@@ -11,147 +11,271 @@
       color: #ddd;
       font-family: 'Courier New', monospace;
       margin: 0;
-      padding: 2rem;
+      padding: 1.5rem;
     }
-    h1 { color: #7df; font-size: 1.2rem; margin: 0 0 0.4rem; }
-    p.sub { color: #666; font-size: 0.8rem; margin: 0 0 2rem; }
+    h1 { color: #7df; font-size: 1.1rem; margin: 0 0 0.3rem; }
+    p.sub { color: #555; font-size: 0.75rem; margin: 0 0 1.5rem; }
+
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+
     .panel {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 4px;
-      padding: 1.2rem;
-      margin-bottom: 1rem;
-      max-width: 640px;
-    }
-    label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 0.4rem; }
-    select, input[type="text"] {
-      background: #222;
-      border: 1px solid #444;
-      color: #ddd;
-      padding: 0.4rem 0.6rem;
-      font-family: inherit;
-      font-size: 0.9rem;
-      border-radius: 2px;
-      width: 100%;
+      background: #181818;
+      border: 1px solid #2a2a2a;
+      border-radius: 3px;
+      padding: 1rem;
       margin-bottom: 0.8rem;
     }
-    .btn-row { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
-    button {
-      background: #2a2a2a;
-      border: 1px solid #555;
-      color: #ccc;
-      padding: 0.5rem 1.2rem;
+    .panel-title {
+      font-size: 0.7rem;
+      color: #7df;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin: 0 0 0.8rem;
+      border-bottom: 1px solid #2a2a2a;
+      padding-bottom: 0.4rem;
+    }
+
+    label { display: block; font-size: 0.75rem; color: #777; margin-bottom: 0.3rem; }
+    select {
+      background: #222;
+      border: 1px solid #3a3a3a;
+      color: #ddd;
+      padding: 0.35rem 0.5rem;
       font-family: inherit;
       font-size: 0.85rem;
       border-radius: 2px;
+      width: 100%;
+      margin-bottom: 0.6rem;
+    }
+    .btn-row { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
+    button {
+      background: #222;
+      border: 1px solid #444;
+      color: #bbb;
+      padding: 0.4rem 1rem;
+      font-family: inherit;
+      font-size: 0.8rem;
+      border-radius: 2px;
       cursor: pointer;
     }
-    button:hover { background: #333; border-color: #7df; color: #7df; }
-    button:disabled { opacity: 0.35; cursor: default; }
-    button.active { background: #1a3a4a; border-color: #7df; color: #7df; }
-    #log {
-      background: #0a0a0a;
-      border: 1px solid #2a2a2a;
+    button:hover { background: #2a2a2a; border-color: #7df; color: #7df; }
+    button:disabled { opacity: 0.3; cursor: default; }
+    button.active { background: #12303f; border-color: #7df; color: #7df; }
+
+    /* ---- parameter knobs ---- */
+    .param-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 0.6rem;
+    }
+    .knob-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .knob-label {
+      font-size: 0.65rem;
+      color: #666;
+      margin-bottom: 0.2rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .knob-label span.val { color: #adf; }
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 3px;
+      background: #333;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: #7df;
+      border: none;
+    }
+    input[type=range]:hover { background: #444; }
+
+    /* ---- operator columns ---- */
+    .op-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.8rem;
+    }
+    .op-col {
+      border: 1px solid #252525;
       border-radius: 2px;
       padding: 0.6rem;
-      height: 140px;
-      overflow-y: auto;
-      font-size: 0.75rem;
+    }
+    .op-col-title {
+      font-size: 0.65rem;
       color: #5a8;
-      line-height: 1.6;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.6rem;
     }
-    #log .err { color: #e66; }
+
+    /* ---- algorithm display ---- */
+    #algDisplay {
+      font-size: 0.7rem;
+      color: #888;
+      margin-top: 0.5rem;
+      min-height: 2em;
+    }
+
+    /* ---- log ---- */
+    #log {
+      background: #0d0d0d;
+      border: 1px solid #222;
+      border-radius: 2px;
+      padding: 0.5rem;
+      height: 100px;
+      overflow-y: auto;
+      font-size: 0.7rem;
+      color: #4a7;
+      line-height: 1.5;
+    }
+    #log .err { color: #e55; }
     #log .info { color: #7df; }
-    .status-dot {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #444;
-      margin-right: 0.5rem;
+
+    .status-row {
+      font-size: 0.7rem;
+      color: #555;
+      margin-top: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
     }
-    .status-dot.playing { background: #5d8; animation: pulse 1s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #333;
+      flex-shrink: 0;
+    }
+    .dot.playing { background: #4c9; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+
+    /* ---- channel selector tabs ---- */
+    .ch-tabs { display: flex; gap: 0.3rem; margin-bottom: 0.8rem; flex-wrap: wrap; }
+    .ch-tab {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      color: #666;
+      padding: 0.25rem 0.6rem;
+      font-family: inherit;
+      font-size: 0.7rem;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    .ch-tab:hover { border-color: #555; color: #aaa; }
+    .ch-tab.sel { border-color: #7df; color: #7df; background: #12283a; }
   </style>
 </head>
 <body>
   <h1>GMLisp YM2612 Player</h1>
-  <p class="sub">Pure-JS FM synthesis — no plugins required</p>
+  <p class="sub">Pure-JS FM synthesis</p>
 
-  <div class="panel">
-    <label>IR file (JSON)</label>
-    <select id="presetSelect">
-      <option value="/examples/ir/demo1-stage-loop.ir.canonical.json">demo1-stage-loop</option>
-      <option value="/examples/ir/demo2-event-recovery.ir.canonical.json">demo2-event-recovery</option>
-    </select>
-    <label>or load local file</label>
-    <input type="file" id="fileInput" accept=".json" style="display:none">
-    <button onclick="document.getElementById('fileInput').click()">Browse…</button>
-
-    <div class="btn-row">
-      <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
-      <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
+  <div class="row">
+    <!-- Transport -->
+    <div class="panel" style="min-width:240px;flex:0 0 240px">
+      <div class="panel-title">Transport</div>
+      <label>IR file</label>
+      <select id="presetSelect">
+        <option value="/examples/ir/demo1-stage-loop.ir.canonical.json">demo1-stage-loop</option>
+        <option value="/examples/ir/demo2-event-recovery.ir.canonical.json">demo2-event-recovery</option>
+      </select>
+      <button onclick="browseFile()" style="width:100%;margin-bottom:0.6rem">Browse local file…</button>
+      <input type="file" id="fileInput" accept=".json" style="display:none">
+      <div class="btn-row">
+        <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
+        <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
+      </div>
+      <div class="status-row">
+        <span class="dot" id="dot"></span>
+        <span id="statusText">Press Play to start</span>
+      </div>
     </div>
 
-    <p style="font-size:0.75rem;color:#555;margin:0.8rem 0 0;">
-      <span class="status-dot" id="statusDot"></span>
-      <span id="statusText">Click Play to start (will prompt for audio permission)</span>
-    </p>
+    <!-- Log -->
+    <div class="panel" style="flex:1;min-width:200px">
+      <div class="panel-title">Console</div>
+      <div id="log"></div>
+    </div>
   </div>
 
-  <div class="panel">
-    <label>Console</label>
-    <div id="log"></div>
+  <!-- FM Parameter Panel -->
+  <div class="panel" id="paramPanel">
+    <div class="panel-title">FM Parameters — live edit (writes to hardware registers immediately)</div>
+
+    <div class="ch-tabs" id="chTabs"></div>
+
+    <!-- Channel-level: ALG + FB -->
+    <div class="param-grid" style="margin-bottom:1rem">
+      <div class="knob-wrap">
+        <div class="knob-label">ALG <span class="val" id="val-alg">5</span></div>
+        <input type="range" id="sl-alg" min="0" max="7" value="5" oninput="onChParam('FM_ALG', this)">
+      </div>
+      <div class="knob-wrap">
+        <div class="knob-label">FB <span class="val" id="val-fb">2</span></div>
+        <input type="range" id="sl-fb" min="0" max="7" value="2" oninput="onChParam('FM_FB', this)">
+      </div>
+    </div>
+    <div id="algDisplay"></div>
+
+    <!-- Per-operator sliders -->
+    <div class="op-grid" id="opGrid"></div>
   </div>
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
 
+    // -----------------------------------------------------------------------
+    // State
+    // -----------------------------------------------------------------------
     let audioCtx = null;
     let workletNode = null;
     let player = null;
     let currentIrURL = document.getElementById('presetSelect').value;
+    let selectedCh = 0;
 
+    // -----------------------------------------------------------------------
+    // Logging / status
+    // -----------------------------------------------------------------------
     const logEl = document.getElementById('log');
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('statusText');
-
     function log(msg, cls = '') {
-      const line = document.createElement('div');
-      if (cls) line.className = cls;
-      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      logEl.appendChild(line);
+      const d = document.createElement('div');
+      if (cls) d.className = cls;
+      d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
     }
-
     function setStatus(msg, playing = false) {
-      statusText.textContent = msg;
-      statusDot.className = 'status-dot' + (playing ? ' playing' : '');
+      document.getElementById('statusText').textContent = msg;
+      document.getElementById('dot').className = 'dot' + (playing ? ' playing' : '');
     }
 
+    // -----------------------------------------------------------------------
+    // Audio
+    // -----------------------------------------------------------------------
     function writeToWorklet(port, addr, data) {
-      if (workletNode) {
-        workletNode.port.postMessage({ type: 'write', port, addr, data });
-      }
+      workletNode?.port.postMessage({ type: 'write', port, addr, data });
     }
 
     async function initAudio() {
       if (audioCtx) return true;
-
       try {
         audioCtx = new AudioContext({ sampleRate: 48000 });
         if (audioCtx.state === 'suspended') await audioCtx.resume();
-
-        log('AudioContext created at ' + audioCtx.sampleRate + ' Hz', 'info');
-
+        log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
         await audioCtx.audioWorklet.addModule('./worklet.js');
         workletNode = new AudioWorkletNode(audioCtx, 'ym2612-processor', {
           numberOfOutputs: 1,
           outputChannelCount: [2],
         });
         workletNode.connect(audioCtx.destination);
-
-        workletNode.port.onmessage = (e) => log('worklet: ' + JSON.stringify(e.data));
-
         log('YM2612 worklet ready', 'info');
         return true;
       } catch (e) {
@@ -160,69 +284,194 @@
       }
     }
 
-    async function loadPreset() {
-      const url = document.getElementById('presetSelect').value;
-      currentIrURL = url;
-      log('Loading: ' + url);
-    }
-
     async function onPlay() {
       const ok = await initAudio();
       if (!ok) return;
-
       if (player) player.stop();
-
       player = new IRPlayer(writeToWorklet);
-
       try {
-        log('Fetching IR…');
+        log('Loading ' + currentIrURL + '…');
         await player.loadURL(currentIrURL);
-        log('IR loaded, starting playback…', 'info');
         player.play(audioCtx);
+        log('Playing', 'info');
         setStatus('Playing', true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
+        syncParamUI();
       } catch (e) {
-        log('Playback error: ' + e.message, 'err');
+        log('Error: ' + e.message, 'err');
         setStatus('Error');
       }
     }
 
     function onStop() {
-      if (player) {
-        player.stop();
-        player = null;
-        log('Stopped');
-        setStatus('Stopped');
-      }
+      player?.stop();
+      player = null;
+      log('Stopped');
+      setStatus('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
     }
 
+    // -----------------------------------------------------------------------
     // File picker
+    // -----------------------------------------------------------------------
+    function browseFile() { document.getElementById('fileInput').click(); }
     document.getElementById('fileInput').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      const opt = document.createElement('option');
-      opt.value = url;
-      opt.textContent = file.name;
-      opt.selected = true;
-      document.getElementById('presetSelect').appendChild(opt);
+      const f = e.target.files[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      const opt = new Option(f.name, url, true, true);
+      document.getElementById('presetSelect').append(opt);
       currentIrURL = url;
-      log('Loaded file: ' + file.name);
+      log('File: ' + f.name);
+    });
+    document.getElementById('presetSelect').addEventListener('change', (e) => {
+      currentIrURL = e.target.value;
     });
 
-    // Preset change
-    document.getElementById('presetSelect').addEventListener('change', loadPreset);
-
-    // Enable play button
     document.getElementById('btnPlay').disabled = false;
 
-    // Expose for inline onclick
+    // Expose for inline handlers
     window.onPlay = onPlay;
     window.onStop = onStop;
+    window.browseFile = browseFile;
 
-    log('Ready. Select a demo and press Play.', 'info');
+    // -----------------------------------------------------------------------
+    // Parameter UI
+    // -----------------------------------------------------------------------
+
+    // Algorithm descriptions (what's a carrier, what's a modulator)
+    const ALG_DESC = [
+      'Alg 0: 1→2→3→4  (max modulation)',
+      'Alg 1: (1+2)→3→4',
+      'Alg 2: (1+(2→3))→4',
+      'Alg 3: ((1→2)+3)→4',
+      'Alg 4: (1→2)+(3→4)  (2 carriers)',
+      'Alg 5: 1→(2+3+4)  (3 carriers)',
+      'Alg 6: (1→2)+3+4  (3 carriers)',
+      'Alg 7: 1+2+3+4  (all carriers, pure additive)',
+    ];
+
+    // Build channel tabs
+    const chTabsEl = document.getElementById('chTabs');
+    for (let i = 0; i < 6; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'ch-tab' + (i === 0 ? ' sel' : '');
+      btn.textContent = 'CH' + (i + 1);
+      btn.dataset.ch = i;
+      btn.onclick = () => selectCh(i);
+      chTabsEl.appendChild(btn);
+    }
+
+    function selectCh(ch) {
+      selectedCh = ch;
+      document.querySelectorAll('.ch-tab').forEach((b, i) => {
+        b.classList.toggle('sel', i === ch);
+      });
+      syncParamUI();
+    }
+
+    // Build operator grids
+    const OP_PARAMS = [
+      { key: 'tl',  label: 'TL',  min: 0, max: 127, param: (op) => `FM_TL${op}` },
+      { key: 'ar',  label: 'AR',  min: 0, max: 31,  param: (op) => `FM_AR${op}` },
+      { key: 'dr',  label: 'DR',  min: 0, max: 31,  param: (op) => `FM_DR${op}` },
+      { key: 'rr',  label: 'RR',  min: 0, max: 15,  param: (op) => `FM_RR${op}` },
+      { key: 'mul', label: 'MUL', min: 0, max: 15,  param: (op) => `FM_ML${op}` },
+    ];
+
+    const opGridEl = document.getElementById('opGrid');
+    for (let op = 1; op <= 4; op++) {
+      const col = document.createElement('div');
+      col.className = 'op-col';
+      col.innerHTML = `<div class="op-col-title">OP${op}</div>`;
+
+      for (const pp of OP_PARAMS) {
+        const wrap = document.createElement('div');
+        wrap.className = 'knob-wrap';
+        const labelId = `val-op${op}-${pp.key}`;
+        const sliderId = `sl-op${op}-${pp.key}`;
+        wrap.innerHTML = `
+          <div class="knob-label">${pp.label} <span class="val" id="${labelId}">-</span></div>
+          <input type="range" id="${sliderId}" min="${pp.min}" max="${pp.max}" value="${pp.min}"
+            data-param="${pp.param(op)}" data-val-id="${labelId}"
+            oninput="onOpParam(this)">
+        `;
+        col.appendChild(wrap);
+      }
+      opGridEl.appendChild(col);
+    }
+
+    // ---- sync slider display from player state ----
+    function syncParamUI() {
+      if (!player) return;
+      const regs = player.getChRegs(selectedCh);
+
+      // Channel level
+      setSlider('sl-alg', 'val-alg', regs.algorithm);
+      setSlider('sl-fb',  'val-fb',  regs.feedback);
+      document.getElementById('algDisplay').textContent = ALG_DESC[regs.algorithm] ?? '';
+
+      // Per-operator
+      for (let op = 1; op <= 4; op++) {
+        const o = regs.ops[op - 1];
+        setSlider(`sl-op${op}-tl`,  `val-op${op}-tl`,  o.tl);
+        setSlider(`sl-op${op}-ar`,  `val-op${op}-ar`,  o.ar);
+        setSlider(`sl-op${op}-dr`,  `val-op${op}-dr`,  o.dr);
+        setSlider(`sl-op${op}-rr`,  `val-op${op}-rr`,  o.rr);
+        setSlider(`sl-op${op}-mul`, `val-op${op}-mul`, o.mul);
+      }
+    }
+
+    function setSlider(sliderId, valId, value) {
+      const sl = document.getElementById(sliderId);
+      const vl = document.getElementById(valId);
+      if (sl) sl.value = value;
+      if (vl) vl.textContent = value;
+    }
+
+    // ---- slider change handlers ----
+    window.onChParam = function(paramName, slider) {
+      const val = parseInt(slider.value, 10);
+      const valEl = document.getElementById(slider.id.replace('sl-', 'val-'));
+      if (valEl) valEl.textContent = val;
+
+      if (paramName === 'FM_ALG') {
+        document.getElementById('algDisplay').textContent = ALG_DESC[val] ?? '';
+      }
+
+      if (player) {
+        player.setParam(paramName, val, selectedCh);
+      } else if (workletNode) {
+        initParamOnlyPlayer();
+        player.setParam(paramName, val, selectedCh);
+      }
+    };
+
+    window.onOpParam = function(slider) {
+      const paramName = slider.dataset.param;
+      const val = parseInt(slider.value, 10);
+      const valEl = document.getElementById(slider.dataset.valId);
+      if (valEl) valEl.textContent = val;
+
+      if (player) {
+        player.setParam(paramName, val, selectedCh);
+      } else {
+        initParamOnlyPlayer();
+        player.setParam(paramName, val, selectedCh);
+      }
+    };
+
+    function initParamOnlyPlayer() {
+      if (player) return;
+      if (!workletNode) return;
+      player = new IRPlayer(writeToWorklet);
+      player.loadJSON({ ppqn: 120, tracks: [] });
+      player._initDefaultVoices();
+      syncParamUI();
+    }
+
+    log('Ready.', 'info');
   </script>
 </body>
 </html>

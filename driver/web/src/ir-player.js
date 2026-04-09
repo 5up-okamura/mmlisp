@@ -538,6 +538,33 @@ export class IRPlayer {
     }
   }
 
+  /**
+   * External real-time parameter write.
+   * target: e.g. 'FM_TL1', 'FM_FB', 'FM_ALG'
+   * value: absolute value (always SET, not ADD)
+   * chIndex: 0-5 (default 0)
+   */
+  setParam(target, value, chIndex = 0) {
+    const port = chIndex >= 3 ? 1 : 0;
+    const chOffset = chIndex % 3;
+    this._applyParam(chIndex, port, chOffset, {
+      cmd: 'PARAM_SET',
+      args: { target, value },
+    });
+  }
+
+  /**
+   * Returns a shallow copy of register state for a channel (for UI display).
+   */
+  getChRegs(chIndex = 0) {
+    const r = this._chRegs[chIndex];
+    return {
+      algorithm: r.algorithm,
+      feedback: r.feedback,
+      ops: r.ops.map(o => ({ ...o })),
+    };
+  }
+
   _writeKeyOff(chIndex) {
     const port = chIndex >= 3 ? 1 : 0;
     const chOffset = chIndex % 3;
