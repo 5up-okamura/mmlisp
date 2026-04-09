@@ -39,12 +39,13 @@
 1. Header validity: pass for demo1/demo2 via tools/check:gmb-demos
 2. Section directory validity: pass for demo1/demo2
 3. Track/event offset validity: pass for demo1/demo2
+4. Decoder compatibility fixtures: pass via tools/check:gmb-fixtures
 
 ## 6. Risks and Decisions
 
 1. Accepted risk: opcode map is provisional
 2. Deferred to v0.2: CSM and FM3 dedicated command behavior
-3. Blocking issue (if any): opcode id table and arg packing are not frozen
+3. Blocking issue (if any): opcode table is still draft and not frozen by review
 
 ## 7. Decision
 
@@ -55,5 +56,5 @@
 ## 8. Action Items
 
 1. Owner: okamura
-2. Task: freeze opcode table and add decoder compatibility fixtures
+2. Task: run freeze review for opcode table and payload contract
 3. Due: next checkpoint

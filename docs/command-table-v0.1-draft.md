@@ -105,6 +105,33 @@ Reserved command policy:
 - Real opcode bytes will be assigned only after command usage is validated with demo songs.
 - Binary format should keep extension room for reserved commands.
 
+## Draft Opcode Table (Current Implementation)
+
+This table reflects current writer/validator behavior and is a freeze candidate
+for v0.1.
+
+1. `0x10` NOTE_ON (payload 3 bytes: pitch:u8, length:u16)
+2. `0x11` REST (payload 2 bytes: length:u16)
+3. `0x12` TIE (payload 2 bytes: length:u16)
+4. `0x40` LOOP_BEGIN (payload 1 byte: loop_id:u8)
+5. `0x41` LOOP_END (payload 2 bytes: loop_id:u8, repeat:u8)
+6. `0x42` MARKER (payload 1 byte: marker_id:u8)
+7. `0x43` JUMP (payload 1 byte: marker_id:u8)
+8. `0x60` PARAM_SET (payload 3 bytes: target_id:u8, value:i16)
+9. `0x61` PARAM_ADD (payload 3 bytes: target_id:u8, delta:i16)
+10. `0x80` TEMPO_SET (payload 2 bytes: bpm:u16)
+
+## Target ID Table (Current Implementation)
+
+1. `0x01` NOTE_PITCH
+2. `0x02` NOTE_VOLUME
+3. `0x03` TEMPO_SCALE
+4. `0x10` FM_FB
+5. `0x11` FM_TL1
+6. `0x12` FM_TL2
+7. `0x13` FM_TL3
+8. `0x14` FM_TL4
+
 See also:
 
 1. docs/spec-v0.1-draft.md

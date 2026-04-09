@@ -66,7 +66,7 @@ Payload contract in current draft:
 
 1. Unknown section id: skip unless marked required by future flags.
 2. Unknown opcode: fail-safe stop track decode.
-3. Malformed payload JSON: treat as decode error.
+3. Payload length mismatch for opcode: treat as decode error.
 4. Invalid loop structure at decode time: stop track and report error.
 
 ## 5. Planned Tightening Before Freeze
@@ -75,3 +75,10 @@ Payload contract in current draft:
 2. Define strict error codes shared by tools and driver.
 3. Add cross-check fixtures for decoder compatibility.
 4. Add multi-track and channel mapping fixtures.
+
+Current fixture coverage:
+
+1. Valid demo1 and demo2 binaries
+2. Invalid magic header fixture
+3. Invalid payload length fixture
+4. Invalid track event-range fixture

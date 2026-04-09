@@ -18,6 +18,8 @@ Run from tools directory:
 6. `npm run build:gmb-demos`
 7. `npm run verify-gmb -- ../examples/gmb/demo1-stage-loop.gmb`
 8. `npm run check:gmb-demos`
+9. `npm run build:gmb-fixtures`
+10. `npm run check:gmb-fixtures`
 
 ## Notes
 
@@ -25,3 +27,4 @@ Run from tools directory:
 2. Generated files use deterministic key ordering to simplify diffs.
 3. The current GMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
 4. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under `examples/ir`.
+5. `check:gmb-fixtures` verifies both expected-valid and expected-invalid fixture binaries.

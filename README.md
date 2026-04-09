@@ -56,6 +56,6 @@ Implemented toolchain stage:
 ## Next Local Steps
 
 1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
-2. Freeze IR-to-GMB opcode table and argument packing.
-3. Cross-check generated GMB with decoder-side compatibility fixtures.
+2. Freeze IR-to-GMB opcode table and argument packing by review.
+3. Add multi-track/channel compatibility fixtures for decoder checks.
 4. Iterate freeze review notes in docs/reviews.
