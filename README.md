@@ -49,6 +49,6 @@ scaffold directories for implementation phases.
 ## Next Local Steps
 
 1. Fill demo skeleton songs with real test phrases.
-2. Export canonical IR snapshots for demos.
-3. Export GMB test binaries for demos.
-4. Write first freeze candidate review note from template.
+2. Export canonical IR snapshots for demos into examples/ir.
+3. Export GMB test binaries for demos into examples/gmb.
+4. Write and iterate freeze review notes in docs/reviews.

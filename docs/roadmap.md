@@ -55,6 +55,7 @@ Phase 3 entry condition:
 
 ## Immediate Local Backlog
 
-1. Create examples/source with two demo skeleton songs
-2. Add docs/reviews template for freeze candidate sign-off
-3. Add provisional opcode mapping memo for internal experiments
+1. Fill demo1-stage-loop and demo2-event-recovery with validation phrases
+2. Produce initial IR snapshots in examples/ir
+3. Produce initial GMB exports in examples/gmb
+4. Record first actionable freeze review using docs/reviews template
