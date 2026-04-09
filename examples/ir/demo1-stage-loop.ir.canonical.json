@@ -1,0 +1,114 @@
+{
+  "metadata": {
+    "author": "okamura",
+    "source": "examples/source/demo1-stage-loop.gml",
+    "title": "Demo 1 Stage Loop"
+  },
+  "ppqn": 120,
+  "tracks": [
+    {
+      "channel": "fm1",
+      "events": [
+        {
+          "args": { "id": "intro" },
+          "cmd": "MARKER",
+          "src": { "column": 8, "line": 15 },
+          "tick": 0
+        },
+        {
+          "args": { "target": "FM_FB", "value": 2 },
+          "cmd": "PARAM_SET",
+          "src": { "column": 8, "line": 16 },
+          "tick": 0
+        },
+        {
+          "args": { "id": "a" },
+          "cmd": "LOOP_BEGIN",
+          "src": { "column": 8, "line": 18 },
+          "tick": 0
+        },
+        {
+          "args": { "length": 60, "pitch": "c4" },
+          "cmd": "NOTE_ON",
+          "src": { "column": 8, "line": 19 },
+          "tick": 0
+        },
+        {
+          "args": { "length": 60, "pitch": "e4" },
+          "cmd": "NOTE_ON",
+          "src": { "column": 8, "line": 20 },
+          "tick": 60
+        },
+        {
+          "args": { "length": 60, "pitch": "g4" },
+          "cmd": "NOTE_ON",
+          "src": { "column": 8, "line": 21 },
+          "tick": 120
+        },
+        {
+          "args": { "length": 60 },
+          "cmd": "REST",
+          "src": { "column": 8, "line": 22 },
+          "tick": 180
+        },
+        {
+          "args": { "delta": 1, "target": "FM_FB" },
+          "cmd": "PARAM_ADD",
+          "src": { "column": 8, "line": 23 },
+          "tick": 240
+        },
+        {
+          "args": { "length": 60, "pitch": "a4" },
+          "cmd": "NOTE_ON",
+          "src": { "column": 8, "line": 24 },
+          "tick": 240
+        },
+        {
+          "args": { "length": 60 },
+          "cmd": "REST",
+          "src": { "column": 8, "line": 25 },
+          "tick": 300
+        },
+        {
+          "args": { "delta": -1, "target": "FM_FB" },
+          "cmd": "PARAM_ADD",
+          "src": { "column": 8, "line": 26 },
+          "tick": 360
+        },
+        {
+          "args": { "id": "a", "repeat": 4 },
+          "cmd": "LOOP_END",
+          "src": { "column": 8, "line": 27 },
+          "tick": 360
+        },
+        {
+          "args": { "id": "turn" },
+          "cmd": "MARKER",
+          "src": { "column": 8, "line": 29 },
+          "tick": 360
+        },
+        {
+          "args": { "length": 120, "pitch": "f4" },
+          "cmd": "NOTE_ON",
+          "src": { "column": 8, "line": 30 },
+          "tick": 360
+        },
+        {
+          "args": { "length": 60 },
+          "cmd": "REST",
+          "src": { "column": 8, "line": 31 },
+          "tick": 480
+        },
+        {
+          "args": { "to": "intro" },
+          "cmd": "JUMP",
+          "src": { "column": 8, "line": 32 },
+          "tick": 540
+        }
+      ],
+      "id": 0,
+      "name": "main"
+    }
+  ],
+  "version": 1
+}

@@ -13,16 +13,25 @@
       :tempo 132
       :len 1/16
 
+      (marker :calm)
       (note :a3)
       (tie 1/16)
       (rest 1/16)
       (note :c4)
 
       (param-set :fm-tl1 40)
-      (param-add :fm-tl1 -3)
-      (param-add :tempo-scale +4)
+      (param-set :tempo-scale 0)
 
-      (loop-begin :l1)
+      (loop-begin :stress)
+      (param-add :fm-tl1 -3)
+      (param-add :tempo-scale +2)
       (note :e4)
       (note :d4)
-      (loop-end :l1 2))))
+      (rest 1/16)
+      (param-add :fm-tl1 +2)
+      (param-add :tempo-scale -2)
+      (loop-end :stress 8)
+
+      (marker :recover)
+      (rest 1/4)
+      (jump :calm))))

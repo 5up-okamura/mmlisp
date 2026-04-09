@@ -22,16 +22,16 @@
 
 ## 3. Demo Validation
 
-1. demo1-stage-loop.gml result: skeleton only, functional validation pending
-2. demo2-event-recovery.gml result: skeleton only, functional validation pending
-3. Loop/marker stability notes: pending
-4. base/delta recovery notes: pending
+1. demo1-stage-loop.gml result: phrase expanded, runtime validation pending
+2. demo2-event-recovery.gml result: phrase expanded, runtime validation pending
+3. Loop/marker stability notes: expected event paths documented
+4. base/delta recovery notes: expected delta behavior documented
 
 ## 4. IR Validation
 
-1. Deterministic output check: pending
-2. Marker/jump resolution check: pending
-3. Diagnostic quality check: pending
+1. Deterministic output check: manual canonical snapshots drafted
+2. Marker/jump resolution check: expected marker ids documented
+3. Diagnostic quality check: pending (requires parser/compiler)
 
 ## 5. GMB Validation
 
@@ -54,5 +54,5 @@
 ## 8. Action Items
 
 1. Owner: okamura
-2. Task: fill demo phrases and produce first IR snapshots
+2. Task: implement first compiler pass and compare output with expected IR
 3. Due: next checkpoint
