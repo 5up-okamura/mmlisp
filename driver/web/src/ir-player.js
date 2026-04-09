@@ -1,0 +1,593 @@
+/**
+ * GMLisp IR player.
+ *
+ * Loads an IR JSON file, translates events into YM2612 register writes,
+ * and schedules them via a write callback timed by the Web Audio clock.
+ *
+ * Usage:
+ *   const player = new IRPlayer(writeCallback);
+ *   await player.loadURL('path/to/demo1.ir.canonical.json');
+ *   player.play();
+ *   player.stop();
+ *
+ * writeCallback(port, addr, data) matches the YM2612 write() interface,
+ * which in practice posts messages to the AudioWorklet.
+ */
+
+// ---------------------------------------------------------------------------
+// Pitch → MIDI note
+// ---------------------------------------------------------------------------
+const NOTE_NAMES = [
+  "c",
+  "cs",
+  "d",
+  "ds",
+  "e",
+  "f",
+  "fs",
+  "g",
+  "gs",
+  "a",
+  "as",
+  "b",
+];
+// Aliases for sharps/flats commonly seen in GMLisp ("c#", "db" etc.)
+const NOTE_ALIASES = {
+  "c#": "cs",
+  db: "cs",
+  "d#": "ds",
+  eb: "ds",
+  "f#": "fs",
+  gb: "fs",
+  "g#": "gs",
+  ab: "gs",
+  "a#": "as",
+  bb: "as",
+};
+
+function pitchToMidi(pitchStr) {
+  // Format: "c4", "e4", "g#3", "bb5" etc.
+  const m = pitchStr.toLowerCase().match(/^([a-g][#b]?)(\d)$/);
+  if (!m) return 60; // fallback C4
+
+  let name = m[1];
+  const octave = parseInt(m[2], 10);
+
+  name = NOTE_ALIASES[name] ?? name;
+  const semitone = NOTE_NAMES.indexOf(name);
+  if (semitone < 0) return 60;
+
+  // MIDI: C4 = 60, C0 = 12
+  return (octave + 1) * 12 + semitone;
+}
+
+// ---------------------------------------------------------------------------
+// MIDI pitch → YM2612 F-number + block
+// Calibrated for NTSC Mega Drive master clock 7670454 Hz.
+// F_num table is computed for block=4 (covers C4-B4 well).
+// For other octaves, the same F_nums are used with block = octave.
+// ---------------------------------------------------------------------------
+
+// F-number for each semitone in the 'reference octave' (matches block=4 / MIDI octave 4)
+// Computed as: F_num = round(freq * 2^20 / (MASTER_CLOCK / 144 / 2^(block-1)))
+//            = round(freq * 2^19 / (MASTER_CLOCK / 144))
+//   where MASTER_CLOCK/144 = 53267 Hz
+const FNUM_TABLE = [
+  644, 682, 723, 766, 811, 860, 911, 966, 1023, 1082, 1146, 1214,
+];
+
+function midiToFnumBlock(midiNote) {
+  const semitone = ((midiNote % 12) + 12) % 12;
+  // MIDI C0=12 → octave=0, C4=60 → octave=4
+  const octave = Math.floor(midiNote / 12) - 1;
+  const block = Math.max(0, Math.min(7, octave));
+  return { fnum: FNUM_TABLE[semitone], block };
+}
+
+// ---------------------------------------------------------------------------
+// Parameter name → YM2612 register offset + encoding
+// ---------------------------------------------------------------------------
+//
+// GMLisp param names (from IR) map to hardware registers.
+// Channel-level params:
+//   FM_FB      → 0xB0 bits 5-3 (feedback, 0-7)
+//   FM_ALG     → 0xB0 bits 2-0 (algorithm, 0-7)
+//   FM_PAN_L   → 0xB4 bit 7
+//   FM_PAN_R   → 0xB4 bit 6
+// Operator params (op1-op4):
+//   FM_TL1..4  → 0x40 per op (total level, 0-127)
+//   FM_AR1..4  → 0x50 per op (attack rate, 0-31)
+//   FM_DR1..4  → 0x60 per op (decay rate, 0-31)
+//   FM_SR1..4  → 0x70 per op (sustain rate, 0-31)
+//   FM_RR1..4  → 0x80 per op (release rate bits 3-0)
+//   FM_SL1..4  → 0x80 per op (sustain level bits 7-4)
+//   FM_ML1..4  → 0x30 per op (multiplier bits 3-0)
+//   FM_DT1..4  → 0x30 per op (detune bits 6-4)
+
+const OP_ADDR_OFFSET = [0, 8, 4, 12]; // op1,op2,op3,op4 in OPN2 register space
+
+function buildChannelRegState(chIndex) {
+  // Returns a mutable object representing all register state for a channel
+  return {
+    algorithm: 0,
+    feedback: 0,
+    stereoL: true,
+    stereoR: true,
+    ops: [
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
+    ],
+  };
+}
+
+// Encode B0 register (algorithm + feedback)
+function encodeB0(regs) {
+  return ((regs.feedback & 0x07) << 3) | (regs.algorithm & 0x07);
+}
+
+// Encode B4 register (stereo + LFO sensitivity)
+function encodeB4(regs) {
+  return ((regs.stereoL ? 1 : 0) << 7) | ((regs.stereoR ? 1 : 0) << 6);
+}
+
+// Encode 0x30 (DT1/MUL) for an operator
+function encode30(op) {
+  return ((op.dt & 0x07) << 4) | (op.mul & 0x0f);
+}
+
+// Encode 0x80 (SL/RR) for an operator
+function encode80(op) {
+  return ((op.sl & 0x0f) << 4) | (op.rr & 0x0f);
+}
+
+// ---------------------------------------------------------------------------
+// IRPlayer
+// ---------------------------------------------------------------------------
+export class IRPlayer {
+  /**
+   * @param {function(port:number, addr:number, data:number): void} writeCallback
+   */
+  constructor(writeCallback) {
+    this._write = writeCallback;
+    this._ir = null;
+    this._playing = false;
+    this._loopCount = new Map(); // loopId → iteration count
+    this._eventIndex = 0;
+    this._currentTick = 0;
+    this._ppqn = 120;
+    this._bpm = 120;
+    this._startAudioTime = 0;
+    this._audioContext = null;
+    this._schedulerTimer = null;
+    this._schedulerLookahead = 0.1; // seconds
+    this._schedulerInterval = 50; // ms
+
+    // Per-channel register state (for incremental PARAM_ADD)
+    this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
+
+    // Track → channel mapping (defaults to index 0 for demo)
+    this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
+  }
+
+  /**
+   * Load an IR JSON from a URL.
+   */
+  async loadURL(url) {
+    const res = await fetch(url);
+    this._ir = await res.json();
+    this._ppqn = this._ir.ppqn ?? 120;
+    this._eventIndex = 0;
+    this._currentTick = 0;
+    this._loopCount.clear();
+
+    // Assign channels: each track maps to its index (capped to 5)
+    for (let i = 0; i < (this._ir.tracks?.length ?? 0); i++) {
+      this._trackChannel.set(i, Math.min(i, 5));
+    }
+
+    return this;
+  }
+
+  /**
+   * Load IR JSON directly from an object.
+   */
+  loadJSON(irObj) {
+    this._ir = irObj;
+    this._ppqn = irObj.ppqn ?? 120;
+    this._eventIndex = 0;
+    this._currentTick = 0;
+    this._loopCount.clear();
+    for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
+      this._trackChannel.set(i, Math.min(i, 5));
+    }
+    return this;
+  }
+
+  /**
+   * Start playback using the provided AudioContext for timing.
+   */
+  play(audioContext) {
+    if (!this._ir) throw new Error("No IR loaded");
+
+    this._audioContext = audioContext;
+    this._playing = true;
+    this._startAudioTime = audioContext.currentTime + 0.05; // small startup offset
+
+    // Initialize all channels with default voices
+    this._initDefaultVoices();
+
+    // Flatten all tracks into a single sorted event list with channel assignments
+    this._flatEvents = this._flattenTracks();
+    this._flatIndex = 0;
+
+    // Start lookahead scheduler
+    this._tick = 0;
+    this._audioTimeAtTick0 = this._startAudioTime;
+    this._scheduleLoop();
+  }
+
+  stop() {
+    this._playing = false;
+    if (this._schedulerTimer !== null) {
+      clearTimeout(this._schedulerTimer);
+      this._schedulerTimer = null;
+    }
+    // All notes off
+    for (let ch = 0; ch < 6; ch++) {
+      this._writeKeyOff(ch);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal
+  // ---------------------------------------------------------------------------
+
+  _tickToAudioTime(tick) {
+    // seconds per tick = (60 / bpm) / ppqn
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    return this._audioTimeAtTick0 + tick * secsPerTick;
+  }
+
+  _scheduleLoop() {
+    if (!this._playing) return;
+
+    const now = this._audioContext.currentTime;
+    const horizon = now + this._schedulerLookahead;
+
+    while (this._flatIndex < this._flatEvents.length) {
+      const ev = this._flatEvents[this._flatIndex];
+      const evTime = this._tickToAudioTime(ev.tick);
+
+      if (evTime > horizon) break;
+
+      // Schedule at evTime (or immediately if in the past)
+      const delay = Math.max(0, evTime - now) * 1000;
+      const evCopy = { ...ev };
+      setTimeout(() => this._dispatchEvent(evCopy), delay);
+
+      this._flatIndex++;
+    }
+
+    const done = this._flatIndex >= this._flatEvents.length;
+    if (!done) {
+      this._schedulerTimer = setTimeout(
+        () => this._scheduleLoop(),
+        this._schedulerInterval,
+      );
+    }
+  }
+
+  _flattenTracks() {
+    if (!this._ir?.tracks) return [];
+
+    const events = [];
+    for (let ti = 0; ti < this._ir.tracks.length; ti++) {
+      const track = this._ir.tracks[ti];
+      const chIndex = this._trackChannel.get(ti) ?? 0;
+      const flatEvs = this._expandLoops(track.events ?? []);
+      for (const ev of flatEvs) {
+        events.push({ ...ev, _chIndex: chIndex, _trackIndex: ti });
+      }
+    }
+    // Sort by tick; preserve order within same tick
+    events.sort((a, b) => a.tick - b.tick);
+    return events;
+  }
+
+  _expandLoops(events) {
+    // Simple loop expansion: expand LOOP_BEGIN/END into repeated event sequences
+    // One-pass finite expansion; avoids infinite loops by capping at max iterations.
+    const result = [];
+    let i = 0;
+
+    function expand(evList, depth) {
+      if (depth > 8) return []; // safety guard
+      const out = [];
+      let j = 0;
+      while (j < evList.length) {
+        const ev = evList[j];
+        if (ev.cmd === "LOOP_BEGIN") {
+          // Find matching LOOP_END
+          const loopId = ev.args?.id;
+          let k = j + 1;
+          let depth2 = 0;
+          while (k < evList.length) {
+            if (evList[k].cmd === "LOOP_BEGIN") depth2++;
+            if (evList[k].cmd === "LOOP_END") {
+              if (depth2 === 0) break;
+              depth2--;
+            }
+            k++;
+          }
+          const loopBody = evList.slice(j + 1, k);
+          const count = evList[k]?.args?.count ?? 2;
+
+          // Expand loop body 'count' times, with re-ticking
+          // Compute loop body duration
+          const lastTick =
+            loopBody.length > 0 ? loopBody[loopBody.length - 1].tick : 0;
+          const bodyDuration = lastTick - (loopBody[0]?.tick ?? 0);
+          const startTick = loopBody[0]?.tick ?? 0;
+
+          for (let rep = 0; rep < count; rep++) {
+            const offset = rep * (bodyDuration + 0); // approximate
+            for (const bodyEv of expand(loopBody, depth + 1)) {
+              out.push({ ...bodyEv, tick: bodyEv.tick + rep * bodyDuration });
+            }
+          }
+
+          j = k + 1; // skip past LOOP_END
+        } else {
+          out.push(ev);
+          j++;
+        }
+      }
+      return out;
+    }
+
+    return expand(events, 0);
+  }
+
+  _dispatchEvent(ev) {
+    if (!this._playing) return;
+
+    const ch = ev._chIndex ?? 0;
+    const port = ch >= 3 ? 1 : 0;
+    const chOffset = ch % 3;
+
+    switch (ev.cmd) {
+      case "TEMPO_SET":
+        this._bpm = ev.args?.bpm ?? this._bpm;
+        break;
+
+      case "NOTE_ON": {
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const { fnum, block } = midiToFnumBlock(midi);
+        const chKey = (port << 2) | chOffset; // 0x28 channel key
+
+        // Write F-number high first (block + MSB), then low
+        this._write(
+          port,
+          0xa4 + chOffset,
+          ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+        );
+        this._write(port, 0xa0 + chOffset, fnum & 0xff);
+        // Key on: all 4 operators
+        this._write(0, 0x28, 0xf0 | chKey);
+
+        // Schedule note off at tick + length
+        const lengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const offDelay = lengthTicks * (60 / (this._bpm * this._ppqn)) * 1000;
+        setTimeout(
+          () => {
+            if (this._playing) {
+              this._write(0, 0x28, chKey); // key off (op mask = 0)
+            }
+          },
+          Math.max(0, offDelay - 5),
+        ); // 5ms early to allow envelope decay
+        break;
+      }
+
+      case "PARAM_SET":
+      case "PARAM_ADD": {
+        this._applyParam(ch, port, chOffset, ev);
+        break;
+      }
+
+      case "MARKER":
+      case "LOOP_BEGIN":
+      case "LOOP_END":
+      case "REST":
+      case "JUMP":
+        // Handled structurally (loops expanded; markers/jumps not needed for linear playback)
+        break;
+    }
+  }
+
+  _applyParam(ch, port, chOffset, ev) {
+    const regs = this._chRegs[ch];
+    const target = (ev.args?.target ?? "").toUpperCase();
+    const value = ev.args?.value ?? 0;
+    const isAdd = ev.cmd === "PARAM_ADD";
+
+    // Helper to clamp and apply
+    const set = (get, apply, min, max) => {
+      const cur = get();
+      const next = Math.max(min, Math.min(max, isAdd ? cur + value : value));
+      apply(next);
+    };
+
+    switch (target) {
+      case "FM_FB":
+        set(
+          () => regs.feedback,
+          (v) => {
+            regs.feedback = v;
+          },
+          0,
+          7,
+        );
+        this._write(port, 0xb0 + chOffset, encodeB0(regs));
+        break;
+      case "FM_ALG":
+        set(
+          () => regs.algorithm,
+          (v) => {
+            regs.algorithm = v;
+          },
+          0,
+          7,
+        );
+        this._write(port, 0xb0 + chOffset, encodeB0(regs));
+        break;
+      case "FM_TL1":
+      case "FM_TL2":
+      case "FM_TL3":
+      case "FM_TL4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].tl,
+          (v) => {
+            regs.ops[opIdx].tl = v;
+          },
+          0,
+          127,
+        );
+        const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, regs.ops[opIdx].tl);
+        break;
+      }
+      case "FM_AR1":
+      case "FM_AR2":
+      case "FM_AR3":
+      case "FM_AR4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].ar,
+          (v) => {
+            regs.ops[opIdx].ar = v;
+          },
+          0,
+          31,
+        );
+        const opAddr = 0x50 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(
+          port,
+          opAddr,
+          (regs.ops[opIdx].rs << 6) | regs.ops[opIdx].ar,
+        );
+        break;
+      }
+      case "FM_DR1":
+      case "FM_DR2":
+      case "FM_DR3":
+      case "FM_DR4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].dr,
+          (v) => {
+            regs.ops[opIdx].dr = v;
+          },
+          0,
+          31,
+        );
+        const opAddr = 0x60 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, regs.ops[opIdx].dr);
+        break;
+      }
+      case "FM_RR1":
+      case "FM_RR2":
+      case "FM_RR3":
+      case "FM_RR4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].rr,
+          (v) => {
+            regs.ops[opIdx].rr = v;
+          },
+          0,
+          15,
+        );
+        const opAddr = 0x80 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, encode80(regs.ops[opIdx]));
+        break;
+      }
+      case "FM_ML1":
+      case "FM_ML2":
+      case "FM_ML3":
+      case "FM_ML4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].mul,
+          (v) => {
+            regs.ops[opIdx].mul = v;
+          },
+          0,
+          15,
+        );
+        const opAddr = 0x30 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, encode30(regs.ops[opIdx]));
+        break;
+      }
+      // Future: TEMPO_SCALE → timing multiplier (not a register write)
+      default:
+        break;
+    }
+  }
+
+  _writeKeyOff(chIndex) {
+    const port = chIndex >= 3 ? 1 : 0;
+    const chOffset = chIndex % 3;
+    const chKey = (port << 2) | chOffset;
+    this._write(0, 0x28, chKey); // all operators off
+  }
+
+  _initDefaultVoices() {
+    // Write a basic FM voice to all channels so notes are audible immediately.
+    // This is a simple sine-like patch: alg=0, fb=0,
+    // all ops: AR=31, TL carriers=0 / TL modulators=40, MUL=1.
+    for (let ch = 0; ch < 6; ch++) {
+      const port = ch >= 3 ? 1 : 0;
+      const offset = ch % 3;
+      const regs = this._chRegs[ch];
+
+      // Algorithm 5 (all ops modulated from op1 output → op2,3,4 are carriers)
+      // gives a richer sound for a default patch without FM programming.
+      regs.algorithm = 5;
+      regs.feedback = 2;
+      this._write(port, 0xb0 + offset, encodeB0(regs));
+      // Stereo: both
+      this._write(port, 0xb4 + offset, 0xc0);
+
+      const opConfigs = [
+        { slot: 0, tl: 20, ar: 28, dr: 6, d2r: 0, sl: 0, rr: 7, mul: 1 }, // op1 (modulator)
+        { slot: 1, tl: 0, ar: 31, dr: 4, d2r: 0, sl: 2, rr: 8, mul: 1 }, // op2
+        { slot: 2, tl: 0, ar: 31, dr: 4, d2r: 0, sl: 2, rr: 8, mul: 1 }, // op3
+        { slot: 3, tl: 0, ar: 31, dr: 4, d2r: 0, sl: 2, rr: 8, mul: 1 }, // op4
+      ];
+
+      for (const cfg of opConfigs) {
+        const opOff = OP_ADDR_OFFSET[cfg.slot];
+        regs.ops[cfg.slot] = {
+          tl: cfg.tl,
+          ar: cfg.ar,
+          dr: cfg.dr,
+          d2r: cfg.d2r,
+          sl: cfg.sl,
+          rr: cfg.rr,
+          mul: cfg.mul,
+          dt: 0,
+        };
+        this._write(port, 0x30 + opOff + offset, encode30(regs.ops[cfg.slot]));
+        this._write(port, 0x40 + opOff + offset, cfg.tl);
+        this._write(port, 0x50 + opOff + offset, 0x60 | cfg.ar); // RS=1
+        this._write(port, 0x60 + opOff + offset, cfg.dr);
+        this._write(port, 0x70 + opOff + offset, cfg.d2r);
+        this._write(port, 0x80 + opOff + offset, encode80(regs.ops[cfg.slot]));
+      }
+    }
+  }
+}
