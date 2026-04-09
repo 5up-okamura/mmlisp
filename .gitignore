@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# logs
+*.log
+
+# node/web build (future)
+node_modules/
+dist/
+.build/
+
+# editor
+.vscode/*.code-workspace
+
+# temporary
+*.tmp
+*.swp
