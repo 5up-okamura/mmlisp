@@ -358,13 +358,6 @@
 
     function highlightLine(oneBased) {
       editorView.dispatch({ effects: setPlayLine.of(oneBased) });
-      // Scroll into view
-      try {
-        const line = editorView.state.doc.line(oneBased);
-        editorView.dispatch({
-          effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
-        });
-      } catch (_) {}
     }
 
     // Load source for initial preset
