@@ -163,6 +163,7 @@ export class IRPlayer {
     this._schedulerTimer = null;
     this._schedulerLookahead = 0.1; // seconds
     this._schedulerInterval = 50; // ms
+    this._loop = true; // loop by default
 
     // Per-channel register state (for incremental PARAM_ADD)
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
@@ -207,9 +208,13 @@ export class IRPlayer {
 
   /**
    * Start playback using the provided AudioContext for timing.
+   * @param {AudioContext} audioContext
+   * @param {{ loop?: boolean }} [options]
    */
-  play(audioContext) {
+  play(audioContext, options = {}) {
     if (!this._ir) throw new Error("No IR loaded");
+
+    if (options.loop !== undefined) this._loop = options.loop;
 
     this._audioContext = audioContext;
     this._playing = true;
@@ -238,6 +243,11 @@ export class IRPlayer {
     for (let ch = 0; ch < 6; ch++) {
       this._writeKeyOff(ch);
     }
+  }
+
+  /** Toggle looping at any time. */
+  setLoop(enabled) {
+    this._loop = enabled;
   }
 
   // ---------------------------------------------------------------------------
@@ -276,6 +286,13 @@ export class IRPlayer {
         () => this._scheduleLoop(),
         this._schedulerInterval,
       );
+    } else if (this._loop && this._flatEvents.length > 0) {
+      // Advance the time base by one score duration so scheduled times stay continuous
+      const lastTick = this._flatEvents[this._flatEvents.length - 1].tick;
+      const secsPerTick = 60 / (this._bpm * this._ppqn);
+      this._audioTimeAtTick0 += (lastTick + 1) * secsPerTick;
+      this._flatIndex = 0;
+      this._scheduleLoop();
     }
   }
 
