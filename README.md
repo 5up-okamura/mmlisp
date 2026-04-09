@@ -43,10 +43,12 @@ scaffold directories for implementation phases.
 3. docs/ir-v0.1-draft.md
 4. docs/gmb-format-v0.1-draft.md
 5. docs/freeze-checklist-v0.1.md
+6. docs/opcode-mapping-provisional-v0.1.md
+7. docs/reviews/freeze-candidate-template.md
 
 ## Next Local Steps
 
-1. Add sample .gml demo sources under examples/source.
-2. Define canonical IR snapshot format and fixtures.
-3. Assign provisional opcode map for internal testing.
-4. Prepare freeze candidate review notes in docs/reviews.
+1. Fill demo skeleton songs with real test phrases.
+2. Export canonical IR snapshots for demos.
+3. Export GMB test binaries for demos.
+4. Write first freeze candidate review note from template.
