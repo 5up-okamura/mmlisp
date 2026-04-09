@@ -44,7 +44,7 @@
 
 1. Accepted risk: opcode map is provisional
 2. Deferred to v0.2: CSM and FM3 dedicated command behavior
-3. Blocking issue (if any): opcode payload format still provisional JSON
+3. Blocking issue (if any): opcode id table and arg packing are not frozen
 
 ## 7. Decision
 
@@ -55,5 +55,5 @@
 ## 8. Action Items
 
 1. Owner: okamura
-2. Task: tighten opcode payload contract and align with decoder draft
+2. Task: freeze opcode table and add decoder compatibility fixtures
 3. Due: next checkpoint

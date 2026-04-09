@@ -34,7 +34,7 @@ Each event record is encoded as:
 1. tick: uint32 little-endian
 2. opcode: uint8
 3. payload_len: uint16 little-endian
-4. payload: UTF-8 JSON bytes for args
+4. payload: fixed binary args
 
 Known opcodes in draft writer:
 
@@ -49,6 +49,19 @@ Known opcodes in draft writer:
 9. 0x61 PARAM_ADD
 10. 0x80 TEMPO_SET
 
+Payload contract in current draft:
+
+1. NOTE_ON: pitch:u8, length:u16
+2. REST: length:u16
+3. TIE: length:u16
+4. TEMPO_SET: bpm:u16
+5. LOOP_BEGIN: loop_id:u8
+6. LOOP_END: loop_id:u8, repeat:u8
+7. MARKER: marker_id:u8
+8. JUMP: marker_id:u8
+9. PARAM_SET: target_id:u8, value:i16
+10. PARAM_ADD: target_id:u8, delta:i16
+
 ## 4. Error Handling Policy
 
 1. Unknown section id: skip unless marked required by future flags.
@@ -58,7 +71,7 @@ Known opcodes in draft writer:
 
 ## 5. Planned Tightening Before Freeze
 
-1. Replace JSON payload with packed binary args.
-2. Freeze opcode table and arg packing format.
-3. Define strict error codes shared by tools and driver.
-4. Add cross-check fixtures for decoder compatibility.
+1. Freeze opcode table and arg packing format.
+2. Define strict error codes shared by tools and driver.
+3. Add cross-check fixtures for decoder compatibility.
+4. Add multi-track and channel mapping fixtures.

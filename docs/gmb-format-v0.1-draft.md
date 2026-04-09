@@ -92,10 +92,23 @@ Current draft writer record format (implementation note):
 1. tick: uint32
 2. opcode: uint8
 3. payload_len: uint16
-4. payload: UTF-8 JSON bytes (event args)
+4. payload: fixed binary args (opcode-specific)
 
-This record format is provisional and expected to be replaced with a tighter
-packed format before v0.1 freeze.
+Current payload sizes (draft):
+
+1. NOTE_ON: 3 bytes (pitch:u8, length:u16)
+2. REST: 2 bytes (length:u16)
+3. TIE: 2 bytes (length:u16)
+4. TEMPO_SET: 2 bytes (bpm:u16)
+5. LOOP_BEGIN: 1 byte (loop_id:u8)
+6. LOOP_END: 2 bytes (loop_id:u8, repeat:u8)
+7. MARKER: 1 byte (marker_id:u8)
+8. JUMP: 1 byte (marker_id:u8)
+9. PARAM_SET: 3 bytes (target_id:u8, value:i16)
+10. PARAM_ADD: 3 bytes (target_id:u8, delta:i16)
+
+This payload format is still provisional and may be further packed before v0.1
+freeze.
 
 ## 9. Metadata Section
 

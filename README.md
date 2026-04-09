@@ -56,6 +56,6 @@ Implemented toolchain stage:
 ## Next Local Steps
 
 1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
-2. Tighten IR-to-GMB opcode payload contract for driver alignment.
-3. Cross-check generated GMB with decoder-side contract fixtures.
+2. Freeze IR-to-GMB opcode table and argument packing.
+3. Cross-check generated GMB with decoder-side compatibility fixtures.
 4. Iterate freeze review notes in docs/reviews.

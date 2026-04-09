@@ -23,5 +23,5 @@ Run from tools directory:
 
 1. The current compiler is intentionally minimal and supports only the v0.1 subset used in the demo files.
 2. Generated files use deterministic key ordering to simplify diffs.
-3. The current GMB writer is a draft implementation aligned to section layout goals, not a frozen opcode format.
+3. The current GMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
 4. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under `examples/ir`.

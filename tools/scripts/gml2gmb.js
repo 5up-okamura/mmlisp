@@ -3,7 +3,16 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { SECTION, OPCODE, u16le, u32le, alignBuffer } = require("./gmb_common");
+const {
+  SECTION,
+  OPCODE,
+  TARGET_ID,
+  u16le,
+  u32le,
+  i16le,
+  alignBuffer,
+  parsePitchToByte,
+} = require("./gmb_common");
 
 function usage() {
   console.error(
@@ -15,13 +24,122 @@ function encodeString(str) {
   return Buffer.from(String(str), "utf8");
 }
 
-function encodeEvent(event) {
+function ensureU8(value, label) {
+  if (value < 0 || value > 255) {
+    throw new Error(`${label} is out of u8 range: ${value}`);
+  }
+  return value & 0xff;
+}
+
+function ensureU16(value, label) {
+  if (value < 0 || value > 65535) {
+    throw new Error(`${label} is out of u16 range: ${value}`);
+  }
+  return value & 0xffff;
+}
+
+function buildTrackMaps(track) {
+  const markerMap = new Map();
+  const loopMap = new Map();
+  let nextMarkerId = 1;
+  let nextLoopId = 1;
+
+  for (const event of track.events || []) {
+    if (event.cmd === "MARKER") {
+      const id = event.args?.id;
+      if (id && !markerMap.has(id)) {
+        markerMap.set(id, ensureU8(nextMarkerId, "marker id"));
+        nextMarkerId += 1;
+      }
+    }
+    if (event.cmd === "LOOP_BEGIN") {
+      const id = event.args?.id;
+      if (id && !loopMap.has(id)) {
+        loopMap.set(id, ensureU8(nextLoopId, "loop id"));
+        nextLoopId += 1;
+      }
+    }
+  }
+
+  return { markerMap, loopMap };
+}
+
+function encodePayload(event, trackMaps) {
+  const args = event.args || {};
+  switch (event.cmd) {
+    case "NOTE_ON": {
+      const pitch = parsePitchToByte(args.pitch || "c4");
+      const length = ensureU16(args.length ?? 0, "NOTE_ON length");
+      return Buffer.concat([Buffer.from([pitch]), u16le(length)]);
+    }
+    case "REST": {
+      const length = ensureU16(args.length ?? 0, "REST length");
+      return u16le(length);
+    }
+    case "TIE": {
+      const length = ensureU16(args.length ?? 0, "TIE length");
+      return u16le(length);
+    }
+    case "TEMPO_SET": {
+      const bpm = ensureU16(args.bpm ?? 0, "TEMPO_SET bpm");
+      return u16le(bpm);
+    }
+    case "MARKER": {
+      const id = args.id;
+      if (!trackMaps.markerMap.has(id)) {
+        throw new Error(`MARKER id not mapped: ${id}`);
+      }
+      return Buffer.from([trackMaps.markerMap.get(id)]);
+    }
+    case "JUMP": {
+      const to = args.to;
+      if (!trackMaps.markerMap.has(to)) {
+        throw new Error(`JUMP target marker not mapped: ${to}`);
+      }
+      return Buffer.from([trackMaps.markerMap.get(to)]);
+    }
+    case "LOOP_BEGIN": {
+      const id = args.id;
+      if (!trackMaps.loopMap.has(id)) {
+        throw new Error(`LOOP_BEGIN id not mapped: ${id}`);
+      }
+      return Buffer.from([trackMaps.loopMap.get(id)]);
+    }
+    case "LOOP_END": {
+      const id = args.id;
+      if (!trackMaps.loopMap.has(id)) {
+        throw new Error(`LOOP_END id not mapped: ${id}`);
+      }
+      const repeat = ensureU8(args.repeat ?? 1, "LOOP_END repeat");
+      return Buffer.from([trackMaps.loopMap.get(id), repeat]);
+    }
+    case "PARAM_SET": {
+      const target = TARGET_ID[args.target];
+      if (target === undefined) {
+        throw new Error(`PARAM_SET target not supported: ${args.target}`);
+      }
+      const value = i16le(args.value ?? 0);
+      return Buffer.concat([Buffer.from([target]), value]);
+    }
+    case "PARAM_ADD": {
+      const target = TARGET_ID[args.target];
+      if (target === undefined) {
+        throw new Error(`PARAM_ADD target not supported: ${args.target}`);
+      }
+      const delta = i16le(args.delta ?? 0);
+      return Buffer.concat([Buffer.from([target]), delta]);
+    }
+    default:
+      throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
+  }
+}
+
+function encodeEvent(event, trackMaps) {
   const op = OPCODE[event.cmd];
   if (op === undefined) {
     throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
   }
-  const argsJson = JSON.stringify(event.args || {});
-  const argsBuf = encodeString(argsJson);
+  const argsBuf = encodePayload(event, trackMaps);
 
   const out = Buffer.concat([
     u32le(event.tick >>> 0),
@@ -33,9 +151,10 @@ function encodeEvent(event) {
 }
 
 function encodeTrackEvents(track) {
+  const trackMaps = buildTrackMaps(track);
   const chunks = [];
   for (const event of track.events || []) {
-    chunks.push(encodeEvent(event));
+    chunks.push(encodeEvent(event, trackMaps));
   }
   return Buffer.concat(chunks);
 }

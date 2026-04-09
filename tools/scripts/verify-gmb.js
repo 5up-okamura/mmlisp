@@ -3,6 +3,25 @@
 
 const fs = require("node:fs");
 
+const SECTION = {
+  TRACK_TABLE: 0x0001,
+  EVENT_STREAM: 0x0002,
+  METADATA: 0x0003,
+};
+
+const OPCODE_PAYLOAD_SIZE = {
+  0x10: 3,
+  0x11: 2,
+  0x12: 2,
+  0x40: 1,
+  0x41: 2,
+  0x42: 1,
+  0x43: 1,
+  0x60: 3,
+  0x61: 3,
+  0x80: 2,
+};
+
 function usage() {
   console.error("Usage: node scripts/verify-gmb.js <file.gmb>");
 }
@@ -18,6 +37,103 @@ function u32le(buf, off) {
 function fail(msg) {
   console.error(`GMB invalid: ${msg}`);
   process.exit(1);
+}
+
+function parseSections(buf, sectionCount) {
+  const sections = new Map();
+  const dirStart = 16;
+  for (let i = 0; i < sectionCount; i += 1) {
+    const off = dirStart + i * 12;
+    const id = u16le(buf, off);
+    const flags = u16le(buf, off + 2);
+    const sectionOffset = u32le(buf, off + 4);
+    const sectionSize = u32le(buf, off + 8);
+    if (sectionOffset + sectionSize > buf.length) {
+      fail(`section ${id} out of bounds`);
+    }
+    sections.set(id, {
+      id,
+      flags,
+      offset: sectionOffset,
+      size: sectionSize,
+    });
+  }
+  return sections;
+}
+
+function parseTrackEntries(buf, section) {
+  if (!section) {
+    fail("missing TRACK_TABLE section");
+  }
+  if (section.size < 4) {
+    fail("TRACK_TABLE section too small");
+  }
+  const base = section.offset;
+  const end = section.offset + section.size;
+  const trackCount = u16le(buf, base);
+  const expectedSize = 4 + trackCount * 12;
+  if (expectedSize > section.size) {
+    fail("TRACK_TABLE size mismatch");
+  }
+
+  const entries = [];
+  let pos = base + 4;
+  for (let i = 0; i < trackCount; i += 1) {
+    if (pos + 12 > end) {
+      fail("TRACK_TABLE entry out of bounds");
+    }
+    entries.push({
+      trackId: u16le(buf, pos),
+      channelId: u16le(buf, pos + 2),
+      eventOffset: u32le(buf, pos + 4),
+      eventLength: u32le(buf, pos + 8),
+    });
+    pos += 12;
+  }
+  return entries;
+}
+
+function verifyTrackEvents(buf, eventSection, trackEntries) {
+  if (!eventSection) {
+    fail("missing EVENT_STREAM section");
+  }
+
+  let totalEvents = 0;
+  for (const t of trackEntries) {
+    const start = eventSection.offset + t.eventOffset;
+    const end = start + t.eventLength;
+    const sectionEnd = eventSection.offset + eventSection.size;
+    if (start > sectionEnd || end > sectionEnd) {
+      fail(`track ${t.trackId} event range out of EVENT_STREAM bounds`);
+    }
+
+    let pos = start;
+    while (pos < end) {
+      if (pos + 7 > end) {
+        fail(`track ${t.trackId} truncated event header`);
+      }
+      const opcode = buf[pos + 4];
+      const payloadLen = u16le(buf, pos + 5);
+      pos += 7;
+      if (pos + payloadLen > end) {
+        fail(`track ${t.trackId} event payload exceeds track range`);
+      }
+
+      const expected = OPCODE_PAYLOAD_SIZE[opcode];
+      if (expected === undefined) {
+        fail(`track ${t.trackId} unknown opcode 0x${opcode.toString(16)}`);
+      }
+      if (payloadLen !== expected) {
+        fail(
+          `track ${t.trackId} opcode 0x${opcode.toString(16)} payload mismatch (${payloadLen} != ${expected})`,
+        );
+      }
+
+      pos += payloadLen;
+      totalEvents += 1;
+    }
+  }
+  return totalEvents;
 }
 
 function main() {
@@ -53,18 +169,22 @@ function main() {
     fail("section directory out of bounds");
   }
 
-  for (let i = 0; i < sectionCount; i += 1) {
-    const off = dirStart + i * 12;
-    const id = u16le(buf, off);
-    const sectionOffset = u32le(buf, off + 4);
-    const sectionSize = u32le(buf, off + 8);
-    if (sectionOffset + sectionSize > buf.length) {
-      fail(`section ${id} out of bounds`);
-    }
+  const sections = parseSections(buf, sectionCount);
+  const trackEntries = parseTrackEntries(
+    buf,
+    sections.get(SECTION.TRACK_TABLE),
+  );
+  const totalEvents = verifyTrackEvents(
+    buf,
+    sections.get(SECTION.EVENT_STREAM),
+    trackEntries,
+  );
+  if (!sections.has(SECTION.METADATA)) {
+    fail("missing METADATA section");
   }
 
   console.log(
-    `GMB valid: version=${versionMajor}.${versionMinor} sections=${sectionCount} size=${buf.length}`,
+    `GMB valid: version=${versionMajor}.${versionMinor} sections=${sectionCount} tracks=${trackEntries.length} events=${totalEvents} size=${buf.length}`,
   );
 }
 

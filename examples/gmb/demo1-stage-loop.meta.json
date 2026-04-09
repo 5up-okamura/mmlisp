@@ -10,15 +10,15 @@
       "id": 2,
       "flags": 0,
       "offset": 68,
-      "size": 458
+      "size": 158
     },
     {
       "id": 3,
       "flags": 0,
-      "offset": 526,
+      "offset": 226,
       "size": 78
     }
   ],
-  "totalSize": 604,
+  "totalSize": 304,
   "trackCount": 1
 }
