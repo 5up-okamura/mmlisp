@@ -565,7 +565,7 @@ export class IRPlayer {
     const port = chIndex >= 3 ? 1 : 0;
     const chOffset = chIndex % 3;
     this._applyParam(chIndex, port, chOffset, {
-      cmd: 'PARAM_SET',
+      cmd: "PARAM_SET",
       args: { target, value },
     });
   }
@@ -578,7 +578,7 @@ export class IRPlayer {
     return {
       algorithm: r.algorithm,
       feedback: r.feedback,
-      ops: r.ops.map(o => ({ ...o })),
+      ops: r.ops.map((o) => ({ ...o })),
     };
   }
 
