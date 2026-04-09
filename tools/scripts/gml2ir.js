@@ -7,10 +7,20 @@ const { parse } = require("./gml_parser");
 
 const PPQN = 120;
 const WHOLE_TICKS = PPQN * 4;
+const SUPPORTED_TARGETS = new Set([
+  "NOTE_PITCH",
+  "NOTE_VOLUME",
+  "TEMPO_SCALE",
+  "FM_FB",
+  "FM_TL1",
+  "FM_TL2",
+  "FM_TL3",
+  "FM_TL4",
+]);
 
 function usage() {
   console.error(
-    "Usage: node scripts/gml2ir.js <input.gml> [--out <file>] [--pretty]",
+    "Usage: node scripts/gml2ir.js <input.gml> [--out <file>] [--diag-out <file>] [--strict] [--pretty]",
   );
 }
 
@@ -68,6 +78,17 @@ function canonicalTarget(symbol) {
   );
 }
 
+function pushDiag(diagnostics, severity, code, message, src, track) {
+  diagnostics.push({
+    severity,
+    code,
+    message,
+    line: src?.line ?? 1,
+    column: src?.column ?? 1,
+    track,
+  });
+}
+
 function getKeywordMap(items, startIndex) {
   const map = new Map();
   let i = startIndex;
@@ -94,7 +115,7 @@ function nodeSrc(node) {
   };
 }
 
-function compilePhrase(phraseNode, state, events) {
+function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
   const items = phraseNode.items;
   const options = getKeywordMap(items, 2);
   const tempoNode = options.get(":tempo");
@@ -195,6 +216,16 @@ function compilePhrase(phraseNode, state, events) {
     if (head === "param-set") {
       const target = canonicalTarget(atomValue(node.items[1]));
       const value = parseIntLike(atomValue(node.items[2])) ?? 0;
+      if (!SUPPORTED_TARGETS.has(target)) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_UNSUPPORTED_TARGET",
+          `Unsupported param-set target: ${target}`,
+          nodeSrc(node.items[0]),
+          trackName,
+        );
+      }
       events.push({
         tick: state.tick,
         cmd: "PARAM_SET",
@@ -207,6 +238,16 @@ function compilePhrase(phraseNode, state, events) {
     if (head === "param-add") {
       const target = canonicalTarget(atomValue(node.items[1]));
       const delta = parseIntLike(atomValue(node.items[2])) ?? 0;
+      if (!SUPPORTED_TARGETS.has(target)) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_UNSUPPORTED_TARGET",
+          `Unsupported param-add target: ${target}`,
+          nodeSrc(node.items[0]),
+          trackName,
+        );
+      }
       events.push({
         tick: state.tick,
         cmd: "PARAM_ADD",
@@ -241,7 +282,122 @@ function compilePhrase(phraseNode, state, events) {
   }
 }
 
-function compilePart(partNode, id) {
+function validateTrack(track, diagnostics) {
+  const markers = new Map();
+  const pendingJumps = [];
+  const loopStack = [];
+
+  for (const e of track.events) {
+    if (e.cmd === "MARKER") {
+      const id = e.args?.id;
+      if (!id || id === "unknown") {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_MARKER_ID",
+          "Marker id is missing or invalid",
+          e.src,
+          track.name,
+        );
+      } else if (markers.has(id)) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_MARKER_DUP",
+          `Duplicate marker id: ${id}`,
+          e.src,
+          track.name,
+        );
+      } else {
+        markers.set(id, true);
+      }
+    }
+
+    if (e.cmd === "JUMP") {
+      const to = e.args?.to;
+      if (!to || to === "unknown") {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_JUMP_TARGET",
+          "Jump target is missing or invalid",
+          e.src,
+          track.name,
+        );
+      } else {
+        pendingJumps.push(e);
+      }
+    }
+
+    if (e.cmd === "LOOP_BEGIN") {
+      const id = e.args?.id;
+      if (!id || id === "unknown") {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_LOOP_ID",
+          "Loop begin id is missing or invalid",
+          e.src,
+          track.name,
+        );
+      }
+      loopStack.push({ id, src: e.src });
+    }
+
+    if (e.cmd === "LOOP_END") {
+      const id = e.args?.id;
+      if (loopStack.length === 0) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_LOOP_END_ORPHAN",
+          `Loop end has no matching begin: ${id || "unknown"}`,
+          e.src,
+          track.name,
+        );
+      } else {
+        const begin = loopStack.pop();
+        if (begin.id !== id) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_LOOP_MISMATCH",
+            `Loop end id ${id || "unknown"} does not match begin id ${begin.id || "unknown"}`,
+            e.src,
+            track.name,
+          );
+        }
+      }
+    }
+  }
+
+  while (loopStack.length > 0) {
+    const begin = loopStack.pop();
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_LOOP_UNCLOSED",
+      `Loop begin is not closed: ${begin.id || "unknown"}`,
+      begin.src,
+      track.name,
+    );
+  }
+
+  for (const j of pendingJumps) {
+    if (!markers.has(j.args.to)) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_JUMP_UNRESOLVED",
+        `Jump target marker not found: ${j.args.to}`,
+        j.src,
+        track.name,
+      );
+    }
+  }
+}
+
+function compilePart(partNode, id, diagnostics) {
   const items = partNode.items;
   const options = getKeywordMap(items, 2);
   const nameNode = items[1];
@@ -276,7 +432,7 @@ function compilePart(partNode, id) {
       node.items.length > 0 &&
       isAtom(node.items[0], "phrase")
     ) {
-      compilePhrase(node, state, events);
+      compilePhrase(node, state, events, diagnostics, name);
     }
   }
 
@@ -302,7 +458,8 @@ function sortObject(value) {
   return value;
 }
 
-function compile(inputPath) {
+function compileDetailed(inputPath) {
+  const diagnostics = [];
   const raw = fs.readFileSync(inputPath, "utf8");
   const roots = parse(raw);
   const score = roots.find(
@@ -329,8 +486,12 @@ function compile(inputPath) {
       node.items.length > 0 &&
       isAtom(node.items[0], "part")
     ) {
-      tracks.push(compilePart(node, tracks.length));
+      tracks.push(compilePart(node, tracks.length, diagnostics));
     }
+  }
+
+  for (const track of tracks) {
+    validateTrack(track, diagnostics);
   }
 
   const repoRoot = path.resolve(__dirname, "..", "..");
@@ -349,7 +510,14 @@ function compile(inputPath) {
     tracks,
   };
 
-  return sortObject(ir);
+  return {
+    ir: sortObject(ir),
+    diagnostics: sortObject(diagnostics),
+  };
+}
+
+function compile(inputPath) {
+  return compileDetailed(inputPath).ir;
 }
 
 function main() {
@@ -361,6 +529,8 @@ function main() {
 
   const input = args[0];
   let outPath = null;
+  let diagOutPath = null;
+  let strict = false;
   let pretty = false;
 
   for (let i = 1; i < args.length; i += 1) {
@@ -369,21 +539,50 @@ function main() {
       i += 1;
       continue;
     }
+    if (args[i] === "--diag-out") {
+      diagOutPath = args[i + 1];
+      i += 1;
+      continue;
+    }
+    if (args[i] === "--strict") {
+      strict = true;
+      continue;
+    }
     if (args[i] === "--pretty") {
       pretty = true;
     }
   }
 
-  const ir = compile(input);
+  const { ir, diagnostics } = compileDetailed(input);
   const json = JSON.stringify(ir, null, pretty ? 2 : 2) + "\n";
+  const hasError = diagnostics.some((d) => d.severity === "error");
+
+  if (diagOutPath) {
+    fs.mkdirSync(path.dirname(diagOutPath), { recursive: true });
+    fs.writeFileSync(diagOutPath, JSON.stringify(diagnostics, null, 2) + "\n", "utf8");
+  }
+
+  if (diagnostics.length > 0) {
+    for (const d of diagnostics) {
+      console.error(
+        `[${d.severity}] ${d.code} ${d.track || "global"}:${d.line}:${d.column} ${d.message}`,
+      );
+    }
+  }
 
   if (outPath) {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, json, "utf8");
+    if (strict && hasError) {
+      process.exit(1);
+    }
     return;
   }
 
   process.stdout.write(json);
+  if (strict && hasError) {
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {
@@ -396,5 +595,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  compileDetailed,
   compile,
 };

@@ -18,3 +18,4 @@ dist/
 
 # generated IR snapshots
 examples/ir/*.generated.json
+examples/ir/*.diagnostics.generated.json

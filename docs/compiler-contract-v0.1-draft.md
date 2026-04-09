@@ -14,11 +14,12 @@ Implemented now:
 3. Verify generated IR against canonical snapshots
 4. Encode draft GMB binary from IR
 5. Validate generated GMB structural integrity
+6. Emit structured semantic diagnostics for marker, loop, and target checks
 
 Not implemented yet:
 
 1. Full language surface
-2. Semantic diagnostics catalog
+2. Full semantic diagnostics catalog coverage
 3. Frozen opcode packing and loader compatibility proof
 
 ## 2. CLI Commands
@@ -91,6 +92,6 @@ GMB output contract (draft):
 
 ## 7. Next Steps
 
-1. Add structured diagnostic codes and source spans
-2. Add semantic checks for marker and loop validity
-3. Align draft opcode/event payload with future GMLDRV decoder contract
+1. Expand diagnostics to additional semantic rules and edge cases
+2. Replace JSON event payloads with packed binary arguments
+3. Validate compatibility against decoder contract draft

@@ -15,6 +15,7 @@
    - docs/ir-v0.1-draft.md
    - docs/gmb-format-v0.1-draft.md
    - docs/freeze-checklist-v0.1.md
+   - docs/gmldrv-decoder-contract-v0.1-draft.md
 2. Excluded items:
    - GMLDRV implementation
    - final opcode freeze
@@ -31,7 +32,7 @@
 
 1. Deterministic output check: pass via tools/check:ir-demos
 2. Marker/jump resolution check: pass for current demo scenarios
-3. Diagnostic quality check: partial (basic parser errors only)
+3. Diagnostic quality check: partial (semantic diagnostics implemented for marker/loop/target)
 
 ## 5. GMB Validation
 
@@ -43,7 +44,7 @@
 
 1. Accepted risk: opcode map is provisional
 2. Deferred to v0.2: CSM and FM3 dedicated command behavior
-3. Blocking issue (if any): semantic diagnostics not complete
+3. Blocking issue (if any): opcode payload format still provisional JSON
 
 ## 7. Decision
 
@@ -54,5 +55,5 @@
 ## 8. Action Items
 
 1. Owner: okamura
-2. Task: add semantic diagnostics and tighten opcode payload contract
+2. Task: tighten opcode payload contract and align with decoder draft
 3. Due: next checkpoint

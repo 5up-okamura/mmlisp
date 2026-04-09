@@ -38,7 +38,7 @@ Draft implementation in progress.
 Implemented toolchain stage:
 
 1. source (.gml) -> deterministic IR (.json)
-2. IR comparison against canonical snapshots
+2. IR comparison against canonical snapshots with strict semantic checks
 3. draft GMB export and structural validation for demo artifacts
 
 ## Key Draft Documents
@@ -51,10 +51,11 @@ Implemented toolchain stage:
 6. docs/opcode-mapping-provisional-v0.1.md
 7. docs/reviews/freeze-candidate-template.md
 8. docs/compiler-contract-v0.1-draft.md
+9. docs/gmldrv-decoder-contract-v0.1-draft.md
 
 ## Next Local Steps
 
-1. Add semantic diagnostics and validation rules to source-to-IR compiler.
+1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
 2. Tighten IR-to-GMB opcode payload contract for driver alignment.
-3. Add decoder-side compatibility notes for future GMLDRV.
+3. Cross-check generated GMB with decoder-side contract fixtures.
 4. Iterate freeze review notes in docs/reviews.
