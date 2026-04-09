@@ -16,9 +16,11 @@ const {
 
 function usage() {
   console.error(
-    "Usage: node scripts/gml2gmb.js <input.ir.json> [--out <file.gmb>] [--meta <file.txt>]",
+    "Usage: node scripts/gml2gmb.js <input.ir.json> [--out <file.gmb>] [--meta <file.txt>] [--target-profile <name>]",
   );
 }
+
+const REQUEST_SLOT_COUNT = 4;
 
 function encodeString(str) {
   return Buffer.from(String(str), "utf8");
@@ -195,39 +197,294 @@ function encodeMetadata(metadata) {
   return Buffer.concat(chunks);
 }
 
-function channelToId(channel) {
-  const map = {
-    fm1: 0,
-    fm2: 1,
-    fm3: 2,
-    fm4: 3,
-    fm5: 4,
-    fm6: 5,
-    psg1: 6,
-    psg2: 7,
-    psg3: 8,
-    noise: 9,
-    pcm1: 10,
-    pcm2: 11,
-  };
-  return map[String(channel || "").toLowerCase()] ?? 0xffff;
+const TARGET_PROFILES = {
+  "md-full": {
+    channelIds: {
+      fm1: 0,
+      fm2: 1,
+      fm3: 2,
+      fm4: 3,
+      fm5: 4,
+      fm6: 5,
+      psg1: 6,
+      psg2: 7,
+      psg3: 8,
+      noise: 9,
+      pcm1: 10,
+      pcm2: 11,
+    },
+    fallbackOrder: [
+      "fm1",
+      "fm2",
+      "fm3",
+      "fm4",
+      "fm5",
+      "fm6",
+      "psg1",
+      "psg2",
+      "psg3",
+      "noise",
+      "pcm1",
+      "pcm2",
+    ],
+  },
+  ym2612: {
+    channelIds: {
+      fm1: 0,
+      fm2: 1,
+      fm3: 2,
+      fm4: 3,
+      fm5: 4,
+      fm6: 5,
+    },
+    fallbackOrder: ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"],
+  },
+  psg: {
+    channelIds: {
+      psg1: 0,
+      psg2: 1,
+      psg3: 2,
+      noise: 3,
+    },
+    fallbackOrder: ["psg1", "psg2", "psg3", "noise"],
+  },
+  generic16: {
+    channelIds: {
+      ch1: 0,
+      ch2: 1,
+      ch3: 2,
+      ch4: 3,
+      ch5: 4,
+      ch6: 5,
+      ch7: 6,
+      ch8: 7,
+      ch9: 8,
+      ch10: 9,
+      ch11: 10,
+      ch12: 11,
+      ch13: 12,
+      ch14: 13,
+      ch15: 14,
+      ch16: 15,
+    },
+    fallbackOrder: [
+      "ch1",
+      "ch2",
+      "ch3",
+      "ch4",
+      "ch5",
+      "ch6",
+      "ch7",
+      "ch8",
+      "ch9",
+      "ch10",
+      "ch11",
+      "ch12",
+      "ch13",
+      "ch14",
+      "ch15",
+      "ch16",
+    ],
+  },
+  mdsdrv: {
+    channelIds: {
+      fm1: 0,
+      fm2: 1,
+      fm3: 2,
+      fm4: 3,
+      fm5: 4,
+      fm6: 5,
+      pcm1: 5,
+      psg1: 6,
+      psg2: 7,
+      psg3: 8,
+      noise: 9,
+      pcm2: 10,
+      pcm3: 11,
+      dummy1: 12,
+      dummy2: 13,
+      dummy3: 14,
+      dummy4: 15,
+      dummy: 12,
+    },
+    fallbackOrder: [
+      "fm1",
+      "fm2",
+      "fm3",
+      "fm4",
+      "fm5",
+      "fm6",
+      "psg1",
+      "psg2",
+      "psg3",
+      "noise",
+      "pcm2",
+      "pcm3",
+      "dummy1",
+      "dummy2",
+      "dummy3",
+      "dummy4",
+    ],
+  },
+};
+
+function normalizeChannelName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
-function buildGmb(ir) {
+function trackChannelCandidates(track) {
+  const candidates = [];
+  const hintCandidates = track?.route_hint?.channel_candidates;
+  if (Array.isArray(hintCandidates)) {
+    for (const c of hintCandidates) {
+      const name = normalizeChannelName(c);
+      if (name) {
+        candidates.push(name);
+      }
+    }
+  }
+
+  const legacy = normalizeChannelName(track?.channel);
+  if (legacy) {
+    candidates.push(legacy);
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const c of candidates) {
+    if (seen.has(c)) {
+      continue;
+    }
+    unique.push(c);
+    seen.add(c);
+  }
+  return unique;
+}
+
+function trackRequestSlot(track) {
+  const slot = track?.route_hint?.request_slot;
+  if (Number.isInteger(slot) && slot >= 0 && slot < REQUEST_SLOT_COUNT) {
+    return slot;
+  }
+  return 3;
+}
+
+function summarizeSlotChannelMasks(trackAssignments) {
+  const bySlot = [];
+  for (let i = 0; i < REQUEST_SLOT_COUNT; i += 1) {
+    bySlot.push({
+      slot: i,
+      channelMask: 0,
+      channels: [],
+    });
+  }
+
+  for (const assignment of trackAssignments) {
+    const slot = assignment.requestSlot;
+    const target = bySlot[slot];
+    if (!target) {
+      continue;
+    }
+    const channelId = assignment.assignedChannelId;
+    if (channelId >= 0 && channelId < 16) {
+      target.channelMask |= 1 << channelId;
+    }
+    if (!target.channels.includes(assignment.assignedChannel)) {
+      target.channels.push(assignment.assignedChannel);
+    }
+  }
+
+  return bySlot;
+}
+
+function createAllocator(targetProfile) {
+  const profile = TARGET_PROFILES[targetProfile] || TARGET_PROFILES["md-full"];
+  const usage = new Map();
+  for (const name of profile.fallbackOrder) {
+    usage.set(name, 0);
+  }
+
+  function pickFallback() {
+    if (profile.fallbackOrder.length === 0) {
+      return null;
+    }
+    let best = profile.fallbackOrder[0];
+    let bestCount = usage.get(best) ?? 0;
+    for (let i = 1; i < profile.fallbackOrder.length; i += 1) {
+      const name = profile.fallbackOrder[i];
+      const count = usage.get(name) ?? 0;
+      if (count < bestCount) {
+        best = name;
+        bestCount = count;
+      }
+    }
+    usage.set(best, bestCount + 1);
+    return best;
+  }
+
+  return {
+    profileName: TARGET_PROFILES[targetProfile] ? targetProfile : "md-full",
+    allocate(track) {
+      const candidates = trackChannelCandidates(track);
+      for (const c of candidates) {
+        if (profile.channelIds[c] !== undefined) {
+          usage.set(c, (usage.get(c) ?? 0) + 1);
+          return {
+            channelName: c,
+            channelId: profile.channelIds[c],
+            strategy: "candidate",
+          };
+        }
+      }
+
+      const fallback = pickFallback();
+      if (fallback && profile.channelIds[fallback] !== undefined) {
+        return {
+          channelName: fallback,
+          channelId: profile.channelIds[fallback],
+          strategy: "fallback",
+        };
+      }
+
+      return {
+        channelName: "unsupported",
+        channelId: 0xffff,
+        strategy: "unsupported",
+      };
+    },
+  };
+}
+
+function buildGmb(ir, options = {}) {
   const tracks = ir.tracks || [];
+  const allocator = createAllocator(options.targetProfile || "md-full");
 
   const eventBlocks = [];
   const trackEntries = [];
+  const trackAssignments = [];
   let eventOffset = 0;
   for (let i = 0; i < tracks.length; i += 1) {
     const t = tracks[i];
+    const allocation = allocator.allocate(t);
+    const requestSlot = trackRequestSlot(t);
     const block = encodeTrackEvents(t);
     eventBlocks.push(block);
     trackEntries.push({
       trackId: t.id ?? i,
-      channelId: channelToId(t.channel),
+      channelId: allocation.channelId,
       eventOffset,
       eventLength: block.length,
+    });
+    trackAssignments.push({
+      trackId: t.id ?? i,
+      trackName: t.name || `track-${i}`,
+      requestSlot,
+      assignedChannel: allocation.channelName,
+      assignedChannelId: allocation.channelId,
+      strategy: allocation.strategy,
+      candidates: trackChannelCandidates(t),
     });
     eventOffset += block.length;
   }
@@ -289,6 +546,9 @@ function buildGmb(ir) {
     sections: directory,
     totalSize: gmb.length,
     trackCount: tracks.length,
+    targetProfile: allocator.profileName,
+    trackAssignments,
+    requestSlotChannelMasks: summarizeSlotChannelMasks(trackAssignments),
   };
 
   return { gmb, meta };
@@ -299,7 +559,12 @@ function parseArgs(argv) {
     usage();
     process.exit(1);
   }
-  const parsed = { input: argv[0], out: null, meta: null };
+  const parsed = {
+    input: argv[0],
+    out: null,
+    meta: null,
+    targetProfile: "md-full",
+  };
   for (let i = 1; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--out") {
@@ -312,6 +577,11 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (a === "--target-profile") {
+      parsed.targetProfile = argv[i + 1] || "md-full";
+      i += 1;
+      continue;
+    }
   }
   return parsed;
 }
@@ -319,7 +589,7 @@ function parseArgs(argv) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const ir = JSON.parse(fs.readFileSync(args.input, "utf8"));
-  const { gmb, meta } = buildGmb(ir);
+  const { gmb, meta } = buildGmb(ir, { targetProfile: args.targetProfile });
 
   const out = args.out || args.input.replace(/\.json$/i, ".gmb");
   fs.mkdirSync(path.dirname(out), { recursive: true });

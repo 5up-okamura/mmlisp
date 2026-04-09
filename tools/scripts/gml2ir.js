@@ -115,6 +115,62 @@ function nodeSrc(node) {
   };
 }
 
+function parseChannelCandidates(channelNode) {
+  const candidates = [];
+
+  if (channelNode && channelNode.kind === "list") {
+    for (const item of channelNode.items) {
+      const value = atomValue(item);
+      if (!value) {
+        continue;
+      }
+      candidates.push(value.replace(/^:/, "").toLowerCase());
+    }
+  } else {
+    const single = atomValue(channelNode);
+    if (single) {
+      candidates.push(single.replace(/^:/, "").toLowerCase());
+    }
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const name of candidates) {
+    if (seen.has(name)) {
+      continue;
+    }
+    unique.push(name);
+    seen.add(name);
+  }
+
+  if (unique.length === 0) {
+    unique.push("fm1");
+  }
+
+  return unique;
+}
+
+function parseRequestSlot(options, diagnostics, trackName) {
+  const slotNode = options.get(":slot") || options.get(":priority");
+  if (!slotNode) {
+    return 3;
+  }
+
+  const slot = parseIntLike(atomValue(slotNode));
+  if (slot === null || slot < 0 || slot > 3) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_REQUEST_SLOT_RANGE",
+      "Track request slot must be in range 0..3",
+      nodeSrc(slotNode),
+      trackName,
+    );
+    return 3;
+  }
+  return slot;
+}
+
 function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
   const items = phraseNode.items;
   const options = getKeywordMap(items, 2);
@@ -406,17 +462,9 @@ function compilePart(partNode, id, diagnostics) {
     : `part${id}`;
 
   const channelNode = options.get(":ch");
-  let channel = "fm1";
-  if (
-    channelNode &&
-    channelNode.kind === "list" &&
-    channelNode.items.length > 0
-  ) {
-    const first = atomValue(channelNode.items[0]);
-    if (first) {
-      channel = first.replace(/^:/, "");
-    }
-  }
+  const channelCandidates = parseChannelCandidates(channelNode);
+  const channel = channelCandidates[0];
+  const requestSlot = parseRequestSlot(options, diagnostics, name);
 
   const state = {
     tick: 0,
@@ -440,6 +488,11 @@ function compilePart(partNode, id, diagnostics) {
     id,
     name,
     channel,
+    route_hint: {
+      allocation_preference: "ordered_first_fit",
+      channel_candidates: channelCandidates,
+      request_slot: requestSlot,
+    },
     events,
   };
 }
@@ -559,7 +612,11 @@ function main() {
 
   if (diagOutPath) {
     fs.mkdirSync(path.dirname(diagOutPath), { recursive: true });
-    fs.writeFileSync(diagOutPath, JSON.stringify(diagnostics, null, 2) + "\n", "utf8");
+    fs.writeFileSync(
+      diagOutPath,
+      JSON.stringify(diagnostics, null, 2) + "\n",
+      "utf8",
+    );
   }
 
   if (diagnostics.length > 0) {

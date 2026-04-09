@@ -72,7 +72,7 @@ Track table header:
 Track entry:
 
 1. track_id: uint16
-2. channel_id: uint16
+2. channel_id: uint16 (physical channel id resolved for selected target profile)
 3. event_offset: uint32 (relative to EVENT_STREAM section)
 4. event_length: uint32
 

@@ -8,6 +8,11 @@
   "tracks": [
     {
       "channel": "fm1",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "channel_candidates": ["fm1"],
+        "request_slot": 3
+      },
       "events": [
         {
           "args": {

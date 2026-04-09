@@ -17,7 +17,7 @@ for current GMB artifacts produced by gmlisp-tools.
 Track entry fields:
 
 1. track_id: uint16
-2. channel_id: uint16
+2. channel_id: uint16 (resolved by compiler allocator for selected target profile)
 3. event_offset: uint32
 4. event_length: uint32
 

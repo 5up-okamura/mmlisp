@@ -25,8 +25,15 @@ Track fields:
 
 1. id: integer
 2. name: string
-3. channel: logical channel id
-4. events: sorted array of event objects
+3. channel: preferred legacy channel id (for backward compatibility)
+4. route_hint: routing hint object
+5. events: sorted array of event objects
+
+route_hint fields:
+
+1. allocation_preference: string (v0.1 default: ordered_first_fit)
+2. channel_candidates: ordered array of logical channel names
+3. request_slot: integer 0..3 (MDSDRV-style request priority slot)
 
 Event fields:
 

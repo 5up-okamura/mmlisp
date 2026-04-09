@@ -46,6 +46,7 @@ Accepted source constructs in v0.1 minimal compiler:
 6. `(param-set ...)`, `(param-add ...)`
 7. `(loop-begin ...)`, `(loop-end ...)`
 8. `:tempo` and `:len` phrase options
+9. part option `:slot` (0..3) as request priority slot (default 3)
 
 ## 4. Output Contract
 
@@ -60,8 +61,15 @@ Track fields:
 
 1. `id`
 2. `name`
-3. `channel`
-4. `events`
+3. `channel` (legacy preferred channel)
+4. `route_hint`
+5. `events`
+
+`route_hint` fields in current draft implementation:
+
+1. `allocation_preference`
+2. `channel_candidates`
+3. `request_slot`
 
 Event fields:
 
@@ -86,7 +94,7 @@ GMB output contract (draft):
 
 ## 6. Current Limitations
 
-1. One emitted track per part (first channel in `:ch` vector)
+1. One emitted track per part (track splitting and voice stealing are not yet implemented)
 2. No macro expansion
 3. No reserved v0.2 command handling
 4. Error handling is basic and not yet code-based

@@ -14,7 +14,7 @@ Run from tools directory:
 2. `npm run build:ir-demos`
 3. `npm run verify-ir -- ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json`
 4. `npm run check:ir-demos`
-5. `npm run gml2gmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json`
+5. `npm run gml2gmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json --target-profile md-full`
 6. `npm run build:gmb-demos`
 7. `npm run verify-gmb -- ../examples/gmb/demo1-stage-loop.gmb`
 8. `npm run check:gmb-demos`
@@ -28,3 +28,4 @@ Run from tools directory:
 3. The current GMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
 4. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under `examples/ir`.
 5. `check:gmb-fixtures` verifies both expected-valid and expected-invalid fixture binaries.
+6. `gml2gmb` supports `--target-profile` (`md-full`, `ym2612`, `psg`, `generic16`, `mdsdrv`) and resolves track-to-channel mapping per profile.
