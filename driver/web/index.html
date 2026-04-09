@@ -196,9 +196,14 @@
       border-right: 1px solid #222;
       color: #444;
     }
-    /* playhead highlight */
-    .cm-playLine { background: #1a3a20 !important; }
-    .cm-playLine .cm-gutterElement { color: #4c9 !important; }
+    /* playhead highlight — left border only, does not interfere with editing */
+    .cm-playLine {
+      box-shadow: inset 3px 0 0 #4c9;
+    }
+    .cm-playLine .cm-gutterElement {
+      color: #4c9 !important;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -308,7 +313,6 @@
       state: EditorState.create({
         doc: '(loading…)',
         extensions: [
-          EditorState.readOnly.of(true),
           oneDarkTheme,
           syntaxHighlighting(defaultHighlightStyle),
           playLineField,
