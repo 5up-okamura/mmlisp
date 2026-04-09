@@ -16,9 +16,9 @@ This repository starts with specification-first development:
 ## Planned Repository Structure
 
 - docs/: specifications and design notes
-- tools/: compiler and web tooling (planned)
-- driver/: GMLDRV implementation (planned)
-- examples/: demo songs and test assets (planned)
+- tools/: compiler and web tooling
+- driver/: GMLDRV implementation
+- examples/: demo songs and test assets
 
 ## Naming
 
@@ -33,4 +33,20 @@ This repository starts with specification-first development:
 
 ## Status
 
-No production code yet. This is an initial spec and planning baseline.
+No production code yet. This repository currently contains draft specs and
+scaffold directories for implementation phases.
+
+## Key Draft Documents
+
+1. docs/spec-v0.1-draft.md
+2. docs/command-table-v0.1-draft.md
+3. docs/ir-v0.1-draft.md
+4. docs/gmb-format-v0.1-draft.md
+5. docs/freeze-checklist-v0.1.md
+
+## Next Local Steps
+
+1. Add sample .gml demo sources under examples/source.
+2. Define canonical IR snapshot format and fixtures.
+3. Assign provisional opcode map for internal testing.
+4. Prepare freeze candidate review notes in docs/reviews.

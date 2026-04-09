@@ -1,5 +1,8 @@
 # GMLisp v0.1 Draft Specification
 
+Document status: draft
+Target freeze: v0.1
+
 ## 1. Purpose
 
 GMLisp targets interactive game music where composition, sound effects, and game state can dynamically influence each other.
@@ -10,17 +13,33 @@ v0.1 prioritizes:
 - Stable intermediate representation (IR)
 - Practical constraints awareness before hardware driver implementation
 
+v0.1 does not aim to be feature-complete for YM2612 edge cases. The goal is
+to lock a minimal, proven authoring-to-binary contract.
+
 ## 2. Product Components
 
 - GMLisp Live: web authoring environment
 - GML compiler: source to IR/binary conversion
 - GMLDRV: playback driver for SGDK/Mega Drive (post-freeze implementation)
 
+Primary development order for v0.1:
+
+1. GMLisp Live authoring and playback validation
+2. Compiler IR and GMB output stabilization
+3. Driver-oriented compatibility checks
+4. GMLDRV implementation after freeze
+
 ## 3. Timebase
 
 - Internal resolution: 120 ticks per beat
 - Tempo stepping: fixed-point accumulator
 - Tuplet support target: 2..8 divisions without frame-locking artifacts
+
+Timing requirements:
+
+1. Tick progression must remain deterministic for identical input and seed
+2. Tempo multiplier changes must apply at explicit command boundaries
+3. Offline export and live preview must produce equivalent event timing
 
 ## 4. Control Model
 
@@ -36,6 +55,13 @@ Recovery behavior:
 - Without intervention: target returns to base
 - Smoothing: first-order low-pass style update
 
+Control requirements:
+
+1. base is always score-owned state
+2. delta is always runtime-owned state
+3. final is derived state and must not be directly serialized as authority
+4. smoothing speed must be explicitly represented in data where used
+
 ## 5. v0.1 Language Scope (minimum)
 
 - score / part / phrase blocks
@@ -44,6 +70,12 @@ Recovery behavior:
 - loop begin/end
 - parameter set/add
 - marker and jump
+
+Non-goals for v0.1 language:
+
+1. Full macro language parity with historical MML ecosystems
+2. Full direct-register authoring workflow
+3. Full CSM authoring syntax
 
 ## 6. Intermediate Representation (IR)
 
@@ -66,6 +98,8 @@ Reserved for v0.2:
 - FM3_MODE
 - REG_WRITE
 
+See separate draft: docs/ir-v0.1-draft.md
+
 ## 7. Binary Format (GMB) Draft
 
 - Header with version
@@ -75,11 +109,19 @@ Reserved for v0.2:
 - Metadata section
 - Reserved bytes for forward compatibility
 
+See separate draft: docs/gmb-format-v0.1-draft.md
+
 ## 8. Validation Rules
 
 - Compile fails on unsupported commands
 - No silent downgrade behavior
 - Diagnostics include line and column
+
+Validation classes:
+
+1. Parse errors: invalid syntax and malformed literals
+2. Semantic errors: unknown marker, invalid loop target, illegal parameter target
+3. Capability errors: command requires feature not enabled in target profile
 
 ## 9. Freeze Gate for v0.1
 
@@ -91,6 +133,34 @@ All conditions should pass:
 4. IR command set proven minimal and sufficient
 5. GMB layout validated against future driver needs
 
+Freeze artifacts required in repository:
+
+1. At least two demo source files
+2. Their exported IR snapshots
+3. Their exported GMB files
+4. A freeze review note summarizing accepted exclusions
+
 ## 10. SGDK/GMLDRV Timing
 
 Driver implementation starts after v0.1 freeze, but format decisions must remain driver-oriented from day one.
+
+Driver readiness criteria before implementation starts:
+
+1. IR command set is stable for one review cycle
+2. GMB section layout has no unresolved blocking items
+3. Required runtime state for base/delta playback is represented in data
+
+## 11. v0.1 Deliverables
+
+1. Language subset spec (this document)
+2. Command table draft
+3. IR format draft
+4. GMB binary draft
+5. Freeze checklist
+6. Demo-driven validation notes
+
+## 12. Change Policy
+
+1. Draft documents can change freely until freeze candidate is announced
+2. Once freeze candidate is announced, all breaking changes require rationale
+3. After freeze, incompatible changes must target v0.2

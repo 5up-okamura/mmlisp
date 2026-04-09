@@ -7,12 +7,24 @@
 - Produce demo songs and prune unnecessary commands
 - Freeze v0.1
 
+Current concrete outputs:
+
+1. v0.1 spec draft
+2. command table draft
+3. IR draft
+4. GMB format draft
+5. freeze checklist
+
 ## Phase 1: Web Authoring Environment (GMLisp Live)
 
 - Editor and diagnostics
 - Transport controls and marker/loop visualization
 - Parameter modulation panel
 - Runtime intervention simulator
+
+Phase 1 exit signal:
+
+1. Demo songs can be edited and auditioned end-to-end in the web workflow
 
 ## Phase 2: Compiler and Format Stabilization
 
@@ -21,14 +33,28 @@
 - GMB binary writer
 - Compatibility/version checks
 
+Phase 2 exit signal:
+
+1. Deterministic IR and GMB outputs for freeze demos
+
 ## Phase 3: Driver Implementation (GMLDRV)
 
 - Minimal event playback on SGDK target
 - Incremental command support based on frozen spec
 - Performance/cycle-budget tuning
 
+Phase 3 entry condition:
+
+1. v0.1 freeze checklist complete
+
 ## Phase 4: Integration and Demo
 
 - End-to-end toolchain: source to GMB to SGDK playback
 - Example game-scene mappings for interactive music
 - Documentation and migration notes for v0.2
+
+## Immediate Local Backlog
+
+1. Create examples/source with two demo skeleton songs
+2. Add docs/reviews template for freeze candidate sign-off
+3. Add provisional opcode mapping memo for internal experiments
