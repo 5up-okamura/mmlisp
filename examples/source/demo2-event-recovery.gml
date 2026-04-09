@@ -7,6 +7,7 @@
 
   (part :tense
     :loop true
+    :role :bgm
     :ch [:fm1 :fm2]
 
     (phrase :bed

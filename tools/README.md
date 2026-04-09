@@ -28,4 +28,4 @@ Run from tools directory:
 3. The current GMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
 4. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under `examples/ir`.
 5. `check:gmb-fixtures` verifies both expected-valid and expected-invalid fixture binaries.
-6. `gml2gmb` supports `--target-profile` (`md-full`, `ym2612`, `psg`, `generic16`, `mdsdrv`) and resolves track-to-channel mapping per profile.
+6. `gml2gmb` supports `--target-profile` (`md-full`, `ym2612`, `psg`) and resolves track-to-channel mapping per profile. `md-full` and `ym2612` include `fm3op1`-`fm3op4` for FM3 independent-frequency mode, and `dac` (shared ID with `fm6`).

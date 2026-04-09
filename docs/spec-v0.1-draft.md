@@ -70,12 +70,39 @@ Control requirements:
 - loop begin/end
 - parameter set/add
 - marker and jump
+- part-level channel hints (`:ch`)
+- part role and write-scope declaration (`:role`, `:write`)
+- direct register write via REG_WRITE IR op
+- FM3 independent-operator mode via FM3_MODE IR op
+
+Track role model:
+
+1. `:bgm` — default; owns note-on/off; long-term channel tenant
+2. `:se` — can evict `:bgm` tracks from channels; traditional sound-effect behavior
+3. `:modulator` — overlays FM parameters on current channel occupant without eviction; multiple modulators may stack on one channel
+4. `:chaos` — no ownership claims; writes freely to any reachable channel; intentional undefined behavior is permitted
+
+Write scope (`:write`) declares which register classes a track may touch:
+
+1. `:notes` — key-on/off and frequency (F-number)
+2. `:fm-params` — operator parameters (TL, op-ratio, AR, DR, RR, SL)
+3. `:ctrl` — control parameters (tempo-scale, volume)
+4. `:reg` — raw YM2612 register writes
+5. `:any` — all of the above (default)
+
+Operator pitch abstraction (`:op-ratio`):
+
+ML and DT are unified as a single fixed-point decimal.
+0.5 = ×0.5 (ML=0), 1.0 = unison (ML=1), 2.0 = octave (ML=2), etc.
+Fractional part encodes DT direction and magnitude.
+The compiler quantizes to the nearest valid (ML, DT) pair per frame.
+Pitch envelopes are authored as PARAM_ADD sequences targeting `:op1-ratio` through `:op4-ratio`.
+GMLisp macros such as `pitch-glide` can generate these sequences at authoring time.
 
 Non-goals for v0.1 language:
 
 1. Full macro language parity with historical MML ecosystems
-2. Full direct-register authoring workflow
-3. Full CSM authoring syntax
+2. Full CSM authoring syntax
 
 ## 6. Intermediate Representation (IR)
 
@@ -91,12 +118,12 @@ Required op families in v0.1:
 - PARAM_ADD
 - MARKER
 - JUMP
+- FM3_MODE
+- REG_WRITE
 
 Reserved for v0.2:
 
 - CSM_ON / CSM_OFF / CSM_RATE
-- FM3_MODE
-- REG_WRITE
 
 See separate draft: docs/ir-v0.1-draft.md
 

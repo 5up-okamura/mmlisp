@@ -150,25 +150,50 @@ function parseChannelCandidates(channelNode) {
   return unique;
 }
 
-function parseRequestSlot(options, diagnostics, trackName) {
-  const slotNode = options.get(":slot") || options.get(":priority");
-  if (!slotNode) {
-    return 3;
-  }
+const VALID_ROLES = new Set(["bgm", "se", "modulator", "chaos"]);
+const VALID_WRITE_SCOPE = new Set(["notes", "fm-params", "ctrl", "reg", "any"]);
 
-  const slot = parseIntLike(atomValue(slotNode));
-  if (slot === null || slot < 0 || slot > 3) {
+function parseTrackRole(options, diagnostics, trackName) {
+  const roleNode = options.get(":role");
+  if (!roleNode) {
+    return "bgm";
+  }
+  const role = atomValue(roleNode)?.replace(/^:/, "");
+  if (!role || !VALID_ROLES.has(role)) {
     pushDiag(
       diagnostics,
       "error",
-      "E_REQUEST_SLOT_RANGE",
-      "Track request slot must be in range 0..3",
-      nodeSrc(slotNode),
+      "E_TRACK_ROLE_INVALID",
+      `Track role must be one of: ${[...VALID_ROLES].join(", ")}`,
+      nodeSrc(roleNode),
       trackName,
     );
-    return 3;
+    return "bgm";
   }
-  return slot;
+  return role;
+}
+
+function parseWriteScope(options, diagnostics, trackName) {
+  const scopeNode = options.get(":write");
+  if (!scopeNode) {
+    return ["any"];
+  }
+  const candidates = parseChannelCandidates(scopeNode).map((s) =>
+    s.replace(/^:/, ""),
+  );
+  const valid = candidates.filter((s) => VALID_WRITE_SCOPE.has(s));
+  const invalid = candidates.filter((s) => !VALID_WRITE_SCOPE.has(s));
+  if (invalid.length > 0) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_WRITE_SCOPE_INVALID",
+      `Unknown write scope values: ${invalid.join(", ")}`,
+      nodeSrc(scopeNode),
+      trackName,
+    );
+  }
+  return valid.length > 0 ? valid : ["any"];
 }
 
 function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
@@ -464,7 +489,8 @@ function compilePart(partNode, id, diagnostics) {
   const channelNode = options.get(":ch");
   const channelCandidates = parseChannelCandidates(channelNode);
   const channel = channelCandidates[0];
-  const requestSlot = parseRequestSlot(options, diagnostics, name);
+  const role = parseTrackRole(options, diagnostics, name);
+  const writeScope = parseWriteScope(options, diagnostics, name);
 
   const state = {
     tick: 0,
@@ -491,7 +517,8 @@ function compilePart(partNode, id, diagnostics) {
     route_hint: {
       allocation_preference: "ordered_first_fit",
       channel_candidates: channelCandidates,
-      request_slot: requestSlot,
+      role,
+      write_scope: writeScope,
     },
     events,
   };

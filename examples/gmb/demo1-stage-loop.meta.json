@@ -26,35 +26,14 @@
     {
       "trackId": 0,
       "trackName": "main",
-      "requestSlot": 3,
+      "role": "bgm",
+      "writeScope": [
+        "any"
+      ],
       "assignedChannel": "fm1",
       "assignedChannelId": 0,
       "strategy": "candidate",
       "candidates": [
-        "fm1"
-      ]
-    }
-  ],
-  "requestSlotChannelMasks": [
-    {
-      "slot": 0,
-      "channelMask": 0,
-      "channels": []
-    },
-    {
-      "slot": 1,
-      "channelMask": 0,
-      "channels": []
-    },
-    {
-      "slot": 2,
-      "channelMask": 0,
-      "channels": []
-    },
-    {
-      "slot": 3,
-      "channelMask": 1,
-      "channels": [
         "fm1"
       ]
     }

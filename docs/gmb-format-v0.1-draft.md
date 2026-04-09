@@ -127,6 +127,12 @@ Required keys in v0.1:
 2. author
 3. compiler_version
 
+Implementation note:
+
+1. The current writer's optional sidecar `.meta.json` (not embedded in GMB)
+   includes allocator diagnostics such as `targetProfile`, per-track
+   assignments, and `requestSlotChannelMasks`.
+
 ## 10. Compatibility Policy
 
 1. Loader must reject newer major versions

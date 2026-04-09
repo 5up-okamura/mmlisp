@@ -7,6 +7,7 @@
 
   (part :main
     :loop true
+    :role :bgm
     :ch [:fm1]
 
     (phrase :riff

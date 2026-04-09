@@ -8,11 +8,6 @@
   "tracks": [
     {
       "channel": "fm1",
-      "route_hint": {
-        "allocation_preference": "ordered_first_fit",
-        "channel_candidates": ["fm1"],
-        "request_slot": 3
-      },
       "events": [
         {
           "args": {
@@ -21,7 +16,7 @@
           "cmd": "TEMPO_SET",
           "src": {
             "column": 14,
-            "line": 13
+            "line": 14
           },
           "tick": 0
         },
@@ -32,7 +27,7 @@
           "cmd": "MARKER",
           "src": {
             "column": 8,
-            "line": 16
+            "line": 17
           },
           "tick": 0
         },
@@ -44,7 +39,7 @@
           "cmd": "PARAM_SET",
           "src": {
             "column": 8,
-            "line": 17
+            "line": 18
           },
           "tick": 0
         },
@@ -55,7 +50,7 @@
           "cmd": "LOOP_BEGIN",
           "src": {
             "column": 8,
-            "line": 19
+            "line": 20
           },
           "tick": 0
         },
@@ -67,7 +62,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 8,
-            "line": 20
+            "line": 21
           },
           "tick": 0
         },
@@ -79,7 +74,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 8,
-            "line": 21
+            "line": 22
           },
           "tick": 60
         },
@@ -91,7 +86,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 8,
-            "line": 22
+            "line": 23
           },
           "tick": 120
         },
@@ -102,7 +97,7 @@
           "cmd": "REST",
           "src": {
             "column": 8,
-            "line": 23
+            "line": 24
           },
           "tick": 180
         },
@@ -114,7 +109,7 @@
           "cmd": "PARAM_ADD",
           "src": {
             "column": 8,
-            "line": 24
+            "line": 25
           },
           "tick": 240
         },
@@ -126,7 +121,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 8,
-            "line": 25
+            "line": 26
           },
           "tick": 240
         },
@@ -137,7 +132,7 @@
           "cmd": "REST",
           "src": {
             "column": 8,
-            "line": 26
+            "line": 27
           },
           "tick": 300
         },
@@ -149,7 +144,7 @@
           "cmd": "PARAM_ADD",
           "src": {
             "column": 8,
-            "line": 27
+            "line": 28
           },
           "tick": 360
         },
@@ -161,7 +156,7 @@
           "cmd": "LOOP_END",
           "src": {
             "column": 8,
-            "line": 28
+            "line": 29
           },
           "tick": 360
         },
@@ -172,7 +167,7 @@
           "cmd": "MARKER",
           "src": {
             "column": 8,
-            "line": 30
+            "line": 31
           },
           "tick": 360
         },
@@ -184,7 +179,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 8,
-            "line": 31
+            "line": 32
           },
           "tick": 360
         },
@@ -195,7 +190,7 @@
           "cmd": "REST",
           "src": {
             "column": 8,
-            "line": 32
+            "line": 33
           },
           "tick": 480
         },
@@ -206,13 +201,19 @@
           "cmd": "JUMP",
           "src": {
             "column": 8,
-            "line": 33
+            "line": 34
           },
           "tick": 540
         }
       ],
       "id": 0,
-      "name": "main"
+      "name": "main",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "channel_candidates": ["fm1"],
+        "role": "bgm",
+        "write_scope": ["any"]
+      }
     }
   ],
   "version": 1

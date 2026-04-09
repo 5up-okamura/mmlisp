@@ -33,7 +33,8 @@ route_hint fields:
 
 1. allocation_preference: string (v0.1 default: ordered_first_fit)
 2. channel_candidates: ordered array of logical channel names
-3. request_slot: integer 0..3 (MDSDRV-style request priority slot)
+3. role: string enum (bgm | se | modulator | chaos; default: bgm)
+4. write_scope: array of strings (notes | fm-params | ctrl | reg | any; default: [any])
 
 Event fields:
 
@@ -54,14 +55,14 @@ Event fields:
 8. PARAM_ADD
 9. MARKER
 10. JUMP
+11. FM3_MODE
+12. REG_WRITE
 
 Reserved for v0.2:
 
 1. CSM_ON
 2. CSM_OFF
 3. CSM_RATE
-4. FM3_MODE
-5. REG_WRITE
 
 ## 4. Normalization Rules
 

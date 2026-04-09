@@ -46,7 +46,15 @@ Accepted source constructs in v0.1 minimal compiler:
 6. `(param-set ...)`, `(param-add ...)`
 7. `(loop-begin ...)`, `(loop-end ...)`
 8. `:tempo` and `:len` phrase options
-9. part option `:slot` (0..3) as request priority slot (default 3)
+9. part option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
+10. part option `:write` as write-scope vector (default: [:any])
+
+Track role model:
+
+1. `:bgm` owns note-on/off; default for music tracks
+2. `:se` can evict bgm tracks from channels
+3. `:modulator` blends FM parameters without eviction; multiple can stack on one channel
+4. `:chaos` no ownership; writes freely; intentional undefined behavior is permitted
 
 ## 4. Output Contract
 
@@ -69,7 +77,8 @@ Track fields:
 
 1. `allocation_preference`
 2. `channel_candidates`
-3. `request_slot`
+3. `role`
+4. `write_scope`
 
 Event fields:
 

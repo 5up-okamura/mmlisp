@@ -20,7 +20,7 @@ function usage() {
   );
 }
 
-const REQUEST_SLOT_COUNT = 4;
+const VALID_ROLES = new Set(["bgm", "se", "modulator", "chaos"]);
 
 function encodeString(str) {
   return Buffer.from(String(str), "utf8");
@@ -197,6 +197,11 @@ function encodeMetadata(metadata) {
   return Buffer.concat(chunks);
 }
 
+// Channel ID conventions:
+//   FM1-FM6: 0-5 (YM2612 physical channels)
+//   FM3op1-op4: 2, 16-18 (FM3 independent-frequency mode; driver enables FM3_MODE)
+//   DAC shares ID 5 with FM6; FM6 is unavailable while DAC is active
+//   PSG1-PSG3: 6-8, Noise: 9 (SN76489 via YM7101)
 const TARGET_PROFILES = {
   "md-full": {
     channelIds: {
@@ -206,12 +211,15 @@ const TARGET_PROFILES = {
       fm4: 3,
       fm5: 4,
       fm6: 5,
+      dac: 5,
+      fm3op1: 2,
+      fm3op2: 16,
+      fm3op3: 17,
+      fm3op4: 18,
       psg1: 6,
       psg2: 7,
       psg3: 8,
       noise: 9,
-      pcm1: 10,
-      pcm2: 11,
     },
     fallbackOrder: [
       "fm1",
@@ -224,8 +232,6 @@ const TARGET_PROFILES = {
       "psg2",
       "psg3",
       "noise",
-      "pcm1",
-      "pcm2",
     ],
   },
   ym2612: {
@@ -236,6 +242,11 @@ const TARGET_PROFILES = {
       fm4: 3,
       fm5: 4,
       fm6: 5,
+      dac: 5,
+      fm3op1: 2,
+      fm3op2: 16,
+      fm3op3: 17,
+      fm3op4: 18,
     },
     fallbackOrder: ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"],
   },
@@ -247,84 +258,6 @@ const TARGET_PROFILES = {
       noise: 3,
     },
     fallbackOrder: ["psg1", "psg2", "psg3", "noise"],
-  },
-  generic16: {
-    channelIds: {
-      ch1: 0,
-      ch2: 1,
-      ch3: 2,
-      ch4: 3,
-      ch5: 4,
-      ch6: 5,
-      ch7: 6,
-      ch8: 7,
-      ch9: 8,
-      ch10: 9,
-      ch11: 10,
-      ch12: 11,
-      ch13: 12,
-      ch14: 13,
-      ch15: 14,
-      ch16: 15,
-    },
-    fallbackOrder: [
-      "ch1",
-      "ch2",
-      "ch3",
-      "ch4",
-      "ch5",
-      "ch6",
-      "ch7",
-      "ch8",
-      "ch9",
-      "ch10",
-      "ch11",
-      "ch12",
-      "ch13",
-      "ch14",
-      "ch15",
-      "ch16",
-    ],
-  },
-  mdsdrv: {
-    channelIds: {
-      fm1: 0,
-      fm2: 1,
-      fm3: 2,
-      fm4: 3,
-      fm5: 4,
-      fm6: 5,
-      pcm1: 5,
-      psg1: 6,
-      psg2: 7,
-      psg3: 8,
-      noise: 9,
-      pcm2: 10,
-      pcm3: 11,
-      dummy1: 12,
-      dummy2: 13,
-      dummy3: 14,
-      dummy4: 15,
-      dummy: 12,
-    },
-    fallbackOrder: [
-      "fm1",
-      "fm2",
-      "fm3",
-      "fm4",
-      "fm5",
-      "fm6",
-      "psg1",
-      "psg2",
-      "psg3",
-      "noise",
-      "pcm2",
-      "pcm3",
-      "dummy1",
-      "dummy2",
-      "dummy3",
-      "dummy4",
-    ],
   },
 };
 
@@ -363,40 +296,9 @@ function trackChannelCandidates(track) {
   return unique;
 }
 
-function trackRequestSlot(track) {
-  const slot = track?.route_hint?.request_slot;
-  if (Number.isInteger(slot) && slot >= 0 && slot < REQUEST_SLOT_COUNT) {
-    return slot;
-  }
-  return 3;
-}
-
-function summarizeSlotChannelMasks(trackAssignments) {
-  const bySlot = [];
-  for (let i = 0; i < REQUEST_SLOT_COUNT; i += 1) {
-    bySlot.push({
-      slot: i,
-      channelMask: 0,
-      channels: [],
-    });
-  }
-
-  for (const assignment of trackAssignments) {
-    const slot = assignment.requestSlot;
-    const target = bySlot[slot];
-    if (!target) {
-      continue;
-    }
-    const channelId = assignment.assignedChannelId;
-    if (channelId >= 0 && channelId < 16) {
-      target.channelMask |= 1 << channelId;
-    }
-    if (!target.channels.includes(assignment.assignedChannel)) {
-      target.channels.push(assignment.assignedChannel);
-    }
-  }
-
-  return bySlot;
+function trackRole(track) {
+  const role = track?.route_hint?.role;
+  return VALID_ROLES.has(role) ? role : "bgm";
 }
 
 function createAllocator(targetProfile) {
@@ -468,7 +370,8 @@ function buildGmb(ir, options = {}) {
   for (let i = 0; i < tracks.length; i += 1) {
     const t = tracks[i];
     const allocation = allocator.allocate(t);
-    const requestSlot = trackRequestSlot(t);
+    const role = trackRole(t);
+    const writeScope = t?.route_hint?.write_scope ?? ["any"];
     const block = encodeTrackEvents(t);
     eventBlocks.push(block);
     trackEntries.push({
@@ -480,7 +383,8 @@ function buildGmb(ir, options = {}) {
     trackAssignments.push({
       trackId: t.id ?? i,
       trackName: t.name || `track-${i}`,
-      requestSlot,
+      role,
+      writeScope,
       assignedChannel: allocation.channelName,
       assignedChannelId: allocation.channelId,
       strategy: allocation.strategy,
@@ -548,7 +452,6 @@ function buildGmb(ir, options = {}) {
     trackCount: tracks.length,
     targetProfile: allocator.profileName,
     trackAssignments,
-    requestSlotChannelMasks: summarizeSlotChannelMasks(trackAssignments),
   };
 
   return { gmb, meta };
