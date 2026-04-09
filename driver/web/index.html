@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GMLisp YM2612 Player</title>
+  <!-- CodeMirror 6 -->
+  <link rel="stylesheet" href="https://esm.sh/@codemirror/view@6/dist/index.css">
   <style>
     * { box-sizing: border-box; }
     body {
@@ -172,6 +174,31 @@
     }
     .ch-tab:hover { border-color: #555; color: #aaa; }
     .ch-tab.sel { border-color: #7df; color: #7df; background: #12283a; }
+
+    /* ---- code editor ---- */
+    #editorWrap {
+      position: relative;
+      border: 1px solid #2a2a2a;
+      border-radius: 2px;
+      overflow: hidden;
+      height: 320px;
+    }
+    #editorWrap .cm-editor {
+      height: 100%;
+      font-size: 0.78rem;
+      background: #0d0d0d;
+    }
+    #editorWrap .cm-scroller { overflow: auto; }
+    #editorWrap .cm-content { color: #bbb; }
+    #editorWrap .cm-activeLine { background: transparent; }
+    #editorWrap .cm-gutters {
+      background: #111;
+      border-right: 1px solid #222;
+      color: #444;
+    }
+    /* playhead highlight */
+    .cm-playLine { background: #1a3a20 !important; }
+    .cm-playLine .cm-gutterElement { color: #4c9 !important; }
   </style>
 </head>
 <body>
@@ -207,6 +234,15 @@
     </div>
   </div>
 
+  <!-- Source Editor Panel -->
+  <div class="panel" id="editorPanel">
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>GML Source — playhead follows playback position</span>
+      <span id="editorFileName" style="color:#555;font-size:0.65rem"></span>
+    </div>
+    <div id="editorWrap"></div>
+  </div>
+
   <!-- FM Parameter Panel -->
   <div class="panel" id="paramPanel">
     <div class="panel-title">FM Parameters — live edit (writes to hardware registers immediately)</div>
@@ -232,6 +268,103 @@
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
+
+    // -----------------------------------------------------------------------
+    // CodeMirror 6 — loaded from CDN
+    // -----------------------------------------------------------------------
+    const { EditorView, Decoration, ViewPlugin } = await import('https://esm.sh/@codemirror/view@6');
+    const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
+    const { defaultHighlightStyle, syntaxHighlighting } = await import('https://esm.sh/@codemirror/language@6');
+    const { oneDarkTheme } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
+
+    // StateEffect / StateField for playhead line decoration
+    const setPlayLine = StateEffect.define();
+    const playLineField = StateField.define({
+      create: () => Decoration.none,
+      update(deco, tr) {
+        deco = deco.map(tr.changes);
+        for (const e of tr.effects) {
+          if (e.is(setPlayLine)) {
+            if (e.value < 0) {
+              deco = Decoration.none;
+            } else {
+              try {
+                const line = tr.state.doc.line(e.value);
+                deco = Decoration.set([
+                  Decoration.line({ class: 'cm-playLine' }).range(line.from),
+                ]);
+              } catch (_) {
+                deco = Decoration.none;
+              }
+            }
+          }
+        }
+        return deco;
+      },
+      provide: (f) => EditorView.decorations.from(f),
+    });
+
+    const editorView = new EditorView({
+      state: EditorState.create({
+        doc: '(loading…)',
+        extensions: [
+          EditorState.readOnly.of(true),
+          oneDarkTheme,
+          syntaxHighlighting(defaultHighlightStyle),
+          playLineField,
+          EditorView.lineWrapping,
+        ],
+      }),
+      parent: document.getElementById('editorWrap'),
+    });
+
+    // IR preset → GML source URL mapping
+    const IR_TO_GML = {
+      '/examples/ir/demo1-stage-loop.ir.canonical.json':
+        '/examples/source/demo1-stage-loop.gml',
+      '/examples/ir/demo2-event-recovery.ir.canonical.json':
+        '/examples/source/demo2-event-recovery.gml',
+    };
+
+    async function loadGmlSource(irURL) {
+      const gmlURL = IR_TO_GML[irURL];
+      if (!gmlURL) {
+        setEditorDoc('(no GML source mapped for this IR file)');
+        document.getElementById('editorFileName').textContent = '';
+        return;
+      }
+      try {
+        const res = await fetch(gmlURL);
+        if (!res.ok) throw new Error(res.status);
+        const src = await res.text();
+        setEditorDoc(src);
+        document.getElementById('editorFileName').textContent =
+          gmlURL.split('/').pop();
+      } catch (e) {
+        setEditorDoc('(failed to load: ' + gmlURL + ')');
+      }
+    }
+
+    function setEditorDoc(text) {
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: text },
+        effects: setPlayLine.of(-1),
+      });
+    }
+
+    function highlightLine(oneBased) {
+      editorView.dispatch({ effects: setPlayLine.of(oneBased) });
+      // Scroll into view
+      try {
+        const line = editorView.state.doc.line(oneBased);
+        editorView.dispatch({
+          effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+        });
+      } catch (_) {}
+    }
+
+    // Load source for initial preset
+    loadGmlSource(document.getElementById('presetSelect').value);
 
     // -----------------------------------------------------------------------
     // State
@@ -294,6 +427,7 @@
       try {
         log('Loading ' + currentIrURL + '…');
         await player.loadURL(currentIrURL);
+        player.setOnLine(highlightLine);
         player.play(audioCtx, { loop: loopEnabled });
         log('Playing', 'info');
         setStatus('Playing', true);
@@ -312,6 +446,7 @@
       log('Stopped');
       setStatus('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
+      editorView.dispatch({ effects: setPlayLine.of(-1) });
     }
 
     // -----------------------------------------------------------------------
@@ -329,6 +464,7 @@
     });
     document.getElementById('presetSelect').addEventListener('change', (e) => {
       currentIrURL = e.target.value;
+      loadGmlSource(currentIrURL);
     });
 
     document.getElementById('btnPlay').disabled = false;

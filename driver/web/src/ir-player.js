@@ -164,6 +164,7 @@ export class IRPlayer {
     this._schedulerLookahead = 0.1; // seconds
     this._schedulerInterval = 50; // ms
     this._loop = true; // loop by default
+    this._onLine = null; // (line: number) => void — called when an event fires
 
     // Per-channel register state (for incremental PARAM_ADD)
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
@@ -250,6 +251,14 @@ export class IRPlayer {
     this._loop = enabled;
   }
 
+  /**
+   * Register a callback fired (approximately) when each event plays.
+   * @param {((line: number) => void) | null} fn  1-based source line number
+   */
+  setOnLine(fn) {
+    this._onLine = fn;
+  }
+
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
@@ -276,6 +285,10 @@ export class IRPlayer {
       const delay = Math.max(0, evTime - now) * 1000;
       const evCopy = { ...ev };
       setTimeout(() => this._dispatchEvent(evCopy), delay);
+      if (this._onLine && ev.src?.line != null) {
+        const line = ev.src.line;
+        setTimeout(() => this._onLine(line), delay);
+      }
 
       this._flatIndex++;
     }
