@@ -1,0 +1,15 @@
+{
+  "name": "gmlisp-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal local tooling for GMLisp draft workflow",
+  "scripts": {
+    "gml2ir": "node scripts/gml2ir.js",
+    "verify-ir": "node scripts/verify-ir.js",
+    "build:ir-demos": "node scripts/gml2ir.js ../examples/source/demo1-stage-loop.gml --out ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/gml2ir.js ../examples/source/demo2-event-recovery.gml --out ../examples/ir/demo2-event-recovery.ir.generated.json",
+    "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/verify-ir.js ../examples/ir/demo2-event-recovery.ir.canonical.json ../examples/ir/demo2-event-recovery.ir.generated.json"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

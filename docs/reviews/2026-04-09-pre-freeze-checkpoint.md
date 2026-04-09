@@ -29,9 +29,9 @@
 
 ## 4. IR Validation
 
-1. Deterministic output check: manual canonical snapshots drafted
-2. Marker/jump resolution check: expected marker ids documented
-3. Diagnostic quality check: pending (requires parser/compiler)
+1. Deterministic output check: pass via tools/check:ir-demos
+2. Marker/jump resolution check: pass for current demo scenarios
+3. Diagnostic quality check: partial (basic parser errors only)
 
 ## 5. GMB Validation
 
@@ -54,5 +54,5 @@
 ## 8. Action Items
 
 1. Owner: okamura
-2. Task: implement first compiler pass and compare output with expected IR
+2. Task: add semantic diagnostics and implement initial IR to GMB writer
 3. Due: next checkpoint

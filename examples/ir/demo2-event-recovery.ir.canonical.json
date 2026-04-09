@@ -10,117 +10,234 @@
       "channel": "fm1",
       "events": [
         {
-          "args": { "id": "calm" },
+          "args": {
+            "bpm": 132
+          },
+          "cmd": "TEMPO_SET",
+          "src": {
+            "column": 14,
+            "line": 13
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "id": "calm"
+          },
           "cmd": "MARKER",
-          "src": { "column": 8, "line": 15 },
+          "src": {
+            "column": 8,
+            "line": 16
+          },
           "tick": 0
         },
         {
-          "args": { "length": 30, "pitch": "a3" },
+          "args": {
+            "length": 30,
+            "pitch": "a3"
+          },
           "cmd": "NOTE_ON",
-          "src": { "column": 8, "line": 16 },
+          "src": {
+            "column": 8,
+            "line": 17
+          },
           "tick": 0
         },
         {
-          "args": { "length": 30 },
+          "args": {
+            "length": 30
+          },
           "cmd": "TIE",
-          "src": { "column": 8, "line": 17 },
+          "src": {
+            "column": 8,
+            "line": 18
+          },
           "tick": 30
         },
         {
-          "args": { "length": 30 },
+          "args": {
+            "length": 30
+          },
           "cmd": "REST",
-          "src": { "column": 8, "line": 18 },
+          "src": {
+            "column": 8,
+            "line": 19
+          },
           "tick": 60
         },
         {
-          "args": { "length": 30, "pitch": "c4" },
+          "args": {
+            "length": 30,
+            "pitch": "c4"
+          },
           "cmd": "NOTE_ON",
-          "src": { "column": 8, "line": 19 },
+          "src": {
+            "column": 8,
+            "line": 20
+          },
           "tick": 90
         },
         {
-          "args": { "target": "FM_TL1", "value": 40 },
+          "args": {
+            "target": "FM_TL1",
+            "value": 40
+          },
           "cmd": "PARAM_SET",
-          "src": { "column": 8, "line": 21 },
+          "src": {
+            "column": 8,
+            "line": 22
+          },
           "tick": 120
         },
         {
-          "args": { "target": "TEMPO_SCALE", "value": 0 },
+          "args": {
+            "target": "TEMPO_SCALE",
+            "value": 0
+          },
           "cmd": "PARAM_SET",
-          "src": { "column": 8, "line": 22 },
+          "src": {
+            "column": 8,
+            "line": 23
+          },
           "tick": 120
         },
         {
-          "args": { "id": "stress" },
+          "args": {
+            "id": "stress"
+          },
           "cmd": "LOOP_BEGIN",
-          "src": { "column": 8, "line": 24 },
+          "src": {
+            "column": 8,
+            "line": 25
+          },
           "tick": 120
         },
         {
-          "args": { "delta": -3, "target": "FM_TL1" },
+          "args": {
+            "delta": -3,
+            "target": "FM_TL1"
+          },
           "cmd": "PARAM_ADD",
-          "src": { "column": 8, "line": 25 },
+          "src": {
+            "column": 8,
+            "line": 26
+          },
           "tick": 120
         },
         {
-          "args": { "delta": 2, "target": "TEMPO_SCALE" },
+          "args": {
+            "delta": 2,
+            "target": "TEMPO_SCALE"
+          },
           "cmd": "PARAM_ADD",
-          "src": { "column": 8, "line": 26 },
+          "src": {
+            "column": 8,
+            "line": 27
+          },
           "tick": 120
         },
         {
-          "args": { "length": 30, "pitch": "e4" },
+          "args": {
+            "length": 30,
+            "pitch": "e4"
+          },
           "cmd": "NOTE_ON",
-          "src": { "column": 8, "line": 27 },
+          "src": {
+            "column": 8,
+            "line": 28
+          },
           "tick": 120
         },
         {
-          "args": { "length": 30, "pitch": "d4" },
+          "args": {
+            "length": 30,
+            "pitch": "d4"
+          },
           "cmd": "NOTE_ON",
-          "src": { "column": 8, "line": 28 },
+          "src": {
+            "column": 8,
+            "line": 29
+          },
           "tick": 150
         },
         {
-          "args": { "length": 30 },
+          "args": {
+            "length": 30
+          },
           "cmd": "REST",
-          "src": { "column": 8, "line": 29 },
+          "src": {
+            "column": 8,
+            "line": 30
+          },
           "tick": 180
         },
         {
-          "args": { "delta": 2, "target": "FM_TL1" },
+          "args": {
+            "delta": 2,
+            "target": "FM_TL1"
+          },
           "cmd": "PARAM_ADD",
-          "src": { "column": 8, "line": 30 },
+          "src": {
+            "column": 8,
+            "line": 31
+          },
           "tick": 210
         },
         {
-          "args": { "delta": -2, "target": "TEMPO_SCALE" },
+          "args": {
+            "delta": -2,
+            "target": "TEMPO_SCALE"
+          },
           "cmd": "PARAM_ADD",
-          "src": { "column": 8, "line": 31 },
+          "src": {
+            "column": 8,
+            "line": 32
+          },
           "tick": 210
         },
         {
-          "args": { "id": "stress", "repeat": 8 },
+          "args": {
+            "id": "stress",
+            "repeat": 8
+          },
           "cmd": "LOOP_END",
-          "src": { "column": 8, "line": 32 },
+          "src": {
+            "column": 8,
+            "line": 33
+          },
           "tick": 210
         },
         {
-          "args": { "id": "recover" },
+          "args": {
+            "id": "recover"
+          },
           "cmd": "MARKER",
-          "src": { "column": 8, "line": 34 },
+          "src": {
+            "column": 8,
+            "line": 35
+          },
           "tick": 210
         },
         {
-          "args": { "length": 120 },
+          "args": {
+            "length": 120
+          },
           "cmd": "REST",
-          "src": { "column": 8, "line": 35 },
+          "src": {
+            "column": 8,
+            "line": 36
+          },
           "tick": 210
         },
         {
-          "args": { "to": "calm" },
+          "args": {
+            "to": "calm"
+          },
           "cmd": "JUMP",
-          "src": { "column": 8, "line": 36 },
+          "src": {
+            "column": 8,
+            "line": 37
+          },
           "tick": 330
         }
       ],

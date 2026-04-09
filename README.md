@@ -45,10 +45,11 @@ scaffold directories for implementation phases.
 5. docs/freeze-checklist-v0.1.md
 6. docs/opcode-mapping-provisional-v0.1.md
 7. docs/reviews/freeze-candidate-template.md
+8. docs/compiler-contract-v0.1-draft.md
 
 ## Next Local Steps
 
-1. Fill demo skeleton songs with real test phrases.
-2. Export canonical IR snapshots for demos into examples/ir.
-3. Export GMB test binaries for demos into examples/gmb.
-4. Write and iterate freeze review notes in docs/reviews.
+1. Add semantic diagnostics and validation rules to source-to-IR compiler.
+2. Implement first IR to GMB writer path for demo data.
+3. Export and validate first .gmb artifacts in examples/gmb.
+4. Iterate freeze review notes in docs/reviews.
