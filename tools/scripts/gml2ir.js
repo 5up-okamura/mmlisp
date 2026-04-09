@@ -10,7 +10,7 @@ const WHOLE_TICKS = PPQN * 4;
 
 function usage() {
   console.error(
-    "Usage: node scripts/gml2ir.js <input.gml> [--out <file>] [--pretty]"
+    "Usage: node scripts/gml2ir.js <input.gml> [--out <file>] [--pretty]",
   );
 }
 
@@ -63,7 +63,9 @@ function canonicalTarget(symbol) {
     ":note-pitch": "NOTE_PITCH",
     ":note-volume": "NOTE_VOLUME",
   };
-  return map[symbol] || symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_");
+  return (
+    map[symbol] || symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_")
+  );
 }
 
 function getKeywordMap(items, startIndex) {
@@ -98,7 +100,10 @@ function compilePhrase(phraseNode, state, events) {
   const tempoNode = options.get(":tempo");
   const lenNode = options.get(":len");
 
-  const phraseDefaultLen = parseLengthToken(atomValue(lenNode), state.defaultLength);
+  const phraseDefaultLen = parseLengthToken(
+    atomValue(lenNode),
+    state.defaultLength,
+  );
   if (tempoNode) {
     const tempoValue = parseIntLike(atomValue(tempoNode));
     if (tempoValue !== null) {
@@ -240,11 +245,17 @@ function compilePart(partNode, id) {
   const items = partNode.items;
   const options = getKeywordMap(items, 2);
   const nameNode = items[1];
-  const name = atomValue(nameNode) ? atomValue(nameNode).replace(/^:/, "") : `part${id}`;
+  const name = atomValue(nameNode)
+    ? atomValue(nameNode).replace(/^:/, "")
+    : `part${id}`;
 
   const channelNode = options.get(":ch");
   let channel = "fm1";
-  if (channelNode && channelNode.kind === "list" && channelNode.items.length > 0) {
+  if (
+    channelNode &&
+    channelNode.kind === "list" &&
+    channelNode.items.length > 0
+  ) {
     const first = atomValue(channelNode.items[0]);
     if (first) {
       channel = first.replace(/^:/, "");
@@ -298,7 +309,7 @@ function compile(inputPath) {
     (node) =>
       node.kind === "list" &&
       node.items.length > 0 &&
-      isAtom(node.items[0], "score")
+      isAtom(node.items[0], "score"),
   );
 
   if (!score) {

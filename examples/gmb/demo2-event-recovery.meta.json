@@ -1,0 +1,24 @@
+{
+  "sections": [
+    {
+      "id": 1,
+      "flags": 0,
+      "offset": 52,
+      "size": 16
+    },
+    {
+      "id": 2,
+      "flags": 0,
+      "offset": 68,
+      "size": 584
+    },
+    {
+      "id": 3,
+      "flags": 0,
+      "offset": 652,
+      "size": 82
+    }
+  ],
+  "totalSize": 734,
+  "trackCount": 1
+}

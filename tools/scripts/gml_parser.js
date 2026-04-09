@@ -156,9 +156,7 @@ function parse(input) {
         items.push(parseNode());
       }
       if (!current() || current().type !== close) {
-        throw new Error(
-          `Unclosed ${open} at ${token.line}:${token.column}`
-        );
+        throw new Error(`Unclosed ${open} at ${token.line}:${token.column}`);
       }
       pos += 1;
       return {
@@ -171,7 +169,7 @@ function parse(input) {
     }
 
     throw new Error(
-      `Unexpected token ${token.type} at ${token.line}:${token.column}`
+      `Unexpected token ${token.type} at ${token.line}:${token.column}`,
     );
   }
 

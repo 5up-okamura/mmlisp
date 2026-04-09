@@ -3,6 +3,8 @@
 This document defines the minimal source-to-IR contract implemented for the
 v0.1 draft workflow.
 
+Related draft path now included: source -> IR -> GMB.
+
 ## 1. Scope
 
 Implemented now:
@@ -10,12 +12,14 @@ Implemented now:
 1. Parse a subset of GMLisp source forms used in demo files
 2. Emit deterministic IR JSON
 3. Verify generated IR against canonical snapshots
+4. Encode draft GMB binary from IR
+5. Validate generated GMB structural integrity
 
 Not implemented yet:
 
 1. Full language surface
 2. Semantic diagnostics catalog
-3. Binary GMB writer
+3. Frozen opcode packing and loader compatibility proof
 
 ## 2. CLI Commands
 
@@ -24,6 +28,9 @@ Run from tools directory.
 1. `npm run gml2ir -- ../examples/source/demo1-stage-loop.gml --out ../examples/ir/demo1-stage-loop.ir.generated.json`
 2. `npm run build:ir-demos`
 3. `npm run check:ir-demos`
+4. `npm run gml2gmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json`
+5. `npm run build:gmb-demos`
+6. `npm run check:gmb-demos`
 
 ## 3. Input Contract
 
@@ -61,6 +68,14 @@ Event fields:
 3. `args`
 4. `src`
 
+GMB output contract (draft):
+
+1. Header with magic/version/section directory count
+2. Section directory with absolute offsets and sizes
+3. Track table section
+4. Event stream section
+5. Metadata section
+
 ## 5. Determinism Rules
 
 1. Object keys are sorted before serialization
@@ -78,4 +93,4 @@ Event fields:
 
 1. Add structured diagnostic codes and source spans
 2. Add semantic checks for marker and loop validity
-3. Add minimal GMB writer from IR
+3. Align draft opcode/event payload with future GMLDRV decoder contract

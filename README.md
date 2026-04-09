@@ -33,8 +33,13 @@ This repository starts with specification-first development:
 
 ## Status
 
-No production code yet. This repository currently contains draft specs and
-scaffold directories for implementation phases.
+Draft implementation in progress.
+
+Implemented toolchain stage:
+
+1. source (.gml) -> deterministic IR (.json)
+2. IR comparison against canonical snapshots
+3. draft GMB export and structural validation for demo artifacts
 
 ## Key Draft Documents
 
@@ -50,6 +55,6 @@ scaffold directories for implementation phases.
 ## Next Local Steps
 
 1. Add semantic diagnostics and validation rules to source-to-IR compiler.
-2. Implement first IR to GMB writer path for demo data.
-3. Export and validate first .gmb artifacts in examples/gmb.
+2. Tighten IR-to-GMB opcode payload contract for driver alignment.
+3. Add decoder-side compatibility notes for future GMLDRV.
 4. Iterate freeze review notes in docs/reviews.

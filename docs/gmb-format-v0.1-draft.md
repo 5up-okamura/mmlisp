@@ -87,6 +87,16 @@ The section contract for v0.1 focuses on structure:
 2. each block is self-terminating or length-bounded by track table
 3. unknown opcode handling must fail safely in loaders
 
+Current draft writer record format (implementation note):
+
+1. tick: uint32
+2. opcode: uint8
+3. payload_len: uint16
+4. payload: UTF-8 JSON bytes (event args)
+
+This record format is provisional and expected to be replaced with a tighter
+packed format before v0.1 freeze.
+
 ## 9. Metadata Section
 
 Metadata is a UTF-8 key-value table.

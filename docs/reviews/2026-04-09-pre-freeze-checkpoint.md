@@ -5,7 +5,7 @@
 1. Candidate ID: pre-freeze-2026-04-09
 2. Date: 2026-04-09
 3. Reviewer(s): okamura
-4. Compiler version: not assigned
+4. Compiler version: gmlisp-tools-0.1.0-draft
 
 ## 2. Scope Confirmation
 
@@ -35,15 +35,15 @@
 
 ## 5. GMB Validation
 
-1. Header validity: pending
-2. Section directory validity: pending
-3. Track/event offset validity: pending
+1. Header validity: pass for demo1/demo2 via tools/check:gmb-demos
+2. Section directory validity: pass for demo1/demo2
+3. Track/event offset validity: pass for demo1/demo2
 
 ## 6. Risks and Decisions
 
 1. Accepted risk: opcode map is provisional
 2. Deferred to v0.2: CSM and FM3 dedicated command behavior
-3. Blocking issue (if any): no exporter implementation yet
+3. Blocking issue (if any): semantic diagnostics not complete
 
 ## 7. Decision
 
@@ -54,5 +54,5 @@
 ## 8. Action Items
 
 1. Owner: okamura
-2. Task: add semantic diagnostics and implement initial IR to GMB writer
+2. Task: add semantic diagnostics and tighten opcode payload contract
 3. Due: next checkpoint

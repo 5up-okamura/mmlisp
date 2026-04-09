@@ -4,7 +4,9 @@
 const fs = require("node:fs");
 
 function usage() {
-  console.error("Usage: node scripts/verify-ir.js <expected.json> <actual.json>");
+  console.error(
+    "Usage: node scripts/verify-ir.js <expected.json> <actual.json>",
+  );
 }
 
 function stable(value) {

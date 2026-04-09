@@ -6,8 +6,12 @@
   "scripts": {
     "gml2ir": "node scripts/gml2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
+    "gml2gmb": "node scripts/gml2gmb.js",
+    "verify-gmb": "node scripts/verify-gmb.js",
     "build:ir-demos": "node scripts/gml2ir.js ../examples/source/demo1-stage-loop.gml --out ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/gml2ir.js ../examples/source/demo2-event-recovery.gml --out ../examples/ir/demo2-event-recovery.ir.generated.json",
-    "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/verify-ir.js ../examples/ir/demo2-event-recovery.ir.canonical.json ../examples/ir/demo2-event-recovery.ir.generated.json"
+    "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/verify-ir.js ../examples/ir/demo2-event-recovery.ir.canonical.json ../examples/ir/demo2-event-recovery.ir.generated.json",
+    "build:gmb-demos": "node scripts/gml2gmb.js ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json && node scripts/gml2gmb.js ../examples/ir/demo2-event-recovery.ir.canonical.json --out ../examples/gmb/demo2-event-recovery.gmb --meta ../examples/gmb/demo2-event-recovery.meta.json",
+    "check:gmb-demos": "npm run build:gmb-demos && node scripts/verify-gmb.js ../examples/gmb/demo1-stage-loop.gmb && node scripts/verify-gmb.js ../examples/gmb/demo2-event-recovery.gmb"
   },
   "engines": {
     "node": ">=18"
