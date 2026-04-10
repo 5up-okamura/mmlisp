@@ -4,6 +4,8 @@
   "private": true,
   "description": "Minimal local tooling for GMLisp draft workflow",
   "scripts": {
+    "format:gml": "node scripts/format-gml.js ../examples/source/*.gml",
+    "check:format:gml": "node scripts/format-gml.js --check ../examples/source/*.gml",
     "gml2ir": "node scripts/gml2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
     "gml2gmb": "node scripts/gml2gmb.js",

@@ -31,4 +31,7 @@
       (marker :turn)
       (note :f4 1/4)
       (rest 1/8)
-      (jump :intro))))
+      (jump :intro)
+    )
+  )
+)

@@ -1,0 +1,38 @@
+{
+  "editor.formatOnSave": true,
+  "files.associations": {
+    "*.gml": "lisp"
+  },
+  "[lisp]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "editor.tokenColorCustomizations": {
+    "textMateRules": [
+      {
+        "name": "GML Lisp declared function names",
+        "scope": ["entity.name.function.lisp", "variable.function.lisp"],
+        "settings": {
+          "foreground": "#61AFEF",
+          "fontStyle": "bold"
+        }
+      },
+      {
+        "name": "GML Lisp builtin call heads",
+        "scope": ["keyword.control.lisp"],
+        "settings": {
+          "foreground": "#ABB2BF",
+          "fontStyle": ""
+        }
+      }
+    ]
+  },
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        "match": "\\.gml$",
+        "cmd": "node \"${workspaceFolder}/tools/scripts/format-gml.js\" \"${file}\""
+      }
+    ]
+  }
+}

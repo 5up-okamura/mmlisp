@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Format Current GML",
+      "type": "shell",
+      "command": "node",
+      "args": ["tools/scripts/format-gml.js", "${file}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Check GML Format",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "check:format:gml"],
+      "options": {
+        "cwd": "${workspaceFolder}/tools"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

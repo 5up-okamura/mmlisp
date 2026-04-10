@@ -10,16 +10,18 @@ Local tooling for the draft workflow.
 
 Run from tools directory:
 
-1. `npm run gml2ir -- ../examples/source/demo1-stage-loop.gml --out ../examples/ir/demo1-stage-loop.ir.generated.json`
-2. `npm run build:ir-demos`
-3. `npm run verify-ir -- ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json`
-4. `npm run check:ir-demos`
-5. `npm run gml2gmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json --target-profile md-full`
-6. `npm run build:gmb-demos`
-7. `npm run verify-gmb -- ../examples/gmb/demo1-stage-loop.gmb`
-8. `npm run check:gmb-demos`
-9. `npm run build:gmb-fixtures`
-10. `npm run check:gmb-fixtures`
+1. `npm run format:gml`
+2. `npm run check:format:gml`
+3. `npm run gml2ir -- ../examples/source/demo1-stage-loop.gml --out ../examples/ir/demo1-stage-loop.ir.generated.json`
+4. `npm run build:ir-demos`
+5. `npm run verify-ir -- ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json`
+6. `npm run check:ir-demos`
+7. `npm run gml2gmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json --target-profile md-full`
+8. `npm run build:gmb-demos`
+9. `npm run verify-gmb -- ../examples/gmb/demo1-stage-loop.gmb`
+10. `npm run check:gmb-demos`
+11. `npm run build:gmb-fixtures`
+12. `npm run check:gmb-fixtures`
 
 ## Notes
 
