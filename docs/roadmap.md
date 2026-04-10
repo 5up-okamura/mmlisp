@@ -174,14 +174,19 @@ that Workers apply at build time to produce the final sample:
   "source_pcm": "tr-808--kick-dry@1.0.0.wav",
   "processing": [
     { "type": "compressor", "threshold_db": -12, "ratio": 4 },
-    { "type": "fade_out_ms", "ms": 5 }
-  ]
+    { "type": "fade_out_ms", "ms": 5 },
+  ],
 }
 ```
 
 - One master file; variants are derived declaratively
 - Enables programmatic generation of processing combinations
 - Requires a Workers audio processing pipeline — build when worth it
+- Particularly useful for:
+  - **FM/PCM volume balance** — normalize relative levels between FM channels and PCM samples
+    without modifying the master file
+  - **Drum kit mixing** — declare per-hit `gain` in each voice's processing chain so a full kit
+    (kick, snare, hi-hat, ...) has consistent levels even when sourced from different masters
 
 For MVP, use Case A. Migrate to Case B when the processing pipeline justifies the investment.
 
