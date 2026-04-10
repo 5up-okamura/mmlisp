@@ -59,3 +59,40 @@ Phase 3 entry condition:
 2. Produce initial IR snapshots in examples/ir
 3. Produce initial GMB exports in examples/gmb
 4. Record first actionable freeze review using docs/reviews template
+
+---
+
+## Future Vision (post-MVP ideas)
+
+### GML `import` system
+
+```lisp
+(import "reverb"    :from :stdlib)
+(import "dx7-brass" :from :patches)
+(import "my-arp"    :from "https://gml.community/patches/okamura/arp01")
+```
+
+- `import` はマクロ展開として実装。コンパイル時に解決し IR に fold → ランタイム依存なし
+- パッチの種類:
+  - **関数エフェクト** (delay, arpeggiator, LFO, ...) — ir-player.js スケジューラーレイヤーで実装可能
+  - **FM 音色** — `VOICE_LOAD` オペコードとして v0.2 スコープに定義
+- バージョン固定 (`@1.2.3`) は再現性に必須
+
+### パッチサーバー / コミュニティ
+
+- `GET /patches/:slug[@version]` → GML スニペットまたは FM 音色 JSON
+- 作者 ID + ライセンス + バージョン履歴をパッチに付与
+- VGM コミュニティとの親和性：snesmusic / hcs64 等の既存フォーラム層
+
+### フォーク & コラボレーション (GitHub モデル)
+
+- 誰かがアップした音色を別の人が **fork して派生版として公開**できる
+- fork 元への逆リンク（lineage）を保持 → 音色の系譜が辿れる
+- PR 的な「改善提案」を元作者に送れる仕組みも検討
+- 例: `dx7-brass` → fork → `dx7-brass-warmer` (by user B) → fork → `dx7-brass-warmer-megadrive` (by user C)
+
+### マネタイゼーション
+
+- パッチ URL ごとに作者の wallet / Stripe を紐付け
+- 投げ銭（per-patch donation）
+- プレミアムパッチ（有料 DL）も選択肢
