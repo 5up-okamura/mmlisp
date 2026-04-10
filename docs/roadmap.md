@@ -83,8 +83,23 @@ Phase 3 entry condition:
 - `GET /patches/:slug[@version]` → GML snippet or FM voice JSON
 - Each patch carries author ID, license, and version history
 - Natural fit with the existing VGM community (snesmusic, hcs64, etc.)
-- **Patch preview is a must-have**: before loading a voice or effect into a song,
-  users need to audition it in-browser — single-note preview with the target chip
+- **Patch preview — dynamic, in-browser synthesis only**:
+  the JS chip emulator already runs in the browser; preview = play a note
+  through the emulator with no pre-rendered audio files, no R2 storage for audio
+- **Finished works** — link out to external platforms (YouTube, SoundCloud, etc.)
+  via a `demo_url` field on the song/patch metadata; no self-hosted audio hosting needed
+
+### Infrastructure (Cloudflare stack)
+
+```
+Cloudflare Pages   — static frontend
+Cloudflare Workers — API (patch CRUD, search, fork, preview synthesis)
+Cloudflare D1      — metadata DB (patches, authors, forks, tags)
+Cloudflare R2      — patch files only (.gml / voice .json); no audio blobs
+```
+
+All managed in a single `wrangler.toml`. Audio preview synthesized on-demand
+in Workers via WebAssembly YM2612 port (or delegated to the client browser).
 
 ### Voice metadata schema
 
@@ -96,30 +111,30 @@ real-model references ("TR-808 Collection") and curated sets ("PC Engine Wavefor
   // Identity
   "id": "dx7-brass-warm",
   "version": "1.2.0",
-  "fork_of": "dx7-brass@1.0.0",      // lineage — null if original
+  "fork_of": "dx7-brass@1.0.0", // lineage — null if original
 
   // Authorship
   "author": "okamura",
-  "license": "CC-BY-4.0",            // CC0 | CC-BY | proprietary | ...
+  "license": "CC-BY-4.0", // CC0 | CC-BY | proprietary | ...
   "created_at": "2026-04-10",
   "updated_at": "2026-04-10",
 
   // Classification (Cubase-style browsing)
-  "category": "Brass",               // Pad | Lead | Bass | Brass | Strings |
-                                     // Keys | Pluck | Organ | Drums | SFX | ...
-  "collection": "DX7 Voices",        // real model or curated set name
+  "category": "Brass", // Pad | Lead | Bass | Brass | Strings |
+  // Keys | Pluck | Organ | Drums | SFX | ...
+  "collection": "DX7 Voices", // real model or curated set name
   "tags": ["warm", "sustain", "fm"], // freeform keywords
 
   // Technical
-  "chip": "YM2612",                  // target chip — required
-  "patch_type": "voice",             // voice | effect | sequence
-  "base_note": 60,                   // MIDI note for preview / tuning reference
-  "polyphony": "mono",               // mono | poly
-  "gml_version": "0.1",             // minimum GML spec version required
+  "chip": "YM2612", // target chip — required
+  "patch_type": "voice", // voice | effect | sequence
+  "base_note": 60, // MIDI note for preview / tuning reference
+  "polyphony": "mono", // mono | poly
+  "gml_version": "0.1", // minimum GML spec version required
 
   // UX
   "description": "Warm brass lead, good for slower melodic lines.",
-  "preview_url": "https://gml.community/preview/dx7-brass-warm.mp3"
+  "demo_url": "https://www.youtube.com/watch?v=..."  // finished work link (YouTube, SoundCloud, etc.),
 }
 ```
 
@@ -139,14 +154,14 @@ real-model references ("TR-808 Collection") and curated sets ("PC Engine Wavefor
 
 Primary target is YM2612 (Mega Drive), but the community vision covers:
 
-| Chip | System | Type |
-|------|--------|------|
-| YM2612 | Sega Mega Drive | FM (OPN2) — current baseline |
-| YM2151 | arcade, X68000 | FM (OPM) |
-| YM2413 | Sega Master System, MSX | FM (OPLL, ROM voices) |
-| SID 6581/8580 | Commodore 64 | analog multi-mode filter |
-| 2A03 / RP2A07 | NES / Famicom | pulse + triangle + noise + DPCM |
-| HuC6280 | PC Engine | wavetable (32-byte waveforms) |
+| Chip          | System                  | Type                            |
+| ------------- | ----------------------- | ------------------------------- |
+| YM2612        | Sega Mega Drive         | FM (OPN2) — current baseline    |
+| YM2151        | arcade, X68000          | FM (OPM)                        |
+| YM2413        | Sega Master System, MSX | FM (OPLL, ROM voices)           |
+| SID 6581/8580 | Commodore 64            | analog multi-mode filter        |
+| 2A03 / RP2A07 | NES / Famicom           | pulse + triangle + noise + DPCM |
+| HuC6280       | PC Engine               | wavetable (32-byte waveforms)   |
 
 Each chip needs its own target profile, register encoder, and JS emulator.
 The IR layer is designed to be chip-agnostic; only the backend (gml2gmb + driver) is chip-specific.
