@@ -224,7 +224,6 @@
       <div class="btn-row">
         <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
         <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
-        <button id="btnLoop" class="active" onclick="onToggleLoop()" title="Toggle loop">⟳ Loop</button>
       </div>
       <div class="status-row">
         <span class="dot" id="dot"></span>
@@ -371,7 +370,6 @@
     let player = null;
     let currentIrURL = document.getElementById('presetSelect').value;
     let selectedCh = 0;
-    let loopEnabled = true;
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -425,7 +423,7 @@
         log('Loading ' + currentIrURL + '…');
         await player.loadURL(currentIrURL);
         player.setOnLine(highlightLine);
-        player.play(audioCtx, { loop: loopEnabled });
+        player.play(audioCtx);
         log('Playing', 'info');
         setStatus('Playing', true);
         document.getElementById('btnPlay').classList.add('active');
@@ -470,14 +468,6 @@
     window.onPlay = onPlay;
     window.onStop = onStop;
     window.browseFile = browseFile;
-
-    window.onToggleLoop = function() {
-      loopEnabled = !loopEnabled;
-      const btn = document.getElementById('btnLoop');
-      btn.classList.toggle('active', loopEnabled);
-      if (player) player.setLoop(loopEnabled);
-      log('Loop ' + (loopEnabled ? 'on' : 'off'));
-    };
 
     // -----------------------------------------------------------------------
     // Parameter UI
