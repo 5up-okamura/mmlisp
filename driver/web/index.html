@@ -8,12 +8,15 @@
   <link rel="stylesheet" href="https://esm.sh/@codemirror/view@6/dist/index.css">
   <style>
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       background: #111;
       color: #ddd;
       font-family: 'Courier New', monospace;
       margin: 0;
       padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
     }
     h1 { color: #7df; font-size: 1.1rem; margin: 0 0 0.3rem; }
     p.sub { color: #555; font-size: 0.75rem; margin: 0 0 1.5rem; }
@@ -134,7 +137,8 @@
       border: 1px solid #222;
       border-radius: 2px;
       padding: 0.5rem;
-      height: 100px;
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
       font-size: 0.7rem;
       color: #4a7;
@@ -181,7 +185,8 @@
       border: 1px solid #2a2a2a;
       border-radius: 2px;
       overflow: hidden;
-      height: 320px;
+      flex: 1;
+      min-height: 0;
     }
     #editorWrap .cm-editor {
       height: 100%;
@@ -207,14 +212,46 @@
   </style>
 </head>
 <body>
-  <h1>GMLisp YM2612 Player</h1>
-  <p class="sub">Pure-JS FM synthesis</p>
+  <!-- Top row: GML Source | FM Parameters -->
+  <div class="row" style="align-items:stretch;flex:1;min-height:0">
+    <!-- Source Editor Panel -->
+    <div class="panel" id="editorPanel" style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>GML Source</span>
+        <span id="editorFileName" style="color:#555;font-size:0.65rem"></span>
+      </div>
+      <div id="editorWrap"></div>
+    </div>
 
-  <div class="row">
+    <!-- FM Parameters Panel -->
+    <div class="panel" id="paramPanel" style="flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto">
+      <div class="panel-title">FM Parameters</div>
+
+      <div class="ch-tabs" id="chTabs"></div>
+
+      <!-- Channel-level: ALG + FB -->
+      <div class="param-grid" style="margin-bottom:1rem">
+        <div class="knob-wrap">
+          <div class="knob-label">ALG <span class="val" id="val-alg">5</span></div>
+          <input type="range" id="sl-alg" min="0" max="7" value="5" oninput="onChParam('FM_ALG', this)">
+        </div>
+        <div class="knob-wrap">
+          <div class="knob-label">FB <span class="val" id="val-fb">2</span></div>
+          <input type="range" id="sl-fb" min="0" max="7" value="2" oninput="onChParam('FM_FB', this)">
+        </div>
+      </div>
+      <div id="algDisplay"></div>
+
+      <!-- Per-operator sliders -->
+      <div class="op-grid" id="opGrid"></div>
+    </div>
+  </div>
+
+  <!-- Bottom row: Transport | Console -->
+  <div class="row" style="align-items:stretch">
     <!-- Transport -->
     <div class="panel" style="min-width:240px;flex:0 0 240px">
       <div class="panel-title">Transport</div>
-      <label>IR file</label>
       <select id="presetSelect">
         <option value="/examples/ir/demo1-stage-loop.ir.canonical.json">demo1-stage-loop</option>
         <option value="/examples/ir/demo2-event-recovery.ir.canonical.json">demo2-event-recovery</option>
@@ -225,49 +262,13 @@
         <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
         <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
       </div>
-      <div class="status-row">
-        <span class="dot" id="dot"></span>
-        <span id="statusText">Press Play to start</span>
-      </div>
     </div>
 
-    <!-- Log -->
-    <div class="panel" style="flex:1;min-width:200px">
+    <!-- Console -->
+    <div class="panel" style="flex:1;min-width:200px;display:flex;flex-direction:column">
       <div class="panel-title">Console</div>
       <div id="log"></div>
     </div>
-  </div>
-
-  <!-- Source Editor Panel -->
-  <div class="panel" id="editorPanel">
-    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>GML Source — playhead follows playback position</span>
-      <span id="editorFileName" style="color:#555;font-size:0.65rem"></span>
-    </div>
-    <div id="editorWrap"></div>
-  </div>
-
-  <!-- FM Parameter Panel -->
-  <div class="panel" id="paramPanel">
-    <div class="panel-title">FM Parameters — live edit (writes to hardware registers immediately)</div>
-
-    <div class="ch-tabs" id="chTabs"></div>
-
-    <!-- Channel-level: ALG + FB -->
-    <div class="param-grid" style="margin-bottom:1rem">
-      <div class="knob-wrap">
-        <div class="knob-label">ALG <span class="val" id="val-alg">5</span></div>
-        <input type="range" id="sl-alg" min="0" max="7" value="5" oninput="onChParam('FM_ALG', this)">
-      </div>
-      <div class="knob-wrap">
-        <div class="knob-label">FB <span class="val" id="val-fb">2</span></div>
-        <input type="range" id="sl-fb" min="0" max="7" value="2" oninput="onChParam('FM_FB', this)">
-      </div>
-    </div>
-    <div id="algDisplay"></div>
-
-    <!-- Per-operator sliders -->
-    <div class="op-grid" id="opGrid"></div>
   </div>
 
   <script type="module">
@@ -382,9 +383,8 @@
       logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
     }
-    function setStatus(msg, playing = false) {
-      document.getElementById('statusText').textContent = msg;
-      document.getElementById('dot').className = 'dot' + (playing ? ' playing' : '');
+    function setStatus(_msg, _playing = false) {
+      // status row removed from UI
     }
 
     // -----------------------------------------------------------------------
