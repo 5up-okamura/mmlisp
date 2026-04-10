@@ -91,15 +91,29 @@ Phase 3 entry condition:
 
 ### Infrastructure (Cloudflare stack)
 
+**Phase 1 — R2 only (no DB)**
+
 ```
 Cloudflare Pages   — static frontend
-Cloudflare Workers — API (patch CRUD, search, fork, preview synthesis)
-Cloudflare D1      — metadata DB (patches, authors, forks, tags)
-Cloudflare R2      — patch files only (.gml / voice .json); no audio blobs
+Cloudflare Workers — API (patch serve, index rebuild)
+Cloudflare R2      — patch files (.gml / voice .json) + index.json
 ```
 
-All managed in a single `wrangler.toml`. Audio preview synthesized on-demand
-in Workers via WebAssembly YM2612 port (or delegated to the client browser).
+- `index.json` — full patch list built by Workers on upload; filtered client-side
+- Lineage resolved by following `fork_of` fields in patch metadata
+- Sufficient up to ~hundreds of patches
+
+**Phase 2 — add D1 when needed**
+
+Trigger: complex tag/category queries get slow, user auth / donation records required,
+or patch count exceeds thousands.
+
+```
++ Cloudflare D1    — metadata DB (patches, authors, forks, tags)
+```
+
+All managed in a single `wrangler.toml`.
+Audio preview synthesized on-demand in the client browser (JS emulator — no audio blobs in R2).
 
 ### Voice metadata schema
 
