@@ -115,6 +115,34 @@ or patch count exceeds thousands.
 All managed in a single `wrangler.toml`.
 Audio preview synthesized on-demand in the client browser (JS emulator — no audio blobs in R2).
 
+### R2 file naming convention
+
+File type is encoded in the extension so Workers can distinguish without reading content:
+
+```
+r2/
+  collections/
+    dx7-voices@1.0.0.collection.json      ← uploaded by author
+    tr-808@1.0.0.collection.json
+  patches/
+    dx7-voices--dx7-brass@1.0.0.json      ← auto-expanded from collection on upload
+    dx7-voices--dx7-brass-warm@1.0.0.json ← fork (same naming, fork_of in metadata)
+    tr-808--kick@1.0.0.json
+  index.json                               ← rebuilt on every upload
+```
+
+**Naming rules:**
+- Collection file: `{collection}@{version}.collection.json`
+- Voice file: `{collection}--{voice}@{version}.json` (`--` separates collection from voice)
+- Fork uses the same format; lineage is tracked via `fork_of` inside the JSON, not in the filename
+- Workers expand a `.collection.json` upload into individual `patches/` entries automatically
+
+**`import` syntax mapping:**
+```lisp
+(import "dx7-voices/dx7-brass" :from :patches)  ; single voice — resolves to dx7-voices--dx7-brass
+(import "dx7-voices"           :from :patches)  ; entire collection
+```
+
 ### Voice metadata schema
 
 `collection` is the proposed name for what might be called "series" — it covers both
@@ -148,7 +176,7 @@ real-model references ("TR-808 Collection") and curated sets ("PC Engine Wavefor
 
   // UX
   "description": "Warm brass lead, good for slower melodic lines.",
-  "demo_url": "https://www.youtube.com/watch?v=..."  // finished work link (YouTube, SoundCloud, etc.),
+  "demo_url": "https://www.youtube.com/watch?v=...", // finished work link (YouTube, SoundCloud, etc.),
 }
 ```
 
