@@ -72,27 +72,44 @@ Phase 3 entry condition:
 (import "my-arp"    :from "https://gml.community/patches/okamura/arp01")
 ```
 
-- `import` はマクロ展開として実装。コンパイル時に解決し IR に fold → ランタイム依存なし
-- パッチの種類:
-  - **関数エフェクト** (delay, arpeggiator, LFO, ...) — ir-player.js スケジューラーレイヤーで実装可能
-  - **FM 音色** — `VOICE_LOAD` オペコードとして v0.2 スコープに定義
-- バージョン固定 (`@1.2.3`) は再現性に必須
+- `import` resolves at compile time and folds into IR — no runtime dependency
+- Patch types:
+  - **Function effects** (delay, arpeggiator, LFO, ...) — implementable in the ir-player.js scheduler layer
+  - **FM voices** — define as a `VOICE_LOAD` opcode in v0.2 scope
+- Version pinning (`@1.2.3`) is required for reproducibility
 
-### パッチサーバー / コミュニティ
+### Patch server / community
 
-- `GET /patches/:slug[@version]` → GML スニペットまたは FM 音色 JSON
-- 作者 ID + ライセンス + バージョン履歴をパッチに付与
-- VGM コミュニティとの親和性：snesmusic / hcs64 等の既存フォーラム層
+- `GET /patches/:slug[@version]` → GML snippet or FM voice JSON
+- Each patch carries author ID, license, and version history
+- Natural fit with the existing VGM community (snesmusic, hcs64, etc.)
+- **Patch preview is a must-have**: before loading a voice or effect into a song,
+  users need to audition it in-browser — single-note preview with the target chip
 
-### フォーク & コラボレーション (GitHub モデル)
+### Fork & collaboration (GitHub model)
 
-- 誰かがアップした音色を別の人が **fork して派生版として公開**できる
-- fork 元への逆リンク（lineage）を保持 → 音色の系譜が辿れる
-- PR 的な「改善提案」を元作者に送れる仕組みも検討
-- 例: `dx7-brass` → fork → `dx7-brass-warmer` (by user B) → fork → `dx7-brass-warmer-megadrive` (by user C)
+- Any uploaded patch can be **forked** — publish a derived version under your own name
+- Reverse lineage links are preserved so the full derivation tree is browsable
+- "Suggest improvement" flow (PR-style) back to the original author
+- Example: `dx7-brass` → fork → `dx7-brass-warmer` (user B) → fork → `dx7-brass-warmer-megadrive` (user C)
 
-### マネタイゼーション
+### Multi-chip expansion
 
-- パッチ URL ごとに作者の wallet / Stripe を紐付け
-- 投げ銭（per-patch donation）
-- プレミアムパッチ（有料 DL）も選択肢
+Primary target is YM2612 (Mega Drive), but the community vision covers:
+
+| Chip | System | Type |
+|------|--------|------|
+| YM2612 | Sega Mega Drive | FM (OPN2) — current baseline |
+| YM2151 | arcade, X68000 | FM (OPM) |
+| YM2413 | Sega Master System, MSX | FM (OPLL, ROM voices) |
+| SID 6581/8580 | Commodore 64 | analog multi-mode filter |
+| 2A03 / RP2A07 | NES / Famicom | pulse + triangle + noise + DPCM |
+| HuC6280 | PC Engine | wavetable (32-byte waveforms) |
+
+Each chip needs its own target profile, register encoder, and JS emulator.
+The IR layer is designed to be chip-agnostic; only the backend (gml2gmb + driver) is chip-specific.
+
+### Monetization
+
+- Per-patch wallet / Stripe link for tip-jar donations
+- Optional paid patches (pay-to-download)
