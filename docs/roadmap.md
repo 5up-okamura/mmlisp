@@ -86,6 +86,48 @@ Phase 3 entry condition:
 - **Patch preview is a must-have**: before loading a voice or effect into a song,
   users need to audition it in-browser — single-note preview with the target chip
 
+### Voice metadata schema
+
+`collection` is the proposed name for what might be called "series" — it covers both
+real-model references ("TR-808 Collection") and curated sets ("PC Engine Waveforms").
+
+```jsonc
+{
+  // Identity
+  "id": "dx7-brass-warm",
+  "version": "1.2.0",
+  "fork_of": "dx7-brass@1.0.0",      // lineage — null if original
+
+  // Authorship
+  "author": "okamura",
+  "license": "CC-BY-4.0",            // CC0 | CC-BY | proprietary | ...
+  "created_at": "2026-04-10",
+  "updated_at": "2026-04-10",
+
+  // Classification (Cubase-style browsing)
+  "category": "Brass",               // Pad | Lead | Bass | Brass | Strings |
+                                     // Keys | Pluck | Organ | Drums | SFX | ...
+  "collection": "DX7 Voices",        // real model or curated set name
+  "tags": ["warm", "sustain", "fm"], // freeform keywords
+
+  // Technical
+  "chip": "YM2612",                  // target chip — required
+  "patch_type": "voice",             // voice | effect | sequence
+  "base_note": 60,                   // MIDI note for preview / tuning reference
+  "polyphony": "mono",               // mono | poly
+  "gml_version": "0.1",             // minimum GML spec version required
+
+  // UX
+  "description": "Warm brass lead, good for slower melodic lines.",
+  "preview_url": "https://gml.community/preview/dx7-brass-warm.mp3"
+}
+```
+
+**Category vocabulary** (aligned with GM / Cubase conventions, chip-music friendly):
+
+`Pad` · `Lead` · `Bass` · `Brass` · `Strings` · `Keys` · `Pluck` · `Organ` ·
+`Choir` · `Pipe` · `Drums` · `Percussion` · `SFX` · `Ambient` · `Noise`
+
 ### Fork & collaboration (GitHub model)
 
 - Any uploaded patch can be **forked** — publish a derived version under your own name
