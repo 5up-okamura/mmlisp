@@ -132,16 +132,58 @@ r2/
 ```
 
 **Naming rules:**
+
 - Collection file: `{collection}@{version}.collection.json`
 - Voice file: `{collection}--{voice}@{version}.json` (`--` separates collection from voice)
 - Fork uses the same format; lineage is tracked via `fork_of` inside the JSON, not in the filename
 - Workers expand a `.collection.json` upload into individual `patches/` entries automatically
 
 **`import` syntax mapping:**
+
 ```lisp
 (import "dx7-voices/dx7-brass" :from :patches)  ; single voice — resolves to dx7-voices--dx7-brass
 (import "dx7-voices"           :from :patches)  ; entire collection
 ```
+
+### PCM variant handling
+
+Some PCM samples (e.g., a TR-808 kick) have multiple natural variants:
+dry master, compressed, reverb tail, shortened, etc.
+
+**Case A — Independent voices (MVP, current approach)**
+
+Each variant is a separately named voice using the existing naming convention:
+
+```
+tr-808--kick@1.0.0.json          ← dry
+tr-808--kick-comp@1.0.0.json     ← compressed
+tr-808--kick-reverb@1.0.0.json   ← with reverb tail
+```
+
+- No new infrastructure; the `fork_of` field can optionally record the shared origin
+- Cannot interpolate between variants or generate them programmatically
+- Start here
+
+**Case B — Processing chain in metadata (future)**
+
+A single dry master `.wav` is stored in R2, and each voice declares a `processing` array
+that Workers apply at build time to produce the final sample:
+
+```jsonc
+{
+  "source_pcm": "tr-808--kick-dry@1.0.0.wav",
+  "processing": [
+    { "type": "compressor", "threshold_db": -12, "ratio": 4 },
+    { "type": "fade_out_ms", "ms": 5 }
+  ]
+}
+```
+
+- One master file; variants are derived declaratively
+- Enables programmatic generation of processing combinations
+- Requires a Workers audio processing pipeline — build when worth it
+
+For MVP, use Case A. Migrate to Case B when the processing pipeline justifies the investment.
 
 ### Voice metadata schema
 
