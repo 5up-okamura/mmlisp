@@ -115,6 +115,32 @@ driver-integration-time work and does not block the authoring-to-binary pipeline
 
 ## 11. Action Items
 
-1. Owner: okamura — tag v0.1-candidate in git
+1. Owner: okamura — tag v0.1-candidate in git ✓ (52f4e20)
 2. Owner: okamura — begin GMLDRV decoder implementation against frozen GMB format
 3. Owner: okamura — finalize opcode table as first GMLDRV integration milestone
+
+## 12. Post-Candidate Fixes (same session, 2026-04-13)
+
+The following fixes were applied after the initial freeze candidate tag and are included
+in the final v0.1-candidate commit:
+
+1. **fix(player): ahead-of-time scheduling via timestamped worklet writes** (e5557d6)
+   - Root cause: `setTimeout` per event in `_scheduleLoop` introduced ±10–20ms timer jitter,
+     making rhythm audibly irregular.
+   - Fix: all register writes carry an AudioContext timestamp (`when`); the AudioWorklet
+     inserts them into a frame-sorted `_timedQueue` and drains at each block boundary.
+     Worst-case timing error is now ±128/48000 ≈ 2.7ms (one worklet block).
+   - Audition result: timing confirmed correct by author.
+
+2. **feat: redesign demos as bar-aligned musical loops** (e5557d6, 56433bc)
+   - demo1-stage-loop: rewritten as 6-bar C-major loop (A×2 + B section), 38 IR events, 516B GMB.
+     Previous version had bar-misaligned loop body (360t) and turn section (180t).
+   - demo2-event-recovery: rewritten as 8-bar A-minor loop (intro 2bar + stress×4 + recovery 2bar),
+     47 IR events, 604B GMB. Previous version had misaligned phrase lengths.
+   - Canonical IR and GMB regenerated; IR match OK × 2, GMB valid × 2.
+
+3. **fix(player): auto-stop on preset change or file load** (52f4e20)
+   - Selecting a different preset or browsing a local file now calls `onStop()` automatically
+     to prevent stale playback state.
+
+All checks pass at final HEAD. Tag v0.1-candidate updated to 52f4e20.
