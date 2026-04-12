@@ -280,6 +280,7 @@
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
+    import { compileGML } from './src/gml2ir.js';
 
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
@@ -357,6 +358,9 @@
           gmlMode,
           playLineField,
           EditorView.lineWrapping,
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) scheduleCompile();
+          }),
         ],
       }),
       parent: document.getElementById('editorWrap'),
@@ -381,9 +385,9 @@
         const res = await fetch(gmlURL);
         if (!res.ok) throw new Error(res.status);
         const src = await res.text();
+        _lastFileName = gmlURL.split('/').pop();
         setEditorDoc(src);
-        document.getElementById('editorFileName').textContent =
-          gmlURL.split('/').pop();
+        document.getElementById('editorFileName').textContent = _lastFileName;
       } catch (e) {
         setEditorDoc('(failed to load: ' + gmlURL + ')');
       }
@@ -399,6 +403,42 @@
     function highlightLine(oneBased) {
       editorView.dispatch({ effects: setPlayLine.of(oneBased) });
     }
+
+    // -----------------------------------------------------------------------
+    // Live compile (debounced)
+    // -----------------------------------------------------------------------
+    let _compileTimer = null;
+    let _lastGoodIR = null;     // last successfully compiled IR object
+    let _lastFileName = 'untitled.gml';
+
+    function scheduleCompile() {
+      clearTimeout(_compileTimer);
+      _compileTimer = setTimeout(() => runCompile(), 400);
+    }
+
+    function runCompile() {
+      const src = editorView.state.doc.toString();
+      try {
+        const { ir, diagnostics } = compileGML(src, _lastFileName);
+        const errors = diagnostics.filter(d => d.severity === 'error');
+        if (errors.length > 0) {
+          for (const d of errors) {
+            log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
+          }
+          // Keep playing with last good IR — do not hotSwap
+          return;
+        }
+        _lastGoodIR = ir;
+        if (player) {
+          player.hotSwap(ir, () => workletNode?.port.postMessage({ type: 'flush' }));
+          log('Recompiled — continuing from bar boundary', 'info');
+        }
+      } catch (e) {
+        log('[compile] ' + e.message, 'err');
+      }
+    }
+
+    // Wire editor → live compile is registered in EditorState extensions above.
 
     // Load source for initial preset
     loadGmlSource(document.getElementById('presetSelect').value);
@@ -460,8 +500,15 @@
       if (player) player.stop();
       player = new IRPlayer(writeToWorklet);
       try {
-        log('Loading ' + currentIrURL + '…');
-        await player.loadURL(currentIrURL);
+        // Use last successfully compiled IR if available, else load from URL
+        if (_lastGoodIR) {
+          player.loadJSON(_lastGoodIR);
+          log('Playing (compiled source)', 'info');
+        } else {
+          log('Loading ' + currentIrURL + '…');
+          await player.loadURL(currentIrURL);
+          log('Playing', 'info');
+        }
         player.setOnLine(highlightLine);
         player.setOnTick((tick, bpm, ppqn) => {
           const beat = Math.floor(tick / ppqn);
@@ -487,7 +534,6 @@
           }
         });
         player.play(audioCtx);
-        log('Playing', 'info');
         setStatus('Playing', true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
@@ -520,11 +566,13 @@
       const opt = new Option(f.name, url, true, true);
       document.getElementById('presetSelect').append(opt);
       currentIrURL = url;
+      _lastGoodIR = null; // force reload from new source after compile
       onStop();
       log('File: ' + f.name);
     });
     document.getElementById('presetSelect').addEventListener('change', (e) => {
       currentIrURL = e.target.value;
+      _lastGoodIR = null;
       onStop();
       loadGmlSource(currentIrURL);
     });

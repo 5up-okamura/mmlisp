@@ -269,6 +269,72 @@ export class IRPlayer {
   }
 
   /**
+   * Hot-swap the IR while playback is running.
+   * The current playback position (in bars) is preserved where possible.
+   *
+   * Workflow:
+   *   1. Compute current tick from track-0 clock.
+   *   2. Flush worklet's timed queue (discard pre-scheduled writes).
+   *   3. Load new IR, rebuild channel map.
+   *   4. Re-enter _scheduleLoop starting from the bar-aligned tick.
+   *
+   * If playback is stopped, behaves like loadJSON().
+   *
+   * @param {object} irObj  Compiled IR object
+   * @param {Function} [flushFn]  Called to flush worklet queue: () => void
+   */
+  hotSwap(irObj, flushFn) {
+    // Snapshot current position before replacing state
+    let resumeTick = 0;
+    if (this._playing && this._tracks.length > 0) {
+      const now = this._audioContext.currentTime;
+      const secsPerTick = 60 / (this._bpm * this._ppqn);
+      const t0 = this._tracks[0];
+      const rawTick = (now - t0.audioTimeAtTick0) / secsPerTick;
+      // Align to bar boundary (bar = ppqn * 4)
+      const barTicks = this._ppqn * 4;
+      resumeTick = Math.max(0, Math.floor(rawTick / barTicks) * barTicks);
+    }
+
+    // Stop current scheduler (don't send key-off — avoid click)
+    this._playing = false;
+    if (this._schedulerTimer !== null) {
+      clearTimeout(this._schedulerTimer);
+      this._schedulerTimer = null;
+    }
+
+    // Flush worklet's pre-scheduled writes
+    if (flushFn) flushFn();
+
+    // Load new IR
+    this.loadJSON(irObj);
+
+    if (!this._audioContext) return; // playback was never started
+
+    // Restart from resume position
+    this._playing = true;
+    const now = this._audioContext.currentTime;
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    // Set audioTimeAtTick0 so that tick=resumeTick corresponds to now+25ms
+    const newTick0 = now + 0.025 - resumeTick * secsPerTick;
+    this._tracks = this._flattenTracks();
+    for (const t of this._tracks) {
+      t.startAudioTime = newTick0;
+      t.audioTimeAtTick0 = newTick0;
+      t.loopCount = 0;
+      // Skip events before resumeTick
+      t.flatIndex = 0;
+      while (
+        t.flatIndex < t.events.length &&
+        t.events[t.flatIndex].tick < resumeTick
+      ) {
+        t.flatIndex++;
+      }
+    }
+    this._scheduleLoop();
+  }
+
+  /**
    * Register a callback fired (approximately) when each event plays.
    * @param {((line: number) => void) | null} fn  1-based source line number
    */

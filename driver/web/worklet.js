@@ -8,6 +8,7 @@
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
  *   { type: 'reset' }
+ *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  */
 
 // WorkletGlobalScope: import the emulator as a module.
@@ -64,6 +65,9 @@ class YM2612Processor extends AudioWorkletProcessor {
       } else if (msg.type === "reset") {
         this._chip = new YM2612();
         this._writeQueue = [];
+        this._timedQueue = [];
+      } else if (msg.type === "flush") {
+        // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
       }
     };
