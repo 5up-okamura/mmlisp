@@ -5,7 +5,7 @@
   :title "Demo 1 Stage Loop"
   :author "okamura"
 
-  (part :main
+  (track :main
     :loop true
     :role :bgm
     :ch [:fm1]

@@ -64,15 +64,15 @@ Control requirements:
 
 ## 5. v0.1 Language Scope (minimum)
 
-- score / part / phrase blocks
+- score / track / phrase blocks
 - note / rest / tie
 - notes (sugar: batch note/rest sequence)
 - tempo set and multiplier
 - loop begin/end
 - parameter set/add (multiple KV pairs per call supported)
 - marker and jump
-- part-level channel hints (`:ch`)
-- part role and write-scope declaration (`:role`, `:write`)
+- track-level channel hints (`:ch`)
+- track role and write-scope declaration (`:role`, `:write`)
 - direct register write via REG_WRITE IR op
 - FM3 independent-operator mode via FM3_MODE IR op
 

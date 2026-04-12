@@ -7,7 +7,7 @@ const { parse } = require("./gml_parser");
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
-const LABELLED_FORMS = new Set(["part", "phrase"]);
+const LABELLED_FORMS = new Set(["track", "phrase"]);
 const KEYWORD_VALUE_KEYS = [
   ":author",
   ":title",

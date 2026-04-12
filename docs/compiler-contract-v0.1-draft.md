@@ -39,7 +39,7 @@ Run from tools directory.
 Accepted source constructs in v0.1 minimal compiler:
 
 1. `(score ...)`
-2. `(part ...)`
+2. `(track ...)`
 3. `(phrase ...)`
 4. `(note ...)`, `(rest ...)`, `(tie ...)`
 5. `(notes ...)` — sugar for batch note/rest sequences (expands to NOTE_ON / REST)
@@ -47,8 +47,8 @@ Accepted source constructs in v0.1 minimal compiler:
 7. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
 8. `(loop-begin ...)`, `(loop-end ...)`
 9. `:tempo` and `:len` phrase options
-10. part option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
-11. part option `:write` as write-scope vector (default: [:any])
+10. track option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
+11. track option `:write` as write-scope vector (default: [:any])
 
 `notes` expansion rules:
 
@@ -118,7 +118,7 @@ GMB output contract (draft):
 
 ## 6. Current Limitations
 
-1. One emitted track per part (track splitting and voice stealing are not yet implemented)
+1. One emitted IR track per source track (track splitting and voice stealing are not yet implemented)
 2. No macro expansion
 3. No reserved v0.2 command handling
 4. Error handling is basic and not yet code-based

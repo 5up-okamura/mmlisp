@@ -529,13 +529,13 @@ function validateTrack(track, diagnostics) {
   }
 }
 
-function compilePart(partNode, id, diagnostics) {
-  const items = partNode.items;
+function compileTrack(trackNode, id, diagnostics) {
+  const items = trackNode.items;
   const options = getKeywordMap(items, 2);
   const nameNode = items[1];
   const name = atomValue(nameNode)
     ? atomValue(nameNode).replace(/^:/, "")
-    : `part${id}`;
+    : `track${id}`;
 
   const channelNode = options.get(":ch");
   const channelCandidates = parseChannelCandidates(channelNode);
@@ -615,9 +615,9 @@ function compileDetailed(inputPath) {
       node &&
       node.kind === "list" &&
       node.items.length > 0 &&
-      isAtom(node.items[0], "part")
+      isAtom(node.items[0], "track")
     ) {
-      tracks.push(compilePart(node, tracks.length, diagnostics));
+      tracks.push(compileTrack(node, tracks.length, diagnostics));
     }
   }
 

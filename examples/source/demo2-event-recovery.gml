@@ -5,7 +5,7 @@
   :title "Demo 2 Event Recovery"
   :author "okamura"
 
-  (part :tense
+  (track :tense
     :loop true
     :role :bgm
     :ch [:fm1 :fm2]
