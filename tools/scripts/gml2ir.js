@@ -589,10 +589,142 @@ function sortObject(value) {
   return value;
 }
 
+function collectDefs(roots, diagnostics) {
+  const defs = new Map();
+  const defns = new Map();
+  const remaining = [];
+
+  for (const root of roots) {
+    if (root.kind !== "list" || root.items.length < 3) {
+      remaining.push(root);
+      continue;
+    }
+    const head = atomValue(root.items[0]);
+
+    if (head === "def") {
+      const name = atomValue(root.items[1]);
+      if (!name) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_DEF_NAME",
+          "def name must be a symbol",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      defs.set(name, root.items[2]);
+      continue;
+    }
+
+    if (head === "defn") {
+      const name = atomValue(root.items[1]);
+      if (!name) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_DEFN_NAME",
+          "defn name must be a symbol",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      const paramsNode = root.items[2];
+      if (
+        !paramsNode ||
+        paramsNode.kind !== "list" ||
+        paramsNode.bracket !== "[]"
+      ) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_DEFN_PARAMS",
+          "defn params must be a [...] vector",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      const params = paramsNode.items
+        .map((item) => atomValue(item))
+        .filter(Boolean);
+      const body = root.items.slice(3);
+      defns.set(name, { params, body, src: nodeSrc(root) });
+      continue;
+    }
+
+    remaining.push(root);
+  }
+
+  return { defs, defns, remaining };
+}
+
+function substituteNode(node, bindings) {
+  if (node.kind === "atom" && bindings.has(node.value)) {
+    const replacement = bindings.get(node.value);
+    return replacement ? { ...replacement } : node;
+  }
+  if (node.kind === "list") {
+    return {
+      ...node,
+      items: node.items.map((item) => substituteNode(item, bindings)),
+    };
+  }
+  return node;
+}
+
+function expandNode(node, defs, defns, depth) {
+  if (depth > 16) {
+    throw new Error("Macro expansion depth exceeded (possible recursion)");
+  }
+
+  if (node.kind === "atom" && defs.has(node.value)) {
+    return [{ ...defs.get(node.value) }];
+  }
+
+  if (node.kind !== "list") {
+    return [node];
+  }
+
+  const head = atomValue(node.items[0]);
+  if (head && defns.has(head)) {
+    const { params, body } = defns.get(head);
+    const args = node.items.slice(1);
+    const bindings = new Map();
+    for (let i = 0; i < params.length; i += 1) {
+      bindings.set(params[i], args[i] || null);
+    }
+    const expanded = [];
+    for (const bodyNode of body) {
+      const substituted = substituteNode(bodyNode, bindings);
+      expanded.push(...expandNode(substituted, defs, defns, depth + 1));
+    }
+    return expanded;
+  }
+
+  const newItems = [];
+  for (const item of node.items) {
+    newItems.push(...expandNode(item, defs, defns, depth + 1));
+  }
+  return [{ ...node, items: newItems }];
+}
+
+function expandRoots(roots, defs, defns) {
+  const result = [];
+  for (const root of roots) {
+    result.push(...expandNode(root, defs, defns, 0));
+  }
+  return result;
+}
+
 function compileDetailed(inputPath) {
   const diagnostics = [];
   const raw = fs.readFileSync(inputPath, "utf8");
-  const roots = parse(raw);
+  const parsed = parse(raw);
+  const { defs, defns, remaining } = collectDefs(parsed, diagnostics);
+  const roots = expandRoots(remaining, defs, defns);
   const score = roots.find(
     (node) =>
       node.kind === "list" &&

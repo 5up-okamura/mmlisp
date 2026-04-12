@@ -64,6 +64,7 @@ Control requirements:
 
 ## 5. v0.1 Language Scope (minimum)
 
+- def / defn (compile-time constants and template macros)
 - score / track / phrase blocks
 - note / rest / tie
 - notes (sugar: batch note/rest sequence)
