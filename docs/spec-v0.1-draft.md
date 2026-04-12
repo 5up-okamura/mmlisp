@@ -69,6 +69,7 @@ Control requirements:
 - score / track / phrase blocks
 - note / rest / tie
 - notes (sugar: batch note/rest sequence)
+- tuplet (sugar: equal-division note/rest sequence into a fixed total duration)
 - tempo set and multiplier
 - loop begin/end
 - parameter set/add (multiple KV pairs per call supported)
@@ -111,6 +112,23 @@ An optional `:len` keyword overrides the default length locally:
 This is a source-level sugar; the compiler expands it to NOTE_ON and REST IR
 events before output. `note` remains the canonical form for single notes,
 notes with individual lengths, or notes interleaved with non-note commands.
+
+`tuplet` sugar syntax:
+
+`(tuplet <total-len> :c4 :e4 :g4)` divides `total-len` equally among all
+elements and emits a NOTE*ON or REST per element. `*` denotes a rest.
+
+Rules:
+
+1. The first argument is a length value (e.g. `1/4`, `1/8`). If omitted the
+   phrase default length is used as the total duration.
+2. Each element receives `floor(total / n)` ticks; any remainder ticks are
+   added to the final element.
+3. `_` expands to REST; a note keyword (`:c4`) expands to NOTE_ON.
+4. Expansion happens before IR emission; no dedicated IR command exists.
+
+Example — quarter-note triplet: `(tuplet 1/4 :c4 :e4 :g4)`
+→ three NOTE_ON events each 40 ticks (120 ticks total).
 
 `param-set` / `param-add` multiple KV syntax:
 

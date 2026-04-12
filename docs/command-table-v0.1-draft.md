@@ -85,6 +85,13 @@ Execution model assumptions:
 Additional targets are allowed only through profile extension and must not be
 assumed by default.
 
+## Source Sugar Forms
+
+These forms are compiled away before IR emission. No opcode is assigned.
+
+1. `notes` — batch note/rest sequence using phrase default length per element
+2. `tuplet` — equal-division sequence into a fixed total duration (remainder to last element)
+
 ## Reserved Commands (v0.2 focus)
 
 1. CSM_ON

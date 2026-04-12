@@ -31,7 +31,7 @@
 
       (marker :turn)
       (note :f4 1/4)
-      (rest 1/8)
+      (tuplet 1/8 :g4 :e4 :c4)
       (jump :intro)
     )
   )

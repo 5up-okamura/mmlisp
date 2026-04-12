@@ -45,12 +45,13 @@ Accepted source constructs in v0.1 minimal compiler:
 5. `(phrase ...)`
 6. `(note ...)`, `(rest ...)`, `(tie ...)`
 7. `(notes ...)` — sugar for batch note/rest sequences (expands to NOTE_ON / REST)
-8. `(marker ...)`, `(jump ...)`
-9. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
-10. `(loop-begin ...)`, `(loop-end ...)`
-11. `:tempo` and `:len` phrase options
-12. track option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
-13. track option `:write` as write-scope vector (default: [:any])
+8. `(tuplet <len> ...)` — sugar for equal-division sequences (expands to NOTE_ON / REST)
+9. `(marker ...)`, `(jump ...)`
+10. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
+11. `(loop-begin ...)`, `(loop-end ...)`
+12. `:tempo` and `:len` phrase options
+13. track option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
+14. track option `:write` as write-scope vector (default: [:any])
 
 `notes` expansion rules:
 
@@ -58,6 +59,14 @@ Accepted source constructs in v0.1 minimal compiler:
 2. `_` is the rest symbol
 3. Optional `:len` keyword overrides default length: `(notes :len 1/16 :c4 :e4)`
 4. Expansion happens before IR emission; no dedicated IR command exists
+
+`tuplet` expansion rules:
+
+1. `(tuplet <len> :c4 :e4 :g4)` divides `len` ticks equally among n elements
+2. Each element receives `floor(total / n)` ticks; any remainder is added to the last element
+3. `_` is the rest symbol; note keywords expand to NOTE_ON
+4. First argument is the total length (fraction e.g. `1/4`); if omitted phrase `:len` is used as total
+5. Expansion happens before IR emission; no dedicated IR command exists
 
 `def` / `defn` rules:
 
@@ -129,9 +138,8 @@ GMB output contract (draft):
 ## 6. Current Limitations
 
 1. One emitted IR track per source track (track splitting and voice stealing are not yet implemented)
-2. No macro expansion
-3. No reserved v0.2 command handling
-4. Error handling is basic and not yet code-based
+2. No reserved v0.2 command handling
+3. Error handling is basic and not yet code-based
 
 ## 7. Next Steps
 
