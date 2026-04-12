@@ -140,7 +140,8 @@
       border: 1px solid #222;
       border-radius: 2px;
       padding: 0.5rem;
-      height: 5rem;
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
       font-size: 0.7rem;
       color: #4a7;
@@ -263,13 +264,15 @@
       <div class="btn-row">
         <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
         <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
-      </div>      <div style="display:flex;gap:1rem;margin-top:0.6rem">
+      </div>
+      <div style="display:flex;gap:1rem;margin-top:0.6rem">
         <div id="posDisplay" style="font-family:monospace;font-size:0.8rem;color:#7df;letter-spacing:0.05em">--:--</div>
         <div id="bpmDisplay" style="font-family:monospace;font-size:0.8rem;color:#fd7;letter-spacing:0.05em">-- BPM</div>
-      </div>    </div>
+      </div>
+    </div>
 
     <!-- Console -->
-    <div class="panel" style="flex:1;min-width:200px;display:flex;flex-direction:column">
+    <div class="panel" style="flex:1;min-width:200px;display:flex;flex-direction:column;overflow:hidden">
       <div class="panel-title">Console</div>
       <div id="log"></div>
     </div>
