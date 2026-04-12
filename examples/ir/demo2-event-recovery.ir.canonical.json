@@ -16,7 +16,7 @@
           "cmd": "TEMPO_SET",
           "src": {
             "column": 14,
-            "line": 14
+            "line": 15
           },
           "tick": 0
         },
@@ -27,55 +27,9 @@
           "cmd": "MARKER",
           "src": {
             "column": 8,
-            "line": 17
-          },
-          "tick": 0
-        },
-        {
-          "args": {
-            "length": 30,
-            "pitch": "a3"
-          },
-          "cmd": "NOTE_ON",
-          "src": {
-            "column": 8,
             "line": 18
           },
           "tick": 0
-        },
-        {
-          "args": {
-            "length": 30
-          },
-          "cmd": "TIE",
-          "src": {
-            "column": 8,
-            "line": 19
-          },
-          "tick": 30
-        },
-        {
-          "args": {
-            "length": 30
-          },
-          "cmd": "REST",
-          "src": {
-            "column": 8,
-            "line": 20
-          },
-          "tick": 60
-        },
-        {
-          "args": {
-            "length": 30,
-            "pitch": "c4"
-          },
-          "cmd": "NOTE_ON",
-          "src": {
-            "column": 8,
-            "line": 21
-          },
-          "tick": 90
         },
         {
           "args": {
@@ -85,9 +39,9 @@
           "cmd": "PARAM_SET",
           "src": {
             "column": 18,
-            "line": 23
+            "line": 19
           },
-          "tick": 120
+          "tick": 0
         },
         {
           "args": {
@@ -97,9 +51,199 @@
           "cmd": "PARAM_SET",
           "src": {
             "column": 18,
-            "line": 24
+            "line": 20
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 22
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 18,
+            "line": 22
+          },
+          "tick": 60
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 22,
+            "line": 22
           },
           "tick": 120
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 22
+          },
+          "tick": 180
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 30,
+            "line": 22
+          },
+          "tick": 240
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 34,
+            "line": 22
+          },
+          "tick": 300
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 38,
+            "line": 22
+          },
+          "tick": 360
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 42,
+            "line": 22
+          },
+          "tick": 420
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "g3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 24
+          },
+          "tick": 480
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "b3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 18,
+            "line": 24
+          },
+          "tick": 540
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "d4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 22,
+            "line": 24
+          },
+          "tick": 600
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "b3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 24
+          },
+          "tick": 660
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "g3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 30,
+            "line": 24
+          },
+          "tick": 720
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 34,
+            "line": 24
+          },
+          "tick": 780
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "g3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 36,
+            "line": 24
+          },
+          "tick": 840
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 40,
+            "line": 24
+          },
+          "tick": 900
         },
         {
           "args": {
@@ -110,7 +254,7 @@
             "column": 8,
             "line": 26
           },
-          "tick": 120
+          "tick": 960
         },
         {
           "args": {
@@ -122,7 +266,7 @@
             "column": 18,
             "line": 27
           },
-          "tick": 120
+          "tick": 960
         },
         {
           "args": {
@@ -134,11 +278,11 @@
             "column": 18,
             "line": 28
           },
-          "tick": 120
+          "tick": 960
         },
         {
           "args": {
-            "length": 30,
+            "length": 60,
             "pitch": "e4"
           },
           "cmd": "NOTE_ON",
@@ -146,66 +290,103 @@
             "column": 14,
             "line": 29
           },
-          "tick": 120
+          "tick": 960
         },
         {
           "args": {
-            "length": 30,
-            "pitch": "d4"
+            "length": 60,
+            "pitch": "g4"
           },
           "cmd": "NOTE_ON",
           "src": {
             "column": 18,
             "line": 29
           },
-          "tick": 150
+          "tick": 1020
         },
         {
           "args": {
-            "length": 30
+            "length": 60,
+            "pitch": "a4"
           },
-          "cmd": "REST",
+          "cmd": "NOTE_ON",
           "src": {
             "column": 22,
             "line": 29
           },
-          "tick": 180
+          "tick": 1080
         },
         {
           "args": {
-            "delta": 2,
-            "target": "FM_TL1"
+            "length": 60,
+            "pitch": "g4"
           },
-          "cmd": "PARAM_ADD",
+          "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 30
+            "column": 26,
+            "line": 29
           },
-          "tick": 210
+          "tick": 1140
         },
         {
           "args": {
-            "delta": -2,
-            "target": "TEMPO_SCALE"
+            "length": 60,
+            "pitch": "e4"
           },
-          "cmd": "PARAM_ADD",
+          "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 31
+            "column": 30,
+            "line": 29
           },
-          "tick": 210
+          "tick": 1200
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 34,
+            "line": 29
+          },
+          "tick": 1260
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "b3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 38,
+            "line": 29
+          },
+          "tick": 1320
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 42,
+            "line": 29
+          },
+          "tick": 1380
         },
         {
           "args": {
             "id": "stress",
-            "repeat": 8
+            "repeat": 4
           },
           "cmd": "LOOP_END",
           "src": {
             "column": 8,
-            "line": 32
+            "line": 30
           },
-          "tick": 210
+          "tick": 1440
         },
         {
           "args": {
@@ -214,9 +395,138 @@
           "cmd": "MARKER",
           "src": {
             "column": 8,
+            "line": 32
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "target": "FM_TL1",
+            "value": 40
+          },
+          "cmd": "PARAM_SET",
+          "src": {
+            "column": 18,
+            "line": 33
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "target": "TEMPO_SCALE",
+            "value": 0
+          },
+          "cmd": "PARAM_SET",
+          "src": {
+            "column": 18,
             "line": 34
           },
-          "tick": 210
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 36
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 18,
+            "line": 36
+          },
+          "tick": 1500
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 22,
+            "line": 36
+          },
+          "tick": 1560
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 36
+          },
+          "tick": 1620
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 30,
+            "line": 36
+          },
+          "tick": 1680
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 34,
+            "line": 36
+          },
+          "tick": 1740
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 36,
+            "line": 36
+          },
+          "tick": 1800
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 38,
+            "line": 36
+          },
+          "tick": 1860
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 8,
+            "line": 38
+          },
+          "tick": 1920
         },
         {
           "args": {
@@ -225,9 +535,21 @@
           "cmd": "REST",
           "src": {
             "column": 8,
-            "line": 35
+            "line": 39
           },
-          "tick": 210
+          "tick": 2160
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 8,
+            "line": 40
+          },
+          "tick": 2280
         },
         {
           "args": {
@@ -236,9 +558,9 @@
           "cmd": "JUMP",
           "src": {
             "column": 8,
-            "line": 36
+            "line": 42
           },
-          "tick": 330
+          "tick": 2400
         }
       ],
       "id": 0,
