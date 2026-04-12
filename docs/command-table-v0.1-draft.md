@@ -49,15 +49,15 @@ Execution model assumptions:
 
 7. PARAM_SET
 
-- Args: target, absolute value
-- Effect: set base parameter value
-- Validation: target must be supported in v0.1 profile
+- Args: target, absolute value (repeatable as KV pairs)
+- Effect: set base parameter value; multiple targets per source call supported
+- Validation: each target must be supported in v0.1 profile
 
 8. PARAM_ADD
 
-- Args: target, delta value
-- Effect: apply relative parameter change
-- Validation: target must be supported in v0.1 profile
+- Args: target, delta value (repeatable as KV pairs)
+- Effect: apply relative parameter change; multiple targets per source call supported
+- Validation: each target must be supported in v0.1 profile
 
 9. MARKER
 

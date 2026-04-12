@@ -44,7 +44,7 @@ Accepted source constructs in v0.1 minimal compiler:
 4. `(note ...)`, `(rest ...)`, `(tie ...)`
 5. `(notes ...)` — sugar for batch note/rest sequences (expands to NOTE_ON / REST)
 6. `(marker ...)`, `(jump ...)`
-7. `(param-set ...)`, `(param-add ...)`
+7. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
 8. `(loop-begin ...)`, `(loop-end ...)`
 9. `:tempo` and `:len` phrase options
 10. part option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
@@ -56,6 +56,13 @@ Accepted source constructs in v0.1 minimal compiler:
 2. `_` is the rest symbol
 3. Optional `:len` keyword overrides default length: `(notes :len 1/16 :c4 :e4)`
 4. Expansion happens before IR emission; no dedicated IR command exists
+
+`param-set` / `param-add` multiple KV rules:
+
+1. `(param-set :fm-fb 2 :fm-tl1 40)` emits two PARAM_SET events at the same tick
+2. Each keyword-value pair is expanded independently
+3. `param-add` follows the same pattern with PARAM_ADD events
+4. Single-pair form remains valid and unchanged
 
 Track role model:
 

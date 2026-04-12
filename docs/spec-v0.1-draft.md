@@ -69,7 +69,7 @@ Control requirements:
 - notes (sugar: batch note/rest sequence)
 - tempo set and multiplier
 - loop begin/end
-- parameter set/add
+- parameter set/add (multiple KV pairs per call supported)
 - marker and jump
 - part-level channel hints (`:ch`)
 - part role and write-scope declaration (`:role`, `:write`)
@@ -109,6 +109,13 @@ An optional `:len` keyword overrides the default length locally:
 This is a source-level sugar; the compiler expands it to NOTE_ON and REST IR
 events before output. `note` remains the canonical form for single notes,
 notes with individual lengths, or notes interleaved with non-note commands.
+
+`param-set` / `param-add` multiple KV syntax:
+
+A single call can set or add multiple targets at once:
+`(param-set :fm-fb 2 :fm-tl1 40 :fm-tl2 19)`.
+Each keyword-value pair emits a separate PARAM_SET (or PARAM_ADD) IR event
+at the same tick. The single-pair form remains valid.
 
 Non-goals for v0.1 language:
 

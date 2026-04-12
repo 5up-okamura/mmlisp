@@ -334,46 +334,58 @@ function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
     }
 
     if (head === "param-set") {
-      const target = canonicalTarget(atomValue(node.items[1]));
-      const value = parseIntLike(atomValue(node.items[2])) ?? 0;
-      if (!SUPPORTED_TARGETS.has(target)) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_UNSUPPORTED_TARGET",
-          `Unsupported param-set target: ${target}`,
-          nodeSrc(node.items[0]),
-          trackName,
-        );
+      let j = 1;
+      while (j + 1 < node.items.length) {
+        const targetNode = node.items[j];
+        const valueNode = node.items[j + 1];
+        const target = canonicalTarget(atomValue(targetNode));
+        const value = parseIntLike(atomValue(valueNode)) ?? 0;
+        if (!SUPPORTED_TARGETS.has(target)) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_UNSUPPORTED_TARGET",
+            `Unsupported param-set target: ${target}`,
+            nodeSrc(targetNode),
+            trackName,
+          );
+        }
+        events.push({
+          tick: state.tick,
+          cmd: "PARAM_SET",
+          args: { target, value },
+          src: nodeSrc(targetNode),
+        });
+        j += 2;
       }
-      events.push({
-        tick: state.tick,
-        cmd: "PARAM_SET",
-        args: { target, value },
-        src: nodeSrc(node.items[0]),
-      });
       continue;
     }
 
     if (head === "param-add") {
-      const target = canonicalTarget(atomValue(node.items[1]));
-      const delta = parseIntLike(atomValue(node.items[2])) ?? 0;
-      if (!SUPPORTED_TARGETS.has(target)) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_UNSUPPORTED_TARGET",
-          `Unsupported param-add target: ${target}`,
-          nodeSrc(node.items[0]),
-          trackName,
-        );
+      let j = 1;
+      while (j + 1 < node.items.length) {
+        const targetNode = node.items[j];
+        const deltaNode = node.items[j + 1];
+        const target = canonicalTarget(atomValue(targetNode));
+        const delta = parseIntLike(atomValue(deltaNode)) ?? 0;
+        if (!SUPPORTED_TARGETS.has(target)) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_UNSUPPORTED_TARGET",
+            `Unsupported param-add target: ${target}`,
+            nodeSrc(targetNode),
+            trackName,
+          );
+        }
+        events.push({
+          tick: state.tick,
+          cmd: "PARAM_ADD",
+          args: { target, delta },
+          src: nodeSrc(targetNode),
+        });
+        j += 2;
       }
-      events.push({
-        tick: state.tick,
-        cmd: "PARAM_ADD",
-        args: { target, delta },
-        src: nodeSrc(node.items[0]),
-      });
       continue;
     }
 
