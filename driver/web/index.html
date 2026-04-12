@@ -4,19 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GMLisp YM2612 Player</title>
+  <link rel="icon" href="data:,">
   <!-- CodeMirror 6 -->
   <link rel="stylesheet" href="https://esm.sh/@codemirror/view@6/dist/index.css">
   <style>
     * { box-sizing: border-box; }
-    html, body { height: 100%; }
+    html, body { height: 100%; margin: 0; }
     body {
       background: #111;
       color: #ddd;
       font-family: 'Courier New', monospace;
-      margin: 0;
       padding: 1.5rem;
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 0;
+      overflow: hidden;
+      height: 100dvh;
     }
     h1 { color: #7df; font-size: 1.1rem; margin: 0 0 0.3rem; }
     p.sub { color: #555; font-size: 0.75rem; margin: 0 0 1.5rem; }
@@ -137,8 +140,7 @@
       border: 1px solid #222;
       border-radius: 2px;
       padding: 0.5rem;
-      flex: 1;
-      min-height: 0;
+      height: 5rem;
       overflow-y: auto;
       font-size: 0.7rem;
       color: #4a7;
@@ -213,9 +215,9 @@
 </head>
 <body>
   <!-- Top row: GML Source | FM Parameters -->
-  <div class="row" style="align-items:stretch;flex:1;min-height:0">
+  <div class="row" style="align-items:stretch;min-height:0;flex-wrap:nowrap">
     <!-- Source Editor Panel -->
-    <div class="panel" id="editorPanel" style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div class="panel" id="editorPanel" style="flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden">
       <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
         <span>GML Source</span>
         <span id="editorFileName" style="color:#555;font-size:0.65rem"></span>
@@ -248,7 +250,7 @@
   </div>
 
   <!-- Bottom row: Transport | Console -->
-  <div class="row" style="align-items:stretch">
+  <div class="row" style="align-items:stretch;flex-wrap:nowrap">
     <!-- Transport -->
     <div class="panel" style="min-width:240px;flex:0 0 240px">
       <div class="panel-title">Transport</div>

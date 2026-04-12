@@ -332,20 +332,21 @@ export class IRPlayer {
   }
 
   _expandLoops(events) {
-    // Simple loop expansion: expand LOOP_BEGIN/END into repeated event sequences
-    // One-pass finite expansion; avoids infinite loops by capping at max iterations.
-    const result = [];
-    let i = 0;
+    // One-pass finite expansion with correct tick re-basing.
+    // Events that follow a loop block are shifted forward by the full loop
+    // duration (count * bodyDuration) so they play after all repetitions,
+    // not interleaved with early repetitions.
 
     function expand(evList, depth) {
       if (depth > 8) return []; // safety guard
       const out = [];
       let j = 0;
+      let tickOffset = 0; // accumulated tick shift from all loops processed so far
+
       while (j < evList.length) {
         const ev = evList[j];
         if (ev.cmd === "LOOP_BEGIN") {
-          // Find matching LOOP_END
-          const loopId = ev.args?.id;
+          // Find matching LOOP_END (ignoring nested pairs)
           let k = j + 1;
           let depth2 = 0;
           while (k < evList.length) {
@@ -359,23 +360,33 @@ export class IRPlayer {
           const loopBody = evList.slice(j + 1, k);
           const count = evList[k]?.args?.repeat ?? evList[k]?.args?.count ?? 2;
 
-          // Expand loop body 'count' times, with re-ticking
-          // Compute loop body duration
-          const lastTick =
-            loopBody.length > 0 ? loopBody[loopBody.length - 1].tick : 0;
-          const bodyDuration = lastTick - (loopBody[0]?.tick ?? 0);
-          const startTick = loopBody[0]?.tick ?? 0;
+          // Derive body duration from LOOP_BEGIN / LOOP_END ticks for accuracy.
+          // Falls back to first/last body event ticks if LOOP_END tick is missing.
+          const loopBeginTick = ev.tick;
+          const loopEndTick =
+            evList[k]?.tick ??
+            (loopBody.length > 0
+              ? loopBody[loopBody.length - 1].tick
+              : loopBeginTick);
+          const bodyDuration = loopEndTick - loopBeginTick;
 
+          // Expand body once (recursive), then stamp each repetition
+          const expandedBody = expand(loopBody, depth + 1);
           for (let rep = 0; rep < count; rep++) {
-            const offset = rep * (bodyDuration + 0); // approximate
-            for (const bodyEv of expand(loopBody, depth + 1)) {
-              out.push({ ...bodyEv, tick: bodyEv.tick + rep * bodyDuration });
+            for (const bodyEv of expandedBody) {
+              out.push({
+                ...bodyEv,
+                tick: bodyEv.tick + tickOffset + rep * bodyDuration,
+              });
             }
           }
 
+          // All subsequent events shift past the full loop duration
+          tickOffset += count * bodyDuration;
           j = k + 1; // skip past LOOP_END
         } else {
-          out.push(ev);
+          // Apply accumulated offset so post-loop events play after all reps
+          out.push({ ...ev, tick: ev.tick + tickOffset });
           j++;
         }
       }
