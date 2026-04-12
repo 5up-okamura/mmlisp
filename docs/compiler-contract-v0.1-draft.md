@@ -49,9 +49,10 @@ Accepted source constructs in v0.1 minimal compiler:
 9. `(marker ...)`, `(jump ...)`
 10. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
 11. `(loop-begin ...)`, `(loop-end ...)`
-12. `:tempo` and `:len` phrase options
+12. `:tempo` and `:len` phrase options (`:len` default: `1/8`)
 13. track option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
 14. track option `:write` as write-scope vector (default: [:any])
+15. track option `:ch` as channel hint vector (default: [:fm1])
 
 `notes` expansion rules:
 
