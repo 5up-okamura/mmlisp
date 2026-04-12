@@ -58,6 +58,11 @@ function normalizeListItems(items) {
       if (!rest) {
         continue;
       }
+      // Only split if the remainder looks like a value (digit, +/- followed by digit,
+      // or a quoted string start), not a keyword continuation (letter or hyphen).
+      if (/^[a-zA-Z-]/.test(rest)) {
+        continue;
+      }
       out.push(cloneAtom(item, key));
       out.push(cloneAtom(item, rest));
       split = true;

@@ -21,14 +21,14 @@
       (note :c4)
 
       (param-set :fm-tl1 40)
-      (param-set :tempo -scale 0)
+      (param-set :tempo-scale 0)
 
       (loop-begin :stress)
       (param-add :fm-tl1 -3)
-      (param-add :tempo -scale +2)
+      (param-add :tempo-scale +2)
       (notes :e4 :d4 _)
       (param-add :fm-tl1 +2)
-      (param-add :tempo -scale -2)
+      (param-add :tempo-scale -2)
       (loop-end :stress 8)
 
       (marker :recover)
