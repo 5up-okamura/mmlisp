@@ -281,7 +281,7 @@
     const { EditorView, Decoration, ViewPlugin } = await import('https://esm.sh/@codemirror/view@6');
     const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
     const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage } = await import('https://esm.sh/@codemirror/language@6');
-    const { oneDarkTheme } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
+    const { oneDarkTheme, oneDarkHighlightStyle } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
 
     // StateEffect / StateField for playhead line decoration
     const setPlayLine = StateEffect.define();
@@ -347,7 +347,7 @@
         doc: '(loading…)',
         extensions: [
           oneDarkTheme,
-          syntaxHighlighting(defaultHighlightStyle),
+          syntaxHighlighting(oneDarkHighlightStyle),
           gmlMode,
           playLineField,
           EditorView.lineWrapping,
