@@ -232,7 +232,9 @@ export class IRPlayer {
     // Build per-track scheduler state
     this._tracks = this._flattenTracks();
     for (const t of this._tracks) {
+      t.startAudioTime = this._startAudioTime;
       t.audioTimeAtTick0 = this._startAudioTime;
+      t.loopCount = 0;
       t.flatIndex = 0;
     }
 
@@ -324,7 +326,10 @@ export class IRPlayer {
           track.events.length > 0 &&
           track.flatIndex >= track.events.length
         ) {
-          track.audioTimeAtTick0 += track.loopDuration * secsPerTick;
+          track.loopCount++;
+          track.audioTimeAtTick0 =
+            track.startAudioTime +
+            track.loopCount * track.loopDuration * secsPerTick;
           track.flatIndex = 0;
           // Continue to schedule new-iteration events that fall within horizon
         } else {
@@ -369,7 +374,14 @@ export class IRPlayer {
       const lastTick = events.length > 0 ? events[events.length - 1].tick : 0;
       const loopDuration = jumpTick >= 0 ? jumpTick : lastTick + 1;
 
-      return { events, loopDuration, flatIndex: 0, audioTimeAtTick0: 0 };
+      return {
+        events,
+        loopDuration,
+        flatIndex: 0,
+        audioTimeAtTick0: 0,
+        loopCount: 0,
+        startAudioTime: 0,
+      };
     });
   }
 
