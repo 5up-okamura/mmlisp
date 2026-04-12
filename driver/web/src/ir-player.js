@@ -522,8 +522,8 @@ export class IRPlayer {
             }
           }
 
-          // All subsequent events shift past the full loop duration
-          tickOffset += count * bodyDuration;
+          // All subsequent events shift past the added loop duration
+          tickOffset += (count - 1) * bodyDuration;
           j = k + 1; // skip past LOOP_END
         } else {
           // Apply accumulated offset so post-loop events play after all reps
