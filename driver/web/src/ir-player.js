@@ -173,6 +173,9 @@ export class IRPlayer {
 
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
+
+    // Per-track scheduler state (set in play())
+    this._tracks = [];
   }
 
   /**
@@ -226,13 +229,13 @@ export class IRPlayer {
     // Initialize all channels with default voices
     this._initDefaultVoices();
 
-    // Flatten all tracks into a single sorted event list with channel assignments
-    this._flatEvents = this._flattenTracks();
-    this._flatIndex = 0;
+    // Build per-track scheduler state
+    this._tracks = this._flattenTracks();
+    for (const t of this._tracks) {
+      t.audioTimeAtTick0 = this._startAudioTime;
+      t.flatIndex = 0;
+    }
 
-    // Start lookahead scheduler
-    this._tick = 0;
-    this._audioTimeAtTick0 = this._startAudioTime;
     this._scheduleLoop();
   }
 
@@ -275,12 +278,6 @@ export class IRPlayer {
   // Internal
   // ---------------------------------------------------------------------------
 
-  _tickToAudioTime(tick) {
-    // seconds per tick = (60 / bpm) / ppqn
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
-    return this._audioTimeAtTick0 + tick * secsPerTick;
-  }
-
   _scheduleLoop() {
     if (!this._playing) return;
 
@@ -290,64 +287,90 @@ export class IRPlayer {
     }
 
     const now = this._audioContext.currentTime;
-    if (this._onTick) {
-      const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const horizon = now + this._schedulerLookahead;
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+
+    // _onTick: use track 0 position for the Bar:Beat display
+    if (this._onTick && this._tracks.length > 0) {
+      const t0 = this._tracks[0];
       const currentTick = Math.max(
         0,
-        (now - this._audioTimeAtTick0) / secsPerTick,
+        (now - t0.audioTimeAtTick0) / secsPerTick,
       );
       this._onTick(currentTick, this._bpm, this._ppqn);
     }
-    const horizon = now + this._schedulerLookahead;
 
-    while (this._flatIndex < this._flatEvents.length) {
-      const ev = this._flatEvents[this._flatIndex];
-      const evTime = this._tickToAudioTime(ev.tick);
+    for (const track of this._tracks) {
+      // Inner guard handles multiple loop-restarts within one lookahead window
+      let guard = 0;
+      while (guard++ < 16) {
+        while (track.flatIndex < track.events.length) {
+          const ev = track.events[track.flatIndex];
+          const evTime = track.audioTimeAtTick0 + ev.tick * secsPerTick;
+          if (evTime > horizon) break;
 
-      if (evTime > horizon) break;
+          this._dispatchEvent(ev, evTime);
+          if (this._onLine && ev.src?.line != null) {
+            const line = ev.src.line;
+            const delay = Math.max(0, evTime - now) * 1000;
+            setTimeout(() => this._onLine(line), delay);
+          }
+          track.flatIndex++;
+        }
 
-      // Dispatch immediately with precise audio timestamp; worklet applies at correct frame
-      this._dispatchEvent(ev, evTime);
-      if (this._onLine && ev.src?.line != null) {
-        const line = ev.src.line;
-        const delay = Math.max(0, evTime - now) * 1000;
-        setTimeout(() => this._onLine(line), delay);
+        // Per-track independent loop restart
+        if (
+          this._loop &&
+          track.events.length > 0 &&
+          track.flatIndex >= track.events.length
+        ) {
+          track.audioTimeAtTick0 += track.loopDuration * secsPerTick;
+          track.flatIndex = 0;
+          // Continue to schedule new-iteration events that fall within horizon
+        } else {
+          break;
+        }
       }
-
-      this._flatIndex++;
     }
 
-    const done = this._flatIndex >= this._flatEvents.length;
-    if (!done) {
-      this._schedulerTimer = setTimeout(
-        () => this._scheduleLoop(),
-        this._schedulerInterval,
-      );
-    } else if (this._loop && this._flatEvents.length > 0) {
-      // Advance the time base by one score duration so scheduled times stay continuous
-      const lastTick = this._flatEvents[this._flatEvents.length - 1].tick;
-      const secsPerTick = 60 / (this._bpm * this._ppqn);
-      this._audioTimeAtTick0 += (lastTick + 1) * secsPerTick;
-      this._flatIndex = 0;
-      this._scheduleLoop();
+    // Stop scheduler only when all tracks exhausted in non-loop mode
+    if (
+      !this._loop &&
+      this._tracks.every((t) => t.flatIndex >= t.events.length)
+    ) {
+      return;
     }
+
+    this._schedulerTimer = setTimeout(
+      () => this._scheduleLoop(),
+      this._schedulerInterval,
+    );
   }
 
   _flattenTracks() {
     if (!this._ir?.tracks) return [];
 
-    const events = [];
-    for (let ti = 0; ti < this._ir.tracks.length; ti++) {
-      const track = this._ir.tracks[ti];
+    return this._ir.tracks.map((track, ti) => {
       const chIndex = this._trackChannel.get(ti) ?? 0;
       const flatEvs = this._expandLoops(track.events ?? []);
-      for (const ev of flatEvs) {
-        events.push({ ...ev, _chIndex: chIndex, _trackIndex: ti });
+      const events = flatEvs
+        .map((ev) => ({ ...ev, _chIndex: chIndex, _trackIndex: ti }))
+        .sort((a, b) => a.tick - b.tick);
+
+      // Loop boundary = tick of the last JUMP event (phrase restart point).
+      // Falls back to lastTick + 1 (one tick past last event) if no JUMP present.
+      let jumpTick = -1;
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].cmd === "JUMP") {
+          jumpTick = events[i].tick;
+          break;
+        }
       }
-    }
-    // Sort by tick; preserve order within same tick
-    events.sort((a, b) => a.tick - b.tick);
-    return events;
+      const lastTick = events.length > 0 ? events[events.length - 1].tick : 0;
+      const loopDuration = jumpTick >= 0 ? jumpTick : lastTick + 1;
+
+      return { events, loopDuration, flatIndex: 0, audioTimeAtTick0: 0 };
+    });
   }
 
   _expandLoops(events) {
