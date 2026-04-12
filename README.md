@@ -41,6 +41,15 @@ Implemented toolchain stage:
 1. source (.gml) -> deterministic IR (.json)
 2. IR comparison against canonical snapshots with strict semantic checks
 3. draft GMB export and structural validation for demo artifacts
+4. Web player (driver/web/) with YM2612 AudioWorklet, GML editor, FM parameter panel
+
+Web player features:
+
+- Ahead-of-time timestamped writes to AudioWorklet (timing error ≤ 2.7ms)
+- Per-track independent loop scheduling with non-cumulative time base
+- Automatic track→channel mapping from IR `track.channel` field
+- CodeMirror 6 editor with GML syntax highlighting (One Dark), playhead line highlight
+- Bar:Beat position counter, FM parameter sliders with real-time playback feedback
 
 ## Key Draft Documents
 

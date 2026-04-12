@@ -142,6 +142,16 @@ function encode80(op) {
   return ((op.sl & 0x0f) << 4) | (op.rr & 0x0f);
 }
 
+// YM2612 channel name → 0-based channel index
+const CH_NAME_TO_INDEX = {
+  fm1: 0,
+  fm2: 1,
+  fm3: 2,
+  fm4: 3,
+  fm5: 4,
+  fm6: 5,
+};
+
 // ---------------------------------------------------------------------------
 // IRPlayer
 // ---------------------------------------------------------------------------
@@ -189,9 +199,9 @@ export class IRPlayer {
     this._currentTick = 0;
     this._loopCount.clear();
 
-    // Assign channels: each track maps to its index (capped to 5)
+    // Assign channels: use IR track.channel name if present, else auto-increment by track index
     for (let i = 0; i < (this._ir.tracks?.length ?? 0); i++) {
-      this._trackChannel.set(i, Math.min(i, 5));
+      this._assignChannel(i, this._ir.tracks[i]);
     }
 
     return this;
@@ -207,7 +217,7 @@ export class IRPlayer {
     this._currentTick = 0;
     this._loopCount.clear();
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
-      this._trackChannel.set(i, Math.min(i, 5));
+      this._assignChannel(i, irObj.tracks[i]);
     }
     return this;
   }
@@ -274,6 +284,17 @@ export class IRPlayer {
   /** Register a callback fired (approximately) when each PARAM_SET/PARAM_ADD event plays. */
   setOnParam(fn) {
     this._onParam = fn;
+  }
+
+  _assignChannel(trackIndex, track) {
+    // If the track declares a channel name (e.g. "fm2"), use it.
+    // Otherwise fall back to track index (auto-increment), capped at 5.
+    const name = track?.channel;
+    const chIndex =
+      name != null && CH_NAME_TO_INDEX[name] != null
+        ? CH_NAME_TO_INDEX[name]
+        : Math.min(trackIndex, 5);
+    this._trackChannel.set(trackIndex, chIndex);
   }
 
   // ---------------------------------------------------------------------------

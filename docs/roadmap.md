@@ -29,6 +29,22 @@ Current status: implemented.
 - Parameter modulation panel
 - Runtime intervention simulator
 
+Current status: partially implemented (driver/web/).
+
+Implemented:
+
+- YM2612 AudioWorklet emulator with ahead-of-time timestamped register writes
+- IR preset loader and local file browser with auto-stop on change
+- Playback transport (Play/Stop) with loop support
+- Per-track independent loop scheduling (each track loops on its own JUMP boundary)
+- Non-cumulative loop time base (startAudioTime + loopCount × loopDuration)
+- Automatic track→channel assignment from IR `track.channel` field; auto-increment fallback
+- CodeMirror 6 source editor with GML StreamLanguage syntax highlighting (One Dark)
+- Playhead line highlight synchronized to source events
+- Bar:Beat position display (25ms poll)
+- FM parameter panel: ALG/FB + op TL/AR/DR/RR/MUL sliders per channel
+- Slider values updated in real time from PARAM_SET/PARAM_ADD playback events
+
 Phase 1 exit signal:
 
 1. Demo songs can be edited and auditioned end-to-end in the web workflow

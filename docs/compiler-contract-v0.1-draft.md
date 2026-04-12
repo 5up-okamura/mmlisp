@@ -52,7 +52,7 @@ Accepted source constructs in v0.1 minimal compiler:
 12. `:tempo` and `:len` phrase options (`:len` default: `1/8`)
 13. track option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
 14. track option `:write` as write-scope vector (default: [:any])
-15. track option `:ch` as channel hint vector (default: [:fm1])
+15. track option `:ch` as channel hint vector (default: auto-increment by track index; track 0 → fm1, track 1 → fm2, …)
 
 `notes` expansion rules:
 

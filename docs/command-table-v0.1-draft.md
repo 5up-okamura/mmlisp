@@ -13,7 +13,7 @@ Default values:
 
 1. phrase `:len` — `1/8` (60 ticks at PPQN=120) when not specified
 2. `note` / `rest` / `tie` length — inherits phrase `:len` when omitted
-3. track `:ch` — `[:fm1]` when not specified
+3. track `:ch` — auto-increment by track index (track 0 → fm1, track 1 → fm2, …) when not specified
 4. track `:role` — `bgm` when not specified
 5. track `:write` — `[:any]` when not specified
 

@@ -144,3 +144,34 @@ in the final v0.1-candidate commit:
      to prevent stale playback state.
 
 All checks pass at final HEAD. Tag v0.1-candidate updated to 52f4e20.
+
+## 13. Web Player Improvements (post-tag, 2026-04-13)
+
+The following improvements were made to driver/web/ after §12 and are not
+covered by the v0.1 freeze checklist (web player is Phase 1 scope):
+
+1. **feat(editor): GML syntax highlighting, playback position, slider feedback** (6fb7968)
+   - CodeMirror 6 `StreamLanguage` tokenizer for GML: keywords, pitches, attributes, numbers,
+     comments, `_` placeholder each with distinct token types.
+   - Transport panel: `Bar:Beat` counter updated every 25ms via `setOnTick`.
+   - FM parameter sliders updated at playback time via `setOnParam`; avoids stale reads.
+   - `ir-player.js`: `setOnTick(fn)` and `setOnParam(fn)` public API.
+
+2. **fix(editor): use oneDarkHighlightStyle for readable syntax colors** (23a064d)
+   - Switched from `defaultHighlightStyle` (light-theme defaults) to `oneDarkHighlightStyle`.
+
+3. **fix(player): per-track independent loop scheduling** (404f48c)
+   - Each track carries its own `{ events, loopDuration, flatIndex, audioTimeAtTick0, loopCount }`.
+   - `loopDuration` = tick of the last JUMP in expanded events (phrase restart boundary).
+   - Tracks loop independently; different phrase lengths and start offsets are preserved.
+   - Enables canon/delay patterns without inter-track interference.
+
+4. **fix(player): non-cumulative loop time base** (eda697d)
+   - `audioTimeAtTick0 = startAudioTime + loopCount × loopDuration × secsPerTick`
+     replaces `+= loopDuration × secsPerTick` to prevent floating-point accumulation.
+
+5. **feat(player): resolve track.channel to ch index; auto-increment fallback** (72e0935)
+   - `CH_NAME_TO_INDEX` map: `fm1`→0 … `fm6`→5.
+   - `_assignChannel()` reads `track.channel` from IR; falls back to `Math.min(trackIndex, 5)`
+     (track 0→ch0, track 1→ch1, …) when no `:ch` is declared.
+   - Multi-track scores with explicit `:ch` assignments play on correct YM2612 channels.
