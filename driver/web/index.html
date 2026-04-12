@@ -263,7 +263,10 @@
       <div class="btn-row">
         <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
         <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
-      </div>      <div id="posDisplay" style="font-family:monospace;font-size:0.8rem;color:#7df;margin-top:0.6rem;letter-spacing:0.05em">--:--</div>    </div>
+      </div>      <div style="display:flex;gap:1rem;margin-top:0.6rem">
+        <div id="posDisplay" style="font-family:monospace;font-size:0.8rem;color:#7df;letter-spacing:0.05em">--:--</div>
+        <div id="bpmDisplay" style="font-family:monospace;font-size:0.8rem;color:#fd7;letter-spacing:0.05em">-- BPM</div>
+      </div>    </div>
 
     <!-- Console -->
     <div class="panel" style="flex:1;min-width:200px;display:flex;flex-direction:column">
@@ -457,11 +460,12 @@
         log('Loading ' + currentIrURL + '…');
         await player.loadURL(currentIrURL);
         player.setOnLine(highlightLine);
-        player.setOnTick((tick, _bpm, ppqn) => {
+        player.setOnTick((tick, bpm, ppqn) => {
           const beat = Math.floor(tick / ppqn);
           const bar = Math.floor(beat / 4) + 1;
           const beatInBar = (beat % 4) + 1;
           document.getElementById('posDisplay').textContent = bar + ' : ' + beatInBar;
+          document.getElementById('bpmDisplay').textContent = bpm + ' BPM';
         });
         const PARAM_KEY_MAP = { TL: 'tl', AR: 'ar', DR: 'dr', RR: 'rr', ML: 'mul' };
         player.setOnParam((ch, target, value) => {
@@ -498,6 +502,7 @@
       setStatus('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
       document.getElementById('posDisplay').textContent = '--:--';
+      document.getElementById('bpmDisplay').textContent = '-- BPM';
       editorView.dispatch({ effects: setPlayLine.of(-1) });
     }
 
