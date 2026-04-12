@@ -263,8 +263,7 @@
       <div class="btn-row">
         <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
         <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
-      </div>
-    </div>
+      </div>      <div id="posDisplay" style="font-family:monospace;font-size:0.8rem;color:#7df;margin-top:0.6rem;letter-spacing:0.05em">--:--</div>    </div>
 
     <!-- Console -->
     <div class="panel" style="flex:1;min-width:200px;display:flex;flex-direction:column">
@@ -281,7 +280,7 @@
     // -----------------------------------------------------------------------
     const { EditorView, Decoration, ViewPlugin } = await import('https://esm.sh/@codemirror/view@6');
     const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
-    const { defaultHighlightStyle, syntaxHighlighting } = await import('https://esm.sh/@codemirror/language@6');
+    const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage } = await import('https://esm.sh/@codemirror/language@6');
     const { oneDarkTheme } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
 
     // StateEffect / StateField for playhead line decoration
@@ -311,12 +310,45 @@
       provide: (f) => EditorView.decorations.from(f),
     });
 
+    // GML StreamLanguage for syntax highlighting
+    const gmlMode = StreamLanguage.define({
+      startState: () => ({}),
+      token(stream, _state) {
+        if (stream.eatSpace()) return null;
+        if (stream.peek() === ';') { stream.skipToEnd(); return 'comment'; }
+        if (stream.peek() === '"') {
+          stream.next();
+          while (!stream.eol()) { if (stream.next() === '"') break; }
+          return 'string';
+        }
+        if (stream.eat('(') || stream.eat(')')) return 'bracket';
+        if (stream.match(/^[+-]?\d+(?:\/\d+)?/)) return 'number';
+        if (stream.eat(':')) {
+          if (stream.match(/^[a-g][#b]?\d/)) return 'string'; // pitch :c4 :gs3 :bb5
+          stream.match(/^[a-zA-Z][a-zA-Z0-9#_-]*/);
+          return 'atom';
+        }
+        if (stream.eat('_')) return 'atom';
+        if (stream.match(/^[a-zA-Z][a-zA-Z0-9-]*/)) {
+          const KW = new Set([
+            'score','track','phrase','note','notes','rest','tie','tuplet',
+            'loop-begin','loop-end','marker','jump',
+            'param-set','param-add','def','defn','true','false',
+          ]);
+          return KW.has(stream.current()) ? 'keyword' : 'variable';
+        }
+        stream.next();
+        return null;
+      },
+    });
+
     const editorView = new EditorView({
       state: EditorState.create({
         doc: '(loading…)',
         extensions: [
           oneDarkTheme,
           syntaxHighlighting(defaultHighlightStyle),
+          gmlMode,
           playLineField,
           EditorView.lineWrapping,
         ],
@@ -425,6 +457,28 @@
         log('Loading ' + currentIrURL + '…');
         await player.loadURL(currentIrURL);
         player.setOnLine(highlightLine);
+        player.setOnTick((tick, _bpm, ppqn) => {
+          const beat = Math.floor(tick / ppqn);
+          const bar = Math.floor(beat / 4) + 1;
+          const beatInBar = (beat % 4) + 1;
+          document.getElementById('posDisplay').textContent = bar + ' : ' + beatInBar;
+        });
+        const PARAM_KEY_MAP = { TL: 'tl', AR: 'ar', DR: 'dr', RR: 'rr', ML: 'mul' };
+        player.setOnParam((ch, target, value) => {
+          if (ch !== selectedCh) return;
+          if (target === 'FM_ALG') {
+            setSlider('sl-alg', 'val-alg', value);
+            document.getElementById('algDisplay').textContent = ALG_DESC[value] ?? '';
+          } else if (target === 'FM_FB') {
+            setSlider('sl-fb', 'val-fb', value);
+          } else {
+            const m = target.match(/^FM_(TL|AR|DR|RR|ML)(\d)$/);
+            if (m) {
+              const key = PARAM_KEY_MAP[m[1]];
+              setSlider(`sl-op${m[2]}-${key}`, `val-op${m[2]}-${key}`, value);
+            }
+          }
+        });
         player.play(audioCtx);
         log('Playing', 'info');
         setStatus('Playing', true);
@@ -443,6 +497,7 @@
       log('Stopped');
       setStatus('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
+      document.getElementById('posDisplay').textContent = '--:--';
       editorView.dispatch({ effects: setPlayLine.of(-1) });
     }
 

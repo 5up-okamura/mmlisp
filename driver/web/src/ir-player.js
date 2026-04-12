@@ -165,6 +165,8 @@ export class IRPlayer {
     this._schedulerInterval = 25; // ms
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
+    this._onTick = null; // (tick, bpm, ppqn) => void — called each scheduler interval
+    this._onParam = null; // (chIndex, target, value) => void — called when a param event plays
 
     // Per-channel register state (for incremental PARAM_ADD)
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
@@ -259,6 +261,16 @@ export class IRPlayer {
     this._onLine = fn;
   }
 
+  /** Register a callback fired each scheduler interval with the current playback position. */
+  setOnTick(fn) {
+    this._onTick = fn;
+  }
+
+  /** Register a callback fired (approximately) when each PARAM_SET/PARAM_ADD event plays. */
+  setOnParam(fn) {
+    this._onParam = fn;
+  }
+
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
@@ -278,6 +290,14 @@ export class IRPlayer {
     }
 
     const now = this._audioContext.currentTime;
+    if (this._onTick) {
+      const secsPerTick = 60 / (this._bpm * this._ppqn);
+      const currentTick = Math.max(
+        0,
+        (now - this._audioTimeAtTick0) / secsPerTick,
+      );
+      this._onTick(currentTick, this._bpm, this._ppqn);
+    }
     const horizon = now + this._schedulerLookahead;
 
     while (this._flatIndex < this._flatEvents.length) {
@@ -450,12 +470,14 @@ export class IRPlayer {
     const target = (ev.args?.target ?? "").toUpperCase();
     const value = ev.args?.value ?? 0;
     const isAdd = ev.cmd === "PARAM_ADD";
+    let nextValue = null;
 
     // Helper to clamp and apply
     const set = (get, apply, min, max) => {
       const cur = get();
       const next = Math.max(min, Math.min(max, isAdd ? cur + value : value));
       apply(next);
+      nextValue = next;
     };
 
     switch (target) {
@@ -574,6 +596,17 @@ export class IRPlayer {
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
       default:
         break;
+    }
+
+    if (this._onParam && nextValue !== null) {
+      const delay = Math.max(
+        0,
+        (when - (this._audioContext?.currentTime ?? 0)) * 1000,
+      );
+      const t = target,
+        c = ch,
+        v = nextValue;
+      setTimeout(() => this._onParam(c, t, v), delay);
     }
   }
 
