@@ -42,12 +42,20 @@ Accepted source constructs in v0.1 minimal compiler:
 2. `(part ...)`
 3. `(phrase ...)`
 4. `(note ...)`, `(rest ...)`, `(tie ...)`
-5. `(marker ...)`, `(jump ...)`
-6. `(param-set ...)`, `(param-add ...)`
-7. `(loop-begin ...)`, `(loop-end ...)`
-8. `:tempo` and `:len` phrase options
-9. part option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
-10. part option `:write` as write-scope vector (default: [:any])
+5. `(notes ...)` — sugar for batch note/rest sequences (expands to NOTE_ON / REST)
+6. `(marker ...)`, `(jump ...)`
+7. `(param-set ...)`, `(param-add ...)`
+8. `(loop-begin ...)`, `(loop-end ...)`
+9. `:tempo` and `:len` phrase options
+10. part option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
+11. part option `:write` as write-scope vector (default: [:any])
+
+`notes` expansion rules:
+
+1. `(notes :c4 :e4 _ :g4)` expands to `(note :c4)` `(note :e4)` `(rest)` `(note :g4)` using phrase `:len`
+2. `_` is the rest symbol
+3. Optional `:len` keyword overrides default length: `(notes :len 1/16 :c4 :e4)`
+4. Expansion happens before IR emission; no dedicated IR command exists
 
 Track role model:
 

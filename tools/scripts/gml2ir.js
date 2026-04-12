@@ -272,6 +272,45 @@ function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
       continue;
     }
 
+    if (head === "notes") {
+      const notesOpts = getKeywordMap(node.items, 1);
+      const notesLenNode = notesOpts.get(":len");
+      const notesLen = parseLengthToken(
+        atomValue(notesLenNode),
+        phraseDefaultLen,
+      );
+      for (let j = 1; j < node.items.length; j += 1) {
+        const elem = node.items[j];
+        const val = atomValue(elem);
+        if (!val || val.startsWith(":len")) {
+          continue;
+        }
+        if (val === ":len") {
+          j += 1;
+          continue;
+        }
+        if (val === "_") {
+          events.push({
+            tick: state.tick,
+            cmd: "REST",
+            args: { length: notesLen },
+            src: nodeSrc(elem),
+          });
+          state.tick += notesLen;
+          continue;
+        }
+        const pitch = val.replace(/^:/, "");
+        events.push({
+          tick: state.tick,
+          cmd: "NOTE_ON",
+          args: { pitch, length: notesLen },
+          src: nodeSrc(elem),
+        });
+        state.tick += notesLen;
+      }
+      continue;
+    }
+
     if (head === "marker") {
       const id = atomValue(node.items[1]);
       events.push({

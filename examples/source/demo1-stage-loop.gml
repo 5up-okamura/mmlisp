@@ -18,10 +18,7 @@
       (param-set :fm-fb 2)
 
       (loop-begin :a)
-      (note :c4)
-      (note :e4)
-      (note :g4)
-      (rest 1/8)
+      (notes :c4 :e4 :g4 _)
       (param-add :fm-fb +1)
       (note :a4)
       (rest 1/8)

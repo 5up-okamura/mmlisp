@@ -66,6 +66,7 @@ Control requirements:
 
 - score / part / phrase blocks
 - note / rest / tie
+- notes (sugar: batch note/rest sequence)
 - tempo set and multiplier
 - loop begin/end
 - parameter set/add
@@ -98,6 +99,16 @@ Fractional part encodes DT direction and magnitude.
 The compiler quantizes to the nearest valid (ML, DT) pair per frame.
 Pitch envelopes are authored as PARAM_ADD sequences targeting `:op1-ratio` through `:op4-ratio`.
 GMLisp macros such as `pitch-glide` can generate these sequences at authoring time.
+
+`notes` sugar syntax:
+
+`(notes :c4 :e4 _ :g4)` expands to individual `(note ...)` and `(rest ...)` calls
+using the enclosing phrase `:len` as default length. `_` denotes a rest.
+An optional `:len` keyword overrides the default length locally:
+`(notes :len 1/16 :c4 :e4 _ :g4)`.
+This is a source-level sugar; the compiler expands it to NOTE_ON and REST IR
+events before output. `note` remains the canonical form for single notes,
+notes with individual lengths, or notes interleaved with non-note commands.
 
 Non-goals for v0.1 language:
 
