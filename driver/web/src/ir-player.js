@@ -161,8 +161,8 @@ export class IRPlayer {
     this._startAudioTime = 0;
     this._audioContext = null;
     this._schedulerTimer = null;
-    this._schedulerLookahead = 0.1; // seconds
-    this._schedulerInterval = 50; // ms
+    this._schedulerLookahead = 0.2; // seconds
+    this._schedulerInterval = 25; // ms
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
 
@@ -272,6 +272,11 @@ export class IRPlayer {
   _scheduleLoop() {
     if (!this._playing) return;
 
+    // Resume if the AudioContext was suspended (e.g. tab switch / system interrupt)
+    if (this._audioContext.state === "suspended") {
+      this._audioContext.resume();
+    }
+
     const now = this._audioContext.currentTime;
     const horizon = now + this._schedulerLookahead;
 
@@ -352,7 +357,7 @@ export class IRPlayer {
             k++;
           }
           const loopBody = evList.slice(j + 1, k);
-          const count = evList[k]?.args?.count ?? 2;
+          const count = evList[k]?.args?.repeat ?? evList[k]?.args?.count ?? 2;
 
           // Expand loop body 'count' times, with re-ticking
           // Compute loop body duration
