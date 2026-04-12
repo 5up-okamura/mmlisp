@@ -457,10 +457,12 @@
       const opt = new Option(f.name, url, true, true);
       document.getElementById('presetSelect').append(opt);
       currentIrURL = url;
+      onStop();
       log('File: ' + f.name);
     });
     document.getElementById('presetSelect').addEventListener('change', (e) => {
       currentIrURL = e.target.value;
+      onStop();
       loadGmlSource(currentIrURL);
     });
 
