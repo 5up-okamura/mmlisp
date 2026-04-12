@@ -65,6 +65,7 @@ Control requirements:
 ## 5. v0.1 Language Scope (minimum)
 
 - def / defn (compile-time constants and template macros)
+  - see subsection below
 - score / track / phrase blocks
 - note / rest / tie
 - notes (sugar: batch note/rest sequence)
@@ -117,6 +118,32 @@ A single call can set or add multiple targets at once:
 `(param-set :fm-fb 2 :fm-tl1 40 :fm-tl2 19)`.
 Each keyword-value pair emits a separate PARAM_SET (or PARAM_ADD) IR event
 at the same tick. The single-pair form remains valid.
+
+`def` / `defn` compile-time expansion:
+
+`(def name value)` binds a compile-time constant. All occurrences of `name` in
+subsequent forms are replaced with `value` before compilation.
+
+`(defn name [params] body...)` defines a template macro. A call `(name arg1 arg2)`
+is expanded by substituting params in the body. Rules:
+
+1. `def` and `defn` must appear at top level, before `(score ...)`
+2. `defn` may call other `defn` (chain expansion is supported)
+3. Recursive expansion is rejected; depth limit is 16
+4. Expansion is purely compile-time; no IR commands are emitted for `def`/`defn`
+5. `def` values must be literals (numbers or keywords); `defn` bodies are arbitrary forms
+
+Example:
+
+```
+(def main-tempo 120)
+(defn trill [a b len]
+  (note a len) (note b len))
+
+(score ...
+  (phrase :riff :tempo main-tempo
+    (trill :c4 :e4 1/16)))
+```
 
 Non-goals for v0.1 language:
 

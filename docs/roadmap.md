@@ -15,6 +15,13 @@ Current concrete outputs:
 4. GMB format draft
 5. freeze checklist
 
+## Phase 0.5: Editor Tooling
+
+- VS Code syntax highlighting via custom TextMate grammar (gml-syntax/)
+- Format-on-save via format-gml.js
+
+Current status: implemented.
+
 ## Phase 1: Web Authoring Environment (GMLisp Live)
 
 - Editor and diagnostics

@@ -19,6 +19,7 @@ This repository starts with specification-first development:
 - tools/: compiler and web tooling
 - driver/: GMLDRV implementation
 - examples/: demo songs and test assets
+- gml-syntax/: VS Code TextMate grammar for .gml syntax highlighting
 
 ## Naming
 
