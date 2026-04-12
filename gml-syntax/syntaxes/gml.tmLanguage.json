@@ -1,0 +1,105 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "source.gml",
+  "name": "GML",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#def-form" },
+    { "include": "#defn-form" },
+    { "include": "#structural-head" },
+    { "include": "#note-head" },
+    { "include": "#flow-head" },
+    { "include": "#param-head" },
+    { "include": "#boolean" },
+    { "include": "#keyword" },
+    { "include": "#rest-shorthand" },
+    { "include": "#fraction" },
+    { "include": "#number" },
+    { "include": "#paren" },
+    { "include": "#bracket" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.semicolon.gml",
+      "match": ";.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.gml",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.gml",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "def-form": {
+      "match": "(?<=\\()\\s*(def)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
+      "captures": {
+        "1": { "name": "storage.type.gml" },
+        "2": { "name": "variable.other.constant.gml" }
+      }
+    },
+    "defn-form": {
+      "match": "(?<=\\()\\s*(defn)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
+      "captures": {
+        "1": { "name": "storage.type.gml" },
+        "2": { "name": "entity.name.function.definition.gml" }
+      }
+    },
+    "structural-head": {
+      "match": "(?<=\\()\\s*(score|track|phrase)(?=[\\s)])",
+      "captures": {
+        "1": { "name": "keyword.control.gml" }
+      }
+    },
+    "note-head": {
+      "match": "(?<=\\()\\s*(note|notes|rest|tie)(?=[\\s)])",
+      "captures": {
+        "1": { "name": "entity.name.function.gml" }
+      }
+    },
+    "flow-head": {
+      "match": "(?<=\\()\\s*(marker|jump|loop-begin|loop-end)(?=[\\s)])",
+      "captures": {
+        "1": { "name": "keyword.other.control-flow.gml" }
+      }
+    },
+    "param-head": {
+      "match": "(?<=\\()\\s*(param-set|param-add)(?=[\\s)])",
+      "captures": {
+        "1": { "name": "support.function.gml" }
+      }
+    },
+    "boolean": {
+      "name": "constant.language.boolean.gml",
+      "match": "(?<=[\\s(])(?:true|false)(?=[\\s)])"
+    },
+    "keyword": {
+      "name": "constant.other.keyword.gml",
+      "match": ":[a-zA-Z][a-zA-Z0-9_+-]*"
+    },
+    "rest-shorthand": {
+      "name": "entity.name.function.gml",
+      "match": "(?<=\\s)_(?=[\\s)])"
+    },
+    "fraction": {
+      "name": "constant.numeric.fraction.gml",
+      "match": "\\d+/\\d+"
+    },
+    "number": {
+      "name": "constant.numeric.integer.gml",
+      "match": "(?<=[\\s(\\[])[+-]?\\d+(?=[\\s)\\]])"
+    },
+    "paren": {
+      "name": "punctuation.section.parens.gml",
+      "match": "[()]"
+    },
+    "bracket": {
+      "name": "punctuation.section.brackets.gml",
+      "match": "[\\[\\]]"
+    }
+  }
+}
