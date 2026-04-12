@@ -34,13 +34,29 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._nativeR = new Float32Array(bufSize);
     this._nativePos = 0; // fractional position in native buffer
 
-    // Register-write queue (handled at block boundary to avoid race conditions)
+    // Untimed write queue: applied immediately at the next block boundary
     this._writeQueue = [];
+    // Timed write queue: [{frame, port, addr, data}] sorted ascending by target frame
+    this._timedQueue = [];
 
     this.port.onmessage = (event) => {
       const msg = event.data;
       if (msg.type === "write") {
-        this._writeQueue.push(msg);
+        if (msg.when != null) {
+          // Insert into _timedQueue maintaining sorted order by target audio frame
+          const targetFrame = Math.round(msg.when * sampleRate);
+          const entry = {
+            frame: targetFrame,
+            port: msg.port ?? 0,
+            addr: msg.addr,
+            data: msg.data,
+          };
+          let i = this._timedQueue.length;
+          while (i > 0 && this._timedQueue[i - 1].frame > targetFrame) i--;
+          this._timedQueue.splice(i, 0, entry);
+        } else {
+          this._writeQueue.push(msg);
+        }
       } else if (msg.type === "writes") {
         for (const op of msg.ops) {
           this._writeQueue.push(op);
@@ -48,6 +64,7 @@ class YM2612Processor extends AudioWorkletProcessor {
       } else if (msg.type === "reset") {
         this._chip = new YM2612();
         this._writeQueue = [];
+        this._timedQueue = [];
       }
     };
   }
@@ -56,10 +73,19 @@ class YM2612Processor extends AudioWorkletProcessor {
     const outL = outputs[0][0];
     const outR = outputs[0][1] ?? outputs[0][0]; // mono fallback
 
-    // Drain the write queue first
+    // Drain untimed writes (voice init, resets, etc.)
     while (this._writeQueue.length > 0) {
       const op = this._writeQueue.shift();
       this._chip.write(op.port ?? 0, op.addr, op.data);
+    }
+    // Drain timed writes scheduled for this block
+    const blockEnd = currentFrame + WORKLET_BLOCK;
+    while (
+      this._timedQueue.length > 0 &&
+      this._timedQueue[0].frame < blockEnd
+    ) {
+      const op = this._timedQueue.shift();
+      this._chip.write(op.port, op.addr, op.data);
     }
 
     const blockSize = outL.length; // always 128

@@ -392,8 +392,8 @@
     // -----------------------------------------------------------------------
     // Audio
     // -----------------------------------------------------------------------
-    function writeToWorklet(port, addr, data) {
-      workletNode?.port.postMessage({ type: 'write', port, addr, data });
+    function writeToWorklet(port, addr, data, when) {
+      workletNode?.port.postMessage({ type: 'write', port, addr, data, when });
     }
 
     async function initAudio() {

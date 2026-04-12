@@ -286,12 +286,11 @@ export class IRPlayer {
 
       if (evTime > horizon) break;
 
-      // Schedule at evTime (or immediately if in the past)
-      const delay = Math.max(0, evTime - now) * 1000;
-      const evCopy = { ...ev };
-      setTimeout(() => this._dispatchEvent(evCopy), delay);
+      // Dispatch immediately with precise audio timestamp; worklet applies at correct frame
+      this._dispatchEvent(ev, evTime);
       if (this._onLine && ev.src?.line != null) {
         const line = ev.src.line;
+        const delay = Math.max(0, evTime - now) * 1000;
         setTimeout(() => this._onLine(line), delay);
       }
 
@@ -396,9 +395,7 @@ export class IRPlayer {
     return expand(events, 0);
   }
 
-  _dispatchEvent(ev) {
-    if (!this._playing) return;
-
+  _dispatchEvent(ev, when) {
     const ch = ev._chIndex ?? 0;
     const port = ch >= 3 ? 1 : 0;
     const chOffset = ch % 3;
@@ -418,28 +415,23 @@ export class IRPlayer {
           port,
           0xa4 + chOffset,
           ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+          when,
         );
-        this._write(port, 0xa0 + chOffset, fnum & 0xff);
+        this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
         // Key on: all 4 operators
-        this._write(0, 0x28, 0xf0 | chKey);
+        this._write(0, 0x28, 0xf0 | chKey, when);
 
-        // Schedule note off at tick + length
+        // Key-off scheduled at exact audio time (5ms before next note for envelope decay)
         const lengthTicks = ev.args?.length ?? this._ppqn / 2;
-        const offDelay = lengthTicks * (60 / (this._bpm * this._ppqn)) * 1000;
-        setTimeout(
-          () => {
-            if (this._playing) {
-              this._write(0, 0x28, chKey); // key off (op mask = 0)
-            }
-          },
-          Math.max(0, offDelay - 5),
-        ); // 5ms early to allow envelope decay
+        const noteDurSecs = lengthTicks * (60 / (this._bpm * this._ppqn));
+        const offWhen = when + noteDurSecs - 0.005;
+        this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
         break;
       }
 
       case "PARAM_SET":
       case "PARAM_ADD": {
-        this._applyParam(ch, port, chOffset, ev);
+        this._applyParam(ch, port, chOffset, ev, when);
         break;
       }
 
@@ -453,7 +445,7 @@ export class IRPlayer {
     }
   }
 
-  _applyParam(ch, port, chOffset, ev) {
+  _applyParam(ch, port, chOffset, ev, when) {
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
     const value = ev.args?.value ?? 0;
@@ -476,7 +468,7 @@ export class IRPlayer {
           0,
           7,
         );
-        this._write(port, 0xb0 + chOffset, encodeB0(regs));
+        this._write(port, 0xb0 + chOffset, encodeB0(regs), when);
         break;
       case "FM_ALG":
         set(
@@ -487,7 +479,7 @@ export class IRPlayer {
           0,
           7,
         );
-        this._write(port, 0xb0 + chOffset, encodeB0(regs));
+        this._write(port, 0xb0 + chOffset, encodeB0(regs), when);
         break;
       case "FM_TL1":
       case "FM_TL2":
@@ -503,7 +495,7 @@ export class IRPlayer {
           127,
         );
         const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
-        this._write(port, opAddr, regs.ops[opIdx].tl);
+        this._write(port, opAddr, regs.ops[opIdx].tl, when);
         break;
       }
       case "FM_AR1":
@@ -524,6 +516,7 @@ export class IRPlayer {
           port,
           opAddr,
           (regs.ops[opIdx].rs << 6) | regs.ops[opIdx].ar,
+          when,
         );
         break;
       }
@@ -541,7 +534,7 @@ export class IRPlayer {
           31,
         );
         const opAddr = 0x60 + OP_ADDR_OFFSET[opIdx] + chOffset;
-        this._write(port, opAddr, regs.ops[opIdx].dr);
+        this._write(port, opAddr, regs.ops[opIdx].dr, when);
         break;
       }
       case "FM_RR1":
@@ -558,7 +551,7 @@ export class IRPlayer {
           15,
         );
         const opAddr = 0x80 + OP_ADDR_OFFSET[opIdx] + chOffset;
-        this._write(port, opAddr, encode80(regs.ops[opIdx]));
+        this._write(port, opAddr, encode80(regs.ops[opIdx]), when);
         break;
       }
       case "FM_ML1":
@@ -575,7 +568,7 @@ export class IRPlayer {
           15,
         );
         const opAddr = 0x30 + OP_ADDR_OFFSET[opIdx] + chOffset;
-        this._write(port, opAddr, encode30(regs.ops[opIdx]));
+        this._write(port, opAddr, encode30(regs.ops[opIdx]), when);
         break;
       }
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
