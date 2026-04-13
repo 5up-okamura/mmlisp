@@ -68,8 +68,10 @@ function makeFixtures() {
   const badPayloadLen = Buffer.from(demo1);
   {
     const h = firstTrackEventHeaderOffset(badPayloadLen);
-    const payloadLen = u16le(badPayloadLen, h + 5);
-    writeU16le(badPayloadLen, h + 5, payloadLen + 1);
+    // Event record format (spec 1.5): [delta:u16][opcode:u8][payload_len:u16]
+    // payload_len is at offset +3 (was +5 in old tick:u32 format)
+    const payloadLen = u16le(badPayloadLen, h + 3);
+    writeU16le(badPayloadLen, h + 3, payloadLen + 1);
   }
 
   const badTrackRange = Buffer.from(demo1);

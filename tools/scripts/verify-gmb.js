@@ -10,16 +10,16 @@ const SECTION = {
 };
 
 const OPCODE_PAYLOAD_SIZE = {
-  0x10: 3,
-  0x11: 2,
-  0x12: 2,
-  0x40: 1,
-  0x41: 2,
-  0x42: 1,
-  0x43: 1,
-  0x60: 3,
-  0x61: 3,
-  0x80: 2,
+  0x10: 3, // NOTE_ON: pitch:u8, length:u16
+  0x11: 2, // REST: length:u16
+  0x12: 2, // TIE: length:u16
+  0x40: 1, // LOOP_BEGIN: loop_id:u8
+  0x41: 2, // LOOP_END: loop_id:u8, repeat:u8
+  0x42: 1, // MARKER: marker_id:u8
+  0x43: 2, // JUMP: rel_offset:i16 (spec 1.6)
+  0x60: 3, // PARAM_SET: target_id:u8, value:i16
+  0x61: 3, // PARAM_ADD: target_id:u8, delta:i16
+  0x80: 2, // TEMPO_SET: bpm:u16
 };
 
 function usage() {
@@ -109,12 +109,13 @@ function verifyTrackEvents(buf, eventSection, trackEntries) {
 
     let pos = start;
     while (pos < end) {
-      if (pos + 7 > end) {
+      // Event record format (spec 1.5): [delta:u16][opcode:u8][payload_len:u16]
+      if (pos + 5 > end) {
         fail(`track ${t.trackId} truncated event header`);
       }
-      const opcode = buf[pos + 4];
-      const payloadLen = u16le(buf, pos + 5);
-      pos += 7;
+      const opcode = buf[pos + 2];
+      const payloadLen = u16le(buf, pos + 3);
+      pos += 5;
       if (pos + payloadLen > end) {
         fail(`track ${t.trackId} event payload exceeds track range`);
       }
