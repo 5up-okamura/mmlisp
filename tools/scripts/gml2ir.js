@@ -11,11 +11,21 @@ const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
   "NOTE_VOLUME",
   "TEMPO_SCALE",
+  "VOL",
+  "FM_ALG",
   "FM_FB",
-  "FM_TL1",
-  "FM_TL2",
-  "FM_TL3",
-  "FM_TL4",
+  ...[1, 2, 3, 4].flatMap((op) => [
+    `FM_AR${op}`,
+    `FM_DR${op}`,
+    `FM_SR${op}`,
+    `FM_RR${op}`,
+    `FM_SL${op}`,
+    `FM_TL${op}`,
+    `FM_KS${op}`,
+    `FM_ML${op}`,
+    `FM_DT${op}`,
+    `FM_SSG${op}`,
+  ]),
 ]);
 
 function usage() {
@@ -64,11 +74,41 @@ function parseLengthToken(value, inheritedTicks) {
 
 function canonicalTarget(symbol) {
   const map = {
+    ":vol": "VOL",
+    ":fm-alg": "FM_ALG",
     ":fm-fb": "FM_FB",
     ":fm-tl1": "FM_TL1",
     ":fm-tl2": "FM_TL2",
     ":fm-tl3": "FM_TL3",
     ":fm-tl4": "FM_TL4",
+    ":fm-ar1": "FM_AR1",
+    ":fm-ar2": "FM_AR2",
+    ":fm-ar3": "FM_AR3",
+    ":fm-ar4": "FM_AR4",
+    ":fm-dr1": "FM_DR1",
+    ":fm-dr2": "FM_DR2",
+    ":fm-dr3": "FM_DR3",
+    ":fm-dr4": "FM_DR4",
+    ":fm-sr1": "FM_SR1",
+    ":fm-sr2": "FM_SR2",
+    ":fm-sr3": "FM_SR3",
+    ":fm-sr4": "FM_SR4",
+    ":fm-rr1": "FM_RR1",
+    ":fm-rr2": "FM_RR2",
+    ":fm-rr3": "FM_RR3",
+    ":fm-rr4": "FM_RR4",
+    ":fm-sl1": "FM_SL1",
+    ":fm-sl2": "FM_SL2",
+    ":fm-sl3": "FM_SL3",
+    ":fm-sl4": "FM_SL4",
+    ":fm-ml1": "FM_ML1",
+    ":fm-ml2": "FM_ML2",
+    ":fm-ml3": "FM_ML3",
+    ":fm-ml4": "FM_ML4",
+    ":fm-dt1": "FM_DT1",
+    ":fm-dt2": "FM_DT2",
+    ":fm-dt3": "FM_DT3",
+    ":fm-dt4": "FM_DT4",
     ":tempo-scale": "TEMPO_SCALE",
     ":note-pitch": "NOTE_PITCH",
     ":note-volume": "NOTE_VOLUME",
@@ -76,6 +116,56 @@ function canonicalTarget(symbol) {
   return (
     map[symbol] || symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_")
   );
+}
+
+// FM_OP_PARAMS: order must match spec 1.2 vector layout [AR DR SR RR SL TL KS ML DT SSG]
+const FM_OP_PARAMS = [
+  "AR",
+  "DR",
+  "SR",
+  "RR",
+  "SL",
+  "TL",
+  "KS",
+  "ML",
+  "DT",
+  "SSG",
+];
+
+function getVecInts(vecNode) {
+  if (!vecNode || vecNode.kind !== "list") return [];
+  return vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0);
+}
+
+// Emit PARAM_SET events for a :fm typed def at the current tick
+function emitFmPatch(td, tick, events, src) {
+  const [alg, fb] = getVecInts(td.algFb);
+  if (alg !== undefined)
+    events.push({
+      tick,
+      cmd: "PARAM_SET",
+      args: { target: "FM_ALG", value: alg },
+      src,
+    });
+  if (fb !== undefined)
+    events.push({
+      tick,
+      cmd: "PARAM_SET",
+      args: { target: "FM_FB", value: fb },
+      src,
+    });
+  for (let op = 0; op < 4; op++) {
+    const vals = getVecInts(td.ops[op]);
+    FM_OP_PARAMS.forEach((pname, pi) => {
+      if (vals[pi] !== undefined)
+        events.push({
+          tick,
+          cmd: "PARAM_SET",
+          args: { target: `FM_${pname}${op + 1}`, value: vals[pi] },
+          src,
+        });
+    });
+  }
 }
 
 function pushDiag(diagnostics, severity, code, message, src, track) {
@@ -196,7 +286,14 @@ function parseWriteScope(options, diagnostics, trackName) {
   return valid.length > 0 ? valid : ["any"];
 }
 
-function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
+function compilePhrase(
+  phraseNode,
+  state,
+  events,
+  diagnostics,
+  trackName,
+  typedDefs,
+) {
   const items = phraseNode.items;
   const options = getKeywordMap(items, 2);
   const tempoNode = options.get(":tempo");
@@ -444,13 +541,33 @@ function compilePhrase(phraseNode, state, events, diagnostics, trackName) {
 
     if (head === "loop-end") {
       const id = atomValue(node.items[1]);
-      const repeat = parseIntLike(atomValue(node.items[2])) ?? 1;
+      const repeat = parseIntLike(atomValue(node.items[2])) ?? 2;
       events.push({
         tick: state.tick,
         cmd: "LOOP_END",
         args: { id: id ? id.replace(/^:/, "") : "loop", repeat },
         src: nodeSrc(node.items[0]),
       });
+      continue;
+    }
+
+    if (head === "ins") {
+      const voiceName = atomValue(node.items[1])?.replace(/^:/, "");
+      if (voiceName && typedDefs?.has(voiceName)) {
+        const td = typedDefs.get(voiceName);
+        if (td.tag === "fm") {
+          emitFmPatch(td, state.tick, events, nodeSrc(node.items[0]));
+        }
+      } else if (voiceName) {
+        pushDiag(
+          diagnostics,
+          "warning",
+          "W_INS_UNKNOWN",
+          `ins: unknown voice name '${voiceName}'`,
+          nodeSrc(node.items[0]),
+          trackName,
+        );
+      }
       continue;
     }
   }
@@ -571,7 +688,7 @@ function validateTrack(track, diagnostics) {
   }
 }
 
-function compileTrack(trackNode, id, diagnostics) {
+function compileTrack(trackNode, id, diagnostics, typedDefs) {
   const items = trackNode.items;
   const options = getKeywordMap(items, 2);
   const nameNode = items[1];
@@ -599,7 +716,7 @@ function compileTrack(trackNode, id, diagnostics) {
       node.items.length > 0 &&
       isAtom(node.items[0], "phrase")
     ) {
-      compilePhrase(node, state, events, diagnostics, name);
+      compilePhrase(node, state, events, diagnostics, name, typedDefs);
     }
   }
 
@@ -634,6 +751,7 @@ function sortObject(value) {
 function collectDefs(roots, diagnostics) {
   const defs = new Map();
   const defns = new Map();
+  const typedDefs = new Map(); // name → { tag: 'fm'|'psg', ... }
   const remaining = [];
 
   for (const root of roots) {
@@ -656,7 +774,23 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      defs.set(name, root.items[2]);
+      const maybeTag = atomValue(root.items[2]);
+      if (maybeTag === ":fm") {
+        typedDefs.set(name, {
+          tag: "fm",
+          algFb: root.items[3],
+          ops: [root.items[4], root.items[5], root.items[6], root.items[7]],
+          src: nodeSrc(root),
+        });
+      } else if (maybeTag === ":psg") {
+        typedDefs.set(name, {
+          tag: "psg",
+          vector: root.items[3],
+          src: nodeSrc(root),
+        });
+      } else {
+        defs.set(name, root.items[2]);
+      }
       continue;
     }
 
@@ -700,7 +834,7 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, defns, remaining };
+  return { defs, defns, typedDefs, remaining };
 }
 
 function substituteNode(node, bindings) {
@@ -765,7 +899,10 @@ function compileDetailed(inputPath) {
   const diagnostics = [];
   const raw = fs.readFileSync(inputPath, "utf8");
   const parsed = parse(raw);
-  const { defs, defns, remaining } = collectDefs(parsed, diagnostics);
+  const { defs, defns, typedDefs, remaining } = collectDefs(
+    parsed,
+    diagnostics,
+  );
   const roots = expandRoots(remaining, defs, defns);
   const score = roots.find(
     (node) =>
@@ -791,12 +928,32 @@ function compileDetailed(inputPath) {
       node.items.length > 0 &&
       isAtom(node.items[0], "track")
     ) {
-      tracks.push(compileTrack(node, tracks.length, diagnostics));
+      tracks.push(compileTrack(node, tracks.length, diagnostics, typedDefs));
     }
   }
 
   for (const track of tracks) {
     validateTrack(track, diagnostics);
+  }
+
+  // same-ch bgm collision diagnostic (warning)
+  const bgmChannels = new Map();
+  for (const track of tracks) {
+    if (track.route_hint.role === "bgm") {
+      const ch = track.route_hint.channel_candidates[0];
+      if (bgmChannels.has(ch)) {
+        pushDiag(
+          diagnostics,
+          "warning",
+          "W_SAME_CH_BGM",
+          `Two bgm tracks share channel ${ch}: '${bgmChannels.get(ch)}' and '${track.name}'`,
+          { line: 1, column: 1 },
+          track.name,
+        );
+      } else {
+        bgmChannels.set(ch, track.name);
+      }
+    }
   }
 
   const repoRoot = path.resolve(__dirname, "..", "..");
