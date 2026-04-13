@@ -77,6 +77,48 @@ note sequences.
     (loop (param-add :pitch 0) (param-add :pitch 5) (param-add :pitch -5))))
 ```
 
+### 1.5 GMB event record: delta tick encoding
+
+IR uses absolute ticks (`"tick": uint32`). GMB uses **delta ticks** — the number
+of PPQN ticks elapsed since the previous event in the same track.
+
+Rationale:
+
+- IR absolute ticks are optimal for Web Audio pre-scheduling, multi-track merge,
+  and binary-search seek.
+- GMB delta ticks match the driver's countdown-timer execution model and reduce
+  per-event byte cost.
+
+The `gml2gmb` encoder is responsible for the conversion:
+`delta[i] = tick[i] - tick[i-1]` (first event: `delta = tick[0]`).
+
+GMB event record format (replaces provisional `tick: uint32`):
+
+```
+[delta: u16] [opcode: u8] [payload: fixed per opcode]
+```
+
+Delta range: 0..65535 ticks. Sequences requiring a gap larger than 65535 ticks
+must insert a `REST` command to bridge the gap (TBD if needed in practice at
+PPQN=120).
+
+### 1.6 GMB JUMP address encoding
+
+`JUMP` uses a **signed 16-bit relative byte offset** from the position of the
+JUMP command itself.
+
+```
+driver:   PC += (int16) offset
+encoder:  offset = markerBytePos - jumpBytePos
+```
+
+This matches the MDSDRV `f5 ww` convention. The offset is negative for
+backward jumps (the common case: loop-to-top). Forward jumps use a positive
+offset.
+
+The encoder resolves all `MARKER` byte positions in a first pass, then fills
+`JUMP` offsets in a second pass.
+
 ---
 
 ## 2. Open Questions
