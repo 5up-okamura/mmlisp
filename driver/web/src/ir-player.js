@@ -761,6 +761,38 @@ export class IRPlayer {
         break;
       }
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
+
+      case "VOL": {
+        // vol 0-15 (15=max, 0=silent). Apply to carrier OPs based on algorithm.
+        // TL = (15 - vol) * 8, clamped to 0-127.
+        // ALG carrier map: which ops are carriers for each algorithm.
+        const CARRIER_OPS = [
+          [3], // alg 0: op4
+          [3], // alg 1: op4
+          [3], // alg 2: op4
+          [3], // alg 3: op4
+          [1, 3], // alg 4: op2, op4
+          [1, 2, 3], // alg 5: op2, op3, op4
+          [1, 2, 3], // alg 6: op2, op3, op4
+          [0, 1, 2, 3], // alg 7: all
+        ];
+        const alg = regs.algorithm ?? 0;
+        const carriers = CARRIER_OPS[alg] ?? [3];
+        const vol = Math.max(
+          0,
+          Math.min(15, isAdd ? (regs.vol ?? 15) + value : value),
+        );
+        regs.vol = vol;
+        const tl = Math.max(0, Math.min(127, (15 - vol) * 8));
+        for (const opIdx of carriers) {
+          regs.ops[opIdx].tl = tl;
+          const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
+          this._write(port, opAddr, tl, when);
+        }
+        nextValue = vol;
+        break;
+      }
+
       default:
         break;
     }
