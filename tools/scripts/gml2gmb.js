@@ -136,15 +136,17 @@ function encodePayload(event, trackMaps) {
   }
 }
 
-function encodeEvent(event, trackMaps) {
+function encodeEvent(event, trackMaps, delta) {
   const op = OPCODE[event.cmd];
   if (op === undefined) {
     throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
   }
   const argsBuf = encodePayload(event, trackMaps);
 
+  // Use delta tick (u16) instead of absolute tick (u32) per spec 1.5
+  const clampedDelta = Math.min(delta, 0xffff);
   const out = Buffer.concat([
-    u32le(event.tick >>> 0),
+    u16le(clampedDelta),
     Buffer.from([op]),
     u16le(argsBuf.length),
     argsBuf,
@@ -154,9 +156,71 @@ function encodeEvent(event, trackMaps) {
 
 function encodeTrackEvents(track) {
   const trackMaps = buildTrackMaps(track);
+
+  // Two-pass encoding for JUMP relative byte offset (spec 1.6):
+  // Pass 1: encode all events with placeholder JUMP offsets, record byte positions of MARKERs
+  // Pass 2: patch JUMP payloads with correct relative offsets
+
+  const sortedEvents = [...(track.events || [])].sort(
+    (a, b) => a.tick - b.tick,
+  );
+
+  // Pass 1: build raw buffers and record marker positions
+  const eventBufs = [];
+  const markerBytePos = new Map(); // markerId u8 → byte offset in stream
+  let byteOffset = 0;
+  let prevTick = 0;
+
+  for (const event of sortedEvents) {
+    const delta = Math.max(0, event.tick - prevTick);
+    prevTick = event.tick;
+
+    if (event.cmd === "MARKER") {
+      const id = trackMaps.markerMap.get(event.args?.id);
+      if (id !== undefined) markerBytePos.set(id, byteOffset);
+    }
+
+    const buf = encodeEvent(event, trackMaps, delta);
+    eventBufs.push({ event, buf, byteOffset });
+    byteOffset += buf.length;
+  }
+
+  // Pass 2: patch JUMP payloads
+  // JUMP record layout: [delta:u16][opcode:u8][payload_len:u16][marker_id:u8]
+  // We replace marker_id byte with relative i16 offset.
+  // delta(2) + opcode(1) + payload_len(2) = 5 bytes header; payload starts at offset 5.
+  // After patch, payload is i16 (2 bytes) instead of u8 (1 byte) — payload_len must be updated too.
+  // To keep it simple: we re-encode JUMP with i16 payload directly in pass 1 via a flag.
+  // Actually, JUMP payload in encodePayload currently returns u8 marker_id.
+  // We'll patch in pass 2 by replacing the 5-byte-offset payload with i16 relative offset.
+
   const chunks = [];
-  for (const event of track.events || []) {
-    chunks.push(encodeEvent(event, trackMaps));
+  for (const { event, buf, byteOffset: jumpOffset } of eventBufs) {
+    if (event.cmd === "JUMP") {
+      const to = event.args?.to;
+      const markerId = trackMaps.markerMap.get(to);
+      const targetBytePos =
+        markerId !== undefined ? markerBytePos.get(markerId) : undefined;
+      if (targetBytePos !== undefined) {
+        // relative = targetPos - jumpPos (negative for backward jump)
+        const rel = targetBytePos - jumpOffset;
+        const clamped = Math.max(-32768, Math.min(32767, rel));
+        // Re-encode JUMP with i16 relative offset payload
+        const op = OPCODE["JUMP"];
+        const delta = buf.readUInt16LE(0); // preserved from pass 1
+        const newBuf = Buffer.concat([
+          u16le(delta),
+          Buffer.from([op]),
+          u16le(2),
+          i16le(clamped),
+        ]);
+        chunks.push(newBuf);
+      } else {
+        chunks.push(buf); // fallback: keep original (marker not found is caught by validator)
+      }
+    } else {
+      chunks.push(buf);
+    }
   }
   return Buffer.concat(chunks);
 }

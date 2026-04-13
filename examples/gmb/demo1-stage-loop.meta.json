@@ -10,16 +10,16 @@
       "id": 2,
       "flags": 0,
       "offset": 68,
-      "size": 370
+      "size": 294
     },
     {
       "id": 3,
       "flags": 0,
-      "offset": 438,
+      "offset": 362,
       "size": 78
     }
   ],
-  "totalSize": 516,
+  "totalSize": 440,
   "trackCount": 1,
   "targetProfile": "md-full",
   "trackAssignments": [
