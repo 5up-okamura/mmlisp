@@ -1,19 +1,22 @@
 # GMLisp Roadmap
 
-## Phase 0: Spec and Authoring Validation
+## Phase 0: Spec and Authoring Validation ✓
 
 - Define language subset and IR
 - Build minimal web playback validation path
 - Produce demo songs and prune unnecessary commands
 - Freeze v0.1
 
-Current concrete outputs:
+Status: **complete** — v0.1-candidate tag at b61eb11 (2026-04-09).
 
-1. v0.1 spec draft
-2. command table draft
-3. IR draft
-4. GMB format draft
-5. freeze checklist
+Outputs:
+
+1. docs/spec-v0.1-draft.md
+2. docs/command-table-v0.1-draft.md
+3. docs/ir-v0.1-draft.md
+4. docs/gmb-format-v0.1-draft.md
+5. docs/reviews/freeze-checklist-v0.1.md (archived)
+6. docs/reviews/2026-04-09-pre-freeze-checkpoint.md
 
 ## Phase 0.5: Editor Tooling
 
@@ -29,9 +32,9 @@ Current status: implemented.
 - Parameter modulation panel
 - Runtime intervention simulator
 
-Current status: partially implemented (driver/web/).
+Current status: partially implemented (driver/web/). See docs/spec-v0.2-draft.md for planned additions.
 
-Implemented:
+Implemented (v0.1 + post-freeze):
 
 - YM2612 AudioWorklet emulator with ahead-of-time timestamped register writes
 - IR preset loader and local file browser with auto-stop on change
@@ -41,9 +44,20 @@ Implemented:
 - Automatic track→channel assignment from IR `track.channel` field; auto-increment fallback
 - CodeMirror 6 source editor with GML StreamLanguage syntax highlighting (One Dark)
 - Playhead line highlight synchronized to source events
-- Bar:Beat position display (25ms poll)
+- Bar:Beat + BPM position display (25ms poll)
 - FM parameter panel: ALG/FB + op TL/AR/DR/RR/MUL sliders per channel
 - Slider values updated in real time from PARAM_SET/PARAM_ADD playback events
+- Browser-side GML compiler (gml-parser.js + gml2ir.js as ES modules)
+- Hot-swap playback: live compile on edit (400ms debounce) with bar-boundary resume
+
+v0.2 planned additions (design in progress):
+
+- Cmd+Enter play/pause toggle; Cmd+. full stop
+- Marker-based playback start from cursor position
+- Named FM/PSG voice data via `def :fm` / `def :psg`
+- same-ch bgm collision diagnostic
+- modulator track note/LFO separation; `:reset-on-note` option
+- PWA top bar UI; FM params slide-in panel; line numbers
 
 Phase 1 exit signal:
 
@@ -78,10 +92,16 @@ Phase 3 entry condition:
 
 ## Immediate Local Backlog
 
-1. Fill demo1-stage-loop and demo2-event-recovery with validation phrases
-2. Produce initial IR snapshots in examples/ir
-3. Produce initial GMB exports in examples/gmb
-4. Record first actionable freeze review using docs/reviews template
+~~1. Fill demo1-stage-loop and demo2-event-recovery with validation phrases~~
+~~2. Produce initial IR snapshots in examples/ir~~
+~~3. Produce initial GMB exports in examples/gmb~~
+~~4. Record first actionable freeze review using docs/reviews template~~
+
+Next:
+
+1. Implement Cmd+Enter pause/resume and Cmd+. stop in driver/web/index.html
+2. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
+3. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
 
 ---
 
