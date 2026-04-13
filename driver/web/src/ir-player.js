@@ -263,6 +263,51 @@ export class IRPlayer {
     }
   }
 
+  /** Returns true if playback is currently running. */
+  isPlaying() {
+    return this._playing;
+  }
+
+  /**
+   * Returns the current playback position in ticks (track-0 clock).
+   * Returns 0 if not playing.
+   */
+  currentTick() {
+    if (!this._playing || this._tracks.length === 0) return 0;
+    const t0 = this._tracks[0];
+    const now = this._audioContext.currentTime;
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    return Math.max(0, Math.floor((now - t0.audioTimeAtTick0) / secsPerTick));
+  }
+
+  /**
+   * Resume playback from an explicit tick position (pause/resume).
+   * @param {AudioContext} audioContext
+   * @param {number} fromTick  PPQN tick to resume from
+   */
+  playFromTick(audioContext, fromTick) {
+    if (!this._ir) throw new Error("No IR loaded");
+    this._audioContext = audioContext;
+    this._playing = true;
+    const now = audioContext.currentTime;
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const newTick0 = now + 0.025 - fromTick * secsPerTick;
+    this._tracks = this._flattenTracks();
+    for (const t of this._tracks) {
+      t.audioTimeAtTick0 = newTick0;
+      t.startAudioTime = newTick0;
+      t.loopCount = 0;
+      t.flatIndex = 0;
+      while (
+        t.flatIndex < t.events.length &&
+        t.events[t.flatIndex].tick < fromTick
+      ) {
+        t.flatIndex++;
+      }
+    }
+    this._scheduleLoop();
+  }
+
   /** Toggle looping at any time. */
   setLoop(enabled) {
     this._loop = enabled;

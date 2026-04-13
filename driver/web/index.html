@@ -579,6 +579,51 @@
 
     document.getElementById('btnPlay').disabled = false;
 
+    // -----------------------------------------------------------------------
+    // Keyboard shortcuts: Cmd+Enter = play/pause toggle, Cmd+. = full stop
+    // -----------------------------------------------------------------------
+    let _paused = false;
+    let _pausedTick = 0;
+
+    function onPause() {
+      if (!player || !player.isPlaying()) return;
+      _pausedTick = player.currentTick();
+      player.stop();
+      _paused = true;
+      log('Paused');
+      document.getElementById('btnPlay').classList.remove('active');
+    }
+
+    function onResume() {
+      if (!player || !_paused) return;
+      player.playFromTick(audioCtx, _pausedTick);
+      _paused = false;
+      log('Resumed', 'info');
+      document.getElementById('btnPlay').classList.add('active');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (!mod) return;
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!player || (!player.isPlaying() && !_paused)) {
+          onPlay();
+        } else if (_paused) {
+          onResume();
+        } else {
+          onPause();
+        }
+      } else if (e.key === '.') {
+        e.preventDefault();
+        _paused = false;
+        _pausedTick = 0;
+        onStop();
+      }
+    });
+
     // Expose for inline handlers
     window.onPlay = onPlay;
     window.onStop = onStop;
