@@ -92,12 +92,14 @@ function midiToFnumBlock(midiNote) {
 // Channel-level params:
 //   FM_FB      → 0xB0 bits 5-3 (feedback, 0-7)
 //   FM_ALG     → 0xB0 bits 2-0 (algorithm, 0-7)
-//   FM_PAN_L   → 0xB4 bit 7
-//   FM_PAN_R   → 0xB4 bit 6
+//   FM_AMS     → 0xB4 bits 5-4 (AM sensitivity, 0-3)
+//   FM_FMS     → 0xB4 bits 2-0 (FM sensitivity, 0-7)
+//   LFO_RATE   → 0x22 global (0=off, 1-8=rate index)
 // Operator params (op1-op4):
 //   FM_TL1..4  → 0x40 per op (total level, 0-127)
 //   FM_AR1..4  → 0x50 per op (attack rate, 0-31)
-//   FM_DR1..4  → 0x60 per op (decay rate, 0-31)
+//   FM_DR1..4  → 0x60 per op bits 4-0 (decay rate, 0-31)
+//   FM_AMEN1..4 → 0x60 per op bit 7 (AM enable, 0-1)
 //   FM_SR1..4  → 0x70 per op (sustain rate, 0-31)
 //   FM_RR1..4  → 0x80 per op (release rate bits 3-0)
 //   FM_SL1..4  → 0x80 per op (sustain level bits 7-4)
@@ -113,11 +115,13 @@ function buildChannelRegState(chIndex) {
     feedback: 0,
     stereoL: true,
     stereoR: true,
+    ams: 0,  // LFO AM sensitivity 0-3 (0xB4 bits 5-4)
+    fms: 0,  // LFO FM sensitivity 0-7 (0xB4 bits 2-0)
     ops: [
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
+      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
     ],
   };
 }
@@ -127,9 +131,19 @@ function encodeB0(regs) {
   return ((regs.feedback & 0x07) << 3) | (regs.algorithm & 0x07);
 }
 
-// Encode B4 register (stereo + LFO sensitivity)
+// Encode B4 register (stereo + AMS/FMS)
 function encodeB4(regs) {
-  return ((regs.stereoL ? 1 : 0) << 7) | ((regs.stereoR ? 1 : 0) << 6);
+  return (
+    ((regs.stereoL ? 1 : 0) << 7) |
+    ((regs.stereoR ? 1 : 0) << 6) |
+    ((regs.ams & 0x03) << 4) |
+    (regs.fms & 0x07)
+  );
+}
+
+// Encode 0x60 (AM enable + DR) for an operator
+function encode60(op) {
+  return ((op.amen & 0x01) << 7) | (op.dr & 0x1f);
 }
 
 // Encode 0x30 (DT1/MUL) for an operator
@@ -180,6 +194,9 @@ export class IRPlayer {
 
     // Per-channel register state (for incremental PARAM_ADD)
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
+
+    // Global YM2612 state
+    this._lfoRate = 0; // 0 = off, 1-8 = rate index
 
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
@@ -723,7 +740,58 @@ export class IRPlayer {
           31,
         );
         const opAddr = 0x60 + OP_ADDR_OFFSET[opIdx] + chOffset;
-        this._write(port, opAddr, regs.ops[opIdx].dr, when);
+        this._write(port, opAddr, encode60(regs.ops[opIdx]), when);
+        break;
+      }
+      case "FM_AMEN1":
+      case "FM_AMEN2":
+      case "FM_AMEN3":
+      case "FM_AMEN4": {
+        const opIdx = parseInt(target[7]) - 1;
+        set(
+          () => regs.ops[opIdx].amen,
+          (v) => {
+            regs.ops[opIdx].amen = v;
+          },
+          0,
+          1,
+        );
+        const opAddr = 0x60 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, encode60(regs.ops[opIdx]), when);
+        break;
+      }
+      case "FM_AMS":
+        set(
+          () => regs.ams,
+          (v) => {
+            regs.ams = v;
+          },
+          0,
+          3,
+        );
+        this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
+        break;
+      case "FM_FMS":
+        set(
+          () => regs.fms,
+          (v) => {
+            regs.fms = v;
+          },
+          0,
+          7,
+        );
+        this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
+        break;
+      case "LFO_RATE": {
+        const rate = Math.max(
+          0,
+          Math.min(8, isAdd ? (this._lfoRate ?? 0) + value : value),
+        );
+        this._lfoRate = rate;
+        // 0 = disable (0x00); 1-8 = enable + rate (0x08 | rate-1)
+        const regVal = rate === 0 ? 0x00 : (0x08 | ((rate - 1) & 0x07));
+        this._write(0, 0x22, regVal, when);
+        nextValue = rate;
         break;
       }
       case "FM_RR1":

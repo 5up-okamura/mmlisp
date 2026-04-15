@@ -93,10 +93,10 @@ Elements beyond the vector length are not emitted (no register write).
 
 | TARGET_ID | Name | Register |
 | --------- | ---- | -------- |
-| 0x3a | `FM_AMEN1` | 0x50+op1 bit7 |
-| 0x3b | `FM_AMEN2` | 0x50+op2 bit7 |
-| 0x3c | `FM_AMEN3` | 0x50+op3 bit7 |
-| 0x3d | `FM_AMEN4` | 0x50+op4 bit7 |
+| 0x3a | `FM_AMEN1` | 0x60+op1 bit7 |
+| 0x3b | `FM_AMEN2` | 0x60+op2 bit7 |
+| 0x3c | `FM_AMEN3` | 0x60+op3 bit7 |
+| 0x3d | `FM_AMEN4` | 0x60+op4 bit7 |
 | 0x3e | `FM_AMS`   | 0xB4 bits5-4  |
 | 0x3f | `FM_FMS`   | 0xB4 bits2-0  |
 | 0x41 | `LFO_RATE` | 0x22 bits2-0 + enable |
