@@ -741,8 +741,12 @@ function sortObject(value) {
 function parsePsgVector(vecNode, name, diagnostics, src) {
   if (!vecNode || vecNode.kind !== "list" || vecNode.items.length === 0) {
     pushDiag(
-      diagnostics, "error", "E_PSG_VECTOR_EMPTY",
-      `def :psg '${name}': envelope vector is missing or empty`, src, null,
+      diagnostics,
+      "error",
+      "E_PSG_VECTOR_EMPTY",
+      `def :psg '${name}': envelope vector is missing or empty`,
+      src,
+      null,
     );
     return { subtype: "bare", steps: [], loopIndex: null, releaseRate: null };
   }
@@ -751,16 +755,24 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
 
   if (first === ":fn") {
     pushDiag(
-      diagnostics, "error", "E_FN_NOT_IMPL",
-      `def :psg '${name}': :fn envelope is not implemented in v0.2`, src, null,
+      diagnostics,
+      "error",
+      "E_FN_NOT_IMPL",
+      `def :psg '${name}': :fn envelope is not implemented in v0.2`,
+      src,
+      null,
     );
     return { subtype: "fn" };
   }
 
   if (first === ":hard") {
     pushDiag(
-      diagnostics, "warning", "W_PSG_HARD_RESERVED",
-      `def :psg '${name}': :hard envelope is reserved syntax — no IR generated`, src, null,
+      diagnostics,
+      "warning",
+      "W_PSG_HARD_RESERVED",
+      `def :psg '${name}': :hard envelope is reserved syntax — no IR generated`,
+      src,
+      null,
     );
     return { subtype: "hard" };
   }
@@ -784,7 +796,11 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
     let i = 1;
     while (i < vecNode.items.length) {
       const val = atomValue(vecNode.items[i]);
-      if (val === ":loop") { loopIndex = steps.length; i += 1; continue; }
+      if (val === ":loop") {
+        loopIndex = steps.length;
+        i += 1;
+        continue;
+      }
       if (val === ":release") {
         i += 1;
         if (i < vecNode.items.length) {
@@ -995,11 +1011,21 @@ export function compileGML(src, filename = "untitled.gml") {
     const scoreSrc = nodeSrc(score);
     const lfoRateVal = parseIntLike(atomValue(scoreLfoRateNode));
     if (lfoRateVal !== null) {
-      initEvents.push({ tick: 0, cmd: "PARAM_SET", args: { target: "LFO_RATE", value: lfoRateVal }, src: scoreSrc });
+      initEvents.push({
+        tick: 0,
+        cmd: "PARAM_SET",
+        args: { target: "LFO_RATE", value: lfoRateVal },
+        src: scoreSrc,
+      });
     }
     const scoreTempoVal = parseIntLike(atomValue(scoreTempoNode));
     if (scoreTempoVal !== null) {
-      initEvents.push({ tick: 0, cmd: "TEMPO_SET", args: { bpm: scoreTempoVal }, src: scoreSrc });
+      initEvents.push({
+        tick: 0,
+        cmd: "TEMPO_SET",
+        args: { bpm: scoreTempoVal },
+        src: scoreSrc,
+      });
     }
     if (initEvents.length > 0) tracks[0].events.unshift(...initEvents);
   }

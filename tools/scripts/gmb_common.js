@@ -99,8 +99,8 @@ const TARGET_ID = {
   FM_AMEN2: 0x3b,
   FM_AMEN3: 0x3c,
   FM_AMEN4: 0x3d,
-  FM_AMS:   0x3e,
-  FM_FMS:   0x3f,
+  FM_AMS: 0x3e,
+  FM_FMS: 0x3f,
   LFO_RATE: 0x41,
 };
 

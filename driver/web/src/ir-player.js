@@ -115,13 +115,57 @@ function buildChannelRegState(chIndex) {
     feedback: 0,
     stereoL: true,
     stereoR: true,
-    ams: 0,  // LFO AM sensitivity 0-3 (0xB4 bits 5-4)
-    fms: 0,  // LFO FM sensitivity 0-7 (0xB4 bits 2-0)
+    ams: 0, // LFO AM sensitivity 0-3 (0xB4 bits 5-4)
+    fms: 0, // LFO FM sensitivity 0-7 (0xB4 bits 2-0)
     ops: [
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
-      { tl: 40, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0 },
+      {
+        tl: 40,
+        ar: 31,
+        dr: 0,
+        d2r: 0,
+        sl: 0,
+        rr: 15,
+        mul: 1,
+        dt: 0,
+        rs: 0,
+        amen: 0,
+      },
+      {
+        tl: 40,
+        ar: 31,
+        dr: 0,
+        d2r: 0,
+        sl: 0,
+        rr: 15,
+        mul: 1,
+        dt: 0,
+        rs: 0,
+        amen: 0,
+      },
+      {
+        tl: 40,
+        ar: 31,
+        dr: 0,
+        d2r: 0,
+        sl: 0,
+        rr: 15,
+        mul: 1,
+        dt: 0,
+        rs: 0,
+        amen: 0,
+      },
+      {
+        tl: 40,
+        ar: 31,
+        dr: 0,
+        d2r: 0,
+        sl: 0,
+        rr: 15,
+        mul: 1,
+        dt: 0,
+        rs: 0,
+        amen: 0,
+      },
     ],
   };
 }
@@ -789,7 +833,7 @@ export class IRPlayer {
         );
         this._lfoRate = rate;
         // 0 = disable (0x00); 1-8 = enable + rate (0x08 | rate-1)
-        const regVal = rate === 0 ? 0x00 : (0x08 | ((rate - 1) & 0x07));
+        const regVal = rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07);
         this._write(0, 0x22, regVal, when);
         nextValue = rate;
         break;
