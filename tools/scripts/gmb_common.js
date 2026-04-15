@@ -95,6 +95,13 @@ const TARGET_ID = {
   FM_SSG2: 0x37,
   FM_SSG3: 0x38,
   FM_SSG4: 0x39,
+  FM_AMEN1: 0x3a,
+  FM_AMEN2: 0x3b,
+  FM_AMEN3: 0x3c,
+  FM_AMEN4: 0x3d,
+  FM_AMS:   0x3e,
+  FM_FMS:   0x3f,
+  LFO_RATE: 0x41,
 };
 
 function parsePitchToByte(raw) {
