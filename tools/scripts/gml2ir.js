@@ -1038,6 +1038,8 @@ function compileDetailed(inputPath) {
   const options = getKeywordMap(score.items, 1);
   const titleNode = options.get(":title");
   const authorNode = options.get(":author");
+  const scoreTempoNode = options.get(":tempo");
+  const scoreLfoRateNode = options.get(":lfo-rate");
 
   const tracks = [];
   for (let i = 0; i < score.items.length; i += 1) {
@@ -1054,6 +1056,33 @@ function compileDetailed(inputPath) {
 
   for (const track of tracks) {
     validateTrack(track, diagnostics);
+  }
+
+  // Prepend score-level initial events (tick 0) to the first track
+  if (tracks.length > 0) {
+    const initEvents = [];
+    const scoreSrc = nodeSrc(score);
+    const lfoRateVal = parseIntLike(atomValue(scoreLfoRateNode));
+    if (lfoRateVal !== null) {
+      initEvents.push({
+        tick: 0,
+        cmd: "PARAM_SET",
+        args: { target: "LFO_RATE", value: lfoRateVal },
+        src: scoreSrc,
+      });
+    }
+    const scoreTempoVal = parseIntLike(atomValue(scoreTempoNode));
+    if (scoreTempoVal !== null) {
+      initEvents.push({
+        tick: 0,
+        cmd: "TEMPO_SET",
+        args: { bpm: scoreTempoVal },
+        src: scoreSrc,
+      });
+    }
+    if (initEvents.length > 0) {
+      tracks[0].events.unshift(...initEvents);
+    }
   }
 
   // same-ch bgm collision diagnostic (warning)
