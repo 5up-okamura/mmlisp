@@ -20,6 +20,9 @@ const SUPPORTED_TARGETS = new Set([
   "VOL",
   "FM_ALG",
   "FM_FB",
+  "FM_AMS",
+  "FM_FMS",
+  "LFO_RATE",
   ...[1, 2, 3, 4].flatMap((op) => [
     `FM_AR${op}`,
     `FM_DR${op}`,
@@ -31,6 +34,7 @@ const SUPPORTED_TARGETS = new Set([
     `FM_ML${op}`,
     `FM_DT${op}`,
     `FM_SSG${op}`,
+    `FM_AMEN${op}`,
   ]),
 ]);
 
@@ -99,6 +103,17 @@ function canonicalTarget(symbol) {
     ":fm-dt2": "FM_DT2",
     ":fm-dt3": "FM_DT3",
     ":fm-dt4": "FM_DT4",
+    ":fm-ssg1": "FM_SSG1",
+    ":fm-ssg2": "FM_SSG2",
+    ":fm-ssg3": "FM_SSG3",
+    ":fm-ssg4": "FM_SSG4",
+    ":fm-amen1": "FM_AMEN1",
+    ":fm-amen2": "FM_AMEN2",
+    ":fm-amen3": "FM_AMEN3",
+    ":fm-amen4": "FM_AMEN4",
+    ":fm-ams": "FM_AMS",
+    ":fm-fms": "FM_FMS",
+    ":lfo-rate": "LFO_RATE",
     ":tempo-scale": "TEMPO_SCALE",
     ":note-pitch": "NOTE_PITCH",
     ":note-volume": "NOTE_VOLUME",
@@ -108,7 +123,7 @@ function canonicalTarget(symbol) {
   );
 }
 
-// FM_OP_PARAMS: order must match spec 1.2 vector layout [AR DR SR RR SL TL KS ML DT SSG]
+// FM_OP_PARAMS: order must match spec 1.2 vector layout [AR DR SR RR SL TL KS ML DT (SSG) (AMEN)]
 const FM_OP_PARAMS = [
   "AR",
   "DR",
@@ -120,6 +135,7 @@ const FM_OP_PARAMS = [
   "ML",
   "DT",
   "SSG",
+  "AMEN",
 ];
 
 function getVecInts(vecNode) {
@@ -129,7 +145,8 @@ function getVecInts(vecNode) {
 
 // Emit PARAM_SET events for a :fm typed def at the current tick
 function emitFmPatch(td, tick, events, src) {
-  const [alg, fb] = getVecInts(td.algFb);
+  const chVals = getVecInts(td.algFb);
+  const [alg, fb] = chVals;
   if (alg !== undefined)
     events.push({
       tick,
@@ -142,6 +159,20 @@ function emitFmPatch(td, tick, events, src) {
       tick,
       cmd: "PARAM_SET",
       args: { target: "FM_FB", value: fb },
+      src,
+    });
+  if (chVals[2] !== undefined)
+    events.push({
+      tick,
+      cmd: "PARAM_SET",
+      args: { target: "FM_AMS", value: chVals[2] },
+      src,
+    });
+  if (chVals[3] !== undefined)
+    events.push({
+      tick,
+      cmd: "PARAM_SET",
+      args: { target: "FM_FMS", value: chVals[3] },
       src,
     });
   for (let op = 0; op < 4; op++) {
