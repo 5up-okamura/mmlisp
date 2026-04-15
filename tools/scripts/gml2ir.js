@@ -779,6 +779,97 @@ function sortObject(value) {
   return value;
 }
 
+/**
+ * Parse a :psg vector node into a structured tagged-union object.
+ * Sub-types: bare | seq | adsr | hard | fn
+ */
+function parsePsgVector(vecNode, name, diagnostics, src) {
+  if (!vecNode || vecNode.kind !== "list" || vecNode.items.length === 0) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_PSG_VECTOR_EMPTY",
+      `def :psg '${name}': envelope vector is missing or empty`,
+      src,
+      null,
+    );
+    return { subtype: "bare", steps: [], loopIndex: null, releaseRate: null };
+  }
+
+  const first = atomValue(vecNode.items[0]);
+
+  if (first === ":fn") {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_FN_NOT_IMPL",
+      `def :psg '${name}': :fn envelope is not implemented in v0.2`,
+      src,
+      null,
+    );
+    return { subtype: "fn" };
+  }
+
+  if (first === ":hard") {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_PSG_HARD_RESERVED",
+      `def :psg '${name}': :hard envelope is reserved syntax — no IR generated`,
+      src,
+      null,
+    );
+    return { subtype: "hard" };
+  }
+
+  if (first === ":adsr") {
+    const opts = getKeywordMap(vecNode.items, 1);
+    return {
+      subtype: "adsr",
+      ar: parseIntLike(atomValue(opts.get(":ar"))) ?? 0,
+      dr: parseIntLike(atomValue(opts.get(":dr"))) ?? 0,
+      sl: parseIntLike(atomValue(opts.get(":sl"))) ?? 0,
+      sr: parseIntLike(atomValue(opts.get(":sr"))) ?? 0,
+      rr: parseIntLike(atomValue(opts.get(":rr"))) ?? 0,
+    };
+  }
+
+  if (first === ":seq") {
+    const steps = [];
+    let loopIndex = null;
+    let releaseRate = null;
+    let i = 1;
+    while (i < vecNode.items.length) {
+      const val = atomValue(vecNode.items[i]);
+      if (val === ":loop") {
+        loopIndex = steps.length;
+        i += 1;
+        continue;
+      }
+      if (val === ":release") {
+        i += 1;
+        if (i < vecNode.items.length) {
+          releaseRate = parseIntLike(atomValue(vecNode.items[i])) ?? 1;
+          i += 1;
+        }
+        continue;
+      }
+      const n = parseIntLike(val);
+      if (n !== null) steps.push(n);
+      i += 1;
+    }
+    return { subtype: "seq", steps, loopIndex, releaseRate };
+  }
+
+  // bare — first element is an integer
+  return {
+    subtype: "bare",
+    steps: vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0),
+    loopIndex: null,
+    releaseRate: null,
+  };
+}
+
 function collectDefs(roots, diagnostics) {
   const defs = new Map();
   const defns = new Map();
@@ -814,11 +905,9 @@ function collectDefs(roots, diagnostics) {
           src: nodeSrc(root),
         });
       } else if (maybeTag === ":psg") {
-        typedDefs.set(name, {
-          tag: "psg",
-          vector: root.items[3],
-          src: nodeSrc(root),
-        });
+        const src = nodeSrc(root);
+        const parsed = parsePsgVector(root.items[3], name, diagnostics, src);
+        typedDefs.set(name, { tag: "psg", envelope: parsed, src });
       } else {
         defs.set(name, root.items[2]);
       }
