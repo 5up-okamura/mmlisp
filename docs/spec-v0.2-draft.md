@@ -320,6 +320,28 @@ Proposed top bar: `File ▾ | Examples ▾ | [● Bar:Beat BPM] | [⌘↵ Play/P
 - CodeMirror `lineNumbers()` extension
 - Remove decorative panel borders/titles from current layout
 
+### 2.8 `defn` — compile-time macro vs. runtime subroutine
+
+Current GMLisp behavior:
+- `defn` is a **compile-time macro**. Call sites are AST-expanded by `expandRoots`
+  before `compilePhrase`. No call/return record appears in IR or GMB.
+- Each `(bend-down :e4)` expands to the full event sequence inline.
+
+Pros of current approach:
+- Simple; no new IR opcodes needed
+- Arguments are substituted at compile time
+
+Cons vs. runtime subroutines:
+- Binary size grows linearly with call count (no sharing in GMB)
+- No runtime parameterization — args are compile-time constants only
+
+v0.3+ candidate: add `CALL target` / `RET` to GMB opcode set and emit a
+subroutine block instead of inlining when `defn` is reused across multiple call
+sites. The IR would gain a `CALL` command; subroutine bodies would live in a
+separate `subroutines` section of the IR.
+
+**v0.2 decision**: `defn` remains compile-time macro. Runtime subroutines deferred.
+
 ---
 
 ## 3. Out of Scope for v0.2
@@ -328,3 +350,5 @@ Proposed top bar: `File ▾ | Examples ▾ | [● Bar:Beat BPM] | [⌘↵ Play/P
 - PCM/WAV sample instruments
 - Patch server / community infrastructure (see roadmap Future Vision)
 - Contextual note editor (keyboard/envelope UI triggered by note selection)
+- Runtime subroutines (`CALL`/`RET` in GMB) — `defn` is compile-time only in v0.2 (see OQ 2.8)
+- Runtime subroutines (`CALL`/`RET` in GMB) — `defn` is compile-time only in v0.2 (see OQ 2.8)
