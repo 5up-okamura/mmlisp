@@ -1,0 +1,3 @@
+{
+  "rewrites": [{ "source": "/", "destination": "/driver/web/index.html" }]
+}
