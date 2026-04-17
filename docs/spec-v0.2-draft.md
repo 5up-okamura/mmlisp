@@ -252,6 +252,78 @@ prepends as events at tick 0 on the first track.
 Dynamic changes mid-song use `param-set` / `tempo-set` inside a phrase as
 before. Score-level options are syntactic sugar for the initial state only.
 
+### 1.9 `:carry` — modulator playhead continuity
+
+By default, when a `:bgm` track fires `NOTE_ON`, any `:modulator` track
+assigned to the same channel resets its playhead to the beginning of the
+current phrase (reset-on-note). This matches ctrmml/MDSDRV default behavior.
+
+`:carry true` suppresses the reset: the modulator continues from its current
+playhead position across note changes. Useful when the modulation envelope
+spans multiple notes or is intended as a continuous sweep.
+
+`:carry` can be specified at two levels with the following priority:
+
+```
+phraseCarry ?? trackCarry ?? false
+```
+
+**Track level** (applies to all phrases in the track unless overridden):
+
+```lisp
+(track :vibrato :ch fm1 :role modulator :carry true
+  phrase-a   ; carry=true (inherited from track)
+  phrase-b)  ; carry=true (inherited from track)
+```
+
+**Phrase level** (overrides track setting for this phrase only):
+
+```lisp
+(def sweep (phrase :carry false   ; override: always reset on note
+  (note :c4 1/8) ...))
+
+(track :vibrato :ch fm1 :role modulator :carry true
+  sweep)   ; carry=false (phrase overrides track)
+```
+
+Default when neither is specified: `false` (reset on NOTE_ON).
+
+### 1.10 `def` with untagged phrase node
+
+A `def` binding may hold a bare `phrase` node (no `:fm` / `:psg` tag).
+The compiler treats it as a compile-time alias: wherever the name appears
+inside a `track` body, it is substituted with the phrase node before
+compilation. No IR is emitted for the `def` itself.
+
+```lisp
+(def riff (phrase (note :c4 1/8) (note :e4 1/8) (note :g4 1/4)))
+
+(track :t1 :ch fm1 riff)
+(track :t2 :ch fm2 riff)  ; same phrase data, different channel
+```
+
+Per-track parameter variation can be achieved with `defn`:
+
+```lisp
+(defn chorus-line [detune]
+  (phrase
+    (param-set :fm-dt1 detune)
+    (note :c4 1/8) (note :e4 1/8)))
+
+(track :t1 :ch fm1 (chorus-line 0))
+(track :t2 :ch fm2 (chorus-line 3))  ; slight detune for chorus effect
+```
+
+Track start offset — use `(rest N/M)` at the start of the phrase; no special
+option is needed:
+
+```lisp
+(track :bass :ch fm3
+  (phrase
+    (rest 8/1)                   ; wait 8 bars before entering
+    (note :c3 1/4) ...))
+```
+
 ---
 
 ## 2. Open Questions
@@ -266,25 +338,11 @@ cursor position. Questions:
 - Does `Cmd+Enter` during playing jump to the nearest marker and continue,
   or does it pause?
 
-### 2.2 def with phrase / track block reference
+### ~~2.2 def with phrase / track block reference~~ → resolved in §1.10
 
-Pattern A (currently supported via `defn`):
-
-```lisp
-(defn riff [] (note :c4 1/8) (note :e4 1/8))
-(track :t1 (phrase (riff)))
-```
-
-Pattern B (not defined in v0.1 — needs v0.2 spec):
-
-```lisp
-(def riff (phrase :len 1/8 (note :c4) (note :e4)))
-(track :t1 riff)
-(track :t2 riff :ch fm2)  ; same phrase, different channel override?
-```
-
-Pattern B raises questions about option override semantics when referencing
-a named phrase block.
+Tagless `(def name (phrase ...))` is a compile-time alias. The name is
+substituted by `expandNode` before `compileTrack`. Track options such as `:ch`
+are specified on the `track` form, not on the shared phrase. See §1.10.
 
 ### ~~2.3 PSG envelope loop and sustain point~~ → resolved in §1.7
 
@@ -292,15 +350,10 @@ Tagged union design (`bare` / `:seq` / `:adsr` / `:hard` / `:fn`).
 Release is part of the voice def, not a track option.
 See §1.7 for full specification.
 
-### 2.4 modulator reset-on-note
+### ~~2.4 modulator reset-on-note~~ → resolved in §1.9
 
-When the `:bgm` track fires a `NOTE_ON`, should the `:modulator` track's
-playhead reset to its beginning?
-
-- Without reset (`carry` in ctrmml): modulator continues through note changes
-- With reset: modulator envelope restarts on every note
-
-Proposed: `:reset-on-note true/false` track option (default TBD).
+Default: reset on `NOTE_ON` (carry=false). `:carry true` suppresses reset.
+Priority: `phraseCarry ?? trackCarry ?? false`. See §1.9.
 
 ### 2.5 FM patch vector — column order confirmation
 
@@ -350,5 +403,4 @@ separate `subroutines` section of the IR.
 - PCM/WAV sample instruments
 - Patch server / community infrastructure (see roadmap Future Vision)
 - Contextual note editor (keyboard/envelope UI triggered by note selection)
-- Runtime subroutines (`CALL`/`RET` in GMB) — `defn` is compile-time only in v0.2 (see OQ 2.8)
 - Runtime subroutines (`CALL`/`RET` in GMB) — `defn` is compile-time only in v0.2 (see OQ 2.8)
