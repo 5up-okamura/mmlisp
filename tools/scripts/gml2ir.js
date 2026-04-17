@@ -613,6 +613,17 @@ function compilePhrase(
         const td = typedDefs.get(voiceName);
         if (td.tag === "fm") {
           emitFmPatch(td, state.tick, events, nodeSrc(node.items[0]));
+        } else if (
+          td.tag === "psg" &&
+          td.envelope.subtype !== "hard" &&
+          td.envelope.subtype !== "fn"
+        ) {
+          events.push({
+            tick: state.tick,
+            cmd: "PSG_VOICE",
+            args: { envelope: td.envelope },
+            src: nodeSrc(node.items[0]),
+          });
         }
       } else if (voiceName) {
         pushDiag(
