@@ -389,11 +389,15 @@ export class IRPlayer {
     let tick = 0;
     if (sourceMap && sourceMap.length > 0) {
       // Binary search: last entry with line <= cursorLine
-      let lo = 0, hi = sourceMap.length - 1, found = -1;
+      let lo = 0,
+        hi = sourceMap.length - 1,
+        found = -1;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
-        if (sourceMap[mid].line <= cursorLine) { found = mid; lo = mid + 1; }
-        else hi = mid - 1;
+        if (sourceMap[mid].line <= cursorLine) {
+          found = mid;
+          lo = mid + 1;
+        } else hi = mid - 1;
       }
       if (found >= 0) tick = sourceMap[found].tick;
     }
