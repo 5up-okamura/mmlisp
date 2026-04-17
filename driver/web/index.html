@@ -409,6 +409,7 @@
     // -----------------------------------------------------------------------
     let _compileTimer = null;
     let _lastGoodIR = null;     // last successfully compiled IR object
+    let _lastSourceMap = null;  // source map from last compile
     let _lastFileName = 'untitled.gml';
 
     function scheduleCompile() {
@@ -419,7 +420,7 @@
     function runCompile() {
       const src = editorView.state.doc.toString();
       try {
-        const { ir, diagnostics } = compileGML(src, _lastFileName);
+        const { ir, diagnostics, sourceMap } = compileGML(src, _lastFileName);
         const errors = diagnostics.filter(d => d.severity === 'error');
         if (errors.length > 0) {
           for (const d of errors) {
@@ -429,6 +430,7 @@
           return;
         }
         _lastGoodIR = ir;
+        _lastSourceMap = sourceMap;
         if (player) {
           player.hotSwap(ir, () => workletNode?.port.postMessage({ type: 'flush' }));
           log('Recompiled — continuing from bar boundary', 'info');
@@ -494,7 +496,7 @@
       }
     }
 
-    async function onPlay() {
+    async function onPlay(fromLine = null) {
       const ok = await initAudio();
       if (!ok) return;
       if (player) player.stop();
@@ -533,7 +535,12 @@
             }
           }
         });
-        player.play(audioCtx);
+        // Seek to cursor line if provided and source map available
+        if (fromLine != null && _lastSourceMap) {
+          player.playFromLine(audioCtx, fromLine, _lastSourceMap);
+        } else {
+          player.play(audioCtx);
+        }
         setStatus('Playing', true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
@@ -610,7 +617,9 @@
       if (e.key === 'Enter') {
         e.preventDefault();
         if (!player || (!player.isPlaying() && !_paused)) {
-          onPlay();
+          // Seek to cursor line and play
+          const cursorLine = editorView.state.doc.lineAt(editorView.state.selection.main.head).number;
+          await onPlay(cursorLine);
         } else if (_paused) {
           onResume();
         } else {

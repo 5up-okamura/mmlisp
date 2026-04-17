@@ -324,19 +324,69 @@ option is needed:
     (note :c3 1/4) ...))
 ```
 
+### 1.11 Source map and cursor-line playback
+
+The compiler attaches a `src: { line, column }` field to every IR event. The
+`compileGML` function (browser-side) returns an additional `sourceMap` array —
+a sorted list of `{ line, tick }` pairs derived from the first event at each
+unique source line.
+
+```
+sourceMap = [{ line: 5, tick: 0 }, { line: 22, tick: 0 }, { line: 24, tick: 120 }, …]
+```
+
+**Cursor-line seek (Cmd+Enter with no active playback):**
+
+1. Read cursor line N from the editor.
+2. Binary-search `sourceMap` for the entry with the largest `line ≤ N`.
+3. Call `player.playFromTick(audioCtx, entry.tick)`.
+4. If no entry is found (cursor before all notes), play from tick 0.
+
+This replaces the `marker` node as the seek mechanism for authoring. The
+`marker` / `jump` nodes remain in the language for loop control only — authors
+do not need to add markers purely to set a playback start point.
+
+**`Cmd+Enter` behavior:**
+
+| State | Action |
+| ----- | ------ |
+| Stopped | Seek to cursor line → play |
+| Playing | Pause (preserve tick) |
+| Paused | Resume from saved tick |
+
+**`Cmd+.`:** Full stop, reset tick to 0, clear playhead highlight.
+
+### 1.12 Channel mute / solo and operator on/off (UI layer only)
+
+These are runtime playback controls with no representation in GML source or IR.
+They are implemented purely in IRPlayer and the web UI.
+
+**Channel mute / solo:**
+
+- `player.muteChannel(ch, muted)` — suppresses `NOTE_ON` key-on writes for
+  the channel. PARAM_SET events still apply (register state stays consistent).
+- `player.soloChannel(ch)` — mutes all channels except `ch`.
+- `player.clearSolo()` — unmute all.
+
+**Operator on/off:**
+
+YM2612 register `0x28` key-on byte encodes per-op enables in bits 7-4 (op4,
+op3, op2, op1 respectively; actual op slot order applies). IRPlayer stores a
+per-channel op mask (default `0xf0` = all on). Changing the mask takes effect
+on the next NOTE_ON.
+
+- `player.setOpMask(ch, mask)` — e.g. `setOpMask(0, 0xa0)` disables op1+op3
+  on channel 0.
+- `player.getOpMask(ch)` → current mask.
+
 ---
 
 ## 2. Open Questions
 
-### 2.1 Marker-based playback
+### ~~2.1 Marker-based playback~~ → resolved in §1.11
 
-`Cmd+Enter` should ideally play from the nearest preceding marker to the
-cursor position. Questions:
-
-- How is the "active marker" determined — cursor line vs. playhead position?
-- If no preceding marker exists, play from the top?
-- Does `Cmd+Enter` during playing jump to the nearest marker and continue,
-  or does it pause?
+Cursor-line seek via compiler source map. No `marker` nodes required in source
+for this purpose. See §1.11.
 
 ### ~~2.2 def with phrase / track block reference~~ → resolved in §1.10
 

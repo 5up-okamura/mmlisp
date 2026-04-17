@@ -248,6 +248,12 @@ export class IRPlayer {
     // Modulator tracks by channel index (built after _flattenTracks)
     this._modulatorsByCh = new Map();
 
+    // Mute state per channel (index 0-5)
+    this._mutedChannels = new Array(6).fill(false);
+
+    // Key-on operator mask per channel (default 0xf0 = all 4 ops on)
+    this._opMasks = new Array(6).fill(0xf0);
+
     // Per-track scheduler state (set in play())
     this._tracks = [];
   }
@@ -373,9 +379,66 @@ export class IRPlayer {
     this._scheduleLoop();
   }
 
+  /**
+   * Seek to the nearest event at or before the given source line, then play.
+   * @param {AudioContext} audioContext
+   * @param {number} cursorLine  1-based source line number
+   * @param {Array<{line:number,tick:number}>} sourceMap  from compileGML()
+   */
+  playFromLine(audioContext, cursorLine, sourceMap) {
+    let tick = 0;
+    if (sourceMap && sourceMap.length > 0) {
+      // Binary search: last entry with line <= cursorLine
+      let lo = 0, hi = sourceMap.length - 1, found = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (sourceMap[mid].line <= cursorLine) { found = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      if (found >= 0) tick = sourceMap[found].tick;
+    }
+    this.playFromTick(audioContext, tick);
+  }
+
   /** Toggle looping at any time. */
   setLoop(enabled) {
     this._loop = enabled;
+  }
+
+  /**
+   * Mute or unmute a channel. Muted channels suppress NOTE_ON key-on writes.
+   * @param {number} ch  0-5
+   * @param {boolean} muted
+   */
+  muteChannel(ch, muted) {
+    this._mutedChannels[ch] = muted;
+  }
+
+  /**
+   * Solo a channel — mutes all others.
+   * @param {number} ch  0-5, or -1 to clear solo
+   */
+  soloChannel(ch) {
+    for (let i = 0; i < 6; i++) this._mutedChannels[i] = ch >= 0 && i !== ch;
+  }
+
+  /** Clear all mutes. */
+  clearMute() {
+    this._mutedChannels.fill(false);
+  }
+
+  /**
+   * Set operator key-on mask for a channel.
+   * @param {number} ch    0-5
+   * @param {number} mask  0xf0 = all on; bit7=op4, bit6=op3, bit5=op2, bit4=op1
+   */
+  setOpMask(ch, mask) {
+    this._opMasks[ch] = mask & 0xf0;
+  }
+
+  /** Get current op mask for a channel. */
+  getOpMask(ch) {
+    return this._opMasks[ch] ?? 0xf0;
   }
 
   /**
@@ -688,8 +751,11 @@ export class IRPlayer {
           when,
         );
         this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
-        // Key on: all 4 operators
-        this._write(0, 0x28, 0xf0 | chKey, when);
+        // Key on: all 4 operators (unless muted or op mask applied)
+        if (!this._mutedChannels[ch]) {
+          const keyOnByte = (this._opMasks[ch] ?? 0xf0) | chKey;
+          this._write(0, 0x28, keyOnByte, when);
+        }
 
         // Reset non-carry modulator tracks on the same channel
         const modulators = this._modulatorsByCh.get(ch) ?? [];

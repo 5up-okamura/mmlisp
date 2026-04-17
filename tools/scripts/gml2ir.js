@@ -806,6 +806,26 @@ function compileTrack(trackNode, id, diagnostics, typedDefs) {
   };
 }
 
+/**
+ * Build a source map: sorted array of { line, tick } pairs.
+ * One entry per unique source line, using the minimum tick seen for that line.
+ * Used by the editor to seek playback to a cursor position.
+ */
+function buildSourceMap(tracks) {
+  const lineToTick = new Map();
+  for (const track of tracks) {
+    for (const ev of track.events ?? []) {
+      const line = ev.src?.line;
+      if (line == null) continue;
+      const cur = lineToTick.get(line);
+      if (cur === undefined || ev.tick < cur) lineToTick.set(line, ev.tick);
+    }
+  }
+  return [...lineToTick.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([line, tick]) => ({ line, tick }));
+}
+
 function sortObject(value) {
   if (Array.isArray(value)) {
     return value.map(sortObject);
@@ -1165,6 +1185,7 @@ function compileDetailed(inputPath) {
   return {
     ir: sortObject(ir),
     diagnostics: sortObject(diagnostics),
+    sourceMap: buildSourceMap(tracks),
   };
 }
 
