@@ -609,7 +609,7 @@
       document.getElementById('btnPlay').classList.add('active');
     }
 
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', async (e) => {
       const isMac = navigator.platform.toUpperCase().includes('MAC');
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
