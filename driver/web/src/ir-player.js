@@ -364,6 +364,8 @@ export class IRPlayer {
       t.loopCount = 0;
       t.flatIndex = 0;
       while (
+        t.flatIndex < t.events.length &&
+        t.events[t.flatIndex].tick < fromTick
       ) {
         t.flatIndex++;
       }
