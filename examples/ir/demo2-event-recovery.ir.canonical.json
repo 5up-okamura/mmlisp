@@ -15,8 +15,8 @@
           },
           "cmd": "TEMPO_SET",
           "src": {
-            "column": 14,
-            "line": 15
+            "column": 1,
+            "line": 5
           },
           "tick": 0
         },

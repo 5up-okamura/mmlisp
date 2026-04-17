@@ -2,13 +2,12 @@
 ; Purpose: loop/marker stability + base/delta modulation
 ; Structure: A(2bar x2) + B(2bar) = 6-bar loop in C major, 120 BPM
 
-(def main-tempo 120)
-
 (def fb-init 2)
 
 (score :id :demo1-stage-loop
   :title "Demo 1 Stage Loop"
   :author "okamura"
+  :tempo 120
 
   (track :main
     :loop true
@@ -16,7 +15,6 @@
     :ch [:fm1]
 
     (phrase :riff
-      :tempo main-tempo
       :len 1/8
 
       (marker :intro)

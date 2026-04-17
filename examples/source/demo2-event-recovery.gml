@@ -5,6 +5,7 @@
 (score :id :demo2-event-recovery
   :title "Demo 2 Event Recovery"
   :author "okamura"
+  :tempo 132
 
   (track :tense
     :loop true
@@ -12,7 +13,6 @@
     :ch [:fm1 :fm2]
 
     (phrase :bed
-      :tempo 132
       :len 1/8
 
       (marker :calm)
