@@ -9,6 +9,9 @@ node_modules/
 dist/
 .build/
 
+# VS Code extension build artifacts
+*.vsix
+
 # editor
 .vscode/*.code-workspace
 
