@@ -9,82 +9,198 @@
   <link rel="stylesheet" href="https://esm.sh/@codemirror/view@6/dist/index.css">
   <style>
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
     body {
       background: #111;
       color: #ddd;
       font-family: 'Courier New', monospace;
-      padding: 1.5rem;
-      display: grid;
-      grid-template-rows: 1fr auto;
-      gap: 0;
-      overflow: hidden;
+      display: flex;
+      flex-direction: column;
       height: 100dvh;
     }
-    h1 { color: #7df; font-size: 1.1rem; margin: 0 0 0.3rem; }
-    p.sub { color: #555; font-size: 0.75rem; margin: 0 0 1.5rem; }
 
-    .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
-
-    .panel {
-      background: #181818;
-      border: 1px solid #2a2a2a;
-      border-radius: 3px;
-      padding: 1rem;
-      margin-bottom: 0.8rem;
-    }
-    .panel-title {
-      font-size: 0.7rem;
-      color: #7df;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin: 0 0 0.8rem;
+    /* ---- top bar ---- */
+    #topbar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0 0.75rem;
+      height: 36px;
+      flex-shrink: 0;
+      background: #161616;
       border-bottom: 1px solid #2a2a2a;
-      padding-bottom: 0.4rem;
     }
-
-    label { display: block; font-size: 0.75rem; color: #777; margin-bottom: 0.3rem; }
-    select {
-      background: #222;
-      border: 1px solid #3a3a3a;
-      color: #ddd;
-      padding: 0.35rem 0.5rem;
-      font-family: inherit;
-      font-size: 0.85rem;
-      border-radius: 2px;
-      width: 100%;
-      margin-bottom: 0.6rem;
+    #topbar .sep {
+      width: 1px;
+      height: 18px;
+      background: #333;
+      margin: 0 0.25rem;
     }
-    .btn-row { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
-    button {
-      background: #222;
-      border: 1px solid #444;
+    #topbar select {
+      background: #1e1e1e;
+      border: 1px solid #333;
       color: #bbb;
-      padding: 0.4rem 1rem;
+      padding: 0.2rem 0.4rem;
       font-family: inherit;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       border-radius: 2px;
       cursor: pointer;
     }
-    button:hover { background: #2a2a2a; border-color: #7df; color: #7df; }
-    button:disabled { opacity: 0.3; cursor: default; }
-    button.active { background: #12303f; border-color: #7df; color: #7df; }
-
-    /* ---- parameter knobs ---- */
-    .param-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-      gap: 0.6rem;
+    #topbar select:hover { border-color: #555; }
+    .tb-btn {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      color: #888;
+      padding: 0.2rem 0.6rem;
+      font-family: inherit;
+      font-size: 0.75rem;
+      border-radius: 2px;
+      cursor: pointer;
+      white-space: nowrap;
     }
-    .knob-wrap {
+    .tb-btn:hover { border-color: #7df; color: #7df; background: #12283a; }
+    .tb-btn:disabled { opacity: 0.3; cursor: default; }
+    .tb-btn.active { border-color: #7df; color: #7df; background: #12303f; }
+    #posDisplay {
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #7df;
+      letter-spacing: 0.05em;
+      min-width: 4.5em;
+    }
+    #bpmDisplay {
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #fd7;
+      letter-spacing: 0.05em;
+      min-width: 5.5em;
+    }
+    .play-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #333;
+      flex-shrink: 0;
+    }
+    .play-dot.playing { background: #4c9; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+    #fileNameDisplay {
+      font-size: 0.7rem;
+      color: #555;
+      margin-left: 0.25rem;
+    }
+    #topbar .spacer { flex: 1; }
+
+    /* ---- main area ---- */
+    #main {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* ---- left column: editor + console ---- */
+    #leftCol {
       display: flex;
       flex-direction: column;
-      align-items: stretch;
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
     }
-    .knob-label {
+    #editorWrap {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      border-bottom: none;
+    }
+    #editorWrap .cm-editor {
+      height: 100%;
+      font-size: 0.78rem;
+      background: #0d0d0d;
+    }
+    #editorWrap .cm-scroller { overflow: auto; }
+    #editorWrap .cm-content { color: #bbb; }
+    #editorWrap .cm-activeLine { background: transparent; }
+    #editorWrap .cm-gutters {
+      background: #111;
+      border-right: 1px solid #1e1e1e;
+      color: #444;
+    }
+    .cm-playLine { box-shadow: inset 3px 0 0 #4c9; }
+    .cm-playLine .cm-gutterElement { color: #4c9 !important; font-weight: bold; }
+
+    /* drag divider */
+    #hDivider {
+      height: 4px;
+      background: #1e1e1e;
+      border-top: 1px solid #2a2a2a;
+      border-bottom: 1px solid #2a2a2a;
+      cursor: row-resize;
+      flex-shrink: 0;
+    }
+    #hDivider:hover { background: #2a3a4a; }
+
+    /* console */
+    #consolePane {
+      height: 140px;
+      min-height: 40px;
+      max-height: 60vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      border-top: none;
+    }
+    #log {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0.4rem 0.6rem;
+      font-size: 0.7rem;
+      color: #4a7;
+      line-height: 1.5;
+      background: #0d0d0d;
+    }
+    #log .err { color: #e55; }
+    #log .info { color: #7df; }
+
+    /* ---- right panel ---- */
+    #rightPanel {
+      width: 300px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: #141414;
+      border-left: 1px solid #2a2a2a;
+      overflow-y: auto;
+      overflow-x: hidden;
+      transition: width 0.15s ease;
+    }
+    #rightPanel.collapsed { width: 0; overflow: hidden; }
+
+    .rack-section {
+      border-bottom: 1px solid #222;
+      padding: 0.75rem;
+    }
+    .rack-title {
       font-size: 0.65rem;
+      color: #7df;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.7rem;
+    }
+
+    /* ---- knobs / sliders (right panel) ---- */
+    .param-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 0.5rem;
+    }
+    .knob-wrap { display: flex; flex-direction: column; }
+    .knob-label {
+      font-size: 0.62rem;
       color: #666;
-      margin-bottom: 0.2rem;
+      margin-bottom: 0.15rem;
       display: flex;
       justify-content: space-between;
     }
@@ -100,181 +216,123 @@
     }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 12px; height: 12px;
+      width: 11px; height: 11px;
       border-radius: 50%;
       background: #7df;
       border: none;
     }
     input[type=range]:hover { background: #444; }
 
-    /* ---- operator columns ---- */
     .op-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 0.8rem;
+      gap: 0.5rem;
     }
     .op-col {
-      border: 1px solid #252525;
+      border: 1px solid #222;
       border-radius: 2px;
-      padding: 0.6rem;
+      padding: 0.4rem;
     }
     .op-col-title {
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       color: #5a8;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      margin-bottom: 0.6rem;
+      margin-bottom: 0.4rem;
     }
-
-    /* ---- algorithm display ---- */
     #algDisplay {
-      font-size: 0.7rem;
+      font-size: 0.67rem;
       color: #888;
-      margin-top: 0.5rem;
-      min-height: 2em;
+      margin-top: 0.4rem;
+      min-height: 1.5em;
     }
 
-    /* ---- log ---- */
-    #log {
-      background: #0d0d0d;
-      border: 1px solid #222;
-      border-radius: 2px;
-      padding: 0.5rem;
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      font-size: 0.7rem;
-      color: #4a7;
-      line-height: 1.5;
-    }
-    #log .err { color: #e55; }
-    #log .info { color: #7df; }
-
-    .status-row {
-      font-size: 0.7rem;
-      color: #555;
-      margin-top: 0.6rem;
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
-    .dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #333;
-      flex-shrink: 0;
-    }
-    .dot.playing { background: #4c9; animation: pulse 1s infinite; }
-    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
-
-    /* ---- channel selector tabs ---- */
-    .ch-tabs { display: flex; gap: 0.3rem; margin-bottom: 0.8rem; flex-wrap: wrap; }
+    /* channel tabs in right panel */
+    .ch-tabs { display: flex; gap: 0.3rem; margin-bottom: 0.7rem; flex-wrap: wrap; }
     .ch-tab {
       background: #1e1e1e;
       border: 1px solid #333;
       color: #666;
-      padding: 0.25rem 0.6rem;
+      padding: 0.2rem 0.5rem;
       font-family: inherit;
-      font-size: 0.7rem;
+      font-size: 0.68rem;
       border-radius: 2px;
       cursor: pointer;
     }
     .ch-tab:hover { border-color: #555; color: #aaa; }
     .ch-tab.sel { border-color: #7df; color: #7df; background: #12283a; }
-
-    /* ---- code editor ---- */
-    #editorWrap {
-      position: relative;
-      border: 1px solid #2a2a2a;
-      border-radius: 2px;
-      overflow: hidden;
-      flex: 1;
-      min-height: 0;
-    }
-    #editorWrap .cm-editor {
-      height: 100%;
-      font-size: 0.78rem;
-      background: #0d0d0d;
-    }
-    #editorWrap .cm-scroller { overflow: auto; }
-    #editorWrap .cm-content { color: #bbb; }
-    #editorWrap .cm-activeLine { background: transparent; }
-    #editorWrap .cm-gutters {
-      background: #111;
-      border-right: 1px solid #222;
-      color: #444;
-    }
-    /* playhead highlight — left border only, does not interfere with editing */
-    .cm-playLine {
-      box-shadow: inset 3px 0 0 #4c9;
-    }
-    .cm-playLine .cm-gutterElement {
-      color: #4c9 !important;
-      font-weight: bold;
-    }
   </style>
 </head>
 <body>
-  <!-- Top row: GML Source | FM Parameters -->
-  <div class="row" style="align-items:stretch;min-height:0;flex-wrap:nowrap">
-    <!-- Source Editor Panel -->
-    <div class="panel" id="editorPanel" style="flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden">
-      <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
-        <span>GML Source</span>
-        <span id="editorFileName" style="color:#555;font-size:0.65rem"></span>
-      </div>
-      <div id="editorWrap"></div>
-    </div>
 
-    <!-- FM Parameters Panel -->
-    <div class="panel" id="paramPanel" style="flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto">
-      <div class="panel-title">FM Parameters</div>
+  <!-- Top bar -->
+  <div id="topbar">
+    <!-- Examples dropdown -->
+    <select id="presetSelect">
+      <option value="/examples/ir/demo1-stage-loop.ir.canonical.json">demo1-stage-loop</option>
+      <option value="/examples/ir/demo2-event-recovery.ir.canonical.json">demo2-event-recovery</option>
+    </select>
+    <button class="tb-btn" onclick="browseFile()">Open…</button>
+    <input type="file" id="fileInput" accept=".json" style="display:none">
+    <span id="fileNameDisplay"></span>
 
-      <div class="ch-tabs" id="chTabs"></div>
+    <div class="sep"></div>
 
-      <!-- Channel-level: ALG + FB -->
-      <div class="param-grid" style="margin-bottom:1rem">
-        <div class="knob-wrap">
-          <div class="knob-label">ALG <span class="val" id="val-alg">5</span></div>
-          <input type="range" id="sl-alg" min="0" max="7" value="5" oninput="onChParam('FM_ALG', this)">
-        </div>
-        <div class="knob-wrap">
-          <div class="knob-label">FB <span class="val" id="val-fb">2</span></div>
-          <input type="range" id="sl-fb" min="0" max="7" value="2" oninput="onChParam('FM_FB', this)">
-        </div>
-      </div>
-      <div id="algDisplay"></div>
+    <!-- Transport status -->
+    <span class="play-dot" id="playDot"></span>
+    <span id="posDisplay">--:--</span>
+    <span id="bpmDisplay">-- BPM</span>
 
-      <!-- Per-operator sliders -->
-      <div class="op-grid" id="opGrid"></div>
-    </div>
+    <div class="sep"></div>
+
+    <!-- Transport buttons -->
+    <button id="btnPlay" class="tb-btn" onclick="onPlay()">▶/⏸  <kbd style="font-size:0.65rem;color:#555">⌘↵</kbd></button>
+    <button id="btnStop" class="tb-btn" onclick="onStop()">■  <kbd style="font-size:0.65rem;color:#555">⌘.</kbd></button>
+
+    <div class="spacer"></div>
+
+    <!-- Panel toggle -->
+    <button id="btnPanel" class="tb-btn" onclick="togglePanel()">FM ▸</button>
   </div>
 
-  <!-- Bottom row: Transport | Console -->
-  <div class="row" style="align-items:stretch;flex-wrap:nowrap">
-    <!-- Transport -->
-    <div class="panel" style="min-width:240px;flex:0 0 240px">
-      <div class="panel-title">Transport</div>
-      <select id="presetSelect">
-        <option value="/examples/ir/demo1-stage-loop.ir.canonical.json">demo1-stage-loop</option>
-        <option value="/examples/ir/demo2-event-recovery.ir.canonical.json">demo2-event-recovery</option>
-      </select>
-      <button onclick="browseFile()" style="width:100%;margin-bottom:0.6rem">Browse local file…</button>
-      <input type="file" id="fileInput" accept=".json" style="display:none">
-      <div class="btn-row">
-        <button id="btnPlay" disabled onclick="onPlay()">▶ Play</button>
-        <button id="btnStop" disabled onclick="onStop()">■ Stop</button>
-      </div>
-      <div style="display:flex;gap:1rem;margin-top:0.6rem">
-        <div id="posDisplay" style="font-family:monospace;font-size:0.8rem;color:#7df;letter-spacing:0.05em">--:--</div>
-        <div id="bpmDisplay" style="font-family:monospace;font-size:0.8rem;color:#fd7;letter-spacing:0.05em">-- BPM</div>
+  <!-- Main area -->
+  <div id="main">
+
+    <!-- Left column: editor + draggable divider + console -->
+    <div id="leftCol">
+      <div id="editorWrap"></div>
+      <div id="hDivider"></div>
+      <div id="consolePane">
+        <div id="log"></div>
       </div>
     </div>
 
-    <!-- Console -->
-    <div class="panel" style="flex:1;min-width:200px;display:flex;flex-direction:column;overflow:hidden">
-      <div class="panel-title">Console</div>
-      <div id="log"></div>
+    <!-- Right panel (collapsible) -->
+    <div id="rightPanel" class="collapsed">
+
+      <!-- Channel tabs -->
+      <div class="rack-section">
+        <div class="rack-title">Channel</div>
+        <div class="ch-tabs" id="chTabs"></div>
+      </div>
+
+      <!-- FM Parameters -->
+      <div class="rack-section">
+        <div class="rack-title">FM Parameters</div>
+        <div class="param-grid" style="margin-bottom:0.75rem">
+          <div class="knob-wrap">
+            <div class="knob-label">ALG <span class="val" id="val-alg">5</span></div>
+            <input type="range" id="sl-alg" min="0" max="7" value="5" oninput="onChParam('FM_ALG', this)">
+          </div>
+          <div class="knob-wrap">
+            <div class="knob-label">FB <span class="val" id="val-fb">2</span></div>
+            <input type="range" id="sl-fb" min="0" max="7" value="2" oninput="onChParam('FM_FB', this)">
+          </div>
+        </div>
+        <div id="algDisplay"></div>
+        <div class="op-grid" id="opGrid" style="margin-top:0.75rem"></div>
+      </div>
+
     </div>
   </div>
 
@@ -378,7 +436,7 @@
       const gmlURL = IR_TO_GML[irURL];
       if (!gmlURL) {
         setEditorDoc('(no GML source mapped for this IR file)');
-        document.getElementById('editorFileName').textContent = '';
+        document.getElementById('fileNameDisplay').textContent = '';
         return;
       }
       try {
@@ -387,7 +445,7 @@
         const src = await res.text();
         _lastFileName = gmlURL.split('/').pop();
         setEditorDoc(src);
-        document.getElementById('editorFileName').textContent = _lastFileName;
+        document.getElementById('fileNameDisplay').textContent = _lastFileName;
       } catch (e) {
         setEditorDoc('(failed to load: ' + gmlURL + ')');
       }
@@ -465,9 +523,47 @@
       logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
     }
-    function setStatus(_msg, _playing = false) {
-      // status row removed from UI
+    function setStatus(_msg, playing = false) {
+      document.getElementById('playDot').classList.toggle('playing', playing);
     }
+
+    // -----------------------------------------------------------------------
+    // Panel toggle
+    // -----------------------------------------------------------------------
+    let _panelOpen = false;
+    function togglePanel() {
+      _panelOpen = !_panelOpen;
+      document.getElementById('rightPanel').classList.toggle('collapsed', !_panelOpen);
+      document.getElementById('btnPanel').textContent = _panelOpen ? 'FM ◂' : 'FM ▸';
+    }
+    window.togglePanel = togglePanel;
+
+    // -----------------------------------------------------------------------
+    // Horizontal divider drag
+    // -----------------------------------------------------------------------
+    (() => {
+      const divider = document.getElementById('hDivider');
+      const consolePane = document.getElementById('consolePane');
+      let dragging = false, startY = 0, startH = 0;
+      divider.addEventListener('mousedown', (e) => {
+        dragging = true;
+        startY = e.clientY;
+        startH = consolePane.offsetHeight;
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'row-resize';
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const delta = startY - e.clientY;
+        const newH = Math.max(40, Math.min(startH + delta, window.innerHeight * 0.6));
+        consolePane.style.height = newH + 'px';
+      });
+      document.addEventListener('mouseup', () => {
+        dragging = false;
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+      });
+    })();
 
     // -----------------------------------------------------------------------
     // Audio
@@ -555,7 +651,7 @@
       player?.stop();
       player = null;
       log('Stopped');
-      setStatus('Stopped');
+      setStatus('Stopped', false);
       document.getElementById('btnPlay').classList.remove('active');
       document.getElementById('posDisplay').textContent = '--:--';
       document.getElementById('bpmDisplay').textContent = '-- BPM';
@@ -584,7 +680,8 @@
       loadGmlSource(currentIrURL);
     });
 
-    document.getElementById('btnPlay').disabled = false;
+    // btnPlay is always enabled (audio init on first click)
+    document.getElementById('btnStop').disabled = false;
 
     // -----------------------------------------------------------------------
     // Keyboard shortcuts: Cmd+Enter = play/pause toggle, Cmd+. = full stop
