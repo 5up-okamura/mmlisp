@@ -341,7 +341,12 @@ function compilePhrase(
     }
   }
   if (phraseCarry !== null) {
-    const effectiveCarry = phraseCarry !== null ? phraseCarry : (trackCarry !== null ? trackCarry : false);
+    const effectiveCarry =
+      phraseCarry !== null
+        ? phraseCarry
+        : trackCarry !== null
+          ? trackCarry
+          : false;
     events.push({
       tick: state.tick,
       cmd: "CARRY_SET",
@@ -774,7 +779,15 @@ function compileTrack(trackNode, id, diagnostics, typedDefs) {
       node.items.length > 0 &&
       isAtom(node.items[0], "phrase")
     ) {
-      compilePhrase(node, state, events, diagnostics, name, typedDefs, trackCarry);
+      compilePhrase(
+        node,
+        state,
+        events,
+        diagnostics,
+        name,
+        typedDefs,
+        trackCarry,
+      );
     }
   }
 
