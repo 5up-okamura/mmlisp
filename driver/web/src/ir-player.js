@@ -245,6 +245,9 @@ export class IRPlayer {
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
 
+    // Modulator tracks by channel index (built after _flattenTracks)
+    this._modulatorsByCh = new Map();
+
     // Per-track scheduler state (set in play())
     this._tracks = [];
   }
@@ -302,8 +305,8 @@ export class IRPlayer {
 
     // Build per-track scheduler state
     this._tracks = this._flattenTracks();
+    this._buildModulatorMap();
     for (const t of this._tracks) {
-      t.startAudioTime = this._startAudioTime;
       t.audioTimeAtTick0 = this._startAudioTime;
       t.loopCount = 0;
       t.flatIndex = 0;
@@ -354,14 +357,13 @@ export class IRPlayer {
     const secsPerTick = 60 / (this._bpm * this._ppqn);
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
     this._tracks = this._flattenTracks();
+    this._buildModulatorMap();
     for (const t of this._tracks) {
       t.audioTimeAtTick0 = newTick0;
       t.startAudioTime = newTick0;
       t.loopCount = 0;
       t.flatIndex = 0;
       while (
-        t.flatIndex < t.events.length &&
-        t.events[t.flatIndex].tick < fromTick
       ) {
         t.flatIndex++;
       }
@@ -424,6 +426,7 @@ export class IRPlayer {
     // Set audioTimeAtTick0 so that tick=resumeTick corresponds to now+25ms
     const newTick0 = now + 0.025 - resumeTick * secsPerTick;
     this._tracks = this._flattenTracks();
+    this._buildModulatorMap();
     for (const t of this._tracks) {
       t.startAudioTime = newTick0;
       t.audioTimeAtTick0 = newTick0;
@@ -567,6 +570,8 @@ export class IRPlayer {
       const lastTick = events.length > 0 ? events[events.length - 1].tick : 0;
       const loopDuration = jumpTick >= 0 ? jumpTick : lastTick + 1;
 
+      const role = track.route_hint?.role ?? "bgm";
+      const carry = track.route_hint?.carry ?? false;
       return {
         events,
         loopDuration,
@@ -574,8 +579,23 @@ export class IRPlayer {
         audioTimeAtTick0: 0,
         loopCount: 0,
         startAudioTime: 0,
+        role,
+        carry,
+        carryState: carry,
+        chIndex,
       };
     });
+  }
+
+  _buildModulatorMap() {
+    this._modulatorsByCh = new Map();
+    for (const t of this._tracks) {
+      if (t.role === "modulator") {
+        const arr = this._modulatorsByCh.get(t.chIndex) ?? [];
+        arr.push(t);
+        this._modulatorsByCh.set(t.chIndex, arr);
+      }
+    }
   }
 
   _expandLoops(events) {
@@ -669,6 +689,19 @@ export class IRPlayer {
         // Key on: all 4 operators
         this._write(0, 0x28, 0xf0 | chKey, when);
 
+        // Reset non-carry modulator tracks on the same channel
+        const modulators = this._modulatorsByCh.get(ch) ?? [];
+        for (const modTrack of modulators) {
+          const carry = modTrack.carryState ?? modTrack.carry ?? false;
+          if (!carry) {
+            modTrack.startAudioTime = when;
+            modTrack.audioTimeAtTick0 = when;
+            modTrack.loopCount = 0;
+            modTrack.carryState = modTrack.carry ?? false;
+            modTrack.flatIndex = 0;
+          }
+        }
+
         // Key-off scheduled at exact audio time (5ms before next note for envelope decay)
         const lengthTicks = ev.args?.length ?? this._ppqn / 2;
         const noteDurSecs = lengthTicks * (60 / (this._bpm * this._ppqn));
@@ -680,6 +713,14 @@ export class IRPlayer {
       case "PARAM_SET":
       case "PARAM_ADD": {
         this._applyParam(ch, port, chOffset, ev, when);
+        break;
+      }
+
+      case "CARRY_SET": {
+        const ti = ev._trackIndex;
+        if (ti != null && this._tracks[ti]) {
+          this._tracks[ti].carryState = ev.args?.carry ?? false;
+        }
         break;
       }
 

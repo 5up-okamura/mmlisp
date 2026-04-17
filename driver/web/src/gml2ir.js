@@ -293,11 +293,31 @@ function compilePhrase(
   diagnostics,
   trackName,
   typedDefs,
+  trackCarry = null,
 ) {
   const items = phraseNode.items;
   const options = getKeywordMap(items, 2);
   const tempoNode = options.get(":tempo");
   const lenNode = options.get(":len");
+
+  // Phrase-level :carry (scanned directly to handle phrases without a label at index 1)
+  let phraseCarry = null;
+  for (let pi = 1; pi + 1 < items.length; pi++) {
+    if (items[pi]?.kind === "atom" && items[pi].value === ":carry") {
+      const cv = atomValue(items[pi + 1]);
+      phraseCarry = cv === "true" ? true : cv === "false" ? false : null;
+      break;
+    }
+  }
+  if (phraseCarry !== null) {
+    const effectiveCarry = phraseCarry !== null ? phraseCarry : (trackCarry !== null ? trackCarry : false);
+    events.push({
+      tick: state.tick,
+      cmd: "CARRY_SET",
+      args: { carry: effectiveCarry },
+      src: nodeSrc(phraseNode),
+    });
+  }
 
   const phraseDefaultLen = parseLengthToken(
     atomValue(lenNode),
@@ -691,6 +711,13 @@ function compileTrack(trackNode, id, diagnostics, typedDefs) {
   const role = parseTrackRole(options, diagnostics, name);
   const writeScope = parseWriteScope(options, diagnostics, name);
 
+  const carryNode = options.get(":carry");
+  let trackCarry = null;
+  if (carryNode !== undefined) {
+    const cv = atomValue(carryNode);
+    trackCarry = cv === "true" ? true : cv === "false" ? false : null;
+  }
+
   const state = {
     tick: 0,
     defaultLength: parseLengthToken("1/8", Math.round(WHOLE_TICKS / 8)),
@@ -705,7 +732,7 @@ function compileTrack(trackNode, id, diagnostics, typedDefs) {
       node.items.length > 0 &&
       isAtom(node.items[0], "phrase")
     ) {
-      compilePhrase(node, state, events, diagnostics, name, typedDefs);
+      compilePhrase(node, state, events, diagnostics, name, typedDefs, trackCarry);
     }
   }
 
@@ -715,6 +742,7 @@ function compileTrack(trackNode, id, diagnostics, typedDefs) {
     channel,
     route_hint: {
       allocation_preference: "ordered_first_fit",
+      carry: trackCarry ?? false,
       channel_candidates: channelCandidates,
       role,
       write_scope: writeScope,

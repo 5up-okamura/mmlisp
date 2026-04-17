@@ -567,6 +567,7 @@
       "name": "tense",
       "route_hint": {
         "allocation_preference": "ordered_first_fit",
+        "carry": false,
         "channel_candidates": [
           "fm1",
           "fm2"
