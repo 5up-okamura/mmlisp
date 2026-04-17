@@ -69,3 +69,23 @@ Web player features:
 2. Freeze IR-to-GMB opcode table and argument packing by review.
 3. Add multi-track/channel compatibility fixtures for decoder checks.
 4. Iterate freeze review notes in docs/reviews.
+
+## Acknowledgements
+
+This project was inspired by and built with reference to the following works:
+
+- **[SGDK (Sega Genesis Dev Kit)](https://github.com/Stephane-D/SGDK)** — Z80 driver infrastructure and toolchain conventions for Mega Drive homebrew.
+- **[MDSDRV](https://github.com/superctr/MDSDRV)** — Sound driver for Sega Mega Drive. Invaluable reference for register usage patterns and real-hardware timing.
+- **[NDP](https://ndp.squares.net/web/)** — PSG sound driver and MML authoring tool for MSX by naruto2413. Influenced the score and MML authoring model.
+- **[Strudel](https://strudel.cc/)** — Live coding music environment (TidalCycles ported to JavaScript). Influenced the generative and pattern-based composition model.
+- **[Opusmodus](https://opusmodus.com/)** — Common Lisp-based music composition system. Influenced the computational and algorithmic approach to score authoring.
+- **[Pure Data](https://puredata.info/)** / **[Max](https://cycling74.com/products/max)** — Visual dataflow environments for audio and interactive media. Foundational influences on the idea of bringing modern compositional tooling to game music.
+- **[glisp](https://github.com/baku89/glisp)** — Lisp-based creative coding environment by Baku Hashimoto. Influenced the GMLisp language design.
+
+The YM2612 emulator (`driver/web/src/ym2612.js`) was generated with AI assistance. The log-sin/exponent table approach and detune table values follow algorithms and constants documented in Yamaha OPN2 application notes and widely-referenced open-source OPN2 emulators (Nuked-OPN2, MAME, Genesis Plus GX). No source code was directly ported, but the numeric constants are ultimately derived from the same chip documentation those projects use.
+
+## License
+
+MIT License — Copyright (c) 2026 Hiroshi Okamura (5&UP Inc.)
+
+See [LICENSE](LICENSE) for the full text.

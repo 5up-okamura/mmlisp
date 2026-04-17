@@ -1,6 +1,16 @@
 /**
  * YM2612 (OPN2) emulator in pure JavaScript.
  *
+ * Copyright (c) 2026 Hiroshi Okamura (5&UP Inc.)
+ * SPDX-License-Identifier: MIT
+ *
+ * Generated with AI assistance. The log-sin/exponent table approach and
+ * detune table values follow algorithms and constants documented in Yamaha
+ * OPN2 application notes and widely-referenced open-source OPN2 emulators
+ * (Nuked-OPN2 by nukeykt, MAME, Genesis Plus GX). No source code was
+ * directly ported, but the numeric constants originate from the same chip
+ * documentation those projects use.
+ *
  * Covers the FM synthesis core needed for GMLisp playback:
  *   - 6 FM channels, 4 operators each
  *   - 8 FM algorithms

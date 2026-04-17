@@ -186,10 +186,69 @@ function collectLeadArgs(items, startIndex, headSymbol) {
   return { leadArgs, nextIndex: index };
 }
 
+function formatAlignedVectors(vectors) {
+  if (vectors.length === 0) return [];
+
+  const rows = vectors.map((vec) => {
+    if (vec.kind !== "list" || vec.bracket[0] !== "[") return null;
+    return vec.items.map((item) => {
+      const inline = nodeToInline(item);
+      return inline !== null ? inline : formatNode(item);
+    });
+  });
+
+  const validRows = rows.filter((r) => r !== null);
+  if (validRows.length === 0) return vectors.map((v) => formatNode(v));
+
+  const numCols = Math.max(...validRows.map((r) => r.length));
+  const colWidths = Array.from({ length: numCols }, (_, c) =>
+    Math.max(...validRows.map((r) => (c < r.length ? r[c].length : 0))),
+  );
+
+  return vectors.map((vec, i) => {
+    if (rows[i] === null) return formatNode(vec);
+    const padded = rows[i].map((item, c) => item.padStart(colWidths[c]));
+    return `[${padded.join(" ")}]`;
+  });
+}
+
+function formatDefVoice(node) {
+  // (def <name> :fm <ch-vec> <op-vec>...)
+  const name = formatNode(node.items[1]);
+  const tag = node.items[2].value;
+  const chVec = node.items[3];
+  const opVecs = node.items.slice(4);
+
+  const chInline = nodeToInline(chVec);
+  const chLine = chInline !== null ? chInline : formatNode(chVec);
+  const opLines = formatAlignedVectors(opVecs);
+
+  const lines = [`(def ${name} ${tag}`, `${INDENT}${chLine}`];
+  for (let i = 0; i < opLines.length; i++) {
+    const suffix = i === opLines.length - 1 ? ")" : "";
+    lines.push(`${INDENT}${opLines[i]}${suffix}`);
+  }
+  if (opLines.length === 0) {
+    lines.push(")");
+  }
+  return lines.join("\n");
+}
+
 function formatList(node) {
   const inline = nodeToInline(node);
   if (inline !== null) {
     return inline;
+  }
+
+  // Special case: (def <name> :fm <ch-vec> <op-vec>...)
+  if (
+    node.items.length >= 4 &&
+    node.items[0].kind === "atom" &&
+    node.items[0].value === "def" &&
+    node.items[2].kind === "atom" &&
+    node.items[2].value === ":fm"
+  ) {
+    return formatDefVoice(node);
   }
 
   const open = node.bracket[0];
