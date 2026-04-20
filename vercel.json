@@ -1,7 +1,0 @@
-{
-  "rewrites": [
-    { "source": "/src/:path*", "destination": "/driver/web/src/:path*" },
-    { "source": "/worklet.js", "destination": "/driver/web/worklet.js" },
-    { "source": "/", "destination": "/driver/web/index.html" }
-  ]
-}
