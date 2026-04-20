@@ -458,21 +458,26 @@
       }
       try {
         const res = await fetch(gmlURL);
-        if (!res.ok) throw new Error(res.status);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${gmlURL}`);
         const src = await res.text();
         _lastFileName = gmlURL.split('/').pop();
-        setEditorDoc(src);
+        setEditorDoc(src, /* compile */ true);
         document.getElementById('fileNameDisplay').textContent = _lastFileName;
       } catch (e) {
+        log('[load] ' + e.message, 'err');
         setEditorDoc('(failed to load: ' + gmlURL + ')');
       }
     }
 
-    function setEditorDoc(text) {
+    let _suppressCompile = false;
+
+    function setEditorDoc(text, triggerCompile = false) {
+      _suppressCompile = !triggerCompile;
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: text },
         effects: setPlayLine.of(-1),
       });
+      _suppressCompile = false;
     }
 
     function highlightLine(oneBased) {
@@ -488,6 +493,7 @@
     let _lastFileName = 'untitled.gml';
 
     function scheduleCompile() {
+      if (_suppressCompile) return;
       clearTimeout(_compileTimer);
       _compileTimer = setTimeout(() => runCompile(), 400);
     }
