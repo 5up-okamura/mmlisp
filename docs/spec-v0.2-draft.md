@@ -91,15 +91,15 @@ Elements beyond the vector length are not emitted (no register write).
 
 #### TARGET_ID allocations (HW LFO additions)
 
-| TARGET_ID | Name | Register |
-| --------- | ---- | -------- |
-| 0x3a | `FM_AMEN1` | 0x60+op1 bit7 |
-| 0x3b | `FM_AMEN2` | 0x60+op2 bit7 |
-| 0x3c | `FM_AMEN3` | 0x60+op3 bit7 |
-| 0x3d | `FM_AMEN4` | 0x60+op4 bit7 |
-| 0x3e | `FM_AMS`   | 0xB4 bits5-4  |
-| 0x3f | `FM_FMS`   | 0xB4 bits2-0  |
-| 0x41 | `LFO_RATE` | 0x22 bits2-0 + enable |
+| TARGET_ID | Name       | Register              |
+| --------- | ---------- | --------------------- |
+| 0x3a      | `FM_AMEN1` | 0x60+op1 bit7         |
+| 0x3b      | `FM_AMEN2` | 0x60+op2 bit7         |
+| 0x3c      | `FM_AMEN3` | 0x60+op3 bit7         |
+| 0x3d      | `FM_AMEN4` | 0x60+op4 bit7         |
+| 0x3e      | `FM_AMS`   | 0xB4 bits5-4          |
+| 0x3f      | `FM_FMS`   | 0xB4 bits2-0          |
+| 0x41      | `LFO_RATE` | 0x22 bits2-0 + enable |
 
 `LFO_RATE` 0 = disable (writes `0x00` to reg 0x22). Values 1–8 map to
 rates 3.98–72.2 Hz (writes `0x08 | (rate-1)`).
@@ -206,13 +206,13 @@ value. Retained for brevity.
 (def brass :psg [:adsr :ar 3 :dr 8 :sl 10 :sr 0 :rr 6])
 ```
 
-| Param | Meaning | Unit |
-| ----- | ------- | ---- |
-| `:ar` | Attack — frames to rise from 0 to 15 | frames |
-| `:dr` | Decay — frames to fall from 15 to `:sl` | frames |
-| `:sl` | Sustain level (0–15) | volume |
+| Param | Meaning                                        | Unit        |
+| ----- | ---------------------------------------------- | ----------- |
+| `:ar` | Attack — frames to rise from 0 to 15           | frames      |
+| `:dr` | Decay — frames to fall from 15 to `:sl`        | frames      |
+| `:sl` | Sustain level (0–15)                           | volume      |
 | `:sr` | Sustain rate — 0 = hold, N = frames/step decay | frames/step |
-| `:rr` | Release rate — frames/step after key-off | frames/step |
+| `:rr` | Release rate — frames/step after key-off       | frames/step |
 
 #### `:hard` — hardware/buzz mode (reserved)
 
@@ -244,10 +244,10 @@ prepends as events at tick 0 on the first track.
   (track ...) ...)
 ```
 
-| Option | IR event emitted | Notes |
-| ------ | ---------------- | ----- |
-| `:tempo N` | `TEMPO_SET bpm=N` at tick 0 | Overrides phrase-level tempo if both present |
-| `:lfo-rate N` | `PARAM_SET :LFO_RATE N` at tick 0 | 0 = LFO off |
+| Option        | IR event emitted                  | Notes                                        |
+| ------------- | --------------------------------- | -------------------------------------------- |
+| `:tempo N`    | `TEMPO_SET bpm=N` at tick 0       | Overrides phrase-level tempo if both present |
+| `:lfo-rate N` | `PARAM_SET :LFO_RATE N` at tick 0 | 0 = LFO off                                  |
 
 Dynamic changes mid-song use `param-set` / `tempo-set` inside a phrase as
 before. Score-level options are syntactic sugar for the initial state only.
@@ -348,11 +348,11 @@ do not need to add markers purely to set a playback start point.
 
 **`Cmd+Enter` behavior:**
 
-| State | Action |
-| ----- | ------ |
+| State   | Action                     |
+| ------- | -------------------------- |
 | Stopped | Seek to cursor line → play |
-| Playing | Pause (preserve tick) |
-| Paused | Resume from saved tick |
+| Playing | Pause (preserve tick)      |
+| Paused  | Resume from saved tick     |
 
 **`Cmd+.`:** Full stop, reset tick to 0, clear playhead highlight.
 
@@ -426,15 +426,18 @@ Proposed top bar: `File ▾ | Examples ▾ | [● Bar:Beat BPM] | [⌘↵ Play/P
 ### 2.8 `defn` — compile-time macro vs. runtime subroutine
 
 Current GMLisp behavior:
+
 - `defn` is a **compile-time macro**. Call sites are AST-expanded by `expandRoots`
   before `compilePhrase`. No call/return record appears in IR or GMB.
 - Each `(bend-down :e4)` expands to the full event sequence inline.
 
 Pros of current approach:
+
 - Simple; no new IR opcodes needed
 - Arguments are substituted at compile time
 
 Cons vs. runtime subroutines:
+
 - Binary size grows linearly with call count (no sharing in GMB)
 - No runtime parameterization — args are compile-time constants only
 
@@ -454,3 +457,8 @@ separate `subroutines` section of the IR.
 - Patch server / community infrastructure (see roadmap Future Vision)
 - Contextual note editor (keyboard/envelope UI triggered by note selection)
 - Runtime subroutines (`CALL`/`RET` in GMB) — `defn` is compile-time only in v0.2 (see OQ 2.8)
+- `REG_WRITE` — raw YM2612 register write. Parser token is reserved; compiler rejects in strict mode. Deferred until low-level register access design is settled.
+- `FM3_MODE` — FM3 independent-operator mode. Same reservation policy as `REG_WRITE`.
+- `CSM_ON` / `CSM_OFF` / `CSM_RATE` — YM2612 CSM (composite sinusoidal modeling) speech-synthesis mode. Out of scope for music demo use cases.
+- Full semantic diagnostics catalog — error/warning coverage beyond current demo-driven checks (e.g. phrase nesting, duplicate track names). Sufficient coverage exists for v0.1 demos; exhaustive catalog deferred.
+- Multi-track channel allocation — voice stealing and track splitting across tracks sharing a channel. Not yet implemented.
