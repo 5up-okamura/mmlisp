@@ -76,7 +76,7 @@
     .play-dot.playing { background: #4c9; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
     #topbar .spacer { flex: 1; }
-    #btnPanel { font-size: 1.2rem; line-height: 1; padding: 0 0.4rem; }
+    #btnPanel { font-size: 1.5rem; line-height: 1; padding: 0 0.4rem; }
 
     /* ---- menu dropdowns ---- */
     .menu-wrap { position: relative; }
@@ -367,17 +367,17 @@
 
     <!-- Transport buttons -->
     <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">
-      <svg id="iconPlay" width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
-      <svg id="iconPause" width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style="display:none"><rect x="0" y="0" width="3" height="10"/><rect x="5" y="0" width="3" height="10"/></svg>
+      <svg id="iconPlay" width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
+      <svg id="iconPause" width="8" height="8" viewBox="0 0 10 10" fill="currentColor" style="display:none"><rect x="0" y="0" width="3" height="10"/><rect x="5" y="0" width="3" height="10"/></svg>
     </button>
     <button id="btnStop" class="tb-btn" onclick="onStop()">
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
+      <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
     </button>
 
     <!-- Transport status -->
     <span class="play-dot" id="playDot" style="margin-left:0.5rem"></span>
     <span id="posDisplay">. : .</span>
-    <span id="bpmDisplay">... BPM</span>
+    <span id="bpmDisplay" style="margin-left:0.5rem">... BPM</span>
 
     <div class="spacer"></div>
 
