@@ -189,7 +189,7 @@ Reserved for v0.2:
 
 - CSM_ON / CSM_OFF / CSM_RATE
 
-See separate draft: docs/ir-v0.1-draft.md
+See: docs/ir.md
 
 ## 7. Binary Format (GMB) Draft
 
@@ -200,7 +200,7 @@ See separate draft: docs/ir-v0.1-draft.md
 - Metadata section
 - Reserved bytes for forward compatibility
 
-See separate draft: docs/gmb-format-v0.1-draft.md
+See: docs/gmb.md
 
 ## 8. Validation Rules
 

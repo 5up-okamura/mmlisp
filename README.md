@@ -53,15 +53,13 @@ Web player features:
 
 ## Key Draft Documents
 
-1. docs/spec-v0.1-draft.md
-2. docs/command-table-v0.1-draft.md
-3. docs/ir-v0.1-draft.md
-4. docs/gmb-format-v0.1-draft.md
-5. docs/freeze-checklist-v0.1.md
-6. docs/opcode-mapping-provisional-v0.1.md
-7. docs/reviews/freeze-candidate-template.md
-8. docs/compiler-contract-v0.1-draft.md
-9. docs/gmldrv-decoder-contract-v0.1-draft.md
+1. docs/spec-v0.1.md
+2. docs/commands.md
+3. docs/ir.md
+4. docs/gmb.md
+5. docs/opcodes.md
+6. docs/compiler.md
+7. docs/driver.md
 
 ## Next Local Steps
 

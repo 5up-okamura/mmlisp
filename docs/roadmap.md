@@ -11,12 +11,10 @@ Status: **complete** — v0.1-candidate tag at b61eb11 (2026-04-09).
 
 Outputs:
 
-1. docs/spec-v0.1-draft.md
-2. docs/command-table-v0.1-draft.md
-3. docs/ir-v0.1-draft.md
-4. docs/gmb-format-v0.1-draft.md
-5. docs/reviews/freeze-checklist-v0.1.md (archived)
-6. docs/reviews/2026-04-09-pre-freeze-checkpoint.md
+1. docs/spec-v0.1.md
+2. docs/commands.md
+3. docs/ir.md
+4. docs/gmb.md
 
 ## Phase 0.5: Editor Tooling
 

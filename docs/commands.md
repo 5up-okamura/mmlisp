@@ -149,6 +149,6 @@ for v0.1.
 
 See also:
 
-1. docs/spec-v0.1-draft.md
-2. docs/ir-v0.1-draft.md
-3. docs/gmb-format-v0.1-draft.md
+1. docs/spec-v0.1.md
+2. docs/ir.md
+3. docs/gmb.md
