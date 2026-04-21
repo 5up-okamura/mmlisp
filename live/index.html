@@ -366,8 +366,13 @@
     </div>
 
     <!-- Transport buttons -->
-    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">▶</button>
-    <button id="btnStop" class="tb-btn" onclick="onStop()">■</button>
+    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">
+      <svg id="iconPlay" width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
+      <svg id="iconPause" width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style="display:none"><rect x="0" y="0" width="3" height="10"/><rect x="5" y="0" width="3" height="10"/></svg>
+    </button>
+    <button id="btnStop" class="tb-btn" onclick="onStop()">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
+    </button>
 
     <!-- Transport status -->
     <span class="play-dot" id="playDot" style="margin-left:0.5rem"></span>
@@ -647,11 +652,13 @@
     // -----------------------------------------------------------------------
     // Panel toggle
     // -----------------------------------------------------------------------
-    let _panelOpen = true;
+    const _isMobile = window.matchMedia('(max-width: 480px)').matches;
+    let _panelOpen = !_isMobile;
+    if (_isMobile) document.getElementById('rightPanel').classList.add('collapsed');
+
     function togglePanel() {
       _panelOpen = !_panelOpen;
       document.getElementById('rightPanel').classList.toggle('collapsed', !_panelOpen);
-
     }
     window.togglePanel = togglePanel;
 
@@ -819,7 +826,8 @@
     }
 
     function setPlayIcon(playing) {
-      document.getElementById('btnPlay').textContent = playing ? '⏸' : '▶';
+      document.getElementById('iconPlay').style.display  = playing ? 'none' : '';
+      document.getElementById('iconPause').style.display = playing ? '' : 'none';
     }
 
     function onPlayToggle() {

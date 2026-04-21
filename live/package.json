@@ -1,9 +1,9 @@
 {
-  "name": "mmlisp-web-player",
+  "name": "mmlisp-web-authoring-environment",
   "version": "0.1.0",
   "private": true,
-  "description": "MMLisp YM2612 browser player",
+  "description": "MMLisp Live — web authoring environment",
   "scripts": {
-    "serve": "npx --yes serve ../.. --cors -p 5173"
+    "serve": "npx --yes serve .. --cors -p 5173"
   }
 }
