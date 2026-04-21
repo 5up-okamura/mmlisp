@@ -316,8 +316,8 @@
     <div class="sep"></div>
 
     <!-- Transport buttons -->
-    <button id="btnPlay" class="tb-btn" onpointerdown="initAudio()" onclick="onPlay()">▶/⏸  <kbd style="font-size:0.65rem;color:#555">⌘↵</kbd></button>
-    <button id="btnStop" class="tb-btn" onclick="onStop()">■  <kbd style="font-size:0.65rem;color:#555">⌘.</kbd></button>
+    <button id="btnPlay" class="tb-btn" onpointerdown="initAudio()" onclick="onPlayToggle()">▶</button>
+    <button id="btnStop" class="tb-btn" onclick="onStop()">■</button>
 
     <div class="spacer"></div>
 
@@ -746,6 +746,21 @@
       return _initAudioPromise;
     }
 
+    function setPlayIcon(playing) {
+      document.getElementById('btnPlay').textContent = playing ? '⏸' : '▶';
+    }
+
+    function onPlayToggle() {
+      if (!player || (!player.isPlaying() && !_paused)) {
+        const cursorLine = editorView.state.doc.lineAt(editorView.state.selection.main.head).number;
+        onPlay(cursorLine);
+      } else if (_paused) {
+        onResume();
+      } else {
+        onPause();
+      }
+    }
+
     async function onPlay(fromLine = null) {
       const ok = await initAudio();
       if (!ok) return;
@@ -801,6 +816,7 @@
           player.play(audioCtx);
         }
         setStatus('Playing', true);
+        setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
         // Restore mute/solo state on new player instance
@@ -824,6 +840,7 @@
       log('Stopped');
       setStatus('Stopped', false);
       document.getElementById('btnPlay').classList.remove('active');
+      setPlayIcon(false);
       document.getElementById('posDisplay').textContent = '--:--';
       document.getElementById('bpmDisplay').textContent = '-- BPM';
       editorView.dispatch({ effects: setTrackLine.of({ trackIdx: -1, line: -1 }) });
@@ -866,6 +883,7 @@
       player.stop();
       _paused = true;
       log('Paused');
+      setPlayIcon(false);
       document.getElementById('btnPlay').classList.remove('active');
     }
 
@@ -874,6 +892,7 @@
       player.playFromTick(audioCtx, _pausedTick);
       _paused = false;
       log('Resumed', 'info');
+      setPlayIcon(true);
       document.getElementById('btnPlay').classList.add('active');
     }
 
@@ -884,15 +903,7 @@
 
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (!player || (!player.isPlaying() && !_paused)) {
-          // Seek to cursor line and play
-          const cursorLine = editorView.state.doc.lineAt(editorView.state.selection.main.head).number;
-          await onPlay(cursorLine);
-        } else if (_paused) {
-          onResume();
-        } else {
-          onPause();
-        }
+        onPlayToggle();
       } else if (e.key === '.') {
         e.preventDefault();
         _paused = false;
@@ -902,10 +913,11 @@
     });
 
     // Expose for inline handlers
-    window.initAudio  = initAudio;
-    window.onPlay     = onPlay;
-    window.onStop     = onStop;
-    window.browseFile = browseFile;
+    window.initAudio    = initAudio;
+    window.onPlayToggle = onPlayToggle;
+    window.onPlay       = onPlay;
+    window.onStop       = onStop;
+    window.browseFile   = browseFile;
 
     // -----------------------------------------------------------------------
     // Parameter UI
