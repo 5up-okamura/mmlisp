@@ -75,18 +75,54 @@
     .play-dot {
       width: 7px; height: 7px;
       border-radius: 50%;
-      background: #4c9;
+      background: #444;
       flex-shrink: 0;
-      display: none;
     }
-    .play-dot.playing { display: block; animation: pulse 1s infinite; }
+    .play-dot.playing { background: #4c9; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
-    #fileNameDisplay {
-      font-size: 0.7rem;
-      color: #777;
-      margin-left: 0.25rem;
-    }
     #topbar .spacer { flex: 1; }
+
+    /* ---- menu dropdowns ---- */
+    .menu-wrap { position: relative; }
+    .menu-btn {
+      background: transparent;
+      border: none;
+      color: #aaa;
+      font-family: inherit;
+      font-size: 0.75rem;
+      border-radius: 2px;
+      cursor: pointer;
+      padding: 0.2rem 0.5rem;
+      white-space: nowrap;
+    }
+    .menu-btn:hover, .menu-wrap.open .menu-btn { color: #7df; background: #12283a; }
+    .menu-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: #1e1e1e;
+      border: 1px solid #444;
+      border-radius: 2px;
+      z-index: 100;
+      min-width: 200px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .menu-wrap.open .menu-dropdown { display: block; }
+    .menu-item {
+      display: block;
+      width: 100%;
+      padding: 0.35rem 0.75rem;
+      background: none;
+      border: none;
+      color: #ccc;
+      font-family: inherit;
+      font-size: 0.75rem;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .menu-item:hover { background: #2a3a4a; color: #7df; }
 
     /* ---- main area ---- */
     #main {
@@ -94,6 +130,7 @@
       flex: 1;
       min-height: 0;
       overflow: hidden;
+      position: relative;
     }
 
     /* ---- left column: editor + console ---- */
@@ -166,17 +203,24 @@
 
     /* ---- right panel ---- */
     #rightPanel {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
       width: 400px;
-      flex-shrink: 0;
       display: flex;
       flex-direction: column;
       background: #141414;
       border-left: 1px solid #2a2a2a;
       overflow-y: auto;
       overflow-x: hidden;
-      transition: width 0.15s ease;
+      transition: transform 0.18s ease;
+      transform: translateX(0);
+      z-index: 10;
     }
-    #rightPanel.collapsed { width: 0; overflow: hidden; }
+    #rightPanel.collapsed {
+      transform: translateX(100%);
+    }
 
     .rack-section {
       border-bottom: 1px solid #222;
@@ -297,14 +341,23 @@
 
   <!-- Top bar -->
   <div id="topbar">
-    <!-- Examples dropdown -->
-    <select id="presetSelect">
-      <option value="/examples/ir/demo1-stage-loop.ir.canonical.json">demo1-stage-loop</option>
-      <option value="/examples/ir/demo2-event-recovery.ir.canonical.json">demo2-event-recovery</option>
-    </select>
-    <button class="tb-btn" onclick="browseFile()">Open…</button>
+    <!-- File menu -->
+    <div class="menu-wrap" id="menuFile">
+      <button class="menu-btn" onclick="toggleMenu('menuFile')">File</button>
+      <div class="menu-dropdown">
+        <button class="menu-item" onclick="browseFile();closeMenus()">Open…</button>
+      </div>
+    </div>
     <input type="file" id="fileInput" accept=".json" style="display:none">
-    <span id="fileNameDisplay"></span>
+
+    <!-- Examples menu -->
+    <div class="menu-wrap" id="menuExamples">
+      <button class="menu-btn" onclick="toggleMenu('menuExamples')">Examples</button>
+      <div class="menu-dropdown">
+        <button class="menu-item" onclick="loadExample('/examples/ir/demo1-stage-loop.ir.canonical.json')">demo1-stage-loop</button>
+        <button class="menu-item" onclick="loadExample('/examples/ir/demo2-event-recovery.ir.canonical.json')">demo2-event-recovery</button>
+      </div>
+    </div>
 
     <div class="sep"></div>
 
@@ -316,13 +369,13 @@
 
     <!-- Transport status -->
     <span class="play-dot" id="playDot"></span>
-    <span id="posDisplay">--:--</span>
-    <span id="bpmDisplay">-- BPM</span>
+    <span id="posDisplay">. : .</span>
+    <span id="bpmDisplay">... BPM</span>
 
     <div class="spacer"></div>
 
     <!-- Panel toggle -->
-    <button id="btnPanel" class="tb-btn" onclick="togglePanel()">Params ◂</button>
+    <button id="btnPanel" class="menu-btn" onclick="togglePanel()">Params</button>
   </div>
 
   <!-- Main area -->
@@ -499,7 +552,6 @@
       const gmlURL = IR_TO_GML[irURL];
       if (!gmlURL) {
         setEditorDoc('(no GML source mapped for this IR file)');
-        document.getElementById('fileNameDisplay').textContent = '';
         return;
       }
       try {
@@ -508,7 +560,6 @@
         const src = await res.text();
         _lastFileName = gmlURL.split('/').pop();
         setEditorDoc(src);
-        document.getElementById('fileNameDisplay').textContent = _lastFileName;
       } catch (e) {
         setEditorDoc('(failed to load: ' + gmlURL + ')');
       }
@@ -563,9 +614,6 @@
 
     // Wire editor → live compile is registered in EditorState extensions above.
 
-    // Load source for initial preset
-    loadGmlSource(document.getElementById('presetSelect').value);
-
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
@@ -573,8 +621,11 @@
     let workletNode = null;
     let _initAudioPromise = null;
     let player = null;
-    let currentIrURL = document.getElementById('presetSelect').value;
+    let currentIrURL = '/examples/ir/demo1-stage-loop.ir.canonical.json';
     let selectedCh = 0;
+
+    // Load source for initial preset
+    loadGmlSource(currentIrURL);
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -598,7 +649,7 @@
     function togglePanel() {
       _panelOpen = !_panelOpen;
       document.getElementById('rightPanel').classList.toggle('collapsed', !_panelOpen);
-      document.getElementById('btnPanel').textContent = _panelOpen ? 'Params ◂' : 'Params ▸';
+      document.getElementById('btnPanel').textContent = 'Params';
     }
     window.togglePanel = togglePanel;
 
@@ -860,8 +911,8 @@
       setStatus('Stopped', false);
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
-      document.getElementById('posDisplay').textContent = '--:--';
-      document.getElementById('bpmDisplay').textContent = '-- BPM';
+      document.getElementById('posDisplay').textContent = '. : .';
+      document.getElementById('bpmDisplay').textContent = '... BPM';
       editorView.dispatch({ effects: setTrackLine.of({ trackIdx: -1, line: -1 }) });
     }
 
@@ -873,19 +924,35 @@
       const f = e.target.files[0];
       if (!f) return;
       const url = URL.createObjectURL(f);
-      const opt = new Option(f.name, url, true, true);
-      document.getElementById('presetSelect').append(opt);
       currentIrURL = url;
-      _lastGoodIR = null; // force reload from new source after compile
+      _lastGoodIR = null;
       onStop();
       log('File: ' + f.name);
     });
-    document.getElementById('presetSelect').addEventListener('change', (e) => {
-      currentIrURL = e.target.value;
+
+    // ---- menu helpers ----
+    function toggleMenu(id) {
+      const wrap = document.getElementById(id);
+      const isOpen = wrap.classList.contains('open');
+      closeMenus();
+      if (!isOpen) wrap.classList.add('open');
+    }
+    function closeMenus() {
+      document.querySelectorAll('.menu-wrap').forEach(el => el.classList.remove('open'));
+    }
+    function loadExample(url) {
+      currentIrURL = url;
       _lastGoodIR = null;
       onStop();
-      loadGmlSource(currentIrURL);
+      loadGmlSource(url);
+      closeMenus();
+    }
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.menu-wrap')) closeMenus();
     });
+    window.toggleMenu  = toggleMenu;
+    window.closeMenus  = closeMenus;
+    window.loadExample = loadExample;
 
     // btnPlay is always enabled (audio init on first click)
     document.getElementById('btnStop').disabled = false;
