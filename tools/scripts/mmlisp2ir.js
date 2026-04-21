@@ -441,6 +441,56 @@ function compileSeq(seqNode, trackState, events, diagnostics, trackName) {
     const item = seqNode.items[i];
     const val = atomValue(item);
 
+    // ── Subgroup: (e g a) → equal division of currentLen ───────────────
+    if (item.kind === "list") {
+      const elems = item.items ?? [];
+      const n = elems.length;
+      if (n > 0) {
+        const totalTicks = currentLen;
+        // Bresenham distribution: spread remainder evenly
+        const base = Math.floor(totalTicks / n);
+        let remainder = totalTicks - base * n;
+        const savedLen = currentLen;
+        for (let j = 0; j < n; j++) {
+          const slotTicks = base + (j < remainder ? 1 : 0);
+          currentLen = slotTicks;
+          const ev = elems[j];
+          const evVal = atomValue(ev);
+          if (evVal === "_") {
+            events.push({
+              tick: trackState.tick,
+              cmd: "REST",
+              args: { length: slotTicks },
+              src: nodeSrc(ev),
+            });
+            trackState.tick += slotTicks;
+          } else if (isAbsPitchAtom(evVal)) {
+            const pitch = evVal.slice(1);
+            const octChar = pitch.match(/\d$/);
+            if (octChar) currentOct = parseInt(octChar[0], 10);
+            events.push({
+              tick: trackState.tick,
+              cmd: "NOTE_ON",
+              args: makeNoteArgs(pitch, slotTicks, currentGate),
+              src: nodeSrc(ev),
+            });
+            trackState.tick += slotTicks;
+          } else if (isNoteAtom(evVal)) {
+            events.push({
+              tick: trackState.tick,
+              cmd: "NOTE_ON",
+              args: makeNoteArgs(evVal + currentOct, slotTicks, currentGate),
+              src: nodeSrc(ev),
+            });
+            trackState.tick += slotTicks;
+          }
+        }
+        currentLen = savedLen;
+      }
+      i += 1;
+      continue;
+    }
+
     if (val === null || val === undefined) {
       i += 1;
       continue;
