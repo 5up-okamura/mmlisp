@@ -30,7 +30,7 @@ Status: **complete**.
 - Parameter modulation panel
 - Runtime intervention simulator
 
-Current status: partially implemented (driver/web/). See docs/spec-v0.2.md for planned additions.
+Current status: partially implemented (live/). See docs/spec-v0.2.md for planned additions.
 
 Implemented (v0.1 + post-freeze):
 
