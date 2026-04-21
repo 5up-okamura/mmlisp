@@ -676,6 +676,7 @@
 
     window.toggleMute = toggleMute;
     window.toggleSolo = toggleSolo;
+    window.selectCh   = selectCh;
 
     // -----------------------------------------------------------------------
     // Horizontal divider drag
@@ -711,29 +712,35 @@
       workletNode?.port.postMessage({ type: 'write', port, addr, data, when });
     }
 
+    let _workletReady = false;
     function initAudio() {
       if (_initAudioPromise) return _initAudioPromise;
       _initAudioPromise = (async () => {
-        if (audioCtx) {
-          if (audioCtx.state === 'suspended') await audioCtx.resume();
-          return true;
-        }
         try {
-          audioCtx = new AudioContext({ sampleRate: 48000 });
+          if (!_workletReady) {
+            // First time: create AudioContext and load worklet
+            if (!audioCtx) {
+              audioCtx = new AudioContext({ sampleRate: 48000 });
+              log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
+            }
+            await audioCtx.audioWorklet.addModule('./worklet.js');
+            workletNode = new AudioWorkletNode(audioCtx, 'ym2612-processor', {
+              numberOfOutputs: 1,
+              outputChannelCount: [2],
+            });
+            workletNode.connect(audioCtx.destination);
+            log('YM2612 worklet ready', 'info');
+            _workletReady = true;
+          }
+          // Always resume in case AudioContext was suspended (tab switch etc.)
           if (audioCtx.state === 'suspended') await audioCtx.resume();
-          log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
-          await audioCtx.audioWorklet.addModule('./worklet.js');
-          workletNode = new AudioWorkletNode(audioCtx, 'ym2612-processor', {
-            numberOfOutputs: 1,
-            outputChannelCount: [2],
-          });
-          workletNode.connect(audioCtx.destination);
-          log('YM2612 worklet ready', 'info');
           return true;
         } catch (e) {
-          _initAudioPromise = null; // allow retry on error
           log('Audio init failed: ' + e.message, 'err');
           return false;
+        } finally {
+          // Clear promise so next call re-checks suspended state
+          _initAudioPromise = null;
         }
       })();
       return _initAudioPromise;
@@ -895,8 +902,9 @@
     });
 
     // Expose for inline handlers
-    window.onPlay = onPlay;
-    window.onStop = onStop;
+    window.initAudio  = initAudio;
+    window.onPlay     = onPlay;
+    window.onStop     = onStop;
     window.browseFile = browseFile;
 
     // -----------------------------------------------------------------------
