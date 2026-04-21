@@ -1,4 +1,4 @@
-; MMLisp demo 2
+; MMLisp demo 2 — v0.3
 ; Purpose: intervention and recovery behavior (base + delta)
 ; Structure: intro(2bar) + stress-loop(1bar x4) + recovery(2bar) = 8-bar loop in A minor
 
@@ -15,102 +15,60 @@
   :author "okamura"
   :tempo 132
 
-  (track
-    :tense (phrase :bed (marker :calm)
-    
-      (notes :a3 :c4 :e4 :c4 :a3 :c4 :e4 :c4)
-    
-      (notes :g3 :b3 :d4 :b3 :g3 _ :g3 _)
-    
-      (loop-begin :stress)
-      (param-add :fm-tl1 -3)
-      (param-add :tempo-scale +2)
-      (notes :e4 :g4 :a4 :g4 :e4 :c4 :b3 :a3)
-      (loop-end :stress 4)
-    
-      (marker :recover)
-      (param-set :fm-tl1 40)
-      (param-set :tempo-scale 0)
-    
-      (notes :a3 :c4 :e4 :c4 :a3 _ _ _)
-    
-      (note :a3 1/2)
-      (rest 1/4)
-      (note :a3 1/4)
-    
-      (jump :calm)
-    )
+  (track :tense :ch fm1 :oct 4 :len 1/8
+    (marker :calm)
+
+    (seq :oct 3 a > c e c < a > c e c)
+    (seq :oct 3 g > b d b < g _ g _)
+
+    (loop-begin :stress)
+    (param-add :fm-tl1 -3)
+    (param-add :tempo-scale +2)
+    (seq :e4 :g4 :a4 :g4 :e4 :c4 :b3 :a3)
+    (loop-end :stress 4)
+
+    (marker :recover)
+    (param-set :fm-tl1 40)
+    (param-set :tempo-scale 0)
+
+    (seq :oct 3 a > c e c < a _ _ _)
+    (seq :len 1/2 :oct 3 a)
+    (rest 1/4)
+    (seq :len 1/4 a)
+
+    (jump :calm)
   )
 
-  (track :psg-bass
-    :ch :psg1
+  (track :psg-bass :ch psg1 :oct 2 :len 1/2
+    (marker :calm)
+    (ins pedal)
+    (seq a a a a)
+    (seq g g g g)
 
-    (phrase :bass (marker :calm)
+    (loop-begin :stress-b)
+    (ins tense-att)
+    (seq :len 1/4 :oct 3 e g a e)
+    (loop-end :stress-b 4)
 
-      (ins pedal)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (note :g2 1/2)
-      (note :g2 1/2)
-      (note :g2 1/2)
-      (note :g2 1/2)
+    (ins pedal)
+    (seq :oct 2 a a a a a)
+    (rest 1/4)
+    (seq :len 1/4 a)
 
-      (loop-begin :stress-b)
-      (ins tense-att)
-      (note :e3 1/4)
-      (note :g3 1/4)
-      (note :a3 1/4)
-      (note :e3 1/4)
-      (loop-end :stress-b 4)
-
-      (ins pedal)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (note :a2 1/2)
-      (rest 1/4)
-      (note :a2 1/4)
-
-      (jump :calm)
-    )
+    (jump :calm)
   )
 
-  (track :psg-perc
-    :ch :noise
+  (track :psg-perc :ch noise :oct 4 :len 1/4
+    (marker :calm)
+    (ins hit-env)
+    (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
 
-    (phrase :perc (marker :calm)
+    (loop-begin :stress-n)
+    (seq c c c c)
+    (loop-end :stress-n 4)
 
-      (ins hit-env)
+    (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
 
-      (note :c4 1/4)
-      (rest 3/4)
-      (note :c4 1/4)
-      (rest 3/4)
-      (note :c4 1/4)
-      (rest 3/4)
-      (note :c4 1/4)
-      (rest 3/4)
-
-      (loop-begin :stress-n)
-      (note :c4 1/4)
-      (note :c4 1/4)
-      (note :c4 1/4)
-      (note :c4 1/4)
-      (loop-end :stress-n 4)
-
-      (note :c4 1/4)
-      (rest 3/4)
-      (note :c4 1/4)
-      (rest 3/4)
-      (note :c4 1/4)
-      (rest 3/4)
-      (note :c4 1/4)
-      (rest 3/4)
-
-      (jump :calm)
-    )
+    (jump :calm)
   )
 )

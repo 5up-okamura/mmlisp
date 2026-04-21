@@ -1,10 +1,10 @@
 /**
- * MMLisp → IR compiler — ES module port of tools/scripts/mmlisp2ir.js.
+ * MMLisp → IR compiler — ES module port of tools/scripts/mmlisp2ir.js (v0.3)
  * No Node.js dependencies; input is a MMLisp source string.
  *
  * API:
  *   compileMMLisp(src: string, filename?: string)
- *     → { ir: object, diagnostics: array }
+ *     → { ir: object, diagnostics: array, sourceMap: array }
  *
  * Errors in diagnostics have: { severity, code, message, line, column, track }
  */
@@ -38,6 +38,20 @@ const SUPPORTED_TARGETS = new Set([
   ]),
 ]);
 
+const TRACK_OPTION_KEYS = new Set([
+  ":ch",
+  ":role",
+  ":oct",
+  ":len",
+  ":gate",
+  ":carry",
+  ":shuffle",
+  ":shuffle-base",
+  ":write",
+]);
+
+const BLOCK_OPTION_KEYS = new Set([":oct", ":len", ":gate"]);
+
 function atomValue(node) {
   if (!node) return null;
   if (node.kind === "atom" || node.kind === "string") return node.value;
@@ -50,20 +64,70 @@ function isAtom(node, value) {
 
 function parseIntLike(value) {
   if (typeof value !== "string") return null;
-  if (/^[+-]?\d+$/.test(value)) return Number.parseInt(value, 10);
+  if (/^[+-]?\d+$/.test(value)) return parseInt(value, 10);
   return null;
 }
 
 function parseLengthToken(value, inheritedTicks) {
   if (!value) return inheritedTicks;
   if (/^\d+\/\d+$/.test(value)) {
-    const [n, d] = value.split("/").map((v) => Number.parseInt(v, 10));
+    const [n, d] = value.split("/").map((v) => parseInt(v, 10));
     return Math.round((WHOLE_TICKS * n) / d);
   }
   if (/^\d+$/.test(value)) {
-    return Math.round((WHOLE_TICKS * 1) / Number.parseInt(value, 10));
+    return Math.round((WHOLE_TICKS * 1) / parseInt(value, 10));
   }
   return inheritedTicks;
+}
+
+function parseGateSpec(val) {
+  if (typeof val !== "string") return null;
+  if (val.includes(".")) {
+    const f = parseFloat(val);
+    if (isNaN(f) || f < 0 || f > 1) return null;
+    if (f >= 1.0) return null;
+    return { type: "ratio", value: f };
+  }
+  const n = parseIntLike(val);
+  if (n === null || n < 0) return null;
+  return { type: "ticks", value: n };
+}
+
+function resolveGateTicks(gateSpec, lengthTicks) {
+  if (!gateSpec) return lengthTicks;
+  if (gateSpec.type === "ratio")
+    return Math.round(lengthTicks * gateSpec.value);
+  return gateSpec.value;
+}
+
+function makeNoteArgs(pitch, lengthTicks, gateSpec) {
+  const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
+  const args = { pitch, length: lengthTicks };
+  if (gateTicks < lengthTicks) args.gate = gateTicks;
+  return args;
+}
+
+function resolveShuffleTicks(nominalTicks, trackState) {
+  if (
+    trackState.shuffleRatio === 0 ||
+    nominalTicks !== trackState.shuffleBase
+  ) {
+    return nominalTicks;
+  }
+  const pair = 2 * trackState.shuffleBase;
+  const beat1 = Math.round((pair * trackState.shuffleRatio) / 100);
+  const beat2 = pair - beat1;
+  const ticks = trackState.subBeatParity === 0 ? beat1 : beat2;
+  trackState.subBeatParity ^= 1;
+  return ticks;
+}
+
+function isNoteAtom(val) {
+  return typeof val === "string" && /^[a-g][#b]?$/.test(val);
+}
+
+function isAbsPitchAtom(val) {
+  return typeof val === "string" && /^:[a-g][#b]?\d$/.test(val);
 }
 
 function canonicalTarget(symbol) {
@@ -123,7 +187,6 @@ function canonicalTarget(symbol) {
   );
 }
 
-// FM_OP_PARAMS: order must match spec 1.2 vector layout [AR DR SR RR SL TL KS ML DT (SSG) (AMEN)]
 const FM_OP_PARAMS = [
   "AR",
   "DR",
@@ -143,7 +206,6 @@ function getVecInts(vecNode) {
   return vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0);
 }
 
-// Emit PARAM_SET events for a :fm typed def at the current tick
 function emitFmPatch(td, tick, events, src) {
   const chVals = getVecInts(td.algFb);
   const [alg, fb] = chVals;
@@ -221,27 +283,22 @@ function nodeSrc(node) {
   return { line: node.line, column: node.column };
 }
 
-function parseChannelCandidates(channelNode) {
-  const candidates = [];
-  if (channelNode && channelNode.kind === "list") {
-    for (const item of channelNode.items) {
-      const value = atomValue(item);
-      if (value) candidates.push(value.replace(/^:/, "").toLowerCase());
-    }
-  } else {
-    const single = atomValue(channelNode);
-    if (single) candidates.push(single.replace(/^:/, "").toLowerCase());
+function parseSingleChannel(channelNode, diagnostics, trackName) {
+  if (!channelNode) return "fm1";
+  if (channelNode.kind === "list") {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_CH_ARRAY_REMOVED",
+      "Multi-channel :ch array syntax is removed in v0.3; use a single channel name",
+      nodeSrc(channelNode),
+      trackName,
+    );
+    const first = atomValue(channelNode.items[0]);
+    return first ? first.replace(/^:/, "").toLowerCase() : "fm1";
   }
-  const unique = [];
-  const seen = new Set();
-  for (const name of candidates) {
-    if (!seen.has(name)) {
-      unique.push(name);
-      seen.add(name);
-    }
-  }
-  if (unique.length === 0) unique.push("fm1");
-  return unique;
+  const val = atomValue(channelNode);
+  return val ? val.replace(/^:/, "").toLowerCase() : "fm1";
 }
 
 const VALID_ROLES = new Set(["bgm", "se", "modulator", "chaos"]);
@@ -268,9 +325,16 @@ function parseTrackRole(options, diagnostics, trackName) {
 function parseWriteScope(options, diagnostics, trackName) {
   const scopeNode = options.get(":write");
   if (!scopeNode) return ["any"];
-  const candidates = parseChannelCandidates(scopeNode).map((s) =>
-    s.replace(/^:/, ""),
-  );
+  const candidates = [];
+  if (scopeNode.kind === "list") {
+    for (const item of scopeNode.items) {
+      const v = atomValue(item);
+      if (v) candidates.push(v.replace(/^:/, ""));
+    }
+  } else {
+    const v = atomValue(scopeNode);
+    if (v) candidates.push(v.replace(/^:/, ""));
+  }
   const valid = candidates.filter((s) => VALID_WRITE_SCOPE.has(s));
   const invalid = candidates.filter((s) => !VALID_WRITE_SCOPE.has(s));
   if (invalid.length > 0) {
@@ -286,190 +350,285 @@ function parseWriteScope(options, diagnostics, trackName) {
   return valid.length > 0 ? valid : ["any"];
 }
 
-function compilePhrase(
-  phraseNode,
-  state,
+function parseTrackHead(items) {
+  const options = new Map();
+  let i = 2;
+  while (i < items.length) {
+    const item = items[i];
+    const val = atomValue(item);
+    if (
+      val &&
+      item.kind === "atom" &&
+      TRACK_OPTION_KEYS.has(val) &&
+      i + 1 < items.length
+    ) {
+      options.set(val, items[i + 1]);
+      i += 2;
+    } else {
+      break;
+    }
+  }
+  return { options, bodyStart: i };
+}
+
+function compileSeq(seqNode, trackState, events, diagnostics, trackName) {
+  let currentOct = trackState.defaultOct;
+  let currentLen = trackState.defaultLength;
+  let currentGate = trackState.defaultGate;
+
+  let i = 1;
+  while (i < seqNode.items.length) {
+    const item = seqNode.items[i];
+    const val = atomValue(item);
+
+    if (val === null || val === undefined) {
+      i += 1;
+      continue;
+    }
+
+    if (val === ":oct") {
+      i += 1;
+      if (i < seqNode.items.length) {
+        const n = parseIntLike(atomValue(seqNode.items[i]));
+        if (n !== null) currentOct = Math.max(0, Math.min(8, n));
+        i += 1;
+      }
+      continue;
+    }
+    if (val === ":len") {
+      i += 1;
+      if (i < seqNode.items.length) {
+        currentLen = parseLengthToken(atomValue(seqNode.items[i]), currentLen);
+        i += 1;
+      }
+      continue;
+    }
+    if (val === ":gate") {
+      i += 1;
+      if (i < seqNode.items.length) {
+        currentGate = parseGateSpec(atomValue(seqNode.items[i]));
+        i += 1;
+      }
+      continue;
+    }
+
+    if (val === ">") {
+      currentOct = Math.min(8, currentOct + 1);
+      i += 1;
+      continue;
+    }
+    if (val === "<") {
+      currentOct = Math.max(0, currentOct - 1);
+      i += 1;
+      continue;
+    }
+
+    if (val === "~") {
+      i += 1;
+      let tieTicks = currentLen;
+      if (i < seqNode.items.length) {
+        const nextVal = atomValue(seqNode.items[i]);
+        const parsed = parseLengthToken(nextVal, null);
+        if (parsed !== null) {
+          tieTicks = parsed;
+          i += 1;
+        }
+      }
+      events.push({
+        tick: trackState.tick,
+        cmd: "TIE",
+        args: { length: tieTicks },
+        src: nodeSrc(item),
+      });
+      trackState.tick += tieTicks;
+      continue;
+    }
+
+    if (val === "_") {
+      const ticks = resolveShuffleTicks(currentLen, trackState);
+      events.push({
+        tick: trackState.tick,
+        cmd: "REST",
+        args: { length: ticks },
+        src: nodeSrc(item),
+      });
+      trackState.tick += ticks;
+      i += 1;
+      continue;
+    }
+
+    if (isAbsPitchAtom(val)) {
+      const pitch = val.slice(1);
+      const octChar = pitch.match(/\d$/);
+      if (octChar) currentOct = parseInt(octChar[0], 10);
+      const ticks = resolveShuffleTicks(currentLen, trackState);
+      events.push({
+        tick: trackState.tick,
+        cmd: "NOTE_ON",
+        args: makeNoteArgs(pitch, ticks, currentGate),
+        src: nodeSrc(item),
+      });
+      trackState.tick += ticks;
+      i += 1;
+      continue;
+    }
+
+    if (isNoteAtom(val)) {
+      const pitch = val + currentOct;
+      const ticks = resolveShuffleTicks(currentLen, trackState);
+      events.push({
+        tick: trackState.tick,
+        cmd: "NOTE_ON",
+        args: makeNoteArgs(pitch, ticks, currentGate),
+        src: nodeSrc(item),
+      });
+      trackState.tick += ticks;
+      i += 1;
+      continue;
+    }
+
+    i += 1;
+  }
+}
+
+function compileTrackBodyItems(
+  items,
+  trackState,
   events,
   diagnostics,
   trackName,
   typedDefs,
-  trackCarry = null,
+  blocks,
+  loopCounter,
 ) {
-  const items = phraseNode.items;
-  const options = getKeywordMap(items, 2);
-  const tempoNode = options.get(":tempo");
-  const lenNode = options.get(":len");
-
-  // Phrase-level :carry (scanned directly to handle phrases without a label at index 1)
-  let phraseCarry = null;
-  for (let pi = 1; pi + 1 < items.length; pi++) {
-    if (items[pi]?.kind === "atom" && items[pi].value === ":carry") {
-      const cv = atomValue(items[pi + 1]);
-      phraseCarry = cv === "true" ? true : cv === "false" ? false : null;
-      break;
+  for (const node of items) {
+    if (node && node.kind === "atom") {
+      const val = node.value;
+      if (val.startsWith(":")) {
+        compileBlockRef(
+          val.slice(1),
+          node,
+          trackState,
+          events,
+          diagnostics,
+          trackName,
+          typedDefs,
+          blocks,
+          loopCounter,
+        );
+      }
+      continue;
     }
-  }
-  if (phraseCarry !== null) {
-    const effectiveCarry =
-      phraseCarry !== null
-        ? phraseCarry
-        : trackCarry !== null
-          ? trackCarry
-          : false;
-    events.push({
-      tick: state.tick,
-      cmd: "CARRY_SET",
-      args: { carry: effectiveCarry },
-      src: nodeSrc(phraseNode),
-    });
-  }
 
-  const phraseDefaultLen = parseLengthToken(
-    atomValue(lenNode),
-    state.defaultLength,
-  );
-  if (tempoNode) {
-    const tempoValue = parseIntLike(atomValue(tempoNode));
-    if (tempoValue !== null) {
-      events.push({
-        tick: state.tick,
-        cmd: "TEMPO_SET",
-        args: { bpm: tempoValue },
-        src: nodeSrc(tempoNode),
-      });
-    }
-  }
-
-  let i = 1;
-  while (i < items.length) {
-    const node = items[i];
-    i += 1;
     if (!node || node.kind !== "list" || node.items.length === 0) continue;
+
     const head = atomValue(node.items[0]);
     if (!head) continue;
 
-    if (head === "note") {
-      const pitch = atomValue(node.items[1]);
-      const lenToken = atomValue(node.items[2]);
-      const length = parseLengthToken(lenToken, phraseDefaultLen);
+    if (head === "phrase") {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_PHRASE_REMOVED",
+        "`phrase` is removed in v0.3; write note commands directly in the track body",
+        nodeSrc(node.items[0]),
+        trackName,
+      );
+      continue;
+    }
+
+    if (head === "note" || head === "notes") {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_NOTE_REMOVED",
+        `\`${head}\` is removed in v0.3; use \`seq\` with bare note names`,
+        nodeSrc(node.items[0]),
+        trackName,
+      );
+      continue;
+    }
+
+    if (head === "seq") {
+      compileSeq(node, trackState, events, diagnostics, trackName);
+      continue;
+    }
+
+    if (head === "x") {
+      const count = parseIntLike(atomValue(node.items[1])) ?? 2;
+      const loopId = `_x${loopCounter.count++}`;
       events.push({
-        tick: state.tick,
-        cmd: "NOTE_ON",
-        args: { pitch: pitch ? pitch.replace(/^:/, "") : "c4", length },
+        tick: trackState.tick,
+        cmd: "LOOP_BEGIN",
+        args: { id: loopId },
         src: nodeSrc(node.items[0]),
       });
-      state.tick += length;
+      compileTrackBodyItems(
+        node.items.slice(2),
+        trackState,
+        events,
+        diagnostics,
+        trackName,
+        typedDefs,
+        blocks,
+        loopCounter,
+      );
+      events.push({
+        tick: trackState.tick,
+        cmd: "LOOP_END",
+        args: { id: loopId, repeat: count },
+        src: nodeSrc(node.items[0]),
+      });
+      continue;
+    }
+
+    if (head === "tempo") {
+      const bpm = parseIntLike(atomValue(node.items[1]));
+      if (bpm !== null) {
+        events.push({
+          tick: trackState.tick,
+          cmd: "TEMPO_SET",
+          args: { bpm },
+          src: nodeSrc(node.items[0]),
+        });
+      }
       continue;
     }
 
     if (head === "rest") {
       const length = parseLengthToken(
         atomValue(node.items[1]),
-        phraseDefaultLen,
+        trackState.defaultLength,
       );
       events.push({
-        tick: state.tick,
+        tick: trackState.tick,
         cmd: "REST",
         args: { length },
         src: nodeSrc(node.items[0]),
       });
-      state.tick += length;
+      trackState.tick += length;
       continue;
     }
 
     if (head === "tie") {
       const length = parseLengthToken(
         atomValue(node.items[1]),
-        phraseDefaultLen,
+        trackState.defaultLength,
       );
       events.push({
-        tick: state.tick,
+        tick: trackState.tick,
         cmd: "TIE",
         args: { length },
         src: nodeSrc(node.items[0]),
       });
-      state.tick += length;
-      continue;
-    }
-
-    if (head === "notes") {
-      const notesOpts = getKeywordMap(node.items, 1);
-      const notesLen = parseLengthToken(
-        atomValue(notesOpts.get(":len")),
-        phraseDefaultLen,
-      );
-      for (let j = 1; j < node.items.length; j += 1) {
-        const elem = node.items[j];
-        const val = atomValue(elem);
-        if (!val || val.startsWith(":len")) continue;
-        if (val === ":len") {
-          j += 1;
-          continue;
-        }
-        if (val === "_") {
-          events.push({
-            tick: state.tick,
-            cmd: "REST",
-            args: { length: notesLen },
-            src: nodeSrc(elem),
-          });
-          state.tick += notesLen;
-          continue;
-        }
-        events.push({
-          tick: state.tick,
-          cmd: "NOTE_ON",
-          args: { pitch: val.replace(/^:/, ""), length: notesLen },
-          src: nodeSrc(elem),
-        });
-        state.tick += notesLen;
-      }
-      continue;
-    }
-
-    if (head === "tuplet") {
-      const totalTicks = parseLengthToken(
-        atomValue(node.items[1]),
-        phraseDefaultLen,
-      );
-      const elems = [];
-      for (let j = 2; j < node.items.length; j += 1) {
-        const elem = node.items[j];
-        const val = atomValue(elem);
-        if (val && (val.startsWith(":") || val === "_"))
-          elems.push({ val, src: nodeSrc(elem) });
-      }
-      if (elems.length > 0) {
-        const perTick = Math.floor(totalTicks / elems.length);
-        const remainder = totalTicks - perTick * elems.length;
-        for (let j = 0; j < elems.length; j += 1) {
-          const { val, src } = elems[j];
-          const length = perTick + (j === elems.length - 1 ? remainder : 0);
-          if (val === "_") {
-            events.push({
-              tick: state.tick,
-              cmd: "REST",
-              args: { length },
-              src,
-            });
-          } else {
-            events.push({
-              tick: state.tick,
-              cmd: "NOTE_ON",
-              args: { pitch: val.replace(/^:/, ""), length },
-              src,
-            });
-          }
-          state.tick += length;
-        }
-      }
+      trackState.tick += length;
       continue;
     }
 
     if (head === "marker") {
       const id = atomValue(node.items[1]);
       events.push({
-        tick: state.tick,
+        tick: trackState.tick,
         cmd: "MARKER",
         args: { id: id ? id.replace(/^:/, "") : "unknown" },
         src: nodeSrc(node.items[0]),
@@ -480,7 +639,7 @@ function compilePhrase(
     if (head === "jump") {
       const target = atomValue(node.items[1]);
       events.push({
-        tick: state.tick,
+        tick: trackState.tick,
         cmd: "JUMP",
         args: { to: target ? target.replace(/^:/, "") : "unknown" },
         src: nodeSrc(node.items[0]),
@@ -506,7 +665,7 @@ function compilePhrase(
           );
         }
         events.push({
-          tick: state.tick,
+          tick: trackState.tick,
           cmd: "PARAM_SET",
           args: { target, value },
           src: nodeSrc(targetNode),
@@ -534,7 +693,7 @@ function compilePhrase(
           );
         }
         events.push({
-          tick: state.tick,
+          tick: trackState.tick,
           cmd: "PARAM_ADD",
           args: { target, delta },
           src: nodeSrc(targetNode),
@@ -547,7 +706,7 @@ function compilePhrase(
     if (head === "loop-begin") {
       const id = atomValue(node.items[1]);
       events.push({
-        tick: state.tick,
+        tick: trackState.tick,
         cmd: "LOOP_BEGIN",
         args: { id: id ? id.replace(/^:/, "") : "loop" },
         src: nodeSrc(node.items[0]),
@@ -557,9 +716,9 @@ function compilePhrase(
 
     if (head === "loop-end") {
       const id = atomValue(node.items[1]);
-      const repeat = parseIntLike(atomValue(node.items[2])) ?? 1;
+      const repeat = parseIntLike(atomValue(node.items[2])) ?? 2;
       events.push({
-        tick: state.tick,
+        tick: trackState.tick,
         cmd: "LOOP_END",
         args: { id: id ? id.replace(/^:/, "") : "loop", repeat },
         src: nodeSrc(node.items[0]),
@@ -568,19 +727,18 @@ function compilePhrase(
     }
 
     if (head === "ins") {
-      // (ins voice-name) — expand typed def to IR events at current tick
       const voiceName = atomValue(node.items[1])?.replace(/^:/, "");
       if (voiceName && typedDefs?.has(voiceName)) {
         const td = typedDefs.get(voiceName);
         if (td.tag === "fm") {
-          emitFmPatch(td, state.tick, events, nodeSrc(node.items[0]));
+          emitFmPatch(td, trackState.tick, events, nodeSrc(node.items[0]));
         } else if (
           td.tag === "psg" &&
           td.envelope.subtype !== "hard" &&
           td.envelope.subtype !== "fn"
         ) {
           events.push({
-            tick: state.tick,
+            tick: trackState.tick,
             cmd: "PSG_VOICE",
             args: { envelope: td.envelope },
             src: nodeSrc(node.items[0]),
@@ -599,6 +757,66 @@ function compilePhrase(
       continue;
     }
   }
+}
+
+function compileBlockRef(
+  blockName,
+  refNode,
+  trackState,
+  events,
+  diagnostics,
+  trackName,
+  typedDefs,
+  blocks,
+  loopCounter,
+) {
+  const block = blocks.get(blockName);
+  if (!block) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_BLOCK_UNKNOWN",
+      `Unknown block: '${blockName}'`,
+      nodeSrc(refNode),
+      trackName,
+    );
+    return;
+  }
+
+  const savedOct = trackState.defaultOct;
+  const savedLen = trackState.defaultLength;
+  const savedGate = trackState.defaultGate;
+
+  if (block.declaredOpts.has(":oct")) {
+    const v = parseIntLike(atomValue(block.declaredOpts.get(":oct")));
+    if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
+  }
+  if (block.declaredOpts.has(":len")) {
+    trackState.defaultLength = parseLengthToken(
+      atomValue(block.declaredOpts.get(":len")),
+      trackState.defaultLength,
+    );
+  }
+  if (block.declaredOpts.has(":gate")) {
+    trackState.defaultGate = parseGateSpec(
+      atomValue(block.declaredOpts.get(":gate")),
+    );
+  }
+
+  compileTrackBodyItems(
+    block.bodyItems,
+    trackState,
+    events,
+    diagnostics,
+    trackName,
+    typedDefs,
+    blocks,
+    loopCounter,
+  );
+
+  trackState.defaultOct = savedOct;
+  trackState.defaultLength = savedLen;
+  trackState.defaultGate = savedGate;
 }
 
 function validateTrack(track, diagnostics) {
@@ -648,7 +866,7 @@ function validateTrack(track, diagnostics) {
     }
     if (e.cmd === "LOOP_BEGIN") {
       const id = e.args?.id;
-      if (!id || id === "unknown") {
+      if (!id) {
         pushDiag(
           diagnostics,
           "error",
@@ -698,6 +916,7 @@ function validateTrack(track, diagnostics) {
       track.name,
     );
   }
+
   for (const j of pendingJumps) {
     if (!markers.has(j.args.to)) {
       pushDiag(
@@ -712,73 +931,6 @@ function validateTrack(track, diagnostics) {
   }
 }
 
-function compileTrack(trackNode, id, diagnostics, typedDefs) {
-  const items = trackNode.items;
-  const options = getKeywordMap(items, 2);
-  const nameNode = items[1];
-  const name = atomValue(nameNode)
-    ? atomValue(nameNode).replace(/^:/, "")
-    : `track${id}`;
-
-  const channelNode = options.get(":ch");
-  const channelCandidates = parseChannelCandidates(channelNode);
-  const channel = channelCandidates[id] ?? channelCandidates[0];
-  const role = parseTrackRole(options, diagnostics, name);
-  const writeScope = parseWriteScope(options, diagnostics, name);
-
-  const carryNode = options.get(":carry");
-  let trackCarry = null;
-  if (carryNode !== undefined) {
-    const cv = atomValue(carryNode);
-    trackCarry = cv === "true" ? true : cv === "false" ? false : null;
-  }
-
-  const state = {
-    tick: 0,
-    defaultLength: parseLengthToken("1/8", Math.round(WHOLE_TICKS / 8)),
-  };
-  const events = [];
-
-  for (let i = 0; i < items.length; i += 1) {
-    const node = items[i];
-    if (
-      node &&
-      node.kind === "list" &&
-      node.items.length > 0 &&
-      isAtom(node.items[0], "phrase")
-    ) {
-      compilePhrase(
-        node,
-        state,
-        events,
-        diagnostics,
-        name,
-        typedDefs,
-        trackCarry,
-      );
-    }
-  }
-
-  return {
-    id,
-    name,
-    channel,
-    route_hint: {
-      allocation_preference: "ordered_first_fit",
-      carry: trackCarry ?? false,
-      channel_candidates: channelCandidates,
-      role,
-      write_scope: writeScope,
-    },
-    events,
-  };
-}
-
-/**
- * Build a source map: sorted array of { line, tick } pairs.
- * One entry per unique source line, using the minimum tick seen for that line.
- * Used by the editor to seek playback to a cursor position.
- */
 function buildSourceMap(tracks) {
   const lineToTick = new Map();
   for (const track of tracks) {
@@ -795,23 +947,16 @@ function buildSourceMap(tracks) {
 }
 
 function sortObject(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortObject);
-  }
+  if (Array.isArray(value)) return value.map(sortObject);
   if (value && typeof value === "object") {
     const out = {};
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).sort())
       out[key] = sortObject(value[key]);
-    }
     return out;
   }
   return value;
 }
 
-/**
- * Parse a :psg vector node into a structured tagged-union object.
- * Sub-types: bare | seq | adsr | hard | fn
- */
 function parsePsgVector(vecNode, name, diagnostics, src) {
   if (!vecNode || vecNode.kind !== "list" || vecNode.items.length === 0) {
     pushDiag(
@@ -824,7 +969,6 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
     );
     return { subtype: "bare", steps: [], loopIndex: null, releaseRate: null };
   }
-
   const first = atomValue(vecNode.items[0]);
 
   if (first === ":fn") {
@@ -832,13 +976,12 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
       diagnostics,
       "error",
       "E_FN_NOT_IMPL",
-      `def :psg '${name}': :fn envelope is not implemented in v0.2`,
+      `def :psg '${name}': :fn envelope is not implemented`,
       src,
       null,
     );
     return { subtype: "fn" };
   }
-
   if (first === ":hard") {
     pushDiag(
       diagnostics,
@@ -850,7 +993,6 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
     );
     return { subtype: "hard" };
   }
-
   if (first === ":adsr") {
     const opts = getKeywordMap(vecNode.items, 1);
     return {
@@ -862,7 +1004,6 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
       rr: parseIntLike(atomValue(opts.get(":rr"))) ?? 0,
     };
   }
-
   if (first === ":seq") {
     const steps = [];
     let loopIndex = null;
@@ -890,7 +1031,6 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
     return { subtype: "seq", steps, loopIndex, releaseRate };
   }
 
-  // bare — first element is an integer
   return {
     subtype: "bare",
     steps: vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0),
@@ -902,11 +1042,12 @@ function parsePsgVector(vecNode, name, diagnostics, src) {
 function collectDefs(roots, diagnostics) {
   const defs = new Map();
   const defns = new Map();
-  const typedDefs = new Map(); // name → { tag: 'fm'|'psg', ... }
+  const typedDefs = new Map();
+  const blocks = new Map();
   const remaining = [];
 
   for (const root of roots) {
-    if (root.kind !== "list" || root.items.length < 3) {
+    if (root.kind !== "list" || root.items.length < 2) {
       remaining.push(root);
       continue;
     }
@@ -927,7 +1068,6 @@ function collectDefs(roots, diagnostics) {
       }
       const maybeTag = atomValue(root.items[2]);
       if (maybeTag === ":fm") {
-        // (def name :fm [ALG FB] [OP1...] [OP2...] [OP3...] [OP4...])
         typedDefs.set(name, {
           tag: "fm",
           algFb: root.items[3],
@@ -981,10 +1121,50 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
+    if (head === "block") {
+      const nameNode = root.items[1];
+      const rawName = atomValue(nameNode);
+      if (!rawName) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_BLOCK_NAME",
+          "block name must be a :keyword symbol",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      const blockName = rawName.replace(/^:/, "");
+      const declaredOpts = new Map();
+      let i = 2;
+      while (i < root.items.length) {
+        const item = root.items[i];
+        const val = atomValue(item);
+        if (
+          val &&
+          item.kind === "atom" &&
+          BLOCK_OPTION_KEYS.has(val) &&
+          i + 1 < root.items.length
+        ) {
+          declaredOpts.set(val, root.items[i + 1]);
+          i += 2;
+        } else {
+          break;
+        }
+      }
+      blocks.set(blockName, {
+        declaredOpts,
+        bodyItems: root.items.slice(i),
+        src: nodeSrc(root),
+      });
+      continue;
+    }
+
     remaining.push(root);
   }
 
-  return { defs, defns, typedDefs, remaining };
+  return { defs, defns, typedDefs, blocks, remaining };
 }
 
 function substituteNode(node, bindings) {
@@ -1013,7 +1193,7 @@ function expandNode(node, defs, defns, depth) {
     const { params, body } = defns.get(head);
     const args = node.items.slice(1);
     const bindings = new Map();
-    for (let i = 0; i < params.length; i += 1)
+    for (let i = 0; i < params.length; i++)
       bindings.set(params[i], args[i] || null);
     const expanded = [];
     for (const bodyNode of body) {
@@ -1036,50 +1216,199 @@ function expandRoots(roots, defs, defns) {
 }
 
 /**
- * Compile a MMLisp source string to IR.
- * @param {string} src  MMLisp source text
- * @param {string} [filename]  Optional filename for metadata (default: "untitled.mmlisp")
- * @returns {{ ir: object, diagnostics: array }}
+ * Compile MMLisp source string to IR.
+ * @param {string} src - MMLisp source text
+ * @param {string} [filename] - filename for metadata / source map
+ * @returns {{ ir: object, diagnostics: array, sourceMap: array }}
  */
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, defns, typedDefs, remaining } = collectDefs(
+  const { defs, defns, typedDefs, blocks, remaining } = collectDefs(
     parsed,
     diagnostics,
   );
   const roots = expandRoots(remaining, defs, defns);
+
   const score = roots.find(
     (node) =>
       node.kind === "list" &&
       node.items.length > 0 &&
       isAtom(node.items[0], "score"),
   );
-
   if (!score) throw new Error("No (score ...) form found");
 
-  const options = getKeywordMap(score.items, 1);
-  const titleNode = options.get(":title");
-  const authorNode = options.get(":author");
-  const scoreTempoNode = options.get(":tempo");
-  const scoreLfoRateNode = options.get(":lfo-rate");
+  const scoreOptions = getKeywordMap(score.items, 1);
+  const titleNode = scoreOptions.get(":title");
+  const authorNode = scoreOptions.get(":author");
+  const scoreTempoNode = scoreOptions.get(":tempo");
+  const scoreLfoRateNode = scoreOptions.get(":lfo-rate");
+  const scoreShuffleNode = scoreOptions.get(":shuffle");
 
-  const tracks = [];
-  for (let i = 0; i < score.items.length; i += 1) {
-    const node = score.items[i];
+  const rawScoreShuffle = parseIntLike(atomValue(scoreShuffleNode)) ?? 0;
+  const scoreShuffleRatio =
+    rawScoreShuffle >= 51 ? Math.min(90, rawScoreShuffle) : 0;
+
+  const trackByName = new Map();
+  const trackOrder = [];
+  const loopCounter = { count: 0 };
+
+  for (const node of score.items) {
     if (
-      node &&
-      node.kind === "list" &&
-      node.items.length > 0 &&
-      isAtom(node.items[0], "track")
-    ) {
-      tracks.push(compileTrack(node, tracks.length, diagnostics, typedDefs));
+      !node ||
+      node.kind !== "list" ||
+      node.items.length === 0 ||
+      !isAtom(node.items[0], "track")
+    )
+      continue;
+
+    const nameNode = node.items[1];
+    const rawName = atomValue(nameNode);
+    const trackName = rawName ? rawName.replace(/^:/, "") : null;
+
+    if (!trackName) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_TRACK_NAME",
+        "track must have a name as its first argument",
+        nodeSrc(node),
+        null,
+      );
+      continue;
     }
+
+    const { options, bodyStart } = parseTrackHead(node.items);
+    const bodyItems = node.items.slice(bodyStart);
+
+    if (!trackByName.has(trackName)) {
+      const channelNode = options.get(":ch");
+      const channel = parseSingleChannel(channelNode, diagnostics, trackName);
+      const role = parseTrackRole(options, diagnostics, trackName);
+      const writeScope = parseWriteScope(options, diagnostics, trackName);
+
+      const carryNode = options.get(":carry");
+      const carry = carryNode ? atomValue(carryNode) === "true" : false;
+
+      const octNode = options.get(":oct");
+      const defaultOct = parseIntLike(atomValue(octNode)) ?? 4;
+
+      const lenNode = options.get(":len");
+      const defaultLength = parseLengthToken(
+        atomValue(lenNode),
+        Math.round(WHOLE_TICKS / 8),
+      );
+
+      const gateNode = options.get(":gate");
+      const defaultGate = gateNode ? parseGateSpec(atomValue(gateNode)) : null;
+
+      const shuffleNode = options.get(":shuffle");
+      const rawTrackShuffle = parseIntLike(atomValue(shuffleNode));
+      let shuffleRatio;
+      if (rawTrackShuffle !== null) {
+        shuffleRatio =
+          rawTrackShuffle === 50
+            ? 0
+            : Math.max(51, Math.min(90, rawTrackShuffle));
+      } else {
+        shuffleRatio = scoreShuffleRatio;
+      }
+
+      const shuffleBaseNode = options.get(":shuffle-base");
+      const shuffleBase = parseLengthToken(
+        atomValue(shuffleBaseNode),
+        Math.round(WHOLE_TICKS / 8),
+      );
+
+      const trackState = {
+        tick: 0,
+        defaultLength,
+        defaultOct,
+        defaultGate,
+        shuffleRatio,
+        shuffleBase,
+        subBeatParity: 0,
+        carry,
+      };
+
+      const trackData = {
+        id: trackOrder.length,
+        name: trackName,
+        channel,
+        route_hint: {
+          allocation_preference: "ordered_first_fit",
+          carry,
+          channel_candidates: [channel],
+          role,
+          write_scope: writeScope,
+        },
+        events: [],
+      };
+
+      if (carryNode) {
+        trackData.events.push({
+          tick: 0,
+          cmd: "CARRY_SET",
+          args: { carry },
+          src: nodeSrc(node),
+        });
+      }
+
+      trackByName.set(trackName, { trackData, trackState });
+      trackOrder.push(trackName);
+    } else {
+      const { trackState } = trackByName.get(trackName);
+
+      if (options.has(":ch")) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_TRACK_CH_REDEF",
+          `Track '${trackName}': :ch cannot be re-specified on an appended track`,
+          nodeSrc(options.get(":ch")),
+          trackName,
+        );
+      }
+      if (options.has(":oct")) {
+        const v = parseIntLike(atomValue(options.get(":oct")));
+        if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
+      }
+      if (options.has(":len")) {
+        trackState.defaultLength = parseLengthToken(
+          atomValue(options.get(":len")),
+          trackState.defaultLength,
+        );
+      }
+      if (options.has(":gate")) {
+        trackState.defaultGate = parseGateSpec(atomValue(options.get(":gate")));
+      }
+      if (options.has(":shuffle")) {
+        const v = parseIntLike(atomValue(options.get(":shuffle")));
+        if (v !== null) {
+          trackState.shuffleRatio =
+            v === 50 ? 0 : Math.max(51, Math.min(90, v));
+          trackState.subBeatParity = 0;
+        }
+      }
+    }
+
+    const { trackData, trackState } = trackByName.get(trackName);
+    compileTrackBodyItems(
+      bodyItems,
+      trackState,
+      trackData.events,
+      diagnostics,
+      trackName,
+      typedDefs,
+      blocks,
+      loopCounter,
+    );
   }
+
+  const tracks = trackOrder.map((name) => trackByName.get(name).trackData);
 
   for (const track of tracks) validateTrack(track, diagnostics);
 
-  // Prepend score-level initial events (tick 0) to the first track
   if (tracks.length > 0) {
     const initEvents = [];
     const scoreSrc = nodeSrc(score);
@@ -1104,8 +1433,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     if (initEvents.length > 0) tracks[0].events.unshift(...initEvents);
   }
 
-  // same-ch bgm collision diagnostic (warning)
-  const bgmChannels = new Map(); // channel → track name
+  const bgmChannels = new Map();
   for (const track of tracks) {
     if (track.route_hint.role === "bgm") {
       const ch = track.route_hint.channel_candidates[0];

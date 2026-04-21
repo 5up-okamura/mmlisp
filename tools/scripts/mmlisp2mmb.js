@@ -154,6 +154,9 @@ function encodeEvent(event, trackMaps, delta) {
   return out;
 }
 
+// IR commands that have no GMB binary encoding and are silently skipped
+const GMB_SKIPPED_CMDS = new Set(["PSG_VOICE", "CARRY_SET"]);
+
 function encodeTrackEvents(track) {
   const trackMaps = buildTrackMaps(track);
 
@@ -161,9 +164,9 @@ function encodeTrackEvents(track) {
   // Pass 1: encode all events with placeholder JUMP offsets, record byte positions of MARKERs
   // Pass 2: patch JUMP payloads with correct relative offsets
 
-  const sortedEvents = [...(track.events || [])].sort(
-    (a, b) => a.tick - b.tick,
-  );
+  const sortedEvents = [...(track.events || [])]
+    .filter((e) => !GMB_SKIPPED_CMDS.has(e.cmd))
+    .sort((a, b) => a.tick - b.tick);
 
   // Pass 1: build raw buffers and record marker positions
   const eventBufs = [];
