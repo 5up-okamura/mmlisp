@@ -2,6 +2,14 @@
 ; Purpose: intervention and recovery behavior (base + delta)
 ; Structure: intro(2bar) + stress-loop(1bar x4) + recovery(2bar) = 8-bar loop in A minor
 
+; PSG envelopes
+
+(def pedal :psg [:seq 12 :loop 11 10 :release 5])
+
+(def tense-att :psg [:seq 15 14 12 :loop 10 11 :release 2])
+
+(def hit-env :psg [15 12 8 4 0])
+
 (score :id :demo2-event-recovery
   :title "Demo 2 Event Recovery"
   :author "okamura"
@@ -30,6 +38,78 @@
       (rest 1/4)
       (note :a3 1/4)
     
+      (jump :calm)
+    )
+  )
+
+  (track :psg-bass
+    :ch :psg1
+
+    (phrase :bass (marker :calm)
+
+      (ins pedal)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :g2 1/2)
+      (note :g2 1/2)
+      (note :g2 1/2)
+      (note :g2 1/2)
+
+      (loop-begin :stress-b)
+      (ins tense-att)
+      (note :e3 1/4)
+      (note :g3 1/4)
+      (note :a3 1/4)
+      (note :e3 1/4)
+      (loop-end :stress-b 4)
+
+      (ins pedal)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (rest 1/4)
+      (note :a2 1/4)
+
+      (jump :calm)
+    )
+  )
+
+  (track :psg-perc
+    :ch :noise
+
+    (phrase :perc (marker :calm)
+
+      (ins hit-env)
+
+      (note :c4 1/4)
+      (rest 3/4)
+      (note :c4 1/4)
+      (rest 3/4)
+      (note :c4 1/4)
+      (rest 3/4)
+      (note :c4 1/4)
+      (rest 3/4)
+
+      (loop-begin :stress-n)
+      (note :c4 1/4)
+      (note :c4 1/4)
+      (note :c4 1/4)
+      (note :c4 1/4)
+      (loop-end :stress-n 4)
+
+      (note :c4 1/4)
+      (rest 3/4)
+      (note :c4 1/4)
+      (rest 3/4)
+      (note :c4 1/4)
+      (rest 3/4)
+      (note :c4 1/4)
+      (rest 3/4)
+
       (jump :calm)
     )
   )

@@ -124,8 +124,10 @@
       border-right: 1px solid #1e1e1e;
       color: #444;
     }
-    .cm-playLine { box-shadow: inset 3px 0 0 #4c9; }
-    .cm-playLine .cm-gutterElement { color: #4c9 !important; font-weight: bold; }
+    /* Per-track playhead cursors — all same colour */
+    .cm-playLine-0, .cm-playLine-1, .cm-playLine-2, .cm-playLine-3 { box-shadow: inset 3px 0 0 #4c9; }
+    .cm-playLine-0 .cm-gutterElement, .cm-playLine-1 .cm-gutterElement,
+    .cm-playLine-2 .cm-gutterElement, .cm-playLine-3 .cm-gutterElement { color: #4c9 !important; font-weight: bold; }
 
     /* drag divider */
     #hDivider {
@@ -395,31 +397,43 @@
     const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage } = await import('https://esm.sh/@codemirror/language@6');
     const { oneDarkTheme, oneDarkHighlightStyle } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
 
-    // StateEffect / StateField for playhead line decoration
-    const setPlayLine = StateEffect.define();
-    const playLineField = StateField.define({
-      create: () => Decoration.none,
-      update(deco, tr) {
-        deco = deco.map(tr.changes);
+    // Multi-track playhead cursors
+    // Effect payload: { trackIdx, line } — trackIdx=-1 clears all tracks
+    const setTrackLine = StateEffect.define();
+    const trackLinesField = StateField.define({
+      create: () => new Map(),
+      update(m, tr) {
         for (const e of tr.effects) {
-          if (e.is(setPlayLine)) {
-            if (e.value < 0) {
-              deco = Decoration.none;
-            } else {
-              try {
-                const line = tr.state.doc.line(e.value);
-                deco = Decoration.set([
-                  Decoration.line({ class: 'cm-playLine' }).range(line.from),
-                ]);
-              } catch (_) {
-                deco = Decoration.none;
-              }
-            }
+          if (e.is(setTrackLine)) {
+            m = new Map(m);
+            if (e.value.trackIdx === -1)      { m.clear(); }
+            else if (e.value.line < 0)        { m.delete(e.value.trackIdx); }
+            else                              { m.set(e.value.trackIdx, e.value.line); }
           }
         }
-        return deco;
+        return m;
       },
-      provide: (f) => EditorView.decorations.from(f),
+    });
+    // Compute decorations from the line map (needs doc, so use compute facet)
+    const trackDecorations = EditorView.decorations.compute([trackLinesField], state => {
+      const lineMap = state.field(trackLinesField);
+      if (lineMap.size === 0) return Decoration.none;
+      // Group track indices by the document position of their line
+      const byPos = new Map(); // lineFrom → trackIdx[]
+      for (const [trackIdx, lineNum] of lineMap) {
+        try {
+          const ln = state.doc.line(lineNum);
+          const arr = byPos.get(ln.from) ?? [];
+          arr.push(trackIdx);
+          byPos.set(ln.from, arr);
+        } catch (_) {}
+      }
+      const decos = [...byPos.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([from, idxs]) =>
+          Decoration.line({ class: idxs.map(i => `cm-playLine-${i}`).join(' ') }).range(from)
+        );
+      return decos.length ? Decoration.set(decos) : Decoration.none;
     });
 
     // GML StreamLanguage for syntax highlighting
@@ -461,7 +475,8 @@
           oneDarkTheme,
           syntaxHighlighting(oneDarkHighlightStyle),
           gmlMode,
-          playLineField,
+          trackLinesField,
+          trackDecorations,
           lineNumbers(),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
@@ -502,12 +517,12 @@
     function setEditorDoc(text) {
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: text },
-        effects: setPlayLine.of(-1),
+        effects: setTrackLine.of({ trackIdx: -1, line: -1 }),
       });
     }
 
-    function highlightLine(oneBased) {
-      editorView.dispatch({ effects: setPlayLine.of(oneBased) });
+    function highlightTrackLine(trackIdx, line) {
+      editorView.dispatch({ effects: setTrackLine.of({ trackIdx, line }) });
     }
 
     // -----------------------------------------------------------------------
@@ -621,9 +636,9 @@
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
-          <button class="ms-btn" style="cursor:default;color:#444;border-color:#222">${PSG_LABELS[i]}</button>
-          <button class="ms-btn" id="btn-mute-${ch}" disabled style="margin-top:0.35rem">M</button>
-          <button class="ms-btn" id="btn-solo-${ch}" disabled>S</button>
+          <button class="ms-btn" style="cursor:default">${PSG_LABELS[i]}</button>
+          <button class="ms-btn" id="btn-mute-${ch}" onclick="toggleMute(${ch})" style="margin-top:0.35rem">M</button>
+          <button class="ms-btn" id="btn-solo-${ch}" onclick="toggleSolo(${ch})">S</button>
         `;
         row.appendChild(col);
       }
@@ -642,18 +657,18 @@
       if (_soloChannel === ch) {
         // unsolo
         _soloChannel = -1;
-        for (let i = 0; i < 6; i++) {
-          document.getElementById(`btn-solo-${i}`).classList.remove('soloed');
+        for (let i = 0; i < 10; i++) {
+          document.getElementById(`btn-solo-${i}`)?.classList.remove('soloed');
         }
         player?.clearMute();
         // restore explicit mutes
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 10; i++) {
           if (_muteState[i]) player?.muteChannel(i, true);
         }
       } else {
         _soloChannel = ch;
-        for (let i = 0; i < 6; i++) {
-          document.getElementById(`btn-solo-${i}`).classList.toggle('soloed', i === ch);
+        for (let i = 0; i < 10; i++) {
+          document.getElementById(`btn-solo-${i}`)?.classList.toggle('soloed', i === ch);
         }
         player?.soloChannel(ch);
       }
@@ -742,7 +757,7 @@
           await player.loadURL(currentIrURL);
           log('Playing', 'info');
         }
-        player.setOnLine(highlightLine);
+        player.setOnLine(highlightTrackLine);
         player.setOnTick((tick, bpm, ppqn) => {
           const beat = Math.floor(tick / ppqn);
           const bar = Math.floor(beat / 4) + 1;
@@ -804,7 +819,7 @@
       document.getElementById('btnPlay').classList.remove('active');
       document.getElementById('posDisplay').textContent = '--:--';
       document.getElementById('bpmDisplay').textContent = '-- BPM';
-      editorView.dispatch({ effects: setPlayLine.of(-1) });
+      editorView.dispatch({ effects: setTrackLine.of({ trackIdx: -1, line: -1 }) });
     }
 
     // -----------------------------------------------------------------------

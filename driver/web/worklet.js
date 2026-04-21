@@ -11,9 +11,10 @@
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  */
 
-// WorkletGlobalScope: import the emulator as a module.
-// The path is relative to the worklet file's URL.
+// WorkletGlobalScope: import the emulators as modules.
+// The paths are relative to the worklet file's URL.
 import { YM2612, NATIVE_SAMPLE_RATE } from "./src/ym2612.js";
+import { SN76489 } from "./src/sn76489.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 
@@ -22,6 +23,11 @@ class YM2612Processor extends AudioWorkletProcessor {
     super(options);
 
     this._chip = new YM2612();
+
+    // SN76489 PSG (port=2 writes)
+    this._psgChip = new SN76489();
+    this._psgWriteQueue = []; // untimed PSG writes
+    this._psgTimedQueue = []; // timed PSG writes: [{frame, data}]
 
     // Resampling state: we generate at NATIVE_SAMPLE_RATE and output at
     // the AudioContext sample rate (typically 44100 or 48000).
@@ -43,7 +49,18 @@ class YM2612Processor extends AudioWorkletProcessor {
     this.port.onmessage = (event) => {
       const msg = event.data;
       if (msg.type === "write") {
-        if (msg.when != null) {
+        if (msg.port === 2) {
+          // PSG write (port=2 is the PSG flag)
+          if (msg.when != null) {
+            const targetFrame = Math.round(msg.when * sampleRate);
+            const entry = { frame: targetFrame, data: msg.data & 0xff };
+            let i = this._psgTimedQueue.length;
+            while (i > 0 && this._psgTimedQueue[i - 1].frame > targetFrame) i--;
+            this._psgTimedQueue.splice(i, 0, entry);
+          } else {
+            this._psgWriteQueue.push(msg.data & 0xff);
+          }
+        } else if (msg.when != null) {
           // Insert into _timedQueue maintaining sorted order by target audio frame
           const targetFrame = Math.round(msg.when * sampleRate);
           const entry = {
@@ -66,9 +83,13 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._chip = new YM2612();
         this._writeQueue = [];
         this._timedQueue = [];
+        this._psgChip = new SN76489();
+        this._psgWriteQueue = [];
+        this._psgTimedQueue = [];
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
+        this._psgTimedQueue = [];
       }
     };
   }
@@ -92,10 +113,26 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._chip.write(op.port, op.addr, op.data);
     }
 
-    const blockSize = outL.length; // always 128
-    const nativeNeeded = Math.ceil(blockSize * this._resampleRatio) + 2;
+    // Drain untimed PSG writes
+    while (this._psgWriteQueue.length > 0) {
+      this._psgChip.write(this._psgWriteQueue.shift());
+    }
+    // Drain timed PSG writes scheduled for this block
+    while (
+      this._psgTimedQueue.length > 0 &&
+      this._psgTimedQueue[0].frame < blockEnd
+    ) {
+      this._psgChip.write(this._psgTimedQueue.shift().data);
+    }
 
-    // Generate native-rate samples
+    // Generate PSG samples at output rate (built-in decimation)
+    const blockSize = outL.length; // always 128
+    const psgL = new Float32Array(blockSize);
+    const psgR = new Float32Array(blockSize);
+    this._psgChip.clockAt(psgL, psgR, blockSize, sampleRate);
+
+    // Generate YM2612 samples (native rate → resample)
+    const nativeNeeded = Math.ceil(blockSize * this._resampleRatio) + 2;
     if (nativeNeeded > this._nativeL.length) {
       this._nativeL = new Float32Array(nativeNeeded + 4);
       this._nativeR = new Float32Array(nativeNeeded + 4);
@@ -109,8 +146,10 @@ class YM2612Processor extends AudioWorkletProcessor {
       const frac = pos - idx;
       const iNext = Math.min(idx + 1, nativeNeeded - 1);
 
-      outL[i] = this._nativeL[idx] * (1 - frac) + this._nativeL[iNext] * frac;
-      outR[i] = this._nativeR[idx] * (1 - frac) + this._nativeR[iNext] * frac;
+      outL[i] =
+        this._nativeL[idx] * (1 - frac) + this._nativeL[iNext] * frac + psgL[i];
+      outR[i] =
+        this._nativeR[idx] * (1 - frac) + this._nativeR[iNext] * frac + psgR[i];
 
       pos += this._resampleRatio;
     }

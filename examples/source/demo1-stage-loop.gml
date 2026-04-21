@@ -4,6 +4,12 @@
 
 (def fb-init 2)
 
+(def pluck :psg [15 13 11 9 7 5 3 1 0])
+
+(def sustain :psg [:seq 15 :loop 14 13 :release 3])
+
+(def kick-env :psg [15 14 12 9 5 0])
+
 (score :id :demo1-stage-loop
   :title "Demo 1 Stage Loop"
   :author "okamura"
@@ -30,6 +36,97 @@
       (note :c4 1/4)
       (rest 1/4)
     
+      (jump :intro)
+    )
+  )
+
+  (track :bass
+    :ch :psg1
+
+    (phrase :psg-bass (marker :intro)
+
+      (ins sustain)
+
+      (loop-begin :pa)
+      (note :c3 1/2)
+      (note :c3 1/2)
+      (note :c3 1/2)
+      (note :c3 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (note :a2 1/2)
+      (loop-end :pa 2)
+
+      (note :f2 1/2)
+      (note :f2 1/2)
+      (note :f2 1/2)
+      (note :f2 1/2)
+      (note :g2 1/4)
+      (note :g2 1/4)
+      (note :g2 1/4)
+      (note :g2 1/4)
+
+      (jump :intro)
+    )
+  )
+
+  (track :counter
+    :ch :psg2
+
+    (phrase :psg-counter (marker :intro)
+
+      (ins pluck)
+
+      (loop-begin :pb)
+      (notes :e5 _ :g5 _ :e5 _ :g5 _)
+      (notes :c5 _ :e5 _ :c5 _ :e5 _)
+      (loop-end :pb 2)
+
+      (notes :a4 _ :c5 _ :a4 _ :c5 _)
+      (note :b4 1/4)
+      (note :d5 1/4)
+      (rest 1/2)
+
+      (jump :intro)
+    )
+  )
+
+  (track :perc
+    :ch :noise
+
+    (phrase :psg-noise (marker :intro)
+
+      (ins kick-env)
+
+      (loop-begin :pn)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (loop-end :pn 3)
+
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+      (rest 1/4)
+      (note :c4 1/4)
+
       (jump :intro)
     )
   )

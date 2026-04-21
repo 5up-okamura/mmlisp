@@ -214,6 +214,17 @@ const CH_NAME_TO_INDEX = {
   fm6: 5,
 };
 
+// SN76489 PSG channel name → 0-based PSG channel index (0-3)
+const PSG_CH_NAME_TO_INDEX = {
+  psg1: 0,
+  psg2: 1,
+  psg3: 2,
+  noise: 3,
+};
+
+// PSG MASTER_CLOCK (NTSC Mega Drive)
+const PSG_MASTER_CLOCK = 3579545;
+
 // ---------------------------------------------------------------------------
 // IRPlayer
 // ---------------------------------------------------------------------------
@@ -248,6 +259,11 @@ export class IRPlayer {
 
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
+
+    // PSG channel routing
+    this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
+    this._psgChVoice = new Array(4).fill(null); // stored envelope per PSG ch
+    this._psgMuted = new Array(4).fill(false); // mute state per PSG ch
 
     // Modulator tracks by channel index (built after _flattenTracks)
     this._modulatorsByCh = new Map();
@@ -331,9 +347,13 @@ export class IRPlayer {
       clearTimeout(this._schedulerTimer);
       this._schedulerTimer = null;
     }
-    // All notes off
+    // All notes off (FM)
     for (let ch = 0; ch < 6; ch++) {
       this._writeKeyOff(ch);
+    }
+    // Silence all PSG channels
+    for (let psgCh = 0; psgCh < 4; psgCh++) {
+      this._psgSetAtt(psgCh, 15);
     }
   }
 
@@ -415,24 +435,36 @@ export class IRPlayer {
 
   /**
    * Mute or unmute a channel. Muted channels suppress NOTE_ON key-on writes.
-   * @param {number} ch  0-5
+   * @param {number} ch  0-5 = FM, 6-9 = PSG (6=psg1, 7=psg2, 8=psg3, 9=noise)
    * @param {boolean} muted
    */
   muteChannel(ch, muted) {
-    this._mutedChannels[ch] = muted;
+    if (ch >= 6 && ch <= 9) {
+      this._psgMuted[ch - 6] = muted;
+    } else {
+      this._mutedChannels[ch] = muted;
+    }
   }
 
   /**
    * Solo a channel — mutes all others.
-   * @param {number} ch  0-5, or -1 to clear solo
+   * @param {number} ch  0-5 FM / 6-9 PSG, or -1 to clear solo
    */
   soloChannel(ch) {
-    for (let i = 0; i < 6; i++) this._mutedChannels[i] = ch >= 0 && i !== ch;
+    if (ch >= 6 && ch <= 9) {
+      // Solo a PSG channel: mute all FM and other PSG channels
+      for (let i = 0; i < 6; i++) this._mutedChannels[i] = true;
+      for (let i = 0; i < 4; i++) this._psgMuted[i] = i !== ch - 6;
+    } else {
+      for (let i = 0; i < 6; i++) this._mutedChannels[i] = ch >= 0 && i !== ch;
+      for (let i = 0; i < 4; i++) this._psgMuted[i] = ch >= 0;
+    }
   }
 
   /** Clear all mutes. */
   clearMute() {
     this._mutedChannels.fill(false);
+    this._psgMuted.fill(false);
   }
 
   /**
@@ -535,9 +567,15 @@ export class IRPlayer {
   }
 
   _assignChannel(trackIndex, track) {
+    // If the track declares a PSG channel name, store in _psgTrackChannel.
+    const name = track?.channel;
+    if (name != null && PSG_CH_NAME_TO_INDEX[name] != null) {
+      this._psgTrackChannel.set(trackIndex, PSG_CH_NAME_TO_INDEX[name]);
+      return;
+    }
+    // Otherwise treat as FM channel.
     // If the track declares a channel name (e.g. "fm2"), use it.
     // Otherwise fall back to track index (auto-increment), capped at 5.
-    const name = track?.channel;
     const chIndex =
       name != null && CH_NAME_TO_INDEX[name] != null
         ? CH_NAME_TO_INDEX[name]
@@ -571,7 +609,7 @@ export class IRPlayer {
       this._onTick(currentTick, this._bpm, this._ppqn);
     }
 
-    for (const track of this._tracks) {
+    for (const [tIdx, track] of this._tracks.entries()) {
       // Inner guard handles multiple loop-restarts within one lookahead window
       let guard = 0;
       while (guard++ < 16) {
@@ -584,7 +622,7 @@ export class IRPlayer {
           if (this._onLine && ev.src?.line != null) {
             const line = ev.src.line;
             const delay = Math.max(0, evTime - now) * 1000;
-            setTimeout(() => this._onLine(line), delay);
+            setTimeout(() => this._onLine(tIdx, line), delay);
           }
           track.flatIndex++;
         }
@@ -625,10 +663,18 @@ export class IRPlayer {
     if (!this._ir?.tracks) return [];
 
     return this._ir.tracks.map((track, ti) => {
-      const chIndex = this._trackChannel.get(ti) ?? 0;
+      const isPsg = this._psgTrackChannel.has(ti);
+      const psgCh = isPsg ? this._psgTrackChannel.get(ti) : null;
+      const chIndex = isPsg ? 0 : (this._trackChannel.get(ti) ?? 0);
       const flatEvs = this._expandLoops(track.events ?? []);
       const events = flatEvs
-        .map((ev) => ({ ...ev, _chIndex: chIndex, _trackIndex: ti }))
+        .map((ev) => ({
+          ...ev,
+          _chIndex: chIndex,
+          _trackIndex: ti,
+          _isPsg: isPsg,
+          _psgCh: psgCh,
+        }))
         .sort((a, b) => a.tick - b.tick);
 
       // Loop boundary = tick of the last JUMP event (phrase restart point).
@@ -656,6 +702,8 @@ export class IRPlayer {
         carry,
         carryState: carry,
         chIndex,
+        isPsg,
+        psgCh,
       };
     });
   }
@@ -737,6 +785,12 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
+    // Route PSG events to PSG handler
+    if (ev._isPsg) {
+      this._dispatchPsgEvent(ev, when);
+      return;
+    }
+
     const ch = ev._chIndex ?? 0;
     const port = ch >= 3 ? 1 : 0;
     const chOffset = ch % 3;
@@ -1156,6 +1210,187 @@ export class IRPlayer {
       lfoRate: this._lfoRate,
       ops: r.ops.map((o) => ({ ...o })),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // PSG helpers (SN76489)
+  // port=2 is the flag for PSG writes in the worklet protocol.
+  // ---------------------------------------------------------------------------
+
+  _psgWriteByte(byte, when) {
+    this._write(2, 0, byte & 0xff, when);
+  }
+
+  // Write attenuation for a PSG channel.
+  // attReg: 0=max volume, 15=silent (hardware convention).
+  _psgSetAtt(psgCh, attReg, when) {
+    // Latch byte: 1 | ch(2) | r=1(att) | att(4)
+    const byte = 0x80 | ((psgCh & 0x03) << 5) | 0x10 | (attReg & 0x0f);
+    this._psgWriteByte(byte, when);
+  }
+
+  // Set tone period for a PSG tone channel (ch 0-2).
+  _psgSetPitch(psgCh, midi, when) {
+    const freq = 440 * Math.pow(2, (midi - 69) / 12);
+    const period = Math.max(
+      1,
+      Math.min(1023, Math.round(PSG_MASTER_CLOCK / (32 * freq))),
+    );
+    // Latch byte: low 4 bits of period
+    this._psgWriteByte(0x80 | ((psgCh & 0x03) << 5) | (period & 0x0f), when);
+    // Data byte: high 6 bits of period
+    this._psgWriteByte((period >> 4) & 0x3f, when);
+  }
+
+  // Trigger noise channel with white noise at medium rate.
+  _psgTriggerNoise(when) {
+    // 0xE5 = 1|11|0|0|1|0|1 → ch3, reg0(ctrl), FB=1(white), NF=01(medium/1024)
+    this._psgWriteByte(0xe5, when);
+  }
+
+  // Schedule envelope writes for a PSG note.
+  // env: PSG_VOICE envelope object (bare/seq/adsr), or null for no envelope.
+  // noteWhen: audio time of note start.
+  // lengthTicks: note duration in ticks.
+  _schedulePsgEnvelope(psgCh, env, noteWhen, lengthTicks) {
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const noteDurSecs = lengthTicks * secsPerTick;
+    const noteOffWhen = noteWhen + noteDurSecs - 0.005;
+
+    if (!env || env.subtype === "hard" || env.subtype === "fn") {
+      // No envelope: full volume for note duration then silence
+      this._psgSetAtt(psgCh, 0, noteWhen);
+      this._psgSetAtt(psgCh, 15, noteOffWhen);
+      return;
+    }
+
+    if (env.subtype === "bare" || env.subtype === "seq") {
+      const steps = env.steps ?? [];
+      if (steps.length === 0) {
+        this._psgSetAtt(psgCh, 0, noteWhen);
+        this._psgSetAtt(psgCh, 15, noteOffWhen);
+        return;
+      }
+      // Step rate: ~60Hz (4 ticks at PPQN=120; scales with PPQN)
+      const stepDurSecs =
+        Math.max(1, Math.round(this._ppqn / 30)) * secsPerTick;
+      const loopIndex = env.loopIndex ?? null;
+
+      let t = noteWhen;
+      let idx = 0;
+      while (t < noteOffWhen) {
+        const gmlVol = Math.max(0, Math.min(15, steps[idx] ?? 0));
+        // GML: 15=max, 0=silent → hardware: 0=max, 15=silent
+        this._psgSetAtt(psgCh, 15 - gmlVol, t);
+        idx++;
+        if (idx >= steps.length) {
+          if (loopIndex !== null) {
+            idx = loopIndex;
+          } else {
+            break; // no loop — hold last step until note off
+          }
+        }
+        t += stepDurSecs;
+      }
+      this._psgSetAtt(psgCh, 15, noteOffWhen);
+      return;
+    }
+
+    if (env.subtype === "adsr") {
+      const { ar, dr, sl, sr, rr } = env;
+      const secsPerStep = secsPerTick; // 1 tick per step
+
+      // Attack: att from 15 → 0
+      let t = noteWhen;
+      if (ar > 0) {
+        for (let att = 15; att >= 0 && t < noteOffWhen; att--) {
+          this._psgSetAtt(psgCh, att, t);
+          t += ar * secsPerStep;
+        }
+      } else {
+        this._psgSetAtt(psgCh, 0, t);
+      }
+
+      // Decay: att from 0 → (15 - sl)
+      const susAtt = Math.max(0, Math.min(15, 15 - sl));
+      if (dr > 0 && t < noteOffWhen) {
+        for (let att = 0; att <= susAtt && t < noteOffWhen; att++) {
+          this._psgSetAtt(psgCh, att, t);
+          t += dr * secsPerStep;
+        }
+      }
+
+      // Sustain: hold at susAtt (or slowly decay if sr > 0)
+      if (t < noteOffWhen) {
+        this._psgSetAtt(psgCh, susAtt, t);
+        if (sr > 0) {
+          let att = susAtt;
+          while (t < noteOffWhen && att <= 15) {
+            this._psgSetAtt(psgCh, att, t);
+            att++;
+            t += sr * secsPerStep;
+          }
+        }
+      }
+
+      // Release: from susAtt → 15 after note off
+      let relT = noteOffWhen;
+      if (rr > 0) {
+        for (let att = susAtt; att <= 15; att++) {
+          this._psgSetAtt(psgCh, att, relT);
+          relT += rr * secsPerStep;
+        }
+      } else {
+        this._psgSetAtt(psgCh, 15, relT);
+      }
+      return;
+    }
+
+    // Fallback
+    this._psgSetAtt(psgCh, 0, noteWhen);
+    this._psgSetAtt(psgCh, 15, noteOffWhen);
+  }
+
+  _dispatchPsgEvent(ev, when) {
+    const psgCh = ev._psgCh ?? 0;
+
+    switch (ev.cmd) {
+      case "PSG_VOICE":
+        // Store the envelope for this PSG channel; applied on next NOTE_ON
+        this._psgChVoice[psgCh] = ev.args?.envelope ?? null;
+        break;
+
+      case "NOTE_ON": {
+        if (this._psgMuted[psgCh]) break;
+
+        const isNoise = psgCh === 3;
+        if (!isNoise) {
+          const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+          this._psgSetPitch(psgCh, midi, when);
+        } else {
+          this._psgTriggerNoise(when);
+        }
+
+        const env = this._psgChVoice[psgCh];
+        const lengthTicks = ev.args?.length ?? this._ppqn / 2;
+        this._schedulePsgEnvelope(psgCh, env, when, lengthTicks);
+        break;
+      }
+
+      case "TEMPO_SET":
+        this._bpm = ev.args?.bpm ?? this._bpm;
+        break;
+
+      case "MARKER":
+      case "LOOP_BEGIN":
+      case "LOOP_END":
+      case "REST":
+      case "JUMP":
+        break;
+
+      default:
+        break;
+    }
   }
 
   _writeKeyOff(chIndex) {
