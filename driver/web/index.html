@@ -231,6 +231,18 @@
       text-transform: uppercase;
       letter-spacing: 0.08em;
       margin-bottom: 0.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .op-col-title input[type=checkbox] {
+      accent-color: #7a9;
+      width: 0.75rem;
+      height: 0.75rem;
+      margin: 0;
+      padding: 0;
+      cursor: pointer;
+      flex-shrink: 0;
     }
     #algDisplay {
       font-size: 0.67rem;
@@ -332,17 +344,36 @@
         <div id="chStrips"></div>
       </div>
 
+      <!-- Global Parameters -->
+      <div class="rack-section">
+        <div class="rack-title">Global</div>
+        <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)">
+          <div class="knob-wrap">
+            <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
+            <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onChParam('LFO_RATE', this)">
+          </div>
+        </div>
+      </div>
+
       <!-- FM Parameters -->
       <div class="rack-section">
         <div class="rack-title">FM Parameters</div>
-        <div class="param-grid">
+        <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)">
           <div class="knob-wrap">
-            <div class="knob-label">ALG <span class="val" id="val-alg">5</span></div>
-            <input type="range" id="sl-alg" min="0" max="7" value="5" oninput="onChParam('FM_ALG', this)">
+            <div class="knob-label">ALG <span class="val" id="val-alg">0</span></div>
+            <input type="range" id="sl-alg" min="0" max="7" value="0" oninput="onChParam('FM_ALG', this)">
           </div>
           <div class="knob-wrap">
-            <div class="knob-label">FB <span class="val" id="val-fb">2</span></div>
-            <input type="range" id="sl-fb" min="0" max="7" value="2" oninput="onChParam('FM_FB', this)">
+            <div class="knob-label">FB <span class="val" id="val-fb">0</span></div>
+            <input type="range" id="sl-fb" min="0" max="7" value="0" oninput="onChParam('FM_FB', this)">
+          </div>
+          <div class="knob-wrap">
+            <div class="knob-label">AMS <span class="val" id="val-ams">0</span></div>
+            <input type="range" id="sl-ams" min="0" max="3" value="0" oninput="onChParam('FM_AMS', this)">
+          </div>
+          <div class="knob-wrap">
+            <div class="knob-label">FMS <span class="val" id="val-fms">0</span></div>
+            <input type="range" id="sl-fms" min="0" max="7" value="0" oninput="onChParam('FM_FMS', this)">
           </div>
         </div>
         <div id="algDisplay"></div>
@@ -707,7 +738,7 @@
           document.getElementById('posDisplay').textContent = bar + ' : ' + beatInBar;
           document.getElementById('bpmDisplay').textContent = bpm + ' BPM';
         });
-        const PARAM_KEY_MAP = { TL: 'tl', AR: 'ar', DR: 'dr', RR: 'rr', ML: 'mul' };
+        const PARAM_KEY_MAP = { TL: 'tl', AR: 'ar', DR: 'dr', SL: 'sl', SR: 'd2r', RR: 'rr', ML: 'mul', DT: 'dt', KS: 'rs', SSG: 'ssg' };
         player.setOnParam((ch, target, value) => {
           if (ch !== selectedCh) return;
           if (target === 'FM_ALG') {
@@ -715,8 +746,14 @@
             document.getElementById('algDisplay').textContent = ALG_DESC[value] ?? '';
           } else if (target === 'FM_FB') {
             setSlider('sl-fb', 'val-fb', value);
+          } else if (target === 'LFO_RATE') {
+            setSlider('sl-lfo', 'val-lfo', value);
+          } else if (target === 'FM_AMS') {
+            setSlider('sl-ams', 'val-ams', value);
+          } else if (target === 'FM_FMS') {
+            setSlider('sl-fms', 'val-fms', value);
           } else {
-            const m = target.match(/^FM_(TL|AR|DR|RR|ML)(\d)$/);
+            const m = target.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT|KS|SSG)(\d)$/);
             if (m) {
               const key = PARAM_KEY_MAP[m[1]];
               setSlider(`sl-op${m[2]}-${key}`, `val-op${m[2]}-${key}`, value);
@@ -865,15 +902,29 @@
       { key: 'tl',  label: 'TL',  min: 0, max: 127, param: (op) => `FM_TL${op}` },
       { key: 'ar',  label: 'AR',  min: 0, max: 31,  param: (op) => `FM_AR${op}` },
       { key: 'dr',  label: 'DR',  min: 0, max: 31,  param: (op) => `FM_DR${op}` },
+      { key: 'sl',  label: 'SL',  min: 0, max: 15,  param: (op) => `FM_SL${op}` },
+      { key: 'd2r', label: 'SR',  min: 0, max: 31,  param: (op) => `FM_SR${op}` },
       { key: 'rr',  label: 'RR',  min: 0, max: 15,  param: (op) => `FM_RR${op}` },
       { key: 'mul', label: 'MUL', min: 0, max: 15,  param: (op) => `FM_ML${op}` },
+      { key: 'dt',  label: 'DT',  min: 0, max: 7,   param: (op) => `FM_DT${op}` },
+      { key: 'rs',  label: 'KS',  min: 0, max: 3,   param: (op) => `FM_KS${op}` },
+      { key: 'ssg', label: 'SSG', min: 0, max: 15,  param: (op) => `FM_SSG${op}` },
     ];
 
     const opGridEl = document.getElementById('opGrid');
     for (let op = 1; op <= 4; op++) {
       const col = document.createElement('div');
       col.className = 'op-col';
-      col.innerHTML = `<div class="op-col-title">OP${op}</div>`;
+      // bit position in opMask: op1=bit4(0x10), op2=bit5(0x20), op3=bit6(0x40), op4=bit7(0x80)
+      const opBit = 1 << (op + 3);
+      col.innerHTML = `<div class="op-col-title">
+        <input type="checkbox" id="chk-op${op}" checked
+          onchange="onOpToggle(${op}, this.checked)">
+        <label for="chk-op${op}">OP${op}</label>
+        <input type="checkbox" id="chk-amen${op}"
+          onchange="onAmenToggle(${op}, this.checked)">
+        <label for="chk-amen${op}" style="color:#fa9">AM</label>
+      </div>`;
 
       for (const pp of OP_PARAMS) {
         const wrap = document.createElement('div');
@@ -899,16 +950,34 @@
       // Channel level
       setSlider('sl-alg', 'val-alg', regs.algorithm);
       setSlider('sl-fb',  'val-fb',  regs.feedback);
+      setSlider('sl-lfo', 'val-lfo', regs.lfoRate ?? 0);
+      setSlider('sl-ams', 'val-ams', regs.ams ?? 0);
+      setSlider('sl-fms', 'val-fms', regs.fms ?? 0);
       document.getElementById('algDisplay').textContent = ALG_DESC[regs.algorithm] ?? '';
 
-      // Per-operator
+      // Per-operator ON/OFF
+      const mask = player ? player.getOpMask(selectedCh) : 0xf0;
+      for (let op = 1; op <= 4; op++) {
+        const bit = 1 << (op + 3);
+        const chk = document.getElementById(`chk-op${op}`);
+        if (chk) chk.checked = !!(mask & bit);
+        const amenChk = document.getElementById(`chk-amen${op}`);
+        if (amenChk) amenChk.checked = !!(regs.ops[op - 1].amen);
+      }
+
+      // Per-operator params
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops[op - 1];
         setSlider(`sl-op${op}-tl`,  `val-op${op}-tl`,  o.tl);
         setSlider(`sl-op${op}-ar`,  `val-op${op}-ar`,  o.ar);
         setSlider(`sl-op${op}-dr`,  `val-op${op}-dr`,  o.dr);
+        setSlider(`sl-op${op}-sl`,  `val-op${op}-sl`,  o.sl);
+        setSlider(`sl-op${op}-d2r`, `val-op${op}-d2r`, o.d2r);
         setSlider(`sl-op${op}-rr`,  `val-op${op}-rr`,  o.rr);
         setSlider(`sl-op${op}-mul`, `val-op${op}-mul`, o.mul);
+        setSlider(`sl-op${op}-dt`,  `val-op${op}-dt`,  o.dt);
+        setSlider(`sl-op${op}-rs`,  `val-op${op}-rs`,  o.rs);
+        setSlider(`sl-op${op}-ssg`, `val-op${op}-ssg`, o.ssg);
       }
     }
 
@@ -935,6 +1004,24 @@
         initParamOnlyPlayer();
         player.setParam(paramName, val, selectedCh);
       }
+    };
+
+    window.onAmenToggle = function(op, checked) {
+      if (!player) {
+        initParamOnlyPlayer();
+      }
+      player.setParam(`FM_AMEN${op}`, checked ? 1 : 0, selectedCh);
+      const amenChk = document.getElementById(`chk-amen${op}`);
+      if (amenChk) amenChk.checked = checked;
+    };
+
+    window.onOpToggle = function(op, checked) {
+      if (!player) return;
+      // op1=bit4, op2=bit5, op3=bit6, op4=bit7
+      const bit = 1 << (op + 3);
+      const cur = player.getOpMask(selectedCh);
+      const next = checked ? (cur | bit) : (cur & ~bit);
+      player.setOpMask(selectedCh, next);
     };
 
     window.onOpParam = function(slider) {
