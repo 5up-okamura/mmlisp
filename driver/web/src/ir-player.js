@@ -425,6 +425,7 @@ export class IRPlayer {
       }
       if (found >= 0) tick = sourceMap[found].tick;
     }
+    this._initDefaultVoices();
     this.playFromTick(audioContext, tick);
   }
 
@@ -867,8 +868,8 @@ export class IRPlayer {
   _applyParam(ch, port, chOffset, ev, when) {
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
-    const value = ev.args?.value ?? 0;
     const isAdd = ev.cmd === "PARAM_ADD";
+    const value = isAdd ? (ev.args?.delta ?? 0) : (ev.args?.value ?? 0);
     let nextValue = null;
 
     // Helper to clamp and apply
