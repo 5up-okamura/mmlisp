@@ -314,7 +314,7 @@
     <div class="sep"></div>
 
     <!-- Transport buttons -->
-    <button id="btnPlay" class="tb-btn" onclick="onPlay()">▶/⏸  <kbd style="font-size:0.65rem;color:#555">⌘↵</kbd></button>
+    <button id="btnPlay" class="tb-btn" onpointerdown="initAudio()" onclick="onPlay()">▶/⏸  <kbd style="font-size:0.65rem;color:#555">⌘↵</kbd></button>
     <button id="btnStop" class="tb-btn" onclick="onStop()">■  <kbd style="font-size:0.65rem;color:#555">⌘.</kbd></button>
 
     <div class="spacer"></div>
@@ -556,6 +556,7 @@
     // -----------------------------------------------------------------------
     let audioCtx = null;
     let workletNode = null;
+    let _initAudioPromise = null;
     let player = null;
     let currentIrURL = document.getElementById('presetSelect').value;
     let selectedCh = 0;
@@ -695,30 +696,41 @@
       workletNode?.port.postMessage({ type: 'write', port, addr, data, when });
     }
 
-    async function initAudio() {
-      if (audioCtx) return true;
-      try {
-        audioCtx = new AudioContext({ sampleRate: 48000 });
-        if (audioCtx.state === 'suspended') await audioCtx.resume();
-        log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
-        await audioCtx.audioWorklet.addModule('./worklet.js');
-        workletNode = new AudioWorkletNode(audioCtx, 'ym2612-processor', {
-          numberOfOutputs: 1,
-          outputChannelCount: [2],
-        });
-        workletNode.connect(audioCtx.destination);
-        log('YM2612 worklet ready', 'info');
-        return true;
-      } catch (e) {
-        log('Audio init failed: ' + e.message, 'err');
-        return false;
-      }
+    function initAudio() {
+      if (_initAudioPromise) return _initAudioPromise;
+      _initAudioPromise = (async () => {
+        if (audioCtx) {
+          if (audioCtx.state === 'suspended') await audioCtx.resume();
+          return true;
+        }
+        try {
+          audioCtx = new AudioContext({ sampleRate: 48000 });
+          if (audioCtx.state === 'suspended') await audioCtx.resume();
+          log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
+          await audioCtx.audioWorklet.addModule('./worklet.js');
+          workletNode = new AudioWorkletNode(audioCtx, 'ym2612-processor', {
+            numberOfOutputs: 1,
+            outputChannelCount: [2],
+          });
+          workletNode.connect(audioCtx.destination);
+          log('YM2612 worklet ready', 'info');
+          return true;
+        } catch (e) {
+          _initAudioPromise = null; // allow retry on error
+          log('Audio init failed: ' + e.message, 'err');
+          return false;
+        }
+      })();
+      return _initAudioPromise;
     }
 
     async function onPlay(fromLine = null) {
       const ok = await initAudio();
       if (!ok) return;
-      if (player) player.stop();
+      if (player) {
+        player.stop();
+        workletNode?.port.postMessage({ type: 'flush' });
+      }
       player = new IRPlayer(writeToWorklet);
       try {
         // Use last successfully compiled IR if available, else load from URL
