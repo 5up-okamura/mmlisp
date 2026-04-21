@@ -16,7 +16,7 @@
           "cmd": "TEMPO_SET",
           "src": {
             "column": 1,
-            "line": 7
+            "line": 13
           },
           "tick": 0
         },
@@ -26,8 +26,8 @@
           },
           "cmd": "MARKER",
           "src": {
-            "column": 8,
-            "line": 20
+            "column": 6,
+            "line": 19
           },
           "tick": 0
         },
@@ -38,7 +38,7 @@
           },
           "cmd": "PARAM_SET",
           "src": {
-            "column": 18,
+            "column": 16,
             "line": 21
           },
           "tick": 0
@@ -49,7 +49,7 @@
           },
           "cmd": "LOOP_BEGIN",
           "src": {
-            "column": 8,
+            "column": 6,
             "line": 23
           },
           "tick": 0
@@ -61,8 +61,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 25
+            "column": 10,
+            "line": 24
           },
           "tick": 0
         },
@@ -73,8 +73,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 25
+            "column": 12,
+            "line": 24
           },
           "tick": 60
         },
@@ -85,8 +85,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 25
+            "column": 14,
+            "line": 24
           },
           "tick": 120
         },
@@ -97,8 +97,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 25
+            "column": 16,
+            "line": 24
           },
           "tick": 180
         },
@@ -109,8 +109,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 25
+            "column": 18,
+            "line": 24
           },
           "tick": 240
         },
@@ -121,8 +121,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 34,
-            "line": 25
+            "column": 20,
+            "line": 24
           },
           "tick": 300
         },
@@ -133,8 +133,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 38,
-            "line": 25
+            "column": 22,
+            "line": 24
           },
           "tick": 360
         },
@@ -145,8 +145,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 42,
-            "line": 25
+            "column": 24,
+            "line": 24
           },
           "tick": 420
         },
@@ -157,8 +157,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 27
+            "column": 17,
+            "line": 25
           },
           "tick": 480
         },
@@ -169,8 +169,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 27
+            "column": 21,
+            "line": 25
           },
           "tick": 540
         },
@@ -181,8 +181,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 27
+            "column": 23,
+            "line": 25
           },
           "tick": 600
         },
@@ -193,8 +193,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 27
+            "column": 25,
+            "line": 25
           },
           "tick": 660
         },
@@ -205,8 +205,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 27
+            "column": 29,
+            "line": 25
           },
           "tick": 720
         },
@@ -217,8 +217,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 34,
-            "line": 27
+            "column": 33,
+            "line": 25
           },
           "tick": 780
         },
@@ -229,8 +229,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 38,
-            "line": 27
+            "column": 35,
+            "line": 25
           },
           "tick": 840
         },
@@ -241,8 +241,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 42,
-            "line": 27
+            "column": 37,
+            "line": 25
           },
           "tick": 900
         },
@@ -253,8 +253,8 @@
           },
           "cmd": "PARAM_ADD",
           "src": {
-            "column": 18,
-            "line": 28
+            "column": 16,
+            "line": 26
           },
           "tick": 960
         },
@@ -265,8 +265,8 @@
           },
           "cmd": "LOOP_END",
           "src": {
-            "column": 8,
-            "line": 29
+            "column": 6,
+            "line": 27
           },
           "tick": 960
         },
@@ -277,19 +277,8 @@
           },
           "cmd": "PARAM_SET",
           "src": {
-            "column": 18,
-            "line": 30
-          },
-          "tick": 960
-        },
-        {
-          "args": {
-            "id": "turn"
-          },
-          "cmd": "MARKER",
-          "src": {
-            "column": 8,
-            "line": 32
+            "column": 16,
+            "line": 28
           },
           "tick": 960
         },
@@ -300,8 +289,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 34
+            "column": 19,
+            "line": 30
           },
           "tick": 960
         },
@@ -312,8 +301,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 34
+            "column": 23,
+            "line": 30
           },
           "tick": 1020
         },
@@ -324,8 +313,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 34
+            "column": 27,
+            "line": 30
           },
           "tick": 1080
         },
@@ -336,8 +325,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 34
+            "column": 31,
+            "line": 30
           },
           "tick": 1140
         },
@@ -348,8 +337,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 34
+            "column": 35,
+            "line": 30
           },
           "tick": 1200
         },
@@ -360,8 +349,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 34,
-            "line": 34
+            "column": 39,
+            "line": 30
           },
           "tick": 1260
         },
@@ -372,8 +361,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 38,
-            "line": 34
+            "column": 43,
+            "line": 30
           },
           "tick": 1320
         },
@@ -384,8 +373,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 42,
-            "line": 34
+            "column": 47,
+            "line": 30
           },
           "tick": 1380
         },
@@ -396,34 +385,46 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 8,
-            "line": 36
+            "column": 19,
+            "line": 31
           },
           "tick": 1440
         },
         {
           "args": {
-            "length": 60,
+            "length": 40,
             "pitch": "a3"
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 19,
-            "line": 37
+            "column": 33,
+            "line": 31
           },
           "tick": 1560
         },
         {
           "args": {
-            "length": 60,
+            "length": 40,
             "pitch": "b3"
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 23,
-            "line": 37
+            "column": 35,
+            "line": 31
           },
-          "tick": 1620
+          "tick": 1600
+        },
+        {
+          "args": {
+            "length": 40,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 37,
+            "line": 31
+          },
+          "tick": 1640
         },
         {
           "args": {
@@ -432,8 +433,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 8,
-            "line": 38
+            "column": 48,
+            "line": 31
           },
           "tick": 1680
         },
@@ -443,8 +444,8 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 8,
-            "line": 39
+            "column": 6,
+            "line": 32
           },
           "tick": 1800
         },
@@ -454,8 +455,8 @@
           },
           "cmd": "JUMP",
           "src": {
-            "column": 8,
-            "line": 41
+            "column": 6,
+            "line": 34
           },
           "tick": 1920
         }
@@ -467,6 +468,1043 @@
         "carry": false,
         "channel_candidates": [
           "fm1"
+        ],
+        "role": "bgm",
+        "write_scope": [
+          "any"
+        ]
+      }
+    },
+    {
+      "channel": "psg1",
+      "events": [
+        {
+          "args": {
+            "id": "intro"
+          },
+          "cmd": "MARKER",
+          "src": {
+            "column": 6,
+            "line": 38
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": 1,
+              "releaseRate": 3,
+              "steps": [
+                15,
+                14,
+                13
+              ],
+              "subtype": "seq"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 39
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "id": "pa"
+          },
+          "cmd": "LOOP_BEGIN",
+          "src": {
+            "column": 6,
+            "line": 40
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "c2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 41
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "c2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 12,
+            "line": 41
+          },
+          "tick": 240
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "c2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 41
+          },
+          "tick": 480
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "c2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 16,
+            "line": 41
+          },
+          "tick": 720
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 17,
+            "line": 42
+          },
+          "tick": 960
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 19,
+            "line": 42
+          },
+          "tick": 1200
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 21,
+            "line": 42
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 23,
+            "line": 42
+          },
+          "tick": 1680
+        },
+        {
+          "args": {
+            "id": "pa",
+            "repeat": 2
+          },
+          "cmd": "LOOP_END",
+          "src": {
+            "column": 6,
+            "line": 43
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "f2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 17,
+            "line": 44
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "f2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 19,
+            "line": 44
+          },
+          "tick": 2160
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "f2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 21,
+            "line": 44
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "f2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 23,
+            "line": 44
+          },
+          "tick": 2640
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 17,
+            "line": 45
+          },
+          "tick": 2880
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 19,
+            "line": 45
+          },
+          "tick": 3120
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 21,
+            "line": 45
+          },
+          "tick": 3360
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 23,
+            "line": 45
+          },
+          "tick": 3600
+        },
+        {
+          "args": {
+            "to": "intro"
+          },
+          "cmd": "JUMP",
+          "src": {
+            "column": 6,
+            "line": 46
+          },
+          "tick": 3840
+        }
+      ],
+      "id": 1,
+      "name": "bass",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "carry": false,
+        "channel_candidates": [
+          "psg1"
+        ],
+        "role": "bgm",
+        "write_scope": [
+          "any"
+        ]
+      }
+    },
+    {
+      "channel": "psg2",
+      "events": [
+        {
+          "args": {
+            "id": "intro"
+          },
+          "cmd": "MARKER",
+          "src": {
+            "column": 6,
+            "line": 50
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": null,
+              "releaseRate": null,
+              "steps": [
+                15,
+                13,
+                11,
+                9,
+                7,
+                5,
+                3,
+                1,
+                0
+              ],
+              "subtype": "bare"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 51
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "id": "pb"
+          },
+          "cmd": "LOOP_BEGIN",
+          "src": {
+            "column": 6,
+            "line": 52
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 53
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 12,
+            "line": 53
+          },
+          "tick": 60
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "g5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 53
+          },
+          "tick": 120
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 16,
+            "line": 53
+          },
+          "tick": 180
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 18,
+            "line": 53
+          },
+          "tick": 240
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 20,
+            "line": 53
+          },
+          "tick": 300
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "g5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 22,
+            "line": 53
+          },
+          "tick": 360
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 24,
+            "line": 53
+          },
+          "tick": 420
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 17,
+            "line": 54
+          },
+          "tick": 480
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 19,
+            "line": 54
+          },
+          "tick": 540
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 21,
+            "line": 54
+          },
+          "tick": 600
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 23,
+            "line": 54
+          },
+          "tick": 660
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 25,
+            "line": 54
+          },
+          "tick": 720
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 27,
+            "line": 54
+          },
+          "tick": 780
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "e4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 29,
+            "line": 54
+          },
+          "tick": 840
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 31,
+            "line": 54
+          },
+          "tick": 900
+        },
+        {
+          "args": {
+            "id": "pb",
+            "repeat": 2
+          },
+          "cmd": "LOOP_END",
+          "src": {
+            "column": 6,
+            "line": 55
+          },
+          "tick": 960
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 17,
+            "line": 56
+          },
+          "tick": 960
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 19,
+            "line": 56
+          },
+          "tick": 1020
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 28,
+            "line": 56
+          },
+          "tick": 1080
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 30,
+            "line": 56
+          },
+          "tick": 1140
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "a4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 39,
+            "line": 56
+          },
+          "tick": 1200
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 41,
+            "line": 56
+          },
+          "tick": 1260
+        },
+        {
+          "args": {
+            "length": 60,
+            "pitch": "c5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 50,
+            "line": 56
+          },
+          "tick": 1320
+        },
+        {
+          "args": {
+            "length": 60
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 52,
+            "line": 56
+          },
+          "tick": 1380
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "b4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 57
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "d5"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 35,
+            "line": 57
+          },
+          "tick": 1560
+        },
+        {
+          "args": {
+            "length": 240
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 6,
+            "line": 58
+          },
+          "tick": 1680
+        },
+        {
+          "args": {
+            "to": "intro"
+          },
+          "cmd": "JUMP",
+          "src": {
+            "column": 6,
+            "line": 59
+          },
+          "tick": 1920
+        }
+      ],
+      "id": 2,
+      "name": "counter",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "carry": false,
+        "channel_candidates": [
+          "psg2"
+        ],
+        "role": "bgm",
+        "write_scope": [
+          "any"
+        ]
+      }
+    },
+    {
+      "channel": "noise",
+      "events": [
+        {
+          "args": {
+            "id": "intro"
+          },
+          "cmd": "MARKER",
+          "src": {
+            "column": 6,
+            "line": 63
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": null,
+              "releaseRate": null,
+              "steps": [
+                15,
+                14,
+                12,
+                9,
+                5,
+                0
+              ],
+              "subtype": "bare"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 64
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "id": "pn"
+          },
+          "cmd": "LOOP_BEGIN",
+          "src": {
+            "column": 6,
+            "line": 65
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 10,
+            "line": 66
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 12,
+            "line": 66
+          },
+          "tick": 120
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 14,
+            "line": 66
+          },
+          "tick": 240
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 16,
+            "line": 66
+          },
+          "tick": 360
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 18,
+            "line": 66
+          },
+          "tick": 480
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 20,
+            "line": 66
+          },
+          "tick": 600
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 22,
+            "line": 66
+          },
+          "tick": 720
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 24,
+            "line": 66
+          },
+          "tick": 840
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 26,
+            "line": 66
+          },
+          "tick": 960
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 28,
+            "line": 66
+          },
+          "tick": 1080
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 30,
+            "line": 66
+          },
+          "tick": 1200
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 32,
+            "line": 66
+          },
+          "tick": 1320
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 34,
+            "line": 66
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 36,
+            "line": 66
+          },
+          "tick": 1560
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 38,
+            "line": 66
+          },
+          "tick": 1680
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 40,
+            "line": 66
+          },
+          "tick": 1800
+        },
+        {
+          "args": {
+            "id": "pn",
+            "repeat": 3
+          },
+          "cmd": "LOOP_END",
+          "src": {
+            "column": 6,
+            "line": 67
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 10,
+            "line": 68
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 12,
+            "line": 68
+          },
+          "tick": 2040
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 14,
+            "line": 68
+          },
+          "tick": 2160
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 16,
+            "line": 68
+          },
+          "tick": 2280
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 18,
+            "line": 68
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 20,
+            "line": 68
+          },
+          "tick": 2520
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 22,
+            "line": 68
+          },
+          "tick": 2640
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 24,
+            "line": 68
+          },
+          "tick": 2760
+        },
+        {
+          "args": {
+            "to": "intro"
+          },
+          "cmd": "JUMP",
+          "src": {
+            "column": 6,
+            "line": 69
+          },
+          "tick": 2880
+        }
+      ],
+      "id": 3,
+      "name": "perc",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "carry": false,
+        "channel_candidates": [
+          "noise"
         ],
         "role": "bgm",
         "write_scope": [

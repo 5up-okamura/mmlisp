@@ -16,7 +16,7 @@
           "cmd": "TEMPO_SET",
           "src": {
             "column": 1,
-            "line": 5
+            "line": 13
           },
           "tick": 0
         },
@@ -26,32 +26,8 @@
           },
           "cmd": "MARKER",
           "src": {
-            "column": 8,
-            "line": 18
-          },
-          "tick": 0
-        },
-        {
-          "args": {
-            "target": "FM_TL1",
-            "value": 40
-          },
-          "cmd": "PARAM_SET",
-          "src": {
-            "column": 18,
+            "column": 6,
             "line": 19
-          },
-          "tick": 0
-        },
-        {
-          "args": {
-            "target": "TEMPO_SCALE",
-            "value": 0
-          },
-          "cmd": "PARAM_SET",
-          "src": {
-            "column": 18,
-            "line": 20
           },
           "tick": 0
         },
@@ -62,8 +38,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 22
+            "column": 17,
+            "line": 21
           },
           "tick": 0
         },
@@ -74,8 +50,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 22
+            "column": 21,
+            "line": 21
           },
           "tick": 60
         },
@@ -86,8 +62,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 22
+            "column": 23,
+            "line": 21
           },
           "tick": 120
         },
@@ -98,8 +74,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 22
+            "column": 25,
+            "line": 21
           },
           "tick": 180
         },
@@ -110,8 +86,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 22
+            "column": 29,
+            "line": 21
           },
           "tick": 240
         },
@@ -122,8 +98,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 34,
-            "line": 22
+            "column": 33,
+            "line": 21
           },
           "tick": 300
         },
@@ -134,8 +110,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 38,
-            "line": 22
+            "column": 35,
+            "line": 21
           },
           "tick": 360
         },
@@ -146,8 +122,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 42,
-            "line": 22
+            "column": 37,
+            "line": 21
           },
           "tick": 420
         },
@@ -158,20 +134,20 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 24
+            "column": 17,
+            "line": 22
           },
           "tick": 480
         },
         {
           "args": {
             "length": 60,
-            "pitch": "b3"
+            "pitch": "b4"
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 24
+            "column": 21,
+            "line": 22
           },
           "tick": 540
         },
@@ -182,20 +158,20 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 24
+            "column": 23,
+            "line": 22
           },
           "tick": 600
         },
         {
           "args": {
             "length": 60,
-            "pitch": "b3"
+            "pitch": "b4"
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 24
+            "column": 25,
+            "line": 22
           },
           "tick": 660
         },
@@ -206,8 +182,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 24
+            "column": 29,
+            "line": 22
           },
           "tick": 720
         },
@@ -217,8 +193,8 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 34,
-            "line": 24
+            "column": 31,
+            "line": 22
           },
           "tick": 780
         },
@@ -229,8 +205,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 36,
-            "line": 24
+            "column": 33,
+            "line": 22
           },
           "tick": 840
         },
@@ -240,8 +216,8 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 40,
-            "line": 24
+            "column": 35,
+            "line": 22
           },
           "tick": 900
         },
@@ -251,8 +227,8 @@
           },
           "cmd": "LOOP_BEGIN",
           "src": {
-            "column": 8,
-            "line": 26
+            "column": 6,
+            "line": 24
           },
           "tick": 960
         },
@@ -263,8 +239,8 @@
           },
           "cmd": "PARAM_ADD",
           "src": {
-            "column": 18,
-            "line": 27
+            "column": 16,
+            "line": 25
           },
           "tick": 960
         },
@@ -275,8 +251,8 @@
           },
           "cmd": "PARAM_ADD",
           "src": {
-            "column": 18,
-            "line": 28
+            "column": 16,
+            "line": 26
           },
           "tick": 960
         },
@@ -287,8 +263,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 29
+            "column": 10,
+            "line": 27
           },
           "tick": 960
         },
@@ -299,8 +275,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 29
+            "column": 14,
+            "line": 27
           },
           "tick": 1020
         },
@@ -311,8 +287,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 29
+            "column": 18,
+            "line": 27
           },
           "tick": 1080
         },
@@ -323,8 +299,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 29
+            "column": 22,
+            "line": 27
           },
           "tick": 1140
         },
@@ -335,8 +311,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 29
+            "column": 26,
+            "line": 27
           },
           "tick": 1200
         },
@@ -347,8 +323,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 34,
-            "line": 29
+            "column": 30,
+            "line": 27
           },
           "tick": 1260
         },
@@ -359,8 +335,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 38,
-            "line": 29
+            "column": 34,
+            "line": 27
           },
           "tick": 1320
         },
@@ -371,8 +347,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 42,
-            "line": 29
+            "column": 38,
+            "line": 27
           },
           "tick": 1380
         },
@@ -383,8 +359,8 @@
           },
           "cmd": "LOOP_END",
           "src": {
-            "column": 8,
-            "line": 30
+            "column": 6,
+            "line": 28
           },
           "tick": 1440
         },
@@ -394,8 +370,8 @@
           },
           "cmd": "MARKER",
           "src": {
-            "column": 8,
-            "line": 32
+            "column": 6,
+            "line": 30
           },
           "tick": 1440
         },
@@ -406,8 +382,8 @@
           },
           "cmd": "PARAM_SET",
           "src": {
-            "column": 18,
-            "line": 33
+            "column": 16,
+            "line": 31
           },
           "tick": 1440
         },
@@ -418,8 +394,8 @@
           },
           "cmd": "PARAM_SET",
           "src": {
-            "column": 18,
-            "line": 34
+            "column": 16,
+            "line": 32
           },
           "tick": 1440
         },
@@ -430,8 +406,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 14,
-            "line": 36
+            "column": 17,
+            "line": 34
           },
           "tick": 1440
         },
@@ -442,8 +418,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 18,
-            "line": 36
+            "column": 21,
+            "line": 34
           },
           "tick": 1500
         },
@@ -454,8 +430,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 22,
-            "line": 36
+            "column": 23,
+            "line": 34
           },
           "tick": 1560
         },
@@ -466,8 +442,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 26,
-            "line": 36
+            "column": 25,
+            "line": 34
           },
           "tick": 1620
         },
@@ -478,8 +454,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 30,
-            "line": 36
+            "column": 29,
+            "line": 34
           },
           "tick": 1680
         },
@@ -489,8 +465,8 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 34,
-            "line": 36
+            "column": 31,
+            "line": 34
           },
           "tick": 1740
         },
@@ -500,8 +476,8 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 36,
-            "line": 36
+            "column": 33,
+            "line": 34
           },
           "tick": 1800
         },
@@ -511,8 +487,8 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 38,
-            "line": 36
+            "column": 35,
+            "line": 34
           },
           "tick": 1860
         },
@@ -523,8 +499,8 @@
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 8,
-            "line": 38
+            "column": 26,
+            "line": 35
           },
           "tick": 1920
         },
@@ -534,20 +510,20 @@
           },
           "cmd": "REST",
           "src": {
-            "column": 8,
-            "line": 39
+            "column": 6,
+            "line": 36
           },
           "tick": 2160
         },
         {
           "args": {
             "length": 120,
-            "pitch": "a3"
+            "pitch": "a4"
           },
           "cmd": "NOTE_ON",
           "src": {
-            "column": 8,
-            "line": 40
+            "column": 19,
+            "line": 37
           },
           "tick": 2280
         },
@@ -557,8 +533,8 @@
           },
           "cmd": "JUMP",
           "src": {
-            "column": 8,
-            "line": 42
+            "column": 6,
+            "line": 39
           },
           "tick": 2400
         }
@@ -569,8 +545,852 @@
         "allocation_preference": "ordered_first_fit",
         "carry": false,
         "channel_candidates": [
-          "fm1",
-          "fm2"
+          "fm1"
+        ],
+        "role": "bgm",
+        "write_scope": [
+          "any"
+        ]
+      }
+    },
+    {
+      "channel": "psg1",
+      "events": [
+        {
+          "args": {
+            "id": "calm"
+          },
+          "cmd": "MARKER",
+          "src": {
+            "column": 6,
+            "line": 43
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": 1,
+              "releaseRate": 5,
+              "steps": [
+                12,
+                11,
+                10
+              ],
+              "subtype": "seq"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 44
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 45
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 12,
+            "line": 45
+          },
+          "tick": 240
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 45
+          },
+          "tick": 480
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 16,
+            "line": 45
+          },
+          "tick": 720
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 46
+          },
+          "tick": 960
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 12,
+            "line": 46
+          },
+          "tick": 1200
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 46
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "g2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 16,
+            "line": 46
+          },
+          "tick": 1680
+        },
+        {
+          "args": {
+            "id": "stress-b"
+          },
+          "cmd": "LOOP_BEGIN",
+          "src": {
+            "column": 6,
+            "line": 48
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": 3,
+              "releaseRate": 2,
+              "steps": [
+                15,
+                14,
+                12,
+                10,
+                11
+              ],
+              "subtype": "seq"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 49
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "e3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 50
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "g3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 28,
+            "line": 50
+          },
+          "tick": 2040
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "a3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 30,
+            "line": 50
+          },
+          "tick": 2160
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "e3"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 32,
+            "line": 50
+          },
+          "tick": 2280
+        },
+        {
+          "args": {
+            "id": "stress-b",
+            "repeat": 4
+          },
+          "cmd": "LOOP_END",
+          "src": {
+            "column": 6,
+            "line": 51
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": 1,
+              "releaseRate": 5,
+              "steps": [
+                12,
+                11,
+                10
+              ],
+              "subtype": "seq"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 53
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 17,
+            "line": 54
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 19,
+            "line": 54
+          },
+          "tick": 2640
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 21,
+            "line": 54
+          },
+          "tick": 2880
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 23,
+            "line": 54
+          },
+          "tick": 3120
+        },
+        {
+          "args": {
+            "length": 240,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 25,
+            "line": 54
+          },
+          "tick": 3360
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 6,
+            "line": 55
+          },
+          "tick": 3600
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "a2"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 19,
+            "line": 56
+          },
+          "tick": 3720
+        },
+        {
+          "args": {
+            "to": "calm"
+          },
+          "cmd": "JUMP",
+          "src": {
+            "column": 6,
+            "line": 58
+          },
+          "tick": 3840
+        }
+      ],
+      "id": 1,
+      "name": "psg-bass",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "carry": false,
+        "channel_candidates": [
+          "psg1"
+        ],
+        "role": "bgm",
+        "write_scope": [
+          "any"
+        ]
+      }
+    },
+    {
+      "channel": "noise",
+      "events": [
+        {
+          "args": {
+            "id": "calm"
+          },
+          "cmd": "MARKER",
+          "src": {
+            "column": 6,
+            "line": 62
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "envelope": {
+              "loopIndex": null,
+              "releaseRate": null,
+              "steps": [
+                15,
+                12,
+                8,
+                4,
+                0
+              ],
+              "subtype": "bare"
+            }
+          },
+          "cmd": "PSG_VOICE",
+          "src": {
+            "column": 6,
+            "line": 63
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 64
+          },
+          "tick": 0
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 12,
+            "line": 64
+          },
+          "tick": 120
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 14,
+            "line": 64
+          },
+          "tick": 240
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 16,
+            "line": 64
+          },
+          "tick": 360
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 18,
+            "line": 64
+          },
+          "tick": 480
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 20,
+            "line": 64
+          },
+          "tick": 600
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 22,
+            "line": 64
+          },
+          "tick": 720
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 24,
+            "line": 64
+          },
+          "tick": 840
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 64
+          },
+          "tick": 960
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 28,
+            "line": 64
+          },
+          "tick": 1080
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 30,
+            "line": 64
+          },
+          "tick": 1200
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 32,
+            "line": 64
+          },
+          "tick": 1320
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 34,
+            "line": 64
+          },
+          "tick": 1440
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 36,
+            "line": 64
+          },
+          "tick": 1560
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 38,
+            "line": 64
+          },
+          "tick": 1680
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 40,
+            "line": 64
+          },
+          "tick": 1800
+        },
+        {
+          "args": {
+            "id": "stress-n"
+          },
+          "cmd": "LOOP_BEGIN",
+          "src": {
+            "column": 6,
+            "line": 66
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 67
+          },
+          "tick": 1920
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 12,
+            "line": 67
+          },
+          "tick": 2040
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 14,
+            "line": 67
+          },
+          "tick": 2160
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 16,
+            "line": 67
+          },
+          "tick": 2280
+        },
+        {
+          "args": {
+            "id": "stress-n",
+            "repeat": 4
+          },
+          "cmd": "LOOP_END",
+          "src": {
+            "column": 6,
+            "line": 68
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 10,
+            "line": 70
+          },
+          "tick": 2400
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 12,
+            "line": 70
+          },
+          "tick": 2520
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 14,
+            "line": 70
+          },
+          "tick": 2640
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 16,
+            "line": 70
+          },
+          "tick": 2760
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 18,
+            "line": 70
+          },
+          "tick": 2880
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 20,
+            "line": 70
+          },
+          "tick": 3000
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 22,
+            "line": 70
+          },
+          "tick": 3120
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 24,
+            "line": 70
+          },
+          "tick": 3240
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 26,
+            "line": 70
+          },
+          "tick": 3360
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 28,
+            "line": 70
+          },
+          "tick": 3480
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 30,
+            "line": 70
+          },
+          "tick": 3600
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 32,
+            "line": 70
+          },
+          "tick": 3720
+        },
+        {
+          "args": {
+            "length": 120,
+            "pitch": "c4"
+          },
+          "cmd": "NOTE_ON",
+          "src": {
+            "column": 34,
+            "line": 70
+          },
+          "tick": 3840
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 36,
+            "line": 70
+          },
+          "tick": 3960
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 38,
+            "line": 70
+          },
+          "tick": 4080
+        },
+        {
+          "args": {
+            "length": 120
+          },
+          "cmd": "REST",
+          "src": {
+            "column": 40,
+            "line": 70
+          },
+          "tick": 4200
+        },
+        {
+          "args": {
+            "to": "calm"
+          },
+          "cmd": "JUMP",
+          "src": {
+            "column": 6,
+            "line": 72
+          },
+          "tick": 4320
+        }
+      ],
+      "id": 2,
+      "name": "psg-perc",
+      "route_hint": {
+        "allocation_preference": "ordered_first_fit",
+        "carry": false,
+        "channel_candidates": [
+          "noise"
         ],
         "role": "bgm",
         "write_scope": [

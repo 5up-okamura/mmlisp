@@ -4,23 +4,23 @@
       "id": 1,
       "flags": 0,
       "offset": 52,
-      "size": 16
+      "size": 40
     },
     {
       "id": 2,
       "flags": 0,
-      "offset": 68,
-      "size": 362
+      "offset": 92,
+      "size": 812
     },
     {
       "id": 3,
       "flags": 0,
-      "offset": 430,
+      "offset": 904,
       "size": 82
     }
   ],
-  "totalSize": 512,
-  "trackCount": 1,
+  "totalSize": 986,
+  "trackCount": 3,
   "targetProfile": "md-full",
   "trackAssignments": [
     {
@@ -34,8 +34,35 @@
       "assignedChannelId": 0,
       "strategy": "candidate",
       "candidates": [
-        "fm1",
-        "fm2"
+        "fm1"
+      ]
+    },
+    {
+      "trackId": 1,
+      "trackName": "psg-bass",
+      "role": "bgm",
+      "writeScope": [
+        "any"
+      ],
+      "assignedChannel": "psg1",
+      "assignedChannelId": 6,
+      "strategy": "candidate",
+      "candidates": [
+        "psg1"
+      ]
+    },
+    {
+      "trackId": 2,
+      "trackName": "psg-perc",
+      "role": "bgm",
+      "writeScope": [
+        "any"
+      ],
+      "assignedChannel": "noise",
+      "assignedChannelId": 9,
+      "strategy": "candidate",
+      "candidates": [
+        "noise"
       ]
     }
   ]
