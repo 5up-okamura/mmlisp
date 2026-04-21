@@ -13,13 +13,13 @@ This repository starts with specification-first development:
 2. Freeze format and command specs.
 3. Implement GMLDRV against the frozen spec.
 
-## Planned Repository Structure
+## Repository Structure
 
 - docs/: specifications and design notes
-- tools/: compiler and web tooling
-- driver/: GMLDRV implementation
+- tools/: compiler and validation tooling
+- driver/: web authoring environment (driver/web/) and future GMLDRV target
 - examples/: demo songs and test assets
-- gml-syntax/: VS Code TextMate grammar for .gml syntax highlighting
+- gml-syntax/: VS Code TextMate grammar for .mmlisp syntax highlighting
 
 ## Naming
 
@@ -27,21 +27,19 @@ This repository starts with specification-first development:
 - Web tool: GMLisp Live
 - Driver: GMLDRV
 
-## File Extensions (draft)
+## File Extensions
 
 - .gml: source score
 - .gmb: compiled binary song data
 
 ## Status
 
-Draft implementation in progress.
+Implemented toolchain:
 
-Implemented toolchain stage:
-
-1. source (.gml) -> deterministic IR (.json)
+1. source (.gml) → deterministic IR (.json)
 2. IR comparison against canonical snapshots with strict semantic checks
-3. draft GMB export and structural validation for demo artifacts
-4. Web player (driver/web/) with YM2612 AudioWorklet, GML editor, FM parameter panel
+3. GMB export and structural validation for demo artifacts
+4. Web authoring environment (driver/web/) with YM2612 AudioWorklet, GML editor, FM parameter panel
 
 Web player features:
 
@@ -61,12 +59,11 @@ Web player features:
 6. docs/compiler.md
 7. docs/driver.md
 
-## Next Local Steps
+## Next Steps
 
 1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
-2. Freeze IR-to-GMB opcode table and argument packing by review.
-3. Add multi-track/channel compatibility fixtures for decoder checks.
-4. Iterate freeze review notes in docs/reviews.
+2. Freeze IR-to-GMB opcode table and argument packing.
+3. Implement GMLDRV on SGDK/Z80 target.
 
 ## Acknowledgements
 

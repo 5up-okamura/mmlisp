@@ -16,12 +16,12 @@ Outputs:
 3. docs/ir.md
 4. docs/gmb.md
 
-## Phase 0.5: Editor Tooling
+## Phase 0.5: Editor Tooling ✓
 
 - VS Code syntax highlighting via custom TextMate grammar (gml-syntax/)
 - Format-on-save via format-gml.js
 
-Current status: implemented.
+Status: **complete**.
 
 ## Phase 1: Web Authoring Environment (GMLisp Live)
 
@@ -30,7 +30,7 @@ Current status: implemented.
 - Parameter modulation panel
 - Runtime intervention simulator
 
-Current status: partially implemented (driver/web/). See docs/spec-v0.2-draft.md for planned additions.
+Current status: partially implemented (driver/web/). See docs/spec-v0.2.md for planned additions.
 
 Implemented (v0.1 + post-freeze):
 
@@ -59,18 +59,16 @@ v0.2 planned additions (design in progress):
 
 Phase 1 exit signal:
 
-1. Demo songs can be edited and auditioned end-to-end in the web workflow
+1. Demo songs can be edited and auditioned end-to-end in the web workflow ✓
 
-## Phase 2: Compiler and Format Stabilization
+## Phase 2: Compiler and Format Stabilization ✓
 
 - Source parser and AST
 - IR generation
 - GMB binary writer
 - Compatibility/version checks
 
-Phase 2 exit signal:
-
-1. Deterministic IR and GMB outputs for freeze demos
+Status: **complete** — deterministic IR and GMB outputs verified for both demo artifacts.
 
 ## Phase 3: Driver Implementation (GMLDRV)
 
@@ -88,18 +86,15 @@ Phase 3 entry condition:
 - Example game-scene mappings for interactive music
 - Documentation and migration notes for v0.2
 
-## Immediate Local Backlog
+## Backlog
 
-~~1. Fill demo1-stage-loop and demo2-event-recovery with validation phrases~~
-~~2. Produce initial IR snapshots in examples/ir~~
-~~3. Produce initial GMB exports in examples/gmb~~
-~~4. Record first actionable freeze review using docs/reviews template~~
-
-Next:
-
-1. Implement Cmd+Enter pause/resume and Cmd+. stop in driver/web/index.html
-2. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
-3. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
+1. Implement Cmd+Enter pause/resume and Cmd+. stop (spec-v0.2 §1.1)
+2. Cursor-line seek from source map (spec-v0.2 §1.11)
+3. Named FM/PSG voice data via `def :fm` / `def :psg` (spec-v0.2 §1.2, §1.7)
+4. Freeze IR-to-GMB opcode table
+5. Begin GMLDRV implementation (Phase 3)
+6. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
+7. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
 
 ---
 
