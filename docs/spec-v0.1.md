@@ -20,14 +20,14 @@ to lock a minimal, proven authoring-to-binary contract.
 
 - MMLisp Live: web authoring environment
 - MMLisp compiler: source to IR/binary conversion
-- MMLDRV: playback driver for SGDK/Mega Drive (post-freeze implementation)
+- MMLispDRV: playback driver for SGDK/Mega Drive (post-freeze implementation)
 
 Primary development order for v0.1:
 
 1. MMLisp Live authoring and playback validation
 2. Compiler IR and GMB output stabilization
 3. Driver-oriented compatibility checks
-4. MMLDRV implementation after freeze
+4. MMLispDRV implementation after freeze
 
 ## 3. Timebase
 
@@ -231,7 +231,7 @@ Freeze artifacts required in repository:
 3. Their exported GMB files
 4. A freeze review note summarizing accepted exclusions
 
-## 10. SGDK/MMLDRV Timing
+## 10. SGDK/MMLispDRV Timing
 
 Driver implementation starts after v0.1 freeze, but format decisions must remain driver-oriented from day one.
 

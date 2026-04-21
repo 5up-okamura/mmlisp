@@ -21,7 +21,7 @@ Not implemented yet:
 
 1. Full language surface
 2. Full semantic diagnostics catalog coverage
-3. Frozen opcode table and long-term compatibility proof with MMLDRV
+3. Frozen opcode table and long-term compatibility proof with MMLispDRV
 
 ## 2. CLI Commands
 
@@ -146,4 +146,4 @@ GMB output contract (draft):
 
 1. Expand diagnostics to additional semantic rules and edge cases
 2. Freeze opcode table and argument packing for v0.1
-3. Add compatibility fixtures consumed by future MMLDRV decoder tests
+3. Add compatibility fixtures consumed by future MMLispDRV decoder tests

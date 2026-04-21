@@ -70,7 +70,7 @@ Phase 1 exit signal:
 
 Status: **complete** — deterministic IR and GMB outputs verified for both demo artifacts.
 
-## Phase 3: Driver Implementation (MMLDRV)
+## Phase 3: Driver Implementation (MMLispDRV)
 
 - Minimal event playback on SGDK target
 - Incremental command support based on frozen spec
@@ -92,7 +92,7 @@ Phase 3 entry condition:
 2. Cursor-line seek from source map (spec-v0.2 §1.11)
 3. Named FM/PSG voice data via `def :fm` / `def :psg` (spec-v0.2 §1.2, §1.7)
 4. Freeze IR-to-GMB opcode table
-5. Begin MMLDRV implementation (Phase 3)
+5. Begin MMLispDRV implementation (Phase 3)
 6. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
 7. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
 

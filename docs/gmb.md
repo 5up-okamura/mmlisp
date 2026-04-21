@@ -5,7 +5,7 @@ This document defines the draft binary format for MMLisp export artifacts.
 ## 1. Goals
 
 1. Compact and deterministic song binary format
-2. Clear version and feature negotiation with future MMLDRV
+2. Clear version and feature negotiation with future MMLispDRV
 3. Forward-compatible section-based layout
 
 ## 2. Endianness and Alignment

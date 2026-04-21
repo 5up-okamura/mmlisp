@@ -1,6 +1,6 @@
-# MMLDRV Decoder Contract v0.1 Draft
+# MMLispDRV Decoder Contract v0.1 Draft
 
-This document defines the draft contract expected by a future MMLDRV decoder
+This document defines the draft contract expected by a future MMLispDRV decoder
 for current GMB artifacts produced by mmlisp-tools.
 
 ## 1. Input Expectations
