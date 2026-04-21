@@ -105,7 +105,7 @@ Phase 3 entry condition:
 ```lisp
 (import "reverb"    :from :stdlib)
 (import "dx7-brass" :from :patches)
-(import "my-arp"    :from "https://gml.community/patches/okamura/arp01")
+(import "my-arp"    :from "https://mmlisp.community/patches/okamura/arp01")
 ```
 
 - `import` resolves at compile time and folds into IR — no runtime dependency

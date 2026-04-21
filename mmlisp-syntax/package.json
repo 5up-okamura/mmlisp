@@ -12,7 +12,7 @@
   "contributes": {
     "languages": [
       {
-        "id": "gml",
+        "id": "mmlisp",
         "aliases": [
           "MMLisp"
         ],
@@ -24,9 +24,9 @@
     ],
     "grammars": [
       {
-        "language": "gml",
+        "language": "mmlisp",
         "scopeName": "source.mmlisp",
-        "path": "./syntaxes/gml.tmLanguage.json"
+        "path": "./syntaxes/mmlisp.tmLanguage.json"
       }
     ]
   }
