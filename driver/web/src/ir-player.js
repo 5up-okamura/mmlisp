@@ -119,52 +119,56 @@ function buildChannelRegState(chIndex) {
     fms: 0, // LFO FM sensitivity 0-7 (0xB4 bits 2-0)
     ops: [
       {
-        tl: 40,
-        ar: 31,
+        tl: 0,
+        ar: 0,
         dr: 0,
         d2r: 0,
         sl: 0,
-        rr: 15,
-        mul: 1,
+        rr: 0,
+        mul: 0,
         dt: 0,
         rs: 0,
         amen: 0,
+        ssg: 0,
       },
       {
-        tl: 40,
-        ar: 31,
+        tl: 0,
+        ar: 0,
         dr: 0,
         d2r: 0,
         sl: 0,
-        rr: 15,
-        mul: 1,
+        rr: 0,
+        mul: 0,
         dt: 0,
         rs: 0,
         amen: 0,
+        ssg: 0,
       },
       {
-        tl: 40,
-        ar: 31,
+        tl: 0,
+        ar: 0,
         dr: 0,
         d2r: 0,
         sl: 0,
-        rr: 15,
-        mul: 1,
+        rr: 0,
+        mul: 0,
         dt: 0,
         rs: 0,
         amen: 0,
+        ssg: 0,
       },
       {
-        tl: 40,
-        ar: 31,
+        tl: 0,
+        ar: 0,
         dr: 0,
         d2r: 0,
         sl: 0,
-        rr: 15,
-        mul: 1,
+        rr: 0,
+        mul: 0,
         dt: 0,
         rs: 0,
         amen: 0,
+        ssg: 0,
       },
     ],
   };
@@ -900,6 +904,23 @@ export class IRPlayer {
         this._write(port, opAddr, encode60(regs.ops[opIdx]), when);
         break;
       }
+      case "FM_SR1":
+      case "FM_SR2":
+      case "FM_SR3":
+      case "FM_SR4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].d2r,
+          (v) => {
+            regs.ops[opIdx].d2r = v;
+          },
+          0,
+          31,
+        );
+        const opAddr = 0x70 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, regs.ops[opIdx].d2r & 0x1f, when);
+        break;
+      }
       case "FM_AMEN1":
       case "FM_AMEN2":
       case "FM_AMEN3":
@@ -985,6 +1006,79 @@ export class IRPlayer {
         this._write(port, opAddr, encode30(regs.ops[opIdx]), when);
         break;
       }
+      case "FM_SL1":
+      case "FM_SL2":
+      case "FM_SL3":
+      case "FM_SL4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].sl,
+          (v) => {
+            regs.ops[opIdx].sl = v;
+          },
+          0,
+          15,
+        );
+        const opAddr = 0x80 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, encode80(regs.ops[opIdx]), when);
+        break;
+      }
+      case "FM_DT1":
+      case "FM_DT2":
+      case "FM_DT3":
+      case "FM_DT4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].dt,
+          (v) => {
+            regs.ops[opIdx].dt = v;
+          },
+          0,
+          7,
+        );
+        const opAddr = 0x30 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, encode30(regs.ops[opIdx]), when);
+        break;
+      }
+      case "FM_KS1":
+      case "FM_KS2":
+      case "FM_KS3":
+      case "FM_KS4": {
+        const opIdx = parseInt(target[5]) - 1;
+        set(
+          () => regs.ops[opIdx].rs,
+          (v) => {
+            regs.ops[opIdx].rs = v;
+          },
+          0,
+          3,
+        );
+        const opAddr = 0x50 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(
+          port,
+          opAddr,
+          (regs.ops[opIdx].rs << 6) | regs.ops[opIdx].ar,
+          when,
+        );
+        break;
+      }
+      case "FM_SSG1":
+      case "FM_SSG2":
+      case "FM_SSG3":
+      case "FM_SSG4": {
+        const opIdx = parseInt(target[6]) - 1;
+        set(
+          () => regs.ops[opIdx].ssg,
+          (v) => {
+            regs.ops[opIdx].ssg = v;
+          },
+          0,
+          15,
+        );
+        const opAddr = 0x90 + OP_ADDR_OFFSET[opIdx] + chOffset;
+        this._write(port, opAddr, regs.ops[opIdx].ssg & 0x0f, when);
+        break;
+      }
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
 
       case "VOL": {
@@ -1057,6 +1151,9 @@ export class IRPlayer {
     return {
       algorithm: r.algorithm,
       feedback: r.feedback,
+      ams: r.ams,
+      fms: r.fms,
+      lfoRate: this._lfoRate,
       ops: r.ops.map((o) => ({ ...o })),
     };
   }
@@ -1069,47 +1166,40 @@ export class IRPlayer {
   }
 
   _initDefaultVoices() {
-    // Write a basic FM voice to all channels so notes are audible immediately.
-    // This is a simple sine-like patch: alg=0, fb=0,
-    // all ops: AR=31, TL carriers=0 / TL modulators=40, MUL=1.
+    // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
+    // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
     for (let ch = 0; ch < 6; ch++) {
       const port = ch >= 3 ? 1 : 0;
       const offset = ch % 3;
       const regs = this._chRegs[ch];
 
-      // Algorithm 5 (all ops modulated from op1 output → op2,3,4 are carriers)
-      // gives a richer sound for a default patch without FM programming.
-      regs.algorithm = 5;
-      regs.feedback = 2;
+      regs.algorithm = 7;
+      regs.feedback = 0;
       this._write(port, 0xb0 + offset, encodeB0(regs));
       // Stereo: both
       this._write(port, 0xb4 + offset, 0xc0);
 
-      const opConfigs = [
-        { slot: 0, tl: 20, ar: 28, dr: 6, d2r: 0, sl: 0, rr: 7, mul: 1 }, // op1 (modulator)
-        { slot: 1, tl: 0, ar: 31, dr: 4, d2r: 0, sl: 2, rr: 8, mul: 1 }, // op2
-        { slot: 2, tl: 0, ar: 31, dr: 4, d2r: 0, sl: 2, rr: 8, mul: 1 }, // op3
-        { slot: 3, tl: 0, ar: 31, dr: 4, d2r: 0, sl: 2, rr: 8, mul: 1 }, // op4
-      ];
-
-      for (const cfg of opConfigs) {
-        const opOff = OP_ADDR_OFFSET[cfg.slot];
-        regs.ops[cfg.slot] = {
-          tl: cfg.tl,
-          ar: cfg.ar,
-          dr: cfg.dr,
-          d2r: cfg.d2r,
-          sl: cfg.sl,
-          rr: cfg.rr,
-          mul: cfg.mul,
+      for (let slot = 0; slot < 4; slot++) {
+        const opOff = OP_ADDR_OFFSET[slot];
+        regs.ops[slot] = {
+          tl: 0,
+          ar: 31,
+          dr: 0,
+          d2r: 0,
+          sl: 0,
+          rr: 15,
+          mul: 1,
           dt: 0,
+          rs: 0,
+          amen: 0,
+          ssg: 0,
         };
-        this._write(port, 0x30 + opOff + offset, encode30(regs.ops[cfg.slot]));
-        this._write(port, 0x40 + opOff + offset, cfg.tl);
-        this._write(port, 0x50 + opOff + offset, 0x60 | cfg.ar); // RS=1
-        this._write(port, 0x60 + opOff + offset, cfg.dr);
-        this._write(port, 0x70 + opOff + offset, cfg.d2r);
-        this._write(port, 0x80 + opOff + offset, encode80(regs.ops[cfg.slot]));
+        this._write(port, 0x30 + opOff + offset, encode30(regs.ops[slot])); // DT=0, MUL=1
+        this._write(port, 0x40 + opOff + offset, 0); // TL=0
+        this._write(port, 0x50 + opOff + offset, 31); // AR=31
+        this._write(port, 0x60 + opOff + offset, 0); // DR=0
+        this._write(port, 0x70 + opOff + offset, 0); // D2R=0
+        this._write(port, 0x80 + opOff + offset, encode80(regs.ops[slot])); // SL=0, RR=15
       }
     }
   }
