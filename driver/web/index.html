@@ -23,18 +23,12 @@
     #topbar {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0 0.75rem;
+      gap: 0.25rem;
+      padding: 0 0.5rem;
       height: 36px;
       flex-shrink: 0;
       background: #161616;
       border-bottom: 1px solid #2a2a2a;
-    }
-    #topbar .sep {
-      width: 1px;
-      height: 18px;
-      background: #333;
-      margin: 0 0.25rem;
     }
     #topbar select {
       background: #1e1e1e;
@@ -56,8 +50,9 @@
       border-radius: 2px;
       cursor: pointer;
       white-space: nowrap;
+      padding: 0.15rem 0.5rem;
     }
-    .tb-btn:hover { border-color: #7df; color: #7df; background: #12283a; }
+    @media (hover: hover) { .tb-btn:hover { border-color: #7df; color: #7df; background: #12283a; } }
     .tb-btn:disabled { opacity: 0.3; cursor: default; }
     .tb-btn.active { border-color: #7df; color: #7df; background: #12303f; }
     #posDisplay {
@@ -81,6 +76,7 @@
     .play-dot.playing { background: #4c9; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
     #topbar .spacer { flex: 1; }
+    #btnPanel { font-size: 1.2rem; line-height: 1; padding: 0 0.4rem; }
 
     /* ---- menu dropdowns ---- */
     .menu-wrap { position: relative; }
@@ -95,7 +91,8 @@
       padding: 0.2rem 0.5rem;
       white-space: nowrap;
     }
-    .menu-btn:hover, .menu-wrap.open .menu-btn { color: #7df; background: #12283a; }
+    @media (hover: hover) { .menu-btn:hover { color: #7df; background: #12283a; } }
+    .menu-wrap.open .menu-btn { color: #7df; background: #12283a; }
     .menu-dropdown {
       display: none;
       position: absolute;
@@ -122,7 +119,7 @@
       cursor: pointer;
       white-space: nowrap;
     }
-    .menu-item:hover { background: #2a3a4a; color: #7df; }
+    @media (hover: hover) { .menu-item:hover { background: #2a3a4a; color: #7df; } }
 
     /* ---- main area ---- */
     #main {
@@ -218,6 +215,9 @@
       transform: translateX(0);
       z-index: 10;
     }
+    @media (max-width: 480px) {
+      #rightPanel { width: 100%; border-left: none; }
+    }
     #rightPanel.collapsed {
       transform: translateX(100%);
     }
@@ -273,7 +273,7 @@
     }
     .op-col-title {
       font-size: 0.62rem;
-      color: #7a9;
+      color: #999;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       margin-bottom: 0.4rem;
@@ -282,7 +282,7 @@
       justify-content: space-between;
     }
     .op-col-title input[type=checkbox] {
-      accent-color: #7a9;
+      accent-color: #7df;
       width: 0.75rem;
       height: 0.75rem;
       margin: 0;
@@ -293,7 +293,7 @@
     #algDisplay {
       font-size: 0.67rem;
       color: #999;
-      min-height: 0;
+      min-height: 1.2em;
       margin: 0.2rem 0;
     }
     .op-grid { margin-top: 0.3rem; }
@@ -303,13 +303,19 @@
     .ch-strips-row {
       display: flex;
       gap: 0.3rem;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: #333 transparent;
+      padding-bottom: 2px;
     }
     .ch-col {
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
       align-items: stretch;
-      flex: 1;
+      flex: 0 0 32px;
+      width: 32px;
     }
     .ms-btn {
       background: #1e1e1e;
@@ -359,23 +365,19 @@
       </div>
     </div>
 
-    <div class="sep"></div>
-
     <!-- Transport buttons -->
-    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()">▶</button>
+    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">▶</button>
     <button id="btnStop" class="tb-btn" onclick="onStop()">■</button>
 
-    <div class="sep"></div>
-
     <!-- Transport status -->
-    <span class="play-dot" id="playDot"></span>
+    <span class="play-dot" id="playDot" style="margin-left:0.5rem"></span>
     <span id="posDisplay">. : .</span>
     <span id="bpmDisplay">... BPM</span>
 
     <div class="spacer"></div>
 
     <!-- Panel toggle -->
-    <button id="btnPanel" class="menu-btn" onclick="togglePanel()">Params</button>
+    <button id="btnPanel" class="menu-btn" onclick="togglePanel()" title="Params">⚙</button>
   </div>
 
   <!-- Main area -->
@@ -393,12 +395,6 @@
     <!-- Right panel (collapsible) -->
     <div id="rightPanel">
 
-      <!-- Channel mute / solo -->
-      <div class="rack-section">
-        <div class="rack-title">Channels</div>
-        <div id="chStrips"></div>
-      </div>
-
       <!-- Global Parameters -->
       <div class="rack-section">
         <div class="rack-title">Global</div>
@@ -408,6 +404,12 @@
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onChParam('LFO_RATE', this)">
           </div>
         </div>
+      </div>
+
+      <!-- Channel mute / solo -->
+      <div class="rack-section">
+        <div class="rack-title">Channels</div>
+        <div id="chStrips"></div>
       </div>
 
       <!-- FM Parameters -->
@@ -649,7 +651,7 @@
     function togglePanel() {
       _panelOpen = !_panelOpen;
       document.getElementById('rightPanel').classList.toggle('collapsed', !_panelOpen);
-      document.getElementById('btnPanel').textContent = 'Params';
+
     }
     window.togglePanel = togglePanel;
 
@@ -1011,14 +1013,14 @@
 
     // Algorithm descriptions (what's a carrier, what's a modulator)
     const ALG_DESC = [
-      'Alg 0: 1→2→3→4  (max modulation)',
-      'Alg 1: (1+2)→3→4',
-      'Alg 2: (1+(2→3))→4',
-      'Alg 3: ((1→2)+3)→4',
-      'Alg 4: (1→2)+(3→4)  (2 carriers)',
-      'Alg 5: 1→(2+3+4)  (3 carriers)',
-      'Alg 6: (1→2)+3+4  (3 carriers)',
-      'Alg 7: 1+2+3+4  (all carriers, pure additive)',
+      '1→2→3→4  (max modulation)',
+      '(1+2)→3→4',
+      '(1+(2→3))→4',
+      '((1→2)+3)→4',
+      '(1→2)+(3→4)  (2 carriers)',
+      '1→(2+3+4)  (3 carriers)',
+      '(1→2)+3+4  (3 carriers)',
+      '1+2+3+4  (all carriers, pure additive)',
     ];
 
     // Build channel tabs — now handled by F1-F6 buttons in chStrips
@@ -1056,7 +1058,7 @@
         <label for="chk-op${op}">OP${op}</label>
         <input type="checkbox" id="chk-amen${op}"
           onchange="onAmenToggle(${op}, this.checked)">
-        <label for="chk-amen${op}" style="color:#fa9">AM</label>
+        <label for="chk-amen${op}">AM</label>
       </div>`;
 
       for (const pp of OP_PARAMS) {
