@@ -1,4 +1,4 @@
-; GMLisp demo 1
+; MMLisp demo 1
 ; Purpose: loop/marker stability + base/delta modulation
 ; Structure: A(2bar x2) + B(2bar) = 6-bar loop in C major, 120 BPM
 

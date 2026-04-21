@@ -1,28 +1,28 @@
 {
-  "generatedAt": "2026-04-15T22:49:41.214Z",
+  "generatedAt": "2026-04-21T07:58:57.110Z",
   "cases": [
     {
-      "file": "valid-demo1.gmb",
+      "file": "valid-demo1.mmb",
       "valid": true,
       "reason": "Known-good demo1 artifact"
     },
     {
-      "file": "valid-demo2.gmb",
+      "file": "valid-demo2.mmb",
       "valid": true,
       "reason": "Known-good demo2 artifact"
     },
     {
-      "file": "invalid-bad-magic.gmb",
+      "file": "invalid-bad-magic.mmb",
       "valid": false,
       "reason": "Magic header is corrupted"
     },
     {
-      "file": "invalid-bad-payload-len.gmb",
+      "file": "invalid-bad-payload-len.mmb",
       "valid": false,
       "reason": "First event payload length is intentionally mismatched"
     },
     {
-      "file": "invalid-track-range.gmb",
+      "file": "invalid-track-range.mmb",
       "valid": false,
       "reason": "Track event range intentionally exceeds EVENT_STREAM"
     }

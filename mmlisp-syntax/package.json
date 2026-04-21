@@ -1,7 +1,7 @@
 {
-  "name": "gml-syntax",
-  "displayName": "GML Syntax",
-  "description": "Syntax highlighting for GMLisp (.gml) files",
+  "name": "mmlisp-syntax",
+  "displayName": "MMLisp Syntax",
+  "description": "Syntax highlighting for MMLisp (.mmlisp) files",
   "version": "0.1.0",
   "engines": {
     "vscode": "^1.70.0"
@@ -14,11 +14,10 @@
       {
         "id": "gml",
         "aliases": [
-          "GML",
-          "GMLisp"
+          "MMLisp"
         ],
         "extensions": [
-          ".gml"
+          ".mmlisp"
         ],
         "configuration": "./language-configuration.json"
       }
@@ -26,7 +25,7 @@
     "grammars": [
       {
         "language": "gml",
-        "scopeName": "source.gml",
+        "scopeName": "source.mmlisp",
         "path": "./syntaxes/gml.tmLanguage.json"
       }
     ]

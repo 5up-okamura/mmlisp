@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "scopeName": "source.gml",
-  "name": "GML",
+  "scopeName": "source.mmlisp",
+  "name": "MMLisp",
   "patterns": [
     { "include": "#comment" },
     { "include": "#string" },
@@ -21,16 +21,16 @@
   ],
   "repository": {
     "comment": {
-      "name": "comment.line.semicolon.gml",
+      "name": "comment.line.semicolon.mmlisp",
       "match": ";.*$"
     },
     "string": {
-      "name": "string.quoted.double.gml",
+      "name": "string.quoted.double.mmlisp",
       "begin": "\"",
       "end": "\"",
       "patterns": [
         {
-          "name": "constant.character.escape.gml",
+          "name": "constant.character.escape.mmlisp",
           "match": "\\\\."
         }
       ]
@@ -38,67 +38,67 @@
     "def-form": {
       "match": "(?<=\\()\\s*(def)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
       "captures": {
-        "1": { "name": "storage.type.gml" },
-        "2": { "name": "variable.other.constant.gml" }
+        "1": { "name": "storage.type.mmlisp" },
+        "2": { "name": "variable.other.constant.mmlisp" }
       }
     },
     "defn-form": {
       "match": "(?<=\\()\\s*(defn)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
       "captures": {
-        "1": { "name": "storage.type.gml" },
-        "2": { "name": "entity.name.function.definition.gml" }
+        "1": { "name": "storage.type.mmlisp" },
+        "2": { "name": "entity.name.function.definition.mmlisp" }
       }
     },
     "structural-head": {
       "match": "(?<=\\()\\s*(score|track|phrase)(?=[\\s)])",
       "captures": {
-        "1": { "name": "keyword.control.gml" }
+        "1": { "name": "keyword.control.mmlisp" }
       }
     },
     "note-head": {
       "match": "(?<=\\()\\s*(note|notes|tuplet|rest|tie)(?=[\\s)])",
       "captures": {
-        "1": { "name": "entity.name.function.gml" }
+        "1": { "name": "entity.name.function.mmlisp" }
       }
     },
     "flow-head": {
       "match": "(?<=\\()\\s*(marker|jump|loop-begin|loop-end)(?=[\\s)])",
       "captures": {
-        "1": { "name": "keyword.other.control-flow.gml" }
+        "1": { "name": "keyword.other.control-flow.mmlisp" }
       }
     },
     "param-head": {
       "match": "(?<=\\()\\s*(param-set|param-add)(?=[\\s)])",
       "captures": {
-        "1": { "name": "support.function.gml" }
+        "1": { "name": "support.function.mmlisp" }
       }
     },
     "boolean": {
-      "name": "constant.language.boolean.gml",
+      "name": "constant.language.boolean.mmlisp",
       "match": "(?<=[\\s(])(?:true|false)(?=[\\s)])"
     },
     "keyword": {
-      "name": "constant.other.keyword.gml",
+      "name": "constant.other.keyword.mmlisp",
       "match": ":[a-zA-Z][a-zA-Z0-9_+-]*"
     },
     "rest-shorthand": {
-      "name": "entity.name.function.gml",
+      "name": "entity.name.function.mmlisp",
       "match": "(?<=\\s)_(?=[\\s)])"
     },
     "fraction": {
-      "name": "constant.numeric.fraction.gml",
+      "name": "constant.numeric.fraction.mmlisp",
       "match": "\\d+/\\d+"
     },
     "number": {
-      "name": "constant.numeric.integer.gml",
+      "name": "constant.numeric.integer.mmlisp",
       "match": "(?<=[\\s(\\[])[+-]?\\d+(?=[\\s)\\]])"
     },
     "paren": {
-      "name": "punctuation.section.parens.gml",
+      "name": "punctuation.section.parens.mmlisp",
       "match": "[()]"
     },
     "bracket": {
-      "name": "punctuation.section.brackets.gml",
+      "name": "punctuation.section.brackets.mmlisp",
       "match": "[\\[\\]]"
     }
   }

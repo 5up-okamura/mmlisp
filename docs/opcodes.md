@@ -43,4 +43,4 @@ Do not treat this mapping as frozen spec.
 
 1. Verify command frequency from demo IR snapshots.
 2. Re-pack NOTE_ON/REST if large gains are found.
-3. Confirm no conflicts with planned GMLDRV decode table.
+3. Confirm no conflicts with planned MMLDRV decode table.

@@ -2,17 +2,17 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Format Current GML",
+      "label": "Format Current MMLisp",
       "type": "shell",
       "command": "node",
-      "args": ["tools/scripts/format-gml.js", "${file}"],
+      "args": ["tools/scripts/format-mmlisp.js", "${file}"],
       "problemMatcher": []
     },
     {
-      "label": "Check GML Format",
+      "label": "Check MMLisp Format",
       "type": "shell",
       "command": "npm",
-      "args": ["run", "check:format:gml"],
+      "args": ["run", "check:format:mmlisp"],
       "options": {
         "cwd": "${workspaceFolder}/tools"
       },

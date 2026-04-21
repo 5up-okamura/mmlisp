@@ -1,21 +1,21 @@
 {
-  "name": "gmlisp-tools",
+  "name": "mmlisp-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal local tooling for GMLisp draft workflow",
+  "description": "Minimal local tooling for MMLisp draft workflow",
   "scripts": {
-    "format:gml": "node scripts/format-gml.js ../examples/source/*.gml",
-    "check:format:gml": "node scripts/format-gml.js --check ../examples/source/*.gml",
-    "gml2ir": "node scripts/gml2ir.js",
+    "format:mmlisp": "node scripts/format-mmlisp.js ../examples/source/*.mmlisp",
+    "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../examples/source/*.mmlisp",
+    "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
-    "gml2gmb": "node scripts/gml2gmb.js",
-    "verify-gmb": "node scripts/verify-gmb.js",
-    "build:ir-demos": "node scripts/gml2ir.js ../examples/source/demo1-stage-loop.gml --strict --diag-out ../examples/ir/demo1-stage-loop.diagnostics.generated.json --out ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/gml2ir.js ../examples/source/demo2-event-recovery.gml --strict --diag-out ../examples/ir/demo2-event-recovery.diagnostics.generated.json --out ../examples/ir/demo2-event-recovery.ir.generated.json",
+    "mmlisp2mmb": "node scripts/mmlisp2mmb.js",
+    "verify-mmb": "node scripts/verify-mmb.js",
+    "build:ir-demos": "node scripts/mmlisp2ir.js ../examples/source/demo1-stage-loop.mmlisp --strict --diag-out ../examples/ir/demo1-stage-loop.diagnostics.generated.json --out ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/mmlisp2ir.js ../examples/source/demo2-event-recovery.mmlisp --strict --diag-out ../examples/ir/demo2-event-recovery.diagnostics.generated.json --out ../examples/ir/demo2-event-recovery.ir.generated.json",
     "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json && node scripts/verify-ir.js ../examples/ir/demo2-event-recovery.ir.canonical.json ../examples/ir/demo2-event-recovery.ir.generated.json",
-    "build:gmb-demos": "node scripts/gml2gmb.js ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json && node scripts/gml2gmb.js ../examples/ir/demo2-event-recovery.ir.canonical.json --out ../examples/gmb/demo2-event-recovery.gmb --meta ../examples/gmb/demo2-event-recovery.meta.json",
-    "check:gmb-demos": "npm run build:gmb-demos && node scripts/verify-gmb.js ../examples/gmb/demo1-stage-loop.gmb && node scripts/verify-gmb.js ../examples/gmb/demo2-event-recovery.gmb",
-    "build:gmb-fixtures": "npm run build:gmb-demos && node scripts/make-gmb-fixtures.js",
-    "check:gmb-fixtures": "npm run build:gmb-fixtures && node scripts/check-gmb-fixtures.js"
+    "build:gmb-demos": "node scripts/mmlisp2mmb.js ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.mmb --meta ../examples/gmb/demo1-stage-loop.meta.json && node scripts/mmlisp2mmb.js ../examples/ir/demo2-event-recovery.ir.canonical.json --out ../examples/gmb/demo2-event-recovery.mmb --meta ../examples/gmb/demo2-event-recovery.meta.json",
+    "check:gmb-demos": "npm run build:gmb-demos && node scripts/verify-mmb.js ../examples/gmb/demo1-stage-loop.mmb && node scripts/verify-mmb.js ../examples/gmb/demo2-event-recovery.mmb",
+    "build:gmb-fixtures": "npm run build:gmb-demos && node scripts/make-mmb-fixtures.js",
+    "check:gmb-fixtures": "npm run build:gmb-fixtures && node scripts/check-mmb-fixtures.js"
   },
   "engines": {
     "node": ">=18"

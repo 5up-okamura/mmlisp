@@ -1,7 +1,7 @@
 {
   "metadata": {
     "author": "okamura",
-    "source": "examples/source/demo2-event-recovery.gml",
+    "source": "examples/source/demo2-event-recovery.mmlisp",
     "title": "Demo 2 Event Recovery"
   },
   "ppqn": 120,

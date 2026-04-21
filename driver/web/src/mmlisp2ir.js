@@ -1,15 +1,15 @@
 /**
- * GML → IR compiler — ES module port of tools/scripts/gml2ir.js.
- * No Node.js dependencies; input is a GML source string.
+ * MMLisp → IR compiler — ES module port of tools/scripts/mmlisp2ir.js.
+ * No Node.js dependencies; input is a MMLisp source string.
  *
  * API:
- *   compileGML(src: string, filename?: string)
+ *   compileMMLisp(src: string, filename?: string)
  *     → { ir: object, diagnostics: array }
  *
  * Errors in diagnostics have: { severity, code, message, line, column, track }
  */
 
-import { parse } from "./gml-parser.js";
+import { parse } from "./mmlisp-parser.js";
 
 const PPQN = 120;
 const WHOLE_TICKS = PPQN * 4;
@@ -1036,12 +1036,12 @@ function expandRoots(roots, defs, defns) {
 }
 
 /**
- * Compile a GML source string to IR.
- * @param {string} src  GML source text
- * @param {string} [filename]  Optional filename for metadata (default: "untitled.gml")
+ * Compile a MMLisp source string to IR.
+ * @param {string} src  MMLisp source text
+ * @param {string} [filename]  Optional filename for metadata (default: "untitled.mmlisp")
  * @returns {{ ir: object, diagnostics: array }}
  */
-export function compileGML(src, filename = "untitled.gml") {
+export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
   const { defs, defns, typedDefs, remaining } = collectDefs(

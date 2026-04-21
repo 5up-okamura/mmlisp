@@ -1,5 +1,5 @@
 /**
- * GMLisp IR player.
+ * MMLisp IR player.
  *
  * Loads an IR JSON file, translates events into YM2612 register writes,
  * and schedules them via a write callback timed by the Web Audio clock.
@@ -31,7 +31,7 @@ const NOTE_NAMES = [
   "as",
   "b",
 ];
-// Aliases for sharps/flats commonly seen in GMLisp ("c#", "db" etc.)
+// Aliases for sharps/flats commonly seen in MMLisp ("c#", "db" etc.)
 const NOTE_ALIASES = {
   "c#": "cs",
   db: "cs",
@@ -88,7 +88,7 @@ function midiToFnumBlock(midiNote) {
 // Parameter name → YM2612 register offset + encoding
 // ---------------------------------------------------------------------------
 //
-// GMLisp param names (from IR) map to hardware registers.
+// MMLisp param names (from IR) map to hardware registers.
 // Channel-level params:
 //   FM_FB      → 0xB0 bits 5-3 (feedback, 0-7)
 //   FM_ALG     → 0xB0 bits 2-0 (algorithm, 0-7)
@@ -407,7 +407,7 @@ export class IRPlayer {
    * Seek to the nearest event at or before the given source line, then play.
    * @param {AudioContext} audioContext
    * @param {number} cursorLine  1-based source line number
-   * @param {Array<{line:number,tick:number}>} sourceMap  from compileGML()
+   * @param {Array<{line:number,tick:number}>} sourceMap  from compileMMLisp()
    */
   playFromLine(audioContext, cursorLine, sourceMap) {
     let tick = 0;
@@ -1280,9 +1280,9 @@ export class IRPlayer {
       let t = noteWhen;
       let idx = 0;
       while (t < noteOffWhen) {
-        const gmlVol = Math.max(0, Math.min(15, steps[idx] ?? 0));
-        // GML: 15=max, 0=silent → hardware: 0=max, 15=silent
-        this._psgSetAtt(psgCh, 15 - gmlVol, t);
+        const mmlispVol = Math.max(0, Math.min(15, steps[idx] ?? 0));
+        // MMLisp: 15=max, 0=silent → hardware: 0=max, 15=silent
+        this._psgSetAtt(psgCh, 15 - mmlispVol, t);
         idx++;
         if (idx >= steps.length) {
           if (loopIndex !== null) {

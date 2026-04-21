@@ -1,7 +1,7 @@
 {
   "metadata": {
     "author": "okamura",
-    "source": "examples/source/demo1-stage-loop.gml",
+    "source": "examples/source/demo1-stage-loop.mmlisp",
     "title": "Demo 1 Stage Loop"
   },
   "ppqn": 120,

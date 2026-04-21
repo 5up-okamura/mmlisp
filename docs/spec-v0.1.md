@@ -1,11 +1,11 @@
-# GMLisp v0.1 Draft Specification
+# MMLisp v0.1 Draft Specification
 
 Document status: draft
 Target freeze: v0.1
 
 ## 1. Purpose
 
-GMLisp targets interactive game music where composition, sound effects, and game state can dynamically influence each other.
+MMLisp targets interactive game music where composition, sound effects, and game state can dynamically influence each other.
 
 v0.1 prioritizes:
 
@@ -18,16 +18,16 @@ to lock a minimal, proven authoring-to-binary contract.
 
 ## 2. Product Components
 
-- GMLisp Live: web authoring environment
-- GML compiler: source to IR/binary conversion
-- GMLDRV: playback driver for SGDK/Mega Drive (post-freeze implementation)
+- MMLisp Live: web authoring environment
+- MMLisp compiler: source to IR/binary conversion
+- MMLDRV: playback driver for SGDK/Mega Drive (post-freeze implementation)
 
 Primary development order for v0.1:
 
-1. GMLisp Live authoring and playback validation
+1. MMLisp Live authoring and playback validation
 2. Compiler IR and GMB output stabilization
 3. Driver-oriented compatibility checks
-4. GMLDRV implementation after freeze
+4. MMLDRV implementation after freeze
 
 ## 3. Timebase
 
@@ -101,7 +101,7 @@ ML and DT are unified as a single fixed-point decimal.
 Fractional part encodes DT direction and magnitude.
 The compiler quantizes to the nearest valid (ML, DT) pair per frame.
 Pitch envelopes are authored as PARAM_ADD sequences targeting `:op1-ratio` through `:op4-ratio`.
-GMLisp macros such as `pitch-glide` can generate these sequences at authoring time.
+MMLisp macros such as `pitch-glide` can generate these sequences at authoring time.
 
 `notes` sugar syntax:
 
@@ -218,7 +218,7 @@ Validation classes:
 
 All conditions should pass:
 
-1. At least two demo songs completed in GMLisp Live
+1. At least two demo songs completed in MMLisp Live
 2. Loop and marker behavior stable under repeated playback
 3. base/delta recovery behavior audibly consistent
 4. IR command set proven minimal and sufficient
@@ -231,7 +231,7 @@ Freeze artifacts required in repository:
 3. Their exported GMB files
 4. A freeze review note summarizing accepted exclusions
 
-## 10. SGDK/GMLDRV Timing
+## 10. SGDK/MMLDRV Timing
 
 Driver implementation starts after v0.1 freeze, but format decisions must remain driver-oriented from day one.
 

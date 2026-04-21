@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parse } = require("./gml_parser");
+const { parse } = require("./mmlisp_parser");
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
@@ -394,7 +394,7 @@ function parseArgs(argv) {
 
   if (files.length === 0) {
     throw new Error(
-      "Usage: node scripts/format-gml.js [--check|--stdout] <file...>",
+      "Usage: node scripts/format-mmlisp.js [--check|--stdout] <file...>",
     );
   }
 
@@ -425,7 +425,7 @@ function main() {
   }
 
   if (check && changed) {
-    process.stderr.write("Some GML files are not formatted.\n");
+    process.stderr.write("Some MMLisp files are not formatted.\n");
     process.exit(1);
   }
 }

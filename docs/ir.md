@@ -1,7 +1,7 @@
-# GMLisp IR v0.1 Draft
+# MMLisp IR v0.1 Draft
 
 This document defines the intermediate representation (IR) produced by the
-GMLisp compiler before binary serialization.
+MMLisp compiler before binary serialization.
 
 ## 1. Goals
 

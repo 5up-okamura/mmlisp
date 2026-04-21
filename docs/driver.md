@@ -1,11 +1,11 @@
-# GMLDRV Decoder Contract v0.1 Draft
+# MMLDRV Decoder Contract v0.1 Draft
 
-This document defines the draft contract expected by a future GMLDRV decoder
-for current GMB artifacts produced by gmlisp-tools.
+This document defines the draft contract expected by a future MMLDRV decoder
+for current GMB artifacts produced by mmlisp-tools.
 
 ## 1. Input Expectations
 
-1. Magic must be `GMB0`.
+1. Magic must be `MMB0`.
 2. Version must be `0.1` for current draft artifacts.
 3. Section directory must contain at least:
    - TRACK_TABLE (0x0001)

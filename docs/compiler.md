@@ -9,7 +9,7 @@ Related draft path now included: source -> IR -> GMB.
 
 Implemented now:
 
-1. Parse a subset of GMLisp source forms used in demo files
+1. Parse a subset of MMLisp source forms used in demo files
 2. Emit deterministic IR JSON
 3. Verify generated IR against canonical snapshots
 4. Encode draft GMB binary from IR
@@ -21,16 +21,16 @@ Not implemented yet:
 
 1. Full language surface
 2. Full semantic diagnostics catalog coverage
-3. Frozen opcode table and long-term compatibility proof with GMLDRV
+3. Frozen opcode table and long-term compatibility proof with MMLDRV
 
 ## 2. CLI Commands
 
 Run from tools directory.
 
-1. `npm run gml2ir -- ../examples/source/demo1-stage-loop.gml --out ../examples/ir/demo1-stage-loop.ir.generated.json`
+1. `npm run mmlisp2ir -- ../examples/source/demo1-stage-loop.mmlisp --out ../examples/ir/demo1-stage-loop.ir.generated.json`
 2. `npm run build:ir-demos`
 3. `npm run check:ir-demos`
-4. `npm run gml2gmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.gmb --meta ../examples/gmb/demo1-stage-loop.meta.json`
+4. `npm run mmlisp2mmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.mmb --meta ../examples/gmb/demo1-stage-loop.meta.json`
 5. `npm run build:gmb-demos`
 6. `npm run check:gmb-demos`
 
@@ -146,4 +146,4 @@ GMB output contract (draft):
 
 1. Expand diagnostics to additional semantic rules and edge cases
 2. Freeze opcode table and argument packing for v0.1
-3. Add compatibility fixtures consumed by future GMLDRV decoder tests
+3. Add compatibility fixtures consumed by future MMLDRV decoder tests

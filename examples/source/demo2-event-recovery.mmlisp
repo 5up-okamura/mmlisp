@@ -1,4 +1,4 @@
-; GMLisp demo 2
+; MMLisp demo 2
 ; Purpose: intervention and recovery behavior (base + delta)
 ; Structure: intro(2bar) + stress-loop(1bar x4) + recovery(2bar) = 8-bar loop in A minor
 

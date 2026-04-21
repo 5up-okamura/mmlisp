@@ -1,4 +1,4 @@
-# GMLisp v0.2 Design Notes
+# MMLisp v0.2 Design Notes
 
 Document status: design-in-progress
 Started: 2026-04-13
@@ -141,7 +141,7 @@ Rationale:
 - GMB delta ticks match the driver's countdown-timer execution model and reduce
   per-event byte cost.
 
-The `gml2gmb` encoder is responsible for the conversion:
+The `mmlisp2mmb` encoder is responsible for the conversion:
 `delta[i] = tick[i] - tick[i-1]` (first event: `delta = tick[0]`).
 
 GMB event record format (replaces provisional `tick: uint32`):
@@ -327,7 +327,7 @@ option is needed:
 ### 1.11 Source map and cursor-line playback
 
 The compiler attaches a `src: { line, column }` field to every IR event. The
-`compileGML` function (browser-side) returns an additional `sourceMap` array —
+`compileMMLisp` function (browser-side) returns an additional `sourceMap` array —
 a sorted list of `{ line, tick }` pairs derived from the first event at each
 unique source line.
 
@@ -358,7 +358,7 @@ do not need to add markers purely to set a playback start point.
 
 ### 1.12 Channel mute / solo and operator on/off (UI layer only)
 
-These are runtime playback controls with no representation in GML source or IR.
+These are runtime playback controls with no representation in MMLisp source or IR.
 They are implemented purely in IRPlayer and the web UI.
 
 **Channel mute / solo:**
@@ -425,7 +425,7 @@ Proposed top bar: `File ▾ | Examples ▾ | [● Bar:Beat BPM] | [⌘↵ Play/P
 
 ### 2.8 `defn` — compile-time macro vs. runtime subroutine
 
-Current GMLisp behavior:
+Current MMLisp behavior:
 
 - `defn` is a **compile-time macro**. Call sites are AST-expanded by `expandRoots`
   before `compilePhrase`. No call/return record appears in IR or GMB.

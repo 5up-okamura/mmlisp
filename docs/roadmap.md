@@ -1,4 +1,4 @@
-# GMLisp Roadmap
+# MMLisp Roadmap
 
 ## Phase 0: Spec and Authoring Validation ✓
 
@@ -18,12 +18,12 @@ Outputs:
 
 ## Phase 0.5: Editor Tooling ✓
 
-- VS Code syntax highlighting via custom TextMate grammar (gml-syntax/)
-- Format-on-save via format-gml.js
+- VS Code syntax highlighting via custom TextMate grammar (mmlisp-syntax/)
+- Format-on-save via format-mmlisp.js
 
 Status: **complete**.
 
-## Phase 1: Web Authoring Environment (GMLisp Live)
+## Phase 1: Web Authoring Environment (MMLisp Live)
 
 - Editor and diagnostics
 - Transport controls and marker/loop visualization
@@ -40,12 +40,12 @@ Implemented (v0.1 + post-freeze):
 - Per-track independent loop scheduling (each track loops on its own JUMP boundary)
 - Non-cumulative loop time base (startAudioTime + loopCount × loopDuration)
 - Automatic track→channel assignment from IR `track.channel` field; auto-increment fallback
-- CodeMirror 6 source editor with GML StreamLanguage syntax highlighting (One Dark)
+- CodeMirror 6 source editor with MMLisp StreamLanguage syntax highlighting (One Dark)
 - Playhead line highlight synchronized to source events
 - Bar:Beat + BPM position display (25ms poll)
 - FM parameter panel: ALG/FB + op TL/AR/DR/RR/MUL sliders per channel
 - Slider values updated in real time from PARAM_SET/PARAM_ADD playback events
-- Browser-side GML compiler (gml-parser.js + gml2ir.js as ES modules)
+- Browser-side MMLisp compiler (mmlisp-parser.js + mmlisp2ir.js as ES modules)
 - Hot-swap playback: live compile on edit (400ms debounce) with bar-boundary resume
 
 v0.2 planned additions (design in progress):
@@ -70,7 +70,7 @@ Phase 1 exit signal:
 
 Status: **complete** — deterministic IR and GMB outputs verified for both demo artifacts.
 
-## Phase 3: Driver Implementation (GMLDRV)
+## Phase 3: Driver Implementation (MMLDRV)
 
 - Minimal event playback on SGDK target
 - Incremental command support based on frozen spec
@@ -92,7 +92,7 @@ Phase 3 entry condition:
 2. Cursor-line seek from source map (spec-v0.2 §1.11)
 3. Named FM/PSG voice data via `def :fm` / `def :psg` (spec-v0.2 §1.2, §1.7)
 4. Freeze IR-to-GMB opcode table
-5. Begin GMLDRV implementation (Phase 3)
+5. Begin MMLDRV implementation (Phase 3)
 6. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
 7. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
 
@@ -100,7 +100,7 @@ Phase 3 entry condition:
 
 ## Future Vision (post-MVP ideas)
 
-### GML `import` system
+### MMLisp `import` system
 
 ```lisp
 (import "reverb"    :from :stdlib)
@@ -116,7 +116,7 @@ Phase 3 entry condition:
 
 ### Patch server / community
 
-- `GET /patches/:slug[@version]` → GML snippet or FM voice JSON
+- `GET /patches/:slug[@version]` → MMLisp snippet or FM voice JSON
 - Each patch carries author ID, license, and version history
 - Natural fit with the existing VGM community (snesmusic, hcs64, etc.)
 - **Patch preview — dynamic, in-browser synthesis only**:
@@ -132,7 +132,7 @@ Phase 3 entry condition:
 ```
 Cloudflare Pages   — static frontend
 Cloudflare Workers — API (patch serve, index rebuild)
-Cloudflare R2      — patch files (.gml / voice .json) + index.json
+Cloudflare R2      — patch files (.mmlisp / voice .json) + index.json
 ```
 
 - `index.json` — full patch list built by Workers on upload; filtered client-side
@@ -255,7 +255,7 @@ real-model references ("TR-808 Collection") and curated sets ("PC Engine Wavefor
   "patch_type": "voice", // voice | effect | sequence
   "base_note": 60, // MIDI note for preview / tuning reference
   "polyphony": "mono", // mono | poly
-  "gml_version": "0.1", // minimum GML spec version required
+  "mmlisp_version": "0.1", // minimum MMLisp spec version required
 
   // UX
   "description": "Warm brass lead, good for slower melodic lines.",
@@ -289,7 +289,7 @@ Primary target is YM2612 (Mega Drive), but the community vision covers:
 | HuC6280       | PC Engine               | wavetable (32-byte waveforms)   |
 
 Each chip needs its own target profile, register encoder, and JS emulator.
-The IR layer is designed to be chip-agnostic; only the backend (gml2gmb + driver) is chip-specific.
+The IR layer is designed to be chip-agnostic; only the backend (mmlisp2mmb + driver) is chip-specific.
 
 ### Monetization
 

@@ -1,8 +1,8 @@
 {
-  "name": "gmlisp-web-player",
+  "name": "mmlisp-web-player",
   "version": "0.1.0",
   "private": true,
-  "description": "GMLisp YM2612 browser player",
+  "description": "MMLisp YM2612 browser player",
   "scripts": {
     "serve": "npx --yes serve ../.. --cors -p 5173"
   }

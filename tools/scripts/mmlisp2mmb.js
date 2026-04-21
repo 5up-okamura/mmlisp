@@ -12,11 +12,11 @@ const {
   i16le,
   alignBuffer,
   parsePitchToByte,
-} = require("./gmb_common");
+} = require("./mmb_common");
 
 function usage() {
   console.error(
-    "Usage: node scripts/gml2gmb.js <input.ir.json> [--out <file.gmb>] [--meta <file.txt>] [--target-profile <name>]",
+    "Usage: node scripts/mmlisp2mmb.js <input.ir.json> [--out <file.mmb>] [--meta <file.txt>] [--target-profile <name>]",
   );
 }
 
@@ -240,7 +240,7 @@ function encodeMetadata(metadata) {
   const entries = [
     ["title", metadata.title || ""],
     ["author", metadata.author || ""],
-    ["compiler_version", metadata.compiler_version || "gmlisp-tools-0.1.0"],
+    ["compiler_version", metadata.compiler_version || "mmlisp-tools-0.1.0"],
   ];
 
   const chunks = [];
@@ -463,7 +463,7 @@ function buildGmb(ir, options = {}) {
     encodeMetadata({
       title: ir.metadata?.title,
       author: ir.metadata?.author,
-      compiler_version: "gmlisp-tools-0.1.0",
+      compiler_version: "mmlisp-tools-0.1.0",
     }),
     2,
   );
@@ -491,7 +491,7 @@ function buildGmb(ir, options = {}) {
   }
 
   const header = Buffer.concat([
-    Buffer.from("GMB0", "ascii"),
+    Buffer.from("MMB0", "ascii"),
     Buffer.from([0x00, 0x01]),
     u16le(0),
     u16le(sectionCount),
@@ -558,7 +558,7 @@ function main() {
   const ir = JSON.parse(fs.readFileSync(args.input, "utf8"));
   const { gmb, meta } = buildGmb(ir, { targetProfile: args.targetProfile });
 
-  const out = args.out || args.input.replace(/\.json$/i, ".gmb");
+  const out = args.out || args.input.replace(/\.json$/i, ".mmb");
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, gmb);
 

@@ -56,8 +56,8 @@ function makeFixtures() {
   const fixturesDir = path.join(gmbDir, "fixtures");
   fs.mkdirSync(fixturesDir, { recursive: true });
 
-  const demo1 = fs.readFileSync(path.join(gmbDir, "demo1-stage-loop.gmb"));
-  const demo2 = fs.readFileSync(path.join(gmbDir, "demo2-event-recovery.gmb"));
+  const demo1 = fs.readFileSync(path.join(gmbDir, "demo1-stage-loop.mmb"));
+  const demo2 = fs.readFileSync(path.join(gmbDir, "demo2-event-recovery.mmb"));
 
   const valid1 = Buffer.from(demo1);
   const valid2 = Buffer.from(demo2);
@@ -86,31 +86,31 @@ function makeFixtures() {
 
   const files = [
     {
-      name: "valid-demo1.gmb",
+      name: "valid-demo1.mmb",
       buffer: valid1,
       valid: true,
       reason: "Known-good demo1 artifact",
     },
     {
-      name: "valid-demo2.gmb",
+      name: "valid-demo2.mmb",
       buffer: valid2,
       valid: true,
       reason: "Known-good demo2 artifact",
     },
     {
-      name: "invalid-bad-magic.gmb",
+      name: "invalid-bad-magic.mmb",
       buffer: badMagic,
       valid: false,
       reason: "Magic header is corrupted",
     },
     {
-      name: "invalid-bad-payload-len.gmb",
+      name: "invalid-bad-payload-len.mmb",
       buffer: badPayloadLen,
       valid: false,
       reason: "First event payload length is intentionally mismatched",
     },
     {
-      name: "invalid-track-range.gmb",
+      name: "invalid-track-range.mmb",
       buffer: badTrackRange,
       valid: false,
       reason: "Track event range intentionally exceeds EVENT_STREAM",

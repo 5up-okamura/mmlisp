@@ -11,7 +11,7 @@
  * directly ported, but the numeric constants originate from the same chip
  * documentation those projects use.
  *
- * Covers the FM synthesis core needed for GMLisp playback:
+ * Covers the FM synthesis core needed for MMLisp playback:
  *   - 6 FM channels, 4 operators each
  *   - 8 FM algorithms
  *   - ADSR envelope generator

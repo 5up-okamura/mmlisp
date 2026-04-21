@@ -1,8 +1,8 @@
-# GMLisp
+# MMLisp
 
-GMLisp is an interactive music authoring system for Mega Drive game development.
+MMLisp is an interactive music authoring system for Mega Drive game development.
 
-- Playback driver: GMLDRV (Z80/SGDK target)
+- Playback driver: MMLDRV (Z80/SGDK target)
 
 ## Current Stage
 
@@ -10,34 +10,34 @@ This repository starts with specification-first development:
 
 1. Build and validate music ideas in the web environment.
 2. Freeze format and command specs.
-3. Implement GMLDRV against the frozen spec.
+3. Implement MMLDRV against the frozen spec.
 
 ## Repository Structure
 
 - docs/: specifications and design notes
 - tools/: compiler and validation tooling
-- driver/: web authoring environment (driver/web/) and future GMLDRV target
+- driver/: web authoring environment (driver/web/) and future MMLDRV target
 - examples/: demo songs and test assets
-- gml-syntax/: VS Code TextMate grammar for .gml syntax highlighting
+- mmlisp-syntax/: VS Code TextMate grammar for .mmlisp syntax highlighting
 
 ## Naming
 
-- Project: GMLisp
-- Driver: GMLDRV
+- Project: MMLisp
+- Driver: MMLDRV
 
 ## File Extensions
 
-- .gml: source score
-- .gmb: compiled binary song data
+- .mmlisp: source score
+- .mmb: compiled binary song data
 
 ## Status
 
 Implemented toolchain:
 
-1. source (.gml) → deterministic IR (.json)
+1. source (.mmlisp) → deterministic IR (.json)
 2. IR comparison against canonical snapshots with strict semantic checks
 3. GMB export and structural validation for demo artifacts
-4. Web authoring environment (driver/web/) with chip emulator AudioWorklet, GML editor, sound parameter panel
+4. Web authoring environment (driver/web/) with chip emulator AudioWorklet, MMLisp editor, sound parameter panel
 
 ## Documents
 
@@ -48,13 +48,13 @@ Implemented toolchain:
 - docs/gmb.md — binary format
 - docs/opcodes.md — opcode assignments (provisional)
 - docs/compiler.md — compiler pipeline contract
-- docs/driver.md — decoder contract for GMLDRV
+- docs/driver.md — decoder contract for MMLDRV
 
 ## Next Steps
 
 1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
 2. Freeze IR-to-GMB opcode table and argument packing.
-3. Implement GMLDRV on SGDK/Z80 target.
+3. Implement MMLDRV on SGDK/Z80 target.
 
 ## Acknowledgements
 
@@ -66,7 +66,7 @@ This project was inspired by and built with reference to the following works:
 - **[Strudel](https://strudel.cc/)** — Live coding music environment (TidalCycles ported to JavaScript). Influenced the generative and pattern-based composition model.
 - **[Opusmodus](https://opusmodus.com/)** — Common Lisp-based music composition system. Influenced the computational and algorithmic approach to score authoring.
 - **[Pure Data](https://puredata.info/)** / **[Max](https://cycling74.com/products/max)** — Visual dataflow environments for audio and interactive media. Foundational influences on the idea of bringing modern compositional tooling to game music.
-- **[glisp](https://github.com/baku89/glisp)** — Lisp-based creative coding environment by Baku Hashimoto. Influenced the GMLisp language design.
+- **[glisp](https://github.com/baku89/glisp)** — Lisp-based creative coding environment by Baku Hashimoto. Influenced the MMLisp language design.
 
 ## License
 

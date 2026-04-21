@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GMLisp YM2612 Player</title>
+  <title>MMLisp YM2612 Player</title>
   <link rel="icon" href="data:,">
   <!-- CodeMirror 6 -->
   <link rel="stylesheet" href="https://esm.sh/@codemirror/view@6/dist/index.css">
@@ -442,7 +442,7 @@
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
-    import { compileGML } from './src/gml2ir.js';
+    import { compileMMLisp } from './src/mmlisp2ir.js';
 
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
@@ -491,8 +491,8 @@
       return decos.length ? Decoration.set(decos) : Decoration.none;
     });
 
-    // GML StreamLanguage for syntax highlighting
-    const gmlMode = StreamLanguage.define({
+    // MMLisp StreamLanguage for syntax highlighting
+    const mmlispMode = StreamLanguage.define({
       startState: () => ({}),
       token(stream, _state) {
         if (stream.eatSpace()) return null;
@@ -529,7 +529,7 @@
         extensions: [
           oneDarkTheme,
           syntaxHighlighting(oneDarkHighlightStyle),
-          gmlMode,
+          mmlispMode,
           trackLinesField,
           trackDecorations,
           lineNumbers(),
@@ -542,28 +542,28 @@
       parent: document.getElementById('editorWrap'),
     });
 
-    // IR preset → GML source URL mapping
-    const IR_TO_GML = {
+    // IR preset → MMLisp source URL mapping
+    const IR_TO_MMLISP = {
       '/examples/ir/demo1-stage-loop.ir.canonical.json':
-        '/examples/source/demo1-stage-loop.gml',
+        '/examples/source/demo1-stage-loop.mmlisp',
       '/examples/ir/demo2-event-recovery.ir.canonical.json':
-        '/examples/source/demo2-event-recovery.gml',
+        '/examples/source/demo2-event-recovery.mmlisp',
     };
 
-    async function loadGmlSource(irURL) {
-      const gmlURL = IR_TO_GML[irURL];
-      if (!gmlURL) {
-        setEditorDoc('(no GML source mapped for this IR file)');
+    async function loadMmlispSource(irURL) {
+      const mmlispURL = IR_TO_MMLISP[irURL];
+      if (!mmlispURL) {
+        setEditorDoc('(no MMLisp source mapped for this IR file)');
         return;
       }
       try {
-        const res = await fetch(gmlURL);
+        const res = await fetch(mmlispURL);
         if (!res.ok) throw new Error(res.status);
         const src = await res.text();
-        _lastFileName = gmlURL.split('/').pop();
+        _lastFileName = mmlispURL.split('/').pop();
         setEditorDoc(src);
       } catch (e) {
-        setEditorDoc('(failed to load: ' + gmlURL + ')');
+        setEditorDoc('(failed to load: ' + mmlispURL + ')');
       }
     }
 
@@ -584,7 +584,7 @@
     let _compileTimer = null;
     let _lastGoodIR = null;     // last successfully compiled IR object
     let _lastSourceMap = null;  // source map from last compile
-    let _lastFileName = 'untitled.gml';
+    let _lastFileName = 'untitled.mmlisp';
 
     function scheduleCompile() {
       clearTimeout(_compileTimer);
@@ -594,7 +594,7 @@
     function runCompile() {
       const src = editorView.state.doc.toString();
       try {
-        const { ir, diagnostics, sourceMap } = compileGML(src, _lastFileName);
+        const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName);
         const errors = diagnostics.filter(d => d.severity === 'error');
         if (errors.length > 0) {
           for (const d of errors) {
@@ -627,7 +627,7 @@
     let selectedCh = 0;
 
     // Load source for initial preset
-    loadGmlSource(currentIrURL);
+    loadMmlispSource(currentIrURL);
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -946,7 +946,7 @@
       currentIrURL = url;
       _lastGoodIR = null;
       onStop();
-      loadGmlSource(url);
+      loadMmlispSource(url);
       closeMenus();
     }
     document.addEventListener('click', (e) => {

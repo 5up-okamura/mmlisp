@@ -1,4 +1,4 @@
-# GMLisp Command Table v0.1 Draft
+# MMLisp Command Table v0.1 Draft
 
 This is a logical command table for compiler/runtime alignment.
 Numeric opcode assignment is intentionally deferred until after demo-driven pruning.

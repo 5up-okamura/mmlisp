@@ -1,14 +1,14 @@
 {
   "editor.formatOnSave": true,
-  "[gml]": {
+  "[mmlisp]": {
     "editor.formatOnSave": false,
     "editor.defaultFormatter": null
   },
   "emeraldwalk.runonsave": {
     "commands": [
       {
-        "match": "\\.gml$",
-        "cmd": "node \"${workspaceFolder}/tools/scripts/format-gml.js\" \"${file}\""
+        "match": "\\.mmlisp$",
+        "cmd": "node \"${workspaceFolder}/tools/scripts/format-mmlisp.js\" \"${file}\""
       }
     ]
   }

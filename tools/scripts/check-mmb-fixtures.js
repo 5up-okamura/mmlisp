@@ -22,7 +22,7 @@ function main() {
     const file = path.join(fixturesDir, c.file);
     const run = spawnSync(
       process.execPath,
-      [path.join(__dirname, "verify-gmb.js"), file],
+      [path.join(__dirname, "verify-mmb.js"), file],
       { encoding: "utf8" },
     );
 

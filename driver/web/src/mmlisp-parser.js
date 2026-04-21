@@ -1,5 +1,5 @@
 /**
- * GML source parser — ES module port of tools/scripts/gml_parser.js.
+ * MMLisp source parser — ES module port of tools/scripts/mmlisp_parser.js.
  * No Node.js dependencies; input is a string, output is an AST array.
  */
 

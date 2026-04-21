@@ -23,7 +23,7 @@ const OPCODE_PAYLOAD_SIZE = {
 };
 
 function usage() {
-  console.error("Usage: node scripts/verify-gmb.js <file.gmb>");
+  console.error("Usage: node scripts/verify-mmb.js <file.mmb>");
 }
 
 function u16le(buf, off) {
@@ -151,7 +151,7 @@ function main() {
   }
 
   const magic = buf.subarray(0, 4).toString("ascii");
-  if (magic !== "GMB0") {
+  if (magic !== "MMB0") {
     fail("bad magic");
   }
 

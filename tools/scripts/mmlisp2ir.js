@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parse } = require("./gml_parser");
+const { parse } = require("./mmlisp_parser");
 
 const PPQN = 120;
 const WHOLE_TICKS = PPQN * 4;
@@ -34,7 +34,7 @@ const SUPPORTED_TARGETS = new Set([
 
 function usage() {
   console.error(
-    "Usage: node scripts/gml2ir.js <input.gml> [--out <file>] [--diag-out <file>] [--strict] [--pretty]",
+    "Usage: node scripts/mmlisp2ir.js <input.mmlisp> [--out <file>] [--diag-out <file>] [--strict] [--pretty]",
   );
 }
 

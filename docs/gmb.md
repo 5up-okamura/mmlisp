@@ -1,11 +1,11 @@
 # GMB Format v0.1 Draft
 
-This document defines the draft binary format for GMLisp export artifacts.
+This document defines the draft binary format for MMLisp export artifacts.
 
 ## 1. Goals
 
 1. Compact and deterministic song binary format
-2. Clear version and feature negotiation with future GMLDRV
+2. Clear version and feature negotiation with future MMLDRV
 3. Forward-compatible section-based layout
 
 ## 2. Endianness and Alignment
@@ -27,7 +27,7 @@ This document defines the draft binary format for GMLisp export artifacts.
 
 Header fields:
 
-1. magic[4]: "GMB0"
+1. magic[4]: "MMB0"
 2. version_major: uint8
 3. version_minor: uint8
 4. flags: uint16
