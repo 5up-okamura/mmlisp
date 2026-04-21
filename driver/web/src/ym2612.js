@@ -95,6 +95,15 @@ const DT_TABLE = [
   ],
 ];
 
+// LFO rate: frequency in Hz for each of the 8 rate settings (0-7)
+const LFO_FREQ_HZ = [3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2];
+// LFO AM depth in envelope attenuation units for AMS 0-3 (~0, 1.4, 5.9, 11.8 dB)
+const LFO_AM_DEPTH = [0, 15, 63, 126];
+// LFO PM depth as fraction of base phaseInc for FMS 0-7 (~0 to 80 cents)
+const LFO_PM_DEPTH = [
+  0, 0.00335, 0.00669, 0.01004, 0.01344, 0.01908, 0.03726, 0.07089,
+];
+
 // ---------------------------------------------------------------------------
 // Envelope timing table
 // Rate 0-63 → samples per envelope step (simplified)
@@ -122,25 +131,36 @@ class Operator {
     this.d2r = 0; // decay rate 2 / sustain rate (0-31)
     this.sl = 15; // sustain level 0-15 (15 = -93 dB)
     this.rr = 15; // release rate 0-15 → real rr = rr*2+1
-    this.ssgEg = 0; // SSG-EG (not fully implemented)
+    this.ssgEg = 0; // SSG-EG mode 0-15 (bit3=enable, bit2=At, bit1=Alt, bit0=Hold)
 
     // Internal state
     this.phase = 0; // 20-bit phase accumulator
     this.phaseInc = 0; // phase increment per sample
     this.envLevel = 1023; // current envelope attenuation (0=loud, 1023=silent)
-    this.envState = "release"; // 'attack'|'decay'|'sustain'|'release'
+    this.envState = "release"; // 'attack'|'decay'|'sustain'|'release'|'ssg'
     this.envCounter = 0; // samples until next envelope step
     this.output = 0; // last output sample (for feedback / modulation)
     this.outputPrev = 0; // previous output (for feedback averaging)
+    this.ssgDir = 1; // SSG-EG direction: +1=decay(louder→silent), -1=attack(silent→loud)
+    this.ssgHeld = false; // SSG-EG in hold state
   }
 
   keyOn(kcode) {
     this.phase = 0;
-    this.envState = "attack";
-    this.envLevel = 1023;
     this.envCounter = 0;
     this.output = 0;
     this.outputPrev = 0;
+    if (this.ssgEg & 0x08) {
+      // SSG-EG mode: bypass normal AR, start at position determined by At bit
+      const at = (this.ssgEg >> 2) & 0x01;
+      this.ssgDir = at ? -1 : 1; // At=0: start decaying, At=1: start attacking
+      this.envLevel = at ? 1023 : 0;
+      this.ssgHeld = false;
+      this.envState = "ssg";
+    } else {
+      this.envState = "attack";
+      this.envLevel = 1023;
+    }
   }
 
   keyOff() {
@@ -152,6 +172,12 @@ class Operator {
 
   // Update envelope one sample
   tickEnvelope(kcode) {
+    // SSG-EG mode: override ADSR with looping shape (release still uses RR)
+    if (this.ssgEg & 0x08 && this.envState !== "release") {
+      if (!this.ssgHeld) this._tickSsgEnvelope(kcode);
+      return;
+    }
+
     const rs = this.rs;
     const ksRate = kcode >> (3 - rs); // key scaling
 
@@ -214,11 +240,54 @@ class Operator {
     }
   }
 
+  // SSG-EG envelope tick (called instead of normal ADSR when ssgEg bit3 set)
+  _tickSsgEnvelope(kcode) {
+    const ksRate = kcode >> (3 - this.rs);
+    const isDecay = this.ssgDir > 0;
+    // Decay uses DR rate, attack uses AR rate
+    const rate = Math.min(63, (isDecay ? this.dr * 2 : this.ar * 2) + ksRate);
+    const step = envelopeStepSamples(rate);
+    if (this.envCounter++ < step) return;
+    this.envCounter = 0;
+    if (isDecay) {
+      this.envLevel += 4;
+      if (this.envLevel >= 1023) {
+        this.envLevel = 1023;
+        this._ssgOnBoundary();
+      }
+    } else {
+      this.envLevel -= (this.envLevel >> 2) + 1;
+      if (this.envLevel <= 0) {
+        this.envLevel = 0;
+        this._ssgOnBoundary();
+      }
+    }
+  }
+
+  // Called when SSG-EG envelope hits a boundary (0 or 1023)
+  _ssgOnBoundary() {
+    const hold = this.ssgEg & 0x01;
+    const alt = (this.ssgEg >> 1) & 0x01;
+    const at = (this.ssgEg >> 2) & 0x01;
+    if (hold) {
+      this.ssgHeld = true;
+      return;
+    }
+    if (alt) {
+      // Flip direction for triangle-wave shapes
+      this.ssgDir = -this.ssgDir;
+    } else {
+      // Reset to start position for sawtooth shapes
+      this.envLevel = at ? 1023 : 0;
+      this.ssgDir = at ? -1 : 1;
+    }
+  }
+
   // Compute operator output given modulation input (in phase units, 0-1023)
-  compute(modPhase) {
+  compute(modPhase, amAttn = 0) {
     this.outputPrev = this.output;
 
-    const totalAttn = this.tl * 8 + this.envLevel;
+    const totalAttn = this.tl * 8 + this.envLevel + (this.am ? amAttn : 0);
     if (totalAttn >= 1023) {
       this.output = 0;
       return 0;
@@ -267,6 +336,8 @@ class Channel {
     this.block3ops = [4, 4, 4, 4]; // FM3 special mode per-op blocks
     this.stereoL = true;
     this.stereoR = true;
+    this.ams = 0; // LFO AM sensitivity 0-3
+    this.fms = 0; // LFO FM sensitivity 0-7
     this.keyState = 0; // bitmask of which operators are keyed on
 
     // Precomputed phase increments
@@ -284,15 +355,15 @@ class Channel {
   }
 
   _updatePhaseIncs() {
+    const kcode = (this.block << 2) | ((this.fnum >> 7) & 3);
     for (let i = 0; i < 4; i++) {
       const op = this.ops[i];
-      const fnum = this.fnum;
-      const block = this.block;
-      op.phaseInc = this._phaseIncForFnum(
-        fnum,
-        block,
-        op.mul === 0 ? 0.5 : op.mul,
+      const baseMul = op.mul === 0 ? 0.5 : op.mul;
+      const baseInc = Math.round(
+        this.fnum * Math.pow(2, this.block - 1) * baseMul,
       );
+      const dtOffset = DT_TABLE[op.dt1 & 0x07][Math.min(31, kcode)];
+      op.phaseInc = Math.max(0, baseInc + dtOffset);
     }
   }
 
@@ -307,11 +378,11 @@ class Channel {
     this.fnum3ops[opIndex] = fnum;
     this.block3ops[opIndex] = block;
     const op = this.ops[opIndex];
-    op.phaseInc = this._phaseIncForFnum(
-      fnum,
-      block,
-      op.mul === 0 ? 0.5 : op.mul,
-    );
+    const kcode = (block << 2) | ((fnum >> 7) & 3);
+    const baseMul = op.mul === 0 ? 0.5 : op.mul;
+    const baseInc = Math.round(fnum * Math.pow(2, block - 1) * baseMul);
+    const dtOffset = DT_TABLE[op.dt1 & 0x07][Math.min(31, kcode)];
+    op.phaseInc = Math.max(0, baseInc + dtOffset);
   }
 
   keyOn(opMask) {
@@ -331,92 +402,98 @@ class Channel {
   }
 
   // Advance phase and envelope for each operator
-  tick() {
+  tick(lfoSin = 0, fmsDepth = 0) {
     const kcode = (this.block << 2) | ((this.fnum >> 7) & 3);
     for (const op of this.ops) {
-      op.phase = (op.phase + op.phaseInc) & 0xfffff; // 20-bit
+      const pmOffset = Math.round(lfoSin * fmsDepth * op.phaseInc);
+      op.phase = (op.phase + op.phaseInc + pmOffset) & 0xfffff; // 20-bit
       op.tickEnvelope(kcode);
     }
   }
 
   // Compute stereo output sample pair
   // feedback: op1 output feeds back into its own modulation
-  computeOutput() {
+  computeOutput(amAttn = 0) {
     const [op1, op2, op3, op4] = this.ops;
     const fb = this.feedback;
+
+    // Per-operator AM attenuation (only for ops with AM flag enabled)
+    const am1 = op1.am ? amAttn : 0;
+    const am2 = op2.am ? amAttn : 0;
+    const am3 = op3.am ? amAttn : 0;
+    const am4 = op4.am ? amAttn : 0;
 
     // Feedback modulation for op1 (average of last two outputs, scaled by feedback)
     const fbMod = fb > 0 ? (op1.output + op1.outputPrev) >> (9 - fb) : 0;
 
     // FM algorithm wiring (all 8 OPN2 algorithms)
-    // Each function returns [op1out, op2out, op3out, op4out, carrierMask]
     let out = 0;
     switch (this.algorithm) {
       case 0: {
         // 1 → 2 → 3 → 4
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(o1 >> 1);
-        const o3 = op3.compute(o2 >> 1);
-        out = op4.compute(o3 >> 1);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(o1 >> 1, am2);
+        const o3 = op3.compute(o2 >> 1, am3);
+        out = op4.compute(o3 >> 1, am4);
         break;
       }
       case 1: {
         // (1 + 2) → 3 → 4
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(0);
-        const o3 = op3.compute((o1 + o2) >> 2);
-        out = op4.compute(o3 >> 1);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(0, am2);
+        const o3 = op3.compute((o1 + o2) >> 2, am3);
+        out = op4.compute(o3 >> 1, am4);
         break;
       }
       case 2: {
         // (1 + (2 → 3)) → 4
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(0);
-        const o3 = op3.compute(o2 >> 1);
-        out = op4.compute((o1 + o3) >> 2);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(0, am2);
+        const o3 = op3.compute(o2 >> 1, am3);
+        out = op4.compute((o1 + o3) >> 2, am4);
         break;
       }
       case 3: {
         // ((1 → 2) + 3) → 4
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(o1 >> 1);
-        const o3 = op3.compute(0);
-        out = op4.compute((o2 + o3) >> 2);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(o1 >> 1, am2);
+        const o3 = op3.compute(0, am3);
+        out = op4.compute((o2 + o3) >> 2, am4);
         break;
       }
       case 4: {
         // (1 → 2) + (3 → 4)
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(o1 >> 1);
-        const o3 = op3.compute(0);
-        const o4 = op4.compute(o3 >> 1);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(o1 >> 1, am2);
+        const o3 = op3.compute(0, am3);
+        const o4 = op4.compute(o3 >> 1, am4);
         out = (o2 + o4) >> 1;
         break;
       }
       case 5: {
         // (1 → 2) + (1 → 3) + (1 → 4)
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(o1 >> 1);
-        const o3 = op3.compute(o1 >> 1);
-        const o4 = op4.compute(o1 >> 1);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(o1 >> 1, am2);
+        const o3 = op3.compute(o1 >> 1, am3);
+        const o4 = op4.compute(o1 >> 1, am4);
         out = (o2 + o3 + o4) / 3;
         break;
       }
       case 6: {
         // (1 → 2) + 3 + 4
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(o1 >> 1);
-        const o3 = op3.compute(0);
-        const o4 = op4.compute(0);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(o1 >> 1, am2);
+        const o3 = op3.compute(0, am3);
+        const o4 = op4.compute(0, am4);
         out = (o2 + o3 + o4) / 3;
         break;
       }
       case 7: {
         // 1 + 2 + 3 + 4 (all carriers, no modulation)
-        const o1 = op1.compute(fbMod);
-        const o2 = op2.compute(0);
-        const o3 = op3.compute(0);
-        const o4 = op4.compute(0);
+        const o1 = op1.compute(fbMod, am1);
+        const o2 = op2.compute(0, am2);
+        const o3 = op3.compute(0, am3);
+        const o4 = op4.compute(0, am4);
         out = (o1 + o2 + o3 + o4) >> 2;
         break;
       }
@@ -442,6 +519,7 @@ export class YM2612 {
     this.dacSample = 0; // signed 8-bit DAC value
     this.lfoEnabled = false;
     this.lfoRate = 0;
+    this._lfoPhase = 0; // LFO phase accumulator [0, 1)
 
     // Pending fnum register (needs both high/low bytes)
     this._fnumLow = new Uint16Array(6); // saved F-number low byte
@@ -566,21 +644,21 @@ export class YM2612 {
         }
         break;
       }
-      case 0xb0:
-        if ((addr & 0x0f) < 3) {
+      case 0xb0: {
+        const sub = addr & 0x0f;
+        if (sub < 3) {
           // 0xB0-0xB2: algorithm and feedback
           ch.algorithm = data & 0x07;
           ch.feedback = (data >> 3) & 0x07;
-        }
-        break;
-      case 0xb4:
-        if ((addr & 0x0f) < 3) {
-          // 0xB4-0xB6: stereo pan + LFO sensitivity
+        } else if (sub >= 4 && sub < 7) {
+          // 0xB4-0xB6: stereo pan + AMS/FMS
           ch.stereoL = !!(data & 0x80);
           ch.stereoR = !!(data & 0x40);
-          // LFO AM/PM depth (not implemented here)
+          ch.ams = (data >> 4) & 0x03;
+          ch.fms = data & 0x07;
         }
         break;
+      }
     }
   }
 
@@ -593,6 +671,17 @@ export class YM2612 {
    */
   clock(outputL, outputR, count) {
     for (let s = 0; s < count; s++) {
+      // Advance LFO
+      if (this.lfoEnabled) {
+        this._lfoPhase =
+          (this._lfoPhase + LFO_FREQ_HZ[this.lfoRate] / NATIVE_SAMPLE_RATE) % 1;
+      }
+      const lfoSin = this.lfoEnabled
+        ? Math.sin(2 * Math.PI * this._lfoPhase)
+        : 0;
+      // AM uses one-sided waveform: 0 = no attenuation, 1 = max attenuation
+      const lfoAMNorm = this.lfoEnabled ? (1 - lfoSin) / 2 : 0;
+
       let sumL = 0;
       let sumR = 0;
 
@@ -606,8 +695,10 @@ export class YM2612 {
           continue;
         }
 
-        ch.tick();
-        const out = ch.computeOutput();
+        const fmsDepth = LFO_PM_DEPTH[ch.fms];
+        const amAttn = Math.round(lfoAMNorm * LFO_AM_DEPTH[ch.ams]);
+        ch.tick(lfoSin, fmsDepth);
+        const out = ch.computeOutput(amAttn);
         sumL += out.l;
         sumR += out.r;
       }
