@@ -83,8 +83,8 @@ unchanged.
 | --------- | ---------------- | --------------------------------------------------------- |
 | `:ch`     | Required         | Inherited; re-specifying is an error (`E_TRACK_CH_REDEF`) |
 | `:role`   | Default `:bgm`   | Inherited                                                 |
-| `:oct`    | Default 4        | Inherited; inline `:o` overrides locally                  |
-| `:len`    | Default `1/8`    | Inherited; inline `:l` overrides locally                  |
+| `:oct`    | Default 4        | Inherited; inline `:oct` overrides locally                |
+| `:len`    | Default `1/8`    | Inherited; inline `:len` overrides locally                |
 | `:carry`  | Default `false`  | Inherited                                                 |
 
 ### 1.2 `phrase` abolished
@@ -96,7 +96,7 @@ note/rest/control commands directly.
 
 | v0.2 phrase responsibility        | v0.3 replacement                                             |
 | --------------------------------- | ------------------------------------------------------------ |
-| `:len` default length scope       | `:len` on `track`; inline `:l` to change                     |
+| `:len` default length scope       | `:len` on `track`; inline `:len` to change                   |
 | `:tempo` setting                  | `(tempo N)` command inline in track body                     |
 | `:carry` flag                     | `:carry` on `track`                                          |
 | Reuse via `def riff (phrase ...)` | `defn` generating track content, or named `block` (see §1.5) |
@@ -110,27 +110,29 @@ note/rest/control commands directly.
 shared length) are replaced by a single `seq` form that maintains inline state.
 
 ```lisp
-(seq :o 4 :l 1/8  c e g c
-     :l 1/4        e
-     :o 5 :l 1/8   c e g)
+(seq :oct 4 :len 1/8  c e g c
+     :len 1/4          e
+     :oct 5 :len 1/8   c e g)
 ```
 
 Inline state modifiers within `seq`:
 
-| Modifier | Meaning                           | Scope                                |
-| -------- | --------------------------------- | ------------------------------------ |
-| `:o N`   | Set current octave (0–8)          | Until next `:o`                      |
-| `:l N`   | Set current length (any fraction) | Until next `:l`                      |
-| `:g N`   | Set gate ratio (0.0–1.0) or ticks | Until next `:g`                      |
-| `_`      | Rest (uses current `:l`)          | Single step                          |
-| `>`      | Octave up by 1                    | Single step or persistent (TBD §2.1) |
-| `<`      | Octave down by 1                  | Single step or persistent (TBD §2.1) |
+| Modifier    | Meaning                                                            | Scope       |
+| ----------- | ------------------------------------------------------------------ | ----------- |
+| `:oct N`    | Set current octave (0–8)                                           | Persistent  |
+| `:len val`  | Set current length (fraction `1/4`, denominator `4`)               | Persistent  |
+| `:gate val` | Set gate ratio (`0.0`–`1.0`) or percent (`80%`)                    | Persistent  |
+| `_`         | Rest (uses current `:len`)                                         | Single step |
+| `~`         | Tie: extend by current `:len`; `~ 1/2` overrides len               | Single step |
+| `>`         | Octave up by 1                                                     | Persistent  |
+| `<`         | Octave down by 1                                                   | Persistent  |
+| `(a b c)`   | Subgroup: divide current `:len` equally among elements (Bresenham) | Single slot |
 
 Note names within `seq` are bare symbols without the `:` keyword prefix and
-without an octave suffix — octave is determined by the current `:o` state:
+without an octave suffix — octave is determined by the current `:oct` state:
 
 ```lisp
-(seq :o 3 :l 1/8  c d e f  g a b  > c)  ; > raises octave: last c is octave 4
+(seq :oct 3 :len 1/8  c d e f  g a b  > c)  ; > raises octave: last c is octave 4
 ```
 
 `note` and `notes` are removed. The parser rejects them with `E_NOTE_REMOVED`.
@@ -141,8 +143,22 @@ Absolute pitch (`:c4`, `:e3`) remains supported inside `seq` as an explicit
 override, resetting the current octave state:
 
 ```lisp
-(seq :o 3 :l 1/8  c e g  :e5 c3)  ; :e5 = absolute, also sets :o to 5 then c3 resets to 3
+(seq :oct 3 :len 1/8  c e g  :e5 g)  ; :e5 sets oct=5; g plays at oct 5
 ```
+
+**Subgroup notation for equal-division rhythms:**
+
+A parenthesized list inside `seq` divides the current `:len` equally among its
+elements using Bresenham distribution (remainder spread to leading elements):
+
+```lisp
+(seq :len 1/4  c  (e g a)  f)          ; triplet: 40+40+40 ticks
+(seq :len 1/4  (c d e f g a b))        ; septuplet: 18+17×6 ticks
+(seq :len 1/4  c  (_ e)  f)            ; rest in subgroup OK
+```
+
+Subgroup elements support bare note names, absolute pitches (`:c4`), and `_` (rest).
+The current `:len` is restored after the subgroup; `:oct` changes within the subgroup persist.
 
 ### 1.4 Cascaded default state: track → seq → note
 
@@ -152,8 +168,8 @@ effect until the scope ends:
 ```
 score :tempo
   track :ch :role :oct :len :gate :carry :shuffle
-    seq  :o  :l    :g
-      note (inline length only)
+    seq  :oct :len :gate
+      note (no inline length; uses current :len)
 ```
 
 Example:
@@ -162,10 +178,10 @@ Example:
 (score :tempo 120
 
   (track :melody :ch fm1 :oct 4 :len 1/8 :gate 0.8
-    (seq c e g  :l 1/4 c  :l 1/8 e g))   ; gate 0.8 applies throughout
+    (seq c e g  :len 1/4 c  :len 1/8 e g))   ; gate 0.8 applies throughout
 
   (track :bass :ch fm2 :oct 2 :len 1/4
-    (seq c _ c _  :o 3 e g)))             ; oct 2 inherited, overridden to 3
+    (seq c _ c _  :oct 3 e g)))               ; oct 2 inherited, overridden to 3
 ```
 
 ### 1.5 `block` — named reusable content (replaces `def (phrase ...)`)
@@ -224,7 +240,7 @@ from step length (the time to the next note).
 Inline gate override within `seq`:
 
 ```lisp
-(seq :o 4 :l 1/8 :g 0.9  c e  :g 0.3  g c)
+(seq :oct 4 :len 1/8 :gate 0.9  c e  :gate 0.3  g c)
 ```
 
 **IR impact:** `NOTE_ON` gains an optional `gate` field (ticks, integer).
@@ -259,10 +275,10 @@ driver and GMB format are unaffected.
 ```lisp
 (score :tempo 120 :shuffle 67           ; score-wide swing
   (track :drums :ch noise
-    (seq :o 4 :l 1/8  c _ c _ c _ c _))
+    (seq :oct 4 :len 1/8  c _ c _ c _ c _))
 
   (track :melody :ch fm1 :shuffle 50   ; override: melody stays straight
-    (seq :o 4 :l 1/8  c e g c)))
+    (seq :oct 4 :len 1/8  c e g c)))
 ```
 
 **Implementation:** `parseLengthToken` is extended to accept a shuffle context.
@@ -301,7 +317,7 @@ All metadata fields on `score` are optional. A minimal score compiles without
 ; Minimal valid score
 (score :tempo 120
   (track :A :ch fm1
-    (seq :o 4 :l 1/8  c e g c)))
+    (seq :oct 4 :len 1/8  c e g c)))
 ```
 
 `:id` is required only when multiple scores appear in the same file (for driver
@@ -331,7 +347,7 @@ in the IR. Loop ID is auto-assigned.
 (§1.4). They behave like `:o` but as increment/decrement.
 
 ```lisp
-(seq :o 3 :l 1/8  c e g  >  c e g)  ; > sets o=4; c e g = c4 e4 g4
+(seq :oct 3 :len 1/8  c e g  >  c e g)  ; > sets oct=4; c e g = c4 e4 g4
 ```
 
 State resets only when `:o N` is explicitly set or a new `seq`/`track` scope

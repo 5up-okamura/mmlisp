@@ -69,9 +69,10 @@ Removed in v0.3 (emit E_PHRASE_REMOVED / E_NOTE_REMOVED diagnostics):
 5. `<` — decrement current octave by 1 (persistent)
 6. `_` — rest using current length
 7. `~` — tie: extend previous note by current length; optionally `~ 1/2` to specify length explicitly
-8. `:c4`, `:d#3`, `:bb5`, etc. — absolute pitch note; updates current octave to the specified octave
-9. `c`, `d#`, `bb`, etc. — bare note name; plays at current octave with current length and gate
-10. Each seq has independent state initialized from the enclosing track defaults
+8. `(a b c)` — subgroup: divide current `:len` equally among elements (Bresenham); `_` and absolute pitches supported
+9. `:c4`, `:d#3`, `:bb5`, etc. — absolute pitch note; updates current octave to the specified octave
+10. `c`, `d#`, `bb`, etc. — bare note name; plays at current octave with current length and gate
+11. Each seq has independent state initialized from the enclosing track defaults
 
 `def` / `defn` rules: 2. `(defn name [params] body...)` defines a template macro; `(name arg1 arg2)` expands to body with params substituted 3. defn may call other defn (chain expansion); recursion is rejected (depth limit 16) 4. def/defn must appear at top level, before `(score ...)` 5. Expansion is purely compile-time; no IR commands are emitted for def/defn themselves
 
