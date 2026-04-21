@@ -1,4 +1,4 @@
-# MMLisp Command Table v0.1 Draft
+# MMLisp Command Table v0.3 Draft
 
 This is a logical command table for compiler/runtime alignment.
 Numeric opcode assignment is intentionally deferred until after demo-driven pruning.
@@ -7,15 +7,16 @@ Execution model assumptions:
 
 1. Commands are processed in tick order
 2. Channel-local command order is preserved
-3. Missing optional length means length inheritance is used
+3. Missing optional length means track default length is used
 
 Default values:
 
-1. phrase `:len` — `1/8` (60 ticks at PPQN=120) when not specified
-2. `note` / `rest` / `tie` length — inherits phrase `:len` when omitted
-3. track `:ch` — auto-increment by track index (track 0 → fm1, track 1 → fm2, …) when not specified
-4. track `:role` — `bgm` when not specified
-5. track `:write` — `[:any]` when not specified
+1. track `:len` — `1/8` (60 ticks at PPQN=120) when not specified
+2. track `:oct` — `4` when not specified
+3. track `:gate` — full gate (no truncation) when not specified
+4. track `:ch` — auto-increment by track index (track 0 → fm1, track 1 → fm2, …) when not specified
+5. track `:role` — `bgm` when not specified
+6. track `:write` — `[:any]` when not specified
 
 ## Core Commands
 
@@ -97,8 +98,7 @@ assumed by default.
 
 These forms are compiled away before IR emission. No opcode is assigned.
 
-1. `notes` — batch note/rest sequence using phrase default length per element
-2. `tuplet` — equal-division sequence into a fixed total duration (remainder to last element)
+1. `seq` — inline note/rest sequence with persistent state modifiers (`:oct`, `:len`, `:gate`, `>`, `<`, `_`, `~`)
 
 ## Reserved Commands (v0.2 focus)
 

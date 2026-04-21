@@ -36,46 +36,44 @@ Run from tools directory.
 
 ## 3. Input Contract
 
-Accepted source constructs in v0.1 minimal compiler:
+Accepted source constructs in v0.3 compiler:
 
 1. `(def name value)` — compile-time constant
 2. `(defn name [params ...] body ...)` — template macro (expanded before compilation)
 3. `(score ...)`
 4. `(track ...)`
-5. `(phrase ...)`
-6. `(note ...)`, `(rest ...)`, `(tie ...)`
-7. `(notes ...)` — sugar for batch note/rest sequences (expands to NOTE_ON / REST)
-8. `(tuplet <len> ...)` — sugar for equal-division sequences (expands to NOTE_ON / REST)
-9. `(marker ...)`, `(jump ...)`
-10. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
-11. `(loop-begin ...)`, `(loop-end ...)`
-12. `:tempo` and `:len` phrase options (`:len` default: `1/8`); `:tempo` is a global tempo-change trigger — when the phrase starts, it sets the global BPM for all tracks
-13. track option `:role` as track behavior declaration (bgm | se | modulator | chaos; default: bgm)
-14. track option `:write` as write-scope vector (default: [:any])
-15. track option `:ch` as channel hint vector (default: auto-increment by track index; track 0 → fm1, track 1 → fm2, …)
+5. `(seq ...)` — inline note/rest sequence with persistent state
+6. `(rest ...)`, `(tie ...)`
+7. `(marker ...)`, `(jump ...)`
+8. `(param-set ...)`, `(param-add ...)` — multiple KV pairs supported per call
+9. `(loop-begin ...)`, `(loop-end ...)`, `(x N ...)` — loop forms
+10. track option `:oct` — initial octave (default: 4)
+11. track option `:len` — default note length (default: `1/8`)
+12. track option `:gate` — default gate (default: `1.0`)
+13. track option `:role` — track behavior declaration (bgm | se | modulator | chaos; default: bgm)
+14. track option `:write` — write-scope vector (default: [:any])
+15. track option `:ch` — channel hint vector (default: auto-increment by track index; track 0 → fm1, track 1 → fm2, …)
+16. track option `:carry` — carry enable flag
+17. track option `:shuffle`, `:shuffle-base` — shuffle/swing timing
 
-`notes` expansion rules:
+Removed in v0.3 (emit E_PHRASE_REMOVED / E_NOTE_REMOVED diagnostics):
 
-1. `(notes :c4 :e4 _ :g4)` expands to `(note :c4)` `(note :e4)` `(rest)` `(note :g4)` using phrase `:len`
-2. `_` is the rest symbol
-3. Optional `:len` keyword overrides default length: `(notes :len 1/16 :c4 :e4)`
-4. Expansion happens before IR emission; no dedicated IR command exists
+- `(phrase ...)`, `(note ...)`, `(notes ...)`, `(tuplet ...)` — replaced by `seq`
 
-`tuplet` expansion rules:
+`seq` modifier rules:
 
-1. `(tuplet <len> :c4 :e4 :g4)` divides `len` ticks equally among n elements
-2. Each element receives `floor(total / n)` ticks; any remainder is added to the last element
-3. `_` is the rest symbol; note keywords expand to NOTE_ON
-4. First argument is the total length (fraction e.g. `1/4`); if omitted phrase `:len` is used as total
-5. Expansion happens before IR emission; no dedicated IR command exists
+1. `:oct N` — set current octave (0–8); persists for subsequent notes in this seq
+2. `:len val` — set current note length (fraction `1/4`, denominator `4`, etc.); persists
+3. `:gate val` — set current gate (ratio `0.0`–`1.0` or percent `80%`); persists
+4. `>` — increment current octave by 1 (persistent)
+5. `<` — decrement current octave by 1 (persistent)
+6. `_` — rest using current length
+7. `~` — tie: extend previous note by current length; optionally `~ 1/2` to specify length explicitly
+8. `:c4`, `:d#3`, `:bb5`, etc. — absolute pitch note; updates current octave to the specified octave
+9. `c`, `d#`, `bb`, etc. — bare note name; plays at current octave with current length and gate
+10. Each seq has independent state initialized from the enclosing track defaults
 
-`def` / `defn` rules:
-
-1. `(def name value)` binds a symbol to a literal value; all occurrences of `name` are replaced
-2. `(defn name [params] body...)` defines a template macro; `(name arg1 arg2)` expands to body with params substituted
-3. defn may call other defn (chain expansion); recursion is rejected (depth limit 16)
-4. def/defn must appear at top level, before `(score ...)`
-5. Expansion is purely compile-time; no IR commands are emitted for def/defn themselves
+`def` / `defn` rules: 2. `(defn name [params] body...)` defines a template macro; `(name arg1 arg2)` expands to body with params substituted 3. defn may call other defn (chain expansion); recursion is rejected (depth limit 16) 4. def/defn must appear at top level, before `(score ...)` 5. Expansion is purely compile-time; no IR commands are emitted for def/defn themselves
 
 `param-set` / `param-add` multiple KV rules:
 
