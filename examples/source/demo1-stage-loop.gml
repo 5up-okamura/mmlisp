@@ -9,35 +9,27 @@
   :author "okamura"
   :tempo 120
 
-  (track :main
-    :loop true
-    :role :bgm
-    :ch [:fm1]
-
-    (phrase :riff
-      :len 1/8
-
-      (marker :intro)
+  (track
+    :main (phrase :riff (marker :intro)
+    
       (param-set :fm-fb fb-init)
-
+    
       (loop-begin :a)
-
+    
       (notes :c4 :e4 :g4 :e4 :c4 :e4 :g4 :e4)
-
+    
       (notes :a3 :c4 :e4 :c4 :a3 :c4 :e4 :c4)
       (param-add :fm-fb +1)
       (loop-end :a 2)
       (param-set :fm-fb fb-init)
-
-      (marker :turn)
-
+    
       (notes :f3 :a3 :c4 :a3 :f3 :a3 :c4 :a3)
-
+    
       (note :g3 1/4)
-      (tuplet 1/4 :a3 :b3)
+      (tuplet 1/4 :a3 :b3 :a3)
       (note :c4 1/4)
       (rest 1/4)
-
+    
       (jump :intro)
     )
   )
