@@ -15,7 +15,10 @@
   :author "okamura"
   :tempo 120
 
-  (track :main :ch fm1 :oct 4 :len 1/8
+  (track :ch fm1
+    :oct 4
+    :len 1/8
+
     (marker :intro)
 
     (param-set :fm-fb fb-init)
@@ -28,13 +31,16 @@
     (param-set :fm-fb fb-init)
 
     (seq :len 1/8 :f3 :a3 :c4 :a3 :f3 :a3 :c4 :a3)
-    (seq :len 1/4 :g3 :len 1/12 a b a :len 1/4 :c4)
+    (seq :len 1/4 :g3 :len 1/12 :a3 :b3 :a3 :len 1/4 :c4)
     (rest 1/4)
 
     (jump :intro)
   )
 
-  (track :bass :ch psg1 :oct 2 :len 1/2
+  (track :ch psg1
+    :oct 2
+    :len 1/2
+
     (marker :intro)
     (ins sustain)
     (loop-begin :pa)
@@ -46,7 +52,10 @@
     (jump :intro)
   )
 
-  (track :counter :ch psg2 :oct 5 :len 1/8
+  (track :ch psg2
+    :oct 5
+    :len 1/8
+
     (marker :intro)
     (ins pluck)
     (loop-begin :pb)
@@ -59,7 +68,10 @@
     (jump :intro)
   )
 
-  (track :perc :ch noise :oct 4 :len 1/4
+  (track :ch noise
+    :oct 4
+    :len 1/4
+
     (marker :intro)
     (ins kick-env)
     (loop-begin :pn)

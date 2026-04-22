@@ -98,7 +98,7 @@ assumed by default.
 
 These forms are compiled away before IR emission. No opcode is assigned.
 
-1. `seq` — inline note/rest sequence with persistent state modifiers (`:oct`, `:len`, `:gate`, `>`, `<`, `_`, `~`, subgroup `(...)`)
+1. `seq` — inline note/rest sequence with persistent state modifiers (`:oct`, `:len`, `:gate`, `:ins`, `>`, `<`, `_`, `~`, subgroup `(...)`)
 
 ## Reserved Commands (v0.2 focus)
 

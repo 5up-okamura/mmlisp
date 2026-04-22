@@ -122,6 +122,7 @@ Inline state modifiers within `seq`:
 | `:oct N`    | Set current octave (0–8)                                           | Persistent  |
 | `:len val`  | Set current length (fraction `1/4`, denominator `4`)               | Persistent  |
 | `:gate val` | Set gate ratio (`0.0`–`1.0`) or percent (`80%`)                    | Persistent  |
+| `:ins name` | Switch voice to named `def` voice                                  | Persistent  |
 | `_`         | Rest (uses current `:len`)                                         | Single step |
 | `~`         | Tie: extend by current `:len`; `~ 1/2` overrides len               | Single step |
 | `>`         | Octave up by 1                                                     | Persistent  |

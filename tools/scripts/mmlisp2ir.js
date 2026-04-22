@@ -95,6 +95,8 @@ function parseLengthToken(value, inheritedTicks) {
 /**
  * Parse a gate specification.
  * Returns { type: 'ratio', value: 0.0-1.0 } or { type: 'ticks', value: N } or null.
+ * Ratio: float 0.0-1.0 (relative to step length).
+ * Ticks: length token (1/16, 16, etc.) — converted via parseLengthToken.
  * null means full gate (1.0 / legato) — no NOTE_OFF, no gate field in IR.
  */
 function parseGateSpec(val) {
@@ -105,9 +107,9 @@ function parseGateSpec(val) {
     if (f >= 1.0) return null;
     return { type: "ratio", value: f };
   }
-  const n = parseIntLike(val);
-  if (n === null || n < 0) return null;
-  return { type: "ticks", value: n };
+  const ticks = parseLengthToken(val, null);
+  if (ticks === null || ticks <= 0) return null;
+  return { type: "ticks", value: ticks };
 }
 
 function resolveGateTicks(gateSpec, lengthTicks) {
@@ -145,14 +147,14 @@ function resolveShuffleTicks(nominalTicks, trackState) {
   return ticks;
 }
 
-/** Returns true if the atom value is a bare note name (c, d#, bb, etc.) */
+/** Returns true if the atom value is a bare note name (c, d+, b-, etc.) */
 function isNoteAtom(val) {
-  return typeof val === "string" && /^[a-g][#b]?$/.test(val);
+  return typeof val === "string" && /^[a-g][+\-]?$/.test(val);
 }
 
-/** Returns true if the atom value is an absolute pitch keyword (:c4, :d#3, :bb5) */
+/** Returns true if the atom value is an absolute pitch keyword (:c4, :f+3, :b-5) */
 function isAbsPitchAtom(val) {
-  return typeof val === "string" && /^:[a-g][#b]?\d$/.test(val);
+  return typeof val === "string" && /^:[a-g][+\-]?\d$/.test(val);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +236,31 @@ const FM_OP_PARAMS = [
 function getVecInts(vecNode) {
   if (!vecNode || vecNode.kind !== "list") return [];
   return vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0);
+}
+
+/**
+ * Emit voice-change events for a typedDef at the given tick.
+ * Returns true if emitted, false if the def type is not supported.
+ */
+function emitVoice(td, tick, events, src) {
+  if (td.tag === "fm") {
+    emitFmPatch(td, tick, events, src);
+    return true;
+  }
+  if (
+    td.tag === "psg" &&
+    td.envelope.subtype !== "hard" &&
+    td.envelope.subtype !== "fn"
+  ) {
+    events.push({
+      tick,
+      cmd: "PSG_VOICE",
+      args: { envelope: td.envelope },
+      src,
+    });
+    return true;
+  }
+  return false;
 }
 
 /** Emit PARAM_SET events for a :fm typed def at the current tick. */
@@ -403,7 +430,7 @@ function parseWriteScope(options, diagnostics, trackName) {
  */
 function parseTrackHead(items) {
   const options = new Map();
-  let i = 2;
+  let i = 1;
   while (i < items.length) {
     const item = items[i];
     const val = atomValue(item);
@@ -430,7 +457,14 @@ function parseTrackHead(items) {
  * Compile a (seq ...) form.
  * Modifies trackState.tick in-place.
  */
-function compileSeq(seqNode, trackState, events, diagnostics, trackName) {
+function compileSeq(
+  seqNode,
+  trackState,
+  events,
+  diagnostics,
+  trackName,
+  typedDefs,
+) {
   // Local seq state starts from track defaults
   let currentOct = trackState.defaultOct;
   let currentLen = trackState.defaultLength;
@@ -466,8 +500,6 @@ function compileSeq(seqNode, trackState, events, diagnostics, trackName) {
             trackState.tick += slotTicks;
           } else if (isAbsPitchAtom(evVal)) {
             const pitch = evVal.slice(1);
-            const octChar = pitch.match(/\d$/);
-            if (octChar) currentOct = parseInt(octChar[0], 10);
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
@@ -573,11 +605,9 @@ function compileSeq(seqNode, trackState, events, diagnostics, trackName) {
       continue;
     }
 
-    // ── Absolute pitch: :c4, :d#3, :bb5, etc. ─────────────────────────
+    // ── Absolute pitch: :c4, :f+3, :b-5, etc. ───────────────────────
     if (isAbsPitchAtom(val)) {
       const pitch = val.slice(1); // strip ':'
-      const octChar = pitch.match(/\d$/);
-      if (octChar) currentOct = parseInt(octChar[0], 10);
       const ticks = resolveShuffleTicks(currentLen, trackState);
       events.push({
         tick: trackState.tick,
@@ -587,6 +617,33 @@ function compileSeq(seqNode, trackState, events, diagnostics, trackName) {
       });
       trackState.tick += ticks;
       i += 1;
+      continue;
+    }
+
+    // ── :ins voiceName (inline voice switch) ─────────────────────────
+    if (val === ":ins") {
+      i += 1;
+      if (i < seqNode.items.length) {
+        const voiceName = atomValue(seqNode.items[i])?.replace(/^:/, "");
+        if (voiceName && typedDefs?.has(voiceName)) {
+          emitVoice(
+            typedDefs.get(voiceName),
+            trackState.tick,
+            events,
+            nodeSrc(item),
+          );
+        } else if (voiceName) {
+          pushDiag(
+            diagnostics,
+            "warning",
+            "W_INS_UNKNOWN",
+            `seq :ins: unknown voice name '${voiceName}'`,
+            nodeSrc(item),
+            trackName,
+          );
+        }
+        i += 1;
+      }
       continue;
     }
 
@@ -679,7 +736,7 @@ function compileTrackBodyItems(
 
     // ── seq ──────────────────────────────────────────────────────────
     if (head === "seq") {
-      compileSeq(node, trackState, events, diagnostics, trackName);
+      compileSeq(node, trackState, events, diagnostics, trackName, typedDefs);
       continue;
     }
 
@@ -869,21 +926,12 @@ function compileTrackBodyItems(
     if (head === "ins") {
       const voiceName = atomValue(node.items[1])?.replace(/^:/, "");
       if (voiceName && typedDefs?.has(voiceName)) {
-        const td = typedDefs.get(voiceName);
-        if (td.tag === "fm") {
-          emitFmPatch(td, trackState.tick, events, nodeSrc(node.items[0]));
-        } else if (
-          td.tag === "psg" &&
-          td.envelope.subtype !== "hard" &&
-          td.envelope.subtype !== "fn"
-        ) {
-          events.push({
-            tick: trackState.tick,
-            cmd: "PSG_VOICE",
-            args: { envelope: td.envelope },
-            src: nodeSrc(node.items[0]),
-          });
-        }
+        emitVoice(
+          typedDefs.get(voiceName),
+          trackState.tick,
+          events,
+          nodeSrc(node.items[0]),
+        );
       } else if (voiceName) {
         pushDiag(
           diagnostics,
@@ -1436,8 +1484,8 @@ function compileDetailed(inputPath) {
   const scoreShuffleRatio =
     rawScoreShuffle >= 51 ? Math.min(90, rawScoreShuffle) : 0;
 
-  // Track append state: name → { trackData, trackState }
-  const trackByName = new Map();
+  // Track registry: "ch::role" → { trackData, trackState }
+  const trackByKey = new Map();
   const trackOrder = [];
   const loopCounter = { count: 0 };
 
@@ -1450,31 +1498,28 @@ function compileDetailed(inputPath) {
     )
       continue;
 
-    const nameNode = node.items[1];
-    const rawName = atomValue(nameNode);
-    const trackName = rawName ? rawName.replace(/^:/, "") : null;
+    const { options, bodyStart } = parseTrackHead(node.items);
+    const bodyItems = node.items.slice(bodyStart);
 
-    if (!trackName) {
+    const channelNode = options.get(":ch");
+    if (!channelNode) {
       pushDiag(
         diagnostics,
         "error",
-        "E_TRACK_NAME",
-        "track must have a name as its first argument",
+        "E_TRACK_CH_REQUIRED",
+        "track must have :ch specified",
         nodeSrc(node),
         null,
       );
       continue;
     }
+    const channel = parseSingleChannel(channelNode, diagnostics, null);
+    const role = parseTrackRole(options, diagnostics, null);
+    const trackKey = `${channel}::${role}`;
 
-    const { options, bodyStart } = parseTrackHead(node.items);
-    const bodyItems = node.items.slice(bodyStart);
-
-    if (!trackByName.has(trackName)) {
+    if (!trackByKey.has(trackKey)) {
       // ── First occurrence: initialize track ──────────────────────────
-      const channelNode = options.get(":ch");
-      const channel = parseSingleChannel(channelNode, diagnostics, trackName);
-      const role = parseTrackRole(options, diagnostics, trackName);
-      const writeScope = parseWriteScope(options, diagnostics, trackName);
+      const writeScope = parseWriteScope(options, diagnostics, trackKey);
 
       const carryNode = options.get(":carry");
       const carry = carryNode ? atomValue(carryNode) === "true" : false;
@@ -1522,7 +1567,6 @@ function compileDetailed(inputPath) {
 
       const trackData = {
         id: trackOrder.length,
-        name: trackName,
         channel,
         route_hint: {
           allocation_preference: "ordered_first_fit",
@@ -1543,22 +1587,12 @@ function compileDetailed(inputPath) {
         });
       }
 
-      trackByName.set(trackName, { trackData, trackState });
-      trackOrder.push(trackName);
+      trackByKey.set(trackKey, { trackData, trackState });
+      trackOrder.push(trackKey);
     } else {
-      // ── Append occurrence: validate and update state ─────────────────
-      const { trackState } = trackByName.get(trackName);
+      // ── Append occurrence: update state ─────────────────────────────
+      const { trackState } = trackByKey.get(trackKey);
 
-      if (options.has(":ch")) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_TRACK_CH_REDEF",
-          `Track '${trackName}': :ch cannot be re-specified on an appended track`,
-          nodeSrc(options.get(":ch")),
-          trackName,
-        );
-      }
       if (options.has(":oct")) {
         const v = parseIntLike(atomValue(options.get(":oct")));
         if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
@@ -1582,20 +1616,20 @@ function compileDetailed(inputPath) {
       }
     }
 
-    const { trackData, trackState } = trackByName.get(trackName);
+    const { trackData, trackState } = trackByKey.get(trackKey);
     compileTrackBodyItems(
       bodyItems,
       trackState,
       trackData.events,
       diagnostics,
-      trackName,
+      trackKey,
       typedDefs,
       blocks,
       loopCounter,
     );
   }
 
-  const tracks = trackOrder.map((name) => trackByName.get(name).trackData);
+  const tracks = trackOrder.map((key) => trackByKey.get(key).trackData);
 
   for (const track of tracks) {
     validateTrack(track, diagnostics);
@@ -1629,7 +1663,7 @@ function compileDetailed(inputPath) {
   }
 
   // Same-ch bgm collision diagnostic
-  const bgmChannels = new Map();
+  const bgmChannels = new Set();
   for (const track of tracks) {
     if (track.route_hint.role === "bgm") {
       const ch = track.route_hint.channel_candidates[0];
@@ -1638,12 +1672,12 @@ function compileDetailed(inputPath) {
           diagnostics,
           "warning",
           "W_SAME_CH_BGM",
-          `Two bgm tracks share channel ${ch}: '${bgmChannels.get(ch)}' and '${track.name}'`,
+          `Two bgm tracks share channel ${ch}`,
           { line: 1, column: 1 },
-          track.name,
+          ch,
         );
       } else {
-        bgmChannels.set(ch, track.name);
+        bgmChannels.add(ch);
       }
     }
   }

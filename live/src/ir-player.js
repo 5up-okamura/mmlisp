@@ -31,23 +31,23 @@ const NOTE_NAMES = [
   "as",
   "b",
 ];
-// Aliases for sharps/flats commonly seen in MMLisp ("c#", "db" etc.)
+// Aliases for accidentals used in MMLisp ("c+", "d-" etc.)
 const NOTE_ALIASES = {
-  "c#": "cs",
-  db: "cs",
-  "d#": "ds",
-  eb: "ds",
-  "f#": "fs",
-  gb: "fs",
-  "g#": "gs",
-  ab: "gs",
-  "a#": "as",
-  bb: "as",
+  "c+": "cs",
+  "d-": "cs",
+  "d+": "ds",
+  "e-": "ds",
+  "f+": "fs",
+  "g-": "fs",
+  "g+": "gs",
+  "a-": "gs",
+  "a+": "as",
+  "b-": "as",
 };
 
 function pitchToMidi(pitchStr) {
-  // Format: "c4", "e4", "g#3", "bb5" etc.
-  const m = pitchStr.toLowerCase().match(/^([a-g][#b]?)(\d)$/);
+  // Format: "c4", "e4", "f+3", "b-5" etc.
+  const m = pitchStr.toLowerCase().match(/^([a-g][+\-]?)(\d)$/);
   if (!m) return 60; // fallback C4
 
   let name = m[1];

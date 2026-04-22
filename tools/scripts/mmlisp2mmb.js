@@ -288,18 +288,6 @@ const TARGET_PROFILES = {
       psg3: 8,
       noise: 9,
     },
-    fallbackOrder: [
-      "fm1",
-      "fm2",
-      "fm3",
-      "fm4",
-      "fm5",
-      "fm6",
-      "psg1",
-      "psg2",
-      "psg3",
-      "noise",
-    ],
   },
   ym2612: {
     channelIds: {
@@ -315,7 +303,6 @@ const TARGET_PROFILES = {
       fm3op3: 17,
       fm3op4: 18,
     },
-    fallbackOrder: ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"],
   },
   psg: {
     channelIds: {
@@ -324,7 +311,6 @@ const TARGET_PROFILES = {
       psg3: 2,
       noise: 3,
     },
-    fallbackOrder: ["psg1", "psg2", "psg3", "noise"],
   },
 };
 
@@ -370,28 +356,6 @@ function trackRole(track) {
 
 function createAllocator(targetProfile) {
   const profile = TARGET_PROFILES[targetProfile] || TARGET_PROFILES["md-full"];
-  const usage = new Map();
-  for (const name of profile.fallbackOrder) {
-    usage.set(name, 0);
-  }
-
-  function pickFallback() {
-    if (profile.fallbackOrder.length === 0) {
-      return null;
-    }
-    let best = profile.fallbackOrder[0];
-    let bestCount = usage.get(best) ?? 0;
-    for (let i = 1; i < profile.fallbackOrder.length; i += 1) {
-      const name = profile.fallbackOrder[i];
-      const count = usage.get(name) ?? 0;
-      if (count < bestCount) {
-        best = name;
-        bestCount = count;
-      }
-    }
-    usage.set(best, bestCount + 1);
-    return best;
-  }
 
   return {
     profileName: TARGET_PROFILES[targetProfile] ? targetProfile : "md-full",
@@ -399,22 +363,12 @@ function createAllocator(targetProfile) {
       const candidates = trackChannelCandidates(track);
       for (const c of candidates) {
         if (profile.channelIds[c] !== undefined) {
-          usage.set(c, (usage.get(c) ?? 0) + 1);
           return {
             channelName: c,
             channelId: profile.channelIds[c],
             strategy: "candidate",
           };
         }
-      }
-
-      const fallback = pickFallback();
-      if (fallback && profile.channelIds[fallback] !== undefined) {
-        return {
-          channelName: fallback,
-          channelId: profile.channelIds[fallback],
-          strategy: "fallback",
-        };
       }
 
       return {
@@ -449,7 +403,7 @@ function buildGmb(ir, options = {}) {
     });
     trackAssignments.push({
       trackId: t.id ?? i,
-      trackName: t.name || `track-${i}`,
+      trackName: t.channel || `track-${i}`,
       role,
       writeScope,
       assignedChannel: allocation.channelName,

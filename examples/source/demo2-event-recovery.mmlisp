@@ -15,7 +15,10 @@
   :author "okamura"
   :tempo 132
 
-  (track :tense :ch fm1 :oct 4 :len 1/8
+  (track :ch fm1
+    :oct 4
+    :len 1/8
+
     (marker :calm)
 
     (seq :oct 3 a > c e c < a > c e c)
@@ -39,7 +42,10 @@
     (jump :calm)
   )
 
-  (track :psg-bass :ch psg1 :oct 2 :len 1/2
+  (track :ch psg1
+    :oct 2
+    :len 1/2
+
     (marker :calm)
     (ins pedal)
     (seq a a a a)
@@ -58,7 +64,10 @@
     (jump :calm)
   )
 
-  (track :psg-perc :ch noise :oct 4 :len 1/4
+  (track :ch noise
+    :oct 4
+    :len 1/4
+
     (marker :calm)
     (ins hit-env)
     (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
