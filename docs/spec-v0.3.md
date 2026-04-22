@@ -49,24 +49,24 @@ all attributes.
 (score :tempo 120
 
   ; ── Section A ──────────────────────────────────────
-  (track :A :ch fm1 :oct 3 :len 1/8
+  (track :ch fm1 :oct 3 :len 1/8
     (x2 c e g e))
 
-  (track :B :ch fm2 :oct 2 :len 1/8
+  (track :ch fm2 :oct 2 :len 1/8
     (x2 c c c c))
 
-  (track :M :ch fm1 :role modulator
+  (track :ch fm1 :role modulator
     (param-set :fm-tl4 30)
     (x8 (param-add :fm-tl4 +1)))
 
   ; ── Section B ──────────────────────────────────────
-  (track :A                          ; inherits :ch fm1 :oct 3 :len 1/8
+  (track :ch fm1                     ; appends to fm1::bgm
     (x2 f g a g))
 
-  (track :B                          ; inherits :ch fm2 :oct 2 :len 1/8
+  (track :ch fm2                     ; appends to fm2::bgm
     (x2 f f f f))
 
-  (track :M                          ; inherits :ch fm1 :role modulator
+  (track :ch fm1 :role modulator     ; appends to fm1::modulator
     (param-set :fm-tl4 30)
     (x8 (param-add :fm-tl4 +1)))
 
@@ -79,13 +79,13 @@ unchanged.
 
 **Attribute inheritance rules for appended tracks:**
 
-| Attribute | First occurrence | Appended occurrence                                       |
-| --------- | ---------------- | --------------------------------------------------------- |
-| `:ch`     | Required         | Inherited; re-specifying is an error (`E_TRACK_CH_REDEF`) |
-| `:role`   | Default `:bgm`   | Inherited                                                 |
-| `:oct`    | Default 4        | Inherited; inline `:oct` overrides locally                |
-| `:len`    | Default `1/8`    | Inherited; inline `:len` overrides locally                |
-| `:carry`  | Default `false`  | Inherited                                                 |
+| Attribute | First occurrence | Appended occurrence                        |
+| --------- | ---------------- | ------------------------------------------ |
+| `:ch`     | Required         | Required; must match first (forms the key) |
+| `:role`   | Default `bgm`    | Required if not `bgm`; forms the key       |
+| `:oct`    | Default 4        | Inherited; inline `:oct` overrides locally |
+| `:len`    | Default `1/8`    | Inherited; inline `:len` overrides locally |
+| `:carry`  | Default `false`  | Inherited                                  |
 
 ### 1.2 `phrase` abolished
 
@@ -178,10 +178,10 @@ Example:
 ```lisp
 (score :tempo 120
 
-  (track :melody :ch fm1 :oct 4 :len 1/8 :gate 0.8
+  (track :ch fm1 :oct 4 :len 1/8 :gate 0.8
     (seq c e g  :len 1/4 c  :len 1/8 e g))   ; gate 0.8 applies throughout
 
-  (track :bass :ch fm2 :oct 2 :len 1/4
+  (track :ch fm2 :oct 2 :len 1/4
     (seq c _ c _  :oct 3 e g)))               ; oct 2 inherited, overridden to 3
 ```
 
@@ -199,8 +199,8 @@ pattern of `def name (phrase ...)`.
   (seq f g a g))
 
 (score :tempo 120
-  (track :A :ch fm1  :riff :riff :riff-variant)
-  (track :B :ch fm2 :oct 2
+  (track :ch fm1  :riff :riff :riff-variant)
+  (track :ch fm2 :oct 2
     (seq c c c c)
     (seq c c c c)
     (seq f f f f)))
@@ -215,7 +215,7 @@ pattern of `def name (phrase ...)`.
 (defblock :arp [root]
   (seq :oct 4  root  :o+ root  :o- root))
 
-(track :A :ch fm1  (:arp c)  (:arp g))
+(track :ch fm1  (:arp c)  (:arp g))
 ```
 
 ### 1.6 Gate time
@@ -231,10 +231,10 @@ from step length (the time to the next note).
 - Gate < 1.0 inserts a `NOTE_OFF` event at `tick + round(length × gate)`.
 
 ```lisp
-(track :melody :ch fm1 :gate 0.8    ; 80% gate on all notes
+(track :ch fm1 :gate 0.8    ; 80% gate on all notes
   (seq :o 4 :l 1/8  c e g c))
 
-(track :staccato :ch fm2 :gate 0.3  ; very short
+(track :ch fm2 :gate 0.3    ; very short
   (seq :o 4 :l 1/8  c c c c))
 ```
 
@@ -275,10 +275,10 @@ driver and GMB format are unaffected.
 
 ```lisp
 (score :tempo 120 :shuffle 67           ; score-wide swing
-  (track :drums :ch noise
+  (track :ch noise
     (seq :oct 4 :len 1/8  c _ c _ c _ c _))
 
-  (track :melody :ch fm1 :shuffle 50   ; override: melody stays straight
+  (track :ch fm1 :shuffle 50            ; override: melody stays straight
     (seq :oct 4 :len 1/8  c e g c)))
 ```
 
@@ -317,7 +317,7 @@ All metadata fields on `score` are optional. A minimal score compiles without
 ```lisp
 ; Minimal valid score
 (score :tempo 120
-  (track :A :ch fm1
+  (track :ch fm1
     (seq :oct 4 :len 1/8  c e g c)))
 ```
 
@@ -385,9 +385,9 @@ flexibility (parameterless blocks that adapt to context).
 (block :riff  c e g e)                     ; no defaults → inherits caller's :oct, :len
 (block :riff-fixed :oct 4 :len 1/8  c e g e)  ; declares :oct and :len → always fixed
 
-(track :A :ch fm1 :oct 4 :len 1/8  :riff)  ; riff plays at oct 4, len 1/8 (inherited)
-(track :B :ch fm2 :oct 3 :len 1/4  :riff)  ; riff plays at oct 3, len 1/4 (inherited)
-(track :C :ch fm1 :oct 2 :len 1/4  :riff-fixed)  ; always oct 4, len 1/8 (declared)
+(track :ch fm1 :oct 4 :len 1/8  :riff)       ; riff plays at oct 4, len 1/8 (inherited)
+(track :ch fm2 :oct 3 :len 1/4  :riff)       ; riff plays at oct 3, len 1/4 (inherited)
+(track :ch fm1 :oct 2 :len 1/4  :riff-fixed) ; always oct 4, len 1/8 (declared)
 ```
 
 ### 2.5 `shuffle-base` and polyrhythm
