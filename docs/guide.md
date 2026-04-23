@@ -159,7 +159,22 @@ The initial vol is the track `:vol` (default 8). Changes are local to the seq.
 
 ---
 
-## 6. Track Options
+## 6. `default` — Mid-track Defaults
+
+`(default ...)` overwrites the track-level defaults that `seq` inherits:
+
+```lisp
+(track :ch fm1 :oct 4 :len 1/8
+  (seq c e g e)               ; oct 4, len 1/8
+  (default :oct 3 :len 1/4)  ; overwrite defaults
+  (seq c e g e))              ; oct 3, len 1/4
+```
+
+Accepted keys: `:oct`, `:len`, `:gate`, `:vol`.
+
+---
+
+## 7. Track Options
 
 Options are placed after the track name:
 
@@ -176,7 +191,7 @@ Options are placed after the track name:
 
 ---
 
-## 7. Voice Definitions
+## 8. Voice Definitions
 
 ### PSG voices
 
@@ -227,7 +242,7 @@ Switch mid-seq with `@name`:
 
 ---
 
-## 8. Loops
+## 9. Loops
 
 ### Finite loop
 
@@ -268,7 +283,7 @@ Compiles to `LOOP_BEGIN` / body / `LOOP_END`. Multiple body forms are allowed:
 
 ---
 
-## 9. Phrase Reuse
+## 10. Phrase Reuse
 
 ### def — named phrase
 
@@ -308,7 +323,7 @@ The calling track's `:oct` / `:len` are inherited when the `seq` inside the `def
 
 ---
 
-## 10. Track Append
+## 11. Track Append
 
 Repeating a track name appends events after the previous ones:
 
@@ -333,7 +348,7 @@ Repeating a track name appends events after the previous ones:
 
 ---
 
-## 11. Modulator Tracks
+## 12. Modulator Tracks
 
 A track with `:role modulator` runs on the same channel as a `bgm` track and fires events simultaneously:
 
@@ -350,7 +365,7 @@ By default, a modulator track resets to its start position each time the primary
 
 ---
 
-## 12. Gate and Swing
+## 13. Gate and Swing
 
 ### Gate
 

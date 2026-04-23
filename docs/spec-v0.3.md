@@ -63,6 +63,17 @@ defines the channel and role; subsequent occurrences inherit all attributes.
 Track bodies contain note/rest/control commands directly. `:len` and `:oct`
 are set as track options or changed inline within `seq`.
 
+To persistently update the track defaults mid-body, use `(default ...)`:
+
+```lisp
+(track :ch fm1 :oct 4 :len 1/8
+  (seq c e g e)               ; oct 4, len 1/8
+  (default :oct 3 :len 1/4)  ; overwrite defaults
+  (seq c e g e))              ; oct 3, len 1/4
+```
+
+Accepted keys: `:oct`, `:len`, `:gate`, `:vol`. Unrecognized keys are ignored.
+
 ### 1.3 `seq` — inline note sequence
 
 ```lisp

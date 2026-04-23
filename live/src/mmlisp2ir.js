@@ -823,6 +823,36 @@ function compileTrackBodyItems(
       continue;
     }
 
+    if (head === "default") {
+      // (default :oct N :len val :gate val :vol N) — overwrite trackState defaults
+      let j = 1;
+      while (j < node.items.length) {
+        const key = atomValue(node.items[j]);
+        if (!key || !key.startsWith(":") || j + 1 >= node.items.length) {
+          j += 1;
+          continue;
+        }
+        const rawVal = atomValue(node.items[j + 1]);
+        if (key === ":oct") {
+          const v = parseIntLike(rawVal);
+          if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
+        } else if (key === ":len") {
+          trackState.defaultLength = parseLengthToken(
+            rawVal,
+            trackState.defaultLength,
+          );
+        } else if (key === ":gate") {
+          const g = parseGateSpec(rawVal);
+          if (g !== null) trackState.defaultGate = g;
+        } else if (key === ":vol") {
+          const v = parseIntLike(rawVal);
+          if (v !== null) trackState.defaultVol = Math.max(0, Math.min(15, v));
+        }
+        j += 2;
+      }
+      continue;
+    }
+
     if (head === "param-set") {
       let j = 1;
       while (j + 1 < node.items.length) {
