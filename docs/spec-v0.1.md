@@ -1,7 +1,7 @@
 # MMLisp v0.1 Draft Specification
 
-Document status: draft
-Target freeze: v0.1
+Document status: frozen
+Frozen: 2026-04-09 (tag: v0.1-candidate at b61eb11)
 
 ## 1. Purpose
 

@@ -48,14 +48,14 @@ Implemented (v0.1 + post-freeze):
 - Browser-side MMLisp compiler (mmlisp-parser.js + mmlisp2ir.js as ES modules)
 - Hot-swap playback: live compile on edit (400ms debounce) with bar-boundary resume
 
-v0.2 planned additions (design in progress):
+v0.2 additions (complete):
 
-- Cmd+Enter play/pause toggle; Cmd+. full stop
-- Marker-based playback start from cursor position
-- Named FM/PSG voice data via `def :fm` / `def :psg`
-- same-ch bgm collision diagnostic
-- modulator track note/LFO separation; `:reset-on-note` option
-- PWA top bar UI; FM params slide-in panel; line numbers
+- ~~Cmd+Enter play/pause toggle; Cmd+. full stop~~
+- ~~Marker-based playback start from cursor position~~
+- ~~Named FM/PSG voice data via `def :fm` / `def :psg`~~
+- ~~same-ch bgm collision diagnostic~~
+- ~~modulator track note/LFO separation; `:reset-on-note` option~~
+- ~~PWA top bar UI; FM params slide-in panel; line numbers~~
 
 Phase 1 exit signal:
 
