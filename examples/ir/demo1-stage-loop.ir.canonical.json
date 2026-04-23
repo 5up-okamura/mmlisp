@@ -278,7 +278,7 @@
           "cmd": "PARAM_SET",
           "src": {
             "column": 16,
-            "line": 30
+            "line": 38
           },
           "tick": 960
         },
@@ -290,7 +290,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 10,
-            "line": 32
+            "line": 40
           },
           "tick": 960
         },
@@ -302,7 +302,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 13,
-            "line": 32
+            "line": 40
           },
           "tick": 1020
         },
@@ -314,7 +314,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 16,
-            "line": 32
+            "line": 40
           },
           "tick": 1080
         },
@@ -326,7 +326,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 19,
-            "line": 32
+            "line": 40
           },
           "tick": 1140
         },
@@ -338,7 +338,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 22,
-            "line": 32
+            "line": 40
           },
           "tick": 1200
         },
@@ -350,7 +350,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 25,
-            "line": 32
+            "line": 40
           },
           "tick": 1260
         },
@@ -362,7 +362,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 28,
-            "line": 32
+            "line": 40
           },
           "tick": 1320
         },
@@ -374,7 +374,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 31,
-            "line": 32
+            "line": 40
           },
           "tick": 1380
         },
@@ -386,7 +386,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 19,
-            "line": 33
+            "line": 41
           },
           "tick": 1440
         },
@@ -398,7 +398,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 32,
-            "line": 33
+            "line": 41
           },
           "tick": 1560
         },
@@ -410,7 +410,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 35,
-            "line": 33
+            "line": 41
           },
           "tick": 1600
         },
@@ -422,7 +422,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 38,
-            "line": 33
+            "line": 41
           },
           "tick": 1640
         },
@@ -434,7 +434,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 50,
-            "line": 33
+            "line": 41
           },
           "tick": 1680
         },
@@ -445,7 +445,7 @@
           "cmd": "REST",
           "src": {
             "column": 6,
-            "line": 34
+            "line": 42
           },
           "tick": 1800
         },
@@ -456,7 +456,7 @@
           "cmd": "JUMP",
           "src": {
             "column": 6,
-            "line": 36
+            "line": 44
           },
           "tick": 1920
         }
@@ -484,7 +484,7 @@
           "cmd": "MARKER",
           "src": {
             "column": 5,
-            "line": 43
+            "line": 93
           },
           "tick": 0
         },
@@ -504,7 +504,7 @@
           "cmd": "PSG_VOICE",
           "src": {
             "column": 5,
-            "line": 44
+            "line": 94
           },
           "tick": 0
         },
@@ -515,7 +515,7 @@
           "cmd": "LOOP_BEGIN",
           "src": {
             "column": 6,
-            "line": 45
+            "line": 95
           },
           "tick": 0
         },
@@ -527,7 +527,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 15,
-            "line": 45
+            "line": 95
           },
           "tick": 0
         },
@@ -539,7 +539,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 17,
-            "line": 45
+            "line": 95
           },
           "tick": 240
         },
@@ -551,7 +551,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 19,
-            "line": 45
+            "line": 95
           },
           "tick": 480
         },
@@ -563,7 +563,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 21,
-            "line": 45
+            "line": 95
           },
           "tick": 720
         },
@@ -575,7 +575,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 29,
-            "line": 45
+            "line": 95
           },
           "tick": 960
         },
@@ -587,7 +587,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 31,
-            "line": 45
+            "line": 95
           },
           "tick": 1200
         },
@@ -599,7 +599,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 33,
-            "line": 45
+            "line": 95
           },
           "tick": 1440
         },
@@ -611,7 +611,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 35,
-            "line": 45
+            "line": 95
           },
           "tick": 1680
         },
@@ -623,7 +623,7 @@
           "cmd": "LOOP_END",
           "src": {
             "column": 6,
-            "line": 45
+            "line": 95
           },
           "tick": 1920
         },
@@ -635,7 +635,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 10,
-            "line": 47
+            "line": 97
           },
           "tick": 1920
         },
@@ -647,7 +647,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 12,
-            "line": 47
+            "line": 97
           },
           "tick": 2160
         },
@@ -659,7 +659,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 14,
-            "line": 47
+            "line": 97
           },
           "tick": 2400
         },
@@ -671,7 +671,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 16,
-            "line": 47
+            "line": 97
           },
           "tick": 2640
         },
@@ -683,7 +683,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 10,
-            "line": 48
+            "line": 98
           },
           "tick": 2880
         },
@@ -695,7 +695,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 12,
-            "line": 48
+            "line": 98
           },
           "tick": 3120
         },
@@ -707,7 +707,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 14,
-            "line": 48
+            "line": 98
           },
           "tick": 3360
         },
@@ -719,7 +719,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 16,
-            "line": 48
+            "line": 98
           },
           "tick": 3600
         },
@@ -730,7 +730,7 @@
           "cmd": "JUMP",
           "src": {
             "column": 6,
-            "line": 49
+            "line": 99
           },
           "tick": 3840
         }
@@ -758,7 +758,7 @@
           "cmd": "MARKER",
           "src": {
             "column": 5,
-            "line": 55
+            "line": 127
           },
           "tick": 0
         },
@@ -784,7 +784,7 @@
           "cmd": "PSG_VOICE",
           "src": {
             "column": 5,
-            "line": 56
+            "line": 128
           },
           "tick": 0
         },
@@ -795,7 +795,7 @@
           "cmd": "LOOP_BEGIN",
           "src": {
             "column": 6,
-            "line": 57
+            "line": 129
           },
           "tick": 0
         },
@@ -807,7 +807,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 15,
-            "line": 57
+            "line": 129
           },
           "tick": 0
         },
@@ -818,7 +818,7 @@
           "cmd": "REST",
           "src": {
             "column": 17,
-            "line": 57
+            "line": 129
           },
           "tick": 60
         },
@@ -830,7 +830,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 19,
-            "line": 57
+            "line": 129
           },
           "tick": 120
         },
@@ -841,7 +841,7 @@
           "cmd": "REST",
           "src": {
             "column": 21,
-            "line": 57
+            "line": 129
           },
           "tick": 180
         },
@@ -853,7 +853,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 23,
-            "line": 57
+            "line": 129
           },
           "tick": 240
         },
@@ -864,7 +864,7 @@
           "cmd": "REST",
           "src": {
             "column": 25,
-            "line": 57
+            "line": 129
           },
           "tick": 300
         },
@@ -876,7 +876,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 27,
-            "line": 57
+            "line": 129
           },
           "tick": 360
         },
@@ -887,7 +887,7 @@
           "cmd": "REST",
           "src": {
             "column": 29,
-            "line": 57
+            "line": 129
           },
           "tick": 420
         },
@@ -899,7 +899,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 44,
-            "line": 57
+            "line": 129
           },
           "tick": 480
         },
@@ -910,7 +910,7 @@
           "cmd": "REST",
           "src": {
             "column": 46,
-            "line": 57
+            "line": 129
           },
           "tick": 540
         },
@@ -922,7 +922,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 48,
-            "line": 57
+            "line": 129
           },
           "tick": 600
         },
@@ -933,7 +933,7 @@
           "cmd": "REST",
           "src": {
             "column": 50,
-            "line": 57
+            "line": 129
           },
           "tick": 660
         },
@@ -945,7 +945,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 52,
-            "line": 57
+            "line": 129
           },
           "tick": 720
         },
@@ -956,7 +956,7 @@
           "cmd": "REST",
           "src": {
             "column": 54,
-            "line": 57
+            "line": 129
           },
           "tick": 780
         },
@@ -968,7 +968,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 56,
-            "line": 57
+            "line": 129
           },
           "tick": 840
         },
@@ -979,7 +979,7 @@
           "cmd": "REST",
           "src": {
             "column": 58,
-            "line": 57
+            "line": 129
           },
           "tick": 900
         },
@@ -991,7 +991,7 @@
           "cmd": "LOOP_END",
           "src": {
             "column": 6,
-            "line": 57
+            "line": 129
           },
           "tick": 960
         },
@@ -1003,7 +1003,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 17,
-            "line": 59
+            "line": 131
           },
           "tick": 960
         },
@@ -1014,7 +1014,7 @@
           "cmd": "REST",
           "src": {
             "column": 19,
-            "line": 59
+            "line": 131
           },
           "tick": 1020
         },
@@ -1026,7 +1026,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 28,
-            "line": 59
+            "line": 131
           },
           "tick": 1080
         },
@@ -1037,7 +1037,7 @@
           "cmd": "REST",
           "src": {
             "column": 30,
-            "line": 59
+            "line": 131
           },
           "tick": 1140
         },
@@ -1049,7 +1049,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 39,
-            "line": 59
+            "line": 131
           },
           "tick": 1200
         },
@@ -1060,7 +1060,7 @@
           "cmd": "REST",
           "src": {
             "column": 41,
-            "line": 59
+            "line": 131
           },
           "tick": 1260
         },
@@ -1072,7 +1072,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 50,
-            "line": 59
+            "line": 131
           },
           "tick": 1320
         },
@@ -1083,7 +1083,7 @@
           "cmd": "REST",
           "src": {
             "column": 52,
-            "line": 59
+            "line": 131
           },
           "tick": 1380
         },
@@ -1095,7 +1095,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 26,
-            "line": 60
+            "line": 132
           },
           "tick": 1440
         },
@@ -1107,7 +1107,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 35,
-            "line": 60
+            "line": 132
           },
           "tick": 1560
         },
@@ -1118,7 +1118,7 @@
           "cmd": "REST",
           "src": {
             "column": 6,
-            "line": 61
+            "line": 133
           },
           "tick": 1680
         },
@@ -1129,7 +1129,7 @@
           "cmd": "JUMP",
           "src": {
             "column": 6,
-            "line": 62
+            "line": 134
           },
           "tick": 1920
         }
@@ -1157,7 +1157,7 @@
           "cmd": "MARKER",
           "src": {
             "column": 5,
-            "line": 68
+            "line": 162
           },
           "tick": 0
         },
@@ -1180,7 +1180,7 @@
           "cmd": "PSG_VOICE",
           "src": {
             "column": 5,
-            "line": 69
+            "line": 163
           },
           "tick": 0
         },
@@ -1191,7 +1191,7 @@
           "cmd": "LOOP_BEGIN",
           "src": {
             "column": 6,
-            "line": 70
+            "line": 164
           },
           "tick": 0
         },
@@ -1202,7 +1202,7 @@
           "cmd": "REST",
           "src": {
             "column": 15,
-            "line": 70
+            "line": 164
           },
           "tick": 0
         },
@@ -1214,7 +1214,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 17,
-            "line": 70
+            "line": 164
           },
           "tick": 120
         },
@@ -1225,7 +1225,7 @@
           "cmd": "REST",
           "src": {
             "column": 19,
-            "line": 70
+            "line": 164
           },
           "tick": 240
         },
@@ -1237,7 +1237,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 21,
-            "line": 70
+            "line": 164
           },
           "tick": 360
         },
@@ -1248,7 +1248,7 @@
           "cmd": "REST",
           "src": {
             "column": 23,
-            "line": 70
+            "line": 164
           },
           "tick": 480
         },
@@ -1260,7 +1260,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 25,
-            "line": 70
+            "line": 164
           },
           "tick": 600
         },
@@ -1271,7 +1271,7 @@
           "cmd": "REST",
           "src": {
             "column": 27,
-            "line": 70
+            "line": 164
           },
           "tick": 720
         },
@@ -1283,7 +1283,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 29,
-            "line": 70
+            "line": 164
           },
           "tick": 840
         },
@@ -1294,7 +1294,7 @@
           "cmd": "REST",
           "src": {
             "column": 31,
-            "line": 70
+            "line": 164
           },
           "tick": 960
         },
@@ -1306,7 +1306,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 33,
-            "line": 70
+            "line": 164
           },
           "tick": 1080
         },
@@ -1317,7 +1317,7 @@
           "cmd": "REST",
           "src": {
             "column": 35,
-            "line": 70
+            "line": 164
           },
           "tick": 1200
         },
@@ -1329,7 +1329,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 37,
-            "line": 70
+            "line": 164
           },
           "tick": 1320
         },
@@ -1340,7 +1340,7 @@
           "cmd": "REST",
           "src": {
             "column": 39,
-            "line": 70
+            "line": 164
           },
           "tick": 1440
         },
@@ -1352,7 +1352,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 41,
-            "line": 70
+            "line": 164
           },
           "tick": 1560
         },
@@ -1363,7 +1363,7 @@
           "cmd": "REST",
           "src": {
             "column": 43,
-            "line": 70
+            "line": 164
           },
           "tick": 1680
         },
@@ -1375,7 +1375,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 45,
-            "line": 70
+            "line": 164
           },
           "tick": 1800
         },
@@ -1387,7 +1387,7 @@
           "cmd": "LOOP_END",
           "src": {
             "column": 6,
-            "line": 70
+            "line": 164
           },
           "tick": 1920
         },
@@ -1398,7 +1398,7 @@
           "cmd": "REST",
           "src": {
             "column": 10,
-            "line": 72
+            "line": 166
           },
           "tick": 1920
         },
@@ -1410,7 +1410,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 12,
-            "line": 72
+            "line": 166
           },
           "tick": 2040
         },
@@ -1421,7 +1421,7 @@
           "cmd": "REST",
           "src": {
             "column": 14,
-            "line": 72
+            "line": 166
           },
           "tick": 2160
         },
@@ -1433,7 +1433,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 16,
-            "line": 72
+            "line": 166
           },
           "tick": 2280
         },
@@ -1444,7 +1444,7 @@
           "cmd": "REST",
           "src": {
             "column": 18,
-            "line": 72
+            "line": 166
           },
           "tick": 2400
         },
@@ -1456,7 +1456,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 20,
-            "line": 72
+            "line": 166
           },
           "tick": 2520
         },
@@ -1467,7 +1467,7 @@
           "cmd": "REST",
           "src": {
             "column": 22,
-            "line": 72
+            "line": 166
           },
           "tick": 2640
         },
@@ -1479,7 +1479,7 @@
           "cmd": "NOTE_ON",
           "src": {
             "column": 24,
-            "line": 72
+            "line": 166
           },
           "tick": 2760
         },
@@ -1490,7 +1490,7 @@
           "cmd": "JUMP",
           "src": {
             "column": 6,
-            "line": 73
+            "line": 167
           },
           "tick": 2880
         }
