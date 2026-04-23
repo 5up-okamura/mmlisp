@@ -17,6 +17,8 @@
     { "include": "#boolean" },
     { "include": "#keyword" },
     { "include": "#rest-shorthand" },
+    { "include": "#octave-shift" },
+    { "include": "#volume-shift" },
     { "include": "#fraction" },
     { "include": "#number" },
     { "include": "#paren" },
@@ -106,6 +108,14 @@
     "rest-shorthand": {
       "name": "constant.language.mmlisp",
       "match": "(?<=\\s)_(?=[\\s)])"
+    },
+    "octave-shift": {
+      "name": "constant.language.mmlisp",
+      "match": "(?<=[\\s(])[><](?=[\\s)])"
+    },
+    "volume-shift": {
+      "name": "constant.language.mmlisp",
+      "match": "(?<=[\\s(])v[+-]\\d*(?=[\\s)])"
     },
     "fraction": {
       "name": "constant.numeric.fraction.mmlisp",
