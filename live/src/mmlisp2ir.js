@@ -44,6 +44,7 @@ const TRACK_OPTION_KEYS = new Set([
   ":oct",
   ":len",
   ":gate",
+  ":vol",
   ":carry",
   ":shuffle",
   ":shuffle-base",
@@ -127,6 +128,11 @@ function resolveShuffleTicks(nominalTicks, trackState) {
 
 function isNoteAtom(val) {
   return typeof val === "string" && /^[a-g][+\-]?$/.test(val);
+}
+
+// Volume shift atom: "v+", "v-", "v+8", "v-16" etc.
+function isVolShiftAtom(val) {
+  return typeof val === "string" && /^v[+\-]\d*$/.test(val);
 }
 
 // Per-note length atom: "c4", "e8", "f+4.", "b-2" etc.
@@ -402,6 +408,7 @@ function compileSeq(
   let currentOct = trackState.defaultOct;
   let currentLen = trackState.defaultLength;
   let currentGate = trackState.defaultGate;
+  let currentVol = trackState.defaultVol;
 
   let i = 1;
   while (i < seqNode.items.length) {
@@ -494,6 +501,20 @@ function compileSeq(
     }
     if (val === "<") {
       currentOct = Math.max(0, currentOct - 1);
+      i += 1;
+      continue;
+    }
+
+    if (isVolShiftAtom(val)) {
+      const sign = val[1] === "+" ? 1 : -1;
+      const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
+      currentVol = Math.max(0, Math.min(15, currentVol + sign * delta));
+      events.push({
+        tick: trackState.tick,
+        cmd: "PARAM_SET",
+        args: { target: "VOL", value: currentVol },
+        src: nodeSrc(item),
+      });
       i += 1;
       continue;
     }
@@ -1231,6 +1252,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       const gateNode = options.get(":gate");
       const defaultGate = gateNode ? parseGateSpec(atomValue(gateNode)) : null;
 
+      const volNode = options.get(":vol");
+      const defaultVol = parseIntLike(atomValue(volNode)) ?? 8;
+
       const shuffleNode = options.get(":shuffle");
       const rawTrackShuffle = parseIntLike(atomValue(shuffleNode));
       let shuffleRatio;
@@ -1254,6 +1278,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultLength,
         defaultOct,
         defaultGate,
+        defaultVol,
         shuffleRatio,
         shuffleBase,
         subBeatParity: 0,

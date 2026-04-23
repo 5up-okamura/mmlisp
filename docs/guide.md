@@ -115,6 +115,8 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 | `@name`     | Switch voice (defined with `def`)                   | persistent |
 | `>`         | Octave up by 1                                      | persistent |
 | `<`         | Octave down by 1                                    | persistent |
+| `v+` `v+N`  | Volume up by N (default 1), clamp 0–15              | persistent |
+| `v-` `v-N`  | Volume down by N (default 1), clamp 0–15            | persistent |
 | `_`         | Rest for the current `:len`                         | one step   |
 | `~`         | Tie — extend previous note; `~ 1/2` sets tie length | one step   |
 | `(a b c)`   | Subgroup — current `:len` divided equally           | one slot   |
@@ -139,6 +141,15 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 (seq :oct 4 c d e f < c d e f)   ; < moves to oct 3
 ```
 
+### Volume shift
+
+```lisp
+(seq c e v+ g v+ a)        ; step up by 8 before g and a (default step)
+(seq c e v+16 g v-8 f c)   ; explicit deltas
+```
+
+The initial vol is the track `:vol` (default 8). Changes are local to the seq.
+
 ### Subgroups (tuplets)
 
 ```lisp
@@ -158,6 +169,7 @@ Options are placed after the track name:
 | `:oct N`      | Initial octave                                     | `4`              |
 | `:len val`    | Default step length                                | `1/8`            |
 | `:gate val`   | Default gate                                       | `1.0` (legato)   |
+| `:vol N`      | Initial volume (0–15)                              | `8`              |
 | `:role name`  | Track role: `bgm`, `se`, `modulator`, `chaos`      | `bgm`            |
 | `:shuffle N`  | Swing amount (51–90; 50 = straight)                | score-level or 0 |
 | `:carry bool` | If `true`, modulator track persists across NOTE_ON | `false`          |

@@ -83,6 +83,8 @@ Inline state modifiers within `seq`:
 | `~`         | Tie: extend by current `:len`; `~ 1/2` overrides len               | Single step |
 | `>`         | Octave up by 1                                                     | Persistent  |
 | `<`         | Octave down by 1                                                   | Persistent  |
+| `v+` `v+N`  | Volume up by N (default 1); clamp 0–15                             | Persistent  |
+| `v-` `v-N`  | Volume down by N (default 1); clamp 0–15                           | Persistent  |
 | `(a b c)`   | Subgroup: divide current `:len` equally among elements (Bresenham) | Single slot |
 
 Note names within `seq` are bare symbols; octave is determined by the current
@@ -368,6 +370,28 @@ and `(rest N.)` forms:
 
 **IR impact:** none — the per-note length expands to the same tick count as
 the equivalent `n/d` fraction before IR emission.
+
+### 1.15 `v+` / `v-` — inline volume shift
+
+Within `seq`, volume can be shifted up or down using bare atoms `v+` and `v-`.
+An optional integer suffix specifies the delta (default: 1). Volume is clamped
+to 0–15.
+
+```lisp
+(seq c e v+ g v+ a)         ; step up by 8 before g and a
+(seq c e v+16 g v-8 a f c)  ; explicit delta
+(seq v- c d e f)            ; step down before the phrase
+```
+
+The initial volume for each `seq` is inherited from the track's `:vol` option
+(default 8). Changes persist within the seq but reset at the next seq.
+
+**IR impact:** a `PARAM_SET { target: "VOL", value: N }` event is emitted at
+the current tick before the following note.
+
+```json
+{ "cmd": "PARAM_SET", "args": { "target": "VOL", "value": 12 } }
+```
 
 ### 1.14 Naming conventions
 
