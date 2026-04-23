@@ -3,32 +3,7 @@
  * No Node.js dependencies; input is a string, output is an AST array.
  */
 
-function stripComments(input) {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < input.length; i += 1) {
-    const ch = input[i];
-    if (ch === '"' && input[i - 1] !== "\\") {
-      inString = !inString;
-      out += ch;
-      continue;
-    }
-    if (!inString && ch === ";") {
-      while (i < input.length && input[i] !== "\n") {
-        i += 1;
-      }
-      if (i < input.length && input[i] === "\n") {
-        out += "\n";
-      }
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
-
 function tokenize(input) {
-  const src = stripComments(input);
   const tokens = [];
   let i = 0;
   let line = 1;
@@ -38,8 +13,8 @@ function tokenize(input) {
     tokens.push({ type, value, line: startLine, column: startCol });
   }
 
-  while (i < src.length) {
-    const ch = src[i];
+  while (i < input.length) {
+    const ch = input[i];
 
     if (ch === "\n") {
       i += 1;
@@ -61,14 +36,27 @@ function tokenize(input) {
       continue;
     }
 
+    if (ch === ";") {
+      const startLine = line;
+      const startCol = column;
+      let value = "";
+      while (i < input.length && input[i] !== "\n") {
+        value += input[i];
+        i += 1;
+        column += 1;
+      }
+      push("comment", value, startLine, startCol);
+      continue;
+    }
+
     if (ch === '"') {
       const startLine = line;
       const startCol = column;
       i += 1;
       column += 1;
       let value = "";
-      while (i < src.length) {
-        const c = src[i];
+      while (i < input.length) {
+        const c = input[i];
         if (c === "\n") {
           line += 1;
           column = 1;
@@ -76,7 +64,7 @@ function tokenize(input) {
           i += 1;
           continue;
         }
-        if (c === '"' && src[i - 1] !== "\\") {
+        if (c === '"' && input[i - 1] !== "\\") {
           i += 1;
           column += 1;
           break;
@@ -92,8 +80,8 @@ function tokenize(input) {
     const startLine = line;
     const startCol = column;
     let value = "";
-    while (i < src.length) {
-      const c = src[i];
+    while (i < input.length) {
+      const c = input[i];
       if (
         c === "\n" ||
         c === " " ||
@@ -103,7 +91,8 @@ function tokenize(input) {
         c === "(" ||
         c === ")" ||
         c === "[" ||
-        c === "]"
+        c === "]" ||
+        c === ";"
       ) {
         break;
       }
@@ -129,6 +118,16 @@ export function parse(input) {
     const token = current();
     if (!token) {
       throw new Error("Unexpected end of input");
+    }
+
+    if (token.type === "comment") {
+      pos += 1;
+      return {
+        kind: "comment",
+        value: token.value,
+        line: token.line,
+        column: token.column,
+      };
     }
 
     if (token.type === "atom") {

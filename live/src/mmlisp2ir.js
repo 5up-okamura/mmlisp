@@ -1020,18 +1020,23 @@ function collectDefs(roots, diagnostics) {
       }
       const maybeTag = atomValue(root.items[2]);
       if (maybeTag === ":fm") {
+        const bodyItems = root.items.filter((n) => n.kind !== "comment");
         typedDefs.set(name, {
           tag: "fm",
-          algFb: root.items[3],
-          ops: [root.items[4], root.items[5], root.items[6], root.items[7]],
+          algFb: bodyItems[3],
+          ops: [bodyItems[4], bodyItems[5], bodyItems[6], bodyItems[7]],
           src: nodeSrc(root),
         });
       } else if (maybeTag === ":psg") {
         const src = nodeSrc(root);
-        const parsed = parsePsgVector(root.items[3], name, diagnostics, src);
+        const bodyItems = root.items.filter((n) => n.kind !== "comment");
+        const parsed = parsePsgVector(bodyItems[3], name, diagnostics, src);
         typedDefs.set(name, { tag: "psg", envelope: parsed, src });
       } else {
-        defs.set(name, root.items.slice(2));
+        defs.set(
+          name,
+          root.items.slice(2).filter((n) => n.kind !== "comment"),
+        );
       }
       continue;
     }
@@ -1049,7 +1054,7 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      const paramsNode = root.items[2];
+      const paramsNode = root.items.filter((n) => n.kind !== "comment")[2];
       if (
         !paramsNode ||
         paramsNode.kind !== "list" ||

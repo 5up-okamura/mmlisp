@@ -125,6 +125,11 @@ function nodeToInline(node) {
     return `${open}${close}`;
   }
 
+  // Can't inline a form that contains comments
+  if (node.items.some((item) => item.kind === "comment")) {
+    return null;
+  }
+
   const parts = [];
   for (const item of node.items) {
     const part = nodeToInline(item);
@@ -182,8 +187,8 @@ function collectLeadArgs(items, startIndex, headSymbol) {
       break;
     }
 
-    // Stop at nested forms; these belong to the body section.
-    if (items[index].kind === "list") {
+    // Stop at nested forms or comments; these belong to the body section.
+    if (items[index].kind === "list" || items[index].kind === "comment") {
       break;
     }
 
@@ -215,28 +220,52 @@ function formatAlignedVectors(vectors) {
 
   return vectors.map((vec, i) => {
     if (rows[i] === null) return formatNode(vec);
-    const padded = rows[i].map((item, c) => item.padStart(colWidths[c]));
+    const padded = rows[i].map((item, c) =>
+      item.padStart(Math.max(2, colWidths[c])),
+    );
     return `[${padded.join(" ")}]`;
   });
 }
 
 function formatDefVoice(node) {
-  // (def <name> :fm <ch-vec> <op-vec>...)
+  // (def <name> :fm [comment...] <ch-vec> [comment...] <op-vec>...)
   const name = formatNode(node.items[1]);
   const tag = node.items[2].value;
-  const chVec = node.items[3];
-  const opVecs = node.items.slice(4);
 
+  // Find ch-vec (first non-comment item after the tag), collecting any preceding comments
+  let chVecIdx = 3;
+  while (
+    chVecIdx < node.items.length &&
+    node.items[chVecIdx].kind === "comment"
+  ) {
+    chVecIdx += 1;
+  }
+  const preChComments = node.items.slice(3, chVecIdx);
+  const chVec = node.items[chVecIdx];
+  const rest = node.items.slice(chVecIdx + 1); // comments + op vecs
+
+  const opVecs = rest.filter((n) => n.kind !== "comment");
   const chInline = nodeToInline(chVec);
   const chLine = chInline !== null ? chInline : formatNode(chVec);
   const opLines = formatAlignedVectors(opVecs);
 
-  const lines = [`(def ${name} ${tag}`, `${INDENT}${chLine}`];
-  for (let i = 0; i < opLines.length; i++) {
-    const suffix = i === opLines.length - 1 ? ")" : "";
-    lines.push(`${INDENT}${opLines[i]}${suffix}`);
+  const lines = [`(def ${name} ${tag}`];
+  for (const c of preChComments) {
+    lines.push(`${INDENT}${c.value}`);
   }
-  if (opLines.length === 0) {
+  lines.push(`${INDENT}${chLine}`);
+
+  let opIdx = 0;
+  for (const item of rest) {
+    if (item.kind === "comment") {
+      lines.push(`${INDENT}${item.value}`);
+    } else {
+      const suffix = opIdx === opVecs.length - 1 ? ")" : "";
+      lines.push(`${INDENT}${opLines[opIdx]}${suffix}`);
+      opIdx += 1;
+    }
+  }
+  if (opVecs.length === 0) {
     lines.push(")");
   }
   return lines.join("\n");
@@ -250,11 +279,9 @@ function formatList(node) {
 
   // Special case: (def <name> :fm <ch-vec> <op-vec>...)
   if (
-    node.items.length >= 4 &&
     node.items[0].kind === "atom" &&
     node.items[0].value === "def" &&
-    node.items[2].kind === "atom" &&
-    node.items[2].value === ":fm"
+    node.items.filter((n) => n.kind !== "comment")[2]?.value === ":fm"
   ) {
     return formatDefVoice(node);
   }
@@ -324,17 +351,20 @@ function formatList(node) {
   }
 
   let previousLine = node.items[0].line || 0;
+  let previousOutputLines = 1;
   for (let i = 0; i < bodyItems.length; i += 1) {
     const child = bodyItems[i];
+    const childText = formatNode(child);
     if (i > 0) {
-      const gap = (child.line || 0) - previousLine;
-      if (gap > 1) {
+      const sourceGap = (child.line || 0) - previousLine;
+      const blankLines = Math.max(0, sourceGap - previousOutputLines);
+      for (let g = 0; g < blankLines; g += 1) {
         lines.push("");
       }
     }
-    const childText = formatNode(child);
     lines.push(indentBlock(childText, childIndent));
     previousLine = child.line || previousLine;
+    previousOutputLines = childText.split("\n").length;
   }
 
   lines.push(`${indent})`);
@@ -350,6 +380,9 @@ function formatNode(node) {
   }
   if (node.kind === "list") {
     return formatList(node);
+  }
+  if (node.kind === "comment") {
+    return node.value;
   }
   throw new Error(`Unsupported node kind: ${node.kind}`);
 }
@@ -377,7 +410,11 @@ function leadingTrivia(source) {
 
 function formatSource(source) {
   const roots = normalizeRoots(parse(source));
-  const formattedRoots = roots.map((root) => formatNode(root)).join("\n\n");
+  // Root-level comments are preserved via leadingTrivia; filter them here to avoid duplication.
+  const formattedRoots = roots
+    .filter((root) => root.kind !== "comment")
+    .map((root) => formatNode(root))
+    .join("\n\n");
   const lead = leadingTrivia(source);
   const combined = lead ? `${lead}\n\n${formattedRoots}` : formattedRoots;
   return `${combined.trimEnd()}\n`;
