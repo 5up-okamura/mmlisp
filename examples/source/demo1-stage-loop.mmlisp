@@ -29,8 +29,8 @@
 
     (param-set :fm-fb fb-init)
 
-    (seq f3 a3 c4 a3 f3 a3 c4 a3)
-    (seq :len 1/4 g3 :len 1/12 a3 b3 a3 :len 1/4 c4)
+    (seq < f a > c < a f a > c < a)
+    (seq :oct 3 g4 a12 b12 a12 > c4)
     (rest 1/4)
 
     (goto intro)

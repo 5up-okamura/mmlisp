@@ -72,6 +72,11 @@ function parseLengthToken(value, inheritedTicks) {
     const [n, d] = value.split("/").map((v) => parseInt(v, 10));
     return Math.round((WHOLE_TICKS * n) / d);
   }
+  // Dotted shorthand: "4." = 3/8, "8." = 3/16, etc.
+  if (/^\d+\.$/.test(value)) {
+    const d = parseInt(value, 10);
+    return Math.round((WHOLE_TICKS * 3) / (d * 2));
+  }
   if (/^\d+$/.test(value)) {
     return Math.round((WHOLE_TICKS * 1) / parseInt(value, 10));
   }
@@ -124,8 +129,16 @@ function isNoteAtom(val) {
   return typeof val === "string" && /^[a-g][+\-]?$/.test(val);
 }
 
-function isAbsPitchAtom(val) {
-  return typeof val === "string" && /^[a-g][+\-]?\d$/.test(val);
+// Per-note length atom: "c4", "e8", "f+4.", "b-2" etc.
+// Trailing number is the length denominator (+ optional dot), NOT octave.
+function isPerNoteLengthAtom(val) {
+  return typeof val === "string" && /^[a-g][+\-]?\d+\.?$/.test(val);
+}
+
+function parsePerNoteLength(val) {
+  const m = val.match(/^([a-g][+\-]?)(\d+\.?)$/);
+  if (!m) return null;
+  return { noteName: m[1], lengthStr: m[2] };
 }
 
 function canonicalTarget(symbol) {
@@ -417,12 +430,13 @@ function compileSeq(
               src: nodeSrc(ev),
             });
             trackState.tick += slotTicks;
-          } else if (isAbsPitchAtom(evVal)) {
-            const pitch = evVal;
+          } else if (isPerNoteLengthAtom(evVal)) {
+            // Per-note length in subgroup: ignore the length suffix, use slot ticks
+            const { noteName } = parsePerNoteLength(evVal);
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
-              args: makeNoteArgs(pitch, slotTicks, currentGate),
+              args: makeNoteArgs(noteName + currentOct, slotTicks, currentGate),
               src: nodeSrc(ev),
             });
             trackState.tick += slotTicks;
@@ -518,16 +532,17 @@ function compileSeq(
       continue;
     }
 
-    if (isAbsPitchAtom(val)) {
-      const pitch = val;
-      const ticks = resolveShuffleTicks(currentLen, trackState);
+    // ── Per-note length atom: c4, e8., f+4 etc. ────────────────────
+    if (isPerNoteLengthAtom(val)) {
+      const { noteName, lengthStr } = parsePerNoteLength(val);
+      const perNoteTicks = parseLengthToken(lengthStr, currentLen);
       events.push({
         tick: trackState.tick,
         cmd: "NOTE_ON",
-        args: makeNoteArgs(pitch, ticks, currentGate),
+        args: makeNoteArgs(noteName + currentOct, perNoteTicks, currentGate),
         src: nodeSrc(item),
       });
-      trackState.tick += ticks;
+      trackState.tick += perNoteTicks;
       i += 1;
       continue;
     }
