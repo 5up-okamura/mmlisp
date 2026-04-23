@@ -88,14 +88,19 @@ Phase 3 entry condition:
 
 ## Backlog
 
-1. Implement Cmd+Enter pause/resume and Cmd+. stop (spec-v0.2 §1.1)
-2. MML-style persistent track state mutation: `(default :oct 3 :len 1/8)` to overwrite `trackState.defaultLength` / `defaultOct` mid-track (currently only configurable at `track` head or inside `seq` locally)
-3. Cursor-line seek from source map (spec-v0.2 §1.11)
-4. Named FM/PSG voice data via `def :fm` / `def :psg` (spec-v0.2 §1.2, §1.7)
-5. Freeze IR-to-GMB opcode table
-6. Begin MMLispDRV implementation (Phase 3)
-7. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
-8. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
+Done (confirmed implemented, not yet removed from backlog):
+
+- ~~Cmd+Enter pause/resume and Cmd+. stop~~ — live/index.html L978
+- ~~Cursor-line seek from source map~~ — IRPlayer.playFromLine() in ir-player.js
+- ~~Named FM/PSG voice data via `def :fm` / `def :psg`~~ — collectDefs() + emitVoice() in mmlisp2ir.js; PSG_VOICE + PARAM_SET handled in ir-player.js
+
+Active:
+
+1. MML-style persistent track state mutation: `(default :oct 3 :len 1/8)` to overwrite `trackState.defaultLength` / `defaultOct` mid-track (currently only configurable at `track` head or inside `seq` locally)
+2. Finalize FM patch vector column order and add example to spec-v0.2-draft.md
+3. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
+4. Freeze IR-to-GMB opcode table
+5. Begin MMLispDRV implementation (Phase 3)
 
 ---
 
