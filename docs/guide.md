@@ -65,21 +65,37 @@ Append an octave number to a note name to pin it to a specific octave:
 
 ## 4. Note Lengths
 
-`:len` accepts fraction (`n/d`) or denominator-only shorthand:
+`:len` accepts fraction (`n/d`) or denominator-only shorthand (`n/d` where numerator is 1 can be written as just `d`):
 
-| Written     | Duration        | Ticks (PPQN=120) |
-| ----------- | --------------- | ---------------- |
-| `1/1`       | whole note      | 480              |
-| `1/2`       | half note       | 240              |
-| `1/4` = `4` | quarter note    | 120              |
-| `1/8` = `8` | eighth note     | 60               |
-| `1/16`      | sixteenth note  | 30               |
-| `1/12`      | triplet eighth  | 40               |
-| `1/6`       | triplet quarter | 80               |
-| `2/1`       | double whole    | 960              |
-| `3/8`       | dotted quarter  | 180              |
+| Written        | Duration       | Ticks (PPQN=120) |
+| -------------- | -------------- | ---------------- |
+| `2/1`          | double whole   | 960              |
+| `1/1` or `1`   | whole note     | 480              |
+| `1/4` or `4`   | quarter note   | 120              |
+| `1/8` or `8`   | eighth note    | 60               |
+| `1/12` or `12` | triplet eighth | 40               |
+| `3/16`         | dotted eighth  | 90               |
+| `3/8`          | dotted quarter | 180              |
 
 Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
+
+### Delay / chorus example
+
+```lisp
+(defn melody []
+  (seq :len 1/4  g f e d  c e  f e d c  b4 g4)
+  (rest 1/1))
+
+(score :tempo 120
+  (track :ch fm1
+    (param-set :vol 11)
+    (x (melody)))
+
+  (track :ch fm2
+    (param-set :vol 7)
+    (rest 3/16)
+    (x (melody))))
+```
 
 ---
 
