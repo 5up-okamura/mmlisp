@@ -7,7 +7,7 @@ const { parse } = require("./mmlisp_parser");
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
-const LABELLED_FORMS = new Set(["track", "block", "defn"]);
+const LABELLED_FORMS = new Set(["track", "defn"]);
 const KEYWORD_VALUE_KEYS = [
   ":author",
   ":title",

@@ -7,11 +7,12 @@
     { "include": "#string" },
     { "include": "#def-form" },
     { "include": "#defn-form" },
-    { "include": "#defblock-form" },
     { "include": "#structural-head" },
     { "include": "#note-head" },
     { "include": "#flow-head" },
     { "include": "#param-head" },
+    { "include": "#label-decl" },
+    { "include": "#voice-switch" },
     { "include": "#boolean" },
     { "include": "#keyword" },
     { "include": "#rest-shorthand" },
@@ -50,15 +51,8 @@
         "2": { "name": "entity.name.function.definition.mmlisp" }
       }
     },
-    "defblock-form": {
-      "match": "(?<=\\()\\s*(defblock)\\s+(:[a-zA-Z][a-zA-Z0-9_-]*)",
-      "captures": {
-        "1": { "name": "storage.type.mmlisp" },
-        "2": { "name": "entity.name.function.definition.mmlisp" }
-      }
-    },
     "structural-head": {
-      "match": "(?<=\\()\\s*(score|track|block)(?=[\\s)])",
+      "match": "(?<=\\()\\s*(score|track)(?=[\\s)])",
       "captures": {
         "1": { "name": "keyword.control.mmlisp" }
       }
@@ -70,15 +64,29 @@
       }
     },
     "flow-head": {
-      "match": "(?<=\\()\\s*(marker|jump|loop-begin|loop-end|tempo)(?=[\\s)])",
+      "match": "(?<=\\()\\s*(goto|x)(?=[\\s)])",
       "captures": {
         "1": { "name": "keyword.other.control-flow.mmlisp" }
       }
     },
     "param-head": {
-      "match": "(?<=\\()\\s*(param-set|param-add|ins)(?=[\\s)])",
+      "match": "(?<=\\()\\s*(param-set|param-add)(?=[\\s)])",
       "captures": {
         "1": { "name": "support.function.mmlisp" }
+      }
+    },
+    "label-decl": {
+      "match": "(#)([a-zA-Z][a-zA-Z0-9_-]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.mmlisp" },
+        "2": { "name": "entity.name.tag.mmlisp" }
+      }
+    },
+    "voice-switch": {
+      "match": "(@)([a-zA-Z][a-zA-Z0-9_-]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.variable.mmlisp" },
+        "2": { "name": "variable.language.mmlisp" }
       }
     },
     "boolean": {
