@@ -2,7 +2,7 @@
 
 Document status: frozen
 Started: 2026-04-13
-Frozen: 2026-04-24 (tag: v0.2-freeze at f730579)
+Frozen: 2026-04-22 (tag: v0.2-freeze at e098156)
 
 This document captures decisions and open questions for v0.2, based on design
 discussions following the v0.1 freeze (tag: v0.1-candidate at b61eb11).
