@@ -98,9 +98,8 @@ Done (confirmed implemented, not yet removed from backlog):
 
 Active:
 
-1. Resolve open questions in docs/spec-v0.2-draft.md §2 before implementing
-2. Freeze IR-to-GMB opcode table
-3. Begin MMLispDRV implementation (Phase 3)
+1. Freeze IR-to-GMB opcode table
+2. Begin MMLispDRV implementation (Phase 3)
 
 ---
 

@@ -422,25 +422,20 @@ Built-in option keywords (`:oct`, `:len`, `:gate`, `:ch`, `:role`, `:fm`,
 
 ## 2. Open Questions
 
-### 2.1 Drum track — 1-channel multi-timbre
+### ~~2.1 Drum track — 1-channel multi-timbre~~ → resolved
 
-PSG noise and FM3 independent-operator mode both allow multiple timbres on
-one channel. Design for authoring multi-timbre drum tracks on a single channel:
+`@voice` switching (`@bd`, `@sd`, `@hh`, …) handles multi-timbre on a single
+channel. Each `@name` atom emits `PSG_VOICE` before the note, switching the
+envelope inline. No new mechanism is needed for v0.3.
 
-**PSG noise approach:**
-`:noise-mode` parameter target to switch between periodic/white noise and clock
-rates between hits, combined with `@voice` for envelope switching.
+FM3 independent-operator mode remains out of scope. See §3.
 
-**FM3 independent-operator mode:**
-Out of scope for v0.3. See §3.
+### ~~2.2 `shuffle-base` and polyrhythm~~ → resolved
 
-No decision yet. Requires driver design input before spec can be written.
-
-### 2.2 `shuffle-base` and polyrhythm
-
-When `:shuffle-base` differs between tracks (e.g. melody swings 8ths, drums
-swing 16ths), tick values diverge from straight alignment. Behavior at loop
-boundaries and label positions needs specification.
+Each track maintains its own independent `subBeatParity` counter. Tracks with
+different `:shuffle-base` values operate on separate tick timelines and require
+no cross-track synchronization. Loop boundaries are respected per-track; the
+driver plays all tracks in global tick order regardless of shuffle alignment.
 
 ---
 
