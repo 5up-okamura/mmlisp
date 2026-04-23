@@ -86,6 +86,15 @@ Phase 3 entry condition:
 - Example game-scene mappings for interactive music
 - Documentation and migration notes for v0.2
 
+## Language Version Status
+
+| Version | Status  | Tag               | Themes                                          |
+| ------- | ------- | ----------------- | ----------------------------------------------- |
+| v0.1    | frozen  | v0.1-candidate    | Core language, IR, GMB format                   |
+| v0.2    | frozen  | v0.2-freeze       | FM/PSG voices, modulator, UI, source map        |
+| v0.3    | frozen  | v0.3-freeze       | seq, gate, shuffle, track append, @voice, v+/v- |
+| v0.4    | design-in-progress | —      | FM3 OP mode, CSM, DAC, pitch env, PSG noise     |
+
 ## Backlog
 
 Done (confirmed implemented, not yet removed from backlog):
