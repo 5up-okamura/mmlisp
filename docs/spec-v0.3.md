@@ -1,8 +1,9 @@
 # MMLisp v0.3 Design Notes
 
-Document status: design-complete
+Document status: frozen
 Started: 2026-04-22
 Finalized: 2026-04-22
+Frozen: 2026-04-24 (tag: v0.3-freeze at c3bdc72)
 
 This document captures decisions and open questions for v0.3, based on design
 discussions following the v0.2 implementation (2026-04-22).
