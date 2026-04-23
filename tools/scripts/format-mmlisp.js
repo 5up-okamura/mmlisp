@@ -7,7 +7,7 @@ const { parse } = require("./mmlisp_parser");
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
-const LABELLED_FORMS = new Set(["track", "phrase", "defn"]);
+const LABELLED_FORMS = new Set(["track", "block", "defn"]);
 const KEYWORD_VALUE_KEYS = [
   ":author",
   ":title",
@@ -17,6 +17,9 @@ const KEYWORD_VALUE_KEYS = [
   ":len",
   ":ch",
   ":id",
+  ":oct",
+  ":gate",
+  ":shuffle",
 ];
 const COLLAPSE_STRING_KEYS = new Set([":title", ":author"]);
 
@@ -132,6 +135,10 @@ function nodeToInline(node) {
 
   const joined = `${open}${parts.join(" ")}${close}`;
   if (open === "(" && joined.length > MAX_INLINE_LENGTH) {
+    // seq forms stay on one line regardless of length
+    if (parts.length > 0 && parts[0] === "seq") {
+      return joined;
+    }
     return null;
   }
   return joined;
