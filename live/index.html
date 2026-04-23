@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MMLisp YM2612 Player</title>
+  <title>MMLisp authoring environment</title>
   <link rel="icon" href="data:,">
   <!-- CodeMirror 6 -->
-  <link rel="stylesheet" href="https://esm.sh/@codemirror/view@6/dist/index.css">
+  <link rel="stylesheet" href="https://unpkg.com/@codemirror/view@6/dist/index.css">
   <style>
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -1115,11 +1115,16 @@
       }
       opGridEl.appendChild(col);
     }
+    syncParamUI(); // initialize sliders and op role colors on startup
 
     // ---- sync slider display from player state ----
     function syncParamUI() {
-      if (!player) return;
-      const regs = player.getChRegs(selectedCh);
+      const regs = player
+        ? player.getChRegs(selectedCh)
+        : { algorithm: 0, feedback: 0, lfoRate: 0, ams: 0, fms: 0,
+            ops: Array.from({ length: 4 }, () => ({
+              tl:0, ar:0, dr:0, sl:0, d2r:0, rr:0, mul:0, dt:0, rs:0, ssg:0, amen:0
+            })) };
 
       // Channel level
       setSlider('sl-alg', 'val-alg', regs.algorithm);
