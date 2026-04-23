@@ -3,7 +3,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parse } = require("./mmlisp_parser");
+
+let parse; // assigned in main() via dynamic import
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
@@ -408,7 +409,8 @@ function parseArgs(argv) {
   return { files, check, stdout };
 }
 
-function main() {
+async function main() {
+  ({ parse } = await import("../../live/src/mmlisp-parser.js"));
   const { files, check, stdout } = parseArgs(process.argv.slice(2));
   let changed = false;
 
@@ -437,9 +439,7 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  process.stderr.write(`${error.message}\n`);
+main().catch((err) => {
+  process.stderr.write(`${err.message}\n`);
   process.exit(1);
-}
+});

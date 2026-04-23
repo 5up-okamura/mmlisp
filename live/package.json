@@ -2,6 +2,7 @@
   "name": "mmlisp-web-authoring-environment",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "MMLisp Live — web authoring environment",
   "scripts": {
     "serve": "npx --yes serve .. --cors -p 5173"

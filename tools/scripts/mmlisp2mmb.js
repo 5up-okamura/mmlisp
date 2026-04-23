@@ -12,7 +12,7 @@ const {
   i16le,
   alignBuffer,
   parsePitchToByte,
-} = require("./mmb_common");
+} = require("./mmb-common");
 
 function usage() {
   console.error(
