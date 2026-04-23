@@ -103,7 +103,7 @@ elements using Bresenham distribution (remainder spread to leading elements):
 (seq :len 1/4  c  (_ e)  f)            ; rest in subgroup OK
 ```
 
-Subgroup elements support bare note names, absolute pitches, and `_` (rest).
+Subgroup elements support bare note names and `_` (rest).
 The current `:len` is restored after the subgroup; `:oct` changes within the subgroup persist.
 
 ### 1.4 Cascaded default state: track → seq → note
@@ -115,7 +115,8 @@ effect until the scope ends:
 score :tempo
   track :ch :role :oct :len :gate :carry :shuffle
     seq  :oct :len :gate
-      note (no inline length; uses current :len)
+      note[N[.]]  per-note length (denominator + optional dot; one note only)
+      note        (no inline length; uses current :len)
 ```
 
 Example:
@@ -342,19 +343,31 @@ Voice switching uses a bare `@name` atom in both track body and `seq` context:
 `@name` is tokenized as a single atom. The compiler detects the `@` prefix to
 distinguish from block references and note names.
 
-### 1.13 Absolute pitch — no `:` prefix
+### 1.13 Per-note length suffix
 
-Absolute pitch is written without `:` prefix. The tokenizer reads `c4`, `f+3`,
-`b-5` as single atoms; the compiler matches `/^[a-g][+-]?[0-8]$/` to identify
-them as absolute pitches.
+A note may carry an inline length: a denominator integer optionally followed
+by `.` for dotted value. The compiler matches `/^[a-g][+\-]?\d+\.?$/` —
+the trailing number is the length denominator, not the octave.
 
 ```lisp
-(seq c d e)            ; relative: octave from current state
-(seq c4 d4 e4)         ; absolute: octave pinned
-(seq :oct 4  c e  f+3  a)  ; mixed: f+3 is absolute, others relative
+(seq c4 e8 g8 c4)        ; quarter eighth eighth quarter
+(seq c4. e8 g8 c2)       ; dotted quarter, eighth, eighth, half
+(seq :len 1/8  c e4 g e) ; e4 overrides for that note only; c/g/e use :len
 ```
 
-Current octave state is **not** updated by absolute pitch atoms.
+The per-note length applies to that note only and does **not** update the
+persistent `:len` state. Octave is still controlled by `:oct`, `>`, and `<`.
+
+**`:len` dotted shorthand:** the same `N.` syntax is also valid for `:len`
+and `(rest N.)` forms:
+
+```lisp
+(seq :len 4.  c e g c)    ; all notes dotted quarter
+(rest 8.)                 ; dotted eighth rest
+```
+
+**IR impact:** none — the per-note length expands to the same tick count as
+the equivalent `n/d` fraction before IR emission.
 
 ### 1.14 Naming conventions
 

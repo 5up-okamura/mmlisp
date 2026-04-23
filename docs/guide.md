@@ -49,43 +49,51 @@ Note names are lowercase only. Accidentals use `+` (sharp) and `-` (flat):
 
 Octave is set with `:oct N` (range 0–8, default 4).
 
-### Absolute pitch
+### Per-note length
 
-Append an octave number to a note name to pin it to a specific octave:
+Append a length denominator (and optional dot) directly to a note:
 
 ```lisp
-(seq :oct 4 c e f+3 a)
+(seq c4 e8 g8 c4)       ; quarter, eighth, eighth, quarter
+(seq c4. e8 g8 c2)      ; dotted quarter, eighth, eighth, half
 ```
 
-`f+3` plays F♯ in octave 3. The current octave is **not** updated — `a` after it still plays in octave 4.
+The per-note length applies to that note only and does **not** update the persistent `:len`.
 
 ---
 
 ## 4. Note Lengths
 
-`:len` accepts fraction (`n/d`) or denominator-only shorthand (`n/d` where numerator is 1 can be written as just `d`):
+`:len` accepts a fraction (`n/d`), denominator-only shorthand (`4` = `1/4`), or dotted shorthand (`4.` = dotted quarter = `3/8`):
 
 | Written        | Duration       | Ticks (PPQN=120) |
 | -------------- | -------------- | ---------------- |
 | `2/1`          | double whole   | 960              |
 | `1/1` or `1`   | whole note     | 480              |
 | `1/4` or `4`   | quarter note   | 120              |
+| `4.`           | dotted quarter | 180              |
 | `1/8` or `8`   | eighth note    | 60               |
+| `8.`           | dotted eighth  | 90               |
 | `1/12` or `12` | triplet eighth | 40               |
-| `3/16`         | dotted eighth  | 90               |
-| `3/8`          | dotted quarter | 180              |
 
 Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 
 ### Delay / chorus example
 
 ```lisp
-(defn melody [] (seq :len 1/4 g f e d c e f e d c b4 g4) (rest 1/1))
+(defn melody []
+  (seq g4 f4 e4 d4  c4 e4  f4 e4 d4 c4  b8 g8)
+  (rest 1))
 
 (score :tempo 120
-  (track :ch fm1 (param-set :vol 11) (x (melody)))
-  (track :ch fm2 (param-set :vol 7) (rest 3/16) (x (melody)))
-)
+  (track :ch fm1
+    (param-set :vol 11)
+    (x (melody)))
+
+  (track :ch fm2
+    (param-set :vol 7)
+    (rest 8.)                 ; 90 ticks offset
+    (x (melody))))
 ```
 
 ---
@@ -102,6 +110,7 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 | ----------- | --------------------------------------------------- | ---------- |
 | `:oct N`    | Set octave (0–8)                                    | persistent |
 | `:len val`  | Set step length                                     | persistent |
+| `c4` `c8.`  | Per-note length suffix (denominator + optional `.`) | one note   |
 | `:gate val` | Set gate (ratio `0.0`–`1.0` or absolute ticks int)  | persistent |
 | `@name`     | Switch voice (defined with `def`)                   | persistent |
 | `>`         | Octave up by 1                                      | persistent |
