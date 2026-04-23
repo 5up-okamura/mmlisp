@@ -1,6 +1,6 @@
 # MMLisp v0.2 Design Notes
 
-Document status: design-in-progress
+Document status: design-complete
 Started: 2026-04-13
 
 This document captures decisions and open questions for v0.2, based on design
@@ -405,7 +405,7 @@ See §1.7 for full specification.
 Default: reset on `NOTE_ON` (carry=false). `:carry true` suppresses reset.
 Priority: `phraseCarry ?? trackCarry ?? false`. See §1.9.
 
-### 2.5 FM patch vector — column order confirmation
+### ~~2.5 FM patch vector — column order confirmation~~ → resolved
 
 Column order `[AR DR SR RR SL TL KS ML DT (SSG) (AMen)]` confirmed.
 DT2 (second detune) is out of scope for v0.2 — omitted from vector.
@@ -415,13 +415,10 @@ DT2 (second detune) is out of scope for v0.2 — omitted from vector.
 Warning `W_SAME_CH_BGM`. IR is still emitted to allow incremental authoring.
 See §1.3.
 
-### 2.7 PWA UI layout
+### ~~2.7 PWA UI layout~~ → resolved
 
-Proposed top bar: `File ▾ | Examples ▾ | [● Bar:Beat BPM] | [⌘↵ Play/Pause] [⌘. Stop] | Help ▾`
-
-- FM parameter panel as slide-in drawer (not always visible)
-- CodeMirror `lineNumbers()` extension
-- Remove decorative panel borders/titles from current layout
+Top bar implemented. FM parameter panel as slide-in drawer. CodeMirror
+`lineNumbers()` extension added.
 
 ### 2.8 `defn` — compile-time macro vs. runtime subroutine
 
