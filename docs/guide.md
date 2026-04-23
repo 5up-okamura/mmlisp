@@ -7,9 +7,7 @@ A reference for everything you need to write music in MMLisp.
 ## 1. Minimal Score
 
 ```lisp
-(score
-  (track :ch fm1
-    (seq c e g c)))
+(score (track :ch fm1 (seq c e g c)))
 ```
 
 - `score` — root form wrapping the entire piece
@@ -56,7 +54,7 @@ Octave is set with `:oct N` (range 0–8, default 4).
 Append an octave number to a note name to pin it to a specific octave:
 
 ```lisp
-(seq :oct 4  c e  f+3  a)
+(seq :oct 4 c e f+3 a)
 ```
 
 `f+3` plays F♯ in octave 3. The current octave is **not** updated — `a` after it still plays in octave 4.
@@ -82,19 +80,12 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 ### Delay / chorus example
 
 ```lisp
-(defn melody []
-  (seq :len 1/4  g f e d  c e  f e d c  b4 g4)
-  (rest 1/1))
+(defn melody [] (seq :len 1/4 g f e d c e f e d c b4 g4) (rest 1/1))
 
 (score :tempo 120
-  (track :ch fm1
-    (param-set :vol 11)
-    (x (melody)))
-
-  (track :ch fm2
-    (param-set :vol 7)
-    (rest 3/16)
-    (x (melody))))
+  (track :ch fm1 (param-set :vol 11) (x (melody)))
+  (track :ch fm2 (param-set :vol 7) (rest 3/16) (x (melody)))
+)
 ```
 
 ---
@@ -102,9 +93,7 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 ## 5. seq Syntax
 
 ```lisp
-(seq :oct 4 :len 1/8  c e g c
-               :len 1/4  e
-               :oct 5    c)
+(seq :oct 4 :len 1/8 c e g c :len 1/4 e :oct 5 c)
 ```
 
 ### Modifiers
@@ -124,28 +113,28 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 ### Rest
 
 ```lisp
-(seq :len 1/8  c _ e _ g _ c _)
+(seq :len 1/8 c _ e _ g _ c _)
 ```
 
 ### Tie
 
 ```lisp
-(seq :len 1/4  c ~ ~)       ; quarter × 3 = dotted half
-(seq :len 1/4  c ~ 1/8)     ; quarter + eighth
+(seq :len 1/4 c ~ ~)       ; quarter × 3 = dotted half
+(seq :len 1/4 c ~ 1/8)     ; quarter + eighth
 ```
 
 ### Octave shift
 
 ```lisp
-(seq :oct 3  c d e f  > c d e f)   ; > moves to oct 4
-(seq :oct 4  c d e f  < c d e f)   ; < moves to oct 3
+(seq :oct 3 c d e f > c d e f)   ; > moves to oct 4
+(seq :oct 4 c d e f < c d e f)   ; < moves to oct 3
 ```
 
 ### Subgroups (tuplets)
 
 ```lisp
-(seq :len 1/4  c (e g a) f)       ; triplet (40 ticks each)
-(seq :len 1/4  (c d e f g a b))   ; septuplet (Bresenham distribution)
+(seq :len 1/4 c (e g a) f)       ; triplet (40 ticks each)
+(seq :len 1/4 (c d e f g a b))   ; septuplet (Bresenham distribution)
 ```
 
 ---
@@ -172,7 +161,6 @@ Options are placed after the track name:
 
 ```lisp
 (def pluck :psg [15 13 11 9 7 5 3 1 0])
-
 (def pad :psg [:seq 15 :loop 14 13 :release 3])
 ```
 
@@ -182,11 +170,13 @@ Bare vector = volume envelope steps (0–15, one per tick). `:loop` marks the lo
 
 ```lisp
 (def brass :fm
-  (7 0 0 3)                          ; (alg fb [ams [fms]])
-  (31 0 5 3 7 0 0 0 0 0 0)           ; op1: AR DR SR RR SL TL KS ML DT SSG AMEN
-  (31 0 5 3 7 0 0 0 0 0 0)           ; op2
-  (31 0 5 3 7 0 0 0 0 0 0)           ; op3
-  (31 0 5 3 7 0 0 0 0 0 0))          ; op4
+  ; alg fb ams fms
+  [7 0 0 3]
+  ; AR DR SR RR SL TL KS ML DT SSG AMEN
+  [31  0  5  3  7  0  0  0  0  0  0]
+  [31  0  5  3  7  0  0  0  0  0  0]
+  [31  0  5  3  7  0  0  0  0  0  0]
+  [31  0  5  3  7  0  0  0  0  0  0])
 ```
 
 Channel vector: `(alg fb [ams [fms]])` — `ams` and `fms` are optional.  
