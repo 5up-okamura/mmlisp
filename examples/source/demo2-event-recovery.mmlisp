@@ -16,21 +16,19 @@
   :tempo 132
 
   (track :ch fm1
-    :oct 4
-    :len 1/8
 
-    (marker :calm)
+    #calm
 
     (seq :oct 3 a > c e c < a > c e c)
     (seq :oct 3 g > b d b < g _ g _)
 
-    (loop-begin :stress)
-    (param-add :fm-tl1 -3)
-    (param-add :tempo-scale +2)
-    (seq :e4 :g4 :a4 :g4 :e4 :c4 :b3 :a3)
-    (loop-end :stress 4)
+    (x 4
+      (param-add :fm-tl1 -3)
+      (param-add :tempo-scale +2)
+      (seq e4 g4 a4 g4 e4 c4 b3 a3)
+    )
 
-    (marker :recover)
+    #recover
     (param-set :fm-tl1 40)
     (param-set :tempo-scale 0)
 
@@ -39,45 +37,39 @@
     (rest 1/4)
     (seq :len 1/4 a)
 
-    (jump :calm)
+    (goto calm)
   )
 
   (track :ch psg1
     :oct 2
     :len 1/2
 
-    (marker :calm)
-    (ins pedal)
+    #calm
+    @pedal
     (seq a a a a)
     (seq g g g g)
 
-    (loop-begin :stress-b)
-    (ins tense-att)
-    (seq :len 1/4 :oct 3 e g a e)
-    (loop-end :stress-b 4)
+    (x 4 @tense-att (seq :len 1/4 :oct 3 e g a e))
 
-    (ins pedal)
-    (seq :oct 2 a a a a a)
+    @pedal
+    (seq a a a a a)
     (rest 1/4)
     (seq :len 1/4 a)
 
-    (jump :calm)
+    (goto calm)
   )
 
   (track :ch noise
-    :oct 4
     :len 1/4
 
-    (marker :calm)
-    (ins hit-env)
+    #calm
+    @hit-env
     (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
 
-    (loop-begin :stress-n)
-    (seq c c c c)
-    (loop-end :stress-n 4)
+    (x 4 (seq c c c c))
 
     (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
 
-    (jump :calm)
+    (goto calm)
   )
 )

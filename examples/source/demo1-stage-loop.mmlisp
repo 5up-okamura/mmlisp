@@ -13,71 +13,63 @@
 (score :id :demo1-stage-loop
   :title "Demo 1 Stage Loop"
   :author "okamura"
-  :tempo 120
+  :tempo 132
 
   (track :ch fm1
-    :oct 4
-    :len 1/8
 
-    (marker :intro)
+    #intro
 
     (param-set :fm-fb fb-init)
 
-    (loop-begin :a)
-    (seq c e g e c e g e)
-    (seq :oct 3 a > c e c < a > c e c)
-    (param-add :fm-fb +1)
-    (loop-end :a 2)
+    (x 2
+      (seq c e g e c e g e)
+      (seq :oct 3 a > c e c < a > c e c)
+      (param-add :fm-fb +1)
+    )
+
     (param-set :fm-fb fb-init)
 
-    (seq :len 1/8 :f3 :a3 :c4 :a3 :f3 :a3 :c4 :a3)
-    (seq :len 1/4 :g3 :len 1/12 :a3 :b3 :a3 :len 1/4 :c4)
+    (seq f3 a3 c4 a3 f3 a3 c4 a3)
+    (seq :len 1/4 g3 :len 1/12 a3 b3 a3 :len 1/4 c4)
     (rest 1/4)
 
-    (jump :intro)
+    (goto intro)
   )
 
   (track :ch psg1
     :oct 2
     :len 1/2
 
-    (marker :intro)
-    (ins sustain)
-    (loop-begin :pa)
-    (seq c c c c)
-    (seq :oct 2 a a a a)
-    (loop-end :pa 2)
-    (seq :oct 2 f f f f)
-    (seq :oct 2 g g g g)
-    (jump :intro)
+    #intro
+    @sustain
+    (x 2 (seq c c c c) (seq a a a a))
+
+    (seq f f f f)
+    (seq g g g g)
+    (goto intro)
   )
 
   (track :ch psg2
     :oct 5
-    :len 1/8
 
-    (marker :intro)
-    (ins pluck)
-    (loop-begin :pb)
-    (seq e _ g _ e _ g _)
-    (seq :oct 4 c _ e _ c _ e _)
-    (loop-end :pb 2)
+    #intro
+    @pluck
+    (x 2 (seq e _ g _ e _ g _) (seq :oct 4 c _ e _ c _ e _))
+
     (seq :oct 4 a _ :oct 5 c _ :oct 4 a _ :oct 5 c _)
     (seq :len 1/4 :oct 4 b :oct 5 d)
     (rest 1/2)
-    (jump :intro)
+    (goto intro)
   )
 
   (track :ch noise
-    :oct 4
     :len 1/4
 
-    (marker :intro)
-    (ins kick-env)
-    (loop-begin :pn)
-    (seq _ c _ c _ c _ c _ c _ c _ c _ c)
-    (loop-end :pn 3)
+    #intro
+    @kick-env
+    (x 3 (seq _ c _ c _ c _ c _ c _ c _ c _ c))
+
     (seq _ c _ c _ c _ c)
-    (jump :intro)
+    (goto intro)
   )
 )

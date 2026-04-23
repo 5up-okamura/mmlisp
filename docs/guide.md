@@ -53,13 +53,13 @@ Octave is set with `:oct N` (range 0–8, default 4).
 
 ### Absolute pitch
 
-Prefix a note with `:` to pin it to a specific octave:
+Append an octave number to a note name to pin it to a specific octave:
 
 ```lisp
-(seq :oct 4  c e  :f+3  a)
+(seq :oct 4  c e  f+3  a)
 ```
 
-`:f+3` plays F♯ in octave 3. The current octave is **not** updated — `a` after it still plays in octave 4.
+`f+3` plays F♯ in octave 3. The current octave is **not** updated — `a` after it still plays in octave 4.
 
 ---
 
@@ -98,7 +98,7 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 | `:oct N`    | Set octave (0–8)                                    | persistent |
 | `:len val`  | Set step length                                     | persistent |
 | `:gate val` | Set gate (ratio `0.0`–`1.0` or absolute ticks int)  | persistent |
-| `:ins name` | Switch voice (defined with `def`)                   | persistent |
+| `@name`     | Switch voice (defined with `def`)                   | persistent |
 | `>`         | Octave up by 1                                      | persistent |
 | `<`         | Octave down by 1                                    | persistent |
 | `_`         | Rest for the current `:len`                         | one step   |
@@ -178,15 +178,15 @@ Operator vector: `(AR DR SR RR SL TL KS ML DT [SSG [AMEN]])` — `SSG` and `AMEN
 
 ### Using a voice
 
-Set at track start with `ins`:
+Set at track start with `@name`:
 
 ```lisp
 (track :ch psg1
-  (ins pad)
+  @pad
   (seq :oct 2  c c g g))
 ```
 
-Switch mid-seq with `:ins`:
+Switch mid-seq with `@name`:
 
 ```lisp
 (def bd :psg [15 14 12 9 5 0])
@@ -194,74 +194,87 @@ Switch mid-seq with `:ins`:
 (def hh :psg [15 8 0])
 
 (track :ch psg1 :len 1/8
-  (seq :ins bd c  :ins hh c  :ins sd c  :ins hh c
-       :ins bd c  :ins hh c  :ins sd c  :ins hh c))
+  (seq @bd c  @hh c  @sd c  @hh c
+       @bd c  @hh c  @sd c  @hh c))
 ```
 
 ---
 
 ## 8. Loops
 
-### Finite loop — shorthand
+### Finite loop
 
 ```lisp
-(x 4  (seq c e g e))   ; repeat 4 times
+(x 4 (seq c e g e))    ; repeat 4 times
 ```
 
-### Finite loop — explicit
+Compiles to `LOOP_BEGIN` / body / `LOOP_END`. Multiple body forms are allowed:
 
-```lisp
-(loop-begin :a)
-(seq c e g e)
-(loop-end :a 4)
-```
-
-Both forms compile to `LOOP_BEGIN` / `LOOP_END` IR events.
+````lisp
+(x 4
+  (seq c e g e)
+  (seq f g a g))
 
 ### Infinite loop
 
 ```lisp
-(marker :top)
+#top
 (seq c e g e)
-(jump :top)
+(goto top)             ; loops forever
+````
+
+`#top` is a bare atom (label declaration). `(goto top)` references it without `#`.
+
+### Finite loop with explicit label
+
+```lisp
+#verse
+(seq c e g e)
+(goto verse 4)         ; repeat 4 times, then fall through
 ```
 
-`jump` takes only a marker name — no count argument. Infinite repeat is the only option.
+### `x` without count — infinite shorthand
+
+```lisp
+(x (seq c e g e))      ; no leading integer = infinite loop
+```
 
 ---
 
 ## 9. Phrase Reuse
 
-### block — named phrase
+### def — named phrase
 
-A `block` containing a single `seq` is equivalent to a named seq:
+Use `def` with a `seq` body to give a phrase a name:
 
 ```lisp
-(block :riff
-  (seq c e g e))
+(def riff (seq c e g e))
+(def bridge (seq :oct 5 :len 1/4  f g a g))
 
 (score
   (track :ch fm1 :oct 4 :len 1/8
-    :riff
-    :riff))
+    riff
+    riff
+    bridge))
 ```
 
-A `block` can also declare default overrides for its contents:
+A phrase `def` can contain multiple forms:
 
 ```lisp
-(block :bridge :oct 5 :len 1/4
-  (seq f g a g))
+(def fill
+  (seq :oct 4 :len 1/8  c e g e)
+  (seq :oct 4 :len 1/4  f g))
 ```
 
-When no options are declared, the calling track's `:oct` / `:len` are inherited.
+The calling track's `:oct` / `:len` are inherited when the `seq` inside the `def` does not declare them.
 
-### defn — parametric template
+### defn — parametric phrase
 
 ```lisp
 (defn arp [root]
   (seq :oct 4  root  > root  < root))
 
-(track :A :ch fm1 :len 1/8
+(track :ch fm1 :len 1/8
   (arp c)
   (arp g))
 ```
@@ -299,10 +312,11 @@ A track with `:role modulator` runs on the same channel as a `bgm` track and fir
 
 ```lisp
 (track :ch fm1 :role modulator
-  (x 4  (param-set :FM_FMS 3)
-        (rest 1/4)
-        (param-set :FM_FMS 0)
-        (rest 1/4)))
+  (x
+    (param-set :FM_FMS 3)
+    (rest 1/4)
+    (param-set :FM_FMS 0)
+    (rest 1/4)))
 ```
 
 By default, a modulator track resets to its start position each time the primary track emits a NOTE_ON. Set `:carry true` to prevent the reset.

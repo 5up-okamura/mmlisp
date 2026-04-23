@@ -50,8 +50,6 @@ const TRACK_OPTION_KEYS = new Set([
   ":write",
 ]);
 
-const BLOCK_OPTION_KEYS = new Set([":oct", ":len", ":gate"]);
-
 function atomValue(node) {
   if (!node) return null;
   if (node.kind === "atom" || node.kind === "string") return node.value;
@@ -123,11 +121,11 @@ function resolveShuffleTicks(nominalTicks, trackState) {
 }
 
 function isNoteAtom(val) {
-  return typeof val === "string" && /^[a-g][#b]?$/.test(val);
+  return typeof val === "string" && /^[a-g][+\-]?$/.test(val);
 }
 
 function isAbsPitchAtom(val) {
-  return typeof val === "string" && /^:[a-g][#b]?\d$/.test(val);
+  return typeof val === "string" && /^[a-g][+\-]?\d$/.test(val);
 }
 
 function canonicalTarget(symbol) {
@@ -304,20 +302,8 @@ function nodeSrc(node) {
   return { line: node.line, column: node.column };
 }
 
-function parseSingleChannel(channelNode, diagnostics, trackName) {
+function parseSingleChannel(channelNode) {
   if (!channelNode) return "fm1";
-  if (channelNode.kind === "list") {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_CH_ARRAY_REMOVED",
-      "Multi-channel :ch array syntax is removed in v0.3; use a single channel name",
-      nodeSrc(channelNode),
-      trackName,
-    );
-    const first = atomValue(channelNode.items[0]);
-    return first ? first.replace(/^:/, "").toLowerCase() : "fm1";
-  }
   const val = atomValue(channelNode);
   return val ? val.replace(/^:/, "").toLowerCase() : "fm1";
 }
@@ -432,7 +418,7 @@ function compileSeq(
             });
             trackState.tick += slotTicks;
           } else if (isAbsPitchAtom(evVal)) {
-            const pitch = evVal.slice(1);
+            const pitch = evVal;
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
@@ -533,7 +519,7 @@ function compileSeq(
     }
 
     if (isAbsPitchAtom(val)) {
-      const pitch = val.slice(1);
+      const pitch = val;
       const ticks = resolveShuffleTicks(currentLen, trackState);
       events.push({
         tick: trackState.tick,
@@ -546,6 +532,31 @@ function compileSeq(
       continue;
     }
 
+    // ── @voice — inline voice switch ──────────────────────────────────
+    if (val && val.startsWith("@")) {
+      const voiceName = val.slice(1);
+      if (voiceName && typedDefs?.has(voiceName)) {
+        emitVoice(
+          typedDefs.get(voiceName),
+          trackState.tick,
+          events,
+          nodeSrc(item),
+        );
+      } else if (voiceName) {
+        pushDiag(
+          diagnostics,
+          "warning",
+          "W_VOICE_UNKNOWN",
+          `seq @${voiceName}: unknown voice name`,
+          nodeSrc(item),
+          trackName,
+        );
+      }
+      i += 1;
+      continue;
+    }
+
+    // ── Bare note name: c, d, e, f, g, a, b (+ optional + or -) ──────
     if (isNoteAtom(val)) {
       const pitch = val + currentOct;
       const ticks = resolveShuffleTicks(currentLen, trackState);
@@ -560,33 +571,6 @@ function compileSeq(
       continue;
     }
 
-    // ── :ins voiceName (inline voice switch) ─────────────────────────
-    if (val === ":ins") {
-      i += 1;
-      if (i < seqNode.items.length) {
-        const voiceName = atomValue(seqNode.items[i])?.replace(/^:/, "");
-        if (voiceName && typedDefs?.has(voiceName)) {
-          emitVoice(
-            typedDefs.get(voiceName),
-            trackState.tick,
-            events,
-            nodeSrc(item),
-          );
-        } else if (voiceName) {
-          pushDiag(
-            diagnostics,
-            "warning",
-            "W_INS_UNKNOWN",
-            `seq :ins: unknown voice name '${voiceName}'`,
-            nodeSrc(item),
-            trackName,
-          );
-        }
-        i += 1;
-      }
-      continue;
-    }
-
     i += 1;
   }
 }
@@ -598,24 +582,49 @@ function compileTrackBodyItems(
   diagnostics,
   trackName,
   typedDefs,
-  blocks,
   loopCounter,
 ) {
   for (const node of items) {
     if (node && node.kind === "atom") {
       const val = node.value;
-      if (val.startsWith(":")) {
-        compileBlockRef(
-          val.slice(1),
-          node,
-          trackState,
-          events,
-          diagnostics,
-          trackName,
-          typedDefs,
-          blocks,
-          loopCounter,
-        );
+      if (val.startsWith("#")) {
+        const id = val.slice(1);
+        if (!id) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_LABEL_EMPTY",
+            "label name must not be empty",
+            nodeSrc(node),
+            trackName,
+          );
+        } else {
+          events.push({
+            tick: trackState.tick,
+            cmd: "MARKER",
+            args: { id },
+            src: nodeSrc(node),
+          });
+        }
+      } else if (val.startsWith("@")) {
+        const voiceName = val.slice(1);
+        if (voiceName && typedDefs?.has(voiceName)) {
+          emitVoice(
+            typedDefs.get(voiceName),
+            trackState.tick,
+            events,
+            nodeSrc(node),
+          );
+        } else if (voiceName) {
+          pushDiag(
+            diagnostics,
+            "warning",
+            "W_VOICE_UNKNOWN",
+            `@${voiceName}: unknown voice name`,
+            nodeSrc(node),
+            trackName,
+          );
+        }
       }
       continue;
     }
@@ -625,60 +634,113 @@ function compileTrackBodyItems(
     const head = atomValue(node.items[0]);
     if (!head) continue;
 
-    if (head === "phrase") {
-      pushDiag(
-        diagnostics,
-        "error",
-        "E_PHRASE_REMOVED",
-        "`phrase` is removed in v0.3; write note commands directly in the track body",
-        nodeSrc(node.items[0]),
-        trackName,
-      );
-      continue;
-    }
-
-    if (head === "note" || head === "notes") {
-      pushDiag(
-        diagnostics,
-        "error",
-        "E_NOTE_REMOVED",
-        `\`${head}\` is removed in v0.3; use \`seq\` with bare note names`,
-        nodeSrc(node.items[0]),
-        trackName,
-      );
-      continue;
-    }
-
     if (head === "seq") {
       compileSeq(node, trackState, events, diagnostics, trackName, typedDefs);
       continue;
     }
 
     if (head === "x") {
-      const count = parseIntLike(atomValue(node.items[1])) ?? 2;
+      const maybeCount = parseIntLike(atomValue(node.items[1]));
+      const bodyStart = maybeCount !== null ? 2 : 1;
       const loopId = `_x${loopCounter.count++}`;
-      events.push({
-        tick: trackState.tick,
-        cmd: "LOOP_BEGIN",
-        args: { id: loopId },
-        src: nodeSrc(node.items[0]),
-      });
-      compileTrackBodyItems(
-        node.items.slice(2),
-        trackState,
-        events,
-        diagnostics,
-        trackName,
-        typedDefs,
-        blocks,
-        loopCounter,
-      );
-      events.push({
-        tick: trackState.tick,
-        cmd: "LOOP_END",
-        args: { id: loopId, repeat: count },
-        src: nodeSrc(node.items[0]),
-      });
+      if (maybeCount !== null) {
+        events.push({
+          tick: trackState.tick,
+          cmd: "LOOP_BEGIN",
+          args: { id: loopId },
+          src: nodeSrc(node.items[0]),
+        });
+        compileTrackBodyItems(
+          node.items.slice(bodyStart),
+          trackState,
+          events,
+          diagnostics,
+          trackName,
+          typedDefs,
+          loopCounter,
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "LOOP_END",
+          args: { id: loopId, repeat: maybeCount },
+          src: nodeSrc(node.items[0]),
+        });
+      } else {
+        events.push({
+          tick: trackState.tick,
+          cmd: "MARKER",
+          args: { id: loopId },
+          src: nodeSrc(node.items[0]),
+        });
+        compileTrackBodyItems(
+          node.items.slice(bodyStart),
+          trackState,
+          events,
+          diagnostics,
+          trackName,
+          typedDefs,
+          loopCounter,
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "JUMP",
+          args: { to: loopId },
+          src: nodeSrc(node.items[0]),
+        });
+      }
+      continue;
+    }
+
+    if (head === "goto") {
+      const label = atomValue(node.items[1]);
+      if (!label) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_GOTO_NO_LABEL",
+          "goto requires a label",
+          nodeSrc(node.items[0]),
+          trackName,
+        );
+        continue;
+      }
+      const count = node.items[2]
+        ? parseIntLike(atomValue(node.items[2]))
+        : null;
+      if (count !== null) {
+        let markerIdx = -1;
+        for (let mi = events.length - 1; mi >= 0; mi--) {
+          if (events[mi].cmd === "MARKER" && events[mi].args.id === label) {
+            markerIdx = mi;
+            break;
+          }
+        }
+        if (markerIdx >= 0) {
+          events[markerIdx] = { ...events[markerIdx], cmd: "LOOP_BEGIN" };
+        } else {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_GOTO_LABEL_NOT_FOUND",
+            `goto: label '#${label}' not found before this point`,
+            nodeSrc(node.items[0]),
+            trackName,
+          );
+        }
+        events.push({
+          tick: trackState.tick,
+          cmd: "LOOP_END",
+          args: { id: label, repeat: count },
+          src: nodeSrc(node.items[0]),
+        });
+      } else {
+        events.push({
+          tick: trackState.tick,
+          cmd: "JUMP",
+          args: { to: label },
+          src: nodeSrc(node.items[0]),
+        });
+      }
       continue;
     }
 
@@ -722,28 +784,6 @@ function compileTrackBodyItems(
         src: nodeSrc(node.items[0]),
       });
       trackState.tick += length;
-      continue;
-    }
-
-    if (head === "marker") {
-      const id = atomValue(node.items[1]);
-      events.push({
-        tick: trackState.tick,
-        cmd: "MARKER",
-        args: { id: id ? id.replace(/^:/, "") : "unknown" },
-        src: nodeSrc(node.items[0]),
-      });
-      continue;
-    }
-
-    if (head === "jump") {
-      const target = atomValue(node.items[1]);
-      events.push({
-        tick: trackState.tick,
-        cmd: "JUMP",
-        args: { to: target ? target.replace(/^:/, "") : "unknown" },
-        src: nodeSrc(node.items[0]),
-      });
       continue;
     }
 
@@ -802,132 +842,17 @@ function compileTrackBodyItems(
       }
       continue;
     }
-
-    if (head === "loop-begin") {
-      const id = atomValue(node.items[1]);
-      events.push({
-        tick: trackState.tick,
-        cmd: "LOOP_BEGIN",
-        args: { id: id ? id.replace(/^:/, "") : "loop" },
-        src: nodeSrc(node.items[0]),
-      });
-      continue;
-    }
-
-    if (head === "loop-end") {
-      const id = atomValue(node.items[1]);
-      const repeat = parseIntLike(atomValue(node.items[2])) ?? 2;
-      events.push({
-        tick: trackState.tick,
-        cmd: "LOOP_END",
-        args: { id: id ? id.replace(/^:/, "") : "loop", repeat },
-        src: nodeSrc(node.items[0]),
-      });
-      continue;
-    }
-
-    if (head === "ins") {
-      const voiceName = atomValue(node.items[1])?.replace(/^:/, "");
-      if (voiceName && typedDefs?.has(voiceName)) {
-        emitVoice(
-          typedDefs.get(voiceName),
-          trackState.tick,
-          events,
-          nodeSrc(node.items[0]),
-        );
-      } else if (voiceName) {
-        pushDiag(
-          diagnostics,
-          "warning",
-          "W_INS_UNKNOWN",
-          `ins: unknown voice name '${voiceName}'`,
-          nodeSrc(node.items[0]),
-          trackName,
-        );
-      }
-      continue;
-    }
   }
-}
-
-function compileBlockRef(
-  blockName,
-  refNode,
-  trackState,
-  events,
-  diagnostics,
-  trackName,
-  typedDefs,
-  blocks,
-  loopCounter,
-) {
-  const block = blocks.get(blockName);
-  if (!block) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_BLOCK_UNKNOWN",
-      `Unknown block: '${blockName}'`,
-      nodeSrc(refNode),
-      trackName,
-    );
-    return;
-  }
-
-  const savedOct = trackState.defaultOct;
-  const savedLen = trackState.defaultLength;
-  const savedGate = trackState.defaultGate;
-
-  if (block.declaredOpts.has(":oct")) {
-    const v = parseIntLike(atomValue(block.declaredOpts.get(":oct")));
-    if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
-  }
-  if (block.declaredOpts.has(":len")) {
-    trackState.defaultLength = parseLengthToken(
-      atomValue(block.declaredOpts.get(":len")),
-      trackState.defaultLength,
-    );
-  }
-  if (block.declaredOpts.has(":gate")) {
-    trackState.defaultGate = parseGateSpec(
-      atomValue(block.declaredOpts.get(":gate")),
-    );
-  }
-
-  compileTrackBodyItems(
-    block.bodyItems,
-    trackState,
-    events,
-    diagnostics,
-    trackName,
-    typedDefs,
-    blocks,
-    loopCounter,
-  );
-
-  trackState.defaultOct = savedOct;
-  trackState.defaultLength = savedLen;
-  trackState.defaultGate = savedGate;
 }
 
 function validateTrack(track, diagnostics) {
   const markers = new Map();
   const pendingJumps = [];
-  const loopStack = [];
 
   for (const e of track.events) {
     if (e.cmd === "MARKER") {
       const id = e.args?.id;
-      if (!id || id === "unknown") {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_MARKER_ID",
-          "Marker id is missing or invalid",
-          e.src,
-          track.name,
-        );
-      } else if (markers.has(id)) {
+      if (markers.has(id)) {
         pushDiag(
           diagnostics,
           "error",
@@ -941,71 +866,8 @@ function validateTrack(track, diagnostics) {
       }
     }
     if (e.cmd === "JUMP") {
-      const to = e.args?.to;
-      if (!to || to === "unknown") {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_JUMP_TARGET",
-          "Jump target is missing or invalid",
-          e.src,
-          track.name,
-        );
-      } else {
-        pendingJumps.push(e);
-      }
+      pendingJumps.push(e);
     }
-    if (e.cmd === "LOOP_BEGIN") {
-      const id = e.args?.id;
-      if (!id) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_LOOP_ID",
-          "Loop begin id is missing or invalid",
-          e.src,
-          track.name,
-        );
-      }
-      loopStack.push({ id, src: e.src });
-    }
-    if (e.cmd === "LOOP_END") {
-      const id = e.args?.id;
-      if (loopStack.length === 0) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_LOOP_END_ORPHAN",
-          `Loop end has no matching begin: ${id || "unknown"}`,
-          e.src,
-          track.name,
-        );
-      } else {
-        const begin = loopStack.pop();
-        if (begin.id !== id) {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_LOOP_MISMATCH",
-            `Loop end id ${id || "unknown"} does not match begin id ${begin.id || "unknown"}`,
-            e.src,
-            track.name,
-          );
-        }
-      }
-    }
-  }
-
-  while (loopStack.length > 0) {
-    const begin = loopStack.pop();
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_LOOP_UNCLOSED",
-      `Loop begin is not closed: ${begin.id || "unknown"}`,
-      begin.src,
-      track.name,
-    );
   }
 
   for (const j of pendingJumps) {
@@ -1134,7 +996,6 @@ function collectDefs(roots, diagnostics) {
   const defs = new Map();
   const defns = new Map();
   const typedDefs = new Map();
-  const blocks = new Map();
   const remaining = [];
 
   for (const root of roots) {
@@ -1170,7 +1031,7 @@ function collectDefs(roots, diagnostics) {
         const parsed = parsePsgVector(root.items[3], name, diagnostics, src);
         typedDefs.set(name, { tag: "psg", envelope: parsed, src });
       } else {
-        defs.set(name, root.items[2]);
+        defs.set(name, root.items.slice(2));
       }
       continue;
     }
@@ -1212,50 +1073,10 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
-    if (head === "block") {
-      const nameNode = root.items[1];
-      const rawName = atomValue(nameNode);
-      if (!rawName) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_BLOCK_NAME",
-          "block name must be a :keyword symbol",
-          nodeSrc(root),
-          null,
-        );
-        continue;
-      }
-      const blockName = rawName.replace(/^:/, "");
-      const declaredOpts = new Map();
-      let i = 2;
-      while (i < root.items.length) {
-        const item = root.items[i];
-        const val = atomValue(item);
-        if (
-          val &&
-          item.kind === "atom" &&
-          BLOCK_OPTION_KEYS.has(val) &&
-          i + 1 < root.items.length
-        ) {
-          declaredOpts.set(val, root.items[i + 1]);
-          i += 2;
-        } else {
-          break;
-        }
-      }
-      blocks.set(blockName, {
-        declaredOpts,
-        bodyItems: root.items.slice(i),
-        src: nodeSrc(root),
-      });
-      continue;
-    }
-
     remaining.push(root);
   }
 
-  return { defs, defns, typedDefs, blocks, remaining };
+  return { defs, defns, typedDefs, remaining };
 }
 
 function substituteNode(node, bindings) {
@@ -1276,7 +1097,7 @@ function expandNode(node, defs, defns, depth) {
   if (depth > 16)
     throw new Error("Macro expansion depth exceeded (possible recursion)");
   if (node.kind === "atom" && defs.has(node.value))
-    return [{ ...defs.get(node.value) }];
+    return defs.get(node.value).map((n) => ({ ...n }));
   if (node.kind !== "list") return [node];
 
   const head = atomValue(node.items[0]);
@@ -1315,7 +1136,7 @@ function expandRoots(roots, defs, defns) {
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, defns, typedDefs, blocks, remaining } = collectDefs(
+  const { defs, defns, typedDefs, remaining } = collectDefs(
     parsed,
     diagnostics,
   );
@@ -1368,7 +1189,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       );
       continue;
     }
-    const channel = parseSingleChannel(channelNode, diagnostics, null);
+    const channel = parseSingleChannel(channelNode);
     const role = parseTrackRole(options, diagnostics, null);
     const trackKey = `${channel}::${role}`;
 
@@ -1477,7 +1298,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       diagnostics,
       trackKey,
       typedDefs,
-      blocks,
       loopCounter,
     );
   }

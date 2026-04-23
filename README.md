@@ -42,8 +42,10 @@ Implemented toolchain:
 
 ## Documents
 
+- docs/guide.md — composer's guide (language reference for authors)
 - docs/spec-v0.1.md — language and system specification (v0.1)
-- docs/spec-v0.2.md — v0.2 design notes (in progress)
+- docs/spec-v0.2.md — v0.2 design notes
+- docs/spec-v0.3.md — v0.3 design notes
 - docs/commands.md — command set definition
 - docs/ir.md — IR JSON schema
 - docs/gmb.md — binary format
