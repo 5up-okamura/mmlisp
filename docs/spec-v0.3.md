@@ -396,18 +396,16 @@ When `:shuffle-base` differs between tracks (e.g. melody swings 8ths, drums
 swing 16ths), tick values diverge from straight alignment. Behavior at loop
 boundaries and marker positions needs specification.
 
-### 2.6 `se` top-level form
+### ~~2.6~~ `se` top-level form — **DECIDED: not needed** (2026-04-23)
 
-A lightweight `se` top-level form for authoring sound effects without the full
-`score` boilerplate (discussed in design session 2026-04-22):
+Sound effects are authored as a regular `score` with `:role se` on the track.
+No dedicated `se` form is required.
 
 ```lisp
-(se :jump :ch fm6 :role se
-  (ins brass) (note :c5 1/16) (note :g5 1/8))
+(score :id :jump-se
+  (track :ch fm6 :role se
+    (ins brass) (seq :c5 _ :g5)))
 ```
-
-Compiles to a single-track score with `:role se` implicit. Relationship to
-`score` `:id` namespace TBD.
 
 ---
 
