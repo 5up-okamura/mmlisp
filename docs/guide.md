@@ -81,7 +81,7 @@ Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
 ### Delay / chorus example
 
 ```lisp
-(defn melody []
+(def melody
   (seq g4 f4 e4 d4  c4 e4  f4 e4 d4 c4  b8 g8)
   (rest 1))
 
