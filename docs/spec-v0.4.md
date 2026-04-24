@@ -541,36 +541,16 @@ needed for organ-style variable-length PSG notes.
 
 ### 2.6 Chord / multi-channel syntax
 
-In v0.3, each channel form addresses a single channel. For chord writing across
-multiple FM channels (e.g. fm1+fm2+fm3 playing the same rhythm at different
-pitches), options are:
+**Decided: No chord syntax. Write each channel independently.**
 
-**Option A — `(chord ...)` form in track body:**
-
-```lisp
-(fm1
-  (chord :chs [fm1 fm2 fm3] :oct 3  c e g))  ; 3-ch chord at oct 3
-```
-
-**Option B — restore multi-channel form with voice-stealing rules:**
+Each channel form addresses a single channel. For chord writing across
+multiple FM channels, use explicit parallel channel forms — one per voice:
 
 ```lisp
-([fm1 fm2 fm3] :role bgm
-  [:oct 3  c e g])   ; compiler assigns notes round-robin or by pitch
+(fm1 [:oct 3  c])
+(fm2 [:oct 3  e])
+(fm3 [:oct 3  g])
 ```
-
-**Option C — explicit parallel tracks (current workaround):**
-
-```lisp
-(fm1 :oct 3 [:oct 3  c])
-(fm2 :oct 3 [:oct 3  e])
-(fm3 :oct 3 [:oct 3  g])
-```
-
-**Decided: No new chord syntax in v0.4.** Option C (explicit parallel tracks)
-is the only supported method. Options A and B add compiler complexity without
-clear authoring benefit; deferred. A future version may introduce
-Strudel-style multi-channel pattern scheduling as a higher-level abstraction.
 
 ### 2.7 Curve functions
 
@@ -939,7 +919,7 @@ All open questions resolved. Summary:
 | 7        | §2.9 Sticky param / `(set)` | ✅ Decided | Option B: `(set ...)`, `param-set` removed                                       |
 | 8        | §2.4 DAC                    | ✅ Decided | Plan B: up to 3ch (`dac-1`–`dac-3`), pitch+vol, drum/texture; sub-items deferred |
 | 9        | §2.12 `(seq)` → `[...]`     | ✅ Decided | `(seq)` removed in v0.4; rename pass needed on demo sources                      |
-| 10       | §2.6 Chord/multi-ch         | ✅ Decided | No new syntax in v0.4; explicit parallel tracks only                             |
+| 10       | §2.6 Chord/multi-ch         | ✅ Decided | No chord syntax; use explicit parallel channels                                  |
 | 11       | §1.3 channel-as-form        | ✅ Decided | `(track :ch X ...)` → `(X ...)`; `track` keyword removed                         |
 | —        | §2.2 FM3 chord              | ✅ Decided | No chord syntax; write each `fm3-N` channel independently                        |
 
