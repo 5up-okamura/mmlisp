@@ -47,21 +47,20 @@ Cycle-alt (Strudel-style per-pass pattern switching via `|`) → out of scope fo
 
 ### 1.3 Syntax unification
 
-| Change                              | Before                     | After                                                            |
-| ----------------------------------- | -------------------------- | ---------------------------------------------------------------- |
-| Note sequence form                  | `(seq ...)` / `[...]`      | flat inline — notes written directly in channel body             |
-| Subgroup / tuplet                   | `[e g a]` in item position | `(e g a)` in item position                                       |
-| Subgroup with explicit total length | —                          | `(1/4 e g a)` — first element is a length token                  |
-| Single-stage curve spec             | `[:fn easeOut ...]`        | `(easeOut ...)`                                                  |
-| Multi-stage curve spec              | `[(easeIn ...) (sin ...)]` | unchanged (after `:env` only)                                    |
-| Track declaration                   | `(track :ch X ...)`        | `(X ...)` — channel name as form head                            |
-| Mid-track defaults                  | `(default :oct 3 ...)`     | removed — channel options set initial state; all state is sticky |
-| `def` reference / voice switch      | `@name`                    | bare identifier `name`                                           |
-| Hardware param write                | `(set :tl1 30)`            | inline `:tl1 30` — same position as `:oct`/`:len`                |
+| Change                         | Before                     | After                                                            |
+| ------------------------------ | -------------------------- | ---------------------------------------------------------------- |
+| Note sequence form             | `(seq ...)` / `[...]`      | flat inline — notes written directly in channel body             |
+| Subgroup / tuplet              | `[e g a]` in item position | `(e g a)` in item position                                       |
+| Single-stage curve spec        | `[:fn easeOut ...]`        | `(easeOut ...)`                                                  |
+| Multi-stage curve spec         | `[(easeIn ...) (sin ...)]` | unchanged (after `:env` only)                                    |
+| Track declaration              | `(track :ch X ...)`        | `(X ...)` — channel name as form head                            |
+| Mid-track defaults             | `(default :oct 3 ...)`     | removed — channel options set initial state; all state is sticky |
+| `def` reference / voice switch | `@name`                    | bare identifier `name`                                           |
+| Hardware param write           | `(set :tl1 30)`            | inline `:tl1 30` — same position as `:oct`/`:len`                |
 
 `[:fn ...]` wrapper is removed. Curve forms are `(curve-name :key val ...)` directly.
 `track` keyword and `:ch` option are removed. The channel name is the form head directly:
-`(fm1 :oct 4  c e g e)`, `(csm brass  c e g)`, `(pcm1 :mode shot  :len 1/4  kick _ snare _)` etc.
+`(fm1 :oct 4  c e g e)`, `(csm brass  c e g)`, `(pcm1 :mode shot  :len 4  kick _ snare _)` etc.
 All state (`:oct`, `:len`, `:gate`, `:vol`, `:mode`, `:env`, `:pitch`, etc.) is sticky — within a
 form and **across consecutive forms of the same channel name**. The compiler maintains a
 per-channel state map; state is never reset automatically between forms.
@@ -69,16 +68,32 @@ per-channel state map; state is never reset automatically between forms.
 
 **Token disambiguation rule** — the parser resolves tokens in this order:
 
-| Token shape                     | Interpretation                                                 |
-| ------------------------------- | -------------------------------------------------------------- |
-| `a`–`g` (optionally `+` or `-`) | Note name (current `:len`)                                     |
-| `aN` (e.g. `c8`, `g+4`)         | Note name with explicit length — overrides `:len` for one note |
-| `_`                             | Rest (current `:len`)                                          |
-| `_N` (e.g. `_4`, `_8`, `_16`)   | Rest with explicit length — overrides `:len` for one rest      |
-| `~`                             | Tie                                                            |
-| `:keyword`                      | Modifier or key-value pair                                     |
-| `(form ...)`                    | Structural form (`x`, `break`, curve, etc.)                    |
-| Any other identifier            | `def` reference — compiler resolves content                    |
+| Token shape                     | Interpretation                                                      |
+| ------------------------------- | ------------------------------------------------------------------- |
+| `a`–`g` (optionally `+` or `-`) | Note name (current `:len`)                                          |
+| `aN` (e.g. `c8`, `g+4`)         | Note name with explicit length — overrides `:len` for one note      |
+| `a.` / `aN.` (e.g. `c.`, `c4.`) | Dotted note — length × 1.5 (current `:len` or explicit, then × 1.5) |
+| `_`                             | Rest (current `:len`)                                               |
+| `_N` (e.g. `_4`, `_8`, `_16`)   | Rest with explicit length — overrides `:len` for one rest           |
+| `_.` / `_N.` (e.g. `_.`, `_4.`) | Dotted rest — length × 1.5 (current `:len` or explicit, then × 1.5) |
+| `aNf` (e.g. `c8f`, `g+3f`)      | Note with exact frame count — BPM-independent; overrides `:len`     |
+| `_Nf` (e.g. `_8f`, `_16f`)      | Rest with exact frame count — BPM-independent; overrides `:len`     |
+| `~`                             | Tie                                                                 |
+| `:keyword`                      | Modifier or key-value pair                                          |
+| `(form ...)`                    | Structural form (`x`, `break`, curve, etc.)                         |
+| Any other identifier            | `def` reference — compiler resolves content                         |
+
+**Length token formats** — wherever a length value appears (`:len`, explicit note/rest suffix) the following forms are accepted:
+
+| Format      | Example | Resolved as                      |
+| ----------- | ------- | -------------------------------- |
+| Integer     | `4`     | note-length (quarter = 30 ticks) |
+| Dotted int  | `4.`    | note-length × 1.5 (45 ticks)     |
+| Frame count | `16f`   | exactly 16 driver frames         |
+
+`4.` is shorthand for `4 * 1.5`. A single dot is supported; double-dot is out of scope for v0.4.
+Fraction notation (`1/N`, `N/M`) is not supported — use ties (`~`) for durations longer than a whole note.
+The `f` suffix is valid wherever a length value appears: `:len`, note/rest suffix, `:delay`.
 
 ---
 
@@ -126,21 +141,21 @@ over time — changing timbre dynamically like an analog FM synth:
 ```lisp
 ; alg4: OP1 modulates OP2. Sweep OP1 (modulator) pitch = timbre sweep
 (fm3-1                              ; OP1 = modulator, alg4
-  :pitch (easeOut :from 0 :to 24 :len 16)   ; sweep modulation ratio
-  :oct 4 :len 1/1  c)               ; hold C; timbre changes over 16 frames
+  :pitch (easeOut :from 0 :to 24 :len 4)   ; sweep modulation ratio (quarter note)
+  :oct 4 :len 1  c)                 ; hold C; timbre changes over one quarter note
 
 (fm3-2                              ; OP2 = carrier, alg4
-  :oct 4 :len 1/1  c)               ; output pitch = C4
+  :oct 4 :len 1  c)                 ; output pitch = C4
 ```
 
 **Drum kit example (alg7 — all carriers):**
 
 ```lisp
 (fm3-1             ; OP1 as kick
-  :oct 2 :len 1/4  c _ _ _)
+  :oct 2 :len 4  c _ _ _)
 
 (fm3-2             ; OP2 as snare
-  :oct 3 :len 1/4  _ c _ c)
+  :oct 3 :len 4  _ c _ c)
 ```
 
 - No new track options needed — fits entirely within the existing channel model
@@ -159,10 +174,10 @@ over time — changing timbre dynamically like an analog FM synth:
 (fm3 drum-kit)               ; shared algorithm, OP TL/AR/DR/SL/RR — no notes
 
 (fm3-1             ; OP1 as kick — uses drum-kit's OP1 params
-  :oct 2 :len 1/4  c _ _ _)
+  :oct 2 :len 4  c _ _ _)
 
 (fm3-2             ; OP2 as snare
-  :oct 3 :len 1/4  _ c _ c)
+  :oct 3 :len 4  _ c _ c)
 ```
 
 A note on any `fm3-N` track always triggers KEY-ON for that OP. On modulator
@@ -195,8 +210,8 @@ key-on rate changes.
 
 ```lisp
 (csm vowel                         ; FM3 voice defines harmonic timbre
-  :oct 4 :len 1/4  c e g           ; csm-rate follows C E G at oct 4
-  :oct 5            c)             ; then C at oct 5 — it sings
+  :oct 4 :len 4  c e g             ; csm-rate follows C E G at oct 4
+  :oct 5         c)                ; then C at oct 5 — it sings
 ```
 
 The compiler converts note pitch to the Timer A reload value (Hz-to-register
@@ -207,24 +222,24 @@ conversion is a compiler detail; authoring uses standard note syntax).
 ```lisp
 (csm vowel
   :csm-rate 220                    ; hold Timer A at 220 Hz regardless of notes
-  :len 1/1  c)
+  :len 1  c)
 ```
 
 **Swept rate — PARAM_SWEEP (§2.11):**
 
 ```lisp
 (csm vowel
-  :csm-rate (easeIn :from 80 :to 440 :len 32)   ; sweep over 32 frames
-  :oct 4 :len 1/1  c)
+  :csm-rate (easeIn :from 80 :to 440 :len 32f)  ; sweep over 32 frames
+  :oct 4 :len 1  c)
 ```
 
 **KEY-ON envelope on csm-rate — ENVELOPE_TABLE (§2.5):**
 
 ```lisp
-(def vowel-open :env :csm-rate (easeOut :from 200 :to 800 :len 24))
+(def vowel-open :env :csm-rate (easeOut :from 200 :to 800 :len 24f))
 
 (csm vowel
-  :oct 4 :len 1/4 :env vowel-open  c e g)     ; envelope fires on each NOTE_ON
+  :oct 4 :len 4 :env vowel-open  c e g)       ; envelope fires on each NOTE_ON
 ```
 
 **Decided: CSM_ON is implicit from `csm` channel presence.**
@@ -327,7 +342,7 @@ to zero when game intervention stops.
 ; score defines base pitch and volume
 (pcm1
   :pitch 0 :vol 12
-  :len 1/1  drone)
+  :len 1  drone)
 
 ; game runtime can add delta_pitch / delta_volume at any time
 ; driver blends back to base when delta is released
@@ -360,13 +375,13 @@ reserved:      3 bytes
 
 ; two independent PCM tracks
 (pcm1 :mode shot
-  :len 1/4  kick _ snare _)
+  :len 4  kick _ snare _)
 
 ; loop: loop region set inline, curve value sweeps loop-end (Oval-style window)
 (pcm2 :mode loop
   :loop-start 1024 :loop-end 4096
   drone
-  :vol 10 :pitch (easeOut :from -1200 :to 0 :len 16))
+  :vol 10 :pitch (easeOut :from -1200 :to 0 :len 16f))
 
 ; change loop window mid-track
 (pcm2
@@ -374,7 +389,7 @@ reserved:      3 bytes
 
 ; animated loop window — loop-end sweeps over 64 frames
 (pcm2
-  :loop-end (linear :from 4096 :to 2048 :len 64))
+  :loop-end (linear :from 4096 :to 2048 :len 64f))
 ```
 
 - bare identifier in pcm context emits `PCM_TRIGGER { sample: id }` (`shot` / `loop-gate`) or
@@ -449,14 +464,14 @@ GMB binary
 
 ```lisp
 ; one-shot: synth tom pitch sweep
-(def syntom-pitch :env :pitch (easeOut :from 0 :to -48 :len 16))
+(def syntom-pitch :env :pitch (easeOut :from 0 :to -48 :len 8))
 
 ; one-shot: brass scoop-up
-(def scoop :env :pitch (easeIn :from -18 :to 0 :len 6))
+(def scoop :env :pitch (easeIn :from -18 :to 0 :len 16))
 
 ; looping LFO: vibrato (delay before onset)
-(def vibrato :env :pitch (sin :from -10 :to 10 :len 16
-                          :delay 24))
+(def vibrato :env :pitch (sin :from -10 :to 10 :len 8
+                          :delay 4))
 
 ; looping LFO: tremolo on TL (carrier level)
 (def tremolo :env :tl1 (triangle :from 0 :to 3 :len 8))
@@ -465,6 +480,10 @@ GMB binary
 (def pluck :env :vol [15 12 8 4 2 1 0])
 (def pad   :env :vol [15 :loop 14 13])
 (def organ :env :vol [15 :loop 14 13 :release 3])
+
+; curve: AM/tremolo via logical vol — works on all channel types
+(def tremolo-psg :env :vol (triangle :from 12 :to 15 :len 8))   ; gentle PSG tremolo
+(def am-fade     :env :vol (easeOut  :from 15 :to 0  :len 1))   ; fade over 1 whole note
 ```
 
 **Decided: `:vol` is a logical volume scale — `0` = silent, `15` = maximum — on all
@@ -478,6 +497,20 @@ channel types.** The compiler maps to hardware per channel:
 
 `[15 12 8 4 2 1 0]` therefore reads as "loud → silent" on every channel type; no
 polarity surprises for the composer.
+
+**`:env :vol` accepts both step-vector and curve forms.** `:from`/`:to` values use
+the same 0–15 logical scale. The compiler applies the same per-channel mapping as
+the integer `:vol` state — no separate scale for curve targets.
+
+For FM tremolo, choosing between `:vol (curve ...)` and `:tl1 (curve ...)`:
+
+| Approach                | Range | Scope                                 | Use when                                |
+| ----------------------- | ----- | ------------------------------------- | --------------------------------------- |
+| `:vol (curve ...)`      | 0–15  | all carriers via channel-level offset | all channel types; coarse AM            |
+| `:tl1 (curve ...)` etc. | 0–127 | one operator at a time                | FM fine-grained tremolo or filter sweep |
+
+Step-vector `[...]` and curve `(curve ...)` can also be combined per-target in a
+multi-target envelope (sequential vol, simultaneous pitch, etc.).
 
 **`:extends` — compile-time def inheritance:**
 
@@ -536,17 +569,17 @@ Rules:
 **Inline override:**
 
 ```lisp
-(fm1  :oct 4 :len 1/4
-  syntom :env syntom-pitch  c
-  snare                     c)   ; explicit per-note env attach
+(fm1  :oct 4 :len 4
+  syntom :env syntom-pitch  c   ; explicit per-note env attach
+  snare                     c)
 ```
 
 **Multi-stage envelopes** — a vector of `(curve ...)` forms, parsed automatically:
 
 ```lisp
 (def vib-entry :env :pitch
-  [(easeIn :from -12 :to 0 :len 6)          ; scoop up
-   (sin    :from -10 :to 10 :len 16)]        ; then vibrato
+  [(easeIn :from -12 :to 0 :len 16)         ; scoop up
+   (sin    :from -10 :to 10 :len 8)]        ; then vibrato
 ```
 
 **Multi-target envelope** — a single `def :env` can drive multiple parameters
@@ -561,7 +594,7 @@ simultaneously by listing multiple `:key (curve ...)` pairs:
 ; vol step sequence + pitch sweep in one def — valid combination
 (def syntom :env
   :vol   [15 12 8 4 2 1 0]
-  :pitch (easeOut :from 0 :to -48 :len 16))
+  :pitch (easeOut :from 0 :to -48 :len 8))
 
 ; voice def: env fires on every NOTE_ON
 (def brass :extends fm-init
@@ -569,7 +602,7 @@ simultaneously by listing multiple `:key (curve ...)` pairs:
   :env trem-brass)
 
 ; inline override per note
-(fm1 :oct 4 :len 1/4
+(fm1 :oct 4 :len 4
   brass :env trem-brass  c e g e)
 ```
 
@@ -593,8 +626,8 @@ compose freely: each target key can independently carry a single curve or a
 ```lisp
 ; sequential: scoop then loop-vibrato on pitch
 (def vib-entry :env :pitch
-  [(easeIn :from -12 :to 0 :len 6)    ; stage 1 — completes after 6 frames
-   (sin    :from -10 :to 10 :len 16)])  ; stage 2 — starts at frame 7, loops by nature
+  [(easeIn :from -12 :to 0 :len 16)   ; stage 1 — one 16th note
+   (sin    :from -10 :to 10 :len 8)])  ; stage 2 — loops at 8th note period
 
 ; simultaneous: two TL targets fire together at KEY-ON
 (def trem-brass :env
@@ -604,7 +637,7 @@ compose freely: each target key can independently carry a single curve or a
 ; both at once: :pitch is sequential, :vol runs in parallel alongside it
 (def syntom-env :env
   :vol   [15 12 8 4 0]                ; vol stages run sequentially
-  :pitch (easeOut :from 0 :to -48 :len 16))  ; pitch curve runs simultaneously
+  :pitch (easeOut :from 0 :to -48 :len 8))  ; pitch curve runs simultaneously
 ```
 
 **Driver state per channel:** up to 4 env slots `{ envId, stage, phase, delay_count }` —
@@ -622,23 +655,37 @@ deal with raw F-number delta; hardware differences are a compiler detail.
 
 **Decided: `:len` for curve duration.**
 
-Wherever a duration appears in a curve form — including `:delay` — `:len`
-accepts either an integer (= frames) or a fraction (= musical time).
-The compiler converts ticks → frames using the score's BPM and driver frame
-rate (typically 60 fps):
+Wherever a duration appears in a curve form — including `:delay` — the same
+length formats as note/rest lengths apply:
+
+| Format      | Example    | Meaning                                         |
+| ----------- | ---------- | ----------------------------------------------- |
+| Integer     | `:len 4`   | note-length — quarter note (30 ticks @ BPM=120) |
+| Dotted int  | `:len 4.`  | note-length × 1.5                               |
+| Frame count | `:len 16f` | exactly 16 driver frames (BPM-independent)      |
+
+Frame-count (`Nf`) is useful for effects where timing is hardware-fixed —
+e.g. a whistle attack of 3 frames, or a PCM gate of exactly 10 frames.
+Musical durations (integer, dotted) scale with BPM; `Nf` does not.
+
+The compiler converts musical lengths to frames using:
 
 ```
 frames = (ticks / PPQN) * (BPM / 60) * fps
 ```
 
+At BPM=120, fps=60, PPQN=120: frames = ticks (quarter = 30 frames).
+
 ```lisp
-(def vibrato :env :pitch (sin :from -10 :to 10 :len 1/4
-                          :delay 1/4))    ; both period and delay in musical time
+(def vibrato :env :pitch (sin :from -10 :to 10 :len 4
+                          :delay 4))          ; period = quarter note, delay = quarter note
 
-(def syntom-pitch :env :pitch (easeOut :from 0 :to -48 :len 1/4))
+(def syntom-pitch :env :pitch (easeOut :from 0 :to -48 :len 8f)) ; exactly 8 frames
 
-(def vibrato-late :env :pitch (sin :from -10 :to 10 :len 1/4
-                               :delay 8)) ; delay in frames, period in musical time
+(def whistle-on :env :pitch (easeIn :from -24 :to 0 :len 3f))    ; 3-frame attack
+
+(def vibrato-late :env :pitch (sin :from -10 :to 10 :len 4
+                               :delay 8f))    ; delay=8 frames fixed, period=quarter
 ```
 
 **Decided: KEY-OFF release deferred. Use `:gate` ratio as workaround.**
@@ -759,7 +806,7 @@ Envelope is attached separately via `:env` or via a `def` reference.
 
 ; noise track
 (noise :mode white0
-  :len 1/8 :env hh-closed-env
+  :len 8 :env hh-closed-env
   c c
   :mode white2 :env hh-open-env
   c
@@ -789,10 +836,10 @@ A `:env` change emits `ENV_ATTACH` IR event.
 
 ```lisp
 (noise :mode white3
-  :len 1/4  c _ c _)
+  :len 4  c _ c _)
 
 (srq3                              ; srq3 drives noise frequency
-  :oct 4 :len 1/4  c _ c _)       ; also audible as tone
+  :oct 4 :len 4  c _ c _)         ; also audible as tone
 ```
 
 **Decided: `:mode` inline modifier covers mid-track noise change.** No
@@ -818,7 +865,7 @@ All hardware parameter values are **absolute** (register value written directly)
 Relative/delta notation (e.g. `:tl1 +5`) is not supported.
 
 ```lisp
-(fm1 :oct 4 :len 1/8
+(fm1 :oct 4 :len 8
   :tl1 30 :dt1 5        ; PARAM_SET — hardware writes
   c e g e
   :tl2 (easeOut :from 28 :to 20 :len 8)   ; PARAM_SWEEP
@@ -912,18 +959,18 @@ rather than per-note.
 **Authoring syntax** — inline `:key curve-form` (same position as any `:key val`):
 
 ```lisp
-; one-shot: TL sweep over 8 frames starting now
-(fm1 :oct 4 :len 1/8
+; one-shot: TL sweep over one 8th note
+(fm1 :oct 4 :len 8
   :tl2 (easeOut :from 28 :to 20 :len 8)
   c e g e)
 
 ; one-shot: pitch glide between sections
-(fm1 :oct 4 :len 1/4
-  :pitch (linear :from 0 :to 12 :len 16)
+(fm1 :oct 4 :len 4
+  :pitch (linear :from 0 :to 12 :len 4)
   c d e  :pitch 0  f g)
 
 ; looping: track-position-locked tremolo starting at this point
-(fm1 :oct 4 :len 1/4
+(fm1 :oct 4 :len 4
   :tl1 (triangle :from 0 :to 4 :len 8)
   c e g e ...)
 ```
@@ -970,7 +1017,7 @@ alike — so a PARAM_SWEEP ending at value X means the next `:glide` starts from
 
 ```lisp
 ; portamento — from current pitch, slide to note pitch over 8 frames
-(def portamento :env :pitch (linear :to 0 :len 8))
+(def portamento :env :pitch (linear :to 0 :len 8f))
 ; :to 0 = note's own pitch; :from omitted = last_written[pitch]
 ```
 
@@ -1007,15 +1054,15 @@ previous note's pitch to the new note's pitch over `N` frames.
 
 ```lisp
 ; basic portamento — 8-frame slide between every note
-(fm1 :oct 4 :len 1/4 :glide 8
+(fm1 :oct 4 :len 4 :glide 8
   c e g e)
 
 ; start from an explicit pitch (c3 → e4 over 8 frames)
-(fm1 :oct 4 :len 1/4 :glide 8 :glide-from c3
+(fm1 :oct 4 :len 4 :glide 8 :glide-from c3
   e g a g)
 
 ; disable mid-phrase
-(fm1 :oct 4 :len 1/4 :glide 8
+(fm1 :oct 4 :len 4 :glide 8
   c e
   :glide 0
   g e)
@@ -1037,51 +1084,57 @@ previous note's pitch to the new note's pitch over `N` frames.
 Notes, rests, modifiers, and structural forms are written directly in the channel
 body — no sequence wrapper.
 
-| Form                   | Context                                     | Interpretation                                                 |
-| ---------------------- | ------------------------------------------- | -------------------------------------------------------------- |
-| note / rest / modifier | Channel body; `(x N ...)` body; `def` body  | Direct sequencing                                              |
-| `cN` (e.g. `c8`)       | Inline in note position                     | Note with explicit length; overrides `:len` for that note only |
-| `_N` (e.g. `_8`)       | Inline in note position                     | Rest with explicit length; overrides `:len` for that rest only |
-| `(notes...)`           | Inline when first element is a note         | Subgroup / tuplet — current `:len` divided equally             |
-| `(len notes...)`       | Inline when first element is a length token | Subgroup with explicit total length                            |
-| `(curve-name ...)`     | After `:env`; value of `:key` inline        | Curve spec                                                     |
-| `[(stage1) (stage2)]`  | After `:env`                                | Multi-stage envelope                                           |
+| Form                   | Context                                    | Interpretation                                                 |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------- |
+| note / rest / modifier | Channel body; `(x N ...)` body; `def` body | Direct sequencing                                              |
+| `cN` (e.g. `c8`)       | Inline in note position                    | Note with explicit length; overrides `:len` for that note only |
+| `_N` (e.g. `_8`)       | Inline in note position                    | Rest with explicit length; overrides `:len` for that rest only |
+| `(notes...)`           | Inline when first element is a note        | Subgroup / tuplet — current `:len` divided equally             |
+| `(curve-name ...)`     | After `:env`; value of `:key` inline       | Curve spec                                                     |
+| `[(stage1) (stage2)]`  | After `:env`                               | Multi-stage envelope                                           |
 
 **Examples:**
 
 ```lisp
 ; note sequence flat in channel body
-(fm1 :oct 4 :len 1/4  c e g c)
+(fm1 :oct 4 :len 4  c e g c)
 
 ; :oct 5 persists after the phrase
-(fm1 :oct 4 :len 1/8  c e g e  :oct 5  c e g e)
+(fm1 :oct 4 :len 8  c e g e  :oct 5  c e g e)
 
 ; bare identifier switches voice (no @ prefix)
-(fm1 :oct 4 :len 1/8  brass  c e g e  :tl1 20  c e g e)
+(fm1 :oct 4 :len 8  brass  c e g e  :tl1 20  c e g e)
 
-; subgroup (triplet): 3 notes sharing current :len (1/4 → 40 ticks each)
-(fm1 :len 1/4  c  (e g a)  f)
-
-; subgroup with explicit length: 3 notes sharing 1/2
-(fm1 :len 1/8  c  (1/2 e g a)  f)
+; subgroup (triplet): 3 notes sharing current :len (4 → 10 ticks each)
+(fm1 :len 4  c  (e g a)  f)
 
 ; single-stage envelope
-(def syntom-pitch :env :pitch (easeOut :from 0 :to -48 :len 16))
+(def syntom-pitch :env :pitch (easeOut :from 0 :to -48 :len 8))
 
 ; multi-stage envelope ([...] retained after :env only — data vector, not note sequence)
 (def vib-entry :env :pitch
-  [(easeIn :from -12 :to 0 :len 6)
-   (sin    :from -10 :to 10 :len 16)])
+  [(easeIn :from -12 :to 0 :len 16)
+   (sin    :from -10 :to 10 :len 8)])
 
 ; curve value inline (emits PARAM_SWEEP)
-(fm1 :len 1/8  :tl2 (easeOut :from 28 :to 20 :len 8)  c e g e)
+(fm1 :len 8  :tl2 (easeOut :from 28 :to 20 :len 8)  c e g e)
+
+; dotted notes — length × 1.5
+(fm1 :len 4  c. e. g)       ; c. = dotted quarter using current :len
+(fm1 :len 8  c4. e8.)       ; c4. = dotted quarter, e8. = dotted eighth (explicit)
+
+; dotted :len — sticky
+(fm1 :len 4.  c e g e)        ; :len 4. = dotted quarter (45 ticks) for all notes
 
 ; rest with explicit length — independent of current :len
-(fm1 :len 1/4  c _8 c _16 c)
+(fm1 :len 4  c _8 c _16 c)
+
+; dotted rests
+(fm1 :len 4  c _. e _4.)    ; _. = dotted quarter rest, _4. = same explicit
 
 ; cross-form state inheritance — :oct 5 and :env persist into next form
-(fm1 :oct 4 :len 1/4 :env scoop  c e g e)
-(fm1  c e g e)   ; :oct 4, :len 1/4, :env scoop all still active
+(fm1 :oct 4 :len 4 :env scoop  c e g e)
+(fm1  c e g e)   ; :oct 4, :len 4, :env scoop all still active
 (fm1 :oct 5  c e g e)   ; only :oct changes; other state unchanged
 ```
 
