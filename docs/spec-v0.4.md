@@ -61,19 +61,24 @@ Cycle-alt (Strudel-style per-pass pattern switching via `|`) → out of scope fo
 
 `[:fn ...]` wrapper is removed. Curve forms are `(curve-name :key val ...)` directly.
 `track` keyword and `:ch` option are removed. The channel name is the form head directly:
-`(fm1 :oct 4  c e g e)`, `(csm brass  c e g)`, `(pcm1 :mode drum  :len 1/4  kick _ snare _)` etc.
-All state (`:oct`, `:len`, `:gate`, `:vol`) is sticky. `(default ...)` and `(set ...)` are removed.
+`(fm1 :oct 4  c e g e)`, `(csm brass  c e g)`, `(pcm1 :mode shot  :len 1/4  kick _ snare _)` etc.
+All state (`:oct`, `:len`, `:gate`, `:vol`, `:mode`, `:env`, `:pitch`, etc.) is sticky — within a
+form and **across consecutive forms of the same channel name**. The compiler maintains a
+per-channel state map; state is never reset automatically between forms.
+`(default ...)` and `(set ...)` are removed.
 
 **Token disambiguation rule** — the parser resolves tokens in this order:
 
-| Token shape                     | Interpretation                              |
-| ------------------------------- | ------------------------------------------- |
-| `a`–`g` (optionally `+` or `-`) | Note name                                   |
-| `_`                             | Rest                                        |
-| `~`                             | Tie                                         |
-| `:keyword`                      | Modifier or key-value pair                  |
-| `(form ...)`                    | Structural form (`x`, `break`, curve, etc.) |
-| Any other identifier            | `def` reference — compiler resolves content |
+| Token shape                     | Interpretation                                                 |
+| ------------------------------- | -------------------------------------------------------------- |
+| `a`–`g` (optionally `+` or `-`) | Note name (current `:len`)                                     |
+| `aN` (e.g. `c8`, `g+4`)         | Note name with explicit length — overrides `:len` for one note |
+| `_`                             | Rest (current `:len`)                                          |
+| `_N` (e.g. `_4`, `_8`, `_16`)   | Rest with explicit length — overrides `:len` for one rest      |
+| `~`                             | Tie                                                            |
+| `:keyword`                      | Modifier or key-value pair                                     |
+| `(form ...)`                    | Structural form (`x`, `break`, curve, etc.)                    |
+| Any other identifier            | `def` reference — compiler resolves content                    |
 
 ---
 
@@ -264,25 +269,30 @@ MDSDRV uses 32-byte batch processing for efficiency.
 
 **Practical limit**: 2ch at 17.5 kHz with pitch + volume is tight but
 achievable. 3ch requires dropping to ~13.3 kHz (still feasible for
-ambient/texture use). Channel count is chosen per-score based on sample rate.
+ambient/loop use). Channel count is chosen per-score based on sample rate.
 
 #### Channel modes
 
-Each PCM channel operates in one of two modes, set at score/scene level:
+Each PCM channel operates in one of three modes, set at score/scene level:
 
-**Drum mode** — short one-shot samples (kicks, hats, etc.)
+**Shot mode** — short one-shot samples (kicks, hats, etc.)
 
-- Plays to end on trigger; no automatic looping
+- Plays to end on trigger; no looping
 - Low latency; supports a sample table for multiple voices per channel
-- Limited pitch control (pitched drums)
+- Limited pitch control (pitched percussion)
 
-**Texture mode** — looped ambient/glitch audio (Oval-style loops, noise
-textures)
+**Loop mode** — looped ambient/glitch audio (Oval-style loops, noise textures)
 
 - Loop region set on the channel via `:loop-start` / `:loop-end` (sample byte offsets)
 - No `:loop-start`/`:loop-end` → one-shot (plays to end)
 - `:loop-start` and `:loop-end` accept an integer or a curve form — enabling animated loop windows
 - Full pitch and volume modulation via inline `:key (curve ...)` and `PARAM_SWEEP`
+
+**Loop-gate mode** — sample loops while the note is held; plays to end when gate closes
+
+- Requires `:loop-start` / `:loop-end`; if loop region is not set, behaves as `shot`
+- Enables sustain-loop playback: note on = loop, note off = play out
+- `:gate` ratio controls how long the loop phase runs before the release tail
 
 #### Software mixing implementation
 
@@ -326,7 +336,7 @@ to zero when game intervention stops.
 Z80 work area per channel (23 bytes):
 
 ```
-mode:          1 byte   DRUM or TEXTURE
+mode:          1 byte   SHOT, LOOP, or LOOP_GATE
 sample_ptr:    3 bytes  ROM address (with bank)
 loop_start:    3 bytes  0 = no loop
 loop_end:      3 bytes  0 = no loop
@@ -341,22 +351,22 @@ reserved:      3 bytes
 #### MMLisp authoring syntax
 
 ```lisp
-; drum samples — no loop, one-shot
+; one-shot samples
 (def kick  :pcm "samples/kick.raw"  :rate 8000)
 (def snare :pcm "samples/snare.raw" :rate 11025)
 
-; texture sample (pcm file only — loop region set on channel)
+; loop sample (loop region set on channel)
 (def drone :pcm "samples/drone.raw" :rate 17500)
 
 ; two independent PCM tracks
-(pcm1 :mode drum
+(pcm1 :mode shot
   :len 1/4  kick _ snare _)
 
-; texture: loop region set inline, curve value sweeps loop-end (Oval-style window)
-(pcm2 :mode texture
+; loop: loop region set inline, curve value sweeps loop-end (Oval-style window)
+(pcm2 :mode loop
   :loop-start 1024 :loop-end 4096
   drone
-  :vol 10 :pitch (easeOut :from -12 :to 0 :len 16))
+  :vol 10 :pitch (easeOut :from -1200 :to 0 :len 16))
 
 ; change loop window mid-track
 (pcm2
@@ -367,13 +377,15 @@ reserved:      3 bytes
   :loop-end (linear :from 4096 :to 2048 :len 64))
 ```
 
-- bare identifier in pcm context emits `PCM_TRIGGER { sample: id }` (drum) or
-  `PCM_LOAD { sample: id }` (texture) IR events
+- bare identifier in pcm context emits `PCM_TRIGGER { sample: id }` (`shot` / `loop-gate`) or
+  `PCM_LOAD { sample: id }` (`loop`) IR events
+- Note events on PCM channels are **trigger-only** — the note letter sets the trigger
+  position in time; pitch value is ignored. Use `:pitch` to control sample playback pitch.
 - `:pitch val` / `:vol val` emit `PARAM_SET` or `PARAM_SWEEP` (when value is a curve)
   as in §2.9/§2.11 — same authoring model as FM channels.
-  `:pitch` is in **semitones** (`0` = original pitch, `-12` = one octave down,
-  `7` = +5th). The compiler converts to `pitch_increment` (`2^(n/12)`) for the
-  Z80 accumulator. Integer values only.
+  `:pitch` uses **semitone-cents** (`0` = original pitch, `-1200` = one octave down,
+  `700` = +5th) — the same unit as `:env :pitch` `:from`/`:to` (see §2.5). The compiler
+  converts to `pitch_increment` (`2^(n/1200)`) for the Z80 accumulator.
 - `:loop-start val` / `:loop-end val` emit `PARAM_SET` (integer) or `PARAM_SWEEP`
   (curve form) — same `:key val` / `:key (curve ...)` rule as all other params.
   Omitting both → one-shot playback
@@ -399,7 +411,7 @@ stored in the sample table.
 - DMA protection scheme (MegaPCM2 approach vs SGDK integration) — deferred
 - `:mode` per-channel vs per-sample-def — deferred; future versions may
   allow Strudel-style pattern-driven sample scheduling (e.g. per-step sample
-  selection without a separate track)
+  selection without a separate track); three modes: `shot`, `loop`, `loop-gate`
 - **Note-driven PCM (Future Vision)** — treat a `pcmN` channel as a pitched
   instrument: each note event selects a sample pitched to that note. For pitches
   not covered by the sample set, the compiler auto-generates pitch-shifted
@@ -1025,13 +1037,15 @@ previous note's pitch to the new note's pitch over `N` frames.
 Notes, rests, modifiers, and structural forms are written directly in the channel
 body — no sequence wrapper.
 
-| Form                   | Context                                     | Interpretation                                     |
-| ---------------------- | ------------------------------------------- | -------------------------------------------------- |
-| note / rest / modifier | Channel body; `(x N ...)` body; `def` body  | Direct sequencing                                  |
-| `(notes...)`           | Inline when first element is a note         | Subgroup / tuplet — current `:len` divided equally |
-| `(len notes...)`       | Inline when first element is a length token | Subgroup with explicit total length                |
-| `(curve-name ...)`     | After `:env`; value of `:key` inline        | Curve spec                                         |
-| `[(stage1) (stage2)]`  | After `:env`                                | Multi-stage envelope                               |
+| Form                   | Context                                     | Interpretation                                                 |
+| ---------------------- | ------------------------------------------- | -------------------------------------------------------------- |
+| note / rest / modifier | Channel body; `(x N ...)` body; `def` body  | Direct sequencing                                              |
+| `cN` (e.g. `c8`)       | Inline in note position                     | Note with explicit length; overrides `:len` for that note only |
+| `_N` (e.g. `_8`)       | Inline in note position                     | Rest with explicit length; overrides `:len` for that rest only |
+| `(notes...)`           | Inline when first element is a note         | Subgroup / tuplet — current `:len` divided equally             |
+| `(len notes...)`       | Inline when first element is a length token | Subgroup with explicit total length                            |
+| `(curve-name ...)`     | After `:env`; value of `:key` inline        | Curve spec                                                     |
+| `[(stage1) (stage2)]`  | After `:env`                                | Multi-stage envelope                                           |
 
 **Examples:**
 
@@ -1061,6 +1075,14 @@ body — no sequence wrapper.
 
 ; curve value inline (emits PARAM_SWEEP)
 (fm1 :len 1/8  :tl2 (easeOut :from 28 :to 20 :len 8)  c e g e)
+
+; rest with explicit length — independent of current :len
+(fm1 :len 1/4  c _8 c _16 c)
+
+; cross-form state inheritance — :oct 5 and :env persist into next form
+(fm1 :oct 4 :len 1/4 :env scoop  c e g e)
+(fm1  c e g e)   ; :oct 4, :len 1/4, :env scoop all still active
+(fm1 :oct 5  c e g e)   ; only :oct changes; other state unchanged
 ```
 
 **Decided: `(seq ...)` and `[...]` (note sequence form) are both removed in v0.4.** No deprecated aliases.
