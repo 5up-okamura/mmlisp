@@ -720,6 +720,29 @@ export class IRPlayer {
     }
   }
 
+  _resolveTiedLength(ev, baseLength) {
+    const trackIndex = ev._trackIndex;
+    if (trackIndex == null) return baseLength;
+
+    const track = this._tracks[trackIndex];
+    if (!track) return baseLength;
+
+    let totalLength = baseLength;
+    let expectedTieTick = ev.tick + baseLength;
+
+    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
+      const nextEv = track.events[i];
+      if (nextEv.tick > expectedTieTick) break;
+      if (nextEv.tick !== expectedTieTick || nextEv.cmd !== "TIE") continue;
+
+      const tieLength = nextEv.args?.length ?? 0;
+      totalLength += tieLength;
+      expectedTieTick += tieLength;
+    }
+
+    return totalLength;
+  }
+
   _expandLoops(events) {
     // One-pass finite expansion with correct tick re-basing.
     // Events that follow a loop block are shifted forward by the full loop
@@ -805,6 +828,8 @@ export class IRPlayer {
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const { fnum, block } = midiToFnumBlock(midi);
         const chKey = (port << 2) | chOffset; // 0x28 channel key
+        const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
 
         // Write F-number high first (block + MSB), then low
         this._write(
@@ -834,7 +859,6 @@ export class IRPlayer {
         }
 
         // Key-off scheduled at exact audio time (5ms before next note for envelope decay)
-        const lengthTicks = ev.args?.length ?? this._ppqn / 2;
         const noteDurSecs = lengthTicks * (60 / (this._bpm * this._ppqn));
         const offWhen = when + noteDurSecs - 0.005;
         this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
@@ -859,6 +883,7 @@ export class IRPlayer {
       case "LOOP_BEGIN":
       case "LOOP_END":
       case "REST":
+      case "TIE":
       case "JUMP":
         // Handled structurally (loops expanded; markers/jumps not needed for linear playback)
         break;
@@ -1373,7 +1398,8 @@ export class IRPlayer {
         }
 
         const env = this._psgChVoice[psgCh];
-        const lengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         this._schedulePsgEnvelope(psgCh, env, when, lengthTicks);
         break;
       }
@@ -1386,6 +1412,7 @@ export class IRPlayer {
       case "LOOP_BEGIN":
       case "LOOP_END":
       case "REST":
+      case "TIE":
       case "JUMP":
         break;
 
