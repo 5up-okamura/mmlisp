@@ -204,6 +204,20 @@ function encode80(op) {
   return ((op.sl & 0x0f) << 4) | (op.rr & 0x0f);
 }
 
+function fmCarrierOpsForAlg(alg) {
+  const CARRIER_OPS = [
+    [3], // alg 0: op4
+    [3], // alg 1: op4
+    [3], // alg 2: op4
+    [3], // alg 3: op4
+    [1, 3], // alg 4: op2, op4
+    [1, 2, 3], // alg 5: op2, op3, op4
+    [1, 2, 3], // alg 6: op2, op3, op4
+    [0, 1, 2, 3], // alg 7: all
+  ];
+  return CARRIER_OPS[alg] ?? [3];
+}
+
 // YM2612 channel name → 0-based channel index
 const CH_NAME_TO_INDEX = {
   fm1: 0,
@@ -297,12 +311,27 @@ export class IRPlayer {
     return this;
   }
 
+  _resolveInitialTempo(irObj) {
+    // Prefer an explicit tempo event at tick 0 so scheduling starts at the
+    // intended BPM on the very first loop.
+    for (const track of irObj?.tracks ?? []) {
+      for (const ev of track.events ?? []) {
+        if (ev?.cmd !== "TEMPO_SET") continue;
+        if ((ev.tick ?? 0) !== 0) continue;
+        const bpm = Number(ev.args?.bpm);
+        if (Number.isFinite(bpm) && bpm > 0) return bpm;
+      }
+    }
+    return 120;
+  }
+
   /**
    * Load IR JSON directly from an object.
    */
   loadJSON(irObj) {
     this._ir = irObj;
     this._ppqn = irObj.ppqn ?? 120;
+    this._bpm = this._resolveInitialTempo(irObj);
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -638,7 +667,7 @@ export class IRPlayer {
           track.audioTimeAtTick0 =
             track.startAudioTime +
             track.loopCount * track.loopDuration * secsPerTick;
-          track.flatIndex = 0;
+          track.flatIndex = track.loopStartIndex ?? 0;
           // Continue to schedule new-iteration events that fall within horizon
         } else {
           break;
@@ -678,23 +707,53 @@ export class IRPlayer {
         }))
         .sort((a, b) => a.tick - b.tick);
 
-      // Loop boundary = tick of the last JUMP event (phrase restart point).
-      // Falls back to lastTick + 1 (one tick past last event) if no JUMP present.
+      // For looped playback, restart from the last JUMP target marker in the
+      // expanded track so pre-roll events before the marker are not replayed.
       let jumpTick = -1;
+      let jumpTarget = null;
       for (let i = events.length - 1; i >= 0; i--) {
         if (events[i].cmd === "JUMP") {
           jumpTick = events[i].tick;
+          jumpTarget = events[i].args?.to ?? null;
           break;
         }
       }
+
+      let loopStartTick = 0;
+      if (jumpTick >= 0 && jumpTarget) {
+        for (let i = events.length - 1; i >= 0; i--) {
+          if (
+            events[i].tick <= jumpTick &&
+            events[i].cmd === "MARKER" &&
+            events[i].args?.id === jumpTarget
+          ) {
+            loopStartTick = events[i].tick;
+            break;
+          }
+        }
+      }
+
+      let loopStartIndex = 0;
+      for (let i = 0; i < events.length; i++) {
+        if (events[i].tick >= loopStartTick) {
+          loopStartIndex = i;
+          break;
+        }
+      }
+
       const lastTick = events.length > 0 ? events[events.length - 1].tick : 0;
-      const loopDuration = jumpTick >= 0 ? jumpTick : lastTick + 1;
+      const loopDuration =
+        jumpTick >= 0
+          ? Math.max(1, jumpTick - loopStartTick)
+          : Math.max(1, lastTick + 1);
 
       const role = track.route_hint?.role ?? "bgm";
       const carry = track.route_hint?.carry ?? false;
       return {
         events,
         loopDuration,
+        loopStartTick,
+        loopStartIndex,
         flatIndex: 0,
         audioTimeAtTick0: 0,
         loopCount: 0,
@@ -830,6 +889,17 @@ export class IRPlayer {
         const chKey = (port << 2) | chOffset; // 0x28 channel key
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
+        const regs = this._chRegs[ch];
+
+        if (regs?.vol != null) {
+          const tl = Math.max(0, Math.min(127, (15 - regs.vol) * 8));
+          const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+          for (const opIdx of carriers) {
+            regs.ops[opIdx].tl = tl;
+            const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
+            this._write(port, opAddr, tl, when);
+          }
+        }
 
         // Write F-number high first (block + MSB), then low
         this._write(
@@ -1162,27 +1232,16 @@ export class IRPlayer {
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
 
       case "VOL": {
-        // vol 0-15 (15=max, 0=silent). Apply to carrier OPs based on algorithm.
+        // vol 0-15 (15=max, 0=silent). Apply to carrier operators so volume
+        // changes preserve timbre similarly to classic FM driver behavior.
         // TL = (15 - vol) * 8, clamped to 0-127.
-        // ALG carrier map: which ops are carriers for each algorithm.
-        const CARRIER_OPS = [
-          [3], // alg 0: op4
-          [3], // alg 1: op4
-          [3], // alg 2: op4
-          [3], // alg 3: op4
-          [1, 3], // alg 4: op2, op4
-          [1, 2, 3], // alg 5: op2, op3, op4
-          [1, 2, 3], // alg 6: op2, op3, op4
-          [0, 1, 2, 3], // alg 7: all
-        ];
-        const alg = regs.algorithm ?? 0;
-        const carriers = CARRIER_OPS[alg] ?? [3];
         const vol = Math.max(
           0,
           Math.min(15, isAdd ? (regs.vol ?? 15) + value : value),
         );
         regs.vol = vol;
         const tl = Math.max(0, Math.min(127, (15 - vol) * 8));
+        const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
           regs.ops[opIdx].tl = tl;
           const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;

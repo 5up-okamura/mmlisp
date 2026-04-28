@@ -1172,6 +1172,8 @@ function expandNode(node, defs, defns, depth) {
   if (node.kind !== "list") return [node];
 
   const head = atomValue(node.items[0]);
+  if (head && defs.has(head) && node.items.length === 1)
+    return defs.get(head).map((n) => ({ ...n }));
   if (head && defns.has(head)) {
     const { params, body } = defns.get(head);
     const args = node.items.slice(1);
@@ -1337,10 +1339,19 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         });
       }
 
+      if (options.has(":vol")) {
+        trackData.events.push({
+          tick: 0,
+          cmd: "PARAM_SET",
+          args: { target: "VOL", value: Math.max(0, Math.min(15, defaultVol)) },
+          src: nodeSrc(node),
+        });
+      }
+
       trackByKey.set(trackKey, { trackData, trackState });
       trackOrder.push(trackKey);
     } else {
-      const { trackState } = trackByKey.get(trackKey);
+      const { trackData, trackState } = trackByKey.get(trackKey);
 
       if (options.has(":oct")) {
         const v = parseIntLike(atomValue(options.get(":oct")));
@@ -1361,6 +1372,18 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
           trackState.shuffleRatio =
             v === 50 ? 0 : Math.max(51, Math.min(90, v));
           trackState.subBeatParity = 0;
+        }
+      }
+      if (options.has(":vol")) {
+        const v = parseIntLike(atomValue(options.get(":vol")));
+        if (v !== null) {
+          trackState.defaultVol = Math.max(0, Math.min(15, v));
+          trackData.events.push({
+            tick: trackState.tick,
+            cmd: "PARAM_SET",
+            args: { target: "VOL", value: trackState.defaultVol },
+            src: nodeSrc(node),
+          });
         }
       }
     }
