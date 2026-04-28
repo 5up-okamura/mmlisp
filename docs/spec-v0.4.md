@@ -60,6 +60,8 @@ per-channel state map; state is never reset automatically between forms.
 | `_.` / `_N.` (e.g. `_.`, `_4.`) | Dotted rest — length × 1.5 (current `:len` or explicit, then × 1.5) |
 | `aNf` (e.g. `c8f`, `g+3f`)      | Note with exact frame count — BPM-independent; overrides `:len`     |
 | `_Nf` (e.g. `_8f`, `_16f`)      | Rest with exact frame count — BPM-independent; overrides `:len`     |
+| `aNt` (e.g. `c14t`, `g+1t`)     | Note with exact tick count — BPM-independent; overrides `:len`      |
+| `_Nt` (e.g. `_14t`, `_1t`)      | Rest with exact tick count — BPM-independent; overrides `:len`      |
 | `~`                             | Tie                                                                 |
 | `:keyword`                      | Modifier or key-value pair                                          |
 | `(form ...)`                    | Structural form (`x`, `break`, curve, etc.)                         |
@@ -72,11 +74,27 @@ per-channel state map; state is never reset automatically between forms.
 | Integer     | `4`     | note-length (quarter = 30 ticks) |
 | Dotted int  | `4.`    | note-length × 1.5 (45 ticks)     |
 | Frame count | `16f`   | exactly 16 driver frames         |
+| Tick count  | `14t`   | exactly 14 ticks                 |
 
 `4.` is shorthand for `4 * 1.5`. A single dot is supported; double-dot is out of scope for v0.4.
 Fraction notation (`1/N`, `N/M`) is not supported — use ties (`~`) for durations longer than a whole note.
-The `f` suffix is valid wherever a length value appears: `:len`, `:gate`, note/rest suffix, `:wait`.
-`:gate` accepts the same length formats as `:len` — integer note-length, dotted, or `Nf` frame count.
+The `f` and `t` suffixes are valid wherever a length value appears: `:len`, `:gate`, note/rest suffix, `:wait`.
+Use `Nt` when the desired duration does not align to any note-length integer — e.g. splitting an 8th note
+(15 ticks) into a 1-tick attack and a 14-tick body:
+
+```lisp
+; SN76489 periodic noise with white-noise attack on each 8th note
+; (srq3 provides frequency for periodic noise, muted via :vol)
+(noise :len 8
+  :mode white      c1t    ; 1-tick attack click
+  :mode periodic3  c14t   ; 14-tick periodic body  (1 + 14 = 15 = 8th note)
+  :mode white      c1t
+  :mode periodic3  c14t
+  :mode white      c1t
+  :mode periodic3  c14t)
+```
+
+`:gate` accepts the same length formats as `:len` — integer note-length, dotted, `Nf` frame count, or `Nt` tick count.
 Example: `:gate 8f` — the compiler emits `KEY_OFF` at exactly 8 frames regardless of BPM; the release tail begins there.
 
 ---
@@ -181,11 +199,11 @@ required before those files are used with the v0.4 compiler.
 Hardware parameter writes use the same `:key val` syntax as note modifiers.
 The compiler distinguishes them by key name:
 
-| Key class       | Examples                                              | Compile behaviour                                                                   |
-| --------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Sequencer state | `:oct` `:len` `:gate` `:vol`                          | compile-time state only — folded into NOTE_ON; `:vol` uses logical scale (see §2.5) |
-| Hardware params | `:tl1`–`:tl4` `:ar1`–`:ar4` `:fb` `:dt1` `:mode` etc. | emit `PARAM_SET` IR event                                                           |
-| Curve value     | `:tl2 (ease-out ...)`                                 | emit `PARAM_SWEEP` IR event                                                         |
+| Key class       | Examples                                                     | Compile behaviour                                                                   |
+| --------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Sequencer state | `:oct` `:len` `:gate` `:vol`                                 | compile-time state only — folded into NOTE_ON; `:vol` uses logical scale (see §2.5) |
+| Hardware params | `:tl1`–`:tl4` `:ar1`–`:ar4` `:fb` `:dt1` `:mode` `:pan` etc. | emit `PARAM_SET` IR event                                                           |
+| Curve value     | `:tl2 (ease-out ...)`                                        | emit `PARAM_SWEEP` IR event                                                         |
 
 All hardware parameter values are **absolute** (register value written directly).
 Relative/delta notation (e.g. `:tl1 +5`) is not supported.
@@ -1015,3 +1033,91 @@ A `:env` change emits `ENV_ATTACH` IR event.
 **Decided: `:mode` inline modifier covers mid-track noise change.** No
 additional syntax needed. Use `:mode white2` mid-track
 to change noise mode.
+
+---
+
+**`:env :mode` — frame-based noise mode envelope**
+
+`:env :mode` accepts a step-vector of mode keywords, advancing one step per
+driver frame. This enables sub-note timbre changes while note sequencing
+remains tick-based.
+
+```lisp
+; attack: 2 frames white → sustain: periodic3 (loops until KEY-OFF or end of note)
+(def noise-atk :env :mode [white0 white0 :loop periodic3])
+
+; attack: white → sustain: periodic → release: white on key-off
+(def noise-asr :env :mode [white0 white0 :loop periodic3 :release white2])
+```
+
+`:loop` and `:release` semantics are identical to `:env :vol` step-vector:
+
+| Region  | Marker               | Playback                                      |
+| ------- | -------------------- | --------------------------------------------- |
+| attack  | (before `:loop`)     | played once on KEY-ON, one step per frame     |
+| sustain | `:loop` … `:release` | looped until `KEY_OFF`                        |
+| release | after `:release`     | played once after `KEY_OFF`; holds final mode |
+
+Without `:release`, the last sustain mode persists after the loop until the
+note ends — natural for periodic-buzz sustain that simply cuts off.
+
+**Why this matters:** note duration is specified in ticks (tempo-relative), but
+the mode envelope runs in frames (hardware-relative). A 1-frame white-noise
+attack stays exactly 1 frame regardless of BPM; the rest of the note uses
+periodic mode for as long as the note lasts.
+
+```lisp
+; 8-beat pattern: each 8th note gets a 1-frame white attack, then periodic buzz
+; srq3 provides frequency for periodic3 mode (muted via :vol)
+(def perc-buzz :env :mode [white0 :loop periodic3])
+
+(noise :len 8 :env perc-buzz
+  c c c c  c c c c)
+```
+
+The compiler encodes `:env :mode` step-vectors as `MODE_ENV_TABLE` entries
+(same section as `ENVELOPE_TABLE`, target=mode). Each step is a 1-byte FB+NF
+value; the driver writes the noise register each frame tick.
+
+---
+
+### 4.2 FM panning — `:pan`
+
+YM2612 register B4 (per-channel) carries a 2-bit L/R output enable in bits 7–6:
+
+| Bits 7–6 | L   | R   | Meaning          |
+| -------- | --- | --- | ---------------- |
+| `11`     | ✓   | ✓   | Center (default) |
+| `10`     | ✓   |     | Left only        |
+| `01`     |     | ✓   | Right only       |
+| `00`     |     |     | Off (mute)       |
+
+`:pan` is a sticky channel option. It emits a `PARAM_SET` for the B4 register.
+Applies to `fm1`–`fm6` only; SN76489 has no stereo hardware.
+
+| Value    | Bits 7–6 | Output          |
+| -------- | -------- | --------------- |
+| `center` | `11`     | L + R (default) |
+| `left`   | `10`     | L only          |
+| `right`  | `01`     | R only          |
+| `off`    | `00`     | Muted           |
+
+```lisp
+(fm1 :pan center  c e g e)   ; L+R — default
+(fm1 :pan left    c e g e)   ; L only
+(fm1 :pan right   c e g e)   ; R only
+(fm1 :pan off     c e g e)   ; silent (useful for muting without stopping the note)
+```
+
+`:pan` is sticky — it persists across forms of the same channel until changed.
+The compiler initial default is `center`; no `PARAM_SET` is emitted unless
+`:pan` appears in the source.
+
+B4 also carries bits 5–4 (AMS, PMS — hardware LFO sensitivity). The compiler
+preserves the AMS/PMS bits from the current voice def when writing `:pan`:
+
+```
+new_B4 = (pan_bits << 6) | (current_B4 & 0x3F)
+```
+
+This means `:pan` and `:lfo-ams`/`:lfo-pms` parameters do not interfere.
