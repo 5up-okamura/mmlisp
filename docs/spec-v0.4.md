@@ -43,9 +43,12 @@ of scope.
 `[:fn ...]` wrapper is removed. Curve forms are `(curve-name :key val ...)` directly.
 `track` keyword and `:ch` option are removed. The channel name is the form head directly:
 `(fm1 :oct 4  c e g e)`, `(srq1 :oct 3  c d e)`, `(noise :mode 7  x x x x)` etc.
-All state (`:oct`, `:len`, `:gate`, `:vol`, `:mode`, `:env`, `:pitch`, etc.) is sticky — within a
+All state (`:oct`, `:len`, `:gate`, `:vel`, `:vol`, `:mode`, `:env`, `:pitch`, etc.) is sticky — within a
 form and **across consecutive forms of the same channel name**. The compiler maintains a
 per-channel state map; state is never reset automatically between forms.
+`:master` is score-level state (not channel-local). `(score :master N)` sets the initial
+global value; inline `:master` writes on any channel update that same global value at
+their timeline tick.
 `(default ...)` and `(set ...)` are removed.
 
 **Token disambiguation rule** — the parser resolves tokens in this order:
@@ -169,7 +172,7 @@ Example: `:len 4` (30 ticks), 4 notes → `[8, 7, 8, 7]` (total = 30).
 (fm1 :len 4  c. e. g)       ; c. = dotted quarter using current :len
 (fm1 :len 8  c4. e8.)       ; c4. = dotted quarter, e8. = dotted eighth (explicit)
 
-; dotted :len — sticky
+; dotted :len
 (fm1 :len 4.  c e g e)        ; :len 4. = dotted quarter (45 ticks) for all notes
 
 ; rest with explicit length — independent of current :len
@@ -199,11 +202,11 @@ required before those files are used with the v0.4 compiler.
 Hardware parameter writes use the same `:key val` syntax as note modifiers.
 The compiler distinguishes them by key name:
 
-| Key class       | Examples                                                     | Compile behaviour                                                                   |
-| --------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Sequencer state | `:oct` `:len` `:gate` `:vol`                                 | compile-time state only — folded into NOTE_ON; `:vol` uses logical scale (see §2.5) |
-| Hardware params | `:tl1`–`:tl4` `:ar1`–`:ar4` `:fb` `:dt1` `:mode` `:pan` etc. | emit `PARAM_SET` IR event                                                           |
-| Curve value     | `:tl2 (ease-out ...)`                                        | emit `PARAM_SWEEP` IR event                                                         |
+| Key class       | Examples                                                     | Compile behaviour                                                                                                        |
+| --------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Sequencer state | `:oct` `:len` `:gate` `:vel` `:vol`                          | `:oct/:len/:gate/:vel` are note-generation state (KEY-ON scoped). `:vol` is channel-level control on timeline (see §1.5) |
+| Hardware params | `:tl1`–`:tl4` `:ar1`–`:ar4` `:fb` `:dt1` `:mode` `:pan` etc. | emit `PARAM_SET` IR event                                                                                                |
+| Curve value     | `:tl2 (ease-out ...)`                                        | emit `PARAM_SWEEP` IR event                                                                                              |
 
 All hardware parameter values are **absolute** (register value written directly).
 Relative/delta notation (e.g. `:tl1 +5`) is not supported.
@@ -215,6 +218,52 @@ Relative/delta notation (e.g. `:tl1 +5`) is not supported.
   :tl2 (ease-out :from 28 :to 20 :len 8)   ; PARAM_SWEEP
   c e g e)
 ```
+
+### 1.5 Level model - `:master` / `:vol` / `:vel`
+
+**Decided: v0.4 uses a 3-layer logical level stack.**
+
+| Layer     | Scope                        | Range | Default | Meaning of max value |
+| --------- | ---------------------------- | ----- | ------- | -------------------- |
+| `:master` | score-global (`(score ...)`) | 0-31  | 31      | no attenuation       |
+| `:vol`    | channel-local state          | 0-31  | 31      | no attenuation       |
+| `:vel`    | note strength                | 0-15  | 15      | full note strength   |
+
+`0` is silence on every layer. Larger values are louder. Composition is multiplicative
+in the logical domain (driver/compiler implementation can use fixed-point integers).
+
+`master` semantics:
+
+- Scope is global (one value shared by all channels).
+- Initial value is set at score head (`(score :master 31 ...)`).
+- Inline writes on any channel update the same global value at that tick.
+
+Trigger model for level layers:
+
+- `:env :vel` is KEY-ON scoped (per-note trigger).
+- `:vol` is not KEY-ON scoped: it changes when timeline events occur (`:vol N`, `:vol (curve ...)`).
+- `:master` is not KEY-ON scoped: it changes when timeline events occur (`:master N`, `:master (curve ...)`).
+- `:vol`/`:master` may also be updated by runtime external control flags/messages from game code.
+
+`env-vel` from `:env :vel` remains 0-15 and is intentionally composer-friendly
+for PSG/SSG-style authoring (`[15 10 5 0]` reads naturally as loud to soft).
+
+Effective note level is determined by all four terms:
+
+```
+effective_level = env_vel(0-15) * vel(0-15) * vol(0-31) * master(0-31)
+```
+
+After logical composition, each backend maps to hardware:
+
+| Channel          | Hardware mapping                                            |
+| ---------------- | ----------------------------------------------------------- |
+| PSG (srq, noise) | convert to SN76489 attenuation (`0=max`, `15=silent`)       |
+| FM (fm1-fm6)     | convert to carrier TL offset (carrier mask resolved by ALG) |
+| PCM (dac)        | convert to mixer gain                                       |
+
+Curves are the preferred way to author fades and musical motion; raising `:vol`
+resolution beyond 0-31 is deferred unless real content shows a need.
 
 ---
 
@@ -283,7 +332,7 @@ the exit address at binary emit time.
 
 **Decided:**
 
-`:glide N` is a sticky channel option that enables automatic portamento: before
+`:glide N` enables automatic portamento: before
 each NOTE_ON the compiler inserts a `PARAM_SWEEP` that slides pitch from the
 previous note's pitch to the new note's pitch over `N` frames.
 
@@ -432,7 +481,7 @@ GMB binary
               wait=0  loop=false
       [id=3]  [target=tl4  curve=triangle  from=0  to=6  frames=8  loop=true]
               [target=tl1  curve=triangle  from=0  to=2  frames=8  loop=true]
-      [id=4]  target=vol  curve=triangle  from=12  to=15  frames=15
+      [id=4]  target=vel  curve=triangle  from=12  to=15  frames=15
               carrier_mask=0b1001  loop=true   ; FM only — compiler resolves from ALG
 ```
 
@@ -440,7 +489,7 @@ GMB binary
 
 ```
 Header (3 bytes):
-  u8   target        ; pitch=0  vol=1  tl1=2  tl2=3  tl3=4  tl4=5  dt1=6  …
+  u8   target        ; pitch=0  vel=1  tl1=2  tl2=3  tl3=4  tl4=5  dt1=6  …
   u8   carrier_mask  ; FM only: bitmask OP1–OP4; 0xFF = N/A (PSG/PCM)
   u8   stage_count   ; number of sequential stages (≥1)
 
@@ -461,7 +510,7 @@ Hold stage values:
 Multi-stage example — ADSR curve (`adsr-curve` from §2.5):
 
 ```
-[id=5]  target=vol  carrier_mask=0xFF  stage_count=4
+[id=5]  target=vel  carrier_mask=0xFF  stage_count=4
   stage[0]  curve_id=ease-out  flags=0          from=0   to=15  frames=4   ; Attack
   stage[1]  curve_id=ease-in   flags=0          from=15  to=10  frames=2   ; Decay
   stage[2]  curve_id=0xFF      flags=koff_wait  from=10  to=10  frames=0   ; Sustain
@@ -490,27 +539,27 @@ compiler resolves the substitution statically.
 ; looping LFO: tremolo on TL (carrier level)
 (def tremolo :env :tl1 (triangle :from 0 :to 3 :len 8))
 
-; step sequence: traditional PSG vol envelope
-(def pluck :env :vol [15 12 8 4 2 1 0])
-(def pad   :env :vol [15 :loop 14 13])
-(def organ :env :vol [15 :loop 14 13 :release 3])
+; step sequence: traditional PSG velocity envelope
+(def pluck :env :vel [15 12 8 4 2 1 0])
+(def pad   :env :vel [15 :loop 14 13])
+(def organ :env :vel [15 :loop 14 13 :release 3])
 
 ; curve vector: attack then release (no sustain loop — both stages complete)
-(def psg-punch :env :vol
+(def psg-punch :env :vel
   [(ease-out :from 15 :to 8 :len 16)    ; stage 1 — quick attack fade, completes
    (ease-in  :from 8  :to 0 :len 8)])   ; stage 2 — tail out, then silence
 
 ; curve vector: attack then sustain-loop (release NOT reachable — loop stage is terminal)
-(def psg-pad :env :vol
+(def psg-pad :env :vel
   [(ease-in    :from 0  :to 14 :len 8)  ; stage 1 — fade in, completes
    (triangle  :from 12 :to 15 :len 8)]) ; stage 2 — tremolo loops indefinitely; no further stage
 
-; curve: AM/tremolo via logical vol — works on all channel types
-(def tremolo-psg :env :vol (triangle :from 12 :to 15 :len 8))   ; gentle PSG tremolo
-(def am-fade     :env :vol (ease-out  :from 15 :to 0  :len 1))   ; fade over 1 whole note
+; curve: AM/tremolo via logical velocity envelope — works on all channel types
+(def tremolo-psg :env :vel (triangle :from 12 :to 15 :len 8))   ; gentle PSG tremolo
+(def am-fade     :env :vel (ease-out  :from 15 :to 0  :len 1))   ; fade over 1 whole note
 
 ; ADSR in step-vector form — attack / decay / sustain-loop / release
-(def adsr-soft :env :vol
+(def adsr-soft :env :vel
   [3 7 12 15                         ; Attack  — 4-step ramp up
    :loop 14 14 15 15                 ; Sustain — gentle shimmer (loops until KEY-OFF)
    :release 12 9 6 3 1 0])          ; Release — ramp down after KEY-OFF
@@ -520,23 +569,24 @@ compiler resolves the substitution statically.
 To combine a sustain-loop with a release tail, use the step-vector
 `[:loop ... :release ...]` form, not `[curve-vec]`.
 
-**Decided: `:vol` is a logical volume scale — `0` = silent, `15` = maximum — on all
-channel types.** The compiler maps to hardware per channel:
+**Decided: `:env :vel` is the envelope-layer loudness scale (`0` = silent, `15` = max envelope output) on all
+channel types.** Final loudness also includes `:vel`, `:vol`, and `:master` (see §1.5).
+The compiler/driver maps the composed level to hardware per channel:
 
-| Channel          | Hardware mapping                                        |
-| ---------------- | ------------------------------------------------------- |
-| PSG (srq, noise) | `hw_attenuation = 15 − vol` (SN76489: 0=max, 15=silent) |
-| FM (fm1–fm4)     | carrier-TL offset applied to all carrier operators      |
-| PCM (dac)        | direct mixing-volume scaling                            |
+| Channel          | Hardware mapping                                      |
+| ---------------- | ----------------------------------------------------- |
+| PSG (srq, noise) | SN76489 attenuation conversion (`0=max`, `15=silent`) |
+| FM (fm1–fm4)     | carrier-TL offset applied to carrier operators        |
+| PCM (dac)        | direct mixing-volume scaling                          |
 
-`[15 12 8 4 2 1 0]` therefore reads as "loud → silent" on every channel type; no
+`[15 12 8 4 2 1 0]` therefore reads as "loud → silent" for the envelope layer on every channel type; no
 polarity surprises for the composer.
 
-**`:env :vol` accepts both step-vector and curve forms.** `:from`/`:to` values use
-the same 0–15 logical scale. The compiler applies the same per-channel mapping as
-the integer `:vol` state — no separate scale for curve targets.
+**`:env :vel` accepts both step-vector and curve forms.** `:from`/`:to` values use
+the same 0-15 envelope scale. This envelope output is composed with `:vel`/`:vol`/`:master`
+before hardware conversion.
 
-**FM `:vol` curve — `carrier_mask` resolved at compile time.** The compiler
+**FM `:vel` curve — `carrier_mask` resolved at compile time.** The compiler
 determines which OPs are carriers from the voice def's `:alg` value and embeds a
 `carrier_mask` (u8 bitmask, bit0=OP1…bit3=OP4) in the `ENVELOPE_TABLE` entry.
 The driver reads the mask and updates only the flagged TL registers each frame.
@@ -546,15 +596,15 @@ When the same `:env` def is attached to voice defs with different ALG values, th
 compiler generates a separate `ENVELOPE_TABLE` entry per (env-def × carrier_mask)
 combination. Authors write one def; the compiler deduplicates automatically.
 
-For FM tremolo, choosing between `:vol (curve ...)` and `:tl1 (curve ...)`:
+For FM tremolo, choosing between `:vel (curve ...)` and `:tl1 (curve ...)`:
 
-| Approach                | Range | Scope                                | Use when                                |
-| ----------------------- | ----- | ------------------------------------ | --------------------------------------- |
-| `:vol (curve ...)`      | 0–15  | carrier OPs only (compiler-resolved) | all channel types; coarse AM            |
-| `:tl1 (curve ...)` etc. | 0–127 | one operator at a time               | FM fine-grained tremolo or filter sweep |
+| Approach                | Range | Scope                                        | Use when                                |
+| ----------------------- | ----- | -------------------------------------------- | --------------------------------------- |
+| `:vel (curve ...)`      | 0-15  | envelope layer, then level-stack composition | all channel types; coarse AM/tremolo    |
+| `:tl1 (curve ...)` etc. | 0–127 | one operator at a time                       | FM fine-grained tremolo or filter sweep |
 
 Step-vector `[...]` and curve `(curve ...)` can also be combined per-target in a
-multi-target envelope (sequential vol, simultaneous pitch, etc.).
+multi-target envelope (sequential vel, simultaneous pitch, etc.).
 
 **`:extends` — compile-time def inheritance:**
 
@@ -636,7 +686,7 @@ without using the step-vector form:
 
 ```lisp
 ; ADSR via multi-stage with wait stage
-(def adsr-curve :env :vol
+(def adsr-curve :env :vel
   [(ease-out :from 0  :to 15 :len 4)    ; Attack
    (ease-in  :from 15 :to 10 :len 2)   ; Decay
    (wait key-off)                       ; Sustain — hold at 10 until KEY-OFF
@@ -652,9 +702,9 @@ simultaneously by listing multiple `:key (curve ...)` pairs:
   :tl4 (triangle :from 0 :to 6 :len 8)
   :tl1 (triangle :from 0 :to 2 :len 8))
 
-; vol step sequence + pitch sweep in one def — valid combination
+; vel step sequence + pitch sweep in one def — valid combination
 (def syntom :env
-  :vol   [15 12 8 4 2 1 0]
+  :vel   [15 12 8 4 2 1 0]
   :pitch (ease-out :from 0 :to -48 :len 8))
 
 ; voice def: env fires on every NOTE_ON
@@ -679,9 +729,9 @@ compose freely: each target key can independently carry a single curve or a
 `[...]` stage vector.
 
 ```lisp
-; both at once: :pitch is sequential stages, :vol runs in parallel alongside it
+; both at once: :pitch is sequential stages, :vel runs in parallel alongside it
 (def syntom-env :env
-  :vol   [15 12 8 4 0]                ; vol stages run sequentially
+  :vel   [15 12 8 4 0]                ; vel stages run sequentially
   :pitch (ease-out :from 0 :to -48 :len 8))  ; pitch curve runs simultaneously
 ```
 
@@ -772,7 +822,7 @@ internally; the wait and curve run as consecutive stages sharing one `envId`.
 
 **Decided: `:release` in step-vector — compiler emits `KEY_OFF` at `gate_ticks`.**
 
-The step-vector format for `:env :vol` is:
+The step-vector format for `:env :vel` is:
 
 ```
 [attack... :loop sustain... :release release...]
@@ -806,13 +856,13 @@ until the step ends (natural: last release value is usually 0 = silent).
 
 ```lisp
 ; attack(15,14) → loop(13,12) → release(11,9,7,5,3,1,0)
-(def organ :env :vol [15 14 :loop 13 12 :release 11 9 7 5 3 1 0])
+(def organ :env :vel [15 14 :loop 13 12 :release 11 9 7 5 3 1 0])
 
 ; no attack — sustain immediately, release on gate close
-(def pad :env :vol [:loop 14 13 :release 5 3 1 0])
+(def pad :env :vel [:loop 14 13 :release 5 3 1 0])
 
 ; one-shot, no loop, no release — envelope plays to end regardless of gate
-(def pluck :env :vol [15 12 8 4 2 1 0])
+(def pluck :env :vel [15 12 8 4 2 1 0])
 ```
 
 `:release` without `:loop` is valid — the envelope plays attack then release
@@ -986,9 +1036,9 @@ Envelope is attached separately via `:env` or via a `def` reference.
 
 ```lisp
 ; named envelope defs
-(def hh-closed-env :env :vol [15 8 0])
-(def hh-open-env   :env :vol [15 12 10 8 4 0])
-(def ride-env      :env :vol [15 14 13 :loop 12 11])
+(def hh-closed-env :env :vel [15 8 0])
+(def hh-open-env   :env :vel [15 12 10 8 4 0])
+(def ride-env      :env :vel [15 14 13 :loop 12 11])
 
 ; noise track
 (noise :mode white0
@@ -1050,7 +1100,7 @@ remains tick-based.
 (def noise-asr :env :mode [white0 white0 :loop periodic3 :release white2])
 ```
 
-`:loop` and `:release` semantics are identical to `:env :vol` step-vector:
+`:loop` and `:release` semantics are identical to `:env :vel` step-vector:
 
 | Region  | Marker               | Playback                                      |
 | ------- | -------------------- | --------------------------------------------- |
@@ -1092,7 +1142,7 @@ YM2612 register B4 (per-channel) carries a 2-bit L/R output enable in bits 7–6
 | `01`     |     | ✓   | Right only       |
 | `00`     |     |     | Off (mute)       |
 
-`:pan` is a sticky channel option. It emits a `PARAM_SET` for the B4 register.
+`:pan` emits a `PARAM_SET` for the B4 register.
 Applies to `fm1`–`fm6` only; SN76489 has no stereo hardware.
 
 | Value    | Bits 7–6 | Output          |
@@ -1109,7 +1159,6 @@ Applies to `fm1`–`fm6` only; SN76489 has no stereo hardware.
 (fm1 :pan off     c e g e)   ; silent (useful for muting without stopping the note)
 ```
 
-`:pan` is sticky — it persists across forms of the same channel until changed.
 The compiler initial default is `center`; no `PARAM_SET` is emitted unless
 `:pan` appears in the source.
 
