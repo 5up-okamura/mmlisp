@@ -11,7 +11,7 @@ Execution model assumptions:
 
 Default values:
 
-1. track `:len` — `1/8` (60 ticks at PPQN=120) when not specified
+1. track `:len` — `1/8` (24 ticks at PPQN=48) when not specified
 2. track `:oct` — `4` when not specified
 3. track `:gate` — full gate (no truncation) when not specified
 4. track `:ch` — auto-increment by track index (track 0 → fm1, track 1 → fm2, …) when not specified

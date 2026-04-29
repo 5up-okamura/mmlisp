@@ -74,8 +74,8 @@ their timeline tick.
 
 | Format      | Example | Resolved as                      |
 | ----------- | ------- | -------------------------------- |
-| Integer     | `4`     | note-length (quarter = 30 ticks) |
-| Dotted int  | `4.`    | note-length × 1.5 (45 ticks)     |
+| Integer     | `4`     | note-length (quarter = 48 ticks) |
+| Dotted int  | `4.`    | note-length × 1.5 (72 ticks)     |
 | Frame count | `16f`   | exactly 16 driver frames         |
 | Tick count  | `14t`   | exactly 14 ticks                 |
 
@@ -83,18 +83,18 @@ their timeline tick.
 Fraction notation (`1/N`, `N/M`) is not supported — use ties (`~`) for durations longer than a whole note.
 The `f` and `t` suffixes are valid wherever a length value appears: `:len`, `:gate`, note/rest suffix, `:wait`.
 Use `Nt` when the desired duration does not align to any note-length integer — e.g. splitting an 8th note
-(15 ticks) into a 1-tick attack and a 14-tick body:
+(24 ticks) into a 1-tick attack and a 23-tick body:
 
 ```lisp
 ; SN76489 periodic noise with white-noise attack on each 8th note
 ; (srq3 provides frequency for periodic noise, muted via :vol)
 (noise :len 8
   :mode white      c1t    ; 1-tick attack click
-  :mode periodic3  c14t   ; 14-tick periodic body  (1 + 14 = 15 = 8th note)
+  :mode periodic3  c23t   ; 23-tick periodic body  (1 + 23 = 24 = 8th note)
   :mode white      c1t
-  :mode periodic3  c14t
+  :mode periodic3  c23t
   :mode white      c1t
-  :mode periodic3  c14t)
+  :mode periodic3  c23t)
 ```
 
 `:gate` accepts the same length formats as `:len` — integer note-length, dotted, `Nf` frame count, or `Nt` tick count.
@@ -136,7 +136,7 @@ The total always equals `parent_ticks` exactly. The per-note error is at most
 1 tick (< 1/60 s at 60 fps — inaudible). No compiler error is raised for
 non-divisible counts.
 
-Example: `:len 4` (30 ticks), 4 notes → `[8, 7, 8, 7]` (total = 30).
+Example: `:len 4` (48 ticks), 5 notes → `[9, 10, 9, 10, 10]` (total = 48).
 
 **Examples:**
 
@@ -150,12 +150,12 @@ Example: `:len 4` (30 ticks), 4 notes → `[8, 7, 8, 7]` (total = 30).
 ; bare identifier switches voice (no @ prefix)
 (fm1 :oct 4 :len 8  brass  c e g e  :tl1 20  c e g e)
 
-; subgroup (triplet): 3 notes in a quarter note (30 ticks / 3 = 10 ticks each — exact)
+; subgroup (triplet): 3 notes in a quarter note (48 ticks / 3 = 16 ticks each — exact)
 (fm1 :len 4  c  (e g a)  f)
 
-; subgroup (4 in a quarter): 30 ticks / 4 = 7.5 — Bresenham distributes as [8, 7, 8, 7]
+; subgroup (5 in a quarter): 48 ticks / 5 = 9.6 — Bresenham distributes as [9, 10, 9, 10, 10]
 ; total always equals parent :len; max per-note error is 1 tick (< 1/60 s, inaudible)
-(fm1 :len 4  (c e g a))
+(fm1 :len 4  (c e g a b))
 
 ; single-stage envelope
 (def syntom-pitch :env :pitch (ease-out :from 0 :to -48 :len 8))
@@ -173,7 +173,7 @@ Example: `:len 4` (30 ticks), 4 notes → `[8, 7, 8, 7]` (total = 30).
 (fm1 :len 8  c4. e8.)       ; c4. = dotted quarter, e8. = dotted eighth (explicit)
 
 ; dotted :len
-(fm1 :len 4.  c e g e)        ; :len 4. = dotted quarter (45 ticks) for all notes
+(fm1 :len 4.  c e g e)        ; :len 4. = dotted quarter (72 ticks) for all notes
 
 ; rest with explicit length — independent of current :len
 (fm1 :len 4  c _8 c _16 c)
@@ -474,7 +474,7 @@ time per channel per frame.
 ```
 GMB binary
 ├── TRACK_DATA
-│     NOTE_ON  pitch=c4  len=120  envId=2   ; u8; 0 = no envelope
+│     NOTE_ON  pitch=c4  len=48   envId=2   ; u8; 0 = no envelope
 │
 └── ENVELOPE_TABLE  (section 0x0005)
       [id=2]  target=pitch  curve=ease-out  from=0  to=-48  frames=16
@@ -784,7 +784,7 @@ length formats as note/rest lengths apply:
 
 | Format      | Example    | Meaning                                         |
 | ----------- | ---------- | ----------------------------------------------- |
-| Integer     | `:len 4`   | note-length — quarter note (30 ticks @ BPM=120) |
+| Integer     | `:len 4`   | note-length — quarter note (48 ticks @ BPM=120) |
 | Dotted int  | `:len 4.`  | note-length × 1.5                               |
 | Frame count | `:len 16f` | exactly 16 driver frames (BPM-independent)      |
 
@@ -795,10 +795,10 @@ Musical durations (integer, dotted) scale with BPM; `Nf` does not.
 The compiler converts musical lengths to frames using:
 
 ```
-frames = (ticks / PPQN) * (BPM / 60) * fps
+frames = ticks * fps * 60 / (BPM * PPQN)
 ```
 
-At BPM=120, fps=60, PPQN=120: frames = ticks (quarter = 30 frames).
+At BPM=120, fps=60, PPQN=48: frames = ticks \* 5 / 8 (quarter = 30 frames).
 
 ```lisp
 (def vibrato :env :pitch (sin :from -10 :to 10 :len 4

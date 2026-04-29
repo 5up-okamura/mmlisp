@@ -66,17 +66,17 @@ The per-note length applies to that note only and does **not** update the persis
 
 `:len` accepts a fraction (`n/d`), denominator-only shorthand (`4` = `1/4`), or dotted shorthand (`4.` = dotted quarter = `3/8`):
 
-| Written        | Duration       | Ticks (PPQN=120) |
-| -------------- | -------------- | ---------------- |
-| `2/1`          | double whole   | 960              |
-| `1/1` or `1`   | whole note     | 480              |
-| `1/4` or `4`   | quarter note   | 120              |
-| `4.`           | dotted quarter | 180              |
-| `1/8` or `8`   | eighth note    | 60               |
-| `8.`           | dotted eighth  | 90               |
-| `1/12` or `12` | triplet eighth | 40               |
+| Written        | Duration       | Ticks (PPQN=48) |
+| -------------- | -------------- | --------------- |
+| `2/1`          | double whole   | 384             |
+| `1/1` or `1`   | whole note     | 192             |
+| `1/4` or `4`   | quarter note   | 48              |
+| `4.`           | dotted quarter | 72              |
+| `1/8` or `8`   | eighth note    | 24              |
+| `8.`           | dotted eighth  | 36              |
+| `1/12` or `12` | triplet eighth | 16              |
 
-Any `n/d` fraction is valid. The minimum is `1/480` (1 tick).
+Any `n/d` fraction is valid. The minimum is `1/192` (1 tick).
 
 ### Delay / chorus example
 
@@ -376,7 +376,7 @@ Gate controls when KEY_OFF fires within a step. Default is `1.0` (legato — no 
 (track :ch fm1 :gate 0.5   ...)    ; staccato — KEY_OFF at half the step
 
 ; Length notation: same tokens as :len (1/16, 16, etc.)
-(seq :gate 1/16  c d e f)          ; KEY_OFF 30 ticks after NOTE_ON regardless of step length
+(seq :gate 1/16  c d e f)          ; KEY_OFF 12 ticks after NOTE_ON regardless of step length
 (seq :gate 16    c d e f)          ; same — denominator-only shorthand
 
 ; Override inside seq

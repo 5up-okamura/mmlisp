@@ -11,7 +11,7 @@
 
 import { parse } from "./mmlisp-parser.js";
 
-const PPQN = 120;
+const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",

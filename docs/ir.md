@@ -16,7 +16,7 @@ IR is represented as a song object with one or more tracks.
 Song fields:
 
 1. version: integer
-2. ppqn: integer (fixed at 120 in v0.1)
+2. ppqn: integer (fixed at 48 in the current draft)
 3. tempo_base: fixed-point increment baseline
 4. tracks: array of track objects
 5. metadata: key-value map

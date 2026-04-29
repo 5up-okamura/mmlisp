@@ -253,7 +253,7 @@ export class IRPlayer {
     this._loopCount = new Map(); // loopId → iteration count
     this._eventIndex = 0;
     this._currentTick = 0;
-    this._ppqn = 120;
+    this._ppqn = 48;
     this._bpm = 120;
     this._startAudioTime = 0;
     this._audioContext = null;
@@ -298,7 +298,7 @@ export class IRPlayer {
   async loadURL(url) {
     const res = await fetch(url);
     this._ir = await res.json();
-    this._ppqn = this._ir.ppqn ?? 120;
+    this._ppqn = this._ir.ppqn ?? 48;
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -330,7 +330,7 @@ export class IRPlayer {
    */
   loadJSON(irObj) {
     this._ir = irObj;
-    this._ppqn = irObj.ppqn ?? 120;
+    this._ppqn = irObj.ppqn ?? 48;
     this._bpm = this._resolveInitialTempo(irObj);
     this._eventIndex = 0;
     this._currentTick = 0;
@@ -1356,9 +1356,8 @@ export class IRPlayer {
         this._psgSetAtt(psgCh, 15, noteOffWhen);
         return;
       }
-      // Step rate: ~60Hz (4 ticks at PPQN=120; scales with PPQN)
-      const stepDurSecs =
-        Math.max(1, Math.round(this._ppqn / 30)) * secsPerTick;
+      // Z80 driver: 1 step per V-INT = 60 Hz, independent of PPQN/BPM.
+      const stepDurSecs = 1 / 60;
       const loopIndex = env.loopIndex ?? null;
 
       let t = noteWhen;
