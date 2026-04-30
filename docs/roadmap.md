@@ -52,8 +52,8 @@ v0.2 additions (complete):
 
 - ~~Cmd+Enter play/pause toggle; Cmd+. full stop~~
 - ~~Marker-based playback start from cursor position~~
-- ~~Named FM/PSG voice data via `def :fm` / `def :psg`~~
-- ~~same-ch bgm collision diagnostic~~
+- ~~Named FM/PSG voice data (legacy voice-def syntax)~~
+- ~~same-channel BGM collision diagnostic~~
 - ~~modulator track note/LFO separation; `:reset-on-note` option~~
 - ~~PWA top bar UI; FM params slide-in panel; line numbers~~
 
@@ -88,13 +88,13 @@ Phase 3 entry condition:
 
 ## Language Version Status
 
-| Version | Status             | Tag            | Themes                                                   |
-| ------- | ------------------ | -------------- | -------------------------------------------------------- |
-| v0.1    | frozen             | v0.1-candidate | Core language, IR, GMB format                            |
-| v0.2    | frozen             | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                 |
-| v0.3    | frozen             | v0.3-freeze    | seq, gate, shuffle, track append, @voice, v+/v-          |
-| v0.4    | design-in-progress | —              | Envelopes/macros, pitch env, PSG noise, pan, level model |
-| v0.5    | planned            | —              | FM3 independent-OP mode, CSM, PCM/DAC                    |
+| Version | Status             | Tag            | Themes                                                                      |
+| ------- | ------------------ | -------------- | --------------------------------------------------------------------------- |
+| v0.1    | frozen             | v0.1-candidate | Core language, IR, GMB format                                               |
+| v0.2    | frozen             | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                    |
+| v0.3    | frozen             | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls |
+| v0.4    | design-in-progress | —              | Envelopes/macros, pitch env, PSG noise, pan, level model                    |
+| v0.5    | planned            | —              | FM3 independent-OP mode, CSM, PCM/DAC                                       |
 
 ## Backlog
 
@@ -102,14 +102,19 @@ Done (confirmed implemented, not yet removed from backlog):
 
 - ~~Cmd+Enter pause/resume and Cmd+. stop~~ — live/index.html L978
 - ~~Cursor-line seek from source map~~ — IRPlayer.playFromLine() in ir-player.js
-- ~~Named FM/PSG voice data via `def :fm` / `def :psg`~~ — collectDefs() + emitVoice() in mmlisp2ir.js; PSG_VOICE + PARAM_SET handled in ir-player.js
-- ~~`(default :oct :len)` mid-track mutation~~ — compileTrackBodyItems(); spec-v0.3 §1.2; guide §6
+- ~~Named FM/PSG voice data (legacy voice-def syntax)~~ — implemented in compiler + player pipeline (v0.2 era)
+- ~~Mid-track default-state mutation~~ — implemented (see spec-v0.3 §1.2; guide §6)
 - ~~FM patch vector column order~~ — confirmed `[AR DR SR RR SL TL KS ML DT (SSG) (AMen)]`; spec-v0.2 §2.5
 
 Active:
 
 1. Freeze IR-to-GMB opcode table
 2. Begin MMLispDRV implementation (Phase 3)
+3. Furnace/DefleMask voice data interoperability (spec-first, then implementation)
+
+- Define canonical mapping from Furnace/DefleMask FM instrument fields to the new MMLisp voice schema
+- Implement import path (converter + validation + diagnostics) in tools/compiler layer
+- Add round-trip fixtures and compatibility tests before any patch-sharing/community rollout
 
 v0.5 candidates:
 
@@ -136,7 +141,7 @@ v0.5 candidates:
 - `import` resolves at compile time and folds into IR — no runtime dependency
 - Patch types:
   - **Function effects** (delay, arpeggiator, LFO, ...) — implementable in the ir-player.js scheduler layer
-  - **FM voices** — define as a `VOICE_LOAD` opcode in v0.2 scope
+  - **FM voices** — define via a canonical voice asset schema compiled into IR/driver events
 - Version pinning (`@1.2.3`) is required for reproducibility
 
 ### Patch server / community
