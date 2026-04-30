@@ -34,7 +34,7 @@ of scope.
 | Note sequence form             | `(seq ...)` / `[...]`       | flat inline — notes written directly in channel body             |
 | Subgroup / tuplet              | `[e g a]` in item position  | `(e g a)` in item position                                       |
 | Single-stage curve spec        | `[:fn ease-out ...]`        | `(ease-out ...)`                                                 |
-| Multi-stage curve spec         | `[(ease-in ...) (sin ...)]` | unchanged (after `:env` only)                                    |
+| Multi-stage curve spec         | `[(ease-in ...) (sin ...)]` | unchanged (after `:macro` only)                                  |
 | Track declaration              | `(track :ch X ...)`         | `(X ...)` — channel name as form head                            |
 | Mid-track defaults             | `(default :oct 3 ...)`      | removed — channel options set initial state; all state is sticky |
 | `def` reference / voice switch | `@name`                     | bare identifier `name`                                           |
@@ -43,7 +43,7 @@ of scope.
 `[:fn ...]` wrapper is removed. Curve forms are `(curve-name :key val ...)` directly.
 `track` keyword and `:ch` option are removed. The channel name is the form head directly:
 `(fm1 :oct 4  c e g e)`, `(srq1 :oct 3  c d e)`, `(noise :mode 7  x x x x)` etc.
-All state (`:oct`, `:len`, `:gate`, `:vel`, `:vol`, `:mode`, `:env`, `:pitch`, etc.) is sticky — within a
+All state (`:oct`, `:len`, `:gate`, `:vel`, `:vol`, `:mode`, `:macro`, `:pitch`, etc.) is sticky — within a
 form and **across consecutive forms of the same channel name**. The compiler maintains a
 per-channel state map; state is never reset automatically between forms.
 `:master` is score-level state (not channel-local). `(score :master N)` sets the initial
@@ -115,8 +115,8 @@ body — no sequence wrapper.
 | `cN` (e.g. `c8`)       | Inline in note position                    | Note with explicit length; overrides `:len` for that note only     |
 | `_N` (e.g. `_8`)       | Inline in note position                    | Rest with explicit length; overrides `:len` for that rest only     |
 | `(notes...)`           | Inline when first element is a note        | Subgroup / tuplet — current `:len` distributed by Bresenham method |
-| `(curve-name ...)`     | After `:env`; value of `:key` inline       | Curve spec                                                         |
-| `[(stage1) (stage2)]`  | After `:env`                               | Multi-stage envelope                                               |
+| `(curve-name ...)`     | After `:macro`; value of `:key` inline     | Curve spec                                                         |
+| `[(stage1) (stage2)]`  | After `:macro`                             | Multi-stage macro                                                  |
 
 **Subgroup tick distribution — Bresenham method:**
 
@@ -158,10 +158,10 @@ Example: `:len 4` (48 ticks), 5 notes → `[9, 10, 9, 10, 10]` (total = 48).
 (fm1 :len 4  (c e g a b))
 
 ; single-stage envelope
-(def syntom-pitch :env :pitch (ease-out :from 0 :to -48 :len 8))
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -48 :len 8))
 
-; multi-stage envelope ([...] retained after :env only — data vector, not note sequence)
-(def vib-entry :env :pitch
+; Multi-stage macro ([...] retained after :macro only — data vector, not note sequence)
+(def vib-entry :macro :pitch
   [(ease-in :from -12 :to 0 :len 16)
    (sin    :from -10 :to 10 :len 8)])
 
@@ -181,14 +181,14 @@ Example: `:len 4` (48 ticks), 5 notes → `[9, 10, 9, 10, 10]` (total = 48).
 ; dotted rests
 (fm1 :len 4  c _. e _4.)    ; _. = dotted quarter rest, _4. = same explicit
 
-; cross-form state inheritance — :oct 5 and :env persist into next form
-(fm1 :oct 4 :len 4 :env scoop  c e g e)
-(fm1  c e g e)   ; :oct 4, :len 4, :env scoop all still active
+; cross-form state inheritance — :oct 5 and :macro persist into next form
+(fm1 :oct 4 :len 4 :macro scoop  c e g e)
+(fm1  c e g e)   ; :oct 4, :len 4, :macro scoop all still active
 (fm1 :oct 5  c e g e)   ; only :oct changes; other state unchanged
 ```
 
 **Decided: `(seq ...)` and `[...]` (note sequence form) are both removed in v0.4.** No deprecated aliases.
-`[...]` is retained **only** after `:env` for multi-stage envelopes (data vector context).
+`[...]` is retained **only** after `:macro` for Multi-stage macros (data vector context).
 Existing demo sources (`demo1-stage-loop.mmlisp`, `demo2-event-recovery.mmlisp`)
 use `(seq ...)` and `(track :ch ...)` throughout — a one-time rename pass is
 required before those files are used with the v0.4 compiler.
@@ -240,18 +240,18 @@ in the logical domain (driver/compiler implementation can use fixed-point intege
 
 Trigger model for level layers:
 
-- `:env :vel` is KEY-ON scoped (per-note trigger).
+- :macro :vel` is KEY-ON scoped (per-note trigger).
 - `:vol` is not KEY-ON scoped: it changes when timeline events occur (`:vol N`, `:vol (curve ...)`).
 - `:master` is not KEY-ON scoped: it changes when timeline events occur (`:master N`, `:master (curve ...)`).
 - `:vol`/`:master` may also be updated by runtime external control flags/messages from game code.
 
-`env-vel` from `:env :vel` remains 0-15 and is intentionally composer-friendly
+`macro-vel` from :macro :vel` remains 0-15 and is intentionally composer-friendly
 for PSG/SSG-style authoring (`[15 10 5 0]` reads naturally as loud to soft).
 
 Effective note level is determined by all four terms:
 
 ```
-effective_level = env_vel(0-15) * vel(0-15) * vol(0-31) * master(0-31)
+effective_level = macro_vel(0-15) * vel(0-15) * vol(0-31) * master(0-31)
 ```
 
 After logical composition, each backend maps to hardware:
@@ -449,7 +449,7 @@ alike — so a PARAM_SWEEP ending at value X means the next `:glide` starts from
 
 ```lisp
 ; portamento — from current pitch, slide to note pitch over 8 frames
-(def portamento :env :pitch (linear :to 0 :len 8f))
+(def portamento :macro :pitch (linear :to 0 :len 8f))
 ; :to 0 = note's own pitch; :from omitted = last_written[pitch]
 ```
 
@@ -474,7 +474,7 @@ at compile time:
 
 #### Pitch macro — relative semitones
 
-`:env :pitch` values are **relative semitones** from the current note at KEY-ON.
+:macro :pitch` values are **relative semitones** from the current note at KEY-ON.
 The full pitch computation before F-Number resolution is:
 
 ```
@@ -494,17 +494,17 @@ warning and ignores `:pan` on those channels.
 Allowed values: `left` (-1), `center` (0), `right` (+1). `none` is not adopted.
 Raw integers are also valid: `-1` = left, `0` = center, `+1` = right.
 
-`:env :pan` is a valid envelope target. Both symbolic and numeric forms are
+:macro :pan` is a valid envelope target. Both symbolic and numeric forms are
 accepted in step vectors:
 
 ```lisp
-(def pan-sweep :env :pan [left left center right right center])
-(def pan-sweep :env :pan [-1 -1 0 1 1 0])
+(def pan-sweep :macro :pan [left left center right right center])
+(def pan-sweep :macro :pan [-1 -1 0 1 1 0])
 ```
 
 #### Envelope targets
 
-All hardware-writable parameters are valid `:env` targets. The table below is
+All hardware-writable parameters are valid `:macro` targets. The table below is
 the complete list. Per-OP targets repeat for each operator suffix (`1`–`4`).
 
 **Common — all channel types**
@@ -622,46 +622,46 @@ Multi-stage example — ADSR curve (`adsr-curve` from §2.5):
 **Decided: `NOTE_ON` carries a single `envId` (u8).** `0` = no envelope. Multiple
 targets (e.g. `:tl4` + `:tl1` + `:pitch` simultaneously) are packed into one
 `ENVELOPE_TABLE` entry with multiple sub-entries; the NOTE_ON still references a
-single id. Inline `:env` overrides replace the id on that NOTE_ON only — the
+single id. Inline `:macro` overrides replace the id on that NOTE_ON only — the
 compiler resolves the substitution statically.
 
 **MMLisp authoring syntax:**
 
 ```lisp
 ; one-shot: synth tom pitch sweep
-(def syntom-pitch :env :pitch (ease-out :from 0 :to -48 :len 8))
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -48 :len 8))
 
 ; one-shot: brass scoop-up
-(def scoop :env :pitch (ease-in :from -18 :to 0 :len 16))
+(def scoop :macro :pitch (ease-in :from -18 :to 0 :len 16))
 
 ; looping LFO: vibrato (wait before onset)
-(def vibrato :env :pitch (sin :from -10 :to 10 :len 8
+(def vibrato :macro :pitch (sin :from -10 :to 10 :len 8
                           :wait 4))
 
 ; looping LFO: tremolo on TL (carrier level)
-(def tremolo :env :tl1 (triangle :from 0 :to 3 :len 8))
+(def tremolo :macro :tl1 (triangle :from 0 :to 3 :len 8))
 
 ; step sequence: traditional PSG velocity envelope
-(def pluck :env :vel [15 12 8 4 2 1 0])
-(def pad   :env :vel [15 :loop 14 13])
-(def organ :env :vel [15 :loop 14 13 :release 3])
+(def pluck :macro :vel [15 12 8 4 2 1 0])
+(def pad   :macro :vel [15 :loop 14 13])
+(def organ :macro :vel [15 :loop 14 13 :release 3])
 
 ; curve vector: attack then release (no sustain loop — both stages complete)
-(def psg-punch :env :vel
+(def psg-punch :macro :vel
   [(ease-out :from 15 :to 8 :len 16)    ; stage 1 — quick attack fade, completes
    (ease-in  :from 8  :to 0 :len 8)])   ; stage 2 — tail out, then silence
 
 ; curve vector: attack then sustain-loop (release NOT reachable — loop stage is terminal)
-(def psg-pad :env :vel
+(def psg-pad :macro :vel
   [(ease-in    :from 0  :to 14 :len 8)  ; stage 1 — fade in, completes
    (triangle  :from 12 :to 15 :len 8)]) ; stage 2 — tremolo loops indefinitely; no further stage
 
 ; curve: AM/tremolo via logical velocity envelope — works on all channel types
-(def tremolo-psg :env :vel (triangle :from 12 :to 15 :len 8))   ; gentle PSG tremolo
-(def am-fade     :env :vel (ease-out  :from 15 :to 0  :len 1))   ; fade over 1 whole note
+(def tremolo-psg :macro :vel (triangle :from 12 :to 15 :len 8))   ; gentle PSG tremolo
+(def am-fade     :macro :vel (ease-out  :from 15 :to 0  :len 1))   ; fade over 1 whole note
 
 ; ADSR in step-vector form — attack / decay / sustain-loop / release
-(def adsr-soft :env :vel
+(def adsr-soft :macro :vel
   [3 7 12 15                         ; Attack  — 4-step ramp up
    :loop 14 14 15 15                 ; Sustain — gentle shimmer (loops until KEY-OFF)
    :release 12 9 6 3 1 0])          ; Release — ramp down after KEY-OFF
@@ -671,7 +671,7 @@ compiler resolves the substitution statically.
 To combine a sustain-loop with a release tail, use the step-vector
 `[:loop ... :release ...]` form, not `[curve-vec]`.
 
-**Decided: `:env :vel` is the envelope-layer loudness scale (`0` = silent, `15` = max envelope output) on all
+**Decided: :macro :vel` is the envelope-layer loudness scale (`0`= silent,`15` = max envelope output) on all
 channel types.** Final loudness also includes `:vel`, `:vol`, and `:master` (see §1.5).
 The compiler/driver maps the composed level to hardware per channel:
 
@@ -684,7 +684,7 @@ The compiler/driver maps the composed level to hardware per channel:
 `[15 12 8 4 2 1 0]` therefore reads as "loud → silent" for the envelope layer on every channel type; no
 polarity surprises for the composer.
 
-**`:env :vel` accepts both step-vector and curve forms.** `:from`/`:to` values use
+**:macro :vel` accepts both step-vector and curve forms.** `:from`/`:to` values use
 the same 0-15 envelope scale. This envelope output is composed with `:vel`/`:vol`/`:master`
 before hardware conversion.
 
@@ -694,7 +694,7 @@ determines which OPs are carriers from the voice def's `:alg` value and embeds a
 The driver reads the mask and updates only the flagged TL registers each frame.
 No runtime ALG lookup is needed.
 
-When the same `:env` def is attached to voice defs with different ALG values, the
+When the same `:macro` def is attached to voice defs with different ALG values, the
 compiler generates a separate `ENVELOPE_TABLE` entry per (env-def × carrier_mask)
 combination. Authors write one def; the compiler deduplicates automatically.
 
@@ -751,25 +751,25 @@ Rules:
   :ar2 31 :dr2  5 :sr2  0 :rr2  3 :sl2  7 :tl2  0 :ks2 0 :ml2 0 :dt2 0
   :ar3 31 :dr3  5 :sr3  0 :rr3  3 :sl3  7 :tl3  0 :ks3 0 :ml3 0 :dt3 0
   :ar4 31 :dr4  5 :sr4  0 :rr4  3 :sl4  7 :tl4  0 :ks4 0 :ml4 0 :dt4 0
-  :env syntom-pitch)            ; envelope fires on every NOTE_ON
+  :macro syntom-pitch)            ; envelope fires on every NOTE_ON
 ```
 
 **Inline override:**
 
 ```lisp
 (fm1  :oct 4 :len 4
-  syntom :env syntom-pitch  c   ; explicit per-note env attach
+  syntom :macro syntom-pitch  c   ; explicit per-note env attach
   snare                     c)
 ```
 
-**Multi-stage envelopes** — a vector of `(curve ...)` forms, providing sequential
+**Multi-stage macros** — a vector of `(curve ...)` forms, providing sequential
 stages on one target. `[...]` is **required** to delimit the stage list; without
 it, in a multi-target def, a second `(curve ...)` form would be ambiguous (another
 stage, or the value of the next `:key`?). The `[...]` wrapper makes stage count
 explicit at the parser level.
 
 ```lisp
-(def vib-entry :env :pitch
+(def vib-entry :macro :pitch
   [(ease-in :from -12 :to 0 :len 16)         ; scoop up
    (sin    :from -10 :to 10 :len 8)])       ; then vibrato
 ```
@@ -788,35 +788,64 @@ without using the step-vector form:
 
 ```lisp
 ; ADSR via multi-stage with wait stage
-(def adsr-curve :env :vel
+(def adsr-curve :macro :vel
   [(ease-out :from 0  :to 15 :len 4)    ; Attack
    (ease-in  :from 15 :to 10 :len 2)   ; Decay
    (wait key-off)                       ; Sustain — hold at 10 until KEY-OFF
    (ease-in  :from 10 :to 0  :len 4)]) ; Release — tail after KEY-OFF
 ```
 
-**Multi-target envelope** — a single `def :env` can drive multiple parameters
+**Multi-target macro** — a single `def :macro` can drive multiple parameters
 simultaneously by listing multiple `:key (curve ...)` pairs:
 
 ```lisp
 ; two TL parameters simultaneously
-(def trem-brass :env
+(def trem-brass :macro
   :tl4 (triangle :from 0 :to 6 :len 8)
   :tl1 (triangle :from 0 :to 2 :len 8))
 
 ; vel step sequence + pitch sweep in one def — valid combination
-(def syntom :env
+(def syntom :macro
   :vel   [15 12 8 4 2 1 0]
   :pitch (ease-out :from 0 :to -48 :len 8))
+```
 
-; voice def: env fires on every NOTE_ON
+**Macro list — `:macro [...]`** — multiple macro entries can be combined at the
+use site by passing a vector. Each element is either a **named def** or an
+**inline `:key curve` pair** written directly in the list. All targets are merged
+and run simultaneously from KEY-ON. If two entries target the same lane, the
+**last one wins**.
+
+```lisp
+(def ar1-sweep :macro :ar1 (ease-in :from 0 :to 31 :len 8))
+(def ar2-sweep :macro :ar2 (ease-in :from 0 :to 20 :len 8))
+
+; named defs
+(fm1 :macro [ar1-sweep ar2-sweep]  c d e)
+
+; inline — no def needed
+(fm1 :macro [:ar1 (ease-in :from 0 :to 31 :len 8)
+             :ar2 (ease-in :from 0 :to 20 :len 8)]  c d e)
+
+; mixed — named def + inline
+(fm1 :macro [ar1-sweep  :pitch (ease-out :from 0 :to -12 :len 4)]  c d e)
+
+; duplicate target — last wins
+(fm1 :macro [ar1-sweep  :ar1 (triangle :from 0 :to 4 :len 4)]  c)  ; triangle wins
+```
+
+A single name (no brackets) remains valid: `:macro trem-brass`.
+A single inline pair is also valid: `:macro :vel [15 12 8 0]`.
+
+```lisp
+; voice def: macro fires on every NOTE_ON
 (def brass :extends fm-init
   :alg 7
-  :env trem-brass)
+  :macro trem-brass)
 
 ; inline override per note
 (fm1 :oct 4 :len 4
-  brass :env trem-brass  c e g e)
+  brass :macro trem-brass  c e g e)
 ```
 
 **Multi-stage execution order — sequential:** stages run one after another on
@@ -825,14 +854,14 @@ If stage N−1 is a loop waveform, it loops indefinitely and stage N is never
 reached — use this to model an attack → sustain-loop pattern.
 
 **Contrast with multi-target:** listing multiple `:key (curve ...)` pairs in one
-`def :env` runs all targets **simultaneously** from KEY-ON — each on its own
+`def :macro` runs all targets **simultaneously** from KEY-ON — each on its own
 independent timeline. Multi-stage (sequential) and multi-target (simultaneous)
 compose freely: each target key can independently carry a single curve or a
 `[...]` stage vector.
 
 ```lisp
 ; both at once: :pitch is sequential stages, :vel runs in parallel alongside it
-(def syntom-env :env
+(def syntom-env :macro
   :vel   [15 12 8 4 0]                ; vel stages run sequentially
   :pitch (ease-out :from 0 :to -48 :len 8))  ; pitch curve runs simultaneously
 ```
@@ -857,13 +886,13 @@ hardware_reg = base_pitch[ch] + env_pitch_delta[ch]
 
 `base_pitch` and `env_pitch_delta` are written to different internal registers and
 summed before the hardware F-number write each frame. This means `:glide`
-(portamento between notes) and `:env :pitch` (per-note LFO/scoop) compose without
+(portamento between notes) and :macro :pitch` (per-note LFO/scoop) compose without
 interference:
 
 ```lisp
 ; glide slides base_pitch c4→e4 over 8 frames;
 ; vibrato runs on env_pitch_delta simultaneously — they add
-(fm1 :glide 8 :env vibrato  :oct 4 :len 4  c e g e)
+(fm1 :glide 8 :macro vibrato  :oct 4 :len 4  c e g e)
 ```
 
 PARAM_SWEEP for `:pitch` (§2.11) also targets `base_pitch`, not `env_pitch_delta`.
@@ -903,18 +932,18 @@ frames = ticks * fps * 60 / (BPM * PPQN)
 At BPM=120, fps=60, PPQN=48: frames = ticks \* 5 / 8 (quarter = 30 frames).
 
 ```lisp
-(def vibrato :env :pitch (sin :from -10 :to 10 :len 4
+(def vibrato :macro :pitch (sin :from -10 :to 10 :len 4
                           :wait 4))           ; period = quarter note, wait before onset
 
-(def syntom-pitch :env :pitch (ease-out :from 0 :to -48 :len 8f)) ; exactly 8 frames
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -48 :len 8f)) ; exactly 8 frames
 
-(def whistle-on :env :pitch (ease-in :from -24 :to 0 :len 3f))    ; 3-frame attack
+(def whistle-on :macro :pitch (ease-in :from -24 :to 0 :len 3f))    ; 3-frame attack
 
-(def vibrato-late :env :pitch (sin :from -10 :to 10 :len 4
+(def vibrato-late :macro :pitch (sin :from -10 :to 10 :len 4
                                :wait 8f))     ; wait=8 frames fixed, period=quarter
 
 ; release swell: after KEY-OFF, scoop up pitch
-(def release-scoop :env :pitch (ease-in :from -24 :to 0 :len 4
+(def release-scoop :macro :pitch (ease-in :from -24 :to 0 :len 4
                                 :wait key-off)) ; curve starts after KEY-OFF
 ```
 
@@ -924,7 +953,7 @@ internally; the wait and curve run as consecutive stages sharing one `envId`.
 
 **Decided: `:release` in step-vector — compiler emits `KEY_OFF` at `gate_ticks`.**
 
-The step-vector format for `:env :vel` is:
+The step-vector format for :macro :vel` is:
 
 ```
 [attack... :loop sustain... :release release...]
@@ -958,13 +987,13 @@ until the step ends (natural: last release value is usually 0 = silent).
 
 ```lisp
 ; attack(15,14) → loop(13,12) → release(11,9,7,5,3,1,0)
-(def organ :env :vel [15 14 :loop 13 12 :release 11 9 7 5 3 1 0])
+(def organ :macro :vel [15 14 :loop 13 12 :release 11 9 7 5 3 1 0])
 
 ; no attack — sustain immediately, release on gate close
-(def pad :env :vel [:loop 14 13 :release 5 3 1 0])
+(def pad :macro :vel [:loop 14 13 :release 5 3 1 0])
 
 ; one-shot, no loop, no release — envelope plays to end regardless of gate
-(def pluck :env :vel [15 12 8 4 2 1 0])
+(def pluck :macro :vel [15 12 8 4 2 1 0])
 ```
 
 `:release` without `:loop` is valid — the envelope plays attack then release
@@ -983,7 +1012,7 @@ For interactive music, the game must be able to trigger KEY-OFF at runtime
 
 ```lisp
 ; len=0: hold indefinitely until the game sends KEY-OFF on this channel
-(srq1 :len 0 :env psg-asr  c)
+(srq1 :len 0 :macro psg-asr  c)
 ```
 
 **`len=0` semantics:**
@@ -1110,7 +1139,7 @@ at compile time (deterministic builds; same score always produces the same binar
 
 All four keywords are required for every curve form. `:wait` defaults to `0` when omitted.
 
-Multi-stage envelopes use `[(curve ...) (curve ...)]` syntax (see §2.5); no
+Multi-stage macros use `[(curve ...) (curve ...)]` syntax (see §2.5); no
 special curve name needed.
 
 `reverse` is not a curve name; reverse a curve by swapping `:from` and `:to`.
@@ -1134,28 +1163,28 @@ simultaneously produces its own tone output, enabling **tone + noise mix**.
 **Design: `:mode` is a channel option and inline modifier.**
 
 Noise mode is set via `:mode` on the `noise` channel.
-Envelope is attached separately via `:env` or via a `def` reference.
+Envelope is attached separately via `:macro` or via a `def` reference.
 
 ```lisp
 ; named envelope defs
-(def hh-closed-env :env :vel [15 8 0])
-(def hh-open-env   :env :vel [15 12 10 8 4 0])
-(def ride-env      :env :vel [15 14 13 :loop 12 11])
+(def hh-closed-env :macro :vel [15 8 0])
+(def hh-open-env   :macro :vel [15 12 10 8 4 0])
+(def ride-env      :macro :vel [15 14 13 :loop 12 11])
 
 ; noise track
 (noise :mode white0
-  :len 8 :env hh-closed-env
+  :len 8 :macro hh-closed-env
   c c
-  :mode white2 :env hh-open-env
+  :mode white2 :macro hh-open-env
   c
-  :mode white0 :env hh-closed-env
+  :mode white0 :macro hh-closed-env
   c c
-  :mode periodic0 :env ride-env
+  :mode periodic0 :macro ride-env
   c)
 ```
 
 A `:mode` change emits `NOISE_MODE` IR event (FB + NF bits).
-A `:env` change emits `ENV_ATTACH` IR event.
+A `:macro` change emits `ENV_ATTACH` IR event.
 
 `:noise` values — single keyword encoding FB + NF bits:
 
@@ -1188,9 +1217,9 @@ to change noise mode.
 
 ---
 
-**`:env :mode` — frame-based noise mode envelope**
+**:macro :mode` — frame-based noise mode envelope**
 
-`:env :mode` accepts a step-vector of mode keywords or raw numeric values
+:macro :mode` accepts a step-vector of mode keywords or raw numeric values
 (the 3-bit FB+NF hardware field written directly), advancing one step per
 driver frame. This enables sub-note timbre changes while note sequencing
 remains tick-based.
@@ -1201,13 +1230,13 @@ preferred for readability but both forms are valid.
 
 ```lisp
 ; attack: 2 frames white → sustain: periodic3 (loops until KEY-OFF or end of note)
-(def noise-atk :env :mode [white0 white0 :loop periodic3])
+(def noise-atk :macro :mode [white0 white0 :loop periodic3])
 
 ; attack: white → sustain: periodic → release: white on key-off
-(def noise-asr :env :mode [white0 white0 :loop periodic3 :release white2])
+(def noise-asr :macro :mode [white0 white0 :loop periodic3 :release white2])
 ```
 
-`:loop` and `:release` semantics are identical to `:env :vel` step-vector:
+`:loop` and `:release` semantics are identical to :macro :vel` step-vector:
 
 | Region  | Marker               | Playback                                      |
 | ------- | -------------------- | --------------------------------------------- |
@@ -1226,14 +1255,14 @@ periodic mode for as long as the note lasts.
 ```lisp
 ; 8-beat pattern: each 8th note gets a 1-frame white attack, then periodic buzz
 ; srq3 provides frequency for periodic3 mode (muted via :vol)
-(def perc-buzz :env :mode [white0 :loop periodic3])
+(def perc-buzz :macro :mode [white0 :loop periodic3])
 
-(noise :len 8 :env perc-buzz
+(noise :len 8 :macro perc-buzz
   c c c c  c c c c)
 ```
 
-The compiler encodes `:env :mode` step-vectors as `MODE_ENV_TABLE` entries
-(same section as `ENVELOPE_TABLE`, target=mode). Each step is a 1-byte FB+NF
+The compiler encodes :macro :mode`step-vectors as`MODE_ENV_TABLE`entries
+(same section as`ENVELOPE_TABLE`, target=mode). Each step is a 1-byte FB+NF
 value; the driver writes the noise register each frame tick.
 
 ---

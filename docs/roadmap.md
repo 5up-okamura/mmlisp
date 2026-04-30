@@ -116,7 +116,7 @@ v0.5 candidates:
 - `defn` — compile-time function definition; returns note sequences or values computed
   from arguments. Arguments resolved at call site; output folded into IR via LUT.
   Enables numeric note input (semitone integers) from computed sequences.
-- arpeggio macro (`:env :pitch` with note/rest sequences)
+- arpeggio macro (`:macro :pitch` with note/rest sequences)
 - quantize snap (scale mask applied after pitch sum)
 - OP mask (per-channel operator enable/disable)
 - AMS/FMS macros

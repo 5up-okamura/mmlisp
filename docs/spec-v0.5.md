@@ -55,7 +55,7 @@ ADSR per operator) is declared via a note-less `(fm3 voice-name)` form.
 - Can `fm3` and `fm3-N` coexist in the same score, or are they mutually
   exclusive within a section?
 - Envelope attachment per operator: does each `fm3-N` track carry its own
-  `:env` independently?
+  `:macro` independently?
 - Is `:glide` supported per operator on `fm3-N` tracks?
 
 ### 2.2 CSM — composite sinusoidal modelling
@@ -232,7 +232,7 @@ This enables:
 
 ```lisp
 ; loop indefinitely until game sends KEY_OFF
-(srq1 :len 0 :env pad-env  c)
+(srq1 :len 0 :macro pad-env  c)
 
 ; PCM texture loop — holds open until STOP_TRACK
 (pcm2 :mode loop :len 0
