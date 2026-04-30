@@ -88,12 +88,13 @@ Phase 3 entry condition:
 
 ## Language Version Status
 
-| Version | Status             | Tag            | Themes                                          |
-| ------- | ------------------ | -------------- | ----------------------------------------------- |
-| v0.1    | frozen             | v0.1-candidate | Core language, IR, GMB format                   |
-| v0.2    | frozen             | v0.2-freeze    | FM/PSG voices, modulator, UI, source map        |
-| v0.3    | frozen             | v0.3-freeze    | seq, gate, shuffle, track append, @voice, v+/v- |
-| v0.4    | design-in-progress | —              | FM3 OP mode, CSM, DAC, pitch env, PSG noise     |
+| Version | Status             | Tag            | Themes                                                   |
+| ------- | ------------------ | -------------- | -------------------------------------------------------- |
+| v0.1    | frozen             | v0.1-candidate | Core language, IR, GMB format                            |
+| v0.2    | frozen             | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                 |
+| v0.3    | frozen             | v0.3-freeze    | seq, gate, shuffle, track append, @voice, v+/v-          |
+| v0.4    | design-in-progress | —              | Envelopes/macros, pitch env, PSG noise, pan, level model |
+| v0.5    | planned            | —              | FM3 independent-OP mode, CSM, PCM/DAC                    |
 
 ## Backlog
 
@@ -109,6 +110,16 @@ Active:
 
 1. Freeze IR-to-GMB opcode table
 2. Begin MMLispDRV implementation (Phase 3)
+
+v0.5 candidates:
+
+- `defn` — compile-time function definition; returns note sequences or values computed
+  from arguments. Arguments resolved at call site; output folded into IR via LUT.
+  Enables numeric note input (semitone integers) from computed sequences.
+- arpeggio macro (`:env :pitch` with note/rest sequences)
+- quantize snap (scale mask applied after pitch sum)
+- OP mask (per-channel operator enable/disable)
+- AMS/FMS macros
 
 ---
 

@@ -457,6 +457,108 @@ Applies to both `ENVELOPE_TABLE` (§2.5) and `PARAM_SWEEP` (§2.11).
 
 ---
 
+### 2.x Macro value model
+
+**Decided: the following rules apply to all macro step vectors.**
+
+#### Numeric representation
+
+Macro functions always generate numeric vectors. Symbolic inputs are resolved
+at compile time:
+
+| Lane        | Symbol input            | Internal value                                |
+| ----------- | ----------------------- | --------------------------------------------- |
+| `:pitch`    | `c` `d` `e` … `b`       | semitone offset 0–11 relative to current note |
+| `:pan`      | `left` `center` `right` | -1 / 0 / +1                                   |
+| `:vel` etc. | integer literal         | integer as-is                                 |
+
+#### Pitch macro — relative semitones
+
+`:env :pitch` values are **relative semitones** from the current note at KEY-ON.
+The full pitch computation before F-Number resolution is:
+
+```
+final_pitch = base_note + :oct adjustment + :pitch offset + env:pitch macro value
+```
+
+Future: a quantize snap (scale mask) may be applied after the sum, rounding to
+the nearest pitch in the specified set (e.g. `[c e g]`). The snap repeats
+across all octaves.
+
+#### Pan lane
+
+`:pan` applies to FM channels (fm1–fm6) and PCM (fm6 as DAC). It is not
+applicable to SN76489 channels (srq1–srq3, noise); the compiler emits a
+warning and ignores `:pan` on those channels.
+
+Allowed values: `left` (-1), `center` (0), `right` (+1). `none` is not adopted.
+Raw integers are also valid: `-1` = left, `0` = center, `+1` = right.
+
+`:env :pan` is a valid envelope target. Both symbolic and numeric forms are
+accepted in step vectors:
+
+```lisp
+(def pan-sweep :env :pan [left left center right right center])
+(def pan-sweep :env :pan [-1 -1 0 1 1 0])
+```
+
+#### Envelope targets
+
+All hardware-writable parameters are valid `:env` targets. The table below is
+the complete list. Per-OP targets repeat for each operator suffix (`1`–`4`).
+
+**Common — all channel types**
+
+| Target   | Channels     | Range       | Notes                           |
+| -------- | ------------ | ----------- | ------------------------------- |
+| `:vel`   | FM, PSG, PCM | 0–15        | KEY-ON scoped; see §1.5         |
+| `:pitch` | FM, PSG, PCM | semitone Δ  | KEY-ON scoped; relative to note |
+| `:pan`   | FM, PCM      | -1 / 0 / +1 | `left`/`center`/`right`; no PSG |
+
+**FM operator params (`:xx1`–`:xx4`)**
+
+| Target        | Range | Description                 |
+| ------------- | ----- | --------------------------- |
+| `:tl1`–`:tl4` | 0–127 | total level                 |
+| `:ar1`–`:ar4` | 0–31  | attack rate                 |
+| `:dr1`–`:dr4` | 0–31  | decay rate                  |
+| `:sr1`–`:sr4` | 0–31  | sustain rate (D2R)          |
+| `:rr1`–`:rr4` | 0–15  | release rate                |
+| `:sl1`–`:sl4` | 0–15  | sustain level               |
+| `:ml1`–`:ml4` | 0–15  | multiplier                  |
+| `:dt1`–`:dt4` | 0–7   | detune 1                    |
+| `:ks1`–`:ks4` | 0–3   | key scale                   |
+| `:am1`–`:am4` | 0–1   | amplitude modulation on/off |
+
+**FM channel params**
+
+| Target | Range | Description          |
+| ------ | ----- | -------------------- |
+| `:alg` | 0–7   | algorithm            |
+| `:fb`  | 0–7   | feedback             |
+| `:ams` | 0–3   | AM sensitivity (LFO) |
+| `:fms` | 0–7   | FM sensitivity (LFO) |
+
+**PSG / noise**
+
+| Target  | Channels | Range | Description          |
+| ------- | -------- | ----- | -------------------- |
+| `:mode` | noise    | 0–7   | noise type; see §4.2 |
+
+#### Hold token
+
+`_` in a step vector means **do nothing** — no register write, no value change.
+The previous state for that lane is preserved. There is no dedicated "silence"
+token (`r` is not defined).
+
+#### Inline vs. macro conflict resolution
+
+When an inline parameter write and a macro step target the same lane at the
+same tick, **inline wins**. The macro step is discarded for that tick only;
+the macro continues advancing on the next tick.
+
+---
+
 ## 3. Envelope & Curves
 
 ### 3.1 KEY-ON envelope model
@@ -1088,9 +1190,14 @@ to change noise mode.
 
 **`:env :mode` — frame-based noise mode envelope**
 
-`:env :mode` accepts a step-vector of mode keywords, advancing one step per
+`:env :mode` accepts a step-vector of mode keywords or raw numeric values
+(the 3-bit FB+NF hardware field written directly), advancing one step per
 driver frame. This enables sub-note timbre changes while note sequencing
 remains tick-based.
+
+Raw numeric values map directly to the SN76489 noise register bits (0–7);
+using the symbolic names (`white0`–`white2`, `periodic0`–`periodic3`) is
+preferred for readability but both forms are valid.
 
 ```lisp
 ; attack: 2 frames white → sustain: periodic3 (loops until KEY-OFF or end of note)
