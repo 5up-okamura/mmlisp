@@ -18,6 +18,7 @@ const SUPPORTED_TARGETS = new Set([
   "NOTE_VOLUME",
   "TEMPO_SCALE",
   "VOL",
+  "MASTER",
   "FM_ALG",
   "FM_FB",
   "FM_AMS",
@@ -69,19 +70,41 @@ function parseIntLike(value) {
 
 function parseLengthToken(value, inheritedTicks) {
   if (!value) return inheritedTicks;
+  // Tick count: "14t" — exact tick value
+  if (/^\d+t$/.test(value)) {
+    return parseInt(value, 10);
+  }
+  // Frame count: "16f" — driver frames; stored as ticks (1 frame = 1 tick approximation)
+  if (/^\d+f$/.test(value)) {
+    return parseInt(value, 10);
+  }
+  // Fraction: "1/2", "3/4"
   if (/^\d+\/\d+$/.test(value)) {
     const [n, d] = value.split("/").map((v) => parseInt(v, 10));
     return Math.round((WHOLE_TICKS * n) / d);
   }
-  // Dotted shorthand: "4." = 3/8, "8." = 3/16, etc.
+  // Dotted integer: "4." = 1.5 × quarter, "8." = 1.5 × eighth, etc.
   if (/^\d+\.$/.test(value)) {
     const d = parseInt(value, 10);
     return Math.round((WHOLE_TICKS * 3) / (d * 2));
   }
+  // Plain integer note-length denominator: "4" = quarter, "8" = eighth, etc.
   if (/^\d+$/.test(value)) {
-    return Math.round((WHOLE_TICKS * 1) / parseInt(value, 10));
+    return Math.round(WHOLE_TICKS / parseInt(value, 10));
   }
   return inheritedTicks;
+}
+
+// Returns true if val is a rest token: "_", "_4", "_4.", "_14t", "_16f"
+function isRestAtom(val) {
+  return typeof val === "string" && /^_(\d+[ft]?\.?)?$/.test(val);
+}
+
+// Parse the length of a rest token; the leading "_" is stripped before parsing.
+function parseRestLength(val, inheritedTicks) {
+  const suffix = val.slice(1);
+  if (suffix === "") return inheritedTicks;
+  return parseLengthToken(suffix, inheritedTicks);
 }
 
 function parseGateSpec(val) {
@@ -104,10 +127,12 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
-function makeNoteArgs(pitch, lengthTicks, gateSpec) {
+function makeNoteArgs(pitch, lengthTicks, gateSpec, vel) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
+  // v0.4: vel is KEY-ON scoped; only emit when non-default (15)
+  if (vel !== undefined && vel !== 15) args.vel = vel;
   return args;
 }
 
@@ -149,55 +174,33 @@ function parsePerNoteLength(val) {
 
 function canonicalTarget(symbol) {
   const map = {
+    // Sequencer / level
     ":vol": "VOL",
-    ":fm-alg": "FM_ALG",
-    ":fm-fb": "FM_FB",
-    ":fm-tl1": "FM_TL1",
-    ":fm-tl2": "FM_TL2",
-    ":fm-tl3": "FM_TL3",
-    ":fm-tl4": "FM_TL4",
-    ":fm-ar1": "FM_AR1",
-    ":fm-ar2": "FM_AR2",
-    ":fm-ar3": "FM_AR3",
-    ":fm-ar4": "FM_AR4",
-    ":fm-dr1": "FM_DR1",
-    ":fm-dr2": "FM_DR2",
-    ":fm-dr3": "FM_DR3",
-    ":fm-dr4": "FM_DR4",
-    ":fm-sr1": "FM_SR1",
-    ":fm-sr2": "FM_SR2",
-    ":fm-sr3": "FM_SR3",
-    ":fm-sr4": "FM_SR4",
-    ":fm-rr1": "FM_RR1",
-    ":fm-rr2": "FM_RR2",
-    ":fm-rr3": "FM_RR3",
-    ":fm-rr4": "FM_RR4",
-    ":fm-sl1": "FM_SL1",
-    ":fm-sl2": "FM_SL2",
-    ":fm-sl3": "FM_SL3",
-    ":fm-sl4": "FM_SL4",
-    ":fm-ml1": "FM_ML1",
-    ":fm-ml2": "FM_ML2",
-    ":fm-ml3": "FM_ML3",
-    ":fm-ml4": "FM_ML4",
-    ":fm-dt1": "FM_DT1",
-    ":fm-dt2": "FM_DT2",
-    ":fm-dt3": "FM_DT3",
-    ":fm-dt4": "FM_DT4",
-    ":fm-ssg1": "FM_SSG1",
-    ":fm-ssg2": "FM_SSG2",
-    ":fm-ssg3": "FM_SSG3",
-    ":fm-ssg4": "FM_SSG4",
-    ":fm-amen1": "FM_AMEN1",
-    ":fm-amen2": "FM_AMEN2",
-    ":fm-amen3": "FM_AMEN3",
-    ":fm-amen4": "FM_AMEN4",
-    ":fm-ams": "FM_AMS",
-    ":fm-fms": "FM_FMS",
-    ":lfo-rate": "LFO_RATE",
+    ":master": "MASTER",
     ":tempo-scale": "TEMPO_SCALE",
     ":note-pitch": "NOTE_PITCH",
     ":note-volume": "NOTE_VOLUME",
+    // LFO
+    ":lfo-rate": "LFO_RATE",
+    // FM channel-level
+    ":alg": "FM_ALG",
+    ":fb": "FM_FB",
+    ":ams": "FM_AMS",
+    ":fms": "FM_FMS",
+    // FM operator params — :tl1–:tl4, :ar1–:ar4, etc.
+    ...[1, 2, 3, 4].reduce((acc, op) => {
+      acc[`:tl${op}`] = `FM_TL${op}`;
+      acc[`:ar${op}`] = `FM_AR${op}`;
+      acc[`:dr${op}`] = `FM_DR${op}`;
+      acc[`:sr${op}`] = `FM_SR${op}`;
+      acc[`:rr${op}`] = `FM_RR${op}`;
+      acc[`:sl${op}`] = `FM_SL${op}`;
+      acc[`:ml${op}`] = `FM_ML${op}`;
+      acc[`:dt${op}`] = `FM_DT${op}`;
+      acc[`:ks${op}`] = `FM_KS${op}`;
+      acc[`:am${op}`] = `FM_AMEN${op}`;
+      return acc;
+    }, {}),
   };
   return (
     map[symbol] || symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_")
@@ -397,6 +400,595 @@ function parseTrackHead(items) {
   return { options, bodyStart: i };
 }
 
+/**
+ * Unified v0.4 channel body compiler.
+ * Processes notes, rests, inline modifiers, and structural forms directly
+ * from an indexed item list. All state (oct, len, gate, vol) is sticky:
+ * modifications persist in trackState across items and across channel forms.
+ */
+function compileChannelBody(
+  items,
+  trackState,
+  events,
+  diagnostics,
+  trackName,
+  typedDefs,
+  loopCounter,
+) {
+  let i = 0;
+  while (i < items.length) {
+    const node = items[i];
+    if (!node) {
+      i++;
+      continue;
+    }
+
+    // Skip comments
+    if (node.kind === "comment") {
+      i++;
+      continue;
+    }
+
+    // ── Atom items ───────────────────────────────────────────────────────
+    if (node.kind === "atom") {
+      const val = node.value;
+
+      // Label marker: #name
+      if (val.startsWith("#")) {
+        const id = val.slice(1);
+        if (!id) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_LABEL_EMPTY",
+            "label name must not be empty",
+            nodeSrc(node),
+            trackName,
+          );
+        } else {
+          events.push({
+            tick: trackState.tick,
+            cmd: "MARKER",
+            args: { id },
+            src: nodeSrc(node),
+          });
+        }
+        i++;
+        continue;
+      }
+
+      // Inline keyword modifier: :oct N, :len N, :gate N, :vol N, :tl1 30, etc.
+      if (val.startsWith(":")) {
+        i++;
+        if (i < items.length) {
+          const rawVal = atomValue(items[i]);
+          switch (val) {
+            case ":oct": {
+              const v = parseIntLike(rawVal);
+              if (v !== null)
+                trackState.defaultOct = Math.max(0, Math.min(8, v));
+              break;
+            }
+            case ":len":
+              trackState.defaultLength = parseLengthToken(
+                rawVal,
+                trackState.defaultLength,
+              );
+              break;
+            case ":gate": {
+              const g = parseGateSpec(rawVal);
+              if (g !== null) trackState.defaultGate = g;
+              break;
+            }
+            case ":vol": {
+              const v = parseIntLike(rawVal);
+              if (v !== null) {
+                // v0.4: :vol range is 0-31 (was 0-15)
+                trackState.defaultVol = Math.max(0, Math.min(31, v));
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "PARAM_SET",
+                  args: { target: "VOL", value: trackState.defaultVol },
+                  src: nodeSrc(node),
+                });
+              }
+              break;
+            }
+            case ":vel": {
+              // per-note velocity, KEY-ON scoped; stored as sticky state
+              const v = parseIntLike(rawVal);
+              if (v !== null)
+                trackState.defaultVel = Math.max(0, Math.min(15, v));
+              break;
+            }
+            case ":master": {
+              // global master level, score-wide
+              const v = parseIntLike(rawVal);
+              if (v !== null) {
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "PARAM_SET",
+                  args: {
+                    target: "MASTER",
+                    value: Math.max(0, Math.min(31, v)),
+                  },
+                  src: nodeSrc(node),
+                });
+              }
+              break;
+            }
+            case ":glide": {
+              const v = parseIntLike(rawVal);
+              if (v !== null) trackState.glide = Math.max(0, v);
+              break;
+            }
+            case ":glide-from": {
+              // override start pitch for next note only
+              trackState.glideFrom = rawVal;
+              break;
+            }
+            case ":break":
+              // :break inside (x N ...) — emit LOOP_BREAK linked to current loop
+              // Note: :break as atom (not keyword pair) is handled separately;
+              // here it appears as ":break" key with a dummy value consumed
+              i--; // back up — :break has no value argument
+              if (trackState.currentLoopId) {
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "LOOP_BREAK",
+                  args: { id: trackState.currentLoopId },
+                  src: nodeSrc(node),
+                });
+              }
+              break;
+            default: {
+              // Inline hardware param write: :tl1 30, :ar1 28, etc.
+              const target = canonicalTarget(val);
+              const value = parseIntLike(rawVal) ?? 0;
+              if (SUPPORTED_TARGETS.has(target)) {
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "PARAM_SET",
+                  args: { target, value },
+                  src: nodeSrc(node),
+                });
+              }
+              break;
+            }
+          }
+          i++;
+        }
+        continue;
+      }
+
+      // Octave shift
+      if (val === ">") {
+        trackState.defaultOct = Math.min(8, trackState.defaultOct + 1);
+        i++;
+        continue;
+      }
+      if (val === "<") {
+        trackState.defaultOct = Math.max(0, trackState.defaultOct - 1);
+        i++;
+        continue;
+      }
+
+      // :break as standalone atom — emits LOOP_BREAK for current loop
+      if (val === ":break") {
+        if (trackState.currentLoopId) {
+          events.push({
+            tick: trackState.tick,
+            cmd: "LOOP_BREAK",
+            args: { id: trackState.currentLoopId },
+            src: nodeSrc(node),
+          });
+        }
+        i++;
+        continue;
+      }
+
+      // Tie: ~ [optional-length]
+      if (val === "~") {
+        i++;
+        let tieTicks = trackState.defaultLength;
+        if (i < items.length) {
+          const parsed = parseLengthToken(atomValue(items[i]), null);
+          if (parsed !== null) {
+            tieTicks = parsed;
+            i++;
+          }
+        }
+        events.push({
+          tick: trackState.tick,
+          cmd: "TIE",
+          args: { length: tieTicks },
+          src: nodeSrc(node),
+        });
+        trackState.tick += tieTicks;
+        continue;
+      }
+
+      // Rest atom: "_", "_4", "_4.", "_14t", "_16f"
+      if (isRestAtom(val)) {
+        const ticks = resolveShuffleTicks(
+          parseRestLength(val, trackState.defaultLength),
+          trackState,
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "REST",
+          args: { length: ticks },
+          src: nodeSrc(node),
+        });
+        trackState.tick += ticks;
+        i++;
+        continue;
+      }
+
+      // Volume shift: v+, v-, v+8, v-16
+      if (isVolShiftAtom(val)) {
+        const sign = val[1] === "+" ? 1 : -1;
+        const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
+        trackState.defaultVol = Math.max(
+          0,
+          Math.min(31, trackState.defaultVol + sign * delta),
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "PARAM_SET",
+          args: { target: "VOL", value: trackState.defaultVol },
+          src: nodeSrc(node),
+        });
+        i++;
+        continue;
+      }
+
+      // Per-note length atom: c4, e8., f+4., b-2 (note name + explicit length)
+      if (isPerNoteLengthAtom(val)) {
+        const { noteName, lengthStr } = parsePerNoteLength(val);
+        const perNoteTicks = parseLengthToken(
+          lengthStr,
+          trackState.defaultLength,
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "NOTE_ON",
+          args: makeNoteArgs(
+            noteName + trackState.defaultOct,
+            perNoteTicks,
+            trackState.defaultGate,
+            trackState.defaultVel,
+          ),
+          src: nodeSrc(node),
+        });
+        trackState.tick += perNoteTicks;
+        i++;
+        continue;
+      }
+
+      // Bare note: c, d, e, f, g, a, b (with optional + or -)
+      if (isNoteAtom(val)) {
+        const ticks = resolveShuffleTicks(trackState.defaultLength, trackState);
+        events.push({
+          tick: trackState.tick,
+          cmd: "NOTE_ON",
+          args: makeNoteArgs(
+            val + trackState.defaultOct,
+            ticks,
+            trackState.defaultGate,
+            trackState.defaultVel,
+          ),
+          src: nodeSrc(node),
+        });
+        trackState.tick += ticks;
+        i++;
+        continue;
+      }
+
+      // Bare identifier: typed def reference (voice/patch switch)
+      if (typedDefs?.has(val)) {
+        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node));
+        i++;
+        continue;
+      }
+
+      // Unknown atom — skip silently
+      i++;
+      continue;
+    }
+
+    // ── List items ───────────────────────────────────────────────────────
+    if (node.kind === "list" && node.items.length > 0) {
+      const head = atomValue(node.items[0]);
+      if (!head) {
+        i++;
+        continue;
+      }
+
+      // Subgroup / tuplet: list starting with a note or per-note-length atom.
+      // Tick duration is distributed among all elements using Bresenham method.
+      if (isNoteAtom(head) || isPerNoteLengthAtom(head)) {
+        const elems = node.items;
+        const n = elems.length;
+        const totalTicks = trackState.defaultLength;
+        let acc = 0;
+        for (let j = 0; j < n; j++) {
+          acc += totalTicks;
+          const slotTicks = Math.floor(acc / n);
+          acc -= slotTicks * n;
+          const ev = elems[j];
+          const evVal = atomValue(ev);
+          if (evVal === "_") {
+            events.push({
+              tick: trackState.tick,
+              cmd: "REST",
+              args: { length: slotTicks },
+              src: nodeSrc(ev),
+            });
+            trackState.tick += slotTicks;
+          } else if (isPerNoteLengthAtom(evVal)) {
+            const { noteName } = parsePerNoteLength(evVal);
+            events.push({
+              tick: trackState.tick,
+              cmd: "NOTE_ON",
+              args: makeNoteArgs(
+                noteName + trackState.defaultOct,
+                slotTicks,
+                trackState.defaultGate,
+                trackState.defaultVel,
+              ),
+              src: nodeSrc(ev),
+            });
+            trackState.tick += slotTicks;
+          } else if (isNoteAtom(evVal)) {
+            events.push({
+              tick: trackState.tick,
+              cmd: "NOTE_ON",
+              args: makeNoteArgs(
+                evVal + trackState.defaultOct,
+                slotTicks,
+                trackState.defaultGate,
+                trackState.defaultVel,
+              ),
+              src: nodeSrc(ev),
+            });
+            trackState.tick += slotTicks;
+          }
+        }
+        i++;
+        continue;
+      }
+
+      // Repeat loop: (x N ...) counts N times; (x ...) loops forever
+      // :break inside the body emits LOOP_BREAK linked to this loop's id
+      if (head === "x") {
+        const maybeCount = parseIntLike(atomValue(node.items[1]));
+        const bodyStart = maybeCount !== null ? 2 : 1;
+        const loopId = `_x${loopCounter.count++}`;
+        const savedLoopId = trackState.currentLoopId;
+        trackState.currentLoopId = maybeCount !== null ? loopId : null; // only counted loops support :break
+        if (maybeCount !== null) {
+          events.push({
+            tick: trackState.tick,
+            cmd: "LOOP_BEGIN",
+            args: { id: loopId },
+            src: nodeSrc(node.items[0]),
+          });
+          compileChannelBody(
+            node.items.slice(bodyStart),
+            trackState,
+            events,
+            diagnostics,
+            trackName,
+            typedDefs,
+            loopCounter,
+          );
+          events.push({
+            tick: trackState.tick,
+            cmd: "LOOP_END",
+            args: { id: loopId, repeat: maybeCount },
+            src: nodeSrc(node.items[0]),
+          });
+          trackState.currentLoopId = savedLoopId;
+        } else {
+          events.push({
+            tick: trackState.tick,
+            cmd: "MARKER",
+            args: { id: loopId },
+            src: nodeSrc(node.items[0]),
+          });
+          compileChannelBody(
+            node.items.slice(bodyStart),
+            trackState,
+            events,
+            diagnostics,
+            trackName,
+            typedDefs,
+            loopCounter,
+          );
+          trackState.currentLoopId = savedLoopId;
+          events.push({
+            tick: trackState.tick,
+            cmd: "JUMP",
+            args: { to: loopId },
+            src: nodeSrc(node.items[0]),
+          });
+        }
+        i++;
+        continue;
+      }
+
+      // Goto / counted goto: (goto label) or (goto label N)
+      if (head === "goto") {
+        const label = atomValue(node.items[1]);
+        if (!label) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_GOTO_NO_LABEL",
+            "goto requires a label",
+            nodeSrc(node.items[0]),
+            trackName,
+          );
+          i++;
+          continue;
+        }
+        const count = node.items[2]
+          ? parseIntLike(atomValue(node.items[2]))
+          : null;
+        if (count !== null) {
+          let markerIdx = -1;
+          for (let mi = events.length - 1; mi >= 0; mi--) {
+            if (events[mi].cmd === "MARKER" && events[mi].args.id === label) {
+              markerIdx = mi;
+              break;
+            }
+          }
+          if (markerIdx >= 0) {
+            events[markerIdx] = { ...events[markerIdx], cmd: "LOOP_BEGIN" };
+          } else {
+            pushDiag(
+              diagnostics,
+              "error",
+              "E_GOTO_LABEL_NOT_FOUND",
+              `goto: label '#${label}' not found before this point`,
+              nodeSrc(node.items[0]),
+              trackName,
+            );
+          }
+          events.push({
+            tick: trackState.tick,
+            cmd: "LOOP_END",
+            args: { id: label, repeat: count },
+            src: nodeSrc(node.items[0]),
+          });
+        } else {
+          events.push({
+            tick: trackState.tick,
+            cmd: "JUMP",
+            args: { to: label },
+            src: nodeSrc(node.items[0]),
+          });
+        }
+        i++;
+        continue;
+      }
+
+      // Tempo change: (tempo N)
+      if (head === "tempo") {
+        const bpm = parseIntLike(atomValue(node.items[1]));
+        if (bpm !== null) {
+          events.push({
+            tick: trackState.tick,
+            cmd: "TEMPO_SET",
+            args: { bpm },
+            src: nodeSrc(node.items[0]),
+          });
+        }
+        i++;
+        continue;
+      }
+
+      // Explicit rest: (rest N) — kept for convenience
+      if (head === "rest") {
+        const length = parseLengthToken(
+          atomValue(node.items[1]),
+          trackState.defaultLength,
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "REST",
+          args: { length },
+          src: nodeSrc(node.items[0]),
+        });
+        trackState.tick += length;
+        i++;
+        continue;
+      }
+
+      // Explicit tie: (tie N)
+      if (head === "tie") {
+        const length = parseLengthToken(
+          atomValue(node.items[1]),
+          trackState.defaultLength,
+        );
+        events.push({
+          tick: trackState.tick,
+          cmd: "TIE",
+          args: { length },
+          src: nodeSrc(node.items[0]),
+        });
+        trackState.tick += length;
+        i++;
+        continue;
+      }
+
+      // Param set: (param-set :target value ...)
+      if (head === "param-set") {
+        let j = 1;
+        while (j + 1 < node.items.length) {
+          const targetNode = node.items[j];
+          const valueNode = node.items[j + 1];
+          const target = canonicalTarget(atomValue(targetNode));
+          const value = parseIntLike(atomValue(valueNode)) ?? 0;
+          if (!SUPPORTED_TARGETS.has(target)) {
+            pushDiag(
+              diagnostics,
+              "error",
+              "E_UNSUPPORTED_TARGET",
+              `Unsupported param-set target: ${target}`,
+              nodeSrc(targetNode),
+              trackName,
+            );
+          }
+          events.push({
+            tick: trackState.tick,
+            cmd: "PARAM_SET",
+            args: { target, value },
+            src: nodeSrc(targetNode),
+          });
+          j += 2;
+        }
+        i++;
+        continue;
+      }
+
+      // Param add: (param-add :target delta ...)
+      if (head === "param-add") {
+        let j = 1;
+        while (j + 1 < node.items.length) {
+          const targetNode = node.items[j];
+          const deltaNode = node.items[j + 1];
+          const target = canonicalTarget(atomValue(targetNode));
+          const delta = parseIntLike(atomValue(deltaNode)) ?? 0;
+          if (!SUPPORTED_TARGETS.has(target)) {
+            pushDiag(
+              diagnostics,
+              "error",
+              "E_UNSUPPORTED_TARGET",
+              `Unsupported param-add target: ${target}`,
+              nodeSrc(targetNode),
+              trackName,
+            );
+          }
+          events.push({
+            tick: trackState.tick,
+            cmd: "PARAM_ADD",
+            args: { target, delta },
+            src: nodeSrc(targetNode),
+          });
+          j += 2;
+        }
+        i++;
+        continue;
+      }
+    }
+
+    i++;
+  }
+}
+
+// ── Legacy compileSeq (v0.3 compatibility) ───────────────────────────────────
 function compileSeq(
   seqNode,
   trackState,
@@ -846,7 +1438,7 @@ function compileTrackBodyItems(
           if (g !== null) trackState.defaultGate = g;
         } else if (key === ":vol") {
           const v = parseIntLike(rawVal);
-          if (v !== null) trackState.defaultVol = Math.max(0, Math.min(15, v));
+          if (v !== null) trackState.defaultVol = Math.max(0, Math.min(31, v));
         }
         j += 2;
       }
@@ -1234,116 +1826,127 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const scoreShuffleRatio =
     rawScoreShuffle >= 51 ? Math.min(90, rawScoreShuffle) : 0;
 
+  // v0.4: Lists with a channel name as the form head are treated as tracks
+  const CHANNEL_NAMES = [
+    "fm1",
+    "fm2",
+    "fm3",
+    "fm4",
+    "fm5",
+    "fm6",
+    "srq1",
+    "srq2",
+    "srq3",
+    "noise",
+  ];
   const trackByKey = new Map();
   const trackOrder = [];
   const loopCounter = { count: 0 };
 
   for (const node of score.items) {
-    if (
-      !node ||
-      node.kind !== "list" ||
-      node.items.length === 0 ||
-      !isAtom(node.items[0], "track")
-    )
-      continue;
+    if (!node || node.kind !== "list" || node.items.length === 0) continue;
 
-    const { options, bodyStart } = parseTrackHead(node.items);
-    const bodyItems = node.items.slice(bodyStart);
+    const head = atomValue(node.items[0]);
+    if (!head || !CHANNEL_NAMES.includes(head)) continue;
 
-    const channelNode = options.get(":ch");
-    if (!channelNode) {
-      pushDiag(
-        diagnostics,
-        "error",
-        "E_TRACK_CH_REQUIRED",
-        "track must have :ch specified",
-        nodeSrc(node),
-        null,
-      );
-      continue;
+    // v0.4: Use channel name as track key
+    const trackKey = head;
+
+    // Collect inline options (key-value pairs immediately after the channel name).
+    // Advance i past the options to find where the body items begin.
+    // Example: (fm1 :oct 4 :len 8 :vol 10  c d e f)
+    //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ options
+    let i = 1;
+    const inlineOpts = {};
+    while (i + 1 < node.items.length) {
+      const key = atomValue(node.items[i]);
+      if (typeof key !== "string" || !key.startsWith(":")) break;
+      inlineOpts[key] = atomValue(node.items[i + 1]);
+      i += 2;
     }
-    const channel = parseSingleChannel(channelNode);
-    const role = parseTrackRole(options, diagnostics, null);
-    const trackKey = `${channel}::${role}`;
+    // Body items start after the inline options
+    const bodyItems = node.items.slice(i);
 
     if (!trackByKey.has(trackKey)) {
-      const writeScope = parseWriteScope(options, diagnostics, trackKey);
+      // Initialize defaults; inline options on the first form set the initial state
+      let defaultOct = 4;
+      let defaultLength = Math.round(WHOLE_TICKS / 8);
+      let defaultGate = null;
+      let defaultVol = 31; // v0.4: default vol is 31 (no attenuation)
+      let shuffleRatio = scoreShuffleRatio;
+      let shuffleBase = Math.round(WHOLE_TICKS / 8);
+      let carry = false;
 
-      const carryNode = options.get(":carry");
-      const carry = carryNode ? atomValue(carryNode) === "true" : false;
-
-      const octNode = options.get(":oct");
-      const defaultOct = parseIntLike(atomValue(octNode)) ?? 4;
-
-      const lenNode = options.get(":len");
-      const defaultLength = parseLengthToken(
-        atomValue(lenNode),
-        Math.round(WHOLE_TICKS / 8),
-      );
-
-      const gateNode = options.get(":gate");
-      const defaultGate = gateNode ? parseGateSpec(atomValue(gateNode)) : null;
-
-      const volNode = options.get(":vol");
-      const defaultVol = parseIntLike(atomValue(volNode)) ?? 8;
-
-      const shuffleNode = options.get(":shuffle");
-      const rawTrackShuffle = parseIntLike(atomValue(shuffleNode));
-      let shuffleRatio;
-      if (rawTrackShuffle !== null) {
-        shuffleRatio =
-          rawTrackShuffle === 50
-            ? 0
-            : Math.max(51, Math.min(90, rawTrackShuffle));
-      } else {
-        shuffleRatio = scoreShuffleRatio;
+      if (inlineOpts[":oct"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":oct"]);
+        if (v !== null) defaultOct = Math.max(0, Math.min(8, v));
+      }
+      if (inlineOpts[":len"] !== undefined) {
+        defaultLength = parseLengthToken(inlineOpts[":len"], defaultLength);
+      }
+      if (inlineOpts[":gate"] !== undefined) {
+        const g = parseGateSpec(inlineOpts[":gate"]);
+        if (g !== null) defaultGate = g;
+      }
+      if (inlineOpts[":vol"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":vol"]);
+        if (v !== null) defaultVol = Math.max(0, Math.min(31, v));
+      }
+      if (inlineOpts[":shuffle"] !== undefined) {
+        const rawTrackShuffle = parseIntLike(inlineOpts[":shuffle"]);
+        if (rawTrackShuffle !== null) {
+          shuffleRatio =
+            rawTrackShuffle === 50
+              ? 0
+              : Math.max(51, Math.min(90, rawTrackShuffle));
+        }
+      }
+      if (inlineOpts[":shuffle-base"] !== undefined) {
+        shuffleBase = parseLengthToken(
+          inlineOpts[":shuffle-base"],
+          shuffleBase,
+        );
+      }
+      if (inlineOpts[":carry"] !== undefined) {
+        carry = inlineOpts[":carry"] === "true";
       }
 
-      const shuffleBaseNode = options.get(":shuffle-base");
-      const shuffleBase = parseLengthToken(
-        atomValue(shuffleBaseNode),
-        Math.round(WHOLE_TICKS / 8),
-      );
-
+      // All state is sticky and persists across consecutive forms of the same channel
       const trackState = {
         tick: 0,
         defaultLength,
         defaultOct,
         defaultGate,
         defaultVol,
+        defaultVel: 15, // v0.4: per-note velocity, KEY-ON scoped, 0-15
+        glide: 0, // v0.4: glide duration in frames (0 = disabled)
+        glideFrom: null, // v0.4: one-shot start pitch override for glide
         shuffleRatio,
         shuffleBase,
         subBeatParity: 0,
         carry,
+        currentLoopId: null, // id of innermost counted (x N ...) loop, for :break
       };
 
       const trackData = {
         id: trackOrder.length,
-        channel,
+        channel: head,
         route_hint: {
           allocation_preference: "ordered_first_fit",
           carry,
-          channel_candidates: [channel],
-          role,
-          write_scope: writeScope,
+          channel_candidates: [head],
+          role: "bgm",
+          write_scope: ["any"],
         },
         events: [],
       };
 
-      if (carryNode) {
-        trackData.events.push({
-          tick: 0,
-          cmd: "CARRY_SET",
-          args: { carry },
-          src: nodeSrc(node),
-        });
-      }
-
-      if (options.has(":vol")) {
+      // Emit initial VOL event if :vol was explicitly specified
+      if (inlineOpts[":vol"] !== undefined) {
         trackData.events.push({
           tick: 0,
           cmd: "PARAM_SET",
-          args: { target: "VOL", value: Math.max(0, Math.min(15, defaultVol)) },
+          args: { target: "VOL", value: defaultVol },
           src: nodeSrc(node),
         });
       }
@@ -1351,33 +1954,34 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       trackByKey.set(trackKey, { trackData, trackState });
       trackOrder.push(trackKey);
     } else {
+      // Update sticky state from inline options on subsequent forms of the same channel
       const { trackData, trackState } = trackByKey.get(trackKey);
 
-      if (options.has(":oct")) {
-        const v = parseIntLike(atomValue(options.get(":oct")));
+      if (inlineOpts[":oct"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":oct"]);
         if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
       }
-      if (options.has(":len")) {
+      if (inlineOpts[":len"] !== undefined) {
         trackState.defaultLength = parseLengthToken(
-          atomValue(options.get(":len")),
+          inlineOpts[":len"],
           trackState.defaultLength,
         );
       }
-      if (options.has(":gate")) {
-        trackState.defaultGate = parseGateSpec(atomValue(options.get(":gate")));
+      if (inlineOpts[":gate"] !== undefined) {
+        trackState.defaultGate = parseGateSpec(inlineOpts[":gate"]);
       }
-      if (options.has(":shuffle")) {
-        const v = parseIntLike(atomValue(options.get(":shuffle")));
+      if (inlineOpts[":shuffle"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":shuffle"]);
         if (v !== null) {
           trackState.shuffleRatio =
             v === 50 ? 0 : Math.max(51, Math.min(90, v));
           trackState.subBeatParity = 0;
         }
       }
-      if (options.has(":vol")) {
-        const v = parseIntLike(atomValue(options.get(":vol")));
+      if (inlineOpts[":vol"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":vol"]);
         if (v !== null) {
-          trackState.defaultVol = Math.max(0, Math.min(15, v));
+          trackState.defaultVol = Math.max(0, Math.min(31, v));
           trackData.events.push({
             tick: trackState.tick,
             cmd: "PARAM_SET",
@@ -1389,7 +1993,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     }
 
     const { trackData, trackState } = trackByKey.get(trackKey);
-    compileTrackBodyItems(
+    compileChannelBody(
       bodyItems,
       trackState,
       trackData.events,
