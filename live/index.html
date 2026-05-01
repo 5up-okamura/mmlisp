@@ -838,8 +838,7 @@
 
     function onPlayToggle() {
       if (!player || (!player.isPlaying() && !_paused)) {
-        const cursorLine = editorView.state.doc.lineAt(editorView.state.selection.main.head).number;
-        onPlay(cursorLine);
+        onPlay();
       } else if (_paused) {
         onResume();
       } else {

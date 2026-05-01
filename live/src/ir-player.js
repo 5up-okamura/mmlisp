@@ -808,6 +808,25 @@ export class IRPlayer {
     // duration (count * bodyDuration) so they play after all repetitions,
     // not interleaved with early repetitions.
 
+    function findFinalPassBreak(loopBody, loopId) {
+      let depth = 0;
+      for (let i = 0; i < loopBody.length; i++) {
+        const ev = loopBody[i];
+        if (ev.cmd === "LOOP_BEGIN") {
+          depth++;
+          continue;
+        }
+        if (ev.cmd === "LOOP_END") {
+          if (depth > 0) depth--;
+          continue;
+        }
+        if (depth === 0 && ev.cmd === "LOOP_BREAK" && ev.args?.id === loopId) {
+          return { index: i, tick: ev.tick };
+        }
+      }
+      return null;
+    }
+
     function expand(evList, depth) {
       if (depth > 8) return []; // safety guard
       const out = [];
@@ -830,6 +849,7 @@ export class IRPlayer {
           }
           const loopBody = evList.slice(j + 1, k);
           const count = evList[k]?.args?.repeat ?? evList[k]?.args?.count ?? 2;
+          const loopId = ev.args?.id;
 
           // Derive body duration from LOOP_BEGIN / LOOP_END ticks for accuracy.
           // Falls back to first/last body event ticks if LOOP_END tick is missing.
@@ -840,10 +860,20 @@ export class IRPlayer {
               ? loopBody[loopBody.length - 1].tick
               : loopBeginTick);
           const bodyDuration = loopEndTick - loopBeginTick;
+          const finalBreak = findFinalPassBreak(loopBody, loopId);
+          const finalBodyDuration =
+            finalBreak != null
+              ? Math.max(0, finalBreak.tick - loopBeginTick)
+              : bodyDuration;
 
           // Expand body once (recursive), then stamp each repetition
-          const expandedBody = expand(loopBody, depth + 1);
           for (let rep = 0; rep < count; rep++) {
+            const isFinalRep = rep === count - 1;
+            const repBody =
+              isFinalRep && finalBreak != null
+                ? loopBody.slice(0, finalBreak.index)
+                : loopBody;
+            const expandedBody = expand(repBody, depth + 1);
             for (const bodyEv of expandedBody) {
               out.push({
                 ...bodyEv,
@@ -852,9 +882,15 @@ export class IRPlayer {
             }
           }
 
-          // All subsequent events shift past the added loop duration
-          tickOffset += (count - 1) * bodyDuration;
+          // Shift following events by the loop's effective repeated duration.
+          // On final-pass break, the last iteration may be shorter than bodyDuration.
+          const effectiveDuration =
+            count > 0 ? (count - 1) * bodyDuration + finalBodyDuration : 0;
+          tickOffset += effectiveDuration - bodyDuration;
           j = k + 1; // skip past LOOP_END
+        } else if (ev.cmd === "LOOP_BREAK") {
+          // LOOP_BREAK is structural; it is consumed during expansion.
+          j++;
         } else {
           // Apply accumulated offset so post-loop events play after all reps
           out.push({ ...ev, tick: ev.tick + tickOffset });
