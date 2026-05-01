@@ -158,12 +158,12 @@ Example: `:len 4` (48 ticks), 5 notes → `[9, 10, 9, 10, 10]` (total = 48).
 (fm1 :len 4  (c e g a b))
 
 ; single-stage envelope
-(def syntom-pitch :macro :pitch (ease-out :from 0 :to -48 :len 8))
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -4800 :len 8))
 
 ; Multi-stage macro ([...] retained after :macro only — data vector, not note sequence)
 (def vib-entry :macro :pitch
-  [(ease-in :from -12 :to 0 :len 16)
-   (sin    :from -10 :to 10 :len 8)])
+  [(ease-in :from -1200 :to 0 :len 16)
+   (sin    :from -1000 :to 1000 :len 8)])
 
 ; curve value inline (emits PARAM_SWEEP)
 (fm1 :len 8  :tl2 (ease-out :from 28 :to 20 :len 8)  c e g e)
@@ -240,12 +240,12 @@ in the logical domain (driver/compiler implementation can use fixed-point intege
 
 Trigger model for level layers:
 
-- :macro :vel` is KEY-ON scoped (per-note trigger).
+- `:macro :vel` is KEY-ON scoped (per-note trigger).
 - `:vol` is not KEY-ON scoped: it changes when timeline events occur (`:vol N`, `:vol (curve ...)`).
 - `:master` is not KEY-ON scoped: it changes when timeline events occur (`:master N`, `:master (curve ...)`).
 - `:vol`/`:master` may also be updated by runtime external control flags/messages from game code.
 
-`macro-vel` from :macro :vel` remains 0-15 and is intentionally composer-friendly
+`macro-vel` from `:macro :vel` remains 0-15 and is intentionally composer-friendly
 for PSG/SSG-style authoring (`[15 10 5 0]` reads naturally as loud to soft).
 
 Effective note level is determined by all four terms:
@@ -398,7 +398,7 @@ rather than per-note.
 
 ; one-shot: pitch glide between sections
 (fm1 :oct 4 :len 4
-  :pitch (linear :from 0 :to 12 :len 4)
+  :pitch (linear :from 0 :to 1200 :len 4)
   c d e  :pitch 0  f g)
 
 ; looping: track-position-locked tremolo starting at this point
@@ -466,20 +466,27 @@ Applies to both `ENVELOPE_TABLE` (§2.5) and `PARAM_SWEEP` (§2.11).
 Macro functions always generate numeric vectors. Symbolic inputs are resolved
 at compile time:
 
-| Lane        | Symbol input            | Internal value                                |
-| ----------- | ----------------------- | --------------------------------------------- |
-| `:pitch`    | `c` `d` `e` … `b`       | semitone offset 0–11 relative to current note |
-| `:pan`      | `left` `center` `right` | -1 / 0 / +1                                   |
-| `:vel` etc. | integer literal         | integer as-is                                 |
+| Lane        | Symbol input            | Internal value                        |
+| ----------- | ----------------------- | ------------------------------------- |
+| `:pitch`    | `c` `d` `e` … `b`       | cents offset relative to current note |
+| `:pan`      | `left` `center` `right` | -1 / 0 / +1                           |
+| `:vel` etc. | integer literal         | integer as-is                         |
 
-#### Pitch macro — relative semitones
+#### Pitch macro — relative cents
 
-:macro :pitch` values are **relative semitones** from the current note at KEY-ON.
-The full pitch computation before F-Number resolution is:
+`:macro :pitch` values are **relative pitch deltas in cents** from the current
+note at KEY-ON (`100 = 1 semitone`, `1200 = 1 octave`).
+
+Accepted numeric range is signed 16-bit (`i16`): `-32768..32767`.
+
+The full pitch computation before backend conversion is:
 
 ```
-final_pitch = base_note + :oct adjustment + :pitch offset + env:pitch macro value
+final_pitch = base_note + :oct adjustment + :pitch offset + macro:pitch delta
 ```
+
+This wide authoring range is intentional so `:pitch` can be used as a primary
+composition lane. Backend writers clamp only at the final hardware write stage.
 
 Future: a quantize snap (scale mask) may be applied after the sum, rounding to
 the nearest pitch in the specified set (e.g. `[c e g]`). The snap repeats
@@ -494,7 +501,7 @@ warning and ignores `:pan` on those channels.
 Allowed values: `left` (-1), `center` (0), `right` (+1). `none` is not adopted.
 Raw integers are also valid: `-1` = left, `0` = center, `+1` = right.
 
-:macro :pan` is a valid envelope target. Both symbolic and numeric forms are
+`:macro :pan` is a valid macro target. Both symbolic and numeric forms are
 accepted in step vectors:
 
 ```lisp
@@ -509,11 +516,11 @@ the complete list. Per-OP targets repeat for each operator suffix (`1`–`4`).
 
 **Common — all channel types**
 
-| Target   | Channels     | Range       | Notes                           |
-| -------- | ------------ | ----------- | ------------------------------- |
-| `:vel`   | FM, PSG, PCM | 0–15        | KEY-ON scoped; see §1.5         |
-| `:pitch` | FM, PSG, PCM | semitone Δ  | KEY-ON scoped; relative to note |
-| `:pan`   | FM, PCM      | -1 / 0 / +1 | `left`/`center`/`right`; no PSG |
+| Target   | Channels     | Range           | Notes                           |
+| -------- | ------------ | --------------- | ------------------------------- |
+| `:vel`   | FM, PSG, PCM | 0–15            | KEY-ON scoped; see §1.5         |
+| `:pitch` | FM, PSG, PCM | cents Δ (`i16`) | KEY-ON scoped; relative to note |
+| `:pan`   | FM, PCM      | -1 / 0 / +1     | `left`/`center`/`right`; no PSG |
 
 **FM operator params (`:xx1`–`:xx4`)**
 
@@ -579,7 +586,7 @@ GMB binary
 │     NOTE_ON  pitch=c4  len=48   envId=2   ; u8; 0 = no envelope
 │
 └── ENVELOPE_TABLE  (section 0x0005)
-      [id=2]  target=pitch  curve=ease-out  from=0  to=-48  frames=16
+      [id=2]  target=pitch  curve=ease-out  from=0  to=-4800  frames=16
               wait=0  loop=false
       [id=3]  [target=tl4  curve=triangle  from=0  to=6  frames=8  loop=true]
               [target=tl1  curve=triangle  from=0  to=2  frames=8  loop=true]
@@ -629,13 +636,13 @@ compiler resolves the substitution statically.
 
 ```lisp
 ; one-shot: synth tom pitch sweep
-(def syntom-pitch :macro :pitch (ease-out :from 0 :to -48 :len 8))
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -4800 :len 8))
 
 ; one-shot: brass scoop-up
-(def scoop :macro :pitch (ease-in :from -18 :to 0 :len 16))
+(def scoop :macro :pitch (ease-in :from -1800 :to 0 :len 16))
 
 ; looping LFO: vibrato (wait before onset)
-(def vibrato :macro :pitch (sin :from -10 :to 10 :len 8
+(def vibrato :macro :pitch (sin :from -1000 :to 1000 :len 8
                           :wait 4))
 
 ; looping LFO: tremolo on TL (carrier level)
@@ -671,7 +678,7 @@ compiler resolves the substitution statically.
 To combine a sustain-loop with a release tail, use the step-vector
 `[:loop ... :release ...]` form, not `[curve-vec]`.
 
-**Decided: :macro :vel` is the envelope-layer loudness scale (`0`= silent,`15` = max envelope output) on all
+**Decided: `:macro :vel` is the envelope-layer loudness scale (`0` = silent, `15` = max envelope output) on all
 channel types.** Final loudness also includes `:vel`, `:vol`, and `:master` (see §1.5).
 The compiler/driver maps the composed level to hardware per channel:
 
@@ -684,7 +691,7 @@ The compiler/driver maps the composed level to hardware per channel:
 `[15 12 8 4 2 1 0]` therefore reads as "loud → silent" for the envelope layer on every channel type; no
 polarity surprises for the composer.
 
-**:macro :vel` accepts both step-vector and curve forms.** `:from`/`:to` values use
+**`:macro :vel` accepts both step-vector and curve forms.** `:from`/`:to` values use
 the same 0-15 envelope scale. This envelope output is composed with `:vel`/`:vol`/`:master`
 before hardware conversion.
 
@@ -770,8 +777,8 @@ explicit at the parser level.
 
 ```lisp
 (def vib-entry :macro :pitch
-  [(ease-in :from -12 :to 0 :len 16)         ; scoop up
-   (sin    :from -10 :to 10 :len 8)])       ; then vibrato
+  [(ease-in :from -1200 :to 0 :len 16)         ; scoop up
+   (sin    :from -1000 :to 1000 :len 8)])      ; then vibrato
 ```
 
 **`(wait)` — pause stage:** holds the ending value of the previous stage for the
@@ -807,7 +814,7 @@ simultaneously by listing multiple `:key (curve ...)` pairs:
 ; vel step sequence + pitch sweep in one def — valid combination
 (def syntom :macro
   :vel   [15 12 8 4 2 1 0]
-  :pitch (ease-out :from 0 :to -48 :len 8))
+  :pitch (ease-out :from 0 :to -4800 :len 8))
 ```
 
 **Macro list — `:macro [...]`** — multiple macro entries can be combined at the
@@ -828,7 +835,7 @@ and run simultaneously from KEY-ON. If two entries target the same lane, the
              :ar2 (ease-in :from 0 :to 20 :len 8)]  c d e)
 
 ; mixed — named def + inline
-(fm1 :macro [ar1-sweep  :pitch (ease-out :from 0 :to -12 :len 4)]  c d e)
+(fm1 :macro [ar1-sweep  :pitch (ease-out :from 0 :to -1200 :len 4)]  c d e)
 
 ; duplicate target — last wins
 (fm1 :macro [ar1-sweep  :ar1 (triangle :from 0 :to 4 :len 4)]  c)  ; triangle wins
@@ -863,7 +870,7 @@ compose freely: each target key can independently carry a single curve or a
 ; both at once: :pitch is sequential stages, :vel runs in parallel alongside it
 (def syntom-env :macro
   :vel   [15 12 8 4 0]                ; vel stages run sequentially
-  :pitch (ease-out :from 0 :to -48 :len 8))  ; pitch curve runs simultaneously
+  :pitch (ease-out :from 0 :to -4800 :len 8))  ; pitch curve runs simultaneously
 ```
 
 **Driver state per channel:** up to 4 env slots `{ envId, stage, phase, delay_count, flags }` —
@@ -886,7 +893,7 @@ hardware_reg = base_pitch[ch] + env_pitch_delta[ch]
 
 `base_pitch` and `env_pitch_delta` are written to different internal registers and
 summed before the hardware F-number write each frame. This means `:glide`
-(portamento between notes) and :macro :pitch` (per-note LFO/scoop) compose without
+(portamento between notes) and `:macro :pitch` (per-note LFO/scoop) compose without
 interference:
 
 ```lisp
@@ -898,8 +905,8 @@ interference:
 PARAM_SWEEP for `:pitch` (§2.11) also targets `base_pitch`, not `env_pitch_delta`.
 This keeps track-timeline pitch glides independent of per-note envelope pitch curves.
 
-**FM vs PSG F-number resolution:** the `:pitch` delta unit in an envelope is defined
-as a hardware-independent semitone-fraction. The compiler scales to F-number
+**FM vs PSG F-number resolution:** the `:pitch` delta unit in a macro is defined
+as a hardware-independent cents value. The compiler scales to F-number
 bits at emit time based on channel type (FM: 11-bit F-number; PSG: 10-bit
 tone register). Envelope table stores the logical delta; the driver reads the
 pre-scaled value from the table.
@@ -907,6 +914,18 @@ pre-scaled value from the table.
 **Decided: `:from`/`:to` unit is semitone-cents (100 = 1 semitone).** The compiler
 scales to F-number register bits at emit time based on channel type. Authors never
 deal with raw F-number delta; hardware differences are a compiler detail.
+
+**Decided: `:pitch` value domain is `i16` cents (`-32768..32767`) for inline,
+step-vector, and curve `:from`/`:to` values.**
+
+**Decided: backend clamp policy.** Values are clamped only when converted to
+chip registers:
+
+- FM (YM2612): clamp to representable pitch domain (effective `block`/`fnum` write range).
+- PSG (SN76489): clamp to representable tone period domain (`1..1023`).
+
+The compiler may emit diagnostics for extreme values, but source values inside
+`i16` remain valid language input.
 
 **Decided: `:len` for curve duration.**
 
@@ -932,18 +951,18 @@ frames = ticks * fps * 60 / (BPM * PPQN)
 At BPM=120, fps=60, PPQN=48: frames = ticks \* 5 / 8 (quarter = 30 frames).
 
 ```lisp
-(def vibrato :macro :pitch (sin :from -10 :to 10 :len 4
+(def vibrato :macro :pitch (sin :from -1000 :to 1000 :len 4
                           :wait 4))           ; period = quarter note, wait before onset
 
-(def syntom-pitch :macro :pitch (ease-out :from 0 :to -48 :len 8f)) ; exactly 8 frames
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -4800 :len 8f)) ; exactly 8 frames
 
-(def whistle-on :macro :pitch (ease-in :from -24 :to 0 :len 3f))    ; 3-frame attack
+(def whistle-on :macro :pitch (ease-in :from -2400 :to 0 :len 3f))    ; 3-frame attack
 
-(def vibrato-late :macro :pitch (sin :from -10 :to 10 :len 4
+(def vibrato-late :macro :pitch (sin :from -1000 :to 1000 :len 4
                                :wait 8f))     ; wait=8 frames fixed, period=quarter
 
 ; release swell: after KEY-OFF, scoop up pitch
-(def release-scoop :macro :pitch (ease-in :from -24 :to 0 :len 4
+(def release-scoop :macro :pitch (ease-in :from -2400 :to 0 :len 4
                                 :wait key-off)) ; curve starts after KEY-OFF
 ```
 
@@ -953,7 +972,7 @@ internally; the wait and curve run as consecutive stages sharing one `envId`.
 
 **Decided: `:release` in step-vector — compiler emits `KEY_OFF` at `gate_ticks`.**
 
-The step-vector format for :macro :vel` is:
+The step-vector format for `:macro :vel` is:
 
 ```
 [attack... :loop sustain... :release release...]
@@ -1205,9 +1224,9 @@ A `:macro` change emits `ENV_ATTACH` IR event.
 ; noise gates on every quarter note; frequency follows sqr3
 (noise :mode white3  :len 1  c c c c  c c c c)
 
-; sqr3 sweeps pitch up an octave over 4 frames — noise frequency tracks it
+; sqr3 sweeps pitch up an octave (+1200 cents) over 4 frames — noise frequency tracks it
 ; sqr3 is also audible as a tone alongside the noise
-(sqr3 :len 1  :pitch (linear :from 0 :to 12 :len 4f)
+(sqr3 :len 1  :pitch (linear :from 0 :to 1200 :len 4f)
   c c c c  c c c c)
 ```
 
@@ -1217,9 +1236,9 @@ to change noise mode.
 
 ---
 
-**:macro :mode` — frame-based noise mode envelope**
+**`:macro :mode` — frame-based noise mode envelope**
 
-:macro :mode` accepts a step-vector of mode keywords or raw numeric values
+`:macro :mode` accepts a step-vector of mode keywords or raw numeric values
 (the 3-bit FB+NF hardware field written directly), advancing one step per
 driver frame. This enables sub-note timbre changes while note sequencing
 remains tick-based.
@@ -1236,7 +1255,7 @@ preferred for readability but both forms are valid.
 (def noise-asr :macro :mode [white0 white0 :loop periodic3 :release white2])
 ```
 
-`:loop` and `:release` semantics are identical to :macro :vel` step-vector:
+`:loop` and `:release` semantics are identical to `:macro :vel` step-vector:
 
 | Region  | Marker               | Playback                                      |
 | ------- | -------------------- | --------------------------------------------- |
@@ -1261,8 +1280,8 @@ periodic mode for as long as the note lasts.
   c c c c  c c c c)
 ```
 
-The compiler encodes :macro :mode`step-vectors as`MODE_ENV_TABLE`entries
-(same section as`ENVELOPE_TABLE`, target=mode). Each step is a 1-byte FB+NF
+The compiler encodes `:macro :mode` step-vectors as `MODE_ENV_TABLE` entries
+(same section as `ENVELOPE_TABLE`, target=mode). Each step is a 1-byte FB+NF
 value; the driver writes the noise register each frame tick.
 
 ---
