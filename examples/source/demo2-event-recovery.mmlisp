@@ -31,7 +31,7 @@
 
     (goto calm)
   )
-  (srq1 :oct 2
+  (sqr1 :oct 2
     :len 1/2
 
     #calm pedal a a a a g g g g

@@ -84,6 +84,31 @@ function midiToFnumBlock(midiNote) {
   return { fnum: FNUM_TABLE[semitone], block };
 }
 
+function sampleCurveUnit(curve, phase) {
+  const t = Math.max(0, Math.min(1, phase));
+  switch (curve) {
+    case "linear":
+      return t;
+    case "ease-in":
+      return t * t;
+    case "ease-out":
+      return 1 - (1 - t) * (1 - t);
+    case "ease-in-out":
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    case "sin":
+      return (Math.sin(2 * Math.PI * t - Math.PI / 2) + 1) / 2;
+    case "triangle":
+      return t < 0.5 ? t * 2 : 2 - t * 2;
+    case "square":
+      return t < 0.5 ? 0 : 1;
+    case "saw":
+    case "ramp":
+      return t;
+    default:
+      return t;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Parameter name → YM2612 register offset + encoding
 // ---------------------------------------------------------------------------
@@ -230,9 +255,9 @@ const CH_NAME_TO_INDEX = {
 
 // SN76489 PSG channel name → 0-based PSG channel index (0-3)
 const PSG_CH_NAME_TO_INDEX = {
-  srq1: 0,
-  srq2: 1,
-  srq3: 2,
+  sqr1: 0,
+  sqr2: 1,
+  sqr3: 2,
   noise: 3,
 };
 
@@ -264,6 +289,7 @@ export class IRPlayer {
     this._onLine = null; // (line: number) => void — called when an event fires
     this._onTick = null; // (tick, bpm, ppqn) => void — called each scheduler interval
     this._onParam = null; // (chIndex, target, value) => void — called when a param event plays
+    this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
     // Per-channel register state (for incremental PARAM_ADD)
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
@@ -351,6 +377,7 @@ export class IRPlayer {
 
     if (options.loop !== undefined) this._loop = options.loop;
 
+    this._clearPendingUiTimers();
     this._audioContext = audioContext;
     this._playing = true;
     this._startAudioTime = audioContext.currentTime + 0.05; // small startup offset
@@ -376,6 +403,7 @@ export class IRPlayer {
       clearTimeout(this._schedulerTimer);
       this._schedulerTimer = null;
     }
+    this._clearPendingUiTimers();
     // All notes off (FM)
     for (let ch = 0; ch < 6; ch++) {
       this._writeKeyOff(ch);
@@ -410,6 +438,7 @@ export class IRPlayer {
    */
   playFromTick(audioContext, fromTick) {
     if (!this._ir) throw new Error("No IR loaded");
+    this._clearPendingUiTimers();
     this._audioContext = audioContext;
     this._playing = true;
     const now = audioContext.currentTime;
@@ -465,7 +494,7 @@ export class IRPlayer {
 
   /**
    * Mute or unmute a channel. Muted channels suppress NOTE_ON key-on writes.
-   * @param {number} ch  0-5 = FM, 6-9 = PSG (6=srq1, 7=srq2, 8=srq3, 9=noise)
+   * @param {number} ch  0-5 = FM, 6-9 = PSG (6=sqr1, 7=sqr2, 8=sqr3, 9=noise)
    * @param {boolean} muted
    */
   muteChannel(ch, muted) {
@@ -545,6 +574,7 @@ export class IRPlayer {
       clearTimeout(this._schedulerTimer);
       this._schedulerTimer = null;
     }
+    this._clearPendingUiTimers();
 
     // Flush worklet's pre-scheduled writes
     if (flushFn) flushFn();
@@ -594,6 +624,21 @@ export class IRPlayer {
   /** Register a callback fired (approximately) when each PARAM_SET/PARAM_ADD event plays. */
   setOnParam(fn) {
     this._onParam = fn;
+  }
+
+  _scheduleUiCallback(fn, delayMs) {
+    const timerId = setTimeout(() => {
+      this._pendingUiTimers.delete(timerId);
+      fn();
+    }, delayMs);
+    this._pendingUiTimers.add(timerId);
+  }
+
+  _clearPendingUiTimers() {
+    for (const timerId of this._pendingUiTimers) {
+      clearTimeout(timerId);
+    }
+    this._pendingUiTimers.clear();
   }
 
   _assignChannel(trackIndex, track) {
@@ -652,7 +697,7 @@ export class IRPlayer {
           if (this._onLine && ev.src?.line != null) {
             const line = ev.src.line;
             const delay = Math.max(0, evTime - now) * 1000;
-            setTimeout(() => this._onLine(tIdx, line), delay);
+            this._scheduleUiCallback(() => this._onLine(tIdx, line), delay);
           }
           track.flatIndex++;
         }
@@ -974,6 +1019,11 @@ export class IRPlayer {
       case "PARAM_SET":
       case "PARAM_ADD": {
         this._applyParam(ch, port, chOffset, ev, when);
+        break;
+      }
+
+      case "PARAM_SWEEP": {
+        this._applyParamSweep(ch, port, chOffset, ev, when);
         break;
       }
 
@@ -1299,7 +1349,64 @@ export class IRPlayer {
       const t = target,
         c = ch,
         v = nextValue;
-      setTimeout(() => this._onParam(c, t, v), delay);
+      this._scheduleUiCallback(() => this._onParam(c, t, v), delay);
+    }
+  }
+
+  _resolveSweepBudgetFrames(ev) {
+    const trackIndex = ev._trackIndex;
+    if (trackIndex == null) return Math.max(1, ev.args?.frames ?? 1);
+
+    const track = this._tracks[trackIndex];
+    if (!track) return Math.max(1, ev.args?.frames ?? 1);
+
+    const target = (ev.args?.target ?? "").toUpperCase();
+    let endTick = ev.tick + (track.loopDuration ?? 1);
+
+    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
+      const nextEv = track.events[i];
+      if ((nextEv.args?.target ?? "").toUpperCase() !== target) continue;
+      if (
+        nextEv.cmd === "PARAM_SET" ||
+        nextEv.cmd === "PARAM_ADD" ||
+        nextEv.cmd === "PARAM_SWEEP"
+      ) {
+        endTick = nextEv.tick;
+        break;
+      }
+    }
+
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    return Math.max(
+      1,
+      Math.floor(Math.max(0, endTick - ev.tick) * secsPerTick * 60),
+    );
+  }
+
+  _applyParamSweep(ch, port, chOffset, ev, when) {
+    const target = (ev.args?.target ?? "").toUpperCase();
+    const from = Number(ev.args?.from ?? 0);
+    const to = Number(ev.args?.to ?? 0);
+    const curve = ev.args?.curve ?? "linear";
+    const baseFrames = Math.max(1, Number(ev.args?.frames ?? 1));
+    const loop = !!ev.args?.loop;
+    const budgetFrames = this._resolveSweepBudgetFrames(ev);
+
+    for (let frame = 0; frame < budgetFrames; frame++) {
+      const phase = loop
+        ? (frame % baseFrames) / baseFrames
+        : baseFrames <= 1
+          ? 1
+          : Math.min(1, frame / (baseFrames - 1));
+      const unit = sampleCurveUnit(curve, phase);
+      const value = Math.round(from + (to - from) * unit);
+      this._applyParam(
+        ch,
+        port,
+        chOffset,
+        { cmd: "PARAM_SET", args: { target, value } },
+        when + frame / 60,
+      );
     }
   }
 

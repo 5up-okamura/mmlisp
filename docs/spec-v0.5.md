@@ -170,12 +170,12 @@ Score "title"
 
 Score "stage1"
   ├─ track fm1: lead
-  ├─ track srq1–srq3: harmony
+  ├─ track sqr1–sqr3: harmony
   └─ track pcm1: drums
 
 Game event: "START pressed"
   → START_TRACK(stage1.fm1)     ; drums begin — title sfx still playing on fm2
-  → START_TRACK(stage1.srq1)    ; harmony added
+  → START_TRACK(stage1.sqr1)    ; harmony added
   → KEY_OFF(title.fm2)          ; sfx release tail fires, fades naturally
 ```
 
@@ -207,14 +207,14 @@ Each score's tracks run independently on their assigned channels.
 **Recommended transition pattern:**
 
 ```
-; scene A is playing on fm1, srq1
-; transition: start scene B on fm2, srq2; fade scene A out
+; scene A is playing on fm1, sqr1
+; transition: start scene B on fm2, sqr2; fade scene A out
 
 68000:
   START_TRACK(sceneB.fm2)
-  START_TRACK(sceneB.srq2)
+  START_TRACK(sceneB.sqr2)
   FADE_TRACK(sceneA.fm1, 60)    ; fade over 60 frames (~1 second)
-  FADE_TRACK(sceneA.srq1, 60)
+  FADE_TRACK(sceneA.sqr1, 60)
 ```
 
 Because tempo does not need to match, scene B can start immediately at its
@@ -232,7 +232,7 @@ This enables:
 
 ```lisp
 ; loop indefinitely until game sends KEY_OFF
-(srq1 :len 0 :macro pad-env  c)
+(sqr1 :len 0 :macro pad-env  c)
 
 ; PCM texture loop — holds open until STOP_TRACK
 (pcm2 :mode loop :len 0

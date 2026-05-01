@@ -45,12 +45,27 @@ const TRACK_OPTION_KEYS = new Set([
   ":oct",
   ":len",
   ":gate",
-  ":vol",
   ":carry",
   ":shuffle",
   ":shuffle-base",
   ":write",
 ]);
+
+// Curve function names recognized in inline curve specs (PARAM_SWEEP authoring)
+const CURVE_NAMES = new Set([
+  "linear",
+  "ease-in",
+  "ease-out",
+  "ease-in-out",
+  "sin",
+  "triangle",
+  "square",
+  "saw",
+  "ramp",
+]);
+
+// Loop waveforms produce PARAM_SWEEP with loop:true; easing/linear produce loop:false
+const LOOP_CURVE_NAMES = new Set(["sin", "triangle", "square", "saw", "ramp"]);
 
 function atomValue(node) {
   if (!node) return null;
@@ -170,6 +185,48 @@ function parsePerNoteLength(val) {
   const m = val.match(/^([a-g][+\-]?)(\d+\.?)$/);
   if (!m) return null;
   return { noteName: m[1], lengthStr: m[2] };
+}
+
+/**
+ * Parse an inline curve spec node, e.g. (ease-out :from 28 :to 20 :len 8).
+ * Returns a PARAM_SWEEP args object or null if the node is not a curve form.
+ */
+function parseCurveSpec(node) {
+  if (!node || node.kind !== "list" || !node.items || node.items.length === 0)
+    return null;
+  const head = atomValue(node.items[0]);
+  if (!CURVE_NAMES.has(head)) return null;
+
+  let from;
+  let to;
+  let frames;
+  for (let j = 1; j < node.items.length; j++) {
+    const k = atomValue(node.items[j]);
+    if (k && k.startsWith(":") && j + 1 < node.items.length) {
+      const v = atomValue(node.items[j + 1]);
+      switch (k) {
+        case ":from":
+          from = parseIntLike(v);
+          break;
+        case ":to":
+          to = parseIntLike(v);
+          break;
+        case ":len":
+          frames = parseLengthToken(v, null);
+          break;
+      }
+      j++;
+    }
+  }
+
+  const spec = {
+    curve: head,
+    to: to ?? 0,
+    loop: LOOP_CURVE_NAMES.has(head),
+  };
+  if (from !== null && from !== undefined) spec.from = from;
+  if (frames !== null && frames !== undefined) spec.frames = frames;
+  return spec;
 }
 
 function canonicalTarget(symbol) {
@@ -481,16 +538,27 @@ function compileChannelBody(
               break;
             }
             case ":vol": {
-              const v = parseIntLike(rawVal);
-              if (v !== null) {
-                // v0.4: :vol range is 0-31 (was 0-15)
-                trackState.defaultVol = Math.max(0, Math.min(31, v));
+              const valueNode = items[i];
+              const curveSpec = parseCurveSpec(valueNode);
+              if (curveSpec) {
                 events.push({
                   tick: trackState.tick,
-                  cmd: "PARAM_SET",
-                  args: { target: "VOL", value: trackState.defaultVol },
+                  cmd: "PARAM_SWEEP",
+                  args: { target: "VOL", ...curveSpec },
                   src: nodeSrc(node),
                 });
+              } else {
+                const v = parseIntLike(rawVal);
+                if (v !== null) {
+                  // v0.4: :vol range is 0-31 (was 0-15)
+                  trackState.defaultVol = Math.max(0, Math.min(31, v));
+                  events.push({
+                    tick: trackState.tick,
+                    cmd: "PARAM_SET",
+                    args: { target: "VOL", value: trackState.defaultVol },
+                    src: nodeSrc(node),
+                  });
+                }
               }
               break;
             }
@@ -502,18 +570,29 @@ function compileChannelBody(
               break;
             }
             case ":master": {
-              // global master level, score-wide
-              const v = parseIntLike(rawVal);
-              if (v !== null) {
+              const valueNode = items[i];
+              const curveSpec = parseCurveSpec(valueNode);
+              if (curveSpec) {
                 events.push({
                   tick: trackState.tick,
-                  cmd: "PARAM_SET",
-                  args: {
-                    target: "MASTER",
-                    value: Math.max(0, Math.min(31, v)),
-                  },
+                  cmd: "PARAM_SWEEP",
+                  args: { target: "MASTER", ...curveSpec },
                   src: nodeSrc(node),
                 });
+              } else {
+                // global master level, score-wide
+                const v = parseIntLike(rawVal);
+                if (v !== null) {
+                  events.push({
+                    tick: trackState.tick,
+                    cmd: "PARAM_SET",
+                    args: {
+                      target: "MASTER",
+                      value: Math.max(0, Math.min(31, v)),
+                    },
+                    src: nodeSrc(node),
+                  });
+                }
               }
               break;
             }
@@ -543,9 +622,20 @@ function compileChannelBody(
               break;
             default: {
               // Inline hardware param write: :tl1 30, :ar1 28, etc.
+              // Value may be a plain integer (PARAM_SET) or a curve form (PARAM_SWEEP).
               const target = canonicalTarget(val);
-              const value = parseIntLike(rawVal) ?? 0;
-              if (SUPPORTED_TARGETS.has(target)) {
+              if (!SUPPORTED_TARGETS.has(target)) break;
+              const valueNode = items[i];
+              const curveSpec = parseCurveSpec(valueNode);
+              if (curveSpec) {
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "PARAM_SWEEP",
+                  args: { target, ...curveSpec },
+                  src: nodeSrc(node),
+                });
+              } else {
+                const value = parseIntLike(rawVal) ?? 0;
                 events.push({
                   tick: trackState.tick,
                   cmd: "PARAM_SET",
@@ -1834,9 +1924,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     "fm4",
     "fm5",
     "fm6",
-    "srq1",
-    "srq2",
-    "srq3",
+    "sqr1",
+    "sqr2",
+    "sqr3",
     "noise",
   ];
   const trackByKey = new Map();
@@ -1853,14 +1943,15 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     const trackKey = head;
 
     // Collect inline options (key-value pairs immediately after the channel name).
-    // Advance i past the options to find where the body items begin.
+    // Only TRACK_OPTION_KEYS are consumed here; hardware param keys (:tl1, :ar1, etc.)
+    // and other modifiers (:vel, :master, etc.) are left in the body for compileChannelBody.
     // Example: (fm1 :oct 4 :len 8 :vol 10  c d e f)
     //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ options
     let i = 1;
     const inlineOpts = {};
     while (i + 1 < node.items.length) {
       const key = atomValue(node.items[i]);
-      if (typeof key !== "string" || !key.startsWith(":")) break;
+      if (!TRACK_OPTION_KEYS.has(key)) break;
       inlineOpts[key] = atomValue(node.items[i + 1]);
       i += 2;
     }

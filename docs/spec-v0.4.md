@@ -22,7 +22,7 @@ of scope.
 | ------------- | --------------------------------- | ------------------------------------------- |
 | `fm1`–`fm6`   | YM2612 FM channels 1–6            | Already valid in v0.3                       |
 | `fm3`         | YM2612 FM channel 3 (normal use)  | Already valid in v0.3                       |
-| `srq1`–`srq3` | SN76489 square-wave tone channels | Renamed in v0.4 (was `psg1`–`psg3` in v0.3) |
+| `sqr1`–`sqr3` | SN76489 square-wave tone channels | Renamed in v0.4 (was `psg1`–`psg3` in v0.3) |
 | `noise`       | SN76489 noise channel             | Already valid in v0.3                       |
 
 ---
@@ -42,7 +42,7 @@ of scope.
 
 `[:fn ...]` wrapper is removed. Curve forms are `(curve-name :key val ...)` directly.
 `track` keyword and `:ch` option are removed. The channel name is the form head directly:
-`(fm1 :oct 4  c e g e)`, `(srq1 :oct 3  c d e)`, `(noise :mode 7  x x x x)` etc.
+`(fm1 :oct 4  c e g e)`, `(sqr1 :oct 3  c d e)`, `(noise :mode 7  x x x x)` etc.
 All state (`:oct`, `:len`, `:gate`, `:vel`, `:vol`, `:mode`, `:macro`, `:pitch`, etc.) is sticky — within a
 form and **across consecutive forms of the same channel name**. The compiler maintains a
 per-channel state map; state is never reset automatically between forms.
@@ -87,7 +87,7 @@ Use `Nt` when the desired duration does not align to any note-length integer —
 
 ```lisp
 ; SN76489 periodic noise with white-noise attack on each 8th note
-; (srq3 provides frequency for periodic noise, muted via :vol)
+; (sqr3 provides frequency for periodic noise, muted via :vol)
 (noise :len 8
   :mode white      c1t    ; 1-tick attack click
   :mode periodic3  c23t   ; 23-tick periodic body  (1 + 23 = 24 = 8th note)
@@ -488,7 +488,7 @@ across all octaves.
 #### Pan lane
 
 `:pan` applies to FM channels (fm1–fm6) and PCM (fm6 as DAC). It is not
-applicable to SN76489 channels (srq1–srq3, noise); the compiler emits a
+applicable to SN76489 channels (sqr1–sqr3, noise); the compiler emits a
 warning and ignores `:pan` on those channels.
 
 Allowed values: `left` (-1), `center` (0), `right` (+1). `none` is not adopted.
@@ -1012,7 +1012,7 @@ For interactive music, the game must be able to trigger KEY-OFF at runtime
 
 ```lisp
 ; len=0: hold indefinitely until the game sends KEY-OFF on this channel
-(srq1 :len 0 :macro psg-asr  c)
+(sqr1 :len 0 :macro psg-asr  c)
 ```
 
 **`len=0` semantics:**
@@ -1040,7 +1040,7 @@ The 68000 sets a bit to request KEY-OFF. The driver checks each frame tick:
 
 ```
 Z80 work area (game-driver communication):
-  key_off_flags:   u16  ; bitmask, one bit per channel (fm1–fm6=6, srq1–srq3=3, noise=1 → 10 bits used)
+  key_off_flags:   u16  ; bitmask, one bit per channel (fm1–fm6=6, sqr1–sqr3=3, noise=1 → 10 bits used)
   ; 68000 sets bit → driver processes on next frame tick → clears bit
 ```
 
@@ -1054,9 +1054,9 @@ Bit assignment (low bit = 0):
 | 3     | fm4        |
 | 4     | fm5        |
 | 5     | fm6        |
-| 6     | srq1       |
-| 7     | srq2       |
-| 8     | srq3       |
+| 6     | sqr1       |
+| 7     | sqr2       |
+| 8     | sqr3       |
 | 9     | noise      |
 | 10–15 | (reserved) |
 
@@ -1155,9 +1155,9 @@ SN76489 noise register (byte format: `111 FB NF1 NF0`):
 | Bits | Field | Meaning                                           |
 | ---- | ----- | ------------------------------------------------- |
 | `FB` | 1 bit | 0 = periodic (pitched buzz), 1 = white noise      |
-| `NF` | 2 bit | 00/01/10 = fixed rate ÷16/÷32/÷64; 11 = srq3 freq |
+| `NF` | 2 bit | 00/01/10 = fixed rate ÷16/÷32/÷64; 11 = sqr3 freq |
 
-When `NF=11`, the noise channel clocks from `srq3`'s tone generator. `srq3`
+When `NF=11`, the noise channel clocks from `sqr3`'s tone generator. `sqr3`
 simultaneously produces its own tone output, enabling **tone + noise mix**.
 
 **Design: `:mode` is a channel option and inline modifier.**
@@ -1193,21 +1193,21 @@ A `:macro` change emits `ENV_ATTACH` IR event.
 | `white0`    | 1   | `00` | white, fastest (÷16)       |
 | `white1`    | 1   | `01` | white, medium (÷32)        |
 | `white2`    | 1   | `10` | white, slowest (÷64)       |
-| `white3`    | 1   | `11` | white, freq = srq3         |
+| `white3`    | 1   | `11` | white, freq = sqr3         |
 | `periodic0` | 0   | `00` | periodic buzz, fastest     |
 | `periodic1` | 0   | `01` | periodic buzz, medium      |
 | `periodic2` | 0   | `10` | periodic buzz, slowest     |
-| `periodic3` | 0   | `11` | periodic buzz, freq = srq3 |
+| `periodic3` | 0   | `11` | periodic buzz, freq = sqr3 |
 
-**srq3 link example — sweep noise frequency with a curve:**
+**sqr3 link example — sweep noise frequency with a curve:**
 
 ```lisp
-; noise gates on every quarter note; frequency follows srq3
+; noise gates on every quarter note; frequency follows sqr3
 (noise :mode white3  :len 1  c c c c  c c c c)
 
-; srq3 sweeps pitch up an octave over 4 frames — noise frequency tracks it
-; srq3 is also audible as a tone alongside the noise
-(srq3 :len 1  :pitch (linear :from 0 :to 12 :len 4f)
+; sqr3 sweeps pitch up an octave over 4 frames — noise frequency tracks it
+; sqr3 is also audible as a tone alongside the noise
+(sqr3 :len 1  :pitch (linear :from 0 :to 12 :len 4f)
   c c c c  c c c c)
 ```
 
@@ -1254,7 +1254,7 @@ periodic mode for as long as the note lasts.
 
 ```lisp
 ; 8-beat pattern: each 8th note gets a 1-frame white attack, then periodic buzz
-; srq3 provides frequency for periodic3 mode (muted via :vol)
+; sqr3 provides frequency for periodic3 mode (muted via :vol)
 (def perc-buzz :macro :mode [white0 :loop periodic3])
 
 (noise :len 8 :macro perc-buzz

@@ -740,6 +740,17 @@
       }
     }
 
+    function applyPlayerMuteSoloState(p) {
+      if (!p) return;
+      if (_soloChannel >= 0) {
+        p.soloChannel(_soloChannel);
+        return;
+      }
+      for (let i = 0; i < 10; i++) {
+        p.muteChannel(i, _muteState[i]);
+      }
+    }
+
     window.toggleMute = toggleMute;
     window.toggleSolo = toggleSolo;
     window.selectCh   = selectCh;
@@ -895,6 +906,7 @@
             }
           }
         });
+        applyPlayerMuteSoloState(player);
         // Seek to cursor line if provided and source map available
         if (fromLine != null && _lastSourceMap) {
           player.playFromLine(audioCtx, fromLine, _lastSourceMap);
@@ -905,14 +917,6 @@
         setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
-        // Restore mute/solo state on new player instance
-        if (_soloChannel >= 0) {
-          player.soloChannel(_soloChannel);
-        } else {
-          for (let i = 0; i < 6; i++) {
-            if (_muteState[i]) player.muteChannel(i, true);
-          }
-        }
         syncParamUI();
       } catch (e) {
         log('Error: ' + e.message, 'err');
@@ -922,6 +926,7 @@
 
     function onStop() {
       player?.stop();
+      workletNode?.port.postMessage({ type: 'flush' });
       player = null;
       log('Stopped');
       setStatus('Stopped', false);
@@ -983,6 +988,7 @@
       if (!player || !player.isPlaying()) return;
       _pausedTick = player.currentTick();
       player.stop();
+      workletNode?.port.postMessage({ type: 'flush' });
       _paused = true;
       log('Paused');
       setPlayIcon(false);
