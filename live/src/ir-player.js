@@ -230,9 +230,9 @@ const CH_NAME_TO_INDEX = {
 
 // SN76489 PSG channel name → 0-based PSG channel index (0-3)
 const PSG_CH_NAME_TO_INDEX = {
-  psg1: 0,
-  psg2: 1,
-  psg3: 2,
+  srq1: 0,
+  srq2: 1,
+  srq3: 2,
   noise: 3,
 };
 
@@ -465,7 +465,7 @@ export class IRPlayer {
 
   /**
    * Mute or unmute a channel. Muted channels suppress NOTE_ON key-on writes.
-   * @param {number} ch  0-5 = FM, 6-9 = PSG (6=psg1, 7=psg2, 8=psg3, 9=noise)
+   * @param {number} ch  0-5 = FM, 6-9 = PSG (6=srq1, 7=srq2, 8=srq3, 9=noise)
    * @param {boolean} muted
    */
   muteChannel(ch, muted) {
@@ -928,7 +928,7 @@ export class IRPlayer {
         const regs = this._chRegs[ch];
 
         if (regs?.vol != null) {
-          const tl = Math.max(0, Math.min(127, (15 - regs.vol) * 8));
+          const tl = Math.max(0, Math.min(127, (31 - regs.vol) * 4));
           const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
           for (const opIdx of carriers) {
             regs.ops[opIdx].tl = tl;
@@ -1268,15 +1268,15 @@ export class IRPlayer {
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
 
       case "VOL": {
-        // vol 0-15 (15=max, 0=silent). Apply to carrier operators so volume
+        // vol 0-31 (31=max, 0=silent). Apply to carrier operators so volume
         // changes preserve timbre similarly to classic FM driver behavior.
-        // TL = (15 - vol) * 8, clamped to 0-127.
+        // TL = (31 - vol) * 4, clamped to 0-127.
         const vol = Math.max(
           0,
-          Math.min(15, isAdd ? (regs.vol ?? 15) + value : value),
+          Math.min(31, isAdd ? (regs.vol ?? 31) + value : value),
         );
         regs.vol = vol;
-        const tl = Math.max(0, Math.min(127, (15 - vol) * 8));
+        const tl = Math.max(0, Math.min(127, (31 - vol) * 4));
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
           regs.ops[opIdx].tl = tl;
