@@ -16,27 +16,27 @@
 (score :tempo 152
 
   (fm1 :oct 1
-    #intro
-    (x 8 :oct 2 c > c)
-    (x 8 :oct 1 b- > b-)
-    (x 8 :oct 1 a > a)
-    (x 5 :oct 2 f > f)
-    :oct 1 g > g < a > a < b- > b-
-    (goto intro)
+    #head
+    (x 8 > c > c <)
+    (x 8 b- > b- <)
+    (x 8 a > a <)
+    (x 5 f > f <)
+    < g > g < a > a < b- > b-
+    (goto head)
   )
 
-  (fm2 :oct 5 :len 4 :vol 12
-    #intro melo (goto intro)
+  (fm2 :oct 5 :len 4
+    #head melo (goto head)
   )
 
-  (fm3 :oct 5 :len 4 :vol 8
+  (fm3 :oct 5 :len 4 :vol 27
     _8.
-    #intro melo (goto intro)
+    #head melo (goto head)
   )
 
   (noise :len 16
-    #intro
+    #head
     (x 16 bd c hh c c c sd c hh c c c)
-    (goto intro)
+    (goto head)
   )
 )
