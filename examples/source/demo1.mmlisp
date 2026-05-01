@@ -1,10 +1,12 @@
 ; MMLisp demo 1 — v0.4
 
-(def bd :psg [15 12 9 6 3 0])
+(def bd :macro :vel [15 12 9 6 3 0])
 
-(def sd :psg [15 14 13 12 11 9 7 5 3 1 0])
+(def sd :macro :vel [15 14 13 12 11 9 7 5 3 1 0])
 
-(def hh :psg [11 0])
+(def hh :macro :vel [11 0])
+
+(def down :macro :pitch (linear :from 0 :to -2400 :len 16))
 
 (def melo
   f4. e8 e1 < g a >
@@ -29,9 +31,16 @@
     #head melo (goto head)
   )
 
-  (fm3 :oct 5 :len 4 :vol 27
+  (fm3 :oct 5 :len 4 :vel 12 :pitch 10
     _8.
     #head melo (goto head)
+  )
+
+  (sqr1 :oct 4 :len 8 :vel 13
+    down
+    #head
+    (x 16 c _ g _)
+    (goto head)
   )
 
   (noise :len 16

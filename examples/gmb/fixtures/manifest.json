@@ -7,11 +7,6 @@
       "reason": "Known-good demo1 artifact"
     },
     {
-      "file": "valid-demo2.mmb",
-      "valid": true,
-      "reason": "Known-good demo2 artifact"
-    },
-    {
       "file": "invalid-bad-magic.mmb",
       "valid": false,
       "reason": "Magic header is corrupted"

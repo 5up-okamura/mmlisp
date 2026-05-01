@@ -11,5 +11,4 @@ Suggested layout:
 
 Current demo skeletons:
 
-1. source/demo1-stage-loop.mmlisp
-2. source/demo2-event-recovery.mmlisp
+1. source/demo1.mmlisp

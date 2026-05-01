@@ -12,13 +12,13 @@ Run from tools directory:
 
 1. `npm run format:mmlisp`
 2. `npm run check:format:mmlisp`
-3. `npm run mmlisp2ir -- ../examples/source/demo1-stage-loop.mmlisp --out ../examples/ir/demo1-stage-loop.ir.generated.json`
+3. `npm run mmlisp2ir -- ../examples/source/demo1.mmlisp --out ../examples/ir/demo1.ir.generated.json`
 4. `npm run build:ir-demos`
-5. `npm run verify-ir -- ../examples/ir/demo1-stage-loop.ir.canonical.json ../examples/ir/demo1-stage-loop.ir.generated.json`
+5. `npm run verify-ir -- ../examples/ir/demo1.ir.canonical.json ../examples/ir/demo1.ir.generated.json`
 6. `npm run check:ir-demos`
-7. `npm run mmlisp2mmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.mmb --meta ../examples/gmb/demo1-stage-loop.meta.json --target-profile md-full`
+7. `npm run mmlisp2mmb -- ../examples/ir/demo1.ir.canonical.json --out ../examples/gmb/demo1.mmb --meta ../examples/gmb/demo1.meta.json --target-profile md-full`
 8. `npm run build:gmb-demos`
-9. `npm run verify-mmb -- ../examples/gmb/demo1-stage-loop.mmb`
+9. `npm run verify-mmb -- ../examples/gmb/demo1.mmb`
 10. `npm run check:gmb-demos`
 11. `npm run build:gmb-fixtures`
 12. `npm run check:gmb-fixtures`

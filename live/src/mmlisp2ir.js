@@ -15,7 +15,6 @@ const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
-  "NOTE_VOLUME",
   "TEMPO_SCALE",
   "VOL",
   "MASTER",
@@ -45,6 +44,7 @@ const TRACK_OPTION_KEYS = new Set([
   ":oct",
   ":len",
   ":gate",
+  ":vel",
   ":carry",
   ":shuffle",
   ":shuffle-base",
@@ -89,7 +89,9 @@ function parseLengthToken(value, inheritedTicks) {
   if (/^\d+t$/.test(value)) {
     return parseInt(value, 10);
   }
-  // Frame count: "16f" — driver frames; stored as ticks (1 frame = 1 tick approximation)
+  // Frame count: "16f" — 60 Hz update intervals used in macro :len context.
+  // Returns the raw frame count; the player schedules one step per 1/60 s.
+  // Not valid for note/rest lengths where BPM-based tick conversion would be required.
   if (/^\d+f$/.test(value)) {
     return parseInt(value, 10);
   }
@@ -142,13 +144,46 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
-function makeNoteArgs(pitch, lengthTicks, gateSpec, vel) {
+function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, pitchMacro, velMacro) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
   // v0.4: vel is KEY-ON scoped; only emit when non-default (15)
   if (vel !== undefined && vel !== 15) args.vel = vel;
+  if (pitchMacro) args.pitchMacro = { ...pitchMacro };
+  if (velMacro) args.velMacro = { ...velMacro };
   return args;
+}
+
+// Parse :macro :vel body — either a step-vector [...] or a single curve form.
+function parseVelMacroSpec(node) {
+  if (!node) return null;
+  // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0]
+  if (node.kind === "list" && node.bracket === "[]") {
+    const steps = [];
+    let loopIndex = null;
+    let releaseIndex = null;
+    for (const item of node.items.filter((n) => n.kind !== "comment")) {
+      const val = atomValue(item);
+      if (val === ":loop") {
+        loopIndex = steps.length;
+        continue;
+      }
+      if (val === ":release") {
+        releaseIndex = steps.length;
+        continue;
+      }
+      const n = parseIntLike(val);
+      if (n !== null) steps.push(Math.max(0, Math.min(15, n)));
+    }
+    return { type: "steps", steps, loopIndex, releaseIndex };
+  }
+  // Curve form: (ease-out :from 15 :to 0 :len 1)
+  if (node.kind === "list" && node.bracket === "()") {
+    const curveSpec = parseCurveSpec(node);
+    if (curveSpec) return { type: "curve", ...curveSpec };
+  }
+  return null;
 }
 
 function resolveShuffleTicks(nominalTicks, trackState) {
@@ -235,8 +270,7 @@ function canonicalTarget(symbol) {
     ":vol": "VOL",
     ":master": "MASTER",
     ":tempo-scale": "TEMPO_SCALE",
-    ":note-pitch": "NOTE_PITCH",
-    ":note-volume": "NOTE_VOLUME",
+    ":pitch": "NOTE_PITCH",
     // LFO
     ":lfo-rate": "LFO_RATE",
     // FM channel-level
@@ -748,6 +782,8 @@ function compileChannelBody(
             perNoteTicks,
             trackState.defaultGate,
             trackState.defaultVel,
+            trackState.activePitchMacro,
+            trackState.activeVelMacro,
           ),
           src: nodeSrc(node),
         });
@@ -767,6 +803,8 @@ function compileChannelBody(
             ticks,
             trackState.defaultGate,
             trackState.defaultVel,
+            trackState.activePitchMacro,
+            trackState.activeVelMacro,
           ),
           src: nodeSrc(node),
         });
@@ -777,7 +815,14 @@ function compileChannelBody(
 
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
-        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node));
+        const td = typedDefs.get(val);
+        if (td?.tag === "pitch-macro") {
+          trackState.activePitchMacro = td.macro;
+        } else if (td?.tag === "vel-macro") {
+          trackState.activeVelMacro = td.macro;
+        } else {
+          emitVoice(td, trackState.tick, events, nodeSrc(node));
+        }
         i++;
         continue;
       }
@@ -826,6 +871,8 @@ function compileChannelBody(
                 slotTicks,
                 trackState.defaultGate,
                 trackState.defaultVel,
+                trackState.activePitchMacro,
+                trackState.activeVelMacro,
               ),
               src: nodeSrc(ev),
             });
@@ -839,6 +886,8 @@ function compileChannelBody(
                 slotTicks,
                 trackState.defaultGate,
                 trackState.defaultVel,
+                trackState.activePitchMacro,
+                trackState.activeVelMacro,
               ),
               src: nodeSrc(ev),
             });
@@ -1780,6 +1829,27 @@ function collectDefs(roots, diagnostics) {
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
         const parsed = parsePsgVector(bodyItems[3], name, diagnostics, src);
         typedDefs.set(name, { tag: "psg", envelope: parsed, src });
+      } else if (
+        maybeTag === ":macro" &&
+        atomValue(root.items.filter((n) => n.kind !== "comment")[3]) ===
+          ":pitch"
+      ) {
+        const src = nodeSrc(root);
+        const bodyItems = root.items.filter((n) => n.kind !== "comment");
+        const parsed = parseCurveSpec(bodyItems[4]);
+        if (parsed) {
+          typedDefs.set(name, { tag: "pitch-macro", macro: parsed, src });
+        }
+      } else if (
+        maybeTag === ":macro" &&
+        atomValue(root.items.filter((n) => n.kind !== "comment")[3]) === ":vel"
+      ) {
+        const src = nodeSrc(root);
+        const bodyItems = root.items.filter((n) => n.kind !== "comment");
+        const parsed = parseVelMacroSpec(bodyItems[4]);
+        if (parsed) {
+          typedDefs.set(name, { tag: "vel-macro", macro: parsed, src });
+        }
       } else {
         defs.set(
           name,
@@ -1964,6 +2034,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       let defaultLength = Math.round(WHOLE_TICKS / 8);
       let defaultGate = null;
       let defaultVol = 31; // v0.4: default vol is 31 (no attenuation)
+      let defaultVel = 15; // v0.4: default velocity 0-15
       let shuffleRatio = scoreShuffleRatio;
       let shuffleBase = Math.round(WHOLE_TICKS / 8);
       let carry = false;
@@ -1982,6 +2053,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       if (inlineOpts[":vol"] !== undefined) {
         const v = parseIntLike(inlineOpts[":vol"]);
         if (v !== null) defaultVol = Math.max(0, Math.min(31, v));
+      }
+      if (inlineOpts[":vel"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":vel"]);
+        if (v !== null) defaultVel = Math.max(0, Math.min(15, v));
       }
       if (inlineOpts[":shuffle"] !== undefined) {
         const rawTrackShuffle = parseIntLike(inlineOpts[":shuffle"]);
@@ -2009,7 +2084,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultOct,
         defaultGate,
         defaultVol,
-        defaultVel: 15, // v0.4: per-note velocity, KEY-ON scoped, 0-15
+        defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
+        activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON
+        activeVelMacro: null, // v0.4: KEY-ON scoped vel macro attached to NOTE_ON
         glide: 0, // v0.4: glide duration in frames (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
         shuffleRatio,
@@ -2080,6 +2157,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
             src: nodeSrc(node),
           });
         }
+      }
+      if (inlineOpts[":vel"] !== undefined) {
+        const v = parseIntLike(inlineOpts[":vel"]);
+        if (v !== null) trackState.defaultVel = Math.max(0, Math.min(15, v));
       }
     }
 

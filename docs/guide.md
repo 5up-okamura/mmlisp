@@ -64,19 +64,30 @@ The per-note length applies to that note only and does **not** update the persis
 
 ## 4. Note Lengths
 
-`:len` accepts a fraction (`n/d`), denominator-only shorthand (`4` = `1/4`), or dotted shorthand (`4.` = dotted quarter = `3/8`):
+Length values use a shared notation accepted by `:len`, `:gate`, per-note suffixes, and rest tokens:
+
+| Form    | Meaning                                        | Example      | Ticks (PPQN=48)   |
+| ------- | ---------------------------------------------- | ------------ | ----------------- |
+| `N`     | Note length denominator (1/N)                  | `4` = 1/4    | 48                |
+| `N.`    | Dotted denominator (1.5 × 1/N)                | `4.`         | 72                |
+| `n/d`   | Explicit fraction of whole note                | `1/8`        | 24                |
+| `Nt`    | Exact tick count                               | `12t`        | 12                |
+| `Nf`    | Frame count (60 Hz) — **macro `:len` only**   | `6f`         | 6 frames (≈100ms) |
+
+`Nf` counts 60 Hz update cycles and is independent of BPM. It is valid in macro `:len` (e.g. `(linear :from 15 :to 0 :len 6f)`) but **not** in note/rest lengths where tick-based notation must be used.
+
+Common values:
 
 | Written        | Duration       | Ticks (PPQN=48) |
 | -------------- | -------------- | --------------- |
-| `2/1`          | double whole   | 384             |
-| `1/1` or `1`   | whole note     | 192             |
+| `2/1` or `1`   | whole note     | 192             |
 | `1/4` or `4`   | quarter note   | 48              |
 | `4.`           | dotted quarter | 72              |
 | `1/8` or `8`   | eighth note    | 24              |
 | `8.`           | dotted eighth  | 36              |
 | `1/12` or `12` | triplet eighth | 16              |
 
-Any `n/d` fraction is valid. The minimum is `1/192` (1 tick).
+Any `n/d` fraction is valid. The minimum is `1t` (1 tick).
 
 ### Delay / chorus example
 
@@ -375,9 +386,10 @@ Gate controls when KEY_OFF fires within a step. Default is `1.0` (legato — no 
 ; Ratio: float 0.0–1.0 (relative to step length)
 (track :ch fm1 :gate 0.5   ...)    ; staccato — KEY_OFF at half the step
 
-; Length notation: same tokens as :len (1/16, 16, etc.)
-(seq :gate 1/16  c d e f)          ; KEY_OFF 12 ticks after NOTE_ON regardless of step length
-(seq :gate 16    c d e f)          ; same — denominator-only shorthand
+; Length notation: integer=denominator, fraction, tick (same as :len)
+(seq :gate 16    c d e f)          ; KEY_OFF after 1/16 note (12 ticks) regardless of step length
+(seq :gate 1/16  c d e f)          ; same as above
+(seq :gate 12t   c d e f)          ; same — exact tick count
 
 ; Override inside seq
 (seq :len 1/8  :gate 0.9  c e  :gate 0.3  g c)
@@ -392,7 +404,7 @@ Gate controls when KEY_OFF fires within a step. Default is `1.0` (legato — no 
 
 Swing reference: `50` = straight, `67` = standard swing (~2:1 triplet), `75` = heavy.
 
-`:shuffle-base` sets the unit that alternates long/short (default `1/8`).
+`:shuffle-base` sets the unit that alternates long/short (default `1/8`). Accepts any length notation: `8`, `1/8`, `24t` are all equivalent.
 
 ### Gate + swing interaction
 

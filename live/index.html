@@ -366,8 +366,7 @@
     <div class="menu-wrap" id="menuExamples">
       <button class="menu-btn" onclick="toggleMenu('menuExamples')">Examples</button>
       <div class="menu-dropdown">
-        <button class="menu-item" onclick="loadExample('/examples/ir/demo1-stage-loop.ir.canonical.json')">demo1-stage-loop</button>
-        <button class="menu-item" onclick="loadExample('/examples/ir/demo2-event-recovery.ir.canonical.json')">demo2-event-recovery</button>
+        <button class="menu-item" onclick="loadExample('/examples/ir/demo1.ir.canonical.json')">demo1</button>
       </div>
     </div>
 
@@ -555,10 +554,8 @@
 
     // IR preset → MMLisp source URL mapping
     const IR_TO_MMLISP = {
-      '/examples/ir/demo1-stage-loop.ir.canonical.json':
-        '/examples/source/demo1-stage-loop.mmlisp',
-      '/examples/ir/demo2-event-recovery.ir.canonical.json':
-        '/examples/source/demo2-event-recovery.mmlisp',
+      '/examples/ir/demo1.ir.canonical.json':
+        '/examples/source/demo1.mmlisp',
     };
 
     async function loadMmlispSource(irURL) {
@@ -634,7 +631,7 @@
     let workletNode = null;
     let _initAudioPromise = null;
     let player = null;
-    let currentIrURL = '/examples/ir/demo1-stage-loop.ir.canonical.json';
+    let currentIrURL = '/examples/ir/demo1.ir.canonical.json';
     let selectedCh = 0;
 
     // Load source for initial preset

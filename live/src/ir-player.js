@@ -68,20 +68,27 @@ function pitchToMidi(pitchStr) {
 // For other octaves, the same F_nums are used with block = octave.
 // ---------------------------------------------------------------------------
 
-// F-number for each semitone in the 'reference octave' (matches block=4 / MIDI octave 4)
-// Computed as: F_num = round(freq * 2^20 / (MASTER_CLOCK / 144 / 2^(block-1)))
-//            = round(freq * 2^19 / (MASTER_CLOCK / 144))
-//   where MASTER_CLOCK/144 = 53267 Hz
-const FNUM_TABLE = [
-  644, 682, 723, 766, 811, 860, 911, 966, 1023, 1082, 1146, 1214,
-];
+// YM2612 frequency formula: fnum = freq * 2^(21-block) / (MASTER_CLOCK/144)
+// MASTER_CLOCK/144 ≈ 53267 Hz (7,670,454 Hz / 144)
+// Supports fractional midiNote for cent-precision pitch.
+const FM_CLOCK_DIV = 53267;
 
 function midiToFnumBlock(midiNote) {
-  const semitone = ((midiNote % 12) + 12) % 12;
-  // MIDI C0=12 → octave=0, C4=60 → octave=4
-  const octave = Math.floor(midiNote / 12) - 1;
-  const block = Math.max(0, Math.min(7, octave));
-  return { fnum: FNUM_TABLE[semitone], block };
+  const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+  let block = 4;
+  let fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
+  while (fnum > 1023 && block < 7) {
+    block++;
+    fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
+  }
+  while (fnum < 512 && block > 0) {
+    block--;
+    fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
+  }
+  return {
+    fnum: Math.max(0, Math.min(2047, fnum)),
+    block: Math.max(0, Math.min(7, block)),
+  };
 }
 
 function sampleCurveUnit(curve, phase) {
@@ -304,6 +311,8 @@ export class IRPlayer {
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
     this._psgChVoice = new Array(4).fill(null); // stored envelope per PSG ch
     this._psgMuted = new Array(4).fill(false); // mute state per PSG ch
+    this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
+    this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
 
     // Modulator tracks by channel index (built after _flattenTracks)
     this._modulatorsByCh = new Map();
@@ -752,15 +761,33 @@ export class IRPlayer {
         }))
         .sort((a, b) => a.tick - b.tick);
 
-      // For looped playback, restart from the last JUMP target marker in the
-      // expanded track so pre-roll events before the marker are not replayed.
+      // For looped playback, restart from the last backward JUMP target marker
+      // (a backward jump is one whose target marker tick < the JUMP tick).
+      // Forward jumps (e.g. event-recovery goto) are ignored for loop detection.
       let jumpTick = -1;
       let jumpTarget = null;
-      for (let i = events.length - 1; i >= 0; i--) {
+
+      // Build a quick label→tick map from MARKER events
+      const markerTicks = new Map();
+      for (const ev of events) {
+        if (ev.cmd === "MARKER" && ev.args?.id) {
+          markerTicks.set(ev.args.id, ev.tick);
+        }
+      }
+
+      // Pick the backward JUMP with the smallest target tick (outermost / main loop).
+      // Multiple backward JUMPs can exist (e.g. goto-calm + goto-recover); the one
+      // that jumps furthest back defines the structural loop boundary.
+      let bestTargetTick = Infinity;
+      for (let i = 0; i < events.length; i++) {
         if (events[i].cmd === "JUMP") {
-          jumpTick = events[i].tick;
-          jumpTarget = events[i].args?.to ?? null;
-          break;
+          const to = events[i].args?.to ?? null;
+          const targetTick = to !== null ? (markerTicks.get(to) ?? -1) : -1;
+          if (targetTick >= 0 && targetTick <= events[i].tick && targetTick < bestTargetTick) {
+            bestTargetTick = targetTick;
+            jumpTick = events[i].tick;
+            jumpTarget = to;
+          }
         }
       }
 
@@ -778,15 +805,25 @@ export class IRPlayer {
         }
       }
 
+      // Truncate events after the backward JUMP so post-loop branch sections
+      // (e.g. event-recovery #recover) are not played in normal linear flow.
+      const trimmedEvents =
+        jumpTick >= 0
+          ? events.filter((ev) => ev.tick <= jumpTick)
+          : events;
+
       let loopStartIndex = 0;
-      for (let i = 0; i < events.length; i++) {
-        if (events[i].tick >= loopStartTick) {
+      for (let i = 0; i < trimmedEvents.length; i++) {
+        if (trimmedEvents[i].tick >= loopStartTick) {
           loopStartIndex = i;
           break;
         }
       }
 
-      const lastTick = events.length > 0 ? events[events.length - 1].tick : 0;
+      const lastTick =
+        trimmedEvents.length > 0
+          ? trimmedEvents[trimmedEvents.length - 1].tick
+          : 0;
       const loopDuration =
         jumpTick >= 0
           ? Math.max(1, jumpTick - loopStartTick)
@@ -795,7 +832,7 @@ export class IRPlayer {
       const role = track.route_hint?.role ?? "bgm";
       const carry = track.route_hint?.carry ?? false;
       return {
-        events,
+        events: trimmedEvents,
         loopDuration,
         loopStartTick,
         loopStartIndex,
@@ -966,11 +1003,18 @@ export class IRPlayer {
 
       case "NOTE_ON": {
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
-        const { fnum, block } = midiToFnumBlock(midi);
+        const centOffset = this._chRegs[ch]?.pitchOffset ?? 0;
+        const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
         const chKey = (port << 2) | chOffset; // 0x28 channel key
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
+        const rawGateTicks = ev.args?.gate;
+        const gateTicks =
+          rawGateTicks != null
+            ? Math.min(rawGateTicks, lengthTicks)
+            : lengthTicks;
         const regs = this._chRegs[ch];
+        regs.currentMidi = midi;
 
         if (regs?.vol != null) {
           const tl = Math.max(0, Math.min(127, (31 - regs.vol) * 4));
@@ -990,6 +1034,22 @@ export class IRPlayer {
           when,
         );
         this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
+        this._scheduleFmPitchMacro(
+          port,
+          chOffset,
+          midi,
+          ev.args?.pitchMacro,
+          when,
+          lengthTicks,
+        );
+        this._scheduleFmVelMacro(
+          ch,
+          port,
+          chOffset,
+          ev.args?.velMacro,
+          when,
+          gateTicks,
+        );
         // Key on: all 4 operators (unless muted or op mask applied)
         if (!this._mutedChannels[ch]) {
           const keyOnByte = (this._opMasks[ch] ?? 0xf0) | chKey;
@@ -1009,9 +1069,9 @@ export class IRPlayer {
           }
         }
 
-        // Key-off scheduled at exact audio time (5ms before next note for envelope decay)
-        const noteDurSecs = lengthTicks * (60 / (this._bpm * this._ppqn));
-        const offWhen = when + noteDurSecs - 0.005;
+        // Key-off at gate boundary (5ms lead for FM envelope decay)
+        const secsPerTick = 60 / (this._bpm * this._ppqn);
+        const offWhen = when + gateTicks * secsPerTick - 0.005;
         this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
         break;
       }
@@ -1317,6 +1377,25 @@ export class IRPlayer {
       }
       // Future: TEMPO_SCALE → timing multiplier (not a register write)
 
+      case "NOTE_PITCH": {
+        // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
+        const baseMidi = regs.currentMidi ?? 60;
+        const centOffset = isAdd ? (regs.pitchOffset ?? 0) + value : value;
+        regs.pitchOffset = centOffset;
+        const { fnum: pf, block: pb } = midiToFnumBlock(
+          baseMidi + centOffset / 100,
+        );
+        this._write(
+          port,
+          0xa4 + chOffset,
+          ((pb & 0x07) << 3) | ((pf >> 8) & 0x07),
+          when,
+        );
+        this._write(port, 0xa0 + chOffset, pf & 0xff, when);
+        nextValue = centOffset;
+        break;
+      }
+
       case "VOL": {
         // vol 0-31 (31=max, 0=silent). Apply to carrier operators so volume
         // changes preserve timbre similarly to classic FM driver behavior.
@@ -1381,6 +1460,120 @@ export class IRPlayer {
       1,
       Math.floor(Math.max(0, endTick - ev.tick) * secsPerTick * 60),
     );
+  }
+
+  _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks) {
+    if (!velMacro) return;
+
+    const regs = this._chRegs[ch];
+    const baseVol = regs.vol ?? 31;
+    const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
+    const gateSecs = when + gateTicks * secsPerTick - 0.005;
+
+    // Map vel-macro output (0-15) + channel vol (0-31) to carrier TL.
+    // vel 15 = full vol, vel 0 = silent.
+    const velToTl = (v) => {
+      const effectiveVol = Math.round(
+        (baseVol * Math.max(0, Math.min(15, v))) / 15,
+      );
+      return Math.max(0, Math.min(127, (31 - effectiveVol) * 4));
+    };
+
+    const writeTl = (tl, t) => {
+      for (const opIdx of carriers) {
+        this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
+      }
+    };
+
+    if (velMacro.type === "curve") {
+      const { from, to, frames: baseFrames, loop, curve } = velMacro;
+      const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+      for (let frame = 0; frame < activeFrames; frame++) {
+        const phase = loop
+          ? (frame % baseFrames) / baseFrames
+          : baseFrames <= 1
+            ? 1
+            : Math.min(1, frame / (baseFrames - 1));
+        const unit = sampleCurveUnit(curve, phase);
+        const velVal = Math.round(from + (to - from) * unit);
+        writeTl(velToTl(velVal), when + frame / 60);
+      }
+      return;
+    }
+
+    if (velMacro.type === "steps") {
+      const { steps, loopIndex, releaseIndex } = velMacro;
+      if (!steps || steps.length === 0) return;
+
+      // Determine how many steps are in the attack+sustain region
+      const sustainEnd = releaseIndex ?? steps.length;
+
+      // Attack + sustain loop until gate
+      let t = when;
+      let idx = 0;
+      while (t < gateSecs) {
+        writeTl(velToTl(steps[idx] ?? 0), t);
+        idx++;
+        if (idx >= sustainEnd) {
+          if (loopIndex !== null) {
+            idx = loopIndex;
+          } else {
+            break; // one-shot: hold last attack step
+          }
+        }
+        t += 1 / 60;
+      }
+
+      // Release phase after gate
+      if (releaseIndex !== null && releaseIndex < steps.length) {
+        t = gateSecs;
+        for (let ri = releaseIndex; ri < steps.length; ri++) {
+          writeTl(velToTl(steps[ri]), t);
+          t += 1 / 60;
+        }
+      }
+    }
+  }
+
+  _scheduleFmPitchMacro(
+    port,
+    chOffset,
+    baseMidi,
+    pitchMacro,
+    when,
+    lengthTicks,
+  ) {
+    if (!pitchMacro) return;
+
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
+    const baseFrames = Math.max(1, Number(pitchMacro.frames ?? 1));
+    const loop = !!pitchMacro.loop;
+    const from = Number(pitchMacro.from ?? 0);
+    const to = Number(pitchMacro.to ?? 0);
+    const curve = pitchMacro.curve ?? "linear";
+    const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+
+    for (let frame = 0; frame < activeFrames; frame++) {
+      const phase = loop
+        ? (frame % baseFrames) / baseFrames
+        : baseFrames <= 1
+          ? 1
+          : Math.min(1, frame / (baseFrames - 1));
+      const unit = sampleCurveUnit(curve, phase);
+      const centOffset = from + (to - from) * unit;
+      const { fnum, block } = midiToFnumBlock(baseMidi + centOffset / 100);
+      const frameWhen = when + frame / 60;
+      this._write(
+        port,
+        0xa4 + chOffset,
+        ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+        frameWhen,
+      );
+      this._write(port, 0xa0 + chOffset, fnum & 0xff, frameWhen);
+    }
   }
 
   _applyParamSweep(ch, port, chOffset, ev, when) {
@@ -1479,15 +1672,18 @@ export class IRPlayer {
   // Schedule envelope writes for a PSG note.
   // env: PSG_VOICE envelope object (bare/seq/adsr), or null for no envelope.
   // noteWhen: audio time of note start.
-  // lengthTicks: note duration in ticks.
-  _schedulePsgEnvelope(psgCh, env, noteWhen, lengthTicks) {
+  // gateTicks: gate duration in ticks.
+  // baseVel: per-note velocity 0-15 (15 = full volume).
+  _schedulePsgEnvelope(psgCh, env, noteWhen, gateTicks, baseVel = 15) {
     const secsPerTick = 60 / (this._bpm * this._ppqn);
-    const noteDurSecs = lengthTicks * secsPerTick;
+    const noteDurSecs = gateTicks * secsPerTick;
     const noteOffWhen = noteWhen + noteDurSecs - 0.005;
+    // Scale a 0-15 envelope step by baseVel/15
+    const scaleStep = (s) => Math.round(Math.max(0, Math.min(15, s)) * baseVel / 15);
 
     if (!env || env.subtype === "hard" || env.subtype === "fn") {
-      // No envelope: full volume for note duration then silence
-      this._psgSetAtt(psgCh, 0, noteWhen);
+      // No envelope: set volume from vel then silence at note-off
+      this._psgSetAtt(psgCh, 15 - scaleStep(15), noteWhen);
       this._psgSetAtt(psgCh, 15, noteOffWhen);
       return;
     }
@@ -1495,7 +1691,7 @@ export class IRPlayer {
     if (env.subtype === "bare" || env.subtype === "seq") {
       const steps = env.steps ?? [];
       if (steps.length === 0) {
-        this._psgSetAtt(psgCh, 0, noteWhen);
+        this._psgSetAtt(psgCh, 15 - scaleStep(15), noteWhen);
         this._psgSetAtt(psgCh, 15, noteOffWhen);
         return;
       }
@@ -1505,8 +1701,10 @@ export class IRPlayer {
 
       let t = noteWhen;
       let idx = 0;
+      let lastVol = scaleStep(steps[0] ?? 0);
       while (t < noteOffWhen) {
-        const mmlispVol = Math.max(0, Math.min(15, steps[idx] ?? 0));
+        const mmlispVol = scaleStep(steps[idx] ?? 0);
+        lastVol = mmlispVol;
         // MMLisp: 15=max, 0=silent → hardware: 0=max, 15=silent
         this._psgSetAtt(psgCh, 15 - mmlispVol, t);
         idx++;
@@ -1519,7 +1717,19 @@ export class IRPlayer {
         }
         t += stepDurSecs;
       }
-      this._psgSetAtt(psgCh, 15, noteOffWhen);
+      // Release phase (seq only): decay lastVol → 0 at releaseRate frames/step.
+      const releaseRate = env.subtype === "seq" ? (env.releaseRate ?? 0) : 0;
+      if (releaseRate > 0 && lastVol > 0) {
+        const relStepSecs = releaseRate / 60;
+        let relT = noteOffWhen;
+        for (let v = lastVol - 1; v >= 0; v--) {
+          this._psgSetAtt(psgCh, 15 - v, relT);
+          relT += relStepSecs;
+        }
+        this._psgSetAtt(psgCh, 15, relT);
+      } else {
+        this._psgSetAtt(psgCh, 15, noteOffWhen);
+      }
       return;
     }
 
@@ -1578,6 +1788,101 @@ export class IRPlayer {
     this._psgSetAtt(psgCh, 15, noteOffWhen);
   }
 
+  _schedulePsgPitchMacro(psgCh, baseMidi, pitchMacro, noteWhen, lengthTicks) {
+    if (!pitchMacro) return;
+
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
+    const baseFrames = Math.max(1, Number(pitchMacro.frames ?? 1));
+    const loop = !!pitchMacro.loop;
+    const from = Number(pitchMacro.from ?? 0);
+    const to = Number(pitchMacro.to ?? 0);
+    const curve = pitchMacro.curve ?? "linear";
+    const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+
+    for (let frame = 0; frame < activeFrames; frame++) {
+      const phase = loop
+        ? (frame % baseFrames) / baseFrames
+        : baseFrames <= 1
+          ? 1
+          : Math.min(1, frame / (baseFrames - 1));
+      const unit = sampleCurveUnit(curve, phase);
+      const centOffset = from + (to - from) * unit;
+      this._psgSetPitch(
+        psgCh,
+        baseMidi + centOffset / 100,
+        noteWhen + frame / 60,
+      );
+    }
+  }
+
+  _schedulePsgVelMacro(psgCh, velMacro, noteWhen, gateTicks, baseVel = 15) {
+    if (!velMacro) return;
+
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
+    const gateSecs = noteWhen + gateTicks * secsPerTick - 0.005;
+
+    // vel 0-15 → PSG attenuation: vel 15=max(att=0), vel 0=silent(att=15)
+    // baseVel scales the macro output: scaledVel = velVal * baseVel / 15
+    const velToAtt = (v) => {
+      const scaled = Math.round(Math.max(0, Math.min(15, v)) * baseVel / 15);
+      return 15 - scaled;
+    };
+
+    if (velMacro.type === "curve") {
+      const { from, to, frames: baseFrames, loop, curve } = velMacro;
+      const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+      for (let frame = 0; frame < activeFrames; frame++) {
+        const phase = loop
+          ? (frame % baseFrames) / baseFrames
+          : baseFrames <= 1
+            ? 1
+            : Math.min(1, frame / (baseFrames - 1));
+        const unit = sampleCurveUnit(curve, phase);
+        const velVal = Math.round(from + (to - from) * unit);
+        this._psgSetAtt(psgCh, velToAtt(velVal), noteWhen + frame / 60);
+      }
+      return;
+    }
+
+    if (velMacro.type === "steps") {
+      const { steps, loopIndex, releaseIndex } = velMacro;
+      if (!steps || steps.length === 0) return;
+
+      const sustainEnd = releaseIndex ?? steps.length;
+
+      // Attack + sustain loop until gate
+      let t = noteWhen;
+      let idx = 0;
+      while (t < gateSecs) {
+        this._psgSetAtt(psgCh, velToAtt(steps[idx] ?? 0), t);
+        idx++;
+        if (idx >= sustainEnd) {
+          if (loopIndex !== null) {
+            idx = loopIndex;
+          } else {
+            break; // one-shot: hold
+          }
+        }
+        t += 1 / 60;
+      }
+
+      // Release phase
+      if (releaseIndex !== null && releaseIndex < steps.length) {
+        t = gateSecs;
+        for (let ri = releaseIndex; ri < steps.length; ri++) {
+          this._psgSetAtt(psgCh, velToAtt(steps[ri]), t);
+          t += 1 / 60;
+        }
+        // Ensure silence after release
+        this._psgSetAtt(psgCh, 15, t);
+      } else {
+        this._psgSetAtt(psgCh, 15, gateSecs);
+      }
+    }
+  }
+
   _dispatchPsgEvent(ev, when) {
     const psgCh = ev._psgCh ?? 0;
 
@@ -1593,7 +1898,16 @@ export class IRPlayer {
         const isNoise = psgCh === 3;
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
-          this._psgSetPitch(psgCh, midi, when);
+          this._psgCurrentMidi[psgCh] = midi;
+          const psgCentOffset = this._psgPitchOffset[psgCh] ?? 0;
+          this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
+          this._schedulePsgPitchMacro(
+            psgCh,
+            midi,
+            ev.args?.pitchMacro,
+            when,
+            this._resolveTiedLength(ev, ev.args?.length ?? this._ppqn / 2),
+          );
         } else {
           this._psgTriggerNoise(when);
         }
@@ -1601,7 +1915,52 @@ export class IRPlayer {
         const env = this._psgChVoice[psgCh];
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
-        this._schedulePsgEnvelope(psgCh, env, when, lengthTicks);
+        const rawPsgGateTicks = ev.args?.gate;
+        const psgGateTicks =
+          rawPsgGateTicks != null
+            ? Math.min(rawPsgGateTicks, lengthTicks)
+            : lengthTicks;
+        const baseVel = ev.args?.vel ?? 15;
+        const velMacro = ev.args?.velMacro ?? null;
+        if (velMacro) {
+          this._schedulePsgVelMacro(psgCh, velMacro, when, psgGateTicks, baseVel);
+        } else {
+          this._schedulePsgEnvelope(psgCh, env, when, psgGateTicks, baseVel);
+        }
+        break;
+      }
+
+      case "PARAM_SET":
+      case "PARAM_SWEEP": {
+        const psgTarget = (ev.args?.target ?? "").toUpperCase();
+        if (psgTarget === "NOTE_PITCH") {
+          const baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
+          const from = Number(ev.args?.from ?? ev.args?.value ?? 0);
+          const to = Number(ev.args?.to ?? from);
+          const curve = ev.args?.curve ?? "linear";
+          const baseFrames = Math.max(1, Number(ev.args?.frames ?? 1));
+          const loop = !!ev.args?.loop;
+          const budgetFrames =
+            ev.cmd === "PARAM_SWEEP" ? this._resolveSweepBudgetFrames(ev) : 1;
+          // For PARAM_SET (single frame), update stored pitch offset
+          if (ev.cmd === "PARAM_SET") {
+            this._psgPitchOffset[psgCh] = from;
+          }
+          for (let frame = 0; frame < budgetFrames; frame++) {
+            const phase = loop
+              ? (frame % baseFrames) / baseFrames
+              : baseFrames <= 1
+                ? 1
+                : Math.min(1, frame / (baseFrames - 1));
+            const unit = sampleCurveUnit(curve, phase);
+            const centOffset = from + (to - from) * unit;
+            this._psgSetPitch(
+              psgCh,
+              baseMidi + centOffset / 100,
+              when + frame / 60,
+            );
+          }
+        }
         break;
       }
 

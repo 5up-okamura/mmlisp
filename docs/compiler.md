@@ -27,10 +27,10 @@ Not implemented yet:
 
 Run from tools directory.
 
-1. `npm run mmlisp2ir -- ../examples/source/demo1-stage-loop.mmlisp --out ../examples/ir/demo1-stage-loop.ir.generated.json`
+1. `npm run mmlisp2ir -- ../examples/source/demo1.mmlisp --out ../examples/ir/demo1.ir.generated.json`
 2. `npm run build:ir-demos`
 3. `npm run check:ir-demos`
-4. `npm run mmlisp2mmb -- ../examples/ir/demo1-stage-loop.ir.canonical.json --out ../examples/gmb/demo1-stage-loop.mmb --meta ../examples/gmb/demo1-stage-loop.meta.json`
+4. `npm run mmlisp2mmb -- ../examples/ir/demo1.ir.canonical.json --out ../examples/gmb/demo1.mmb --meta ../examples/gmb/demo1.meta.json`
 5. `npm run build:gmb-demos`
 6. `npm run check:gmb-demos`
 

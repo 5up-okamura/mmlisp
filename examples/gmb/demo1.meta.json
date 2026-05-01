@@ -4,28 +4,28 @@
       "id": 1,
       "flags": 0,
       "offset": 52,
-      "size": 40
+      "size": 64
     },
     {
       "id": 2,
       "flags": 0,
-      "offset": 92,
-      "size": 812
+      "offset": 116,
+      "size": 674
     },
     {
       "id": 3,
       "flags": 0,
-      "offset": 904,
-      "size": 82
+      "offset": 790,
+      "size": 90
     }
   ],
-  "totalSize": 986,
-  "trackCount": 3,
+  "totalSize": 880,
+  "trackCount": 5,
   "targetProfile": "md-full",
   "trackAssignments": [
     {
       "trackId": 0,
-      "trackName": "tense",
+      "trackName": "fm1",
       "role": "bgm",
       "writeScope": [
         "any"
@@ -39,21 +39,49 @@
     },
     {
       "trackId": 1,
-      "trackName": "psg-bass",
+      "trackName": "fm2",
       "role": "bgm",
       "writeScope": [
         "any"
       ],
-      "assignedChannel": "psg1",
-      "assignedChannelId": 6,
+      "assignedChannel": "fm2",
+      "assignedChannelId": 1,
       "strategy": "candidate",
       "candidates": [
-        "psg1"
+        "fm2"
       ]
     },
     {
       "trackId": 2,
-      "trackName": "psg-perc",
+      "trackName": "fm3",
+      "role": "bgm",
+      "writeScope": [
+        "any"
+      ],
+      "assignedChannel": "fm3",
+      "assignedChannelId": 2,
+      "strategy": "candidate",
+      "candidates": [
+        "fm3"
+      ]
+    },
+    {
+      "trackId": 3,
+      "trackName": "sqr1",
+      "role": "bgm",
+      "writeScope": [
+        "any"
+      ],
+      "assignedChannel": "unsupported",
+      "assignedChannelId": 65535,
+      "strategy": "unsupported",
+      "candidates": [
+        "sqr1"
+      ]
+    },
+    {
+      "trackId": 4,
+      "trackName": "noise",
       "role": "bgm",
       "writeScope": [
         "any"

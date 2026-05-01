@@ -88,13 +88,107 @@ Phase 3 entry condition:
 
 ## Language Version Status
 
-| Version | Status             | Tag            | Themes                                                                      |
-| ------- | ------------------ | -------------- | --------------------------------------------------------------------------- |
-| v0.1    | frozen             | v0.1-candidate | Core language, IR, GMB format                                               |
-| v0.2    | frozen             | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                    |
-| v0.3    | frozen             | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls |
-| v0.4    | design-in-progress | —              | Envelopes/macros, pitch env, PSG noise, pan, level model                    |
-| v0.5    | planned            | —              | FM3 independent-OP mode, CSM, PCM/DAC                                       |
+| Version | Status      | Tag            | Themes                                                                      |
+| ------- | ----------- | -------------- | --------------------------------------------------------------------------- |
+| v0.1    | frozen      | v0.1-candidate | Core language, IR, GMB format                                               |
+| v0.2    | frozen      | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                    |
+| v0.3    | frozen      | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls |
+| v0.4    | in-progress | —              | Envelopes/macros, pitch env, PSG noise, pan, level model                    |
+
+### v0.4 Implementation Progress
+
+#### Compiler (live/src/mmlisp2ir.js)
+
+**Syntax / Language**
+
+- [x] Channel name forms `(fm1 ...)` / `(sqr1 ...)` / `(noise ...)`
+- [x] Inline `:key val` → `PARAM_SET`
+- [x] Inline `:key (curve ...)` → `PARAM_SWEEP`
+- [x] `def` bare reference (no `@` sigil required)
+- [x] `(x N ...)` loop + `:break` / `LOOP_BREAK`
+- [x] Subgroup / tuplet `(e g a)` with Bresenham tick distribution
+- [x] All length token forms: integer, dotted (`4.`), frames (`Nf`), ticks (`Nt`)
+- [x] Dotted notes / rests (`c4.`, `_8.`)
+- [ ] `:glide N` — emit `PARAM_SWEEP NOTE_PITCH` before NOTE_ON (state stored; emit not yet implemented)
+- [ ] `:glide-from` — one-shot start-pitch override (state stored; emit not yet implemented)
+
+**Level Model**
+
+- [x] `:vel` sticky state → NOTE_ON args
+- [x] `:vol N` → `PARAM_SET VOL`
+- [x] `:master N` → `PARAM_SET MASTER`
+- [x] `:master (curve ...)` → `PARAM_SWEEP MASTER`
+- [ ] `:vol (curve ...)` → `PARAM_SWEEP VOL` (inline curve form)
+
+**Macros**
+
+- [x] `:macro :pitch` single curve → `pitchMacro` in NOTE_ON
+- [x] `:macro :vel` step-vector → `velMacro` in NOTE_ON
+- [x] `:macro :vel` single curve → `velMacro` in NOTE_ON
+- [ ] `:macro :vel` / `:macro :pitch` multi-stage `[(curve...) (curve...)]` form
+- [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))` — simultaneous targets
+- [ ] `:macro [list]` — use-site macro list merge
+- [ ] `:macro :mode` — noise mode step-vector envelope
+- [ ] `:macro :pan` — step-vector / curve
+- [ ] `:extends` — compile-time FM voice inheritance
+- [ ] `(wait N)` / `(wait Nf)` / `(wait key-off)` pause stage (inside multi-stage)
+- [ ] `len=0` hold note (KEY_OFF driven by runtime `key_off_flags`)
+
+**PSG Noise**
+
+- [x] `noise` channel basic NOTE_ON
+- [ ] `:mode white0`–`white3` / `periodic0`–`periodic3` → `NOISE_MODE` IR event
+
+---
+
+#### Player (live/src/ir-player.js)
+
+**FM**
+
+- [x] NOTE_ON F-number/block calculation (cents precision, fractional MIDI)
+- [x] `PARAM_SET NOTE_PITCH` → store `pitchOffset` + immediate register write
+- [x] `PARAM_SWEEP NOTE_PITCH` → 60 Hz frame-loop register writes
+- [x] NOTE_ON applies stored `pitchOffset` (cents)
+- [x] `_scheduleFmPitchMacro` — per-note KEY-ON curve interpolation
+- [x] `_scheduleFmVelMacro` — step-vector + curve
+- [x] Gate (`ev.args.gate`) applied to FM key-off timing and vel-macro gate boundary
+- [ ] `MASTER` → recalculate all carrier TL values
+- [ ] `:glide` PARAM_SWEEP handling (expected to work via existing PARAM_SWEEP path)
+
+**PSG**
+
+- [x] `_psgSetPitch` with cents precision
+- [x] `PARAM_SET NOTE_PITCH` → store `_psgPitchOffset` + immediate write
+- [x] `PARAM_SWEEP NOTE_PITCH` → 60 Hz frame-loop writes
+- [x] NOTE_ON applies `_psgPitchOffset`
+- [x] `_schedulePsgPitchMacro`
+- [x] `_schedulePsgVelMacro` — step-vector + curve
+- [x] Gate (`ev.args.gate`) applied to PSG note-off timing and vel-macro gate boundary
+- [ ] `NOISE_MODE` event handling (noise FB+NF register writes)
+- [ ] `MASTER` → PSG attenuation recalculation
+
+---
+
+#### Examples
+
+- [x] Migrate `(def bd/sd/hh :psg [...])` → `(def bd/sd/hh :macro :vel [...])`
+- [x] `(def down :macro :pitch ...)` updated to cents unit (`:to -2400`)
+- [ ] Migrate demo2
+
+---
+
+#### Remaining Tasks (priority order)
+
+1. `:glide` emit (compiler)
+2. `MASTER` player implementation (FM + PSG)
+3. `:mode` / `NOISE_MODE` (compiler + player)
+4. `:vol (curve ...)` inline form
+5. `:macro` multi-stage / multi-target
+6. `:macro [list]` use-site merge
+7. `:extends`
+8. `(wait)` / `len=0`
+9. Migrate demo2
+   | v0.5 | planned | — | FM3 independent-OP mode, CSM, PCM/DAC |
 
 ## Backlog
 

@@ -56,11 +56,9 @@ function makeFixtures() {
   const fixturesDir = path.join(gmbDir, "fixtures");
   fs.mkdirSync(fixturesDir, { recursive: true });
 
-  const demo1 = fs.readFileSync(path.join(gmbDir, "demo1-stage-loop.mmb"));
-  const demo2 = fs.readFileSync(path.join(gmbDir, "demo2-event-recovery.mmb"));
+  const demo1 = fs.readFileSync(path.join(gmbDir, "demo1.mmb"));
 
   const valid1 = Buffer.from(demo1);
-  const valid2 = Buffer.from(demo2);
 
   const badMagic = Buffer.from(demo1);
   badMagic.write("BAD0", 0, "ascii");
@@ -90,12 +88,6 @@ function makeFixtures() {
       buffer: valid1,
       valid: true,
       reason: "Known-good demo1 artifact",
-    },
-    {
-      name: "valid-demo2.mmb",
-      buffer: valid2,
-      valid: true,
-      reason: "Known-good demo2 artifact",
     },
     {
       name: "invalid-bad-magic.mmb",

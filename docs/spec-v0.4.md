@@ -189,9 +189,9 @@ Example: `:len 4` (48 ticks), 5 notes → `[9, 10, 9, 10, 10]` (total = 48).
 
 **Decided: `(seq ...)` and `[...]` (note sequence form) are both removed in v0.4.** No deprecated aliases.
 `[...]` is retained **only** after `:macro` for Multi-stage macros (data vector context).
-Existing demo sources (`demo1-stage-loop.mmlisp`, `demo2-event-recovery.mmlisp`)
-use `(seq ...)` and `(track :ch ...)` throughout — a one-time rename pass is
-required before those files are used with the v0.4 compiler.
+Existing demo source (`demo1.mmlisp`) used `(seq ...)` and `(track :ch ...)`
+throughout — a one-time rename pass was required before it could be used with
+the v0.4 compiler.
 
 ---
 
