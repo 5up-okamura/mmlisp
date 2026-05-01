@@ -1,8 +1,7 @@
-; MMLisp demo 2 — v0.3
+
+; MMLisp demo 2 — v0.4
 ; Purpose: intervention and recovery behavior (base + delta)
 ; Structure: intro(2bar) + stress-loop(1bar x4) + recovery(2bar) = 8-bar loop in A minor
-
-; PSG envelopes
 
 (def pedal :psg [:seq 12 :loop 11 10 :release 5])
 
@@ -15,60 +14,45 @@
   :author "okamura"
   :tempo 132
 
-  (track :ch fm1
+  (fm1 #calm
+    :oct 3
 
-    #calm
-
-    (seq :oct 3 a > c e c < a > c e c)
-    (seq :oct 3 g > b d b < g _ g _)
+    a > c e c < a > c e c :oct 3 g > b d b < g _ g _
 
     (x 4
       (param-add :fm-tl1 -3)
       (param-add :tempo-scale +2)
-      (seq e4 g4 a4 g4 e4 c4 < b4 a4)
+      :oct 3 e4 g4 a4 g4 e4 c4 < b4 a4
     )
-
     #recover
     (param-set :fm-tl1 40)
     (param-set :tempo-scale 0)
-
-    (seq :oct 3 a > c e c < a _ _ _)
-    (seq :len 1/2 :oct 3 a)
-    (rest 1/4)
-    (seq :len 1/4 a)
+    :oct 3 a > c e c < a _ _ _ :len 1/2 :oct 3 a _1/4 :len 1/4 a
 
     (goto calm)
   )
-
-  (track :ch psg1
-    :oct 2
+  (srq1 :oct 2
     :len 1/2
 
-    #calm
-    @pedal
-    (seq a a a a)
-    (seq g g g g)
+    #calm pedal a a a a g g g g
 
-    (x 4 @tense-att (seq :len 1/4 :oct 3 e g a e))
+    (x 4 tense-att :len 1/4 :oct 3 e g a e)
 
-    @pedal
-    (seq a a a a a)
-    (rest 1/4)
-    (seq :len 1/4 a)
+
+
+
+
+    pedal :len 1/2 :oct 2 a a a a a _1/4 :len 1/4 a
 
     (goto calm)
   )
+  (noise :len 1/4
 
-  (track :ch noise
-    :len 1/4
+    #calm hit-env c _ _ _ c _ _ _ c _ _ _ c _ _ _
 
-    #calm
-    @hit-env
-    (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
+    (x 4 c c c c)
 
-    (x 4 (seq c c c c))
-
-    (seq c _ _ _ c _ _ _ c _ _ _ c _ _ _)
+    c _ _ _ c _ _ _ c _ _ _ c _ _ _
 
     (goto calm)
   )

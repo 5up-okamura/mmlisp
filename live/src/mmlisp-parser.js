@@ -161,6 +161,7 @@ export function parse(input) {
       if (!current() || current().type !== close) {
         throw new Error(`Unclosed ${open} at ${token.line}:${token.column}`);
       }
+      const endLine = current().line;
       pos += 1;
       return {
         kind: "list",
@@ -168,6 +169,7 @@ export function parse(input) {
         items,
         line: token.line,
         column: token.column,
+        endLine,
       };
     }
 

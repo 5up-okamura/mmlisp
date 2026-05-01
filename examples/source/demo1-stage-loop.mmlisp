@@ -1,4 +1,4 @@
-; MMLisp demo 1 — v0.3
+; MMLisp demo 1 — v0.4
 
 (def bd :psg [15 12 9 6 3 0])
 
@@ -7,34 +7,36 @@
 (def hh :psg [11 0])
 
 (def melo
-  (seq f4. e8 e1 < g a)
-  (seq f4. e8 e1.)
-  (seq f4. e8 e1 d e)
-  (seq f1 g32 g+4 ~ 16. g4. f)
+  f4. e8 e1 < g a >
+  f4. e8 e1.
+  f4. e8 e1 d e
+  f1 g32 g+4 ~ 16. g4. f
 )
 
 (score :tempo 152
 
-  (track :ch fm1
-    :oct 1
-
+  (fm1 :oct 1
     #intro
-    (x 8 (seq :oct 2 c > c))
-    (x 8 (seq b- > b-))
-    (x 8 (seq a > a))
-    (x 5 (seq :oct 2 f > f))
-    (seq g > g < a > a < b- > b-)
+    (x 8 :oct 2 c > c)
+    (x 8 :oct 1 b- > b-)
+    (x 8 :oct 1 a > a)
+    (x 5 :oct 2 f > f)
+    :oct 1 g > g < a > a < b- > b-
     (goto intro)
   )
-  (track :ch fm2 :oct 5 :len 4 :vol 12 #intro melo (goto intro))
 
-  (track :ch fm3 :oct 5 :len 4 :vol 8 (rest 8.) #intro melo (goto intro))
+  (fm2 :oct 5 :len 4 :vol 12
+    #intro melo (goto intro)
+  )
 
-  (track :ch noise
-    :len 16
+  (fm3 :oct 5 :len 4 :vol 8
+    _8.
+    #intro melo (goto intro)
+  )
 
+  (noise :len 16
     #intro
-    (x 16 (seq @bd c @hh c c c @sd c @hh c c c))
+    (x 16 bd c hh c c c sd c hh c c c)
     (goto intro)
   )
 )
