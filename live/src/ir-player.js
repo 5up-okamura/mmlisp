@@ -305,6 +305,7 @@ export class IRPlayer {
 
     // Global YM2612 state
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
+    this._masterVol = 31; // 0 = silent, 31 = full (additive TL offset applied to all channels)
 
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
@@ -1120,7 +1121,7 @@ export class IRPlayer {
     let nextValue = null;
 
     // Helper to clamp and apply
-    const set = (get, apply, min, max) => {
+    const set = (apply, min, max) => {
       const next = Math.max(min, Math.min(max, value));
       apply(next);
       nextValue = next;
@@ -1129,7 +1130,6 @@ export class IRPlayer {
     switch (target) {
       case "FM_FB":
         set(
-          () => regs.feedback,
           (v) => {
             regs.feedback = v;
           },
@@ -1140,7 +1140,6 @@ export class IRPlayer {
         break;
       case "FM_ALG":
         set(
-          () => regs.algorithm,
           (v) => {
             regs.algorithm = v;
           },
@@ -1155,7 +1154,6 @@ export class IRPlayer {
       case "FM_TL4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].tl,
           (v) => {
             regs.ops[opIdx].tl = v;
           },
@@ -1172,7 +1170,6 @@ export class IRPlayer {
       case "FM_AR4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].ar,
           (v) => {
             regs.ops[opIdx].ar = v;
           },
@@ -1194,7 +1191,6 @@ export class IRPlayer {
       case "FM_DR4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].dr,
           (v) => {
             regs.ops[opIdx].dr = v;
           },
@@ -1211,7 +1207,6 @@ export class IRPlayer {
       case "FM_SR4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].d2r,
           (v) => {
             regs.ops[opIdx].d2r = v;
           },
@@ -1228,7 +1223,6 @@ export class IRPlayer {
       case "FM_AMEN4": {
         const opIdx = parseInt(target[7]) - 1;
         set(
-          () => regs.ops[opIdx].amen,
           (v) => {
             regs.ops[opIdx].amen = v;
           },
@@ -1241,7 +1235,6 @@ export class IRPlayer {
       }
       case "FM_AMS":
         set(
-          () => regs.ams,
           (v) => {
             regs.ams = v;
           },
@@ -1252,7 +1245,6 @@ export class IRPlayer {
         break;
       case "FM_FMS":
         set(
-          () => regs.fms,
           (v) => {
             regs.fms = v;
           },
@@ -1276,7 +1268,6 @@ export class IRPlayer {
       case "FM_RR4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].rr,
           (v) => {
             regs.ops[opIdx].rr = v;
           },
@@ -1293,7 +1284,6 @@ export class IRPlayer {
       case "FM_ML4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].mul,
           (v) => {
             regs.ops[opIdx].mul = v;
           },
@@ -1310,7 +1300,6 @@ export class IRPlayer {
       case "FM_SL4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].sl,
           (v) => {
             regs.ops[opIdx].sl = v;
           },
@@ -1327,7 +1316,6 @@ export class IRPlayer {
       case "FM_DT4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].dt,
           (v) => {
             regs.ops[opIdx].dt = v;
           },
@@ -1344,7 +1332,6 @@ export class IRPlayer {
       case "FM_KS4": {
         const opIdx = parseInt(target[5]) - 1;
         set(
-          () => regs.ops[opIdx].rs,
           (v) => {
             regs.ops[opIdx].rs = v;
           },
@@ -1366,7 +1353,6 @@ export class IRPlayer {
       case "FM_SSG4": {
         const opIdx = parseInt(target[6]) - 1;
         set(
-          () => regs.ops[opIdx].ssg,
           (v) => {
             regs.ops[opIdx].ssg = v;
           },
@@ -1377,8 +1363,6 @@ export class IRPlayer {
         this._write(port, opAddr, regs.ops[opIdx].ssg & 0x0f, when);
         break;
       }
-      // Future: TEMPO_SCALE → timing multiplier (not a register write)
-
       case "NOTE_PITCH": {
         // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
         const baseMidi = regs.currentMidi ?? 60;
@@ -1399,12 +1383,12 @@ export class IRPlayer {
       }
 
       case "VOL": {
-        // vol 0-31 (31=max, 0=silent). Apply to carrier operators so volume
-        // changes preserve timbre similarly to classic FM driver behavior.
-        // TL = (31 - vol) * 4, clamped to 0-127.
+        // vol 0-31 (31=max, 0=silent). Apply to carrier operators.
+        // Effective TL = per-channel attenuation + master attenuation, clamped 0-127.
         const vol = Math.max(0, Math.min(31, value));
         regs.vol = vol;
-        const tl = Math.max(0, Math.min(127, (31 - vol) * 4));
+        const masterAttn = (31 - (this._masterVol ?? 31)) * 4;
+        const tl = Math.min(127, (31 - vol) * 4 + masterAttn);
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
           regs.ops[opIdx].tl = tl;
@@ -1412,6 +1396,27 @@ export class IRPlayer {
           this._write(port, opAddr, tl, when);
         }
         nextValue = vol;
+        break;
+      }
+
+      case "MASTER": {
+        // Global master volume 0-31 (31=full). Re-applies carrier TL on all FM channels.
+        const master = Math.max(0, Math.min(31, value));
+        this._masterVol = master;
+        const masterAttn = (31 - master) * 4;
+        for (let ci = 0; ci < 6; ci++) {
+          const cr = this._chRegs[ci];
+          const vol = cr.vol ?? 31;
+          const tl = Math.min(127, (31 - vol) * 4 + masterAttn);
+          const cp = ci >= 3 ? 1 : 0;
+          const co = ci % 3;
+          const crs = fmCarrierOpsForAlg(cr.algorithm ?? 0);
+          for (const opIdx of crs) {
+            cr.ops[opIdx].tl = tl;
+            this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
+          }
+        }
+        nextValue = master;
         break;
       }
 

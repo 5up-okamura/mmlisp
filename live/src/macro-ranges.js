@@ -14,35 +14,34 @@
 export const MACRO_TARGET_RANGE = {
   // KEY-ON scoped
   NOTE_PITCH: { min: -32768, max: 32767, integer: false },
-  VEL:        { min: 0,      max: 15,    integer: true  },
+  VEL: { min: 0, max: 15, integer: true },
 
   // Channel-level
-  VOL:        { min: 0,      max: 31,    integer: true  },
-  MASTER:     { min: 0,      max: 31,    integer: true  },
-  PAN:        { min: -1,     max: 1,     integer: true  }, // snap: -1 left / 0 center / +1 right
+  VOL: { min: 0, max: 31, integer: true },
+  MASTER: { min: 0, max: 31, integer: true },
 
-  // PSG noise
-  MODE:       { min: 0,      max: 7,     integer: true  },
+  // LFO
+  LFO_RATE: { min: 0, max: 8, integer: true },
 
   // FM channel params
-  FM_ALG:     { min: 0,      max: 7,     integer: true  },
-  FM_FB:      { min: 0,      max: 7,     integer: true  },
-  FM_AMS:     { min: 0,      max: 3,     integer: true  },
-  FM_FMS:     { min: 0,      max: 7,     integer: true  },
+  FM_ALG: { min: 0, max: 7, integer: true },
+  FM_FB: { min: 0, max: 7, integer: true },
+  FM_AMS: { min: 0, max: 3, integer: true },
+  FM_FMS: { min: 0, max: 7, integer: true },
 
   // FM operator params — shared by FM_TL1–FM_TL4, FM_AR1–FM_AR4, etc.
   // clampForTarget() strips the trailing digit before lookup.
-  FM_TL:      { min: 0,      max: 127,   integer: true  },
-  FM_AR:      { min: 0,      max: 31,    integer: true  },
-  FM_DR:      { min: 0,      max: 31,    integer: true  },
-  FM_SR:      { min: 0,      max: 31,    integer: true  },
-  FM_RR:      { min: 0,      max: 15,    integer: true  },
-  FM_SL:      { min: 0,      max: 15,    integer: true  },
-  FM_ML:      { min: 0,      max: 15,    integer: true  },
-  FM_DT:      { min: 0,      max: 7,     integer: true  },
-  FM_KS:      { min: 0,      max: 3,     integer: true  },
-  FM_AMEN:    { min: 0,      max: 1,     integer: true  },
-  FM_SSG:     { min: 0,      max: 15,    integer: true  },
+  FM_TL: { min: 0, max: 127, integer: true },
+  FM_AR: { min: 0, max: 31, integer: true },
+  FM_DR: { min: 0, max: 31, integer: true },
+  FM_SR: { min: 0, max: 31, integer: true },
+  FM_RR: { min: 0, max: 15, integer: true },
+  FM_SL: { min: 0, max: 15, integer: true },
+  FM_ML: { min: 0, max: 15, integer: true },
+  FM_DT: { min: 0, max: 7, integer: true },
+  FM_KS: { min: 0, max: 3, integer: true },
+  FM_AMEN: { min: 0, max: 1, integer: true },
+  FM_SSG: { min: 0, max: 15, integer: true },
 };
 
 /**

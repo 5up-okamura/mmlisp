@@ -221,6 +221,16 @@ Relative/delta notation (e.g. `:tl1 +5`) is not supported.
 
 This model is intentionally different from `:macro :vel` / `:macro :pitch` attached to `NOTE_ON`, which are KEY-ON scoped.
 
+**Trigger scope summary:**
+
+| Form | Example | Trigger | Continuity |
+|---|---|---|---|
+| Inline curve write | `:alg (sin ...)` | Timeline tick (place of write) | Continues until overwritten; persists across track loops |
+| `:macro :pitch` | `(def vib :macro :pitch (sin ...))` | KEY-ON (each NOTE_ON) | Restarted from phase 0 on every note |
+| `:macro :vel` | `(def att :macro :vel [15 10 5 0])` | KEY-ON (each NOTE_ON) | Restarted on every note |
+
+The distinction is: directly writing a curve (`:target (fn ...)`) is a channel-level timeline operation; attaching a curve after `:macro` makes it note-level (KEY-ON scoped).
+
 `PARAM_ADD` in v0.4 is out of scope for authoring and runtime semantics in this document.
 
 ```lisp

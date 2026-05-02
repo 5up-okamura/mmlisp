@@ -16,7 +16,6 @@ const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
-  "TEMPO_SCALE",
   "VOL",
   "MASTER",
   "FM_ALG",

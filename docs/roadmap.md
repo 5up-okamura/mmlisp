@@ -186,7 +186,7 @@ _Compiler — per-target gaps (after unification):_
 - [ ] FM macro: `_` hold token (advance 1 frame, skip write)
 - [ ] FM macro: multi-stage sequential execution (each stage runs its own `:len`)
 - [ ] FM macro: `(wait key-off)` — loop stage until gate, then continue
-- [ ] `MASTER` → recalculate all carrier TL values
+- [x] `MASTER` → recalculate all carrier TL values (implemented; `_masterVol` + VOL interaction)
 - [ ] `:glide` PARAM_SWEEP handling (expected to work via existing PARAM_SWEEP path)
 
 **PSG**
@@ -235,31 +235,12 @@ Then per-target gaps unlocked by the refactor:
 Other:
 
 10. `:glide` emit (compiler)
-11. `MASTER` player implementation (FM + PSG)
+11. ~~`MASTER` player implementation~~ (done)
 12. `:vol (curve ...)` inline form
 13. `:macro` multi-target (compiler)
 14. `:macro [list]` use-site merge
 15. `:extends`
 16. `len=0` hold note
-
-**Open design gap — phrase-level (channel-continuous) modulation:**
-
-`:macro :pitch` is KEY-ON scoped: the curve restarts from phase 0 on every NOTE_ON.
-`PARAM_SWEEP NOTE_PITCH` is tick-positioned and plays once.
-Neither supports a vibrato/LFO that runs continuously across note boundaries without resetting.
-
-What is needed but not yet designed:
-
-- A channel-level modulation command that starts an oscillation at a given tick and keeps
-  running independently of subsequent NOTE_ON events (phase is not reset per note).
-- Syntax candidates: `(lfo :pitch :rate 8f :depth 100)` as a channel-body statement;
-  or a `PARAM_LFO` IR event separate from `PARAM_SWEEP`.
-- A matching stop command (or implicit stop at the end of the pattern/loop).
-- The player scheduler must maintain per-channel LFO state and add the LFO offset on top
-  of the note's base pitch at each F-number write, independent of the note macro.
-
-This is unblocked only after the `_scheduleMacro` unification (task 2 above) settles
-the per-note scheduling contract, so the channel-level path can be defined cleanly alongside it.
     | v0.5 | planned | — | FM3 independent-OP mode, CSM, PCM/DAC |
 
 ## Backlog
