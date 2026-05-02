@@ -24,7 +24,7 @@ const SUPPORTED_TARGETS = new Set([
   "FM_FMS",
   "LFO_RATE",
   "PAN",
-  "MODE",
+  "NOISE_MODE",
   ...[1, 2, 3, 4].flatMap((op) => [
     `FM_AR${op}`,
     `FM_DR${op}`,
@@ -227,7 +227,7 @@ function parseMacroSpec(node, target) {
         continue;
       }
       let n = parseIntLike(val);
-      if (n === null && target === "MODE" && val in NOISE_MODE_MAP) {
+      if (n === null && target === "NOISE_MODE" && val in NOISE_MODE_MAP) {
         n = NOISE_MODE_MAP[val];
       }
       if (n !== null) {
@@ -339,7 +339,7 @@ function canonicalTarget(symbol) {
     ":ams": "FM_AMS",
     ":fms": "FM_FMS",
     ":pan": "PAN",
-    ":mode": "MODE",
+    ":mode": "NOISE_MODE",
     // FM operator params — :tl1–:tl4, :ar1–:ar4, etc.
     ...[1, 2, 3, 4].reduce((acc, op) => {
       acc[`:tl${op}`] = `FM_TL${op}`;

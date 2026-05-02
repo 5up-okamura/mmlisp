@@ -1449,7 +1449,7 @@ export class IRPlayer {
         break;
       }
 
-      case "MODE": {
+      case "NOISE_MODE": {
         // Noise mode (PSG noise control) — bits 5-3 (FB + NF)
         // Values 0-7 directly map to SN76489 noise register bits 5-3
         const mode = Math.max(0, Math.min(7, value));
