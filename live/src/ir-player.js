@@ -17,6 +17,23 @@
 import { clampForTarget } from "./macro-ranges.js";
 
 // ---------------------------------------------------------------------------
+// Bit manipulation helper
+// ---------------------------------------------------------------------------
+/**
+ * Update a portion of a byte/word by value and mask.
+ * Clears the masked bits, then sets them to (newValue & mask) shifted by shiftBits.
+ *
+ * @param {number} currentValue - the current register value
+ * @param {number} newValue     - the new value to insert
+ * @param {number} mask         - bit mask for the new value (before shift)
+ * @param {number} shiftBits    - left shift amount
+ * @returns {number} updated value
+ */
+function updateBits(currentValue, newValue, mask, shiftBits) {
+  return (currentValue & ~(mask << shiftBits)) | ((newValue & mask) << shiftBits);
+}
+
+// ---------------------------------------------------------------------------
 // Pitch → MIDI note
 // ---------------------------------------------------------------------------
 const NOTE_NAMES = [
@@ -147,10 +164,10 @@ function buildChannelRegState(chIndex) {
   return {
     algorithm: 0,
     feedback: 0,
-    stereoL: true,
-    stereoR: true,
+    pan: 0, // -1 (left) / 0 (center) / 1 (right), used for PAN macro
     ams: 0, // LFO AM sensitivity 0-3 (0xB4 bits 5-4)
     fms: 0, // LFO FM sensitivity 0-7 (0xB4 bits 2-0)
+    b4: 0xc0, // Cache of YM2612 B4 register (read-only on hardware; we cache to preserve bits)
     ops: [
       {
         tl: 0,
@@ -213,11 +230,12 @@ function encodeB0(regs) {
   return ((regs.feedback & 0x07) << 3) | (regs.algorithm & 0x07);
 }
 
-// Encode B4 register (stereo + AMS/FMS)
+// Encode B4 register (pan + AMS/FMS)
 function encodeB4(regs) {
+  // PAN: -1 (left) → 0b10, 0 (center) → 0b11, 1 (right) → 0b01
+  const panBits = regs.pan < 0 ? 0b10 : (regs.pan > 0 ? 0b01 : 0b11);
   return (
-    ((regs.stereoL ? 1 : 0) << 7) |
-    ((regs.stereoR ? 1 : 0) << 6) |
+    (panBits << 6) |
     ((regs.ams & 0x03) << 4) |
     (regs.fms & 0x07)
   );
@@ -1253,6 +1271,17 @@ export class IRPlayer {
         );
         this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
         break;
+      case "PAN": {
+        set(
+          (v) => {
+            regs.pan = v;
+          },
+          -1,
+          1,
+        );
+        this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
+        break;
+      }
       case "LFO_RATE": {
         const rate = Math.max(0, Math.min(8, value));
         this._lfoRate = rate;

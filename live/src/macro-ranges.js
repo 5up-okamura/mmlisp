@@ -42,6 +42,12 @@ export const MACRO_TARGET_RANGE = {
   FM_KS: { min: 0, max: 3, integer: true },
   FM_AMEN: { min: 0, max: 1, integer: true },
   FM_SSG: { min: 0, max: 15, integer: true },
+
+  // FM panning — bits 7-6 of B4
+  PAN: { min: -1, max: 1, integer: true },
+
+  // PSG noise mode (0-3 via `:mode` keyword on noise channel)
+  MODE: { min: 0, max: 3, integer: true },
 };
 
 /**

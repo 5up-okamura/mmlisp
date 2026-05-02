@@ -23,6 +23,8 @@ const SUPPORTED_TARGETS = new Set([
   "FM_AMS",
   "FM_FMS",
   "LFO_RATE",
+  "PAN",
+  "MODE",
   ...[1, 2, 3, 4].flatMap((op) => [
     `FM_AR${op}`,
     `FM_DR${op}`,
@@ -318,6 +320,8 @@ function canonicalTarget(symbol) {
     ":fb": "FM_FB",
     ":ams": "FM_AMS",
     ":fms": "FM_FMS",
+    ":pan": "PAN",
+    ":mode": "MODE",
     // FM operator params — :tl1–:tl4, :ar1–:ar4, etc.
     ...[1, 2, 3, 4].reduce((acc, op) => {
       acc[`:tl${op}`] = `FM_TL${op}`;

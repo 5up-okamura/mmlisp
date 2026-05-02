@@ -307,13 +307,9 @@
       "route_hint": {
         "allocation_preference": "ordered_first_fit",
         "carry": false,
-        "channel_candidates": [
-          "fm1"
-        ],
+        "channel_candidates": ["fm1"],
         "role": "bgm",
-        "write_scope": [
-          "any"
-        ]
+        "write_scope": ["any"]
       }
     },
     {
@@ -573,13 +569,9 @@
       "route_hint": {
         "allocation_preference": "ordered_first_fit",
         "carry": false,
-        "channel_candidates": [
-          "fm2"
-        ],
+        "channel_candidates": ["fm2"],
         "role": "bgm",
-        "write_scope": [
-          "any"
-        ]
+        "write_scope": ["any"]
       }
     },
     {
@@ -880,13 +872,9 @@
       "route_hint": {
         "allocation_preference": "ordered_first_fit",
         "carry": false,
-        "channel_candidates": [
-          "fm3"
-        ],
+        "channel_candidates": ["fm3"],
         "role": "bgm",
-        "write_scope": [
-          "any"
-        ]
+        "write_scope": ["any"]
       }
     },
     {
@@ -1006,13 +994,9 @@
       "route_hint": {
         "allocation_preference": "ordered_first_fit",
         "carry": false,
-        "channel_candidates": [
-          "sqr1"
-        ],
+        "channel_candidates": ["sqr1"],
         "role": "bgm",
-        "write_scope": [
-          "any"
-        ]
+        "write_scope": ["any"]
       }
     },
     {
@@ -1047,14 +1031,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                15,
-                12,
-                9,
-                6,
-                3,
-                0
-              ],
+              "steps": [15, 12, 9, 6, 3, 0],
               "type": "steps"
             }
           },
@@ -1072,10 +1049,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                11,
-                0
-              ],
+              "steps": [11, 0],
               "type": "steps"
             }
           },
@@ -1093,10 +1067,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                11,
-                0
-              ],
+              "steps": [11, 0],
               "type": "steps"
             }
           },
@@ -1114,10 +1085,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                11,
-                0
-              ],
+              "steps": [11, 0],
               "type": "steps"
             }
           },
@@ -1135,19 +1103,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                15,
-                14,
-                13,
-                12,
-                11,
-                9,
-                7,
-                5,
-                3,
-                1,
-                0
-              ],
+              "steps": [15, 14, 13, 12, 11, 9, 7, 5, 3, 1, 0],
               "type": "steps"
             }
           },
@@ -1165,10 +1121,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                11,
-                0
-              ],
+              "steps": [11, 0],
               "type": "steps"
             }
           },
@@ -1186,10 +1139,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                11,
-                0
-              ],
+              "steps": [11, 0],
               "type": "steps"
             }
           },
@@ -1207,10 +1157,7 @@
             "velMacro": {
               "loopIndex": null,
               "releaseIndex": null,
-              "steps": [
-                11,
-                0
-              ],
+              "steps": [11, 0],
               "type": "steps"
             }
           },
@@ -1249,13 +1196,9 @@
       "route_hint": {
         "allocation_preference": "ordered_first_fit",
         "carry": false,
-        "channel_candidates": [
-          "noise"
-        ],
+        "channel_candidates": ["noise"],
         "role": "bgm",
-        "write_scope": [
-          "any"
-        ]
+        "write_scope": ["any"]
       }
     }
   ],
