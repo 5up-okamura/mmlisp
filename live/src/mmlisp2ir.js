@@ -184,6 +184,46 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
 }
 
 /**
+ * v0.4: Emit glide PARAM_SWEEP before NOTE_ON if glide is active.
+ * Inserts a portamento slide from lastNotePitch to newPitch over glideFrames.
+ * Resets glideFrom after emission (one-shot override).
+ */
+function emitGlideIfNeeded(
+  trackState,
+  newPitch,
+  events,
+  glideFrames,
+  nodeSrc,
+) {
+  if (glideFrames <= 0 || !trackState.lastNotePitch) return; // No glide or first note
+
+  const fromPitch = trackState.glideFrom || trackState.lastNotePitch;
+  trackState.glideFrom = null; // One-shot reset
+
+  events.push({
+    tick: trackState.tick,
+    cmd: "PARAM_SWEEP",
+    args: {
+      target: "NOTE_PITCH",
+      from: fromPitch,
+      to: newPitch,
+      curve: "linear",
+      frames: glideFrames,
+      loop: false,
+    },
+    src: nodeSrc,
+  });
+}
+
+/**
+ * v0.4: Update lastNotePitch after emitting NOTE_ON.
+ */
+function updateLastNotePitch(trackState, pitch) {
+  trackState.lastNotePitch = pitch;
+}
+
+
+/**
  * Parse a :macro spec node for any target.
  * Accepts both step-vector [...] and curve (...) forms.
  * Steps are clamped with clampForTarget(target, n) — works for any target.
@@ -882,11 +922,20 @@ function compileChannelBody(
           lengthStr,
           trackState.defaultLength,
         );
+        const fullPitch = noteName + trackState.defaultOct;
+        // v0.4: emit glide PARAM_SWEEP before NOTE_ON if needed
+        emitGlideIfNeeded(
+          trackState,
+          fullPitch,
+          events,
+          trackState.glide,
+          nodeSrc(node),
+        );
         events.push({
           tick: trackState.tick,
           cmd: "NOTE_ON",
           args: makeNoteArgs(
-            noteName + trackState.defaultOct,
+            fullPitch,
             perNoteTicks,
             trackState.defaultGate,
             trackState.defaultVel,
@@ -895,6 +944,7 @@ function compileChannelBody(
           src: nodeSrc(node),
         });
         trackState.tick += perNoteTicks;
+        updateLastNotePitch(trackState, fullPitch);
         i++;
         continue;
       }
@@ -902,11 +952,20 @@ function compileChannelBody(
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
         const ticks = resolveShuffleTicks(trackState.defaultLength, trackState);
+        const fullPitch = val + trackState.defaultOct;
+        // v0.4: emit glide PARAM_SWEEP before NOTE_ON if needed
+        emitGlideIfNeeded(
+          trackState,
+          fullPitch,
+          events,
+          trackState.glide,
+          nodeSrc(node),
+        );
         events.push({
           tick: trackState.tick,
           cmd: "NOTE_ON",
           args: makeNoteArgs(
-            val + trackState.defaultOct,
+            fullPitch,
             ticks,
             trackState.defaultGate,
             trackState.defaultVel,
@@ -915,6 +974,7 @@ function compileChannelBody(
           src: nodeSrc(node),
         });
         trackState.tick += ticks;
+        updateLastNotePitch(trackState, fullPitch);
         i++;
         continue;
       }
@@ -971,11 +1031,20 @@ function compileChannelBody(
             trackState.tick += slotTicks;
           } else if (isPerNoteLengthAtom(evVal)) {
             const { noteName } = parsePerNoteLength(evVal);
+            const fullPitch = noteName + trackState.defaultOct;
+            // v0.4: emit glide if needed
+            emitGlideIfNeeded(
+              trackState,
+              fullPitch,
+              events,
+              trackState.glide,
+              nodeSrc(ev),
+            );
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
               args: makeNoteArgs(
-                noteName + trackState.defaultOct,
+                fullPitch,
                 slotTicks,
                 trackState.defaultGate,
                 trackState.defaultVel,
@@ -984,12 +1053,22 @@ function compileChannelBody(
               src: nodeSrc(ev),
             });
             trackState.tick += slotTicks;
+            updateLastNotePitch(trackState, fullPitch);
           } else if (isNoteAtom(evVal)) {
+            const fullPitch = evVal + trackState.defaultOct;
+            // v0.4: emit glide if needed
+            emitGlideIfNeeded(
+              trackState,
+              fullPitch,
+              events,
+              trackState.glide,
+              nodeSrc(ev),
+            );
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
               args: makeNoteArgs(
-                evVal + trackState.defaultOct,
+                fullPitch,
                 slotTicks,
                 trackState.defaultGate,
                 trackState.defaultVel,
@@ -998,6 +1077,7 @@ function compileChannelBody(
               src: nodeSrc(ev),
             });
             trackState.tick += slotTicks;
+            updateLastNotePitch(trackState, fullPitch);
           }
         }
         i++;
@@ -1247,21 +1327,53 @@ function compileSeq(
           } else if (isPerNoteLengthAtom(evVal)) {
             // Per-note length in subgroup: ignore the length suffix, use slot ticks
             const { noteName } = parsePerNoteLength(evVal);
+            const fullPitch = noteName + currentOct;
+            // v0.4: emit glide if trackState has glide active
+            emitGlideIfNeeded(
+              trackState,
+              fullPitch,
+              events,
+              trackState.glide,
+              nodeSrc(ev),
+            );
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
-              args: makeNoteArgs(noteName + currentOct, slotTicks, currentGate),
+              args: makeNoteArgs(
+                fullPitch,
+                slotTicks,
+                currentGate,
+                trackState.defaultVel,
+                trackState.activeMacros,
+              ),
               src: nodeSrc(ev),
             });
             trackState.tick += slotTicks;
+            updateLastNotePitch(trackState, fullPitch);
           } else if (isNoteAtom(evVal)) {
+            const fullPitch = evVal + currentOct;
+            // v0.4: emit glide if trackState has glide active
+            emitGlideIfNeeded(
+              trackState,
+              fullPitch,
+              events,
+              trackState.glide,
+              nodeSrc(ev),
+            );
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
-              args: makeNoteArgs(evVal + currentOct, slotTicks, currentGate),
+              args: makeNoteArgs(
+                fullPitch,
+                slotTicks,
+                currentGate,
+                trackState.defaultVel,
+                trackState.activeMacros,
+              ),
               src: nodeSrc(ev),
             });
             trackState.tick += slotTicks;
+            updateLastNotePitch(trackState, fullPitch);
           }
         }
         currentLen = savedLen;
@@ -2126,6 +2238,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
         glide: 0, // v0.4: glide duration in frames (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
+        lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
         shuffleRatio,
         shuffleBase,
         subBeatParity: 0,

@@ -1,0 +1,6 @@
+(score
+  (tempo 120)
+  (fm1 :oct 4 :len 4 :glide 8
+    c e g e
+  )
+)
