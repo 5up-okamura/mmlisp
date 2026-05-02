@@ -923,7 +923,8 @@
               "frames": 12,
               "from": 0,
               "loop": false,
-              "to": -2400
+              "to": -2400,
+              "type": "curve"
             },
             "vel": 13
           },
@@ -954,7 +955,8 @@
               "frames": 12,
               "from": 0,
               "loop": false,
-              "to": -2400
+              "to": -2400,
+              "type": "curve"
             },
             "vel": 13
           },

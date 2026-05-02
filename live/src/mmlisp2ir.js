@@ -155,8 +155,15 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, pitchMacro, velMacro) {
   return args;
 }
 
-// Parse :macro :vel body — either a step-vector [...] or a single curve form.
-function parseVelMacroSpec(node) {
+/**
+ * Parse a :macro spec node for any target.
+ * Accepts both step-vector [...] and curve (...) forms.
+ * Steps are clamped with clampForTarget(target, n) — works for any target.
+ * Returns { type: "steps", steps, loopIndex, releaseIndex }
+ *      or { type: "curve", ...curveSpec }
+ * or null if the node cannot be parsed.
+ */
+function parseMacroSpec(node, target) {
   if (!node) return null;
   // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0]
   if (node.kind === "list" && node.bracket === "[]") {
@@ -174,7 +181,7 @@ function parseVelMacroSpec(node) {
         continue;
       }
       const n = parseIntLike(val);
-      if (n !== null) steps.push(clampForTarget("VEL", n));
+      if (n !== null) steps.push(clampForTarget(target, n));
     }
     return { type: "steps", steps, loopIndex, releaseIndex };
   }
@@ -646,12 +653,12 @@ function compileChannelBody(
               const macroTarget = rawVal;
               if (i + 1 < items.length) {
                 const specNode = items[i + 1];
-                if (macroTarget === ":pitch") {
-                  const curveSpec = parseCurveSpec(specNode);
-                  if (curveSpec) trackState.activePitchMacro = curveSpec;
-                } else if (macroTarget === ":vel") {
-                  const velSpec = parseVelMacroSpec(specNode);
-                  if (velSpec) trackState.activeVelMacro = velSpec;
+                const irTarget = canonicalTarget(macroTarget);
+                const spec = parseMacroSpec(specNode, irTarget);
+                if (spec) {
+                  if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
+                  else if (irTarget === "VEL") trackState.activeVelMacro = spec;
+                  // future targets: add here
                 }
                 i++; // advance past spec node; outer i++ skips the :pitch/:vel token
               }
@@ -833,10 +840,10 @@ function compileChannelBody(
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
         const td = typedDefs.get(val);
-        if (td?.tag === "pitch-macro") {
-          trackState.activePitchMacro = td.macro;
-        } else if (td?.tag === "vel-macro") {
-          trackState.activeVelMacro = td.macro;
+        if (td?.tag === "macro") {
+          if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
+          else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
+          // future targets: add here
         } else {
           emitVoice(td, trackState.tick, events, nodeSrc(node));
         }
@@ -1788,26 +1795,14 @@ function collectDefs(roots, diagnostics) {
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
         const parsed = parsePsgVector(bodyItems[3], name, diagnostics, src);
         typedDefs.set(name, { tag: "psg", envelope: parsed, src });
-      } else if (
-        maybeTag === ":macro" &&
-        atomValue(root.items.filter((n) => n.kind !== "comment")[3]) ===
-          ":pitch"
-      ) {
+      } else if (maybeTag === ":macro") {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const parsed = parseCurveSpec(bodyItems[4]);
-        if (parsed) {
-          typedDefs.set(name, { tag: "pitch-macro", macro: parsed, src });
-        }
-      } else if (
-        maybeTag === ":macro" &&
-        atomValue(root.items.filter((n) => n.kind !== "comment")[3]) === ":vel"
-      ) {
-        const src = nodeSrc(root);
-        const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const parsed = parseVelMacroSpec(bodyItems[4]);
-        if (parsed) {
-          typedDefs.set(name, { tag: "vel-macro", macro: parsed, src });
+        const macroTargetSym = atomValue(bodyItems[3]); // e.g. ":pitch" or ":vel"
+        const irTarget = canonicalTarget(macroTargetSym);
+        const spec = parseMacroSpec(bodyItems[4], irTarget);
+        if (spec) {
+          typedDefs.set(name, { tag: "macro", target: irTarget, spec, src });
         }
       } else {
         defs.set(

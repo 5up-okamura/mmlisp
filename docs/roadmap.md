@@ -148,8 +148,8 @@ _Compiler — `parseMacroSpec` refactor:_
 
 - [x] `:macro :vel` parsed via `parseVelMacroSpec` (current, pre-unification)
 - [x] `:macro :pitch` parsed via `parseCurveSpec` (current, single curve only)
-- [ ] Unify into single `parseMacroSpec(node, target)` covering all forms + all targets
-- [ ] `collectDefs` emits unified `{ tag: "macro", target, spec }` for all `:macro` defs
+- [x] Unify into single `parseMacroSpec(node, target)` covering all forms + all targets
+- [x] `collectDefs` emits unified `{ tag: "macro", target, spec }` for all `:macro` defs
 
 _Compiler — per-target gaps (after unification):_
 
@@ -219,8 +219,8 @@ _Compiler — per-target gaps (after unification):_
 
 Macro refactor first (unblocks all downstream macro features):
 
-1. **Unify** `parseMacroSpec` in compiler (covers all targets, all input forms)
-2. **Unify** `_scheduleMacro(target, spec, write_fn, when, gate)` in player (FM + PSG share)
+1. ~~**Unify** `parseMacroSpec` in compiler (covers all targets, all input forms)~~ (done)
+2. ~~**Unify** `_scheduleMacro(target, spec, write_fn, when, gate)` in player (FM + PSG share)~~ (done)
 3. `_` hold token \u2014 advance 1 frame, skip write (falls out of unified scheduler)
 4. Multi-stage sequential execution (falls out of unified scheduler)
 5. `(wait key-off)` release stage (falls out of unified scheduler)

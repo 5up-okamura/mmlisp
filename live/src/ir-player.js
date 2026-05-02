@@ -1486,6 +1486,67 @@ export class IRPlayer {
     );
   }
 
+  // Core macro scheduler shared by all targets and types.
+  // Returns the audio time immediately after the last scheduled write (for
+  // scheduling silence), or null if no writes were made (curve type or empty).
+  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn) {
+    if (!spec) return null;
+
+    if (spec.type === "curve") {
+      const { from, to, frames: rawFrames = 1, loop, curve = "linear" } = spec;
+      const baseFrames = Math.max(1, Number(rawFrames));
+      const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+      for (let frame = 0; frame < activeFrames; frame++) {
+        const phase = loop
+          ? (frame % baseFrames) / baseFrames
+          : baseFrames <= 1
+            ? 1
+            : Math.min(1, frame / (baseFrames - 1));
+        writeFn(
+          from + (to - from) * sampleCurveUnit(curve, phase),
+          when + frame / 60,
+        );
+      }
+      return when + activeFrames / 60;
+    }
+
+    if (spec.type === "steps") {
+      const { steps, loopIndex, releaseIndex } = spec;
+      if (!steps || steps.length === 0) return null;
+
+      const sustainEnd = releaseIndex ?? steps.length;
+
+      // Attack + sustain loop until gate
+      let t = when;
+      let idx = 0;
+      while (t < gateSecs) {
+        writeFn(steps[idx] ?? 0, t);
+        idx++;
+        if (idx >= sustainEnd) {
+          if (loopIndex !== null) {
+            idx = loopIndex;
+          } else {
+            break; // one-shot: hold last attack step
+          }
+        }
+        t += 1 / 60;
+      }
+
+      // Release phase after gate
+      if (releaseIndex !== null && releaseIndex < steps.length) {
+        t = gateSecs;
+        for (let ri = releaseIndex; ri < steps.length; ri++) {
+          writeFn(steps[ri], t);
+          t += 1 / 60;
+        }
+        return t; // time after last release write
+      }
+      return gateSecs; // time at gate-off
+    }
+
+    return null;
+  }
+
   _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks) {
     if (!velMacro) return;
 
@@ -1505,60 +1566,12 @@ export class IRPlayer {
       return clampForTarget("FM_TL", (31 - effectiveVol) * 4);
     };
 
-    const writeTl = (tl, t) => {
+    this._scheduleMacro(velMacro, noteFrames, gateSecs, when, (v, t) => {
+      const tl = velToTl(Math.round(v));
       for (const opIdx of carriers) {
         this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
       }
-    };
-
-    if (velMacro.type === "curve") {
-      const { from, to, frames: baseFrames, loop, curve } = velMacro;
-      const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
-      for (let frame = 0; frame < activeFrames; frame++) {
-        const phase = loop
-          ? (frame % baseFrames) / baseFrames
-          : baseFrames <= 1
-            ? 1
-            : Math.min(1, frame / (baseFrames - 1));
-        const unit = sampleCurveUnit(curve, phase);
-        const velVal = Math.round(from + (to - from) * unit);
-        writeTl(velToTl(velVal), when + frame / 60);
-      }
-      return;
-    }
-
-    if (velMacro.type === "steps") {
-      const { steps, loopIndex, releaseIndex } = velMacro;
-      if (!steps || steps.length === 0) return;
-
-      // Determine how many steps are in the attack+sustain region
-      const sustainEnd = releaseIndex ?? steps.length;
-
-      // Attack + sustain loop until gate
-      let t = when;
-      let idx = 0;
-      while (t < gateSecs) {
-        writeTl(velToTl(steps[idx] ?? 0), t);
-        idx++;
-        if (idx >= sustainEnd) {
-          if (loopIndex !== null) {
-            idx = loopIndex;
-          } else {
-            break; // one-shot: hold last attack step
-          }
-        }
-        t += 1 / 60;
-      }
-
-      // Release phase after gate
-      if (releaseIndex !== null && releaseIndex < steps.length) {
-        t = gateSecs;
-        for (let ri = releaseIndex; ri < steps.length; ri++) {
-          writeTl(velToTl(steps[ri]), t);
-          t += 1 / 60;
-        }
-      }
-    }
+    });
   }
 
   _scheduleFmPitchMacro(
@@ -1573,31 +1586,18 @@ export class IRPlayer {
 
     const secsPerTick = 60 / (this._bpm * this._ppqn);
     const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
-    const baseFrames = Math.max(1, Number(pitchMacro.frames ?? 1));
-    const loop = !!pitchMacro.loop;
-    const from = Number(pitchMacro.from ?? 0);
-    const to = Number(pitchMacro.to ?? 0);
-    const curve = pitchMacro.curve ?? "linear";
-    const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+    const gateSecs = when + lengthTicks * secsPerTick;
 
-    for (let frame = 0; frame < activeFrames; frame++) {
-      const phase = loop
-        ? (frame % baseFrames) / baseFrames
-        : baseFrames <= 1
-          ? 1
-          : Math.min(1, frame / (baseFrames - 1));
-      const unit = sampleCurveUnit(curve, phase);
-      const centOffset = from + (to - from) * unit;
+    this._scheduleMacro(pitchMacro, noteFrames, gateSecs, when, (centOffset, t) => {
       const { fnum, block } = midiToFnumBlock(baseMidi + centOffset / 100);
-      const frameWhen = when + frame / 60;
       this._write(
         port,
         0xa4 + chOffset,
         ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-        frameWhen,
+        t,
       );
-      this._write(port, 0xa0 + chOffset, fnum & 0xff, frameWhen);
-    }
+      this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+    });
   }
 
   _applyParamSweep(ch, port, chOffset, ev, when) {
@@ -1886,27 +1886,16 @@ export class IRPlayer {
 
     const secsPerTick = 60 / (this._bpm * this._ppqn);
     const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
-    const baseFrames = Math.max(1, Number(pitchMacro.frames ?? 1));
-    const loop = !!pitchMacro.loop;
-    const from = Number(pitchMacro.from ?? 0);
-    const to = Number(pitchMacro.to ?? 0);
-    const curve = pitchMacro.curve ?? "linear";
-    const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+    const gateSecs = noteWhen + lengthTicks * secsPerTick;
 
-    for (let frame = 0; frame < activeFrames; frame++) {
-      const phase = loop
-        ? (frame % baseFrames) / baseFrames
-        : baseFrames <= 1
-          ? 1
-          : Math.min(1, frame / (baseFrames - 1));
-      const unit = sampleCurveUnit(curve, phase);
-      const centOffset = from + (to - from) * unit;
-      this._psgSetPitch(
-        psgCh,
-        baseMidi + centOffset / 100,
-        noteWhen + frame / 60,
-      );
-    }
+    this._scheduleMacro(
+      pitchMacro,
+      noteFrames,
+      gateSecs,
+      noteWhen,
+      (centOffset, t) =>
+        this._psgSetPitch(psgCh, baseMidi + centOffset / 100, t),
+    );
   }
 
   _schedulePsgVelMacro(psgCh, velMacro, noteWhen, gateTicks, baseVel = 15) {
@@ -1923,56 +1912,15 @@ export class IRPlayer {
       return 15 - scaled;
     };
 
-    if (velMacro.type === "curve") {
-      const { from, to, frames: baseFrames, loop, curve } = velMacro;
-      const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
-      for (let frame = 0; frame < activeFrames; frame++) {
-        const phase = loop
-          ? (frame % baseFrames) / baseFrames
-          : baseFrames <= 1
-            ? 1
-            : Math.min(1, frame / (baseFrames - 1));
-        const unit = sampleCurveUnit(curve, phase);
-        const velVal = Math.round(from + (to - from) * unit);
-        this._psgSetAtt(psgCh, velToAtt(velVal), noteWhen + frame / 60);
-      }
-      return;
-    }
-
-    if (velMacro.type === "steps") {
-      const { steps, loopIndex, releaseIndex } = velMacro;
-      if (!steps || steps.length === 0) return;
-
-      const sustainEnd = releaseIndex ?? steps.length;
-
-      // Attack + sustain loop until gate
-      let t = noteWhen;
-      let idx = 0;
-      while (t < gateSecs) {
-        this._psgSetAtt(psgCh, velToAtt(steps[idx] ?? 0), t);
-        idx++;
-        if (idx >= sustainEnd) {
-          if (loopIndex !== null) {
-            idx = loopIndex;
-          } else {
-            break; // one-shot: hold
-          }
-        }
-        t += 1 / 60;
-      }
-
-      // Release phase
-      if (releaseIndex !== null && releaseIndex < steps.length) {
-        t = gateSecs;
-        for (let ri = releaseIndex; ri < steps.length; ri++) {
-          this._psgSetAtt(psgCh, velToAtt(steps[ri]), t);
-          t += 1 / 60;
-        }
-        // Ensure silence after release
-        this._psgSetAtt(psgCh, 15, t);
-      } else {
-        this._psgSetAtt(psgCh, 15, gateSecs);
-      }
+    const silenceAt = this._scheduleMacro(
+      velMacro,
+      noteFrames,
+      gateSecs,
+      noteWhen,
+      (v, t) => this._psgSetAtt(psgCh, velToAtt(Math.round(v)), t),
+    );
+    if (silenceAt !== null) {
+      this._psgSetAtt(psgCh, 15, silenceAt);
     }
   }
 
