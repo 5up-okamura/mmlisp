@@ -123,14 +123,6 @@ function encodePayload(event, trackMaps) {
       const value = i16le(args.value ?? 0);
       return Buffer.concat([Buffer.from([target]), value]);
     }
-    case "PARAM_ADD": {
-      const target = TARGET_ID[args.target];
-      if (target === undefined) {
-        throw new Error(`PARAM_ADD target not supported: ${args.target}`);
-      }
-      const delta = i16le(args.delta ?? 0);
-      return Buffer.concat([Buffer.from([target]), delta]);
-    }
     default:
       throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
   }

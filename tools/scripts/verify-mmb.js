@@ -18,7 +18,6 @@ const OPCODE_PAYLOAD_SIZE = {
   0x42: 1, // MARKER: marker_id:u8
   0x43: 2, // JUMP: rel_offset:i16 (spec 1.6)
   0x60: 3, // PARAM_SET: target_id:u8, value:i16
-  0x61: 3, // PARAM_ADD: target_id:u8, delta:i16
   0x80: 2, // TEMPO_SET: bpm:u16
 };
 

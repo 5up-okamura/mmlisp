@@ -80,7 +80,7 @@
       }
     },
     "param-head": {
-      "match": "(?<=\\()\\s*(param-set|param-add)(?=[\\s)])",
+      "match": "(?<=\\()\\s*(param-set)(?=[\\s)])",
       "captures": {
         "1": { "name": "support.function.mmlisp" }
       }

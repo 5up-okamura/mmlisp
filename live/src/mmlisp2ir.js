@@ -10,6 +10,7 @@
  */
 
 import { parse } from "./mmlisp-parser.js";
+import { clampForTarget } from "./macro-ranges.js";
 
 const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
@@ -174,7 +175,7 @@ function parseVelMacroSpec(node) {
         continue;
       }
       const n = parseIntLike(val);
-      if (n !== null) steps.push(Math.max(0, Math.min(15, n)));
+      if (n !== null) steps.push(clampForTarget("VEL", n));
     }
     return { type: "steps", steps, loopIndex, releaseIndex };
   }
@@ -640,6 +641,23 @@ function compileChannelBody(
               trackState.glideFrom = rawVal;
               break;
             }
+            case ":macro": {
+              // :macro :pitch (curve...) or :macro :vel ([steps...]/curve...)
+              // rawVal is ":pitch" or ":vel"; items[i+1] is the spec node.
+              const macroTarget = rawVal;
+              if (i + 1 < items.length) {
+                const specNode = items[i + 1];
+                if (macroTarget === ":pitch") {
+                  const curveSpec = parseCurveSpec(specNode);
+                  if (curveSpec) trackState.activePitchMacro = curveSpec;
+                } else if (macroTarget === ":vel") {
+                  const velSpec = parseVelMacroSpec(specNode);
+                  if (velSpec) trackState.activeVelMacro = velSpec;
+                }
+                i++; // advance past spec node; outer i++ skips the :pitch/:vel token
+              }
+              break;
+            }
             case ":break":
               // :break inside (x N ...) — emit LOOP_BREAK linked to current loop
               // Note: :break as atom (not keyword pair) is handled separately;
@@ -1084,36 +1102,6 @@ function compileChannelBody(
             tick: trackState.tick,
             cmd: "PARAM_SET",
             args: { target, value },
-            src: nodeSrc(targetNode),
-          });
-          j += 2;
-        }
-        i++;
-        continue;
-      }
-
-      // Param add: (param-add :target delta ...)
-      if (head === "param-add") {
-        let j = 1;
-        while (j + 1 < node.items.length) {
-          const targetNode = node.items[j];
-          const deltaNode = node.items[j + 1];
-          const target = canonicalTarget(atomValue(targetNode));
-          const delta = parseIntLike(atomValue(deltaNode)) ?? 0;
-          if (!SUPPORTED_TARGETS.has(target)) {
-            pushDiag(
-              diagnostics,
-              "error",
-              "E_UNSUPPORTED_TARGET",
-              `Unsupported param-add target: ${target}`,
-              nodeSrc(targetNode),
-              trackName,
-            );
-          }
-          events.push({
-            tick: trackState.tick,
-            cmd: "PARAM_ADD",
-            args: { target, delta },
             src: nodeSrc(targetNode),
           });
           j += 2;
@@ -1605,34 +1593,6 @@ function compileTrackBodyItems(
           tick: trackState.tick,
           cmd: "PARAM_SET",
           args: { target, value },
-          src: nodeSrc(targetNode),
-        });
-        j += 2;
-      }
-      continue;
-    }
-
-    if (head === "param-add") {
-      let j = 1;
-      while (j + 1 < node.items.length) {
-        const targetNode = node.items[j];
-        const deltaNode = node.items[j + 1];
-        const target = canonicalTarget(atomValue(targetNode));
-        const delta = parseIntLike(atomValue(deltaNode)) ?? 0;
-        if (!SUPPORTED_TARGETS.has(target)) {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_UNSUPPORTED_TARGET",
-            `Unsupported param-add target: ${target}`,
-            nodeSrc(targetNode),
-            trackName,
-          );
-        }
-        events.push({
-          tick: trackState.tick,
-          cmd: "PARAM_ADD",
-          args: { target, delta },
           src: nodeSrc(targetNode),
         });
         j += 2;

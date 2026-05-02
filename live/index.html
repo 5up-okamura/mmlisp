@@ -524,7 +524,7 @@
           const KW = new Set([
             'score','track','phrase','note','notes','rest','tie','tuplet',
             'loop-begin','loop-end','marker','jump',
-            'param-set','param-add','def','defn','true','false',
+            'param-set','def','defn','true','false',
           ]);
           return KW.has(stream.current()) ? 'keyword' : 'variable';
         }

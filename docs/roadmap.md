@@ -93,7 +93,7 @@ Phase 3 entry condition:
 | v0.1    | frozen      | v0.1-candidate | Core language, IR, GMB format                                               |
 | v0.2    | frozen      | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                    |
 | v0.3    | frozen      | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls |
-| v0.4    | in-progress | —              | Envelopes/macros, pitch env, PSG noise, pan, level model                    |
+| v0.4    | in-progress | —              | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model |
 
 ### v0.4 Implementation Progress
 
@@ -120,18 +120,46 @@ Phase 3 entry condition:
 - [x] `:master (curve ...)` → `PARAM_SWEEP MASTER`
 - [ ] `:vol (curve ...)` → `PARAM_SWEEP VOL` (inline curve form)
 
-**Macros**
+**Macros — unified architecture**
 
-- [x] `:macro :pitch` single curve → `pitchMacro` in NOTE_ON
-- [x] `:macro :vel` step-vector → `velMacro` in NOTE_ON
-- [x] `:macro :vel` single curve → `velMacro` in NOTE_ON
-- [ ] `:macro :vel` / `:macro :pitch` multi-stage `[(curve...) (curve...)]` form
-- [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))` — simultaneous targets
-- [ ] `:macro [list]` — use-site macro list merge
-- [ ] `:macro :mode` — noise mode step-vector envelope
-- [ ] `:macro :pan` — step-vector / curve
+All macro targets share a single parse path (`parseMacroSpec`) and a single
+scheduler (`_scheduleMacro`). No per-target special cases.
+
+_Input forms — identical for all targets:_
+
+- [x] Numeric step-vector `[0 1 2]`
+- [x] Step-vector `:loop` — loop sustain region until gate (all targets)
+- [x] Step-vector `:release` — release region played after gate (all targets)
+- [ ] `_` hold token in step-vector — advances 1 frame, skips write (all targets)
+- [x] Single curve form `(ease-in :from ... :to ... :len ...)`
+- [x] Looping single-stage curve `(sin ...)` / `(triangle ...)`
+- [ ] Multi-stage form `[(stage1) (stage2) ...]` — stages run sequentially by own `:len`
+- [ ] `(wait N)` / `(wait Nf)` pause stage inside multi-stage
+- [ ] `(wait key-off)` — stage loops until gate, then advances; curve-form equivalent of `:release`
+
+_Symbolic → numeric coercion at compile time (all targets):_
+
+- [x] `:pan` — `left` / `center` / `right` → -1 / 0 / +1
+- [x] `:mode` — `white0`–`white3` / `periodic0`–`periodic3` → 0–7
+- [ ] Curve/function output for `:pan` — snap to -1 / 0 / +1
+- [ ] Curve/function output for `:mode` — snap to integer 0–7
+
+_Compiler — `parseMacroSpec` refactor:_
+
+- [x] `:macro :vel` parsed via `parseVelMacroSpec` (current, pre-unification)
+- [x] `:macro :pitch` parsed via `parseCurveSpec` (current, single curve only)
+- [ ] Unify into single `parseMacroSpec(node, target)` covering all forms + all targets
+- [ ] `collectDefs` emits unified `{ tag: "macro", target, spec }` for all `:macro` defs
+
+_Compiler — per-target gaps (after unification):_
+
+- [ ] `:macro :pitch` step-vector `[0 -100 :loop -200 :release 0]`
+- [ ] `:macro :pan` step-vector + curve
+- [ ] `:macro :mode` step-vector + curve
+- [ ] `:macro` FM operator params (`:tl1`–`:tl4`, `:ar1`–`:ar4`, etc.)
+- [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))`
+- [ ] `:macro [list]` use-site macro array/list merge
 - [ ] `:extends` — compile-time FM voice inheritance
-- [ ] `(wait N)` / `(wait Nf)` / `(wait key-off)` pause stage (inside multi-stage)
 - [ ] `len=0` hold note (KEY_OFF driven by runtime `key_off_flags`)
 
 **PSG Noise**
@@ -149,9 +177,15 @@ Phase 3 entry condition:
 - [x] `PARAM_SET NOTE_PITCH` → store `pitchOffset` + immediate register write
 - [x] `PARAM_SWEEP NOTE_PITCH` → 60 Hz frame-loop register writes
 - [x] NOTE_ON applies stored `pitchOffset` (cents)
-- [x] `_scheduleFmPitchMacro` — per-note KEY-ON curve interpolation
-- [x] `_scheduleFmVelMacro` — step-vector + curve
-- [x] Gate (`ev.args.gate`) applied to FM key-off timing and vel-macro gate boundary
+- [x] `_scheduleFmPitchMacro` — single-curve interpolation (current, pre-unification)
+- [x] `_scheduleFmVelMacro` — step-vector + curve (current, pre-unification)
+- [x] FM vel macro — sustain loop (`:loop`) / release tail (`:release`)
+- [x] Gate applied to FM key-off timing and macro gate boundary
+- [ ] Unify into `_scheduleMacro(target, spec, write_fn, when, gate)` — replaces both schedulers
+- [ ] FM: `_scheduleMacro` covers pitch + vel + pan + op params with unified step/curve/multi-stage logic
+- [ ] FM macro: `_` hold token (advance 1 frame, skip write)
+- [ ] FM macro: multi-stage sequential execution (each stage runs its own `:len`)
+- [ ] FM macro: `(wait key-off)` — loop stage until gate, then continue
 - [ ] `MASTER` → recalculate all carrier TL values
 - [ ] `:glide` PARAM_SWEEP handling (expected to work via existing PARAM_SWEEP path)
 
@@ -161,9 +195,12 @@ Phase 3 entry condition:
 - [x] `PARAM_SET NOTE_PITCH` → store `_psgPitchOffset` + immediate write
 - [x] `PARAM_SWEEP NOTE_PITCH` → 60 Hz frame-loop writes
 - [x] NOTE_ON applies `_psgPitchOffset`
-- [x] `_schedulePsgPitchMacro`
-- [x] `_schedulePsgVelMacro` — step-vector + curve
-- [x] Gate (`ev.args.gate`) applied to PSG note-off timing and vel-macro gate boundary
+- [x] `_schedulePsgPitchMacro` — single-curve interpolation (current, pre-unification)
+- [x] `_schedulePsgVelMacro` — step-vector + curve (current, pre-unification)
+- [x] PSG vel macro — sustain loop (`:loop`) / release tail (`:release`)
+- [x] Gate applied to PSG note-off timing and macro gate boundary
+- [ ] Share `_scheduleMacro` with FM (PSG provides its own `write_fn`)
+- [ ] PSG macro: `_` hold token, multi-stage, `(wait key-off)` — via unified scheduler
 - [ ] `NOISE_MODE` event handling (noise FB+NF register writes)
 - [ ] `MASTER` → PSG attenuation recalculation
 
@@ -173,22 +210,57 @@ Phase 3 entry condition:
 
 - [x] Migrate `(def bd/sd/hh :psg [...])` → `(def bd/sd/hh :macro :vel [...])`
 - [x] `(def down :macro :pitch ...)` updated to cents unit (`:to -2400`)
-- [ ] Migrate demo2
+- [x] Add multi-stage `:macro :pitch` examples to spec v0.4 (`syntom-pitch`, `vib-entry`)
+- [x] Retire demo2 example and keep demo set on `demo1`
 
 ---
 
 #### Remaining Tasks (priority order)
 
-1. `:glide` emit (compiler)
-2. `MASTER` player implementation (FM + PSG)
-3. `:mode` / `NOISE_MODE` (compiler + player)
-4. `:vol (curve ...)` inline form
-5. `:macro` multi-stage / multi-target
-6. `:macro [list]` use-site merge
-7. `:extends`
-8. `(wait)` / `len=0`
-9. Migrate demo2
-   | v0.5 | planned | — | FM3 independent-OP mode, CSM, PCM/DAC |
+Macro refactor first (unblocks all downstream macro features):
+
+1. **Unify** `parseMacroSpec` in compiler (covers all targets, all input forms)
+2. **Unify** `_scheduleMacro(target, spec, write_fn, when, gate)` in player (FM + PSG share)
+3. `_` hold token \u2014 advance 1 frame, skip write (falls out of unified scheduler)
+4. Multi-stage sequential execution (falls out of unified scheduler)
+5. `(wait key-off)` release stage (falls out of unified scheduler)
+
+Then per-target gaps unlocked by the refactor:
+
+6. `:macro :pitch` step-vector + `:loop` / `:release`
+7. `:macro :pan` step-vector + curve with snap
+8. `:macro :mode` step-vector + curve with snap; emit `NOISE_MODE` per step
+9. `:macro` FM operator params (`:tl1`\u2013`:tl4` etc.)
+
+Other:
+
+10. `:glide` emit (compiler)
+11. `MASTER` player implementation (FM + PSG)
+12. `:vol (curve ...)` inline form
+13. `:macro` multi-target (compiler)
+14. `:macro [list]` use-site merge
+15. `:extends`
+16. `len=0` hold note
+
+**Open design gap — phrase-level (channel-continuous) modulation:**
+
+`:macro :pitch` is KEY-ON scoped: the curve restarts from phase 0 on every NOTE_ON.
+`PARAM_SWEEP NOTE_PITCH` is tick-positioned and plays once.
+Neither supports a vibrato/LFO that runs continuously across note boundaries without resetting.
+
+What is needed but not yet designed:
+
+- A channel-level modulation command that starts an oscillation at a given tick and keeps
+  running independently of subsequent NOTE_ON events (phase is not reset per note).
+- Syntax candidates: `(lfo :pitch :rate 8f :depth 100)` as a channel-body statement;
+  or a `PARAM_LFO` IR event separate from `PARAM_SWEEP`.
+- A matching stop command (or implicit stop at the end of the pattern/loop).
+- The player scheduler must maintain per-channel LFO state and add the LFO offset on top
+  of the note's base pitch at each F-number write, independent of the note macro.
+
+This is unblocked only after the `_scheduleMacro` unification (task 2 above) settles
+the per-note scheduling contract, so the channel-level path can be defined cleanly alongside it.
+    | v0.5 | planned | — | FM3 independent-OP mode, CSM, PCM/DAC |
 
 ## Backlog
 

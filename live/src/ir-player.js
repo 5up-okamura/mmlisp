@@ -14,6 +14,8 @@
  * which in practice posts messages to the AudioWorklet.
  */
 
+import { clampForTarget } from "./macro-ranges.js";
+
 // ---------------------------------------------------------------------------
 // Pitch → MIDI note
 // ---------------------------------------------------------------------------
@@ -298,7 +300,7 @@ export class IRPlayer {
     this._onParam = null; // (chIndex, target, value) => void — called when a param event plays
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
-    // Per-channel register state (for incremental PARAM_ADD)
+    // Per-channel register state for param application
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
 
     // Global YM2612 state
@@ -399,6 +401,7 @@ export class IRPlayer {
     this._buildModulatorMap();
     for (const t of this._tracks) {
       t.audioTimeAtTick0 = this._startAudioTime;
+      t.startAudioTime = this._startAudioTime;
       t.loopCount = 0;
       t.flatIndex = 0;
     }
@@ -630,7 +633,7 @@ export class IRPlayer {
     this._onTick = fn;
   }
 
-  /** Register a callback fired (approximately) when each PARAM_SET/PARAM_ADD event plays. */
+  /** Register a callback fired (approximately) when each PARAM_SET event plays. */
   setOnParam(fn) {
     this._onParam = fn;
   }
@@ -711,9 +714,10 @@ export class IRPlayer {
           track.flatIndex++;
         }
 
-        // Per-track independent loop restart
+        // Per-track independent loop restart (only if source defines a loop)
         if (
           this._loop &&
+          track.hasLoop &&
           track.events.length > 0 &&
           track.flatIndex >= track.events.length
         ) {
@@ -729,9 +733,10 @@ export class IRPlayer {
       }
     }
 
-    // Stop scheduler only when all tracks exhausted in non-loop mode
+    // Stop scheduler when no track will loop further and all are exhausted
+    const willLoopAny = this._loop && this._tracks.some((t) => t.hasLoop);
     if (
-      !this._loop &&
+      !willLoopAny &&
       this._tracks.every((t) => t.flatIndex >= t.events.length)
     ) {
       return;
@@ -783,7 +788,11 @@ export class IRPlayer {
         if (events[i].cmd === "JUMP") {
           const to = events[i].args?.to ?? null;
           const targetTick = to !== null ? (markerTicks.get(to) ?? -1) : -1;
-          if (targetTick >= 0 && targetTick <= events[i].tick && targetTick < bestTargetTick) {
+          if (
+            targetTick >= 0 &&
+            targetTick <= events[i].tick &&
+            targetTick < bestTargetTick
+          ) {
             bestTargetTick = targetTick;
             jumpTick = events[i].tick;
             jumpTarget = to;
@@ -808,9 +817,7 @@ export class IRPlayer {
       // Truncate events after the backward JUMP so post-loop branch sections
       // (e.g. event-recovery #recover) are not played in normal linear flow.
       const trimmedEvents =
-        jumpTick >= 0
-          ? events.filter((ev) => ev.tick <= jumpTick)
-          : events;
+        jumpTick >= 0 ? events.filter((ev) => ev.tick <= jumpTick) : events;
 
       let loopStartIndex = 0;
       for (let i = 0; i < trimmedEvents.length; i++) {
@@ -836,6 +843,7 @@ export class IRPlayer {
         loopDuration,
         loopStartTick,
         loopStartIndex,
+        hasLoop: jumpTick >= 0,
         flatIndex: 0,
         audioTimeAtTick0: 0,
         loopCount: 0,
@@ -1076,8 +1084,7 @@ export class IRPlayer {
         break;
       }
 
-      case "PARAM_SET":
-      case "PARAM_ADD": {
+      case "PARAM_SET": {
         this._applyParam(ch, port, chOffset, ev, when);
         break;
       }
@@ -1109,14 +1116,12 @@ export class IRPlayer {
   _applyParam(ch, port, chOffset, ev, when) {
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
-    const isAdd = ev.cmd === "PARAM_ADD";
-    const value = isAdd ? (ev.args?.delta ?? 0) : (ev.args?.value ?? 0);
+    const value = ev.args?.value ?? 0;
     let nextValue = null;
 
     // Helper to clamp and apply
     const set = (get, apply, min, max) => {
-      const cur = get();
-      const next = Math.max(min, Math.min(max, isAdd ? cur + value : value));
+      const next = Math.max(min, Math.min(max, value));
       apply(next);
       nextValue = next;
     };
@@ -1257,10 +1262,7 @@ export class IRPlayer {
         this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
         break;
       case "LFO_RATE": {
-        const rate = Math.max(
-          0,
-          Math.min(8, isAdd ? (this._lfoRate ?? 0) + value : value),
-        );
+        const rate = Math.max(0, Math.min(8, value));
         this._lfoRate = rate;
         // 0 = disable (0x00); 1-8 = enable + rate (0x08 | rate-1)
         const regVal = rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07);
@@ -1380,7 +1382,7 @@ export class IRPlayer {
       case "NOTE_PITCH": {
         // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
         const baseMidi = regs.currentMidi ?? 60;
-        const centOffset = isAdd ? (regs.pitchOffset ?? 0) + value : value;
+        const centOffset = value;
         regs.pitchOffset = centOffset;
         const { fnum: pf, block: pb } = midiToFnumBlock(
           baseMidi + centOffset / 100,
@@ -1400,10 +1402,7 @@ export class IRPlayer {
         // vol 0-31 (31=max, 0=silent). Apply to carrier operators so volume
         // changes preserve timbre similarly to classic FM driver behavior.
         // TL = (31 - vol) * 4, clamped to 0-127.
-        const vol = Math.max(
-          0,
-          Math.min(31, isAdd ? (regs.vol ?? 31) + value : value),
-        );
+        const vol = Math.max(0, Math.min(31, value));
         regs.vol = vol;
         const tl = Math.max(0, Math.min(127, (31 - vol) * 4));
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
@@ -1432,29 +1431,49 @@ export class IRPlayer {
     }
   }
 
-  _resolveSweepBudgetFrames(ev) {
+  _resolveSweepEndTick(ev) {
     const trackIndex = ev._trackIndex;
-    if (trackIndex == null) return Math.max(1, ev.args?.frames ?? 1);
+    if (trackIndex == null) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
 
     const track = this._tracks[trackIndex];
-    if (!track) return Math.max(1, ev.args?.frames ?? 1);
+    if (!track) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
 
     const target = (ev.args?.target ?? "").toUpperCase();
-    let endTick = ev.tick + (track.loopDuration ?? 1);
+    const loopDuration = track.loopDuration ?? 1;
+    const loopStartTick = track.loopStartTick ?? 0;
+    const jumpTick = loopStartTick + loopDuration;
+    const isLoopCurve = !!ev.args?.loop;
+
+    // Default sweep horizon is one structural loop. If sweep starts in the intro
+    // section (before loopStartTick), it must at least survive until first jump.
+    let endTick =
+      track.hasLoop && ev.tick < loopStartTick
+        ? jumpTick
+        : ev.tick + loopDuration;
+    let hasExplicitStop = false;
 
     for (let i = track.flatIndex + 1; i < track.events.length; i++) {
       const nextEv = track.events[i];
       if ((nextEv.args?.target ?? "").toUpperCase() !== target) continue;
-      if (
-        nextEv.cmd === "PARAM_SET" ||
-        nextEv.cmd === "PARAM_ADD" ||
-        nextEv.cmd === "PARAM_SWEEP"
-      ) {
+      if (nextEv.cmd === "PARAM_SET" || nextEv.cmd === "PARAM_SWEEP") {
         endTick = nextEv.tick;
+        hasExplicitStop = true;
         break;
       }
     }
 
+    // Looping curves (sin/triangle/square/saw/ramp) should not freeze at the
+    // first loop boundary when there is no explicit overwrite. Keep them alive
+    // for multiple loop iterations so channel-level LFO-style sweeps persist.
+    if (!hasExplicitStop && isLoopCurve && track.hasLoop) {
+      endTick = Math.max(endTick, jumpTick + loopDuration * 16);
+    }
+
+    return endTick;
+  }
+
+  _resolveSweepBudgetFrames(ev) {
+    const endTick = this._resolveSweepEndTick(ev);
     const secsPerTick = 60 / (this._bpm * this._ppqn);
     return Math.max(
       1,
@@ -1476,9 +1495,9 @@ export class IRPlayer {
     // vel 15 = full vol, vel 0 = silent.
     const velToTl = (v) => {
       const effectiveVol = Math.round(
-        (baseVol * Math.max(0, Math.min(15, v))) / 15,
+        (baseVol * clampForTarget("VEL", v)) / 15,
       );
-      return Math.max(0, Math.min(127, (31 - effectiveVol) * 4));
+      return clampForTarget("FM_TL", (31 - effectiveVol) * 4);
     };
 
     const writeTl = (tl, t) => {
@@ -1584,10 +1603,78 @@ export class IRPlayer {
     const baseFrames = Math.max(1, Number(ev.args?.frames ?? 1));
     const loop = !!ev.args?.loop;
     const budgetFrames = this._resolveSweepBudgetFrames(ev);
+    const endTick = this._resolveSweepEndTick(ev);
+    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+    const spansLoopBoundary =
+      track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
+    const loopPhaseOffset =
+      loop && spansLoopBoundary && track != null
+        ? track.loopCount * budgetFrames
+        : 0;
+
+    // NOTE_PITCH must follow later NOTE_ON base notes. If we precompute all frames
+    // against one base note, later notes are overwritten back toward an old pitch.
+    if (target === "NOTE_PITCH") {
+      const trackIndex = ev._trackIndex;
+      const track = trackIndex != null ? this._tracks[trackIndex] : null;
+      const secsPerTick = 60 / (this._bpm * this._ppqn);
+      const framesPerTick = secsPerTick * 60;
+
+      let baseMidi = this._chRegs[ch]?.currentMidi ?? 60;
+      let cursor = track ? track.flatIndex + 1 : 0;
+      let nextNoteTick = Infinity;
+      let nextNoteMidi = baseMidi;
+
+      const advanceNextNote = () => {
+        if (!track) {
+          nextNoteTick = Infinity;
+          return;
+        }
+        while (cursor < track.events.length) {
+          const ne = track.events[cursor++];
+          if (ne.cmd !== "NOTE_ON" || ne._isPsg) continue;
+          nextNoteTick = ne.tick;
+          nextNoteMidi = pitchToMidi(ne.args?.pitch ?? "c4");
+          return;
+        }
+        nextNoteTick = Infinity;
+      };
+
+      advanceNextNote();
+
+      for (let frame = 0; frame < budgetFrames; frame++) {
+        const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
+        while (frameTick >= nextNoteTick) {
+          baseMidi = nextNoteMidi;
+          advanceNextNote();
+        }
+
+        const phase = loop
+          ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
+          : baseFrames <= 1
+            ? 1
+            : Math.min(1, frame / (baseFrames - 1));
+        const unit = sampleCurveUnit(curve, phase);
+        const centOffset = Math.round(from + (to - from) * unit);
+        this._chRegs[ch].pitchOffset = centOffset;
+        const { fnum: pf, block: pb } = midiToFnumBlock(
+          baseMidi + centOffset / 100,
+        );
+        const frameWhen = when + frame / 60;
+        this._write(
+          port,
+          0xa4 + chOffset,
+          ((pb & 0x07) << 3) | ((pf >> 8) & 0x07),
+          frameWhen,
+        );
+        this._write(port, 0xa0 + chOffset, pf & 0xff, frameWhen);
+      }
+      return;
+    }
 
     for (let frame = 0; frame < budgetFrames; frame++) {
       const phase = loop
-        ? (frame % baseFrames) / baseFrames
+        ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
         : baseFrames <= 1
           ? 1
           : Math.min(1, frame / (baseFrames - 1));
@@ -1679,7 +1766,8 @@ export class IRPlayer {
     const noteDurSecs = gateTicks * secsPerTick;
     const noteOffWhen = noteWhen + noteDurSecs - 0.005;
     // Scale a 0-15 envelope step by baseVel/15
-    const scaleStep = (s) => Math.round(Math.max(0, Math.min(15, s)) * baseVel / 15);
+    const scaleStep = (s) =>
+      Math.round((Math.max(0, Math.min(15, s)) * baseVel) / 15);
 
     if (!env || env.subtype === "hard" || env.subtype === "fn") {
       // No envelope: set volume from vel then silence at note-off
@@ -1826,7 +1914,7 @@ export class IRPlayer {
     // vel 0-15 → PSG attenuation: vel 15=max(att=0), vel 0=silent(att=15)
     // baseVel scales the macro output: scaledVel = velVal * baseVel / 15
     const velToAtt = (v) => {
-      const scaled = Math.round(Math.max(0, Math.min(15, v)) * baseVel / 15);
+      const scaled = Math.round((clampForTarget("VEL", v) * baseVel) / 15);
       return 15 - scaled;
     };
 
@@ -1923,7 +2011,13 @@ export class IRPlayer {
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
         if (velMacro) {
-          this._schedulePsgVelMacro(psgCh, velMacro, when, psgGateTicks, baseVel);
+          this._schedulePsgVelMacro(
+            psgCh,
+            velMacro,
+            when,
+            psgGateTicks,
+            baseVel,
+          );
         } else {
           this._schedulePsgEnvelope(psgCh, env, when, psgGateTicks, baseVel);
         }
@@ -1934,7 +2028,6 @@ export class IRPlayer {
       case "PARAM_SWEEP": {
         const psgTarget = (ev.args?.target ?? "").toUpperCase();
         if (psgTarget === "NOTE_PITCH") {
-          const baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
           const from = Number(ev.args?.from ?? ev.args?.value ?? 0);
           const to = Number(ev.args?.to ?? from);
           const curve = ev.args?.curve ?? "linear";
@@ -1942,18 +2035,60 @@ export class IRPlayer {
           const loop = !!ev.args?.loop;
           const budgetFrames =
             ev.cmd === "PARAM_SWEEP" ? this._resolveSweepBudgetFrames(ev) : 1;
+          const endTick = this._resolveSweepEndTick(ev);
+          const trackIndex = ev._trackIndex;
+          const track = trackIndex != null ? this._tracks[trackIndex] : null;
+          const spansLoopBoundary =
+            track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
+          const loopPhaseOffset =
+            loop && spansLoopBoundary && track != null
+              ? track.loopCount * budgetFrames
+              : 0;
+          const secsPerTick = 60 / (this._bpm * this._ppqn);
+          const framesPerTick = secsPerTick * 60;
+          let baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
+          let cursor = track ? track.flatIndex + 1 : 0;
+          let nextNoteTick = Infinity;
+          let nextNoteMidi = baseMidi;
+
+          const advanceNextPsgNote = () => {
+            if (!track) {
+              nextNoteTick = Infinity;
+              return;
+            }
+            while (cursor < track.events.length) {
+              const ne = track.events[cursor++];
+              if (ne.cmd !== "NOTE_ON" || !ne._isPsg) continue;
+              if ((ne._psgCh ?? 0) !== psgCh) continue;
+              nextNoteTick = ne.tick;
+              nextNoteMidi = pitchToMidi(ne.args?.pitch ?? "c4");
+              return;
+            }
+            nextNoteTick = Infinity;
+          };
+
+          advanceNextPsgNote();
+
           // For PARAM_SET (single frame), update stored pitch offset
           if (ev.cmd === "PARAM_SET") {
             this._psgPitchOffset[psgCh] = from;
+          } else {
+            this._psgPitchOffset[psgCh] = to;
           }
           for (let frame = 0; frame < budgetFrames; frame++) {
+            const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
+            while (frameTick >= nextNoteTick) {
+              baseMidi = nextNoteMidi;
+              advanceNextPsgNote();
+            }
             const phase = loop
-              ? (frame % baseFrames) / baseFrames
+              ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
               : baseFrames <= 1
                 ? 1
                 : Math.min(1, frame / (baseFrames - 1));
             const unit = sampleCurveUnit(curve, phase);
             const centOffset = from + (to - from) * unit;
+            this._psgPitchOffset[psgCh] = centOffset;
             this._psgSetPitch(
               psgCh,
               baseMidi + centOffset / 100,

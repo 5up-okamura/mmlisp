@@ -44,7 +44,6 @@ const OPCODE = {
   MARKER: 0x42,
   JUMP: 0x43,
   PARAM_SET: 0x60,
-  PARAM_ADD: 0x61,
   TEMPO_SET: 0x80,
 };
 

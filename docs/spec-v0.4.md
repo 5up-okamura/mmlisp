@@ -40,7 +40,7 @@ of scope.
 | `def` reference / voice switch | `@name`                     | bare identifier `name`                                           |
 | Hardware param write           | `(set :tl1 30)`             | inline `:tl1 30` — same position as `:oct`/`:len`                |
 
-`[:fn ...]` wrapper is removed. Curve forms are `(curve-name :key val ...)` directly.
+`[:fn ...]` wrapper is removed. Curve forms are `(curve-name :from ... :to ... :len ...)` directly.
 `track` keyword and `:ch` option are removed. The channel name is the form head directly:
 `(fm1 :oct 4  c e g e)`, `(sqr1 :oct 3  c d e)`, `(noise :mode 7  x x x x)` etc.
 All state (`:oct`, `:len`, `:gate`, `:vel`, `:vol`, `:mode`, `:macro`, `:pitch`, etc.) is sticky — within a
@@ -66,7 +66,7 @@ their timeline tick.
 | `aNt` (e.g. `c14t`, `g+1t`)     | Note with exact tick count — BPM-independent; overrides `:len`      |
 | `_Nt` (e.g. `_14t`, `_1t`)      | Rest with exact tick count — BPM-independent; overrides `:len`      |
 | `~`                             | Tie                                                                 |
-| `:keyword`                      | Modifier or key-value pair                                          |
+| `:keyword`                      | Modifier or parameter pair                                          |
 | `(form ...)`                    | Structural form (`x`, `break`, curve, etc.)                         |
 | Any other identifier            | `def` reference — compiler resolves content                         |
 
@@ -115,7 +115,7 @@ body — no sequence wrapper.
 | `cN` (e.g. `c8`)       | Inline in note position                    | Note with explicit length; overrides `:len` for that note only     |
 | `_N` (e.g. `_8`)       | Inline in note position                    | Rest with explicit length; overrides `:len` for that rest only     |
 | `(notes...)`           | Inline when first element is a note        | Subgroup / tuplet — current `:len` distributed by Bresenham method |
-| `(curve-name ...)`     | After `:macro`; value of `:key` inline     | Curve spec                                                         |
+| `(curve-name ...)`     | After `:macro`; inline curve form          | Curve spec                                                         |
 | `[(stage1) (stage2)]`  | After `:macro`                             | Multi-stage macro                                                  |
 
 **Subgroup tick distribution — Bresenham method:**
@@ -157,10 +157,11 @@ Example: `:len 4` (48 ticks), 5 notes → `[9, 10, 9, 10, 10]` (total = 48).
 ; total always equals parent :len; max per-note error is 1 tick (< 1/60 s, inaudible)
 (fm1 :len 4  (c e g a b))
 
-; single-stage envelope
+; single-stage envelope (:pitch values are cents; -4800 = -4 octaves)
 (def syntom-pitch :macro :pitch (ease-out :from 0 :to -4800 :len 8))
 
 ; Multi-stage macro ([...] retained after :macro only — data vector, not note sequence)
+; cents again: -1200 = -1 octave, +/-1000 = +/-10 semitones
 (def vib-entry :macro :pitch
   [(ease-in :from -1200 :to 0 :len 16)
    (sin    :from -1000 :to 1000 :len 8)])
@@ -197,9 +198,9 @@ the v0.4 compiler.
 
 ### 1.4 Inline parameter writes
 
-**Decided: inline `:key val` for all parameter writes. `(set ...)` and `param-set` are removed.**
+**Decided: inline `:<target> value` for all parameter writes. `(set ...)` and `param-set` are removed.**
 
-Hardware parameter writes use the same `:key val` syntax as note modifiers.
+Hardware parameter writes use the same `:<target> value` syntax as note modifiers.
 The compiler distinguishes them by key name:
 
 | Key class       | Examples                                                     | Compile behaviour                                                                                                        |
@@ -210,6 +211,17 @@ The compiler distinguishes them by key name:
 
 All hardware parameter values are **absolute** (register value written directly).
 Relative/delta notation (e.g. `:tl1 +5`) is not supported.
+
+`PARAM_SWEEP` trigger scope:
+
+- Inline curve writes such as `:alg (sin ...)`, `:fb (triangle ...)`, `:pitch (sin ...)` are **timeline-driven**.
+- They are **not** KEY-ON scoped. The curve starts at that tick and continues by channel time.
+- A later write on the same target (`PARAM_SET` or another `PARAM_SWEEP`) overrides and ends the previous sweep.
+- Loop waveforms (`sin`, `triangle`, `square`, `saw`, `ramp`) are treated as periodic and continue across phrase/track loops unless explicitly overwritten.
+
+This model is intentionally different from `:macro :vel` / `:macro :pitch` attached to `NOTE_ON`, which are KEY-ON scoped.
+
+`PARAM_ADD` in v0.4 is out of scope for authoring and runtime semantics in this document.
 
 ```lisp
 (fm1 :oct 4 :len 8
@@ -388,7 +400,7 @@ Useful for filter-style TL sweeps, cross-section pitch glides, synth-pad
 slow attacks, or track-position-locked LFOs driven from the track timeline
 rather than per-note.
 
-**Authoring syntax** — inline `:key curve-form` (same position as any `:key val`):
+**Authoring syntax** — inline `:<target> curve-form` (same position as any `:<target> value`):
 
 ```lisp
 ; one-shot: TL sweep over one 8th note
@@ -396,7 +408,7 @@ rather than per-note.
   :tl2 (ease-out :from 28 :to 20 :len 8)
   c e g e)
 
-; one-shot: pitch glide between sections
+; one-shot: pitch glide between sections (+1200 = +1 octave, in cents)
 (fm1 :oct 4 :len 4
   :pitch (linear :from 0 :to 1200 :len 4)
   c d e  :pitch 0  f g)
@@ -772,7 +784,7 @@ Rules:
 **Multi-stage macros** — a vector of `(curve ...)` forms, providing sequential
 stages on one target. `[...]` is **required** to delimit the stage list; without
 it, in a multi-target def, a second `(curve ...)` form would be ambiguous (another
-stage, or the value of the next `:key`?). The `[...]` wrapper makes stage count
+stage, or the value of the next target key?). The `[...]` wrapper makes stage count
 explicit at the parser level.
 
 ```lisp
@@ -803,7 +815,7 @@ without using the step-vector form:
 ```
 
 **Multi-target macro** — a single `def :macro` can drive multiple parameters
-simultaneously by listing multiple `:key (curve ...)` pairs:
+simultaneously by listing multiple `:<target> (curve ...)` pairs:
 
 ```lisp
 ; two TL parameters simultaneously
@@ -819,7 +831,7 @@ simultaneously by listing multiple `:key (curve ...)` pairs:
 
 **Macro list — `:macro [...]`** — multiple macro entries can be combined at the
 use site by passing a vector. Each element is either a **named def** or an
-**inline `:key curve` pair** written directly in the list. All targets are merged
+**inline `:<target> curve` pair** written directly in the list. All targets are merged
 and run simultaneously from KEY-ON. If two entries target the same lane, the
 **last one wins**.
 
@@ -860,7 +872,7 @@ the same key. Stage N begins only after stage N−1 completes (`frames` elapsed)
 If stage N−1 is a loop waveform, it loops indefinitely and stage N is never
 reached — use this to model an attack → sustain-loop pattern.
 
-**Contrast with multi-target:** listing multiple `:key (curve ...)` pairs in one
+**Contrast with multi-target:** listing multiple `:<target> (curve ...)` pairs in one
 `def :macro` runs all targets **simultaneously** from KEY-ON — each on its own
 independent timeline. Multi-stage (sequential) and multi-target (simultaneous)
 compose freely: each target key can independently carry a single curve or a
