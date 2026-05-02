@@ -1492,6 +1492,45 @@ export class IRPlayer {
   _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn) {
     if (!spec) return null;
 
+    if (spec.type === "stages") {
+      const { stages } = spec;
+      if (!stages || stages.length === 0) return null;
+
+      let t = when;
+      for (const stage of stages) {
+        if (stage.waitKeyOff) {
+          // Jump time cursor to gate boundary, then continue with next stage
+          t = Math.max(t, gateSecs);
+          continue;
+        }
+        if (stage.waitFrames != null) {
+          t += stage.waitFrames / 60;
+          continue;
+        }
+        // Regular curve stage
+        const {
+          curve = "linear",
+          from = 0,
+          to = 0,
+          frames: rawFrames = 1,
+          loop = false,
+        } = stage;
+        const baseFrames = Math.max(1, Number(rawFrames));
+        // For looping stages, run until gate (or next key-off boundary)
+        const budget = loop ? Math.max(0, Math.floor((gateSecs - t) * 60)) : baseFrames;
+        for (let frame = 0; frame < budget; frame++) {
+          const phase = loop
+            ? (frame % baseFrames) / baseFrames
+            : baseFrames <= 1
+              ? 1
+              : Math.min(1, frame / (baseFrames - 1));
+          writeFn(from + (to - from) * sampleCurveUnit(curve, phase), t + frame / 60);
+        }
+        t += budget / 60;
+      }
+      return t;
+    }
+
     if (spec.type === "curve") {
       const { from, to, frames: rawFrames = 1, loop, curve = "linear" } = spec;
       const baseFrames = Math.max(1, Number(rawFrames));

@@ -161,16 +161,45 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, pitchMacro, velMacro) {
  * Steps are clamped with clampForTarget(target, n) — works for any target.
  * Returns { type: "steps", steps, loopIndex, releaseIndex }
  *      or { type: "curve", ...curveSpec }
+ *      or { type: "stages", stages: [...] }  (multi-stage sequential)
  * or null if the node cannot be parsed.
  */
 function parseMacroSpec(node, target) {
   if (!node) return null;
-  // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0]
+  // Step-vector or multi-stage form: [...]
   if (node.kind === "list" && node.bracket === "[]") {
+    const items = node.items.filter((n) => n.kind !== "comment");
+
+    // If all items are () expressions, treat as multi-stage sequential
+    const allExprs = items.length > 0 && items.every(
+      (it) => it.kind === "list" && it.bracket === "(",
+    );
+    if (allExprs) {
+      const stages = [];
+      for (const stageNode of items) {
+        const head = atomValue(stageNode.items?.[0]);
+        if (head === "wait") {
+          // (wait key-off) or (wait N) or (wait Nf)
+          const arg = atomValue(stageNode.items?.[1]);
+          if (arg === "key-off") {
+            stages.push({ waitKeyOff: true });
+          } else {
+            const f = parseIntLike(arg);
+            stages.push({ waitFrames: f ?? 1 });
+          }
+          continue;
+        }
+        const curveSpec = parseCurveSpec(stageNode);
+        if (curveSpec) stages.push(curveSpec);
+      }
+      return { type: "stages", stages };
+    }
+
+    // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0 _ ...]
     const steps = [];
     let loopIndex = null;
     let releaseIndex = null;
-    for (const item of node.items.filter((n) => n.kind !== "comment")) {
+    for (const item of items) {
       const val = atomValue(item);
       if (val === ":loop") {
         loopIndex = steps.length;
