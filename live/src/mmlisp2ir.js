@@ -181,7 +181,11 @@ function parseMacroSpec(node, target) {
         continue;
       }
       const n = parseIntLike(val);
-      if (n !== null) steps.push(clampForTarget(target, n));
+      if (n !== null) {
+        steps.push(clampForTarget(target, n));
+      } else if (val === "_") {
+        steps.push(null); // hold: advance 1 frame, no write
+      }
     }
     return { type: "steps", steps, loopIndex, releaseIndex };
   }

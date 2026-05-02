@@ -221,7 +221,7 @@ Macro refactor first (unblocks all downstream macro features):
 
 1. ~~**Unify** `parseMacroSpec` in compiler (covers all targets, all input forms)~~ (done)
 2. ~~**Unify** `_scheduleMacro(target, spec, write_fn, when, gate)` in player (FM + PSG share)~~ (done)
-3. `_` hold token \u2014 advance 1 frame, skip write (falls out of unified scheduler)
+3. ~~`_` hold token — advance 1 frame, skip write (falls out of unified scheduler)~~ (done)
 4. Multi-stage sequential execution (falls out of unified scheduler)
 5. `(wait key-off)` release stage (falls out of unified scheduler)
 

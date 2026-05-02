@@ -1520,7 +1520,7 @@ export class IRPlayer {
       let t = when;
       let idx = 0;
       while (t < gateSecs) {
-        writeFn(steps[idx] ?? 0, t);
+        if (steps[idx] !== null && steps[idx] !== undefined) writeFn(steps[idx], t);
         idx++;
         if (idx >= sustainEnd) {
           if (loopIndex !== null) {
@@ -1536,7 +1536,7 @@ export class IRPlayer {
       if (releaseIndex !== null && releaseIndex < steps.length) {
         t = gateSecs;
         for (let ri = releaseIndex; ri < steps.length; ri++) {
-          writeFn(steps[ri], t);
+          if (steps[ri] !== null && steps[ri] !== undefined) writeFn(steps[ri], t);
           t += 1 / 60;
         }
         return t; // time after last release write
