@@ -1449,6 +1449,18 @@ export class IRPlayer {
         break;
       }
 
+      case "MODE": {
+        // Noise mode (PSG noise control) — bits 5-3 (FB + NF)
+        // Values 0-7 directly map to SN76489 noise register bits 5-3
+        const mode = Math.max(0, Math.min(7, value));
+        if (ch === 2) {
+          // PSG noise channel
+          this._psgSetNoiseCfg(mode, when);
+        }
+        nextValue = mode;
+        break;
+      }
+
       default:
         break;
     }
@@ -1807,6 +1819,16 @@ export class IRPlayer {
   _psgSetAtt(psgCh, attReg, when) {
     // Latch byte: 1 | ch(2) | r=1(att) | att(4)
     const byte = 0x80 | ((psgCh & 0x03) << 5) | 0x10 | (attReg & 0x0f);
+    this._psgWriteByte(byte, when);
+  }
+
+  // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
+  // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
+  _psgSetNoiseCfg(modeVal, when) {
+    // Latch byte: 1 | ch=3(2) | r=0(noise) | FB+NF(3) | extra(1)
+    // Format: 1 | 11 | 0 | NF(2) | FB(1) | X(1)
+    // Shifts to: bits 5-3 in final register
+    const byte = 0x80 | (0x03 << 5) | ((modeVal & 0x07) << 0);
     this._psgWriteByte(byte, when);
   }
 

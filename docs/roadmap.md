@@ -229,7 +229,7 @@ Then per-target gaps unlocked by the refactor:
 
 6. ~~`:macro :pitch` step-vector + `:loop` / `:release`~~ (done — falls out of unified parseMacroSpec/scheduleMacro)
 7. ~~`:macro :pan` step-vector + curve with snap~~ (done)
-8. `:macro :mode` step-vector + curve with snap; emit `NOISE_MODE` per step
+8. ~~`:macro :mode` step-vector + curve with snap; emit `NOISE_MODE` per step~~ (done)
 9. `:macro` FM operator params (`:tl1`\u2013`:tl4` etc.)
 
 Other:

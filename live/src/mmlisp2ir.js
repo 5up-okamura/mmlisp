@@ -69,6 +69,20 @@ const CURVE_NAMES = new Set([
 // Loop waveforms produce PARAM_SWEEP with loop:true; easing/linear produce loop:false
 const LOOP_CURVE_NAMES = new Set(["sin", "triangle", "square", "saw", "ramp"]);
 
+// PSG noise mode symbols — white0-3 and periodic0-3 map to FB + NF bits
+// white:    FB=1, NF varies: 00/01/10/11 → white0/1/2/3
+// periodic: FB=0, NF varies: 00/01/10/11 → periodic0/1/2/3
+const NOISE_MODE_MAP = {
+  white0: 0b1_00, // 4
+  white1: 0b1_01, // 5
+  white2: 0b1_10, // 6
+  white3: 0b1_11, // 7
+  periodic0: 0b0_00, // 0
+  periodic1: 0b0_01, // 1
+  periodic2: 0b0_10, // 2
+  periodic3: 0b0_11, // 3
+};
+
 function atomValue(node) {
   if (!node) return null;
   if (node.kind === "atom" || node.kind === "string") return node.value;
@@ -198,6 +212,7 @@ function parseMacroSpec(node, target) {
     }
 
     // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0 _ ...]
+    // For MODE target, also accept noise mode symbols (white0-3, periodic0-3)
     const steps = [];
     let loopIndex = null;
     let releaseIndex = null;
@@ -211,7 +226,10 @@ function parseMacroSpec(node, target) {
         releaseIndex = steps.length;
         continue;
       }
-      const n = parseIntLike(val);
+      let n = parseIntLike(val);
+      if (n === null && target === "MODE" && val in NOISE_MODE_MAP) {
+        n = NOISE_MODE_MAP[val];
+      }
       if (n !== null) {
         steps.push(clampForTarget(target, n));
       } else if (val === "_") {
