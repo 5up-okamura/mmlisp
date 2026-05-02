@@ -1,0 +1,8 @@
+(def fm-tremolo :macro :tl1 (triangle :from 0 :to 3 :len 8))
+
+(score
+  (tempo 120)
+  (fm1 :macro fm-tremolo
+    c4 d4 e4 f4
+  )
+)

@@ -160,14 +160,26 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
-function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, pitchMacro, velMacro) {
+function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
   // v0.4: vel is KEY-ON scoped; only emit when non-default (15)
   if (vel !== undefined && vel !== 15) args.vel = vel;
-  if (pitchMacro) args.pitchMacro = { ...pitchMacro };
-  if (velMacro) args.velMacro = { ...velMacro };
+  // v0.4: embed all active macros
+  if (activeMacros && Object.keys(activeMacros).length > 0) {
+    for (const [target, spec] of Object.entries(activeMacros)) {
+      // Legacy naming: NOTE_PITCH → pitchMacro, VEL → velMacro
+      // New targets: FM_TL1 → fm_tl1, etc. (snake_case)
+      if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
+      else if (target === "VEL") args.velMacro = { ...spec };
+      else {
+        // Convert UPPER_CASE target to snake_case for IR embedding
+        const key = target.toLowerCase();
+        args[key] = { ...spec };
+      }
+    }
+  }
   return args;
 }
 
@@ -703,23 +715,40 @@ function compileChannelBody(
               break;
             }
             case ":macro": {
-              // :macro :pitch (curve...) or :macro :vel ([steps...]/curve...)
-              // rawVal is ":pitch" or ":vel"; items[i+1] is the spec node.
-              const macroTarget = rawVal;
-              if (i + 1 < items.length) {
-                const specNode = items[i + 1];
-                const irTarget = canonicalTarget(macroTarget);
-                const spec = parseMacroSpec(specNode, irTarget);
-                if (spec) {
-                  if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
-                  else if (irTarget === "VEL") trackState.activeVelMacro = spec;
-                  // future targets: add here
+              // Two forms:
+              // 1) :macro def-name — reference a previously defined macro
+              // 2) :macro :target spec — inline macro specification
+              // rawVal is the value of the :macro keyword pair (i.e., items[i] when we enter switch)
+              
+              if (rawVal?.startsWith(":")) {
+                // Form 2: inline :target spec
+                // rawVal is the target (":pitch", ":tl1", etc.)
+                // items[i + 1] is the spec node
+                const macroTarget = rawVal;
+                if (i + 1 < items.length) {
+                  const specNode = items[i + 1];
+                  const irTarget = canonicalTarget(macroTarget);
+                  const spec = parseMacroSpec(specNode, irTarget);
+                  if (spec && SUPPORTED_TARGETS.has(irTarget)) {
+                    trackState.activeMacros[irTarget] = spec;
+                    if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
+                    else if (irTarget === "VEL") trackState.activeVelMacro = spec;
+                  }
+                  // Consume spec node: outer loop will do i++, we need one more
+                  i++;
                 }
-                i++; // advance past spec node; outer i++ skips the :pitch/:vel token
+              } else if (rawVal && typedDefs?.has(rawVal)) {
+                // Form 1: reference to def macro
+                // rawVal is the def-name
+                const td = typedDefs.get(rawVal);
+                if (td?.tag === "macro") {
+                  trackState.activeMacros[td.target] = td.spec;
+                  if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
+                  else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
+                }
               }
               break;
             }
-            case ":break":
               // :break inside (x N ...) — emit LOOP_BREAK linked to current loop
               // Note: :break as atom (not keyword pair) is handled separately;
               // here it appears as ":break" key with a dummy value consumed
@@ -861,8 +890,7 @@ function compileChannelBody(
             perNoteTicks,
             trackState.defaultGate,
             trackState.defaultVel,
-            trackState.activePitchMacro,
-            trackState.activeVelMacro,
+            trackState.activeMacros,
           ),
           src: nodeSrc(node),
         });
@@ -882,8 +910,7 @@ function compileChannelBody(
             ticks,
             trackState.defaultGate,
             trackState.defaultVel,
-            trackState.activePitchMacro,
-            trackState.activeVelMacro,
+            trackState.activeMacros,
           ),
           src: nodeSrc(node),
         });
@@ -896,9 +923,11 @@ function compileChannelBody(
       if (typedDefs?.has(val)) {
         const td = typedDefs.get(val);
         if (td?.tag === "macro") {
+          // v0.4: unified macro map
+          trackState.activeMacros[td.target] = td.spec;
+          // v0.4: legacy support for direct field access
           if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
           else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
-          // future targets: add here
         } else {
           emitVoice(td, trackState.tick, events, nodeSrc(node));
         }
@@ -950,8 +979,7 @@ function compileChannelBody(
                 slotTicks,
                 trackState.defaultGate,
                 trackState.defaultVel,
-                trackState.activePitchMacro,
-                trackState.activeVelMacro,
+                trackState.activeMacros,
               ),
               src: nodeSrc(ev),
             });
@@ -965,8 +993,7 @@ function compileChannelBody(
                 slotTicks,
                 trackState.defaultGate,
                 trackState.defaultVel,
-                trackState.activePitchMacro,
-                trackState.activeVelMacro,
+                trackState.activeMacros,
               ),
               src: nodeSrc(ev),
             });
@@ -2094,8 +2121,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultGate,
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
-        activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON
-        activeVelMacro: null, // v0.4: KEY-ON scoped vel macro attached to NOTE_ON
+        activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON (legacy)
+        activeVelMacro: null, // v0.4: KEY-ON scoped vel macro attached to NOTE_ON (legacy)
+        activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
         glide: 0, // v0.4: glide duration in frames (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
         shuffleRatio,
