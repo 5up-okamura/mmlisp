@@ -202,7 +202,7 @@ _Compiler — per-target gaps (after unification):_
 - [x] Share `_scheduleMacro` with FM (PSG provides its own `write_fn`)
 - [x] PSG macro: `_` hold token, multi-stage, `(wait key-off)` — via unified scheduler
 - [x] `NOISE_MODE` event handling (noise FB+NF register writes)
-- [ ] `MASTER` → PSG attenuation recalculation
+- [x] `MASTER` → PSG attenuation recalculation
 
 ---
 
