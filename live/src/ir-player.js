@@ -17,25 +17,6 @@
 import { clampForTarget } from "./macro-ranges.js";
 
 // ---------------------------------------------------------------------------
-// Bit manipulation helper
-// ---------------------------------------------------------------------------
-/**
- * Update a portion of a byte/word by value and mask.
- * Clears the masked bits, then sets them to (newValue & mask) shifted by shiftBits.
- *
- * @param {number} currentValue - the current register value
- * @param {number} newValue     - the new value to insert
- * @param {number} mask         - bit mask for the new value (before shift)
- * @param {number} shiftBits    - left shift amount
- * @returns {number} updated value
- */
-function updateBits(currentValue, newValue, mask, shiftBits) {
-  return (
-    (currentValue & ~(mask << shiftBits)) | ((newValue & mask) << shiftBits)
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Pitch → MIDI note
 // ---------------------------------------------------------------------------
 const NOTE_NAMES = [
@@ -419,7 +400,12 @@ export class IRPlayer {
     return this;
   }
 
-  _resolveInitialTempo(irObj) {
+  /** Seconds per PPQN tick at the current tempo. */
+  get _secsPerTick() {
+    return 60 / (this._bpm * this._ppqn);
+  }
+
+    _resolveInitialTempo(irObj) {
     // Prefer an explicit tempo event at tick 0 so scheduling starts at the
     // intended BPM on the very first loop.
     for (const track of irObj?.tracks ?? []) {
@@ -510,7 +496,7 @@ export class IRPlayer {
     if (!this._playing || this._tracks.length === 0) return 0;
     const t0 = this._tracks[0];
     const now = this._audioContext.currentTime;
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     return Math.max(0, Math.floor((now - t0.audioTimeAtTick0) / secsPerTick));
   }
 
@@ -525,7 +511,7 @@ export class IRPlayer {
     this._audioContext = audioContext;
     this._playing = true;
     const now = audioContext.currentTime;
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
     this._tracks = this._flattenTracks();
     this._buildModulatorMap();
@@ -657,7 +643,7 @@ export class IRPlayer {
     let resumeTick = 0;
     if (this._playing && this._tracks.length > 0) {
       const now = this._audioContext.currentTime;
-      const secsPerTick = 60 / (this._bpm * this._ppqn);
+      const secsPerTick = this._secsPerTick;
       const t0 = this._tracks[0];
       const rawTick = (now - t0.audioTimeAtTick0) / secsPerTick;
       // Align to bar boundary (bar = ppqn * 4)
@@ -684,7 +670,7 @@ export class IRPlayer {
     // Restart from resume position
     this._playing = true;
     const now = this._audioContext.currentTime;
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     // Set audioTimeAtTick0 so that tick=resumeTick corresponds to now+25ms
     const newTick0 = now + 0.025 - resumeTick * secsPerTick;
     this._tracks = this._flattenTracks();
@@ -769,7 +755,7 @@ export class IRPlayer {
 
     const now = this._audioContext.currentTime;
     const horizon = now + this._schedulerLookahead;
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
 
     // _onTick: use track 0 position for the Bar:Beat display
     if (this._onTick && this._tracks.length > 0) {
@@ -1176,7 +1162,7 @@ export class IRPlayer {
 
         // Key-off at gate boundary (5ms lead for FM envelope decay)
         // gateTicks === 0 means hold indefinitely (len=0 note; KEY-OFF via triggerKeyOff())
-        const secsPerTick = 60 / (this._bpm * this._ppqn);
+        const secsPerTick = this._secsPerTick;
         if (gateTicks > 0) {
           const offWhen = when + gateTicks * secsPerTick - 0.005;
           this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
@@ -1617,7 +1603,7 @@ export class IRPlayer {
 
   _resolveSweepBudgetFrames(ev) {
     const endTick = this._resolveSweepEndTick(ev);
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     return Math.max(
       1,
       Math.floor(Math.max(0, endTick - ev.tick) * secsPerTick * 60),
@@ -1630,7 +1616,7 @@ export class IRPlayer {
   //   iterFrames        – how many frames to actually write (capped to remaining sweep)
   //   loopPhaseOffset   – phase offset for looping curves (sin/tri/saw/…)
   _sweepFrameParams(ev, baseFrames, loop) {
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     const budgetFrames = this._resolveSweepBudgetFrames(ev);
     const endTick = this._resolveSweepEndTick(ev);
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
@@ -1761,7 +1747,7 @@ export class IRPlayer {
   // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
   // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
   _scheduleFmOpMacros(ch, port, chOffset, noteArgs, when, gateTicks) {
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     // gateTicks===0 = hold note: macros run for a very long time (runtime key-off)
     const HOLD_FRAMES = 0x7fffffff;
     const noteFrames =
@@ -1812,7 +1798,7 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     const baseVol = regs.vol ?? 31;
     const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     // gateTicks===0 = hold note: run macros until runtime key-off
     const HOLD_FRAMES = 0x7fffffff;
     const noteFrames =
@@ -1843,7 +1829,7 @@ export class IRPlayer {
   ) {
     if (!pitchMacro) return;
 
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
     const gateSecs = when + lengthTicks * secsPerTick;
 
@@ -1870,7 +1856,7 @@ export class IRPlayer {
     const from = Number(ev.args?.from ?? 0);
     const to = Number(ev.args?.to ?? 0);
     const curve = ev.args?.curve ?? "linear";
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     // ev.args.frames is in ticks (from parseLengthToken); convert to 60 Hz frames.
     const baseFrames = Math.max(
       1,
@@ -2040,7 +2026,7 @@ export class IRPlayer {
   // baseVel: per-note velocity 0-15 (15 = full volume).
   _schedulePsgEnvelope(psgCh, env, noteWhen, gateTicks, baseVel = 15) {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     const noteDurSecs = gateTicks * secsPerTick;
     const noteOffWhen = noteWhen + noteDurSecs - 0.005;
 
@@ -2172,7 +2158,7 @@ export class IRPlayer {
   _schedulePsgPitchMacro(psgCh, baseMidi, pitchMacro, noteWhen, lengthTicks) {
     if (!pitchMacro) return;
 
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
     const gateSecs = noteWhen + lengthTicks * secsPerTick;
 
@@ -2190,7 +2176,7 @@ export class IRPlayer {
     if (!velMacro) return;
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
 
-    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const secsPerTick = this._secsPerTick;
     const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
     const gateSecs = noteWhen + gateTicks * secsPerTick - 0.005;
 
@@ -2289,10 +2275,10 @@ export class IRPlayer {
             const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? 31)));
             const to = Math.max(0, Math.min(31, Number(ev.args?.to ?? from)));
             const curve = ev.args?.curve ?? "linear";
-            const secsPerTickVol = 60 / (this._bpm * this._ppqn);
+            const secsPerTick = this._secsPerTick;
             const baseFrames = Math.max(
               1,
-              Math.round(Number(ev.args?.frames ?? 1) * secsPerTickVol * 60),
+              Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60),
             );
             this._psgVolSweep[psgCh] = {
               from, to, curve, baseFrames, nonLoopOffset: 0, startWhen: when,
@@ -2303,7 +2289,7 @@ export class IRPlayer {
           const from = Number(ev.args?.from ?? ev.args?.value ?? 0);
           const to = Number(ev.args?.to ?? from);
           const curve = ev.args?.curve ?? "linear";
-          const secsPerTick = 60 / (this._bpm * this._ppqn);
+          const secsPerTick = this._secsPerTick;
           // ev.args.frames is ticks; convert to 60 Hz frames.
           const baseFrames = Math.max(
             1,
