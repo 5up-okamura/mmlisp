@@ -188,13 +188,7 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
  * Inserts a portamento slide from lastNotePitch to newPitch over glideFrames.
  * Resets glideFrom after emission (one-shot override).
  */
-function emitGlideIfNeeded(
-  trackState,
-  newPitch,
-  events,
-  glideFrames,
-  nodeSrc,
-) {
+function emitGlideIfNeeded(trackState, newPitch, events, glideFrames, nodeSrc) {
   if (glideFrames <= 0 || !trackState.lastNotePitch) return; // No glide or first note
 
   const fromPitch = trackState.glideFrom || trackState.lastNotePitch;
@@ -222,7 +216,6 @@ function updateLastNotePitch(trackState, pitch) {
   trackState.lastNotePitch = pitch;
 }
 
-
 /**
  * Parse a :macro spec node for any target.
  * Accepts both step-vector [...] and curve (...) forms.
@@ -239,9 +232,9 @@ function parseMacroSpec(node, target) {
     const items = node.items.filter((n) => n.kind !== "comment");
 
     // If all items are () expressions, treat as multi-stage sequential
-    const allExprs = items.length > 0 && items.every(
-      (it) => it.kind === "list" && it.bracket === "(",
-    );
+    const allExprs =
+      items.length > 0 &&
+      items.every((it) => it.kind === "list" && it.bracket === "(");
     if (allExprs) {
       const stages = [];
       for (const stageNode of items) {
@@ -754,41 +747,46 @@ function compileChannelBody(
               trackState.glideFrom = rawVal;
               break;
             }
-            case ":macro": {
-              // Two forms:
-              // 1) :macro def-name — reference a previously defined macro
-              // 2) :macro :target spec — inline macro specification
-              // rawVal is the value of the :macro keyword pair (i.e., items[i] when we enter switch)
-              
-              if (rawVal?.startsWith(":")) {
-                // Form 2: inline :target spec
-                // rawVal is the target (":pitch", ":tl1", etc.)
-                // items[i + 1] is the spec node
-                const macroTarget = rawVal;
-                if (i + 1 < items.length) {
-                  const specNode = items[i + 1];
-                  const irTarget = canonicalTarget(macroTarget);
-                  const spec = parseMacroSpec(specNode, irTarget);
-                  if (spec && SUPPORTED_TARGETS.has(irTarget)) {
-                    trackState.activeMacros[irTarget] = spec;
-                    if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
-                    else if (irTarget === "VEL") trackState.activeVelMacro = spec;
+            case ":macro":
+              {
+                // Two forms:
+                // 1) :macro def-name — reference a previously defined macro
+                // 2) :macro :target spec — inline macro specification
+                // rawVal is the value of the :macro keyword pair (i.e., items[i] when we enter switch)
+
+                if (rawVal?.startsWith(":")) {
+                  // Form 2: inline :target spec
+                  // rawVal is the target (":pitch", ":tl1", etc.)
+                  // items[i + 1] is the spec node
+                  const macroTarget = rawVal;
+                  if (i + 1 < items.length) {
+                    const specNode = items[i + 1];
+                    const irTarget = canonicalTarget(macroTarget);
+                    const spec = parseMacroSpec(specNode, irTarget);
+                    if (spec && SUPPORTED_TARGETS.has(irTarget)) {
+                      trackState.activeMacros[irTarget] = spec;
+                      if (irTarget === "NOTE_PITCH")
+                        trackState.activePitchMacro = spec;
+                      else if (irTarget === "VEL")
+                        trackState.activeVelMacro = spec;
+                    }
+                    // Consume spec node: outer loop will do i++, we need one more
+                    i++;
                   }
-                  // Consume spec node: outer loop will do i++, we need one more
-                  i++;
+                } else if (rawVal && typedDefs?.has(rawVal)) {
+                  // Form 1: reference to def macro
+                  // rawVal is the def-name
+                  const td = typedDefs.get(rawVal);
+                  if (td?.tag === "macro") {
+                    trackState.activeMacros[td.target] = td.spec;
+                    if (td.target === "NOTE_PITCH")
+                      trackState.activePitchMacro = td.spec;
+                    else if (td.target === "VEL")
+                      trackState.activeVelMacro = td.spec;
+                  }
                 }
-              } else if (rawVal && typedDefs?.has(rawVal)) {
-                // Form 1: reference to def macro
-                // rawVal is the def-name
-                const td = typedDefs.get(rawVal);
-                if (td?.tag === "macro") {
-                  trackState.activeMacros[td.target] = td.spec;
-                  if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
-                  else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
-                }
+                break;
               }
-              break;
-            }
               // :break inside (x N ...) — emit LOOP_BREAK linked to current loop
               // Note: :break as atom (not keyword pair) is handled separately;
               // here it appears as ":break" key with a dummy value consumed

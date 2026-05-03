@@ -30,7 +30,9 @@ import { clampForTarget } from "./macro-ranges.js";
  * @returns {number} updated value
  */
 function updateBits(currentValue, newValue, mask, shiftBits) {
-  return (currentValue & ~(mask << shiftBits)) | ((newValue & mask) << shiftBits);
+  return (
+    (currentValue & ~(mask << shiftBits)) | ((newValue & mask) << shiftBits)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -233,12 +235,8 @@ function encodeB0(regs) {
 // Encode B4 register (pan + AMS/FMS)
 function encodeB4(regs) {
   // PAN: -1 (left) → 0b10, 0 (center) → 0b11, 1 (right) → 0b01
-  const panBits = regs.pan < 0 ? 0b10 : (regs.pan > 0 ? 0b01 : 0b11);
-  return (
-    (panBits << 6) |
-    ((regs.ams & 0x03) << 4) |
-    (regs.fms & 0x07)
-  );
+  const panBits = regs.pan < 0 ? 0b10 : regs.pan > 0 ? 0b01 : 0b11;
+  return (panBits << 6) | ((regs.ams & 0x03) << 4) | (regs.fms & 0x07);
 }
 
 // Encode 0x60 (AM enable + DR) for an operator
@@ -1554,14 +1552,19 @@ export class IRPlayer {
         } = stage;
         const baseFrames = Math.max(1, Number(rawFrames));
         // For looping stages, run until gate (or next key-off boundary)
-        const budget = loop ? Math.max(0, Math.floor((gateSecs - t) * 60)) : baseFrames;
+        const budget = loop
+          ? Math.max(0, Math.floor((gateSecs - t) * 60))
+          : baseFrames;
         for (let frame = 0; frame < budget; frame++) {
           const phase = loop
             ? (frame % baseFrames) / baseFrames
             : baseFrames <= 1
               ? 1
               : Math.min(1, frame / (baseFrames - 1));
-          writeFn(from + (to - from) * sampleCurveUnit(curve, phase), t + frame / 60);
+          writeFn(
+            from + (to - from) * sampleCurveUnit(curve, phase),
+            t + frame / 60,
+          );
         }
         t += budget / 60;
       }
@@ -1596,7 +1599,8 @@ export class IRPlayer {
       let t = when;
       let idx = 0;
       while (t < gateSecs) {
-        if (steps[idx] !== null && steps[idx] !== undefined) writeFn(steps[idx], t);
+        if (steps[idx] !== null && steps[idx] !== undefined)
+          writeFn(steps[idx], t);
         idx++;
         if (idx >= sustainEnd) {
           if (loopIndex !== null) {
@@ -1612,7 +1616,8 @@ export class IRPlayer {
       if (releaseIndex !== null && releaseIndex < steps.length) {
         t = gateSecs;
         for (let ri = releaseIndex; ri < steps.length; ri++) {
-          if (steps[ri] !== null && steps[ri] !== undefined) writeFn(steps[ri], t);
+          if (steps[ri] !== null && steps[ri] !== undefined)
+            writeFn(steps[ri], t);
           t += 1 / 60;
         }
         return t; // time after last release write
@@ -1664,16 +1669,22 @@ export class IRPlayer {
     const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
     const gateSecs = when + lengthTicks * secsPerTick;
 
-    this._scheduleMacro(pitchMacro, noteFrames, gateSecs, when, (centOffset, t) => {
-      const { fnum, block } = midiToFnumBlock(baseMidi + centOffset / 100);
-      this._write(
-        port,
-        0xa4 + chOffset,
-        ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-        t,
-      );
-      this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
-    });
+    this._scheduleMacro(
+      pitchMacro,
+      noteFrames,
+      gateSecs,
+      when,
+      (centOffset, t) => {
+        const { fnum, block } = midiToFnumBlock(baseMidi + centOffset / 100);
+        this._write(
+          port,
+          0xa4 + chOffset,
+          ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+          t,
+        );
+        this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+      },
+    );
   }
 
   _applyParamSweep(ch, port, chOffset, ev, when) {
