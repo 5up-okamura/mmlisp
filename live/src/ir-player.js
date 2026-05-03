@@ -333,7 +333,8 @@ export class IRPlayer {
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
     this._psgVol = new Array(4).fill(31); // channel vol 0-31 per PSG ch
-    this._psgLastVelAtt = new Array(4).fill(15); // last velocity attenuation written per PSG ch
+    this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
+    this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
 
     // Modulator tracks by channel index (built after _flattenTracks)
     this._modulatorsByCh = new Map();
@@ -1476,16 +1477,16 @@ export class IRPlayer {
         }
         // PSG channels: recalculate attenuation from vel * vol * master
         for (let psgCh = 0; psgCh < 4; psgCh++) {
-          const velAtt = this._psgLastVelAtt[psgCh] ?? 15;
-          const vol = this._psgVol[psgCh] ?? 31;
-          // Compose: velLevel (0-15) * volLevel (0-31) * masterLevel (0-31) / (15*31*31)
-          // Result scaled to attenuation range 0-15 (0=max, 15=silent)
-          const velLevel = 15 - velAtt; // 0-15, higher = louder
-          const volLevel = vol; // 0-31, higher = louder
-          const masterLevel = master; // 0-31, higher = louder
-          const composed = Math.max(0, Math.min(15, Math.round(velLevel * volLevel * masterLevel / (15 * 31 * 31) * 15)));
-          const finalAtt = 15 - composed;
-          this._psgSetAtt(psgCh, finalAtt, when);
+          const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
+          const vol = this._psgVolAtTime(psgCh, when); // 0-31
+          const composed = Math.max(
+            0,
+            Math.min(
+              15,
+              Math.round(((velLevel * vol * master) / (15 * 31 * 31)) * 15),
+            ),
+          );
+          this._psgSetAtt(psgCh, 15 - composed, when);
         }
         nextValue = master;
         break;
@@ -1927,8 +1928,18 @@ export class IRPlayer {
     // Latch byte: 1 | ch(2) | r=1(att) | att(4)
     const byte = 0x80 | ((psgCh & 0x03) << 5) | 0x10 | (attReg & 0x0f);
     this._psgWriteByte(byte, when);
-    // Record the last vel attenuation written (for MASTER recalculation)
-    this._psgLastVelAtt[psgCh] = attReg;
+  }
+
+  // Returns the current VOL (0-31) for a PSG channel at the given audio time,
+  // sampling an active VOL sweep if present.
+  _psgVolAtTime(psgCh, when) {
+    const sweep = this._psgVolSweep?.[psgCh];
+    if (!sweep) return this._psgVol[psgCh] ?? 31;
+    const frameOffset = Math.max(0, (when - sweep.startWhen) * 60);
+    const phase =
+      sweep.frames <= 1 ? 1 : Math.min(1, frameOffset / (sweep.frames - 1));
+    const unit = sampleCurveUnit(sweep.curve, phase);
+    return sweep.from + (sweep.to - sweep.from) * unit;
   }
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
@@ -1966,16 +1977,32 @@ export class IRPlayer {
   // gateTicks: gate duration in ticks.
   // baseVel: per-note velocity 0-15 (15 = full volume).
   _schedulePsgEnvelope(psgCh, env, noteWhen, gateTicks, baseVel = 15) {
+    this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
     const secsPerTick = 60 / (this._bpm * this._ppqn);
     const noteDurSecs = gateTicks * secsPerTick;
     const noteOffWhen = noteWhen + noteDurSecs - 0.005;
-    // Scale a 0-15 envelope step by baseVel/15
-    const scaleStep = (s) =>
-      Math.round((Math.max(0, Math.min(15, s)) * baseVel) / 15);
+
+    // Compose vel * vol * master → hardware attenuation (0=max, 15=silent).
+    // velLevel: 0-15 (envelope step already scaled by baseVel/15)
+    const vol = this._psgVolAtTime(psgCh, noteWhen);
+    const master = this._masterVol ?? 31;
+    const composeAtt = (velLevel) => {
+      const c = Math.max(
+        0,
+        Math.min(
+          15,
+          Math.round(((velLevel * vol * master) / (15 * 31 * 31)) * 15),
+        ),
+      );
+      return 15 - c;
+    };
+    // Scale a 0-15 envelope step by baseVel/15, then compute att.
+    const scaleToAtt = (s) =>
+      composeAtt(Math.round((Math.max(0, Math.min(15, s)) * baseVel) / 15));
 
     if (!env || env.subtype === "hard" || env.subtype === "fn") {
       // No envelope: set volume from vel then silence at note-off
-      this._psgSetAtt(psgCh, 15 - scaleStep(15), noteWhen);
+      this._psgSetAtt(psgCh, scaleToAtt(15), noteWhen);
       this._psgSetAtt(psgCh, 15, noteOffWhen);
       return;
     }
@@ -1983,7 +2010,7 @@ export class IRPlayer {
     if (env.subtype === "bare" || env.subtype === "seq") {
       const steps = env.steps ?? [];
       if (steps.length === 0) {
-        this._psgSetAtt(psgCh, 15 - scaleStep(15), noteWhen);
+        this._psgSetAtt(psgCh, scaleToAtt(15), noteWhen);
         this._psgSetAtt(psgCh, 15, noteOffWhen);
         return;
       }
@@ -1993,12 +2020,16 @@ export class IRPlayer {
 
       let t = noteWhen;
       let idx = 0;
-      let lastVol = scaleStep(steps[0] ?? 0);
+      // lastVelLevel: the vel-scaled level (0-15) of the last step, for release.
+      let lastVelLevel = Math.round(
+        (Math.max(0, Math.min(15, steps[0] ?? 0)) * baseVel) / 15,
+      );
       while (t < noteOffWhen) {
-        const mmlispVol = scaleStep(steps[idx] ?? 0);
-        lastVol = mmlispVol;
-        // MMLisp: 15=max, 0=silent → hardware: 0=max, 15=silent
-        this._psgSetAtt(psgCh, 15 - mmlispVol, t);
+        const velLevel = Math.round(
+          (Math.max(0, Math.min(15, steps[idx] ?? 0)) * baseVel) / 15,
+        );
+        lastVelLevel = velLevel;
+        this._psgSetAtt(psgCh, composeAtt(velLevel), t);
         idx++;
         if (idx >= steps.length) {
           if (loopIndex !== null) {
@@ -2009,13 +2040,13 @@ export class IRPlayer {
         }
         t += stepDurSecs;
       }
-      // Release phase (seq only): decay lastVol → 0 at releaseRate frames/step.
+      // Release phase (seq only): decay lastVelLevel → 0 at releaseRate frames/step.
       const releaseRate = env.subtype === "seq" ? (env.releaseRate ?? 0) : 0;
-      if (releaseRate > 0 && lastVol > 0) {
+      if (releaseRate > 0 && lastVelLevel > 0) {
         const relStepSecs = releaseRate / 60;
         let relT = noteOffWhen;
-        for (let v = lastVol - 1; v >= 0; v--) {
-          this._psgSetAtt(psgCh, 15 - v, relT);
+        for (let v = lastVelLevel - 1; v >= 0; v--) {
+          this._psgSetAtt(psgCh, composeAtt(v), relT);
           relT += relStepSecs;
         }
         this._psgSetAtt(psgCh, 15, relT);
@@ -2028,34 +2059,44 @@ export class IRPlayer {
     if (env.subtype === "adsr") {
       const { ar, dr, sl, sr, rr } = env;
       const secsPerStep = secsPerTick; // 1 tick per step
+      // ADSR: envelope att 0=loudest, 15=silent. Scale through vol+master.
+      const maxLevel = Math.max(
+        0,
+        Math.min(15, Math.round((15 * vol * master) / (31 * 31))),
+      );
+      const adsr2hw = (att) =>
+        Math.max(
+          0,
+          Math.min(15, 15 - Math.round(((15 - att) * maxLevel) / 15)),
+        );
 
       // Attack: att from 15 → 0
       let t = noteWhen;
       if (ar > 0) {
         for (let att = 15; att >= 0 && t < noteOffWhen; att--) {
-          this._psgSetAtt(psgCh, att, t);
+          this._psgSetAtt(psgCh, adsr2hw(att), t);
           t += ar * secsPerStep;
         }
       } else {
-        this._psgSetAtt(psgCh, 0, t);
+        this._psgSetAtt(psgCh, adsr2hw(0), t);
       }
 
       // Decay: att from 0 → (15 - sl)
       const susAtt = Math.max(0, Math.min(15, 15 - sl));
       if (dr > 0 && t < noteOffWhen) {
         for (let att = 0; att <= susAtt && t < noteOffWhen; att++) {
-          this._psgSetAtt(psgCh, att, t);
+          this._psgSetAtt(psgCh, adsr2hw(att), t);
           t += dr * secsPerStep;
         }
       }
 
       // Sustain: hold at susAtt (or slowly decay if sr > 0)
       if (t < noteOffWhen) {
-        this._psgSetAtt(psgCh, susAtt, t);
+        this._psgSetAtt(psgCh, adsr2hw(susAtt), t);
         if (sr > 0) {
           let att = susAtt;
           while (t < noteOffWhen && att <= 15) {
-            this._psgSetAtt(psgCh, att, t);
+            this._psgSetAtt(psgCh, adsr2hw(att), t);
             att++;
             t += sr * secsPerStep;
           }
@@ -2066,7 +2107,7 @@ export class IRPlayer {
       let relT = noteOffWhen;
       if (rr > 0) {
         for (let att = susAtt; att <= 15; att++) {
-          this._psgSetAtt(psgCh, att, relT);
+          this._psgSetAtt(psgCh, adsr2hw(att), relT);
           relT += rr * secsPerStep;
         }
       } else {
@@ -2076,7 +2117,7 @@ export class IRPlayer {
     }
 
     // Fallback
-    this._psgSetAtt(psgCh, 0, noteWhen);
+    this._psgSetAtt(psgCh, composeAtt(15), noteWhen);
     this._psgSetAtt(psgCh, 15, noteOffWhen);
   }
 
@@ -2099,16 +2140,25 @@ export class IRPlayer {
 
   _schedulePsgVelMacro(psgCh, velMacro, noteWhen, gateTicks, baseVel = 15) {
     if (!velMacro) return;
+    this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
 
     const secsPerTick = 60 / (this._bpm * this._ppqn);
     const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
     const gateSecs = noteWhen + gateTicks * secsPerTick - 0.005;
 
-    // vel 0-15 → PSG attenuation: vel 15=max(att=0), vel 0=silent(att=15)
-    // baseVel scales the macro output: scaledVel = velVal * baseVel / 15
+    // vel 0-15 → att composing vel * vol * master
+    const vol = this._psgVolAtTime(psgCh, noteWhen);
+    const master = this._masterVol ?? 31;
     const velToAtt = (v) => {
-      const scaled = Math.round((clampForTarget("VEL", v) * baseVel) / 15);
-      return 15 - scaled;
+      const velLevel = Math.round((clampForTarget("VEL", v) * baseVel) / 15);
+      const composed = Math.max(
+        0,
+        Math.min(
+          15,
+          Math.round(((velLevel * vol * master) / (15 * 31 * 31)) * 15),
+        ),
+      );
+      return 15 - composed;
     };
 
     const silenceAt = this._scheduleMacro(
@@ -2180,18 +2230,37 @@ export class IRPlayer {
       case "PARAM_SWEEP": {
         const psgTarget = (ev.args?.target ?? "").toUpperCase();
         if (psgTarget === "VOL") {
-          // vol 0-31 (31=max, 0=silent). Store per-channel vol for master composition.
-          const vol = Math.max(0, Math.min(31, ev.args?.value ?? 31));
-          this._psgVol[psgCh] = vol;
-          // Recompute final attenuation from vel * vol * master
-          const velAtt = this._psgLastVelAtt[psgCh] ?? 15;
-          const master = this._masterVol ?? 31;
-          const velLevel = 15 - velAtt;
-          const volLevel = vol;
-          const masterLevel = master;
-          const composed = Math.max(0, Math.min(15, Math.round(velLevel * volLevel * masterLevel / (15 * 31 * 31) * 15)));
-          const finalAtt = 15 - composed;
-          this._psgSetAtt(psgCh, finalAtt, when);
+          if (ev.cmd === "PARAM_SET") {
+            // Immediate vol: store and update hardware using last known vel.
+            const vol = Math.max(0, Math.min(31, ev.args?.value ?? 31));
+            this._psgVol[psgCh] = vol;
+            this._psgVolSweep[psgCh] = null;
+            const velLevel = this._psgLastVel[psgCh] ?? 15;
+            const master = this._masterVol ?? 31;
+            const composed = Math.max(
+              0,
+              Math.min(
+                15,
+                Math.round(((velLevel * vol * master) / (15 * 31 * 31)) * 15),
+              ),
+            );
+            this._psgSetAtt(psgCh, 15 - composed, when);
+          } else {
+            // PARAM_SWEEP: store sweep state. Hardware writes happen at each NOTE_ON
+            // via _psgVolAtTime(), so no frame-by-frame pre-scheduling needed.
+            const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? 31)));
+            const to = Math.max(0, Math.min(31, Number(ev.args?.to ?? from)));
+            const curve = ev.args?.curve ?? "linear";
+            const frames = Math.max(1, Number(ev.args?.frames ?? 1));
+            this._psgVolSweep[psgCh] = {
+              from,
+              to,
+              curve,
+              frames,
+              startWhen: when,
+            };
+            this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
+          }
         } else if (psgTarget === "NOTE_PITCH") {
           const from = Number(ev.args?.from ?? ev.args?.value ?? 0);
           const to = Number(ev.args?.to ?? from);
