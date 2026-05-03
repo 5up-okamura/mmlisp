@@ -1071,7 +1071,14 @@ export class IRPlayer {
           when,
           gateTicks,
         );
-        this._scheduleFmOpMacros(ch, port, chOffset, ev.args ?? {}, when, gateTicks);
+        this._scheduleFmOpMacros(
+          ch,
+          port,
+          chOffset,
+          ev.args ?? {},
+          when,
+          gateTicks,
+        );
         // Key on: all 4 operators (unless muted or op mask applied)
         if (!this._mutedChannels[ch]) {
           const keyOnByte = (this._opMasks[ch] ?? 0xf0) | chKey;
@@ -1658,10 +1665,16 @@ export class IRPlayer {
       if (!spec) continue;
       const t = target; // capture for closure
       this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, when) => {
-        this._applyParam(ch, port, chOffset, {
-          cmd: "PARAM_SET",
-          args: { target: t, value: v },
-        }, when);
+        this._applyParam(
+          ch,
+          port,
+          chOffset,
+          {
+            cmd: "PARAM_SET",
+            args: { target: t, value: v },
+          },
+          when,
+        );
       });
     }
   }

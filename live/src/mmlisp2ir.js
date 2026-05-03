@@ -749,43 +749,63 @@ function compileChannelBody(
             }
             case ":macro":
               {
-                // Two forms:
-                // 1) :macro def-name — reference a previously defined macro
-                // 2) :macro :target spec — inline macro specification
-                // rawVal is the value of the :macro keyword pair (i.e., items[i] when we enter switch)
+                // Three forms:
+                // 1) :macro def-name          — single named def reference
+                // 2) :macro :target spec       — single inline pair
+                // 3) :macro [...]              — list of defs/inline pairs (Task 14)
+                const macroNode = items[i]; // the node following :macro
 
-                if (rawVal?.startsWith(":")) {
-                  // Form 2: inline :target spec
-                  // rawVal is the target (":pitch", ":tl1", etc.)
-                  // items[i + 1] is the spec node
-                  const macroTarget = rawVal;
-                  if (i + 1 < items.length) {
-                    const specNode = items[i + 1];
-                    const irTarget = canonicalTarget(macroTarget);
-                    const spec = parseMacroSpec(specNode, irTarget);
-                    if (spec && SUPPORTED_TARGETS.has(irTarget)) {
-                      trackState.activeMacros[irTarget] = spec;
-                      if (irTarget === "NOTE_PITCH")
-                        trackState.activePitchMacro = spec;
-                      else if (irTarget === "VEL")
-                        trackState.activeVelMacro = spec;
+                const applyMacroEntry = (irTarget, spec) => {
+                  if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
+                  trackState.activeMacros[irTarget] = spec;
+                  if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
+                  else if (irTarget === "VEL") trackState.activeVelMacro = spec;
+                };
+
+                if (
+                  macroNode?.kind === "list" &&
+                  macroNode.bracket === "[]"
+                ) {
+                  // Form 3: [list] — iterate entries, last write wins per target
+                  const listItems = macroNode.items.filter(
+                    (n) => n.kind !== "comment",
+                  );
+                  let j = 0;
+                  while (j < listItems.length) {
+                    const entryVal = atomValue(listItems[j]);
+                    if (entryVal?.startsWith(":")) {
+                      // inline :target spec pair
+                      if (j + 1 < listItems.length) {
+                        const irTarget = canonicalTarget(entryVal);
+                        const spec = parseMacroSpec(listItems[j + 1], irTarget);
+                        applyMacroEntry(irTarget, spec);
+                        j += 2;
+                      } else {
+                        j++;
+                      }
+                    } else if (entryVal && typedDefs?.has(entryVal)) {
+                      // named def reference
+                      const td = typedDefs.get(entryVal);
+                      if (td?.tag === "macro")
+                        applyMacroEntry(td.target, td.spec);
+                      j++;
+                    } else {
+                      j++;
                     }
-                    // Consume spec node: outer loop will do i++, we need one more
+                  }
+                } else if (rawVal?.startsWith(":")) {
+                  // Form 2: inline :target spec
+                  if (i + 1 < items.length) {
+                    const irTarget = canonicalTarget(rawVal);
+                    const spec = parseMacroSpec(items[i + 1], irTarget);
+                    applyMacroEntry(irTarget, spec);
                     i++;
                   }
                 } else if (rawVal && typedDefs?.has(rawVal)) {
-                  // Form 1: reference to def macro
-                  // rawVal is the def-name
+                  // Form 1: single named def
                   const td = typedDefs.get(rawVal);
-                  if (td?.tag === "macro") {
-                    for (const { target, spec } of td.targets) {
-                      trackState.activeMacros[target] = spec;
-                      if (target === "NOTE_PITCH")
-                        trackState.activePitchMacro = spec;
-                      else if (target === "VEL")
-                        trackState.activeVelMacro = spec;
-                    }
-                  }
+                  if (td?.tag === "macro")
+                    applyMacroEntry(td.target, td.spec);
                 }
                 break;
               }
@@ -983,12 +1003,10 @@ function compileChannelBody(
       if (typedDefs?.has(val)) {
         const td = typedDefs.get(val);
         if (td?.tag === "macro") {
-          // v0.4: unified macro map (supports multi-target defs)
-          for (const { target, spec } of td.targets) {
-            trackState.activeMacros[target] = spec;
-            if (target === "NOTE_PITCH") trackState.activePitchMacro = spec;
-            else if (target === "VEL") trackState.activeVelMacro = spec;
-          }
+          // bare identifier expands single-target def
+          trackState.activeMacros[td.target] = td.spec;
+          if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
+          else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
         } else {
           emitVoice(td, trackState.tick, events, nodeSrc(node));
         }
@@ -1965,20 +1983,11 @@ function collectDefs(roots, diagnostics) {
       } else if (maybeTag === ":macro") {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        // Parse one or more :target spec pairs (Task 13: multi-target support)
-        const targets = [];
-        let tIdx = 3;
-        while (tIdx + 1 < bodyItems.length) {
-          const macroTargetSym = atomValue(bodyItems[tIdx]);
-          const irTarget = macroTargetSym ? canonicalTarget(macroTargetSym) : null;
-          const spec = irTarget
-            ? parseMacroSpec(bodyItems[tIdx + 1], irTarget)
-            : null;
-          if (spec) targets.push({ target: irTarget, spec });
-          tIdx += 2;
-        }
-        if (targets.length > 0) {
-          typedDefs.set(name, { tag: "macro", targets, src });
+        const macroTargetSym = atomValue(bodyItems[3]); // e.g. ":pitch" or ":vel"
+        const irTarget = canonicalTarget(macroTargetSym);
+        const spec = parseMacroSpec(bodyItems[4], irTarget);
+        if (spec) {
+          typedDefs.set(name, { tag: "macro", target: irTarget, spec, src });
         }
       } else {
         defs.set(

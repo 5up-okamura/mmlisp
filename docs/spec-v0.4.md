@@ -824,21 +824,6 @@ without using the step-vector form:
    (ease-in  :from 10 :to 0  :len 4)]) ; Release — tail after KEY-OFF
 ```
 
-**Multi-target macro** — a single `def :macro` can drive multiple parameters
-simultaneously by listing multiple `:<target> (curve ...)` pairs:
-
-```lisp
-; two TL parameters simultaneously
-(def trem-brass :macro
-  :tl4 (triangle :from 0 :to 6 :len 8)
-  :tl1 (triangle :from 0 :to 2 :len 8))
-
-; vel step sequence + pitch sweep in one def — valid combination
-(def syntom :macro
-  :vel   [15 12 8 4 2 1 0]
-  :pitch (ease-out :from 0 :to -4800 :len 8))
-```
-
 **Macro list — `:macro [...]`** — multiple macro entries can be combined at the
 use site by passing a vector. Each element is either a **named def** or an
 **inline `:<target> curve` pair** written directly in the list. All targets are merged
@@ -866,6 +851,11 @@ and run simultaneously from KEY-ON. If two entries target the same lane, the
 A single name (no brackets) remains valid: `:macro trem-brass`.
 A single inline pair is also valid: `:macro :vel [15 12 8 0]`.
 
+Combining multiple targets per channel is done at the use site via `[list]`.
+Each `def :macro` defines exactly one target. `def` expands inline — putting
+multiple targets in one def would require the def to expand differently
+depending on context, which violates the simple substitution model.
+
 ```lisp
 ; voice def: macro fires on every NOTE_ON
 (def brass :extends fm-init
@@ -882,17 +872,18 @@ the same key. Stage N begins only after stage N−1 completes (`frames` elapsed)
 If stage N−1 is a loop waveform, it loops indefinitely and stage N is never
 reached — use this to model an attack → sustain-loop pattern.
 
-**Contrast with multi-target:** listing multiple `:<target> (curve ...)` pairs in one
-`def :macro` runs all targets **simultaneously** from KEY-ON — each on its own
-independent timeline. Multi-stage (sequential) and multi-target (simultaneous)
-compose freely: each target key can independently carry a single curve or a
-`[...]` stage vector.
+**Multi-target — simultaneous:** the `[list]` form at the use site merges
+entries targeting different parameters. All targets start simultaneously from
+KEY-ON, each on its own independent timeline. Multi-stage (sequential per
+target) and multi-target (simultaneous across targets) compose freely: each
+target key can independently carry a single curve or a `[...]` stage vector.
 
 ```lisp
 ; both at once: :pitch is sequential stages, :vel runs in parallel alongside it
-(def syntom-env :macro
-  :vel   [15 12 8 4 0]                ; vel stages run sequentially
-  :pitch (ease-out :from 0 :to -4800 :len 8))  ; pitch curve runs simultaneously
+(def syntom-vel   :macro :vel   [15 12 8 4 0])
+(def syntom-pitch :macro :pitch (ease-out :from 0 :to -4800 :len 8))
+
+(fm1 :macro [syntom-vel syntom-pitch]  c d e)
 ```
 
 **Driver state per channel:** up to 4 env slots `{ envId, stage, phase, delay_count, flags }` —
