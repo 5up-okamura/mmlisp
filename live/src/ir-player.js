@@ -35,6 +35,8 @@ import {
   CH_NAME_TO_INDEX,
   PSG_CH_NAME_TO_INDEX,
   PSG_MASTER_CLOCK,
+  KEY_OFF_LEAD_SECS,
+  HOLD_FRAMES,
 } from "./ir-utils.js";
 
 // ---------------------------------------------------------------------------
@@ -805,11 +807,7 @@ export class IRPlayer {
         const chKey = (port << 2) | chOffset; // 0x28 channel key
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
-        const rawGateTicks = ev.args?.gate;
-        const gateTicks =
-          rawGateTicks != null
-            ? Math.min(rawGateTicks, lengthTicks)
-            : lengthTicks;
+        const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
         const regs = this._chRegs[ch];
         regs.currentMidi = midi;
 
@@ -834,13 +832,21 @@ export class IRPlayer {
           when,
         );
         this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
-        this._scheduleFmPitchMacro(
-          port,
-          chOffset,
-          midi,
+        this._schedulePitchMacro(
           ev.args?.pitchMacro,
+          midi,
           when,
           lengthTicks,
+          (centOffset, t) => {
+            const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
+            this._write(
+              port,
+              0xa4 + chOffset,
+              ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+              t,
+            );
+            this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+          },
         );
         this._scheduleFmVelMacro(
           ch,
@@ -886,7 +892,7 @@ export class IRPlayer {
         // gateTicks === 0 means hold indefinitely (len=0 note; KEY-OFF via triggerKeyOff())
         const secsPerTick = this._secsPerTick;
         if (gateTicks > 0) {
-          const offWhen = when + gateTicks * secsPerTick - 0.005;
+          const offWhen = when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS;
           this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
         } else {
           // Hold note: register the channel for runtime key-off
@@ -1282,6 +1288,24 @@ export class IRPlayer {
     }
   }
 
+  // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.
+  _resolveGateTicks(rawGate, lengthTicks) {
+    return rawGate != null ? Math.min(rawGate, lengthTicks) : lengthTicks;
+  }
+
+  // Compute { noteFrames, gateSecs } for macro scheduling.
+  // gateTicks === 0 = hold note (runs until triggerKeyOff).
+  _resolveNoteFramesAndGate(when, gateTicks) {
+    if (gateTicks === 0) {
+      return { noteFrames: HOLD_FRAMES, gateSecs: when + 1e9 };
+    }
+    const secsPerTick = this._secsPerTick;
+    return {
+      noteFrames: Math.max(1, Math.floor(gateTicks * secsPerTick * 60)),
+      gateSecs: when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS,
+    };
+  }
+
   _resolveSweepEndTick(ev) {
     const trackIndex = ev._trackIndex;
     if (trackIndex == null) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
@@ -1469,15 +1493,7 @@ export class IRPlayer {
   // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
   // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
   _scheduleFmOpMacros(ch, port, chOffset, noteArgs, when, gateTicks) {
-    const secsPerTick = this._secsPerTick;
-    // gateTicks===0 = hold note: macros run for a very long time (runtime key-off)
-    const HOLD_FRAMES = 0x7fffffff;
-    const noteFrames =
-      gateTicks === 0
-        ? HOLD_FRAMES
-        : Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
-    const gateSecs =
-      gateTicks === 0 ? when + 1e9 : when + gateTicks * secsPerTick - 0.005;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const OP_MACRO_MAP = {
       pan: "PAN",
       ...Object.fromEntries(
@@ -1520,15 +1536,7 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     const baseVol = regs.vol ?? 31;
     const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
-    const secsPerTick = this._secsPerTick;
-    // gateTicks===0 = hold note: run macros until runtime key-off
-    const HOLD_FRAMES = 0x7fffffff;
-    const noteFrames =
-      gateTicks === 0
-        ? HOLD_FRAMES
-        : Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
-    const gateSecs =
-      gateTicks === 0 ? when + 1e9 : when + gateTicks * secsPerTick - 0.005;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     // vel 15 = full vol, vel 0 = silent. Use unified pipeline.
     const velToTl = (v) =>
       levelToFmTl(composeLevel(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31));
@@ -1541,36 +1549,16 @@ export class IRPlayer {
     });
   }
 
-  _scheduleFmPitchMacro(
-    port,
-    chOffset,
-    baseMidi,
-    pitchMacro,
-    when,
-    lengthTicks,
-  ) {
+  // Schedule a pitch macro for any channel (FM or PSG).
+  // writeFn(centOffset, t) performs the hardware write for the channel.
+  _schedulePitchMacro(pitchMacro, baseMidi, when, lengthTicks, writeFn) {
     if (!pitchMacro) return;
 
     const secsPerTick = this._secsPerTick;
     const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
     const gateSecs = when + lengthTicks * secsPerTick;
 
-    this._scheduleMacro(
-      pitchMacro,
-      noteFrames,
-      gateSecs,
-      when,
-      (centOffset, t) => {
-        const { fnum, block } = midiToFnumBlock(baseMidi + centOffset / 100);
-        this._write(
-          port,
-          0xa4 + chOffset,
-          ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-          t,
-        );
-        this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
-      },
-    );
+    this._scheduleMacro(pitchMacro, noteFrames, gateSecs, when, writeFn);
   }
 
   _applyParamSweep(ch, port, chOffset, ev, when) {
@@ -1750,7 +1738,7 @@ export class IRPlayer {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
     const secsPerTick = this._secsPerTick;
     const noteDurSecs = gateTicks * secsPerTick;
-    const noteOffWhen = noteWhen + noteDurSecs - 0.005;
+    const noteOffWhen = noteWhen + noteDurSecs - KEY_OFF_LEAD_SECS;
 
     // Compose vel * vol * master → PSG hardware attenuation via shared helpers.
     const vol = this._psgVolAtTime(psgCh, noteWhen);
@@ -1877,30 +1865,11 @@ export class IRPlayer {
     this._psgSetAtt(psgCh, 15, noteOffWhen);
   }
 
-  _schedulePsgPitchMacro(psgCh, baseMidi, pitchMacro, noteWhen, lengthTicks) {
-    if (!pitchMacro) return;
-
-    const secsPerTick = this._secsPerTick;
-    const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
-    const gateSecs = noteWhen + lengthTicks * secsPerTick;
-
-    this._scheduleMacro(
-      pitchMacro,
-      noteFrames,
-      gateSecs,
-      noteWhen,
-      (centOffset, t) =>
-        this._psgSetPitch(psgCh, baseMidi + centOffset / 100, t),
-    );
-  }
-
   _schedulePsgVelMacro(psgCh, velMacro, noteWhen, gateTicks, baseVel = 15) {
     if (!velMacro) return;
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
 
-    const secsPerTick = this._secsPerTick;
-    const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
-    const gateSecs = noteWhen + gateTicks * secsPerTick - 0.005;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
 
     // vel 0-15 → PSG att via shared composition helpers
     const vol = this._psgVolAtTime(psgCh, noteWhen);
@@ -1940,12 +1909,12 @@ export class IRPlayer {
           this._psgCurrentMidi[psgCh] = midi;
           const psgCentOffset = this._psgPitchOffset[psgCh] ?? 0;
           this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
-          this._schedulePsgPitchMacro(
-            psgCh,
-            midi,
+          this._schedulePitchMacro(
             ev.args?.pitchMacro,
+            midi,
             when,
             this._resolveTiedLength(ev, ev.args?.length ?? this._ppqn / 2),
+            (centOffset, t) => this._psgSetPitch(psgCh, midi + centOffset / 100, t),
           );
         } else {
           this._psgTriggerNoise(when);
@@ -1954,11 +1923,7 @@ export class IRPlayer {
         const env = this._psgChVoice[psgCh];
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
-        const rawPsgGateTicks = ev.args?.gate;
-        const psgGateTicks =
-          rawPsgGateTicks != null
-            ? Math.min(rawPsgGateTicks, lengthTicks)
-            : lengthTicks;
+        const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
         if (velMacro) {

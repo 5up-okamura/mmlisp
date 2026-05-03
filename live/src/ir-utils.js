@@ -386,3 +386,15 @@ export const PSG_CH_NAME_TO_INDEX = {
 
 // PSG MASTER_CLOCK (NTSC Mega Drive)
 export const PSG_MASTER_CLOCK = 3579545;
+
+// ---------------------------------------------------------------------------
+// Timing constants
+// ---------------------------------------------------------------------------
+
+// Lead time in seconds before gate boundary for FM key-off writes.
+// Gives the FM envelope time to start decaying before the note technically ends.
+export const KEY_OFF_LEAD_SECS = 0.005;
+
+// Sentinel frame count used for hold notes (gateTicks === 0).
+// Macros continue until triggerKeyOff() is called at runtime.
+export const HOLD_FRAMES = 0x7fffffff;
