@@ -480,20 +480,6 @@ function resolveVoice(name, typedDefs, diagnostics, seen = new Set()) {
   seen.add(name);
   const td = typedDefs.get(name);
   if (!td) return null;
-  if (td.tag === "fm") {
-    // Legacy vector-form: convert to kwMap
-    const kwMap = new Map();
-    const chVals = getVecInts(td.algFb);
-    const CH_KEYS = ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"];
-    chVals.forEach((v, i) => { if (CH_KEYS[i]) kwMap.set(CH_KEYS[i], v); });
-    for (let op = 0; op < 4; op++) {
-      const vals = getVecInts(td.ops[op]);
-      FM_OP_PARAMS.forEach((pname, pi) => {
-        if (vals[pi] !== undefined) kwMap.set(`FM_${pname}${op + 1}`, vals[pi]);
-      });
-    }
-    return kwMap;
-  }
   if (td.tag === "fm-kw") {
     const base = td.extends
       ? resolveVoice(td.extends, typedDefs, diagnostics, seen)
@@ -2047,15 +2033,7 @@ function collectDefs(roots, diagnostics) {
         continue;
       }
       const maybeTag = atomValue(root.items[2]);
-      if (maybeTag === ":fm") {
-        const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        typedDefs.set(name, {
-          tag: "fm",
-          algFb: bodyItems[3],
-          ops: [bodyItems[4], bodyItems[5], bodyItems[6], bodyItems[7]],
-          src: nodeSrc(root),
-        });
-      } else if (maybeTag === ":psg") {
+      if (maybeTag === ":psg") {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
         const parsed = parsePsgVector(bodyItems[3], name, diagnostics, src);

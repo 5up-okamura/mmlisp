@@ -769,7 +769,9 @@ Rules:
 - Any key present in the child overrides the parent; unmentioned keys are
   inherited from the parent
 - Chains are resolved depth-first; cycles are a compiler error
-- `:extends` is valid only on FM voice defs (not on envelope defs or PCM defs)
+- `:extends` is valid only in `def` forms for FM voice parameters; def is
+  expanded at the use site, so inline `:extends` (e.g., directly in channel body)
+  is not supported. Use a named def reference instead.
 
 **Attaching an envelope to a voice def:**
 
