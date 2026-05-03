@@ -1071,6 +1071,7 @@ export class IRPlayer {
           when,
           gateTicks,
         );
+        this._scheduleFmOpMacros(ch, port, chOffset, ev.args ?? {}, when, gateTicks);
         // Key on: all 4 operators (unless muted or op mask applied)
         if (!this._mutedChannels[ch]) {
           const keyOnByte = (this._opMasks[ch] ?? 0xf0) | chKey;
@@ -1626,6 +1627,43 @@ export class IRPlayer {
     }
 
     return null;
+  }
+
+  // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
+  // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
+  _scheduleFmOpMacros(ch, port, chOffset, noteArgs, when, gateTicks) {
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
+    const gateSecs = when + gateTicks * secsPerTick - 0.005;
+    // Map of embedded macro key → canonical IR target name
+    const OP_MACRO_MAP = {
+      pan: "PAN",
+      ...Object.fromEntries(
+        [1, 2, 3, 4].flatMap((op) => [
+          [`fm_tl${op}`, `FM_TL${op}`],
+          [`fm_ar${op}`, `FM_AR${op}`],
+          [`fm_dr${op}`, `FM_DR${op}`],
+          [`fm_sr${op}`, `FM_SR${op}`],
+          [`fm_rr${op}`, `FM_RR${op}`],
+          [`fm_sl${op}`, `FM_SL${op}`],
+          [`fm_ml${op}`, `FM_ML${op}`],
+          [`fm_dt${op}`, `FM_DT${op}`],
+          [`fm_ks${op}`, `FM_KS${op}`],
+          [`fm_amen${op}`, `FM_AMEN${op}`],
+        ]),
+      ),
+    };
+    for (const [key, target] of Object.entries(OP_MACRO_MAP)) {
+      const spec = noteArgs[key];
+      if (!spec) continue;
+      const t = target; // capture for closure
+      this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, when) => {
+        this._applyParam(ch, port, chOffset, {
+          cmd: "PARAM_SET",
+          args: { target: t, value: v },
+        }, when);
+      });
+    }
   }
 
   _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks) {

@@ -778,11 +778,13 @@ function compileChannelBody(
                   // rawVal is the def-name
                   const td = typedDefs.get(rawVal);
                   if (td?.tag === "macro") {
-                    trackState.activeMacros[td.target] = td.spec;
-                    if (td.target === "NOTE_PITCH")
-                      trackState.activePitchMacro = td.spec;
-                    else if (td.target === "VEL")
-                      trackState.activeVelMacro = td.spec;
+                    for (const { target, spec } of td.targets) {
+                      trackState.activeMacros[target] = spec;
+                      if (target === "NOTE_PITCH")
+                        trackState.activePitchMacro = spec;
+                      else if (target === "VEL")
+                        trackState.activeVelMacro = spec;
+                    }
                   }
                 }
                 break;
@@ -981,11 +983,12 @@ function compileChannelBody(
       if (typedDefs?.has(val)) {
         const td = typedDefs.get(val);
         if (td?.tag === "macro") {
-          // v0.4: unified macro map
-          trackState.activeMacros[td.target] = td.spec;
-          // v0.4: legacy support for direct field access
-          if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
-          else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
+          // v0.4: unified macro map (supports multi-target defs)
+          for (const { target, spec } of td.targets) {
+            trackState.activeMacros[target] = spec;
+            if (target === "NOTE_PITCH") trackState.activePitchMacro = spec;
+            else if (target === "VEL") trackState.activeVelMacro = spec;
+          }
         } else {
           emitVoice(td, trackState.tick, events, nodeSrc(node));
         }
@@ -1962,11 +1965,20 @@ function collectDefs(roots, diagnostics) {
       } else if (maybeTag === ":macro") {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const macroTargetSym = atomValue(bodyItems[3]); // e.g. ":pitch" or ":vel"
-        const irTarget = canonicalTarget(macroTargetSym);
-        const spec = parseMacroSpec(bodyItems[4], irTarget);
-        if (spec) {
-          typedDefs.set(name, { tag: "macro", target: irTarget, spec, src });
+        // Parse one or more :target spec pairs (Task 13: multi-target support)
+        const targets = [];
+        let tIdx = 3;
+        while (tIdx + 1 < bodyItems.length) {
+          const macroTargetSym = atomValue(bodyItems[tIdx]);
+          const irTarget = macroTargetSym ? canonicalTarget(macroTargetSym) : null;
+          const spec = irTarget
+            ? parseMacroSpec(bodyItems[tIdx + 1], irTarget)
+            : null;
+          if (spec) targets.push({ target: irTarget, spec });
+          tIdx += 2;
+        }
+        if (targets.length > 0) {
+          typedDefs.set(name, { tag: "macro", targets, src });
         }
       } else {
         defs.set(

@@ -109,8 +109,8 @@ Phase 3 entry condition:
 - [x] Subgroup / tuplet `(e g a)` with Bresenham tick distribution
 - [x] All length token forms: integer, dotted (`4.`), frames (`Nf`), ticks (`Nt`)
 - [x] Dotted notes / rests (`c4.`, `_8.`)
-- [ ] `:glide N` — emit `PARAM_SWEEP NOTE_PITCH` before NOTE_ON (state stored; emit not yet implemented)
-- [ ] `:glide-from` — one-shot start-pitch override (state stored; emit not yet implemented)
+- [x] `:glide N` — emit `PARAM_SWEEP NOTE_PITCH` before NOTE_ON
+- [x] `:glide-from` — one-shot start-pitch override
 
 **Level Model**
 
@@ -118,7 +118,7 @@ Phase 3 entry condition:
 - [x] `:vol N` → `PARAM_SET VOL`
 - [x] `:master N` → `PARAM_SET MASTER`
 - [x] `:master (curve ...)` → `PARAM_SWEEP MASTER`
-- [ ] `:vol (curve ...)` → `PARAM_SWEEP VOL` (inline curve form)
+- [x] `:vol (curve ...)` → `PARAM_SWEEP VOL` (inline curve form)
 
 **Macros — unified architecture**
 
@@ -130,12 +130,12 @@ _Input forms — identical for all targets:_
 - [x] Numeric step-vector `[0 1 2]`
 - [x] Step-vector `:loop` — loop sustain region until gate (all targets)
 - [x] Step-vector `:release` — release region played after gate (all targets)
-- [ ] `_` hold token in step-vector — advances 1 frame, skips write (all targets)
+- [x] `_` hold token in step-vector — advances 1 frame, skips write (all targets)
 - [x] Single curve form `(ease-in :from ... :to ... :len ...)`
 - [x] Looping single-stage curve `(sin ...)` / `(triangle ...)`
-- [ ] Multi-stage form `[(stage1) (stage2) ...]` — stages run sequentially by own `:len`
-- [ ] `(wait N)` / `(wait Nf)` pause stage inside multi-stage
-- [ ] `(wait key-off)` — stage loops until gate, then advances; curve-form equivalent of `:release`
+- [x] Multi-stage form `[(stage1) (stage2) ...]` — stages run sequentially by own `:len`
+- [x] `(wait N)` / `(wait Nf)` pause stage inside multi-stage
+- [x] `(wait key-off)` — stage loops until gate, then advances; curve-form equivalent of `:release`
 
 _Symbolic → numeric coercion at compile time (all targets):_
 
@@ -153,10 +153,10 @@ _Compiler — `parseMacroSpec` refactor:_
 
 _Compiler — per-target gaps (after unification):_
 
-- [ ] `:macro :pitch` step-vector `[0 -100 :loop -200 :release 0]`
-- [ ] `:macro :pan` step-vector + curve
-- [ ] `:macro :mode` step-vector + curve
-- [ ] `:macro` FM operator params (`:tl1`–`:tl4`, `:ar1`–`:ar4`, etc.)
+- [x] `:macro :pitch` step-vector `[0 -100 :loop -200 :release 0]`
+- [x] `:macro :pan` step-vector + curve
+- [x] `:macro :mode` step-vector + curve
+- [x] `:macro` FM operator params (`:tl1`–`:tl4`, `:ar1`–`:ar4`, etc.)
 - [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))`
 - [ ] `:macro [list]` use-site macro array/list merge
 - [ ] `:extends` — compile-time FM voice inheritance
@@ -165,7 +165,7 @@ _Compiler — per-target gaps (after unification):_
 **PSG Noise**
 
 - [x] `noise` channel basic NOTE_ON
-- [ ] `:mode white0`–`white3` / `periodic0`–`periodic3` → `NOISE_MODE` IR event
+- [x] `:mode white0`–`white3` / `periodic0`–`periodic3` → `NOISE_MODE` IR event
 
 ---
 
@@ -181,13 +181,13 @@ _Compiler — per-target gaps (after unification):_
 - [x] `_scheduleFmVelMacro` — step-vector + curve (current, pre-unification)
 - [x] FM vel macro — sustain loop (`:loop`) / release tail (`:release`)
 - [x] Gate applied to FM key-off timing and macro gate boundary
-- [ ] Unify into `_scheduleMacro(target, spec, write_fn, when, gate)` — replaces both schedulers
-- [ ] FM: `_scheduleMacro` covers pitch + vel + pan + op params with unified step/curve/multi-stage logic
-- [ ] FM macro: `_` hold token (advance 1 frame, skip write)
-- [ ] FM macro: multi-stage sequential execution (each stage runs its own `:len`)
-- [ ] FM macro: `(wait key-off)` — loop stage until gate, then continue
+- [x] Unify into `_scheduleMacro(target, spec, write_fn, when, gate)` — replaces both schedulers
+- [x] FM: `_scheduleMacro` covers pitch + vel + pan + op params with unified step/curve/multi-stage logic
+- [x] FM macro: `_` hold token (advance 1 frame, skip write)
+- [x] FM macro: multi-stage sequential execution (each stage runs its own `:len`)
+- [x] FM macro: `(wait key-off)` — loop stage until gate, then continue
 - [x] `MASTER` → recalculate all carrier TL values (implemented; `_masterVol` + VOL interaction)
-- [ ] `:glide` PARAM_SWEEP handling (expected to work via existing PARAM_SWEEP path)
+- [x] `:glide` PARAM_SWEEP handling (works via existing PARAM_SWEEP path)
 
 **PSG**
 
@@ -199,9 +199,9 @@ _Compiler — per-target gaps (after unification):_
 - [x] `_schedulePsgVelMacro` — step-vector + curve (current, pre-unification)
 - [x] PSG vel macro — sustain loop (`:loop`) / release tail (`:release`)
 - [x] Gate applied to PSG note-off timing and macro gate boundary
-- [ ] Share `_scheduleMacro` with FM (PSG provides its own `write_fn`)
-- [ ] PSG macro: `_` hold token, multi-stage, `(wait key-off)` — via unified scheduler
-- [ ] `NOISE_MODE` event handling (noise FB+NF register writes)
+- [x] Share `_scheduleMacro` with FM (PSG provides its own `write_fn`)
+- [x] PSG macro: `_` hold token, multi-stage, `(wait key-off)` — via unified scheduler
+- [x] `NOISE_MODE` event handling (noise FB+NF register writes)
 - [ ] `MASTER` → PSG attenuation recalculation
 
 ---
@@ -230,13 +230,13 @@ Then per-target gaps unlocked by the refactor:
 6. ~~`:macro :pitch` step-vector + `:loop` / `:release`~~ (done — falls out of unified parseMacroSpec/scheduleMacro)
 7. ~~`:macro :pan` step-vector + curve with snap~~ (done)
 8. ~~`:macro :mode` step-vector + curve with snap; emit `NOISE_MODE` per step~~ (done)
-9. `:macro` FM operator params (`:tl1`\u2013`:tl4` etc.)
+9. ~~`:macro` FM operator params (`:tl1`\u2013`:tl4` etc.)~~ (done)
 
 Other:
 
-10. `:glide` emit (compiler)
+10. ~~`:glide` emit (compiler)~~ (done)
 11. ~~`MASTER` player implementation~~ (done)
-12. `:vol (curve ...)` inline form
+12. ~~`:vol (curve ...)` inline form~~ (done)
 13. `:macro` multi-target (compiler)
 14. `:macro [list]` use-site merge
 15. `:extends`
