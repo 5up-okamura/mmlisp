@@ -133,6 +133,58 @@ Sonic 3 K driver (1ch PCM + FM6 alternation).
 
 ---
 
+### 2.4 Mid-track tempo change
+
+v0.4 removed the broken `(tempo N)` in-channel handler. v0.5 adds correct
+mid-track tempo change support.
+
+**Syntax**: same keyword style as other per-channel params, placed inline in
+the channel body.
+
+```lisp
+(score :tempo 120
+  (fm1 :oct 4 :len 4
+    c d e f          ; plays at 120 BPM
+    :tempo 80
+    g a              ; plays at 80 BPM
+    :tempo 120
+    b5 c5))          ; back to 120 BPM
+```
+
+**IR representation**: `TEMPO_SET` event at the tick where the change occurs,
+identical to the existing command already defined in the IR format.
+
+```json
+{ "tick": 192, "cmd": "TEMPO_SET", "args": { "bpm": 80 } }
+```
+
+**Player implementation requirement**: the current scheduler uses a fixed
+`secsPerTick = 60 / (bpm * ppqn)` computed once per `_scheduleLoop` call and
+a single `audioTimeAtTick0` origin per track. A `TEMPO_SET` mid-track requires
+reanchoring the time origin at the change point:
+
+```
+newAudioTimeAtTick0 = audioTimeOfChange - changeTick * newSecsPerTick
+```
+
+where `audioTimeOfChange = oldAudioTimeAtTick0 + changeTick * oldSecsPerTick`.
+
+This reanchoring must happen at dispatch time (when the `TEMPO_SET` event is
+processed inside `_dispatchEvent`), updating `track.audioTimeAtTick0` for all
+tracks sharing the same BPM context. The scheduler then naturally uses the new
+`secsPerTick` for all subsequent events.
+
+**Scope**: tempo changes apply globally (all tracks advance together), matching
+the existing `(score :tempo N)` semantics.
+
+**Open questions:**
+
+- Should per-track independent tempo be supported (different BPM per channel)?
+  Likely out of scope — all current hardware targets share one BPM context.
+- Is `TEMPO_SWEEP` (gradual BPM change) needed in v0.5, or deferred further?
+
+---
+
 ## 3. Out of Scope for v0.5
 
 - DT2 (second detune register) — deferred indefinitely
@@ -263,3 +315,4 @@ Open questions pending resolution:
 | 1        | §2.2 | CSM                     | ⬜ Open | Timer A exclusivity with FM3; csm-rate range        |
 | 2        | §2.1 | FM3 independent OP mode | ⬜ Open | Channel naming, mask bitmask, mode enable mechanism |
 | 3        | §2.3 | PCM playback            | ⬜ Open | Sample declaration, pitch range, fm6 coexistence    |
+| 4        | §2.4 | Mid-track tempo change  | ⬜ Open | Player reanchoring implementation                   |
