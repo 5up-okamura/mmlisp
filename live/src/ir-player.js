@@ -326,11 +326,16 @@ export class IRPlayer {
   triggerKeyOff(ch) {
     if (!this._holdChannels.has(ch)) return;
     this._holdChannels.delete(ch);
-    const port = ch >= 3 ? 1 : 0;
-    const chOffset = ch % 3;
-    const chKey = (port << 2) | chOffset;
     const when = this._ctx?.currentTime ?? 0;
-    this._write(0, 0x28, chKey, when);
+    if (ch >= 6) {
+      // PSG channels: silence by setting attenuation to 15 (max att = silent)
+      this._psgSetAtt(ch - 6, 15, when);
+    } else {
+      const port = ch >= 3 ? 1 : 0;
+      const chOffset = ch % 3;
+      const chKey = (port << 2) | chOffset;
+      this._write(0, 0x28, chKey, when);
+    }
   }
 
   /**
@@ -1736,8 +1741,9 @@ export class IRPlayer {
   // baseVel: per-note velocity 0-15 (15 = full volume).
   _schedulePsgEnvelope(psgCh, env, noteWhen, gateTicks, baseVel = 15) {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
+    const isHold = gateTicks === 0;
     const secsPerTick = this._secsPerTick;
-    const noteDurSecs = gateTicks * secsPerTick;
+    const noteDurSecs = isHold ? 0 : gateTicks * secsPerTick;
     const noteOffWhen = noteWhen + noteDurSecs - KEY_OFF_LEAD_SECS;
 
     // Compose vel * vol * master → PSG hardware attenuation via shared helpers.
@@ -1755,7 +1761,7 @@ export class IRPlayer {
     if (!env || env.subtype === "hard" || env.subtype === "fn") {
       // No envelope: set volume from vel then silence at note-off
       this._psgSetAtt(psgCh, scaleToAtt(15), noteWhen);
-      this._psgSetAtt(psgCh, 15, noteOffWhen);
+      if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
       return;
     }
 
@@ -1763,7 +1769,7 @@ export class IRPlayer {
       const steps = env.steps ?? [];
       if (steps.length === 0) {
         this._psgSetAtt(psgCh, scaleToAtt(15), noteWhen);
-        this._psgSetAtt(psgCh, 15, noteOffWhen);
+        if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
         return;
       }
       // Z80 driver: 1 step per V-INT = 60 Hz, independent of PPQN/BPM.
@@ -1886,7 +1892,8 @@ export class IRPlayer {
       noteWhen,
       (v, t) => this._psgSetAtt(psgCh, velToAtt(Math.round(v)), t),
     );
-    if (silenceAt !== null) {
+    // On hold notes (gateTicks === 0), silence is triggered by triggerKeyOff().
+    if (silenceAt !== null && gateTicks !== 0) {
       this._psgSetAtt(psgCh, 15, silenceAt);
     }
   }
@@ -1924,6 +1931,10 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        if (psgGateTicks === 0) {
+          // Hold note: register for runtime key-off via triggerKeyOff(psgCh + 6)
+          this._holdChannels.add(psgCh + 6);
+        }
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
         if (velMacro) {
