@@ -447,19 +447,6 @@ function emitVoice(td, tick, events, src, typedDefs, diagnostics) {
     }
     return true;
   }
-  if (
-    td.tag === "psg" &&
-    td.envelope.subtype !== "hard" &&
-    td.envelope.subtype !== "fn"
-  ) {
-    events.push({
-      tick,
-      cmd: "PSG_VOICE",
-      args: { envelope: td.envelope },
-      src,
-    });
-    return true;
-  }
   return false;
 }
 
@@ -1924,88 +1911,6 @@ function sortObject(value) {
   return value;
 }
 
-function parsePsgVector(vecNode, name, diagnostics, src) {
-  if (!vecNode || vecNode.kind !== "list" || vecNode.items.length === 0) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_PSG_VECTOR_EMPTY",
-      `def :psg '${name}': envelope vector is missing or empty`,
-      src,
-      null,
-    );
-    return { subtype: "bare", steps: [], loopIndex: null, releaseRate: null };
-  }
-  const first = atomValue(vecNode.items[0]);
-
-  if (first === ":fn") {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_FN_NOT_IMPL",
-      `def :psg '${name}': :fn envelope is not implemented`,
-      src,
-      null,
-    );
-    return { subtype: "fn" };
-  }
-  if (first === ":hard") {
-    pushDiag(
-      diagnostics,
-      "warning",
-      "W_PSG_HARD_RESERVED",
-      `def :psg '${name}': :hard envelope is reserved syntax — no IR generated`,
-      src,
-      null,
-    );
-    return { subtype: "hard" };
-  }
-  if (first === ":adsr") {
-    const opts = getKeywordMap(vecNode.items, 1);
-    return {
-      subtype: "adsr",
-      ar: parseIntLike(atomValue(opts.get(":ar"))) ?? 0,
-      dr: parseIntLike(atomValue(opts.get(":dr"))) ?? 0,
-      sl: parseIntLike(atomValue(opts.get(":sl"))) ?? 0,
-      sr: parseIntLike(atomValue(opts.get(":sr"))) ?? 0,
-      rr: parseIntLike(atomValue(opts.get(":rr"))) ?? 0,
-    };
-  }
-  if (first === ":seq") {
-    const steps = [];
-    let loopIndex = null;
-    let releaseRate = null;
-    let i = 1;
-    while (i < vecNode.items.length) {
-      const val = atomValue(vecNode.items[i]);
-      if (val === ":loop") {
-        loopIndex = steps.length;
-        i += 1;
-        continue;
-      }
-      if (val === ":release") {
-        i += 1;
-        if (i < vecNode.items.length) {
-          releaseRate = parseIntLike(atomValue(vecNode.items[i])) ?? 1;
-          i += 1;
-        }
-        continue;
-      }
-      const n = parseIntLike(val);
-      if (n !== null) steps.push(n);
-      i += 1;
-    }
-    return { subtype: "seq", steps, loopIndex, releaseRate };
-  }
-
-  return {
-    subtype: "bare",
-    steps: vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0),
-    loopIndex: null,
-    releaseRate: null,
-  };
-}
-
 function collectDefs(roots, diagnostics) {
   const defs = new Map();
   const defns = new Map();
@@ -2033,12 +1938,7 @@ function collectDefs(roots, diagnostics) {
         continue;
       }
       const maybeTag = atomValue(root.items[2]);
-      if (maybeTag === ":psg") {
-        const src = nodeSrc(root);
-        const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const parsed = parsePsgVector(bodyItems[3], name, diagnostics, src);
-        typedDefs.set(name, { tag: "psg", envelope: parsed, src });
-      } else if (maybeTag === ":macro") {
+      if (maybeTag === ":macro") {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
         const macroTargetSym = atomValue(bodyItems[3]); // e.g. ":pitch" or ":vel"
