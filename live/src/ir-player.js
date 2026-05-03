@@ -78,7 +78,6 @@ export class IRPlayer {
 
     // PSG channel routing
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
-    this._psgChVoice = new Array(4).fill(null); // stored envelope per PSG ch
     this._psgMuted = new Array(4).fill(false); // mute state per PSG ch
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
@@ -1850,11 +1849,6 @@ export class IRPlayer {
     const psgCh = ev._psgCh ?? 0;
 
     switch (ev.cmd) {
-      case "PSG_VOICE":
-        // Store the envelope for this PSG channel; applied on next NOTE_ON
-        this._psgChVoice[psgCh] = ev.args?.envelope ?? null;
-        break;
-
       case "NOTE_ON": {
         if (this._psgMuted[psgCh]) break;
 
@@ -1876,7 +1870,6 @@ export class IRPlayer {
           this._psgTriggerNoise(when);
         }
 
-        const env = this._psgChVoice[psgCh];
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
