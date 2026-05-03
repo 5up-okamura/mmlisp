@@ -332,6 +332,8 @@ export class IRPlayer {
     this._psgMuted = new Array(4).fill(false); // mute state per PSG ch
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
+    this._psgVol = new Array(4).fill(31); // channel vol 0-31 per PSG ch
+    this._psgLastVelAtt = new Array(4).fill(15); // last velocity attenuation written per PSG ch
 
     // Modulator tracks by channel index (built after _flattenTracks)
     this._modulatorsByCh = new Map();
@@ -1454,10 +1456,12 @@ export class IRPlayer {
       }
 
       case "MASTER": {
-        // Global master volume 0-31 (31=full). Re-applies carrier TL on all FM channels.
+        // Global master volume 0-31 (31=full). Re-applies carrier TL on all FM channels
+        // and PSG attenuation on all PSG channels.
         const master = Math.max(0, Math.min(31, value));
         this._masterVol = master;
         const masterAttn = (31 - master) * 4;
+        // FM channels: update carrier TL
         for (let ci = 0; ci < 6; ci++) {
           const cr = this._chRegs[ci];
           const vol = cr.vol ?? 31;
@@ -1469,6 +1473,19 @@ export class IRPlayer {
             cr.ops[opIdx].tl = tl;
             this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
           }
+        }
+        // PSG channels: recalculate attenuation from vel * vol * master
+        for (let psgCh = 0; psgCh < 4; psgCh++) {
+          const velAtt = this._psgLastVelAtt[psgCh] ?? 15;
+          const vol = this._psgVol[psgCh] ?? 31;
+          // Compose: velLevel (0-15) * volLevel (0-31) * masterLevel (0-31) / (15*31*31)
+          // Result scaled to attenuation range 0-15 (0=max, 15=silent)
+          const velLevel = 15 - velAtt; // 0-15, higher = louder
+          const volLevel = vol; // 0-31, higher = louder
+          const masterLevel = master; // 0-31, higher = louder
+          const composed = Math.max(0, Math.min(15, Math.round(velLevel * volLevel * masterLevel / (15 * 31 * 31) * 15)));
+          const finalAtt = 15 - composed;
+          this._psgSetAtt(psgCh, finalAtt, when);
         }
         nextValue = master;
         break;
@@ -1670,9 +1687,7 @@ export class IRPlayer {
         ? HOLD_FRAMES
         : Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
     const gateSecs =
-      gateTicks === 0
-        ? when + 1e9
-        : when + gateTicks * secsPerTick - 0.005;
+      gateTicks === 0 ? when + 1e9 : when + gateTicks * secsPerTick - 0.005;
     const OP_MACRO_MAP = {
       pan: "PAN",
       ...Object.fromEntries(
@@ -1912,6 +1927,8 @@ export class IRPlayer {
     // Latch byte: 1 | ch(2) | r=1(att) | att(4)
     const byte = 0x80 | ((psgCh & 0x03) << 5) | 0x10 | (attReg & 0x0f);
     this._psgWriteByte(byte, when);
+    // Record the last vel attenuation written (for MASTER recalculation)
+    this._psgLastVelAtt[psgCh] = attReg;
   }
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
@@ -2162,7 +2179,20 @@ export class IRPlayer {
       case "PARAM_SET":
       case "PARAM_SWEEP": {
         const psgTarget = (ev.args?.target ?? "").toUpperCase();
-        if (psgTarget === "NOTE_PITCH") {
+        if (psgTarget === "VOL") {
+          // vol 0-31 (31=max, 0=silent). Store per-channel vol for master composition.
+          const vol = Math.max(0, Math.min(31, ev.args?.value ?? 31));
+          this._psgVol[psgCh] = vol;
+          // Recompute final attenuation from vel * vol * master
+          const velAtt = this._psgLastVelAtt[psgCh] ?? 15;
+          const master = this._masterVol ?? 31;
+          const velLevel = 15 - velAtt;
+          const volLevel = vol;
+          const masterLevel = master;
+          const composed = Math.max(0, Math.min(15, Math.round(velLevel * volLevel * masterLevel / (15 * 31 * 31) * 15)));
+          const finalAtt = 15 - composed;
+          this._psgSetAtt(psgCh, finalAtt, when);
+        } else if (psgTarget === "NOTE_PITCH") {
           const from = Number(ev.args?.from ?? ev.args?.value ?? 0);
           const to = Number(ev.args?.to ?? from);
           const curve = ev.args?.curve ?? "linear";
