@@ -10,7 +10,7 @@
  */
 
 import { parse } from "./mmlisp-parser.js";
-import { clampForTarget } from "./macro-ranges.js";
+import { clampForTarget } from "./ir-utils.js";
 
 const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
