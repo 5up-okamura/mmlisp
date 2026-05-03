@@ -157,9 +157,9 @@ _Compiler — per-target gaps (after unification):_
 - [x] `:macro :pan` step-vector + curve
 - [x] `:macro :mode` step-vector + curve
 - [x] `:macro` FM operator params (`:tl1`–`:tl4`, `:ar1`–`:ar4`, etc.)
-- [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))`
-- [ ] `:macro [list]` use-site macro array/list merge
-- [ ] `:extends` — compile-time FM voice inheritance
+- [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))` ~~(removed; use [list] at use-site)~~
+- [x] `:macro [list]` use-site macro array/list merge
+- [x] `:extends` — compile-time FM voice inheritance
 - [ ] `len=0` hold note (KEY_OFF driven by runtime `key_off_flags`)
 
 **PSG Noise**

@@ -424,9 +424,24 @@ function getVecInts(vecNode) {
   return vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0);
 }
 
-function emitVoice(td, tick, events, src) {
+function emitVoice(td, tick, events, src, typedDefs, diagnostics) {
   if (td.tag === "fm") {
     emitFmPatch(td, tick, events, src);
+    return true;
+  }
+  if (td.tag === "fm-kw") {
+    const kwMap = td.extends
+      ? resolveVoice(td.extends, typedDefs ?? new Map(), diagnostics ?? [], new Set())
+      : new Map();
+    if (kwMap) {
+      // Merge child overrides on top of resolved base
+      const merged = new Map(kwMap);
+      for (const [k, v] of td.kwMap) merged.set(k, v);
+      emitVoiceFromKwMap(merged, tick, events, src);
+    } else {
+      // Base resolution failed; emit child keys only
+      emitVoiceFromKwMap(td.kwMap, tick, events, src);
+    }
     return true;
   }
   if (
@@ -443,6 +458,64 @@ function emitVoice(td, tick, events, src) {
     return true;
   }
   return false;
+}
+
+// Resolve :extends chain into a flat kwMap of canonical param names → number.
+// Returns null and emits a diagnostic on cycle/missing-base.
+function resolveVoice(name, typedDefs, diagnostics, seen = new Set()) {
+  if (seen.has(name)) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_EXTENDS_CYCLE",
+      `cycle detected in :extends chain: ${name}`,
+      null,
+      null,
+    );
+    return null;
+  }
+  seen.add(name);
+  const td = typedDefs.get(name);
+  if (!td) return null;
+  if (td.tag === "fm") {
+    // Legacy vector-form: convert to kwMap
+    const kwMap = new Map();
+    const chVals = getVecInts(td.algFb);
+    const CH_KEYS = ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"];
+    chVals.forEach((v, i) => { if (CH_KEYS[i]) kwMap.set(CH_KEYS[i], v); });
+    for (let op = 0; op < 4; op++) {
+      const vals = getVecInts(td.ops[op]);
+      FM_OP_PARAMS.forEach((pname, pi) => {
+        if (vals[pi] !== undefined) kwMap.set(`FM_${pname}${op + 1}`, vals[pi]);
+      });
+    }
+    return kwMap;
+  }
+  if (td.tag === "fm-kw") {
+    const base = td.extends
+      ? resolveVoice(td.extends, typedDefs, diagnostics, seen)
+      : new Map();
+    if (base === null) return null;
+    // Child overrides parent
+    const merged = new Map(base);
+    for (const [k, v] of td.kwMap) merged.set(k, v);
+    return merged;
+  }
+  return null;
+}
+
+function emitVoiceFromKwMap(kwMap, tick, events, src) {
+  const EMIT_KEYS = [
+    "FM_ALG", "FM_FB", "FM_AMS", "FM_FMS",
+    ...([1, 2, 3, 4].flatMap((op) =>
+      FM_OP_PARAMS.map((p) => `FM_${p}${op}`)
+    )),
+  ];
+  for (const target of EMIT_KEYS) {
+    const value = kwMap.get(target);
+    if (value !== undefined)
+      events.push({ tick, cmd: "PARAM_SET", args: { target, value }, src });
+  }
 }
 
 function emitFmPatch(td, tick, events, src) {
@@ -1008,7 +1081,7 @@ function compileChannelBody(
           if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
           else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
         } else {
-          emitVoice(td, trackState.tick, events, nodeSrc(node));
+          emitVoice(td, trackState.tick, events, nodeSrc(node), typedDefs, diagnostics);
         }
         i++;
         continue;
@@ -1500,6 +1573,8 @@ function compileSeq(
           trackState.tick,
           events,
           nodeSrc(item),
+          typedDefs,
+          diagnostics,
         );
       } else if (voiceName) {
         pushDiag(
@@ -1573,6 +1648,8 @@ function compileTrackBodyItems(
             trackState.tick,
             events,
             nodeSrc(node),
+            typedDefs,
+            diagnostics,
           );
         } else if (voiceName) {
           pushDiag(
@@ -1989,6 +2066,35 @@ function collectDefs(roots, diagnostics) {
         if (spec) {
           typedDefs.set(name, { tag: "macro", target: irTarget, spec, src });
         }
+      } else if (maybeTag === ":extends") {
+        // Keyword-map FM voice def with inheritance
+        // (def child :extends base :alg 7 :tl1 20 ...)
+        const src = nodeSrc(root);
+        const bodyItems = root.items.filter((n) => n.kind !== "comment");
+        const baseName = atomValue(bodyItems[3]);
+        const kwMap = new Map();
+        for (let ki = 4; ki + 1 < bodyItems.length; ki += 2) {
+          const kwSym = atomValue(bodyItems[ki]);
+          const kwVal = parseIntLike(atomValue(bodyItems[ki + 1]));
+          if (kwSym?.startsWith(":") && kwVal !== null) {
+            kwMap.set(canonicalTarget(kwSym), kwVal);
+          }
+        }
+        typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src });
+      } else if (maybeTag?.startsWith(":alg") || maybeTag?.startsWith(":fb") || maybeTag?.startsWith(":ar") || maybeTag?.startsWith(":tl") || maybeTag?.startsWith(":dr") || maybeTag?.startsWith(":sr") || maybeTag?.startsWith(":rr")) {
+        // Keyword-map FM voice def without :fm tag (bare keyword form)
+        // (def my-patch :alg 7 :fb 0 :tl1 20 ...)
+        const src = nodeSrc(root);
+        const bodyItems = root.items.filter((n) => n.kind !== "comment");
+        const kwMap = new Map();
+        for (let ki = 2; ki + 1 < bodyItems.length; ki += 2) {
+          const kwSym = atomValue(bodyItems[ki]);
+          const kwVal = parseIntLike(atomValue(bodyItems[ki + 1]));
+          if (kwSym?.startsWith(":") && kwVal !== null) {
+            kwMap.set(canonicalTarget(kwSym), kwVal);
+          }
+        }
+        typedDefs.set(name, { tag: "fm-kw", extends: null, kwMap, src });
       } else {
         defs.set(
           name,
