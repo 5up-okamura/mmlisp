@@ -135,6 +135,28 @@ function levelToPsgAtt(level) {
   return Math.max(0, Math.min(15, Math.round((1 - t) * 15)));
 }
 
+// Sample a vol sweep state { from, to, curve, baseFrames, nonLoopOffset, startWhen }
+// at the given audio time. Returns a clamped value in the same range as from/to.
+// Shared by _fmVolAtTime and _psgVolAtTime.
+function sweepVolAtTime(sweep, when) {
+  const frameOffset = Math.max(0, (when - sweep.startWhen) * 60);
+  const frame = (sweep.nonLoopOffset ?? 0) + frameOffset;
+  const phase =
+    sweep.baseFrames <= 1 ? 1 : Math.min(1, frame / (sweep.baseFrames - 1));
+  const unit = sampleCurveUnit(sweep.curve, phase);
+  return Math.max(0, Math.min(31, sweep.from + (sweep.to - sweep.from) * unit));
+}
+
+// Compute sweep phase [0,1] for a given frame index.
+// loop=true wraps with loopPhaseOffset; loop=false clamps to 1.
+function sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset) {
+  return loop
+    ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
+    : baseFrames <= 1
+      ? 1
+      : Math.min(1, frame / (baseFrames - 1));
+}
+
 function sampleCurveUnit(curve, phase) {
   const t = Math.max(0, Math.min(1, phase));
   switch (curve) {
@@ -1602,6 +1624,33 @@ export class IRPlayer {
     );
   }
 
+  // Compute sweep iteration parameters for the current loop:
+  //   budgetFrames      – total frames to write this invocation
+  //   nonLoopStartFrame – absolute frame index at start of this iteration
+  //   iterFrames        – how many frames to actually write (capped to remaining sweep)
+  //   loopPhaseOffset   – phase offset for looping curves (sin/tri/saw/…)
+  _sweepFrameParams(ev, baseFrames, loop) {
+    const secsPerTick = 60 / (this._bpm * this._ppqn);
+    const budgetFrames = this._resolveSweepBudgetFrames(ev);
+    const endTick = this._resolveSweepEndTick(ev);
+    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+    const spansLoopBoundary =
+      track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
+    const loopPhaseOffset =
+      loop && spansLoopBoundary && track != null
+        ? track.loopCount * budgetFrames
+        : 0;
+    const loopDurationFrames = track
+      ? Math.max(1, Math.floor((track.loopDuration ?? 1) * secsPerTick * 60))
+      : budgetFrames;
+    const loopCount = track?.loopCount ?? 0;
+    const nonLoopStartFrame = !loop ? loopCount * loopDurationFrames : 0;
+    const iterFrames = !loop
+      ? Math.max(0, Math.min(loopDurationFrames, baseFrames - nonLoopStartFrame))
+      : budgetFrames;
+    return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset };
+  }
+
   // Core macro scheduler shared by all targets and types.
   // Returns the audio time immediately after the last scheduled write (for
   // scheduling silence), or null if no writes were made (curve type or empty).
@@ -1772,13 +1821,9 @@ export class IRPlayer {
         : Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
     const gateSecs =
       gateTicks === 0 ? when + 1e9 : when + gateTicks * secsPerTick - 0.005;
-    // vel 15 = full vol, vel 0 = silent.
-    const velToTl = (v) => {
-      const effectiveVol = Math.round(
-        (baseVol * clampForTarget("VEL", v)) / 15,
-      );
-      return clampForTarget("FM_TL", (31 - effectiveVol) * 4);
-    };
+    // vel 15 = full vol, vel 0 = silent. Use unified pipeline.
+    const velToTl = (v) =>
+      levelToFmTl(composeLevel(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31));
 
     this._scheduleMacro(velMacro, noteFrames, gateSecs, when, (v, t) => {
       const tl = velToTl(Math.round(v));
@@ -1832,34 +1877,20 @@ export class IRPlayer {
       Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60),
     );
     const loop = !!ev.args?.loop;
-    const budgetFrames = this._resolveSweepBudgetFrames(ev);
-    const endTick = this._resolveSweepEndTick(ev);
-    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-    const spansLoopBoundary =
-      track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
-    const loopPhaseOffset =
-      loop && spansLoopBoundary && track != null
-        ? track.loopCount * budgetFrames
-        : 0;
+    const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset } =
+      this._sweepFrameParams(ev, baseFrames, loop);
 
-    // NOTE_PITCH must follow later NOTE_ON base notes. If we precompute all frames
-    // against one base note, later notes are overwritten back toward an old pitch.
+    // NOTE_PITCH: must track future NOTE_ON base pitches so per-frame frequency
+    // writes use the correct note at each point in time.
     if (target === "NOTE_PITCH") {
-      const trackIndex = ev._trackIndex;
-      const track = trackIndex != null ? this._tracks[trackIndex] : null;
-      const secsPerTick = 60 / (this._bpm * this._ppqn);
+      const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
       const framesPerTick = secsPerTick * 60;
-
       let baseMidi = this._chRegs[ch]?.currentMidi ?? 60;
       let cursor = track ? track.flatIndex + 1 : 0;
       let nextNoteTick = Infinity;
       let nextNoteMidi = baseMidi;
-
-      const advanceNextNote = () => {
-        if (!track) {
-          nextNoteTick = Infinity;
-          return;
-        }
+      const advance = () => {
+        if (!track) { nextNoteTick = Infinity; return; }
         while (cursor < track.events.length) {
           const ne = track.events[cursor++];
           if (ne.cmd !== "NOTE_ON" || ne._isPsg) continue;
@@ -1869,119 +1900,48 @@ export class IRPlayer {
         }
         nextNoteTick = Infinity;
       };
-
-      advanceNextNote();
-
+      advance();
       for (let frame = 0; frame < budgetFrames; frame++) {
         const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
-        while (frameTick >= nextNoteTick) {
-          baseMidi = nextNoteMidi;
-          advanceNextNote();
-        }
-
-        const phase = loop
-          ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
-          : baseFrames <= 1
-            ? 1
-            : Math.min(1, frame / (baseFrames - 1));
-        const unit = sampleCurveUnit(curve, phase);
-        const centOffset = Math.round(from + (to - from) * unit);
+        while (frameTick >= nextNoteTick) { baseMidi = nextNoteMidi; advance(); }
+        const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
+        const centOffset = Math.round(from + (to - from) * sampleCurveUnit(curve, phase));
         this._chRegs[ch].pitchOffset = centOffset;
-        const { fnum: pf, block: pb } = midiToFnumBlock(
-          baseMidi + centOffset / 100,
-        );
+        const { fnum: pf, block: pb } = midiToFnumBlock(baseMidi + centOffset / 100);
         const frameWhen = when + frame / 60;
-        this._write(
-          port,
-          0xa4 + chOffset,
-          ((pb & 0x07) << 3) | ((pf >> 8) & 0x07),
-          frameWhen,
-        );
+        this._write(port, 0xa4 + chOffset, ((pb & 0x07) << 3) | ((pf >> 8) & 0x07), frameWhen);
         this._write(port, 0xa0 + chOffset, pf & 0xff, frameWhen);
       }
       return;
     }
 
-    // For non-looping sweeps that span multiple structural loops (e.g. :vol fade
-    // over 8 bars where one loop iteration is 1 bar), offset the phase by how
-    // many loop iterations have already elapsed so each restart continues the
-    // sweep rather than restarting it from `from`.
-    const secsPerTickLocal = 60 / (this._bpm * this._ppqn);
-    const loopDurationFrames = track
-      ? Math.max(
-          1,
-          Math.floor((track.loopDuration ?? 1) * secsPerTickLocal * 60),
-        )
-      : budgetFrames;
-    const loopCount = track?.loopCount ?? 0;
-    const nonLoopStartFrame = !loop ? loopCount * loopDurationFrames : 0;
-
-    // How many frames to write this iteration (cap to remaining sweep length).
-    const iterFrames = !loop
-      ? Math.max(
-          0,
-          Math.min(loopDurationFrames, baseFrames - nonLoopStartFrame),
-        )
-      : budgetFrames;
-
-    // For VOL target on FM channels: write TL directly (don't go through
-    // _applyParam which sets regs.vol immediately and breaks NOTE_ON TL calc).
-    // Store sweep state so _fmVolAtTime() can sample the correct vol at NOTE_ON time.
+    // VOL: write TL directly per-frame (avoids mutating regs.vol mid-sweep which
+    // would cause NOTE_ON to read the wrong vol).  Store sweep state so
+    // _fmVolAtTime() returns the correct instantaneous vol at NOTE_ON time.
     const regs = this._chRegs[ch];
-    const isFmVol = target === "VOL";
-    if (isFmVol) {
+    if (target === "VOL") {
       const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
       for (let i = 0; i < iterFrames; i++) {
         const frame = !loop ? nonLoopStartFrame + i : i;
-        const phase = loop
-          ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
-          : baseFrames <= 1
-            ? 1
-            : Math.min(1, frame / (baseFrames - 1));
-        const unit = sampleCurveUnit(curve, phase);
-        const volAtFrame = Math.max(0, Math.min(31, from + (to - from) * unit));
-        const tl = levelToFmTl(
-          composeLevel(regs.vel ?? 15, volAtFrame, this._masterVol ?? 31),
-        );
+        const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
+        const vol = Math.max(0, Math.min(31, from + (to - from) * sampleCurveUnit(curve, phase)));
+        const tl = levelToFmTl(composeLevel(regs.vel ?? 15, vol, this._masterVol ?? 31));
         const frameWhen = when + i / 60;
         for (const opIdx of carriers) {
-          this._write(
-            port,
-            0x40 + OP_ADDR_OFFSET[opIdx] + chOffset,
-            tl,
-            frameWhen,
-          );
+          this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, frameWhen);
         }
       }
-      // Store sweep state for _fmVolAtTime() — NOTE_ON will sample this.
-      this._fmVolSweep[ch] = {
-        from,
-        to,
-        curve,
-        baseFrames,
-        nonLoopOffset: nonLoopStartFrame,
-        startWhen: when,
-      };
-      // Update regs.vol to final value for MASTER recalc fallback.
-      regs.vol = to;
-    } else {
-      for (let i = 0; i < iterFrames; i++) {
-        const frame = !loop ? nonLoopStartFrame + i : i;
-        const phase = loop
-          ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
-          : baseFrames <= 1
-            ? 1
-            : Math.min(1, frame / (baseFrames - 1));
-        const unit = sampleCurveUnit(curve, phase);
-        const value = Math.round(from + (to - from) * unit);
-        this._applyParam(
-          ch,
-          port,
-          chOffset,
-          { cmd: "PARAM_SET", args: { target, value } },
-          when + i / 60,
-        );
-      }
+      this._fmVolSweep[ch] = { from, to, curve, baseFrames, nonLoopOffset: nonLoopStartFrame, startWhen: when };
+      regs.vol = to; // final value for MASTER recalc fallback
+      return;
+    }
+
+    // All other FM parameters: route through _applyParam (handles register encoding).
+    for (let i = 0; i < iterFrames; i++) {
+      const frame = !loop ? nonLoopStartFrame + i : i;
+      const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
+      const value = Math.round(from + (to - from) * sampleCurveUnit(curve, phase));
+      this._applyParam(ch, port, chOffset, { cmd: "PARAM_SET", args: { target, value } }, when + i / 60);
     }
   }
 
@@ -2036,26 +1996,12 @@ export class IRPlayer {
   // sampling an active VOL sweep if present.
   _fmVolAtTime(ch, when) {
     const sweep = this._fmVolSweep?.[ch];
-    if (!sweep) return this._chRegs[ch].vol ?? 31;
-    const frameOffset = Math.max(0, (when - sweep.startWhen) * 60);
-    const frame = sweep.nonLoopOffset + frameOffset;
-    const phase =
-      sweep.baseFrames <= 1 ? 1 : Math.min(1, frame / (sweep.baseFrames - 1));
-    const unit = sampleCurveUnit(sweep.curve, phase);
-    return Math.max(
-      0,
-      Math.min(31, sweep.from + (sweep.to - sweep.from) * unit),
-    );
+    return sweep ? sweepVolAtTime(sweep, when) : (this._chRegs[ch].vol ?? 31);
   }
 
   _psgVolAtTime(psgCh, when) {
     const sweep = this._psgVolSweep?.[psgCh];
-    if (!sweep) return this._psgVol[psgCh] ?? 31;
-    const frameOffset = Math.max(0, (when - sweep.startWhen) * 60);
-    const phase =
-      sweep.frames <= 1 ? 1 : Math.min(1, frameOffset / (sweep.frames - 1));
-    const unit = sampleCurveUnit(sweep.curve, phase);
-    return sweep.from + (sweep.to - sweep.from) * unit;
+    return sweep ? sweepVolAtTime(sweep, when) : (this._psgVol[psgCh] ?? 31);
   }
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
@@ -2338,23 +2284,18 @@ export class IRPlayer {
               when,
             );
           } else {
-            // PARAM_SWEEP: store sweep state. Hardware writes happen at each NOTE_ON
-            // via _psgVolAtTime(), so no frame-by-frame pre-scheduling needed.
+            // PARAM_SWEEP: store sweep state (same format as _fmVolSweep).
+            // Hardware writes happen lazily at each NOTE_ON via _psgVolAtTime().
             const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? 31)));
             const to = Math.max(0, Math.min(31, Number(ev.args?.to ?? from)));
             const curve = ev.args?.curve ?? "linear";
-            // ev.args.frames is ticks; convert to 60 Hz frames for _psgVolAtTime.
             const secsPerTickVol = 60 / (this._bpm * this._ppqn);
-            const frames = Math.max(
+            const baseFrames = Math.max(
               1,
               Math.round(Number(ev.args?.frames ?? 1) * secsPerTickVol * 60),
             );
             this._psgVolSweep[psgCh] = {
-              from,
-              to,
-              curve,
-              frames,
-              startWhen: when,
+              from, to, curve, baseFrames, nonLoopOffset: 0, startWhen: when,
             };
             this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
           }
@@ -2370,27 +2311,18 @@ export class IRPlayer {
           );
           const loop = !!ev.args?.loop;
           const framesPerTick = secsPerTick * 60;
-          const budgetFrames =
-            ev.cmd === "PARAM_SWEEP" ? this._resolveSweepBudgetFrames(ev) : 1;
-          const endTick = this._resolveSweepEndTick(ev);
-          const trackIndex = ev._trackIndex;
-          const track = trackIndex != null ? this._tracks[trackIndex] : null;
-          const spansLoopBoundary =
-            track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
-          const loopPhaseOffset =
-            loop && spansLoopBoundary && track != null
-              ? track.loopCount * budgetFrames
-              : 0;
+          const { budgetFrames, loopPhaseOffset } =
+            ev.cmd === "PARAM_SWEEP"
+              ? this._sweepFrameParams(ev, baseFrames, loop)
+              : { budgetFrames: 1, loopPhaseOffset: 0 };
+          const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
           let baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
           let cursor = track ? track.flatIndex + 1 : 0;
           let nextNoteTick = Infinity;
           let nextNoteMidi = baseMidi;
 
-          const advanceNextPsgNote = () => {
-            if (!track) {
-              nextNoteTick = Infinity;
-              return;
-            }
+          const advance = () => {
+            if (!track) { nextNoteTick = Infinity; return; }
             while (cursor < track.events.length) {
               const ne = track.events[cursor++];
               if (ne.cmd !== "NOTE_ON" || !ne._isPsg) continue;
@@ -2401,34 +2333,17 @@ export class IRPlayer {
             }
             nextNoteTick = Infinity;
           };
+          advance();
 
-          advanceNextPsgNote();
-
-          // For PARAM_SET (single frame), update stored pitch offset
-          if (ev.cmd === "PARAM_SET") {
-            this._psgPitchOffset[psgCh] = from;
-          } else {
-            this._psgPitchOffset[psgCh] = to;
-          }
+          // Store final pitch offset (used when no active sweep)
+          this._psgPitchOffset[psgCh] = ev.cmd === "PARAM_SET" ? from : to;
           for (let frame = 0; frame < budgetFrames; frame++) {
             const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
-            while (frameTick >= nextNoteTick) {
-              baseMidi = nextNoteMidi;
-              advanceNextPsgNote();
-            }
-            const phase = loop
-              ? ((frame + loopPhaseOffset) % baseFrames) / baseFrames
-              : baseFrames <= 1
-                ? 1
-                : Math.min(1, frame / (baseFrames - 1));
-            const unit = sampleCurveUnit(curve, phase);
-            const centOffset = from + (to - from) * unit;
+            while (frameTick >= nextNoteTick) { baseMidi = nextNoteMidi; advance(); }
+            const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
+            const centOffset = from + (to - from) * sampleCurveUnit(curve, phase);
             this._psgPitchOffset[psgCh] = centOffset;
-            this._psgSetPitch(
-              psgCh,
-              baseMidi + centOffset / 100,
-              when + frame / 60,
-            );
+            this._psgSetPitch(psgCh, baseMidi + centOffset / 100, when + frame / 60);
           }
         }
         break;
