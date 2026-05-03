@@ -152,7 +152,7 @@ function parseGateSpec(val) {
     return { type: "ratio", value: f };
   }
   const ticks = parseLengthToken(val, null);
-  if (ticks === null || ticks <= 0) return null;
+  if (ticks === null || ticks < 0) return null;
   return { type: "ticks", value: ticks };
 }
 
