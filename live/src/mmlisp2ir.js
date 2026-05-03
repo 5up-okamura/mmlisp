@@ -434,7 +434,12 @@ function emitVoice(td, tick, events, src, typedDefs, diagnostics) {
   }
   if (td.tag === "fm-kw") {
     const kwMap = td.extends
-      ? resolveVoice(td.extends, typedDefs ?? new Map(), diagnostics ?? [], new Set())
+      ? resolveVoice(
+          td.extends,
+          typedDefs ?? new Map(),
+          diagnostics ?? [],
+          new Set(),
+        )
       : new Map();
     if (kwMap) {
       // Merge child overrides on top of resolved base
@@ -482,10 +487,11 @@ function resolveVoice(name, typedDefs, diagnostics, seen = new Set()) {
 
 function emitVoiceFromKwMap(kwMap, tick, events, src) {
   const EMIT_KEYS = [
-    "FM_ALG", "FM_FB", "FM_AMS", "FM_FMS",
-    ...([1, 2, 3, 4].flatMap((op) =>
-      FM_OP_PARAMS.map((p) => `FM_${p}${op}`)
-    )),
+    "FM_ALG",
+    "FM_FB",
+    "FM_AMS",
+    "FM_FMS",
+    ...[1, 2, 3, 4].flatMap((op) => FM_OP_PARAMS.map((p) => `FM_${p}${op}`)),
   ];
   for (const target of EMIT_KEYS) {
     const value = kwMap.get(target);
@@ -807,14 +813,12 @@ function compileChannelBody(
                 const applyMacroEntry = (irTarget, spec) => {
                   if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
                   trackState.activeMacros[irTarget] = spec;
-                  if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
+                  if (irTarget === "NOTE_PITCH")
+                    trackState.activePitchMacro = spec;
                   else if (irTarget === "VEL") trackState.activeVelMacro = spec;
                 };
 
-                if (
-                  macroNode?.kind === "list" &&
-                  macroNode.bracket === "[]"
-                ) {
+                if (macroNode?.kind === "list" && macroNode.bracket === "[]") {
                   // Form 3: [list] — iterate entries, last write wins per target
                   const listItems = macroNode.items.filter(
                     (n) => n.kind !== "comment",
@@ -853,8 +857,7 @@ function compileChannelBody(
                 } else if (rawVal && typedDefs?.has(rawVal)) {
                   // Form 1: single named def
                   const td = typedDefs.get(rawVal);
-                  if (td?.tag === "macro")
-                    applyMacroEntry(td.target, td.spec);
+                  if (td?.tag === "macro") applyMacroEntry(td.target, td.spec);
                 }
                 break;
               }
@@ -1057,7 +1060,14 @@ function compileChannelBody(
           if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
           else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
         } else {
-          emitVoice(td, trackState.tick, events, nodeSrc(node), typedDefs, diagnostics);
+          emitVoice(
+            td,
+            trackState.tick,
+            events,
+            nodeSrc(node),
+            typedDefs,
+            diagnostics,
+          );
         }
         i++;
         continue;
@@ -1962,7 +1972,15 @@ function collectDefs(roots, diagnostics) {
           }
         }
         typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src });
-      } else if (maybeTag?.startsWith(":alg") || maybeTag?.startsWith(":fb") || maybeTag?.startsWith(":ar") || maybeTag?.startsWith(":tl") || maybeTag?.startsWith(":dr") || maybeTag?.startsWith(":sr") || maybeTag?.startsWith(":rr")) {
+      } else if (
+        maybeTag?.startsWith(":alg") ||
+        maybeTag?.startsWith(":fb") ||
+        maybeTag?.startsWith(":ar") ||
+        maybeTag?.startsWith(":tl") ||
+        maybeTag?.startsWith(":dr") ||
+        maybeTag?.startsWith(":sr") ||
+        maybeTag?.startsWith(":rr")
+      ) {
         // Keyword-map FM voice def without :fm tag (bare keyword form)
         // (def my-patch :alg 7 :fb 0 :tl1 20 ...)
         const src = nodeSrc(root);

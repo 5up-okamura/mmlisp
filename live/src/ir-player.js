@@ -129,7 +129,7 @@ export class IRPlayer {
     return 60 / (this._bpm * this._ppqn);
   }
 
-    _resolveInitialTempo(irObj) {
+  _resolveInitialTempo(irObj) {
     // Prefer an explicit tempo event at tick 0 so scheduling starts at the
     // intended BPM on the very first loop.
     for (const track of irObj?.tracks ?? []) {
@@ -1383,7 +1383,10 @@ export class IRPlayer {
     const loopCount = track?.loopCount ?? 0;
     const nonLoopStartFrame = !loop ? loopCount * loopDurationFrames : 0;
     const iterFrames = !loop
-      ? Math.max(0, Math.min(loopDurationFrames, baseFrames - nonLoopStartFrame))
+      ? Math.max(
+          0,
+          Math.min(loopDurationFrames, baseFrames - nonLoopStartFrame),
+        )
       : budgetFrames;
     return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset };
   }
@@ -1498,7 +1501,10 @@ export class IRPlayer {
   // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
   // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
   _scheduleFmOpMacros(ch, port, chOffset, noteArgs, when, gateTicks) {
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      when,
+      gateTicks,
+    );
     const OP_MACRO_MAP = {
       pan: "PAN",
       ...Object.fromEntries(
@@ -1541,10 +1547,15 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     const baseVol = regs.vol ?? 31;
     const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      when,
+      gateTicks,
+    );
     // vel 15 = full vol, vel 0 = silent. Use unified pipeline.
     const velToTl = (v) =>
-      levelToFmTl(composeLevel(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31));
+      levelToFmTl(
+        composeLevel(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31),
+      );
 
     this._scheduleMacro(velMacro, noteFrames, gateSecs, when, (v, t) => {
       const tl = velToTl(Math.round(v));
@@ -1584,14 +1595,18 @@ export class IRPlayer {
     // NOTE_PITCH: must track future NOTE_ON base pitches so per-frame frequency
     // writes use the correct note at each point in time.
     if (target === "NOTE_PITCH") {
-      const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+      const track =
+        ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
       const framesPerTick = secsPerTick * 60;
       let baseMidi = this._chRegs[ch]?.currentMidi ?? 60;
       let cursor = track ? track.flatIndex + 1 : 0;
       let nextNoteTick = Infinity;
       let nextNoteMidi = baseMidi;
       const advance = () => {
-        if (!track) { nextNoteTick = Infinity; return; }
+        if (!track) {
+          nextNoteTick = Infinity;
+          return;
+        }
         while (cursor < track.events.length) {
           const ne = track.events[cursor++];
           if (ne.cmd !== "NOTE_ON" || ne._isPsg) continue;
@@ -1604,13 +1619,30 @@ export class IRPlayer {
       advance();
       for (let frame = 0; frame < budgetFrames; frame++) {
         const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
-        while (frameTick >= nextNoteTick) { baseMidi = nextNoteMidi; advance(); }
-        const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
-        const centOffset = Math.round(from + (to - from) * sampleCurveUnit(curve, phase));
+        while (frameTick >= nextNoteTick) {
+          baseMidi = nextNoteMidi;
+          advance();
+        }
+        const phase = sampleSweepPhase(
+          frame,
+          baseFrames,
+          loop,
+          loopPhaseOffset,
+        );
+        const centOffset = Math.round(
+          from + (to - from) * sampleCurveUnit(curve, phase),
+        );
         this._chRegs[ch].pitchOffset = centOffset;
-        const { fnum: pf, block: pb } = midiToFnumBlock(baseMidi + centOffset / 100);
+        const { fnum: pf, block: pb } = midiToFnumBlock(
+          baseMidi + centOffset / 100,
+        );
         const frameWhen = when + frame / 60;
-        this._write(port, 0xa4 + chOffset, ((pb & 0x07) << 3) | ((pf >> 8) & 0x07), frameWhen);
+        this._write(
+          port,
+          0xa4 + chOffset,
+          ((pb & 0x07) << 3) | ((pf >> 8) & 0x07),
+          frameWhen,
+        );
         this._write(port, 0xa0 + chOffset, pf & 0xff, frameWhen);
       }
       return;
@@ -1624,15 +1656,37 @@ export class IRPlayer {
       const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
       for (let i = 0; i < iterFrames; i++) {
         const frame = !loop ? nonLoopStartFrame + i : i;
-        const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
-        const vol = Math.max(0, Math.min(31, from + (to - from) * sampleCurveUnit(curve, phase)));
-        const tl = levelToFmTl(composeLevel(regs.vel ?? 15, vol, this._masterVol ?? 31));
+        const phase = sampleSweepPhase(
+          frame,
+          baseFrames,
+          loop,
+          loopPhaseOffset,
+        );
+        const vol = Math.max(
+          0,
+          Math.min(31, from + (to - from) * sampleCurveUnit(curve, phase)),
+        );
+        const tl = levelToFmTl(
+          composeLevel(regs.vel ?? 15, vol, this._masterVol ?? 31),
+        );
         const frameWhen = when + i / 60;
         for (const opIdx of carriers) {
-          this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, frameWhen);
+          this._write(
+            port,
+            0x40 + OP_ADDR_OFFSET[opIdx] + chOffset,
+            tl,
+            frameWhen,
+          );
         }
       }
-      this._fmVolSweep[ch] = { from, to, curve, baseFrames, nonLoopOffset: nonLoopStartFrame, startWhen: when };
+      this._fmVolSweep[ch] = {
+        from,
+        to,
+        curve,
+        baseFrames,
+        nonLoopOffset: nonLoopStartFrame,
+        startWhen: when,
+      };
       regs.vol = to; // final value for MASTER recalc fallback
       return;
     }
@@ -1641,8 +1695,16 @@ export class IRPlayer {
     for (let i = 0; i < iterFrames; i++) {
       const frame = !loop ? nonLoopStartFrame + i : i;
       const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
-      const value = Math.round(from + (to - from) * sampleCurveUnit(curve, phase));
-      this._applyParam(ch, port, chOffset, { cmd: "PARAM_SET", args: { target, value } }, when + i / 60);
+      const value = Math.round(
+        from + (to - from) * sampleCurveUnit(curve, phase),
+      );
+      this._applyParam(
+        ch,
+        port,
+        chOffset,
+        { cmd: "PARAM_SET", args: { target, value } },
+        when + i / 60,
+      );
     }
   }
 
@@ -1875,7 +1937,10 @@ export class IRPlayer {
     if (!velMacro) return;
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
 
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      noteWhen,
+      gateTicks,
+    );
 
     // vel 0-15 → PSG att via shared composition helpers
     const vol = this._psgVolAtTime(psgCh, noteWhen);
@@ -1921,7 +1986,8 @@ export class IRPlayer {
             midi,
             when,
             this._resolveTiedLength(ev, ev.args?.length ?? this._ppqn / 2),
-            (centOffset, t) => this._psgSetPitch(psgCh, midi + centOffset / 100, t),
+            (centOffset, t) =>
+              this._psgSetPitch(psgCh, midi + centOffset / 100, t),
           );
         } else {
           this._psgTriggerNoise(when);
@@ -1979,7 +2045,12 @@ export class IRPlayer {
               Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60),
             );
             this._psgVolSweep[psgCh] = {
-              from, to, curve, baseFrames, nonLoopOffset: 0, startWhen: when,
+              from,
+              to,
+              curve,
+              baseFrames,
+              nonLoopOffset: 0,
+              startWhen: when,
             };
             this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
           }
@@ -1999,14 +2070,18 @@ export class IRPlayer {
             ev.cmd === "PARAM_SWEEP"
               ? this._sweepFrameParams(ev, baseFrames, loop)
               : { budgetFrames: 1, loopPhaseOffset: 0 };
-          const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+          const track =
+            ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
           let baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
           let cursor = track ? track.flatIndex + 1 : 0;
           let nextNoteTick = Infinity;
           let nextNoteMidi = baseMidi;
 
           const advance = () => {
-            if (!track) { nextNoteTick = Infinity; return; }
+            if (!track) {
+              nextNoteTick = Infinity;
+              return;
+            }
             while (cursor < track.events.length) {
               const ne = track.events[cursor++];
               if (ne.cmd !== "NOTE_ON" || !ne._isPsg) continue;
@@ -2023,11 +2098,24 @@ export class IRPlayer {
           this._psgPitchOffset[psgCh] = ev.cmd === "PARAM_SET" ? from : to;
           for (let frame = 0; frame < budgetFrames; frame++) {
             const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
-            while (frameTick >= nextNoteTick) { baseMidi = nextNoteMidi; advance(); }
-            const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
-            const centOffset = from + (to - from) * sampleCurveUnit(curve, phase);
+            while (frameTick >= nextNoteTick) {
+              baseMidi = nextNoteMidi;
+              advance();
+            }
+            const phase = sampleSweepPhase(
+              frame,
+              baseFrames,
+              loop,
+              loopPhaseOffset,
+            );
+            const centOffset =
+              from + (to - from) * sampleCurveUnit(curve, phase);
             this._psgPitchOffset[psgCh] = centOffset;
-            this._psgSetPitch(psgCh, baseMidi + centOffset / 100, when + frame / 60);
+            this._psgSetPitch(
+              psgCh,
+              baseMidi + centOffset / 100,
+              when + frame / 60,
+            );
           }
         }
         break;
