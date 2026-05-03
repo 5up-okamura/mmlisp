@@ -838,9 +838,8 @@ export class IRPlayer {
         this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
         this._schedulePitchMacro(
           ev.args?.pitchMacro,
-          midi,
           when,
-          lengthTicks,
+          gateTicks,
           (centOffset, t) => {
             const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
             this._write(
@@ -1566,13 +1565,13 @@ export class IRPlayer {
 
   // Schedule a pitch macro for any channel (FM or PSG).
   // writeFn(centOffset, t) performs the hardware write for the channel.
-  _schedulePitchMacro(pitchMacro, baseMidi, when, lengthTicks, writeFn) {
+  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn) {
     if (!pitchMacro) return;
 
-    const secsPerTick = this._secsPerTick;
-    const noteFrames = Math.max(1, Math.floor(lengthTicks * secsPerTick * 60));
-    const gateSecs = when + lengthTicks * secsPerTick;
-
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      when,
+      gateTicks,
+    );
     this._scheduleMacro(pitchMacro, noteFrames, gateSecs, when, writeFn);
   }
 
@@ -1853,6 +1852,9 @@ export class IRPlayer {
         if (this._psgMuted[psgCh]) break;
 
         const isNoise = psgCh === 3;
+        const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
+        const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
@@ -1860,19 +1862,14 @@ export class IRPlayer {
           this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
-            midi,
             when,
-            this._resolveTiedLength(ev, ev.args?.length ?? this._ppqn / 2),
+            psgGateTicks,
             (centOffset, t) =>
               this._psgSetPitch(psgCh, midi + centOffset / 100, t),
           );
         } else {
           this._psgTriggerNoise(when);
         }
-
-        const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
-        const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
-        const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
         if (psgGateTicks === 0) {
           // Hold note: register for runtime key-off via triggerKeyOff(psgCh + 6)
           this._holdChannels.add(psgCh + 6);
