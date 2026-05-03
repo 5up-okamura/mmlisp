@@ -1801,145 +1801,18 @@ export class IRPlayer {
   // noteWhen: audio time of note start.
   // gateTicks: gate duration in ticks.
   // baseVel: per-note velocity 0-15 (15 = full volume).
-  _schedulePsgEnvelope(psgCh, env, noteWhen, gateTicks, baseVel = 15) {
+  _schedulePsgEnvelope(psgCh, noteWhen, gateTicks, baseVel = 15) {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
     const isHold = gateTicks === 0;
     const secsPerTick = this._secsPerTick;
-    const noteDurSecs = isHold ? 0 : gateTicks * secsPerTick;
-    const noteOffWhen = noteWhen + noteDurSecs - KEY_OFF_LEAD_SECS;
+    const noteOffWhen = noteWhen + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS;
 
-    // Compose vel * vol * master → PSG hardware attenuation via shared helpers.
+    // Compose vel * vol * master → PSG hardware attenuation.
     const vol = this._psgVolAtTime(psgCh, noteWhen);
     const master = this._masterVol ?? 31;
-    // stepToAtt: envelope step (0-15) in vel-space, scaled by baseVel then composed.
-    const stepToAtt = (s) => {
-      const velLevel = Math.round(
-        (Math.max(0, Math.min(15, s)) * baseVel) / 15,
-      );
-      return levelToPsgAtt(composeLevel(velLevel, vol, master));
-    };
-    const scaleToAtt = stepToAtt;
+    const att = levelToPsgAtt(composeLevel(baseVel, vol, master));
 
-    if (!env || env.subtype === "hard" || env.subtype === "fn") {
-      // No envelope: set volume from vel then silence at note-off
-      this._psgSetAtt(psgCh, scaleToAtt(15), noteWhen);
-      if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
-      return;
-    }
-
-    if (env.subtype === "bare" || env.subtype === "seq") {
-      const steps = env.steps ?? [];
-      if (steps.length === 0) {
-        this._psgSetAtt(psgCh, scaleToAtt(15), noteWhen);
-        if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
-        return;
-      }
-      // Z80 driver: 1 step per V-INT = 60 Hz, independent of PPQN/BPM.
-      const stepDurSecs = 1 / 60;
-      const loopIndex = env.loopIndex ?? null;
-
-      // Hold note: run the envelope once (or until loop point), then sustain.
-      // Normal note: run until noteOffWhen.
-      const endT = isHold ? Infinity : noteOffWhen;
-      let t = noteWhen;
-      let idx = 0;
-      // lastStep: raw envelope step (0-15) for release phase calculation.
-      let lastStep = Math.max(0, Math.min(15, steps[0] ?? 0));
-      while (t < endT) {
-        const step = Math.max(0, Math.min(15, steps[idx] ?? 0));
-        lastStep = step;
-        this._psgSetAtt(psgCh, stepToAtt(step), t);
-        idx++;
-        if (idx >= steps.length) {
-          if (loopIndex !== null) {
-            idx = loopIndex;
-          } else {
-            break; // no loop — hold last step until note off
-          }
-        }
-        t += stepDurSecs;
-      }
-      if (!isHold) {
-        // Release phase (seq only): decay lastStep → 0 at releaseRate frames/step.
-        const releaseRate = env.subtype === "seq" ? (env.releaseRate ?? 0) : 0;
-        if (releaseRate > 0 && lastStep > 0) {
-          const relStepSecs = releaseRate / 60;
-          let relT = noteOffWhen;
-          for (let v = lastStep - 1; v >= 0; v--) {
-            this._psgSetAtt(psgCh, stepToAtt(v), relT);
-            relT += relStepSecs;
-          }
-          this._psgSetAtt(psgCh, 15, relT);
-        } else {
-          this._psgSetAtt(psgCh, 15, noteOffWhen);
-        }
-      }
-      return;
-    }
-
-    if (env.subtype === "adsr") {
-      const { ar, dr, sl, sr, rr } = env;
-      const secsPerStep = secsPerTick; // 1 tick per step
-      // ADSR att: 0=loudest, 15=silent. Map through vol+master composition.
-      // att=0 → baseVel (full), att=15 → 0 (silent)
-      const adsr2hw = (att) => {
-        const velLevel = Math.round(((15 - att) / 15) * baseVel);
-        return levelToPsgAtt(composeLevel(velLevel, vol, master));
-      };
-
-      // For hold notes use Infinity as noteOffWhen so envelope runs freely.
-      const envOffWhen = isHold ? Infinity : noteOffWhen;
-
-      // Attack: att from 15 → 0
-      let t = noteWhen;
-      if (ar > 0) {
-        for (let att = 15; att >= 0 && t < envOffWhen; att--) {
-          this._psgSetAtt(psgCh, adsr2hw(att), t);
-          t += ar * secsPerStep;
-        }
-      } else {
-        this._psgSetAtt(psgCh, adsr2hw(0), t);
-      }
-
-      // Decay: att from 0 → (15 - sl)
-      const susAtt = Math.max(0, Math.min(15, 15 - sl));
-      if (dr > 0 && t < envOffWhen) {
-        for (let att = 0; att <= susAtt && t < envOffWhen; att++) {
-          this._psgSetAtt(psgCh, adsr2hw(att), t);
-          t += dr * secsPerStep;
-        }
-      }
-
-      // Sustain: hold at susAtt (or slowly decay if sr > 0)
-      if (t < envOffWhen) {
-        this._psgSetAtt(psgCh, adsr2hw(susAtt), t);
-        if (sr > 0) {
-          let att = susAtt;
-          while (t < envOffWhen && att <= 15) {
-            this._psgSetAtt(psgCh, adsr2hw(att), t);
-            att++;
-            t += sr * secsPerStep;
-          }
-        }
-      }
-
-      if (!isHold) {
-        // Release: from susAtt → 15 after note off
-        let relT = noteOffWhen;
-        if (rr > 0) {
-          for (let att = susAtt; att <= 15; att++) {
-            this._psgSetAtt(psgCh, adsr2hw(att), relT);
-            relT += rr * secsPerStep;
-          }
-        } else {
-          this._psgSetAtt(psgCh, 15, relT);
-        }
-      }
-      return;
-    }
-
-    // Fallback
-    this._psgSetAtt(psgCh, stepToAtt(15), noteWhen);
+    this._psgSetAtt(psgCh, att, noteWhen);
     if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
   }
 
@@ -2022,7 +1895,7 @@ export class IRPlayer {
             baseVel,
           );
         } else {
-          this._schedulePsgEnvelope(psgCh, env, when, psgGateTicks, baseVel);
+          this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel);
         }
         break;
       }
