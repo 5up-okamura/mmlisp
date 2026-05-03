@@ -339,6 +339,9 @@ export class IRPlayer {
     // Mute state per channel (index 0-5)
     this._mutedChannels = new Array(6).fill(false);
 
+    // Channels holding a len=0 note, waiting for triggerKeyOff()
+    this._holdChannels = new Set();
+
     // Key-on operator mask per channel (default 0xf0 = all 4 ops on)
     this._opMasks = new Array(6).fill(0xf0);
 
@@ -553,6 +556,20 @@ export class IRPlayer {
   clearMute() {
     this._mutedChannels.fill(false);
     this._psgMuted.fill(false);
+  }
+
+  /**
+   * Trigger KEY-OFF for a hold note (len=0) on the given FM channel.
+   * @param {number} ch  0-5 FM channel index
+   */
+  triggerKeyOff(ch) {
+    if (!this._holdChannels.has(ch)) return;
+    this._holdChannels.delete(ch);
+    const port = ch >= 3 ? 1 : 0;
+    const chOffset = ch % 3;
+    const chKey = (port << 2) | chOffset;
+    const when = this._ctx?.currentTime ?? 0;
+    this._write(0, 0x28, chKey, when);
   }
 
   /**
@@ -1099,9 +1116,15 @@ export class IRPlayer {
         }
 
         // Key-off at gate boundary (5ms lead for FM envelope decay)
+        // gateTicks === 0 means hold indefinitely (len=0 note; KEY-OFF via triggerKeyOff())
         const secsPerTick = 60 / (this._bpm * this._ppqn);
-        const offWhen = when + gateTicks * secsPerTick - 0.005;
-        this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
+        if (gateTicks > 0) {
+          const offWhen = when + gateTicks * secsPerTick - 0.005;
+          this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
+        } else {
+          // Hold note: register the channel for runtime key-off
+          this._holdChannels.add(ch);
+        }
         break;
       }
 
@@ -1640,9 +1663,16 @@ export class IRPlayer {
   // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
   _scheduleFmOpMacros(ch, port, chOffset, noteArgs, when, gateTicks) {
     const secsPerTick = 60 / (this._bpm * this._ppqn);
-    const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
-    const gateSecs = when + gateTicks * secsPerTick - 0.005;
-    // Map of embedded macro key → canonical IR target name
+    // gateTicks===0 = hold note: macros run for a very long time (runtime key-off)
+    const HOLD_FRAMES = 0x7fffffff;
+    const noteFrames =
+      gateTicks === 0
+        ? HOLD_FRAMES
+        : Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
+    const gateSecs =
+      gateTicks === 0
+        ? when + 1e9
+        : when + gateTicks * secsPerTick - 0.005;
     const OP_MACRO_MAP = {
       pan: "PAN",
       ...Object.fromEntries(
@@ -1686,10 +1716,14 @@ export class IRPlayer {
     const baseVol = regs.vol ?? 31;
     const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
     const secsPerTick = 60 / (this._bpm * this._ppqn);
-    const noteFrames = Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
-    const gateSecs = when + gateTicks * secsPerTick - 0.005;
-
-    // Map vel-macro output (0-15) + channel vol (0-31) to carrier TL.
+    // gateTicks===0 = hold note: run macros until runtime key-off
+    const HOLD_FRAMES = 0x7fffffff;
+    const noteFrames =
+      gateTicks === 0
+        ? HOLD_FRAMES
+        : Math.max(1, Math.floor(gateTicks * secsPerTick * 60));
+    const gateSecs =
+      gateTicks === 0 ? when + 1e9 : when + gateTicks * secsPerTick - 0.005;
     // vel 15 = full vol, vel 0 = silent.
     const velToTl = (v) => {
       const effectiveVol = Math.round(

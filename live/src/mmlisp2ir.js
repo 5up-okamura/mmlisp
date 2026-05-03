@@ -122,8 +122,11 @@ function parseLengthToken(value, inheritedTicks) {
     return Math.round((WHOLE_TICKS * 3) / (d * 2));
   }
   // Plain integer note-length denominator: "4" = quarter, "8" = eighth, etc.
+  // Special: "0" = hold note (len=0, KEY-OFF driven by runtime)
   if (/^\d+$/.test(value)) {
-    return Math.round(WHOLE_TICKS / parseInt(value, 10));
+    const d = parseInt(value, 10);
+    if (d === 0) return 0;
+    return Math.round(WHOLE_TICKS / d);
   }
   return inheritedTicks;
 }

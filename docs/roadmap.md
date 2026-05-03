@@ -160,7 +160,7 @@ _Compiler — per-target gaps (after unification):_
 - [ ] `:macro` multi-target `(def foo :macro :vel [...] :pitch (...))` ~~(removed; use [list] at use-site)~~
 - [x] `:macro [list]` use-site macro array/list merge
 - [x] `:extends` — compile-time FM voice inheritance
-- [ ] `len=0` hold note (KEY_OFF driven by runtime `key_off_flags`)
+- [x] `len=0` hold note (KEY_OFF driven by runtime `key_off_flags`)
 
 **PSG Noise**
 
