@@ -1199,21 +1199,6 @@ function compileChannelBody(
         continue;
       }
 
-      // Tempo change: (tempo N)
-      if (head === "tempo") {
-        const bpm = parseIntLike(atomValue(node.items[1]));
-        if (bpm !== null) {
-          events.push({
-            tick: trackState.tick,
-            cmd: "TEMPO_SET",
-            args: { bpm },
-            src: nodeSrc(node.items[0]),
-          });
-        }
-        i++;
-        continue;
-      }
-
       // Explicit rest: (rest N) — kept for convenience
       if (head === "rest") {
         const length = parseLengthToken(
@@ -1693,19 +1678,6 @@ function compileTrackBodyItems(
           tick: trackState.tick,
           cmd: "JUMP",
           args: { to: label },
-          src: nodeSrc(node.items[0]),
-        });
-      }
-      continue;
-    }
-
-    if (head === "tempo") {
-      const bpm = parseIntLike(atomValue(node.items[1]));
-      if (bpm !== null) {
-        events.push({
-          tick: trackState.tick,
-          cmd: "TEMPO_SET",
-          args: { bpm },
           src: nodeSrc(node.items[0]),
         });
       }

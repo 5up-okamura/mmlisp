@@ -1024,10 +1024,6 @@ export class IRPlayer {
     const chOffset = ch % 3;
 
     switch (ev.cmd) {
-      case "TEMPO_SET":
-        this._bpm = ev.args?.bpm ?? this._bpm;
-        break;
-
       case "NOTE_ON": {
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const centOffset = this._chRegs[ch]?.pitchOffset ?? 0;
@@ -2141,10 +2137,6 @@ export class IRPlayer {
         }
         break;
       }
-
-      case "TEMPO_SET":
-        this._bpm = ev.args?.bpm ?? this._bpm;
-        break;
 
       case "MARKER":
       case "LOOP_BEGIN":
