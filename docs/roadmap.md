@@ -157,7 +157,7 @@ _Compiler — per-target gaps (after unification):_
 - [x] `:macro :pan` step-vector + curve
 - [x] `:macro :mode` step-vector + curve
 - [x] `:macro` FM operator params (`:tl1`–`:tl4`, `:ar1`–`:ar4`, etc.)
-- [x] `def :macro` is single-target by design (multi-target in one `def` is not adopted)
+- [x] `def :macro` multi-target (`:macro :vel ... :pitch ...`) support
 - [x] `:macro [list]` use-site macro array/list merge
 - [x] `:extends` — compile-time FM voice inheritance
 - [x] `len=0` hold note (KEY_OFF driven by runtime `key_off_flags`)
@@ -237,7 +237,7 @@ Other:
 10. ~~`:glide` emit (compiler)~~ (done)
 11. ~~`MASTER` player implementation~~ (done)
 12. ~~`:vol (curve ...)` inline form~~ (done)
-13. ~~`def :macro` multi-target in one def~~ (not adopted; use `:macro [list]` at use-site)
+13. ~~`def :macro` multi-target in one def~~ (done)
 14. ~~`:macro [list]` use-site merge~~ (done)
 15. ~~`:extends`~~ (done)
 16. ~~`len=0` hold note~~ (done)

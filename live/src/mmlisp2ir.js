@@ -223,6 +223,41 @@ function updateLastNotePitch(trackState, pitch) {
   trackState.lastNotePitch = pitch;
 }
 
+function applyMacroEntryToState(trackState, irTarget, spec) {
+  if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
+  trackState.activeMacros[irTarget] = spec;
+  if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
+  else if (irTarget === "VEL") trackState.activeVelMacro = spec;
+}
+
+function applyTypedMacroDef(trackState, td) {
+  if (!td) return false;
+  if (td.tag === "macro") {
+    applyMacroEntryToState(trackState, td.target, td.spec);
+    return true;
+  }
+  if (td.tag === "macro-list") {
+    for (const entry of td.entries || []) {
+      if (!entry) continue;
+      applyMacroEntryToState(trackState, entry.target, entry.spec);
+    }
+    return true;
+  }
+  return false;
+}
+
+function collectMacroEntriesFromItems(items) {
+  const entries = [];
+  for (let ki = 0; ki + 1 < items.length; ki += 2) {
+    const macroTargetSym = atomValue(items[ki]);
+    if (!macroTargetSym?.startsWith(":")) continue;
+    const irTarget = canonicalTarget(macroTargetSym);
+    const spec = parseMacroSpec(items[ki + 1], irTarget);
+    if (spec) entries.push({ target: irTarget, spec });
+  }
+  return entries;
+}
+
 /**
  * Parse a :macro spec node for any target.
  * Accepts both step-vector [...] and curve (...) forms.
@@ -818,14 +853,6 @@ function compileChannelBody(
                 // 3) :macro [...]              — list of defs/inline pairs (Task 14)
                 const macroNode = items[i]; // the node following :macro
 
-                const applyMacroEntry = (irTarget, spec) => {
-                  if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
-                  trackState.activeMacros[irTarget] = spec;
-                  if (irTarget === "NOTE_PITCH")
-                    trackState.activePitchMacro = spec;
-                  else if (irTarget === "VEL") trackState.activeVelMacro = spec;
-                };
-
                 if (macroNode?.kind === "list" && macroNode.bracket === "[]") {
                   // Form 3: [list] — iterate entries, last write wins per target
                   const listItems = macroNode.items.filter(
@@ -839,7 +866,7 @@ function compileChannelBody(
                       if (j + 1 < listItems.length) {
                         const irTarget = canonicalTarget(entryVal);
                         const spec = parseMacroSpec(listItems[j + 1], irTarget);
-                        applyMacroEntry(irTarget, spec);
+                        applyMacroEntryToState(trackState, irTarget, spec);
                         j += 2;
                       } else {
                         j++;
@@ -847,8 +874,7 @@ function compileChannelBody(
                     } else if (entryVal && typedDefs?.has(entryVal)) {
                       // named def reference
                       const td = typedDefs.get(entryVal);
-                      if (td?.tag === "macro")
-                        applyMacroEntry(td.target, td.spec);
+                      applyTypedMacroDef(trackState, td);
                       j++;
                     } else {
                       j++;
@@ -859,13 +885,13 @@ function compileChannelBody(
                   if (i + 1 < items.length) {
                     const irTarget = canonicalTarget(rawVal);
                     const spec = parseMacroSpec(items[i + 1], irTarget);
-                    applyMacroEntry(irTarget, spec);
+                    applyMacroEntryToState(trackState, irTarget, spec);
                     i++;
                   }
                 } else if (rawVal && typedDefs?.has(rawVal)) {
                   // Form 1: single named def
                   const td = typedDefs.get(rawVal);
-                  if (td?.tag === "macro") applyMacroEntry(td.target, td.spec);
+                  applyTypedMacroDef(trackState, td);
                 }
                 break;
               }
@@ -1064,12 +1090,7 @@ function compileChannelBody(
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
         const td = typedDefs.get(val);
-        if (td?.tag === "macro") {
-          // bare identifier expands single-target def
-          trackState.activeMacros[td.target] = td.spec;
-          if (td.target === "NOTE_PITCH") trackState.activePitchMacro = td.spec;
-          else if (td.target === "VEL") trackState.activeVelMacro = td.spec;
-        } else {
+        if (!applyTypedMacroDef(trackState, td)) {
           emitVoice(
             td,
             trackState.tick,
@@ -1686,11 +1707,23 @@ function collectDefs(roots, diagnostics) {
       if (maybeTag === ":macro") {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const macroTargetSym = atomValue(bodyItems[3]); // e.g. ":pitch" or ":vel"
-        const irTarget = canonicalTarget(macroTargetSym);
-        const spec = parseMacroSpec(bodyItems[4], irTarget);
-        if (spec) {
-          typedDefs.set(name, { tag: "macro", target: irTarget, spec, src });
+        let entries = [];
+        // Preferred form for multi-target def:
+        // (def name :macro [:vel [...] :pitch (...)])
+        const macroListNode = bodyItems[3];
+        if (macroListNode?.kind === "list" && macroListNode.bracket === "[]") {
+          const listItems = macroListNode.items.filter((n) => n.kind !== "comment");
+          entries = collectMacroEntriesFromItems(listItems);
+        } else {
+          // Backward-compatible forms:
+          // (def name :macro :vel [...])
+          // (def name :macro :vel [...] :pitch (...))
+          entries = collectMacroEntriesFromItems(bodyItems.slice(3));
+        }
+        if (entries.length === 1) {
+          typedDefs.set(name, { tag: "macro", ...entries[0], src });
+        } else if (entries.length > 1) {
+          typedDefs.set(name, { tag: "macro-list", entries, src });
         }
       } else if (maybeTag === ":extends") {
         // Keyword-map FM voice def with inheritance

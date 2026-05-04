@@ -857,10 +857,22 @@ and run simultaneously from KEY-ON. If two entries target the same lane, the
 A single name (no brackets) remains valid: `:macro trem-brass`.
 A single inline pair is also valid: `:macro :vel [15 12 8 0]`.
 
-Combining multiple targets per channel is done at the use site via `[list]`.
-Each `def :macro` defines exactly one target. `def` expands inline — putting
-multiple targets in one def would require the def to expand differently
-depending on context, which violates the simple substitution model.
+Combining multiple targets per channel can be authored in two ways:
+
+1. `:macro [list]` at the use site
+2. A multi-target `def :macro` with `:macro [ ... ]`
+
+```lisp
+(def synth-env :macro [
+  :vel   [15 12 8 4 0]
+  :pitch (linear :from 0 :to -1200 :len 8)
+])
+
+(fm1 :macro synth-env c)
+```
+
+When the same target appears multiple times in one multi-target def, the last
+entry wins.
 
 ```lisp
 ; voice def: macro fires on every NOTE_ON
