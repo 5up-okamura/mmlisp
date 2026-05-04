@@ -1346,7 +1346,7 @@ function compileChannelBody(
   }
 }
 
-// ── Legacy compileSeq (v0.3 compatibility) ───────────────────────────────────
+// ── compileSeq ─────────────────────────────────────────────────────────────
 function compileSeq(
   seqNode,
   trackState,

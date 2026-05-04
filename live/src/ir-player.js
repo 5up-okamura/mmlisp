@@ -1794,11 +1794,8 @@ export class IRPlayer {
     this._psgWriteByte(0xe5, when);
   }
 
-  // Schedule envelope writes for a PSG note.
-  // env: PSG_VOICE envelope object (bare/seq/adsr), or null for no envelope.
-  // noteWhen: audio time of note start.
-  // gateTicks: gate duration in ticks.
-  // baseVel: per-note velocity 0-15 (15 = full volume).
+  // Set PSG attenuation at note-on; schedule silence at note-off.
+  // gateTicks === 0 = hold note (no auto-silence; triggerKeyOff() handles it).
   _schedulePsgEnvelope(psgCh, noteWhen, gateTicks, baseVel = 15) {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
     const isHold = gateTicks === 0;
