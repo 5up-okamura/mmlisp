@@ -72,15 +72,15 @@ their timeline tick.
 
 **Length token formats** — wherever a length value appears (`:len`, explicit note/rest suffix) the following forms are accepted:
 
-| Format      | Example | Resolved as                      |
-| ----------- | ------- | -------------------------------- |
-| Integer     | `4`     | note-length (quarter = 48 ticks) |
-| Dotted int  | `4.`    | note-length × 1.5 (72 ticks)     |
+| Format      | Example | Resolved as                          |
+| ----------- | ------- | ------------------------------------ |
+| Integer     | `4`     | note-length (quarter = 48 ticks)     |
+| Dotted int  | `4.`    | note-length × 1.5 (72 ticks)         |
 | Fraction    | `2/1`   | N/M of a whole note (384 ticks each) |
-| Frame count | `16f`   | exactly 16 driver frames         |
-| Tick count  | `14t`   | exactly 14 ticks                 |
+| Frame count | `16f`   | exactly 16 driver frames             |
+| Tick count  | `14t`   | exactly 14 ticks                     |
 
-`4.` is shorthand for `4 * 1.5`. A single dot is supported; double-dot is out of scope for v0.4.
+`4.` is shorthand for `4 * 1.5`. A single dot is supported.
 Fraction notation (`N/M`) is supported: `2/1` = 2 whole notes, `1/3` = triplet whole.
 The `f` and `t` suffixes are valid wherever a length value appears: `:len`, `:gate`, note/rest suffix, `:wait`.
 Use `Nt` when the desired duration does not align to any note-length integer — e.g. splitting an 8th note
@@ -480,7 +480,7 @@ Applies to both `ENVELOPE_TABLE` (§2.5) and `PARAM_SWEEP` (§2.11).
 
 ---
 
-### 2.x Macro value model
+### 2.4 Macro value model
 
 **Decided: the following rules apply to all macro step vectors.**
 
@@ -571,8 +571,8 @@ the complete list. Per-OP targets repeat for each operator suffix (`1`–`4`).
 
 **PSG / noise**
 
-| Target  | Channels | Range | Description          |
-| ------- | -------- | ----- | -------------------- |
+| Target  | Channels | Range | Description                            |
+| ------- | -------- | ----- | -------------------------------------- |
 | `:mode` | noise    | 0–7   | noise type; default `white0`; see §4.2 |
 
 #### Hold token
@@ -1154,22 +1154,21 @@ Curve names use kebab-case — consistent with MMLisp's identifier convention.
 
 **Loop waveforms (MMLisp-specific; not in easings.net):**
 
-| Name       | Shape                                                                    | Loop | Primary use                     |
-| ---------- | ------------------------------------------------------------------------ | ---- | ------------------------------- |
-| `linear`   | Straight line from `from` to `to`                                        | —    | One-shot ramp; portamento       |
-| `sin`      | Full sine cycle per period                                               | ✓    | Vibrato, smooth LFO             |
-| `triangle` | Linear ramp up then down per period                                      | ✓    | Tremolo                         |
-| `saw`      | Linear ramp up then hard reset per period                                | ✓    | Sawtooth LFO, pitch drift       |
-| `square`   | `from` for first half-period, `to` for second half                       | ✓    | Hard LFO gate, chiptune         |
-| `noise`    | White: pseudo-random value in `[from, to]` re-rolled each frame          | ✓    | Random vibrato, roughness       |
-| `pink`     | 1/f filtered noise — low-frequency bias, natural-feeling flutter         | ✓    | Breath, strings, organic wobble |
-| `perlin`   | Gradient noise — smoothly varying, never repeats within 256-frame window | ✓    | Pitch drift, csm-rate wander    |
+| Name       | Shape                                                                    | Loop | Primary use                       |
+| ---------- | ------------------------------------------------------------------------ | ---- | --------------------------------- |
+| `linear`   | Straight line from `from` to `to`                                        | —    | One-shot ramp; portamento         |
+| `sin`      | Full sine cycle per period                                               | ✓    | Vibrato, smooth LFO               |
+| `triangle` | Linear ramp up then down per period                                      | ✓    | Tremolo                           |
+| `saw`      | Linear ramp up then hard reset per period                                | ✓    | Sawtooth LFO, pitch drift         |
+| `ramp`     | Linear ramp down then hard reset per period                              | ✓    | Reverse sawtooth LFO, pitch drift |
+| `square`   | `from` for first half-period, `to` for second half                       | ✓    | Hard LFO gate, chiptune           |
+| `noise`    | White: pseudo-random value in `[from, to]` re-rolled each frame          | ✓    | Random vibrato, roughness         |
+| `pink`     | 1/f filtered noise — low-frequency bias, natural-feeling flutter         | ✓    | Breath, strings, organic wobble   |
+| `perlin`   | Gradient noise — smoothly varying, never repeats within 256-frame window | ✓    | Pitch drift, csm-rate wander      |
 
-Loop waveforms (`sin`, `triangle`, `saw`, `square`, `noise`, `pink`, `perlin`) always loop — no `:loop` flag needed. Easing curves and `linear` are always one-shot. The compiler sets the `loop` flag in the binary based on curve name.
+Loop waveforms (`sin`, `triangle`, `saw`, `ramp`, `square`, `noise`, `pink`, `perlin`) always loop — no `:loop` flag needed. Easing curves and `linear` are always one-shot. The compiler sets the `loop` flag in the binary based on curve name.
 All noise/stochastic LUTs (`noise`, `pink`, `perlin`) are generated from a fixed seed
 at compile time (deterministic builds; same score always produces the same binary).
-
-`brown` (1/f² noise) deferred to v0.4+ — musical character overlaps with `perlin`.
 
 **Short aliases (for convenience; resolve at compile time):**
 

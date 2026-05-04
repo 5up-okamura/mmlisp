@@ -761,8 +761,7 @@ function compileChannelBody(
           switch (val) {
             case ":oct": {
               const v = parseIntLike(rawVal);
-              if (v !== null)
-                trackState.defaultOct = Math.max(0, Math.min(8, v));
+              if (v !== null) trackState.defaultOct = Math.max(0, v);
               break;
             }
             case ":len":
@@ -943,7 +942,7 @@ function compileChannelBody(
 
       // Octave shift
       if (val === ">") {
-        trackState.defaultOct = Math.min(8, trackState.defaultOct + 1);
+        trackState.defaultOct = trackState.defaultOct + 1;
         i++;
         continue;
       }
@@ -1564,7 +1563,7 @@ function compileTrackBodyItems(
         const rawVal = atomValue(node.items[j + 1]);
         if (key === ":oct") {
           const v = parseIntLike(rawVal);
-          if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
+          if (v !== null) trackState.defaultOct = Math.max(0, v);
         } else if (key === ":len") {
           trackState.defaultLength = parseLengthToken(
             rawVal,
@@ -1712,7 +1711,9 @@ function collectDefs(roots, diagnostics) {
         // (def name :macro [:vel [...] :pitch (...)])
         const macroListNode = bodyItems[3];
         if (macroListNode?.kind === "list" && macroListNode.bracket === "[]") {
-          const listItems = macroListNode.items.filter((n) => n.kind !== "comment");
+          const listItems = macroListNode.items.filter(
+            (n) => n.kind !== "comment",
+          );
           entries = collectMacroEntriesFromItems(listItems);
         } else {
           // Backward-compatible forms:
@@ -1953,7 +1954,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
 
       if (inlineOpts[":oct"] !== undefined) {
         const v = parseIntLike(inlineOpts[":oct"]);
-        if (v !== null) defaultOct = Math.max(0, Math.min(8, v));
+        if (v !== null) defaultOct = Math.max(0, v);
       }
       if (inlineOpts[":len"] !== undefined) {
         defaultLength = parseLengthToken(inlineOpts[":len"], defaultLength);
@@ -2051,7 +2052,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
 
       if (inlineOpts[":oct"] !== undefined) {
         const v = parseIntLike(inlineOpts[":oct"]);
-        if (v !== null) trackState.defaultOct = Math.max(0, Math.min(8, v));
+        if (v !== null) trackState.defaultOct = Math.max(0, v);
       }
       if (inlineOpts[":len"] !== undefined) {
         trackState.defaultLength = parseLengthToken(

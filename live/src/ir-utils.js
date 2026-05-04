@@ -114,8 +114,8 @@ const NOTE_ALIASES = {
 };
 
 export function pitchToMidi(pitchStr) {
-  // Format: "c4", "e4", "f+3", "b-5" etc.
-  const m = pitchStr.toLowerCase().match(/^([a-g][+\-]?)(\d)$/);
+  // Format: "c4", "e4", "f+3", "b-5", "c10" etc.
+  const m = pitchStr.toLowerCase().match(/^([a-g][+\-]?)(\d+)$/);
   if (!m) return 60; // fallback C4
 
   let name = m[1];
