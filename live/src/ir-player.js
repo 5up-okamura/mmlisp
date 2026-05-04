@@ -933,9 +933,10 @@ export class IRPlayer {
     const value = ev.args?.value ?? 0;
     let nextValue = null;
 
-    // Helper to clamp and apply
+    // Helper to round, clamp and apply. All hardware register targets are integers;
+    // rounding here means curves routed through _applyParam never store floats.
     const set = (apply, min, max) => {
-      const next = Math.max(min, Math.min(max, value));
+      const next = Math.max(min, Math.min(max, Math.round(value)));
       apply(next);
       nextValue = next;
     };
@@ -1078,7 +1079,7 @@ export class IRPlayer {
         break;
       }
       case "LFO_RATE": {
-        const rate = Math.max(0, Math.min(8, value));
+        const rate = Math.max(0, Math.min(8, Math.round(value)));
         this._lfoRate = rate;
         // 0 = disable (0x00); 1-8 = enable + rate (0x08 | rate-1)
         const regVal = rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07);
@@ -1258,7 +1259,7 @@ export class IRPlayer {
       case "NOISE_MODE": {
         // Noise mode (PSG noise control) — bits 5-3 (FB + NF)
         // Values 0-7 directly map to SN76489 noise register bits 5-3
-        const mode = Math.max(0, Math.min(7, value));
+        const mode = Math.max(0, Math.min(7, Math.round(value)));
         if (ch === 2) {
           // PSG noise channel
           this._psgSetNoiseCfg(mode, when);
