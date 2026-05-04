@@ -111,6 +111,7 @@ export class IRPlayer {
     const res = await fetch(url);
     this._ir = await res.json();
     this._ppqn = this._ir.ppqn ?? 48;
+    this._bpm = 120;
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -128,27 +129,13 @@ export class IRPlayer {
     return 60 / (this._bpm * this._ppqn);
   }
 
-  _resolveInitialTempo(irObj) {
-    // Prefer an explicit tempo event at tick 0 so scheduling starts at the
-    // intended BPM on the very first loop.
-    for (const track of irObj?.tracks ?? []) {
-      for (const ev of track.events ?? []) {
-        if (ev?.cmd !== "TEMPO_SET") continue;
-        if ((ev.tick ?? 0) !== 0) continue;
-        const bpm = Number(ev.args?.bpm);
-        if (Number.isFinite(bpm) && bpm > 0) return bpm;
-      }
-    }
-    return 120;
-  }
-
   /**
    * Load IR JSON directly from an object.
    */
   loadJSON(irObj) {
     this._ir = irObj;
     this._ppqn = irObj.ppqn ?? 48;
-    this._bpm = this._resolveInitialTempo(irObj);
+    this._bpm = 120;
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -919,6 +906,12 @@ export class IRPlayer {
         if (ti != null && this._tracks[ti]) {
           this._tracks[ti].carryState = ev.args?.carry ?? false;
         }
+        break;
+      }
+
+      case "TEMPO_SET": {
+        const bpm = Number(ev.args?.bpm);
+        if (Number.isFinite(bpm) && bpm > 0) this._bpm = bpm;
         break;
       }
 
@@ -1988,6 +1981,12 @@ export class IRPlayer {
             );
           }
         }
+        break;
+      }
+
+      case "TEMPO_SET": {
+        const bpm = Number(ev.args?.bpm);
+        if (Number.isFinite(bpm) && bpm > 0) this._bpm = bpm;
         break;
       }
 
