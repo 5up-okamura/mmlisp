@@ -180,6 +180,15 @@ export function levelToPsgAtt(level) {
   return Math.max(0, Math.min(15, Math.round((1 - t) * 15)));
 }
 
+// Convenience: compose vel/vol/master and convert to hardware register in one call.
+// Add analogous functions (composePcmVol, composeCsmTl, …) when new synth types land.
+export function composeFmTl(vel, vol, master) {
+  return levelToFmTl(composeLevel(vel, vol, master));
+}
+export function composePsgAtt(vel, vol, master) {
+  return levelToPsgAtt(composeLevel(vel, vol, master));
+}
+
 // ---------------------------------------------------------------------------
 // Vol sweep sampling + curve helpers
 // ---------------------------------------------------------------------------

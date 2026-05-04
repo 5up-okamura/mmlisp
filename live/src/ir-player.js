@@ -18,9 +18,8 @@ import {
   clampForTarget,
   pitchToMidi,
   midiToFnumBlock,
-  composeLevel,
-  levelToFmTl,
-  levelToPsgAtt,
+  composeFmTl,
+  composePsgAtt,
   sweepVolAtTime,
   sampleSweepPhase,
   sampleCurveUnit,
@@ -804,8 +803,10 @@ export class IRPlayer {
 
         if (regs?.vol != null || this._fmVolSweep[ch] != null) {
           const currentVol = this._fmVolAtTime(ch, when);
-          const tl = levelToFmTl(
-            composeLevel(regs.vel ?? 15, currentVol, this._masterVol ?? 31),
+          const tl = composeFmTl(
+            regs.vel ?? 15,
+            currentVol,
+            this._masterVol ?? 31,
           );
           const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
           for (const opIdx of carriers) {
@@ -1212,7 +1213,7 @@ export class IRPlayer {
         const vol = Math.max(0, Math.min(31, value));
         regs.vol = vol;
         const vel = regs.vel ?? 15;
-        const tl = levelToFmTl(composeLevel(vel, vol, this._masterVol ?? 31));
+        const tl = composeFmTl(vel, vol, this._masterVol ?? 31);
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
           regs.ops[opIdx].tl = tl;
@@ -1231,9 +1232,7 @@ export class IRPlayer {
         // FM channels: update carrier TL
         for (let ci = 0; ci < 6; ci++) {
           const cr = this._chRegs[ci];
-          const tl = levelToFmTl(
-            composeLevel(cr.vel ?? 15, cr.vol ?? 31, master),
-          );
+          const tl = composeFmTl(cr.vel ?? 15, cr.vol ?? 31, master);
           const cp = ci >= 3 ? 1 : 0;
           const co = ci % 3;
           const crs = fmCarrierOpsForAlg(cr.algorithm ?? 0);
@@ -1248,7 +1247,7 @@ export class IRPlayer {
           const vol = this._psgVolAtTime(psgCh, when); // 0-31
           this._psgSetAtt(
             psgCh,
-            levelToPsgAtt(composeLevel(velLevel, vol, master)),
+            composePsgAtt(velLevel, vol, master),
             when,
           );
         }
@@ -1544,8 +1543,10 @@ export class IRPlayer {
     );
     // vel 15 = full vol, vel 0 = silent. Use unified pipeline.
     const velToTl = (v) =>
-      levelToFmTl(
-        composeLevel(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31),
+      composeFmTl(
+        clampForTarget("VEL", v),
+        baseVol,
+        this._masterVol ?? 31,
       );
 
     this._scheduleMacro(velMacro, noteFrames, gateSecs, when, (v, t) => {
@@ -1657,8 +1658,10 @@ export class IRPlayer {
           0,
           Math.min(31, from + (to - from) * sampleCurveUnit(curve, phase)),
         );
-        const tl = levelToFmTl(
-          composeLevel(regs.vel ?? 15, vol, this._masterVol ?? 31),
+        const tl = composeFmTl(
+          regs.vel ?? 15,
+          vol,
+          this._masterVol ?? 31,
         );
         const frameWhen = when + i / 60;
         for (const opIdx of carriers) {
@@ -1798,7 +1801,7 @@ export class IRPlayer {
     // Compose vel * vol * master → PSG hardware attenuation.
     const vol = this._psgVolAtTime(psgCh, noteWhen);
     const master = this._masterVol ?? 31;
-    const att = levelToPsgAtt(composeLevel(baseVel, vol, master));
+    const att = composePsgAtt(baseVel, vol, master);
 
     this._psgSetAtt(psgCh, att, noteWhen);
     if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
@@ -1818,7 +1821,7 @@ export class IRPlayer {
     const master = this._masterVol ?? 31;
     const velToAtt = (v) => {
       const velLevel = Math.round((clampForTarget("VEL", v) * baseVel) / 15);
-      return levelToPsgAtt(composeLevel(velLevel, vol, master));
+      return composePsgAtt(velLevel, vol, master);
     };
 
     const silenceAt = this._scheduleMacro(
@@ -1893,7 +1896,7 @@ export class IRPlayer {
             const master = this._masterVol ?? 31;
             this._psgSetAtt(
               psgCh,
-              levelToPsgAtt(composeLevel(velLevel, vol, master)),
+              composePsgAtt(velLevel, vol, master),
               when,
             );
           } else {
