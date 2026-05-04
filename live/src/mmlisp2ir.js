@@ -16,6 +16,7 @@ const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
+  "VEL",
   "VOL",
   "MASTER",
   "FM_ALG",
@@ -82,6 +83,9 @@ const NOISE_MODE_MAP = {
   periodic2: 0b0_10, // 2
   periodic3: 0b0_11, // 3
 };
+
+// PAN symbolic values → logical range -1/0/+1 (encodeB4 maps these to L/LR/R bits)
+const PAN_MAP = { left: -1, center: 0, right: 1 };
 
 function atomValue(node) {
   if (!node) return null;
@@ -260,7 +264,8 @@ function parseMacroSpec(node, target) {
     }
 
     // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0 _ ...]
-    // For MODE target, also accept noise mode symbols (white0-3, periodic0-3)
+    // For MODE target, also accept noise mode symbols (white0-3, periodic0-3).
+    // For PAN target, also accept pan symbols (left, center, right).
     const steps = [];
     let loopIndex = null;
     let releaseIndex = null;
@@ -277,6 +282,9 @@ function parseMacroSpec(node, target) {
       let n = parseIntLike(val);
       if (n === null && target === "NOISE_MODE" && val in NOISE_MODE_MAP) {
         n = NOISE_MODE_MAP[val];
+      }
+      if (n === null && target === "PAN" && val in PAN_MAP) {
+        n = PAN_MAP[val];
       }
       if (n !== null) {
         steps.push(clampForTarget(target, n));
@@ -889,11 +897,13 @@ function compileChannelBody(
                   src: nodeSrc(node),
                 });
               } else {
-                const value = parseIntLike(rawVal) ?? 0;
+                let value = parseIntLike(rawVal);
+                if (value === null && target === "PAN" && rawVal in PAN_MAP)
+                  value = PAN_MAP[rawVal];
                 events.push({
                   tick: trackState.tick,
                   cmd: "PARAM_SET",
-                  args: { target, value },
+                  args: { target, value: value ?? 0 },
                   src: nodeSrc(node),
                 });
               }

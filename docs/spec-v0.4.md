@@ -520,7 +520,7 @@ across all octaves.
 applicable to SN76489 channels (sqr1–sqr3, noise); the compiler emits a
 warning and ignores `:pan` on those channels.
 
-Allowed values: `left` (-1), `center` (0), `right` (+1). `none` is not adopted.
+Allowed values: `left` (-1), `center` (0), `right` (+1).
 Raw integers are also valid: `-1` = left, `0` = center, `+1` = right.
 
 `:macro :pan` is a valid macro target. Both symbolic and numeric forms are
@@ -816,6 +816,10 @@ given duration before proceeding to the next stage.
 
 `(wait key-off)` enables a release tail in a multi-stage curve envelope
 without using the step-vector form:
+
+Multi-stage envelopes are triggered by KEY-ON: the first stage starts at KEY-ON,
+`(wait key-off)` holds at the current value, and the following stage starts when
+KEY-OFF arrives.
 
 ```lisp
 ; ADSR via multi-stage with wait stage
@@ -1320,13 +1324,11 @@ Applies to `fm1`–`fm6` only; SN76489 has no stereo hardware.
 | `center` | `11`     | L + R (default) |
 | `left`   | `10`     | L only          |
 | `right`  | `01`     | R only          |
-| `off`    | `00`     | Muted           |
 
 ```lisp
 (fm1 :pan center  c e g e)   ; L+R — default
 (fm1 :pan left    c e g e)   ; L only
 (fm1 :pan right   c e g e)   ; R only
-(fm1 :pan off     c e g e)   ; silent (useful for muting without stopping the note)
 ```
 
 The compiler initial default is `center`; no `PARAM_SET` is emitted unless
