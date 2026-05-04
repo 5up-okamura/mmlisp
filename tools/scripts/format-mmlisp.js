@@ -14,6 +14,8 @@ const KEYWORD_VALUE_KEYS = [
   ":title",
   ":tempo",
   ":loop",
+  ":loop-start",
+  ":loop-end",
   ":role",
   ":len",
   ":ch",
@@ -21,6 +23,9 @@ const KEYWORD_VALUE_KEYS = [
   ":oct",
   ":gate",
   ":shuffle",
+  ":csm-rate",
+  ":rate",
+  ":mode",
 ];
 const COLLAPSE_STRING_KEYS = new Set([":title", ":author"]);
 
