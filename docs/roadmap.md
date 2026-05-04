@@ -141,8 +141,8 @@ _Symbolic → numeric coercion at compile time (all targets):_
 
 - [x] `:pan` — `left` / `center` / `right` → -1 / 0 / +1
 - [x] `:mode` — `white0`–`white3` / `periodic0`–`periodic3` → 0–7
-- [ ] Curve/function output for `:pan` — snap to -1 / 0 / +1
-- [ ] Curve/function output for `:mode` — snap to integer 0–7
+- [x] Curve/function output for `:pan` — snap to -1 / 0 / +1
+- [x] Curve/function output for `:mode` — snap to integer 0–7
 
 _Compiler — `parseMacroSpec` refactor:_
 

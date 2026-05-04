@@ -1068,13 +1068,9 @@ export class IRPlayer {
         this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
         break;
       case "PAN": {
-        set(
-          (v) => {
-            regs.pan = v;
-          },
-          -1,
-          1,
-        );
+        const pan = this._snapMacroOutput("PAN", value);
+        regs.pan = pan;
+        nextValue = pan;
         this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
         break;
       }
@@ -1259,7 +1255,7 @@ export class IRPlayer {
       case "NOISE_MODE": {
         // Noise mode (PSG noise control) — bits 5-3 (FB + NF)
         // Values 0-7 directly map to SN76489 noise register bits 5-3
-        const mode = Math.max(0, Math.min(7, Math.round(value)));
+        const mode = this._snapMacroOutput("NOISE_MODE", value);
         if (ch === 2) {
           // PSG noise channel
           this._psgSetNoiseCfg(mode, when);
@@ -1300,6 +1296,20 @@ export class IRPlayer {
       noteFrames: Math.max(1, Math.floor(gateTicks * secsPerTick * 60)),
       gateSecs: when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS,
     };
+  }
+
+  // Snap curve/function outputs to discrete hardware lanes when needed.
+  _snapMacroOutput(target, value) {
+    const t = String(target || "").toUpperCase();
+    if (t === "PAN") {
+      // Tri-state pan lane: left(-1) / center(0) / right(+1)
+      return Math.max(-1, Math.min(1, Math.round(Number(value) || 0)));
+    }
+    if (t === "NOISE_MODE") {
+      // SN76489 mode is a 3-bit integer (0..7)
+      return Math.max(0, Math.min(7, Math.round(Number(value) || 0)));
+    }
+    return value;
   }
 
   _resolveSweepEndTick(ev) {
@@ -1838,6 +1848,17 @@ export class IRPlayer {
     }
   }
 
+  _schedulePsgModeMacro(psgCh, modeMacro, noteWhen, gateTicks) {
+    if (!modeMacro) return;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      noteWhen,
+      gateTicks,
+    );
+    this._scheduleMacro(modeMacro, noteFrames, gateSecs, noteWhen, (v, t) => {
+      this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t);
+    });
+  }
+
   _dispatchPsgEvent(ev, when) {
     const psgCh = ev._psgCh ?? 0;
 
@@ -1863,6 +1884,12 @@ export class IRPlayer {
           );
         } else {
           this._psgTriggerNoise(when);
+          this._schedulePsgModeMacro(
+            psgCh,
+            ev.args?.noise_mode,
+            when,
+            psgGateTicks,
+          );
         }
         if (psgGateTicks === 0) {
           // Hold note: register for runtime key-off via triggerKeyOff(psgCh + 6)
