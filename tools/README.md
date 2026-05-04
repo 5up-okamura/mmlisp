@@ -25,7 +25,7 @@ Run from tools directory:
 
 ## Notes
 
-1. The current compiler is intentionally minimal and supports only the v0.1 subset used in the demo files.
+1. The current compiler and player path support the v0.4 language used by the demo workflow.
 2. Generated files use deterministic key ordering to simplify diffs.
 3. The current GMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
 4. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under `examples/ir`.

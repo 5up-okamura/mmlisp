@@ -76,11 +76,12 @@ their timeline tick.
 | ----------- | ------- | -------------------------------- |
 | Integer     | `4`     | note-length (quarter = 48 ticks) |
 | Dotted int  | `4.`    | note-length × 1.5 (72 ticks)     |
+| Fraction    | `2/1`   | N/M of a whole note (384 ticks each) |
 | Frame count | `16f`   | exactly 16 driver frames         |
 | Tick count  | `14t`   | exactly 14 ticks                 |
 
 `4.` is shorthand for `4 * 1.5`. A single dot is supported; double-dot is out of scope for v0.4.
-Fraction notation (`1/N`, `N/M`) is not supported — use ties (`~`) for durations longer than a whole note.
+Fraction notation (`N/M`) is supported: `2/1` = 2 whole notes, `1/3` = triplet whole.
 The `f` and `t` suffixes are valid wherever a length value appears: `:len`, `:gate`, note/rest suffix, `:wait`.
 Use `Nt` when the desired duration does not align to any note-length integer — e.g. splitting an 8th note
 (24 ticks) into a 1-tick attack and a 23-tick body:
@@ -572,7 +573,7 @@ the complete list. Per-OP targets repeat for each operator suffix (`1`–`4`).
 
 | Target  | Channels | Range | Description          |
 | ------- | -------- | ----- | -------------------- |
-| `:mode` | noise    | 0–7   | noise type; see §4.2 |
+| `:mode` | noise    | 0–7   | noise type; default `white0`; see §4.2 |
 
 #### Hold token
 

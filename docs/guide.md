@@ -1,411 +1,378 @@
-# MMLisp Composer's Guide
+# MMLisp Composer's Guide (v0.4)
 
-A reference for everything you need to write music in MMLisp.
+Practical authoring guide for the current MMLisp language.
 
 ---
 
 ## 1. Minimal Score
 
 ```lisp
-(score (track :ch fm1 (seq c e g c)))
+(score
+  (fm1 c e g c))
 ```
 
-- `score` — root form wrapping the entire piece
-- `track` — event stream for one channel; `:ch` is required
-- `seq` — inline sequence of notes and rests
+- `score` is the root form.
+- Channel forms are written directly as `(fm1 ...)`, `(sqr1 ...)`, `(noise ...)`.
+- Notes/rests/modifiers are written inline in the channel body.
 
-`:oct` defaults to `4`, `:len` to `1/8`. `:tempo` is optional.
+Default state:
+
+- `:oct` = `4`
+- `:len` = `8` (eighth note)
+- `:vol` = `31`
+- `:vel` = `15`
 
 ---
 
 ## 2. Channel Reference
 
-| Name          | Hardware                           |
-| ------------- | ---------------------------------- |
-| `fm1`–`fm6`   | YM2612 FM synthesizer (6 channels) |
-| `psg1`–`psg3` | SN76489 square wave (3 channels)   |
-| `noise`       | SN76489 noise channel              |
+| Name          | Hardware                     |
+| ------------- | ---------------------------- |
+| `fm1`-`fm6`   | YM2612 FM channels           |
+| `sqr1`-`sqr3` | SN76489 square tone channels |
+| `noise`       | SN76489 noise channel        |
 
 ---
 
-## 3. Note Names
+## 3. Notes and Rests
 
-Note names are lowercase only. Accidentals use `+` (sharp) and `-` (flat):
+### Note names
 
-| Written | Pitch     |
-| ------- | --------- |
-| `c`     | C         |
-| `c+`    | C♯        |
-| `d-`    | D♭ (= C♯) |
-| `d`     | D         |
-| `e-`    | E♭        |
-| `f`     | F         |
-| `f+`    | F♯        |
-| `g`     | G         |
-| `a-`    | A♭        |
-| `a`     | A         |
-| `b-`    | B♭        |
-| `b`     | B         |
+`c d e f g a b` with accidentals `+` / `-`:
 
-Octave is set with `:oct N` (range 0–8, default 4).
+- `c+` = C sharp
+- `d-` = D flat
+
+Octave comes from current `:oct`.
+
+### Rest tokens
+
+- `_` uses current `:len`
+- `_8`, `_4.`, `_12t`, `_6f` are explicit-length rests
 
 ### Per-note length
 
-Append a length denominator (and optional dot) directly to a note:
+Append a length token to one note:
 
 ```lisp
-(seq c4 e8 g8 c4)       ; quarter, eighth, eighth, quarter
-(seq c4. e8 g8 c2)      ; dotted quarter, eighth, eighth, half
+(fm1 :oct 4 :len 8
+  c4 e8 g8 c4.)
 ```
 
-The per-note length applies to that note only and does **not** update the persistent `:len`.
+This affects only that note.
 
 ---
 
-## 4. Note Lengths
+## 4. Length Syntax
 
-Length values use a shared notation accepted by `:len`, `:gate`, per-note suffixes, and rest tokens:
+These formats are accepted wherever a length value appears — `:len`, note/rest suffix, `:gate` (absolute form), curve `:len`, `:shuffle-base`, `(rest N)`, `(tie N)`, `~ N`:
 
-| Form    | Meaning                                        | Example      | Ticks (PPQN=48)   |
-| ------- | ---------------------------------------------- | ------------ | ----------------- |
-| `N`     | Note length denominator (1/N)                  | `4` = 1/4    | 48                |
-| `N.`    | Dotted denominator (1.5 × 1/N)                | `4.`         | 72                |
-| `n/d`   | Explicit fraction of whole note                | `1/8`        | 24                |
-| `Nt`    | Exact tick count                               | `12t`        | 12                |
-| `Nf`    | Frame count (60 Hz) — **macro `:len` only**   | `6f`         | 6 frames (≈100ms) |
+| Form  | Meaning                                                          |
+| ----- | ---------------------------------------------------------------- |
+| `N`   | note-length denominator (`4` = quarter, `8` = eighth)            |
+| `N.`  | dotted length (`1.5x`)                                           |
+| `N/M` | fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) |
+| `Nt`  | exact tick count                                                 |
+| `Nf`  | exact frame count (60 Hz)                                        |
 
-`Nf` counts 60 Hz update cycles and is independent of BPM. It is valid in macro `:len` (e.g. `(linear :from 15 :to 0 :len 6f)`) but **not** in note/rest lengths where tick-based notation must be used.
+Examples:
 
-Common values:
-
-| Written        | Duration       | Ticks (PPQN=48) |
-| -------------- | -------------- | --------------- |
-| `2/1` or `1`   | whole note     | 192             |
-| `1/4` or `4`   | quarter note   | 48              |
-| `4.`           | dotted quarter | 72              |
-| `1/8` or `8`   | eighth note    | 24              |
-| `8.`           | dotted eighth  | 36              |
-| `1/12` or `12` | triplet eighth | 16              |
-
-Any `n/d` fraction is valid. The minimum is `1t` (1 tick).
-
-### Delay / chorus example
-
-```lisp
-(def melody
-  (seq g4 f4 e4 d4  c4 e4  f4 e4 d4 c4  b8 g8)
-  (rest 1))
-
-(score :tempo 120
-  (track :ch fm1
-    (param-set :vol 11)
-    (x (melody)))
-
-  (track :ch fm2
-    (param-set :vol 7)
-    (rest 8.)                 ; 90 ticks offset
-    (x (melody))))
-```
+- `4` = quarter note
+- `4.` = dotted quarter
+- `2/1` = 2 whole notes (2 bars at 4/4)
+- `1/3` = triplet whole
+- `24t` = 24 ticks exactly
+- `8f` = 8 frames exactly
 
 ---
 
-## 5. seq Syntax
+## 5. Inline Modifiers (Persistent State)
 
 ```lisp
-(seq :oct 4 :len 1/8 c e g c :len 1/4 e :oct 5 c)
+(fm1 :oct 4 :len 8 :gate 0.8
+  c e g e
+  :oct 5
+  c e g e)
 ```
 
-### Modifiers
+Common modifiers:
 
-| Modifier    | Effect                                              | Scope      |
-| ----------- | --------------------------------------------------- | ---------- |
-| `:oct N`    | Set octave (0–8)                                    | persistent |
-| `:len val`  | Set step length                                     | persistent |
-| `c4` `c8.`  | Per-note length suffix (denominator + optional `.`) | one note   |
-| `:gate val` | Set gate (ratio `0.0`–`1.0` or absolute ticks int)  | persistent |
-| `@name`     | Switch voice (defined with `def`)                   | persistent |
-| `>`         | Octave up by 1                                      | persistent |
-| `<`         | Octave down by 1                                    | persistent |
-| `v+` `v+N`  | Volume up by N (default 1), clamp 0–15              | persistent |
-| `v-` `v-N`  | Volume down by N (default 1), clamp 0–15            | persistent |
-| `_`         | Rest for the current `:len`                         | one step   |
-| `~`         | Tie — extend previous note; `~ 1/2` sets tie length | one step   |
-| `(a b c)`   | Subgroup — current `:len` divided equally           | one slot   |
+- `:oct N` — octave (`0`–`8`)
+- `:len token` — default note length (length token); `0` emits a held note and does not advance the timeline
+- `:gate token-or-ratio` — gate time; ratio `0.0`–`1.0` or absolute length token; `0` holds until runtime KEY-OFF
+- `:vel N` — note-on velocity (`0`–`15`)
+- `:vol N` — channel output level (`0`–`31`)
+- `:master N` — global master level (`0`–`31`)
+- `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
+- `:glide N` — portamento duration in frames (plain integer)
+- `:glide-from note` — override start pitch for next note only
 
-### Rest
+Shorthands:
 
-```lisp
-(seq :len 1/8 c _ e _ g _ c _)
-```
-
-### Tie
-
-```lisp
-(seq :len 1/4 c ~ ~)       ; quarter × 3 = dotted half
-(seq :len 1/4 c ~ 1/8)     ; quarter + eighth
-```
-
-### Octave shift
-
-```lisp
-(seq :oct 3 c d e f > c d e f)   ; > moves to oct 4
-(seq :oct 4 c d e f < c d e f)   ; < moves to oct 3
-```
-
-### Volume shift
-
-```lisp
-(seq c e v+ g v+ a)        ; step up by 8 before g and a (default step)
-(seq c e v+16 g v-8 f c)   ; explicit deltas
-```
-
-The initial vol is the track `:vol` (default 8). Changes are local to the seq.
-
-### Subgroups (tuplets)
-
-```lisp
-(seq :len 1/4 c (e g a) f)       ; triplet (40 ticks each)
-(seq :len 1/4 (c d e f g a b))   ; septuplet (Bresenham distribution)
-```
+- `>` octave up
+- `<` octave down
+- `v+`, `v-`, `v+N`, `v-N` adjust `:vol` (0-31)
 
 ---
 
-## 6. `default` — Mid-track Defaults
+## 6. Subgroups, Loops, and Break
 
-`(default ...)` overwrites the track-level defaults that `seq` inherits:
+### Subgroup / tuplet
 
 ```lisp
-(track :ch fm1 :oct 4 :len 1/8
-  (seq c e g e)               ; oct 4, len 1/8
-  (default :oct 3 :len 1/4)  ; overwrite defaults
-  (seq c e g e))              ; oct 3, len 1/4
+(fm1 :len 4
+  c (e g a) f)
 ```
 
-Accepted keys: `:oct`, `:len`, `:gate`, `:vol`.
+`(e g a)` divides the parent slot using Bresenham distribution.
+
+### Counted loop
+
+```lisp
+(fm1 :len 8
+  (x 4
+    c d e :break f g))
+```
+
+- `(x N ...)` repeats body `N` times.
+- `:break` skips the tail on the last pass.
 
 ---
 
-## 7. Track Options
+## 7. Definitions and Reuse
 
-Options are placed after the track name:
-
-| Option        | Effect                                             | Default          |
-| ------------- | -------------------------------------------------- | ---------------- |
-| `:ch name`    | Channel assignment (required)                      | —                |
-| `:oct N`      | Initial octave                                     | `4`              |
-| `:len val`    | Default step length                                | `1/8`            |
-| `:gate val`   | Default gate                                       | `1.0` (legato)   |
-| `:vol N`      | Initial volume (0–15)                              | `8`              |
-| `:role name`  | Track role: `bgm`, `se`, `modulator`, `chaos`      | `bgm`            |
-| `:shuffle N`  | Swing amount (51–90; 50 = straight)                | score-level or 0 |
-| `:carry bool` | If `true`, modulator track persists across NOTE_ON | `false`          |
-
----
-
-## 8. Voice Definitions
-
-### PSG voices
+### `def` (named snippet)
 
 ```lisp
-(def pluck :psg [15 13 11 9 7 5 3 1 0])
-(def pad :psg [:seq 15 :loop 14 13 :release 3])
-```
-
-Bare vector = volume envelope steps (0–15, one per tick). `:loop` marks the loop start; `:release` sets the release rate.
-
-### FM voices
-
-```lisp
-(def brass :fm
-  ; alg fb ams fms
-  [7 0 0 3]
-  ; AR DR SR RR SL TL KS ML DT SSG AMEN
-  [31  0  5  3  7  0  0  0  0  0  0]
-  [31  0  5  3  7  0  0  0  0  0  0]
-  [31  0  5  3  7  0  0  0  0  0  0]
-  [31  0  5  3  7  0  0  0  0  0  0])
-```
-
-Channel vector: `(alg fb [ams [fms]])` — `ams` and `fms` are optional.  
-Operator vector: `(AR DR SR RR SL TL KS ML DT [SSG [AMEN]])` — `SSG` and `AMEN` are optional trailing fields; omitting them leaves those registers unchanged.
-
-### Using a voice
-
-Set at track start with `@name`:
-
-```lisp
-(track :ch psg1
-  @pad
-  (seq :oct 2  c c g g))
-```
-
-Switch mid-seq with `@name`:
-
-```lisp
-(def bd :psg [15 14 12 9 5 0])
-(def sd :psg [15 13 10 6 2 0])
-(def hh :psg [15 8 0])
-
-(track :ch psg1 :len 1/8
-  (seq @bd c  @hh c  @sd c  @hh c
-       @bd c  @hh c  @sd c  @hh c))
-```
-
----
-
-## 9. Loops
-
-### Finite loop
-
-```lisp
-(x 4 (seq c e g e))    ; repeat 4 times
-```
-
-Compiles to `LOOP_BEGIN` / body / `LOOP_END`. Multiple body forms are allowed:
-
-````lisp
-(x 4
-  (seq c e g e)
-  (seq f g a g))
-
-### Infinite loop
-
-```lisp
-#top
-(seq c e g e)
-(goto top)             ; loops forever
-````
-
-`#top` is a bare atom (label declaration). `(goto top)` references it without `#`.
-
-### Finite loop with explicit label
-
-```lisp
-#verse
-(seq c e g e)
-(goto verse 4)         ; repeat 4 times, then fall through
-```
-
-### `x` without count — infinite shorthand
-
-```lisp
-(x (seq c e g e))      ; no leading integer = infinite loop
-```
-
----
-
-## 10. Phrase Reuse
-
-### def — named phrase
-
-Use `def` with a `seq` body to give a phrase a name:
-
-```lisp
-(def riff (seq c e g e))
-(def bridge (seq :oct 5 :len 1/4  f g a g))
+(def riff c e g e)
 
 (score
-  (track :ch fm1 :oct 4 :len 1/8
+  (fm1 :oct 4 :len 8
     riff
-    riff
-    bridge))
+    riff))
 ```
 
-A phrase `def` can contain multiple forms:
+`def` expands inline.
 
-```lisp
-(def fill
-  (seq :oct 4 :len 1/8  c e g e)
-  (seq :oct 4 :len 1/4  f g))
-```
-
-The calling track's `:oct` / `:len` are inherited when the `seq` inside the `def` does not declare them.
-
-### defn — parametric phrase
+### `defn` (parametric)
 
 ```lisp
 (defn arp [root]
-  (seq :oct 4  root  > root  < root))
+  root > root < root)
 
-(track :ch fm1 :len 1/8
-  (arp c)
-  (arp g))
+(score
+  (fm1 :oct 4 :len 8
+    (arp c)
+    (arp g)))
 ```
 
 ---
 
-## 11. Track Append
+## 8. FM Voice Definitions
 
-Repeating a track name appends events after the previous ones:
+FM voice defs use keyword maps (and can use `:extends`):
+
+```lisp
+(def fm-init
+  :alg 0 :fb 0 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 127 :ks1 0 :ml1 0 :dt1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 127 :ks2 0 :ml2 0 :dt2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0)
+
+(def brass :extends fm-init
+  :alg 7
+  :tl1 20 :tl2 30 :tl3 25 :tl4 0)
+```
+
+Use by bare identifier:
 
 ```lisp
 (score
-  ; Section A
-  (track :ch fm1 :oct 4 :len 1/8
-    (seq c e g e))
-
-  (track :ch psg1 :oct 2 :len 1/4
-    (seq c c))
-
-  ; Section B — appended to the same tracks
-  (track :ch fm1
-    (seq f g a g))
-
-  (track :ch psg1
-    (seq f f)))
+  (fm1 :oct 4 :len 8
+    brass
+    c e g e))
 ```
-
-`:ch` and `:role` together identify the track — writing the same pair again appends to that track. `:oct`, `:len`, `:gate`, and `:shuffle` can be updated on append.
 
 ---
 
-## 12. Modulator Tracks
+## 9. Macro Basics (`:macro`)
 
-A track with `:role modulator` runs on the same channel as a `bgm` track and fires events simultaneously:
+Macros are KEY-ON scoped per NOTE_ON.
+
+### Single-target def
 
 ```lisp
-(track :ch fm1 :role modulator
-  (x
-    (param-set :FM_FMS 3)
-    (rest 1/4)
-    (param-set :FM_FMS 0)
-    (rest 1/4)))
+(def pluck :macro :vel [15 12 8 4 0])
 ```
 
-By default, a modulator track resets to its start position each time the primary track emits a NOTE_ON. Set `:carry true` to prevent the reset.
+### Multi-target def (list form)
+
+```lisp
+(def synth-env :macro [
+  :vel   [15 12 8 4 0]
+  :pitch (linear :from 0 :to -1200 :len 8)
+])
+```
+
+### Use-site forms
+
+```lisp
+(def pluck :macro :vel [15 12 8 4 0])
+
+(fm1 pluck c)                              ; bare name — applies the macro def
+(fm1 :macro :vel [15 10 5 0] c)           ; inline anonymous macro
+(fm1 :macro [pluck :pan [left center right]] c)  ; mix named + inline
+```
+
+If the same target appears multiple times, last one wins.
 
 ---
 
-## 13. Gate and Swing
+## 10. Multi-stage Macro and `wait key-off`
 
-### Gate
-
-Gate controls when KEY_OFF fires within a step. Default is `1.0` (legato — no early KEY_OFF).
+Multi-stage uses a vector of curve/wait stages and runs sequentially for one target.
 
 ```lisp
-; Ratio: float 0.0–1.0 (relative to step length)
-(track :ch fm1 :gate 0.5   ...)    ; staccato — KEY_OFF at half the step
-
-; Length notation: integer=denominator, fraction, tick (same as :len)
-(seq :gate 16    c d e f)          ; KEY_OFF after 1/16 note (12 ticks) regardless of step length
-(seq :gate 1/16  c d e f)          ; same as above
-(seq :gate 12t   c d e f)          ; same — exact tick count
-
-; Override inside seq
-(seq :len 1/8  :gate 0.9  c e  :gate 0.3  g c)
+(def adsr-curve :macro :vel [
+  (linear :from 0  :to 15 :len 4)
+  (wait key-off)
+  (linear :from 15 :to 0  :len 4)
+])
 ```
 
-### Swing
+Behavior:
+
+- Triggered at KEY-ON
+- First stage runs attack
+- `(wait key-off)` holds value until KEY-OFF
+- After KEY-OFF, following stage runs release
+
+`(wait N)` waits N frames (plain integer, not a length token).
+
+---
+
+## 11. Curve and Step Value Domains
+
+### `:pan`
+
+Accepted values:
+
+- Symbolic: `left` = `-1`, `center` = `0`, `right` = `+1`
+- Numeric: `-1`, `0`, `1` are also valid directly
+
+Curve/function outputs are snapped to `-1 / 0 / +1`.
+
+### `:mode` (noise)
+
+Accepted symbolic values:
+
+- `white0`-`white3`
+- `periodic0`-`periodic3`
+
+Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
+
+---
+
+## 12. Noise Authoring (`noise` channel)
 
 ```lisp
-(track :ch fm2 :shuffle 67 :len 1/8
-  (seq c d e f g a b c))
+(def perc-buzz :macro :mode [white0 :loop periodic3])
+(def hh-env :macro :vel [15 9 4 0])
+
+(score
+  (noise :len 8 :mode white0 :macro [perc-buzz hh-env]
+    c c c c))
 ```
 
-Swing reference: `50` = straight, `67` = standard swing (~2:1 triplet), `75` = heavy.
+- `:mode` writes `NOISE_MODE`
+- `:macro :mode` allows per-frame timbre motion
 
-`:shuffle-base` sets the unit that alternates long/short (default `1/8`). Accepts any length notation: `8`, `1/8`, `24t` are all equivalent.
+---
 
-### Gate + swing interaction
+## 13. Gate and Hold Notes
 
-Shuffle affects the _step length_. Gate ratio is applied to each individual (post-shuffle) step length — so KEY_OFF tracks the swung beat naturally. With ratio gate, a long beat gets a proportionally longer sound-on window and a short beat gets a shorter one, which is the correct swung feel. Absolute-tick gate ignores step length entirely and is unaffected by shuffle.
+`:gate` controls how long the note sounds within its slot.
+
+```lisp
+(fm1 :len 8 :gate 0.5 c d e f)   ; KEY-OFF at 50% of each slot
+(fm1 :len 8 :gate 6f  c d e f)   ; KEY-OFF 6 frames into each slot
+```
+
+### `:gate 0` — hold, timeline advances
+
+`:gate 0` fires KEY-ON and holds indefinitely, but the timeline still advances by `:len`. Use this when the channel needs to stay in sync with others while holding a note.
+
+```lisp
+(fm1 :len 4 :gate 0
+  c _ _ _)   ; KEY-ON on beat 1, timeline moves 4 beats, KEY-OFF via runtime
+```
+
+### `:len 0` — hold, timeline does not advance
+
+`:len 0` fires KEY-ON, holds indefinitely, and does not advance the timeline. Any subsequent notes in the same channel all land at tick 0. Useful for a single held note with a release macro:
+
+```lisp
+(sqr1 :len 0 :macro :vel [15 :loop 14 13 :release 8 4 0]
+  c)
+```
+
+In both cases, KEY-OFF is triggered at runtime via `triggerKeyOff()`.
+
+---
+
+## 14. Track Append by Channel Name
+
+Repeating the same channel form appends events and keeps sticky state.
+
+```lisp
+(score
+  (fm1
+    c e g e)
+  (fm1
+    f g a g))
+```
+
+---
+
+## 15. Practical v0.4 Example
+
+```lisp
+(def fm-init
+  :alg 0 :fb 0 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 127 :ks1 0 :ml1 0 :dt1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 127 :ks2 0 :ml2 0 :dt2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0)
+
+(def brass :extends fm-init
+  :alg 7
+  :tl1 20 :tl2 30 :tl3 25 :tl4 0)
+
+(def phrase c e g e)
+(def env :macro [
+  :vel [15 12 8 4 0]
+  :pan [:loop left center right center]
+])
+
+(score
+  (fm1
+    brass
+    env
+    phrase
+    (x 2 phrase))
+
+  (noise :mode white0
+    c _ c _))
+```
+
+---
+
+## 16. Migration Checklist (Old to v0.4)
+
+- Replace `(track :ch fm1 ...)` with `(fm1 ...)`
+- Replace `(seq ...)` with direct inline body items
+- Replace `psg1`-`psg3` with `sqr1`-`sqr3`
+- Replace `@voice` with bare identifier `voice`
+- Replace `(set ...)` and `(default ...)` with inline modifiers
+- Use length tokens consistently (`N`, `N.`, `N/M`, `Nt`, `Nf`)

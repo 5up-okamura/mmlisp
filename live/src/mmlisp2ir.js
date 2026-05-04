@@ -2033,6 +2033,16 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         });
       }
 
+      // Emit default NOISE_MODE (white0) for noise channel
+      if (head === "noise") {
+        trackData.events.push({
+          tick: 0,
+          cmd: "PARAM_SET",
+          args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] },
+          src: nodeSrc(node),
+        });
+      }
+
       trackByKey.set(trackKey, { trackData, trackState });
       trackOrder.push(trackKey);
     } else {
