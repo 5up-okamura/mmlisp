@@ -457,10 +457,11 @@
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
     // -----------------------------------------------------------------------
-    const { EditorView, Decoration, ViewPlugin, lineNumbers } = await import('https://esm.sh/@codemirror/view@6');
+    const { EditorView, Decoration, ViewPlugin, lineNumbers, keymap } = await import('https://esm.sh/@codemirror/view@6');
     const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
     const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage } = await import('https://esm.sh/@codemirror/language@6');
     const { oneDarkTheme, oneDarkHighlightStyle } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
+    const { history, historyKeymap } = await import('https://esm.sh/@codemirror/commands@6');
 
     // Multi-track playhead cursors
     // Effect payload: { trackIdx, line } — trackIdx=-1 clears all tracks
@@ -533,21 +534,25 @@
       },
     });
 
+    const editorExtensions = [
+      oneDarkTheme,
+      syntaxHighlighting(oneDarkHighlightStyle),
+      mmlispMode,
+      trackLinesField,
+      trackDecorations,
+      lineNumbers(),
+      EditorView.lineWrapping,
+      history(),
+      keymap.of(historyKeymap),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) scheduleCompile();
+      }),
+    ];
+
     const editorView = new EditorView({
       state: EditorState.create({
         doc: '(loading…)',
-        extensions: [
-          oneDarkTheme,
-          syntaxHighlighting(oneDarkHighlightStyle),
-          mmlispMode,
-          trackLinesField,
-          trackDecorations,
-          lineNumbers(),
-          EditorView.lineWrapping,
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) scheduleCompile();
-          }),
-        ],
+        extensions: editorExtensions,
       }),
       parent: document.getElementById('editorWrap'),
     });
@@ -576,10 +581,11 @@
     }
 
     function setEditorDoc(text) {
-      editorView.dispatch({
-        changes: { from: 0, to: editorView.state.doc.length, insert: text },
-        effects: setTrackLine.of({ trackIdx: -1, line: -1 }),
-      });
+      // Reset the full state so that undo history does not include the file load.
+      editorView.setState(EditorState.create({
+        doc: text,
+        extensions: editorExtensions,
+      }));
     }
 
     function highlightTrackLine(trackIdx, line) {
