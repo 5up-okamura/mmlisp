@@ -88,12 +88,13 @@ Phase 3 entry condition:
 
 ## Language Version Status
 
-| Version | Status | Tag            | Themes                                                                      |
-| ------- | ------ | -------------- | --------------------------------------------------------------------------- |
-| v0.1    | frozen | v0.1-candidate | Core language, IR, GMB format                                               |
-| v0.2    | frozen | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                    |
-| v0.3    | frozen | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls |
-| v0.4    | frozen | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model |
+| Version | Status      | Tag            | Themes                                                                               |
+| ------- | ----------- | -------------- | ------------------------------------------------------------------------------------ |
+| v0.1    | frozen      | v0.1-candidate | Core language, IR, GMB format                                                        |
+| v0.2    | frozen      | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                             |
+| v0.3    | frozen      | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls          |
+| v0.4    | frozen      | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model          |
+| v0.5    | in progress | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, File I/O UI |
 
 ### v0.4 Implementation Progress
 
@@ -242,6 +243,86 @@ Other:
 15. ~~`:extends`~~ (done)
 16. ~~`len=0` hold note~~ (done)
     | v0.5 | planned | — | FM3 independent-OP mode, CSM, PCM/DAC |
+
+---
+
+### v0.5 Implementation Progress
+
+#### Compiler (live/src/mmlisp2ir.js)
+
+**FM3 CSM mode**
+
+- [ ] `fm3-csm` track form → emit `CSM_RATE` / `CSM_ON` / `CSM_OFF` IR events
+- [ ] `:csm-rate N` inline constant Hz on `fm3-csm`
+- [ ] `:csm-rate (curve ...)` inline swept Hz on `fm3-csm`
+- [ ] `fm3-csm-rate` companion track → note-based Timer A frequency
+- [ ] Score-level CSM/FM3/fm3-N mutual-exclusion compile error
+
+**FM3 independent-operator mode**
+
+- [ ] `(fm3 voice-name)` form → enables FM3 special mode; shared voice declaration
+- [ ] `fm3-1`–`fm3-4` track forms → independent F-number per OP; emit `FM3_OP_PITCH` IR events
+
+**TEMPO_SWEEP**
+
+- [ ] `:tempo N` mid-track → `TEMPO_SET` IR event
+- [ ] `:tempo (curve :from N :to M :len L)` → `TEMPO_SWEEP` IR event
+
+**PCM / DAC**
+
+- [ ] `def :sample` declaration → WAV load + 8-bit signed PCM conversion at compile time
+- [ ] `:rate` on `def :sample` → C4 playback rate override
+- [ ] Stereo WAV → mono downmix `(L+R)/2` at compile time
+- [ ] Sample path resolution relative to `.mmlisp` source file location
+- [ ] `pcm1`–`pcm3` track forms → emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
+- [ ] `fm6 :mode shot|loop|loop-gate` → PCM note events on fm6 DAC channel
+- [ ] Pitch-to-rate mapping: `rate = 2^(semitones_from_C4 / 12)`; clamp C2–C6 with warning
+
+**Stochastic curves**
+
+- [ ] `noise` / `pink` / `perlin` / `brown` in `CURVE_NAMES` / `LOOP_CURVE_NAMES`
+- [ ] `sampleCurveUnit` LUT generation with fixed seed `0xDEAD`
+- [ ] `brown` IIR implementation: `y[n] = 0.99 * y[n-1] + 0.01 * x[n]`, min-max normalize
+
+---
+
+#### Player (live/src/ir-player.js)
+
+**FM3 CSM mode**
+
+- [ ] `CSM_RATE` → write Timer A frequency to YM2612
+- [ ] `CSM_ON` / `CSM_OFF` → YM2612 CSM mode register bit
+
+**FM3 independent-OP mode**
+
+- [ ] `FM3_OP_PITCH` → write independent F-number/block per OP
+
+**TEMPO_SWEEP**
+
+- [ ] `TEMPO_SET` dispatch → reanchor `audioTimeAtTick0` for all tracks
+- [ ] `TEMPO_SWEEP` dispatch → interpolate `secsPerTick` each scheduler pass
+
+**PCM / DAC**
+
+- [ ] Sample buffer management (load compiled PCM data into AudioWorklet)
+- [ ] `PCM_NOTE_ON` → trigger soft-mix channel at computed rate with volume
+- [ ] `PCM_NOTE_OFF` / `loop-gate` release
+- [ ] 3ch soft-mixer in Z80 worklet emulation path (or AudioWorklet mixing layer)
+
+---
+
+#### UI (live/index.html + live/src/)
+
+**File I/O**
+
+- [ ] File menu: **New** / **Open...** / **Save** / **Save As...**
+- [ ] Open: use File System Access API (`showOpenFilePicker`) → load `.mmlisp`; set base directory
+- [ ] Save As: `showSaveFilePicker` → write `.mmlisp`; update base directory for sample resolution
+- [ ] Save: write to previously acquired `FileSystemFileHandle` (no picker re-prompt)
+- [ ] Unsaved-state guard: warn when compiling `def :sample` paths with no saved base directory
+- [ ] Title bar shows current filename (or "Untitled" when unsaved)
+
+---
 
 ## Backlog
 
