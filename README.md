@@ -47,6 +47,7 @@ Implemented toolchain:
 - docs/spec-v0.2.md — v0.2 design notes
 - docs/spec-v0.3.md — v0.3 design notes
 - docs/spec-v0.4.md — v0.4 design notes
+- docs/spec-v0.5.md — v0.5 design notes (FM3 independent-OP, CSM, PCM/DAC, TEMPO_SWEEP)
 - docs/commands.md — command set definition
 - docs/ir.md — IR JSON schema
 - docs/gmb.md — binary format
