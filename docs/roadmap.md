@@ -274,7 +274,7 @@ Other:
 - [ ] `:rate` on `def :sample` → C4 playback rate override
 - [ ] Stereo WAV → mono downmix `(L+R)/2` at compile time
 - [ ] Sample path resolution relative to `.mmlisp` source file location
-- [ ] `pcm1`–`pcm3` track forms → emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
+- [ ] `(pcm1 sample-name ...)` / `pcm2` / `pcm3` track forms → sample as first positional arg; emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
 - [ ] `fm6 :mode shot|loop|loop-gate` → PCM note events on fm6 DAC channel
 - [ ] Pitch-to-rate mapping: `rate = 2^(semitones_from_C4 / 12)`; clamp C2–C6 with warning
 

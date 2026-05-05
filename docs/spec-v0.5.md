@@ -100,7 +100,13 @@ mixed with normal `fm3` or `fm3-N` in the same score (compile error).
   Out-of-range notes are clamped with a warning.
 - **Volume:** 0–15, same scale as `:vel`. Composes with `:vol` / `:master`
   via the standard level stack.
+- **Track form:** `(pcm1 sample-name ...)` / `(pcm2 ...)` / `(pcm3 ...)` —
+  numbered channels (like `fm1`, `sqr1`). Sample name is the first positional
+  argument, binding that sample to the channel for the track (analogous to FM
+  voice binding). Notes specify pitch.
 - **PCM modes** (`:mode` on `pcm1`–`pcm3`): `shot` / `loop` / `loop-gate`.
+  Default is `shot` per playback event — not a sticky channel state.
+  Same model as `:mode` on `noise` (per-note, not per-channel initial value).
 - **fm6 coexistence:** `fm6` track supports `:mode fm` (FM channel),
   `:mode shot` (one-shot PCM), `:mode loop` (looping PCM), and
   `:mode loop-gate` (gated loop PCM). Mid-track switching is allowed.
@@ -213,7 +219,8 @@ definitions), then referenced by symbol from PCM tracks.
 (def snare :sample :file "sounds/snare.wav" :rate 11025)
 
 (score :tempo 120
-  (pcm1 :mode shot :len 4  kick _ snare _))
+  (pcm1 kick  :len 4  c _ c _)   ; kick on beats 1, 3
+  (pcm2 snare :len 4  _ c _ c))  ; snare on beats 2, 4
 ```
 
 `def` declarations are score-independent and reusable across scores. This
@@ -249,14 +256,15 @@ Reference implementations: MDSDRV (2ch 17.5 kHz, 16-step volume, batch DMA),
 Sonic 3 K driver (1ch PCM + FM6 alternation).
 
 ```lisp
-; one-shot percussion hit
-(pcm1 :len 4  :mode shot  kick _ snare _)
+; one-shot percussion — sample name is first positional arg, notes specify pitch
+(pcm1 kick  :len 4  c _ c _)   ; C4 = native rate
+(pcm2 snare :len 4  _ c _ c)
 
 ; pitched PCM — C4 = 1.0×; other notes are rate-transposed
-(pcm2 :oct 4 :len 8  :mode shot  c d e f)
+(pcm1 bass :oct 3 :len 8  c c c16 c16 c16)
 
 ; looping texture
-(pcm3 :len 1 :vol 8  :mode loop  c)
+(pcm3 pad :len 1 :vol 8  :mode loop  c)
 ```
 
 ### 1.8 FM3 independent-operator mode
@@ -405,8 +413,8 @@ This enables:
 (sqr1 :len 0 :macro pad-env  c)
 
 ; PCM texture loop — holds open until STOP_TRACK
-(pcm2 :mode loop :len 0
-  :loop-start 0 :loop-end 4096  drone)
+(pcm2 drone :mode loop :len 0
+  :loop-start 0 :loop-end 4096  c)
 ```
 
 ### 4.6 Implications for the compiler
