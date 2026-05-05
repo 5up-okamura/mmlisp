@@ -453,6 +453,8 @@
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
+    import { parse } from './src/mmlisp-parser.js';
+    import { formatMMLisp } from './src/mmlisp-formatter.js';
 
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
@@ -534,6 +536,25 @@
       },
     });
 
+    function formatDocument() {
+      const src = editorView.state.doc.toString();
+      let formatted;
+      try {
+        formatted = formatMMLisp(src, parse);
+      } catch (e) {
+        log('Format error: ' + e.message, 'err');
+        return true; // prevent default even on error
+      }
+      if (formatted !== src) {
+        const { from, to } = editorView.state.selection.main;
+        editorView.dispatch({
+          changes: { from: 0, to: editorView.state.doc.length, insert: formatted },
+          selection: { anchor: Math.min(from, formatted.length) },
+        });
+      }
+      return true;
+    }
+
     const editorExtensions = [
       oneDarkTheme,
       syntaxHighlighting(oneDarkHighlightStyle),
@@ -543,7 +564,10 @@
       lineNumbers(),
       EditorView.lineWrapping,
       history(),
-      keymap.of(historyKeymap),
+      keymap.of([
+        ...historyKeymap,
+        { key: 'Mod-Shift-f', run: formatDocument },
+      ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) scheduleCompile();
       }),
