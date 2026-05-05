@@ -104,12 +104,17 @@ mixed with normal `fm3` or `fm3-N` in the same score (compile error).
   numbered channels (like `fm1`, `sqr1`). Sample name is the first positional
   argument, binding that sample to the channel for the track (analogous to FM
   voice binding). Notes specify pitch.
-- **PCM modes** (`:mode` on `pcm1`–`pcm3`): `shot` / `loop` / `loop-gate`.
-  Default is `shot` per playback event — not a sticky channel state.
-  Same model as `:mode` on `noise` (per-note, not per-channel initial value).
+- **PCM modes** (`:mode` on `pcm1`–`pcm3`):
+  - `shot` — one-shot: plays start→end once, then stops.
+  - `loop` — sustain loop: plays attack (start→`:loop-start`), loops
+    `:loop-start`–`:loop-end` until KEY-OFF, then plays release
+    (`:loop-end`→end). Equivalent to the SF2/SFZ `sustain-loop` pattern.
+    Use `len=0` to hold until `STOP_TRACK` or `KEY_OFF` from the game.
+    Default is `shot` per playback event — not a sticky channel state.
+    Same model as `:mode` on `noise` (per-note, not per-channel initial value).
 - **fm6 coexistence:** `fm6` track supports `:mode fm` (FM channel),
-  `:mode shot` (one-shot PCM), `:mode loop` (looping PCM), and
-  `:mode loop-gate` (gated loop PCM). Mid-track switching is allowed.
+  `:mode shot` (one-shot PCM), and `:mode loop` (sustain loop PCM).
+  Mid-track switching is allowed.
 - **PCM channel count:** limited by Z80 throughput at the chosen mix rate
   (higher rate = fewer channels). `pcm1`–`pcm3` are the declared maximum;
   the driver manages the actual constraint.
@@ -263,8 +268,8 @@ Sonic 3 K driver (1ch PCM + FM6 alternation).
 ; pitched PCM — C4 = 1.0×; other notes are rate-transposed
 (pcm1 bass :oct 3 :len 8  c c c16 c16 c16)
 
-; looping texture
-(pcm3 pad :len 1 :vol 8  :mode loop  c)
+; looping texture — sustain loop held until STOP_TRACK
+(pcm3 pad :len 0 :vol 8  :mode loop  c)
 ```
 
 ### 1.8 FM3 independent-operator mode
@@ -406,7 +411,7 @@ This enables:
 - Sound effects that last as long as the game state (e.g. engine rumble,
   charge-up sound, boss warning siren)
 - Musical phrases that loop until the scene changes
-- PCM loops (`loop` / `loop-gate` mode) held open indefinitely
+- PCM loops (`:mode loop`) held open indefinitely
 
 ```lisp
 ; loop indefinitely until game sends KEY_OFF
