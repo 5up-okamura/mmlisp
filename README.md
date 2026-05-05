@@ -54,6 +54,14 @@ Implemented toolchain:
 - docs/compiler.md — compiler pipeline contract
 - docs/driver.md — decoder contract for MMLispDRV
 
+## MMLisp Live — Keyboard Shortcuts
+
+| macOS         | Windows / Linux | Action               |
+| ------------- | --------------- | -------------------- |
+| `Cmd+Return`  | `Ctrl+Enter`    | Play / Pause         |
+| `Cmd+.`       | `Ctrl+.`        | Stop                 |
+| `Cmd+Shift+F` | `Ctrl+Shift+F`  | Format current score |
+
 ## Next Steps
 
 1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
