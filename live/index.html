@@ -461,9 +461,9 @@
     // -----------------------------------------------------------------------
     const { EditorView, Decoration, ViewPlugin, lineNumbers, keymap } = await import('https://esm.sh/@codemirror/view@6');
     const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
-    const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage } = await import('https://esm.sh/@codemirror/language@6');
+    const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage, indentService, indentUnit } = await import('https://esm.sh/@codemirror/language@6');
     const { oneDarkTheme, oneDarkHighlightStyle } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
-    const { history, historyKeymap, indentWithTab } = await import('https://esm.sh/@codemirror/commands@6');
+    const { history, historyKeymap, indentWithTab, insertNewlineAndIndent } = await import('https://esm.sh/@codemirror/commands@6');
     const { autocompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
 
     // Multi-track playhead cursors
@@ -597,6 +597,44 @@
       return null;
     }
 
+    // MMLisp auto-indent service (Lisp-style: align to char after opening paren,
+    // or indent +2 if nothing follows the paren on that line)
+    const mmlispIndent = indentService.of((context, pos) => {
+      const doc = context.state.doc;
+      const line = doc.lineAt(pos);
+      const src = doc.sliceString(0, line.from);
+
+      // Scan src tracking paren depth, skipping strings and comments
+      let depth = 0;
+      let lastOpenPos = -1;
+      let inStr = false;
+      for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        if (inStr) {
+          if (ch === '\\') { i++; } // escape
+          else if (ch === '"') { inStr = false; }
+        } else if (ch === '"') {
+          inStr = true;
+        } else if (ch === ';') {
+          // skip to end of line
+          while (i < src.length && src[i] !== '\n') i++;
+        } else if (ch === '(') {
+          depth++;
+          lastOpenPos = i;
+        } else if (ch === ')') {
+          depth--;
+        }
+      }
+
+      if (depth <= 0 || lastOpenPos < 0) return 0;
+
+      const openLine = doc.lineAt(lastOpenPos);
+      const openCol = lastOpenPos - openLine.from;
+
+      // Always indent +2 from ( — matches the formatter's childIndent rule
+      return openCol + 2;
+    });
+
     function formatDocument() {
       const src = editorView.state.doc.toString();
       let formatted;
@@ -625,9 +663,12 @@
       lineNumbers(),
       EditorView.lineWrapping,
       history(),
+      indentUnit.of('  '),
+      mmlispIndent,
       autocompletion({ override: [mmlispCompletions] }),
       keymap.of([
         indentWithTab,
+        { key: 'Enter', run: insertNewlineAndIndent },
         ...historyKeymap,
         { key: 'Mod-Shift-f', run: formatDocument },
       ]),
