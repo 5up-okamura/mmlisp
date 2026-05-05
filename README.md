@@ -3,7 +3,7 @@
 MMLisp is an interactive music authoring system for retro video game hardware.
 
 - Web authoring environment: https://mmlisp.vercel.app/
-- Playback driver: MMLispDRV (Z80/SGDK target)
+- Playback driver: MMLispDRV (Z80/SGDK target) — **not yet implemented**
 
 ## Current Stage
 
@@ -20,11 +20,6 @@ This repository starts with specification-first development:
 - live/: MMLisp Live — web authoring environment
 - examples/: demo songs and test assets
 - mmlisp-syntax/: VS Code TextMate grammar for .mmlisp syntax highlighting
-
-## Naming
-
-- Project: MMLisp
-- Driver: MMLispDRV
 
 ## File Extensions
 
