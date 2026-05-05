@@ -220,12 +220,129 @@ export function sampleCurveUnit(curve, phase) {
   switch (curve) {
     case "linear":
       return t;
+    // ── Sine ──────────────────────────────────────────────────────────────
+    case "ease-in-sine":
+      return 1 - Math.cos((t * Math.PI) / 2);
+    case "ease-out-sine":
+      return Math.sin((t * Math.PI) / 2);
+    case "ease-inout-sine":
+      return -(Math.cos(Math.PI * t) - 1) / 2;
+    // ── Quad ──────────────────────────────────────────────────────────────
     case "ease-in":
+    case "ease-in-quad":
       return t * t;
     case "ease-out":
+    case "ease-out-quad":
       return 1 - (1 - t) * (1 - t);
-    case "ease-in-out":
+    case "ease-inout":
+    case "ease-inout-quad":
       return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    // ── Cubic ─────────────────────────────────────────────────────────────
+    case "ease-in-cubic":
+      return t * t * t;
+    case "ease-out-cubic":
+      return 1 - Math.pow(1 - t, 3);
+    case "ease-inout-cubic":
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    // ── Quart ─────────────────────────────────────────────────────────────
+    case "ease-in-quart":
+      return t * t * t * t;
+    case "ease-out-quart":
+      return 1 - Math.pow(1 - t, 4);
+    case "ease-inout-quart":
+      return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
+    // ── Quint ─────────────────────────────────────────────────────────────
+    case "ease-in-quint":
+      return Math.pow(t, 5);
+    case "ease-out-quint":
+      return 1 - Math.pow(1 - t, 5);
+    case "ease-inout-quint":
+      return t < 0.5 ? 16 * Math.pow(t, 5) : 1 - Math.pow(-2 * t + 2, 5) / 2;
+    // ── Expo ──────────────────────────────────────────────────────────────
+    case "ease-in-expo":
+      return t === 0 ? 0 : Math.pow(2, 10 * t - 10);
+    case "ease-out-expo":
+      return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+    case "ease-inout-expo":
+      return t === 0
+        ? 0
+        : t === 1
+          ? 1
+          : t < 0.5
+            ? Math.pow(2, 20 * t - 10) / 2
+            : (2 - Math.pow(2, -20 * t + 10)) / 2;
+    // ── Circ ──────────────────────────────────────────────────────────────
+    case "ease-in-circ":
+      return 1 - Math.sqrt(1 - t * t);
+    case "ease-out-circ":
+      return Math.sqrt(1 - Math.pow(t - 1, 2));
+    case "ease-inout-circ":
+      return t < 0.5
+        ? (1 - Math.sqrt(1 - Math.pow(2 * t, 2))) / 2
+        : (Math.sqrt(1 - Math.pow(-2 * t + 2, 2)) + 1) / 2;
+    // ── Back ──────────────────────────────────────────────────────────────
+    case "ease-in-back": {
+      const c1 = 1.70158,
+        c3 = c1 + 1;
+      return c3 * t * t * t - c1 * t * t;
+    }
+    case "ease-out-back": {
+      const c1 = 1.70158,
+        c3 = c1 + 1;
+      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+    }
+    case "ease-inout-back": {
+      const c1 = 1.70158,
+        c2 = c1 * 1.525;
+      return t < 0.5
+        ? (Math.pow(2 * t, 2) * ((c2 + 1) * 2 * t - c2)) / 2
+        : (Math.pow(2 * t - 2, 2) * ((c2 + 1) * (2 * t - 2) + c2) + 2) / 2;
+    }
+    // ── Elastic ───────────────────────────────────────────────────────────
+    case "ease-in-elastic": {
+      const c4 = (2 * Math.PI) / 3;
+      return t === 0
+        ? 0
+        : t === 1
+          ? 1
+          : -Math.pow(2, 10 * t - 10) * Math.sin((t * 10 - 10.75) * c4);
+    }
+    case "ease-out-elastic": {
+      const c4 = (2 * Math.PI) / 3;
+      return t === 0
+        ? 0
+        : t === 1
+          ? 1
+          : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+    }
+    case "ease-inout-elastic": {
+      const c5 = (2 * Math.PI) / 4.5;
+      return t === 0
+        ? 0
+        : t === 1
+          ? 1
+          : t < 0.5
+            ? -(Math.pow(2, 20 * t - 10) * Math.sin((20 * t - 11.125) * c5)) / 2
+            : (Math.pow(2, -20 * t + 10) * Math.sin((20 * t - 11.125) * c5)) /
+                2 +
+              1;
+    }
+    // ── Bounce ────────────────────────────────────────────────────────────
+    case "ease-out-bounce": {
+      const n1 = 7.5625,
+        d1 = 2.75;
+      if (t < 1 / d1) return n1 * t * t;
+      if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+      if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+      return n1 * (t -= 2.625 / d1) * t + 0.984375;
+    }
+    case "ease-in-bounce":
+      return 1 - sampleCurveUnit("ease-out-bounce", 1 - t);
+    case "ease-inout-bounce":
+      return t < 0.5
+        ? (1 - sampleCurveUnit("ease-out-bounce", 1 - 2 * t)) / 2
+        : (1 + sampleCurveUnit("ease-out-bounce", 2 * t - 1)) / 2;
+    // ── Loop waveforms ────────────────────────────────────────────────────
     case "sin":
       return (Math.sin(2 * Math.PI * t - Math.PI / 2) + 1) / 2;
     case "triangle":
@@ -235,6 +352,11 @@ export function sampleCurveUnit(curve, phase) {
     case "saw":
     case "ramp":
       return t;
+    // ── Stochastic (v0.5; LUT-based at compile time) ──────────────────────
+    case "noise":
+    case "pink":
+    case "perlin":
+      return t; // placeholder — v0.5 LUT implementation
     default:
       return t;
   }

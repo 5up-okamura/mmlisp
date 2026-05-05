@@ -463,7 +463,8 @@
     const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
     const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage } = await import('https://esm.sh/@codemirror/language@6');
     const { oneDarkTheme, oneDarkHighlightStyle } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
-    const { history, historyKeymap } = await import('https://esm.sh/@codemirror/commands@6');
+    const { history, historyKeymap, indentWithTab } = await import('https://esm.sh/@codemirror/commands@6');
+    const { autocompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
 
     // Multi-track playhead cursors
     // Effect payload: { trackIdx, line } — trackIdx=-1 clears all tracks
@@ -518,7 +519,6 @@
         if (stream.eat('(') || stream.eat(')')) return 'bracket';
         if (stream.match(/^[+-]?\d+(?:\/\d+)?/)) return 'number';
         if (stream.eat(':')) {
-          if (stream.match(/^[a-g][#b]?\d/)) return 'string'; // pitch :c4 :gs3 :bb5
           stream.match(/^[a-zA-Z][a-zA-Z0-9#_-]*/);
           return 'atom';
         }
@@ -535,6 +535,67 @@
         return null;
       },
     });
+
+    // -----------------------------------------------------------------------
+    // Autocomplete
+    // -----------------------------------------------------------------------
+    const AC_FORMS = [
+      'score','rest','tie',
+      'def','defn','x','goto','param-set',
+      'linear',
+      'ease-in','ease-out','ease-inout',
+      'ease-in-sine','ease-out-sine','ease-inout-sine',
+      'ease-in-quad','ease-out-quad','ease-inout-quad',
+      'ease-in-cubic','ease-out-cubic','ease-inout-cubic',
+      'ease-in-quart','ease-out-quart','ease-inout-quart',
+      'ease-in-quint','ease-out-quint','ease-inout-quint',
+      'ease-in-expo','ease-out-expo','ease-inout-expo',
+      'ease-in-circ','ease-out-circ','ease-inout-circ',
+      'ease-in-back','ease-out-back','ease-inout-back',
+      'ease-in-elastic','ease-out-elastic','ease-inout-elastic',
+      'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
+      'sin','triangle','square','saw','ramp',
+      'noise','pink','perlin',
+    ];
+    const AC_TRACKS = [
+      'fm1','fm2','fm3','fm3-csm','fm3-1','fm3-2','fm3-3','fm3-4',
+      'fm4','fm5','fm6',
+      'sqr1','sqr2','sqr3','noise',
+      'pcm1','pcm2','pcm3',
+    ];
+    const AC_PARAMS = [
+      ':oct',':len',':gate',':vel',':vol',
+      ':tempo',':shuffle',':shuffle-base',':carry',
+      ':ch',':role',':id',':title',':author',
+      ':macro',':loop',':loop-start',':loop-end',
+      ':mode',':lfo-rate',':pitch',':extends',
+      ':from',':to',
+      ':rate',':csm-rate',':file',':sample',
+    ];
+
+    function mmlispCompletions(context) {
+      // After '(' — suggest forms and track names
+      const formMatch = context.matchBefore(/\([a-zA-Z0-9_-]*/);
+      if (formMatch) {
+        const typed = formMatch.text.slice(1); // strip '('
+        const options = [...AC_FORMS, ...AC_TRACKS]
+          .filter(s => s.startsWith(typed))
+          .map(s => ({ label: s, type: 'keyword', apply: s + ' ' }));
+        if (options.length === 0 && !context.explicit) return null;
+        return { from: formMatch.from + 1, options };
+      }
+      // After ':' — suggest keyword params and pitches
+      const kwMatch = context.matchBefore(/:([a-zA-Z0-9#_-]*)/);
+      if (kwMatch) {
+        const typed = kwMatch.text;
+        const options = [...AC_PARAMS]
+          .filter(s => s.startsWith(typed))
+          .map(s => ({ label: s, type: 'property' }));
+        if (options.length === 0 && !context.explicit) return null;
+        return { from: kwMatch.from, options };
+      }
+      return null;
+    }
 
     function formatDocument() {
       const src = editorView.state.doc.toString();
@@ -564,7 +625,9 @@
       lineNumbers(),
       EditorView.lineWrapping,
       history(),
+      autocompletion({ override: [mmlispCompletions] }),
       keymap.of([
+        indentWithTab,
         ...historyKeymap,
         { key: 'Mod-Shift-f', run: formatDocument },
       ]),
