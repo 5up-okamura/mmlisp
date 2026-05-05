@@ -275,7 +275,7 @@ Other:
 - [ ] Stereo WAV → mono downmix `(L+R)/2` at compile time
 - [ ] Sample path resolution relative to `.mmlisp` source file location
 - [ ] `(pcm1 sample-name ...)` / `pcm2` / `pcm3` track forms → sample as first positional arg; emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
-- [ ] `fm6 :mode shot|loop|loop-gate` → PCM note events on fm6 DAC channel
+- [ ] `fm6 :mode shot|loop` → PCM note events on fm6 DAC channel (`loop` = sustain loop)
 - [ ] Pitch-to-rate mapping: `rate = 2^(semitones_from_C4 / 12)`; clamp C2–C6 with warning
 
 **Stochastic curves**
@@ -306,7 +306,7 @@ Other:
 
 - [ ] Sample buffer management (load compiled PCM data into AudioWorklet)
 - [ ] `PCM_NOTE_ON` → trigger soft-mix channel at computed rate with volume
-- [ ] `PCM_NOTE_OFF` / `loop-gate` release
+- [ ] `PCM_NOTE_OFF` / `loop` release from sustain loop playback
 - [ ] 3ch soft-mixer in Z80 worklet emulation path (or AudioWorklet mixing layer)
 
 ---

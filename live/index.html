@@ -572,6 +572,7 @@
       ':from',':to',
       ':rate',':csm-rate',':file',':sample',
     ];
+    const AC_MODE_VALUES = ['shot', 'loop'];
 
     function mmlispCompletions(context) {
       // After '(' — suggest forms and track names
@@ -594,6 +595,20 @@
         if (options.length === 0 && !context.explicit) return null;
         return { from: kwMatch.from, options };
       }
+
+      // After ':mode ' — suggest PCM mode values
+      const line = context.state.doc.lineAt(context.pos);
+      const before = context.state.sliceDoc(line.from, context.pos);
+      const modeMatch = /:mode\s+([a-z-]*)$/.exec(before);
+      if (modeMatch) {
+        const typed = modeMatch[1];
+        const options = AC_MODE_VALUES
+          .filter(s => s.startsWith(typed))
+          .map(s => ({ label: s, type: 'enum' }));
+        if (options.length === 0 && !context.explicit) return null;
+        return { from: context.pos - typed.length, options };
+      }
+
       return null;
     }
 
