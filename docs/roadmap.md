@@ -313,14 +313,27 @@ Other:
 
 #### UI (live/index.html + live/src/)
 
-**File I/O**
+**File menu**
 
-- [ ] File menu: **New** / **Open...** / **Save** / **Save As...**
+- [ ] File menu: **New** / **Open...** / **Save** / **Save As...** / ── / **Examples ▶**
 - [ ] Open: use File System Access API (`showOpenFilePicker`) → load `.mmlisp`; set base directory
 - [ ] Save As: `showSaveFilePicker` → write `.mmlisp`; update base directory for sample resolution
 - [ ] Save: write to previously acquired `FileSystemFileHandle` (no picker re-prompt)
 - [ ] Unsaved-state guard: warn when compiling `def :sample` paths with no saved base directory
 - [ ] Title bar shows current filename (or "Untitled" when unsaved)
+- [ ] Examples submenu: load bundled `.mmlisp` sample into editor (currently: demo1; extensible)
+
+**Tools menu**
+
+- [ ] Tools menu: **Format Source** / ── / **Snippets ▶**
+- [ ] Format Source: reformat editor content (same as Cmd+Shift+F / Ctrl+Shift+F shortcut)
+- [ ] Snippets submenu: insert a code snippet at cursor (items TBD)
+
+---
+
+#### Documentation (docs/guide.md)
+
+- [ ] Update guide for v0.5 features: FM3 CSM, FM3 independent-OP, PCM tracks, TEMPO_SWEEP, stochastic curves
 
 ---
 
