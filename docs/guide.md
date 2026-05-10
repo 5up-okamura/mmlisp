@@ -277,7 +277,7 @@ Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
 ## 12. Noise Authoring (`noise` channel)
 
 ```lisp
-(def perc-buzz :macro :mode [white0 :loop periodic3])
+(def perc-buzz :macro :mode [white0 :hold periodic3])
 (def hh-env :macro :vel [15 9 4 0])
 
 (score
@@ -313,7 +313,7 @@ Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
 `:len 0` fires KEY-ON, holds indefinitely, and does not advance the timeline. Any subsequent notes in the same channel all land at tick 0. Useful for a single held note with a release macro:
 
 ```lisp
-(sqr1 :len 0 :macro :vel [15 :loop 14 13 :release 8 4 0]
+(sqr1 :len 0 :macro :vel [15 :hold 14 13 :off 8 4 0]
   c)
 ```
 
@@ -352,7 +352,7 @@ Repeating the same channel form appends events and keeps sticky state.
 (def phrase c e g e)
 (def env :macro [
   :vel [15 12 8 4 0]
-  :pan [:loop left center right center]
+  :pan [:hold left center right center]
 ])
 
 (score

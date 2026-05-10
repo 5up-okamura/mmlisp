@@ -129,14 +129,14 @@ scheduler (`_scheduleMacro`). No per-target special cases.
 _Input forms — identical for all targets:_
 
 - [x] Numeric step-vector `[0 1 2]`
-- [x] Step-vector `:loop` — loop sustain region until gate (all targets)
-- [x] Step-vector `:release` — release region played after gate (all targets)
+- [x] Step-vector `:hold` — hold/sustain region until gate (all targets)
+- [x] Step-vector `:off` — release region played after gate (all targets)
 - [x] `_` hold token in step-vector — advances 1 frame, skips write (all targets)
 - [x] Single curve form `(ease-in :from ... :to ... :len ...)`
 - [x] Looping single-stage curve `(sin ...)` / `(triangle ...)`
 - [x] Multi-stage form `[(stage1) (stage2) ...]` — stages run sequentially by own `:len`
 - [x] `(wait N)` / `(wait Nf)` pause stage inside multi-stage
-- [x] `(wait key-off)` — stage loops until gate, then advances; curve-form equivalent of `:release`
+- [x] `(wait key-off)` — stage loops until gate, then advances; curve-form equivalent of `:off`
 
 _Symbolic → numeric coercion at compile time (all targets):_
 
@@ -154,7 +154,7 @@ _Compiler — `parseMacroSpec` refactor:_
 
 _Compiler — per-target gaps (after unification):_
 
-- [x] `:macro :pitch` step-vector `[0 -100 :loop -200 :release 0]`
+- [x] `:macro :pitch` step-vector `[0 -100 :hold -200 :off 0]`
 - [x] `:macro :pan` step-vector + curve
 - [x] `:macro :mode` step-vector + curve
 - [x] `:macro` FM operator params (`:tl1`–`:tl4`, `:ar1`–`:ar4`, etc.)
@@ -180,7 +180,7 @@ _Compiler — per-target gaps (after unification):_
 - [x] NOTE_ON applies stored `pitchOffset` (cents)
 - [x] `_scheduleFmPitchMacro` — single-curve interpolation (current, pre-unification)
 - [x] `_scheduleFmVelMacro` — step-vector + curve (current, pre-unification)
-- [x] FM vel macro — sustain loop (`:loop`) / release tail (`:release`)
+- [x] FM vel macro — hold/sustain (`:hold`) / release tail (`:off`)
 - [x] Gate applied to FM key-off timing and macro gate boundary
 - [x] Unify into `_scheduleMacro(target, spec, write_fn, when, gate)` — replaces both schedulers
 - [x] FM: `_scheduleMacro` covers pitch + vel + pan + op params with unified step/curve/multi-stage logic
@@ -198,7 +198,7 @@ _Compiler — per-target gaps (after unification):_
 - [x] NOTE_ON applies `_psgPitchOffset`
 - [x] `_schedulePsgPitchMacro` — single-curve interpolation (current, pre-unification)
 - [x] `_schedulePsgVelMacro` — step-vector + curve (current, pre-unification)
-- [x] PSG vel macro — sustain loop (`:loop`) / release tail (`:release`)
+- [x] PSG vel macro — hold/sustain (`:hold`) / release tail (`:off`)
 - [x] Gate applied to PSG note-off timing and macro gate boundary
 - [x] Share `_scheduleMacro` with FM (PSG provides its own `write_fn`)
 - [x] PSG macro: `_` hold token, multi-stage, `(wait key-off)` — via unified scheduler
@@ -228,7 +228,7 @@ Macro refactor first (unblocks all downstream macro features):
 
 Then per-target gaps unlocked by the refactor:
 
-6. ~~`:macro :pitch` step-vector + `:loop` / `:release`~~ (done — falls out of unified parseMacroSpec/scheduleMacro)
+6. ~~`:macro :pitch` step-vector + `:hold` / `:off`~~ (done — falls out of unified parseMacroSpec/scheduleMacro)
 7. ~~`:macro :pan` step-vector + curve with snap~~ (done)
 8. ~~`:macro :mode` step-vector + curve with snap; emit `NOISE_MODE` per step~~ (done)
 9. ~~`:macro` FM operator params (`:tl1`\u2013`:tl4` etc.)~~ (done)

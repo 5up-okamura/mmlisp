@@ -340,7 +340,7 @@ function parseMacroSpec(node, target) {
       return { type: "stages", stages };
     }
 
-    // Step-vector form: [15 :loop 14 13 :release 11 9 7 5 3 0 _ ...]
+    // Step-vector form: [15 :hold 14 13 :off 11 9 7 5 3 0 _ ...]
     // For MODE target, also accept noise mode symbols (white0-3, periodic0-3).
     // For PAN target, also accept pan symbols (left, center, right).
     const steps = [];
@@ -348,11 +348,11 @@ function parseMacroSpec(node, target) {
     let releaseIndex = null;
     for (const item of items) {
       const val = atomValue(item);
-      if (val === ":loop") {
+      if (val === ":hold") {
         loopIndex = steps.length;
         continue;
       }
-      if (val === ":release") {
+      if (val === ":off") {
         releaseIndex = steps.length;
         continue;
       }

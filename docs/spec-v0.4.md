@@ -673,8 +673,8 @@ compiler resolves the substitution statically.
 
 ; step sequence: traditional PSG velocity envelope
 (def pluck :macro :vel [15 12 8 4 2 1 0])
-(def pad   :macro :vel [15 :loop 14 13])
-(def organ :macro :vel [15 :loop 14 13 :release 3])
+(def pad   :macro :vel [15 :hold 14 13])
+(def organ :macro :vel [15 :hold 14 13 :off 3])
 
 ; curve vector: attack then release (no sustain loop — both stages complete)
 (def psg-punch :macro :vel
@@ -693,13 +693,13 @@ compiler resolves the substitution statically.
 ; ADSR in step-vector form — attack / decay / sustain-loop / release
 (def adsr-soft :macro :vel
   [3 7 12 15                         ; Attack  — 4-step ramp up
-   :loop 14 14 15 15                 ; Sustain — gentle shimmer (loops until KEY-OFF)
-   :release 12 9 6 3 1 0])          ; Release — ramp down after KEY-OFF
+   :hold 14 14 15 15                 ; Sustain — gentle shimmer (loops until KEY-OFF)
+   :off 12 9 6 3 1 0])          ; Release — ramp down after KEY-OFF
 ```
 
 **Rule: a looping curve stage is terminal — stages after it are never reached.**
 To combine a sustain-loop with a release tail, use the step-vector
-`[:loop ... :release ...]` form, not `[curve-vec]`.
+`[:hold ... :off ...]` form, not `[curve-vec]`.
 
 **Decided: `:macro :vel` is the envelope-layer loudness scale (`0` = silent, `15` = max envelope output) on all
 channel types.** Final loudness also includes `:vel`, `:vol`, and `:master` (see §1.5).
@@ -1002,19 +1002,19 @@ At BPM=120, fps=60, PPQN=48: frames = ticks \* 5 / 8 (quarter = 30 frames).
 **Compiler:** `:wait N` on a single-stage curve expands to `[(wait N) (curve ...)]`
 internally; the wait and curve run as consecutive stages sharing one `envId`.
 
-**Decided: `:release` in step-vector — compiler emits `KEY_OFF` at `gate_ticks`.**
+**Decided: `:off` in step-vector — compiler emits `KEY_OFF` at `gate_ticks`.**
 
 The step-vector format for `:macro :vel` is:
 
 ```
-[attack... :loop sustain... :release release...]
+[attack... :hold sustain... :off off...]
 ```
 
-| Region  | Marker               | Playback                                          |
-| ------- | -------------------- | ------------------------------------------------- |
-| attack  | (before `:loop`)     | played once on KEY-ON                             |
-| sustain | `:loop` … `:release` | looped until `KEY_OFF` event in stream            |
-| release | after `:release`     | played once after `KEY_OFF`; then holds final val |
+| Region  | Marker           | Playback                                          |
+| ------- | ---------------- | ------------------------------------------------- |
+| attack  | (before `:hold`) | played once on KEY-ON                             |
+| sustain | `:hold` … `:off` | looped until `KEY_OFF` event in stream            |
+| release | after `:off`     | played once after `KEY_OFF`; then holds final val |
 
 For fixed-length notes (`len > 0`), `gate_ticks` is known at compile time.
 The compiler emits an explicit `KEY_OFF` event at the `gate_ticks` position
@@ -1037,18 +1037,18 @@ If the release tail ends before `step_ticks`, the envelope holds the final value
 until the step ends (natural: last release value is usually 0 = silent).
 
 ```lisp
-; attack(15,14) → loop(13,12) → release(11,9,7,5,3,1,0)
-(def organ :macro :vel [15 14 :loop 13 12 :release 11 9 7 5 3 1 0])
+; attack(15,14) → hold(13,12) → off(11,9,7,5,3,1,0)
+(def organ :macro :vel [15 14 :hold 13 12 :off 11 9 7 5 3 1 0])
 
 ; no attack — sustain immediately, release on gate close
-(def pad :macro :vel [:loop 14 13 :release 5 3 1 0])
+(def pad :macro :vel [:hold 14 13 :off 5 3 1 0])
 
 ; one-shot, no loop, no release — envelope plays to end regardless of gate
 (def pluck :macro :vel [15 12 8 4 2 1 0])
 ```
 
-`:release` without `:loop` is valid — the envelope plays attack then release
-(no loop phase). `:loop` without `:release` loops indefinitely (original
+`:off` without `:hold` is valid — the envelope plays attack then release
+(no hold phase). `:hold` without `:off` loops indefinitely (original
 behaviour — abrupt cut on step end, which is fine for short staccato notes).
 
 **`:gate` interaction:** set `:gate` to control where the compiler places `KEY_OFF`.
@@ -1075,7 +1075,7 @@ For interactive music, the game must be able to trigger KEY-OFF at runtime
 | release | fires on KEY-OFF; walks ENVELOPE_TABLE release steps; holds final value |
 
 **Unified KEY-OFF mechanism:** the channel state machine treats all KEY-OFF
-signals identically — exit sustain, walk ENVELOPE_TABLE `:release` steps one
+signals identically — exit sustain, walk ENVELOPE_TABLE `:off` steps one
 per tick, hold final value. The source of KEY-OFF differs by note type:
 
 | Note type         | KEY-OFF source                                     |
@@ -1111,7 +1111,7 @@ Bit assignment (low bit = 0):
 | 9     | noise      |
 | 10–15 | (reserved) |
 
-`:release` without `:loop` with `len=0` is valid: attack plays once, then
+`:off` without `:hold` with `len=0` is valid: attack plays once, then
 the note holds the final attack value until KEY-OFF fires the release tail.
 
 ---
@@ -1166,7 +1166,7 @@ Curve names use kebab-case — consistent with MMLisp's identifier convention.
 | `pink`     | 1/f filtered noise — low-frequency bias, natural-feeling flutter         | ✓    | Breath, strings, organic wobble   |
 | `perlin`   | Gradient noise — smoothly varying, never repeats within 256-frame window | ✓    | Pitch drift, csm-rate wander      |
 
-Loop waveforms (`sin`, `triangle`, `saw`, `ramp`, `square`, `noise`, `pink`, `perlin`) always loop — no `:loop` flag needed. Easing curves and `linear` are always one-shot. The compiler sets the `loop` flag in the binary based on curve name.
+Loop waveforms (`sin`, `triangle`, `saw`, `ramp`, `square`, `noise`, `pink`, `perlin`) always loop — no `:hold` flag needed. Easing curves and `linear` are always one-shot. The compiler sets the `loop` flag in the binary based on curve name.
 All noise/stochastic LUTs (`noise`, `pink`, `perlin`) are generated from a fixed seed
 at compile time (deterministic builds; same score always produces the same binary).
 
@@ -1219,7 +1219,7 @@ Envelope is attached separately via `:macro` or via a `def` reference.
 ; named envelope defs
 (def hh-closed-env :macro :vel [15 8 0])
 (def hh-open-env   :macro :vel [15 12 10 8 4 0])
-(def ride-env      :macro :vel [15 14 13 :loop 12 11])
+(def ride-env      :macro :vel [15 14 13 :hold 12 11])
 
 ; noise track
 (noise :mode white0
@@ -1280,21 +1280,21 @@ preferred for readability but both forms are valid.
 
 ```lisp
 ; attack: 2 frames white → sustain: periodic3 (loops until KEY-OFF or end of note)
-(def noise-atk :macro :mode [white0 white0 :loop periodic3])
+(def noise-atk :macro :mode [white0 white0 :hold periodic3])
 
 ; attack: white → sustain: periodic → release: white on key-off
-(def noise-asr :macro :mode [white0 white0 :loop periodic3 :release white2])
+(def noise-asr :macro :mode [white0 white0 :hold periodic3 :off white2])
 ```
 
-`:loop` and `:release` semantics are identical to `:macro :vel` step-vector:
+`:hold` and `:off` semantics are identical to `:macro :vel` step-vector:
 
-| Region  | Marker               | Playback                                      |
-| ------- | -------------------- | --------------------------------------------- |
-| attack  | (before `:loop`)     | played once on KEY-ON, one step per frame     |
-| sustain | `:loop` … `:release` | looped until `KEY_OFF`                        |
-| release | after `:release`     | played once after `KEY_OFF`; holds final mode |
+| Region  | Marker           | Playback                                      |
+| ------- | ---------------- | --------------------------------------------- |
+| attack  | (before `:hold`) | played once on KEY-ON, one step per frame     |
+| sustain | `:hold` … `:off` | looped until `KEY_OFF`                        |
+| release | after `:off`     | played once after `KEY_OFF`; holds final mode |
 
-Without `:release`, the last sustain mode persists after the loop until the
+Without `:off`, the last sustain mode persists after the loop until the
 note ends — natural for periodic-buzz sustain that simply cuts off.
 
 **Why this matters:** note duration is specified in ticks (tempo-relative), but
