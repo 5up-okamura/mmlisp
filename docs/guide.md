@@ -365,14 +365,3 @@ Repeating the same channel form appends events and keeps sticky state.
   (noise :mode white0
     c _ c _))
 ```
-
----
-
-## 16. Migration Checklist (Old to v0.4)
-
-- Replace `(track :ch fm1 ...)` with `(fm1 ...)`
-- Replace `(seq ...)` with direct inline body items
-- Replace `psg1`-`psg3` with `sqr1`-`sqr3`
-- Replace `@voice` with bare identifier `voice`
-- Replace `(set ...)` and `(default ...)` with inline modifiers
-- Use length tokens consistently (`N`, `N.`, `N/M`, `Nt`, `Nf`)
