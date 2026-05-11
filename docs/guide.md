@@ -104,7 +104,7 @@ Common modifiers:
 - `:vol N` — channel output level (`0`–`31`)
 - `:master N` — global master level (`0`–`31`)
 - `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
-- `:glide N` — portamento duration in frames (plain integer)
+- `:glide token` — portamento duration (same length-token forms as `:len`)
 - `:glide-from note` — override start pitch for next note only
 
 Shorthands:
@@ -248,7 +248,7 @@ Behavior:
 - `(wait key-off)` holds value until KEY-OFF
 - After KEY-OFF, following stage runs release
 
-`(wait N)` waits N frames (plain integer, not a length token).
+`(wait token)` waits by length token (same forms as `:len`).
 
 ---
 

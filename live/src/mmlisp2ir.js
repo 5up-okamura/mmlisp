@@ -153,7 +153,6 @@ function parseLengthToken(value, inheritedTicks) {
   }
   // Frame count: "16f" — 60 Hz update intervals used in macro :len context.
   // Returns the raw frame count; the player schedules one step per 1/60 s.
-  // Not valid for note/rest lengths where BPM-based tick conversion would be required.
   if (/^\d+f$/.test(value)) {
     return parseInt(value, 10);
   }
@@ -177,13 +176,14 @@ function parseLengthToken(value, inheritedTicks) {
   return inheritedTicks;
 }
 
-// Returns true if val is a rest token: "_", "_4", "_4.", "_14t", "_16f"
+// Returns true if val is a rest token: "_", "_4", "_4.", "_14t", "_16f", "_1/2"
 function isRestAtom(val) {
-  return typeof val === "string" && /^_(\d+[ft]?\.?)?$/.test(val);
+  return parseRestLength(val, null) !== null;
 }
 
 // Parse the length of a rest token; the leading "_" is stripped before parsing.
 function parseRestLength(val, inheritedTicks) {
+  if (typeof val !== "string" || !val.startsWith("_")) return null;
   const suffix = val.slice(1);
   if (suffix === "") return inheritedTicks;
   return parseLengthToken(suffix, inheritedTicks);
@@ -191,7 +191,9 @@ function parseRestLength(val, inheritedTicks) {
 
 function parseGateSpec(val) {
   if (typeof val !== "string") return null;
-  if (val.includes(".")) {
+  // Gate ratio is decimal 0 < x < 1 (e.g. 0.75 or .5).
+  // Dotted length tokens like "4." are handled by parseLengthToken below.
+  if (/^(?:\d*\.\d+)$/.test(val)) {
     const f = parseFloat(val);
     if (isNaN(f) || f < 0 || f > 1) return null;
     if (f >= 1.0) return null;
@@ -234,11 +236,11 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
 
 /**
  * v0.4: Emit glide PARAM_SWEEP before NOTE_ON if glide is active.
- * Inserts a portamento slide from lastNotePitch to newPitch over glideFrames.
+ * Inserts a portamento slide from lastNotePitch to newPitch over glideTicks.
  * Resets glideFrom after emission (one-shot override).
  */
-function emitGlideIfNeeded(trackState, newPitch, events, glideFrames, nodeSrc) {
-  if (glideFrames <= 0 || !trackState.lastNotePitch) return; // No glide or first note
+function emitGlideIfNeeded(trackState, newPitch, events, glideTicks, nodeSrc) {
+  if (glideTicks <= 0 || !trackState.lastNotePitch) return; // No glide or first note
 
   const fromPitch = trackState.glideFrom || trackState.lastNotePitch;
   trackState.glideFrom = null; // One-shot reset
@@ -251,7 +253,7 @@ function emitGlideIfNeeded(trackState, newPitch, events, glideFrames, nodeSrc) {
       from: fromPitch,
       to: newPitch,
       curve: "linear",
-      frames: glideFrames,
+      frames: glideTicks,
       loop: false,
     },
     src: nodeSrc,
@@ -329,8 +331,8 @@ function parseMacroSpec(node, target) {
           if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
           } else {
-            const f = parseIntLike(arg);
-            stages.push({ waitFrames: f ?? 1 });
+            const t = parseLengthToken(arg, null);
+            stages.push({ waitTicks: t ?? 1 });
           }
           continue;
         }
@@ -403,16 +405,21 @@ function isVolShiftAtom(val) {
   return typeof val === "string" && /^v[+\-]\d*$/.test(val);
 }
 
-// Per-note length atom: "c4", "e8", "f+4.", "b-2" etc.
-// Trailing number is the length denominator (+ optional dot), NOT octave.
-function isPerNoteLengthAtom(val) {
-  return typeof val === "string" && /^[a-g][+\-]?\d+\.?$/.test(val);
+// Per-note length atom: note name + any valid length token suffix.
+// Examples: c4, e8., f+12t, b-6f, a1/2
+function parsePerNoteLength(val) {
+  if (typeof val !== "string") return null;
+  const m = val.match(/^([a-g][+\-]?)(.+)$/);
+  if (!m) return null;
+  const noteName = m[1];
+  const lengthStr = m[2];
+  const parsed = parseLengthToken(lengthStr, null);
+  if (parsed === null) return null;
+  return { noteName, lengthStr };
 }
 
-function parsePerNoteLength(val) {
-  const m = val.match(/^([a-g][+\-]?)(\d+\.?)$/);
-  if (!m) return null;
-  return { noteName: m[1], lengthStr: m[2] };
+function isPerNoteLengthAtom(val) {
+  return parsePerNoteLength(val) !== null;
 }
 
 /**
@@ -877,7 +884,7 @@ function compileChannelBody(
               break;
             }
             case ":glide": {
-              const v = parseIntLike(rawVal);
+              const v = parseLengthToken(rawVal, null);
               if (v !== null) trackState.glide = Math.max(0, v);
               break;
             }
@@ -1064,7 +1071,7 @@ function compileChannelBody(
         continue;
       }
 
-      // Per-note length atom: c4, e8., f+4., b-2 (note name + explicit length)
+      // Per-note length atom: c4, e8., f+12t, b-6f, a1/2
       if (isPerNoteLengthAtom(val)) {
         const { noteName, lengthStr } = parsePerNoteLength(val);
         const perNoteTicks = parseLengthToken(
@@ -2043,7 +2050,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON (legacy)
         activeVelMacro: null, // v0.4: KEY-ON scoped vel macro attached to NOTE_ON (legacy)
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
-        glide: 0, // v0.4: glide duration in frames (0 = disabled)
+        glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
         lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
         shuffleRatio,

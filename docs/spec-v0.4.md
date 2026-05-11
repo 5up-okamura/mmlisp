@@ -98,7 +98,7 @@ Use `Nt` when the desired duration does not align to any note-length integer —
   :mode periodic3  c23t)
 ```
 
-`:gate` accepts the same length formats as `:len` — integer note-length, dotted, `Nf` frame count, or `Nt` tick count.
+`:gate` accepts either a gate ratio (`0 < r < 1`, e.g. `0.5`) or the same length-token formats as `:len`.
 Example: `:gate 8f` — the compiler emits `KEY_OFF` at exactly 8 frames regardless of BPM; the release tail begins there.
 
 ---
@@ -355,12 +355,12 @@ the exit address at binary emit time.
 
 **Decided:**
 
-`:glide N` enables automatic portamento: before
+`:glide token` enables automatic portamento: before
 each NOTE_ON the compiler inserts a `PARAM_SWEEP` that slides pitch from the
-previous note's pitch to the new note's pitch over `N` frames.
+previous note's pitch to the new note's pitch over the specified duration.
 
 ```
-:glide N          — slide duration in frames (integer); 0 = disabled
+:glide token      — slide duration (same length-token forms as `:len`); 0 = disabled
 :glide-from note  — override the starting pitch for the next note only
                     (note token, e.g. c4, g+3)
 ```
@@ -380,21 +380,21 @@ previous note's pitch to the new note's pitch over `N` frames.
 
 ```lisp
 ; basic portamento — 8-frame slide between every note
-(fm1 :oct 4 :len 4 :glide 8
+(fm1 :oct 4 :len 4 :glide 8f
   c e g e)
 
 ; start from an explicit pitch (c3 → e4 over 8 frames)
-(fm1 :oct 4 :len 4 :glide 8 :glide-from c3
+(fm1 :oct 4 :len 4 :glide 8f :glide-from c3
   e g a g)
 
 ; disable mid-phrase
-(fm1 :oct 4 :len 4 :glide 8
+(fm1 :oct 4 :len 4 :glide 8f
   c e
   :glide 0
   g e)
 ```
 
-**Compiled IR sketch (`:glide 8`, previous pitch = c4, current note = e4):**
+**Compiled IR sketch (`:glide 8f`, previous pitch = c4, current note = e4):**
 
 ```json
 { "op": "PARAM_SWEEP", "target": "pitch", "from": "c4", "to": "e4", "curve": "linear", "frames": 8 }
@@ -635,8 +635,8 @@ Stage descriptor (8 bytes × stage_count):
 
 Hold stage values:
 
-- `(wait N)` / `(wait Nf)` → `curve_id=0xFF  flags=0  from=to=<prev_stage.to>  frames=N`
-  Both length formats compile to frame counts; no sentinel needed.
+- `(wait token)` → `curve_id=0xFF  flags=0  from=to=<prev_stage.to>  frames=<duration>`
+  Length-token duration is encoded in the stage duration field; no sentinel needed.
 - `(wait key-off)` → `curve_id=0xFF  flags=koff_wait  from=to=<prev_stage.to>  frames=0`
 
 Multi-stage example — ADSR curve (`adsr-curve` from §2.5):
@@ -810,8 +810,7 @@ explicit at the parser level.
 given duration before proceeding to the next stage.
 
 ```
-(wait N)        — pause for N note-lengths (same format as :len)
-(wait Nf)       — pause for exactly N frames
+(wait token)    — pause for duration token (same forms as :len)
 (wait key-off)  — hold indefinitely until KEY-OFF arrives, then proceed
 ```
 
@@ -968,6 +967,8 @@ length formats as note/rest lengths apply:
 | ----------- | ---------- | ----------------------------------------------- |
 | Integer     | `:len 4`   | note-length — quarter note (48 ticks @ BPM=120) |
 | Dotted int  | `:len 4.`  | note-length × 1.5                               |
+| Fraction    | `:len 1/2` | fractional whole-note duration                  |
+| Tick count  | `:len 14t` | exactly 14 ticks                                |
 | Frame count | `:len 16f` | exactly 16 driver frames (BPM-independent)      |
 
 Frame-count (`Nf`) is useful for effects where timing is hardware-fixed —
@@ -999,7 +1000,7 @@ At BPM=120, fps=60, PPQN=48: frames = ticks \* 5 / 8 (quarter = 30 frames).
 ```
 
 `:wait` accepts the same values as `(wait)` stage form — `N`, `Nf`, or `key-off`.
-**Compiler:** `:wait N` on a single-stage curve expands to `[(wait N) (curve ...)]`
+**Compiler:** `:wait token` on a single-stage curve expands to `[(wait token) (curve ...)]`
 internally; the wait and curve run as consecutive stages sharing one `envId`.
 
 **Decided: `:off` in step-vector — compiler emits `KEY_OFF` at `gate_ticks`.**

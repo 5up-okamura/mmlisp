@@ -1242,11 +1242,7 @@ export class IRPlayer {
         for (let psgCh = 0; psgCh < 4; psgCh++) {
           const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
           const vol = this._psgVolAtTime(psgCh, when); // 0-31
-          this._psgSetAtt(
-            psgCh,
-            composePsgAtt(velLevel, vol, master),
-            when,
-          );
+          this._psgSetAtt(psgCh, composePsgAtt(velLevel, vol, master), when);
         }
         nextValue = master;
         break;
@@ -1409,6 +1405,10 @@ export class IRPlayer {
           t = Math.max(t, gateSecs);
           continue;
         }
+        if (stage.waitTicks != null) {
+          t += Math.max(0, Number(stage.waitTicks)) * this._secsPerTick;
+          continue;
+        }
         if (stage.waitFrames != null) {
           t += stage.waitFrames / 60;
           continue;
@@ -1554,11 +1554,7 @@ export class IRPlayer {
     );
     // vel 15 = full vol, vel 0 = silent. Use unified pipeline.
     const velToTl = (v) =>
-      composeFmTl(
-        clampForTarget("VEL", v),
-        baseVol,
-        this._masterVol ?? 31,
-      );
+      composeFmTl(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31);
 
     this._scheduleMacro(velMacro, noteFrames, gateSecs, when, (v, t) => {
       const tl = velToTl(Math.round(v));
@@ -1669,11 +1665,7 @@ export class IRPlayer {
           0,
           Math.min(31, from + (to - from) * sampleCurveUnit(curve, phase)),
         );
-        const tl = composeFmTl(
-          regs.vel ?? 15,
-          vol,
-          this._masterVol ?? 31,
-        );
+        const tl = composeFmTl(regs.vel ?? 15, vol, this._masterVol ?? 31);
         const frameWhen = when + i / 60;
         for (const opIdx of carriers) {
           this._write(
@@ -1922,11 +1914,7 @@ export class IRPlayer {
             this._psgVolSweep[psgCh] = null;
             const velLevel = this._psgLastVel[psgCh] ?? 15;
             const master = this._masterVol ?? 31;
-            this._psgSetAtt(
-              psgCh,
-              composePsgAtt(velLevel, vol, master),
-              when,
-            );
+            this._psgSetAtt(psgCh, composePsgAtt(velLevel, vol, master), when);
           } else {
             // PARAM_SWEEP: store sweep state (same format as _fmVolSweep).
             // Hardware writes happen lazily at each NOTE_ON via _psgVolAtTime().
