@@ -214,6 +214,70 @@ in the same pass as these three.
 **LUT generation rule:** fixed seed (`0xDEAD`) at compile time; same source
 always produces identical LUT data.
 
+### 1.5.1 Curve parameter extension (v0.5)
+
+v0.5 adds optional keyword arguments to curve forms, especially for
+stochastic waveforms (`noise`, `pink`, `perlin`, `brown`).
+
+This section defines authoring semantics only. Z80 driver storage layout,
+LUT count limits, paging strategy, and memory budget are intentionally
+deferred to the driver implementation phase.
+
+Base curve form (unchanged):
+
+```lisp
+(curve-name :from A :to B :len L ...optional-params)
+```
+
+Common optional params (all curve names):
+
+| Key      | Type   | Default | Meaning                                     |
+| -------- | ------ | ------- | ------------------------------------------- |
+| `:phase` | int    | `0`     | Start phase offset (0..255)                 |
+| `:rate`  | number | `1.0`   | Phase speed multiplier (relative to `:len`) |
+
+Loop-wave optional params:
+
+| Curve              | Key     | Type | Default | Meaning                       |
+| ------------------ | ------- | ---- | ------- | ----------------------------- |
+| `square`           | `:duty` | int  | `128`   | Duty cycle (1..255)           |
+| `sin/triangle/saw` | `:skew` | int  | `0`     | Shape skew amount (-127..127) |
+
+Stochastic optional params:
+
+| Curve                     | Key            | Type   | Default | Meaning                                         |
+| ------------------------- | -------------- | ------ | ------- | ----------------------------------------------- |
+| `noise/pink/perlin/brown` | `:hold`        | int    | `1`     | Sample-and-hold interval in frames              |
+| `noise/pink/perlin/brown` | `:jitter`      | number | `0.0`   | High-frequency randomness mix amount (0.0..1.0) |
+| `pink`                    | `:beta`        | number | `1.0`   | Spectral tilt control                           |
+| `perlin`                  | `:octaves`     | int    | `3`     | Fractal octave count (1..8)                     |
+| `perlin`                  | `:lacunarity`  | number | `2.0`   | Frequency ratio per octave                      |
+| `perlin`                  | `:persistence` | number | `0.5`   | Amplitude ratio per octave                      |
+| `brown`                   | `:leak`        | number | `0.99`  | Integrator leak coefficient                     |
+
+Compile-time normalization rules:
+
+- Unknown keyword for a curve name is a compile error.
+- Out-of-range values are clamped and emit a warning.
+- All optional params are part of the LUT identity key.
+- Identical `(curve-name + params)` combinations reuse one LUT.
+
+Examples:
+
+```lisp
+; brown drift with slower motion and mild hold
+(fm1 :macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995)
+  c e g e)
+
+; pink flutter with stronger low-frequency bias
+(sqr1 :macro :pitch (pink :from -40 :to 40 :len 8 :beta 1.2 :phase 32)
+  c c c c)
+
+; perlin wander with explicit fractal controls
+(fm2 :macro :pan (perlin :from -1 :to 1 :len 16 :octaves 4 :persistence 0.6)
+  c _ c _)
+```
+
 ### 1.6 Sample file system
 
 **Declaration:** samples are defined with `def` (same style as FM voice
