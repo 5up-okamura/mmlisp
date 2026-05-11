@@ -367,6 +367,12 @@ v0.5 candidates:
 - OP mask (per-channel operator enable/disable)
 - AMS/FMS macros
 
+Parked (out of current scope, post-core features):
+
+- Dynamic performance branch primitives (`|` alternation, random part switching, random label jump)
+- Reproducible random sequence by seed-indexed LUT traversal (same seed => same sequence)
+- Label numbering + jump-address table for O(1) branch target resolution in Z80 driver
+
 ---
 
 ## Future Vision (post-MVP ideas)
