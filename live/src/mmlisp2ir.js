@@ -400,8 +400,8 @@ function isNoteAtom(val) {
   return typeof val === "string" && /^[a-g][+\-]?$/.test(val);
 }
 
-// Volume shift atom: "v+", "v-", "v+8", "v-16" etc.
-function isVolShiftAtom(val) {
+// Velocity shift atom: "v+", "v-", "v+8", "v-16" etc.
+function isVelShiftAtom(val) {
   return typeof val === "string" && /^v[+\-]\d*$/.test(val);
 }
 
@@ -1053,20 +1053,14 @@ function compileChannelBody(
         continue;
       }
 
-      // Volume shift: v+, v-, v+8, v-16
-      if (isVolShiftAtom(val)) {
+      // Velocity shift: v+, v-, v+8, v-16
+      if (isVelShiftAtom(val)) {
         const sign = val[1] === "+" ? 1 : -1;
         const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
-        trackState.defaultVol = Math.max(
+        trackState.defaultVel = Math.max(
           0,
-          Math.min(31, trackState.defaultVol + sign * delta),
+          Math.min(15, trackState.defaultVel + sign * delta),
         );
-        events.push({
-          tick: trackState.tick,
-          cmd: "PARAM_SET",
-          args: { target: "VOL", value: trackState.defaultVol },
-          src: nodeSrc(node),
-        });
         i++;
         continue;
       }

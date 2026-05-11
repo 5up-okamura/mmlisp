@@ -111,7 +111,7 @@ Shorthands:
 
 - `>` octave up
 - `<` octave down
-- `v+`, `v-`, `v+N`, `v-N` adjust `:vol` (0-31)
+- `v+`, `v-`, `v+N`, `v-N` adjust `:vel` (0-15)
 
 ---
 
