@@ -305,12 +305,24 @@ upgrade lands.
 
 **Path resolution:** paths are relative to the `.mmlisp` source file.
 
-**WAV conversion** (compile time):
+**Sample import-time effects and conversion (compile time):**
 
 - Stereo → mono via `(L + R) / 2` downmix
-- Converted to 8-bit signed PCM
-- `:rate` sets the C4 playback rate (Hz); defaults to the WAV native sample
-  rate if omitted
+- Bit depth conversion: `:bit-depth` (e.g. 4/6/8) — quantizes to target depth, expands to 8bit for playback
+- Volume normalization or gain: `:volume` (dB or linear)
+- Simple compressor: `:compress` (preset or ratio/threshold)
+- Simple reverb: `:reverb` (preset or time/amount)
+- Additional effects (future): drive, filter, etc.
+- All effects are applied at compile time; the processed PCM is baked into the ROM
+- `:rate` sets the C4 playback rate (Hz); defaults to the WAV native sample rate if omitted
+
+**Authoring example:**
+
+```lisp
+(def snare :sample :file "sounds/snare.wav" :bit-depth 4 :volume -6 :compress "lofi" :reverb "room")
+```
+
+**Output:** compiled `.mmb` is written to the same directory as the source `.mmlisp` file, named `<score-name>.mmb`.
 
 **Output:** compiled `.mmb` is written to the same directory as the source
 `.mmlisp` file, named `<score-name>.mmb`.
