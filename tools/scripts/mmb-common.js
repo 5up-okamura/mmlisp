@@ -45,6 +45,9 @@ const OPCODE = {
   JUMP: 0x43,
   PARAM_SET: 0x60,
   TEMPO_SET: 0x80,
+  // Experimental v0.5 PCM events
+  PCM_NOTE_ON: 0xc0,
+  PCM_NOTE_OFF: 0xc1,
 };
 
 const TARGET_ID = {

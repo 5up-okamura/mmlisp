@@ -40,11 +40,28 @@ function ensureU16(value, label) {
   return value & 0xffff;
 }
 
+function normalizePcmMode(value) {
+  return String(value || "shot")
+    .trim()
+    .toLowerCase() === "loop"
+    ? 1
+    : 0;
+}
+
+function rateToQ8_8(rate, label) {
+  const n = Number(rate);
+  if (!Number.isFinite(n) || n <= 0) return ensureU16(0x0100, label);
+  const q = Math.round(n * 256);
+  return ensureU16(Math.max(1, Math.min(0xffff, q)), label);
+}
+
 function buildTrackMaps(track) {
   const markerMap = new Map();
   const loopMap = new Map();
+  const sampleMap = new Map();
   let nextMarkerId = 1;
   let nextLoopId = 1;
+  let nextSampleId = 1;
 
   for (const event of track.events || []) {
     if (event.cmd === "MARKER") {
@@ -61,9 +78,16 @@ function buildTrackMaps(track) {
         nextLoopId += 1;
       }
     }
+    if (event.cmd === "PCM_NOTE_ON" || event.cmd === "PCM_NOTE_OFF") {
+      const name = String(event.args?.sample || "").trim();
+      if (name && !sampleMap.has(name)) {
+        sampleMap.set(name, ensureU8(nextSampleId, "sample id"));
+        nextSampleId += 1;
+      }
+    }
   }
 
-  return { markerMap, loopMap };
+  return { markerMap, loopMap, sampleMap };
 }
 
 function encodePayload(event, trackMaps) {
@@ -122,6 +146,37 @@ function encodePayload(event, trackMaps) {
       }
       const value = i16le(args.value ?? 0);
       return Buffer.concat([Buffer.from([target]), value]);
+    }
+    case "PCM_NOTE_ON": {
+      const sample = String(args.sample || "").trim();
+      const sampleId = trackMaps.sampleMap.get(sample);
+      if (!sampleId) {
+        throw new Error(`PCM_NOTE_ON sample not mapped: ${sample}`);
+      }
+      const rateQ8_8 = rateToQ8_8(args.rate ?? 1, "PCM_NOTE_ON rate");
+      const length = ensureU16(args.length ?? 0, "PCM_NOTE_ON length");
+      const vel = ensureU8(args.vel ?? 15, "PCM_NOTE_ON vel");
+      const mode = ensureU8(normalizePcmMode(args.mode), "PCM_NOTE_ON mode");
+      const baseRate = ensureU16(
+        Math.max(0, Math.min(65535, Math.round(Number(args.baseRate ?? 0)))),
+        "PCM_NOTE_ON baseRate",
+      );
+      return Buffer.concat([
+        Buffer.from([sampleId]),
+        u16le(rateQ8_8),
+        u16le(length),
+        Buffer.from([vel, mode]),
+        u16le(baseRate),
+      ]);
+    }
+    case "PCM_NOTE_OFF": {
+      const sample = String(args.sample || "").trim();
+      const sampleId = trackMaps.sampleMap.get(sample);
+      if (!sampleId) {
+        throw new Error(`PCM_NOTE_OFF sample not mapped: ${sample}`);
+      }
+      const mode = ensureU8(normalizePcmMode(args.mode), "PCM_NOTE_OFF mode");
+      return Buffer.from([sampleId, mode]);
     }
     default:
       throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
@@ -271,6 +326,9 @@ const TARGET_PROFILES = {
       fm5: 4,
       fm6: 5,
       dac: 5,
+      pcm1: 20,
+      pcm2: 21,
+      pcm3: 22,
       fm3op1: 2,
       fm3op2: 16,
       fm3op3: 17,
@@ -290,6 +348,9 @@ const TARGET_PROFILES = {
       fm5: 4,
       fm6: 5,
       dac: 5,
+      pcm1: 20,
+      pcm2: 21,
+      pcm3: 22,
       fm3op1: 2,
       fm3op2: 16,
       fm3op3: 17,

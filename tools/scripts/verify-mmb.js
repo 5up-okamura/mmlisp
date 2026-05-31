@@ -19,6 +19,8 @@ const OPCODE_PAYLOAD_SIZE = {
   0x43: 2, // JUMP: rel_offset:i16 (spec 1.6)
   0x60: 3, // PARAM_SET: target_id:u8, value:i16
   0x80: 2, // TEMPO_SET: bpm:u16
+  0xc0: 9, // PCM_NOTE_ON: sample_id:u8, rate:q8.8, length:u16, vel:u8, mode:u8, base_rate:u16
+  0xc1: 2, // PCM_NOTE_OFF: sample_id:u8, mode:u8
 };
 
 function usage() {
