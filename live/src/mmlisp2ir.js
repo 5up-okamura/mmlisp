@@ -344,6 +344,9 @@ function emitCsmRateEvent(
           len: rateArgs.len,
           curve: rateArgs.curve,
         };
+  if (rateArgs?.params && typeof rateArgs.params === "object") {
+    args.params = { ...rateArgs.params };
+  }
   if (markInline) {
     trackState.hasInlineCsmRate = true;
   }
@@ -796,10 +799,10 @@ function parseCurveSpec(node) {
       const v = atomValue(node.items[j + 1]);
       switch (k) {
         case ":from":
-          from = parseIntLike(v);
+          from = parseNumberLike(v);
           break;
         case ":to":
-          to = parseIntLike(v);
+          to = parseNumberLike(v);
           break;
         case ":len":
           frames = parseLengthToken(v, null);
@@ -1360,26 +1363,16 @@ function compileChannelBody(
                 valueNode.bracket === "()" &&
                 valueNode.items?.length > 0
               ) {
-                const curve = atomValue(valueNode.items[0]);
-                if (!(curve && CURVE_NAMES.has(curve))) break;
+                const curveSpec = parseCurveSpec(valueNode);
+                if (!curveSpec) break;
 
-                let from = null;
-                let to = null;
-                let len = null;
-                for (let j = 1; j < valueNode.items.length; j++) {
-                  const k = atomValue(valueNode.items[j]);
-                  if (
-                    !(k && k.startsWith(":")) ||
-                    j + 1 >= valueNode.items.length
-                  ) {
-                    continue;
-                  }
-                  const v = atomValue(valueNode.items[j + 1]);
-                  if (k === ":from") from = parseNumberLike(v);
-                  else if (k === ":to") to = parseNumberLike(v);
-                  else if (k === ":len") len = parseLengthToken(v, null);
-                  j++;
-                }
+                const from = parseNumberLike(String(curveSpec.from ?? ""));
+                const to = parseNumberLike(String(curveSpec.to ?? ""));
+                const len =
+                  Number.isFinite(Number(curveSpec.frames)) &&
+                  Number(curveSpec.frames) > 0
+                    ? Number(curveSpec.frames)
+                    : null;
 
                 if (
                   from !== null &&
@@ -1395,7 +1388,13 @@ function compileChannelBody(
                     diagnostics,
                     nodeSrc(node),
                     trackName,
-                    { from, to, len, curve },
+                    {
+                      from,
+                      to,
+                      len,
+                      curve: curveSpec.curve,
+                      params: curveSpec.params,
+                    },
                     true,
                   );
                 } else {
@@ -1430,54 +1429,51 @@ function compileChannelBody(
                 valueNode.bracket === "()" &&
                 valueNode.items?.length > 0
               ) {
-                const curve = atomValue(valueNode.items[0]);
-                if (curve && CURVE_NAMES.has(curve)) {
-                  let from = null;
-                  let to = null;
-                  let len = null;
-                  for (let j = 1; j < valueNode.items.length; j++) {
-                    const k = atomValue(valueNode.items[j]);
-                    if (
-                      !(k && k.startsWith(":")) ||
-                      j + 1 >= valueNode.items.length
-                    )
-                      continue;
-                    const v = atomValue(valueNode.items[j + 1]);
-                    if (k === ":from") from = parseNumberLike(v);
-                    else if (k === ":to") to = parseNumberLike(v);
-                    else if (k === ":len") len = parseLengthToken(v, null);
-                    j++;
-                  }
+                const curveSpec = parseCurveSpec(valueNode);
+                if (!curveSpec) break;
 
-                  const fromBpm = from ?? trackState.currentTempo;
-                  const toBpm = to;
-                  if (
-                    fromBpm !== null &&
-                    Number.isFinite(fromBpm) &&
-                    fromBpm > 0 &&
-                    toBpm !== null &&
-                    Number.isFinite(toBpm) &&
-                    toBpm > 0 &&
-                    len !== null &&
-                    len > 0
-                  ) {
-                    trackState.currentTempo = toBpm;
-                    events.push({
-                      tick: trackState.tick,
-                      cmd: "TEMPO_SWEEP",
-                      args: { from: fromBpm, to: toBpm, len, curve },
-                      src: nodeSrc(node),
-                    });
-                  } else {
-                    pushDiag(
-                      diagnostics,
-                      "error",
-                      "E_TEMPO_INVALID",
-                      "invalid :tempo curve; expected (:curve :from N :to M :len L)",
-                      nodeSrc(node),
-                      trackName,
-                    );
-                  }
+                const from = parseNumberLike(String(curveSpec.from ?? ""));
+                const to = parseNumberLike(String(curveSpec.to ?? ""));
+                const len =
+                  Number.isFinite(Number(curveSpec.frames)) &&
+                  Number(curveSpec.frames) > 0
+                    ? Number(curveSpec.frames)
+                    : null;
+
+                const fromBpm = from ?? trackState.currentTempo;
+                const toBpm = to;
+                if (
+                  fromBpm !== null &&
+                  Number.isFinite(fromBpm) &&
+                  fromBpm > 0 &&
+                  toBpm !== null &&
+                  Number.isFinite(toBpm) &&
+                  toBpm > 0 &&
+                  len !== null &&
+                  len > 0
+                ) {
+                  trackState.currentTempo = toBpm;
+                  events.push({
+                    tick: trackState.tick,
+                    cmd: "TEMPO_SWEEP",
+                    args: {
+                      from: fromBpm,
+                      to: toBpm,
+                      len,
+                      curve: curveSpec.curve,
+                      params: curveSpec.params,
+                    },
+                    src: nodeSrc(node),
+                  });
+                } else {
+                  pushDiag(
+                    diagnostics,
+                    "error",
+                    "E_TEMPO_INVALID",
+                    "invalid :tempo curve; expected (:curve :from N :to M :len L)",
+                    nodeSrc(node),
+                    trackName,
+                  );
                 }
               }
               break;
