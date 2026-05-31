@@ -137,6 +137,16 @@ function atomValue(node) {
   return null;
 }
 
+function describeNodeToken(node) {
+  const atom = atomValue(node);
+  if (atom !== null) return atom;
+  if (node?.kind === "list") {
+    const head = atomValue(node.items?.[0]);
+    return head ? `(${head} ...)` : "(...)";
+  }
+  return node?.kind ?? "unknown";
+}
+
 function isAtom(node, value) {
   return node && node.kind === "atom" && node.value === value;
 }
@@ -1451,7 +1461,7 @@ function compileChannelBody(
         diagnostics,
         "error",
         "E_UNKNOWN_ATOM",
-        `Unknown token: ${val}`,
+        `Unknown token: ${describeNodeToken(node)}`,
         nodeSrc(node),
         trackName,
       );
@@ -1510,12 +1520,11 @@ function compileChannelBody(
               trackName,
             );
           } else {
-            const token = evVal ?? ev.kind;
             pushDiag(
               diagnostics,
               "error",
               "E_UNKNOWN_TUPLET_ELEM",
-              `Unknown tuplet element: ${token}`,
+              `Unknown tuplet element: ${describeNodeToken(ev)}`,
               nodeSrc(ev),
               trackName,
             );
@@ -1708,7 +1717,7 @@ function compileChannelBody(
         diagnostics,
         "error",
         "E_UNKNOWN_LIST",
-        `Unknown list form: (${head} ...)`,
+        `Unknown list form: ${describeNodeToken(node)}`,
         nodeSrc(node.items[0]),
         trackName,
       );
@@ -1957,7 +1966,7 @@ function compileTrackBodyItems(
       diagnostics,
       "error",
       "E_UNKNOWN_LIST",
-      `Unknown list form: (${head} ...)`,
+      `Unknown list form: ${describeNodeToken(node)}`,
       nodeSrc(node.items[0]),
       trackName,
     );
