@@ -290,8 +290,8 @@ Other:
 
 **FM3 CSM mode**
 
-- [ ] `CSM_RATE` → write Timer A frequency to YM2612
-- [ ] `CSM_ON` / `CSM_OFF` → YM2612 CSM mode register bit
+- [x] `CSM_RATE` → write Timer A frequency to YM2612
+- [x] `CSM_ON` / `CSM_OFF` → YM2612 CSM mode register bit
 
 **FM3 independent-OP mode**
 

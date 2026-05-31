@@ -38,6 +38,8 @@ import {
   HOLD_FRAMES,
 } from "./ir-utils.js";
 
+const YM2612_MASTER_CLOCK = 7670454;
+
 // ---------------------------------------------------------------------------
 // IRPlayer
 // ---------------------------------------------------------------------------
@@ -72,6 +74,7 @@ export class IRPlayer {
     // Global YM2612 state
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
     this._masterVol = 31; // 0 = silent, 31 = full (additive TL offset applied to all channels)
+    this._reg27 = 0;
 
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
@@ -712,6 +715,53 @@ export class IRPlayer {
     }
   }
 
+  _timerAValueFromHz(hz) {
+    const safeHz = Math.max(1, Number(hz) || 1);
+    // YM2612 Timer A: hz ≈ master_clock / (144 * (1024 - TA)).
+    const ta = Math.round(1024 - YM2612_MASTER_CLOCK / (144 * safeHz));
+    return Math.max(0, Math.min(1023, ta));
+  }
+
+  _writeTimerAValue(ta, when) {
+    const hi = (ta >> 2) & 0xff;
+    const lo = ta & 0x03;
+    this._write(0, 0x24, hi, when);
+    this._write(0, 0x25, lo, when);
+  }
+
+  _setCsmRateHz(hz, when) {
+    this._writeTimerAValue(this._timerAValueFromHz(hz), when);
+  }
+
+  _setCsmEnabled(enabled, when) {
+    this._reg27 = enabled ? this._reg27 | 0x80 : this._reg27 & ~0x80;
+    this._write(0, 0x27, this._reg27, when);
+  }
+
+  _applyCsmRate(ev, when) {
+    const hz = Number(ev.args?.hz);
+    if (Number.isFinite(hz) && hz > 0) {
+      this._setCsmRateHz(hz, when);
+      return;
+    }
+
+    const from = Number(ev.args?.from);
+    const to = Number(ev.args?.to);
+    const lenTicks = Number(ev.args?.len);
+    if (!(Number.isFinite(from) && from > 0)) return;
+    if (!(Number.isFinite(to) && to > 0)) return;
+    if (!(Number.isFinite(lenTicks) && lenTicks > 0)) return;
+
+    const curve = ev.args?.curve ?? "linear";
+    const frames = Math.max(1, Math.round(lenTicks * this._secsPerTick * 60));
+    for (let frame = 0; frame < frames; frame++) {
+      const phase = frames <= 1 ? 1 : frame / (frames - 1);
+      const unit = sampleCurveUnit(curve, phase);
+      const hzAt = from + (to - from) * unit;
+      this._setCsmRateHz(hzAt, when + frame / 60);
+    }
+  }
+
   _buildModulatorMap() {
     this._modulatorsByCh = new Map();
     for (const t of this._tracks) {
@@ -976,6 +1026,21 @@ export class IRPlayer {
         if (ti != null && this._tracks[ti]) {
           this._tracks[ti].carryState = ev.args?.carry ?? false;
         }
+        break;
+      }
+
+      case "CSM_RATE": {
+        this._applyCsmRate(ev, when);
+        break;
+      }
+
+      case "CSM_ON": {
+        this._setCsmEnabled(true, when);
+        break;
+      }
+
+      case "CSM_OFF": {
+        this._setCsmEnabled(false, when);
         break;
       }
 
