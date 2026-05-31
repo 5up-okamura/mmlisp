@@ -1509,6 +1509,16 @@ function compileChannelBody(
               nodeSrc(ev),
               trackName,
             );
+          } else {
+            const token = evVal ?? ev.kind;
+            pushDiag(
+              diagnostics,
+              "error",
+              "E_UNKNOWN_TUPLET_ELEM",
+              `Unknown tuplet element: ${token}`,
+              nodeSrc(ev),
+              trackName,
+            );
           }
         }
         i++;
