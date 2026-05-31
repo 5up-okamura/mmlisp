@@ -88,13 +88,13 @@ Phase 3 entry condition:
 
 ## Language Version Status
 
-| Version | Status      | Tag            | Themes                                                                               |
-| ------- | ----------- | -------------- | ------------------------------------------------------------------------------------ |
-| v0.1    | frozen      | v0.1-candidate | Core language, IR, GMB format                                                        |
-| v0.2    | frozen      | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                             |
-| v0.3    | frozen      | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls          |
-| v0.4    | frozen      | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model          |
-| v0.5    | in progress | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, File I/O UI |
+| Version | Status   | Tag            | Themes                                                                               |
+| ------- | -------- | -------------- | ------------------------------------------------------------------------------------ |
+| v0.1    | frozen   | v0.1-candidate | Core language, IR, GMB format                                                        |
+| v0.2    | frozen   | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                             |
+| v0.3    | frozen   | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls          |
+| v0.4    | frozen   | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model          |
+| v0.5    | complete | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, File I/O UI |
 
 ### v0.4 Implementation Progress
 
@@ -270,9 +270,9 @@ Other:
 
 **PCM / DAC**
 
-- [ ] `def :sample` declaration → WAV load + 8-bit signed PCM conversion at compile time
+- [x] `def :sample` declaration → WAV load + 8-bit signed PCM conversion at compile time
 - [x] `:rate` on `def :sample` → C4 playback rate override
-- [ ] Stereo WAV → mono downmix `(L+R)/2` at compile time
+- [x] Stereo WAV → mono downmix `(L+R)/2` at compile time
 - [x] Sample path resolution relative to `.mmlisp` source file location
 - [x] `(pcm1 sample-name ...)` / `pcm2` / `pcm3` track forms → sample as first positional arg; emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
 - [x] `fm6 :mode shot|loop` → PCM note events on fm6 DAC channel (`loop` = sustain loop)
