@@ -316,7 +316,11 @@ function isPcmTrackName(name) {
 }
 
 function isTrackPcmActive(trackState) {
-  return !!(trackState?.isPcmTrack || trackState?.fm6Mode === "shot" || trackState?.fm6Mode === "loop");
+  return !!(
+    trackState?.isPcmTrack ||
+    trackState?.fm6Mode === "shot" ||
+    trackState?.fm6Mode === "loop"
+  );
 }
 
 function isLikelyPcmBodyToken(value) {
