@@ -10,6 +10,7 @@
     "verify-ir": "node scripts/verify-ir.js",
     "mmlisp2mmb": "node scripts/mmlisp2mmb.js",
     "verify-mmb": "node scripts/verify-mmb.js",
+    "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js",
     "build:ir-demos": "node scripts/mmlisp2ir.js ../examples/source/demo1.mmlisp --strict --diag-out ../examples/ir/demo1.diagnostics.generated.json --out ../examples/ir/demo1.ir.generated.json",
     "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1.ir.canonical.json ../examples/ir/demo1.ir.generated.json",
     "build:gmb-demos": "node scripts/mmlisp2mmb.js ../examples/ir/demo1.ir.canonical.json --out ../examples/gmb/demo1.mmb --meta ../examples/gmb/demo1.meta.json",
