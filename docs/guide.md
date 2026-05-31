@@ -1,4 +1,4 @@
-# MMLisp Composer's Guide (v0.4)
+# MMLisp Composer's Guide (v0.5)
 
 Practical authoring guide for the current MMLisp language.
 
@@ -335,7 +335,7 @@ Repeating the same channel form appends events and keeps sticky state.
 
 ---
 
-## 15. Practical v0.4 Example
+## 15. Practical v0.5 Example
 
 ```lisp
 (def fm-init
@@ -365,3 +365,57 @@ Repeating the same channel form appends events and keeps sticky state.
   (noise :mode white0
     c _ c _))
 ```
+
+---
+
+## 16. v0.5 Additions
+
+### FM3 CSM mode
+
+Use `fm3-csm` when you want FM3 to run in CSM mode.
+
+```lisp
+(score
+  (fm3-csm :csm-rate 60
+    c _ c _))
+```
+
+- `fm3-csm` enables the FM3 special mode.
+- `:csm-rate N` sets the Timer A frequency.
+- `:csm-rate (curve ...)` sweeps the rate over time.
+
+### Tempo sweeps
+
+`:tempo` now accepts a curve form for smooth changes:
+
+```lisp
+(score
+  (:tempo (curve :from 120 :to 180 :len 8))
+  (fm1 c e g c))
+```
+
+- `:tempo N` changes tempo immediately.
+- `:tempo (curve :from N :to M :len L)` emits `TEMPO_SWEEP`.
+
+### PCM samples
+
+Samples are defined with `def :sample`, then used as the first positional argument of `pcm1` / `pcm2` / `pcm3`.
+
+```lisp
+(def kick  :sample :file "sounds/kick.wav")
+(def snare :sample :file "sounds/snare.wav" :rate 11025)
+
+(score :tempo 120
+  (pcm1 kick  :len 4  c _ c _)
+  (pcm2 snare :len 4  _ c _ c))
+```
+
+- `:file` is required.
+- `:rate` overrides the C4 playback rate.
+- Stereo WAV files are downmixed to mono at compile time.
+- WAV data is converted to 8-bit signed PCM at compile time.
+
+### Stochastic curves
+
+The curve system now includes `noise`, `pink`, `perlin`, and `brown`.
+They can be used anywhere curve expressions are accepted, including `:macro` and `:tempo`.
