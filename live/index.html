@@ -383,6 +383,14 @@
       </div>
     </div>
 
+    <!-- Tools menu -->
+    <div class="menu-wrap" id="menuTools">
+      <button class="menu-btn" onclick="toggleMenu('menuTools')">Tools</button>
+      <div class="menu-dropdown">
+        <button class="menu-item" onclick="formatSource();closeMenus()">Format Source</button>
+      </div>
+    </div>
+
     <!-- Transport buttons -->
     <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">
       <svg id="iconPlay" width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
@@ -681,6 +689,7 @@
       }
       return true;
     }
+    window.formatSource = formatDocument;
 
     const editorExtensions = [
       oneDarkTheme,
