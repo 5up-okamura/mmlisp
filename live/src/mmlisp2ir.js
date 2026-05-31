@@ -147,13 +147,17 @@ function describeNodeToken(node) {
   return node?.kind ?? "unknown";
 }
 
-function pushUnknownDiag(diagnostics, code, label, node, src, trackName) {
+function pushUnknownDiag(diagnostics, code, label, node, trackName) {
+  const diagSrc =
+    node?.kind === "list" && Array.isArray(node.items) && node.items.length > 0
+      ? nodeSrc(node.items[0])
+      : nodeSrc(node);
   pushDiag(
     diagnostics,
     "error",
     code,
     `${label}: ${describeNodeToken(node)}`,
-    src,
+    diagSrc,
     trackName,
   );
 }
@@ -1473,7 +1477,6 @@ function compileChannelBody(
         "E_UNKNOWN_ATOM",
         "Unknown token",
         node,
-        nodeSrc(node),
         trackName,
       );
       i++;
@@ -1489,7 +1492,6 @@ function compileChannelBody(
           "E_UNKNOWN_LIST",
           "Unknown list form",
           node,
-          nodeSrc(node.items[0]),
           trackName,
         );
         i++;
@@ -1544,7 +1546,6 @@ function compileChannelBody(
               "E_UNKNOWN_TUPLET_ELEM",
               "Unknown tuplet element",
               ev,
-              nodeSrc(ev),
               trackName,
             );
           }
@@ -1737,7 +1738,6 @@ function compileChannelBody(
         "E_UNKNOWN_LIST",
         "Unknown list form",
         node,
-        nodeSrc(node.items[0]),
         trackName,
       );
       i++;
@@ -1749,7 +1749,6 @@ function compileChannelBody(
       "E_UNKNOWN_NODE",
       "Unknown channel-body node",
       node,
-      nodeSrc(node),
       trackName,
     );
     i++;
@@ -1793,7 +1792,6 @@ function compileTrackBodyItems(
           "E_UNKNOWN_ATOM",
           "Unknown token",
           node,
-          nodeSrc(node),
           trackName,
         );
       }
@@ -1808,7 +1806,6 @@ function compileTrackBodyItems(
         "E_UNKNOWN_NODE",
         "Unknown track-body node",
         node,
-        nodeSrc(node),
         trackName,
       );
       continue;
@@ -1821,7 +1818,6 @@ function compileTrackBodyItems(
         "E_UNKNOWN_LIST",
         "Unknown list form",
         node,
-        nodeSrc(node.items[0]),
         trackName,
       );
       continue;
@@ -2025,7 +2021,6 @@ function compileTrackBodyItems(
       "E_UNKNOWN_LIST",
       "Unknown list form",
       node,
-      nodeSrc(node.items[0]),
       trackName,
     );
   }
