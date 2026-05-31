@@ -778,6 +778,7 @@
     let _sourceHandle = null;
     let _sourceFileName = null;
     let _sourceDir = null;
+    let _unsavedSamplePathWarned = false;
     const _pcmSampleCache = new Map();
 
     function toFetchablePath(path) {
@@ -917,6 +918,17 @@
       const src = editorView.state.doc.toString();
       try {
         const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName);
+        const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
+        const hasSamples = sampleDefs.length > 0;
+        const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL);
+        if (hasSamples && !hasSavedBase) {
+          if (!_unsavedSamplePathWarned) {
+            log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
+            _unsavedSamplePathWarned = true;
+          }
+        } else {
+          _unsavedSamplePathWarned = false;
+        }
         const errors = diagnostics.filter(d => d.severity === 'error');
         if (errors.length > 0) {
           for (const d of errors) {

@@ -271,12 +271,12 @@ Other:
 **PCM / DAC**
 
 - [ ] `def :sample` declaration → WAV load + 8-bit signed PCM conversion at compile time
-- [ ] `:rate` on `def :sample` → C4 playback rate override
+- [x] `:rate` on `def :sample` → C4 playback rate override
 - [ ] Stereo WAV → mono downmix `(L+R)/2` at compile time
-- [ ] Sample path resolution relative to `.mmlisp` source file location
-- [ ] `(pcm1 sample-name ...)` / `pcm2` / `pcm3` track forms → sample as first positional arg; emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
-- [ ] `fm6 :mode shot|loop` → PCM note events on fm6 DAC channel (`loop` = sustain loop)
-- [ ] Pitch-to-rate mapping: `rate = 2^(semitones_from_C4 / 12)`; clamp C2–C6 with warning
+- [x] Sample path resolution relative to `.mmlisp` source file location
+- [x] `(pcm1 sample-name ...)` / `pcm2` / `pcm3` track forms → sample as first positional arg; emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
+- [x] `fm6 :mode shot|loop` → PCM note events on fm6 DAC channel (`loop` = sustain loop)
+- [x] Pitch-to-rate mapping: `rate = 2^(semitones_from_C4 / 12)`; clamp C2–C6 with warning
 
 **Stochastic curves**
 
@@ -304,10 +304,10 @@ Other:
 
 **PCM / DAC**
 
-- [ ] Sample buffer management (load compiled PCM data into AudioWorklet)
-- [ ] `PCM_NOTE_ON` → trigger soft-mix channel at computed rate with volume
-- [ ] `PCM_NOTE_OFF` / `loop` release from sustain loop playback
-- [ ] 3ch soft-mixer in Z80 worklet emulation path (or AudioWorklet mixing layer)
+- [x] Sample buffer management (load compiled PCM data into AudioWorklet)
+- [x] `PCM_NOTE_ON` → trigger soft-mix channel at computed rate with volume
+- [x] `PCM_NOTE_OFF` / `loop` release from sustain loop playback
+- [x] 3ch soft-mixer in Z80 worklet emulation path (or AudioWorklet mixing layer)
 
 ---
 
@@ -316,17 +316,17 @@ Other:
 **File menu**
 
 - [ ] File menu: **New** / **Open...** / **Save** / **Save As...** / ── / **Examples ▶**
-- [ ] Open: use File System Access API (`showOpenFilePicker`) → load `.mmlisp`; set base directory
-- [ ] Save As: `showSaveFilePicker` → write `.mmlisp`; update base directory for sample resolution
-- [ ] Save: write to previously acquired `FileSystemFileHandle` (no picker re-prompt)
-- [ ] Unsaved-state guard: warn when compiling `def :sample` paths with no saved base directory
-- [ ] Title bar shows current filename (or "Untitled" when unsaved)
-- [ ] Examples submenu: load bundled `.mmlisp` sample into editor (currently: demo1; extensible)
+- [x] Open: use File System Access API (`showOpenFilePicker`) → load `.mmlisp`; set base directory
+- [x] Save As: `showSaveFilePicker` → write `.mmlisp`; update base directory for sample resolution
+- [x] Save: write to previously acquired `FileSystemFileHandle` (no picker re-prompt)
+- [x] Unsaved-state guard: warn when compiling `def :sample` paths with no saved base directory
+- [x] Title bar shows current filename (or "Untitled" when unsaved)
+- [x] Examples submenu: load bundled `.mmlisp` sample into editor (currently: demo1; extensible)
 
 **Tools menu**
 
 - [ ] Tools menu: **Format Source** / ── / **Snippets ▶**
-- [ ] Format Source: reformat editor content (same as Cmd+Shift+F / Ctrl+Shift+F shortcut)
+- [x] Format Source: reformat editor content (same as Cmd+Shift+F / Ctrl+Shift+F shortcut)
 - [ ] Snippets submenu: insert a code snippet at cursor (items TBD)
 
 ---
