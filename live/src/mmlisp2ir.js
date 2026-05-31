@@ -781,6 +781,15 @@ function parseCurveSpec(node) {
   let from;
   let to;
   let frames;
+  const params = {};
+  let hasParams = false;
+
+  const clampNum = (n, min, max) => Math.max(min, Math.min(max, n));
+  const setParam = (key, value) => {
+    params[key] = value;
+    hasParams = true;
+  };
+
   for (let j = 1; j < node.items.length; j++) {
     const k = atomValue(node.items[j]);
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
@@ -795,6 +804,61 @@ function parseCurveSpec(node) {
         case ":len":
           frames = parseLengthToken(v, null);
           break;
+        case ":phase": {
+          const n = parseIntLike(v);
+          if (n !== null) setParam("phase", clampNum(n, 0, 255));
+          break;
+        }
+        case ":rate": {
+          const n = parseNumberLike(v);
+          if (n !== null && n > 0) setParam("rate", n);
+          break;
+        }
+        case ":duty": {
+          const n = parseIntLike(v);
+          if (n !== null) setParam("duty", clampNum(n, 1, 255));
+          break;
+        }
+        case ":skew": {
+          const n = parseIntLike(v);
+          if (n !== null) setParam("skew", clampNum(n, -127, 127));
+          break;
+        }
+        case ":hold": {
+          const n = parseIntLike(v);
+          if (n !== null) setParam("hold", Math.max(1, n));
+          break;
+        }
+        case ":jitter": {
+          const n = parseNumberLike(v);
+          if (n !== null) setParam("jitter", clampNum(n, 0, 1));
+          break;
+        }
+        case ":beta": {
+          const n = parseNumberLike(v);
+          if (n !== null && n > 0) setParam("beta", n);
+          break;
+        }
+        case ":octaves": {
+          const n = parseIntLike(v);
+          if (n !== null) setParam("octaves", clampNum(n, 1, 8));
+          break;
+        }
+        case ":lacunarity": {
+          const n = parseNumberLike(v);
+          if (n !== null && n > 0) setParam("lacunarity", n);
+          break;
+        }
+        case ":persistence": {
+          const n = parseNumberLike(v);
+          if (n !== null && n > 0) setParam("persistence", n);
+          break;
+        }
+        case ":leak": {
+          const n = parseNumberLike(v);
+          if (n !== null) setParam("leak", clampNum(n, 0, 0.9999));
+          break;
+        }
       }
       j++;
     }
@@ -807,6 +871,7 @@ function parseCurveSpec(node) {
   };
   if (from !== null && from !== undefined) spec.from = from;
   if (frames !== null && frames !== undefined) spec.frames = frames;
+  if (hasParams) spec.params = params;
   return spec;
 }
 

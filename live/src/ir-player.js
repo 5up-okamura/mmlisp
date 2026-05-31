@@ -698,6 +698,7 @@ export class IRPlayer {
       to,
       len,
       curve,
+      params: args?.params,
       startTick: changeTick,
     };
   }
@@ -712,7 +713,11 @@ export class IRPlayer {
     );
     const elapsedTicks = currentTick - this._tempoSweep.startTick;
     const phase = Math.max(0, Math.min(1, elapsedTicks / this._tempoSweep.len));
-    const unit = sampleCurveUnit(this._tempoSweep.curve, phase);
+    const unit = sampleCurveUnit(
+      this._tempoSweep.curve,
+      phase,
+      this._tempoSweep.params,
+    );
     const nextBpm =
       this._tempoSweep.from +
       (this._tempoSweep.to - this._tempoSweep.from) * unit;
@@ -794,7 +799,7 @@ export class IRPlayer {
     const frames = Math.max(1, Math.round(lenTicks * this._secsPerTick * 60));
     for (let frame = 0; frame < frames; frame++) {
       const phase = frames <= 1 ? 1 : frame / (frames - 1);
-      const unit = sampleCurveUnit(curve, phase);
+      const unit = sampleCurveUnit(curve, phase, ev.args?.params);
       const hzAt = from + (to - from) * unit;
       this._setCsmRateHz(hzAt, when + frame / 60);
     }
@@ -1699,6 +1704,7 @@ export class IRPlayer {
           to = 0,
           frames: rawFrames = 1,
           loop = false,
+          params,
         } = stage;
         const baseFrames = Math.max(1, Number(rawFrames));
         // For looping stages, run until gate (or next key-off boundary)
@@ -1712,7 +1718,7 @@ export class IRPlayer {
               ? 1
               : Math.min(1, frame / (baseFrames - 1));
           writeFn(
-            from + (to - from) * sampleCurveUnit(curve, phase),
+            from + (to - from) * sampleCurveUnit(curve, phase, params),
             t + frame / 60,
           );
         }
@@ -1722,7 +1728,14 @@ export class IRPlayer {
     }
 
     if (spec.type === "curve") {
-      const { from, to, frames: rawFrames = 1, loop, curve = "linear" } = spec;
+      const {
+        from,
+        to,
+        frames: rawFrames = 1,
+        loop,
+        curve = "linear",
+        params,
+      } = spec;
       const baseFrames = Math.max(1, Number(rawFrames));
       const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
       for (let frame = 0; frame < activeFrames; frame++) {
@@ -1732,7 +1745,7 @@ export class IRPlayer {
             ? 1
             : Math.min(1, frame / (baseFrames - 1));
         writeFn(
-          from + (to - from) * sampleCurveUnit(curve, phase),
+          from + (to - from) * sampleCurveUnit(curve, phase, params),
           when + frame / 60,
         );
       }
@@ -1860,6 +1873,7 @@ export class IRPlayer {
     const from = Number(ev.args?.from ?? 0);
     const to = Number(ev.args?.to ?? 0);
     const curve = ev.args?.curve ?? "linear";
+    const params = ev.args?.params;
     const secsPerTick = this._secsPerTick;
     // ev.args.frames is in ticks (from parseLengthToken); convert to 60 Hz frames.
     const baseFrames = Math.max(
@@ -1908,7 +1922,7 @@ export class IRPlayer {
           loopPhaseOffset,
         );
         const centOffset = Math.round(
-          from + (to - from) * sampleCurveUnit(curve, phase),
+          from + (to - from) * sampleCurveUnit(curve, phase, params),
         );
         this._chRegs[ch].pitchOffset = centOffset;
         const { fnum: pf, block: pb } = midiToFnumBlock(
@@ -1942,7 +1956,10 @@ export class IRPlayer {
         );
         const vol = Math.max(
           0,
-          Math.min(31, from + (to - from) * sampleCurveUnit(curve, phase)),
+          Math.min(
+            31,
+            from + (to - from) * sampleCurveUnit(curve, phase, params),
+          ),
         );
         const tl = composeFmTl(regs.vel ?? 15, vol, this._masterVol ?? 31);
         const frameWhen = when + i / 60;
@@ -1959,6 +1976,7 @@ export class IRPlayer {
         from,
         to,
         curve,
+        params,
         baseFrames,
         nonLoopOffset: nonLoopStartFrame,
         startWhen: when,
@@ -1972,7 +1990,7 @@ export class IRPlayer {
       const frame = !loop ? nonLoopStartFrame + i : i;
       const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
       const value = Math.round(
-        from + (to - from) * sampleCurveUnit(curve, phase),
+        from + (to - from) * sampleCurveUnit(curve, phase, params),
       );
       this._applyParam(
         ch,
@@ -2270,7 +2288,8 @@ export class IRPlayer {
               loopPhaseOffset,
             );
             const centOffset =
-              from + (to - from) * sampleCurveUnit(curve, phase);
+              from +
+              (to - from) * sampleCurveUnit(curve, phase, ev.args?.params);
             this._psgPitchOffset[psgCh] = centOffset;
             this._psgSetPitch(
               psgCh,

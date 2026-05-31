@@ -201,7 +201,7 @@ export function sweepVolAtTime(sweep, when) {
   const frame = (sweep.nonLoopOffset ?? 0) + frameOffset;
   const phase =
     sweep.baseFrames <= 1 ? 1 : Math.min(1, frame / (sweep.baseFrames - 1));
-  const unit = sampleCurveUnit(sweep.curve, phase);
+  const unit = sampleCurveUnit(sweep.curve, phase, sweep.params);
   return Math.max(0, Math.min(31, sweep.from + (sweep.to - sweep.from) * unit));
 }
 
@@ -304,18 +304,116 @@ const STOCHASTIC_LUTS = buildStochasticLuts(
   STOCHASTIC_LUT_SEED,
 );
 
-function sampleStochasticCurve(curve, phase) {
-  const lut = STOCHASTIC_LUTS[curve];
+const LOOP_CURVE_NAMES = new Set([
+  "sin",
+  "triangle",
+  "square",
+  "saw",
+  "ramp",
+  "noise",
+  "pink",
+  "perlin",
+  "brown",
+]);
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function fract(v) {
+  return v - Math.floor(v);
+}
+
+function sampleLut(lut, phase, hold = 1) {
   if (!lut || lut.length === 0) return phase;
-  const idx = Math.max(
+  const idxRaw = Math.max(
     0,
     Math.min(lut.length - 1, Math.floor(phase * (lut.length - 1))),
   );
-  return lut[idx];
+  const holdFrames = Math.max(1, Math.floor(Number(hold) || 1));
+  const idx = Math.floor(idxRaw / holdFrames) * holdFrames;
+  return lut[Math.min(lut.length - 1, idx)];
 }
 
-export function sampleCurveUnit(curve, phase) {
-  const t = Math.max(0, Math.min(1, phase));
+function hashUnit01(x) {
+  const n = Math.sin((x + 1.23456789) * 12.9898) * 43758.5453123;
+  return fract(n);
+}
+
+function applySkew(phase, skewRaw) {
+  const skew = Math.max(-127, Math.min(127, Number(skewRaw) || 0));
+  if (skew === 0) return phase;
+  const pivot = 0.5 + (skew / 127) * 0.45;
+  const p = Math.max(0.05, Math.min(0.95, pivot));
+  if (phase <= p) return 0.5 * (phase / p);
+  return 0.5 + 0.5 * ((phase - p) / (1 - p));
+}
+
+function sampleStochasticCurve(curve, phase, params) {
+  const hold = Math.max(1, Math.floor(Number(params?.hold) || 1));
+  const jitter = clamp01(Number(params?.jitter) || 0);
+
+  const noiseLut = STOCHASTIC_LUTS.noise;
+  const pinkLut = STOCHASTIC_LUTS.pink;
+  const perlinLut = STOCHASTIC_LUTS.perlin;
+  const brownLut = STOCHASTIC_LUTS.brown;
+
+  let base = phase;
+  if (curve === "noise") {
+    base = sampleLut(noiseLut, phase, hold);
+  } else if (curve === "pink") {
+    const beta = Math.max(0.1, Number(params?.beta) || 1.0);
+    const pink = sampleLut(pinkLut, phase, hold);
+    if (beta === 1) {
+      base = pink;
+    } else if (beta < 1) {
+      const mix = clamp01(1 - beta);
+      const noise = sampleLut(noiseLut, phase, hold);
+      base = pink * (1 - mix) + noise * mix;
+    } else {
+      const mix = clamp01(beta - 1);
+      const brown = sampleLut(brownLut, phase, hold);
+      base = pink * (1 - mix) + brown * mix;
+    }
+  } else if (curve === "perlin") {
+    const octaves = Math.max(
+      1,
+      Math.min(8, Math.round(Number(params?.octaves) || 3)),
+    );
+    const lacunarity = Math.max(0.01, Number(params?.lacunarity) || 2.0);
+    const persistence = Math.max(0.01, Number(params?.persistence) || 0.5);
+    let total = 0;
+    let amp = 1;
+    let freq = 1;
+    let norm = 0;
+    for (let i = 0; i < octaves; i++) {
+      total += amp * sampleLut(perlinLut, fract(phase * freq), hold);
+      norm += amp;
+      amp *= persistence;
+      freq *= lacunarity;
+    }
+    base = norm > 0 ? total / norm : sampleLut(perlinLut, phase, hold);
+  } else if (curve === "brown") {
+    const leak = Math.max(0, Math.min(0.9999, Number(params?.leak) || 0.99));
+    const brown = sampleLut(brownLut, phase, hold);
+    const noise = sampleLut(noiseLut, phase, hold);
+    const whiten = clamp01((0.99 - leak) / 0.99);
+    base = brown * (1 - whiten) + noise * whiten;
+  }
+
+  if (jitter <= 0) return base;
+  const n = hashUnit01(phase * 131071.0);
+  return base * (1 - jitter) + n * jitter;
+}
+
+export function sampleCurveUnit(curve, phase, params = null) {
+  const phaseOffset = (Number(params?.phase) || 0) / 256;
+  const rate = Number(params?.rate);
+  const rateMul = Number.isFinite(rate) && rate > 0 ? rate : 1;
+  const phaseScaled = (phase + phaseOffset) * rateMul;
+  const t = LOOP_CURVE_NAMES.has(curve)
+    ? fract(phaseScaled)
+    : clamp01(phaseScaled);
   switch (curve) {
     case "linear":
       return t;
@@ -443,20 +541,31 @@ export function sampleCurveUnit(curve, phase) {
         : (1 + sampleCurveUnit("ease-out-bounce", 2 * t - 1)) / 2;
     // ── Loop waveforms ────────────────────────────────────────────────────
     case "sin":
-      return (Math.sin(2 * Math.PI * t - Math.PI / 2) + 1) / 2;
-    case "triangle":
-      return t < 0.5 ? t * 2 : 2 - t * 2;
-    case "square":
-      return t < 0.5 ? 0 : 1;
+      return (
+        (Math.sin(2 * Math.PI * applySkew(t, params?.skew) - Math.PI / 2) + 1) /
+        2
+      );
+    case "triangle": {
+      const tt = applySkew(t, params?.skew);
+      return tt < 0.5 ? tt * 2 : 2 - tt * 2;
+    }
+    case "square": {
+      const duty = Math.max(
+        1,
+        Math.min(255, Math.round(Number(params?.duty) || 128)),
+      );
+      const threshold = duty / 256;
+      return t < threshold ? 0 : 1;
+    }
     case "saw":
     case "ramp":
-      return t;
+      return applySkew(t, params?.skew);
     // ── Stochastic (v0.5; LUT-based at compile time) ──────────────────────
     case "noise":
     case "pink":
     case "perlin":
     case "brown":
-      return sampleStochasticCurve(curve, t);
+      return sampleStochasticCurve(curve, t, params);
     default:
       return t;
   }
