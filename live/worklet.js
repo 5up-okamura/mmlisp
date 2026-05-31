@@ -7,7 +7,7 @@
  * Message protocol (from main thread via port.postMessage):
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
- *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate}] }
+ *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate, loopStart?, loopEnd?}] }
  *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, vel: number, mode: 'shot'|'loop' }
  *   { type: 'pcm-note-off', when: number, sample: string }
  *   { type: 'reset' }
@@ -95,6 +95,8 @@ class YM2612Processor extends AudioWorkletProcessor {
           this._pcmSamples.set(name, {
             data,
             sampleRate: Number.isFinite(sr) && sr > 0 ? sr : this._outputSR,
+            loopStart: Number(s?.loopStart),
+            loopEnd: Number(s?.loopEnd),
           });
         }
       } else if (msg.type === "pcm-note-on" || msg.type === "pcm-note-off") {
@@ -146,18 +148,33 @@ class YM2612Processor extends AudioWorkletProcessor {
     const vel = Number(msg.vel);
     const sample = String(msg.sample ?? "");
     if (!sample) return;
-    const gain = Math.max(0, Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15));
+    const gain = Math.max(
+      0,
+      Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15),
+    );
     const sampleEntry = this._pcmSamples.get(sample);
     const data = sampleEntry?.data ?? this._pcmFallbackSample;
     const baseRateMsg = Number(msg.baseRate);
     const baseRate =
       Number.isFinite(baseRateMsg) && baseRateMsg > 0
         ? baseRateMsg
-        : sampleEntry?.sampleRate ?? this._outputSR;
-    const rawStep = (Number.isFinite(rate) ? rate : 1) * (baseRate / this._outputSR);
+        : (sampleEntry?.sampleRate ?? this._outputSR);
+    const rawStep =
+      (Number.isFinite(rate) ? rate : 1) * (baseRate / this._outputSR);
     const step = Math.max(0.01, rawStep);
     const mode = msg.mode === "loop" ? "loop" : "shot";
     const ch = Number(msg.ch);
+    const loopStartRaw = Number(sampleEntry?.loopStart);
+    const loopEndRaw = Number(sampleEntry?.loopEnd);
+    const len = data.length;
+    const loopStart =
+      Number.isFinite(loopStartRaw) && loopStartRaw >= 0
+        ? Math.min(len - 1, Math.floor(loopStartRaw))
+        : 0;
+    const loopEnd =
+      Number.isFinite(loopEndRaw) && loopEndRaw > loopStart
+        ? Math.min(len, Math.floor(loopEndRaw))
+        : len;
     const voice = {
       ch: Number.isFinite(ch) ? ch : null,
       sample,
@@ -165,24 +182,34 @@ class YM2612Processor extends AudioWorkletProcessor {
       step,
       gain,
       mode,
+      released: false,
+      loopStart,
+      loopEnd,
       data,
     };
     if (mode === "loop") {
-      this._pcmVoices = this._pcmVoices.filter((v) => v.sample !== sample);
+      this._pcmVoices = this._pcmVoices.filter((v) => {
+        if (v.mode !== "loop") return true;
+        if (v.sample !== sample) return true;
+        if (!Number.isFinite(ch)) return false;
+        return v.ch !== ch;
+      });
     }
     this._pcmVoices.push(voice);
   }
 
   _stopPcmVoice(msg) {
+    if (msg.mode === "shot") return;
     const sample = String(msg.sample ?? "");
     if (!sample) return;
     const ch = Number(msg.ch);
     const hasCh = Number.isFinite(ch);
-    this._pcmVoices = this._pcmVoices.filter((v) => {
-      if (v.sample !== sample) return true;
-      if (!hasCh) return false;
-      return v.ch !== ch;
-    });
+    for (const v of this._pcmVoices) {
+      if (v.mode !== "loop") continue;
+      if (v.sample !== sample) continue;
+      if (hasCh && v.ch !== ch) continue;
+      v.released = true;
+    }
   }
 
   _mixPcmSample() {
@@ -191,9 +218,20 @@ class YM2612Processor extends AudioWorkletProcessor {
     for (const voice of this._pcmVoices) {
       const data = voice.data;
       if (!data || data.length === 0) continue;
+      if (voice.mode === "loop" && !voice.released) {
+        const ls = Math.max(0, Math.min(data.length - 1, voice.loopStart ?? 0));
+        const le = Math.max(
+          ls + 1,
+          Math.min(data.length, voice.loopEnd ?? data.length),
+        );
+        const loopLen = le - ls;
+        if (voice.pos >= le) {
+          voice.pos = ls + ((voice.pos - ls) % loopLen);
+        }
+      }
       let idx = Math.floor(voice.pos);
       if (idx >= data.length) {
-        if (voice.mode === "loop") {
+        if (voice.mode === "loop" && !voice.released) {
           voice.pos = voice.pos % data.length;
           idx = Math.floor(voice.pos);
         } else {
@@ -202,7 +240,10 @@ class YM2612Processor extends AudioWorkletProcessor {
       }
       mixed += data[idx] * voice.gain;
       voice.pos += voice.step;
-      if (voice.mode === "loop" || voice.pos < data.length) {
+      if (
+        (voice.mode === "loop" && !voice.released) ||
+        voice.pos < data.length
+      ) {
         alive.push(voice);
       }
     }

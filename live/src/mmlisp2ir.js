@@ -457,7 +457,7 @@ function emitNoteForTrack(
       args,
       src,
     });
-    if (gateTicks > 0) {
+    if (mode === "loop" && gateTicks > 0) {
       events.push({
         tick: trackState.tick + gateTicks,
         cmd: "PCM_NOTE_OFF",
@@ -588,6 +588,8 @@ function parseSampleDef(root, diagnostics) {
   const sample = {
     file: null,
     rate: null,
+    loopStart: null,
+    loopEnd: null,
     bitDepth: null,
     volume: null,
     compress: null,
@@ -602,6 +604,12 @@ function parseSampleDef(root, diagnostics) {
     } else if (key === ":rate") {
       const rate = parseIntLike(rawVal);
       if (rate !== null) sample.rate = rate;
+    } else if (key === ":loop-start") {
+      const loopStart = parseIntLike(rawVal);
+      if (loopStart !== null) sample.loopStart = loopStart;
+    } else if (key === ":loop-end") {
+      const loopEnd = parseIntLike(rawVal);
+      if (loopEnd !== null) sample.loopEnd = loopEnd;
     } else if (key === ":bit-depth") {
       const bitDepth = parseIntLike(rawVal);
       if (bitDepth !== null) sample.bitDepth = bitDepth;
@@ -2650,6 +2658,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         file: sample.file,
         resolvedFile: resolveSamplePath(sample.file, filename),
         rate: sample.rate,
+        loopStart: sample.loopStart,
+        loopEnd: sample.loopEnd,
         bitDepth: sample.bitDepth,
         volume: sample.volume,
         compress: sample.compress,

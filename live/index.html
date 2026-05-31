@@ -830,6 +830,8 @@
             name: String(def.name),
             data: decoded.data,
             sampleRate: decoded.sampleRate,
+            loopStart: Number.isFinite(def.loopStart) ? def.loopStart : null,
+            loopEnd: Number.isFinite(def.loopEnd) ? def.loopEnd : null,
           });
         } catch (e) {
           log(`PCM load failed (${def.name}): ${e.message}`, 'err');
