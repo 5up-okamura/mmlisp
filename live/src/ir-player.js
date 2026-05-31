@@ -335,11 +335,21 @@ export class IRPlayer {
    * @param {number} mask  0xf0 = all on; bit7=op4, bit6=op3, bit5=op2, bit4=op1
    */
   setOpMask(ch, mask) {
-    this._opMasks[ch] = mask & 0xf0;
+    if (!Number.isInteger(ch) || ch < 0 || ch > 5) {
+      throw new Error(`Invalid channel index for setOpMask: ${ch}`);
+    }
+    const keyMask = Number(mask) & 0xf0;
+    if (keyMask === 0) {
+      throw new Error(`Invalid op mask for setOpMask: ${mask}`);
+    }
+    this._opMasks[ch] = keyMask;
   }
 
   /** Get current op mask for a channel. */
   getOpMask(ch) {
+    if (!Number.isInteger(ch) || ch < 0 || ch > 5) {
+      throw new Error(`Invalid channel index for getOpMask: ${ch}`);
+    }
     return this._opMasks[ch] ?? 0xf0;
   }
 

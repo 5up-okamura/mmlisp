@@ -1415,7 +1415,7 @@ function compileChannelBody(
         continue;
       }
 
-      // Unknown atom — skip silently
+      // Unknown atom: report as error (except fm3-csm-rate numeric shorthand).
       if (trackState.isCsmRateTrack) {
         const rawHz = parseNumberLike(val);
         if (rawHz !== null) {
@@ -1440,6 +1440,14 @@ function compileChannelBody(
           continue;
         }
       }
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_UNKNOWN_ATOM",
+        `Unknown token: ${val}`,
+        nodeSrc(node),
+        trackName,
+      );
       i++;
       continue;
     }
