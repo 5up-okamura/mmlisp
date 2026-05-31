@@ -1132,7 +1132,47 @@ export class IRPlayer {
         this._writeFm3OpPitch(op, midi, when);
         break;
       }
+
+      case "PCM_NOTE_ON": {
+        this._dispatchPcmNoteOn(ev, when);
+        break;
+      }
+
+      case "PCM_NOTE_OFF": {
+        this._dispatchPcmNoteOff(ev, when);
+        break;
+      }
     }
+  }
+
+  _dispatchPcmNoteOn(ev, when) {
+    const sample = String(ev.args?.sample ?? "").trim();
+    if (!sample) return;
+    const rate = Number(ev.args?.rate);
+    const vel = Number(ev.args?.vel ?? 15);
+    const mode = ev.args?.mode === "loop" ? "loop" : "shot";
+    this._write({
+      type: "pcm-note-on",
+      when,
+      ch: ev._chIndex ?? null,
+      sample,
+      rate: Number.isFinite(rate) && rate > 0 ? rate : 1,
+      vel: Number.isFinite(vel) ? vel : 15,
+      mode,
+    });
+  }
+
+  _dispatchPcmNoteOff(ev, when) {
+    const sample = String(ev.args?.sample ?? "").trim();
+    if (!sample) return;
+    const mode = ev.args?.mode === "loop" ? "loop" : "shot";
+    this._write({
+      type: "pcm-note-off",
+      when,
+      ch: ev._chIndex ?? null,
+      sample,
+      mode,
+    });
   }
 
   _dispatchGlobalEvent(ev, when) {

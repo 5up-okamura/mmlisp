@@ -1034,8 +1034,13 @@
     // -----------------------------------------------------------------------
     // Audio
     // -----------------------------------------------------------------------
-    function writeToWorklet(port, addr, data, when) {
-      workletNode?.port.postMessage({ type: 'write', port, addr, data, when });
+    function writeToWorklet(portOrMsg, addr, data, when) {
+      if (!workletNode) return;
+      if (portOrMsg && typeof portOrMsg === 'object' && !Array.isArray(portOrMsg)) {
+        workletNode.port.postMessage(portOrMsg);
+        return;
+      }
+      workletNode.port.postMessage({ type: 'write', port: portOrMsg, addr, data, when });
     }
 
     let _workletReady = false;

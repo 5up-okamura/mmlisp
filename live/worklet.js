@@ -7,6 +7,8 @@
  * Message protocol (from main thread via port.postMessage):
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
+ *   { type: 'pcm-note-on', when: number, sample: string, rate: number, vel: number, mode: 'shot'|'loop' }
+ *   { type: 'pcm-note-off', when: number, sample: string }
  *   { type: 'reset' }
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  */
@@ -28,6 +30,11 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._psgChip = new SN76489();
     this._psgWriteQueue = []; // untimed PSG writes
     this._psgTimedQueue = []; // timed PSG writes: [{frame, data}]
+
+    // Minimal software PCM voices (temporary until real sample bank loading lands)
+    this._pcmTimedQueue = []; // timed PCM commands: [{frame, type, ...}]
+    this._pcmVoices = [];
+    this._pcmFallbackSample = this._buildFallbackSample();
 
     // Resampling state: we generate at NATIVE_SAMPLE_RATE and output at
     // the AudioContext sample rate (typically 44100 or 48000).
@@ -75,6 +82,15 @@ class YM2612Processor extends AudioWorkletProcessor {
         } else {
           this._writeQueue.push(msg);
         }
+      } else if (msg.type === "pcm-note-on" || msg.type === "pcm-note-off") {
+        const targetFrame =
+          msg.when != null
+            ? Math.round(msg.when * sampleRate)
+            : currentFrame + WORKLET_BLOCK;
+        const entry = { ...msg, frame: targetFrame };
+        let i = this._pcmTimedQueue.length;
+        while (i > 0 && this._pcmTimedQueue[i - 1].frame > targetFrame) i--;
+        this._pcmTimedQueue.splice(i, 0, entry);
       } else if (msg.type === "writes") {
         for (const op of msg.ops) {
           this._writeQueue.push(op);
@@ -86,12 +102,80 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._psgChip = new SN76489();
         this._psgWriteQueue = [];
         this._psgTimedQueue = [];
+        this._pcmTimedQueue = [];
+        this._pcmVoices = [];
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
         this._psgTimedQueue = [];
+        this._pcmTimedQueue = [];
+        this._pcmVoices = [];
       }
     };
+  }
+
+  _buildFallbackSample() {
+    const length = 1024;
+    const out = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      const t = i / length;
+      const env = 1 - t;
+      out[i] = Math.sin(2 * Math.PI * 4 * t) * env * 0.6;
+    }
+    return out;
+  }
+
+  _startPcmVoice(msg) {
+    const rate = Number(msg.rate);
+    const vel = Number(msg.vel);
+    const sample = String(msg.sample ?? "");
+    if (!sample) return;
+    const gain = Math.max(0, Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15));
+    const step = Math.max(0.01, Number.isFinite(rate) ? rate : 1);
+    const mode = msg.mode === "loop" ? "loop" : "shot";
+    const voice = {
+      sample,
+      pos: 0,
+      step,
+      gain,
+      mode,
+      data: this._pcmFallbackSample,
+    };
+    if (mode === "loop") {
+      this._pcmVoices = this._pcmVoices.filter((v) => v.sample !== sample);
+    }
+    this._pcmVoices.push(voice);
+  }
+
+  _stopPcmVoice(msg) {
+    const sample = String(msg.sample ?? "");
+    if (!sample) return;
+    this._pcmVoices = this._pcmVoices.filter((v) => v.sample !== sample);
+  }
+
+  _mixPcmSample() {
+    let mixed = 0;
+    const alive = [];
+    for (const voice of this._pcmVoices) {
+      const data = voice.data;
+      if (!data || data.length === 0) continue;
+      let idx = Math.floor(voice.pos);
+      if (idx >= data.length) {
+        if (voice.mode === "loop") {
+          voice.pos = voice.pos % data.length;
+          idx = Math.floor(voice.pos);
+        } else {
+          continue;
+        }
+      }
+      mixed += data[idx] * voice.gain;
+      voice.pos += voice.step;
+      if (voice.mode === "loop" || voice.pos < data.length) {
+        alive.push(voice);
+      }
+    }
+    this._pcmVoices = alive;
+    return mixed;
   }
 
   process(_inputs, outputs, _parameters) {
@@ -125,6 +209,19 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._psgChip.write(this._psgTimedQueue.shift().data);
     }
 
+    // Drain timed PCM commands
+    while (
+      this._pcmTimedQueue.length > 0 &&
+      this._pcmTimedQueue[0].frame < blockEnd
+    ) {
+      const op = this._pcmTimedQueue.shift();
+      if (op.type === "pcm-note-on") {
+        this._startPcmVoice(op);
+      } else if (op.type === "pcm-note-off") {
+        this._stopPcmVoice(op);
+      }
+    }
+
     // Generate PSG samples at output rate (built-in decimation)
     const blockSize = outL.length; // always 128
     const psgL = new Float32Array(blockSize);
@@ -145,11 +242,18 @@ class YM2612Processor extends AudioWorkletProcessor {
       const idx = Math.floor(pos);
       const frac = pos - idx;
       const iNext = Math.min(idx + 1, nativeNeeded - 1);
+      const pcm = this._mixPcmSample();
 
       outL[i] =
-        this._nativeL[idx] * (1 - frac) + this._nativeL[iNext] * frac + psgL[i];
+        this._nativeL[idx] * (1 - frac) +
+        this._nativeL[iNext] * frac +
+        psgL[i] +
+        pcm;
       outR[i] =
-        this._nativeR[idx] * (1 - frac) + this._nativeR[iNext] * frac + psgR[i];
+        this._nativeR[idx] * (1 - frac) +
+        this._nativeR[iNext] * frac +
+        psgR[i] +
+        pcm;
 
       pos += this._resampleRatio;
     }
