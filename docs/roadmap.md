@@ -265,8 +265,8 @@ Other:
 
 **TEMPO_SWEEP**
 
-- [ ] `:tempo N` mid-track → `TEMPO_SET` IR event
-- [ ] `:tempo (curve :from N :to M :len L)` → `TEMPO_SWEEP` IR event
+- [x] `:tempo N` mid-track → `TEMPO_SET` IR event
+- [x] `:tempo (curve :from N :to M :len L)` → `TEMPO_SWEEP` IR event
 
 **PCM / DAC**
 
@@ -299,8 +299,8 @@ Other:
 
 **TEMPO_SWEEP**
 
-- [ ] `TEMPO_SET` dispatch → reanchor `audioTimeAtTick0` for all tracks
-- [ ] `TEMPO_SWEEP` dispatch → interpolate `secsPerTick` each scheduler pass
+- [x] `TEMPO_SET` dispatch → reanchor `audioTimeAtTick0` for all tracks
+- [x] `TEMPO_SWEEP` dispatch → interpolate `secsPerTick` each scheduler pass
 
 **PCM / DAC**
 

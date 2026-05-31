@@ -466,6 +466,12 @@ function parseCurveSpec(node) {
   return spec;
 }
 
+function parseNumberLike(value) {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function canonicalTarget(symbol) {
   const map = {
     // Sequencer / level
@@ -881,6 +887,77 @@ function compileChannelBody(
                     },
                     src: nodeSrc(node),
                   });
+                }
+              }
+              break;
+            }
+            case ":tempo": {
+              const valueNode = items[i];
+              const bpm = parseNumberLike(rawVal);
+              if (bpm !== null && bpm > 0) {
+                trackState.currentTempo = bpm;
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "TEMPO_SET",
+                  args: { bpm },
+                  src: nodeSrc(node),
+                });
+                break;
+              }
+
+              if (
+                valueNode?.kind === "list" &&
+                valueNode.bracket === "()" &&
+                valueNode.items?.length > 0
+              ) {
+                const curve = atomValue(valueNode.items[0]);
+                if (curve && CURVE_NAMES.has(curve)) {
+                  let from = null;
+                  let to = null;
+                  let len = null;
+                  for (let j = 1; j < valueNode.items.length; j++) {
+                    const k = atomValue(valueNode.items[j]);
+                    if (
+                      !(k && k.startsWith(":")) ||
+                      j + 1 >= valueNode.items.length
+                    )
+                      continue;
+                    const v = atomValue(valueNode.items[j + 1]);
+                    if (k === ":from") from = parseNumberLike(v);
+                    else if (k === ":to") to = parseNumberLike(v);
+                    else if (k === ":len") len = parseLengthToken(v, null);
+                    j++;
+                  }
+
+                  const fromBpm = from ?? trackState.currentTempo;
+                  const toBpm = to;
+                  if (
+                    fromBpm !== null &&
+                    Number.isFinite(fromBpm) &&
+                    fromBpm > 0 &&
+                    toBpm !== null &&
+                    Number.isFinite(toBpm) &&
+                    toBpm > 0 &&
+                    len !== null &&
+                    len > 0
+                  ) {
+                    trackState.currentTempo = toBpm;
+                    events.push({
+                      tick: trackState.tick,
+                      cmd: "TEMPO_SWEEP",
+                      args: { from: fromBpm, to: toBpm, len, curve },
+                      src: nodeSrc(node),
+                    });
+                  } else {
+                    pushDiag(
+                      diagnostics,
+                      "error",
+                      "E_TEMPO_INVALID",
+                      "invalid :tempo curve; expected (:curve :from N :to M :len L)",
+                      nodeSrc(node),
+                      trackName,
+                    );
+                  }
                 }
               }
               break;
@@ -1937,6 +2014,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const titleNode = scoreOptions.get(":title");
   const authorNode = scoreOptions.get(":author");
   const scoreTempoNode = scoreOptions.get(":tempo");
+  const scoreTempoVal = parseIntLike(atomValue(scoreTempoNode));
   const scoreLfoRateNode = scoreOptions.get(":lfo-rate");
   const scoreShuffleNode = scoreOptions.get(":shuffle");
 
@@ -2041,6 +2119,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultLength,
         defaultOct,
         defaultGate,
+        currentTempo: scoreTempoVal ?? 120,
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
         activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON (legacy)
@@ -2162,7 +2241,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         src: scoreSrc,
       });
     }
-    const scoreTempoVal = parseIntLike(atomValue(scoreTempoNode));
     if (scoreTempoVal !== null) {
       initEvents.push({
         tick: 0,

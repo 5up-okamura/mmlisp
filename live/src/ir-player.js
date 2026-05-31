@@ -54,6 +54,7 @@ export class IRPlayer {
     this._currentTick = 0;
     this._ppqn = 48;
     this._bpm = 120;
+    this._tempoSweep = null;
     this._startAudioTime = 0;
     this._audioContext = null;
     this._schedulerTimer = null;
@@ -111,6 +112,7 @@ export class IRPlayer {
     this._ir = await res.json();
     this._ppqn = this._ir.ppqn ?? 48;
     this._bpm = 120;
+    this._tempoSweep = null;
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -135,6 +137,7 @@ export class IRPlayer {
     this._ir = irObj;
     this._ppqn = irObj.ppqn ?? 48;
     this._bpm = 120;
+    this._tempoSweep = null;
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -469,14 +472,15 @@ export class IRPlayer {
 
     const now = this._audioContext.currentTime;
     const horizon = now + this._schedulerLookahead;
-    const secsPerTick = this._secsPerTick;
+
+    this._updateTempoSweep(now);
 
     // _onTick: use track 0 position for the Bar:Beat display
     if (this._onTick && this._tracks.length > 0) {
       const t0 = this._tracks[0];
       const currentTick = Math.max(
         0,
-        (now - t0.audioTimeAtTick0) / secsPerTick,
+        (now - t0.audioTimeAtTick0) / this._secsPerTick,
       );
       this._onTick(currentTick, this._bpm, this._ppqn);
     }
@@ -487,7 +491,7 @@ export class IRPlayer {
       while (guard++ < 16) {
         while (track.flatIndex < track.events.length) {
           const ev = track.events[track.flatIndex];
-          const evTime = track.audioTimeAtTick0 + ev.tick * secsPerTick;
+          const evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
           if (evTime > horizon) break;
 
           this._dispatchEvent(ev, evTime);
@@ -509,7 +513,7 @@ export class IRPlayer {
           track.loopCount++;
           track.audioTimeAtTick0 =
             track.startAudioTime +
-            track.loopCount * track.loopDuration * secsPerTick;
+            track.loopCount * track.loopDuration * this._secsPerTick;
           track.flatIndex = track.loopStartIndex ?? 0;
           // Continue to schedule new-iteration events that fall within horizon
         } else {
@@ -641,6 +645,71 @@ export class IRPlayer {
         psgCh,
       };
     });
+  }
+
+  _setTempoAtTick(bpm, changeTick, changeWhen) {
+    if (!Number.isFinite(bpm) || bpm <= 0) return;
+    if (this._tracks.length === 0) {
+      this._bpm = bpm;
+      return;
+    }
+
+    const oldSecsPerTick = this._secsPerTick;
+    const t0 = this._tracks[0];
+    const audioTimeOfChange =
+      changeWhen ?? t0.audioTimeAtTick0 + changeTick * oldSecsPerTick;
+
+    this._bpm = bpm;
+    const newSecsPerTick = this._secsPerTick;
+    const newTick0 = audioTimeOfChange - changeTick * newSecsPerTick;
+
+    for (const track of this._tracks) {
+      track.audioTimeAtTick0 = newTick0;
+      track.startAudioTime = newTick0;
+    }
+  }
+
+  _startTempoSweep(args, changeTick, changeWhen) {
+    const from = Number.isFinite(Number(args?.from))
+      ? Number(args.from)
+      : this._bpm;
+    const to = Number.isFinite(Number(args?.to)) ? Number(args.to) : from;
+    const len = Math.max(1, Math.round(Number(args?.len ?? 1)));
+    const curve = args?.curve ?? "linear";
+
+    if (!(from > 0) || !(to > 0)) return;
+
+    this._setTempoAtTick(from, changeTick, changeWhen);
+    this._tempoSweep = {
+      from,
+      to,
+      len,
+      curve,
+      startTick: changeTick,
+    };
+  }
+
+  _updateTempoSweep(now) {
+    if (!this._tempoSweep || this._tracks.length === 0) return;
+
+    const t0 = this._tracks[0];
+    const currentTick = Math.max(
+      0,
+      (now - t0.audioTimeAtTick0) / this._secsPerTick,
+    );
+    const elapsedTicks = currentTick - this._tempoSweep.startTick;
+    const phase = Math.max(0, Math.min(1, elapsedTicks / this._tempoSweep.len));
+    const unit = sampleCurveUnit(this._tempoSweep.curve, phase);
+    const nextBpm =
+      this._tempoSweep.from +
+      (this._tempoSweep.to - this._tempoSweep.from) * unit;
+
+    this._setTempoAtTick(nextBpm, currentTick, now);
+
+    if (phase >= 1) {
+      this._setTempoAtTick(this._tempoSweep.to, currentTick, now);
+      this._tempoSweep = null;
+    }
   }
 
   _buildModulatorMap() {
@@ -912,7 +981,15 @@ export class IRPlayer {
 
       case "TEMPO_SET": {
         const bpm = Number(ev.args?.bpm);
-        if (Number.isFinite(bpm) && bpm > 0) this._bpm = bpm;
+        if (Number.isFinite(bpm) && bpm > 0) {
+          this._tempoSweep = null;
+          this._setTempoAtTick(bpm, ev.tick ?? 0, when);
+        }
+        break;
+      }
+
+      case "TEMPO_SWEEP": {
+        this._startTempoSweep(ev.args ?? {}, ev.tick ?? 0, when);
         break;
       }
 
@@ -2005,7 +2082,15 @@ export class IRPlayer {
 
       case "TEMPO_SET": {
         const bpm = Number(ev.args?.bpm);
-        if (Number.isFinite(bpm) && bpm > 0) this._bpm = bpm;
+        if (Number.isFinite(bpm) && bpm > 0) {
+          this._tempoSweep = null;
+          this._setTempoAtTick(bpm, ev.tick ?? 0, when);
+        }
+        break;
+      }
+
+      case "TEMPO_SWEEP": {
+        this._startTempoSweep(ev.args ?? {}, ev.tick ?? 0, when);
         break;
       }
 
