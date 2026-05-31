@@ -1501,7 +1501,7 @@ function compileChannelBody(
       // Subgroup / tuplet: list starting with a note or per-note-length atom.
       // Tick duration is distributed among all elements using Bresenham method.
       if (isNoteAtom(head) || isPerNoteLengthAtom(head)) {
-        const elems = node.items;
+        const elems = node.items.filter((ev) => ev?.kind !== "comment");
         const n = elems.length;
         const totalTicks = trackState.defaultLength;
         let acc = 0;
@@ -1510,9 +1510,6 @@ function compileChannelBody(
           const slotTicks = Math.floor(acc / n);
           acc -= slotTicks * n;
           const ev = elems[j];
-          if (ev?.kind === "comment") {
-            continue;
-          }
           const evVal = atomValue(ev);
           if (evVal === "_") {
             events.push({
