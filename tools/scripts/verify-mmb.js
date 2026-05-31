@@ -7,6 +7,7 @@ const SECTION = {
   TRACK_TABLE: 0x0001,
   EVENT_STREAM: 0x0002,
   METADATA: 0x0003,
+  SAMPLE_BANK: 0x0004,
 };
 
 const OPCODE_PAYLOAD_SIZE = {
@@ -138,6 +139,72 @@ function verifyTrackEvents(buf, eventSection, trackEntries) {
   return totalEvents;
 }
 
+function verifySampleBank(buf, section) {
+  if (!section) {
+    return 0;
+  }
+  if (section.size < 2) {
+    fail("SAMPLE_BANK section too small");
+  }
+
+  const base = section.offset;
+  const end = section.offset + section.size;
+  const sampleCount = u16le(buf, base);
+  let pos = base + 2;
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    if (pos + 2 > end) {
+      fail(`SAMPLE_BANK sample ${i} truncated header`);
+    }
+    const sampleId = buf[pos];
+    const nameLen = buf[pos + 1];
+    pos += 2;
+
+    if (sampleId === 0) {
+      fail(`SAMPLE_BANK sample ${i} has invalid sample id 0`);
+    }
+    if (pos + nameLen + 20 > end) {
+      fail(`SAMPLE_BANK sample ${i} truncated record`);
+    }
+
+    const name = buf.subarray(pos, pos + nameLen).toString("utf8");
+    if (!name) {
+      fail(`SAMPLE_BANK sample ${i} missing name`);
+    }
+    pos += nameLen;
+
+    const sampleRate = u32le(buf, pos);
+    const frameCount = u32le(buf, pos + 4);
+    const loopStart = u32le(buf, pos + 8);
+    const loopEnd = u32le(buf, pos + 12);
+    const dataLen = u32le(buf, pos + 16);
+    pos += 20;
+
+    if (sampleRate === 0) {
+      fail(`SAMPLE_BANK sample ${i} has invalid sample rate`);
+    }
+    if (loopEnd < loopStart || loopEnd > frameCount) {
+      fail(`SAMPLE_BANK sample ${i} has invalid loop range`);
+    }
+    if (pos + dataLen > end) {
+      fail(`SAMPLE_BANK sample ${i} truncated PCM data`);
+    }
+    if (dataLen !== frameCount) {
+      fail(`SAMPLE_BANK sample ${i} frame count mismatch`);
+    }
+
+    pos += dataLen;
+  }
+
+  for (; pos < end; pos += 1) {
+    if (buf[pos] !== 0) {
+      fail("SAMPLE_BANK trailing bytes must be zero padding");
+    }
+  }
+
+  return sampleCount;
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length !== 1) {
@@ -181,6 +248,7 @@ function main() {
     sections.get(SECTION.EVENT_STREAM),
     trackEntries,
   );
+  verifySampleBank(buf, sections.get(SECTION.SAMPLE_BANK));
   if (!sections.has(SECTION.METADATA)) {
     fail("missing METADATA section");
   }

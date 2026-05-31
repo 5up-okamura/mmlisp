@@ -26,6 +26,11 @@ function encodeString(str) {
   return Buffer.from(String(str), "utf8");
 }
 
+function decodeBase64Pcm8(dataBase64) {
+  const raw = Buffer.from(String(dataBase64 || ""), "base64");
+  return Buffer.from(raw);
+}
+
 function ensureU8(value, label) {
   if (value < 0 || value > 255) {
     throw new Error(`${label} is out of u8 range: ${value}`);
@@ -38,6 +43,13 @@ function ensureU16(value, label) {
     throw new Error(`${label} is out of u16 range: ${value}`);
   }
   return value & 0xffff;
+}
+
+function ensureU32(value, label) {
+  if (value < 0 || value > 0xffffffff) {
+    throw new Error(`${label} is out of u32 range: ${value}`);
+  }
+  return value >>> 0;
 }
 
 function normalizePcmMode(value) {
@@ -55,13 +67,86 @@ function rateToQ8_8(rate, label) {
   return ensureU16(Math.max(1, Math.min(0xffff, q)), label);
 }
 
-function buildTrackMaps(track) {
+function buildSampleBank(sampleDefs) {
+  const sampleMap = new Map();
+  const entries = [];
+  let nextSampleId = 1;
+
+  for (const sample of sampleDefs || []) {
+    const name = String(sample?.name || "").trim();
+    const compiled = sample?.compiled;
+    if (!name || !compiled?.dataBase64) continue;
+
+    const sampleId = ensureU8(nextSampleId, "sample id");
+    nextSampleId += 1;
+    sampleMap.set(name, sampleId);
+
+    const pcm = decodeBase64Pcm8(compiled.dataBase64);
+    const sampleRate = ensureU32(
+      Math.max(
+        0,
+        Math.min(
+          0xffffffff,
+          Math.round(Number(compiled.sourceSampleRate || sample.rate || 0)),
+        ),
+      ),
+      "sample rate",
+    );
+    const frameCount = ensureU32(
+      Math.max(0, Math.min(0xffffffff, Number(compiled.frames || pcm.length))),
+      "sample frame count",
+    );
+    const loopStart = ensureU32(
+      Math.max(
+        0,
+        Math.min(0xffffffff, Math.round(Number(sample.loopStart ?? 0))),
+      ),
+      "sample loopStart",
+    );
+    const loopEnd = ensureU32(
+      Math.max(
+        0,
+        Math.min(0xffffffff, Math.round(Number(sample.loopEnd ?? frameCount))),
+      ),
+      "sample loopEnd",
+    );
+
+    entries.push({
+      sampleId,
+      name,
+      sampleRate,
+      frameCount,
+      loopStart,
+      loopEnd,
+      pcm,
+    });
+  }
+
+  const chunks = [u16le(entries.length)];
+  for (const entry of entries) {
+    const nameBuf = encodeString(entry.name);
+    if (nameBuf.length > 255) {
+      throw new Error(`sample name too long: ${entry.name}`);
+    }
+    chunks.push(Buffer.from([entry.sampleId]));
+    chunks.push(Buffer.from([nameBuf.length]));
+    chunks.push(nameBuf);
+    chunks.push(u32le(entry.sampleRate));
+    chunks.push(u32le(entry.frameCount));
+    chunks.push(u32le(entry.loopStart));
+    chunks.push(u32le(entry.loopEnd));
+    chunks.push(u32le(entry.pcm.length));
+    chunks.push(entry.pcm);
+  }
+
+  return { sampleMap, bank: Buffer.concat(chunks), entries };
+}
+
+function buildTrackMaps(track, sampleMap) {
   const markerMap = new Map();
   const loopMap = new Map();
-  const sampleMap = new Map();
   let nextMarkerId = 1;
   let nextLoopId = 1;
-  let nextSampleId = 1;
 
   for (const event of track.events || []) {
     if (event.cmd === "MARKER") {
@@ -76,13 +161,6 @@ function buildTrackMaps(track) {
       if (id && !loopMap.has(id)) {
         loopMap.set(id, ensureU8(nextLoopId, "loop id"));
         nextLoopId += 1;
-      }
-    }
-    if (event.cmd === "PCM_NOTE_ON" || event.cmd === "PCM_NOTE_OFF") {
-      const name = String(event.args?.sample || "").trim();
-      if (name && !sampleMap.has(name)) {
-        sampleMap.set(name, ensureU8(nextSampleId, "sample id"));
-        nextSampleId += 1;
       }
     }
   }
@@ -204,8 +282,8 @@ function encodeEvent(event, trackMaps, delta) {
 // IR commands that have no GMB binary encoding and are silently skipped
 const GMB_SKIPPED_CMDS = new Set(["PSG_VOICE", "CARRY_SET"]);
 
-function encodeTrackEvents(track) {
-  const trackMaps = buildTrackMaps(track);
+function encodeTrackEvents(track, sampleMap) {
+  const trackMaps = buildTrackMaps(track, sampleMap);
 
   // Two-pass encoding for JUMP relative byte offset (spec 1.6):
   // Pass 1: encode all events with placeholder JUMP offsets, record byte positions of MARKERs
@@ -436,6 +514,7 @@ function createAllocator(targetProfile) {
 function buildGmb(ir, options = {}) {
   const tracks = ir.tracks || [];
   const allocator = createAllocator(options.targetProfile || "md-full");
+  const sampleBank = buildSampleBank(ir.metadata?.samples || []);
 
   const eventBlocks = [];
   const trackEntries = [];
@@ -446,7 +525,7 @@ function buildGmb(ir, options = {}) {
     const allocation = allocator.allocate(t);
     const role = trackRole(t);
     const writeScope = t?.route_hint?.write_scope ?? ["any"];
-    const block = encodeTrackEvents(t);
+    const block = encodeTrackEvents(t, sampleBank.sampleMap);
     eventBlocks.push(block);
     trackEntries.push({
       trackId: t.id ?? i,
@@ -477,11 +556,15 @@ function buildGmb(ir, options = {}) {
     }),
     2,
   );
+  const sampleBankSection = alignBuffer(sampleBank.bank, 2);
 
   const sectionEntries = [
     { id: SECTION.TRACK_TABLE, flags: 0, data: trackTable },
     { id: SECTION.EVENT_STREAM, flags: 0, data: eventStream },
     { id: SECTION.METADATA, flags: 0, data: metadata },
+    ...(sampleBank.entries.length > 0
+      ? [{ id: SECTION.SAMPLE_BANK, flags: 0, data: sampleBankSection }]
+      : []),
   ];
 
   const headerSize = 16;
@@ -526,6 +609,15 @@ function buildGmb(ir, options = {}) {
     trackCount: tracks.length,
     targetProfile: allocator.profileName,
     trackAssignments,
+    sampleBank: sampleBank.entries.map((entry) => ({
+      sampleId: entry.sampleId,
+      name: entry.name,
+      sampleRate: entry.sampleRate,
+      frameCount: entry.frameCount,
+      loopStart: entry.loopStart,
+      loopEnd: entry.loopEnd,
+      dataLength: entry.pcm.length,
+    })),
   };
 
   return { gmb, meta };

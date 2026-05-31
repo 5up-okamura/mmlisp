@@ -3,6 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { buildGmb } = require("./mmlisp2mmb");
 
 function u16le(buf, off) {
   return buf.readUInt16LE(off);
@@ -50,6 +51,56 @@ function firstTrackEventHeaderOffset(buf) {
   return stream.offset + eventOffset;
 }
 
+function buildSampleBankFixture() {
+  const ir = {
+    metadata: {
+      title: "fixture-pcm",
+      samples: [
+        {
+          name: "kick",
+          rate: 22050,
+          loopStart: 1,
+          loopEnd: 3,
+          compiled: {
+            sourceSampleRate: 22050,
+            frames: 4,
+            dataBase64: Buffer.from([0x80, 0x7f, 0x00, 0x40]).toString(
+              "base64",
+            ),
+          },
+        },
+      ],
+    },
+    tracks: [
+      {
+        id: 1,
+        channel: "pcm1",
+        events: [
+          {
+            cmd: "PCM_NOTE_ON",
+            tick: 0,
+            args: {
+              sample: "kick",
+              rate: 1,
+              length: 12,
+              vel: 15,
+              mode: "shot",
+              baseRate: 0,
+            },
+          },
+          {
+            cmd: "PCM_NOTE_OFF",
+            tick: 12,
+            args: { sample: "kick", mode: "shot" },
+          },
+        ],
+      },
+    ],
+  };
+
+  return buildGmb(ir, { targetProfile: "md-full" }).gmb;
+}
+
 function makeFixtures() {
   const repoRoot = path.resolve(__dirname, "..", "..");
   const gmbDir = path.join(repoRoot, "examples", "gmb");
@@ -57,8 +108,10 @@ function makeFixtures() {
   fs.mkdirSync(fixturesDir, { recursive: true });
 
   const demo1 = fs.readFileSync(path.join(gmbDir, "demo1.mmb"));
+  const pcmBank = buildSampleBankFixture();
 
   const valid1 = Buffer.from(demo1);
+  const validPcmBank = Buffer.from(pcmBank);
 
   const badMagic = Buffer.from(demo1);
   badMagic.write("BAD0", 0, "ascii");
@@ -82,12 +135,27 @@ function makeFixtures() {
     writeU32le(badTrackRange, firstEntry + 8, 0x00ffffff);
   }
 
+  const badSampleBank = Buffer.from(pcmBank);
+  {
+    const sampleBank = parseSection(badSampleBank, 0x0004);
+    if (!sampleBank) {
+      throw new Error("missing SAMPLE_BANK");
+    }
+    writeU16le(badSampleBank, sampleBank.offset, 2);
+  }
+
   const files = [
     {
       name: "valid-demo1.mmb",
       buffer: valid1,
       valid: true,
       reason: "Known-good demo1 artifact",
+    },
+    {
+      name: "valid-pcm-sample-bank.mmb",
+      buffer: validPcmBank,
+      valid: true,
+      reason: "Known-good demo with embedded PCM sample bank",
     },
     {
       name: "invalid-bad-magic.mmb",
@@ -106,6 +174,12 @@ function makeFixtures() {
       buffer: badTrackRange,
       valid: false,
       reason: "Track event range intentionally exceeds EVENT_STREAM",
+    },
+    {
+      name: "invalid-bad-sample-bank.mmb",
+      buffer: badSampleBank,
+      valid: false,
+      reason: "Sample bank count is intentionally mismatched",
     },
   ];
 

@@ -1,10 +1,15 @@
 {
-  "generatedAt": "2026-05-04T05:21:08.867Z",
+  "generatedAt": "2026-05-31T20:20:58.867Z",
   "cases": [
     {
       "file": "valid-demo1.mmb",
       "valid": true,
       "reason": "Known-good demo1 artifact"
+    },
+    {
+      "file": "valid-pcm-sample-bank.mmb",
+      "valid": true,
+      "reason": "Known-good demo with embedded PCM sample bank"
     },
     {
       "file": "invalid-bad-magic.mmb",
@@ -20,6 +25,11 @@
       "file": "invalid-track-range.mmb",
       "valid": false,
       "reason": "Track event range intentionally exceeds EVENT_STREAM"
+    },
+    {
+      "file": "invalid-bad-sample-bank.mmb",
+      "valid": false,
+      "reason": "Sample bank count is intentionally mismatched"
     }
   ]
 }
