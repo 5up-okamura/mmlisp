@@ -165,27 +165,23 @@ function buildSampleBank(sampleDefs) {
   return { sampleMap, bank: Buffer.concat(chunks), entries };
 }
 
-function collectReferencedPcmSamples(tracks) {
+function validateSampleBankCoverage(tracks, sampleMap) {
   const sampleNames = new Set();
   for (const track of tracks || []) {
     for (const event of track?.events || []) {
-      if (event?.cmd === "PCM_NOTE_ON" || event?.cmd === "PCM_NOTE_OFF") {
-        const name = String(event.args?.sample || "").trim();
-        if (name) {
-          sampleNames.add(name);
-        }
+      if (event?.cmd !== "PCM_NOTE_ON" && event?.cmd !== "PCM_NOTE_OFF") {
+        continue;
+      }
+      const name = String(event.args?.sample || "").trim();
+      if (name && !sampleMap.has(name)) {
+        sampleNames.add(name);
       }
     }
   }
-  return sampleNames;
-}
-
-function validateSampleBankCoverage(tracks, sampleMap) {
-  const referenced = collectReferencedPcmSamples(tracks);
-  for (const name of referenced) {
-    if (!sampleMap.has(name)) {
-      throw new Error(`PCM_NOTE_ON references undefined sample: ${name}`);
-    }
+  if (sampleNames.size > 0) {
+    throw new Error(
+      `PCM_NOTE_ON references undefined sample: ${[...sampleNames][0]}`,
+    );
   }
 }
 

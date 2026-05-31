@@ -790,6 +790,32 @@
       return '/' + path;
     }
 
+    function audioBufferToMono(decoded) {
+      const channels = decoded.numberOfChannels;
+      const length = decoded.length;
+      const mono = new Float32Array(length);
+      if (channels <= 1) {
+        mono.set(decoded.getChannelData(0));
+      } else {
+        const left = decoded.getChannelData(0);
+        const right = decoded.getChannelData(1);
+        for (let i = 0; i < length; i++) mono[i] = (left[i] + right[i]) * 0.5;
+      }
+      return mono;
+    }
+
+    function signedPcm8Base64ToMono(dataBase64) {
+      const bin = atob(dataBase64);
+      const len = bin.length;
+      const mono = new Float32Array(len);
+      for (let i = 0; i < len; i++) {
+        const u = bin.charCodeAt(i) & 0xff;
+        const s8 = u > 127 ? u - 256 : u;
+        mono[i] = s8 / 128;
+      }
+      return mono;
+    }
+
     async function decodePcmSample(path) {
       const cached = _pcmSampleCache.get(path);
       if (cached) return cached;
@@ -799,17 +825,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const encoded = await res.arrayBuffer();
       const decoded = await audioCtx.decodeAudioData(encoded.slice(0));
-      const channels = decoded.numberOfChannels;
-      const length = decoded.length;
-      const mono = new Float32Array(length);
-      if (channels <= 1) {
-        mono.set(decoded.getChannelData(0));
-      } else {
-        const l = decoded.getChannelData(0);
-        const r = decoded.getChannelData(1);
-        for (let i = 0; i < length; i++) mono[i] = (l[i] + r[i]) * 0.5;
-      }
-      const out = { data: mono, sampleRate: decoded.sampleRate };
+      const out = { data: audioBufferToMono(decoded), sampleRate: decoded.sampleRate };
       _pcmSampleCache.set(path, out);
       return out;
     }
@@ -824,20 +840,11 @@
       const cached = _pcmCompiledCache.get(cacheKey);
       if (cached) return cached;
 
-      const bin = atob(compiled.dataBase64);
-      const len = bin.length;
-      const mono = new Float32Array(len);
-      for (let i = 0; i < len; i++) {
-        const u = bin.charCodeAt(i) & 0xff;
-        const s8 = u > 127 ? u - 256 : u;
-        mono[i] = s8 / 128;
-      }
-
       const sampleRate = Number(compiled.sourceSampleRate) > 0
         ? Number(compiled.sourceSampleRate)
         : (Number(def?.rate) > 0 ? Number(def.rate) : 44100);
 
-      const out = { data: mono, sampleRate };
+      const out = { data: signedPcm8Base64ToMono(compiled.dataBase64), sampleRate };
       _pcmCompiledCache.set(cacheKey, out);
       return out;
     }

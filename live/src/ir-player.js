@@ -206,6 +206,58 @@ function parseMetadataSection(bytes, section) {
   return metadata;
 }
 
+function readSampleBankRecord(bytes, view, pos, sampleIndex, end) {
+  if (pos + 2 > end) {
+    throw new Error(`SAMPLE_BANK sample ${sampleIndex} truncated header`);
+  }
+  const sampleId = bytes[pos];
+  const nameLen = bytes[pos + 1];
+  pos += 2;
+  if (sampleId === 0) {
+    throw new Error(
+      `SAMPLE_BANK sample ${sampleIndex} has invalid sample id 0`,
+    );
+  }
+  if (pos + nameLen + 20 > end) {
+    throw new Error(`SAMPLE_BANK sample ${sampleIndex} truncated record`);
+  }
+
+  const name = TEXT_DECODER.decode(bytes.subarray(pos, pos + nameLen));
+  pos += nameLen;
+  const sampleRate = readU32LE(view, pos);
+  const frameCount = readU32LE(view, pos + 4);
+  const loopStart = readU32LE(view, pos + 8);
+  const loopEnd = readU32LE(view, pos + 12);
+  const dataLen = readU32LE(view, pos + 16);
+  pos += 20;
+
+  if (sampleRate === 0) {
+    throw new Error(
+      `SAMPLE_BANK sample ${sampleIndex} has invalid sample rate`,
+    );
+  }
+  if (loopEnd < loopStart || loopEnd > frameCount) {
+    throw new Error(`SAMPLE_BANK sample ${sampleIndex} has invalid loop range`);
+  }
+  if (pos + dataLen > end) {
+    throw new Error(`SAMPLE_BANK sample ${sampleIndex} truncated PCM data`);
+  }
+  if (dataLen !== frameCount) {
+    throw new Error(`SAMPLE_BANK sample ${sampleIndex} frame count mismatch`);
+  }
+
+  return {
+    sampleId,
+    name,
+    sampleRate,
+    frameCount,
+    loopStart,
+    loopEnd,
+    data: bytes.subarray(pos, pos + dataLen),
+    nextPos: pos + dataLen,
+  };
+}
+
 function parseSampleBankSection(bytes, view, section) {
   const samples = [];
   const sampleById = new Map();
@@ -219,51 +271,19 @@ function parseSampleBankSection(bytes, view, section) {
   const sampleCount = readU16LE(view, section.offset);
   let pos = section.offset + 2;
   for (let i = 0; i < sampleCount; i++) {
-    if (pos + 2 > end)
-      throw new Error(`SAMPLE_BANK sample ${i} truncated header`);
-    const sampleId = bytes[pos];
-    const nameLen = bytes[pos + 1];
-    pos += 2;
-    if (sampleId === 0)
-      throw new Error(`SAMPLE_BANK sample ${i} has invalid sample id 0`);
-    if (pos + nameLen + 20 > end)
-      throw new Error(`SAMPLE_BANK sample ${i} truncated record`);
-
-    const name = TEXT_DECODER.decode(bytes.subarray(pos, pos + nameLen));
-    pos += nameLen;
-    const sampleRate = readU32LE(view, pos);
-    const frameCount = readU32LE(view, pos + 4);
-    const loopStart = readU32LE(view, pos + 8);
-    const loopEnd = readU32LE(view, pos + 12);
-    const dataLen = readU32LE(view, pos + 16);
-    pos += 20;
-
-    if (sampleRate === 0) {
-      throw new Error(`SAMPLE_BANK sample ${i} has invalid sample rate`);
-    }
-    if (loopEnd < loopStart || loopEnd > frameCount) {
-      throw new Error(`SAMPLE_BANK sample ${i} has invalid loop range`);
-    }
-    if (pos + dataLen > end) {
-      throw new Error(`SAMPLE_BANK sample ${i} truncated PCM data`);
-    }
-    if (dataLen !== frameCount) {
-      throw new Error(`SAMPLE_BANK sample ${i} frame count mismatch`);
-    }
-
-    const data = bytes.subarray(pos, pos + dataLen);
-    pos += dataLen;
-    sampleById.set(sampleId, name);
+    const record = readSampleBankRecord(bytes, view, pos, i, end);
+    pos = record.nextPos;
+    sampleById.set(record.sampleId, record.name);
     samples.push({
-      name,
-      rate: sampleRate,
-      loopStart,
-      loopEnd,
+      name: record.name,
+      rate: record.sampleRate,
+      loopStart: record.loopStart,
+      loopEnd: record.loopEnd,
       compiled: {
         format: "pcm_s8",
-        sourceSampleRate: sampleRate,
-        frames: frameCount,
-        dataBase64: bytesToBase64(data),
+        sourceSampleRate: record.sampleRate,
+        frames: record.frameCount,
+        dataBase64: bytesToBase64(record.data),
       },
     });
   }

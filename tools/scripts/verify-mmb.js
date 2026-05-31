@@ -2,27 +2,21 @@
 "use strict";
 
 const fs = require("node:fs");
-
-const SECTION = {
-  TRACK_TABLE: 0x0001,
-  EVENT_STREAM: 0x0002,
-  METADATA: 0x0003,
-  SAMPLE_BANK: 0x0004,
-};
+const { SECTION, OPCODE } = require("./mmb-common");
 
 const OPCODE_PAYLOAD_SIZE = {
-  0x10: 3, // NOTE_ON: pitch:u8, length:u16
-  0x11: 2, // REST: length:u16
-  0x12: 2, // TIE: length:u16
-  0x40: 1, // LOOP_BEGIN: loop_id:u8
-  0x41: 2, // LOOP_END: loop_id:u8, repeat:u8
-  0x42: 1, // MARKER: marker_id:u8
-  0x43: 2, // JUMP: rel_offset:i16 (spec 1.6)
-  0x60: 3, // PARAM_SET: target_id:u8, value:i16
-  0x61: null, // PARAM_SWEEP: variable-length payload
-  0x80: 2, // TEMPO_SET: bpm:u16
-  0xc0: 9, // PCM_NOTE_ON: sample_id:u8, rate:q8.8, length:u16, vel:u8, mode:u8, base_rate:u16
-  0xc1: 2, // PCM_NOTE_OFF: sample_id:u8, mode:u8
+  [OPCODE.NOTE_ON]: 3, // NOTE_ON: pitch:u8, length:u16
+  [OPCODE.REST]: 2, // REST: length:u16
+  [OPCODE.TIE]: 2, // TIE: length:u16
+  [OPCODE.LOOP_BEGIN]: 1, // LOOP_BEGIN: loop_id:u8
+  [OPCODE.LOOP_END]: 2, // LOOP_END: loop_id:u8, repeat:u8
+  [OPCODE.MARKER]: 1, // MARKER: marker_id:u8
+  [OPCODE.JUMP]: 2, // JUMP: rel_offset:i16 (spec 1.6)
+  [OPCODE.PARAM_SET]: 3, // PARAM_SET: target_id:u8, value:i16
+  [OPCODE.PARAM_SWEEP]: null, // PARAM_SWEEP: variable-length payload
+  [OPCODE.TEMPO_SET]: 2, // TEMPO_SET: bpm:u16
+  [OPCODE.PCM_NOTE_ON]: 9, // PCM_NOTE_ON: sample_id:u8, rate:q8.8, length:u16, vel:u8, mode:u8, base_rate:u16
+  [OPCODE.PCM_NOTE_OFF]: 2, // PCM_NOTE_OFF: sample_id:u8, mode:u8
 };
 
 function usage() {
