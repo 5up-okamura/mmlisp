@@ -1484,7 +1484,18 @@ function compileChannelBody(
     }
 
     // ── List items ───────────────────────────────────────────────────────
-    if (node.kind === "list" && node.items.length > 0) {
+    if (node.kind === "list") {
+      if (node.items.length === 0) {
+        pushUnknownDiag(
+          diagnostics,
+          "E_UNKNOWN_LIST",
+          "Unknown list form",
+          node,
+          trackName,
+        );
+        i++;
+        continue;
+      }
       const head = atomValue(node.items[0]);
       if (!head) {
         pushUnknownDiag(
@@ -1800,11 +1811,22 @@ function compileTrackBodyItems(
 
     if (!node || node.kind === "comment") continue;
 
-    if (node.kind !== "list" || node.items.length === 0) {
+    if (node.kind !== "list") {
       pushUnknownDiag(
         diagnostics,
         "E_UNKNOWN_NODE",
         "Unknown track-body node",
+        node,
+        trackName,
+      );
+      continue;
+    }
+
+    if (node.items.length === 0) {
+      pushUnknownDiag(
+        diagnostics,
+        "E_UNKNOWN_LIST",
+        "Unknown list form",
         node,
         trackName,
       );
