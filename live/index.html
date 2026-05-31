@@ -730,6 +730,7 @@
 
     const SOURCE_FILE_TYPES = [
       { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } },
+      { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
     ];
 
     async function loadMmlispSource(irURL) {
@@ -886,6 +887,19 @@
 
     async function readFileHandle(handle) {
       const file = await handle.getFile();
+      if (/\.mmb(?:$|\?)/i.test(file.name)) {
+        _sourceHandle = null;
+        _sourceFileName = file.name;
+        _sourceDir = null;
+        currentIrURL = URL.createObjectURL(file);
+        _lastGoodIR = null;
+        _lastSourceMap = null;
+        _lastFileName = file.name;
+        displayFileName(file.name);
+        setEditorDoc('(binary MMB preset loaded)');
+        log('Loaded ' + file.name + ' as binary preset', 'info');
+        return;
+      }
       const src = await file.text();
       setSourceContextFromHandle(handle);
       _lastGoodIR = null;
@@ -1235,6 +1249,11 @@
           player.loadJSON(_lastGoodIR);
           await syncPcmSamplesToWorklet(_lastGoodIR);
           log('Playing (compiled source)', 'info');
+        } else if (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL)) {
+          log('Loading ' + currentIrURL + '…');
+          await player.loadMMB(currentIrURL);
+          await syncPcmSamplesToWorklet(player._ir);
+          log('Playing (MMB)', 'info');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
@@ -1322,11 +1341,16 @@
       currentIrURL = url;
       _lastGoodIR = null;
       onStop();
-      loadMmlispSource(url);
       _sourceHandle = null;
       _sourceFileName = null;
       _sourceDir = null;
-      displayFileName('demo1.mmlisp');
+      if (/\.mmb(?:$|\?)/i.test(url)) {
+        displayFileName(url.split('/').pop() || 'demo1.mmb');
+        setEditorDoc('(binary MMB preset loaded)');
+      } else {
+        loadMmlispSource(url);
+        displayFileName('demo1.mmlisp');
+      }
       closeMenus();
     }
     document.addEventListener('click', (e) => {
