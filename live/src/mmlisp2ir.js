@@ -10,7 +10,7 @@
  */
 
 import { parse } from "./mmlisp-parser.js";
-import { clampForTarget } from "./ir-utils.js";
+import { clampForTarget, pitchToMidi } from "./ir-utils.js";
 
 const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
@@ -472,6 +472,44 @@ function parseNumberLike(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function clampCsmRateHz(hz, diagnostics, src, trackName) {
+  const min = 52;
+  const max = 53270;
+  const clamped = Math.max(min, Math.min(max, hz));
+  if (clamped !== hz) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_CSM_RATE_CLAMPED",
+      `:csm-rate ${hz}Hz out of range (${min}..${max}); clamped to ${clamped}Hz`,
+      src,
+      trackName,
+    );
+  }
+  return clamped;
+}
+
+function csmPitchToHz(pitch) {
+  const midi = pitchToMidi(pitch);
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function csmTrackPitch(trackState, noteName, diagnostics, src, trackName) {
+  let oct = trackState.defaultOct;
+  if (oct > 10) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_CSM_RATE_OCT_CLAMPED",
+      `fm3-csm-rate note octave ${oct} exceeds 10; clamped to 10 (use raw Hz literal above this range)`,
+      src,
+      trackName,
+    );
+    oct = 10;
+  }
+  return `${noteName}${Math.max(0, oct)}`;
+}
+
 function canonicalTarget(symbol) {
   const map = {
     // Sequencer / level
@@ -891,6 +929,93 @@ function compileChannelBody(
               }
               break;
             }
+            case ":csm-rate": {
+              if (!trackState.isCsmTrack) break;
+              const valueNode = items[i];
+              const hz = parseNumberLike(rawVal);
+              if (hz !== null) {
+                const clamped = clampCsmRateHz(
+                  hz,
+                  diagnostics,
+                  nodeSrc(node),
+                  trackName,
+                );
+                trackState.hasInlineCsmRate = true;
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "CSM_RATE",
+                  args: { hz: clamped },
+                  src: nodeSrc(node),
+                });
+                break;
+              }
+
+              if (
+                valueNode?.kind === "list" &&
+                valueNode.bracket === "()" &&
+                valueNode.items?.length > 0
+              ) {
+                const curve = atomValue(valueNode.items[0]);
+                if (!(curve && CURVE_NAMES.has(curve))) break;
+
+                let from = null;
+                let to = null;
+                let len = null;
+                for (let j = 1; j < valueNode.items.length; j++) {
+                  const k = atomValue(valueNode.items[j]);
+                  if (
+                    !(k && k.startsWith(":")) ||
+                    j + 1 >= valueNode.items.length
+                  ) {
+                    continue;
+                  }
+                  const v = atomValue(valueNode.items[j + 1]);
+                  if (k === ":from") from = parseNumberLike(v);
+                  else if (k === ":to") to = parseNumberLike(v);
+                  else if (k === ":len") len = parseLengthToken(v, null);
+                  j++;
+                }
+
+                if (
+                  from !== null &&
+                  to !== null &&
+                  Number.isFinite(from) &&
+                  Number.isFinite(to) &&
+                  len !== null &&
+                  len > 0
+                ) {
+                  const fromHz = clampCsmRateHz(
+                    from,
+                    diagnostics,
+                    nodeSrc(node),
+                    trackName,
+                  );
+                  const toHz = clampCsmRateHz(
+                    to,
+                    diagnostics,
+                    nodeSrc(node),
+                    trackName,
+                  );
+                  trackState.hasInlineCsmRate = true;
+                  events.push({
+                    tick: trackState.tick,
+                    cmd: "CSM_RATE",
+                    args: { from: fromHz, to: toHz, len, curve },
+                    src: nodeSrc(node),
+                  });
+                } else {
+                  pushDiag(
+                    diagnostics,
+                    "error",
+                    "E_CSM_RATE_INVALID",
+                    "invalid :csm-rate curve; expected (:curve :from N :to M :len L)",
+                    nodeSrc(node),
+                    trackName,
+                  );
+                }
+              }
+              break;
+            }
             case ":tempo": {
               const valueNode = items[i];
               const bpm = parseNumberLike(rawVal);
@@ -1151,6 +1276,30 @@ function compileChannelBody(
           lengthStr,
           trackState.defaultLength,
         );
+        if (trackState.isCsmRateTrack) {
+          const pitch = csmTrackPitch(
+            trackState,
+            noteName,
+            diagnostics,
+            nodeSrc(node),
+            trackName,
+          );
+          const hz = clampCsmRateHz(
+            csmPitchToHz(pitch),
+            diagnostics,
+            nodeSrc(node),
+            trackName,
+          );
+          events.push({
+            tick: trackState.tick,
+            cmd: "CSM_RATE",
+            args: { hz },
+            src: nodeSrc(node),
+          });
+          trackState.tick += perNoteTicks;
+          i++;
+          continue;
+        }
         const fullPitch = noteName + trackState.defaultOct;
         // v0.4: emit glide PARAM_SWEEP before NOTE_ON if needed
         emitGlideIfNeeded(
@@ -1160,6 +1309,15 @@ function compileChannelBody(
           trackState.glide,
           nodeSrc(node),
         );
+        if (trackState.isCsmTrack) {
+          events.push({
+            tick: trackState.tick,
+            cmd: "CSM_ON",
+            args: {},
+            src: nodeSrc(node),
+          });
+          trackState.hasCsmOn = true;
+        }
         events.push({
           tick: trackState.tick,
           cmd: "NOTE_ON",
@@ -1181,6 +1339,30 @@ function compileChannelBody(
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
         const ticks = resolveShuffleTicks(trackState.defaultLength, trackState);
+        if (trackState.isCsmRateTrack) {
+          const pitch = csmTrackPitch(
+            trackState,
+            val,
+            diagnostics,
+            nodeSrc(node),
+            trackName,
+          );
+          const hz = clampCsmRateHz(
+            csmPitchToHz(pitch),
+            diagnostics,
+            nodeSrc(node),
+            trackName,
+          );
+          events.push({
+            tick: trackState.tick,
+            cmd: "CSM_RATE",
+            args: { hz },
+            src: nodeSrc(node),
+          });
+          trackState.tick += ticks;
+          i++;
+          continue;
+        }
         const fullPitch = val + trackState.defaultOct;
         // v0.4: emit glide PARAM_SWEEP before NOTE_ON if needed
         emitGlideIfNeeded(
@@ -1190,6 +1372,15 @@ function compileChannelBody(
           trackState.glide,
           nodeSrc(node),
         );
+        if (trackState.isCsmTrack) {
+          events.push({
+            tick: trackState.tick,
+            cmd: "CSM_ON",
+            args: {},
+            src: nodeSrc(node),
+          });
+          trackState.hasCsmOn = true;
+        }
         events.push({
           tick: trackState.tick,
           cmd: "NOTE_ON",
@@ -1226,6 +1417,30 @@ function compileChannelBody(
       }
 
       // Unknown atom — skip silently
+      if (trackState.isCsmRateTrack) {
+        const rawHz = parseNumberLike(val);
+        if (rawHz !== null) {
+          const ticks = resolveShuffleTicks(
+            trackState.defaultLength,
+            trackState,
+          );
+          const hz = clampCsmRateHz(
+            rawHz,
+            diagnostics,
+            nodeSrc(node),
+            trackName,
+          );
+          events.push({
+            tick: trackState.tick,
+            cmd: "CSM_RATE",
+            args: { hz },
+            src: nodeSrc(node),
+          });
+          trackState.tick += ticks;
+          i++;
+          continue;
+        }
+      }
       i++;
       continue;
     }
@@ -1261,6 +1476,29 @@ function compileChannelBody(
             trackState.tick += slotTicks;
           } else if (isPerNoteLengthAtom(evVal)) {
             const { noteName } = parsePerNoteLength(evVal);
+            if (trackState.isCsmRateTrack) {
+              const pitch = csmTrackPitch(
+                trackState,
+                noteName,
+                diagnostics,
+                nodeSrc(ev),
+                trackName,
+              );
+              const hz = clampCsmRateHz(
+                csmPitchToHz(pitch),
+                diagnostics,
+                nodeSrc(ev),
+                trackName,
+              );
+              events.push({
+                tick: trackState.tick,
+                cmd: "CSM_RATE",
+                args: { hz },
+                src: nodeSrc(ev),
+              });
+              trackState.tick += slotTicks;
+              continue;
+            }
             const fullPitch = noteName + trackState.defaultOct;
             // v0.4: emit glide if needed
             emitGlideIfNeeded(
@@ -1270,6 +1508,15 @@ function compileChannelBody(
               trackState.glide,
               nodeSrc(ev),
             );
+            if (trackState.isCsmTrack) {
+              events.push({
+                tick: trackState.tick,
+                cmd: "CSM_ON",
+                args: {},
+                src: nodeSrc(ev),
+              });
+              trackState.hasCsmOn = true;
+            }
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
@@ -1285,6 +1532,29 @@ function compileChannelBody(
             trackState.tick += slotTicks;
             updateLastNotePitch(trackState, fullPitch);
           } else if (isNoteAtom(evVal)) {
+            if (trackState.isCsmRateTrack) {
+              const pitch = csmTrackPitch(
+                trackState,
+                evVal,
+                diagnostics,
+                nodeSrc(ev),
+                trackName,
+              );
+              const hz = clampCsmRateHz(
+                csmPitchToHz(pitch),
+                diagnostics,
+                nodeSrc(ev),
+                trackName,
+              );
+              events.push({
+                tick: trackState.tick,
+                cmd: "CSM_RATE",
+                args: { hz },
+                src: nodeSrc(ev),
+              });
+              trackState.tick += slotTicks;
+              continue;
+            }
             const fullPitch = evVal + trackState.defaultOct;
             // v0.4: emit glide if needed
             emitGlideIfNeeded(
@@ -1294,6 +1564,15 @@ function compileChannelBody(
               trackState.glide,
               nodeSrc(ev),
             );
+            if (trackState.isCsmTrack) {
+              events.push({
+                tick: trackState.tick,
+                cmd: "CSM_ON",
+                args: {},
+                src: nodeSrc(ev),
+              });
+              trackState.hasCsmOn = true;
+            }
             events.push({
               tick: trackState.tick,
               cmd: "NOTE_ON",
@@ -2027,6 +2306,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     "fm1",
     "fm2",
     "fm3",
+    "fm3-csm",
+    "fm3-csm-rate",
     "fm4",
     "fm5",
     "fm6",
@@ -2035,6 +2316,35 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     "sqr3",
     "noise",
   ];
+
+  const scoreChannelHeads = new Set();
+  for (const node of score.items) {
+    if (!node || node.kind !== "list" || node.items.length === 0) continue;
+    const head = atomValue(node.items[0]);
+    if (head) scoreChannelHeads.add(head);
+  }
+
+  const hasCsmMode =
+    scoreChannelHeads.has("fm3-csm") || scoreChannelHeads.has("fm3-csm-rate");
+  const hasFm3NormalOrOp =
+    scoreChannelHeads.has("fm3") ||
+    scoreChannelHeads.has("fm3-1") ||
+    scoreChannelHeads.has("fm3-2") ||
+    scoreChannelHeads.has("fm3-3") ||
+    scoreChannelHeads.has("fm3-4");
+  if (hasCsmMode && hasFm3NormalOrOp) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_FM3_MODE_CONFLICT",
+      "fm3-csm/fm3-csm-rate cannot be mixed with fm3 or fm3-1..fm3-4 in the same score",
+      nodeSrc(score),
+      "global",
+    );
+  }
+
+  const hasCompanionCsmRateTrack = scoreChannelHeads.has("fm3-csm-rate");
+  let hasInlineCsmRate = false;
   const trackByKey = new Map();
   const trackOrder = [];
   const loopCounter = { count: 0 };
@@ -2120,6 +2430,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultOct,
         defaultGate,
         currentTempo: scoreTempoVal ?? 120,
+        isCsmTrack: head === "fm3-csm",
+        isCsmRateTrack: head === "fm3-csm-rate",
+        hasInlineCsmRate: false,
+        hasCsmOn: false,
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
         activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON (legacy)
@@ -2137,11 +2451,13 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
 
       const trackData = {
         id: trackOrder.length,
-        channel: head,
+        channel: head === "fm3-csm" || head === "fm3-csm-rate" ? "fm3" : head,
         route_hint: {
           allocation_preference: "ordered_first_fit",
           carry,
-          channel_candidates: [head],
+          channel_candidates: [
+            head === "fm3-csm" || head === "fm3-csm-rate" ? "fm3" : head,
+          ],
           role: "bgm",
           write_scope: ["any"],
         },
@@ -2222,6 +2538,29 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       trackKey,
       typedDefs,
       loopCounter,
+    );
+
+    if (trackState.isCsmTrack && trackState.hasCsmOn) {
+      trackData.events.push({
+        tick: trackState.tick,
+        cmd: "CSM_OFF",
+        args: {},
+        src: nodeSrc(node),
+      });
+    }
+    if (trackState.isCsmTrack && trackState.hasInlineCsmRate) {
+      hasInlineCsmRate = true;
+    }
+  }
+
+  if (hasInlineCsmRate && hasCompanionCsmRateTrack) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_CSM_RATE_SOURCE_CONFLICT",
+      "inline :csm-rate and fm3-csm-rate companion track are mutually exclusive per score",
+      nodeSrc(score),
+      "global",
     );
   }
 

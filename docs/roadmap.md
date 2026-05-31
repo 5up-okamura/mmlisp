@@ -252,11 +252,11 @@ Other:
 
 **FM3 CSM mode**
 
-- [ ] `fm3-csm` track form → emit `CSM_RATE` / `CSM_ON` / `CSM_OFF` IR events
-- [ ] `:csm-rate N` inline constant Hz on `fm3-csm`
-- [ ] `:csm-rate (curve ...)` inline swept Hz on `fm3-csm`
-- [ ] `fm3-csm-rate` companion track → note-based Timer A frequency
-- [ ] Score-level CSM/FM3/fm3-N mutual-exclusion compile error
+- [x] `fm3-csm` track form → emit `CSM_RATE` / `CSM_ON` / `CSM_OFF` IR events
+- [x] `:csm-rate N` inline constant Hz on `fm3-csm`
+- [x] `:csm-rate (curve ...)` inline swept Hz on `fm3-csm`
+- [x] `fm3-csm-rate` companion track → note-based Timer A frequency
+- [x] Score-level CSM/FM3/fm3-N mutual-exclusion compile error
 
 **FM3 independent-operator mode**
 
