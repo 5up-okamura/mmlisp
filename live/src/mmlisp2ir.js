@@ -906,7 +906,11 @@ function parseCurveSpec(
         }
         case ":rate": {
           const n = parseNumberLike(v);
-          if (n !== null && n > 0) setParam("rate", n);
+          if (n !== null)
+            setParam(
+              "rate",
+              clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":rate"),
+            );
           break;
         }
         case ":duty": {
@@ -923,7 +927,11 @@ function parseCurveSpec(
         }
         case ":hold": {
           const n = parseIntLike(v);
-          if (n !== null) setParam("hold", Math.max(1, n));
+          if (n !== null)
+            setParam(
+              "hold",
+              clampWithWarning(n, 1, Number.MAX_SAFE_INTEGER, ":hold"),
+            );
           break;
         }
         case ":jitter": {
@@ -934,7 +942,11 @@ function parseCurveSpec(
         }
         case ":beta": {
           const n = parseNumberLike(v);
-          if (n !== null && n > 0) setParam("beta", n);
+          if (n !== null)
+            setParam(
+              "beta",
+              clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":beta"),
+            );
           break;
         }
         case ":octaves": {
@@ -945,12 +957,20 @@ function parseCurveSpec(
         }
         case ":lacunarity": {
           const n = parseNumberLike(v);
-          if (n !== null && n > 0) setParam("lacunarity", n);
+          if (n !== null)
+            setParam(
+              "lacunarity",
+              clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":lacunarity"),
+            );
           break;
         }
         case ":persistence": {
           const n = parseNumberLike(v);
-          if (n !== null && n > 0) setParam("persistence", n);
+          if (n !== null)
+            setParam(
+              "persistence",
+              clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":persistence"),
+            );
           break;
         }
         case ":leak": {
