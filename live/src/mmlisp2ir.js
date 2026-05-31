@@ -98,6 +98,7 @@ const CURVE_NAMES = new Set([
   "noise",
   "pink",
   "perlin",
+  "brown",
 ]);
 
 // Loop waveforms produce PARAM_SWEEP with loop:true; easing/linear produce loop:false
@@ -110,6 +111,7 @@ const LOOP_CURVE_NAMES = new Set([
   "noise",
   "pink",
   "perlin",
+  "brown",
 ]);
 
 // PSG noise mode symbols — white0-3 and periodic0-3 map to FB + NF bits

@@ -280,9 +280,9 @@ Other:
 
 **Stochastic curves**
 
-- [ ] `noise` / `pink` / `perlin` / `brown` in `CURVE_NAMES` / `LOOP_CURVE_NAMES`
-- [ ] `sampleCurveUnit` LUT generation with fixed seed `0xDEAD`
-- [ ] `brown` IIR implementation: `y[n] = 0.99 * y[n-1] + 0.01 * x[n]`, min-max normalize
+- [x] `noise` / `pink` / `perlin` / `brown` in `CURVE_NAMES` / `LOOP_CURVE_NAMES`
+- [x] `sampleCurveUnit` LUT generation with fixed seed `0xDEAD`
+- [x] `brown` IIR implementation: `y[n] = 0.99 * y[n-1] + 0.01 * x[n]`, min-max normalize
 
 ---
 

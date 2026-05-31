@@ -215,6 +215,105 @@ export function sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset) {
       : Math.min(1, frame / (baseFrames - 1));
 }
 
+const STOCHASTIC_LUT_SEED = 0xdead;
+const STOCHASTIC_LUT_SIZE = 1024;
+
+function createSeededRng(seed) {
+  let state = seed >>> 0;
+  return function next() {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function normalizeToUnit(values) {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max === min) {
+    return values.map(() => 0.5);
+  }
+  const scale = 1 / (max - min);
+  return values.map((v) => (v - min) * scale);
+}
+
+function buildStochasticLuts(size, seed) {
+  const rng = createSeededRng(seed);
+
+  const white = Array.from({ length: size }, () => rng() * 2 - 1);
+
+  // Paul Kellet-style IIR approximation for pink noise.
+  const pinkRaw = [];
+  let b0 = 0;
+  let b1 = 0;
+  let b2 = 0;
+  let b3 = 0;
+  let b4 = 0;
+  let b5 = 0;
+  let b6 = 0;
+  for (let i = 0; i < size; i++) {
+    const x = white[i];
+    b0 = 0.99886 * b0 + 0.0555179 * x;
+    b1 = 0.99332 * b1 + 0.0750759 * x;
+    b2 = 0.969 * b2 + 0.153852 * x;
+    b3 = 0.8665 * b3 + 0.3104856 * x;
+    b4 = 0.55 * b4 + 0.5329522 * x;
+    b5 = -0.7616 * b5 - 0.016898 * x;
+    const y = b0 + b1 + b2 + b3 + b4 + b5 + b6 + 0.5362 * x;
+    b6 = 0.115926 * x;
+    pinkRaw.push(y);
+  }
+
+  // 1D value noise (Perlin-like smooth random curve).
+  const latticeCount = 257;
+  const lattice = Array.from({ length: latticeCount }, () => rng() * 2 - 1);
+  const perlinRaw = [];
+  const repeat = 8;
+  for (let i = 0; i < size; i++) {
+    const x = (i / size) * repeat;
+    const x0 = Math.floor(x);
+    const x1 = x0 + 1;
+    const f = x - x0;
+    const u = f * f * (3 - 2 * f);
+    const a = lattice[x0 % lattice.length];
+    const b = lattice[x1 % lattice.length];
+    perlinRaw.push(a + (b - a) * u);
+  }
+
+  // Brown noise: leaky integrator, then min-max normalize.
+  const brownRaw = [];
+  let y = 0;
+  for (let i = 0; i < size; i++) {
+    y = 0.99 * y + 0.01 * white[i];
+    brownRaw.push(y);
+  }
+
+  return {
+    noise: normalizeToUnit(white),
+    pink: normalizeToUnit(pinkRaw),
+    perlin: normalizeToUnit(perlinRaw),
+    brown: normalizeToUnit(brownRaw),
+  };
+}
+
+const STOCHASTIC_LUTS = buildStochasticLuts(
+  STOCHASTIC_LUT_SIZE,
+  STOCHASTIC_LUT_SEED,
+);
+
+function sampleStochasticCurve(curve, phase) {
+  const lut = STOCHASTIC_LUTS[curve];
+  if (!lut || lut.length === 0) return phase;
+  const idx = Math.max(
+    0,
+    Math.min(lut.length - 1, Math.floor(phase * (lut.length - 1))),
+  );
+  return lut[idx];
+}
+
 export function sampleCurveUnit(curve, phase) {
   const t = Math.max(0, Math.min(1, phase));
   switch (curve) {
@@ -356,7 +455,8 @@ export function sampleCurveUnit(curve, phase) {
     case "noise":
     case "pink":
     case "perlin":
-      return t; // placeholder — v0.5 LUT implementation
+    case "brown":
+      return sampleStochasticCurve(curve, t);
     default:
       return t;
   }
