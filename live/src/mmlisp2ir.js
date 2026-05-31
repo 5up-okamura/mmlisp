@@ -1473,6 +1473,14 @@ function compileChannelBody(
     if (node.kind === "list" && node.items.length > 0) {
       const head = atomValue(node.items[0]);
       if (!head) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_UNKNOWN_LIST",
+          `Unknown list form: ${describeNodeToken(node)}`,
+          nodeSrc(node.items[0]),
+          trackName,
+        );
         i++;
         continue;
       }
@@ -1767,7 +1775,17 @@ function compileTrackBodyItems(
     if (!node || node.kind !== "list" || node.items.length === 0) continue;
 
     const head = atomValue(node.items[0]);
-    if (!head) continue;
+    if (!head) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_UNKNOWN_LIST",
+        `Unknown list form: ${describeNodeToken(node)}`,
+        nodeSrc(node.items[0]),
+        trackName,
+      );
+      continue;
+    }
 
     if (head === "x") {
       const maybeCount = parseIntLike(atomValue(node.items[1]));
