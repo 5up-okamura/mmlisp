@@ -172,6 +172,54 @@ function parseIntLike(value) {
   return null;
 }
 
+function normalizePathSeparators(path) {
+  return String(path || "").replace(/\\/g, "/");
+}
+
+function isAbsolutePath(path) {
+  const p = normalizePathSeparators(path);
+  return (
+    p.startsWith("/") ||
+    /^[a-zA-Z]:\//.test(p) ||
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p)
+  );
+}
+
+function dirnamePosix(path) {
+  const p = normalizePathSeparators(path);
+  const idx = p.lastIndexOf("/");
+  if (idx <= 0) return idx === 0 ? "/" : "";
+  return p.slice(0, idx);
+}
+
+function normalizePosixPath(path) {
+  const p = normalizePathSeparators(path);
+  const isAbs = p.startsWith("/");
+  const segs = p.split("/");
+  const out = [];
+  for (const seg of segs) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (out.length > 0 && out[out.length - 1] !== "..") {
+        out.pop();
+      } else if (!isAbs) {
+        out.push("..");
+      }
+      continue;
+    }
+    out.push(seg);
+  }
+  return (isAbs ? "/" : "") + out.join("/");
+}
+
+function resolveSamplePath(sampleFile, sourceFile) {
+  const file = normalizePathSeparators(sampleFile);
+  if (!file || isAbsolutePath(file)) return file;
+  const baseDir = dirnamePosix(sourceFile || "");
+  if (!baseDir) return file;
+  return normalizePosixPath(`${baseDir}/${file}`);
+}
+
 function parseLengthToken(value, inheritedTicks) {
   if (!value) return inheritedTicks;
   // Tick count: "14t" — exact tick value
@@ -2571,6 +2619,21 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     }
   }
 
+  const sampleSourceBaseKnown = normalizePathSeparators(filename).includes("/");
+  for (const [name, sample] of sampleDefs.entries()) {
+    if (!sample?.file) continue;
+    if (isAbsolutePath(sample.file)) continue;
+    if (sampleSourceBaseKnown) continue;
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_SAMPLE_BASE_UNKNOWN",
+      `sample path is relative but source base directory is unknown: ${name}`,
+      sample.src ?? { line: 1, column: 1 },
+      "global",
+    );
+  }
+
   const ir = sortObject({
     version: 1,
     ppqn: PPQN,
@@ -2581,6 +2644,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
         file: sample.file,
+        resolvedFile: resolveSamplePath(sample.file, filename),
         rate: sample.rate,
         bitDepth: sample.bitDepth,
         volume: sample.volume,
