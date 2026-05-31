@@ -751,6 +751,7 @@ export class IRPlayer {
     if (fm3SpecialMode !== undefined) {
       next = fm3SpecialMode ? next | 0x40 : next & ~0x40;
     }
+    if (next === this._reg27) return;
     this._reg27 = next;
     this._write(0, 0x27, this._reg27, when);
   }
