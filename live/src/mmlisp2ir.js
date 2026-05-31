@@ -242,17 +242,12 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
-  // v0.4: vel is KEY-ON scoped; only emit when non-default (15)
   if (vel !== undefined && vel !== 15) args.vel = vel;
-  // v0.4: embed all active macros
   if (activeMacros && Object.keys(activeMacros).length > 0) {
     for (const [target, spec] of Object.entries(activeMacros)) {
-      // Legacy naming: NOTE_PITCH → pitchMacro, VEL → velMacro
-      // New targets: FM_TL1 → fm_tl1, etc. (snake_case)
       if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
       else if (target === "VEL") args.velMacro = { ...spec };
       else {
-        // Convert UPPER_CASE target to snake_case for IR embedding
         const key = target.toLowerCase();
         args[key] = { ...spec };
       }
@@ -415,8 +410,6 @@ function updateLastNotePitch(trackState, pitch) {
 function applyMacroEntryToState(trackState, irTarget, spec) {
   if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
   trackState.activeMacros[irTarget] = spec;
-  if (irTarget === "NOTE_PITCH") trackState.activePitchMacro = spec;
-  else if (irTarget === "VEL") trackState.activeVelMacro = spec;
 }
 
 function applyTypedMacroDef(trackState, td) {
@@ -1624,7 +1617,7 @@ function compileChannelBody(
         continue;
       }
 
-      // Goto / counted goto: (goto label) or (goto label N)
+      // Goto: (goto label)
       if (head === "goto") {
         const label = atomValue(node.items[1]);
         if (!label) {
@@ -1639,77 +1632,24 @@ function compileChannelBody(
           i++;
           continue;
         }
-        const count = node.items[2]
-          ? parseIntLike(atomValue(node.items[2]))
-          : null;
-        if (count !== null) {
-          let markerIdx = -1;
-          for (let mi = events.length - 1; mi >= 0; mi--) {
-            if (events[mi].cmd === "MARKER" && events[mi].args.id === label) {
-              markerIdx = mi;
-              break;
-            }
-          }
-          if (markerIdx >= 0) {
-            events[markerIdx] = { ...events[markerIdx], cmd: "LOOP_BEGIN" };
-          } else {
-            pushDiag(
-              diagnostics,
-              "error",
-              "E_GOTO_LABEL_NOT_FOUND",
-              `goto: label '#${label}' not found before this point`,
-              nodeSrc(node.items[0]),
-              trackName,
-            );
-          }
-          events.push({
-            tick: trackState.tick,
-            cmd: "LOOP_END",
-            args: { id: label, repeat: count },
-            src: nodeSrc(node.items[0]),
-          });
-        } else {
-          events.push({
-            tick: trackState.tick,
-            cmd: "JUMP",
-            args: { to: label },
-            src: nodeSrc(node.items[0]),
-          });
+        if (node.items.length !== 2) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_GOTO_ARITY",
+            "goto requires exactly one label argument",
+            nodeSrc(node.items[0]),
+            trackName,
+          );
+          i++;
+          continue;
         }
-        i++;
-        continue;
-      }
-
-      // Explicit rest: (rest N) — kept for convenience
-      if (head === "rest") {
-        const length = parseLengthToken(
-          atomValue(node.items[1]),
-          trackState.defaultLength,
-        );
         events.push({
           tick: trackState.tick,
-          cmd: "REST",
-          args: { length },
+          cmd: "JUMP",
+          args: { to: label },
           src: nodeSrc(node.items[0]),
         });
-        trackState.tick += length;
-        i++;
-        continue;
-      }
-
-      // Explicit tie: (tie N)
-      if (head === "tie") {
-        const length = parseLengthToken(
-          atomValue(node.items[1]),
-          trackState.defaultLength,
-        );
-        events.push({
-          tick: trackState.tick,
-          cmd: "TIE",
-          args: { length },
-          src: nodeSrc(node.items[0]),
-        });
-        trackState.tick += length;
         i++;
         continue;
       }
@@ -1862,8 +1802,6 @@ function collectDefs(roots, diagnostics) {
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
         let entries = [];
-        // Preferred form for multi-target def:
-        // (def name :macro [:vel [...] :pitch (...)])
         const macroListNode = bodyItems[3];
         if (macroListNode?.kind === "list" && macroListNode.bracket === "[]") {
           const listItems = macroListNode.items.filter(
@@ -1871,9 +1809,6 @@ function collectDefs(roots, diagnostics) {
           );
           entries = collectMacroEntriesFromItems(listItems);
         } else {
-          // Backward-compatible forms:
-          // (def name :macro :vel [...])
-          // (def name :macro :vel [...] :pitch (...))
           entries = collectMacroEntriesFromItems(bodyItems.slice(3));
         }
         if (entries.length === 1) {
@@ -2198,8 +2133,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         hasCsmOn: false,
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
-        activePitchMacro: null, // v0.4: KEY-ON scoped pitch macro attached to NOTE_ON (legacy)
-        activeVelMacro: null, // v0.4: KEY-ON scoped vel macro attached to NOTE_ON (legacy)
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
         glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
