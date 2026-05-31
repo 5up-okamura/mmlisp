@@ -240,17 +240,90 @@ function fm3OpMask(opIndex) {
   return opIndex >= 1 && opIndex <= 4 ? 0x10 << (opIndex - 1) : 0xf0;
 }
 
-function makeFm3OpNoteArgs(pitch, lengthTicks, gateSpec, vel, opIndex) {
-  const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
-  const args = {
-    pitch,
-    length: lengthTicks,
-    fm3Op: opIndex,
-    opMask: fm3OpMask(opIndex),
-  };
-  if (gateTicks < lengthTicks) args.gate = gateTicks;
-  if (vel !== undefined && vel !== 15) args.vel = vel;
+function makeFm3OpNoteArgs(
+  pitch,
+  lengthTicks,
+  gateSpec,
+  vel,
+  opIndex,
+  activeMacros,
+) {
+  const args = makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros);
+  args.fm3Op = opIndex;
+  args.opMask = fm3OpMask(opIndex);
   return args;
+}
+
+function emitNoteForTrack(
+  trackState,
+  noteName,
+  lengthTicks,
+  events,
+  diagnostics,
+  src,
+  trackName,
+) {
+  if (trackState.isCsmRateTrack) {
+    const pitch = csmTrackPitch(
+      trackState,
+      noteName,
+      diagnostics,
+      src,
+      trackName,
+    );
+    const hz = clampCsmRateHz(csmPitchToHz(pitch), diagnostics, src, trackName);
+    events.push({
+      tick: trackState.tick,
+      cmd: "CSM_RATE",
+      args: { hz },
+      src,
+    });
+    trackState.tick += lengthTicks;
+    return;
+  }
+
+  const fullPitch = noteName + trackState.defaultOct;
+  emitGlideIfNeeded(trackState, fullPitch, events, trackState.glide, src);
+  if (trackState.isFm3OpTrack) {
+    events.push({
+      tick: trackState.tick,
+      cmd: "FM3_OP_PITCH",
+      args: { op: trackState.fm3OpIndex, pitch: fullPitch },
+      src,
+    });
+  }
+  if (trackState.isCsmTrack) {
+    events.push({
+      tick: trackState.tick,
+      cmd: "CSM_ON",
+      args: {},
+      src,
+    });
+    trackState.hasCsmOn = true;
+  }
+  events.push({
+    tick: trackState.tick,
+    cmd: "NOTE_ON",
+    args: trackState.isFm3OpTrack
+      ? makeFm3OpNoteArgs(
+          fullPitch,
+          lengthTicks,
+          trackState.defaultGate,
+          trackState.defaultVel,
+          trackState.fm3OpIndex,
+          trackState.activeMacros,
+        )
+      : makeNoteArgs(
+          fullPitch,
+          lengthTicks,
+          trackState.defaultGate,
+          trackState.defaultVel,
+          trackState.activeMacros,
+        ),
+    src,
+  });
+  trackState.tick += lengthTicks;
+  updateLastNotePitch(trackState, fullPitch);
 }
 
 /**
@@ -1293,87 +1366,15 @@ function compileChannelBody(
           lengthStr,
           trackState.defaultLength,
         );
-        if (trackState.isFm3OpTrack) {
-          const fullPitch = noteName + trackState.defaultOct;
-          events.push({
-            tick: trackState.tick,
-            cmd: "FM3_OP_PITCH",
-            args: { op: trackState.fm3OpIndex, pitch: fullPitch },
-            src: nodeSrc(node),
-          });
-          events.push({
-            tick: trackState.tick,
-            cmd: "NOTE_ON",
-            args: makeFm3OpNoteArgs(
-              fullPitch,
-              perNoteTicks,
-              trackState.defaultGate,
-              trackState.defaultVel,
-              trackState.fm3OpIndex,
-            ),
-            src: nodeSrc(node),
-          });
-          trackState.tick += perNoteTicks;
-          updateLastNotePitch(trackState, fullPitch);
-          i++;
-          continue;
-        }
-        if (trackState.isCsmRateTrack) {
-          const pitch = csmTrackPitch(
-            trackState,
-            noteName,
-            diagnostics,
-            nodeSrc(node),
-            trackName,
-          );
-          const hz = clampCsmRateHz(
-            csmPitchToHz(pitch),
-            diagnostics,
-            nodeSrc(node),
-            trackName,
-          );
-          events.push({
-            tick: trackState.tick,
-            cmd: "CSM_RATE",
-            args: { hz },
-            src: nodeSrc(node),
-          });
-          trackState.tick += perNoteTicks;
-          i++;
-          continue;
-        }
-        const fullPitch = noteName + trackState.defaultOct;
-        // v0.4: emit glide PARAM_SWEEP before NOTE_ON if needed
-        emitGlideIfNeeded(
+        emitNoteForTrack(
           trackState,
-          fullPitch,
+          noteName,
+          perNoteTicks,
           events,
-          trackState.glide,
+          diagnostics,
           nodeSrc(node),
+          trackName,
         );
-        if (trackState.isCsmTrack) {
-          events.push({
-            tick: trackState.tick,
-            cmd: "CSM_ON",
-            args: {},
-            src: nodeSrc(node),
-          });
-          trackState.hasCsmOn = true;
-        }
-        events.push({
-          tick: trackState.tick,
-          cmd: "NOTE_ON",
-          args: makeNoteArgs(
-            fullPitch,
-            perNoteTicks,
-            trackState.defaultGate,
-            trackState.defaultVel,
-            trackState.activeMacros,
-          ),
-          src: nodeSrc(node),
-        });
-        trackState.tick += perNoteTicks;
-        updateLastNotePitch(trackState, fullPitch);
         i++;
         continue;
       }
@@ -1381,87 +1382,15 @@ function compileChannelBody(
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
         const ticks = resolveShuffleTicks(trackState.defaultLength, trackState);
-        if (trackState.isFm3OpTrack) {
-          const fullPitch = val + trackState.defaultOct;
-          events.push({
-            tick: trackState.tick,
-            cmd: "FM3_OP_PITCH",
-            args: { op: trackState.fm3OpIndex, pitch: fullPitch },
-            src: nodeSrc(node),
-          });
-          events.push({
-            tick: trackState.tick,
-            cmd: "NOTE_ON",
-            args: makeFm3OpNoteArgs(
-              fullPitch,
-              ticks,
-              trackState.defaultGate,
-              trackState.defaultVel,
-              trackState.fm3OpIndex,
-            ),
-            src: nodeSrc(node),
-          });
-          trackState.tick += ticks;
-          updateLastNotePitch(trackState, fullPitch);
-          i++;
-          continue;
-        }
-        if (trackState.isCsmRateTrack) {
-          const pitch = csmTrackPitch(
-            trackState,
-            val,
-            diagnostics,
-            nodeSrc(node),
-            trackName,
-          );
-          const hz = clampCsmRateHz(
-            csmPitchToHz(pitch),
-            diagnostics,
-            nodeSrc(node),
-            trackName,
-          );
-          events.push({
-            tick: trackState.tick,
-            cmd: "CSM_RATE",
-            args: { hz },
-            src: nodeSrc(node),
-          });
-          trackState.tick += ticks;
-          i++;
-          continue;
-        }
-        const fullPitch = val + trackState.defaultOct;
-        // v0.4: emit glide PARAM_SWEEP before NOTE_ON if needed
-        emitGlideIfNeeded(
+        emitNoteForTrack(
           trackState,
-          fullPitch,
+          val,
+          ticks,
           events,
-          trackState.glide,
+          diagnostics,
           nodeSrc(node),
+          trackName,
         );
-        if (trackState.isCsmTrack) {
-          events.push({
-            tick: trackState.tick,
-            cmd: "CSM_ON",
-            args: {},
-            src: nodeSrc(node),
-          });
-          trackState.hasCsmOn = true;
-        }
-        events.push({
-          tick: trackState.tick,
-          cmd: "NOTE_ON",
-          args: makeNoteArgs(
-            fullPitch,
-            ticks,
-            trackState.defaultGate,
-            trackState.defaultVel,
-            trackState.activeMacros,
-          ),
-          src: nodeSrc(node),
-        });
-        trackState.tick += ticks;
-        updateLastNotePitch(trackState, fullPitch);
         i++;
         continue;
       }
@@ -1543,165 +1472,25 @@ function compileChannelBody(
             trackState.tick += slotTicks;
           } else if (isPerNoteLengthAtom(evVal)) {
             const { noteName } = parsePerNoteLength(evVal);
-            if (trackState.isFm3OpTrack) {
-              const fullPitch = noteName + trackState.defaultOct;
-              events.push({
-                tick: trackState.tick,
-                cmd: "FM3_OP_PITCH",
-                args: { op: trackState.fm3OpIndex, pitch: fullPitch },
-                src: nodeSrc(ev),
-              });
-              events.push({
-                tick: trackState.tick,
-                cmd: "NOTE_ON",
-                args: makeFm3OpNoteArgs(
-                  fullPitch,
-                  slotTicks,
-                  trackState.defaultGate,
-                  trackState.defaultVel,
-                  trackState.fm3OpIndex,
-                ),
-                src: nodeSrc(ev),
-              });
-              trackState.tick += slotTicks;
-              updateLastNotePitch(trackState, fullPitch);
-              continue;
-            }
-            if (trackState.isCsmRateTrack) {
-              const pitch = csmTrackPitch(
-                trackState,
-                noteName,
-                diagnostics,
-                nodeSrc(ev),
-                trackName,
-              );
-              const hz = clampCsmRateHz(
-                csmPitchToHz(pitch),
-                diagnostics,
-                nodeSrc(ev),
-                trackName,
-              );
-              events.push({
-                tick: trackState.tick,
-                cmd: "CSM_RATE",
-                args: { hz },
-                src: nodeSrc(ev),
-              });
-              trackState.tick += slotTicks;
-              continue;
-            }
-            const fullPitch = noteName + trackState.defaultOct;
-            // v0.4: emit glide if needed
-            emitGlideIfNeeded(
+            emitNoteForTrack(
               trackState,
-              fullPitch,
+              noteName,
+              slotTicks,
               events,
-              trackState.glide,
+              diagnostics,
               nodeSrc(ev),
+              trackName,
             );
-            if (trackState.isCsmTrack) {
-              events.push({
-                tick: trackState.tick,
-                cmd: "CSM_ON",
-                args: {},
-                src: nodeSrc(ev),
-              });
-              trackState.hasCsmOn = true;
-            }
-            events.push({
-              tick: trackState.tick,
-              cmd: "NOTE_ON",
-              args: makeNoteArgs(
-                fullPitch,
-                slotTicks,
-                trackState.defaultGate,
-                trackState.defaultVel,
-                trackState.activeMacros,
-              ),
-              src: nodeSrc(ev),
-            });
-            trackState.tick += slotTicks;
-            updateLastNotePitch(trackState, fullPitch);
           } else if (isNoteAtom(evVal)) {
-            if (trackState.isFm3OpTrack) {
-              const fullPitch = evVal + trackState.defaultOct;
-              events.push({
-                tick: trackState.tick,
-                cmd: "FM3_OP_PITCH",
-                args: { op: trackState.fm3OpIndex, pitch: fullPitch },
-                src: nodeSrc(ev),
-              });
-              events.push({
-                tick: trackState.tick,
-                cmd: "NOTE_ON",
-                args: makeFm3OpNoteArgs(
-                  fullPitch,
-                  slotTicks,
-                  trackState.defaultGate,
-                  trackState.defaultVel,
-                  trackState.fm3OpIndex,
-                ),
-                src: nodeSrc(ev),
-              });
-              trackState.tick += slotTicks;
-              updateLastNotePitch(trackState, fullPitch);
-              continue;
-            }
-            if (trackState.isCsmRateTrack) {
-              const pitch = csmTrackPitch(
-                trackState,
-                evVal,
-                diagnostics,
-                nodeSrc(ev),
-                trackName,
-              );
-              const hz = clampCsmRateHz(
-                csmPitchToHz(pitch),
-                diagnostics,
-                nodeSrc(ev),
-                trackName,
-              );
-              events.push({
-                tick: trackState.tick,
-                cmd: "CSM_RATE",
-                args: { hz },
-                src: nodeSrc(ev),
-              });
-              trackState.tick += slotTicks;
-              continue;
-            }
-            const fullPitch = evVal + trackState.defaultOct;
-            // v0.4: emit glide if needed
-            emitGlideIfNeeded(
+            emitNoteForTrack(
               trackState,
-              fullPitch,
+              evVal,
+              slotTicks,
               events,
-              trackState.glide,
+              diagnostics,
               nodeSrc(ev),
+              trackName,
             );
-            if (trackState.isCsmTrack) {
-              events.push({
-                tick: trackState.tick,
-                cmd: "CSM_ON",
-                args: {},
-                src: nodeSrc(ev),
-              });
-              trackState.hasCsmOn = true;
-            }
-            events.push({
-              tick: trackState.tick,
-              cmd: "NOTE_ON",
-              args: makeNoteArgs(
-                fullPitch,
-                slotTicks,
-                trackState.defaultGate,
-                trackState.defaultVel,
-                trackState.activeMacros,
-              ),
-              src: nodeSrc(ev),
-            });
-            trackState.tick += slotTicks;
-            updateLastNotePitch(trackState, fullPitch);
           }
         }
         i++;

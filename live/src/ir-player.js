@@ -923,6 +923,8 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
+    if (this._dispatchGlobalEvent(ev, when)) return;
+
     // Route PSG events to PSG handler
     if (ev._isPsg) {
       this._dispatchPsgEvent(ev, when);
@@ -987,6 +989,20 @@ export class IRPlayer {
                 t,
               );
               this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+            },
+          );
+        } else {
+          // FM3 OP1..3 notes use dedicated pitch registers; apply runtime pitch offset
+          // and NOTE_PITCH macro updates through FM3 OP pitch writes.
+          if (centOffset !== 0) {
+            this._writeFm3OpPitch(fm3Op, midi + centOffset / 100, when);
+          }
+          this._schedulePitchMacro(
+            ev.args?.pitchMacro,
+            when,
+            gateTicks,
+            (noteCentOffset, t) => {
+              this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
             },
           );
         }
@@ -1092,19 +1108,23 @@ export class IRPlayer {
         this._writeFm3OpPitch(op, midi, when);
         break;
       }
+    }
+  }
 
+  _dispatchGlobalEvent(ev, when) {
+    switch (ev.cmd) {
       case "TEMPO_SET": {
         const bpm = Number(ev.args?.bpm);
         if (Number.isFinite(bpm) && bpm > 0) {
           this._tempoSweep = null;
           this._setTempoAtTick(bpm, ev.tick ?? 0, when);
         }
-        break;
+        return true;
       }
 
       case "TEMPO_SWEEP": {
         this._startTempoSweep(ev.args ?? {}, ev.tick ?? 0, when);
-        break;
+        return true;
       }
 
       case "MARKER":
@@ -1113,8 +1133,10 @@ export class IRPlayer {
       case "REST":
       case "TIE":
       case "JUMP":
-        // Handled structurally (loops expanded; markers/jumps not needed for linear playback)
-        break;
+        return true;
+
+      default:
+        return false;
     }
   }
 
@@ -2193,28 +2215,6 @@ export class IRPlayer {
         }
         break;
       }
-
-      case "TEMPO_SET": {
-        const bpm = Number(ev.args?.bpm);
-        if (Number.isFinite(bpm) && bpm > 0) {
-          this._tempoSweep = null;
-          this._setTempoAtTick(bpm, ev.tick ?? 0, when);
-        }
-        break;
-      }
-
-      case "TEMPO_SWEEP": {
-        this._startTempoSweep(ev.args ?? {}, ev.tick ?? 0, when);
-        break;
-      }
-
-      case "MARKER":
-      case "LOOP_BEGIN":
-      case "LOOP_END":
-      case "REST":
-      case "TIE":
-      case "JUMP":
-        break;
 
       default:
         break;
