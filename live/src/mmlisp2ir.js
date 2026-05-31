@@ -1733,6 +1733,14 @@ function compileChannelBody(
       continue;
     }
 
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_UNKNOWN_NODE",
+      `Unknown channel-body node: ${describeNodeToken(node)}`,
+      nodeSrc(node),
+      trackName,
+    );
     i++;
   }
 }
