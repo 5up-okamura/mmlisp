@@ -165,6 +165,30 @@ function buildSampleBank(sampleDefs) {
   return { sampleMap, bank: Buffer.concat(chunks), entries };
 }
 
+function collectReferencedPcmSamples(tracks) {
+  const sampleNames = new Set();
+  for (const track of tracks || []) {
+    for (const event of track?.events || []) {
+      if (event?.cmd === "PCM_NOTE_ON" || event?.cmd === "PCM_NOTE_OFF") {
+        const name = String(event.args?.sample || "").trim();
+        if (name) {
+          sampleNames.add(name);
+        }
+      }
+    }
+  }
+  return sampleNames;
+}
+
+function validateSampleBankCoverage(tracks, sampleMap) {
+  const referenced = collectReferencedPcmSamples(tracks);
+  for (const name of referenced) {
+    if (!sampleMap.has(name)) {
+      throw new Error(`PCM_NOTE_ON references undefined sample: ${name}`);
+    }
+  }
+}
+
 function buildTrackMaps(track, sampleMap) {
   const markerMap = new Map();
   const loopMap = new Map();
@@ -566,6 +590,7 @@ function buildGmb(ir, options = {}) {
   const tracks = ir.tracks || [];
   const allocator = createAllocator(options.targetProfile || "md-full");
   const sampleBank = buildSampleBank(ir.metadata?.samples || []);
+  validateSampleBankCoverage(tracks, sampleBank.sampleMap);
 
   const eventBlocks = [];
   const trackEntries = [];

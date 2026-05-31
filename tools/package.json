@@ -16,7 +16,8 @@
     "build:gmb-demos": "node scripts/mmlisp2mmb.js ../examples/ir/demo1.ir.canonical.json --out ../examples/gmb/demo1.mmb --meta ../examples/gmb/demo1.meta.json",
     "check:gmb-demos": "npm run build:gmb-demos && node scripts/verify-mmb.js ../examples/gmb/demo1.mmb",
     "build:gmb-fixtures": "npm run build:gmb-demos && node scripts/make-mmb-fixtures.js",
-    "check:gmb-fixtures": "npm run build:gmb-fixtures && node scripts/check-mmb-fixtures.js"
+    "check:gmb-fixtures": "npm run build:gmb-fixtures && node scripts/check-mmb-fixtures.js && npm run check:pcm-sample-coverage",
+    "check:pcm-sample-coverage": "node scripts/check-pcm-sample-coverage.js"
   },
   "engines": {
     "node": ">=18"
