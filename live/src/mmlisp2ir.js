@@ -352,11 +352,25 @@ function emitNoteForTrack(
     }
 
     const fullPitch = noteName + trackState.defaultOct;
+    const pcmMidiRaw = pitchToMidi(fullPitch);
+    const pcmMidiClamped = Math.max(36, Math.min(84, pcmMidiRaw));
+    if (pcmMidiClamped !== pcmMidiRaw) {
+      pushDiag(
+        diagnostics,
+        "warning",
+        "W_PCM_PITCH_CLAMP",
+        `pcm pitch out of practical range (C2-C6), clamped: ${fullPitch}`,
+        src,
+        trackName,
+      );
+    }
+    const pcmRate = Math.pow(2, (pcmMidiClamped - 60) / 12);
     const gateTicks = resolveGateTicks(trackState.defaultGate, lengthTicks);
     const mode = trackState.pcmPendingMode ?? "shot";
     const args = {
       sample: trackState.pcmSampleName,
       pitch: fullPitch,
+      rate: pcmRate,
       length: lengthTicks,
       mode,
     };
