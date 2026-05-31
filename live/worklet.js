@@ -7,6 +7,7 @@
  * Message protocol (from main thread via port.postMessage):
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
+ *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate}] }
  *   { type: 'pcm-note-on', when: number, sample: string, rate: number, vel: number, mode: 'shot'|'loop' }
  *   { type: 'pcm-note-off', when: number, sample: string }
  *   { type: 'reset' }
@@ -35,6 +36,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmTimedQueue = []; // timed PCM commands: [{frame, type, ...}]
     this._pcmVoices = [];
     this._pcmFallbackSample = this._buildFallbackSample();
+    this._pcmSamples = new Map();
 
     // Resampling state: we generate at NATIVE_SAMPLE_RATE and output at
     // the AudioContext sample rate (typically 44100 or 48000).
@@ -82,6 +84,19 @@ class YM2612Processor extends AudioWorkletProcessor {
         } else {
           this._writeQueue.push(msg);
         }
+      } else if (msg.type === "pcm-set-samples") {
+        this._pcmSamples = new Map();
+        for (const s of msg.samples || []) {
+          const name = String(s?.name ?? "").trim();
+          if (!name) continue;
+          const data = s?.data instanceof Float32Array ? s.data : null;
+          const sr = Number(s?.sampleRate);
+          if (!data || data.length === 0) continue;
+          this._pcmSamples.set(name, {
+            data,
+            sampleRate: Number.isFinite(sr) && sr > 0 ? sr : this._outputSR,
+          });
+        }
       } else if (msg.type === "pcm-note-on" || msg.type === "pcm-note-off") {
         const targetFrame =
           msg.when != null
@@ -104,6 +119,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
+        this._pcmSamples = new Map();
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
@@ -131,15 +147,21 @@ class YM2612Processor extends AudioWorkletProcessor {
     const sample = String(msg.sample ?? "");
     if (!sample) return;
     const gain = Math.max(0, Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15));
-    const step = Math.max(0.01, Number.isFinite(rate) ? rate : 1);
+    const sampleEntry = this._pcmSamples.get(sample);
+    const data = sampleEntry?.data ?? this._pcmFallbackSample;
+    const baseRate = sampleEntry?.sampleRate ?? this._outputSR;
+    const rawStep = (Number.isFinite(rate) ? rate : 1) * (baseRate / this._outputSR);
+    const step = Math.max(0.01, rawStep);
     const mode = msg.mode === "loop" ? "loop" : "shot";
+    const ch = Number(msg.ch);
     const voice = {
+      ch: Number.isFinite(ch) ? ch : null,
       sample,
       pos: 0,
       step,
       gain,
       mode,
-      data: this._pcmFallbackSample,
+      data,
     };
     if (mode === "loop") {
       this._pcmVoices = this._pcmVoices.filter((v) => v.sample !== sample);
@@ -150,7 +172,13 @@ class YM2612Processor extends AudioWorkletProcessor {
   _stopPcmVoice(msg) {
     const sample = String(msg.sample ?? "");
     if (!sample) return;
-    this._pcmVoices = this._pcmVoices.filter((v) => v.sample !== sample);
+    const ch = Number(msg.ch);
+    const hasCh = Number.isFinite(ch);
+    this._pcmVoices = this._pcmVoices.filter((v) => {
+      if (v.sample !== sample) return true;
+      if (!hasCh) return false;
+      return v.ch !== ch;
+    });
   }
 
   _mixPcmSample() {
