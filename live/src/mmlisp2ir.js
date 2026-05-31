@@ -428,6 +428,51 @@ function applyTypedMacroDef(trackState, td) {
   return false;
 }
 
+function parseSampleDef(root, diagnostics) {
+  const bodyItems = root.items.filter((n) => n.kind !== "comment");
+  const sample = {
+    file: null,
+    rate: null,
+    bitDepth: null,
+    volume: null,
+    compress: null,
+    reverb: null,
+  };
+
+  for (let ki = 3; ki + 1 < bodyItems.length; ki += 2) {
+    const key = atomValue(bodyItems[ki]);
+    const rawVal = atomValue(bodyItems[ki + 1]);
+    if (key === ":file") {
+      sample.file = rawVal;
+    } else if (key === ":rate") {
+      const rate = parseIntLike(rawVal);
+      if (rate !== null) sample.rate = rate;
+    } else if (key === ":bit-depth") {
+      const bitDepth = parseIntLike(rawVal);
+      if (bitDepth !== null) sample.bitDepth = bitDepth;
+    } else if (key === ":volume") {
+      if (rawVal !== null) sample.volume = rawVal;
+    } else if (key === ":compress") {
+      if (rawVal !== null) sample.compress = rawVal;
+    } else if (key === ":reverb") {
+      if (rawVal !== null) sample.reverb = rawVal;
+    }
+  }
+
+  if (!sample.file) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_SAMPLE_FILE",
+      "def :sample requires :file",
+      nodeSrc(root),
+      null,
+    );
+  }
+
+  return sample;
+}
+
 function collectMacroEntriesFromItems(items) {
   const entries = [];
   for (let ki = 0; ki + 1 < items.length; ki += 2) {
@@ -1775,6 +1820,7 @@ function collectDefs(roots, diagnostics) {
   const defs = new Map();
   const defns = new Map();
   const typedDefs = new Map();
+  const sampleDefs = new Map();
   const remaining = [];
 
   for (const root of roots) {
@@ -1816,6 +1862,10 @@ function collectDefs(roots, diagnostics) {
         } else if (entries.length > 1) {
           typedDefs.set(name, { tag: "macro-list", entries, src });
         }
+      } else if (maybeTag === ":sample") {
+        const src = nodeSrc(root);
+        const sample = parseSampleDef(root, diagnostics);
+        sampleDefs.set(name, { tag: "sample", ...sample, src });
       } else if (maybeTag === ":extends") {
         // Keyword-map FM voice def with inheritance
         // (def child :extends base :alg 7 :tl1 20 ...)
@@ -1902,7 +1952,7 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, defns, typedDefs, remaining };
+  return { defs, defns, typedDefs, sampleDefs, remaining };
 }
 
 function substituteNode(node, bindings) {
@@ -1964,7 +2014,7 @@ function expandRoots(roots, defs, defns) {
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, defns, typedDefs, remaining } = collectDefs(
+  const { defs, defns, typedDefs, sampleDefs, remaining } = collectDefs(
     parsed,
     diagnostics,
   );
@@ -2329,6 +2379,15 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       title: atomValue(titleNode) || filename,
       author: atomValue(authorNode) || "unknown",
       source: filename,
+      samples: [...sampleDefs.entries()].map(([name, sample]) => ({
+        name,
+        file: sample.file,
+        rate: sample.rate,
+        bitDepth: sample.bitDepth,
+        volume: sample.volume,
+        compress: sample.compress,
+        reverb: sample.reverb,
+      })),
     },
     tracks,
   });
