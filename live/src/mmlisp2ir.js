@@ -315,6 +315,10 @@ function isPcmTrackName(name) {
   return /^pcm[1-3]$/.test(name);
 }
 
+function isTrackPcmActive(trackState) {
+  return !!(trackState?.isPcmTrack || trackState?.fm6Mode === "shot" || trackState?.fm6Mode === "loop");
+}
+
 function isLikelyPcmBodyToken(value) {
   if (!value) return false;
   if (value.startsWith(":")) return true;
@@ -337,13 +341,25 @@ function emitNoteForTrack(
   src,
   trackName,
 ) {
-  if (trackState.isPcmTrack) {
+  if (isTrackPcmActive(trackState)) {
     if (!trackState.pcmSampleName) {
       pushDiag(
         diagnostics,
         "error",
         "E_PCM_SAMPLE_REQUIRED",
-        "pcm track requires a sample symbol before note data",
+        "pcm mode requires a sample symbol before note data",
+        src,
+        trackName,
+      );
+      trackState.tick += lengthTicks;
+      return;
+    }
+    if (!trackState.sampleDefs?.has(trackState.pcmSampleName)) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_PCM_SAMPLE_UNDEFINED",
+        `undefined sample def: ${trackState.pcmSampleName}`,
         src,
         trackName,
       );
@@ -1347,16 +1363,38 @@ function compileChannelBody(
               trackState.glideFrom = rawVal;
               break;
             }
+            case ":sample": {
+              if (!isTrackPcmActive(trackState)) break;
+              if (rawVal) {
+                trackState.pcmSampleName = rawVal;
+              } else {
+                pushDiag(
+                  diagnostics,
+                  "error",
+                  "E_PCM_SAMPLE_REQUIRED",
+                  "pcm mode requires :sample <name>",
+                  nodeSrc(node),
+                  trackName,
+                );
+              }
+              break;
+            }
             case ":mode": {
-              if (!trackState.isPcmTrack) break;
-              if (isPcmModeSymbol(rawVal)) {
+              if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
+                trackState.pcmPendingMode = rawVal;
+              } else if (trackState.isFm6Track && rawVal === "fm") {
+                trackState.fm6Mode = "fm";
+              } else if (trackState.isFm6Track && isPcmModeSymbol(rawVal)) {
+                trackState.fm6Mode = rawVal;
                 trackState.pcmPendingMode = rawVal;
               } else {
                 pushDiag(
                   diagnostics,
                   "error",
                   "E_PCM_MODE_INVALID",
-                  "pcm :mode must be shot or loop",
+                  trackState.isFm6Track
+                    ? "fm6 :mode must be fm, shot, or loop"
+                    : "pcm :mode must be shot or loop",
                   nodeSrc(node),
                   trackName,
                 );
@@ -1567,6 +1605,13 @@ function compileChannelBody(
           nodeSrc(node),
           trackName,
         );
+        i++;
+        continue;
+      }
+
+      // Bare identifier: sample symbol in PCM mode
+      if (isTrackPcmActive(trackState) && trackState.sampleDefs?.has(val)) {
+        trackState.pcmSampleName = val;
         i++;
         continue;
       }
@@ -2299,8 +2344,11 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         isCsmTrack: head === "fm3-csm",
         isCsmRateTrack: head === "fm3-csm-rate",
         isPcmTrack,
+        isFm6Track: head === "fm6",
+        fm6Mode: "fm",
         pcmSampleName,
         pcmPendingMode: null,
+        sampleDefs,
         hasInlineCsmRate: false,
         hasCsmOn: false,
         defaultVol,
