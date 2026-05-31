@@ -147,6 +147,17 @@ function describeNodeToken(node) {
   return node?.kind ?? "unknown";
 }
 
+function pushUnknownDiag(diagnostics, code, label, node, src, trackName) {
+  pushDiag(
+    diagnostics,
+    "error",
+    code,
+    `${label}: ${describeNodeToken(node)}`,
+    src,
+    trackName,
+  );
+}
+
 function isAtom(node, value) {
   return node && node.kind === "atom" && node.value === value;
 }
@@ -1457,11 +1468,11 @@ function compileChannelBody(
           continue;
         }
       }
-      pushDiag(
+      pushUnknownDiag(
         diagnostics,
-        "error",
         "E_UNKNOWN_ATOM",
-        `Unknown token: ${describeNodeToken(node)}`,
+        "Unknown token",
+        node,
         nodeSrc(node),
         trackName,
       );
@@ -1473,11 +1484,11 @@ function compileChannelBody(
     if (node.kind === "list" && node.items.length > 0) {
       const head = atomValue(node.items[0]);
       if (!head) {
-        pushDiag(
+        pushUnknownDiag(
           diagnostics,
-          "error",
           "E_UNKNOWN_LIST",
-          `Unknown list form: ${describeNodeToken(node)}`,
+          "Unknown list form",
+          node,
           nodeSrc(node.items[0]),
           trackName,
         );
@@ -1528,11 +1539,11 @@ function compileChannelBody(
               trackName,
             );
           } else {
-            pushDiag(
+            pushUnknownDiag(
               diagnostics,
-              "error",
               "E_UNKNOWN_TUPLET_ELEM",
-              `Unknown tuplet element: ${describeNodeToken(ev)}`,
+              "Unknown tuplet element",
+              ev,
               nodeSrc(ev),
               trackName,
             );
@@ -1721,11 +1732,11 @@ function compileChannelBody(
         continue;
       }
 
-      pushDiag(
+      pushUnknownDiag(
         diagnostics,
-        "error",
         "E_UNKNOWN_LIST",
-        `Unknown list form: ${describeNodeToken(node)}`,
+        "Unknown list form",
+        node,
         nodeSrc(node.items[0]),
         trackName,
       );
@@ -1733,11 +1744,11 @@ function compileChannelBody(
       continue;
     }
 
-    pushDiag(
+    pushUnknownDiag(
       diagnostics,
-      "error",
       "E_UNKNOWN_NODE",
-      `Unknown channel-body node: ${describeNodeToken(node)}`,
+      "Unknown channel-body node",
+      node,
       nodeSrc(node),
       trackName,
     );
@@ -1777,11 +1788,11 @@ function compileTrackBodyItems(
           });
         }
       } else {
-        pushDiag(
+        pushUnknownDiag(
           diagnostics,
-          "error",
           "E_UNKNOWN_ATOM",
-          `Unknown token: ${describeNodeToken(node)}`,
+          "Unknown token",
+          node,
           nodeSrc(node),
           trackName,
         );
@@ -1792,11 +1803,11 @@ function compileTrackBodyItems(
     if (!node || node.kind === "comment") continue;
 
     if (node.kind !== "list" || node.items.length === 0) {
-      pushDiag(
+      pushUnknownDiag(
         diagnostics,
-        "error",
         "E_UNKNOWN_NODE",
-        `Unknown track-body node: ${describeNodeToken(node)}`,
+        "Unknown track-body node",
+        node,
         nodeSrc(node),
         trackName,
       );
@@ -1805,11 +1816,11 @@ function compileTrackBodyItems(
 
     const head = atomValue(node.items[0]);
     if (!head) {
-      pushDiag(
+      pushUnknownDiag(
         diagnostics,
-        "error",
         "E_UNKNOWN_LIST",
-        `Unknown list form: ${describeNodeToken(node)}`,
+        "Unknown list form",
+        node,
         nodeSrc(node.items[0]),
         trackName,
       );
@@ -2009,11 +2020,11 @@ function compileTrackBodyItems(
       continue;
     }
 
-    pushDiag(
+    pushUnknownDiag(
       diagnostics,
-      "error",
       "E_UNKNOWN_LIST",
-      `Unknown list form: ${describeNodeToken(node)}`,
+      "Unknown list form",
+      node,
       nodeSrc(node.items[0]),
       trackName,
     );
