@@ -260,8 +260,8 @@ Other:
 
 **FM3 independent-operator mode**
 
-- [ ] `(fm3 voice-name)` form → enables FM3 special mode; shared voice declaration
-- [ ] `fm3-1`–`fm3-4` track forms → independent F-number per OP; emit `FM3_OP_PITCH` IR events
+- [x] `(fm3 voice-name)` form → enables FM3 special mode; shared voice declaration
+- [x] `fm3-1`–`fm3-4` track forms → independent F-number per OP; emit `FM3_OP_PITCH` IR events
 
 **TEMPO_SWEEP**
 
@@ -295,7 +295,7 @@ Other:
 
 **FM3 independent-OP mode**
 
-- [ ] `FM3_OP_PITCH` → write independent F-number/block per OP
+- [x] `FM3_OP_PITCH` → write independent F-number/block per OP
 
 **TEMPO_SWEEP**
 

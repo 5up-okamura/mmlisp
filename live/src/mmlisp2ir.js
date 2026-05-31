@@ -236,6 +236,23 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
   return args;
 }
 
+function fm3OpMask(opIndex) {
+  return opIndex >= 1 && opIndex <= 4 ? 0x10 << (opIndex - 1) : 0xf0;
+}
+
+function makeFm3OpNoteArgs(pitch, lengthTicks, gateSpec, vel, opIndex) {
+  const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
+  const args = {
+    pitch,
+    length: lengthTicks,
+    fm3Op: opIndex,
+    opMask: fm3OpMask(opIndex),
+  };
+  if (gateTicks < lengthTicks) args.gate = gateTicks;
+  if (vel !== undefined && vel !== 15) args.vel = vel;
+  return args;
+}
+
 /**
  * v0.4: Emit glide PARAM_SWEEP before NOTE_ON if glide is active.
  * Inserts a portamento slide from lastNotePitch to newPitch over glideTicks.
@@ -1276,6 +1293,31 @@ function compileChannelBody(
           lengthStr,
           trackState.defaultLength,
         );
+        if (trackState.isFm3OpTrack) {
+          const fullPitch = noteName + trackState.defaultOct;
+          events.push({
+            tick: trackState.tick,
+            cmd: "FM3_OP_PITCH",
+            args: { op: trackState.fm3OpIndex, pitch: fullPitch },
+            src: nodeSrc(node),
+          });
+          events.push({
+            tick: trackState.tick,
+            cmd: "NOTE_ON",
+            args: makeFm3OpNoteArgs(
+              fullPitch,
+              perNoteTicks,
+              trackState.defaultGate,
+              trackState.defaultVel,
+              trackState.fm3OpIndex,
+            ),
+            src: nodeSrc(node),
+          });
+          trackState.tick += perNoteTicks;
+          updateLastNotePitch(trackState, fullPitch);
+          i++;
+          continue;
+        }
         if (trackState.isCsmRateTrack) {
           const pitch = csmTrackPitch(
             trackState,
@@ -1339,6 +1381,31 @@ function compileChannelBody(
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
         const ticks = resolveShuffleTicks(trackState.defaultLength, trackState);
+        if (trackState.isFm3OpTrack) {
+          const fullPitch = val + trackState.defaultOct;
+          events.push({
+            tick: trackState.tick,
+            cmd: "FM3_OP_PITCH",
+            args: { op: trackState.fm3OpIndex, pitch: fullPitch },
+            src: nodeSrc(node),
+          });
+          events.push({
+            tick: trackState.tick,
+            cmd: "NOTE_ON",
+            args: makeFm3OpNoteArgs(
+              fullPitch,
+              ticks,
+              trackState.defaultGate,
+              trackState.defaultVel,
+              trackState.fm3OpIndex,
+            ),
+            src: nodeSrc(node),
+          });
+          trackState.tick += ticks;
+          updateLastNotePitch(trackState, fullPitch);
+          i++;
+          continue;
+        }
         if (trackState.isCsmRateTrack) {
           const pitch = csmTrackPitch(
             trackState,
@@ -1476,6 +1543,30 @@ function compileChannelBody(
             trackState.tick += slotTicks;
           } else if (isPerNoteLengthAtom(evVal)) {
             const { noteName } = parsePerNoteLength(evVal);
+            if (trackState.isFm3OpTrack) {
+              const fullPitch = noteName + trackState.defaultOct;
+              events.push({
+                tick: trackState.tick,
+                cmd: "FM3_OP_PITCH",
+                args: { op: trackState.fm3OpIndex, pitch: fullPitch },
+                src: nodeSrc(ev),
+              });
+              events.push({
+                tick: trackState.tick,
+                cmd: "NOTE_ON",
+                args: makeFm3OpNoteArgs(
+                  fullPitch,
+                  slotTicks,
+                  trackState.defaultGate,
+                  trackState.defaultVel,
+                  trackState.fm3OpIndex,
+                ),
+                src: nodeSrc(ev),
+              });
+              trackState.tick += slotTicks;
+              updateLastNotePitch(trackState, fullPitch);
+              continue;
+            }
             if (trackState.isCsmRateTrack) {
               const pitch = csmTrackPitch(
                 trackState,
@@ -1532,6 +1623,30 @@ function compileChannelBody(
             trackState.tick += slotTicks;
             updateLastNotePitch(trackState, fullPitch);
           } else if (isNoteAtom(evVal)) {
+            if (trackState.isFm3OpTrack) {
+              const fullPitch = evVal + trackState.defaultOct;
+              events.push({
+                tick: trackState.tick,
+                cmd: "FM3_OP_PITCH",
+                args: { op: trackState.fm3OpIndex, pitch: fullPitch },
+                src: nodeSrc(ev),
+              });
+              events.push({
+                tick: trackState.tick,
+                cmd: "NOTE_ON",
+                args: makeFm3OpNoteArgs(
+                  fullPitch,
+                  slotTicks,
+                  trackState.defaultGate,
+                  trackState.defaultVel,
+                  trackState.fm3OpIndex,
+                ),
+                src: nodeSrc(ev),
+              });
+              trackState.tick += slotTicks;
+              updateLastNotePitch(trackState, fullPitch);
+              continue;
+            }
             if (trackState.isCsmRateTrack) {
               const pitch = csmTrackPitch(
                 trackState,
@@ -2306,6 +2421,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     "fm1",
     "fm2",
     "fm3",
+    "fm3-1",
+    "fm3-2",
+    "fm3-3",
+    "fm3-4",
     "fm3-csm",
     "fm3-csm-rate",
     "fm4",
@@ -2326,12 +2445,12 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
 
   const hasCsmMode =
     scoreChannelHeads.has("fm3-csm") || scoreChannelHeads.has("fm3-csm-rate");
-  const hasFm3NormalOrOp =
-    scoreChannelHeads.has("fm3") ||
+  const hasFm3OpTracks =
     scoreChannelHeads.has("fm3-1") ||
     scoreChannelHeads.has("fm3-2") ||
     scoreChannelHeads.has("fm3-3") ||
     scoreChannelHeads.has("fm3-4");
+  const hasFm3NormalOrOp = scoreChannelHeads.has("fm3") || hasFm3OpTracks;
   if (hasCsmMode && hasFm3NormalOrOp) {
     pushDiag(
       diagnostics,
@@ -2430,6 +2549,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultOct,
         defaultGate,
         currentTempo: scoreTempoVal ?? 120,
+        isFm3OpTrack: /^fm3-[1-4]$/.test(head),
+        fm3OpIndex: /^fm3-[1-4]$/.test(head)
+          ? parseInt(head.slice(4), 10)
+          : null,
         isCsmTrack: head === "fm3-csm",
         isCsmRateTrack: head === "fm3-csm-rate",
         hasInlineCsmRate: false,
@@ -2451,12 +2574,21 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
 
       const trackData = {
         id: trackOrder.length,
-        channel: head === "fm3-csm" || head === "fm3-csm-rate" ? "fm3" : head,
+        channel:
+          head === "fm3-csm" ||
+          head === "fm3-csm-rate" ||
+          /^fm3-[1-4]$/.test(head)
+            ? "fm3"
+            : head,
         route_hint: {
           allocation_preference: "ordered_first_fit",
           carry,
           channel_candidates: [
-            head === "fm3-csm" || head === "fm3-csm-rate" ? "fm3" : head,
+            head === "fm3-csm" ||
+            head === "fm3-csm-rate" ||
+            /^fm3-[1-4]$/.test(head)
+              ? "fm3"
+              : head,
           ],
           role: "bgm",
           write_scope: ["any"],
@@ -2571,6 +2703,14 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   if (tracks.length > 0) {
     const initEvents = [];
     const scoreSrc = nodeSrc(score);
+    if (hasFm3OpTracks) {
+      initEvents.push({
+        tick: 0,
+        cmd: "FM3_MODE",
+        args: { mode: "op" },
+        src: scoreSrc,
+      });
+    }
     const lfoRateVal = parseIntLike(atomValue(scoreLfoRateNode));
     if (lfoRateVal !== null) {
       initEvents.push({

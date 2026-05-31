@@ -738,6 +738,31 @@ export class IRPlayer {
     this._write(0, 0x27, this._reg27, when);
   }
 
+  _setFm3SpecialMode(enabled, when) {
+    this._reg27 = enabled ? this._reg27 | 0x40 : this._reg27 & ~0x40;
+    this._write(0, 0x27, this._reg27, when);
+  }
+
+  _writeFm3OpPitch(op, midiNote, when) {
+    const { fnum, block } = midiToFnumBlock(midiNote);
+    const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
+    const low = fnum & 0xff;
+
+    if (op === 4) {
+      // OP4 follows the channel-3 base FNUM path.
+      this._write(0, 0xa4 + 2, high, when);
+      this._write(0, 0xa0 + 2, low, when);
+      return;
+    }
+
+    if (op >= 1 && op <= 3) {
+      // OP1..3 use FM3 special registers A8-AA / AC-AE.
+      const idx = op - 1;
+      this._write(0, 0xac + idx, high, when);
+      this._write(0, 0xa8 + idx, low, when);
+    }
+  }
+
   _applyCsmRate(ev, when) {
     const hz = Number(ev.args?.hz);
     if (Number.isFinite(hz) && hz > 0) {
@@ -911,6 +936,9 @@ export class IRPlayer {
     switch (ev.cmd) {
       case "NOTE_ON": {
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const fm3Op = Number(ev.args?.fm3Op);
+        const isFm3OpNote =
+          ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4;
         const centOffset = this._chRegs[ch]?.pitchOffset ?? 0;
         const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
         const chKey = (port << 2) | chOffset; // 0x28 channel key
@@ -935,29 +963,33 @@ export class IRPlayer {
           }
         }
 
-        // Write F-number high first (block + MSB), then low
-        this._write(
-          port,
-          0xa4 + chOffset,
-          ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-          when,
-        );
-        this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
-        this._schedulePitchMacro(
-          ev.args?.pitchMacro,
-          when,
-          gateTicks,
-          (centOffset, t) => {
-            const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
-            this._write(
-              port,
-              0xa4 + chOffset,
-              ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-              t,
-            );
-            this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
-          },
-        );
+        // FM3 OP1..3 notes use dedicated A8/AC registers via FM3_OP_PITCH events.
+        const writesBasePitch = !isFm3OpNote || fm3Op === 4;
+        if (writesBasePitch) {
+          // Write F-number high first (block + MSB), then low
+          this._write(
+            port,
+            0xa4 + chOffset,
+            ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+            when,
+          );
+          this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
+          this._schedulePitchMacro(
+            ev.args?.pitchMacro,
+            when,
+            gateTicks,
+            (centOffset, t) => {
+              const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
+              this._write(
+                port,
+                0xa4 + chOffset,
+                ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+                t,
+              );
+              this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+            },
+          );
+        }
         this._scheduleFmVelMacro(
           ch,
           port,
@@ -981,7 +1013,11 @@ export class IRPlayer {
           (regs?.vol != null || this._fmVolSweep[ch] != null) &&
           this._fmVolAtTime(ch, when) === 0;
         if (!this._mutedChannels[ch] && !isFmSilent) {
-          const keyOnByte = (this._opMasks[ch] ?? 0xf0) | chKey;
+          const eventMask = Number(ev.args?.opMask);
+          const keyMask = Number.isFinite(eventMask)
+            ? eventMask & 0xf0
+            : (this._opMasks[ch] ?? 0xf0);
+          const keyOnByte = keyMask | chKey;
           this._write(0, 0x28, keyOnByte, when);
         }
 
@@ -1041,6 +1077,19 @@ export class IRPlayer {
 
       case "CSM_OFF": {
         this._setCsmEnabled(false, when);
+        break;
+      }
+
+      case "FM3_MODE": {
+        this._setFm3SpecialMode((ev.args?.mode ?? "") === "op", when);
+        break;
+      }
+
+      case "FM3_OP_PITCH": {
+        const op = Number(ev.args?.op);
+        if (!Number.isInteger(op) || op < 1 || op > 4) break;
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        this._writeFm3OpPitch(op, midi, when);
         break;
       }
 
