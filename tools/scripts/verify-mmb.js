@@ -19,6 +19,7 @@ const OPCODE_PAYLOAD_SIZE = {
   0x42: 1, // MARKER: marker_id:u8
   0x43: 2, // JUMP: rel_offset:i16 (spec 1.6)
   0x60: 3, // PARAM_SET: target_id:u8, value:i16
+  0x61: null, // PARAM_SWEEP: variable-length payload
   0x80: 2, // TEMPO_SET: bpm:u16
   0xc0: 9, // PCM_NOTE_ON: sample_id:u8, rate:q8.8, length:u16, vel:u8, mode:u8, base_rate:u16
   0xc1: 2, // PCM_NOTE_OFF: sample_id:u8, mode:u8
@@ -126,10 +127,52 @@ function verifyTrackEvents(buf, eventSection, trackEntries) {
       if (expected === undefined) {
         fail(`track ${t.trackId} unknown opcode 0x${opcode.toString(16)}`);
       }
-      if (payloadLen !== expected) {
+      if (expected !== null && payloadLen !== expected) {
         fail(
           `track ${t.trackId} opcode 0x${opcode.toString(16)} payload mismatch (${payloadLen} != ${expected})`,
         );
+      }
+
+      if (opcode === 0x61) {
+        if (payloadLen < 9) {
+          fail(`track ${t.trackId} PARAM_SWEEP payload too small`);
+        }
+        const targetId = buf[pos];
+        const flags = buf[pos + 1];
+        let sweepPos = pos + 2;
+        if (targetId === 0) {
+          fail(`track ${t.trackId} PARAM_SWEEP has invalid target id 0`);
+        }
+        if (flags & 0x02) {
+          sweepPos += 2;
+        }
+        sweepPos += 2; // to
+        sweepPos += 2; // frames
+        if (sweepPos + 1 > pos + payloadLen) {
+          fail(`track ${t.trackId} PARAM_SWEEP truncated curve header`);
+        }
+        const curveLen = buf[sweepPos];
+        sweepPos += 1;
+        if (sweepPos + curveLen + 1 > pos + payloadLen) {
+          fail(`track ${t.trackId} PARAM_SWEEP truncated curve body`);
+        }
+        sweepPos += curveLen;
+        const paramsCount = buf[sweepPos];
+        sweepPos += 1;
+        for (let i = 0; i < paramsCount; i += 1) {
+          if (sweepPos + 1 > pos + payloadLen) {
+            fail(`track ${t.trackId} PARAM_SWEEP truncated param key length`);
+          }
+          const keyLen = buf[sweepPos];
+          sweepPos += 1;
+          if (sweepPos + keyLen + 8 > pos + payloadLen) {
+            fail(`track ${t.trackId} PARAM_SWEEP truncated param entry`);
+          }
+          sweepPos += keyLen + 8;
+        }
+        if (sweepPos !== pos + payloadLen) {
+          fail(`track ${t.trackId} PARAM_SWEEP payload size mismatch`);
+        }
       }
 
       pos += payloadLen;

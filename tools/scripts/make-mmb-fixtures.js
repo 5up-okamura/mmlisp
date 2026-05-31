@@ -101,6 +101,38 @@ function buildSampleBankFixture() {
   return buildGmb(ir, { targetProfile: "md-full" }).gmb;
 }
 
+function buildParamSweepFixture() {
+  const ir = {
+    metadata: {
+      title: "fixture-sweep",
+    },
+    tracks: [
+      {
+        id: 1,
+        channel: "fm1",
+        events: [
+          {
+            cmd: "PARAM_SWEEP",
+            tick: 0,
+            args: {
+              target: "VOL",
+              from: 0,
+              to: 31,
+              frames: 4,
+              curve: "linear",
+              loop: false,
+              params: { phase: 2 },
+            },
+          },
+          { cmd: "NOTE_ON", tick: 0, args: { pitch: "c4", length: 4 } },
+        ],
+      },
+    ],
+  };
+
+  return buildGmb(ir, { targetProfile: "md-full" }).gmb;
+}
+
 function makeFixtures() {
   const repoRoot = path.resolve(__dirname, "..", "..");
   const gmbDir = path.join(repoRoot, "examples", "gmb");
@@ -109,9 +141,11 @@ function makeFixtures() {
 
   const demo1 = fs.readFileSync(path.join(gmbDir, "demo1.mmb"));
   const pcmBank = buildSampleBankFixture();
+  const paramSweep = buildParamSweepFixture();
 
   const valid1 = Buffer.from(demo1);
   const validPcmBank = Buffer.from(pcmBank);
+  const validParamSweep = Buffer.from(paramSweep);
 
   const badMagic = Buffer.from(demo1);
   badMagic.write("BAD0", 0, "ascii");
@@ -144,6 +178,13 @@ function makeFixtures() {
     writeU16le(badSampleBank, sampleBank.offset, 2);
   }
 
+  const badParamSweep = Buffer.from(paramSweep);
+  {
+    const h = firstTrackEventHeaderOffset(badParamSweep);
+    const payloadLen = u16le(badParamSweep, h + 3);
+    writeU16le(badParamSweep, h + 3, payloadLen + 1);
+  }
+
   const files = [
     {
       name: "valid-demo1.mmb",
@@ -156,6 +197,12 @@ function makeFixtures() {
       buffer: validPcmBank,
       valid: true,
       reason: "Known-good demo with embedded PCM sample bank",
+    },
+    {
+      name: "valid-param-sweep.mmb",
+      buffer: validParamSweep,
+      valid: true,
+      reason: "Known-good demo with embedded PARAM_SWEEP opcode",
     },
     {
       name: "invalid-bad-magic.mmb",
@@ -180,6 +227,12 @@ function makeFixtures() {
       buffer: badSampleBank,
       valid: false,
       reason: "Sample bank count is intentionally mismatched",
+    },
+    {
+      name: "invalid-bad-param-sweep.mmb",
+      buffer: badParamSweep,
+      valid: false,
+      reason: "PARAM_SWEEP payload length is intentionally mismatched",
     },
   ];
 

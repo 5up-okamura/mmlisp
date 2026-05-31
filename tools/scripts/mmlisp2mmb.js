@@ -31,6 +31,29 @@ function decodeBase64Pcm8(dataBase64) {
   return Buffer.from(raw);
 }
 
+function encodeSweepParams(params) {
+  const entries = Object.entries(params || {});
+  const chunks = [
+    Buffer.from([ensureU8(entries.length, "PARAM_SWEEP params count")]),
+  ];
+  for (const [key, value] of entries) {
+    const keyBuf = encodeString(key);
+    if (keyBuf.length > 255) {
+      throw new Error(`PARAM_SWEEP param key too long: ${key}`);
+    }
+    const valueNum = Number(value);
+    if (!Number.isFinite(valueNum)) {
+      throw new Error(`PARAM_SWEEP param value must be numeric: ${key}`);
+    }
+    const valBuf = Buffer.alloc(8);
+    valBuf.writeDoubleLE(valueNum, 0);
+    chunks.push(Buffer.from([keyBuf.length]));
+    chunks.push(keyBuf);
+    chunks.push(valBuf);
+  }
+  return Buffer.concat(chunks);
+}
+
 function ensureU8(value, label) {
   if (value < 0 || value > 255) {
     throw new Error(`${label} is out of u8 range: ${value}`);
@@ -224,6 +247,34 @@ function encodePayload(event, trackMaps) {
       }
       const value = i16le(args.value ?? 0);
       return Buffer.concat([Buffer.from([target]), value]);
+    }
+    case "PARAM_SWEEP": {
+      const target = TARGET_ID[args.target];
+      if (target === undefined) {
+        throw new Error(`PARAM_SWEEP target not supported: ${args.target}`);
+      }
+      const curveBuf = encodeString(args.curve ?? "linear");
+      if (curveBuf.length > 255) {
+        throw new Error(`PARAM_SWEEP curve name too long: ${args.curve}`);
+      }
+      const flags = (args.loop ? 1 : 0) | (args.from != null ? 2 : 0);
+      const fromBuf =
+        args.from != null ? i16le(args.from ?? 0) : Buffer.alloc(0);
+      const toBuf = i16le(args.to ?? 0);
+      const frames = ensureU16(
+        Math.max(1, Math.round(Number(args.frames ?? 1))),
+        "PARAM_SWEEP frames",
+      );
+      const payload = [
+        Buffer.from([target, flags]),
+        fromBuf,
+        toBuf,
+        u16le(frames),
+        Buffer.from([curveBuf.length]),
+        curveBuf,
+        encodeSweepParams(args.params),
+      ];
+      return Buffer.concat(payload);
     }
     case "PCM_NOTE_ON": {
       const sample = String(args.sample || "").trim();

@@ -55,6 +55,7 @@ const MMB_OPCODE_TO_CMD = {
   0x42: "MARKER",
   0x43: "JUMP",
   0x60: "PARAM_SET",
+  0x61: "PARAM_SWEEP",
   0x80: "TEMPO_SET",
   0xc0: "PCM_NOTE_ON",
   0xc1: "PCM_NOTE_OFF",
@@ -147,6 +148,10 @@ function readI16LE(view, offset) {
 
 function readU32LE(view, offset) {
   return view.getUint32(offset, true);
+}
+
+function readF64LE(view, offset) {
+  return view.getFloat64(offset, true);
 }
 
 function bytesToBase64(bytes) {
@@ -293,6 +298,42 @@ function parseEventPayload(cmd, bytes, view, offset, sampleById) {
     case "PARAM_SET": {
       const target = MMB_TARGET_ID_TO_NAME[bytes[0]] ?? `TARGET_${bytes[0]}`;
       return { target, value: readI16LE(view, offset + 1) };
+    }
+    case "PARAM_SWEEP": {
+      const target = MMB_TARGET_ID_TO_NAME[bytes[0]] ?? `TARGET_${bytes[0]}`;
+      const flags = bytes[1];
+      let rel = 2;
+      const args = {
+        target,
+        loop: (flags & 0x01) !== 0,
+      };
+      if (flags & 0x02) {
+        args.from = readI16LE(view, offset + rel);
+        rel += 2;
+      }
+      args.to = readI16LE(view, offset + rel);
+      rel += 2;
+      args.frames = readU16LE(view, offset + rel);
+      rel += 2;
+      const curveLen = bytes[rel];
+      rel += 1;
+      args.curve = TEXT_DECODER.decode(bytes.subarray(rel, rel + curveLen));
+      rel += curveLen;
+      const paramsCount = bytes[rel];
+      rel += 1;
+      if (paramsCount > 0) {
+        const params = {};
+        for (let i = 0; i < paramsCount; i += 1) {
+          const keyLen = bytes[rel];
+          rel += 1;
+          const key = TEXT_DECODER.decode(bytes.subarray(rel, rel + keyLen));
+          rel += keyLen;
+          params[key] = readF64LE(view, offset + rel);
+          rel += 8;
+        }
+        args.params = params;
+      }
+      return args;
     }
     case "TEMPO_SET":
       return { bpm: readU16LE(view, offset) };

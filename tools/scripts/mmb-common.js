@@ -45,6 +45,7 @@ const OPCODE = {
   MARKER: 0x42,
   JUMP: 0x43,
   PARAM_SET: 0x60,
+  PARAM_SWEEP: 0x61,
   TEMPO_SET: 0x80,
   // Experimental v0.5 PCM events
   PCM_NOTE_ON: 0xc0,
