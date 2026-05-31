@@ -8,7 +8,7 @@
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
  *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate}] }
- *   { type: 'pcm-note-on', when: number, sample: string, rate: number, vel: number, mode: 'shot'|'loop' }
+ *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, vel: number, mode: 'shot'|'loop' }
  *   { type: 'pcm-note-off', when: number, sample: string }
  *   { type: 'reset' }
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
@@ -149,7 +149,11 @@ class YM2612Processor extends AudioWorkletProcessor {
     const gain = Math.max(0, Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15));
     const sampleEntry = this._pcmSamples.get(sample);
     const data = sampleEntry?.data ?? this._pcmFallbackSample;
-    const baseRate = sampleEntry?.sampleRate ?? this._outputSR;
+    const baseRateMsg = Number(msg.baseRate);
+    const baseRate =
+      Number.isFinite(baseRateMsg) && baseRateMsg > 0
+        ? baseRateMsg
+        : sampleEntry?.sampleRate ?? this._outputSR;
     const rawStep = (Number.isFinite(rate) ? rate : 1) * (baseRate / this._outputSR);
     const step = Math.max(0.01, rawStep);
     const mode = msg.mode === "loop" ? "loop" : "shot";

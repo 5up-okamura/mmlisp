@@ -1149,6 +1149,7 @@ export class IRPlayer {
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
     const rate = Number(ev.args?.rate);
+    const baseRate = Number(ev.args?.baseRate);
     const vel = Number(ev.args?.vel ?? 15);
     const mode = ev.args?.mode === "loop" ? "loop" : "shot";
     this._write({
@@ -1157,6 +1158,7 @@ export class IRPlayer {
       ch: ev._chIndex ?? null,
       sample,
       rate: Number.isFinite(rate) && rate > 0 ? rate : 1,
+      baseRate: Number.isFinite(baseRate) && baseRate > 0 ? baseRate : null,
       vel: Number.isFinite(vel) ? vel : 15,
       mode,
     });

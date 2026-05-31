@@ -435,6 +435,7 @@ function emitNoteForTrack(
     const pcmRate = Math.pow(2, (pcmMidiClamped - 60) / 12);
     const gateTicks = resolveGateTicks(trackState.defaultGate, lengthTicks);
     const mode = trackState.pcmPendingMode ?? "shot";
+    const sampleDef = trackState.sampleDefs?.get(trackState.pcmSampleName);
     const args = {
       sample: trackState.pcmSampleName,
       pitch: fullPitch,
@@ -442,6 +443,9 @@ function emitNoteForTrack(
       length: lengthTicks,
       mode,
     };
+    if (Number.isFinite(sampleDef?.rate) && sampleDef.rate > 0) {
+      args.baseRate = sampleDef.rate;
+    }
     if (trackState.defaultVel !== undefined && trackState.defaultVel !== 15) {
       args.vel = trackState.defaultVel;
     }
