@@ -295,7 +295,7 @@ function emitNoteForTrack(
       src,
     });
   }
-  if (trackState.isCsmTrack) {
+  if (trackState.isCsmTrack && !trackState.hasCsmOn) {
     events.push({
       tick: trackState.tick,
       cmd: "CSM_ON",

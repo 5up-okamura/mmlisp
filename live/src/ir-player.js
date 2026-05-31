@@ -1032,7 +1032,7 @@ export class IRPlayer {
           this._fmVolAtTime(ch, when) === 0;
         if (!this._mutedChannels[ch] && !isFmSilent) {
           const hasEventMask = ev.args?.opMask !== undefined;
-          let keyMask = this._opMasks[ch] ?? 0xf0;
+          let keyMask = this.getOpMask(ch);
           if (hasEventMask) {
             const eventMask = Number(ev.args?.opMask);
             if (!Number.isFinite(eventMask)) {
