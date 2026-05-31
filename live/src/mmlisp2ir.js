@@ -1768,6 +1768,15 @@ function compileTrackBodyItems(
             src: nodeSrc(node),
           });
         }
+      } else {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_UNKNOWN_ATOM",
+          `Unknown token: ${describeNodeToken(node)}`,
+          nodeSrc(node),
+          trackName,
+        );
       }
       continue;
     }
