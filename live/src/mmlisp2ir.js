@@ -1693,6 +1693,17 @@ function compileChannelBody(
         i++;
         continue;
       }
+
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_UNKNOWN_LIST",
+        `Unknown list form: (${head} ...)`,
+        nodeSrc(node.items[0]),
+        trackName,
+      );
+      i++;
+      continue;
     }
 
     i++;
@@ -1931,6 +1942,15 @@ function compileTrackBodyItems(
       }
       continue;
     }
+
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_UNKNOWN_LIST",
+      `Unknown list form: (${head} ...)`,
+      nodeSrc(node.items[0]),
+      trackName,
+    );
   }
 }
 
