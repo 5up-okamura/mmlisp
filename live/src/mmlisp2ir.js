@@ -1510,6 +1510,9 @@ function compileChannelBody(
           const slotTicks = Math.floor(acc / n);
           acc -= slotTicks * n;
           const ev = elems[j];
+          if (ev?.kind === "comment") {
+            continue;
+          }
           const evVal = atomValue(ev);
           if (evVal === "_") {
             events.push({
