@@ -733,13 +733,15 @@ export class IRPlayer {
     this._writeTimerAValue(this._timerAValueFromHz(hz), when);
   }
 
-  _setCsmEnabled(enabled, when) {
-    this._reg27 = enabled ? this._reg27 | 0x80 : this._reg27 & ~0x80;
-    this._write(0, 0x27, this._reg27, when);
-  }
-
-  _setFm3SpecialMode(enabled, when) {
-    this._reg27 = enabled ? this._reg27 | 0x40 : this._reg27 & ~0x40;
+  _setReg27State({ csmEnabled, fm3SpecialMode }, when) {
+    let next = this._reg27;
+    if (csmEnabled !== undefined) {
+      next = csmEnabled ? next | 0x80 : next & ~0x80;
+    }
+    if (fm3SpecialMode !== undefined) {
+      next = fm3SpecialMode ? next | 0x40 : next & ~0x40;
+    }
+    this._reg27 = next;
     this._write(0, 0x27, this._reg27, when);
   }
 
@@ -1029,10 +1031,18 @@ export class IRPlayer {
           (regs?.vol != null || this._fmVolSweep[ch] != null) &&
           this._fmVolAtTime(ch, when) === 0;
         if (!this._mutedChannels[ch] && !isFmSilent) {
-          const eventMask = Number(ev.args?.opMask);
-          const keyMask = Number.isFinite(eventMask)
-            ? eventMask & 0xf0
-            : (this._opMasks[ch] ?? 0xf0);
+          const hasEventMask = ev.args?.opMask !== undefined;
+          let keyMask = this._opMasks[ch] ?? 0xf0;
+          if (hasEventMask) {
+            const eventMask = Number(ev.args?.opMask);
+            if (!Number.isFinite(eventMask)) {
+              throw new Error(`Invalid NOTE_ON opMask: ${ev.args?.opMask}`);
+            }
+            keyMask = eventMask & 0xf0;
+            if (keyMask === 0) {
+              throw new Error(`Invalid NOTE_ON opMask nibble: ${eventMask}`);
+            }
+          }
           const keyOnByte = keyMask | chKey;
           this._write(0, 0x28, keyOnByte, when);
         }
@@ -1087,17 +1097,20 @@ export class IRPlayer {
       }
 
       case "CSM_ON": {
-        this._setCsmEnabled(true, when);
+        this._setReg27State({ csmEnabled: true }, when);
         break;
       }
 
       case "CSM_OFF": {
-        this._setCsmEnabled(false, when);
+        this._setReg27State({ csmEnabled: false }, when);
         break;
       }
 
       case "FM3_MODE": {
-        this._setFm3SpecialMode((ev.args?.mode ?? "") === "op", when);
+        this._setReg27State(
+          { fm3SpecialMode: (ev.args?.mode ?? "") === "op" },
+          when,
+        );
         break;
       }
 

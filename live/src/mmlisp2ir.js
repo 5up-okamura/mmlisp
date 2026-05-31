@@ -237,7 +237,10 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
 }
 
 function fm3OpMask(opIndex) {
-  return opIndex >= 1 && opIndex <= 4 ? 0x10 << (opIndex - 1) : 0xf0;
+  if (!Number.isInteger(opIndex) || opIndex < 1 || opIndex > 4) {
+    throw new Error(`Invalid FM3 operator index: ${opIndex}`);
+  }
+  return 0x10 << (opIndex - 1);
 }
 
 function makeFm3OpNoteArgs(
