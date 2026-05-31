@@ -807,6 +807,39 @@ function parseCurveSpec(
   const params = {};
   let hasParams = false;
 
+  const COMMON_PARAM_KEYS = new Set([":phase", ":rate"]);
+  const LOOP_WAVE_PARAM_KEYS = new Set([":duty", ":skew"]);
+  const STOCHASTIC_PARAM_KEYS = new Set([
+    ":hold",
+    ":jitter",
+    ":beta",
+    ":octaves",
+    ":lacunarity",
+    ":persistence",
+    ":leak",
+  ]);
+  const STOCHASTIC_CURVES = new Set(["noise", "pink", "perlin", "brown"]);
+  const LOOP_WAVE_CURVES = new Set([
+    "sin",
+    "triangle",
+    "square",
+    "saw",
+    "ramp",
+  ]);
+
+  const supportsParamKey = (curveName, key) => {
+    if (COMMON_PARAM_KEYS.has(key)) return true;
+    if (LOOP_WAVE_PARAM_KEYS.has(key)) return LOOP_WAVE_CURVES.has(curveName);
+    if (!STOCHASTIC_PARAM_KEYS.has(key)) return false;
+    if (!STOCHASTIC_CURVES.has(curveName)) return false;
+    if (key === ":beta") return curveName === "pink";
+    if (key === ":octaves" || key === ":lacunarity" || key === ":persistence") {
+      return curveName === "perlin";
+    }
+    if (key === ":leak") return curveName === "brown";
+    return true;
+  };
+
   const clampNum = (n, min, max) => Math.max(min, Math.min(max, n));
   const clampWithWarning = (n, min, max, key) => {
     const clamped = clampNum(n, min, max);
@@ -836,6 +869,25 @@ function parseCurveSpec(
     const k = atomValue(node.items[j]);
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
       const v = atomValue(node.items[j + 1]);
+      if (
+        !supportsParamKey(head, k) &&
+        k !== ":from" &&
+        k !== ":to" &&
+        k !== ":len"
+      ) {
+        if (diagnostics) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_CURVE_PARAM_UNKNOWN",
+            `unknown curve param ${k} for curve ${head}`,
+            src ?? nodeSrc(node),
+            trackName,
+          );
+        }
+        j++;
+        continue;
+      }
       switch (k) {
         case ":from":
           from = parseNumberLike(v);
