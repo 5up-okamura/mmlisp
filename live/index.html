@@ -41,16 +41,6 @@
       cursor: pointer;
     }
     #topbar select:hover { border-color: #555; }
-    #fileTitle {
-      margin-left: 0.5rem;
-      font-family: monospace;
-      font-size: 0.75rem;
-      color: #9ad;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      min-width: 0;
-    }
     .tb-btn {
       background: #1e1e1e;
       border: 1px solid #333;
@@ -115,7 +105,7 @@
       min-width: 200px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
-    .menu-wrap.open .menu-dropdown { display: block; }
+    .menu-wrap.open > .menu-dropdown { display: block; }
     .menu-item {
       display: block;
       width: 100%;
@@ -371,15 +361,12 @@
         <button class="menu-item" onclick="openFile();closeMenus()">Open…</button>
         <button class="menu-item" onclick="saveFile();closeMenus()">Save</button>
         <button class="menu-item" onclick="saveFileAs();closeMenus()">Save As…</button>
-      </div>
-    </div>
-    <div id="fileTitle">Untitled</div>
-
-    <!-- Examples menu -->
-    <div class="menu-wrap" id="menuExamples">
-      <button class="menu-btn" onclick="toggleMenu('menuExamples')">Examples</button>
-      <div class="menu-dropdown">
-        <button class="menu-item" onclick="loadExample('/examples/ir/demo1.ir.canonical.json')">demo1</button>
+        <div class="menu-wrap" id="menuExamples" style="position:relative;">
+          <button class="menu-item" onclick="toggleSubmenu('menuExamples')">Examples ▶</button>
+          <div class="menu-dropdown" style="left:100%; top:0; margin-left:4px;">
+            <button class="menu-item" onclick="loadExample('/examples/ir/demo1.ir.canonical.json');closeMenus()">demo1</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -745,7 +732,6 @@
         const src = await res.text();
         _lastFileName = mmlispURL.split('/').pop();
         currentIrURL = irURL;
-        displayFileName(_lastFileName);
         setEditorDoc(src);
       } catch (e) {
         setEditorDoc('(failed to load: ' + mmlispURL + ')');
@@ -758,11 +744,6 @@
         doc: text,
         extensions: editorExtensions,
       }));
-    }
-
-    function displayFileName(name) {
-      const el = document.getElementById('fileTitle');
-      if (el) el.textContent = name || 'Untitled';
     }
 
     function highlightTrackLine(trackIdx, line) {
@@ -888,7 +869,6 @@
       _sourceFileName = handle?.name || null;
       _sourceDir = null;
       currentIrURL = null;
-      displayFileName(_sourceFileName);
       _lastFileName = _sourceFileName || 'untitled.mmlisp';
     }
 
@@ -902,7 +882,6 @@
         _lastGoodIR = null;
         _lastSourceMap = null;
         _lastFileName = file.name;
-        displayFileName(file.name);
         setEditorDoc('(binary MMB preset loaded)');
         log('Loaded ' + file.name + ' as binary preset', 'info');
         return;
@@ -957,7 +936,6 @@
       _lastFileName = 'untitled.mmlisp';
       _lastGoodIR = null;
       _lastSourceMap = null;
-      displayFileName('Untitled');
       setEditorDoc('(score :title "Untitled"\n  )');
       onStop();
       scheduleCompile();
@@ -1344,6 +1322,15 @@
     function closeMenus() {
       document.querySelectorAll('.menu-wrap').forEach(el => el.classList.remove('open'));
     }
+
+    function toggleSubmenu(id) {
+      const wrap = document.getElementById(id);
+      if (!wrap) return;
+      const isOpen = wrap.classList.contains('open');
+      document.querySelectorAll('#menuFile .menu-wrap.open').forEach(el => el.classList.remove('open'));
+      if (!isOpen) wrap.classList.add('open');
+    }
+
     function loadExample(url) {
       currentIrURL = url;
       _lastGoodIR = null;
@@ -1352,11 +1339,9 @@
       _sourceFileName = null;
       _sourceDir = null;
       if (/\.mmb(?:$|\?)/i.test(url)) {
-        displayFileName(url.split('/').pop() || 'demo1.mmb');
         setEditorDoc('(binary MMB preset loaded)');
       } else {
         loadMmlispSource(url);
-        displayFileName('demo1.mmlisp');
       }
       closeMenus();
     }
@@ -1364,6 +1349,7 @@
       if (!e.target.closest('.menu-wrap')) closeMenus();
     });
     window.toggleMenu  = toggleMenu;
+    window.toggleSubmenu = toggleSubmenu;
     window.closeMenus  = closeMenus;
     window.loadExample = loadExample;
 

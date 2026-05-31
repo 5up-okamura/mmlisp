@@ -315,13 +315,12 @@ Other:
 
 **File menu**
 
-- [ ] File menu: **New** / **Open...** / **Save** / **Save As...** / ── / **Examples ▶**
+- [x] File menu: **New** / **Open...** / **Save** / **Save As...** / **Examples ▶**
 - [x] Open: use File System Access API (`showOpenFilePicker`) → load `.mmlisp`; set base directory
 - [x] Save As: `showSaveFilePicker` → write `.mmlisp`; update base directory for sample resolution
 - [x] Save: write to previously acquired `FileSystemFileHandle` (no picker re-prompt)
 - [x] Unsaved-state guard: warn when compiling `def :sample` paths with no saved base directory
-- [x] Title bar shows current filename (or "Untitled" when unsaved)
-- [x] Examples submenu: load bundled `.mmlisp` sample into editor (currently: demo1; extensible)
+- [x] Examples item under File menu: load bundled `.mmlisp` sample into editor (currently: demo1; extensible)
 
 **Tools menu**
 
