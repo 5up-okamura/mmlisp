@@ -257,6 +257,35 @@ function makeFm3OpNoteArgs(
   return args;
 }
 
+function emitCsmRateEvent(
+  trackState,
+  events,
+  diagnostics,
+  src,
+  trackName,
+  rateArgs,
+  markInline = false,
+) {
+  const args =
+    rateArgs?.hz !== undefined
+      ? { hz: clampCsmRateHz(rateArgs.hz, diagnostics, src, trackName) }
+      : {
+          from: clampCsmRateHz(rateArgs.from, diagnostics, src, trackName),
+          to: clampCsmRateHz(rateArgs.to, diagnostics, src, trackName),
+          len: rateArgs.len,
+          curve: rateArgs.curve,
+        };
+  if (markInline) {
+    trackState.hasInlineCsmRate = true;
+  }
+  events.push({
+    tick: trackState.tick,
+    cmd: "CSM_RATE",
+    args,
+    src,
+  });
+}
+
 function emitNoteForTrack(
   trackState,
   noteName,
@@ -274,12 +303,8 @@ function emitNoteForTrack(
       src,
       trackName,
     );
-    const hz = clampCsmRateHz(csmPitchToHz(pitch), diagnostics, src, trackName);
-    events.push({
-      tick: trackState.tick,
-      cmd: "CSM_RATE",
-      args: { hz },
-      src,
+    emitCsmRateEvent(trackState, events, diagnostics, src, trackName, {
+      hz: csmPitchToHz(pitch),
     });
     trackState.tick += lengthTicks;
     return;
@@ -1027,19 +1052,15 @@ function compileChannelBody(
               const valueNode = items[i];
               const hz = parseNumberLike(rawVal);
               if (hz !== null) {
-                const clamped = clampCsmRateHz(
-                  hz,
+                emitCsmRateEvent(
+                  trackState,
+                  events,
                   diagnostics,
                   nodeSrc(node),
                   trackName,
+                  { hz },
+                  true,
                 );
-                trackState.hasInlineCsmRate = true;
-                events.push({
-                  tick: trackState.tick,
-                  cmd: "CSM_RATE",
-                  args: { hz: clamped },
-                  src: nodeSrc(node),
-                });
                 break;
               }
 
@@ -1077,25 +1098,15 @@ function compileChannelBody(
                   len !== null &&
                   len > 0
                 ) {
-                  const fromHz = clampCsmRateHz(
-                    from,
+                  emitCsmRateEvent(
+                    trackState,
+                    events,
                     diagnostics,
                     nodeSrc(node),
                     trackName,
+                    { from, to, len, curve },
+                    true,
                   );
-                  const toHz = clampCsmRateHz(
-                    to,
-                    diagnostics,
-                    nodeSrc(node),
-                    trackName,
-                  );
-                  trackState.hasInlineCsmRate = true;
-                  events.push({
-                    tick: trackState.tick,
-                    cmd: "CSM_RATE",
-                    args: { from: fromHz, to: toHz, len, curve },
-                    src: nodeSrc(node),
-                  });
                 } else {
                   pushDiag(
                     diagnostics,
@@ -1423,18 +1434,14 @@ function compileChannelBody(
             trackState.defaultLength,
             trackState,
           );
-          const hz = clampCsmRateHz(
-            rawHz,
+          emitCsmRateEvent(
+            trackState,
+            events,
             diagnostics,
             nodeSrc(node),
             trackName,
+            { hz: rawHz },
           );
-          events.push({
-            tick: trackState.tick,
-            cmd: "CSM_RATE",
-            args: { hz },
-            src: nodeSrc(node),
-          });
           trackState.tick += ticks;
           i++;
           continue;
