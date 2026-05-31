@@ -333,7 +333,7 @@ Other:
 
 #### Documentation (docs/guide.md)
 
-- [ ] Update guide for v0.5 features: FM3 CSM, FM3 independent-OP, PCM tracks, TEMPO_SWEEP, stochastic curves
+- [x] Update guide for v0.5 features: FM3 CSM, FM3 independent-OP, PCM tracks, TEMPO_SWEEP, stochastic curves
 
 ---
 
