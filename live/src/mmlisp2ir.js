@@ -1781,7 +1781,19 @@ function compileTrackBodyItems(
       continue;
     }
 
-    if (!node || node.kind !== "list" || node.items.length === 0) continue;
+    if (!node || node.kind === "comment") continue;
+
+    if (node.kind !== "list" || node.items.length === 0) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_UNKNOWN_NODE",
+        `Unknown track-body node: ${describeNodeToken(node)}`,
+        nodeSrc(node),
+        trackName,
+      );
+      continue;
+    }
 
     const head = atomValue(node.items[0]);
     if (!head) {
