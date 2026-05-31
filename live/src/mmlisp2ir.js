@@ -639,13 +639,18 @@ function parseSampleDef(root, diagnostics) {
   return sample;
 }
 
-function collectMacroEntriesFromItems(items) {
+function collectMacroEntriesFromItems(items, diagnostics, trackName) {
   const entries = [];
   for (let ki = 0; ki + 1 < items.length; ki += 2) {
     const macroTargetSym = atomValue(items[ki]);
     if (!macroTargetSym?.startsWith(":")) continue;
     const irTarget = canonicalTarget(macroTargetSym);
-    const spec = parseMacroSpec(items[ki + 1], irTarget);
+    const spec = parseMacroSpec(
+      items[ki + 1],
+      irTarget,
+      diagnostics,
+      trackName,
+    );
     if (spec) entries.push({ target: irTarget, spec });
   }
   return entries;
@@ -660,7 +665,7 @@ function collectMacroEntriesFromItems(items) {
  *      or { type: "stages", stages: [...] }  (multi-stage sequential)
  * or null if the node cannot be parsed.
  */
-function parseMacroSpec(node, target) {
+function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
   if (!node) return null;
   // Step-vector or multi-stage form: [...]
   if (node.kind === "list" && node.bracket === "[]") {
@@ -685,7 +690,12 @@ function parseMacroSpec(node, target) {
           }
           continue;
         }
-        const curveSpec = parseCurveSpec(stageNode);
+        const curveSpec = parseCurveSpec(
+          stageNode,
+          diagnostics,
+          nodeSrc(stageNode),
+          trackName,
+        );
         if (curveSpec) stages.push(curveSpec);
       }
       return { type: "stages", stages };
@@ -724,7 +734,12 @@ function parseMacroSpec(node, target) {
   }
   // Curve form: (ease-out :from 15 :to 0 :len 1)
   if (node.kind === "list" && node.bracket === "()") {
-    const curveSpec = parseCurveSpec(node);
+    const curveSpec = parseCurveSpec(
+      node,
+      diagnostics,
+      nodeSrc(node),
+      trackName,
+    );
     if (curveSpec) return { type: "curve", ...curveSpec };
   }
   return null;
@@ -775,7 +790,12 @@ function isPerNoteLengthAtom(val) {
  * Parse an inline curve spec node, e.g. (ease-out :from 28 :to 20 :len 8).
  * Returns a PARAM_SWEEP args object or null if the node is not a curve form.
  */
-function parseCurveSpec(node) {
+function parseCurveSpec(
+  node,
+  diagnostics = null,
+  src = null,
+  trackName = null,
+) {
   if (!node || node.kind !== "list" || !node.items || node.items.length === 0)
     return null;
   const head = atomValue(node.items[0]);
@@ -788,6 +808,25 @@ function parseCurveSpec(node) {
   let hasParams = false;
 
   const clampNum = (n, min, max) => Math.max(min, Math.min(max, n));
+  const clampWithWarning = (n, min, max, key) => {
+    const clamped = clampNum(n, min, max);
+    if (
+      diagnostics &&
+      Number.isFinite(n) &&
+      Number.isFinite(clamped) &&
+      clamped !== n
+    ) {
+      pushDiag(
+        diagnostics,
+        "warning",
+        "W_CURVE_PARAM_CLAMPED",
+        `curve param ${key} out of range (${min}..${max}); clamped: ${n} -> ${clamped}`,
+        src ?? nodeSrc(node),
+        trackName,
+      );
+    }
+    return clamped;
+  };
   const setParam = (key, value) => {
     params[key] = value;
     hasParams = true;
@@ -809,7 +848,8 @@ function parseCurveSpec(node) {
           break;
         case ":phase": {
           const n = parseIntLike(v);
-          if (n !== null) setParam("phase", clampNum(n, 0, 255));
+          if (n !== null)
+            setParam("phase", clampWithWarning(n, 0, 255, ":phase"));
           break;
         }
         case ":rate": {
@@ -819,12 +859,14 @@ function parseCurveSpec(node) {
         }
         case ":duty": {
           const n = parseIntLike(v);
-          if (n !== null) setParam("duty", clampNum(n, 1, 255));
+          if (n !== null)
+            setParam("duty", clampWithWarning(n, 1, 255, ":duty"));
           break;
         }
         case ":skew": {
           const n = parseIntLike(v);
-          if (n !== null) setParam("skew", clampNum(n, -127, 127));
+          if (n !== null)
+            setParam("skew", clampWithWarning(n, -127, 127, ":skew"));
           break;
         }
         case ":hold": {
@@ -834,7 +876,8 @@ function parseCurveSpec(node) {
         }
         case ":jitter": {
           const n = parseNumberLike(v);
-          if (n !== null) setParam("jitter", clampNum(n, 0, 1));
+          if (n !== null)
+            setParam("jitter", clampWithWarning(n, 0, 1, ":jitter"));
           break;
         }
         case ":beta": {
@@ -844,7 +887,8 @@ function parseCurveSpec(node) {
         }
         case ":octaves": {
           const n = parseIntLike(v);
-          if (n !== null) setParam("octaves", clampNum(n, 1, 8));
+          if (n !== null)
+            setParam("octaves", clampWithWarning(n, 1, 8, ":octaves"));
           break;
         }
         case ":lacunarity": {
@@ -859,7 +903,8 @@ function parseCurveSpec(node) {
         }
         case ":leak": {
           const n = parseNumberLike(v);
-          if (n !== null) setParam("leak", clampNum(n, 0, 0.9999));
+          if (n !== null)
+            setParam("leak", clampWithWarning(n, 0, 0.9999, ":leak"));
           break;
         }
       }
@@ -1284,7 +1329,12 @@ function compileChannelBody(
             }
             case ":vol": {
               const valueNode = items[i];
-              const curveSpec = parseCurveSpec(valueNode);
+              const curveSpec = parseCurveSpec(
+                valueNode,
+                diagnostics,
+                nodeSrc(node),
+                trackName,
+              );
               if (curveSpec) {
                 events.push({
                   tick: trackState.tick,
@@ -1316,7 +1366,12 @@ function compileChannelBody(
             }
             case ":master": {
               const valueNode = items[i];
-              const curveSpec = parseCurveSpec(valueNode);
+              const curveSpec = parseCurveSpec(
+                valueNode,
+                diagnostics,
+                nodeSrc(node),
+                trackName,
+              );
               if (curveSpec) {
                 events.push({
                   tick: trackState.tick,
@@ -1363,7 +1418,12 @@ function compileChannelBody(
                 valueNode.bracket === "()" &&
                 valueNode.items?.length > 0
               ) {
-                const curveSpec = parseCurveSpec(valueNode);
+                const curveSpec = parseCurveSpec(
+                  valueNode,
+                  diagnostics,
+                  nodeSrc(node),
+                  trackName,
+                );
                 if (!curveSpec) break;
 
                 const from = parseNumberLike(String(curveSpec.from ?? ""));
@@ -1429,7 +1489,12 @@ function compileChannelBody(
                 valueNode.bracket === "()" &&
                 valueNode.items?.length > 0
               ) {
-                const curveSpec = parseCurveSpec(valueNode);
+                const curveSpec = parseCurveSpec(
+                  valueNode,
+                  diagnostics,
+                  nodeSrc(node),
+                  trackName,
+                );
                 if (!curveSpec) break;
 
                 const from = parseNumberLike(String(curveSpec.from ?? ""));
@@ -1546,7 +1611,12 @@ function compileChannelBody(
                       // inline :target spec pair
                       if (j + 1 < listItems.length) {
                         const irTarget = canonicalTarget(entryVal);
-                        const spec = parseMacroSpec(listItems[j + 1], irTarget);
+                        const spec = parseMacroSpec(
+                          listItems[j + 1],
+                          irTarget,
+                          diagnostics,
+                          trackName,
+                        );
                         applyMacroEntryToState(trackState, irTarget, spec);
                         j += 2;
                       } else {
@@ -1565,7 +1635,12 @@ function compileChannelBody(
                   // Form 2: inline :target spec
                   if (i + 1 < items.length) {
                     const irTarget = canonicalTarget(rawVal);
-                    const spec = parseMacroSpec(items[i + 1], irTarget);
+                    const spec = parseMacroSpec(
+                      items[i + 1],
+                      irTarget,
+                      diagnostics,
+                      trackName,
+                    );
                     applyMacroEntryToState(trackState, irTarget, spec);
                     i++;
                   }
@@ -1595,7 +1670,12 @@ function compileChannelBody(
               const target = canonicalTarget(val);
               if (!SUPPORTED_TARGETS.has(target)) break;
               const valueNode = items[i];
-              const curveSpec = parseCurveSpec(valueNode);
+              const curveSpec = parseCurveSpec(
+                valueNode,
+                diagnostics,
+                nodeSrc(node),
+                trackName,
+              );
               if (curveSpec) {
                 events.push({
                   tick: trackState.tick,
@@ -2122,9 +2202,13 @@ function collectDefs(roots, diagnostics) {
           const listItems = macroListNode.items.filter(
             (n) => n.kind !== "comment",
           );
-          entries = collectMacroEntriesFromItems(listItems);
+          entries = collectMacroEntriesFromItems(listItems, diagnostics, name);
         } else {
-          entries = collectMacroEntriesFromItems(bodyItems.slice(3));
+          entries = collectMacroEntriesFromItems(
+            bodyItems.slice(3),
+            diagnostics,
+            name,
+          );
         }
         if (entries.length === 1) {
           typedDefs.set(name, { tag: "macro", ...entries[0], src });
