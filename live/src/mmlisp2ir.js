@@ -205,6 +205,7 @@ function parseLengthToken(value, inheritedTicks) {
 
 // Returns true if val is a rest token: "_", "_4", "_4.", "_14t", "_16f", "_1/2"
 function isRestAtom(val) {
+  if (val === "_") return true;
   return parseRestLength(val, null) !== null;
 }
 
@@ -306,6 +307,27 @@ function emitCsmRateEvent(
   });
 }
 
+function isPcmModeSymbol(value) {
+  return value === "shot" || value === "loop";
+}
+
+function isPcmTrackName(name) {
+  return /^pcm[1-3]$/.test(name);
+}
+
+function isLikelyPcmBodyToken(value) {
+  if (!value) return false;
+  if (value.startsWith(":")) return true;
+  if (value.startsWith("#")) return true;
+  if (value === "~" || value === ">" || value === "<" || value === "_")
+    return true;
+  if (value === "goto" || value === "x" || value === "param-set") return true;
+  if (isRestAtom(value)) return true;
+  if (isNoteAtom(value)) return true;
+  if (isPerNoteLengthAtom(value)) return true;
+  return false;
+}
+
 function emitNoteForTrack(
   trackState,
   noteName,
@@ -315,6 +337,53 @@ function emitNoteForTrack(
   src,
   trackName,
 ) {
+  if (trackState.isPcmTrack) {
+    if (!trackState.pcmSampleName) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_PCM_SAMPLE_REQUIRED",
+        "pcm track requires a sample symbol before note data",
+        src,
+        trackName,
+      );
+      trackState.tick += lengthTicks;
+      return;
+    }
+
+    const fullPitch = noteName + trackState.defaultOct;
+    const gateTicks = resolveGateTicks(trackState.defaultGate, lengthTicks);
+    const mode = trackState.pcmPendingMode ?? "shot";
+    const args = {
+      sample: trackState.pcmSampleName,
+      pitch: fullPitch,
+      length: lengthTicks,
+      mode,
+    };
+    if (trackState.defaultVel !== undefined && trackState.defaultVel !== 15) {
+      args.vel = trackState.defaultVel;
+    }
+    if (gateTicks < lengthTicks) args.gate = gateTicks;
+
+    events.push({
+      tick: trackState.tick,
+      cmd: "PCM_NOTE_ON",
+      args,
+      src,
+    });
+    if (gateTicks > 0) {
+      events.push({
+        tick: trackState.tick + gateTicks,
+        cmd: "PCM_NOTE_OFF",
+        args: { sample: trackState.pcmSampleName, mode },
+        src,
+      });
+    }
+    trackState.tick += lengthTicks;
+    trackState.pcmPendingMode = null;
+    return;
+  }
+
   if (trackState.isCsmRateTrack) {
     const pitch = csmTrackPitch(
       trackState,
@@ -1264,6 +1333,22 @@ function compileChannelBody(
               trackState.glideFrom = rawVal;
               break;
             }
+            case ":mode": {
+              if (!trackState.isPcmTrack) break;
+              if (isPcmModeSymbol(rawVal)) {
+                trackState.pcmPendingMode = rawVal;
+              } else {
+                pushDiag(
+                  diagnostics,
+                  "error",
+                  "E_PCM_MODE_INVALID",
+                  "pcm :mode must be shot or loop",
+                  nodeSrc(node),
+                  trackName,
+                );
+              }
+              break;
+            }
             case ":macro":
               {
                 // Three forms:
@@ -2058,6 +2143,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     "sqr2",
     "sqr3",
     "noise",
+    "pcm1",
+    "pcm2",
+    "pcm3",
   ];
 
   const scoreChannelHeads = new Set();
@@ -2098,6 +2186,23 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     const head = atomValue(node.items[0]);
     if (!head || !CHANNEL_NAMES.includes(head)) continue;
 
+    const isPcmTrack = isPcmTrackName(head);
+
+    let pcmSampleName = null;
+    let bodyStartIndex = 1;
+    if (isPcmTrack && node.items.length > 1) {
+      const maybeSample = node.items[1];
+      const sampleVal = atomValue(maybeSample);
+      if (
+        sampleVal &&
+        maybeSample.kind === "atom" &&
+        !isLikelyPcmBodyToken(sampleVal)
+      ) {
+        pcmSampleName = sampleVal;
+        bodyStartIndex = 2;
+      }
+    }
+
     // v0.4: Use channel name as track key
     const trackKey = head;
 
@@ -2106,7 +2211,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     // and other modifiers (:vel, :master, etc.) are left in the body for compileChannelBody.
     // Example: (fm1 :oct 4 :len 8 :vol 10  c d e f)
     //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ options
-    let i = 1;
+    let i = bodyStartIndex;
     const inlineOpts = {};
     while (i + 1 < node.items.length) {
       const key = atomValue(node.items[i]);
@@ -2179,6 +2284,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
           : null,
         isCsmTrack: head === "fm3-csm",
         isCsmRateTrack: head === "fm3-csm-rate",
+        isPcmTrack,
+        pcmSampleName,
+        pcmPendingMode: null,
         hasInlineCsmRate: false,
         hasCsmOn: false,
         defaultVol,
@@ -2244,6 +2352,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       // Update sticky state from inline options on subsequent forms of the same channel
       const { trackData, trackState } = trackByKey.get(trackKey);
 
+      if (isPcmTrack && pcmSampleName) {
+        trackState.pcmSampleName = pcmSampleName;
+      }
+
       if (inlineOpts[":oct"] !== undefined) {
         const v = parseIntLike(inlineOpts[":oct"]);
         if (v !== null) trackState.defaultOct = Math.max(0, v);
@@ -2284,6 +2396,27 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     }
 
     const { trackData, trackState } = trackByKey.get(trackKey);
+    if (trackState.isPcmTrack) {
+      if (!trackState.pcmSampleName) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_PCM_SAMPLE_REQUIRED",
+          "pcm track requires a sample symbol before note data",
+          nodeSrc(node),
+          trackKey,
+        );
+      } else if (!sampleDefs.has(trackState.pcmSampleName)) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_PCM_SAMPLE_UNDEFINED",
+          `undefined sample def: ${trackState.pcmSampleName}`,
+          nodeSrc(node),
+          trackKey,
+        );
+      }
+    }
     compileChannelBody(
       bodyItems,
       trackState,
