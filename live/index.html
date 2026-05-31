@@ -780,6 +780,7 @@
     let _sourceDir = null;
     let _unsavedSamplePathWarned = false;
     const _pcmSampleCache = new Map();
+    const _pcmCompiledCache = new Map();
 
     function toFetchablePath(path) {
       if (!path) return null;
@@ -812,6 +813,34 @@
       return out;
     }
 
+    function decodeCompiledPcmSample(def) {
+      const compiled = def?.compiled;
+      if (!compiled || compiled.format !== 'pcm_s8' || !compiled.dataBase64) {
+        return null;
+      }
+
+      const cacheKey = `${String(def?.name || '')}:${compiled.dataBase64.length}:${compiled.sourceSampleRate || 0}`;
+      const cached = _pcmCompiledCache.get(cacheKey);
+      if (cached) return cached;
+
+      const bin = atob(compiled.dataBase64);
+      const len = bin.length;
+      const mono = new Float32Array(len);
+      for (let i = 0; i < len; i++) {
+        const u = bin.charCodeAt(i) & 0xff;
+        const s8 = u > 127 ? u - 256 : u;
+        mono[i] = s8 / 128;
+      }
+
+      const sampleRate = Number(compiled.sourceSampleRate) > 0
+        ? Number(compiled.sourceSampleRate)
+        : (Number(def?.rate) > 0 ? Number(def.rate) : 44100);
+
+      const out = { data: mono, sampleRate };
+      _pcmCompiledCache.set(cacheKey, out);
+      return out;
+    }
+
     async function syncPcmSamplesToWorklet(ir) {
       if (!workletNode) return;
       const defs = ir?.metadata?.samples;
@@ -822,10 +851,14 @@
 
       const samples = [];
       for (const def of defs) {
-        const sourcePath = def?.resolvedFile || def?.file;
-        if (!sourcePath || !def?.name) continue;
+        if (!def?.name) continue;
         try {
-          const decoded = await decodePcmSample(sourcePath);
+          let decoded = decodeCompiledPcmSample(def);
+          if (!decoded) {
+            const sourcePath = def?.resolvedFile || def?.file;
+            if (!sourcePath) continue;
+            decoded = await decodePcmSample(sourcePath);
+          }
           if (!decoded) continue;
           samples.push({
             name: String(def.name),

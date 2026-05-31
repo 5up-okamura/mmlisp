@@ -107,6 +107,120 @@ function quantizeMonoToSignedPcm8(mono, bitDepth = 8) {
   return out;
 }
 
+function applyGainToMono(mono, gain) {
+  const out = new Float32Array(mono.length);
+  for (let i = 0; i < mono.length; i += 1) {
+    out[i] = clamp(mono[i] * gain, -1, 1);
+  }
+  return out;
+}
+
+function applyVolumeEffect(mono, volumeSpec, diagnostics, sampleName) {
+  if (volumeSpec == null) return mono;
+  const n = Number(volumeSpec);
+  if (!Number.isFinite(n)) {
+    diagnostics.push({
+      severity: "warning",
+      code: "W_SAMPLE_EFFECT_IGNORED",
+      message: `unsupported :volume value for sample ${sampleName}: ${String(volumeSpec)}`,
+      line: 1,
+      column: 1,
+      track: null,
+    });
+    return mono;
+  }
+  if (n === 0) return applyGainToMono(mono, 0);
+
+  // Heuristic: small positive values are linear gain; otherwise dB.
+  const gain = n > 0 && n <= 4 ? n : Math.pow(10, n / 20);
+  return applyGainToMono(mono, gain);
+}
+
+function applyCompressorEffect(mono, compressSpec, diagnostics, sampleName) {
+  if (compressSpec == null) return mono;
+  const raw = String(compressSpec).trim().toLowerCase();
+
+  let threshold = 0.5;
+  let ratio = 2.5;
+  if (raw === "lofi") {
+    threshold = 0.35;
+    ratio = 4.0;
+  } else {
+    const n = Number(compressSpec);
+    if (!(Number.isFinite(n) && n > 1)) {
+      diagnostics.push({
+        severity: "warning",
+        code: "W_SAMPLE_EFFECT_IGNORED",
+        message: `unsupported :compress value for sample ${sampleName}: ${String(compressSpec)}`,
+        line: 1,
+        column: 1,
+        track: null,
+      });
+      return mono;
+    }
+    ratio = n;
+  }
+
+  const out = new Float32Array(mono.length);
+  for (let i = 0; i < mono.length; i += 1) {
+    const s = mono[i];
+    const a = Math.abs(s);
+    if (a <= threshold) {
+      out[i] = s;
+      continue;
+    }
+    const excess = a - threshold;
+    const c = threshold + excess / ratio;
+    out[i] = clamp(Math.sign(s) * c, -1, 1);
+  }
+  return out;
+}
+
+function applyReverbEffect(
+  mono,
+  reverbSpec,
+  sampleRate,
+  diagnostics,
+  sampleName,
+) {
+  if (reverbSpec == null) return mono;
+  const raw = String(reverbSpec).trim().toLowerCase();
+
+  let delayMs;
+  let decay;
+  let mix;
+  if (raw === "room") {
+    delayMs = 45;
+    decay = 0.4;
+    mix = 0.22;
+  } else {
+    const n = Number(reverbSpec);
+    if (!Number.isFinite(n)) {
+      diagnostics.push({
+        severity: "warning",
+        code: "W_SAMPLE_EFFECT_IGNORED",
+        message: `unsupported :reverb value for sample ${sampleName}: ${String(reverbSpec)}`,
+        line: 1,
+        column: 1,
+        track: null,
+      });
+      return mono;
+    }
+    delayMs = 50;
+    decay = 0.35;
+    mix = clamp(n, 0, 1);
+  }
+
+  const delay = Math.max(1, Math.floor((sampleRate * delayMs) / 1000));
+  const out = new Float32Array(mono.length);
+  for (let i = 0; i < mono.length; i += 1) {
+    const dry = mono[i];
+    const fb = i >= delay ? out[i - delay] * decay : 0;
+    out[i] = clamp(dry * (1 - mix) + (dry + fb) * mix, -1, 1);
+  }
+  return out;
+}
+
 function normalizePathForFs(repoRoot, samplePath) {
   const p = String(samplePath || "").replace(/\\/g, "/");
   if (!p) return "";
@@ -139,7 +253,28 @@ function compileSamplesIntoIr(ir, diagnostics, repoRoot) {
     try {
       const wavBuf = fs.readFileSync(absPath);
       const decoded = parseWavFile(wavBuf);
-      const pcm8 = quantizeMonoToSignedPcm8(decoded.mono, sample.bitDepth);
+      let processed = decoded.mono;
+      processed = applyVolumeEffect(
+        processed,
+        sample.volume,
+        diagnostics,
+        name,
+      );
+      processed = applyCompressorEffect(
+        processed,
+        sample.compress,
+        diagnostics,
+        name,
+      );
+      processed = applyReverbEffect(
+        processed,
+        sample.reverb,
+        decoded.sampleRate,
+        diagnostics,
+        name,
+      );
+
+      const pcm8 = quantizeMonoToSignedPcm8(processed, sample.bitDepth);
       const effectiveRate =
         Number(sample.rate) > 0 ? Number(sample.rate) : decoded.sampleRate;
 
