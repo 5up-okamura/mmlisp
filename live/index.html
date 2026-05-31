@@ -41,6 +41,16 @@
       cursor: pointer;
     }
     #topbar select:hover { border-color: #555; }
+    #fileTitle {
+      margin-left: 0.5rem;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #9ad;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
     .tb-btn {
       background: #1e1e1e;
       border: 1px solid #333;
@@ -357,10 +367,13 @@
     <div class="menu-wrap" id="menuFile">
       <button class="menu-btn" onclick="toggleMenu('menuFile')">File</button>
       <div class="menu-dropdown">
-        <button class="menu-item" onclick="browseFile();closeMenus()">Open…</button>
+        <button class="menu-item" onclick="newFile();closeMenus()">New</button>
+        <button class="menu-item" onclick="openFile();closeMenus()">Open…</button>
+        <button class="menu-item" onclick="saveFile();closeMenus()">Save</button>
+        <button class="menu-item" onclick="saveFileAs();closeMenus()">Save As…</button>
       </div>
     </div>
-    <input type="file" id="fileInput" accept=".json" style="display:none">
+    <div id="fileTitle">Untitled</div>
 
     <!-- Examples menu -->
     <div class="menu-wrap" id="menuExamples">
@@ -706,6 +719,10 @@
         '/examples/source/demo1.mmlisp',
     };
 
+    const SOURCE_FILE_TYPES = [
+      { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } },
+    ];
+
     async function loadMmlispSource(irURL) {
       const mmlispURL = IR_TO_MMLISP[irURL];
       if (!mmlispURL) {
@@ -717,6 +734,8 @@
         if (!res.ok) throw new Error(res.status);
         const src = await res.text();
         _lastFileName = mmlispURL.split('/').pop();
+        currentIrURL = irURL;
+        displayFileName(_lastFileName);
         setEditorDoc(src);
       } catch (e) {
         setEditorDoc('(failed to load: ' + mmlispURL + ')');
@@ -731,6 +750,11 @@
       }));
     }
 
+    function displayFileName(name) {
+      const el = document.getElementById('fileTitle');
+      if (el) el.textContent = name || 'Untitled';
+    }
+
     function highlightTrackLine(trackIdx, line) {
       editorView.dispatch({ effects: setTrackLine.of({ trackIdx, line }) });
     }
@@ -742,6 +766,76 @@
     let _lastGoodIR = null;     // last successfully compiled IR object
     let _lastSourceMap = null;  // source map from last compile
     let _lastFileName = 'untitled.mmlisp';
+    let _sourceHandle = null;
+    let _sourceFileName = null;
+    let _sourceDir = null;
+
+    function setSourceContextFromHandle(handle) {
+      _sourceHandle = handle;
+      _sourceFileName = handle?.name || null;
+      _sourceDir = null;
+      currentIrURL = null;
+      displayFileName(_sourceFileName);
+      _lastFileName = _sourceFileName || 'untitled.mmlisp';
+    }
+
+    async function readFileHandle(handle) {
+      const file = await handle.getFile();
+      const src = await file.text();
+      setSourceContextFromHandle(handle);
+      _lastGoodIR = null;
+      _lastSourceMap = null;
+      setEditorDoc(src);
+      runCompile();
+    }
+
+    async function openFile() {
+      const [handle] = await window.showOpenFilePicker({
+        types: SOURCE_FILE_TYPES,
+        multiple: false,
+      });
+      await readFileHandle(handle);
+    }
+
+    async function saveFileAs() {
+      const handle = await window.showSaveFilePicker({
+        types: SOURCE_FILE_TYPES,
+        suggestedName: _sourceFileName || 'untitled.mmlisp',
+      });
+      const src = editorView.state.doc.toString();
+      const writable = await handle.createWritable();
+      await writable.write(src);
+      await writable.close();
+      setSourceContextFromHandle(handle);
+      log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
+    }
+
+    async function saveFile() {
+      if (!_sourceHandle) {
+        await saveFileAs();
+        return;
+      }
+      const src = editorView.state.doc.toString();
+      const writable = await _sourceHandle.createWritable();
+      await writable.write(src);
+      await writable.close();
+      setSourceContextFromHandle(_sourceHandle);
+      log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
+    }
+
+    function newFile() {
+      _sourceHandle = null;
+      _sourceFileName = null;
+      _sourceDir = null;
+      currentIrURL = null;
+      _lastFileName = 'untitled.mmlisp';
+      _lastGoodIR = null;
+      _lastSourceMap = null;
+      displayFileName('Untitled');
+      setEditorDoc('(score :title "Untitled"\n  )');
+      onStop();
+      scheduleCompile();
+    }
 
     function scheduleCompile() {
       clearTimeout(_compileTimer);
@@ -1016,10 +1110,12 @@
         if (_lastGoodIR) {
           player.loadJSON(_lastGoodIR);
           log('Playing (compiled source)', 'info');
-        } else {
+        } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
           log('Playing', 'info');
+        } else {
+          throw new Error('No compiled IR available for the current source');
         }
         player.setOnLine(highlightTrackLine);
         player.setOnTick((tick, bpm, ppqn) => {
@@ -1086,17 +1182,6 @@
     // -----------------------------------------------------------------------
     // File picker
     // -----------------------------------------------------------------------
-    function browseFile() { document.getElementById('fileInput').click(); }
-    document.getElementById('fileInput').addEventListener('change', (e) => {
-      const f = e.target.files[0];
-      if (!f) return;
-      const url = URL.createObjectURL(f);
-      currentIrURL = url;
-      _lastGoodIR = null;
-      onStop();
-      log('File: ' + f.name);
-    });
-
     // ---- menu helpers ----
     function toggleMenu(id) {
       const wrap = document.getElementById(id);
@@ -1112,6 +1197,10 @@
       _lastGoodIR = null;
       onStop();
       loadMmlispSource(url);
+      _sourceHandle = null;
+      _sourceFileName = null;
+      _sourceDir = null;
+      displayFileName('demo1.mmlisp');
       closeMenus();
     }
     document.addEventListener('click', (e) => {
@@ -1171,7 +1260,10 @@
     window.onPlayToggle = onPlayToggle;
     window.onPlay       = onPlay;
     window.onStop       = onStop;
-    window.browseFile   = browseFile;
+    window.newFile      = newFile;
+    window.openFile     = openFile;
+    window.saveFile     = saveFile;
+    window.saveFileAs   = saveFileAs;
 
     // -----------------------------------------------------------------------
     // Parameter UI
