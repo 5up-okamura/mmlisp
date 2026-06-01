@@ -604,10 +604,22 @@ export class IRPlayer {
     return this;
   }
 
+  _resolveInitialTempo(irObj) {
+    for (const track of irObj?.tracks ?? []) {
+      for (const ev of track.events ?? []) {
+        if (ev?.cmd !== "TEMPO_SET") continue;
+        if ((ev.tick ?? 0) !== 0) continue;
+        const bpm = Number(ev.args?.bpm);
+        if (Number.isFinite(bpm) && bpm > 0) return bpm;
+      }
+    }
+    return 120;
+  }
+
   _loadIR(irObj) {
     this._ir = irObj;
     this._ppqn = irObj.ppqn ?? 48;
-    this._bpm = 120;
+    this._bpm = this._resolveInitialTempo(irObj);
     this._tempoSweep = null;
     this._eventIndex = 0;
     this._currentTick = 0;
@@ -956,13 +968,14 @@ export class IRPlayer {
     const horizon = now + this._schedulerLookahead;
 
     this._updateTempoSweep(now);
+    const secsPerTick = this._secsPerTick;
 
     // _onTick: use track 0 position for the Bar:Beat display
     if (this._onTick && this._tracks.length > 0) {
       const t0 = this._tracks[0];
       const currentTick = Math.max(
         0,
-        (now - t0.audioTimeAtTick0) / this._secsPerTick,
+        (now - t0.audioTimeAtTick0) / secsPerTick,
       );
       this._onTick(currentTick, this._bpm, this._ppqn);
     }
@@ -973,7 +986,7 @@ export class IRPlayer {
       while (guard++ < 16) {
         while (track.flatIndex < track.events.length) {
           const ev = track.events[track.flatIndex];
-          const evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
+          const evTime = track.audioTimeAtTick0 + ev.tick * secsPerTick;
           if (evTime > horizon) break;
 
           this._dispatchEvent(ev, evTime);
@@ -995,7 +1008,7 @@ export class IRPlayer {
           track.loopCount++;
           track.audioTimeAtTick0 =
             track.startAudioTime +
-            track.loopCount * track.loopDuration * this._secsPerTick;
+            track.loopCount * track.loopDuration * secsPerTick;
           track.flatIndex = track.loopStartIndex ?? 0;
           // Continue to schedule new-iteration events that fall within horizon
         } else {
@@ -1657,7 +1670,9 @@ export class IRPlayer {
         const bpm = Number(ev.args?.bpm);
         if (Number.isFinite(bpm) && bpm > 0) {
           this._tempoSweep = null;
-          this._setTempoAtTick(bpm, ev.tick ?? 0, when);
+          if (bpm !== this._bpm) {
+            this._setTempoAtTick(bpm, ev.tick ?? 0, when);
+          }
         }
         return true;
       }
