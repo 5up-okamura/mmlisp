@@ -37,6 +37,19 @@ function isKeyword(node) {
   return node && node.kind === "atom" && node.value.startsWith(":");
 }
 
+function isCommentNode(node) {
+  return node && node.kind === "comment";
+}
+
+function sourceLine(node) {
+  return node?.line || 0;
+}
+
+function isSameSourceLine(a, b) {
+  const la = sourceLine(a);
+  return la > 0 && la === sourceLine(b);
+}
+
 function cloneAtom(source, value) {
   return {
     kind: "atom",
@@ -135,11 +148,11 @@ function nodeToInline(node) {
   }
 
   // A trailing line comment on the same line is allowed; internal/leading comments are not.
-  const nonCommentItems = node.items.filter((item) => item.kind !== "comment");
-  const commentItems = node.items.filter((item) => item.kind === "comment");
+  const nonCommentItems = node.items.filter((item) => !isCommentNode(item));
+  const commentItems = node.items.filter((item) => isCommentNode(item));
   const trailingComment =
     commentItems.length === 1 &&
-    node.items[node.items.length - 1].kind === "comment"
+    isCommentNode(node.items[node.items.length - 1])
       ? commentItems[0]
       : null;
   if (commentItems.length > 0 && !trailingComment) {
@@ -158,7 +171,7 @@ function nodeToInline(node) {
   }
 
   // A trailing comment must be on the same source line.
-  if (trailingComment && (trailingComment.line || 0) > firstLine) {
+  if (trailingComment && sourceLine(trailingComment) > firstLine) {
     return null;
   }
 
@@ -215,7 +228,7 @@ function collectKeywordPairs(items, startIndex) {
   let index = startIndex;
   while (index < items.length) {
     // Stop at standalone comments so they remain in the body section.
-    if (items[index].kind === "comment") break;
+    if (isCommentNode(items[index])) break;
     if (index + 1 >= items.length || !isKeyword(items[index])) break;
     const keyNode = items[index];
     const valueNode = items[index + 1];
@@ -224,8 +237,8 @@ function collectKeywordPairs(items, startIndex) {
     let trailingComment = null;
     if (
       index < items.length &&
-      items[index].kind === "comment" &&
-      (items[index].line || 0) === (keyNode.line || 0)
+      isCommentNode(items[index]) &&
+      isSameSourceLine(keyNode, items[index])
     ) {
       trailingComment = items[index];
       index += 1;
@@ -259,7 +272,7 @@ function collectLeadArgs(items, startIndex, headSymbol) {
     }
 
     // Stop at nested forms or comments; these belong to the body section.
-    if (items[index].kind === "list" || items[index].kind === "comment") {
+    if (items[index].kind === "list" || isCommentNode(items[index])) {
       break;
     }
 
@@ -313,10 +326,7 @@ function formatDefVoice(node) {
 
   // Find ch-vec (first non-comment item after the tag), collecting any preceding comments
   let chVecIdx = 3;
-  while (
-    chVecIdx < node.items.length &&
-    node.items[chVecIdx].kind === "comment"
-  ) {
+  while (chVecIdx < node.items.length && isCommentNode(node.items[chVecIdx])) {
     chVecIdx += 1;
   }
   const preChComments = node.items.slice(3, chVecIdx);
@@ -336,7 +346,7 @@ function formatDefVoice(node) {
 
   let opIdx = 0;
   for (const item of rest) {
-    if (item.kind === "comment") {
+    if (isCommentNode(item)) {
       lines.push(`${INDENT}${item.value}`);
     } else {
       const suffix = opIdx === opVecs.length - 1 ? ")" : "";
@@ -360,7 +370,7 @@ function formatList(node) {
   if (
     node.items[0].kind === "atom" &&
     node.items[0].value === "def" &&
-    node.items.filter((n) => n.kind !== "comment")[2]?.value === ":fm"
+    node.items.filter((n) => !isCommentNode(n))[2]?.value === ":fm"
   ) {
     return formatDefVoice(node);
   }
@@ -493,10 +503,10 @@ function formatList(node) {
     while (bodyIndex < bodyItems.length) {
       const item = bodyItems[bodyIndex];
       // A trailing line comment on the same source line is appended and ends the group.
-      if (item.kind === "comment") {
+      if (isCommentNode(item)) {
         if (
           currentSourceLine > 0 &&
-          (item.line || 0) === currentSourceLine &&
+          sourceLine(item) === currentSourceLine &&
           groupParts.length > 0
         ) {
           groupParts.push({
