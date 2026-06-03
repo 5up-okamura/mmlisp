@@ -214,11 +214,8 @@ function collectKeywordPairs(items, startIndex) {
   const pairs = []; // each entry: [keyNode, valueNode, trailingComment | null]
   let index = startIndex;
   while (index < items.length) {
-    // Skip comments between pairs; they'll be handled separately.
-    if (items[index].kind === "comment") {
-      index += 1;
-      continue;
-    }
+    // Stop at standalone comments so they remain in the body section.
+    if (items[index].kind === "comment") break;
     if (index + 1 >= items.length || !isKeyword(items[index])) break;
     const keyNode = items[index];
     const valueNode = items[index + 1];

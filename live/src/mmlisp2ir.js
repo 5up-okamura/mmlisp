@@ -400,7 +400,7 @@ function emitNoteForTrack(
     if (!trackState.pcmSampleName) {
       pushDiag(
         diagnostics,
-        "error",
+        "warning",
         "E_PCM_SAMPLE_REQUIRED",
         "pcm mode requires a sample symbol before note data",
         src,
@@ -1632,7 +1632,7 @@ function compileChannelBody(
               } else {
                 pushDiag(
                   diagnostics,
-                  "error",
+                  "warning",
                   "E_PCM_SAMPLE_REQUIRED",
                   "pcm mode requires :sample <name>",
                   nodeSrc(node),
@@ -2743,7 +2743,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       if (!trackState.pcmSampleName) {
         pushDiag(
           diagnostics,
-          "error",
+          "warning",
           "E_PCM_SAMPLE_REQUIRED",
           "pcm track requires a sample symbol before note data",
           nodeSrc(node),

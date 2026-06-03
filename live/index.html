@@ -107,7 +107,10 @@
     }
     .menu-wrap.open > .menu-dropdown { display: block; }
     .menu-item {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
       width: 100%;
       padding: 0.35rem 0.75rem;
       background: none;
@@ -119,7 +122,12 @@
       cursor: pointer;
       white-space: nowrap;
     }
+    .menu-item-shortcut {
+      color: #888;
+      font-size: 0.72rem;
+    }
     @media (hover: hover) { .menu-item:hover { background: #2a3a4a; color: #7df; } }
+    @media (hover: hover) { .menu-item:hover .menu-item-shortcut { color: #a9d8ff; } }
 
     /* ---- main area ---- */
     #main {
@@ -357,10 +365,22 @@
     <div class="menu-wrap" id="menuFile">
       <button class="menu-btn" onclick="toggleMenu('menuFile')">File</button>
       <div class="menu-dropdown">
-        <button class="menu-item" onclick="newFile();closeMenus()">New</button>
-        <button class="menu-item" onclick="openFile();closeMenus()">Open…</button>
-        <button class="menu-item" onclick="saveFile();closeMenus()">Save</button>
-        <button class="menu-item" onclick="saveFileAs();closeMenus()">Save As…</button>
+        <button class="menu-item" onclick="newFile();closeMenus()">
+          <span>New</span>
+          <span class="menu-item-shortcut" id="newFileShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="openFile();closeMenus()">
+          <span>Open…</span>
+          <span class="menu-item-shortcut" id="openFileShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="saveFile();closeMenus()">
+          <span>Save</span>
+          <span class="menu-item-shortcut" id="saveFileShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="saveFileAs();closeMenus()">
+          <span>Save As…</span>
+          <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
+        </button>
         <div class="menu-wrap" id="menuExamples" style="position:relative;">
           <button class="menu-item" onclick="toggleSubmenu('menuExamples')">Examples ▶</button>
           <div class="menu-dropdown" style="left:100%; top:0; margin-left:4px;">
@@ -374,7 +394,14 @@
     <div class="menu-wrap" id="menuTools">
       <button class="menu-btn" onclick="toggleMenu('menuTools')">Tools</button>
       <div class="menu-dropdown">
-        <button class="menu-item" onclick="formatSource();closeMenus()">Format Source</button>
+        <button class="menu-item" onclick="formatSource();closeMenus()">
+          <span>Format Source</span>
+          <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="toggleCommentAction();closeMenus()">
+          <span>Toggle Comment</span>
+          <span class="menu-item-shortcut" id="toggleCommentShortcut"></span>
+        </button>
       </div>
     </div>
 
@@ -566,7 +593,7 @@
       'noise','pink','perlin',
     ];
     const AC_TRACKS = [
-      'fm1','fm2','fm3','fm3-csm','fm3-1','fm3-2','fm3-3','fm3-4',
+      'fm1','fm2','fm3','fm3-csm','fm3-csm-rate','fm3-1','fm3-2','fm3-3','fm3-4',
       'fm4','fm5','fm6',
       'sqr1','sqr2','sqr3','noise',
       'pcm1','pcm2','pcm3',
@@ -624,12 +651,10 @@
     // or indent +2 if nothing follows the paren on that line)
     const mmlispIndent = indentService.of((context, pos) => {
       const doc = context.state.doc;
-      const line = doc.lineAt(pos);
-      const src = doc.sliceString(0, line.from);
+      const src = doc.sliceString(0, pos);
 
-      // Scan src tracking paren depth, skipping strings and comments
-      let depth = 0;
-      let lastOpenPos = -1;
+      // Scan src tracking unmatched opening parens, skipping strings/comments.
+      const openStack = [];
       let inStr = false;
       for (let i = 0; i < src.length; i++) {
         const ch = src[i];
@@ -642,14 +667,14 @@
           // skip to end of line
           while (i < src.length && src[i] !== '\n') i++;
         } else if (ch === '(') {
-          depth++;
-          lastOpenPos = i;
+          openStack.push(i);
         } else if (ch === ')') {
-          depth--;
+          if (openStack.length > 0) openStack.pop();
         }
       }
 
-      if (depth <= 0 || lastOpenPos < 0) return 0;
+      if (openStack.length === 0) return 0;
+      const lastOpenPos = openStack[openStack.length - 1];
 
       const openLine = doc.lineAt(lastOpenPos);
       const openCol = lastOpenPos - openLine.from;
@@ -676,7 +701,71 @@
       }
       return true;
     }
+
+    function toggleLineComment() {
+      const state = editorView.state;
+      const changes = [];
+
+      for (const selection of state.selection.ranges) {
+        const startLine = state.doc.lineAt(selection.from).number;
+        const endPos = selection.to > selection.from ? selection.to - 1 : selection.to;
+        const endLine = state.doc.lineAt(endPos).number;
+        const lines = [];
+        let shouldUncomment = true;
+
+        for (let lineNo = startLine; lineNo <= endLine; lineNo++) {
+          const line = state.doc.line(lineNo);
+          const match = line.text.match(/^(\s*); ?/);
+          const hasComment = match != null;
+          if (line.text.trim().length > 0 && !hasComment) shouldUncomment = false;
+          lines.push({ line, match });
+        }
+
+        for (const { line, match } of lines) {
+          if (shouldUncomment) {
+            if (!match) continue;
+            const from = line.from + match[1].length;
+            const to = from + match[0].length - match[1].length;
+            changes.push({ from, to, insert: '' });
+          } else {
+            changes.push({ from: line.from, insert: '; ' });
+          }
+        }
+      }
+
+      if (changes.length === 0) return true;
+      editorView.dispatch({ changes });
+      editorView.focus();
+      return true;
+    }
     window.formatSource = formatDocument;
+    window.toggleCommentAction = toggleLineComment;
+
+    function formatShortcutLabel(key) {
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      if (key === 'Mod-n') return isMac ? '⌘N' : 'Ctrl+N';
+      if (key === 'Mod-o') return isMac ? '⌘O' : 'Ctrl+O';
+      if (key === 'Mod-s') return isMac ? '⌘S' : 'Ctrl+S';
+      if (key === 'Mod-Shift-s') return isMac ? '⌘⇧S' : 'Ctrl+Shift+S';
+      if (key === 'Mod-Shift-f') return isMac ? '⌘⇧F' : 'Ctrl+Shift+F';
+      if (key === 'Mod-/') return isMac ? '⌘/' : 'Ctrl+/';
+      return key;
+    }
+
+    function initShortcutLabels() {
+      const shortcutLabels = [
+        ['newFileShortcut', 'Mod-n'],
+        ['openFileShortcut', 'Mod-o'],
+        ['saveFileShortcut', 'Mod-s'],
+        ['saveFileAsShortcut', 'Mod-Shift-s'],
+        ['formatSourceShortcut', 'Mod-Shift-f'],
+        ['toggleCommentShortcut', 'Mod-/'],
+      ];
+      for (const [id, key] of shortcutLabels) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = formatShortcutLabel(key);
+      }
+    }
 
     const editorExtensions = [
       oneDarkTheme,
@@ -694,6 +783,7 @@
         indentWithTab,
         { key: 'Enter', run: insertNewlineAndIndent },
         ...historyKeymap,
+        { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
       ]),
       EditorView.updateListener.of((update) => {
@@ -708,6 +798,8 @@
       }),
       parent: document.getElementById('editorWrap'),
     });
+
+    initShortcutLabels();
 
     // IR preset → MMLisp source URL mapping
     const IR_TO_MMLISP = {
@@ -1387,7 +1479,19 @@
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
 
-      if (e.key === 'Enter') {
+      if (e.key === 'n' && !e.shiftKey) {
+        e.preventDefault();
+        newFile();
+      } else if (e.key === 'o' && !e.shiftKey) {
+        e.preventDefault();
+        await openFile();
+      } else if (e.key === 's' && e.shiftKey) {
+        e.preventDefault();
+        await saveFileAs();
+      } else if (e.key === 's' && !e.shiftKey) {
+        e.preventDefault();
+        await saveFile();
+      } else if (e.key === 'Enter') {
         e.preventDefault();
         onPlayToggle();
       } else if (e.key === '.') {
