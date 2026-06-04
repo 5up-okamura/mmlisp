@@ -239,6 +239,20 @@
       color: #7df;
       margin-bottom: 0.5rem;
     }
+    .rack-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+    }
+    #fmParamStatus {
+      color: #9bd;
+      font-size: 0.68rem;
+      font-weight: normal;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     /* ---- knobs / sliders (right panel) ---- */
     .param-grid {
@@ -311,6 +325,30 @@
     }
     .op-grid { margin-top: 0.3rem; }
     .param-grid { margin-bottom: 0.3rem; }
+
+    /* FM panel disabled state */
+    #fmParamSection.fm-disabled .knob-label,
+    #fmParamSection.fm-disabled .op-col-title,
+    #fmParamSection.fm-disabled #algDisplay {
+      color: #666;
+    }
+    #fmParamSection.fm-disabled .knob-label .val,
+    #fmParamSection.fm-disabled .op-col .knob-label .val {
+      color: #666;
+    }
+    #fmParamSection.fm-disabled input[type=range] {
+      background: #262626;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+    #fmParamSection.fm-disabled input[type=range]::-webkit-slider-thumb {
+      background: #555;
+    }
+    #fmParamSection.fm-disabled input[type=checkbox] {
+      cursor: not-allowed;
+      opacity: 0.55;
+      filter: saturate(0);
+    }
 
     /* channel strips */
     .ch-strips-row {
@@ -473,8 +511,8 @@
       </div>
 
       <!-- FM Parameters -->
-      <div class="rack-section">
-        <div class="rack-title">FM Parameters</div>
+      <div class="rack-section" id="fmParamSection">
+        <div class="rack-title rack-title-row"><span>FM Parameters</span><span id="fmParamStatus"></span></div>
         <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)">
           <div class="knob-wrap">
             <div class="knob-label">ALG <span class="val" id="val-alg">0</span></div>
@@ -1693,6 +1731,7 @@
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) scheduleCompile();
+        if (update.docChanged || update.selectionSet) syncParamUI();
       }),
     ];
 
@@ -1997,6 +2036,7 @@
     let player = null;
     let currentIrURL = null;
     let selectedCh = 0;
+    let _fmCursorDefContext = null;
 
     // Load default source on startup
     setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
@@ -2057,7 +2097,7 @@
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
-          <button class="ms-btn${ch === 0 ? ' ch-sel' : ''}" id="btn-ch-${ch}" onclick="selectCh(${ch})">${FM_LABELS[ch]}</button>
+          <button class="ms-btn${selectedCh === ch ? ' ch-sel' : ''}" id="btn-ch-${ch}" onclick="selectCh(${ch})">${FM_LABELS[ch]}</button>
           <button class="ms-btn" id="btn-mute-${ch}" onclick="toggleMute(${ch})" style="margin-top:0.35rem">M</button>
           <button class="ms-btn" id="btn-solo-${ch}" onclick="toggleSolo(${ch})">S</button>
         `;
@@ -2070,7 +2110,7 @@
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
-          <button class="ms-btn" style="cursor:default">${PSG_LABELS[i]}</button>
+          <button class="ms-btn${selectedCh === ch ? ' ch-sel' : ''}" id="btn-ch-${ch}" onclick="selectCh(${ch})">${PSG_LABELS[i]}</button>
           <button class="ms-btn" id="btn-mute-${ch}" onclick="toggleMute(${ch})" style="margin-top:0.35rem">M</button>
           <button class="ms-btn" id="btn-solo-${ch}" onclick="toggleSolo(${ch})">S</button>
         `;
@@ -2474,12 +2514,265 @@
       }
     }
 
-    // Build channel tabs — now handled by F1-F6 buttons in chStrips
-    function selectCh(ch) {
-      selectedCh = ch;
-      for (let i = 0; i < 6; i++) {
-        document.getElementById(`btn-ch-${i}`)?.classList.toggle('ch-sel', i === ch);
+    function defaultFmRegs() {
+      return {
+        algorithm: 0,
+        feedback: 0,
+        lfoRate: 0,
+        ams: 0,
+        fms: 0,
+        ops: Array.from({ length: 4 }, () => ({
+          tl: 0,
+          ar: 0,
+          dr: 0,
+          sl: 0,
+          d2r: 0,
+          rr: 0,
+          mul: 0,
+          dt: 0,
+          rs: 0,
+          ssg: 0,
+          amen: 0,
+        })),
+      };
+    }
+
+    function isFmChannel(ch) {
+      return Number.isInteger(ch) && ch >= 0 && ch < 6;
+    }
+
+    function channelLabel(ch) {
+      if (ch == null) return '';
+      if (ch >= 0 && ch < 6) return FM_LABELS[ch] ?? '';
+      if (ch >= 6 && ch < 10) return PSG_LABELS[ch - 6] ?? '';
+      return '';
+    }
+
+    function isFmVoiceDefNode(node) {
+      if (!node || node.kind !== 'list' || !Array.isArray(node.items) || node.items.length < 2) {
+        return false;
       }
+      const head = node.items[0];
+      if (!head || head.kind !== 'atom' || head.value !== 'def') return false;
+
+      const FM_DEF_RE = /^:(alg|fb|ams|fms|tl[1-4]|ar[1-4]|dr[1-4]|sl[1-4]|sr[1-4]|rr[1-4]|ml[1-4]|dt[1-4]|ks[1-4]|ssg[1-4]|am[1-4])$/;
+      let hasFmKey = false;
+      let extendsInitFm = false;
+
+      for (let i = 2; i < node.items.length; i++) {
+        const it = node.items[i];
+        if (!it || it.kind !== 'atom') continue;
+        if (FM_DEF_RE.test(it.value)) hasFmKey = true;
+        if (it.value === ':extend' || it.value === ':extends') {
+          const next = node.items[i + 1];
+          const nv = next && next.kind === 'atom' ? next.value : null;
+          if (nv === '@init-fm' || nv === 'init-fm') extendsInitFm = true;
+        }
+      }
+
+      return hasFmKey || extendsInitFm;
+    }
+
+    function parseFmDefRegs(defNode) {
+      const regs = defaultFmRegs();
+      const kv = new Map();
+      for (let i = 2; i + 1 < defNode.items.length; i++) {
+        const k = defNode.items[i];
+        const v = defNode.items[i + 1];
+        if (!k || k.kind !== 'atom' || !k.value.startsWith(':')) continue;
+        if (!v || v.kind !== 'atom') continue;
+        const n = parseInt(v.value, 10);
+        if (Number.isFinite(n)) kv.set(k.value, n);
+      }
+
+      if (kv.has(':alg')) regs.algorithm = kv.get(':alg');
+      if (kv.has(':fb')) regs.feedback = kv.get(':fb');
+      if (kv.has(':ams')) regs.ams = kv.get(':ams');
+      if (kv.has(':fms')) regs.fms = kv.get(':fms');
+
+      for (let op = 1; op <= 4; op++) {
+        const o = regs.ops[op - 1];
+        if (kv.has(`:tl${op}`)) o.tl = kv.get(`:tl${op}`);
+        if (kv.has(`:ar${op}`)) o.ar = kv.get(`:ar${op}`);
+        if (kv.has(`:dr${op}`)) o.dr = kv.get(`:dr${op}`);
+        if (kv.has(`:sl${op}`)) o.sl = kv.get(`:sl${op}`);
+        if (kv.has(`:sr${op}`)) o.d2r = kv.get(`:sr${op}`);
+        if (kv.has(`:rr${op}`)) o.rr = kv.get(`:rr${op}`);
+        if (kv.has(`:ml${op}`)) o.mul = kv.get(`:ml${op}`);
+        if (kv.has(`:dt${op}`)) o.dt = kv.get(`:dt${op}`);
+        if (kv.has(`:ks${op}`)) o.rs = kv.get(`:ks${op}`);
+        if (kv.has(`:ssg${op}`)) o.ssg = kv.get(`:ssg${op}`);
+        if (kv.has(`:am${op}`)) o.amen = kv.get(`:am${op}`) ? 1 : 0;
+      }
+
+      return regs;
+    }
+
+    function findFmDefAtCursor() {
+      const state = editorView.state;
+      const cursorLine = state.doc.lineAt(state.selection.main.head).number;
+      const src = state.doc.toString();
+
+      let ast;
+      try {
+        ast = parse(src);
+      } catch {
+        return null;
+      }
+
+      let best = null;
+      function visit(node) {
+        if (!node || node.kind !== 'list') return;
+        const start = node.line;
+        const end = node.endLine ?? node.line;
+        if (start <= cursorLine && cursorLine <= end && isFmVoiceDefNode(node)) {
+          const span = end - start;
+          if (!best || span < (best.endLine - best.line)) {
+            best = node;
+          }
+        }
+        for (const item of node.items ?? []) visit(item);
+      }
+      for (const root of ast) visit(root);
+      if (!best) return null;
+
+      const from = state.doc.line(best.line).from;
+      const to = state.doc.line(best.endLine ?? best.line).to;
+      const nameNode = best.items[1];
+      const name = nameNode && nameNode.kind === 'atom' ? nameNode.value : '';
+      return {
+        name,
+        from,
+        to,
+        regs: parseFmDefRegs(best),
+      };
+    }
+
+    function getFmParamMode() {
+      if (isFmChannel(selectedCh)) return 'channel';
+      if (selectedCh == null && _fmCursorDefContext) return 'cursor-def';
+      return 'disabled';
+    }
+
+    function updateFmParamStatus() {
+      const statusEl = document.getElementById('fmParamStatus');
+      if (!statusEl) return;
+      // Priority:
+      // 1) selected FM channel -> show F1-F6
+      // 2) no channel selected + cursor on FM def -> show def name
+      // 3) otherwise -> no status
+      if (isFmChannel(selectedCh)) {
+        statusEl.textContent = channelLabel(selectedCh);
+        return;
+      }
+      if (selectedCh == null && _fmCursorDefContext?.name) {
+        statusEl.textContent = _fmCursorDefContext.name;
+        return;
+      }
+      statusEl.textContent = '';
+    }
+
+    function updateFmControlInteractivity(mode) {
+      const section = document.getElementById('fmParamSection');
+      if (!section) return;
+      const controls = section.querySelectorAll('input');
+      const enabled = mode !== 'disabled';
+      section.classList.toggle('fm-disabled', !enabled);
+      controls.forEach((el) => {
+        el.disabled = !enabled;
+      });
+      if (mode === 'cursor-def') {
+        for (let op = 1; op <= 4; op++) {
+          const opChk = document.getElementById(`chk-op${op}`);
+          if (opChk) opChk.disabled = true;
+        }
+      }
+    }
+
+    function fmParamToDefKey(paramName) {
+      if (paramName === 'FM_ALG') return ':alg';
+      if (paramName === 'FM_FB') return ':fb';
+      if (paramName === 'FM_AMS') return ':ams';
+      if (paramName === 'FM_FMS') return ':fms';
+      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT|KS|SSG|AMEN)([1-4])$/);
+      if (!m) return null;
+      if (m[1] === 'AMEN') return `:am${m[2]}`;
+      return `:${m[1].toLowerCase()}${m[2]}`;
+    }
+
+    function replaceOrInsertDefParam(defText, defKey, valueText) {
+      const esc = defKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(${esc}\\s+)([^\\s\\)\\]]+)`);
+      if (re.test(defText)) {
+        return defText.replace(re, `$1${valueText}`);
+      }
+      const closePos = defText.lastIndexOf(')');
+      if (closePos < 0) return defText;
+      return `${defText.slice(0, closePos)}\n  ${defKey} ${valueText}${defText.slice(closePos)}`;
+    }
+
+    function setCursorDefParam(paramName, value) {
+      const defKey = fmParamToDefKey(paramName);
+      if (!defKey) return false;
+      const ctx = _fmCursorDefContext ?? findFmDefAtCursor();
+      if (!ctx) return false;
+      const state = editorView.state;
+      const oldText = state.doc.sliceString(ctx.from, ctx.to);
+      const next = replaceOrInsertDefParam(oldText, defKey, String(value));
+      if (next === oldText) return true;
+      editorView.dispatch({ changes: { from: ctx.from, to: ctx.to, insert: next } });
+      return true;
+    }
+
+    function setLiveChannelParam(paramName, value) {
+      if (!player) {
+        initParamOnlyPlayer();
+      }
+      if (!player) return false;
+      player.setParam(paramName, value, selectedCh);
+      return true;
+    }
+
+    function setLiveOperatorEnabled(op, enabled) {
+      if (getFmParamMode() !== 'channel') {
+        syncParamUI();
+        return false;
+      }
+      if (!player) {
+        initParamOnlyPlayer();
+      }
+      if (!player) {
+        syncParamUI();
+        return false;
+      }
+      const bit = 1 << (op + 3); // op1=bit4, op2=bit5, op3=bit6, op4=bit7
+      const cur = player.getOpMask(selectedCh);
+      const next = enabled ? (cur | bit) : (cur & ~bit);
+      player.setOpMask(selectedCh, next);
+      return true;
+    }
+
+    function handleParamWriteByMode(paramName, value, options = {}) {
+      const mode = getFmParamMode();
+      if (mode === 'disabled') {
+        syncParamUI();
+        return { handled: true, mode, success: false };
+      }
+      if (mode === 'cursor-def') {
+        const ok = setCursorDefParam(paramName, value);
+        if (!ok && options.syncOnCursorDefMiss) {
+          syncParamUI();
+        }
+        return { handled: true, mode, success: ok };
+      }
+      const ok = setLiveChannelParam(paramName, value);
+      return { handled: true, mode, success: ok };
+    }
+
+    // Build channel tabs — now handled by channel buttons in chStrips
+    function selectCh(ch) {
+      selectedCh = selectedCh === ch ? null : ch;
+      buildChStrips();
       syncParamUI();
     }
 
@@ -2532,12 +2825,17 @@
 
     // ---- sync slider display from player state ----
     function syncParamUI() {
-      const regs = player
-        ? player.getChRegs(selectedCh)
-        : { algorithm: 0, feedback: 0, lfoRate: 0, ams: 0, fms: 0,
-            ops: Array.from({ length: 4 }, () => ({
-              tl:0, ar:0, dr:0, sl:0, d2r:0, rr:0, mul:0, dt:0, rs:0, ssg:0, amen:0
-            })) };
+      _fmCursorDefContext = selectedCh == null ? findFmDefAtCursor() : null;
+      updateFmParamStatus();
+
+      const mode = getFmParamMode();
+      updateFmControlInteractivity(mode);
+
+      const regs = mode === 'cursor-def'
+        ? _fmCursorDefContext.regs
+        : (mode === 'channel' && player)
+          ? player.getChRegs(selectedCh)
+          : defaultFmRegs();
 
       // Channel level
       setSlider('sl-alg', 'val-alg', regs.algorithm);
@@ -2549,7 +2847,7 @@
       updateOpRoles(regs.algorithm);
 
       // Per-operator ON/OFF
-      const mask = player ? player.getOpMask(selectedCh) : 0xf0;
+      const mask = mode === 'channel' && player ? player.getOpMask(selectedCh) : 0xf0;
       for (let op = 1; op <= 4; op++) {
         const bit = 1 << (op + 3);
         const chk = document.getElementById(`chk-op${op}`);
@@ -2581,55 +2879,51 @@
       if (vl) vl.textContent = value;
     }
 
+    function setValueTextById(valId, value) {
+      const el = document.getElementById(valId);
+      if (el) el.textContent = value;
+    }
+
+    function setSliderDisplayValue(slider, value) {
+      setValueTextById(slider.id.replace('sl-', 'val-'), value);
+    }
+
+    function setDataBoundDisplayValue(slider, value) {
+      setValueTextById(slider.dataset.valId, value);
+    }
+
     // ---- slider change handlers ----
     window.onChParam = function(paramName, slider) {
       const val = parseInt(slider.value, 10);
-      const valEl = document.getElementById(slider.id.replace('sl-', 'val-'));
-      if (valEl) valEl.textContent = val;
+      setSliderDisplayValue(slider, val);
 
       if (paramName === 'FM_ALG') {
         document.getElementById('algDisplay').textContent = ALG_DESC[val] ?? '';
         updateOpRoles(val);
       }
 
-      if (player) {
-        player.setParam(paramName, val, selectedCh);
-      } else if (workletNode) {
-        initParamOnlyPlayer();
-        player.setParam(paramName, val, selectedCh);
-      }
+      const writeState = handleParamWriteByMode(paramName, val, { syncOnCursorDefMiss: true });
+      if (writeState.handled) return;
     };
 
     window.onAmenToggle = function(op, checked) {
-      if (!player) {
-        initParamOnlyPlayer();
-      }
-      player.setParam(`FM_AMEN${op}`, checked ? 1 : 0, selectedCh);
+      const writeState = handleParamWriteByMode(`FM_AMEN${op}`, checked ? 1 : 0);
+      if (!writeState.handled || !writeState.success) return;
       const amenChk = document.getElementById(`chk-amen${op}`);
       if (amenChk) amenChk.checked = checked;
     };
 
     window.onOpToggle = function(op, checked) {
-      if (!player) return;
-      // op1=bit4, op2=bit5, op3=bit6, op4=bit7
-      const bit = 1 << (op + 3);
-      const cur = player.getOpMask(selectedCh);
-      const next = checked ? (cur | bit) : (cur & ~bit);
-      player.setOpMask(selectedCh, next);
+      setLiveOperatorEnabled(op, checked);
     };
 
     window.onOpParam = function(slider) {
       const paramName = slider.dataset.param;
       const val = parseInt(slider.value, 10);
-      const valEl = document.getElementById(slider.dataset.valId);
-      if (valEl) valEl.textContent = val;
+      setDataBoundDisplayValue(slider, val);
 
-      if (player) {
-        player.setParam(paramName, val, selectedCh);
-      } else {
-        initParamOnlyPlayer();
-        player.setParam(paramName, val, selectedCh);
-      }
+      const writeState = handleParamWriteByMode(paramName, val);
+      if (writeState.handled) return;
     };
 
     function initParamOnlyPlayer() {
