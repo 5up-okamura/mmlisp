@@ -135,7 +135,7 @@
       flex: 1;
       min-height: 0;
       overflow: hidden;
-      position: relative;
+      --panel-width: 400px;
     }
 
     /* ---- left column: editor + console ---- */
@@ -208,26 +208,25 @@
 
     /* ---- right panel ---- */
     #rightPanel {
-      position: absolute;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      width: 400px;
+      position: relative;
+      width: var(--panel-width);
+      flex: 0 0 var(--panel-width);
       display: flex;
       flex-direction: column;
       background: #141414;
       border-left: 1px solid #2a2a2a;
       overflow-y: auto;
       overflow-x: hidden;
-      transition: transform 0.18s ease;
-      transform: translateX(0);
-      z-index: 10;
+      transition: width 0.18s ease, flex-basis 0.18s ease, border-color 0.18s ease;
     }
     @media (max-width: 480px) {
       #rightPanel { width: 100%; border-left: none; }
     }
     #rightPanel.collapsed {
-      transform: translateX(100%);
+      width: 0;
+      flex-basis: 0;
+      border-left-color: transparent;
+      overflow: hidden;
     }
 
     .rack-section {
@@ -1260,12 +1259,18 @@
     // Panel toggle
     // -----------------------------------------------------------------------
     const _isMobile = window.matchMedia('(max-width: 480px)').matches;
+    const _panelEl = document.getElementById('rightPanel');
     let _panelOpen = !_isMobile;
-    if (_isMobile) document.getElementById('rightPanel').classList.add('collapsed');
+
+    function applyPanelState() {
+      _panelEl.classList.toggle('collapsed', !_panelOpen);
+    }
+
+    applyPanelState();
 
     function togglePanel() {
       _panelOpen = !_panelOpen;
-      document.getElementById('rightPanel').classList.toggle('collapsed', !_panelOpen);
+      applyPanelState();
     }
     window.togglePanel = togglePanel;
 
