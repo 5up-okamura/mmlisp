@@ -1,4 +1,4 @@
-; MMLisp demo 1 — v0.4
+; MMLisp demo 1
 
 (def bd :macro :vel [15 12 9 6 3 0])
 
