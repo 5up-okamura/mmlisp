@@ -66,16 +66,12 @@ Implemented toolchain:
 
 ## Acknowledgements
 
-This project was inspired by and built with reference to the following works:
+This project directly references the following works in its design and implementation:
 
 - **[SGDK (Sega Genesis Dev Kit)](https://github.com/Stephane-D/SGDK)** — Z80 driver infrastructure and toolchain conventions for Mega Drive homebrew.
 - **[MDSDRV](https://github.com/superctr/MDSDRV)** — Sound driver for Sega Mega Drive. Invaluable reference for register usage patterns and real-hardware timing.
 - **[PMD](https://en.touhouwiki.net/wiki/User:Mami/Music_Dev/PMD)** — Professional Music Driver for PC-98 by KAJA. Influenced the MML command model and track sequencing design.
 - **[NDP](https://ndp.squares.net/web/)** — PSG sound driver and MML authoring tool for MSX by naruto2413. Influenced the score and MML authoring model.
-- **[Strudel](https://strudel.cc/)** — Live coding music environment (TidalCycles ported to JavaScript). Influenced the generative and pattern-based composition model.
-- **[Opusmodus](https://opusmodus.com/)** — Common Lisp-based music composition system. Influenced the computational and algorithmic approach to score authoring.
-- **[Pure Data](https://puredata.info/)** / **[Max](https://cycling74.com/products/max)** — Visual dataflow environments for audio and interactive media. Foundational influences on the idea of bringing modern compositional tooling to game music.
-- **[glisp](https://github.com/baku89/glisp)** — Lisp-based creative coding environment by Baku Hashimoto. Influenced the MMLisp language design.
 
 ## License
 
