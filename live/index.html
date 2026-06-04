@@ -372,6 +372,16 @@
           <span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
         </button>
+        <div class="menu-wrap" id="menuImport" style="position:relative;">
+          <button class="menu-item" onclick="toggleSubmenu('menuImport')">Import ▶</button>
+          <div class="menu-dropdown" style="left:100%; top:0; margin-left:4px;">
+            <button class="menu-item" onclick="importDefleMaskDmp();closeMenus()">DefleMask DMP…</button>
+            <button class="menu-item" onclick="importFui();closeMenus()">Furnace FUI…</button>
+            <button class="menu-item" onclick="importTfi();closeMenus()">TFI…</button>
+            <button class="menu-item" onclick="importVgi();closeMenus()">VGI…</button>
+            <button class="menu-item" onclick="importOpni();closeMenus()">OPNI…</button>
+          </div>
+        </div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
           <span>Save</span>
           <span class="menu-item-shortcut" id="saveFileShortcut"></span>
@@ -935,6 +945,10 @@
     function insertSnippetByKey(key) {
       const text = SNIPPET_TEXT[key];
       if (!text) return;
+      insertTextAtCursor(text);
+    }
+
+    function insertTextAtCursor(text) {
       const state = editorView.state;
       const selection = state.selection.main;
       const atStart = selection.from === 0;
@@ -951,6 +965,659 @@
       editorView.focus();
     }
 
+    function readDmpU8(bytes, cursor) {
+      if (cursor.i >= bytes.length) throw new Error('Unexpected end of DMP data');
+      const v = bytes[cursor.i];
+      cursor.i += 1;
+      return v;
+    }
+
+    function skipBytes(bytes, cursor, count) {
+      if (count <= 0) return;
+      if (cursor.i + count > bytes.length) throw new Error('Unexpected end of data');
+      cursor.i += count;
+    }
+
+    function readFixedAscii(bytes, cursor, len) {
+      if (cursor.i + len > bytes.length) throw new Error('Unexpected end of data');
+      let s = '';
+      for (let i = 0; i < len; i++) {
+        s += String.fromCharCode(bytes[cursor.i + i]);
+      }
+      cursor.i += len;
+      return s;
+    }
+
+    function readLeU16(bytes, cursor) {
+      const lo = readDmpU8(bytes, cursor);
+      const hi = readDmpU8(bytes, cursor);
+      return lo | (hi << 8);
+    }
+
+    function readLeU32(bytes, cursor) {
+      const b0 = readDmpU8(bytes, cursor);
+      const b1 = readDmpU8(bytes, cursor);
+      const b2 = readDmpU8(bytes, cursor);
+      const b3 = readDmpU8(bytes, cursor);
+      return (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) >>> 0;
+    }
+
+    function readCString(bytes, cursor, maxLen = 1 << 20) {
+      let out = '';
+      let n = 0;
+      while (cursor.i < bytes.length) {
+        const c = readDmpU8(bytes, cursor);
+        if (c === 0) return out;
+        out += String.fromCharCode(c);
+        n += 1;
+        if (n >= maxLen) throw new Error('String too long in instrument data');
+      }
+      throw new Error('Unterminated string in instrument data');
+    }
+
+    function clampDmpValue(v, min, max) {
+      const n = Number(v) | 0;
+      if (n < min) return min;
+      if (n > max) return max;
+      return n;
+    }
+
+    function normalizeFmOp(raw) {
+      return {
+        mul: clampDmpValue(raw.mul, 0, 15),
+        tl: clampDmpValue(raw.tl, 0, 127),
+        ar: clampDmpValue(raw.ar, 0, 31),
+        dr: clampDmpValue(raw.dr, 0, 31),
+        sl: clampDmpValue(raw.sl, 0, 15),
+        rr: clampDmpValue(raw.rr, 0, 15),
+        am: clampDmpValue(raw.am ? 1 : 0, 0, 1),
+        rs: clampDmpValue(raw.rs, 0, 3),
+        dt: clampDmpValue(raw.dt, 0, 7),
+        sr: clampDmpValue(raw.sr, 0, 31),
+        ssg: clampDmpValue(raw.ssg, 0, 15),
+      };
+    }
+
+    function readFmOps(bytes, cursor, count, readOne) {
+      const ops = new Array(count);
+      for (let i = 0; i < count; i++) {
+        ops[i] = normalizeFmOp(readOne(bytes, cursor));
+      }
+      return ops;
+    }
+
+    function normalizeFmPatchFields(patch) {
+      return {
+        ...patch,
+        alg: clampDmpValue(patch.alg, 0, 7),
+        fb: clampDmpValue(patch.fb, 0, 7),
+        ams: clampDmpValue(patch.ams, 0, 3),
+        fms: clampDmpValue(patch.fms, 0, 7),
+      };
+    }
+
+    function parseDefleMaskDmpFm(bytes) {
+      const cursor = { i: 0 };
+      const version = readDmpU8(bytes, cursor);
+      if (version > 11) throw new Error(`Unsupported DMP version: ${version}`);
+
+      let sys = 2; // Assume Genesis for legacy DMP variants without a system byte.
+      if (version >= 11) {
+        sys = readDmpU8(bytes, cursor);
+      }
+
+      let mode = 1;
+      if (version > 1) {
+        mode = readDmpU8(bytes, cursor);
+      }
+      if (!mode) {
+        throw new Error('This DMP is not in FM mode');
+      }
+
+      if (sys !== 2 && sys !== 9) {
+        throw new Error(`Unsupported DMP system for this importer: ${sys} (only Genesis/Neo Geo FM supported)`);
+      }
+
+      let ops = 4;
+      if (version < 10) {
+        if (version > 1) {
+          if (bytes.length === 51) {
+            readDmpU8(bytes, cursor);
+            ops = 4;
+          } else {
+            ops = readDmpU8(bytes, cursor) ? 4 : 2;
+          }
+        } else if (bytes.length === 49) {
+          ops = 4;
+          readDmpU8(bytes, cursor);
+        } else {
+          ops = readDmpU8(bytes, cursor) ? 2 : 4;
+        }
+      }
+      if (ops !== 4) {
+        throw new Error(`Unsupported operator count in DMP: ${ops} (4-op FM only)`);
+      }
+
+      const fms = version > 1 ? readDmpU8(bytes, cursor) : 0;
+      const fb = readDmpU8(bytes, cursor);
+      const alg = readDmpU8(bytes, cursor);
+      const ams = sys !== 1 ? readDmpU8(bytes, cursor) : 0;
+
+      const opsOut = readFmOps(bytes, cursor, ops, (b, c) => {
+        const mul = readDmpU8(b, c);
+        const tl = readDmpU8(b, c);
+        const ar = readDmpU8(b, c);
+        const dr = readDmpU8(b, c);
+        const sl = readDmpU8(b, c);
+        const rr = readDmpU8(b, c);
+        const am = readDmpU8(b, c);
+        const rs = readDmpU8(b, c);
+        const dtRaw = readDmpU8(b, c);
+        const sr = readDmpU8(b, c);
+        const ssg = readDmpU8(b, c);
+        return {
+          mul,
+          tl,
+          ar,
+          dr,
+          sl,
+          rr,
+          am,
+          rs,
+          dt: dtRaw & 0x0f,
+          sr,
+          ssg,
+        };
+      });
+
+      return normalizeFmPatchFields({
+        version,
+        sys,
+        alg,
+        fb,
+        ams,
+        fms,
+        ops: opsOut,
+      });
+    }
+
+    function parseTfiFm(bytes) {
+      const cursor = { i: 0 };
+      const alg = readDmpU8(bytes, cursor);
+      const fb = readDmpU8(bytes, cursor);
+      const ops = readFmOps(bytes, cursor, 4, (b, c) => ({
+        mul: readDmpU8(b, c),
+        dt: readDmpU8(b, c),
+        tl: readDmpU8(b, c),
+        rs: readDmpU8(b, c),
+        ar: readDmpU8(b, c),
+        dr: readDmpU8(b, c),
+        sr: readDmpU8(b, c),
+        rr: readDmpU8(b, c),
+        sl: readDmpU8(b, c),
+        ssg: readDmpU8(b, c),
+        am: 0,
+      }));
+      return normalizeFmPatchFields({
+        alg,
+        fb,
+        ams: 0,
+        fms: 0,
+        ops,
+      });
+    }
+
+    function parseVgiFm(bytes) {
+      const cursor = { i: 0 };
+      const alg = readDmpU8(bytes, cursor);
+      const fb = readDmpU8(bytes, cursor);
+      const fmsAms = readDmpU8(bytes, cursor);
+      const ops = readFmOps(bytes, cursor, 4, (b, c) => {
+        const mul = readDmpU8(b, c);
+        const dt = readDmpU8(b, c);
+        const tl = readDmpU8(b, c);
+        const rs = readDmpU8(b, c);
+        const ar = readDmpU8(b, c);
+        const drAmp = readDmpU8(b, c);
+        const sr = readDmpU8(b, c);
+        const rr = readDmpU8(b, c);
+        const sl = readDmpU8(b, c);
+        const ssg = readDmpU8(b, c);
+        return {
+          mul,
+          dt,
+          tl,
+          rs,
+          ar,
+          dr: drAmp & 0x7f,
+          am: (drAmp & 0x80) ? 1 : 0,
+          sr,
+          rr,
+          sl,
+          ssg,
+        };
+      });
+      return normalizeFmPatchFields({
+        alg,
+        fb,
+        ams: (fmsAms >> 4) & 0x03,
+        fms: fmsAms & 0x07,
+        ops,
+      });
+    }
+
+    function parseOpniFm(bytes) {
+      const cursor = { i: 0 };
+      const header = readFixedAscii(bytes, cursor, 11);
+      if (header !== 'WOPN2-INST' && header !== 'WOPN2-IN2T') {
+        throw new Error('Invalid OPNI header');
+      }
+
+      // OPNI v1 has no explicit version field. If v2+ marker is invalid, rewind.
+      const maybeVersionPos = cursor.i;
+      let version = readLeU16(bytes, cursor);
+      if (!(version >= 2 && version <= 0x0f)) {
+        cursor.i = maybeVersionPos;
+        version = 1;
+      }
+
+      readDmpU8(bytes, cursor); // isPerc
+      skipBytes(bytes, cursor, 32); // name
+      skipBytes(bytes, cursor, 3); // MIDI params
+
+      const feedAlgo = readDmpU8(bytes, cursor);
+      readDmpU8(bytes, cursor); // global bank flags
+
+      const ops = readFmOps(bytes, cursor, 4, (b, c) => {
+        const dtMul = readDmpU8(b, c);
+        const totalLevel = readDmpU8(b, c);
+        const arRateScale = readDmpU8(b, c);
+        const drAmpEnable = readDmpU8(b, c);
+        const sr = readDmpU8(b, c);
+        const susRelease = readDmpU8(b, c);
+        const ssg = readDmpU8(b, c);
+        return {
+          mul: dtMul & 0x0f,
+          dt: (dtMul >> 4) & 0x07,
+          tl: totalLevel & 0x7f,
+          rs: (arRateScale >> 6) & 0x03,
+          ar: arRateScale & 0x1f,
+          dr: drAmpEnable & 0x1f,
+          am: (drAmpEnable >> 7) & 0x01,
+          sr: sr & 0x1f,
+          rr: susRelease & 0x0f,
+          sl: (susRelease >> 4) & 0x0f,
+          ssg,
+        };
+      });
+
+      if (version >= 2) {
+        skipBytes(bytes, cursor, 4); // keyon/keyoff delay
+      }
+
+      return normalizeFmPatchFields({
+        alg: feedAlgo & 0x07,
+        fb: (feedAlgo >> 3) & 0x07,
+        ams: 0,
+        fms: 0,
+        ops,
+      });
+    }
+
+    function reorderFurnaceOps(ops) {
+      // Furnace stores OPN/OPM operators in internal order 1,3,2,4.
+      if (!Array.isArray(ops) || ops.length !== 4) return ops;
+      return [ops[0], ops[2], ops[1], ops[3]];
+    }
+
+    function parseFuiFmFeature(bytes, cursor, version, featEnd) {
+      const opFlags = readDmpU8(bytes, cursor);
+      const opCount = opFlags & 0x0f;
+
+      let next = readDmpU8(bytes, cursor);
+      const alg = (next >> 4) & 0x07;
+      const fb = next & 0x07;
+
+      next = readDmpU8(bytes, cursor);
+      const ams = (next >> 3) & 0x03;
+      const fms = next & 0x07;
+
+      // ams2/ops/opllPreset
+      readDmpU8(bytes, cursor);
+      if (version >= 224) readDmpU8(bytes, cursor); // block
+
+      const ops = readFmOps(bytes, cursor, opCount, (b, c) => {
+        const b1 = readDmpU8(b, c);
+        const b2 = readDmpU8(b, c);
+        const b3 = readDmpU8(b, c);
+        const b4 = readDmpU8(b, c);
+        const b5 = readDmpU8(b, c);
+        const b6 = readDmpU8(b, c);
+        const b7 = readDmpU8(b, c);
+        readDmpU8(b, c); // dam/dt2/ws
+        return {
+          mul: b1 & 0x0f,
+          dt: (b1 >> 4) & 0x07,
+          tl: b2 & 0x7f,
+          rs: (b3 >> 6) & 0x03,
+          ar: b3 & 0x1f,
+          dr: b4 & 0x1f,
+          am: (b4 >> 7) & 0x01,
+          sr: b5 & 0x1f,
+          rr: b6 & 0x0f,
+          sl: (b6 >> 4) & 0x0f,
+          ssg: b7 & 0x0f,
+        };
+      });
+
+      cursor.i = featEnd;
+      if (opCount !== 4) {
+        throw new Error(`Unsupported FUI FM operator count: ${opCount} (4-op only)`);
+      }
+
+      return normalizeFmPatchFields({
+        alg,
+        fb,
+        ams,
+        fms,
+        ops: reorderFurnaceOps(ops),
+      });
+    }
+
+    function parseFuiNew(bytes) {
+      const cursor = { i: 0 };
+      const magic = readFixedAscii(bytes, cursor, 4);
+      if (magic !== 'FINS' && magic !== 'FINB') {
+        throw new Error('Invalid FUI header (expected FINS/FINB)');
+      }
+
+      const version = readLeU16(bytes, cursor);
+      // Instrument type (FM=1, OPM=33) is not strictly required if FM feature exists.
+      readLeU16(bytes, cursor);
+
+      let parsedFm = null;
+      while (cursor.i + 4 <= bytes.length) {
+        const code = readFixedAscii(bytes, cursor, 2);
+        if (code === 'EN') break;
+        const featLen = readLeU16(bytes, cursor);
+        const featEnd = cursor.i + featLen;
+        if (featEnd > bytes.length) throw new Error('Corrupt FUI feature length');
+
+        if (code === 'FM') {
+          parsedFm = parseFuiFmFeature(bytes, cursor, version, featEnd);
+        } else {
+          cursor.i = featEnd;
+        }
+      }
+
+      if (!parsedFm) throw new Error('FUI contains no FM feature');
+      return parsedFm;
+    }
+
+    function parseFuiOld(bytes) {
+      const cursor = { i: 0 };
+      const header = readFixedAscii(bytes, cursor, 16);
+      if (header !== '-Furnace instr.-') {
+        throw new Error('Invalid old FUI header');
+      }
+
+      const version = readLeU16(bytes, cursor);
+      readLeU16(bytes, cursor); // reserved
+      const insPtr = readLeU32(bytes, cursor);
+
+      if (insPtr <= 0 || insPtr >= bytes.length) {
+        throw new Error('Invalid old FUI instrument pointer');
+      }
+
+      cursor.i = insPtr;
+      const instMagic = readFixedAscii(bytes, cursor, 4);
+      if (instMagic !== 'INST') {
+        throw new Error('Invalid old FUI INST block');
+      }
+
+      readLeU32(bytes, cursor); // block size
+      readLeU16(bytes, cursor); // format version
+      readDmpU8(bytes, cursor); // instrument type
+      readDmpU8(bytes, cursor); // reserved
+      readCString(bytes, cursor); // instrument name
+
+      const alg = readDmpU8(bytes, cursor);
+      const fb = readDmpU8(bytes, cursor);
+      const fms = readDmpU8(bytes, cursor);
+      const ams = readDmpU8(bytes, cursor);
+      const opCount = readDmpU8(bytes, cursor);
+      readDmpU8(bytes, cursor); // opll preset/reserved
+      skipBytes(bytes, cursor, 2); // reserved
+
+      if (opCount !== 4) {
+        throw new Error(`Unsupported old FUI FM operator count: ${opCount} (4-op only)`);
+      }
+
+      const ops = readFmOps(bytes, cursor, 4, (b, c) => {
+        const am = readDmpU8(b, c);
+        const ar = readDmpU8(b, c);
+        const dr = readDmpU8(b, c);
+        const mul = readDmpU8(b, c);
+        const rr = readDmpU8(b, c);
+        const sl = readDmpU8(b, c);
+        const tl = readDmpU8(b, c);
+        readDmpU8(b, c); // dt2
+        const rs = readDmpU8(b, c);
+        const dt = readDmpU8(b, c);
+        const sr = readDmpU8(b, c); // d2r
+        const ssg = readDmpU8(b, c);
+        skipBytes(b, c, 8); // dam,dvb,egt,ksl,sus,vib,ws,ksr
+        if (version >= 114) readDmpU8(b, c); else readDmpU8(b, c); // enable/reserved
+        if (version >= 115) readDmpU8(b, c); else readDmpU8(b, c); // kvs/reserved
+        skipBytes(b, c, 10); // reserved
+        return { mul, tl, ar, dr, sl, rr, am, rs, dt, sr, ssg };
+      });
+
+      return normalizeFmPatchFields({
+        alg,
+        fb,
+        ams,
+        fms,
+        ops: reorderFurnaceOps(ops),
+      });
+    }
+
+    function parseFuiFm(bytes) {
+      if (bytes.length < 8) throw new Error('FUI file is too small');
+      if (bytes[0] === 0x46 && bytes[1] === 0x49 && bytes[2] === 0x4e) {
+        // FINS / FINB
+        return parseFuiNew(bytes);
+      }
+      return parseFuiOld(bytes);
+    }
+
+    function makeVoiceNameFromFile(fileName) {
+      const base = String(fileName || '')
+        .replace(/\.[^.]+$/, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return '@' + (base || 'dmp-voice');
+    }
+
+    function buildMmlispVoiceFromDmp(parsed, voiceName) {
+      const header = [`  :alg ${parsed.alg}`, `:fb ${parsed.fb}`];
+      if (parsed.ams !== 0) header.push(`:ams ${parsed.ams}`);
+      if (parsed.fms !== 0) header.push(`:fms ${parsed.fms}`);
+
+      const lines = [
+        `(def ${voiceName}`,
+        header.join(' '),
+      ];
+
+      for (let i = 0; i < 4; i++) {
+        const op = parsed.ops[i];
+        const n = i + 1;
+        const parts = [
+          `  :ar${n} ${op.ar}`,
+          `:dr${n} ${op.dr}`,
+          `:sr${n} ${op.sr}`,
+          `:rr${n} ${op.rr}`,
+          `:sl${n} ${op.sl}`,
+          `:tl${n} ${op.tl}`,
+          `:ks${n} ${op.rs}`,
+          `:ml${n} ${op.mul}`,
+          `:dt${n} ${op.dt}`,
+        ];
+        if (op.ssg !== 0) parts.push(`:ssg${n} ${op.ssg}`);
+        if (op.am !== 0) parts.push(`:am${n} ${op.am}`);
+        lines.push(
+          parts.join(' '),
+        );
+      }
+      lines.push(')');
+      return lines.join('\n');
+    }
+
+    const FM_IMPORT_FORMATS = Object.freeze({
+      DMP: Object.freeze({
+        key: 'DMP',
+        label: 'DMP',
+        description: 'DefleMask instrument dump',
+        extensions: ['.dmp'],
+        parser: parseDefleMaskDmpFm,
+      }),
+      FUI: Object.freeze({
+        key: 'FUI',
+        label: 'FUI',
+        description: 'Furnace instrument',
+        extensions: ['.fui'],
+        parser: parseFuiFm,
+      }),
+      TFI: Object.freeze({
+        key: 'TFI',
+        label: 'TFI',
+        description: 'TFM Music Maker instrument',
+        extensions: ['.tfi'],
+        parser: parseTfiFm,
+      }),
+      VGI: Object.freeze({
+        key: 'VGI',
+        label: 'VGI',
+        description: 'VGM Music Maker instrument',
+        extensions: ['.vgi'],
+        parser: parseVgiFm,
+      }),
+      OPNI: Object.freeze({
+        key: 'OPNI',
+        label: 'OPNI',
+        description: 'OPN2BankEditor instrument',
+        extensions: ['.opni'],
+        parser: parseOpniFm,
+      }),
+    });
+
+    function detectFmImportFormatKey(fileName) {
+      const name = String(fileName || '').toLowerCase();
+      if (name.endsWith('.dmp')) return 'DMP';
+      if (name.endsWith('.fui')) return 'FUI';
+      if (name.endsWith('.tfi')) return 'TFI';
+      if (name.endsWith('.vgi')) return 'VGI';
+      if (name.endsWith('.opni')) return 'OPNI';
+      return null;
+    }
+
+    async function importFmVoiceFromFile(file, key) {
+      const fmt = FM_IMPORT_FORMATS[key];
+      if (!fmt) throw new Error(`Unknown import format: ${key}`);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const parsed = fmt.parser(bytes);
+      const voiceName = makeVoiceNameFromFile(file.name);
+      const text = buildMmlispVoiceFromDmp(parsed, voiceName);
+      insertTextAtCursor(text);
+      scheduleCompile();
+      log(`Imported ${file.name} (${fmt.label}) as ${voiceName}`, 'info');
+    }
+
+    function pickFileWithInput(extensions) {
+      const accept = Array.isArray(extensions) ? extensions.join(',') : '';
+      return new Promise((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = accept;
+        input.style.position = 'fixed';
+        input.style.left = '-9999px';
+        input.style.width = '1px';
+        input.style.height = '1px';
+        document.body.appendChild(input);
+
+        const cleanup = () => {
+          input.removeEventListener('change', onChange);
+          input.remove();
+        };
+
+        const onChange = () => {
+          const file = input.files && input.files[0];
+          cleanup();
+          if (!file) {
+            const err = new Error('Import canceled');
+            err.name = 'AbortError';
+            reject(err);
+            return;
+          }
+          resolve(file);
+        };
+
+        input.addEventListener('change', onChange, { once: true });
+        input.click();
+      });
+    }
+
+    async function pickImportFile(options) {
+      // Always prefer plain file input for import to avoid browser File System Access
+      // restrictions like "contains system files" on some folders/platforms.
+      return pickFileWithInput(options.extensions);
+    }
+
+    async function importFmVoiceFile(options) {
+      try {
+        const file = await pickImportFile(options);
+        await importFmVoiceFromFile(file, options.key);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`${options.label} import failed: ${e?.message || e}`, 'err');
+        try {
+          log(`${options.label} picker: accept=${options.extensions.join(',')}`, 'info');
+        } catch {
+          // noop
+        }
+      }
+    }
+
+    function importFmVoiceByKey(key) {
+      const fmt = FM_IMPORT_FORMATS[key];
+      if (!fmt) {
+        log(`Unknown import format: ${key}`, 'err');
+        return Promise.resolve();
+      }
+      return importFmVoiceFile(fmt);
+    }
+
+    async function importDefleMaskDmp() {
+      return importFmVoiceByKey('DMP');
+    }
+
+    async function importTfi() {
+      return importFmVoiceByKey('TFI');
+    }
+
+    async function importFui() {
+      return importFmVoiceByKey('FUI');
+    }
+
+    async function importVgi() {
+      return importFmVoiceByKey('VGI');
+    }
+
+    async function importOpni() {
+      return importFmVoiceByKey('OPNI');
+    }
+
     function insertSnippetFmVoice() {
       insertSnippetByKey('fmVoice');
     }
@@ -958,6 +1625,11 @@
     window.formatSource = formatDocument;
     window.toggleCommentAction = toggleLineComment;
     window.insertSnippetFmVoice = insertSnippetFmVoice;
+    window.importDefleMaskDmp = importDefleMaskDmp;
+    window.importFui = importFui;
+    window.importTfi = importTfi;
+    window.importVgi = importVgi;
+    window.importOpni = importOpni;
 
     function formatShortcutLabel(key) {
       const isMac = navigator.platform.toUpperCase().includes('MAC');
@@ -1043,6 +1715,7 @@
     const SOURCE_FILE_TYPES = [
       { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } },
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
+      { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
     ];
 
     async function loadMmlispSource(irURL) {
@@ -1199,6 +1872,11 @@
 
     async function readFileHandle(handle) {
       const file = await handle.getFile();
+      const fmImportKey = detectFmImportFormatKey(file.name);
+      if (fmImportKey) {
+        await importFmVoiceFromFile(file, fmImportKey);
+        return;
+      }
       if (/\.mmb(?:$|\?)/i.test(file.name)) {
         _sourceHandle = null;
         _sourceFileName = file.name;
