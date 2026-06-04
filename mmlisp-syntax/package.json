@@ -28,6 +28,12 @@
         "scopeName": "source.mmlisp",
         "path": "./syntaxes/mmlisp.tmLanguage.json"
       }
+    ],
+    "snippets": [
+      {
+        "language": "mmlisp",
+        "path": "./snippets/mmlisp.code-snippets"
+      }
     ]
   }
 }

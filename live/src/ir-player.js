@@ -2219,9 +2219,25 @@ export class IRPlayer {
         loop,
         curve = "linear",
         params,
+        waitTicks = null,
+        waitKeyOff = false,
       } = spec;
       const baseFrames = Math.max(1, Number(rawFrames));
-      const activeFrames = loop ? noteFrames : Math.min(noteFrames, baseFrames);
+      const waitFrameOffset = waitKeyOff
+        ? Math.max(0, Math.round((gateSecs - when) * 60))
+        : Math.max(
+            0,
+            Math.round(Number(waitTicks ?? 0) * this._secsPerTick * 60),
+          );
+      const startWhen = waitKeyOff
+        ? Math.max(when, gateSecs)
+        : when + waitFrameOffset / 60;
+      const remainingFrames = Math.max(0, noteFrames - waitFrameOffset);
+      const activeFrames = waitKeyOff
+        ? baseFrames
+        : loop
+          ? remainingFrames
+          : Math.min(remainingFrames, baseFrames);
       for (let frame = 0; frame < activeFrames; frame++) {
         const phase = loop
           ? (frame % baseFrames) / baseFrames
@@ -2230,10 +2246,10 @@ export class IRPlayer {
             : Math.min(1, frame / (baseFrames - 1));
         writeFn(
           from + (to - from) * sampleCurveUnit(curve, phase, params),
-          when + frame / 60,
+          startWhen + frame / 60,
         );
       }
-      return when + activeFrames / 60;
+      return startWhen + activeFrames / 60;
     }
 
     if (spec.type === "steps") {

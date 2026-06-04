@@ -804,10 +804,12 @@ function parseCurveSpec(
   let from;
   let to;
   let frames;
+  let waitTicks = null;
+  let waitKeyOff = false;
   const params = {};
   let hasParams = false;
 
-  const COMMON_PARAM_KEYS = new Set([":phase", ":rate"]);
+  const COMMON_PARAM_KEYS = new Set([":phase", ":rate", ":wait"]);
   const LOOP_WAVE_PARAM_KEYS = new Set([":duty", ":skew"]);
   const STOCHASTIC_PARAM_KEYS = new Set([
     ":hold",
@@ -897,6 +899,14 @@ function parseCurveSpec(
           break;
         case ":len":
           frames = parseLengthToken(v, null);
+          break;
+        case ":wait":
+          if (v === "key-off") {
+            waitKeyOff = true;
+          } else {
+            const t = parseLengthToken(v, null);
+            if (t !== null) waitTicks = t;
+          }
           break;
         case ":phase": {
           const n = parseIntLike(v);
@@ -991,6 +1001,8 @@ function parseCurveSpec(
   };
   if (from !== null && from !== undefined) spec.from = from;
   if (frames !== null && frames !== undefined) spec.frames = frames;
+  if (waitTicks !== null) spec.waitTicks = waitTicks;
+  if (waitKeyOff) spec.waitKeyOff = true;
   if (hasParams) spec.params = params;
   return spec;
 }
@@ -1088,6 +1100,29 @@ const FM_OP_PARAMS = [
   "SSG",
   "AMEN",
 ];
+
+function createInitFmKwMap() {
+  const kwMap = new Map([
+    ["FM_ALG", 7],
+    ["FM_FB", 0],
+    ["FM_AMS", 0],
+    ["FM_FMS", 0],
+  ]);
+  for (const op of [1, 2, 3, 4]) {
+    kwMap.set(`FM_AR${op}`, 31);
+    kwMap.set(`FM_DR${op}`, 0);
+    kwMap.set(`FM_SR${op}`, 0);
+    kwMap.set(`FM_RR${op}`, 15);
+    kwMap.set(`FM_SL${op}`, 0);
+    kwMap.set(`FM_TL${op}`, 0);
+    kwMap.set(`FM_KS${op}`, 0);
+    kwMap.set(`FM_ML${op}`, 1);
+    kwMap.set(`FM_DT${op}`, 0);
+    kwMap.set(`FM_SSG${op}`, 0);
+    kwMap.set(`FM_AMEN${op}`, 0);
+  }
+  return kwMap;
+}
 
 function getVecInts(vecNode) {
   if (!vecNode || vecNode.kind !== "list") return [];
@@ -2291,9 +2326,9 @@ function collectDefs(roots, diagnostics) {
         const src = nodeSrc(root);
         const sample = parseSampleDef(root, diagnostics);
         sampleDefs.set(name, { tag: "sample", ...sample, src });
-      } else if (maybeTag === ":extends") {
+      } else if (maybeTag === ":extend") {
         // Keyword-map FM voice def with inheritance
-        // (def child :extends base :alg 7 :tl1 20 ...)
+        // (def child :extend base :alg 7 :tl1 20 ...)
         const src = nodeSrc(root);
         const bodyItems = root.items.filter((n) => n.kind !== "comment");
         const baseName = atomValue(bodyItems[3]);
@@ -2443,6 +2478,14 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     parsed,
     diagnostics,
   );
+  if (!typedDefs.has("@init-fm")) {
+    typedDefs.set("@init-fm", {
+      tag: "fm-kw",
+      extends: null,
+      kwMap: createInitFmKwMap(),
+      src: null,
+    });
+  }
   const roots = expandRoots(remaining, defs, defns);
 
   const score = roots.find(
