@@ -499,9 +499,9 @@
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
     // -----------------------------------------------------------------------
-    const { EditorView, Decoration, ViewPlugin, lineNumbers, keymap } = await import('https://esm.sh/@codemirror/view@6');
+    const { EditorView, Decoration, lineNumbers, keymap } = await import('https://esm.sh/@codemirror/view@6');
     const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
-    const { defaultHighlightStyle, syntaxHighlighting, StreamLanguage, indentService, indentUnit } = await import('https://esm.sh/@codemirror/language@6');
+    const { syntaxHighlighting, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { oneDarkTheme, oneDarkHighlightStyle } = await import('https://esm.sh/@codemirror/theme-one-dark@6');
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent } = await import('https://esm.sh/@codemirror/commands@6');
     const { autocompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
@@ -687,6 +687,75 @@
       // Always indent +2 from ( — matches the formatter's childIndent rule
       return openCol + 2;
     });
+
+    const mmlispParenFold = foldService.of((state, lineStart) => {
+      const doc = state.doc;
+      const line = doc.lineAt(lineStart);
+      const text = line.text;
+      const firstNonSpace = text.search(/\S/);
+      if (firstNonSpace < 0) return null;
+
+      const openPos = line.from + firstNonSpace;
+      if (doc.sliceString(openPos, openPos + 1) !== '(') return null;
+
+      let depth = 1;
+      let inString = false;
+      for (let pos = openPos + 1; pos < doc.length; pos++) {
+        const ch = doc.sliceString(pos, pos + 1);
+
+        if (inString) {
+          if (ch === '\\') {
+            pos++;
+            continue;
+          }
+          if (ch === '"') inString = false;
+          continue;
+        }
+
+        if (ch === '"') {
+          inString = true;
+          continue;
+        }
+
+        if (ch === ';') {
+          const commentLine = doc.lineAt(pos);
+          pos = commentLine.to;
+          continue;
+        }
+
+        if (ch === '(') {
+          depth++;
+          continue;
+        }
+
+        if (ch === ')') {
+          depth--;
+          if (depth === 0) {
+            const closeLine = doc.lineAt(pos);
+            if (closeLine.number === line.number) return null;
+            return { from: openPos + 1, to: pos };
+          }
+        }
+      }
+
+      return null;
+    });
+
+    function summarizeFoldHead(state, range) {
+      const openPos = Math.max(0, range.from - 1);
+      const line = state.doc.lineAt(openPos);
+      const raw = state.doc.sliceString(openPos, line.to);
+      const compact = raw.replace(/\s+/g, ' ').trim();
+      if (!compact.startsWith('(')) return '...';
+
+      const headText = compact.slice(1).trimStart();
+      if (!headText) return '...';
+
+      // Keep folded labels short so they don't dominate the editor line.
+      const maxLen = 36;
+      const head = headText.length > maxLen ? headText.slice(0, maxLen - 1) + '…' : headText;
+      return `${head} ...`;
+    }
 
     function formatDocument() {
       const src = editorView.state.doc.toString();
@@ -923,14 +992,29 @@
       trackLinesField,
       trackDecorations,
       lineNumbers(),
+      codeFolding({
+        preparePlaceholder: (state, range) => summarizeFoldHead(state, range),
+        placeholderDOM: (_view, onclick, summary) => {
+          const span = document.createElement('span');
+          span.className = 'cm-foldPlaceholder';
+          span.textContent = String(summary || '...');
+          span.title = 'Click to unfold';
+          span.setAttribute('aria-label', 'Folded code: click to unfold');
+          span.onclick = onclick;
+          return span;
+        },
+      }),
+      foldGutter(),
       EditorView.lineWrapping,
       history(),
       indentUnit.of('  '),
       mmlispIndent,
+      mmlispParenFold,
       autocompletion({ override: [mmlispCompletions] }),
       keymap.of([
         indentWithTab,
         { key: 'Enter', run: insertNewlineAndIndent },
+        ...foldKeymap,
         ...historyKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
