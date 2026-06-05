@@ -195,6 +195,12 @@
       font-size: 0.82rem;
       background: #0d0d0d;
     }
+    /* iOS Safari zooms focused editors when the effective font size is < 16px. */
+    @media (hover: none) and (pointer: coarse) {
+      #editorWrap .cm-editor {
+        font-size: 16px;
+      }
+    }
     #editorWrap .cm-scroller { overflow: auto; }
     #editorWrap .cm-content { color: #bbb; }
     #editorWrap .cm-activeLine { background: transparent; }
