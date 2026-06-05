@@ -81,26 +81,25 @@ class YM2612Processor extends AudioWorkletProcessor {
         if (msg.port === 2) {
           // PSG write (port=2 is the PSG flag)
           if (msg.when != null) {
-            const targetFrame = Math.round(msg.when * sampleRate);
-            const entry = { frame: targetFrame, data: msg.data & 0xff };
-            let i = this._psgTimedQueue.length;
-            while (i > 0 && this._psgTimedQueue[i - 1].frame > targetFrame) i--;
-            this._psgTimedQueue.splice(i, 0, entry);
+            this._insertTimed(
+              this._psgTimedQueue,
+              Math.round(msg.when * sampleRate),
+              { data: msg.data & 0xff },
+            );
           } else {
             this._psgWriteQueue.push(msg.data & 0xff);
           }
         } else if (msg.when != null) {
           // Insert into _timedQueue maintaining sorted order by target audio frame
-          const targetFrame = Math.round(msg.when * sampleRate);
-          const entry = {
-            frame: targetFrame,
-            port: msg.port ?? 0,
-            addr: msg.addr,
-            data: msg.data,
-          };
-          let i = this._timedQueue.length;
-          while (i > 0 && this._timedQueue[i - 1].frame > targetFrame) i--;
-          this._timedQueue.splice(i, 0, entry);
+          this._insertTimed(
+            this._timedQueue,
+            Math.round(msg.when * sampleRate),
+            {
+              port: msg.port ?? 0,
+              addr: msg.addr,
+              data: msg.data,
+            },
+          );
         } else {
           this._writeQueue.push(msg);
         }
@@ -124,10 +123,7 @@ class YM2612Processor extends AudioWorkletProcessor {
           msg.when != null
             ? Math.round(msg.when * sampleRate)
             : currentFrame + WORKLET_BLOCK;
-        const entry = { ...msg, frame: targetFrame };
-        let i = this._pcmTimedQueue.length;
-        while (i > 0 && this._pcmTimedQueue[i - 1].frame > targetFrame) i--;
-        this._pcmTimedQueue.splice(i, 0, entry);
+        this._insertTimed(this._pcmTimedQueue, targetFrame, msg);
       } else if (msg.type === "writes") {
         for (const op of msg.ops) {
           this._writeQueue.push(op);
@@ -157,6 +153,24 @@ class YM2612Processor extends AudioWorkletProcessor {
     };
   }
 
+  _insertTimed(queue, frame, payload) {
+    let i = queue.length;
+    while (i > 0 && queue[i - 1].frame > frame) i--;
+    queue.splice(i, 0, { frame, ...payload });
+  }
+
+  _drainImmediateQueue(queue, consume) {
+    while (queue.length > 0) {
+      consume(queue.shift());
+    }
+  }
+
+  _drainTimedQueue(queue, endFrame, consume) {
+    while (queue.length > 0 && queue[0].frame < endFrame) {
+      consume(queue.shift());
+    }
+  }
+
   _renderYmOne() {
     if (!this._ymModule) {
       return [0, 0];
@@ -171,14 +185,13 @@ class YM2612Processor extends AudioWorkletProcessor {
     if (!this._ymModule) {
       return;
     }
-    while (this._writeQueue.length > 0) {
-      const op = this._writeQueue.shift();
+    this._drainImmediateQueue(this._writeQueue, (op) => {
       this._ymModule._nopn_write_reg(
         op.port ?? 0,
         op.addr & 0xff,
         op.data & 0xff,
       );
-    }
+    });
   }
 
   _buildFallbackSample() {
@@ -303,48 +316,37 @@ class YM2612Processor extends AudioWorkletProcessor {
   process(_inputs, outputs, _parameters) {
     const outL = outputs[0][0];
     const outR = outputs[0][1] ?? outputs[0][0]; // mono fallback
+    const blockSize = outL.length;
+    const blockEnd = currentFrame + blockSize;
 
     // Drain untimed YM writes (voice init, resets, etc.)
     this._drainImmediateYmWrites();
     // Drain timed writes scheduled for this block
-    const blockEnd = currentFrame + WORKLET_BLOCK;
-    while (
-      this._timedQueue.length > 0 &&
-      this._timedQueue[0].frame < blockEnd
-    ) {
-      const op = this._timedQueue.shift();
+    this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
       if (this._ymModule) {
         this._ymModule._nopn_write_reg(op.port, op.addr & 0xff, op.data & 0xff);
       }
-    }
+    });
 
     // Drain untimed PSG writes
-    while (this._psgWriteQueue.length > 0) {
-      this._psgChip.write(this._psgWriteQueue.shift());
-    }
+    this._drainImmediateQueue(this._psgWriteQueue, (data) => {
+      this._psgChip.write(data);
+    });
     // Drain timed PSG writes scheduled for this block
-    while (
-      this._psgTimedQueue.length > 0 &&
-      this._psgTimedQueue[0].frame < blockEnd
-    ) {
-      this._psgChip.write(this._psgTimedQueue.shift().data);
-    }
+    this._drainTimedQueue(this._psgTimedQueue, blockEnd, (op) => {
+      this._psgChip.write(op.data);
+    });
 
     // Drain timed PCM commands
-    while (
-      this._pcmTimedQueue.length > 0 &&
-      this._pcmTimedQueue[0].frame < blockEnd
-    ) {
-      const op = this._pcmTimedQueue.shift();
+    this._drainTimedQueue(this._pcmTimedQueue, blockEnd, (op) => {
       if (op.type === "pcm-note-on") {
         this._startPcmVoice(op);
       } else if (op.type === "pcm-note-off") {
         this._stopPcmVoice(op);
       }
-    }
+    });
 
     // Generate PSG samples at output rate (built-in decimation)
-    const blockSize = outL.length; // always 128
     const psgL = new Float32Array(blockSize);
     const psgR = new Float32Array(blockSize);
     this._psgChip.clockAt(psgL, psgR, blockSize, sampleRate);

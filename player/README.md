@@ -6,8 +6,8 @@ playback independently from the MMLisp compiler path.
 Current state:
 
 - `index.html` / `vgm-player.js` provide a minimal YM2612-only VGM player.
-- `nuked-worklet.js` uses a WASM build of `Nuked-OPN2` for higher-accuracy FM
-  playback.
+- `vgm-player.js` loads `../live/worklet.js`, so `player` and `live` share the
+  same AudioWorklet implementation.
 - The player is intended as a validation harness before or alongside changes to
   `live/`.
 

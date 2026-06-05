@@ -299,8 +299,8 @@ async function initAudio() {
       audioCtx = new AudioContext({ sampleRate: 48000 });
     }
     if (!workletReady) {
-      await audioCtx.audioWorklet.addModule("./nuked-worklet.js");
-      workletNode = new AudioWorkletNode(audioCtx, "nuked-opn2-processor", {
+      await audioCtx.audioWorklet.addModule("../live/worklet.js");
+      workletNode = new AudioWorkletNode(audioCtx, "ym2612-processor", {
         numberOfOutputs: 1,
         outputChannelCount: [2],
       });

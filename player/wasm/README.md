@@ -44,10 +44,10 @@ Integration notes:
 2. `player/wasm/build-nuked.sh` builds a single-file ES module for AudioWorklet
    loading, and syncs a copy to `live/nuked-opn2.js` for Vercel/static deploys
    that only publish the `live/` directory.
-3. `player/nuked-worklet.js` loads the generated module and handles timed YM
-   register writes.
-4. `live/worklet.js` can reuse the same generated backend while PSG and PCM stay
-   on the existing path.
+3. `live/worklet.js` loads the generated module and handles timed YM register
+   writes.
+4. `player/vgm-player.js` loads `../live/worklet.js` so both apps share the
+   same worklet implementation.
 
 Notes:
 
