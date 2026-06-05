@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YM2612 VGM Player</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #181c23;
+      --panel-2: #202632;
+      --line: #2a3342;
+      --text: #d8dee9;
+      --muted: #8b9bb0;
+      --accent: #76d0ff;
+      --accent-2: #b8f08a;
+      --danger: #ff8f8f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: radial-gradient(circle at top, #182130, var(--bg) 45%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)), var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.4rem;
+      color: var(--accent);
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .controls input[type="file"] {
+      max-width: 100%;
+    }
+    button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover:enabled {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    label.inline {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .meta-item {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .meta-label {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-bottom: 4px;
+    }
+    .meta-value {
+      word-break: break-all;
+    }
+    #log {
+      min-height: 180px;
+      max-height: 360px;
+      overflow: auto;
+      background: #0b0e13;
+      border-radius: 10px;
+      border: 1px solid #1c2330;
+      padding: 10px 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .info { color: var(--accent); }
+    .warn { color: #ffcf7a; }
+    .err { color: var(--danger); }
+    .ok { color: var(--accent-2); }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>YM2612 VGM Player</h1>
+      <p>Validation harness for the current YM2612 playback engine. Supports YM2612 register streams and wait commands from raw <code>.vgm</code> files. DAC/PCM is intentionally ignored.</p>
+    </section>
+
+    <section class="card">
+      <div class="controls">
+        <input id="fileInput" type="file" accept=".vgm,application/octet-stream">
+        <button id="btnPlay" disabled>Play</button>
+        <button id="btnStop" disabled>Stop</button>
+        <label class="inline"><input id="loopToggle" type="checkbox">Loop</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="meta" id="metaGrid"></div>
+    </section>
+
+    <section class="card">
+      <div id="log"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./vgm-player.js"></script>
+</body>
+</html>

@@ -79,3 +79,7 @@ This project directly references the following works in its design and implement
 MIT License — Copyright (c) 2026 Hiroshi Okamura (5&UP Inc.)
 
 See [LICENSE](LICENSE) for the full text.
+
+This repository also vendors `Nuked-OPN2` under `third_party/Nuked-OPN2`, which
+is licensed separately under LGPL-2.1-or-later. See
+`THIRD_PARTY_NOTICES.md` and `third_party/Nuked-OPN2/LICENSE`.

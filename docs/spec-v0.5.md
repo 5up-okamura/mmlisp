@@ -568,3 +568,15 @@ Also implemented in the live UI:
 - FM/PSG channel strips (select / mute / solo)
 - File open/save/save-as integration
 - `.mmb` binary preset loading path in live mode
+
+### 6.5 Playback backend status (temporary)
+
+Current implementation direction in the live/player environment:
+
+- FM playback accuracy is being prioritized first, with validation work centered
+  on a higher-accuracy YM2612 backend.
+- PSG playback remains on the current implementation temporarily.
+- PCM playback remains on the current implementation temporarily.
+
+PSG and PCM are intentionally left in their current state for now and are
+expected to be reviewed/replaced later, after FM playback behavior is settled.

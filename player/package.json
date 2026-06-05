@@ -1,0 +1,10 @@
+{
+  "name": "mmlisp-vgm-player",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone YM2612 VGM player for validating the current playback engine",
+  "scripts": {
+    "serve": "npx --yes serve .. --cors -p 5174"
+  }
+}

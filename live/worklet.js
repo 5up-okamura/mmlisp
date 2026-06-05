@@ -16,16 +16,20 @@
 
 // WorkletGlobalScope: import the emulators as modules.
 // The paths are relative to the worklet file's URL.
-import { YM2612, NATIVE_SAMPLE_RATE } from "./src/ym2612.js";
+import createNukedModule from "../player/wasm/dist/nuked-opn2.js";
 import { SN76489 } from "./src/sn76489.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
+const NUKED_NATIVE_SAMPLE_RATE = 7670454 / 144;
+const nukedModulePromise = createNukedModule();
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
     super(options);
 
-    this._chip = new YM2612();
+    this._ymModule = null;
+    this._ymBufferPtr = 0;
+    this._ymReady = false;
 
     // SN76489 PSG (port=2 writes)
     this._psgChip = new SN76489();
@@ -40,20 +44,36 @@ class YM2612Processor extends AudioWorkletProcessor {
 
     // Resampling state: we generate at NATIVE_SAMPLE_RATE and output at
     // the AudioContext sample rate (typically 44100 or 48000).
-    this._nativeSR = NATIVE_SAMPLE_RATE;
+    this._nativeSR = NUKED_NATIVE_SAMPLE_RATE;
     this._outputSR = sampleRate; // AudioWorkletGlobalScope provides this
     this._resampleRatio = this._nativeSR / this._outputSR;
-
-    // Native sample ring buffer (stereo, pre-allocated)
-    const bufSize = Math.ceil(WORKLET_BLOCK * this._resampleRatio) + 4;
-    this._nativeL = new Float32Array(bufSize);
-    this._nativeR = new Float32Array(bufSize);
-    this._nativePos = 0; // fractional position in native buffer
+    this._ymFrac = 0;
+    this._ymCurrent = [0, 0];
+    this._ymNext = [0, 0];
 
     // Untimed write queue: applied immediately at the next block boundary
     this._writeQueue = [];
     // Timed write queue: [{frame, port, addr, data}] sorted ascending by target frame
     this._timedQueue = [];
+
+    this._ymInitPromise = nukedModulePromise
+      .then((instance) => {
+        this._ymModule = instance;
+        this._ymModule._nopn_init();
+        this._ymBufferPtr = this._ymModule._nopn_get_buffer_ptr();
+        this._nativeSR = this._ymModule._nopn_get_native_sample_rate();
+        this._resampleRatio = this._nativeSR / this._outputSR;
+        this._ymFrac = 0;
+        this._ymCurrent = [0, 0];
+        this._ymNext = this._renderYmOne();
+        this._ymReady = true;
+      })
+      .catch((error) => {
+        this.port.postMessage({
+          type: "error",
+          message: String(error?.message ?? error),
+        });
+      });
 
     this.port.onmessage = (event) => {
       const msg = event.data;
@@ -113,7 +133,12 @@ class YM2612Processor extends AudioWorkletProcessor {
           this._writeQueue.push(op);
         }
       } else if (msg.type === "reset") {
-        this._chip = new YM2612();
+        if (this._ymModule) {
+          this._ymModule._nopn_reset();
+        }
+        this._ymFrac = 0;
+        this._ymCurrent = [0, 0];
+        this._ymNext = this._ymModule ? this._renderYmOne() : [0, 0];
         this._writeQueue = [];
         this._timedQueue = [];
         this._psgChip = new SN76489();
@@ -130,6 +155,30 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._pcmVoices = [];
       }
     };
+  }
+
+  _renderYmOne() {
+    if (!this._ymModule) {
+      return [0, 0];
+    }
+    this._ymModule._nopn_render(1);
+    const base = this._ymBufferPtr >> 1;
+    const heap = this._ymModule.HEAP16;
+    return [heap[base] / 512, heap[base + 1] / 512];
+  }
+
+  _drainImmediateYmWrites() {
+    if (!this._ymModule) {
+      return;
+    }
+    while (this._writeQueue.length > 0) {
+      const op = this._writeQueue.shift();
+      this._ymModule._nopn_write_reg(
+        op.port ?? 0,
+        op.addr & 0xff,
+        op.data & 0xff,
+      );
+    }
   }
 
   _buildFallbackSample() {
@@ -255,11 +304,8 @@ class YM2612Processor extends AudioWorkletProcessor {
     const outL = outputs[0][0];
     const outR = outputs[0][1] ?? outputs[0][0]; // mono fallback
 
-    // Drain untimed writes (voice init, resets, etc.)
-    while (this._writeQueue.length > 0) {
-      const op = this._writeQueue.shift();
-      this._chip.write(op.port ?? 0, op.addr, op.data);
-    }
+    // Drain untimed YM writes (voice init, resets, etc.)
+    this._drainImmediateYmWrites();
     // Drain timed writes scheduled for this block
     const blockEnd = currentFrame + WORKLET_BLOCK;
     while (
@@ -267,7 +313,9 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._timedQueue[0].frame < blockEnd
     ) {
       const op = this._timedQueue.shift();
-      this._chip.write(op.port, op.addr, op.data);
+      if (this._ymModule) {
+        this._ymModule._nopn_write_reg(op.port, op.addr & 0xff, op.data & 0xff);
+      }
     }
 
     // Drain untimed PSG writes
@@ -301,38 +349,26 @@ class YM2612Processor extends AudioWorkletProcessor {
     const psgR = new Float32Array(blockSize);
     this._psgChip.clockAt(psgL, psgR, blockSize, sampleRate);
 
-    // Generate YM2612 samples (native rate → resample)
-    const nativeNeeded = Math.ceil(blockSize * this._resampleRatio) + 2;
-    if (nativeNeeded > this._nativeL.length) {
-      this._nativeL = new Float32Array(nativeNeeded + 4);
-      this._nativeR = new Float32Array(nativeNeeded + 4);
-    }
-    this._chip.clock(this._nativeL, this._nativeR, nativeNeeded);
-
-    // Linear interpolation resample to output rate
-    let pos = this._nativePos;
     for (let i = 0; i < blockSize; i++) {
-      const idx = Math.floor(pos);
-      const frac = pos - idx;
-      const iNext = Math.min(idx + 1, nativeNeeded - 1);
       const pcm = this._mixPcmSample();
+      let ymL = 0;
+      let ymR = 0;
 
-      outL[i] =
-        this._nativeL[idx] * (1 - frac) +
-        this._nativeL[iNext] * frac +
-        psgL[i] +
-        pcm;
-      outR[i] =
-        this._nativeR[idx] * (1 - frac) +
-        this._nativeR[iNext] * frac +
-        psgR[i] +
-        pcm;
+      if (this._ymReady) {
+        const t = this._ymFrac;
+        ymL = this._ymCurrent[0] * (1 - t) + this._ymNext[0] * t;
+        ymR = this._ymCurrent[1] * (1 - t) + this._ymNext[1] * t;
+        this._ymFrac += this._resampleRatio;
+        while (this._ymFrac >= 1) {
+          this._ymFrac -= 1;
+          this._ymCurrent = this._ymNext;
+          this._ymNext = this._renderYmOne();
+        }
+      }
 
-      pos += this._resampleRatio;
+      outL[i] = ymL + psgL[i] + pcm;
+      outR[i] = ymR + psgR[i] + pcm;
     }
-
-    // Carry over fractional position into next block
-    this._nativePos = pos - Math.floor(pos);
 
     return true; // keep processor alive
   }
