@@ -523,3 +523,48 @@ The compiler does need to:
 | §1.6 | PCM sample file system   | ✅ Decided | `def` sample model, WAV conv; see §1.6         |
 | §1.7 | PCM mixing               | ✅ Decided | 3ch soft-mix, raw 8-bit PCM; see §1.7          |
 | §1.8 | FM3 independent-OP       | ✅ Decided | `fm3-1`–`fm3-4` independent F-number; see §1.8 |
+
+---
+
+## 6. Live Tooling Addendum (Implemented, not core language spec)
+
+The following features are implemented in the live authoring environment but
+are not currently captured as core MMLisp language/IR spec items in v0.5.
+
+### 6.1 File > Import FM Voice
+
+FM voice import from external tracker/instrument formats is implemented in the
+live UI:
+
+- DefleMask DMP
+- Furnace FUI
+- TFI
+- VGI
+- OPNI
+
+Imported data is converted into MMLisp `def` text for authoring use.
+
+### 6.2 Panel workflow enhancements
+
+The right-side panel supports direct live control and preview workflows:
+
+- FM parameter editing via UI sliders/controls
+- Channel context switching (selected FM/PSG target)
+- Keyboard note preview for selected target (FM/PSG)
+- Keyboard-driven step input into the editor
+
+### 6.3 Tools menu editor actions
+
+Tools menu includes editor convenience actions:
+
+- Toggle Comment
+- Format Source
+
+### 6.4 Additional implemented live conveniences
+
+Also implemented in the live UI:
+
+- Collapsible parameter panel
+- FM/PSG channel strips (select / mute / solo)
+- File open/save/save-as integration
+- `.mmb` binary preset loading path in live mode
