@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MMLisp authoring environment</title>
   <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
   <!-- CodeMirror 6 -->
   <link rel="stylesheet" href="https://unpkg.com/@codemirror/view@6/dist/index.css">
   <style>
@@ -13,7 +16,7 @@
     body {
       background: #111;
       color: #ddd;
-      font-family: 'Courier New', monospace;
+      font-family: 'Open Sans', sans-serif;
       display: flex;
       flex-direction: column;
       height: 100dvh;
@@ -36,17 +39,18 @@
       color: #ccc;
       padding: 0.2rem 0.4rem;
       font-family: inherit;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       border-radius: 2px;
       cursor: pointer;
     }
     #topbar select:hover { border-color: #555; }
-    .tb-btn {
+    .tb-btn,
+    .kbd-btn {
       background: #1e1e1e;
       border: 1px solid #333;
       color: #aaa;
       font-family: inherit;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       border-radius: 2px;
       cursor: pointer;
       white-space: nowrap;
@@ -56,14 +60,12 @@
     .tb-btn:disabled { opacity: 0.3; cursor: default; }
     .tb-btn.active { border-color: #7df; color: #7df; background: #12303f; }
     #posDisplay {
-      font-family: monospace;
-      font-size: 0.78rem;
+      font-size: 0.72rem;
       color: #7df;
       letter-spacing: 0.05em;
     }
     #bpmDisplay {
-      font-family: monospace;
-      font-size: 0.78rem;
+      font-size: 0.72rem;
       color: #fd7;
       letter-spacing: 0.05em;
     }
@@ -85,7 +87,7 @@
       border: none;
       color: #aaa;
       font-family: inherit;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       border-radius: 2px;
       cursor: pointer;
       padding: 0.2rem 0.5rem;
@@ -117,7 +119,7 @@
       border: none;
       color: #ccc;
       font-family: inherit;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       text-align: left;
       cursor: pointer;
       white-space: nowrap;
@@ -155,7 +157,7 @@
     }
     #editorWrap .cm-editor {
       height: 100%;
-      font-size: 0.78rem;
+      font-size: 0.82rem;
       background: #0d0d0d;
     }
     #editorWrap .cm-scroller { overflow: auto; }
@@ -198,7 +200,7 @@
       min-height: 0;
       overflow-y: auto;
       padding: 0.4rem 0.6rem;
-      font-size: 0.7rem;
+      font-size: 0.72rem;
       color: #6c9;
       line-height: 1.5;
       background: #0d0d0d;
@@ -215,9 +217,14 @@
       flex-direction: column;
       background: #141414;
       border-left: 1px solid #2a2a2a;
+      overflow: hidden;
+      transition: width 0.18s ease, flex-basis 0.18s ease, border-color 0.18s ease;
+    }
+    #rightPanelBody {
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
-      transition: width 0.18s ease, flex-basis 0.18s ease, border-color 0.18s ease;
     }
     @media (max-width: 480px) {
       #rightPanel { width: 100%; border-left: none; }
@@ -234,7 +241,7 @@
       padding: 0.75rem;
     }
     .rack-title {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: bold;
       color: #7df;
       margin-bottom: 0.5rem;
@@ -247,7 +254,7 @@
     }
     #fmParamStatus {
       color: #9bd;
-      font-size: 0.68rem;
+      font-size: 0.58rem;
       font-weight: normal;
       white-space: nowrap;
       overflow: hidden;
@@ -263,13 +270,14 @@
     .knob-wrap { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
     .knob-wrap:last-child { margin-bottom: 0; }
     .knob-label {
-      font-size: 0.62rem;
+      font-size: 0.58rem;
       color: #999;
       display: flex;
       justify-content: space-between;
     }
     .knob-label span.val { color: #adf; }
     input[type=range] {
+      appearance: none;
       -webkit-appearance: none;
       width: 100%;
       height: 3px;
@@ -293,7 +301,7 @@
       gap: 0.5rem;
     }
     .op-col-title {
-      font-size: 0.62rem;
+      font-size: 0.58rem;
       color: #999;
       text-transform: uppercase;
       letter-spacing: 0.08em;
@@ -318,7 +326,7 @@
     .op-col input[type=range]::-webkit-slider-thumb { background: var(--op-color); }
     .op-col .knob-label span.val { color: var(--op-color); }
     #algDisplay {
-      font-size: 0.67rem;
+      font-size: 0.58rem;
       color: #999;
       min-height: 1.2em;
       margin: 0.2rem 0;
@@ -373,7 +381,7 @@
       border: 1px solid #2e2e2e;
       color: #999;
       font-family: inherit;
-      font-size: 0.68rem;
+      font-size: 0.58rem;
       border-radius: 2px;
       cursor: pointer;
       width: 100%;
@@ -385,11 +393,137 @@
     .ms-btn.ch-sel { background: #12283a; border-color: #7df; color: #7df; }
     .ms-btn:disabled { opacity: 0.25; cursor: default; }
     .ch-section-label {
-      font-size: 0.6rem;
+      font-size: 0.58rem;
       color: #666;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       padding: 0.4rem 0 0.2rem;
+    }
+
+    /* bottom keyboard */
+    #keyboardDock {
+      border-top: none;
+      background: #121212;
+      padding: 0.55rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      flex-shrink: 0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #keyboardControls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      overflow-x: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #333 transparent;
+      padding-bottom: 0.1rem;
+    }
+    .kbd-group {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .kbd-group.kbd-oct {
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .kbd-btn {
+      line-height: normal;
+      height: auto;
+      min-width: auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .kbd-btn svg {
+      width: 0.8rem;
+      height: 0.8rem;
+      display: block;
+      pointer-events: none;
+      fill: currentColor;
+    }
+    .kbd-btn:hover { border-color: #777; color: #ddd; }
+    .kbd-btn.active {
+      background: #3a1f1f;
+      color: #f7b3b3;
+    }
+    #kbKeys {
+      position: relative;
+      height: 5rem;
+      user-select: none;
+      touch-action: none;
+      overflow: hidden;
+      border: none;
+      border-radius: 4px;
+      background: #111;
+    }
+    .kb-white-row {
+      display: grid;
+      grid-template-columns: repeat(14, minmax(0, 1fr));
+      gap: 2px;
+      height: 100%;
+      background: #1a1a1a;
+    }
+    .kb-black-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 60%;
+      pointer-events: none;
+    }
+    .kb-key {
+      border: none;
+      border-radius: 0 0 2px 2px;
+      background: #ececec;
+      color: #222;
+      font-size: 0.58rem;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 0.3rem;
+      cursor: pointer;
+      position: relative;
+      outline: none;
+    }
+    .kb-oct-marker {
+      font-size: 0.58rem;
+      color: #5b5b5b;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .kb-key.black {
+      position: absolute;
+      top: 0;
+      background: #222;
+      color: #d6d6d6;
+      height: 100%;
+      width: calc((100% / 14) - 2px);
+      transform: translateX(-50%);
+      z-index: 1;
+      pointer-events: auto;
+      justify-content: center;
+      padding-bottom: 0.15rem;
+    }
+    .kb-key.down {
+      box-shadow: inset 0 0 0 2px #4da5d8;
+      background: #d0e9f7;
+      color: #16344a;
+    }
+    .kb-key.black.down {
+      background: #345567;
+      color: #d9edf8;
+    }
+    #keyboardDock.kb-disabled .kbd-btn,
+    #keyboardDock.kb-disabled .kb-key {
+      opacity: 0.25;
+      cursor: not-allowed;
     }
 
   </style>
@@ -493,6 +627,8 @@
     <!-- Right panel (collapsible) -->
     <div id="rightPanel">
 
+      <div id="rightPanelBody">
+
       <!-- Global Parameters -->
       <div class="rack-section">
         <div class="rack-title">Global</div>
@@ -535,11 +671,42 @@
         <div class="op-grid" id="opGrid"></div>
       </div>
 
+      </div>
+
+      <div id="keyboardDock" class="kb-disabled">
+        <div id="keyboardControls">
+          <div class="kbd-group kbd-step">
+            <button class="kbd-btn" id="btnStepRec" title="Step Input" aria-label="Step Input">
+              <svg viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="3.2"/></svg>
+            </button>
+            <button class="kbd-btn" id="btnStepDel" title="Delete Last" aria-label="Delete Last">
+              <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M4 1 L1 5 L4 9 H11 V1 Z M5.2 3.2 L6.8 5 L5.2 6.8 L6 7.6 L7.8 6 L9.6 7.6 L10.4 6.8 L8.8 5 L10.4 3.2 L9.6 2.4 L7.8 4 L6 2.4 Z"/></svg>
+            </button>
+            <button class="kbd-btn" id="btnStepRest" title="Rest" aria-label="Rest">
+              <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="4.4" width="7" height="1.2"/></svg>
+            </button>
+            <button class="kbd-btn" id="btnStepTie" title="Tie" aria-label="Tie">
+              <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M4 3.5C2.9 3.5 2 4.4 2 5.5S2.9 7.5 4 7.5H5.5V6.3H4C3.55 6.3 3.2 5.95 3.2 5.5S3.55 4.7 4 4.7H5.5V3.5H4ZM8 2.5H6.5V3.7H8C8.45 3.7 8.8 4.05 8.8 4.5S8.45 5.3 8 5.3H6.5V6.5H8C9.1 6.5 10 5.6 10 4.5S9.1 2.5 8 2.5ZM4.8 4.9H7.2V6.1H4.8Z"/></svg>
+            </button>
+          </div>
+          <div class="kbd-group kbd-oct">
+            <button class="kbd-btn" id="btnOctDown" title="Octave Down" aria-label="Octave Down">
+              <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M6.8 1.5L3.2 5L6.8 8.5L7.6 7.7L4.8 5L7.6 2.3Z"/></svg>
+            </button>
+            <button class="kbd-btn" id="btnOctUp" title="Octave Up" aria-label="Octave Up">
+              <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.2 1.5L2.4 2.3L5.2 5L2.4 7.7L3.2 8.5L6.8 5Z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="kbKeys"></div>
+      </div>
+
     </div>
   </div>
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
+    import { midiToFnumBlock } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
@@ -2037,6 +2204,36 @@
     let currentIrURL = null;
     let selectedCh = 0;
     let _fmCursorDefContext = null;
+    let _stepInputEnabled = false;
+    let _kbBaseOctave = 3;
+    let _kbAppliedDefSig = null;
+    const _kbPointerMap = new Map();
+
+    const KB_MIN_BASE_OCT = 1;
+    const KB_MAX_BASE_OCT = 6;
+    const _kbPcLikeQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const KB_WHITE_SEMITONES = [0, 2, 4, 5, 7, 9, 11];
+    const KB_BLACK_DEFS = [
+      { semitone: 1, whiteAfter: 1 },
+      { semitone: 3, whiteAfter: 2 },
+      { semitone: 6, whiteAfter: 4 },
+      { semitone: 8, whiteAfter: 5 },
+      { semitone: 10, whiteAfter: 6 },
+    ];
+    const KB_SEMITONES = [
+      { name: 'C',  black: false },
+      { name: 'C#', black: true },
+      { name: 'D',  black: false },
+      { name: 'D#', black: true },
+      { name: 'E',  black: false },
+      { name: 'F',  black: false },
+      { name: 'F#', black: true },
+      { name: 'G',  black: false },
+      { name: 'G#', black: true },
+      { name: 'A',  black: false },
+      { name: 'A#', black: true },
+      { name: 'B',  black: false },
+    ];
 
     // Load default source on startup
     setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
@@ -2689,6 +2886,324 @@
       }
     }
 
+    function getKeyboardTargetContext() {
+      if (isFmChannel(selectedCh)) {
+        return { chIndex: selectedCh, useCursorDef: false };
+      }
+      if (selectedCh == null && _fmCursorDefContext?.regs) {
+        return { chIndex: 0, useCursorDef: true, defCtx: _fmCursorDefContext };
+      }
+      return null;
+    }
+
+    function setLiveParamForChannel(paramName, value, chIndex) {
+      if (!player) {
+        initParamOnlyPlayer();
+      }
+      if (!player) return false;
+      player.setParam(paramName, value, chIndex);
+      return true;
+    }
+
+    function applyFmRegsToChannel(chIndex, regs) {
+      if (!regs) return false;
+      let ok = true;
+      ok = setLiveParamForChannel('FM_ALG', regs.algorithm, chIndex) && ok;
+      ok = setLiveParamForChannel('FM_FB', regs.feedback, chIndex) && ok;
+      ok = setLiveParamForChannel('FM_AMS', regs.ams ?? 0, chIndex) && ok;
+      ok = setLiveParamForChannel('FM_FMS', regs.fms ?? 0, chIndex) && ok;
+      for (let op = 1; op <= 4; op++) {
+        const o = regs.ops?.[op - 1] ?? {};
+        ok = setLiveParamForChannel(`FM_TL${op}`, o.tl ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_AR${op}`, o.ar ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_DR${op}`, o.dr ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_SL${op}`, o.sl ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_SR${op}`, o.d2r ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_RR${op}`, o.rr ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_ML${op}`, o.mul ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_DT${op}`, o.dt ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_KS${op}`, o.rs ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_SSG${op}`, o.ssg ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_AMEN${op}`, o.amen ?? 0, chIndex) && ok;
+      }
+      return ok;
+    }
+
+    function previewNoteOn(chIndex, midi) {
+      if (!workletNode) return;
+      const { fnum, block } = midiToFnumBlock(midi);
+      const port = chIndex >= 3 ? 1 : 0;
+      const chOffset = chIndex % 3;
+      const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
+      const low = fnum & 0xff;
+      writeToWorklet(port, 0xa4 + chOffset, high);
+      writeToWorklet(port, 0xa0 + chOffset, low);
+      const keyMask = player ? player.getOpMask(chIndex) : 0xf0;
+      const chKey = (port << 2) | chOffset;
+      writeToWorklet(0, 0x28, keyMask | chKey);
+    }
+
+    function previewNoteOff(chIndex) {
+      if (!workletNode) return;
+      const port = chIndex >= 3 ? 1 : 0;
+      const chOffset = chIndex % 3;
+      const chKey = (port << 2) | chOffset;
+      writeToWorklet(0, 0x28, chKey);
+    }
+
+    function midiToStepToken(midi) {
+      const names = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
+      const note = ((midi % 12) + 12) % 12;
+      const oct = Math.floor(midi / 12) - 1;
+      return `${names[note]}${oct}`;
+    }
+
+    function insertStepToken(token) {
+      insertTextAtCursor(`${token} `);
+    }
+
+    function getKeyboardOctaveSpan() {
+      return _kbPcLikeQuery.matches ? 3 : 2;
+    }
+
+    function deletePreviousStepToken() {
+      const state = editorView.state;
+      const pos = state.selection.main.from;
+      if (pos <= 0) return;
+      const before = state.doc.sliceString(0, pos);
+      const trimmed = before.replace(/\s+$/, '');
+      if (trimmed.length === 0) return;
+      const tokenMatch = trimmed.match(/([^\s]+)$/);
+      if (!tokenMatch) return;
+      const token = tokenMatch[1];
+      if (!/^([a-g](\+)?-?\d+|_|&)$/i.test(token)) return;
+      let from = trimmed.length - token.length;
+      if (from > 0 && /\s/.test(before[from - 1])) from -= 1;
+      editorView.dispatch({
+        changes: { from, to: pos, insert: '' },
+        selection: { anchor: from },
+      });
+    }
+
+    function buildKeyboardKeys() {
+      const keysEl = document.getElementById('kbKeys');
+      if (!keysEl) return;
+      keysEl.innerHTML = '';
+      const whiteRow = document.createElement('div');
+      whiteRow.className = 'kb-white-row';
+      const blackRow = document.createElement('div');
+      blackRow.className = 'kb-black-row';
+      const octaveSpan = getKeyboardOctaveSpan();
+      const totalWhite = octaveSpan * 7;
+      whiteRow.style.gridTemplateColumns = `repeat(${totalWhite}, minmax(0, 1fr))`;
+
+      const keyAtPoint = (clientX, clientY) => {
+        const hit = document.elementFromPoint(clientX, clientY);
+        if (!hit) return null;
+        const key = hit.closest('.kb-key');
+        if (!key || !keysEl.contains(key)) return null;
+        return key;
+      };
+
+      const releasePointer = (pointerId) => {
+        const info = _kbPointerMap.get(pointerId);
+        if (!info) return;
+        if (info.midi != null) {
+          previewNoteOff(info.chIndex);
+        }
+        info.btn?.classList.remove('down');
+        _kbPointerMap.delete(pointerId);
+      };
+
+      const movePointer = (e) => {
+        const info = _kbPointerMap.get(e.pointerId);
+        if (!info) return;
+
+        const nextBtn = keyAtPoint(e.clientX, e.clientY);
+        if (!nextBtn) {
+          if (info.midi != null) {
+            previewNoteOff(info.chIndex);
+            info.btn?.classList.remove('down');
+            info.btn = null;
+            info.midi = null;
+          }
+          return;
+        }
+
+        const nextMidi = Number(nextBtn.dataset.midi);
+        if (!Number.isFinite(nextMidi) || nextMidi === info.midi) return;
+
+        if (info.midi != null) {
+          previewNoteOff(info.chIndex);
+        }
+        info.btn?.classList.remove('down');
+
+        previewNoteOn(info.chIndex, nextMidi);
+        nextBtn.classList.add('down');
+
+        info.btn = nextBtn;
+        info.midi = nextMidi;
+      };
+
+      for (let octOffset = 0; octOffset < octaveSpan; octOffset++) {
+        const oct = _kbBaseOctave + octOffset;
+        for (const semitone of KB_WHITE_SEMITONES) {
+          const meta = KB_SEMITONES[semitone];
+          const midi = (oct + 1) * 12 + semitone;
+          const btn = document.createElement('button');
+          btn.className = 'kb-key';
+          btn.type = 'button';
+          btn.dataset.midi = String(midi);
+          btn.textContent = '';
+          if (meta.name === 'C') {
+            const marker = document.createElement('span');
+            marker.className = 'kb-oct-marker';
+            marker.textContent = String(oct);
+            btn.appendChild(marker);
+          }
+          whiteRow.appendChild(btn);
+        }
+      }
+
+      for (let octOffset = 0; octOffset < octaveSpan; octOffset++) {
+        const oct = _kbBaseOctave + octOffset;
+        for (const def of KB_BLACK_DEFS) {
+          const midi = (oct + 1) * 12 + def.semitone;
+          const btn = document.createElement('button');
+          btn.className = 'kb-key black';
+          btn.type = 'button';
+          btn.dataset.midi = String(midi);
+          const centerIndex = octOffset * 7 + def.whiteAfter;
+          const leftPercent = (centerIndex / totalWhite) * 100;
+          btn.style.left = `${leftPercent}%`;
+          btn.style.width = `calc((100% / ${totalWhite}) - 2px)`;
+          blackRow.appendChild(btn);
+        }
+      }
+
+      keysEl.appendChild(whiteRow);
+      keysEl.appendChild(blackRow);
+
+      keysEl.onpointerdown = async (e) => {
+        const btn = e.target.closest('.kb-key');
+        if (!btn || !keysEl.contains(btn)) return;
+
+        e.preventDefault();
+
+        const target = getKeyboardTargetContext();
+        if (!target) return;
+
+        const midi = Number(btn.dataset.midi);
+        if (!Number.isFinite(midi)) return;
+
+        const ok = await initAudio();
+        if (!ok) return;
+
+        if (target.useCursorDef) {
+          const sig = JSON.stringify(target.defCtx.regs);
+          if (_kbAppliedDefSig !== sig) {
+            applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
+            _kbAppliedDefSig = sig;
+          }
+        }
+
+        previewNoteOn(target.chIndex, midi);
+        if (_stepInputEnabled) {
+          insertStepToken(midiToStepToken(midi));
+        }
+
+        btn.classList.add('down');
+        _kbPointerMap.set(e.pointerId, { btn, midi, chIndex: target.chIndex });
+        if (typeof keysEl.setPointerCapture === 'function') {
+          keysEl.setPointerCapture(e.pointerId);
+        }
+      };
+
+      keysEl.onpointermove = (e) => {
+        if (!_kbPointerMap.has(e.pointerId)) return;
+        e.preventDefault();
+        movePointer(e);
+      };
+      keysEl.onpointerup = (e) => {
+        e.preventDefault();
+        releasePointer(e.pointerId);
+        if (typeof keysEl.hasPointerCapture === 'function' && keysEl.hasPointerCapture(e.pointerId)) {
+          keysEl.releasePointerCapture(e.pointerId);
+        }
+      };
+      keysEl.onpointercancel = (e) => {
+        e.preventDefault();
+        releasePointer(e.pointerId);
+        if (typeof keysEl.hasPointerCapture === 'function' && keysEl.hasPointerCapture(e.pointerId)) {
+          keysEl.releasePointerCapture(e.pointerId);
+        }
+      };
+
+      updateKeyboardUiState();
+    }
+
+    function updateKeyboardUiState() {
+      const dock = document.getElementById('keyboardDock');
+      if (!dock) return;
+      const target = getKeyboardTargetContext();
+      const enabled = !!target;
+      dock.classList.toggle('kb-disabled', !enabled);
+      for (const btn of dock.querySelectorAll('.kb-key')) {
+        btn.disabled = !enabled;
+      }
+      const delBtn = document.getElementById('btnStepDel');
+      const restBtn = document.getElementById('btnStepRest');
+      const tieBtn = document.getElementById('btnStepTie');
+      if (delBtn) delBtn.disabled = !_stepInputEnabled;
+      if (restBtn) restBtn.disabled = !_stepInputEnabled;
+      if (tieBtn) tieBtn.disabled = !_stepInputEnabled;
+    }
+
+    function initKeyboardControls() {
+      const recBtn = document.getElementById('btnStepRec');
+      const delBtn = document.getElementById('btnStepDel');
+      const restBtn = document.getElementById('btnStepRest');
+      const tieBtn = document.getElementById('btnStepTie');
+      const octDownBtn = document.getElementById('btnOctDown');
+      const octUpBtn = document.getElementById('btnOctUp');
+
+      recBtn?.addEventListener('click', () => {
+        _stepInputEnabled = !_stepInputEnabled;
+        recBtn.classList.toggle('active', _stepInputEnabled);
+        updateKeyboardUiState();
+      });
+      delBtn?.addEventListener('click', () => {
+        if (!_stepInputEnabled) return;
+        deletePreviousStepToken();
+      });
+      restBtn?.addEventListener('click', () => {
+        if (!_stepInputEnabled) return;
+        insertStepToken('_');
+      });
+      tieBtn?.addEventListener('click', () => {
+        if (!_stepInputEnabled) return;
+        insertStepToken('&');
+      });
+      octDownBtn?.addEventListener('click', () => {
+        if (_kbBaseOctave <= KB_MIN_BASE_OCT) return;
+        _kbBaseOctave -= 1;
+        buildKeyboardKeys();
+      });
+      octUpBtn?.addEventListener('click', () => {
+        if (_kbBaseOctave >= KB_MAX_BASE_OCT) return;
+        _kbBaseOctave += 1;
+        buildKeyboardKeys();
+      });
+
+      const onViewportModeChange = () => buildKeyboardKeys();
+      if (typeof _kbPcLikeQuery.addEventListener === 'function') {
+        _kbPcLikeQuery.addEventListener('change', onViewportModeChange);
+      } else if (typeof _kbPcLikeQuery.addListener === 'function') {
+        _kbPcLikeQuery.addListener(onViewportModeChange);
+      }
+      buildKeyboardKeys();
+    }
+
     function fmParamToDefKey(paramName) {
       if (paramName === 'FM_ALG') return ':alg';
       if (paramName === 'FM_FB') return ':fb';
@@ -2725,12 +3240,7 @@
     }
 
     function setLiveChannelParam(paramName, value) {
-      if (!player) {
-        initParamOnlyPlayer();
-      }
-      if (!player) return false;
-      player.setParam(paramName, value, selectedCh);
-      return true;
+      return setLiveParamForChannel(paramName, value, selectedCh);
     }
 
     function setLiveOperatorEnabled(op, enabled) {
@@ -2827,6 +3337,7 @@
     function syncParamUI() {
       _fmCursorDefContext = selectedCh == null ? findFmDefAtCursor() : null;
       updateFmParamStatus();
+      updateKeyboardUiState();
 
       const mode = getFmParamMode();
       updateFmControlInteractivity(mode);
@@ -2934,6 +3445,8 @@
       player._initDefaultVoices();
       syncParamUI();
     }
+
+    initKeyboardControls();
 
     log('Ready.', 'info');
   </script>
