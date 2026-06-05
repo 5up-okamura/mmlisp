@@ -460,7 +460,7 @@
       touch-action: none;
       overflow: hidden;
       border: none;
-      border-radius: 4px;
+      border-radius: 2px;
       background: #111;
     }
     .kb-white-row {
@@ -2890,10 +2890,15 @@
       if (isFmChannel(selectedCh)) {
         return { chIndex: selectedCh, useCursorDef: false };
       }
+      if (Number.isInteger(selectedCh) && selectedCh >= 6 && selectedCh < 10) {
+        return { chIndex: selectedCh, useCursorDef: false };
+      }
       if (selectedCh == null && _fmCursorDefContext?.regs) {
         return { chIndex: 0, useCursorDef: true, defCtx: _fmCursorDefContext };
       }
-      return null;
+      // Keep the keyboard usable even when PSG is selected or no channel is selected.
+      // Fallback target is FM1 preview.
+      return { chIndex: 0, useCursorDef: false };
     }
 
     function setLiveParamForChannel(paramName, value, chIndex) {
@@ -2931,6 +2936,22 @@
 
     function previewNoteOn(chIndex, midi) {
       if (!workletNode) return;
+
+      if (chIndex >= 6 && chIndex < 10) {
+        initParamOnlyPlayer();
+        if (!player) return;
+        const psgCh = chIndex - 6;
+        const when = audioCtx?.currentTime;
+        if (psgCh === 3) {
+          player._psgTriggerNoise(when);
+        } else {
+          player._psgSetPitch(psgCh, midi, when);
+        }
+        // 0 = loudest attenuation, 15 = silent
+        player._psgSetAtt(psgCh, 0, when);
+        return;
+      }
+
       const { fnum, block } = midiToFnumBlock(midi);
       const port = chIndex >= 3 ? 1 : 0;
       const chOffset = chIndex % 3;
@@ -2945,6 +2966,14 @@
 
     function previewNoteOff(chIndex) {
       if (!workletNode) return;
+
+      if (chIndex >= 6 && chIndex < 10) {
+        if (!player) return;
+        const psgCh = chIndex - 6;
+        player._psgSetAtt(psgCh, 15, audioCtx?.currentTime);
+        return;
+      }
+
       const port = chIndex >= 3 ? 1 : 0;
       const chOffset = chIndex % 3;
       const chKey = (port << 2) | chOffset;
