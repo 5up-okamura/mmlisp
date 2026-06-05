@@ -257,6 +257,11 @@
       transform: translateX(0);
       transition: transform 0.18s ease, border-color 0.18s ease;
     }
+    #rightPanel,
+    #rightPanel * {
+      -webkit-user-select: none;
+      user-select: none;
+    }
     #rightPanelBody {
       flex: 1;
       min-height: 0;
@@ -468,6 +473,11 @@
       flex-shrink: 0;
       border-radius: 8px;
       overflow: hidden;
+    }
+    #keyboardDock,
+    #keyboardDock * {
+      -webkit-user-select: none;
+      user-select: none;
     }
     #keyboardControls {
       display: flex;
