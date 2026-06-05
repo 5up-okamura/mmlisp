@@ -21,6 +21,7 @@ Local integration files in this repository:
 - `player/wasm/nuked_adapter.c`
 - `player/wasm/build-nuked.sh`
 - `player/wasm/dist/nuked-opn2.js`
+- `live/nuked-opn2.js`
 
 The upstream license text is preserved at `third_party/Nuked-OPN2/LICENSE`.
 When distributing builds that include the generated WASM wrapper, keep that

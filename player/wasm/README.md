@@ -23,6 +23,8 @@ Generated output:
 ```text
 player/wasm/dist/
   nuked-opn2.js
+live/
+   nuked-opn2.js
 ```
 
 Build prerequisites:
@@ -40,7 +42,8 @@ Integration notes:
 
 1. `player/wasm/nuked_adapter.c` wraps the upstream core with a small C API.
 2. `player/wasm/build-nuked.sh` builds a single-file ES module for AudioWorklet
-   loading.
+   loading, and syncs a copy to `live/nuked-opn2.js` for Vercel/static deploys
+   that only publish the `live/` directory.
 3. `player/nuked-worklet.js` loads the generated module and handles timed YM
    register writes.
 4. `live/worklet.js` can reuse the same generated backend while PSG and PCM stay

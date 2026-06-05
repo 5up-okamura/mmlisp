@@ -16,7 +16,7 @@
 
 // WorkletGlobalScope: import the emulators as modules.
 // The paths are relative to the worklet file's URL.
-import createNukedModule from "../player/wasm/dist/nuked-opn2.js";
+import createNukedModule from "./nuked-opn2.js";
 import { SN76489 } from "./src/sn76489.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size

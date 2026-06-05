@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 src_dir="$repo_root/third_party/Nuked-OPN2"
 out_dir="$repo_root/player/wasm/dist"
+out_file="$out_dir/nuked-opn2.js"
+live_out_file="$repo_root/live/nuked-opn2.js"
 adapter_src="$repo_root/player/wasm/nuked_adapter.c"
 
 if ! command -v emcc >/dev/null 2>&1; then
@@ -38,7 +40,10 @@ emcc \
   -s FILESYSTEM=0 \
   -s EXPORTED_FUNCTIONS='["_malloc","_free","_nopn_init","_nopn_reset","_nopn_write_reg","_nopn_render","_nopn_get_buffer_ptr","_nopn_get_native_sample_rate"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAP16"]' \
-  -o "$out_dir/nuked-opn2.js"
+  -o "$out_file"
 
-echo "Built $out_dir/nuked-opn2.js"
+cp "$out_file" "$live_out_file"
+
+echo "Built $out_file"
+echo "Synced $live_out_file"
 
