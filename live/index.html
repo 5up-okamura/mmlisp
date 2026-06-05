@@ -3092,12 +3092,25 @@
     function midiToStepToken(midi) {
       const names = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
       const note = ((midi % 12) + 12) % 12;
-      const oct = Math.floor(midi / 12) - 1;
-      return `${names[note]}${oct}`;
+      return names[note];
+    }
+
+    function insertInlineTextAtCursor(text) {
+      const state = editorView.state;
+      const selection = state.selection.main;
+      editorView.dispatch({
+        changes: {
+          from: selection.from,
+          to: selection.to,
+          insert: text,
+        },
+        selection: { anchor: selection.from + text.length },
+      });
+      editorView.focus();
     }
 
     function insertStepToken(token) {
-      insertTextAtCursor(`${token} `);
+      insertInlineTextAtCursor(`${token} `);
     }
 
     function getKeyboardOctaveSpan() {
@@ -3109,14 +3122,12 @@
       const pos = state.selection.main.from;
       if (pos <= 0) return;
       const before = state.doc.sliceString(0, pos);
-      const trimmed = before.replace(/\s+$/, '');
-      if (trimmed.length === 0) return;
-      const tokenMatch = trimmed.match(/([^\s]+)$/);
+      const tokenMatch = before.match(/([^\s]+)\s?$/);
       if (!tokenMatch) return;
       const token = tokenMatch[1];
-      if (!/^([a-g](\+)?-?\d+|_|&)$/i.test(token)) return;
-      let from = trimmed.length - token.length;
-      if (from > 0 && /\s/.test(before[from - 1])) from -= 1;
+      if (!/^([a-g](\+)?|_|~)$/i.test(token)) return;
+      const fullMatch = tokenMatch[0];
+      const from = pos - fullMatch.length;
       editorView.dispatch({
         changes: { from, to: pos, insert: '' },
         selection: { anchor: from },
@@ -3320,7 +3331,7 @@
       });
       tieBtn?.addEventListener('click', () => {
         if (!_stepInputEnabled) return;
-        insertStepToken('&');
+        insertStepToken('~');
       });
       octDownBtn?.addEventListener('click', () => {
         if (_kbBaseOctave <= KB_MIN_BASE_OCT) return;
