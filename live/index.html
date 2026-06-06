@@ -195,10 +195,14 @@
       font-size: 0.82rem;
       background: #0d0d0d;
     }
-    /* iOS Safari zooms focused editors when the effective font size is < 16px. */
-    @media (hover: none) and (pointer: coarse) {
-      #editorWrap .cm-editor {
-        font-size: 16px;
+    /* iOS Safari zooms focused editable content when effective size is < 16px. */
+    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
+      #editorWrap .cm-editor,
+      #editorWrap .cm-content,
+      #editorWrap .cm-line,
+      #editorWrap .cm-gutter,
+      #editorWrap .cm-gutterElement {
+        font-size: 16px !important;
       }
     }
     #editorWrap .cm-scroller { overflow: auto; }
