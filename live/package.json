@@ -5,6 +5,8 @@
   "type": "module",
   "description": "MMLisp Live — web authoring environment",
   "scripts": {
-    "serve": "npx --yes serve .. --cors -p 5173"
+    "serve": "npx --yes serve .. --cors -p 5173",
+    "gen:https-cert": "bash scripts/gen-local-cert.sh",
+    "serve:https": "npm run gen:https-cert && npx --yes serve .. --cors -p 5173 --ssl-cert .certs/dev-cert.pem --ssl-key .certs/dev-key.pem"
   }
 }

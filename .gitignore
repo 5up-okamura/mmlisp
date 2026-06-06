@@ -18,6 +18,7 @@ dist/
 # temporary
 *.tmp
 *.swp
+live/.certs/
 
 # generated IR snapshots
 examples/ir/*.generated.json

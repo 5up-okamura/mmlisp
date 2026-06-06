@@ -2496,8 +2496,23 @@
       return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
     }
 
+    function audioWorkletUnavailableReason() {
+      const protocol = window.location?.protocol ?? 'unknown';
+      const host = window.location?.host ?? 'unknown';
+      const secure = window.isSecureContext;
+      const hasAPI = !!window.AudioWorkletNode;
+      const reason = !secure && protocol !== 'https:'
+        ? `insecure context (${protocol}//${host})`
+        : 'AudioWorklet API not supported in this browser runtime';
+      return { reason, protocol, host, secure, hasAPI };
+    }
+
     async function ensureWorkletNode() {
       if (_workletReady) return;
+      if (!audioCtx?.audioWorklet || typeof audioCtx.audioWorklet.addModule !== 'function') {
+        const info = audioWorkletUnavailableReason();
+        throw new Error(`AudioWorklet unavailable: ${info.reason}`);
+      }
       await audioCtx.audioWorklet.addModule('./worklet.js');
       workletNode = new AudioWorkletNode(audioCtx, 'ym2612-processor', {
         numberOfOutputs: 1,
@@ -2510,7 +2525,6 @@
         }
       };
       workletNode.connect(audioCtx.destination);
-      log('YM2612 worklet ready', 'info');
       _workletReady = true;
     }
 
@@ -2544,6 +2558,11 @@
           await ensureWorkletNode();
           return true;
         } catch (e) {
+          const info = audioWorkletUnavailableReason();
+          if (!audioCtx?.audioWorklet || typeof audioCtx.audioWorklet.addModule !== 'function') {
+            log(`AudioWorklet unavailable: ${info.reason}`, 'err');
+            log(`Hint: open over HTTPS (or localhost) and use Safari/iOS 14.5+`, 'err');
+          }
           log('Audio init failed: ' + e.message, 'err');
           return false;
         } finally {
@@ -2552,28 +2571,6 @@
       })();
       return _initAudioPromise;
     }
-
-    // Ensure audio init is not tied to Play button only.
-    // Any first user gesture (tap/click/key) can unlock audio on mobile.
-    (() => {
-      let fired = false;
-      const onFirstGesture = () => {
-        if (fired) return;
-        fired = true;
-        cleanup();
-        void initAudio();
-      };
-      const cleanup = () => {
-        document.removeEventListener('pointerdown', onFirstGesture, true);
-        document.removeEventListener('touchstart', onFirstGesture, true);
-        document.removeEventListener('mousedown', onFirstGesture, true);
-        document.removeEventListener('keydown', onFirstGesture, true);
-      };
-      document.addEventListener('pointerdown', onFirstGesture, true);
-      document.addEventListener('touchstart', onFirstGesture, true);
-      document.addEventListener('mousedown', onFirstGesture, true);
-      document.addEventListener('keydown', onFirstGesture, true);
-    })();
 
     function setPlayIcon(playing) {
       document.getElementById('iconPlay').style.display  = playing ? 'none' : '';
