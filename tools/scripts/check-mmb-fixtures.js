@@ -7,11 +7,11 @@ const { spawnSync } = require("node:child_process");
 
 function main() {
   const repoRoot = path.resolve(__dirname, "..", "..");
-  const fixturesDir = path.join(repoRoot, "examples", "gmb", "fixtures");
+  const fixturesDir = path.join(repoRoot, "examples", "mmb", "fixtures");
   const manifestPath = path.join(fixturesDir, "manifest.json");
 
   if (!fs.existsSync(manifestPath)) {
-    console.error("Fixture manifest not found. Run build:gmb-fixtures first.");
+    console.error("Fixture manifest not found. Run build:mmb-fixtures first.");
     process.exit(1);
   }
 

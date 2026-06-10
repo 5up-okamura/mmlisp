@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { buildGmb } = require("./mmlisp2mmb");
+const { buildMmb } = require("./mmlisp2mmb");
 
 function u16le(buf, off) {
   return buf.readUInt16LE(off);
@@ -44,7 +44,7 @@ function firstTrackEventHeaderOffset(buf) {
   }
   const trackCount = u16le(buf, track.offset);
   if (trackCount < 1) {
-    throw new Error("no tracks in gmb");
+    throw new Error("no tracks in mmb");
   }
   const firstEntry = track.offset + 4;
   const eventOffset = u32le(buf, firstEntry + 4);
@@ -98,7 +98,7 @@ function buildSampleBankFixture() {
     ],
   };
 
-  return buildGmb(ir, { targetProfile: "md-full" }).gmb;
+  return buildMmb(ir, { targetProfile: "md-full" }).mmb;
 }
 
 function buildParamSweepFixture() {
@@ -130,16 +130,16 @@ function buildParamSweepFixture() {
     ],
   };
 
-  return buildGmb(ir, { targetProfile: "md-full" }).gmb;
+  return buildMmb(ir, { targetProfile: "md-full" }).mmb;
 }
 
 function makeFixtures() {
   const repoRoot = path.resolve(__dirname, "..", "..");
-  const gmbDir = path.join(repoRoot, "examples", "gmb");
-  const fixturesDir = path.join(gmbDir, "fixtures");
+  const mmbDir = path.join(repoRoot, "examples", "mmb");
+  const fixturesDir = path.join(mmbDir, "fixtures");
   fs.mkdirSync(fixturesDir, { recursive: true });
 
-  const demo1 = fs.readFileSync(path.join(gmbDir, "demo1.mmb"));
+  const demo1 = fs.readFileSync(path.join(mmbDir, "demo1.mmb"));
   const pcmBank = buildSampleBankFixture();
   const paramSweep = buildParamSweepFixture();
 
@@ -257,7 +257,7 @@ function makeFixtures() {
 
   fs.writeFileSync(
     path.join(fixturesDir, "README.md"),
-    "# GMB Compatibility Fixtures\n\nGenerated fixture set for decoder compatibility checks.\n\nRegenerate with:\n\n1. npm run build:gmb-demos\n2. npm run build:gmb-fixtures\n\nRun checks with:\n\n1. npm run check:gmb-fixtures\n",
+    "# MMB Compatibility Fixtures\n\nGenerated fixture set for decoder compatibility checks.\n\nRegenerate with:\n\n1. npm run build:mmb-demos\n2. npm run build:mmb-fixtures\n\nRun checks with:\n\n1. npm run check:mmb-fixtures\n",
     "utf8",
   );
 

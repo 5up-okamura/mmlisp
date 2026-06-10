@@ -6,7 +6,7 @@ Suggested layout:
 
 1. source/: .mmlisp files
 2. ir/: canonical IR snapshots
-3. gmb/: exported binary files
+3. mmb/: exported binary files
 4. notes/: listening and validation notes
 
 Current demo skeletons:

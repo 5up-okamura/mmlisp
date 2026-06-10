@@ -501,7 +501,7 @@ This enables:
 ### 4.6 Implications for the compiler
 
 The MMLisp compiler is unaffected by this model. Each track compiles
-independently to its GMB binary representation. Track identity, lifetime
+independently to its MMB binary representation. Track identity, lifetime
 management, and the 68000→Z80 protocol are entirely driver concerns.
 
 The compiler does need to:

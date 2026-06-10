@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-const { buildGmb } = require("./mmlisp2mmb");
+const { buildMmb } = require("./mmlisp2mmb");
 
 function main() {
   const ir = {
@@ -31,7 +31,7 @@ function main() {
   };
 
   try {
-    buildGmb(ir);
+    buildMmb(ir);
   } catch (error) {
     if (
       String(error && error.message ? error.message : error) ===

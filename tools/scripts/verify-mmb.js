@@ -32,7 +32,7 @@ function u32le(buf, off) {
 }
 
 function fail(msg) {
-  console.error(`GMB invalid: ${msg}`);
+  console.error(`MMB invalid: ${msg}`);
   process.exit(1);
 }
 
@@ -291,7 +291,7 @@ function main() {
   }
 
   console.log(
-    `GMB valid: version=${versionMajor}.${versionMinor} sections=${sectionCount} tracks=${trackEntries.length} events=${totalEvents} size=${buf.length}`,
+    `MMB valid: version=${versionMajor}.${versionMinor} sections=${sectionCount} tracks=${trackEntries.length} events=${totalEvents} size=${buf.length}`,
   );
 }
 

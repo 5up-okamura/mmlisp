@@ -14,7 +14,7 @@ Outputs:
 1. docs/spec-v0.1.md
 2. docs/commands.md
 3. docs/ir.md
-4. docs/gmb.md
+4. docs/mmb.md
 
 ## Phase 0.5: Editor Tooling ✓
 
@@ -65,10 +65,10 @@ Phase 1 exit signal:
 
 - Source parser and AST
 - IR generation
-- GMB binary writer
+- MMB binary writer
 - Compatibility/version checks
 
-Status: **complete** — deterministic IR and GMB outputs verified for both demo artifacts.
+Status: **complete** — deterministic IR and MMB outputs verified for both demo artifacts.
 
 ## Phase 3: Driver Implementation (MMLispDRV)
 
@@ -82,7 +82,7 @@ Phase 3 entry condition:
 
 ## Phase 4: Integration and Demo
 
-- End-to-end toolchain: source to GMB to SGDK playback
+- End-to-end toolchain: source to MMB to SGDK playback
 - Example game-scene mappings for interactive music
 - Documentation and migration notes for v0.2
 
@@ -90,7 +90,7 @@ Phase 3 entry condition:
 
 | Version | Status   | Tag            | Themes                                                                               |
 | ------- | -------- | -------------- | ------------------------------------------------------------------------------------ |
-| v0.1    | frozen   | v0.1-candidate | Core language, IR, GMB format                                                        |
+| v0.1    | frozen   | v0.1-candidate | Core language, IR, MMB format                                                        |
 | v0.2    | frozen   | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                             |
 | v0.3    | frozen   | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls          |
 | v0.4    | frozen   | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model          |
@@ -348,7 +348,7 @@ Done (confirmed implemented, not yet removed from backlog):
 
 Active:
 
-1. Freeze IR-to-GMB opcode table
+1. Freeze IR-to-MMB opcode table
 2. Begin MMLispDRV implementation (Phase 3)
 3. Furnace/DefleMask voice data interoperability (spec-first, then implementation)
 

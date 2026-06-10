@@ -32,7 +32,7 @@ Implemented toolchain:
 
 1. source (.mmlisp) → deterministic IR (.json)
 2. IR comparison against canonical snapshots with strict semantic checks
-3. GMB export and structural validation for demo artifacts
+3. MMB export and structural validation for demo artifacts
 4. MMLisp Live (live/) — web authoring environment with chip emulator AudioWorklet, MMLisp editor, sound parameter panel
 
 ## Documents
@@ -45,7 +45,7 @@ Implemented toolchain:
 - docs/spec-v0.5.md — v0.5 design notes (FM3 independent-OP, CSM, PCM/DAC, TEMPO_SWEEP)
 - docs/commands.md — command set definition
 - docs/ir.md — IR JSON schema
-- docs/gmb.md — binary format
+- docs/mmb.md — binary format
 - docs/opcodes.md — opcode assignments (provisional)
 - docs/compiler.md — compiler pipeline contract
 - docs/driver.md — decoder contract for MMLispDRV
@@ -61,7 +61,7 @@ Implemented toolchain:
 ## Next Steps
 
 1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
-2. Freeze IR-to-GMB opcode table and argument packing.
+2. Freeze IR-to-MMB opcode table and argument packing.
 3. Implement MMLispDRV on SGDK/Z80 target.
 
 ## Acknowledgements

@@ -151,4 +151,4 @@ See also:
 
 1. docs/spec-v0.1.md
 2. docs/ir.md
-3. docs/gmb.md
+3. docs/mmb.md

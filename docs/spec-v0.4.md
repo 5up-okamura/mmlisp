@@ -335,7 +335,7 @@ LOOP_END            ; counter--; if counter > 0: jump to return_addr
 ```
 
 - `LOOP_BREAK` carries the exit address as a 2-byte operand, resolved by the
-  GMB compiler via forward reference on the matching loop id.
+  MMB compiler via forward reference on the matching loop id.
 - The Z80 driver loop stack entry (`{ return_addr, counter }`) is **unchanged**.
 - `LOOP_BEGIN` opcode format is **unchanged** — full backward compatibility.
 - Only new opcode: `LOOP_BREAK <u16 exit_addr>`.
@@ -346,7 +346,7 @@ IR representation:
 { "cmd": "LOOP_BREAK", "args": { "id": "_x0" } }
 ```
 
-The `id` links `LOOP_BREAK` to its enclosing loop; the GMB compiler resolves
+The `id` links `LOOP_BREAK` to its enclosing loop; the MMB compiler resolves
 the exit address at binary emit time.
 
 ---
@@ -604,7 +604,7 @@ bytes carry only an `envId` reference; the driver evaluates the curve in real
 time per channel per frame.
 
 ```
-GMB binary
+MMB binary
 ├── TRACK_DATA
 │     NOTE_ON  pitch=c4  len=48   envId=2   ; u8; 0 = no envelope
 │
@@ -1123,7 +1123,7 @@ the note holds the final attack value until KEY-OFF fires the release tail.
 table lookup only.**
 
 The compiler (JS) generates a 256-entry u8 normalized LUT for each distinct
-curve name used in a score. LUTs are stored in a new GMB section
+curve name used in a score. LUTs are stored in a new MMB section
 `CURVE_TABLE (0x0006)`. The Z80 driver evaluates:
 
 ```

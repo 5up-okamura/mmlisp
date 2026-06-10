@@ -3,7 +3,7 @@
 This document defines the minimal source-to-IR contract implemented for the
 v0.1 draft workflow.
 
-Related draft path now included: source -> IR -> GMB.
+Related draft path now included: source -> IR -> MMB.
 
 ## 1. Scope
 
@@ -12,8 +12,8 @@ Implemented now:
 1. Parse a subset of MMLisp source forms used in demo files
 2. Emit deterministic IR JSON
 3. Verify generated IR against canonical snapshots
-4. Encode draft GMB binary from IR
-5. Validate generated GMB structural integrity
+4. Encode draft MMB binary from IR
+5. Validate generated MMB structural integrity
 6. Emit structured semantic diagnostics for marker, loop, and target checks
 7. Encode fixed binary payloads per opcode (no JSON args payload)
 
@@ -30,9 +30,9 @@ Run from tools directory.
 1. `npm run mmlisp2ir -- ../examples/source/demo1.mmlisp --out ../examples/ir/demo1.ir.generated.json`
 2. `npm run build:ir-demos`
 3. `npm run check:ir-demos`
-4. `npm run mmlisp2mmb -- ../examples/ir/demo1.ir.canonical.json --out ../examples/gmb/demo1.mmb --meta ../examples/gmb/demo1.meta.json`
-5. `npm run build:gmb-demos`
-6. `npm run check:gmb-demos`
+4. `npm run mmlisp2mmb -- ../examples/ir/demo1.ir.canonical.json --out ../examples/mmb/demo1.mmb --meta ../examples/mmb/demo1.meta.json`
+5. `npm run build:mmb-demos`
+6. `npm run check:mmb-demos`
 
 ## 3. Input Contract
 
@@ -121,7 +121,7 @@ Event fields:
 3. `args`
 4. `src`
 
-GMB output contract (draft):
+MMB output contract (draft):
 
 1. Header with magic/version/section directory count
 2. Section directory with absolute offsets and sizes

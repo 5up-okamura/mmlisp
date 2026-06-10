@@ -200,7 +200,7 @@ See: docs/ir.md
 - Metadata section
 - Reserved bytes for forward compatibility
 
-See: docs/gmb.md
+See: docs/mmb.md
 
 ## 8. Validation Rules
 

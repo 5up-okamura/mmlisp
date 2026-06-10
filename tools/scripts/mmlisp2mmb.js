@@ -328,14 +328,14 @@ function encodePayload(event, trackMaps) {
       return Buffer.from([sampleId, mode]);
     }
     default:
-      throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
+      throw new Error(`Unsupported IR command for MMB writer: ${event.cmd}`);
   }
 }
 
 function encodeEvent(event, trackMaps, delta) {
   const op = OPCODE[event.cmd];
   if (op === undefined) {
-    throw new Error(`Unsupported IR command for GMB writer: ${event.cmd}`);
+    throw new Error(`Unsupported IR command for MMB writer: ${event.cmd}`);
   }
   const argsBuf = encodePayload(event, trackMaps);
 
@@ -350,8 +350,8 @@ function encodeEvent(event, trackMaps, delta) {
   return out;
 }
 
-// IR commands that have no GMB binary encoding and are silently skipped
-const GMB_SKIPPED_CMDS = new Set(["PSG_VOICE", "CARRY_SET"]);
+// IR commands that have no MMB binary encoding and are silently skipped
+const MMB_SKIPPED_CMDS = new Set(["PSG_VOICE", "CARRY_SET"]);
 
 function encodeTrackEvents(track, sampleMap) {
   const trackMaps = buildTrackMaps(track, sampleMap);
@@ -361,7 +361,7 @@ function encodeTrackEvents(track, sampleMap) {
   // Pass 2: patch JUMP payloads with correct relative offsets
 
   const sortedEvents = [...(track.events || [])]
-    .filter((e) => !GMB_SKIPPED_CMDS.has(e.cmd))
+    .filter((e) => !MMB_SKIPPED_CMDS.has(e.cmd))
     .sort((a, b) => a.tick - b.tick);
 
   // Pass 1: build raw buffers and record marker positions
@@ -582,7 +582,7 @@ function createAllocator(targetProfile) {
   };
 }
 
-function buildGmb(ir, options = {}) {
+function buildMmb(ir, options = {}) {
   const tracks = ir.tracks || [];
   const allocator = createAllocator(options.targetProfile || "md-full");
   const sampleBank = buildSampleBank(ir.metadata?.samples || []);
@@ -673,11 +673,11 @@ function buildGmb(ir, options = {}) {
   }
 
   const body = Buffer.concat(sectionEntries.map((s) => s.data));
-  const gmb = Buffer.concat([header, Buffer.concat(dirChunks), body]);
+  const mmb = Buffer.concat([header, Buffer.concat(dirChunks), body]);
 
   const meta = {
     sections: directory,
-    totalSize: gmb.length,
+    totalSize: mmb.length,
     trackCount: tracks.length,
     targetProfile: allocator.profileName,
     trackAssignments,
@@ -692,7 +692,7 @@ function buildGmb(ir, options = {}) {
     })),
   };
 
-  return { gmb, meta };
+  return { mmb, meta };
 }
 
 function parseArgs(argv) {
@@ -730,11 +730,11 @@ function parseArgs(argv) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const ir = JSON.parse(fs.readFileSync(args.input, "utf8"));
-  const { gmb, meta } = buildGmb(ir, { targetProfile: args.targetProfile });
+  const { mmb, meta } = buildMmb(ir, { targetProfile: args.targetProfile });
 
   const out = args.out || args.input.replace(/\.json$/i, ".mmb");
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, gmb);
+  fs.writeFileSync(out, mmb);
 
   if (args.meta) {
     fs.mkdirSync(path.dirname(args.meta), { recursive: true });
@@ -752,5 +752,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  buildGmb,
+  buildMmb,
 };

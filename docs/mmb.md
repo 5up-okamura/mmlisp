@@ -1,4 +1,4 @@
-# GMB Format v0.1 Draft
+# MMB Format v0.1 Draft
 
 This document defines the draft binary format for MMLisp export artifacts.
 
@@ -129,7 +129,7 @@ Required keys in v0.1:
 
 Implementation note:
 
-1. The current writer's optional sidecar `.meta.json` (not embedded in GMB)
+1. The current writer's optional sidecar `.meta.json` (not embedded in MMB)
    includes allocator diagnostics such as `targetProfile`, per-track
    assignments, and `requestSlotChannelMasks`.
 
@@ -152,4 +152,4 @@ Before v0.1 freeze:
 
 1. finalize section ids and required keys
 2. finalize opcode map in command table follow-up document
-3. add at least two golden GMB samples to regression fixtures
+3. add at least two golden MMB samples to regression fixtures

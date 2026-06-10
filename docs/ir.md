@@ -7,7 +7,7 @@ MMLisp compiler before binary serialization.
 
 1. Deterministic event representation for preview and export
 2. Minimal command set aligned with v0.1 language scope
-3. Stable bridge between source language and GMB binary
+3. Stable bridge between source language and MMB binary
 
 ## 2. IR Unit Model
 

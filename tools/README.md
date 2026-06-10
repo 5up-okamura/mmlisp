@@ -16,18 +16,18 @@ Run from tools directory:
 4. `npm run build:ir-demos`
 5. `npm run verify-ir -- ../examples/ir/demo1.ir.canonical.json ../examples/ir/demo1.ir.generated.json`
 6. `npm run check:ir-demos`
-7. `npm run mmlisp2mmb -- ../examples/ir/demo1.ir.canonical.json --out ../examples/gmb/demo1.mmb --meta ../examples/gmb/demo1.meta.json --target-profile md-full`
-8. `npm run build:gmb-demos`
-9. `npm run verify-mmb -- ../examples/gmb/demo1.mmb`
-10. `npm run check:gmb-demos`
-11. `npm run build:gmb-fixtures`
-12. `npm run check:gmb-fixtures`
+7. `npm run mmlisp2mmb -- ../examples/ir/demo1.ir.canonical.json --out ../examples/mmb/demo1.mmb --meta ../examples/mmb/demo1.meta.json --target-profile md-full`
+8. `npm run build:mmb-demos`
+9. `npm run verify-mmb -- ../examples/mmb/demo1.mmb`
+10. `npm run check:mmb-demos`
+11. `npm run build:mmb-fixtures`
+12. `npm run check:mmb-fixtures`
 
 ## Notes
 
 1. The current compiler and player path support the v0.4 language used by the demo workflow.
 2. Generated files use deterministic key ordering to simplify diffs.
-3. The current GMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
+3. The current MMB writer uses fixed binary payloads per opcode, but the opcode table is not yet frozen.
 4. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under `examples/ir`.
-5. `check:gmb-fixtures` verifies both expected-valid and expected-invalid fixture binaries.
+5. `check:mmb-fixtures` verifies both expected-valid and expected-invalid fixture binaries.
 6. `mmlisp2mmb` supports `--target-profile` (`md-full`, `ym2612`, `psg`) and resolves track-to-channel mapping per profile. `md-full` and `ym2612` include `fm3op1`-`fm3op4` for FM3 independent-frequency mode, and `dac` (shared ID with `fm6`).
