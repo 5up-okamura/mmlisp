@@ -564,6 +564,15 @@ export class IRPlayer {
     // Channels holding a len=0 note, waiting for triggerKeyOff()
     this._holdChannels = new Set();
 
+    // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
+    // operator of channel 3 via the shared 0x28 key register. Because the
+    // register holds the on/off state of all four operators at once, the
+    // per-operator NOTE_ON events must be merged into a combined mask instead
+    // of clobbering one another. We record each operator's [on, off) interval
+    // and recompute the combined key writes at every affected boundary.
+    // Entries: { opBit, on, off } where `off` is null for hold (len=0) notes.
+    this._fm3OpIntervals = [];
+
     // Key-on operator mask per channel (default 0xf0 = all 4 ops on)
     this._opMasks = new Array(6).fill(0xf0);
 
@@ -649,6 +658,9 @@ export class IRPlayer {
     // Initialize all channels with default voices
     this._initDefaultVoices();
 
+    // Reset FM3 operator key-merge state for a fresh run
+    this._fm3OpIntervals = [];
+
     // Build per-track scheduler state
     this._tracks = this._flattenTracks();
     this._buildModulatorMap();
@@ -709,6 +721,7 @@ export class IRPlayer {
     const now = audioContext.currentTime;
     const secsPerTick = this._secsPerTick;
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
+    this._fm3OpIntervals = [];
     this._tracks = this._flattenTracks();
     this._buildModulatorMap();
     for (const t of this._tracks) {
@@ -806,7 +819,15 @@ export class IRPlayer {
       const port = ch >= 3 ? 1 : 0;
       const chOffset = ch % 3;
       const chKey = (port << 2) | chOffset;
-      this._write(0, 0x28, chKey, when);
+      if (ch === 2 && this._fm3OpIntervals.some((iv) => iv.off == null)) {
+        // Release only the held FM3 operators; any timed operators stay keyed.
+        this._fm3OpIntervals = this._fm3OpIntervals.filter(
+          (iv) => iv.off != null,
+        );
+        this._write(0, 0x28, (this._fm3MaskAt(when) & 0xf0) | chKey, when);
+      } else {
+        this._write(0, 0x28, chKey, when);
+      }
     }
   }
 
@@ -1256,10 +1277,72 @@ export class IRPlayer {
     }
 
     if (op >= 1 && op <= 3) {
-      // OP1..3 use FM3 special registers A8-AA / AC-AE.
-      const idx = op - 1;
+      // OP1..3 use the FM3 special-mode FNUM registers A8-AA / AC-AE.
+      // The register-to-operator order is NOT sequential: on real hardware
+      // (and in Nuked-OPN2's fnum_3ch[] decode) OP1 reads A9/AD, OP2 reads
+      // AA/AE, and OP3 reads A8/AC. Mapping op -> offset from the A8/AC base:
+      //   OP1 -> 1, OP2 -> 2, OP3 -> 0.
+      const idx = [1, 2, 0][op - 1];
       this._write(0, 0xac + idx, high, when);
       this._write(0, 0xa8 + idx, low, when);
+    }
+  }
+
+  /**
+   * Combined FM3 operator key mask active at `time` (post-transition), i.e.
+   * the OR of every recorded operator interval whose [on, off) range contains
+   * `time`. A key-off at exactly `iv.off` is treated as already released.
+   */
+  _fm3MaskAt(time) {
+    let mask = 0;
+    for (const iv of this._fm3OpIntervals) {
+      if (time >= iv.on && (iv.off == null || time < iv.off)) {
+        mask |= iv.opBit;
+      }
+    }
+    return mask;
+  }
+
+  /**
+   * Schedule a single FM3 operator's key-on/key-off, merging it with any other
+   * operators of channel 3 that overlap in time. Adding an operator only
+   * changes the combined mask during its own [on, off) span, so we recompute
+   * and re-emit the 0x28 register at every boundary inside that span. Because
+   * the worklet applies equal-time writes in insertion order (last wins),
+   * re-emitting supersedes the stale values written when earlier operators were
+   * scheduled, yielding the correct chord at each transition.
+   *
+   * @param {number} opBit  operator key bit (0x10=OP1 … 0x80=OP4)
+   * @param {number} onTime audio time of key-on
+   * @param {number|null} offTime audio time of key-off, or null for a hold note
+   */
+  _scheduleFm3OpKey(opBit, onTime, offTime) {
+    const chKey = (0 << 2) | 2; // channel 3: port 0, channel offset 2
+
+    // Drop intervals that have fully elapsed so the list stays bounded across
+    // loops (keep a small margin so in-flight writes are not disturbed).
+    const now = this._audioContext?.currentTime ?? 0;
+    if (this._fm3OpIntervals.length > 0) {
+      this._fm3OpIntervals = this._fm3OpIntervals.filter(
+        (iv) => iv.off == null || iv.off >= now - 1,
+      );
+    }
+
+    this._fm3OpIntervals.push({ opBit, on: onTime, off: offTime });
+
+    // Collect every boundary affected by this note: its own endpoints plus any
+    // other operator transition that falls within this note's active span.
+    const within = (t) =>
+      t > onTime && (offTime == null || t < offTime);
+    const boundaries = new Set([onTime]);
+    if (offTime != null) boundaries.add(offTime);
+    for (const iv of this._fm3OpIntervals) {
+      if (within(iv.on)) boundaries.add(iv.on);
+      if (iv.off != null && within(iv.off)) boundaries.add(iv.off);
+    }
+
+    for (const t of boundaries) {
+      this._write(0, 0x28, this._fm3MaskAt(t) | chKey, t);
     }
   }
 
@@ -1528,6 +1611,14 @@ export class IRPlayer {
         const isFmSilent =
           (regs?.vol != null || this._fmVolSweep[ch] != null) &&
           this._fmVolAtTime(ch, when) === 0;
+        const secsPerTick = this._secsPerTick;
+        const offWhen =
+          gateTicks > 0
+            ? Math.max(
+                when + 0.001,
+                when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS,
+              )
+            : null;
         if (!this._mutedChannels[ch] && !isFmSilent) {
           const hasEventMask = ev.args?.opMask !== undefined;
           let keyMask = this.getOpMask(ch);
@@ -1541,8 +1632,14 @@ export class IRPlayer {
               throw new Error(`Invalid NOTE_ON opMask nibble: ${eventMask}`);
             }
           }
-          const keyOnByte = keyMask | chKey;
-          this._write(0, 0x28, keyOnByte, when);
+          if (isFm3OpNote) {
+            // Merge this operator's key with the other FM3 operators sharing
+            // channel 3's 0x28 register instead of overwriting them.
+            this._scheduleFm3OpKey(keyMask & 0xf0, when, offWhen);
+          } else {
+            const keyOnByte = keyMask | chKey;
+            this._write(0, 0x28, keyOnByte, when);
+          }
         }
 
         // Reset non-carry modulator tracks on the same channel
@@ -1560,10 +1657,12 @@ export class IRPlayer {
 
         // Key-off at gate boundary (5ms lead for FM envelope decay)
         // gateTicks === 0 means hold indefinitely (len=0 note; KEY-OFF via triggerKeyOff())
-        const secsPerTick = this._secsPerTick;
+        // FM3 operator notes schedule their own key-off via _scheduleFm3OpKey
+        // above so simultaneous operators are not silenced together.
         if (gateTicks > 0) {
-          const offWhen = when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS;
-          this._write(0, 0x28, chKey, Math.max(when + 0.001, offWhen));
+          if (!isFm3OpNote) {
+            this._write(0, 0x28, chKey, offWhen);
+          }
         } else {
           // Hold note: register the channel for runtime key-off
           this._holdChannels.add(ch);
@@ -1605,10 +1704,20 @@ export class IRPlayer {
       }
 
       case "FM3_MODE": {
-        this._setReg27State(
-          { fm3SpecialMode: (ev.args?.mode ?? "") === "op" },
-          when,
-        );
+        const opMode = (ev.args?.mode ?? "") === "op";
+        this._setReg27State({ fm3SpecialMode: opMode }, when);
+        if (opMode) {
+          // In CH3 special mode each operator takes its frequency from its own
+          // F-number register. A score may drive only a subset of operators
+          // (e.g. only fm3-1), leaving the others at F-number 0. Those operators
+          // are never keyed, so they stay silent regardless — but we seed all
+          // four with a valid pitch as defensive insurance so no operator is
+          // left at an undefined frequency. Each fm3-N track's own FM3_OP_PITCH
+          // (emitted after this event) overrides its operator's seed.
+          for (let op = 1; op <= 4; op++) {
+            this._writeFm3OpPitch(op, 60, when);
+          }
+        }
         break;
       }
 

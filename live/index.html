@@ -3091,6 +3091,14 @@
       const low = fnum & 0xff;
       writeToWorklet(port, 0xa4 + chOffset, high);
       writeToWorklet(port, 0xa0 + chOffset, low);
+      // CH3 may be left in FM3 special mode (separate per-operator frequencies)
+      // after editing/playing an fm3-N score; the base A0/A4 write above only
+      // reaches OP4 in that mode. Mirror the pitch onto every operator's
+      // F-number so all keyed operators play in unison. These supplementary
+      // registers are inert in normal mode, so this is harmless there.
+      if (chIndex === 2 && player) {
+        for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi);
+      }
       const keyMask = player ? player.getOpMask(chIndex) : 0xf0;
       const chKey = (port << 2) | chOffset;
       writeToWorklet(0, 0x28, keyMask | chKey);
