@@ -10,7 +10,7 @@
  */
 
 import { parse } from "./mmlisp-parser.js";
-import { clampForTarget, pitchToMidi } from "./ir-utils.js";
+import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
 
 const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
@@ -492,12 +492,14 @@ function emitNoteForTrack(
     }
     if (gateTicks < lengthTicks) args.gate = gateTicks;
 
-    events.push({
+    const pcmEv = {
       tick: trackState.tick,
       cmd: "PCM_NOTE_ON",
       args,
       src,
-    });
+    };
+    stampDelay(pcmEv, trackState);
+    events.push(pcmEv);
     if (mode === "loop" && gateTicks > 0) {
       events.push({
         tick: trackState.tick + gateTicks,
@@ -545,7 +547,7 @@ function emitNoteForTrack(
     });
     trackState.hasCsmOn = true;
   }
-  events.push({
+  const noteEv = {
     tick: trackState.tick,
     cmd: "NOTE_ON",
     args: trackState.isFm3OpTrack
@@ -567,7 +569,9 @@ function emitNoteForTrack(
           trackState.macroStep,
         ),
     src,
-  });
+  };
+  stampDelay(noteEv, trackState);
+  events.push(noteEv);
   trackState.tick += lengthTicks;
   updateLastNotePitch(trackState, fullPitch);
 }
@@ -614,6 +618,84 @@ function applyMacroEntryToState(trackState, irTarget, spec) {
 function clearMacroTarget(trackState, irTarget) {
   if (irTarget && SUPPORTED_TARGETS.has(irTarget))
     delete trackState.activeMacros[irTarget];
+}
+
+// v0.5 §1.5.3: resolve a :delay-vels spec into a concrete array of per-tap
+// velocities. A step vector lists them directly; a curve derives the tap count
+// from its :len (a time span in ticks) divided by the :delay spacing.
+function resolveDelayVels(spec, delayTicks) {
+  if (!spec || !(delayTicks > 0)) return null;
+  if (spec.type === "steps") {
+    const vels = (spec.steps || []).filter((v) => v !== null && v !== undefined);
+    return vels.length ? vels.map((v) => clampForTarget("VEL", v)) : null;
+  }
+  if (spec.type === "curve") {
+    const { from = 0, to = 0, frames = 0, curve = "linear", params } = spec;
+    const count = Math.floor(frames / delayTicks);
+    if (count < 1) return null;
+    const vels = [];
+    for (let k = 1; k <= count; k++) {
+      const v = from + (to - from) * sampleCurveUnit(curve, k / count, params);
+      vels.push(clampForTarget("VEL", Math.round(v)));
+    }
+    return vels;
+  }
+  return null;
+}
+
+// Stamp the active :delay config onto a freshly-emitted note event so the
+// post-pass (expandTrackDelays) can generate echoes from it.
+function stampDelay(ev, trackState) {
+  if (!(trackState.delayTicks > 0) || !trackState.delayVels) return;
+  const vels = resolveDelayVels(trackState.delayVels, trackState.delayTicks);
+  if (vels && vels.length) ev._delay = { ticks: trackState.delayTicks, vels };
+}
+
+// v0.5 §1.5.3: compile-time delay expansion. Each note stamped with _delay
+// emits echo copies at +k·spacing with the tap velocities. Written (source)
+// notes outrank echoes: an echo overlapping any written note is dropped, so
+// echoes only sound in the gaps the written part leaves (monophonic priority).
+function expandTrackDelays(track) {
+  const events = track.events;
+  const NOTE_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON"]);
+  const sources = events.filter((e) => e._delay && NOTE_CMDS.has(e.cmd));
+  if (sources.length === 0) {
+    for (const e of events) delete e._delay;
+    return;
+  }
+  const occupied = events
+    .filter((e) => NOTE_CMDS.has(e.cmd))
+    .map((e) => {
+      const len = e.args.gate ?? e.args.length ?? 0;
+      return [e.tick, e.tick + len];
+    });
+  const collides = (t, len) =>
+    occupied.some(([s, en]) => t < en && t + len > s);
+
+  const echoes = [];
+  for (const ev of sources) {
+    const { ticks, vels } = ev._delay;
+    const len = ev.args.gate ?? ev.args.length ?? 0;
+    for (let k = 0; k < vels.length; k++) {
+      const tick = ev.tick + (k + 1) * ticks;
+      if (collides(tick, len)) continue;
+      // Echoes carry pitch/length/gate only — not the source's per-note macros.
+      const args = { ...ev.args };
+      delete args.pitchMacro;
+      delete args.velMacro;
+      delete args.note_semi;
+      delete args.keyon;
+      delete args.step;
+      if (vels[k] === 15) delete args.vel;
+      else args.vel = vels[k];
+      echoes.push({ tick, cmd: ev.cmd, args, src: ev.src });
+    }
+  }
+  for (const e of events) delete e._delay;
+  if (echoes.length) {
+    events.push(...echoes);
+    events.sort((a, b) => a.tick - b.tick);
+  }
 }
 
 function applyTypedMacroDef(trackState, td) {
@@ -1502,6 +1584,33 @@ function compileChannelBody(
               } else {
                 const step = parseStepToken(rawVal);
                 if (step !== null) trackState.macroStep = step;
+              }
+              break;
+            }
+            case ":delay": {
+              // §1.5.3 track delay: echo tap spacing (length-token). `none`
+              // clears the whole delay-* family.
+              if (rawVal === "none") {
+                trackState.delayTicks = 0;
+                trackState.delayVels = null;
+              } else {
+                const ticks = parseLengthToken(rawVal, null);
+                if (ticks !== null && ticks > 0) trackState.delayTicks = ticks;
+              }
+              break;
+            }
+            case ":delay-vels": {
+              // Echo velocities: step vector [11 7 3] or a curve whose :len
+              // (time span) over :delay yields the tap count.
+              if (rawVal === "none") {
+                trackState.delayVels = null;
+              } else {
+                trackState.delayVels = parseMacroSpec(
+                  items[i],
+                  "VEL",
+                  diagnostics,
+                  trackName,
+                );
               }
               break;
             }
@@ -2772,6 +2881,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
         macroStep: { ...DEFAULT_MACRO_STEP }, // v0.5: :step clock for step-vector macros
+        delayTicks: 0, // v0.5: :delay echo tap spacing in ticks (0 = off)
+        delayVels: null, // v0.5: :delay-vels spec (steps or curve) for echo velocities
 
         glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
@@ -2933,6 +3044,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   }
 
   const tracks = trackOrder.map((key) => trackByKey.get(key).trackData);
+
+  for (const track of tracks) expandTrackDelays(track);
 
   for (const track of tracks) validateTrack(track, diagnostics);
 
