@@ -1530,18 +1530,22 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        const stepSecs = this._stepSecs(ev.args?.step);
         const regs = this._chRegs[ch];
         regs.currentMidi = midi;
 
         if (regs?.vol != null || this._fmVolSweep[ch] != null) {
           const currentVol = this._fmVolAtTime(ch, when);
-          const tl = composeFmTl(
-            regs.vel ?? 15,
-            currentVol,
-            this._masterVol ?? 31,
-          );
+          const vel = regs.vel ?? 15;
+          const master = this._masterVol ?? 31;
           const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
           for (const opIdx of carriers) {
+            const tl = this._carrierTl(
+              regs.ops[opIdx],
+              vel,
+              currentVol,
+              master,
+            );
             regs.ops[opIdx].tl = tl;
             const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
             this._write(port, opAddr, tl, when);
@@ -1559,20 +1563,29 @@ export class IRPlayer {
             when,
           );
           this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
+          const basePitchWrite = (centOffset, t) => {
+            const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
+            this._write(
+              port,
+              0xa4 + chOffset,
+              ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
+              t,
+            );
+            this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+          };
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
             gateTicks,
-            (centOffset, t) => {
-              const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
-              this._write(
-                port,
-                0xa4 + chOffset,
-                ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-                t,
-              );
-              this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
-            },
+            basePitchWrite,
+            stepSecs,
+          );
+          this._scheduleSemiMacro(
+            ev.args?.note_semi,
+            when,
+            gateTicks,
+            basePitchWrite,
+            stepSecs,
           );
         } else {
           // FM3 OP1..3 notes use dedicated pitch registers; apply runtime pitch offset
@@ -1580,13 +1593,22 @@ export class IRPlayer {
           if (centOffset !== 0) {
             this._writeFm3OpPitch(fm3Op, midi + centOffset / 100, when);
           }
+          const fm3PitchWrite = (noteCentOffset, t) => {
+            this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
+          };
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
             gateTicks,
-            (noteCentOffset, t) => {
-              this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
-            },
+            fm3PitchWrite,
+            stepSecs,
+          );
+          this._scheduleSemiMacro(
+            ev.args?.note_semi,
+            when,
+            gateTicks,
+            fm3PitchWrite,
+            stepSecs,
           );
         }
         this._scheduleFmVelMacro(
@@ -1596,6 +1618,7 @@ export class IRPlayer {
           ev.args?.velMacro,
           when,
           gateTicks,
+          stepSecs,
         );
         this._scheduleFmOpMacros(
           ch,
@@ -1639,6 +1662,16 @@ export class IRPlayer {
           } else {
             const keyOnByte = keyMask | chKey;
             this._write(0, 0x28, keyOnByte, when);
+            // :keyon retrigger gate (drum roll / echo tail). FM3-op notes share
+            // the 0x28 register so retrigger there is deferred.
+            this._scheduleKeyonMacro(
+              ev.args?.keyon,
+              keyMask,
+              chKey,
+              when,
+              gateTicks,
+              stepSecs,
+            );
           }
         }
 
@@ -1677,6 +1710,19 @@ export class IRPlayer {
 
       case "PARAM_SWEEP": {
         this._applyParamSweep(ch, port, chOffset, ev, when);
+        break;
+      }
+
+      case "PARAM_SWEEP_STOP": {
+        // Freeze a running inline sweep. The preceding sweep's frame writes are
+        // already bounded to this tick by _resolveSweepEndTick, so most targets
+        // simply hold their last written register value. VOL keeps persistent
+        // sweep state, so freeze it explicitly at the current value.
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (target === "VOL") {
+          this._chRegs[ch].vol = this._fmVolAtTime(ch, when);
+          this._fmVolSweep[ch] = null;
+        }
         break;
       }
 
@@ -1846,6 +1892,8 @@ export class IRPlayer {
         const opIdx = parseInt(target[5]) - 1;
         set(
           (v) => {
+            // Voiced (timbre) TL — the base level vel/vol/master attenuate from.
+            regs.ops[opIdx].voicedTl = v;
             regs.ops[opIdx].tl = v;
           },
           0,
@@ -2087,9 +2135,10 @@ export class IRPlayer {
         const vol = Math.max(0, Math.min(31, value));
         regs.vol = vol;
         const vel = regs.vel ?? 15;
-        const tl = composeFmTl(vel, vol, this._masterVol ?? 31);
+        const master = this._masterVol ?? 31;
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
+          const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
           regs.ops[opIdx].tl = tl;
           const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
           this._write(port, opAddr, tl, when);
@@ -2106,11 +2155,16 @@ export class IRPlayer {
         // FM channels: update carrier TL
         for (let ci = 0; ci < 6; ci++) {
           const cr = this._chRegs[ci];
-          const tl = composeFmTl(cr.vel ?? 15, cr.vol ?? 31, master);
           const cp = ci >= 3 ? 1 : 0;
           const co = ci % 3;
           const crs = fmCarrierOpsForAlg(cr.algorithm ?? 0);
           for (const opIdx of crs) {
+            const tl = this._carrierTl(
+              cr.ops[opIdx],
+              cr.vel ?? 15,
+              cr.vol ?? 31,
+              master,
+            );
             cr.ops[opIdx].tl = tl;
             this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
           }
@@ -2171,6 +2225,14 @@ export class IRPlayer {
     };
   }
 
+  // Effective carrier TL: the operator's voiced (timbre) TL plus the
+  // velocity/volume/master attenuation as a dB-domain offset. Preserves the
+  // patch's base level and per-carrier balance instead of flattening every
+  // carrier to a single composed TL.
+  _carrierTl(op, vel, vol, master) {
+    return Math.min(127, (op.voicedTl ?? 0) + composeFmTl(vel, vol, master));
+  }
+
   // Snap curve/function outputs to discrete hardware lanes when needed.
   _snapMacroOutput(target, value) {
     const t = String(target || "").toUpperCase();
@@ -2209,7 +2271,11 @@ export class IRPlayer {
     for (let i = track.flatIndex + 1; i < track.events.length; i++) {
       const nextEv = track.events[i];
       if ((nextEv.args?.target ?? "").toUpperCase() !== target) continue;
-      if (nextEv.cmd === "PARAM_SET" || nextEv.cmd === "PARAM_SWEEP") {
+      if (
+        nextEv.cmd === "PARAM_SET" ||
+        nextEv.cmd === "PARAM_SWEEP" ||
+        nextEv.cmd === "PARAM_SWEEP_STOP"
+      ) {
         endTick = nextEv.tick;
         hasExplicitStop = true;
         break;
@@ -2265,10 +2331,21 @@ export class IRPlayer {
     return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset };
   }
 
+  // Resolve a NOTE_ON `step` spec ({ unit, value }) to seconds per step.
+  // Absent → 1/60 s (the pre-:step 60 Hz rate).
+  _stepSecs(stepSpec) {
+    if (!stepSpec) return 1 / 60;
+    if (stepSpec.unit === "tick")
+      return Math.max(1, stepSpec.value) * this._secsPerTick;
+    return Math.max(1, stepSpec.value) / 60; // frame
+  }
+
   // Core macro scheduler shared by all targets and types.
+  // stepSecs is the per-step duration for step-vector macros (the :step clock);
+  // curve/stage sampling stays at 60 Hz.
   // Returns the audio time immediately after the last scheduled write (for
   // scheduling silence), or null if no writes were made (curve type or empty).
-  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn) {
+  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
     if (!spec) return null;
 
     if (spec.type === "stages") {
@@ -2367,7 +2444,7 @@ export class IRPlayer {
 
       const sustainEnd = releaseIndex ?? steps.length;
 
-      // Attack + sustain loop until gate
+      // Attack + sustain loop until gate, advancing one step per :step interval
       let t = when;
       let idx = 0;
       while (t < gateSecs) {
@@ -2381,16 +2458,16 @@ export class IRPlayer {
             break; // one-shot: hold last attack step
           }
         }
-        t += 1 / 60;
+        t += stepSecs;
       }
 
-      // Release phase after gate
+      // Release phase after gate (steps after :off), spaced by :step too
       if (releaseIndex !== null && releaseIndex < steps.length) {
         t = gateSecs;
         for (let ri = releaseIndex; ri < steps.length; ri++) {
           if (steps[ri] !== null && steps[ri] !== undefined)
             writeFn(steps[ri], t);
-          t += 1 / 60;
+          t += stepSecs;
         }
         return t; // time after last release write
       }
@@ -2407,6 +2484,7 @@ export class IRPlayer {
       when,
       gateTicks,
     );
+    const stepSecs = this._stepSecs(noteArgs.step);
     const OP_MACRO_MAP = {
       pan: "PAN",
       ...Object.fromEntries(
@@ -2428,22 +2506,29 @@ export class IRPlayer {
       const spec = noteArgs[key];
       if (!spec) continue;
       const t = target; // capture for closure
-      this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, when) => {
-        this._applyParam(
-          ch,
-          port,
-          chOffset,
-          {
-            cmd: "PARAM_SET",
-            args: { target: t, value: v },
-          },
-          when,
-        );
-      });
+      this._scheduleMacro(
+        spec,
+        noteFrames,
+        gateSecs,
+        when,
+        (v, when) => {
+          this._applyParam(
+            ch,
+            port,
+            chOffset,
+            {
+              cmd: "PARAM_SET",
+              args: { target: t, value: v },
+            },
+            when,
+          );
+        },
+        stepSecs,
+      );
     }
   }
 
-  _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks) {
+  _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks, stepSecs) {
     if (!velMacro) return;
 
     const regs = this._chRegs[ch];
@@ -2453,28 +2538,91 @@ export class IRPlayer {
       when,
       gateTicks,
     );
-    // vel 15 = full vol, vel 0 = silent. Use unified pipeline.
-    const velToTl = (v) =>
-      composeFmTl(clampForTarget("VEL", v), baseVol, this._masterVol ?? 31);
-
-    this._scheduleMacro(velMacro, noteFrames, gateSecs, when, (v, t) => {
-      const tl = velToTl(Math.round(v));
-      for (const opIdx of carriers) {
-        this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
-      }
-    });
+    // vel 15 = patch level, vel 0 = silent. Attenuates from each carrier's
+    // voiced TL (preserving the patch's base level and per-carrier balance).
+    const master = this._masterVol ?? 31;
+    this._scheduleMacro(
+      velMacro,
+      noteFrames,
+      gateSecs,
+      when,
+      (v, t) => {
+        const vel = clampForTarget("VEL", Math.round(v));
+        for (const opIdx of carriers) {
+          const tl = this._carrierTl(regs.ops[opIdx], vel, baseVol, master);
+          regs.ops[opIdx].tl = tl;
+          this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
+        }
+      },
+      stepSecs,
+    );
   }
 
   // Schedule a pitch macro for any channel (FM or PSG).
   // writeFn(centOffset, t) performs the hardware write for the channel.
-  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn) {
+  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn, stepSecs) {
     if (!pitchMacro) return;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
     );
-    this._scheduleMacro(pitchMacro, noteFrames, gateSecs, when, writeFn);
+    this._scheduleMacro(
+      pitchMacro,
+      noteFrames,
+      gateSecs,
+      when,
+      writeFn,
+      stepSecs,
+    );
+  }
+
+  // Schedule a :semi macro (discrete semitone offsets) on the pitch write path.
+  // Reuses the pitch writeFn; semitone values are ×100 to cents.
+  _scheduleSemiMacro(semiMacro, when, gateTicks, writeFn, stepSecs) {
+    if (!semiMacro) return;
+
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      when,
+      gateTicks,
+    );
+    this._scheduleMacro(
+      semiMacro,
+      noteFrames,
+      gateSecs,
+      when,
+      (semi, t) => writeFn(semi * 100, t),
+      stepSecs,
+    );
+  }
+
+  // Schedule a :keyon retrigger gate. Sampled per :step; a value >= 0.5 fires a
+  // key-off→key-on (restarting the envelope). The t=0 sample coincides with the
+  // note's own NOTE_ON and is a no-op. keyMask/chKey target the 0x28 register.
+  _scheduleKeyonMacro(keyonSpec, keyMask, chKey, when, gateTicks, stepSecs) {
+    if (!keyonSpec) return;
+
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      when,
+      gateTicks,
+    );
+    const keyOnByte = (keyMask & 0xf0) | chKey;
+    // Gap to register the key-off before re-keying; kept short so on-beat
+    // timing stays accurate, capped below KEY_OFF_LEAD_SECS.
+    const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
+    this._scheduleMacro(
+      keyonSpec,
+      noteFrames,
+      gateSecs,
+      when,
+      (v, t) => {
+        if (v < 0.5) return; // gate closed this step
+        if (t <= when + 1e-6) return; // first sample = note's own key-on
+        this._write(0, 0x28, chKey, Math.max(when, t - gap)); // key off
+        this._write(0, 0x28, keyOnByte, t); // key on
+      },
+      stepSecs,
+    );
   }
 
   _applyParamSweep(ch, port, chOffset, ev, when) {
@@ -2570,9 +2718,11 @@ export class IRPlayer {
             from + (to - from) * sampleCurveUnit(curve, phase, params),
           ),
         );
-        const tl = composeFmTl(regs.vel ?? 15, vol, this._masterVol ?? 31);
+        const vel = regs.vel ?? 15;
+        const master = this._masterVol ?? 31;
         const frameWhen = when + i / 60;
         for (const opIdx of carriers) {
+          const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
           this._write(
             port,
             0x40 + OP_ADDR_OFFSET[opIdx] + chOffset,
@@ -2768,17 +2918,27 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        const psgStepSecs = this._stepSecs(ev.args?.step);
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
           const psgCentOffset = this._psgPitchOffset[psgCh] ?? 0;
           this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
+          const psgPitchWrite = (centOffset, t) =>
+            this._psgSetPitch(psgCh, midi + centOffset / 100, t);
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
             psgGateTicks,
-            (centOffset, t) =>
-              this._psgSetPitch(psgCh, midi + centOffset / 100, t),
+            psgPitchWrite,
+            psgStepSecs,
+          );
+          this._scheduleSemiMacro(
+            ev.args?.note_semi,
+            when,
+            psgGateTicks,
+            psgPitchWrite,
+            psgStepSecs,
           );
         } else {
           this._psgTriggerNoise(when);

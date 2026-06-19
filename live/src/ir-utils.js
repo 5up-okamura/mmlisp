@@ -613,6 +613,7 @@ export function buildChannelRegState(chIndex) {
     ops: [
       {
         tl: 0,
+        voicedTl: 0,
         ar: 0,
         dr: 0,
         d2r: 0,
@@ -626,6 +627,7 @@ export function buildChannelRegState(chIndex) {
       },
       {
         tl: 0,
+        voicedTl: 0,
         ar: 0,
         dr: 0,
         d2r: 0,
@@ -639,6 +641,7 @@ export function buildChannelRegState(chIndex) {
       },
       {
         tl: 0,
+        voicedTl: 0,
         ar: 0,
         dr: 0,
         d2r: 0,
@@ -652,6 +655,7 @@ export function buildChannelRegState(chIndex) {
       },
       {
         tl: 0,
+        voicedTl: 0,
         ar: 0,
         dr: 0,
         d2r: 0,
