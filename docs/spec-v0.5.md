@@ -278,6 +278,239 @@ Examples:
   c _ c _)
 ```
 
+### 1.5.2 Step macros — `:step`, `:semi`, `:keyon` (v0.5)
+
+v0.5 adds three macro facilities built on one model: a per-step sequence
+clock (`:step`), a discrete semitone pitch sequence (`:semi`), and a key-on
+retrigger gate (`:keyon`). They are orthogonal targets — used alone or layered
+through the existing multi-target macro list — so arpeggios, drum rolls, and
+stochastic retriggers all fall out of the same primitives.
+
+This section defines authoring semantics only. Z80 driver storage layout and
+event encoding are deferred to the driver implementation phase.
+
+#### `:step` — sequence step duration (group-level)
+
+`:step` sets how long each step of every step-vector macro in the same macro
+group lasts. It accepts the standard length-token grammar:
+
+| Token | Meaning            |
+| ----- | ------------------ |
+| `1`   | whole note         |
+| `1/4` | quarter note       |
+| `8`   | eighth note        |
+| `16f` | 16 frames (1/60 s) |
+| `14t` | 14 ticks           |
+
+- Default when omitted: **`1f`** (one 60 Hz frame). This is the pre-v0.5
+  step-macro rate, so existing `:vel` / `:tl` step envelopes are unchanged.
+- `:step` is a property of the macro group: every step-vector target in the
+  group advances on the same grid and stays phase-locked — step N of `:semi`
+  coincides with step N of `:keyon`.
+- Curve macros are unaffected; they sample continuously over their own `:len`.
+- `:step` is persistent track state (set once, stays in effect — the standard
+  MMLisp model for `:len` / `:gate` / `:oct`). Like those, `:step` and `:macro`
+  are read at note-emit time, so their relative order is immaterial; writing
+  `:step` first (`:step 16 :macro ...`) is the conventional reading.
+
+#### `:semi` — semitone pitch sequence
+
+`:semi` is a step-vector macro whose values are **semitone offsets** relative
+to the note. It is the discrete counterpart to `:pitch`, which is curve-based
+and measured in cents:
+
+| Target   | Domain     | Value unit | Key-on retrigger |
+| -------- | ---------- | ---------- | ---------------- |
+| `:pitch` | continuous | cents      | no               |
+| `:semi`  | discrete   | semitones  | no               |
+
+- `:semi` changes pitch only; it never retriggers the envelope. On a sustained
+  voice this is the classic chiptune arpeggio.
+- A semitone is ×100 cents internally and shares the `NOTE_PITCH` apply path.
+- `:hold` / `:off` loop and release markers behave as for any step vector.
+
+```lisp
+; sustained-voice arpeggio (no retrigger), 60 Hz default step
+(fm1 :macro :semi [:hold 0 4 7]  c)
+```
+
+#### `:keyon` — retrigger gate
+
+`:keyon` is sampled once per `:step`; when the sampled value is **≥ 0.5** a
+key-on retrigger fires (key-off then key-on across the existing `KEY_OFF_LEAD`
+gap, restarting the operator envelopes). The 0.5 threshold matches the integer
+rounding (`Math.round`) used for every other macro target.
+
+`:keyon` accepts any macro signal, so the full curve/stochastic engine doubles
+as a gate generator:
+
+| Form                           | Result                                       |
+| ------------------------------ | -------------------------------------------- |
+| `:keyon 1`                     | constant gate — fire **every** `:step`       |
+| `:keyon 0`                     | never fire (same as omitting `:keyon`)       |
+| `:keyon [:hold 1]`             | every step (equivalent to `1`)               |
+| `:keyon [1]`                   | one-shot — fire once at step 0, then stop    |
+| `:keyon [:hold 1 0]`           | fire on alternate steps                      |
+| `:keyon (square :duty D)`      | duty-controlled regular gating               |
+| `:keyon (noise :from 0 :to 1)` | probabilistic retrigger (~50 % per step)     |
+
+Scalar `1` / `0` are accepted as constant signals; `1` is the shorthand for
+the common "retrigger every step" case.
+
+Retrigger rules:
+
+- The first sample at t = 0 coincides with the note's own NOTE_ON and is a
+  no-op, so a note never double-triggers on its own attack.
+- `:keyon` honors the `:off` release marker exactly like any other step macro
+  (e.g. `:vel`). Steps **before** `:off` are the sustain section — they loop
+  until gate, so the retriggers stop at note-off (a drum roll). Steps **after**
+  `:off` are the release section — they fire **after** note-off, so retriggers
+  continue past the gate (a single-note echo / reverb tail).
+- Two consecutive firing steps produce two attacks — the intended behavior for
+  rolls and tails.
+
+```lisp
+; drum roll — no :off, all sustain; stops at note-off
+(fm1 :macro :keyon [:hold 1]  c)
+
+; single-note echo tail — taps in the release section fire after note-off,
+; decaying via the phase-locked :vel release
+(fm1 :macro [ :keyon [0 :off 1 1 1]
+              :vel   [15 :off 11 7 3] ] :step 1/8  c)
+```
+
+`:step` governs the spacing of **both** the sustain and the release section, so
+the tail taps above are spaced at `:step` (1/8), not at the 60 Hz frame rate.
+
+#### Clearing and reset — `none`
+
+Because all three are persistent track state, the value keyword `none` reverts
+a persistent option to its baseline. (There is otherwise no way to stop an
+active macro once set.)
+
+| Statement            | Effect                                              |
+| -------------------- | --------------------------------------------------- |
+| `:macro :semi none`  | clear the `:semi` macro on this track               |
+| `:macro :keyon none` | clear the `:keyon` macro on this track              |
+| `:macro none`        | clear all active macros on this track               |
+| `:step none`         | revert step rate to the default `1f` (≡ `:step 1f`) |
+| `:pan none`          | stop a running inline `PARAM_SWEEP`, freezing the value |
+
+`none` reads as "no modulation / no override": the baseline for a macro target
+is its absence, and the baseline for `:step` is the 60 Hz default.
+
+`none` also stops a **timeline (inline) `PARAM_SWEEP`** — e.g. an auto-pan
+started with `:pan (sin ...)`. Inline curves run free of key-on and otherwise
+have no off switch; `:target none` stops the sweep and **freezes the parameter
+at its current value** (write an explicit `:target value` to set a specific
+one). This makes `none` the single "stop modulating" word across both key-on
+macros and timeline sweeps.
+
+#### Composition
+
+The three facilities are orthogonal targets sharing the group `:step` clock:
+
+```lisp
+; drum roll — retrigger only, 32nd-note rate
+(fm1 :macro :keyon 1 :step 32  c)
+
+; classic arpeggio — pitch only, no retrigger
+(fm1 :macro :semi [:hold 0 4 7] :step 1f  c)
+
+; decaying-voice arpeggio — pitch + retrigger every step
+(fm1 :macro [ :semi  [:hold 0 4 7]
+              :keyon 1 ] :step 1/16  c)
+
+; stochastic stutter — random retrigger on a held note
+(fm1 :macro :keyon (noise :from 0 :to 1) :step 1/16  c)
+```
+
+### 1.5.3 Track delay — `:delay`, `:delay-vels` (v0.5)
+
+`:delay` is a per-note echo applied at compile time. It is distinct from the
+single-note retrigger of §1.5.2 (`:keyon`): `:keyon` re-fires one note's
+envelope, whereas `:delay` echoes the **written note stream**. Because every
+note is offset by the same delay time, a constant per-note echo reproduces a
+**phrase-level delay** — the whole passage repeats, shifted and decayed.
+
+This is event expansion (same family as `defn`): each source note emits N extra
+NOTE_ON copies at compile time. Zero runtime cost; no driver feature is needed.
+
+This section defines authoring semantics only.
+
+#### `:delay` — echo time (persistent track option)
+
+`:delay T` enables delay on the track with tap spacing `T`, using the standard
+length-token grammar (`1/4`, `8`, `16f`, `14t`). It is persistent track state
+like `:len` / `:step`; `:delay none` turns it off.
+
+All delay sub-options carry the `delay-` prefix. This is required, not
+cosmetic: `:pan` and `:semi` already name other features (channel pan, the
+§1.5.2 arp macro), so per-tap variants must be namespaced to disambiguate.
+`:delay none` clears the whole `delay-*` family.
+
+#### `:delay-vels` — echo decay (sequence or curve)
+
+`:delay-vels` gives the velocity of each echo and reuses the macro-spec
+grammar:
+
+- **step vector** — one value per echo, count is explicit: `:delay-vels [11 7 3]`
+  → 3 echoes at vel 11, 7, 3.
+- **curve** — `:len` is the **time span** of the echo tail (as everywhere else
+  in MMLisp), and taps fall at each `:delay` interval within it. The tap count
+  is therefore derived: `span ÷ :delay`. With `:delay 1/4`,
+  `:delay-vels (ease-out :from 12 :to 0 :len 1)` spans a whole note → 4 echoes
+  at 1/4, 2/4, 3/4, 4/4, each sampling the curve at its position.
+
+This keeps `:len` meaning time consistently: a step vector states the tap count
+directly, a curve derives it from `:len ÷ :delay` — the same relationship as a
+step macro's explicit steps vs. a curve macro's `:len`.
+
+Tap values are absolute echo velocities (matching the literal `:vel` of the
+expanded notes; the name pairs with `:vel`). Echoes are generated from the
+original note only — no feedback recursion.
+
+#### Optional per-tap modifiers (future)
+
+Because echo taps are sequential (never simultaneous on a monophonic channel),
+each tap can carry its own parameters. These are deferred — interesting but not
+essential, and no existing game music goes this far:
+
+- `:delay-pan [left right left]` — per-tap pan (temporal ping-pong)
+- `:delay-semi [0 0 12]` — per-tap semitone transposition (dub-style)
+
+They are additive over the core expansion (set the parameter just before each
+echo's NOTE_ON), so they cost little once `:delay` / `:delay-vels` exist.
+
+**Cross-channel delay is explicitly out of scope.** To overlap echoes with a
+still-playing source, `def` the phrase and replay it on a separate channel —
+the MMLisp-idiomatic way — rather than injecting events across tracks.
+
+#### Expansion
+
+```lisp
+(fm1 :delay 1/4 :delay-vels [11 7 3]
+  c e g e)
+```
+
+expands at compile time to:
+
+```lisp
+:vel 15 c e g e   :vel 11 c e g e   :vel 7 c e g e   :vel 3 c e g e
+```
+
+Each note emits echoes at +1/4, +2/4, +3/4; the constant offset shifts the
+whole phrase, so it repeats and decays. No trailing rests are needed — the
+echoes fill that span.
+
+#### Monophonic priority
+
+The channel is monophonic, so only one note sounds at any tick. Written
+(source) notes always take priority over echo taps: where an echo would collide
+with a written note, the echo is dropped — effect taps never preempt real
+notes, so echoes sound only in the gaps the written part leaves. Exact behavior
+at partial overlaps is to be refined with use.
+
 ### 1.6 Sample file system
 
 **Declaration:** samples are defined with `def` (same style as FM voice
@@ -520,6 +753,8 @@ The compiler does need to:
 | §1.1 | FM3 channel modes        | ✅ Decided | CSM + independent-OP; see §1.1, §1.8           |
 | §1.3 | Tempo change             | ✅ Decided | TEMPO_SET / TEMPO_SWEEP; see §1.3              |
 | §1.5 | `brown` / stochastic LUT | ✅ Decided | IIR spec, LUT generation; see §1.5             |
+| §1.5.2 | Step macros              | ✅ Decided | `:step` clock, `:semi` arp, `:keyon` gate; see §1.5.2 |
+| §1.5.3 | Track delay              | ✅ Decided | `:delay`/`:delay-vels` compile-time per-note echo; see §1.5.3 |
 | §1.6 | PCM sample file system   | ✅ Decided | `def` sample model, WAV conv; see §1.6         |
 | §1.7 | PCM mixing               | ✅ Decided | 3ch soft-mix, raw 8-bit PCM; see §1.7          |
 | §1.8 | FM3 independent-OP       | ✅ Decided | `fm3-1`–`fm3-4` independent F-number; see §1.8 |
