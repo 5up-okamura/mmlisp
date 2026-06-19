@@ -38,6 +38,9 @@ the live environment; call this out when a change is hard to verify that way.
 ## Working agreements
 
 - **English** for all code, comments, and commit messages.
+- **No AI attribution in git.** Do not add `Co-Authored-By: Claude` (or any
+  AI tool) trailers, `Generated with` lines, or AI co-authors/committers to
+  commits. Commits are authored solely by the human committer.
 - **No legacy support.** v0.4-and-earlier behavior is not maintained; remove
   dead code that only served deprecated specs rather than guarding it.
 - **Minimalism is about the output, not the tooling.** Every feature must
