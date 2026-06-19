@@ -16,6 +16,8 @@ const PPQN = 48;
 const WHOLE_TICKS = PPQN * 4;
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
+  "NOTE_SEMI",
+  "KEYON",
   "VEL",
   "VOL",
   "MASTER",
@@ -251,6 +253,28 @@ function parseLengthToken(value, inheritedTicks) {
   return inheritedTicks;
 }
 
+// Default macro step rate: one 60 Hz frame (the pre-:step behavior, so existing
+// step macros are unchanged).
+const DEFAULT_MACRO_STEP = { unit: "frame", value: 1 };
+
+// Parse a :step token into an explicit { unit, value }. parseLengthToken
+// collapses "16f" (frames) and "1/4"/"14t" (ticks) into a bare number, losing
+// the unit the player needs to schedule each kind correctly.
+function parseStepToken(value) {
+  if (typeof value !== "string") return null;
+  if (/^\d+f$/.test(value)) {
+    const n = parseInt(value, 10);
+    return n > 0 ? { unit: "frame", value: n } : null;
+  }
+  if (/^\d+t$/.test(value)) {
+    const n = parseInt(value, 10);
+    return n > 0 ? { unit: "tick", value: n } : null;
+  }
+  const ticks = parseLengthToken(value, null);
+  if (ticks === null || ticks <= 0) return null;
+  return { unit: "tick", value: ticks };
+}
+
 // Returns true if val is a rest token: "_", "_4", "_4.", "_14t", "_16f", "_1/2"
 function isRestAtom(val) {
   if (val === "_") return true;
@@ -287,7 +311,7 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
-function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
+function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, macroStep) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
@@ -297,9 +321,15 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
       if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
       else if (target === "VEL") args.velMacro = { ...spec };
       else {
+        // NOTE_SEMI → note_semi, KEYON → keyon, FM_TL1 → fm_tl1, ...
         const key = target.toLowerCase();
         args[key] = { ...spec };
       }
+    }
+    // Attach the :step clock only when non-default; absence means the 60 Hz
+    // frame rate, preserving pre-v0.5 step-macro behavior.
+    if (macroStep && (macroStep.unit !== "frame" || macroStep.value !== 1)) {
+      args.step = { ...macroStep };
     }
   }
   return args;
@@ -319,8 +349,16 @@ function makeFm3OpNoteArgs(
   vel,
   opIndex,
   activeMacros,
+  macroStep,
 ) {
-  const args = makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros);
+  const args = makeNoteArgs(
+    pitch,
+    lengthTicks,
+    gateSpec,
+    vel,
+    activeMacros,
+    macroStep,
+  );
   args.fm3Op = opIndex;
   args.opMask = fm3OpMask(opIndex);
   return args;
@@ -518,6 +556,7 @@ function emitNoteForTrack(
           trackState.defaultVel,
           trackState.fm3OpIndex,
           trackState.activeMacros,
+          trackState.macroStep,
         )
       : makeNoteArgs(
           fullPitch,
@@ -525,6 +564,7 @@ function emitNoteForTrack(
           trackState.defaultGate,
           trackState.defaultVel,
           trackState.activeMacros,
+          trackState.macroStep,
         ),
     src,
   });
@@ -568,6 +608,12 @@ function updateLastNotePitch(trackState, pitch) {
 function applyMacroEntryToState(trackState, irTarget, spec) {
   if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
   trackState.activeMacros[irTarget] = spec;
+}
+
+// v0.5: `:macro :target none` clears one active macro; `:macro none` clears all.
+function clearMacroTarget(trackState, irTarget) {
+  if (irTarget && SUPPORTED_TARGETS.has(irTarget))
+    delete trackState.activeMacros[irTarget];
 }
 
 function applyTypedMacroDef(trackState, td) {
@@ -741,6 +787,18 @@ function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
       trackName,
     );
     if (curveSpec) return { type: "curve", ...curveSpec };
+  }
+  // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
+  // `[:hold N]` (single value, looped). Mainly for :keyon (1 = fire every
+  // :step, 0 = never).
+  const scalar = parseIntLike(atomValue(node));
+  if (scalar !== null) {
+    return {
+      type: "steps",
+      steps: [clampForTarget(target, scalar)],
+      loopIndex: 0,
+      releaseIndex: null,
+    };
   }
   return null;
 }
@@ -1058,6 +1116,8 @@ function canonicalTarget(symbol) {
     ":master": "MASTER",
     ":tempo-scale": "TEMPO_SCALE",
     ":pitch": "NOTE_PITCH",
+    ":semi": "NOTE_SEMI",
+    ":keyon": "KEYON",
     // LFO
     ":lfo-rate": "LFO_RATE",
     // FM channel-level
@@ -1434,6 +1494,17 @@ function compileChannelBody(
               if (g !== null) trackState.defaultGate = g;
               break;
             }
+            case ":step": {
+              // Group-level step duration for step-vector macros (:semi/:keyon
+              // /:vel ...). Persistent track state; `none` resets to 1f.
+              if (rawVal === "none") {
+                trackState.macroStep = { ...DEFAULT_MACRO_STEP };
+              } else {
+                const step = parseStepToken(rawVal);
+                if (step !== null) trackState.macroStep = step;
+              }
+              break;
+            }
             case ":vol": {
               const valueNode = items[i];
               const curveSpec = parseCurveSpec(
@@ -1718,13 +1789,17 @@ function compileChannelBody(
                       // inline :target spec pair
                       if (j + 1 < listItems.length) {
                         const irTarget = canonicalTarget(entryVal);
-                        const spec = parseMacroSpec(
-                          listItems[j + 1],
-                          irTarget,
-                          diagnostics,
-                          trackName,
-                        );
-                        applyMacroEntryToState(trackState, irTarget, spec);
+                        if (atomValue(listItems[j + 1]) === "none") {
+                          clearMacroTarget(trackState, irTarget);
+                        } else {
+                          const spec = parseMacroSpec(
+                            listItems[j + 1],
+                            irTarget,
+                            diagnostics,
+                            trackName,
+                          );
+                          applyMacroEntryToState(trackState, irTarget, spec);
+                        }
                         j += 2;
                       } else {
                         j++;
@@ -1742,15 +1817,22 @@ function compileChannelBody(
                   // Form 2: inline :target spec
                   if (i + 1 < items.length) {
                     const irTarget = canonicalTarget(rawVal);
-                    const spec = parseMacroSpec(
-                      items[i + 1],
-                      irTarget,
-                      diagnostics,
-                      trackName,
-                    );
-                    applyMacroEntryToState(trackState, irTarget, spec);
+                    if (atomValue(items[i + 1]) === "none") {
+                      clearMacroTarget(trackState, irTarget);
+                    } else {
+                      const spec = parseMacroSpec(
+                        items[i + 1],
+                        irTarget,
+                        diagnostics,
+                        trackName,
+                      );
+                      applyMacroEntryToState(trackState, irTarget, spec);
+                    }
                     i++;
                   }
+                } else if (rawVal === "none") {
+                  // `:macro none` — clear all active macros on this track
+                  trackState.activeMacros = {};
                 } else if (rawVal && typedDefs?.has(rawVal)) {
                   // Form 1: single named def
                   const td = typedDefs.get(rawVal);
@@ -1776,6 +1858,17 @@ function compileChannelBody(
               // Value may be a plain integer (PARAM_SET) or a curve form (PARAM_SWEEP).
               const target = canonicalTarget(val);
               if (!SUPPORTED_TARGETS.has(target)) break;
+              if (rawVal === "none") {
+                // Stop a running inline PARAM_SWEEP, freezing the value (e.g.
+                // an auto-pan started with `:pan (sin ...)`).
+                events.push({
+                  tick: trackState.tick,
+                  cmd: "PARAM_SWEEP_STOP",
+                  args: { target },
+                  src: nodeSrc(node),
+                });
+                break;
+              }
               const valueNode = items[i];
               const curveSpec = parseCurveSpec(
                 valueNode,
@@ -2678,6 +2771,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
+        macroStep: { ...DEFAULT_MACRO_STEP }, // v0.5: :step clock for step-vector macros
+
         glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
         lastNotePitch: null, // v0.4: previous note's pitch for glide calculation

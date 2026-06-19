@@ -26,6 +26,12 @@
 export const MACRO_TARGET_RANGE = {
   // KEY-ON scoped
   NOTE_PITCH: { min: -32768, max: 32767, integer: false },
+  // Discrete semitone offset sequence (×100 cents at playback). Counterpart to
+  // NOTE_PITCH (continuous, cents).
+  NOTE_SEMI: { min: -48, max: 48, integer: true },
+  // Retrigger gate: sampled per :step, fires key-on at >= 0.5. Step lists use
+  // 0/1; curves/stochastic signals pass through and are thresholded.
+  KEYON: { min: 0, max: 1, integer: false },
   VEL: { min: 0, max: 15, integer: true },
 
   // Channel-level
