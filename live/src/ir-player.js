@@ -20,6 +20,7 @@ import {
   midiToFnumBlock,
   composeFmTl,
   composePsgAtt,
+  velToTlAtten,
   sweepVolAtTime,
   sampleSweepPhase,
   sampleCurveUnit,
@@ -1530,19 +1531,25 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
-        const stepSecs = this._stepSecs(ev.args?.step);
         const regs = this._chRegs[ch];
         regs.currentMidi = midi;
 
-        if (regs?.vol != null || this._fmVolSweep[ch] != null) {
-          const currentVol = this._fmVolAtTime(ch, when);
-          const vel = regs.vel ?? 15;
+        // Apply per-note velocity (and any vol/master) to carrier TL,
+        // attenuating from each operator's voiced TL. Runs on every normal note
+        // so static :vel works and a previously attenuated note is reset; vel 15
+        // / vol 31 / master 31 restores the voiced level. FM3-op notes keep the
+        // vol-gated path so the per-operator special mode is undisturbed.
+        const hasVol = regs?.vol != null || this._fmVolSweep[ch] != null;
+        if (hasVol || !isFm3OpNote) {
+          const currentVol = hasVol ? this._fmVolAtTime(ch, when) : (regs.vol ?? 31);
+          const noteVel = ev.args?.vel ?? 15;
+          regs.vel = noteVel; // track sticky vel for later VOL/MASTER recalcs
           const master = this._masterVol ?? 31;
           const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
           for (const opIdx of carriers) {
             const tl = this._carrierTl(
               regs.ops[opIdx],
-              vel,
+              noteVel,
               currentVol,
               master,
             );
@@ -1578,14 +1585,12 @@ export class IRPlayer {
             when,
             gateTicks,
             basePitchWrite,
-            stepSecs,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
             when,
             gateTicks,
             basePitchWrite,
-            stepSecs,
           );
         } else {
           // FM3 OP1..3 notes use dedicated pitch registers; apply runtime pitch offset
@@ -1601,14 +1606,12 @@ export class IRPlayer {
             when,
             gateTicks,
             fm3PitchWrite,
-            stepSecs,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
             when,
             gateTicks,
             fm3PitchWrite,
-            stepSecs,
           );
         }
         this._scheduleFmVelMacro(
@@ -1618,7 +1621,6 @@ export class IRPlayer {
           ev.args?.velMacro,
           when,
           gateTicks,
-          stepSecs,
         );
         this._scheduleFmOpMacros(
           ch,
@@ -1630,10 +1632,13 @@ export class IRPlayer {
         );
         // Key on: all 4 operators (unless muted or vol=0).
         // YM2612: TL=127 gives totalAttn=1016 < 1023 (not silent at sustain),
-        // so when vol=0 we skip key-on entirely to guarantee silence.
+        // so when a volume control is 0 we skip key-on entirely to guarantee
+        // silence. vol and master are "volume": 0 mutes. (vel never mutes — it
+        // floors at its lowest ladder step.)
         const isFmSilent =
-          (regs?.vol != null || this._fmVolSweep[ch] != null) &&
-          this._fmVolAtTime(ch, when) === 0;
+          ((regs?.vol != null || this._fmVolSweep[ch] != null) &&
+            this._fmVolAtTime(ch, when) === 0) ||
+          (this._masterVol ?? 31) === 0;
         const secsPerTick = this._secsPerTick;
         const offWhen =
           gateTicks > 0
@@ -1642,6 +1647,7 @@ export class IRPlayer {
                 when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS,
               )
             : null;
+        let keyonEnd = null;
         if (!this._mutedChannels[ch] && !isFmSilent) {
           const hasEventMask = ev.args?.opMask !== undefined;
           let keyMask = this.getOpMask(ch);
@@ -1663,14 +1669,16 @@ export class IRPlayer {
             const keyOnByte = keyMask | chKey;
             this._write(0, 0x28, keyOnByte, when);
             // :keyon retrigger gate (drum roll / echo tail). FM3-op notes share
-            // the 0x28 register so retrigger there is deferred.
-            this._scheduleKeyonMacro(
+            // the 0x28 register so retrigger there is deferred. When active, the
+            // keyon macro owns the channel's keying: its end time becomes the
+            // final key-off (the note's own gate key-off is suppressed below so
+            // it can't cancel the first retrigger that lands on the boundary).
+            keyonEnd = this._scheduleKeyonMacro(
               ev.args?.keyon,
               keyMask,
               chKey,
               when,
               gateTicks,
-              stepSecs,
             );
           }
         }
@@ -1694,7 +1702,10 @@ export class IRPlayer {
         // above so simultaneous operators are not silenced together.
         if (gateTicks > 0) {
           if (!isFm3OpNote) {
-            this._write(0, 0x28, chKey, offWhen);
+            // With a keyon retrigger active, key off after the last retrigger
+            // (keyonEnd) instead of at the gate, so the final tap isn't cut and
+            // the boundary collision is avoided. Otherwise key off at the gate.
+            this._write(0, 0x28, chKey, keyonEnd != null ? keyonEnd : offWhen);
           }
         } else {
           // Hold note: register the channel for runtime key-off
@@ -2225,12 +2236,18 @@ export class IRPlayer {
     };
   }
 
-  // Effective carrier TL: the operator's voiced (timbre) TL plus the
-  // velocity/volume/master attenuation as a dB-domain offset. Preserves the
-  // patch's base level and per-carrier balance instead of flattening every
-  // carrier to a single composed TL.
+  // Effective carrier TL = voiced (timbre) TL + velocity ladder + vol/master
+  // attenuation, all as dB-domain offsets (preserving the patch's base level
+  // and per-carrier balance).
+  //
+  // vel is musical velocity: a ~2 dB/step logarithmic ladder matching the
+  // PMD / MDSDRV coarse volume convention. vel 15 = no attenuation (patch
+  // level), vel 0 = a ~-30 dB floor — it never mutes. True silence is a rest,
+  // or vol/master 0 (handled as a hard mute at key-on time).
   _carrierTl(op, vel, vol, master) {
-    return Math.min(127, (op.voicedTl ?? 0) + composeFmTl(vel, vol, master));
+    const velAtten = velToTlAtten(vel);
+    const volAtten = composeFmTl(15, vol, master); // vol/master only
+    return Math.min(127, (op.voicedTl ?? 0) + velAtten + volAtten);
   }
 
   // Snap curve/function outputs to discrete hardware lanes when needed.
@@ -2484,7 +2501,6 @@ export class IRPlayer {
       when,
       gateTicks,
     );
-    const stepSecs = this._stepSecs(noteArgs.step);
     const OP_MACRO_MAP = {
       pan: "PAN",
       ...Object.fromEntries(
@@ -2523,12 +2539,12 @@ export class IRPlayer {
             when,
           );
         },
-        stepSecs,
+        this._stepSecs(spec.step),
       );
     }
   }
 
-  _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks, stepSecs) {
+  _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks) {
     if (!velMacro) return;
 
     const regs = this._chRegs[ch];
@@ -2554,13 +2570,13 @@ export class IRPlayer {
           this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
         }
       },
-      stepSecs,
+      this._stepSecs(velMacro.step),
     );
   }
 
   // Schedule a pitch macro for any channel (FM or PSG).
   // writeFn(centOffset, t) performs the hardware write for the channel.
-  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn, stepSecs) {
+  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn) {
     if (!pitchMacro) return;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
@@ -2573,13 +2589,13 @@ export class IRPlayer {
       gateSecs,
       when,
       writeFn,
-      stepSecs,
+      this._stepSecs(pitchMacro.step),
     );
   }
 
   // Schedule a :semi macro (discrete semitone offsets) on the pitch write path.
   // Reuses the pitch writeFn; semitone values are ×100 to cents.
-  _scheduleSemiMacro(semiMacro, when, gateTicks, writeFn, stepSecs) {
+  _scheduleSemiMacro(semiMacro, when, gateTicks, writeFn) {
     if (!semiMacro) return;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
@@ -2592,25 +2608,28 @@ export class IRPlayer {
       gateSecs,
       when,
       (semi, t) => writeFn(semi * 100, t),
-      stepSecs,
+      this._stepSecs(semiMacro.step),
     );
   }
 
   // Schedule a :keyon retrigger gate. Sampled per :step; a value >= 0.5 fires a
   // key-off→key-on (restarting the envelope). The t=0 sample coincides with the
   // note's own NOTE_ON and is a no-op. keyMask/chKey target the 0x28 register.
-  _scheduleKeyonMacro(keyonSpec, keyMask, chKey, when, gateTicks, stepSecs) {
-    if (!keyonSpec) return;
+  // Returns the audio time after the last step (used to place the final
+  // key-off), or null if there was no keyon macro.
+  _scheduleKeyonMacro(keyonSpec, keyMask, chKey, when, gateTicks) {
+    if (!keyonSpec) return null;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
     );
+    const stepSecs = this._stepSecs(keyonSpec.step);
     const keyOnByte = (keyMask & 0xf0) | chKey;
     // Gap to register the key-off before re-keying; kept short so on-beat
     // timing stays accurate, capped below KEY_OFF_LEAD_SECS.
     const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
-    this._scheduleMacro(
+    return this._scheduleMacro(
       keyonSpec,
       noteFrames,
       gateSecs,
@@ -2918,7 +2937,6 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
-        const psgStepSecs = this._stepSecs(ev.args?.step);
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
@@ -2931,14 +2949,12 @@ export class IRPlayer {
             when,
             psgGateTicks,
             psgPitchWrite,
-            psgStepSecs,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
             when,
             psgGateTicks,
             psgPitchWrite,
-            psgStepSecs,
           );
         } else {
           this._psgTriggerNoise(when);

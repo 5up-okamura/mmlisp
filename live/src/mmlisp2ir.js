@@ -253,10 +253,6 @@ function parseLengthToken(value, inheritedTicks) {
   return inheritedTicks;
 }
 
-// Default macro step rate: one 60 Hz frame (the pre-:step behavior, so existing
-// step macros are unchanged).
-const DEFAULT_MACRO_STEP = { unit: "frame", value: 1 };
-
 // Parse a :step token into an explicit { unit, value }. parseLengthToken
 // collapses "16f" (frames) and "1/4"/"14t" (ticks) into a bare number, losing
 // the unit the player needs to schedule each kind correctly.
@@ -311,13 +307,14 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
-function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, macroStep) {
+function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
   if (vel !== undefined && vel !== 15) args.vel = vel;
   if (activeMacros && Object.keys(activeMacros).length > 0) {
     for (const [target, spec] of Object.entries(activeMacros)) {
+      // Each spec may carry its own .step (the per-macro :step clock).
       if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
       else if (target === "VEL") args.velMacro = { ...spec };
       else {
@@ -325,11 +322,6 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, macroStep
         const key = target.toLowerCase();
         args[key] = { ...spec };
       }
-    }
-    // Attach the :step clock only when non-default; absence means the 60 Hz
-    // frame rate, preserving pre-v0.5 step-macro behavior.
-    if (macroStep && (macroStep.unit !== "frame" || macroStep.value !== 1)) {
-      args.step = { ...macroStep };
     }
   }
   return args;
@@ -349,16 +341,8 @@ function makeFm3OpNoteArgs(
   vel,
   opIndex,
   activeMacros,
-  macroStep,
 ) {
-  const args = makeNoteArgs(
-    pitch,
-    lengthTicks,
-    gateSpec,
-    vel,
-    activeMacros,
-    macroStep,
-  );
+  const args = makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros);
   args.fm3Op = opIndex;
   args.opMask = fm3OpMask(opIndex);
   return args;
@@ -558,7 +542,6 @@ function emitNoteForTrack(
           trackState.defaultVel,
           trackState.fm3OpIndex,
           trackState.activeMacros,
-          trackState.macroStep,
         )
       : makeNoteArgs(
           fullPitch,
@@ -566,7 +549,6 @@ function emitNoteForTrack(
           trackState.defaultGate,
           trackState.defaultVel,
           trackState.activeMacros,
-          trackState.macroStep,
         ),
     src,
   };
@@ -769,17 +751,25 @@ function parseSampleDef(root, diagnostics) {
 
 function collectMacroEntriesFromItems(items, diagnostics, trackName) {
   const entries = [];
+  let currentStep = null; // :step applies to the targets that follow it
   for (let ki = 0; ki + 1 < items.length; ki += 2) {
-    const macroTargetSym = atomValue(items[ki]);
-    if (!macroTargetSym?.startsWith(":")) continue;
-    const irTarget = canonicalTarget(macroTargetSym);
+    const sym = atomValue(items[ki]);
+    if (!sym?.startsWith(":")) continue;
+    if (sym === ":step") {
+      currentStep = parseStepToken(atomValue(items[ki + 1]));
+      continue;
+    }
+    const irTarget = canonicalTarget(sym);
     const spec = parseMacroSpec(
       items[ki + 1],
       irTarget,
       diagnostics,
       trackName,
     );
-    if (spec) entries.push({ target: irTarget, spec });
+    if (spec) {
+      if (currentStep) spec.step = currentStep;
+      entries.push({ target: irTarget, spec });
+    }
   }
   return entries;
 }
@@ -1576,17 +1566,6 @@ function compileChannelBody(
               if (g !== null) trackState.defaultGate = g;
               break;
             }
-            case ":step": {
-              // Group-level step duration for step-vector macros (:semi/:keyon
-              // /:vel ...). Persistent track state; `none` resets to 1f.
-              if (rawVal === "none") {
-                trackState.macroStep = { ...DEFAULT_MACRO_STEP };
-              } else {
-                const step = parseStepToken(rawVal);
-                if (step !== null) trackState.macroStep = step;
-              }
-              break;
-            }
             case ":delay": {
               // §1.5.3 track delay: echo tap spacing (length-token). `none`
               // clears the whole delay-* family.
@@ -1892,9 +1871,19 @@ function compileChannelBody(
                     (n) => n.kind !== "comment",
                   );
                   let j = 0;
+                  let currentStep = null; // :step applies to following targets
                   while (j < listItems.length) {
                     const entryVal = atomValue(listItems[j]);
-                    if (entryVal?.startsWith(":")) {
+                    if (entryVal === ":step") {
+                      if (j + 1 < listItems.length) {
+                        currentStep = parseStepToken(
+                          atomValue(listItems[j + 1]),
+                        );
+                        j += 2;
+                      } else {
+                        j++;
+                      }
+                    } else if (entryVal?.startsWith(":")) {
                       // inline :target spec pair
                       if (j + 1 < listItems.length) {
                         const irTarget = canonicalTarget(entryVal);
@@ -1907,6 +1896,7 @@ function compileChannelBody(
                             diagnostics,
                             trackName,
                           );
+                          if (spec && currentStep) spec.step = currentStep;
                           applyMacroEntryToState(trackState, irTarget, spec);
                         }
                         j += 2;
@@ -2880,7 +2870,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
-        macroStep: { ...DEFAULT_MACRO_STEP }, // v0.5: :step clock for step-vector macros
         delayTicks: 0, // v0.5: :delay echo tap spacing in ticks (0 = off)
         delayVels: null, // v0.5: :delay-vels spec (steps or curve) for echo velocities
 

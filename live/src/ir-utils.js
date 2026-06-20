@@ -179,6 +179,19 @@ export function levelToFmTl(level) {
   return Math.max(0, Math.min(127, Math.round((1 - t) * 127)));
 }
 
+// YM2612 TL resolution and the musical velocity step, in dB.
+export const TL_DB_PER_STEP = 0.75; // 128 steps over ~95 dB
+export const VEL_DB_PER_STEP = 2; // PMD / MDSDRV coarse-volume convention
+
+// Velocity (0-15) → TL attenuation steps: a ~2 dB/step logarithmic ladder
+// matching the PMD / MDSDRV coarse-volume convention. vel 15 = 0 (no
+// attenuation, plays at the patch level), vel 0 ≈ -30 dB. Never mutes — true
+// silence is a rest, or vol/master 0. Used for note velocity, not fades.
+export function velToTlAtten(vel) {
+  const v = Math.max(0, Math.min(15, Math.round(vel)));
+  return Math.round(((15 - v) * VEL_DB_PER_STEP) / TL_DB_PER_STEP);
+}
+
 // Convert composed level 0.0-1.0 → SN76489 attenuation (0=max, 15=silent).
 // Att is already in dB domain (2 dB/step), so linear mapping is correct.
 export function levelToPsgAtt(level) {

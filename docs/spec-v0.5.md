@@ -289,10 +289,12 @@ stochastic retriggers all fall out of the same primitives.
 This section defines authoring semantics only. Z80 driver storage layout and
 event encoding are deferred to the driver implementation phase.
 
-#### `:step` — sequence step duration (group-level)
+#### `:step` — sequence step duration (macro-list element)
 
-`:step` sets how long each step of every step-vector macro in the same macro
-group lasts. It accepts the standard length-token grammar:
+`:step` sets how long each step of a step-vector macro lasts. It is an element
+**inside the `:macro [...]` list** and applies to the targets that **follow**
+it in the list, until the next `:step`. It accepts the standard length-token
+grammar:
 
 | Token | Meaning            |
 | ----- | ------------------ |
@@ -302,16 +304,23 @@ group lasts. It accepts the standard length-token grammar:
 | `16f` | 16 frames (1/60 s) |
 | `14t` | 14 ticks           |
 
-- Default when omitted: **`1f`** (one 60 Hz frame). This is the pre-v0.5
-  step-macro rate, so existing `:vel` / `:tl` step envelopes are unchanged.
-- `:step` is a property of the macro group: every step-vector target in the
-  group advances on the same grid and stays phase-locked — step N of `:semi`
-  coincides with step N of `:keyon`.
-- Curve macros are unaffected; they sample continuously over their own `:len`.
-- `:step` is persistent track state (set once, stays in effect — the standard
-  MMLisp model for `:len` / `:gate` / `:oct`). Like those, `:step` and `:macro`
-  are read at note-emit time, so their relative order is immaterial; writing
-  `:step` first (`:step 16 :macro ...`) is the conventional reading.
+```lisp
+; one step for the whole group
+(fm1 :macro [ :step 1/16  :semi [:hold 0 4 7]  :keyon 1 ]  c)
+
+; different step per target (positional)
+(fm1 :macro [ :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1] ]  c)
+```
+
+- Default when omitted: **`1f`** (one 60 Hz frame) — the pre-v0.5 step rate, so
+  existing `:vel` / `:tl` step envelopes are unchanged.
+- Because `:step` belongs to the macro (not the track), each macro — and each
+  preset bundled in a `def` — carries its own step. A track is no longer
+  limited to a single step rate.
+- Targets sharing one `:step` advance on the same grid and stay phase-locked
+  (step N of `:semi` coincides with step N of `:keyon`).
+- `:step` governs both the sustain loop and the `:off` release section of its
+  targets. Curve macros are unaffected; they sample continuously over `:len`.
 
 #### `:semi` — semitone pitch sequence
 
@@ -371,33 +380,32 @@ Retrigger rules:
 
 ```lisp
 ; drum roll — no :off, all sustain; stops at note-off
-(fm1 :macro :keyon [:hold 1]  c)
+(fm1 :macro [ :keyon [:hold 1] ]  c)
 
 ; single-note echo tail — taps in the release section fire after note-off,
 ; decaying via the phase-locked :vel release
-(fm1 :macro [ :keyon [0 :off 1 1 1]
-              :vel   [15 :off 11 7 3] ] :step 1/8  c)
+(fm1 :macro [ :step 1/8  :keyon [0 :off 1 1 1]
+                         :vel   [15 :off 11 7 3] ]  c)
 ```
 
-`:step` governs the spacing of **both** the sustain and the release section, so
-the tail taps above are spaced at `:step` (1/8), not at the 60 Hz frame rate.
+A target's `:step` governs the spacing of **both** its sustain and its `:off`
+release section, so the tail taps above are spaced at `:step` (1/8), not at the
+60 Hz frame rate.
 
 #### Clearing and reset — `none`
 
-Because all three are persistent track state, the value keyword `none` reverts
-a persistent option to its baseline. (There is otherwise no way to stop an
-active macro once set.)
+The value keyword `none` clears an active macro (there is otherwise no way to
+stop one once set).
 
 | Statement            | Effect                                              |
 | -------------------- | --------------------------------------------------- |
 | `:macro :semi none`  | clear the `:semi` macro on this track               |
 | `:macro :keyon none` | clear the `:keyon` macro on this track              |
 | `:macro none`        | clear all active macros on this track               |
-| `:step none`         | revert step rate to the default `1f` (≡ `:step 1f`) |
 | `:pan none`          | stop a running inline `PARAM_SWEEP`, freezing the value |
 
 `none` reads as "no modulation / no override": the baseline for a macro target
-is its absence, and the baseline for `:step` is the 60 Hz default.
+is its absence.
 
 `none` also stops a **timeline (inline) `PARAM_SWEEP`** — e.g. an auto-pan
 started with `:pan (sin ...)`. Inline curves run free of key-on and otherwise
@@ -408,21 +416,20 @@ macros and timeline sweeps.
 
 #### Composition
 
-The three facilities are orthogonal targets sharing the group `:step` clock:
+The three facilities are orthogonal targets, each carrying its own `:step`:
 
 ```lisp
 ; drum roll — retrigger only, 32nd-note rate
-(fm1 :macro :keyon 1 :step 32  c)
+(fm1 :macro [ :step 32 :keyon 1 ]  c)
 
-; classic arpeggio — pitch only, no retrigger
-(fm1 :macro :semi [:hold 0 4 7] :step 1f  c)
+; classic arpeggio — pitch only, no retrigger (default 1f step)
+(fm1 :macro [ :semi [:hold 0 4 7] ]  c)
 
 ; decaying-voice arpeggio — pitch + retrigger every step
-(fm1 :macro [ :semi  [:hold 0 4 7]
-              :keyon 1 ] :step 1/16  c)
+(fm1 :macro [ :step 1/16  :semi [:hold 0 4 7]  :keyon 1 ]  c)
 
 ; stochastic stutter — random retrigger on a held note
-(fm1 :macro :keyon (noise :from 0 :to 1) :step 1/16  c)
+(fm1 :macro [ :step 1/16 :keyon (noise :from 0 :to 1) ]  c)
 ```
 
 ### 1.5.3 Track delay — `:delay`, `:delay-vels` (v0.5)
@@ -442,7 +449,7 @@ This section defines authoring semantics only.
 
 `:delay T` enables delay on the track with tap spacing `T`, using the standard
 length-token grammar (`1/4`, `8`, `16f`, `14t`). It is persistent track state
-like `:len` / `:step`; `:delay none` turns it off.
+like `:len` / `:gate`; `:delay none` turns it off.
 
 All delay sub-options carry the `delay-` prefix. This is required, not
 cosmetic: `:pan` and `:semi` already name other features (channel pan, the
