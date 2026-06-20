@@ -100,9 +100,11 @@ Common modifiers:
 - `:oct N` — octave (`0`–`8`)
 - `:len token` — default note length (length token); `0` emits a held note and does not advance the timeline
 - `:gate token-or-ratio` — gate time; ratio `0.0`–`1.0` or absolute length token; `0` holds until runtime KEY-OFF
-- `:vel N` — note-on velocity (`0`–`15`)
-- `:vol N` — channel output level (`0`–`31`)
-- `:master N` — global master level (`0`–`31`)
+- `:vel N` — note-on velocity (`0`–`15`); a ~2 dB/step musical ladder (PMD /
+  MDSDRV style). `15` plays at the patch level, `0` is a ~-30 dB floor —
+  velocity **never mutes** (use a rest for silence)
+- `:vol N` — channel output level (`0`–`31`); **`0` mutes**
+- `:master N` — global master level (`0`–`31`); **`0` mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
 - `:glide token` — portamento duration (same length-token forms as `:len`)
 - `:glide-from note` — override start pitch for next note only
@@ -170,7 +172,7 @@ Shorthands:
 
 ## 8. FM Voice Definitions
 
-FM voice defs use keyword maps (and can use `:extends`):
+FM voice defs use keyword maps (and can use `:extend`):
 
 ```lisp
 (def fm-init
@@ -180,7 +182,7 @@ FM voice defs use keyword maps (and can use `:extends`):
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0
   :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0)
 
-(def brass :extends fm-init
+(def brass :extend fm-init
   :alg 7
   :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 ```
@@ -274,7 +276,92 @@ Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
 
 ---
 
-## 12. Noise Authoring (`noise` channel)
+## 12. Step Macros (`:semi`, `:keyon`, `:step`)
+
+Step-vector macro targets for arpeggios, drum rolls, and per-note echo tails.
+
+### `:semi` — semitone arpeggio
+
+Discrete semitone offsets (the counterpart to `:pitch`, which is continuous
+cents). On a sustained voice this is a classic arpeggio. `:hold` marks the loop
+point.
+
+```lisp
+(fm1 :macro [ :step 1/16  :semi [:hold 0 4 7] ]  c)   ; c–e–g, looping
+```
+
+### `:keyon` — retrigger gate
+
+Sampled once per `:step`; a value `>= 0.5` fires a key-on retrigger (re-attacks
+the envelope). Accepts `0`/`1` step lists, a scalar, or a curve/stochastic
+signal.
+
+- `:keyon 1` — retrigger every step (drum roll)
+- `:keyon [0 :off 1 1 1]` — retrigger only in the release section (after KEY-OFF)
+
+`:keyon` honors `:off`: steps before `:off` loop until the gate (a roll that
+stops at KEY-OFF); steps after `:off` fire after KEY-OFF (a 1-channel echo
+tail). While a `:keyon` macro is active it owns the channel keying — the note
+keys off after the last retrigger.
+
+```lisp
+(fm1 :macro [ :step 32 :keyon 1 ]  c)   ; drum roll
+```
+
+### `:step` — step duration
+
+`:step token` lives inside the `:macro [...]` list and sets the step length for
+the targets that **follow** it (until the next `:step`). Default `1f` (one
+60 Hz frame). Each macro/target carries its own step, so different targets can
+run at different rates.
+
+```lisp
+(fm1 :macro [ :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1] ]  c)
+```
+
+### Echo-tail preset (1-channel delay on one note)
+
+```lisp
+(def $echo :macro [ :step 1/8  :keyon [0 :off 1 1 1]
+                                :vel   [15 :off 10 5 0] ])
+
+(fm1 $echo :len 8  c _ _ _)
+```
+
+After KEY-OFF the note retriggers three times at 1/8 spacing, decaying via the
+phase-locked `:vel` release. (`:vel` floors at ~-30 dB; for a tail that fades to
+true silence, automate `:tl` to 127 instead — see §5.)
+
+Clear a macro with `none`: `:macro :semi none`, or `:macro none` clears all.
+
+---
+
+## 13. Track Delay (`:delay`, `:delay-vels`)
+
+`:delay` echoes the **written notes** at compile time — a whole phrase repeats,
+shifted and decayed. (Distinct from `:keyon`, which retriggers a single note.)
+
+- `:delay token` — echo tap spacing (length token); persistent track state;
+  `:delay none` turns it off
+- `:delay-vels [...]` — per-echo velocities; a step vector lists the taps, or a
+  curve derives the count from `:len ÷ :delay`
+
+```lisp
+(fm1 :delay 1/4 :delay-vels [11 7 3]
+  c e g e)
+```
+
+plays the phrase plus three decaying repeats (vel 11, 7, 3), each a quarter
+later. The original note keeps its own velocity — `:delay-vels` lists the echoes
+only (so its first value is the **first echo**, not the dry note).
+
+The channel is monophonic: written notes take priority, so an echo overlapping a
+written note is dropped and echoes fill the gaps. For true overlapping delay,
+`def` the phrase and replay it on another channel.
+
+---
+
+## 14. Noise Authoring (`noise` channel)
 
 ```lisp
 (def perc-buzz :macro :mode [white0 :hold periodic3])
@@ -290,7 +377,7 @@ Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
 
 ---
 
-## 13. Gate and Hold Notes
+## 15. Gate and Hold Notes
 
 `:gate` controls how long the note sounds within its slot.
 
@@ -321,7 +408,7 @@ In both cases, KEY-OFF is triggered at runtime via `triggerKeyOff()`.
 
 ---
 
-## 14. Track Append by Channel Name
+## 16. Track Append by Channel Name
 
 Repeating the same channel form appends events and keeps sticky state.
 
@@ -335,7 +422,7 @@ Repeating the same channel form appends events and keeps sticky state.
 
 ---
 
-## 16. FM3 CSM Mode
+## 17. FM3 CSM Mode
 
 Use `fm3-csm` when you want FM3 to run in CSM mode.
 
@@ -351,7 +438,7 @@ Use `fm3-csm` when you want FM3 to run in CSM mode.
 
 ---
 
-## 17. Tempo Sweeps
+## 18. Tempo Sweeps
 
 `:tempo` now accepts a curve form for smooth changes:
 
@@ -366,7 +453,7 @@ Use `fm3-csm` when you want FM3 to run in CSM mode.
 
 ---
 
-## 18. PCM Samples
+## 19. PCM Samples
 
 Samples are defined with `def :sample`, then used as the first positional argument of `pcm1` / `pcm2` / `pcm3`.
 
@@ -386,14 +473,14 @@ Samples are defined with `def :sample`, then used as the first positional argume
 
 ---
 
-## 19. Stochastic Curves
+## 20. Stochastic Curves
 
 The curve system now includes `noise`, `pink`, `perlin`, and `brown`.
 They can be used anywhere curve expressions are accepted, including `:macro` and `:tempo`.
 
 ---
 
-## 20. Example
+## 21. Example
 
 ```lisp
 (def fm-init
@@ -403,7 +490,7 @@ They can be used anywhere curve expressions are accepted, including `:macro` and
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0
   :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0)
 
-(def brass :extends fm-init
+(def brass :extend fm-init
   :alg 7
   :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 

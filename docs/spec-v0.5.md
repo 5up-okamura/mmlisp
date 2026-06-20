@@ -518,6 +518,31 @@ with a written note, the echo is dropped — effect taps never preempt real
 notes, so echoes sound only in the gaps the written part leaves. Exact behavior
 at partial overlaps is to be refined with use.
 
+### 1.5.4 Velocity and volume → level (v0.5)
+
+Three controls scale a note's loudness; they are **not** interchangeable.
+
+- **`:vel` (0–15) — velocity.** A musical accent following the PMD / MDSDRV
+  coarse-volume convention: a **~2 dB/step logarithmic ladder**. `vel 15` plays
+  at the patch level (no attenuation); `vel 0` is a **~-30 dB floor**. Velocity
+  **never mutes** — silence is a rest. (The previous linear amplitude → linear
+  TL mapping made mid/low velocities drop far too fast and is replaced.)
+- **`:vol` (0–31) and `:master` (0–31) — volume.** Output faders; **0 is a hard
+  mute** (the channel skips key-on, guaranteeing silence).
+
+On FM, the controls compose in the dB domain on top of each operator's voiced
+(timbre) TL:
+
+```
+carrier TL = voicedTL[op] + velAttenuation(vel) + volMasterAttenuation(vol, master)
+```
+
+This preserves the patch's base level and per-carrier balance (rather than
+flattening every carrier to one composed TL), so `vel`/`vol`/`master` attenuate
+uniformly from the voiced timbre. A `:vel` macro fades only to the velocity
+floor; to fade a note to true silence, automate `:tl` (carrier TL → 127) or use
+`:vol`.
+
 ### 1.6 Sample file system
 
 **Declaration:** samples are defined with `def` (same style as FM voice
@@ -762,6 +787,7 @@ The compiler does need to:
 | §1.5 | `brown` / stochastic LUT | ✅ Decided | IIR spec, LUT generation; see §1.5             |
 | §1.5.2 | Step macros              | ✅ Decided | `:step` clock, `:semi` arp, `:keyon` gate; see §1.5.2 |
 | §1.5.3 | Track delay              | ✅ Decided | `:delay`/`:delay-vels` compile-time per-note echo; see §1.5.3 |
+| §1.5.4 | Velocity / volume → level | ✅ Decided | vel = 2 dB/step ladder (floors); vol/master mute at 0; see §1.5.4 |
 | §1.6 | PCM sample file system   | ✅ Decided | `def` sample model, WAV conv; see §1.6         |
 | §1.7 | PCM mixing               | ✅ Decided | 3ch soft-mix, raw 8-bit PCM; see §1.7          |
 | §1.8 | FM3 independent-OP       | ✅ Decided | `fm3-1`–`fm3-4` independent F-number; see §1.8 |
