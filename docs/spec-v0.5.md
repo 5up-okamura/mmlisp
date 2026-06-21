@@ -518,6 +518,31 @@ with a written note, the echo is dropped — effect taps never preempt real
 notes, so echoes sound only in the gaps the written part leaves. Exact behavior
 at partial overlaps is to be refined with use.
 
+#### Inherited articulation
+
+Echo notes inherit the source note's per-note **articulation** macros —
+`:keyon`, `:semi`, `:pitch`, and the FM operator macros, each with its own
+`:step` — so a phrase that carries a 1-channel echo tail (`:keyon`) repeats with
+that tail intact.
+
+The `:vel` macro is inherited but **scaled** so each echo's tail peaks at that
+echo's `:delay-vels` value: every value is multiplied by `delay-vels[k] /
+sourcePeak` (rounded, clamped), where `sourcePeak` is the macro's largest value.
+The dry (source) note is left unscaled.
+
+Example — `:vel [15 :off 10 5 0]` with `:delay 1/4 :delay-vels [10 5 2 0]`:
+
+| repeat | peak | scaled vel tail     |
+| ------ | ---- | ------------------- |
+| dry    | 15   | `15 10 5 0`         |
+| echo 0 | 10   | `10 7 3 0` (×10/15) |
+| echo 1 | 5    | `5 3 2 0`  (×5/15)  |
+| echo 2 | 2    | `2 1 1 0`           |
+| echo 3 | 0    | `0 0 0 0`           |
+
+(Inherited `:keyon` tails extend past a note's gate; on a monophonic channel a
+long tail can overrun the next echo — the same "echoes fill the gaps" reality.)
+
 ### 1.5.4 Velocity and volume → level (v0.5)
 
 Three controls scale a note's loudness; they are **not** interchangeable.

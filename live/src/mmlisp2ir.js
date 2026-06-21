@@ -625,6 +625,56 @@ function resolveDelayVels(spec, delayTicks) {
   return null;
 }
 
+// Largest numeric value in a :vel macro — the reference peak for echo scaling.
+function velMacroPeak(spec) {
+  if (!spec) return 0;
+  if (spec.type === "steps") {
+    return (spec.steps || []).reduce(
+      (m, v) => (v !== null && v !== undefined ? Math.max(m, v) : m),
+      0,
+    );
+  }
+  if (spec.type === "curve") {
+    return Math.max(spec.from ?? 0, spec.to ?? 0);
+  }
+  if (spec.type === "stages") {
+    return (spec.stages || []).reduce(
+      (m, st) =>
+        st && st.from !== undefined ? Math.max(m, st.from, st.to ?? 0) : m,
+      0,
+    );
+  }
+  return 0;
+}
+
+// Scale a :vel macro's values by `ratio` (rounded and clamped to the vel range),
+// preserving type, markers, and per-macro step. Used so a :delay echo's
+// inherited vel tail peaks at the echo's :delay-vels level.
+function scaleVelMacroSteps(spec, ratio) {
+  if (!spec) return spec;
+  const s = (v) =>
+    v === null || v === undefined
+      ? v
+      : clampForTarget("VEL", Math.round(v * ratio));
+  if (spec.type === "steps") {
+    return { ...spec, steps: (spec.steps || []).map(s) };
+  }
+  if (spec.type === "curve") {
+    return { ...spec, from: s(spec.from ?? 0), to: s(spec.to ?? 0) };
+  }
+  if (spec.type === "stages") {
+    return {
+      ...spec,
+      stages: (spec.stages || []).map((st) =>
+        st && st.from !== undefined
+          ? { ...st, from: s(st.from), to: s(st.to ?? 0) }
+          : st,
+      ),
+    };
+  }
+  return spec;
+}
+
 // Stamp the active :delay config onto a freshly-emitted note event so the
 // post-pass (expandTrackDelays) can generate echoes from it.
 function stampDelay(ev, trackState) {
@@ -661,15 +711,19 @@ function expandTrackDelays(track) {
     for (let k = 0; k < vels.length; k++) {
       const tick = ev.tick + (k + 1) * ticks;
       if (collides(tick, len)) continue;
-      // Echoes carry pitch/length/gate only — not the source's per-note macros.
+      // Echoes inherit the source's articulation macros (keyon / semi / pitch /
+      // op, each with its own :step). The vel macro is inherited but scaled so
+      // this echo's tail peaks at its :delay-vels level; the dry note is left
+      // untouched.
       const args = { ...ev.args };
-      delete args.pitchMacro;
-      delete args.velMacro;
-      delete args.note_semi;
-      delete args.keyon;
-      delete args.step;
-      if (vels[k] === 15) delete args.vel;
-      else args.vel = vels[k];
+      const dv = vels[k];
+      if (args.velMacro) {
+        const peak = velMacroPeak(args.velMacro);
+        const ratio = peak > 0 ? dv / peak : 0;
+        args.velMacro = scaleVelMacroSteps(args.velMacro, ratio);
+      }
+      if (dv === 15) delete args.vel;
+      else args.vel = dv;
       echoes.push({ tick, cmd: ev.cmd, args, src: ev.src });
     }
   }

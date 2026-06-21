@@ -359,6 +359,22 @@ The channel is monophonic: written notes take priority, so an echo overlapping a
 written note is dropped and echoes fill the gaps. For true overlapping delay,
 `def` the phrase and replay it on another channel.
 
+### Echoes inherit articulation
+
+Echoes carry the source's per-note macros (`:keyon`, `:semi`, …), so a phrase
+with a 1-channel `:keyon` tail repeats with that tail. The `:vel` macro is
+inherited but **scaled** so each echo's tail peaks at its `:delay-vels` value:
+
+```lisp
+(def $echo :macro [:step 16 :vel [15 :off 10 5 0] :keyon [0 :off 1 1 1]])
+
+(fm1 $echo :delay 4 :delay-vels [10 5 2 0]
+  :len 16 c _ _ _ :len 4 _ _ _)
+```
+
+Each phrase repeat retriggers like the source; its vel tail is `[15 10 5 0]`
+scaled to the echo's level (echo at 10 → `~10 7 3 0`, at 5 → `~5 3 2 0`, …).
+
 ---
 
 ## 14. Noise Authoring (`noise` channel)
