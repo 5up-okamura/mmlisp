@@ -101,6 +101,7 @@ const CURVE_NAMES = new Set([
   "pink",
   "perlin",
   "brown",
+  "const", // constant value (positional arg); sugar for linear from = to
 ]);
 
 // Loop waveforms produce PARAM_SWEEP with loop:true; easing/linear produce loop:false
@@ -841,10 +842,11 @@ function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
   if (node.kind === "list" && node.bracket === "[]") {
     const items = node.items.filter((n) => n.kind !== "comment");
 
-    // If all items are () expressions, treat as multi-stage sequential
+    // If all items are () expressions, treat as multi-stage sequential.
+    // (Parser stores the bracket as the open+close pair, "()", not "(".)
     const allExprs =
       items.length > 0 &&
-      items.every((it) => it.kind === "list" && it.bracket === "(");
+      items.every((it) => it.kind === "list" && it.bracket === "()");
     if (allExprs) {
       const stages = [];
       for (const stageNode of items) {
@@ -988,8 +990,20 @@ function parseCurveSpec(
   let frames;
   let waitTicks = null;
   let waitKeyOff = false;
+  let forceLoop = false;
   const params = {};
   let hasParams = false;
+
+  // `const` is sugar for a flat segment: the positional value becomes
+  // from = to, emitted as a (non-loop) linear curve (needs no new sampler).
+  const isConst = head === "const";
+  if (isConst) {
+    const cval = parseNumberLike(atomValue(node.items[1]));
+    if (cval !== null) {
+      from = cval;
+      to = cval;
+    }
+  }
 
   const COMMON_PARAM_KEYS = new Set([":phase", ":rate", ":wait"]);
   const LOOP_WAVE_PARAM_KEYS = new Set([":duty", ":skew"]);
@@ -1051,6 +1065,12 @@ function parseCurveSpec(
 
   for (let j = 1; j < node.items.length; j++) {
     const k = atomValue(node.items[j]);
+    if (k === ":loop") {
+      // Value-less flag: force this curve to loop (forward), e.g. so an easing
+      // curve can be a cycling sustain stage.
+      forceLoop = true;
+      continue;
+    }
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
       const v = atomValue(node.items[j + 1]);
       if (
@@ -1177,9 +1197,9 @@ function parseCurveSpec(
   }
 
   const spec = {
-    curve: head,
+    curve: isConst ? "linear" : head,
     to: to ?? 0,
-    loop: LOOP_CURVE_NAMES.has(head),
+    loop: LOOP_CURVE_NAMES.has(head) || forceLoop,
   };
   if (from !== null && from !== undefined) spec.from = from;
   if (frames !== null && frames !== undefined) spec.frames = frames;

@@ -231,10 +231,19 @@ Base curve form (unchanged):
 
 Common optional params (all curve names):
 
-| Key      | Type   | Default | Meaning                                     |
-| -------- | ------ | ------- | ------------------------------------------- |
-| `:phase` | int    | `0`     | Start phase offset (0..255)                 |
-| `:rate`  | number | `1.0`   | Phase speed multiplier (relative to `:len`) |
+| Key      | Type   | Default | Meaning                                       |
+| -------- | ------ | ------- | --------------------------------------------- |
+| `:phase` | int    | `0`     | Start phase offset (0..255)                   |
+| `:rate`  | number | `1.0`   | Phase speed multiplier (relative to `:len`)   |
+| `:loop`  | flag   | —       | Force the curve to loop (cycle until key-off) |
+
+Loop-wave curves (`sin` `triangle` `square` `saw` `ramp`) loop by default; the
+value-less `:loop` flag forces any other curve (e.g. an easing) to cycle too,
+acting as a looping sustain stage. Loop direction is forward only.
+
+`const` is an additional curve: `(const V :len L)` holds the **positional**
+value `V` for `:len` (a flat segment / constant signal); it is sugar for a
+non-looping `linear` with `:from` = `:to` = `V`.
 
 Loop-wave optional params:
 
@@ -289,12 +298,18 @@ stochastic retriggers all fall out of the same primitives.
 This section defines authoring semantics only. Z80 driver storage layout and
 event encoding are deferred to the driver implementation phase.
 
-#### `:step` — sequence step duration (macro-list element)
+#### `:step` — macro sampling clock (macro-list element)
 
-`:step` sets how long each step of a step-vector macro lasts. It is an element
-**inside the `:macro [...]` list** and applies to the targets that **follow**
-it in the list, until the next `:step`. It accepts the standard length-token
-grammar:
+`:step` is the **sampling interval for the macro** — the rate at which the macro
+is evaluated and written. It applies to **every** macro form:
+
+- **step vector** — advances one step per `:step` (discrete steps).
+- **curve** — sampled-and-held every `:step`. At the default it's smooth; a
+  coarser `:step` gives a stepped / sample-and-hold curve (e.g.
+  `:step 8 :tl1 (sin …)` is a 1/8 stepped LFO).
+
+It is an element **inside the `:macro [...]` list** and applies to the targets
+that **follow** it (until the next `:step`). It accepts the length-token grammar:
 
 | Token | Meaning            |
 | ----- | ------------------ |
@@ -312,15 +327,17 @@ grammar:
 (fm1 :macro [ :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1] ]  c)
 ```
 
-- Default when omitted: **`1f`** (one 60 Hz frame) — the pre-v0.5 step rate, so
-  existing `:vel` / `:tl` step envelopes are unchanged.
+- Default when omitted: **`1f`** (one 60 Hz frame) = sample every frame, so
+  curves are smooth and existing macros are unchanged.
 - Because `:step` belongs to the macro (not the track), each macro — and each
   preset bundled in a `def` — carries its own step. A track is no longer
   limited to a single step rate.
 - Targets sharing one `:step` advance on the same grid and stay phase-locked
   (step N of `:semi` coincides with step N of `:keyon`).
-- `:step` governs both the sustain loop and the `:off` release section of its
-  targets. Curve macros are unaffected; they sample continuously over `:len`.
+- `:step` governs both the sustain loop and the `:off` release section.
+- A curve-form `:keyon` is therefore just "a curve sampled at `:step`" — no
+  special rule. `:keyon (square …) :step 16` gates retriggers on the 1/16 grid;
+  `:step 1f` samples it at 60 Hz.
 
 #### `:semi` — semitone pitch sequence
 

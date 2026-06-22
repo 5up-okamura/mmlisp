@@ -255,6 +255,33 @@ Behavior:
 
 `(wait token)` waits by length token (same forms as `:len`).
 
+### Cycling sustain (looping stage)
+
+A **looping** curve stage runs until KEY-OFF instead of for a fixed `:len`,
+giving a modulated sustain (LFO). Loop-wave curves (`sin` `triangle` `square`
+`saw` `ramp`) loop by default; any other curve loops when you add the **`:loop`**
+flag:
+
+```lisp
+(def organ :macro :vel [
+  (ease-in :from 0 :to 15 :len 2)         ; attack
+  (sin :from 13 :to 15 :len 4)            ; vibrato sustain — loops until key-off
+  (ease-out :from 15 :to 0 :len 6)        ; release
+])
+
+(ease-out :from 15 :to 0 :len 4 :loop)    ; :loop forces a non-loop curve to cycle
+```
+
+### `(const V :len D)` — flat segment
+
+`const` holds a single value (the positional argument) for `:len`. Useful as a
+flat stage, or to retrigger for a fixed span after key-off without listing
+repeats — combined with `:step` it fires once per step (see §12):
+
+```lisp
+:keyon [ (wait key-off) (const 1 :len 8) ]   ; fire every :step across :len 8
+```
+
 ---
 
 ## 11. Curve and Step Value Domains
@@ -311,12 +338,19 @@ keys off after the last retrigger.
 (fm1 :macro [ :step 32 :keyon 1 ]  c)   ; drum roll
 ```
 
-### `:step` — step duration
+### `:step` — sampling clock
 
-`:step token` lives inside the `:macro [...]` list and sets the step length for
-the targets that **follow** it (until the next `:step`). Default `1f` (one
-60 Hz frame). Each macro/target carries its own step, so different targets can
-run at different rates.
+`:step token` lives inside the `:macro [...]` list and sets the **sampling
+interval** for the targets that **follow** it (until the next `:step`). Default
+`1f` (one 60 Hz frame). Each macro/target carries its own step, so different
+targets can run at different rates.
+
+It applies to every macro form: a **step vector** advances one step per `:step`;
+a **curve** is sampled-and-held every `:step` (so a coarse step turns a smooth
+curve into a stepped / sample-and-hold one — e.g. `:step 8 :tl1 (sin …)` is a
+1/8 stepped LFO; the default `1f` keeps curves smooth). A curve-form `:keyon` is
+just a curve sampled at `:step`, so `:keyon (square …) :step 16` gates
+retriggers on the 1/16 grid.
 
 ```lisp
 (fm1 :macro [ :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1] ]  c)
@@ -333,7 +367,9 @@ run at different rates.
 
 After KEY-OFF the note retriggers three times at 1/8 spacing, decaying via the
 phase-locked `:vel` release. (`:vel` floors at ~-30 dB; for a tail that fades to
-true silence, automate `:tl` to 127 instead — see §5.)
+true silence, automate `:tl` to 127 instead — see §5.) For a long tail, replace
+the `1 1 1 …` list with `[(wait key-off) (const 1 :len N)]` — it fires once per
+`:step` across `:len` without counting taps (see §10).
 
 Clear a macro with `none`: `:macro :semi none`, or `:macro none` clears all.
 

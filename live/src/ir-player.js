@@ -2371,6 +2371,11 @@ export class IRPlayer {
   _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
     if (!spec) return null;
 
+    // :step is the macro sampling clock. Curve/stage macros sample (and hold)
+    // every stepFrames; default 1f = 1 frame = 60 Hz (smooth, unchanged). A
+    // coarser :step gives a stepped / sample-and-hold curve.
+    const stepFrames = Math.max(1, Math.round(stepSecs * 60));
+
     if (spec.type === "stages") {
       const { stages } = spec;
       if (!stages || stages.length === 0) return null;
@@ -2399,12 +2404,16 @@ export class IRPlayer {
           loop = false,
           params,
         } = stage;
-        const baseFrames = Math.max(1, Number(rawFrames));
+        // :len is a length token (ticks); convert to 60 Hz frames like sweeps.
+        const baseFrames = Math.max(
+          1,
+          Math.round(Number(rawFrames) * this._secsPerTick * 60),
+        );
         // For looping stages, run until gate (or next key-off boundary)
         const budget = loop
           ? Math.max(0, Math.floor((gateSecs - t) * 60))
           : baseFrames;
-        for (let frame = 0; frame < budget; frame++) {
+        for (let frame = 0; frame < budget; frame += stepFrames) {
           const phase = loop
             ? (frame % baseFrames) / baseFrames
             : baseFrames <= 1
@@ -2431,7 +2440,11 @@ export class IRPlayer {
         waitTicks = null,
         waitKeyOff = false,
       } = spec;
-      const baseFrames = Math.max(1, Number(rawFrames));
+      // :len is a length token (ticks); convert to 60 Hz frames like sweeps.
+      const baseFrames = Math.max(
+        1,
+        Math.round(Number(rawFrames) * this._secsPerTick * 60),
+      );
       const waitFrameOffset = waitKeyOff
         ? Math.max(0, Math.round((gateSecs - when) * 60))
         : Math.max(
@@ -2447,7 +2460,7 @@ export class IRPlayer {
         : loop
           ? remainingFrames
           : Math.min(remainingFrames, baseFrames);
-      for (let frame = 0; frame < activeFrames; frame++) {
+      for (let frame = 0; frame < activeFrames; frame += stepFrames) {
         const phase = loop
           ? (frame % baseFrames) / baseFrames
           : baseFrames <= 1
@@ -2467,10 +2480,12 @@ export class IRPlayer {
 
       const sustainEnd = releaseIndex ?? steps.length;
 
-      // Attack + sustain loop until gate, advancing one step per :step interval
+      // Attack + sustain loop until gate, advancing one step per :step interval.
+      // An empty sustain section (`[:off ...]`, releaseIndex 0) writes nothing
+      // before key-off — the target keeps its current value until the release.
       let t = when;
       let idx = 0;
-      while (t < gateSecs) {
+      while (sustainEnd > 0 && t < gateSecs) {
         if (steps[idx] !== null && steps[idx] !== undefined)
           writeFn(steps[idx], t);
         idx++;
