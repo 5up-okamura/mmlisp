@@ -103,8 +103,11 @@ Common modifiers:
 - `:vel N` — note-on velocity (`0`–`15`); a ~2 dB/step musical ladder (PMD /
   MDSDRV style). `15` plays at the patch level, `0` is a ~-30 dB floor —
   velocity **never mutes** (use a rest for silence)
-- `:vol N` — channel output level (`0`–`31`); **`0` mutes**
-- `:master N` — global master level (`0`–`31`); **`0` mutes**
+- `:vol N` — channel output level (`0`–`31`); a bipolar mixer-fader: unity
+  (0 dB) sits below the top with **boost** headroom above and cut below; **`0`
+  mutes**. Default (unset) = unity.
+- `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
+  mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
 - `:glide token` — portamento duration (same length-token forms as `:len`)
 - `:glide-from note` — override start pitch for next note only

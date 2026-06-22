@@ -618,7 +618,7 @@ function resolveDelayVels(spec, delayTicks) {
     const vels = [];
     for (let k = 1; k <= count; k++) {
       const v = from + (to - from) * sampleCurveUnit(curve, k / count, params);
-      vels.push(clampForTarget("VEL", Math.round(v)));
+      vels.push(clampForTarget("VEL", v)); // float — quantized at playback
     }
     return vels;
   }
@@ -647,15 +647,13 @@ function velMacroPeak(spec) {
   return 0;
 }
 
-// Scale a :vel macro's values by `ratio` (rounded and clamped to the vel range),
-// preserving type, markers, and per-macro step. Used so a :delay echo's
-// inherited vel tail peaks at the echo's :delay-vels level.
+// Scale a :vel macro's values by `ratio` (clamped to the vel range; kept float,
+// quantized at playback), preserving type, markers, and per-macro step. Used so
+// a :delay echo's inherited vel tail peaks at the echo's :delay-vels level.
 function scaleVelMacroSteps(spec, ratio) {
   if (!spec) return spec;
   const s = (v) =>
-    v === null || v === undefined
-      ? v
-      : clampForTarget("VEL", Math.round(v * ratio));
+    v === null || v === undefined ? v : clampForTarget("VEL", v * ratio);
   if (spec.type === "steps") {
     return { ...spec, steps: (spec.steps || []).map(s) };
   }

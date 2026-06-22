@@ -18,9 +18,11 @@ import {
   clampForTarget,
   pitchToMidi,
   midiToFnumBlock,
-  composeFmTl,
-  composePsgAtt,
   velToTlAtten,
+  volToTlOffset,
+  velToPsgAtten,
+  volToPsgOffset,
+  VOL_UNITY,
   sweepVolAtTime,
   sampleSweepPhase,
   sampleCurveUnit,
@@ -538,7 +540,7 @@ export class IRPlayer {
 
     // Global YM2612 state
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
-    this._masterVol = 31; // 0 = silent, 31 = full (additive TL offset applied to all channels)
+    this._masterVol = VOL_UNITY; // 0 = silent, 31 = full (additive TL offset applied to all channels)
     this._reg27 = 0;
 
     // Track → channel mapping (defaults to index 0 for demo)
@@ -549,7 +551,7 @@ export class IRPlayer {
     this._psgMuted = new Array(4).fill(false); // mute state per PSG ch
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
-    this._psgVol = new Array(4).fill(31); // channel vol 0-31 per PSG ch
+    this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
     this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
 
@@ -1541,10 +1543,10 @@ export class IRPlayer {
         // vol-gated path so the per-operator special mode is undisturbed.
         const hasVol = regs?.vol != null || this._fmVolSweep[ch] != null;
         if (hasVol || !isFm3OpNote) {
-          const currentVol = hasVol ? this._fmVolAtTime(ch, when) : (regs.vol ?? 31);
+          const currentVol = hasVol ? this._fmVolAtTime(ch, when) : (regs.vol ?? VOL_UNITY);
           const noteVel = ev.args?.vel ?? 15;
           regs.vel = noteVel; // track sticky vel for later VOL/MASTER recalcs
-          const master = this._masterVol ?? 31;
+          const master = this._masterVol ?? VOL_UNITY;
           const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
           for (const opIdx of carriers) {
             const tl = this._carrierTl(
@@ -1638,7 +1640,7 @@ export class IRPlayer {
         const isFmSilent =
           ((regs?.vol != null || this._fmVolSweep[ch] != null) &&
             this._fmVolAtTime(ch, when) === 0) ||
-          (this._masterVol ?? 31) === 0;
+          (this._masterVol ?? VOL_UNITY) === 0;
         const secsPerTick = this._secsPerTick;
         const offWhen =
           gateTicks > 0
@@ -2146,7 +2148,7 @@ export class IRPlayer {
         const vol = Math.max(0, Math.min(31, value));
         regs.vol = vol;
         const vel = regs.vel ?? 15;
-        const master = this._masterVol ?? 31;
+        const master = this._masterVol ?? VOL_UNITY;
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
           const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
@@ -2173,7 +2175,7 @@ export class IRPlayer {
             const tl = this._carrierTl(
               cr.ops[opIdx],
               cr.vel ?? 15,
-              cr.vol ?? 31,
+              cr.vol ?? VOL_UNITY,
               master,
             );
             cr.ops[opIdx].tl = tl;
@@ -2184,7 +2186,7 @@ export class IRPlayer {
         for (let psgCh = 0; psgCh < 4; psgCh++) {
           const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
           const vol = this._psgVolAtTime(psgCh, when); // 0-31
-          this._psgSetAtt(psgCh, composePsgAtt(velLevel, vol, master), when);
+          this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
         }
         nextValue = master;
         break;
@@ -2245,9 +2247,13 @@ export class IRPlayer {
   // level), vel 0 = a ~-30 dB floor — it never mutes. True silence is a rest,
   // or vol/master 0 (handled as a hard mute at key-on time).
   _carrierTl(op, vel, vol, master) {
-    const velAtten = velToTlAtten(vel);
-    const volAtten = composeFmTl(15, vol, master); // vol/master only
-    return Math.min(127, (op.voicedTl ?? 0) + velAtten + volAtten);
+    // Sum the signed dB offsets (float) on top of the voiced TL, then quantize
+    // once. vel attenuates (floors, never mutes); vol/master are bipolar
+    // (boost = negative offset, clamped at TL 0). Uniform across carriers, so
+    // the patch's per-carrier balance is preserved.
+    const offset =
+      velToTlAtten(vel) + volToTlOffset(vol) + volToTlOffset(master);
+    return Math.max(0, Math.min(127, Math.round((op.voicedTl ?? 0) + offset)));
   }
 
   // Snap curve/function outputs to discrete hardware lanes when needed.
@@ -2548,22 +2554,22 @@ export class IRPlayer {
     if (!velMacro) return;
 
     const regs = this._chRegs[ch];
-    const baseVol = regs.vol ?? 31;
+    const baseVol = regs.vol ?? VOL_UNITY;
     const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
     );
-    // vel 15 = patch level, vel 0 = silent. Attenuates from each carrier's
-    // voiced TL (preserving the patch's base level and per-carrier balance).
-    const master = this._masterVol ?? 31;
+    // vel 15 = patch level, vel 0 = -30 dB floor. Float vel → finer TL than 16
+    // steps (rounded once inside _carrierTl).
+    const master = this._masterVol ?? VOL_UNITY;
     this._scheduleMacro(
       velMacro,
       noteFrames,
       gateSecs,
       when,
       (v, t) => {
-        const vel = clampForTarget("VEL", Math.round(v));
+        const vel = clampForTarget("VEL", v);
         for (const opIdx of carriers) {
           const tl = this._carrierTl(regs.ops[opIdx], vel, baseVol, master);
           regs.ops[opIdx].tl = tl;
@@ -2738,7 +2744,7 @@ export class IRPlayer {
           ),
         );
         const vel = regs.vel ?? 15;
-        const master = this._masterVol ?? 31;
+        const master = this._masterVol ?? VOL_UNITY;
         const frameWhen = when + i / 60;
         for (const opIdx of carriers) {
           const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
@@ -2827,16 +2833,26 @@ export class IRPlayer {
     this._psgWriteByte(byte, when);
   }
 
+  // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
+  // 15=silent) via the same additive dB-offset model as FM, quantized once to
+  // the 16-step attenuator. vol or master 0 is a hard mute.
+  _composePsgAtt(vel, vol, master) {
+    if (vol <= 0 || master <= 0) return 15;
+    const att =
+      velToPsgAtten(vel) + volToPsgOffset(vol) + volToPsgOffset(master);
+    return Math.max(0, Math.min(15, Math.round(att)));
+  }
+
   // Returns the current VOL (0-31) for a PSG channel at the given audio time,
   // sampling an active VOL sweep if present.
   _fmVolAtTime(ch, when) {
     const sweep = this._fmVolSweep?.[ch];
-    return sweep ? sweepVolAtTime(sweep, when) : (this._chRegs[ch].vol ?? 31);
+    return sweep ? sweepVolAtTime(sweep, when) : (this._chRegs[ch].vol ?? VOL_UNITY);
   }
 
   _psgVolAtTime(psgCh, when) {
     const sweep = this._psgVolSweep?.[psgCh];
-    return sweep ? sweepVolAtTime(sweep, when) : (this._psgVol[psgCh] ?? 31);
+    return sweep ? sweepVolAtTime(sweep, when) : (this._psgVol[psgCh] ?? VOL_UNITY);
   }
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
@@ -2876,10 +2892,10 @@ export class IRPlayer {
     const secsPerTick = this._secsPerTick;
     const noteOffWhen = noteWhen + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS;
 
-    // Compose vel * vol * master → PSG hardware attenuation.
+    // Compose vel / vol / master → PSG attenuation (additive dB model).
     const vol = this._psgVolAtTime(psgCh, noteWhen);
-    const master = this._masterVol ?? 31;
-    const att = composePsgAtt(baseVel, vol, master);
+    const master = this._masterVol ?? VOL_UNITY;
+    const att = this._composePsgAtt(baseVel, vol, master);
 
     this._psgSetAtt(psgCh, att, noteWhen);
     if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
@@ -2894,12 +2910,12 @@ export class IRPlayer {
       gateTicks,
     );
 
-    // vel 0-15 → PSG att via shared composition helpers
+    // vel macro scales the note's base vel (float), then → PSG att.
     const vol = this._psgVolAtTime(psgCh, noteWhen);
-    const master = this._masterVol ?? 31;
+    const master = this._masterVol ?? VOL_UNITY;
     const velToAtt = (v) => {
-      const velLevel = Math.round((clampForTarget("VEL", v) * baseVel) / 15);
-      return composePsgAtt(velLevel, vol, master);
+      const velLevel = (clampForTarget("VEL", v) * baseVel) / 15;
+      return this._composePsgAtt(velLevel, vol, master);
     };
 
     const silenceAt = this._scheduleMacro(
@@ -2907,7 +2923,7 @@ export class IRPlayer {
       noteFrames,
       gateSecs,
       noteWhen,
-      (v, t) => this._psgSetAtt(psgCh, velToAtt(Math.round(v)), t),
+      (v, t) => this._psgSetAtt(psgCh, velToAtt(v), t),
     );
     // On hold notes (gateTicks === 0), silence is triggered by triggerKeyOff().
     if (silenceAt !== null && gateTicks !== 0) {
@@ -2991,16 +3007,16 @@ export class IRPlayer {
         if (psgTarget === "VOL") {
           if (ev.cmd === "PARAM_SET") {
             // Immediate vol: store and update hardware using last known vel.
-            const vol = Math.max(0, Math.min(31, ev.args?.value ?? 31));
+            const vol = Math.max(0, Math.min(31, ev.args?.value ?? VOL_UNITY));
             this._psgVol[psgCh] = vol;
             this._psgVolSweep[psgCh] = null;
             const velLevel = this._psgLastVel[psgCh] ?? 15;
-            const master = this._masterVol ?? 31;
-            this._psgSetAtt(psgCh, composePsgAtt(velLevel, vol, master), when);
+            const master = this._masterVol ?? VOL_UNITY;
+            this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
           } else {
             // PARAM_SWEEP: store sweep state (same format as _fmVolSweep).
             // Hardware writes happen lazily at each NOTE_ON via _psgVolAtTime().
-            const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? 31)));
+            const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? VOL_UNITY)));
             const to = Math.max(0, Math.min(31, Number(ev.args?.to ?? from)));
             const curve = ev.args?.curve ?? "linear";
             const secsPerTick = this._secsPerTick;

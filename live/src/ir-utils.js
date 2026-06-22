@@ -32,11 +32,13 @@ export const MACRO_TARGET_RANGE = {
   // Retrigger gate: sampled per :step, fires key-on at >= 0.5. Step lists use
   // 0/1; curves/stochastic signals pass through and are thresholded.
   KEYON: { min: 0, max: 1, integer: false },
-  VEL: { min: 0, max: 15, integer: true },
+  // Level controls clamp only (no rounding): values stay float through the
+  // pipeline and are quantized once at the hardware-register write.
+  VEL: { min: 0, max: 15, integer: false },
 
   // Channel-level
-  VOL: { min: 0, max: 31, integer: true },
-  MASTER: { min: 0, max: 31, integer: true },
+  VOL: { min: 0, max: 31, integer: false },
+  MASTER: { min: 0, max: 31, integer: false },
 
   // LFO
   LFO_RATE: { min: 0, max: 8, integer: true },
@@ -179,17 +181,50 @@ export function levelToFmTl(level) {
   return Math.max(0, Math.min(127, Math.round((1 - t) * 127)));
 }
 
-// YM2612 TL resolution and the musical velocity step, in dB.
-export const TL_DB_PER_STEP = 0.75; // 128 steps over ~95 dB
-export const VEL_DB_PER_STEP = 2; // PMD / MDSDRV coarse-volume convention
+// ---------------------------------------------------------------------------
+// Unified level model — additive dB offsets
+// ---------------------------------------------------------------------------
+// vel / vol / master each map to a signed dB offset; the offsets are summed (in
+// float) on top of an operator's voiced TL, and quantized once at the register
+// write. This is the PMD/MDSDRV table style and maps directly onto a Z80 driver
+// (add small per-control offset tables). The helpers below return register-step
+// offsets (FM: dB ÷ 0.75; PSG: dB ÷ 2), as floats.
+//
+// Hardware step sizes, in dB:
+export const TL_DB_PER_STEP = 0.75; // YM2612 TL — 128 steps over ~95 dB
+export const PSG_DB_PER_STEP = 2; // SN76489 attenuator — 16 steps
+// Velocity ladder (PMD / MDSDRV coarse-volume convention):
+export const VEL_DB_PER_STEP = 2;
+// vol/master mixer-fader (tunable): VOL_UNITY = 0 dB reference on the 0–31
+// scale; values above boost, below cut. Unity sits below the top so there is
+// boost headroom, like a real fader.
+export const VOL_STEP_DB = 2;
+export const VOL_UNITY = 24;
 
-// Velocity (0-15) → TL attenuation steps: a ~2 dB/step logarithmic ladder
-// matching the PMD / MDSDRV coarse-volume convention. vel 15 = 0 (no
-// attenuation, plays at the patch level), vel 0 ≈ -30 dB. Never mutes — true
-// silence is a rest, or vol/master 0. Used for note velocity, not fades.
+// Velocity (0-15) → TL attenuation (float, register steps). 2 dB/step ladder:
+// vel 15 = 0 (patch level), vel 0 ≈ -30 dB floor. Attenuation only — never
+// mutes (silence is a rest, or vol/master 0). Caller rounds once.
 export function velToTlAtten(vel) {
-  const v = Math.max(0, Math.min(15, Math.round(vel)));
-  return Math.round(((15 - v) * VEL_DB_PER_STEP) / TL_DB_PER_STEP);
+  const v = Math.max(0, Math.min(15, vel));
+  return ((15 - v) * VEL_DB_PER_STEP) / TL_DB_PER_STEP;
+}
+
+// vol or master (0-31) → signed TL offset (float). Bipolar mixer-fader around
+// VOL_UNITY (0 dB): v > unity boosts (negative offset, louder), v < unity cuts.
+// 0 is a hard mute handled by the caller (this curve does not reach silence).
+export function volToTlOffset(v) {
+  const x = Math.max(0, Math.min(31, v));
+  return ((VOL_UNITY - x) * VOL_STEP_DB) / TL_DB_PER_STEP;
+}
+
+// PSG attenuator-domain counterparts (register steps = dB ÷ 2).
+export function velToPsgAtten(vel) {
+  const v = Math.max(0, Math.min(15, vel));
+  return ((15 - v) * VEL_DB_PER_STEP) / PSG_DB_PER_STEP;
+}
+export function volToPsgOffset(v) {
+  const x = Math.max(0, Math.min(31, v));
+  return ((VOL_UNITY - x) * VOL_STEP_DB) / PSG_DB_PER_STEP;
 }
 
 // Convert composed level 0.0-1.0 → SN76489 attenuation (0=max, 15=silent).

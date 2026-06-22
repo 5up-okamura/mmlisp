@@ -545,28 +545,41 @@ long tail can overrun the next echo — the same "echoes fill the gaps" reality.
 
 ### 1.5.4 Velocity and volume → level (v0.5)
 
-Three controls scale a note's loudness; they are **not** interchangeable.
-
-- **`:vel` (0–15) — velocity.** A musical accent following the PMD / MDSDRV
-  coarse-volume convention: a **~2 dB/step logarithmic ladder**. `vel 15` plays
-  at the patch level (no attenuation); `vel 0` is a **~-30 dB floor**. Velocity
-  **never mutes** — silence is a rest. (The previous linear amplitude → linear
-  TL mapping made mid/low velocities drop far too fast and is replaced.)
-- **`:vol` (0–31) and `:master` (0–31) — volume.** Output faders; **0 is a hard
-  mute** (the channel skips key-on, guaranteeing silence).
-
-On FM, the controls compose in the dB domain on top of each operator's voiced
-(timbre) TL:
+`vel` / `vol` / `master` scale a note's loudness as **signed dB offsets composed
+by addition** on top of each operator's voiced (timbre) TL. The offsets are
+summed in float and quantized **once** at the register write. This is the
+PMD/MDSDRV table style and maps directly onto a Z80 driver (per-control offset
+tables, add + clamp — no float/log).
 
 ```
-carrier TL = voicedTL[op] + velAttenuation(vel) + volMasterAttenuation(vol, master)
+FM:  carrier TL = clamp(0,127, round( voicedTL[op] + dVel + dVol + dMaster ))
+PSG: attenuation = clamp(0, 15, round(             dVel + dVol + dMaster ))
 ```
 
-This preserves the patch's base level and per-carrier balance (rather than
-flattening every carrier to one composed TL), so `vel`/`vol`/`master` attenuate
-uniformly from the voiced timbre. A `:vel` macro fades only to the velocity
-floor; to fade a note to true silence, automate `:tl` (carrier TL → 127) or use
-`:vol`.
+Because the offset is **uniform across carriers**, the patch's per-carrier
+balance is preserved (not flattened to one composed TL).
+
+- **`:vel` (0–15) — velocity.** A 2 dB/step ladder (PMD/MDSDRV coarse-volume
+  convention). `vel 15` = 0 dB (patch level); `vel 0` ≈ **−30 dB floor**.
+  Attenuation only — velocity **never mutes** (silence is a rest).
+- **`:vol` / `:master` (0–31) — volume.** A **bipolar mixer-fader** around a
+  unity (0 dB) point set below the top, so there is **boost** headroom above and
+  cut below — like a real fader. `> unity` boosts (negative offset, louder,
+  clamped at the carrier's TL 0 ceiling — limited by the patch's headroom);
+  `< unity` cuts; **`0` is a hard mute** (FM skips key-on; PSG → max att). vol
+  and master share the curve and their offsets add. The unspecified default is
+  unity (0 dB = voiced), so the silent default is unchanged.
+
+The dB constants are **tunable** (`VEL_DB_PER_STEP`, `VOL_STEP_DB`, `VOL_UNITY`
+in `ir-utils.js`); defaults are vel 2 dB/step, vol 2 dB/step with unity at 24
+(boost to ~+14 dB at 31, cut to ~−46 dB at 1).
+
+Resolution: authored values are integer (`vel` 0–15, `vol`/`master` 0–31), but
+**computed** values (curve macros, delay scaling) stay float through the
+pipeline and reach the hardware's native resolution — on FM, the TL 0.75 dB step
+(~41 distinct levels over the vel range) instead of 16. PSG is hardware-capped at
+its 16-step attenuator. A `:vel` macro fades only to the velocity floor; to fade
+a note to true silence automate `:tl` (carrier TL → 127) or use `:vol`.
 
 ### 1.6 Sample file system
 
