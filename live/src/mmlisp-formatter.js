@@ -20,7 +20,7 @@ const KEYWORD_VALUE_KEYS = [
   ":loop",
   ":loop-start",
   ":loop-end",
-  ":role",
+  ":prio",
   ":len",
   ":ch",
   ":id",

@@ -558,9 +558,6 @@ export class IRPlayer {
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
 
-    // Modulator tracks by channel index (built after _flattenTracks)
-    this._modulatorsByCh = new Map();
-
     // Mute state per channel (index 0-5)
     this._mutedChannels = new Array(6).fill(false);
 
@@ -666,7 +663,6 @@ export class IRPlayer {
 
     // Build per-track scheduler state
     this._tracks = this._flattenTracks();
-    this._buildModulatorMap();
     for (const t of this._tracks) {
       t.audioTimeAtTick0 = this._startAudioTime;
       t.startAudioTime = this._startAudioTime;
@@ -726,7 +722,6 @@ export class IRPlayer {
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
     this._fm3OpIntervals = [];
     this._tracks = this._flattenTracks();
-    this._buildModulatorMap();
     for (const t of this._tracks) {
       t.audioTimeAtTick0 = newTick0;
       t.startAudioTime = newTick0;
@@ -909,7 +904,6 @@ export class IRPlayer {
     // Set audioTimeAtTick0 so that tick=resumeTick corresponds to now+25ms
     const newTick0 = now + 0.025 - resumeTick * secsPerTick;
     this._tracks = this._flattenTracks();
-    this._buildModulatorMap();
     for (const t of this._tracks) {
       t.startAudioTime = newTick0;
       t.audioTimeAtTick0 = newTick0;
@@ -1144,8 +1138,6 @@ export class IRPlayer {
           ? Math.max(1, jumpTick - loopStartTick)
           : Math.max(1, lastTick + 1);
 
-      const role = track.route_hint?.role ?? "bgm";
-      const carry = track.route_hint?.carry ?? false;
       return {
         events: trimmedEvents,
         loopDuration,
@@ -1156,9 +1148,6 @@ export class IRPlayer {
         audioTimeAtTick0: 0,
         loopCount: 0,
         startAudioTime: 0,
-        role,
-        carry,
-        carryState: carry,
         chIndex,
         isPsg,
         psgCh,
@@ -1370,17 +1359,6 @@ export class IRPlayer {
       const unit = sampleCurveUnit(curve, phase, ev.args?.params);
       const hzAt = from + (to - from) * unit;
       this._setCsmRateHz(hzAt, when + frame / 60);
-    }
-  }
-
-  _buildModulatorMap() {
-    this._modulatorsByCh = new Map();
-    for (const t of this._tracks) {
-      if (t.role === "modulator") {
-        const arr = this._modulatorsByCh.get(t.chIndex) ?? [];
-        arr.push(t);
-        this._modulatorsByCh.set(t.chIndex, arr);
-      }
     }
   }
 
@@ -1685,19 +1663,6 @@ export class IRPlayer {
           }
         }
 
-        // Reset non-carry modulator tracks on the same channel
-        const modulators = this._modulatorsByCh.get(ch) ?? [];
-        for (const modTrack of modulators) {
-          const carry = modTrack.carryState ?? modTrack.carry ?? false;
-          if (!carry) {
-            modTrack.startAudioTime = when;
-            modTrack.audioTimeAtTick0 = when;
-            modTrack.loopCount = 0;
-            modTrack.carryState = modTrack.carry ?? false;
-            modTrack.flatIndex = 0;
-          }
-        }
-
         // Key-off at gate boundary (5ms lead for FM envelope decay)
         // gateTicks === 0 means hold indefinitely (len=0 note; KEY-OFF via triggerKeyOff())
         // FM3 operator notes schedule their own key-off via _scheduleFm3OpKey
@@ -1735,14 +1700,6 @@ export class IRPlayer {
         if (target === "VOL") {
           this._chRegs[ch].vol = this._fmVolAtTime(ch, when);
           this._fmVolSweep[ch] = null;
-        }
-        break;
-      }
-
-      case "CARRY_SET": {
-        const ti = ev._trackIndex;
-        if (ti != null && this._tracks[ti]) {
-          this._tracks[ti].carryState = ev.args?.carry ?? false;
         }
         break;
       }

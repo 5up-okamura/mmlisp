@@ -477,6 +477,35 @@ Repeating the same channel form appends events and keeps sticky state.
 
 ---
 
+## 16b. Layering with `:prio`
+
+By default, repeated forms of a channel **append** (§16). To instead **layer**
+two forms on the same channel at the same time, give them different `:prio`
+values.
+
+- `:prio N` — unsigned integer, **lower number = higher priority**. Default `8`.
+- **Same `:prio` → append** (one timeline; the §16 behaviour).
+- **Different `:prio` → layer** as parallel timelines on the one physical
+  channel. The channel is monophonic, so collisions are resolved by priority:
+  the higher-priority (lower-number) note sounds, and the lower-priority part
+  fills the gaps it leaves.
+- Resolution is **preemptive**: a higher-priority note that begins while a
+  lower-priority note is sounding cuts it off (the lower note is simply
+  silenced at that point — no release tail in this version).
+
+```lisp
+(score
+  (fm1 :prio 1  :len 4   c _ _ g _ _)   ; sparse lead — always sounds
+  (fm1 :prio 5  :len 16  e e e e e e e e e e e e))  ; filler — yields to the lead
+```
+
+The whole thing is resolved at compile time into a single event stream, so the
+player and driver still see one track per channel. Keep loops and heavy
+parameter automation on a single layer — flow control across `:prio` layers is
+not reconciled.
+
+---
+
 ## 17. FM3 CSM Mode
 
 Use `fm3-csm` when you want FM3 to run in CSM mode.

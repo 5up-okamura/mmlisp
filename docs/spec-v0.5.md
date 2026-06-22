@@ -598,6 +598,32 @@ pipeline and reach the hardware's native resolution — on FM, the TL 0.75 dB st
 its 16-step attenuator. A `:vel` macro fades only to the velocity floor; to fade
 a note to true silence automate `:tl` (carrier TL → 127) or use `:vol`.
 
+### 1.5.5 Channel priority layering — `:prio` (v0.5)
+
+Multiple forms of the same channel default to **append** (sticky-state
+concatenation). `:prio` lets forms instead **layer** on the one physical channel.
+
+- `:prio N` — track option, unsigned integer, **lower number = higher
+  priority**. Default `8` (leaves headroom on both sides; the absolute value is
+  arbitrary, only relative ordering matters).
+- **Equal `:prio` → append** (one timeline; unchanged behaviour).
+- **Distinct `:prio` → parallel timelines** on the same channel, each starting
+  at tick 0. Internally each `(channel, prio)` pair is its own track keyed
+  `head:prio`.
+- Resolution is **compile-time and monophonic**: a post-pass flattens the layers
+  into one event stream. Note events are arbitrated **preemptively** — a note is
+  dropped where a higher-priority note is already sounding, and **cut** (gate
+  truncated to silence, no release tail) where a higher-priority note begins
+  mid-sustain. This generalizes the §1.5.3 echo "source outranks tap" rule.
+- Non-note events pass through in tick order; loops/flow control across layers
+  are not reconciled (compiler warns `W_PRIO_LAYER_FLOW`).
+
+The flattened output is one track per channel, so the IR, player, and eventual
+Z80 driver are unchanged by this feature. This **replaces** the former `:role`
+(`se`/`bgm`/`modulator`/`chaos`) concept, which is removed. Runtime dynamic
+parameter performance (the "modulator" idea — live timbre automation via
+`SET_PARAM`, §4.3) is a separate future concern, not part of `:prio`.
+
 ### 1.6 Sample file system
 
 **Declaration:** samples are defined with `def` (same style as FM voice
@@ -843,6 +869,7 @@ The compiler does need to:
 | §1.5.2 | Step macros              | ✅ Decided | `:step` clock, `:semi` arp, `:keyon` gate; see §1.5.2 |
 | §1.5.3 | Track delay              | ✅ Decided | `:delay`/`:delay-vels` compile-time per-note echo; see §1.5.3 |
 | §1.5.4 | Velocity / volume → level | ✅ Decided | vel = 2 dB/step ladder (floors); vol/master mute at 0; see §1.5.4 |
+| §1.5.5 | Channel priority layering | ✅ Decided | `:prio` compile-time monophonic layering (lower = higher, default 8); replaces `:role`; see §1.5.5 |
 | §1.6 | PCM sample file system   | ✅ Decided | `def` sample model, WAV conv; see §1.6         |
 | §1.7 | PCM mixing               | ✅ Decided | 3ch soft-mix, raw 8-bit PCM; see §1.7          |
 | §1.8 | FM3 independent-OP       | ✅ Decided | `fm3-1`–`fm3-4` independent F-number; see §1.8 |

@@ -45,12 +45,11 @@ const SUPPORTED_TARGETS = new Set([
 
 const TRACK_OPTION_KEYS = new Set([
   ":ch",
-  ":role",
+  ":prio",
   ":oct",
   ":len",
   ":gate",
   ":vel",
-  ":carry",
   ":shuffle",
   ":shuffle-base",
   ":write",
@@ -731,6 +730,84 @@ function expandTrackDelays(track) {
     events.push(...echoes);
     events.sort((a, b) => a.tick - b.tick);
   }
+}
+
+// v0.5 :prio layering. Multiple forms of the same channel with different :prio
+// values become independent parallel timelines; this post-pass flattens them
+// into one monophonic event stream. Lower number = higher priority. Note events
+// are resolved preemptively: a note is dropped where a higher-priority note is
+// already sounding, and truncated (simple cut to silence) where a higher-priority
+// note begins mid-sustain. All non-note events pass through in tick order, so
+// loops/param automation on layered channels are best-effort only (warned below).
+const PRIO_NOTE_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON"]);
+const PRIO_FLOW_CMDS = new Set([
+  "JUMP",
+  "LOOP_BEGIN",
+  "LOOP_END",
+  "LOOP_BREAK",
+]);
+
+// Sounding span of a note: gate (if set) else length; 0 means hold
+// indefinitely (§ gate/len 0), modelled here as occupying the channel forever.
+function prioNoteSpan(ev) {
+  const g = ev.args.gate;
+  if (g === 0) return Infinity;
+  if (g != null) return g;
+  const l = ev.args.length;
+  return l === 0 ? Infinity : (l ?? 0);
+}
+
+function flattenPriorityLayers(head, layers, diagnostics) {
+  // Highest priority first (lowest number). The first layer is the container we
+  // reuse for route_hint/channel; only its event list is rebuilt.
+  layers.sort((a, b) => a.prio - b.prio);
+
+  if (layers.filter((l) => l.trackData.events.some((e) => PRIO_FLOW_CMDS.has(e.cmd))).length > 1) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_PRIO_LAYER_FLOW",
+      `loops/flow control across :prio layers on channel ${head} are not resolved; keep loops on a single layer`,
+      { line: 1, column: 1 },
+      head,
+    );
+  }
+
+  const occupied = []; // committed sounding intervals from higher-priority layers
+  const drop = new Set();
+
+  for (const { trackData } of layers) {
+    const notes = trackData.events
+      .filter((e) => PRIO_NOTE_CMDS.has(e.cmd))
+      .sort((a, b) => a.tick - b.tick);
+
+    const committed = [];
+    for (let i = 0; i < notes.length; i++) {
+      const ev = notes[i];
+      const t = ev.tick;
+      // Suppressed: starts while a higher-priority note is sounding.
+      if (occupied.some(([s, e]) => t >= s && t < e)) {
+        drop.add(ev);
+        continue;
+      }
+      const rawEnd = t + prioNoteSpan(ev); // gate/len end (may be Infinity)
+      const nextSame = notes[i + 1]?.tick ?? Infinity; // own retrigger ends it
+      let nextHi = Infinity; // next higher-priority onset
+      for (const [s] of occupied) if (s > t && s < nextHi) nextHi = s;
+      // A higher-priority note interrupts before this note's natural end → cut
+      // to silence (no release tail in this version).
+      if (nextHi < rawEnd && nextHi < nextSame) ev.args.gate = nextHi - t;
+      committed.push([t, Math.min(rawEnd, nextSame, nextHi)]);
+    }
+    occupied.push(...committed);
+  }
+
+  const base = layers[0].trackData;
+  base.events = layers
+    .flatMap((l) => l.trackData.events)
+    .filter((ev) => !drop.has(ev))
+    .sort((a, b) => a.tick - b.tick);
+  return base;
 }
 
 function applyTypedMacroDef(trackState, td) {
@@ -1489,26 +1566,7 @@ function parseSingleChannel(channelNode) {
   return val ? val.replace(/^:/, "").toLowerCase() : "fm1";
 }
 
-const VALID_ROLES = new Set(["bgm", "se", "modulator", "chaos"]);
 const VALID_WRITE_SCOPE = new Set(["notes", "fm-params", "ctrl", "reg", "any"]);
-
-function parseTrackRole(options, diagnostics, trackName) {
-  const roleNode = options.get(":role");
-  if (!roleNode) return "bgm";
-  const role = atomValue(roleNode)?.replace(/^:/, "");
-  if (!role || !VALID_ROLES.has(role)) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_TRACK_ROLE_INVALID",
-      `Track role must be one of: ${[...VALID_ROLES].join(", ")}`,
-      nodeSrc(roleNode),
-      trackName,
-    );
-    return "bgm";
-  }
-  return role;
-}
 
 function parseWriteScope(options, diagnostics, trackName) {
   const scopeNode = options.get(":write");
@@ -2850,9 +2908,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       }
     }
 
-    // v0.4: Use channel name as track key
-    const trackKey = head;
-
     // Collect inline options (key-value pairs immediately after the channel name).
     // Only TRACK_OPTION_KEYS are consumed here; hardware param keys (:tl1, :ar1, etc.)
     // and other modifiers (:vel, :master, etc.) are left in the body for compileChannelBody.
@@ -2869,6 +2924,17 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     // Body items start after the inline options
     const bodyItems = node.items.slice(i);
 
+    // v0.5: :prio layers forms on the same channel. Same prio appends (one
+    // timeline); different prio values are independent parallel timelines on the
+    // same physical channel, resolved by priority at the flatten post-pass.
+    // Lower number = higher priority; default 8 (headroom on both sides).
+    let prio = 8;
+    if (inlineOpts[":prio"] !== undefined) {
+      const v = parseIntLike(inlineOpts[":prio"]);
+      if (v !== null) prio = Math.max(0, v);
+    }
+    const trackKey = `${head}:${prio}`;
+
     if (!trackByKey.has(trackKey)) {
       // Initialize defaults; inline options on the first form set the initial state
       let defaultOct = 4;
@@ -2878,7 +2944,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       let defaultVel = 15; // v0.4: default velocity 0-15
       let shuffleRatio = scoreShuffleRatio;
       let shuffleBase = Math.round(WHOLE_TICKS / 8);
-      let carry = false;
 
       if (inlineOpts[":oct"] !== undefined) {
         const v = parseIntLike(inlineOpts[":oct"]);
@@ -2914,9 +2979,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
           shuffleBase,
         );
       }
-      if (inlineOpts[":carry"] !== undefined) {
-        carry = inlineOpts[":carry"] === "true";
-      }
 
       // All state is sticky and persists across consecutive forms of the same channel
       const trackState = {
@@ -2951,7 +3013,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         shuffleRatio,
         shuffleBase,
         subBeatParity: 0,
-        carry,
         currentLoopId: null, // id of innermost counted (x N ...) loop, for :break
       };
 
@@ -2965,7 +3026,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
             : head,
         route_hint: {
           allocation_preference: "ordered_first_fit",
-          carry,
           channel_candidates: [
             head === "fm3-csm" ||
             head === "fm3-csm-rate" ||
@@ -2973,7 +3033,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
               ? "fm3"
               : head,
           ],
-          role: "bgm",
           write_scope: ["any"],
         },
         events: [],
@@ -2999,7 +3058,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         });
       }
 
-      trackByKey.set(trackKey, { trackData, trackState });
+      trackByKey.set(trackKey, { trackData, trackState, head, prio });
       trackOrder.push(trackKey);
     } else {
       // Update sticky state from inline options on subsequent forms of the same channel
@@ -3104,9 +3163,31 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     );
   }
 
-  const tracks = trackOrder.map((key) => trackByKey.get(key).trackData);
+  // Expand :delay echoes per prio-layer (each layer is its own linear timeline),
+  // then merge layers that share a physical channel (same head) into one track.
+  for (const key of trackOrder) {
+    expandTrackDelays(trackByKey.get(key).trackData);
+  }
 
-  for (const track of tracks) expandTrackDelays(track);
+  const layersByHead = new Map();
+  for (const key of trackOrder) {
+    const entry = trackByKey.get(key);
+    const arr = layersByHead.get(entry.head) ?? [];
+    arr.push({ prio: entry.prio, trackData: entry.trackData });
+    layersByHead.set(entry.head, arr);
+  }
+
+  const tracks = [];
+  for (const [head, layers] of layersByHead) {
+    tracks.push(
+      layers.length === 1
+        ? layers[0].trackData
+        : flattenPriorityLayers(head, layers, diagnostics),
+    );
+  }
+  tracks.forEach((t, idx) => {
+    t.id = idx;
+  });
 
   for (const track of tracks) validateTrack(track, diagnostics);
 
@@ -3139,25 +3220,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       });
     }
     if (initEvents.length > 0) tracks[0].events.unshift(...initEvents);
-  }
-
-  const bgmChannels = new Set();
-  for (const track of tracks) {
-    if (track.route_hint.role === "bgm") {
-      const ch = track.route_hint.channel_candidates[0];
-      if (bgmChannels.has(ch)) {
-        pushDiag(
-          diagnostics,
-          "warning",
-          "W_SAME_CH_BGM",
-          `Two bgm tracks share channel ${ch}`,
-          { line: 1, column: 1 },
-          ch,
-        );
-      } else {
-        bgmChannels.add(ch);
-      }
-    }
   }
 
   const sampleSourceBaseKnown = normalizePathSeparators(filename).includes("/");
