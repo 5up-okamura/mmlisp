@@ -14,68 +14,64 @@
 // ---------------------------------------------------------------------------
 // Macro target range table
 // ---------------------------------------------------------------------------
-// Used by the compiler (parseMacroSpec / step-vector parsing) and the player
-// (_scheduleMacro write path) to clamp and round macro output values.
+// Valid value range per target. Used by the compiler (parseMacroSpec) and the
+// player (macro write path) only to CLAMP — never to round.
 //
-// integer: true  — Math.round then clamp (used for all hardware registers and
-//                  snap-to-integer targets like :pan, :mode)
-// integer: false — clamp only, preserve fractional value (e.g. NOTE_PITCH in cents)
+// Quantization policy: macro/param values stay float through the whole
+// pipeline; each parameter is quantized to its integer hardware register ONCE,
+// at the write (e.g. _applyParam's set() / _snapMacroOutput / midiToFnumBlock /
+// _carrierTl / _composePsgAtt / _psgSetPitch). So there is no per-target
+// rounding flag here — every register is integer, and rounding lives at the
+// single output point.
 //
 // Targets with a numeric suffix (FM_TL1–FM_TL4 etc.) fall back to the
 // suffix-stripped key via clampForTarget().
 export const MACRO_TARGET_RANGE = {
   // KEY-ON scoped
-  NOTE_PITCH: { min: -32768, max: 32767, integer: false },
-  // Discrete semitone offset sequence (×100 cents at playback). Counterpart to
-  // NOTE_PITCH (continuous, cents).
-  NOTE_SEMI: { min: -48, max: 48, integer: true },
-  // Retrigger gate: sampled per :step, fires key-on at >= 0.5. Step lists use
-  // 0/1; curves/stochastic signals pass through and are thresholded.
-  KEYON: { min: 0, max: 1, integer: false },
-  // Level controls clamp only (no rounding): values stay float through the
-  // pipeline and are quantized once at the hardware-register write.
-  VEL: { min: 0, max: 15, integer: false },
+  NOTE_PITCH: { min: -32768, max: 32767 }, // cents
+  NOTE_SEMI: { min: -48, max: 48 }, // semitone offsets (×100 cents at playback)
+  KEYON: { min: 0, max: 1 }, // gate; thresholded at >= 0.5 at playback
+  VEL: { min: 0, max: 15 },
 
   // Channel-level
-  VOL: { min: 0, max: 31, integer: false },
-  MASTER: { min: 0, max: 31, integer: false },
+  VOL: { min: 0, max: 31 },
+  MASTER: { min: 0, max: 31 },
 
   // LFO
-  LFO_RATE: { min: 0, max: 8, integer: true },
+  LFO_RATE: { min: 0, max: 8 },
 
   // FM channel params
-  FM_ALG: { min: 0, max: 7, integer: true },
-  FM_FB: { min: 0, max: 7, integer: true },
-  FM_AMS: { min: 0, max: 3, integer: true },
-  FM_FMS: { min: 0, max: 7, integer: true },
+  FM_ALG: { min: 0, max: 7 },
+  FM_FB: { min: 0, max: 7 },
+  FM_AMS: { min: 0, max: 3 },
+  FM_FMS: { min: 0, max: 7 },
 
   // FM operator params — shared by FM_TL1–FM_TL4, FM_AR1–FM_AR4, etc.
   // clampForTarget() strips the trailing digit before lookup.
-  FM_TL: { min: 0, max: 127, integer: true },
-  FM_AR: { min: 0, max: 31, integer: true },
-  FM_DR: { min: 0, max: 31, integer: true },
-  FM_SR: { min: 0, max: 31, integer: true },
-  FM_RR: { min: 0, max: 15, integer: true },
-  FM_SL: { min: 0, max: 15, integer: true },
-  FM_ML: { min: 0, max: 15, integer: true },
-  FM_DT: { min: 0, max: 7, integer: true },
-  FM_KS: { min: 0, max: 3, integer: true },
-  FM_AMEN: { min: 0, max: 1, integer: true },
-  FM_SSG: { min: 0, max: 15, integer: true },
+  FM_TL: { min: 0, max: 127 },
+  FM_AR: { min: 0, max: 31 },
+  FM_DR: { min: 0, max: 31 },
+  FM_SR: { min: 0, max: 31 },
+  FM_RR: { min: 0, max: 15 },
+  FM_SL: { min: 0, max: 15 },
+  FM_ML: { min: 0, max: 15 },
+  FM_DT: { min: 0, max: 7 },
+  FM_KS: { min: 0, max: 3 },
+  FM_AMEN: { min: 0, max: 1 },
+  FM_SSG: { min: 0, max: 15 },
 
   // FM panning — bits 7-6 of B4
-  PAN: { min: -1, max: 1, integer: true },
+  PAN: { min: -1, max: 1 },
 
   // PSG noise mode (0-7 via `:mode` keyword on noise channel)
-  NOISE_MODE: { min: 0, max: 7, integer: true },
+  NOISE_MODE: { min: 0, max: 7 },
 };
 
 /**
  * Clamp a macro output value to the hardware range for the given target.
- * For integer targets, rounds before clamping.
+ * Clamp only — never rounds (values stay float; the register write quantizes).
  * For targets with a numeric suffix (e.g. "FM_TL1"), strips the suffix and
- * looks up the base key (e.g. "FM_TL").
- * Returns v unchanged if no range entry is found.
+ * looks up the base key (e.g. "FM_TL"). Returns v unchanged if no range entry.
  *
  * @param {string} target  - canonical target name (e.g. "FM_TL1", "VEL", "PAN")
  * @param {number} v       - raw value from macro interpolation
@@ -86,8 +82,7 @@ export function clampForTarget(target, v) {
     MACRO_TARGET_RANGE[target] ??
     MACRO_TARGET_RANGE[target.replace(/\d+$/, "")];
   if (!range) return v;
-  const val = range.integer ? Math.round(v) : v;
-  return Math.max(range.min, Math.min(range.max, val));
+  return Math.max(range.min, Math.min(range.max, v));
 }
 
 // ---------------------------------------------------------------------------
