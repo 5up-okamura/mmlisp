@@ -10,6 +10,7 @@
  *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate, loopStart?, loopEnd?}] }
  *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, vel: number, mode: 'shot'|'loop' }
  *   { type: 'pcm-note-off', when: number, sample: string }
+ *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
  *   { type: 'reset' }
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  */
@@ -17,11 +18,22 @@
 // WorkletGlobalScope: import the emulators as modules.
 // The paths are relative to the worklet file's URL.
 import createNukedModule from "./nuked-opn2.js";
-import { SN76489 } from "./src/sn76489.js";
+import createPsgModule from "./nuked-psg.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 const NUKED_NATIVE_SAMPLE_RATE = 7670454 / 144;
+const PSG_NATIVE_SAMPLE_RATE = 3579545 / 16;
 const nukedModulePromise = createNukedModule();
+const psgModulePromise = createPsgModule();
+
+// PSG output is a unipolar sum of up to 4 channels in [0, 4]. Scale it so a
+// single full-volume channel lands near the old core's level, and DC-block it
+// to remove the offset (and the thumps when notes change the offset).
+const PSG_OUTPUT_GAIN = 0.5;
+// One-pole DC blocker coefficient (~5 Hz high-pass at the output rate).
+const PSG_DC_R = 0.9995;
+// Mega Drive Model 1 analog low-pass default cutoff (Hz).
+const MD_LPF_DEFAULT_CUTOFF = 3000;
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
@@ -31,16 +43,33 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._ymBufferPtr = 0;
     this._ymReady = false;
 
-    // SN76489 PSG (port=2 writes)
-    this._psgChip = new SN76489();
+    // Nuked-PSG (SEGA SN76489). port=2 writes feed raw latch/data bytes.
+    this._psgModule = null;
+    this._psgBufferPtr = 0;
+    this._psgReady = false;
+    this._psgNativeSR = PSG_NATIVE_SAMPLE_RATE;
     this._psgWriteQueue = []; // untimed PSG writes
     this._psgTimedQueue = []; // timed PSG writes: [{frame, data}]
+    // Native -> output decimation state (box filter) + DC blocker.
+    this._psgTickFrac = 0;
+    this._psgDcX = 0;
+    this._psgDcY = 0;
 
-    // Minimal software PCM voices (temporary until real sample bank loading lands)
+    // PCM voices feeding the YM2612 DAC (register 0x2a). The mix is summed and
+    // quantized to one 8-bit stream per FM native sample, then written through
+    // the real chip — exactly like the Z80 driver streaming the DAC.
     this._pcmTimedQueue = []; // timed PCM commands: [{frame, type, ...}]
     this._pcmVoices = [];
-    this._pcmFallbackSample = this._buildFallbackSample();
     this._pcmSamples = new Map();
+    this._dacEnabled = false;
+
+    // Switchable Mega Drive analog output low-pass (one-pole, per channel).
+    this._lpfOn = false;
+    this._lpfCutoff = MD_LPF_DEFAULT_CUTOFF;
+    this._lpfA = 0;
+    this._lpfYL = 0;
+    this._lpfYR = 0;
+    this._updateLpfCoeff();
 
     // Resampling state: we generate at NATIVE_SAMPLE_RATE and output at
     // the AudioContext sample rate (typically 44100 or 48000).
@@ -67,6 +96,21 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._ymCurrent = [0, 0];
         this._ymNext = this._renderYmOne();
         this._ymReady = true;
+      })
+      .catch((error) => {
+        this.port.postMessage({
+          type: "error",
+          message: String(error?.message ?? error),
+        });
+      });
+
+    this._psgInitPromise = psgModulePromise
+      .then((instance) => {
+        this._psgModule = instance;
+        this._psgModule._psg_init();
+        this._psgBufferPtr = this._psgModule._psg_get_buffer_ptr();
+        this._psgNativeSR = this._psgModule._psg_get_native_sample_rate();
+        this._psgReady = true;
       })
       .catch((error) => {
         this.port.postMessage({
@@ -128,6 +172,11 @@ class YM2612Processor extends AudioWorkletProcessor {
         for (const op of msg.ops) {
           this._writeQueue.push(op);
         }
+      } else if (msg.type === "set-analog-lpf") {
+        this._lpfOn = !!msg.on;
+        const c = Number(msg.cutoffHz);
+        if (Number.isFinite(c) && c > 0) this._lpfCutoff = c;
+        this._updateLpfCoeff();
       } else if (msg.type === "reset") {
         if (this._ymModule) {
           this._ymModule._nopn_reset();
@@ -137,18 +186,27 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._ymNext = this._ymModule ? this._renderYmOne() : [0, 0];
         this._writeQueue = [];
         this._timedQueue = [];
-        this._psgChip = new SN76489();
+        if (this._psgModule) {
+          this._psgModule._psg_reset();
+        }
         this._psgWriteQueue = [];
         this._psgTimedQueue = [];
+        this._psgTickFrac = 0;
+        this._psgDcX = 0;
+        this._psgDcY = 0;
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
         this._pcmSamples = new Map();
+        this._setDacEnabled(false);
+        this._lpfYL = 0;
+        this._lpfYR = 0;
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
+        this._setDacEnabled(false);
       }
     };
   }
@@ -175,10 +233,33 @@ class YM2612Processor extends AudioWorkletProcessor {
     if (!this._ymModule) {
       return [0, 0];
     }
+    // Stream one PCM/DAC sample (mixed from the active voices) into the real
+    // YM2612 DAC right before advancing the chip one native sample.
+    if (this._dacEnabled) {
+      const f = this._mixDacSampleNative();
+      const dac8 = Math.max(0, Math.min(255, Math.round(f * 127) + 128));
+      this._ymModule._nopn_set_dac_sample(dac8);
+    }
     this._ymModule._nopn_render(1);
     const base = this._ymBufferPtr >> 1;
     const heap = this._ymModule.HEAP16;
     return [heap[base] / 512, heap[base + 1] / 512];
+  }
+
+  _setDacEnabled(on) {
+    const next = !!on;
+    if (next === this._dacEnabled) return;
+    this._dacEnabled = next;
+    if (this._ymModule) {
+      this._ymModule._nopn_set_dac_enabled(next ? 1 : 0);
+    }
+  }
+
+  _updateLpfCoeff() {
+    // One-pole low-pass: y += a * (x - y), a = 1 - exp(-2*pi*fc/fs).
+    const fs = this._outputSR || sampleRate;
+    const a = 1 - Math.exp((-2 * Math.PI * this._lpfCutoff) / fs);
+    this._lpfA = Math.max(0, Math.min(1, a));
   }
 
   _drainImmediateYmWrites() {
@@ -194,17 +275,6 @@ class YM2612Processor extends AudioWorkletProcessor {
     });
   }
 
-  _buildFallbackSample() {
-    const length = 1024;
-    const out = new Float32Array(length);
-    for (let i = 0; i < length; i++) {
-      const t = i / length;
-      const env = 1 - t;
-      out[i] = Math.sin(2 * Math.PI * 4 * t) * env * 0.6;
-    }
-    return out;
-  }
-
   _startPcmVoice(msg) {
     const rate = Number(msg.rate);
     const vel = Number(msg.vel);
@@ -215,14 +285,17 @@ class YM2612Processor extends AudioWorkletProcessor {
       Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15),
     );
     const sampleEntry = this._pcmSamples.get(sample);
-    const data = sampleEntry?.data ?? this._pcmFallbackSample;
+    const data = sampleEntry?.data;
+    if (!data || data.length === 0) return; // missing sample: nothing to play
     const baseRateMsg = Number(msg.baseRate);
     const baseRate =
       Number.isFinite(baseRateMsg) && baseRateMsg > 0
         ? baseRateMsg
-        : (sampleEntry?.sampleRate ?? this._outputSR);
+        : (sampleEntry?.sampleRate ?? this._nativeSR);
+    // Voices advance at the FM native rate, since the DAC stream is written
+    // once per native chip sample.
     const rawStep =
-      (Number.isFinite(rate) ? rate : 1) * (baseRate / this._outputSR);
+      (Number.isFinite(rate) ? rate : 1) * (baseRate / this._nativeSR);
     const step = Math.max(0.01, rawStep);
     const mode = msg.mode === "loop" ? "loop" : "shot";
     const ch = Number(msg.ch);
@@ -274,7 +347,10 @@ class YM2612Processor extends AudioWorkletProcessor {
     }
   }
 
-  _mixPcmSample() {
+  // Sum the active PCM voices into one signed float (~[-1, 1]) at the FM native
+  // rate. The caller quantizes this to the 8-bit DAC. Runs once per native
+  // chip sample (called from _renderYmOne).
+  _mixDacSampleNative() {
     let mixed = 0;
     const alive = [];
     for (const voice of this._pcmVoices) {
@@ -313,6 +389,56 @@ class YM2612Processor extends AudioWorkletProcessor {
     return mixed;
   }
 
+  // Render `blockSize` output-rate PSG samples: box-filter decimate the Nuked
+  // native stream (~223.7 kHz) down to the output rate, then DC-block and scale.
+  // PSG is mono; returns a single Float32Array.
+  _renderPsgBlock(blockSize) {
+    const out =
+      this._psgOut && this._psgOut.length === blockSize
+        ? this._psgOut
+        : (this._psgOut = new Float32Array(blockSize));
+    if (!this._psgReady) {
+      out.fill(0);
+      return out;
+    }
+    const ratio = this._psgNativeSR / this._outputSR;
+    const counts =
+      this._psgCounts && this._psgCounts.length === blockSize
+        ? this._psgCounts
+        : (this._psgCounts = new Int32Array(blockSize));
+
+    let frac = this._psgTickFrac;
+    let total = 0;
+    for (let i = 0; i < blockSize; i++) {
+      let ticks = Math.round(frac + ratio);
+      if (ticks < 1) ticks = 1;
+      frac += ratio - ticks;
+      counts[i] = ticks;
+      total += ticks;
+    }
+    this._psgTickFrac = frac;
+
+    this._psgModule._psg_render(total);
+    const heap = this._psgModule.HEAPF32;
+    let k = this._psgBufferPtr >> 2;
+    let dcX = this._psgDcX;
+    let dcY = this._psgDcY;
+    for (let i = 0; i < blockSize; i++) {
+      const n = counts[i];
+      let acc = 0;
+      for (let t = 0; t < n; t++) acc += heap[k++];
+      const s = (acc / n) * PSG_OUTPUT_GAIN;
+      // One-pole DC blocker: removes the unipolar offset and note-change thumps.
+      const y = s - dcX + PSG_DC_R * dcY;
+      dcX = s;
+      dcY = y;
+      out[i] = y;
+    }
+    this._psgDcX = dcX;
+    this._psgDcY = dcY;
+    return out;
+  }
+
   process(_inputs, outputs, _parameters) {
     const outL = outputs[0][0];
     const outR = outputs[0][1] ?? outputs[0][0]; // mono fallback
@@ -330,11 +456,11 @@ class YM2612Processor extends AudioWorkletProcessor {
 
     // Drain untimed PSG writes
     this._drainImmediateQueue(this._psgWriteQueue, (data) => {
-      this._psgChip.write(data);
+      if (this._psgModule) this._psgModule._psg_write(data & 0xff);
     });
     // Drain timed PSG writes scheduled for this block
     this._drainTimedQueue(this._psgTimedQueue, blockEnd, (op) => {
-      this._psgChip.write(op.data);
+      if (this._psgModule) this._psgModule._psg_write(op.data & 0xff);
     });
 
     // Drain timed PCM commands
@@ -346,13 +472,18 @@ class YM2612Processor extends AudioWorkletProcessor {
       }
     });
 
-    // Generate PSG samples at output rate (built-in decimation)
-    const psgL = new Float32Array(blockSize);
-    const psgR = new Float32Array(blockSize);
-    this._psgChip.clockAt(psgL, psgR, blockSize, sampleRate);
+    // Enable the YM2612 DAC while any PCM voice is active (sacrifices FM6).
+    this._setDacEnabled(this._pcmVoices.length > 0);
+
+    // Generate the PSG block (Nuked native rate -> output rate, decimated).
+    const psg = this._renderPsgBlock(blockSize);
+
+    const lpfOn = this._lpfOn;
+    const a = this._lpfA;
+    let yL = this._lpfYL;
+    let yR = this._lpfYR;
 
     for (let i = 0; i < blockSize; i++) {
-      const pcm = this._mixPcmSample();
       let ymL = 0;
       let ymR = 0;
 
@@ -368,9 +499,23 @@ class YM2612Processor extends AudioWorkletProcessor {
         }
       }
 
-      outL[i] = ymL + psgL[i] + pcm;
-      outR[i] = ymR + psgR[i] + pcm;
+      // PCM now rides through ymL/ymR via the chip DAC; PSG sums alongside.
+      let mixL = ymL + psg[i];
+      let mixR = ymR + psg[i];
+
+      if (lpfOn) {
+        yL += a * (mixL - yL);
+        yR += a * (mixR - yR);
+        mixL = yL;
+        mixR = yR;
+      }
+
+      outL[i] = mixL;
+      outR[i] = mixR;
     }
+
+    this._lpfYL = yL;
+    this._lpfYR = yR;
 
     return true; // keep processor alive
   }

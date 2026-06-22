@@ -9,6 +9,12 @@ static ym3438_t g_chip;
 static int16_t g_buffer[NOPN_MAX_RENDER_SAMPLES * 2];
 static int g_initialized = 0;
 
+// DAC streaming state. When enabled, FM channel 6 is replaced by the value of
+// register 0x2a, which we restream every rendered sample. 0x80 is the centered
+// (silent) value: ym3438 maps 0x2a writes as (value ^ 0x80) << 1.
+static int g_dac_enabled = 0;
+static int g_dac_sample = 0x80;
+
 static void nopn_clock_cycles(int cycles) {
   int16_t frame[2] = {0, 0};
   for (int i = 0; i < cycles; i++) {
@@ -33,6 +39,29 @@ int nopn_init(void) {
 void nopn_reset(void) {
   nopn_ensure_init();
   OPN2_Reset(&g_chip);
+  g_dac_enabled = 0;
+  g_dac_sample = 0x80;
+}
+
+// Enable/disable the DAC (register 0x2b bit7). Called rarely (on transitions),
+// so the extra latch cycles are negligible. Sacrifices FM channel 6 while on.
+void nopn_set_dac_enabled(int on) {
+  nopn_ensure_init();
+  g_dac_enabled = on ? 1 : 0;
+  OPN2_Write(&g_chip, 0, 0x2b);
+  nopn_clock_cycles(24);
+  OPN2_Write(&g_chip, 1, (uint8_t)(on ? 0x80 : 0x00));
+  nopn_clock_cycles(24);
+  if (!on) {
+    g_dac_sample = 0x80;
+  }
+}
+
+// Set the unsigned-8-bit DAC value (0x80 = center) to be streamed on the next
+// render. The actual 0x2a write is folded into nopn_render's per-sample clock
+// budget so it adds no extra cycles.
+void nopn_set_dac_sample(int value) {
+  g_dac_sample = value & 0xff;
 }
 
 void nopn_write_reg(int port, int addr, int data) {
@@ -66,6 +95,16 @@ int nopn_render(int sample_count) {
     int32_t acc_l = 0;
     int32_t acc_r = 0;
     for (int i = 0; i < NOPN_CLOCKS_PER_SAMPLE; i++) {
+      // Restream the DAC byte within this sample's clock budget: select the
+      // 0x2a data register, then write the value a few cycles later so the
+      // address latch has settled. No extra clocks are spent.
+      if (g_dac_enabled) {
+        if (i == 0) {
+          OPN2_Write(&g_chip, 0, 0x2a);
+        } else if (i == 8) {
+          OPN2_Write(&g_chip, 1, (uint8_t)g_dac_sample);
+        }
+      }
       int16_t frame[2] = {0, 0};
       OPN2_Clock(&g_chip, frame);
       acc_l += frame[0];

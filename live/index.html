@@ -666,6 +666,10 @@
           <span>Toggle Comment</span>
           <span class="menu-item-shortcut" id="toggleCommentShortcut"></span>
         </button>
+        <button class="menu-item" onclick="toggleAnalogLpf();closeMenus()">
+          <span>Analog LPF</span>
+          <span class="menu-item-shortcut" id="analogLpfCheck"></span>
+        </button>
         <div class="menu-wrap submenu-wrap" id="menuToolsSnippets">
           <button class="menu-item" onclick="toggleSubmenu('menuToolsSnippets')">
             <span>Snippets</span>
@@ -2525,8 +2529,25 @@
         }
       };
       workletNode.connect(audioCtx.destination);
+      // Apply the current analog-LPF state to the freshly created node.
+      workletNode.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
       _workletReady = true;
     }
+
+    // Mega Drive Model 1 analog output low-pass (~3 kHz). Switchable.
+    const ANALOG_LPF_CUTOFF = 3000;
+    let analogLpfOn = false;
+    function updateAnalogLpfCheck() {
+      const el = document.getElementById('analogLpfCheck');
+      if (el) el.textContent = analogLpfOn ? '✓' : '';
+    }
+    function toggleAnalogLpf() {
+      analogLpfOn = !analogLpfOn;
+      updateAnalogLpfCheck();
+      workletNode?.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
+    }
+    // Module-scope functions aren't global; expose for the inline onclick.
+    window.toggleAnalogLpf = toggleAnalogLpf;
 
     // Pre-load the worklet module on page load (no user gesture needed).
     // AudioContext starts suspended — we only need to resume() on first click.

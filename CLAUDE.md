@@ -21,7 +21,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `ir-utils.js`         | Shared: pitch/MIDI conversion, target ranges, curve sampling  |
 | `ir-player.js`        | Runtime: schedule IR events, run macros, write chip registers |
 | `mmlisp-formatter.js` | Source formatter                                              |
-| `nuked-opn2.js`, `sn76489.js` | YM2612 / PSG emulation cores                          |
+| `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `player/wasm/`) |
 
 Specs: `docs/spec-v0.5.md` is canonical (`§5` is the decision table).
 `docs/spec-v0.4.md` is **legacy** — reference only, do not implement against it.
