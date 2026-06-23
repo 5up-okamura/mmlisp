@@ -162,6 +162,7 @@ export function parse(input) {
         throw new Error(`Unclosed ${open} at ${token.line}:${token.column}`);
       }
       const endLine = current().line;
+      const endColumn = current().column + 1; // one past the closing bracket
       pos += 1;
       return {
         kind: "list",
@@ -170,6 +171,7 @@ export function parse(input) {
         line: token.line,
         column: token.column,
         endLine,
+        endColumn,
       };
     }
 

@@ -922,10 +922,20 @@ export class IRPlayer {
 
   /**
    * Register a callback fired (approximately) when each event plays.
-   * @param {((line: number) => void) | null} fn  1-based source line number
+   * @param {((trackIdx: number, src: { line, column, endLine, endColumn }) => void) | null} fn
+   *   src is the 1-based source span of the token that produced the event.
    */
   setOnLine(fn) {
     this._onLine = fn;
+  }
+
+  /**
+   * Register a callback fired when a step-sequence macro starts/stops sounding.
+   * @param {((show: boolean, src: { line, column, endLine, endColumn }) => void) | null} fn
+   *   show=true at the sequence's start time, show=false at its end time.
+   */
+  setOnSeq(fn) {
+    this._onSeq = fn;
   }
 
   /** Register a callback fired each scheduler interval with the current playback position. */
@@ -1009,9 +1019,9 @@ export class IRPlayer {
 
           this._dispatchEvent(ev, evTime);
           if (this._onLine && ev.src?.line != null) {
-            const line = ev.src.line;
+            const src = ev.src;
             const delay = Math.max(0, evTime - now) * 1000;
-            this._scheduleUiCallback(() => this._onLine(tIdx, line), delay);
+            this._scheduleUiCallback(() => this._onLine(tIdx, src), delay);
           }
           track.flatIndex++;
         }
@@ -2320,12 +2330,39 @@ export class IRPlayer {
     return Math.max(1, stepSpec.value) / 60; // frame
   }
 
+  // Thin wrapper: run the macro, and if it carries a source span (step
+  // sequences do), highlight that `[...]` literal for its sounding window.
+  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
+    const endTime = this._scheduleMacroImpl(
+      spec,
+      noteFrames,
+      gateSecs,
+      when,
+      writeFn,
+      stepSecs,
+    );
+    if (spec?.src && this._onSeq) {
+      const src = spec.src;
+      const now = this._audioContext.currentTime;
+      const hideAt = endTime ?? gateSecs;
+      this._scheduleUiCallback(
+        () => this._onSeq(true, src),
+        Math.max(0, when - now) * 1000,
+      );
+      this._scheduleUiCallback(
+        () => this._onSeq(false, src),
+        Math.max(0, hideAt - now) * 1000,
+      );
+    }
+    return endTime;
+  }
+
   // Core macro scheduler shared by all targets and types.
   // stepSecs is the per-step duration for step-vector macros (the :step clock);
   // curve/stage sampling stays at 60 Hz.
   // Returns the audio time immediately after the last scheduled write (for
   // scheduling silence), or null if no writes were made (curve type or empty).
-  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
+  _scheduleMacroImpl(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
     if (!spec) return null;
 
     // :step is the macro sampling clock. Curve/stage macros sample (and hold)

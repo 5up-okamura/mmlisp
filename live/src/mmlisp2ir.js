@@ -979,7 +979,9 @@ function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
         steps.push(null); // hold: advance 1 frame, no write
       }
     }
-    return { type: "steps", steps, loopIndex, releaseIndex };
+    // src spans the whole `[...]` literal so the player can highlight the
+    // sounding step sequence during playback.
+    return { type: "steps", steps, loopIndex, releaseIndex, src: nodeSrc(node) };
   }
   // Curve form: (ease-out :from 15 :to 0 :len 1)
   if (node.kind === "list" && node.bracket === "()") {
@@ -1556,8 +1558,20 @@ function getKeywordMap(items, startIndex) {
   return map;
 }
 
+// Source span for a node: { line, column } start plus { endLine, endColumn }
+// end, all 1-based; endColumn is one past the last character. Lists carry their
+// own end (from the parser); atom-likes span their literal text on one line.
 function nodeSrc(node) {
-  return { line: node.line, column: node.column };
+  const src = { line: node.line, column: node.column };
+  if (node.kind === "list") {
+    src.endLine = node.endLine ?? node.line;
+    src.endColumn = node.endColumn ?? node.column + 1;
+  } else {
+    const len = typeof node.value === "string" ? node.value.length : 1;
+    src.endLine = node.line;
+    src.endColumn = node.column + Math.max(1, len);
+  }
+  return src;
 }
 
 function parseSingleChannel(channelNode) {
