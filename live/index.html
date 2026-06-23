@@ -953,14 +953,32 @@
       'sqr1','sqr2','sqr3','noise',
       'pcm1','pcm2','pcm3',
     ];
+    // Keyword params suggested after ':'. Keep in sync with the keywords the
+    // compiler accepts (mmlisp2ir.js: canonicalTarget, track/note options,
+    // curve params). FM operator params are generated per operator (1–4).
+    const AC_FM_OP_PARAMS = ['ar','dr','sr','rr','sl','tl','ml','dt','ks','am']
+      .flatMap(p => [1, 2, 3, 4].map(op => `:${p}${op}`));
     const AC_PARAMS = [
-      ':oct',':len',':gate',':vel',':vol',
-      ':tempo',':shuffle',':shuffle-base',':prio',
-      ':ch',':id',':title',':author',
-      ':macro',':loop',':loop-start',':loop-end',
-      ':mode',':lfo-rate',':pitch',':extend',
-      ':from',':to',
-      ':rate',':csm-rate',':file',':sample',
+      // score / meta
+      ':title',':author',':tempo',':lfo-rate',':shuffle',':shuffle-base',
+      // track / channel
+      ':ch',':id',':prio',':oct',':len',':gate',':vel',':vol',':volume',
+      ':master',':pan',':mode',':write',
+      // note dynamics / sequencer
+      ':pitch',':semi',':keyon',':delay',':delay-vels',':glide',':glide-from',
+      ':tempo-scale',':csm-rate',
+      // macro / voice / definitions
+      ':macro',':extend',':step',':loop',':loop-start',':loop-end',
+      ':file',':sample',':rate',
+      // PCM / effects
+      ':bit-depth',':compress',':reverb',
+      // curve params
+      ':from',':to',':phase',':wait',':duty',':skew',':hold',':jitter',
+      ':beta',':octaves',':lacunarity',':persistence',':leak',
+      // FM channel
+      ':alg',':fb',':ams',':fms',
+      // FM operator params (×4)
+      ...AC_FM_OP_PARAMS,
     ];
     const AC_MODE_VALUES = ['shot', 'loop'];
 
