@@ -145,6 +145,24 @@ function readU16LE(view, offset) {
   return view.getUint16(offset, true);
 }
 
+// Integer GCD/LCM, used to size the VGM loop window to the common period of
+// independently-looping tracks. Guards against zero/garbage durations.
+function gcd(a, b) {
+  a = Math.abs(Math.round(a));
+  b = Math.abs(Math.round(b));
+  while (b) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+function lcm(a, b) {
+  a = Math.max(1, Math.round(a));
+  b = Math.max(1, Math.round(b));
+  const g = gcd(a, b);
+  return g ? (a / g) * b : a;
+}
+
 function readI16LE(view, offset) {
   return view.getInt16(offset, true);
 }
@@ -995,6 +1013,21 @@ export class IRPlayer {
     const now = this._audioContext.currentTime;
     const horizon = now + this._schedulerLookahead;
 
+    if (this._scheduleStep(now, horizon)) return;
+
+    this._schedulerTimer = setTimeout(
+      () => this._scheduleLoop(),
+      this._schedulerInterval,
+    );
+  }
+
+  // Schedule every track's events up to `horizon`, dispatching register writes
+  // and handling per-track loop restarts. Returns true when playback is
+  // complete (no track will loop further and all events are exhausted). The
+  // scheduling decisions depend only on `now`/`horizon`, so an offline capture
+  // (captureRegisterLog) can drive this with a manually advanced clock instead
+  // of the real audio timer.
+  _scheduleStep(now, horizon) {
     this._updateTempoSweep(now);
     const secsPerTick = this._secsPerTick;
 
@@ -1045,19 +1078,180 @@ export class IRPlayer {
       }
     }
 
-    // Stop scheduler when no track will loop further and all are exhausted
+    // Playback is complete when no track will loop further and all are exhausted.
     const willLoopAny = this._loop && this._tracks.some((t) => t.hasLoop);
-    if (
+    return (
       !willLoopAny &&
       this._tracks.every((t) => t.flatIndex >= t.events.length)
-    ) {
-      return;
+    );
+  }
+
+  /**
+   * Render the loaded IR to a flat, time-ordered register-write log without
+   * touching real audio. Drives the same scheduling logic as play() but with a
+   * manually advanced clock and a capturing write callback, so the result is a
+   * deterministic transcript of every YM2612/PSG write — the basis for VGM
+   * export.
+   *
+   * Tracks loop independently (each `(goto …)` returns that track to its own
+   * label), and a track may have an intro before its label — so loop-start
+   * ticks differ per track. The single VGM loop point must be where *every*
+   * track has entered its repeating body, i.e. the LATEST loop-start tick among
+   * looping tracks; anything earlier would replay another track's intro on each
+   * pass. The loop length is the LCM of the per-track loop durations. To fill
+   * that window for every track (a track with an earlier/shorter body must keep
+   * repeating through it), capture runs with looping ENABLED and stops once the
+   * clock passes the loop end. `loopStartSec`/`endSec` bound the region the VGM
+   * player repeats; the intro before `loopStartSec` plays once.
+   *
+   * Object-form (DAC/PCM) writes are counted in `pcmCount` but not recorded —
+   * VGM export covers FM + PSG only for now.
+   *
+   * @returns {{ writes: Array<{sec:number,port:number,addr:number,data:number}>,
+   *             pcmCount: number, loopStartSec: number|null, endSec: number }}
+   */
+  captureRegisterLog({ stepSec = 0.01, maxSec = 1200 } = {}) {
+    if (!this._ir) throw new Error("No IR loaded");
+
+    // A non-zero base time so that init writes (emitted with when=undefined)
+    // map cleanly to sec 0 ahead of the first scheduled event.
+    const BASE = 1.0;
+
+    const writes = [];
+    let pcmCount = 0;
+
+    const saved = {
+      write: this._write,
+      onLine: this._onLine,
+      onTick: this._onTick,
+      onParam: this._onParam,
+      onSeq: this._onSeq,
+      ctx: this._audioContext,
+      loop: this._loop,
+      playing: this._playing,
+      bpm: this._bpm,
+      tempoSweep: this._tempoSweep,
+    };
+
+    // Silence every UI callback so no real setTimeout fires during capture.
+    this._onLine = null;
+    this._onTick = null;
+    this._onParam = null;
+    this._onSeq = null;
+
+    this._write = (portOrMsg, addr, data, when) => {
+      if (portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg)) {
+        pcmCount++; // DAC/PCM event — not encoded into VGM yet
+        return;
+      }
+      const sec = (when == null ? BASE : when) - BASE;
+      writes.push({
+        sec,
+        port: portOrMsg | 0,
+        addr: addr & 0xff,
+        data: data & 0xff,
+      });
+    };
+
+    let loopStartSec = null;
+    let endSec = 0;
+
+    try {
+      this._audioContext = { currentTime: BASE, state: "running", resume() {} };
+      this._playing = true;
+      this._bpm = this._resolveInitialTempo(this._ir);
+      this._tempoSweep = null;
+
+      this._initDefaultVoices(); // preamble register writes (when=undefined → sec 0)
+
+      this._fm3OpIntervals = [];
+      this._tracks = this._flattenTracks();
+      for (const t of this._tracks) {
+        t.audioTimeAtTick0 = BASE;
+        t.startAudioTime = BASE;
+        t.loopCount = 0;
+        t.flatIndex = 0;
+      }
+
+      const looping = this._tracks.filter((t) => t.hasLoop);
+      this._loop = looping.length > 0;
+
+      // Global loop point = latest per-track loop start (every track is in its
+      // body by then). `refTrack` owns that tick, so its live tick→time mapping
+      // gives an exact loopStartSec even under a tempo set before the loop.
+      // Loop length = LCM of the per-track loop durations.
+      let refTrack = null;
+      let loopPeriodTicks = 1;
+      for (const t of looping) {
+        if (refTrack === null || t.loopStartTick > refTrack.loopStartTick) {
+          refTrack = t;
+        }
+        loopPeriodTicks = lcm(loopPeriodTicks, t.loopDuration);
+      }
+
+      // Drive a fake clock forward. One-shot pieces stop when fully scheduled;
+      // looping pieces never report "done", so we stop once the clock has
+      // passed the loop end (endSec, known once the loop start is reached).
+      let elapsed = 0;
+      let done = false;
+      while (elapsed <= maxSec) {
+        const now = BASE + elapsed;
+        this._audioContext.currentTime = now;
+        done = this._scheduleStep(now, now + this._schedulerLookahead);
+
+        // Capture the loop region the moment refTrack reaches its loop start,
+        // so secsPerTick reflects the tempo active there. refTrack has not
+        // looped yet at this point (its jump is later), so audioTimeAtTick0 is
+        // still its iteration-1 base.
+        if (
+          loopStartSec === null &&
+          refTrack &&
+          refTrack.flatIndex > refTrack.loopStartIndex
+        ) {
+          const secsPerTick = this._secsPerTick;
+          loopStartSec =
+            refTrack.audioTimeAtTick0 +
+            refTrack.loopStartTick * secsPerTick -
+            BASE;
+          endSec = loopStartSec + loopPeriodTicks * secsPerTick;
+        }
+
+        if (this._loop) {
+          // Keep going until we have captured one full loop body past its end.
+          if (loopStartSec !== null && now - BASE >= endSec) break;
+        } else if (done) {
+          break;
+        }
+
+        elapsed += stepSec;
+      }
+    } finally {
+      this._write = saved.write;
+      this._onLine = saved.onLine;
+      this._onTick = saved.onTick;
+      this._onParam = saved.onParam;
+      this._onSeq = saved.onSeq;
+      this._audioContext = saved.ctx;
+      this._loop = saved.loop;
+      this._playing = saved.playing;
+      this._bpm = saved.bpm;
+      this._tempoSweep = saved.tempoSweep;
     }
 
-    this._schedulerTimer = setTimeout(
-      () => this._scheduleLoop(),
-      this._schedulerInterval,
-    );
+    writes.sort((a, b) => a.sec - b.sec);
+
+    if (loopStartSec === null) {
+      // One-shot: end just after the last write so final releases ring out.
+      endSec = (writes.length ? writes[writes.length - 1].sec : 0) + 0.05;
+    } else {
+      // Looping: keep only [0, endSec). The clock ran slightly past the loop
+      // end to fully populate the window; those overflow writes belong to the
+      // next iteration and are dropped (the VGM player replays them via loop).
+      const kept = writes.filter((w) => w.sec < endSec);
+      return { writes: kept, pcmCount, loopStartSec, endSec };
+    }
+
+    return { writes, pcmCount, loopStartSec, endSec };
   }
 
   _flattenTracks() {

@@ -642,6 +642,15 @@
             <button class="menu-item" onclick="importOpni();closeMenus()">OPNI…</button>
           </div>
         </div>
+        <div class="menu-wrap submenu-wrap" id="menuExport">
+          <button class="menu-item" onclick="toggleSubmenu('menuExport')">
+            <span>Export</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown">
+            <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
+          </div>
+        </div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
           <span>Save</span>
           <span class="menu-item-shortcut" id="saveFileShortcut"></span>
@@ -806,6 +815,7 @@
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
+    import { renderVgm } from './src/vgm-export.js';
     import { midiToFnumBlock } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -2287,6 +2297,64 @@
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
     }
 
+    async function exportVgm() {
+      const src = editorView.state.doc.toString();
+      let ir;
+      try {
+        const compiled = compileMMLisp(src, _lastFileName);
+        const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
+        if (errors.length > 0) {
+          log('Cannot export VGM: source has compile errors', 'err');
+          return;
+        }
+        ir = compiled.ir;
+      } catch (e) {
+        log('VGM export failed to compile: ' + e.message, 'err');
+        return;
+      }
+
+      let bytes, pcmCount;
+      try {
+        const offline = new IRPlayer(() => {});
+        offline.loadJSON(ir);
+        ({ bytes, pcmCount } = renderVgm(offline, {
+          title: ir.metadata?.title,
+          author: ir.metadata?.author,
+        }));
+      } catch (e) {
+        log('VGM export failed: ' + e.message, 'err');
+        return;
+      }
+      if (pcmCount > 0) {
+        log(`VGM export: skipped ${pcmCount} DAC/PCM event(s) (FM + PSG only)`, 'err');
+      }
+
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '.vgm';
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'VGM', accept: { 'application/octet-stream': ['.vgm'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = suggestedName;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+        log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('VGM save failed: ' + e.message, 'err');
+      }
+    }
+
     async function saveFile() {
       if (!_sourceHandle) {
         await saveFileAs();
@@ -2884,6 +2952,7 @@
     window.openFile     = openFile;
     window.saveFile     = saveFile;
     window.saveFileAs   = saveFileAs;
+    window.exportVgm    = exportVgm;
 
     // -----------------------------------------------------------------------
     // Parameter UI
