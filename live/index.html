@@ -526,6 +526,7 @@
       justify-content: center;
       text-align: center;
     }
+    .kbd-btn[hidden] { display: none; }
     .kbd-btn svg {
       width: 0.8rem;
       height: 0.8rem;
@@ -789,13 +790,13 @@
             <button class="kbd-btn" id="btnStepRec" title="Step Input" aria-label="Step Input">
               <svg viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="3.2"/></svg>
             </button>
-            <button class="kbd-btn" id="btnStepDel" title="Delete Last" aria-label="Delete Last">
+            <button class="kbd-btn" id="btnStepDel" title="Delete Last" aria-label="Delete Last" hidden>
               <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M4 1 L1 5 L4 9 H11 V1 Z M5.2 3.2 L6.8 5 L5.2 6.8 L6 7.6 L7.8 6 L9.6 7.6 L10.4 6.8 L8.8 5 L10.4 3.2 L9.6 2.4 L7.8 4 L6 2.4 Z"/></svg>
             </button>
-            <button class="kbd-btn" id="btnStepRest" title="Rest" aria-label="Rest">
+            <button class="kbd-btn" id="btnStepRest" title="Rest" aria-label="Rest" hidden>
               <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="4.4" width="7" height="1.2"/></svg>
             </button>
-            <button class="kbd-btn" id="btnStepTie" title="Tie" aria-label="Tie">
+            <button class="kbd-btn" id="btnStepTie" title="Tie" aria-label="Tie" hidden>
               <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M4 3.5C2.9 3.5 2 4.4 2 5.5S2.9 7.5 4 7.5H5.5V6.3H4C3.55 6.3 3.2 5.95 3.2 5.5S3.55 4.7 4 4.7H5.5V3.5H4ZM8 2.5H6.5V3.7H8C8.45 3.7 8.8 4.05 8.8 4.5S8.45 5.3 8 5.3H6.5V6.5H8C9.1 6.5 10 5.6 10 4.5S9.1 2.5 8 2.5ZM4.8 4.9H7.2V6.1H4.8Z"/></svg>
             </button>
           </div>
@@ -3571,9 +3572,13 @@
       const delBtn = document.getElementById('btnStepDel');
       const restBtn = document.getElementById('btnStepRest');
       const tieBtn = document.getElementById('btnStepTie');
-      if (delBtn) delBtn.disabled = !_stepInputEnabled;
-      if (restBtn) restBtn.disabled = !_stepInputEnabled;
-      if (tieBtn) tieBtn.disabled = !_stepInputEnabled;
+      // The step-edit buttons only make sense while recording; hide them
+      // entirely when REC is off.
+      for (const btn of [delBtn, restBtn, tieBtn]) {
+        if (!btn) continue;
+        btn.hidden = !_stepInputEnabled;
+        btn.disabled = !_stepInputEnabled;
+      }
     }
 
     function initKeyboardControls() {
