@@ -70,6 +70,18 @@ function normalizeListItems(items) {
       continue;
     }
 
+    // Collapse whitespace in the value of a COLLAPSE_STRING_KEYS keyword, once
+    // here so every downstream path (inline and multi-line) sees it normalized.
+    if (item.kind === "string") {
+      const prev = out[out.length - 1];
+      if (prev && prev.kind === "atom" && COLLAPSE_STRING_KEYS.has(prev.value)) {
+        out.push({ ...item, value: item.value.replace(/\s+/g, " ").trim() });
+      } else {
+        out.push(item);
+      }
+      continue;
+    }
+
     if (item.kind !== "atom") {
       out.push(item);
       continue;
@@ -114,13 +126,6 @@ function normalizeRoots(roots) {
   });
 }
 
-function normalizeStringForKey(key, value) {
-  if (!COLLAPSE_STRING_KEYS.has(key)) {
-    return value;
-  }
-  return value.replace(/\s+/g, " ").trim();
-}
-
 function escapeString(value) {
   return value
     .replace(/\\/g, "\\\\")
@@ -128,6 +133,13 @@ function escapeString(value) {
     .replace(/\r/g, "\\r")
     .replace(/\n/g, "\\n")
     .replace(/\t/g, "\\t");
+}
+
+// Blank lines to emit between two source-adjacent items, derived from their line
+// gap (an N-line gap → N-1 blanks). Returns 0 when either line is unknown.
+function sourceGapBlanks(prevLine, curLine) {
+  if (prevLine <= 0 || curLine <= 0) return 0;
+  return Math.max(0, curLine - prevLine - 1);
 }
 
 function nodeToInline(node) {
@@ -224,15 +236,19 @@ function indentBlock(text, prefix) {
 }
 
 function collectKeywordPairs(items, startIndex) {
-  const pairs = []; // each entry: [keyNode, valueNode, trailingComment | null]
+  const pairs = []; // each entry: [keyNode, valueNode | null, trailingComment | null]
   let index = startIndex;
   while (index < items.length) {
     // Stop at standalone comments so they remain in the body section.
     if (isCommentNode(items[index])) break;
-    if (index + 1 >= items.length || !isKeyword(items[index])) break;
+    if (!isKeyword(items[index])) break;
     const keyNode = items[index];
-    const valueNode = items[index + 1];
-    index += 2;
+    // A keyword immediately followed by another keyword is a valueless tag
+    // (e.g. the :macro type marker), not a key whose value is that keyword.
+    const isTag = isKeyword(items[index + 1]);
+    if (!isTag && index + 1 >= items.length) break;
+    const valueNode = isTag ? null : items[index + 1];
+    index += isTag ? 1 : 2;
     // Attach a trailing comment on the same source line.
     let trailingComment = null;
     if (
@@ -377,7 +393,6 @@ function formatList(node) {
 
   const open = node.bracket[0];
   const close = node.bracket[1];
-  const indent = "";
   const childIndent = INDENT;
 
   if (node.items.length === 0) {
@@ -390,15 +405,31 @@ function formatList(node) {
     for (const item of node.items) {
       lines.push(indentBlock(formatNode(item), childIndent));
     }
-    lines.push(`${indent}${close}`);
+    lines.push(close);
     return lines.join("\n");
   }
 
-  const head = formatNode(node.items[0]);
-  const headSymbol = node.items[0].kind === "atom" ? node.items[0].value : "";
+  // The head is the first non-comment item; any comments before it are emitted
+  // on their own lines rather than being mistaken for the head symbol.
+  let headIndex = 0;
+  while (headIndex < node.items.length && isCommentNode(node.items[headIndex])) {
+    headIndex += 1;
+  }
+  const preHeadComments = node.items.slice(0, headIndex);
+  if (headIndex === node.items.length) {
+    // A form containing only comments — emit them and close.
+    const lines = ["("];
+    for (const c of preHeadComments) lines.push(`${childIndent}${c.value}`);
+    lines.push(")");
+    return lines.join("\n");
+  }
+
+  const head = formatNode(node.items[headIndex]);
+  const headSymbol =
+    node.items[headIndex].kind === "atom" ? node.items[headIndex].value : "";
   const { leadArgs, nextIndex: pairStartIndex } = collectLeadArgs(
     node.items,
-    1,
+    headIndex + 1,
     headSymbol,
   );
   const leadText = joinAtomsWithSourceSpacing(
@@ -409,36 +440,42 @@ function formatList(node) {
     })),
   );
   const lines = [leadText ? `(${head} ${leadText}` : `(${head}`];
+  for (const c of preHeadComments) {
+    lines.push(`${childIndent}${c.value}`);
+  }
 
   const { pairs, nextIndex } = collectKeywordPairs(node.items, pairStartIndex);
   let pairOffset = 0;
-  if (leadArgs.length === 0 && pairs.length > 0) {
-    const firstKey = formatNode(pairs[0][0]);
-    const firstValue = formatNode(pairs[0][1]);
-    if (!firstValue.includes("\n")) {
-      lines[0] = `${lines[0]} ${firstKey} ${firstValue}`;
-      pairOffset = 1;
-      // Also absorb subsequent pairs that are on the same source line.
-      const firstLine = pairs[0][0].line || 0;
-      while (pairOffset < pairs.length) {
-        const [kNode, vNode] = pairs[pairOffset];
-        if (firstLine === 0 || (kNode.line || 0) !== firstLine) break;
-        const kText = formatNode(kNode);
-        const vText = formatNode(vNode);
-        if (vText.includes("\n")) break;
-        lines[0] = `${lines[0]} ${kText} ${vText}`;
-        pairOffset += 1;
-      }
-      // Attach trailing comment of the last absorbed pair to the first line.
-      const lastAbsorbed = pairs[pairOffset - 1];
-      if (lastAbsorbed[2]) {
-        lines[0] = `${lines[0]} ${lastAbsorbed[2].value}`;
-      }
+  // Absorb onto the header line the keyword pairs the author wrote on the head's
+  // own source line (source-faithful, regardless of lead args). Pairs the author
+  // placed on later lines stay below.
+  const headLine = node.items[headIndex].line || 0;
+  while (pairOffset < pairs.length) {
+    const [kNode, vNode] = pairs[pairOffset];
+    if (headLine === 0 || (kNode.line || 0) !== headLine) break;
+    const vText = vNode ? formatNode(vNode) : null;
+    if (vText && vText.includes("\n")) break;
+    lines[0] =
+      vText === null
+        ? `${lines[0]} ${formatNode(kNode)}`
+        : `${lines[0]} ${formatNode(kNode)} ${vText}`;
+    pairOffset += 1;
+    // A trailing comment ends the source line; nothing else can be absorbed.
+    if (pairs[pairOffset - 1][2]) {
+      lines[0] = `${lines[0]} ${pairs[pairOffset - 1][2].value}`;
+      break;
     }
   }
 
   {
     let i = pairOffset;
+    // Preserve source blank lines between keyword pairs, like the body section.
+    let prevPairLine =
+      pairOffset > 0
+        ? pairs[pairOffset - 1][1]?.line || pairs[pairOffset - 1][0].line || 0
+        : leadArgs.length > 0
+          ? leadArgs[leadArgs.length - 1].line || 0
+          : node.items[headIndex].line || 0;
     while (i < pairs.length) {
       // Group consecutive pairs that share the same source line.
       const groupSourceLine = pairs[i][0].line || 0;
@@ -450,20 +487,26 @@ function formatList(node) {
       ) {
         const [keyNode, valueNode, trailingComment] = pairs[i];
         const keyText = formatNode(keyNode);
-        let valueText = formatNode(valueNode);
-        if (valueNode.kind === "string") {
-          valueText = `"${escapeString(normalizeStringForKey(keyText, valueNode.value))}"`;
-        }
+        const valueText = valueNode ? formatNode(valueNode) : null;
         groupParts.push({ keyText, valueText });
         if (trailingComment) groupTrailingComment = trailingComment;
         i += 1;
       }
 
+      for (let g = 0; g < sourceGapBlanks(prevPairLine, groupSourceLine); g += 1) {
+        lines.push("");
+      }
+      prevPairLine = pairs[i - 1][1]?.line || pairs[i - 1][0].line || prevPairLine;
+
       // If any value is multiline, fall back to one pair per line.
-      const hasMultiline = groupParts.some((p) => p.valueText.includes("\n"));
+      const hasMultiline = groupParts.some(
+        (p) => p.valueText && p.valueText.includes("\n"),
+      );
       if (hasMultiline) {
         for (const { keyText, valueText } of groupParts) {
-          if (!valueText.includes("\n")) {
+          if (valueText === null) {
+            lines.push(`${childIndent}${keyText}`);
+          } else if (!valueText.includes("\n")) {
             lines.push(`${childIndent}${keyText} ${valueText}`);
           } else {
             const valueLines = valueText.split("\n");
@@ -475,7 +518,7 @@ function formatList(node) {
         }
       } else {
         const combined = groupParts
-          .map((p) => `${p.keyText} ${p.valueText}`)
+          .map((p) => (p.valueText === null ? p.keyText : `${p.keyText} ${p.valueText}`))
           .join(" ");
         const suffix = groupTrailingComment
           ? ` ${groupTrailingComment.value}`
@@ -491,8 +534,8 @@ function formatList(node) {
   // the keyword section and the body are derived from source gaps, not forced.
   let previousLine =
     pairs.length > 0
-      ? pairs[pairs.length - 1][1].line || node.items[0].line || 0
-      : node.items[0].line || 0;
+      ? pairs[pairs.length - 1][1]?.line || node.items[headIndex].line || 0
+      : node.items[headIndex].line || 0;
   let bodyIndex = 0;
   while (bodyIndex < bodyItems.length) {
     const child = bodyItems[bodyIndex];
@@ -534,10 +577,8 @@ function formatList(node) {
     // If nothing was collected (e.g. a comment or multiline item), emit it alone.
     if (groupParts.length === 0) {
       const childText = formatNode(child);
-      if (previousLine > 0) {
-        const sourceGap = (child.line || 0) - previousLine;
-        const blankLines = Math.max(0, sourceGap - 1);
-        for (let g = 0; g < blankLines; g += 1) lines.push("");
+      for (let g = 0; g < sourceGapBlanks(previousLine, child.line || 0); g += 1) {
+        lines.push("");
       }
       lines.push(indentBlock(childText, childIndent));
       previousLine = child.endLine || child.line || previousLine;
@@ -546,17 +587,15 @@ function formatList(node) {
     }
 
     const childText = joinAtomsWithSourceSpacing(groupParts);
-    if (previousLine > 0) {
-      const sourceGap = (child.line || 0) - previousLine;
-      const blankLines = Math.max(0, sourceGap - 1);
-      for (let g = 0; g < blankLines; g += 1) lines.push("");
+    for (let g = 0; g < sourceGapBlanks(previousLine, child.line || 0); g += 1) {
+      lines.push("");
     }
     lines.push(indentBlock(childText, childIndent));
     const lastItem = bodyItems[bodyIndex - 1];
     previousLine = lastItem.endLine || lastItem.line || previousLine;
   }
 
-  lines.push(`${indent})`);
+  lines.push(")");
   return lines.join("\n");
 }
 
@@ -576,27 +615,6 @@ function formatNode(node) {
   throw new Error(`Unsupported node kind: ${node.kind}`);
 }
 
-function leadingTrivia(source) {
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const kept = [];
-  let i = 0;
-  while (i < lines.length) {
-    const trimmed = lines[i].trim();
-    if (trimmed === "" || trimmed.startsWith(";")) {
-      kept.push(lines[i].replace(/\s+$/g, ""));
-      i += 1;
-      continue;
-    }
-    break;
-  }
-
-  while (kept.length > 0 && kept[kept.length - 1] === "") {
-    kept.pop();
-  }
-
-  return kept.join("\n");
-}
-
 /**
  * Format a MMLisp source string.
  *
@@ -606,12 +624,23 @@ function leadingTrivia(source) {
  */
 export function formatMMLisp(source, parse) {
   const roots = normalizeRoots(parse(source));
-  // Root-level comments are preserved via leadingTrivia; filter here to avoid duplication.
-  const formattedRoots = roots
-    .filter((root) => root.kind !== "comment")
-    .map((root) => formatNode(root))
-    .join("\n\n");
-  const lead = leadingTrivia(source);
-  const combined = lead ? `${lead}\n\n${formattedRoots}` : formattedRoots;
-  return `${combined.trimEnd()}\n`;
+
+  const endLineOf = (node) => node.endLine || node.line || 0;
+
+  // Render every root in order, separated by exactly the blank lines present in
+  // the source (an N-line gap → N-1 blank lines) — the same rule already used
+  // for items inside a form. A comment on the line directly above a form is
+  // therefore adjacent and stays attached to it.
+  let out = "";
+  let prevEnd = 0;
+  for (const root of roots) {
+    const text = formatNode(root);
+    if (prevEnd > 0) {
+      out += "\n" + "\n".repeat(sourceGapBlanks(prevEnd, root.line || prevEnd));
+    }
+    out += text;
+    prevEnd = endLineOf(root);
+  }
+
+  return `${out.trimEnd()}\n`;
 }
