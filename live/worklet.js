@@ -15,45 +15,32 @@
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  */
 
-// WorkletGlobalScope: import the emulators as modules.
-// The paths are relative to the worklet file's URL.
-import createNukedModule from "./nuked-opn2.js";
-import createPsgModule from "./nuked-psg.js";
+// The Mega Drive chip-synthesis DSP (FM resample, PSG decimate + DC block, mix,
+// analog LPF) lives in the shared MegaDriveSynth core so this realtime worklet
+// and the offline WAV renderer (src/export-wav.js) stay in lockstep.
+// Path is relative to the worklet file's URL.
+import {
+  MegaDriveSynth,
+  NUKED_NATIVE_SAMPLE_RATE,
+  MD_LPF_DEFAULT_CUTOFF,
+} from "./src/synth-md.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
-const NUKED_NATIVE_SAMPLE_RATE = 7670454 / 144;
-const PSG_NATIVE_SAMPLE_RATE = 3579545 / 16;
-const nukedModulePromise = createNukedModule();
-const psgModulePromise = createPsgModule();
-
-// PSG output is a unipolar sum of up to 4 channels in [0, 4]. Scale it so a
-// single full-volume channel lands near the old core's level, and DC-block it
-// to remove the offset (and the thumps when notes change the offset).
-const PSG_OUTPUT_GAIN = 0.5;
-// One-pole DC blocker coefficient (~5 Hz high-pass at the output rate).
-const PSG_DC_R = 0.9995;
-// Mega Drive Model 1 analog low-pass default cutoff (Hz).
-const MD_LPF_DEFAULT_CUTOFF = 3000;
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
     super(options);
 
-    this._ymModule = null;
-    this._ymBufferPtr = 0;
-    this._ymReady = false;
+    // The shared synth (both chips + DSP); null until the cores finish loading.
+    this._synth = null;
 
-    // Nuked-PSG (SEGA SN76489). port=2 writes feed raw latch/data bytes.
-    this._psgModule = null;
-    this._psgBufferPtr = 0;
-    this._psgReady = false;
-    this._psgNativeSR = PSG_NATIVE_SAMPLE_RATE;
+    // FM native rate, used to advance PCM/DAC voices (the DAC stream is written
+    // once per FM native sample). Constant; equals the core's reported rate.
+    this._nativeSR = NUKED_NATIVE_SAMPLE_RATE;
+
+    // PSG write queues (port=2). Drained block-quantized in process().
     this._psgWriteQueue = []; // untimed PSG writes
     this._psgTimedQueue = []; // timed PSG writes: [{frame, data}]
-    // Native -> output decimation state (box filter) + DC blocker.
-    this._psgTickFrac = 0;
-    this._psgDcX = 0;
-    this._psgDcY = 0;
 
     // PCM voices feeding the YM2612 DAC (register 0x2a). The mix is summed and
     // quantized to one 8-bit stream per FM native sample, then written through
@@ -61,56 +48,28 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmTimedQueue = []; // timed PCM commands: [{frame, type, ...}]
     this._pcmVoices = [];
     this._pcmSamples = new Map();
-    this._dacEnabled = false;
 
-    // Switchable Mega Drive analog output low-pass (one-pole, per channel).
+    // Desired analog-LPF config, applied to the synth when it becomes ready and
+    // on every set-analog-lpf message. Buffered here so a toggle that arrives
+    // before the cores load still takes effect.
     this._lpfOn = false;
     this._lpfCutoff = MD_LPF_DEFAULT_CUTOFF;
-    this._lpfA = 0;
-    this._lpfYL = 0;
-    this._lpfYR = 0;
-    this._updateLpfCoeff();
 
-    // Resampling state: we generate at NATIVE_SAMPLE_RATE and output at
-    // the AudioContext sample rate (typically 44100 or 48000).
-    this._nativeSR = NUKED_NATIVE_SAMPLE_RATE;
-    this._outputSR = sampleRate; // AudioWorkletGlobalScope provides this
-    this._resampleRatio = this._nativeSR / this._outputSR;
-    this._ymFrac = 0;
-    this._ymCurrent = [0, 0];
-    this._ymNext = [0, 0];
+    // FM/PSG register write queues. Drained block-quantized in process().
+    this._writeQueue = []; // untimed: [{port, addr, data}]
+    this._timedQueue = []; // timed: [{frame, port, addr, data}]
 
-    // Untimed write queue: applied immediately at the next block boundary
-    this._writeQueue = [];
-    // Timed write queue: [{frame, port, addr, data}] sorted ascending by target frame
-    this._timedQueue = [];
+    // DAC byte provider handed to the synth: mix the active PCM voices to a
+    // signed float, quantize to the 8-bit DAC, once per FM native sample.
+    this._getDacByte = () => {
+      const f = this._mixDacSampleNative();
+      return Math.max(0, Math.min(255, Math.round(f * 127) + 128));
+    };
 
-    this._ymInitPromise = nukedModulePromise
-      .then((instance) => {
-        this._ymModule = instance;
-        this._ymModule._nopn_init();
-        this._ymBufferPtr = this._ymModule._nopn_get_buffer_ptr();
-        this._nativeSR = this._ymModule._nopn_get_native_sample_rate();
-        this._resampleRatio = this._nativeSR / this._outputSR;
-        this._ymFrac = 0;
-        this._ymCurrent = [0, 0];
-        this._ymNext = this._renderYmOne();
-        this._ymReady = true;
-      })
-      .catch((error) => {
-        this.port.postMessage({
-          type: "error",
-          message: String(error?.message ?? error),
-        });
-      });
-
-    this._psgInitPromise = psgModulePromise
-      .then((instance) => {
-        this._psgModule = instance;
-        this._psgModule._psg_init();
-        this._psgBufferPtr = this._psgModule._psg_get_buffer_ptr();
-        this._psgNativeSR = this._psgModule._psg_get_native_sample_rate();
-        this._psgReady = true;
+    MegaDriveSynth.create(sampleRate)
+      .then((synth) => {
+        synth.setLpf(this._lpfOn, this._lpfCutoff);
+        this._synth = synth;
       })
       .catch((error) => {
         this.port.postMessage({
@@ -157,7 +116,7 @@ class YM2612Processor extends AudioWorkletProcessor {
           if (!data || data.length === 0) continue;
           this._pcmSamples.set(name, {
             data,
-            sampleRate: Number.isFinite(sr) && sr > 0 ? sr : this._outputSR,
+            sampleRate: Number.isFinite(sr) && sr > 0 ? sr : sampleRate,
             loopStart: Number(s?.loopStart),
             loopEnd: Number(s?.loopEnd),
           });
@@ -176,37 +135,23 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._lpfOn = !!msg.on;
         const c = Number(msg.cutoffHz);
         if (Number.isFinite(c) && c > 0) this._lpfCutoff = c;
-        this._updateLpfCoeff();
+        this._synth?.setLpf(this._lpfOn, this._lpfCutoff);
       } else if (msg.type === "reset") {
-        if (this._ymModule) {
-          this._ymModule._nopn_reset();
-        }
-        this._ymFrac = 0;
-        this._ymCurrent = [0, 0];
-        this._ymNext = this._ymModule ? this._renderYmOne() : [0, 0];
+        this._synth?.reset();
         this._writeQueue = [];
         this._timedQueue = [];
-        if (this._psgModule) {
-          this._psgModule._psg_reset();
-        }
         this._psgWriteQueue = [];
         this._psgTimedQueue = [];
-        this._psgTickFrac = 0;
-        this._psgDcX = 0;
-        this._psgDcY = 0;
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
         this._pcmSamples = new Map();
-        this._setDacEnabled(false);
-        this._lpfYL = 0;
-        this._lpfYR = 0;
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
-        this._setDacEnabled(false);
+        this._synth?.setDacEnabled(false);
       }
     };
   }
@@ -229,49 +174,9 @@ class YM2612Processor extends AudioWorkletProcessor {
     }
   }
 
-  _renderYmOne() {
-    if (!this._ymModule) {
-      return [0, 0];
-    }
-    // Stream one PCM/DAC sample (mixed from the active voices) into the real
-    // YM2612 DAC right before advancing the chip one native sample.
-    if (this._dacEnabled) {
-      const f = this._mixDacSampleNative();
-      const dac8 = Math.max(0, Math.min(255, Math.round(f * 127) + 128));
-      this._ymModule._nopn_set_dac_sample(dac8);
-    }
-    this._ymModule._nopn_render(1);
-    const base = this._ymBufferPtr >> 1;
-    const heap = this._ymModule.HEAP16;
-    return [heap[base] / 512, heap[base + 1] / 512];
-  }
-
-  _setDacEnabled(on) {
-    const next = !!on;
-    if (next === this._dacEnabled) return;
-    this._dacEnabled = next;
-    if (this._ymModule) {
-      this._ymModule._nopn_set_dac_enabled(next ? 1 : 0);
-    }
-  }
-
-  _updateLpfCoeff() {
-    // One-pole low-pass: y += a * (x - y), a = 1 - exp(-2*pi*fc/fs).
-    const fs = this._outputSR || sampleRate;
-    const a = 1 - Math.exp((-2 * Math.PI * this._lpfCutoff) / fs);
-    this._lpfA = Math.max(0, Math.min(1, a));
-  }
-
   _drainImmediateYmWrites() {
-    if (!this._ymModule) {
-      return;
-    }
     this._drainImmediateQueue(this._writeQueue, (op) => {
-      this._ymModule._nopn_write_reg(
-        op.port ?? 0,
-        op.addr & 0xff,
-        op.data & 0xff,
-      );
+      this._synth.writeYM(op.port ?? 0, op.addr, op.data);
     });
   }
 
@@ -348,8 +253,8 @@ class YM2612Processor extends AudioWorkletProcessor {
   }
 
   // Sum the active PCM voices into one signed float (~[-1, 1]) at the FM native
-  // rate. The caller quantizes this to the 8-bit DAC. Runs once per native
-  // chip sample (called from _renderYmOne).
+  // rate. Quantized to the 8-bit DAC by _getDacByte, which the synth calls once
+  // per FM native sample while the DAC is enabled.
   _mixDacSampleNative() {
     let mixed = 0;
     const alive = [];
@@ -392,75 +297,30 @@ class YM2612Processor extends AudioWorkletProcessor {
   // Render `blockSize` output-rate PSG samples: box-filter decimate the Nuked
   // native stream (~223.7 kHz) down to the output rate, then DC-block and scale.
   // PSG is mono; returns a single Float32Array.
-  _renderPsgBlock(blockSize) {
-    const out =
-      this._psgOut && this._psgOut.length === blockSize
-        ? this._psgOut
-        : (this._psgOut = new Float32Array(blockSize));
-    if (!this._psgReady) {
-      out.fill(0);
-      return out;
-    }
-    const ratio = this._psgNativeSR / this._outputSR;
-    const counts =
-      this._psgCounts && this._psgCounts.length === blockSize
-        ? this._psgCounts
-        : (this._psgCounts = new Int32Array(blockSize));
-
-    let frac = this._psgTickFrac;
-    let total = 0;
-    for (let i = 0; i < blockSize; i++) {
-      let ticks = Math.round(frac + ratio);
-      if (ticks < 1) ticks = 1;
-      frac += ratio - ticks;
-      counts[i] = ticks;
-      total += ticks;
-    }
-    this._psgTickFrac = frac;
-
-    this._psgModule._psg_render(total);
-    const heap = this._psgModule.HEAPF32;
-    let k = this._psgBufferPtr >> 2;
-    let dcX = this._psgDcX;
-    let dcY = this._psgDcY;
-    for (let i = 0; i < blockSize; i++) {
-      const n = counts[i];
-      let acc = 0;
-      for (let t = 0; t < n; t++) acc += heap[k++];
-      const s = (acc / n) * PSG_OUTPUT_GAIN;
-      // One-pole DC blocker: removes the unipolar offset and note-change thumps.
-      const y = s - dcX + PSG_DC_R * dcY;
-      dcX = s;
-      dcY = y;
-      out[i] = y;
-    }
-    this._psgDcX = dcX;
-    this._psgDcY = dcY;
-    return out;
-  }
-
   process(_inputs, outputs, _parameters) {
     const outL = outputs[0][0];
     const outR = outputs[0][1] ?? outputs[0][0]; // mono fallback
     const blockSize = outL.length;
     const blockEnd = currentFrame + blockSize;
 
-    // Drain untimed YM writes (voice init, resets, etc.)
-    this._drainImmediateYmWrites();
-    // Drain timed writes scheduled for this block
-    this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
-      if (this._ymModule) {
-        this._ymModule._nopn_write_reg(op.port, op.addr & 0xff, op.data & 0xff);
-      }
-    });
+    const synth = this._synth;
+    if (!synth) {
+      // Cores still loading: emit silence but keep the processor alive.
+      outL.fill(0);
+      if (outR !== outL) outR.fill(0);
+      return true;
+    }
 
-    // Drain untimed PSG writes
-    this._drainImmediateQueue(this._psgWriteQueue, (data) => {
-      if (this._psgModule) this._psgModule._psg_write(data & 0xff);
+    // Apply this block's register writes up front (block-quantized timing).
+    this._drainImmediateYmWrites();
+    this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
+      synth.writeYM(op.port, op.addr, op.data);
     });
-    // Drain timed PSG writes scheduled for this block
+    this._drainImmediateQueue(this._psgWriteQueue, (data) => {
+      synth.writePSG(data);
+    });
     this._drainTimedQueue(this._psgTimedQueue, blockEnd, (op) => {
-      if (this._psgModule) this._psgModule._psg_write(op.data & 0xff);
+      synth.writePSG(op.data);
     });
 
     // Drain timed PCM commands
@@ -473,49 +333,12 @@ class YM2612Processor extends AudioWorkletProcessor {
     });
 
     // Enable the YM2612 DAC while any PCM voice is active (sacrifices FM6).
-    this._setDacEnabled(this._pcmVoices.length > 0);
+    synth.setDacEnabled(this._pcmVoices.length > 0);
 
-    // Generate the PSG block (Nuked native rate -> output rate, decimated).
-    const psg = this._renderPsgBlock(blockSize);
-
-    const lpfOn = this._lpfOn;
-    const a = this._lpfA;
-    let yL = this._lpfYL;
-    let yR = this._lpfYR;
-
-    for (let i = 0; i < blockSize; i++) {
-      let ymL = 0;
-      let ymR = 0;
-
-      if (this._ymReady) {
-        const t = this._ymFrac;
-        ymL = this._ymCurrent[0] * (1 - t) + this._ymNext[0] * t;
-        ymR = this._ymCurrent[1] * (1 - t) + this._ymNext[1] * t;
-        this._ymFrac += this._resampleRatio;
-        while (this._ymFrac >= 1) {
-          this._ymFrac -= 1;
-          this._ymCurrent = this._ymNext;
-          this._ymNext = this._renderYmOne();
-        }
-      }
-
-      // PCM now rides through ymL/ymR via the chip DAC; PSG sums alongside.
-      let mixL = ymL + psg[i];
-      let mixR = ymR + psg[i];
-
-      if (lpfOn) {
-        yL += a * (mixL - yL);
-        yR += a * (mixR - yR);
-        mixL = yL;
-        mixR = yR;
-      }
-
-      outL[i] = mixL;
-      outR[i] = mixR;
-    }
-
-    this._lpfYL = yL;
-    this._lpfYR = yR;
+    // All writes for the block are already applied, so the synth renders the
+    // PSG block in one call (onFrame omitted); the DAC byte is mixed per FM
+    // native sample via _getDacByte.
+    synth.renderInto(outL, outR, blockSize, null, this._getDacByte);
 
     return true; // keep processor alive
   }

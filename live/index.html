@@ -649,6 +649,7 @@
           </button>
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
+            <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
           </div>
         </div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
@@ -815,7 +816,8 @@
 
   <script type="module">
     import { IRPlayer } from './src/ir-player.js';
-    import { renderVgm } from './src/vgm-export.js';
+    import { renderVgm } from './src/export-vgm.js';
+    import { renderWav } from './src/export-wav.js';
     import { midiToFnumBlock } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -2355,6 +2357,62 @@
       }
     }
 
+    async function exportWav() {
+      const src = editorView.state.doc.toString();
+      let ir;
+      try {
+        const compiled = compileMMLisp(src, _lastFileName);
+        const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
+        if (errors.length > 0) {
+          log('Cannot export WAV: source has compile errors', 'err');
+          return;
+        }
+        ir = compiled.ir;
+      } catch (e) {
+        log('WAV export failed to compile: ' + e.message, 'err');
+        return;
+      }
+
+      let bytes, pcmCount, durationSec;
+      try {
+        log('Rendering WAV…', 'info');
+        const offline = new IRPlayer(() => {});
+        offline.loadJSON(ir);
+        ({ bytes, pcmCount, durationSec } = await renderWav(offline, { lpfOn: analogLpfOn }));
+      } catch (e) {
+        log('WAV export failed: ' + e.message, 'err');
+        return;
+      }
+      if (pcmCount > 0) {
+        log(`WAV export: skipped ${pcmCount} DAC/PCM event(s) (FM + PSG only)`, 'err');
+      }
+
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '.wav';
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'WAV', accept: { 'audio/wav': ['.wav'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = suggestedName;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+        log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('WAV save failed: ' + e.message, 'err');
+      }
+    }
+
     async function saveFile() {
       if (!_sourceHandle) {
         await saveFileAs();
@@ -2953,6 +3011,7 @@
     window.saveFile     = saveFile;
     window.saveFileAs   = saveFileAs;
     window.exportVgm    = exportVgm;
+    window.exportWav    = exportWav;
 
     // -----------------------------------------------------------------------
     // Parameter UI
