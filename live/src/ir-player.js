@@ -1521,6 +1521,13 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        // Monophonic priority: macro tails (echo/retrigger/curve) are cut a
+        // key-off lead before the next note on this channel, so they cannot
+        // bleed onto it and the next note keeps its normal lead-in.
+        const nextNote = this._nextNoteSecs(ev);
+        const macroLimit = Number.isFinite(nextNote)
+          ? nextNote - KEY_OFF_LEAD_SECS
+          : Infinity;
         const regs = this._chRegs[ch];
         regs.currentMidi = midi;
 
@@ -1575,12 +1582,14 @@ export class IRPlayer {
             when,
             gateTicks,
             basePitchWrite,
+            macroLimit,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
             when,
             gateTicks,
             basePitchWrite,
+            macroLimit,
           );
         } else {
           // FM3 OP1..3 notes use dedicated pitch registers; apply runtime pitch offset
@@ -1596,12 +1605,14 @@ export class IRPlayer {
             when,
             gateTicks,
             fm3PitchWrite,
+            macroLimit,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
             when,
             gateTicks,
             fm3PitchWrite,
+            macroLimit,
           );
         }
         this._scheduleFmVelMacro(
@@ -1611,6 +1622,7 @@ export class IRPlayer {
           ev.args?.velMacro,
           when,
           gateTicks,
+          macroLimit,
         );
         this._scheduleFmOpMacros(
           ch,
@@ -1619,6 +1631,7 @@ export class IRPlayer {
           ev.args ?? {},
           when,
           gateTicks,
+          macroLimit,
         );
         // Key on: all 4 operators (unless muted or vol=0).
         // YM2612: TL=127 gives totalAttn=1016 < 1023 (not silent at sustain),
@@ -1669,6 +1682,7 @@ export class IRPlayer {
               chKey,
               when,
               gateTicks,
+              macroLimit,
             );
           }
         }
@@ -1682,6 +1696,8 @@ export class IRPlayer {
             // With a keyon retrigger active, key off after the last retrigger
             // (keyonEnd) instead of at the gate, so the final tap isn't cut and
             // the boundary collision is avoided. Otherwise key off at the gate.
+            // keyonEnd is clamped to <= macroLimit (= next note - lead), so it
+            // is always before the next note's key-on — no collision.
             this._write(0, 0x28, chKey, keyonEnd != null ? keyonEnd : offWhen);
           }
         } else {
@@ -2205,6 +2221,36 @@ export class IRPlayer {
     };
   }
 
+  // Audio time of the next NOTE_ON on this event's track (the same channel), or
+  // Infinity if none remain. Used as the monophonic-priority cutoff so a note's
+  // macro tail (echo/retrigger) cannot bleed past the following note.
+  _nextNoteSecs(ev) {
+    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+    if (!track) return Infinity;
+    const secsPerTick = this._secsPerTick;
+    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
+      const ne = track.events[i];
+      if (ne.cmd === "NOTE_ON") {
+        return track.audioTimeAtTick0 + ne.tick * secsPerTick;
+      }
+    }
+    // No more notes this iteration: if the track loops, the next note is the
+    // first note of the next iteration (same time base as the loop restart at
+    // _scheduleLoop), so the last note's tail is clipped at the loop seam.
+    if (this._loop && track.hasLoop && track.loopDuration) {
+      for (let i = track.loopStartIndex ?? 0; i < track.events.length; i++) {
+        const ne = track.events[i];
+        if (ne.cmd === "NOTE_ON") {
+          return (
+            track.audioTimeAtTick0 +
+            (track.loopDuration + ne.tick) * secsPerTick
+          );
+        }
+      }
+    }
+    return Infinity;
+  }
+
   // Effective carrier TL = voiced (timbre) TL + velocity ladder + vol/master
   // attenuation, all as dB-domain offsets (preserving the patch's base level
   // and per-carrier balance).
@@ -2332,7 +2378,15 @@ export class IRPlayer {
 
   // Thin wrapper: run the macro, and if it carries a source span (step
   // sequences do), highlight that `[...]` literal for its sounding window.
-  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
+  _scheduleMacro(
+    spec,
+    noteFrames,
+    gateSecs,
+    when,
+    writeFn,
+    stepSecs = 1 / 60,
+    limitSecs = Infinity,
+  ) {
     const endTime = this._scheduleMacroImpl(
       spec,
       noteFrames,
@@ -2340,6 +2394,7 @@ export class IRPlayer {
       when,
       writeFn,
       stepSecs,
+      limitSecs,
     );
     if (spec?.src && this._onSeq) {
       const src = spec.src;
@@ -2362,8 +2417,25 @@ export class IRPlayer {
   // curve/stage sampling stays at 60 Hz.
   // Returns the audio time immediately after the last scheduled write (for
   // scheduling silence), or null if no writes were made (curve type or empty).
-  _scheduleMacroImpl(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60) {
+  _scheduleMacroImpl(
+    spec,
+    noteFrames,
+    gateSecs,
+    when,
+    writeFn,
+    stepSecs = 1 / 60,
+    limitSecs = Infinity,
+  ) {
     if (!spec) return null;
+
+    // Monophonic priority: the next note-on (limitSecs) supersedes this note's
+    // tail, so drop any write scheduled at/after it.
+    if (limitSecs !== Infinity) {
+      const inner = writeFn;
+      writeFn = (v, t) => {
+        if (t < limitSecs) inner(v, t);
+      };
+    }
 
     // :step is the macro sampling clock. Curve/stage macros sample (and hold)
     // every stepFrames; default 1f = 1 frame = 60 Hz (smooth, unchanged). A
@@ -2420,7 +2492,7 @@ export class IRPlayer {
         }
         t += budget / 60;
       }
-      return t;
+      return Math.min(t, limitSecs);
     }
 
     if (spec.type === "curve") {
@@ -2465,7 +2537,7 @@ export class IRPlayer {
           startWhen + frame / 60,
         );
       }
-      return startWhen + activeFrames / 60;
+      return Math.min(startWhen + activeFrames / 60, limitSecs);
     }
 
     if (spec.type === "steps") {
@@ -2501,9 +2573,9 @@ export class IRPlayer {
             writeFn(steps[ri], t);
           t += stepSecs;
         }
-        return t; // time after last release write
+        return Math.min(t, limitSecs); // time after last release write
       }
-      return gateSecs; // time at gate-off
+      return Math.min(gateSecs, limitSecs); // time at gate-off
     }
 
     return null;
@@ -2511,7 +2583,15 @@ export class IRPlayer {
 
   // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
   // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
-  _scheduleFmOpMacros(ch, port, chOffset, noteArgs, when, gateTicks) {
+  _scheduleFmOpMacros(
+    ch,
+    port,
+    chOffset,
+    noteArgs,
+    when,
+    gateTicks,
+    limitSecs = Infinity,
+  ) {
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
@@ -2555,11 +2635,20 @@ export class IRPlayer {
           );
         },
         this._stepSecs(spec.step),
+        limitSecs,
       );
     }
   }
 
-  _scheduleFmVelMacro(ch, port, chOffset, velMacro, when, gateTicks) {
+  _scheduleFmVelMacro(
+    ch,
+    port,
+    chOffset,
+    velMacro,
+    when,
+    gateTicks,
+    limitSecs = Infinity,
+  ) {
     if (!velMacro) return;
 
     const regs = this._chRegs[ch];
@@ -2586,12 +2675,13 @@ export class IRPlayer {
         }
       },
       this._stepSecs(velMacro.step),
+      limitSecs,
     );
   }
 
   // Schedule a pitch macro for any channel (FM or PSG).
   // writeFn(centOffset, t) performs the hardware write for the channel.
-  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn) {
+  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn, limitSecs = Infinity) {
     if (!pitchMacro) return;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
@@ -2605,12 +2695,13 @@ export class IRPlayer {
       when,
       writeFn,
       this._stepSecs(pitchMacro.step),
+      limitSecs,
     );
   }
 
   // Schedule a :semi macro (discrete semitone offsets) on the pitch write path.
   // Reuses the pitch writeFn; semitone values are ×100 to cents.
-  _scheduleSemiMacro(semiMacro, when, gateTicks, writeFn) {
+  _scheduleSemiMacro(semiMacro, when, gateTicks, writeFn, limitSecs = Infinity) {
     if (!semiMacro) return;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
@@ -2624,6 +2715,7 @@ export class IRPlayer {
       when,
       (semi, t) => writeFn(semi * 100, t),
       this._stepSecs(semiMacro.step),
+      limitSecs,
     );
   }
 
@@ -2632,7 +2724,14 @@ export class IRPlayer {
   // note's own NOTE_ON and is a no-op. keyMask/chKey target the 0x28 register.
   // Returns the audio time after the last step (used to place the final
   // key-off), or null if there was no keyon macro.
-  _scheduleKeyonMacro(keyonSpec, keyMask, chKey, when, gateTicks) {
+  _scheduleKeyonMacro(
+    keyonSpec,
+    keyMask,
+    chKey,
+    when,
+    gateTicks,
+    limitSecs = Infinity,
+  ) {
     if (!keyonSpec) return null;
 
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
@@ -2656,6 +2755,7 @@ export class IRPlayer {
         this._write(0, 0x28, keyOnByte, t); // key on
       },
       stepSecs,
+      limitSecs,
     );
   }
 
@@ -2910,7 +3010,14 @@ export class IRPlayer {
     if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
   }
 
-  _schedulePsgVelMacro(psgCh, velMacro, noteWhen, gateTicks, baseVel = 15) {
+  _schedulePsgVelMacro(
+    psgCh,
+    velMacro,
+    noteWhen,
+    gateTicks,
+    baseVel = 15,
+    limitSecs = Infinity,
+  ) {
     if (!velMacro) return;
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
 
@@ -2933,22 +3040,40 @@ export class IRPlayer {
       gateSecs,
       noteWhen,
       (v, t) => this._psgSetAtt(psgCh, velToAtt(v), t),
+      this._stepSecs(velMacro.step),
+      limitSecs,
     );
     // On hold notes (gateTicks === 0), silence is triggered by triggerKeyOff().
+    // silenceAt is clamped to <= limitSecs (= next note - lead), so it is before
+    // the next note — write it directly.
     if (silenceAt !== null && gateTicks !== 0) {
       this._psgSetAtt(psgCh, 15, silenceAt);
     }
   }
 
-  _schedulePsgModeMacro(psgCh, modeMacro, noteWhen, gateTicks) {
+  _schedulePsgModeMacro(
+    psgCh,
+    modeMacro,
+    noteWhen,
+    gateTicks,
+    limitSecs = Infinity,
+  ) {
     if (!modeMacro) return;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       noteWhen,
       gateTicks,
     );
-    this._scheduleMacro(modeMacro, noteFrames, gateSecs, noteWhen, (v, t) => {
-      this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t);
-    });
+    this._scheduleMacro(
+      modeMacro,
+      noteFrames,
+      gateSecs,
+      noteWhen,
+      (v, t) => {
+        this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t);
+      },
+      this._stepSecs(modeMacro.step),
+      limitSecs,
+    );
   }
 
   _dispatchPsgEvent(ev, when) {
@@ -2962,6 +3087,12 @@ export class IRPlayer {
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        // Monophonic priority: cut this note's macro tail a key-off lead before
+        // the next note on this channel.
+        const psgNextNote = this._nextNoteSecs(ev);
+        const psgMacroLimit = Number.isFinite(psgNextNote)
+          ? psgNextNote - KEY_OFF_LEAD_SECS
+          : Infinity;
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
@@ -2974,12 +3105,14 @@ export class IRPlayer {
             when,
             psgGateTicks,
             psgPitchWrite,
+            psgMacroLimit,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
             when,
             psgGateTicks,
             psgPitchWrite,
+            psgMacroLimit,
           );
         } else {
           this._psgTriggerNoise(when);
@@ -2988,6 +3121,7 @@ export class IRPlayer {
             ev.args?.noise_mode,
             when,
             psgGateTicks,
+            psgMacroLimit,
           );
         }
         if (psgGateTicks === 0) {
@@ -3003,6 +3137,7 @@ export class IRPlayer {
             when,
             psgGateTicks,
             baseVel,
+            psgMacroLimit,
           );
         } else {
           this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel);
