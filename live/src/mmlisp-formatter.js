@@ -235,6 +235,74 @@ function indentBlock(text, prefix) {
     .join("\n");
 }
 
+// Lay out a run of items source-faithfully: items the author wrote on one
+// source line stay on that line (joined with their original spacing), blank
+// lines are derived from source gaps, and items whose formatted text spans
+// multiple lines are emitted alone. Used for both list bodies and [ vectors.
+function formatItemLines(items, childIndent, startLine) {
+  const lines = [];
+  let previousLine = startLine;
+  let index = 0;
+  while (index < items.length) {
+    const child = items[index];
+    const currentSourceLine = child.line || 0;
+
+    // Group all consecutive items that share the same source line.
+    const groupParts = [];
+    while (index < items.length) {
+      const item = items[index];
+      // A trailing line comment on the same source line is appended and ends the group.
+      if (isCommentNode(item)) {
+        if (
+          currentSourceLine > 0 &&
+          sourceLine(item) === currentSourceLine &&
+          groupParts.length > 0
+        ) {
+          groupParts.push({
+            text: item.value,
+            column: item.column || 0,
+            value: item.value,
+          });
+          index += 1;
+        }
+        break;
+      }
+      // Stop when this item moves to a new source line.
+      if (currentSourceLine > 0 && (item.line || 0) > currentSourceLine) break;
+      const itemText = formatNode(item);
+      // Don't group items whose formatted text spans multiple lines.
+      if (itemText.includes("\n")) break;
+      groupParts.push({
+        text: itemText,
+        column: item.column || 0,
+        value: item.kind === "atom" ? item.value : itemText,
+      });
+      index += 1;
+    }
+
+    // If nothing was collected (e.g. a comment or multiline item), emit it alone.
+    if (groupParts.length === 0) {
+      const childText = formatNode(child);
+      for (let g = 0; g < sourceGapBlanks(previousLine, child.line || 0); g += 1) {
+        lines.push("");
+      }
+      lines.push(indentBlock(childText, childIndent));
+      previousLine = child.endLine || child.line || previousLine;
+      index += 1;
+      continue;
+    }
+
+    const childText = joinAtomsWithSourceSpacing(groupParts);
+    for (let g = 0; g < sourceGapBlanks(previousLine, child.line || 0); g += 1) {
+      lines.push("");
+    }
+    lines.push(indentBlock(childText, childIndent));
+    const lastItem = items[index - 1];
+    previousLine = lastItem.endLine || lastItem.line || previousLine;
+  }
+  return lines;
+}
+
 function collectKeywordPairs(items, startIndex) {
   const pairs = []; // each entry: [keyNode, valueNode | null, trailingComment | null]
   let index = startIndex;
@@ -400,11 +468,11 @@ function formatList(node) {
   }
 
   if (open === "[") {
-    // Fallback for long vectors; keep one item per line.
+    // Vector that didn't fit inline: lay items out source-faithfully so the
+    // author's per-line grouping (e.g. :key value pairs) is preserved.
     const lines = [open];
-    for (const item of node.items) {
-      lines.push(indentBlock(formatNode(item), childIndent));
-    }
+    const body = formatItemLines(node.items, childIndent, node.items[0].line || 0);
+    for (const line of body) lines.push(line);
     lines.push(close);
     return lines.join("\n");
   }
@@ -530,69 +598,14 @@ function formatList(node) {
 
   const bodyItems = node.items.slice(nextIndex);
 
-  // Track position based on last keyword-pair value so blank lines between
-  // the keyword section and the body are derived from source gaps, not forced.
-  let previousLine =
+  // Blank lines between the keyword section and the body are derived from the
+  // last keyword-pair value's source line (or the head's), not forced.
+  const bodyStartLine =
     pairs.length > 0
       ? pairs[pairs.length - 1][1]?.line || node.items[headIndex].line || 0
       : node.items[headIndex].line || 0;
-  let bodyIndex = 0;
-  while (bodyIndex < bodyItems.length) {
-    const child = bodyItems[bodyIndex];
-    const currentSourceLine = child.line || 0;
-
-    // Group all consecutive items that share the same source line.
-    const groupParts = [];
-    while (bodyIndex < bodyItems.length) {
-      const item = bodyItems[bodyIndex];
-      // A trailing line comment on the same source line is appended and ends the group.
-      if (isCommentNode(item)) {
-        if (
-          currentSourceLine > 0 &&
-          sourceLine(item) === currentSourceLine &&
-          groupParts.length > 0
-        ) {
-          groupParts.push({
-            text: item.value,
-            column: item.column || 0,
-            value: item.value,
-          });
-          bodyIndex += 1;
-        }
-        break;
-      }
-      // Stop when this item moves to a new source line.
-      if (currentSourceLine > 0 && (item.line || 0) > currentSourceLine) break;
-      const itemText = formatNode(item);
-      // Don't group items whose formatted text spans multiple lines.
-      if (itemText.includes("\n")) break;
-      groupParts.push({
-        text: itemText,
-        column: item.column || 0,
-        value: item.kind === "atom" ? item.value : itemText,
-      });
-      bodyIndex += 1;
-    }
-
-    // If nothing was collected (e.g. a comment or multiline item), emit it alone.
-    if (groupParts.length === 0) {
-      const childText = formatNode(child);
-      for (let g = 0; g < sourceGapBlanks(previousLine, child.line || 0); g += 1) {
-        lines.push("");
-      }
-      lines.push(indentBlock(childText, childIndent));
-      previousLine = child.endLine || child.line || previousLine;
-      bodyIndex += 1;
-      continue;
-    }
-
-    const childText = joinAtomsWithSourceSpacing(groupParts);
-    for (let g = 0; g < sourceGapBlanks(previousLine, child.line || 0); g += 1) {
-      lines.push("");
-    }
-    lines.push(indentBlock(childText, childIndent));
-    const lastItem = bodyItems[bodyIndex - 1];
-    previousLine = lastItem.endLine || lastItem.line || previousLine;
+  for (const line of formatItemLines(bodyItems, childIndent, bodyStartLine)) {
+    lines.push(line);
   }
 
   lines.push(")");
