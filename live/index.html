@@ -101,6 +101,13 @@
 
     /* ---- menu dropdowns ---- */
     .menu-wrap { position: relative; }
+    /* Stretch top-level menu buttons to the full bar height so the dropdown,
+       anchored at 100%, opens flush with the top bar's bottom border. */
+    #topbar > .menu-wrap {
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+    }
     .menu-btn {
       background: transparent;
       border: none;
@@ -113,14 +120,13 @@
     .menu-dropdown {
       display: none;
       position: absolute;
-      top: calc(100% + 4px);
+      top: 100%;
       left: 0;
       background: var(--background);
       border: 1px solid var(--mid);
       border-radius: 2px;
       z-index: 100;
       min-width: 200px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
     .menu-wrap.open > .menu-dropdown { display: block; }
     .menu-item {
