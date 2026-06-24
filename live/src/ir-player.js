@@ -549,7 +549,6 @@ export class IRPlayer {
     this._schedulerInterval = 25; // ms
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
-    this._onTick = null; // (tick, bpm, ppqn) => void — called each scheduler interval
     this._onParam = null; // (chIndex, target, value) => void — called when a param event plays
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
@@ -970,11 +969,6 @@ export class IRPlayer {
     this._onSeq = fn;
   }
 
-  /** Register a callback fired each scheduler interval with the current playback position. */
-  setOnTick(fn) {
-    this._onTick = fn;
-  }
-
   /** Register a callback fired (approximately) when each PARAM_SET event plays. */
   setOnParam(fn) {
     this._onParam = fn;
@@ -1060,16 +1054,6 @@ export class IRPlayer {
 
     this._updateTempoSweep(now);
     const secsPerTick = this._secsPerTick;
-
-    // _onTick: use track 0 position for the Bar:Beat display
-    if (this._onTick && this._tracks.length > 0) {
-      const t0 = this._tracks[0];
-      const currentTick = Math.max(
-        0,
-        (now - t0.audioTimeAtTick0) / secsPerTick,
-      );
-      this._onTick(currentTick, this._bpm, this._ppqn);
-    }
 
     for (const [tIdx, track] of this._tracks.entries()) {
       // Inner guard handles multiple loop-restarts within one lookahead window
@@ -1161,7 +1145,6 @@ export class IRPlayer {
     const saved = {
       write: this._write,
       onLine: this._onLine,
-      onTick: this._onTick,
       onParam: this._onParam,
       onSeq: this._onSeq,
       ctx: this._audioContext,
@@ -1173,7 +1156,6 @@ export class IRPlayer {
 
     // Silence every UI callback so no real setTimeout fires during capture.
     this._onLine = null;
-    this._onTick = null;
     this._onParam = null;
     this._onSeq = null;
 
@@ -1266,7 +1248,6 @@ export class IRPlayer {
     } finally {
       this._write = saved.write;
       this._onLine = saved.onLine;
-      this._onTick = saved.onTick;
       this._onParam = saved.onParam;
       this._onSeq = saved.onSeq;
       this._audioContext = saved.ctx;

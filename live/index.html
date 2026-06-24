@@ -69,24 +69,6 @@
     @media (hover: hover) { .tb-btn:hover { border-color: #7df; color: #7df; background: #12283a; } }
     .tb-btn:disabled { opacity: 0.3; cursor: default; }
     .tb-btn.active { border-color: #7df; color: #7df; background: #12303f; }
-    #posDisplay {
-      font-size: 0.72rem;
-      color: #7df;
-      letter-spacing: 0.05em;
-    }
-    #bpmDisplay {
-      font-size: 0.72rem;
-      color: #fd7;
-      letter-spacing: 0.05em;
-    }
-    .play-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #444;
-      flex-shrink: 0;
-    }
-    .play-dot.playing { background: #4c9; animation: pulse 1s infinite; }
-    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
     #topbar .spacer { flex: 1; }
     #btnPanel {
       display: inline-flex;
@@ -713,11 +695,6 @@
     <button id="btnStop" class="tb-btn" onclick="onStop()">
       <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
     </button>
-
-    <!-- Transport status -->
-    <span class="play-dot" id="playDot" style="margin-left:0.5rem"></span>
-    <span id="posDisplay">. : .</span>
-    <span id="bpmDisplay" style="margin-left:0.5rem">... BPM</span>
 
     <div class="spacer"></div>
 
@@ -2584,10 +2561,6 @@
       logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
     }
-    function setStatus(_msg, playing = false) {
-      document.getElementById('playDot').classList.toggle('playing', playing);
-    }
-
     // -----------------------------------------------------------------------
     // Panel toggle
     // -----------------------------------------------------------------------
@@ -2882,13 +2855,6 @@
         }
         player.setOnLine(highlightTrackLine);
         player.setOnSeq(highlightSeq);
-        player.setOnTick((tick, bpm, ppqn) => {
-          const beat = Math.floor(tick / ppqn);
-          const bar = Math.floor(beat / 4) + 1;
-          const beatInBar = (beat % 4) + 1;
-          document.getElementById('posDisplay').textContent = bar + ' : ' + beatInBar;
-          document.getElementById('bpmDisplay').textContent = bpm + ' BPM';
-        });
         const PARAM_KEY_MAP = { TL: 'tl', AR: 'ar', DR: 'dr', SL: 'sl', SR: 'd2r', RR: 'rr', ML: 'mul', DT: 'dt', KS: 'rs', SSG: 'ssg' };
         player.setOnParam((ch, target, value) => {
           if (ch !== selectedCh) return;
@@ -2919,14 +2885,12 @@
         } else {
           player.play(audioCtx);
         }
-        setStatus('Playing', true);
         setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
         syncParamUI();
       } catch (e) {
         log('Error: ' + e.message, 'err');
-        setStatus('Error');
       }
     }
 
@@ -2935,11 +2899,8 @@
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
       log('Stopped');
-      setStatus('Stopped', false);
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
-      document.getElementById('posDisplay').textContent = '. : .';
-      document.getElementById('bpmDisplay').textContent = '... BPM';
       editorView.dispatch({ effects: [setTrackLine.of({ trackIdx: -1 }), setSeq.of({ clear: true })] });
     }
 
