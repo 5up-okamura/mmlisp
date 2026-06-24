@@ -48,6 +48,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmTimedQueue = []; // timed PCM commands: [{frame, type, ...}]
     this._pcmVoices = [];
     this._pcmSamples = new Map();
+    this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
 
     // Desired analog-LPF config, applied to the synth when it becomes ready and
     // on every set-analog-lpf message. Buffered here so a toggle that arrives
@@ -127,6 +128,17 @@ class YM2612Processor extends AudioWorkletProcessor {
             ? Math.round(msg.when * sampleRate)
             : currentFrame + WORKLET_BLOCK;
         this._insertTimed(this._pcmTimedQueue, targetFrame, msg);
+      } else if (msg.type === "pcm-set-vol") {
+        // Live per-PCM-channel mixer fader, keyed by track index (matches the
+        // track sent on pcm-note-on). Applies to current and future voices.
+        const track = Number(msg.track);
+        const g = Math.max(0, Math.min(1, Number(msg.gain)));
+        if (Number.isFinite(track) && Number.isFinite(g)) {
+          this._pcmTrackGain.set(track, g);
+          for (const v of this._pcmVoices) {
+            if (v.track === track) v.gain = (v.velGain ?? v.gain) * g;
+          }
+        }
       } else if (msg.type === "writes") {
         for (const op of msg.ops) {
           this._writeQueue.push(op);
@@ -145,6 +157,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
         this._pcmSamples = new Map();
+        this._pcmTrackGain = new Map();
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
@@ -185,7 +198,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     const vel = Number(msg.vel);
     const sample = String(msg.sample ?? "");
     if (!sample) return;
-    const gain = Math.max(
+    const velGain = Math.max(
       0,
       Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15),
     );
@@ -204,6 +217,8 @@ class YM2612Processor extends AudioWorkletProcessor {
     const step = Math.max(0.01, rawStep);
     const mode = msg.mode === "loop" ? "loop" : "shot";
     const ch = Number(msg.ch);
+    const track = Number(msg.track);
+    const trackGain = this._pcmTrackGain.get(track) ?? 1;
     const loopStartRaw = Number(sampleEntry?.loopStart);
     const loopEndRaw = Number(sampleEntry?.loopEnd);
     const len = data.length;
@@ -217,10 +232,12 @@ class YM2612Processor extends AudioWorkletProcessor {
         : len;
     const voice = {
       ch: Number.isFinite(ch) ? ch : null,
+      track: Number.isFinite(track) ? track : null,
       sample,
       pos: 0,
       step,
-      gain,
+      velGain,
+      gain: velGain * trackGain,
       mode,
       released: false,
       loopStart,

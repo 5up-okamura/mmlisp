@@ -212,6 +212,16 @@ export function volToTlOffset(v) {
   return ((VOL_UNITY - x) * VOL_STEP_DB) / TL_DB_PER_STEP;
 }
 
+// vol (0-31) → linear gain for the software-mixed PCM/DAC path. Same dB-per-step
+// fader as FM/PSG, referenced to VOL_UNITY (0 dB). 0 is a hard mute. Boost above
+// unity is clamped to 1.0 since the 8-bit DAC stream is already at full scale.
+export function volToLinearGain(v) {
+  const x = Math.max(0, Math.min(31, v));
+  if (x <= 0) return 0;
+  const db = (x - VOL_UNITY) * VOL_STEP_DB;
+  return Math.min(1, Math.pow(10, db / 20));
+}
+
 // PSG attenuator-domain counterparts (register steps = dB ÷ 2).
 export function velToPsgAtten(vel) {
   const v = Math.max(0, Math.min(15, vel));

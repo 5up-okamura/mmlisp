@@ -20,6 +20,7 @@ import {
   midiToFnumBlock,
   velToTlAtten,
   volToTlOffset,
+  volToLinearGain,
   velToPsgAtten,
   volToPsgOffset,
   VOL_UNITY,
@@ -828,6 +829,38 @@ export class IRPlayer {
   _isTrackAudible(ti) {
     if (this._soloTracks.size > 0) return this._soloTracks.has(ti);
     return !this._mutedTracks.has(ti);
+  }
+
+  /**
+   * Live mixer fader for a PSG channel. vol 0-31 (31=max, 0=silent). Sets the
+   * sticky channel vol and re-applies attenuation immediately.
+   * @param {number} psgCh 0-3 (0=sqr1 … 3=noise)
+   * @param {number} vol   0-31
+   */
+  setPsgVol(psgCh, vol) {
+    if (psgCh < 0 || psgCh > 3) return;
+    const v = Math.max(0, Math.min(31, vol));
+    this._psgVol[psgCh] = v;
+    this._psgVolSweep[psgCh] = null;
+    const when = this._audioContext?.currentTime ?? 0;
+    const vel = this._psgLastVel[psgCh] ?? 15;
+    const master = this._masterVol ?? VOL_UNITY;
+    this._psgSetAtt(psgCh, this._composePsgAtt(vel, v, master), when);
+  }
+
+  /**
+   * Live mixer fader for a software-mixed PCM channel, keyed by track index.
+   * vol 0-31 → linear gain applied in the worklet to current and future voices.
+   * @param {number} trackIndex
+   * @param {number} vol 0-31
+   */
+  setPcmTrackVol(trackIndex, vol) {
+    if (trackIndex == null) return;
+    this._write({
+      type: "pcm-set-vol",
+      track: trackIndex,
+      gain: volToLinearGain(vol),
+    });
   }
 
   /**
@@ -2009,6 +2042,7 @@ export class IRPlayer {
       type: "pcm-note-on",
       when,
       ch: ev._chIndex ?? null,
+      track: ev._trackIndex ?? null,
       sample,
       rate: Number.isFinite(rate) && rate > 0 ? rate : 1,
       baseRate: Number.isFinite(baseRate) && baseRate > 0 ? baseRate : null,

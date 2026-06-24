@@ -530,6 +530,35 @@
     .ms-btn.soloed { background: var(--background); border-color: var(--accent); color: var(--accent); }
     .ms-btn.ch-sel { background: var(--background); border-color: var(--foreground); color: var(--foreground); }
     .ms-btn:disabled { opacity: 0.25; cursor: default; }
+    .ch-knob {
+      width: 1.15rem;
+      height: 1.15rem;
+      margin: 0.3rem auto 0;
+      border-radius: 50%;
+      background: var(--background);
+      border: 1px solid var(--mid);
+      position: relative;
+      cursor: ns-resize;
+      flex: 0 0 auto;
+      touch-action: none;
+    }
+    .ch-knob:hover { border-color: var(--high); }
+    .ch-vol-val {
+      font-size: 0.55rem;
+      color: var(--mid);
+      text-align: center;
+    }
+    .ch-knob-ind {
+      position: absolute;
+      left: 50%;
+      bottom: 50%;
+      width: 1.5px;
+      height: 42%;
+      margin-left: -0.75px;
+      background: var(--foreground);
+      border-radius: 1px;
+      transform-origin: bottom center;
+    }
     .ch-section-label {
       font-size: 0.58rem;
       color: var(--mid);
@@ -878,6 +907,10 @@
         <div class="rack-body">
         <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)">
           <div class="knob-wrap">
+            <div class="knob-label">MASTER <span class="val" id="val-master">31</span></div>
+            <input type="range" id="sl-master" min="0" max="31" value="31" oninput="onMaster(this)">
+          </div>
+          <div class="knob-wrap">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onChParam('LFO_RATE', this)">
           </div>
@@ -971,7 +1004,7 @@
     import { IRPlayer } from './src/ir-player.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
-    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX } from './src/ir-utils.js';
+    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
@@ -2716,6 +2749,8 @@
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
+    const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
+    let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
     // Canonical hardware order of score channel heads. fm3-csm-rate has no strip
     // of its own — it folds into the single "fm3-csm" (csm) strip.
     const CHANNEL_ORDER = ['fm1','fm2','fm3','fm3-1','fm3-2','fm3-3','fm3-4','fm3-csm',
@@ -2816,13 +2851,17 @@
       return label.toUpperCase();
     }
 
-    // Hardware index that drives the FM param panel for a given head:
-    // 0-5 = FM, 6-9 = PSG, null = no FM/PSG params (pcm*, csm).
-    function selIndexForHead(head) {
-      if (/^fm3-[1-4]$/.test(head)) return CH_NAME_TO_INDEX.fm3;
-      if (CH_NAME_TO_INDEX[head] != null) return CH_NAME_TO_INDEX[head];
-      if (PSG_CH_NAME_TO_INDEX[head] != null) return 6 + PSG_CH_NAME_TO_INDEX[head];
-      return null;
+    // Per-head routing, computed once per strip:
+    //  - volKind/volIndex: where the live vol fader writes (FM channel / PSG ch /
+    //    PCM track). fm3, fm3-1..4 and fm3-csm all share hardware FM3.
+    //  - selIndex: hardware index driving the FM param panel (0-5 FM, 6-9 PSG,
+    //    null = no editable FM panel: pcm*, csm).
+    function channelRouting(head) {
+      if (/^pcm[1-3]$/.test(head)) return { volKind: 'pcm', volIndex: null, selIndex: null };
+      const psg = PSG_CH_NAME_TO_INDEX[head];
+      if (psg != null) return { volKind: 'psg', volIndex: psg, selIndex: 6 + psg };
+      const fm = /^fm3(-|$)/.test(head) ? CH_NAME_TO_INDEX.fm3 : (CH_NAME_TO_INDEX[head] ?? null);
+      return { volKind: 'fm', volIndex: fm, selIndex: head === 'fm3-csm' ? null : fm };
     }
 
     // Build the strip model from the IR's used channels, in canonical hardware
@@ -2842,7 +2881,7 @@
           head,
           label: channelLabelOf(head),
           trackIndex: headToTrack.get(head),
-          selIndex: selIndexForHead(head),
+          ...channelRouting(head),
         });
       }
       return model;
@@ -2855,6 +2894,7 @@
       const present = new Set(_chStripModel.map((e) => e.head));
       for (const h of _mutedChannels) if (!present.has(h)) _mutedChannels.delete(h);
       for (const h of _soloChannels) if (!present.has(h)) _soloChannels.delete(h);
+      for (const h of [..._channelVol.keys()]) if (!present.has(h)) _channelVol.delete(h);
       if (selectedChannel != null && !present.has(selectedChannel)) {
         selectedChannel = null;
         selectedCh = null;
@@ -2873,12 +2913,17 @@
         const selCls  = selectedChannel === h ? ' ch-sel' : '';
         const muteCls = _mutedChannels.has(h) ? ' muted' : '';
         const soloCls = _soloChannels.has(h) ? ' soloed' : '';
+        const vol = _channelVol.get(h) ?? VOL_UNITY;
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
           <button class="ms-btn${selCls}" onclick="selectCh('${h}')">${entry.label}</button>
-          <button class="ms-btn${muteCls}" onclick="toggleMute('${h}')" style="margin-top:0.35rem">M</button>
+          <button class="ms-btn${muteCls}" onclick="toggleMute('${h}')">M</button>
           <button class="ms-btn${soloCls}" onclick="toggleSolo('${h}')">S</button>
+          <div class="ch-knob" title="vol (drag)" data-head="${h}">
+            <div class="ch-knob-ind" style="transform: rotate(${volToKnobAngle(vol)}deg)"></div>
+          </div>
+          <div class="ch-vol-val">${vol}</div>
         `;
         row.appendChild(col);
       }
@@ -2905,20 +2950,77 @@
       renderChStrips();
     }
 
-    // Push persisted mute/solo (kept by channel name) onto a freshly loaded player,
-    // translating names → track indices from the current strip model.
-    function applyPlayerMuteSoloState(p) {
+    // Apply a channel's live mixer vol to the player, routed by precomputed type.
+    function setChannelVolLive(entry, vol) {
+      if (!player) initParamOnlyPlayer();
+      if (!player) return;
+      if (entry.volKind === 'pcm') player.setPcmTrackVol(entry.trackIndex, vol);
+      else if (entry.volKind === 'psg') player.setPsgVol(entry.volIndex, vol);
+      else if (entry.volIndex != null) player.setParam('VOL', vol, entry.volIndex);
+    }
+
+    // Map vol 0-31 to the knob indicator angle (-135°…+135°).
+    function volToKnobAngle(vol) {
+      const v = Math.max(0, Math.min(31, vol));
+      return -135 + (v / 31) * 270;
+    }
+    function setKnobVisual(knob, vol) {
+      const ind = knob.querySelector('.ch-knob-ind');
+      if (ind) ind.style.transform = `rotate(${volToKnobAngle(vol)}deg)`;
+      const val = knob.parentElement?.querySelector('.ch-vol-val');
+      if (val) val.textContent = vol;
+    }
+
+    // Rotary vol knobs: vertical drag changes 0-31. Delegated on the persistent
+    // #chStrips container so it survives strip re-renders.
+    let _knobDrag = null;
+    document.getElementById('chStrips')?.addEventListener('pointerdown', (e) => {
+      const knob = e.target.closest('.ch-knob');
+      if (!knob) return;
+      const entry = _chStripModel.find((x) => x.head === knob.dataset.head);
+      if (!entry) return;
+      e.preventDefault();
+      _knobDrag = { entry, knob, startY: e.clientY, startVol: _channelVol.get(entry.head) ?? VOL_UNITY };
+      knob.setPointerCapture?.(e.pointerId);
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!_knobDrag) return;
+      const { entry, knob } = _knobDrag;
+      const dy = _knobDrag.startY - e.clientY; // up = louder
+      const vol = Math.max(0, Math.min(31, Math.round(_knobDrag.startVol + dy * 0.2)));
+      if (vol === (_channelVol.get(entry.head) ?? VOL_UNITY)) return;
+      _channelVol.set(entry.head, vol);
+      setKnobVisual(knob, vol);
+      setChannelVolLive(entry, vol);
+    });
+    window.addEventListener('pointerup', () => { _knobDrag = null; });
+
+    function onMaster(slider) {
+      const val = parseInt(slider.value, 10);
+      setSliderDisplayValue(slider, val);
+      _masterVolUi = val;
+      if (!player) initParamOnlyPlayer();
+      player?.setParam('MASTER', val, 0);
+    }
+
+    // Push persisted mixer state (mute/solo/vol/master, kept by channel name) onto
+    // a freshly loaded player, translating names → track indices from the model.
+    function applyPlayerChannelState(p) {
       if (!p) return;
       p.clearChannelStates();
       for (const entry of _chStripModel) {
         if (_mutedChannels.has(entry.head)) p.muteTrack(entry.trackIndex, true);
         if (_soloChannels.has(entry.head)) p.soloTrack(entry.trackIndex, true);
+        const vol = _channelVol.get(entry.head);
+        if (vol != null) setChannelVolLive(entry, vol);
       }
+      p.setParam('MASTER', _masterVolUi, 0);
     }
 
     window.toggleMute = toggleMute;
     window.toggleSolo = toggleSolo;
     window.selectCh   = selectCh;
+    window.onMaster = onMaster;
 
     // -----------------------------------------------------------------------
     // Horizontal divider drag
@@ -3131,7 +3233,7 @@
         // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
         // that never went through compileNow), then push persisted mute/solo.
         buildChStrips(player._ir);
-        applyPlayerMuteSoloState(player);
+        applyPlayerChannelState(player);
         // Seek to cursor line if provided and source map available
         if (fromLine != null && _lastSourceMap) {
           player.playFromLine(audioCtx, fromLine, _lastSourceMap);
