@@ -553,6 +553,15 @@ export class IRPlayer {
     this._onParam = null; // (chIndex, target, value) => void — called when a param event plays
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
+    // Gapless swap (Build during playback): a swap requested by swapAtNextBar()
+    // is deferred until the next bar boundary so already-scheduled audio plays
+    // out untouched. While a swap is pending, old tracks stop scheduling at
+    // _scheduleCapTime; after commit, _dispatchFloor suppresses any new write
+    // before the boundary so the new IR starts exactly on the boundary.
+    this._pendingSwap = null; // { irObj, boundaryTick, boundaryTime } | null
+    this._scheduleCapTime = Infinity; // audio time; old tracks don't schedule past this
+    this._dispatchFloor = -Infinity; // audio time; events before this are skipped (not dispatched)
+
     // Per-channel register state for param application
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
 
@@ -872,70 +881,75 @@ export class IRPlayer {
   }
 
   /**
-   * Hot-swap the IR while playback is running.
-   * The current playback position (in bars) is preserved where possible.
+   * Swap the IR gaplessly at the next bar boundary while playback runs.
    *
-   * Workflow:
-   *   1. Compute current tick from track-0 clock.
-   *   2. Flush worklet's timed queue (discard pre-scheduled writes).
-   *   3. Load new IR, rebuild channel map.
-   *   4. Re-enter _scheduleLoop starting from the bar-aligned tick.
+   * Unlike a flush-and-restart, this leaves all already-scheduled audio intact:
+   * the outgoing IR plays out to the next bar boundary, then the incoming IR
+   * takes over from that boundary — keeping the global position (Strudel-style).
+   * No worklet flush is sent, so there is no dropout or click.
+   *
+   * The boundary is chosen past the scheduler lookahead, so no outgoing event
+   * beyond it has been queued yet; until the boundary, outgoing tracks are
+   * capped (see _scheduleCapTime) and the actual swap happens in _commitSwap().
    *
    * If playback is stopped, behaves like loadJSON().
    *
    * @param {object} irObj  Compiled IR object
-   * @param {Function} [flushFn]  Called to flush worklet queue: () => void
    */
-  hotSwap(irObj, flushFn) {
-    // Snapshot current position before replacing state
-    let resumeTick = 0;
-    if (this._playing && this._tracks.length > 0) {
-      const now = this._audioContext.currentTime;
-      const secsPerTick = this._secsPerTick;
-      const t0 = this._tracks[0];
-      const rawTick = (now - t0.audioTimeAtTick0) / secsPerTick;
-      // Align to bar boundary (bar = ppqn * 4)
-      const barTicks = this._ppqn * 4;
-      resumeTick = Math.max(0, Math.floor(rawTick / barTicks) * barTicks);
+  swapAtNextBar(irObj) {
+    if (!this._playing || this._tracks.length === 0 || !this._audioContext) {
+      // Not playing — just load; the next play() picks it up.
+      this.loadJSON(irObj);
+      return;
     }
 
-    // Stop current scheduler (don't send key-off — avoid click)
-    this._playing = false;
-    if (this._schedulerTimer !== null) {
-      clearTimeout(this._schedulerTimer);
-      this._schedulerTimer = null;
-    }
-    this._clearPendingUiTimers();
-
-    // Flush worklet's pre-scheduled writes
-    if (flushFn) flushFn();
-
-    // Load new IR
-    this.loadJSON(irObj);
-
-    if (!this._audioContext) return; // playback was never started
-
-    // Restart from resume position
-    this._playing = true;
     const now = this._audioContext.currentTime;
     const secsPerTick = this._secsPerTick;
-    // Set audioTimeAtTick0 so that tick=resumeTick corresponds to now+25ms
-    const newTick0 = now + 0.025 - resumeTick * secsPerTick;
+    const t0 = this._tracks[0];
+    // Local tick within track 0's current (loop-advanced) frame.
+    const localTick = Math.max(0, (now - t0.audioTimeAtTick0) / secsPerTick);
+    const barTicks = this._ppqn * 4;
+    // First bar boundary whose time is safely past the lookahead window, so the
+    // outgoing tracks have not queued anything beyond it yet.
+    const leadTicks = (this._schedulerLookahead + 0.03) / secsPerTick;
+    const boundaryTick =
+      Math.ceil((localTick + leadTicks) / barTicks) * barTicks;
+    const boundaryTime = t0.audioTimeAtTick0 + boundaryTick * secsPerTick;
+
+    this._pendingSwap = { irObj, boundaryTick, boundaryTime };
+    this._scheduleCapTime = boundaryTime;
+  }
+
+  // Commit a pending swap: load the incoming IR and anchor its tracks so that
+  // tick=boundaryTick lands exactly on boundaryTime, continuing the global
+  // position. Called from _scheduleLoop once the boundary is within the horizon.
+  _commitSwap() {
+    const { irObj, boundaryTick, boundaryTime } = this._pendingSwap;
+    this._pendingSwap = null;
+    this._scheduleCapTime = Infinity;
+
+    // Load new IR (does not touch callbacks, _playing, or _audioContext).
+    this.loadJSON(irObj);
+
+    const secsPerTick = this._secsPerTick;
+    const newTick0 = boundaryTime - boundaryTick * secsPerTick;
     this._tracks = this._flattenTracks();
     for (const t of this._tracks) {
       t.startAudioTime = newTick0;
       t.audioTimeAtTick0 = newTick0;
       t.loopCount = 0;
-      // Skip events before resumeTick
       t.flatIndex = 0;
+      // Resume at the boundary tick (loops fast-forward in _scheduleStep).
       while (
         t.flatIndex < t.events.length &&
-        t.events[t.flatIndex].tick < resumeTick
+        t.events[t.flatIndex].tick < boundaryTick
       ) {
         t.flatIndex++;
       }
     }
-    this._scheduleLoop();
+    // Suppress any incoming write before the boundary (loop catch-up) so the new
+    // IR starts exactly on the boundary, overlapping the outgoing tail cleanly.
+    this._dispatchFloor = boundaryTime;
   }
 
   /**
@@ -1013,6 +1027,17 @@ export class IRPlayer {
     const now = this._audioContext.currentTime;
     const horizon = now + this._schedulerLookahead;
 
+    // Commit a pending gapless swap once the scheduler reaches the boundary.
+    // All outgoing events before the boundary are already queued in the worklet
+    // (and capped from going past it), so the incoming IR can take over with no
+    // flush and no gap.
+    if (this._pendingSwap && horizon >= this._pendingSwap.boundaryTime) {
+      // Schedule the outgoing tracks right up to the boundary first (capped at
+      // it), so no tail events are dropped, then hand over to the incoming IR.
+      this._scheduleStep(now, this._pendingSwap.boundaryTime);
+      this._commitSwap();
+    }
+
     if (this._scheduleStep(now, horizon)) return;
 
     this._schedulerTimer = setTimeout(
@@ -1028,6 +1053,11 @@ export class IRPlayer {
   // (captureRegisterLog) can drive this with a manually advanced clock instead
   // of the real audio timer.
   _scheduleStep(now, horizon) {
+    // Once the boundary has passed, the post-swap dispatch floor is moot.
+    if (this._dispatchFloor !== -Infinity && now >= this._dispatchFloor) {
+      this._dispatchFloor = -Infinity;
+    }
+
     this._updateTempoSweep(now);
     const secsPerTick = this._secsPerTick;
 
@@ -1049,12 +1079,20 @@ export class IRPlayer {
           const ev = track.events[track.flatIndex];
           const evTime = track.audioTimeAtTick0 + ev.tick * secsPerTick;
           if (evTime > horizon) break;
+          // Pending swap: stop the outgoing tracks at the swap boundary so they
+          // never emit past it (the incoming IR takes over there).
+          if (evTime >= this._scheduleCapTime) break;
 
-          this._dispatchEvent(ev, evTime);
-          if (this._onLine && ev.src?.line != null) {
-            const src = ev.src;
-            const delay = Math.max(0, evTime - now) * 1000;
-            this._scheduleUiCallback(() => this._onLine(tIdx, src), delay);
+          // After a swap commit, _dispatchFloor suppresses the incoming IR's
+          // loop catch-up so nothing is written before the boundary; advance
+          // past those events without dispatching.
+          if (evTime >= this._dispatchFloor) {
+            this._dispatchEvent(ev, evTime);
+            if (this._onLine && ev.src?.line != null) {
+              const src = ev.src;
+              const delay = Math.max(0, evTime - now) * 1000;
+              this._scheduleUiCallback(() => this._onLine(tIdx, src), delay);
+            }
           }
           track.flatIndex++;
         }

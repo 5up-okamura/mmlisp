@@ -677,6 +677,10 @@
     <div class="menu-wrap" id="menuTools">
       <button class="menu-btn" onclick="toggleMenu('menuTools')">Tools</button>
       <div class="menu-dropdown">
+        <button class="menu-item" onclick="buildAction();closeMenus()">
+          <span>Build</span>
+          <span class="menu-item-shortcut" id="buildShortcut"></span>
+        </button>
         <button class="menu-item" onclick="formatSource();closeMenus()">
           <span>Format Source</span>
           <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
@@ -1901,8 +1905,7 @@
       const voiceName = makeVoiceNameFromFile(file.name);
       const text = buildMmlispVoiceFromDmp(parsed, voiceName);
       insertTextAtCursor(text);
-      scheduleCompile();
-      log(`Imported ${file.name} (${fmt.label}) as ${voiceName}`, 'info');
+      log(`Imported ${file.name} (${fmt.label}) as ${voiceName} — press Build to apply`, 'info');
     }
 
     function pickFileWithInput(extensions) {
@@ -1993,6 +1996,7 @@
       insertSnippetByKey('fmVoice');
     }
 
+    window.buildAction = buildAction;
     window.formatSource = formatDocument;
     window.toggleCommentAction = toggleLineComment;
     window.insertSnippetFmVoice = insertSnippetFmVoice;
@@ -2010,6 +2014,7 @@
       if (key === 'Mod-Shift-s') return isMac ? '⌘⇧S' : 'Ctrl+Shift+S';
       if (key === 'Mod-Shift-f') return isMac ? '⌘⇧F' : 'Ctrl+Shift+F';
       if (key === 'Mod-/') return isMac ? '⌘/' : 'Ctrl+/';
+      if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
       return key;
     }
 
@@ -2021,6 +2026,7 @@
         ['saveFileAsShortcut', 'Mod-Shift-s'],
         ['formatSourceShortcut', 'Mod-Shift-f'],
         ['toggleCommentShortcut', 'Mod-/'],
+        ['buildShortcut', 'Mod-b'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -2064,7 +2070,8 @@
         { key: 'Mod-Shift-f', run: formatDocument },
       ]),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) scheduleCompile();
+        // Compilation is manual (Build / Cmd-Ctrl+B); editing never compiles or
+        // applies — see buildAction(). Only the param/cursor UI tracks edits.
         if (update.docChanged || update.selectionSet) syncParamUI();
       }),
     ];
@@ -2108,7 +2115,7 @@
         // carries token/macro source spans) instead of the precompiled
         // canonical IR. setEditorDoc replaces state without firing the
         // doc-change compile trigger, so do it explicitly (as file-open does).
-        runCompile();
+        compileNow();
       } catch (e) {
         setEditorDoc('(failed to load: ' + mmlispURL + ')');
       }
@@ -2131,9 +2138,8 @@
     }
 
     // -----------------------------------------------------------------------
-    // Live compile (debounced)
+    // Manual compile (Tools > Build / Cmd-Ctrl+B)
     // -----------------------------------------------------------------------
-    let _compileTimer = null;
     let _lastGoodIR = null;     // last successfully compiled IR object
     let _lastSourceMap = null;  // source map from last compile
     let _lastFileName = 'untitled.mmlisp';
@@ -2276,7 +2282,7 @@
       _lastGoodIR = null;
       _lastSourceMap = null;
       setEditorDoc(src);
-      runCompile();
+      compileNow();
     }
 
     async function openFile() {
@@ -2437,15 +2443,12 @@
       _lastSourceMap = null;
       setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
       onStop();
-      scheduleCompile();
     }
 
-    function scheduleCompile() {
-      clearTimeout(_compileTimer);
-      _compileTimer = setTimeout(() => runCompile(), 400);
-    }
-
-    function runCompile() {
+    // Compile the current source to IR. Logs diagnostics, updates _lastGoodIR /
+    // _lastSourceMap on success, and returns { ir, ok }. Does NOT apply to the
+    // running player — callers decide (see buildAction).
+    function compileNow() {
       const src = editorView.state.doc.toString();
       try {
         const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName);
@@ -2465,20 +2468,30 @@
           for (const d of errors) {
             log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
           }
-          // Keep playing with last good IR — do not hotSwap
-          return;
+          return { ir: null, ok: false };
         }
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
-        if (player) {
-          syncPcmSamplesToWorklet(ir).catch((e) => {
-            log('PCM sync failed: ' + e.message, 'err');
-          });
-          player.hotSwap(ir, () => workletNode?.port.postMessage({ type: 'flush' }));
-          log('Recompiled — continuing from bar boundary', 'info');
-        }
+        return { ir, ok: true };
       } catch (e) {
         log('[compile] ' + e.message, 'err');
+        return { ir: null, ok: false };
+      }
+    }
+
+    // Manual build (Tools > Build / Cmd-Ctrl+B): compile, then — if playing —
+    // apply gaplessly at the next bar boundary. Errors keep the last good IR.
+    function buildAction() {
+      const { ir, ok } = compileNow();
+      if (!ok) return;
+      if (player) {
+        syncPcmSamplesToWorklet(ir).catch((e) => {
+          log('PCM sync failed: ' + e.message, 'err');
+        });
+        player.swapAtNextBar(ir);
+        log('Built — applies at next bar', 'info');
+      } else {
+        log('Built', 'info');
       }
     }
 
@@ -2527,7 +2540,7 @@
 
     // Load default source on startup
     setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-    runCompile();
+    compileNow();
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -2809,6 +2822,9 @@
     async function onPlay(fromLine = null) {
       const ok = await initAudio();
       if (!ok) return;
+      // Manual-compile model: build on demand if nothing has been compiled yet
+      // (e.g. after New File) so Play still works straight from source.
+      if (!_lastGoodIR && !currentIrURL) compileNow();
       if (player) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
@@ -2991,6 +3007,9 @@
       } else if (e.key === 's' && !e.shiftKey) {
         e.preventDefault();
         await saveFile();
+      } else if (e.key === 'b' && !e.shiftKey) {
+        e.preventDefault();
+        buildAction();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         onPlayToggle();
