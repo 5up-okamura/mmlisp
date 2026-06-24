@@ -13,14 +13,17 @@
   <style>
     /* ---- color tokens ----
        3 bases + error; mid/high are derived from foreground so changing
-       --foreground retints the whole UI. */
+       --foreground retints the whole UI. --contrast is the emphasis pole
+       (white on dark themes, black on light themes); applyTheme() sets it
+       automatically from the background's luminance. */
     :root {
       --background: #000;
       --foreground: #7df;
       --accent:     #6c9;
       --error:      #e66;
-      --mid:  color-mix(in srgb, var(--foreground) 40%, var(--background)); /* toned down */
-      --high: color-mix(in srgb, var(--foreground) 45%, #fff);             /* emphasis */
+      --contrast:   #fff;
+      --mid:  color-mix(in srgb, var(--foreground) 40%, var(--background));   /* toned down */
+      --high: color-mix(in srgb, var(--foreground) 45%, var(--contrast));     /* emphasis */
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -603,6 +606,71 @@
       cursor: not-allowed;
     }
 
+    /* ---- modal (custom theme editor) ---- */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.5);
+    }
+    .modal-overlay[hidden] { display: none; }
+    .modal {
+      background: var(--background);
+      border: 1px solid var(--foreground);
+      border-radius: 4px;
+      padding: 1rem 1.25rem;
+      min-width: 260px;
+    }
+    .modal-title {
+      color: var(--foreground);
+      font-size: 0.78rem;
+      font-weight: bold;
+      margin-bottom: 0.75rem;
+    }
+    .theme-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .theme-field {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .theme-field label {
+      flex: 1;
+      color: var(--foreground);
+      font-size: 0.72rem;
+    }
+    .theme-field input[type=color] {
+      width: 1.5rem;
+      height: 1.5rem;
+      padding: 0;
+      border: 1px solid var(--mid);
+      border-radius: 2px;
+      background: none;
+      cursor: pointer;
+    }
+    .theme-field input[type=text] {
+      width: 5.5rem;
+      background: var(--background);
+      border: 1px solid var(--mid);
+      color: var(--foreground);
+      border-radius: 2px;
+      padding: 0.15rem 0.4rem;
+      font-family: inherit;
+      font-size: 0.72rem;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
   </style>
 </head>
 <body>
@@ -693,6 +761,15 @@
           <span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
+        <div class="menu-wrap submenu-wrap" id="menuToolsTheme">
+          <button class="menu-item" onclick="toggleSubmenu('menuToolsTheme')">
+            <span>Theme</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="themeMenuList">
+            <!-- preset items + Custom… injected by buildThemeMenu() -->
+          </div>
+        </div>
       </div>
     </div>
 
@@ -802,6 +879,20 @@
         <div id="kbKeys"></div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Custom theme editor -->
+  <div id="themeModal" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-title">Custom Theme</div>
+      <div class="theme-fields" id="themeFields">
+        <!-- rows injected by buildThemeModal() -->
+      </div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="resetCustomTheme()">Reset</button>
+        <button class="tb-btn" onclick="closeThemeModal()">Done</button>
+      </div>
     </div>
   </div>
 
@@ -2983,6 +3074,152 @@
     window.toggleSubmenu = toggleSubmenu;
     window.closeMenus  = closeMenus;
     window.loadExample = loadExample;
+
+    // -----------------------------------------------------------------------
+    // ---- theme ----
+    // A theme is the four base colors; --mid/--high/--contrast derive from
+    // them (see :root). applyColors() writes the bases onto :root inline and
+    // picks --contrast from background luminance so emphasis works on both
+    // dark and light backgrounds. Selection is persisted to localStorage.
+    // -----------------------------------------------------------------------
+    const THEME_FIELDS = [
+      ['background', 'Background'],
+      ['foreground', 'Foreground'],
+      ['accent', 'Accent'],
+      ['error', 'Error'],
+    ];
+    const THEMES = {
+      default:  { name: 'Default',  background: '#000', foreground: '#7df', accent: '#6c9', error: '#f33' },
+      blue:   { name: 'Blue',   background: '#00c', foreground: '#eee', accent: '#0f0', error: '#f33' },
+      light: { name: 'Light', background: '#fff', foreground: '#00f', accent: '#f00', error: '#f00' },
+    };
+    const THEME_STORE_KEY = 'mmlisp.theme';
+    const DEFAULT_THEME_ID = 'default';
+    let _themeState = { id: DEFAULT_THEME_ID, custom: { ...THEMES.default } };
+
+    function parseHexRGB(hex) {
+      let h = String(hex).trim().replace(/^#/, '');
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      if (h.length !== 6) return null;
+      const n = parseInt(h, 16);
+      if (Number.isNaN(n)) return null;
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    function toHex6(hex) {
+      const c = parseHexRGB(hex);
+      return c ? '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('') : '#000000';
+    }
+    // WCAG relative luminance → emphasis pole (white on dark, black on light).
+    function contrastPole(bg) {
+      const c = parseHexRGB(bg) || { r: 0, g: 0, b: 0 };
+      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      const lum = 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+      return lum > 0.4 ? '#000' : '#fff';
+    }
+    function colorsForState(st) {
+      return st.id === 'custom' ? st.custom : (THEMES[st.id] || THEMES[DEFAULT_THEME_ID]);
+    }
+    function applyColors(colors) {
+      const root = document.documentElement.style;
+      root.setProperty('--background', colors.background);
+      root.setProperty('--foreground', colors.foreground);
+      root.setProperty('--accent', colors.accent);
+      root.setProperty('--error', colors.error);
+      root.setProperty('--contrast', contrastPole(colors.background));
+    }
+    function saveThemeState() {
+      try { localStorage.setItem(THEME_STORE_KEY, JSON.stringify(_themeState)); } catch (_) {}
+    }
+    function setTheme(id) {
+      _themeState.id = id;
+      applyColors(colorsForState(_themeState));
+      saveThemeState();
+      buildThemeMenu();
+    }
+    function buildThemeMenu() {
+      const list = document.getElementById('themeMenuList');
+      if (!list) return;
+      const check = id => `<span class="menu-item-shortcut">${_themeState.id === id ? '✓' : ''}</span>`;
+      let html = '';
+      for (const id of Object.keys(THEMES)) {
+        html += `<button class="menu-item" onclick="setTheme('${id}');closeMenus()"><span>${THEMES[id].name}</span>${check(id)}</button>`;
+      }
+      html += `<button class="menu-item" onclick="openThemeModal()"><span>Custom…</span>${check('custom')}</button>`;
+      list.innerHTML = html;
+    }
+    function buildThemeModal() {
+      const wrap = document.getElementById('themeFields');
+      if (!wrap || wrap.childElementCount) return;
+      wrap.innerHTML = THEME_FIELDS.map(([key, label]) => `
+        <div class="theme-field">
+          <label for="ct-${key}">${label}</label>
+          <input type="color" id="ct-${key}" data-key="${key}">
+          <input type="text" id="ct-${key}-hex" data-key="${key}" spellcheck="false">
+        </div>`).join('');
+      for (const [key] of THEME_FIELDS) {
+        const swatch = document.getElementById(`ct-${key}`);
+        const text = document.getElementById(`ct-${key}-hex`);
+        swatch.addEventListener('input', () => { text.value = swatch.value; onCustomFieldChange(key, swatch.value); });
+        text.addEventListener('input', () => {
+          const v = text.value.trim();
+          if (parseHexRGB(v)) { swatch.value = toHex6(v); onCustomFieldChange(key, v); }
+        });
+      }
+    }
+    function onCustomFieldChange(key, value) {
+      _themeState.id = 'custom';
+      _themeState.custom = { ..._themeState.custom, [key]: value };
+      applyColors(_themeState.custom);
+      saveThemeState();
+      buildThemeMenu();
+    }
+    function openThemeModal() {
+      closeMenus();
+      buildThemeModal();
+      const seed = { ...colorsForState(_themeState) };
+      _themeState = { id: 'custom', custom: seed };
+      for (const [key] of THEME_FIELDS) {
+        document.getElementById(`ct-${key}`).value = toHex6(seed[key]);
+        document.getElementById(`ct-${key}-hex`).value = seed[key];
+      }
+      applyColors(seed);
+      saveThemeState();
+      buildThemeMenu();
+      document.getElementById('themeModal').hidden = false;
+    }
+    function closeThemeModal() {
+      document.getElementById('themeModal').hidden = true;
+    }
+    function resetCustomTheme() {
+      const base = THEMES[DEFAULT_THEME_ID];
+      _themeState.custom = { ...base };
+      for (const [key] of THEME_FIELDS) {
+        document.getElementById(`ct-${key}`).value = toHex6(base[key]);
+        document.getElementById(`ct-${key}-hex`).value = base[key];
+      }
+      applyColors(_themeState.custom);
+      saveThemeState();
+    }
+    function initTheme() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(THEME_STORE_KEY) || 'null');
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.id) _themeState.id = parsed.id;
+          if (parsed.custom) _themeState.custom = { ...THEMES.default, ...parsed.custom };
+        }
+      } catch (_) {}
+      if (_themeState.id !== 'custom' && !THEMES[_themeState.id]) _themeState.id = DEFAULT_THEME_ID;
+      applyColors(colorsForState(_themeState));
+      buildThemeMenu();
+    }
+    document.getElementById('themeModal').addEventListener('click', (e) => {
+      if (e.target.id === 'themeModal') closeThemeModal();
+    });
+    window.setTheme = setTheme;
+    window.openThemeModal = openThemeModal;
+    window.closeThemeModal = closeThemeModal;
+    window.resetCustomTheme = resetCustomTheme;
+    initTheme();
 
     // btnPlay is always enabled (audio init on first click)
     document.getElementById('btnStop').disabled = false;
