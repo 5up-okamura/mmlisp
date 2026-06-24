@@ -422,18 +422,43 @@
       justify-content: space-between;
     }
     .op-col-title input[type=checkbox] {
-      width: 0.75rem;
-      height: 0.75rem;
+      appearance: none;
+      -webkit-appearance: none;
+      width: 0.8rem;
+      height: 0.8rem;
       margin: 0;
       padding: 0;
       cursor: pointer;
       flex-shrink: 0;
+      box-sizing: border-box;
+      position: relative;
+      background: var(--background);
+      border: 1px solid var(--mid);
+      border-radius: 2px;
+    }
+    .op-col-title input[type=checkbox]:hover { border-color: var(--high); }
+    .op-col-title input[type=checkbox]:focus-visible {
+      outline: 1px solid var(--high);
+      outline-offset: 1px;
+    }
+    .op-col-title input[type=checkbox]:checked::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 1.5px;
+      height: 140%; /* box diagonal (√2) — spans corner to corner */
+      background: var(--background);
+      transform: translate(-50%, -50%) rotate(45deg);
     }
     /* Carrier / modulator roles — default is modulator */
     .op-col { --op-color: var(--accent); }
     .op-col.carrier { --op-color: var(--foreground); }
     .op-col .op-col-title { color: var(--op-color); }
-    .op-col .op-col-title input[type=checkbox] { accent-color: var(--op-color); }
+    .op-col .op-col-title input[type=checkbox]:checked {
+      background: var(--op-color);
+      border-color: var(--op-color);
+    }
     .op-col input[type=range]::-webkit-slider-thumb { background: var(--op-color); }
     .op-col input[type=range]::-moz-range-thumb { background: var(--op-color); }
     .op-col .knob-label span.val { color: var(--op-color); }
@@ -471,7 +496,10 @@
     #fmParamSection.fm-disabled input[type=checkbox] {
       cursor: not-allowed;
       opacity: 0.55;
-      filter: saturate(0);
+    }
+    #fmParamSection.fm-disabled .op-col-title input[type=checkbox]:checked {
+      background: var(--mid);
+      border-color: var(--mid);
     }
 
     /* channel strips */
