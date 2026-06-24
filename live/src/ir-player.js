@@ -574,7 +574,6 @@ export class IRPlayer {
 
     // PSG channel routing
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
-    this._psgMuted = new Array(4).fill(false); // mute state per PSG ch
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
     this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
@@ -584,8 +583,11 @@ export class IRPlayer {
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
 
-    // Mute state per channel (index 0-5)
-    this._mutedChannels = new Array(6).fill(false);
+    // Mute / solo state keyed by track index (a track == one sounding channel,
+    // e.g. fm3-1, pcm1). Solo overrides mute: when any track is soloed, only
+    // soloed tracks sound.
+    this._mutedTracks = new Set();
+    this._soloTracks = new Set();
 
     // Channels holding a len=0 note, waiting for triggerKeyOff()
     this._holdChannels = new Set();
@@ -795,37 +797,37 @@ export class IRPlayer {
   }
 
   /**
-   * Mute or unmute a channel. Muted channels suppress NOTE_ON key-on writes.
-   * @param {number} ch  0-5 = FM, 6-9 = PSG (6=sqr1, 7=sqr2, 8=sqr3, 9=noise)
+   * Mute or unmute a sounding channel by track index. Muted tracks suppress
+   * NOTE_ON key-on writes.
+   * @param {number} ti  track index (== track.id == position in ir.tracks)
    * @param {boolean} muted
    */
-  muteChannel(ch, muted) {
-    if (ch >= 6 && ch <= 9) {
-      this._psgMuted[ch - 6] = muted;
-    } else {
-      this._mutedChannels[ch] = muted;
-    }
+  muteTrack(ti, muted) {
+    if (muted) this._mutedTracks.add(ti);
+    else this._mutedTracks.delete(ti);
   }
 
   /**
-   * Solo a channel — mutes all others.
-   * @param {number} ch  0-5 FM / 6-9 PSG, or -1 to clear solo
+   * Solo or unsolo a track. Multiple tracks may be soloed at once; while any
+   * track is soloed, only soloed tracks sound.
+   * @param {number} ti  track index
+   * @param {boolean} on
    */
-  soloChannel(ch) {
-    if (ch >= 6 && ch <= 9) {
-      // Solo a PSG channel: mute all FM and other PSG channels
-      for (let i = 0; i < 6; i++) this._mutedChannels[i] = true;
-      for (let i = 0; i < 4; i++) this._psgMuted[i] = i !== ch - 6;
-    } else {
-      for (let i = 0; i < 6; i++) this._mutedChannels[i] = ch >= 0 && i !== ch;
-      for (let i = 0; i < 4; i++) this._psgMuted[i] = ch >= 0;
-    }
+  soloTrack(ti, on) {
+    if (on) this._soloTracks.add(ti);
+    else this._soloTracks.delete(ti);
   }
 
-  /** Clear all mutes. */
-  clearMute() {
-    this._mutedChannels.fill(false);
-    this._psgMuted.fill(false);
+  /** Clear all mute and solo state. */
+  clearChannelStates() {
+    this._mutedTracks.clear();
+    this._soloTracks.clear();
+  }
+
+  /** Whether a track currently sounds (solo overrides mute). */
+  _isTrackAudible(ti) {
+    if (this._soloTracks.size > 0) return this._soloTracks.has(ti);
+    return !this._mutedTracks.has(ti);
   }
 
   /**
@@ -1864,7 +1866,7 @@ export class IRPlayer {
               )
             : null;
         let keyonEnd = null;
-        if (!this._mutedChannels[ch] && !isFmSilent) {
+        if (this._isTrackAudible(ev._trackIndex) && !isFmSilent) {
           const hasEventMask = ev.args?.opMask !== undefined;
           let keyMask = this.getOpMask(ch);
           if (hasEventMask) {
@@ -3294,7 +3296,7 @@ export class IRPlayer {
 
     switch (ev.cmd) {
       case "NOTE_ON": {
-        if (this._psgMuted[psgCh]) break;
+        if (!this._isTrackAudible(ev._trackIndex)) break;
 
         const isNoise = psgCh === 3;
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;

@@ -3032,6 +3032,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
 
       const trackData = {
         id: trackOrder.length,
+        // Original score channel name (e.g. "fm3-1", "pcm1"), preserved for the
+        // UI to label and address per-sounding-channel. `channel` below collapses
+        // FM3 variants to the shared hardware channel for the driver.
+        scoreChannel: head,
         channel:
           head === "fm3-csm" ||
           head === "fm3-csm-rate" ||

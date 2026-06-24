@@ -464,18 +464,18 @@
 
     /* channel strips */
     .ch-strips-row {
-      display: grid;
-      grid-template-columns: repeat(10, minmax(0, 1fr));
+      display: flex;
       gap: 0.3rem;
-      overflow: hidden;
-      padding-bottom: 2px;
+      overflow-x: auto;
+      padding-bottom: 4px;
     }
     .ch-col {
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
       align-items: stretch;
-      min-width: 0;
+      flex: 0 0 auto;
+      min-width: 2rem;
     }
     .ms-btn {
       background: var(--background);
@@ -931,7 +931,7 @@
     import { IRPlayer } from './src/ir-player.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
-    import { midiToFnumBlock } from './src/ir-utils.js';
+    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
@@ -2599,6 +2599,7 @@
       _lastGoodIR = null;
       _lastSourceMap = null;
       setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
+      compileNow();
       onStop();
     }
 
@@ -2629,6 +2630,7 @@
         }
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
+        buildChStrips(ir);
         // Anchor playhead highlights to the document this IR was compiled from.
         // Later edits (without rebuild) are mapped from here so highlights track
         // the text. Edits compose into the field even while stopped.
@@ -2666,7 +2668,16 @@
     let _initAudioPromise = null;
     let player = null;
     let currentIrURL = null;
-    let selectedCh = 0;
+    let selectedCh = null;                 // hardware FM/PSG index (0-9) or null — drives the FM param panel
+    let selectedChannel = null;            // head of the selected strip (e.g. "fm3-1") for highlight
+    const CURSOR_DEF_PREVIEW_CH = 0;        // FM channel used to audition a cursor FM def (incl. its op mask)
+    const _mutedChannels = new Set();      // muted channel names (heads)
+    const _soloChannels = new Set();       // soloed channel names (heads)
+    let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
+    // Canonical hardware order of score channel heads. fm3-csm-rate has no strip
+    // of its own — it folds into the single "fm3-csm" (csm) strip.
+    const CHANNEL_ORDER = ['fm1','fm2','fm3','fm3-1','fm3-2','fm3-3','fm3-4','fm3-csm',
+      'fm4','fm5','fm6','sqr1','sqr2','sqr3','noise','pcm1','pcm2','pcm3'];
     let _fmCursorDefContext = null;
     let _stepInputEnabled = false;
     let _kbBaseOctave = 3;
@@ -2744,85 +2755,121 @@
     });
 
     // -----------------------------------------------------------------------
-    // Channel strips: mute / solo
+    // Channel strips: mute / solo (driven by the compiled score)
     // -----------------------------------------------------------------------
-    const _muteState = new Array(10).fill(false); // 0-5 FM, 6-9 PSG
-    let _soloChannel = -1; // -1 = no solo
-
+    // Hardware-index labels, still used by the FM param-panel status (channelLabel).
     const FM_LABELS  = ['F1','F2','F3','F4','F5','F6'];
     const PSG_LABELS = ['S1','S2','S3','N1'];
 
-    function buildChStrips() {
-      const el = document.getElementById('chStrips');
-      el.innerHTML = '';
+    // Score channel name (head) → short strip label.
+    function channelLabelOf(head) {
+      if (head === 'fm3-csm') return 'csm';
+      let m;
+      if ((m = /^fm([1-6])$/.exec(head))) return 'f' + m[1];
+      if ((m = /^fm3-([1-4])$/.exec(head))) return 'f3-' + m[1];
+      if ((m = /^sqr([1-3])$/.exec(head))) return 's' + m[1];
+      if (head === 'noise') return 'n1';
+      if ((m = /^pcm([1-3])$/.exec(head))) return 'p' + m[1];
+      return head;
+    }
 
+    // Hardware index that drives the FM param panel for a given head:
+    // 0-5 = FM, 6-9 = PSG, null = no FM/PSG params (pcm*, csm).
+    function selIndexForHead(head) {
+      if (/^fm3-[1-4]$/.test(head)) return CH_NAME_TO_INDEX.fm3;
+      if (CH_NAME_TO_INDEX[head] != null) return CH_NAME_TO_INDEX[head];
+      if (PSG_CH_NAME_TO_INDEX[head] != null) return 6 + PSG_CH_NAME_TO_INDEX[head];
+      return null;
+    }
+
+    // Build the strip model from the IR's used channels, in canonical hardware
+    // order. fm3-csm-rate (Timer-A control) is intentionally excluded; the csm
+    // strip targets the sounding fm3-csm track.
+    function buildChStripModel(ir) {
+      const tracks = ir?.tracks ?? [];
+      const headToTrack = new Map();
+      tracks.forEach((t, ti) => {
+        const head = t.scoreChannel ?? t.channel;
+        if (head != null && !headToTrack.has(head)) headToTrack.set(head, ti);
+      });
+      const model = [];
+      for (const head of CHANNEL_ORDER) {
+        if (!headToTrack.has(head)) continue;
+        model.push({
+          head,
+          label: channelLabelOf(head),
+          trackIndex: headToTrack.get(head),
+          selIndex: selIndexForHead(head),
+        });
+      }
+      return model;
+    }
+
+    function buildChStrips(ir) {
+      _chStripModel = buildChStripModel(ir);
+      // Persist mute/solo by channel name, but drop state for channels that are
+      // no longer in the score (a removed-then-readded channel returns fresh).
+      const present = new Set(_chStripModel.map((e) => e.head));
+      for (const h of _mutedChannels) if (!present.has(h)) _mutedChannels.delete(h);
+      for (const h of _soloChannels) if (!present.has(h)) _soloChannels.delete(h);
+      if (selectedChannel != null && !present.has(selectedChannel)) {
+        selectedChannel = null;
+        selectedCh = null;
+      }
+      renderChStrips();
+    }
+
+    function renderChStrips() {
+      const el = document.getElementById('chStrips');
+      if (!el) return;
+      el.innerHTML = '';
       const row = document.createElement('div');
       row.className = 'ch-strips-row';
-
-      // FM channels
-      for (let ch = 0; ch < 6; ch++) {
+      for (const entry of _chStripModel) {
+        const h = entry.head;
+        const selCls  = selectedChannel === h ? ' ch-sel' : '';
+        const muteCls = _mutedChannels.has(h) ? ' muted' : '';
+        const soloCls = _soloChannels.has(h) ? ' soloed' : '';
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
-          <button class="ms-btn${selectedCh === ch ? ' ch-sel' : ''}" id="btn-ch-${ch}" onclick="selectCh(${ch})">${FM_LABELS[ch]}</button>
-          <button class="ms-btn" id="btn-mute-${ch}" onclick="toggleMute(${ch})" style="margin-top:0.35rem">M</button>
-          <button class="ms-btn" id="btn-solo-${ch}" onclick="toggleSolo(${ch})">S</button>
+          <button class="ms-btn${selCls}" onclick="selectCh('${h}')">${entry.label}</button>
+          <button class="ms-btn${muteCls}" onclick="toggleMute('${h}')" style="margin-top:0.35rem">M</button>
+          <button class="ms-btn${soloCls}" onclick="toggleSolo('${h}')">S</button>
         `;
         row.appendChild(col);
       }
-
-      // PSG channels
-      for (let i = 0; i < 4; i++) {
-        const ch = 6 + i;
-        const col = document.createElement('div');
-        col.className = 'ch-col';
-        col.innerHTML = `
-          <button class="ms-btn${selectedCh === ch ? ' ch-sel' : ''}" id="btn-ch-${ch}" onclick="selectCh(${ch})">${PSG_LABELS[i]}</button>
-          <button class="ms-btn" id="btn-mute-${ch}" onclick="toggleMute(${ch})" style="margin-top:0.35rem">M</button>
-          <button class="ms-btn" id="btn-solo-${ch}" onclick="toggleSolo(${ch})">S</button>
-        `;
-        row.appendChild(col);
-      }
-
       el.appendChild(row);
     }
-    buildChStrips();
 
-    function toggleMute(ch) {
-      _muteState[ch] = !_muteState[ch];
-      document.getElementById(`btn-mute-${ch}`).classList.toggle('muted', _muteState[ch]);
-      player?.muteChannel(ch, _muteState[ch]);
+    function _trackIndexOf(head) {
+      return _chStripModel.find((e) => e.head === head)?.trackIndex;
     }
 
-    function toggleSolo(ch) {
-      if (_soloChannel === ch) {
-        // unsolo
-        _soloChannel = -1;
-        for (let i = 0; i < 10; i++) {
-          document.getElementById(`btn-solo-${i}`)?.classList.remove('soloed');
-        }
-        player?.clearMute();
-        // restore explicit mutes
-        for (let i = 0; i < 10; i++) {
-          if (_muteState[i]) player?.muteChannel(i, true);
-        }
-      } else {
-        _soloChannel = ch;
-        for (let i = 0; i < 10; i++) {
-          document.getElementById(`btn-solo-${i}`)?.classList.toggle('soloed', i === ch);
-        }
-        player?.soloChannel(ch);
-      }
+    function toggleMute(head) {
+      const on = !_mutedChannels.has(head);
+      if (on) _mutedChannels.add(head); else _mutedChannels.delete(head);
+      const ti = _trackIndexOf(head);
+      if (ti != null) player?.muteTrack(ti, on);
+      renderChStrips();
     }
 
+    function toggleSolo(head) {
+      const on = !_soloChannels.has(head);
+      if (on) _soloChannels.add(head); else _soloChannels.delete(head);
+      const ti = _trackIndexOf(head);
+      if (ti != null) player?.soloTrack(ti, on);
+      renderChStrips();
+    }
+
+    // Push persisted mute/solo (kept by channel name) onto a freshly loaded player,
+    // translating names → track indices from the current strip model.
     function applyPlayerMuteSoloState(p) {
       if (!p) return;
-      if (_soloChannel >= 0) {
-        p.soloChannel(_soloChannel);
-        return;
-      }
-      for (let i = 0; i < 10; i++) {
-        p.muteChannel(i, _muteState[i]);
+      p.clearChannelStates();
+      for (const entry of _chStripModel) {
+        if (_mutedChannels.has(entry.head)) p.muteTrack(entry.trackIndex, true);
+        if (_soloChannels.has(entry.head)) p.soloTrack(entry.trackIndex, true);
       }
     }
 
@@ -3038,6 +3085,9 @@
             }
           }
         });
+        // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
+        // that never went through compileNow), then push persisted mute/solo.
+        buildChStrips(player._ir);
         applyPlayerMuteSoloState(player);
         // Seek to cursor line if provided and source map available
         if (fromLine != null && _lastSourceMap) {
@@ -3537,12 +3587,6 @@
       controls.forEach((el) => {
         el.disabled = !enabled;
       });
-      if (mode === 'cursor-def') {
-        for (let op = 1; op <= 4; op++) {
-          const opChk = document.getElementById(`chk-op${op}`);
-          if (opChk) opChk.disabled = true;
-        }
-      }
     }
 
     function getKeyboardTargetContext() {
@@ -3553,7 +3597,7 @@
         return { chIndex: selectedCh, useCursorDef: false };
       }
       if (selectedCh == null && _fmCursorDefContext?.regs) {
-        return { chIndex: 0, useCursorDef: true, defCtx: _fmCursorDefContext };
+        return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
       }
       // Keep the keyboard usable even when PSG is selected or no channel is selected.
       // Fallback target is FM1 preview.
@@ -3983,7 +4027,11 @@
     }
 
     function setLiveOperatorEnabled(op, enabled) {
-      if (getFmParamMode() !== 'channel') {
+      const mode = getFmParamMode();
+      // 'channel' edits the selected channel's key mask; 'cursor-def' edits the
+      // preview channel's mask so a voice def can be auditioned with operators
+      // toggled (the mask is not part of the def, only the audition).
+      if (mode === 'disabled') {
         syncParamUI();
         return false;
       }
@@ -3994,10 +4042,11 @@
         syncParamUI();
         return false;
       }
+      const ch = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
       const bit = 1 << (op + 3); // op1=bit4, op2=bit5, op3=bit6, op4=bit7
-      const cur = player.getOpMask(selectedCh);
+      const cur = player.getOpMask(ch);
       const next = enabled ? (cur | bit) : (cur & ~bit);
-      player.setOpMask(selectedCh, next);
+      player.setOpMask(ch, next);
       return true;
     }
 
@@ -4019,9 +4068,15 @@
     }
 
     // Build channel tabs — now handled by channel buttons in chStrips
-    function selectCh(ch) {
-      selectedCh = selectedCh === ch ? null : ch;
-      buildChStrips();
+    function selectCh(head) {
+      if (selectedChannel === head) {
+        selectedChannel = null;
+        selectedCh = null;
+      } else {
+        selectedChannel = head;
+        selectedCh = _chStripModel.find((e) => e.head === head)?.selIndex ?? null;
+      }
+      renderChStrips();
       syncParamUI();
     }
 
@@ -4096,8 +4151,10 @@
       document.getElementById('algDisplay').textContent = ALG_DESC[regs.algorithm] ?? '';
       updateOpRoles(regs.algorithm);
 
-      // Per-operator ON/OFF
-      const mask = mode === 'channel' && player ? player.getOpMask(selectedCh) : 0xf0;
+      // Per-operator ON/OFF. In cursor-def mode reflect the preview channel's
+      // mask so auditioned operator toggles persist in the UI.
+      const maskCh = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
+      const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
       for (let op = 1; op <= 4; op++) {
         const bit = 1 << (op + 3);
         const chk = document.getElementById(`chk-op${op}`);
