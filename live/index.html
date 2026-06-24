@@ -1634,11 +1634,14 @@
     }
 
     function readFmOps(bytes, cursor, count, readOne) {
-      const ops = new Array(count);
+      const ops = [];
+      // Read only the operators the file actually carries. A source with fewer
+      // than 4 (e.g. a 2-op instrument) yields a shorter list; the voice writer
+      // emits just those, leaving the rest at the compiler's operator defaults.
       for (let i = 0; i < count; i++) {
-        ops[i] = normalizeFmOp(readOne(bytes, cursor));
+        ops.push(normalizeFmOp(readOne(bytes, cursor)));
       }
-      return ops;
+      return ops.slice(0, 4); // YM2612 is 4-op; never keep more
     }
 
     function normalizeFmPatchFields(patch) {
@@ -1689,10 +1692,6 @@
           ops = readDmpU8(bytes, cursor) ? 2 : 4;
         }
       }
-      if (ops !== 4) {
-        throw new Error(`Unsupported operator count in DMP: ${ops} (4-op FM only)`);
-      }
-
       const fms = version > 1 ? readDmpU8(bytes, cursor) : 0;
       const fb = readDmpU8(bytes, cursor);
       const alg = readDmpU8(bytes, cursor);
@@ -1906,9 +1905,6 @@
       });
 
       cursor.i = featEnd;
-      if (opCount !== 4) {
-        throw new Error(`Unsupported FUI FM operator count: ${opCount} (4-op only)`);
-      }
 
       return normalizeFmPatchFields({
         alg,
@@ -1984,11 +1980,7 @@
       readDmpU8(bytes, cursor); // opll preset/reserved
       skipBytes(bytes, cursor, 2); // reserved
 
-      if (opCount !== 4) {
-        throw new Error(`Unsupported old FUI FM operator count: ${opCount} (4-op only)`);
-      }
-
-      const ops = readFmOps(bytes, cursor, 4, (b, c) => {
+      const ops = readFmOps(bytes, cursor, opCount, (b, c) => {
         const am = readDmpU8(b, c);
         const ar = readDmpU8(b, c);
         const dr = readDmpU8(b, c);
@@ -2045,7 +2037,7 @@
         header.join(' '),
       ];
 
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < parsed.ops.length; i++) {
         const op = parsed.ops[i];
         const n = i + 1;
         const parts = [
@@ -2123,6 +2115,9 @@
       const bytes = new Uint8Array(await file.arrayBuffer());
       const parsed = fmt.parser(bytes);
       const voiceName = makeVoiceNameFromFile(file.name);
+      if (parsed.ops.length < 4) {
+        log(`${file.name}: ${parsed.ops.length}-op source — wrote ${parsed.ops.length} operators; check :alg`, 'info');
+      }
       const text = buildMmlispVoiceFromDmp(parsed, voiceName);
       insertTextAtCursor(text);
       log(`Imported ${file.name} (${fmt.label}) as ${voiceName} — press Build to apply`, 'info');
