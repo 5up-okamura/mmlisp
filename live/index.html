@@ -853,62 +853,90 @@
       ];
     }
 
-    // Multi-track playhead cursors — highlight the sounding token per track.
-    // Effect payload: { trackIdx, src } — trackIdx=-1 clears all; src null removes one track.
+    // Playhead highlights (token per track + active step sequences). IR events
+    // carry source positions in the document the active IR was BUILT from, but
+    // editing during playback does not recompile — so positions are resolved
+    // against that build-time document once, then MAPPED through later edits so
+    // the highlight follows the text. Re-anchored on play / build.
+    //   setTrackLine: { trackIdx, src } — trackIdx=-1 clears all; src null removes one
+    //   setSeq:       { show, src } or { clear: true }  (ref-counted per [...] literal)
+    //   setPlayheadBase: re-anchor to the current doc (the active IR was just (re)built)
     const setTrackLine = StateEffect.define();
-    const trackLinesField = StateField.define({
-      create: () => new Map(),
-      update(m, tr) {
+    const setSeq = StateEffect.define();
+    const setPlayheadBase = StateEffect.define();
+
+    // Resolve a build-time src to current-document [from, to): resolve against the
+    // anchor doc, then map through edits accumulated since the anchor.
+    function resolvePlayhead(src, builtDoc, changes, curDoc) {
+      let [from, to] = srcToRange(builtDoc ?? curDoc, src);
+      if (changes) { from = changes.mapPos(from, 1); to = changes.mapPos(to, -1); }
+      return [
+        Math.max(0, Math.min(curDoc.length, from)),
+        Math.max(from + 1, Math.min(curDoc.length, to)),
+      ];
+    }
+
+    const playheadField = StateField.define({
+      // toks: Map<trackIdx, {from,to,cls}>; seqs: Map<"line:col", {from,to,count,cls}>
+      // builtDoc: anchor Text; changes: ChangeSet since anchor (null == identity)
+      create: () => ({ toks: new Map(), seqs: new Map(), builtDoc: null, changes: null }),
+      update(v, tr) {
+        let { toks, seqs, builtDoc, changes } = v;
+        let dirty = false;
+        const own = () => { if (!dirty) { toks = new Map(toks); seqs = new Map(seqs); dirty = true; } };
+
+        // Follow edits: map existing ranges and accumulate changes since anchor.
+        if (tr.docChanged) {
+          own();
+          const remap = (r) => {
+            const from = tr.changes.mapPos(r.from, 1);
+            return { ...r, from, to: Math.max(from + 1, tr.changes.mapPos(r.to, -1)) };
+          };
+          for (const [k, r] of toks) toks.set(k, remap(r));
+          for (const [k, r] of seqs) seqs.set(k, remap(r));
+          changes = changes ? changes.compose(tr.changes) : tr.changes;
+        }
+
         for (const e of tr.effects) {
-          if (e.is(setTrackLine)) {
-            m = new Map(m);
-            if (e.value.trackIdx === -1)  { m.clear(); }
-            else if (!e.value.src)        { m.delete(e.value.trackIdx); }
-            else                          { m.set(e.value.trackIdx, e.value.src); }
+          if (e.is(setPlayheadBase)) {
+            own(); toks.clear(); seqs.clear();
+            builtDoc = tr.state.doc; changes = null;
+          } else if (e.is(setTrackLine)) {
+            own();
+            const { trackIdx, src } = e.value;
+            if (trackIdx === -1) toks.clear();
+            else if (!src) toks.delete(trackIdx);
+            else try {
+              const [from, to] = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
+              toks.set(trackIdx, { from, to, cls: `cm-playTok-${trackIdx % 4}` });
+            } catch (_) {}
+          } else if (e.is(setSeq)) {
+            own();
+            if (e.value.clear) { seqs.clear(); continue; }
+            const { show, src } = e.value;
+            const key = `${src.line}:${src.column}`;
+            const cur = seqs.get(key);
+            const count = (cur?.count ?? 0) + (show ? 1 : -1);
+            if (count <= 0) seqs.delete(key);
+            else if (cur) seqs.set(key, { ...cur, count });
+            else try {
+              const [from, to] = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
+              seqs.set(key, { from, to, count, cls: 'cm-playSeq' });
+            } catch (_) {}
           }
         }
-        return m;
+
+        return dirty ? { toks, seqs, builtDoc, changes } : v;
       },
     });
 
-    // Active step sequences ([...] literals) — ref-counted by source position so
-    // overlapping notes that reuse a sequence stay lit until the last one ends.
-    // Effect payload: { show, src } or { clear: true }.
-    const setSeq = StateEffect.define();
-    const seqField = StateField.define({
-      create: () => new Map(), // "line:col" → { src, count }
-      update(m, tr) {
-        let next = m;
-        for (const e of tr.effects) {
-          if (!e.is(setSeq)) continue;
-          next = new Map(next);
-          if (e.value.clear) { next.clear(); continue; }
-          const { show, src } = e.value;
-          const key = `${src.line}:${src.column}`;
-          const count = (next.get(key)?.count ?? 0) + (show ? 1 : -1);
-          if (count <= 0) next.delete(key);
-          else next.set(key, { src, count });
-        }
-        return next;
-      },
-    });
-
-    // Compute mark decorations from both fields (needs doc, so use compute facet)
-    const trackDecorations = EditorView.decorations.compute([trackLinesField, seqField], state => {
-      const doc = state.doc;
+    // Offsets in playheadField are already current (mapped in its update), so just
+    // build marks from them — no implicit re-mapping.
+    const playheadDecorations = EditorView.decorations.compute([playheadField], (state) => {
+      const v = state.field(playheadField);
       const decos = [];
-      for (const [, info] of state.field(seqField)) {
-        try {
-          const [from, to] = srcToRange(doc, info.src);
-          decos.push(Decoration.mark({ class: 'cm-playSeq' }).range(from, to));
-        } catch (_) {}
-      }
-      for (const [trackIdx, src] of state.field(trackLinesField)) {
-        try {
-          const [from, to] = srcToRange(doc, src);
-          decos.push(Decoration.mark({ class: `cm-playTok-${trackIdx % 4}` }).range(from, to));
-        } catch (_) {}
-      }
+      for (const r of v.seqs.values()) decos.push(Decoration.mark({ class: r.cls }).range(r.from, r.to));
+      for (const r of v.toks.values()) decos.push(Decoration.mark({ class: r.cls }).range(r.from, r.to));
       return decos.length ? Decoration.set(decos, true) : Decoration.none;
     });
 
@@ -2038,9 +2066,8 @@
       oneDarkTheme,
       syntaxHighlighting(oneDarkHighlightStyle),
       mmlispMode,
-      trackLinesField,
-      seqField,
-      trackDecorations,
+      playheadField,
+      playheadDecorations,
       lineNumbers(),
       codeFolding({
         preparePlaceholder: (state, range) => summarizeFoldHead(state, range),
@@ -2472,6 +2499,10 @@
         }
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
+        // Anchor playhead highlights to the document this IR was compiled from.
+        // Later edits (without rebuild) are mapped from here so highlights track
+        // the text. Edits compose into the field even while stopped.
+        editorView.dispatch({ effects: setPlayheadBase.of(null) });
         return { ir, ok: true };
       } catch (e) {
         log('[compile] ' + e.message, 'err');
