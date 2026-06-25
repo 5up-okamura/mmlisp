@@ -103,9 +103,9 @@ Common modifiers:
 - `:vel N` — note-on velocity (`0`–`15`); a ~2 dB/step musical ladder (PMD /
   MDSDRV style). `15` plays at the patch level, `0` is a ~-30 dB floor —
   velocity **never mutes** (use a rest for silence)
-- `:vol N` — channel output level (`0`–`31`); a bipolar mixer-fader: unity
-  (0 dB) sits below the top with **boost** headroom above and cut below; **`0`
-  mutes**. Default (unset) = unity.
+- `:vol N` — channel output level (`0`–`31`); a mixer-fader with unity (0 dB)
+  at the top: `31` = full, lower values cut — a pure attenuator; **`0`
+  mutes**. Default (unset) = `31` (unity).
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)

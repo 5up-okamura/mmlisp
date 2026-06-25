@@ -191,10 +191,10 @@ export const PSG_DB_PER_STEP = 2; // SN76489 attenuator — 16 steps
 // Velocity ladder (PMD / MDSDRV coarse-volume convention):
 export const VEL_DB_PER_STEP = 2;
 // vol/master mixer-fader (tunable): VOL_UNITY = 0 dB reference on the 0–31
-// scale; values above boost, below cut. Unity sits below the top so there is
-// boost headroom, like a real fader.
+// scale. Unity sits at the top (31 = full, no attenuation), so vol/master is a
+// pure attenuator — lower values cut, matching the master fader.
 export const VOL_STEP_DB = 2;
-export const VOL_UNITY = 24;
+export const VOL_UNITY = 31;
 
 // Velocity (0-15) → TL attenuation (float, register steps). 2 dB/step ladder:
 // vel 15 = 0 (patch level), vel 0 ≈ -30 dB floor. Attenuation only — never

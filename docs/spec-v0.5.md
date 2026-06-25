@@ -579,17 +579,15 @@ balance is preserved (not flattened to one composed TL).
 - **`:vel` (0–15) — velocity.** A 2 dB/step ladder (PMD/MDSDRV coarse-volume
   convention). `vel 15` = 0 dB (patch level); `vel 0` ≈ **−30 dB floor**.
   Attenuation only — velocity **never mutes** (silence is a rest).
-- **`:vol` / `:master` (0–31) — volume.** A **bipolar mixer-fader** around a
-  unity (0 dB) point set below the top, so there is **boost** headroom above and
-  cut below — like a real fader. `> unity` boosts (negative offset, louder,
-  clamped at the carrier's TL 0 ceiling — limited by the patch's headroom);
-  `< unity` cuts; **`0` is a hard mute** (FM skips key-on; PSG → max att). vol
-  and master share the curve and their offsets add. The unspecified default is
-  unity (0 dB = voiced), so the silent default is unchanged.
+- **`:vol` / `:master` (0–31) — volume.** A **mixer-fader** with unity (0 dB)
+  at the **top**: `31` = full (no attenuation), lower values cut — a pure
+  attenuator, like a master fader. **`0` is a hard mute** (FM skips key-on;
+  PSG → max att). vol and master share the curve and their offsets add. The
+  unspecified default is `31` (unity, 0 dB = voiced).
 
 The dB constants are **tunable** (`VEL_DB_PER_STEP`, `VOL_STEP_DB`, `VOL_UNITY`
-in `ir-utils.js`); defaults are vel 2 dB/step, vol 2 dB/step with unity at 24
-(boost to ~+14 dB at 31, cut to ~−46 dB at 1).
+in `ir-utils.js`); defaults are vel 2 dB/step, vol 2 dB/step with unity at 31
+(cut to ~−62 dB at 1).
 
 Resolution: authored values are integer (`vel` 0–15, `vol`/`master` 0–31), but
 **computed** values (curve macros, delay scaling) stay float through the
