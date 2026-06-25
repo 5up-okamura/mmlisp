@@ -77,15 +77,17 @@ function lengthToken(num, dots, pct, wholeClocks) {
   return null;
 }
 
-// mucom `t` sets the YM2608 Timer-B directly. BPM = quarter-notes/min =
-// 60 * interruptRate / clocksPerQuarter, interruptRate = OPNA_clock /
-// (1152 * (256 - t)). PC-8801 OPNA (~3.9936 MHz) with C128 -> ~6500/(256-t).
+// mucom `t` sets the OPNA Timer-B directly. The realtime tempo also depends on
+// the clock resolution C (note clocks per whole note), since note durations are
+// counted in those clocks. Derived from the driver itself (pc8801src muc88.asm):
+// SETTMP converts T(BPM)->Timer-B as Timer-B = 256 - 3.46*(60000/(T*C/4)), and
+// INIT sets the default C=128. Inverting: BPM = 830400 / ((256 - t) * C).
+// e.g. t202 -> 120 BPM at C128, but 80 BPM at C192.
 function timerBToBpm(t, wholeClocks) {
   t = Math.max(0, Math.min(255, t));
-  const quarterClocks = (wholeClocks || DEFAULT_WHOLE_CLOCKS) / 4;
-  const denom = 1152 * quarterClocks * (256 - t);
+  const denom = (256 - t) * (wholeClocks || DEFAULT_WHOLE_CLOCKS);
   if (denom <= 0) return 120;
-  return Math.max(1, Math.round((60 * 3993600) / denom));
+  return Math.max(1, Math.round(830400 / denom));
 }
 
 // --- MML body tokenizer -----------------------------------------------------
@@ -98,12 +100,26 @@ const NOTE_LETTERS = new Set(["a", "b", "c", "d", "e", "f", "g"]);
 function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   const root = [];
   const stack = [root]; // loop nesting; top is current op list
-  const push = (op) => stack[stack.length - 1].push(op);
+  // A lowercase `t` (Timer-B) tempo's BPM depends on the clock resolution C in
+  // effect for the notes it governs, but `C` often follows `t` on the same line
+  // (e.g. `t202C192`). So defer its conversion until the next note/rest, when
+  // state.wholeClocks reflects any C just set.
+  const pendingTempos = [];
+  const finalizeTempos = () => {
+    if (!pendingTempos.length) return;
+    for (const tp of pendingTempos) tp.bpm = timerBToBpm(tp.timerB, state.wholeClocks);
+    pendingTempos.length = 0;
+  };
+  const push = (op) => {
+    if (op.t === "note" || op.t === "rest") finalizeTempos();
+    stack[stack.length - 1].push(op);
+  };
   const isSsg = partLetter in SSG_PARTS;
   // Loop-span state (absent for macro bodies, which are single-line -> all (x)).
   state.decisions = state.decisions || [];
   if (state.decisionIdx == null) state.decisionIdx = 0;
   state.crossStack = state.crossStack || [];
+  state.lfo = state.lfo || { on: false, delay: 0, clock: 0, amp: 0, amt: 0 };
   let comment = null; // verbatim `; …` trailing comment, kept for the output line
 
   let i = 0;
@@ -112,6 +128,26 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     let s = "";
     while (i < n && body[i] >= "0" && body[i] <= "9") s += body[i++];
     return s === "" ? null : parseInt(s, 10);
+  };
+  // A signed integer (for command args that may be negative), then a
+  // comma-separated list of them (e.g. `M0,4,2,10`, `H3,4,2`).
+  const readSignedInt = () => {
+    let sign = 1;
+    if (body[i] === "+") i++;
+    else if (body[i] === "-") { sign = -1; i++; }
+    const v = readInt();
+    return v == null ? null : sign * v;
+  };
+  const readNumList = () => {
+    const vals = [];
+    for (;;) {
+      const v = readSignedInt();
+      if (v == null) break;
+      vals.push(v);
+      if (body[i] === ",") { i++; continue; }
+      break;
+    }
+    return vals;
   };
   const skipSpaces = () => {
     while (i < n && /\s/.test(body[i])) i++;
@@ -183,7 +219,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
 
     // Tempo: T<bpm> (collected globally); t<timer> deferred
     if (c === "T") { i++; const v = readInt(); if (v != null) push({ t: "tempo", bpm: v }); continue; }
-    if (c === "t") { i++; const v = readInt(); if (v != null) push({ t: "tempo", bpm: timerBToBpm(v, state.wholeClocks) }); continue; }
+    if (c === "t") { i++; const v = readInt(); if (v != null) { const op = { t: "tempo", timerB: v, bpm: null }; push(op); pendingTempos.push(op); } continue; }
 
     // Volume: v<0-15>, ) raise, ( lower
     if (c === "v") { i++; const v = readInt(); if (v != null) push({ t: "vel", v }); continue; }
@@ -283,18 +319,26 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     }
     if (c === "&") { i++; warnOnce(warn, "&", "slur (&) articulation dropped; notes play separately"); continue; }
 
-    // Portamento {…}: a pitch glide occupying one note's time. Approximate it as
-    // a single note (the target pitch) of that duration — keeping the timing,
-    // dropping the glide. Without this the inner letters/digits would be
-    // mis-read as stray notes (e.g. {c2b} -> a spurious half note).
+    // Portamento {from len to}: a pitch glide occupying one note's time. mucom
+    // {c2b} slides c->b over length 2 (octaves may be crossed with < / >). Map to
+    // MMLisp's portamento: :glide-from <start> :glide <len> then the target note.
     if (c === "{") {
       i++;
-      let lastNote = null, lastAcc = 0, inNum = null, inDots = 0, inPct = null;
+      let bo = 0; // octave shift inside the braces (relative to the running octave)
+      const notes = []; // {letter, acc, bo} in order
+      let inNum = null, inDots = 0, inPct = null;
       while (i < n && body[i] !== "}") {
         const d = body[i];
-        if (NOTE_LETTERS.has(d)) { lastNote = d.toLowerCase(); lastAcc = 0; i++; }
-        else if (d === "+" || d === "#") { lastAcc += 1; i++; }
-        else if (d === "-") { lastAcc -= 1; i++; }
+        if (NOTE_LETTERS.has(d)) {
+          i++;
+          let acc = 0;
+          while (i < n && (body[i] === "+" || body[i] === "#" || body[i] === "-")) {
+            acc += body[i] === "-" ? -1 : 1; i++;
+          }
+          notes.push({ letter: d.toLowerCase(), acc, bo });
+        }
+        else if (d === ">") { bo += 1; i++; }
+        else if (d === "<") { bo -= 1; i++; }
         else if (d === "%") { i++; inPct = readInt() ?? 0; }
         else if (d >= "0" && d <= "9") { inNum = readInt(); }
         else if (d === ".") { inDots++; i++; }
@@ -313,8 +357,8 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       const len = hasLen
         ? lengthToken(num, dots, pct, state.wholeClocks)
         : lengthToken(inNum, inDots, inPct, state.wholeClocks);
-      if (lastNote) push({ t: "note", letter: lastNote, acc: lastAcc, len });
-      warnOnce(warn, "{", "portamento {…} approximated as a single note (glide dropped)");
+      if (notes.length >= 2) push({ t: "porta", from: notes[0], to: notes[notes.length - 1], len });
+      else if (notes.length === 1) push({ t: "note", letter: notes[0].letter, acc: notes[0].acc, len });
       continue;
     }
 
@@ -331,20 +375,46 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
+    // Hardware LFO: H speed,pms,ams -> the YM LFO (:lfo-rate global) plus the
+    // per-channel sensitivities (:fms / :ams). FM only (rendered side skips SSG).
+    if (c === "H") {
+      i++;
+      const [speed = 0, pms = 0, ams = 0] = readNumList();
+      push({ t: "hwLfo", speed, pms, ams });
+      continue;
+    }
+
+    // Software LFO (pitch vibrato): M delay,clock,amp,amount defines+enables it;
+    // MF on/off; MW/MC/ML/MD set one param. State persists across the part's lines
+    // and is emitted as a sticky `:macro :pitch (triangle …)` (cleared by MF 0).
+    if (c === "M") {
+      i++;
+      const sub = (i < n && /[A-Za-z]/.test(body[i])) ? body[i++] : null;
+      const nums = readNumList();
+      const lfo = state.lfo;
+      if (sub === "F") lfo.on = (nums[0] ?? 0) !== 0;
+      else if (sub === "W") lfo.delay = nums[0] ?? lfo.delay;
+      else if (sub === "C") lfo.clock = nums[0] ?? lfo.clock;
+      else if (sub === "L") lfo.amp = nums[0] ?? lfo.amp;
+      else if (sub === "D") lfo.amt = nums[0] ?? lfo.amt;
+      else {
+        lfo.delay = nums[0] ?? 0; lfo.clock = nums[1] ?? 0;
+        lfo.amp = nums[2] ?? 0; lfo.amt = nums[3] ?? 0; lfo.on = true;
+      }
+      push({ t: "lfoSet", lfo: { ...lfo }, wholeClocks: state.wholeClocks });
+      continue;
+    }
+
     // Deferred / unsupported commands. Consume each command's FULL argument list
     // so nothing leaks into note/length parsing (a leaked arg becomes a spurious
     // note and drifts the channel). Arg shapes differ per command:
-    if ("HMRyKkqSEPwsV".includes(c)) {
+    if ("RyKkqSEPwsV".includes(c)) {
       i++;
       warnOnce(warn, c, `command '${c}' not supported; dropped`);
       if (c === "y") {
         // y<reg>,<n>,<n> — register may be a symbolic name (letters) or number
         while (i < n && /[A-Za-z]/.test(body[i])) i++; // register name
         while (i < n && /[0-9$+\-,.]/.test(body[i])) i++; // values
-      } else if (c === "M") {
-        // M n,n,n,n  OR  MF/MW/MC/ML/MD/MA n — optional sub-letter then numbers
-        if (i < n && /[A-Za-z]/.test(body[i])) i++;
-        while (i < n && /[0-9$+\-,.]/.test(body[i])) i++;
       } else {
         while (i < n && /[0-9$+\-,.]/.test(body[i])) i++;
       }
@@ -357,6 +427,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   }
 
   if (stack.length > 1) warn.push(`part ${partLetter}: unterminated loop '[' — closed at end`);
+  finalizeTempos(); // a tempo with no following note uses the final resolution
   return { ops: root, comment };
 }
 
@@ -451,6 +522,7 @@ export function parseMucom(text) {
         decisions: loopDecisions.get(letter) || [],
         decisionIdx: 0,
         crossStack: [], // open cross-line loops (labels), persists across lines
+        lfo: { on: false, delay: 0, clock: 0, amp: 0, amt: 0 }, // software LFO (M), persists across lines
       });
     }
     return state.get(letter);
@@ -629,15 +701,16 @@ function renderOps(ops, ctx, out, depth = 0) {
         out.push(op.len ? `~ ${op.len}` : "~");
         break;
       case "octUp":
-        out.push(">");
+        out.push(">"); ctx.oct++;
         break;
       case "octDown":
-        out.push("<");
+        out.push("<"); ctx.oct--;
         break;
       case "octSet":
         // mucom FM octaves read one higher than MMLisp's (drop one); SSG/PSG use
         // a different frequency table and need no shift.
-        out.push(`:oct ${op.n - (ctx.isSsg ? 0 : 1)}`);
+        ctx.oct = op.n - (ctx.isSsg ? 0 : 1);
+        out.push(`:oct ${ctx.oct}`);
         break;
       case "pan":
         // mucom p: 0=off,1=right,2=left,3=center -> MMLisp :pan
@@ -653,8 +726,65 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "lenSet":
+        ctx.len = op.token;
         out.push(`:len ${op.token}`);
         break;
+      case "porta": {
+        // mucom {from len to}: glide from the start pitch to the target over len.
+        // :glide-from needs an absolute octave (a bare note resolves to C4).
+        const fromOct = ctx.oct + op.from.bo;
+        out.push(`:glide-from ${op.from.letter}${ACC(op.from.acc)}${fromOct}`);
+        for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
+        for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
+        const len = op.len ?? ctx.len ?? "4";
+        out.push(`:glide ${len}`);
+        out.push(`${op.to.letter}${ACC(op.to.acc)}${op.len ?? ""}`);
+        out.push(":glide 0"); // one porta note only; following notes don't glide
+        break;
+      }
+      case "hwLfo":
+        // Hardware (YM) LFO. FM only — the SSG/PSG has no equivalent.
+        if (ctx.isSsg) {
+          warnOnce(ctx.warnings, "Hssg", "hardware LFO (H) is FM-only; dropped on SSG/PSG");
+        } else {
+          out.push(`:lfo-rate ${clamp(op.speed, 0, 8)} :fms ${clamp(op.pms, 0, 7)} :ams ${clamp(op.ams, 0, 3)}`);
+        }
+        break;
+      case "lfoSet": {
+        // Software pitch LFO -> sticky :macro :pitch. Depth/period scaling are
+        // representative approximations (like detune); tune by ear if needed.
+        // mucom triangle: amp steps of +amt each up then down; peak = amp*amt
+        // (F-number units -> cents), full cycle = 2*amp*clock mucom-clocks.
+        const lfo = op.lfo;
+        let spec;
+        if (!lfo.on || lfo.amp * lfo.amt === 0 || lfo.clock === 0) {
+          spec = "none"; // LFO off -> (def lfo-off :macro :pitch none)
+        } else {
+          const factor = WHOLE_TICKS / op.wholeClocks; // mucom clocks -> ticks
+          const cents = Math.round(lfo.amp * lfo.amt * (ctx.isSsg ? PSG_CENTS_PER_DETUNE : FM_CENTS_PER_DETUNE));
+          const period = Math.max(1, Math.round(2 * lfo.amp * lfo.clock * factor));
+          const tri = `(triangle :from ${-cents} :to ${cents} :len ${period}t)`;
+          // delay>0: hold at the note's pitch for the delay, then the triangle loops.
+          spec = lfo.delay > 0
+            ? `[ (wait ${Math.max(1, Math.round(lfo.delay * factor))}t) ${tri} ]`
+            : tri;
+        }
+        // Define each distinct LFO (and the off-clear) once as (def … :macro
+        // :pitch …) and reference it by name — compact and readable.
+        if (ctx.lfoRegistry) {
+          let name = ctx.lfoRegistry.get(spec);
+          if (!name) {
+            name = spec === "none"
+              ? "lfo-off"
+              : `lfo${[...ctx.lfoRegistry.keys()].filter((k) => k !== "none").length + 1}`;
+            ctx.lfoRegistry.set(spec, name);
+          }
+          out.push(name); // bare reference — the def already carries :macro
+        } else {
+          out.push(`:macro :pitch ${spec}`);
+        }
+        break;
+      }
       case "vel":
         if (op.v !== ctx.vel) { out.push(`:vel ${clamp(op.v, 0, 15)}`); ctx.vel = op.v; }
         break;
@@ -775,10 +905,16 @@ export function mucomToMmlisp(parsed) {
     lines.push("", voiceToDef(voiceLabels.get(num), v));
   }
 
+  // Distinct software-LFO specs collected during rendering -> emitted as
+  // (def lfoN :macro :pitch …) above the score, referenced by name.
+  const lfoRegistry = new Map();
+
   // Macros become (def *n …); only those with supported content are kept.
   const usableMacros = new Set();
   for (const [mn, mac] of [...(macros || new Map()).entries()].sort((a, b) => a[0] - b[0])) {
     const toks = [];
+    // No lfoRegistry here: a `*n` body can't reference another def (:macro lfoN),
+    // so its LFO renders inline. The *n def is already singular, so no duplication.
     renderOps(mac.ops, { vel: null, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = toks.join(" ").trim();
     if (!content) continue;
@@ -793,6 +929,8 @@ export function mucomToMmlisp(parsed) {
   if (meta.title) scoreHead.push(`:title ${qstr(meta.title)}`);
   if (author) scoreHead.push(`:author ${qstr(author)}`);
   scoreHead.push(`:tempo ${tempo ?? 120}`);
+  // LFO defs (if any) are spliced in here once rendering has discovered them.
+  const lfoDefAnchor = lines.length;
   lines.push("");
   for (const c of scoreComments || []) lines.push(c);
   lines.push(scoreHead.join(" "));
@@ -803,7 +941,7 @@ export function mucomToMmlisp(parsed) {
   const ctxByLetter = new Map();
   const letterCtx = (letter) => {
     if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings });
+      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in SSG_PARTS ? 6 : 5, len: null, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry });
     }
     return ctxByLetter.get(letter);
   };
@@ -824,6 +962,13 @@ export function mucomToMmlisp(parsed) {
     const toks = [];
     renderOps(f.ops, letterCtx(f.letter), toks);
     f.text = toks.join(" ");
+  }
+
+  // Emit the discovered LFO defs above the score (referenced by name inline).
+  if (lfoRegistry.size) {
+    const defLines = [];
+    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} :macro :pitch ${spec})`);
+    lines.splice(lfoDefAnchor, 0, ...defLines);
   }
 
   // Per channel: #loop (or octave base) on the first playable form, (go loop)
