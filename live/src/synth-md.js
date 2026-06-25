@@ -32,9 +32,15 @@ export const PSG_NATIVE_SAMPLE_RATE = 3579545 / 16;
 // Mega Drive Model 1 analog output low-pass default cutoff (Hz).
 export const MD_LPF_DEFAULT_CUTOFF = 3000;
 
-// PSG is a unipolar sum of 4 channels; scale toward a single-channel level and
-// DC-block to remove the offset (and the thumps when notes change it).
-const PSG_OUTPUT_GAIN = 0.5;
+// PSG is a unipolar sum of 4 channels; scale to match the FM:PSG balance of the
+// reference emulators, and DC-block to remove the offset (and the thumps when
+// notes change it). Calibrated so one max PSG square sits ~-6 dB below one max
+// FM channel — the Genesis-Plus-GX default (fm_preamp 100 / psg_preamp 150 →
+// PSG ~0.51x FM, -5.8 dB) and MAME's classic 2:1 route ratio. Measured through
+// this full path (Nuked cores + decimation/DC block): a max FM channel peaks at
+// ~0.066 and a max PSG square at ~0.278, so 0.5 left PSG ~+12 dB too hot; 0.06
+// brings it to the ~-6 dB consensus.
+const PSG_OUTPUT_GAIN = 0.06;
 const PSG_DC_R = 0.9995; // one-pole DC blocker (~5 Hz high-pass at output rate)
 const FM_SAMPLE_SCALE = 512; // int16 chip output -> float
 const NOPN_MAX_RENDER = 4096; // nuked adapter caps _nopn_render() at this
