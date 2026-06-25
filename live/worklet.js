@@ -71,6 +71,9 @@ class YM2612Processor extends AudioWorkletProcessor {
       .then((synth) => {
         synth.setLpf(this._lpfOn, this._lpfCutoff);
         this._synth = synth;
+        // Signal the main thread that the WASM cores are live — lets it
+        // distinguish "context never started" from "synth never initialized".
+        this.port.postMessage({ type: "ready", sampleRate });
       })
       .catch((error) => {
         this.port.postMessage({
