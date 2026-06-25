@@ -1383,6 +1383,47 @@
       return `${head} ...`;
     }
 
+    // Split a string into tokens and the whitespace gaps around them, where each
+    // bracket char is its own token and other tokens are maximal non-whitespace,
+    // non-bracket runs: s === gaps[0] + words[0] + ... + words[n-1] + gaps[n].
+    // Treating brackets separately makes paren attach/detach (e.g. `] )` → `])`)
+    // a pure gap change rather than a token change.
+    function splitWordsAndGaps(s) {
+      const words = [], gaps = [];
+      const isWs = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v';
+      const isBracket = (c) => c === '(' || c === ')' || c === '[' || c === ']';
+      let i = 0, gapStart = 0;
+      while (i < s.length) {
+        if (isWs(s[i])) { i++; continue; }
+        gaps.push(s.slice(gapStart, i));
+        if (isBracket(s[i])) { words.push(s[i]); i++; }
+        else { let j = i; while (j < s.length && !isWs(s[j]) && !isBracket(s[j])) j++; words.push(s.slice(i, j)); i = j; }
+        gapStart = i;
+      }
+      gaps.push(s.slice(gapStart));
+      return { words, gaps };
+    }
+
+    // Formatting only rewrites whitespace (indentation, spacing, line breaks),
+    // leaving the non-whitespace tokens unchanged and in order. When that holds,
+    // produce minimal changes that touch only the differing gaps, so every token
+    // keeps its identity — playhead highlights and the cursor map through the
+    // format without a rebuild. Returns null if tokens changed (caller replaces
+    // the whole document instead).
+    function whitespaceFormatChanges(oldStr, newStr) {
+      const a = splitWordsAndGaps(oldStr), b = splitWordsAndGaps(newStr);
+      if (a.words.length !== b.words.length) return null;
+      for (let i = 0; i < a.words.length; i++) if (a.words[i] !== b.words[i]) return null;
+      const changes = [];
+      let pos = 0;
+      for (let i = 0; i <= a.words.length; i++) {
+        const oldGap = a.gaps[i], to = pos + oldGap.length;
+        if (oldGap !== b.gaps[i]) changes.push({ from: pos, to, insert: b.gaps[i] });
+        pos = to + (i < a.words.length ? a.words[i].length : 0);
+      }
+      return changes;
+    }
+
     function formatDocument() {
       const src = editorView.state.doc.toString();
       let formatted;
@@ -1392,8 +1433,14 @@
         log('Format error: ' + e.message, 'err');
         return true; // prevent default even on error
       }
-      if (formatted !== src) {
-        const { from, to } = editorView.state.selection.main;
+      if (formatted === src) return true;
+      const wsChanges = whitespaceFormatChanges(src, formatted);
+      if (wsChanges) {
+        // Whitespace-only diff: omit selection so it maps through the changes.
+        if (wsChanges.length) editorView.dispatch({ changes: wsChanges });
+      } else {
+        // Tokens changed (rare): full replace; highlights clear until next build.
+        const { from } = editorView.state.selection.main;
         editorView.dispatch({
           changes: { from: 0, to: editorView.state.doc.length, insert: formatted },
           selection: { anchor: Math.min(from, formatted.length) },
