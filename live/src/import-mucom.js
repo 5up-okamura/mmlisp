@@ -101,14 +101,15 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   const root = [];
   const stack = [root]; // loop nesting; top is current op list
   // A lowercase `t` (Timer-B) tempo's BPM depends on the clock resolution C in
-  // effect for the notes it governs, but `C` often follows `t` on the same line
-  // (e.g. `t202C192`). So defer its conversion until the next note/rest, when
-  // state.wholeClocks reflects any C just set.
-  const pendingTempos = [];
+  // effect for the notes it governs, but `C` often follows `t` — on the same
+  // line (`t202C192`) or a later one (`t225` alone, then `C192 …`). So defer its
+  // conversion until the next note/rest, when state.wholeClocks reflects that C.
+  // Kept on `state` so it persists across the part's lines (one call per line).
+  state.pendingTempos = state.pendingTempos || [];
   const finalizeTempos = () => {
-    if (!pendingTempos.length) return;
-    for (const tp of pendingTempos) tp.bpm = timerBToBpm(tp.timerB, state.wholeClocks);
-    pendingTempos.length = 0;
+    if (!state.pendingTempos.length) return;
+    for (const tp of state.pendingTempos) tp.bpm = timerBToBpm(tp.timerB, state.wholeClocks);
+    state.pendingTempos.length = 0;
   };
   const push = (op) => {
     if (op.t === "note" || op.t === "rest") finalizeTempos();
@@ -214,12 +215,22 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
+    // `%<clocks>` (SET LIZM): set the default note length directly in clocks,
+    // same as l%<clocks>. (As a note/rest suffix `%` is handled in their parsers;
+    // this is the standalone command form, e.g. `%1c` = set len 1 clock, then c.)
+    if (c === "%") {
+      i++;
+      const p = readInt();
+      if (p != null) push({ t: "lenSet", token: lengthToken(null, 0, p, state.wholeClocks) });
+      continue;
+    }
+
     // Whole-note clock resolution
     if (c === "C") { i++; const v = readInt(); if (v != null && v > 0) state.wholeClocks = v; continue; }
 
     // Tempo: T<bpm> (collected globally); t<timer> deferred
     if (c === "T") { i++; const v = readInt(); if (v != null) push({ t: "tempo", bpm: v }); continue; }
-    if (c === "t") { i++; const v = readInt(); if (v != null) { const op = { t: "tempo", timerB: v, bpm: null }; push(op); pendingTempos.push(op); } continue; }
+    if (c === "t") { i++; const v = readInt(); if (v != null) { const op = { t: "tempo", timerB: v, bpm: null }; push(op); state.pendingTempos.push(op); } continue; }
 
     // Volume: v<0-15>, ) raise, ( lower
     if (c === "v") { i++; const v = readInt(); if (v != null) push({ t: "vel", v }); continue; }
@@ -427,7 +438,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   }
 
   if (stack.length > 1) warn.push(`part ${partLetter}: unterminated loop '[' — closed at end`);
-  finalizeTempos(); // a tempo with no following note uses the final resolution
+  // Pending tempos are NOT finalized here: they persist on `state` so a `t` on
+  // one line can pick up a `C` (and its first note) on a later line of the part.
+  // Any still-pending at the very end are flushed by parseMucom.
   return { ops: root, comment };
 }
 
@@ -509,6 +522,14 @@ export function parseMucom(text) {
   let sawPart = false;
   const state = new Map(); // per-part scanner state
 
+  // Macros (`*n`) are text-substituted in mucom, so their direct-clock lengths
+  // (`%`) resolve against the caller's C. Macros are tokenized once, before the
+  // parts set C, so seed them with the song's first C (most songs use one).
+  const songClocks = (() => {
+    const m = text.match(/(?<![A-Za-z])C(\d+)/);
+    return m ? parseInt(m[1], 10) : DEFAULT_WHOLE_CLOCKS;
+  })();
+
   // Pre-scan loop brackets per part: a `[ … ]` whose `[` and `]` are on
   // different source lines can't be a single `(x …)` form (we split each line
   // into its own (chN …) form), so it's emitted as `#labelK …(go labelK n)`
@@ -550,7 +571,7 @@ export function parseMucom(text) {
       let content = mac[2];
       while (!content.includes("}") && i < lines.length) { content += "\n" + lines[i]; i++; }
       content = content.slice(0, content.indexOf("}")).trim();
-      const { ops } = tokenizeBody(content, { wholeClocks: DEFAULT_WHOLE_CLOCKS }, warnings, "*", macros);
+      const { ops } = tokenizeBody(content, { wholeClocks: songClocks }, warnings, "*", macros);
       macros.set(parseInt(mac[1], 10), { ops, comments: pendingComments.splice(0) });
       continue;
     }
@@ -634,6 +655,15 @@ export function parseMucom(text) {
       continue;
     }
     // otherwise: stray line, ignore
+  }
+
+  // Flush any tempo still pending at end of a part (no note ever followed it):
+  // resolve it against that part's final clock resolution.
+  for (const st of state.values()) {
+    if (st.pendingTempos?.length) {
+      for (const tp of st.pendingTempos) tp.bpm = timerBToBpm(tp.timerB, st.wholeClocks);
+      st.pendingTempos.length = 0;
+    }
   }
 
   // The song's initial tempo seeds the score header (a tempo on a dropped part
