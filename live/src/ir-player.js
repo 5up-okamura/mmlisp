@@ -580,6 +580,11 @@ export class IRPlayer {
     this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
     this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
+    // Whether each PSG ch is currently sounding a note (att < 15). A PSG channel
+    // drones whenever its attenuation is non-silent, regardless of frequency, so
+    // master/vol recomputes must NOT re-write a non-silent att to an idle channel
+    // (that would un-silence it into a tone). Updated on every _psgSetAtt.
+    this._psgSounding = new Array(4).fill(false);
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
@@ -823,6 +828,9 @@ export class IRPlayer {
   clearChannelStates() {
     this._mutedTracks.clear();
     this._soloTracks.clear();
+    // No note is sounding on a freshly (re)configured player, so a subsequent
+    // master/vol preamble must not re-write a non-silent att to any PSG channel.
+    this._psgSounding.fill(false);
   }
 
   /** Whether a track currently sounds (solo overrides mute). */
@@ -842,6 +850,10 @@ export class IRPlayer {
     const v = Math.max(0, Math.min(31, vol));
     this._psgVol[psgCh] = v;
     this._psgVolSweep[psgCh] = null;
+    // Store the fader value; only push a live attenuation if the channel is
+    // actually sounding. Otherwise the next note-on picks up the new vol — a
+    // fader move must never un-silence an idle channel into a tone.
+    if (!this._psgSounding[psgCh]) return;
     const when = this._audioContext?.currentTime ?? 0;
     const vel = this._psgLastVel[psgCh] ?? 15;
     const master = this._masterVol ?? VOL_UNITY;
@@ -2414,8 +2426,11 @@ export class IRPlayer {
             this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
           }
         }
-        // PSG channels: recalculate attenuation from vel * vol * master
+        // PSG channels: recalculate attenuation from vel * vol * master, but only
+        // for channels currently sounding — re-writing a non-silent att to an idle
+        // channel (e.g. at play start, before any note) would drone a tone.
         for (let psgCh = 0; psgCh < 4; psgCh++) {
+          if (!this._psgSounding[psgCh]) continue;
           const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
           const vol = this._psgVolAtTime(psgCh, when); // 0-31
           this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
@@ -3186,8 +3201,11 @@ export class IRPlayer {
   // Write attenuation for a PSG channel.
   // attReg: 0=max volume, 15=silent (hardware convention).
   _psgSetAtt(psgCh, attReg, when) {
+    const att = attReg & 0x0f;
+    // Track sounding state so master/vol recomputes don't un-silence idle channels.
+    this._psgSounding[psgCh] = att < 15;
     // Latch byte: 1 | ch(2) | r=1(att) | att(4)
-    const byte = 0x80 | ((psgCh & 0x03) << 5) | 0x10 | (attReg & 0x0f);
+    const byte = 0x80 | ((psgCh & 0x03) << 5) | 0x10 | att;
     this._psgWriteByte(byte, when);
   }
 
@@ -3399,13 +3417,21 @@ export class IRPlayer {
         const psgTarget = (ev.args?.target ?? "").toUpperCase();
         if (psgTarget === "VOL") {
           if (ev.cmd === "PARAM_SET") {
-            // Immediate vol: store and update hardware using last known vel.
+            // Immediate vol: store, and update hardware only if the channel is
+            // currently sounding (otherwise it takes effect at the next NOTE_ON;
+            // writing att to an idle channel would drone a tone).
             const vol = Math.max(0, Math.min(31, ev.args?.value ?? VOL_UNITY));
             this._psgVol[psgCh] = vol;
             this._psgVolSweep[psgCh] = null;
-            const velLevel = this._psgLastVel[psgCh] ?? 15;
-            const master = this._masterVol ?? VOL_UNITY;
-            this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
+            if (this._psgSounding[psgCh]) {
+              const velLevel = this._psgLastVel[psgCh] ?? 15;
+              const master = this._masterVol ?? VOL_UNITY;
+              this._psgSetAtt(
+                psgCh,
+                this._composePsgAtt(velLevel, vol, master),
+                when,
+              );
+            }
           } else {
             // PARAM_SWEEP: store sweep state (same format as _fmVolSweep).
             // Hardware writes happen lazily at each NOTE_ON via _psgVolAtTime().
@@ -3508,6 +3534,9 @@ export class IRPlayer {
   }
 
   _initDefaultVoices() {
+    // No PSG note is sounding at the start of a run; clear the flags so the
+    // master/vol preamble writes don't drone idle channels.
+    this._psgSounding.fill(false);
     // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
     // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
     for (let ch = 0; ch < 6; ch++) {
