@@ -794,6 +794,8 @@
             <button class="menu-item" onclick="importTfi();closeMenus()">TFI…</button>
             <button class="menu-item" onclick="importVgi();closeMenus()">VGI…</button>
             <button class="menu-item" onclick="importOpni();closeMenus()">OPNI…</button>
+            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc)…</button>
+            <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voice Bank (.dat)…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -1004,6 +1006,7 @@
     import { IRPlayer } from './src/ir-player.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
+    import { importMucom, voiceBankToMmlisp } from './src/import-mucom.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -1047,14 +1050,21 @@
     const setPlayheadBase = StateEffect.define();
 
     // Resolve a build-time src to current-document [from, to): resolve against the
-    // anchor doc, then map through edits accumulated since the anchor.
+    // anchor doc, then map through edits accumulated since the anchor. Returns null
+    // if the source region was deleted or reflowed away (e.g. a full reformat),
+    // so the highlight is dropped instead of collapsing to a stray position.
     function resolvePlayhead(src, builtDoc, changes, curDoc) {
-      let [from, to] = srcToRange(builtDoc ?? curDoc, src);
-      if (changes) { from = changes.mapPos(from, 1); to = changes.mapPos(to, -1); }
-      return [
-        Math.max(0, Math.min(curDoc.length, from)),
-        Math.max(from + 1, Math.min(curDoc.length, to)),
-      ];
+      let from, to;
+      try { [from, to] = srcToRange(builtDoc ?? curDoc, src); }
+      catch (_) { return null; }
+      if (changes) {
+        const f = changes.mapPos(from, 1), t = changes.mapPos(to, -1);
+        if (t <= f) return null;
+        from = f; to = t;
+      }
+      from = Math.max(0, Math.min(curDoc.length, from));
+      to = Math.max(0, Math.min(curDoc.length, to));
+      return to > from ? [from, to] : null;
     }
 
     const playheadField = StateField.define({
@@ -1066,15 +1076,19 @@
         let dirty = false;
         const own = () => { if (!dirty) { toks = new Map(toks); seqs = new Map(seqs); dirty = true; } };
 
-        // Follow edits: map existing ranges and accumulate changes since anchor.
+        // Follow edits: map existing ranges; drop any whose region collapsed
+        // (deleted or reflowed, e.g. by a whole-document reformat).
         if (tr.docChanged) {
           own();
-          const remap = (r) => {
-            const from = tr.changes.mapPos(r.from, 1);
-            return { ...r, from, to: Math.max(from + 1, tr.changes.mapPos(r.to, -1)) };
+          const remap = (m) => {
+            for (const [k, r] of m) {
+              const from = tr.changes.mapPos(r.from, 1);
+              const to = tr.changes.mapPos(r.to, -1);
+              if (to > from) m.set(k, { ...r, from, to });
+              else m.delete(k);
+            }
           };
-          for (const [k, r] of toks) toks.set(k, remap(r));
-          for (const [k, r] of seqs) seqs.set(k, remap(r));
+          remap(toks); remap(seqs);
           changes = changes ? changes.compose(tr.changes) : tr.changes;
         }
 
@@ -1087,10 +1101,11 @@
             const { trackIdx, src } = e.value;
             if (trackIdx === -1) toks.clear();
             else if (!src) toks.delete(trackIdx);
-            else try {
-              const [from, to] = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
-              toks.set(trackIdx, { from, to, cls: `cm-playTok-${trackIdx % 4}` });
-            } catch (_) {}
+            else {
+              const r = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
+              if (r) toks.set(trackIdx, { from: r[0], to: r[1], cls: `cm-playTok-${trackIdx % 4}` });
+              else toks.delete(trackIdx);
+            }
           } else if (e.is(setSeq)) {
             own();
             if (e.value.clear) { seqs.clear(); continue; }
@@ -1100,10 +1115,10 @@
             const count = (cur?.count ?? 0) + (show ? 1 : -1);
             if (count <= 0) seqs.delete(key);
             else if (cur) seqs.set(key, { ...cur, count });
-            else try {
-              const [from, to] = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
-              seqs.set(key, { from, to, count, cls: 'cm-playSeq' });
-            } catch (_) {}
+            else {
+              const r = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
+              if (r) seqs.set(key, { from: r[0], to: r[1], count, cls: 'cm-playSeq' });
+            }
           }
         }
 
@@ -1111,13 +1126,19 @@
       },
     });
 
-    // Offsets in playheadField are already current (mapped in its update), so just
-    // build marks from them — no implicit re-mapping.
+    // Offsets in playheadField are already current (mapped in its update). Clamp
+    // defensively so a stale range can never throw and wipe all decorations.
     const playheadDecorations = EditorView.decorations.compute([playheadField], (state) => {
+      const len = state.doc.length;
       const v = state.field(playheadField);
       const decos = [];
-      for (const r of v.seqs.values()) decos.push(Decoration.mark({ class: r.cls }).range(r.from, r.to));
-      for (const r of v.toks.values()) decos.push(Decoration.mark({ class: r.cls }).range(r.from, r.to));
+      const add = (r) => {
+        const from = Math.max(0, Math.min(len, r.from));
+        const to = Math.max(0, Math.min(len, r.to));
+        if (from < to) decos.push(Decoration.mark({ class: r.cls }).range(from, to));
+      };
+      for (const r of v.seqs.values()) add(r);
+      for (const r of v.toks.values()) add(r);
       return decos.length ? Decoration.set(decos, true) : Decoration.none;
     });
 
@@ -1168,7 +1189,7 @@
     // -----------------------------------------------------------------------
     const AC_FORMS = [
       'score','rest','tie',
-      'def','defn','x','goto','param-set',
+      'def','defn','x','go','param-set',
       'linear',
       'ease-in','ease-out','ease-inout',
       'ease-in-sine','ease-out-sine','ease-inout-sine',
@@ -1451,89 +1472,89 @@
   ; FM
   (fm1
     #loop
-    (goto loop)
+    (go loop)
   )
   (fm2
     #loop
-    (goto loop)
+    (go loop)
   )
   (fm3
     #loop
-    (goto loop)
+    (go loop)
   )
   (fm4
     #loop
-    (goto loop)
+    (go loop)
   )
   (fm5
     #loop
-    (goto loop)
+    (go loop)
   )
   (fm6
     #loop
-    (goto loop)
+    (go loop)
   )
 
   ; FM3
 ;   (fm3-1
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 ;   (fm3-2
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 ;   (fm3-3
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 ;   (fm3-4
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 
   ; CSM
 ;   (fm3-csm
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 ;   (fm3-csm-rate
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 
   ; PCM
 ;   (pcm1
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 ;   (pcm2
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 ;   (pcm3
 ;     #loop
-;     (goto loop)
+;     (go loop)
 ;   )
 
   ; SQUARE
   (sqr1
     #loop
-    (goto loop)
+    (go loop)
   )
   (sqr2
     #loop
-    (goto loop)
+    (go loop)
   )
   (sqr3
     #loop
-    (goto loop)
+    (go loop)
   )
 
   ; NOISE
   (noise
     #loop
-    (goto loop)
+    (go loop)
   )
 )`;
 
@@ -2137,22 +2158,30 @@
 
         const cleanup = () => {
           input.removeEventListener('change', onChange);
+          input.removeEventListener('cancel', onCancel);
           input.remove();
+        };
+
+        const abort = () => {
+          cleanup();
+          const err = new Error('Import canceled');
+          err.name = 'AbortError';
+          reject(err);
         };
 
         const onChange = () => {
           const file = input.files && input.files[0];
+          if (!file) { abort(); return; }
           cleanup();
-          if (!file) {
-            const err = new Error('Import canceled');
-            err.name = 'AbortError';
-            reject(err);
-            return;
-          }
           resolve(file);
         };
 
+        // Dismissing the file dialog fires 'cancel' (not 'change') in modern
+        // browsers; without this the await would hang forever on cancel.
+        const onCancel = () => abort();
+
         input.addEventListener('change', onChange, { once: true });
+        input.addEventListener('cancel', onCancel, { once: true });
         input.click();
       });
     }
@@ -2207,6 +2236,96 @@
       return importFmVoiceByKey('OPNI');
     }
 
+    // Remember the last imported mucom song so its voice bank can be applied
+    // afterwards (loading the .dat is a separate, user-initiated action so its
+    // file dialog always has a fresh user gesture and can't be blocked).
+    let _mucomSong = null; // { bytes, fileName }
+
+    function loadMucomSource(source, warnings, fileName, label) {
+      _sourceHandle = null;
+      _sourceFileName = (fileName || 'mucom').replace(/\.[^.]*$/, '') + '.mmlisp';
+      _sourceDir = null;
+      currentIrURL = null;
+      _lastFileName = _sourceFileName;
+      _lastGoodIR = null;
+      _lastSourceMap = null;
+      onStop();
+      setEditorDoc(source);
+      compileNow();
+      log(label, 'info');
+      for (const w of warnings) log(`mucom88: ${w}`, 'info');
+    }
+
+    // mucom88 .muc: convert the whole song to MMLisp source and load it as a
+    // new untitled document (FM + SSG only; rhythm/ADPCM/etc. are reported).
+    async function importMucom88() {
+      let file;
+      try {
+        file = await pickFileWithInput(['.muc', '.mml']);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`mucom88 import failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        _mucomSong = { bytes, fileName: file.name };
+        // Load the song NOW (default voices) so picking the file always shows a
+        // result — even if the optional .dat picker below is dismissed or the
+        // browser blocks the chained dialog.
+        const first = importMucom(bytes, null);
+        loadMucomSource(first.source, first.warnings, file.name, `Imported ${file.name} (mucom88) — review and Build`);
+        // If it references an external voice bank (#voice xxx.dat), offer to load
+        // it now; selecting it re-converts with real voices. Cancel keeps default.
+        let voiceFile = null;
+        try {
+          const head = new TextDecoder('shift-jis', { fatal: false }).decode(bytes.subarray(0, 4096));
+          const vm = head.match(/^#voice\s+(\S+)/im);
+          if (vm) voiceFile = vm[1];
+        } catch { /* detection is best-effort */ }
+        if (voiceFile) {
+          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — select that .dat to hear them (cancel to keep default voices; or load later via File ▸ Import ▸ mucom88 voice bank)`, 'info');
+          try {
+            const datFile = await pickFileWithInput(['.dat']);
+            const datBytes = new Uint8Array(await datFile.arrayBuffer());
+            const second = importMucom(bytes, datBytes);
+            loadMucomSource(second.source, second.warnings, file.name, `Reloaded ${file.name} with ${datFile.name} (mucom88)`);
+          } catch (e2) {
+            if (e2 && e2.name === 'AbortError') log('mucom88: no voice bank selected — keeping default voices', 'info');
+            else throw e2;
+          }
+        }
+      } catch (e) {
+        log(`mucom88 import failed: ${e?.message || e}`, 'err');
+      }
+    }
+
+    // Load a mucom .dat voice bank. If a song was just imported, re-convert it
+    // with the bank so external @"name"/@n voices resolve; otherwise load the
+    // bank on its own as a library of (def @name …) voice definitions.
+    async function importMucomVoiceBank() {
+      let datFile;
+      try {
+        datFile = await pickFileWithInput(['.dat']);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`mucom88 voice bank failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      try {
+        const datBytes = new Uint8Array(await datFile.arrayBuffer());
+        if (_mucomSong) {
+          const { source, warnings } = importMucom(_mucomSong.bytes, datBytes);
+          loadMucomSource(source, warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`);
+        } else {
+          const { source, warnings } = voiceBankToMmlisp(datBytes);
+          loadMucomSource(source, warnings, datFile.name, `Loaded voice bank ${datFile.name} (mucom88) — ${(source.match(/\(def @/g) || []).length} voices`);
+        }
+      } catch (e) {
+        log(`mucom88 voice bank failed: ${e?.message || e}`, 'err');
+      }
+    }
+
     function insertSnippetFmVoice() {
       insertSnippetByKey('fmVoice');
     }
@@ -2220,6 +2339,8 @@
     window.importTfi = importTfi;
     window.importVgi = importVgi;
     window.importOpni = importOpni;
+    window.importMucom88 = importMucom88;
+    window.importMucomVoiceBank = importMucomVoiceBank;
 
     function formatShortcutLabel(key) {
       const isMac = navigator.platform.toUpperCase().includes('MAC');

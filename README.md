@@ -72,6 +72,7 @@ This project directly references the following works in its design and implement
 - **[MDSDRV](https://github.com/superctr/MDSDRV)** — Sound driver for Sega Mega Drive. Invaluable reference for register usage patterns and real-hardware timing.
 - **[PMD](https://en.touhouwiki.net/wiki/User:Mami/Music_Dev/PMD)** — Professional Music Driver for PC-98 by KAJA. Influenced the MML command model and track sequencing design.
 - **[NDP](https://ndp.squares.net/web/)** — PSG sound driver and MML authoring tool for MSX by naruto2413. Influenced the score and MML authoring model.
+- **[mucom88](https://github.com/onitama/mucom88)** — MML sound driver for the PC-8801 (OPNA) by Yuzo Koshiro, maintained by onitama; licensed CC BY-NC-SA 4.0. Referenced for the `.muc` / `.dat` import path — MML command model and clock-grid note timing.
 - **[Furnace](https://github.com/tildearrow/furnace)** / **[DefleMask](https://www.deflemask.com/)** — Multi-system chiptune trackers referenced for tracker workflow, pattern sequencing, and chip-focused composition practices.
 
 ## License
@@ -83,3 +84,16 @@ See [LICENSE](LICENSE) for the full text.
 This repository also vendors `Nuked-OPN2` under `third_party/Nuked-OPN2`, which
 is licensed separately under LGPL-2.1-or-later. See
 `THIRD_PARTY_NOTICES.md` and `third_party/Nuked-OPN2/LICENSE`.
+
+### mucom88 import
+
+The `.muc` / `.dat` importer (`live/src/import-mucom.js`) is original code that
+**interoperates with** the mucom88 file formats. It does not include any of
+mucom88's source code, sound driver, or bundled voice data, so it does not place
+MMLisp under mucom88's license. mucom88 itself is distributed under
+**CC BY-NC-SA 4.0** (© Yuzo Koshiro; maintained by onitama).
+
+Imported content remains the property of its original authors. You are
+responsible for holding the rights to any `.muc` song or `.dat` voice bank you
+convert, and any sample music by Yuzo Koshiro must be credited per mucom88's
+terms, e.g. `"<Title> / Copyright (C) by Yuzo Koshiro"`.
