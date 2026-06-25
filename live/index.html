@@ -191,12 +191,30 @@
       min-height: 0;
       overflow: hidden;
       border-bottom: none;
+      position: relative;
+      background: var(--background);
     }
+    /* Piano-roll visualizer canvas, faint behind the editor text. */
+    #vizCanvas {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.5;
+      display: none;
+    }
+    #editorWrap.viz-on #vizCanvas { display: block; }
     #editorWrap .cm-editor {
       height: 100%;
       font-size: 0.82rem;
       background: var(--background);
+      position: relative;
+      z-index: 1;
     }
+    /* While the roll is on, make the editor layers transparent so it shows through. */
+    #editorWrap.viz-on .cm-editor,
+    #editorWrap.viz-on .cm-scroller,
+    #editorWrap.viz-on .cm-gutters { background: transparent; }
     /* iOS Safari zooms focused editable content when effective size is < 16px. */
     @media (hover: none) and (pointer: coarse), (max-width: 768px) {
       #editorWrap .cm-editor,
@@ -516,6 +534,24 @@
       align-items: stretch;
       flex: 0 0 auto;
       min-width: 2rem;
+    }
+    .ch-btns {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    /* Rough VU overlay on the [F1][M][S] stack: foreground fill rising from bottom. */
+    .ch-vu {
+      position: absolute;
+      inset: 0;
+      transform-origin: bottom center;
+      transform: scaleY(0);
+      background: var(--foreground);
+      opacity: 0.22;
+      border-radius: 2px;
+      pointer-events: none;
+      transition: transform 0.08s linear;
     }
     .ms-btn {
       background: var(--background);
@@ -857,6 +893,10 @@
           <span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
+        <button class="menu-item" onclick="togglePianoRoll();closeMenus()">
+          <span>Piano Roll</span>
+          <span class="menu-item-shortcut" id="pianoRollCheck"></span>
+        </button>
         <div class="menu-wrap submenu-wrap" id="menuToolsTheme">
           <button class="menu-item" onclick="toggleSubmenu('menuToolsTheme')">
             <span>Theme</span>
@@ -891,7 +931,7 @@
 
     <!-- Left column: editor + draggable divider + console -->
     <div id="leftCol">
-      <div id="editorWrap"></div>
+      <div id="editorWrap"><canvas id="vizCanvas"></canvas></div>
       <div id="hDivider"></div>
       <div id="consolePane">
         <div id="log"></div>
@@ -1040,7 +1080,7 @@
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp } from './src/import-mucom.js';
-    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY } from './src/ir-utils.js';
+    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi } from './src/ir-utils.js';
     import { compileMMLisp } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
@@ -2900,6 +2940,7 @@
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
         buildChStrips(ir);
+        if (pianoRollOn && _fmLiveRaf == null) rebuildVizNotes(); // refresh roll preview while editing stopped
         // When not playing, show the score's starting tempo (the loop drives it live).
         if (_fmLiveRaf == null) updateTempoDisplay(irInitialBpm(ir));
         // Anchor playhead highlights to the document this IR was compiled from.
@@ -2950,9 +2991,12 @@
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
     let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
     let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
-    let _liveSliderDragging = false;        // suppress loop slider-thumb writes while dragging a panel slider
+    let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
+    let _tempoDragging = false;             // dragging the tempo slider → don't let the loop move its thumb
     let _tempoShown = null;                 // last tempo value shown (change detection)
+    let pianoRollOn = false;                 // piano-roll visualizer toggle (Tools menu)
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
+    let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
     // Canonical hardware order of score channel heads. fm3-csm-rate has no strip
     // of its own — it folds into the single "fm3-csm" (csm) strip.
@@ -3120,9 +3164,12 @@
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
-          <button class="ms-btn${selCls}" onclick="selectCh('${h}')">${entry.label}</button>
-          <button class="ms-btn${muteCls}" onclick="toggleMute('${h}')">M</button>
-          <button class="ms-btn${soloCls}" onclick="toggleSolo('${h}')">S</button>
+          <div class="ch-btns">
+            <button class="ms-btn${selCls}" onclick="selectCh('${h}')">${entry.label}</button>
+            <button class="ms-btn${muteCls}" onclick="toggleMute('${h}')">M</button>
+            <button class="ms-btn${soloCls}" onclick="toggleSolo('${h}')">S</button>
+            <div class="ch-vu" data-head="${h}"></div>
+          </div>
           <div class="ch-knob" title="vol (drag)" data-head="${h}">
             <div class="ch-knob-ind" style="transform: rotate(${volToKnobAngle(vol)}deg)"></div>
           </div>
@@ -3131,6 +3178,9 @@
         row.appendChild(col);
       }
       el.appendChild(row);
+      // Cache the VU overlay elements so the playback loop doesn't query per frame.
+      _chVuEls = new Map();
+      el.querySelectorAll('.ch-vu').forEach((vu) => _chVuEls.set(vu.dataset.head, vu));
     }
 
     function _trackIndexOf(head) {
@@ -3204,6 +3254,11 @@
       _masterVolUi = val;
       if (!player) initParamOnlyPlayer();
       player?.setParam('MASTER', val, 0);
+      // Reflect the new master on the selected FM channel's TL immediately (the
+      // live refresh loop only runs while playing).
+      if (player && isFmChannel(selectedCh) && getFmParamMode() === 'channel') {
+        applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
+      }
     }
 
     // Push persisted mixer state (mute/solo/vol/master, kept by channel name) onto
@@ -3443,6 +3498,7 @@
         // that never went through compileNow), then push persisted mute/solo.
         buildChStrips(player._ir);
         applyPlayerChannelState(player);
+        rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // Seek to cursor line if provided and source map available
         if (fromLine != null && _lastSourceMap) {
           player.playFromLine(audioCtx, fromLine, _lastSourceMap);
@@ -3461,6 +3517,8 @@
 
     function onStop() {
       stopFmLiveLoop();
+      resetChannelVu();
+      _vizFrozen = null;
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
@@ -3673,10 +3731,13 @@
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedTick = 0;
+    let _vizFrozen = null; // per-track frozen clocks while paused (piano roll holds in place)
 
     function onPause() {
       if (!player || !player.isPlaying()) return;
       _pausedTick = player.currentTick();
+      // Freeze each track's playhead so the piano roll stops in place (not reset).
+      _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
       player.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       _paused = true;
@@ -3689,6 +3750,7 @@
       if (!player || !_paused) return;
       player.playFromTick(audioCtx, _pausedTick);
       _paused = false;
+      _vizFrozen = null;
       log('Resumed', 'info');
       setPlayIcon(true);
       document.getElementById('btnPlay').classList.add('active');
@@ -4577,7 +4639,8 @@
       _fmLiveLast = ts;
       if (!player) return;
       updateTempoDisplay(player.getBpm());
-      if (_liveSliderDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
+      updateChannelVu();
+      if (_fmPanelDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
       applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
     }
     function startFmLiveLoop() {
@@ -4587,9 +4650,15 @@
       if (_fmLiveRaf != null) { cancelAnimationFrame(_fmLiveRaf); _fmLiveRaf = null; }
     }
     document.getElementById('rightPanelBody')?.addEventListener('pointerdown', (e) => {
-      if (e.target.matches('input[type=range]')) _liveSliderDragging = true;
+      const el = e.target;
+      if (!el.matches?.('input[type=range]')) return;
+      // Only an FM-panel slider blocks the FM live refresh; only the tempo slider
+      // blocks the tempo thumb. master/vol/lfo drags block neither, so e.g.
+      // dragging MASTER still live-updates the FM TL sliders.
+      if (el.closest('#fmParamSection')) _fmPanelDragging = true;
+      if (el.id === 'sl-tempo') _tempoDragging = true;
     });
-    window.addEventListener('pointerup', () => { _liveSliderDragging = false; });
+    window.addEventListener('pointerup', () => { _fmPanelDragging = false; _tempoDragging = false; });
 
     // TEMPO control: slider is limited to a common BPM range, but the number shows
     // the actual tempo (which the score may push beyond that range).
@@ -4599,7 +4668,7 @@
       _tempoShown = r;
       const valEl = document.getElementById('val-tempo');
       if (valEl) valEl.textContent = r;
-      if (!_liveSliderDragging) {
+      if (!_tempoDragging) {
         const sl = document.getElementById('sl-tempo');
         if (sl) sl.value = Math.max(20, Math.min(300, r));
       }
@@ -4623,6 +4692,242 @@
       return 120;
     }
     window.onTempo = onTempo;
+
+    // =====================================================================
+    // Playback visualizers: piano roll (editor overlay) + rough channel VU.
+    // Both are driven from the IR's note events + the live per-track playhead;
+    // no audio analysis. See player.trackClock().
+    // =====================================================================
+    let _vizNotes = [];          // per strip-channel: { head, trackIndex, notes[], loMidi, hiMidi }
+    let _vizRaf = null;
+    let _vizColors = null;
+    const VIZ_BEATS_VISIBLE = 16; // ticks window per cell = ppqn * this
+    const VIZ_MIN_CELL_W = 360;   // min cell width (px); cols = floor(editorW / this), capped at 3
+
+    function vizPpqn() {
+      return (player?._ir ?? _lastGoodIR)?.ppqn || 96;
+    }
+
+    function buildVizNotes(getEvents) {
+      const model = [];
+      for (const entry of _chStripModel) {
+        const evs = getEvents(entry.trackIndex);
+        if (!evs) continue;
+        const notes = [];
+        let lo = 127, hi = 0;
+        for (const ev of evs) {
+          let midi, len, gate, vel;
+          if (ev.cmd === 'NOTE_ON') {
+            midi = pitchToMidi(ev.args?.pitch ?? 'c4');
+            len = ev.args?.length ?? 0;
+            gate = ev.args?.gate ?? len;
+            vel = ev.args?.vel ?? 15;
+          } else if (ev.cmd === 'PCM_NOTE_ON') {
+            const rate = Number(ev.args?.rate) || 1;
+            midi = Math.round(60 + 12 * Math.log2(rate));
+            len = ev.args?.length ?? 0;
+            gate = ev.args?.gate ?? len;
+            vel = ev.args?.vel ?? 15;
+          } else continue;
+          notes.push({ startTick: ev.tick, midi, lenTicks: len, gateTicks: Math.max(1, gate), vel });
+          if (midi < lo) lo = midi;
+          if (midi > hi) hi = midi;
+        }
+        model.push({ head: entry.head, label: entry.label, trackIndex: entry.trackIndex, notes, loMidi: lo, hiMidi: hi });
+      }
+      return model;
+    }
+    function rebuildVizNotes() {
+      // Build from the player's EXPANDED events whenever it has an IR loaded, so
+      // (x N …) loop repeats are unrolled and align with trackClock. Fall back to
+      // the raw IR only when there is no player (stopped preview).
+      const usePlayer = !!(player && player._ir);
+      const getEvents = usePlayer
+        ? (ti) => player.expandedTrackEvents(ti)
+        : (ti) => _lastGoodIR?.tracks?.[ti]?.events ?? [];
+      _vizNotes = buildVizNotes(getEvents);
+    }
+
+    // Mute/solo audibility, mirrored from the Channels strip state.
+    function isChannelAudible(head) {
+      if (_soloChannels.size > 0) return _soloChannels.has(head);
+      return !_mutedChannels.has(head);
+    }
+
+    // ---- rough per-channel VU (from the note model + live playhead) ----
+    // minTicks gives every note a minimum on-time so brief notes (short PSG
+    // envelopes) still register at the ~20fps sample rate.
+    function channelLevelAt(cell, clock, minTicks) {
+      const t = clock ? clock.tick : 0;
+      const loop = clock?.loopTicks ?? null;
+      let level = 0;
+      for (const n of cell.notes) {
+        const eff = Math.max(n.gateTicks, minTicks);
+        const reps = loop ? [-1, 0, 1] : [0];
+        for (const k of reps) {
+          const s = n.startTick + k * (loop ?? 0);
+          if (t >= s && t < s + eff) {
+            const env = 1 - 0.5 * ((t - s) / eff); // simple decay over the note
+            const v = (n.vel / 15) * env;
+            if (v > level) level = v;
+          }
+        }
+      }
+      return level;
+    }
+    function updateChannelVu() {
+      if (!player || !_vizNotes.length) return;
+      const secsPerTick = 60 / (Math.max(1, player.getBpm()) * vizPpqn());
+      const minTicks = Math.max(1, 0.08 / secsPerTick); // ~80ms floor
+      const master = (_masterVolUi ?? 31) / 31;
+      for (const cell of _vizNotes) {
+        const el = _chVuEls.get(cell.head);
+        if (!el) continue;
+        let lvl = 0;
+        if (isChannelAudible(cell.head)) {
+          const vol = (_channelVol.get(cell.head) ?? VOL_UNITY) / 31;
+          const clock = (_paused && _vizFrozen) ? _vizFrozen.get(cell.trackIndex) : player.trackClock(cell.trackIndex);
+          lvl = channelLevelAt(cell, clock, minTicks) * vol * master;
+        }
+        el.style.transform = `scaleY(${lvl.toFixed(3)})`;
+      }
+    }
+    function resetChannelVu() {
+      _chVuEls.forEach((el) => { el.style.transform = 'scaleY(0)'; });
+    }
+
+    // ---- piano roll (editor overlay) ----
+    function sampleVizColors() {
+      const cs = getComputedStyle(document.documentElement);
+      _vizColors = {
+        fg: cs.getPropertyValue('--foreground').trim() || '#cfe',
+        mid: cs.getPropertyValue('--mid').trim() || '#678',
+      };
+    }
+    function resizeVizCanvas() {
+      const c = document.getElementById('vizCanvas');
+      const wrap = document.getElementById('editorWrap');
+      if (!c || !wrap) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      // Pin the CSS display size to the container (a canvas with no CSS size
+      // displays at its backing attribute size, which would feed back and grow).
+      c.style.width = w + 'px';
+      c.style.height = h + 'px';
+      c.width = Math.max(1, Math.round(w * dpr));
+      c.height = Math.max(1, Math.round(h * dpr));
+      c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function drawPianoRoll() {
+      const c = document.getElementById('vizCanvas');
+      const wrap = document.getElementById('editorWrap');
+      if (!c || !wrap) return;
+      const dpr = window.devicePixelRatio || 1;
+      const W = wrap.clientWidth, H = wrap.clientHeight; // fixed container reference
+      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
+        resizeVizCanvas();
+      }
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, W, H);
+      const cells = _vizNotes.filter((cl) => cl.notes.length);
+      if (!cells.length) return;
+      if (!_vizColors) sampleVizColors();
+      const C = cells.length;
+      // Column count follows the available width (wider → more columns, capped
+      // at 3), so e.g. 5 channels lay out as 2×3 when narrow, 3×2 when wide.
+      const cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
+      const rows = Math.ceil(C / cols);
+      const cellW = W / cols, cellH = H / rows;
+      const windowTicks = vizPpqn() * VIZ_BEATS_VISIBLE;
+      for (let k = 0; k < C; k++) {
+        const cell = cells[k];
+        const x0 = (k % cols) * cellW, y0 = Math.floor(k / cols) * cellH;
+        const centerX = x0 + cellW / 2;
+        const pxPerTick = cellW / windowTicks;
+        const clock = (_paused && _vizFrozen)
+          ? _vizFrozen.get(cell.trackIndex)
+          : player?.trackClock(cell.trackIndex);
+        const t = clock ? clock.tick : 0;
+        const loop = clock?.loopTicks ?? null;
+        let lo = cell.loMidi, hi = cell.hiMidi;
+        if (hi < lo) { lo = 48; hi = 72; }
+        if (hi === lo) { lo -= 6; hi += 6; }
+        lo -= 1; hi += 1;
+        const pad = 6;
+        const noteH = Math.max(2, Math.min(10, (cellH - pad * 2) / (hi - lo)));
+        const yOf = (m) => y0 + pad + (cellH - pad * 2) * (1 - (m - lo) / (hi - lo)) - noteH / 2;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x0, y0, cellW, cellH);
+        ctx.clip();
+        // per-channel divider/border
+        ctx.globalAlpha = 0.2;
+        ctx.strokeStyle = _vizColors.fg;
+        ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellW - 1, cellH - 1);
+        ctx.globalAlpha = 1;
+
+        const reps = loop ? [-1, 0, 1] : [0];
+        for (const n of cell.notes) {
+          const w = Math.max(2, n.lenTicks * pxPerTick);
+          const y = yOf(n.midi);
+          for (const rep of reps) {
+            const s = n.startTick + rep * (loop ?? 0);
+            const x = centerX + (s - t) * pxPerTick;
+            if (x + w < x0 || x > x0 + cellW) continue;
+            // Fill only while the note is actually sounding; otherwise outline.
+            if (s <= t && t < s + n.gateTicks) {
+              ctx.globalAlpha = 0.8;
+              ctx.fillStyle = _vizColors.fg;
+              ctx.fillRect(x, y, w, noteH);
+            } else {
+              ctx.globalAlpha = 0.8;
+              ctx.strokeStyle = _vizColors.fg;
+              ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, w - 1), Math.max(1, noteH - 1));
+            }
+            ctx.globalAlpha = 1;
+          }
+        }
+        // channel label (bottom-right, drawn last so it stays legible over notes)
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = _vizColors.fg;
+        ctx.font = '600 11px ui-monospace, monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(cell.label ?? cell.head, x0 + cellW - 5, y0 + cellH - 4);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
+    function vizTick() {
+      _vizRaf = requestAnimationFrame(vizTick);
+      drawPianoRoll();
+    }
+    function startPianoRoll() {
+      rebuildVizNotes();
+      sampleVizColors();
+      resizeVizCanvas();
+      if (_vizRaf == null) _vizRaf = requestAnimationFrame(vizTick);
+    }
+    function stopPianoRoll() {
+      if (_vizRaf != null) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
+      const c = document.getElementById('vizCanvas');
+      if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    }
+    function updatePianoRollCheck() {
+      const el = document.getElementById('pianoRollCheck');
+      if (el) el.textContent = pianoRollOn ? '✓' : '';
+    }
+    function togglePianoRoll() {
+      pianoRollOn = !pianoRollOn;
+      updatePianoRollCheck();
+      document.getElementById('editorWrap')?.classList.toggle('viz-on', pianoRollOn);
+      if (pianoRollOn) startPianoRoll(); else stopPianoRoll();
+    }
+    window.togglePianoRoll = togglePianoRoll;
+
+    const _vizResizeObs = new ResizeObserver(() => { if (pianoRollOn) resizeVizCanvas(); });
+    _vizResizeObs.observe(document.getElementById('editorWrap'));
 
     function setSlider(sliderId, valId, value) {
       const sl = document.getElementById(sliderId);

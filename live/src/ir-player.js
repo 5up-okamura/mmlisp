@@ -754,6 +754,35 @@ export class IRPlayer {
   }
 
   /**
+   * Expanded event list for a track — counted `(x N …)` loops unrolled — for
+   * visualizers. While playing returns the already-expanded scheduler events;
+   * otherwise expands the IR on demand. Ticks align with trackClock().
+   * @param {number} trackIndex index into ir.tracks
+   */
+  expandedTrackEvents(trackIndex) {
+    const tr = this._tracks?.[trackIndex];
+    if (tr) return tr.events;
+    const evs = this._ir?.tracks?.[trackIndex]?.events;
+    return evs ? this._expandLoops(evs) : [];
+  }
+
+  /**
+   * Per-track playback clock for visualizers: the local fractional tick (wraps
+   * within the track's loop, since audioTimeAtTick0 is re-anchored each loop) and
+   * the loop length in ticks if the track loops. Returns null when not playing.
+   * @param {number} trackIndex index into ir.tracks (== flattened track index)
+   */
+  trackClock(trackIndex) {
+    const tr = this._tracks?.[trackIndex];
+    if (!this._playing || !tr || !this._audioContext) return null;
+    const tick = Math.max(
+      0,
+      (this._audioContext.currentTime - tr.audioTimeAtTick0) / this._secsPerTick,
+    );
+    return { tick, loopTicks: tr.hasLoop ? tr.loopDuration : null };
+  }
+
+  /**
    * Resume playback from an explicit tick position (pause/resume).
    * @param {AudioContext} audioContext
    * @param {number} fromTick  PPQN tick to resume from
