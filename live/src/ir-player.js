@@ -142,6 +142,19 @@ const MMB_CHANNEL_ID_TO_NAME = {
 
 const TEXT_DECODER = new TextDecoder();
 
+// Control-flow and timing events do not represent a sounding position, so they
+// must not move the editor playhead highlight. Without this, a zero-duration
+// loop (e.g. `#loop (go loop)` with no notes) fires MARKER/JUMP at the
+// scheduler's max rate and the highlight flickers on `go` / `#loop` / `score`.
+const PLAYHEAD_SKIP_CMDS = new Set([
+  "MARKER",
+  "JUMP",
+  "LOOP_BEGIN",
+  "LOOP_END",
+  "TEMPO_SET",
+  "TEMPO_SWEEP",
+]);
+
 function readU16LE(view, offset) {
   return view.getUint16(offset, true);
 }
@@ -1119,7 +1132,11 @@ export class IRPlayer {
           // past those events without dispatching.
           if (evTime >= this._dispatchFloor) {
             this._dispatchEvent(ev, evTime);
-            if (this._onLine && ev.src?.line != null) {
+            if (
+              this._onLine &&
+              ev.src?.line != null &&
+              !PLAYHEAD_SKIP_CMDS.has(ev.cmd)
+            ) {
               const src = ev.src;
               const delay = Math.max(0, evTime - now) * 1000;
               this._scheduleUiCallback(() => this._onLine(tIdx, src), delay);
