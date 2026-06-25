@@ -37,18 +37,26 @@ Implemented toolchain:
 
 ## Documents
 
-- docs/guide.md — composer's guide (language reference for authors, v0.4)
-- docs/spec-v0.1.md — language and system specification (v0.1)
-- docs/spec-v0.2.md — v0.2 design notes
-- docs/spec-v0.3.md — v0.3 design notes
-- docs/spec-v0.4.md — v0.4 design notes
-- docs/spec-v0.5.md — v0.5 design notes (FM3 independent-OP, CSM, PCM/DAC, TEMPO_SWEEP)
-- docs/commands.md — command set definition
-- docs/ir.md — IR JSON schema
-- docs/mmb.md — binary format
-- docs/opcodes.md — opcode assignments (provisional)
-- docs/compiler.md — compiler pipeline contract
-- docs/driver.md — decoder contract for MMLispDRV
+**Current** — read these:
+
+- [docs/spec-v0.5.md](docs/spec-v0.5.md) — canonical spec (FM3 independent-OP, CSM, PCM/DAC, TEMPO_SWEEP)
+- [docs/spec-v0.4.md](docs/spec-v0.4.md) — v0.4 spec (reference)
+- [docs/guide.md](docs/guide.md) — composer's guide (language reference for authors, v0.4)
+
+**Reference** — format and pipeline contracts:
+
+- [docs/commands.md](docs/commands.md) — command set definition
+- [docs/ir.md](docs/ir.md) — IR JSON schema
+- [docs/mmb.md](docs/mmb.md) — binary format
+- [docs/opcodes.md](docs/opcodes.md) — opcode assignments (provisional)
+- [docs/compiler.md](docs/compiler.md) — compiler pipeline contract
+- [docs/driver.md](docs/driver.md) — decoder contract for MMLispDRV
+
+**Legacy specs** — historical, superseded by v0.4/v0.5; no need to read:
+
+- [docs/spec-v0.1.md](docs/spec-v0.1.md)
+- [docs/spec-v0.2.md](docs/spec-v0.2.md)
+- [docs/spec-v0.3.md](docs/spec-v0.3.md)
 
 ## MMLisp Live — Keyboard Shortcuts
 
