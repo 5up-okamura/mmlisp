@@ -1680,8 +1680,12 @@ export class IRPlayer {
       return null;
     }
 
+    // Returns { events, extra } where `extra` is how much longer the expanded
+    // list is than the compressed input (the accumulated loop-expansion shift).
+    // `extra` is what lets an OUTER loop offset its repetitions by the inner
+    // body's *expanded* duration — without it, nested loops overlap.
     function expand(evList, depth) {
-      if (depth > 8) return []; // safety guard
+      if (depth > 8) return { events: [], extra: 0 }; // safety guard
       const out = [];
       let j = 0;
       let tickOffset = 0; // accumulated tick shift from all loops processed so far
@@ -1719,27 +1723,31 @@ export class IRPlayer {
               ? Math.max(0, finalBreak.tick - loopBeginTick)
               : bodyDuration;
 
-          // Expand body once (recursive), then stamp each repetition
+          // Expand once; the EXPANDED body may be longer than bodyDuration when
+          // it contains its own loops, so reps must advance by repDur, not by the
+          // compressed bodyDuration (otherwise repetitions overlap → desync).
+          const full = expand(loopBody, depth + 1);
+          const repDur = bodyDuration + full.extra;
+          const final =
+            finalBreak != null
+              ? expand(loopBody.slice(0, finalBreak.index), depth + 1)
+              : full;
+          const finalRepDur = finalBodyDuration + final.extra;
+
           for (let rep = 0; rep < count; rep++) {
-            const isFinalRep = rep === count - 1;
-            const repBody =
-              isFinalRep && finalBreak != null
-                ? loopBody.slice(0, finalBreak.index)
-                : loopBody;
-            const expandedBody = expand(repBody, depth + 1);
-            for (const bodyEv of expandedBody) {
+            const body = rep === count - 1 ? final.events : full.events;
+            for (const bodyEv of body) {
               out.push({
                 ...bodyEv,
-                tick: bodyEv.tick + tickOffset + rep * bodyDuration,
+                tick: bodyEv.tick + tickOffset + rep * repDur,
               });
             }
           }
 
-          // Shift following events by the loop's effective repeated duration.
-          // On final-pass break, the last iteration may be shorter than bodyDuration.
-          const effectiveDuration =
-            count > 0 ? (count - 1) * bodyDuration + finalBodyDuration : 0;
-          tickOffset += effectiveDuration - bodyDuration;
+          // Shift following events by the loop's full expanded duration.
+          const totalLoopDuration =
+            count > 0 ? (count - 1) * repDur + finalRepDur : 0;
+          tickOffset += totalLoopDuration - bodyDuration;
           j = k + 1; // skip past LOOP_END
         } else if (ev.cmd === "LOOP_BREAK") {
           // LOOP_BREAK is structural; it is consumed during expansion.
@@ -1750,10 +1758,10 @@ export class IRPlayer {
           j++;
         }
       }
-      return out;
+      return { events: out, extra: tickOffset };
     }
 
-    return expand(events, 0);
+    return expand(events, 0).events;
   }
 
   _dispatchEvent(ev, when) {

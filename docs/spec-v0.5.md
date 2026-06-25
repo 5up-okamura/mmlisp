@@ -712,6 +712,65 @@ FB, TL, ADSR per operator) is declared via a note-less `(fm3 voice-name)` form.
 (fm3-4 :oct 2 :len 2  c _)   ; OP4 — sub hit
 ```
 
+### 1.9 Loops and labels — `#label`, `go`, `x` (v0.5)
+
+One label/jump primitive handles all looping and branching. The jump command is
+**`go`** (renamed from `goto`; the old name is removed).
+
+```lisp
+#head                       ; label — bare atom, leading #
+(seq c e g e)
+(go head)                   ; infinite loop — jump back to #head forever
+```
+
+```lisp
+#verse
+(seq c e g e)
+(go verse 4)                ; finite: the #verse…go section plays 4 times, then falls through
+:break                      ; optional — on the final pass, exit the loop here
+```
+
+- `(go label)` → `JUMP { to: label }` (infinite; the player loops the track to it).
+- `(go label N)` → the `#label`→`go` section plays **N times** then continues.
+  Compiles to the same `LOOP_BEGIN`/`LOOP_END` as `(x N …)` (a post-merge pass
+  rewrites a counted `JUMP` + its `MARKER`), so the label and the `go` may live
+  in **different track forms** — they merge into one channel first.
+- **`x` is sugar** for the counted form: `(x N body)` ≡ `#auto body (go auto N)`;
+  `(x body)` (no count) is the infinite form.
+- **`:break`** marks the early-exit point of the enclosing counted loop (works in
+  both `(x N …)` and `#label …(go label N)`): the final pass stops at `:break`.
+
+---
+
+### 1.10 Time base — ticks and note lengths (v0.5)
+
+The IR timeline is measured in **ticks**. The resolution is **PPQN = 96**: a
+quarter note is 96 ticks, so a **whole note is 384 ticks**. The IR carries this
+as the `ppqn` field; the player and the VGM/WAV exporters derive seconds-per-tick
+from it (`60 / (bpm × ppqn)`), so a tick count is musical, not wall-clock.
+
+> **Changed in v0.5:** PPQN was raised from 48 to **96** (whole note 192 → 384
+> ticks). 384 is the LCM of MMLisp's note fractions (192) and the common
+> imported driver grid (mucom's default 128 clocks/whole), so a whole note is
+> divisible by all of `1,2,4,8,16,32,64,128`, their single dot (×3/2), triplets
+> (÷3), **and** 128th notes (= 3 ticks). Imported lengths that previously had to
+> round now land on exact ticks. All existing tick values simply double; musical
+> timing is unchanged because the player reads `ppqn` from the IR.
+
+Note/`:len` length tokens:
+
+| Token  | Meaning                                  | Ticks (at 384/whole) |
+| ------ | ---------------------------------------- | -------------------- |
+| `4`    | quarter note                             | 96                   |
+| `8.`   | dotted eighth                            | 72                   |
+| `16`   | sixteenth                                | 24                   |
+| `128`  | 128th note                               | 3                    |
+| `6t`   | raw ticks — exactly N ticks              | 6                    |
+| `16f`  | frames — N × (1/60 s), tempo-independent | —                    |
+
+Use a fraction for ordinary durations; `Nt` expresses any value off the fraction
+grid (e.g. an importer reproducing a driver's truncated length).
+
 ---
 
 ## 2. Resolved — moved to §1

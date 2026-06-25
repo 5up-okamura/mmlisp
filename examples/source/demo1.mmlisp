@@ -24,28 +24,28 @@
     (x 8 a > a <)
     (x 5 f > f <)
     < g > g < a > a < b- > b-
-    (goto head)
+    (go head)
   )
 
   (fm2 :oct 5 :len 4
-    #head melo (goto head)
+    #head melo (go head)
   )
 
   (fm3 :oct 5 :len 4 :vel 12 :pitch 10
     _8.
-    #head melo (goto head)
+    #head melo (go head)
   )
 
   (sqr1 :oct 4 :len 8 :vel 13
     down
     #head
     (x 16 c _ g _)
-    (goto head)
+    (go head)
   )
 
   (noise :len 16
     #head
     (x 16 bd c hh c c c sd c hh c c c)
-    (goto head)
+    (go head)
   )
 )

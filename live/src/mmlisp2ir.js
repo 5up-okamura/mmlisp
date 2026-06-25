@@ -12,7 +12,10 @@
 import { parse } from "./mmlisp-parser.js";
 import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
 
-const PPQN = 48;
+// 96 ticks/quarter (384/whole). Divisible by both MMLisp's note fractions and
+// mucom's default 128-clock/whole grid (LCM 384), so imported 128th notes land
+// on exact ticks instead of rounding (1/128 whole = 3 ticks, not 1.5).
+const PPQN = 96;
 const WHOLE_TICKS = PPQN * 4;
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
@@ -402,7 +405,7 @@ function isLikelyPcmBodyToken(value) {
   if (value.startsWith("#")) return true;
   if (value === "~" || value === ">" || value === "<" || value === "_")
     return true;
-  if (value === "goto" || value === "x" || value === "param-set") return true;
+  if (value === "go" || value === "x" || value === "param-set") return true;
   if (isRestAtom(value)) return true;
   if (isNoteAtom(value)) return true;
   if (isPerNoteLengthAtom(value)) return true;
@@ -2083,18 +2086,18 @@ function compileChannelBody(
                 }
                 break;
               }
-              // :break inside (x N ...) — emit LOOP_BREAK linked to current loop
-              // Note: :break as atom (not keyword pair) is handled separately;
-              // here it appears as ":break" key with a dummy value consumed
+            case ":break":
+              // :break takes no value; the keyword path already stepped onto the
+              // next token, so back up to leave it for the next iteration. Id is
+              // the current (x …) loop, or null inside a #label…(go label N) loop
+              // where convertCountedJumps assigns it after the forms merge.
               i--; // back up — :break has no value argument
-              if (trackState.currentLoopId) {
-                events.push({
-                  tick: trackState.tick,
-                  cmd: "LOOP_BREAK",
-                  args: { id: trackState.currentLoopId },
-                  src: nodeSrc(node),
-                });
-              }
+              events.push({
+                tick: trackState.tick,
+                cmd: "LOOP_BREAK",
+                args: { id: trackState.currentLoopId ?? null },
+                src: nodeSrc(node),
+              });
               break;
             default: {
               // Inline hardware param write: :tl1 30, :ar1 28, etc.
@@ -2157,16 +2160,16 @@ function compileChannelBody(
         continue;
       }
 
-      // :break as standalone atom — emits LOOP_BREAK for current loop
+      // :break as standalone atom — emits LOOP_BREAK for the enclosing loop. Id
+      // is the current (x …) loop, or null inside a `#label …(go label N)` loop
+      // where convertCountedJumps assigns it after the forms merge.
       if (val === ":break") {
-        if (trackState.currentLoopId) {
-          events.push({
-            tick: trackState.tick,
-            cmd: "LOOP_BREAK",
-            args: { id: trackState.currentLoopId },
-            src: nodeSrc(node),
-          });
-        }
+        events.push({
+          tick: trackState.tick,
+          cmd: "LOOP_BREAK",
+          args: { id: trackState.currentLoopId ?? null },
+          src: nodeSrc(node),
+        });
         i++;
         continue;
       }
@@ -2454,37 +2457,54 @@ function compileChannelBody(
         continue;
       }
 
-      // Goto: (goto label)
-      if (head === "goto") {
+      // Jump: (go label) infinite, (go label N) repeats the #label..go section
+      // N times then falls through (same loop as (x N …); see convertCountedJumps).
+      if (head === "go") {
         const label = atomValue(node.items[1]);
         if (!label) {
           pushDiag(
             diagnostics,
             "error",
-            "E_GOTO_NO_LABEL",
-            "goto requires a label",
+            "E_GO_NO_LABEL",
+            "go requires a label",
             nodeSrc(node.items[0]),
             trackName,
           );
           i++;
           continue;
         }
-        if (node.items.length !== 2) {
+        if (node.items.length < 2 || node.items.length > 3) {
           pushDiag(
             diagnostics,
             "error",
-            "E_GOTO_ARITY",
-            "goto requires exactly one label argument",
+            "E_GO_ARITY",
+            "go takes a label and an optional repeat count: (go label [N])",
             nodeSrc(node.items[0]),
             trackName,
           );
           i++;
           continue;
+        }
+        let repeat = null;
+        if (node.items.length === 3) {
+          repeat = parseIntLike(atomValue(node.items[2]));
+          if (repeat === null || repeat < 1) {
+            pushDiag(
+              diagnostics,
+              "error",
+              "E_GO_COUNT",
+              "go repeat count must be a positive integer",
+              nodeSrc(node.items[0]),
+              trackName,
+            );
+            i++;
+            continue;
+          }
         }
         events.push({
           tick: trackState.tick,
           cmd: "JUMP",
-          args: { to: label },
+          args: repeat !== null ? { to: label, repeat } : { to: label },
           src: nodeSrc(node.items[0]),
         });
         i++;
@@ -2540,6 +2560,36 @@ function compileChannelBody(
       trackName,
     );
     i++;
+  }
+}
+
+// Turn a counted backward jump — `(go label N)` -> JUMP { to, repeat } — plus
+// its `#label` MARKER into the same LOOP_BEGIN/LOOP_END pair that `(x N …)`
+// emits, so the loader's `_expandLoops` (nesting, count, :break) handles both.
+// Runs on a track's merged events, so the label and the `go` may come from
+// different `(fmN …)` forms (mucom multi-line loops). Count-less JUMPs (infinite
+// `(go label)` / `#loop`) are left untouched for the track-level loop.
+function convertCountedJumps(track) {
+  const events = track.events;
+  if (!events) return;
+  // Left-to-right so an inner counted loop is converted before its outer one;
+  // that claims inner :break (LOOP_BREAK id:null) for the inner loop first.
+  for (let j = 0; j < events.length; j++) {
+    const ev = events[j];
+    if (ev.cmd !== "JUMP" || ev.args?.repeat == null) continue;
+    const id = ev.args.to;
+    let m = -1;
+    for (let k = j - 1; k >= 0; k--) {
+      if (events[k].cmd === "MARKER" && events[k].args?.id === id) { m = k; break; }
+    }
+    if (m < 0) continue; // no backward marker — leave for validateTrack to flag
+    events[m] = { ...events[m], cmd: "LOOP_BEGIN", args: { id } };
+    events[j] = { ...ev, cmd: "LOOP_END", args: { id, repeat: ev.args.repeat } };
+    for (let k = m + 1; k < j; k++) {
+      if (events[k].cmd === "LOOP_BREAK" && events[k].args?.id == null) {
+        events[k] = { ...events[k], args: { ...events[k].args, id } };
+      }
+    }
   }
 }
 
@@ -3207,6 +3257,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     t.id = idx;
   });
 
+  for (const track of tracks) convertCountedJumps(track);
   for (const track of tracks) validateTrack(track, diagnostics);
 
   if (tracks.length > 0) {
