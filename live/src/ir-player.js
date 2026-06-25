@@ -887,6 +887,32 @@ export class IRPlayer {
     });
   }
 
+  /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
+  getBpm() {
+    return this._bpm;
+  }
+
+  /**
+   * Live tempo override. Clears any active tempo sweep. While playing, applies at
+   * the current position so timing stays continuous; otherwise sets the base tempo.
+   * @param {number} bpm
+   */
+  setTempo(bpm) {
+    if (!Number.isFinite(bpm) || bpm <= 0) return;
+    this._tempoSweep = null;
+    if (this._playing && this._tracks.length > 0 && this._audioContext) {
+      const now = this._audioContext.currentTime;
+      const t0 = this._tracks[0];
+      const currentTick = Math.max(
+        0,
+        (now - t0.audioTimeAtTick0) / this._secsPerTick,
+      );
+      this._setTempoAtTick(bpm, currentTick, now);
+    } else {
+      this._bpm = bpm;
+    }
+  }
+
   /**
    * Trigger KEY-OFF for a hold note (len=0) on the given FM channel.
    * @param {number} ch  0-5 FM channel index

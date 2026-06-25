@@ -913,6 +913,10 @@
             <input type="range" id="sl-master" min="0" max="31" value="31" oninput="onMaster(this)">
           </div>
           <div class="knob-wrap">
+            <div class="knob-label">TEMPO <span class="val" id="val-tempo">120</span></div>
+            <input type="range" id="sl-tempo" min="20" max="300" value="120" oninput="onTempo(this)">
+          </div>
+          <div class="knob-wrap">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onChParam('LFO_RATE', this)">
           </div>
@@ -2867,6 +2871,8 @@
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
         buildChStrips(ir);
+        // When not playing, show the score's starting tempo (the loop drives it live).
+        if (_fmLiveRaf == null) updateTempoDisplay(irInitialBpm(ir));
         // Anchor playhead highlights to the document this IR was compiled from.
         // Later edits (without rebuild) are mapped from here so highlights track
         // the text. Edits compose into the field even while stopped.
@@ -2913,6 +2919,10 @@
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
+    let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
+    let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
+    let _liveSliderDragging = false;        // suppress loop slider-thumb writes while dragging a panel slider
+    let _tempoShown = null;                 // last tempo value shown (change detection)
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
     // Canonical hardware order of score channel heads. fm3-csm-rate has no strip
@@ -4502,30 +4512,61 @@
       }
     }
 
-    // Live monitor: while playing an FM channel, track the live registers so the
-    // panel reflects vel/vol/master/macro modulation. Change-detected (idle songs
-    // write nothing); skipped while the user drags a slider.
-    let _fmLiveRaf = null;
-    let _fmLiveLast = 0;
-    let _fmSliderDragging = false;
-    function fmLiveTick(ts) {
-      _fmLiveRaf = requestAnimationFrame(fmLiveTick);
+    // Live monitor while playing: reflect the live tempo always, and the selected
+    // FM channel's registers (vel/vol/master/macro). Change-detected (idle songs
+    // write nothing); slider thumbs are not moved while the user drags one.
+    function liveTick(ts) {
+      _fmLiveRaf = requestAnimationFrame(liveTick);
       if (ts - _fmLiveLast < 50) return; // ~20 fps
       _fmLiveLast = ts;
-      if (_fmSliderDragging || !player || !isFmChannel(selectedCh)) return;
-      if (getFmParamMode() !== 'channel') return;
+      if (!player) return;
+      updateTempoDisplay(player.getBpm());
+      if (_liveSliderDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
       applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
     }
     function startFmLiveLoop() {
-      if (_fmLiveRaf == null) _fmLiveRaf = requestAnimationFrame(fmLiveTick);
+      if (_fmLiveRaf == null) _fmLiveRaf = requestAnimationFrame(liveTick);
     }
     function stopFmLiveLoop() {
       if (_fmLiveRaf != null) { cancelAnimationFrame(_fmLiveRaf); _fmLiveRaf = null; }
     }
-    document.getElementById('fmParamSection')?.addEventListener('pointerdown', (e) => {
-      if (e.target.matches('input[type=range]')) _fmSliderDragging = true;
+    document.getElementById('rightPanelBody')?.addEventListener('pointerdown', (e) => {
+      if (e.target.matches('input[type=range]')) _liveSliderDragging = true;
     });
-    window.addEventListener('pointerup', () => { _fmSliderDragging = false; });
+    window.addEventListener('pointerup', () => { _liveSliderDragging = false; });
+
+    // TEMPO control: slider is limited to a common BPM range, but the number shows
+    // the actual tempo (which the score may push beyond that range).
+    function updateTempoDisplay(bpm) {
+      const r = Math.round(bpm);
+      if (_tempoShown === r) return;
+      _tempoShown = r;
+      const valEl = document.getElementById('val-tempo');
+      if (valEl) valEl.textContent = r;
+      if (!_liveSliderDragging) {
+        const sl = document.getElementById('sl-tempo');
+        if (sl) sl.value = Math.max(20, Math.min(300, r));
+      }
+    }
+    function onTempo(slider) {
+      const val = parseInt(slider.value, 10);
+      _tempoShown = null; // force the number to refresh to the dragged value
+      updateTempoDisplay(val);
+      if (!player) initParamOnlyPlayer();
+      player?.setTempo(val);
+    }
+    function irInitialBpm(ir) {
+      for (const t of ir?.tracks ?? []) {
+        for (const ev of t.events ?? []) {
+          if (ev.cmd === 'TEMPO_SET') {
+            const b = Number(ev.args?.bpm);
+            if (Number.isFinite(b) && b > 0) return b;
+          }
+        }
+      }
+      return 120;
+    }
+    window.onTempo = onTempo;
 
     function setSlider(sliderId, valId, value) {
       const sl = document.getElementById(sliderId);
