@@ -2912,6 +2912,7 @@
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
+    let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
     // Canonical hardware order of score channel heads. fm3-csm-rate has no strip
@@ -3370,29 +3371,8 @@
         }
         player.setOnLine(highlightTrackLine);
         player.setOnSeq(highlightSeq);
-        const PARAM_KEY_MAP = { TL: 'tl', AR: 'ar', DR: 'dr', SL: 'sl', SR: 'd2r', RR: 'rr', ML: 'mul', DT: 'dt', KS: 'rs', SSG: 'ssg' };
-        player.setOnParam((ch, target, value) => {
-          if (ch !== selectedCh) return;
-          if (target === 'FM_ALG') {
-            setSlider('sl-alg', 'val-alg', value);
-            document.getElementById('algDisplay').textContent = ALG_DESC[value] ?? '';
-            updateOpRoles(value);
-          } else if (target === 'FM_FB') {
-            setSlider('sl-fb', 'val-fb', value);
-          } else if (target === 'LFO_RATE') {
-            setSlider('sl-lfo', 'val-lfo', value);
-          } else if (target === 'FM_AMS') {
-            setSlider('sl-ams', 'val-ams', value);
-          } else if (target === 'FM_FMS') {
-            setSlider('sl-fms', 'val-fms', value);
-          } else {
-            const m = target.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT|KS|SSG)(\d)$/);
-            if (m) {
-              const key = PARAM_KEY_MAP[m[1]];
-              setSlider(`sl-op${m[2]}-${key}`, `val-op${m[2]}-${key}`, value);
-            }
-          }
-        });
+        // The FM panel tracks live registers via the playback refresh loop
+        // (startFmLiveLoop), so no per-PARAM_SET UI callback is needed.
         // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
         // that never went through compileNow), then push persisted mute/solo.
         buildChStrips(player._ir);
@@ -3407,12 +3387,14 @@
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
         syncParamUI();
+        startFmLiveLoop();
       } catch (e) {
         log('Error: ' + e.message, 'err');
       }
     }
 
     function onStop() {
+      stopFmLiveLoop();
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
@@ -4463,42 +4445,87 @@
           ? player.getChRegs(selectedCh)
           : defaultFmRegs();
 
-      // Channel level
-      setSlider('sl-alg', 'val-alg', regs.algorithm);
-      setSlider('sl-fb',  'val-fb',  regs.feedback);
-      setSlider('sl-lfo', 'val-lfo', regs.lfoRate ?? 0);
-      setSlider('sl-ams', 'val-ams', regs.ams ?? 0);
-      setSlider('sl-fms', 'val-fms', regs.fms ?? 0);
-      document.getElementById('algDisplay').textContent = ALG_DESC[regs.algorithm] ?? '';
-      updateOpRoles(regs.algorithm);
-
-      // Per-operator ON/OFF. In cursor-def mode reflect the preview channel's
-      // mask so auditioned operator toggles persist in the UI.
+      // In cursor-def mode reflect the preview channel's mask so auditioned
+      // operator toggles persist in the UI.
       const maskCh = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
       const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
-      for (let op = 1; op <= 4; op++) {
-        const bit = 1 << (op + 3);
-        const chk = document.getElementById(`chk-op${op}`);
-        if (chk) chk.checked = !!(mask & bit);
-        const amenChk = document.getElementById(`chk-amen${op}`);
-        if (amenChk) amenChk.checked = !!(regs.ops[op - 1].amen);
-      }
+      // Context (channel/def) changed → force a full repaint and cache reset.
+      applyRegsToFmSliders(regs, mask, true);
+    }
 
-      // Per-operator params
+    // Apply a register snapshot to the FM panel sliders/checkboxes. Change-detected
+    // against _fmSliderCache so an unchanged frame writes nothing to the DOM. Pass
+    // force=true to repaint everything and reset the cache (on context change).
+    function setSliderCached(sliderId, valId, value) {
+      if (_fmSliderCache[sliderId] === value) return;
+      _fmSliderCache[sliderId] = value;
+      setSlider(sliderId, valId, value);
+    }
+    function applyRegsToFmSliders(regs, mask, force = false) {
+      if (force) _fmSliderCache = {};
+      setSliderCached('sl-alg', 'val-alg', regs.algorithm);
+      setSliderCached('sl-fb',  'val-fb',  regs.feedback);
+      setSliderCached('sl-lfo', 'val-lfo', regs.lfoRate ?? 0);
+      setSliderCached('sl-ams', 'val-ams', regs.ams ?? 0);
+      setSliderCached('sl-fms', 'val-fms', regs.fms ?? 0);
+      if (_fmSliderCache._alg !== regs.algorithm) {
+        _fmSliderCache._alg = regs.algorithm;
+        document.getElementById('algDisplay').textContent = ALG_DESC[regs.algorithm] ?? '';
+        updateOpRoles(regs.algorithm);
+      }
+      for (let op = 1; op <= 4; op++) {
+        const on = !!(mask & (1 << (op + 3)));
+        if (_fmSliderCache[`_opchk${op}`] !== on) {
+          _fmSliderCache[`_opchk${op}`] = on;
+          const chk = document.getElementById(`chk-op${op}`);
+          if (chk) chk.checked = on;
+        }
+        const amen = !!regs.ops[op - 1].amen;
+        if (_fmSliderCache[`_amen${op}`] !== amen) {
+          _fmSliderCache[`_amen${op}`] = amen;
+          const amenChk = document.getElementById(`chk-amen${op}`);
+          if (amenChk) amenChk.checked = amen;
+        }
+      }
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops[op - 1];
-        setSlider(`sl-op${op}-tl`,  `val-op${op}-tl`,  o.tl);
-        setSlider(`sl-op${op}-ar`,  `val-op${op}-ar`,  o.ar);
-        setSlider(`sl-op${op}-dr`,  `val-op${op}-dr`,  o.dr);
-        setSlider(`sl-op${op}-sl`,  `val-op${op}-sl`,  o.sl);
-        setSlider(`sl-op${op}-d2r`, `val-op${op}-d2r`, o.d2r);
-        setSlider(`sl-op${op}-rr`,  `val-op${op}-rr`,  o.rr);
-        setSlider(`sl-op${op}-mul`, `val-op${op}-mul`, o.mul);
-        setSlider(`sl-op${op}-dt`,  `val-op${op}-dt`,  o.dt);
-        setSlider(`sl-op${op}-rs`,  `val-op${op}-rs`,  o.rs);
-        setSlider(`sl-op${op}-ssg`, `val-op${op}-ssg`, o.ssg);
+        setSliderCached(`sl-op${op}-tl`,  `val-op${op}-tl`,  o.tl);
+        setSliderCached(`sl-op${op}-ar`,  `val-op${op}-ar`,  o.ar);
+        setSliderCached(`sl-op${op}-dr`,  `val-op${op}-dr`,  o.dr);
+        setSliderCached(`sl-op${op}-sl`,  `val-op${op}-sl`,  o.sl);
+        setSliderCached(`sl-op${op}-d2r`, `val-op${op}-d2r`, o.d2r);
+        setSliderCached(`sl-op${op}-rr`,  `val-op${op}-rr`,  o.rr);
+        setSliderCached(`sl-op${op}-mul`, `val-op${op}-mul`, o.mul);
+        setSliderCached(`sl-op${op}-dt`,  `val-op${op}-dt`,  o.dt);
+        setSliderCached(`sl-op${op}-rs`,  `val-op${op}-rs`,  o.rs);
+        setSliderCached(`sl-op${op}-ssg`, `val-op${op}-ssg`, o.ssg);
       }
     }
+
+    // Live monitor: while playing an FM channel, track the live registers so the
+    // panel reflects vel/vol/master/macro modulation. Change-detected (idle songs
+    // write nothing); skipped while the user drags a slider.
+    let _fmLiveRaf = null;
+    let _fmLiveLast = 0;
+    let _fmSliderDragging = false;
+    function fmLiveTick(ts) {
+      _fmLiveRaf = requestAnimationFrame(fmLiveTick);
+      if (ts - _fmLiveLast < 50) return; // ~20 fps
+      _fmLiveLast = ts;
+      if (_fmSliderDragging || !player || !isFmChannel(selectedCh)) return;
+      if (getFmParamMode() !== 'channel') return;
+      applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
+    }
+    function startFmLiveLoop() {
+      if (_fmLiveRaf == null) _fmLiveRaf = requestAnimationFrame(fmLiveTick);
+    }
+    function stopFmLiveLoop() {
+      if (_fmLiveRaf != null) { cancelAnimationFrame(_fmLiveRaf); _fmLiveRaf = null; }
+    }
+    document.getElementById('fmParamSection')?.addEventListener('pointerdown', (e) => {
+      if (e.target.matches('input[type=range]')) _fmSliderDragging = true;
+    });
+    window.addEventListener('pointerup', () => { _fmSliderDragging = false; });
 
     function setSlider(sliderId, valId, value) {
       const sl = document.getElementById(sliderId);

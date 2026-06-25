@@ -563,7 +563,6 @@ export class IRPlayer {
     this._schedulerInterval = 25; // ms
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
-    this._onParam = null; // (chIndex, target, value) => void — called when a param event plays
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
     // Gapless swap (Build during playback): a swap requested by swapAtNextBar()
@@ -1029,11 +1028,6 @@ export class IRPlayer {
     this._onSeq = fn;
   }
 
-  /** Register a callback fired (approximately) when each PARAM_SET event plays. */
-  setOnParam(fn) {
-    this._onParam = fn;
-  }
-
   _scheduleUiCallback(fn, delayMs) {
     const timerId = setTimeout(() => {
       this._pendingUiTimers.delete(timerId);
@@ -1209,7 +1203,6 @@ export class IRPlayer {
     const saved = {
       write: this._write,
       onLine: this._onLine,
-      onParam: this._onParam,
       onSeq: this._onSeq,
       ctx: this._audioContext,
       loop: this._loop,
@@ -1220,7 +1213,6 @@ export class IRPlayer {
 
     // Silence every UI callback so no real setTimeout fires during capture.
     this._onLine = null;
-    this._onParam = null;
     this._onSeq = null;
 
     this._write = (portOrMsg, addr, data, when) => {
@@ -1312,7 +1304,6 @@ export class IRPlayer {
     } finally {
       this._write = saved.write;
       this._onLine = saved.onLine;
-      this._onParam = saved.onParam;
       this._onSeq = saved.onSeq;
       this._audioContext = saved.ctx;
       this._loop = saved.loop;
@@ -2136,14 +2127,12 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
     const value = ev.args?.value ?? 0;
-    let nextValue = null;
 
     // Helper to round, clamp and apply. All hardware register targets are integers;
     // rounding here means curves routed through _applyParam never store floats.
     const set = (apply, min, max) => {
       const next = Math.max(min, Math.min(max, Math.round(value)));
       apply(next);
-      nextValue = next;
     };
 
     switch (target) {
@@ -2277,7 +2266,6 @@ export class IRPlayer {
       case "PAN": {
         const pan = this._snapMacroOutput("PAN", value);
         regs.pan = pan;
-        nextValue = pan;
         this._write(port, 0xb4 + chOffset, encodeB4(regs), when);
         break;
       }
@@ -2287,7 +2275,6 @@ export class IRPlayer {
         // 0 = disable (0x00); 1-8 = enable + rate (0x08 | rate-1)
         const regVal = rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07);
         this._write(0, 0x22, regVal, when);
-        nextValue = rate;
         break;
       }
       case "FM_RR1":
@@ -2406,7 +2393,6 @@ export class IRPlayer {
           when,
         );
         this._write(port, 0xa0 + chOffset, pf & 0xff, when);
-        nextValue = centOffset;
         break;
       }
 
@@ -2425,7 +2411,6 @@ export class IRPlayer {
           const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
           this._write(port, opAddr, tl, when);
         }
-        nextValue = vol;
         break;
       }
 
@@ -2460,7 +2445,6 @@ export class IRPlayer {
           const vol = this._psgVolAtTime(psgCh, when); // 0-31
           this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
         }
-        nextValue = master;
         break;
       }
 
@@ -2472,23 +2456,11 @@ export class IRPlayer {
           // PSG noise channel
           this._psgSetNoiseCfg(mode, when);
         }
-        nextValue = mode;
         break;
       }
 
       default:
         break;
-    }
-
-    if (this._onParam && nextValue !== null) {
-      const delay = Math.max(
-        0,
-        (when - (this._audioContext?.currentTime ?? 0)) * 1000,
-      );
-      const t = target,
-        c = ch,
-        v = nextValue;
-      this._scheduleUiCallback(() => this._onParam(c, t, v), delay);
     }
   }
 
