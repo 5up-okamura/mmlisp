@@ -816,13 +816,15 @@ function flattenPriorityLayers(head, layers, diagnostics) {
 function applyTypedMacroDef(trackState, td) {
   if (!td) return false;
   if (td.tag === "macro") {
-    applyMacroEntryToState(trackState, td.target, td.spec);
+    if (td.clear) clearMacroTarget(trackState, td.target);
+    else applyMacroEntryToState(trackState, td.target, td.spec);
     return true;
   }
   if (td.tag === "macro-list") {
     for (const entry of td.entries || []) {
       if (!entry) continue;
-      applyMacroEntryToState(trackState, entry.target, entry.spec);
+      if (entry.clear) clearMacroTarget(trackState, entry.target);
+      else applyMacroEntryToState(trackState, entry.target, entry.spec);
     }
     return true;
   }
@@ -893,6 +895,11 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
       continue;
     }
     const irTarget = canonicalTarget(sym);
+    // `:target none` is a clear directive — valid inline, so valid in a def too.
+    if (atomValue(items[ki + 1]) === "none") {
+      entries.push({ target: irTarget, clear: true });
+      continue;
+    }
     const spec = parseMacroSpec(
       items[ki + 1],
       irTarget,
