@@ -3615,6 +3615,7 @@
     const THEME_STORE_KEY = 'mmlisp.theme';
     const DEFAULT_THEME_ID = 'default';
     let _themeState = { id: DEFAULT_THEME_ID, custom: { ...THEMES.default } };
+    let _themeReady = false; // true once init finished, so applyColors can repaint canvases
 
     function parseHexRGB(hex) {
       let h = String(hex).trim().replace(/^#/, '');
@@ -3645,6 +3646,11 @@
       root.setProperty('--accent', colors.accent);
       root.setProperty('--error', colors.error);
       root.setProperty('--contrast', contrastPole(colors.background));
+      // Canvases sample theme colors when they draw; repaint them on theme change.
+      if (_themeReady) {
+        drawAlgDiagram();
+        _vizColors = null; // piano roll re-samples colors on its next frame
+      }
     }
     function saveThemeState() {
       try { localStorage.setItem(THEME_STORE_KEY, JSON.stringify(_themeState)); } catch (_) {}
@@ -5121,6 +5127,7 @@
     // Restore persisted visualizer selection (piano roll is the only mode yet).
     if (loadPref('visualizer', 'off') === 'pianoroll') togglePianoRoll();
 
+    _themeReady = true; // init done — applyColors may now repaint canvases on theme change
     log('Ready.', 'info');
   </script>
 </body>
