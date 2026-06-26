@@ -3379,8 +3379,21 @@
     }
 
     // Mega Drive Model 1 analog output low-pass (~3 kHz). Switchable.
+    // User preferences persisted to localStorage. Values are stored as named
+    // strings (not booleans) so future options — Analog LPF console models,
+    // other visualizer modes — can be added without migrating saved data.
+    const PREFS_KEY = 'mmlisp.prefs';
+    function readPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') || {}; } catch (_) { return {}; } }
+    function loadPref(key, fallback) { const v = readPrefs()[key]; return v == null ? fallback : v; }
+    function savePref(key, value) {
+      const p = readPrefs();
+      p[key] = value;
+      try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (_) {}
+    }
+
     const ANALOG_LPF_CUTOFF = 3000;
-    let analogLpfOn = false;
+    // 'off' | 'model1' (only Model 1 is modeled today; more may follow).
+    let analogLpfOn = loadPref('analogLpf', 'off') !== 'off';
     function updateAnalogLpfCheck() {
       const el = document.getElementById('analogLpfCheck');
       if (el) el.textContent = analogLpfOn ? '✓' : '';
@@ -3388,10 +3401,12 @@
     function toggleAnalogLpf() {
       analogLpfOn = !analogLpfOn;
       updateAnalogLpfCheck();
+      savePref('analogLpf', analogLpfOn ? 'model1' : 'off');
       workletNode?.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
     }
     // Module-scope functions aren't global; expose for the inline onclick.
     window.toggleAnalogLpf = toggleAnalogLpf;
+    updateAnalogLpfCheck(); // reflect the restored state in the menu
 
     // Pre-load the worklet module on page load (no user gesture needed).
     // AudioContext starts suspended — we only need to resume() on first click.
@@ -5028,6 +5043,8 @@
       pianoRollOn = !pianoRollOn;
       updatePianoRollCheck();
       document.getElementById('editorWrap')?.classList.toggle('viz-on', pianoRollOn);
+      // 'off' | 'pianoroll' (oscilloscope and other modes may be added later).
+      savePref('visualizer', pianoRollOn ? 'pianoroll' : 'off');
       if (pianoRollOn) startPianoRoll(); else stopPianoRoll();
     }
     window.togglePianoRoll = togglePianoRoll;
@@ -5100,6 +5117,9 @@
     }
 
     initKeyboardControls();
+
+    // Restore persisted visualizer selection (piano roll is the only mode yet).
+    if (loadPref('visualizer', 'off') === 'pianoroll') togglePianoRoll();
 
     log('Ready.', 'info');
   </script>
