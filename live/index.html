@@ -384,8 +384,7 @@
       grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
       gap: 0.5rem;
     }
-    .knob-wrap { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
-    .knob-wrap:last-child { margin-bottom: 0; }
+    .knob-wrap { display: flex; flex-direction: column; gap: 0; }
     .knob-label {
       font-size: 0.58rem;
       color: var(--mid);
@@ -429,7 +428,6 @@
       color: var(--mid);
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      margin-bottom: 0.4rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -465,7 +463,7 @@
       transform: translate(-50%, -50%) rotate(45deg);
     }
     /* Carrier / modulator roles — default is modulator */
-    .op-col { --op-color: var(--accent); }
+    .op-col { --op-color: var(--accent); display: flex; flex-direction: column; gap: 0.5rem; }
     .op-col.carrier { --op-color: var(--foreground); }
     .op-col .op-col-title { color: var(--op-color); }
     .op-col .op-col-title input[type=checkbox]:checked {
@@ -475,19 +473,28 @@
     .op-col input[type=range]::-webkit-slider-thumb { background: var(--op-color); }
     .op-col input[type=range]::-moz-range-thumb { background: var(--op-color); }
     .op-col .knob-label span.val { color: var(--op-color); }
-    #algDisplay {
-      font-size: 0.58rem;
-      color: var(--mid);
-      min-height: 1.2em;
-      margin: 0.2rem 0;
+    .rack-body { display: flex; flex-direction: column; gap: 0.5rem; }
+    /* ALG/FB / AMS/FMS on the left, algorithm diagram spanning both rows at right */
+    .alg-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr;
+      grid-template-areas: "a b d" "c e d";
+      gap: 0.5rem;
+      align-items: start;
     }
-    .op-grid { margin-top: 0.3rem; }
-    .param-grid { margin-bottom: 0.3rem; }
+    .alg-diagram {
+      grid-area: d;
+      width: 100%;
+      max-width: 140px; /* keep the diagram from stretching wide in its column */
+      height: 100%;
+      min-height: 58px;
+      justify-self: center;
+    }
+    #fmParamSection.fm-disabled .alg-diagram { opacity: 0.4; }
 
     /* FM panel disabled state */
     #fmParamSection.fm-disabled .knob-label,
-    #fmParamSection.fm-disabled .op-col-title,
-    #fmParamSection.fm-disabled #algDisplay {
+    #fmParamSection.fm-disabled .op-col-title {
       color: var(--mid);
     }
     #fmParamSection.fm-disabled .knob-label .val,
@@ -971,25 +978,25 @@
       <div class="rack-section" id="fmParamSection">
         <div class="rack-title rack-title-row"><span>FM Parameters</span><span id="fmParamStatus"></span></div>
         <div class="rack-body">
-        <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)">
-          <div class="knob-wrap">
+        <div class="alg-grid">
+          <div class="knob-wrap" style="grid-area:a">
             <div class="knob-label">ALG <span class="val" id="val-alg">0</span></div>
             <input type="range" id="sl-alg" min="0" max="7" value="0" oninput="onChParam('FM_ALG', this)">
           </div>
-          <div class="knob-wrap">
+          <div class="knob-wrap" style="grid-area:b">
             <div class="knob-label">FB <span class="val" id="val-fb">0</span></div>
             <input type="range" id="sl-fb" min="0" max="7" value="0" oninput="onChParam('FM_FB', this)">
           </div>
-          <div class="knob-wrap">
+          <div class="knob-wrap" style="grid-area:c">
             <div class="knob-label">AMS <span class="val" id="val-ams">0</span></div>
             <input type="range" id="sl-ams" min="0" max="3" value="0" oninput="onChParam('FM_AMS', this)">
           </div>
-          <div class="knob-wrap">
+          <div class="knob-wrap" style="grid-area:e">
             <div class="knob-label">FMS <span class="val" id="val-fms">0</span></div>
             <input type="range" id="sl-fms" min="0" max="7" value="0" oninput="onChParam('FM_FMS', this)">
           </div>
+          <canvas id="algDiagram" class="alg-diagram"></canvas>
         </div>
-        <div id="algDisplay"></div>
         <div class="op-grid" id="opGrid"></div>
         </div>
       </div>
@@ -3799,17 +3806,6 @@
     // -----------------------------------------------------------------------
 
     // Algorithm descriptions (what's a carrier, what's a modulator)
-    const ALG_DESC = [
-      '1→2→3→4  (max modulation)',
-      '(1+2)→3→4',
-      '(1+(2→3))→4',
-      '((1→2)+3)→4',
-      '(1→2)+(3→4)  (2 carriers)',
-      '1→(2+3+4)  (3 carriers)',
-      '(1→2)+3+4  (3 carriers)',
-      '1+2+3+4  (all carriers, pure additive)',
-    ];
-
     // Carrier operators (1-indexed) per algorithm
     const ALG_CARRIERS = [
       [4],             // ALG 0: 1→2→3→4
@@ -3830,6 +3826,117 @@
           colEl.classList.toggle('carrier',   carriers.has(op));
           colEl.classList.toggle('modulator', !carriers.has(op));
         }
+      }
+      drawAlgDiagram(alg);
+    }
+
+    // Operator modulation edges [from→to] and grid positions [col,row] per algorithm.
+    const ALG_EDGES = [
+      [[1,2],[2,3],[3,4]],   // 0
+      [[1,3],[2,3],[3,4]],   // 1
+      [[2,3],[3,4],[1,4]],   // 2
+      [[1,2],[2,4],[3,4]],   // 3
+      [[1,2],[3,4]],         // 4
+      [[1,2],[1,3],[1,4]],   // 5
+      [[1,2]],               // 6
+      [],                    // 7
+    ];
+    // Operator grid positions [col,row]: modulators left → carriers right (carriers
+    // sit in the rightmost column so they collect into the output bus on the right).
+    const ALG_LAYOUT = [
+      { 1:[0,0], 2:[1,0], 3:[2,0], 4:[3,0] },  // 0: 1→2→3→4
+      { 1:[0,0], 2:[0,1], 3:[1,0], 4:[2,0] },  // 1: (1+2)→3→4
+      { 2:[0,0], 3:[1,0], 1:[1,1], 4:[2,0] },  // 2: (1+(2→3))→4
+      { 1:[0,0], 2:[1,0], 3:[1,1], 4:[2,0] },  // 3: ((1→2)+3)→4
+      { 1:[0,0], 2:[1,0], 3:[0,1], 4:[1,1] },  // 4: (1→2)+(3→4)
+      { 1:[0,1], 2:[1,0], 3:[1,1], 4:[1,2] },  // 5: 1→(2+3+4)
+      { 1:[0,0], 2:[1,0], 3:[1,1], 4:[1,2] },  // 6: (1→2)+3+4
+      { 1:[0,0], 2:[1,1], 3:[2,2], 4:[3,3] },  // 7: 1+2+3+4 (staggered so it isn't cramped)
+    ];
+
+    function drawAlgDiagram(alg) {
+      if (alg == null) alg = parseInt(document.getElementById('sl-alg')?.value ?? '0', 10) || 0;
+      const c = document.getElementById('algDiagram');
+      const pos = ALG_LAYOUT[alg];
+      if (!c || !pos) return;
+      const dpr = window.devicePixelRatio || 1;
+      const W = c.clientWidth, H = c.clientHeight;
+      if (W < 2 || H < 2) return;
+      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
+        c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+      }
+      const ctx = c.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+
+      const cs = getComputedStyle(document.documentElement);
+      const fg = cs.getPropertyValue('--foreground').trim() || '#cfe';
+      const accent = cs.getPropertyValue('--accent').trim() || '#7c9';
+      const mid = cs.getPropertyValue('--mid').trim() || '#678';
+      const carriers = new Set(ALG_CARRIERS[alg] ?? []);
+
+      let cols = 1, rows = 1;
+      for (const op in pos) { cols = Math.max(cols, pos[op][0] + 1); rows = Math.max(rows, pos[op][1] + 1); }
+
+      // Box size is fixed by height so every algorithm uses the same square,
+      // regardless of column count; the boxes + output region are then centered
+      // horizontally (4-column algs simply use more of the width).
+      const padY = 5, outW = 14, sidePad = 4;
+      const box = Math.max(7, Math.min(16, (H - 2 * padY) / 3));
+      const rowGap = rows > 1 ? (H - 2 * padY - box) / (rows - 1) : 0;
+      const startY = (H - ((rows - 1) * rowGap + box)) / 2;
+      const availW = W - 2 * sidePad - outW;
+      const colGap = cols > 1 ? Math.min(box * 1.7, (availW - box) / (cols - 1)) : 0;
+      const layoutW = (cols - 1) * colGap + box;
+      const startX = (W - (layoutW + outW)) / 2;
+      const cx = (op) => startX + pos[op][0] * colGap + box / 2;
+      const cy = (op) => startY + pos[op][1] * rowGap + box / 2;
+      const gridRight = startX + layoutW;          // right edge of the operator boxes
+      const rightX = gridRight + outW;             // output line reaches here
+      const busX = (gridRight + rightX) / 2;       // bend region (boxes→bus) == output line (bus→edge)
+
+      // modulation edges — orthogonal (horizontal out, vertical, horizontal in)
+      ctx.lineWidth = 1; ctx.strokeStyle = mid; ctx.globalAlpha = 0.85;
+      for (const [a, b] of ALG_EDGES[alg]) {
+        const ax = cx(a) + box / 2, ay = cy(a), bx = cx(b) - box / 2, by = cy(b);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        if (ay === by) { ctx.lineTo(bx, by); }
+        else { const mx = (ax + bx) / 2; ctx.lineTo(mx, ay); ctx.lineTo(mx, by); ctx.lineTo(bx, by); }
+        ctx.stroke();
+      }
+
+      // carriers → vertical output bus → final output line at the right edge
+      ctx.strokeStyle = fg;
+      let minY = H, maxY = 0;
+      for (const op of carriers) {
+        const y = cy(op);
+        ctx.beginPath(); ctx.moveTo(cx(op) + box / 2, y); ctx.lineTo(busX, y); ctx.stroke();
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      }
+      if (carriers.size > 1) { ctx.beginPath(); ctx.moveTo(busX, minY); ctx.lineTo(busX, maxY); ctx.stroke(); }
+      const midY = (minY + maxY) / 2;
+      ctx.beginPath(); ctx.moveTo(busX, midY); ctx.lineTo(rightX, midY); ctx.stroke();
+
+      // feedback always self-modulates op1; emphasise op1 below while FB is active.
+      const fb = parseInt(document.getElementById('sl-fb')?.value ?? '0', 10) || 0;
+
+      // operator boxes (op1 emphasised while feedback is active)
+      ctx.font = `${Math.round(box * 0.62)}px ui-monospace, monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let op = 1; op <= 4; op++) {
+        const col = carriers.has(op) ? fg : accent;
+        const emph = op === 1 && fb > 0;
+        const ox = cx(op), oy = cy(op), x = ox - box / 2, y = oy - box / 2;
+        if (emph) {
+          ctx.globalAlpha = 0.2; ctx.fillStyle = col;
+          ctx.fillRect(x, y, box, box);
+        }
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = emph ? 2 : 1.3;
+        ctx.fillStyle = ctx.strokeStyle = col;
+        ctx.strokeRect(x, y, box, box);
+        ctx.fillText(String(op), ox, oy + 0.5);
       }
     }
 
@@ -4591,10 +4698,14 @@
       setSliderCached('sl-lfo', 'val-lfo', regs.lfoRate ?? 0);
       setSliderCached('sl-ams', 'val-ams', regs.ams ?? 0);
       setSliderCached('sl-fms', 'val-fms', regs.fms ?? 0);
-      if (_fmSliderCache._alg !== regs.algorithm) {
+      const algChanged = _fmSliderCache._alg !== regs.algorithm;
+      if (algChanged) {
         _fmSliderCache._alg = regs.algorithm;
-        document.getElementById('algDisplay').textContent = ALG_DESC[regs.algorithm] ?? '';
-        updateOpRoles(regs.algorithm);
+        updateOpRoles(regs.algorithm); // redraws the diagram (incl. feedback)
+      }
+      if (_fmSliderCache._fb !== regs.feedback) {
+        _fmSliderCache._fb = regs.feedback;
+        if (!algChanged) drawAlgDiagram(regs.algorithm);
       }
       for (let op = 1; op <= 4; op++) {
         const on = !!(mask & (1 << (op + 3)));
@@ -4950,8 +5061,9 @@
       setSliderDisplayValue(slider, val);
 
       if (paramName === 'FM_ALG') {
-        document.getElementById('algDisplay').textContent = ALG_DESC[val] ?? '';
         updateOpRoles(val);
+      } else if (paramName === 'FM_FB') {
+        drawAlgDiagram(); // feedback loop visibility depends on FB
       }
 
       const writeState = handleParamWriteByMode(paramName, val, { syncOnCursorDefMiss: true });
