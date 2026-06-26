@@ -89,7 +89,7 @@ Examples:
 ## 5. Inline Modifiers (Persistent State)
 
 ```lisp
-(fm1 :oct 4 :len 8 :gate 0.8
+(fm1 :oct 4 :len 8 :gate* 0.8
   c e g e
   :oct 5
   c e g e)
@@ -99,7 +99,9 @@ Common modifiers:
 
 - `:oct N` — octave (`0`–`8`)
 - `:len token` — default note length (length token); `0` emits a held note and does not advance the timeline
-- `:gate token-or-ratio` — gate time; ratio `0.0`–`1.0` or absolute length token; `0` holds until runtime KEY-OFF
+- `:gate token` — gate time as an absolute length token (e.g. `6f`, `8`, `12t`); `0` holds until runtime KEY-OFF
+- `:gate* ratio` — gate as a fraction of the note length (`0.0`–`1.0`)
+- `:gate- token` — shorten the gate: note length **minus** this time (key off early / staccato)
 - `:vel N` — note-on velocity (`0`–`15`); a ~2 dB/step musical ladder (PMD /
   MDSDRV style). `15` plays at the patch level, `0` is a ~-30 dB floor —
   velocity **never mutes** (use a rest for silence)
@@ -436,11 +438,13 @@ scaled to the echo's level (echo at 10 → `~10 7 3 0`, at 5 → `~5 3 2 0`, …
 
 ## 15. Gate and Hold Notes
 
-`:gate` controls how long the note sounds within its slot.
+The gate family controls how long the note sounds within its slot. The
+operation is chosen by the keyword so the argument is never ambiguous:
 
 ```lisp
-(fm1 :len 8 :gate 0.5 c d e f)   ; KEY-OFF at 50% of each slot
-(fm1 :len 8 :gate 6f  c d e f)   ; KEY-OFF 6 frames into each slot
+(fm1 :len 8 :gate  6f   c d e f)  ; absolute: KEY-OFF 6 frames into each slot
+(fm1 :len 8 :gate* 0.5  c d e f)  ; ratio:    KEY-OFF at 50% of each slot
+(fm1 :len 8 :gate- 2t   c d e f)  ; minus:    KEY-OFF 2 ticks before each slot ends
 ```
 
 ### `:gate 0` — hold, timeline advances

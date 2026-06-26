@@ -52,6 +52,8 @@ const TRACK_OPTION_KEYS = new Set([
   ":oct",
   ":len",
   ":gate",
+  ":gate*",
+  ":gate-",
   ":vel",
   ":shuffle",
   ":shuffle-base",
@@ -288,25 +290,32 @@ function parseRestLength(val, inheritedTicks) {
   return parseLengthToken(suffix, inheritedTicks);
 }
 
-function parseGateSpec(val) {
+// The gate family. The operation is chosen by the keyword so each is
+// unambiguous (no overloading one arg as either a ratio or a time):
+//   :gate  <time>  — absolute sounding time (length / Nf / Nt token); `0` = hold.
+//   :gate* <ratio> — fraction of the note length (0 <= ratio < 1).
+//   :gate- <time>  — shorten: note length minus this time (key off early).
+function parseGateFamily(keyword, val) {
   if (typeof val !== "string") return null;
-  // Gate ratio is decimal 0 < x < 1 (e.g. 0.75 or .5).
-  // Dotted length tokens like "4." are handled by parseLengthToken below.
-  if (/^(?:\d*\.\d+)$/.test(val)) {
+  if (keyword === ":gate*") {
     const f = parseFloat(val);
-    if (isNaN(f) || f < 0 || f > 1) return null;
-    if (f >= 1.0) return null;
-    return { type: "ratio", value: f };
+    return !isNaN(f) && f >= 0 && f < 1 ? { type: "ratio", value: f } : null;
   }
-  const ticks = parseLengthToken(val, null);
+  const ticks = val === "0" ? 0 : parseLengthToken(val, null);
   if (ticks === null || ticks < 0) return null;
-  return { type: "ticks", value: ticks };
+  return keyword === ":gate-"
+    ? { type: "cut", value: ticks }
+    : { type: "ticks", value: ticks };
 }
 
 function resolveGateTicks(gateSpec, lengthTicks) {
   if (!gateSpec) return lengthTicks;
   if (gateSpec.type === "ratio")
     return Math.round(lengthTicks * gateSpec.value);
+  // `cut`: shorten the gate by a fixed amount (key off early) — note length minus
+  // the cut, floored at 1 tick. Set by `:gate-cut`.
+  if (gateSpec.type === "cut")
+    return Math.max(1, lengthTicks - gateSpec.value);
   return gateSpec.value;
 }
 
@@ -1725,8 +1734,10 @@ function compileChannelBody(
                 trackState.defaultLength,
               );
               break;
-            case ":gate": {
-              const g = parseGateSpec(rawVal);
+            case ":gate":
+            case ":gate*":
+            case ":gate-": {
+              const g = parseGateFamily(val, rawVal);
               if (g !== null) trackState.defaultGate = g;
               break;
             }
@@ -3034,9 +3045,11 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       if (inlineOpts[":len"] !== undefined) {
         defaultLength = parseLengthToken(inlineOpts[":len"], defaultLength);
       }
-      if (inlineOpts[":gate"] !== undefined) {
-        const g = parseGateSpec(inlineOpts[":gate"]);
-        if (g !== null) defaultGate = g;
+      for (const gk of [":gate", ":gate*", ":gate-"]) {
+        if (inlineOpts[gk] !== undefined) {
+          const g = parseGateFamily(gk, inlineOpts[gk]);
+          if (g !== null) defaultGate = g;
+        }
       }
       if (inlineOpts[":vol"] !== undefined) {
         const v = parseIntLike(inlineOpts[":vol"]);
@@ -3164,8 +3177,11 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
           trackState.defaultLength,
         );
       }
-      if (inlineOpts[":gate"] !== undefined) {
-        trackState.defaultGate = parseGateSpec(inlineOpts[":gate"]);
+      for (const gk of [":gate", ":gate*", ":gate-"]) {
+        if (inlineOpts[gk] !== undefined) {
+          const g = parseGateFamily(gk, inlineOpts[gk]);
+          if (g !== null) trackState.defaultGate = g;
+        }
       }
       if (inlineOpts[":shuffle"] !== undefined) {
         const v = parseIntLike(inlineOpts[":shuffle"]);
