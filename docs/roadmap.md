@@ -242,7 +242,6 @@ Other:
 14. ~~`:macro [list]` use-site merge~~ (done)
 15. ~~`:extends`~~ (done)
 16. ~~`len=0` hold note~~ (done)
-    | v0.5 | planned | — | FM3 independent-OP mode, CSM, PCM/DAC |
 
 ---
 
@@ -324,15 +323,90 @@ Other:
 
 **Tools menu**
 
-- [ ] Tools menu: **Format Source** / ── / **Snippets ▶**
+- [x] Tools menu: **Format Source** / ── / **Snippets ▶** / **Theme ▶**
 - [x] Format Source: reformat editor content (same as Cmd+Shift+F / Ctrl+Shift+F shortcut)
-- [ ] Snippets submenu: insert a code snippet at cursor (items TBD)
+- [x] Snippets submenu: insert a code snippet at cursor (FM Voice Template)
 
 ---
 
 #### Documentation (docs/guide.md)
 
 - [x] Update guide for v0.5 features: FM3 CSM, FM3 independent-OP, PCM tracks, TEMPO_SWEEP, stochastic curves
+
+---
+
+## mucom88 Importer
+
+Converts a mucom88 `.muc` song (PC-8801 / YM2608 OPNA) to MMLisp source.
+Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp text
+→ (compiled by the normal toolchain).
+
+### Status — implemented
+
+- **Channels**: FM A–C / H–J → `fm1`–`fm6`, SSG D–F → `sqr1`–`sqr3`.
+  Dropped: part G (rhythm), part K (ADPCM).
+- **Notes / lengths** on mucom's clock grid: `len` → `floor(C/len)` clocks →
+  ticks (`× 384/C`); `%<clocks>` direct lengths; dots; `^`/`&`→tie.
+- **Octave** (FM reads one higher → `:oct N-1`; SSG no shift), relative `<`/`>`.
+- **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`.
+- **Loops**: single-line `[…]n` → `(x n …)`; multi-line `[…]n` → `#labelK …
+  (go labelK n)`; `/` break → `:break`; global `L` → `#loop`/`(go loop)`.
+- **Voices**: inline `@n` FM defs, `@"name"`, external `.dat` bank load + merge.
+- **Macros** `*n` → `(def *n …)`, tokenized at the song's C resolution.
+- **Modulation**: portamento `{c2b}` → `:glide-from`/`:glide`; hardware LFO `H` →
+  `:lfo-rate`/`:fms`/`:ams`; software LFO `M` → `(def lfoN :macro :pitch
+  (triangle …))` + `(wait …)` delay; off `MF0` → `(def lfo-off :macro :pitch none)`.
+- **Tempo**: `T` (BPM direct); `t` (Timer-B) via the driver formula
+  `BPM = 830400 / ((256 − t) × C)`, deferred so a later `C` (and its first note)
+  sets the resolution. First tempo seeds the score; changes emitted inline.
+
+### Priority 1 — track alignment
+
+Goal: every track in a song has the same total tick length (so they don't drift
+apart over the loop). Current: **19 / 46** reference songs align exactly. Two
+remaining classes of drift:
+
+1. **Factor-rounding** — songs whose `C` doesn't divide the 384-tick grid
+   (e.g. `C112`: slp020, bare21) accumulate per-note ±1-tick rounding in the
+   clocks→ticks step. Fix options: raise the tick grid to an LCM that covers the
+   common `C` values, or dither the clocks→ticks conversion with a running
+   remainder so the total stays exact.
+2. **Structural** — clean `C` but parts convert to different lengths. Either a
+   conversion bug or a genuinely different part length (intro / non-looping
+   tail). Needs per-song diagnosis. Remaining (spread in ticks):
+   `pcmt12 12 · gh011 24 · pcmt31 48 · stk013/023 72 · stg001 96 ·
+   sq1_103/disco4 192 · bare03 336 · pcmt16 384 · bos010(fm3) 768 · … bare21 7200`.
+
+Method: compare a drifting part against a parallel aligned part to locate the
+divergent measure; confirm against the raw MML clock count.
+
+### Priority 2 — currently-dropped mucom commands
+
+By musical impact (each maps onto existing MMLisp primitives):
+
+- **High**: `q` quantize/gate (articulation — MMLisp has gate); `E` SSG soft
+  envelope (PSG volume envelope — map like the LFO); `K`/`k` key shift (transpose).
+- **Medium**: `&` slur (legato); `w` noise wave (PSG noise pitch); `J` tag jump
+  (→ `#label`/`(go)`); `P` mix port (SSG tone/noise enable); `V` total volume
+  offset.
+- **Low**: `s` shuffle / key-on revise; `y` register write; `S` SE detune;
+  `R` reverb.
+
+### Priority 3 — dropped channels (larger effort)
+
+- Part **G** rhythm (drums) → noise/PCM mapping + drum kit.
+- Part **K** ADPCM (PCM samples) → MMLisp PCM channel + sample conversion.
+- `@%` register-dump voice format.
+
+### Reference
+
+- Driver source (authoritative): `github.com/onitama/mucom88` →
+  `pc8801src/ver1.2/{muc88,music,msub}.asm`. Command table: `msub.asm`. Tempo:
+  `SETTMP` (T→Timer-B) + `INIT` (default `C = 128`) in `muc88.asm`.
+- Tempo: `BPM = 830400 / ((256 − t) × C)`.
+- Lengths: `floor(C / len)` clocks, each clock = `384 / C` ticks (PPQN 96).
+- License: mucom88 is CC BY-NC-SA 4.0; the importer only reads the format and
+  bundles no mucom88 code/data (see README).
 
 ---
 
