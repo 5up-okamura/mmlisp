@@ -236,6 +236,21 @@ Macros are KEY-ON scoped per NOTE_ON.
 
 If the same target appears multiple times, last one wins.
 
+### Relative macros (`*`)
+
+A macro target may take a trailing `*` to make its values **multiply** the
+note's base value for that target instead of replacing it. The values are
+ratios (typically `0`–`1`); `effective = value × base`. Currently `:vel*` is
+supported (base = the note's `:vel`); the plain `:vel` macro is absolute.
+
+```lisp
+(fm1 :vel 12 :macro :vel* [1 0.5 0] c)   ; peaks at 12, then 6, then 0
+```
+
+The note's velocity is resolved per note, so a `:vel*` def tracks per-note
+`:vel` changes. `*` on a target with no base to scale (e.g. `:pitch*`) is a
+compile error.
+
 ---
 
 ## 10. Multi-stage Macro and `wait key-off`

@@ -3349,11 +3349,13 @@ export class IRPlayer {
       gateTicks,
     );
 
-    // vel macro scales the note's base vel (float), then → PSG att.
+    // The vel macro's output is the absolute velocity (0-15), matching FM and
+    // the static-vel path; `:vel*` bakes any note-vel scaling in at compile
+    // time, so the player must not scale again here.
     const vol = this._psgVolAtTime(psgCh, noteWhen);
     const master = this._masterVol ?? VOL_UNITY;
     const velToAtt = (v) => {
-      const velLevel = (clampForTarget("VEL", v) * baseVel) / 15;
+      const velLevel = clampForTarget("VEL", v);
       return this._composePsgAtt(velLevel, vol, master);
     };
 

@@ -328,8 +328,18 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
     for (const [target, spec] of Object.entries(activeMacros)) {
       // Each spec may carry its own .step (the per-macro :step clock).
       if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
-      else if (target === "VEL") args.velMacro = { ...spec };
-      else {
+      else if (target === "VEL") {
+        // `:vel*` scales the macro by this note's velocity (resolved here, so
+        // it tracks per-note vel changes); the result is a plain absolute
+        // velMacro. The base is vel (default 15 = full).
+        if (spec.mul) {
+          const scaled = scaleMacroValues(spec, vel ?? 15, "VEL");
+          delete scaled.mul;
+          args.velMacro = scaled;
+        } else {
+          args.velMacro = { ...spec };
+        }
+      } else {
         // NOTE_SEMI → note_semi, KEYON → keyon, FM_TL1 → fm_tl1, ...
         const key = target.toLowerCase();
         args[key] = { ...spec };
@@ -669,13 +679,14 @@ function velMacroPeak(spec) {
   return 0;
 }
 
-// Scale a :vel macro's values by `ratio` (clamped to the vel range; kept float,
-// quantized at playback), preserving type, markers, and per-macro step. Used so
-// a :delay echo's inherited vel tail peaks at the echo's :delay-vels level.
-function scaleVelMacroSteps(spec, ratio) {
+// Scale a macro spec's values by `factor`, clamped to `target`'s range (kept
+// float, quantized at playback), preserving type, markers, and per-macro step.
+// Shared by the `*` multiplicative modifier (factor = the note's static base)
+// and :delay echoes (factor = the echo's vel ratio).
+function scaleMacroValues(spec, factor, target) {
   if (!spec) return spec;
   const s = (v) =>
-    v === null || v === undefined ? v : clampForTarget("VEL", v * ratio);
+    v === null || v === undefined ? v : clampForTarget(target, v * factor);
   if (spec.type === "steps") {
     return { ...spec, steps: (spec.steps || []).map(s) };
   }
@@ -693,6 +704,40 @@ function scaleVelMacroSteps(spec, ratio) {
     };
   }
   return spec;
+}
+
+// A :delay echo's inherited vel tail peaks at the echo's :delay-vels level.
+function scaleVelMacroSteps(spec, ratio) {
+  return scaleMacroValues(spec, ratio, "VEL");
+}
+
+// Macro targets that accept the `*` (multiplicative) modifier: each has a
+// per-note/channel static base its macro values scale. Offset targets
+// (NOTE_PITCH/NOTE_SEMI) and discrete ones (PAN/KEYON/...) have no base, so
+// `*` is rejected there. VOL/MASTER live in a separate channel-level macro
+// path and are not wired yet; add them here once that path tracks a base.
+const MUL_BASE_TARGETS = new Set(["VEL"]);
+
+// Split a macro keyword into its canonical target and the `*` (multiplicative)
+// modifier: `:vel*` -> { target: "VEL", mul: true }.
+function macroKeyword(sym) {
+  const mul = sym.length > 1 && sym.endsWith("*");
+  return { target: canonicalTarget(mul ? sym.slice(0, -1) : sym), mul };
+}
+
+// Validate a `*` modifier against its target; pushes a diagnostic and returns
+// false when the target has no base value to scale.
+function macroMulOk(target, sym, diagnostics, trackName) {
+  if (MUL_BASE_TARGETS.has(target)) return true;
+  pushDiag(
+    diagnostics,
+    "error",
+    "E_MACRO_MUL_NO_BASE",
+    `'${sym}' has no base value to scale; the '*' modifier applies only to ${[...MUL_BASE_TARGETS].join(", ").toLowerCase()}`,
+    null,
+    trackName,
+  );
+  return false;
 }
 
 // Stamp the active :delay config onto a freshly-emitted note event so the
@@ -913,7 +958,10 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
       currentStep = parseStepToken(atomValue(items[ki + 1]));
       continue;
     }
-    const irTarget = canonicalTarget(sym);
+    // Trailing `*` = multiplicative: the macro's values scale the target's
+    // static base (e.g. `:vel*` scales the note's velocity) instead of
+    // replacing it.
+    const { target: irTarget, mul } = macroKeyword(sym);
     // `:target none` is a clear directive — valid inline, so valid in a def too.
     if (atomValue(items[ki + 1]) === "none") {
       entries.push({ target: irTarget, clear: true });
@@ -926,6 +974,8 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
       trackName,
     );
     if (spec) {
+      if (mul && !macroMulOk(irTarget, sym, diagnostics, trackName)) continue;
+      if (mul) spec.mul = true;
       if (currentStep) spec.step = currentStep;
       entries.push({ target: irTarget, spec });
     }
@@ -2062,7 +2112,8 @@ function compileChannelBody(
                     } else if (entryVal?.startsWith(":")) {
                       // inline :target spec pair
                       if (j + 1 < listItems.length) {
-                        const irTarget = canonicalTarget(entryVal);
+                        const { target: irTarget, mul } =
+                          macroKeyword(entryVal);
                         if (atomValue(listItems[j + 1]) === "none") {
                           clearMacroTarget(trackState, irTarget);
                         } else {
@@ -2073,7 +2124,16 @@ function compileChannelBody(
                             trackName,
                           );
                           if (spec && currentStep) spec.step = currentStep;
-                          applyMacroEntryToState(trackState, irTarget, spec);
+                          if (
+                            spec &&
+                            mul &&
+                            !macroMulOk(irTarget, entryVal, diagnostics, trackName)
+                          ) {
+                            // `*` misused — diagnostic pushed; drop this entry.
+                          } else {
+                            if (spec && mul) spec.mul = true;
+                            applyMacroEntryToState(trackState, irTarget, spec);
+                          }
                         }
                         j += 2;
                       } else {
@@ -2091,7 +2151,7 @@ function compileChannelBody(
                 } else if (rawVal?.startsWith(":")) {
                   // Form 2: inline :target spec
                   if (i + 1 < items.length) {
-                    const irTarget = canonicalTarget(rawVal);
+                    const { target: irTarget, mul } = macroKeyword(rawVal);
                     if (atomValue(items[i + 1]) === "none") {
                       clearMacroTarget(trackState, irTarget);
                     } else {
@@ -2101,7 +2161,16 @@ function compileChannelBody(
                         diagnostics,
                         trackName,
                       );
-                      applyMacroEntryToState(trackState, irTarget, spec);
+                      if (
+                        spec &&
+                        mul &&
+                        !macroMulOk(irTarget, rawVal, diagnostics, trackName)
+                      ) {
+                        // `*` misused — diagnostic pushed; drop this entry.
+                      } else {
+                        if (spec && mul) spec.mul = true;
+                        applyMacroEntryToState(trackState, irTarget, spec);
+                      }
                     }
                     i++;
                   }
