@@ -351,20 +351,15 @@
       cursor: pointer;
       user-select: none;
     }
+    /* Same open/close chevrons as the editor's code-fold gutter (⌄ / ›). */
     .rack-title::before {
-      content: '';
+      content: '⌄';
       display: inline-block;
-      width: 0;
-      height: 0;
-      border-left: 4px solid currentColor;
-      border-top: 3px solid transparent;
-      border-bottom: 3px solid transparent;
+      width: 0.8em;
       margin-right: 0.4rem;
-      vertical-align: middle;
-      transform: rotate(90deg);
-      transition: transform 0.12s;
+      text-align: center;
     }
-    .rack-section.collapsed .rack-title::before { transform: rotate(0deg); }
+    .rack-section.collapsed .rack-title::before { content: '›'; }
     .rack-section.collapsed .rack-title { margin-bottom: 0; }
     .rack-section.collapsed .rack-body { display: none; }
     .rack-title-row {
