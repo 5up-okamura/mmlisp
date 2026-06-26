@@ -240,6 +240,10 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // Pan: p0=off, p1=right, p2=left, p3=center
     if (c === "p") { i++; const v = readInt(); if (v != null) push({ t: "pan", v }); continue; }
 
+    // Quantize/gate: q<n> keys off n clocks early (staccato) -> :gate- (note
+    // length minus that time). Sticky like mucom's q.
+    if (c === "q") { i++; const n = readInt() ?? 0; push({ t: "gateCut", n, wholeClocks: state.wholeClocks }); continue; }
+
     // Detune: D<n> absolute / D+<n> relative -> :pitch (value mapped 1:1)
     if (c === "D") {
       i++;
@@ -419,7 +423,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // Deferred / unsupported commands. Consume each command's FULL argument list
     // so nothing leaks into note/length parsing (a leaked arg becomes a spurious
     // note and drifts the channel). Arg shapes differ per command:
-    if ("RyKkqSEPwsV".includes(c)) {
+    if ("RyKkSEPwsV".includes(c)) {
       i++;
       warnOnce(warn, c, `command '${c}' not supported; dropped`);
       if (c === "y") {
@@ -818,6 +822,12 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "vel":
         if (op.v !== ctx.vel) { out.push(`:vel ${clamp(op.v, 0, 15)}`); ctx.vel = op.v; }
         break;
+      case "gateCut": {
+        // mucom q<n> -> :gate- (key off n clocks early); convert clocks to ticks.
+        const cut = Math.round(op.n * (WHOLE_TICKS / op.wholeClocks));
+        if (cut !== ctx.gateCut) { out.push(`:gate- ${cut}t`); ctx.gateCut = cut; }
+        break;
+      }
       case "velAdj": {
         const nv = clamp((ctx.vel ?? 12) + op.d, 0, 15);
         if (nv !== ctx.vel) { out.push(`:vel ${nv}`); ctx.vel = nv; }
