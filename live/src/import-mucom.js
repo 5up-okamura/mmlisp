@@ -244,6 +244,15 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // length minus that time). Sticky like mucom's q.
     if (c === "q") { i++; const n = readInt() ?? 0; push({ t: "gateCut", n, wholeClocks: state.wholeClocks }); continue; }
 
+    // E AL,AR,DR,SL,SR,RR: SSG soft envelope (ADSR on a 0-255 level, per-clock
+    // rates) -> a sticky :macro :vel volume envelope.
+    if (c === "E") {
+      i++;
+      const [al = 0, ar = 0, dr = 0, sl = 0, sr = 0, rr = 0] = readNumList();
+      push({ t: "ssgEnv", al, ar, dr, sl, sr, rr, wholeClocks: state.wholeClocks });
+      continue;
+    }
+
     // Detune: D<n> absolute / D+<n> relative -> :pitch (value mapped 1:1)
     if (c === "D") {
       i++;
@@ -423,7 +432,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // Deferred / unsupported commands. Consume each command's FULL argument list
     // so nothing leaks into note/length parsing (a leaked arg becomes a spurious
     // note and drifts the channel). Arg shapes differ per command:
-    if ("RyKkSEPwsV".includes(c)) {
+    if ("RyKkSPwsV".includes(c)) {
       i++;
       warnOnce(warn, c, `command '${c}' not supported; dropped`);
       if (c === "y") {
@@ -819,6 +828,31 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         break;
       }
+      case "ssgEnv": {
+        // mucom E AL,AR,DR,SL,SR,RR -> sticky :macro :vel* ADSR. mucom scales the
+        // envelope by the note's volume (vol = env_level*(v+1)/256), so this maps
+        // to a multiplicative (0-1) vel macro: the note's :vel is the peak, the
+        // envelope is the shape. Rates are per-clock deltas, so a stage time =
+        // delta/rate clocks -> ticks. SR (slow sustain drift) is a flat hold.
+        const factor = WHOLE_TICKS / op.wholeClocks;
+        const lv = (x) => Math.round((Math.max(0, Math.min(255, x)) / 255) * 100) / 100;
+        const tm = (delta, rate) => Math.max(1, Math.round((rate > 0 ? delta / rate : 0) * factor));
+        const al = lv(op.al), sl = lv(op.sl);
+        const stages = [];
+        if (al < 1) stages.push(`(linear :from ${al} :to 1 :len ${tm(255 - op.al, op.ar)}t)`);
+        stages.push(`(linear :from 1 :to ${sl} :len ${tm(255 - op.sl, op.dr)}t)`);
+        stages.push("(wait key-off)");
+        stages.push(`(linear :from ${sl} :to 0 :len ${tm(op.sl, op.rr)}t)`);
+        const spec = `[ ${stages.join(" ")} ]`;
+        if (ctx.envRegistry) {
+          let name = ctx.envRegistry.get(spec);
+          if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
+          out.push(name); // bare reference — the def carries :macro :vel*
+        } else {
+          out.push(`:macro :vel* ${spec}`);
+        }
+        break;
+      }
       case "vel":
         if (op.v !== ctx.vel) { out.push(`:vel ${clamp(op.v, 0, 15)}`); ctx.vel = op.v; }
         break;
@@ -948,6 +982,7 @@ export function mucomToMmlisp(parsed) {
   // Distinct software-LFO specs collected during rendering -> emitted as
   // (def lfoN :macro :pitch …) above the score, referenced by name.
   const lfoRegistry = new Map();
+  const envRegistry = new Map(); // distinct SSG soft envelopes -> (def envN :macro :vel …)
 
   // Macros become (def *n …); only those with supported content are kept.
   const usableMacros = new Set();
@@ -981,7 +1016,7 @@ export function mucomToMmlisp(parsed) {
   const ctxByLetter = new Map();
   const letterCtx = (letter) => {
     if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in SSG_PARTS ? 6 : 5, len: null, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry });
+      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in SSG_PARTS ? 6 : 5, len: null, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry });
     }
     return ctxByLetter.get(letter);
   };
@@ -1004,10 +1039,11 @@ export function mucomToMmlisp(parsed) {
     f.text = toks.join(" ");
   }
 
-  // Emit the discovered LFO defs above the score (referenced by name inline).
-  if (lfoRegistry.size) {
+  // Emit the discovered LFO / envelope defs above the score (referenced by name).
+  if (lfoRegistry.size || envRegistry.size) {
     const defLines = [];
     for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} :macro :pitch ${spec})`);
+    for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} :macro :vel* ${spec})`);
     lines.splice(lfoDefAnchor, 0, ...defLines);
   }
 
