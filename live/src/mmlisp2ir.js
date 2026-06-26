@@ -572,16 +572,26 @@ function emitGlideIfNeeded(trackState, newPitch, events, glideTicks, nodeSrc) {
   const fromPitch = trackState.glideFrom || trackState.lastNotePitch;
   trackState.glideFrom = null; // One-shot reset
 
+  // NOTE_PITCH is a numeric cent offset relative to the note's own base pitch
+  // (the player applies `baseMidi + centOffset/100`). Express the glide as an
+  // offset sweep: start at (fromPitch − newPitch) cents, end at 0, so the note
+  // slides from the previous/override pitch up or down to its own pitch.
+  const fromCents =
+    (pitchToMidi(String(fromPitch)) - pitchToMidi(String(newPitch))) * 100;
   events.push({
     tick: trackState.tick,
     cmd: "PARAM_SWEEP",
     args: {
       target: "NOTE_PITCH",
-      from: fromPitch,
-      to: newPitch,
+      from: fromCents,
+      to: 0,
       curve: "linear",
       frames: glideTicks,
       loop: false,
+      // A glide is a bounded one-shot: it slides over `frames` then stops, unlike
+      // an inline pitch sweep that holds its final value until the next event. So
+      // it must not extend across following notes (which would clobber their pitch).
+      bounded: true,
     },
     src: nodeSrc,
   });
@@ -1969,7 +1979,8 @@ function compileChannelBody(
               break;
             }
             case ":glide-from": {
-              // override start pitch for next note only
+              // Override the glide's start pitch for the next note. Absolute
+              // pitch (note + octave, e.g. "f5") — trailing number is octave.
               trackState.glideFrom = rawVal;
               break;
             }

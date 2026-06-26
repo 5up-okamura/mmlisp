@@ -110,7 +110,9 @@ Common modifiers:
   mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
 - `:glide token` — portamento duration (same length-token forms as `:len`)
-- `:glide-from note` — override start pitch for next note only
+- `:glide-from pitch` — override the glide's start pitch for the next note only.
+  Absolute pitch (note + octave, e.g. `f5`); here the trailing number is the
+  **octave**, not a length.
 
 Shorthands:
 

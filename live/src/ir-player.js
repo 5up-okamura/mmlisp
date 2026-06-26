@@ -2603,6 +2603,10 @@ export class IRPlayer {
     const trackIndex = ev._trackIndex;
     if (trackIndex == null) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
 
+    // A bounded sweep (e.g. a glide/portamento) lasts exactly its `frames` and
+    // then stops — it must not extend across following notes.
+    if (ev.args?.bounded) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
+
     const track = this._tracks[trackIndex];
     if (!track) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
 
