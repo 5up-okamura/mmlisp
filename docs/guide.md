@@ -111,10 +111,11 @@ Common modifiers:
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
-- `:glide token` — portamento duration (same length-token forms as `:len`)
-- `:glide-from pitch` — override the glide's start pitch for the next note only.
-  Absolute pitch (note + octave, e.g. `f5`); here the trailing number is the
-  **octave**, not a length.
+- `(glide T)` — portamento from the previous note over duration `T` (same
+  length-token forms as `:len`); `(glide 0)` disables.
+- `(glide from-pitch T)` — glide from an explicit start pitch. The start pitch is
+  an absolute pitch (note + octave, e.g. `f5`, where the trailing number is the
+  **octave**); `T` is the duration. Example: `(glide f5 32)`.
 
 Shorthands:
 
@@ -205,33 +206,32 @@ Use by bare identifier:
 
 ---
 
-## 9. Macro Basics (`:macro`)
+## 9. Macro Basics (`(macro ...)`)
 
 Macros are KEY-ON scoped per NOTE_ON.
 
 ### Single-target def
 
 ```lisp
-(def pluck :macro :vel [15 12 8 4 0])
+(def pluck (macro :vel [15 12 8 4 0]))
 ```
 
-### Multi-target def (list form)
+### Multi-target def
 
 ```lisp
-(def synth-env :macro [
+(def synth-env (macro
   :vel   [15 12 8 4 0]
-  :pitch (linear :from 0 :to -1200 :len 8)
-])
+  :pitch (linear :from 0 :to -1200 :len 8)))
 ```
 
 ### Use-site forms
 
 ```lisp
-(def pluck :macro :vel [15 12 8 4 0])
+(def pluck (macro :vel [15 12 8 4 0]))
 
 (fm1 pluck c)                              ; bare name — applies the macro def
-(fm1 :macro :vel [15 10 5 0] c)           ; inline anonymous macro
-(fm1 :macro [pluck :pan [left center right]] c)  ; mix named + inline
+(fm1 (macro :vel [15 10 5 0]) c)           ; inline anonymous macro
+(fm1 (macro pluck :pan [left center right]) c)  ; mix named + inline
 ```
 
 If the same target appears multiple times, last one wins.
@@ -244,7 +244,7 @@ ratios (typically `0`–`1`); `effective = value × base`. Currently `:vel*` is
 supported (base = the note's `:vel`); the plain `:vel` macro is absolute.
 
 ```lisp
-(fm1 :vel 12 :macro :vel* [1 0.5 0] c)   ; peaks at 12, then 6, then 0
+(fm1 :vel 12 (macro :vel* [1 0.5 0]) c)   ; peaks at 12, then 6, then 0
 ```
 
 The note's velocity is resolved per note, so a `:vel*` def tracks per-note
@@ -258,11 +258,11 @@ compile error.
 Multi-stage uses a vector of curve/wait stages and runs sequentially for one target.
 
 ```lisp
-(def adsr-curve :macro :vel [
+(def adsr-curve (macro :vel [
   (linear :from 0  :to 15 :len 4)
   (wait key-off)
   (linear :from 15 :to 0  :len 4)
-])
+]))
 ```
 
 Behavior:
@@ -282,11 +282,11 @@ giving a modulated sustain (LFO). Loop-wave curves (`sin` `triangle` `square`
 flag:
 
 ```lisp
-(def organ :macro :vel [
+(def organ (macro :vel [
   (ease-in :from 0 :to 15 :len 2)         ; attack
   (sin :from 13 :to 15 :len 4)            ; vibrato sustain — loops until key-off
   (ease-out :from 15 :to 0 :len 6)        ; release
-])
+]))
 
 (ease-out :from 15 :to 0 :len 4 :loop)    ; :loop forces a non-loop curve to cycle
 ```
@@ -336,7 +336,7 @@ cents). On a sustained voice this is a classic arpeggio. `:hold` marks the loop
 point.
 
 ```lisp
-(fm1 :macro [ :step 1/16  :semi [:hold 0 4 7] ]  c)   ; c–e–g, looping
+(fm1 (macro :step 1/16  :semi [:hold 0 4 7])  c)   ; c–e–g, looping
 ```
 
 ### `:keyon` — retrigger gate
@@ -354,12 +354,12 @@ tail). While a `:keyon` macro is active it owns the channel keying — the note
 keys off after the last retrigger.
 
 ```lisp
-(fm1 :macro [ :step 32 :keyon 1 ]  c)   ; drum roll
+(fm1 (macro :step 32 :keyon 1)  c)   ; drum roll
 ```
 
 ### `:step` — sampling clock
 
-`:step token` lives inside the `:macro [...]` list and sets the **sampling
+`:step token` lives inside the `(macro ...)` form and sets the **sampling
 interval** for the targets that **follow** it (until the next `:step`). Default
 `1f` (one 60 Hz frame). Each macro/target carries its own step, so different
 targets can run at different rates.
@@ -372,14 +372,14 @@ just a curve sampled at `:step`, so `:keyon (square …) :step 16` gates
 retriggers on the 1/16 grid.
 
 ```lisp
-(fm1 :macro [ :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1] ]  c)
+(fm1 (macro :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1])  c)
 ```
 
 ### Echo-tail preset (1-channel delay on one note)
 
 ```lisp
-(def $echo :macro [ :step 1/8  :keyon [0 :off 1 1 1]
-                                :vel   [15 :off 10 5 0] ])
+(def $echo (macro :step 1/8  :keyon [0 :off 1 1 1]
+                             :vel   [15 :off 10 5 0]))
 
 (fm1 $echo :len 8  c _ _ _)
 ```
@@ -390,64 +390,105 @@ true silence, automate `:tl` to 127 instead — see §5.) For a long tail, repla
 the `1 1 1 …` list with `[(wait key-off) (const 1 :len N)]` — it fires once per
 `:step` across `:len` without counting taps (see §10).
 
-Clear a macro with `none`: `:macro :semi none`, or `:macro none` clears all.
+Clear a macro with `none`: `(macro :semi none)`, or `(macro none)` clears all.
 
 ---
 
-## 13. Track Delay (`:delay`, `:delay-vels`)
+## 13. Track Delay (`(delay ...)`)
 
-`:delay` echoes the **written notes** at compile time — a whole phrase repeats,
-shifted and decayed. (Distinct from `:keyon`, which retriggers a single note.)
-
-- `:delay token` — echo tap spacing (length token); persistent track state;
-  `:delay none` turns it off
-- `:delay-vels [...]` — per-echo velocities; a step vector lists the taps, or a
-  curve derives the count from `:len ÷ :delay`
+`(delay ...)` echoes the **written notes** at compile time — a whole phrase
+repeats, shifted and decayed. (Distinct from `:keyon`, which retriggers a single
+note.) Taps are **relative** to each note's own value: an echo follows whatever
+velocity that note carries.
 
 ```lisp
-(fm1 :delay 1/4 :delay-vels [11 7 3]
+(delay <target> <count|list|curve> :by N :time T)
+```
+
+- `<target>` — `:vel` (additive deltas) or `:vel*` (multiplicative ratios).
+  (`:vol` is reserved, not yet supported.)
+- 2nd arg is polymorphic:
+  - a **number** = tap count (pair with `:by`),
+  - a **`[list]`** = explicit per-tap deltas (`:vel`) or ratios (`:vel*`),
+  - a **`(curve …)`** = relative envelope; tap count = its `:len ÷ :time`.
+- `:by N` — per-tap step: on `:vel`, tap k = note_vel + N·k; on `:vel*`,
+  tap k = note_vel · N^k.
+- `:time T` — tap spacing (length token).
+
+`(delay ...)` is **sticky** track state that applies to following notes;
+`(delay none)` clears it, `(delay :vel none)` clears one target. Delay is an
+**overlay** that fills gaps — it does **not** lengthen the phrase.
+
+```lisp
+(fm1 (delay :vel 3 :by -4 :time 1/8)
   c e g e)
 ```
 
-plays the phrase plus three decaying repeats (vel 11, 7, 3), each a quarter
-later. The original note keeps its own velocity — `:delay-vels` lists the echoes
-only (so its first value is the **first echo**, not the dry note).
+plays the phrase plus three decaying repeats (−4 vel each tap), spaced an eighth
+apart. Equivalent explicit form: `(delay :vel [-4 -8 -12] :time 1/8)`.
+
+```lisp
+(fm1 (delay :vel 3 :by -1 :time 4t)  c e g e)   ; 3 echoes, −1 vel each, spaced 4t
+(fm1 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)  c)  ; non-linear ratio fade
+```
 
 The channel is monophonic: written notes take priority, so an echo overlapping a
 written note is dropped and echoes fill the gaps. For true overlapping delay,
 `def` the phrase and replay it on another channel.
 
-### Echoes inherit articulation
+### `(echo ...)` — phrase-lengthening replay
 
-Echoes carry the source's per-note macros (`:keyon`, `:semi`, …), so a phrase
-with a 1-channel `:keyon` tail repeats with that tail. The `:vel` macro is
-inherited but **scaled** so each echo's tail peaks at its `:delay-vels` value:
+`(echo ...)` is an inline note-replay that **lengthens** the phrase: its taps
+occupy real time, so later notes shift back. This is the opposite of `(delay
+...)`, which overlays into gaps without lengthening. `(echo ...)` is relative and
+**one-shot** at its position (not sticky).
 
 ```lisp
-(def $echo :macro [:step 16 :vel [15 :off 10 5 0] :keyon [0 :off 1 1 1]])
+(echo <target> <count> :by N [:back B])
+```
 
-(fm1 $echo :delay 4 :delay-vels [10 5 2 0]
+- `<target>` — `:vel` (additive) / `:vel*` (multiplicative).
+- `<count>` — number of taps. `:by N` — per-tap step (`:vel` → note_vel + N·k;
+  `:vel*` → note_vel · N^k).
+- `:back B` — replay the single note B positions back (`B=1` = the last note,
+  the default).
+
+```lisp
+(fm1 c (echo :vel 3 :by -1))         ; last note replayed at vel−1, −2, −3 (decaying trail)
+(fm1 c (echo :vel* 3 :by 0.7))       ; ×0.7, ×0.49, ×0.343
+(fm1 c e (echo :vel 1 :by -4 :back 2))  ; replay the note 2 back (c) once at vel−4
+```
+
+### Echoes inherit articulation
+
+Delay echoes carry the source's per-note macros (`:keyon`, `:semi`, …), so a
+phrase with a 1-channel `:keyon` tail repeats with that tail.
+
+```lisp
+(def $echo (macro :step 16 :vel [15 :off 10 5 0] :keyon [0 :off 1 1 1]))
+
+(fm1 $echo (delay :vel 4 :by -3 :time 4)
   :len 16 c _ _ _ :len 4 _ _ _)
 ```
 
-Each phrase repeat retriggers like the source; its vel tail is `[15 10 5 0]`
-scaled to the echo's level (echo at 10 → `~10 7 3 0`, at 5 → `~5 3 2 0`, …).
+Each phrase repeat retriggers like the source; its vel tail rides the note's
+velocity, lowered by the delay's per-tap step.
 
 ---
 
 ## 14. Noise Authoring (`noise` channel)
 
 ```lisp
-(def perc-buzz :macro :mode [white0 :hold periodic3])
-(def hh-env :macro :vel [15 9 4 0])
+(def perc-buzz (macro :mode [white0 :hold periodic3]))
+(def hh-env (macro :vel [15 9 4 0]))
 
 (score
-  (noise :len 8 :mode white0 :macro [perc-buzz hh-env]
+  (noise :len 8 :mode white0 (macro perc-buzz hh-env)
     c c c c))
 ```
 
 - `:mode` writes `NOISE_MODE`
-- `:macro :mode` allows per-frame timbre motion
+- `(macro :mode ...)` allows per-frame timbre motion
 
 ---
 
@@ -476,7 +517,7 @@ operation is chosen by the keyword so the argument is never ambiguous:
 `:len 0` fires KEY-ON, holds indefinitely, and does not advance the timeline. Any subsequent notes in the same channel all land at tick 0. Useful for a single held note with a release macro:
 
 ```lisp
-(sqr1 :len 0 :macro :vel [15 :hold 14 13 :off 8 4 0]
+(sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])
   c)
 ```
 
@@ -581,7 +622,7 @@ Samples are defined with `def :sample`, then used as the first positional argume
 ## 20. Stochastic Curves
 
 The curve system now includes `noise`, `pink`, `perlin`, and `brown`.
-They can be used anywhere curve expressions are accepted, including `:macro` and `:tempo`.
+They can be used anywhere curve expressions are accepted, including `(macro ...)` and `:tempo`.
 
 ---
 
@@ -600,10 +641,9 @@ They can be used anywhere curve expressions are accepted, including `:macro` and
   :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 
 (def phrase c e g e)
-(def env :macro [
+(def env (macro
   :vel [15 12 8 4 0]
-  :pan [:hold left center right center]
-])
+  :pan [:hold left center right center]))
 
 (score
   (fm1

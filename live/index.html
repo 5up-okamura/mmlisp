@@ -1265,6 +1265,7 @@
     const AC_FORMS = [
       'score','rest','tie',
       'def','defn','x','go','param-set',
+      'echo','delay','glide','macro',
       'linear',
       'ease-in','ease-out','ease-inout',
       'ease-in-sine','ease-out-sine','ease-inout-sine',
@@ -1298,10 +1299,10 @@
       ':ch',':id',':prio',':oct',':len',':gate',':gate*',':gate-',':vel',':vel*',':vol',':volume',
       ':master',':pan',':mode',':write',
       // note dynamics / sequencer
-      ':pitch',':semi',':keyon',':delay',':delay-vels',':glide',':glide-from',
+      ':pitch',':semi',':keyon',':by',':back',':time',':ratio',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
-      ':macro',':extend',':step',':loop',':loop-start',':loop-end',
+      ':extend',':step',':loop',':loop-start',':loop-end',
       ':file',':sample',':rate',
       // PCM / effects
       ':bit-depth',':compress',':reverb',
@@ -1586,9 +1587,9 @@
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 0 :ks3 0 :ml3 1 :dt3 0
   :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0)
 
-(def @env1 :macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0])
-(def @env2 :macro :vel (linear :from 15 :to 0 :len 16f))
-(def @lfo :macro :pitch (sin :from -20 :to 20 :len 16 :wait 4))
+(def @env1 (macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
+(def @env2 (macro :vel (linear :from 15 :to 0 :len 16f)))
+(def @lfo (macro :pitch (sin :from -20 :to 20 :len 16 :wait 4)))
 
 (score :tempo 120
   ; FM

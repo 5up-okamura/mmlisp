@@ -311,8 +311,8 @@ function collectKeywordPairs(items, startIndex) {
     if (isCommentNode(items[index])) break;
     if (!isKeyword(items[index])) break;
     const keyNode = items[index];
-    // A keyword immediately followed by another keyword is a valueless tag
-    // (e.g. the :macro type marker), not a key whose value is that keyword.
+    // A keyword immediately followed by another keyword is a valueless tag,
+    // not a key whose value is that keyword.
     const isTag = isKeyword(items[index + 1]);
     if (!isTag && index + 1 >= items.length) break;
     const valueNode = isTag ? null : items[index + 1];

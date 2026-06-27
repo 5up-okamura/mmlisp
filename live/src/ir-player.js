@@ -1974,12 +1974,16 @@ export class IRPlayer {
             this._fmVolAtTime(ch, when) === 0) ||
           (this._masterVol ?? VOL_UNITY) === 0;
         const secsPerTick = this._secsPerTick;
+        // No automatic detach: key off at the exact gate boundary. When the gate
+        // fills the note and another note follows immediately, suppress the
+        // key-off so the note slurs (legato) — detachment is the composer's job
+        // via :gate-. A gate-cut note always keys off; so does a note before a
+        // rest or the last note (gateEnd lands before the next note).
+        const gateEndSecs = when + gateTicks * secsPerTick;
         const offWhen =
-          gateTicks > 0
-            ? Math.max(
-                when + 0.001,
-                when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS,
-              )
+          gateTicks > 0 &&
+          (ev.args?.gate != null || gateEndSecs < nextNote - 0.001)
+            ? Math.max(when + 0.001, gateEndSecs)
             : null;
         let keyonEnd = null;
         if (this._isTrackAudible(ev._trackIndex) && !isFmSilent) {
@@ -2025,11 +2029,10 @@ export class IRPlayer {
         if (gateTicks > 0) {
           if (!isFm3OpNote) {
             // With a keyon retrigger active, key off after the last retrigger
-            // (keyonEnd) instead of at the gate, so the final tap isn't cut and
-            // the boundary collision is avoided. Otherwise key off at the gate.
-            // keyonEnd is clamped to <= macroLimit (= next note - lead), so it
-            // is always before the next note's key-on — no collision.
-            this._write(0, 0x28, chKey, keyonEnd != null ? keyonEnd : offWhen);
+            // (keyonEnd) instead of at the gate, so the final tap isn't cut.
+            // offWhen is null when the note slurs into the next — no key-off.
+            const keyOffAt = keyonEnd != null ? keyonEnd : offWhen;
+            if (keyOffAt != null) this._write(0, 0x28, chKey, keyOffAt);
           }
         } else {
           // Hold note: register the channel for runtime key-off
@@ -2768,19 +2771,13 @@ export class IRPlayer {
 
       let t = when;
       for (const stage of stages) {
-        if (stage.waitKeyOff) {
-          // Jump time cursor to gate boundary, then continue with next stage
-          t = Math.max(t, gateSecs);
-          continue;
-        }
-        if (stage.waitTicks != null) {
+        // A :wait advances the time cursor. A pure wait stage (no curve) stops
+        // here; a curve stage with :wait uses it as a pre-delay, then plays.
+        if (stage.waitKeyOff) t = Math.max(t, gateSecs);
+        else if (stage.waitTicks != null)
           t += Math.max(0, Number(stage.waitTicks)) * this._secsPerTick;
-          continue;
-        }
-        if (stage.waitFrames != null) {
-          t += stage.waitFrames / 60;
-          continue;
-        }
+        else if (stage.waitFrames != null) t += stage.waitFrames / 60;
+        if (!stage.curve) continue; // pure wait stage
         // Regular curve stage
         const {
           curve = "linear",
@@ -2790,11 +2787,11 @@ export class IRPlayer {
           loop = false,
           params,
         } = stage;
-        // :len is a length token (ticks); convert to 60 Hz frames like sweeps.
-        const baseFrames = Math.max(
-          1,
-          Math.round(Number(rawFrames) * this._secsPerTick * 60),
-        );
+        // :len is ticks by default → convert to 60 Hz frames; `Nf` (lenFrames)
+        // is already an absolute frame count, used as-is.
+        const baseFrames = stage.lenFrames
+          ? Math.max(1, Math.round(Number(rawFrames)))
+          : Math.max(1, Math.round(Number(rawFrames) * this._secsPerTick * 60));
         // For looping stages, run until gate (or next key-off boundary)
         const budget = loop
           ? Math.max(0, Math.floor((gateSecs - t) * 60))
@@ -2826,11 +2823,11 @@ export class IRPlayer {
         waitTicks = null,
         waitKeyOff = false,
       } = spec;
-      // :len is a length token (ticks); convert to 60 Hz frames like sweeps.
-      const baseFrames = Math.max(
-        1,
-        Math.round(Number(rawFrames) * this._secsPerTick * 60),
-      );
+      // :len is ticks by default → convert to 60 Hz frames; `Nf` (lenFrames) is
+      // already an absolute frame count, used as-is.
+      const baseFrames = spec.lenFrames
+        ? Math.max(1, Math.round(Number(rawFrames)))
+        : Math.max(1, Math.round(Number(rawFrames) * this._secsPerTick * 60));
       const waitFrameOffset = waitKeyOff
         ? Math.max(0, Math.round((gateSecs - when) * 60))
         : Math.max(
@@ -3318,11 +3315,8 @@ export class IRPlayer {
 
   // Set PSG attenuation at note-on; schedule silence at note-off.
   // gateTicks === 0 = hold note (no auto-silence; triggerKeyOff() handles it).
-  _schedulePsgEnvelope(psgCh, noteWhen, gateTicks, baseVel = 15) {
+  _schedulePsgEnvelope(psgCh, noteWhen, gateTicks, baseVel = 15, offWhen = null) {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
-    const isHold = gateTicks === 0;
-    const secsPerTick = this._secsPerTick;
-    const noteOffWhen = noteWhen + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS;
 
     // Compose vel / vol / master → PSG attenuation (additive dB model).
     const vol = this._psgVolAtTime(psgCh, noteWhen);
@@ -3330,7 +3324,9 @@ export class IRPlayer {
     const att = this._composePsgAtt(baseVel, vol, master);
 
     this._psgSetAtt(psgCh, att, noteWhen);
-    if (!isHold) this._psgSetAtt(psgCh, 15, noteOffWhen);
+    // Silence at the gate boundary; offWhen is null when the note holds or slurs
+    // into the next (legato).
+    if (offWhen != null) this._psgSetAtt(psgCh, 15, offWhen);
   }
 
   _schedulePsgVelMacro(
@@ -3340,6 +3336,7 @@ export class IRPlayer {
     gateTicks,
     baseVel = 15,
     limitSecs = Infinity,
+    offWhen = null,
   ) {
     if (!velMacro) return;
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
@@ -3368,10 +3365,9 @@ export class IRPlayer {
       this._stepSecs(velMacro.step),
       limitSecs,
     );
-    // On hold notes (gateTicks === 0), silence is triggered by triggerKeyOff().
-    // silenceAt is clamped to <= limitSecs (= next note - lead), so it is before
-    // the next note — write it directly.
-    if (silenceAt !== null && gateTicks !== 0) {
+    // Silence at the macro tail. offWhen is null when the note holds or slurs
+    // into the next (legato) — leave the tone sounding for the next note.
+    if (silenceAt !== null && offWhen != null) {
       this._psgSetAtt(psgCh, 15, silenceAt);
     }
   }
@@ -3455,6 +3451,14 @@ export class IRPlayer {
         }
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
+        // No auto-detach: silence at the gate boundary; suppress (slur/legato)
+        // when the gate fills the note and another note follows immediately.
+        const psgGateEnd = when + psgGateTicks * this._secsPerTick;
+        const psgOffWhen =
+          psgGateTicks > 0 &&
+          (ev.args?.gate != null || psgGateEnd < psgNextNote - 0.001)
+            ? psgGateEnd
+            : null;
         if (velMacro) {
           this._schedulePsgVelMacro(
             psgCh,
@@ -3463,9 +3467,10 @@ export class IRPlayer {
             psgGateTicks,
             baseVel,
             psgMacroLimit,
+            psgOffWhen,
           );
         } else {
-          this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel);
+          this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel, psgOffWhen);
         }
         break;
       }

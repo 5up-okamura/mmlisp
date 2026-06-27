@@ -578,6 +578,15 @@ function emitNoteForTrack(
   events.push(noteEv);
   trackState.tick += lengthTicks;
   updateLastNotePitch(trackState, fullPitch);
+  // Feed the (echo …) history from the standard pitch path (FM3-op/PCM excluded).
+  if (!trackState.isFm3OpTrack)
+    pushRecentNote(
+      trackState,
+      fullPitch,
+      lengthTicks,
+      trackState.defaultGate,
+      trackState.defaultVel ?? 15,
+    );
 }
 
 /**
@@ -623,6 +632,47 @@ function updateLastNotePitch(trackState, pitch) {
   trackState.lastNotePitch = pitch;
 }
 
+// v0.5: rolling history of recently emitted notes (max 9) for (echo …) replay.
+// pitch is absolute (includes octave), so the replay needs no octave bookkeeping.
+function pushRecentNote(trackState, pitch, length, gateSpec, vel) {
+  const hist = (trackState.recentNotes ||= []);
+  hist.push({ pitch, length, gateSpec, vel });
+  if (hist.length > 9) hist.shift();
+}
+
+// Resolve a tap's value relative to the source: additive (src + by·k) or
+// multiplicative (src · by^k), clamped to the target range. Shared by echo/delay.
+function tapValue(domain, by, k, srcVal, target) {
+  const v = domain === "mul" ? srcVal * Math.pow(by, k) : srcVal + by * k;
+  return clampForTarget(target, v);
+}
+
+// (echo …): replay the single note `back` positions back (back=1 = the last
+// note), once per tap (1..count), each modulating `target` relative to that
+// note's own value. Advances trackState.tick so the phrase lengthens. This
+// matches mucom `\=n1,n2` (the note n1 back), where `back` = n1. v1 targets VEL.
+function emitEchoReplay(trackState, events, { domain, count, by, back }, src) {
+  const hist = trackState.recentNotes || [];
+  if (!hist.length || count < 1) return;
+  const note = hist[Math.max(0, hist.length - back)]; // clamp to the oldest note
+  if (!note) return;
+  // mucom replays the echoed pitch at the *current* defaults (the `\` expansion
+  // substitutes the bare note name, inheriting the current length `l` and gate
+  // `q`), not the source note's length/gate.
+  const len = trackState.defaultLength;
+  const gate = trackState.defaultGate;
+  for (let k = 1; k <= count; k++) {
+    const vel = tapValue(domain, by, k, note.vel ?? 15, "VEL");
+    events.push({
+      tick: trackState.tick,
+      cmd: "NOTE_ON",
+      args: makeNoteArgs(note.pitch, len, gate, vel, null),
+      src,
+    });
+    trackState.tick += len;
+  }
+}
+
 function applyMacroEntryToState(trackState, irTarget, spec) {
   if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
   trackState.activeMacros[irTarget] = spec;
@@ -634,25 +684,31 @@ function clearMacroTarget(trackState, irTarget) {
     delete trackState.activeMacros[irTarget];
 }
 
-// v0.5 §1.5.3: resolve a :delay-vels spec into a concrete array of per-tap
-// velocities. A step vector lists them directly; a curve derives the tap count
-// from its :len (a time span in ticks) divided by the :delay spacing.
-function resolveDelayVels(spec, delayTicks) {
+// v0.5: resolve a (delay …) spec into concrete per-tap velocities, RELATIVE to
+// the source note's vel. `param` = a regular ramp from `:by` (additive on :vel /
+// geometric on :vel*); `list` = explicit per-tap deltas/ratios; `curve` = a
+// relative envelope whose tap count is :len ÷ spacing. mode "add"|"mul".
+function resolveDelayVels(spec, delayTicks, srcVel) {
   if (!spec || !(delayTicks > 0)) return null;
-  if (spec.type === "steps") {
-    const vels = (spec.steps || []).filter((v) => v !== null && v !== undefined);
-    return vels.length ? vels.map((v) => clampForTarget("VEL", v)) : null;
+  const apply = (rel) =>
+    clampForTarget("VEL", spec.mode === "mul" ? srcVel * rel : srcVel + rel);
+  if (spec.type === "param") {
+    const out = [];
+    for (let k = 1; k <= spec.count; k++)
+      out.push(tapValue(spec.mode, spec.by ?? 0, k, srcVel, "VEL"));
+    return out.length ? out : null;
+  }
+  if (spec.type === "list") {
+    return spec.list.length ? spec.list.map(apply) : null;
   }
   if (spec.type === "curve") {
     const { from = 0, to = 0, frames = 0, curve = "linear", params } = spec;
     const count = Math.floor(frames / delayTicks);
     if (count < 1) return null;
-    const vels = [];
-    for (let k = 1; k <= count; k++) {
-      const v = from + (to - from) * sampleCurveUnit(curve, k / count, params);
-      vels.push(clampForTarget("VEL", v)); // float — quantized at playback
-    }
-    return vels;
+    const out = [];
+    for (let k = 1; k <= count; k++)
+      out.push(apply(from + (to - from) * sampleCurveUnit(curve, k / count, params)));
+    return out;
   }
   return null;
 }
@@ -743,8 +799,12 @@ function macroMulOk(target, sym, diagnostics, trackName) {
 // Stamp the active :delay config onto a freshly-emitted note event so the
 // post-pass (expandTrackDelays) can generate echoes from it.
 function stampDelay(ev, trackState) {
-  if (!(trackState.delayTicks > 0) || !trackState.delayVels) return;
-  const vels = resolveDelayVels(trackState.delayVels, trackState.delayTicks);
+  if (!(trackState.delayTicks > 0) || !trackState.delaySpec) return;
+  const vels = resolveDelayVels(
+    trackState.delaySpec,
+    trackState.delayTicks,
+    ev.args?.vel ?? 15,
+  );
   if (vels && vels.length) ev._delay = { ticks: trackState.delayTicks, vels };
 }
 
@@ -1146,6 +1206,7 @@ function parseCurveSpec(
   let from;
   let to;
   let frames;
+  let lenFrames = false; // :len given as Nf (frames) vs ticks (note-length / Nt)
   let waitTicks = null;
   let waitKeyOff = false;
   let forceLoop = false;
@@ -1259,6 +1320,7 @@ function parseCurveSpec(
           break;
         case ":len":
           frames = parseLengthToken(v, null);
+          lenFrames = /^\d+f$/.test(v); // Nf is an absolute frame count, not ticks
           break;
         case ":wait":
           if (v === "key-off") {
@@ -1361,6 +1423,7 @@ function parseCurveSpec(
   };
   if (from !== null && from !== undefined) spec.from = from;
   if (frames !== null && frames !== undefined) spec.frames = frames;
+  if (lenFrames) spec.lenFrames = true;
   if (waitTicks !== null) spec.waitTicks = waitTicks;
   if (waitKeyOff) spec.waitKeyOff = true;
   if (hasParams) spec.params = params;
@@ -1791,33 +1854,6 @@ function compileChannelBody(
               if (g !== null) trackState.defaultGate = g;
               break;
             }
-            case ":delay": {
-              // §1.5.3 track delay: echo tap spacing (length-token). `none`
-              // clears the whole delay-* family.
-              if (rawVal === "none") {
-                trackState.delayTicks = 0;
-                trackState.delayVels = null;
-              } else {
-                const ticks = parseLengthToken(rawVal, null);
-                if (ticks !== null && ticks > 0) trackState.delayTicks = ticks;
-              }
-              break;
-            }
-            case ":delay-vels": {
-              // Echo velocities: step vector [11 7 3] or a curve whose :len
-              // (time span) over :delay yields the tap count.
-              if (rawVal === "none") {
-                trackState.delayVels = null;
-              } else {
-                trackState.delayVels = parseMacroSpec(
-                  items[i],
-                  "VEL",
-                  diagnostics,
-                  trackName,
-                );
-              }
-              break;
-            }
             case ":vol": {
               const valueNode = items[i];
               const curveSpec = parseCurveSpec(
@@ -2034,17 +2070,6 @@ function compileChannelBody(
               }
               break;
             }
-            case ":glide": {
-              const v = parseLengthToken(rawVal, null);
-              if (v !== null) trackState.glide = Math.max(0, v);
-              break;
-            }
-            case ":glide-from": {
-              // Override the glide's start pitch for the next note. Absolute
-              // pitch (note + octave, e.g. "f5") — trailing number is octave.
-              trackState.glideFrom = rawVal;
-              break;
-            }
             case ":sample": {
               if (!isTrackPcmActive(trackState)) break;
               if (rawVal) {
@@ -2083,107 +2108,6 @@ function compileChannelBody(
               }
               break;
             }
-            case ":macro":
-              {
-                // Three forms:
-                // 1) :macro def-name          — single named def reference
-                // 2) :macro :target spec       — single inline pair
-                // 3) :macro [...]              — list of defs/inline pairs (Task 14)
-                const macroNode = items[i]; // the node following :macro
-
-                if (macroNode?.kind === "list" && macroNode.bracket === "[]") {
-                  // Form 3: [list] — iterate entries, last write wins per target
-                  const listItems = macroNode.items.filter(
-                    (n) => n.kind !== "comment",
-                  );
-                  let j = 0;
-                  let currentStep = null; // :step applies to following targets
-                  while (j < listItems.length) {
-                    const entryVal = atomValue(listItems[j]);
-                    if (entryVal === ":step") {
-                      if (j + 1 < listItems.length) {
-                        currentStep = parseStepToken(
-                          atomValue(listItems[j + 1]),
-                        );
-                        j += 2;
-                      } else {
-                        j++;
-                      }
-                    } else if (entryVal?.startsWith(":")) {
-                      // inline :target spec pair
-                      if (j + 1 < listItems.length) {
-                        const { target: irTarget, mul } =
-                          macroKeyword(entryVal);
-                        if (atomValue(listItems[j + 1]) === "none") {
-                          clearMacroTarget(trackState, irTarget);
-                        } else {
-                          const spec = parseMacroSpec(
-                            listItems[j + 1],
-                            irTarget,
-                            diagnostics,
-                            trackName,
-                          );
-                          if (spec && currentStep) spec.step = currentStep;
-                          if (
-                            spec &&
-                            mul &&
-                            !macroMulOk(irTarget, entryVal, diagnostics, trackName)
-                          ) {
-                            // `*` misused — diagnostic pushed; drop this entry.
-                          } else {
-                            if (spec && mul) spec.mul = true;
-                            applyMacroEntryToState(trackState, irTarget, spec);
-                          }
-                        }
-                        j += 2;
-                      } else {
-                        j++;
-                      }
-                    } else if (entryVal && typedDefs?.has(entryVal)) {
-                      // named def reference
-                      const td = typedDefs.get(entryVal);
-                      applyTypedMacroDef(trackState, td);
-                      j++;
-                    } else {
-                      j++;
-                    }
-                  }
-                } else if (rawVal?.startsWith(":")) {
-                  // Form 2: inline :target spec
-                  if (i + 1 < items.length) {
-                    const { target: irTarget, mul } = macroKeyword(rawVal);
-                    if (atomValue(items[i + 1]) === "none") {
-                      clearMacroTarget(trackState, irTarget);
-                    } else {
-                      const spec = parseMacroSpec(
-                        items[i + 1],
-                        irTarget,
-                        diagnostics,
-                        trackName,
-                      );
-                      if (
-                        spec &&
-                        mul &&
-                        !macroMulOk(irTarget, rawVal, diagnostics, trackName)
-                      ) {
-                        // `*` misused — diagnostic pushed; drop this entry.
-                      } else {
-                        if (spec && mul) spec.mul = true;
-                        applyMacroEntryToState(trackState, irTarget, spec);
-                      }
-                    }
-                    i++;
-                  }
-                } else if (rawVal === "none") {
-                  // `:macro none` — clear all active macros on this track
-                  trackState.activeMacros = {};
-                } else if (rawVal && typedDefs?.has(rawVal)) {
-                  // Form 1: single named def
-                  const td = typedDefs.get(rawVal);
-                  applyTypedMacroDef(trackState, td);
-                }
-                break;
-              }
             case ":break":
               // :break takes no value; the keyword path already stepped onto the
               // next token, so back up to leave it for the next iteration. Id is
@@ -2609,6 +2533,189 @@ function compileChannelBody(
         continue;
       }
 
+      // Echo: (echo <target> <count> :by N [:back B]) — inline note-replay that
+      // lengthens the phrase. Replays the single note B positions back (B=1 =
+      // the last note), relative to that note's value; :vel adds, :vel*
+      // multiplies. mucom `\=n1,n2` ≡ (echo :vel 1 :by -n2 :back n1).
+      if (head === "echo") {
+        const items = node.items;
+        const tgt = atomValue(items[1]) || ":vel";
+        const mul = tgt.endsWith("*");
+        const param = (mul ? tgt.slice(0, -1) : tgt).replace(/^:/, "");
+        let count = 1;
+        let j = 2;
+        const c0 = parseIntLike(atomValue(items[2]));
+        if (c0 !== null) {
+          count = Math.max(1, c0);
+          j = 3;
+        }
+        let by = 0;
+        let back = 1;
+        for (; j + 1 < items.length; j += 2) {
+          const key = atomValue(items[j]);
+          const val = atomValue(items[j + 1]);
+          if (key === ":by") by = parseFloat(val);
+          else if (key === ":back")
+            back = Math.max(1, parseIntLike(val) ?? 1);
+        }
+        if (param !== "vel") {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_ECHO_TARGET",
+            `(echo …) supports :vel/:vel* for now (got ${tgt})`,
+            nodeSrc(items[0]),
+            trackName,
+          );
+        } else {
+          emitEchoReplay(
+            trackState,
+            events,
+            { domain: mul ? "mul" : "add", count, by, back },
+            nodeSrc(node),
+          );
+        }
+        i++;
+        continue;
+      }
+
+      // Delay: (delay <target> <count> :by N :time T) parametric, or
+      // (delay <target> [list|curve] :time T) explicit. Relative to the source
+      // note; sticky (applies to following notes). (delay none) / (delay :vel none)
+      // clear. Overlay/gap-filling (does not lengthen) via expandTrackDelays.
+      if (head === "delay") {
+        const items = node.items;
+        const a1 = atomValue(items[1]);
+        if (a1 === "none") {
+          trackState.delaySpec = null;
+          trackState.delayTicks = 0;
+          i++;
+          continue;
+        }
+        const mul = a1?.endsWith("*");
+        const param = (mul ? a1.slice(0, -1) : a1 || ":vel").replace(/^:/, "");
+        const mode = mul ? "mul" : "add";
+        const a2node = items[2];
+        const a2 = atomValue(a2node);
+        if (param !== "vel") {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_DELAY_TARGET",
+            `(delay …) supports :vel/:vel* for now (got ${a1})`,
+            nodeSrc(items[0]),
+            trackName,
+          );
+          i++;
+          continue;
+        }
+        if (a2 === "none") {
+          trackState.delaySpec = null;
+          trackState.delayTicks = 0;
+          i++;
+          continue;
+        }
+        // 2nd arg: number = tap count (+:by); [list]/(curve) = explicit.
+        let spec = null;
+        if (a2node?.kind === "list" && a2node.bracket === "[]") {
+          const list = a2node.items
+            .filter((n) => n.kind !== "comment")
+            .map((n) => parseFloat(atomValue(n)))
+            .filter((v) => !isNaN(v));
+          spec = { mode, type: "list", list };
+        } else if (a2node?.kind === "list" && a2node.bracket === "()") {
+          const cv = parseCurveSpec(a2node, diagnostics, nodeSrc(node), trackName);
+          if (cv) spec = { mode, type: "curve", ...cv };
+        } else if (parseIntLike(a2) !== null) {
+          spec = { mode, type: "param", count: Math.max(1, parseIntLike(a2)) };
+        }
+        let time = null;
+        for (let j = 3; j + 1 < items.length; j += 2) {
+          const key = atomValue(items[j]);
+          const val = atomValue(items[j + 1]);
+          if (key === ":by" && spec?.type === "param") spec.by = parseFloat(val);
+          else if (key === ":time") time = parseLengthToken(val, null);
+        }
+        if (spec && time !== null && time > 0) {
+          trackState.delaySpec = spec;
+          trackState.delayTicks = time;
+        } else {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_DELAY_ARGS",
+            "(delay …) needs a count/[list]/(curve) and :time T",
+            nodeSrc(items[0]),
+            trackName,
+          );
+        }
+        i++;
+        continue;
+      }
+
+      // Glide: (glide <time>) portamento from the previous note;
+      // (glide <from-pitch> <time>) sets an explicit start pitch; (glide 0) off.
+      if (head === "glide") {
+        const items = node.items;
+        const has2 = items.length >= 3;
+        if (has2) trackState.glideFrom = atomValue(items[1]);
+        const tv = atomValue(items[has2 ? 2 : 1]);
+        const t = tv === "0" ? 0 : parseLengthToken(tv, null);
+        if (t !== null) trackState.glide = Math.max(0, t);
+        i++;
+        continue;
+      }
+
+      // Macro: (macro :target spec [:target spec …] [:step clk]) inline envelope;
+      // (macro none) clears all, (macro :vel none) clears one; bare def names and
+      // def references may be mixed in. Runtime within-note envelope.
+      if (head === "macro") {
+        const rest = node.items.slice(1).filter((n) => n.kind !== "comment");
+        if (rest.length === 1 && atomValue(rest[0]) === "none") {
+          trackState.activeMacros = {};
+          i++;
+          continue;
+        }
+        let j = 0;
+        let currentStep = null;
+        while (j < rest.length) {
+          const sym = atomValue(rest[j]);
+          if (sym === ":step") {
+            if (j + 1 < rest.length) {
+              currentStep = parseStepToken(atomValue(rest[j + 1]));
+              j += 2;
+            } else j++;
+          } else if (sym?.startsWith(":")) {
+            if (j + 1 < rest.length) {
+              const { target, mul } = macroKeyword(sym);
+              if (atomValue(rest[j + 1]) === "none") {
+                clearMacroTarget(trackState, target);
+              } else {
+                const spec = parseMacroSpec(
+                  rest[j + 1],
+                  target,
+                  diagnostics,
+                  trackName,
+                );
+                if (spec && currentStep) spec.step = currentStep;
+                if (spec && mul && !macroMulOk(target, sym, diagnostics, trackName)) {
+                  // `*` misused — diagnostic pushed; drop this entry.
+                } else {
+                  if (spec && mul) spec.mul = true;
+                  applyMacroEntryToState(trackState, target, spec);
+                }
+              }
+              j += 2;
+            } else j++;
+          } else if (sym && typedDefs?.has(sym)) {
+            applyTypedMacroDef(trackState, typedDefs.get(sym));
+            j++;
+          } else j++;
+        }
+        i++;
+        continue;
+      }
+
       // Param set: (param-set :target value ...)
       if (head === "param-set") {
         let j = 1;
@@ -2784,23 +2891,18 @@ function collectDefs(roots, diagnostics) {
         continue;
       }
       const maybeTag = atomValue(root.items[2]);
-      if (maybeTag === ":macro") {
+      const macroFnNode = root.items[2];
+      if (
+        macroFnNode?.kind === "list" &&
+        atomValue(macroFnNode.items?.[0]) === "macro"
+      ) {
+        // (def name (macro :target spec …))
         const src = nodeSrc(root);
-        const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        let entries = [];
-        const macroListNode = bodyItems[3];
-        if (macroListNode?.kind === "list" && macroListNode.bracket === "[]") {
-          const listItems = macroListNode.items.filter(
-            (n) => n.kind !== "comment",
-          );
-          entries = collectMacroEntriesFromItems(listItems, diagnostics, name);
-        } else {
-          entries = collectMacroEntriesFromItems(
-            bodyItems.slice(3),
-            diagnostics,
-            name,
-          );
-        }
+        const entries = collectMacroEntriesFromItems(
+          macroFnNode.items.slice(1).filter((n) => n.kind !== "comment"),
+          diagnostics,
+          name,
+        );
         if (entries.length === 1) {
           typedDefs.set(name, { tag: "macro", ...entries[0], src });
         } else if (entries.length > 1) {
@@ -3168,8 +3270,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultVol,
         defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
-        delayTicks: 0, // v0.5: :delay echo tap spacing in ticks (0 = off)
-        delayVels: null, // v0.5: :delay-vels spec (steps or curve) for echo velocities
+        delayTicks: 0, // v0.5: (delay …) tap spacing in ticks (0 = off)
+        delaySpec: null, // v0.5: (delay …) relative spec {mode,type,…} or null
 
         glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide

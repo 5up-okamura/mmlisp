@@ -30,7 +30,7 @@ mixed with normal `fm3` or `fm3-N` in the same score (compile error).
 **FM3 independent-OP details:**
 
 - IR mode enable: implicit from the presence of any `fm3-N` channel.
-- `:macro` and `:glide` are independent per `fm3-N` track.
+- `(macro ...)` and `(glide ...)` are independent per `fm3-N` track.
 - S_MASK (KEY-ON slot mask): OP1=1, OP2=2, OP3=4, OP4=8.
 - `fm3` voice declaration and `fm3-N` tracks are mutually exclusive within
   a score (one commits to special mode for the entire score).
@@ -46,8 +46,8 @@ mixed with normal `fm3` or `fm3-N` in the same score (compile error).
   `:oct 10` require a raw Hz literal.
 - `:csm-rate` valid range: 52–53,270 Hz. Out-of-range values are clamped
   with a compiler warning.
-- `fm3-csm-rate` supports `:glide` (slides Timer A Hz between notes).
-- `fm3-csm` supports `:glide` (slides FM3 F-number / tonal center pitch).
+- `fm3-csm-rate` supports `(glide ...)` (slides Timer A Hz between notes).
+- `fm3-csm` supports `(glide ...)` (slides FM3 F-number / tonal center pitch).
 - Timer A frequency can be specified in two ways (mutually exclusive per score):
   - **Inline on `fm3-csm`**: `:csm-rate N` (constant Hz) or
     `:csm-rate (curve ...)` (swept Hz). No `fm3-csm-rate` track needed.
@@ -202,7 +202,7 @@ seeded JS `sampleCurveUnit` in the live player.
 
 ```lisp
 ; slow timbral drift on an FM operator
-(fm1 :macro :tl1 (brown :from 20 :to 30 :len 4)
+(fm1 (macro :tl1 (brown :from 20 :to 30 :len 4))
   c e g e)
 ```
 
@@ -275,15 +275,15 @@ Examples:
 
 ```lisp
 ; brown drift with slower motion and mild hold
-(fm1 :macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995)
+(fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995))
   c e g e)
 
 ; pink flutter with stronger low-frequency bias
-(sqr1 :macro :pitch (pink :from -40 :to 40 :len 8 :beta 1.2 :phase 32)
+(sqr1 (macro :pitch (pink :from -40 :to 40 :len 8 :beta 1.2 :phase 32))
   c c c c)
 
 ; perlin wander with explicit fractal controls
-(fm2 :macro :pan (perlin :from -1 :to 1 :len 16 :octaves 4 :persistence 0.6)
+(fm2 (macro :pan (perlin :from -1 :to 1 :len 16 :octaves 4 :persistence 0.6))
   c _ c _)
 ```
 
@@ -308,7 +308,7 @@ is evaluated and written. It applies to **every** macro form:
   coarser `:step` gives a stepped / sample-and-hold curve (e.g.
   `:step 8 :tl1 (sin …)` is a 1/8 stepped LFO).
 
-It is an element **inside the `:macro [...]` list** and applies to the targets
+It is an element **inside the `(macro ...)` form** and applies to the targets
 that **follow** it (until the next `:step`). It accepts the length-token grammar:
 
 | Token | Meaning            |
@@ -321,10 +321,10 @@ that **follow** it (until the next `:step`). It accepts the length-token grammar
 
 ```lisp
 ; one step for the whole group
-(fm1 :macro [ :step 1/16  :semi [:hold 0 4 7]  :keyon 1 ]  c)
+(fm1 (macro :step 1/16  :semi [:hold 0 4 7]  :keyon 1)  c)
 
 ; different step per target (positional)
-(fm1 :macro [ :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1] ]  c)
+(fm1 (macro :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1])  c)
 ```
 
 - Default when omitted: **`1f`** (one 60 Hz frame) = sample every frame, so
@@ -357,7 +357,7 @@ and measured in cents:
 
 ```lisp
 ; sustained-voice arpeggio (no retrigger), 60 Hz default step
-(fm1 :macro :semi [:hold 0 4 7]  c)
+(fm1 (macro :semi [:hold 0 4 7])  c)
 ```
 
 #### `:keyon` — retrigger gate
@@ -397,12 +397,12 @@ Retrigger rules:
 
 ```lisp
 ; drum roll — no :off, all sustain; stops at note-off
-(fm1 :macro [ :keyon [:hold 1] ]  c)
+(fm1 (macro :keyon [:hold 1])  c)
 
 ; single-note echo tail — taps in the release section fire after note-off,
 ; decaying via the phase-locked :vel release
-(fm1 :macro [ :step 1/8  :keyon [0 :off 1 1 1]
-                         :vel   [15 :off 11 7 3] ]  c)
+(fm1 (macro :step 1/8  :keyon [0 :off 1 1 1]
+                       :vel   [15 :off 11 7 3])  c)
 ```
 
 A target's `:step` governs the spacing of **both** its sustain and its `:off`
@@ -416,9 +416,9 @@ stop one once set).
 
 | Statement            | Effect                                              |
 | -------------------- | --------------------------------------------------- |
-| `:macro :semi none`  | clear the `:semi` macro on this track               |
-| `:macro :keyon none` | clear the `:keyon` macro on this track              |
-| `:macro none`        | clear all active macros on this track               |
+| `(macro :semi none)`  | clear the `:semi` macro on this track              |
+| `(macro :keyon none)` | clear the `:keyon` macro on this track             |
+| `(macro none)`        | clear all active macros on this track             |
 | `:pan none`          | stop a running inline `PARAM_SWEEP`, freezing the value |
 
 `none` reads as "no modulation / no override": the baseline for a macro target
@@ -437,23 +437,23 @@ The three facilities are orthogonal targets, each carrying its own `:step`:
 
 ```lisp
 ; drum roll — retrigger only, 32nd-note rate
-(fm1 :macro [ :step 32 :keyon 1 ]  c)
+(fm1 (macro :step 32 :keyon 1)  c)
 
 ; classic arpeggio — pitch only, no retrigger (default 1f step)
-(fm1 :macro [ :semi [:hold 0 4 7] ]  c)
+(fm1 (macro :semi [:hold 0 4 7])  c)
 
 ; decaying-voice arpeggio — pitch + retrigger every step
-(fm1 :macro [ :step 1/16  :semi [:hold 0 4 7]  :keyon 1 ]  c)
+(fm1 (macro :step 1/16  :semi [:hold 0 4 7]  :keyon 1)  c)
 
 ; stochastic stutter — random retrigger on a held note
-(fm1 :macro [ :step 1/16 :keyon (noise :from 0 :to 1) ]  c)
+(fm1 (macro :step 1/16 :keyon (noise :from 0 :to 1))  c)
 ```
 
-### 1.5.3 Track delay — `:delay`, `:delay-vels` (v0.5)
+### 1.5.3 Track delay — `(delay ...)` (v0.5)
 
-`:delay` is a per-note echo applied at compile time. It is distinct from the
+`(delay ...)` is a per-note echo applied at compile time. It is distinct from the
 single-note retrigger of §1.5.2 (`:keyon`): `:keyon` re-fires one note's
-envelope, whereas `:delay` echoes the **written note stream**. Because every
+envelope, whereas `(delay ...)` echoes the **written note stream**. Because every
 note is offset by the same delay time, a constant per-note echo reproduces a
 **phrase-level delay** — the whole passage repeats, shifted and decayed.
 
@@ -462,49 +462,33 @@ NOTE_ON copies at compile time. Zero runtime cost; no driver feature is needed.
 
 This section defines authoring semantics only.
 
-#### `:delay` — echo time (persistent track option)
+#### Form
 
-`:delay T` enables delay on the track with tap spacing `T`, using the standard
-length-token grammar (`1/4`, `8`, `16f`, `14t`). It is persistent track state
-like `:len` / `:gate`; `:delay none` turns it off.
+```lisp
+(delay <target> <count|list|curve> :by N :time T)
+```
 
-All delay sub-options carry the `delay-` prefix. This is required, not
-cosmetic: `:pan` and `:semi` already name other features (channel pan, the
-§1.5.2 arp macro), so per-tap variants must be namespaced to disambiguate.
-`:delay none` clears the whole `delay-*` family.
+Delay taps are **relative** to each note's own value — an echo rides whatever
+velocity that note carries, rather than restating an absolute level. `(delay
+...)` is **sticky** track state (applies to following notes, like `:len` /
+`:gate`); `(delay none)` turns it off, `(delay :vel none)` clears one target.
 
-#### `:delay-vels` — echo decay (sequence or curve)
+- `<target>` — `:vel` (additive deltas) or `:vel*` (multiplicative ratios).
+  `:vol` is reserved (not yet supported).
+- The 2nd argument is polymorphic:
+  - a **number** = tap count (pair with `:by`).
+  - a **`[list]`** = explicit per-tap deltas (`:vel`) or ratios (`:vel*`); the
+    count is the list length.
+  - a **`(curve …)`** = a relative envelope; the tap count is derived as its
+    `:len ÷ :time`, with each tap sampling the curve at its position.
+- `:by N` — per-tap step: on `:vel`, tap k = note_vel + N·k; on `:vel*`,
+  tap k = note_vel · N^k.
+- `:time T` — tap spacing, using the standard length-token grammar (`1/4`, `8`,
+  `16f`, `14t`).
 
-`:delay-vels` gives the velocity of each echo and reuses the macro-spec
-grammar:
-
-- **step vector** — one value per echo, count is explicit: `:delay-vels [11 7 3]`
-  → 3 echoes at vel 11, 7, 3.
-- **curve** — `:len` is the **time span** of the echo tail (as everywhere else
-  in MMLisp), and taps fall at each `:delay` interval within it. The tap count
-  is therefore derived: `span ÷ :delay`. With `:delay 1/4`,
-  `:delay-vels (ease-out :from 12 :to 0 :len 1)` spans a whole note → 4 echoes
-  at 1/4, 2/4, 3/4, 4/4, each sampling the curve at its position.
-
-This keeps `:len` meaning time consistently: a step vector states the tap count
-directly, a curve derives it from `:len ÷ :delay` — the same relationship as a
-step macro's explicit steps vs. a curve macro's `:len`.
-
-Tap values are absolute echo velocities (matching the literal `:vel` of the
-expanded notes; the name pairs with `:vel`). Echoes are generated from the
-original note only — no feedback recursion.
-
-#### Optional per-tap modifiers (future)
-
-Because echo taps are sequential (never simultaneous on a monophonic channel),
-each tap can carry its own parameters. These are deferred — interesting but not
-essential, and no existing game music goes this far:
-
-- `:delay-pan [left right left]` — per-tap pan (temporal ping-pong)
-- `:delay-semi [0 0 12]` — per-tap semitone transposition (dub-style)
-
-They are additive over the core expansion (set the parameter just before each
-echo's NOTE_ON), so they cost little once `:delay` / `:delay-vels` exist.
+Delay is an **overlay** that fills the gaps the written part leaves — it does
+**not** lengthen the phrase (contrast `(echo ...)` below). Echoes are generated
+from the original note only — no feedback recursion.
 
 **Cross-channel delay is explicitly out of scope.** To overlap echoes with a
 still-playing source, `def` the phrase and replay it on a separate channel —
@@ -513,19 +497,19 @@ the MMLisp-idiomatic way — rather than injecting events across tracks.
 #### Expansion
 
 ```lisp
-(fm1 :delay 1/4 :delay-vels [11 7 3]
+(fm1 (delay :vel 3 :by -4 :time 1/8)
   c e g e)
 ```
 
-expands at compile time to:
+Each note emits three echoes at +1/8, +2/8, +3/8, each −4 vel from the note's
+value. The constant offset shifts the whole phrase, so it repeats and decays.
+The parametric `:by` form is preferred for regular ramps; the explicit list form
+`(delay :vel [-4 -8 -12] :time 1/8)` is equivalent. A curve gives a non-linear
+fade:
 
 ```lisp
-:vel 15 c e g e   :vel 11 c e g e   :vel 7 c e g e   :vel 3 c e g e
+(fm1 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)  c)
 ```
-
-Each note emits echoes at +1/4, +2/4, +3/4; the constant offset shifts the
-whole phrase, so it repeats and decays. No trailing rests are needed — the
-echoes fill that span.
 
 #### Monophonic priority
 
@@ -540,25 +524,34 @@ at partial overlaps is to be refined with use.
 Echo notes inherit the source note's per-note **articulation** macros —
 `:keyon`, `:semi`, `:pitch`, and the FM operator macros, each with its own
 `:step` — so a phrase that carries a 1-channel echo tail (`:keyon`) repeats with
-that tail intact.
-
-The `:vel` macro is inherited but **scaled** so each echo's tail peaks at that
-echo's `:delay-vels` value: every value is multiplied by `delay-vels[k] /
-sourcePeak` (rounded, clamped), where `sourcePeak` is the macro's largest value.
-The dry (source) note is left unscaled.
-
-Example — `:vel [15 :off 10 5 0]` with `:delay 1/4 :delay-vels [10 5 2 0]`:
-
-| repeat | peak | scaled vel tail     |
-| ------ | ---- | ------------------- |
-| dry    | 15   | `15 10 5 0`         |
-| echo 0 | 10   | `10 7 3 0` (×10/15) |
-| echo 1 | 5    | `5 3 2 0`  (×5/15)  |
-| echo 2 | 2    | `2 1 1 0`           |
-| echo 3 | 0    | `0 0 0 0`           |
+that tail intact. The `:vel` macro is inherited and rides each echo's velocity,
+lowered by the delay's per-tap step.
 
 (Inherited `:keyon` tails extend past a note's gate; on a monophonic channel a
 long tail can overrun the next echo — the same "echoes fill the gaps" reality.)
+
+### 1.5.3b Phrase echo — `(echo ...)` (v0.5)
+
+`(echo ...)` is an inline note-replay that **lengthens** the phrase: its taps
+occupy real time, so notes after it shift back. This is the opposite of `(delay
+...)`, which overlays into gaps and does not lengthen. `(echo ...)` is relative
+and **one-shot** at its position in the note stream (not sticky track state).
+
+```lisp
+(echo <target> <count> :by N [:back B])
+```
+
+- `<target>` — `:vel` (additive) or `:vel*` (multiplicative).
+- `<count>` — number of taps. `:by N` — per-tap step (`:vel` → note_vel + N·k;
+  `:vel*` → note_vel · N^k).
+- `:back B` — replay the single note B positions back (`B=1` = the last note,
+  the default). Matches mucom `\=n1,n2` where `n1` = how many notes back.
+
+```lisp
+(fm1 c (echo :vel 3 :by -1))         ; last note replayed at vel−1, −2, −3 (decaying trail)
+(fm1 c (echo :vel* 3 :by 0.7))       ; ×0.7, ×0.49, ×0.343
+(fm1 c e (echo :vel 1 :by -4 :back 2))  ; replay the note 2 back (c) once at vel−4
+```
 
 ### 1.5.4 Velocity and volume → level (v0.5)
 
@@ -894,7 +887,7 @@ This enables:
 
 ```lisp
 ; loop indefinitely until game sends KEY_OFF
-(sqr1 :len 0 :macro pad-env  c)
+(sqr1 :len 0 (macro pad-env)  c)
 
 ; PCM texture loop — holds open until STOP_TRACK
 (pcm2 drone :mode loop :len 0
@@ -924,7 +917,7 @@ The compiler does need to:
 | §1.3 | Tempo change             | ✅ Decided | TEMPO_SET / TEMPO_SWEEP; see §1.3              |
 | §1.5 | `brown` / stochastic LUT | ✅ Decided | IIR spec, LUT generation; see §1.5             |
 | §1.5.2 | Step macros              | ✅ Decided | `:step` clock, `:semi` arp, `:keyon` gate; see §1.5.2 |
-| §1.5.3 | Track delay              | ✅ Decided | `:delay`/`:delay-vels` compile-time per-note echo; see §1.5.3 |
+| §1.5.3 | Track delay / echo       | ✅ Decided | `(delay ...)` overlay + `(echo ...)` lengthening replay, both relative; see §1.5.3 |
 | §1.5.4 | Velocity / volume → level | ✅ Decided | vel = 2 dB/step ladder (floors); vol/master mute at 0; see §1.5.4 |
 | §1.5.5 | Channel priority layering | ✅ Decided | `:prio` compile-time monophonic layering (lower = higher, default 8); replaces `:role`; see §1.5.5 |
 | §1.6 | PCM sample file system   | ✅ Decided | `def` sample model, WAV conv; see §1.6         |

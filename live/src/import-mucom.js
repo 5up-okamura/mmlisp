@@ -121,6 +121,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   if (state.decisionIdx == null) state.decisionIdx = 0;
   state.crossStack = state.crossStack || [];
   state.lfo = state.lfo || { on: false, delay: 0, clock: 0, amp: 0, amt: 0 };
+  state.echo = state.echo || {}; // shared across parts via partState; local for macros
   let comment = null; // verbatim `; …` trailing comment, kept for the output line
 
   let i = 0;
@@ -386,16 +387,23 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
-    // Echo ¥…/\… : `¥=n,n` defines the echo; a trailing `¥` after a note makes
-    // the channel sound a delayed copy of that note (these are the delay/echo
-    // channels). It occupies the channel's timeline, so emit an echo note of the
-    // same pitch/length — otherwise the channel runs short and drifts.
+    // Echo macro (¥/\, byte 0x5C). `\=n1,n2`: n1 = how many notes back to echo,
+    // n2 = volume reduction. A trailing `\` is one echo tap of the single note
+    // n1 positions back at vel-n2 -> (echo :vel 1 :by -n2 :back n1). The compiler
+    // replays that note (absolute pitch, so octaves come out right) and lengthens.
     if (c === "¥" || c === "\\") {
       i++;
-      if (body[i] === "=") { i++; while (i < n && /[0-9$+\-,.]/.test(body[i])) i++; continue; }
-      const list = stack[stack.length - 1];
-      const last = list[list.length - 1];
-      if (last && last.t === "note") push({ t: "note", letter: last.letter, acc: last.acc, len: last.len, echo: true });
+      if (body[i] === "=") {
+        i++;
+        const a = readInt() ?? 0;
+        let b = 0;
+        if (body[i] === ",") { i++; b = readInt() ?? 0; }
+        state.echo.back = Math.max(0, Math.min(9, a));
+        state.echo.drop = Math.max(0, b);
+        continue;
+      }
+      const back = state.echo.back ?? 1;
+      if (back > 0) push({ t: "echo", back, drop: state.echo.drop ?? 0 });
       continue;
     }
 
@@ -549,6 +557,9 @@ export function parseMucom(text) {
   // which spans forms. Returns, per letter, the decision for each `[` in order.
   const loopDecisions = scanLoopSpans(lines);
 
+  // The echo macro `\=n1,n2` is GLOBAL in mucom (usually set on the conductor
+  // part), so share one config object across every part.
+  const sharedEcho = {};
   const partState = (letter) => {
     if (!state.has(letter)) {
       state.set(letter, {
@@ -557,6 +568,7 @@ export function parseMucom(text) {
         decisionIdx: 0,
         crossStack: [], // open cross-line loops (labels), persists across lines
         lfo: { on: false, delay: 0, clock: 0, amp: 0, amt: 0 }, // software LFO (M), persists across lines
+        echo: sharedEcho, // shared: \=n1,n2 set in any part applies to all
       });
     }
     return state.get(letter);
@@ -774,15 +786,15 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "porta": {
         // mucom {from len to}: glide from the start pitch to the target over len.
-        // :glide-from needs an absolute octave (a bare note resolves to C4).
+        // (glide <from> <len>) — from needs an absolute octave (bare note = C4).
         const fromOct = ctx.oct + op.from.bo;
-        out.push(`:glide-from ${op.from.letter}${ACC(op.from.acc)}${fromOct}`);
+        const fromPitch = `${op.from.letter}${ACC(op.from.acc)}${fromOct}`;
+        const len = op.len ?? ctx.len ?? "4";
+        out.push(`(glide ${fromPitch} ${len})`);
         for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
         for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
-        const len = op.len ?? ctx.len ?? "4";
-        out.push(`:glide ${len}`);
         out.push(`${op.to.letter}${ACC(op.to.acc)}${op.len ?? ""}`);
-        out.push(":glide 0"); // one porta note only; following notes don't glide
+        out.push("(glide 0)"); // one porta note only; following notes don't glide
         break;
       }
       case "hwLfo":
@@ -824,7 +836,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           }
           out.push(name); // bare reference — the def already carries :macro
         } else {
-          out.push(`:macro :pitch ${spec}`);
+          out.push(`(macro :pitch ${spec})`);
         }
         break;
       }
@@ -849,7 +861,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
           out.push(name); // bare reference — the def carries :macro :vel*
         } else {
-          out.push(`:macro :vel* ${spec}`);
+          out.push(`(macro :vel* ${spec})`);
         }
         break;
       }
@@ -865,6 +877,23 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "velAdj": {
         const nv = clamp((ctx.vel ?? 12) + op.d, 0, 15);
         if (nv !== ctx.vel) { out.push(`:vel ${nv}`); ctx.vel = nv; }
+        break;
+      }
+      case "echo": {
+        // mucom `\` -> one echo tap of the single note `back` positions back at
+        // vel - drop. Define each distinct echo once as (def ecN (echo …)) and
+        // reference it by name — compact, like the LFO/envelope defs. Omit
+        // defaults (:by 0, :back 1).
+        let form = ":vel 1";
+        if (op.drop) form += ` :by ${-op.drop}`;
+        if (op.back !== 1) form += ` :back ${op.back}`;
+        if (ctx.echoRegistry) {
+          let name = ctx.echoRegistry.get(form);
+          if (!name) { name = `ec${ctx.echoRegistry.size + 1}`; ctx.echoRegistry.set(form, name); }
+          out.push(name);
+        } else {
+          out.push(`(echo ${form})`);
+        }
         break;
       }
       case "macroCall":
@@ -983,6 +1012,7 @@ export function mucomToMmlisp(parsed) {
   // (def lfoN :macro :pitch …) above the score, referenced by name.
   const lfoRegistry = new Map();
   const envRegistry = new Map(); // distinct SSG soft envelopes -> (def envN :macro :vel …)
+  const echoRegistry = new Map(); // distinct echoes -> (def ecN (echo …)), referenced by name
 
   // Macros become (def *n …); only those with supported content are kept.
   const usableMacros = new Set();
@@ -1016,7 +1046,7 @@ export function mucomToMmlisp(parsed) {
   const ctxByLetter = new Map();
   const letterCtx = (letter) => {
     if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in SSG_PARTS ? 6 : 5, len: null, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry });
+      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in SSG_PARTS ? 6 : 5, len: null, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry });
     }
     return ctxByLetter.get(letter);
   };
@@ -1039,11 +1069,12 @@ export function mucomToMmlisp(parsed) {
     f.text = toks.join(" ");
   }
 
-  // Emit the discovered LFO / envelope defs above the score (referenced by name).
-  if (lfoRegistry.size || envRegistry.size) {
+  // Emit the discovered LFO / envelope / echo defs above the score (by name).
+  if (lfoRegistry.size || envRegistry.size || echoRegistry.size) {
     const defLines = [];
-    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} :macro :pitch ${spec})`);
-    for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} :macro :vel* ${spec})`);
+    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro :pitch ${spec}))`);
+    for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} (macro :vel* ${spec}))`);
+    for (const [form, name] of echoRegistry) defLines.push("", `(def ${name} (echo ${form}))`);
     lines.splice(lfoDefAnchor, 0, ...defLines);
   }
 
