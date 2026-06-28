@@ -4,6 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MMLisp authoring environment</title>
+  <!-- Apply the saved theme before first paint so the loading screen (and the
+       app) come up in the right colors instead of flashing the defaults. Reads
+       the flat resolved-color cache written by applyColors(); absent on first
+       load, leaving the :root defaults below. Also exposes __hideLoading, used
+       by the ready hook and the error/timeout safety nets. -->
+  <script>
+    (function () {
+      try {
+        var c = JSON.parse(localStorage.getItem('mmlisp.theme.css') || 'null');
+        if (c && typeof c === 'object') {
+          var s = document.documentElement.style;
+          ['background', 'foreground', 'accent', 'error', 'contrast'].forEach(function (k) {
+            if (c[k]) s.setProperty('--' + k, c[k]);
+          });
+        }
+      } catch (_) {}
+      window.__hideLoading = function () {
+        var el = document.getElementById('loadingOverlay');
+        if (el) el.classList.add('is-loaded');
+      };
+    })();
+  </script>
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -744,6 +766,32 @@
       cursor: not-allowed;
     }
 
+    /* ---- loading overlay (covers the half-built UI until init is done) ---- */
+    #loadingOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--background);
+      opacity: 1;
+      transition: opacity 0.25s ease;
+    }
+    #loadingOverlay.is-loaded { opacity: 0; pointer-events: none; }
+    .loading-spinner {
+      width: 34px;
+      height: 34px;
+      border: 3px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: loading-spin 0.8s linear infinite;
+    }
+    @keyframes loading-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .loading-spinner { animation: none; }
+    }
+
     /* ---- modal (custom theme editor) ---- */
     .modal-overlay {
       position: fixed;
@@ -812,6 +860,9 @@
   </style>
 </head>
 <body>
+
+  <!-- Loading screen, hidden once the app is ready (see __hideLoading). -->
+  <div id="loadingOverlay" aria-hidden="true"><div class="loading-spinner"></div></div>
 
   <!-- Top bar -->
   <div id="topbar">
@@ -1074,11 +1125,15 @@
       window.addEventListener('error', function (e) {
         early('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown') +
           (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+        if (window.__hideLoading) window.__hideLoading(); // don't trap the log behind the spinner
       });
       window.addEventListener('unhandledrejection', function (e) {
         var r = e.reason;
         early('Unhandled rejection: ' + (r && r.message ? r.message : String(r)));
+        if (window.__hideLoading) window.__hideLoading();
       });
+      // Fallback: never leave the spinner up forever if init stalls (e.g. CDN).
+      setTimeout(function () { if (window.__hideLoading) window.__hideLoading(); }, 10000);
     })();
   </script>
 
@@ -3666,7 +3721,16 @@
       root.setProperty('--foreground', colors.foreground);
       root.setProperty('--accent', colors.accent);
       root.setProperty('--error', colors.error);
-      root.setProperty('--contrast', contrastPole(colors.background));
+      const contrast = contrastPole(colors.background);
+      root.setProperty('--contrast', contrast);
+      // Persist the resolved colors flat so the pre-paint head script can apply
+      // them before first paint (no theme math duplicated outside the module).
+      try {
+        localStorage.setItem('mmlisp.theme.css', JSON.stringify({
+          background: colors.background, foreground: colors.foreground,
+          accent: colors.accent, error: colors.error, contrast,
+        }));
+      } catch (_) {}
       // Canvases sample theme colors when they draw; repaint them on theme change.
       if (_themeReady) {
         drawAlgDiagram();
@@ -5206,6 +5270,7 @@
 
     _themeReady = true; // init done — applyColors may now repaint canvases on theme change
     log('Ready.', 'info');
+    window.__hideLoading?.(); // reveal the fully-built UI
   </script>
 </body>
 </html>
