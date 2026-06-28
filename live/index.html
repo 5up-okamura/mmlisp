@@ -233,6 +233,9 @@
       border-right: none;
       color: var(--mid);
     }
+    /* Playhead highlights are drawn as a layer of rectangles over the text (not
+       text spans), so they never affect line-wrap layout. */
+    .cm-playheadLayer { pointer-events: none; }
     /* Per-track playhead cursors — outline the sounding token (no fill) */
     .cm-playTok-0, .cm-playTok-1, .cm-playTok-2, .cm-playTok-3 {
       border-radius: 2px;
@@ -1093,8 +1096,8 @@
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
     // -----------------------------------------------------------------------
-    const { EditorView, Decoration, lineNumbers, keymap } = await import('https://esm.sh/@codemirror/view@6');
-    const { EditorState, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
+    const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker } = await import('https://esm.sh/@codemirror/view@6');
+    const { EditorState, EditorSelection, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { tags } = await import('https://esm.sh/@lezer/highlight@1');
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent } = await import('https://esm.sh/@codemirror/commands@6');
@@ -1204,20 +1207,36 @@
       },
     });
 
-    // Offsets in playheadField are already current (mapped in its update). Clamp
-    // defensively so a stale range can never throw and wipe all decorations.
-    const playheadDecorations = EditorView.decorations.compute([playheadField], (state) => {
-      const len = state.doc.length;
-      const v = state.field(playheadField);
-      const decos = [];
-      const add = (r) => {
-        const from = Math.max(0, Math.min(len, r.from));
-        const to = Math.max(0, Math.min(len, r.to));
-        if (from < to) decos.push(Decoration.mark({ class: r.cls }).range(from, to));
-      };
-      for (const r of v.seqs.values()) add(r);
-      for (const r of v.toks.values()) add(r);
-      return decos.length ? Decoration.set(decos, true) : Decoration.none;
+    // Draw playhead highlights as a layer of rectangles over the text rather than
+    // Decoration.mark spans. Marks split the text into inline boxes, which under
+    // lineWrapping can shift the soft-wrap point as highlights come and go; a
+    // layer never touches the text DOM, so the layout is unaffected.
+    const playheadLayer = layer({
+      above: true,
+      class: 'cm-playheadLayer',
+      update: (update) =>
+        update.docChanged ||
+        update.viewportChanged ||
+        update.geometryChanged ||
+        update.startState.field(playheadField) !== update.state.field(playheadField),
+      markers: (view) => {
+        const len = view.state.doc.length;
+        const v = view.state.field(playheadField);
+        const markers = [];
+        const add = (r) => {
+          const from = Math.max(0, Math.min(len, r.from));
+          const to = Math.max(0, Math.min(len, r.to));
+          if (from >= to) return;
+          try {
+            for (const m of RectangleMarker.forRange(view, r.cls, EditorSelection.range(from, to))) {
+              markers.push(m);
+            }
+          } catch (_) {}
+        };
+        for (const r of v.seqs.values()) add(r);
+        for (const r of v.toks.values()) add(r);
+        return markers;
+      },
     });
 
     // MMLisp StreamLanguage for syntax highlighting.
@@ -2512,7 +2531,7 @@
       syntaxHighlighting(mmlispHighlight),
       mmlispMode,
       playheadField,
-      playheadDecorations,
+      playheadLayer,
       lineNumbers(),
       codeFolding({
         preparePlaceholder: (state, range) => summarizeFoldHead(state, range),
