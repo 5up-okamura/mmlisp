@@ -821,7 +821,6 @@
       <div class="menu-dropdown">
         <button class="menu-item" onclick="newFile();closeMenus()">
           <span>New</span>
-          <span class="menu-item-shortcut" id="newFileShortcut"></span>
         </button>
         <button class="menu-item" onclick="openFile();closeMenus()">
           <span>Open…</span>
@@ -2501,7 +2500,6 @@
 
     function initShortcutLabels() {
       const shortcutLabels = [
-        ['newFileShortcut', 'Mod-n'],
         ['openFileShortcut', 'Mod-o'],
         ['saveFileShortcut', 'Mod-s'],
         ['saveFileAsShortcut', 'Mod-Shift-s'],
@@ -3808,10 +3806,7 @@
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
 
-      if (e.key === 'n' && !e.shiftKey) {
-        e.preventDefault();
-        newFile();
-      } else if (e.key === 'o' && !e.shiftKey) {
+      if (e.key === 'o' && !e.shiftKey) {
         e.preventDefault();
         await openFile();
       } else if (e.key === 's' && e.shiftKey) {
