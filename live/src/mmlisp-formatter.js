@@ -458,42 +458,96 @@ function formatList(node) {
   }
 
   {
+    // Build the keyword groups (consecutive pairs sharing a source line).
+    const groups = [];
     let i = pairOffset;
-    // Preserve source blank lines between keyword pairs, like the body section.
+    while (i < pairs.length) {
+      const sourceLine = pairs[i][0].line || 0;
+      const parts = [];
+      let trailingComment = null;
+      while (
+        i < pairs.length &&
+        (sourceLine === 0 || (pairs[i][0].line || 0) === sourceLine)
+      ) {
+        const [keyNode, valueNode, tc] = pairs[i];
+        parts.push({
+          keyText: formatNode(keyNode),
+          valueText: valueNode ? formatNode(valueNode) : null,
+        });
+        if (tc) trailingComment = tc;
+        i += 1;
+      }
+      const valueLine = pairs[i - 1][1]?.line || pairs[i - 1][0].line || sourceLine;
+      const hasMultiline = parts.some(
+        (p) => p.valueText && p.valueText.includes("\n"),
+      );
+      // Alignable rows must be plain key/value pairs on one line.
+      const alignable =
+        !trailingComment &&
+        !hasMultiline &&
+        parts.every((p) => p.valueText !== null);
+      groups.push({ sourceLine, valueLine, parts, trailingComment, hasMultiline, alignable });
+    }
+
+    // Two rows align when they share a key signature: the keys with trailing
+    // digits stripped (so :ar1/:ar2/… group as one table) and equal length.
+    const signature = (g) =>
+      g.parts.map((p) => p.keyText.replace(/\d+$/, "")).join(" ");
+
     let prevPairLine =
       pairOffset > 0
         ? pairs[pairOffset - 1][1]?.line || pairs[pairOffset - 1][0].line || 0
         : leadArgs.length > 0
           ? leadArgs[leadArgs.length - 1].line || 0
           : node.items[headIndex].line || 0;
-    while (i < pairs.length) {
-      // Group consecutive pairs that share the same source line.
-      const groupSourceLine = pairs[i][0].line || 0;
-      const groupParts = [];
-      let groupTrailingComment = null;
-      while (
-        i < pairs.length &&
-        (groupSourceLine === 0 || (pairs[i][0].line || 0) === groupSourceLine)
-      ) {
-        const [keyNode, valueNode, trailingComment] = pairs[i];
-        const keyText = formatNode(keyNode);
-        const valueText = valueNode ? formatNode(valueNode) : null;
-        groupParts.push({ keyText, valueText });
-        if (trailingComment) groupTrailingComment = trailingComment;
-        i += 1;
-      }
-
-      for (let g = 0; g < sourceGapBlanks(prevPairLine, groupSourceLine); g += 1) {
+    const pushBlanks = (line) => {
+      for (let b = 0; b < sourceGapBlanks(prevPairLine, line); b += 1) {
         lines.push("");
       }
-      prevPairLine = pairs[i - 1][1]?.line || pairs[i - 1][0].line || prevPairLine;
+    };
 
-      // If any value is multiline, fall back to one pair per line.
-      const hasMultiline = groupParts.some(
-        (p) => p.valueText && p.valueText.includes("\n"),
-      );
-      if (hasMultiline) {
-        for (const { keyText, valueText } of groupParts) {
+    let g = 0;
+    while (g < groups.length) {
+      // Extend an alignment run of same-signature alignable rows.
+      let end = g;
+      if (groups[g].alignable) {
+        const sig = signature(groups[g]);
+        while (
+          end + 1 < groups.length &&
+          groups[end + 1].alignable &&
+          signature(groups[end + 1]) === sig
+        ) {
+          end += 1;
+        }
+      }
+
+      if (end > g) {
+        // Align values column by column across the run (keys are equal width).
+        const numCols = groups[g].parts.length;
+        const valW = Array.from({ length: numCols }, (_, c) =>
+          Math.max(
+            ...Array.from({ length: end - g + 1 }, (_, r) =>
+              groups[g + r].parts[c].valueText.length,
+            ),
+          ),
+        );
+        for (let r = g; r <= end; r += 1) {
+          pushBlanks(groups[r].sourceLine);
+          const line = groups[r].parts
+            .map((p, c) => `${p.keyText} ${p.valueText.padStart(valW[c])}`)
+            .join(" ");
+          lines.push(`${childIndent}${line}`);
+          prevPairLine = groups[r].valueLine;
+        }
+        g = end + 1;
+        continue;
+      }
+
+      const grp = groups[g];
+      pushBlanks(grp.sourceLine);
+      prevPairLine = grp.valueLine;
+      if (grp.hasMultiline) {
+        for (const { keyText, valueText } of grp.parts) {
           if (valueText === null) {
             lines.push(`${childIndent}${keyText}`);
           } else if (!valueText.includes("\n")) {
@@ -507,14 +561,15 @@ function formatList(node) {
           }
         }
       } else {
-        const combined = groupParts
+        const combined = grp.parts
           .map((p) => (p.valueText === null ? p.keyText : `${p.keyText} ${p.valueText}`))
           .join(" ");
-        const suffix = groupTrailingComment
-          ? ` ${groupTrailingComment.value}`
+        const suffix = grp.trailingComment
+          ? ` ${grp.trailingComment.value}`
           : "";
         lines.push(`${childIndent}${combined}${suffix}`);
       }
+      g += 1;
     }
   }
 
