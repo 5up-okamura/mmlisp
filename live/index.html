@@ -491,6 +491,9 @@
       justify-self: center;
     }
     #fmParamSection.fm-disabled .alg-diagram { opacity: 0.4; }
+    /* per-operator ADSR envelope graph at the bottom of each op column */
+    .op-env { width: 100%; height: 30px; min-height: 30px; display: block; }
+    #fmParamSection.fm-disabled .op-env { opacity: 0.4; }
 
     /* FM panel disabled state */
     #fmParamSection.fm-disabled .knob-label,
@@ -3650,6 +3653,7 @@
       // Canvases sample theme colors when they draw; repaint them on theme change.
       if (_themeReady) {
         drawAlgDiagram();
+        for (let op = 1; op <= 4; op++) drawOpEnvelope(op);
         _vizColors = null; // piano roll re-samples colors on its next frame
       }
     }
@@ -4652,6 +4656,11 @@
         <label for="chk-amen${op}">AM</label>
       </div>`;
 
+      const env = document.createElement('canvas');
+      env.className = 'op-env';
+      env.id = `op-env-${op}`;
+      col.appendChild(env);
+
       for (const pp of OP_PARAMS) {
         const wrap = document.createElement('div');
         wrap.className = 'knob-wrap';
@@ -4668,6 +4677,50 @@
       opGridEl.appendChild(col);
     }
     syncParamUI(); // initialize sliders and op role colors on startup
+
+    // Draw operator op's ADSR envelope (from its TL/AR/DR/SL/SR/RR sliders).
+    function drawOpEnvelope(op) {
+      const c = document.getElementById(`op-env-${op}`);
+      const colEl = document.getElementById(`op-col-${op}`);
+      if (!c || !colEl) return;
+      const dpr = window.devicePixelRatio || 1;
+      const W = c.clientWidth, H = c.clientHeight;
+      if (W < 2 || H < 2) return;
+      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
+        c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+      }
+      const ctx = c.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      const v = (k) => parseInt(document.getElementById(`sl-op${op}-${k}`)?.value ?? '0', 10) || 0;
+      const tl = v('tl'), ar = v('ar'), dr = v('dr'), sl = v('sl'), d2r = v('d2r'), rr = v('rr');
+      const color = getComputedStyle(colEl).getPropertyValue('--op-color').trim() || '#7c9';
+
+      const pad = 2, x0 = pad, x1 = W - pad, y0 = pad, y1 = H - pad;
+      const peak = (127 - tl) / 127;          // 0..1 peak level after TL
+      const sus = peak * (15 - sl) / 15;      // sustain start level (SL)
+      const susEnd = sus * (1 - d2r / 31);    // after the secondary decay (SR)
+      const ta = (31 - ar) + 1;               // higher rate → shorter segment
+      const td = (31 - dr) + 1;
+      const ts = 16;                          // fixed sustain hold
+      const tr = (15 - rr) * 2 + 1;
+      const total = ta + td + ts + tr;
+      const tx = (t) => x0 + (t / total) * (x1 - x0);
+      const ly = (l) => y1 - l * (y1 - y0);
+      const pts = [[0, 0], [ta, peak], [ta + td, sus], [ta + td + ts, susEnd], [total, 0]];
+
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.18; ctx.lineWidth = 1;       // baseline
+      ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.globalAlpha = 0.25;                           // key-off marker (release start)
+      const koX = tx(ta + td + ts);
+      ctx.beginPath(); ctx.moveTo(koX, y0); ctx.lineTo(koX, y1); ctx.stroke();
+      ctx.globalAlpha = 0.9; ctx.lineWidth = 1.3;       // envelope curve
+      ctx.beginPath();
+      pts.forEach(([t, l], i) => { const X = tx(t), Y = ly(l); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
 
     // ---- sync slider display from player state ----
     function syncParamUI() {
@@ -4755,6 +4808,12 @@
         setSliderCached(`sl-op${op}-dt`,  `val-op${op}-dt`,  o.dt);
         setSliderCached(`sl-op${op}-rs`,  `val-op${op}-rs`,  o.rs);
         setSliderCached(`sl-op${op}-ssg`, `val-op${op}-ssg`, o.ssg);
+        // Redraw the envelope only when one of its parameters changed.
+        const envSig = `${o.tl},${o.ar},${o.dr},${o.sl},${o.d2r},${o.rr}`;
+        if (_fmSliderCache[`_env${op}`] !== envSig) {
+          _fmSliderCache[`_env${op}`] = envSig;
+          drawOpEnvelope(op);
+        }
       }
     }
 
@@ -5109,6 +5168,9 @@
       const paramName = slider.dataset.param;
       const val = parseInt(slider.value, 10);
       setDataBoundDisplayValue(slider, val);
+
+      const om = slider.id.match(/^sl-op(\d)-/);
+      if (om) drawOpEnvelope(+om[1]);
 
       const writeState = handleParamWriteByMode(paramName, val);
       if (writeState.handled) return;
