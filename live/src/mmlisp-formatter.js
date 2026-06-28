@@ -375,88 +375,10 @@ function collectLeadArgs(items, startIndex, headSymbol) {
   return { leadArgs, nextIndex: index };
 }
 
-function formatAlignedVectors(vectors) {
-  if (vectors.length === 0) return [];
-
-  const rows = vectors.map((vec) => {
-    if (vec.kind !== "list" || vec.bracket[0] !== "[") return null;
-    return vec.items.map((item) => {
-      const inline = nodeToInline(item);
-      return inline !== null ? inline : formatNode(item);
-    });
-  });
-
-  const validRows = rows.filter((r) => r !== null);
-  if (validRows.length === 0) return vectors.map((v) => formatNode(v));
-
-  const numCols = Math.max(...validRows.map((r) => r.length));
-  const colWidths = Array.from({ length: numCols }, (_, c) =>
-    Math.max(...validRows.map((r) => (c < r.length ? r[c].length : 0))),
-  );
-
-  return vectors.map((vec, i) => {
-    if (rows[i] === null) return formatNode(vec);
-    const padded = rows[i].map((item, c) =>
-      item.padStart(Math.max(2, colWidths[c])),
-    );
-    return `[${padded.join(" ")}]`;
-  });
-}
-
-function formatDefVoice(node) {
-  // (def <name> :fm [comment...] <ch-vec> [comment...] <op-vec>...)
-  const name = formatNode(node.items[1]);
-  const tag = node.items[2].value;
-
-  // Find ch-vec (first non-comment item after the tag), collecting any preceding comments
-  let chVecIdx = 3;
-  while (chVecIdx < node.items.length && isCommentNode(node.items[chVecIdx])) {
-    chVecIdx += 1;
-  }
-  const preChComments = node.items.slice(3, chVecIdx);
-  const chVec = node.items[chVecIdx];
-  const rest = node.items.slice(chVecIdx + 1); // comments + op vecs
-
-  const opVecs = rest.filter((n) => n.kind !== "comment");
-  const chInline = nodeToInline(chVec);
-  const chLine = chInline !== null ? chInline : formatNode(chVec);
-  const opLines = formatAlignedVectors(opVecs);
-
-  const lines = [`(def ${name} ${tag}`];
-  for (const c of preChComments) {
-    lines.push(`${INDENT}${c.value}`);
-  }
-  lines.push(`${INDENT}${chLine}`);
-
-  let opIdx = 0;
-  for (const item of rest) {
-    if (isCommentNode(item)) {
-      lines.push(`${INDENT}${item.value}`);
-    } else {
-      const suffix = opIdx === opVecs.length - 1 ? ")" : "";
-      lines.push(`${INDENT}${opLines[opIdx]}${suffix}`);
-      opIdx += 1;
-    }
-  }
-  if (opVecs.length === 0) {
-    lines.push(")");
-  }
-  return lines.join("\n");
-}
-
 function formatList(node) {
   const inline = nodeToInline(node);
   if (inline !== null) {
     return inline;
-  }
-
-  // Special case: (def <name> :fm <ch-vec> <op-vec>...)
-  if (
-    node.items[0].kind === "atom" &&
-    node.items[0].value === "def" &&
-    node.items.filter((n) => !isCommentNode(n))[2]?.value === ":fm"
-  ) {
-    return formatDefVoice(node);
   }
 
   const open = node.bracket[0];
