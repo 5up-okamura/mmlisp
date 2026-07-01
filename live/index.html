@@ -164,6 +164,7 @@
       text-align: left;
       white-space: nowrap;
     }
+    .menu-sep { height: 0; border-top: 1px solid var(--mid); margin: 0.25rem 0; }
     .menu-item-shortcut {
       color: var(--mid);
     }
@@ -856,6 +857,13 @@
       gap: 0.5rem;
       margin-top: 1rem;
     }
+    /* About / Licenses info modals */
+    .info-modal { max-width: min(460px, 90vw); }
+    .info-body { color: var(--foreground); font-size: 0.72rem; line-height: 1.55; }
+    .info-body p { margin: 0 0 0.6rem; }
+    .info-body a { color: var(--accent); }
+    .license-row { margin: 0 0 0.55rem; }
+    .license-row b { color: var(--foreground); }
 
   </style>
 </head>
@@ -866,6 +874,42 @@
 
   <!-- Top bar -->
   <div id="topbar">
+    <!-- MMLisp menu (app info + preferences) -->
+    <div class="menu-wrap" id="menuMMLisp">
+      <button class="menu-btn" onclick="toggleMenu('menuMMLisp')">MMLisp</button>
+      <div class="menu-dropdown">
+        <button class="menu-item" onclick="openInfoModal('aboutModal')">
+          <span>About MMLisp</span>
+        </button>
+        <button class="menu-item" onclick="openInfoModal('licenseModal')">
+          <span>Licenses</span>
+        </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="toggleAnalogLpf();closeMenus()">
+          <span>Analog LPF</span>
+          <span class="menu-item-shortcut" id="analogLpfCheck"></span>
+        </button>
+        <div class="menu-wrap submenu-wrap" id="menuMMLispViz">
+          <button class="menu-item" onclick="toggleSubmenu('menuMMLispViz')">
+            <span>Visualizer</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="vizMenuList">
+            <!-- Off / Piano Roll injected by buildVizMenu() -->
+          </div>
+        </div>
+        <div class="menu-wrap submenu-wrap" id="menuMMLispTheme">
+          <button class="menu-item" onclick="toggleSubmenu('menuMMLispTheme')">
+            <span>Theme</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="themeMenuList">
+            <!-- preset items + Custom… injected by buildThemeMenu() -->
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- File menu -->
     <div class="menu-wrap" id="menuFile">
       <button class="menu-btn" onclick="toggleMenu('menuFile')">File</button>
@@ -945,23 +989,6 @@
           </button>
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="insertSnippetFmVoice();closeMenus()">FM Voice Template</button>
-          </div>
-        </div>
-        <button class="menu-item" onclick="toggleAnalogLpf();closeMenus()">
-          <span>Analog LPF</span>
-          <span class="menu-item-shortcut" id="analogLpfCheck"></span>
-        </button>
-        <button class="menu-item" onclick="togglePianoRoll();closeMenus()">
-          <span>Piano Roll</span>
-          <span class="menu-item-shortcut" id="pianoRollCheck"></span>
-        </button>
-        <div class="menu-wrap submenu-wrap" id="menuToolsTheme">
-          <button class="menu-item" onclick="toggleSubmenu('menuToolsTheme')">
-            <span>Theme</span>
-            <span class="submenu-arrow" aria-hidden="true"></span>
-          </button>
-          <div class="menu-dropdown submenu-dropdown" id="themeMenuList">
-            <!-- preset items + Custom… injected by buildThemeMenu() -->
           </div>
         </div>
       </div>
@@ -1100,6 +1127,61 @@
       <div class="modal-actions">
         <button class="tb-btn" onclick="resetCustomTheme()">Reset</button>
         <button class="tb-btn" onclick="closeThemeModal()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- About -->
+  <div id="aboutModal" class="modal-overlay" hidden>
+    <div class="modal info-modal">
+      <div class="modal-title">About MMLisp</div>
+      <div class="info-body">
+        <p><b>MMLisp</b> — a Lisp-like DSL for composing expressive, interactive
+        music for the Sega Mega Drive (YM2612 FM + PSG).</p>
+        <p>Version v0.5<br>
+        © 2026 Hiroshi Okamura (5&amp;UP Inc.) — MIT License</p>
+        <p><a href="https://github.com/5up-okamura/mmlisp" target="_blank" rel="noopener">github.com/5up-okamura/mmlisp</a></p>
+        <p>Sound emulation by Nuked-OPN2 &amp; Nuked-PSG — see
+        <a href="#" onclick="closeInfoModal('aboutModal');openInfoModal('licenseModal');return false;">Licenses</a>.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="closeInfoModal('aboutModal')">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Licenses -->
+  <div id="licenseModal" class="modal-overlay" hidden>
+    <div class="modal info-modal">
+      <div class="modal-title">Licenses</div>
+      <div class="info-body">
+        <div class="license-row">
+          <b>MMLisp</b> — MIT · © 2026 Hiroshi Okamura (5&amp;UP Inc.)<br>
+          <a href="/LICENSE" target="_blank" rel="noopener">License</a>
+        </div>
+        <div class="license-row">
+          <b>Nuked-OPN2</b> (YM2612 emulation) — LGPL-2.1 · © 2017–2022 Alexey Khokholov (Nuke.YKT)<br>
+          <a href="/third_party/Nuked-OPN2/LICENSE" target="_blank" rel="noopener">License</a> ·
+          <a href="https://github.com/nukeykt/Nuked-OPN2" target="_blank" rel="noopener">Source</a>
+        </div>
+        <div class="license-row">
+          <b>Nuked-PSG</b> (PSG emulation) — GPL-2.0-or-later · © 2021 Nuke.YKT<br>
+          <a href="/third_party/Nuked-PSG/LICENSE" target="_blank" rel="noopener">License</a> ·
+          <a href="https://github.com/nukeykt/Nuked-PSG" target="_blank" rel="noopener">Source</a>
+        </div>
+        <div class="license-row">
+          <b>CodeMirror 6</b> — MIT ·
+          <a href="https://codemirror.net/LICENSE" target="_blank" rel="noopener">License</a>
+        </div>
+        <div class="license-row">
+          <b>Open Sans</b> — Apache-2.0 ·
+          <a href="https://fonts.google.com/specimen/Open+Sans/about" target="_blank" rel="noopener">About</a>
+        </div>
+        <p>Corresponding source for this application and its GPL/LGPL components:
+        <a href="https://github.com/5up-okamura/mmlisp" target="_blank" rel="noopener">github.com/5up-okamura/mmlisp</a></p>
+      </div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="closeInfoModal('licenseModal')">Done</button>
       </div>
     </div>
   </div>
@@ -3826,6 +3908,14 @@
     document.getElementById('themeModal').addEventListener('click', (e) => {
       if (e.target.id === 'themeModal') closeThemeModal();
     });
+    // Generic info modals (About / Licenses): open/close by id, close on overlay click.
+    window.openInfoModal = (id) => { closeMenus(); document.getElementById(id).hidden = false; };
+    window.closeInfoModal = (id) => { document.getElementById(id).hidden = true; };
+    for (const id of ['aboutModal', 'licenseModal']) {
+      document.getElementById(id).addEventListener('click', (e) => {
+        if (e.target.id === id) window.closeInfoModal(id);
+      });
+    }
     window.setTheme = setTheme;
     window.openThemeModal = openThemeModal;
     window.closeThemeModal = closeThemeModal;
@@ -5179,19 +5269,27 @@
       const c = document.getElementById('vizCanvas');
       if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
     }
-    function updatePianoRollCheck() {
-      const el = document.getElementById('pianoRollCheck');
-      if (el) el.textContent = pianoRollOn ? '✓' : '';
+    // Visualizer modes — 'off' | 'pianoroll' (oscilloscope etc. may be added later).
+    const VIZ_MODES = [['off', 'Off'], ['pianoroll', 'Piano Roll']];
+    function buildVizMenu() {
+      const list = document.getElementById('vizMenuList');
+      if (!list) return;
+      const cur = pianoRollOn ? 'pianoroll' : 'off';
+      list.innerHTML = VIZ_MODES.map(([id, name]) =>
+        `<button class="menu-item" onclick="setVisualizer('${id}');closeMenus()"><span>${name}</span><span class="menu-item-shortcut">${cur === id ? '✓' : ''}</span></button>`
+      ).join('');
     }
-    function togglePianoRoll() {
-      pianoRollOn = !pianoRollOn;
-      updatePianoRollCheck();
-      document.getElementById('editorWrap')?.classList.toggle('viz-on', pianoRollOn);
-      // 'off' | 'pianoroll' (oscilloscope and other modes may be added later).
-      savePref('visualizer', pianoRollOn ? 'pianoroll' : 'off');
-      if (pianoRollOn) startPianoRoll(); else stopPianoRoll();
+    function setVisualizer(mode) {
+      const on = mode === 'pianoroll';
+      if (on !== pianoRollOn) {
+        pianoRollOn = on;
+        document.getElementById('editorWrap')?.classList.toggle('viz-on', pianoRollOn);
+        savePref('visualizer', on ? 'pianoroll' : 'off');
+        if (pianoRollOn) startPianoRoll(); else stopPianoRoll();
+      }
+      buildVizMenu();
     }
-    window.togglePianoRoll = togglePianoRoll;
+    window.setVisualizer = setVisualizer;
 
     const _vizResizeObs = new ResizeObserver(() => { if (pianoRollOn) resizeVizCanvas(); });
     _vizResizeObs.observe(document.getElementById('editorWrap'));
@@ -5266,7 +5364,7 @@
     initKeyboardControls();
 
     // Restore persisted visualizer selection (piano roll is the only mode yet).
-    if (loadPref('visualizer', 'off') === 'pianoroll') togglePianoRoll();
+    setVisualizer(loadPref('visualizer', 'off'));
 
     _themeReady = true; // init done — applyColors may now repaint canvases on theme change
     log('Ready.', 'info');
