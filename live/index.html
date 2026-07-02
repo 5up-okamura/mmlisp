@@ -534,8 +534,9 @@
       height: 100%;
       min-height: 58px;
       justify-self: center;
+      cursor: pointer; /* click to preview the last-played note */
     }
-    #fmParamSection.fm-disabled .alg-diagram { opacity: 0.4; }
+    #fmParamSection.fm-disabled .alg-diagram { opacity: 0.4; cursor: default; }
     /* per-operator ADSR envelope graph at the bottom of each op column */
     .op-env { width: 100%; height: 30px; min-height: 30px; display: block; }
     #fmParamSection.fm-disabled .op-env { opacity: 0.4; }
@@ -1097,7 +1098,7 @@
             <div class="knob-label">FMS <span class="val" id="val-fms">0</span></div>
             <input type="range" id="sl-fms" min="0" max="7" value="0" oninput="onChParam('FM_FMS', this)">
           </div>
-          <canvas id="algDiagram" class="alg-diagram"></canvas>
+          <canvas id="algDiagram" class="alg-diagram" title="Click to preview (last note)"></canvas>
         </div>
         <div class="op-grid" id="opGrid"></div>
         </div>
@@ -3189,6 +3190,17 @@
     let _kbBaseOctave = 3;
     let _kbAppliedDefSig = null;
     const _kbPointerMap = new Map();
+    const _kbPhysicalMap = new Map();      // physical-keyboard note down: e.code → { chIndex, midi }
+    let _lastPreviewMidi = 60;             // last previewed pitch (initial C4 = MIDI 60)
+    let _algPreviewTimer = null;           // fixed-gate timer for the algorithm-diagram tap preview
+    const PREVIEW_GATE_MS = 600;           // tap-preview note length (long enough to hear sustain/release)
+    // Physical-keyboard piano, single-row DAW layout, keyed by e.code (layout-independent).
+    // Semitone offset above the base octave's C.
+    const KB_PHYSICAL_LAYOUT = {
+      KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7,
+      KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14,
+      KeyP: 15, Semicolon: 16,
+    };
 
     const KB_MIN_BASE_OCT = 1;
     const KB_MAX_BASE_OCT = 6;
@@ -4459,6 +4471,13 @@
       previewFmNoteOff(chIndex);
     }
 
+    // Single entry point for note-on so every preview surface (on-screen keyboard,
+    // physical keyboard, algorithm-diagram tap) records the last-played pitch.
+    function startPreviewNote(chIndex, midi) {
+      _lastPreviewMidi = midi;
+      previewNoteOn(chIndex, midi);
+    }
+
     function midiToStepToken(midi) {
       const names = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
       const note = ((midi % 12) + 12) % 12;
@@ -4557,7 +4576,7 @@
         }
         info.btn?.classList.remove('down');
 
-        previewNoteOn(info.chIndex, nextMidi);
+        startPreviewNote(info.chIndex, nextMidi);
         nextBtn.classList.add('down');
 
         info.btn = nextBtn;
@@ -4626,7 +4645,7 @@
           }
         }
 
-        previewNoteOn(target.chIndex, midi);
+        startPreviewNote(target.chIndex, midi);
         if (_stepInputEnabled) {
           insertStepToken(midiToStepToken(midi));
         }
@@ -4724,7 +4743,102 @@
       } else if (typeof _kbPcLikeQuery.addListener === 'function') {
         _kbPcLikeQuery.addListener(onViewportModeChange);
       }
+
+      // Physical-keyboard piano (only while the editor is not focused) and the
+      // click-to-preview algorithm diagram. Both reuse the same preview path as
+      // the on-screen keyboard.
+      document.addEventListener('keydown', onPhysicalKeyDown);
+      document.addEventListener('keyup', onPhysicalKeyUp);
+      window.addEventListener('blur', releaseAllPhysicalNotes);
+      document.getElementById('algDiagram')?.addEventListener('pointerdown', onAlgDiagramPointerDown);
+
       buildKeyboardKeys();
+    }
+
+    // True while the user is typing (CodeMirror or any input/textarea/editable),
+    // so the physical-keyboard piano stays out of the way of text entry.
+    function isEditableTargetFocused() {
+      if (editorView?.hasFocus) return true;
+      const el = document.activeElement;
+      if (!el) return false;
+      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+    }
+
+    // Push the cursor-def voice onto the preview channel before auditioning, with
+    // the same signature cache the on-screen keyboard uses.
+    function ensurePreviewDefApplied(target) {
+      if (!target.useCursorDef) return;
+      const sig = JSON.stringify(target.defCtx.regs);
+      if (_kbAppliedDefSig !== sig) {
+        applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
+        _kbAppliedDefSig = sig;
+      }
+    }
+
+    async function onPhysicalKeyDown(e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return; // leave modifier shortcuts alone
+      if (e.repeat) return;                            // ignore auto-repeat
+      const semi = KB_PHYSICAL_LAYOUT[e.code];
+      if (semi === undefined) return;                  // not a piano key
+      if (isEditableTargetFocused()) return;           // typing, not playing
+      if (_kbPhysicalMap.has(e.code)) return;          // already held
+
+      e.preventDefault();
+      const target = getKeyboardTargetContext();
+      if (!target) return;
+      const midi = (_kbBaseOctave + 1) * 12 + semi;
+
+      // Reserve the slot before the async init so a keyup during init can cancel it.
+      const entry = { chIndex: target.chIndex, midi };
+      _kbPhysicalMap.set(e.code, entry);
+      const ok = await initAudio();
+      if (!ok) { _kbPhysicalMap.delete(e.code); return; }
+      if (_kbPhysicalMap.get(e.code) !== entry) return; // released during init
+
+      ensurePreviewDefApplied(target);
+      startPreviewNote(target.chIndex, midi);
+      if (_stepInputEnabled) insertStepToken(midiToStepToken(midi));
+    }
+
+    function onPhysicalKeyUp(e) {
+      const info = _kbPhysicalMap.get(e.code);
+      if (!info) return;
+      _kbPhysicalMap.delete(e.code);
+      previewNoteOff(info.chIndex);
+    }
+
+    function releaseAllPhysicalNotes() {
+      for (const info of _kbPhysicalMap.values()) previewNoteOff(info.chIndex);
+      _kbPhysicalMap.clear();
+    }
+
+    // Fire on pointer-down (not click) for immediate response. pointerdown grants
+    // user activation, so initAudio() inside previewLastNoteTap still resumes audio
+    // — the on-screen keyboard relies on the same behavior.
+    function onAlgDiagramPointerDown(e) {
+      if (e.button != null && e.button !== 0) return; // primary button / touch only
+      e.preventDefault();
+      previewLastNoteTap();
+    }
+
+    // Algorithm-diagram tap: preview the last-played note (initial C4) with a fixed
+    // gate so the current voice can be re-auditioned without the keyboard.
+    async function previewLastNoteTap() {
+      const target = getKeyboardTargetContext();
+      if (!target) return;
+      const ok = await initAudio();
+      if (!ok) return;
+      ensurePreviewDefApplied(target);
+      if (_algPreviewTimer) {           // stop the previous tap before retriggering
+        clearTimeout(_algPreviewTimer);
+        previewNoteOff(target.chIndex);
+        _algPreviewTimer = null;
+      }
+      startPreviewNote(target.chIndex, _lastPreviewMidi);
+      _algPreviewTimer = setTimeout(() => {
+        previewNoteOff(target.chIndex);
+        _algPreviewTimer = null;
+      }, PREVIEW_GATE_MS);
     }
 
     function fmParamToDefKey(paramName) {
