@@ -38,7 +38,7 @@ emcc \
   -s ENVIRONMENT=web,worker \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s FILESYSTEM=0 \
-  -s EXPORTED_FUNCTIONS='["_malloc","_free","_nopn_init","_nopn_reset","_nopn_write_reg","_nopn_render","_nopn_get_buffer_ptr","_nopn_get_native_sample_rate","_nopn_set_dac_enabled","_nopn_set_dac_sample"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_nopn_init","_nopn_reset","_nopn_write_reg","_nopn_render","_nopn_get_buffer_ptr","_nopn_get_channel_buffer_ptr","_nopn_get_native_sample_rate","_nopn_set_dac_enabled","_nopn_set_dac_sample"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAP16"]' \
   -o "$out_file"
 

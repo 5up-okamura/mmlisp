@@ -7,6 +7,10 @@
 
 static ym3438_t g_chip;
 static int16_t g_buffer[NOPN_MAX_RENDER_SAMPLES * 2];
+// Per-channel oscilloscope taps, interleaved [sample][channel 0..5]. Filled
+// alongside g_buffer on every render from the core's ch_out state (9-bit
+// signed, -256..255). Channel 6 carries the DAC byte while the DAC is on.
+static int16_t g_ch_buffer[NOPN_MAX_RENDER_SAMPLES * 6];
 static int g_initialized = 0;
 
 // DAC streaming state. When enabled, FM channel 6 is replaced by the value of
@@ -77,6 +81,10 @@ int nopn_get_buffer_ptr(void) {
   return (int)(uintptr_t)g_buffer;
 }
 
+int nopn_get_channel_buffer_ptr(void) {
+  return (int)(uintptr_t)g_ch_buffer;
+}
+
 double nopn_get_native_sample_rate(void) {
   return 7670454.0 / 144.0;
 }
@@ -112,6 +120,17 @@ int nopn_render(int sample_count) {
     }
     g_buffer[sample_index * 2] = (int16_t)(acc_l / NOPN_CLOCKS_PER_SAMPLE);
     g_buffer[sample_index * 2 + 1] = (int16_t)(acc_r / NOPN_CLOCKS_PER_SAMPLE);
+
+    // Per-channel scope taps: after a full 24-clock sample every channel's
+    // ch_out holds the value computed for this sample. With the DAC on,
+    // channel 6's slot in the mix is the DAC byte, so tap dacdata instead.
+    int16_t *ch_tap = &g_ch_buffer[sample_index * 6];
+    for (int c = 0; c < 6; c++) {
+      ch_tap[c] = g_chip.ch_out[c];
+    }
+    if (g_dac_enabled) {
+      ch_tap[5] = g_chip.dacdata;
+    }
   }
 
   return sample_count;

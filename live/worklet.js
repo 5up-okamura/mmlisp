@@ -11,8 +11,17 @@
  *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, vel: number, mode: 'shot'|'loop' }
  *   { type: 'pcm-note-off', when: number, sample: string }
  *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
+ *   { type: 'scope-enable', on: boolean }
+ *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
  *   { type: 'reset' }
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
+ *
+ * Messages to the main thread include (while scope is enabled):
+ *   { type: 'scope', sampleRate, freq: number[10], fm6IsDac: boolean,
+ *     ch: [ArrayBuffer × 10] }  — SCOPE_FLUSH output-rate samples per channel
+ *     (FM 1-6, PSG tone 1-3, noise), buffers transferred; post them back via
+ *     'scope-return' to avoid reallocation. freq[c] is the pitch latched from
+ *     the channel's register writes (Hz, 0 = unknown/unpitched).
  */
 
 // The Mega Drive chip-synthesis DSP (FM resample, PSG decimate + DC block, mix,
@@ -23,9 +32,12 @@ import {
   MegaDriveSynth,
   NUKED_NATIVE_SAMPLE_RATE,
   MD_LPF_DEFAULT_CUTOFF,
+  SCOPE_CHANNELS,
 } from "./src/synth-md.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
+const SCOPE_FLUSH = 1024; // scope samples per batch posted to the main thread
+const PSG_CLOCK = 3579545; // NTSC Z80 clock driving the PSG
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
@@ -55,6 +67,21 @@ class YM2612Processor extends AudioWorkletProcessor {
     // before the cores load still takes effect.
     this._lpfOn = false;
     this._lpfCutoff = MD_LPF_DEFAULT_CUTOFF;
+
+    // Oscilloscope: per-channel tap accumulation + per-channel pitch latches.
+    // Enabled by 'scope-enable'; every SCOPE_FLUSH samples the batch is posted
+    // with its buffers transferred, and the main thread recycles them back via
+    // 'scope-return'. Pitch latches always run (they're a few compares per
+    // register write) so a scope enabled mid-note shows the right period.
+    this._scopeOn = false;
+    this._scopeScratch = null; // SCOPE_CHANNELS per-block tap arrays
+    this._scopeBufs = null; // SCOPE_CHANNELS flush-batch arrays (lazy)
+    this._scopePos = 0;
+    this._scopePool = []; // recycled ArrayBuffers from 'scope-return'
+    this._scopeFreq = new Float64Array(SCOPE_CHANNELS); // Hz, 0 = unknown
+    this._fmFnumHi = new Uint8Array(6); // latched 0xA4+c (block/fnum-hi)
+    this._psgTone = new Uint16Array(3); // 10-bit tone periods
+    this._psgLatch = 0; // last PSG latch byte
 
     // FM/PSG register write queues. Drained block-quantized in process().
     this._writeQueue = []; // untimed: [{port, addr, data}]
@@ -151,6 +178,17 @@ class YM2612Processor extends AudioWorkletProcessor {
         const c = Number(msg.cutoffHz);
         if (Number.isFinite(c) && c > 0) this._lpfCutoff = c;
         this._synth?.setLpf(this._lpfOn, this._lpfCutoff);
+      } else if (msg.type === "scope-enable") {
+        this._scopeOn = !!msg.on;
+        this._scopeBufs = null;
+        this._scopePos = 0;
+      } else if (msg.type === "scope-return") {
+        for (const b of msg.ch || []) {
+          // Cap the pool at a few in-flight batches so a disable can't leak.
+          if (b instanceof ArrayBuffer && this._scopePool.length < 4 * SCOPE_CHANNELS) {
+            this._scopePool.push(b);
+          }
+        }
       } else if (msg.type === "reset") {
         this._synth?.reset();
         this._writeQueue = [];
@@ -161,6 +199,10 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._pcmVoices = [];
         this._pcmSamples = new Map();
         this._pcmTrackGain = new Map();
+        this._scopeFreq.fill(0);
+        this._fmFnumHi.fill(0);
+        this._psgTone.fill(0);
+        this._psgLatch = 0;
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap)
         this._timedQueue = [];
@@ -192,8 +234,62 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   _drainImmediateYmWrites() {
     this._drainImmediateQueue(this._writeQueue, (op) => {
-      this._synth.writeYM(op.port ?? 0, op.addr, op.data);
+      this._applyYmWrite(op.port ?? 0, op.addr, op.data);
     });
+  }
+
+  // Apply a YM register write, latching per-channel pitch on the way in.
+  _applyYmWrite(port, addr, data) {
+    this._latchYmPitch(port ?? 0, addr & 0xff, data & 0xff);
+    this._synth.writeYM(port ?? 0, addr, data);
+  }
+
+  // Apply a PSG byte, latching tone-channel pitch on the way in.
+  _applyPsgWrite(data) {
+    this._latchPsgPitch(data & 0xff);
+    this._synth.writePSG(data);
+  }
+
+  // FM pitch latch: 0xA4+c holds block/fnum-hi until the 0xA0+c write applies
+  // the pair (hardware latch order). Channel = port*3 + register offset.
+  _latchYmPitch(port, addr, data) {
+    if (addr >= 0xa4 && addr <= 0xa6) {
+      this._fmFnumHi[(port ? 3 : 0) + (addr - 0xa4)] = data;
+    } else if (addr >= 0xa0 && addr <= 0xa2) {
+      const ch = (port ? 3 : 0) + (addr - 0xa0);
+      const hi = this._fmFnumHi[ch];
+      const fnum = ((hi & 7) << 8) | data;
+      const block = (hi >> 3) & 7;
+      // freq = fnum * 2^(block-1) * (chip clock / 144) / 2^20
+      this._scopeFreq[ch] = fnum
+        ? (fnum * Math.pow(2, block - 1) * NUKED_NATIVE_SAMPLE_RATE) / (1 << 20)
+        : 0;
+    }
+  }
+
+  // PSG pitch latch: SN76489 latch/data protocol. Tone period low nibble rides
+  // the latch byte; a following data byte supplies the upper 6 bits.
+  _latchPsgPitch(data) {
+    if (data & 0x80) {
+      this._psgLatch = data;
+      const ch = (data >> 5) & 3;
+      if (!(data & 0x10) && ch < 3) {
+        this._psgTone[ch] = (this._psgTone[ch] & 0x3f0) | (data & 0x0f);
+        this._updatePsgFreq(ch);
+      }
+    } else {
+      const latch = this._psgLatch;
+      const ch = (latch >> 5) & 3;
+      if (!(latch & 0x10) && ch < 3) {
+        this._psgTone[ch] = (this._psgTone[ch] & 0x00f) | ((data & 0x3f) << 4);
+        this._updatePsgFreq(ch);
+      }
+    }
+  }
+
+  _updatePsgFreq(ch) {
+    const n = this._psgTone[ch] || 0x400; // period 0 counts as 0x400
+    this._scopeFreq[6 + ch] = PSG_CLOCK / (32 * n);
   }
 
   _startPcmVoice(msg) {
@@ -334,13 +430,13 @@ class YM2612Processor extends AudioWorkletProcessor {
     // Apply this block's register writes up front (block-quantized timing).
     this._drainImmediateYmWrites();
     this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
-      synth.writeYM(op.port, op.addr, op.data);
+      this._applyYmWrite(op.port, op.addr, op.data);
     });
     this._drainImmediateQueue(this._psgWriteQueue, (data) => {
-      synth.writePSG(data);
+      this._applyPsgWrite(data);
     });
     this._drainTimedQueue(this._psgTimedQueue, blockEnd, (op) => {
-      synth.writePSG(op.data);
+      this._applyPsgWrite(op.data);
     });
 
     // Drain timed PCM commands
@@ -358,9 +454,64 @@ class YM2612Processor extends AudioWorkletProcessor {
     // All writes for the block are already applied, so the synth renders the
     // PSG block in one call (onFrame omitted); the DAC byte is mixed per FM
     // native sample via _getDacByte.
-    synth.renderInto(outL, outR, blockSize, null, this._getDacByte);
+    const scope = this._scopeOn ? this._scopeScratchFor(blockSize) : null;
+    synth.renderInto(outL, outR, blockSize, null, this._getDacByte, scope);
+    if (scope) this._scopeAccumulate(scope, blockSize);
 
     return true; // keep processor alive
+  }
+
+  _scopeScratchFor(blockSize) {
+    if (!this._scopeScratch || this._scopeScratch[0].length !== blockSize) {
+      this._scopeScratch = Array.from(
+        { length: SCOPE_CHANNELS },
+        () => new Float32Array(blockSize),
+      );
+    }
+    return this._scopeScratch;
+  }
+
+  // Append this block's taps to the flush batch; post (with buffer transfer)
+  // whenever SCOPE_FLUSH samples are ready. Handles blocks that straddle a
+  // flush boundary, so any render quantum size works.
+  _scopeAccumulate(scope, blockSize) {
+    let src = 0;
+    while (src < blockSize) {
+      if (!this._scopeBufs) {
+        this._scopeBufs = [];
+        for (let c = 0; c < SCOPE_CHANNELS; c++) {
+          const recycled = this._scopePool.pop();
+          this._scopeBufs.push(
+            recycled && recycled.byteLength === SCOPE_FLUSH * 4
+              ? new Float32Array(recycled)
+              : new Float32Array(SCOPE_FLUSH),
+          );
+        }
+        this._scopePos = 0;
+      }
+      const n = Math.min(blockSize - src, SCOPE_FLUSH - this._scopePos);
+      for (let c = 0; c < SCOPE_CHANNELS; c++) {
+        const chunk =
+          src === 0 && n === blockSize ? scope[c] : scope[c].subarray(src, src + n);
+        this._scopeBufs[c].set(chunk, this._scopePos);
+      }
+      this._scopePos += n;
+      src += n;
+      if (this._scopePos >= SCOPE_FLUSH) {
+        const buffers = this._scopeBufs.map((b) => b.buffer);
+        this._scopeBufs = null;
+        this.port.postMessage(
+          {
+            type: "scope",
+            sampleRate,
+            freq: Array.from(this._scopeFreq),
+            fm6IsDac: this._pcmVoices.length > 0,
+            ch: buffers,
+          },
+          buffers,
+        );
+      }
+    }
   }
 }
 

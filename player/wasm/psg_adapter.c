@@ -10,8 +10,15 @@
 #define PSG_CLOCK_DIV 16.0
 #define PSG_MAX_RENDER_SAMPLES 4096
 
+// Nuked-PSG's DAC table (ympsg.c, external linkage): attenuator level → output
+// level. Per-channel taps reuse it to split YMPSG_GetOutput's 4-channel sum.
+extern const float ympsg_vol[17];
+
 static ympsg_t g_chip;
 static float g_buffer[PSG_MAX_RENDER_SAMPLES];
+// Per-channel oscilloscope taps, interleaved [sample][channel 0..3]
+// (tone 1-3, noise). Same scale as one term of the mixed g_buffer sum.
+static float g_ch_buffer[PSG_MAX_RENDER_SAMPLES * 4];
 static int g_initialized = 0;
 
 static void psg_ensure_init(void) {
@@ -44,6 +51,10 @@ int psg_get_buffer_ptr(void) {
   return (int)(uintptr_t)g_buffer;
 }
 
+int psg_get_channel_buffer_ptr(void) {
+  return (int)(uintptr_t)g_ch_buffer;
+}
+
 double psg_get_native_sample_rate(void) {
   return PSG_MASTER_CLOCK / PSG_CLOCK_DIV;
 }
@@ -65,6 +76,13 @@ int psg_render(int sample_count) {
     int32_t v = 0;
     YMPSG_Generate(&g_chip, &v);
     g_buffer[i] = (float)v / 8192.0f;
+
+    // Per-channel scope taps: volume_out reflects the sample just generated
+    // (YMPSG_Generate ends with YMPSG_GetOutput, which updates it).
+    float *ch_tap = &g_ch_buffer[i * 4];
+    for (int c = 0; c < 4; c++) {
+      ch_tap[c] = ympsg_vol[g_chip.volume_out[c]];
+    }
   }
 
   return sample_count;

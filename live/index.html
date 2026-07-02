@@ -3119,7 +3119,7 @@
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
         buildChStrips(ir);
-        if (pianoRollOn && _fmLiveRaf == null) rebuildVizNotes(); // refresh roll preview while editing stopped
+        if (_vizMode !== 'off' && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
         // When not playing, show the score's starting tempo (the loop drives it live).
         if (_fmLiveRaf == null) updateTempoDisplay(irInitialBpm(ir));
         // Anchor playhead highlights to the document this IR was compiled from.
@@ -3173,7 +3173,7 @@
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
     let _tempoDragging = false;             // dragging the tempo slider → don't let the loop move its thumb
     let _tempoShown = null;                 // last tempo value shown (change detection)
-    let pianoRollOn = false;                 // piano-roll visualizer toggle (Tools menu)
+    let _vizMode = 'off';                    // visualizer mode: 'off' | 'pianoroll' | 'scope'
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
@@ -3547,11 +3547,15 @@
           log('Worklet error: ' + msg.message, 'err');
         } else if (msg?.type === 'ready') {
           log('Synth ready @ ' + msg.sampleRate + ' Hz', 'info');
+        } else if (msg?.type === 'scope') {
+          onScopeBatch(msg);
         }
       };
       workletNode.connect(audioCtx.destination);
-      // Apply the current analog-LPF state to the freshly created node.
+      // Apply the current analog-LPF state to the fresh node, and keep the
+      // per-channel tap stream on for its lifetime (feeds scope + VU).
       workletNode.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
+      workletNode.port.postMessage({ type: 'scope-enable', on: true });
       _workletReady = true;
     }
 
@@ -5068,9 +5072,9 @@
     window.onTempo = onTempo;
 
     // =====================================================================
-    // Playback visualizers: piano roll (editor overlay) + rough channel VU.
-    // Both are driven from the IR's note events + the live per-track playhead;
-    // no audio analysis. See player.trackClock().
+    // Playback visualizers. The piano roll (editor overlay) is driven from the
+    // IR's note events + the live per-track playhead (player.trackClock()); the
+    // oscilloscope and the channel VU read real chip output from the audio taps.
     // =====================================================================
     let _vizNotes = [];          // per strip-channel: { head, trackIndex, notes[], loMidi, hiMidi }
     let _vizRaf = null;
@@ -5122,51 +5126,31 @@
       _vizNotes = buildVizNotes(getEvents);
     }
 
-    // Mute/solo audibility, mirrored from the Channels strip state.
-    function isChannelAudible(head) {
-      if (_soloChannels.size > 0) return _soloChannels.has(head);
-      return !_mutedChannels.has(head);
-    }
-
-    // ---- rough per-channel VU (from the note model + live playhead) ----
-    // minTicks gives every note a minimum on-time so brief notes (short PSG
-    // envelopes) still register at the ~20fps sample rate.
-    function channelLevelAt(cell, clock, minTicks) {
-      const t = clock ? clock.tick : 0;
-      const loop = clock?.loopTicks ?? null;
-      let level = 0;
-      for (const n of cell.notes) {
-        const eff = Math.max(n.gateTicks, minTicks);
-        const reps = loop ? [-1, 0, 1] : [0];
-        for (const k of reps) {
-          const s = n.startTick + k * (loop ?? 0);
-          if (t >= s && t < s + eff) {
-            const env = 1 - 0.5 * ((t - s) / eff); // simple decay over the note
-            const v = (n.vel / 15) * env;
-            if (v > level) level = v;
-          }
-        }
-      }
-      return level;
-    }
+    // ---- per-channel VU (real levels from the audio taps) ----
+    // Peak of the latest scope batch (~21ms of chip output), so envelopes,
+    // LFO, TL and mute/solo all show as they actually sound. dB-scaled bar
+    // (a full-scale channel tops out, VU_RANGE_DB below it hits zero) so the
+    // useful dynamic range spreads over the bar instead of pinning at the
+    // top. Instant attack; the release decays the displayed level per VU
+    // tick, i.e. a constant fall in dB like a hardware peak meter.
+    const VU_FULL_SCALE = 1 / 16; // mix-contribution units of a full-scale channel
+    const VU_RANGE_DB = 40;       // bar spans [-VU_RANGE_DB, 0] dB
+    const VU_RELEASE = 0.9;       // displayed-level decay per VU tick
+    const _vuLevels = new Map();  // head → displayed level
     function updateChannelVu() {
-      if (!player || !_vizNotes.length) return;
-      const secsPerTick = 60 / (Math.max(1, player.getBpm()) * vizPpqn());
-      const minTicks = Math.max(1, 0.08 / secsPerTick); // ~80ms floor
-      const master = (_masterVolUi ?? 31) / 31;
-      for (const cell of _vizNotes) {
-        const el = _chVuEls.get(cell.head);
-        if (!el) continue;
-        let lvl = 0;
-        if (isChannelAudible(cell.head)) {
-          const vol = (_channelVol.get(cell.head) ?? VOL_UNITY) / 31;
-          const clock = (_paused && _vizFrozen) ? _vizFrozen.get(cell.trackIndex) : player.trackClock(cell.trackIndex);
-          lvl = channelLevelAt(cell, clock, minTicks) * vol * master;
-        }
+      for (const [head, el] of _chVuEls) {
+        const k = scopeChannelOf(head);
+        const peak = k != null ? _scopePeaks[k] : 0;
+        const target = peak > 0
+          ? Math.max(0, Math.min(1, 1 + (20 * Math.log10(peak / VU_FULL_SCALE)) / VU_RANGE_DB))
+          : 0;
+        const lvl = Math.max(target, (_vuLevels.get(head) ?? 0) * VU_RELEASE);
+        _vuLevels.set(head, lvl);
         el.style.transform = `scaleY(${lvl.toFixed(3)})`;
       }
     }
     function resetChannelVu() {
+      _vuLevels.clear();
       _chVuEls.forEach((el) => { el.style.transform = 'scaleY(0)'; });
     }
 
@@ -5273,44 +5257,193 @@
         ctx.restore();
       }
     }
+    // ---- per-channel audio taps (oscilloscope + VU) ----
+    // Per-channel waveforms tapped inside the synth (see synth-md.js), batched
+    // by the worklet and accumulated here in rings. The stream is enabled for
+    // the node's lifetime: the scope draws from the rings and the Channels VU
+    // reads the per-batch peaks, so both always show real chip output.
+    // Channel order is fixed: 0-5 FM 1-6 (FM6 carries the DAC while PCM
+    // plays), 6-8 PSG tone, 9 noise.
+    const SCOPE_CH = 10;
+    const SCOPE_RING = 16384;       // ~340ms at 48k: 2+ periods of any audible pitch
+    const SCOPE_DISPLAY_GAIN = 10;  // mix-contribution units → pane half-height
+    const _scopeRings = Array.from({ length: SCOPE_CH }, () => new Float32Array(SCOPE_RING));
+    const _scopePeaks = new Float32Array(SCOPE_CH); // |peak| of the latest batch
+    let _scopeAbs = 0;              // absolute sample count at the ring write head
+    let _scopeFreqs = new Array(SCOPE_CH).fill(0); // latched pitch per channel (Hz)
+    let _scopeSR = 48000;           // worklet sample rate (updates per batch)
+
+    function onScopeBatch(msg) {
+      _scopeSR = msg.sampleRate || _scopeSR;
+      _scopeFreqs = msg.freq || _scopeFreqs;
+      const pos = _scopeAbs % SCOPE_RING;
+      let len = 0;
+      // Batch length (1024) divides SCOPE_RING, so a copy never wraps.
+      for (let c = 0; c < SCOPE_CH && c < msg.ch.length; c++) {
+        const v = new Float32Array(msg.ch[c]);
+        _scopeRings[c].set(v, pos);
+        let pk = 0;
+        for (let i = 0; i < v.length; i++) {
+          const a = Math.abs(v[i]);
+          if (a > pk) pk = a;
+        }
+        _scopePeaks[c] = pk;
+        len = v.length;
+      }
+      _scopeAbs += len;
+      // Recycle the transferred buffers back to the worklet.
+      workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
+    }
+    // The strip head's hardware scope channel: PCM tracks sound through the
+    // FM6 DAC and fm3 variants share hardware FM3.
+    function scopeChannelOf(head) {
+      const r = channelRouting(head);
+      if (r.volKind === 'pcm') return 5;
+      if (r.volKind === 'psg') return 6 + r.volIndex;
+      return r.volIndex;
+    }
+    // Draws into the same cell list and grid as the piano roll (one cell per
+    // strip channel, same order and geometry), so switching visualizers keeps
+    // every channel in its place.
+    function drawScope() {
+      const c = document.getElementById('vizCanvas');
+      const wrap = document.getElementById('editorWrap');
+      if (!c || !wrap) return;
+      const dpr = window.devicePixelRatio || 1;
+      const W = wrap.clientWidth, H = wrap.clientHeight;
+      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
+        resizeVizCanvas();
+      }
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, W, H);
+      if (!_scopeRings) return;
+      const cells = _vizNotes.filter((cl) => cl.notes.length);
+      if (!cells.length) return;
+      if (!_vizColors) sampleVizColors();
+      const C = cells.length;
+      const cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
+      const rows = Math.ceil(C / cols);
+      const cellW = W / cols, cellH = H / rows;
+      const latest = _scopeAbs;
+      for (let p = 0; p < C; p++) {
+        const cell = cells[p];
+        const k = scopeChannelOf(cell.head);
+        const x0 = (p % cols) * cellW, y0 = Math.floor(p / cols) * cellH;
+        const midY = y0 + cellH / 2;
+        const ring = k != null ? _scopeRings[k] : null;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x0, y0, cellW, cellH);
+        ctx.clip();
+        // pane border + center line
+        ctx.globalAlpha = 0.2;
+        ctx.strokeStyle = _vizColors.fg;
+        ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellW - 1, cellH - 1);
+        ctx.globalAlpha = 0.15;
+        ctx.beginPath();
+        ctx.moveTo(x0, midY + 0.5);
+        ctx.lineTo(x0 + cellW, midY + 0.5);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        if (ring) {
+          // Window selection. With a latched pitch, span an integer number of
+          // periods (≥2, targeting ~256 samples) and anchor a rising zero
+          // crossing at the pane center, so the wave's reference point stays
+          // put across notes (the classic scope-video look). The search
+          // origin is quantized to the period grid, so the same crossing is
+          // found frame after frame while a note holds — stationary trace.
+          // Unpitched channels (noise, DAC) free-run a fixed window.
+          const freq = _scopeFreqs[k] || 0;
+          let win, start;
+          if (freq > 20 && freq < _scopeSR / 4) {
+            const P = _scopeSR / freq;
+            const periods = Math.max(2, Math.round(256 / P));
+            win = Math.min(SCOPE_RING / 2, Math.round(periods * P));
+            const mid = latest - win / 2;
+            const r0 = Math.floor(mid - (mid % P));
+            const at = (i) => ring[((i % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
+            let anchor = r0;
+            let prev = at(r0);
+            const lim = Math.ceil(P * 1.5);
+            for (let d = 1; d <= lim; d++) {
+              const cur = at(r0 - d);
+              if (cur <= 0 && prev > 0) { anchor = r0 - d; break; }
+              prev = cur;
+            }
+            start = anchor - win / 2;
+          } else {
+            win = 1024;
+            start = latest - win;
+          }
+          // waveform polyline
+          ctx.globalAlpha = 0.9;
+          ctx.strokeStyle = _vizColors.fg;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          const px = Math.max(16, Math.floor(cellW));
+          const amp = cellH / 2 - 4;
+          for (let x = 0; x <= px; x++) {
+            const s = start + (x / px) * win;
+            const i0 = Math.floor(s);
+            const tf = s - i0;
+            const a = ring[((i0 % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
+            const b = ring[(((i0 + 1) % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
+            const v = Math.max(-1, Math.min(1, (a * (1 - tf) + b * tf) * SCOPE_DISPLAY_GAIN));
+            const y = midY - v * amp;
+            if (x === 0) ctx.moveTo(x0 + x * (cellW / px), y);
+            else ctx.lineTo(x0 + x * (cellW / px), y);
+          }
+          ctx.stroke();
+        }
+        // channel label (bottom-right, same as the piano roll)
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = _vizColors.fg;
+        ctx.font = '600 11px ui-monospace, monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(cell.label ?? cell.head, x0 + cellW - 5, y0 + cellH - 4);
+        ctx.restore();
+      }
+    }
+
     function vizTick() {
       _vizRaf = requestAnimationFrame(vizTick);
-      drawPianoRoll();
+      if (_vizMode === 'scope') drawScope();
+      else drawPianoRoll();
     }
-    function startPianoRoll() {
-      rebuildVizNotes();
+    function startViz() {
+      rebuildVizNotes(); // cell list shared by both piano roll and scope
       sampleVizColors();
       resizeVizCanvas();
       if (_vizRaf == null) _vizRaf = requestAnimationFrame(vizTick);
     }
-    function stopPianoRoll() {
+    function stopViz() {
       if (_vizRaf != null) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
       const c = document.getElementById('vizCanvas');
       if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
     }
-    // Visualizer modes — 'off' | 'pianoroll' (oscilloscope etc. may be added later).
-    const VIZ_MODES = [['off', 'Off'], ['pianoroll', 'Piano Roll']];
+    // Visualizer modes — mutually exclusive overlays on the editor canvas.
+    const VIZ_MODES = [['off', 'Off'], ['pianoroll', 'Piano Roll'], ['scope', 'Oscilloscope']];
     function buildVizMenu() {
       const list = document.getElementById('vizMenuList');
       if (!list) return;
-      const cur = pianoRollOn ? 'pianoroll' : 'off';
       list.innerHTML = VIZ_MODES.map(([id, name]) =>
-        `<button class="menu-item" onclick="setVisualizer('${id}');closeMenus()"><span>${name}</span><span class="menu-item-shortcut">${cur === id ? '✓' : ''}</span></button>`
+        `<button class="menu-item" onclick="setVisualizer('${id}');closeMenus()"><span>${name}</span><span class="menu-item-shortcut">${_vizMode === id ? '✓' : ''}</span></button>`
       ).join('');
     }
     function setVisualizer(mode) {
-      const on = mode === 'pianoroll';
-      if (on !== pianoRollOn) {
-        pianoRollOn = on;
-        document.getElementById('editorWrap')?.classList.toggle('viz-on', pianoRollOn);
-        savePref('visualizer', on ? 'pianoroll' : 'off');
-        if (pianoRollOn) startPianoRoll(); else stopPianoRoll();
+      if (!VIZ_MODES.some(([id]) => id === mode)) mode = 'off';
+      if (mode !== _vizMode) {
+        _vizMode = mode;
+        document.getElementById('editorWrap')?.classList.toggle('viz-on', mode !== 'off');
+        savePref('visualizer', mode);
+        if (mode === 'off') stopViz(); else startViz();
       }
       buildVizMenu();
     }
     window.setVisualizer = setVisualizer;
 
-    const _vizResizeObs = new ResizeObserver(() => { if (pianoRollOn) resizeVizCanvas(); });
+    const _vizResizeObs = new ResizeObserver(() => { if (_vizMode !== 'off') resizeVizCanvas(); });
     _vizResizeObs.observe(document.getElementById('editorWrap'));
 
     function setSlider(sliderId, valId, value) {
@@ -5382,7 +5515,7 @@
 
     initKeyboardControls();
 
-    // Restore persisted visualizer selection (piano roll is the only mode yet).
+    // Restore persisted visualizer selection.
     setVisualizer(loadPref('visualizer', 'off'));
 
     _themeReady = true; // init done — applyColors may now repaint canvases on theme change

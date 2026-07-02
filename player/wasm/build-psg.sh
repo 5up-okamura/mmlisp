@@ -38,7 +38,7 @@ emcc \
   -s ENVIRONMENT=web,worker \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s FILESYSTEM=0 \
-  -s EXPORTED_FUNCTIONS='["_malloc","_free","_psg_init","_psg_reset","_psg_write","_psg_render","_psg_get_buffer_ptr","_psg_get_native_sample_rate"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_psg_init","_psg_reset","_psg_write","_psg_render","_psg_get_buffer_ptr","_psg_get_channel_buffer_ptr","_psg_get_native_sample_rate"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAPF32"]' \
   -o "$out_file"
 

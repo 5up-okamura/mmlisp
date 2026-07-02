@@ -11,7 +11,7 @@
 //   create(outputSR) -> instance
 //   writeYM/writePSG (or the system's register buses)
 //   setLpf / setDacEnabled / reset
-//   renderInto(outL, outR, count, onFrame?, getDacByte?)
+//   renderInto(outL, outR, count, onFrame?, getDacByte?, scope?)
 //
 // renderInto serves both timing models via onFrame:
 //   - onFrame == null : writes were already applied for the whole block
@@ -45,6 +45,18 @@ const PSG_DC_R = 0.9995; // one-pole DC blocker (~5 Hz high-pass at output rate)
 const FM_SAMPLE_SCALE = 512; // int16 chip output -> float
 const NOPN_MAX_RENDER = 4096; // nuked adapter caps _nopn_render() at this
 
+// Oscilloscope taps: 10 per-channel streams at the output rate, scaled to each
+// channel's contribution to the mix. FM: the chip time-multiplexes channels on
+// its 9-bit DAC, so one channel's share of the 24-cycle-averaged output is
+// ch_out / 4096 — measured against this path (least-squares fit of a solo
+// full-scale channel vs the mix; the ~9% residual is the DAC ladder offsets
+// from other channels' bus slots, which a clean per-channel tap excludes).
+// PSG: one DC-blocked term of the 4-channel sum times PSG_OUTPUT_GAIN.
+export const SCOPE_FM_CHANNELS = 6; // scope indices 0-5 (FM6 = DAC when on)
+export const SCOPE_PSG_CHANNELS = 4; // scope indices 6-9 (tone 1-3, noise)
+export const SCOPE_CHANNELS = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS;
+const FM_CH_SCALE = 1 / 4096;
+
 export class MegaDriveSynth {
   /** Instantiate both cores and return a ready synth. */
   static async create(outputSR) {
@@ -64,6 +76,15 @@ export class MegaDriveSynth {
     psg._psg_init();
     this._ymBufferPtr = ym._nopn_get_buffer_ptr();
     this._psgBufferPtr = psg._psg_get_buffer_ptr();
+    this._ymChPtr = ym._nopn_get_channel_buffer_ptr();
+    this._psgChPtr = psg._psg_get_channel_buffer_ptr();
+
+    // Scope tap state: FM current/next native samples per channel (mirrors the
+    // stereo lerp window) + per-channel PSG DC blockers.
+    this._ymChCur = new Float32Array(SCOPE_FM_CHANNELS);
+    this._ymChNext = new Float32Array(SCOPE_FM_CHANNELS);
+    this._psgChDcX = new Float32Array(SCOPE_PSG_CHANNELS);
+    this._psgChDcY = new Float32Array(SCOPE_PSG_CHANNELS);
     this._resampleRatio = ym._nopn_get_native_sample_rate() / outputSR;
     this._psgRatio = psg._psg_get_native_sample_rate() / outputSR;
 
@@ -88,6 +109,10 @@ export class MegaDriveSynth {
     this._psgTickFrac = 0;
     this._psgDcX = 0;
     this._psgDcY = 0;
+    this._ymChCur.fill(0);
+    this._ymChNext.fill(0);
+    this._psgChDcX.fill(0);
+    this._psgChDcY.fill(0);
   }
 
   /** Reset both chips and all DSP state to silence. */
@@ -153,6 +178,16 @@ export class MegaDriveSynth {
     ];
   }
 
+  // Read the FM per-channel taps for native sample k of the current render
+  // buffer into dst, scaled to each channel's mix contribution.
+  _readFmChTaps(k, dst) {
+    const heap = this._ym.HEAP16;
+    let p = (this._ymChPtr >> 1) + k * SCOPE_FM_CHANNELS;
+    for (let c = 0; c < SCOPE_FM_CHANNELS; c++) {
+      dst[c] = heap[p++] * FM_CH_SCALE;
+    }
+  }
+
   // One-pole DC blocker step (removes the PSG's unipolar offset + thumps).
   _dcBlock(s) {
     const y = s - this._psgDcX + PSG_DC_R * this._psgDcY;
@@ -161,10 +196,41 @@ export class MegaDriveSynth {
     return y;
   }
 
+  // Per-channel variant of _dcBlock for the PSG scope taps.
+  _dcBlockCh(c, s) {
+    const y = s - this._psgChDcX[c] + PSG_DC_R * this._psgChDcY[c];
+    this._psgChDcX[c] = s;
+    this._psgChDcY[c] = y;
+    return y;
+  }
+
+  // Box-average + DC-block the per-channel PSG taps for the n native ticks
+  // starting at tickOffset (within the block rendered by the last
+  // _psg_render call), writing output sample i of the scope's PSG streams.
+  _psgScopeTaps(scope, i, tickOffset, n) {
+    const heap = this._psg.HEAPF32;
+    let p = (this._psgChPtr >> 2) + tickOffset * SCOPE_PSG_CHANNELS;
+    let a0 = 0,
+      a1 = 0,
+      a2 = 0,
+      a3 = 0;
+    for (let t = 0; t < n; t++) {
+      a0 += heap[p];
+      a1 += heap[p + 1];
+      a2 += heap[p + 2];
+      a3 += heap[p + 3];
+      p += SCOPE_PSG_CHANNELS;
+    }
+    scope[6][i] = this._dcBlockCh(0, (a0 / n) * PSG_OUTPUT_GAIN);
+    scope[7][i] = this._dcBlockCh(1, (a1 / n) * PSG_OUTPUT_GAIN);
+    scope[8][i] = this._dcBlockCh(2, (a2 / n) * PSG_OUTPUT_GAIN);
+    scope[9][i] = this._dcBlockCh(3, (a3 / n) * PSG_OUTPUT_GAIN);
+  }
+
   // Render one PSG output sample: box-decimate this sample's native ticks, then
   // DC-block. Numerically identical to rendering the ticks in a single block;
   // used on the sample-accurate path where PSG writes land between samples.
-  _renderPsgSample() {
+  _renderPsgSample(scope, i) {
     let n = Math.round(this._psgTickFrac + this._psgRatio);
     if (n < 1) n = 1;
     this._psgTickFrac += this._psgRatio - n;
@@ -173,13 +239,14 @@ export class MegaDriveSynth {
     const base = this._psgBufferPtr >> 2;
     let acc = 0;
     for (let t = 0; t < n; t++) acc += heap[base + t];
+    if (scope) this._psgScopeTaps(scope, i, 0, n);
     return this._dcBlock((acc / n) * PSG_OUTPUT_GAIN);
   }
 
   // Render `count` PSG output samples with a single _psg_render(total) call.
   // Valid only when no PSG write occurs between samples (the worklet's
   // block-quantized path) — fewer WASM boundary crossings than per-sample.
-  _renderPsgBlockInto(out, count) {
+  _renderPsgBlockInto(out, count, scope) {
     if (!this._psgCounts || this._psgCounts.length < count) {
       this._psgCounts = new Int32Array(count);
     }
@@ -197,15 +264,22 @@ export class MegaDriveSynth {
     this._psg._psg_render(total);
     const heap = this._psg.HEAPF32;
     let k = this._psgBufferPtr >> 2;
+    let tick = 0;
     for (let i = 0; i < count; i++) {
       const n = counts[i];
       let acc = 0;
       for (let t = 0; t < n; t++) acc += heap[k++];
+      if (scope) this._psgScopeTaps(scope, i, tick, n);
+      tick += n;
       out[i] = this._dcBlock((acc / n) * PSG_OUTPUT_GAIN);
     }
   }
 
-  renderInto(outL, outR, count, onFrame = null, getDacByte = null) {
+  // scope: optional array of SCOPE_CHANNELS Float32Arrays (length >= count).
+  // When given, per-channel waveforms land in scope[0..5] (FM 1-6) and
+  // scope[6..9] (PSG tone 1-3, noise) on the same output-rate time axis as
+  // the mix. Null-cost when omitted.
+  renderInto(outL, outR, count, onFrame = null, getDacByte = null, scope = null) {
     // Block-quantized callers (onFrame == null) have already applied every PSG
     // write, so the whole PSG block can render in one call. Sample-accurate
     // callers render PSG per sample as writes interleave.
@@ -215,7 +289,7 @@ export class MegaDriveSynth {
         this._psgScratch = new Float32Array(count);
       }
       psgBlock = this._psgScratch;
-      this._renderPsgBlockInto(psgBlock, count);
+      this._renderPsgBlockInto(psgBlock, count, scope);
     }
 
     // FM batch path: with no interleaved writes (onFrame == null) and the DAC
@@ -237,12 +311,20 @@ export class MegaDriveSynth {
     for (let i = 0; i < count; i++) {
       if (onFrame) onFrame(i);
 
-      const psgS = onFrame ? this._renderPsgSample() : psgBlock[i];
+      const psgS = onFrame ? this._renderPsgSample(scope, i) : psgBlock[i];
 
       // FM: linear-interpolate between the current and next native samples.
       const t = this._ymFrac;
       let mixL = this._ymCurrent[0] * (1 - t) + this._ymNext[0] * t + psgS;
       let mixR = this._ymCurrent[1] * (1 - t) + this._ymNext[1] * t + psgS;
+      if (scope) {
+        // Same lerp window per channel, so taps stay aligned with the mix.
+        const cur = this._ymChCur;
+        const next = this._ymChNext;
+        for (let c = 0; c < SCOPE_FM_CHANNELS; c++) {
+          scope[c][i] = cur[c] * (1 - t) + next[c] * t;
+        }
+      }
       this._ymFrac += this._resampleRatio;
       while (this._ymFrac >= 1) {
         this._ymFrac -= 1;
@@ -250,6 +332,12 @@ export class MegaDriveSynth {
         this._ymNext = batchFM
           ? this._fmNextNative()
           : this._renderYmOne(getDacByte);
+        if (scope) {
+          const tmp = this._ymChCur;
+          this._ymChCur = this._ymChNext;
+          this._ymChNext = tmp;
+          this._readFmChTaps(batchFM ? this._ymBatchPos - 1 : 0, this._ymChNext);
+        }
       }
 
       if (this._lpfOn) {
