@@ -44,6 +44,12 @@ const PSG_OUTPUT_GAIN = 0.06;
 const PSG_DC_R = 0.9995; // one-pole DC blocker (~5 Hz high-pass at output rate)
 const FM_SAMPLE_SCALE = 512; // int16 chip output -> float
 const NOPN_MAX_RENDER = 4096; // nuked adapter caps _nopn_render() at this
+// Master output gain. FM/PSG sit well below 0 dBFS (a max FM channel peaks
+// ~0.066, 6 channels ~0.379), far quieter than Furnace. Lift the final mix and
+// hard-clip the rare peaks (authentic "amp saturates" — the WAV encoder and the
+// Web Audio destination already clamp at the edges). Tunable by ear; ~2.5-4 is
+// the useful range (higher = louder but clips dense passages more).
+const MASTER_OUTPUT_GAIN = 4.0;
 
 // Oscilloscope taps: 10 per-channel streams at the output rate, scaled to each
 // channel's contribution to the mix. FM: the chip time-multiplexes channels on
@@ -279,7 +285,14 @@ export class MegaDriveSynth {
   // When given, per-channel waveforms land in scope[0..5] (FM 1-6) and
   // scope[6..9] (PSG tone 1-3, noise) on the same output-rate time axis as
   // the mix. Null-cost when omitted.
-  renderInto(outL, outR, count, onFrame = null, getDacByte = null, scope = null) {
+  renderInto(
+    outL,
+    outR,
+    count,
+    onFrame = null,
+    getDacByte = null,
+    scope = null,
+  ) {
     // Block-quantized callers (onFrame == null) have already applied every PSG
     // write, so the whole PSG block can render in one call. Sample-accurate
     // callers render PSG per sample as writes interleave.
@@ -336,7 +349,10 @@ export class MegaDriveSynth {
           const tmp = this._ymChCur;
           this._ymChCur = this._ymChNext;
           this._ymChNext = tmp;
-          this._readFmChTaps(batchFM ? this._ymBatchPos - 1 : 0, this._ymChNext);
+          this._readFmChTaps(
+            batchFM ? this._ymBatchPos - 1 : 0,
+            this._ymChNext,
+          );
         }
       }
 
@@ -346,6 +362,14 @@ export class MegaDriveSynth {
         mixL = this._lpfYL;
         mixR = this._lpfYR;
       }
+      // Master gain + hard clip (final stage; the analog LPF above is linear so
+      // the boost after it is equivalent, and the clip stays last).
+      mixL *= MASTER_OUTPUT_GAIN;
+      mixR *= MASTER_OUTPUT_GAIN;
+      if (mixL > 1) mixL = 1;
+      else if (mixL < -1) mixL = -1;
+      if (mixR > 1) mixR = 1;
+      else if (mixR < -1) mixR = -1;
       outL[i] = mixL;
       outR[i] = mixR;
     }
