@@ -781,6 +781,20 @@ function macroKeyword(sym) {
   return { target: canonicalTarget(mul ? sym.slice(0, -1) : sym), mul };
 }
 
+// Target group: a [] vector of macro keywords in target position, e.g.
+// (macro [:tl1 :tl2 :tl3 :tl4] spec) — one spec applied to every target.
+// Returns the keyword strings, or null if node is not an all-keyword vector.
+// Unambiguous: spec vectors only ever appear in the value position.
+function macroTargetGroup(node) {
+  if (node?.kind !== "list" || node.bracket !== "[]") return null;
+  const items = node.items.filter((n) => n.kind !== "comment");
+  if (items.length === 0) return null;
+  const syms = items.map((n) => atomValue(n));
+  return syms.every((s) => typeof s === "string" && s.startsWith(":"))
+    ? syms
+    : null;
+}
+
 // Validate a `*` modifier against its target; pushes a diagnostic and returns
 // false when the target has no base value to scale.
 function macroMulOk(target, sym, diagnostics, trackName) {
@@ -1012,32 +1026,40 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
   const entries = [];
   let currentStep = null; // :step applies to the targets that follow it
   for (let ki = 0; ki + 1 < items.length; ki += 2) {
-    const sym = atomValue(items[ki]);
-    if (!sym?.startsWith(":")) continue;
-    if (sym === ":step") {
+    // Target group: [:tl1 :tl2 ...] — expand to one entry per keyword,
+    // sharing a single parsed spec (pure sugar; per-keyword `*` still applies).
+    const group = macroTargetGroup(items[ki]);
+    const syms = group ?? [atomValue(items[ki])];
+    if (!group && !syms[0]?.startsWith(":")) continue;
+    if (syms[0] === ":step") {
       currentStep = parseStepToken(atomValue(items[ki + 1]));
       continue;
     }
-    // Trailing `*` = multiplicative: the macro's values scale the target's
-    // static base (e.g. `:vel*` scales the note's velocity) instead of
-    // replacing it.
-    const { target: irTarget, mul } = macroKeyword(sym);
-    // `:target none` is a clear directive — valid inline, so valid in a def too.
-    if (atomValue(items[ki + 1]) === "none") {
-      entries.push({ target: irTarget, clear: true });
-      continue;
-    }
-    const spec = parseMacroSpec(
-      items[ki + 1],
-      irTarget,
-      diagnostics,
-      trackName,
-    );
-    if (spec) {
-      if (mul && !macroMulOk(irTarget, sym, diagnostics, trackName)) continue;
-      if (mul) spec.mul = true;
-      if (currentStep) spec.step = currentStep;
-      entries.push({ target: irTarget, spec });
+    const isClear = atomValue(items[ki + 1]) === "none";
+    for (const sym of syms) {
+      // Trailing `*` = multiplicative: the macro's values scale the target's
+      // static base (e.g. `:vel*` scales the note's velocity) instead of
+      // replacing it.
+      const { target: irTarget, mul } = macroKeyword(sym);
+      // `:target none` is a clear directive — valid inline, so valid in a def too.
+      if (isClear) {
+        entries.push({ target: irTarget, clear: true });
+        continue;
+      }
+      // Parse per target so step values clamp to each target's own range —
+      // exactly equivalent to writing the :target spec pair per target.
+      const spec = parseMacroSpec(
+        items[ki + 1],
+        irTarget,
+        diagnostics,
+        trackName,
+      );
+      if (spec) {
+        if (mul && !macroMulOk(irTarget, sym, diagnostics, trackName)) continue;
+        if (mul) spec.mul = true;
+        if (currentStep) spec.step = currentStep;
+        entries.push({ target: irTarget, spec });
+      }
     }
   }
   return entries;
@@ -2680,17 +2702,23 @@ function compileChannelBody(
         let currentStep = null;
         while (j < rest.length) {
           const sym = atomValue(rest[j]);
+          const group = macroTargetGroup(rest[j]);
           if (sym === ":step") {
             if (j + 1 < rest.length) {
               currentStep = parseStepToken(atomValue(rest[j + 1]));
               j += 2;
             } else j++;
-          } else if (sym?.startsWith(":")) {
+          } else if (group || sym?.startsWith(":")) {
             if (j + 1 < rest.length) {
-              const { target, mul } = macroKeyword(sym);
-              if (atomValue(rest[j + 1]) === "none") {
-                clearMacroTarget(trackState, target);
-              } else {
+              const isClear = atomValue(rest[j + 1]) === "none";
+              // Target group [:tl1 :tl2 ...] applies the one spec (or clear)
+              // to every keyword — sugar for writing the pair per target.
+              for (const groupSym of group ?? [sym]) {
+                const { target, mul } = macroKeyword(groupSym);
+                if (isClear) {
+                  clearMacroTarget(trackState, target);
+                  continue;
+                }
                 const spec = parseMacroSpec(
                   rest[j + 1],
                   target,
@@ -2698,7 +2726,11 @@ function compileChannelBody(
                   trackName,
                 );
                 if (spec && currentStep) spec.step = currentStep;
-                if (spec && mul && !macroMulOk(target, sym, diagnostics, trackName)) {
+                if (
+                  spec &&
+                  mul &&
+                  !macroMulOk(target, groupSym, diagnostics, trackName)
+                ) {
                   // `*` misused — diagnostic pushed; drop this entry.
                 } else {
                   if (spec && mul) spec.mul = true;

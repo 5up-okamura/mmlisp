@@ -339,6 +339,30 @@ that **follow** it (until the next `:step`). It accepts the length-token grammar
   special rule. `:keyon (square …) :step 16` gates retriggers on the 1/16 grid;
   `:step 1f` samples it at 60 Hz.
 
+#### Target groups — `[:tl1 :tl2 …] spec`
+
+The target position also accepts a `[]` vector of macro keywords, applying one
+spec to every listed target:
+
+```lisp
+; swell all four operators' TL together
+(fm1 (macro [:tl1 :tl2 :tl3 :tl4] (linear :from 40 :to 0 :len 8))  c)
+
+; clear both at once
+(fm1 (macro [:tl1 :tl2] none)  d)
+```
+
+- **Pure sugar**: expands at compile time to one macro per target, exactly
+  equivalent to writing the `:target spec` pair per target (values clamp to
+  each target's own range). IR shape and player are unchanged.
+- Unambiguous: spec vectors only ever appear in the value position, so an
+  all-keyword `[]` vector in target position is always a group.
+- The `*` modifier stays per keyword (`[:vel* :tl1]` scales only `:vel`), and a
+  preceding `:step` applies to the whole group — the members stay phase-locked.
+- Curve LUT sharing needs no special handling: identical curve + params
+  combinations already reuse one LUT (§1.5.1), so a grouped curve stores its
+  table once regardless of target count.
+
 #### `:semi` — semitone pitch sequence
 
 `:semi` is a step-vector macro whose values are **semitone offsets** relative
