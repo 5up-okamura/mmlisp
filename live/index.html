@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MMLisp authoring environment</title>
+  <!-- PWA: installable, runs standalone (full screen) on mobile. Relative paths
+       keep the app movable (it is served under /live/). -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="MMLisp">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <!-- Apply the saved theme before first paint so the loading screen (and the
        app) come up in the right colors instead of flashing the defaults. Reads
        the flat resolved-color cache written by applyColors(); absent on first
@@ -18,6 +27,11 @@
           ['background', 'foreground', 'accent', 'error', 'contrast'].forEach(function (k) {
             if (c[k]) s.setProperty('--' + k, c[k]);
           });
+          // Match the PWA status-bar / address-bar color to the saved theme.
+          if (c.background) {
+            var tc = document.querySelector('meta[name="theme-color"]');
+            if (tc) tc.setAttribute('content', c.background);
+          }
         }
       } catch (_) {}
       window.__hideLoading = function () {
@@ -26,7 +40,7 @@
       };
     })();
   </script>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -56,6 +70,11 @@
       display: flex;
       flex-direction: column;
       height: 100dvh;
+      /* Standalone PWA: with viewport-fit=cover the layout fills the screen,
+         so inset content past notches / the home indicator. env() is 0 in an
+         ordinary browser window, leaving the desktop layout untouched. */
+      padding: env(safe-area-inset-top) env(safe-area-inset-right)
+               env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
 
     /* ---- top bar ---- */
@@ -1219,7 +1238,7 @@
     })();
   </script>
 
-  <script type="module">
+<script type="module">
     import { IRPlayer } from './src/ir-player.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
@@ -5369,6 +5388,15 @@
     _themeReady = true; // init done — applyColors may now repaint canvases on theme change
     log('Ready.', 'info');
     window.__hideLoading?.(); // reveal the fully-built UI
+
+    // Register the service worker for installability + fast repeat loads. Do it
+    // on load so it never competes with the initial render, and swallow errors
+    // so an unsupported/insecure context leaves normal operation untouched.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
   </script>
 </body>
 </html>
