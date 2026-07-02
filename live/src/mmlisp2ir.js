@@ -329,11 +329,11 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
       // Each spec may carry its own .step (the per-macro :step clock).
       if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
       else if (target === "VEL") {
-        // `:vel*` scales the macro by this note's velocity (resolved here, so
-        // it tracks per-note vel changes); the result is a plain absolute
-        // velMacro. The base is vel (default 15 = full).
+        // `:vel*` scales the macro by this note's velocity as a 0..1 ratio
+        // (resolved here, so it tracks per-note vel changes); the result is a
+        // plain absolute velMacro. vel 15 (default) = ×1 = macro unchanged.
         if (spec.mul) {
-          const scaled = scaleMacroValues(spec, vel ?? 15, "VEL");
+          const scaled = scaleMacroValues(spec, (vel ?? 15) / 15, "VEL");
           delete scaled.mul;
           args.velMacro = scaled;
         } else {
