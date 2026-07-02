@@ -1751,23 +1751,18 @@
 `,
     };
 
-    const DEFAULT_NEW_FILE_SOURCE = String.raw`(def @voice1
-  :alg 7 :fb 0 :ams 0 :fms 0
-  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
-  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 0 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
-  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 0 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
-  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0)
-
-(def @voice2 :extend @init-fm
+    const DEFAULT_NEW_FILE_SOURCE = String.raw`(def @voice1 :extend @init-fm
   :alg 7 :fb 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 0 :ks2 0 :ml2 1 :dt2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 0 :ks3 0 :ml3 1 :dt3 0
-  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0)
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0
+)
 
-(def @env1 (macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
-(def @env2 (macro :vel (linear :from 15 :to 0 :len 16f)))
-(def @lfo (macro :pitch (sin :from -20 :to 20 :len 16 :wait 4)))
+(def env1 (macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
+(def env2 (macro :vel (linear :from 15 :to 0 :len 16f)))
+(def lfo (macro :pitch (sin :from -20 :to 20 :len 16 :wait 8)))
+(def down (macro :pitch (linear :from 0 :to -2400 :len 16f)))
 
 (score :tempo 120
   ; FM
@@ -3676,9 +3671,11 @@
     async function onPlay(fromLine = null) {
       const ok = await initAudio();
       if (!ok) return;
-      // Manual-compile model: build on demand if nothing has been compiled yet
-      // (e.g. after New File) so Play still works straight from source.
-      if (!_lastGoodIR && !currentIrURL) compileNow();
+      // Manual-compile model: starting from stopped always rebuilds from the
+      // current source, so Play reflects the latest edits. On error, compileNow
+      // keeps the last good IR; only binary/URL presets with no editable source
+      // (currentIrURL set, nothing compiled yet) are left to the loader below.
+      if (_lastGoodIR || !currentIrURL) compileNow();
       if (player) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
