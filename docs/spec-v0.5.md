@@ -678,10 +678,14 @@ Runtime values for interactive playback (Tier 0/1). **Computation lives on the
 host (68000); the driver stays dumb** — value slots, the built-in `$time`, and
 read-modify-write `PARAM_ADD`/`PARAM_MUL`. No on-Z80 expression VM.
 
-- `(def-val name init :min M :max X)` — declare a value slot. `init` is the
-  default; `:min` / `:max` (default `0` / `127`) bound the live control. The
-  live app renders one **Dynamic Parameters** slider per `def-val` from these,
-  driving `setVal` as you drag.
+- `(def-val name init :from A :to B :step S)` — declare a value slot. `:from` /
+  `:to` are order-free directional endpoints: the slider runs **from A to B**
+  (so `:from 0 :to -127` runs 0 → −127, negatives and either direction are
+  fine). `init` (the positional value) is the default; if omitted it defaults to
+  `:from`. `:step` (default `1`) sets granularity — useful for wide ranges (e.g.
+  `:from 0 :to 2400 :step 8`). `:min` / `:max` are accepted synonyms for the
+  endpoints (unordered). The live app renders one **Dynamic Parameters** slider
+  per `def-val`, driving `setVal` as you drag.
 - `$name` — reference a slot, or the built-in `$time` (elapsed 60 Hz frames
   since track start, read-only), in a value or operator-operand position.
 - The host sets slots via the §4.3 control interface; the score reads them.
@@ -699,6 +703,15 @@ IR: `metadata.vals` carries `[{name, slot, init}]`; the events are
 `PARAM_FROM_VAL {target, src}`, `PARAM_ADD {target, delta}`,
 `PARAM_MUL {target, factor}` where `delta`/`factor` is a literal or `{src}`.
 An undefined `$name` raises `E_VAL_UNDEFINED`.
+
+**Dynamic macro parameters.** A `$name` may also feed a curve's `:from` / `:to`
+/ `:rate` — dynamic LFO depth and speed (e.g. `(sin :from -40 :to $depth
+:rate $spd)`). The slot is read **once at note-on**, so the value is constant
+for that note. The value only ever comes from a slot — the score never computes
+(no `(mul $x -1)`; derive such values on the host into another slot). The curve
+spec records these in a `dyn: {from?, to?, rate?}` map the player resolves at
+schedule time. `:len` / `:step` are **not** dynamic yet — they need a frame/tick
+unit (a future `def-val :unit`).
 
 The JS player resolves values at dispatch time and keeps `chRegs` as the
 shadow register file for read-modify-write; with the Web Audio look-ahead this

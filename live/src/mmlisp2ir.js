@@ -1293,6 +1293,13 @@ function parseCurveSpec(
   let forceLoop = false;
   const params = {};
   let hasParams = false;
+  // v0.5 dynamic macro params: $name in :from/:to/:rate records a runtime slot
+  // source here (with a placeholder static value); the player resolves it at
+  // note-on. `:len`/`:step` (which need a frame/tick unit) are not dynamic yet.
+  const dyn = {};
+  let hasDyn = false;
+  const dynSrc = (v) =>
+    typeof v === "string" && v.startsWith("$") ? v.slice(1) : null;
 
   // `const` is sugar for a flat segment: the positional value becomes
   // from = to, emitted as a (non-loop) linear curve (needs no new sampler).
@@ -1393,12 +1400,24 @@ function parseCurveSpec(
         continue;
       }
       switch (k) {
-        case ":from":
-          from = parseNumberLike(v);
+        case ":from": {
+          const s = dynSrc(v);
+          if (s) {
+            from = 0;
+            dyn.from = s;
+            hasDyn = true;
+          } else from = parseNumberLike(v);
           break;
-        case ":to":
-          to = parseNumberLike(v);
+        }
+        case ":to": {
+          const s = dynSrc(v);
+          if (s) {
+            to = 0;
+            dyn.to = s;
+            hasDyn = true;
+          } else to = parseNumberLike(v);
           break;
+        }
         case ":len":
           frames = parseLengthToken(v, null);
           lenFrames = /^\d+f$/.test(v); // Nf is an absolute frame count, not ticks
@@ -1418,6 +1437,13 @@ function parseCurveSpec(
           break;
         }
         case ":rate": {
+          const s = dynSrc(v);
+          if (s) {
+            setParam("rate", 1);
+            dyn.rate = s;
+            hasDyn = true;
+            break;
+          }
           const n = parseNumberLike(v);
           if (n !== null)
             setParam(
@@ -1508,6 +1534,7 @@ function parseCurveSpec(
   if (waitTicks !== null) spec.waitTicks = waitTicks;
   if (waitKeyOff) spec.waitKeyOff = true;
   if (hasParams) spec.params = params;
+  if (hasDyn) spec.dyn = dyn;
   return spec;
 }
 
@@ -3053,17 +3080,50 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      const init = parseIntLike(atomValue(root.items[2])) ?? 0;
-      let min = 0;
-      let max = 127;
-      for (let k = 3; k + 1 < root.items.length; k += 2) {
+      // Optional positional init (item[2]); absent when options start there
+      // (e.g. `(def-val x :from 0 :to -127)`), then init defaults to `from`.
+      const initPos = parseIntLike(atomValue(root.items[2]));
+      let from;
+      let to;
+      let minOpt;
+      let maxOpt;
+      let step = 1; // slider granularity (control resolution)
+      for (let k = initPos === null ? 2 : 3; k + 1 < root.items.length; k += 2) {
         const key = atomValue(root.items[k]);
         const v = parseIntLike(atomValue(root.items[k + 1]));
-        if (key === ":min" && v !== null) min = v;
-        else if (key === ":max" && v !== null) max = v;
+        if (v === null) continue;
+        if (key === ":from") from = v;
+        else if (key === ":to") to = v;
+        else if (key === ":min") minOpt = v;
+        else if (key === ":max") maxOpt = v;
+        else if (key === ":step" && v > 0) step = v;
       }
+      // `:from`/`:to` are order-free directional endpoints (from = the start,
+      // so a slider runs from → to); `:min`/`:max` are accepted synonyms.
+      let min;
+      let max;
+      let reversed = false;
+      if (from !== undefined || to !== undefined) {
+        const a = from ?? 0;
+        const b = to ?? 0;
+        min = Math.min(a, b);
+        max = Math.max(a, b);
+        reversed = a > b;
+      } else {
+        min = minOpt ?? 0;
+        max = maxOpt ?? 127;
+      }
+      const init = initPos ?? from ?? min;
       if (!vals.has(name))
-        vals.set(name, { name, slot: vals.size, init, min, max });
+        vals.set(name, {
+          name,
+          slot: vals.size,
+          init,
+          min,
+          max,
+          step,
+          reversed,
+        });
       continue;
     }
 
@@ -3715,6 +3775,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         init: v.init,
         min: v.min,
         max: v.max,
+        step: v.step,
+        reversed: v.reversed,
       })),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,

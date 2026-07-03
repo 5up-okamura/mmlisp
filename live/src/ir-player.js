@@ -2241,6 +2241,22 @@ export class IRPlayer {
     return Number(operand) || 0;
   }
 
+  // v0.5 dynamic macro params: resolve a curve spec's dynamic :from/:to/:rate
+  // (spec.dyn = { from?, to?, rate? } slot names) to current slot values at
+  // `when` (note-on) — one read per note, so the value is constant for the
+  // note. Returns { from, to, params } with the dynamic fields overridden.
+  _curveFields(spec, when) {
+    const dyn = spec.dyn;
+    let { from, to, params } = spec;
+    if (dyn) {
+      if (dyn.from != null) from = this._resolveSrc(dyn.from, when);
+      if (dyn.to != null) to = this._resolveSrc(dyn.to, when);
+      if (dyn.rate != null)
+        params = { ...params, rate: this._resolveSrc(dyn.rate, when) };
+    }
+    return { from, to, params };
+  }
+
   // Read a target's current stored value from chRegs (the shadow register file)
   // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
   // base so a relative TL op composes with vel/vol attenuation.
@@ -2865,15 +2881,9 @@ export class IRPlayer {
           t += Math.max(0, Number(stage.waitTicks)) * this._secsPerTick;
         else if (stage.waitFrames != null) t += stage.waitFrames / 60;
         if (!stage.curve) continue; // pure wait stage
-        // Regular curve stage
-        const {
-          curve = "linear",
-          from = 0,
-          to = 0,
-          frames: rawFrames = 1,
-          loop = false,
-          params,
-        } = stage;
+        // Regular curve stage (dynamic :from/:to/:rate resolved per note)
+        const { curve = "linear", frames: rawFrames = 1, loop = false } = stage;
+        const { from = 0, to = 0, params } = this._curveFields(stage, when);
         // :len is ticks by default → convert to 60 Hz frames; `Nf` (lenFrames)
         // is already an absolute frame count, used as-is.
         const baseFrames = stage.lenFrames
@@ -2901,15 +2911,13 @@ export class IRPlayer {
 
     if (spec.type === "curve") {
       const {
-        from,
-        to,
         frames: rawFrames = 1,
         loop,
         curve = "linear",
-        params,
         waitTicks = null,
         waitKeyOff = false,
       } = spec;
+      const { from, to, params } = this._curveFields(spec, when);
       // :len is ticks by default → convert to 60 Hz frames; `Nf` (lenFrames) is
       // already an absolute frame count, used as-is.
       const baseFrames = spec.lenFrames
@@ -3165,10 +3173,12 @@ export class IRPlayer {
 
   _applyParamSweep(ch, port, chOffset, ev, when) {
     const target = (ev.args?.target ?? "").toUpperCase();
-    const from = Number(ev.args?.from ?? 0);
-    const to = Number(ev.args?.to ?? 0);
+    // Dynamic :from/:to/:rate ($name) resolved once at sweep start.
+    const df = this._curveFields(ev.args ?? {}, when);
+    const from = Number(df.from ?? 0);
+    const to = Number(df.to ?? 0);
     const curve = ev.args?.curve ?? "linear";
-    const params = ev.args?.params;
+    const params = df.params;
     const secsPerTick = this._secsPerTick;
     // ev.args.frames is in ticks (from parseLengthToken); convert to 60 Hz frames.
     const baseFrames = Math.max(

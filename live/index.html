@@ -1504,7 +1504,7 @@
     // -----------------------------------------------------------------------
     const AC_FORMS = [
       'score','rest','tie',
-      'def','defn','x','go','param-set',
+      'def','defn','def-val','x','go','param-set',
       'echo','delay','glide','macro',
       'linear',
       'ease-in','ease-out','ease-inout',
@@ -1544,6 +1544,8 @@
       // macro / voice / definitions
       ':extend',':step',':loop',':loop-start',':loop-end',
       ':file',':sample',':rate',
+      // def-val (dynamic value slots)
+      ':min',':max',
       // PCM / effects
       ':bit-depth',':compress',':reverb',
       // curve params
@@ -3479,9 +3481,10 @@
         const wrap = document.createElement('div');
         wrap.className = 'knob-wrap';
         const cur = _dynVals[v.name];
+        const rtl = v.reversed ? ' style="direction:rtl"' : '';
         wrap.innerHTML =
           `<div class="knob-label">${v.name} <span class="val" id="dynval-${v.name}">${cur}</span></div>` +
-          `<input type="range" min="${v.min}" max="${v.max}" value="${cur}" ` +
+          `<input type="range" min="${v.min}" max="${v.max}" step="${v.step ?? 1}" value="${cur}"${rtl} ` +
           `oninput="onDynParam('${v.name}', this)">`;
         body.appendChild(wrap);
       }
