@@ -3037,8 +3037,9 @@ function collectDefs(roots, diagnostics) {
     }
     const head = atomValue(root.items[0]);
 
-    // (def-val name init) — declare a runtime value slot (Tier 0/1 dynamic
-    // value). Slots are assigned indices in declaration order.
+    // (def-val name init :min M :max X) — declare a runtime value slot (Tier
+    // 0/1 dynamic value). init is the default; :min/:max bound the live control
+    // (the Dynamic Parameters sliders). Slots are indexed in declaration order.
     if (head === "def-val") {
       const name = atomValue(root.items[1]);
       if (!name || name.startsWith("$")) {
@@ -3053,7 +3054,16 @@ function collectDefs(roots, diagnostics) {
         continue;
       }
       const init = parseIntLike(atomValue(root.items[2])) ?? 0;
-      if (!vals.has(name)) vals.set(name, { name, slot: vals.size, init });
+      let min = 0;
+      let max = 127;
+      for (let k = 3; k + 1 < root.items.length; k += 2) {
+        const key = atomValue(root.items[k]);
+        const v = parseIntLike(atomValue(root.items[k + 1]));
+        if (key === ":min" && v !== null) min = v;
+        else if (key === ":max" && v !== null) max = v;
+      }
+      if (!vals.has(name))
+        vals.set(name, { name, slot: vals.size, init, min, max });
       continue;
     }
 
@@ -3703,6 +3713,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         name: v.name,
         slot: v.slot,
         init: v.init,
+        min: v.min,
+        max: v.max,
       })),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,

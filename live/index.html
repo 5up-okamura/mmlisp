@@ -535,6 +535,12 @@
     .op-col input[type=range]::-moz-range-thumb { background: var(--op-color); }
     .op-col .knob-label span.val { color: var(--op-color); }
     .rack-body { display: flex; flex-direction: column; gap: 0.5rem; }
+    /* Dynamic Parameters (def-val sliders) — same grid/size as FM params */
+    .dyn-param-body {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 0.5rem;
+    }
     /* ALG/FB / AMS/FMS on the left, algorithm diagram spanning both rows at right */
     .alg-grid {
       display: grid;
@@ -1117,6 +1123,14 @@
           <canvas id="algDiagram" class="alg-diagram" title="Click to preview (last note)"></canvas>
         </div>
         <div class="op-grid" id="opGrid"></div>
+        </div>
+      </div>
+
+      <!-- Dynamic Parameters (def-val sliders) -->
+      <div class="rack-section" id="dynParamSection" hidden>
+        <div class="rack-title rack-title-row"><span>Dynamic Parameters</span></div>
+        <div class="rack-body">
+          <div id="dynParamBody" class="dyn-param-body"></div>
         </div>
       </div>
 
@@ -3167,6 +3181,7 @@
         _lastGoodIR = ir;
         _lastSourceMap = sourceMap;
         buildChStrips(ir);
+        renderDynParams(ir);
         if (_vizMode !== 'off' && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
         // When not playing, show the score's starting tempo (the loop drives it live).
         if (_fmLiveRaf == null) updateTempoDisplay(irInitialBpm(ir));
@@ -3234,6 +3249,7 @@
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
+    let _dynVals = {};                     // Dynamic Parameters: name → current slider value (declared here so the startup compileNow can render before the panel functions)
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
     let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
     let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
@@ -3444,6 +3460,48 @@
       return _chStripModel.find((e) => e.head === head)?.trackIndex;
     }
 
+    // Dynamic Parameters: one slider per (def-val …) slot. Slider positions
+    // persist across build/play in _dynVals (declared with the panel state
+    // above); onDynParam drives player.setVal live. The section auto-hides when
+    // the score declares no def-vals.
+    function renderDynParams(ir) {
+      const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals : [];
+      const section = document.getElementById('dynParamSection');
+      const body = document.getElementById('dynParamBody');
+      if (!section || !body) return;
+      // Keep values for surviving names; seed new ones from init.
+      const next = {};
+      for (const v of vals) next[v.name] = v.name in _dynVals ? _dynVals[v.name] : v.init;
+      _dynVals = next;
+      section.hidden = vals.length === 0;
+      body.innerHTML = '';
+      for (const v of vals) {
+        const wrap = document.createElement('div');
+        wrap.className = 'knob-wrap';
+        const cur = _dynVals[v.name];
+        wrap.innerHTML =
+          `<div class="knob-label">${v.name} <span class="val" id="dynval-${v.name}">${cur}</span></div>` +
+          `<input type="range" min="${v.min}" max="${v.max}" value="${cur}" ` +
+          `oninput="onDynParam('${v.name}', this)">`;
+        body.appendChild(wrap);
+      }
+    }
+
+    function onDynParam(name, el) {
+      const v = Number(el.value);
+      _dynVals[name] = v;
+      const disp = document.getElementById('dynval-' + name);
+      if (disp) disp.textContent = v;
+      if (player) player.setVal(name, v);
+    }
+
+    // Push all current slider values into a freshly (re)started player, since
+    // the player seeds slots from def-val inits on load.
+    function applyDynVals() {
+      if (!player) return;
+      for (const name in _dynVals) player.setVal(name, _dynVals[name]);
+    }
+
     function toggleMute(head) {
       const on = !_mutedChannels.has(head);
       if (on) _mutedChannels.add(head); else _mutedChannels.delete(head);
@@ -3535,6 +3593,7 @@
     window.toggleMute = toggleMute;
     window.toggleSolo = toggleSolo;
     window.selectCh   = selectCh;
+    window.onDynParam = onDynParam;
     window.onMaster = onMaster;
 
     // -----------------------------------------------------------------------
@@ -3775,6 +3834,8 @@
         // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
         // that never went through compileNow), then push persisted mute/solo.
         buildChStrips(player._ir);
+        renderDynParams(player._ir);
+        applyDynVals();
         applyPlayerChannelState(player);
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // Seek to cursor line if provided and source map available

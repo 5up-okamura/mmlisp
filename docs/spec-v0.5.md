@@ -678,8 +678,10 @@ Runtime values for interactive playback (Tier 0/1). **Computation lives on the
 host (68000); the driver stays dumb** — value slots, the built-in `$time`, and
 read-modify-write `PARAM_ADD`/`PARAM_MUL`. No on-Z80 expression VM.
 
-- `(def-val name init)` — declare a value slot with an initial value. Slots are
-  assigned fixed indices in declaration order (a small bank in driver RAM).
+- `(def-val name init :min M :max X)` — declare a value slot. `init` is the
+  default; `:min` / `:max` (default `0` / `127`) bound the live control. The
+  live app renders one **Dynamic Parameters** slider per `def-val` from these,
+  driving `setVal` as you drag.
 - `$name` — reference a slot, or the built-in `$time` (elapsed 60 Hz frames
   since track start, read-only), in a value or operator-operand position.
 - The host sets slots via the §4.3 control interface; the score reads them.
