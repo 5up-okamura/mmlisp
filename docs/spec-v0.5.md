@@ -639,6 +639,70 @@ Z80 driver are unchanged by this feature. This **replaces** the former `:role`
 parameter performance (the "modulator" idea — live timbre automation via
 `SET_PARAM`, §4.3) is a separate future concern, not part of `:prio`.
 
+### 1.5.4 Relative / arithmetic operators (v0.5)
+
+One rule across the language: a trailing operator on a target combines the
+value with the target's current base. No suffix = **absolute**, `+` = **add**,
+`*` = **multiply**. There is no `-` / `/` keyword — subtract with a negative
+(`:vel+ -2`), divide with a fraction (`:vel* 0.5`).
+
+| Context               | Absolute      | Add            | Multiply         |
+| --------------------- | ------------- | -------------- | ---------------- |
+| inline vel/oct        | `:vel 12`     | `:vel+ 2`      | `:vel* 0.5`      |
+| inline other params   | `:tl1 30`     | `:tl1+ 5`      | `:tl1* 0.5`      |
+| macro (VEL)           | `:vel [..]`   | `:vel+ [..]`   | `:vel* [..]`     |
+| echo / delay          | —             | `:vel+`        | `:vel*`          |
+
+- **vel / oct** resolve at **compile time** (their base lives in the track
+  state), so the IR carries plain absolute values.
+- **Other params** (`:tl1`, `:vol`, …) have no compile-time base — `+`/`*`
+  emit runtime `PARAM_ADD` / `PARAM_MUL` (read-modify-write; §1.5.5).
+- **Macros**: `+`/`*` apply only to `VEL` (the one macro target with a base);
+  others raise `E_MACRO_OP_NO_BASE`. `:vel*` scales the macro by the note's
+  0..1 vel ratio; `:vel+` adds the note's vel as an offset.
+- **echo / delay** taps are always relative, so an operator is **required**
+  (`:vel+` add / `:vel*` multiply); bare `:vel` raises `E_ECHO_OP_REQUIRED` /
+  `E_DELAY_OP_REQUIRED` (except the clear forms `(delay :vel none)`).
+
+Note-stream shorthand atoms (relative, sticky):
+
+| Atom            | Meaning                                  |
+| --------------- | ---------------------------------------- |
+| `v+` `v-` `v±N` | shift velocity (no number = ±1)          |
+| `o+` `o-` `o±N` | shift octave (no number = ±1)            |
+| `<` `>`         | octave down / up (traditional MML, ∓1)   |
+
+### 1.5.5 Dynamic values — `$name`, `(def-val …)` (v0.5)
+
+Runtime values for interactive playback (Tier 0/1). **Computation lives on the
+host (68000); the driver stays dumb** — value slots, the built-in `$time`, and
+read-modify-write `PARAM_ADD`/`PARAM_MUL`. No on-Z80 expression VM.
+
+- `(def-val name init)` — declare a value slot with an initial value. Slots are
+  assigned fixed indices in declaration order (a small bank in driver RAM).
+- `$name` — reference a slot, or the built-in `$time` (elapsed 60 Hz frames
+  since track start, read-only), in a value or operator-operand position.
+- The host sets slots via the §4.3 control interface; the score reads them.
+  The score does not compute (that is the host's job) — so no `set`/expressions.
+
+```lisp
+(def-val level 20)
+(fm1 :tl1 $level      c)   ; TL from the live slot            → PARAM_FROM_VAL
+(fm1 :tl1+ $level     c)   ; TL relative to the slot          → PARAM_ADD
+(fm1 :vol* $level     c)   ; VOL scaled by the slot           → PARAM_MUL
+(fm1 :ar1 $time       c)   ; a built-in source                → PARAM_FROM_VAL
+```
+
+IR: `metadata.vals` carries `[{name, slot, init}]`; the events are
+`PARAM_FROM_VAL {target, src}`, `PARAM_ADD {target, delta}`,
+`PARAM_MUL {target, factor}` where `delta`/`factor` is a literal or `{src}`.
+An undefined `$name` raises `E_VAL_UNDEFINED`.
+
+The JS player resolves values at dispatch time and keeps `chRegs` as the
+shadow register file for read-modify-write; with the Web Audio look-ahead this
+trails live `setVal()` by the scheduler window. The eventual Z80 driver
+resolves per playback tick.
+
 ### 1.6 Sample file system
 
 **Declaration:** samples are defined with `def` (same style as FM voice
@@ -801,7 +865,7 @@ All v0.5 open questions resolved. Design promoted to §1:
 - §1.7 PCM mixing (3ch soft-mix, raw 8-bit PCM)
 - §1.8 FM3 independent-operator mode (`fm3-1`–`fm3-4`)
 
-Deferred to v0.6+: `PARAM_ADD`, cycle-alt `|` — see §3.
+Deferred to v0.6+: cycle-alt `|` — see §3.
 
 ---
 
@@ -813,8 +877,6 @@ Deferred to v0.6+: `PARAM_ADD`, cycle-alt `|` — see §3.
 - Runtime subroutines (`CALL`/`RET`) — `defn` currently compiles to inline
   copy expansion (no `CALL`/`RET` in the driver yet). Subroutine reference is
   a future upgrade; syntax is forward-compatible.
-- `PARAM_ADD` / relative runtime value operations — deferred until interactive
-  control direction is defined
 - Cycle-alt `|` in `(x N ...)` — parse-model interaction with `:break` and
   nested loops is high-complexity; revisit after loop grammar test matrix is
   expanded (v0.6+)
@@ -872,7 +934,13 @@ The exact binary protocol is a driver design phase decision. The intent:
 | `STOP_TRACK id`    | Stop a track (fires release tail if defined, else immediately) |
 | `KEY_OFF ch`       | Send KEY-OFF to a specific channel (triggers `:release`)       |
 | `SET_PARAM ch k v` | Write an absolute value to `key` on channel `ch` at runtime    |
+| `SET_VAL slot v`   | Write a value slot (§1.5.5); the score reads it via `$name`    |
+| `GET_VAL slot`     | Read a slot / built-in source back to the host                 |
 | `FADE_TRACK id n`  | Fade out track over `n` frames then stop                       |
+
+`SET_VAL` is where the host feeds computed values (health→volume, speed→pitch)
+into slots — the host does the arithmetic; the driver only reads slots and
+applies `PARAM_FROM_VAL` / `PARAM_ADD` / `PARAM_MUL`.
 
 The communication area is a Z80 RAM region polled every frame tick.
 The 68000 writes commands; the Z80 processes them on the next tick and clears

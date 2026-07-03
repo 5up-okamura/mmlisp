@@ -389,7 +389,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
 
     // Echo macro (¥/\, byte 0x5C). `\=n1,n2`: n1 = how many notes back to echo,
     // n2 = volume reduction. A trailing `\` is one echo tap of the single note
-    // n1 positions back at vel-n2 -> (echo :vel 1 :by -n2 :back n1). The compiler
+    // n1 positions back at vel-n2 -> (echo :vel+ 1 :by -n2 :back n1). The compiler
     // replays that note (absolute pitch, so octaves come out right) and lengthens.
     if (c === "¥" || c === "\\") {
       i++;
@@ -847,12 +847,15 @@ function renderOps(ops, ctx, out, depth = 0) {
         // envelope is the shape. Rates are per-clock deltas, so a stage time =
         // delta/rate clocks -> ticks. SR (slow sustain drift) is a flat hold.
         const factor = WHOLE_TICKS / op.wholeClocks;
-        const lv = (x) => Math.round((Math.max(0, Math.min(255, x)) / 255) * 100) / 100;
+        // Emit on the 0-15 vel scale (peak = 15). `:vel*` scales the macro by
+        // the note's vel/15 ratio, so peak 15 reproduces "the note's :vel is
+        // the envelope peak".
+        const lv = (x) => Math.round((Math.max(0, Math.min(255, x)) / 255) * 15 * 100) / 100;
         const tm = (delta, rate) => Math.max(1, Math.round((rate > 0 ? delta / rate : 0) * factor));
         const al = lv(op.al), sl = lv(op.sl);
         const stages = [];
-        if (al < 1) stages.push(`(linear :from ${al} :to 1 :len ${tm(255 - op.al, op.ar)}t)`);
-        stages.push(`(linear :from 1 :to ${sl} :len ${tm(255 - op.sl, op.dr)}t)`);
+        if (al < 15) stages.push(`(linear :from ${al} :to 15 :len ${tm(255 - op.al, op.ar)}t)`);
+        stages.push(`(linear :from 15 :to ${sl} :len ${tm(255 - op.sl, op.dr)}t)`);
         stages.push("(wait key-off)");
         stages.push(`(linear :from ${sl} :to 0 :len ${tm(op.sl, op.rr)}t)`);
         const spec = `[ ${stages.join(" ")} ]`;
@@ -884,7 +887,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         // vel - drop. Define each distinct echo once as (def ecN (echo …)) and
         // reference it by name — compact, like the LFO/envelope defs. Omit
         // defaults (:by 0, :back 1).
-        let form = ":vel 1";
+        let form = ":vel+ 1";
         if (op.drop) form += ` :by ${-op.drop}`;
         if (op.back !== 1) form += ` :back ${op.back}`;
         if (ctx.echoRegistry) {

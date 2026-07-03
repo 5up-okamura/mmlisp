@@ -329,13 +329,18 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
       // Each spec may carry its own .step (the per-macro :step clock).
       if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
       else if (target === "VEL") {
-        // `:vel*` scales the macro by this note's velocity as a 0..1 ratio
-        // (resolved here, so it tracks per-note vel changes); the result is a
-        // plain absolute velMacro. vel 15 (default) = ×1 = macro unchanged.
-        if (spec.mul) {
+        // `:vel*`/`:vel+` combine the macro with this note's velocity, resolved
+        // here so it tracks per-note vel changes → a plain absolute velMacro.
+        // `*` scales by the 0..1 vel ratio (vel 15 = ×1 = unchanged); `+` adds
+        // the note's vel as an offset (vel is a relative envelope around it).
+        if (spec.op === "*") {
           const scaled = scaleMacroValues(spec, (vel ?? 15) / 15, "VEL");
-          delete scaled.mul;
+          delete scaled.op;
           args.velMacro = scaled;
+        } else if (spec.op === "+") {
+          const shifted = addMacroValues(spec, vel ?? 15, "VEL");
+          delete shifted.op;
+          args.velMacro = shifted;
         } else {
           args.velMacro = { ...spec };
         }
@@ -739,10 +744,11 @@ function velMacroPeak(spec) {
 // float, quantized at playback), preserving type, markers, and per-macro step.
 // Shared by the `*` multiplicative modifier (factor = the note's static base)
 // and :delay echoes (factor = the echo's vel ratio).
-function scaleMacroValues(spec, factor, target) {
+// Apply fn to every scalar value a macro spec carries (step values / curve
+// from&to / stage from&to), preserving nulls. Shared by scale and add.
+function mapMacroValues(spec, fn) {
   if (!spec) return spec;
-  const s = (v) =>
-    v === null || v === undefined ? v : clampForTarget(target, v * factor);
+  const s = (v) => (v === null || v === undefined ? v : fn(v));
   if (spec.type === "steps") {
     return { ...spec, steps: (spec.steps || []).map(s) };
   }
@@ -762,6 +768,14 @@ function scaleMacroValues(spec, factor, target) {
   return spec;
 }
 
+function scaleMacroValues(spec, factor, target) {
+  return mapMacroValues(spec, (v) => clampForTarget(target, v * factor));
+}
+
+function addMacroValues(spec, offset, target) {
+  return mapMacroValues(spec, (v) => clampForTarget(target, v + offset));
+}
+
 // A :delay echo's inherited vel tail peaks at the echo's :delay-vels level.
 function scaleVelMacroSteps(spec, ratio) {
   return scaleMacroValues(spec, ratio, "VEL");
@@ -772,13 +786,42 @@ function scaleVelMacroSteps(spec, ratio) {
 // (NOTE_PITCH/NOTE_SEMI) and discrete ones (PAN/KEYON/...) have no base, so
 // `*` is rejected there. VOL/MASTER live in a separate channel-level macro
 // path and are not wired yet; add them here once that path tracks a base.
-const MUL_BASE_TARGETS = new Set(["VEL"]);
+const OP_BASE_TARGETS = new Set(["VEL"]);
 
-// Split a macro keyword into its canonical target and the `*` (multiplicative)
-// modifier: `:vel*` -> { target: "VEL", mul: true }.
+// Split a trailing arithmetic operator off a keyword/atom:
+// "vel*" -> { stem: "vel", op: "*" }, "oct+" -> {stem:"oct", op:"+"}, "vel" -> {stem, op:null}.
+// Only `+` (add to base) and `*` (multiply base) are operators; no `-`/`/`.
+function opSuffix(sym) {
+  const last = sym.length > 1 ? sym[sym.length - 1] : "";
+  return last === "*" || last === "+"
+    ? { stem: sym.slice(0, -1), op: last }
+    : { stem: sym, op: null };
+}
+
+// Split a macro keyword into its canonical target and the arithmetic operator:
+// `:vel*` -> { target: "VEL", op: "*" }, `:vel+` -> op "+", `:vel` -> op null.
 function macroKeyword(sym) {
-  const mul = sym.length > 1 && sym.endsWith("*");
-  return { target: canonicalTarget(mul ? sym.slice(0, -1) : sym), mul };
+  const { stem, op } = opSuffix(sym);
+  return { target: canonicalTarget(stem), op };
+}
+
+// Resolve a `$name` value/operand to a source id: "$time" (built-in) or a
+// declared slot name. Diagnoses unknown names. Returns null if `raw` is not a
+// `$` reference.
+function resolveValRef(raw, vals, diagnostics, trackName, src) {
+  if (typeof raw !== "string" || !raw.startsWith("$")) return null;
+  const name = raw.slice(1);
+  if (name === "time") return "$time";
+  if (vals?.has(name)) return name;
+  pushDiag(
+    diagnostics,
+    "error",
+    "E_VAL_UNDEFINED",
+    `undefined value: ${raw} (declare with (def-val ${name} …))`,
+    src,
+    trackName,
+  );
+  return name; // keep the IR well-formed; player treats a missing slot as 0
 }
 
 // Target group: a [] vector of macro keywords in target position, e.g.
@@ -795,15 +838,15 @@ function macroTargetGroup(node) {
     : null;
 }
 
-// Validate a `*` modifier against its target; pushes a diagnostic and returns
-// false when the target has no base value to scale.
-function macroMulOk(target, sym, diagnostics, trackName) {
-  if (MUL_BASE_TARGETS.has(target)) return true;
+// Validate a `+`/`*` operator against its target; pushes a diagnostic and
+// returns false when the target has no base value to add to / scale.
+function macroOpOk(target, sym, diagnostics, trackName) {
+  if (OP_BASE_TARGETS.has(target)) return true;
   pushDiag(
     diagnostics,
     "error",
-    "E_MACRO_MUL_NO_BASE",
-    `'${sym}' has no base value to scale; the '*' modifier applies only to ${[...MUL_BASE_TARGETS].join(", ").toLowerCase()}`,
+    "E_MACRO_OP_NO_BASE",
+    `'${sym}' has no base value to combine with; +/* apply only to ${[...OP_BASE_TARGETS].join(", ").toLowerCase()}`,
     null,
     trackName,
   );
@@ -1037,10 +1080,9 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
     }
     const isClear = atomValue(items[ki + 1]) === "none";
     for (const sym of syms) {
-      // Trailing `*` = multiplicative: the macro's values scale the target's
-      // static base (e.g. `:vel*` scales the note's velocity) instead of
-      // replacing it.
-      const { target: irTarget, mul } = macroKeyword(sym);
+      // Trailing operator: `*` scales the target's static base, `+` adds to it
+      // (e.g. `:vel*`/`:vel+`), instead of replacing.
+      const { target: irTarget, op } = macroKeyword(sym);
       // `:target none` is a clear directive — valid inline, so valid in a def too.
       if (isClear) {
         entries.push({ target: irTarget, clear: true });
@@ -1048,15 +1090,17 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
       }
       // Parse per target so step values clamp to each target's own range —
       // exactly equivalent to writing the :target spec pair per target.
+      // Relative (+/*) macros parse unclamped (signed offsets / ratios).
       const spec = parseMacroSpec(
         items[ki + 1],
         irTarget,
         diagnostics,
         trackName,
+        !op,
       );
       if (spec) {
-        if (mul && !macroMulOk(irTarget, sym, diagnostics, trackName)) continue;
-        if (mul) spec.mul = true;
+        if (op && !macroOpOk(irTarget, sym, diagnostics, trackName)) continue;
+        if (op) spec.op = op;
         if (currentStep) spec.step = currentStep;
         entries.push({ target: irTarget, spec });
       }
@@ -1074,8 +1118,17 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
  *      or { type: "stages", stages: [...] }  (multi-stage sequential)
  * or null if the node cannot be parsed.
  */
-function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
+function parseMacroSpec(
+  node,
+  target,
+  diagnostics = null,
+  trackName = null,
+  clamp = true,
+) {
   if (!node) return null;
+  // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
+  // here and clamp only after combining with the base (add/scaleMacroValues).
+  const clampVal = (v) => (clamp ? clampForTarget(target, v) : v);
   // Step-vector or multi-stage form: [...]
   if (node.kind === "list" && node.bracket === "[]") {
     const items = node.items.filter((n) => n.kind !== "comment");
@@ -1135,7 +1188,7 @@ function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
         n = PAN_MAP[val];
       }
       if (n !== null) {
-        steps.push(clampForTarget(target, n));
+        steps.push(clampVal(n));
       } else if (val === "_") {
         steps.push(null); // hold: advance 1 frame, no write
       }
@@ -1161,7 +1214,7 @@ function parseMacroSpec(node, target, diagnostics = null, trackName = null) {
   if (scalar !== null) {
     return {
       type: "steps",
-      steps: [clampForTarget(target, scalar)],
+      steps: [clampVal(scalar)],
       loopIndex: 0,
       releaseIndex: null,
     };
@@ -1191,6 +1244,12 @@ function isNoteAtom(val) {
 // Velocity shift atom: "v+", "v-", "v+8", "v-16" etc.
 function isVelShiftAtom(val) {
   return typeof val === "string" && /^v[+\-]\d*$/.test(val);
+}
+
+// Octave shift atom: "o+", "o-", "o+2", "o-2" etc. (parallel to v±; complements
+// the traditional < / > which shift by ±1).
+function isOctShiftAtom(val) {
+  return typeof val === "string" && /^o[+\-]\d*$/.test(val);
 }
 
 // Per-note length atom: note name + any valid length token suffix.
@@ -1809,6 +1868,7 @@ function compileChannelBody(
   trackName,
   typedDefs,
   loopCounter,
+  vals,
 ) {
   let i = 0;
   while (i < items.length) {
@@ -1858,9 +1918,18 @@ function compileChannelBody(
         if (i < items.length) {
           const rawVal = atomValue(items[i]);
           switch (val) {
-            case ":oct": {
-              const v = parseIntLike(rawVal);
-              if (v !== null) trackState.defaultOct = Math.max(0, v);
+            case ":oct":
+            case ":oct+":
+            case ":oct*": {
+              // absolute / +add / *multiply against the running octave base
+              const { op } = opSuffix(val);
+              const raw = op === "*" ? parseFloat(rawVal) : parseIntLike(rawVal);
+              if (raw !== null && !Number.isNaN(raw)) {
+                const cur = trackState.defaultOct;
+                const next =
+                  op === "+" ? cur + raw : op === "*" ? cur * raw : raw;
+                trackState.defaultOct = Math.max(0, Math.round(next));
+              }
               break;
             }
             case ":len":
@@ -1906,11 +1975,19 @@ function compileChannelBody(
               }
               break;
             }
-            case ":vel": {
-              // per-note velocity, KEY-ON scoped; stored as sticky state
-              const v = parseIntLike(rawVal);
-              if (v !== null)
-                trackState.defaultVel = Math.max(0, Math.min(15, v));
+            case ":vel":
+            case ":vel+":
+            case ":vel*": {
+              // per-note velocity (KEY-ON scoped, sticky): absolute / +add /
+              // *multiply against the running vel base (default 15).
+              const { op } = opSuffix(val);
+              const raw = op === "*" ? parseFloat(rawVal) : parseIntLike(rawVal);
+              if (raw !== null && !Number.isNaN(raw)) {
+                const cur = trackState.defaultVel ?? 15;
+                const next =
+                  op === "+" ? cur + raw : op === "*" ? cur * raw : raw;
+                trackState.defaultVel = Math.max(0, Math.min(15, Math.round(next)));
+              }
               break;
             }
             case ":master": {
@@ -2144,45 +2221,62 @@ function compileChannelBody(
               });
               break;
             default: {
-              // Inline hardware param write: :tl1 30, :ar1 28, etc.
-              // Value may be a plain integer (PARAM_SET) or a curve form (PARAM_SWEEP).
-              const target = canonicalTarget(val);
+              // Inline hardware param write: :tl1 30, :tl1+ 5, :tl1 $x, ...
+              // Absolute literal → PARAM_SET; curve → PARAM_SWEEP; +/* operator
+              // or $value → runtime PARAM_ADD/PARAM_MUL/PARAM_FROM_VAL.
+              const { stem, op } = opSuffix(val);
+              const target = canonicalTarget(stem);
               if (!SUPPORTED_TARGETS.has(target)) break;
-              if (rawVal === "none") {
-                // Stop a running inline PARAM_SWEEP, freezing the value (e.g.
-                // an auto-pan started with `:pan (sin ...)`).
+              const push = (cmd, args) =>
                 events.push({
                   tick: trackState.tick,
-                  cmd: "PARAM_SWEEP_STOP",
-                  args: { target },
+                  cmd,
+                  args,
                   src: nodeSrc(node),
                 });
+              if (!op && rawVal === "none") {
+                // Stop a running inline PARAM_SWEEP, freezing the value.
+                push("PARAM_SWEEP_STOP", { target });
                 break;
               }
-              const valueNode = items[i];
+              // Dynamic value ($slot / $time) — runtime resolved.
+              const ref = resolveValRef(
+                rawVal,
+                vals,
+                diagnostics,
+                trackName,
+                nodeSrc(node),
+              );
+              if (ref !== null) {
+                if (op === "+") push("PARAM_ADD", { target, delta: { src: ref } });
+                else if (op === "*")
+                  push("PARAM_MUL", { target, factor: { src: ref } });
+                else push("PARAM_FROM_VAL", { target, src: ref });
+                break;
+              }
+              // Relative literal: :tl1+ 5 / :tl1* 0.5 → runtime read-modify-write.
+              if (op) {
+                const n = op === "*" ? parseFloat(rawVal) : parseIntLike(rawVal);
+                if (n !== null && !Number.isNaN(n)) {
+                  if (op === "*") push("PARAM_MUL", { target, factor: n });
+                  else push("PARAM_ADD", { target, delta: n });
+                }
+                break;
+              }
+              // Absolute: curve sweep or literal set.
               const curveSpec = parseCurveSpec(
-                valueNode,
+                items[i],
                 diagnostics,
                 nodeSrc(node),
                 trackName,
               );
               if (curveSpec) {
-                events.push({
-                  tick: trackState.tick,
-                  cmd: "PARAM_SWEEP",
-                  args: { target, ...curveSpec },
-                  src: nodeSrc(node),
-                });
+                push("PARAM_SWEEP", { target, ...curveSpec });
               } else {
                 let value = parseIntLike(rawVal);
                 if (value === null && target === "PAN" && rawVal in PAN_MAP)
                   value = PAN_MAP[rawVal];
-                events.push({
-                  tick: trackState.tick,
-                  cmd: "PARAM_SET",
-                  args: { target, value: value ?? 0 },
-                  src: nodeSrc(node),
-                });
+                push("PARAM_SET", { target, value: value ?? 0 });
               }
               break;
             }
@@ -2200,6 +2294,14 @@ function compileChannelBody(
       }
       if (val === "<") {
         trackState.defaultOct = Math.max(0, trackState.defaultOct - 1);
+        i++;
+        continue;
+      }
+      // Octave shift atom: o+, o-, o+2, o-2 (parallel to v±)
+      if (isOctShiftAtom(val)) {
+        const sign = val[1] === "+" ? 1 : -1;
+        const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
+        trackState.defaultOct = Math.max(0, trackState.defaultOct + sign * delta);
         i++;
         continue;
       }
@@ -2465,6 +2567,7 @@ function compileChannelBody(
             trackName,
             typedDefs,
             loopCounter,
+            vals,
           );
           events.push({
             tick: trackState.tick,
@@ -2488,6 +2591,7 @@ function compileChannelBody(
             trackName,
             typedDefs,
             loopCounter,
+            vals,
           );
           trackState.currentLoopId = savedLoopId;
           events.push({
@@ -2562,8 +2666,8 @@ function compileChannelBody(
       if (head === "echo") {
         const items = node.items;
         const tgt = atomValue(items[1]) || ":vel";
-        const mul = tgt.endsWith("*");
-        const param = (mul ? tgt.slice(0, -1) : tgt).replace(/^:/, "");
+        const { stem, op } = opSuffix(tgt);
+        const param = stem.replace(/^:/, "");
         let count = 1;
         let j = 2;
         const c0 = parseIntLike(atomValue(items[2]));
@@ -2585,7 +2689,16 @@ function compileChannelBody(
             diagnostics,
             "error",
             "E_ECHO_TARGET",
-            `(echo …) supports :vel/:vel* for now (got ${tgt})`,
+            `(echo …) supports :vel+/:vel* for now (got ${tgt})`,
+            nodeSrc(items[0]),
+            trackName,
+          );
+        } else if (!op) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_ECHO_OP_REQUIRED",
+            `(echo …) needs an operator: :vel+ (add) or :vel* (multiply)`,
             nodeSrc(items[0]),
             trackName,
           );
@@ -2593,7 +2706,7 @@ function compileChannelBody(
           emitEchoReplay(
             trackState,
             events,
-            { domain: mul ? "mul" : "add", count, by, back },
+            { domain: op === "*" ? "mul" : "add", count, by, back },
             nodeSrc(node),
           );
         }
@@ -2614,9 +2727,9 @@ function compileChannelBody(
           i++;
           continue;
         }
-        const mul = a1?.endsWith("*");
-        const param = (mul ? a1.slice(0, -1) : a1 || ":vel").replace(/^:/, "");
-        const mode = mul ? "mul" : "add";
+        const { stem, op } = opSuffix(a1 || ":vel");
+        const param = stem.replace(/^:/, "");
+        const mode = op === "*" ? "mul" : "add";
         const a2node = items[2];
         const a2 = atomValue(a2node);
         if (param !== "vel") {
@@ -2634,6 +2747,19 @@ function compileChannelBody(
         if (a2 === "none") {
           trackState.delaySpec = null;
           trackState.delayTicks = 0;
+          i++;
+          continue;
+        }
+        // Setting (not clearing) a relative delay requires an operator.
+        if (!op) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_DELAY_OP_REQUIRED",
+            `(delay …) needs an operator: :vel+ (add) or :vel* (multiply)`,
+            nodeSrc(items[0]),
+            trackName,
+          );
           i++;
           continue;
         }
@@ -2714,7 +2840,7 @@ function compileChannelBody(
               // Target group [:tl1 :tl2 ...] applies the one spec (or clear)
               // to every keyword — sugar for writing the pair per target.
               for (const groupSym of group ?? [sym]) {
-                const { target, mul } = macroKeyword(groupSym);
+                const { target, op } = macroKeyword(groupSym);
                 if (isClear) {
                   clearMacroTarget(trackState, target);
                   continue;
@@ -2724,16 +2850,17 @@ function compileChannelBody(
                   target,
                   diagnostics,
                   trackName,
+                  !op,
                 );
                 if (spec && currentStep) spec.step = currentStep;
                 if (
                   spec &&
-                  mul &&
-                  !macroMulOk(target, groupSym, diagnostics, trackName)
+                  op &&
+                  !macroOpOk(target, groupSym, diagnostics, trackName)
                 ) {
-                  // `*` misused — diagnostic pushed; drop this entry.
+                  // +/* misused — diagnostic pushed; drop this entry.
                 } else {
-                  if (spec && mul) spec.mul = true;
+                  if (spec && op) spec.op = op;
                   applyMacroEntryToState(trackState, target, spec);
                 }
               }
@@ -2900,6 +3027,7 @@ function collectDefs(roots, diagnostics) {
   const defns = new Map();
   const typedDefs = new Map();
   const sampleDefs = new Map();
+  const vals = new Map(); // v0.5: (def-val name init) runtime value slots
   const remaining = [];
 
   for (const root of roots) {
@@ -2908,6 +3036,26 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
     const head = atomValue(root.items[0]);
+
+    // (def-val name init) — declare a runtime value slot (Tier 0/1 dynamic
+    // value). Slots are assigned indices in declaration order.
+    if (head === "def-val") {
+      const name = atomValue(root.items[1]);
+      if (!name || name.startsWith("$")) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_DEFVAL_NAME",
+          "def-val name must be a plain symbol (no $ prefix)",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      const init = parseIntLike(atomValue(root.items[2])) ?? 0;
+      if (!vals.has(name)) vals.set(name, { name, slot: vals.size, init });
+      continue;
+    }
 
     if (head === "def") {
       const name = atomValue(root.items[1]);
@@ -3030,7 +3178,7 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, defns, typedDefs, sampleDefs, remaining };
+  return { defs, defns, typedDefs, sampleDefs, vals, remaining };
 }
 
 function substituteNode(node, bindings) {
@@ -3092,7 +3240,7 @@ function expandRoots(roots, defs, defns) {
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, defns, typedDefs, sampleDefs, remaining } = collectDefs(
+  const { defs, defns, typedDefs, sampleDefs, vals, remaining } = collectDefs(
     parsed,
     diagnostics,
   );
@@ -3442,6 +3590,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       trackKey,
       typedDefs,
       loopCounter,
+      vals,
     );
 
     if (trackState.isCsmTrack && trackState.hasCsmOn) {
@@ -3550,6 +3699,11 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       title: atomValue(titleNode) || filename,
       author: atomValue(authorNode) || "unknown",
       source: filename,
+      vals: [...vals.values()].map((v) => ({
+        name: v.name,
+        slot: v.slot,
+        init: v.init,
+      })),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
         file: sample.file,

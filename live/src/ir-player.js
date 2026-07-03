@@ -676,6 +676,13 @@ export class IRPlayer {
     this._ppqn = irObj.ppqn ?? 48;
     this._bpm = this._resolveInitialTempo(irObj);
     this._tempoSweep = null;
+    // v0.5 dynamic value slots: name → current value, seeded from def-val inits.
+    // The host (or live UI) mutates these via setVal(); scores read them with
+    // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
+    this._vals = {};
+    for (const v of irObj.metadata?.vals ?? []) {
+      this._vals[v.name] = v.init ?? 0;
+    }
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
@@ -2046,6 +2053,33 @@ export class IRPlayer {
         break;
       }
 
+      // v0.5 dynamic values (Tier 0/1). Resolved at dispatch time; with the
+      // Web Audio look-ahead this trails live setVal() by the scheduler window
+      // — acceptable for the reference player (the Z80 driver resolves per tick).
+      case "PARAM_FROM_VAL": {
+        const value = this._resolveSrc(ev.args?.src, when);
+        this._applyParam(
+          ch,
+          port,
+          chOffset,
+          { args: { target: ev.args?.target, value } },
+          when,
+        );
+        break;
+      }
+      case "PARAM_ADD":
+      case "PARAM_MUL": {
+        const target = ev.args?.target;
+        const cur = this._readParam(ch, target);
+        const operand = this._resolveOperand(
+          ev.cmd === "PARAM_MUL" ? ev.args?.factor : ev.args?.delta,
+          when,
+        );
+        const value = ev.cmd === "PARAM_MUL" ? cur * operand : cur + operand;
+        this._applyParam(ch, port, chOffset, { args: { target, value } }, when);
+        break;
+      }
+
       case "PARAM_SWEEP": {
         this._applyParamSweep(ch, port, chOffset, ev, when);
         break;
@@ -2178,6 +2212,59 @@ export class IRPlayer {
 
       default:
         return false;
+    }
+  }
+
+  // v0.5 dynamic values — host API to set/read a value slot by name.
+  setVal(name, value) {
+    if (this._vals) this._vals[name] = Number(value) || 0;
+  }
+  getVal(name) {
+    return this._vals?.[name] ?? 0;
+  }
+
+  // Elapsed 60 Hz frames since playback start, at audio time `when`.
+  _valTime(when) {
+    return Math.max(0, Math.round((when - (this._startAudioTime ?? 0)) * 60));
+  }
+
+  // Resolve a value source id: "$time" (built-in) or a slot name.
+  _resolveSrc(src, when) {
+    if (src === "$time") return this._valTime(when);
+    return this._vals?.[src] ?? 0;
+  }
+
+  // Resolve a PARAM_ADD/MUL operand: a literal number or a { src } reference.
+  _resolveOperand(operand, when) {
+    if (operand && typeof operand === "object" && "src" in operand)
+      return this._resolveSrc(operand.src, when);
+    return Number(operand) || 0;
+  }
+
+  // Read a target's current stored value from chRegs (the shadow register file)
+  // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
+  // base so a relative TL op composes with vel/vol attenuation.
+  _readParam(ch, target) {
+    const regs = this._chRegs[ch];
+    if (!regs) return 0;
+    const t = String(target || "").toUpperCase();
+    const m = t.match(/^FM_([A-Z]+)([1-4])$/);
+    if (m) {
+      const FIELD = {
+        TL: "voicedTl", AR: "ar", DR: "dr", SR: "d2r", RR: "rr",
+        SL: "sl", ML: "mul", DT: "dt", KS: "rs", AMEN: "amen", SSG: "ssg",
+      };
+      const f = FIELD[m[1]];
+      return f ? (regs.ops[+m[2] - 1]?.[f] ?? 0) : 0;
+    }
+    switch (t) {
+      case "FM_FB": return regs.feedback ?? 0;
+      case "FM_ALG": return regs.algorithm ?? 0;
+      case "FM_AMS": return regs.ams ?? 0;
+      case "FM_FMS": return regs.fms ?? 0;
+      case "VOL": return regs.vol ?? 0;
+      case "PAN": return regs.pan ?? 0;
+      default: return 0;
     }
   }
 
