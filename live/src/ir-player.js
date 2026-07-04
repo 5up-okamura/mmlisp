@@ -680,8 +680,10 @@ export class IRPlayer {
     // The host (or live UI) mutates these via setVal(); scores read them with
     // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
     this._vals = {};
+    this._valUnits = {}; // slot → "frame" | "tick" (for dynamic :len/:step)
     for (const v of irObj.metadata?.vals ?? []) {
       this._vals[v.name] = v.init ?? 0;
+      this._valUnits[v.name] = v.unit ?? "frame";
     }
     this._eventIndex = 0;
     this._currentTick = 0;
@@ -2257,6 +2259,22 @@ export class IRPlayer {
     return { from, to, params };
   }
 
+  // Length of a curve/stage in 60 Hz frames. A dynamic :len (spec.dyn.len) reads
+  // the slot at note-on and interprets it by the slot's unit (frame as-is / tick
+  // → tempo-relative); otherwise the static frames field (ticks, or Nf frames).
+  _resolveLenFrames(spec, rawFrames, when) {
+    if (spec.dyn?.len != null) {
+      const raw = this._resolveSrc(spec.dyn.len, when);
+      const unit = this._valUnits?.[spec.dyn.len] ?? "frame";
+      return unit === "tick"
+        ? Math.max(1, Math.round(raw * this._secsPerTick * 60))
+        : Math.max(1, Math.round(raw));
+    }
+    return spec.lenFrames
+      ? Math.max(1, Math.round(Number(rawFrames)))
+      : Math.max(1, Math.round(Number(rawFrames) * this._secsPerTick * 60));
+  }
+
   // Read a target's current stored value from chRegs (the shadow register file)
   // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
   // base so a relative TL op composes with vel/vol attenuation.
@@ -2884,11 +2902,7 @@ export class IRPlayer {
         // Regular curve stage (dynamic :from/:to/:rate resolved per note)
         const { curve = "linear", frames: rawFrames = 1, loop = false } = stage;
         const { from = 0, to = 0, params } = this._curveFields(stage, when);
-        // :len is ticks by default → convert to 60 Hz frames; `Nf` (lenFrames)
-        // is already an absolute frame count, used as-is.
-        const baseFrames = stage.lenFrames
-          ? Math.max(1, Math.round(Number(rawFrames)))
-          : Math.max(1, Math.round(Number(rawFrames) * this._secsPerTick * 60));
+        const baseFrames = this._resolveLenFrames(stage, rawFrames, when);
         // For looping stages, run until gate (or next key-off boundary)
         const budget = loop
           ? Math.max(0, Math.floor((gateSecs - t) * 60))
@@ -2918,11 +2932,9 @@ export class IRPlayer {
         waitKeyOff = false,
       } = spec;
       const { from, to, params } = this._curveFields(spec, when);
-      // :len is ticks by default → convert to 60 Hz frames; `Nf` (lenFrames) is
-      // already an absolute frame count, used as-is.
-      const baseFrames = spec.lenFrames
-        ? Math.max(1, Math.round(Number(rawFrames)))
-        : Math.max(1, Math.round(Number(rawFrames) * this._secsPerTick * 60));
+      // :len → 60 Hz frames (ticks by default, `Nf` as absolute frames, or a
+      // dynamic slot resolved by its unit).
+      const baseFrames = this._resolveLenFrames(spec, rawFrames, when);
       const waitFrameOffset = waitKeyOff
         ? Math.max(0, Math.round((gateSecs - when) * 60))
         : Math.max(

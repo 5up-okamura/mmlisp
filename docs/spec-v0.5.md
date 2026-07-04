@@ -683,9 +683,10 @@ read-modify-write `PARAM_ADD`/`PARAM_MUL`. No on-Z80 expression VM.
   (so `:from 0 :to -127` runs 0 → −127, negatives and either direction are
   fine). `init` (the positional value) is the default; if omitted it defaults to
   `:from`. `:step` (default `1`) sets granularity — useful for wide ranges (e.g.
-  `:from 0 :to 2400 :step 8`). `:min` / `:max` are accepted synonyms for the
-  endpoints (unordered). The live app renders one **Dynamic Parameters** slider
-  per `def-val`, driving `setVal` as you drag.
+  `:from 0 :to 2400 :step 8`). `:unit frame|tick` (default `frame`) is the time
+  unit used when the slot feeds a `:len` (dynamic durations). `:min` / `:max`
+  are accepted synonyms for the endpoints (unordered). The live app renders one
+  **Dynamic Parameters** slider per `def-val`, driving `setVal` as you drag.
 - `$name` — reference a slot, or the built-in `$time` (elapsed 60 Hz frames
   since track start, read-only), in a value or operator-operand position.
 - The host sets slots via the §4.3 control interface; the score reads them.
@@ -709,9 +710,10 @@ An undefined `$name` raises `E_VAL_UNDEFINED`.
 :rate $spd)`). The slot is read **once at note-on**, so the value is constant
 for that note. The value only ever comes from a slot — the score never computes
 (no `(mul $x -1)`; derive such values on the host into another slot). The curve
-spec records these in a `dyn: {from?, to?, rate?}` map the player resolves at
-schedule time. `:len` / `:step` are **not** dynamic yet — they need a frame/tick
-unit (a future `def-val :unit`).
+spec records these in a `dyn: {from?, to?, rate?, len?}` map the player resolves
+at schedule time. `:len` is dynamic too (dynamic envelope/LFO durations); its
+slot's `def-val :unit` (frame or tick) sets how the value is read at note-on.
+`:step` (the macro clock) stays static for now.
 
 The JS player resolves values at dispatch time and keeps `chRegs` as the
 shadow register file for read-modify-write; with the Web Audio look-ahead this

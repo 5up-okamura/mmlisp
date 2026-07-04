@@ -1418,10 +1418,20 @@ function parseCurveSpec(
           } else to = parseNumberLike(v);
           break;
         }
-        case ":len":
-          frames = parseLengthToken(v, null);
-          lenFrames = /^\d+f$/.test(v); // Nf is an absolute frame count, not ticks
+        case ":len": {
+          const s = dynSrc(v);
+          if (s) {
+            // Dynamic length: unit comes from the slot's def-val :unit; the
+            // player resolves the frame/tick interpretation at note-on.
+            frames = 1;
+            dyn.len = s;
+            hasDyn = true;
+          } else {
+            frames = parseLengthToken(v, null);
+            lenFrames = /^\d+f$/.test(v); // Nf is an absolute frame count, not ticks
+          }
           break;
+        }
         case ":wait":
           if (v === "key-off") {
             waitKeyOff = true;
@@ -3088,9 +3098,15 @@ function collectDefs(roots, diagnostics) {
       let minOpt;
       let maxOpt;
       let step = 1; // slider granularity (control resolution)
+      let unit = "frame"; // time unit when this slot feeds :len/:step
       for (let k = initPos === null ? 2 : 3; k + 1 < root.items.length; k += 2) {
         const key = atomValue(root.items[k]);
-        const v = parseIntLike(atomValue(root.items[k + 1]));
+        const raw = atomValue(root.items[k + 1]);
+        if (key === ":unit") {
+          if (raw === "frame" || raw === "tick") unit = raw;
+          continue;
+        }
+        const v = parseIntLike(raw);
         if (v === null) continue;
         if (key === ":from") from = v;
         else if (key === ":to") to = v;
@@ -3123,6 +3139,7 @@ function collectDefs(roots, diagnostics) {
           max,
           step,
           reversed,
+          unit,
         });
       continue;
     }
@@ -3777,6 +3794,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         max: v.max,
         step: v.step,
         reversed: v.reversed,
+        unit: v.unit,
       })),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
