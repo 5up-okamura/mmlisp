@@ -23,8 +23,10 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-formatter.js` | Source formatter                                              |
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `player/wasm/`) |
 
-Specs: `docs/spec-v0.5.md` is canonical (`§5` is the decision table).
-`docs/spec-v0.4.md` is **legacy** — reference only, do not implement against it.
+Docs: `docs/language.md` is the canonical language reference;
+`docs/guide.md` is the tutorial. Driver/format design: `docs/driver.md`,
+`docs/mmb.md`, `docs/opcodes.md`; IR: `docs/ir.md`. There are no per-version
+spec files — new design decisions amend these documents directly.
 
 ## Running
 
