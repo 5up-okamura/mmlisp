@@ -407,6 +407,46 @@ function emitCsmRateEvent(
   });
 }
 
+// (glide ...) on fm3-csm-rate slides Timer A Hz between notes: emit the swept
+// CSM_RATE form (same shape as inline `:csm-rate (curve ...)`) from the previous
+// note's Hz — or a one-shot `(glide <from> <time>)` override, given as a raw Hz
+// literal or a pitch — to the new Hz. The sweep length is clamped to the note
+// length so scheduled sweep writes cannot overrun the next note's rate.
+function emitCsmRateNoteHz(
+  trackState,
+  events,
+  diagnostics,
+  src,
+  trackName,
+  hz,
+  lengthTicks,
+) {
+  const glideTicks = trackState.glide ?? 0;
+  let fromHz = null;
+  if (glideTicks > 0 && trackState.lastCsmHz != null) {
+    const override = trackState.glideFrom;
+    trackState.glideFrom = null; // one-shot reset, mirrors emitGlideIfNeeded
+    if (override != null) {
+      const n = parseNumberLike(String(override));
+      fromHz = n !== null ? n : csmPitchToHz(String(override));
+      if (!Number.isFinite(fromHz)) fromHz = trackState.lastCsmHz;
+    } else {
+      fromHz = trackState.lastCsmHz;
+    }
+  }
+  if (fromHz != null && fromHz !== hz) {
+    emitCsmRateEvent(trackState, events, diagnostics, src, trackName, {
+      from: fromHz,
+      to: hz,
+      len: Math.min(glideTicks, lengthTicks),
+      curve: "linear",
+    });
+  } else {
+    emitCsmRateEvent(trackState, events, diagnostics, src, trackName, { hz });
+  }
+  trackState.lastCsmHz = hz;
+}
+
 function isPcmModeSymbol(value) {
   return value === "shot" || value === "loop";
 }
@@ -532,9 +572,15 @@ function emitNoteForTrack(
       src,
       trackName,
     );
-    emitCsmRateEvent(trackState, events, diagnostics, src, trackName, {
-      hz: csmPitchToHz(pitch),
-    });
+    emitCsmRateNoteHz(
+      trackState,
+      events,
+      diagnostics,
+      src,
+      trackName,
+      csmPitchToHz(pitch),
+      lengthTicks,
+    );
     trackState.tick += lengthTicks;
     return;
   }
@@ -2475,13 +2521,14 @@ function compileChannelBody(
             trackState.defaultLength,
             trackState,
           );
-          emitCsmRateEvent(
+          emitCsmRateNoteHz(
             trackState,
             events,
             diagnostics,
             nodeSrc(node),
             trackName,
-            { hz: rawHz },
+            rawHz,
+            ticks,
           );
           trackState.tick += ticks;
           i++;
@@ -3543,6 +3590,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
         glideFrom: null, // v0.4: one-shot start pitch override for glide
         lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
+        lastCsmHz: null, // v0.5: previous fm3-csm-rate Hz for glide sweeps
         shuffleRatio,
         shuffleBase,
         subBeatParity: 0,
