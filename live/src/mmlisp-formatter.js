@@ -12,7 +12,7 @@
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
-const LABELLED_FORMS = new Set(["track", "defn"]);
+const LABELLED_FORMS = new Set(["track"]);
 const KEYWORD_VALUE_KEYS = [
   ":author",
   ":title",

@@ -432,9 +432,6 @@ Active:
 
 v0.5 candidates:
 
-- `defn` — compile-time function definition; returns note sequences or values computed
-  from arguments. Arguments resolved at call site; output folded into IR via LUT.
-  Enables numeric note input (semitone integers) from computed sequences.
 - arpeggio macro (`:macro :pitch` with note/rest sequences)
 - quantize snap (scale mask applied after pitch sum)
 - OP mask (per-channel operator enable/disable)
@@ -442,6 +439,9 @@ v0.5 candidates:
 
 Parked (out of current scope, post-core features):
 
+- Parametric phrase definitions — `defn` (token-substitution templates) was
+  removed in the v0.5 cleanup: zero usage, unhygienic parameter capture, and
+  definition-site source maps. Redesign on demand when a composition needs it.
 - Dynamic performance branch primitives (`|` alternation, random part switching, random label jump)
 - Reproducible random sequence by seed-indexed LUT traversal (same seed => same sequence)
 - Label numbering + jump-address table for O(1) branch target resolution in Z80 driver

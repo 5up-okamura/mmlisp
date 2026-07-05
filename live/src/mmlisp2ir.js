@@ -3108,7 +3108,6 @@ function sortObject(value) {
 
 function collectDefs(roots, diagnostics) {
   const defs = new Map();
-  const defns = new Map();
   const typedDefs = new Map();
   const sampleDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
@@ -3272,64 +3271,13 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
-    if (head === "defn") {
-      const name = atomValue(root.items[1]);
-      if (!name) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_DEFN_NAME",
-          "defn name must be a symbol",
-          nodeSrc(root),
-          null,
-        );
-        continue;
-      }
-      const paramsNode = root.items.filter((n) => n.kind !== "comment")[2];
-      if (
-        !paramsNode ||
-        paramsNode.kind !== "list" ||
-        paramsNode.bracket !== "[]"
-      ) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_DEFN_PARAMS",
-          "defn params must be a [...] vector",
-          nodeSrc(root),
-          null,
-        );
-        continue;
-      }
-      const params = paramsNode.items
-        .map((item) => atomValue(item))
-        .filter(Boolean);
-      const body = root.items.slice(3);
-      defns.set(name, { params, body, src: nodeSrc(root) });
-      continue;
-    }
-
     remaining.push(root);
   }
 
-  return { defs, defns, typedDefs, sampleDefs, vals, remaining };
+  return { defs, typedDefs, sampleDefs, vals, remaining };
 }
 
-function substituteNode(node, bindings) {
-  if (node.kind === "atom" && bindings.has(node.value)) {
-    const replacement = bindings.get(node.value);
-    return replacement ? { ...replacement } : node;
-  }
-  if (node.kind === "list") {
-    return {
-      ...node,
-      items: node.items.map((item) => substituteNode(item, bindings)),
-    };
-  }
-  return node;
-}
-
-function expandNode(node, defs, defns, depth) {
+function expandNode(node, defs, depth) {
   if (depth > 16)
     throw new Error("Macro expansion depth exceeded (possible recursion)");
   if (node.kind === "atom" && defs.has(node.value))
@@ -3339,29 +3287,16 @@ function expandNode(node, defs, defns, depth) {
   const head = atomValue(node.items[0]);
   if (head && defs.has(head) && node.items.length === 1)
     return defs.get(head).map((n) => ({ ...n }));
-  if (head && defns.has(head)) {
-    const { params, body } = defns.get(head);
-    const args = node.items.slice(1);
-    const bindings = new Map();
-    for (let i = 0; i < params.length; i++)
-      bindings.set(params[i], args[i] || null);
-    const expanded = [];
-    for (const bodyNode of body) {
-      const substituted = substituteNode(bodyNode, bindings);
-      expanded.push(...expandNode(substituted, defs, defns, depth + 1));
-    }
-    return expanded;
-  }
 
   const newItems = [];
   for (const item of node.items)
-    newItems.push(...expandNode(item, defs, defns, depth + 1));
+    newItems.push(...expandNode(item, defs, depth + 1));
   return [{ ...node, items: newItems }];
 }
 
-function expandRoots(roots, defs, defns) {
+function expandRoots(roots, defs) {
   const result = [];
-  for (const root of roots) result.push(...expandNode(root, defs, defns, 0));
+  for (const root of roots) result.push(...expandNode(root, defs, 0));
   return result;
 }
 
@@ -3374,7 +3309,7 @@ function expandRoots(roots, defs, defns) {
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, defns, typedDefs, sampleDefs, vals, remaining } = collectDefs(
+  const { defs, typedDefs, sampleDefs, vals, remaining } = collectDefs(
     parsed,
     diagnostics,
   );
@@ -3386,7 +3321,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       src: null,
     });
   }
-  const roots = expandRoots(remaining, defs, defns);
+  const roots = expandRoots(remaining, defs);
 
   const score = roots.find(
     (node) =>

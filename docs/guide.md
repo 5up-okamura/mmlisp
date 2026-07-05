@@ -164,18 +164,6 @@ Shorthands:
 
 `def` expands inline.
 
-### `defn` (parametric)
-
-```lisp
-(defn arp [root]
-  root > root < root)
-
-(score
-  (fm1 :oct 4 :len 8
-    (arp c)
-    (arp g)))
-```
-
 ---
 
 ## 8. FM Voice Definitions
