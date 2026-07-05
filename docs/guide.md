@@ -1,6 +1,8 @@
 # MMLisp Composer's Guide
 
-Practical authoring guide for the current MMLisp language.
+Practical authoring guide for the current MMLisp language. This is the
+tutorial; the full reference (every keyword, range, and rule) is
+`docs/language.md`.
 
 ---
 
@@ -19,6 +21,7 @@ Default state:
 
 - `:oct` = `4`
 - `:len` = `8` (eighth note)
+- `:gate` = full note length
 - `:vol` = `31`
 - `:vel` = `15`
 
@@ -26,11 +29,16 @@ Default state:
 
 ## 2. Channel Reference
 
-| Name          | Hardware                     |
-| ------------- | ---------------------------- |
-| `fm1`-`fm6`   | YM2612 FM channels           |
-| `sqr1`-`sqr3` | SN76489 square tone channels |
-| `noise`       | SN76489 noise channel        |
+| Name           | Hardware                                             |
+| -------------- | ---------------------------------------------------- |
+| `fm1`-`fm6`    | YM2612 FM channels (`fm6` also plays PCM via `:mode`)|
+| `fm3-1`-`fm3-4`| FM3 independent-operator mode (one track per OP)     |
+| `fm3-csm`, `fm3-csm-rate` | FM3 CSM mode (§17)                        |
+| `sqr1`-`sqr3`  | SN76489 square tone channels                         |
+| `noise`        | SN76489 noise channel                                |
+| `pcm1`-`pcm3`  | Software-mixed PCM channels (§19)                    |
+
+See `docs/language.md` §2 for mode-exclusivity rules.
 
 ---
 
@@ -65,7 +73,9 @@ This affects only that note.
 
 ## 4. Length Syntax
 
-These formats are accepted wherever a length value appears — `:len`, note/rest suffix, `:gate` (absolute form), curve `:len`, `:shuffle-base`, `(rest N)`, `(tie N)`, `~ N`:
+These formats are accepted wherever a length value appears — `:len`, note/rest
+suffix, `:gate` / `:gate-`, curve `:len`, macro `:step`, `~ N`, `(wait N)`,
+`(glide T)`, `(delay … :time T)`, `:shuffle-base`:
 
 | Form  | Meaning                                                          |
 | ----- | ---------------------------------------------------------------- |
@@ -73,7 +83,7 @@ These formats are accepted wherever a length value appears — `:len`, note/rest
 | `N.`  | dotted length (`1.5x`)                                           |
 | `N/M` | fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) |
 | `Nt`  | exact tick count                                                 |
-| `Nf`  | exact frame count (60 Hz)                                        |
+| `Nf`  | frame count (60 Hz) — honored in curve `:len` and macro `:step`  |
 
 Examples:
 
@@ -82,7 +92,10 @@ Examples:
 - `2/1` = 2 whole notes (2 bars at 4/4)
 - `1/3` = triplet whole
 - `24t` = 24 ticks exactly
-- `8f` = 8 frames exactly
+- `8f` = 8 frames (curve `:len` / `:step` contexts; use `Nt` elsewhere)
+
+The tick grid is PPQN 96 (quarter = 96 ticks, whole = 384). See
+`docs/language.md` §4.
 
 ---
 
@@ -99,7 +112,7 @@ Common modifiers:
 
 - `:oct N` — octave (`0`–`8`)
 - `:len token` — default note length (length token); `0` emits a held note and does not advance the timeline
-- `:gate token` — gate time as an absolute length token (e.g. `6f`, `8`, `12t`); `0` holds until runtime KEY-OFF
+- `:gate token` — gate time as an absolute length token (e.g. `8`, `12t`); `0` holds until runtime KEY-OFF
 - `:gate* ratio` — gate as a fraction of the note length (`0.0`–`1.0`)
 - `:gate- token` — shorten the gate: note length **minus** this time (key off early / staccato)
 - `:vel N` — note-on velocity (`0`–`15`); a ~2 dB/step musical ladder (PMD /
@@ -110,7 +123,8 @@ Common modifiers:
   mutes**. Default (unset) = `31` (unity).
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
-- `:shuffle N` — swing ratio (`51`–`90`; `50` = straight)
+- `:shuffle N` — swing ratio (`51`–`90`; `50` = straight). Head-only: write it
+  right after the channel name (or as a score option), not mid-body
 - `(glide T)` — portamento from the previous note over duration `T` (same
   length-token forms as `:len`); `(glide 0)` disables.
 - `(glide from-pitch T)` — glide from an explicit start pitch. The start pitch is
@@ -121,6 +135,7 @@ Shorthands:
 
 - `>` octave up
 - `<` octave down
+- `o+`, `o-`, `o+N`, `o-N` adjust `:oct`
 - `v+`, `v-`, `v+N`, `v-N` adjust `:vel` (0-15)
 
 ---
@@ -146,6 +161,22 @@ Shorthands:
 
 - `(x N ...)` repeats body `N` times.
 - `:break` skips the tail on the last pass.
+
+### Labels and `go`
+
+```lisp
+(fm1 :len 8
+  #verse
+  c e g e
+  (go verse 4)     ; the #verse section plays 4 times, then falls through
+  #head
+  c g
+  (go head))       ; infinite loop
+```
+
+`(go label N)` compiles to the same loop as `(x N ...)`; the label and the
+`go` may even live in different forms of the same channel. See
+`docs/language.md` §13.
 
 ---
 
@@ -181,16 +212,16 @@ FM voice defs use keyword maps (and can use `:extend`):
 (def brass :extend fm-init
   :alg 7
   :tl1 20 :tl2 30 :tl3 25 :tl4 0)
-```
 
-Use by bare identifier:
-
-```lisp
+; use by bare identifier:
 (score
   (fm1 :oct 4 :len 8
     brass
     c e g e))
 ```
+
+The built-in `@init-fm` (a neutral full patch) is always available as an
+`:extend` base — see `docs/language.md` §9.
 
 ---
 
@@ -275,9 +306,10 @@ flag:
   (sin :from 13 :to 15 :len 4)            ; vibrato sustain — loops until key-off
   (ease-out :from 15 :to 0 :len 6)        ; release
 ]))
-
-(ease-out :from 15 :to 0 :len 4 :loop)    ; :loop forces a non-loop curve to cycle
 ```
+
+The value-less `:loop` flag forces a non-loop curve to cycle, e.g.
+`(ease-out :from 15 :to 0 :len 4 :loop)` as a pulsing sustain stage.
 
 ### `(const V :len D)` — flat segment
 
@@ -286,7 +318,9 @@ flat stage, or to retrigger for a fixed span after key-off without listing
 repeats — combined with `:step` it fires once per step (see §12):
 
 ```lisp
-:keyon [ (wait key-off) (const 1 :len 8) ]   ; fire every :step across :len 8
+(def tail (macro :step 16 :keyon [(wait key-off) (const 1 :len 8)]))
+
+(fm1 tail :len 4 c)   ; fire every :step across :len 8 after key-off
 ```
 
 ---
@@ -310,6 +344,8 @@ Accepted symbolic values:
 - `periodic0`-`periodic3`
 
 Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
+Set the mode via a `:mode` macro (see §14) — inline `:mode` on the `noise`
+channel is currently rejected by the compiler.
 
 ---
 
@@ -366,10 +402,10 @@ retriggers on the 1/16 grid.
 ### Echo-tail preset (1-channel delay on one note)
 
 ```lisp
-(def $echo (macro :step 1/8  :keyon [0 :off 1 1 1]
-                             :vel   [15 :off 10 5 0]))
+(def echo-tail (macro :step 1/8  :keyon [0 :off 1 1 1]
+                                 :vel   [15 :off 10 5 0]))
 
-(fm1 $echo :len 8  c _ _ _)
+(fm1 echo-tail :len 8  c _ _ _)
 ```
 
 After KEY-OFF the note retriggers three times at 1/8 spacing, decaying via the
@@ -389,17 +425,17 @@ repeats, shifted and decayed. (Distinct from `:keyon`, which retriggers a single
 note.) Taps are **relative** to each note's own value: an echo follows whatever
 velocity that note carries.
 
-```lisp
+```text
 (delay <target> <count|list|curve> :by N :time T)
 ```
 
-- `<target>` — `:vel` (additive deltas) or `:vel*` (multiplicative ratios).
-  (`:vol` is reserved, not yet supported.)
+- `<target>` — `:vel+` (additive deltas) or `:vel*` (multiplicative ratios);
+  the operator is required. (`:vol` is reserved, not yet supported.)
 - 2nd arg is polymorphic:
   - a **number** = tap count (pair with `:by`),
-  - a **`[list]`** = explicit per-tap deltas (`:vel`) or ratios (`:vel*`),
+  - a **`[list]`** = explicit per-tap deltas (`:vel+`) or ratios (`:vel*`),
   - a **`(curve …)`** = relative envelope; tap count = its `:len ÷ :time`.
-- `:by N` — per-tap step: on `:vel`, tap k = note_vel + N·k; on `:vel*`,
+- `:by N` — per-tap step: on `:vel+`, tap k = note_vel + N·k; on `:vel*`,
   tap k = note_vel · N^k.
 - `:time T` — tap spacing (length token).
 
@@ -408,15 +444,15 @@ velocity that note carries.
 **overlay** that fills gaps — it does **not** lengthen the phrase.
 
 ```lisp
-(fm1 (delay :vel 3 :by -4 :time 1/8)
+(fm1 (delay :vel+ 3 :by -4 :time 1/8)
   c e g e)
 ```
 
 plays the phrase plus three decaying repeats (−4 vel each tap), spaced an eighth
-apart. Equivalent explicit form: `(delay :vel [-4 -8 -12] :time 1/8)`.
+apart. Equivalent explicit form: `(delay :vel+ [-4 -8 -12] :time 1/8)`.
 
 ```lisp
-(fm1 (delay :vel 3 :by -1 :time 4t)  c e g e)   ; 3 echoes, −1 vel each, spaced 4t
+(fm1 (delay :vel+ 3 :by -1 :time 4t)  c e g e)   ; 3 echoes, −1 vel each, spaced 4t
 (fm1 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)  c)  ; non-linear ratio fade
 ```
 
@@ -431,20 +467,21 @@ occupy real time, so later notes shift back. This is the opposite of `(delay
 ...)`, which overlays into gaps without lengthening. `(echo ...)` is relative and
 **one-shot** at its position (not sticky).
 
-```lisp
+```text
 (echo <target> <count> :by N [:back B])
 ```
 
-- `<target>` — `:vel` (additive) / `:vel*` (multiplicative).
-- `<count>` — number of taps. `:by N` — per-tap step (`:vel` → note_vel + N·k;
+- `<target>` — `:vel+` (additive) / `:vel*` (multiplicative); the operator is
+  required.
+- `<count>` — number of taps. `:by N` — per-tap step (`:vel+` → note_vel + N·k;
   `:vel*` → note_vel · N^k).
 - `:back B` — replay the single note B positions back (`B=1` = the last note,
   the default).
 
 ```lisp
-(fm1 c (echo :vel 3 :by -1))         ; last note replayed at vel−1, −2, −3 (decaying trail)
-(fm1 c (echo :vel* 3 :by 0.7))       ; ×0.7, ×0.49, ×0.343
-(fm1 c e (echo :vel 1 :by -4 :back 2))  ; replay the note 2 back (c) once at vel−4
+(fm1 c (echo :vel+ 3 :by -1))         ; last note replayed at vel−1, −2, −3 (decaying trail)
+(fm1 c (echo :vel* 3 :by 0.7))        ; ×0.7, ×0.49, ×0.343
+(fm1 c e (echo :vel+ 1 :by -4 :back 2))  ; replay the note 2 back (c) once at vel−4
 ```
 
 ### Echoes inherit articulation
@@ -453,9 +490,9 @@ Delay echoes carry the source's per-note macros (`:keyon`, `:semi`, …), so a
 phrase with a 1-channel `:keyon` tail repeats with that tail.
 
 ```lisp
-(def $echo (macro :step 16 :vel [15 :off 10 5 0] :keyon [0 :off 1 1 1]))
+(def echo-tail (macro :step 16 :vel [15 :off 10 5 0] :keyon [0 :off 1 1 1]))
 
-(fm1 $echo (delay :vel 4 :by -3 :time 4)
+(fm1 echo-tail (delay :vel+ 4 :by -3 :time 4)
   :len 16 c _ _ _ :len 4 _ _ _)
 ```
 
@@ -471,12 +508,13 @@ velocity, lowered by the delay's per-tap step.
 (def hh-env (macro :vel [15 9 4 0]))
 
 (score
-  (noise :len 8 :mode white0 (macro perc-buzz hh-env)
+  (noise :len 8 (macro perc-buzz hh-env)
     c c c c))
 ```
 
-- `:mode` writes `NOISE_MODE`
-- `(macro :mode ...)` allows per-frame timbre motion
+- The channel starts in `white0`; a `:mode` macro writes `NOISE_MODE` for
+  per-frame timbre motion (inline `:mode` is currently rejected here — see
+  §11)
 
 ---
 
@@ -486,7 +524,7 @@ The gate family controls how long the note sounds within its slot. The
 operation is chosen by the keyword so the argument is never ambiguous:
 
 ```lisp
-(fm1 :len 8 :gate  6f   c d e f)  ; absolute: KEY-OFF 6 frames into each slot
+(fm1 :len 8 :gate  24t  c d e f)  ; absolute: KEY-OFF 24 ticks into each slot
 (fm1 :len 8 :gate* 0.5  c d e f)  ; ratio:    KEY-OFF at 50% of each slot
 (fm1 :len 8 :gate- 2t   c d e f)  ; minus:    KEY-OFF 2 ticks before each slot ends
 ```
@@ -574,16 +612,48 @@ Use `fm3-csm` when you want FM3 to run in CSM mode.
 
 ## 18. Tempo Sweeps
 
-`:tempo` now accepts a curve form for smooth changes:
+`:tempo` is written inline in a track body and accepts a curve form for
+smooth changes:
 
 ```lisp
-(score
-  (:tempo (curve :from 120 :to 180 :len 8))
-  (fm1 c e g c))
+(score :tempo 120
+  (fm1 :len 4
+    c e
+    :tempo (linear :from 120 :to 180 :len 8)
+    g c))
 ```
 
-- `:tempo N` changes tempo immediately.
-- `:tempo (curve :from N :to M :len L)` emits `TEMPO_SWEEP`.
+- `:tempo N` changes tempo immediately (`TEMPO_SET`).
+- `:tempo (linear :from N :to M :len L)` emits `TEMPO_SWEEP` — any curve name
+  works (`ease-out`, `sin`, …; there is no curve literally named `curve`).
+- Tempo is global: all tracks follow the change.
+
+---
+
+## 18b. Dynamic Parameters (`def-val` / `$name`)
+
+Declare a runtime value slot with `(def-val ...)` and reference it with
+`$name` anywhere a runtime parameter takes a value. The live app renders one
+**Dynamic Parameters** slider per slot — drag it while the score plays.
+
+```lisp
+(def-val cutoff 30 :from 0 :to 127)
+(def-val depth 20 :from 0 :to 60)
+
+(score
+  (fm1 :tl1 $cutoff                              ; absolute from the slot
+       :tl2+ $cutoff                             ; relative to the slot
+       (macro :pitch (sin :from -40 :to $depth)) ; dynamic LFO depth
+       c e g e))
+```
+
+- `:from` / `:to` set the slider's endpoints (either direction); the
+  positional value is the initial setting.
+- `$time` is built in: elapsed 60 Hz frames since track start.
+- Curve `:from` / `:to` / `:rate` / `:len` accept `$name`, read once at each
+  note-on.
+
+See `docs/language.md` §8 for `:step`, `:unit`, and the IR mapping.
 
 ---
 
@@ -640,6 +710,6 @@ They can be used anywhere curve expressions are accepted, including `(macro ...)
     phrase
     (x 2 phrase))
 
-  (noise :mode white0
+  (noise
     c _ c _))
 ```
