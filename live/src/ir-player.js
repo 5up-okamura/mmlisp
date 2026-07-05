@@ -958,7 +958,7 @@ export class IRPlayer {
   triggerKeyOff(ch) {
     if (!this._holdChannels.has(ch)) return;
     this._holdChannels.delete(ch);
-    const when = this._ctx?.currentTime ?? 0;
+    const when = this._audioContext?.currentTime ?? 0;
     if (ch >= 6) {
       // PSG channels: silence by setting attenuation to 15 (max att = silent)
       this._psgSetAtt(ch - 6, 15, when);
