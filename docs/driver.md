@@ -1,84 +1,429 @@
-# MMLispDRV Decoder Contract v0.1 Draft
+# MMLispDRV v0.2 Architecture
 
-This document defines the draft contract expected by a future MMLispDRV decoder
-for current MMB artifacts produced by mmlisp-tools.
+Status: **design frozen for review**. This document defines the Z80 sound
+driver that consumes MMB v0.2 (`docs/mmb.md`, `docs/opcodes.md`). It gates
+implementation: first a JS reference implementation (`drv-player.js`), then
+the Z80 assembly — both against this spec (§12).
 
-## 1. Input Expectations
+This document also absorbs the interactive-playback design vision that
+previously lived in `docs/spec-v0.5.md` §4; **this is now its canonical
+home** (§2).
 
-1. Magic must be `MMB0`.
-2. Version must be `0.1` for current draft artifacts.
-3. Section directory must contain at least:
-   - TRACK_TABLE (0x0001)
-   - EVENT_STREAM (0x0002)
-   - METADATA (0x0003)
+## 1. Role and Constraints
 
-## 2. Track Table Contract
+MMLispDRV runs entirely on the Mega Drive Z80 (8KB RAM at 0x0000–0x1FFF),
+reading song data in place from the banked 68k-ROM window (0x8000–0xFFFF)
+and writing the YM2612 (0x4000–0x4003) and SN76489 (0x7F11) directly. The
+68000 never touches the sound chips; it talks to the driver through a
+mailbox in Z80 RAM (§6).
 
-Track entry fields:
+Design principles (working agreements applied to the driver):
 
-1. track_id: uint16
-2. channel_id: uint16 (resolved by compiler allocator for selected target profile)
-3. event_offset: uint32
-4. event_length: uint32
+- **Pointer walking only.** The MMB is decoded in place; no parsing pass,
+  no unpacking, no allocation.
+- **The driver stays dumb.** All computation that can happen at compile
+  time does: BPM → tick increments, note names → MIDI numbers, Hz → Timer A
+  periods, easing vocabulary → a 4-shape curve set. All *runtime*
+  computation the score needs (health → volume, speed → pitch) happens on
+  the 68000, which feeds results into value slots (§6.4).
+- **Determinism.** Frame-by-frame register output is a pure function of
+  (MMB bytes, mailbox command history). The JS reference and the asm must
+  produce matching write logs (§12).
 
-Decoder requirements:
+## 2. Interactive Playback Model
 
-1. Reject out-of-range event offsets.
-2. Treat unknown channel ids as unsupported track mapping.
-3. Do not read beyond `event_length`.
+### 2.1 Goal
 
-## 3. Event Stream Contract (Current Draft)
+MMLisp is not a fixed-BGM driver. The target is a **DJ-style continuous
+audio environment**: scene transitions flow without silence gaps — a title
+sting's release tail decays under the incoming stage music; boss → clear →
+next-stage transitions crossfade rather than cut. Tempo does **not** need
+to match between scenes: tracks from different scores run at their own BPM
+independently (hence per-track tick accumulators, §3).
 
-Each event record is encoded as:
+### 2.2 Track lifetime — channel ownership
 
-1. tick: uint32 little-endian
-2. opcode: uint8
-3. payload_len: uint16 little-endian
-4. payload: fixed binary args
+The unit of runtime control is the **track**, not the score. A score is a
+named collection of tracks; the game starts and stops tracks individually
+(`START_TRACK` / `STOP_TRACK` / `FADE_TRACK`, §6.3).
 
-Known opcodes in draft writer:
+**Channel ownership rule:** when a newly started track claims a channel
+already owned by a running track, the running track is released on that
+channel — with its release tail if the voice defines one (key-off, envelope
+runs out), otherwise immediately. The channel-state block records the
+owning track id (§5.1) to arbitrate this.
 
-1. 0x10 NOTE_ON
-2. 0x11 REST
-3. 0x12 TIE
-4. 0x40 LOOP_BEGIN
-5. 0x41 LOOP_END
-6. 0x42 MARKER
-7. 0x43 JUMP
-8. 0x60 PARAM_SET
-9. 0x61 PARAM_ADD
-10. 0x80 TEMPO_SET
+### 2.3 Layering and scene transitions
 
-Payload contract in current draft:
+Multiple MMBs' tracks may be active at once (M1 limits this to tracks of
+one MMB per bank window; see §5.3). The canonical transition:
 
-1. NOTE_ON: pitch:u8, length:u16
-2. REST: length:u16
-3. TIE: length:u16
-4. TEMPO_SET: bpm:u16
-5. LOOP_BEGIN: loop_id:u8
-6. LOOP_END: loop_id:u8, repeat:u8
-7. MARKER: marker_id:u8
-8. JUMP: marker_id:u8
-9. PARAM_SET: target_id:u8, value:i16
-10. PARAM_ADD: target_id:u8, delta:i16
+```
+68000:
+  START_TRACK(sceneB.fm2)
+  START_TRACK(sceneB.sqr2)
+  FADE_TRACK(sceneA.fm1, 60)   ; 60 frames ≈ 1 s
+  FADE_TRACK(sceneA.sqr1, 60)
+```
 
-## 4. Error Handling Policy
+### 2.4 `len=0` — indefinite hold
 
-1. Unknown section id: skip unless marked required by future flags.
-2. Unknown opcode: fail-safe stop track decode.
-3. Payload length mismatch for opcode: treat as decode error.
-4. Invalid loop structure at decode time: stop track and report error.
+A NOTE_ON with duration byte 0x00 keys on and **suspends the track's
+dispatcher** until the host sends `KEY_OFF` (on the channel) or
+`STOP_TRACK`. Use cases: state-length sound effects (engine rumble,
+charge-up), pad chords under a scene, PCM loops held open. Sweeps/macros
+already running on the channel keep running while held.
 
-## 5. Planned Tightening Before Freeze
+## 3. Timing
 
-1. Freeze opcode table and arg packing format.
-2. Define strict error codes shared by tools and driver.
-3. Add cross-check fixtures for decoder compatibility.
-4. Add multi-track and channel mapping fixtures.
+### 3.1 Clock source and accumulators
 
-Current fixture coverage:
+The driver runs from the **60 Hz vblank interrupt** (Z80 INT, driven by the
+VDP). Each frame, every active track advances by its tempo increment in an
+**8.8 fixed-point tick accumulator**:
 
-1. Valid demo1 and demo2 binaries
-2. Invalid magic header fixture
-3. Invalid payload length fixture
-4. Invalid track event-range fixture
+```
+acc += increment            ; u16 + u16, 8.8
+while (acc >= 0x100):       ; integer part ≥ 1
+    acc -= 0x100
+    advance_one_tick(track) ; count down wait; dispatch events at 0
+```
+
+`increment = round(bpm × 96 × 256 / 3600) = round(bpm × 512 / 75)`
+(precomputed at compile time; mmb.md §7.5).
+
+### 3.2 Why 8.8, and the error budget
+
+PPQN 96 at 60 fps gives fractional ticks per frame for almost every tempo
+(120 BPM → 3.2 ticks/frame). With an 8.8 accumulator:
+
+- **Accumulation is exact.** Integer adds only — the fractional part is
+  never discarded, so over any loop of N frames the track advances exactly
+  `N × increment / 256` ticks. Every loop pass reproduces the identical
+  tick-to-frame pattern: **zero drift over loops**, and two tracks at the
+  same increment can never diverge.
+- **The only error is the one-time rounding of the increment**, bounded by
+  0.5/256 tick per frame ≈ **0.195 hundredths of a tick per frame**. This
+  is a constant tempo offset, not accumulating jitter:
+  relative tempo error ≤ 0.5 / increment.
+  - 120 BPM: increment 819.2 → 819, error 0.024% ≈ **14.6 ms per minute**.
+  - Worst case at ≥ 60 BPM (increment ≥ 410): ≤ 0.122% ≈ **73 ms/min**.
+  - Exact (zero error) whenever BPM is a multiple of 75 (increment
+    = bpm × 512/75; e.g. 75 → 512, 150 → 1024, 225 → 1536).
+- **Accumulators are per-track; the increment is per-song.** Tempo is
+  score-global in the language (a mid-track `:tempo` retimes every track of
+  the score — language.md §5), so a TEMPO_SET/TEMPO_SWEEP decoded on any
+  track replaces the increment for **all tracks of its MMB**. Per-track
+  accumulators keep only the fractional phase. Independent BPM exists
+  *between* songs: tracks of different MMBs each follow their own song
+  increment (§2.1).
+
+### 3.3 PAL
+
+On PAL (50 Hz vblank) the same increments play 60/50 = 1.2× slower.
+Correction (scaling increments by 6/5 at load, or PAL-precomputed files via
+the reserved PAL_TIMEBASE header flag, mmb.md §4) is **deferred**; M1 is
+NTSC-timed.
+
+## 4. Main Loop
+
+Frame order is **fixed and normative** — the JS reference implements
+exactly this order, and A/B verification (§12) depends on it:
+
+1. **Drain mailbox** (§6.2): consume all pending commands (≤ 8), in ring
+   order. START/STOP/KEY_OFF effects apply before any dispatch this frame.
+2. **Per track, ascending track index:** run the §3.1 accumulator loop;
+   each consumed tick counts down `wait_ticks` and, at zero, executes
+   stream events (immediate events run back-to-back; the next timed event
+   reloads `wait_ticks`). Key-offs scheduled by the gate rule fire on their
+   tick inside this loop.
+3. **(M2+) Engines, ascending channel index:** sweep interpolators, then
+   (M3) macro steppers — each computes new values into the shadow state.
+4. **Flush the write queue:** all register writes generated this frame go
+   out now, in fixed order — YM channels fm1→fm6 (per channel: operator
+   params, then channel params, then F-num/block, then key-on/off via $28),
+   then globals ($22/$27), then PSG sqr1→sqr3→noise. Writes are
+   change-only: a value equal to the shadow register is skipped (§5.4).
+
+**YM BUSY policy:** every YM2612 access goes through one write routine that
+polls the status byte (0x4000 bit 7, BUSY) until clear before writing the
+address and again before the data byte. Batching all writes into step 4
+bounds the per-frame chip-access time and keeps the write order
+deterministic. PSG writes need no wait.
+
+## 5. Z80 RAM Map (8KB, 0x0000–0x1FFF)
+
+| Range           | Size   | Contents                                        |
+| --------------- | ------ | ----------------------------------------------- |
+| 0x0000–0x11FF   | 4608 B | driver code + constant tables (budget ≤ 4.5KB)  |
+| 0x1200–0x147F   | 640 B  | channel state: 10 × 64 B (§5.1)                 |
+| 0x1480–0x167F   | 512 B  | track control blocks: 16 × 32 B (§5.2)          |
+| 0x1680–0x16BF   | 64 B   | mailbox — 68k-visible (§6.1)                    |
+| 0x16C0–0x16DF   | 32 B   | val slots: 16 × i16 — 68k-readable (§6.4)       |
+| 0x16E0–0x179F   | 192 B  | YM + PSG shadow registers (§5.4)                |
+| 0x17A0–0x1DFF   | 1632 B | **reserved:** M2 PCM ring buffers               |
+| 0x1E00–0x1F7F   | 384 B  | reserved headroom                               |
+| 0x1F80–0x1FFF   | 128 B  | stack                                           |
+
+Constant tables inside the code image (all generated by the JS reference,
+§12): FM F-number LUT 24 B, PSG period LUT 144 B, level tables 96 B (§7),
+PCM rate multipliers 98 B (M2), curve unit LUTs 4 × 256 B (M2). Total
+≈ 1.4KB of the 4.5KB code budget.
+
+### 5.1 Channel state block (64 B × 10 channels)
+
+Channels 0–9 (fm1–fm6, sqr1–sqr3, noise; mmb.md §6.1). fm3 operator
+sub-tracks (ids 16–18) store their per-op pitch inside fm3's block; PCM
+voices (20–22) live in the M2 ring-buffer area. The 64-byte layout is
+**reserved in full now** so M2/M3 never reshuffle:
+
+| Offset    | Size | Field           | Stage |
+| --------- | ---- | --------------- | ----- |
+| 0x00      | 1    | status (bit0 keyed, bit1 held/len=0, bit2 muted, bits3–7 reserved) | M1 |
+| 0x01      | 1    | note (MIDI)     | M1    |
+| 0x02      | 2    | fnum / PSG period (current, incl. bend) | M1 |
+| 0x04      | 1    | block           | M1    |
+| 0x05      | 1    | vel state (0–15) | M1   |
+| 0x06      | 1    | vol (0–31)      | M1    |
+| 0x07      | 1    | master (0–31)   | M1    |
+| 0x08      | 1    | gate state (0–8) | M1   |
+| 0x09      | 1    | pan (i8 −1/0/1) | M1    |
+| 0x0A      | 2    | key-off countdown (ticks; 0xFFFF = none/held) | M1 |
+| 0x0C      | 2    | pitch offset (cents, i16) | M2 |
+| 0x0E      | 1    | owner track id (0xFF = free) | M1 |
+| 0x0F      | 1    | algorithm (carrier mask lookup) | M1 |
+| 0x10–0x13 | 4    | voiced TL, op1–op4 (level-composition base) | M1 |
+| 0x14–0x17 | 4    | reserved        | —     |
+| 0x18–0x2F | 24   | sweep engine: 2 slots × 12 B (target, curve, flags, phase u16, from i16, to i16, len u16, step u16) | M2 |
+| 0x30–0x3D | 14   | macro engine state (step clock, index, gate-region ptr) | M3 |
+| 0x3E–0x3F | 2    | reserved        | —     |
+
+M1 uses offsets 0x00–0x13 (~24 B of the 64).
+
+### 5.2 Track control block (32 B × 16 tracks)
+
+| Offset    | Size | Field                                            |
+| --------- | ---- | ------------------------------------------------ |
+| 0x00      | 1    | status (0 idle, 1 playing, 2 held, 3 fading)     |
+| 0x01      | 1    | track_id (from MMB track table)                  |
+| 0x02      | 1    | channel_id                                       |
+| 0x03      | 1    | track flags (hasLoop/isCsm/isFm3Op)              |
+| 0x04      | 2    | stream pointer (Z80 address in window)           |
+| 0x06      | 2    | stream base (window address of EVENT_STREAM payload; JUMP/CALL dests are relative to this) |
+| 0x08      | 2    | bank (9-bit index of the 32KB window)            |
+| 0x0A      | 2    | tick accumulator (8.8)                           |
+| 0x0C      | 2    | tempo increment (8.8)                            |
+| 0x0E      | 2    | wait_ticks (until next timed dispatch)           |
+| 0x10–0x1B | 12   | control stack: 4 × {ptr u16, count u8} — LOOP entries carry the remaining count; CALL entries are tagged count = 0xFF (M3) |
+| 0x1C      | 1    | control stack depth                              |
+| 0x1D      | 1    | fade counter (M2)                                |
+| 0x1E      | 1    | last MARKER id (mirrored to mailbox status)      |
+| 0x1F      | 1    | reserved                                         |
+
+### 5.3 Banking
+
+Song data is read through the 0x8000–0xFFFF banked window; the bank is
+**latched at START_TRACK** (§6.3). M1 restriction: **one MMB per window** —
+all simultaneously playing tracks must come from the same MMB/bank, because
+the Z80 has one window. (Cross-MMB layering — the §2.3 vision across two
+scores — requires bank switching between track dispatches; deferred, the
+mailbox protocol already carries the per-command bank so no protocol change
+will be needed.)
+
+## 6. Mailbox Protocol (68000 → Z80)
+
+Realizes the §2 control interface (formerly spec-v0.5 §4.3). The 68000 writes commands
+into a ring in Z80 RAM (taking the Z80 bus briefly); the Z80 drains the
+ring at the top of every frame (§4 step 1) and clears consumed cells.
+
+### 6.1 Layout (64 B at 0x1680)
+
+| Offset    | Size | Field                                            |
+| --------- | ---- | ------------------------------------------------ |
+| 0x00–0x1F | 32   | command ring: 8 cells × 4 B {cmd u8, a0 u8, a1 u8, a2 u8} |
+| 0x20      | 1    | head (68k-owned: next cell to write)             |
+| 0x21      | 1    | tail (Z80-owned: next cell to read)              |
+| 0x22–0x31 | 16   | per-track status bytes (Z80-owned, 68k-readable): bit7 active, bit6 fading, bits5–0 last MARKER id (markers used for host sync must be ≤ 63) |
+| 0x32      | 1    | driver_ready (0x00 while booting, 0xD2 when the main loop is up) |
+| 0x33      | 1    | protocol_version (= 2)                           |
+| 0x34–0x3F | 12   | reserved                                         |
+
+Ring discipline: the 68k writes the cell at `head` (cmd byte last), then
+increments `head` mod 8. The Z80 consumes while `tail != head`: execute,
+zero the cmd byte, increment `tail` mod 8. The ring is full when
+`(head + 1) mod 8 == tail`; the 68k must not overwrite — with per-frame
+draining, 8 commands/frame is the burst budget.
+
+### 6.2 Command set
+
+| Cmd  | Name        | a0        | a1        | a2       | Stage |
+| ---- | ----------- | --------- | --------- | -------- | ----- |
+| 0x00 | (empty)     | —         | —         | —        | —     |
+| 0x01 | START_TRACK | track_id  | bank low  | bank high| M1    |
+| 0x02 | STOP_TRACK  | track_id  | —         | —        | M1    |
+| 0x03 | KEY_OFF     | channel_id| —         | —        | M2    |
+| 0x04 | SET_PARAM   | channel_id| target_id | value i8 | M2    |
+| 0x05 | FADE_TRACK  | track_id  | frames    | —        | M2    |
+| 0x06 | SET_VAL     | slot      | value low | value high | M3  |
+| 0x07 | GET_VAL     | —         | —         | —        | reserved — realized as a direct 68k read of the val-slot array (§6.4), no command round-trip |
+
+### 6.3 Command semantics
+
+- **START_TRACK** — latch the bank, look up `track_id` in the MMB track
+  table, initialize the TCB (stream ptr = base + event_offset, accumulator
+  0, increment from the stream's first TEMPO_SET — the compiler guarantees
+  one before the first timed event), apply the channel ownership rule
+  (§2.2), reset channel level state to defaults (vel 15, vol 31, master 31,
+  gate 8), and initialize declared val slots not yet host-written (mmb.md
+  §8). Restarting an active track restarts it from the top.
+- **STOP_TRACK** — key-off (release tail runs out naturally), free the
+  channel, mark the TCB idle. On the fm3-csm track this **clears the CSM
+  bit in reg $27** (§9).
+- **KEY_OFF** — key-off one channel without stopping its track: releases a
+  `len=0` hold (the track's dispatcher resumes) or truncates a sounding
+  note (its release envelope fires).
+- **SET_PARAM** — one-shot absolute write of `target_id` (opcodes.md §7) on
+  a channel, as if a PARAM_SET arrived in the stream. Value is i8; the two
+  i16 targets (NOTE_PITCH cents) are host-drivable via val slots +
+  `PARAM_FROM_VAL` instead.
+- **FADE_TRACK** — attenuate the track's channel by stepping `master` down
+  to 0 over `frames` frames, then behave as STOP_TRACK.
+- **SET_VAL** — write i16 into a val slot; takes effect at the next
+  dispatch that reads the slot (`PARAM_FROM_VAL`/`_ADD_VAL`/`_MUL_VAL`,
+  dynamic curve params). The host does all arithmetic; the driver only
+  stores and applies (docs/language.md §8).
+
+### 6.4 Val slots
+
+16 × i16 at 0x16C0 (fixed, published address). Written by the Z80 (init
+from VAL_TABLE, SET_VAL commands); read directly by the 68k for GET_VAL.
+Slot index = VAL_TABLE index; slot 0xFF in stream operands is the built-in
+`$time` source (frames since track start), never stored in this array.
+
+## 7. Level Composition
+
+Implements the level model of docs/language.md §6 — signed dB offsets composed by
+addition, quantization once at the write:
+
+```
+FM  (per carrier op of the current ALG):
+    TL  = clamp(0, 127, voicedTL[op] + vel_tl[vel] + vol_tl[vol] + vol_tl[master])
+PSG:
+    att = clamp(0, 15,  vel_psg[vel] + vol_psg[vol] + vol_psg[master])
+```
+
+Offset tables in the driver image, **generated from the `ir-utils.js`
+constants** (`TL_DB_PER_STEP` 0.75, `PSG_DB_PER_STEP` 2, `VEL_DB_PER_STEP`
+2, `VOL_STEP_DB` 2, `VOL_UNITY` 31):
+
+- `vel_tl[16]` = round((15 − v) × 2 / 0.75) =
+  `[40,37,35,32,29,27,24,21,19,16,13,11,8,5,3,0]` (v = 0…15)
+- `vol_tl[32]` = round((31 − v) × 2 / 0.75) — v = 31 → 0 … v = 1 → 80;
+  **shared by vol and master** (their offsets add)
+- `vel_psg[16]` = 15 − v; `vol_psg[32]` = 31 − v
+
+Rules:
+
+- **vol = 0 or master = 0 is a hard mute:** FM skips key-on (and forces
+  carrier TL 127 if already sounding); PSG writes max attenuation 15. The
+  v = 0 table entries are never used.
+- Velocity never mutes (vel 0 = −30 dB floor); silence is a rest.
+- Carrier ops per algorithm come from the `fmCarrierOpsForAlg` table
+  (alg 0–3 → op4; 4 → op2,4; 5–6 → op2,3,4; 7 → all).
+- **Same-table requirement:** the JS reference and the asm use these
+  byte-identical integer tables. The tables round per term, whereas
+  `ir-player.js` sums floats and quantizes once — a known divergence of at
+  most ±2 TL steps (±1.5 dB) / ±1 PSG step, inside the §12 acceptance band.
+
+## 8. Pitch Tables
+
+Both tables are generated by the JS reference **from the same code as
+`ir-utils.js`** (`midiToFnumBlock`, `PSG_MASTER_CLOCK`) and pasted verbatim
+into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
+
+- **FM:** `FNUM_LUT[12]` u16, A-rooted so every entry falls in the 512–1023
+  window `midiToFnumBlock` normalizes to:
+  `[541,574,608,644,682,723,766,811,859,910,965,1022]` (A, A#, …, G#).
+  For MIDI note n: `index = (n + 3) mod 12`, `block = (n + 3)/12 − 1`.
+  Because the ideal F-number is exactly ×2 per octave, one rounded table +
+  block reproduces `midiToFnumBlock` output bit-exactly for all notes with
+  block 0–7 (MIDI 9–116); outside, block clamps and the F-number shifts
+  (sub/ultra-sonic; ±1 LSB tolerance there).
+- **PSG:** `PSG_PERIOD_LUT[72]` u16 for MIDI 45–116
+  (`period = round(3579545 / (32 × freq))`; MIDI 45/A2 → 1017). Notes below
+  45 clamp to period 1023, above 116 to the top entry.
+- Fractional pitch (cents — glide, vibrato, NOTE_PITCH sweeps) is an M2
+  sweep-engine concern: cents offsets are applied as a linear interpolation
+  between adjacent LUT entries (F-number is near-linear over one semitone;
+  error < 1 cent). Never in the M1 note path.
+
+## 9. CSM Rule
+
+- The compiler emits `CSM_ON` once at the start and `CSM_OFF` only at
+  **end-of-stream** of an fm3-csm track; mid-track rests do **not** toggle
+  the CSM bit (Timer A just keeps retriggering a released envelope).
+- The driver's invariant: `STOP_TRACK` (and END_OF_TRACK, and the stop side
+  of FADE_TRACK) on the track flagged `isCsm` clears the CSM bits in reg
+  $27 — the flag exists in the track table precisely so stopping never
+  leaves the chip in CSM mode.
+
+## 10. Open Decision — Voice Representation
+
+Today a full FM voice change compiles to ~30 same-tick PARAM_SET events:
+~90 stream bytes and 30 dispatch iterations per change, repeated for every
+voice switch in the song.
+
+| Option | Stream cost / change | Driver cost | Toolchain cost |
+| ------ | -------------------- | ----------- | -------------- |
+| A. Leave as-is (PARAM_SET burst) | ~90 B | 30 dispatches + 30 queued writes | none |
+| B. **VOICE_TABLE + VOICE_SET (recommended)** | 2 B (+29 B per *unique* voice, once, in VOICE_TABLE) | one dispatch → 29-byte table copy into shadow + writes | export-time coalescing pass in `mmlisp2mmb`; **IR unchanged** |
+| C. New IR voice event | 2 B | same as B | IR schema change; player, live tooling, and spec all touched |
+
+**Recommendation: B.** The win is large for any real song (voices are
+reused constantly), the driver side is a straight register-block copy, and
+it stays an *encoding* optimization — the IR keeps its honest per-parameter
+semantics and the live player is untouched. Detection rule: a same-tick
+group of PARAM_SETs covering the full voice parameter set (28 operator
+params + ALG/FB) coalesces into a deduplicated VOICE_TABLE entry (mmb.md
+§11) + `VOICE_SET` (opcode 0x14); partial groups stay as PARAM_SETs.
+Voice entry layout (29 B, register-order: $30,$40,$50,$60,$70,$80,$90 × 4
+ops + $B0) to be frozen in mmb.md §11 when this decision is approved.
+
+## 11. Milestones
+
+- **M1 — core playback.** Core opcodes (opcodes.md §3), FM + PSG note
+  paths, level tables (§7), pitch LUTs (§8), mailbox with
+  START_TRACK/STOP_TRACK, channel ownership, `len=0` holds, MARKER status
+  feedback. Skip-decode of all reserved opcodes.
+- **M2 — motion.** PARAM_SWEEP / PARAM_SWEEP_STOP (glide, vibrato via loop
+  curves), PARAM_ADD, TEMPO_SWEEP, LOOP_BREAK, CSM (ON/OFF/RATE const +
+  swept), single-channel PCM through the DAC (ring buffer in the reserved
+  area), KEY_OFF / SET_PARAM / FADE_TRACK commands.
+- **M3 — expression.** NOTE_ON_EX + macro engine (`:step` clocks,
+  pitch/vel/op macros, `:semi`, `:keyon`), FM3 independent-OP
+  (FM3_MODE/FM3_OP_PITCH), dynamic value slots (SET_VAL,
+  PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL, dynamic curve params),
+  multi-channel PCM soft mix, CALL/RET + the encode-time dedup pass.
+
+## 12. Verification Strategy
+
+There is no automated test suite for audio; verification is comparative:
+
+1. **JS reference implementation** (`drv-player.js`): executes MMB v0.2
+   with the §4 loop order and **integer-only math** (8.8 accumulators, the
+   §7/§8 integer tables — no floats), in the live environment as an
+   alternate backend. It is the executable form of this spec.
+2. **Register-write log A/B.** For each demo song, the reference driver's
+   frame-stamped register log is diffed against `ir-player.js` output.
+   Acceptance: same writes within **±1 frame**, level values within ±2 TL
+   steps / ±1 PSG step (§7), F-numbers exact in the block 0–7 range (§8),
+   curve outputs within the 256-entry LUT quantization (opcodes.md §8).
+3. **LUT export.** The reference prints every constant table (F-number,
+   PSG period, level offsets, PCM rate multipliers, curve units) as asm
+   `db`/`dw` blocks for verbatim inclusion — the asm never re-derives a
+   table, so JS/asm table divergence is structurally impossible.
+4. **Asm bring-up (per milestone).** The Z80 build replays the same MMBs in
+   an emulator with a register-write trace; the trace must match the JS
+   reference log exactly (same math, same tables, same order — zero
+   tolerance at this stage, the ±1-frame band applies only to the
+   ir-player comparison).

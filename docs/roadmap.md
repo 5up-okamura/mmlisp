@@ -9,12 +9,9 @@
 
 Status: **complete** — v0.1-candidate tag at b61eb11 (2026-04-09).
 
-Outputs:
-
-1. docs/spec-v0.1.md
-2. docs/commands.md
-3. docs/ir.md
-4. docs/mmb.md
+Outputs: the v0.1 spec, command table, and the first IR/MMB drafts.
+(Per-version spec files were consolidated into docs/language.md and the
+driver doc set in the v0.5 cleanup; the originals live in git history.)
 
 ## Phase 0.5: Editor Tooling ✓
 
@@ -30,7 +27,7 @@ Status: **complete**.
 - Parameter modulation panel
 - Runtime intervention simulator
 
-Current status: partially implemented (live/). See docs/spec-v0.2.md for planned additions.
+Current status: partially implemented (live/).
 
 Implemented (v0.1 + post-freeze):
 
@@ -72,13 +69,38 @@ Status: **complete** — deterministic IR and MMB outputs verified for both demo
 
 ## Phase 3: Driver Implementation (MMLispDRV)
 
-- Minimal event playback on SGDK target
-- Incremental command support based on frozen spec
-- Performance/cycle-budget tuning
+Docs-first: the driver design is specified before any code. The doc set —
+docs/mmb.md (MMB v0.2 container), docs/opcodes.md (opcode/target freeze),
+docs/driver.md (MMLispDRV v0.2 architecture) — is written; **review of that
+set is the Phase 3 entry condition.**
+
+Order of work:
+
+1. **Design docs** (done, pending review) — MMB v0.2 delta/duration stream
+   format, frozen opcode + target tables, Z80 RAM map, mailbox protocol,
+   timing model, level/pitch tables. Open decisions flagged for review:
+   NOTE_ON vel/gate carriage (opcodes.md §4), voice representation /
+   VOICE_TABLE (driver.md §10).
+2. **JS reference implementation** (`drv-player.js`) — executes MMB v0.2
+   with integer-only math and the normative main-loop order; A/B
+   register-write-log diff against ir-player.js (±1 frame acceptance);
+   prints all constant tables for verbatim asm inclusion (driver.md §12).
+3. **Z80 assembly** — same MMBs, trace must match the JS reference exactly;
+   then performance/cycle-budget tuning on hardware.
+
+Milestone staging (full definitions in driver.md §11):
+
+- **M1 — core playback**: core opcodes, FM + PSG, level tables,
+  START_TRACK/STOP_TRACK, channel ownership, len=0 holds.
+- **M2 — motion**: PARAM_SWEEP/STOP + glide, PARAM_ADD, TEMPO_SWEEP,
+  LOOP_BREAK, CSM, single-channel PCM DAC, KEY_OFF/SET_PARAM/FADE_TRACK.
+- **M3 — expression**: NOTE_ON_EX + macro engine, FM3 independent-OP,
+  dynamic value slots, multi-channel PCM soft mix, CALL/RET + dedup pass.
 
 Phase 3 entry condition:
 
-1. v0.1 freeze checklist complete
+1. Phase 3 doc set (mmb.md, opcodes.md, driver.md) reviewed and open
+   decisions resolved
 
 ## Phase 4: Integration and Demo
 
@@ -417,8 +439,8 @@ Done (confirmed implemented, not yet removed from backlog):
 - ~~Cmd+Enter pause/resume and Cmd+. stop~~ — live/index.html L978
 - ~~Cursor-line seek from source map~~ — IRPlayer.playFromLine() in ir-player.js
 - ~~Named FM/PSG voice data (legacy voice-def syntax)~~ — implemented in compiler + player pipeline (v0.2 era)
-- ~~Mid-track default-state mutation~~ — implemented (see spec-v0.3 §1.2; guide §6)
-- ~~FM patch vector column order~~ — confirmed `[AR DR SR RR SL TL KS ML DT (SSG) (AMen)]`; spec-v0.2 §2.5
+- ~~Mid-track default-state mutation~~ — implemented (guide §5)
+- ~~FM patch vector column order~~ — confirmed `[AR DR SR RR SL TL KS ML DT (SSG) (AMen)]` (v0.2 era)
 
 Active:
 

@@ -1,155 +1,328 @@
-# MMB Format v0.1 Draft
+# MMB v0.2 Container Format
 
-This document defines the draft binary format for MMLisp export artifacts.
+Status: **design frozen for review** — this document, together with
+`docs/opcodes.md` (opcode/target freeze) and `docs/driver.md` (driver
+architecture), gates the Phase 3 driver implementation. Event and target
+vocabulary comes from `docs/ir.md`; MMB is the binary lowering of that IR.
+
+MMB v0.2 replaces the v0.1 draft format entirely. There is no v0.1
+compatibility path (no legacy support); `tools/scripts/mmlisp2mmb.js` and all
+fixtures move to v0.2 in one step.
 
 ## 1. Goals
 
-1. Compact and deterministic song binary format
-2. Clear version and feature negotiation with future MMLispDRV
-3. Forward-compatible section-based layout
+1. **Z80-decodable in place.** The driver reads the file directly from a
+   banked 68k-ROM window (0x8000–0xFFFF). Locating any structure is pointer
+   walking only — fixed-size headers and offset fields, no parsing, no
+   allocation, no relocation.
+2. **Compact.** Events are byte-packed with no per-event tick or length
+   prefixes (the headline change from v0.1; see §7).
+3. **Deterministic.** Identical IR input produces byte-identical MMB output.
+4. Clear version negotiation and fail-safe handling of unknown content.
 
-## 2. Endianness and Alignment
+## 2. Conventions
 
-1. Endianness: little-endian
-2. Section offsets: uint32
-3. Section payload alignment: 2-byte minimum
+1. Endianness: **little-endian** for all multi-byte fields.
+2. Section starts are 2-byte aligned (zero padding between sections).
+   Structures *inside* a section are byte-packed — the Z80 has no alignment
+   constraints.
+3. "Reserved" fields must be written as zero and ignored on read.
+4. Offsets are relative to the structure named in the field description,
+   never absolute file positions, so the file works at any window address.
 
 ## 3. High-Level Layout
 
-1. File header
-2. Section directory
-3. Track table section
-4. Event stream section
-5. Metadata section
-6. Reserved extension section (optional)
+```
++--------------------+  0x0000
+| File header        |  12 bytes
++--------------------+  0x000C
+| Section directory  |  section_count × 12 bytes
++--------------------+
+| Sections ...       |  in directory order
++--------------------+
+```
 
-## 4. File Header (fixed size)
+## 4. File Header (12 bytes)
 
-Header fields:
+| Offset | Size | Field         | Value / notes                        |
+| ------ | ---- | ------------- | ------------------------------------ |
+| 0x00   | 4    | magic         | `"MMB0"` (0x4D 0x4D 0x42 0x30)       |
+| 0x04   | 1    | version_major | 0                                    |
+| 0x05   | 1    | version_minor | 2                                    |
+| 0x06   | 2    | flags         | u16, see below                       |
+| 0x08   | 2    | section_count | u16                                  |
+| 0x0A   | 2    | header_size   | u16, = 12 for v0.2                   |
 
-1. magic[4]: "MMB0"
-2. version_major: uint8
-3. version_minor: uint8
-4. flags: uint16
-5. section_count: uint16
-6. header_size: uint16
-7. crc32: uint32 (optional in v0.1, zero allowed)
+The v0.1 `crc32` field is **dropped**. Integrity checking is a 68k-side
+loader concern (checksum the ROM region however the game likes); the Z80
+driver never verifies checksums.
 
-## 5. Feature Flags (draft)
+Header flags:
 
-1. bit0: extended tempo encoding present
-2. bit1: marker table present
-3. bit2: reserved CSM extension used
-4. bit3: reserved FM3 extension used
-5. bit4..bit15: reserved
+| Bit  | Name         | Meaning                                              |
+| ---- | ------------ | ---------------------------------------------------- |
+| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed one 32KB bank window. Must be 0 in v0.2 output; loaders reject it (see §12). |
+| 1    | PAL_TIMEBASE | **Reserved.** Tempo increments precomputed for 50 Hz (see driver.md §3). Must be 0 in v0.2. |
+| 2–15 | —            | Reserved, must be 0.                                 |
 
-v0.1 strict export must not set reserved-extension bits unless explicitly
-enabled for experimental builds.
+## 5. Section Directory
 
-## 6. Section Directory Entry
+`section_count` entries, each 12 bytes, immediately after the header:
 
-Each entry:
+| Offset | Size | Field  | Notes                                    |
+| ------ | ---- | ------ | ---------------------------------------- |
+| 0x00   | 2    | id     | u16, section id                          |
+| 0x02   | 2    | flags  | u16; bit0 = REQUIRED, bits1–15 reserved  |
+| 0x04   | 4    | offset | u32, from start of file                  |
+| 0x08   | 4    | size   | u32, payload bytes (excl. alignment pad) |
 
-1. id: uint16
-2. flags: uint16
-3. offset: uint32
-4. size: uint32
+Section ids:
 
-Section ids (draft):
+| Id     | Name        | Status                              |
+| ------ | ----------- | ----------------------------------- |
+| 0x0001 | TRACK_TABLE | required (§6)                       |
+| 0x0002 | EVENT_STREAM| required (§7)                       |
+| 0x0003 | METADATA    | required (§9); driver ignores it    |
+| 0x0004 | SAMPLE_BANK | optional (§10); M2 content, layout frozen now |
+| 0x0005 | VAL_TABLE   | optional (§8); M3 content, layout frozen now |
+| 0x0006 | VOICE_TABLE | **reserved** (§11, open decision)   |
 
-1. 0x0001 TRACK_TABLE
-2. 0x0002 EVENT_STREAM
-3. 0x0003 METADATA
-4. 0x00F0 RESERVED_EXTENSION
+Directory order is fixed: ascending id. A loader skips unknown section ids
+unless the entry's REQUIRED flag is set, in which case the load fails (§13).
 
-## 7. Track Table Section
+## 6. TRACK_TABLE Section (0x0001)
 
-Track table header:
+```
+track_count : u16
+entries     : track_count × 5 bytes
+```
 
-1. track_count: uint16
-2. reserved: uint16
+Track entry (5 bytes):
 
-Track entry:
+| Offset | Size | Field        | Notes                                        |
+| ------ | ---- | ------------ | -------------------------------------------- |
+| 0x00   | 1    | track_id     | u8, stable id referenced by START_TRACK etc. |
+| 0x01   | 1    | channel_id   | u8, see channel map below                    |
+| 0x02   | 1    | flags        | u8, see below                                |
+| 0x03   | 2    | event_offset | u16, relative to EVENT_STREAM payload start  |
 
-1. track_id: uint16
-2. channel_id: uint16 (physical channel id resolved for selected target profile)
-3. event_offset: uint32 (relative to EVENT_STREAM section)
-4. event_length: uint32
+Track flags:
 
-## 8. Event Stream Section
+| Bit | Name    | Meaning                                            |
+| --- | ------- | -------------------------------------------------- |
+| 0   | hasLoop | Track contains a backward JUMP (loops forever)     |
+| 1   | isCsm   | fm3-csm track; drives Timer A / CSM (driver.md §9) |
+| 2   | isFm3Op | fm3 independent-operator sub-track (channel 16–18) |
+| 3–7 | —       | Reserved, must be 0                                |
 
-v0.1 stores command stream per track in compact form.
+`event_offset` is u16, which bounds the whole event stream — and in practice
+the whole MMB — to **one 32KB bank window** in M1. Larger songs are deferred
+behind the reserved WIDE_OFFSETS header flag (§4); v0.2 tooling must reject
+output that would overflow u16 offsets.
 
-Command opcode assignment is intentionally not frozen in this document.
-The section contract for v0.1 focuses on structure:
+### 6.1 Channel id map
 
-1. per-track event blocks are contiguous
-2. each block is self-terminating or length-bounded by track table
-3. unknown opcode handling must fail safely in loaders
+Carried verbatim from the live player (`live/src/ir-player.js`,
+`MMB_CHANNEL_ID_TO_NAME`). Ids are frozen:
 
-Current draft writer record format (implementation note):
+| Id    | Channel        | Hardware                              |
+| ----- | -------------- | ------------------------------------- |
+| 0–5   | fm1–fm6        | YM2612 FM channels 1–6                |
+| 6–8   | sqr1–sqr3      | SN76489 square 1–3                    |
+| 9     | noise          | SN76489 noise                         |
+| 10–15 | —              | reserved                              |
+| 16–18 | fm3 op2–op4    | YM2612 ch3 special mode, operators 2–4 (op1 is channel 2 = fm3) |
+| 19    | —              | reserved                              |
+| 20–22 | pcm1–pcm3      | software-mixed DAC voices (fm6 DAC)   |
+| 23–255| —              | reserved                              |
 
-1. tick: uint32
-2. opcode: uint8
-3. payload_len: uint16
-4. payload: fixed binary args (opcode-specific)
+## 7. EVENT_STREAM Section (0x0002)
 
-Current payload sizes (draft):
+Per-track event blocks are contiguous, byte-packed, in track-table order.
+Each block starts at its `event_offset` and ends at its `END_OF_TRACK`
+opcode (0x00) — v0.2 has an explicit terminator; v0.1's reliance on
+byte-length bounds is gone (the track entry no longer carries a length).
 
-1. NOTE_ON: 3 bytes (pitch:u8, length:u16)
-2. REST: 2 bytes (length:u16)
-3. TIE: 2 bytes (length:u16)
-4. TEMPO_SET: 2 bytes (bpm:u16)
-5. LOOP_BEGIN: 1 byte (loop_id:u8)
-6. LOOP_END: 2 bytes (loop_id:u8, repeat:u8)
-7. MARKER: 1 byte (marker_id:u8)
-8. JUMP: 1 byte (marker_id:u8)
-9. PARAM_SET: 3 bytes (target_id:u8, value:i16)
-10. PARAM_ADD: 3 bytes (target_id:u8, delta:i16)
+### 7.1 Delta/duration encoding
 
-This payload format is still provisional and may be further packed before v0.1
-freeze.
+This is the headline change from v0.1. The v0.1 draft prefixed every record
+with `{tick u32, opcode u8, payload_len u16}` — 7 bytes of overhead per
+event. v0.2 events carry **no time and no length prefix**:
 
-## 9. Metadata Section
+1. Events in a block are sequential. Each track has a clock (in ticks,
+   PPQN 96 — see docs/language.md §4).
+2. **Timed events** — `NOTE_ON`, `REST`, `TIE`, `PCM_NOTE_ON` — carry a
+   *duration* operand and advance the track clock by that many ticks after
+   executing.
+3. **All other events** execute at the current clock position and carry no
+   time bytes. A run of parameter events between two notes occupies zero
+   musical time, exactly like same-tick IR events.
+4. Payload sizes are implied by the opcode (and, for parameter opcodes, by
+   the target's width — see opcodes.md §7). There is no `payload_len`.
 
-Metadata is a UTF-8 key-value table.
+### 7.2 Duration operand encoding
 
-Entry format:
+| First byte | Meaning                                                    |
+| ---------- | ---------------------------------------------------------- |
+| 0x01–0xFE  | duration in ticks (1–254)                                  |
+| 0xFF       | extended: u16le follows, duration = 255–65535 ticks        |
+| 0x00       | **indefinite hold** (`len=0` note): key stays on until the host sends `KEY_OFF` / `STOP_TRACK` (docs/language.md §17); the track clock does not advance and the driver stops dispatching this track until released |
 
-1. key_len: uint8
-2. key bytes
-3. value_len: uint16
-4. value bytes
+At PPQN 96 a quarter note is 96 ticks (1 byte); a whole note is 384 ticks
+(3 bytes, extended form). `REST`/`TIE` use the same encoding; `0x00` is only
+valid on `NOTE_ON` / `PCM_NOTE_ON`.
 
-Required keys in v0.1:
+### 7.3 Pitch representation
 
-1. title
-2. author
-3. compiler_version
+Pitch is a **u8 MIDI note number**, resolved at compile time (note names,
+`:oct`, transpose all folded by the compiler). The driver converts note →
+registers with ROM tables:
 
-Implementation note:
+- FM: a 12-entry u16 F-number LUT plus `block` derived from the note
+  (`block = (note + 3) / 12 − 1`, LUT indexed by `(note + 3) mod 12` — the
+  table is A-rooted so that every F-number lands in the 512–1023 window
+  that `midiToFnumBlock` in `live/src/ir-utils.js` normalizes to).
+- PSG: a u16 period LUT over the playable note range.
 
-1. The current writer's optional sidecar `.meta.json` (not embedded in MMB)
-   includes allocator diagnostics such as `targetProfile`, per-track
-   assignments, and `requestSlotChannelMasks`.
+Both tables **must match the `ir-utils.js` math** (`midiToFnumBlock`,
+`PSG_MASTER_CLOCK`). The JS reference implementation generates both tables
+from that same code and prints them for verbatim inclusion in the Z80
+source (driver.md §8, §12). Fractional/cent pitch never appears in the
+stream; pitch bends are `PARAM_SWEEP NOTE_PITCH` events executed by the
+driver's sweep engine (M2).
 
-## 10. Compatibility Policy
+### 7.4 Parameter values
 
-1. Loader must reject newer major versions
-2. Loader may accept newer minor versions if unknown flags are not set
-3. Unknown required feature flags must cause load failure
+Targets are u8 ids (opcodes.md §7). A parameter value is **i8 when the
+target's clamp range fits in i8, i16 otherwise**; the width is a fixed
+per-target property listed in the target table, known to both encoder and
+decoder (the driver holds a width bitmap in ROM). In practice every target
+except `NOTE_PITCH` (cents, ±32767) is i8.
 
-## 11. Validation Rules
+### 7.5 TEMPO_SET payload
 
-1. All section offsets and sizes must be in bounds
-2. Track event ranges must not overlap illegally
-3. Metadata entries must be valid UTF-8
-4. section_count must match directory entries
+BPM never reaches the Z80. `TEMPO_SET` carries the precomputed per-frame
+tick increment in **8.8 fixed point**:
 
-## 12. Freeze Notes
+```
+increment = round(bpm × 96 × 256 / 3600) = round(bpm × 512 / 75)
+```
 
-Before v0.1 freeze:
+e.g. 120 BPM → 819 (0x0333), 150 BPM → 1024 (0x0400, exact). Display-only
+BPM lives in METADATA. Error analysis is in driver.md §3.
 
-1. finalize section ids and required keys
-2. finalize opcode map in command table follow-up document
-3. add at least two golden MMB samples to regression fixtures
+### 7.6 Opcode set
+
+The full opcode table, payload layouts, and freeze status live in
+`docs/opcodes.md`. This section only defines the stream *framing* (delta
+model, duration operands, terminator).
+
+## 8. VAL_TABLE Section (0x0005)
+
+Dynamic value slots (`def-val`, docs/language.md §8). Layout:
+
+```
+count : u16          (0–16; driver RAM reserves 16 slots)
+inits : count × i16  (initial slot values, slot = array index)
+```
+
+Slot names stay in IR/metadata only; the binary uses indices. At
+START_TRACK time the driver initializes each declared slot to its init
+value unless the host has already written it this session (driver.md §6).
+M3 content; the layout is frozen now so M1 files may already carry it
+(M1 drivers skip the section).
+
+## 9. METADATA Section (0x0003)
+
+The v0.1 key-value format is kept unchanged. Repeated entries:
+
+```
+key_len   : u8
+key       : key_len bytes, UTF-8
+value_len : u16
+value     : value_len bytes, UTF-8
+```
+
+Required keys: `title`, `author`, `compiler_version`. Optional keys include
+`bpm` (display-only, see §7.5) and val-slot names. **The driver ignores this
+section entirely**; it exists for hosts and tools.
+
+## 10. SAMPLE_BANK Section (0x0004)
+
+PCM data for `def :sample` (docs/language.md §9, §16). M2 content; the layout is
+frozen now. Structure:
+
+```
+entry_count : u16
+entries     : entry_count × 20 bytes
+blobs       : raw sample data (8-bit signed PCM), byte-packed
+```
+
+Sample entry (20 bytes):
+
+| Offset | Size | Field      | Notes                                        |
+| ------ | ---- | ---------- | -------------------------------------------- |
+| 0x00   | 1    | sample_id  | u8, referenced by PCM_NOTE_ON                |
+| 0x01   | 1    | flags      | bit0 = has_loop; bits1–7 reserved            |
+| 0x02   | 4    | offset     | u32, blob start relative to SAMPLE_BANK payload |
+| 0x06   | 4    | length     | u32, bytes                                   |
+| 0x0A   | 2    | base_rate  | u16, playback rate in Hz at C4               |
+| 0x0C   | 4    | loop_start | u32, byte offset into the sample             |
+| 0x10   | 4    | loop_end   | u32, byte offset into the sample             |
+
+Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
+Sample ids are assigned in IR declaration order. Note that a SAMPLE_BANK can
+push a file past the 32KB window; PCM-heavy songs are an M2 concern and may
+require the WIDE_OFFSETS escape or bank-splitting — decided in M2, not here.
+
+## 11. VOICE_TABLE Section (0x0006) — reserved
+
+> **Open decision — voice representation.** Today a full FM voice change
+> compiles to ~30 same-tick `PARAM_SET` events (~90 stream bytes, 30
+> dispatches). The recommended plan is: `mmlisp2mmb` coalesces full-voice
+> bursts into VOICE_TABLE entries plus a `VOICE_SET` opcode, leaving the IR
+> unchanged. The trade-off table and recommendation live in driver.md §10;
+> the section id and the 0x14 `VOICE_SET` opcode slot (opcodes.md §5) are
+> reserved either way so no renumbering is needed once decided.
+
+## 12. Size Budget and Banking
+
+- M1 constraint: **one MMB file ≤ one 32KB bank window** (0x8000–0xFFFF).
+  The bank is latched at START_TRACK; all tracks of a playing MMB live in
+  the same window (driver.md §5).
+- The u16 `event_offset` in the track table encodes this limit structurally.
+- Escape hatch (reserved, not implemented in v0.2): header flag
+  WIDE_OFFSETS widens `event_offset` to u32 and permits multi-bank
+  streaming. Any loader seeing this flag set must reject the file until a
+  future version defines the mechanism.
+
+## 13. Compatibility Policy
+
+1. Loader must reject a file whose `version_major` is newer than it knows.
+2. Loader may accept newer `version_minor` if no unknown header flags are
+   set and no unknown REQUIRED sections are present.
+3. Unknown section id: skip, unless its REQUIRED flag is set → reject.
+4. Unknown header flag set → reject.
+5. Unknown opcode inside a track stream → fail-safe: stop decoding that
+   track, report error (opcodes.md §1 defines which opcodes a v0.2 M1
+   decoder must be able to *skip* vs treat as unknown).
+
+## 14. Validation Rules
+
+Checked by `tools/scripts/verify-mmb.js` (and asserted by the JS reference
+driver on load):
+
+1. Magic, version, `header_size` = 12, directory in ascending id order.
+2. All section offsets/sizes in bounds; sections non-overlapping;
+   `section_count` matches the directory.
+3. TRACK_TABLE, EVENT_STREAM, METADATA present.
+4. Every `event_offset` in bounds; every track block reaches an
+   `END_OF_TRACK` opcode without running off the section end.
+5. Every `channel_id` is defined in §6.1; at most one track per channel per
+   file; `isCsm`/`isFm3Op` flags consistent with channel ids.
+6. Metadata entries valid UTF-8; required keys present.
+7. VAL_TABLE `count` ≤ 16; every val-slot reference in the stream < count.
+8. Every `sample_id` referenced by a PCM_NOTE_ON exists in SAMPLE_BANK;
+   blob ranges in bounds; `loop_end` ≤ length.
+9. Duration byte 0x00 only on NOTE_ON / PCM_NOTE_ON.
+10. Deterministic output: recompiling the same IR yields identical bytes.
