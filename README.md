@@ -1,62 +1,117 @@
 # MMLisp
 
-MMLisp is an interactive music authoring system for retro video game hardware.
+MMLisp is a Lisp-like music language for the Sega Mega Drive (YM2612 FM +
+SN76489 PSG). You write scores as s-expressions, audition them instantly in a
+browser authoring environment running a cycle-accurate chip emulator, and
+compile them to a compact binary for a Z80 sound driver — with a design built
+around *interactive* music: tracks that start, stop, layer, and respond to
+game state at runtime.
 
-- Web authoring environment: https://mmlisp.vercel.app/
-- Playback driver: MMLispDRV (Z80/SGDK target) — **not yet implemented**
+- **Try it now:** https://mmlisp.vercel.app/
+- **Playback driver:** MMLispDRV (Z80, SGDK integration) — in design; see the
+  capability table below.
 
-## Current Stage
+## What it looks like
 
-This repository starts with specification-first development:
+```lisp
+(def epiano :alg 4 :fb 2
+  :ar1 31 :dr1 8 :sr1 2 :rr1 8 :sl1 2 :tl1 28 :ks1 0 :ml1 2 :dt1 3
+  :ar2 31 :dr2 12 :sr2 3 :rr2 8 :sl2 3 :tl2 4 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 8 :sr3 2 :rr3 8 :sl3 2 :tl3 32 :ks3 0 :ml3 6 :dt3 -3
+  :ar4 31 :dr4 12 :sr4 3 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
 
-1. Build and validate music ideas in the web environment.
-2. Freeze format and command specs.
-3. Implement MMLispDRV against the frozen spec.
+(def hat (macro :vel [15 8 2]))
+
+(score :tempo 112
+  (fm1 epiano :oct 4 :len 8      ; FM electric piano, arpeggiated line
+    c e g b > c e d c <)
+
+  (sqr1 :oct 5 :len 4 :vel 9     ; PSG square counter-line
+    e g a b)
+
+  (noise :len 8 hat              ; PSG noise as a hi-hat via a velocity macro
+    c c c c  c c c c))
+```
+
+Paste it into [MMLisp Live](https://mmlisp.vercel.app/), press Cmd/Ctrl+Enter,
+and you get an FM e-piano arpeggio over a square-wave line with a ticking
+noise hat — synthesized by the same register writes the real chips would see.
+
+Beyond notes, the language gives you envelopes and LFOs as composable curve
+macros (`(macro :tl1 (sin :from 20 :to 30 :len 4))`), chiptune arpeggios and
+drum rolls (`:semi` / `:keyon`), compile-time echo and delay expansion, FM3
+special modes (independent-operator, CSM), PCM tracks, and live-controllable
+parameters (`def-val` sliders / `$name`) designed to be driven by game code.
+
+## MMLisp Live (web authoring environment)
+
+`live/` hosts the full authoring workflow in the browser — no install:
+
+- CodeMirror editor with MMLisp syntax highlighting, autocomplete, and
+  format-on-demand
+- Hot-swap compile on edit: the score rebuilds while playing and resumes at
+  the next bar boundary
+- Accurate FM sound via a Nuked-OPN2 (YM2612) WebAssembly core in an
+  AudioWorklet
+- FM parameter panel: per-channel ALG/FB and per-operator sliders, updated
+  live from playback and editable while the song runs
+- Dynamic Parameters panel: one slider per `def-val` slot, driving `$name`
+  values in real time
+- Channel strips (select / mute / solo), keyboard note preview, and
+  keyboard-driven step input
+- FM voice import: DefleMask DMP, Furnace FUI, TFI, VGI, OPNI
+- mucom88 `.muc` / `.dat` song and voice-bank import
+- VGM and WAV export; open/save `.mmlisp` sources with the File System
+  Access API
+
+```
+cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
+```
+
+## MMLispDRV (Z80 driver) — capability status
+
+The driver is being built docs-first: a JS reference implementation validated
+against the live player, then the Z80 assembly port. Everything below already
+plays in MMLisp Live; this table tracks what runs on the **hardware driver**.
+
+| Capability                                                        | Status         |
+| ------------------------------------------------------------------ | -------------- |
+| Core playback: notes/rests/ties, loops, jumps, FM + PSG voices     | 🚧 planned (M1) |
+| Velocity / volume / master level composition (dB offset tables)    | 🚧 planned (M1) |
+| 68000 mailbox: `START_TRACK` / `STOP_TRACK`                        | 🚧 planned (M1) |
+| Parameter sweeps and glide (`PARAM_SWEEP`), `TEMPO_SWEEP`          | 🚧 planned (M2) |
+| FM3 CSM mode (Timer A buzz)                                        | 🚧 planned (M2) |
+| PCM playback, single DAC channel                                   | 🚧 planned (M2) |
+| `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | 🚧 planned (M2) |
+| Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 planned (M3) |
+| FM3 independent-operator mode                                      | 🚧 planned (M3) |
+| Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | 🚧 planned (M3) |
+| Multi-channel PCM soft mixing (up to 3ch)                          | 🚧 planned (M3) |
+| `CALL`/`RET` event-stream deduplication                            | 🚧 planned (M3) |
+
+Nothing is implemented on the Z80 yet — statuses flip to ✅ as milestones land.
+See [docs/driver.md](docs/driver.md) for the architecture and milestone plan.
 
 ## Repository Structure
 
-- docs/: specifications and design notes
-- tools/: compiler and validation tooling
-- live/: MMLisp Live — web authoring environment
-- examples/: demo songs and test assets
-- mmlisp-syntax/: VS Code TextMate grammar for .mmlisp syntax highlighting
+- `docs/` — language reference, driver design, formats
+- `live/` — MMLisp Live web authoring environment (editor, compiler, player)
+- `examples/` — demo songs and test assets
+- `tools/` — command-line compiler and validation scripts
+- `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`
+- `player/`, `third_party/` — chip emulator cores (Nuked-OPN2 WASM build)
 
-## File Extensions
-
-- .mmlisp: source score
-- .mmb: compiled binary song data
-
-## Status
-
-Implemented toolchain:
-
-1. source (.mmlisp) → deterministic IR (.json)
-2. IR comparison against canonical snapshots with strict semantic checks
-3. MMB export and structural validation for demo artifacts
-4. MMLisp Live (live/) — web authoring environment with chip emulator AudioWorklet, MMLisp editor, sound parameter panel
+File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 
 ## Documents
 
-**Current** — read these:
-
-- [docs/spec-v0.5.md](docs/spec-v0.5.md) — canonical spec (FM3 independent-OP, CSM, PCM/DAC, TEMPO_SWEEP)
-- [docs/spec-v0.4.md](docs/spec-v0.4.md) — v0.4 spec (reference)
-- [docs/guide.md](docs/guide.md) — composer's guide (language reference for authors, v0.4)
-
-**Reference** — format and pipeline contracts:
-
-- [docs/commands.md](docs/commands.md) — command set definition
-- [docs/ir.md](docs/ir.md) — IR JSON schema
-- [docs/mmb.md](docs/mmb.md) — binary format
-- [docs/opcodes.md](docs/opcodes.md) — opcode assignments (provisional)
-- [docs/compiler.md](docs/compiler.md) — compiler pipeline contract
-- [docs/driver.md](docs/driver.md) — decoder contract for MMLispDRV
-
-**Legacy specs** — historical, superseded by v0.4/v0.5; no need to read:
-
-- [docs/spec-v0.1.md](docs/spec-v0.1.md)
-- [docs/spec-v0.2.md](docs/spec-v0.2.md)
-- [docs/spec-v0.3.md](docs/spec-v0.3.md)
+- [docs/language.md](docs/language.md) — canonical language reference
+- [docs/guide.md](docs/guide.md) — composer's guide (tutorial)
+- [docs/ir.md](docs/ir.md) — IR JSON reference (compiler output)
+- [docs/mmb.md](docs/mmb.md) — MMB binary container format
+- [docs/opcodes.md](docs/opcodes.md) — MMB opcode and target tables
+- [docs/driver.md](docs/driver.md) — MMLispDRV architecture and milestones
+- [docs/roadmap.md](docs/roadmap.md) — project roadmap and version history
 
 ## MMLisp Live — Keyboard Shortcuts
 
@@ -65,12 +120,6 @@ Implemented toolchain:
 | `Cmd+Return`  | `Ctrl+Enter`    | Play / Pause         |
 | `Cmd+.`       | `Ctrl+.`        | Stop                 |
 | `Cmd+Shift+F` | `Ctrl+Shift+F`  | Format current score |
-
-## Next Steps
-
-1. Expand semantic diagnostics coverage beyond current marker/loop/target checks.
-2. Freeze IR-to-MMB opcode table and argument packing.
-3. Implement MMLispDRV on SGDK/Z80 target.
 
 ## Acknowledgements
 
