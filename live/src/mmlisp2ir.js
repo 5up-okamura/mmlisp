@@ -1523,7 +1523,8 @@ function parseCurveSpec(
           if (n !== null)
             setParam(
               "rate",
-              clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":rate"),
+              // 0 = freeze (no phase advance); matches the player's rate >= 0.
+              clampWithWarning(n, 0, Number.MAX_VALUE, ":rate"),
             );
           break;
         }

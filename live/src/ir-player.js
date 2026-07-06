@@ -686,8 +686,14 @@ export class IRPlayer {
     // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
     this._vals = {};
     this._valUnits = {}; // slot → "frame" | "tick" (for dynamic :len/:step)
+    this._valRanges = {}; // slot → [lo, hi] finite bounds (NaN/Inf guard)
     for (const v of irObj.metadata?.vals ?? []) {
-      this._vals[v.name] = v.init ?? 0;
+      const a = Number(v.min);
+      const b = Number(v.max);
+      const lo = Number.isFinite(a) && Number.isFinite(b) ? Math.min(a, b) : 0;
+      const hi = Number.isFinite(a) && Number.isFinite(b) ? Math.max(a, b) : 0;
+      this._valRanges[v.name] = [lo, hi];
+      this._vals[v.name] = this._clampVal(v.name, v.init);
       this._valUnits[v.name] = v.unit ?? "frame";
     }
     this._eventIndex = 0;
@@ -2222,9 +2228,24 @@ export class IRPlayer {
     }
   }
 
+  // Coerce a slot value to a finite number within its declared [lo, hi] range.
+  // This is the single NaN/Infinity guard for dynamic values: keeping slots
+  // finite here stops bad values from reaching gate/len/pitch/param math, where
+  // a NaN would otherwise silently produce a no-op or corrupt register write.
+  // A non-finite input snaps to the low bound; slots with no range are only
+  // finite-coerced (→ 0 when non-finite).
+  _clampVal(name, value) {
+    const n = Number(value);
+    const range = this._valRanges?.[name];
+    if (!range) return Number.isFinite(n) ? n : 0;
+    const [lo, hi] = range;
+    if (!Number.isFinite(n)) return lo;
+    return Math.max(lo, Math.min(hi, n));
+  }
+
   // v0.5 dynamic values — host API to set/read a value slot by name.
   setVal(name, value) {
-    if (this._vals) this._vals[name] = Number(value) || 0;
+    if (this._vals) this._vals[name] = this._clampVal(name, value);
   }
   getVal(name) {
     return this._vals?.[name] ?? 0;
@@ -2235,10 +2256,13 @@ export class IRPlayer {
     return Math.max(0, Math.round((when - (this._startAudioTime ?? 0)) * 60));
   }
 
-  // Resolve a value source id: "$time" (built-in) or a slot name.
+  // Resolve a value source id: "$time" (built-in) or a slot name. Slots are kept
+  // finite at write time (_clampVal); the finite guard here is belt-and-braces
+  // so no dynamic-value path can ever hand NaN to downstream math.
   _resolveSrc(src, when) {
     if (src === "$time") return this._valTime(when);
-    return this._vals?.[src] ?? 0;
+    const v = this._vals?.[src];
+    return Number.isFinite(v) ? v : 0;
   }
 
   // Resolve a PARAM_ADD/MUL operand: a literal number or a { src } reference.
