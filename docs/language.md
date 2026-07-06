@@ -231,6 +231,10 @@ parameter write at the current tick:
 `(param-set :target v :target v …)` batches absolute integer writes
 (`E_UNSUPPORTED_TARGET` for unknown targets).
 
+An inline `:keyword` that is neither a known directive nor a hardware param
+target (a typo, or a track-header option like `:ch` used mid-body) is rejected
+with `E_UNKNOWN_KEYWORD` rather than silently dropped.
+
 ### 5.2 Shuffle
 
 `:shuffle R` (51–90; `50` = straight) swings note/rest pairs whose nominal
@@ -532,6 +536,10 @@ and `(delay …)`:
 Loop-wave and stochastic curves cycle until key-off; the value-less `:loop`
 flag forces any other curve to cycle (a looping sustain stage). Loop direction
 is forward only.
+
+`curve-name` above is a placeholder — write a real name from the table. A
+`(…)` in a curve position whose head is not one of these names (a typo, or the
+literal word `curve`) is rejected with `E_UNKNOWN_CURVE`.
 
 ### Common parameters (all curves)
 

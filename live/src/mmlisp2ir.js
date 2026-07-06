@@ -1204,6 +1204,7 @@ function parseMacroSpec(
           diagnostics,
           nodeSrc(stageNode),
           trackName,
+          true,
         );
         if (curveSpec) stages.push(curveSpec);
       }
@@ -1250,6 +1251,7 @@ function parseMacroSpec(
       diagnostics,
       nodeSrc(node),
       trackName,
+      true,
     );
     if (curveSpec) return { type: "curve", ...curveSpec };
   }
@@ -1324,11 +1326,28 @@ function parseCurveSpec(
   diagnostics = null,
   src = null,
   trackName = null,
+  requireCurve = false,
 ) {
   if (!node || node.kind !== "list" || !node.items || node.items.length === 0)
     return null;
   const head = atomValue(node.items[0]);
-  if (!CURVE_NAMES.has(head)) return null;
+  if (!CURVE_NAMES.has(head)) {
+    // A `(...)` in a value position must be a curve; an unknown head is a typo
+    // (e.g. the literal word `curve`, or a misspelled easing name) — flag it
+    // instead of silently falling through to a literal/zero. `[...]` step
+    // vectors and non-list values are left to their own parsers.
+    if (requireCurve && node.bracket === "()" && diagnostics) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_UNKNOWN_CURVE",
+        `unknown curve function: ${head ?? "(empty)"}`,
+        src ?? nodeSrc(node),
+        trackName,
+      );
+    }
+    return null;
+  }
 
   let from;
   let to;
@@ -2035,6 +2054,7 @@ function compileChannelBody(
                 diagnostics,
                 nodeSrc(node),
                 trackName,
+                true,
               );
               if (curveSpec) {
                 events.push({
@@ -2080,6 +2100,7 @@ function compileChannelBody(
                 diagnostics,
                 nodeSrc(node),
                 trackName,
+                true,
               );
               if (curveSpec) {
                 events.push({
@@ -2132,6 +2153,7 @@ function compileChannelBody(
                   diagnostics,
                   nodeSrc(node),
                   trackName,
+                  true,
                 );
                 if (!curveSpec) break;
 
@@ -2203,6 +2225,7 @@ function compileChannelBody(
                   diagnostics,
                   nodeSrc(node),
                   trackName,
+                  true,
                 );
                 if (!curveSpec) break;
 
@@ -2327,7 +2350,19 @@ function compileChannelBody(
               // or $value → runtime PARAM_ADD/PARAM_MUL/PARAM_FROM_VAL.
               const { stem, op } = opSuffix(val);
               const target = canonicalTarget(stem);
-              if (!SUPPORTED_TARGETS.has(target)) break;
+              if (!SUPPORTED_TARGETS.has(target)) {
+                // Unrecognized `:keyword` — a typo or a stray track-header option
+                // used mid-body. Fail loudly instead of dropping it silently.
+                pushDiag(
+                  diagnostics,
+                  "error",
+                  "E_UNKNOWN_KEYWORD",
+                  `unknown inline keyword: ${val}`,
+                  nodeSrc(node),
+                  trackName,
+                );
+                break;
+              }
               const push = (cmd, args) =>
                 events.push({
                   tick: trackState.tick,
@@ -2370,6 +2405,7 @@ function compileChannelBody(
                 diagnostics,
                 nodeSrc(node),
                 trackName,
+                true,
               );
               if (curveSpec) {
                 push("PARAM_SWEEP", { target, ...curveSpec });
@@ -2874,7 +2910,7 @@ function compileChannelBody(
             .filter((v) => !isNaN(v));
           spec = { mode, type: "list", list };
         } else if (a2node?.kind === "list" && a2node.bracket === "()") {
-          const cv = parseCurveSpec(a2node, diagnostics, nodeSrc(node), trackName);
+          const cv = parseCurveSpec(a2node, diagnostics, nodeSrc(node), trackName, true);
           if (cv) spec = { mode, type: "curve", ...cv };
         } else if (parseIntLike(a2) !== null) {
           spec = { mode, type: "param", count: Math.max(1, parseIntLike(a2)) };
