@@ -8,16 +8,9 @@
     "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../examples/source/*.mmlisp",
     "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
-    "mmlisp2mmb": "node scripts/mmlisp2mmb.js",
-    "verify-mmb": "node scripts/verify-mmb.js",
     "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js",
     "build:ir-demos": "node scripts/mmlisp2ir.js ../examples/source/demo1.mmlisp --strict --diag-out ../examples/ir/demo1.diagnostics.generated.json --out ../examples/ir/demo1.ir.generated.json",
-    "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1.ir.canonical.json ../examples/ir/demo1.ir.generated.json",
-    "build:mmb-demos": "node scripts/mmlisp2mmb.js ../examples/ir/demo1.ir.canonical.json --out ../examples/mmb/demo1.mmb --meta ../examples/mmb/demo1.meta.json",
-    "check:mmb-demos": "npm run build:mmb-demos && node scripts/verify-mmb.js ../examples/mmb/demo1.mmb",
-    "build:mmb-fixtures": "npm run build:mmb-demos && node scripts/make-mmb-fixtures.js",
-    "check:mmb-fixtures": "npm run build:mmb-fixtures && node scripts/check-mmb-fixtures.js && npm run check:pcm-sample-coverage",
-    "check:pcm-sample-coverage": "node scripts/check-pcm-sample-coverage.js"
+    "check:ir-demos": "npm run build:ir-demos && node scripts/verify-ir.js ../examples/ir/demo1.ir.canonical.json ../examples/ir/demo1.ir.generated.json"
   },
   "engines": {
     "node": ">=18"
