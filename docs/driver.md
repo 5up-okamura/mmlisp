@@ -420,11 +420,26 @@ There is no automated test suite for audio; verification is comparative:
    with the §4 loop order and **integer-only math** (8.8 accumulators, the
    §7/§8 integer tables — no floats), in the live environment as an
    alternate backend. It is the executable form of this spec.
-2. **Register-write log A/B.** For each demo song, the reference driver's
-   frame-stamped register log is diffed against `ir-player.js` output.
-   Acceptance: same writes within **±1 frame**, level values within ±2 TL
-   steps / ±1 PSG step (§7), F-numbers exact in the block 0–7 range (§8),
-   curve outputs within the 256-entry LUT quantization (opcodes.md §8).
+2. **Register-write log A/B** (`ab-compare.js`; `window.__abCompare()` in
+   the live app). The reference driver's frame-stamped register log is
+   diffed against `ir-player.js` output as per-register *state runs* (raw
+   write streams are incomparable: the IR player runs a continuous clock
+   and repeats values; the driver is frame-quantized and change-only).
+   Acceptance bands:
+   - **±1 frame** timing skew on every state change and key edge.
+   - **TL data ±2 steps** (integer offset tables vs float-sum-then-round);
+     **F-number low byte ±1** (LUT cent interpolation vs float pow).
+   - **$28 key edges compare per channel** — cross-channel write order
+     within one frame is player-specific and carries no meaning.
+   - **Waiver — notes sounding across a TEMPO_SET**: the IR player
+     schedules a note's key-off at onset-tempo (queued writes cannot be
+     retimed); the driver counts gate ticks under the live tempo map and
+     is the tick-exact one. Scores for exact A/B (ab-core) put tempo
+     changes on all-track note boundaries.
+   Gate: `examples/source/ab-core.mmlisp` (exactly the M1 opcode set) must
+   diff clean — currently **0 mismatches**. Songs using M2/M3 features
+   (macros, sweeps, PCM, CSM) report skipped-event diagnostics and A-side
+   surplus writes; expected, logged, not a failure.
 3. **LUT export.** The reference prints every constant table (F-number,
    PSG period, level offsets, PCM rate multipliers, curve units) as asm
    `db`/`dw` blocks for verbatim inclusion — the asm never re-derives a

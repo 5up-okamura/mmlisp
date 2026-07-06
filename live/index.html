@@ -931,6 +931,11 @@
           <span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
+        <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
+                title="Play through the MMLispDRV reference decoder (MMB v0.2) instead of the IR player">
+          <span>MMLispDRV Backend</span>
+          <span class="menu-item-shortcut" id="drvBackendCheck"></span>
+        </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispViz">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispViz')">
             <span>Visualizer</span>
@@ -986,6 +991,7 @@
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
+            <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
           </div>
         </div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
@@ -1271,6 +1277,9 @@
 
 <script type="module">
     import { IRPlayer } from './src/ir-player.js';
+    import { DrvPlayer } from './src/drv-player.js';
+    import { encodeMmb } from './src/export-mmb.js';
+    import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp } from './src/import-mucom.js';
@@ -3073,6 +3082,60 @@
       }
     }
 
+    async function exportMmb() {
+      const src = editorView.state.doc.toString();
+      let ir;
+      try {
+        const compiled = compileMMLisp(src, _lastFileName);
+        const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
+        if (errors.length > 0) {
+          log('Cannot export MMB: source has compile errors', 'err');
+          return;
+        }
+        ir = compiled.ir;
+      } catch (e) {
+        log('MMB export failed to compile: ' + e.message, 'err');
+        return;
+      }
+
+      let bytes, diags;
+      try {
+        ({ bytes, diagnostics: diags } = encodeMmb(ir));
+      } catch (e) {
+        log('MMB export failed: ' + e.message, 'err');
+        return;
+      }
+      if (diags.length > 0) {
+        log(`MMB export: ${diags.length} event(s) not in the M1 stream (see console)`, 'err');
+        console.warn('encodeMmb diagnostics:', diags);
+      }
+
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '.mmb';
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'MMB', accept: { 'application/octet-stream': ['.mmb'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = suggestedName;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+        log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('MMB save failed: ' + e.message, 'err');
+      }
+    }
+
     async function exportWav() {
       const src = editorView.state.doc.toString();
       let ir;
@@ -3729,6 +3792,31 @@
     window.toggleAnalogLpf = toggleAnalogLpf;
     updateAnalogLpfCheck(); // reflect the restored state in the menu
 
+    // MMLispDRV reference backend (Phase C A/B listening; docs/driver.md §12).
+    let _drvBackend = loadPref('drvBackend', 'off') !== 'off';
+    function updateDrvBackendCheck() {
+      const el = document.getElementById('drvBackendCheck');
+      if (el) el.textContent = _drvBackend ? '✓' : '';
+    }
+    function toggleDrvBackend() {
+      _drvBackend = !_drvBackend;
+      updateDrvBackendCheck();
+      savePref('drvBackend', _drvBackend ? 'on' : 'off');
+      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.2)' : 'IR player'), 'info');
+    }
+    window.toggleDrvBackend = toggleDrvBackend;
+    updateDrvBackendCheck();
+
+    // Headless A/B hook: compile the current source (or the given one) and
+    // diff the IR player's and the driver reference's register logs.
+    // Returns the result object; the formatted report goes to the console.
+    window.__abCompare = (src) => {
+      const source = src ?? editorView.state.doc.toString();
+      const result = abCompare(source, { filename: _lastFileName });
+      console.log(formatAbReport(result));
+      return result;
+    };
+
     // Pre-load the worklet module on page load (no user gesture needed).
     // AudioContext starts suspended — we only need to resume() on first click.
     (async () => {
@@ -3810,6 +3898,48 @@
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
       }
+
+      // MMLispDRV reference backend: compile → MMB v0.2 → frame-stepped
+      // decoder (drv-player.js). Same worklet, different scheduler — the
+      // audible form of the A/B comparison. Line highlight / pause-resume /
+      // mute-solo are IR-player features and stay off in this mode.
+      if (_drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
+        try {
+          let mmbBytes;
+          if (_lastGoodIR && _drvBackend) {
+            const { bytes, diagnostics } = encodeMmb(_lastGoodIR);
+            mmbBytes = bytes;
+            const skipped = diagnostics.length;
+            if (skipped > 0) {
+              log(`MMB export: ${skipped} event(s) not in the M1 stream (see console)`, 'err');
+              console.warn('encodeMmb diagnostics:', diagnostics);
+            }
+          } else if (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL)) {
+            log('Loading ' + currentIrURL + '…');
+            const res = await fetch(currentIrURL);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            mmbBytes = new Uint8Array(await res.arrayBuffer());
+          } else {
+            throw new Error('No compiled IR available for the current source');
+          }
+          player = new DrvPlayer(writeToWorklet);
+          player.loadMMB(mmbBytes);
+          if (_lastGoodIR) {
+            buildChStrips(_lastGoodIR);
+            renderDynParams(_lastGoodIR);
+            rebuildVizNotes();
+          }
+          player.play(audioCtx);
+          log('Playing (MMLispDRV reference)', 'info');
+          setPlayIcon(true);
+          document.getElementById('btnPlay').classList.add('active');
+          startFmLiveLoop();
+        } catch (e) {
+          log('Error: ' + e.message, 'err');
+        }
+        return;
+      }
+
       player = new IRPlayer(writeToWorklet);
       try {
         // Use last successfully compiled IR if available, else load from URL
@@ -3817,11 +3947,6 @@
           player.loadJSON(_lastGoodIR);
           await syncPcmSamplesToWorklet(_lastGoodIR);
           log('Playing (compiled source)', 'info');
-        } else if (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL)) {
-          log('Loading ' + currentIrURL + '…');
-          await player.loadMMB(currentIrURL);
-          await syncPcmSamplesToWorklet(player._ir);
-          log('Playing (MMB)', 'info');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
@@ -4101,6 +4226,8 @@
 
     function onPause() {
       if (!player || !player.isPlaying()) return;
+      // The MMLispDRV reference has no tick-seek; pause degrades to stop.
+      if (typeof player.currentTick !== 'function') { onStop(); return; }
       _pausedTick = player.currentTick();
       // Freeze each track's playhead so the piano roll stops in place (not reset).
       _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
@@ -4160,6 +4287,7 @@
     window.saveFile     = saveFile;
     window.saveFileAs   = saveFileAs;
     window.exportVgm    = exportVgm;
+    window.exportMmb    = exportMmb;
     window.exportWav    = exportWav;
 
     // -----------------------------------------------------------------------
