@@ -140,16 +140,17 @@ Shorthands:
 
 ---
 
-## 6. Subgroups, Loops, and Break
+## 6. Tuplets, Loops, and Break
 
-### Subgroup / tuplet
+### Tuplet
 
 ```lisp
 (fm1 :len 4
-  c (e g a) f)
+  c (t e g a) f)
 ```
 
-`(e g a)` divides the parent slot using Bresenham distribution.
+`(t e g a)` divides one `:len` slot among its elements using Bresenham
+distribution.
 
 ### Counted loop
 

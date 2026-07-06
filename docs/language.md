@@ -113,20 +113,24 @@ MIDI 60). Enharmonic accidentals are equivalent (`c+` = `d-`).
 Note names shadow definitions: a `def` named `a`–`g` (or anything that parses
 as a note/length token) cannot be referenced in a channel body.
 
-### Subgroups (tuplets)
+### Tuplets — `(t …)`
 
-A list starting with a note divides **one** current `:len` slot among its
-elements (Bresenham distribution, so remainders spread evenly):
+`(t elem …)` divides **one** current `:len` slot among its elements
+(Bresenham distribution, so remainders spread evenly):
 
 ```lisp
 (score
   (fm1 :len 4
-    c (e g a) f       ; triplet inside one quarter
-    (c _ c)))         ; rests allowed
+    c (t e g a) f     ; triplet inside one quarter
+    (t c _ c)))       ; rests allowed
 ```
 
 Elements may be notes, per-note-length atoms (their suffix is ignored — the
-slot division wins), or `_` rests. Subgroups do not nest.
+slot division wins), or `_` rests. Tuplets do not nest
+(`E_UNKNOWN_TUPLET_ELEM`); an empty `(t)` is `E_TUPLET_EMPTY`.
+
+A bare note-headed list (the pre-v0.5 subgroup form `(e g a)`) is no longer a
+tuplet — it is rejected with `E_UNKNOWN_LIST`; the syntax is reserved.
 
 ---
 

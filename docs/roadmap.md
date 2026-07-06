@@ -129,7 +129,9 @@ Phase 3 entry condition:
 - [x] Inline `:key (curve ...)` → `PARAM_SWEEP`
 - [x] `def` bare reference (no `@` sigil required)
 - [x] `(x N ...)` loop + `:break` / `LOOP_BREAK`
-- [x] Subgroup / tuplet `(e g a)` with Bresenham tick distribution
+- [x] Tuplet `(t e g a)` with Bresenham tick distribution (originally the
+      note-headed subgroup `(e g a)`; renamed to the explicit `(t …)` form in
+      the v0.5 cleanup — note-headed lists are reserved)
 - [x] All length token forms: integer, dotted (`4.`), frames (`Nf`), ticks (`Nt`)
 - [x] Dotted notes / rests (`c4.`, `_8.`)
 - [x] `:glide N` — emit `PARAM_SWEEP NOTE_PITCH` before NOTE_ON

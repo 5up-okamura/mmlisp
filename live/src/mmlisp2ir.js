@@ -2671,11 +2671,25 @@ function compileChannelBody(
         continue;
       }
 
-      // Subgroup / tuplet: list starting with a note or per-note-length atom.
-      // Tick duration is distributed among all elements using Bresenham method.
-      if (isNoteAtom(head) || isPerNoteLengthAtom(head)) {
-        const elems = node.items.filter((ev) => ev?.kind !== "comment");
+      // Tuplet: (t elem …) divides one current :len slot among its elements
+      // using Bresenham distribution (remainders spread evenly).
+      if (head === "t") {
+        const elems = node.items
+          .slice(1)
+          .filter((ev) => ev?.kind !== "comment");
         const n = elems.length;
+        if (n === 0) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_TUPLET_EMPTY",
+            "(t …) needs at least one element",
+            nodeSrc(node),
+            trackName,
+          );
+          i++;
+          continue;
+        }
         const totalTicks = trackState.defaultLength;
         let acc = 0;
         for (let j = 0; j < n; j++) {
