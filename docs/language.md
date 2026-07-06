@@ -699,9 +699,6 @@ the phrase.
     (go head)))                ; infinite outer loop
 ```
 
-> Not yet implemented: `(seq …)` grouping (seen in older design notes) is not
-> part of the language; write items directly or use a snippet `def`.
-
 ---
 
 ## 14. Glide

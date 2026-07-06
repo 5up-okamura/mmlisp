@@ -114,7 +114,7 @@ Phase 3 entry condition:
 | ------- | -------- | -------------- | ------------------------------------------------------------------------------------ |
 | v0.1    | frozen   | v0.1-candidate | Core language, IR, MMB format                                                        |
 | v0.2    | frozen   | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                             |
-| v0.3    | frozen   | v0.3-freeze    | seq, gate, shuffle, track append, voice reference, relative volume controls          |
+| v0.3    | frozen   | v0.3-freeze    | gate, shuffle, track append, voice reference, relative volume controls               |
 | v0.4    | frozen   | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model          |
 | v0.5    | complete | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, File I/O UI |
 
