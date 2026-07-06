@@ -76,17 +76,20 @@ set is the Phase 3 entry condition.**
 
 Order of work:
 
-1. **Design docs** (done, pending review) — MMB v0.2 delta/duration stream
-   format, frozen opcode + target tables, Z80 RAM map, mailbox protocol,
-   timing model, level/pitch tables. Open decisions flagged for review:
-   NOTE_ON vel/gate carriage (opcodes.md §4), voice representation /
-   VOICE_TABLE (driver.md §10).
-2. **JS reference implementation** (`drv-player.js`) — executes MMB v0.2
-   with integer-only math and the normative main-loop order; A/B
-   register-write-log diff against ir-player.js (±1 frame acceptance);
-   prints all constant tables for verbatim asm inclusion (driver.md §12).
-3. **Z80 assembly** — same MMBs, trace must match the JS reference exactly;
-   then performance/cycle-budget tuning on hardware.
+1. **Design docs** (done) — MMB v0.2 delta/duration stream format, frozen
+   opcode + target tables, Z80 RAM map, mailbox protocol, timing model,
+   level/pitch tables. Open decisions resolved: NOTE_ON vel/gate = track
+   state + NOTE_ON_EX (opcodes.md §4); voice representation = export-time
+   VOICE_TABLE coalescing (driver.md §10).
+2. **JS reference implementation** (done, M1 coverage) — `mmb.js` +
+   `export-mmb.js` + `drv-player.js` + `ab-compare.js` in live/src/.
+   Integer-only 60 Hz decoder, normative main-loop order, LUTs exported
+   for verbatim asm inclusion. A/B gate: `examples/source/ab-core.mmlisp`
+   diffs clean against ir-player.js (0 mismatches; bands in driver.md
+   §12). Live app: MMLispDRV backend toggle, File > Export > MMB…,
+   `window.__abCompare()`. M2/M3 opcodes are length-decoded and skipped.
+3. **Z80 assembly** (next) — same MMBs, trace must match the JS reference
+   exactly; then performance/cycle-budget tuning on hardware.
 
 Milestone staging (full definitions in driver.md §11):
 
