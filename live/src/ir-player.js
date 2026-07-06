@@ -1182,7 +1182,6 @@ export class IRPlayer {
     }
 
     this._updateTempoSweep(now);
-    const secsPerTick = this._secsPerTick;
 
     for (const [tIdx, track] of this._tracks.entries()) {
       // Inner guard handles multiple loop-restarts within one lookahead window
@@ -1190,7 +1189,11 @@ export class IRPlayer {
       while (guard++ < 16) {
         while (track.flatIndex < track.events.length) {
           const ev = track.events[track.flatIndex];
-          const evTime = track.audioTimeAtTick0 + ev.tick * secsPerTick;
+          // Read secsPerTick live: a TEMPO_SET dispatched earlier in this very
+          // pass re-anchors audioTimeAtTick0 for the NEW tempo — mapping later
+          // events with a stale secsPerTick would schedule everything inside
+          // the lookahead window after a tempo change at the wrong time.
+          const evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
           if (evTime > horizon) break;
           // Pending swap: stop the outgoing tracks at the swap boundary so they
           // never emit past it (the incoming IR takes over there).
@@ -1224,7 +1227,7 @@ export class IRPlayer {
           track.loopCount++;
           track.audioTimeAtTick0 =
             track.startAudioTime +
-            track.loopCount * track.loopDuration * secsPerTick;
+            track.loopCount * track.loopDuration * this._secsPerTick;
           track.flatIndex = track.loopStartIndex ?? 0;
           // Continue to schedule new-iteration events that fall within horizon
         } else {
