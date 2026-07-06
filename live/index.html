@@ -4618,6 +4618,9 @@
         initParamOnlyPlayer();
       }
       if (!player) return false;
+      // Live slider edits are an IR-player feature; the MMLispDRV reference
+      // plays the compiled MMB as-is (SET_PARAM arrives with the M2 mailbox).
+      if (typeof player.setParam !== 'function') return false;
       player.setParam(paramName, value, chIndex);
       return true;
     }
@@ -4658,7 +4661,7 @@
     }
 
     function previewPsgNoteOn(chIndex, midi) {
-      if (!player) return;
+      if (!player || typeof player._psgSetAtt !== 'function') return;
       const psgCh = chIndex - 6;
       const when = audioCtx?.currentTime;
       if (psgCh === 3) {
@@ -4671,7 +4674,7 @@
     }
 
     function previewPsgNoteOff(chIndex) {
-      if (!player) return;
+      if (!player || typeof player._psgSetAtt !== 'function') return;
       const psgCh = chIndex - 6;
       player._psgSetAtt(psgCh, 15, audioCtx?.currentTime);
     }
@@ -4688,7 +4691,7 @@
       // reaches OP4 in that mode. Mirror the pitch onto every operator's
       // F-number so all keyed operators play in unison. These supplementary
       // registers are inert in normal mode, so this is harmless there.
-      if (chIndex === 2 && player) {
+      if (chIndex === 2 && player && typeof player._writeFm3OpPitch === 'function') {
         for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi);
       }
       const keyMask = player ? player.getOpMask(chIndex) : 0xf0;
@@ -5578,7 +5581,7 @@
         const pxPerTick = cellW / windowTicks;
         const clock = (_paused && _vizFrozen)
           ? _vizFrozen.get(cell.trackIndex)
-          : player?.trackClock(cell.trackIndex);
+          : player?.trackClock?.(cell.trackIndex);
         const t = clock ? clock.tick : 0;
         const loop = clock?.loopTicks ?? null;
         let lo = cell.loMidi, hi = cell.hiMidi;

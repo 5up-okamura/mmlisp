@@ -224,6 +224,7 @@ export class DrvPlayer {
     // Hardware shadow for change-only suppression (driver.md §5.4). Key ($28)
     // and raw PSG bytes are edges, not state — they bypass the shadow.
     this._shadow = [new Map(), new Map()]; // per YM port: addr → data
+    this._opMasks = new Array(6).fill(0xf0); // UI op-enable mask per channel
 
     this._trk = (song?.tracks ?? []).map((t) => ({
       channelId: t.channelId,
@@ -387,7 +388,7 @@ export class DrvPlayer {
     // vol/master 0 = hard mute: skip key-on entirely (language.md §6).
     if (regs.vol === 0 || this._master === 0) return;
     regs.keyed = true;
-    this._ymKey(0xf0 | chKey);
+    this._ymKey((this._opMasks?.[ch] ?? 0xf0) | chKey);
   }
   _keyOff(ch) {
     const regs = this._fm[ch];
@@ -945,5 +946,22 @@ export class DrvPlayer {
   /** The constant tables the asm port ships verbatim (driver.md §12). */
   getLuts() {
     return this._luts;
+  }
+
+  // ── Live-monitor surface (read-only views of driver state for the UI) ────
+  /** Current tempo, for the transport display. Derived from the 8.8 increment. */
+  getBpm() {
+    return ((this._increment ?? bpmToTickIncrement(120)) * 75) / 512;
+  }
+  /** FM channel shadow state; same field shape as IRPlayer's chRegs. */
+  getChRegs(ch) {
+    return this._fm?.[ch] ?? freshFmChannel();
+  }
+  getOpMask(ch) {
+    return this._opMasks?.[ch] ?? 0xf0;
+  }
+  /** UI op-enable checkboxes; applied at the next key-on. */
+  setOpMask(ch, mask) {
+    if (this._opMasks && ch >= 0 && ch < 6) this._opMasks[ch] = mask & 0xf0;
   }
 }
