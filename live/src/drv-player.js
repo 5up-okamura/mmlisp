@@ -865,10 +865,12 @@ export class DrvPlayer {
     if (!this._song) throw new Error("No MMB loaded");
     this.stop();
     this._audioContext = audioContext ?? null;
+    // Anchor the frame clock before _reset so the init writes carry the real
+    // start time instead of a stale anchor from a previous run.
+    this._startAudioTime = audioContext ? audioContext.currentTime + 0.05 : 0;
     this._reset();
     this._playing = true;
     if (!audioContext) return;
-    this._startAudioTime = audioContext.currentTime + 0.05;
     const LOOKAHEAD = 0.2;
     const tick = () => {
       if (!this._playing) return;
@@ -894,12 +896,21 @@ export class DrvPlayer {
       clearInterval(this._timer);
       this._timer = null;
     }
-    // Silence everything that might still be keyed/sounding.
-    if (this._trk) {
-      for (let ch = 0; ch < 6; ch++) if (this._fm?.[ch]?.keyed) this._keyOff(ch);
-      for (let p = 0; p < 4; p++) {
-        if (this._psg?.[p]?.sounding) this._writePsgAtt(p, 15);
-      }
+    if (!this._fm) return; // never reset — nothing was ever written
+    // Silence with IMMEDIATE (untimed) writes, every channel unconditionally.
+    // Two reasons this must not go through the normal timed path: the driver
+    // clock runs up to a lookahead ahead of the audible position, so
+    // frame-stamped key-offs would land in the future — and the page flushes
+    // the worklet's timed queues right after stop(), which would discard them
+    // (the untimed queue survives a flush). Mirrors IRPlayer.stop().
+    for (let ch = 0; ch < 6; ch++) {
+      const chKey = ((ch >= 3 ? 1 : 0) << 2) | (ch % 3);
+      this._writeCb(0, 0x28, chKey);
+      this._fm[ch].keyed = false;
+    }
+    for (let p = 0; p < 4; p++) {
+      this._writeCb(2, 0, 0x80 | ((p & 0x03) << 5) | 0x10 | 0x0f);
+      if (this._psg?.[p]) this._psg[p].sounding = false;
     }
   }
 
