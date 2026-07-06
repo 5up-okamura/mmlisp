@@ -37,7 +37,7 @@ A source file is a sequence of top-level forms:
 | ----------- | -------------------- | --------------------------------------------- |
 | `:title`    | string               | Metadata                                      |
 | `:author`   | string               | Metadata                                      |
-| `:tempo`    | integer BPM          | `TEMPO_SET` at tick 0 (default 120). Integer only at score level; use a mid-track `:tempo` for fractional BPM or sweeps |
+| `:tempo`    | integer BPM or curve | Bare integer → `TEMPO_SET` at tick 0 (default 120; fractional BPM needs a mid-track `:tempo`). A curve → `TEMPO_SWEEP` from tick 0, e.g. `:tempo (linear :from 120 :to 80 :len 4)` (`:from` defaults to 120 if omitted) |
 | `:lfo-rate` | 0–8                  | YM2612 global LFO (`0` = off)                 |
 | `:shuffle`  | 51–90 (`50` = off)   | Score-wide swing default (§5)                 |
 
@@ -213,6 +213,8 @@ head position, and equally as body directives.)
 `:tempo N` reanchors the timeline instantly; `:tempo (linear :from A :to B
 :len L)` emits `TEMPO_SWEEP` over `L` (any non-`const` curve name works —
 there is no curve literally named `curve`). Tempo changes apply to all tracks.
+The same curve form works as a score option (§1), emitting the sweep from
+tick 0.
 
 On the `noise` channel, `:mode` sets the noise mode as **persistent channel
 state**: it emits `PARAM_SET NOISE_MODE`, and every noise note re-asserts the

@@ -1638,6 +1638,77 @@ function parseNumberLike(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Build a tick-0-or-mid-track TEMPO_SWEEP event from a `(curve …)` value node,
+// shared by inline `:tempo` and score-level `:tempo`. `fallbackFromBpm` is the
+// sweep start when the curve omits `:from` (the current tempo). Returns
+// `{ event, toBpm }` on success, or null (a diagnostic is pushed for a
+// malformed curve; a non-curve node returns null silently for the caller to
+// handle). `src`/`trackName` locate diagnostics.
+function buildTempoSweepFromCurve(
+  valueNode,
+  tick,
+  fallbackFromBpm,
+  diagnostics,
+  src,
+  trackName,
+) {
+  if (
+    !(
+      valueNode?.kind === "list" &&
+      valueNode.bracket === "()" &&
+      valueNode.items?.length > 0
+    )
+  ) {
+    return null;
+  }
+  const curveSpec = parseCurveSpec(valueNode, diagnostics, src, trackName, true);
+  if (!curveSpec) return null;
+
+  const from = parseNumberLike(String(curveSpec.from ?? ""));
+  const to = parseNumberLike(String(curveSpec.to ?? ""));
+  const len =
+    Number.isFinite(Number(curveSpec.frames)) && Number(curveSpec.frames) > 0
+      ? Number(curveSpec.frames)
+      : null;
+  const fromBpm = from ?? fallbackFromBpm;
+  const toBpm = to;
+  if (
+    fromBpm !== null &&
+    Number.isFinite(fromBpm) &&
+    fromBpm > 0 &&
+    toBpm !== null &&
+    Number.isFinite(toBpm) &&
+    toBpm > 0 &&
+    len !== null &&
+    len > 0
+  ) {
+    return {
+      event: {
+        tick,
+        cmd: "TEMPO_SWEEP",
+        args: {
+          from: fromBpm,
+          to: toBpm,
+          len,
+          curve: curveSpec.curve,
+          params: curveSpec.params,
+        },
+        src,
+      },
+      toBpm,
+    };
+  }
+  pushDiag(
+    diagnostics,
+    "error",
+    "E_TEMPO_INVALID",
+    "invalid :tempo curve; expected (<curve> :from N :to M :len L)",
+    src,
+    trackName,
+  );
+  return null;
+}
+
 function clampCsmRateHz(hz, diagnostics, src, trackName) {
   const min = 52;
   const max = 53270;
@@ -2235,63 +2306,17 @@ function compileChannelBody(
                 break;
               }
 
-              if (
-                valueNode?.kind === "list" &&
-                valueNode.bracket === "()" &&
-                valueNode.items?.length > 0
-              ) {
-                const curveSpec = parseCurveSpec(
-                  valueNode,
-                  diagnostics,
-                  nodeSrc(node),
-                  trackName,
-                  true,
-                );
-                if (!curveSpec) break;
-
-                const from = parseNumberLike(String(curveSpec.from ?? ""));
-                const to = parseNumberLike(String(curveSpec.to ?? ""));
-                const len =
-                  Number.isFinite(Number(curveSpec.frames)) &&
-                  Number(curveSpec.frames) > 0
-                    ? Number(curveSpec.frames)
-                    : null;
-
-                const fromBpm = from ?? trackState.currentTempo;
-                const toBpm = to;
-                if (
-                  fromBpm !== null &&
-                  Number.isFinite(fromBpm) &&
-                  fromBpm > 0 &&
-                  toBpm !== null &&
-                  Number.isFinite(toBpm) &&
-                  toBpm > 0 &&
-                  len !== null &&
-                  len > 0
-                ) {
-                  trackState.currentTempo = toBpm;
-                  events.push({
-                    tick: trackState.tick,
-                    cmd: "TEMPO_SWEEP",
-                    args: {
-                      from: fromBpm,
-                      to: toBpm,
-                      len,
-                      curve: curveSpec.curve,
-                      params: curveSpec.params,
-                    },
-                    src: nodeSrc(node),
-                  });
-                } else {
-                  pushDiag(
-                    diagnostics,
-                    "error",
-                    "E_TEMPO_INVALID",
-                    "invalid :tempo curve; expected (:curve :from N :to M :len L)",
-                    nodeSrc(node),
-                    trackName,
-                  );
-                }
+              const swept = buildTempoSweepFromCurve(
+                valueNode,
+                trackState.tick,
+                trackState.currentTempo,
+                diagnostics,
+                nodeSrc(node),
+                trackName,
+              );
+              if (swept) {
+                trackState.currentTempo = swept.toBpm;
+                events.push(swept.event);
               }
               break;
             }
@@ -3415,6 +3440,24 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const authorNode = scoreOptions.get(":author");
   const scoreTempoNode = scoreOptions.get(":tempo");
   const scoreTempoVal = parseIntLike(atomValue(scoreTempoNode));
+  // Score-level tempo curve: (score :tempo (linear :from A :to B :len L) …).
+  // Build the tick-0 TEMPO_SWEEP up front so its `from` can seed the initial
+  // tempo used for track state and Nf frame conversion. Only attempted when the
+  // option is not a bare BPM integer.
+  const scoreTempoSweep =
+    scoreTempoVal === null && scoreTempoNode
+      ? buildTempoSweepFromCurve(
+          scoreTempoNode,
+          0,
+          120, // default start tempo when the curve omits :from
+          diagnostics,
+          nodeSrc(score),
+          "global",
+        )
+      : null;
+  // The tempo active at tick 0, for seeding track currentTempo / Nf conversion.
+  const scoreInitialBpm =
+    scoreTempoVal ?? (scoreTempoSweep ? scoreTempoSweep.event.args.from : null);
   const scoreLfoRateNode = scoreOptions.get(":lfo-rate");
   const scoreShuffleNode = scoreOptions.get(":shuffle");
 
@@ -3545,12 +3588,12 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultLength = parseLengthToken(
           inlineOpts[":len"],
           defaultLength,
-          scoreTempoVal ?? 120,
+          scoreInitialBpm ?? 120,
         );
       }
       for (const gk of [":gate", ":gate*", ":gate-"]) {
         if (inlineOpts[gk] !== undefined) {
-          const g = parseGateFamily(gk, inlineOpts[gk], scoreTempoVal ?? 120);
+          const g = parseGateFamily(gk, inlineOpts[gk], scoreInitialBpm ?? 120);
           if (g !== null) defaultGate = g;
         }
       }
@@ -3575,7 +3618,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         shuffleBase = parseLengthToken(
           inlineOpts[":shuffle-base"],
           shuffleBase,
-          scoreTempoVal ?? 120,
+          scoreInitialBpm ?? 120,
         );
       }
 
@@ -3585,7 +3628,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         defaultLength,
         defaultOct,
         defaultGate,
-        currentTempo: scoreTempoVal ?? 120,
+        currentTempo: scoreInitialBpm ?? 120,
         isFm3OpTrack: /^fm3-[1-4]$/.test(head),
         fm3OpIndex: /^fm3-[1-4]$/.test(head)
           ? parseInt(head.slice(4), 10)
@@ -3829,6 +3872,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         args: { bpm: scoreTempoVal },
         src: scoreSrc,
       });
+    } else if (scoreTempoSweep) {
+      // Score-level tempo curve → ramp from the start (TEMPO_SWEEP at tick 0).
+      initEvents.push(scoreTempoSweep.event);
     }
     if (initEvents.length > 0) tracks[0].events.unshift(...initEvents);
   }
