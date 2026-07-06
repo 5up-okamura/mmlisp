@@ -2269,7 +2269,25 @@ function compileChannelBody(
               break;
             }
             case ":mode": {
-              if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
+              if (trackState.isNoiseTrack) {
+                if (rawVal in NOISE_MODE_MAP) {
+                  events.push({
+                    tick: trackState.tick,
+                    cmd: "PARAM_SET",
+                    args: { target: "NOISE_MODE", value: NOISE_MODE_MAP[rawVal] },
+                    src: nodeSrc(node),
+                  });
+                } else {
+                  pushDiag(
+                    diagnostics,
+                    "error",
+                    "E_NOISE_MODE_INVALID",
+                    "noise :mode must be white0-3 or periodic0-3",
+                    nodeSrc(node),
+                    trackName,
+                  );
+                }
+              } else if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
                 trackState.pcmPendingMode = rawVal;
               } else if (trackState.isFm6Track && rawVal === "fm") {
                 trackState.fm6Mode = "fm";
@@ -3510,6 +3528,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         isCsmRateTrack: head === "fm3-csm-rate",
         isPcmTrack,
         isFm6Track: head === "fm6",
+        isNoiseTrack: head === "noise",
         fm6Mode: "fm",
         pcmSampleName,
         pcmPendingMode: null,

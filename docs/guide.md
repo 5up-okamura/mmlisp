@@ -344,8 +344,9 @@ Accepted symbolic values:
 - `periodic0`-`periodic3`
 
 Default: `white0`. Curve/function outputs are snapped to integer `0..7`.
-Set the mode via a `:mode` macro (see §14) — inline `:mode` on the `noise`
-channel is currently rejected by the compiler.
+Inline `:mode white2` sets the mode as persistent channel state — it holds
+across notes until the next `:mode`. A `:mode` macro (see §14) layers a
+temporary per-note override on top.
 
 ---
 
@@ -512,9 +513,9 @@ velocity, lowered by the delay's per-tap step.
     c c c c))
 ```
 
-- The channel starts in `white0`; a `:mode` macro writes `NOISE_MODE` for
-  per-frame timbre motion (inline `:mode` is currently rejected here — see
-  §11)
+- The channel starts in `white0`; inline `:mode` sets the persistent mode
+  (see §11), and a `:mode` macro writes `NOISE_MODE` for per-frame timbre
+  motion as a temporary override
 
 ---
 

@@ -456,7 +456,9 @@ completion regardless of gate; loop samples stop only at `PCM_NOTE_OFF`.
 
 There is no `NOISE_MODE` command: PSG noise mode is a `PARAM_SET` target
 (the compiler auto-emits `PARAM_SET NOISE_MODE 4` = white0 at tick 0 on the
-noise track) and a `NOTE_ON`-embedded `noise_mode` macro.
+noise track, and inline `:mode` emits further `PARAM_SET NOISE_MODE`). It is
+persistent player state re-asserted on every noise `NOTE_ON`; the
+`NOTE_ON`-embedded `noise_mode` macro layers a temporary per-note override.
 
 ## 6. Macro spec shapes
 
@@ -583,7 +585,7 @@ write.
 | `FM_AMS`          | 0–3            | B4 bits 5–4.                                                 |
 | `FM_FMS`          | 0–7            | B4 bits 2–0.                                                 |
 | `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. |
-| `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Applied from the NOTE_ON macro on the noise channel; see §11 for the PARAM_SET gap. |
+| `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |
 | `FM_DR1`–`FM_DR4` | 0–31           | 0x60+op bits 4–0 (shared byte with AMEN).                    |
@@ -690,29 +692,24 @@ the open items to settle for the MMB/Z80 encoding.
    are macro-legal) but no scheduler consumes them; `fm_ssg1–4` has no
    scheduler entry either (and no inline `:ssg` keyword resolves to it, so it
    is doubly unreachable). `keyon` is ignored on FM3-op and PSG notes.
-2. **`PARAM_SET NOISE_MODE` is dead on the noise track.** The compiler
-   auto-emits it at tick 0, but PSG-routed dispatch handles only
-   `VOL`/`NOTE_PITCH`; only the NOTE_ON-embedded `noise_mode` macro reaches
-   the chip — and each noise `NOTE_ON` first re-triggers a fixed `0xE5`
-   (white/medium) control write.
-3. **`lenFrames` / `waitTicks` / `waitKeyOff` / `dyn.len` on PARAM_SWEEP.**
+2. **`lenFrames` / `waitTicks` / `waitKeyOff` / `dyn.len` on PARAM_SWEEP.**
    Honored in NOTE_ON macro curves, ignored by `_applyParamSweep` (which
    always treats `frames` as ticks and starts immediately).
-4. **PARAM targets with no PARAM path.** `NOTE_SEMI`, `KEYON`, `VEL` are in
+3. **PARAM targets with no PARAM path.** `NOTE_SEMI`, `KEYON`, `VEL` are in
    `SUPPORTED_TARGETS` (so `param-set`/inline writes can emit them) but
    `_applyParam` has no case for them.
-5. **`param-set` emits even on unsupported targets** (diagnostic + event);
+4. **`param-set` emits even on unsupported targets** (diagnostic + event);
    the player drops unknown targets silently.
-6. **`JUMP { to, repeat }` residue.** Normally rewritten to
+5. **`JUMP { to, repeat }` residue.** Normally rewritten to
    `LOOP_BEGIN`/`LOOP_END`; if the marker is forward (or missing), the raw
    form survives and the player ignores `repeat`.
-7. **`route_hint` is write-only.** The player routes purely by the `channel`
+6. **`route_hint` is write-only.** The player routes purely by the `channel`
    name; `parseWriteScope` exists in the compiler but its result is never
    wired into the track (`write_scope` is always `["any"]`).
-8. **Tracks have no `name`.** `validateTrack` reads `track.name` for its
+7. **Tracks have no `name`.** `validateTrack` reads `track.name` for its
    diagnostics — always undefined.
-9. **`(wait Nf)` inside a stages vector** parses as ticks (unit lost); the
+8. **`(wait Nf)` inside a stages vector** parses as ticks (unit lost); the
    player's `waitFrames` stage branch is unreachable from compiled IR.
-10. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
-    worklet: shot samples play to completion; loop samples stop only at
-    `PCM_NOTE_OFF`.
+9. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
+   worklet: shot samples play to completion; loop samples stop only at
+   `PCM_NOTE_OFF`.

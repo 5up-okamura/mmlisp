@@ -597,6 +597,11 @@ export class IRPlayer {
     // master/vol recomputes must NOT re-write a non-silent att to an idle channel
     // (that would un-silence it into a tone). Updated on every _psgSetAtt.
     this._psgSounding = new Array(4).fill(false);
+    // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
+    // current value; PARAM_SET NOISE_MODE updates it; the mode macro is a
+    // temporary override layered on top. Default white0 (0b1_00) matches the
+    // compiler's tick-0 default emission.
+    this._psgNoiseMode = 0b1_00;
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
@@ -2627,17 +2632,6 @@ export class IRPlayer {
         break;
       }
 
-      case "NOISE_MODE": {
-        // Noise mode (PSG noise control) — bits 5-3 (FB + NF)
-        // Values 0-7 directly map to SN76489 noise register bits 5-3
-        const mode = this._snapMacroOutput("NOISE_MODE", value);
-        if (ch === 2) {
-          // PSG noise channel
-          this._psgSetNoiseCfg(mode, when);
-        }
-        break;
-      }
-
       default:
         break;
     }
@@ -3416,10 +3410,9 @@ export class IRPlayer {
     this._psgWriteByte((period >> 4) & 0x3f, when);
   }
 
-  // Trigger noise channel with white noise at medium rate.
+  // Trigger the noise channel, re-asserting the current persistent noise mode.
   _psgTriggerNoise(when) {
-    // 0xE5 = 1|11|0|0|1|0|1 → ch3, reg0(ctrl), FB=1(white), NF=01(medium/1024)
-    this._psgWriteByte(0xe5, when);
+    this._psgSetNoiseCfg(this._psgNoiseMode, when);
   }
 
   // Set PSG attenuation at note-on; schedule silence at note-off.
@@ -3624,6 +3617,16 @@ export class IRPlayer {
               startWhen: when,
             };
             this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
+          }
+        } else if (psgTarget === "NOISE_MODE") {
+          // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
+          // if the channel is currently sounding, take effect immediately.
+          this._psgNoiseMode = this._snapMacroOutput(
+            "NOISE_MODE",
+            ev.args?.value ?? 0,
+          );
+          if (this._psgSounding[psgCh]) {
+            this._psgSetNoiseCfg(this._psgNoiseMode, when);
           }
         } else if (psgTarget === "NOTE_PITCH") {
           const from = Number(ev.args?.from ?? ev.args?.value ?? 0);

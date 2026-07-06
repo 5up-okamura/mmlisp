@@ -196,7 +196,7 @@ head position, and equally as body directives.)
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick         |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (per-note); `fm6`: `fm`/`shot`/`loop` |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (per-note); `fm6`: `fm`/`shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` |
 | `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:break`   | (no value)                | Early exit of the enclosing counted loop (§13)           |
@@ -206,9 +206,12 @@ head position, and equally as body directives.)
 :len L)` emits `TEMPO_SWEEP` over `L` (any non-`const` curve name works —
 there is no curve literally named `curve`). Tempo changes apply to all tracks.
 
-> Known gap: inline `:mode` on the `noise` channel is currently rejected
-> (`E_PCM_MODE_INVALID`). The channel starts in `white0`; change modes with a
-> `:mode` macro (§10) meanwhile.
+On the `noise` channel, `:mode` sets the noise mode as **persistent channel
+state**: it emits `PARAM_SET NOISE_MODE`, and every noise note re-asserts the
+current mode. The channel starts in `white0`; `:mode white2` changes it and the
+new mode holds across notes until the next `:mode`. A `:mode` macro (§10)
+layers a *temporary* per-note override on top without disturbing this state. An
+unknown symbol is rejected with `E_NOISE_MODE_INVALID`.
 
 ### 5.1 Inline parameter writes
 
