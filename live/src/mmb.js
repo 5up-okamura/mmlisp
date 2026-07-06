@@ -229,6 +229,67 @@ export function curveId(name) {
   return CURVE_ID.linear;
 }
 
+// ── Integer curve evaluation (driver.md §8, M2 sweep engine) ──────────────
+// The driver evaluates curves integer-only from an 8-bit phase (0..255) to an
+// 8-bit unit (0..255). Seven of the eight shapes are computed (a multiply or a
+// fold); only `sin` needs a table. Both drv-player.js and the Z80 asm use
+// THIS definition — gen-tables.mjs emits SIN_LUT verbatim, and curveUnit8 is
+// hand-ported to asm — so JS and asm cannot disagree.
+
+// sin loop waveform: (1 - cos(2π·t/256)) / 2, i.e. the ir-utils `sin` curve
+// with default params, quantized to 0..255. Starts at 0, peaks 255 at t=128.
+export const SIN_LUT = (() => {
+  const lut = new Uint8Array(256);
+  for (let t = 0; t < 256; t++) {
+    lut[t] = Math.round(((1 - Math.cos((2 * Math.PI * t) / 256)) / 2) * 255);
+  }
+  return lut;
+})();
+
+// curveUnit8(id, t): id = driver curve id (CURVE_ID), t = phase 0..255 → 0..255.
+// Loop shapes (4..7) are periodic over t; easing shapes (0..3) are one-shot.
+export function curveUnit8(id, t) {
+  t &= 0xff;
+  switch (id) {
+    case 0: // linear
+    case 7: // saw (ramp) — identity ramp over the period
+      return t;
+    case 1: // ease-in (quad): t²
+      return (t * t) >> 8;
+    case 2: // ease-out (quad): 1 - (1-t)²
+      return 255 - (((255 - t) * (255 - t)) >> 8);
+    case 3: // ease-inout (quad)
+      return t < 128
+        ? (2 * t * t) >> 8
+        : 255 - ((2 * (255 - t) * (255 - t)) >> 8);
+    case 4: // sin loop
+      return SIN_LUT[t];
+    case 5: // triangle loop: up then down
+      return t < 128 ? t << 1 : (255 - t) << 1;
+    case 6: // square loop: 50% duty (:duty is authoring-side, opcodes.md §8)
+      return t < 128 ? 0 : 255;
+    default:
+      return t;
+  }
+}
+
+// sweepValue(from, to, unit8): from + trunc((to-from)·unit8 / 256), truncating
+// toward zero (matches the asm magnitude-multiply-then-negate). Result is the
+// interpolated target value before per-target clamping at the register write.
+export function sweepValue(from, to, unit8) {
+  const p = (to - from) * (unit8 & 0xff);
+  return from + (p < 0 ? -((-p) >> 8) : p >> 8);
+}
+
+// Per-frame phase increment (8.8→16-bit phase) for a sweep of `len` frames.
+// Loop: one full period over `len` frames. One-shot: reaches ~full at the last
+// frame (endpoint is forced to `to` on completion, so the residue is harmless).
+export function sweepStep(len, loop) {
+  const n = Math.max(1, len | 0);
+  if (loop) return Math.min(0xffff, Math.floor(65536 / n));
+  return n <= 1 ? 0 : Math.min(0xffff, Math.floor(65536 / (n - 1)));
+}
+
 // ── Duration operand (mmb.md §7.2) ────────────────────────────────────────
 export const DUR_HOLD = 0x00; // indefinite hold (len=0 note)
 export const DUR_EXT = 0xff; // extended: u16le follows

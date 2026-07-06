@@ -121,15 +121,26 @@ check of *the glue + the bus/interrupt model*. In rough order of effort:
 emulator, so if the real emulator diverges from `dump-trace`, the difference is
 in the Mega Drive bus/interrupt environment, not the driver.
 
-## Limits (M1)
+## What plays (M1 + M2a)
+
+- Notes/rests/ties, per-note length + gate, loops (counted + infinite JUMP),
+  markers, `len=0` holds, FM + PSG voices and levels, tempo changes.
+- **Motion (M2a):** `:vol`/`:master` curve fades and level LFOs
+  (`PARAM_SWEEP`/`_STOP`), relative writes (`:vel+` etc via `PARAM_ADD`), and
+  tempo ramps (`TEMPO_SWEEP`).
+
+## Limits
 
 - One MMB per bank window; all live tracks share it.
-- M2/M3 stream features (sweeps, PARAM_ADD, TEMPO_SWEEP, CSM, PCM, macros) are
-  length-decoded and skipped — notes stay in time, the effects are silent until
-  those milestones land.
-- Mailbox commands beyond START/STOP_TRACK (KEY_OFF, SET_PARAM, FADE_TRACK,
-  SET_VAL) are accepted and ignored in M1.
-- `PARAM_SET NOTE_PITCH` (cents glide/vibrato) is an M2 concern and is a no-op
-  in the Z80 build.
+- **Pitch motion is M2b:** inline `:pitch` and pitch glide/vibrato
+  (`PARAM_SET`/`PARAM_SWEEP NOTE_PITCH`) are no-ops in the current Z80 build.
+- CSM, PCM/DAC, and the M2 mailbox commands (KEY_OFF, SET_PARAM, FADE_TRACK,
+  SET_VAL) are not yet implemented — accepted and ignored / skipped.
+- Remaining M3 stream features (macros, dynamic value slots, CALL/RET) are
+  length-decoded and skipped; notes stay in time.
+
+The RAM-map remap that M2 introduced (internal regions moved above the
+mailbox) does **not** affect this glue — the mailbox and val-slot addresses it
+uses are unchanged.
 
 See `drv/README.md` for the full deviation list and the driver-side design.

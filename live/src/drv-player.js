@@ -41,6 +41,9 @@ import {
   targetWidth,
   readDuration,
   bpmToTickIncrement,
+  curveUnit8,
+  sweepValue,
+  sweepStep,
 } from "./mmb.js";
 import {
   midiToFnumBlock,
@@ -226,6 +229,12 @@ export class DrvPlayer {
     this._shadow = [new Map(), new Map()]; // per YM port: addr → data
     this._opMasks = new Array(6).fill(0xf0); // UI op-enable mask per channel
 
+    // M2 sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
+    // channel (e.g. a pitch glide and a volume fade at once) + one global tempo
+    // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
+    this._sweeps = Array.from({ length: 10 }, () => [null, null]);
+    this._tempoSweep = null;
+
     this._trk = (song?.tracks ?? []).map((t) => ({
       channelId: t.channelId,
       flags: t.flags,
@@ -409,6 +418,10 @@ export class DrvPlayer {
   _noteOn(trk, note, dur, exGate) {
     const ch = trk.channelId;
     if (trk.unsupported) return; // fm3-op / pcm: timeline only in M1
+    // A new note cancels loop sweeps on this channel (opcodes.md §6: loop
+    // sweeps "run until PARAM_SWEEP_STOP / next note"). One-shot sweeps
+    // (fades, glide) survive.
+    this._cancelLoopSweeps(ch);
     if (ch < 6) {
       const regs = this._fm[ch];
       regs.currentNote = note;
@@ -571,15 +584,50 @@ export class DrvPlayer {
           trk.pc += 3;
           break;
         }
-        // ── Reserved opcodes: length-decode and skip (M2/M3) ──────────────
-        case OPCODE.PARAM_SWEEP:
-          this._skip(trk, op, 10); // op + 9 payload bytes (opcodes.md §6)
-          break;
-        case OPCODE.PARAM_ADD: {
-          const w = targetWidth(s[trk.pc + 1]);
-          this._skip(trk, op, 2 + w);
+        // ── M2 motion: sweeps, param-add, tempo sweep ─────────────────────
+        case OPCODE.PARAM_SWEEP: {
+          const target = s[trk.pc + 1];
+          const curve = s[trk.pc + 2];
+          const flags = s[trk.pc + 3];
+          const from = i16(u16(s, trk.pc + 4));
+          const to = i16(u16(s, trk.pc + 6));
+          const len = u16(s, trk.pc + 8);
+          trk.pc += 10;
+          this._startSweep(trk.channelId, target, curve, flags & 1, from, to, len);
           break;
         }
+        case OPCODE.PARAM_SWEEP_STOP: {
+          const target = s[trk.pc + 1];
+          trk.pc += 2;
+          this._stopSweep(trk.channelId, target);
+          break;
+        }
+        case OPCODE.PARAM_ADD: {
+          const target = s[trk.pc + 1];
+          const w = targetWidth(target);
+          const delta = w === 2 ? i16(u16(s, trk.pc + 2)) : i8(s[trk.pc + 2]);
+          trk.pc += 2 + w;
+          this._paramSet(trk.channelId, target, this._readParam(trk.channelId, target) + delta);
+          break;
+        }
+        case OPCODE.TEMPO_SWEEP: {
+          const from = u16(s, trk.pc + 1);
+          const to = u16(s, trk.pc + 3);
+          const len = u16(s, trk.pc + 5);
+          const curve = s[trk.pc + 7];
+          trk.pc += 8;
+          this._tempoSweep = {
+            curveId: curve,
+            from,
+            to,
+            len: Math.max(1, len),
+            frame: 0,
+            phase16: 0,
+            step16: sweepStep(len, false),
+          };
+          break;
+        }
+        // ── Reserved opcodes: length-decode and skip (M2/M3) ──────────────
         case OPCODE.PARAM_MUL:
           this._skip(trk, op, 4);
           break;
@@ -587,12 +635,6 @@ export class DrvPlayer {
         case OPCODE.PARAM_ADD_VAL:
         case OPCODE.PARAM_MUL_VAL:
           this._skip(trk, op, 3);
-          break;
-        case OPCODE.PARAM_SWEEP_STOP:
-          this._skip(trk, op, 2);
-          break;
-        case OPCODE.TEMPO_SWEEP:
-          this._skip(trk, op, 8);
           break;
         case OPCODE.CSM_ON:
         case OPCODE.CSM_OFF:
@@ -825,6 +867,95 @@ export class DrvPlayer {
     }
   }
 
+  // ── M2 sweep engine (driver.md §4 step 3) ────────────────────────────────
+  _startSweep(ch, target, curveId, loop, from, to, len) {
+    if (ch >= 10) return; // fm3-op / pcm: no sweep engine in M2 core
+    const slots = this._sweeps[ch];
+    const slot = {
+      target,
+      curveId,
+      loop: !!loop,
+      from,
+      to,
+      len: Math.max(1, len),
+      frame: 0,
+      phase16: 0,
+      step16: sweepStep(len, loop),
+    };
+    let idx = slots.findIndex((x) => x && x.target === target);
+    if (idx < 0) idx = slots.findIndex((x) => x === null);
+    if (idx < 0) {
+      idx = 0;
+      this._diag("W_DRV_SWEEP_SLOTS", `sweep slot overflow on ch ${ch}; evicted slot 0`);
+    }
+    slots[idx] = slot;
+  }
+
+  _stopSweep(ch, target) {
+    if (ch >= 10) return;
+    const slots = this._sweeps[ch];
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i] && slots[i].target === target) slots[i] = null;
+    }
+  }
+
+  _cancelLoopSweeps(ch) {
+    const slots = this._sweeps[ch];
+    if (!slots) return;
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i] && slots[i].loop) slots[i] = null;
+    }
+  }
+
+  // One sweep slot, one frame. Returns true when a one-shot sweep completes
+  // (caller frees the slot). Loop sweeps never complete on their own.
+  _processSweep(ch, slot) {
+    if (!slot.loop && slot.frame >= slot.len - 1) {
+      this._paramSet(ch, slot.target, slot.to); // exact endpoint
+      return true;
+    }
+    const unit = curveUnit8(slot.curveId, slot.phase16 >> 8);
+    this._paramSet(ch, slot.target, sweepValue(slot.from, slot.to, unit));
+    slot.phase16 = (slot.phase16 + slot.step16) & 0xffff;
+    if (!slot.loop) slot.frame++;
+    return false;
+  }
+
+  _processTempoSweep() {
+    const ts = this._tempoSweep;
+    if (ts.frame >= ts.len - 1) {
+      this._increment = ts.to;
+      return true;
+    }
+    const unit = curveUnit8(ts.curveId, ts.phase16 >> 8);
+    this._increment = sweepValue(ts.from, ts.to, unit);
+    ts.phase16 = (ts.phase16 + ts.step16) & 0xffff;
+    ts.frame++;
+    return false;
+  }
+
+  // Logical current value of a target, for PARAM_ADD read-modify-write.
+  _readParam(ch, target) {
+    if (target === TARGET_ID.MASTER) return this._master;
+    if (target === TARGET_ID.VOL)
+      return ch < 6 ? this._fm[ch].vol : ch < 10 ? this._psg[ch - 6].vol : 31;
+    if (target === TARGET_ID.VEL)
+      return ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel : 15;
+    if (target === TARGET_ID.GATE)
+      return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
+    if (ch < 6) {
+      const regs = this._fm[ch];
+      if (target === TARGET_ID.NOTE_PITCH) return regs.pitchCents;
+      if (target === TARGET_ID.FM_FB) return regs.feedback;
+      if (target === TARGET_ID.FM_ALG) return regs.algorithm;
+      if (target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4)
+        return regs.ops[target - TARGET_ID.FM_TL1].voicedTl;
+    } else if (ch < 10 && target === TARGET_ID.NOTE_PITCH) {
+      return this._psg[ch - 6].pitchCents;
+    }
+    return 0;
+  }
+
   // ── The vblank step (driver.md §4, normative order) ──────────────────────
   stepFrame() {
     // 1. Mailbox drain — stub in the reference (all tracks auto-started).
@@ -849,7 +980,15 @@ export class DrvPlayer {
         }
       }
     }
-    // 3. (M2+) sweep/macro engines — none in M1.
+    // 3. Sweep engines (driver.md §4 step 3): ascending channel, ascending
+    //    slot, then the global tempo sweep. Each writes into the shadow.
+    for (let ch = 0; ch < 10; ch++) {
+      const slots = this._sweeps[ch];
+      for (let si = 0; si < slots.length; si++) {
+        if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
+      }
+    }
+    if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
     // 4. Write flush — in this reference, writes go out inline through the
     //    shadow (change-only) in dispatch order, which preserves the same
     //    per-frame final state the batched Z80 flush produces.

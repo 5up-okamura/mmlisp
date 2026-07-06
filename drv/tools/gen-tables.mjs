@@ -32,7 +32,7 @@ import {
   OP_ADDR_OFFSET,
   PSG_MASTER_CLOCK,
 } from "../../live/src/ir-utils.js";
-import { bpmToTickIncrement } from "../../live/src/mmb.js";
+import { bpmToTickIncrement, SIN_LUT } from "../../live/src/mmb.js";
 
 function fnumLut12() {
   // Entries for MIDI 57..68 (A3..G#4): index = (note + 3) mod 12 == 0 at A,
@@ -131,6 +131,11 @@ export function generateTables() {
       "OP_ADDR_OFF",
       "4 x u8, operator slot -> OPN2 register address offset",
       [...OP_ADDR_OFFSET],
+    ),
+    dbBlock(
+      "SIN_LUT",
+      "256 x u8, sin loop-curve unit (1-cos(2pi t/256))/2 * 255 (M2 sweeps)",
+      [...SIN_LUT],
     ),
     "",
     `DEFAULT_INCREMENT equ ${bpmToTickIncrement(120)} ; 120 BPM in 8.8 ticks/frame`,

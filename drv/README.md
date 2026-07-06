@@ -2,7 +2,8 @@
 
 The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 `docs/opcodes.md`, ported from the JS reference implementation
-(`live/src/drv-player.js`). Current coverage: **M1 (core playback)**.
+(`live/src/drv-player.js`). Current coverage: **M1 (core playback)** plus
+**M2a (motion: sweeps, PARAM_ADD, TEMPO_SWEEP for level/tempo targets)**.
 
 ## Layout
 
@@ -39,8 +40,38 @@ node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200
 driver, replays the MMB in the emulator (mailbox-started like a real 68000
 host), and diffs the frame-stamped register log against
 `drv-player.js` — **raw equality, zero tolerance**: same writes, same
-values, same frames, same order (driver.md §12.4). Current status: all
-three scores diff clean.
+values, same frames, same order (driver.md §12.4). Current status: all four
+gate scores diff clean (ab-core, stress-m1, stress-m2skip, m2-motion).
+
+## M2a — motion (sweeps / PARAM_ADD / TEMPO_SWEEP)
+
+Implemented for **level and tempo targets**: `:vol`/`:master` curve fades
+(one-shot `PARAM_SWEEP` + `PARAM_SWEEP_STOP`), looping level LFOs (loop-curve
+sweeps, cancelled by the next note), relative writes (`PARAM_ADD`, e.g.
+`:vel+`), and tempo ramps (`TEMPO_SWEEP`). The engine:
+
+- **Curves are integer-only and single-sourced.** `mmb.js` `curveUnit8(id,t)`
+  maps an 8-bit phase to an 8-bit unit for all eight driver curves (four
+  easings computed via one multiply, four loop waveforms — only `sin` needs a
+  256-byte table, exported as `SIN_LUT`). drv-player.js, gen-tables.mjs, and
+  the asm all use it, so they cannot disagree.
+- **Per-channel sweep slots** (2 × 12 B at CHS+$18/$24) hold target, curve,
+  loop flag, from/to, frames-left, phase, and step. Value =
+  `from + trunc((to-from)·unit / 256)`, endpoint forced exactly on one-shot
+  completion. Phase advances by a step precomputed with a 16-round division.
+- **Frame order** follows driver.md §4 step 3: after track dispatch, sweep
+  engines run ascending channel then the global tempo sweep, writing through
+  the change-only shadow.
+
+**Deferred to M2b: `NOTE_PITCH` sweeps (glide / vibrato).** They need
+cent-interpolated pitch in the asm note path (driver.md §8), which the M1 asm
+stubs out; the gate scores avoid inline `:pitch` and pitch sweeps.
+
+Note the DrvPlayer↔ir-player A/B (`ab-compare.js`) is *informational* for M2:
+the driver's integer curve crosses each TL/att boundary a few frames off from
+ir-player's float easing, exceeding the tight ±1-frame band on slow fades.
+Fades are musically faithful (same shape/endpoints); the hard gate is
+asm↔DrvPlayer raw equality, which is exact.
 
 ## Why a first-party assembler/emulator
 
@@ -68,18 +99,21 @@ These are the deltas against the docs as written:
    flush (and re-basing the comparator on per-frame *state* equality) is
    deferred to the on-hardware cycle-budget phase, where bounding per-frame
    chip access actually matters.
-2. **Shadow file size/placement.** driver.md §5 reserves 192 B at $16E0.
-   Change-only suppression needs value + valid planes: 2×152 B each
-   (YM $22–$B9 per port), placed at $17A0 in the M2 PCM-reserved area for
-   now. The $16E0 block holds driver globals instead. The RAM map needs a
-   recut when M2 PCM lands.
+2. **RAM map remapped for M2.** The M2 code+table image (4730 B) grew past
+   the old 0x1200 data floor, so the internal data regions moved above the
+   mailbox: channel state → $1720, TCB → $19A0, shadow (value+valid planes,
+   2×152 B each) → $1BA0. Code+tables now own $0000–$167F. The **68k-published
+   addresses are unchanged** — mailbox $1680, val slots $16C0 — so the host
+   interface (and the SGDK glue) is unaffected. The image (4730 B) exceeds the
+   driver.md §5 "≤4.5 KB" *design target*; it still fits Z80 RAM comfortably
+   with the remap, and size/cycle tuning is the hardware phase.
 3. **Per-track increment slot reused.** Tempo is per-MMB (one MMB in M1), so
    the TCB increment field ($0C) holds the gate key-off countdown instead;
    the increment lives in a global. Revisit for cross-MMB layering.
-4. **`PARAM_SET NOTE_PITCH` is a no-op** in the asm: cents interpolation is
-   an M2 sweep-engine concern (driver.md §8 "never in the M1 note path").
-   The JS reference *does* implement it (the live app wants it), so a score
-   using `:pitch` inline will diff — none of the gate scores do.
+4. **`PARAM_SET NOTE_PITCH` is a no-op** in the asm (M2b): cents interpolation
+   in the note path (driver.md §8) is not yet ported, so inline `:pitch` and
+   pitch sweeps (glide/vibrato) diff against the JS reference — the gate scores
+   avoid them. Level and tempo sweeps are fully ported (M2a).
 5. **Mailbox commands beyond START/STOP_TRACK** (KEY_OFF, SET_PARAM,
    FADE_TRACK, SET_VAL) are consumed and ignored — M2/M3 per §6.2.
 6. **START_TRACK resets** the channel's vel/vol/gate; the global `master` is

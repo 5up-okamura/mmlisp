@@ -1,7 +1,8 @@
-; M1 skip-decode + hold stress: len=0 holds (track suspends until host
-; release — none arrives, so it holds to the horizon), and M2 reserved
-; opcodes (PARAM_SWEEP from :vol/:glide curves, TEMPO_SWEEP) that an M1
-; decoder must length-decode and skip without losing stream sync.
+; Hold + M2-motion stress: len=0 holds (track suspends until host release —
+; none arrives, so it holds to the horizon) coexisting with M2 sweeps and a
+; tempo ramp. Verifies the sweep engine keeps running on held channels and
+; that holds don't desync the decoder. Avoids NOTE_PITCH sweeps (glide/vibrato
+; are M2b).
 
 (def organ :alg 5 :fb 1
   :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 18 :ks1 0 :ml1 1 :dt1 0
@@ -15,7 +16,7 @@
   (fm1 organ :oct 4 :len 4 :vel 12
     c :vol (ease-out :from 31 :to 12 :len 60f) e g
     :vol 31
-    :pitch (ease-in :from 0 :to -1200 :len 30f)
+    :master (ease-in :from 20 :to 31 :len 30f)
     c > c2 <
     d2)
 

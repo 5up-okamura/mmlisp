@@ -10,6 +10,7 @@
     "selftest": "node tools/selftest.mjs",
     "verify": "node tools/verify.mjs ../examples/source/ab-core.mmlisp",
     "verify:stress": "node tools/verify.mjs tests/stress-m1.mmlisp --frames 1800 && node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200",
-    "verify:all": "npm run selftest && npm run verify && npm run verify:stress"
+    "verify:m2": "node tools/verify.mjs tests/m2-motion.mmlisp --frames 800",
+    "verify:all": "npm run selftest && npm run verify && npm run verify:stress && npm run verify:m2"
   }
 }

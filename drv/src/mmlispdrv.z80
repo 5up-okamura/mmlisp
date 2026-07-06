@@ -25,10 +25,14 @@ BANK_REG    equ $6000
 PSG_PORT    equ $7f11
 WINDOW      equ $8000
 
-; ── RAM map (driver.md §5) ─────────────────────────────────────────────────
-CH_STATE    equ $1200       ; 10 × 64 B channel state blocks
-TCB_BASE    equ $1480       ; 16 × 32 B track control blocks
-MB_RING     equ $1680       ; mailbox: 8 cells × 4 B
+; ── RAM map (driver.md §5, M2 revision) ────────────────────────────────────
+; M2 grew the code+table image past the old 0x1200 data floor, so the internal
+; data regions (channel state, TCB, shadow) moved above the mailbox to give
+; code room to 0x167F. The 68k-published addresses — mailbox 0x1680 and val
+; slots 0x16C0 — are UNCHANGED, so the host interface is unaffected.
+CH_STATE    equ $1720       ; 10 × 64 B channel state blocks
+TCB_BASE    equ $19a0       ; 16 × 32 B track control blocks
+MB_RING     equ $1680       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ $16a0
 MB_TAIL     equ $16a1
 MB_TSTAT    equ $16a2       ; 16 per-track status bytes
@@ -60,12 +64,48 @@ G_TIDX      equ $16f8       ; u8   track index scratch
 G_BLOCK     equ $16f9       ; u8   FM block scratch
 G_FNUM      equ $16fa       ; u16  FM F-number scratch
 
+; M2 sweep-engine globals (scratch + tempo-sweep slot; the driver globals live
+; in the freed 192 B at $16E0, well below the shadow at $17A0).
+G_CH        equ $16fc       ; u8   current channel for param_set
+G_SW_FROM   equ $16fd       ; i16  sweep-value from (scratch)
+G_SW_TO     equ $16ff       ; i16  sweep-value to (scratch)
+G_SW_UNIT   equ $1701       ; u8   curve unit (scratch)
+G_SW_SIGN   equ $1702       ; u8   sign of (to-from) (scratch)
+G_SW_CNT    equ $1703       ; u8   division bit counter (scratch)
+G_SW_TGT    equ $1704       ; u8   PARAM_SWEEP target (setup)
+G_SW_CRV    equ $1705       ; u8   PARAM_SWEEP curve (setup)
+G_SW_FLG    equ $1706       ; u8   PARAM_SWEEP flags (setup)
+G_SW_LEN    equ $1707       ; u16  PARAM_SWEEP len frames (setup)
+G_SW_STEP   equ $1709       ; u16  computed phase step (setup)
+G_SW_OFF    equ $170b       ; u8   chosen slot offset (setup)
+G_SW_DELTA  equ $170c       ; i16  PARAM_ADD delta (scratch)
+; tempo sweep — one global slot (tempo is per-MMB, driver.md §3)
+G_TS_ACTIVE equ $170e       ; u8   1 = running
+G_TS_CURVE  equ $170f       ; u8   curve id (0-7)
+G_TS_FROM   equ $1710       ; u16  increment from (8.8)
+G_TS_TO     equ $1712       ; u16  increment to (8.8)
+G_TS_LEFT   equ $1714       ; u16  frames left
+G_TS_PHASE  equ $1716       ; u16  phase (0..65535)
+G_TS_STEP   equ $1718       ; u16  phase step
+
+; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
+; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
+SW_SLOT0    equ $18
+SW_SLOT1    equ $24
+SW_TARGET   equ 0           ; u8  target id (0 = empty slot)
+SW_CURVE    equ 1           ; u8  bits0-2 curve id, bit7 loop flag
+SW_FROM     equ 2           ; i16
+SW_TO       equ 4           ; i16
+SW_LEFT     equ 6           ; u16 frames left (one-shot completion counter)
+SW_PHASE    equ 8           ; u16 phase 0..65535 (curve t = high byte)
+SW_STEP     equ 10          ; u16 per-frame phase increment
+
 ; shadow register file — change-only suppression (driver.md §5.4).
 ; 2 × 152 bytes covering YM addresses $22..$B9 per port, plus a parallel
 ; byte-per-register valid plane (a register is always written the first time).
 ; Lives in the M2 PCM-reserved area for now.
-SHADOW      equ $17a0       ; 304 B (port0 at +0, port1 at +152)
-SHVALID     equ $18d0       ; 304 B valid plane (offset SHADOW+304)
+SHADOW      equ $1ba0       ; 304 B (port0 at +0, port1 at +152)
+SHVALID     equ $1cd0       ; 304 B valid plane (offset SHADOW+304)
 
 STACK_TOP   equ $2000
 
@@ -127,10 +167,10 @@ start:
     di
     im 1
     ld sp,STACK_TOP
-    ; clear all driver RAM ($1200..$1F7F)
-    ld hl,$1200
-    ld de,$1201
-    ld bc,$0d7f
+    ; clear all driver data RAM ($1680..$1F7F; code+tables occupy $0000..)
+    ld hl,$1680
+    ld de,$1681
+    ld bc,$08ff
     ld (hl),0
     ldir
     ; channel state defaults (matches drv-player freshFmChannel/_reset)
@@ -290,6 +330,7 @@ fs_next:
     ld de,32
     add ix,de
     djnz fs_track
+    call process_sweeps     ; step 3: sweep + tempo engines
     ret
 
 ; ===========================================================================
@@ -581,21 +622,22 @@ d_next:
     jp z,d_param_set
     cp $80
     jp z,d_tempo_set
+    ; M2 motion opcodes (real handlers)
+    cp $61                  ; PARAM_SWEEP
+    jp z,d_param_sweep
+    cp $62                  ; PARAM_ADD
+    jp z,d_param_add
+    cp $65                  ; PARAM_SWEEP_STOP
+    jp z,d_param_sweep_stop
+    cp $81                  ; TEMPO_SWEEP
+    jp z,d_tempo_sweep
     ; reserved opcodes: length-decode and skip (opcodes.md §1)
     cp $14                  ; VOICE_SET
     jp z,d_skip2
-    cp $61                  ; PARAM_SWEEP: op + 9 payload bytes
-    jp z,d_skip10
-    cp $62                  ; PARAM_ADD: op + target + value(width)
-    jp z,d_skip_add
     cp $63                  ; PARAM_MUL
     jp z,d_skip4
     cp $64                  ; PARAM_FROM_VAL
     jp z,d_skip3
-    cp $65                  ; PARAM_SWEEP_STOP
-    jp z,d_skip2
-    cp $81                  ; TEMPO_SWEEP
-    jp z,d_skip8
     cp $a0                  ; CSM_ON
     jp z,d_skip1
     cp $a1                  ; CSM_OFF
@@ -885,6 +927,8 @@ d_ps_w2:
     inc hl
 d_ps_have:
     ld (G_VAL),de
+    ld a,(ix+T_CH)
+    ld (G_CH),a
     push hl
     call param_set
     pop hl
@@ -916,27 +960,6 @@ d_skip3:
 d_skip4:
     ld de,4
     add hl,de
-    jp d_next
-d_skip8:
-    ld de,8
-    add hl,de
-    jp d_next
-d_skip10:
-    ld de,10
-    add hl,de
-    jp d_next
-d_skip_add:                 ; PARAM_ADD: width from target id
-    inc hl
-    ld a,(hl)
-    inc hl
-    inc hl                  ; i8 value
-    cp 1
-    jr z,d_sa_w2
-    cp 3
-    jr z,d_sa_w2
-    jp d_next
-d_sa_w2:
-    inc hl
     jp d_next
 d_skip_csmrate:             ; CSM_RATE: flags bit0 → const(4) / swept(9)
     inc hl
@@ -991,6 +1014,7 @@ note_on:
     cp 10
     ret nc                  ; fm3-op / pcm tracks keep time only in M1
     call chs_ptr_iy
+    call cancel_loop_sweeps ; a new note stops loop sweeps (opcodes.md §6)
     cp 6
     jp nc,no_psg
     ; ── FM ────────────────────────────────────────────────────────────
@@ -1181,7 +1205,7 @@ param_set:
     jp z,ps_vel
     cp 9                    ; GATE (track-channel state)
     jp z,ps_gate
-    ld a,(ix+T_CH)
+    ld a,(G_CH)
     cp 6
     jp c,ps_fm
     cp 10
@@ -1198,7 +1222,7 @@ param_set:
     ret z
     call compose_psg_att
     ld c,a
-    ld a,(ix+T_CH)
+    ld a,(G_CH)
     sub 6
     ld b,a
     ld a,c
@@ -1271,7 +1295,7 @@ ps_vel:
     ld b,15
     call clamp_val
     ld c,a
-    ld a,(ix+T_CH)
+    ld a,(G_CH)
     cp 10
     ret nc
     call chs_ptr_iy
@@ -1282,7 +1306,7 @@ ps_gate:
     ld b,8
     call clamp_val
     ld c,a
-    ld a,(ix+T_CH)
+    ld a,(G_CH)
     cp 10
     ret nc
     call chs_ptr_iy
@@ -1338,7 +1362,7 @@ psf_vol:
     ld b,31
     call clamp_val
     ld (iy+CHS_VOL),a
-    ld a,(ix+T_CH)
+    ld a,(G_CH)             ; IX may be a sweep slot here, not the TCB
     jp write_carrier_tls
 
 psf_fb:                     ; B0 = (v&7)<<3 | alg (shadow RMW)
@@ -2053,6 +2077,650 @@ fpo_hi:
     ld d,1
     sub 3
     ld c,a
+    ret
+
+; ===========================================================================
+; M2 motion — sweep engine, PARAM_ADD, TEMPO_SWEEP (opcodes.md §6).
+; Behavioral twin of drv-player.js: same integer curves (mmb.js curveUnit8),
+; same phase/step model, same per-frame apply order.
+; ===========================================================================
+
+; ── dispatch: PARAM_SWEEP (target, curve, flags, from i16, to i16, len u16) ─
+d_param_sweep:
+    inc hl
+    ld a,(hl)
+    ld (G_SW_TGT),a
+    inc hl
+    ld a,(hl)
+    ld (G_SW_CRV),a
+    inc hl
+    ld a,(hl)
+    ld (G_SW_FLG),a
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_FROM),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_TO),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_LEN),de
+    push hl
+    call start_sweep
+    pop hl
+    jp d_next
+
+; ── dispatch: PARAM_SWEEP_STOP (target) ────────────────────────────────────
+d_param_sweep_stop:
+    inc hl
+    ld a,(hl)
+    inc hl
+    push hl
+    call stop_sweep
+    pop hl
+    jp d_next
+
+; ── dispatch: PARAM_ADD (target, delta i8/i16) ─────────────────────────────
+d_param_add:
+    inc hl
+    ld a,(hl)
+    ld (G_TARGET),a
+    inc hl
+    cp 1                    ; NOTE_PITCH i16
+    jr z,dpa_w2
+    cp 3                    ; TEMPO_SCALE i16
+    jr z,dpa_w2
+    ld e,(hl)               ; i8 → sign-extend
+    inc hl
+    ld d,0
+    bit 7,e
+    jr z,dpa_have
+    ld d,$ff
+    jr dpa_have
+dpa_w2:
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+dpa_have:
+    ld (G_SW_DELTA),de
+    push hl
+    ld a,(ix+T_CH)
+    ld (G_CH),a
+    call read_param        ; HL = current value
+    ld de,(G_SW_DELTA)
+    add hl,de
+    ld (G_VAL),hl
+    call param_set
+    pop hl
+    jp d_next
+
+; ── dispatch: TEMPO_SWEEP (from u16, to u16, len u16, curve u8) ─────────────
+d_tempo_sweep:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_TS_FROM),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_TS_TO),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_LEN),de        ; reuse len scratch
+    ld (G_TS_LEFT),de       ; frames left = len
+    ld a,(hl)
+    inc hl
+    ld (G_TS_CURVE),a
+    push hl
+    ld hl,0
+    ld (G_TS_PHASE),hl
+    xor a                   ; one-shot
+    ld de,(G_SW_LEN)
+    call sweep_step
+    ld (G_TS_STEP),hl
+    ld a,1
+    ld (G_TS_ACTIVE),a
+    pop hl
+    jp d_next
+
+; ── start_sweep — allocate/refresh a sweep slot on ix's channel ────────────
+; Uses G_SW_TGT/CRV/FLG/FROM/TO/LEN. Slot pick: same target, else empty,
+; else slot 0 (eviction). Fills the 12-byte slot; step from sweep_step.
+start_sweep:
+    ld a,(ix+T_CH)
+    cp 10
+    ret nc                  ; no sweep engine on fm3-op / pcm
+    call chs_ptr_iy
+    ld a,(G_SW_TGT)
+    ld b,a
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    cp b
+    jr z,ss_use0
+    ld a,(iy+SW_SLOT1+SW_TARGET)
+    cp b
+    jr z,ss_use1
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    or a
+    jr z,ss_use0
+    ld a,(iy+SW_SLOT1+SW_TARGET)
+    or a
+    jr z,ss_use1
+ss_use0:
+    ld a,SW_SLOT0
+    jr ss_fill
+ss_use1:
+    ld a,SW_SLOT1
+ss_fill:
+    ld (G_SW_OFF),a
+    ld a,(G_SW_FLG)
+    and 1
+    ld de,(G_SW_LEN)
+    call sweep_step         ; HL = step16
+    ld (G_SW_STEP),hl
+    push iy
+    pop hl
+    ld a,(G_SW_OFF)
+    ld c,a
+    ld b,0
+    add hl,bc               ; HL = slot base
+    ld a,(G_SW_TGT)
+    ld (hl),a               ; +0 target
+    inc hl
+    ld a,(G_SW_CRV)
+    and 7
+    ld c,a
+    ld a,(G_SW_FLG)
+    and 1
+    rrca                    ; loop → bit7
+    or c
+    ld (hl),a               ; +1 curve | loop
+    inc hl
+    ld de,(G_SW_FROM)
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl                  ; +2 from
+    ld de,(G_SW_TO)
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl                  ; +4 to
+    ld de,(G_SW_LEN)
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl                  ; +6 frames left
+    xor a
+    ld (hl),a
+    inc hl
+    ld (hl),a
+    inc hl                  ; +8 phase = 0
+    ld de,(G_SW_STEP)
+    ld (hl),e
+    inc hl
+    ld (hl),d               ; +10 step
+    ret
+
+; ── stop_sweep — free any slot on ix's channel matching target A ───────────
+stop_sweep:
+    ld c,a
+    ld a,(ix+T_CH)
+    cp 10
+    ret nc
+    call chs_ptr_iy
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    cp c
+    jr nz,sps_1
+    ld (iy+SW_SLOT0+SW_TARGET),0
+sps_1:
+    ld a,(iy+SW_SLOT1+SW_TARGET)
+    cp c
+    ret nz
+    ld (iy+SW_SLOT1+SW_TARGET),0
+    ret
+
+; ── cancel_loop_sweeps — free loop slots on IY's channel; preserves A/IY ────
+cancel_loop_sweeps:
+    push af
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    or a
+    jr z,cls_1
+    bit 7,(iy+SW_SLOT0+SW_CURVE)
+    jr z,cls_1
+    ld (iy+SW_SLOT0+SW_TARGET),0
+cls_1:
+    ld a,(iy+SW_SLOT1+SW_TARGET)
+    or a
+    jr z,cls_done
+    bit 7,(iy+SW_SLOT1+SW_CURVE)
+    jr z,cls_done
+    ld (iy+SW_SLOT1+SW_TARGET),0
+cls_done:
+    pop af
+    ret
+
+; ── process_sweeps — step 3 of the frame (driver.md §4) ────────────────────
+; Ascending channel 0..9, both slots, then the global tempo sweep.
+process_sweeps:
+    ld c,0
+psw_ch:
+    ld a,c
+    call chs_ptr_iy
+    ld a,SW_SLOT0
+    call process_slot
+    ld a,c
+    call chs_ptr_iy         ; param_set inside may have moved IY
+    ld a,SW_SLOT1
+    call process_slot
+    inc c
+    ld a,c
+    cp 10
+    jr c,psw_ch
+    jp process_tempo_sweep
+
+; process_slot: A = slot offset, IY = channel block, C = channel id.
+; IX is the slot pointer (param_set never touches IX). Channel counter (C) is
+; preserved for the caller's loop.
+process_slot:
+    push bc                 ; preserve channel counter
+    ld (G_SW_OFF),a         ; slot offset
+    ld a,c
+    ld (G_CH),a
+    push iy
+    pop ix
+    ld a,(G_SW_OFF)
+    ld c,a
+    ld b,0
+    add ix,bc               ; IX = slot base
+    ld a,(ix+SW_TARGET)
+    or a
+    jp z,psl_done           ; empty slot
+    bit 7,(ix+SW_CURVE)
+    jr nz,psl_run           ; loop sweep: never auto-completes
+    ; one-shot completion: frames-left <= 1 → write `to`, free slot
+    ld a,(ix+SW_LEFT+1)
+    or a
+    jr nz,psl_run
+    ld a,(ix+SW_LEFT)
+    cp 2
+    jr nc,psl_run
+    ld l,(ix+SW_TO)
+    ld h,(ix+SW_TO+1)
+    ld (G_VAL),hl
+    ld a,(ix+SW_TARGET)
+    ld (G_TARGET),a
+    ld (ix+SW_TARGET),0     ; free
+    call param_set
+    jp psl_done
+psl_run:
+    ; unit = curveUnit8(curve & 7, phase>>8); phase>>8 = high byte
+    ld a,(ix+SW_CURVE)
+    and 7
+    ld b,a
+    ld a,(ix+SW_PHASE+1)
+    call curve_unit8        ; A = unit
+    ld l,(ix+SW_FROM)
+    ld h,(ix+SW_FROM+1)
+    ld (G_SW_FROM),hl
+    ld l,(ix+SW_TO)
+    ld h,(ix+SW_TO+1)
+    ld (G_SW_TO),hl
+    call sweep_value        ; A = unit → HL = value
+    ld (G_VAL),hl
+    ld a,(ix+SW_TARGET)
+    ld (G_TARGET),a
+    call param_set
+    ; phase += step
+    ld l,(ix+SW_PHASE)
+    ld h,(ix+SW_PHASE+1)
+    ld e,(ix+SW_STEP)
+    ld d,(ix+SW_STEP+1)
+    add hl,de
+    ld (ix+SW_PHASE),l
+    ld (ix+SW_PHASE+1),h
+    ; one-shot: frames-left--
+    bit 7,(ix+SW_CURVE)
+    jr nz,psl_done
+    ld l,(ix+SW_LEFT)
+    ld h,(ix+SW_LEFT+1)
+    dec hl
+    ld (ix+SW_LEFT),l
+    ld (ix+SW_LEFT+1),h
+psl_done:
+    pop bc
+    ret
+
+; ── process_tempo_sweep — one global slot; sets G_INC (driver.md §3) ────────
+process_tempo_sweep:
+    ld a,(G_TS_ACTIVE)
+    or a
+    ret z
+    ; completion
+    ld a,(G_TS_LEFT+1)
+    or a
+    jr nz,pts_run
+    ld a,(G_TS_LEFT)
+    cp 2
+    jr nc,pts_run
+    ld hl,(G_TS_TO)
+    ld (G_INC),hl
+    xor a
+    ld (G_TS_ACTIVE),a
+    ret
+pts_run:
+    ld a,(G_TS_CURVE)
+    and 7
+    ld b,a
+    ld a,(G_TS_PHASE+1)
+    call curve_unit8
+    ld hl,(G_TS_FROM)
+    ld (G_SW_FROM),hl
+    ld hl,(G_TS_TO)
+    ld (G_SW_TO),hl
+    call sweep_value
+    ld (G_INC),hl
+    ld hl,(G_TS_PHASE)
+    ld de,(G_TS_STEP)
+    add hl,de
+    ld (G_TS_PHASE),hl
+    ld hl,(G_TS_LEFT)
+    dec hl
+    ld (G_TS_LEFT),hl
+    ret
+
+; ── read_param — current value of G_TARGET on G_CH → HL (PARAM_ADD RMW) ─────
+read_param:
+    ld a,(G_TARGET)
+    cp 5                    ; MASTER (global)
+    jr z,rp_master
+    ld a,(G_CH)
+    cp 10
+    jr nc,rp_zero
+    call chs_ptr_iy
+    ld a,(G_TARGET)
+    cp 4                    ; VOL
+    jr z,rp_vol
+    cp 6                    ; VEL
+    jr z,rp_vel
+    cp 9                    ; GATE
+    jr z,rp_gate
+    ; FM TL1..4 (0x11..0x14) → voiced TL; other targets read 0
+    cp $11
+    jr c,rp_zero
+    cp $15
+    jr nc,rp_zero
+    ld a,(G_CH)
+    cp 6
+    jr nc,rp_zero
+    ld a,(G_TARGET)
+    sub $11
+    push iy
+    pop hl
+    ld e,a
+    ld d,0
+    ld bc,CHS_VTL
+    add hl,bc
+    add hl,de
+    ld a,(hl)
+    ld l,a
+    ld h,0
+    ret
+rp_master:
+    ld a,(G_MASTER)
+    ld l,a
+    ld h,0
+    ret
+rp_vol:
+    ld l,(iy+CHS_VOL)
+    ld h,0
+    ret
+rp_vel:
+    ld l,(iy+CHS_VEL)
+    ld h,0
+    ret
+rp_gate:
+    ld l,(iy+CHS_GATE)
+    ld h,0
+    ret
+rp_zero:
+    ld hl,0
+    ret
+
+; ── sweep_value — from + trunc((to-from)*unit / 256), toward zero ──────────
+; In: A = unit8, (G_SW_FROM), (G_SW_TO). Out: HL = value. Preserves IX/IY.
+sweep_value:
+    ld (G_SW_UNIT),a
+    ld hl,(G_SW_TO)
+    ld de,(G_SW_FROM)
+    or a
+    sbc hl,de               ; HL = to - from (signed)
+    ld a,h
+    ld (G_SW_SIGN),a        ; sign in bit7
+    bit 7,h
+    jr z,sv_mag
+    ld a,l                  ; negate → magnitude
+    cpl
+    ld l,a
+    ld a,h
+    cpl
+    ld h,a
+    inc hl
+sv_mag:
+    ld d,h
+    ld e,l                  ; DE = |to-from|
+    ld a,(G_SW_UNIT)
+    call mul16x8_sh8        ; HL = (DE * A) >> 8
+    ld a,(G_SW_SIGN)
+    bit 7,a
+    jr z,sv_add
+    ld a,l                  ; negate result
+    cpl
+    ld l,a
+    ld a,h
+    cpl
+    ld h,a
+    inc hl
+sv_add:
+    ld de,(G_SW_FROM)
+    add hl,de
+    ret
+
+; ── sweep_step — per-frame phase increment (matches mmb.js sweepStep) ──────
+; In: A = loop flag (0/1), DE = len. Out: HL = step16 (0 for one-shot len<=1).
+sweep_step:
+    or a
+    jr nz,sst_div           ; loop: divisor = len
+    ld a,d
+    or a
+    jr nz,sst_dec
+    ld a,e
+    cp 2
+    jr nc,sst_dec
+    ld hl,0                 ; one-shot len <= 1 → step 0
+    ret
+sst_dec:
+    dec de                  ; one-shot divisor = len - 1
+sst_div:
+    ld b,d
+    ld c,e                  ; BC = divisor
+    jp div_65536
+
+; ── div_65536 — floor(65536 / BC) → HL (clamped to 0xFFFF for BC=1) ────────
+div_65536:
+    ld hl,1                 ; remainder (bit 16 of 0x10000)
+    ld de,0                 ; quotient
+    ld a,16
+    ld (G_SW_CNT),a
+d65_lp:
+    add hl,hl               ; remainder <<= 1
+    jr c,d65_sub            ; overflow → certainly >= divisor
+    ld a,l
+    sub c
+    ld a,h
+    sbc a,b
+    jr c,d65_q0             ; remainder < divisor → quotient bit 0
+d65_sub:
+    or a
+    sbc hl,bc               ; remainder -= divisor
+    ex de,hl
+    add hl,hl
+    inc hl                  ; quotient = (quotient<<1)|1
+    ex de,hl
+    jr d65_next
+d65_q0:
+    ex de,hl
+    add hl,hl               ; quotient <<= 1
+    ex de,hl
+d65_next:
+    ld a,(G_SW_CNT)
+    dec a
+    ld (G_SW_CNT),a
+    jr nz,d65_lp
+    ex de,hl                ; HL = quotient
+    ret
+
+; ── mul8 — DE (D=0, E=u8) * A (u8) → HL (u16) ──────────────────────────────
+mul8:
+    ld hl,0
+    ld b,8
+mul8_lp:
+    add hl,hl
+    add a,a
+    jr nc,mul8_sk
+    add hl,de
+mul8_sk:
+    djnz mul8_lp
+    ret
+
+; ── mul16x8_sh8 — (DE u16 * A u8) >> 8 → HL ────────────────────────────────
+mul16x8_sh8:
+    ld c,a                  ; multiplier
+    ld b,0                  ; product high byte
+    ld hl,0                 ; product low 16
+    ld a,8
+m16_lp:
+    add hl,hl
+    rl b
+    sla c
+    jr nc,m16_sk
+    add hl,de
+    jr nc,m16_sk
+    inc b
+m16_sk:
+    dec a
+    jr nz,m16_lp
+    ld l,h                  ; product >> 8 = (B:H)
+    ld h,b
+    ret
+
+; ── curve_unit8 — B = curve id (0-7), A = t (0..255) → A = unit (0..255) ───
+; Matches mmb.js curveUnit8. Preserves IX/IY (restores BC).
+curve_unit8:
+    push bc
+    ld c,a                  ; t
+    ld a,b
+    or a
+    jr z,cu_ident           ; 0 linear
+    cp 7
+    jr z,cu_ident           ; 7 saw
+    cp 1
+    jr z,cu_ein
+    cp 2
+    jr z,cu_eout
+    cp 3
+    jr z,cu_eio
+    cp 4
+    jr z,cu_sin
+    cp 5
+    jr z,cu_tri
+    cp 6
+    jr z,cu_sqr
+cu_ident:
+    ld a,c
+    pop bc
+    ret
+cu_ein:                     ; (t*t) >> 8
+    ld a,c
+    ld e,a
+    ld d,0
+    call mul8
+    ld a,h
+    pop bc
+    ret
+cu_eout:                    ; 255 - ((255-t)^2 >> 8)
+    ld a,c
+    cpl
+    ld e,a
+    ld d,0
+    call mul8
+    ld a,h
+    cpl
+    pop bc
+    ret
+cu_eio:                     ; t<128 ? (2t^2)>>8 : 255-((2(255-t)^2)>>8)
+    ld a,c
+    cp 128
+    jr nc,cu_eio_hi
+    ld e,a
+    ld d,0
+    call mul8
+    add hl,hl
+    ld a,h
+    pop bc
+    ret
+cu_eio_hi:
+    ld a,c
+    cpl
+    ld e,a
+    ld d,0
+    call mul8
+    add hl,hl
+    ld a,h
+    cpl
+    pop bc
+    ret
+cu_sin:                     ; SIN_LUT[t]
+    ld a,c
+    ld e,a
+    ld d,0
+    ld hl,SIN_LUT
+    add hl,de
+    ld a,(hl)
+    pop bc
+    ret
+cu_tri:                     ; t<128 ? t*2 : (255-t)*2
+    ld a,c
+    cp 128
+    jr nc,cu_tri_hi
+    add a,a
+    pop bc
+    ret
+cu_tri_hi:
+    cpl
+    add a,a
+    pop bc
+    ret
+cu_sqr:                     ; t<128 ? 0 : 255
+    ld a,c
+    cp 128
+    ld a,0
+    jr c,cu_sqr_done
+    ld a,255
+cu_sqr_done:
+    pop bc
     ret
 
 ; ── constant tables (generated; driver.md §12.3) ──────────────────────────
