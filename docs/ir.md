@@ -85,11 +85,6 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
   "id": 0,
   "scoreChannel": "fm3-1",
   "channel": "fm3",
-  "route_hint": {
-    "allocation_preference": "ordered_first_fit",
-    "channel_candidates": ["fm3"],
-    "write_scope": ["any"]
-  },
   "events": [ ... ]
 }
 ```
@@ -97,13 +92,11 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | Field          | Type   | Semantics                                                                |
 | -------------- | ------ | ------------------------------------------------------------------------ |
 | `id`           | int    | Index into `tracks` (re-numbered after layer flattening).                 |
-| `scoreChannel` | string | Original channel head (`fm3-1`, `pcm2`, …) — preserved for UI labeling.   |
+| `scoreChannel` | string | Original channel head (`fm3-1`, `pcm2`, …) — preserved for UI labeling; also the label used in track diagnostics. |
 | `channel`      | string | Physical channel name. FM3 variants (`fm3-1..4`, `fm3-csm`, `fm3-csm-rate`) collapse to `fm3`. |
-| `route_hint`   | object | Currently constant (`ordered_first_fit`, single candidate = `channel`, `write_scope: ["any"]`). The player ignores it. |
 | `events`       | array  | Time-ordered event list (see §4).                                        |
 
-There is **no `name` field** on tracks (the validator references `track.name`
-for diagnostics, which is always undefined — see §11).
+Tracks have no `name` field; the player routes purely by `channel`.
 
 ### 3.1 Channel names and player routing
 
@@ -575,9 +568,9 @@ write.
 | Target            | Range          | Chip mapping                                               |
 | ----------------- | -------------- | ----------------------------------------------------------- |
 | `NOTE_PITCH`      | −32768–32767 cents | Re-applied through F-number (A4/A0, or FM3 op registers) or PSG tone period. |
-| `NOTE_SEMI`       | −48–48         | Semitone offset ×100 cents on the pitch path. **Macro-only** — as a PARAM target the player ignores it. |
-| `KEYON`           | 0–1            | Retrigger gate (reg 0x28 key pulses). **Macro-only.**       |
-| `VEL`             | 0–15           | Velocity ladder (2 dB/step) folded into carrier TL / PSG att. **Macro/note-scoped only** — a PARAM_SET on VEL is ignored. |
+| `NOTE_SEMI`       | −48–48         | Semitone offset ×100 cents on the pitch path. **Macro-only** — rejected as a `param-set`/inline PARAM target (`E_UNSUPPORTED_TARGET`). |
+| `KEYON`           | 0–1            | Retrigger gate (reg 0x28 key pulses). **Macro-only** — rejected as a PARAM target. |
+| `VEL`             | 0–15           | Velocity ladder (2 dB/step) folded into carrier TL / PSG att. **Macro / `:vel` note-scoped only** — rejected as a PARAM target. |
 | `VOL`             | 0–31           | Channel fader → carrier TL offset (FM) / attenuator (PSG). 0 = hard mute. |
 | `MASTER`          | 0–31           | Global fader → all FM carrier TLs + all sounding PSG channels. |
 | `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Global.          |
@@ -672,7 +665,6 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
   "metadata": { "title": "demo", "author": "unknown", "source": "demo.mmlisp", "vals": [], "samples": [] },
   "tracks": [ {
     "id": 0, "scoreChannel": "fm1", "channel": "fm1",
-    "route_hint": { "allocation_preference": "ordered_first_fit", "channel_candidates": ["fm1"], "write_scope": ["any"] },
     "events": [
       { "tick": 0,  "cmd": "TEMPO_SET", "args": { "bpm": 120 }, "src": { "line": 1, "column": 2, "endLine": 5, "endColumn": 2 } },
       { "tick": 0,  "cmd": "PARAM_SET", "args": { "target": "FM_ALG", "value": 4 }, "src": { "line": 2, "column": 4, "endLine": 2, "endColumn": 9 } },
@@ -688,27 +680,14 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
 Fields the compiler emits that the player ignores (or vice versa). These are
 the open items to settle for the MMB/Z80 encoding.
 
-1. **NOTE_ON macros without a runtime path.** `vol`, `master`, `lfo_rate`,
-   `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` specs are emittable (their targets
-   are macro-legal) but no scheduler consumes them; `fm_ssg1–4` has no
-   scheduler entry either (and no inline `:ssg` keyword resolves to it, so it
-   is doubly unreachable). `keyon` is ignored on FM3-op and PSG notes.
-2. **`lenFrames` / `waitTicks` / `waitKeyOff` / `dyn.len` on PARAM_SWEEP.**
-   Honored in NOTE_ON macro curves, ignored by `_applyParamSweep` (which
-   always treats `frames` as ticks and starts immediately).
-3. **PARAM targets with no PARAM path.** `NOTE_SEMI`, `KEYON`, `VEL` are in
-   `SUPPORTED_TARGETS` (so `param-set`/inline writes can emit them) but
-   `_applyParam` has no case for them.
-4. **`param-set` emits even on unsupported targets** (diagnostic + event);
+1. **`keyon` macro ignored on FM3-op and PSG notes.** The `keyon` NOTE_ON macro
+   (retrigger gate) has no scheduler path on FM3 independent-op or PSG channels.
+2. **`waitTicks` / `waitKeyOff` / `dyn.len` on inline PARAM_SWEEP.** Honored in
+   NOTE_ON macro curves; `_applyParamSweep` starts immediately and ignores a
+   pre-delay or dynamic length. (An `Nf` `:len` *is* honored — `lenFrames`
+   schedules absolute frames.)
+3. **`param-set` emits even on unsupported targets** (diagnostic + event);
    the player drops unknown targets silently.
-5. **`JUMP { to, repeat }` residue.** Normally rewritten to
-   `LOOP_BEGIN`/`LOOP_END`; if the marker is forward (or missing), the raw
-   form survives and the player ignores `repeat`.
-6. **`route_hint` is write-only.** The player routes purely by the `channel`
-   name; `parseWriteScope` exists in the compiler but its result is never
-   wired into the track (`write_scope` is always `["any"]`).
-7. **Tracks have no `name`.** `validateTrack` reads `track.name` for its
-   diagnostics — always undefined.
-8. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
+4. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
    worklet: shot samples play to completion; loop samples stop only at
-   `PCM_NOTE_OFF`.
+   `PCM_NOTE_OFF`. Accepted as an M1 limitation (see language.md §16).

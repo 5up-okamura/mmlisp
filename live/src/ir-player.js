@@ -3040,6 +3040,13 @@ export class IRPlayer {
     );
     const OP_MACRO_MAP = {
       pan: "PAN",
+      vol: "VOL",
+      master: "MASTER",
+      lfo_rate: "LFO_RATE",
+      fm_alg: "FM_ALG",
+      fm_fb: "FM_FB",
+      fm_ams: "FM_AMS",
+      fm_fms: "FM_FMS",
       ...Object.fromEntries(
         [1, 2, 3, 4].flatMap((op) => [
           [`fm_tl${op}`, `FM_TL${op}`],
@@ -3052,6 +3059,7 @@ export class IRPlayer {
           [`fm_dt${op}`, `FM_DT${op}`],
           [`fm_ks${op}`, `FM_KS${op}`],
           [`fm_amen${op}`, `FM_AMEN${op}`],
+          [`fm_ssg${op}`, `FM_SSG${op}`],
         ]),
       ),
     };
@@ -3210,11 +3218,13 @@ export class IRPlayer {
     const curve = ev.args?.curve ?? "linear";
     const params = df.params;
     const secsPerTick = this._secsPerTick;
-    // ev.args.frames is in ticks (from parseLengthToken); convert to 60 Hz frames.
-    const baseFrames = Math.max(
-      1,
-      Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60),
-    );
+    // ev.args.frames is ticks by default; an Nf `:len` sets lenFrames so it is
+    // an absolute 60 Hz frame count (mirrors NOTE_ON macro curves via
+    // _resolveLenFrames). Tempo is resolved at onset — a mid-sweep tempo change
+    // drifts the wall-clock duration, matching the note-length Nf stance.
+    const baseFrames = ev.args?.lenFrames
+      ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
+      : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
     const loop = !!ev.args?.loop;
     const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset } =
       this._sweepFrameParams(ev, baseFrames, loop);

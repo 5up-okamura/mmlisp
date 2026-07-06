@@ -680,7 +680,9 @@ the phrase.
 
 - `(go label N)` is rewritten post-merge into the same `LOOP_BEGIN`/`LOOP_END`
   as `(x N …)`, so the label and the `go` may live in different forms of the
-  same channel.
+  same channel. The `#label` must **precede** the counted `go` (a backward
+  jump); a forward counted `(go label N)` is unsupported (`E_GO_FORWARD_COUNT`).
+  Infinite `(go label)` may jump either direction.
 - `go` arity: label plus optional positive count (`E_GO_NO_LABEL`,
   `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching marker is
   `E_JUMP_UNRESOLVED`.
@@ -815,6 +817,9 @@ raw 8-bit signed PCM.
 - **`:mode`** is per-note (not sticky): `shot` (default) plays start→end
   once; `loop` plays attack, cycles `:loop-start`–`:loop-end` until KEY-OFF
   (a `PCM_NOTE_OFF` at the gate), then plays the release.
+  > M1 limitation: a `shot` sample plays to its end regardless of the note's
+  > `length`/`gate` (they are not forwarded to the mixer worklet); only `loop`
+  > mode honors KEY-OFF. Gated / length-limited one-shots are a later milestone.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6).
 - `fm6` doubles as a PCM channel via `:mode shot`/`loop` (bind a sample with

@@ -403,7 +403,9 @@ ops + $B0) to be frozen in mmb.md §11 when this decision is approved.
 - **M2 — motion.** PARAM_SWEEP / PARAM_SWEEP_STOP (glide, vibrato via loop
   curves), PARAM_ADD, TEMPO_SWEEP, LOOP_BREAK, CSM (ON/OFF/RATE const +
   swept), single-channel PCM through the DAC (ring buffer in the reserved
-  area), KEY_OFF / SET_PARAM / FADE_TRACK commands.
+  area), KEY_OFF / SET_PARAM / FADE_TRACK commands. Note: a `shot` sample
+  plays to its end — a note's `length`/`gate` do not truncate it (only `loop`
+  mode honors KEY-OFF). Gated / length-limited one-shots are a later milestone.
 - **M3 — expression.** NOTE_ON_EX + macro engine (`:step` clocks,
   pitch/vel/op macros, `:semi`, `:keyon`), FM3 independent-OP
   (FM3_MODE/FM3_OP_PITCH), dynamic value slots (SET_VAL,

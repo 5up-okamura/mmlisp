@@ -17,6 +17,7 @@ import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
 // on exact ticks instead of rounding (1/128 whole = 3 ticks, not 1.5).
 const PPQN = 96;
 const WHOLE_TICKS = PPQN * 4;
+// Macro-legal targets — everything a `(macro :target …)` may drive.
 const SUPPORTED_TARGETS = new Set([
   "NOTE_PITCH",
   "NOTE_SEMI",
@@ -46,6 +47,17 @@ const SUPPORTED_TARGETS = new Set([
   ]),
 ]);
 
+// PARAM-legal targets — what an inline `:target v` / `(param-set …)` may write.
+// A strict subset of the macro-legal set: NOTE_SEMI, KEYON and VEL have no
+// meaningful absolute-write semantics (NOTE_SEMI duplicates NOTE_PITCH, KEYON is
+// a note event, VEL is key-on-sticky), so they are macro-only. Writing them as a
+// PARAM is rejected.
+const PARAM_SET_TARGETS = new Set(
+  [...SUPPORTED_TARGETS].filter(
+    (t) => t !== "NOTE_SEMI" && t !== "KEYON" && t !== "VEL",
+  ),
+);
+
 const TRACK_OPTION_KEYS = new Set([
   ":ch",
   ":prio",
@@ -57,7 +69,6 @@ const TRACK_OPTION_KEYS = new Set([
   ":vel",
   ":shuffle",
   ":shuffle-base",
-  ":write",
 ]);
 
 // Curve function names recognized in inline curve specs (PARAM_SWEEP authoring)
@@ -1002,7 +1013,7 @@ function prioNoteSpan(ev) {
 
 function flattenPriorityLayers(head, layers, diagnostics) {
   // Highest priority first (lowest number). The first layer is the container we
-  // reuse for route_hint/channel; only its event list is rebuilt.
+  // reuse for channel/scoreChannel; only its event list is rebuilt.
   layers.sort((a, b) => a.prio - b.prio);
 
   if (layers.filter((l) => l.trackData.events.some((e) => PRIO_FLOW_CMDS.has(e.cmd))).length > 1) {
@@ -1777,6 +1788,7 @@ function canonicalTarget(symbol) {
       acc[`:dt${op}`] = `FM_DT${op}`;
       acc[`:ks${op}`] = `FM_KS${op}`;
       acc[`:am${op}`] = `FM_AMEN${op}`;
+      acc[`:ssg${op}`] = `FM_SSG${op}`;
       return acc;
     }, {}),
   };
@@ -1993,36 +2005,6 @@ function parseSingleChannel(channelNode) {
   if (!channelNode) return "fm1";
   const val = atomValue(channelNode);
   return val ? val.replace(/^:/, "").toLowerCase() : "fm1";
-}
-
-const VALID_WRITE_SCOPE = new Set(["notes", "fm-params", "ctrl", "reg", "any"]);
-
-function parseWriteScope(options, diagnostics, trackName) {
-  const scopeNode = options.get(":write");
-  if (!scopeNode) return ["any"];
-  const candidates = [];
-  if (scopeNode.kind === "list") {
-    for (const item of scopeNode.items) {
-      const v = atomValue(item);
-      if (v) candidates.push(v.replace(/^:/, ""));
-    }
-  } else {
-    const v = atomValue(scopeNode);
-    if (v) candidates.push(v.replace(/^:/, ""));
-  }
-  const valid = candidates.filter((s) => VALID_WRITE_SCOPE.has(s));
-  const invalid = candidates.filter((s) => !VALID_WRITE_SCOPE.has(s));
-  if (invalid.length > 0) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_WRITE_SCOPE_INVALID",
-      `Unknown write scope values: ${invalid.join(", ")}`,
-      nodeSrc(scopeNode),
-      trackName,
-    );
-  }
-  return valid.length > 0 ? valid : ["any"];
 }
 
 function parseTrackHead(items) {
@@ -2403,6 +2385,19 @@ function compileChannelBody(
                   "error",
                   "E_UNKNOWN_KEYWORD",
                   `unknown inline keyword: ${val}`,
+                  nodeSrc(node),
+                  trackName,
+                );
+                break;
+              }
+              if (!PARAM_SET_TARGETS.has(target)) {
+                // A known macro keyword (:semi/:keyon) with no absolute-write
+                // meaning — valid in a (macro …) but not as an inline write.
+                pushDiag(
+                  diagnostics,
+                  "error",
+                  "E_UNSUPPORTED_TARGET",
+                  `${val} is macro-only; not an inline parameter write`,
                   nodeSrc(node),
                   trackName,
                 );
@@ -3071,7 +3066,7 @@ function compileChannelBody(
           const valueNode = node.items[j + 1];
           const target = canonicalTarget(atomValue(targetNode));
           const value = parseIntLike(atomValue(valueNode)) ?? 0;
-          if (!SUPPORTED_TARGETS.has(target)) {
+          if (!PARAM_SET_TARGETS.has(target)) {
             pushDiag(
               diagnostics,
               "error",
@@ -3159,7 +3154,7 @@ function validateTrack(track, diagnostics) {
           "E_MARKER_DUP",
           `Duplicate marker id: ${id}`,
           e.src,
-          track.name,
+          track.scoreChannel,
         );
       } else {
         markers.set(id, true);
@@ -3178,7 +3173,21 @@ function validateTrack(track, diagnostics) {
         "E_JUMP_UNRESOLVED",
         `Jump target marker not found: ${j.args.to}`,
         j.src,
-        track.name,
+        track.scoreChannel,
+      );
+    } else if (j.args.repeat != null) {
+      // A counted `(go label N)` whose marker is forward: convertCountedJumps
+      // only rewrites *backward* counted jumps into LOOP_BEGIN/LOOP_END, so this
+      // survived as a raw JUMP the player would loop with `repeat` ignored.
+      // Forward counted jumps are unsupported (only backward `(go head N)` and
+      // infinite `(go label)` are).
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_GO_FORWARD_COUNT",
+        `forward counted jump unsupported: (go ${j.args.to} ${j.args.repeat}) — the marker must precede the go`,
+        j.src,
+        track.scoreChannel,
       );
     }
   }
@@ -3672,17 +3681,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
           /^fm3-[1-4]$/.test(head)
             ? "fm3"
             : head,
-        route_hint: {
-          allocation_preference: "ordered_first_fit",
-          channel_candidates: [
-            head === "fm3-csm" ||
-            head === "fm3-csm-rate" ||
-            /^fm3-[1-4]$/.test(head)
-              ? "fm3"
-              : head,
-          ],
-          write_scope: ["any"],
-        },
         events: [],
       };
 
