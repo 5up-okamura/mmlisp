@@ -144,18 +144,26 @@ Length token grammar:
 | `N.`  | Dotted (×1.5)                                          | `8.` → 72     |
 | `N/M` | Fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) | `1/3` → 128 |
 | `Nt`  | Exact tick count                                       | `6t` → 6      |
-| `Nf`  | N frames (1/60 s), tempo-independent                   | —             |
+| `Nf`  | N frames (1/60 s); context-dependent (see below)       | —             |
 | `0`   | Hold: KEY-ON without advancing / without KEY-OFF (§17) | 0             |
 
 Accepted wherever a length appears: `:len`, note/rest suffix, `:gate`,
 `:gate-`, curve `:len`, macro `:step`, `~ N`, `(wait N)`, `(glide T)`,
 `(delay … :time T)`, `:shuffle-base`.
 
-`Nf` is honored as a 60 Hz frame count in curve `:len` and macro `:step`
-(where the player schedules per frame) and in `def-val :unit frame` slots.
+`Nf` is a true 60 Hz frame count — scheduled per frame, tempo-independent — in
+curve `:len`, macro `:step`, a `(wait Nf)` stage, and `def-val :unit frame`
+slots (the player runs these off its own frame clock).
 
-> Not yet implemented: in tick contexts (note lengths, `:gate`, `~`), `Nf`
-> currently parses as N raw **ticks**, not frames. Use `Nt` in tick contexts.
+In **structural** contexts that advance the musical timeline — note length,
+`:gate`, `~` (tie), and rests — `Nf` is converted to ticks at the tempo active
+at compile time. So `c16f` lasts 16/60 s at the tempo it was authored under; a
+mid-track `:tempo` change before the note is accounted for, but a **runtime**
+tempo change (live `setTempo`, or a `TEMPO_SWEEP` spanning the note) scales it
+like any tick duration. Use `Nt` when you want an exact, tempo-proof tick count.
+
+> Not yet converted: `(glide T)` and `(delay … :time T)` still read `Nf` as raw
+> ticks. Use `Nt` there for now.
 
 ---
 
@@ -343,6 +351,10 @@ Dynamic Parameters slider per slot. Names must not start with `$`
   not accept `$`.
 - `$time` is built in: elapsed 60 Hz frames since track start, read-only.
 - An undefined `$name` raises `E_VAL_UNDEFINED`.
+- A slot value is always clamped to its declared `[min, max]` finite range —
+  at `init` and on every host `setVal` — so a bad (out-of-range or non-finite)
+  value can never reach the pitch/length/gate/param math. This mirrors the
+  bounded integer slots the Z80 driver will hold.
 
 **Dynamic curve parameters.** A `$name` may feed a curve's `:from`, `:to`,
 `:rate`, or `:len`. The slot is read **once at note-on**, so the value is
@@ -548,7 +560,7 @@ literal word `curve`) is rejected with `E_UNKNOWN_CURVE`.
 | `:from` `:to` | number   | 0       | Endpoints (accept `$slot`, §8)              |
 | `:len`   | length token  | —       | Duration; ticks, or absolute frames with `Nf`; accepts `$slot` |
 | `:phase` | int 0–255     | `0`     | Start phase offset                          |
-| `:rate`  | number > 0    | `1.0`   | Phase speed multiplier (relative to `:len`); accepts `$slot` |
+| `:rate`  | number ≥ 0    | `1.0`   | Phase speed multiplier (relative to `:len`); `0` freezes the curve at its start phase; accepts `$slot` |
 | `:loop`  | flag          | —       | Force looping                               |
 | `:wait`  | length token or `key-off` | — | Delay before the curve starts    |
 

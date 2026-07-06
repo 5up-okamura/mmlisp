@@ -227,16 +227,29 @@ function resolveSamplePath(sampleFile, sourceFile) {
   return normalizePosixPath(`${baseDir}/${file}`);
 }
 
-function parseLengthToken(value, inheritedTicks) {
+// Convert an Nf frame count (wall-clock, 1/60 s) to musical ticks at `bpm`.
+// Used where a duration advances the tick timeline (note length, :gate, ~,
+// rest). The conversion uses the tempo active at compile time, so under a
+// runtime tempo change an Nf note scales with tempo like any tick duration.
+function framesToTicks(frames, bpm) {
+  if (frames === 0) return 0; // 0f = hold, mirroring plain 0
+  return Math.max(1, Math.round((frames * bpm * PPQN) / 3600));
+}
+
+// `bpm` gives a structural context (note length / gate / tie / rest): there an
+// `Nf` token is converted to ticks at the active tempo. When `bpm` is null
+// (curve `:len` context) the raw frame count is returned and paired with a
+// `lenFrames` flag the player honors natively.
+function parseLengthToken(value, inheritedTicks, bpm = null) {
   if (!value) return inheritedTicks;
   // Tick count: "14t" — exact tick value
   if (/^\d+t$/.test(value)) {
     return parseInt(value, 10);
   }
-  // Frame count: "16f" — 60 Hz update intervals used in macro :len context.
-  // Returns the raw frame count; the player schedules one step per 1/60 s.
+  // Frame count: "16f" — 60 Hz update intervals.
   if (/^\d+f$/.test(value)) {
-    return parseInt(value, 10);
+    const frames = parseInt(value, 10);
+    return bpm != null ? framesToTicks(frames, bpm) : frames;
   }
   // Fraction: "1/2", "3/4"
   if (/^\d+\/\d+$/.test(value)) {
@@ -283,11 +296,11 @@ function isRestAtom(val) {
 }
 
 // Parse the length of a rest token; the leading "_" is stripped before parsing.
-function parseRestLength(val, inheritedTicks) {
+function parseRestLength(val, inheritedTicks, bpm = null) {
   if (typeof val !== "string" || !val.startsWith("_")) return null;
   const suffix = val.slice(1);
   if (suffix === "") return inheritedTicks;
-  return parseLengthToken(suffix, inheritedTicks);
+  return parseLengthToken(suffix, inheritedTicks, bpm);
 }
 
 // The gate family. The operation is chosen by the keyword so each is
@@ -295,13 +308,13 @@ function parseRestLength(val, inheritedTicks) {
 //   :gate  <time>  — absolute sounding time (length / Nf / Nt token); `0` = hold.
 //   :gate* <ratio> — fraction of the note length (0 <= ratio < 1).
 //   :gate- <time>  — shorten: note length minus this time (key off early).
-function parseGateFamily(keyword, val) {
+function parseGateFamily(keyword, val, bpm = null) {
   if (typeof val !== "string") return null;
   if (keyword === ":gate*") {
     const f = parseFloat(val);
     return !isNaN(f) && f >= 0 && f < 1 ? { type: "ratio", value: f } : null;
   }
-  const ticks = val === "0" ? 0 : parseLengthToken(val, null);
+  const ticks = val === "0" ? 0 : parseLengthToken(val, null, bpm);
   if (ticks === null || ticks < 0) return null;
   return keyword === ":gate-"
     ? { type: "cut", value: ticks }
@@ -1193,6 +1206,11 @@ function parseMacroSpec(
           const arg = atomValue(stageNode.items?.[1]);
           if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
+          } else if (/^\d+f$/.test(arg)) {
+            // Nf is a wall-clock frame count; carry the unit so the player's
+            // frame branch schedules it directly (a stage wait is a local
+            // sampler delay, not a timeline advance — tempo-independent).
+            stages.push({ waitFrames: parseInt(arg, 10) });
           } else {
             const t = parseLengthToken(arg, null);
             stages.push({ waitTicks: t ?? 1 });
@@ -2039,12 +2057,13 @@ function compileChannelBody(
               trackState.defaultLength = parseLengthToken(
                 rawVal,
                 trackState.defaultLength,
+                trackState.currentTempo,
               );
               break;
             case ":gate":
             case ":gate*":
             case ":gate-": {
-              const g = parseGateFamily(val, rawVal);
+              const g = parseGateFamily(val, rawVal, trackState.currentTempo);
               if (g !== null) trackState.defaultGate = g;
               break;
             }
@@ -2463,7 +2482,11 @@ function compileChannelBody(
         i++;
         let tieTicks = trackState.defaultLength;
         if (i < items.length) {
-          const parsed = parseLengthToken(atomValue(items[i]), null);
+          const parsed = parseLengthToken(
+            atomValue(items[i]),
+            null,
+            trackState.currentTempo,
+          );
           if (parsed !== null) {
             tieTicks = parsed;
             i++;
@@ -2482,7 +2505,7 @@ function compileChannelBody(
       // Rest atom: "_", "_4", "_4.", "_14t", "_16f"
       if (isRestAtom(val)) {
         const ticks = resolveShuffleTicks(
-          parseRestLength(val, trackState.defaultLength),
+          parseRestLength(val, trackState.defaultLength, trackState.currentTempo),
           trackState,
         );
         events.push({
@@ -2514,6 +2537,7 @@ function compileChannelBody(
         const perNoteTicks = parseLengthToken(
           lengthStr,
           trackState.defaultLength,
+          trackState.currentTempo,
         );
         emitNoteForTrack(
           trackState,
@@ -3518,11 +3542,15 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         if (v !== null) defaultOct = Math.max(0, v);
       }
       if (inlineOpts[":len"] !== undefined) {
-        defaultLength = parseLengthToken(inlineOpts[":len"], defaultLength);
+        defaultLength = parseLengthToken(
+          inlineOpts[":len"],
+          defaultLength,
+          scoreTempoVal ?? 120,
+        );
       }
       for (const gk of [":gate", ":gate*", ":gate-"]) {
         if (inlineOpts[gk] !== undefined) {
-          const g = parseGateFamily(gk, inlineOpts[gk]);
+          const g = parseGateFamily(gk, inlineOpts[gk], scoreTempoVal ?? 120);
           if (g !== null) defaultGate = g;
         }
       }
@@ -3547,6 +3575,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         shuffleBase = parseLengthToken(
           inlineOpts[":shuffle-base"],
           shuffleBase,
+          scoreTempoVal ?? 120,
         );
       }
 
@@ -3652,11 +3681,12 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         trackState.defaultLength = parseLengthToken(
           inlineOpts[":len"],
           trackState.defaultLength,
+          trackState.currentTempo,
         );
       }
       for (const gk of [":gate", ":gate*", ":gate-"]) {
         if (inlineOpts[gk] !== undefined) {
-          const g = parseGateFamily(gk, inlineOpts[gk]);
+          const g = parseGateFamily(gk, inlineOpts[gk], trackState.currentTempo);
           if (g !== null) trackState.defaultGate = g;
         }
       }

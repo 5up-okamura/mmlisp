@@ -534,7 +534,8 @@ either a curve spec (§6.2 fields, no `type`) or a wait:
 | Stage field   | Semantics                                                                    |
 | ------------- | ------------------------------------------------------------------------------|
 | `waitKeyOff: true` | Snap the cursor to the gate boundary.                                     |
-| `waitTicks: N`     | Advance the cursor N ticks. (`(wait Nf)` loses its frame unit — parsed as ticks; the player's `waitFrames` stage branch is currently unreachable.) |
+| `waitTicks: N`     | Advance the cursor N ticks (tempo-scaled).                                 |
+| `waitFrames: N`    | Advance the cursor N 60 Hz frames (wall-clock). Emitted for `(wait Nf)`.   |
 | curve stage        | Plays for its `frames`; a `loop: true` stage cycles until the gate.       |
 
 A `:wait` **inside** a curve stage acts as that stage's pre-delay.
@@ -708,8 +709,6 @@ the open items to settle for the MMB/Z80 encoding.
    wired into the track (`write_scope` is always `["any"]`).
 7. **Tracks have no `name`.** `validateTrack` reads `track.name` for its
    diagnostics — always undefined.
-8. **`(wait Nf)` inside a stages vector** parses as ticks (unit lost); the
-   player's `waitFrames` stage branch is unreachable from compiled IR.
-9. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
+8. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
    worklet: shot samples play to completion; loop samples stop only at
    `PCM_NOTE_OFF`.
