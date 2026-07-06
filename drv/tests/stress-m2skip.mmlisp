@@ -1,0 +1,32 @@
+; M1 skip-decode + hold stress: len=0 holds (track suspends until host
+; release — none arrives, so it holds to the horizon), and M2 reserved
+; opcodes (PARAM_SWEEP from :vol/:glide curves, TEMPO_SWEEP) that an M1
+; decoder must length-decode and skip without losing stream sync.
+
+(def organ :alg 5 :fb 1
+  :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 18 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 5 :sr2 1 :rr2 7 :sl2 2 :tl2 8 :ks2 0 :ml2 2 :dt2 1
+  :ar3 31 :dr3 5 :sr3 1 :rr3 7 :sl3 2 :tl3 10 :ks3 0 :ml3 4 :dt3 -1
+  :ar4 31 :dr4 6 :sr4 1 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(score :tempo 120
+  ; sweeps land as PARAM_SWEEP opcodes; the M1 decoder skips them and the
+  ; notes around them must stay aligned with the reference
+  (fm1 organ :oct 4 :len 4 :vel 12
+    c :vol (ease-out :from 31 :to 12 :len 60f) e g
+    :vol 31
+    :pitch (ease-in :from 0 :to -1200 :len 30f)
+    c > c2 <
+    d2)
+
+  ; a len=0 hold: keys on and suspends the track's dispatcher
+  (fm2 organ :oct 3 :len 4 :vel 10
+    c e g0)
+
+  ; PSG hold under a swept-tempo passage on another track
+  (sqr1 :oct 5 :len 2 :vel 9
+    c e0)
+
+  (sqr2 :oct 4 :len 4 :vel 8
+    :tempo (linear :from 120 :to 90 :len 2)
+    c d e f g2))

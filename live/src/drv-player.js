@@ -573,7 +573,7 @@ export class DrvPlayer {
         }
         // ── Reserved opcodes: length-decode and skip (M2/M3) ──────────────
         case OPCODE.PARAM_SWEEP:
-          this._skip(trk, op, 9);
+          this._skip(trk, op, 10); // op + 9 payload bytes (opcodes.md §6)
           break;
         case OPCODE.PARAM_ADD: {
           const w = targetWidth(s[trk.pc + 1]);

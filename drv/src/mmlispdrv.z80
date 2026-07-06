@@ -1,0 +1,2059 @@
+; ===========================================================================
+; MMLispDRV v0.2 — M1 core playback (docs/driver.md, docs/mmb.md,
+; docs/opcodes.md). Behaviorally locked to the JS reference implementation
+; (live/src/drv-player.js): same math, same tables (src/tables.z80 is
+; generated from the JS), same write order, same change-only suppression.
+; The A/B gate is raw register-trace equality (driver.md §12.4).
+;
+; M1 implementation notes (see drv/README.md):
+; - Writes are emitted inline during dispatch through the shadow file, in
+;   dispatch order — exactly like the reference. The §4 batched write-queue
+;   flush is deferred to the on-hardware tuning phase.
+; - Shadow file: 2×152 bytes (YM addr $22..$B9 per port) + a byte-per-register
+;   valid plane, placed in the M2 PCM-reserved area (recut the RAM map when
+;   PCM lands).
+; - PARAM_SET NOTE_PITCH (cents) is an M2 sweep-engine concern (driver.md §8)
+;   and is a no-op here; the JS reference implements it for the live app.
+; ===========================================================================
+
+; ── Hardware ───────────────────────────────────────────────────────────────
+YM_ADDR0    equ $4000
+YM_DATA0    equ $4001
+YM_ADDR1    equ $4002
+YM_DATA1    equ $4003
+BANK_REG    equ $6000
+PSG_PORT    equ $7f11
+WINDOW      equ $8000
+
+; ── RAM map (driver.md §5) ─────────────────────────────────────────────────
+CH_STATE    equ $1200       ; 10 × 64 B channel state blocks
+TCB_BASE    equ $1480       ; 16 × 32 B track control blocks
+MB_RING     equ $1680       ; mailbox: 8 cells × 4 B
+MB_HEAD     equ $16a0
+MB_TAIL     equ $16a1
+MB_TSTAT    equ $16a2       ; 16 per-track status bytes
+MB_READY    equ $16b2
+MB_VER      equ $16b3
+VAL_SLOTS   equ $16c0       ; 16 × i16 (M3)
+
+; globals (in the former 192-byte shadow slot; the real shadow moved, see
+; SHADOW below)
+G_INC       equ $16e0       ; u16  per-MMB tempo increment (8.8)
+G_TT        equ $16e2       ; u16  TRACK_TABLE payload addr (window)
+G_ES        equ $16e4       ; u16  EVENT_STREAM payload addr (window)
+G_VAL       equ $16e6       ; u16  PARAM_SET value (i16)
+G_DUR       equ $16e8       ; u16  current duration operand
+G_EXG       equ $16ea       ; u16  NOTE_ON_EX gate operand
+G_MASTER    equ $16ec       ; u8   global master level (0..31)
+G_NOISEMODE equ $16ed       ; u8   PSG noise mode (0..7)
+G_OFF4      equ $16ee       ; u8   rounded level offset for carrier TL
+G_CMASK     equ $16ef       ; u8   carrier mask scratch
+G_TARGET    equ $16f0       ; u8   PARAM_SET target id
+G_NOTE      equ $16f1       ; u8   NOTE_ON note
+G_EXG_F     equ $16f2       ; u8   NOTE_ON_EX gate present flag
+G_TMP       equ $16f3       ; u8   scratch
+G_OP        equ $16f4       ; u8   op index scratch
+G_ARG0      equ $16f5       ; u8   mailbox args
+G_ARG1      equ $16f6
+G_ARG2      equ $16f7
+G_TIDX      equ $16f8       ; u8   track index scratch
+G_BLOCK     equ $16f9       ; u8   FM block scratch
+G_FNUM      equ $16fa       ; u16  FM F-number scratch
+
+; shadow register file — change-only suppression (driver.md §5.4).
+; 2 × 152 bytes covering YM addresses $22..$B9 per port, plus a parallel
+; byte-per-register valid plane (a register is always written the first time).
+; Lives in the M2 PCM-reserved area for now.
+SHADOW      equ $17a0       ; 304 B (port0 at +0, port1 at +152)
+SHVALID     equ $18d0       ; 304 B valid plane (offset SHADOW+304)
+
+STACK_TOP   equ $2000
+
+; ── Channel state block fields (driver.md §5.1) ───────────────────────────
+CHS_STATUS  equ $00         ; bit0 = keyed (FM) / sounding (PSG)
+CHS_NOTE    equ $01
+CHS_VEL     equ $05
+CHS_VOL     equ $06
+CHS_GATE    equ $08
+CHS_OWNER   equ $0e         ; owning TCB index, $FF = free
+CHS_ALG     equ $0f
+CHS_VTL     equ $10         ; 4 × voiced TL (op1..op4)
+
+; ── Track control block fields (driver.md §5.2) ───────────────────────────
+T_STATUS    equ $00         ; 0 idle, 1 playing, 2 held
+T_TRKID     equ $01
+T_CH        equ $02
+T_FLAGS     equ $03
+T_PC        equ $04         ; u16 stream pointer (window addr)
+T_BASE      equ $06         ; u16 EVENT_STREAM payload (window addr)
+T_BANK      equ $08         ; u16
+T_ACC       equ $0a         ; u16 8.8 tick accumulator
+T_GATELEFT  equ $0c         ; u16 ticks to scheduled key-off, 0 = none
+                            ; (M1 reuse of the per-track increment slot —
+                            ; the increment is per-MMB and lives in G_INC)
+T_WAIT      equ $0e         ; u16 ticks until next timed dispatch
+T_LOOPS     equ $10         ; 4 × {resume u16, remaining u8}
+T_DEPTH     equ $1c
+T_MARKER    equ $1e
+T_INDEX     equ $1f         ; own TCB index (mailbox status slot)
+
+; ===========================================================================
+    org 0
+    jp start
+
+; ── vblank interrupt (IM 1): one driver frame ─────────────────────────────
+    org $38
+int_handler:
+    push af
+    push bc
+    push de
+    push hl
+    push ix
+    push iy
+    call frame_step
+    pop iy
+    pop ix
+    pop hl
+    pop de
+    pop bc
+    pop af
+    ei
+    reti
+
+; ===========================================================================
+; Boot
+; ===========================================================================
+start:
+    di
+    im 1
+    ld sp,STACK_TOP
+    ; clear all driver RAM ($1200..$1F7F)
+    ld hl,$1200
+    ld de,$1201
+    ld bc,$0d7f
+    ld (hl),0
+    ldir
+    ; channel state defaults (matches drv-player freshFmChannel/_reset)
+    xor a
+boot_ch:
+    push af
+    call chs_ptr_iy
+    ld (iy+CHS_NOTE),60
+    ld (iy+CHS_VEL),15
+    ld (iy+CHS_VOL),31
+    ld (iy+CHS_GATE),8
+    ld (iy+CHS_OWNER),$ff
+    ld (iy+CHS_ALG),7
+    pop af
+    inc a
+    cp 10
+    jr c,boot_ch
+    ; globals
+    ld hl,DEFAULT_INCREMENT
+    ld (G_INC),hl
+    ld a,31
+    ld (G_MASTER),a
+    ld a,4
+    ld (G_NOISEMODE),a
+    ; neutral power-on patch (same bytes/order as drv-player _emitInitWrites)
+    xor a
+boot_patch:
+    push af
+    call fm_port_off        ; D=port, C=ch offset
+    ld b,$07                ; B0: fb 0, alg 7
+    ld a,$b0
+    add a,c
+    ld e,a
+    call ym_write
+    ld b,$c0                ; B4: both speakers, ams/fms 0
+    ld a,$b4
+    add a,c
+    ld e,a
+    call ym_write
+    ld a,0                  ; op slots in slot order 0..3 = addr off 0,8,4,12
+    call boot_slot
+    ld a,8
+    call boot_slot
+    ld a,4
+    call boot_slot
+    ld a,12
+    call boot_slot
+    pop af
+    inc a
+    cp 6
+    jr c,boot_patch
+    ; mailbox up
+    ld a,2
+    ld (MB_VER),a
+    ld a,$d2
+    ld (MB_READY),a
+    ei
+idle:
+    halt
+    jr idle
+
+; one operator slot of the neutral patch. A = op addr offset, C/D live.
+boot_slot:
+    add a,c
+    ld (G_TMP),a
+    add a,$30               ; DT/MUL: dt 0, mul 1
+    ld e,a
+    ld b,$01
+    call ym_write
+    ld a,(G_TMP)
+    add a,$40               ; TL 0
+    ld e,a
+    ld b,0
+    call ym_write
+    ld a,(G_TMP)
+    add a,$50               ; KS/AR: ks 0, ar 31
+    ld e,a
+    ld b,$1f
+    call ym_write
+    ld a,(G_TMP)
+    add a,$60               ; AM/DR 0
+    ld e,a
+    ld b,0
+    call ym_write
+    ld a,(G_TMP)
+    add a,$70               ; SR 0
+    ld e,a
+    ld b,0
+    call ym_write
+    ld a,(G_TMP)
+    add a,$80               ; SL/RR: sl 0, rr 15
+    ld e,a
+    ld b,$0f
+    jp ym_write
+
+; ===========================================================================
+; Frame step (driver.md §4): mailbox → per-track accumulate/dispatch.
+; Writes go out inline (change-only) in dispatch order, like the reference.
+; ===========================================================================
+frame_step:
+    call mbox_drain
+    ld ix,TCB_BASE
+    ld b,16
+fs_track:
+    push bc
+    ld a,(ix+T_STATUS)
+    cp 1
+    jr nz,fs_next           ; idle or held: no accumulation
+    ; acc += increment (per-MMB, read fresh — a TEMPO_SET decoded by an
+    ; earlier track this frame already applies to later tracks)
+    ld l,(ix+T_ACC)
+    ld h,(ix+T_ACC+1)
+    ld de,(G_INC)
+    add hl,de
+    ld (ix+T_ACC),l
+    ld (ix+T_ACC+1),h
+fs_tick:
+    ld a,(ix+T_ACC+1)       ; integer part ≥ 1?
+    or a
+    jr z,fs_next
+    dec a
+    ld (ix+T_ACC+1),a       ; acc -= 0x100
+    ; gate countdown first (reference tick order)
+    ld l,(ix+T_GATELEFT)
+    ld h,(ix+T_GATELEFT+1)
+    ld a,h
+    or l
+    jr z,fs_wait
+    dec hl
+    ld (ix+T_GATELEFT),l
+    ld (ix+T_GATELEFT+1),h
+    ld a,h
+    or l
+    jr nz,fs_wait
+    ld a,(ix+T_CH)          ; gate expired: key/att off
+    call channel_off
+fs_wait:
+    ld l,(ix+T_WAIT)
+    ld h,(ix+T_WAIT+1)
+    ld a,h
+    or l
+    jr z,fs_dispatch
+    dec hl
+    ld (ix+T_WAIT),l
+    ld (ix+T_WAIT+1),h
+    ld a,h
+    or l
+    jr nz,fs_tick           ; still waiting
+fs_dispatch:
+    call dispatch
+    ld a,(ix+T_STATUS)
+    cp 1
+    jr nz,fs_next           ; ended or held mid-frame: drop remaining ticks
+    jr fs_tick
+fs_next:
+    pop bc
+    ld de,32
+    add ix,de
+    djnz fs_track
+    ret
+
+; ===========================================================================
+; Mailbox (driver.md §6)
+; ===========================================================================
+mbox_drain:
+    ld a,(MB_TAIL)
+md_loop:
+    ld c,a                  ; C = tail
+    ld a,(MB_HEAD)
+    cp c
+    ret z
+    ; cell = MB_RING + tail*4
+    ld a,c
+    add a,a
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,MB_RING
+    add hl,de
+    ld a,(hl)               ; cmd
+    ld (hl),0               ; consume
+    inc hl
+    ld d,a
+    ld a,(hl)
+    ld (G_ARG0),a
+    inc hl
+    ld a,(hl)
+    ld (G_ARG1),a
+    inc hl
+    ld a,(hl)
+    ld (G_ARG2),a
+    push bc
+    ld a,d
+    cp 1
+    jr nz,md_not_start
+    call start_track
+    jr md_done
+md_not_start:
+    cp 2
+    jr nz,md_done           ; KEY_OFF/SET_PARAM/FADE/SET_VAL are M2/M3
+    call stop_track
+md_done:
+    pop bc
+    ld a,c
+    inc a
+    and 7
+    ld (MB_TAIL),a
+    jr md_loop
+
+; ── START_TRACK (driver.md §6.3) ──────────────────────────────────────────
+start_track:
+    call mmb_locate
+    ; find G_ARG0 in the track table
+    ld hl,(G_TT)
+    ld e,(hl)               ; track_count (≤16, low byte is enough)
+    inc hl
+    inc hl
+    ld c,0                  ; index
+st_find:
+    ld a,(G_ARG0)
+    cp (hl)
+    jr z,st_found
+    push de
+    ld de,5
+    add hl,de
+    pop de
+    inc c
+    dec e
+    jr nz,st_find
+    ret                     ; unknown track id
+st_found:
+    ld a,c
+    ld (G_TIDX),a
+    ; IX = TCB_BASE + index*32
+    push hl
+    ld l,c
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de
+    push hl
+    pop ix
+    pop hl
+    ; fill the TCB from the 5-byte track entry
+    ld a,(hl)
+    ld (ix+T_TRKID),a
+    inc hl
+    ld a,(hl)
+    ld (ix+T_CH),a
+    inc hl
+    ld a,(hl)
+    ld (ix+T_FLAGS),a
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    ld hl,(G_ES)
+    add hl,de               ; stream ptr = ES payload + event_offset
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    ld hl,(G_ES)
+    ld (ix+T_BASE),l
+    ld (ix+T_BASE+1),h
+    xor a
+    ld (ix+T_ACC),a
+    ld (ix+T_ACC+1),a
+    ld (ix+T_WAIT),a
+    ld (ix+T_WAIT+1),a
+    ld (ix+T_GATELEFT),a
+    ld (ix+T_GATELEFT+1),a
+    ld (ix+T_DEPTH),a
+    ld (ix+T_MARKER),a
+    ld a,(G_TIDX)
+    ld (ix+T_INDEX),a
+    ld a,(G_ARG1)
+    ld (ix+T_BANK),a
+    ld a,(G_ARG2)
+    ld (ix+T_BANK+1),a
+    call bank_latch
+    ; channel ownership (driver.md §2.2)
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,st_active         ; fm3-op/pcm ids: no channel block in M1
+    call chs_ptr_iy
+    ld a,(iy+CHS_OWNER)
+    cp $ff
+    jr z,st_claim
+    ld c,a                  ; previous owner index
+    ld a,(G_TIDX)
+    cp c
+    jr z,st_claim
+    ; release the running track on this channel
+    ld a,(ix+T_CH)
+    push bc
+    call channel_off
+    pop bc
+    ld l,c
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de
+    ld (hl),0               ; previous TCB → idle
+    ld hl,MB_TSTAT
+    ld a,c
+    add a,l
+    ld l,a
+    ld (hl),0
+st_claim:
+    ld a,(G_TIDX)
+    ld (iy+CHS_OWNER),a
+    ld (iy+CHS_VEL),15      ; reset channel level state to defaults
+    ld (iy+CHS_VOL),31
+    ld (iy+CHS_GATE),8
+st_active:
+    ld (ix+T_STATUS),1
+    ld hl,MB_TSTAT
+    ld a,(G_TIDX)
+    add a,l
+    ld l,a
+    ld (hl),$80
+    ret
+
+; ── STOP_TRACK ────────────────────────────────────────────────────────────
+stop_track:
+    ld ix,TCB_BASE
+    ld b,16
+sp_loop:
+    ld a,(ix+T_STATUS)
+    or a
+    jr z,sp_next
+    ld a,(G_ARG0)
+    cp (ix+T_TRKID)
+    jr nz,sp_next
+    push bc
+    ld a,(ix+T_CH)
+    call channel_off
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,sp_noown
+    call chs_ptr_iy
+    ld (iy+CHS_OWNER),$ff
+sp_noown:
+    ld (ix+T_STATUS),0
+    ld hl,MB_TSTAT
+    ld a,(ix+T_INDEX)
+    add a,l
+    ld l,a
+    ld (hl),0
+    pop bc
+sp_next:
+    ld de,32
+    add ix,de
+    djnz sp_loop
+    ret
+
+; ── locate TRACK_TABLE / EVENT_STREAM payloads in the banked window ───────
+mmb_locate:
+    ld hl,(WINDOW+8)        ; section_count
+    ld b,l
+    ld hl,WINDOW+12         ; directory
+ml_sec:
+    ld a,(hl)               ; id low byte (ids are tiny)
+    cp 1
+    jr z,ml_tt
+    cp 2
+    jr z,ml_es
+ml_next:
+    ld de,12
+    add hl,de
+    djnz ml_sec
+    ret
+ml_tt:
+    call ml_payload
+    ld (G_TT),de
+    jr ml_next
+ml_es:
+    call ml_payload
+    ld (G_ES),de
+    jr ml_next
+; DE = WINDOW + offset(u32, low u16 used — one 32KB window in M1)
+ml_payload:
+    push hl
+    inc hl
+    inc hl
+    inc hl
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    ld hl,WINDOW
+    add hl,de
+    ex de,hl
+    pop hl
+    ret
+
+; latch the 9-bit bank number, LSB first
+bank_latch:
+    ld l,(ix+T_BANK)
+    ld h,(ix+T_BANK+1)
+    ld b,9
+bl_loop:
+    ld a,l
+    and 1
+    ld (BANK_REG),a
+    srl h
+    rr l
+    djnz bl_loop
+    ret
+
+; ===========================================================================
+; Event dispatch — runs stream events until a timed event loads T_WAIT,
+; the track ends, or it holds. IX = TCB. Mirrors drv-player _dispatch.
+; ===========================================================================
+dispatch:
+    ld l,(ix+T_PC)
+    ld h,(ix+T_PC+1)
+d_next:
+    ld a,(hl)
+    or a
+    jp z,d_eot
+    cp $10
+    jp z,d_note_on
+    cp $11
+    jp z,d_rest
+    cp $12
+    jp z,d_tie
+    cp $13
+    jp z,d_note_ex
+    cp $40
+    jp z,d_loop_begin
+    cp $41
+    jp z,d_loop_end
+    cp $42
+    jp z,d_marker
+    cp $43
+    jp z,d_jump
+    cp $46
+    jp z,d_loop_break
+    cp $60
+    jp z,d_param_set
+    cp $80
+    jp z,d_tempo_set
+    ; reserved opcodes: length-decode and skip (opcodes.md §1)
+    cp $14                  ; VOICE_SET
+    jp z,d_skip2
+    cp $61                  ; PARAM_SWEEP: op + 9 payload bytes
+    jp z,d_skip10
+    cp $62                  ; PARAM_ADD: op + target + value(width)
+    jp z,d_skip_add
+    cp $63                  ; PARAM_MUL
+    jp z,d_skip4
+    cp $64                  ; PARAM_FROM_VAL
+    jp z,d_skip3
+    cp $65                  ; PARAM_SWEEP_STOP
+    jp z,d_skip2
+    cp $81                  ; TEMPO_SWEEP
+    jp z,d_skip8
+    cp $a0                  ; CSM_ON
+    jp z,d_skip1
+    cp $a1                  ; CSM_OFF
+    jp z,d_skip1
+    cp $a2                  ; CSM_RATE: const 4 / swept 9
+    jp z,d_skip_csmrate
+    cp $a3                  ; FM3_MODE
+    jp z,d_skip2
+    cp $a4                  ; FM3_OP_PITCH
+    jp z,d_skip3
+    cp $c0                  ; PCM_NOTE_ON: timed even when skipped
+    jp z,d_pcm_note_on
+    cp $c1                  ; PCM_NOTE_OFF
+    jp z,d_skip1
+    cp $e1                  ; PARAM_ADD_VAL
+    jp z,d_skip3
+    cp $e2                  ; PARAM_MUL_VAL
+    jp z,d_skip3
+    ; unknown opcode: fail-safe — stop decoding this track (mmb.md §13)
+    ld (ix+T_STATUS),0
+    ret
+
+; ── END_OF_TRACK ──────────────────────────────────────────────────────────
+d_eot:
+    ld a,(ix+T_CH)
+    call channel_off
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,d_eot_st
+    call chs_ptr_iy
+    ld (iy+CHS_OWNER),$ff
+d_eot_st:
+    ld (ix+T_STATUS),0
+    ld a,(ix+T_MARKER)
+    and $3f
+    ld c,a
+    ld hl,MB_TSTAT
+    ld a,(ix+T_INDEX)
+    add a,l
+    ld l,a
+    ld (hl),c               ; active bit cleared, last marker kept
+    ret
+
+; ── NOTE_ON ───────────────────────────────────────────────────────────────
+d_note_on:
+    inc hl
+    ld a,(hl)
+    ld (G_NOTE),a
+    inc hl
+    call read_dur           ; DE = ticks, HL past operand
+    ld (G_DUR),de
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    xor a
+    ld (G_EXG_F),a
+    call note_on
+d_note_wait:
+    ld de,(G_DUR)
+    ld a,d
+    or e
+    ret z                   ; hold (or unsupported dur-0): wait untouched
+    ld a,(G_EXG_F)
+    or a
+    jr z,d_note_setw
+    ld hl,(G_EXG)
+    ld a,h
+    or l
+    ret z                   ; exGate 0 = hold
+d_note_setw:
+    ld (ix+T_WAIT),e
+    ld (ix+T_WAIT+1),d
+    ret
+
+; ── NOTE_ON_EX (flags u8, note u8, [vel u8], dur, [gate dur]) ─────────────
+d_note_ex:
+    inc hl
+    ld a,(hl)               ; flags
+    ld (G_TMP),a
+    inc hl
+    ld a,(hl)
+    ld (G_NOTE),a
+    inc hl
+    xor a
+    ld (G_EXG_F),a
+    ld a,(G_TMP)
+    bit 0,a
+    jr z,d_nex_dur
+    ld a,(hl)               ; one-shot vel (state write, unclamped — ref)
+    inc hl
+    ld c,a
+    push hl
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,d_nex_veldone
+    call chs_ptr_iy
+    ld (iy+CHS_VEL),c
+d_nex_veldone:
+    pop hl
+d_nex_dur:
+    call read_dur
+    ld (G_DUR),de
+    ld a,(G_TMP)
+    bit 1,a
+    jr z,d_nex_go
+    call read_dur           ; gate operand (duration encoding)
+    ld (G_EXG),de
+    ld a,1
+    ld (G_EXG_F),a
+d_nex_go:
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    call note_on
+    jr d_note_wait
+
+; ── REST ──────────────────────────────────────────────────────────────────
+d_rest:
+    inc hl
+    push hl
+    ld a,(ix+T_CH)
+    call channel_off
+    pop hl
+    call read_dur
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+d_timed_wait:
+    ld a,d
+    or e
+    jr nz,d_tw
+    ld de,1                 ; defensive: no zero-length wait
+d_tw:
+    ld (ix+T_WAIT),e
+    ld (ix+T_WAIT+1),d
+    ret
+
+; ── TIE ───────────────────────────────────────────────────────────────────
+d_tie:
+    inc hl
+    call read_dur
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    jr d_timed_wait
+
+; ── LOOP_BEGIN (count u8) ─────────────────────────────────────────────────
+d_loop_begin:
+    inc hl
+    ld b,(hl)               ; total count
+    inc hl
+    ld a,(ix+T_DEPTH)
+    cp 4
+    jp nc,d_next            ; overflow: ignore the loop (reference diag)
+    ; entry ptr = IX + T_LOOPS + depth*3
+    ld c,a
+    add a,a
+    add a,c
+    add a,T_LOOPS
+    push hl
+    ld e,a
+    ld d,0
+    push ix
+    pop hl
+    add hl,de
+    pop de                  ; DE = resume pc
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl
+    dec b
+    ld (hl),b               ; remaining = count-1
+    inc (ix+T_DEPTH)
+    ex de,hl                ; HL = pc
+    jp d_next
+
+; ── LOOP_END ──────────────────────────────────────────────────────────────
+d_loop_end:
+    inc hl
+    ld a,(ix+T_DEPTH)
+    or a
+    jp z,d_next             ; no active loop
+    dec a
+    ld c,a
+    add a,a
+    add a,c
+    add a,T_LOOPS
+    push hl
+    ld e,a
+    ld d,0
+    push ix
+    pop hl
+    add hl,de               ; HL = entry
+    inc hl
+    inc hl
+    ld a,(hl)               ; remaining
+    or a
+    jr z,d_le_pop
+    dec (hl)
+    dec hl
+    ld d,(hl)
+    dec hl
+    ld e,(hl)
+    pop hl                  ; discard saved pc
+    ex de,hl                ; pc = resume
+    jp d_next
+d_le_pop:
+    pop hl
+    dec (ix+T_DEPTH)
+    jp d_next
+
+; ── LOOP_BREAK (skip u16) ─────────────────────────────────────────────────
+d_loop_break:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld a,(ix+T_DEPTH)
+    or a
+    jp z,d_next
+    dec a
+    ld c,a
+    add a,a
+    add a,c
+    add a,T_LOOPS+2
+    push hl
+    ld l,a
+    ld h,0
+    push ix
+    pop bc                  ; BC = tcb base... via stack
+    add hl,bc
+    ld a,(hl)               ; remaining
+    pop hl
+    or a
+    jp nz,d_next            ; not the final pass
+    add hl,de               ; final pass: jump past LOOP_END
+    dec (ix+T_DEPTH)
+    jp d_next
+
+; ── MARKER (id u8) ────────────────────────────────────────────────────────
+d_marker:
+    inc hl
+    ld a,(hl)
+    inc hl
+    ld (ix+T_MARKER),a
+    and $3f
+    or $80
+    ld c,a
+    push hl
+    ld hl,MB_TSTAT
+    ld a,(ix+T_INDEX)
+    add a,l
+    ld l,a
+    ld (hl),c
+    pop hl
+    jp d_next
+
+; ── JUMP (dest u16, EVENT_STREAM-relative) ────────────────────────────────
+d_jump:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    ld l,(ix+T_BASE)
+    ld h,(ix+T_BASE+1)
+    add hl,de
+    jp d_next
+
+; ── PARAM_SET (target u8, value i8/i16) ───────────────────────────────────
+d_param_set:
+    inc hl
+    ld a,(hl)
+    inc hl
+    ld (G_TARGET),a
+    cp 1                    ; NOTE_PITCH: i16
+    jr z,d_ps_w2
+    cp 3                    ; TEMPO_SCALE: i16
+    jr z,d_ps_w2
+    ld e,(hl)               ; i8 → sign-extend
+    inc hl
+    ld d,0
+    bit 7,e
+    jr z,d_ps_have
+    ld d,$ff
+    jr d_ps_have
+d_ps_w2:
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+d_ps_have:
+    ld (G_VAL),de
+    push hl
+    call param_set
+    pop hl
+    jp d_next
+
+; ── TEMPO_SET (increment u16, per-MMB) ────────────────────────────────────
+d_tempo_set:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_INC),de
+    jp d_next
+
+; ── reserved-opcode skips ─────────────────────────────────────────────────
+d_skip1:
+    inc hl
+    jp d_next
+d_skip2:
+    inc hl
+    inc hl
+    jp d_next
+d_skip3:
+    inc hl
+    inc hl
+    inc hl
+    jp d_next
+d_skip4:
+    ld de,4
+    add hl,de
+    jp d_next
+d_skip8:
+    ld de,8
+    add hl,de
+    jp d_next
+d_skip10:
+    ld de,10
+    add hl,de
+    jp d_next
+d_skip_add:                 ; PARAM_ADD: width from target id
+    inc hl
+    ld a,(hl)
+    inc hl
+    inc hl                  ; i8 value
+    cp 1
+    jr z,d_sa_w2
+    cp 3
+    jr z,d_sa_w2
+    jp d_next
+d_sa_w2:
+    inc hl
+    jp d_next
+d_skip_csmrate:             ; CSM_RATE: flags bit0 → const(4) / swept(9)
+    inc hl
+    ld a,(hl)
+    inc hl
+    inc hl
+    inc hl                  ; const form: flags + period u16
+    bit 0,a
+    jp z,d_next
+    ld de,5                 ; swept adds from/to/len/curve − period = 5 more
+    add hl,de
+    jp d_next
+d_pcm_note_on:              ; sample u8, note u8, dur — keeps the clock
+    inc hl
+    inc hl
+    inc hl
+    call read_dur
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    jp d_timed_wait
+
+; ===========================================================================
+; read_dur: (HL) duration operand → DE = ticks (0 = indefinite hold),
+; HL advanced past the operand. (mmb.md §7.2)
+; ===========================================================================
+read_dur:
+    ld a,(hl)
+    inc hl
+    or a
+    jr z,rd_hold
+    cp $ff
+    jr z,rd_ext
+    ld e,a
+    ld d,0
+    ret
+rd_ext:
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ret
+rd_hold:
+    ld de,0
+    ret
+
+; ===========================================================================
+; note_on — key a note on the track's channel using current state.
+; In: (G_NOTE), (G_DUR), (G_EXG_F)/(G_EXG); IX = TCB. (drv-player _noteOn)
+; ===========================================================================
+note_on:
+    ld a,(ix+T_CH)
+    cp 10
+    ret nc                  ; fm3-op / pcm tracks keep time only in M1
+    call chs_ptr_iy
+    cp 6
+    jp nc,no_psg
+    ; ── FM ────────────────────────────────────────────────────────────
+    ld c,a                  ; ch
+    ld a,(G_NOTE)
+    ld (iy+CHS_NOTE),a
+    ld a,c
+    push bc
+    call write_carrier_tls  ; composed TL on every carrier, ascending op
+    pop bc
+    ld a,c
+    push bc
+    call fm_port_off        ; D=port, C=choff
+    ld a,(G_NOTE)
+    call write_fm_pitch     ; A4 then A0, change-only
+    pop bc
+    ld a,c
+    call key_on
+    jr no_gate
+no_psg:
+    ; ── PSG ───────────────────────────────────────────────────────────
+    sub 6
+    ld c,a                  ; psg channel 0..3
+    ld a,(G_NOTE)
+    ld (iy+CHS_NOTE),a
+    ld a,c
+    cp 3
+    jr z,no_noise
+    ld a,(G_NOTE)
+    call write_psg_pitch    ; latch + data bytes
+    jr no_att
+no_noise:
+    call write_noise_cfg    ; noise: config byte instead of pitch
+no_att:
+    push bc
+    call compose_psg_att
+    pop bc
+    call write_psg_att      ; C=psgCh, IY=chs
+no_gate:
+    ; ── gate scheduling (opcodes.md §3.1) ─────────────────────────────
+    ld de,(G_DUR)
+    ld a,d
+    or e
+    jr z,no_hold
+    ld a,(G_EXG_F)
+    or a
+    jr z,no_stdgate
+    ld hl,(G_EXG)
+    ld a,h
+    or l
+    jr z,no_hold            ; exGate 0 = hold until host key-off
+    ; gateLeft = min(exGate, dur)
+    push hl
+    or a
+    sbc hl,de
+    pop hl
+    jr c,no_setgl
+    ld l,e
+    ld h,d
+    jr no_setgl
+no_stdgate:
+    ld a,(iy+CHS_GATE)
+    cp 8
+    jr nc,no_fullgate
+    or a
+    jr nz,no_mul
+    ld hl,1                 ; gate 0 → max(1, 0)
+    jr no_setgl
+no_mul:
+    ; gateLeft = max(1, (dur*gate)>>3) = (dur>>3)*gate + ((dur&7)*gate)>>3
+    ld b,a                  ; gate 1..7
+    ld a,e
+    and 7
+    ld c,a                  ; remainder bits
+    ld h,d
+    ld l,e
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l                    ; HL = dur>>3
+    push de
+    ld e,l
+    ld d,h
+    ld a,b
+    dec a
+    jr z,no_muldone
+no_mulloop:
+    add hl,de
+    dec a
+    jr nz,no_mulloop
+no_muldone:
+    pop de
+    xor a
+no_m2:
+    add a,c
+    djnz no_m2              ; A = remainder*gate (≤ 49)
+    srl a
+    srl a
+    srl a
+    add a,l
+    ld l,a
+    jr nc,no_nc
+    inc h
+no_nc:
+    ld a,h
+    or l
+    jr nz,no_setgl
+    ld l,1
+no_setgl:
+    ld (ix+T_GATELEFT),l
+    ld (ix+T_GATELEFT+1),h
+    ret
+no_fullgate:
+    ; full gate: key-off at expiry is realized by the next REST /
+    ; END_OF_TRACK (slur/TIE cancel it by simply not keying off)
+    xor a
+    ld (ix+T_GATELEFT),a
+    ld (ix+T_GATELEFT+1),a
+    ret
+no_hold:
+    ld (ix+T_STATUS),2      ; len=0: suspend the dispatcher (§2.4)
+    xor a
+    ld (ix+T_GATELEFT),a
+    ld (ix+T_GATELEFT+1),a
+    ret
+
+; ===========================================================================
+; channel_off — key-off / attenuate-off one channel id (drv-player
+; _channelOff). A = channel id; preserves IX.
+; ===========================================================================
+channel_off:
+    cp 10
+    ret nc
+    call chs_ptr_iy
+    cp 6
+    jr nc,co_psg
+    bit 0,(iy+CHS_STATUS)   ; keyed?
+    ret z
+    res 0,(iy+CHS_STATUS)
+    cp 3
+    jr c,co_key
+    inc a                   ; ch 3..5 → key code 4..6
+co_key:
+    ld b,a                  ; all ops off
+    jp ym_key
+co_psg:
+    bit 0,(iy+CHS_STATUS)   ; sounding?
+    ret z
+    sub 6
+    ld c,a
+    ld a,15
+    jp write_psg_att        ; att 15 clears the sounding bit
+
+; key_on — A = FM ch, IY = chs. Skips key-on when vol/master mute.
+key_on:
+    ld c,a
+    ld a,(iy+CHS_VOL)
+    or a
+    ret z
+    ld a,(G_MASTER)
+    or a
+    ret z
+    set 0,(iy+CHS_STATUS)
+    ld a,c
+    cp 3
+    jr c,ko_code
+    inc a
+ko_code:
+    or $f0                  ; op mask: all operators on
+    ld b,a
+    jp ym_key
+
+; ===========================================================================
+; PARAM_SET execution (opcodes.md §7; drv-player _paramSet order).
+; In: (G_TARGET), (G_VAL) i16; IX = TCB.
+; ===========================================================================
+param_set:
+    ld a,(G_TARGET)
+    cp 5                    ; MASTER (global)
+    jp z,ps_master
+    cp $41                  ; LFO_RATE (global)
+    jp z,ps_lfo
+    cp $42                  ; NOISE_MODE (global)
+    jp z,ps_noisemode
+    cp 6                    ; VEL (track-channel state)
+    jp z,ps_vel
+    cp 9                    ; GATE (track-channel state)
+    jp z,ps_gate
+    ld a,(ix+T_CH)
+    cp 6
+    jp c,ps_fm
+    cp 10
+    ret nc                  ; fm3-op / pcm ids: no M1 param path
+    ; ── PSG-channel targets ───────────────────────────────────────────
+    call chs_ptr_iy
+    ld a,(G_TARGET)
+    cp 4                    ; VOL
+    ret nz                  ; NOTE_PITCH (M2) and others: no-op
+    ld b,31
+    call clamp_val
+    ld (iy+CHS_VOL),a
+    bit 0,(iy+CHS_STATUS)
+    ret z
+    call compose_psg_att
+    ld c,a
+    ld a,(ix+T_CH)
+    sub 6
+    ld b,a
+    ld a,c
+    ld c,b
+    jp write_psg_att
+
+ps_master:
+    ld b,31
+    call clamp_val
+    ld (G_MASTER),a
+    ; re-apply carrier TL on all FM channels, ascending
+    xor a
+psm_fm:
+    push af
+    call chs_ptr_iy
+    call write_carrier_tls
+    pop af
+    inc a
+    cp 6
+    jr c,psm_fm
+    ; PSG attenuation on sounding channels
+    ld c,0
+psm_psg:
+    ld a,c
+    add a,6
+    push bc
+    call chs_ptr_iy
+    pop bc
+    bit 0,(iy+CHS_STATUS)
+    jr z,psm_next
+    push bc
+    call compose_psg_att
+    pop bc
+    call write_psg_att
+psm_next:
+    inc c
+    ld a,c
+    cp 4
+    jr c,psm_psg
+    ret
+
+ps_lfo:
+    ld b,8
+    call clamp_val
+    or a
+    jr nz,psl_on
+    ld b,0
+    jr psl_write
+psl_on:
+    dec a
+    and 7
+    or 8
+    ld b,a
+psl_write:
+    ld d,0
+    ld e,$22
+    jp ym_write
+
+ps_noisemode:
+    ld a,(G_VAL)
+    and 7
+    ld (G_NOISEMODE),a
+    ld a,9
+    call chs_ptr_iy
+    bit 0,(iy+CHS_STATUS)
+    ret z
+    jp write_noise_cfg
+
+ps_vel:
+    ld b,15
+    call clamp_val
+    ld c,a
+    ld a,(ix+T_CH)
+    cp 10
+    ret nc
+    call chs_ptr_iy
+    ld (iy+CHS_VEL),c
+    ret
+
+ps_gate:
+    ld b,8
+    call clamp_val
+    ld c,a
+    ld a,(ix+T_CH)
+    cp 10
+    ret nc
+    call chs_ptr_iy
+    ld (iy+CHS_GATE),c
+    ret
+
+; ── FM-channel targets ─────────────────────────────────────────────────────
+ps_fm:
+    call chs_ptr_iy
+    call fm_port_off        ; D=port, C=choff (value lives in G_VAL)
+    ld a,(G_TARGET)
+    cp 1
+    ret z                   ; NOTE_PITCH: M2 sweep-engine concern
+    cp 4
+    jp z,psf_vol
+    cp $10
+    jp z,psf_fb
+    cp $15
+    jp z,psf_alg
+    cp $3e
+    jp z,psf_ams
+    cp $3f
+    jp z,psf_fms
+    cp $40
+    jp z,psf_pan
+    cp $11
+    ret c                   ; NOTE_SEMI/KEYON etc: no register effect
+    cp $15
+    jp c,psf_tl
+    cp $1a
+    jp c,psf_ar
+    cp $1e
+    jp c,psf_dr
+    cp $22
+    jp c,psf_sr
+    cp $26
+    jp c,psf_rr
+    cp $2a
+    jp c,psf_sl
+    cp $2e
+    jp c,psf_ks
+    cp $32
+    jp c,psf_ml
+    cp $36
+    jp c,psf_dt
+    cp $3a
+    jp c,psf_ssg
+    cp $3e
+    jp c,psf_amen
+    ret
+
+psf_vol:
+    ld b,31
+    call clamp_val
+    ld (iy+CHS_VOL),a
+    ld a,(ix+T_CH)
+    jp write_carrier_tls
+
+psf_fb:                     ; B0 = (v&7)<<3 | alg (shadow RMW)
+    ld a,$b0
+    add a,c
+    ld e,a
+    call ym_shadow_read
+    and $07
+    ld b,a
+    ld a,(G_VAL)
+    and 7
+    rlca
+    rlca
+    rlca
+    or b
+    ld b,a
+    jp ym_write
+
+psf_alg:                    ; B0 = fb | (v&7); update carrier-mask state
+    ld a,(G_VAL)
+    and 7
+    ld (iy+CHS_ALG),a
+    ld (G_TMP),a
+    ld a,$b0
+    add a,c
+    ld e,a
+    call ym_shadow_read
+    and $38
+    ld b,a
+    ld a,(G_TMP)
+    or b
+    ld b,a
+    jp ym_write
+
+psf_ams:                    ; B4 bits 5-4
+    ld a,$b4
+    add a,c
+    ld e,a
+    call ym_shadow_read
+    and $cf
+    ld b,a
+    ld a,(G_VAL)
+    and 3
+    rlca
+    rlca
+    rlca
+    rlca
+    or b
+    ld b,a
+    jp ym_write
+
+psf_fms:                    ; B4 bits 2-0
+    ld a,$b4
+    add a,c
+    ld e,a
+    call ym_shadow_read
+    and $f8
+    ld b,a
+    ld a,(G_VAL)
+    and 7
+    or b
+    ld b,a
+    jp ym_write
+
+psf_pan:                    ; B4 bits 7-6: -1→L(10), 0→LR(11), 1→R(01)
+    ld a,$b4
+    add a,c
+    ld e,a
+    call ym_shadow_read
+    and $3f
+    ld b,a
+    ld a,(G_VAL+1)
+    bit 7,a
+    jr nz,psfp_left
+    ld a,(G_VAL)
+    or a
+    jr z,psfp_center
+    ld a,$40                ; right
+    jr psfp_done
+psfp_left:
+    ld a,$80
+    jr psfp_done
+psfp_center:
+    ld a,$c0
+psfp_done:
+    or b
+    ld b,a
+    jp ym_write
+
+psf_tl:                     ; voicedTl = clamp(v,0,127); write it raw
+    sub $11
+    ld (G_OP),a
+    ld b,127
+    call clamp_val
+    ld b,a
+    push de
+    push iy
+    pop hl
+    ld a,(G_OP)
+    add a,CHS_VTL
+    ld e,a
+    ld d,0
+    add hl,de
+    ld (hl),b
+    pop de
+    ld a,(G_OP)
+    ld e,$40
+    call op_e
+    jp ym_write
+
+psf_ar:                     ; $50: keep KS bits
+    sub $16
+    ld e,$50
+    call op_e
+    call ym_shadow_read
+    and $c0
+    ld b,a
+    ld a,(G_VAL)
+    and $1f
+    or b
+    ld b,a
+    jp ym_write
+
+psf_dr:                     ; $60: keep AM-enable bit
+    sub $1a
+    ld e,$60
+    call op_e
+    call ym_shadow_read
+    and $80
+    ld b,a
+    ld a,(G_VAL)
+    and $1f
+    or b
+    ld b,a
+    jp ym_write
+
+psf_sr:                     ; $70: whole register
+    sub $1e
+    ld e,$70
+    call op_e
+    ld a,(G_VAL)
+    and $1f
+    ld b,a
+    jp ym_write
+
+psf_rr:                     ; $80: keep SL nibble
+    sub $22
+    ld e,$80
+    call op_e
+    call ym_shadow_read
+    and $f0
+    ld b,a
+    ld a,(G_VAL)
+    and $0f
+    or b
+    ld b,a
+    jp ym_write
+
+psf_sl:                     ; $80: keep RR nibble
+    sub $26
+    ld e,$80
+    call op_e
+    call ym_shadow_read
+    and $0f
+    ld b,a
+    ld a,(G_VAL)
+    and $0f
+    rlca
+    rlca
+    rlca
+    rlca
+    or b
+    ld b,a
+    jp ym_write
+
+psf_ks:                     ; $50: keep AR bits
+    sub $2a
+    ld e,$50
+    call op_e
+    call ym_shadow_read
+    and $1f
+    ld b,a
+    ld a,(G_VAL)
+    and 3
+    rrca
+    rrca
+    or b
+    ld b,a
+    jp ym_write
+
+psf_ml:                     ; $30: keep DT bits
+    sub $2e
+    ld e,$30
+    call op_e
+    call ym_shadow_read
+    and $70
+    ld b,a
+    ld a,(G_VAL)
+    and $0f
+    or b
+    ld b,a
+    jp ym_write
+
+psf_dt:                     ; $30: keep MUL bits ((v&7)<<4 like encode30)
+    sub $32
+    ld e,$30
+    call op_e
+    call ym_shadow_read
+    and $0f
+    ld b,a
+    ld a,(G_VAL)
+    and 7
+    rlca
+    rlca
+    rlca
+    rlca
+    or b
+    ld b,a
+    jp ym_write
+
+psf_ssg:                    ; $90: whole register
+    sub $36
+    ld e,$90
+    call op_e
+    ld a,(G_VAL)
+    and $0f
+    ld b,a
+    jp ym_write
+
+psf_amen:                   ; $60: keep DR bits
+    sub $3a
+    ld e,$60
+    call op_e
+    call ym_shadow_read
+    and $1f
+    ld b,a
+    ld a,(G_VAL)
+    and 1
+    rrca                    ; (v&1)<<7
+    or b
+    ld b,a
+    jp ym_write
+
+; op_e — A = op index (0..3), E = register base, C = channel offset,
+; D = port (preserved) → E = final register address.
+op_e:
+    push de
+    ld e,a
+    ld d,0
+    ld hl,OP_ADDR_OFF
+    add hl,de
+    ld a,(hl)
+    pop de
+    add a,e
+    add a,c
+    ld e,a
+    ret
+
+; clamp_val — clamp (G_VAL) as i16 into 0..B → A. Preserves C/DE (D often
+; carries the YM port here).
+clamp_val:
+    ld hl,(G_VAL)
+    bit 7,h
+    jr nz,cv_zero
+    ld a,h
+    or a
+    jr nz,cv_max
+    ld a,l
+    cp b
+    ret c
+    ret z
+cv_max:
+    ld a,b
+    ret
+cv_zero:
+    xor a
+    ret
+
+; ===========================================================================
+; Level composition (driver.md §7) — 1/4-step offset tables, one rounding
+; of the sum, clamp at the write. Matches drv-player _carrierTl/_psgAtt.
+; ===========================================================================
+; compose_off4: IY=chs → (G_OFF4) = (velTl4[vel]+volTl4[vol]+volTl4[master]+2)>>2
+compose_off4:
+    ld a,(iy+CHS_VEL)
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,VEL_TL4
+    add hl,de
+    ld c,(hl)
+    inc hl
+    ld b,(hl)
+    ld a,(iy+CHS_VOL)
+    add a,a
+    ld e,a
+    ld hl,VOL_TL4
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld h,(hl)
+    ld l,a
+    add hl,bc
+    ld b,h
+    ld c,l
+    ld a,(G_MASTER)
+    add a,a
+    ld e,a
+    ld hl,VOL_TL4
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld h,(hl)
+    ld l,a
+    add hl,bc
+    inc hl
+    inc hl
+    srl h
+    rr l
+    srl h
+    rr l
+    ld a,l
+    ld (G_OFF4),a
+    ret
+
+; tl_add_clamp: A = voicedTl → A = min(127, voicedTl + off4). Clobbers H.
+tl_add_clamp:
+    ld h,a
+    ld a,(G_OFF4)
+    add a,h
+    jr c,tac_max
+    cp 128
+    ret c
+tac_max:
+    ld a,127
+    ret
+
+; write_carrier_tls: A = FM ch, IY = chs. Composed TL to every carrier op of
+; the current algorithm, ascending op order (drv-player _noteOn / VOL path).
+write_carrier_tls:
+    push af
+    call compose_off4
+    pop af
+    call fm_port_off        ; D=port, C=choff
+    ld a,(iy+CHS_ALG)
+    push de
+    ld e,a
+    ld d,0
+    ld hl,CARRIER_MASK
+    add hl,de
+    ld a,(hl)
+    pop de
+    ld (G_CMASK),a
+    bit 0,a                 ; op1 → $40
+    jr z,wct_s1
+    ld a,(iy+CHS_VTL)
+    call tl_add_clamp
+    ld b,a
+    ld a,$40
+    add a,c
+    ld e,a
+    call ym_write
+wct_s1:
+    ld a,(G_CMASK)
+    bit 1,a                 ; op2 → $48
+    jr z,wct_s2
+    ld a,(iy+CHS_VTL+1)
+    call tl_add_clamp
+    ld b,a
+    ld a,$48
+    add a,c
+    ld e,a
+    call ym_write
+wct_s2:
+    ld a,(G_CMASK)
+    bit 2,a                 ; op3 → $44
+    jr z,wct_s3
+    ld a,(iy+CHS_VTL+2)
+    call tl_add_clamp
+    ld b,a
+    ld a,$44
+    add a,c
+    ld e,a
+    call ym_write
+wct_s3:
+    ld a,(G_CMASK)
+    bit 3,a                 ; op4 → $4C
+    ret z
+    ld a,(iy+CHS_VTL+3)
+    call tl_add_clamp
+    ld b,a
+    ld a,$4c
+    add a,c
+    ld e,a
+    jp ym_write
+
+; compose_psg_att: IY=chs → A = attenuation 0..15 (15 = mute).
+compose_psg_att:
+    ld a,(iy+CHS_VOL)
+    or a
+    jr z,cpa_mute
+    ld a,(G_MASTER)
+    or a
+    jr z,cpa_mute
+    ld a,(iy+CHS_VEL)
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,VEL_PSG4
+    add hl,de
+    ld c,(hl)
+    inc hl
+    ld b,(hl)
+    ld a,(iy+CHS_VOL)
+    add a,a
+    ld e,a
+    ld hl,VOL_PSG4
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld h,(hl)
+    ld l,a
+    add hl,bc
+    ld b,h
+    ld c,l
+    ld a,(G_MASTER)
+    add a,a
+    ld e,a
+    ld hl,VOL_PSG4
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld h,(hl)
+    ld l,a
+    add hl,bc
+    inc hl
+    inc hl
+    srl h
+    rr l
+    srl h
+    rr l
+    ld a,l
+    cp 16
+    ret c
+cpa_mute:
+    ld a,15
+    ret
+
+; ===========================================================================
+; Pitch (driver.md §8) — 12-entry A-rooted F-number LUT + block; PSG period
+; LUT over MIDI 45..116 with clamping. M1 has no cent interpolation.
+; ===========================================================================
+; write_fm_pitch: A = note, C = choff, D = port. Writes $A4 then $A0.
+write_fm_pitch:
+    add a,3
+    ld b,0                  ; quotient
+wfp_div:
+    cp 12
+    jr c,wfp_mod
+    sub 12
+    inc b
+    jr wfp_div
+wfp_mod:
+    ld (G_TMP),a            ; (note+3) mod 12
+    ld a,b
+    or a
+    jr nz,wfp_blk
+    ld a,1                  ; note < 9: clamp block to 0 (sub-sonic range)
+wfp_blk:
+    dec a                   ; block = quotient - 1
+    cp 8
+    jr c,wfp_bok
+    ld a,7
+wfp_bok:
+    ld (G_BLOCK),a
+    ld a,(G_TMP)
+    add a,a
+    push de
+    ld e,a
+    ld d,0
+    ld hl,FNUM_LUT
+    add hl,de
+    ld a,(hl)
+    ld (G_FNUM),a
+    inc hl
+    ld a,(hl)
+    ld (G_FNUM+1),a
+    pop de
+    ; $A4 = block<<3 | fnum>>8
+    ld a,(G_BLOCK)
+    rlca
+    rlca
+    rlca
+    ld b,a
+    ld a,(G_FNUM+1)
+    or b
+    ld b,a
+    ld a,$a4
+    add a,c
+    ld e,a
+    call ym_write
+    ; $A0 = fnum low
+    ld a,(G_FNUM)
+    ld b,a
+    ld a,$a0
+    add a,c
+    ld e,a
+    jp ym_write
+
+; write_psg_pitch: A = note, C = psg channel 0..2. Latch byte then data byte.
+write_psg_pitch:
+    sub 45
+    jr nc,wpp_clamped
+    ld hl,1023              ; below MIDI 45: lowest period
+    jr wpp_have
+wpp_clamped:
+    cp 72
+    jr c,wpp_idx
+    ld a,71                 ; above MIDI 116: top entry
+wpp_idx:
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,PSG_PERIOD_LUT
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld h,(hl)
+    ld l,a
+wpp_have:
+    ld a,c
+    rrca
+    rrca
+    rrca                    ; ch<<5
+    ld b,a
+    ld a,l
+    and $0f
+    or b
+    or $80
+    call psg_write          ; latch: 1cc0ffff
+    ld a,l
+    rrca
+    rrca
+    rrca
+    rrca
+    and $0f
+    ld b,a
+    ld a,h
+    rlca
+    rlca
+    rlca
+    rlca
+    or b
+    and $3f
+    jp psg_write            ; data: 00ffffff
+
+; write_psg_att: A = att 0..15, C = psg channel 0..3, IY = chs.
+; Tracks the sounding flag (att < 15) like drv-player _writePsgAtt.
+write_psg_att:
+    and $0f
+    ld b,a
+    cp 15
+    jr c,wpa_snd
+    res 0,(iy+CHS_STATUS)
+    jr wpa_out
+wpa_snd:
+    set 0,(iy+CHS_STATUS)
+wpa_out:
+    ld a,c
+    rrca
+    rrca
+    rrca
+    or $90                  ; 1cc1vvvv
+    or b
+    jp psg_write
+
+; write_noise_cfg: PSG noise control byte from the global mode.
+write_noise_cfg:
+    ld a,(G_NOISEMODE)
+    and 7
+    or $e0
+    jp psg_write
+
+; ===========================================================================
+; Register write layer (driver.md §4/§5.4)
+; ===========================================================================
+; ym_shadow_ptr: D=port, E=addr → HL = shadow byte. Preserves BC/DE.
+ym_shadow_ptr:
+    push de
+    ld a,e
+    sub $22
+    ld e,a
+    ld a,d
+    ld d,0
+    ld hl,SHADOW
+    add hl,de
+    or a
+    jr z,ysp_p0
+    ld de,152
+    add hl,de
+ysp_p0:
+    pop de
+    ret
+
+; ym_shadow_read: D=port, E=addr → A = last written value (0 if never).
+; Preserves BC/DE; clobbers HL.
+ym_shadow_read:
+    call ym_shadow_ptr
+    push de
+    ld de,304
+    add hl,de
+    ld a,(hl)
+    ld de,0-304
+    add hl,de
+    pop de
+    or a
+    jr z,ysr_inv
+    ld a,(hl)
+    ret
+ysr_inv:
+    xor a
+    ret
+
+; ym_write: B=data, D=port(0/1), E=addr. Change-only via the shadow file;
+; the first write to a register always goes out. Preserves BC/DE.
+ym_write:
+    call ym_shadow_ptr
+    push de
+    ld de,304
+    add hl,de
+    ld a,(hl)
+    or a
+    jr nz,ymw_valid
+    ld (hl),1               ; mark valid
+    ld de,0-304
+    add hl,de
+    pop de
+    jr ymw_store
+ymw_valid:
+    ld de,0-304
+    add hl,de
+    pop de
+    ld a,(hl)
+    cp b
+    ret z                   ; unchanged: suppress
+ymw_store:
+    ld (hl),b
+    ; fall through
+; ym_hw: raw YM2612 write with BUSY polling. B=data, D=port, E=addr.
+ym_hw:
+    push hl
+    ld hl,YM_ADDR0
+    bit 0,d
+    jr z,ymh_p0
+    ld hl,YM_ADDR1
+ymh_p0:
+    ld a,(YM_ADDR0)         ; status: bit7 BUSY
+    rlca
+    jr c,ymh_p0
+    ld (hl),e
+    inc hl
+ymh_p1:
+    ld a,(YM_ADDR0)
+    rlca
+    jr c,ymh_p1
+    ld (hl),b
+    pop hl
+    ret
+
+; ym_key: B = $28 payload. Key edges bypass the shadow (always written).
+ym_key:
+    ld d,0
+    ld e,$28
+    jr ym_hw
+
+; psg_write: A = byte. The SN76489 has no readable state; always written.
+psg_write:
+    ld (PSG_PORT),a
+    ret
+
+; ===========================================================================
+; Small helpers
+; ===========================================================================
+; chs_ptr_iy: A = channel id → IY = CH_STATE + A*64. Preserves A/BC/DE/HL.
+chs_ptr_iy:
+    push hl
+    push de
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,CH_STATE
+    add hl,de
+    push hl
+    pop iy
+    pop de
+    pop hl
+    ret
+
+; fm_port_off: A = FM ch 0..5 → D = port, C = channel offset 0..2.
+fm_port_off:
+    cp 3
+    jr nc,fpo_hi
+    ld d,0
+    ld c,a
+    ret
+fpo_hi:
+    ld d,1
+    sub 3
+    ld c,a
+    ret
+
+; ── constant tables (generated; driver.md §12.3) ──────────────────────────
+    include "tables.z80"

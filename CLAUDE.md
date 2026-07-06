@@ -23,6 +23,16 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-formatter.js` | Source formatter                                              |
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `player/wasm/`) |
 
+The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
+`export-mmb.js` (IR → MMB v0.2), `drv-player.js` (JS reference driver), and
+`ab-compare.js` (register-log A/B) in the same directory.
+
+The Z80 driver port (Phase 3) lives in `drv/`: `src/mmlispdrv.z80` (M1
+driver) plus a first-party node toolchain in `drv/tools/` (Z80 assembler,
+Z80 CPU emulator, trace harness — no external binaries). Its gate:
+`cd drv && npm run verify:all` must show zero trace mismatches against
+`drv-player.js`.
+
 Docs: `docs/language.md` is the canonical language reference;
 `docs/guide.md` is the tutorial. Driver/format design: `docs/driver.md`,
 `docs/mmb.md`, `docs/opcodes.md`; IR: `docs/ir.md`. There are no per-version

@@ -1,0 +1,15 @@
+{
+  "name": "mmlispdrv",
+  "private": true,
+  "type": "module",
+  "description": "MMLispDRV — Z80 sound driver (Phase 3) with a first-party assemble/emulate/trace toolchain",
+  "scripts": {
+    "tables": "node tools/gen-tables.mjs",
+    "emit-bin": "node tools/emit-bin.mjs",
+    "dump": "node tools/dump-trace.mjs",
+    "selftest": "node tools/selftest.mjs",
+    "verify": "node tools/verify.mjs ../examples/source/ab-core.mmlisp",
+    "verify:stress": "node tools/verify.mjs tests/stress-m1.mmlisp --frames 1800 && node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200",
+    "verify:all": "npm run selftest && npm run verify && npm run verify:stress"
+  }
+}

@@ -88,8 +88,13 @@ Order of work:
    diffs clean against ir-player.js (0 mismatches; bands in driver.md
    §12). Live app: MMLispDRV backend toggle, File > Export > MMB…,
    `window.__abCompare()`. M2/M3 opcodes are length-decoded and skipped.
-3. **Z80 assembly** (next) — same MMBs, trace must match the JS reference
-   exactly; then performance/cycle-budget tuning on hardware.
+3. **Z80 assembly** (in progress — M1 done in emulation) — `drv/`:
+   M1 driver (~3.5KB image) plus a first-party node toolchain (assembler,
+   Z80 emulator, trace harness). Gate: raw register-trace equality vs the
+   JS reference — ab-core + two stress scores (JUMP/holds/M2-skip) diff
+   clean at zero tolerance. Deviations to review in `drv/README.md`.
+   Next: M2 (sweeps/PARAM_ADD/TEMPO_SWEEP/CSM/PCM), then hardware
+   bring-up + cycle-budget tuning with a real assembler build.
 
 Milestone staging (full definitions in driver.md §11):
 
