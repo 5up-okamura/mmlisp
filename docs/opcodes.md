@@ -102,7 +102,11 @@ the shadow-register queue (driver.md §4).
 of the containing MMB** (tempo is score-global; language.md §5). 8.8 fixed
 point, precomputed at compile time (mmb.md §7.5).
 
-## 4. Open Decision — NOTE_ON velocity/gate carriage
+## 4. Decided — NOTE_ON velocity/gate carriage
+
+**Resolved: Option B adopted** (2026-07-06). NOTE_ON carries only `{note, dur}`;
+vel/gate are sticky driver state set by `PARAM_SET VEL` / `PARAM_SET GATE`, with
+NOTE_ON_EX (§5.1) for per-note deviations. Rationale below.
 
 Demo-class songs need per-note velocity and gate in M1. Three candidate
 encodings:

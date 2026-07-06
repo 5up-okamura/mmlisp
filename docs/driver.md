@@ -367,7 +367,12 @@ into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
   $27 — the flag exists in the track table precisely so stopping never
   leaves the chip in CSM mode.
 
-## 10. Open Decision — Voice Representation
+## 10. Decided — Voice Representation
+
+**Resolved: Option B adopted** (2026-07-06). The export-time coalescing pass
+folds full-voice PARAM_SET bursts into VOICE_TABLE entries + `VOICE_SET` (0x14);
+the IR is unchanged. The 29-byte voice entry layout is to be frozen in mmb.md
+§11 during Phase C. Rationale below.
 
 Today a full FM voice change compiles to ~30 same-tick PARAM_SET events:
 ~90 stream bytes and 30 dispatch iterations per change, repeated for every
