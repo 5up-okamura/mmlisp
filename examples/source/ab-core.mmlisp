@@ -1,0 +1,51 @@
+; A/B verification score for the MMLispDRV reference player (Phase C gate).
+; Exercises exactly the M1 core opcode set — notes/rests/ties across FM and
+; PSG, per-note lengths, gates, nested counted loops with :break, marker/jump
+; loop, PARAM_SET on level and register targets, and a mid-song TEMPO_SET.
+; No macros, sweeps, CSM, FM3 special modes, PCM, or dynamic values.
+
+(def lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def bass :alg 3 :fb 5
+  :ar1 31 :dr1 4 :sr1 0 :rr1 5 :sl1 1 :tl1 22 :ks1 0 :ml1 0 :dt1 0
+  :ar2 31 :dr2 6 :sr2 1 :rr2 6 :sl2 2 :tl2 28 :ks2 0 :ml2 2 :dt2 3
+  :ar3 31 :dr3 8 :sr3 1 :rr3 7 :sl3 2 :tl3 24 :ks3 0 :ml3 1 :dt3 0
+  :ar4 31 :dr4 12 :sr4 2 :rr4 10 :sl4 4 :tl4 2 :ks4 0 :ml4 1 :dt4 0)
+
+; The mid-song :tempo change lands at tick 768, a note boundary on every
+; track: a note *sounding across* a tempo change keeps its onset-tempo
+; duration in the live player but is tick-exact in the driver — a documented
+; acceptance waiver (driver.md §12), deliberately not exercised here.
+(score :tempo 120 :lfo-rate 4
+  (fm1 lead :oct 4 :len 8 :vel 12
+    c e g  c4 e8 g8 ~ 8
+    :vel 15
+    (x 2 c d e :break f g)
+    :tempo 96
+    :gate* 0.5
+    a g f e
+    :gate* 1.0
+    d2)
+
+  (fm2 bass :oct 2 :len 4 :vel 13 :pan left
+    c _ < g _8 g8 > c ~ 4
+    :vol 24
+    c c8 c8 < g > c2)
+
+  (sqr1 :oct 5 :len 4 :vel 10
+    e g a b  _2
+    :vel 8
+    e8 e8 _8 e8 g2)
+
+  (sqr2 :oct 4 :len 2 :vel 7
+    c e _ g)
+
+  (noise :len 8 :vel 11
+    #beat
+    c c8. c16 _8 c c c8 c8
+    (go beat 2)
+    c2))
