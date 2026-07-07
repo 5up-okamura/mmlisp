@@ -3,7 +3,7 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator)
 from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
-> **Verification status.** The Z80 driver (the same ~6.3 KB image this
+> **Verification status.** The Z80 driver (the same ~5.7 KB image this
 > integration ships) covers **all of M1 and M2** — FM/PSG notes, level model,
 > loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3
 > CSM, single-channel PCM DAC, and the host mailbox commands. Its register
@@ -41,7 +41,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
    mmlispdrv.z80 ──emit-bin.mjs──▶ mmlispdrv_bin.h ──gcc──────┤
                                                               ▼
                                      68k: MMLisp_init(); MMLisp_startTrack(...)
-                                                              │ mailbox (0xA018D0)
+                                                              │ mailbox (0xA018A0)
                                                               ▼
                                      Z80: MMLispDRV plays YM2612 + PSG @ 60 Hz
 ```
@@ -62,7 +62,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the ~6 KB Z80 image to Z80 RAM at
+- **Loading.** `MMLisp_init()` uploads the ~5.7 KB Z80 image to Z80 RAM at
   0x0000 via `Z80_loadCustomDriver`, then polls the mailbox `driver_ready`
   byte until it reads `0xD2`. While MMLispDRV owns the Z80 you must not use
   SGDK's XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG
@@ -75,7 +75,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 - **Control.** `MMLisp_startTrack` / `MMLisp_stopTrack` / `MMLisp_keyOff` /
   `MMLisp_setParam` / `MMLisp_fadeTrack` post commands into an 8-slot ring in
-  Z80 RAM at 0xA018D0 (`docs/driver.md` §6). Posting requests the Z80 bus
+  Z80 RAM at 0xA018A0 (`docs/driver.md` §6). Posting requests the Z80 bus
   (briefly halting it), writes the 4-byte cell with the command byte last, and
   releases the bus. The Z80 drains the ring at the top of each frame. Use
   `MMLisp_fadeTrack` for DJ-style scene transitions (fade one scene's tracks
@@ -105,7 +105,7 @@ Because the driver logic is already proven, the on-target check is really a
 check of *the glue + the bus/interrupt model*. In rough order of effort:
 
 1. **Boot flag.** In your emulator's debugger, break after `MMLisp_init()` and
-   read Z80 RAM 0x1902 — it should be `0xD2`. If it never flips, the upload or
+   read Z80 RAM 0x18D2 — it should be `0xD2`. If it never flips, the upload or
    the Z80 reset/interrupt-enable path is wrong, not the driver.
 
 2. **Listen.** Run in an accurate emulator (BlastEm, Genesis Plus GX). You
@@ -154,8 +154,8 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - Remaining M3 stream features (macros, `PARAM_FROM_VAL`, CALL/RET) are
   length-decoded and skipped; notes stay in time.
 
-> **Mailbox address.** The data floor — and with it the mailbox (`0xA018D0`)
-> and val slots (`0xA01910`) — moves as the image grows. If you pinned an older
+> **Mailbox address.** The data floor — and with it the mailbox (`0xA018A0`)
+> and val slots (`0xA018E0`) — moves as the image grows. If you pinned an older
 > address in your own code, update it (the constants in `mmlispdrv.c` are always
 > current).
 

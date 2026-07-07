@@ -31,6 +31,8 @@ export const SECTION_ID = {
   SAMPLE_BANK: 0x0004,
   VAL_TABLE: 0x0005,
   VOICE_TABLE: 0x0006,
+  MACRO_TABLE: 0x0007,
+  LUT_TABLE: 0x0008,
 };
 export const SECTION_FLAG = { REQUIRED: 1 << 0 };
 

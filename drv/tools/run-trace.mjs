@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
 const RAM_SIZE = 0x2000;
-const MB_BASE = 0x18d0; // mailbox (published); tracks the driver's DATA_BASE
+const MB_BASE = 0x18a0; // mailbox (published); tracks the driver DATA_BASE
 const MB_HEAD = MB_BASE + 0x20;
 const MB_READY = MB_BASE + 0x32;
 
@@ -20,9 +20,9 @@ export function runTrace(
   mmbBytes,
   { frames, maxStepsPerFrame = 2_000_000, commands = [] } = {},
 ) {
-  if (driverBin.length > 0x18d0) {
+  if (driverBin.length > 0x18a0) {
     throw new Error(
-      `driver image ${driverBin.length} bytes overruns the data floor at 0x18d0`,
+      `driver image ${driverBin.length} bytes overruns the data floor at 0x18a0`,
     );
   }
   const ram = new Uint8Array(RAM_SIZE);

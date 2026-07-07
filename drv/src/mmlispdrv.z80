@@ -32,7 +32,7 @@ WINDOW      equ $8000
 ; with the floor (M2 PCM), so drv/sgdk/mmlispdrv.c and driver.md §5 reflect the
 ; current values. Bump DATA_BASE (and re-check the top fits under the stack)
 ; when the image outgrows the current floor.
-DATA_BASE   equ $18d0       ; code owns $0000..$18CF (6352 B)
+DATA_BASE   equ $18a0       ; code owns $0000..$189F (~605 B headroom over the 5699 B image)
 
 MB_RING     equ DATA_BASE       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ MB_RING+$20
@@ -115,10 +115,24 @@ G_PCM_LOOPE equ G_BASE+$5f      ; u16  loop end (sample index)
 G_PCM_LOOPL equ G_BASE+$61      ; u16  loop length (loopEnd - loopStart)
 G_PCM_MUL   equ G_BASE+$63      ; u32  scratch for the 16x16 multiply
 G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
-G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch, ends +$69)
+G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
+; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
+; through the bank window); each is G_LUT + its <label>_OFF (tables.z80),
+; computed once per MMB at START_TRACK. Accessed as `ld hl,(<label>)`.
+G_LUT          equ G_BASE+$6a   ; u16  LUT_TABLE payload window addr
+FNUM_LUT       equ G_BASE+$6c   ; u16
+PSG_PERIOD_LUT equ G_BASE+$6e   ; u16
+VEL_TL4        equ G_BASE+$70   ; u16
+VOL_TL4        equ G_BASE+$72   ; u16
+VEL_PSG4       equ G_BASE+$74   ; u16
+VOL_PSG4       equ G_BASE+$76   ; u16
+CARRIER_MASK   equ G_BASE+$78   ; u16
+OP_ADDR_OFF    equ G_BASE+$7a   ; u16
+SIN_LUT        equ G_BASE+$7c   ; u16
+PCM_MULT_FRAME equ G_BASE+$7e   ; u16  (ends +$7f)
 
-CH_STATE    equ $19a0       ; 10 × 64 B channel state blocks   ($19A0..$1C1F)
-TCB_BASE    equ $1c20       ; 16 × 32 B track control blocks   ($1C20..$1E1F)
+CH_STATE    equ $1980       ; 10 × 64 B channel state blocks   ($1980..$1BFF)
+TCB_BASE    equ $1c00       ; 16 × 32 B track control blocks   ($1C00..$1DFF)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -136,8 +150,8 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 ; 2 × 152 value bytes covering YM addresses $22..$B9 per port, plus a
 ; bit-per-register valid plane (2 × 152 bits = 2 × 19 B): a register is always
 ; written the first time it changes.
-SHADOW      equ $1e20       ; 304 value bytes (port0 +0, port1 +152) ($1E20..$1F4F)
-SHVALID     equ $1f50       ; 38 B valid bitmap (index 0..303)        ($1F50..$1F75)
+SHADOW      equ $1e00       ; 304 value bytes (port0 +0, port1 +152) ($1E00..$1F2F)
+SHVALID     equ $1f30       ; 38 B valid bitmap (index 0..303)        ($1F30..$1F55)
 
 STACK_TOP   equ $2000
 
@@ -686,11 +700,13 @@ ml_sec:
     jr z,ml_es
     cp 4
     jr z,ml_sb
+    cp 8
+    jr z,ml_lut
 ml_next:
     ld de,12
     add hl,de
     djnz ml_sec
-    ret
+    jp compute_lut_bases    ; derive per-table pointers from G_LUT
 ml_tt:
     call ml_payload
     ld (G_TT),de
@@ -703,6 +719,45 @@ ml_sb:
     call ml_payload
     ld (G_SB),de
     jr ml_next
+ml_lut:
+    call ml_payload
+    ld (G_LUT),de
+    jr ml_next
+
+; compute_lut_bases: G_LUT + each table's byte offset (tables.z80) → base globals.
+compute_lut_bases:
+    ld bc,(G_LUT)
+    ld hl,FNUM_LUT_OFF
+    add hl,bc
+    ld (FNUM_LUT),hl
+    ld hl,PSG_PERIOD_LUT_OFF
+    add hl,bc
+    ld (PSG_PERIOD_LUT),hl
+    ld hl,VEL_TL4_OFF
+    add hl,bc
+    ld (VEL_TL4),hl
+    ld hl,VOL_TL4_OFF
+    add hl,bc
+    ld (VOL_TL4),hl
+    ld hl,VEL_PSG4_OFF
+    add hl,bc
+    ld (VEL_PSG4),hl
+    ld hl,VOL_PSG4_OFF
+    add hl,bc
+    ld (VOL_PSG4),hl
+    ld hl,CARRIER_MASK_OFF
+    add hl,bc
+    ld (CARRIER_MASK),hl
+    ld hl,OP_ADDR_OFF_OFF
+    add hl,bc
+    ld (OP_ADDR_OFF),hl
+    ld hl,SIN_LUT_OFF
+    add hl,bc
+    ld (SIN_LUT),hl
+    ld hl,PCM_MULT_FRAME_OFF
+    add hl,bc
+    ld (PCM_MULT_FRAME),hl
+    ret
 ; DE = WINDOW + offset(u32, low u16 used — one 32KB window in M1)
 ml_payload:
     push hl
@@ -1875,7 +1930,7 @@ op_e:
     push de
     ld e,a
     ld d,0
-    ld hl,OP_ADDR_OFF
+    ld hl,(OP_ADDR_OFF)
     add hl,de
     ld a,(hl)
     pop de
@@ -1914,7 +1969,7 @@ compose_off4:
     add a,a
     ld e,a
     ld d,0
-    ld hl,VEL_TL4
+    ld hl,(VEL_TL4)
     add hl,de
     ld c,(hl)
     inc hl
@@ -1922,7 +1977,7 @@ compose_off4:
     ld a,(iy+CHS_VOL)
     add a,a
     ld e,a
-    ld hl,VOL_TL4
+    ld hl,(VOL_TL4)
     add hl,de
     ld a,(hl)
     inc hl
@@ -1934,7 +1989,7 @@ compose_off4:
     ld a,(G_MASTER)
     add a,a
     ld e,a
-    ld hl,VOL_TL4
+    ld hl,(VOL_TL4)
     add hl,de
     ld a,(hl)
     inc hl
@@ -1974,7 +2029,7 @@ write_carrier_tls:
     push de
     ld e,a
     ld d,0
-    ld hl,CARRIER_MASK
+    ld hl,(CARRIER_MASK)
     add hl,de
     ld a,(hl)
     pop de
@@ -2034,7 +2089,7 @@ compose_psg_att:
     add a,a
     ld e,a
     ld d,0
-    ld hl,VEL_PSG4
+    ld hl,(VEL_PSG4)
     add hl,de
     ld c,(hl)
     inc hl
@@ -2042,7 +2097,7 @@ compose_psg_att:
     ld a,(iy+CHS_VOL)
     add a,a
     ld e,a
-    ld hl,VOL_PSG4
+    ld hl,(VOL_PSG4)
     add hl,de
     ld a,(hl)
     inc hl
@@ -2054,7 +2109,7 @@ compose_psg_att:
     ld a,(G_MASTER)
     add a,a
     ld e,a
-    ld hl,VOL_PSG4
+    ld hl,(VOL_PSG4)
     add hl,de
     ld a,(hl)
     inc hl
@@ -2142,7 +2197,7 @@ cfb_bok:
     push de
     ld e,a
     ld d,0
-    ld hl,FNUM_LUT
+    ld hl,(FNUM_LUT)
     add hl,de
     ld a,(hl)
     ld (G_FNUM),a
@@ -2264,7 +2319,7 @@ cpp_idx:
     add a,a
     ld e,a
     ld d,0
-    ld hl,PSG_PERIOD_LUT
+    ld hl,(PSG_PERIOD_LUT)
     add hl,de
     ld a,(hl)
     inc hl
@@ -3171,7 +3226,7 @@ pno_nok:
     add a,a
     ld c,a
     ld b,0
-    ld hl,PCM_MULT_FRAME
+    ld hl,(PCM_MULT_FRAME)
     add hl,bc
     ld c,(hl)
     inc hl
@@ -3642,7 +3697,7 @@ cu_sin:                     ; SIN_LUT[t]
     ld a,c
     ld e,a
     ld d,0
-    ld hl,SIN_LUT
+    ld hl,(SIN_LUT)
     add hl,de
     ld a,(hl)
     pop bc

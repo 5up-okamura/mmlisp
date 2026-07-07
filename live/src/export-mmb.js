@@ -38,6 +38,7 @@ import {
   bpmToTickIncrement,
 } from "./mmb.js";
 import { pitchToMidi, clampForTarget } from "./ir-utils.js";
+import { buildLutBlob } from "./lut-blob.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
@@ -765,6 +766,15 @@ export function encodeMmb(ir, opts = {}) {
     }
     sections.push({ id: SECTION_ID.VAL_TABLE, flags: 0, payload: valTable.bytes });
   }
+
+  // LUT_TABLE (mmb.md §16): the driver's constant LUTs, in ROM, read through the
+  // bank window — always emitted so the Z80 image needn't carry them. Identical
+  // bytes for every song; the JS reference computes its own copy (buildLuts).
+  sections.push({
+    id: SECTION_ID.LUT_TABLE,
+    flags: 0,
+    payload: buildLutBlob().blob,
+  });
 
   // ── Assemble file: header + directory (ascending id) + sections ─────────
   sections.sort((a, b) => a.id - b.id);

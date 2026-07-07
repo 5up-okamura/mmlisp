@@ -16,7 +16,8 @@ src/tables.z80      generated constant tables — do not edit (gen-tables.mjs)
 tools/z80asm.mjs    first-party two-pass Z80 assembler (subset, no deps)
 tools/z80cpu.mjs    first-party Z80 CPU emulator (same subset, no deps)
 tools/selftest.mjs  assembler + emulator self-tests
-tools/gen-tables.mjs  prints every LUT from the live/src math (driver.md §12.3)
+tools/gen-tables.mjs  emits the asm LUT byte offsets (the LUT data ships in the
+                      MMB LUT_TABLE section via live/src/lut-blob.js, not the image)
 tools/mmb-build.mjs   .mmlisp → .mmb via the live/src toolchain
 tools/ref-trace.mjs   .mmb → JS-reference register-write log
 tools/run-trace.mjs   .mmb + driver.bin → Z80-emulated register-write log
@@ -169,18 +170,24 @@ These are the deltas against the docs as written:
    flush (and re-basing the comparator on per-frame *state* equality) is
    deferred to the on-hardware cycle-budget phase, where bounding per-frame
    chip access actually matters.
-2. **RAM map: all data above the code.** The image grows through the
-   milestones, so the map puts every RAM region above the code at
-   `DATA_BASE = $18D0` (code owns $0000–$18CF): mailbox $18D0, val slots $1910,
-   globals $1930, channel state $19A0, TCB $1C20, shadow $1E20–$1F75, stack
-   $1F80. The shadow's valid plane is a **bitmap** (1 bit/register, 2×19 B) —
-   the byte-per-register plane was dropped to fit 8 KB. `DATA_BASE` bumps as the
-   image grows (now tight: ~6.3 KB image, ~30 B of headroom under the stack — M3
-   will need a bigger rework, e.g. shrinking the shadow value plane). The
-   mailbox and val slots are the only 68k-published addresses; they **move with
-   the floor**, so `drv/sgdk/mmlispdrv.c` and driver.md §5 carry the current
-   values. The image exceeds the driver.md §5 "≤4.5 KB" *design target*;
-   size/cycle tuning is the hardware phase.
+2. **RAM map: all data above the code; LUTs in ROM.** The image grows through
+   the milestones, so every RAM region sits above the code at `DATA_BASE = $18A0`
+   (code owns $0000–$189F): mailbox $18A0, val slots $18E0, globals $1900,
+   channel state $1980, TCB $1C00, shadow $1E00–$1F55, stack $1F80. Two reworks
+   keep it under 8 KB:
+   - the shadow's valid plane is a **bitmap** (1 bit/register, 2×19 B), not a
+     byte-per-register plane;
+   - the **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB
+     section (mmb.md §16) read through the bank window, freeing ~726 B. The
+     driver derives a window pointer per table at START_TRACK; `gen-tables.mjs`
+     now emits only the byte offsets, and `live/src/lut-blob.js` is the shared
+     LUT source for the section and the JS reference.
+
+   The image is ~5.7 KB with ~600 B of code headroom (was ~30 B) — enough for
+   the core M3 engine. The mailbox and val slots are the only 68k-published
+   addresses; they **move with the floor**, so `drv/sgdk/mmlispdrv.c` and
+   driver.md §5 carry the current values. The image exceeds the driver.md §5
+   "≤4.5 KB" *design target*; size/cycle tuning is the hardware phase.
 3. **Per-track increment slot reused.** Tempo is per-MMB (one MMB in M1), so
    the TCB increment field ($0C) holds the gate key-off countdown instead;
    the increment lives in a global. Revisit for cross-MMB layering.
