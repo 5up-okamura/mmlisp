@@ -175,18 +175,20 @@ deterministic. PSG writes need no wait.
 
 > **Implementation note (M2/M3 build).** The image grew through the milestones,
 > so the reference/asm build places **all** RAM data above the code at
-> `DATA_BASE` (currently 0x1990; code owns 0x0000–0x198F, ~6.5 KB image at the
-> 8 KB ceiling). From there: mailbox 0x1990, val slots 0x19D0, driver globals
-> 0x19F0, channel state 0x1A78, TCB 0x1CF8 (11 blocks), shadow 0x1E58, valid
-> bitmap 0x1F88, stack top 0x2000. Space reworks got it under 8 KB: the shadow's
-> valid plane is a **bit**-per-register bitmap (2×19 B, not 2×152 B); the
-> **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB section
-> (mmb.md §16) read through the bank window (~726 B freed); and an M3 **memory
-> compaction** reclaimed the stack slack and trimmed TCB from 16 to 11 concurrent
-> tracks (interim — all songs use ≤5) for code room. The driver is now at the
-> ceiling; remaining M3 features need a real headroom rework. The mailbox and val
-> slots are the only 68k-published addresses; they move with `DATA_BASE`, so
-> `drv/sgdk/mmlispdrv.c` uses the current values. See `drv/README.md`.
+> `DATA_BASE` (currently 0x18F0; code owns 0x0000–0x18EF, ~6.4 KB image, full
+> 16-track capacity, ~14 B headroom). From there: mailbox 0x18F0, val slots
+> 0x1930, driver globals 0x1950, channel state 0x19D8, TCB 0x1C58 (16 blocks),
+> shadow 0x1E58, valid bitmap 0x1F88, stack top 0x2000. Space reworks got it
+> under 8 KB: the shadow's valid plane is a **bit**-per-register bitmap (2×19 B,
+> not 2×152 B); the **constant LUTs moved out of Z80 RAM into ROM** (a LUT_TABLE
+> MMB section, mmb.md §16, ~726 B freed); and a **table-drive refactor** collapsed
+> the ten near-identical FM op-param handlers into one descriptor table + routine
+> (~169 B), which paid back the interim TCB trims and restored full 16-track
+> capacity. The monolith is now full; the remaining M3 moves to a 68k-offload
+> split (engines on the main 68000, the Z80 a thin register + PCM executor). The
+> mailbox and val slots are the only 68k-published addresses; they move with
+> `DATA_BASE`, so `drv/sgdk/mmlispdrv.c` uses the current values. See
+> `drv/README.md`.
 
 The constant tables (F-number, PSG period, level ladders, carrier masks,
 operator offsets, the sin curve unit, PCM rate multipliers — §7, §8) are

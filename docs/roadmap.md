@@ -110,13 +110,16 @@ Order of work:
    step/curve/stage forms + `:semi` arpeggios), and **dynamic value slots**
    (SET_VAL + PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL/PARAM_MUL + `$time`, driver.md
    §6.4) are implemented and gated (`verify:m3`, fourteen trace scores, zero
-   tolerance). The image is ~6.5 KB at the **8 KB ceiling** (~5 B headroom); each
-   M3 feature has cost a TCB trim (now 11 concurrent tracks) or stack reclaim.
+   tolerance). A **table-drive refactor** then collapsed the ten near-identical FM op-param
+   handlers into a descriptor table + one routine (~169 B recovered, behaviour
+   identical, 14 gates still 0-diff), which paid back the interim TCB trims and
+   **restored full 16-track capacity** (~14 B headroom). The 8 KB monolith is now
+   full at full capacity — a clean completion point for M1 + M2 + the current M3.
    **The remaining M3 (multi-macro, i16 pitch macros, `:keyon`, CALL/RET, PCM
-   soft mix, VOICE_SET) needs a real headroom rework** — the shadow value plane
-   is nearly all live registers, so the levers are a sparse shadow index, cutting
-   a planned feature, or the hardware phase's real assembler. Then hardware
-   bring-up + cycle tuning.
+   soft mix, VOICE_SET) moves to the 68k-offload architecture** (sequencer +
+   expression engines on the main 68000 — `drv-player.js` is the design — and the
+   Z80 reduced to a thin register-flush + PCM executor), which removes the size
+   ceiling entirely. Then hardware bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

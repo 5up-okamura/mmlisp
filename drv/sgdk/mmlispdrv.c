@@ -9,12 +9,12 @@
 // Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets. The mailbox tracks
 // the driver's DATA_BASE, which moves as the image grows; it is still the only
 // published address the host needs.
-#define MB_RING        0x1990   // 8 cells x 4 bytes {cmd, a0, a1, a2}
-#define MB_HEAD        0x19B0   // 68k-owned: next cell to write
-#define MB_TAIL        0x19B1   // Z80-owned: next cell to read
-#define MB_TSTAT       0x19B2   // 16 per-track status bytes
-#define MB_READY       0x19C2   // 0xD2 when the driver main loop is up
-#define VAL_SLOTS      0x19D0   // 16 x i16 dynamic value slots (68k read/write)
+#define MB_RING        0x18F0   // 8 cells x 4 bytes {cmd, a0, a1, a2}
+#define MB_HEAD        0x1910   // 68k-owned: next cell to write
+#define MB_TAIL        0x1911   // Z80-owned: next cell to read
+#define MB_TSTAT       0x1912   // 16 per-track status bytes
+#define MB_READY       0x1922   // 0xD2 when the driver main loop is up
+#define VAL_SLOTS      0x1930   // 16 x i16 dynamic value slots (68k read/write)
 
 // Command ids (docs/opcodes.md / driver.md §6.2).
 #define CMD_START_TRACK  0x01

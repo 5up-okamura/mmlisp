@@ -32,7 +32,7 @@ WINDOW      equ $8000
 ; with the floor (M2 PCM), so drv/sgdk/mmlispdrv.c and driver.md §5 reflect the
 ; current values. Bump DATA_BASE (and re-check the top fits under the stack)
 ; when the image outgrows the current floor.
-DATA_BASE   equ $1990       ; code owns $0000..$198F (~5 B headroom over the 6539 B image)
+DATA_BASE   equ $18f0       ; code owns $0000..$18EF (~14 B headroom over the 6370 B image)
 
 MB_RING     equ DATA_BASE       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ MB_RING+$20
@@ -135,10 +135,10 @@ G_MACRO        equ G_BASE+$81   ; u16  MACRO_TABLE descriptor base (payload+2; 0
 G_MBLOB        equ G_BASE+$83   ; u16  MACRO_TABLE value-blob base
 G_FRAME        equ G_BASE+$85   ; u16  frames since boot ($time source, driver.md §6.4)
 
-CH_STATE    equ $1a78       ; 10 × 64 B channel state blocks   ($1A78..$1CF7)
-TCB_BASE    equ $1cf8       ; TCB_COUNT × 32 B track control blocks   ($1CF8..$1E57)
-TCB_COUNT   equ 11          ; M3 interim: 11 concurrent tracks (all songs ≤5;
-                            ; restore after a real headroom rework)
+CH_STATE    equ $19d8       ; 10 × 64 B channel state blocks   ($19D8..$1C57)
+TCB_BASE    equ $1c58       ; TCB_COUNT × 32 B track control blocks   ($1C58..$1E57)
+TCB_COUNT   equ 16          ; full track capacity: 6 FM + 4 PSG, or FM3-op (5) +
+                            ; PCM soft-mix (3) + the rest — up to 16 concurrent
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
