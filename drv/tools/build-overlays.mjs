@@ -19,6 +19,7 @@ export function buildOverlays({ residentPath, overlayPaths, slot, descTab }) {
     overlays.push({ path: p, offset: blob.length, length: code.length });
     for (const b of code) blob.push(b);
   }
+  if (overlays.length === 0) return { resident, overlay: new Uint8Array(0), overlays, symbols };
   const tabAddr = symbols.get(descTab);
   if (tabAddr == null) throw new Error(`descriptor table symbol '${descTab}' not found`);
   overlays.forEach((ov, i) => {

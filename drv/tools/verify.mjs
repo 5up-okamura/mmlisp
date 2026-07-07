@@ -10,9 +10,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { refTrace } from "./ref-trace.mjs";
-import { assemble } from "./z80asm.mjs";
 import { runTrace } from "./run-trace.mjs";
-import { generateTables } from "./gen-tables.mjs";
+import { buildDriver } from "./build-driver.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -43,12 +42,17 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   const ref = refTrace(mmb, { maxFrames: frames ?? 36000, commands });
   const horizon = ref.frames;
 
-  // 3. regenerate tables + assemble
-  writeFileSync(join(srcDir, "tables.z80"), generateTables());
-  const { bytes: bin } = assemble(join(srcDir, "mmlispdrv.z80"));
+  // 3. regenerate tables + assemble (resident + overlay ROM blob)
+  const { resident, overlay, overlayBank } = buildDriver();
 
-  // 4. emulate
-  const asm = runTrace(bin, mmb, { frames: horizon, commands });
+  // 4. emulate — the overlay blob (empty until cold code moves) rides a second
+  //    ROM bank the driver loads from on demand.
+  const asm = runTrace(resident, mmb, {
+    frames: horizon,
+    commands,
+    overlay: overlay.length ? overlay : null,
+    overlayBank,
+  });
 
   // 5. raw diff
   const a = ref.writes.filter((w) => w.frame < horizon);
@@ -76,7 +80,7 @@ export function verify(songPath, { frames, verbose = false } = {}) {
     ok: mismatches.length === 0,
     mismatches,
     stats: {
-      binBytes: bin.length,
+      binBytes: resident.length + overlay.length,
       mmbBytes: mmb.length,
       frames: horizon,
       refWrites: a.length,

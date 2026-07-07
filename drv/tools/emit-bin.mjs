@@ -9,17 +9,15 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assemble } from "./z80asm.mjs";
-import { generateTables } from "./gen-tables.mjs";
+import { buildDriver } from "./build-driver.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const srcDir = join(here, "..", "src");
 const outDir = join(here, "..", "sgdk");
 
-writeFileSync(join(srcDir, "tables.z80"), generateTables());
-const { bytes } = assemble(join(srcDir, "mmlispdrv.z80"));
+const { resident: bytes, overlay } = buildDriver();
 
 writeFileSync(join(outDir, "mmlispdrv.bin"), bytes);
+if (overlay.length) writeFileSync(join(outDir, "mmlispdrv_ovl.bin"), overlay);
 
 const rows = [];
 for (let i = 0; i < bytes.length; i += 12) {
