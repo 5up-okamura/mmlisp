@@ -1,0 +1,11 @@
+; M3 gate (slice 2): curve and loop-curve macros, pre-sampled at the :step
+; clock into the same value-array shape the engine already steps. A one-shot
+; eased envelope (attack, ends at key-off), a looping triangle LFO (sustain
+; cycled), a multi-stage macro (attack curve → sustain loop), and MACRO_CLEAR.
+(score :tempo 150
+  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+    (macro :vol (ease-out :from 28 :to 6 :len 8f)) :len 4
+    c _
+    (macro :vol (triangle :from 24 :to 10 :len 6f :loop)) c e
+    (macro :vol [(ease-in :from 20 :to 28 :len 4f) (triangle :from 28 :to 16 :len 6f :loop)]) g
+    (macro :vol none) c))

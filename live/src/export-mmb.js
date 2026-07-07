@@ -37,7 +37,7 @@ import {
   encodeDuration,
   bpmToTickIncrement,
 } from "./mmb.js";
-import { pitchToMidi, clampForTarget } from "./ir-utils.js";
+import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 import { buildLutBlob } from "./lut-blob.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
@@ -210,21 +210,123 @@ export function encodeMmb(ir, opts = {}) {
 
   // ── Macro registry (MACRO_TABLE §0x0007) ────────────────────────────────
   // Every distinct lowered macro is interned once and referenced by id from
-  // MACRO_SET. Slice 1 lowers the `steps` type onto i8 targets that ride the
-  // ordinary PARAM_SET apply path; curve/stages and the special targets
-  // (NOTE_PITCH i16, NOTE_SEMI, KEYON) are still dropped with a warning.
+  // MACRO_SET. Lowers the `steps`, `curve`, and `stages` forms onto i8 targets
+  // that ride the PARAM_SET apply path; curve/stages are pre-sampled at the
+  // :step clock (driver.md §13). The special targets (NOTE_PITCH i16,
+  // NOTE_SEMI, KEYON) and dynamic (val-slot) params are still dropped.
   const macroRegistry = new Map(); // canonical key → { id, target, flags, step, loopStart, release, values }
 
-  const internMacro = (spec, target, trackLabel) => {
-    if (!spec || typeof spec !== "object" || spec.type !== "steps") {
+  // :step clock → frames (default 1f). Tick units are not lowered yet.
+  const macroStepFrames = (spec, target, trackLabel) => {
+    if (spec.step?.unit === "frame") return Math.max(1, Math.min(255, spec.step.value));
+    if (spec.step?.unit === "tick") {
       diag(
         "warning",
-        "W_MMB_MACRO_SKIPPED",
-        `${target} macro (${spec?.type ?? "?"}) not lowered yet (M3 slice); dropped`,
+        "W_MMB_MACRO_STEP_TICK",
+        `${target} macro :step in ticks not lowered yet (M3 slice); using 1f`,
         trackLabel,
       );
-      return null;
     }
+    return 1;
+  };
+
+  // Sample one curve into an integer value array, clamped to the target.
+  const sampleCurveValues = (spec, target, count, phaseAt) => {
+    const from = Number(spec.from ?? 0);
+    const to = Number(spec.to ?? 0);
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const unit = sampleCurveUnit(spec.curve ?? "linear", phaseAt(i), spec.params);
+      out.push(clampForTarget(target, Math.round(from + (to - from) * unit)));
+    }
+    return out;
+  };
+
+  // Lower one IR macro spec → { flags, step, loopStart, release, values } | null.
+  const lowerMacro = (spec, target, trackLabel) => {
+    const step = macroStepFrames(spec, target, trackLabel);
+    const skip = (why) => {
+      diag("warning", "W_MMB_MACRO_SKIPPED", `${target} macro ${why}; dropped`, trackLabel);
+      return null;
+    };
+
+    if (spec.type === "steps") {
+      const values = spec.steps ?? [];
+      if (values.length === 0 || values.length > 255) return null;
+      return {
+        step,
+        loopStart: spec.loopIndex == null ? 0xff : spec.loopIndex,
+        release: spec.releaseIndex == null ? 0xff : spec.releaseIndex,
+        values,
+      };
+    }
+
+    if (spec.type === "curve") {
+      if (spec.dyn) return skip("has dynamic (val-slot) params (later M3 slice)");
+      if (!spec.lenFrames) return skip(":len in ticks not lowered yet (M3 slice)");
+      const baseFrames = Math.max(1, Math.round(Number(spec.frames ?? 1)));
+      // A curve is pre-sampled every `step` frames (driver.md §13). A loop curve
+      // fills the sustain region (one period, cycled); a one-shot fills the
+      // attack region and holds its last value.
+      if (spec.loop) {
+        const period = Math.max(1, Math.min(255, Math.round(baseFrames / step)));
+        const values = sampleCurveValues(spec, target, period, (i) => (i * step) / baseFrames);
+        return { step, loopStart: 0, release: 0xff, values };
+      }
+      const n = Math.max(1, Math.min(255, Math.ceil(baseFrames / step)));
+      const values = sampleCurveValues(spec, target, n, (i) =>
+        baseFrames <= 1 ? 1 : Math.min(1, (i * step) / (baseFrames - 1)),
+      );
+      return { step, loopStart: 0xff, release: 0xff, values };
+    }
+
+    if (spec.type === "stages") return lowerStages(spec, target, trackLabel, step, skip);
+
+    return skip(`(${spec?.type ?? "?"}) has no lowering`);
+  };
+
+  // Multi-stage: concatenate each stage's samples. `(wait N)` → hold-sentinel
+  // steps; `(wait key-off)` marks the release boundary; a looping stage marks
+  // the sustain loop start.
+  const lowerStages = (spec, target, trackLabel, step, skip) => {
+    const values = [];
+    let loopStart = 0xff;
+    let release = 0xff;
+    for (const stage of spec.stages ?? []) {
+      if (stage.waitKeyOff) {
+        release = values.length;
+        continue;
+      }
+      if (stage.waitFrames != null || stage.waitTicks != null) {
+        if (stage.waitTicks != null && stage.waitFrames == null)
+          return skip("stage (wait N) in ticks not lowered yet (M3 slice)");
+        const frames = Math.max(0, Number(stage.waitFrames ?? 0));
+        for (let f = 0; f < frames; f += step) values.push(null); // hold sentinel
+        continue;
+      }
+      if (!stage.curve) continue;
+      if (stage.dyn) return skip("stage has dynamic (val-slot) params (later M3 slice)");
+      if (!stage.lenFrames) return skip("stage :len in ticks not lowered yet (M3 slice)");
+      const baseFrames = Math.max(1, Math.round(Number(stage.frames ?? 1)));
+      if (stage.loop) {
+        loopStart = values.length;
+        const period = Math.max(1, Math.round(baseFrames / step));
+        values.push(...sampleCurveValues(stage, target, period, (i) => (i * step) / baseFrames));
+      } else {
+        const n = Math.max(1, Math.ceil(baseFrames / step));
+        values.push(
+          ...sampleCurveValues(stage, target, n, (i) =>
+            baseFrames <= 1 ? 1 : Math.min(1, (i * step) / (baseFrames - 1)),
+          ),
+        );
+      }
+    }
+    if (values.length === 0 || values.length > 255) return null;
+    return { step, loopStart, release, values };
+  };
+
+  const internMacro = (spec, target, trackLabel) => {
+    if (!spec || typeof spec !== "object") return null;
     if (target === "NOTE_PITCH" || target === "NOTE_SEMI" || target === "KEYON") {
       diag(
         "warning",
@@ -234,28 +336,16 @@ export function encodeMmb(ir, opts = {}) {
       );
       return null;
     }
-    const values = spec.steps ?? [];
-    if (values.length === 0 || values.length > 255) return null;
-    const loopStart = spec.loopIndex == null ? 0xff : spec.loopIndex;
-    const release = spec.releaseIndex == null ? 0xff : spec.releaseIndex;
-    let step = 1; // :step clock in frames; default 1f
-    if (spec.step?.unit === "frame") step = Math.max(1, Math.min(255, spec.step.value));
-    else if (spec.step?.unit === "tick") {
-      diag(
-        "warning",
-        "W_MMB_MACRO_STEP_TICK",
-        `${target} macro :step in ticks not lowered yet (M3 slice); using 1f`,
-        trackLabel,
-      );
-    }
+    const lowered = lowerMacro(spec, target, trackLabel);
+    if (!lowered) return null;
     const flags = 0; // i8 values
-    const key = `${target}|${flags}|${step}|${loopStart}|${release}|${values
+    const key = `${target}|${flags}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
       .map((v) => (v == null ? "_" : v))
       .join(",")}`;
     const hit = macroRegistry.get(key);
     if (hit) return hit.id;
     const id = macroRegistry.size;
-    macroRegistry.set(key, { id, target, flags, step, loopStart, release, values });
+    macroRegistry.set(key, { id, target, flags, ...lowered });
     return id;
   };
 

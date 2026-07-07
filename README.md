@@ -88,7 +88,7 @@ pending.
 | FM3 CSM mode (Timer A buzz)                                        | ✅ emulation (M2) |
 | PCM playback, single DAC channel (frame-quantized feed)           | ✅ emulation (M2) |
 | `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | ✅ emulation (M2) |
-| Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 partial (M3): `steps` on i8 targets done; curves/`:semi`/`:keyon` next |
+| Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 partial (M3): step/curve/stage macros on i8 targets done; `:semi`/`:keyon`/pitch next |
 | FM3 independent-operator mode                                      | ✅ emulation (M3) |
 | Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | 🚧 planned (M3) |
 | Multi-channel PCM soft mixing (up to 3ch)                          | 🚧 planned (M3) |

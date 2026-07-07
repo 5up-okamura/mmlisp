@@ -488,15 +488,20 @@ or easing at macro time. This keeps the engine tiny and reproduces `ir-player`
 `_scheduleMacro` exactly, so the JS reference and asm share it under the §12
 trace gate.
 
-**Implementation status (slice 1).** The engine is implemented and gated
-(`verify:m3`) for the `steps` macro form on i8 targets that ride the PARAM_SET
-apply path — the common envelope/LFO case (VOL/VEL/FM_TL/…). Interim limits,
+**Implementation status.** The engine is implemented and gated (`verify:m3`)
+for the `steps`, `curve`, and `stages` macro forms on i8 targets that ride the
+PARAM_SET apply path — the common envelope/LFO case (VOL/VEL/FM_TL/…). Curve
+and stage macros are pre-sampled at the `:step` clock in the exporter (a
+one-shot curve fills the attack region and holds its last value; a looping
+curve/stage fills the sustain region; `(wait key-off)` marks the release
+boundary) — no engine change, the same value array is stepped. Interim limits,
 each a later slice: one active macro per channel (the RAM reserves 3 active +
-3 running slots below, but the driver code drives slot 0 only); `curve`/`stages`
-forms and tick-unit `:step` are not yet lowered by the exporter (dropped with a
-warning); the i16 target NOTE_PITCH and the macro-only targets NOTE_SEMI/KEYON
-need their own apply paths. The hard gate is asm↔`drv-player` at zero tolerance;
-the `ir-player` A/B is informational for macros (pre-sampled vs continuous-time).
+3 running slots below, but the driver code drives slot 0 only); tick-unit
+`:step`/`:len` and dynamic (val-slot) `:from`/`:to`/`:rate`/`:len` are dropped
+with a warning; the i16 target NOTE_PITCH and the macro-only targets
+NOTE_SEMI/KEYON need their own apply paths. The hard gate is asm↔`drv-player`
+at zero tolerance; the `ir-player` A/B is informational for macros (the
+exporter pre-samples what `ir-player` evaluates in continuous time).
 
 ### 13.1 Sticky active set + trigger
 
