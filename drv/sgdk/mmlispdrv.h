@@ -48,6 +48,12 @@ void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value);
 // (driver.md §6.3). Use for DJ-style scene transitions.
 void MMLisp_fadeTrack(u8 track_id, u8 frames);
 
+// Dynamic value slots (driver.md §6.4): write/read one of the 16 i16 slots the
+// score reads via `$name` (PARAM_FROM_VAL / _ADD_VAL / _MUL_VAL). All arithmetic
+// lives on the host — e.g. drive an FM3 AMS/FMS depth, or a live tempo.
+void MMLisp_setVal(u8 slot, s16 value);
+s16 MMLisp_getVal(u8 slot);
+
 // Read a per-track mailbox status byte (0..15): bit7 active, bit6 fading,
 // bits5-0 the last MARKER id the track passed (host sync point).
 u8 MMLisp_trackStatus(u8 track_index);

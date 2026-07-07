@@ -175,18 +175,18 @@ deterministic. PSG writes need no wait.
 
 > **Implementation note (M2/M3 build).** The image grew through the milestones,
 > so the reference/asm build places **all** RAM data above the code at
-> `DATA_BASE` (currently 0x1940; code owns 0x0000–0x193F, ~6.3 KB image with
-> ~160 B headroom). From there: mailbox 0x1940, val slots 0x1980, driver globals
-> 0x19A0, channel state 0x1A28, TCB 0x1CA8 (13 blocks), shadow 0x1E48, valid
-> bitmap 0x1F78, stack top 0x2000. Three space reworks got it under 8 KB: the
-> shadow's valid plane is a **bit**-per-register bitmap (2×19 B, not 2×152 B);
-> the **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB section
+> `DATA_BASE` (currently 0x1990; code owns 0x0000–0x198F, ~6.5 KB image at the
+> 8 KB ceiling). From there: mailbox 0x1990, val slots 0x19D0, driver globals
+> 0x19F0, channel state 0x1A78, TCB 0x1CF8 (11 blocks), shadow 0x1E58, valid
+> bitmap 0x1F88, stack top 0x2000. Space reworks got it under 8 KB: the shadow's
+> valid plane is a **bit**-per-register bitmap (2×19 B, not 2×152 B); the
+> **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB section
 > (mmb.md §16) read through the bank window (~726 B freed); and an M3 **memory
-> compaction** reclaimed the over-generous stack slack and trimmed TCB from 16 to
-> 13 concurrent tracks (interim — all songs use ≤5) for ~160 B of code room. The
-> mailbox and val slots are the only 68k-published addresses; they move with
-> `DATA_BASE`, so `drv/sgdk/mmlispdrv.c` uses the current values. See
-> `drv/README.md`.
+> compaction** reclaimed the stack slack and trimmed TCB from 16 to 11 concurrent
+> tracks (interim — all songs use ≤5) for code room. The driver is now at the
+> ceiling; remaining M3 features need a real headroom rework. The mailbox and val
+> slots are the only 68k-published addresses; they move with `DATA_BASE`, so
+> `drv/sgdk/mmlispdrv.c` uses the current values. See `drv/README.md`.
 
 The constant tables (F-number, PSG period, level ladders, carrier masks,
 operator offsets, the sin curve unit, PCM rate multipliers — §7, §8) are
@@ -323,10 +323,14 @@ draining, 8 commands/frame is the burst budget.
 
 ### 6.4 Val slots
 
-16 × i16 at 0x16C0 (fixed, published address). Written by the Z80 (init
-from VAL_TABLE, SET_VAL commands); read directly by the 68k for GET_VAL.
+16 × i16 at the published `VAL_SLOTS` address (mailbox floor + 0x40; see the
+§5 note for the current value). Written by the Z80 (init from VAL_TABLE at
+START_TRACK, then `SET_VAL` commands); read directly by the 68k for GET_VAL.
 Slot index = VAL_TABLE index; slot 0xFF in stream operands is the built-in
-`$time` source (frames since track start), never stored in this array.
+`$time` source (elapsed 60 Hz frames, low 16 bits), never stored in this array.
+(The reference/asm implement `$time` as frames since boot; for the M1
+single-MMB model, tracks start together so this equals frames since track
+start.)
 
 ## 7. Level Composition
 

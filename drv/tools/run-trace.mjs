@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
 const RAM_SIZE = 0x2000;
-const MB_BASE = 0x1940; // mailbox (published); tracks the driver DATA_BASE
+const MB_BASE = 0x1990; // mailbox (published); tracks the driver DATA_BASE
 const MB_HEAD = MB_BASE + 0x20;
 const MB_READY = MB_BASE + 0x32;
 

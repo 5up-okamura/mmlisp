@@ -32,7 +32,7 @@ WINDOW      equ $8000
 ; with the floor (M2 PCM), so drv/sgdk/mmlispdrv.c and driver.md §5 reflect the
 ; current values. Bump DATA_BASE (and re-check the top fits under the stack)
 ; when the image outgrows the current floor.
-DATA_BASE   equ $1940       ; code owns $0000..$193F (~160 B headroom over the 6303 B image)
+DATA_BASE   equ $1990       ; code owns $0000..$198F (~5 B headroom over the 6539 B image)
 
 MB_RING     equ DATA_BASE       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ MB_RING+$20
@@ -133,12 +133,12 @@ PCM_MULT_FRAME equ G_BASE+$7e   ; u16
 G_FM3MASK      equ G_BASE+$80   ; u8   FM3 independent-OP key mask (0x10..0x80)
 G_MACRO        equ G_BASE+$81   ; u16  MACRO_TABLE descriptor base (payload+2; 0 none)
 G_MBLOB        equ G_BASE+$83   ; u16  MACRO_TABLE value-blob base
-G_MDESC        equ G_BASE+$85   ; u16  current macro descriptor ptr (step scratch)
+G_FRAME        equ G_BASE+$85   ; u16  frames since boot ($time source, driver.md §6.4)
 
-CH_STATE    equ $1a28       ; 10 × 64 B channel state blocks   ($1A28..$1CA7)
-TCB_BASE    equ $1ca8       ; TCB_COUNT × 32 B track control blocks   ($1CA8..$1E47)
-TCB_COUNT   equ 13          ; M3 interim: 13 concurrent tracks (all songs ≤5;
-                            ; restore to 16 after a data-region shrink)
+CH_STATE    equ $1a78       ; 10 × 64 B channel state blocks   ($1A78..$1CF7)
+TCB_BASE    equ $1cf8       ; TCB_COUNT × 32 B track control blocks   ($1CF8..$1E57)
+TCB_COUNT   equ 11          ; M3 interim: 11 concurrent tracks (all songs ≤5;
+                            ; restore after a real headroom rework)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -156,8 +156,8 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 ; 2 × 152 value bytes covering YM addresses $22..$B9 per port, plus a
 ; bit-per-register valid plane (2 × 152 bits = 2 × 19 B): a register is always
 ; written the first time it changes.
-SHADOW      equ $1e48       ; 304 value bytes (port0 +0, port1 +152) ($1E48..$1F77)
-SHVALID     equ $1f78       ; 38 B valid bitmap (index 0..303)        ($1F78..$1F9D)
+SHADOW      equ $1e58       ; 304 value bytes (port0 +0, port1 +152) ($1E58..$1F87)
+SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1FAD)
 
 STACK_TOP   equ $2000
 
@@ -236,10 +236,10 @@ start:
     di
     im 1
     ld sp,STACK_TOP
-    ; clear all driver data RAM (DATA_BASE..$1F9D; stack owns $1F9E..$1FFF)
+    ; clear all driver data RAM (DATA_BASE..$1FAD; stack owns $1FAE..$1FFF)
     ld hl,DATA_BASE
     ld de,DATA_BASE+1
-    ld bc,$1f9d-DATA_BASE
+    ld bc,$1fad-DATA_BASE
     ld (hl),0
     ldir
     ; channel state defaults (matches drv-player freshFmChannel/_reset)
@@ -403,6 +403,9 @@ fs_next:
     djnz fs_track
     call process_sweeps     ; step 3: sweep + tempo engines
     call process_macros     ; step 3: macro engine, after sweeps (§13.3)
+    ld hl,(G_FRAME)         ; advance $time (after dispatch, like drv-player)
+    inc hl
+    ld (G_FRAME),hl
     ret
 
 ; ===========================================================================
@@ -458,8 +461,13 @@ md_c4:
     jr md_done
 md_c5:
     cp 5                    ; FADE_TRACK (track_id, frames)
-    jr nz,md_done           ; SET_VAL and others: M3
+    jr nz,md_c6
     call mb_fade_track
+    jr md_done
+md_c6:
+    cp 6                    ; SET_VAL (slot, value low, value high)
+    jr nz,md_done
+    call mb_set_val
 md_done:
     pop bc
     ld a,c
@@ -721,6 +729,8 @@ ml_sec:
     jr z,ml_es
     cp 4
     jr z,ml_sb
+    cp 5
+    jr z,ml_val
     cp 7
     jr z,ml_macro
     cp 8
@@ -745,6 +755,22 @@ ml_sb:
 ml_lut:
     call ml_payload
     ld (G_LUT),de
+    jr ml_next
+ml_val:
+    call ml_payload         ; DE = payload (count u16, then count × i16 inits)
+    push hl                 ; preserve the directory scan ptr
+    push bc                 ; preserve the section counter
+    ex de,hl                ; HL = payload
+    ld a,(hl)               ; count (low; ≤16)
+    inc hl
+    inc hl                  ; HL = &inits[0]
+    add a,a                 ; count * 2 bytes
+    ld c,a
+    ld b,0
+    ld de,VAL_SLOTS         ; seed declared slots (driver.md §6.3)
+    ldir
+    pop bc
+    pop hl
     jr ml_next
 ml_macro:
     push hl                 ; preserve the directory scan ptr
@@ -889,9 +915,9 @@ d_next:
     cp $14                  ; VOICE_SET
     jp z,d_skip2
     cp $63                  ; PARAM_MUL
-    jp z,d_skip4
+    jp z,d_param_mul
     cp $64                  ; PARAM_FROM_VAL
-    jp z,d_skip3
+    jp z,d_param_from_val
     cp $a3                  ; FM3_MODE
     jp z,d_fm3_mode
     cp $a4                  ; FM3_OP_PITCH
@@ -903,9 +929,9 @@ d_next:
     cp $e0                  ; MACRO_SET
     jp z,d_macro_set
     cp $e1                  ; PARAM_ADD_VAL
-    jp z,d_skip3
+    jp z,d_param_add_val
     cp $e2                  ; PARAM_MUL_VAL
-    jp z,d_skip3
+    jp z,d_param_mul_val
     cp $e3                  ; MACRO_CLEAR
     jp z,d_macro_clear
     ; unknown opcode: fail-safe — stop decoding this track (mmb.md §13)
@@ -3947,6 +3973,117 @@ rp_pitch:
 rp_zero:
     ld hl,0
     ret
+
+; ===========================================================================
+; Dynamic value slots (driver.md §6.4; opcodes.md §6/§8). SET_VAL writes a
+; slot; the stream ops read one at dispatch time and PARAM_SET the result.
+; ===========================================================================
+
+; val_ptr: A = slot (0..15) → HL = &VAL_SLOTS[slot]. Clobbers DE.
+val_ptr:
+    add a,a                 ; slot * 2
+    ld e,a
+    ld d,0
+    ld hl,VAL_SLOTS
+    add hl,de
+    ret
+
+; read_slot: A = slot → HL = i16 value. Slot 0xFF = $time (frame counter);
+; 0x00-0x0F index VAL_SLOTS. Clobbers DE.
+read_slot:
+    cp $ff
+    jr z,rsl_time
+    and $0f
+    call val_ptr
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    ex de,hl                ; HL = i16 slot value
+    ret
+rsl_time:
+    ld hl,(G_FRAME)
+    ret
+
+; mb_set_val: (G_ARG0)=slot, (G_ARG1)=lo, (G_ARG2)=hi → VAL_SLOTS[slot] = i16.
+mb_set_val:
+    ld a,(G_ARG0)
+    cp 16
+    ret nc
+    call val_ptr
+    ld a,(G_ARG1)
+    ld (hl),a
+    inc hl
+    ld a,(G_ARG2)
+    ld (hl),a
+    ret
+
+; dv_head: HL at opcode → G_TARGET (byte+1), G_CH (from T_CH); returns A =
+; operand byte (byte+2); leaves the resume ptr (byte+3) on the stack for
+; dv_write's pop. Preserves IX.
+dv_head:
+    pop de                  ; DE = return address
+    inc hl
+    ld a,(hl)
+    ld (G_TARGET),a
+    inc hl
+    ld c,(hl)               ; operand
+    inc hl
+    push hl                 ; resume ptr
+    push de                 ; return address
+    ld a,(ix+T_CH)
+    ld (G_CH),a
+    ld a,c
+    ret
+
+; PARAM_FROM_VAL (target u8, slot u8): value = slot.
+d_param_from_val:
+    call dv_head            ; A = slot
+    call read_slot
+    jr dv_write
+
+; PARAM_ADD_VAL (target u8, slot u8): value = read_param + slot.
+d_param_add_val:
+    call dv_head            ; A = slot
+    ld c,a
+    call read_param         ; HL = current
+    push hl
+    ld a,c
+    call read_slot          ; HL = slot value
+    pop de
+    add hl,de
+    jr dv_write
+
+; PARAM_MUL_VAL (target u8, slot u8): value = (read_param * slot) >> 8.
+d_param_mul_val:
+    call dv_head            ; A = slot
+    call read_slot          ; HL = factor (8.8)
+    jr dv_mul
+
+; PARAM_MUL (target u8, factor u16 8.8): value = (read_param * factor) >> 8.
+d_param_mul:
+    inc hl
+    ld a,(hl)
+    ld (G_TARGET),a
+    inc hl
+    ld c,(hl)               ; factor low
+    inc hl
+    ld b,(hl)               ; factor high
+    inc hl
+    push hl
+    ld a,(ix+T_CH)
+    ld (G_CH),a
+    ld l,c
+    ld h,b                  ; HL = factor
+dv_mul:
+    ex de,hl                ; DE = factor
+    call read_param         ; HL = current (levels are unsigned ≤127)
+    ld a,l
+    call mul16x8_sh8        ; (DE * A) >> 8 → HL
+dv_write:
+    ld (G_VAL),hl
+    call param_set
+    pop hl
+    jp d_next
 
 ; ── sweep_value — from + trunc((to-from)*unit / 256), toward zero ──────────
 ; In: A = unit8, (G_SW_FROM), (G_SW_TO). Out: HL = value. Preserves IX/IY.

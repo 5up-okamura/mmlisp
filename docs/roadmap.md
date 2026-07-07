@@ -106,14 +106,17 @@ Order of work:
    constant LUTs moved out of Z80 RAM into ROM (a LUT_TABLE MMB section §0x0008
    read through the bank window), freeing ~726 B — the image was ~5.7 KB with
    ~600 B of code headroom (was ~30). **M3 started** (2026-07-07): FM3
-   independent-OP (FM3_MODE/FM3_OP_PITCH, driver.md §13.4) is implemented and
-   gated (`verify:m3`, tenth trace score). The **step-macro engine** (MACRO_SET/
-   CLEAR, MACRO_TABLE §0x0007) landed too (eleventh score): `steps` macros on i8
-   targets, exporter → drv-player → asm, zero tolerance. The image is now ~6.3 KB
-   with ~1 B of headroom — **M3 is size-bound**. Slice 2 (curve/stages lowering)
-   is exporter-only; slice 3 (macro-only targets, i16 NOTE_PITCH, multi-macro,
-   dynamic value slots, CALL/RET, VOICE_SET) needs the shadow-value-plane rework
-   first. Then hardware bring-up + cycle tuning.
+   independent-OP, the **macro engine** (MACRO_SET/CLEAR + MACRO_TABLE §0x0007:
+   step/curve/stage forms + `:semi` arpeggios), and **dynamic value slots**
+   (SET_VAL + PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL/PARAM_MUL + `$time`, driver.md
+   §6.4) are implemented and gated (`verify:m3`, fourteen trace scores, zero
+   tolerance). The image is ~6.5 KB at the **8 KB ceiling** (~5 B headroom); each
+   M3 feature has cost a TCB trim (now 11 concurrent tracks) or stack reclaim.
+   **The remaining M3 (multi-macro, i16 pitch macros, `:keyon`, CALL/RET, PCM
+   soft mix, VOICE_SET) needs a real headroom rework** — the shadow value plane
+   is nearly all live registers, so the levers are a sparse shadow index, cutting
+   a planned feature, or the hardware phase's real assembler. Then hardware
+   bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

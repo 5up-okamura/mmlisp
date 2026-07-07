@@ -9,11 +9,12 @@
 // Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets. The mailbox tracks
 // the driver's DATA_BASE, which moves as the image grows; it is still the only
 // published address the host needs.
-#define MB_RING        0x1940   // 8 cells x 4 bytes {cmd, a0, a1, a2}
-#define MB_HEAD        0x1960   // 68k-owned: next cell to write
-#define MB_TAIL        0x1961   // Z80-owned: next cell to read
-#define MB_TSTAT       0x1962   // 16 per-track status bytes
-#define MB_READY       0x1972   // 0xD2 when the driver main loop is up
+#define MB_RING        0x1990   // 8 cells x 4 bytes {cmd, a0, a1, a2}
+#define MB_HEAD        0x19B0   // 68k-owned: next cell to write
+#define MB_TAIL        0x19B1   // Z80-owned: next cell to read
+#define MB_TSTAT       0x19B2   // 16 per-track status bytes
+#define MB_READY       0x19C2   // 0xD2 when the driver main loop is up
+#define VAL_SLOTS      0x19D0   // 16 x i16 dynamic value slots (68k read/write)
 
 // Command ids (docs/opcodes.md / driver.md §6.2).
 #define CMD_START_TRACK  0x01
@@ -21,6 +22,7 @@
 #define CMD_KEY_OFF      0x03
 #define CMD_SET_PARAM    0x04
 #define CMD_FADE_TRACK   0x05
+#define CMD_SET_VAL      0x06
 
 // Post one command into the mailbox ring. The 68k requests the Z80 bus (which
 // halts the Z80), so the access is fully serialized; we still write the cmd
@@ -93,6 +95,24 @@ void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value)
 void MMLisp_fadeTrack(u8 track_id, u8 frames)
 {
     mailbox_send(CMD_FADE_TRACK, track_id, frames, 0);
+}
+
+void MMLisp_setVal(u8 slot, s16 value)
+{
+    // The score reads the slot via PARAM_FROM_VAL / _ADD_VAL / _MUL_VAL at
+    // dispatch time (driver.md §6.4). Interactive control: e.g. a filter-depth
+    // slider, game-state-driven timbre, live tempo.
+    mailbox_send(CMD_SET_VAL, slot, value & 0xFF, (value >> 8) & 0xFF);
+}
+
+s16 MMLisp_getVal(u8 slot)
+{
+    // GET_VAL is a direct read of the published val-slot array — no round-trip.
+    Z80_requestBus(TRUE);
+    vu8* p = Z80_RAM(VAL_SLOTS + ((slot & 0x0F) << 1));
+    s16 v = (s16)(p[0] | (p[1] << 8));
+    Z80_releaseBus();
+    return v;
 }
 
 u8 MMLisp_trackStatus(u8 track_index)

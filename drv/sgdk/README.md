@@ -3,14 +3,15 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator)
 from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
-> **Verification status.** The Z80 driver (the same ~6.3 KB image this
-> integration ships) covers **all of M1 and M2** plus two M3 features — **FM3
-> independent-operator mode** and the **step-macro engine** — FM/PSG notes,
-> level model, loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch
-> (glide/vibrato), FM3 CSM, FM3 independent-OP, step macros, single-channel PCM
-> DAC, and the host mailbox commands. Its register output is proven
+> **Verification status.** The Z80 driver (the same ~6.5 KB image this
+> integration ships) covers **all of M1 and M2** plus several M3 features —
+> **FM3 independent-operator mode**, the **macro engine** (step/curve/stage +
+> `:semi` arpeggios), and **dynamic value slots** — FM/PSG notes, level model,
+> loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3
+> CSM, FM3 independent-OP, macros, host-set value slots, single-channel PCM DAC,
+> and the host mailbox commands. Its register output is proven
 > byte-for-byte against the JS reference *in emulation* (`drv/tools/verify.mjs`;
-> twelve gate scores diff clean at zero tolerance). What
+> fourteen gate scores diff clean at zero tolerance). What
 > is **not** yet verified is this 68k glue and the driver under a real Mega
 > Drive bus/interrupt model: the C here is written against SGDK's ~1.6x Z80 API
 > and has not been compiled or run in this repo (no SGDK/m68k toolchain here).
@@ -43,7 +44,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
    mmlispdrv.z80 ──emit-bin.mjs──▶ mmlispdrv_bin.h ──gcc──────┤
                                                               ▼
                                      68k: MMLisp_init(); MMLisp_startTrack(...)
-                                                              │ mailbox (0xA01940)
+                                                              │ mailbox (0xA01990)
                                                               ▼
                                      Z80: MMLispDRV plays YM2612 + PSG @ 60 Hz
 ```
@@ -64,7 +65,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the ~6.3 KB Z80 image to Z80 RAM at
+- **Loading.** `MMLisp_init()` uploads the ~6.5 KB Z80 image to Z80 RAM at
   0x0000 via `Z80_loadCustomDriver`, then polls the mailbox `driver_ready`
   byte until it reads `0xD2`. While MMLispDRV owns the Z80 you must not use
   SGDK's XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG
@@ -77,7 +78,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 - **Control.** `MMLisp_startTrack` / `MMLisp_stopTrack` / `MMLisp_keyOff` /
   `MMLisp_setParam` / `MMLisp_fadeTrack` post commands into an 8-slot ring in
-  Z80 RAM at 0xA01940 (`docs/driver.md` §6). Posting requests the Z80 bus
+  Z80 RAM at 0xA01990 (`docs/driver.md` §6). Posting requests the Z80 bus
   (briefly halting it), writes the 4-byte cell with the command byte last, and
   releases the bus. The Z80 drains the ring at the top of each frame. Use
   `MMLisp_fadeTrack` for DJ-style scene transitions (fade one scene's tracks
@@ -107,7 +108,7 @@ Because the driver logic is already proven, the on-target check is really a
 check of *the glue + the bus/interrupt model*. In rough order of effort:
 
 1. **Boot flag.** In your emulator's debugger, break after `MMLisp_init()` and
-   read Z80 RAM 0x1972 — it should be `0xD2`. If it never flips, the upload or
+   read Z80 RAM 0x19C2 — it should be `0xD2`. If it never flips, the upload or
    the Z80 reset/interrupt-enable path is wrong, not the driver.
 
 2. **Listen.** Run in an accurate emulator (BlastEm, Genesis Plus GX). You
@@ -143,28 +144,34 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - **FM3 independent-OP (M3):** `(fm3 …)` + `fm3-1`…`fm3-4` — CH3's four
   operators at independent F-numbers with their own `$28` key bits.
 - **Macros (M3):** `(macro :target …)` — step vectors, `(curve …)` envelopes,
-  and multi-stage sequences (attack / sustain-loop / release), pre-sampled at
-  the `:step` clock, on level & FM-op targets. `:semi`/`:keyon` and pitch
-  macros are later slices.
+  multi-stage sequences (attack / sustain-loop / release), and `:semi` chiptune
+  arpeggios, on level, FM-op, and pitch targets. `:keyon` and i16 pitch macros
+  are later slices.
+- **Dynamic values (M3):** `(def-val …)` + `$name` — the host sets 16 i16 slots
+  with `MMLisp_setVal` (or reads with `MMLisp_getVal`); the score folds them into
+  parameters via `PARAM_FROM_VAL` / `_ADD_VAL` / `_MUL_VAL` / `PARAM_MUL`, plus
+  the built-in `$time`. E.g. a live filter/LFO-depth slider or game-state timbre.
 - **PCM (M2):** single-channel samples through the `fm6` DAC (`:mode
   shot`/`loop`). Note the DAC feed is modelled frame-quantized in the verified
   build (see `drv/README.md`); the real sub-frame feed timing is a
   hardware-bring-up item.
 
-- **Mailbox (M2):** `MMLisp_keyOff` (release a `len=0` hold / truncate a note),
-  `MMLisp_setParam` (one-shot param write), `MMLisp_fadeTrack` (fade a track to
-  silence then stop).
+- **Mailbox (M2/M3):** `MMLisp_keyOff` (release a `len=0` hold / truncate a
+  note), `MMLisp_setParam` (one-shot param write), `MMLisp_fadeTrack` (fade a
+  track to silence then stop), `MMLisp_setVal` / `MMLisp_getVal` (dynamic value
+  slots).
 
 ## Limits
 
 - One MMB per bank window; all live tracks share it.
-- `SET_VAL` (dynamic value slots) is M3; not yet implemented.
-- Remaining M3 stream features (macros, `PARAM_FROM_VAL`, CALL/RET,
-  multi-channel PCM soft mix) are length-decoded and skipped; notes stay in
-  time. FM3 independent-OP is the one M3 feature that fully plays.
+- Interim: up to **11 concurrent tracks** (all sample songs use ≤5) until a
+  headroom rework restores 16.
+- Remaining M3 stream features (`:keyon` macros, i16 pitch macros, multi-macro,
+  CALL/RET, multi-channel PCM soft mix) are length-decoded and skipped; notes
+  stay in time.
 
-> **Mailbox address.** The data floor — and with it the mailbox (`0xA01940`)
-> and val slots (`0xA01980`) — moves as the image grows. If you pinned an older
+> **Mailbox address.** The data floor — and with it the mailbox (`0xA01990`)
+> and val slots (`0xA019D0`) — moves as the image grows. If you pinned an older
 > address in your own code, update it (the constants in `mmlispdrv.c` are always
 > current).
 

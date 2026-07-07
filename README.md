@@ -88,15 +88,16 @@ pending.
 | FM3 CSM mode (Timer A buzz)                                        | ✅ emulation (M2) |
 | PCM playback, single DAC channel (frame-quantized feed)           | ✅ emulation (M2) |
 | `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | ✅ emulation (M2) |
-| Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 partial (M3): step/curve/stage macros on i8 targets done; `:semi`/`:keyon`/pitch next |
+| Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 partial (M3): step/curve/stage macros + `:semi` arpeggios done; `:keyon`/pitch/multi next |
 | FM3 independent-operator mode                                      | ✅ emulation (M3) |
-| Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | 🚧 planned (M3) |
+| Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | ✅ emulation (M3) |
 | Multi-channel PCM soft mixing (up to 3ch)                          | 🚧 planned (M3) |
 | `CALL`/`RET` event-stream deduplication                            | 🚧 planned (M3) |
 
-M1, all of M2, and M3's FM3 independent-operator mode plus the step-macro engine
-(steps on i8 targets) are done in emulation (eleven trace scores diff clean); the
-rest of M3 is next. See
+M1, all of M2, and a growing slice of M3 — FM3 independent-operator mode, the
+macro engine (step/curve/stage + `:semi` arpeggios), and dynamic value slots —
+are done in emulation (fourteen trace scores diff clean). The driver is now at
+the 8 KB ceiling, so the rest of M3 needs a headroom rework. See
 [docs/driver.md](docs/driver.md) for the architecture and
 [drv/README.md](drv/README.md) for the port, toolchain, and verification.
 

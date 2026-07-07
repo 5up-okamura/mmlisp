@@ -196,12 +196,16 @@ Notes:
   (run until PARAM_SWEEP_STOP / next note per IR semantics), bits1–7
   reserved 0. From/to are in target units, i16 regardless of target width
   (NOTE_PITCH cents need it; narrow targets just don't use the range).
-- **PARAM_MUL** factor is unsigned 8.8 (0x0100 = ×1.0). Read-modify-write
-  against the shadow value, quantize and clamp at the register write.
-- **PARAM_FROM_VAL / PARAM_ADD_VAL / PARAM_MUL_VAL** read val slot `slot`
-  (mmb.md §8) at dispatch time. Slot 0xFF = the built-in `$time` source
-  (elapsed frames since track start, low 16 bits, saturating per read
-  context); slots 0x00–0x0F are VAL_TABLE slots.
+- **PARAM_MUL** (implemented) factor is unsigned 8.8 (0x0100 = ×1.0).
+  Read-modify-write against the current value, clamped at the write. The driver
+  multiplies the low byte of the current value (levels are ≤127), so signed/wide
+  targets (NOTE_PITCH) via MUL are a later refinement.
+- **PARAM_FROM_VAL / PARAM_ADD_VAL / PARAM_MUL_VAL** (implemented) read val slot
+  `slot` (mmb.md §8) at dispatch time. FROM_VAL writes the slot; ADD_VAL adds it
+  to the current value; MUL_VAL multiplies by it as an 8.8 factor (like
+  PARAM_MUL). Slot 0xFF = the built-in `$time` source (elapsed 60 Hz frames,
+  low 16 bits); slots 0x00–0x0F are VAL_TABLE slots, seeded at START_TRACK and
+  written by the `SET_VAL` mailbox command (driver.md §6).
 - **TEMPO_SWEEP** interpolates the tick increment over `len` frames.
   Because the increment is proportional to BPM, linear interpolation in
   increment domain is linear in BPM — no conversion needed on the Z80.

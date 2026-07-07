@@ -301,6 +301,11 @@ export class DrvPlayer {
     this._macros = song?.macros ?? [];
     this._macroActive = Array.from({ length: 10 }, () => new Map()); // target → macro index
     this._macroSlots = Array.from({ length: 10 }, () => []); // running slots
+    // M3 dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
+    // overwritten by SET_VAL. $time (slot 0xFF) reads the frame counter instead.
+    this._valSlots = new Int16Array(16);
+    const vi = song?.valInits ?? [];
+    for (let i = 0; i < 16; i++) this._valSlots[i] = vi[i] ?? 0;
     this._tempoSweep = null;
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
@@ -761,15 +766,37 @@ export class DrvPlayer {
           };
           break;
         }
-        // ── Reserved opcodes: length-decode and skip (M2/M3) ──────────────
-        case OPCODE.PARAM_MUL:
-          this._skip(trk, op, 4);
+        // ── Dynamic value ops (driver.md §6.4; opcodes.md §6/§8) ──────────
+        case OPCODE.PARAM_MUL: {
+          const target = s[trk.pc + 1];
+          const factor = s[trk.pc + 2] | (s[trk.pc + 3] << 8); // unsigned 8.8
+          trk.pc += 4;
+          const cur = this._readParam(trk.channelId, target);
+          this._paramSet(trk.channelId, target, (cur * factor) >> 8);
           break;
-        case OPCODE.PARAM_FROM_VAL:
-        case OPCODE.PARAM_ADD_VAL:
-        case OPCODE.PARAM_MUL_VAL:
-          this._skip(trk, op, 3);
+        }
+        case OPCODE.PARAM_FROM_VAL: {
+          const target = s[trk.pc + 1];
+          const v = this._readSlot(s[trk.pc + 2]);
+          trk.pc += 3;
+          this._paramSet(trk.channelId, target, v);
           break;
+        }
+        case OPCODE.PARAM_ADD_VAL: {
+          const target = s[trk.pc + 1];
+          const v = this._readSlot(s[trk.pc + 2]);
+          trk.pc += 3;
+          this._paramSet(trk.channelId, target, this._readParam(trk.channelId, target) + v);
+          break;
+        }
+        case OPCODE.PARAM_MUL_VAL: {
+          const target = s[trk.pc + 1];
+          const factor = this._readSlot(s[trk.pc + 2]); // 8.8 factor
+          trk.pc += 3;
+          const cur = this._readParam(trk.channelId, target);
+          this._paramSet(trk.channelId, target, (cur * factor) >> 8);
+          break;
+        }
         case OPCODE.CSM_ON:
           trk.pc += 1;
           this._setReg27(this._reg27 | 0x80);
@@ -1292,9 +1319,19 @@ export class DrvPlayer {
       case 0x05: // FADE_TRACK (track_id, frames)
         this._mailboxFade(a0, a1);
         break;
+      case 0x06: // SET_VAL (slot, value low, value high)
+        if (a0 < 16) this._valSlots[a0] = i16(a1 | (a2 << 8));
+        break;
       default:
         break; // 0x01/0x02 START/STOP auto-driven; others reserved
     }
+  }
+
+  // Read a dynamic value source (driver.md §6.4): slot 0xFF is the built-in
+  // $time (frames since start, low 16 bits); 0x00–0x0F are VAL_TABLE slots.
+  _readSlot(slot) {
+    if (slot === 0xff) return this._frame & 0xffff;
+    return this._valSlots[slot & 0x0f];
   }
 
   _mailboxKeyOff(channelId) {

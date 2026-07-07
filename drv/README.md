@@ -6,9 +6,11 @@ The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 — motion (sweeps, PARAM_ADD, TEMPO_SWEEP), cent-interpolated NOTE_PITCH
 (glide / vibrato / detune), FM3 CSM mode, single-channel PCM DAC (shot / loop,
 frame-quantized), and the host mailbox commands (KEY_OFF / SET_PARAM /
-FADE_TRACK) — plus two **M3** features: **FM3 independent-operator mode**
-(FM3_MODE / FM3_OP_PITCH, driver.md §13.4) and the **step-macro engine**
-(MACRO_SET / MACRO_CLEAR, driver.md §13) for `steps` macros on i8 targets.
+FADE_TRACK) — plus several **M3** features: **FM3 independent-operator mode**
+(FM3_MODE / FM3_OP_PITCH, driver.md §13.4), the **macro engine** (MACRO_SET /
+MACRO_CLEAR, driver.md §13 — step/curve/stage forms + `:semi` arpeggios), and
+**dynamic value slots** (SET_VAL + PARAM_FROM_VAL / _ADD_VAL / _MUL_VAL /
+PARAM_MUL + `$time`, driver.md §6.4).
 
 ## Layout
 
@@ -173,15 +175,18 @@ These are the deltas against the docs as written:
    deferred to the on-hardware cycle-budget phase, where bounding per-frame
    chip access actually matters.
 2. **RAM map: all data above the code; LUTs in ROM.** The image grows through
-   the milestones, so every RAM region sits above the code at `DATA_BASE = $1940`
-   (code owns $0000–$193F): mailbox $1940, val slots $1980, globals $19A0,
-   channel state $1A28, TCB $1CA8–$1E47 (13 blocks), shadow $1E48–$1F77, valid
-   bitmap $1F78–$1F9D, stack top $2000. A **memory compaction** (M3) reclaimed the
-   over-generous stack slack and trimmed TCB from 16 to 13 concurrent tracks
-   (interim — all songs use ≤5; the ring caps concurrent starts at 8) to free
-   ~160 B of code room for the rest of M3. The macro channel-RAM at channel-block
-   0x30–0x3E moved FADE-frames-left to 0x3F (driver.md §5.1). Earlier reworks
-   keep it under 8 KB:
+   the milestones, so every RAM region sits above the code at `DATA_BASE = $1990`
+   (code owns $0000–$198F): mailbox $1990, val slots $19D0, globals $19F0,
+   channel state $1A78, TCB $1CF8–$1E57 (11 blocks), shadow $1E58–$1F87, valid
+   bitmap $1F88–$1FAD, stack top $2000. A **memory compaction** (M3) reclaimed the
+   over-generous stack slack and trimmed TCB from 16 to **11** concurrent tracks
+   (interim — all songs use ≤5; the ring caps concurrent starts at 8) to make
+   room for M3. **The driver is now at the 8 KB ceiling** (~5 B headroom): the
+   remaining M3 features (multi-macro, i16 pitch macros, CALL/RET, PCM soft mix)
+   need a real headroom rework — the shadow value plane is nearly all live
+   registers, so the likely levers are a sparse shadow index or the hardware
+   phase's real assembler. The macro channel-RAM at channel-block 0x30–0x3E moved
+   FADE-frames-left to 0x3F (driver.md §5.1). Earlier reworks keep it under 8 KB:
    - the shadow's valid plane is a **bitmap** (1 bit/register, 2×19 B), not a
      byte-per-register plane;
    - the **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB
@@ -190,12 +195,10 @@ These are the deltas against the docs as written:
      now emits only the byte offsets, and `live/src/lut-blob.js` is the shared
      LUT source for the section and the JS reference.
 
-   The image is ~6.3 KB (step-macro engine landed) with **~1 B of code headroom**
-   under the data floor — M3 is now size-bound. The `steps` engine only just fit
-   (single active macro per channel; a field-in-`IY` step loop). Slice 2 (curve /
-   stages lowering) is exporter-only and adds no image; **slice 3** (macro-only
-   targets, i16 NOTE_PITCH, multi-macro) needs the shadow-value-plane rework
-   first. The mailbox and val slots are the only 68k-published
+   The image is ~6.5 KB (macros + NOTE_SEMI + dynamic values landed) with **~5 B
+   of code headroom** under the data floor — the driver is at the 8 KB ceiling.
+   Each M3 feature has cost a TCB trim / stack reclaim; the next one needs a real
+   headroom rework, not another nibble. The mailbox and val slots are the only 68k-published
    addresses; they **move with the floor**, so `drv/sgdk/mmlispdrv.c` and
    driver.md §5 carry the current values. The image exceeds the driver.md §5
    "≤4.5 KB" *design target*; size/cycle tuning is the hardware phase.
@@ -233,6 +236,7 @@ These are the deltas against the docs as written:
 - Mailbox: ring discipline per §6.1; `driver_ready = $D2`,
   `protocol_version = 2`; per-track status bytes carry active bit + last
   MARKER id.
-- Implemented M3 opcodes (FM3_MODE / FM3_OP_PITCH, MACRO_SET / MACRO_CLEAR) execute; the remaining
+- Implemented M3 opcodes (FM3_MODE / FM3_OP_PITCH, MACRO_SET / MACRO_CLEAR,
+  PARAM_MUL / PARAM_FROM_VAL / _ADD_VAL / _MUL_VAL, SET_VAL) execute; the remaining
   M3 opcodes are length-decoded and skipped; unknown opcodes stop the track
   (fail-safe, mmb.md §13).
