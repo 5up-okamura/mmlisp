@@ -42,11 +42,12 @@ MB_READY    equ MB_RING+$32
 MB_VER      equ MB_RING+$33
 G_OVL_BANK  equ MB_RING+$34     ; u16 overlay ROM bank (host sets at init; published)
 G_MMB_BANK  equ MB_RING+$36     ; u16 current MMB bank (set by bank_latch; internal)
+G_CUR_OVL   equ MB_RING+$38     ; u8  overlay index currently in the slot (0xFF none)
 VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 
 ; Overlay slot: a shared RAM buffer just above the resident code where cold-code
 ; overlays (ovl_setup / ovl_cmd) are loaded on demand and executed (driver.md §5).
-OVERLAY_SLOT equ $1720         ; resident ends ~$1709; slot $1720..DATA_BASE ($18F0), 464 B ≥ max overlay 445
+OVERLAY_SLOT equ $172d         ; slot $172D..DATA_BASE ($18F0) = 451 B ≥ max overlay 445; G_PCMV sits just below
 
 ; driver globals block
 G_BASE      equ MB_RING+$60     ; $17E0
@@ -110,16 +111,25 @@ G_CS_TO     equ G_BASE+$48      ; u16  Timer-A period to
 G_CS_LEFT   equ G_BASE+$4a      ; u16  frames left
 G_CS_PHASE  equ G_BASE+$4c      ; u16  phase
 G_CS_STEP   equ G_BASE+$4e      ; u16  phase step
-; M2 PCM / DAC (driver.md §11, frame-quantized feed)
+; M3 PCM soft-mix (driver.md §14): pcm1–pcm3 → 3 voice slots summed to the
+; single fm6 DAC. Each frame emits PCM_MIX_R DAC ticks; every active voice is
+; resampled (nearest) to that grid and the ≤3 signed samples hard-saturate to i8.
 G_SB        equ G_BASE+$50      ; u16  SAMPLE_BANK payload window addr (0 = none)
-G_PCM_ACT   equ G_BASE+$52      ; u8   bit0 active, bit2 hasLoop, bit3 releasing
-G_PCM_BASE  equ G_BASE+$53      ; u16  window addr of the sample's first byte
-G_PCM_LEN   equ G_BASE+$55      ; u16  sample length (bytes)
-G_PCM_INC   equ G_BASE+$57      ; u32  16.16 samples/frame increment
-G_PCM_POS   equ G_BASE+$5b      ; u32  16.16 current sample position
-G_PCM_LOOPE equ G_BASE+$5f      ; u16  loop end (sample index)
-G_PCM_LOOPL equ G_BASE+$61      ; u16  loop length (loopEnd - loopStart)
-G_PCM_MUL   equ G_BASE+$63      ; u32  scratch for the 16x16 multiply
+G_PCM_MUL   equ G_BASE+$52      ; u32  scratch for the 16x16 multiply / divide
+PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
+; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
+PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
+PV_BASE     equ 1               ; u16 sample base window addr
+PV_LEN      equ 3               ; u16 length
+PV_INC      equ 5               ; u32 16.16 per-mix-tick increment
+PV_POS      equ 9               ; u32 16.16 position
+PV_LOOPE    equ 13              ; u16 loop end (sample index)
+PV_LOOPL    equ 15              ; u16 loop length (loopEnd - loopStart)
+PCM_V_SIZE  equ 17
+; 3 voice slots live in the RAM gap between the resident code and OVERLAY_SLOT
+; (the data region above DATA_BASE is packed). Boot zeroes the PV_ACT bytes; the
+; build asserts code end ≤ G_PCMV. Anchored just below the slot.
+G_PCMV      equ $16fa          ; 3 × 17 B ($16FA..$172D)
 G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
 G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
 ; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
@@ -270,6 +280,12 @@ boot_ch:
     cp 10
     jr c,boot_ch
     ; globals
+    ld a,$ff
+    ld (G_CUR_OVL),a        ; no overlay in the slot yet
+    xor a                   ; PCM voices idle (structs live below DATA_BASE, uncleared)
+    ld (G_PCMV+0*PCM_V_SIZE+PV_ACT),a
+    ld (G_PCMV+1*PCM_V_SIZE+PV_ACT),a
+    ld (G_PCMV+2*PCM_V_SIZE+PV_ACT),a
     ld hl,DEFAULT_INCREMENT
     ld (G_INC),hl
     ld a,31
@@ -500,6 +516,12 @@ bl_loop:
 ; bank into OVERLAY_SLOT, then restore the MMB bank. Caller then `call
 ; OVERLAY_SLOT`. Cold path only; clobbers A/BC/DE/HL.
 load_overlay:
+    push af
+    ld hl,G_CUR_OVL
+    cp (hl)
+    jr z,lo_hit             ; already in the slot → caller just calls it
+    ld (hl),a
+    pop af
     add a,a
     add a,a                 ; index * 4
     ld e,a
@@ -526,12 +548,17 @@ load_overlay:
     ldir                    ; copy the overlay into the slot
     ld hl,(G_MMB_BANK)
     jp latch_bank           ; window → MMB
+lo_hit:
+    pop af
+    ret
 
 ; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
-; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd).
+; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd,
+; 2 = ovl_pcm).
 ovl_desc_tab:
     db 0,0,0,0              ; overlay 0 (ovl_setup)
     db 0,0,0,0              ; overlay 1 (ovl_cmd)
+    db 0,0,0,0              ; overlay 2 (ovl_pcm)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
@@ -1132,11 +1159,18 @@ d_pcm_note_on:
     ld a,(hl)               ; note
     ld (G_ARG1),a
     inc hl
+    ld a,(ix+T_CH)
+    sub 20                  ; pcm1–pcm3 → voice 0–2
+    ld (G_ARG2),a
     call read_dur           ; DE = ticks
     ld (ix+T_PC),l
     ld (ix+T_PC+1),h
     push de
-    call pcm_note_on        ; uses G_ARG0 (sample), G_ARG1 (note)
+    push ix                 ; ovl_pcm pcm_note_on clobbers IX (voice struct)
+    ld a,2                  ; overlay index 2 = ovl_pcm
+    call load_overlay
+    call OVERLAY_SLOT
+    pop ix
     pop de
     ld a,d
     or e
@@ -1149,16 +1183,34 @@ d_pcm_wait:
     ret
 
 ; ── PCM_NOTE_OFF ───────────────────────────────────────────────────────────
+; shot plays to end; a loop starts its release tail (PV_ACT bit3) on its voice.
 d_pcm_note_off:
     inc hl
-    ; shot plays to end; a loop starts its release tail (bit3)
-    ld a,(G_PCM_ACT)
+    push hl                 ; save stream PC
+    ld a,(ix+T_CH)
+    sub 20
+    cp 3
+    jr nc,dpno_done         ; not a pcm voice
+    ld l,a
+    ld h,0
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; vi*16
+    add hl,de               ; vi*17
+    ld de,G_PCMV
+    add hl,de               ; HL = &voice.PV_ACT
+    ld a,(hl)
     bit 0,a
-    jp z,d_next
+    jr z,dpno_done          ; not active
     bit 2,a                 ; hasLoop?
-    jp z,d_next
+    jr z,dpno_done          ; shot → plays to end
     or $08                  ; releasing
-    ld (G_PCM_ACT),a
+    ld (hl),a
+dpno_done:
+    pop hl
     jp d_next
 
 ; ===========================================================================
@@ -3346,248 +3398,149 @@ pf_next:
     jp nz,pf_lp
     ret
 
-; ===========================================================================
-; M2 PCM / DAC (driver.md §11) — frame-quantized single-channel feed.
-; ===========================================================================
-; pcm_note_on: G_ARG0 = sample id, G_ARG1 = note. Sets up the voice.
-pcm_note_on:
-    ld hl,(G_SB)
-    ld a,h
-    or l
-    ret z                   ; no SAMPLE_BANK
-    ; entry = G_SB + 2 + id*20 ; id*20 = id*16 + id*4
-    ld a,(G_ARG0)
-    ld e,a
-    ld d,0
-    ld l,a
-    ld h,0
-    add hl,hl
-    add hl,hl               ; id*4
-    ld b,h
-    ld c,l                  ; BC = id*4
-    add hl,hl
-    add hl,hl               ; id*16
-    add hl,bc               ; id*20
-    ld bc,(G_SB)
-    add hl,bc
-    inc hl
-    inc hl                  ; HL = entry addr (skip u16 count)
-    inc hl                  ; skip sample_id (+0) → flags (+1)
-    ; flags → hasLoop (provisional store; the tail folds it into bit2)
-    ld a,(hl)               ; flags
-    and 1
-    ld (G_PCM_ACT),a
-    inc hl                  ; → offset (+2)
-    ; offset (u32, low u16 used) → sample base = G_SB + 2 + count*20 + offset
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; DE = offset (low u16)
-    inc hl
-    inc hl
-    inc hl                  ; skip offset hi bytes → +6 length
-    push de                 ; save offset
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; DE = length (low u16)
-    ld (G_PCM_LEN),de
-    inc hl
-    inc hl
-    inc hl                  ; skip length hi → +10 base_rate
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; DE = base_rate
-    inc hl                  ; +12 loop_start
-    push hl                 ; save ptr at loop_start
-    ; inc32 = base_rate × MULT_FRAME[note-36]
-    ld a,(G_ARG1)
-    sub 36
-    jr nc,pno_nlo
-    xor a
-pno_nlo:
-    cp 49
-    jr c,pno_nok
-    ld a,48
-pno_nok:
-    add a,a
-    ld c,a
-    ld b,0
-    ld hl,(PCM_MULT_FRAME)
-    add hl,bc
-    ld c,(hl)
-    inc hl
-    ld b,(hl)               ; BC = MULT_FRAME[note-36]
-    ; DE = base_rate, BC = mult → G_PCM_INC (32-bit)
-    call mul16x16           ; DE×BC → (G_PCM_MUL) u32
+; process_pcm: PCM soft-mix (driver.md §14). PCM_MIX_R ticks/frame; each tick
+; sums the ≤3 active voices (nearest-neighbour), hard-saturates to i8, writes the
+; fm6 DAC ($2A). DAC on/off via the change-only shadow ($2B). (G_PCM_MUL) low
+; word is the per-tick signed accumulator.
+process_pcm:
+    call pcm_any_active
+    ret z                   ; no voice active → DAC already off
+    ld b,PCM_MIX_R
+pp_tick:
+    push bc                 ; save tick counter
+    ld hl,0
+    ld (G_PCM_MUL),hl       ; acc = 0
+    ld ix,G_PCMV+0*PCM_V_SIZE
+    call pcm_voice_acc
+    ld ix,G_PCMV+1*PCM_V_SIZE
+    call pcm_voice_acc
+    ld ix,G_PCMV+2*PCM_V_SIZE
+    call pcm_voice_acc
+    ; saturate (G_PCM_MUL) i16 → i8 in A
     ld hl,(G_PCM_MUL)
-    ld (G_PCM_INC),hl
-    ld hl,(G_PCM_MUL+2)
-    ld (G_PCM_INC+2),hl
-    ; loop_start / loop_end
-    pop hl                  ; ptr at loop_start (u32)
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; loop_start (low u16)
-    inc hl
-    inc hl
-    inc hl
-    push de                 ; loop_start
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; loop_end (low u16)
-    ld (G_PCM_LOOPE),de
-    pop bc                  ; loop_start
-    ex de,hl                ; HL = loop_end
+    ld a,h
     or a
-    sbc hl,bc               ; HL = loop_end - loop_start
-    ld (G_PCM_LOOPL),hl
-    ; base = G_SB + 2 + count*20 + offset. count*20:
-    ld hl,(G_SB)
-    ld c,(hl)
-    inc hl
-    ld b,(hl)               ; BC = count
-    ld l,c
-    ld h,b
-    add hl,hl
-    add hl,hl               ; count*4
-    ld e,l
-    ld d,h
-    add hl,hl
-    add hl,hl               ; count*16
-    add hl,de               ; count*20
-    ld de,(G_SB)
-    add hl,de
-    inc hl
-    inc hl                  ; + 2 (past count) = blob region base
-    pop de                  ; offset
-    add hl,de               ; + entry offset → sample base addr
-    ld (G_PCM_BASE),hl
-    ; pos = 0
-    xor a
-    ld (G_PCM_POS),a
-    ld (G_PCM_POS+1),a
-    ld (G_PCM_POS+2),a
-    ld (G_PCM_POS+3),a
-    ; G_PCM_ACT holds hasLoop (0/1) from the flags read; assemble bit0 active,
-    ; bit2 hasLoop. DAC on/off is tracked by the change-only shadow, not a bit.
-    ld a,(G_PCM_ACT)
-    add a,a
-    add a,a                 ; hasLoop → bit2
-    or $01                  ; active
-    ld (G_PCM_ACT),a
-    ld b,$80                ; DAC enable (fm6 → DAC); shadow suppresses repeats
+    jr z,pp_poslo           ; H==0: 0..255 (positive)
+    inc a
+    jr z,pp_neg             ; H==$FF: negative
+    bit 7,h
+    jr nz,pp_clipn          ; H high → very negative
+    ld a,127                ; H low but nonzero → very positive
+    jr pp_have
+pp_poslo:
+    ld a,l
+    cp 128
+    jr c,pp_have            ; L<128 → A=L
+    ld a,127
+    jr pp_have
+pp_neg:
+    ld a,l
+    cp 128
+    jr nc,pp_have           ; L>=128 → value in [-128,-1] → A=L (i8)
+pp_clipn:
+    ld a,$80                ; -128
+pp_have:
+    xor $80                 ; signed i8 → unsigned DAC
+    ld b,a
+    ld d,0
+    ld e,$2a
+    call ym_hw              ; raw DAC write (bypass shadow)
+    pop bc
+    djnz pp_tick
+    ; all ticks done: if every voice ended, release the DAC
+    call pcm_any_active
+    ret nz
+    ld b,0
     ld d,0
     ld e,$2b
-    jp ym_write
+    jp ym_write             ; DAC off (change-only)
 
-; process_pcm: one frame of DAC feed (frame-quantized).
-process_pcm:
-    ld a,(G_PCM_ACT)
-    bit 0,a
+; pcm_any_active: Z set iff no voice's PV_ACT is nonzero (bit0 active). A clobbered.
+pcm_any_active:
+    ld a,(G_PCMV+0*PCM_V_SIZE+PV_ACT)
+    or a
+    ret nz
+    ld a,(G_PCMV+1*PCM_V_SIZE+PV_ACT)
+    or a
+    ret nz
+    ld a,(G_PCMV+2*PCM_V_SIZE+PV_ACT)
+    or a
+    ret
+
+; pcm_voice_acc: IX = voice. If active, add its current (nearest-neighbour)
+; signed sample to (G_PCM_MUL), advance pos by PV_INC, wrap the loop region or
+; deactivate at a shot/tail end. Preserves B (the tick counter).
+pcm_voice_acc:
+    ld a,(ix+PV_ACT)
+    or a
     ret z
-    ; start = pos>>16 = high word of pos32
-    ld hl,(G_PCM_POS+2)
-    ld (G_PCM_MUL),hl       ; stash start index
-    ; pos += inc (32-bit)
-    ld hl,(G_PCM_POS)
-    ld de,(G_PCM_INC)
-    add hl,de
-    ld (G_PCM_POS),hl
-    ld hl,(G_PCM_POS+2)
-    ld de,(G_PCM_INC+2)
-    adc hl,de
-    ld (G_PCM_POS+2),hl     ; HL = end index (high word)
-    ; iterate k = start .. end-1
-    ld de,(G_PCM_MUL)       ; DE = start (k)
-ppf_loop:
-    ld a,e                  ; k - end (carry ⇒ k < end ⇒ keep going)
-    sub l
-    ld a,d
-    sbc a,h
-    jr nc,ppf_wrap          ; k >= end → done this frame
-    ; output sample at index DE (k), with shot/loop handling
-    push hl                 ; save end
-    push de                 ; save k (pcm_emit_sample clobbers DE)
-    call pcm_emit_sample    ; DE = k → writes $2A; may clear active
-    pop de
-    pop hl
-    ld a,(G_PCM_ACT)
-    bit 0,a
-    jr z,ppf_end            ; shot ended mid-frame
-    inc de                  ; k++
-    jr ppf_loop
-ppf_wrap:
-    ; loop: keep pos inside the loop region
-    ld a,(G_PCM_ACT)
-    bit 2,a
-    jr z,ppf_done
-    bit 3,a
-    jr nz,ppf_done          ; releasing: no wrap
-ppf_wrapl:
-    ld hl,(G_PCM_POS+2)
-    ld de,(G_PCM_LOOPE)
+    ld l,(ix+PV_POS+2)
+    ld h,(ix+PV_POS+3)      ; HL = idx = pos>>16
+    bit 2,(ix+PV_ACT)       ; hasLoop?
+    jr z,pva_shot
+    bit 3,(ix+PV_ACT)       ; releasing?
+    jr z,pva_fetch          ; loop, not releasing → idx already < loopEnd
+pva_shot:
+    ld e,(ix+PV_LEN)
+    ld d,(ix+PV_LEN+1)
     ld a,l
     sub e
     ld a,h
     sbc a,d
-    jr c,ppf_done           ; posHi < loopEnd
-    ld de,(G_PCM_LOOPL)     ; posHi -= loopLen
-    ld hl,(G_PCM_POS+2)
+    jr c,pva_fetch          ; idx < len
+    ld (ix+PV_ACT),0        ; shot / tail reached the end
+    ret
+pva_fetch:
+    ld e,(ix+PV_BASE)
+    ld d,(ix+PV_BASE+1)
+    add hl,de              ; HL = base + idx (window addr)
+    ld a,(hl)              ; signed sample
+    ld l,a
+    ld h,0
+    bit 7,a
+    jr z,pva_add
+    ld h,$ff              ; sign-extend
+pva_add:
+    ld de,(G_PCM_MUL)
+    add hl,de
+    ld (G_PCM_MUL),hl     ; acc += sample
+    ; pos += inc (32-bit)
+    ld l,(ix+PV_POS)
+    ld h,(ix+PV_POS+1)
+    ld e,(ix+PV_INC)
+    ld d,(ix+PV_INC+1)
+    add hl,de
+    ld (ix+PV_POS),l
+    ld (ix+PV_POS+1),h
+    ld l,(ix+PV_POS+2)
+    ld h,(ix+PV_POS+3)
+    ld e,(ix+PV_INC+2)
+    ld d,(ix+PV_INC+3)
+    adc hl,de
+    ld (ix+PV_POS+2),l
+    ld (ix+PV_POS+3),h
+    ; loop wrap (non-releasing): while pos>>16 >= loopEnd: pos -= loopLen<<16
+    bit 2,(ix+PV_ACT)
+    ret z
+    bit 3,(ix+PV_ACT)
+    ret nz
+pva_wrap:
+    ld l,(ix+PV_POS+2)
+    ld h,(ix+PV_POS+3)
+    ld e,(ix+PV_LOOPE)
+    ld d,(ix+PV_LOOPE+1)
+    ld a,l
+    sub e
+    ld a,h
+    sbc a,d
+    ret c                 ; idx < loopEnd → done
+    ld e,(ix+PV_LOOPL)
+    ld d,(ix+PV_LOOPL+1)
     or a
     sbc hl,de
-    ld (G_PCM_POS+2),hl
-    jr ppf_wrapl
-ppf_done:
-    ret
-ppf_end:
-    ret
-
-; pcm_emit_sample: DE = sample index k. Handles shot end / loop wrap, writes
-; the (signed→unsigned) byte to $2A. Clears active + DAC off at shot end.
-pcm_emit_sample:
-    ld a,(G_PCM_ACT)
-    bit 2,a
-    jr z,pes_shot
-    bit 3,a
-    jr nz,pes_shot          ; releasing → play out to end (shot-like)
-    ; loop: while k >= loopEnd: k -= loopLen
-pes_wrap:
-    ld hl,(G_PCM_LOOPE)
-    ld a,e
-    sub l
-    ld a,d
-    sbc a,h
-    jr c,pes_have           ; k < loopEnd
-    ld hl,(G_PCM_LOOPL)
-    ex de,hl
-    or a
-    sbc hl,de
-    ex de,hl                ; k -= loopLen
-    jr pes_wrap
-pes_shot:
-    ld hl,(G_PCM_LEN)
-    ld a,e
-    sub l
-    ld a,d
-    sbc a,h
-    jr c,pes_have           ; k < len
-    ; end of a shot (or unlooped) sample: stop + DAC off
-    ld a,(G_PCM_ACT)
-    and $fe                 ; clear active
-    ld (G_PCM_ACT),a
-    ld b,0
-    ld d,0
-    ld e,$2b
-    call ym_write           ; DAC off (change-only)
-    ret
-pes_have:
-    ld hl,(G_PCM_BASE)
-    add hl,de               ; sample byte address in window
-    ld a,(hl)
-    xor $80                 ; signed → unsigned DAC
-    ld b,a
-    ld d,0
-    ld e,$2a
-    jp ym_hw                ; raw DAC write (bypass shadow)
+    ld (ix+PV_POS+2),l
+    ld (ix+PV_POS+3),h
+    jr pva_wrap
 
 ; mul16x16: DE × BC (unsigned) → (G_PCM_MUL) u32 little-endian. MSB-first
 ; shift-add; `ld` preserves flags so the <<1 carry crosses word halves.

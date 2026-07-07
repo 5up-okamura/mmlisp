@@ -44,7 +44,8 @@ import {
   curveUnit8,
   sweepValue,
   sweepStep,
-  pcmIncrement,
+  pcmTickIncrement,
+  PCM_MIX_RATE,
 } from "./mmb.js";
 import {
   midiToFnumBlock,
@@ -310,8 +311,23 @@ export class DrvPlayer {
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
-    // Single-channel PCM through the fm6 DAC (frame-quantized, driver.md §11).
-    this._pcm = { active: false, dacOn: false };
+    // PCM soft-mix (driver.md §14): pcm1–pcm3 (channels 20–22) are three voice
+    // slots summed in software to the single fm6 DAC. Each frame emits R mix
+    // ticks; every active voice is resampled to that grid, the ≤3 signed samples
+    // summed, hard-saturated to int8, and written to $2A. `dacOn` is shared.
+    this._pcmVoices = [0, 1, 2].map(() => ({
+      active: false,
+      base: 0,
+      len: 0,
+      hasLoop: false,
+      loopStart: 0,
+      loopEnd: 0,
+      loopLen: 0,
+      inc: 0,
+      pos: 0,
+      releasing: false,
+    }));
+    this._pcmDacOn = false;
 
     this._trk = (song?.tracks ?? []).map((t) => ({
       trackId: t.trackId,
@@ -325,7 +341,7 @@ export class DrvPlayer {
       running: true,
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
-      unsupported: t.channelId >= 19, // pcm-softmix (20-22): timeline only (M3)
+      unsupported: t.channelId >= 23, // pcm1–pcm3 (20–22) are soft-mix PCM (M3)
       fading: false, // FADE_TRACK (M2 mailbox): Bresenham vol ramp to 0, then stop
       fadeN: 0,
       fadeErr: 0,
@@ -851,7 +867,7 @@ export class DrvPlayer {
           const note = s[trk.pc + 2];
           const dur = readDuration(s, trk.pc + 3);
           trk.pc = dur.next;
-          this._pcmNoteOn(sampleId, note);
+          this._pcmNoteOn(trk.channelId, sampleId, note);
           // Held (dur 0) PCM suspends the dispatcher like any hold; otherwise
           // advance the clock. The sample keeps feeding via step 3 regardless.
           if (dur.ticks === 0) {
@@ -863,7 +879,7 @@ export class DrvPlayer {
         }
         case OPCODE.PCM_NOTE_OFF:
           trk.pc += 1;
-          this._pcmNoteOff();
+          this._pcmNoteOff(trk.channelId);
           break;
         case OPCODE.MACRO_SET: {
           const macroId = s[trk.pc + 1];
@@ -1278,10 +1294,12 @@ export class DrvPlayer {
     this._writeCb(0, 0x2a, (storedByte ^ 0x80) & 0xff, this._when());
   }
 
-  _pcmNoteOn(sampleId, note) {
+  _pcmNoteOn(channelId, sampleId, note) {
+    const vi = channelId - 20; // pcm1–pcm3 → voice 0–2
+    if (vi < 0 || vi > 2) return;
     const s = this._song.samples[sampleId];
     if (!s || s.len === 0) return;
-    const v = this._pcm;
+    const v = this._pcmVoices[vi];
     v.active = true;
     v.base = s.base;
     v.len = s.len;
@@ -1289,19 +1307,21 @@ export class DrvPlayer {
     v.loopStart = s.loopStart;
     v.loopEnd = s.hasLoop ? s.loopEnd : s.len;
     v.loopLen = v.loopEnd - v.loopStart;
-    v.inc = pcmIncrement(s.baseRate, note); // 16.16 samples/frame
+    v.inc = pcmTickIncrement(s.baseRate, note); // 16.16 samples/mix-tick
     v.pos = 0;
     v.releasing = false;
-    if (!v.dacOn) {
-      v.dacOn = true;
+    if (!this._pcmDacOn) {
+      this._pcmDacOn = true;
       this._ym(0, 0x2b, 0x80); // DAC enable (fm6 → DAC)
     }
   }
 
-  _pcmNoteOff() {
+  _pcmNoteOff(channelId) {
     // shot plays to its end regardless (opcodes.md §6). A loop leaves its loop
     // region and plays out the tail to the sample end.
-    const v = this._pcm;
+    const vi = channelId - 20;
+    if (vi < 0 || vi > 2) return;
+    const v = this._pcmVoices[vi];
     if (v.active && v.hasLoop) v.releasing = true;
   }
 
@@ -1382,28 +1402,39 @@ export class DrvPlayer {
 
   // One frame of DAC feed. Returns nothing; deactivates + DAC-off at end.
   _pcmFrame() {
-    const v = this._pcm;
-    if (!v.active) return;
-    const start = v.pos >>> 16;
-    v.pos = (v.pos + v.inc) >>> 0;
-    const end = v.pos >>> 16;
+    const voices = this._pcmVoices;
+    if (!voices[0].active && !voices[1].active && !voices[2].active) return;
     const data = this._song.sampleData;
-    for (let k = start; k < end; k++) {
-      let idx = k;
-      if (v.hasLoop && !v.releasing) {
-        while (idx >= v.loopEnd) idx -= v.loopLen;
-      } else if (idx >= v.len) {
-        v.active = false;
-        break;
+    for (let t = 0; t < PCM_MIX_RATE; t++) {
+      let acc = 0;
+      for (let vi = 0; vi < 3; vi++) {
+        const v = voices[vi];
+        if (!v.active) continue;
+        const idx = v.pos >>> 16;
+        if (!(v.hasLoop && !v.releasing) && idx >= v.len) {
+          // shot / releasing tail reached the sample end
+          v.active = false;
+          continue;
+        }
+        acc += i8(data[v.base + idx]); // signed sample, nearest-neighbour
+        v.pos = (v.pos + v.inc) >>> 0;
+        if (v.hasLoop && !v.releasing) {
+          // keep the accumulator inside the loop region (bounds pos too)
+          while (v.pos >>> 16 >= v.loopEnd)
+            v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
+        }
       }
-      this._dacByte(data[v.base + idx]);
+      // hard-saturate the summed voices to int8, then to the DAC
+      acc = acc > 127 ? 127 : acc < -128 ? -128 : acc;
+      this._dacByte(acc);
     }
-    if (v.active && v.hasLoop && !v.releasing) {
-      // Keep the accumulator inside the loop region.
-      while (v.pos >>> 16 >= v.loopEnd) v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
-    }
-    if (!v.active && v.dacOn) {
-      v.dacOn = false;
+    if (
+      !voices[0].active &&
+      !voices[1].active &&
+      !voices[2].active &&
+      this._pcmDacOn
+    ) {
+      this._pcmDacOn = false;
       this._ym(0, 0x2b, 0x00); // release fm6 back to FM
     }
   }
@@ -1534,7 +1565,7 @@ export class DrvPlayer {
   _done() {
     // The driver is still busy while the DAC is feeding a sample, even if
     // every track has ended (a shot/loop tail plays past its note).
-    if (this._pcm && this._pcm.active) return false;
+    if (this._pcmVoices.some((v) => v.active)) return false;
     return this._trk.every((t) => !t.running || t.held);
   }
 

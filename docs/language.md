@@ -73,7 +73,7 @@ unaffected by layering.
 | Name            | Hardware                | Notes                                             |
 | --------------- | ----------------------- | ------------------------------------------------- |
 | `fm1`–`fm5`     | YM2612 FM channels      |                                                   |
-| `fm6`           | YM2612 FM / DAC         | `:mode fm` (default) / `shot` / `loop` (PCM); mid-track switching allowed |
+| `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. Using any `pcmN` puts fm6 in DAC mode (the hardware shares one DAC) |
 | `fm3`           | YM2612 FM3, normal mode | Note-less `(fm3 voice)` declares the shared patch for independent-OP mode |
 | `fm3-1`–`fm3-4` | FM3 independent-OP mode | One track per operator F-number; presence enables the mode (`FM3_MODE op`) |
 | `fm3-csm`       | FM3 CSM mode            | Tonal center; standard note syntax                |
@@ -208,7 +208,7 @@ head position, and equally as body directives.)
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick         |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (per-note); `fm6`: `fm`/`shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (per-note); `noise`: `white0`–`white3`/`periodic0`–`periodic3` |
 | `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:break`   | (no value)                | Early exit of the enclosing counted loop (§13)           |
@@ -814,6 +814,13 @@ sample symbol).
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, data becomes
 raw 8-bit signed PCM.
 
+`pcm1`–`pcm3` are three voices **soft-mixed** by the Z80 to the single fm6 DAC
+at a fixed mix rate (~10.5 kHz): each voice is resampled to that grid, the
+voices are summed and **hard-clipped**, so loud simultaneous hits distort by
+design (headroom is the composer's to manage via `:vel`/`:vol`). A `shot` plays
+to its end; a `loop` sustains until `KEY_OFF` then plays its tail. See
+driver.md §14.
+
 ### Playback
 
 - **Pitch → rate**: `rate = 2^(semitones_from_C4 / 12)`; C4 = 1.0×. Practical
@@ -826,8 +833,9 @@ raw 8-bit signed PCM.
   > mode honors KEY-OFF. Gated / length-limited one-shots are a later milestone.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6).
-- `fm6` doubles as a PCM channel via `:mode shot`/`loop` (bind a sample with
-  `:sample`); `:mode fm` returns it to FM. Mid-track switching is allowed.
+- PCM plays on `pcm1`–`pcm3`, three voices **soft-mixed** to the single fm6 DAC
+  (driver.md §14). `fm6` is FM only (`fm6 :mode shot`/`loop` is an error); using
+  any `pcmN` claims the DAC, so fm6 is unavailable as FM at the same time.
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; an unknown
   sample name is `E_PCM_SAMPLE_UNDEFINED`.
 

@@ -480,11 +480,7 @@ function isPcmTrackName(name) {
 }
 
 function isTrackPcmActive(trackState) {
-  return !!(
-    trackState?.isPcmTrack ||
-    trackState?.fm6Mode === "shot" ||
-    trackState?.fm6Mode === "loop"
-  );
+  return !!trackState?.isPcmTrack;
 }
 
 function isLikelyPcmBodyToken(value) {
@@ -2340,17 +2336,14 @@ function compileChannelBody(
               } else if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
                 trackState.pcmPendingMode = rawVal;
               } else if (trackState.isFm6Track && rawVal === "fm") {
-                trackState.fm6Mode = "fm";
-              } else if (trackState.isFm6Track && isPcmModeSymbol(rawVal)) {
-                trackState.fm6Mode = rawVal;
-                trackState.pcmPendingMode = rawVal;
+                // fm6 is FM-only; `:mode fm` is an accepted no-op. PCM is pcm1-3.
               } else {
                 pushDiag(
                   diagnostics,
                   "error",
                   "E_PCM_MODE_INVALID",
                   trackState.isFm6Track
-                    ? "fm6 :mode must be fm, shot, or loop"
+                    ? "fm6 is FM only; use pcm1-3 for PCM"
                     : "pcm :mode must be shot or loop",
                   nodeSrc(node),
                   trackName,
@@ -3661,7 +3654,6 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         isPcmTrack,
         isFm6Track: head === "fm6",
         isNoiseTrack: head === "noise",
-        fm6Mode: "fm",
         pcmSampleName,
         pcmPendingMode: null,
         sampleDefs,

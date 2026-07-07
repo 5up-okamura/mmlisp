@@ -1,0 +1,179 @@
+; ovl_pcm — overlay (Stage 2, driver.md §14). Cold PCM setup loaded on demand
+; into OVERLAY_SLOT and run there (68k free, Z80 autonomous). Entry = pcm_note_on;
+; the hot per-frame mixer (process_pcm) stays resident. Assembled at the slot with
+; the resident image's symbols preloaded, so it calls resident helpers directly.
+        org OVERLAY_SLOT
+; pcm_note_on: (G_ARG0)=sample id, (G_ARG1)=note, (G_ARG2)=voice index (0-2).
+; Fills voice struct G_PCMV+vi*17. inc = per-mix-tick (16.16) = inc_frame / R.
+pcm_note_on:
+    ld hl,(G_SB)
+    ld a,h
+    or l
+    ret z                   ; no SAMPLE_BANK
+    ld a,(G_ARG2)
+    cp 3
+    ret nc                  ; voice index guard (pcm1-3 → 0-2)
+    ; IX = G_PCMV + vi*17
+    ld l,a
+    ld h,0
+    ld e,l
+    ld d,h                  ; DE = vi
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; vi*16
+    add hl,de               ; vi*17
+    ld de,G_PCMV
+    add hl,de
+    push hl
+    pop ix                  ; IX = voice struct
+    ; SAMPLE_BANK entry = G_SB + 2 + id*20
+    ld a,(G_ARG0)
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl               ; id*4
+    ld b,h
+    ld c,l                  ; BC = id*4
+    add hl,hl
+    add hl,hl               ; id*16
+    add hl,bc               ; id*20
+    ld bc,(G_SB)
+    add hl,bc
+    inc hl
+    inc hl                  ; skip u16 count → entry
+    inc hl                  ; skip sample_id (+0) → flags (+1)
+    ld a,(hl)               ; flags
+    and 1
+    ld (ix+PV_ACT),a        ; provisional hasLoop (folded in below)
+    inc hl                  ; → offset (+2)
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = offset (low u16)
+    inc hl
+    inc hl
+    inc hl                  ; skip offset hi → +6 length
+    push de                 ; save offset
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = length (low u16)
+    ld (ix+PV_LEN),e
+    ld (ix+PV_LEN+1),d
+    inc hl
+    inc hl
+    inc hl                  ; skip length hi → +10 base_rate
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = base_rate
+    inc hl                  ; +12 loop_start
+    push hl                 ; save ptr at loop_start
+    ; inc_frame = base_rate × MULT_FRAME[note-36]
+    ld a,(G_ARG1)
+    sub 36
+    jr nc,po_nlo
+    xor a
+po_nlo:
+    cp 49
+    jr c,po_nok
+    ld a,48
+po_nok:
+    add a,a
+    ld c,a
+    ld b,0
+    ld hl,(PCM_MULT_FRAME)
+    add hl,bc
+    ld c,(hl)
+    inc hl
+    ld b,(hl)               ; BC = MULT_FRAME[note-36]
+    call mul16x16           ; DE×BC → (G_PCM_MUL) u32 = inc_frame
+    call div32_r            ; (G_PCM_MUL) /= PCM_MIX_R → inc_tick
+    ld hl,(G_PCM_MUL)
+    ld (ix+PV_INC),l
+    ld (ix+PV_INC+1),h
+    ld hl,(G_PCM_MUL+2)
+    ld (ix+PV_INC+2),l
+    ld (ix+PV_INC+3),h
+    ; loop_start / loop_end
+    pop hl                  ; ptr at loop_start (u32)
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; loop_start (low u16)
+    inc hl
+    inc hl
+    inc hl
+    push de                 ; loop_start
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; loop_end (low u16)
+    ld (ix+PV_LOOPE),e
+    ld (ix+PV_LOOPE+1),d
+    pop bc                  ; loop_start
+    ex de,hl                ; HL = loop_end
+    or a
+    sbc hl,bc               ; loop_end - loop_start
+    ld (ix+PV_LOOPL),l
+    ld (ix+PV_LOOPL+1),h
+    ; base = G_SB + 2 + count*20 + offset
+    ld hl,(G_SB)
+    ld c,(hl)
+    inc hl
+    ld b,(hl)               ; BC = count
+    ld l,c
+    ld h,b
+    add hl,hl
+    add hl,hl               ; count*4
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl               ; count*16
+    add hl,de               ; count*20
+    ld de,(G_SB)
+    add hl,de
+    inc hl
+    inc hl                  ; + 2 (past count) = blob base
+    pop de                  ; offset
+    add hl,de               ; sample base addr
+    ld (ix+PV_BASE),l
+    ld (ix+PV_BASE+1),h
+    ; pos = 0
+    xor a
+    ld (ix+PV_POS),a
+    ld (ix+PV_POS+1),a
+    ld (ix+PV_POS+2),a
+    ld (ix+PV_POS+3),a
+    ; ACT = active (bit0) | hasLoop (bit2)
+    ld a,(ix+PV_ACT)        ; provisional hasLoop 0/1
+    add a,a
+    add a,a                 ; → bit2
+    or $01
+    ld (ix+PV_ACT),a
+    ; DAC enable (fm6 → DAC); change-only shadow suppresses repeats
+    ld b,$80
+    ld d,0
+    ld e,$2b
+    jp ym_write
+
+; div32_r: (G_PCM_MUL) u32 /= PCM_MIX_R (175), floored, in place; remainder
+; discarded. Standard restoring long division (9-bit remainder via the carry).
+div32_r:
+    ld hl,(G_PCM_MUL)       ; low 16
+    ld de,(G_PCM_MUL+2)     ; high 16 → DEHL = dividend; quotient shifts in
+    ld c,PCM_MIX_R
+    ld b,32
+    xor a                   ; A = running remainder (< 175)
+d32_lp:
+    add hl,hl
+    rl e
+    rl d                    ; DEHL <<= 1, carry = shifted-out MSB
+    rla                     ; rem = rem<<1 | MSB ; carry = overflow (bit 8)
+    jr c,d32_sub            ; rem >= 256 > 175 → subtract
+    cp c
+    jr c,d32_no
+d32_sub:
+    sub c                   ; rem -= 175 (wraps correctly on overflow)
+    inc l                   ; set quotient bit 0 (vacated by the shift)
+d32_no:
+    djnz d32_lp
+    ld (G_PCM_MUL),hl
+    ld (G_PCM_MUL+2),de
+    ret

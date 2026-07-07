@@ -317,6 +317,19 @@ export function pcmIncrement(baseRate, note) {
   return (baseRate * PCM_MULT_FRAME[n - 36]) >>> 0;
 }
 
+// PCM soft-mix (driver.md §14): pcm1–pcm3 are summed in software to the single
+// fm6 DAC. Each frame emits a fixed R DAC writes ("mix ticks"); every active
+// voice is resampled (nearest-neighbour) to that grid and the ≤3 signed samples
+// are summed then hard-saturated to int8. R is the effective sample rate / 60.
+export const PCM_MIX_RATE = 175; // DAC writes per frame ≈ 10.5 kHz
+
+// 16.16 per-mix-tick increment: the per-frame increment divided across R ticks.
+// Computed at full 16.16 precision then floored so pitch stays accurate (a table
+// pre-divided by R would round too coarsely).
+export function pcmTickIncrement(baseRate, note) {
+  return Math.floor(pcmIncrement(baseRate, note) / PCM_MIX_RATE) >>> 0;
+}
+
 // ── Duration operand (mmb.md §7.2) ────────────────────────────────────────
 export const DUR_HOLD = 0x00; // indefinite hold (len=0 note)
 export const DUR_EXT = 0xff; // extended: u16le follows

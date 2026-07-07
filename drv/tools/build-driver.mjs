@@ -18,8 +18,9 @@ const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 // moves into these files; each is assembled at OVERLAY_SLOT and loaded on
 // demand into that shared RAM buffer. The overlay ROM ships at OVERLAY_BANK.
 export const OVERLAY_BANK = 1;
-// Order defines the overlay index in ovl_desc_tab (0 = ovl_setup, 1 = ovl_cmd).
-const OVERLAYS = ["ovl_setup.z80", "ovl_cmd.z80"];
+// Order defines the overlay index in ovl_desc_tab (0 = ovl_setup, 1 = ovl_cmd,
+// 2 = ovl_pcm).
+const OVERLAYS = ["ovl_setup.z80", "ovl_cmd.z80", "ovl_pcm.z80"];
 
 export function buildDriver() {
   writeFileSync(join(srcDir, "tables.z80"), generateTables());
@@ -28,5 +29,21 @@ export function buildDriver() {
     overlayPaths: OVERLAYS.map((f) => join(srcDir, f)),
     descTab: "ovl_desc_tab",
   });
+  // The PCM voice structs live in the RAM gap just below OVERLAY_SLOT; assert the
+  // resident code does not grow into them (G_PCMV is $16F0). Assert each overlay
+  // still fits the shared slot.
+  const gPcmv = built.symbols.get("G_PCMV");
+  const slot = built.symbols.get("OVERLAY_SLOT");
+  const dataBase = built.symbols.get("DATA_BASE");
+  if (built.resident.length > gPcmv) {
+    throw new Error(
+      `resident (${built.resident.length}) overruns G_PCMV (0x${gPcmv.toString(16)})`,
+    );
+  }
+  const slotSize = dataBase - slot;
+  for (const ov of built.overlays) {
+    if (ov.length > slotSize)
+      throw new Error(`overlay ${ov.length} B > slot ${slotSize} B`);
+  }
   return { ...built, overlayBank: OVERLAY_BANK };
 }

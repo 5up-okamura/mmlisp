@@ -8,7 +8,7 @@ from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > **FM3 independent-operator mode**, the **macro engine** (step/curve/stage +
 > `:semi` arpeggios), and **dynamic value slots** — FM/PSG notes, level model,
 > loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3
-> CSM, FM3 independent-OP, macros, host-set value slots, single-channel PCM DAC,
+> CSM, FM3 independent-OP, macros, host-set value slots, 3-channel PCM soft-mix,
 > and the host mailbox commands. Its register output is proven
 > byte-for-byte against the JS reference *in emulation* (`drv/tools/verify.mjs`;
 > fourteen gate scores diff clean at zero tolerance). What
@@ -151,10 +151,11 @@ in the Mega Drive bus/interrupt environment, not the driver.
   with `MMLisp_setVal` (or reads with `MMLisp_getVal`); the score folds them into
   parameters via `PARAM_FROM_VAL` / `_ADD_VAL` / `_MUL_VAL` / `PARAM_MUL`, plus
   the built-in `$time`. E.g. a live filter/LFO-depth slider or game-state timbre.
-- **PCM (M2):** single-channel samples through the `fm6` DAC (`:mode
-  shot`/`loop`). Note the DAC feed is modelled frame-quantized in the verified
-  build (see `drv/README.md`); the real sub-frame feed timing is a
-  hardware-bring-up item.
+- **PCM soft-mix (M3):** `pcm1`–`pcm3` — three sample voices (`:mode
+  shot`/`loop`) summed in software to the single `fm6` DAC at a fixed ~10.5 kHz
+  mix rate, hard-clipped (`fm6` itself is FM-only). The feed is modelled
+  frame-quantized in the verified build (see `drv/README.md`); the real
+  sub-frame feed timing is a hardware-bring-up item.
 
 - **Mailbox (M2/M3):** `MMLisp_keyOff` (release a `len=0` hold / truncate a
   note), `MMLisp_setParam` (one-shot param write), `MMLisp_fadeTrack` (fade a
@@ -167,10 +168,10 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - Full **16 concurrent tracks** (6 FM + 4 PSG, or FM3-op + PCM soft-mix + the
   rest). Note: the emulation gate harness starts all tracks through the 8-cell
   mailbox ring, so it exercises ≤8 at once; the driver itself holds 16.
-- Remaining M3 stream features (`:keyon` macros, i16 pitch macros, multi-macro,
-  CALL/RET, multi-channel PCM soft mix) are length-decoded and skipped; notes
-  stay in time. The 8 KB image is now full, so these are the boundary where the
-  driver moves to the 68k-offload architecture (see `drv/README.md`).
+- Remaining M3 stream features (`:keyon` retrigger macros, VOICE_SET, CALL/RET)
+  are length-decoded and skipped; notes stay in time. Z80 code overlays keep the
+  resident image under the 8 KB ceiling, so these land on the Z80 as they're
+  built (the 68k-offload architecture stays the last resort; see `drv/README.md`).
 
 > **Mailbox address.** The data floor — and with it the mailbox (`0xA018F0`)
 > and val slots (`0xA01930`) — moves as the image grows. If you pinned an older

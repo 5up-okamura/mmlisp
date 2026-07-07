@@ -450,11 +450,12 @@ specified in mmb.md §11.
   area), KEY_OFF / SET_PARAM / FADE_TRACK commands. Note: a `shot` sample
   plays to its end — a note's `length`/`gate` do not truncate it (only `loop`
   mode honors KEY-OFF). Gated / length-limited one-shots are a later milestone.
-- **M3 — expression.** FM3 independent-OP (FM3_MODE/FM3_OP_PITCH, §13.4)
-  **is implemented and gated**. Remaining: NOTE_ON_EX + macro engine
-  (`:step` clocks, pitch/vel/op macros, `:semi`, `:keyon`), dynamic value
-  slots (SET_VAL, PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL, dynamic curve
-  params), multi-channel PCM soft mix, CALL/RET + the encode-time dedup pass.
+- **M3 — expression.** FM3 independent-OP (FM3_MODE/FM3_OP_PITCH, §13.4), the
+  macro engine (`:step` clocks; VOL/VEL/FM/i16-NOTE_PITCH/NOTE_SEMI macros;
+  up to 3 concurrent per channel), dynamic value slots (SET_VAL,
+  PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL), and **multi-channel PCM soft
+  mix** (§14) **are implemented and gated**. Remaining: NOTE_ON_EX macro_ref,
+  KEYON retrigger, VOICE_SET, CALL/RET + the encode-time dedup pass.
 
 ## 12. Verification Strategy
 
@@ -586,3 +587,29 @@ its bit (OP1 = `$10` … OP4 = `$80`) and re-emits `$28 = mask | 0x02`. A full
 gate is used (the operator keys off at the next rest / end-of-track). The
 driver derives the operator from the channel id (2→1, 16-18→2-4); F-numbers
 go through the change-only shadow, key edges bypass it.
+
+## 14. PCM Soft-Mix (M3)
+
+`pcm1`–`pcm3` are three PCM voice slots summed in software to the single fm6
+DAC. (`fm6` itself is FM-only; it is no longer a PCM channel.) Each `PCM_NOTE_ON`
+sets up its channel's voice (sample base/length/loop + a per-mix-tick increment);
+`PCM_NOTE_OFF` starts a looped voice's release tail (a `shot` plays to its end
+regardless). The heavy per-note setup is cold — it lives in the `ovl_pcm`
+overlay (§5.3), loaded on demand — so only the hot mixer stays resident.
+
+**The mix (frame-quantized, matches the M2 burst-DAC deviation).** Each frame
+emits a fixed `R` DAC writes (the *mix rate*, `PCM_MIX_R = 175` ≈ 10.5 kHz). Per
+tick, every active voice is resampled to that grid by **nearest-neighbour**
+(sample at `pos >> 16`, then `pos += inc`), the ≤3 signed samples are **summed
+and hard-saturated to int8**, and the result is written to `$2A`. `inc` is the
+16.16 per-tick increment `= floor(inc_frame / R)` (full-precision divide so pitch
+stays accurate; a table pre-divided by `R` would round too coarsely). A voice
+deactivates when a shot/tail passes the sample end; a non-releasing loop wraps by
+`loopLen` each tick. The DAC is enabled (`$2B`) on the first active voice and
+released when the last voice ends, both through the change-only shadow.
+
+A single voice takes the same path (one active slot) — there is no separate
+fast path. The voice structs (17 B × 3) live in the RAM gap just below
+`OVERLAY_SLOT`. As with the rest of the driver the hard gate is asm↔`drv-player`
+at zero tolerance; the sub-frame feed *timing* (bytes burst at frame start, not
+spread) remains a hardware-bring-up concern.

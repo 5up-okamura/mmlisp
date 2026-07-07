@@ -118,12 +118,16 @@ Order of work:
    cold control-plane code (start_track, mailbox handlers, MMB parsing — ~660 B)
    moved out of Z80 RAM into a 32 KB-aligned overlay ROM blob the driver loads on
    demand into a shared RAM slot, keeping the per-frame loop resident and the Z80
-   autonomous. Resident RAM image dropped to ~5.7 KB with ~175 B headroom (was
-   ~14); all fourteen gate scores still diff clean. More overlays (boot, CSM) can
-   free further RAM, so the remaining M3 (multi-macro, i16 pitch, `:keyon`,
-   CALL/RET, PCM soft mix, VOICE_SET) now fits on the Z80. The 68k-offload
-   architecture (engines on the main 68000, `drv-player.js` the design) stays the
-   last resort. Then hardware bring-up + cycle tuning.
+   autonomous. On that freed headroom M3 grew: **i16 NOTE_PITCH macros** (pitch
+   envelopes/vibrato), **up to 3 concurrent macros per channel** (keyed by
+   target), and **3-channel PCM soft-mix** (`pcm1`–`pcm3` summed to the fm6 DAC
+   at a fixed ~10.5 kHz mix rate, hard-clipped; fm6-as-PCM retired) — the PCM
+   per-note setup rides a third overlay so only the hot mixer stays resident
+   (driver.md §14). `verify:all` is seventeen trace scores, all zero-diff.
+   Remaining M3: VOICE_SET, CALL/RET + dedup, `:keyon` retrigger, NOTE_ON_EX
+   macro_ref. The 68k-offload architecture (engines on the main 68000,
+   `drv-player.js` the design) stays the last resort. Then hardware bring-up +
+   cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 
