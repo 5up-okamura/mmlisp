@@ -258,8 +258,11 @@ function stripComment(s) {
 }
 
 // ── The assembler ──────────────────────────────────────────────────────────
-export function assemble(entryPath) {
-  const symbols = new Map();
+// `preload` seeds the symbol table (a Map) before assembling — used to build
+// overlays: an overlay is assembled with the resident image's symbols preloaded
+// so it can reference resident routines and equates directly (no import file).
+export function assemble(entryPath, { preload = null } = {}) {
+  const symbols = new Map(preload ?? []);
   const lines = [];
 
   function loadFile(path) {
