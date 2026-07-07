@@ -1123,6 +1123,17 @@ export class DrvPlayer {
     this._macroSlots[ch] = slots;
   }
 
+  // NOTE_SEMI macro apply: pitch register at (current note + semitones), cents 0,
+  // no change to the channel's sticky pitch offset (matches ir-player basePitchWrite).
+  _writeNoteSemi(ch, semi) {
+    if (ch < 6) {
+      this._writeFmPitch(ch, this._fm[ch].currentNote + semi, 0);
+    } else if (ch < 10) {
+      const p = ch - 6;
+      if (p < 3) this._writePsgPitch(p, this._psg[p].currentNote + semi, 0);
+    }
+  }
+
   _processMacros() {
     for (let ch = 0; ch < 10; ch++) {
       const slots = this._macroSlots[ch];
@@ -1161,7 +1172,12 @@ export class DrvPlayer {
     }
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
     const v = d.values[slot.cursor];
-    if (v !== null && v !== undefined) this._paramSet(ch, d.target, v);
+    if (v !== null && v !== undefined) {
+      // NOTE_SEMI is a key-on pitch offset (chiptune arpeggio): write the pitch
+      // register at note+semi without touching the sticky :pitch state.
+      if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v);
+      else this._paramSet(ch, d.target, v);
+    }
     slot.stepClock = d.step - 1;
     if (slot.state === "run") {
       slot.cursor++;

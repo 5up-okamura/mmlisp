@@ -1,0 +1,11 @@
+; M3 gate (slice 3a): NOTE_SEMI macro — chiptune arpeggio. The macro value is
+; a semitone offset added to the note's pitch each :step (no retrigger); the
+; pitch register cycles through the chord. Exercises the attack step, the
+; :hold sustain loop, re-trigger on the next note, a rest (release/end), and
+; MACRO_CLEAR, on both FM and PSG.
+(score :tempo 150
+  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+    (macro :semi [0 :hold 4 7]) :len 4
+    c _ e (macro :semi none) g)
+  (sqr1 :len 4
+    (macro :semi [0 :hold 3 7 10]) a c (macro :semi none) e))

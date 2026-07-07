@@ -1856,9 +1856,16 @@ sm_fire:
 sm_pos:
     ld (G_VAL),de
     ld a,(iy+0)             ; target
+    cp 7                    ; NOTE_SEMI: key-on pitch offset (arpeggio)
+    jr z,sm_semi
     ld (G_TARGET),a
     push iy
     call param_set          ; (G_CH),(G_TARGET),(G_VAL) — clobbers IY
+    pop iy
+    jr sm_noapply
+sm_semi:
+    push iy
+    call apply_note_semi
     pop iy
 sm_noapply:
     ld a,(iy+2)             ; step
@@ -1896,6 +1903,34 @@ sm_adv_rel:
 sm_done:
     ld (ix+MSL_DESC),$ff    ; slot finished
     ret
+
+; apply_note_semi: (G_CH) = channel, (G_VAL) low = semitone offset. Writes the
+; pitch register at note+semi (cents 0), leaving the sticky :pitch state alone
+; (drv-player _writeNoteSemi). Clobbers IY.
+apply_note_semi:
+    ld a,(G_CH)
+    cp 10
+    ret nc                  ; fm3-op/pcm: no semi
+    call chs_ptr_iy         ; IY = chs
+    ld a,(iy+CHS_NOTE)
+    ld hl,(G_VAL)
+    add a,l                 ; effective note = note + semi
+    ld b,a
+    ld hl,0
+    ld (G_PITCHC),hl        ; cents 0
+    ld a,(G_CH)
+    cp 6
+    jr nc,ans_psg
+    call fm_port_off        ; A=ch → D=port, C=choff
+    ld a,b
+    jp write_fm_pitch
+ans_psg:
+    sub 6
+    cp 3
+    ret nc                  ; noise: no tone pitch
+    ld c,a
+    ld a,b
+    jp write_psg_pitch
 
 ; ===========================================================================
 ; PARAM_SET execution (opcodes.md §7; drv-player _paramSet order).

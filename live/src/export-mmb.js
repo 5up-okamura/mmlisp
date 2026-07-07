@@ -327,7 +327,7 @@ export function encodeMmb(ir, opts = {}) {
 
   const internMacro = (spec, target, trackLabel) => {
     if (!spec || typeof spec !== "object") return null;
-    if (target === "NOTE_PITCH" || target === "NOTE_SEMI" || target === "KEYON") {
+    if (target === "NOTE_PITCH" || target === "KEYON") {
       diag(
         "warning",
         "W_MMB_MACRO_SKIPPED",

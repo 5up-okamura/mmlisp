@@ -496,12 +496,14 @@ PARAM_SET apply path — the common envelope/LFO case (VOL/VEL/FM_TL/…). Curve
 and stage macros are pre-sampled at the `:step` clock in the exporter (a
 one-shot curve fills the attack region and holds its last value; a looping
 curve/stage fills the sustain region; `(wait key-off)` marks the release
-boundary) — no engine change, the same value array is stepped. Interim limits,
-each a later slice: one active macro per channel (the RAM reserves 3 active +
-3 running slots below, but the driver code drives slot 0 only); tick-unit
-`:step`/`:len` and dynamic (val-slot) `:from`/`:to`/`:rate`/`:len` are dropped
-with a warning; the i16 target NOTE_PITCH and the macro-only targets
-NOTE_SEMI/KEYON need their own apply paths. The hard gate is asm↔`drv-player`
+boundary) — no engine change, the same value array is stepped. The macro-only target **NOTE_SEMI** is implemented (§13.2): its value is a
+semitone offset written to the pitch register at note+semi each `:step` (no
+retrigger, no change to the sticky `:pitch` state) — the classic chiptune
+arpeggio, on FM and PSG. Interim limits, each a later slice: one active macro
+per channel (the RAM reserves 3 active + 3 running slots below, but the driver
+code drives slot 0 only); tick-unit `:step`/`:len` and dynamic (val-slot)
+`:from`/`:to`/`:rate`/`:len` are dropped with a warning; the i16 target
+NOTE_PITCH and the KEYON retrigger target need their own apply paths. The hard gate is asm↔`drv-player`
 at zero tolerance; the `ir-player` A/B is informational for macros (the
 exporter pre-samples what `ir-player` evaluates in continuous time).
 
