@@ -8,9 +8,37 @@ around *interactive* music: tracks that start, stop, layer, and respond to
 game state at runtime.
 
 - **Try it now:** https://mmlisp.vercel.app/
-- **Playback driver:** MMLispDRV (Z80, SGDK integration) — M1 + M2 complete in
-  emulation (trace-verified against the JS reference); see the capability table
-  below.
+- **Playback driver:** MMLispDRV (Z80, SGDK integration) — trace-verified
+  against the JS reference in emulation.
+
+## Highlights
+
+- **Music as code, not a tracker.** Scores are Lisp s-expressions — name a voice
+  once and reuse it, factor phrases into definitions, build envelopes and LFOs
+  from composable curves, expand echoes and arpeggios at compile time. A
+  programming language's expressiveness, aimed at the YM2612 + PSG.
+- **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.vercel.app/)
+  auditions your score in the browser through a cycle-accurate **Nuked-OPN2**
+  (YM2612) core — the same register writes the real chip sees — and hot-swaps
+  the recompiled score without stopping playback.
+- **Deep FM expression as language features.** Per-operator envelope/LFO macros,
+  cent-accurate glide and vibrato, **FM3 independent-operator mode** and CSM,
+  chiptune arpeggios (`:semi`) and drum rolls (`:keyon`) — advanced YM2612
+  techniques you write, not hand-poke.
+- **3-channel PCM, software-mixed.** `pcm1`–`pcm3` mix in software to the single
+  DAC, so a kick, a bass hit, and a sample can sound together.
+- **Interactive by design.** Tracks start / stop / layer / fade at runtime, and
+  `def-val` slots let game code drive parameters live via `$name` — built for
+  game music, not just linear playback.
+- **Keeps the 68000 free.** Compiles to a compact (~6 KB) autonomous Z80 driver,
+  **MMLispDRV**, that runs off the vblank interrupt on its own — the main CPU
+  stays yours for the game. SGDK integration included. (Verified in emulation;
+  real-hardware bring-up is the next milestone.)
+- **Provably faithful.** Every register write the Z80 driver makes is checked
+  **byte-for-byte** against a JS reference at zero tolerance — so what you hear
+  in the browser is what the driver emits.
+- **Bring your own voices.** Import FM patches from DefleMask (DMP), Furnace
+  (FUI), TFI, VGI, OPNI, and mucom88 `.muc` / `.dat` banks.
 
 ## What it looks like
 
@@ -69,38 +97,24 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 ```
 
-## MMLispDRV (Z80 driver) — capability status
+## MMLispDRV (the hardware driver)
 
-The driver is being built docs-first: a JS reference implementation validated
-against the live player, then the Z80 assembly port. Everything below already
-plays in MMLisp Live; this table tracks what runs on the **hardware driver**.
-✅ means the Z80 assembly is written and its register-write trace matches the
-JS reference exactly (zero tolerance, `drv/`); real-hardware bring-up is still
-pending.
+MMLispDRV plays a compiled score (`.mmb`) on the Mega Drive's Z80, driven by the
+60 Hz vblank interrupt and controlled by the 68000 through a small mailbox
+(start / stop / fade tracks, live parameter and value writes). It plays
+everything the language expresses — FM + PSG voices and the full level model,
+motion (sweeps / glide / vibrato / tempo ramps), FM3 independent-operator mode
+and CSM, the macro engine, dynamic value slots, and 3-channel PCM soft-mixing —
+reading song data from banked ROM so it needs only ~6 KB of Z80 RAM, and leaves
+the 68000 free for the game.
 
-| Capability                                                        | Status         |
-| ------------------------------------------------------------------ | -------------- |
-| Core playback: notes/rests/ties, loops, jumps, FM + PSG voices     | ✅ emulation (M1) |
-| Velocity / volume / master level composition (dB offset tables)    | ✅ emulation (M1) |
-| 68000 mailbox: `START_TRACK` / `STOP_TRACK`                        | ✅ emulation (M1) |
-| Parameter sweeps and glide (`PARAM_SWEEP`), `TEMPO_SWEEP`          | ✅ emulation (M2) |
-| Cent-interpolated pitch: glide / vibrato / detune (`NOTE_PITCH`)   | ✅ emulation (M2) |
-| FM3 CSM mode (Timer A buzz)                                        | ✅ emulation (M2) |
-| PCM playback via the fm6 DAC (frame-quantized feed)               | ✅ emulation (M2) |
-| `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | ✅ emulation (M2) |
-| Macro engine: step/curve/stage, `:semi`, i16 pitch, `:keyon`, 3 concurrent | ✅ emulation (M3) |
-| FM3 independent-operator mode                                      | ✅ emulation (M3) |
-| Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | ✅ emulation (M3) |
-| Multi-channel PCM soft mixing (`pcm1`–`pcm3`, up to 3ch)           | ✅ emulation (M3) |
-| `CALL`/`RET` event-stream deduplication, VOICE_SET                 | 🚧 planned (M3) |
-
-M1, all of M2, and most of M3 — FM3 independent-operator mode, the macro engine
-(step/curve/stage + `:semi` arpeggios + i16 pitch envelopes + up to 3 concurrent
-macros/channel), dynamic value slots, and 3-channel PCM soft-mixing — are done in
-emulation (seventeen trace scores diff clean). Z80 code overlays moved cold code
-into ROM, keeping the resident image under the 8 KB ceiling. See
-[docs/driver.md](docs/driver.md) for the architecture and
-[drv/README.md](drv/README.md) for the port, toolchain, and verification.
+It's built reference-first: a JS implementation (`drv-player.js`) validated in
+MMLisp Live, then a Z80 assembly port whose **every register write is checked
+byte-for-byte against it at zero tolerance** (18 trace scores, `drv/`). The
+driver is verified in emulation today; real-hardware bring-up is the next
+milestone. See [docs/driver.md](docs/driver.md) for the architecture,
+[drv/README.md](drv/README.md) for the port and verification, and
+[docs/roadmap.md](docs/roadmap.md) for detailed status.
 
 ## Repository Structure
 
