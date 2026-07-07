@@ -8,8 +8,8 @@ The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 mailbox commands (KEY_OFF / SET_PARAM / FADE_TRACK) — plus most of **M3**:
 **FM3 independent-operator mode** (FM3_MODE / FM3_OP_PITCH, driver.md §13.4),
 the **macro engine** (MACRO_SET / MACRO_CLEAR, driver.md §13 — step/curve/stage
-forms, `:semi` arpeggios, i16 NOTE_PITCH envelopes, up to 3 concurrent per
-channel), **dynamic value slots** (SET_VAL + PARAM_FROM_VAL / _ADD_VAL /
+forms, `:semi` arpeggios, i16 NOTE_PITCH envelopes, `:keyon` retrigger, up to 3
+concurrent per channel), **dynamic value slots** (SET_VAL + PARAM_FROM_VAL / _ADD_VAL /
 _MUL_VAL / PARAM_MUL + `$time`, driver.md §6.4), and **3-channel PCM soft-mix**
 (`pcm1`–`pcm3` summed to the fm6 DAC, driver.md §14).
 
@@ -51,9 +51,9 @@ driver, replays the MMB in the emulator (mailbox-started like a real 68000
 host), and diffs the frame-stamped register log against
 `drv-player.js` — **raw equality, zero tolerance**: same writes, same
 values, same frames, same order (driver.md §12.4). Current status: all
-seventeen gate scores diff clean (`npm run verify:all`) — ab-core, the two
+eighteen gate scores diff clean (`npm run verify:all`) — ab-core, the two
 stress scores, the M2 set (motion, pitch, CSM, PCM, PCM-loop, mailbox), and the
-M3 set (FM3-op, macros: step/curve/semi/dynval/pitch/multi, PCM soft-mix).
+M3 set (FM3-op, macros: step/curve/semi/dynval/pitch/multi/keyon, PCM soft-mix).
 
 Host mailbox commands (KEY_OFF / SET_PARAM / FADE_TRACK) are host-driven, not
 in the MMB stream, so a test may carry a sidecar `<song>.cmds.json` holding
@@ -192,14 +192,18 @@ These are the deltas against the docs as written:
    cold code moves out of RAM into a 32 KB-aligned overlay ROM blob
    (`mmlispdrv_ovl.bin`) the driver LDIRs on demand into the shared
    `OVERLAY_SLOT` ($172D), then runs there, keeping the per-frame loop resident
-   and the Z80 autonomous. Three overlays share the slot (a `G_CUR_OVL` guard
+   and the Z80 autonomous. Four overlays share the slot (a `G_CUR_OVL` guard
    skips a reload when the wanted overlay is already in it): `ovl_setup`
-   (start_track + MMB parsing), `ovl_cmd` (the mailbox commands), and `ovl_pcm`
-   (PCM per-note setup). That freed headroom carried the rest of M3 — i16 pitch
-   macros, 3 concurrent macros/channel, and PCM soft-mix — onto the Z80, so the
-   68k-offload architecture stays the last resort. The resident image is
-   **~5.87 KB**; the 3 PCM voice structs (17 B × 3) live in the RAM gap just
-   below `OVERLAY_SLOT` (the region above `DATA_BASE` is packed), zeroed at boot.
+   (start_track + MMB parsing), `ovl_cmd` (the mailbox commands), `ovl_pcm`
+   (PCM per-note setup), and `ovl_boot` (the one-shot power-on init). The boot
+   overlay is loaded once by a tiny resident reset stub, so the host must publish
+   `G_OVL_BANK` **before releasing the Z80 from reset**, and `ovl_boot`'s RAM
+   clear preserves the overlay-bank globals. That freed headroom carried the rest
+   of M3 — i16 pitch macros, 3 concurrent macros/channel, PCM soft-mix, and
+   `:keyon` retrigger — onto the Z80, so the 68k-offload architecture stays the
+   last resort. The resident image is **~5.77 KB**; the 3 PCM voice structs
+   (17 B × 3) live in the RAM gap just below `OVERLAY_SLOT` (the region above
+   `DATA_BASE` is packed), zeroed at boot.
    The mailbox and val slots are the only 68k-published addresses; they **move
    with the floor**, so `drv/sgdk/mmlispdrv.c` and driver.md §5 carry the current
    values. The image exceeds the driver.md §5 "≤4.5 KB" *design target*;

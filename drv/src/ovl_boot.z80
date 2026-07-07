@@ -1,0 +1,118 @@
+; ovl_boot — overlay (Stage 3, driver.md §5.3). The one-shot power-on init,
+; loaded once by the resident reset stub into OVERLAY_SLOT and run there. Frees
+; the cold boot code from the resident image. Returns to the stub (which does
+; ei + the resident idle loop). Assembled at the slot with the resident image's
+; symbols preloaded, so it calls resident helpers directly.
+        org OVERLAY_SLOT
+boot_body:
+    ; clear driver RAM, PRESERVING the overlay-bank globals the host set before
+    ; reset: G_OVL_BANK/G_MMB_BANK/G_CUR_OVL ($34..$38). Two ranges skip them.
+    ld hl,DATA_BASE
+    ld de,DATA_BASE+1
+    ld bc,G_OVL_BANK-DATA_BASE-1
+    ld (hl),0
+    ldir
+    ld hl,G_CUR_OVL+1
+    ld de,G_CUR_OVL+2
+    ld bc,$1fad-G_CUR_OVL-1
+    ld (hl),0
+    ldir
+    ; channel state defaults (matches drv-player freshFmChannel/_reset)
+    xor a
+boot_ch:
+    push af
+    call chs_ptr_iy
+    ld (iy+CHS_NOTE),60
+    ld (iy+CHS_VEL),15
+    ld (iy+CHS_VOL),31
+    ld (iy+CHS_GATE),8
+    ld (iy+CHS_OWNER),$ff
+    ld (iy+CHS_ALG),7
+    ld (iy+CHS_MACT),$ff       ; macro engine: 3 empty active + 3 running slots
+    ld (iy+CHS_MACT+1),$ff
+    ld (iy+CHS_MACT+2),$ff
+    ld (iy+CHS_MSLOT+MSL_DESC),$ff
+    ld (iy+CHS_MSLOT+4+MSL_DESC),$ff
+    ld (iy+CHS_MSLOT+8+MSL_DESC),$ff
+    pop af
+    inc a
+    cp 10
+    jr c,boot_ch
+    ; globals + PCM voices idle (structs live below DATA_BASE, outside the clear)
+    xor a
+    ld (G_PCMV+0*PCM_V_SIZE+PV_ACT),a
+    ld (G_PCMV+1*PCM_V_SIZE+PV_ACT),a
+    ld (G_PCMV+2*PCM_V_SIZE+PV_ACT),a
+    ld hl,DEFAULT_INCREMENT
+    ld (G_INC),hl
+    ld a,31
+    ld (G_MASTER),a
+    ld a,4
+    ld (G_NOISEMODE),a
+    ; neutral power-on patch (same bytes/order as drv-player _emitInitWrites)
+    xor a
+boot_patch:
+    push af
+    call fm_port_off        ; D=port, C=ch offset
+    ld b,$07                ; B0: fb 0, alg 7
+    ld a,$b0
+    add a,c
+    ld e,a
+    call ym_write
+    ld b,$c0                ; B4: both speakers, ams/fms 0
+    ld a,$b4
+    add a,c
+    ld e,a
+    call ym_write
+    ld a,0                  ; op slots in slot order 0..3 = addr off 0,8,4,12
+    call boot_slot
+    ld a,8
+    call boot_slot
+    ld a,4
+    call boot_slot
+    ld a,12
+    call boot_slot
+    pop af
+    inc a
+    cp 6
+    jr c,boot_patch
+    ; mailbox up (last, after the clear zeroed these)
+    ld a,2
+    ld (MB_VER),a
+    ld a,$d2
+    ld (MB_READY),a
+    ret                     ; back to the resident stub (ei + idle)
+
+; one operator slot of the neutral patch. A = op addr offset, C/D live.
+boot_slot:
+    add a,c
+    ld (G_TMP),a
+    add a,$30               ; DT/MUL: dt 0, mul 1
+    ld e,a
+    ld b,$01
+    call ym_write
+    ld a,(G_TMP)
+    add a,$40               ; TL 0
+    ld e,a
+    ld b,0
+    call ym_write
+    ld a,(G_TMP)
+    add a,$50               ; KS/AR: ks 0, ar 31
+    ld e,a
+    ld b,$1f
+    call ym_write
+    ld a,(G_TMP)
+    add a,$60               ; AM/DR 0
+    ld e,a
+    ld b,0
+    call ym_write
+    ld a,(G_TMP)
+    add a,$70               ; SR 0
+    ld e,a
+    ld b,0
+    call ym_write
+    ld a,(G_TMP)
+    add a,$80               ; SL/RR: sl 0, rr 15
+    ld e,a
+    ld b,$0f
+    jp ym_write

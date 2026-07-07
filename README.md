@@ -88,11 +88,11 @@ pending.
 | FM3 CSM mode (Timer A buzz)                                        | ✅ emulation (M2) |
 | PCM playback via the fm6 DAC (frame-quantized feed)               | ✅ emulation (M2) |
 | `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | ✅ emulation (M2) |
-| Macro engine: step/curve/stage, `:semi`, i16 pitch, 3 concurrent  | ✅ emulation (M3) |
+| Macro engine: step/curve/stage, `:semi`, i16 pitch, `:keyon`, 3 concurrent | ✅ emulation (M3) |
 | FM3 independent-operator mode                                      | ✅ emulation (M3) |
 | Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | ✅ emulation (M3) |
 | Multi-channel PCM soft mixing (`pcm1`–`pcm3`, up to 3ch)           | ✅ emulation (M3) |
-| `CALL`/`RET` event-stream deduplication, VOICE_SET, `:keyon`       | 🚧 planned (M3) |
+| `CALL`/`RET` event-stream deduplication, VOICE_SET                 | 🚧 planned (M3) |
 
 M1, all of M2, and most of M3 — FM3 independent-operator mode, the macro engine
 (step/curve/stage + `:semi` arpeggios + i16 pitch envelopes + up to 3 concurrent

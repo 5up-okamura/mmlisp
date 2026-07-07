@@ -270,6 +270,17 @@ scores — requires bank switching between track dispatches; deferred, the
 mailbox protocol already carries the per-command bank so no protocol change
 will be needed.)
 
+**Code overlays.** Cold code lives in a 32 KB-aligned overlay ROM blob at
+`G_OVL_BANK`; `load_overlay` banks the window to it, `LDIR`s the overlay into
+the shared `OVERLAY_SLOT` RAM buffer, banks back, and the caller runs it there
+(§11 lists the overlays). A `G_CUR_OVL` guard skips the copy when the wanted
+overlay is already in the slot. The host publishes `G_OVL_BANK` at init. **The
+boot code is itself an overlay** (`ovl_boot`): the resident reset stub loads it
+using `G_OVL_BANK`, so the host must write `G_OVL_BANK` into Z80 RAM **before
+releasing the Z80 from reset**, and `ovl_boot`'s RAM clear preserves the
+overlay-bank globals (`G_OVL_BANK` / `G_MMB_BANK` / `G_CUR_OVL`). The idle loop
+stays resident (a later overlay load overwrites the slot).
+
 ## 6. Mailbox Protocol (68000 → Z80)
 
 Realizes the §2 control interface (formerly spec-v0.5 §4.3). The 68000 writes commands
@@ -451,11 +462,11 @@ specified in mmb.md §11.
   plays to its end — a note's `length`/`gate` do not truncate it (only `loop`
   mode honors KEY-OFF). Gated / length-limited one-shots are a later milestone.
 - **M3 — expression.** FM3 independent-OP (FM3_MODE/FM3_OP_PITCH, §13.4), the
-  macro engine (`:step` clocks; VOL/VEL/FM/i16-NOTE_PITCH/NOTE_SEMI macros;
+  macro engine (`:step` clocks; VOL/VEL/FM/i16-NOTE_PITCH/NOTE_SEMI/KEYON macros;
   up to 3 concurrent per channel), dynamic value slots (SET_VAL,
   PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL), and **multi-channel PCM soft
   mix** (§14) **are implemented and gated**. Remaining: NOTE_ON_EX macro_ref,
-  KEYON retrigger, VOICE_SET, CALL/RET + the encode-time dedup pass.
+  VOICE_SET, CALL/RET + the encode-time dedup pass.
 
 ## 12. Verification Strategy
 
@@ -526,12 +537,17 @@ together (up to 3, keyed by target — e.g. a VOL envelope + a NOTE_PITCH vibrat
 (matching drv-player's Map), `MACRO_SET` replaces same-target in place and
 appends a new target, `MACRO_CLEAR` removes one target (or all on `0xFF`),
 NOTE_ON instantiates every active into its running slot, and `process_macros`
-steps all three — gated by `m3-macro-multi`. Interim limits, each a later slice:
-tick-unit `:step`/`:len` and dynamic (val-slot) `:from`/`:to`/`:rate`/`:len`
-are dropped with a warning; the KEYON retrigger target needs its own apply
-path. The hard gate is asm↔`drv-player`
-at zero tolerance; the `ir-player` A/B is informational for macros (the
-exporter pre-samples what `ir-player` evaluates in continuous time).
+steps all three — gated by `m3-macro-multi`. The macro-only target **KEYON**
+(retrigger) is implemented (`apply_keyon`, gated by `m3-macro-keyon`): a nonzero
+step re-attacks the note — it restarts the channel's non-keyon macro slots to
+their attack (so soft-envelope `:vol`/`:pitch` macros replay) and, on FM, re-keys
+the hardware EG (`$28` off→on; FM3-op op via its mask). PSG has no hardware EG,
+so the soft-envelope restart is the whole effect; the macro engine runs on
+channels 0–9, so PCM and FM3-op op2–4 are deferred (exporter drops `:keyon`
+there). Interim limits, each a later slice: tick-unit `:step`/`:len` and dynamic
+(val-slot) `:from`/`:to`/`:rate`/`:len` are dropped with a warning. The hard gate
+is asm↔`drv-player` at zero tolerance; the `ir-player` A/B is informational for
+macros (the exporter pre-samples what `ir-player` evaluates in continuous time).
 
 ### 13.1 Sticky active set + trigger
 

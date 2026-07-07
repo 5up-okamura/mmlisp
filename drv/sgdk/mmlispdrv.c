@@ -51,23 +51,38 @@ static void mailbox_send(u8 cmd, u8 a0, u8 a1, u8 a2)
 
 void MMLisp_init(const u8* overlay_rom)
 {
-    // Upload the resident image and start the driver, then wait for its ready
-    // flag. (Symbol names vary across SGDK versions — Z80_loadCustomDriver is
-    // the ~1.6x form.)
+    // The boot code itself now lives in an overlay (ovl_boot, driver.md §5.3), so
+    // the Z80 needs the overlay ROM bank in RAM (G_OVL_BANK) BEFORE it runs its
+    // reset vector — the reset stub loads ovl_boot with it, and ovl_boot's RAM
+    // clear preserves it. So upload the resident image AND publish the bank while
+    // the Z80 is held in reset, then release. This mirrors the trace harness
+    // (run-trace.mjs). The overlay blob must be 32 KB-aligned in ROM so its bank
+    // window base is overlay byte 0.
+    //
+    // (SGDK bus/reset symbols vary across versions; adjust to your SGDK. The
+    // invariant is: G_OVL_BANK is written before the Z80 executes address 0.)
     Z80_init();
-    Z80_loadCustomDriver(mmlispdrv_bin, MMLISPDRV_SIZE);
-    while (!MMLisp_isReady())
-        ;
-
-    // Publish the overlay ROM bank (driver.md §5): the Z80 loads cold code
-    // (start_track, mailbox handlers, MMB parsing) from here on demand. The blob
-    // must be 32 KB-aligned in ROM so its bank window base is overlay byte 0;
-    // set it after the reset (which clears driver RAM), before any startTrack.
-    u16 bank = (u16)((u32)overlay_rom >> 15);
     Z80_requestBus(TRUE);
+    Z80_startReset();
+
+    // Byte-wise upload — Z80 RAM at 0xA00000 is 8-bit; a 16-bit write corrupts
+    // the odd byte.
+    {
+        const u8* src = mmlispdrv_bin;
+        vu8* dst = (vu8*)0xA00000;
+        for (u16 i = 0; i < MMLISPDRV_SIZE; i++)
+            dst[i] = src[i];
+    }
+
+    u16 bank = (u16)((u32)overlay_rom >> 15);
     *Z80_RAM(G_OVL_BANK)     = bank & 0xFF;
     *Z80_RAM(G_OVL_BANK + 1) = (bank >> 8) & 0xFF;
+
+    Z80_endReset();     // release reset → boots at PC=0 with G_OVL_BANK already set
     Z80_releaseBus();
+
+    while (!MMLisp_isReady())
+        ;
 }
 
 bool MMLisp_isReady(void)

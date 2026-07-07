@@ -1219,7 +1219,10 @@ export class DrvPlayer {
       // NOTE_SEMI is a key-on pitch offset (chiptune arpeggio): write the pitch
       // register at note+semi without touching the sticky :pitch state.
       if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v);
-      else this._paramSet(ch, d.target, v);
+      // KEYON retrigger: a nonzero step re-attacks the note (driver.md §14).
+      else if (d.target === TARGET_ID.KEYON) {
+        if (v !== 0) this._keyonRetrigger(ch);
+      } else this._paramSet(ch, d.target, v);
     }
     slot.stepClock = d.step - 1;
     if (slot.state === "run") {
@@ -1234,6 +1237,29 @@ export class DrvPlayer {
       if (slot.cursor >= d.count) return true; // release finished
     }
     return false;
+  }
+
+  // KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
+  // soft-envelope macros (every non-keyon running slot → attack) and, on FM,
+  // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
+  // the whole effect. (The macro engine runs on channels 0-9, so this is FM+PSG.)
+  _keyonRetrigger(ch) {
+    for (const s of this._macroSlots[ch]) {
+      if (!s) continue;
+      const sd = this._macros[s.descIdx];
+      if (!sd || sd.target === TARGET_ID.KEYON) continue;
+      s.cursor = 0;
+      s.stepClock = 0;
+      s.state = "run";
+    }
+    const op = this._fm3OpFor(ch);
+    if (op) {
+      this._fm3KeyOp(op, false);
+      this._fm3KeyOp(op, true);
+    } else if (ch < 6) {
+      this._keyOff(ch);
+      this._keyOn(ch);
+    }
   }
 
   // One sweep slot, one frame. Returns true when a one-shot sweep completes

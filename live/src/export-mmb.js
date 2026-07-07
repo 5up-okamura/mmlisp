@@ -325,13 +325,16 @@ export function encodeMmb(ir, opts = {}) {
     return { step, loopStart, release, values };
   };
 
-  const internMacro = (spec, target, trackLabel) => {
+  const internMacro = (spec, target, trackLabel, channelId) => {
     if (!spec || typeof spec !== "object") return null;
-    if (target === "KEYON") {
+    if (target === "KEYON" && channelId > 9) {
+      // Retrigger re-attacks the note's envelopes (FM hardware EG via $28 +
+      // soft-env macros; PSG soft-env macros). The macro engine runs on channels
+      // 0-9 only, so PCM (20-22) and FM3-op op2-4 (16-18) are deferred.
       diag(
         "warning",
-        "W_MMB_MACRO_SKIPPED",
-        `${target} macro needs a later M3 slice; dropped`,
+        "W_MMB_KEYON_UNSUPPORTED",
+        `:keyon is FM/PSG only (macro engine channels); dropped on ${trackLabel}`,
         trackLabel,
       );
       return null;
@@ -420,7 +423,7 @@ export function encodeMmb(ir, opts = {}) {
           const desired = new Map(); // target → macro_id
           for (const key of Object.keys(a)) {
             if (!MACRO_ARG_KEYS.has(key)) continue;
-            const id = internMacro(a[key], macroKeyToTarget(key), label);
+            const id = internMacro(a[key], macroKeyToTarget(key), label, channelId);
             if (id != null) desired.set(macroKeyToTarget(key), id);
           }
           for (const target of [...activeMacros.keys()]) {

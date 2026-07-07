@@ -246,122 +246,27 @@ int_handler:
     reti
 
 ; ===========================================================================
-; Boot
+; Boot — resident stub. The cold one-shot init (RAM clear, channel/voice
+; defaults, neutral FM patch, mailbox-up) lives in the ovl_boot overlay, loaded
+; once here. The host writes G_OVL_BANK into Z80 RAM before releasing reset, and
+; ovl_boot's RAM clear preserves it (driver.md §5.3). The idle loop stays
+; resident (a later overlay load would overwrite the slot).
 ; ===========================================================================
 start:
     di
     im 1
     ld sp,STACK_TOP
-    ; clear all driver data RAM (DATA_BASE..$1FAD; stack owns $1FAE..$1FFF)
-    ld hl,DATA_BASE
-    ld de,DATA_BASE+1
-    ld bc,$1fad-DATA_BASE
-    ld (hl),0
-    ldir
-    ; channel state defaults (matches drv-player freshFmChannel/_reset)
-    xor a
-boot_ch:
-    push af
-    call chs_ptr_iy
-    ld (iy+CHS_NOTE),60
-    ld (iy+CHS_VEL),15
-    ld (iy+CHS_VOL),31
-    ld (iy+CHS_GATE),8
-    ld (iy+CHS_OWNER),$ff
-    ld (iy+CHS_ALG),7
-    ld (iy+CHS_MACT),$ff       ; macro engine: 3 empty active + 3 running slots
-    ld (iy+CHS_MACT+1),$ff
-    ld (iy+CHS_MACT+2),$ff
-    ld (iy+CHS_MSLOT+MSL_DESC),$ff
-    ld (iy+CHS_MSLOT+4+MSL_DESC),$ff
-    ld (iy+CHS_MSLOT+8+MSL_DESC),$ff
-    pop af
-    inc a
-    cp 10
-    jr c,boot_ch
-    ; globals
+    ld hl,0
+    ld (G_MMB_BANK),hl      ; MMB default bank (uncleared at reset; ovl_boot preserves it)
     ld a,$ff
-    ld (G_CUR_OVL),a        ; no overlay in the slot yet
-    xor a                   ; PCM voices idle (structs live below DATA_BASE, uncleared)
-    ld (G_PCMV+0*PCM_V_SIZE+PV_ACT),a
-    ld (G_PCMV+1*PCM_V_SIZE+PV_ACT),a
-    ld (G_PCMV+2*PCM_V_SIZE+PV_ACT),a
-    ld hl,DEFAULT_INCREMENT
-    ld (G_INC),hl
-    ld a,31
-    ld (G_MASTER),a
-    ld a,4
-    ld (G_NOISEMODE),a
-    ; neutral power-on patch (same bytes/order as drv-player _emitInitWrites)
-    xor a
-boot_patch:
-    push af
-    call fm_port_off        ; D=port, C=ch offset
-    ld b,$07                ; B0: fb 0, alg 7
-    ld a,$b0
-    add a,c
-    ld e,a
-    call ym_write
-    ld b,$c0                ; B4: both speakers, ams/fms 0
-    ld a,$b4
-    add a,c
-    ld e,a
-    call ym_write
-    ld a,0                  ; op slots in slot order 0..3 = addr off 0,8,4,12
-    call boot_slot
-    ld a,8
-    call boot_slot
-    ld a,4
-    call boot_slot
-    ld a,12
-    call boot_slot
-    pop af
-    inc a
-    cp 6
-    jr c,boot_patch
-    ; mailbox up
-    ld a,2
-    ld (MB_VER),a
-    ld a,$d2
-    ld (MB_READY),a
+    ld (G_CUR_OVL),a        ; empty slot → force the boot overlay to load
+    ld a,3                  ; overlay index 3 = ovl_boot
+    call load_overlay
+    call OVERLAY_SLOT       ; boot: clear RAM, defaults, neutral patch, mailbox up
     ei
 idle:
     halt
     jr idle
-
-; one operator slot of the neutral patch. A = op addr offset, C/D live.
-boot_slot:
-    add a,c
-    ld (G_TMP),a
-    add a,$30               ; DT/MUL: dt 0, mul 1
-    ld e,a
-    ld b,$01
-    call ym_write
-    ld a,(G_TMP)
-    add a,$40               ; TL 0
-    ld e,a
-    ld b,0
-    call ym_write
-    ld a,(G_TMP)
-    add a,$50               ; KS/AR: ks 0, ar 31
-    ld e,a
-    ld b,$1f
-    call ym_write
-    ld a,(G_TMP)
-    add a,$60               ; AM/DR 0
-    ld e,a
-    ld b,0
-    call ym_write
-    ld a,(G_TMP)
-    add a,$70               ; SR 0
-    ld e,a
-    ld b,0
-    call ym_write
-    ld a,(G_TMP)
-    add a,$80               ; SL/RR: sl 0, rr 15
-    ld e,a
-    ld b,$0f
-    jp ym_write
 
 ; ===========================================================================
 ; Frame step (driver.md §4): mailbox → per-track accumulate/dispatch.
@@ -554,11 +459,12 @@ lo_hit:
 
 ; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
 ; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd,
-; 2 = ovl_pcm).
+; 2 = ovl_pcm, 3 = ovl_boot).
 ovl_desc_tab:
     db 0,0,0,0              ; overlay 0 (ovl_setup)
     db 0,0,0,0              ; overlay 1 (ovl_cmd)
     db 0,0,0,0              ; overlay 2 (ovl_pcm)
+    db 0,0,0,0              ; overlay 3 (ovl_boot)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
@@ -1736,6 +1642,8 @@ sm_pos:
     ld a,(iy+0)             ; target
     cp 7                    ; NOTE_SEMI: key-on pitch offset (arpeggio)
     jr z,sm_semi
+    cp 8                    ; KEYON: retrigger on a nonzero step
+    jr z,sm_keyon
     ld (G_TARGET),a
     push iy
     call param_set          ; (G_CH),(G_TARGET),(G_VAL) — clobbers IY
@@ -1744,6 +1652,16 @@ sm_pos:
 sm_semi:
     push iy
     call apply_note_semi
+    pop iy
+    jr sm_noapply
+sm_keyon:
+    ld a,d
+    or e
+    jr z,sm_noapply         ; zero step: no retrigger
+    push iy
+    push ix                 ; apply_keyon walks the slots via IX; sm_noapply needs it
+    call apply_keyon
+    pop ix
     pop iy
 sm_noapply:
     ld a,(iy+2)             ; step
@@ -1809,6 +1727,55 @@ ans_psg:
     ld c,a
     ld a,b
     jp write_psg_pitch
+
+; apply_keyon: (G_CH) = channel. Re-attack the note (driver.md §14 keyon):
+; restart the channel's non-keyon macro slots to their attack, then re-key the
+; hardware EG on FM ($28 off→on; FM3-op op via its mask). PSG has no hardware EG,
+; so the macro restart is the whole effect. Clobbers IX/IY/A/BC/DE/HL.
+apply_keyon:
+    ld a,(G_CH)
+    call chs_ptr_iy         ; IY = chs
+    push iy
+    pop ix
+    ld de,CHS_MSLOT
+    add ix,de               ; IX = &slot[0]
+    ld b,3
+ak_slot:
+    push bc
+    ld a,(ix+MSL_DESC)
+    cp $ff
+    jr z,ak_snext
+    call macro_desc_ptr     ; A = desc → HL = descriptor
+    ld a,(hl)               ; target
+    cp 8
+    jr z,ak_snext           ; keyon slot: don't restart itself
+    xor a
+    ld (ix+MSL_CUR),a
+    ld (ix+MSL_CLK),a
+    ld (ix+MSL_STATE),a
+ak_snext:
+    ld de,4
+    add ix,de
+    pop bc
+    djnz ak_slot
+    ; re-key
+    ld a,(G_CH)
+    call fm3_op_for
+    or a
+    jr z,ak_fm
+    push af                 ; A = op
+    call fm3_key_op_off
+    pop af
+    jp fm3_key_op_on
+ak_fm:
+    ld a,(G_CH)
+    cp 6
+    ret nc                  ; PSG: no hardware re-key (macro restart is the effect)
+    call channel_off        ; A = ch → key off
+    ld a,(G_CH)
+    call chs_ptr_iy         ; key_on needs IY = chs
+    ld a,(G_CH)
+    jp key_on               ; A = ch → key on
 
 ; ===========================================================================
 ; PARAM_SET execution (opcodes.md §7; drv-player _paramSet order).

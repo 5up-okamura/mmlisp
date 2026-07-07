@@ -75,19 +75,21 @@ export function runTrace(
     },
   });
 
+  // Publish the overlay ROM bank BEFORE releasing reset: the boot code itself now
+  // lives in the ovl_boot overlay, so the reset stub loads it using G_OVL_BANK
+  // (MB_BASE+0x34), and ovl_boot's RAM clear preserves that global. On hardware
+  // the 68k writes this into Z80 RAM while holding the Z80 in reset.
+  if (overlay) {
+    ram[MB_BASE + 0x34] = overlayBank & 0xff;
+    ram[MB_BASE + 0x35] = (overlayBank >> 8) & 0xff;
+  }
+
   // Boot until the idle halt.
   let steps = 0;
   while (!cpu.halted && steps++ < maxStepsPerFrame) cpu.step();
   if (!cpu.halted) throw new Error("driver did not reach the idle loop");
   if (ram[MB_READY] !== 0xd2) {
     throw new Error(`driver_ready = 0x${ram[MB_READY].toString(16)}, want 0xD2`);
-  }
-
-  // Publish the overlay ROM bank (the host does this at init, after the reset
-  // that clears driver RAM). G_OVL_BANK is MB_BASE+0x34.
-  if (overlay) {
-    ram[MB_BASE + 0x34] = overlayBank & 0xff;
-    ram[MB_BASE + 0x35] = (overlayBank >> 8) & 0xff;
   }
 
   // 68k role: START_TRACK for every track in the MMB track table.

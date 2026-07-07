@@ -65,11 +65,14 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the ~6.5 KB Z80 image to Z80 RAM at
-  0x0000 via `Z80_loadCustomDriver`, then polls the mailbox `driver_ready`
-  byte until it reads `0xD2`. While MMLispDRV owns the Z80 you must not use
-  SGDK's XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG
-  (0x7F11) itself.
+- **Loading.** `MMLisp_init(overlay_rom)` uploads the resident Z80 image to Z80
+  RAM at 0x0000 **and publishes the overlay ROM bank (`G_OVL_BANK`) while the Z80
+  is held in reset**, then releases and polls the mailbox `driver_ready` byte
+  until it reads `0xD2`. The bank-before-reset order matters: the boot code
+  itself is an overlay (`ovl_boot`), so the reset stub needs `G_OVL_BANK` to load
+  it (`drv/README.md`). While MMLispDRV owns the Z80 you must not use SGDK's
+  XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG (0x7F11)
+  itself. Pass a 32 KB-aligned pointer to the overlay ROM blob (`mmlispdrv_ovl.bin`).
 
 - **Timing.** The driver runs `IM 1` and takes one frame per Z80 vblank
   interrupt (the 60 Hz `/INT` the VDP raises each vblank — the same tick every
@@ -144,9 +147,9 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - **FM3 independent-OP (M3):** `(fm3 …)` + `fm3-1`…`fm3-4` — CH3's four
   operators at independent F-numbers with their own `$28` key bits.
 - **Macros (M3):** `(macro :target …)` — step vectors, `(curve …)` envelopes,
-  multi-stage sequences (attack / sustain-loop / release), and `:semi` chiptune
-  arpeggios, on level, FM-op, and pitch targets. `:keyon` and i16 pitch macros
-  are later slices.
+  multi-stage sequences (attack / sustain-loop / release), `:semi` chiptune
+  arpeggios, i16 `:pitch` envelopes, and `:keyon` retrigger (drum rolls), on
+  level, FM-op, and pitch targets — up to 3 concurrent macros per channel.
 - **Dynamic values (M3):** `(def-val …)` + `$name` — the host sets 16 i16 slots
   with `MMLisp_setVal` (or reads with `MMLisp_getVal`); the score folds them into
   parameters via `PARAM_FROM_VAL` / `_ADD_VAL` / `_MUL_VAL` / `PARAM_MUL`, plus
@@ -168,7 +171,7 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - Full **16 concurrent tracks** (6 FM + 4 PSG, or FM3-op + PCM soft-mix + the
   rest). Note: the emulation gate harness starts all tracks through the 8-cell
   mailbox ring, so it exercises ≤8 at once; the driver itself holds 16.
-- Remaining M3 stream features (`:keyon` retrigger macros, VOICE_SET, CALL/RET)
+- Remaining M3 stream features (VOICE_SET, CALL/RET)
   are length-decoded and skipped; notes stay in time. Z80 code overlays keep the
   resident image under the 8 KB ceiling, so these land on the Z80 as they're
   built (the 68k-offload architecture stays the last resort; see `drv/README.md`).

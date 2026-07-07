@@ -123,8 +123,13 @@ Order of work:
    target), and **3-channel PCM soft-mix** (`pcm1`–`pcm3` summed to the fm6 DAC
    at a fixed ~10.5 kHz mix rate, hard-clipped; fm6-as-PCM retired) — the PCM
    per-note setup rides a third overlay so only the hot mixer stays resident
-   (driver.md §14). `verify:all` is seventeen trace scores, all zero-diff.
-   Remaining M3: VOICE_SET, CALL/RET + dedup, `:keyon` retrigger, NOTE_ON_EX
+   (driver.md §14). Then **`:keyon` retrigger** (drum rolls: a nonzero step
+   re-attacks the note — FM hardware EG re-key + soft-envelope macro restart;
+   FM+PSG) landed too, and to fit it the **boot code itself moved into a fourth
+   overlay** (`ovl_boot`): a tiny resident reset stub loads it, the host now
+   publishes `G_OVL_BANK` before releasing the Z80 from reset, and `ovl_boot`'s
+   RAM clear preserves the overlay-bank globals. `verify:all` is eighteen trace
+   scores, all zero-diff. Remaining M3: VOICE_SET, CALL/RET + dedup, NOTE_ON_EX
    macro_ref. The 68k-offload architecture (engines on the main 68000,
    `drv-player.js` the design) stays the last resort. Then hardware bring-up +
    cycle tuning.
