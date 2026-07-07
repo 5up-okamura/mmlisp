@@ -324,7 +324,11 @@ export class DrvPlayer {
 
   // ── Pitch (integer LUT + cent interpolation) ─────────────────────────────
   // Returns (block << 11) | fnum for note + cents, interpolating between the
-  // two neighbouring semitone entries in (fnum << block) space.
+  // two neighbouring semitone entries. The interpolation is done in block0's
+  // F-number units (not the full fnum<<block space) with a non-negative
+  // numerator, so the whole thing stays inside 16-bit integers and matches the
+  // Z80 asm bit-for-bit (driver.md §8; the residue vs the old float-space form
+  // is ≤ 1 F-number LSB, well inside the A/B band).
   _fnumBlockFor(note, cents) {
     const { fnumBlock } = this._luts;
     let n = note;
@@ -340,14 +344,15 @@ export class DrvPlayer {
     if (c === 0) return fnumBlock[n];
     const e0 = fnumBlock[n];
     const e1 = fnumBlock[n + 1];
-    const v0 = (e0 & 0x7ff) << (e0 >> 11);
-    const v1 = (e1 & 0x7ff) << (e1 >> 11);
-    const v = v0 + Math.round(((v1 - v0) * c) / 100);
-    let block = e0 >> 11;
-    let fnum = v >> block;
+    const block0 = e0 >> 11;
+    const fnum0 = e0 & 0x7ff;
+    const shift = Math.max(0, (e1 >> 11) - block0); // 0 or 1 for adjacent notes
+    const v1 = (e1 & 0x7ff) << shift; // e1's F-number in block0 units
+    let block = block0;
+    let fnum = fnum0 + Math.floor(((v1 - fnum0) * c + 50) / 100); // round half up
     while (fnum > 1023 && block < 7) {
       block++;
-      fnum = v >> block;
+      fnum >>= 1;
     }
     return ((block & 0x07) << 11) | (fnum & 0x7ff);
   }
@@ -363,7 +368,11 @@ export class DrvPlayer {
     }
     n = n < 0 ? 0 : n > 126 ? 126 : n;
     if (c === 0) return psgPeriod[n];
-    const p = psgPeriod[n] + Math.round(((psgPeriod[n + 1] - psgPeriod[n]) * c) / 100);
+    // Period decreases as pitch rises, so diff >= 0; subtract with a
+    // non-negative numerator to mirror the asm (round half up).
+    const p0 = psgPeriod[n];
+    const diff = p0 - psgPeriod[n + 1];
+    const p = p0 - Math.floor((diff * c + 50) / 100);
     return p < 1 ? 1 : p > 1023 ? 1023 : p;
   }
 

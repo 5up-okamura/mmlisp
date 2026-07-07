@@ -3,7 +3,8 @@
 The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 `docs/opcodes.md`, ported from the JS reference implementation
 (`live/src/drv-player.js`). Current coverage: **M1 (core playback)** plus
-**M2a (motion: sweeps, PARAM_ADD, TEMPO_SWEEP for level/tempo targets)**.
+**M2a (motion: sweeps, PARAM_ADD, TEMPO_SWEEP)** and **M2b (cent-interpolated
+NOTE_PITCH — glide / vibrato / detune)**.
 
 ## Layout
 
@@ -40,8 +41,9 @@ node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200
 driver, replays the MMB in the emulator (mailbox-started like a real 68000
 host), and diffs the frame-stamped register log against
 `drv-player.js` — **raw equality, zero tolerance**: same writes, same
-values, same frames, same order (driver.md §12.4). Current status: all four
-gate scores diff clean (ab-core, stress-m1, stress-m2skip, m2-motion).
+values, same frames, same order (driver.md §12.4). Current status: all five
+gate scores diff clean (ab-core, stress-m1, stress-m2skip, m2-motion,
+m2b-pitch).
 
 ## M2a — motion (sweeps / PARAM_ADD / TEMPO_SWEEP)
 
@@ -63,9 +65,23 @@ sweeps, cancelled by the next note), relative writes (`PARAM_ADD`, e.g.
   engines run ascending channel then the global tempo sweep, writing through
   the change-only shadow.
 
-**Deferred to M2b: `NOTE_PITCH` sweeps (glide / vibrato).** They need
-cent-interpolated pitch in the asm note path (driver.md §8), which the M1 asm
-stubs out; the gate scores avoid inline `:pitch` and pitch sweeps.
+## M2b — cent-interpolated NOTE_PITCH (glide / vibrato / detune)
+
+Inline `:pitch` (PARAM_SET NOTE_PITCH), pitch glides (one-shot NOTE_PITCH
+sweeps), and vibrato (loop NOTE_PITCH sweeps) now bend pitch on FM and PSG.
+The channel's cent offset is sticky state (CHS+$0C) applied at every note-on
+and every sweep frame. Cent interpolation (driver.md §8) runs between the two
+neighbouring semitone LUT entries:
+
+- **FM:** interpolate in the *lower* note's F-number units (not the full
+  `fnum<<block` space) with a non-negative numerator, so it stays in 16-bit
+  integers and the endpoint re-normalizes block/F-number. drv-player.js's
+  `_fnumBlockFor` was reformulated to this same 16-bit form (≤ 1 F-number LSB
+  from the old float-space version) so JS and asm match exactly.
+- **PSG:** interpolate the period LUT; period decreases with pitch, so the
+  driver subtracts a non-negative delta.
+- Shared helpers: `fold_cents` (peels whole semitones out of the cent
+  offset), `divmod100`/`div100` (the ÷100 the round-half-up needs).
 
 Note the DrvPlayer↔ir-player A/B (`ab-compare.js`) is *informational* for M2:
 the driver's integer curve crosses each TL/att boundary a few frames off from
@@ -99,21 +115,22 @@ These are the deltas against the docs as written:
    flush (and re-basing the comparator on per-frame *state* equality) is
    deferred to the on-hardware cycle-budget phase, where bounding per-frame
    chip access actually matters.
-2. **RAM map remapped for M2.** The M2 code+table image (4730 B) grew past
+2. **RAM map remapped for M2.** The M2 code+table image (5150 B) grew past
    the old 0x1200 data floor, so the internal data regions moved above the
-   mailbox: channel state → $1720, TCB → $19A0, shadow (value+valid planes,
-   2×152 B each) → $1BA0. Code+tables now own $0000–$167F. The **68k-published
-   addresses are unchanged** — mailbox $1680, val slots $16C0 — so the host
-   interface (and the SGDK glue) is unaffected. The image (4730 B) exceeds the
-   driver.md §5 "≤4.5 KB" *design target*; it still fits Z80 RAM comfortably
-   with the remap, and size/cycle tuning is the hardware phase.
+   mailbox: channel state → $1740, TCB → $19C0, shadow (value+valid planes,
+   2×152 B each) → $1BC0. Code+tables now own $0000–$167F (5760 B, of which
+   5150 are used). The **68k-published addresses are unchanged** — mailbox
+   $1680, val slots $16C0 — so the host interface (and the SGDK glue) is
+   unaffected. The image exceeds the driver.md §5 "≤4.5 KB" *design target*; it
+   still fits with the remap, and size/cycle tuning is the hardware phase.
 3. **Per-track increment slot reused.** Tempo is per-MMB (one MMB in M1), so
    the TCB increment field ($0C) holds the gate key-off countdown instead;
    the increment lives in a global. Revisit for cross-MMB layering.
-4. **`PARAM_SET NOTE_PITCH` is a no-op** in the asm (M2b): cents interpolation
-   in the note path (driver.md §8) is not yet ported, so inline `:pitch` and
-   pitch sweeps (glide/vibrato) diff against the JS reference — the gate scores
-   avoid them. Level and tempo sweeps are fully ported (M2a).
+4. **Pitch interpolation reformulated** (M2b): drv-player.js's `_fnumBlockFor`
+   / `_psgPeriodFor` were changed to a 16-bit-friendly, non-negative-numerator
+   form so the asm matches bit-for-bit. This shifts the reference's cent-bent
+   pitch by ≤ 1 F-number / period LSB versus the old float-space rounding —
+   inaudible, and M1 (no cents) is untouched.
 5. **Mailbox commands beyond START/STOP_TRACK** (KEY_OFF, SET_PARAM,
    FADE_TRACK, SET_VAL) are consumed and ignored — M2/M3 per §6.2.
 6. **START_TRACK resets** the channel's vel/vol/gate; the global `master` is

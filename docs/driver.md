@@ -167,7 +167,7 @@ deterministic. PSG writes need no wait.
 
 > **M2 implementation note.** The M2 code+table image outgrew the 0x1200
 > floor, so the reference/asm build relocates the *internal* regions above the
-> mailbox (channel state → 0x1720, TCB → 0x19A0, shadow → 0x1BA0), giving
+> mailbox (channel state → 0x1740, TCB → 0x19C0, shadow → 0x1BC0), giving
 > code+tables 0x0000–0x167F. The **68k-published addresses are unchanged**
 > (mailbox 0x1680, val slots 0x16C0). The shadow also grew to value + valid
 > planes (2×152 B each) for change-only suppression. See `drv/README.md`.

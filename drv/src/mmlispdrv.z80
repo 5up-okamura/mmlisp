@@ -30,8 +30,8 @@ WINDOW      equ $8000
 ; data regions (channel state, TCB, shadow) moved above the mailbox to give
 ; code room to 0x167F. The 68k-published addresses — mailbox 0x1680 and val
 ; slots 0x16C0 — are UNCHANGED, so the host interface is unaffected.
-CH_STATE    equ $1720       ; 10 × 64 B channel state blocks
-TCB_BASE    equ $19a0       ; 16 × 32 B track control blocks
+CH_STATE    equ $1740       ; 10 × 64 B channel state blocks
+TCB_BASE    equ $19c0       ; 16 × 32 B track control blocks
 MB_RING     equ $1680       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ $16a0
 MB_TAIL     equ $16a1
@@ -87,6 +87,14 @@ G_TS_TO     equ $1712       ; u16  increment to (8.8)
 G_TS_LEFT   equ $1714       ; u16  frames left
 G_TS_PHASE  equ $1716       ; u16  phase (0..65535)
 G_TS_STEP   equ $1718       ; u16  phase step
+; M2b pitch (cent interpolation, driver.md §8)
+G_PITCHC    equ $171a       ; i16  cents offset for the pending pitch write
+G_CREM      equ $171c       ; u8   folded cent remainder [0,99]
+G_NOTEADJ   equ $171d       ; u8   note after semitone fold (clamped 0..126)
+G_FN0       equ $171e       ; u16  lower-neighbour F-number / PSG period
+G_BLK0      equ $1720       ; u8   lower-neighbour block
+G_CHOFF     equ $1721       ; u8   FM channel offset / PSG channel (pitch emit)
+G_PORT      equ $1722       ; u8   YM port (pitch emit)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -104,8 +112,8 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 ; 2 × 152 bytes covering YM addresses $22..$B9 per port, plus a parallel
 ; byte-per-register valid plane (a register is always written the first time).
 ; Lives in the M2 PCM-reserved area for now.
-SHADOW      equ $1ba0       ; 304 B (port0 at +0, port1 at +152)
-SHVALID     equ $1cd0       ; 304 B valid plane (offset SHADOW+304)
+SHADOW      equ $1bc0       ; 304 B (port0 at +0, port1 at +152)
+SHVALID     equ $1cf0       ; 304 B valid plane (offset SHADOW+304)
 
 STACK_TOP   equ $2000
 
@@ -115,6 +123,7 @@ CHS_NOTE    equ $01
 CHS_VEL     equ $05
 CHS_VOL     equ $06
 CHS_GATE    equ $08
+CHS_PITCH   equ $0c         ; i16 pitch offset in cents (driver.md §5.1, M2b)
 CHS_OWNER   equ $0e         ; owning TCB index, $FF = free
 CHS_ALG     equ $0f
 CHS_VTL     equ $10         ; 4 × voiced TL (op1..op4)
@@ -1028,6 +1037,9 @@ note_on:
     ld a,c
     push bc
     call fm_port_off        ; D=port, C=choff
+    ld l,(iy+CHS_PITCH)     ; apply the channel's stored cent offset
+    ld h,(iy+CHS_PITCH+1)
+    ld (G_PITCHC),hl
     ld a,(G_NOTE)
     call write_fm_pitch     ; A4 then A0, change-only
     pop bc
@@ -1043,6 +1055,9 @@ no_psg:
     ld a,c
     cp 3
     jr z,no_noise
+    ld l,(iy+CHS_PITCH)
+    ld h,(iy+CHS_PITCH+1)
+    ld (G_PITCHC),hl
     ld a,(G_NOTE)
     call write_psg_pitch    ; latch + data bytes
     jr no_att
@@ -1213,8 +1228,10 @@ param_set:
     ; ── PSG-channel targets ───────────────────────────────────────────
     call chs_ptr_iy
     ld a,(G_TARGET)
+    cp 1                    ; NOTE_PITCH
+    jr z,ps_psg_pitch
     cp 4                    ; VOL
-    ret nz                  ; NOTE_PITCH (M2) and others: no-op
+    ret nz                  ; other targets: no-op
     ld b,31
     call clamp_val
     ld (iy+CHS_VOL),a
@@ -1228,6 +1245,19 @@ param_set:
     ld a,c
     ld c,b
     jp write_psg_att
+
+ps_psg_pitch:              ; store cents, re-emit period (noise has no pitch)
+    ld hl,(G_VAL)
+    ld (G_PITCHC),hl
+    ld (iy+CHS_PITCH),l
+    ld (iy+CHS_PITCH+1),h
+    ld a,(G_CH)
+    cp 9
+    ret z                  ; noise: no tone period
+    sub 6
+    ld c,a
+    ld a,(iy+CHS_NOTE)
+    jp write_psg_pitch
 
 ps_master:
     ld b,31
@@ -1319,7 +1349,7 @@ ps_fm:
     call fm_port_off        ; D=port, C=choff (value lives in G_VAL)
     ld a,(G_TARGET)
     cp 1
-    ret z                   ; NOTE_PITCH: M2 sweep-engine concern
+    jp z,psf_pitch          ; NOTE_PITCH: cent-interpolated pitch (M2b)
     cp 4
     jp z,psf_vol
     cp $10
@@ -1364,6 +1394,14 @@ psf_vol:
     ld (iy+CHS_VOL),a
     ld a,(G_CH)             ; IX may be a sweep slot here, not the TCB
     jp write_carrier_tls
+
+psf_pitch:                 ; store cents, re-emit F-number/block. C/D set by ps_fm.
+    ld hl,(G_VAL)
+    ld (G_PITCHC),hl
+    ld (iy+CHS_PITCH),l
+    ld (iy+CHS_PITCH+1),h
+    ld a,(iy+CHS_NOTE)
+    jp write_fm_pitch
 
 psf_fb:                     ; B0 = (v&7)<<3 | alg (shadow RMW)
     ld a,$b0
@@ -1815,42 +1853,21 @@ cpa_mute:
 ; Pitch (driver.md §8) — 12-entry A-rooted F-number LUT + block; PSG period
 ; LUT over MIDI 45..116 with clamping. M1 has no cent interpolation.
 ; ===========================================================================
-; write_fm_pitch: A = note, C = choff, D = port. Writes $A4 then $A0.
+; write_fm_pitch: A = note, cents in (G_PITCHC), C = choff, D = port.
+; Computes the cent-interpolated F-number/block (driver.md §8) and writes
+; $A4 then $A0. Mirrors drv-player _fnumBlockFor + _writeFmPitch.
 write_fm_pitch:
-    add a,3
-    ld b,0                  ; quotient
-wfp_div:
-    cp 12
-    jr c,wfp_mod
-    sub 12
-    inc b
-    jr wfp_div
-wfp_mod:
-    ld (G_TMP),a            ; (note+3) mod 12
+    ld b,a
+    ld a,c
+    ld (G_CHOFF),a
+    ld a,d
+    ld (G_PORT),a
     ld a,b
-    or a
-    jr nz,wfp_blk
-    ld a,1                  ; note < 9: clamp block to 0 (sub-sonic range)
-wfp_blk:
-    dec a                   ; block = quotient - 1
-    cp 8
-    jr c,wfp_bok
-    ld a,7
-wfp_bok:
-    ld (G_BLOCK),a
-    ld a,(G_TMP)
-    add a,a
-    push de
-    ld e,a
-    ld d,0
-    ld hl,FNUM_LUT
-    add hl,de
-    ld a,(hl)
-    ld (G_FNUM),a
-    inc hl
-    ld a,(hl)
-    ld (G_FNUM+1),a
-    pop de
+    call fnum_block_cents   ; → G_FNUM, G_BLOCK
+    ld a,(G_PORT)
+    ld d,a
+    ld a,(G_CHOFF)
+    ld c,a
     ; $A4 = block<<3 | fnum>>8
     ld a,(G_BLOCK)
     rlca
@@ -1872,26 +1889,115 @@ wfp_bok:
     ld e,a
     jp ym_write
 
-; write_psg_pitch: A = note, C = psg channel 0..2. Latch byte then data byte.
-write_psg_pitch:
-    sub 45
-    jr nc,wpp_clamped
-    ld hl,1023              ; below MIDI 45: lowest period
-    jr wpp_have
-wpp_clamped:
-    cp 72
-    jr c,wpp_idx
-    ld a,71                 ; above MIDI 116: top entry
-wpp_idx:
+; calc_fnum_block: A = note → (G_FNUM) u16, (G_BLOCK) u8. Preserves DE.
+calc_fnum_block:
+    add a,3
+    ld b,0                  ; quotient
+cfb_div:
+    cp 12
+    jr c,cfb_mod
+    sub 12
+    inc b
+    jr cfb_div
+cfb_mod:
+    ld (G_TMP),a            ; (note+3) mod 12
+    ld a,b
+    or a
+    jr nz,cfb_blk
+    ld a,1                  ; note < 9: clamp block to 0 (sub-sonic range)
+cfb_blk:
+    dec a                   ; block = quotient - 1
+    cp 8
+    jr c,cfb_bok
+    ld a,7
+cfb_bok:
+    ld (G_BLOCK),a
+    ld a,(G_TMP)
     add a,a
+    push de
     ld e,a
     ld d,0
-    ld hl,PSG_PERIOD_LUT
+    ld hl,FNUM_LUT
     add hl,de
     ld a,(hl)
+    ld (G_FNUM),a
     inc hl
-    ld h,(hl)
-    ld l,a
+    ld a,(hl)
+    ld (G_FNUM+1),a
+    pop de
+    ret
+
+; fnum_block_cents: A = note, (G_PITCHC) cents → (G_FNUM), (G_BLOCK).
+fnum_block_cents:
+    call fold_cents         ; A = noteAdj, (G_CREM) = rem
+    ld (G_NOTEADJ),a
+    call calc_fnum_block    ; e0 → G_FNUM, G_BLOCK
+    ld a,(G_CREM)
+    or a
+    ret z                   ; whole-semitone fold: e0 as-is
+    ld hl,(G_FNUM)          ; fnum0
+    ld (G_FN0),hl
+    ld a,(G_BLOCK)          ; block0
+    ld (G_BLK0),a
+    ld a,(G_NOTEADJ)
+    inc a
+    call calc_fnum_block    ; e1 → G_FNUM (fnum1), G_BLOCK (block1)
+    ; shift = block1 - block0 (0 or 1); v1 = fnum1 << shift, in HL
+    ld a,(G_BLOCK)
+    ld hl,G_BLK0
+    sub (hl)
+    jr nc,fbc_shp
+    xor a
+fbc_shp:
+    ld b,a
+    ld hl,(G_FNUM)          ; fnum1
+    inc b
+fbc_shl:
+    dec b
+    jr z,fbc_shd
+    add hl,hl
+    jr fbc_shl
+fbc_shd:
+    ld de,(G_FN0)           ; fnum0
+    or a
+    sbc hl,de               ; HL = v1 - fnum0 (>= 0, small)
+    ld a,l                  ; multiplicand (<= ~60)
+    ld e,a
+    ld d,0
+    ld a,(G_CREM)
+    call mul8               ; HL = (v1-fnum0) * rem
+    ld de,50
+    add hl,de
+    call div100             ; HL = round-half-up((v1-fnum0)*rem / 100)
+    ld de,(G_FN0)
+    add hl,de               ; fnum = fnum0 + delta
+    ld a,(G_BLK0)
+    ld (G_BLOCK),a
+fbc_norm:
+    ld a,h                  ; fnum > 1023 → high byte >= 4
+    cp 4
+    jr c,fbc_done
+    ld a,(G_BLOCK)
+    cp 7
+    jr nc,fbc_done
+    inc a
+    ld (G_BLOCK),a
+    srl h
+    rr l
+    jr fbc_norm
+fbc_done:
+    ld (G_FNUM),hl
+    ret
+
+; write_psg_pitch: A = note, cents in (G_PITCHC), C = psg channel 0..2.
+write_psg_pitch:
+    ld b,a
+    ld a,c
+    ld (G_CHOFF),a
+    ld a,b
+    call psg_period_cents   ; → HL = period
+    ld a,(G_CHOFF)
+    ld c,a
 wpp_have:
     ld a,c
     rrca
@@ -1918,6 +2024,159 @@ wpp_have:
     or b
     and $3f
     jp psg_write            ; data: 00ffffff
+
+; calc_psg_period: A = note → HL = period (clamped to the LUT range).
+calc_psg_period:
+    sub 45
+    jr nc,cpp_c
+    ld hl,1023              ; below MIDI 45: lowest period
+    ret
+cpp_c:
+    cp 72
+    jr c,cpp_idx
+    ld a,71                 ; above MIDI 116: top entry
+cpp_idx:
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,PSG_PERIOD_LUT
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld h,(hl)
+    ld l,a
+    ret
+
+; psg_period_cents: A = note, (G_PITCHC) cents → HL = period (clamped 1..1023).
+psg_period_cents:
+    call fold_cents
+    ld (G_NOTEADJ),a
+    call calc_psg_period
+    ld a,(G_CREM)
+    or a
+    ret z
+    ld (G_FN0),hl           ; period0
+    ld a,(G_NOTEADJ)
+    inc a
+    call calc_psg_period    ; HL = period1
+    ex de,hl                ; DE = period1
+    ld hl,(G_FN0)           ; period0
+    or a
+    sbc hl,de               ; HL = diff = period0 - period1 (>= 0)
+    ld a,l
+    ld e,a
+    ld d,0
+    ld a,(G_CREM)
+    call mul8               ; HL = diff * rem
+    ld de,50
+    add hl,de
+    call div100             ; HL = delta
+    ld de,(G_FN0)
+    ex de,hl                ; HL = period0, DE = delta
+    or a
+    sbc hl,de               ; period = period0 - delta
+    bit 7,h
+    jr nz,ppc_lo            ; underflow → 1
+    ld a,h
+    cp 4
+    jr c,ppc_hi
+    ld hl,1023              ; > 1023 → clamp
+    ret
+ppc_hi:
+    ld a,h
+    or l
+    ret nz
+    inc hl                  ; 0 → 1
+    ret
+ppc_lo:
+    ld hl,1
+    ret
+
+; ── cent folding + integer /100 (driver.md §8) ─────────────────────────────
+; fold_cents: A = note, (G_PITCHC) cents → A = note+semis (clamped 0..126),
+; (G_CREM) = remainder cents [0,99]. Mirrors drv-player's semitone fold.
+fold_cents:
+    ld (G_TMP),a            ; note
+    ld hl,(G_PITCHC)
+    bit 7,h
+    jr z,fc_pos
+    ; negative: magnitude
+    ld a,l
+    cpl
+    ld l,a
+    ld a,h
+    cpl
+    ld h,a
+    inc hl
+    call divmod100          ; BC = |c|/100, HL = |c|%100
+    ld a,l
+    or a
+    jr nz,fc_neg_r
+    xor a                   ; r == 0 → rem 0, note - q
+    ld (G_CREM),a
+    ld a,(G_TMP)
+    ld l,a
+    ld h,0
+    or a
+    sbc hl,bc
+    jr fc_clamp
+fc_neg_r:
+    ld a,100
+    sub l
+    ld (G_CREM),a           ; rem = 100 - r
+    ld a,(G_TMP)
+    ld l,a
+    ld h,0
+    or a
+    sbc hl,bc               ; note - q
+    dec hl                  ; - 1
+    jr fc_clamp
+fc_pos:
+    call divmod100          ; BC = c/100, HL = c%100
+    ld a,l
+    ld (G_CREM),a
+    ld a,(G_TMP)
+    ld l,a
+    ld h,0
+    add hl,bc               ; note + q
+fc_clamp:
+    bit 7,h
+    jr nz,fc_lo
+    ld a,h
+    or a
+    jr nz,fc_hi
+    ld a,l
+    cp 127
+    ret c
+fc_hi:
+    ld a,126
+    ret
+fc_lo:
+    xor a
+    ret
+
+; divmod100: HL (unsigned) → BC = HL/100, HL = HL%100 (0..99).
+divmod100:
+    ld bc,0
+    ld de,100
+dm100_lp:
+    or a
+    sbc hl,de
+    jr c,dm100_fix
+    inc bc
+    jr dm100_lp
+dm100_fix:
+    add hl,de
+    ret
+
+; div100: HL (unsigned) → HL = HL/100 (truncated).
+div100:
+    push bc
+    call divmod100
+    ld h,b
+    ld l,c
+    pop bc
+    ret
 
 ; write_psg_att: A = att 0..15, C = psg channel 0..3, IY = chs.
 ; Tracks the sounding flag (att < 15) like drv-player _writePsgAtt.
@@ -2451,6 +2710,8 @@ read_param:
     jr nc,rp_zero
     call chs_ptr_iy
     ld a,(G_TARGET)
+    cp 1                    ; NOTE_PITCH (cents, i16)
+    jr z,rp_pitch
     cp 4                    ; VOL
     jr z,rp_vol
     cp 6                    ; VEL
@@ -2494,6 +2755,10 @@ rp_vel:
 rp_gate:
     ld l,(iy+CHS_GATE)
     ld h,0
+    ret
+rp_pitch:
+    ld l,(iy+CHS_PITCH)
+    ld h,(iy+CHS_PITCH+1)
     ret
 rp_zero:
     ld hl,0

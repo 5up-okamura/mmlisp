@@ -88,16 +88,17 @@ Order of work:
    diffs clean against ir-player.js (0 mismatches; bands in driver.md
    §12). Live app: MMLispDRV backend toggle, File > Export > MMB…,
    `window.__abCompare()`. M2/M3 opcodes are length-decoded and skipped.
-3. **Z80 assembly** (in progress — M1 + M2a done in emulation) — `drv/`:
-   the driver (~4.7KB image) plus a first-party node toolchain (assembler,
-   Z80 emulator, trace harness). Gate: raw register-trace equality vs the
-   JS reference — four scores (ab-core, stress-m1, holds+sweeps, m2-motion)
-   diff clean at zero tolerance. **M2a** adds the sweep engine
-   (PARAM_SWEEP/STOP), PARAM_ADD, and TEMPO_SWEEP for level/tempo targets,
-   with a single-sourced integer curve model (`mmb.js` `curveUnit8`).
-   Deviations in `drv/README.md`. Next: **M2b** (NOTE_PITCH cents →
-   glide/vibrato), then CSM/PCM and the M2 mailbox commands
-   (KEY_OFF/SET_PARAM/FADE_TRACK); then hardware bring-up + cycle tuning.
+3. **Z80 assembly** (in progress — M1 + M2a + M2b done in emulation) —
+   `drv/`: the driver (~5.2KB image) plus a first-party node toolchain
+   (assembler, Z80 emulator, trace harness). Gate: raw register-trace
+   equality vs the JS reference — five scores (ab-core, stress-m1,
+   holds+sweeps, m2-motion, m2b-pitch) diff clean at zero tolerance.
+   **M2a** = sweep engine (PARAM_SWEEP/STOP), PARAM_ADD, TEMPO_SWEEP for
+   level/tempo, with a single-sourced integer curve model (`mmb.js`
+   `curveUnit8`). **M2b** = cent-interpolated NOTE_PITCH (glide / vibrato /
+   detune) on FM + PSG. Deviations in `drv/README.md`. Next: CSM, PCM/DAC,
+   and the M2 mailbox commands (KEY_OFF/SET_PARAM/FADE_TRACK); then hardware
+   bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 
