@@ -8,8 +8,9 @@ around *interactive* music: tracks that start, stop, layer, and respond to
 game state at runtime.
 
 - **Try it now:** https://mmlisp.vercel.app/
-- **Playback driver:** MMLispDRV (Z80, SGDK integration) — in design; see the
-  capability table below.
+- **Playback driver:** MMLispDRV (Z80, SGDK integration) — M1 + M2 complete in
+  emulation (trace-verified against the JS reference); see the capability table
+  below.
 
 ## What it looks like
 
@@ -73,29 +74,36 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 The driver is being built docs-first: a JS reference implementation validated
 against the live player, then the Z80 assembly port. Everything below already
 plays in MMLisp Live; this table tracks what runs on the **hardware driver**.
+✅ means the Z80 assembly is written and its register-write trace matches the
+JS reference exactly (zero tolerance, `drv/`); real-hardware bring-up is still
+pending.
 
 | Capability                                                        | Status         |
 | ------------------------------------------------------------------ | -------------- |
-| Core playback: notes/rests/ties, loops, jumps, FM + PSG voices     | 🚧 planned (M1) |
-| Velocity / volume / master level composition (dB offset tables)    | 🚧 planned (M1) |
-| 68000 mailbox: `START_TRACK` / `STOP_TRACK`                        | 🚧 planned (M1) |
-| Parameter sweeps and glide (`PARAM_SWEEP`), `TEMPO_SWEEP`          | 🚧 planned (M2) |
-| FM3 CSM mode (Timer A buzz)                                        | 🚧 planned (M2) |
-| PCM playback, single DAC channel                                   | 🚧 planned (M2) |
-| `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | 🚧 planned (M2) |
+| Core playback: notes/rests/ties, loops, jumps, FM + PSG voices     | ✅ emulation (M1) |
+| Velocity / volume / master level composition (dB offset tables)    | ✅ emulation (M1) |
+| 68000 mailbox: `START_TRACK` / `STOP_TRACK`                        | ✅ emulation (M1) |
+| Parameter sweeps and glide (`PARAM_SWEEP`), `TEMPO_SWEEP`          | ✅ emulation (M2) |
+| Cent-interpolated pitch: glide / vibrato / detune (`NOTE_PITCH`)   | ✅ emulation (M2) |
+| FM3 CSM mode (Timer A buzz)                                        | ✅ emulation (M2) |
+| PCM playback, single DAC channel (frame-quantized feed)           | ✅ emulation (M2) |
+| `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | ✅ emulation (M2) |
 | Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 planned (M3) |
 | FM3 independent-operator mode                                      | 🚧 planned (M3) |
 | Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | 🚧 planned (M3) |
 | Multi-channel PCM soft mixing (up to 3ch)                          | 🚧 planned (M3) |
 | `CALL`/`RET` event-stream deduplication                            | 🚧 planned (M3) |
 
-Nothing is implemented on the Z80 yet — statuses flip to ✅ as milestones land.
-See [docs/driver.md](docs/driver.md) for the architecture and milestone plan.
+M1 and all of M2 are done in emulation (nine trace scores diff clean); M3 is
+next. See [docs/driver.md](docs/driver.md) for the architecture and
+[drv/README.md](drv/README.md) for the port, toolchain, and verification.
 
 ## Repository Structure
 
 - `docs/` — language reference, driver design, formats
 - `live/` — MMLisp Live web authoring environment (editor, compiler, player)
+- `drv/` — MMLispDRV Z80 driver: assembly source, first-party toolchain
+  (assembler, Z80 emulator, trace harness), and SGDK integration
 - `examples/` — demo songs and test assets
 - `tools/` — command-line compiler and validation scripts
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`

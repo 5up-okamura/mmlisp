@@ -3,13 +3,18 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator)
 from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
-> **Verification status.** The Z80 driver's register output is proven
-> byte-for-byte against the JS reference *in emulation* (`drv/tools/verify.mjs`
-> — the same Z80 image this integration ships). What is **not** yet verified is
-> this 68k glue and the driver running under a real Mega Drive bus/interrupt
-> model. The C here is written against SGDK's ~1.6x Z80 API and has not been
-> compiled or run in this repo (no SGDK/m68k toolchain here). Follow
-> "Confirming it works" below on an emulator before trusting it.
+> **Verification status.** The Z80 driver (the same ~6.3 KB image this
+> integration ships) covers **all of M1 and M2** — FM/PSG notes, level model,
+> loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3
+> CSM, single-channel PCM DAC, and the host mailbox commands. Its register
+> output is proven byte-for-byte against the JS reference *in emulation*
+> (`drv/tools/verify.mjs`; nine gate scores diff clean at zero tolerance). What
+> is **not** yet verified is this 68k glue and the driver under a real Mega
+> Drive bus/interrupt model: the C here is written against SGDK's ~1.6x Z80 API
+> and has not been compiled or run in this repo (no SGDK/m68k toolchain here).
+> Follow "Confirming it works" below on an emulator before trusting it. (The
+> PCM DAC feed is modelled frame-quantized in the verified build — see below and
+> `drv/README.md`; its sub-frame feed timing is a hardware-bring-up item.)
 
 ## Files
 
