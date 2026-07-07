@@ -1,0 +1,18 @@
+; M3 gate: multiple simultaneous macros per channel (up to 3 active, keyed by
+; target). Exercises two targets running together (VOL envelope + NOTE_PITCH
+; vibrato + NOTE_SEMI arpeggio), replace-by-target (a second :vol macro
+; supersedes the first in place), per-target clear (drop :pitch, keep :vol),
+; and clear-all, on FM and PSG.
+(score :tempo 150
+  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+    (macro :vol (triangle :from 24 :to 8 :len 4f :loop))
+    (macro :pitch [0 :hold 40 0 -40])
+    (macro :semi [0 :hold 4 7]) :len 4
+    c
+    (macro :vol (triangle :from 30 :to 12 :len 3f :loop)) e   ; replace :vol
+    (macro :pitch none) g                                     ; drop :pitch, keep :vol+:semi
+    (macro :vol none) (macro :semi none) c)                   ; clear rest
+  (sqr1 :len 4
+    (macro :vol (triangle :from 15 :to 4 :len 5f :loop))
+    (macro :pitch [0 :hold 50 -50])
+    a c e (macro :vol none) g))

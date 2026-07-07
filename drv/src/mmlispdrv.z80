@@ -46,7 +46,7 @@ VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 
 ; Overlay slot: a shared RAM buffer just above the resident code where cold-code
 ; overlays (ovl_setup / ovl_cmd) are loaded on demand and executed (driver.md §5).
-OVERLAY_SLOT equ $1700         ; resident ends ~$1651; slot $1700..DATA_BASE ($18F0)
+OVERLAY_SLOT equ $1720         ; resident ends ~$1709; slot $1720..DATA_BASE ($18F0), 464 B ≥ max overlay 445
 
 ; driver globals block
 G_BASE      equ MB_RING+$60     ; $17E0
@@ -259,8 +259,12 @@ boot_ch:
     ld (iy+CHS_GATE),8
     ld (iy+CHS_OWNER),$ff
     ld (iy+CHS_ALG),7
-    ld (iy+CHS_MACT),$ff       ; macro engine: empty active + running slot
+    ld (iy+CHS_MACT),$ff       ; macro engine: 3 empty active + 3 running slots
+    ld (iy+CHS_MACT+1),$ff
+    ld (iy+CHS_MACT+2),$ff
     ld (iy+CHS_MSLOT+MSL_DESC),$ff
+    ld (iy+CHS_MSLOT+4+MSL_DESC),$ff
+    ld (iy+CHS_MSLOT+8+MSL_DESC),$ff
     pop af
     inc a
     cp 10
@@ -1415,50 +1419,156 @@ macro_desc_ptr:
     add hl,de
     ret
 
-; ── MACRO_SET (macro_id u8) — bind the channel's active macro ──────────────
-; Slice 1 keeps a single active macro per channel (slot 0); the RAM reserves 3
-; active ids + 3 running slots (§5.1) for the multi-macro slice.
+; ── MACRO_SET (macro_id u8) — bind a macro to the channel's active set ──────
+; Up to 3 macros active per channel, keyed by target (driver.md §13.1). Binding
+; a target that is already active replaces it in place; a new target appends.
+; The active ids stay compact and insertion-ordered (matches drv-player's Map).
 d_macro_set:
     inc hl
-    ld a,(hl)               ; macro id
+    ld c,(hl)               ; C = macro id
     inc hl
-    push hl
-    ld c,a
+    push hl                 ; save stream ptr
     ld a,(ix+T_CH)
     cp 10
-    jr nc,dms_done          ; fm3-op/pcm: no macro slots
-    call chs_ptr_iy
-    ld (iy+CHS_MACT),c
-dms_done:
+    jr nc,dms_pop           ; fm3-op/pcm: no macro slots
+    call chs_ptr_iy         ; IY = chs
+    ld a,c
+    call macro_desc_ptr     ; HL = descriptor
+    ld d,(hl)               ; D = new macro's target
+    push iy
+    pop hl
+    ld a,CHS_MACT
+    add a,l
+    ld l,a
+    jr nc,dms_p1
+    inc h
+dms_p1:
+    push hl                 ; keep &CHS_MACT[0] for pass 2
+    ld b,3
+dms_p1l:
+    ld a,(hl)
+    cp $ff
+    jr z,dms_p1n            ; empty slot: skip
+    push hl
+    push de                 ; preserve D = new target (macro_desc_ptr clobbers DE)
+    push bc
+    call macro_desc_ptr     ; A = id → HL = descriptor
+    ld a,(hl)               ; that macro's target
+    pop bc
+    pop de
+    pop hl
+    cp d
+    jr z,dms_hit            ; same target → replace here
+dms_p1n:
+    inc hl
+    djnz dms_p1l
+    pop hl                  ; pass 2: HL = &CHS_MACT[0]
+    ld b,3
+dms_p2l:
+    ld a,(hl)
+    cp $ff
+    jr z,dms_hit2           ; first empty → append
+    inc hl
+    djnz dms_p2l
+    jr dms_pop              ; all 3 active (shouldn't happen): drop
+dms_hit:
+    pop de                  ; discard saved base
+dms_hit2:
+    ld (hl),c               ; store macro id
+dms_pop:
     pop hl
     jp d_next
 
-; ── MACRO_CLEAR (target u8) — clear the active binding ─────────────────────
-; The running slot keeps its snapshot and finishes the note (§13.1).
+; ── MACRO_CLEAR (target u8) — clear active bindings ────────────────────────
+; target 0xFF clears the whole active set; otherwise remove the macro bound to
+; that target and shift the rest down (stays compact). Running slots keep their
+; snapshot and finish the note (§13.1).
 d_macro_clear:
     inc hl
-    inc hl                  ; target byte (single active macro: unconditional)
+    ld c,(hl)               ; C = target byte
+    inc hl
     push hl
     ld a,(ix+T_CH)
     cp 10
-    jr nc,dmc_done
+    jr nc,dmc_pop
     call chs_ptr_iy
-    ld (iy+CHS_MACT),$ff
-dmc_done:
+    push iy
+    pop hl
+    ld a,CHS_MACT
+    add a,l
+    ld l,a
+    jr nc,dmc_h
+    inc h
+dmc_h:
+    ld a,c
+    cp $ff
+    jr nz,dmc_one
+    ld (hl),$ff             ; clear all
+    inc hl
+    ld (hl),$ff
+    inc hl
+    ld (hl),$ff
+    jr dmc_pop
+dmc_one:
+    ld b,3
+dmc_scan:
+    ld a,(hl)
+    cp $ff
+    jr z,dmc_next           ; empty
+    push hl
+    push bc
+    call macro_desc_ptr
+    ld a,(hl)               ; this active macro's target
+    pop bc
+    pop hl
+    cp c
+    jr z,dmc_del
+dmc_next:
+    inc hl
+    djnz dmc_scan
+    jr dmc_pop              ; target not active
+dmc_del:
+    dec b                   ; B = entries after this one
+    jr z,dmc_last           ; nothing after: just blank
+dmc_sl:
+    inc hl
+    ld a,(hl)               ; pull next down
+    dec hl
+    ld (hl),a
+    inc hl
+    djnz dmc_sl
+dmc_last:
+    ld (hl),$ff
+dmc_pop:
     pop hl
     jp d_next
 
-; macro_trigger: IY = chs. Instantiate the active macro into its running slot
-; (NOTE_ON, §13.1). Keeps IX.
+; macro_trigger: IY = chs. Instantiate every active macro into a running slot
+; (NOTE_ON, §13.1), in active order. Empty actives (0xFF) leave inert slots.
+; Keeps IX.
 macro_trigger:
-    ld a,(iy+CHS_MACT)
-    ld (iy+CHS_MSLOT+MSL_DESC),a
-    cp $ff
-    ret z
+    push ix
+    push iy
+    pop hl
+    ld bc,CHS_MACT
+    add hl,bc               ; HL = &CHS_MACT[0]
+    push iy
+    pop ix
+    ld bc,CHS_MSLOT
+    add ix,bc               ; IX = &slot[0]
+    ld b,3
+mt_l:
+    ld a,(hl)               ; active id (0xFF = empty)
+    ld (ix+MSL_DESC),a
     xor a
-    ld (iy+CHS_MSLOT+MSL_CLK),a
-    ld (iy+CHS_MSLOT+MSL_CUR),a
-    ld (iy+CHS_MSLOT+MSL_STATE),a
+    ld (ix+MSL_CLK),a
+    ld (ix+MSL_CUR),a
+    ld (ix+MSL_STATE),a
+    inc hl
+    ld de,4
+    add ix,de
+    djnz mt_l
+    pop ix
     ret
 
 ; process_macros: frame step 3, after the sweep engines (§13.3). Steps the
@@ -1474,15 +1584,24 @@ pm_ch:
     ld a,c
     ld (G_CH),a
     call chs_ptr_iy         ; IY = chs
-    ld a,(iy+CHS_MSLOT+MSL_DESC)
-    cp $ff
-    jr z,pm_next
     push iy
     pop ix
     ld de,CHS_MSLOT
-    add ix,de               ; IX = &slot[0]
+    add ix,de               ; IX = &slot[0] (step_macro never moves IX)
+    ld b,3
+pm_slot:
+    push bc
+    ld a,(ix+MSL_DESC)
+    cp $ff
+    jr z,pm_snext
+    ld a,(G_CH)
+    call chs_ptr_iy         ; restore IY = chs (step_macro leaves IY = descriptor)
     call step_macro
-pm_next:
+pm_snext:
+    ld de,4
+    add ix,de
+    pop bc
+    djnz pm_slot
     pop bc
     inc c
     ld a,c
