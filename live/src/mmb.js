@@ -113,8 +113,10 @@ export const OPCODE = {
   FM3_OP_PITCH: 0xa4,
   PCM_NOTE_ON: 0xc0,
   PCM_NOTE_OFF: 0xc1,
+  MACRO_SET: 0xe0,
   PARAM_ADD_VAL: 0xe1,
   PARAM_MUL_VAL: 0xe2,
+  MACRO_CLEAR: 0xe3,
 };
 export const OPCODE_NAME = Object.fromEntries(
   Object.entries(OPCODE).map(([name, id]) => [id, name]),

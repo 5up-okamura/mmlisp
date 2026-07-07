@@ -3,14 +3,14 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator)
 from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
-> **Verification status.** The Z80 driver (the same ~5.9 KB image this
-> integration ships) covers **all of M1 and M2** plus M3's **FM3
-> independent-operator mode** — FM/PSG notes, level model, loops, holds,
-> sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3 CSM, FM3
-> independent-OP, single-channel PCM DAC, and the host mailbox commands. Its
-> register output is proven byte-for-byte against the JS reference *in
-> emulation* (`drv/tools/verify.mjs`; ten gate scores diff clean at zero
-> tolerance). What
+> **Verification status.** The Z80 driver (the same ~6.3 KB image this
+> integration ships) covers **all of M1 and M2** plus two M3 features — **FM3
+> independent-operator mode** and the **step-macro engine** — FM/PSG notes,
+> level model, loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch
+> (glide/vibrato), FM3 CSM, FM3 independent-OP, step macros, single-channel PCM
+> DAC, and the host mailbox commands. Its register output is proven
+> byte-for-byte against the JS reference *in emulation* (`drv/tools/verify.mjs`;
+> eleven gate scores diff clean at zero tolerance). What
 > is **not** yet verified is this 68k glue and the driver under a real Mega
 > Drive bus/interrupt model: the C here is written against SGDK's ~1.6x Z80 API
 > and has not been compiled or run in this repo (no SGDK/m68k toolchain here).
@@ -64,7 +64,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the ~5.9 KB Z80 image to Z80 RAM at
+- **Loading.** `MMLisp_init()` uploads the ~6.3 KB Z80 image to Z80 RAM at
   0x0000 via `Z80_loadCustomDriver`, then polls the mailbox `driver_ready`
   byte until it reads `0xD2`. While MMLispDRV owns the Z80 you must not use
   SGDK's XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG
@@ -142,6 +142,9 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - **CSM (M2):** `fm3-csm` tracks — CSM mode + Timer A rate (const and swept).
 - **FM3 independent-OP (M3):** `(fm3 …)` + `fm3-1`…`fm3-4` — CH3's four
   operators at independent F-numbers with their own `$28` key bits.
+- **Step macros (M3):** `(macro :target [v :hold v … :off v …])` step-vector
+  envelopes/LFOs on level & FM-op targets (attack / sustain-loop / release).
+  Curve/stage macros and `:semi`/`:keyon` are later slices.
 - **PCM (M2):** single-channel samples through the `fm6` DAC (`:mode
   shot`/`loop`). Note the DAC feed is modelled frame-quantized in the verified
   build (see `drv/README.md`); the real sub-frame feed timing is a

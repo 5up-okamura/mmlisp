@@ -221,12 +221,15 @@ Notes:
   (`rate = base_rate × 2^((note−60)/12)`, precomputed table of 49 u16
   multipliers for C2–C6 in ROM). `dur = 0x00` + a looped sample holds until
   PCM_NOTE_OFF / host release.
-- **MACRO_SET / MACRO_CLEAR** drive the macro engine (mmb.md §15, driver.md
-  §14). Macros are sticky track state: `MACRO_SET {macro_id}` binds
+- **MACRO_SET / MACRO_CLEAR** drive the macro engine (implemented — mmb.md §15,
+  driver.md §13). Macros are sticky track state: `MACRO_SET {macro_id}` binds
   MACRO_TABLE[macro_id] as the active macro for its target (replacing any
   active macro on that target); `MACRO_CLEAR {target}` clears one target
   (`0xFF` = clear all). `NOTE_ON` (0x10) then triggers whatever is active — no
   change to NOTE_ON. `NOTE_ON_EX` `macro_ref` (§5.1) is the per-note one-shot.
+  The exporter diffs each note's snapshotted macros into these sticky opcodes.
+  Slice 1 lowers the `steps` form onto i8 targets (driver.md §13); the driver
+  keeps one active macro per channel for now.
 - **0xE4–0xEF** stay undefined. Undefined ⇒ fail-safe reject, not skip.
 
 ## 7. Target ID Table

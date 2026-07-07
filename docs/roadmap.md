@@ -107,11 +107,13 @@ Order of work:
    read through the bank window), freeing ~726 B — the image was ~5.7 KB with
    ~600 B of code headroom (was ~30). **M3 started** (2026-07-07): FM3
    independent-OP (FM3_MODE/FM3_OP_PITCH, driver.md §13.4) is implemented and
-   gated (`verify:m3`, tenth trace score, zero tolerance); the image is ~5.9 KB.
-   The port's channel-ownership eviction now exempts the FM3 shared channel 2 so
-   the voice + op1 coexist, realigning it with the reference (which never
-   evicts). Next: macro engine + dynamic value slots, CALL/RET + dedup,
-   VOICE_SET — then hardware bring-up + cycle tuning.
+   gated (`verify:m3`, tenth trace score). The **step-macro engine** (MACRO_SET/
+   CLEAR, MACRO_TABLE §0x0007) landed too (eleventh score): `steps` macros on i8
+   targets, exporter → drv-player → asm, zero tolerance. The image is now ~6.3 KB
+   with ~1 B of headroom — **M3 is size-bound**. Slice 2 (curve/stages lowering)
+   is exporter-only; slice 3 (macro-only targets, i16 NOTE_PITCH, multi-macro,
+   dynamic value slots, CALL/RET, VOICE_SET) needs the shadow-value-plane rework
+   first. Then hardware bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

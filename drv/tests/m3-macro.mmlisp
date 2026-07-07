@@ -1,0 +1,9 @@
+; M3 gate: step-vector macro engine (slice 1). One VOL macro with an attack
+; step, a :hold sustain loop, and an :off release section. Exercises trigger
+; on NOTE_ON, the sustain loop under a held note, the release region when the
+; note keys off into a rest, macro re-trigger on the next note, and
+; MACRO_CLEAR (the tail notes carry no macro).
+(score :tempo 150
+  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+    (macro :vol [28 :hold 22 18 :off 14 10 6 4]) :len 4
+    c _ e (macro :vol none) g c))

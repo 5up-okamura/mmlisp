@@ -219,8 +219,8 @@ voices (20–22) live in the M2 ring-buffer area. The 64-byte layout is
 | 0x10–0x13 | 4    | voiced TL, op1–op4 (level-composition base) | M1 |
 | 0x14–0x17 | 4    | FADE_TRACK Bresenham counters (N, V, err, cur; M2 mailbox) | M2 |
 | 0x18–0x2F | 24   | sweep engine: 2 slots × 12 B (target, curve, flags, phase u16, from i16, to i16, len u16, step u16) | M2 |
-| 0x30–0x3D | 14   | macro engine (§14): 3 active-macro ids + 3 running slots × {descriptor idx, step clock, cursor, flags} = 4 B | M3 |
-| 0x3E–0x3F | 2    | FADE frames-left; reserved | M2 |
+| 0x30–0x3E | 15   | macro engine (§13): 3 active-macro ids (0x30–0x32) + 3 running slots × {descriptor idx, step clock, cursor, state} = 4 B (0x33–0x3E) | M3 |
+| 0x3F      | 1    | FADE frames-left | M2 |
 
 M1 uses offsets 0x00–0x13 (~24 B of the 64). (The implementation moved a few
 M2 fields — FADE counters into 0x14–0x17/0x3E, the M2 shadow to a bitmap valid
@@ -487,6 +487,16 @@ release). Curves and stages are pre-sampled; the driver never evaluates a curve
 or easing at macro time. This keeps the engine tiny and reproduces `ir-player`
 `_scheduleMacro` exactly, so the JS reference and asm share it under the §12
 trace gate.
+
+**Implementation status (slice 1).** The engine is implemented and gated
+(`verify:m3`) for the `steps` macro form on i8 targets that ride the PARAM_SET
+apply path — the common envelope/LFO case (VOL/VEL/FM_TL/…). Interim limits,
+each a later slice: one active macro per channel (the RAM reserves 3 active +
+3 running slots below, but the driver code drives slot 0 only); `curve`/`stages`
+forms and tick-unit `:step` are not yet lowered by the exporter (dropped with a
+warning); the i16 target NOTE_PITCH and the macro-only targets NOTE_SEMI/KEYON
+need their own apply paths. The hard gate is asm↔`drv-player` at zero tolerance;
+the `ir-player` A/B is informational for macros (pre-sampled vs continuous-time).
 
 ### 13.1 Sticky active set + trigger
 

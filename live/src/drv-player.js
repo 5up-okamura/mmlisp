@@ -226,7 +226,45 @@ export class DrvPlayer {
       }
     }
 
-    this._song = { stream, tracks, valInits, samples, sampleData };
+    // MACRO_TABLE (mmb.md §15): 8-byte descriptors + a value blob. Parsed into
+    // per-macro descriptors with the values sliced out (i8, or i16 if flags
+    // bit0). Hold sentinel 0x80 / 0x8000 stays as null.
+    const macros = [];
+    const macroTable = sections.get(SECTION_ID.MACRO_TABLE);
+    if (macroTable) {
+      const n = u16(macroTable, 0);
+      const blobBase = 2 + n * 8;
+      for (let i = 0; i < n; i++) {
+        const e = 2 + i * 8;
+        const flags = macroTable[e + 1];
+        const wide = (flags & 1) !== 0;
+        const count = macroTable[e + 5];
+        let off = blobBase + u16(macroTable, e + 6);
+        const values = [];
+        for (let k = 0; k < count; k++) {
+          if (wide) {
+            const raw = u16(macroTable, off);
+            values.push(raw === 0x8000 ? null : i16(raw));
+            off += 2;
+          } else {
+            const raw = macroTable[off];
+            values.push(raw === 0x80 ? null : (raw << 24) >> 24);
+            off += 1;
+          }
+        }
+        macros.push({
+          target: macroTable[e],
+          flags,
+          step: macroTable[e + 2],
+          loopStart: macroTable[e + 3],
+          release: macroTable[e + 4],
+          count,
+          values,
+        });
+      }
+    }
+
+    this._song = { stream, tracks, valInits, samples, sampleData, macros };
     return this;
   }
 
@@ -258,6 +296,11 @@ export class DrvPlayer {
     // channel (e.g. a pitch glide and a volume fade at once) + one global tempo
     // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
     this._sweeps = Array.from({ length: 10 }, () => [null, null]);
+    // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
+    // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
+    this._macros = song?.macros ?? [];
+    this._macroActive = Array.from({ length: 10 }, () => new Map()); // target → macro index
+    this._macroSlots = Array.from({ length: 10 }, () => []); // running slots
     this._tempoSweep = null;
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
@@ -531,6 +574,10 @@ export class DrvPlayer {
       this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
     }
 
+    // Re-trigger the channel's active macros (driver.md §13.1). The first step
+    // fires this frame in step 3, overriding the note-on's base level.
+    if (!fm3op && ch < 10) this._macroTrigger(ch);
+
     // Gate scheduling (opcodes.md §3.1). exGate: absolute ticks (NOTE_ON_EX);
     // 0 = hold until the host keys off.
     const gate = fm3op ? 8 : ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
@@ -791,6 +838,26 @@ export class DrvPlayer {
           trk.pc += 1;
           this._pcmNoteOff();
           break;
+        case OPCODE.MACRO_SET: {
+          const macroId = s[trk.pc + 1];
+          trk.pc += 2;
+          const d = this._macros[macroId];
+          if (d && trk.channelId < 10) {
+            // Sticky: bind this macro as the active macro for its target,
+            // replacing any macro already active on that target (driver.md §13.1).
+            this._macroActive[trk.channelId].set(d.target, macroId);
+          }
+          break;
+        }
+        case OPCODE.MACRO_CLEAR: {
+          const target = s[trk.pc + 1];
+          trk.pc += 2;
+          if (trk.channelId < 10) {
+            if (target === 0xff) this._macroActive[trk.channelId].clear();
+            else this._macroActive[trk.channelId].delete(target);
+          }
+          break;
+        }
         case OPCODE.VOICE_SET:
           this._skip(trk, op, 2);
           break;
@@ -1038,6 +1105,78 @@ export class DrvPlayer {
     }
   }
 
+  // ── M3 macro engine (driver.md §13) ──────────────────────────────────────
+  _channelKeyed(ch) {
+    if (ch < 6) return this._fm[ch].keyed;
+    if (ch < 10) return this._psg[ch - 6].sounding;
+    return false;
+  }
+
+  // NOTE_ON re-instantiates every active macro into a fresh running slot
+  // (driver.md §13.1). Insertion order = MACRO_SET order (§13.3).
+  _macroTrigger(ch) {
+    const active = this._macroActive[ch];
+    const slots = [];
+    for (const macroId of active.values()) {
+      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state: "run" });
+    }
+    this._macroSlots[ch] = slots;
+  }
+
+  _processMacros() {
+    for (let ch = 0; ch < 10; ch++) {
+      const slots = this._macroSlots[ch];
+      if (slots.length === 0) continue;
+      const keyed = this._channelKeyed(ch);
+      let dead = false;
+      for (let i = 0; i < slots.length; i++) {
+        if (this._stepMacro(ch, slots[i], keyed)) {
+          slots[i] = null;
+          dead = true;
+        }
+      }
+      if (dead) this._macroSlots[ch] = slots.filter(Boolean);
+    }
+  }
+
+  // One running slot, one frame. Returns true when the slot is finished.
+  // Regions (mmb.md §15): attack [0..loopStart), sustain [loopStart..release)
+  // cycled while keyed, release [release..count) once after key-off.
+  _stepMacro(ch, slot, keyed) {
+    const d = this._macros[slot.descIdx];
+    if (!d) return true;
+    // Key-off: leave attack/sustain for the release region (or end).
+    if ((slot.state === "run" || slot.state === "hold") && !keyed) {
+      if (d.release !== 0xff && d.release < d.count) {
+        slot.state = "release";
+        slot.cursor = d.release;
+        slot.stepClock = 0; // release[0] fires on the key-off frame
+      } else {
+        return true; // no release section
+      }
+    }
+    if (slot.stepClock > 0) {
+      slot.stepClock--;
+      return false;
+    }
+    if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
+    const v = d.values[slot.cursor];
+    if (v !== null && v !== undefined) this._paramSet(ch, d.target, v);
+    slot.stepClock = d.step - 1;
+    if (slot.state === "run") {
+      slot.cursor++;
+      const sustainEnd = d.release === 0xff ? d.count : d.release;
+      if (slot.cursor >= sustainEnd) {
+        if (d.loopStart !== 0xff) slot.cursor = d.loopStart; // sustain loop
+        else slot.state = "hold"; // one-shot: hold last attack value
+      }
+    } else {
+      slot.cursor++;
+      if (slot.cursor >= d.count) return true; // release finished
+    }
+    return false;
+  }
+
   // One sweep slot, one frame. Returns true when a one-shot sweep completes
   // (caller frees the slot). Loop sweeps never complete on their own.
   _processSweep(ch, slot) {
@@ -1270,6 +1409,7 @@ export class DrvPlayer {
         if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
       }
     }
+    this._processMacros(); // §13.3: macros after sweeps, same write path
     if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
     if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
     this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)

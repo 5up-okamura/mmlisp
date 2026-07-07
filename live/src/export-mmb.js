@@ -42,8 +42,17 @@ import { buildLutBlob } from "./lut-blob.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
-// NOTE_ON macro spec keys — no MMB representation until the M3 macro engine
-// claims the 0xE0 block; each occurrence is reported, the note still plays.
+// NOTE_ON macro spec key → target name (opcodes.md §7). Most keys uppercase
+// directly (vol→VOL, fm_tl1→FM_TL1, note_semi→NOTE_SEMI); velMacro/pitchMacro
+// are the two irregular ones.
+function macroKeyToTarget(key) {
+  if (key === "velMacro") return "VEL";
+  if (key === "pitchMacro") return "NOTE_PITCH";
+  return key.toUpperCase();
+}
+
+// NOTE_ON macro spec keys — snapshotted per note; the exporter diffs them into
+// sticky MACRO_SET / MACRO_CLEAR (driver.md §13.1). Unlowered forms still warn.
 const MACRO_ARG_KEYS = new Set([
   "pitchMacro",
   "velMacro",
@@ -199,6 +208,57 @@ export function encodeMmb(ir, opts = {}) {
     return null;
   };
 
+  // ── Macro registry (MACRO_TABLE §0x0007) ────────────────────────────────
+  // Every distinct lowered macro is interned once and referenced by id from
+  // MACRO_SET. Slice 1 lowers the `steps` type onto i8 targets that ride the
+  // ordinary PARAM_SET apply path; curve/stages and the special targets
+  // (NOTE_PITCH i16, NOTE_SEMI, KEYON) are still dropped with a warning.
+  const macroRegistry = new Map(); // canonical key → { id, target, flags, step, loopStart, release, values }
+
+  const internMacro = (spec, target, trackLabel) => {
+    if (!spec || typeof spec !== "object" || spec.type !== "steps") {
+      diag(
+        "warning",
+        "W_MMB_MACRO_SKIPPED",
+        `${target} macro (${spec?.type ?? "?"}) not lowered yet (M3 slice); dropped`,
+        trackLabel,
+      );
+      return null;
+    }
+    if (target === "NOTE_PITCH" || target === "NOTE_SEMI" || target === "KEYON") {
+      diag(
+        "warning",
+        "W_MMB_MACRO_SKIPPED",
+        `${target} macro needs a later M3 slice; dropped`,
+        trackLabel,
+      );
+      return null;
+    }
+    const values = spec.steps ?? [];
+    if (values.length === 0 || values.length > 255) return null;
+    const loopStart = spec.loopIndex == null ? 0xff : spec.loopIndex;
+    const release = spec.releaseIndex == null ? 0xff : spec.releaseIndex;
+    let step = 1; // :step clock in frames; default 1f
+    if (spec.step?.unit === "frame") step = Math.max(1, Math.min(255, spec.step.value));
+    else if (spec.step?.unit === "tick") {
+      diag(
+        "warning",
+        "W_MMB_MACRO_STEP_TICK",
+        `${target} macro :step in ticks not lowered yet (M3 slice); using 1f`,
+        trackLabel,
+      );
+    }
+    const flags = 0; // i8 values
+    const key = `${target}|${flags}|${step}|${loopStart}|${release}|${values
+      .map((v) => (v == null ? "_" : v))
+      .join(",")}`;
+    const hit = macroRegistry.get(key);
+    if (hit) return hit.id;
+    const id = macroRegistry.size;
+    macroRegistry.set(key, { id, target, flags, step, loopStart, release, values });
+    return id;
+  };
+
   // ── EVENT_STREAM + per-track layout ─────────────────────────────────────
   const stream = new Writer();
   const trackEntries = []; // { trackId, channelId, flags, eventOffset }
@@ -230,6 +290,7 @@ export function encodeMmb(ir, opts = {}) {
     let clock = 0; // running tick position of the stream
     let velState = 15; // sticky VEL (opcodes.md §4)
     let gateState = 8; // sticky GATE in eighths of dur
+    const activeMacros = new Map(); // sticky active macro per target id (driver.md §13.1)
     const markerIds = new Map(); // marker string id → u8
     const markerOffsets = new Map(); // marker string id → stream offset
     const jumpFixups = []; // { at, to } forward-marker patches
@@ -265,14 +326,25 @@ export function encodeMmb(ir, opts = {}) {
       switch (ev.cmd) {
         case "NOTE_ON": {
           syncClock(ev.tick);
+          // Diff this note's snapshotted macros into sticky MACRO_SET / CLEAR.
+          const desired = new Map(); // target → macro_id
           for (const key of Object.keys(a)) {
-            if (MACRO_ARG_KEYS.has(key)) {
-              diag(
-                "warning",
-                "W_MMB_MACRO_SKIPPED",
-                `NOTE_ON ${key} macro has no MMB encoding yet (M3); dropped`,
-                label,
-              );
+            if (!MACRO_ARG_KEYS.has(key)) continue;
+            const id = internMacro(a[key], macroKeyToTarget(key), label);
+            if (id != null) desired.set(macroKeyToTarget(key), id);
+          }
+          for (const target of [...activeMacros.keys()]) {
+            if (!desired.has(target)) {
+              stream.u8(OPCODE.MACRO_CLEAR);
+              stream.u8(TARGET_ID[target]);
+              activeMacros.delete(target);
+            }
+          }
+          for (const [target, id] of desired) {
+            if (activeMacros.get(target) !== id) {
+              stream.u8(OPCODE.MACRO_SET);
+              stream.u8(id);
+              activeMacros.set(target, id);
             }
           }
           const vel = a.vel ?? 15;
@@ -767,6 +839,15 @@ export function encodeMmb(ir, opts = {}) {
     sections.push({ id: SECTION_ID.VAL_TABLE, flags: 0, payload: valTable.bytes });
   }
 
+  // MACRO_TABLE (mmb.md §15): interned macro descriptors + value blobs.
+  if (macroRegistry.size > 0) {
+    sections.push({
+      id: SECTION_ID.MACRO_TABLE,
+      flags: 0,
+      payload: buildMacroTable(macroRegistry),
+    });
+  }
+
   // LUT_TABLE (mmb.md §16): the driver's constant LUTs, in ROM, read through the
   // bank window — always emitted so the Z80 image needn't carry them. Identical
   // bytes for every song; the JS reference computes its own copy (buildLuts).
@@ -816,6 +897,39 @@ export function encodeMmb(ir, opts = {}) {
 }
 
 // SAMPLE_BANK (mmb.md §10): entry table + raw 8-bit signed PCM blobs.
+// MACRO_TABLE payload (mmb.md §15): entry_count u16, then entry_count × 8-byte
+// descriptors {target, flags, step, loop_start, release, count, blob_offset u16},
+// then the value blobs (i8, or i16 when flags bit0), byte-packed. Hold sentinel
+// 0x80 / 0x8000 marks a `_` (advance, write nothing).
+function buildMacroTable(registry) {
+  const entries = [...registry.values()].sort((a, b) => a.id - b.id);
+  const desc = new Writer();
+  const blob = new Writer();
+  desc.u16(entries.length);
+  const offsets = [];
+  let off = 0;
+  for (const e of entries) {
+    offsets.push(off);
+    off += e.values.length * (e.flags & 1 ? 2 : 1);
+  }
+  entries.forEach((e, i) => {
+    desc.u8(TARGET_ID[e.target]);
+    desc.u8(e.flags);
+    desc.u8(e.step);
+    desc.u8(e.loopStart);
+    desc.u8(e.release);
+    desc.u8(e.values.length);
+    desc.u16(offsets[i]);
+  });
+  for (const e of entries) {
+    for (const v of e.values) {
+      if (e.flags & 1) blob.u16(v == null ? 0x8000 : v & 0xffff);
+      else blob.u8(v == null ? 0x80 : v & 0xff);
+    }
+  }
+  return [...desc.bytes, ...blob.bytes];
+}
+
 function buildSampleBank(ir, blobs, diag) {
   const samples = ir.metadata?.samples ?? [];
   const entries = new Writer();

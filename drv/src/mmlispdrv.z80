@@ -131,6 +131,9 @@ OP_ADDR_OFF    equ G_BASE+$7a   ; u16
 SIN_LUT        equ G_BASE+$7c   ; u16
 PCM_MULT_FRAME equ G_BASE+$7e   ; u16
 G_FM3MASK      equ G_BASE+$80   ; u8   FM3 independent-OP key mask (0x10..0x80)
+G_MACRO        equ G_BASE+$81   ; u16  MACRO_TABLE descriptor base (payload+2; 0 none)
+G_MBLOB        equ G_BASE+$83   ; u16  MACRO_TABLE value-blob base
+G_MDESC        equ G_BASE+$85   ; u16  current macro descriptor ptr (step scratch)
 
 CH_STATE    equ $1988       ; 10 × 64 B channel state blocks   ($1988..$1C07)
 TCB_BASE    equ $1c08       ; 16 × 32 B track control blocks   ($1C08..$1E07)
@@ -151,8 +154,8 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 ; 2 × 152 value bytes covering YM addresses $22..$B9 per port, plus a
 ; bit-per-register valid plane (2 × 152 bits = 2 × 19 B): a register is always
 ; written the first time it changes.
-SHADOW      equ $1e00       ; 304 value bytes (port0 +0, port1 +152) ($1E00..$1F2F)
-SHVALID     equ $1f30       ; 38 B valid bitmap (index 0..303)        ($1F30..$1F55)
+SHADOW      equ $1e08       ; 304 value bytes (port0 +0, port1 +152) ($1E08..$1F37)
+SHVALID     equ $1f38       ; 38 B valid bitmap (index 0..303)        ($1F38..$1F5D)
 
 STACK_TOP   equ $2000
 
@@ -171,7 +174,15 @@ CHS_FADEN   equ $14         ; u8  frame count / err threshold
 CHS_FADEV   equ $15         ; u8  err increment (= vol at fade start)
 CHS_FADEERR equ $16         ; u8  running Bresenham error
 CHS_FADECUR equ $17         ; u8  running current vol
-CHS_FADEL   equ $3e         ; u8  frames left (countdown)
+CHS_FADEL   equ $3f         ; u8  frames left (countdown)
+; M3 macro engine (driver.md §5.1 / §13): 3 sticky active-macro ids then 3
+; running slots. Slot = {descIdx, step clock, cursor, state}; descIdx 0xFF = free.
+CHS_MACT    equ $30         ; 3 × active macro id (0xFF = empty)
+CHS_MSLOT   equ $33         ; 3 × 4-byte running slot ($33..$3E)
+MSL_DESC    equ 0           ; slot: snapshot macro descriptor index (0xFF free)
+MSL_CLK     equ 1           ; slot: frames until the next :step
+MSL_CUR     equ 2           ; slot: cursor into the value array
+MSL_STATE   equ 3           ; slot: 0 run (attack/sustain), 1 hold, 2 release
 
 T_FADING    equ 3           ; T_FLAGS bit3: track is fading (still playing)
 
@@ -240,6 +251,8 @@ boot_ch:
     ld (iy+CHS_GATE),8
     ld (iy+CHS_OWNER),$ff
     ld (iy+CHS_ALG),7
+    ld (iy+CHS_MACT),$ff       ; macro engine: empty active + running slot
+    ld (iy+CHS_MSLOT+MSL_DESC),$ff
     pop af
     inc a
     cp 10
@@ -387,6 +400,7 @@ fs_next:
     add ix,de
     djnz fs_track
     call process_sweeps     ; step 3: sweep + tempo engines
+    call process_macros     ; step 3: macro engine, after sweeps (§13.3)
     ret
 
 ; ===========================================================================
@@ -705,6 +719,8 @@ ml_sec:
     jr z,ml_es
     cp 4
     jr z,ml_sb
+    cp 7
+    jr z,ml_macro
     cp 8
     jr z,ml_lut
 ml_next:
@@ -727,6 +743,32 @@ ml_sb:
 ml_lut:
     call ml_payload
     ld (G_LUT),de
+    jr ml_next
+ml_macro:
+    push hl                 ; preserve the directory scan ptr
+    push bc                 ; preserve the section counter
+    call ml_payload         ; DE = payload (entry_count u16, then descriptors, blob)
+    push de
+    ld a,(de)               ; entry_count low
+    ld l,a
+    inc de
+    ld a,(de)               ; entry_count high
+    ld h,a                  ; HL = entry_count
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; HL = entry_count * 8
+    pop de                  ; DE = payload
+    push de
+    add hl,de               ; HL = payload + count*8
+    inc hl
+    inc hl                  ; + 2 → blob base
+    ld (G_MBLOB),hl
+    pop de
+    inc de
+    inc de                  ; descriptor base = payload + 2
+    ld (G_MACRO),de
+    pop bc
+    pop hl
     jr ml_next
 
 ; compute_lut_bases: G_LUT + each table's byte offset (tables.z80) → base globals.
@@ -856,10 +898,14 @@ d_next:
     jp z,d_pcm_note_on
     cp $c1                  ; PCM_NOTE_OFF
     jp z,d_pcm_note_off
+    cp $e0                  ; MACRO_SET
+    jp z,d_macro_set
     cp $e1                  ; PARAM_ADD_VAL
     jp z,d_skip3
     cp $e2                  ; PARAM_MUL_VAL
     jp z,d_skip3
+    cp $e3                  ; MACRO_CLEAR
+    jp z,d_macro_clear
     ; unknown opcode: fail-safe — stop decoding this track (mmb.md §13)
     ld (ix+T_STATUS),0
     ret
@@ -1500,6 +1546,10 @@ no_att:
     pop bc
     call write_psg_att      ; C=psgCh, IY=chs
 no_gate:
+    ; re-trigger the channel's active macros (driver.md §13.1)
+    ld a,(ix+T_CH)
+    call chs_ptr_iy
+    call macro_trigger
     ; ── gate scheduling (opcodes.md §3.1) ─────────────────────────────
     ld de,(G_DUR)
     ld a,d
@@ -1654,6 +1704,196 @@ ko_code:
     or $f0                  ; op mask: all operators on
     ld b,a
     jp ym_key
+
+; ===========================================================================
+; Macro engine (driver.md §13; drv-player _processMacros). Slice 1: `steps`
+; macros on i8 targets that ride the PARAM_SET apply path.
+; ===========================================================================
+
+; macro_desc_ptr: A = macro id → HL = descriptor ptr (window). Clobbers DE.
+macro_desc_ptr:
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; id * 8
+    ld de,(G_MACRO)
+    add hl,de
+    ret
+
+; ── MACRO_SET (macro_id u8) — bind the channel's active macro ──────────────
+; Slice 1 keeps a single active macro per channel (slot 0); the RAM reserves 3
+; active ids + 3 running slots (§5.1) for the multi-macro slice.
+d_macro_set:
+    inc hl
+    ld a,(hl)               ; macro id
+    inc hl
+    push hl
+    ld c,a
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,dms_done          ; fm3-op/pcm: no macro slots
+    call chs_ptr_iy
+    ld (iy+CHS_MACT),c
+dms_done:
+    pop hl
+    jp d_next
+
+; ── MACRO_CLEAR (target u8) — clear the active binding ─────────────────────
+; The running slot keeps its snapshot and finishes the note (§13.1).
+d_macro_clear:
+    inc hl
+    inc hl                  ; target byte (single active macro: unconditional)
+    push hl
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,dmc_done
+    call chs_ptr_iy
+    ld (iy+CHS_MACT),$ff
+dmc_done:
+    pop hl
+    jp d_next
+
+; macro_trigger: IY = chs. Instantiate the active macro into its running slot
+; (NOTE_ON, §13.1). Keeps IX.
+macro_trigger:
+    ld a,(iy+CHS_MACT)
+    ld (iy+CHS_MSLOT+MSL_DESC),a
+    cp $ff
+    ret z
+    xor a
+    ld (iy+CHS_MSLOT+MSL_CLK),a
+    ld (iy+CHS_MSLOT+MSL_CUR),a
+    ld (iy+CHS_MSLOT+MSL_STATE),a
+    ret
+
+; process_macros: frame step 3, after the sweep engines (§13.3). Steps the
+; running macro on every M1 channel.
+process_macros:
+    ld hl,(G_MACRO)
+    ld a,h
+    or l
+    ret z                   ; no macro table
+    ld c,0                  ; channel
+pm_ch:
+    push bc
+    ld a,c
+    ld (G_CH),a
+    call chs_ptr_iy         ; IY = chs
+    ld a,(iy+CHS_MSLOT+MSL_DESC)
+    cp $ff
+    jr z,pm_next
+    push iy
+    pop ix
+    ld de,CHS_MSLOT
+    add ix,de               ; IX = &slot[0]
+    call step_macro
+pm_next:
+    pop bc
+    inc c
+    ld a,c
+    cp 10
+    jr c,pm_ch
+    ret
+
+; step_macro: IX = slot base, IY = chs, (G_CH) = channel. Advances one slot
+; one frame (mmb.md §15 regions; drv-player _stepMacro). IY is repointed at the
+; descriptor (fields iy+0 target, +2 step, +3 loop, +4 release, +5 count,
+; +6/7 blob_offset); param_set clobbers IY, so it is restored around the call.
+step_macro:
+    ld a,(iy+CHS_STATUS)
+    and 1
+    ld c,a                  ; C = keyed
+    ld a,(ix+MSL_DESC)
+    call macro_desc_ptr     ; HL = descriptor
+    push hl
+    pop iy                  ; IY = descriptor
+    dec c
+    jr z,sm_active          ; keyed (C was 1)
+    ld a,(ix+MSL_STATE)
+    cp 2
+    jr z,sm_active          ; already releasing
+    ld a,(iy+4)             ; release
+    ld b,(iy+5)             ; count
+    cp $ff
+    jp z,sm_done            ; no release section
+    cp b
+    jp nc,sm_done
+    ld (ix+MSL_CUR),a       ; cursor = release
+    ld (ix+MSL_STATE),2
+    xor a
+    ld (ix+MSL_CLK),a       ; fire release[0] this frame
+sm_active:
+    ld a,(ix+MSL_CLK)
+    or a
+    jr z,sm_fire
+    dec a
+    ld (ix+MSL_CLK),a
+    ret
+sm_fire:
+    ld a,(ix+MSL_STATE)
+    cp 1
+    ret z                   ; one-shot hold: idle until key-off
+    ; value = blob[G_MBLOB + boff + cursor]
+    ld l,(iy+6)
+    ld h,(iy+7)             ; HL = blob_offset
+    ld de,(G_MBLOB)
+    add hl,de
+    ld a,(ix+MSL_CUR)
+    ld e,a
+    ld d,0
+    add hl,de               ; + cursor
+    ld a,(hl)
+    cp $80
+    jr z,sm_noapply         ; hold sentinel: advance, write nothing
+    ld e,a                  ; sign-extend to i16
+    ld d,0
+    bit 7,e
+    jr z,sm_pos
+    dec d                   ; D = $ff
+sm_pos:
+    ld (G_VAL),de
+    ld a,(iy+0)             ; target
+    ld (G_TARGET),a
+    push iy
+    call param_set          ; (G_CH),(G_TARGET),(G_VAL) — clobbers IY
+    pop iy
+sm_noapply:
+    ld a,(iy+2)             ; step
+    dec a
+    ld (ix+MSL_CLK),a
+    ld a,(ix+MSL_STATE)
+    cp 2
+    jr z,sm_adv_rel
+    ; run: cursor++; wrap to loop_start or hold at sustain end
+    ld a,(iy+4)             ; release
+    ld b,(iy+5)             ; count
+    cp $ff
+    jr nz,sm_se
+    ld a,b                  ; sustainEnd = count
+sm_se:
+    ld d,a                  ; sustainEnd
+    ld a,(ix+MSL_CUR)
+    inc a
+    cp d
+    jr c,sm_setcur          ; cursor < sustainEnd
+    ld a,(iy+3)             ; loop_start
+    cp $ff
+    jr nz,sm_setcur         ; loop → cursor = loop_start
+    ld (ix+MSL_STATE),1     ; one-shot: hold the last attack value
+    ret
+sm_setcur:
+    ld (ix+MSL_CUR),a
+    ret
+sm_adv_rel:
+    ld a,(ix+MSL_CUR)
+    inc a
+    ld (ix+MSL_CUR),a
+    cp (iy+5)               ; cursor >= count?
+    ret c
+sm_done:
+    ld (ix+MSL_DESC),$ff    ; slot finished
+    ret
 
 ; ===========================================================================
 ; PARAM_SET execution (opcodes.md §7; drv-player _paramSet order).
