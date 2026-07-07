@@ -10,7 +10,7 @@ from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > (glide/vibrato), FM3 CSM, FM3 independent-OP, step macros, single-channel PCM
 > DAC, and the host mailbox commands. Its register output is proven
 > byte-for-byte against the JS reference *in emulation* (`drv/tools/verify.mjs`;
-> eleven gate scores diff clean at zero tolerance). What
+> twelve gate scores diff clean at zero tolerance). What
 > is **not** yet verified is this 68k glue and the driver under a real Mega
 > Drive bus/interrupt model: the C here is written against SGDK's ~1.6x Z80 API
 > and has not been compiled or run in this repo (no SGDK/m68k toolchain here).
@@ -43,7 +43,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
    mmlispdrv.z80 ──emit-bin.mjs──▶ mmlispdrv_bin.h ──gcc──────┤
                                                               ▼
                                      68k: MMLisp_init(); MMLisp_startTrack(...)
-                                                              │ mailbox (0xA018A0)
+                                                              │ mailbox (0xA01940)
                                                               ▼
                                      Z80: MMLispDRV plays YM2612 + PSG @ 60 Hz
 ```
@@ -77,7 +77,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 - **Control.** `MMLisp_startTrack` / `MMLisp_stopTrack` / `MMLisp_keyOff` /
   `MMLisp_setParam` / `MMLisp_fadeTrack` post commands into an 8-slot ring in
-  Z80 RAM at 0xA018A0 (`docs/driver.md` §6). Posting requests the Z80 bus
+  Z80 RAM at 0xA01940 (`docs/driver.md` §6). Posting requests the Z80 bus
   (briefly halting it), writes the 4-byte cell with the command byte last, and
   releases the bus. The Z80 drains the ring at the top of each frame. Use
   `MMLisp_fadeTrack` for DJ-style scene transitions (fade one scene's tracks
@@ -107,7 +107,7 @@ Because the driver logic is already proven, the on-target check is really a
 check of *the glue + the bus/interrupt model*. In rough order of effort:
 
 1. **Boot flag.** In your emulator's debugger, break after `MMLisp_init()` and
-   read Z80 RAM 0x18D2 — it should be `0xD2`. If it never flips, the upload or
+   read Z80 RAM 0x1972 — it should be `0xD2`. If it never flips, the upload or
    the Z80 reset/interrupt-enable path is wrong, not the driver.
 
 2. **Listen.** Run in an accurate emulator (BlastEm, Genesis Plus GX). You
@@ -142,9 +142,10 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - **CSM (M2):** `fm3-csm` tracks — CSM mode + Timer A rate (const and swept).
 - **FM3 independent-OP (M3):** `(fm3 …)` + `fm3-1`…`fm3-4` — CH3's four
   operators at independent F-numbers with their own `$28` key bits.
-- **Step macros (M3):** `(macro :target [v :hold v … :off v …])` step-vector
-  envelopes/LFOs on level & FM-op targets (attack / sustain-loop / release).
-  Curve/stage macros and `:semi`/`:keyon` are later slices.
+- **Macros (M3):** `(macro :target …)` — step vectors, `(curve …)` envelopes,
+  and multi-stage sequences (attack / sustain-loop / release), pre-sampled at
+  the `:step` clock, on level & FM-op targets. `:semi`/`:keyon` and pitch
+  macros are later slices.
 - **PCM (M2):** single-channel samples through the `fm6` DAC (`:mode
   shot`/`loop`). Note the DAC feed is modelled frame-quantized in the verified
   build (see `drv/README.md`); the real sub-frame feed timing is a
@@ -162,8 +163,8 @@ in the Mega Drive bus/interrupt environment, not the driver.
   multi-channel PCM soft mix) are length-decoded and skipped; notes stay in
   time. FM3 independent-OP is the one M3 feature that fully plays.
 
-> **Mailbox address.** The data floor — and with it the mailbox (`0xA018A0`)
-> and val slots (`0xA018E0`) — moves as the image grows. If you pinned an older
+> **Mailbox address.** The data floor — and with it the mailbox (`0xA01940`)
+> and val slots (`0xA01980`) — moves as the image grows. If you pinned an older
 > address in your own code, update it (the constants in `mmlispdrv.c` are always
 > current).
 

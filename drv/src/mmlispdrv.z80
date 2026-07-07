@@ -32,7 +32,7 @@ WINDOW      equ $8000
 ; with the floor (M2 PCM), so drv/sgdk/mmlispdrv.c and driver.md §5 reflect the
 ; current values. Bump DATA_BASE (and re-check the top fits under the stack)
 ; when the image outgrows the current floor.
-DATA_BASE   equ $18a0       ; code owns $0000..$189F (~605 B headroom over the 5699 B image)
+DATA_BASE   equ $1940       ; code owns $0000..$193F (~160 B headroom over the 6303 B image)
 
 MB_RING     equ DATA_BASE       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ MB_RING+$20
@@ -135,8 +135,10 @@ G_MACRO        equ G_BASE+$81   ; u16  MACRO_TABLE descriptor base (payload+2; 0
 G_MBLOB        equ G_BASE+$83   ; u16  MACRO_TABLE value-blob base
 G_MDESC        equ G_BASE+$85   ; u16  current macro descriptor ptr (step scratch)
 
-CH_STATE    equ $1988       ; 10 × 64 B channel state blocks   ($1988..$1C07)
-TCB_BASE    equ $1c08       ; 16 × 32 B track control blocks   ($1C08..$1E07)
+CH_STATE    equ $1a28       ; 10 × 64 B channel state blocks   ($1A28..$1CA7)
+TCB_BASE    equ $1ca8       ; TCB_COUNT × 32 B track control blocks   ($1CA8..$1E47)
+TCB_COUNT   equ 13          ; M3 interim: 13 concurrent tracks (all songs ≤5;
+                            ; restore to 16 after a data-region shrink)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -154,8 +156,8 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 ; 2 × 152 value bytes covering YM addresses $22..$B9 per port, plus a
 ; bit-per-register valid plane (2 × 152 bits = 2 × 19 B): a register is always
 ; written the first time it changes.
-SHADOW      equ $1e08       ; 304 value bytes (port0 +0, port1 +152) ($1E08..$1F37)
-SHVALID     equ $1f38       ; 38 B valid bitmap (index 0..303)        ($1F38..$1F5D)
+SHADOW      equ $1e48       ; 304 value bytes (port0 +0, port1 +152) ($1E48..$1F77)
+SHVALID     equ $1f78       ; 38 B valid bitmap (index 0..303)        ($1F78..$1F9D)
 
 STACK_TOP   equ $2000
 
@@ -234,10 +236,10 @@ start:
     di
     im 1
     ld sp,STACK_TOP
-    ; clear all driver data RAM (DATA_BASE..$1F7F; code+tables occupy $0000..)
+    ; clear all driver data RAM (DATA_BASE..$1F9D; stack owns $1F9E..$1FFF)
     ld hl,DATA_BASE
     ld de,DATA_BASE+1
-    ld bc,$1f7f-DATA_BASE
+    ld bc,$1f9d-DATA_BASE
     ld (hl),0
     ldir
     ; channel state defaults (matches drv-player freshFmChannel/_reset)
@@ -342,7 +344,7 @@ boot_slot:
 frame_step:
     call mbox_drain
     ld ix,TCB_BASE
-    ld b,16
+    ld b,TCB_COUNT
 fs_track:
     push bc
     ld a,(ix+T_STATUS)
@@ -594,7 +596,7 @@ st_active:
 ; ── STOP_TRACK ────────────────────────────────────────────────────────────
 stop_track:
     ld ix,TCB_BASE
-    ld b,16
+    ld b,TCB_COUNT
 sp_loop:
     ld a,(ix+T_STATUS)
     or a
@@ -630,7 +632,7 @@ mb_key_off:
     call channel_off
     ; release a len=0 hold: resume the track's dispatcher (status 2 → 1)
     ld ix,TCB_BASE
-    ld b,16
+    ld b,TCB_COUNT
 mko_lp:
     ld a,(ix+T_STATUS)
     cp 2
@@ -664,7 +666,7 @@ msp_pos:
 ; ── FADE_TRACK (track_id, frames) — driver.md §6.3 ─────────────────────────
 mb_fade_track:
     ld ix,TCB_BASE
-    ld b,16
+    ld b,TCB_COUNT
 mft_find:
     ld a,(ix+T_STATUS)
     or a
@@ -3485,7 +3487,7 @@ pcs_run:
 ; fading track ramps its channel vol toward 0, then stops after N frames.
 process_fades:
     ld ix,TCB_BASE
-    ld c,16
+    ld c,TCB_COUNT
 pf_lp:
     ld a,(ix+T_STATUS)
     or a

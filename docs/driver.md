@@ -175,16 +175,18 @@ deterministic. PSG writes need no wait.
 
 > **Implementation note (M2/M3 build).** The image grew through the milestones,
 > so the reference/asm build places **all** RAM data above the code at
-> `DATA_BASE` (currently 0x18A0; code owns 0x0000–0x189F, ~5.7 KB image with
-> ~600 B headroom). From there: mailbox 0x18A0, val slots 0x18E0, driver globals
-> 0x1900, channel state 0x1980, TCB 0x1C00, shadow 0x1E00. Two space reworks got
-> it under 8 KB: the shadow's valid plane is a **bit**-per-register bitmap
-> (2×19 B, not 2×152 B); and the **constant LUTs moved out of Z80 RAM into ROM**
-> — a LUT_TABLE MMB section (mmb.md §16) read through the bank window (~726 B
-> freed). The mailbox and val slots are the only 68k-published addresses; they
-> move with `DATA_BASE`, so `drv/sgdk/mmlispdrv.c` uses the current values.
-> `DATA_BASE` bumps as the image grows (re-checking the top fits under the
-> stack). See `drv/README.md`.
+> `DATA_BASE` (currently 0x1940; code owns 0x0000–0x193F, ~6.3 KB image with
+> ~160 B headroom). From there: mailbox 0x1940, val slots 0x1980, driver globals
+> 0x19A0, channel state 0x1A28, TCB 0x1CA8 (13 blocks), shadow 0x1E48, valid
+> bitmap 0x1F78, stack top 0x2000. Three space reworks got it under 8 KB: the
+> shadow's valid plane is a **bit**-per-register bitmap (2×19 B, not 2×152 B);
+> the **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB section
+> (mmb.md §16) read through the bank window (~726 B freed); and an M3 **memory
+> compaction** reclaimed the over-generous stack slack and trimmed TCB from 16 to
+> 13 concurrent tracks (interim — all songs use ≤5) for ~160 B of code room. The
+> mailbox and val slots are the only 68k-published addresses; they move with
+> `DATA_BASE`, so `drv/sgdk/mmlispdrv.c` uses the current values. See
+> `drv/README.md`.
 
 The constant tables (F-number, PSG period, level ladders, carrier masks,
 operator offsets, the sin curve unit, PCM rate multipliers — §7, §8) are

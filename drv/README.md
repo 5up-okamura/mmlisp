@@ -173,13 +173,15 @@ These are the deltas against the docs as written:
    deferred to the on-hardware cycle-budget phase, where bounding per-frame
    chip access actually matters.
 2. **RAM map: all data above the code; LUTs in ROM.** The image grows through
-   the milestones, so every RAM region sits above the code at `DATA_BASE = $18A0`
-   (code owns $0000–$189F): mailbox $18A0, val slots $18E0, globals $1900,
-   channel state $1988, TCB $1C08, shadow $1E08–$1F37, valid bitmap $1F38–$1F5D,
-   stack top $2000. (The macro engine bumped the internal regions up 8 B for a
-   global; the published mailbox/val-slots stayed put. The macro channel-RAM at
-   channel-block 0x30–0x3E moved FADE-frames-left to 0x3F, driver.md §5.1.) Two
-   reworks keep it under 8 KB:
+   the milestones, so every RAM region sits above the code at `DATA_BASE = $1940`
+   (code owns $0000–$193F): mailbox $1940, val slots $1980, globals $19A0,
+   channel state $1A28, TCB $1CA8–$1E47 (13 blocks), shadow $1E48–$1F77, valid
+   bitmap $1F78–$1F9D, stack top $2000. A **memory compaction** (M3) reclaimed the
+   over-generous stack slack and trimmed TCB from 16 to 13 concurrent tracks
+   (interim — all songs use ≤5; the ring caps concurrent starts at 8) to free
+   ~160 B of code room for the rest of M3. The macro channel-RAM at channel-block
+   0x30–0x3E moved FADE-frames-left to 0x3F (driver.md §5.1). Earlier reworks
+   keep it under 8 KB:
    - the shadow's valid plane is a **bitmap** (1 bit/register, 2×19 B), not a
      byte-per-register plane;
    - the **constant LUTs moved out of Z80 RAM into ROM** — a LUT_TABLE MMB
