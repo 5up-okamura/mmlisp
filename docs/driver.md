@@ -515,11 +515,15 @@ curve/stage fills the sustain region; `(wait key-off)` marks the release
 boundary) — no engine change, the same value array is stepped. The macro-only target **NOTE_SEMI** is implemented (§13.2): its value is a
 semitone offset written to the pitch register at note+semi each `:step` (no
 retrigger, no change to the sticky `:pitch` state) — the classic chiptune
-arpeggio, on FM and PSG. Interim limits, each a later slice: one active macro
-per channel (the RAM reserves 3 active + 3 running slots below, but the driver
-code drives slot 0 only); tick-unit `:step`/`:len` and dynamic (val-slot)
-`:from`/`:to`/`:rate`/`:len` are dropped with a warning; the i16 target
-NOTE_PITCH and the KEYON retrigger target need their own apply paths. The hard gate is asm↔`drv-player`
+arpeggio, on FM and PSG. The i16 target **NOTE_PITCH** is implemented (pitch
+envelopes / vibrato shapes): its descriptor carries flags bit0 (i16), the value
+blob is 2 bytes per `:step` (cents, hold sentinel `0x8000`), and `sm_fire`
+reads it wide and rides the PARAM_SET apply path (`NOTE_PITCH` cents offset) —
+gated by `m3-macro-pitch` on FM and PSG. Interim limits, each a later slice:
+one active macro per channel (the RAM reserves 3 active + 3 running slots below,
+but the driver code drives slot 0 only); tick-unit `:step`/`:len` and dynamic
+(val-slot) `:from`/`:to`/`:rate`/`:len` are dropped with a warning; the KEYON
+retrigger target needs its own apply path. The hard gate is asm↔`drv-player`
 at zero tolerance; the `ir-player` A/B is informational for macros (the
 exporter pre-samples what `ir-player` evaluates in continuous time).
 

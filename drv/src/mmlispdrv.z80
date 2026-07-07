@@ -1528,7 +1528,7 @@ sm_fire:
     ld a,(ix+MSL_STATE)
     cp 1
     ret z                   ; one-shot hold: idle until key-off
-    ; value = blob[G_MBLOB + boff + cursor]
+    ; value = blob[G_MBLOB + boff + cursor(*width)]. flags bit0 = i16 (NOTE_PITCH).
     ld l,(iy+6)
     ld h,(iy+7)             ; HL = blob_offset
     ld de,(G_MBLOB)
@@ -1537,14 +1537,29 @@ sm_fire:
     ld e,a
     ld d,0
     add hl,de               ; + cursor
+    bit 0,(iy+1)
+    jr nz,sm_wide
+    ; i8 value → sign-extend
     ld a,(hl)
     cp $80
     jr z,sm_noapply         ; hold sentinel: advance, write nothing
-    ld e,a                  ; sign-extend to i16
+    ld e,a
     ld d,0
     bit 7,e
     jr z,sm_pos
     dec d                   ; D = $ff
+    jr sm_pos
+sm_wide:
+    add hl,de               ; + cursor again → cursor*2 (i16 stride)
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = i16 value
+    ld a,d
+    cp $80                  ; hold sentinel = 0x8000?
+    jr nz,sm_pos
+    ld a,e
+    or a
+    jr z,sm_noapply
 sm_pos:
     ld (G_VAL),de
     ld a,(iy+0)             ; target

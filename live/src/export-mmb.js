@@ -327,7 +327,7 @@ export function encodeMmb(ir, opts = {}) {
 
   const internMacro = (spec, target, trackLabel) => {
     if (!spec || typeof spec !== "object") return null;
-    if (target === "NOTE_PITCH" || target === "KEYON") {
+    if (target === "KEYON") {
       diag(
         "warning",
         "W_MMB_MACRO_SKIPPED",
@@ -338,7 +338,7 @@ export function encodeMmb(ir, opts = {}) {
     }
     const lowered = lowerMacro(spec, target, trackLabel);
     if (!lowered) return null;
-    const flags = 0; // i8 values
+    const flags = target === "NOTE_PITCH" ? 1 : 0; // bit0 = i16 values (cents)
     const key = `${target}|${flags}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
       .map((v) => (v == null ? "_" : v))
       .join(",")}`;
