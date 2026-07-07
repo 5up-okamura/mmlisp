@@ -44,6 +44,7 @@ import {
   curveUnit8,
   sweepValue,
   sweepStep,
+  pcmIncrement,
 } from "./mmb.js";
 import {
   midiToFnumBlock,
@@ -201,7 +202,31 @@ export class DrvPlayer {
       for (let i = 0; i < n; i++) valInits.push(i16(u16(valTable, 2 + i * 2)));
     }
 
-    this._song = { stream, tracks, valInits };
+    // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs.
+    // `blobBase` is the offset of the blob region within the section; entry
+    // offsets are relative to it. We keep the section subarray + resolved
+    // per-sample descriptors.
+    const samples = [];
+    let sampleData = null;
+    const sampleBank = sections.get(SECTION_ID.SAMPLE_BANK);
+    if (sampleBank) {
+      sampleData = sampleBank;
+      const n = u16(sampleBank, 0);
+      const blobBase = 2 + n * 20;
+      for (let i = 0; i < n; i++) {
+        const e = 2 + i * 20;
+        samples[sampleBank[e]] = {
+          hasLoop: (sampleBank[e + 1] & 1) !== 0,
+          base: blobBase + u32(sampleBank, e + 2),
+          len: u32(sampleBank, e + 6),
+          baseRate: u16(sampleBank, e + 10),
+          loopStart: u32(sampleBank, e + 12),
+          loopEnd: u32(sampleBank, e + 16),
+        };
+      }
+    }
+
+    this._song = { stream, tracks, valInits, samples, sampleData };
     return this;
   }
 
@@ -236,6 +261,8 @@ export class DrvPlayer {
     this._tempoSweep = null;
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
+    // Single-channel PCM through the fm6 DAC (frame-quantized, driver.md §11).
+    this._pcm = { active: false, dacOn: false };
 
     this._trk = (song?.tracks ?? []).map((t) => ({
       channelId: t.channelId,
@@ -688,15 +715,23 @@ export class DrvPlayer {
           this._skip(trk, op, 3);
           break;
         case OPCODE.PCM_NOTE_ON: {
-          // Timed even when skipped: keep the track clock aligned.
+          const sampleId = s[trk.pc + 1];
+          const note = s[trk.pc + 2];
           const dur = readDuration(s, trk.pc + 3);
-          this._noteSkip(op);
           trk.pc = dur.next;
-          trk.wait = dur.ticks === 0 ? 1 : dur.ticks;
+          this._pcmNoteOn(sampleId, note);
+          // Held (dur 0) PCM suspends the dispatcher like any hold; otherwise
+          // advance the clock. The sample keeps feeding via step 3 regardless.
+          if (dur.ticks === 0) {
+            trk.held = true;
+            return;
+          }
+          trk.wait = dur.ticks;
           return;
         }
         case OPCODE.PCM_NOTE_OFF:
-          this._skip(trk, op, 1);
+          trk.pc += 1;
+          this._pcmNoteOff();
           break;
         case OPCODE.VOICE_SET:
           this._skip(trk, op, 2);
@@ -996,6 +1031,68 @@ export class DrvPlayer {
     return false;
   }
 
+  // ── PCM / DAC (driver.md §11, frame-quantized feed — see mmb.js) ──────────
+  _dacByte(storedByte) {
+    // Sample bytes are stored 8-bit signed (two's complement); the DAC ($2A)
+    // is 8-bit unsigned (128 = zero) — XOR 0x80 converts.
+    this._writeCb(0, 0x2a, (storedByte ^ 0x80) & 0xff, this._when());
+  }
+
+  _pcmNoteOn(sampleId, note) {
+    const s = this._song.samples[sampleId];
+    if (!s || s.len === 0) return;
+    const v = this._pcm;
+    v.active = true;
+    v.base = s.base;
+    v.len = s.len;
+    v.hasLoop = s.hasLoop;
+    v.loopStart = s.loopStart;
+    v.loopEnd = s.hasLoop ? s.loopEnd : s.len;
+    v.loopLen = v.loopEnd - v.loopStart;
+    v.inc = pcmIncrement(s.baseRate, note); // 16.16 samples/frame
+    v.pos = 0;
+    v.releasing = false;
+    if (!v.dacOn) {
+      v.dacOn = true;
+      this._ym(0, 0x2b, 0x80); // DAC enable (fm6 → DAC)
+    }
+  }
+
+  _pcmNoteOff() {
+    // shot plays to its end regardless (opcodes.md §6). A loop leaves its loop
+    // region and plays out the tail to the sample end.
+    const v = this._pcm;
+    if (v.active && v.hasLoop) v.releasing = true;
+  }
+
+  // One frame of DAC feed. Returns nothing; deactivates + DAC-off at end.
+  _pcmFrame() {
+    const v = this._pcm;
+    if (!v.active) return;
+    const start = v.pos >>> 16;
+    v.pos = (v.pos + v.inc) >>> 0;
+    const end = v.pos >>> 16;
+    const data = this._song.sampleData;
+    for (let k = start; k < end; k++) {
+      let idx = k;
+      if (v.hasLoop && !v.releasing) {
+        while (idx >= v.loopEnd) idx -= v.loopLen;
+      } else if (idx >= v.len) {
+        v.active = false;
+        break;
+      }
+      this._dacByte(data[v.base + idx]);
+    }
+    if (v.active && v.hasLoop && !v.releasing) {
+      // Keep the accumulator inside the loop region.
+      while (v.pos >>> 16 >= v.loopEnd) v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
+    }
+    if (!v.active && v.dacOn) {
+      v.dacOn = false;
+      this._ym(0, 0x2b, 0x00); // release fm6 back to FM
+    }
+  }
+
   // Logical current value of a target, for PARAM_ADD read-modify-write.
   _readParam(ch, target) {
     if (target === TARGET_ID.MASTER) return this._master;
@@ -1052,6 +1149,7 @@ export class DrvPlayer {
     }
     if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
     if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
+    this._pcmFrame(); // DAC sample feed (driver.md §11)
     // 4. Write flush — in this reference, writes go out inline through the
     //    shadow (change-only) in dispatch order, which preserves the same
     //    per-frame final state the batched Z80 flush produces.
@@ -1117,6 +1215,9 @@ export class DrvPlayer {
   }
 
   _done() {
+    // The driver is still busy while the DAC is feeding a sample, even if
+    // every track has ended (a shot/loop tail plays past its note).
+    if (this._pcm && this._pcm.active) return false;
     return this._trk.every((t) => !t.running || t.held);
   }
 

@@ -290,6 +290,29 @@ export function sweepStep(len, loop) {
   return n <= 1 ? 0 : Math.min(0xffff, Math.floor(65536 / (n - 1)));
 }
 
+// ── PCM per-frame rate (driver.md §11, opcodes.md §6) — frame-quantized DAC ─
+// The single-channel DAC feed is modelled frame-quantized (option A): each
+// 60 Hz frame advances a 16.16 sample-position accumulator by `increment` and
+// bursts the covered sample bytes to $2A. This verifies rate/indexing/loop
+// deterministically (asm↔reference exact); the real sub-frame feed timing is a
+// hardware-bring-up concern (samples burst at frame start here, not spread).
+//
+// increment (16.16 samples/frame) = base_rate × MULT_FRAME[note-36], where
+// MULT_FRAME[n] = round(2^((note-60)/12) × 65536 / 60) for C2..C6 (note 36..84).
+export const PCM_MULT_FRAME = (() => {
+  const t = new Uint16Array(49);
+  for (let n = 36; n <= 84; n++) {
+    t[n - 36] = Math.round((Math.pow(2, (n - 60) / 12) * 65536) / 60);
+  }
+  return t;
+})();
+
+// 16.16 per-frame position increment for a sample of `baseRate` Hz at `note`.
+export function pcmIncrement(baseRate, note) {
+  const n = note < 36 ? 36 : note > 84 ? 84 : note;
+  return (baseRate * PCM_MULT_FRAME[n - 36]) >>> 0;
+}
+
 // ── Duration operand (mmb.md §7.2) ────────────────────────────────────────
 export const DUR_HOLD = 0x00; // indefinite hold (len=0 note)
 export const DUR_EXT = 0xff; // extended: u16le follows

@@ -36,7 +36,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
    mmlispdrv.z80 ──emit-bin.mjs──▶ mmlispdrv_bin.h ──gcc──────┤
                                                               ▼
                                      68k: MMLisp_init(); MMLisp_startTrack(...)
-                                                              │ mailbox (0xA01680)
+                                                              │ mailbox (0xA01780)
                                                               ▼
                                      Z80: MMLispDRV plays YM2612 + PSG @ 60 Hz
 ```
@@ -57,7 +57,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the ~3.5 KB Z80 image to Z80 RAM at
+- **Loading.** `MMLisp_init()` uploads the ~6 KB Z80 image to Z80 RAM at
   0x0000 via `Z80_loadCustomDriver`, then polls the mailbox `driver_ready`
   byte until it reads `0xD2`. While MMLispDRV owns the Z80 you must not use
   SGDK's XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG
@@ -69,7 +69,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
   tracks the score is autonomous.
 
 - **Control.** `MMLisp_startTrack` / `MMLisp_stopTrack` post commands into an
-  8-slot ring in Z80 RAM at 0xA01680 (`docs/driver.md` §6). Posting requests
+  8-slot ring in Z80 RAM at 0xA01780 (`docs/driver.md` §6). Posting requests
   the Z80 bus (briefly halting it), writes the 4-byte cell with the command
   byte last, and releases the bus. The Z80 drains the ring at the top of each
   frame.
@@ -98,7 +98,7 @@ Because the driver logic is already proven, the on-target check is really a
 check of *the glue + the bus/interrupt model*. In rough order of effort:
 
 1. **Boot flag.** In your emulator's debugger, break after `MMLisp_init()` and
-   read Z80 RAM 0x16B2 — it should be `0xD2`. If it never flips, the upload or
+   read Z80 RAM 0x17B2 — it should be `0xD2`. If it never flips, the upload or
    the Z80 reset/interrupt-enable path is wrong, not the driver.
 
 2. **Listen.** Run in an accurate emulator (BlastEm, Genesis Plus GX). You
@@ -131,17 +131,22 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - **Pitch (M2b):** inline `:pitch` detune, glides, and vibrato
   (cent-interpolated `NOTE_PITCH` on FM and PSG).
 - **CSM (M2):** `fm3-csm` tracks — CSM mode + Timer A rate (const and swept).
+- **PCM (M2):** single-channel samples through the `fm6` DAC (`:mode
+  shot`/`loop`). Note the DAC feed is modelled frame-quantized in the verified
+  build (see `drv/README.md`); the real sub-frame feed timing is a
+  hardware-bring-up item.
 
 ## Limits
 
 - One MMB per bank window; all live tracks share it.
-- PCM/DAC and the M2 mailbox commands (KEY_OFF, SET_PARAM, FADE_TRACK,
-  SET_VAL) are not yet implemented — accepted and ignored / skipped.
+- The M2 mailbox commands (KEY_OFF, SET_PARAM, FADE_TRACK, SET_VAL) are not yet
+  implemented — accepted and ignored.
 - Remaining M3 stream features (macros, dynamic value slots, CALL/RET) are
   length-decoded and skipped; notes stay in time.
 
-The RAM-map remap that M2 introduced (internal regions moved above the
-mailbox) does **not** affect this glue — the mailbox and val-slot addresses it
-uses are unchanged.
+> **Mailbox address.** As the image grew (M2 PCM), the data floor — and with
+> it the mailbox (`0xA01780`) and val slots (`0xA017C0`) — moved. If you pinned
+> the old `0xA01680` in your own code, update it (the constants in
+> `mmlispdrv.c` are already current).
 
 See `drv/README.md` for the full deviation list and the driver-side design.

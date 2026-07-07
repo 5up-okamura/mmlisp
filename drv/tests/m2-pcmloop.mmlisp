@@ -1,0 +1,5 @@
+; M2 PCM loop mode: a looped sample on fm6 with a sustain loop + KEY-OFF.
+(def pad :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(score :tempo 120
+  (fm6 :mode loop :sample pad :oct 4 :len 2 :vel 14
+    c :gate* 0.5 e))

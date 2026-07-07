@@ -26,84 +26,97 @@ PSG_PORT    equ $7f11
 WINDOW      equ $8000
 
 ; ── RAM map (driver.md §5, M2 revision) ────────────────────────────────────
-; M2 grew the code+table image past the old 0x1200 data floor, so the internal
-; data regions (channel state, TCB, shadow) moved above the mailbox to give
-; code room to 0x167F. The 68k-published addresses — mailbox 0x1680 and val
-; slots 0x16C0 — are UNCHANGED, so the host interface is unaffected.
-CH_STATE    equ $1740       ; 10 × 64 B channel state blocks
-TCB_BASE    equ $19c0       ; 16 × 32 B track control blocks
-MB_RING     equ $1680       ; mailbox: 8 cells × 4 B  (published)
-MB_HEAD     equ $16a0
-MB_TAIL     equ $16a1
-MB_TSTAT    equ $16a2       ; 16 per-track status bytes
-MB_READY    equ $16b2
-MB_VER      equ $16b3
-VAL_SLOTS   equ $16c0       ; 16 × i16 (M3)
+; The code+table image grows through the milestones, so all RAM data lives
+; ABOVE the code: DATA_BASE is the floor, giving code $0000..DATA_BASE-1. The
+; mailbox and val slots are still the only 68k-published addresses; they moved
+; with the floor (M2 PCM), so drv/sgdk/mmlispdrv.c and driver.md §5 reflect the
+; current values. Bump DATA_BASE (and re-check the top fits under the stack)
+; when the image outgrows the current floor.
+DATA_BASE   equ $1780       ; code owns $0000..$177F (6016 B)
 
-; globals (in the former 192-byte shadow slot; the real shadow moved, see
-; SHADOW below)
-G_INC       equ $16e0       ; u16  per-MMB tempo increment (8.8)
-G_TT        equ $16e2       ; u16  TRACK_TABLE payload addr (window)
-G_ES        equ $16e4       ; u16  EVENT_STREAM payload addr (window)
-G_VAL       equ $16e6       ; u16  PARAM_SET value (i16)
-G_DUR       equ $16e8       ; u16  current duration operand
-G_EXG       equ $16ea       ; u16  NOTE_ON_EX gate operand
-G_MASTER    equ $16ec       ; u8   global master level (0..31)
-G_NOISEMODE equ $16ed       ; u8   PSG noise mode (0..7)
-G_OFF4      equ $16ee       ; u8   rounded level offset for carrier TL
-G_CMASK     equ $16ef       ; u8   carrier mask scratch
-G_TARGET    equ $16f0       ; u8   PARAM_SET target id
-G_NOTE      equ $16f1       ; u8   NOTE_ON note
-G_EXG_F     equ $16f2       ; u8   NOTE_ON_EX gate present flag
-G_TMP       equ $16f3       ; u8   scratch
-G_OP        equ $16f4       ; u8   op index scratch
-G_ARG0      equ $16f5       ; u8   mailbox args
-G_ARG1      equ $16f6
-G_ARG2      equ $16f7
-G_TIDX      equ $16f8       ; u8   track index scratch
-G_BLOCK     equ $16f9       ; u8   FM block scratch
-G_FNUM      equ $16fa       ; u16  FM F-number scratch
+MB_RING     equ DATA_BASE       ; mailbox: 8 cells × 4 B  (published)
+MB_HEAD     equ MB_RING+$20
+MB_TAIL     equ MB_RING+$21
+MB_TSTAT    equ MB_RING+$22     ; 16 per-track status bytes
+MB_READY    equ MB_RING+$32
+MB_VER      equ MB_RING+$33
+VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 
-; M2 sweep-engine globals (scratch + tempo-sweep slot; the driver globals live
-; in the freed 192 B at $16E0, well below the shadow at $17A0).
-G_CH        equ $16fc       ; u8   current channel for param_set
-G_SW_FROM   equ $16fd       ; i16  sweep-value from (scratch)
-G_SW_TO     equ $16ff       ; i16  sweep-value to (scratch)
-G_SW_UNIT   equ $1701       ; u8   curve unit (scratch)
-G_SW_SIGN   equ $1702       ; u8   sign of (to-from) (scratch)
-G_SW_CNT    equ $1703       ; u8   division bit counter (scratch)
-G_SW_TGT    equ $1704       ; u8   PARAM_SWEEP target (setup)
-G_SW_CRV    equ $1705       ; u8   PARAM_SWEEP curve (setup)
-G_SW_FLG    equ $1706       ; u8   PARAM_SWEEP flags (setup)
-G_SW_LEN    equ $1707       ; u16  PARAM_SWEEP len frames (setup)
-G_SW_STEP   equ $1709       ; u16  computed phase step (setup)
-G_SW_OFF    equ $170b       ; u8   chosen slot offset (setup)
-G_SW_DELTA  equ $170c       ; i16  PARAM_ADD delta (scratch)
+; driver globals block
+G_BASE      equ MB_RING+$60     ; $17E0
+G_INC       equ G_BASE+$00      ; u16  per-MMB tempo increment (8.8)
+G_TT        equ G_BASE+$02      ; u16  TRACK_TABLE payload addr (window)
+G_ES        equ G_BASE+$04      ; u16  EVENT_STREAM payload addr (window)
+G_VAL       equ G_BASE+$06      ; u16  PARAM_SET value (i16)
+G_DUR       equ G_BASE+$08      ; u16  current duration operand
+G_EXG       equ G_BASE+$0a      ; u16  NOTE_ON_EX gate operand
+G_MASTER    equ G_BASE+$0c      ; u8   global master level (0..31)
+G_NOISEMODE equ G_BASE+$0d      ; u8   PSG noise mode (0..7)
+G_OFF4      equ G_BASE+$0e      ; u8   rounded level offset for carrier TL
+G_CMASK     equ G_BASE+$0f      ; u8   carrier mask scratch
+G_TARGET    equ G_BASE+$10      ; u8   PARAM_SET target id
+G_NOTE      equ G_BASE+$11      ; u8   NOTE_ON note
+G_EXG_F     equ G_BASE+$12      ; u8   NOTE_ON_EX gate present flag
+G_TMP       equ G_BASE+$13      ; u8   scratch
+G_OP        equ G_BASE+$14      ; u8   op index scratch
+G_ARG0      equ G_BASE+$15      ; u8   mailbox args
+G_ARG1      equ G_BASE+$16
+G_ARG2      equ G_BASE+$17
+G_TIDX      equ G_BASE+$18      ; u8   track index scratch
+G_BLOCK     equ G_BASE+$19      ; u8   FM block scratch
+G_FNUM      equ G_BASE+$1a      ; u16  FM F-number scratch
+; M2 sweep-engine globals (scratch + tempo-sweep slot)
+G_CH        equ G_BASE+$1c      ; u8   current channel for param_set
+G_SW_FROM   equ G_BASE+$1d      ; i16  sweep-value from (scratch)
+G_SW_TO     equ G_BASE+$1f      ; i16  sweep-value to (scratch)
+G_SW_UNIT   equ G_BASE+$21      ; u8   curve unit (scratch)
+G_SW_SIGN   equ G_BASE+$22      ; u8   sign of (to-from) (scratch)
+G_SW_CNT    equ G_BASE+$23      ; u8   division bit counter (scratch)
+G_SW_TGT    equ G_BASE+$24      ; u8   PARAM_SWEEP target (setup)
+G_SW_CRV    equ G_BASE+$25      ; u8   PARAM_SWEEP curve (setup)
+G_SW_FLG    equ G_BASE+$26      ; u8   PARAM_SWEEP flags (setup)
+G_SW_LEN    equ G_BASE+$27      ; u16  PARAM_SWEEP len frames (setup)
+G_SW_STEP   equ G_BASE+$29      ; u16  computed phase step (setup)
+G_SW_OFF    equ G_BASE+$2b      ; u8   chosen slot offset (setup)
+G_SW_DELTA  equ G_BASE+$2c      ; i16  PARAM_ADD delta (scratch)
 ; tempo sweep — one global slot (tempo is per-MMB, driver.md §3)
-G_TS_ACTIVE equ $170e       ; u8   1 = running
-G_TS_CURVE  equ $170f       ; u8   curve id (0-7)
-G_TS_FROM   equ $1710       ; u16  increment from (8.8)
-G_TS_TO     equ $1712       ; u16  increment to (8.8)
-G_TS_LEFT   equ $1714       ; u16  frames left
-G_TS_PHASE  equ $1716       ; u16  phase (0..65535)
-G_TS_STEP   equ $1718       ; u16  phase step
+G_TS_ACTIVE equ G_BASE+$2e      ; u8   1 = running
+G_TS_CURVE  equ G_BASE+$2f      ; u8   curve id (0-7)
+G_TS_FROM   equ G_BASE+$30      ; u16  increment from (8.8)
+G_TS_TO     equ G_BASE+$32      ; u16  increment to (8.8)
+G_TS_LEFT   equ G_BASE+$34      ; u16  frames left
+G_TS_PHASE  equ G_BASE+$36      ; u16  phase (0..65535)
+G_TS_STEP   equ G_BASE+$38      ; u16  phase step
 ; M2b pitch (cent interpolation, driver.md §8)
-G_PITCHC    equ $171a       ; i16  cents offset for the pending pitch write
-G_CREM      equ $171c       ; u8   folded cent remainder [0,99]
-G_NOTEADJ   equ $171d       ; u8   note after semitone fold (clamped 0..126)
-G_FN0       equ $171e       ; u16  lower-neighbour F-number / PSG period
-G_BLK0      equ $1720       ; u8   lower-neighbour block
-G_CHOFF     equ $1721       ; u8   FM channel offset / PSG channel (pitch emit)
-G_PORT      equ $1722       ; u8   YM port (pitch emit)
+G_PITCHC    equ G_BASE+$3a      ; i16  cents offset for the pending pitch write
+G_CREM      equ G_BASE+$3c      ; u8   folded cent remainder [0,99]
+G_NOTEADJ   equ G_BASE+$3d      ; u8   note after semitone fold (clamped 0..126)
+G_FN0       equ G_BASE+$3e      ; u16  lower-neighbour F-number / PSG period
+G_BLK0      equ G_BASE+$40      ; u8   lower-neighbour block
+G_CHOFF     equ G_BASE+$41      ; u8   FM channel offset / PSG channel (pitch emit)
+G_PORT      equ G_BASE+$42      ; u8   YM port (pitch emit)
 ; M2 CSM (driver.md §9)
-G_REG27     equ $1723       ; u8   CH3/CSM mode register shadow (bit7 CSM)
-G_CS_ACTIVE equ $1724       ; u8   1 = Timer-A period sweep running
-G_CS_CURVE  equ $1725       ; u8   curve id
-G_CS_FROM   equ $1726       ; u16  Timer-A period from
-G_CS_TO     equ $1728       ; u16  Timer-A period to
-G_CS_LEFT   equ $172a       ; u16  frames left
-G_CS_PHASE  equ $172c       ; u16  phase
-G_CS_STEP   equ $172e       ; u16  phase step
+G_REG27     equ G_BASE+$43      ; u8   CH3/CSM mode register shadow (bit7 CSM)
+G_CS_ACTIVE equ G_BASE+$44      ; u8   1 = Timer-A period sweep running
+G_CS_CURVE  equ G_BASE+$45      ; u8   curve id
+G_CS_FROM   equ G_BASE+$46      ; u16  Timer-A period from
+G_CS_TO     equ G_BASE+$48      ; u16  Timer-A period to
+G_CS_LEFT   equ G_BASE+$4a      ; u16  frames left
+G_CS_PHASE  equ G_BASE+$4c      ; u16  phase
+G_CS_STEP   equ G_BASE+$4e      ; u16  phase step
+; M2 PCM / DAC (driver.md §11, frame-quantized feed)
+G_SB        equ G_BASE+$50      ; u16  SAMPLE_BANK payload window addr (0 = none)
+G_PCM_ACT   equ G_BASE+$52      ; u8   bit0 active, bit2 hasLoop, bit3 releasing
+G_PCM_BASE  equ G_BASE+$53      ; u16  window addr of the sample's first byte
+G_PCM_LEN   equ G_BASE+$55      ; u16  sample length (bytes)
+G_PCM_INC   equ G_BASE+$57      ; u32  16.16 samples/frame increment
+G_PCM_POS   equ G_BASE+$5b      ; u32  16.16 current sample position
+G_PCM_LOOPE equ G_BASE+$5f      ; u16  loop end (sample index)
+G_PCM_LOOPL equ G_BASE+$61      ; u16  loop length (loopEnd - loopStart)
+G_PCM_MUL   equ G_BASE+$63      ; u32  scratch for the 16x16 multiply (ends +$66)
+
+CH_STATE    equ $1880       ; 10 × 64 B channel state blocks   ($1880..$1AFF)
+TCB_BASE    equ $1b00       ; 16 × 32 B track control blocks   ($1B00..$1CFF)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -121,8 +134,8 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 ; 2 × 152 bytes covering YM addresses $22..$B9 per port, plus a parallel
 ; byte-per-register valid plane (a register is always written the first time).
 ; Lives in the M2 PCM-reserved area for now.
-SHADOW      equ $1bc0       ; 304 B (port0 at +0, port1 at +152)
-SHVALID     equ $1cf0       ; 304 B valid plane (offset SHADOW+304)
+SHADOW      equ $1d00       ; 304 B (port0 at +0, port1 at +152)   ($1D00..$1E2F)
+SHVALID     equ $1e30       ; 304 B valid plane (offset SHADOW+304) ($1E30..$1F5F)
 
 STACK_TOP   equ $2000
 
@@ -185,10 +198,10 @@ start:
     di
     im 1
     ld sp,STACK_TOP
-    ; clear all driver data RAM ($1680..$1F7F; code+tables occupy $0000..)
-    ld hl,$1680
-    ld de,$1681
-    ld bc,$08ff
+    ; clear all driver data RAM (DATA_BASE..$1F7F; code+tables occupy $0000..)
+    ld hl,DATA_BASE
+    ld de,DATA_BASE+1
+    ld bc,$1f7f-DATA_BASE
     ld (hl),0
     ldir
     ; channel state defaults (matches drv-player freshFmChannel/_reset)
@@ -564,6 +577,8 @@ ml_sec:
     jr z,ml_tt
     cp 2
     jr z,ml_es
+    cp 4
+    jr z,ml_sb
 ml_next:
     ld de,12
     add hl,de
@@ -576,6 +591,10 @@ ml_tt:
 ml_es:
     call ml_payload
     ld (G_ES),de
+    jr ml_next
+ml_sb:
+    call ml_payload
+    ld (G_SB),de
     jr ml_next
 ; DE = WINDOW + offset(u32, low u16 used — one 32KB window in M1)
 ml_payload:
@@ -666,10 +685,10 @@ d_next:
     jp z,d_skip2
     cp $a4                  ; FM3_OP_PITCH
     jp z,d_skip3
-    cp $c0                  ; PCM_NOTE_ON: timed even when skipped
+    cp $c0                  ; PCM_NOTE_ON
     jp z,d_pcm_note_on
     cp $c1                  ; PCM_NOTE_OFF
-    jp z,d_skip1
+    jp z,d_pcm_note_off
     cp $e1                  ; PARAM_ADD_VAL
     jp z,d_skip3
     cp $e2                  ; PARAM_MUL_VAL
@@ -1051,14 +1070,43 @@ dcr_swept:
     pop hl
     jp d_next
 
-d_pcm_note_on:              ; sample u8, note u8, dur — keeps the clock
+; ── PCM_NOTE_ON (sample u8, note u8, dur) ──────────────────────────────────
+d_pcm_note_on:
     inc hl
+    ld a,(hl)               ; sample id
+    ld (G_ARG0),a
     inc hl
+    ld a,(hl)               ; note
+    ld (G_ARG1),a
     inc hl
-    call read_dur
+    call read_dur           ; DE = ticks
     ld (ix+T_PC),l
     ld (ix+T_PC+1),h
-    jp d_timed_wait
+    push de
+    call pcm_note_on        ; uses G_ARG0 (sample), G_ARG1 (note)
+    pop de
+    ld a,d
+    or e
+    jr nz,d_pcm_wait
+    ld (ix+T_STATUS),2      ; dur 0 → hold; sample keeps feeding via step 3
+    ret
+d_pcm_wait:
+    ld (ix+T_WAIT),e
+    ld (ix+T_WAIT+1),d
+    ret
+
+; ── PCM_NOTE_OFF ───────────────────────────────────────────────────────────
+d_pcm_note_off:
+    inc hl
+    ; shot plays to end; a loop starts its release tail (bit3)
+    ld a,(G_PCM_ACT)
+    bit 0,a
+    jp z,d_next
+    bit 2,a                 ; hasLoop?
+    jp z,d_next
+    or $08                  ; releasing
+    ld (G_PCM_ACT),a
+    jp d_next
 
 ; ===========================================================================
 ; read_dur: (HL) duration operand → DE = ticks (0 = indefinite hold),
@@ -2659,7 +2707,8 @@ psw_ch:
     cp 10
     jr c,psw_ch
     call process_tempo_sweep
-    jp process_csm_sweep
+    call process_csm_sweep
+    jp process_pcm
 
 ; process_slot: A = slot offset, IY = channel block, C = channel id.
 ; IX is the slot pointer (param_set never touches IX). Channel counter (C) is
@@ -2833,6 +2882,281 @@ pcs_run:
     ld hl,(G_CS_LEFT)
     dec hl
     ld (G_CS_LEFT),hl
+    ret
+
+; ===========================================================================
+; M2 PCM / DAC (driver.md §11) — frame-quantized single-channel feed.
+; ===========================================================================
+; pcm_note_on: G_ARG0 = sample id, G_ARG1 = note. Sets up the voice.
+pcm_note_on:
+    ld hl,(G_SB)
+    ld a,h
+    or l
+    ret z                   ; no SAMPLE_BANK
+    ; entry = G_SB + 2 + id*20 ; id*20 = id*16 + id*4
+    ld a,(G_ARG0)
+    ld e,a
+    ld d,0
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl               ; id*4
+    ld b,h
+    ld c,l                  ; BC = id*4
+    add hl,hl
+    add hl,hl               ; id*16
+    add hl,bc               ; id*20
+    ld bc,(G_SB)
+    add hl,bc
+    inc hl
+    inc hl                  ; HL = entry addr (skip u16 count)
+    inc hl                  ; skip sample_id (+0) → flags (+1)
+    ; flags → hasLoop (provisional store; the tail folds it into bit2)
+    ld a,(hl)               ; flags
+    and 1
+    ld (G_PCM_ACT),a
+    inc hl                  ; → offset (+2)
+    ; offset (u32, low u16 used) → sample base = G_SB + 2 + count*20 + offset
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = offset (low u16)
+    inc hl
+    inc hl
+    inc hl                  ; skip offset hi bytes → +6 length
+    push de                 ; save offset
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = length (low u16)
+    ld (G_PCM_LEN),de
+    inc hl
+    inc hl
+    inc hl                  ; skip length hi → +10 base_rate
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = base_rate
+    inc hl                  ; +12 loop_start
+    push hl                 ; save ptr at loop_start
+    ; inc32 = base_rate × MULT_FRAME[note-36]
+    ld a,(G_ARG1)
+    sub 36
+    jr nc,pno_nlo
+    xor a
+pno_nlo:
+    cp 49
+    jr c,pno_nok
+    ld a,48
+pno_nok:
+    add a,a
+    ld c,a
+    ld b,0
+    ld hl,PCM_MULT_FRAME
+    add hl,bc
+    ld c,(hl)
+    inc hl
+    ld b,(hl)               ; BC = MULT_FRAME[note-36]
+    ; DE = base_rate, BC = mult → G_PCM_INC (32-bit)
+    call mul16x16           ; DE×BC → (G_PCM_MUL) u32
+    ld hl,(G_PCM_MUL)
+    ld (G_PCM_INC),hl
+    ld hl,(G_PCM_MUL+2)
+    ld (G_PCM_INC+2),hl
+    ; loop_start / loop_end
+    pop hl                  ; ptr at loop_start (u32)
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; loop_start (low u16)
+    inc hl
+    inc hl
+    inc hl
+    push de                 ; loop_start
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; loop_end (low u16)
+    ld (G_PCM_LOOPE),de
+    pop bc                  ; loop_start
+    ex de,hl                ; HL = loop_end
+    or a
+    sbc hl,bc               ; HL = loop_end - loop_start
+    ld (G_PCM_LOOPL),hl
+    ; base = G_SB + 2 + count*20 + offset. count*20:
+    ld hl,(G_SB)
+    ld c,(hl)
+    inc hl
+    ld b,(hl)               ; BC = count
+    ld l,c
+    ld h,b
+    add hl,hl
+    add hl,hl               ; count*4
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl               ; count*16
+    add hl,de               ; count*20
+    ld de,(G_SB)
+    add hl,de
+    inc hl
+    inc hl                  ; + 2 (past count) = blob region base
+    pop de                  ; offset
+    add hl,de               ; + entry offset → sample base addr
+    ld (G_PCM_BASE),hl
+    ; pos = 0
+    xor a
+    ld (G_PCM_POS),a
+    ld (G_PCM_POS+1),a
+    ld (G_PCM_POS+2),a
+    ld (G_PCM_POS+3),a
+    ; G_PCM_ACT holds hasLoop (0/1) from the flags read; assemble bit0 active,
+    ; bit2 hasLoop. DAC on/off is tracked by the change-only shadow, not a bit.
+    ld a,(G_PCM_ACT)
+    add a,a
+    add a,a                 ; hasLoop → bit2
+    or $01                  ; active
+    ld (G_PCM_ACT),a
+    ld b,$80                ; DAC enable (fm6 → DAC); shadow suppresses repeats
+    ld d,0
+    ld e,$2b
+    jp ym_write
+
+; process_pcm: one frame of DAC feed (frame-quantized).
+process_pcm:
+    ld a,(G_PCM_ACT)
+    bit 0,a
+    ret z
+    ; start = pos>>16 = high word of pos32
+    ld hl,(G_PCM_POS+2)
+    ld (G_PCM_MUL),hl       ; stash start index
+    ; pos += inc (32-bit)
+    ld hl,(G_PCM_POS)
+    ld de,(G_PCM_INC)
+    add hl,de
+    ld (G_PCM_POS),hl
+    ld hl,(G_PCM_POS+2)
+    ld de,(G_PCM_INC+2)
+    adc hl,de
+    ld (G_PCM_POS+2),hl     ; HL = end index (high word)
+    ; iterate k = start .. end-1
+    ld de,(G_PCM_MUL)       ; DE = start (k)
+ppf_loop:
+    ld a,e                  ; k - end (carry ⇒ k < end ⇒ keep going)
+    sub l
+    ld a,d
+    sbc a,h
+    jr nc,ppf_wrap          ; k >= end → done this frame
+    ; output sample at index DE (k), with shot/loop handling
+    push hl                 ; save end
+    push de                 ; save k (pcm_emit_sample clobbers DE)
+    call pcm_emit_sample    ; DE = k → writes $2A; may clear active
+    pop de
+    pop hl
+    ld a,(G_PCM_ACT)
+    bit 0,a
+    jr z,ppf_end            ; shot ended mid-frame
+    inc de                  ; k++
+    jr ppf_loop
+ppf_wrap:
+    ; loop: keep pos inside the loop region
+    ld a,(G_PCM_ACT)
+    bit 2,a
+    jr z,ppf_done
+    bit 3,a
+    jr nz,ppf_done          ; releasing: no wrap
+ppf_wrapl:
+    ld hl,(G_PCM_POS+2)
+    ld de,(G_PCM_LOOPE)
+    ld a,l
+    sub e
+    ld a,h
+    sbc a,d
+    jr c,ppf_done           ; posHi < loopEnd
+    ld de,(G_PCM_LOOPL)     ; posHi -= loopLen
+    ld hl,(G_PCM_POS+2)
+    or a
+    sbc hl,de
+    ld (G_PCM_POS+2),hl
+    jr ppf_wrapl
+ppf_done:
+    ret
+ppf_end:
+    ret
+
+; pcm_emit_sample: DE = sample index k. Handles shot end / loop wrap, writes
+; the (signed→unsigned) byte to $2A. Clears active + DAC off at shot end.
+pcm_emit_sample:
+    ld a,(G_PCM_ACT)
+    bit 2,a
+    jr z,pes_shot
+    bit 3,a
+    jr nz,pes_shot          ; releasing → play out to end (shot-like)
+    ; loop: while k >= loopEnd: k -= loopLen
+pes_wrap:
+    ld hl,(G_PCM_LOOPE)
+    ld a,e
+    sub l
+    ld a,d
+    sbc a,h
+    jr c,pes_have           ; k < loopEnd
+    ld hl,(G_PCM_LOOPL)
+    ex de,hl
+    or a
+    sbc hl,de
+    ex de,hl                ; k -= loopLen
+    jr pes_wrap
+pes_shot:
+    ld hl,(G_PCM_LEN)
+    ld a,e
+    sub l
+    ld a,d
+    sbc a,h
+    jr c,pes_have           ; k < len
+    ; end of a shot (or unlooped) sample: stop + DAC off
+    ld a,(G_PCM_ACT)
+    and $fe                 ; clear active
+    ld (G_PCM_ACT),a
+    ld b,0
+    ld d,0
+    ld e,$2b
+    call ym_write           ; DAC off (change-only)
+    ret
+pes_have:
+    ld hl,(G_PCM_BASE)
+    add hl,de               ; sample byte address in window
+    ld a,(hl)
+    xor $80                 ; signed → unsigned DAC
+    ld b,a
+    ld d,0
+    ld e,$2a
+    jp ym_hw                ; raw DAC write (bypass shadow)
+
+; mul16x16: DE × BC (unsigned) → (G_PCM_MUL) u32 little-endian. MSB-first
+; shift-add; `ld` preserves flags so the <<1 carry crosses word halves.
+mul16x16:
+    ld hl,0
+    ld (G_PCM_MUL),hl
+    ld (G_PCM_MUL+2),hl
+    ld a,16
+m1616_lp:
+    ; result <<= 1  (low half sets carry, high half consumes it)
+    ld hl,(G_PCM_MUL)
+    add hl,hl
+    ld (G_PCM_MUL),hl
+    ld hl,(G_PCM_MUL+2)
+    adc hl,hl
+    ld (G_PCM_MUL+2),hl
+    ; multiplier MSB out (old bit15 of BC → carry)
+    sla c
+    rl b
+    jr nc,m1616_sk
+    ; result += DE, then propagate carry into the high half
+    ld hl,(G_PCM_MUL)
+    add hl,de
+    ld (G_PCM_MUL),hl
+    jr nc,m1616_sk
+    ld hl,(G_PCM_MUL+2)
+    inc hl
+    ld (G_PCM_MUL+2),hl
+m1616_sk:
+    dec a
+    jr nz,m1616_lp
     ret
 
 ; ── read_param — current value of G_TARGET on G_CH → HL (PARAM_ADD RMW) ─────

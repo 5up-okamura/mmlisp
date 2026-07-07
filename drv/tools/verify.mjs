@@ -30,9 +30,11 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   // 1. song → MMB
   const { bytes: mmb } = buildMmb(songPath);
 
-  // 2. JS reference trace (also decides the frame horizon)
+  // 2. JS reference trace. `frames` caps how long it runs; the horizon is
+  // where the reference actually ended (which may be earlier — e.g. a PCM
+  // tail finishing — so the asm is run for exactly that many frames).
   const ref = refTrace(mmb, frames ? { maxFrames: frames } : {});
-  const horizon = frames ?? ref.frames;
+  const horizon = ref.frames;
 
   // 3. regenerate tables + assemble
   writeFileSync(join(srcDir, "tables.z80"), generateTables());

@@ -32,7 +32,7 @@ import {
   OP_ADDR_OFFSET,
   PSG_MASTER_CLOCK,
 } from "../../live/src/ir-utils.js";
-import { bpmToTickIncrement, SIN_LUT } from "../../live/src/mmb.js";
+import { bpmToTickIncrement, SIN_LUT, PCM_MULT_FRAME } from "../../live/src/mmb.js";
 
 function fnumLut12() {
   // Entries for MIDI 57..68 (A3..G#4): index = (note + 3) mod 12 == 0 at A,
@@ -136,6 +136,12 @@ export function generateTables() {
       "SIN_LUT",
       "256 x u8, sin loop-curve unit (1-cos(2pi t/256))/2 * 255 (M2 sweeps)",
       [...SIN_LUT],
+    ),
+    dwBlock(
+      "PCM_MULT_FRAME",
+      "49 x u16, PCM per-frame increment factor C2..C6: round(2^((n-60)/12)*65536/60)",
+      [...PCM_MULT_FRAME],
+      8,
     ),
     "",
     `DEFAULT_INCREMENT equ ${bpmToTickIncrement(120)} ; 120 BPM in 8.8 ticks/frame`,

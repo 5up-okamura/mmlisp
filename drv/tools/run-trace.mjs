@@ -11,14 +11,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
 const RAM_SIZE = 0x2000;
-const MB_BASE = 0x1680;
+const MB_BASE = 0x1780; // mailbox (published); moved with the data floor (M2 PCM)
 const MB_HEAD = MB_BASE + 0x20;
 const MB_READY = MB_BASE + 0x32;
 
 export function runTrace(driverBin, mmbBytes, { frames, maxStepsPerFrame = 2_000_000 } = {}) {
-  if (driverBin.length > 0x1680) {
+  if (driverBin.length > 0x1780) {
     throw new Error(
-      `driver image ${driverBin.length} bytes overruns the data floor at 0x1680`,
+      `driver image ${driverBin.length} bytes overruns the data floor at 0x1780`,
     );
   }
   const ram = new Uint8Array(RAM_SIZE);

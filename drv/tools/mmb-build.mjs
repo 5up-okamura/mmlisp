@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { encodeMmb } from "../../live/src/export-mmb.js";
+import { loadSamplesForIr } from "./wav.mjs";
 
 export function buildMmb(sourcePath) {
   const src = readFileSync(sourcePath, "utf8");
@@ -14,7 +15,13 @@ export function buildMmb(sourcePath) {
       `compile failed: ${errors.map((e) => e.message).join("; ")}`,
     );
   }
-  const { bytes, diagnostics: exportDiags } = encodeMmb(ir);
+  // PCM songs need the sample blobs (SAMPLE_BANK); load the WAVs the compiler
+  // resolved. Non-PCM songs skip this entirely.
+  const opts = {};
+  if ((ir.metadata?.samples ?? []).length) {
+    opts.samples = loadSamplesForIr(ir);
+  }
+  const { bytes, diagnostics: exportDiags } = encodeMmb(ir, opts);
   return { bytes, diagnostics: [...diagnostics, ...exportDiags] };
 }
 

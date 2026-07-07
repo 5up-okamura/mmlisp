@@ -1,0 +1,5 @@
+; M2 single-channel PCM through the fm6 DAC (shot mode).
+(def blip :sample :file "blip.wav")
+(score :tempo 120
+  (fm6 :mode shot :sample blip :oct 4 :len 4 :vel 15
+    c e g c))

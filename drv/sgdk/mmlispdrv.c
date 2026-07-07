@@ -6,12 +6,14 @@
 // ── Z80 address space, as seen from the 68000 (Z80 RAM is at 0xA00000) ──────
 #define Z80_RAM(off)   ((vu8*)(0xA00000 + (off)))
 
-// Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets.
-#define MB_RING        0x1680   // 8 cells x 4 bytes {cmd, a0, a1, a2}
-#define MB_HEAD        0x16A0   // 68k-owned: next cell to write
-#define MB_TAIL        0x16A1   // Z80-owned: next cell to read
-#define MB_TSTAT       0x16A2   // 16 per-track status bytes
-#define MB_READY       0x16B2   // 0xD2 when the driver main loop is up
+// Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets. The mailbox moved
+// with the data floor as the image grew (M2 PCM); it is still the only
+// published address the host needs.
+#define MB_RING        0x1780   // 8 cells x 4 bytes {cmd, a0, a1, a2}
+#define MB_HEAD        0x17A0   // 68k-owned: next cell to write
+#define MB_TAIL        0x17A1   // Z80-owned: next cell to read
+#define MB_TSTAT       0x17A2   // 16 per-track status bytes
+#define MB_READY       0x17B2   // 0xD2 when the driver main loop is up
 
 // Command ids (docs/opcodes.md / driver.md §6.2).
 #define CMD_START_TRACK  0x01
