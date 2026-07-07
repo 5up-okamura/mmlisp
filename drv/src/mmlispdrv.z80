@@ -129,10 +129,11 @@ VOL_PSG4       equ G_BASE+$76   ; u16
 CARRIER_MASK   equ G_BASE+$78   ; u16
 OP_ADDR_OFF    equ G_BASE+$7a   ; u16
 SIN_LUT        equ G_BASE+$7c   ; u16
-PCM_MULT_FRAME equ G_BASE+$7e   ; u16  (ends +$7f)
+PCM_MULT_FRAME equ G_BASE+$7e   ; u16
+G_FM3MASK      equ G_BASE+$80   ; u8   FM3 independent-OP key mask (0x10..0x80)
 
-CH_STATE    equ $1980       ; 10 × 64 B channel state blocks   ($1980..$1BFF)
-TCB_BASE    equ $1c00       ; 16 × 32 B track control blocks   ($1C00..$1DFF)
+CH_STATE    equ $1988       ; 10 × 64 B channel state blocks   ($1988..$1C07)
+TCB_BASE    equ $1c08       ; 16 × 32 B track control blocks   ($1C08..$1E07)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -537,8 +538,12 @@ st_found:
     ld a,(G_TIDX)
     cp c
     jr z,st_claim
-    ; release the running track on this channel
+    ; a different track already owns this channel. ch2 is the FM3 shared
+    ; channel (voice + op1 coexist in special mode): keep both, don't evict
+    ; or reset the shared level state. Any other channel: release the owner.
     ld a,(ix+T_CH)
+    cp 2
+    jr z,st_active
     push bc
     call channel_off
     pop bc
@@ -844,9 +849,9 @@ d_next:
     cp $64                  ; PARAM_FROM_VAL
     jp z,d_skip3
     cp $a3                  ; FM3_MODE
-    jp z,d_skip2
+    jp z,d_fm3_mode
     cp $a4                  ; FM3_OP_PITCH
-    jp z,d_skip3
+    jp z,d_fm3_op_pitch
     cp $c0                  ; PCM_NOTE_ON
     jp z,d_pcm_note_on
     cp $c1                  ; PCM_NOTE_OFF
@@ -1232,6 +1237,148 @@ dcr_swept:
     pop hl
     jp d_next
 
+; ── FM3 independent-OP opcodes (driver.md §5.1) ────────────────────────────
+; FM3_MODE (mode u8): 0 normal, 1 special (independent-OP), 2 CSM.
+d_fm3_mode:
+    inc hl
+    ld a,(hl)               ; mode
+    inc hl
+    push hl
+    ld c,a                  ; mode
+    ld a,(G_REG27)
+    and $3f                 ; clear bit7 (CSM) + bit6 (special)
+    ld b,a
+    ld a,c
+    dec a
+    jr z,dfm_special        ; mode 1
+    dec a
+    jr z,dfm_csm            ; mode 2
+    ld a,b                  ; mode 0: normal
+    jr dfm_set
+dfm_special:
+    ld a,b
+    or $40
+    jr dfm_set
+dfm_csm:
+    ld a,b
+    or $80
+dfm_set:
+    call set_reg27
+    pop hl
+    jp d_next
+
+; FM3_OP_PITCH (op u8, note u8): write one operator's F-number.
+d_fm3_op_pitch:
+    inc hl
+    ld a,(hl)               ; op
+    ld (G_ARG0),a
+    inc hl
+    ld a,(hl)               ; note
+    inc hl
+    push hl
+    call write_fm3_op_pitch ; A = note, (G_ARG0) = op
+    pop hl
+    jp d_next
+
+; write_fm3_op_pitch: A = note, (G_ARG0) = op (1-4). Change-only writes.
+; OP4 rides the CH3 base ($A6/$A2); OP1-3 use the special-mode F-number
+; registers $AC+idx / $A8+idx with idx = op mod 3 (OP1→1, OP2→2, OP3→0).
+write_fm3_op_pitch:
+    call calc_fnum_block    ; → G_FNUM, G_BLOCK
+    ld a,(G_BLOCK)          ; high = block<<3 | fnum>>8
+    rlca
+    rlca
+    rlca
+    ld b,a
+    ld a,(G_FNUM+1)
+    or b
+    ld (G_ARG1),a           ; stash high byte
+    ld a,(G_ARG0)           ; op
+    cp 4
+    jr z,wf3_op4
+    ; idx = op mod 3
+    cp 3
+    jr c,wf3_idx
+    sub 3
+wf3_idx:
+    ld c,a                  ; idx (0,1,2)
+    add a,$ac               ; $AC+idx = high
+    ld e,a
+    ld a,(G_ARG1)
+    ld b,a
+    ld d,0
+    call ym_write
+    ld a,c
+    add a,$a8               ; $A8+idx = low
+    ld e,a
+    ld a,(G_FNUM)
+    ld b,a
+    ld d,0
+    jp ym_write
+wf3_op4:
+    ld a,(G_ARG1)
+    ld b,a
+    ld d,0
+    ld e,$a6
+    call ym_write
+    ld a,(G_FNUM)
+    ld b,a
+    ld d,0
+    ld e,$a2
+    jp ym_write
+
+; fm3_op_for: A = channel → A = OP (1-4) if it drives an FM3 operator in
+; special mode, else 0. Clobbers C. (op1→ch2, op2-4→ch16-18.)
+fm3_op_for:
+    ld c,a
+    ld a,(G_REG27)
+    bit 6,a                 ; special mode?
+    jr z,f3f_no
+    ld a,c
+    cp 2
+    jr z,f3f_op1
+    cp 16
+    jr c,f3f_no
+    cp 19
+    jr nc,f3f_no
+    sub 14                  ; 16→2, 17→3, 18→4
+    ret
+f3f_op1:
+    ld a,1
+    ret
+f3f_no:
+    xor a
+    ret
+
+; fm3_bit: A = op (1-4) → A = key bit (OP1=$10 … OP4=$80).
+fm3_bit:
+    ld b,a
+    ld a,$10
+f3b_sh:
+    dec b
+    ret z
+    add a,a
+    jr f3b_sh
+
+; fm3_key_op_on / _off: A = op → set/clear the mask bit and re-emit $28.
+fm3_key_op_on:
+    call fm3_bit
+    ld hl,G_FM3MASK
+    or (hl)
+    ld (hl),a
+    or $02                  ; CH3 key code
+    ld b,a
+    jp ym_key
+fm3_key_op_off:
+    call fm3_bit
+    cpl
+    ld hl,G_FM3MASK
+    and (hl)
+    ld (hl),a
+    or $02
+    ld b,a
+    jp ym_key
+
 ; ── PCM_NOTE_ON (sample u8, note u8, dur) ──────────────────────────────────
 d_pcm_note_on:
     inc hl
@@ -1300,8 +1447,12 @@ rd_hold:
 ; ===========================================================================
 note_on:
     ld a,(ix+T_CH)
+    call fm3_op_for
+    or a
+    jp nz,note_on_fm3       ; FM3 independent-OP: key one operator
+    ld a,(ix+T_CH)
     cp 10
-    ret nc                  ; fm3-op / pcm tracks keep time only in M1
+    ret nc                  ; pcm-softmix tracks keep time only (M3)
     call chs_ptr_iy
     call cancel_loop_sweeps ; a new note stops loop sweeps (opcodes.md §6)
     cp 6
@@ -1438,11 +1589,31 @@ no_hold:
     ld (ix+T_GATELEFT+1),a
     ret
 
+; FM3 independent-OP note: the F-number was set by the preceding
+; FM3_OP_PITCH; this keys the operator and takes the full-gate path (the
+; op keys off at the next REST / END_OF_TRACK). A = op (1-4), IX = TCB.
+note_on_fm3:
+    call fm3_key_op_on
+    ld de,(G_DUR)
+    ld a,d
+    or e
+    jp z,no_hold
+    jp no_fullgate
+
 ; ===========================================================================
 ; channel_off — key-off / attenuate-off one channel id (drv-player
 ; _channelOff). A = channel id; preserves IX.
 ; ===========================================================================
 channel_off:
+    push af
+    call fm3_op_for
+    or a
+    jr z,co_normal
+    call fm3_key_op_off     ; FM3 independent-OP: clear one operator
+    pop af
+    ret
+co_normal:
+    pop af
     cp 10
     ret nc
     call chs_ptr_iy

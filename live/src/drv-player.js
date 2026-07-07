@@ -261,6 +261,7 @@ export class DrvPlayer {
     this._tempoSweep = null;
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
+    this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
     // Single-channel PCM through the fm6 DAC (frame-quantized, driver.md §11).
     this._pcm = { active: false, dacOn: false };
 
@@ -276,7 +277,7 @@ export class DrvPlayer {
       running: true,
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
-      unsupported: t.channelId >= 16, // fm3-op / pcm tracks: M1 keeps time only
+      unsupported: t.channelId >= 19, // pcm-softmix (20-22): timeline only (M3)
       fading: false, // FADE_TRACK (M2 mailbox): Bresenham vol ramp to 0, then stop
       fadeN: 0,
       fadeErr: 0,
@@ -451,21 +452,62 @@ export class DrvPlayer {
     this._ymKey(chKey);
   }
   _channelOff(channelId) {
+    const op = this._fm3OpFor(channelId);
+    if (op) {
+      this._fm3KeyOp(op, false);
+      return;
+    }
     if (channelId < 6) this._keyOff(channelId);
     else if (channelId < 10) {
       if (this._psg[channelId - 6].sounding) this._writePsgAtt(channelId - 6, 15);
     }
   }
 
+  // ── FM3 independent-OP mode (driver.md §5.1 / opcodes.md 0xA3/0xA4) ────────
+  // In special mode ($27 bit6) CH3's four operators have independent F-numbers
+  // and key bits. op1 rides channel 2 (fm3), op2-4 ride channels 16-18.
+  _fm3OpFor(ch) {
+    if (!(this._reg27 & 0x40)) return 0; // special mode off → normal channels
+    if (ch === 2) return 1;
+    if (ch >= 16 && ch <= 18) return ch - 14;
+    return 0;
+  }
+
+  _fm3KeyOp(op, on) {
+    const bit = 0x10 << (op - 1); // OP1=0x10 … OP4=0x80 ($28 slot bits)
+    if (on) this._fm3OpMask |= bit;
+    else this._fm3OpMask &= ~bit;
+    this._ymKey(this._fm3OpMask | 0x02); // ch2 key = 0x02
+  }
+
+  _writeFm3OpPitch(op, note) {
+    const fb = this._fnumBlockFor(note, 0);
+    const high = (((fb >> 11) & 0x07) << 3) | ((fb >> 8) & 0x07);
+    const low = fb & 0xff;
+    if (op === 4) {
+      this._ym(0, 0xa6, high); // CH3 base F-number path
+      this._ym(0, 0xa2, low);
+    } else {
+      const idx = [1, 2, 0][op - 1]; // OP1→A9/AD, OP2→AA/AE, OP3→A8/AC
+      this._ym(0, 0xac + idx, high);
+      this._ym(0, 0xa8 + idx, low);
+    }
+  }
+
   // ── NOTE_ON execution ────────────────────────────────────────────────────
   _noteOn(trk, note, dur, exGate) {
     const ch = trk.channelId;
-    if (trk.unsupported) return; // fm3-op / pcm: timeline only in M1
+    const fm3op = this._fm3OpFor(ch);
+    if (!fm3op && trk.unsupported) return; // pcm-softmix: timeline only (M3)
     // A new note cancels loop sweeps on this channel (opcodes.md §6: loop
     // sweeps "run until PARAM_SWEEP_STOP / next note"). One-shot sweeps
     // (fades, glide) survive.
     this._cancelLoopSweeps(ch);
-    if (ch < 6) {
+    if (fm3op) {
+      // FM3 independent-OP: the F-number was set by the preceding FM3_OP_PITCH;
+      // this just keys the operator. Level/voice comes from the shared patch.
+      this._fm3KeyOp(fm3op, true);
+    } else if (ch < 6) {
       const regs = this._fm[ch];
       regs.currentNote = note;
       // Carrier TL from voiced levels + vel/vol/master (every note, so a
@@ -491,7 +533,7 @@ export class DrvPlayer {
 
     // Gate scheduling (opcodes.md §3.1). exGate: absolute ticks (NOTE_ON_EX);
     // 0 = hold until the host keys off.
-    const gate = ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
+    const gate = fm3op ? 8 : ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
     if (dur === 0 || exGate === 0) {
       trk.held = true;
       trk.gateLeft = -1;
@@ -713,12 +755,23 @@ export class DrvPlayer {
           }
           break;
         }
-        case OPCODE.FM3_MODE:
-          this._skip(trk, op, 2);
+        case OPCODE.FM3_MODE: {
+          const mode = s[trk.pc + 1]; // 0 normal, 1 special (op), 2 CSM
+          trk.pc += 2;
+          // bit6 = CH3 special (independent-OP), bit7 = CSM.
+          let r = this._reg27 & ~0xc0;
+          if (mode === 1) r |= 0x40;
+          else if (mode === 2) r |= 0x80;
+          this._setReg27(r);
           break;
-        case OPCODE.FM3_OP_PITCH:
-          this._skip(trk, op, 3);
+        }
+        case OPCODE.FM3_OP_PITCH: {
+          const opn = s[trk.pc + 1];
+          const note = s[trk.pc + 2];
+          trk.pc += 3;
+          this._writeFm3OpPitch(opn, note);
           break;
+        }
         case OPCODE.PCM_NOTE_ON: {
           const sampleId = s[trk.pc + 1];
           const note = s[trk.pc + 2];

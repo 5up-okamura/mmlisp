@@ -53,6 +53,14 @@ channel — with its release tail if the voice defines one (key-off, envelope
 runs out), otherwise immediately. The channel-state block records the
 owning track id (§5.1) to arbitrate this.
 
+**Exception — the FM3 shared channel.** Channel 2 is exempt from eviction:
+in FM3 independent-OP mode the note-less `(fm3 …)` voice track and the
+`fm3-1` operator track legitimately coexist on it (§13.4), so a second
+track claiming channel 2 keeps both rather than releasing the first. The
+first claimant owns the shared level state; later ones only key their
+operator. (`fm3-2`–`fm3-4` live on ids 16-18, which carry no channel block
+and never arbitrate.)
+
 ### 2.3 Layering and scene transitions
 
 Multiple MMBs' tracks may be active at once (M1 limits this to tracks of
@@ -424,11 +432,11 @@ specified in mmb.md §11.
   area), KEY_OFF / SET_PARAM / FADE_TRACK commands. Note: a `shot` sample
   plays to its end — a note's `length`/`gate` do not truncate it (only `loop`
   mode honors KEY-OFF). Gated / length-limited one-shots are a later milestone.
-- **M3 — expression.** NOTE_ON_EX + macro engine (`:step` clocks,
-  pitch/vel/op macros, `:semi`, `:keyon`), FM3 independent-OP
-  (FM3_MODE/FM3_OP_PITCH), dynamic value slots (SET_VAL,
-  PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL, dynamic curve params),
-  multi-channel PCM soft mix, CALL/RET + the encode-time dedup pass.
+- **M3 — expression.** FM3 independent-OP (FM3_MODE/FM3_OP_PITCH, §13.4)
+  **is implemented and gated**. Remaining: NOTE_ON_EX + macro engine
+  (`:step` clocks, pitch/vel/op macros, `:semi`, `:keyon`), dynamic value
+  slots (SET_VAL, PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL, dynamic curve
+  params), multi-channel PCM soft mix, CALL/RET + the encode-time dedup pass.
 
 ## 12. Verification Strategy
 
@@ -513,3 +521,24 @@ Running slots step in a fixed order (active-set index, ascending channel) so
 the register trace is deterministic — the same requirement as the sweep engine
 (§4). Macro writes and sweep writes on the same target in the same frame follow
 their engine order (sweeps first, then macros), matching the reference.
+
+### 13.4 FM3 independent-OP mode (implemented)
+
+`FM3_MODE {mode}` (0xA3) sets CH3's mode register `$27`: mode 1 sets bit6
+(special / independent-OP), mode 2 sets bit7 (CSM), mode 0 clears both. In
+special mode CH3's four operators run at independent F-numbers with their own
+key bits.
+
+The score splits this across coexisting tracks: a note-less `(fm3 voice)`
+track carries the shared patch and channel level state, and `fm3-1`–`fm3-4`
+each drive one operator. `fm3-1` rides channel 2 (with the voice, §2.2);
+`fm3-2`–`fm3-4` ride channel ids 16-18. Each operator note emits
+`FM3_OP_PITCH {op, note}` (0xA4) — writing that operator's F-number registers
+(OP4 → the CH3 base `$A6`/`$A2`; OP1-3 → `$AC+idx`/`$A8+idx` with
+`idx = op mod 3`) — followed by a `NOTE_ON` that keys the operator.
+
+Keying is a shared 4-bit mask (`G_FM3MASK`): each operator's key sets/clears
+its bit (OP1 = `$10` … OP4 = `$80`) and re-emits `$28 = mask | 0x02`. A full
+gate is used (the operator keys off at the next rest / end-of-track). The
+driver derives the operator from the channel id (2→1, 16-18→2-4); F-numbers
+go through the change-only shadow, key edges bypass it.

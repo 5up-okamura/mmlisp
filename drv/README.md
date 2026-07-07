@@ -2,11 +2,12 @@
 
 The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 `docs/opcodes.md`, ported from the JS reference implementation
-(`live/src/drv-player.js`). Coverage: **M1 (core playback)** and **all of M2**
+(`live/src/drv-player.js`). Coverage: **M1 (core playback)**, **all of M2**
 — motion (sweeps, PARAM_ADD, TEMPO_SWEEP), cent-interpolated NOTE_PITCH
 (glide / vibrato / detune), FM3 CSM mode, single-channel PCM DAC (shot / loop,
 frame-quantized), and the host mailbox commands (KEY_OFF / SET_PARAM /
-FADE_TRACK).
+FADE_TRACK) — and the first **M3** feature, **FM3 independent-operator mode**
+(FM3_MODE / FM3_OP_PITCH, driver.md §13.4).
 
 ## Layout
 
@@ -183,8 +184,8 @@ These are the deltas against the docs as written:
      now emits only the byte offsets, and `live/src/lut-blob.js` is the shared
      LUT source for the section and the JS reference.
 
-   The image is ~5.7 KB with ~600 B of code headroom (was ~30 B) — enough for
-   the core M3 engine. The mailbox and val slots are the only 68k-published
+   The image is ~5.9 KB (FM3 independent-OP landed) with ~370 B of code
+   headroom under the data floor. The mailbox and val slots are the only 68k-published
    addresses; they **move with the floor**, so `drv/sgdk/mmlispdrv.c` and
    driver.md §5 carry the current values. The image exceeds the driver.md §5
    "≤4.5 KB" *design target*; size/cycle tuning is the hardware phase.
@@ -200,7 +201,10 @@ These are the deltas against the docs as written:
    FADE_TRACK, SET_VAL) are consumed and ignored — M2/M3 per §6.2.
 6. **START_TRACK resets** the channel's vel/vol/gate; the global `master` is
    only set at boot (§6.3 reads as if master were per-channel — it is global
-   in the reference and here).
+   in the reference and here). **Exception:** channel 2 (the FM3 shared
+   channel) is exempt from ownership eviction and the reset — the `(fm3 …)`
+   voice and `fm3-1` track coexist there (driver.md §2.2 / §13.4). This
+   realigns the port with the reference, which never evicts.
 7. **Out-of-gamut notes**: MIDI < 9 clamps to block 0 with the LUT F-number
    (the reference computes a shifted value); > 116 clamps to the top PSG
    entry. Both are outside the musical range (driver.md §8 tolerates ±1 LSB
@@ -219,5 +223,6 @@ These are the deltas against the docs as written:
 - Mailbox: ring discipline per §6.1; `driver_ready = $D2`,
   `protocol_version = 2`; per-track status bytes carry active bit + last
   MARKER id.
-- M2/M3 opcodes are length-decoded and skipped; unknown opcodes stop the
-  track (fail-safe, mmb.md §13).
+- Implemented M3 opcodes (FM3_MODE / FM3_OP_PITCH) execute; the remaining
+  M3 opcodes are length-decoded and skipped; unknown opcodes stop the track
+  (fail-safe, mmb.md §13).

@@ -89,13 +89,14 @@ pending.
 | PCM playback, single DAC channel (frame-quantized feed)           | ✅ emulation (M2) |
 | `KEY_OFF` / `SET_PARAM` / `FADE_TRACK` mailbox commands            | ✅ emulation (M2) |
 | Macro engine: step/curve macros, `:semi` arpeggios, `:keyon` rolls | 🚧 planned (M3) |
-| FM3 independent-operator mode                                      | 🚧 planned (M3) |
+| FM3 independent-operator mode                                      | ✅ emulation (M3) |
 | Dynamic value slots (`SET_VAL` / `GET_VAL` / `$name`)              | 🚧 planned (M3) |
 | Multi-channel PCM soft mixing (up to 3ch)                          | 🚧 planned (M3) |
 | `CALL`/`RET` event-stream deduplication                            | 🚧 planned (M3) |
 
-M1 and all of M2 are done in emulation (nine trace scores diff clean); M3 is
-next. See [docs/driver.md](docs/driver.md) for the architecture and
+M1, all of M2, and M3's FM3 independent-operator mode are done in emulation
+(ten trace scores diff clean); the rest of M3 is next. See
+[docs/driver.md](docs/driver.md) for the architecture and
 [drv/README.md](drv/README.md) for the port, toolchain, and verification.
 
 ## Repository Structure

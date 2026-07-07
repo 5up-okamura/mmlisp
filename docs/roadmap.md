@@ -104,11 +104,14 @@ Order of work:
    pre-sampled step-stream) and VOICE_TABLE/VOICE_SET — mmb.md §11/§15,
    opcodes.md §5/§6, driver.md §13. **Code-size rework done** (2026-07-07): the
    constant LUTs moved out of Z80 RAM into ROM (a LUT_TABLE MMB section §0x0008
-   read through the bank window), freeing ~726 B — the image is ~5.7 KB with
-   ~600 B of code headroom (was ~30). Next: **M3 implementation** — macro engine
-   + dynamic value slots first (they fit the freed room), then FM3 independent-OP,
-   CALL/RET + dedup, VOICE_SET (may need further trims) — then hardware bring-up
-   + cycle tuning.
+   read through the bank window), freeing ~726 B — the image was ~5.7 KB with
+   ~600 B of code headroom (was ~30). **M3 started** (2026-07-07): FM3
+   independent-OP (FM3_MODE/FM3_OP_PITCH, driver.md §13.4) is implemented and
+   gated (`verify:m3`, tenth trace score, zero tolerance); the image is ~5.9 KB.
+   The port's channel-ownership eviction now exempts the FM3 shared channel 2 so
+   the voice + op1 coexist, realigning it with the reference (which never
+   evicts). Next: macro engine + dynamic value slots, CALL/RET + dedup,
+   VOICE_SET — then hardware bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

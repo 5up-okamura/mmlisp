@@ -3,12 +3,14 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator)
 from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
-> **Verification status.** The Z80 driver (the same ~5.7 KB image this
-> integration ships) covers **all of M1 and M2** — FM/PSG notes, level model,
-> loops, holds, sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3
-> CSM, single-channel PCM DAC, and the host mailbox commands. Its register
-> output is proven byte-for-byte against the JS reference *in emulation*
-> (`drv/tools/verify.mjs`; nine gate scores diff clean at zero tolerance). What
+> **Verification status.** The Z80 driver (the same ~5.9 KB image this
+> integration ships) covers **all of M1 and M2** plus M3's **FM3
+> independent-operator mode** — FM/PSG notes, level model, loops, holds,
+> sweeps/PARAM_ADD/TEMPO_SWEEP, cent pitch (glide/vibrato), FM3 CSM, FM3
+> independent-OP, single-channel PCM DAC, and the host mailbox commands. Its
+> register output is proven byte-for-byte against the JS reference *in
+> emulation* (`drv/tools/verify.mjs`; ten gate scores diff clean at zero
+> tolerance). What
 > is **not** yet verified is this 68k glue and the driver under a real Mega
 > Drive bus/interrupt model: the C here is written against SGDK's ~1.6x Z80 API
 > and has not been compiled or run in this repo (no SGDK/m68k toolchain here).
@@ -62,7 +64,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the ~5.7 KB Z80 image to Z80 RAM at
+- **Loading.** `MMLisp_init()` uploads the ~5.9 KB Z80 image to Z80 RAM at
   0x0000 via `Z80_loadCustomDriver`, then polls the mailbox `driver_ready`
   byte until it reads `0xD2`. While MMLispDRV owns the Z80 you must not use
   SGDK's XGM/PCM drivers — MMLispDRV writes the YM2612 (0x4000–0x4003) and PSG
@@ -128,7 +130,7 @@ check of *the glue + the bus/interrupt model*. In rough order of effort:
 emulator, so if the real emulator diverges from `dump-trace`, the difference is
 in the Mega Drive bus/interrupt environment, not the driver.
 
-## What plays (M1 + M2)
+## What plays (M1 + M2 + FM3-op)
 
 - Notes/rests/ties, per-note length + gate, loops (counted + infinite JUMP),
   markers, `len=0` holds, FM + PSG voices and levels, tempo changes.
@@ -138,6 +140,8 @@ in the Mega Drive bus/interrupt environment, not the driver.
 - **Pitch (M2b):** inline `:pitch` detune, glides, and vibrato
   (cent-interpolated `NOTE_PITCH` on FM and PSG).
 - **CSM (M2):** `fm3-csm` tracks — CSM mode + Timer A rate (const and swept).
+- **FM3 independent-OP (M3):** `(fm3 …)` + `fm3-1`…`fm3-4` — CH3's four
+  operators at independent F-numbers with their own `$28` key bits.
 - **PCM (M2):** single-channel samples through the `fm6` DAC (`:mode
   shot`/`loop`). Note the DAC feed is modelled frame-quantized in the verified
   build (see `drv/README.md`); the real sub-frame feed timing is a
@@ -151,8 +155,9 @@ in the Mega Drive bus/interrupt environment, not the driver.
 
 - One MMB per bank window; all live tracks share it.
 - `SET_VAL` (dynamic value slots) is M3; not yet implemented.
-- Remaining M3 stream features (macros, `PARAM_FROM_VAL`, CALL/RET) are
-  length-decoded and skipped; notes stay in time.
+- Remaining M3 stream features (macros, `PARAM_FROM_VAL`, CALL/RET,
+  multi-channel PCM soft mix) are length-decoded and skipped; notes stay in
+  time. FM3 independent-OP is the one M3 feature that fully plays.
 
 > **Mailbox address.** The data floor — and with it the mailbox (`0xA018A0`)
 > and val slots (`0xA018E0`) — moves as the image grows. If you pinned an older
