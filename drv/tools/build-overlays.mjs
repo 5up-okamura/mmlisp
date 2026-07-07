@@ -11,11 +11,12 @@ import { assemble } from "./z80asm.mjs";
 export function buildOverlays({ residentPath, overlayPaths, slot, descTab }) {
   const { bytes: resBytes, symbols } = assemble(residentPath);
   const resident = new Uint8Array(resBytes);
+  const slotAddr = symbols.get("OVERLAY_SLOT") ?? slot; // single-sourced from the asm
   const blob = [];
   const overlays = [];
   for (const p of overlayPaths) {
     const full = assemble(p, { preload: symbols }).bytes;
-    const code = full.slice(slot); // drop the org pad → the ROM bytes
+    const code = full.slice(slotAddr); // drop the org pad → the ROM bytes
     overlays.push({ path: p, offset: blob.length, length: code.length });
     for (const b of code) blob.push(b);
   }

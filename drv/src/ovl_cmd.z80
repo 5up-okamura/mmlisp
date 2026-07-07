@@ -1,0 +1,144 @@
+; ovl_cmd — overlay (Stage 1, driver.md §5). Cold code loaded on demand into
+; OVERLAY_SLOT and run there (68k free, Z80 autonomous). Assembled at the slot
+; with the resident image's symbols preloaded, so it calls resident helpers
+; and uses resident equates directly. Dispatcher for mailbox commands 2-6.
+        org OVERLAY_SLOT
+        ; D = mailbox command (2-6): dispatch to the handler.
+        ld a,d
+        cp 2
+        jp z,stop_track
+        cp 3
+        jp z,mb_key_off
+        cp 4
+        jp z,mb_set_param
+        cp 5
+        jp z,mb_fade_track
+        jp mb_set_val          ; cmd 6
+; ── STOP_TRACK ────────────────────────────────────────────────────────────
+stop_track:
+    ld ix,TCB_BASE
+    ld b,TCB_COUNT
+sp_loop:
+    ld a,(ix+T_STATUS)
+    or a
+    jr z,sp_next
+    ld a,(G_ARG0)
+    cp (ix+T_TRKID)
+    jr nz,sp_next
+    push bc
+    ld a,(ix+T_CH)
+    call channel_off
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,sp_noown
+    call chs_ptr_iy
+    ld (iy+CHS_OWNER),$ff
+sp_noown:
+    ld (ix+T_STATUS),0
+    ld hl,MB_TSTAT
+    ld a,(ix+T_INDEX)
+    add a,l
+    ld l,a
+    ld (hl),0
+    pop bc
+sp_next:
+    ld de,32
+    add ix,de
+    djnz sp_loop
+    ret
+
+; ── KEY_OFF (channel_id in G_ARG0) — driver.md §6.2 ────────────────────────
+mb_key_off:
+    ld a,(G_ARG0)
+    call channel_off
+    ; release a len=0 hold: resume the track's dispatcher (status 2 → 1)
+    ld ix,TCB_BASE
+    ld b,TCB_COUNT
+mko_lp:
+    ld a,(ix+T_STATUS)
+    cp 2
+    jr nz,mko_next
+    ld a,(G_ARG0)
+    cp (ix+T_CH)
+    jr nz,mko_next
+    ld (ix+T_STATUS),1
+mko_next:
+    ld de,32
+    add ix,de
+    djnz mko_lp
+    ret
+
+; ── SET_PARAM (channel, target, value i8) — driver.md §6.2 ─────────────────
+mb_set_param:
+    ld a,(G_ARG0)
+    ld (G_CH),a
+    ld a,(G_ARG1)
+    ld (G_TARGET),a
+    ld a,(G_ARG2)          ; i8 → sign-extend
+    ld l,a
+    ld h,0
+    bit 7,l
+    jr z,msp_pos
+    ld h,$ff
+msp_pos:
+    ld (G_VAL),hl
+    jp param_set
+
+; ── FADE_TRACK (track_id, frames) — driver.md §6.3 ─────────────────────────
+mb_fade_track:
+    ld ix,TCB_BASE
+    ld b,TCB_COUNT
+mft_find:
+    ld a,(ix+T_STATUS)
+    or a
+    jr z,mft_next
+    ld a,(G_ARG0)
+    cp (ix+T_TRKID)
+    jr z,mft_found
+mft_next:
+    ld de,32
+    add ix,de
+    djnz mft_find
+    ret                    ; unknown track id
+mft_found:
+    ld a,(G_ARG1)          ; frames
+    or a
+    jr nz,mft_setup
+    ; frames 0 → immediate stop
+    ld a,(ix+T_CH)
+    call channel_off
+    bit 1,(ix+T_FLAGS)
+    jr z,mft_ncsm
+    ld a,(G_REG27)
+    and $7f
+    call set_reg27
+mft_ncsm:
+    ld (ix+T_STATUS),0
+    ret
+mft_setup:
+    set T_FADING,(ix+T_FLAGS)
+    ld a,(ix+T_CH)
+    call chs_ptr_iy
+    ld a,(G_ARG1)
+    ld (iy+CHS_FADEN),a     ; N = threshold
+    ld (iy+CHS_FADEL),a     ; frames left
+    ld a,(iy+CHS_VOL)       ; V = current vol
+    ld (iy+CHS_FADEV),a
+    ld (iy+CHS_FADECUR),a
+    xor a
+    ld (iy+CHS_FADEERR),a
+    ret
+
+; mb_set_val: (G_ARG0)=slot, (G_ARG1)=lo, (G_ARG2)=hi → VAL_SLOTS[slot] = i16.
+mb_set_val:
+    ld a,(G_ARG0)
+    cp 16
+    ret nc
+    call val_ptr
+    ld a,(G_ARG1)
+    ld (hl),a
+    inc hl
+    ld a,(G_ARG2)
+    ld (hl),a
+    ret
+

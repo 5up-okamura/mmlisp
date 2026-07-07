@@ -83,6 +83,13 @@ export function runTrace(
     throw new Error(`driver_ready = 0x${ram[MB_READY].toString(16)}, want 0xD2`);
   }
 
+  // Publish the overlay ROM bank (the host does this at init, after the reset
+  // that clears driver RAM). G_OVL_BANK is MB_BASE+0x34.
+  if (overlay) {
+    ram[MB_BASE + 0x34] = overlayBank & 0xff;
+    ram[MB_BASE + 0x35] = (overlayBank >> 8) & 0xff;
+  }
+
   // 68k role: START_TRACK for every track in the MMB track table.
   const tracks = readTrackTable(mmbBytes);
   if (tracks.length > 8) throw new Error("more tracks than mailbox cells");

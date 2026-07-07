@@ -14,6 +14,7 @@
 #define MB_TAIL        0x1911   // Z80-owned: next cell to read
 #define MB_TSTAT       0x1912   // 16 per-track status bytes
 #define MB_READY       0x1922   // 0xD2 when the driver main loop is up
+#define G_OVL_BANK     0x1924   // overlay ROM bank (host sets at init; driver.md §5)
 #define VAL_SLOTS      0x1930   // 16 x i16 dynamic value slots (68k read/write)
 
 // Command ids (docs/opcodes.md / driver.md §6.2).
@@ -48,15 +49,25 @@ static void mailbox_send(u8 cmd, u8 a0, u8 a1, u8 a2)
     Z80_releaseBus();
 }
 
-void MMLisp_init(void)
+void MMLisp_init(const u8* overlay_rom)
 {
-    // Upload and start the custom Z80 driver, then wait for its ready flag.
-    // (Exact symbol names vary slightly across SGDK versions — see z80_ctrl.h;
-    //  Z80_loadCustomDriver is the ~1.6x form.)
+    // Upload the resident image and start the driver, then wait for its ready
+    // flag. (Symbol names vary across SGDK versions — Z80_loadCustomDriver is
+    // the ~1.6x form.)
     Z80_init();
     Z80_loadCustomDriver(mmlispdrv_bin, MMLISPDRV_SIZE);
     while (!MMLisp_isReady())
         ;
+
+    // Publish the overlay ROM bank (driver.md §5): the Z80 loads cold code
+    // (start_track, mailbox handlers, MMB parsing) from here on demand. The blob
+    // must be 32 KB-aligned in ROM so its bank window base is overlay byte 0;
+    // set it after the reset (which clears driver RAM), before any startTrack.
+    u16 bank = (u16)((u32)overlay_rom >> 15);
+    Z80_requestBus(TRUE);
+    *Z80_RAM(G_OVL_BANK)     = bank & 0xFF;
+    *Z80_RAM(G_OVL_BANK + 1) = (bank >> 8) & 0xFF;
+    Z80_releaseBus();
 }
 
 bool MMLisp_isReady(void)

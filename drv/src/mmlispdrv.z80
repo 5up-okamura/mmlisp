@@ -40,7 +40,13 @@ MB_TAIL     equ MB_RING+$21
 MB_TSTAT    equ MB_RING+$22     ; 16 per-track status bytes
 MB_READY    equ MB_RING+$32
 MB_VER      equ MB_RING+$33
+G_OVL_BANK  equ MB_RING+$34     ; u16 overlay ROM bank (host sets at init; published)
+G_MMB_BANK  equ MB_RING+$36     ; u16 current MMB bank (set by bank_latch; internal)
 VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
+
+; Overlay slot: a shared RAM buffer just above the resident code where cold-code
+; overlays (ovl_setup / ovl_cmd) are loaded on demand and executed (driver.md §5).
+OVERLAY_SLOT equ $1700         ; resident ends ~$1651; slot $1700..DATA_BASE ($18F0)
 
 ; driver globals block
 G_BASE      equ MB_RING+$60     ; $17E0
@@ -439,35 +445,26 @@ md_loop:
     ld a,(hl)
     ld (G_ARG2),a
     push bc
+    ; Commands run from overlays (cold code, driver.md §5): cmd 1 → ovl_setup
+    ; (entry = start_track); cmds 2-6 → ovl_cmd (dispatches on the command byte
+    ; in D). D holds the command across load_overlay.
     ld a,d
     cp 1
-    jr nz,md_not_start
-    call start_track
+    jr nz,md_cmd
+    xor a                  ; overlay 0 = ovl_setup
+    call load_overlay
+    call OVERLAY_SLOT
     jr md_done
-md_not_start:
+md_cmd:
     cp 2
-    jr nz,md_c3
-    call stop_track
-    jr md_done
-md_c3:
-    cp 3                    ; KEY_OFF (channel_id)
-    jr nz,md_c4
-    call mb_key_off
-    jr md_done
-md_c4:
-    cp 4                    ; SET_PARAM (channel, target, value i8)
-    jr nz,md_c5
-    call mb_set_param
-    jr md_done
-md_c5:
-    cp 5                    ; FADE_TRACK (track_id, frames)
-    jr nz,md_c6
-    call mb_fade_track
-    jr md_done
-md_c6:
-    cp 6                    ; SET_VAL (slot, value low, value high)
-    jr nz,md_done
-    call mb_set_val
+    jr c,md_done           ; cmd 0/1 already handled
+    cp 7
+    jr nc,md_done          ; cmd ≥ 7: reserved
+    push de                ; preserve the command (D) across load_overlay
+    ld a,1                 ; overlay 1 = ovl_cmd
+    call load_overlay
+    pop de
+    call OVERLAY_SLOT      ; D = command; the overlay dispatches
 md_done:
     pop bc
     ld a,c
@@ -477,382 +474,14 @@ md_done:
     jr md_loop
 
 ; ── START_TRACK (driver.md §6.3) ──────────────────────────────────────────
-start_track:
-    call mmb_locate
-    ; find G_ARG0 in the track table
-    ld hl,(G_TT)
-    ld e,(hl)               ; track_count (≤16, low byte is enough)
-    inc hl
-    inc hl
-    ld c,0                  ; index
-st_find:
-    ld a,(G_ARG0)
-    cp (hl)
-    jr z,st_found
-    push de
-    ld de,5
-    add hl,de
-    pop de
-    inc c
-    dec e
-    jr nz,st_find
-    ret                     ; unknown track id
-st_found:
-    ld a,c
-    ld (G_TIDX),a
-    ; IX = TCB_BASE + index*32
-    push hl
-    ld l,c
-    ld h,0
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    ld de,TCB_BASE
-    add hl,de
-    push hl
-    pop ix
-    pop hl
-    ; fill the TCB from the 5-byte track entry
-    ld a,(hl)
-    ld (ix+T_TRKID),a
-    inc hl
-    ld a,(hl)
-    ld (ix+T_CH),a
-    inc hl
-    ld a,(hl)
-    ld (ix+T_FLAGS),a
-    inc hl
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    ld hl,(G_ES)
-    add hl,de               ; stream ptr = ES payload + event_offset
-    ld (ix+T_PC),l
-    ld (ix+T_PC+1),h
-    ld hl,(G_ES)
-    ld (ix+T_BASE),l
-    ld (ix+T_BASE+1),h
-    xor a
-    ld (ix+T_ACC),a
-    ld (ix+T_ACC+1),a
-    ld (ix+T_WAIT),a
-    ld (ix+T_WAIT+1),a
-    ld (ix+T_GATELEFT),a
-    ld (ix+T_GATELEFT+1),a
-    ld (ix+T_DEPTH),a
-    ld (ix+T_MARKER),a
-    ld a,(G_TIDX)
-    ld (ix+T_INDEX),a
-    ld a,(G_ARG1)
-    ld (ix+T_BANK),a
-    ld a,(G_ARG2)
-    ld (ix+T_BANK+1),a
-    call bank_latch
-    ; channel ownership (driver.md §2.2)
-    ld a,(ix+T_CH)
-    cp 10
-    jr nc,st_active         ; fm3-op/pcm ids: no channel block in M1
-    call chs_ptr_iy
-    ld a,(iy+CHS_OWNER)
-    cp $ff
-    jr z,st_claim
-    ld c,a                  ; previous owner index
-    ld a,(G_TIDX)
-    cp c
-    jr z,st_claim
-    ; a different track already owns this channel. ch2 is the FM3 shared
-    ; channel (voice + op1 coexist in special mode): keep both, don't evict
-    ; or reset the shared level state. Any other channel: release the owner.
-    ld a,(ix+T_CH)
-    cp 2
-    jr z,st_active
-    push bc
-    call channel_off
-    pop bc
-    ld l,c
-    ld h,0
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    ld de,TCB_BASE
-    add hl,de
-    ld (hl),0               ; previous TCB → idle
-    ld hl,MB_TSTAT
-    ld a,c
-    add a,l
-    ld l,a
-    ld (hl),0
-st_claim:
-    ld a,(G_TIDX)
-    ld (iy+CHS_OWNER),a
-    ld (iy+CHS_VEL),15      ; reset channel level state to defaults
-    ld (iy+CHS_VOL),31
-    ld (iy+CHS_GATE),8
-st_active:
-    ld (ix+T_STATUS),1
-    ld hl,MB_TSTAT
-    ld a,(G_TIDX)
-    add a,l
-    ld l,a
-    ld (hl),$80
-    ret
-
-; ── STOP_TRACK ────────────────────────────────────────────────────────────
-stop_track:
-    ld ix,TCB_BASE
-    ld b,TCB_COUNT
-sp_loop:
-    ld a,(ix+T_STATUS)
-    or a
-    jr z,sp_next
-    ld a,(G_ARG0)
-    cp (ix+T_TRKID)
-    jr nz,sp_next
-    push bc
-    ld a,(ix+T_CH)
-    call channel_off
-    ld a,(ix+T_CH)
-    cp 10
-    jr nc,sp_noown
-    call chs_ptr_iy
-    ld (iy+CHS_OWNER),$ff
-sp_noown:
-    ld (ix+T_STATUS),0
-    ld hl,MB_TSTAT
-    ld a,(ix+T_INDEX)
-    add a,l
-    ld l,a
-    ld (hl),0
-    pop bc
-sp_next:
-    ld de,32
-    add ix,de
-    djnz sp_loop
-    ret
-
-; ── KEY_OFF (channel_id in G_ARG0) — driver.md §6.2 ────────────────────────
-mb_key_off:
-    ld a,(G_ARG0)
-    call channel_off
-    ; release a len=0 hold: resume the track's dispatcher (status 2 → 1)
-    ld ix,TCB_BASE
-    ld b,TCB_COUNT
-mko_lp:
-    ld a,(ix+T_STATUS)
-    cp 2
-    jr nz,mko_next
-    ld a,(G_ARG0)
-    cp (ix+T_CH)
-    jr nz,mko_next
-    ld (ix+T_STATUS),1
-mko_next:
-    ld de,32
-    add ix,de
-    djnz mko_lp
-    ret
-
-; ── SET_PARAM (channel, target, value i8) — driver.md §6.2 ─────────────────
-mb_set_param:
-    ld a,(G_ARG0)
-    ld (G_CH),a
-    ld a,(G_ARG1)
-    ld (G_TARGET),a
-    ld a,(G_ARG2)          ; i8 → sign-extend
-    ld l,a
-    ld h,0
-    bit 7,l
-    jr z,msp_pos
-    ld h,$ff
-msp_pos:
-    ld (G_VAL),hl
-    jp param_set
-
-; ── FADE_TRACK (track_id, frames) — driver.md §6.3 ─────────────────────────
-mb_fade_track:
-    ld ix,TCB_BASE
-    ld b,TCB_COUNT
-mft_find:
-    ld a,(ix+T_STATUS)
-    or a
-    jr z,mft_next
-    ld a,(G_ARG0)
-    cp (ix+T_TRKID)
-    jr z,mft_found
-mft_next:
-    ld de,32
-    add ix,de
-    djnz mft_find
-    ret                    ; unknown track id
-mft_found:
-    ld a,(G_ARG1)          ; frames
-    or a
-    jr nz,mft_setup
-    ; frames 0 → immediate stop
-    ld a,(ix+T_CH)
-    call channel_off
-    bit 1,(ix+T_FLAGS)
-    jr z,mft_ncsm
-    ld a,(G_REG27)
-    and $7f
-    call set_reg27
-mft_ncsm:
-    ld (ix+T_STATUS),0
-    ret
-mft_setup:
-    set T_FADING,(ix+T_FLAGS)
-    ld a,(ix+T_CH)
-    call chs_ptr_iy
-    ld a,(G_ARG1)
-    ld (iy+CHS_FADEN),a     ; N = threshold
-    ld (iy+CHS_FADEL),a     ; frames left
-    ld a,(iy+CHS_VOL)       ; V = current vol
-    ld (iy+CHS_FADEV),a
-    ld (iy+CHS_FADECUR),a
-    xor a
-    ld (iy+CHS_FADEERR),a
-    ret
-
-; ── locate TRACK_TABLE / EVENT_STREAM payloads in the banked window ───────
-mmb_locate:
-    ld hl,(WINDOW+8)        ; section_count
-    ld b,l
-    ld hl,WINDOW+12         ; directory
-ml_sec:
-    ld a,(hl)               ; id low byte (ids are tiny)
-    cp 1
-    jr z,ml_tt
-    cp 2
-    jr z,ml_es
-    cp 4
-    jr z,ml_sb
-    cp 5
-    jr z,ml_val
-    cp 7
-    jr z,ml_macro
-    cp 8
-    jr z,ml_lut
-ml_next:
-    ld de,12
-    add hl,de
-    djnz ml_sec
-    jp compute_lut_bases    ; derive per-table pointers from G_LUT
-ml_tt:
-    call ml_payload
-    ld (G_TT),de
-    jr ml_next
-ml_es:
-    call ml_payload
-    ld (G_ES),de
-    jr ml_next
-ml_sb:
-    call ml_payload
-    ld (G_SB),de
-    jr ml_next
-ml_lut:
-    call ml_payload
-    ld (G_LUT),de
-    jr ml_next
-ml_val:
-    call ml_payload         ; DE = payload (count u16, then count × i16 inits)
-    push hl                 ; preserve the directory scan ptr
-    push bc                 ; preserve the section counter
-    ex de,hl                ; HL = payload
-    ld a,(hl)               ; count (low; ≤16)
-    inc hl
-    inc hl                  ; HL = &inits[0]
-    add a,a                 ; count * 2 bytes
-    ld c,a
-    ld b,0
-    ld de,VAL_SLOTS         ; seed declared slots (driver.md §6.3)
-    ldir
-    pop bc
-    pop hl
-    jr ml_next
-ml_macro:
-    push hl                 ; preserve the directory scan ptr
-    push bc                 ; preserve the section counter
-    call ml_payload         ; DE = payload (entry_count u16, then descriptors, blob)
-    push de
-    ld a,(de)               ; entry_count low
-    ld l,a
-    inc de
-    ld a,(de)               ; entry_count high
-    ld h,a                  ; HL = entry_count
-    add hl,hl
-    add hl,hl
-    add hl,hl               ; HL = entry_count * 8
-    pop de                  ; DE = payload
-    push de
-    add hl,de               ; HL = payload + count*8
-    inc hl
-    inc hl                  ; + 2 → blob base
-    ld (G_MBLOB),hl
-    pop de
-    inc de
-    inc de                  ; descriptor base = payload + 2
-    ld (G_MACRO),de
-    pop bc
-    pop hl
-    jr ml_next
-
-; compute_lut_bases: G_LUT + each table's byte offset (tables.z80) → base globals.
-compute_lut_bases:
-    ld bc,(G_LUT)
-    ld hl,FNUM_LUT_OFF
-    add hl,bc
-    ld (FNUM_LUT),hl
-    ld hl,PSG_PERIOD_LUT_OFF
-    add hl,bc
-    ld (PSG_PERIOD_LUT),hl
-    ld hl,VEL_TL4_OFF
-    add hl,bc
-    ld (VEL_TL4),hl
-    ld hl,VOL_TL4_OFF
-    add hl,bc
-    ld (VOL_TL4),hl
-    ld hl,VEL_PSG4_OFF
-    add hl,bc
-    ld (VEL_PSG4),hl
-    ld hl,VOL_PSG4_OFF
-    add hl,bc
-    ld (VOL_PSG4),hl
-    ld hl,CARRIER_MASK_OFF
-    add hl,bc
-    ld (CARRIER_MASK),hl
-    ld hl,OP_ADDR_OFF_OFF
-    add hl,bc
-    ld (OP_ADDR_OFF),hl
-    ld hl,SIN_LUT_OFF
-    add hl,bc
-    ld (SIN_LUT),hl
-    ld hl,PCM_MULT_FRAME_OFF
-    add hl,bc
-    ld (PCM_MULT_FRAME),hl
-    ret
-; DE = WINDOW + offset(u32, low u16 used — one 32KB window in M1)
-ml_payload:
-    push hl
-    inc hl
-    inc hl
-    inc hl
-    inc hl
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    ld hl,WINDOW
-    add hl,de
-    ex de,hl
-    pop hl
-    ret
-
 ; latch the 9-bit bank number, LSB first
 bank_latch:
     ld l,(ix+T_BANK)
     ld h,(ix+T_BANK+1)
+    ld (G_MMB_BANK),hl      ; remember the MMB bank for the overlay loader
+    ; fall through to latch_bank
+; latch_bank: HL = 9-bit bank → shift LSB-first into the bank register.
+latch_bank:
     ld b,9
 bl_loop:
     ld a,l
@@ -862,6 +491,43 @@ bl_loop:
     rr l
     djnz bl_loop
     ret
+
+; load_overlay: A = overlay index → LDIR overlay[index] from the overlay ROM
+; bank into OVERLAY_SLOT, then restore the MMB bank. Caller then `call
+; OVERLAY_SLOT`. Cold path only; clobbers A/BC/DE/HL.
+load_overlay:
+    add a,a
+    add a,a                 ; index * 4
+    ld e,a
+    ld d,0
+    ld hl,ovl_desc_tab
+    add hl,de
+    ld e,(hl)               ; rom_offset low
+    inc hl
+    ld d,(hl)               ; rom_offset high
+    inc hl
+    ld c,(hl)               ; length low
+    inc hl
+    ld b,(hl)               ; length high  (BC = length)
+    ex de,hl                ; HL = rom_offset
+    ld de,WINDOW
+    add hl,de               ; HL = window source ($8000 + offset)
+    push hl
+    push bc
+    ld hl,(G_OVL_BANK)
+    call latch_bank         ; window → overlay ROM
+    pop bc
+    pop hl
+    ld de,OVERLAY_SLOT
+    ldir                    ; copy the overlay into the slot
+    ld hl,(G_MMB_BANK)
+    jp latch_bank           ; window → MMB
+
+; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
+; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd).
+ovl_desc_tab:
+    db 0,0,0,0              ; overlay 0 (ovl_setup)
+    db 0,0,0,0              ; overlay 1 (ovl_cmd)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
@@ -3913,19 +3579,6 @@ read_slot:
     ret
 rsl_time:
     ld hl,(G_FRAME)
-    ret
-
-; mb_set_val: (G_ARG0)=slot, (G_ARG1)=lo, (G_ARG2)=hi → VAL_SLOTS[slot] = i16.
-mb_set_val:
-    ld a,(G_ARG0)
-    cp 16
-    ret nc
-    call val_ptr
-    ld a,(G_ARG1)
-    ld (hl),a
-    inc hl
-    ld a,(G_ARG2)
-    ld (hl),a
     ret
 
 ; dv_head: HL at opcode → G_TARGET (byte+1), G_CH (from T_CH); returns A =

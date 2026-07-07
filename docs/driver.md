@@ -189,6 +189,16 @@ deterministic. PSG writes need no wait.
 > mailbox and val slots are the only 68k-published addresses; they move with
 > `DATA_BASE`, so `drv/sgdk/mmlispdrv.c` uses the current values. See
 > `drv/README.md`.
+>
+> **Code overlays.** Cold code (rarely invoked, not the per-frame loop) lives in
+> a 32 KB-aligned **overlay ROM blob** (`mmlispdrv_ovl.bin`), not Z80 RAM. The
+> resident loader (`load_overlay`) banks the window to the overlay ROM, `LDIR`s
+> the requested overlay into a shared RAM buffer at `OVERLAY_SLOT`, banks back to
+> the MMB, and calls it. `start_track` + MMB parsing (`ovl_setup`) and the
+> mailbox command handlers (`ovl_cmd`) are the first two overlays; the resident
+> holds only the hot dispatch/note/sweep/macro/PCM path. This keeps the 68k free
+> (the Z80 stays autonomous) while freeing RAM. `MMLisp_init` publishes the
+> overlay bank at `G_OVL_BANK` (mailbox +0x34) after the reset.
 
 The constant tables (F-number, PSG period, level ladders, carrier masks,
 operator offsets, the sin curve unit, PCM rate multipliers — §7, §8) are

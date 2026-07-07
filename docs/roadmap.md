@@ -113,13 +113,17 @@ Order of work:
    tolerance). A **table-drive refactor** then collapsed the ten near-identical FM op-param
    handlers into a descriptor table + one routine (~169 B recovered, behaviour
    identical, 14 gates still 0-diff), which paid back the interim TCB trims and
-   **restored full 16-track capacity** (~14 B headroom). The 8 KB monolith is now
-   full at full capacity — a clean completion point for M1 + M2 + the current M3.
-   **The remaining M3 (multi-macro, i16 pitch macros, `:keyon`, CALL/RET, PCM
-   soft mix, VOICE_SET) moves to the 68k-offload architecture** (sequencer +
-   expression engines on the main 68000 — `drv-player.js` is the design — and the
-   Z80 reduced to a thin register-flush + PCM executor), which removes the size
-   ceiling entirely. Then hardware bring-up + cycle tuning.
+   **restored full 16-track capacity** (~14 B headroom). Rather than freeze the monolith, a
+   **Z80 code-overlay pass** then broke the ceiling without touching the 68k: the
+   cold control-plane code (start_track, mailbox handlers, MMB parsing — ~660 B)
+   moved out of Z80 RAM into a 32 KB-aligned overlay ROM blob the driver loads on
+   demand into a shared RAM slot, keeping the per-frame loop resident and the Z80
+   autonomous. Resident RAM image dropped to ~5.7 KB with ~175 B headroom (was
+   ~14); all fourteen gate scores still diff clean. More overlays (boot, CSM) can
+   free further RAM, so the remaining M3 (multi-macro, i16 pitch, `:keyon`,
+   CALL/RET, PCM soft mix, VOICE_SET) now fits on the Z80. The 68k-offload
+   architecture (engines on the main 68000, `drv-player.js` the design) stays the
+   last resort. Then hardware bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

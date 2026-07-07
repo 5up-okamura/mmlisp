@@ -1,0 +1,262 @@
+; ovl_setup — overlay (Stage 1, driver.md §5). Cold code loaded on demand into
+; OVERLAY_SLOT and run there (68k free, Z80 autonomous). Assembled at the slot
+; with the resident image's symbols preloaded, so it calls resident helpers
+; and uses resident equates directly. Entry = start_track (mailbox cmd 1).
+        org OVERLAY_SLOT
+start_track:
+    call mmb_locate
+    ; find G_ARG0 in the track table
+    ld hl,(G_TT)
+    ld e,(hl)               ; track_count (≤16, low byte is enough)
+    inc hl
+    inc hl
+    ld c,0                  ; index
+st_find:
+    ld a,(G_ARG0)
+    cp (hl)
+    jr z,st_found
+    push de
+    ld de,5
+    add hl,de
+    pop de
+    inc c
+    dec e
+    jr nz,st_find
+    ret                     ; unknown track id
+st_found:
+    ld a,c
+    ld (G_TIDX),a
+    ; IX = TCB_BASE + index*32
+    push hl
+    ld l,c
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de
+    push hl
+    pop ix
+    pop hl
+    ; fill the TCB from the 5-byte track entry
+    ld a,(hl)
+    ld (ix+T_TRKID),a
+    inc hl
+    ld a,(hl)
+    ld (ix+T_CH),a
+    inc hl
+    ld a,(hl)
+    ld (ix+T_FLAGS),a
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    ld hl,(G_ES)
+    add hl,de               ; stream ptr = ES payload + event_offset
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    ld hl,(G_ES)
+    ld (ix+T_BASE),l
+    ld (ix+T_BASE+1),h
+    xor a
+    ld (ix+T_ACC),a
+    ld (ix+T_ACC+1),a
+    ld (ix+T_WAIT),a
+    ld (ix+T_WAIT+1),a
+    ld (ix+T_GATELEFT),a
+    ld (ix+T_GATELEFT+1),a
+    ld (ix+T_DEPTH),a
+    ld (ix+T_MARKER),a
+    ld a,(G_TIDX)
+    ld (ix+T_INDEX),a
+    ld a,(G_ARG1)
+    ld (ix+T_BANK),a
+    ld a,(G_ARG2)
+    ld (ix+T_BANK+1),a
+    call bank_latch
+    ; channel ownership (driver.md §2.2)
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,st_active         ; fm3-op/pcm ids: no channel block in M1
+    call chs_ptr_iy
+    ld a,(iy+CHS_OWNER)
+    cp $ff
+    jr z,st_claim
+    ld c,a                  ; previous owner index
+    ld a,(G_TIDX)
+    cp c
+    jr z,st_claim
+    ; a different track already owns this channel. ch2 is the FM3 shared
+    ; channel (voice + op1 coexist in special mode): keep both, don't evict
+    ; or reset the shared level state. Any other channel: release the owner.
+    ld a,(ix+T_CH)
+    cp 2
+    jr z,st_active
+    push bc
+    call channel_off
+    pop bc
+    ld l,c
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de
+    ld (hl),0               ; previous TCB → idle
+    ld hl,MB_TSTAT
+    ld a,c
+    add a,l
+    ld l,a
+    ld (hl),0
+st_claim:
+    ld a,(G_TIDX)
+    ld (iy+CHS_OWNER),a
+    ld (iy+CHS_VEL),15      ; reset channel level state to defaults
+    ld (iy+CHS_VOL),31
+    ld (iy+CHS_GATE),8
+st_active:
+    ld (ix+T_STATUS),1
+    ld hl,MB_TSTAT
+    ld a,(G_TIDX)
+    add a,l
+    ld l,a
+    ld (hl),$80
+    ret
+
+; ── locate TRACK_TABLE / EVENT_STREAM payloads in the banked window ───────
+mmb_locate:
+    ld hl,(WINDOW+8)        ; section_count
+    ld b,l
+    ld hl,WINDOW+12         ; directory
+ml_sec:
+    ld a,(hl)               ; id low byte (ids are tiny)
+    cp 1
+    jr z,ml_tt
+    cp 2
+    jr z,ml_es
+    cp 4
+    jr z,ml_sb
+    cp 5
+    jr z,ml_val
+    cp 7
+    jr z,ml_macro
+    cp 8
+    jr z,ml_lut
+ml_next:
+    ld de,12
+    add hl,de
+    djnz ml_sec
+    jp compute_lut_bases    ; derive per-table pointers from G_LUT
+ml_tt:
+    call ml_payload
+    ld (G_TT),de
+    jr ml_next
+ml_es:
+    call ml_payload
+    ld (G_ES),de
+    jr ml_next
+ml_sb:
+    call ml_payload
+    ld (G_SB),de
+    jr ml_next
+ml_lut:
+    call ml_payload
+    ld (G_LUT),de
+    jr ml_next
+ml_val:
+    call ml_payload         ; DE = payload (count u16, then count × i16 inits)
+    push hl                 ; preserve the directory scan ptr
+    push bc                 ; preserve the section counter
+    ex de,hl                ; HL = payload
+    ld a,(hl)               ; count (low; ≤16)
+    inc hl
+    inc hl                  ; HL = &inits[0]
+    add a,a                 ; count * 2 bytes
+    ld c,a
+    ld b,0
+    ld de,VAL_SLOTS         ; seed declared slots (driver.md §6.3)
+    ldir
+    pop bc
+    pop hl
+    jr ml_next
+ml_macro:
+    push hl                 ; preserve the directory scan ptr
+    push bc                 ; preserve the section counter
+    call ml_payload         ; DE = payload (entry_count u16, then descriptors, blob)
+    push de
+    ld a,(de)               ; entry_count low
+    ld l,a
+    inc de
+    ld a,(de)               ; entry_count high
+    ld h,a                  ; HL = entry_count
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; HL = entry_count * 8
+    pop de                  ; DE = payload
+    push de
+    add hl,de               ; HL = payload + count*8
+    inc hl
+    inc hl                  ; + 2 → blob base
+    ld (G_MBLOB),hl
+    pop de
+    inc de
+    inc de                  ; descriptor base = payload + 2
+    ld (G_MACRO),de
+    pop bc
+    pop hl
+    jr ml_next
+
+; compute_lut_bases: G_LUT + each table's byte offset (tables.z80) → base globals.
+compute_lut_bases:
+    ld bc,(G_LUT)
+    ld hl,FNUM_LUT_OFF
+    add hl,bc
+    ld (FNUM_LUT),hl
+    ld hl,PSG_PERIOD_LUT_OFF
+    add hl,bc
+    ld (PSG_PERIOD_LUT),hl
+    ld hl,VEL_TL4_OFF
+    add hl,bc
+    ld (VEL_TL4),hl
+    ld hl,VOL_TL4_OFF
+    add hl,bc
+    ld (VOL_TL4),hl
+    ld hl,VEL_PSG4_OFF
+    add hl,bc
+    ld (VEL_PSG4),hl
+    ld hl,VOL_PSG4_OFF
+    add hl,bc
+    ld (VOL_PSG4),hl
+    ld hl,CARRIER_MASK_OFF
+    add hl,bc
+    ld (CARRIER_MASK),hl
+    ld hl,OP_ADDR_OFF_OFF
+    add hl,bc
+    ld (OP_ADDR_OFF),hl
+    ld hl,SIN_LUT_OFF
+    add hl,bc
+    ld (SIN_LUT),hl
+    ld hl,PCM_MULT_FRAME_OFF
+    add hl,bc
+    ld (PCM_MULT_FRAME),hl
+    ret
+; DE = WINDOW + offset(u32, low u16 used — one 32KB window in M1)
+ml_payload:
+    push hl
+    inc hl
+    inc hl
+    inc hl
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    ld hl,WINDOW
+    add hl,de
+    ex de,hl
+    pop hl
+    ret
+

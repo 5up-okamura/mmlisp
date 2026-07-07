@@ -17,16 +17,15 @@ const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 // Overlay configuration. Cold code (rarely invoked, not the per-frame loop)
 // moves into these files; each is assembled at OVERLAY_SLOT and loaded on
 // demand into that shared RAM buffer. The overlay ROM ships at OVERLAY_BANK.
-export const OVERLAY_SLOT = 0x1600;
 export const OVERLAY_BANK = 1;
-const OVERLAYS = []; // e.g. ["ovl_cmd.z80", "ovl_setup.z80"]
+// Order defines the overlay index in ovl_desc_tab (0 = ovl_setup, 1 = ovl_cmd).
+const OVERLAYS = ["ovl_setup.z80", "ovl_cmd.z80"];
 
 export function buildDriver() {
   writeFileSync(join(srcDir, "tables.z80"), generateTables());
   const built = buildOverlays({
     residentPath: join(srcDir, "mmlispdrv.z80"),
     overlayPaths: OVERLAYS.map((f) => join(srcDir, f)),
-    slot: OVERLAY_SLOT,
     descTab: "ovl_desc_tab",
   });
   return { ...built, overlayBank: OVERLAY_BANK };

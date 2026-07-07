@@ -196,10 +196,14 @@ These are the deltas against the docs as written:
      now emits only the byte offsets, and `live/src/lut-blob.js` is the shared
      LUT source for the section and the JS reference.
 
-   The image is ~6.4 KB with **~14 B of headroom at full 16-track capacity** —
-   the table-drive refactor recovered enough (169 B) to restore TCB to 16 and
-   still leave the monolith just fitting. This is the boundary: the remaining M3
-   moves to the 68k-offload architecture. The mailbox and val slots are the only 68k-published
+   The resident RAM image is **5.7 KB with ~175 B of headroom** (was ~14 B). A
+   **code-overlay pass** moved the cold control-plane code (start_track, the
+   mailbox handlers, the MMB-section parsing — ~660 B) out of Z80 RAM into a
+   713 B overlay ROM blob (`mmlispdrv_ovl.bin`) that the driver loads on demand
+   into OVERLAY_SLOT ($1700), keeping the 68k free and the per-frame loop
+   resident. Since cold code now lives in ROM, more overlays (boot, CSM, …) can
+   free further RAM, and the remaining M3 fits without the 68k offload — that
+   stays the last resort. The mailbox and val slots are the only 68k-published
    addresses; they **move with the floor**, so `drv/sgdk/mmlispdrv.c` and
    driver.md §5 carry the current values. The image exceeds the driver.md §5
    "≤4.5 KB" *design target*; size/cycle tuning is the hardware phase.

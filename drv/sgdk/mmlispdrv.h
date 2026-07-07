@@ -15,11 +15,14 @@
 
 #include <genesis.h>
 
-// Upload the Z80 image and spin until the driver's main loop reports ready
-// (mailbox driver_ready == 0xD2). Call once at startup, before any track ops.
-// While MMLispDRV owns the Z80 you must not use SGDK's own sound drivers
-// (XGM/PCM); this driver writes the YM2612 and PSG directly.
-void MMLisp_init(void);
+// Upload the resident Z80 image, spin until the driver reports ready (mailbox
+// driver_ready == 0xD2), then publish the overlay ROM bank. Call once at
+// startup, before any track ops. `overlay_rom` points at the 32 KB-aligned
+// mmlispdrv_ovl.bin blob in ROM — the Z80 loads cold code (start_track, mailbox
+// handlers, MMB parsing) from it on demand (driver.md §5). While MMLispDRV owns
+// the Z80 you must not use SGDK's own sound drivers (XGM/PCM); this driver
+// writes the YM2612 and PSG directly.
+void MMLisp_init(const u8* overlay_rom);
 
 // True once the Z80 driver is up. MMLisp_init already waits for this; use it
 // for a non-blocking readiness check.
