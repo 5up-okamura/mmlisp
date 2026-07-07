@@ -18,7 +18,16 @@ const MB_READY = MB_BASE + 0x32;
 export function runTrace(
   driverBin,
   mmbBytes,
-  { frames, maxStepsPerFrame = 2_000_000, commands = [] } = {},
+  {
+    frames,
+    maxStepsPerFrame = 2_000_000,
+    commands = [],
+    // Overlay support: a second ROM blob at a distinct bank the driver loads
+    // cold code from. When absent, the window always serves the MMB (the M1
+    // model) and the bank register is tracked but otherwise inert.
+    overlay = null,
+    overlayBank = null,
+  } = {},
 ) {
   if (driverBin.length > MB_BASE) {
     throw new Error(
@@ -30,13 +39,21 @@ export function runTrace(
   const writes = [];
   let frame = 0;
   const latch = [0, 0];
+  // Mega Drive Z80 bank register: a 9-bit shift register at 0x6000. Each write
+  // inserts bit0 of the value at bit 8 and shifts right; 9 writes set the bank
+  // (the top 9 bits of the 68k address the 0x8000-0xFFFF window maps to).
+  let bankReg = 0;
 
   const cpu = new Z80Cpu({
     read: (a) => {
       a &= 0xffff;
       if (a < RAM_SIZE) return ram[a];
       if (a === 0x4000) return 0; // YM status: never BUSY in the harness
-      if (a >= 0x8000) return mmbBytes[a - 0x8000] ?? 0;
+      if (a >= 0x8000) {
+        const off = a & 0x7fff;
+        if (overlay && bankReg === overlayBank) return overlay[off] ?? 0;
+        return mmbBytes[off] ?? 0; // MMB bank (the driver latches it as bank 0)
+      }
       return 0xff;
     },
     write: (a, v) => {
@@ -52,7 +69,7 @@ export function runTrace(
         case 0x4002: latch[1] = v; return;
         case 0x4003: writes.push({ frame, port: 1, addr: latch[1], data: v }); return;
         case 0x7f11: writes.push({ frame, port: 2, addr: 0, data: v }); return;
-        case 0x6000: return; // bank register: shift writes, ignored here
+        case 0x6000: bankReg = ((bankReg >> 1) | ((v & 1) << 8)) & 0x1ff; return;
         default: return;
       }
     },
