@@ -2120,27 +2120,9 @@ ps_fm:
     ret c                   ; NOTE_SEMI/KEYON etc: no register effect
     cp $15
     jp c,psf_tl
-    cp $1a
-    jp c,psf_ar
-    cp $1e
-    jp c,psf_dr
-    cp $22
-    jp c,psf_sr
-    cp $26
-    jp c,psf_rr
-    cp $2a
-    jp c,psf_sl
-    cp $2e
-    jp c,psf_ks
-    cp $32
-    jp c,psf_ml
-    cp $36
-    jp c,psf_dt
-    cp $3a
-    jp c,psf_ssg
     cp $3e
-    jp c,psf_amen
-    ret
+    ret nc                  ; ≥ 0x3E handled above / invalid target
+    jp generic_op_param     ; 0x16-0x3D: table-driven FM op-param write
 
 psf_vol:
     ld b,31
@@ -2265,137 +2247,66 @@ psf_tl:                     ; voicedTl = clamp(v,0,127); write it raw
     call op_e
     jp ym_write
 
-psf_ar:                     ; $50: keep KS bits
+; op_param_tab — one row per FM op-param family (AR..AMEN), indexed by
+; (target-0x16)>>2: {reg_base, keep_mask, val_mask, shift(left)}. Collapses ten
+; near-identical psf_* handlers into generic_op_param below.
+op_param_tab:
+    db $50,$c0,$1f,0        ; AR  (0x16): keep KS
+    db $60,$80,$1f,0        ; DR  (0x1A): keep AM-enable
+    db $70,$00,$1f,0        ; SR  (0x1E): whole
+    db $80,$f0,$0f,0        ; RR  (0x22): keep SL
+    db $80,$0f,$0f,4        ; SL  (0x26): keep RR, <<4
+    db $50,$1f,$03,6        ; KS  (0x2A): keep AR, <<6
+    db $30,$70,$0f,0        ; ML  (0x2E): keep DT
+    db $30,$0f,$07,4        ; DT  (0x32): keep MUL, <<4
+    db $90,$00,$0f,0        ; SSG (0x36): whole
+    db $60,$1f,$01,7        ; AMEN(0x3A): keep DR, <<7
+
+; generic_op_param: A = target (0x16..0x3D), D = port, C = choff, IY = chs,
+; (G_VAL) = value. Read-modify-writes the field into its shared YM register
+; (change-only), driven by op_param_tab. Replaces psf_ar..psf_amen.
+generic_op_param:
     sub $16
-    ld e,$50
-    call op_e
-    call ym_shadow_read
-    and $c0
-    ld b,a
-    ld a,(G_VAL)
-    and $1f
-    or b
-    ld b,a
-    jp ym_write
-
-psf_dr:                     ; $60: keep AM-enable bit
-    sub $1a
-    ld e,$60
-    call op_e
-    call ym_shadow_read
-    and $80
-    ld b,a
-    ld a,(G_VAL)
-    and $1f
-    or b
-    ld b,a
-    jp ym_write
-
-psf_sr:                     ; $70: whole register
-    sub $1e
-    ld e,$70
-    call op_e
-    ld a,(G_VAL)
-    and $1f
-    ld b,a
-    jp ym_write
-
-psf_rr:                     ; $80: keep SL nibble
-    sub $22
-    ld e,$80
-    call op_e
-    call ym_shadow_read
-    and $f0
-    ld b,a
-    ld a,(G_VAL)
-    and $0f
-    or b
-    ld b,a
-    jp ym_write
-
-psf_sl:                     ; $80: keep RR nibble
-    sub $26
-    ld e,$80
-    call op_e
-    call ym_shadow_read
-    and $0f
-    ld b,a
-    ld a,(G_VAL)
-    and $0f
-    rlca
-    rlca
-    rlca
-    rlca
-    or b
-    ld b,a
-    jp ym_write
-
-psf_ks:                     ; $50: keep AR bits
-    sub $2a
-    ld e,$50
-    call op_e
-    call ym_shadow_read
-    and $1f
-    ld b,a
-    ld a,(G_VAL)
+    ld l,a
+    ld h,0
     and 3
-    rrca
-    rrca
-    or b
+    ld (G_OP),a            ; op index
+    ld a,l
+    and $fc                ; family * 4 = table offset
+    ld l,a
+    push de                ; preserve port (D)
+    ld de,op_param_tab
+    add hl,de
+    pop de
+    ld e,(hl)              ; reg_base (D=port intact)
+    push hl
+    ld a,(G_OP)
+    call op_e              ; E = register address
+    pop hl
+    inc hl
+    ld b,(hl)              ; keep_mask
+    inc hl
+    ld a,(G_VAL)
+    and (hl)               ; value & val_mask
+    inc hl
+    ld c,(hl)              ; shift count (choff no longer needed)
+gop_sh:
+    dec c
+    jp m,gop_shd
+    add a,a
+    jr gop_sh
+gop_shd:
+    ld c,a                 ; C = field bits
+    ld a,b
+    or a
+    jr z,gop_wr            ; keep 0 → whole register
+    call ym_shadow_read    ; A = current value (D=port, E=addr)
+    and b
+    or c
     ld b,a
     jp ym_write
-
-psf_ml:                     ; $30: keep DT bits
-    sub $2e
-    ld e,$30
-    call op_e
-    call ym_shadow_read
-    and $70
-    ld b,a
-    ld a,(G_VAL)
-    and $0f
-    or b
-    ld b,a
-    jp ym_write
-
-psf_dt:                     ; $30: keep MUL bits ((v&7)<<4 like encode30)
-    sub $32
-    ld e,$30
-    call op_e
-    call ym_shadow_read
-    and $0f
-    ld b,a
-    ld a,(G_VAL)
-    and 7
-    rlca
-    rlca
-    rlca
-    rlca
-    or b
-    ld b,a
-    jp ym_write
-
-psf_ssg:                    ; $90: whole register
-    sub $36
-    ld e,$90
-    call op_e
-    ld a,(G_VAL)
-    and $0f
-    ld b,a
-    jp ym_write
-
-psf_amen:                   ; $60: keep DR bits
-    sub $3a
-    ld e,$60
-    call op_e
-    call ym_shadow_read
-    and $1f
-    ld b,a
-    ld a,(G_VAL)
-    and 1
-    rrca                    ; (v&1)<<7
-    or b
-    ld b,a
+gop_wr:
+    ld b,c
     jp ym_write
 
 ; op_e — A = op index (0..3), E = register base, C = channel offset,
