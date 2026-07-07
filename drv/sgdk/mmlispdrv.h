@@ -36,6 +36,18 @@ void MMLisp_startTrack(const u8* mmb, u8 track_id);
 // Stop a track: key-off (release tail runs out), free its channel, mark idle.
 void MMLisp_stopTrack(u8 track_id);
 
+// Key-off one channel without stopping its track: releases a len=0 hold (the
+// dispatcher resumes) or truncates a sounding note (driver.md §6.2).
+void MMLisp_keyOff(u8 channel_id);
+
+// One-shot absolute parameter write on a channel, as if a PARAM_SET arrived in
+// the stream. `target` is a target id (docs/opcodes.md §7); `value` is i8.
+void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value);
+
+// Fade a track's channel to silence over `frames` frames, then stop it
+// (driver.md §6.3). Use for DJ-style scene transitions.
+void MMLisp_fadeTrack(u8 track_id, u8 frames);
+
 // Read a per-track mailbox status byte (0..15): bit7 active, bit6 fading,
 // bits5-0 the last MARKER id the track passed (host sync point).
 u8 MMLisp_trackStatus(u8 track_index);

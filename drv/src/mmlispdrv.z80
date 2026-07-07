@@ -32,7 +32,7 @@ WINDOW      equ $8000
 ; with the floor (M2 PCM), so drv/sgdk/mmlispdrv.c and driver.md §5 reflect the
 ; current values. Bump DATA_BASE (and re-check the top fits under the stack)
 ; when the image outgrows the current floor.
-DATA_BASE   equ $1780       ; code owns $0000..$177F (6016 B)
+DATA_BASE   equ $18d0       ; code owns $0000..$18CF (6352 B)
 
 MB_RING     equ DATA_BASE       ; mailbox: 8 cells × 4 B  (published)
 MB_HEAD     equ MB_RING+$20
@@ -113,10 +113,12 @@ G_PCM_INC   equ G_BASE+$57      ; u32  16.16 samples/frame increment
 G_PCM_POS   equ G_BASE+$5b      ; u32  16.16 current sample position
 G_PCM_LOOPE equ G_BASE+$5f      ; u16  loop end (sample index)
 G_PCM_LOOPL equ G_BASE+$61      ; u16  loop length (loopEnd - loopStart)
-G_PCM_MUL   equ G_BASE+$63      ; u32  scratch for the 16x16 multiply (ends +$66)
+G_PCM_MUL   equ G_BASE+$63      ; u32  scratch for the 16x16 multiply
+G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
+G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch, ends +$69)
 
-CH_STATE    equ $1880       ; 10 × 64 B channel state blocks   ($1880..$1AFF)
-TCB_BASE    equ $1b00       ; 16 × 32 B track control blocks   ($1B00..$1CFF)
+CH_STATE    equ $19a0       ; 10 × 64 B channel state blocks   ($19A0..$1C1F)
+TCB_BASE    equ $1c20       ; 16 × 32 B track control blocks   ($1C20..$1E1F)
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -131,11 +133,11 @@ SW_PHASE    equ 8           ; u16 phase 0..65535 (curve t = high byte)
 SW_STEP     equ 10          ; u16 per-frame phase increment
 
 ; shadow register file — change-only suppression (driver.md §5.4).
-; 2 × 152 bytes covering YM addresses $22..$B9 per port, plus a parallel
-; byte-per-register valid plane (a register is always written the first time).
-; Lives in the M2 PCM-reserved area for now.
-SHADOW      equ $1d00       ; 304 B (port0 at +0, port1 at +152)   ($1D00..$1E2F)
-SHVALID     equ $1e30       ; 304 B valid plane (offset SHADOW+304) ($1E30..$1F5F)
+; 2 × 152 value bytes covering YM addresses $22..$B9 per port, plus a
+; bit-per-register valid plane (2 × 152 bits = 2 × 19 B): a register is always
+; written the first time it changes.
+SHADOW      equ $1e20       ; 304 value bytes (port0 +0, port1 +152) ($1E20..$1F4F)
+SHVALID     equ $1f50       ; 38 B valid bitmap (index 0..303)        ($1F50..$1F75)
 
 STACK_TOP   equ $2000
 
@@ -149,6 +151,14 @@ CHS_PITCH   equ $0c         ; i16 pitch offset in cents (driver.md §5.1, M2b)
 CHS_OWNER   equ $0e         ; owning TCB index, $FF = free
 CHS_ALG     equ $0f
 CHS_VTL     equ $10         ; 4 × voiced TL (op1..op4)
+; FADE_TRACK state (M2 mailbox): Bresenham vol ramp (driver.md §6.3)
+CHS_FADEN   equ $14         ; u8  frame count / err threshold
+CHS_FADEV   equ $15         ; u8  err increment (= vol at fade start)
+CHS_FADEERR equ $16         ; u8  running Bresenham error
+CHS_FADECUR equ $17         ; u8  running current vol
+CHS_FADEL   equ $3e         ; u8  frames left (countdown)
+
+T_FADING    equ 3           ; T_FLAGS bit3: track is fading (still playing)
 
 ; ── Track control block fields (driver.md §5.2) ───────────────────────────
 T_STATUS    equ $00         ; 0 idle, 1 playing, 2 held
@@ -402,8 +412,23 @@ md_loop:
     jr md_done
 md_not_start:
     cp 2
-    jr nz,md_done           ; KEY_OFF/SET_PARAM/FADE/SET_VAL are M2/M3
+    jr nz,md_c3
     call stop_track
+    jr md_done
+md_c3:
+    cp 3                    ; KEY_OFF (channel_id)
+    jr nz,md_c4
+    call mb_key_off
+    jr md_done
+md_c4:
+    cp 4                    ; SET_PARAM (channel, target, value i8)
+    jr nz,md_c5
+    call mb_set_param
+    jr md_done
+md_c5:
+    cp 5                    ; FADE_TRACK (track_id, frames)
+    jr nz,md_done           ; SET_VAL and others: M3
+    call mb_fade_track
 md_done:
     pop bc
     ld a,c
@@ -564,6 +589,88 @@ sp_next:
     ld de,32
     add ix,de
     djnz sp_loop
+    ret
+
+; ── KEY_OFF (channel_id in G_ARG0) — driver.md §6.2 ────────────────────────
+mb_key_off:
+    ld a,(G_ARG0)
+    call channel_off
+    ; release a len=0 hold: resume the track's dispatcher (status 2 → 1)
+    ld ix,TCB_BASE
+    ld b,16
+mko_lp:
+    ld a,(ix+T_STATUS)
+    cp 2
+    jr nz,mko_next
+    ld a,(G_ARG0)
+    cp (ix+T_CH)
+    jr nz,mko_next
+    ld (ix+T_STATUS),1
+mko_next:
+    ld de,32
+    add ix,de
+    djnz mko_lp
+    ret
+
+; ── SET_PARAM (channel, target, value i8) — driver.md §6.2 ─────────────────
+mb_set_param:
+    ld a,(G_ARG0)
+    ld (G_CH),a
+    ld a,(G_ARG1)
+    ld (G_TARGET),a
+    ld a,(G_ARG2)          ; i8 → sign-extend
+    ld l,a
+    ld h,0
+    bit 7,l
+    jr z,msp_pos
+    ld h,$ff
+msp_pos:
+    ld (G_VAL),hl
+    jp param_set
+
+; ── FADE_TRACK (track_id, frames) — driver.md §6.3 ─────────────────────────
+mb_fade_track:
+    ld ix,TCB_BASE
+    ld b,16
+mft_find:
+    ld a,(ix+T_STATUS)
+    or a
+    jr z,mft_next
+    ld a,(G_ARG0)
+    cp (ix+T_TRKID)
+    jr z,mft_found
+mft_next:
+    ld de,32
+    add ix,de
+    djnz mft_find
+    ret                    ; unknown track id
+mft_found:
+    ld a,(G_ARG1)          ; frames
+    or a
+    jr nz,mft_setup
+    ; frames 0 → immediate stop
+    ld a,(ix+T_CH)
+    call channel_off
+    bit 1,(ix+T_FLAGS)
+    jr z,mft_ncsm
+    ld a,(G_REG27)
+    and $7f
+    call set_reg27
+mft_ncsm:
+    ld (ix+T_STATUS),0
+    ret
+mft_setup:
+    set T_FADING,(ix+T_FLAGS)
+    ld a,(ix+T_CH)
+    call chs_ptr_iy
+    ld a,(G_ARG1)
+    ld (iy+CHS_FADEN),a     ; N = threshold
+    ld (iy+CHS_FADEL),a     ; frames left
+    ld a,(iy+CHS_VOL)       ; V = current vol
+    ld (iy+CHS_FADEV),a
+    ld (iy+CHS_FADECUR),a
+    xor a
+    ld (iy+CHS_FADEERR),a
     ret
 
 ; ── locate TRACK_TABLE / EVENT_STREAM payloads in the banked window ───────
@@ -2326,62 +2433,84 @@ write_noise_cfg:
 ; ===========================================================================
 ; Register write layer (driver.md §4/§5.4)
 ; ===========================================================================
-; ym_shadow_ptr: D=port, E=addr → HL = shadow byte. Preserves BC/DE.
+; ym_shadow_ptr: D=port, E=addr → HL = value byte; (G_SHIDX) = index 0..303.
+; index = (addr-0x22) + port*152. Preserves BC/DE.
 ym_shadow_ptr:
-    push de
     ld a,e
     sub $22
-    ld e,a
-    ld a,d
-    ld d,0
-    ld hl,SHADOW
-    add hl,de
-    or a
+    ld l,a
+    ld h,0                  ; HL = addr - 0x22 (0..151)
+    bit 0,d                 ; port 1?
     jr z,ysp_p0
+    push de
     ld de,152
     add hl,de
+    pop de
 ysp_p0:
+    ld (G_SHIDX),hl         ; index
+    push de
+    ld de,SHADOW
+    add hl,de               ; HL = SHADOW + index
     pop de
     ret
 
-; ym_shadow_read: D=port, E=addr → A = last written value (0 if never).
+; ym_valid_ptr: (G_SHIDX) → HL = valid bitmap byte, A = bit mask. Preserves BC/DE.
+ym_valid_ptr:
+    push de
+    ld hl,(G_SHIDX)
+    ld a,l
+    and 7
+    ld d,a                  ; bit position 0..7
+    ld a,1                  ; mask = 1 << bit (before DE is reused for SHVALID)
+    inc d
+yvp_lp:
+    dec d
+    jr z,yvp_end
+    add a,a
+    jr yvp_lp
+yvp_end:
+    push af                 ; save mask
+    ld hl,(G_SHIDX)
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l                    ; HL = index >> 3
+    ld de,SHVALID
+    add hl,de               ; HL = valid byte
+    pop af                  ; mask back
+    pop de
+    ret
+
+; ym_shadow_read: D=port, E=addr → A = last written value (0 if never written).
 ; Preserves BC/DE; clobbers HL.
 ym_shadow_read:
     call ym_shadow_ptr
-    push de
-    ld de,304
-    add hl,de
+    push hl                 ; value ptr
+    call ym_valid_ptr
+    and (hl)                ; valid bit set?
+    pop hl                  ; value ptr
+    ret z                   ; never written → A = 0
     ld a,(hl)
-    ld de,0-304
-    add hl,de
-    pop de
-    or a
-    jr z,ysr_inv
-    ld a,(hl)
-    ret
-ysr_inv:
-    xor a
     ret
 
-; ym_write: B=data, D=port(0/1), E=addr. Change-only via the shadow file;
-; the first write to a register always goes out. Preserves BC/DE.
+; ym_write: B=data, D=port(0/1), E=addr. Change-only via the shadow; the first
+; write to a register always goes out. Preserves BC/DE.
 ym_write:
     call ym_shadow_ptr
-    push de
-    ld de,304
-    add hl,de
-    ld a,(hl)
-    or a
+    push hl                 ; value ptr
+    call ym_valid_ptr       ; HL = valid byte, A = mask
+    ld (G_SHMASK),a
+    and (hl)
     jr nz,ymw_valid
-    ld (hl),1               ; mark valid
-    ld de,0-304
-    add hl,de
-    pop de
+    ld a,(G_SHMASK)         ; first write: set valid bit
+    or (hl)
+    ld (hl),a
+    pop hl                  ; value ptr
     jr ymw_store
 ymw_valid:
-    ld de,0-304
-    add hl,de
-    pop de
+    pop hl                  ; value ptr
     ld a,(hl)
     cp b
     ret z                   ; unchanged: suppress
@@ -2708,6 +2837,7 @@ psw_ch:
     jr c,psw_ch
     call process_tempo_sweep
     call process_csm_sweep
+    call process_fades
     jp process_pcm
 
 ; process_slot: A = slot offset, IY = channel block, C = channel id.
@@ -2882,6 +3012,98 @@ pcs_run:
     ld hl,(G_CS_LEFT)
     dec hl
     ld (G_CS_LEFT),hl
+    ret
+
+; ── process_fades — FADE_TRACK Bresenham vol ramps (driver.md §6.3) ────────
+; Iterates TCBs ascending (matching the reference's per-track order); each
+; fading track ramps its channel vol toward 0, then stops after N frames.
+process_fades:
+    ld ix,TCB_BASE
+    ld c,16
+pf_lp:
+    ld a,(ix+T_STATUS)
+    or a
+    jp z,pf_next
+    bit T_FADING,(ix+T_FLAGS)
+    jp z,pf_next
+    push bc
+    ld a,(ix+T_CH)
+    ld (G_CH),a
+    call chs_ptr_iy         ; IY = channel block
+    ; err += V ; while err >= N: err -= N, cur--   (DE = 9-bit accumulator)
+    ld a,(iy+CHS_FADEERR)
+    ld e,a
+    ld d,0
+    ld a,(iy+CHS_FADEV)
+    add a,e
+    ld e,a
+    jr nc,pf_wh
+    inc d
+pf_wh:
+    ld a,e
+    sub (iy+CHS_FADEN)
+    ld l,a
+    ld a,d
+    sbc a,0
+    jr c,pf_whd             ; DE < N → done
+    ld e,l
+    ld d,a
+    dec (iy+CHS_FADECUR)
+    jr pf_wh
+pf_whd:
+    ld a,e
+    ld (iy+CHS_FADEERR),a   ; err back (0..N-1)
+    ; vol = max(0, cur)
+    ld a,(iy+CHS_FADECUR)
+    bit 7,a
+    jr z,pf_vok
+    xor a
+pf_vok:
+    ld l,a
+    ld h,0
+    ld (G_VAL),hl
+    ld a,4                  ; TARGET_ID VOL
+    ld (G_TARGET),a
+    ; decrement frames-left, remember whether this was the last frame
+    dec (iy+CHS_FADEL)
+    ld a,0
+    jr nz,pf_nd
+    inc a
+pf_nd:
+    ld (G_TMP),a            ; done flag (survives param_set)
+    call param_set          ; apply the vol (clobbers IY, not IX)
+    ld a,(G_TMP)
+    or a
+    jr z,pf_cont
+    ; fade complete → STOP_TRACK
+    res T_FADING,(ix+T_FLAGS)
+    ld a,(ix+T_CH)
+    call channel_off
+    ld a,(ix+T_CH)
+    cp 10
+    jr nc,pf_noown
+    call chs_ptr_iy
+    ld (iy+CHS_OWNER),$ff
+pf_noown:
+    bit 1,(ix+T_FLAGS)      ; isCsm?
+    jr z,pf_nocsm
+    ld a,(G_REG27)
+    and $7f
+    call set_reg27
+pf_nocsm:
+    ld (ix+T_STATUS),0
+    ld hl,MB_TSTAT
+    ld a,(ix+T_INDEX)
+    add a,l
+    ld l,a
+    ld (hl),0
+pf_cont:
+    pop bc
+pf_next:
+    ld de,32
+    add ix,de
+    dec c
+    jp nz,pf_lp
     ret
 
 ; ===========================================================================

@@ -36,7 +36,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
    mmlispdrv.z80 ──emit-bin.mjs──▶ mmlispdrv_bin.h ──gcc──────┤
                                                               ▼
                                      68k: MMLisp_init(); MMLisp_startTrack(...)
-                                                              │ mailbox (0xA01780)
+                                                              │ mailbox (0xA018D0)
                                                               ▼
                                      Z80: MMLispDRV plays YM2612 + PSG @ 60 Hz
 ```
@@ -68,11 +68,13 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
   Mega Drive Z80 sound driver uses). The 68k does not pump it; after starting
   tracks the score is autonomous.
 
-- **Control.** `MMLisp_startTrack` / `MMLisp_stopTrack` post commands into an
-  8-slot ring in Z80 RAM at 0xA01780 (`docs/driver.md` §6). Posting requests
-  the Z80 bus (briefly halting it), writes the 4-byte cell with the command
-  byte last, and releases the bus. The Z80 drains the ring at the top of each
-  frame.
+- **Control.** `MMLisp_startTrack` / `MMLisp_stopTrack` / `MMLisp_keyOff` /
+  `MMLisp_setParam` / `MMLisp_fadeTrack` post commands into an 8-slot ring in
+  Z80 RAM at 0xA018D0 (`docs/driver.md` §6). Posting requests the Z80 bus
+  (briefly halting it), writes the 4-byte cell with the command byte last, and
+  releases the bus. The Z80 drains the ring at the top of each frame. Use
+  `MMLisp_fadeTrack` for DJ-style scene transitions (fade one scene's tracks
+  while starting the next).
 
 - **Markers.** Each track mirrors the last `MARKER` it passed into a status
   byte; `MMLisp_trackStatus(i)` reads it (bit7 active, bit6 fading, bits5-0
@@ -98,7 +100,7 @@ Because the driver logic is already proven, the on-target check is really a
 check of *the glue + the bus/interrupt model*. In rough order of effort:
 
 1. **Boot flag.** In your emulator's debugger, break after `MMLisp_init()` and
-   read Z80 RAM 0x17B2 — it should be `0xD2`. If it never flips, the upload or
+   read Z80 RAM 0x1902 — it should be `0xD2`. If it never flips, the upload or
    the Z80 reset/interrupt-enable path is wrong, not the driver.
 
 2. **Listen.** Run in an accurate emulator (BlastEm, Genesis Plus GX). You
@@ -136,17 +138,20 @@ in the Mega Drive bus/interrupt environment, not the driver.
   build (see `drv/README.md`); the real sub-frame feed timing is a
   hardware-bring-up item.
 
+- **Mailbox (M2):** `MMLisp_keyOff` (release a `len=0` hold / truncate a note),
+  `MMLisp_setParam` (one-shot param write), `MMLisp_fadeTrack` (fade a track to
+  silence then stop).
+
 ## Limits
 
 - One MMB per bank window; all live tracks share it.
-- The M2 mailbox commands (KEY_OFF, SET_PARAM, FADE_TRACK, SET_VAL) are not yet
-  implemented — accepted and ignored.
-- Remaining M3 stream features (macros, dynamic value slots, CALL/RET) are
+- `SET_VAL` (dynamic value slots) is M3; not yet implemented.
+- Remaining M3 stream features (macros, `PARAM_FROM_VAL`, CALL/RET) are
   length-decoded and skipped; notes stay in time.
 
-> **Mailbox address.** As the image grew (M2 PCM), the data floor — and with
-> it the mailbox (`0xA01780`) and val slots (`0xA017C0`) — moved. If you pinned
-> the old `0xA01680` in your own code, update it (the constants in
-> `mmlispdrv.c` are already current).
+> **Mailbox address.** The data floor — and with it the mailbox (`0xA018D0`)
+> and val slots (`0xA01910`) — moves as the image grows. If you pinned an older
+> address in your own code, update it (the constants in `mmlispdrv.c` are always
+> current).
 
 See `drv/README.md` for the full deviation list and the driver-side design.

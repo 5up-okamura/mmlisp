@@ -2,10 +2,11 @@
 
 The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 `docs/opcodes.md`, ported from the JS reference implementation
-(`live/src/drv-player.js`). Current coverage: **M1 (core playback)**,
-**M2a (motion: sweeps, PARAM_ADD, TEMPO_SWEEP)**, **M2b (cent-interpolated
-NOTE_PITCH — glide / vibrato / detune)**, **M2 CSM (FM3 CSM mode)**, and
-**M2 PCM (single-channel DAC — shot / loop, frame-quantized)**.
+(`live/src/drv-player.js`). Coverage: **M1 (core playback)** and **all of M2**
+— motion (sweeps, PARAM_ADD, TEMPO_SWEEP), cent-interpolated NOTE_PITCH
+(glide / vibrato / detune), FM3 CSM mode, single-channel PCM DAC (shot / loop,
+frame-quantized), and the host mailbox commands (KEY_OFF / SET_PARAM /
+FADE_TRACK).
 
 ## Layout
 
@@ -43,9 +44,15 @@ node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200
 driver, replays the MMB in the emulator (mailbox-started like a real 68000
 host), and diffs the frame-stamped register log against
 `drv-player.js` — **raw equality, zero tolerance**: same writes, same
-values, same frames, same order (driver.md §12.4). Current status: all eight
+values, same frames, same order (driver.md §12.4). Current status: all nine
 gate scores diff clean (ab-core, stress-m1, stress-m2skip, m2-motion,
-m2b-pitch, m2-csm, m2-pcm, m2-pcmloop).
+m2b-pitch, m2-csm, m2-pcm, m2-pcmloop, m2-mailbox).
+
+Host mailbox commands (KEY_OFF / SET_PARAM / FADE_TRACK) are host-driven, not
+in the MMB stream, so a test may carry a sidecar `<song>.cmds.json` holding
+`[{frame, cmd, a0, a1, a2}]`. The verify harness injects the same schedule into
+both players (the reference applies it at the top of the frame; the emulator
+posts it into the mailbox ring before that frame's interrupt).
 
 ## M2a — motion (sweeps / PARAM_ADD / TEMPO_SWEEP)
 
@@ -119,6 +126,17 @@ play in *which* frame, which the real feed will reproduce. The reference reads
 sample blobs the node toolchain loads from the WAVs (`drv/tools/wav.mjs`) into
 the MMB SAMPLE_BANK; asm and reference read the same bytes.
 
+## M2 mailbox commands (host → driver)
+
+The 68000 drives runtime control through the mailbox ring (driver.md §6):
+`KEY_OFF` (release a `len=0` hold or truncate a note on a channel), `SET_PARAM`
+(one-shot absolute param write, as if a stream `PARAM_SET`), and `FADE_TRACK`
+(ramp a track's channel vol to 0 over N frames, then stop it — for DJ-style
+scene transitions). The fade is a division-free Bresenham vol ramp
+(`process_fades`, iterated in track order to match the reference); the track
+keeps playing while it fades. `START_TRACK`/`STOP_TRACK` also exist; the
+verification harness auto-starts all tracks, so those are exercised implicitly.
+
 Note the DrvPlayer↔ir-player A/B (`ab-compare.js`) is *informational* for M2:
 the driver's integer curve crosses each TL/att boundary a few frames off from
 ir-player's float easing, exceeding the tight ±1-frame band on slow fades.
@@ -153,13 +171,16 @@ These are the deltas against the docs as written:
    chip access actually matters.
 2. **RAM map: all data above the code.** The image grows through the
    milestones, so the map puts every RAM region above the code at
-   `DATA_BASE = $1780` (code owns $0000–$177F): mailbox $1780, val slots $17C0,
-   globals $17E0, channel state $1880, TCB $1B00, shadow (value+valid planes,
-   2×152 B each) $1D00–$1F5F, stack $1F80. `DATA_BASE` bumps as the image grows.
-   The mailbox and val slots are the only 68k-published addresses; they **moved
-   with the floor** (M2 PCM), so `drv/sgdk/mmlispdrv.c` and driver.md §5 carry
-   the current values. The image (5945 B) exceeds the driver.md §5 "≤4.5 KB"
-   *design target*; size/cycle tuning is the hardware phase.
+   `DATA_BASE = $18D0` (code owns $0000–$18CF): mailbox $18D0, val slots $1910,
+   globals $1930, channel state $19A0, TCB $1C20, shadow $1E20–$1F75, stack
+   $1F80. The shadow's valid plane is a **bitmap** (1 bit/register, 2×19 B) —
+   the byte-per-register plane was dropped to fit 8 KB. `DATA_BASE` bumps as the
+   image grows (now tight: ~6.3 KB image, ~30 B of headroom under the stack — M3
+   will need a bigger rework, e.g. shrinking the shadow value plane). The
+   mailbox and val slots are the only 68k-published addresses; they **move with
+   the floor**, so `drv/sgdk/mmlispdrv.c` and driver.md §5 carry the current
+   values. The image exceeds the driver.md §5 "≤4.5 KB" *design target*;
+   size/cycle tuning is the hardware phase.
 3. **Per-track increment slot reused.** Tempo is per-MMB (one MMB in M1), so
    the TCB increment field ($0C) holds the gate key-off countdown instead;
    the increment lives in a global. Revisit for cross-MMB layering.

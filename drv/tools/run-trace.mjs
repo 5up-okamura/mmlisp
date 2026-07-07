@@ -11,14 +11,18 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
 const RAM_SIZE = 0x2000;
-const MB_BASE = 0x1780; // mailbox (published); moved with the data floor (M2 PCM)
+const MB_BASE = 0x18d0; // mailbox (published); tracks the driver's DATA_BASE
 const MB_HEAD = MB_BASE + 0x20;
 const MB_READY = MB_BASE + 0x32;
 
-export function runTrace(driverBin, mmbBytes, { frames, maxStepsPerFrame = 2_000_000 } = {}) {
-  if (driverBin.length > 0x1780) {
+export function runTrace(
+  driverBin,
+  mmbBytes,
+  { frames, maxStepsPerFrame = 2_000_000, commands = [] } = {},
+) {
+  if (driverBin.length > 0x18d0) {
     throw new Error(
-      `driver image ${driverBin.length} bytes overruns the data floor at 0x1780`,
+      `driver image ${driverBin.length} bytes overruns the data floor at 0x18d0`,
     );
   }
   const ram = new Uint8Array(RAM_SIZE);
@@ -74,8 +78,26 @@ export function runTrace(driverBin, mmbBytes, { frames, maxStepsPerFrame = 2_000
   });
   ram[MB_HEAD] = tracks.length & 7;
 
+  // Host mailbox schedule: post commands into the ring just before the frame's
+  // interrupt so the Z80 drains them at the top of that frame (§4 step 1).
+  const cmdByFrame = new Map();
+  for (const c of commands) {
+    if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
+    cmdByFrame.get(c.frame).push(c);
+  }
+  const postCommand = (c) => {
+    const head = ram[MB_HEAD];
+    const cell = MB_BASE + head * 4;
+    ram[cell + 1] = c.a0 ?? 0;
+    ram[cell + 2] = c.a1 ?? 0;
+    ram[cell + 3] = c.a2 ?? 0;
+    ram[cell] = c.cmd; // cmd byte last (ring discipline)
+    ram[MB_HEAD] = (head + 1) & 7;
+  };
+
   // Frame loop.
   for (frame = 0; frame < frames; frame++) {
+    for (const c of cmdByFrame.get(frame) ?? []) postCommand(c);
     cpu.intRequest();
     let s = 0;
     while (s++ < maxStepsPerFrame) {

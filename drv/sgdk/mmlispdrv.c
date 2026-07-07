@@ -6,18 +6,21 @@
 // ── Z80 address space, as seen from the 68000 (Z80 RAM is at 0xA00000) ──────
 #define Z80_RAM(off)   ((vu8*)(0xA00000 + (off)))
 
-// Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets. The mailbox moved
-// with the data floor as the image grew (M2 PCM); it is still the only
+// Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets. The mailbox tracks
+// the driver's DATA_BASE, which moves as the image grows; it is still the only
 // published address the host needs.
-#define MB_RING        0x1780   // 8 cells x 4 bytes {cmd, a0, a1, a2}
-#define MB_HEAD        0x17A0   // 68k-owned: next cell to write
-#define MB_TAIL        0x17A1   // Z80-owned: next cell to read
-#define MB_TSTAT       0x17A2   // 16 per-track status bytes
-#define MB_READY       0x17B2   // 0xD2 when the driver main loop is up
+#define MB_RING        0x18D0   // 8 cells x 4 bytes {cmd, a0, a1, a2}
+#define MB_HEAD        0x18F0   // 68k-owned: next cell to write
+#define MB_TAIL        0x18F1   // Z80-owned: next cell to read
+#define MB_TSTAT       0x18F2   // 16 per-track status bytes
+#define MB_READY       0x1902   // 0xD2 when the driver main loop is up
 
 // Command ids (docs/opcodes.md / driver.md §6.2).
 #define CMD_START_TRACK  0x01
 #define CMD_STOP_TRACK   0x02
+#define CMD_KEY_OFF      0x03
+#define CMD_SET_PARAM    0x04
+#define CMD_FADE_TRACK   0x05
 
 // Post one command into the mailbox ring. The 68k requests the Z80 bus (which
 // halts the Z80), so the access is fully serialized; we still write the cmd
@@ -75,6 +78,21 @@ void MMLisp_startTrack(const u8* mmb, u8 track_id)
 void MMLisp_stopTrack(u8 track_id)
 {
     mailbox_send(CMD_STOP_TRACK, track_id, 0, 0);
+}
+
+void MMLisp_keyOff(u8 channel_id)
+{
+    mailbox_send(CMD_KEY_OFF, channel_id, 0, 0);
+}
+
+void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value)
+{
+    mailbox_send(CMD_SET_PARAM, channel_id, target_id, (u8)value);
+}
+
+void MMLisp_fadeTrack(u8 track_id, u8 frames)
+{
+    mailbox_send(CMD_FADE_TRACK, track_id, frames, 0);
 }
 
 u8 MMLisp_trackStatus(u8 track_index)

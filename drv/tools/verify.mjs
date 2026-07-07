@@ -5,7 +5,7 @@
 //
 //   node verify.mjs <song.mmlisp> [--frames N] [--verbose]
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
@@ -13,7 +13,6 @@ import { refTrace } from "./ref-trace.mjs";
 import { assemble } from "./z80asm.mjs";
 import { runTrace } from "./run-trace.mjs";
 import { generateTables } from "./gen-tables.mjs";
-import { readFileSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -30,10 +29,18 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   // 1. song → MMB
   const { bytes: mmb } = buildMmb(songPath);
 
+  // Optional host mailbox schedule: a sidecar "<song>.cmds.json" holding
+  // [{frame, cmd, a0, a1, a2}] injected into both players (M2 KEY_OFF /
+  // SET_PARAM / FADE_TRACK, which are host-driven, not in the MMB stream).
+  const cmdPath = songPath.replace(/\.mmlisp$/, ".cmds.json");
+  const commands = existsSync(cmdPath)
+    ? JSON.parse(readFileSync(cmdPath, "utf8"))
+    : [];
+
   // 2. JS reference trace. `frames` caps how long it runs; the horizon is
   // where the reference actually ended (which may be earlier — e.g. a PCM
   // tail finishing — so the asm is run for exactly that many frames).
-  const ref = refTrace(mmb, frames ? { maxFrames: frames } : {});
+  const ref = refTrace(mmb, { maxFrames: frames ?? 36000, commands });
   const horizon = ref.frames;
 
   // 3. regenerate tables + assemble
@@ -41,7 +48,7 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   const { bytes: bin } = assemble(join(srcDir, "mmlispdrv.z80"));
 
   // 4. emulate
-  const asm = runTrace(bin, mmb, { frames: horizon });
+  const asm = runTrace(bin, mmb, { frames: horizon, commands });
 
   // 5. raw diff
   const a = ref.writes.filter((w) => w.frame < horizon);

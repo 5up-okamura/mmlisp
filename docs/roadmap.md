@@ -88,19 +88,20 @@ Order of work:
    diffs clean against ir-player.js (0 mismatches; bands in driver.md
    §12). Live app: MMLispDRV backend toggle, File > Export > MMB…,
    `window.__abCompare()`. M2/M3 opcodes are length-decoded and skipped.
-3. **Z80 assembly** (in progress — M1 + all M2 stream features done in
-   emulation) — `drv/`: the driver (~5.9KB image) plus a first-party node
-   toolchain (assembler, Z80 emulator, trace harness). Gate: raw
-   register-trace equality vs the JS reference — eight scores diff clean at
-   zero tolerance. **M2a** = sweep engine (PARAM_SWEEP/STOP), PARAM_ADD,
-   TEMPO_SWEEP with a single-sourced integer curve model (`mmb.js`
-   `curveUnit8`). **M2b** = cent-interpolated NOTE_PITCH (glide/vibrato/
-   detune). **M2 CSM** = FM3 CSM mode (CSM_ON/OFF, Timer A const + swept).
-   **M2 PCM** = single-channel DAC (shot/loop), modelled frame-quantized
-   (the sub-frame feed timing is a hardware concern). Deviations in
-   `drv/README.md`. Next: the M2 mailbox commands (KEY_OFF/SET_PARAM/
-   FADE_TRACK) — needs a DrvPlayer mailbox impl + harness extension; then M3
-   (macros) and hardware bring-up + cycle tuning.
+3. **Z80 assembly** (in progress — **M1 + all of M2 done in emulation**) —
+   `drv/`: the driver (~6.3KB image) plus a first-party node toolchain
+   (assembler, Z80 emulator, trace harness). Gate: raw register-trace
+   equality vs the JS reference — nine scores diff clean at zero tolerance.
+   **M2a** = sweep engine (PARAM_SWEEP/STOP), PARAM_ADD, TEMPO_SWEEP with a
+   single-sourced integer curve model (`mmb.js` `curveUnit8`). **M2b** =
+   cent-interpolated NOTE_PITCH (glide/vibrato/detune). **M2 CSM** = FM3 CSM
+   mode. **M2 PCM** = single-channel DAC (shot/loop), frame-quantized (the
+   sub-frame feed timing is a hardware concern). **M2 mailbox** = KEY_OFF /
+   SET_PARAM / FADE_TRACK (host-driven; a sidecar cmd schedule is injected
+   into both players). The shadow's valid plane is now a bitmap (fit 8 KB).
+   Deviations in `drv/README.md`. Next: **M3** (macro engine, dynamic value
+   slots + SET_VAL, NOTE_ON_EX, FM3 independent-OP, CALL/RET + dedup, VOICE_SET)
+   — needs a code-size rework — then hardware bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

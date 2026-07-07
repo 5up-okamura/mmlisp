@@ -265,6 +265,7 @@ export class DrvPlayer {
     this._pcm = { active: false, dacOn: false };
 
     this._trk = (song?.tracks ?? []).map((t) => ({
+      trackId: t.trackId,
       channelId: t.channelId,
       flags: t.flags,
       pc: t.eventOffset,
@@ -276,6 +277,10 @@ export class DrvPlayer {
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
       unsupported: t.channelId >= 16, // fm3-op / pcm tracks: M1 keeps time only
+      fading: false, // FADE_TRACK (M2 mailbox): Bresenham vol ramp to 0, then stop
+      fadeN: 0,
+      fadeErr: 0,
+      fadeVol: 0,
     }));
     for (const t of this._trk) {
       if (t.unsupported) {
@@ -1065,6 +1070,71 @@ export class DrvPlayer {
     if (v.active && v.hasLoop) v.releasing = true;
   }
 
+  // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
+  //    of a frame. START/STOP are auto-driven in this reference; the M2
+  //    commands below arrive via captureRegisterLog's `commands` schedule.
+  _applyMailbox(cmd, a0, a1, a2) {
+    switch (cmd) {
+      case 0x03: // KEY_OFF (channel_id)
+        this._mailboxKeyOff(a0);
+        break;
+      case 0x04: // SET_PARAM (channel_id, target_id, value i8)
+        this._paramSet(a0, a1, i8(a2));
+        break;
+      case 0x05: // FADE_TRACK (track_id, frames)
+        this._mailboxFade(a0, a1);
+        break;
+      default:
+        break; // 0x01/0x02 START/STOP auto-driven; others reserved
+    }
+  }
+
+  _mailboxKeyOff(channelId) {
+    this._channelOff(channelId);
+    // Release a len=0 hold: the track's dispatcher resumes (driver.md §6.2).
+    for (const t of this._trk) {
+      if (t.channelId === channelId && t.held) t.held = false;
+    }
+  }
+
+  _stopTrack(t) {
+    this._channelOff(t.channelId);
+    if (t.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
+    t.running = false;
+    t.fading = false;
+  }
+
+  _mailboxFade(trackId, frames) {
+    const t = this._trk.find((x) => x.trackId === trackId && x.running);
+    if (!t) return;
+    if (frames === 0) {
+      this._stopTrack(t);
+      return;
+    }
+    // Bresenham vol ramp from the channel's current vol down to 0 over `frames`
+    // frames, then STOP_TRACK (driver.md §6.3). Division-free.
+    t.fading = true;
+    t.fadeN = frames;
+    t.fadeErr = 0;
+    t.fadeVol = this._readParam(t.channelId, TARGET_ID.VOL);
+    t.fadeCur = t.fadeVol;
+    t.fadeFrame = 0;
+  }
+
+  _processFades() {
+    for (const t of this._trk) {
+      if (!t.fading) continue;
+      t.fadeFrame++;
+      t.fadeErr += t.fadeVol;
+      while (t.fadeErr >= t.fadeN) {
+        t.fadeErr -= t.fadeN;
+        t.fadeCur--;
+      }
+      this._paramSet(t.channelId, TARGET_ID.VOL, t.fadeCur < 0 ? 0 : t.fadeCur);
+      if (t.fadeFrame >= t.fadeN) this._stopTrack(t);
+    }
+  }
+
   // One frame of DAC feed. Returns nothing; deactivates + DAC-off at end.
   _pcmFrame() {
     const v = this._pcm;
@@ -1149,6 +1219,7 @@ export class DrvPlayer {
     }
     if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
     if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
+    this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)
     this._pcmFrame(); // DAC sample feed (driver.md §11)
     // 4. Write flush — in this reference, writes go out inline through the
     //    shadow (change-only) in dispatch order, which preserves the same
@@ -1227,18 +1298,29 @@ export class DrvPlayer {
    * The same manual-clock idea as IRPlayer.captureRegisterLog, so the two
    * logs can be diffed by ab-compare.js.
    */
-  captureRegisterLog({ maxFrames = 36000 } = {}) {
+  captureRegisterLog({ maxFrames = 36000, commands = [] } = {}) {
     if (!this._song) throw new Error("No MMB loaded");
     const writes = [];
     const saved = this._writeCb;
     this._writeCb = (port, addr, data) => {
       writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
     };
+    // Host mailbox schedule (KEY_OFF/SET_PARAM/FADE_TRACK): applied at the top
+    // of the matching frame, before dispatch — exactly where the Z80 drains the
+    // ring (driver.md §4 step 1).
+    const cmdByFrame = new Map();
+    for (const c of commands) {
+      if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
+      cmdByFrame.get(c.frame).push(c);
+    }
     try {
       this._audioContext = null;
       this._reset();
       let frames = 0;
       while (frames < maxFrames) {
+        for (const c of cmdByFrame.get(this._frame) ?? []) {
+          this._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
+        }
         this.stepFrame();
         frames++;
         if (this._done()) break;
