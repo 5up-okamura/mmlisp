@@ -234,6 +234,8 @@ export class DrvPlayer {
     // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
     this._sweeps = Array.from({ length: 10 }, () => [null, null]);
     this._tempoSweep = null;
+    this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
+    this._csmRateSweep = null; // swept Timer A period (driver.md §9)
 
     this._trk = (song?.tracks ?? []).map((t) => ({
       channelId: t.channelId,
@@ -487,6 +489,8 @@ export class DrvPlayer {
         case OPCODE.END_OF_TRACK: {
           trk.pendingOff = false;
           this._channelOff(trk.channelId);
+          // Stopping an fm3-csm track must clear CSM (driver.md §9).
+          if (trk.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
           trk.running = false;
           return;
         }
@@ -646,12 +650,37 @@ export class DrvPlayer {
           this._skip(trk, op, 3);
           break;
         case OPCODE.CSM_ON:
+          trk.pc += 1;
+          this._setReg27(this._reg27 | 0x80);
+          break;
         case OPCODE.CSM_OFF:
-          this._skip(trk, op, 1);
+          trk.pc += 1;
+          this._setReg27(this._reg27 & ~0x80);
           break;
-        case OPCODE.CSM_RATE:
-          this._skip(trk, op, s[trk.pc + 1] === 0 ? 4 : 9);
+        case OPCODE.CSM_RATE: {
+          const flags = s[trk.pc + 1];
+          if ((flags & 1) === 0) {
+            const period = u16(s, trk.pc + 2);
+            trk.pc += 4;
+            this._writeTimerA(period);
+          } else {
+            const from = u16(s, trk.pc + 2);
+            const to = u16(s, trk.pc + 4);
+            const len = u16(s, trk.pc + 6);
+            const curve = s[trk.pc + 8];
+            trk.pc += 9;
+            this._csmRateSweep = {
+              curveId: curve,
+              from,
+              to,
+              len: Math.max(1, len),
+              frame: 0,
+              phase16: 0,
+              step16: sweepStep(len, false),
+            };
+          }
           break;
+        }
         case OPCODE.FM3_MODE:
           this._skip(trk, op, 2);
           break;
@@ -943,6 +972,30 @@ export class DrvPlayer {
     return false;
   }
 
+  // ── CSM (driver.md §9): reg $27 mode bit + Timer A period ($24/$25) ───────
+  _setReg27(value) {
+    this._reg27 = value & 0xff;
+    this._ym(0, 0x27, this._reg27);
+  }
+
+  _writeTimerA(period) {
+    this._ym(0, 0x24, (period >> 2) & 0xff);
+    this._ym(0, 0x25, period & 0x03);
+  }
+
+  _processCsmRateSweep() {
+    const cs = this._csmRateSweep;
+    if (cs.frame >= cs.len - 1) {
+      this._writeTimerA(cs.to);
+      return true;
+    }
+    const unit = curveUnit8(cs.curveId, cs.phase16 >> 8);
+    this._writeTimerA(sweepValue(cs.from, cs.to, unit));
+    cs.phase16 = (cs.phase16 + cs.step16) & 0xffff;
+    cs.frame++;
+    return false;
+  }
+
   // Logical current value of a target, for PARAM_ADD read-modify-write.
   _readParam(ch, target) {
     if (target === TARGET_ID.MASTER) return this._master;
@@ -998,6 +1051,7 @@ export class DrvPlayer {
       }
     }
     if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
+    if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
     // 4. Write flush — in this reference, writes go out inline through the
     //    shadow (change-only) in dispatch order, which preserves the same
     //    per-frame final state the batched Z80 flush produces.

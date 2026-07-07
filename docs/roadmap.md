@@ -96,9 +96,10 @@ Order of work:
    **M2a** = sweep engine (PARAM_SWEEP/STOP), PARAM_ADD, TEMPO_SWEEP for
    level/tempo, with a single-sourced integer curve model (`mmb.js`
    `curveUnit8`). **M2b** = cent-interpolated NOTE_PITCH (glide / vibrato /
-   detune) on FM + PSG. Deviations in `drv/README.md`. Next: CSM, PCM/DAC,
-   and the M2 mailbox commands (KEY_OFF/SET_PARAM/FADE_TRACK); then hardware
-   bring-up + cycle tuning.
+   detune) on FM + PSG. **M2 CSM** = FM3 CSM mode (CSM_ON/OFF, Timer A rate
+   const + swept). Deviations in `drv/README.md`. Next: PCM/DAC and the M2
+   mailbox commands (KEY_OFF/SET_PARAM/FADE_TRACK); then hardware bring-up +
+   cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

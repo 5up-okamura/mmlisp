@@ -95,6 +95,15 @@ G_FN0       equ $171e       ; u16  lower-neighbour F-number / PSG period
 G_BLK0      equ $1720       ; u8   lower-neighbour block
 G_CHOFF     equ $1721       ; u8   FM channel offset / PSG channel (pitch emit)
 G_PORT      equ $1722       ; u8   YM port (pitch emit)
+; M2 CSM (driver.md §9)
+G_REG27     equ $1723       ; u8   CH3/CSM mode register shadow (bit7 CSM)
+G_CS_ACTIVE equ $1724       ; u8   1 = Timer-A period sweep running
+G_CS_CURVE  equ $1725       ; u8   curve id
+G_CS_FROM   equ $1726       ; u16  Timer-A period from
+G_CS_TO     equ $1728       ; u16  Timer-A period to
+G_CS_LEFT   equ $172a       ; u16  frames left
+G_CS_PHASE  equ $172c       ; u16  phase
+G_CS_STEP   equ $172e       ; u16  phase step
 
 ; Sweep slot layout (12 B; two per channel block at CHS+$18 / CHS+$24,
 ; matching driver.md §5.1's 0x18-0x2F sweep-engine reservation).
@@ -640,6 +649,12 @@ d_next:
     jp z,d_param_sweep_stop
     cp $81                  ; TEMPO_SWEEP
     jp z,d_tempo_sweep
+    cp $a0                  ; CSM_ON
+    jp z,d_csm_on
+    cp $a1                  ; CSM_OFF
+    jp z,d_csm_off
+    cp $a2                  ; CSM_RATE
+    jp z,d_csm_rate
     ; reserved opcodes: length-decode and skip (opcodes.md §1)
     cp $14                  ; VOICE_SET
     jp z,d_skip2
@@ -647,12 +662,6 @@ d_next:
     jp z,d_skip4
     cp $64                  ; PARAM_FROM_VAL
     jp z,d_skip3
-    cp $a0                  ; CSM_ON
-    jp z,d_skip1
-    cp $a1                  ; CSM_OFF
-    jp z,d_skip1
-    cp $a2                  ; CSM_RATE: const 4 / swept 9
-    jp z,d_skip_csmrate
     cp $a3                  ; FM3_MODE
     jp z,d_skip2
     cp $a4                  ; FM3_OP_PITCH
@@ -673,6 +682,13 @@ d_next:
 d_eot:
     ld a,(ix+T_CH)
     call channel_off
+    ; stopping an fm3-csm track clears CSM (driver.md §9)
+    bit 1,(ix+T_FLAGS)
+    jr z,d_eot_noc
+    ld a,(G_REG27)
+    and $7f
+    call set_reg27
+d_eot_noc:
     ld a,(ix+T_CH)
     cp 10
     jr nc,d_eot_st
@@ -970,17 +986,71 @@ d_skip4:
     ld de,4
     add hl,de
     jp d_next
-d_skip_csmrate:             ; CSM_RATE: flags bit0 → const(4) / swept(9)
+
+; ── CSM opcodes (driver.md §9) ─────────────────────────────────────────────
+d_csm_on:
     inc hl
-    ld a,(hl)
-    inc hl
-    inc hl
-    inc hl                  ; const form: flags + period u16
-    bit 0,a
-    jp z,d_next
-    ld de,5                 ; swept adds from/to/len/curve − period = 5 more
-    add hl,de
+    push hl
+    ld a,(G_REG27)
+    or $80
+    call set_reg27
+    pop hl
     jp d_next
+d_csm_off:
+    inc hl
+    push hl
+    ld a,(G_REG27)
+    and $7f
+    call set_reg27
+    pop hl
+    jp d_next
+d_csm_rate:
+    inc hl
+    ld a,(hl)               ; flags
+    inc hl
+    bit 0,a
+    jr nz,dcr_swept
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    push hl
+    ex de,hl                ; HL = period
+    call write_timer_a
+    pop hl
+    jp d_next
+dcr_swept:
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_CS_FROM),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_CS_TO),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_LEN),de        ; reuse len scratch
+    ld (G_CS_LEFT),de
+    ld a,(hl)               ; curve
+    inc hl
+    ld (G_CS_CURVE),a
+    push hl
+    ld hl,0
+    ld (G_CS_PHASE),hl
+    xor a
+    ld de,(G_SW_LEN)
+    call sweep_step
+    ld (G_CS_STEP),hl
+    ld a,1
+    ld (G_CS_ACTIVE),a
+    pop hl
+    jp d_next
+
 d_pcm_note_on:              ; sample u8, note u8, dur — keeps the clock
     inc hl
     inc hl
@@ -2588,7 +2658,8 @@ psw_ch:
     ld a,c
     cp 10
     jr c,psw_ch
-    jp process_tempo_sweep
+    call process_tempo_sweep
+    jp process_csm_sweep
 
 ; process_slot: A = slot offset, IY = channel block, C = channel id.
 ; IX is the slot pointer (param_set never touches IX). Channel counter (C) is
@@ -2698,6 +2769,70 @@ pts_run:
     ld hl,(G_TS_LEFT)
     dec hl
     ld (G_TS_LEFT),hl
+    ret
+
+; ── CSM helpers (driver.md §9) ─────────────────────────────────────────────
+; set_reg27: A = value → G_REG27 + YM $27 (change-only via shadow).
+set_reg27:
+    ld (G_REG27),a
+    ld b,a
+    ld d,0
+    ld e,$27
+    jp ym_write
+
+; write_timer_a: HL = 10-bit Timer A period → $24 = period>>2, $25 = period&3.
+write_timer_a:
+    ld a,l
+    and 3
+    ld c,a
+    srl h
+    rr l
+    srl h
+    rr l                    ; HL = period >> 2
+    ld b,l
+    ld d,0
+    ld e,$24
+    call ym_write
+    ld b,c
+    ld d,0
+    ld e,$25
+    jp ym_write
+
+; process_csm_sweep: one global Timer-A period sweep (mirrors tempo sweep).
+process_csm_sweep:
+    ld a,(G_CS_ACTIVE)
+    or a
+    ret z
+    ld a,(G_CS_LEFT+1)
+    or a
+    jr nz,pcs_run
+    ld a,(G_CS_LEFT)
+    cp 2
+    jr nc,pcs_run
+    ld hl,(G_CS_TO)
+    call write_timer_a
+    xor a
+    ld (G_CS_ACTIVE),a
+    ret
+pcs_run:
+    ld a,(G_CS_CURVE)
+    and 7
+    ld b,a
+    ld a,(G_CS_PHASE+1)
+    call curve_unit8
+    ld hl,(G_CS_FROM)
+    ld (G_SW_FROM),hl
+    ld hl,(G_CS_TO)
+    ld (G_SW_TO),hl
+    call sweep_value
+    call write_timer_a
+    ld hl,(G_CS_PHASE)
+    ld de,(G_CS_STEP)
+    add hl,de
+    ld (G_CS_PHASE),hl
+    ld hl,(G_CS_LEFT)
+    dec hl
+    ld (G_CS_LEFT),hl
     ret
 
 ; ── read_param — current value of G_TARGET on G_CH → HL (PARAM_ADD RMW) ─────

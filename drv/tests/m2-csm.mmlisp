@@ -1,0 +1,9 @@
+(def buzz :alg 7 :fb 0
+  :ar1 31 :dr1 10 :sr1 4 :rr1 8 :sl1 4 :tl1 20 :ks1 0 :ml1 3 :dt1 0
+  :ar2 31 :dr2 12 :sr2 5 :rr2 9 :sl2 5 :tl2 18 :ks2 0 :ml2 5 :dt2 0
+  :ar3 31 :dr3 10 :sr3 4 :rr3 8 :sl3 4 :tl3 22 :ks3 0 :ml3 7 :dt3 0
+  :ar4 31 :dr4 14 :sr4 6 :rr4 10 :sl4 6 :tl4 8 :ks4 0 :ml4 2 :dt4 0)
+(score :tempo 120
+  (fm3-csm buzz :oct 3 :len 4 :vel 13 :csm-rate 440
+    c e g :csm-rate 660 c
+    :csm-rate (linear :from 440 :to 880 :len 2) c2))

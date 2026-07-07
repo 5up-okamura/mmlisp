@@ -2,9 +2,10 @@
 
 The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 `docs/opcodes.md`, ported from the JS reference implementation
-(`live/src/drv-player.js`). Current coverage: **M1 (core playback)** plus
-**M2a (motion: sweeps, PARAM_ADD, TEMPO_SWEEP)** and **M2b (cent-interpolated
-NOTE_PITCH — glide / vibrato / detune)**.
+(`live/src/drv-player.js`). Current coverage: **M1 (core playback)**,
+**M2a (motion: sweeps, PARAM_ADD, TEMPO_SWEEP)**, **M2b (cent-interpolated
+NOTE_PITCH — glide / vibrato / detune)**, and **M2 CSM (FM3 CSM mode:
+CSM_ON/OFF, Timer A rate const + swept)**.
 
 ## Layout
 
@@ -41,9 +42,9 @@ node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200
 driver, replays the MMB in the emulator (mailbox-started like a real 68000
 host), and diffs the frame-stamped register log against
 `drv-player.js` — **raw equality, zero tolerance**: same writes, same
-values, same frames, same order (driver.md §12.4). Current status: all five
+values, same frames, same order (driver.md §12.4). Current status: all six
 gate scores diff clean (ab-core, stress-m1, stress-m2skip, m2-motion,
-m2b-pitch).
+m2b-pitch, m2-csm).
 
 ## M2a — motion (sweeps / PARAM_ADD / TEMPO_SWEEP)
 
@@ -82,6 +83,18 @@ neighbouring semitone LUT entries:
   driver subtracts a non-negative delta.
 - Shared helpers: `fold_cents` (peels whole semitones out of the cent
   offset), `divmod100`/`div100` (the ÷100 the round-half-up needs).
+
+## M2 CSM (FM3 CSM mode)
+
+An `fm3-csm` track drives the YM2612 CSM mode: `CSM_ON`/`CSM_OFF` toggle bit 7
+of reg $27 (tracked in a shadow so bit 6 / FM3-special survives into M3), and
+`CSM_RATE` writes the Timer A period ($24 hi / $25 lo) — const, or swept over
+`len` frames via the same integer curve engine (a global slot processed after
+the tempo sweep in step 3). The period reaches the Z80 precomputed (Hz never
+does; opcodes.md §6), so the driver interpolates in period space. Stopping an
+`isCsm` track (END_OF_TRACK, and later STOP/FADE) clears the CSM bit
+(driver.md §9). Notes on the track are ordinary FM3 note-ons (the tonal
+centre).
 
 Note the DrvPlayer↔ir-player A/B (`ab-compare.js`) is *informational* for M2:
 the driver's integer curve crosses each TL/att boundary a few frames off from

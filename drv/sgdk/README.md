@@ -130,11 +130,12 @@ in the Mega Drive bus/interrupt environment, not the driver.
   tempo ramps (`TEMPO_SWEEP`).
 - **Pitch (M2b):** inline `:pitch` detune, glides, and vibrato
   (cent-interpolated `NOTE_PITCH` on FM and PSG).
+- **CSM (M2):** `fm3-csm` tracks — CSM mode + Timer A rate (const and swept).
 
 ## Limits
 
 - One MMB per bank window; all live tracks share it.
-- CSM, PCM/DAC, and the M2 mailbox commands (KEY_OFF, SET_PARAM, FADE_TRACK,
+- PCM/DAC and the M2 mailbox commands (KEY_OFF, SET_PARAM, FADE_TRACK,
   SET_VAL) are not yet implemented — accepted and ignored / skipped.
 - Remaining M3 stream features (macros, dynamic value slots, CALL/RET) are
   length-decoded and skipped; notes stay in time.
