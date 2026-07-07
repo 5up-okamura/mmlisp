@@ -99,9 +99,13 @@ Order of work:
    sub-frame feed timing is a hardware concern). **M2 mailbox** = KEY_OFF /
    SET_PARAM / FADE_TRACK (host-driven; a sidecar cmd schedule is injected
    into both players). The shadow's valid plane is now a bitmap (fit 8 KB).
-   Deviations in `drv/README.md`. Next: **M3** (macro engine, dynamic value
-   slots + SET_VAL, NOTE_ON_EX, FM3 independent-OP, CALL/RET + dedup, VOICE_SET)
-   — needs a code-size rework — then hardware bring-up + cycle tuning.
+   Deviations in `drv/README.md`. **M3 binary formats now frozen** (2026-07-07):
+   the macro engine (MACRO_TABLE §0x0007 + MACRO_SET/CLEAR opcodes 0xE0/0xE3,
+   uniform pre-sampled step-stream) and VOICE_TABLE/VOICE_SET — see mmb.md §11
+   /§15, opcodes.md §5/§6, driver.md §13. Next: **M3 implementation** (macro
+   engine, dynamic value slots + SET_VAL, NOTE_ON_EX, FM3 independent-OP,
+   CALL/RET + dedup, VOICE_SET) — needs a code-size rework first — then hardware
+   bring-up + cycle tuning.
 
 Milestone staging (full definitions in driver.md §11):
 

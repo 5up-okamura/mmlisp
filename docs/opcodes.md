@@ -133,7 +133,7 @@ initial PARAM_SETs only for non-default values.
 | Op   | Name       | Payload                        | Stage |
 | ---- | ---------- | ------------------------------ | ----- |
 | 0x13 | NOTE_ON_EX | flags u8, note u8, dur, fields | M3    |
-| 0x14 | VOICE_SET  | voice_id u8                    | open — see driver.md §10 |
+| 0x14 | VOICE_SET  | voice_id u8                    | M3 — VOICE_TABLE (mmb.md §11), driver.md §10 |
 | 0x44 | CALL       | dest u16                       | M3    |
 | 0x45 | RET        | —                              | M3    |
 | 0x46 | LOOP_BREAK | skip u16                       | M2    |
@@ -146,7 +146,7 @@ initial PARAM_SETs only for non-default values.
 | --- | --------- | ------- | ---------------------------------------------- |
 | 0   | vel       | u8      | velocity for this note only (state untouched)  |
 | 1   | gate      | dur enc | absolute gate in ticks for this note only (covers `:gate-` and irregular gates) |
-| 2   | macro_ref | u8      | index into the future macro table (M3 engine)  |
+| 2   | macro_ref | u8      | per-note one-shot: trigger MACRO_TABLE[macro_ref] for this note only, without touching the sticky active set (mmb.md §15, opcodes.md §6) |
 | 3–7 | —         | —       | reserved; **must be 0** — a decoder seeing a set reserved bit must fail-safe (sizes unknown → not skippable) |
 
 Skip rule for an M1 decoder: read flags/note/dur, then skip each present
@@ -184,8 +184,10 @@ field by its fixed size (gate uses duration-operand length rules).
 | 0xA4 | FM3_OP_PITCH     | op u8 (1–4), note u8                                 | M3    |
 | 0xC0 | PCM_NOTE_ON      | sample u8, note u8, dur                              | M2    |
 | 0xC1 | PCM_NOTE_OFF     | —                                                    | M2    |
+| 0xE0 | MACRO_SET        | macro_id u8                                          | M3    |
 | 0xE1 | PARAM_ADD_VAL    | target u8, slot u8                                   | M3    |
 | 0xE2 | PARAM_MUL_VAL    | target u8, slot u8                                   | M3    |
+| 0xE3 | MACRO_CLEAR      | target u8                                            | M3    |
 
 Notes:
 
@@ -216,9 +218,13 @@ Notes:
   (`rate = base_rate × 2^((note−60)/12)`, precomputed table of 49 u16
   multipliers for C2–C6 in ROM). `dur = 0x00` + a looped sample holds until
   PCM_NOTE_OFF / host release.
-- **0xE0, 0xE3–0xEF** are undefined (the M3 macro-engine design will claim
-  them together with a macro table section). Undefined ⇒ fail-safe reject,
-  not skip.
+- **MACRO_SET / MACRO_CLEAR** drive the macro engine (mmb.md §15, driver.md
+  §14). Macros are sticky track state: `MACRO_SET {macro_id}` binds
+  MACRO_TABLE[macro_id] as the active macro for its target (replacing any
+  active macro on that target); `MACRO_CLEAR {target}` clears one target
+  (`0xFF` = clear all). `NOTE_ON` (0x10) then triggers whatever is active — no
+  change to NOTE_ON. `NOTE_ON_EX` `macro_ref` (§5.1) is the per-note one-shot.
+- **0xE4–0xEF** stay undefined. Undefined ⇒ fail-safe reject, not skip.
 
 ## 7. Target ID Table
 

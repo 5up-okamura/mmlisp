@@ -205,12 +205,14 @@ voices (20–22) live in the M2 ring-buffer area. The 64-byte layout is
 | 0x0E      | 1    | owner track id (0xFF = free) | M1 |
 | 0x0F      | 1    | algorithm (carrier mask lookup) | M1 |
 | 0x10–0x13 | 4    | voiced TL, op1–op4 (level-composition base) | M1 |
-| 0x14–0x17 | 4    | reserved        | —     |
+| 0x14–0x17 | 4    | FADE_TRACK Bresenham counters (N, V, err, cur; M2 mailbox) | M2 |
 | 0x18–0x2F | 24   | sweep engine: 2 slots × 12 B (target, curve, flags, phase u16, from i16, to i16, len u16, step u16) | M2 |
-| 0x30–0x3D | 14   | macro engine state (step clock, index, gate-region ptr) | M3 |
-| 0x3E–0x3F | 2    | reserved        | —     |
+| 0x30–0x3D | 14   | macro engine (§14): 3 active-macro ids + 3 running slots × {descriptor idx, step clock, cursor, flags} = 4 B | M3 |
+| 0x3E–0x3F | 2    | FADE frames-left; reserved | M2 |
 
-M1 uses offsets 0x00–0x13 (~24 B of the 64).
+M1 uses offsets 0x00–0x13 (~24 B of the 64). (The implementation moved a few
+M2 fields — FADE counters into 0x14–0x17/0x3E, the M2 shadow to a bitmap valid
+plane — see `drv/README.md`; the 64-byte block is unchanged.)
 
 ### 5.2 Track control block (32 B × 16 tracks)
 
@@ -381,10 +383,10 @@ into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
 
 ## 10. Decided — Voice Representation
 
-**Resolved: Option B adopted** (2026-07-06). The export-time coalescing pass
-folds full-voice PARAM_SET bursts into VOICE_TABLE entries + `VOICE_SET` (0x14);
-the IR is unchanged. The 29-byte voice entry layout is to be frozen in mmb.md
-§11 during Phase C. Rationale below.
+**Resolved: Option B adopted** (2026-07-06); the 29-byte voice entry layout is
+**frozen in mmb.md §11** (2026-07-07). The export-time coalescing pass folds
+full-voice PARAM_SET bursts into VOICE_TABLE entries + `VOICE_SET` (0x14); the
+IR is unchanged. Rationale below.
 
 Today a full FM voice change compiles to ~30 same-tick PARAM_SET events:
 ~90 stream bytes and 30 dispatch iterations per change, repeated for every
@@ -402,9 +404,9 @@ it stays an *encoding* optimization — the IR keeps its honest per-parameter
 semantics and the live player is untouched. Detection rule: a same-tick
 group of PARAM_SETs covering the full voice parameter set (28 operator
 params + ALG/FB) coalesces into a deduplicated VOICE_TABLE entry (mmb.md
-§11) + `VOICE_SET` (opcode 0x14); partial groups stay as PARAM_SETs.
-Voice entry layout (29 B, register-order: $30,$40,$50,$60,$70,$80,$90 × 4
-ops + $B0) to be frozen in mmb.md §11 when this decision is approved.
+§11) + `VOICE_SET` (opcode 0x14); partial groups stay as PARAM_SETs. The
+29-byte register-order entry ($30,$40,$50,$60,$70,$80,$90 × 4 ops + $B0) is
+specified in mmb.md §11.
 
 ## 11. Milestones
 
@@ -461,3 +463,49 @@ There is no automated test suite for audio; verification is comparative:
    reference log exactly (same math, same tables, same order — zero
    tolerance at this stage, the ±1-frame band applies only to the
    ir-player comparison).
+
+## 13. Macro Engine (M3)
+
+Macros (docs/language.md §10) are per-target parameter automation attached to
+notes. The rich authoring vocabulary — step vectors, curves, multi-stage,
+`:hold` sustain loops, `:off` release, `_` holds, the `:step` clock, symbolic
+coercion — is **lowered at compile time** to one uniform runtime shape (mmb.md
+§15): a per-`:step` value array in three regions (attack / sustain-loop /
+release). Curves and stages are pre-sampled; the driver never evaluates a curve
+or easing at macro time. This keeps the engine tiny and reproduces `ir-player`
+`_scheduleMacro` exactly, so the JS reference and asm share it under the §12
+trace gate.
+
+### 13.1 Sticky active set + trigger
+
+`MACRO_SET {macro_id}` binds MACRO_TABLE[macro_id] as the **active macro for
+its target** on the track (sticky, replacing any active macro on that target);
+`MACRO_CLEAR {target}` clears one (`0xFF` = all). The channel holds up to **3**
+active-macro ids (§5.1). On **any** `NOTE_ON` the driver instantiates each
+active macro into a **running slot** (3 slots × {descriptor index, step clock,
+cursor, flags}); `NOTE_ON_EX` `macro_ref` adds a per-note one-shot. When a
+channel's active set would exceed 3, the *exporter* drops the extras with a
+`W_MMB_MACRO_SLOTS` warning (deterministic) — the driver never overflows.
+
+### 13.2 Per-frame stepping
+
+In the frame loop (§4 step 3, after the sweep engines, before the write flush),
+each running macro:
+
+1. advances its step clock; on a `:step` boundary it writes `values[cursor]`
+   to the target through the **same** per-target apply path `PARAM_SET` uses
+   (level composition, cent pitch, pan snap, …), skipping the hold sentinel;
+2. advances `cursor` with the region rules — attack once, then the sustain
+   region cycled while the note is keyed, jumping to the release region at
+   key-off, then playing release once and ending.
+
+`NOTE_SEMI`/`KEYON` (macro-only targets, opcodes.md §7) resolve here: `NOTE_SEMI`
+adds `value × 100` cents to the note pitch (no retrigger, chiptune arpeggio),
+`KEYON` retriggers key-on when the value crosses ≥ 0.5.
+
+### 13.3 Ordering
+
+Running slots step in a fixed order (active-set index, ascending channel) so
+the register trace is deterministic — the same requirement as the sweep engine
+(§4). Macro writes and sweep writes on the same target in the same frame follow
+their engine order (sweeps first, then macros), matching the reference.

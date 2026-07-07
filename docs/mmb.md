@@ -85,7 +85,8 @@ Section ids:
 | 0x0003 | METADATA    | required (§9); driver ignores it    |
 | 0x0004 | SAMPLE_BANK | optional (§10); M2 content, layout frozen now |
 | 0x0005 | VAL_TABLE   | optional (§8); M3 content, layout frozen now |
-| 0x0006 | VOICE_TABLE | **reserved** (§11, open decision)   |
+| 0x0006 | VOICE_TABLE | optional (§11); M3 content, layout frozen now |
+| 0x0007 | MACRO_TABLE | optional (§15); M3 content, layout frozen now |
 
 Directory order is fixed: ascending id. A loader skips unknown section ids
 unless the entry's REQUIRED flag is set, in which case the load fails (§13).
@@ -275,15 +276,39 @@ Sample ids are assigned in IR declaration order. Note that a SAMPLE_BANK can
 push a file past the 32KB window; PCM-heavy songs are an M2 concern and may
 require the WIDE_OFFSETS escape or bank-splitting — decided in M2, not here.
 
-## 11. VOICE_TABLE Section (0x0006) — reserved
+## 11. VOICE_TABLE Section (0x0006)
 
-> **Open decision — voice representation.** Today a full FM voice change
-> compiles to ~30 same-tick `PARAM_SET` events (~90 stream bytes, 30
-> dispatches). The recommended plan is: `mmlisp2mmb` coalesces full-voice
-> bursts into VOICE_TABLE entries plus a `VOICE_SET` opcode, leaving the IR
-> unchanged. The trade-off table and recommendation live in driver.md §10;
-> the section id and the 0x14 `VOICE_SET` opcode slot (opcodes.md §5) are
-> reserved either way so no renumbering is needed once decided.
+Deduplicated FM voices, referenced by `VOICE_SET` (opcodes.md §5). The
+export-time coalescing pass (driver.md §10) folds a same-tick group of
+PARAM_SETs covering a full voice into one entry here + a `VOICE_SET`; the IR is
+unchanged. Structure:
+
+```
+entry_count : u16
+entries     : entry_count × 29 bytes
+```
+
+Voice entry (29 bytes), laid out in register-write order so the driver copies
+a block into the operator shadow and queues the writes with no per-field logic:
+
+| Offset | Size | Registers | Contents                                          |
+| ------ | ---- | --------- | ------------------------------------------------- |
+| 0x00   | 4    | $30+op    | DT/MUL, op1–op4                                    |
+| 0x04   | 4    | $40+op    | TL, op1–op4 (voiced base; the level model recomposes carrier TL from vel/vol/master, driver.md §7) |
+| 0x08   | 4    | $50+op    | KS/AR, op1–op4                                     |
+| 0x0C   | 4    | $60+op    | AM enable / DR, op1–op4                            |
+| 0x10   | 4    | $70+op    | SR (D2R), op1–op4                                  |
+| 0x14   | 4    | $80+op    | SL/RR, op1–op4                                     |
+| 0x18   | 4    | $90+op    | SSG-EG, op1–op4                                    |
+| 0x1C   | 1    | $B0       | FB/ALG                                            |
+
+`$B4` (pan / AMS / FMS) is **not** part of a voice — it is performance state
+set separately. Voice ids are assigned in the coalescing pass's discovery
+order; identical voices dedup to one entry.
+
+Detection rule (exporter): a same-tick PARAM_SET group covering the full voice
+parameter set (28 operator params + ALG/FB) becomes a `VOICE_SET`; partial
+groups stay as PARAM_SETs (driver.md §10).
 
 ## 12. Size Budget and Banking
 
@@ -326,3 +351,46 @@ driver on load):
    blob ranges in bounds; `loop_end` ≤ length.
 9. Duration byte 0x00 only on NOTE_ON / PCM_NOTE_ON.
 10. Deterministic output: recompiling the same IR yields identical bytes.
+11. Every `voice_id` (VOICE_SET) < VOICE_TABLE `entry_count`; every `macro_id`
+    (MACRO_SET / NOTE_ON_EX macro_ref) < MACRO_TABLE `entry_count`; every macro
+    descriptor's `blob_offset + count × width` is in bounds and
+    `loop_start`/`release` are `0xFF` or ≤ `count`.
+
+## 15. MACRO_TABLE Section (0x0007)
+
+Deduplicated macro definitions (docs/language.md §10), referenced by index from
+`MACRO_SET` / `NOTE_ON_EX` `macro_ref` (opcodes.md §5, §6). The exporter lowers
+**every** macro form — step vector, curve, multi-stage — to one uniform shape
+at compile time (driver.md §13): a per-`:step` value array in three regions
+(attack / sustain-loop / release). The driver never evaluates a curve or easing
+at macro time; it steps a cursor through the values. Structure mirrors
+SAMPLE_BANK (fixed descriptors + a variable blob):
+
+```
+entry_count : u16
+descriptors : entry_count × 8 bytes
+blobs       : value arrays, byte-packed
+```
+
+Macro descriptor (8 bytes):
+
+| Offset | Size | Field       | Notes                                            |
+| ------ | ---- | ----------- | ------------------------------------------------ |
+| 0x00   | 1    | target      | target id (opcodes.md §7); also fixes value width |
+| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bits1–7 reserved 0 |
+| 0x02   | 1    | step        | `:step` clock in 60 Hz frames, 1–255 (ticks lowered at compile time) |
+| 0x03   | 1    | loop_start  | step index the sustain loop begins; `0xFF` = one-shot (hold the last attack value) |
+| 0x04   | 1    | release     | step index the release begins; `0xFF` = no release |
+| 0x05   | 1    | count       | number of steps, 1–255                           |
+| 0x06   | 2    | blob_offset | u16, into the blob region (relative to its start) |
+
+The value blob is `count` values, i8 (or i16 if `flags` bit0), little-endian.
+The **hold sentinel** `0x80` (i8) / `0x8000` (i16) means "advance one step,
+write nothing" (the `_` token; NOTE_PITCH cents are practically ±32767, so
+−32768 is free as the sentinel). Regions inside the array:
+
+```
+[0 .. loop_start)        attack  — played once
+[loop_start .. release)  sustain — cycled until key-off (empty if equal)
+[release .. count)       release — played once after key-off
+```
