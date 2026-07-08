@@ -544,9 +544,11 @@ their attack (so soft-envelope `:vol`/`:pitch` macros replay) and, on FM, re-key
 the hardware EG (`$28` off→on; FM3-op op via its mask). PSG has no hardware EG,
 so the soft-envelope restart is the whole effect; the macro engine runs on
 channels 0–9, so PCM and FM3-op op2–4 are deferred (exporter drops `:keyon`
-there). Interim limits, each a later slice: tick-unit `:step`/`:len` and dynamic
-(val-slot) `:from`/`:to`/`:rate`/`:len` are dropped with a warning. The hard gate
-is asm↔`drv-player` at zero tolerance; the `ir-player` A/B is informational for
+there). Tick-unit `:step`/`:len` are resolved to a 60 Hz frame count at the
+note's tempo when the macro is snapshotted (compiler side, like the `Nf`
+glide/delay resolution), so both frame (`Nf`) and note-length macro clocks work.
+Interim limit: dynamic (val-slot) `:from`/`:to`/`:rate`/`:len` are dropped with a
+warning. The hard gate is asm↔`drv-player` at zero tolerance; the `ir-player` A/B is informational for
 macros (the exporter pre-samples what `ir-player` evaluates in continuous time).
 
 ### 13.1 Sticky active set + trigger

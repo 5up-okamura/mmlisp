@@ -263,7 +263,9 @@ export function encodeMmb(ir, opts = {}) {
 
     if (spec.type === "curve") {
       if (spec.dyn) return skip("has dynamic (val-slot) params (later M3 slice)");
-      if (!spec.lenFrames) return skip(":len in ticks not lowered yet (M3 slice)");
+      // Tick/Nf `:len` is resolved to a frame count upstream (mmlisp2ir
+      // resolveMacroLen); a curve reaching here without one has no `:len`.
+      if (!spec.lenFrames) return skip("requires a :len");
       const baseFrames = Math.max(1, Math.round(Number(spec.frames ?? 1)));
       // A curve is pre-sampled every `step` frames (driver.md §13). A loop curve
       // fills the sustain region (one period, cycled); a one-shot fills the

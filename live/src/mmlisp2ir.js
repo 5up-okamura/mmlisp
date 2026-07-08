@@ -247,6 +247,45 @@ function framesToTicks(frames, bpm) {
   return Math.max(1, Math.round((frames * bpm * PPQN) / 3600));
 }
 
+// Inverse of framesToTicks: a tick duration → 60 Hz frame count at `bpm`.
+function ticksToFrames(ticks, bpm) {
+  if (!ticks) return ticks;
+  return Math.max(1, Math.round((ticks * 3600) / (bpm * PPQN)));
+}
+
+// Resolve a macro spec's `:len`/`:wait` from ticks to frames at the note's
+// tempo, so the driver — which samples macros on a 60 Hz frame clock — gets an
+// absolute frame count (`lenFrames`). `Nf` lens are already frames. Returns a
+// copy; the shared def spec is left untouched. Mirrors the glide/delay Nf→tick
+// resolution done at compile time.
+function resolveMacroLen(spec, bpm) {
+  if (!spec || typeof spec !== "object" || bpm == null) return { ...spec };
+  const out = { ...spec };
+  // `:step` in ticks → frames (the driver clocks macros on 60 Hz frames).
+  if (out.step?.unit === "tick") {
+    out.step = { unit: "frame", value: ticksToFrames(out.step.value, bpm) };
+  }
+  if (out.type === "curve") {
+    if (!out.lenFrames && out.frames != null) {
+      out.frames = ticksToFrames(out.frames, bpm);
+      out.lenFrames = true;
+    }
+  } else if (out.type === "stages") {
+    out.stages = (out.stages ?? []).map((st) => {
+      const s = { ...st };
+      if (s.curve && !s.lenFrames && s.frames != null) {
+        s.frames = ticksToFrames(s.frames, bpm);
+        s.lenFrames = true;
+      }
+      if (s.waitTicks != null && s.waitFrames == null) {
+        s.waitFrames = ticksToFrames(s.waitTicks, bpm);
+      }
+      return s;
+    });
+  }
+  return out;
+}
+
 // `bpm` gives a structural context (note length / gate / tie / rest): there an
 // `Nf` token is converted to ticks at the active tempo. When `bpm` is null
 // (curve `:len` context) the raw frame count is returned and paired with a
@@ -343,15 +382,17 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
-function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros) {
+function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, bpm) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
   if (gateTicks < lengthTicks) args.gate = gateTicks;
   if (vel !== undefined && vel !== 15) args.vel = vel;
   if (activeMacros && Object.keys(activeMacros).length > 0) {
-    for (const [target, spec] of Object.entries(activeMacros)) {
-      // Each spec may carry its own .step (the per-macro :step clock).
-      if (target === "NOTE_PITCH") args.pitchMacro = { ...spec };
+    for (const [target, spec0] of Object.entries(activeMacros)) {
+      // Each spec may carry its own .step (the per-macro :step clock). Resolve a
+      // tick-unit `:len` to an absolute frame count at this note's tempo first.
+      const spec = resolveMacroLen(spec0, bpm);
+      if (target === "NOTE_PITCH") args.pitchMacro = spec;
       else if (target === "VEL") {
         // `:vel*`/`:vel+` combine the macro with this note's velocity, resolved
         // here so it tracks per-note vel changes → a plain absolute velMacro.
@@ -392,8 +433,9 @@ function makeFm3OpNoteArgs(
   vel,
   opIndex,
   activeMacros,
+  bpm,
 ) {
-  const args = makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros);
+  const args = makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, bpm);
   args.fm3Op = opIndex;
   args.opMask = fm3OpMask(opIndex);
   return args;
@@ -657,6 +699,7 @@ function emitNoteForTrack(
           trackState.defaultVel,
           trackState.fm3OpIndex,
           trackState.activeMacros,
+          trackState.currentTempo,
         )
       : makeNoteArgs(
           fullPitch,
@@ -664,6 +707,7 @@ function emitNoteForTrack(
           trackState.defaultGate,
           trackState.defaultVel,
           trackState.activeMacros,
+          trackState.currentTempo,
         ),
     src,
   };
