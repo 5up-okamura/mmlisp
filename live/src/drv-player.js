@@ -286,7 +286,10 @@ export class DrvPlayer {
       gate: 8,
       pitchCents: 0,
       currentNote: 60,
-      sounding: false,
+      sounding: false, // audible: att < 15 (change-only / master gate)
+      keyed: false, // note active: set at NOTE_ON, cleared at channel-off. A
+      // vel macro can drive att to 15 (silent) mid-note without un-keying, so
+      // the macro engine keys off this, not `sounding` (driver.md §13.3).
     }));
     // Hardware shadow for change-only suppression (driver.md §5.4). Key ($28)
     // and raw PSG bytes are edges, not state — they bypass the shadow.
@@ -523,6 +526,7 @@ export class DrvPlayer {
     }
     if (channelId < 6) this._keyOff(channelId);
     else if (channelId < 10) {
+      this._psg[channelId - 6].keyed = false;
       if (this._psg[channelId - 6].sounding) this._writePsgAtt(channelId - 6, 15);
     }
   }
@@ -593,6 +597,7 @@ export class DrvPlayer {
       const psgCh = ch - 6;
       const st = this._psg[psgCh];
       st.currentNote = note;
+      if (!legato) st.keyed = true; // the note is active (audible or not)
       if (psgCh === 3) this._writeNoiseCfg();
       else this._writePsgPitch(psgCh, note, st.pitchCents);
       // Legato: keep the tone sounding (att = the PSG "key"); just the frequency
@@ -972,10 +977,6 @@ export class DrvPlayer {
       if (this._psg[3].sounding) this._writeNoiseCfg();
       return;
     }
-    if (target === TARGET_ID.VEL) {
-      this._setLevel(channelId, "vel", value < 0 ? 0 : value > 15 ? 15 : value);
-      return;
-    }
     if (target === TARGET_ID.GATE) {
       this._setLevel(channelId, "gate", value < 0 ? 0 : value > 8 ? 8 : value);
       return;
@@ -985,9 +986,12 @@ export class DrvPlayer {
     if (channelId >= 6 && channelId < 10) {
       const psgCh = channelId - 6;
       const st = this._psg[psgCh];
-      if (target === TARGET_ID.VOL) {
-        st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
-        if (st.sounding) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
+      if (target === TARGET_ID.VOL || target === TARGET_ID.VEL) {
+        // vel and vol both compose into the PSG attenuation — re-apply on a keyed
+        // note (even if currently silent, so a vel macro can bring it back up).
+        if (target === TARGET_ID.VOL) st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+        else st.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+        if (st.keyed) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
       } else if (target === TARGET_ID.NOTE_PITCH) {
         st.pitchCents = value;
         if (psgCh < 3) this._writePsgPitch(psgCh, st.currentNote, value);
@@ -1010,8 +1014,11 @@ export class DrvPlayer {
         regs.pitchCents = value;
         this._writeFmPitch(ch, regs.currentNote, value);
         return;
+      case target === TARGET_ID.VEL:
       case target === TARGET_ID.VOL: {
-        regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+        // vel and vol both compose into the carrier TL — recompose every carrier.
+        if (target === TARGET_ID.VEL) regs.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+        else regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
         for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
           const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
           regs.ops[opIdx].tl = tl;
@@ -1156,7 +1163,7 @@ export class DrvPlayer {
   // ── M3 macro engine (driver.md §13) ──────────────────────────────────────
   _channelKeyed(ch) {
     if (ch < 6) return this._fm[ch].keyed;
-    if (ch < 10) return this._psg[ch - 6].sounding;
+    if (ch < 10) return this._psg[ch - 6].keyed;
     return false;
   }
 

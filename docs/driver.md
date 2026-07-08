@@ -217,7 +217,7 @@ voices (20–22) live in the M2 ring-buffer area. The 64-byte layout is
 
 | Offset    | Size | Field           | Stage |
 | --------- | ---- | --------------- | ----- |
-| 0x00      | 1    | status (bit0 keyed, bit1 held/len=0, bit2 muted, bits3–7 reserved) | M1 |
+| 0x00      | 1    | status (bit0 keyed = note active; bit1 = PSG audible, att < 15; bits2–7 reserved) | M1 |
 | 0x01      | 1    | note (MIDI)     | M1    |
 | 0x02      | 2    | fnum / PSG period (current, incl. bend) | M1 |
 | 0x04      | 1    | block           | M1    |
@@ -584,6 +584,16 @@ Running slots step in a fixed order (active-set index, ascending channel) so
 the register trace is deterministic — the same requirement as the sweep engine
 (§4). Macro writes and sweep writes on the same target in the same frame follow
 their engine order (sweeps first, then macros), matching the reference.
+
+A macro steps while its channel is **keyed** (note active), which is distinct
+from **audible**: a `:vel`/`:vol` macro can drive the level to silence (PSG
+att 15) mid-note without ending the note, and must keep stepping so it can bring
+the level back up. So the engine keys off `CHS_STATUS` bit0 (keyed), set at
+NOTE_ON and cleared at channel-off — not bit1 (PSG audible). A level macro
+re-applies to the output (FM carrier TL / PSG att) each step, sharing the
+PARAM_SET path, so it updates the sticky `:vel`/`:vol`; a following note
+re-establishes its own level on its NOTE_ON (or its own macro's first step), and
+the change-only shadow absorbs the transient.
 
 ### 13.4 FM3 independent-OP mode (implemented)
 

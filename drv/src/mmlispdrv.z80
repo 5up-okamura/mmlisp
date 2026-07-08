@@ -179,7 +179,9 @@ SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1
 STACK_TOP   equ $2000
 
 ; ── Channel state block fields (driver.md §5.1) ───────────────────────────
-CHS_STATUS  equ $00         ; bit0 = keyed (FM) / sounding (PSG)
+CHS_STATUS  equ $00         ; bit0 = keyed (note active; FM key / PSG note-on..off)
+                            ; bit1 = PSG audible (att < 15). A vel macro can drive
+                            ; att to 15 mid-note without un-keying (driver.md §13.3)
 CHS_NOTE    equ $01
 CHS_VEL     equ $05
 CHS_VOL     equ $06
@@ -1205,12 +1207,15 @@ no_psg:
 no_noise:
     call write_noise_cfg    ; noise: config byte instead of pitch
 no_att:
-    ; legato: if already sounding, keep the tone (att = the PSG "key"); a silent
-    ; channel still needs its attenuation to start.
+    ; A non-legato note (re)keys the channel; legato leaves the key set and, if the
+    ; tone is already audible, leaves the attenuation too (att = the PSG "key").
     ld a,(G_LEGATO)
     or a
-    jr z,no_att_write
-    bit 0,(iy+CHS_STATUS)
+    jr nz,na_legato
+    set 0,(iy+CHS_STATUS)   ; note active (keyed)
+    jr no_att_write
+na_legato:
+    bit 1,(iy+CHS_STATUS)   ; audible?
     jr nz,no_gate           ; sounding + legato → leave attenuation
 no_att_write:
     push bc
@@ -1351,12 +1356,13 @@ co_key:
     ld b,a                  ; all ops off
     jp ym_key
 co_psg:
-    bit 0,(iy+CHS_STATUS)   ; sounding?
+    res 0,(iy+CHS_STATUS)   ; note no longer active (keyed off)
+    bit 1,(iy+CHS_STATUS)   ; still audible?
     ret z
     sub 6
     ld c,a
     ld a,15
-    jp write_psg_att        ; att 15 clears the sounding bit
+    jp write_psg_att        ; att 15 clears the audible bit
 
 ; key_on — A = FM ch, IY = chs. Skips key-on when vol/master mute.
 key_on:
@@ -1870,7 +1876,7 @@ psm_psg:
     push bc
     call chs_ptr_iy
     pop bc
-    bit 0,(iy+CHS_STATUS)
+    bit 1,(iy+CHS_STATUS)   ; audible PSG channel → recompose its att
     jr z,psm_next
     push bc
     call compose_psg_att
@@ -1906,7 +1912,7 @@ ps_noisemode:
     ld (G_NOISEMODE),a
     ld a,9
     call chs_ptr_iy
-    bit 0,(iy+CHS_STATUS)
+    bit 1,(iy+CHS_STATUS)   ; only re-emit if the noise channel is audible
     ret z
     jp write_noise_cfg
 
@@ -1916,10 +1922,23 @@ ps_vel:
     ld c,a
     ld a,(G_CH)
     cp 10
-    ret nc
+    ret nc                  ; fm3-op/pcm: no level path
     call chs_ptr_iy
     ld (iy+CHS_VEL),c
-    ret
+    ; vel composes into the level like vol — re-apply to the output.
+    ld a,(G_CH)
+    cp 6
+    jp c,write_carrier_tls  ; FM: recompose every carrier TL (A = ch)
+    bit 0,(iy+CHS_STATUS)   ; PSG: re-att only on a keyed channel
+    ret z
+    call compose_psg_att
+    ld c,a
+    ld a,(G_CH)
+    sub 6
+    ld b,a
+    ld a,c
+    ld c,b
+    jp write_psg_att
 
 ps_gate:
     ld b,8
@@ -2685,10 +2704,10 @@ write_psg_att:
     ld b,a
     cp 15
     jr c,wpa_snd
-    res 0,(iy+CHS_STATUS)
+    res 1,(iy+CHS_STATUS)   ; att 15 → not audible
     jr wpa_out
 wpa_snd:
-    set 0,(iy+CHS_STATUS)
+    set 1,(iy+CHS_STATUS)   ; audible
 wpa_out:
     ld a,c
     rrca

@@ -1,0 +1,16 @@
+; M3 gate: velocity macros that drive the level to silence, then a new note.
+; A :vel macro modulates the composed output (FM carrier TL / PSG attenuation),
+; without corrupting the channel's keyed state — so when the macro reaches vel 0
+; (att 15, silent) and the next note switches macros, the new note still keys and
+; its envelope sounds. This is the noise-drum pattern from demo1; it caught the
+; PSG "keyed vs audible" conflation (driver.md §13.3).
+(score :tempo 120
+  (noise :len 8
+    (macro :vel [15 8 2]) c c
+    (macro :vel [15 12 9 6 3 0]) c c
+    (macro :vel [11 0]) c c c)
+  (sqr1 :len 8 :vel 13
+    (macro :vel [15 6 0]) c e
+    (macro :vel [15 10 5 0]) g c)
+  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 8
+    (macro :vel [15 8 0]) c e g c))
