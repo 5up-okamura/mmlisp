@@ -300,20 +300,35 @@ Macros are KEY-ON scoped per NOTE_ON.
 
 If the same target appears multiple times, last one wins.
 
-### Relative macros (`*`)
+### Relative macros (`+` / `*`)
 
-A macro target may take a trailing `*` to make its values **multiply** the
-note's base value for that target instead of replacing it. The values are
-ratios (typically `0`–`1`); `effective = value × base`. Currently `:vel*` is
-supported (base = the note's `:vel`); the plain `:vel` macro is absolute.
+A macro target may take a trailing operator to combine its values with a base
+instead of replacing it.
+
+**`*` multiplies** (ratios, typically `0`–`1`; `effective = value × base`).
+Supported on `:vel`, whose base is the note's `:vel` — resolved per note, so the
+def tracks per-note `:vel` changes:
 
 ```lisp
 (fm1 :vel 12 (macro :vel* [1 0.5 0]) c)   ; peaks at 12, then 6, then 0
 ```
 
-The note's velocity is resolved per note, so a `:vel*` def tracks per-note
-`:vel` changes. `*` on a target with no base to scale (e.g. `:pitch*`) is a
-compile error.
+**`+` adds.** On `:vel` it offsets by the note's vel (baked per note-on). On the
+offset targets `:pitch` / `:semi` it is **additive over the channel's live pitch
+offset** — each frame writes `note + (offset + macro sample)`. So one shared
+vibrato macro plus a per-voice static `:pitch` detune makes a chorus:
+
+```lisp
+(def vib (macro :pitch+ (sin :from -40 :to 40 :len 8 :wait 4)))
+
+(score
+  (fm1 :oct 5          vib c e g)    ; wobble centered at 0
+  (fm2 :oct 5 :pitch 8 vib c e g))   ; centered at +8c → detuned against fm1
+```
+
+Plain `:pitch` / `:semi` (no `+`) **override** the offset instead. `*` on an
+offset target (e.g. `:pitch*`) has no base to scale and is a compile error
+(`E_MACRO_OP_NO_BASE`).
 
 ---
 

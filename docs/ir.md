@@ -145,9 +145,9 @@ FM / PSG note. Also used (with extra fields) on FM3 operator tracks.
 | `length`     | int        | ticks   | yes | Timeline advance. `0` = hold note (key-off only via runtime `triggerKeyOff`).  |
 | `gate`       | int        | ticks   | no  | Sounding span. **Present only when `gate < length`**; absent ⇒ gate = length. `0` = hold. |
 | `vel`        | int        | 0–15    | no  | Velocity. **Omitted when 15** (the default).                                   |
-| `pitchMacro` | spec (§6)  | cents   | no  | `NOTE_PITCH` macro — cent offset around the note's own pitch.                  |
+| `pitchMacro` | spec (§6)  | cents   | no  | `NOTE_PITCH` macro — cent offset around the note's own pitch. `:pitch+` sets `add: true` on the spec: the player/driver composes each sample with the channel's live pitch offset (from inline `:pitch`) instead of overwriting it. |
 | `velMacro`   | spec (§6)  | 0–15    | no  | `VEL` macro — absolute velocity envelope. `:vel*`/`:vel+` are pre-combined with the note's `vel` at compile time (no `op` field survives). Values may be float after scaling. |
-| `note_semi`  | spec (§6)  | ±48 semi| no  | `NOTE_SEMI` macro (×100 to cents at playback).                                 |
+| `note_semi`  | spec (§6)  | ±48 semi| no  | `NOTE_SEMI` macro (×100 to cents at playback). `:semi+` sets `add: true` (same additive composition as `pitchMacro`). |
 | `keyon`      | spec (§6)  | 0/1     | no  | Retrigger gate: sampled per `:step`; value ≥ 0.5 fires key-off→key-on.         |
 | `pan`        | spec (§6)  | −1/0/+1 | no  | `PAN` macro.                                                                   |
 | `noise_mode` | spec (§6)  | 0–7     | no  | `NOISE_MODE` macro (noise channel notes only).                                 |

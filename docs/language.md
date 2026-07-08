@@ -330,7 +330,8 @@ divide with a fraction (`:vel* 0.5`).
 | ------------------- | ----------- | ------------- | -------------- | ------------ |
 | inline vel / oct    | `:vel 12`   | `:vel+ 2`     | `:vel* 0.5`    | compile time |
 | inline other params | `:tl1 30`   | `:tl1+ 5`     | `:tl1* 0.5`    | runtime `PARAM_ADD` / `PARAM_MUL` |
-| macro (`:vel` only) | `:vel [..]` | `:vel+ [..]`  | `:vel* [..]`   | per note-on  |
+| macro `:vel`        | `:vel [..]` | `:vel+ [..]`  | `:vel* [..]`   | per note-on (baked) |
+| macro `:pitch`/`:semi` | `:pitch [..]` | `:pitch+ [..]` | —          | per frame (additive over live offset) |
 | echo / delay        | —           | `:vel+`       | `:vel*`        | compile time |
 
 - `vel`/`oct` have a compile-time base in the track state, so the IR carries
