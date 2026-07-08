@@ -505,6 +505,28 @@ function emitNoteForTrack(
   src,
   trackName,
 ) {
+  // Slur/tie connector (X ~ Y): a pending `~` connects this note to the previous
+  // one. Same pitch → TIE (extend the previous note; works on every channel).
+  // Different pitch → legato (a NOTE_ON that updates the frequency without
+  // re-keying), applied on the standard FM/PSG note path below.
+  let legato = false;
+  if (trackState.pendingLegato) {
+    trackState.pendingLegato = false;
+    const cmpPitch = noteName + trackState.defaultOct;
+    const prev = trackState.lastNotePitch;
+    if (prev && pitchToMidi(cmpPitch) === pitchToMidi(String(prev))) {
+      events.push({
+        tick: trackState.tick,
+        cmd: "TIE",
+        args: { length: lengthTicks },
+        src,
+      });
+      trackState.tick += lengthTicks;
+      updateLastNotePitch(trackState, cmpPitch);
+      return;
+    }
+    legato = true;
+  }
   if (isTrackPcmActive(trackState)) {
     if (!trackState.pcmSampleName) {
       pushDiag(
@@ -645,6 +667,9 @@ function emitNoteForTrack(
         ),
     src,
   };
+  // Legato slur: frequency changes, the operator is not re-keyed (§ tie/slur).
+  // FM3-op notes have their own per-operator keying, so legato is FM/PSG only.
+  if (legato && !trackState.isFm3OpTrack) noteEv.args.legato = true;
   stampDelay(noteEv, trackState);
   events.push(noteEv);
   trackState.tick += lengthTicks;
@@ -1133,17 +1158,17 @@ function parseSampleDef(root, diagnostics) {
 
 function collectMacroEntriesFromItems(items, diagnostics, trackName) {
   const entries = [];
-  let currentStep = null; // :step applies to the targets that follow it
+  // :step is position-free — one per macro applies to every target, regardless
+  // of where it sits. Scan it out first; 2+ is an error (split into separate
+  // (macro …) forms for multiple clocks).
+  const macroStep = extractMacroStep(items, diagnostics, trackName);
   for (let ki = 0; ki + 1 < items.length; ki += 2) {
     // Target group: [:tl1 :tl2 ...] — expand to one entry per keyword,
     // sharing a single parsed spec (pure sugar; per-keyword `*` still applies).
     const group = macroTargetGroup(items[ki]);
     const syms = group ?? [atomValue(items[ki])];
     if (!group && !syms[0]?.startsWith(":")) continue;
-    if (syms[0] === ":step") {
-      currentStep = parseStepToken(atomValue(items[ki + 1]));
-      continue;
-    }
+    if (syms[0] === ":step") continue; // handled by extractMacroStep
     const isClear = atomValue(items[ki + 1]) === "none";
     for (const sym of syms) {
       // Trailing operator: `*` scales the target's static base, `+` adds to it
@@ -1167,12 +1192,36 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
       if (spec) {
         if (op && !macroOpOk(irTarget, sym, diagnostics, trackName)) continue;
         if (op) spec.op = op;
-        if (currentStep) spec.step = currentStep;
+        if (macroStep) spec.step = macroStep;
         entries.push({ target: irTarget, spec });
       }
     }
   }
   return entries;
+}
+
+// Pull the single `:step` clock out of a macro's items (position-free). Returns
+// the parsed step or null; pushes E_MACRO_STEP_DUP when more than one appears.
+function extractMacroStep(items, diagnostics, trackName) {
+  let step = null;
+  let count = 0;
+  for (let k = 0; k < items.length; k++) {
+    if (atomValue(items[k]) !== ":step") continue;
+    count++;
+    if (count === 1 && k + 1 < items.length)
+      step = parseStepToken(atomValue(items[k + 1]));
+  }
+  if (count > 1) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_MACRO_STEP_DUP",
+      "a macro takes at most one :step; use separate (macro …) forms for multiple clocks",
+      null,
+      trackName,
+    );
+  }
+  return step;
 }
 
 /**
@@ -2507,28 +2556,14 @@ function compileChannelBody(
         continue;
       }
 
-      // Tie: ~ [optional-length]
+      // Slur/tie connector: X ~ Y. Marks the next real note as connected to the
+      // previous one — same pitch ties (extends), different pitch slurs (a
+      // legato NOTE_ON: new pitch, no re-key). The flag attaches to the next
+      // real note, skipping state tokens (`c ~ > d`). The connected note keeps
+      // its own length, so `~` consumes none.
       if (val === "~") {
+        trackState.pendingLegato = true;
         i++;
-        let tieTicks = trackState.defaultLength;
-        if (i < items.length) {
-          const parsed = parseLengthToken(
-            atomValue(items[i]),
-            null,
-            trackState.currentTempo,
-          );
-          if (parsed !== null) {
-            tieTicks = parsed;
-            i++;
-          }
-        }
-        events.push({
-          tick: trackState.tick,
-          cmd: "TIE",
-          args: { length: tieTicks },
-          src: nodeSrc(node),
-        });
-        trackState.tick += tieTicks;
         continue;
       }
 
@@ -3037,15 +3072,13 @@ function compileChannelBody(
           continue;
         }
         let j = 0;
-        let currentStep = null;
+        // :step is position-free — one per macro applies to every target.
+        const macroStep = extractMacroStep(rest, diagnostics, trackName);
         while (j < rest.length) {
           const sym = atomValue(rest[j]);
           const group = macroTargetGroup(rest[j]);
           if (sym === ":step") {
-            if (j + 1 < rest.length) {
-              currentStep = parseStepToken(atomValue(rest[j + 1]));
-              j += 2;
-            } else j++;
+            j += j + 1 < rest.length ? 2 : 1; // consumed above
           } else if (group || sym?.startsWith(":")) {
             if (j + 1 < rest.length) {
               const isClear = atomValue(rest[j + 1]) === "none";
@@ -3064,7 +3097,7 @@ function compileChannelBody(
                   trackName,
                   !op,
                 );
-                if (spec && currentStep) spec.step = currentStep;
+                if (spec && macroStep) spec.step = macroStep;
                 if (
                   spec &&
                   op &&

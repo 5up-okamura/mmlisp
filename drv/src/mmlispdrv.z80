@@ -64,6 +64,7 @@ G_CMASK     equ G_BASE+$0f      ; u8   carrier mask scratch
 G_TARGET    equ G_BASE+$10      ; u8   PARAM_SET target id
 G_NOTE      equ G_BASE+$11      ; u8   NOTE_ON note
 G_EXG_F     equ G_BASE+$12      ; u8   NOTE_ON_EX gate present flag
+G_LEGATO    equ G_BASE+$87      ; u8   NOTE_ON_EX bit3: slur (write pitch, no re-key)
 G_TMP       equ G_BASE+$13      ; u8   scratch
 G_OP        equ G_BASE+$14      ; u8   op index scratch
 G_ARG0      equ G_BASE+$15      ; u8   mailbox args
@@ -581,6 +582,7 @@ d_note_on:
     ld (ix+T_PC+1),h
     xor a
     ld (G_EXG_F),a
+    ld (G_LEGATO),a         ; plain NOTE_ON is never legato
     call note_on
 d_note_wait:
     ld de,(G_DUR)
@@ -635,6 +637,9 @@ d_nex_dur:
     ld a,1
     ld (G_EXG_F),a
 d_nex_go:
+    ld a,(G_TMP)            ; flags
+    and $08                 ; bit3 = legato
+    ld (G_LEGATO),a
     ld (ix+T_PC),l
     ld (ix+T_PC+1),h
     call note_on
@@ -1176,6 +1181,9 @@ note_on:
     ld a,(G_NOTE)
     call write_fm_pitch     ; A4 then A0, change-only
     pop bc
+    ld a,(G_LEGATO)
+    or a
+    jr nz,no_gate           ; legato: frequency moved, leave the EG keyed
     ld a,c
     call key_on
     jr no_gate
@@ -1197,6 +1205,14 @@ no_psg:
 no_noise:
     call write_noise_cfg    ; noise: config byte instead of pitch
 no_att:
+    ; legato: if already sounding, keep the tone (att = the PSG "key"); a silent
+    ; channel still needs its attenuation to start.
+    ld a,(G_LEGATO)
+    or a
+    jr z,no_att_write
+    bit 0,(iy+CHS_STATUS)
+    jr nz,no_gate           ; sounding + legato → leave attenuation
+no_att_write:
     push bc
     call compose_psg_att
     pop bc

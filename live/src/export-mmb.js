@@ -468,12 +468,17 @@ export function encodeMmb(ir, opts = {}) {
             emitParamState(TARGET_ID.GATE, 8);
             gateState = 8;
           }
-          if (exGate !== null) {
+          // NOTE_ON_EX flags (opcodes.md §5.1), fields in bit order: bit1 = an
+          // absolute gate, bit3 = legato (slur — no field, no re-key).
+          let noteFlags = 0;
+          if (exGate !== null) noteFlags |= 0b0010;
+          if (a.legato) noteFlags |= 0b1000;
+          if (noteFlags) {
             stream.u8(OPCODE.NOTE_ON_EX);
-            stream.u8(0b10); // flags: gate field only
+            stream.u8(noteFlags);
             stream.u8(note);
             stream.raw(encodeDuration(length));
-            stream.raw(encodeDuration(exGate));
+            if (noteFlags & 0b0010) stream.raw(encodeDuration(exGate));
           } else {
             stream.u8(OPCODE.NOTE_ON);
             stream.u8(note);

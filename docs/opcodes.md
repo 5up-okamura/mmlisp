@@ -147,7 +147,8 @@ initial PARAM_SETs only for non-default values.
 | 0   | vel       | u8      | velocity for this note only (state untouched)  |
 | 1   | gate      | dur enc | absolute gate in ticks for this note only (covers `:gate-` and irregular gates) |
 | 2   | macro_ref | u8      | per-note one-shot: trigger MACRO_TABLE[macro_ref] for this note only, without touching the sticky active set (mmb.md §15, opcodes.md §6) |
-| 3–7 | —         | —       | reserved; **must be 0** — a decoder seeing a set reserved bit must fail-safe (sizes unknown → not skippable) |
+| 3   | legato    | —       | slur: write the F-number / recompose levels / re-snapshot macros but **do not re-key** (leave `$28`, the FM EG or PSG tone carries over). No field. `X ~ Y` different-pitch (language.md §3.1). FM/PSG only |
+| 4–7 | —         | —       | reserved; **must be 0** — a decoder seeing a set reserved bit must fail-safe (sizes unknown → not skippable) |
 
 Skip rule for an M1 decoder: read flags/note/dur, then skip each present
 field by its fixed size (gate uses duration-operand length rules).

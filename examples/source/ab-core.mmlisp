@@ -22,7 +22,7 @@
 ; acceptance waiver (driver.md §12), deliberately not exercised here.
 (score :tempo 120 :lfo-rate 4
   (fm1 lead :oct 4 :len 8 :vel 12
-    c e g  c4 e8 g8 ~ 8
+    c e g  c4 e8 g8 ~ g8
     :vel 15
     (x 2 c d e :break f g)
     :tempo 96
@@ -32,7 +32,7 @@
     d2)
 
   (fm2 bass :oct 2 :len 4 :vel 13 :pan left
-    c _ < g _8 g8 > c ~ 4
+    c _ < g _8 g8 > c ~ c4
     :vol 24
     c c8 c8 < g > c2)
 
