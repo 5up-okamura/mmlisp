@@ -411,6 +411,18 @@ into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
   sweep-engine concern: cents offsets are applied as a linear interpolation
   between adjacent LUT entries (F-number is near-linear over one semitone;
   error < 1 cent). Never in the M1 note path.
+- **The F-number write is unconditional, not change-only.** The high byte
+  (`$A4`–`$A6`) latches into a register the YM2612 shares across the three
+  channels of a port; the low-byte write (`$A0`–`$A2`) commits `{latch, low}`
+  to *its* channel. If the high byte were suppressed because this channel's
+  block was unchanged, another channel's intervening high-byte write would have
+  clobbered the shared latch, and the low-byte commit would pick up the wrong
+  octave — audible pitch corruption that worsens with more active FM channels.
+  So `write_fm_pitch` / `write_fm3_op_pitch` (and drv-player `_writeFmPitch` /
+  `_writeFm3OpPitch`) write the `$A4`/`$A0` pair every note via
+  `ym_write_always` / `_ymAlways`, keeping the shadow current but always
+  emitting. This is the one place M1 deliberately bypasses change-only
+  suppression besides the `$28` key edge.
 
 ## 9. CSM Rule
 

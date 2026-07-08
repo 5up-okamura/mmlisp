@@ -387,6 +387,17 @@ export class DrvPlayer {
     this._shadow[port].set(addr, d);
     this._writeCb(port, addr, d, this._when());
   }
+  // YM write that always emits (but keeps the shadow current). For the F-number
+  // pair $A4-A6/$A0-A2: the high-byte write latches into a port-shared register
+  // and the low-byte write commits {latch, low} to the channel. Change-only
+  // suppression is invalid here — if another channel's high-byte write clobbered
+  // the shared latch since this channel's last note, a suppressed high byte lets
+  // the low-byte commit pick up the wrong octave. Write the pair every note.
+  _ymAlways(port, addr, data) {
+    const d = data & 0xff;
+    this._shadow[port].set(addr, d);
+    this._writeCb(port, addr, d, this._when());
+  }
   // YM key register — an edge, always written.
   _ymKey(data) {
     this._writeCb(0, 0x28, data & 0xff, this._when());
@@ -493,8 +504,8 @@ export class DrvPlayer {
     const fb = this._fnumBlockFor(note, cents);
     const block = fb >> 11;
     const fnum = fb & 0x7ff;
-    this._ym(port, 0xa4 + off, ((block & 0x07) << 3) | ((fnum >> 8) & 0x07));
-    this._ym(port, 0xa0 + off, fnum & 0xff);
+    this._ymAlways(port, 0xa4 + off, ((block & 0x07) << 3) | ((fnum >> 8) & 0x07));
+    this._ymAlways(port, 0xa0 + off, fnum & 0xff);
   }
   _writePsgPitch(psgCh, note, cents) {
     const period = this._psgPeriodFor(note, cents);
@@ -562,12 +573,12 @@ export class DrvPlayer {
     const high = (((fb >> 11) & 0x07) << 3) | ((fb >> 8) & 0x07);
     const low = fb & 0xff;
     if (op === 4) {
-      this._ym(0, 0xa6, high); // CH3 base F-number path
-      this._ym(0, 0xa2, low);
+      this._ymAlways(0, 0xa6, high); // CH3 base F-number path
+      this._ymAlways(0, 0xa2, low);
     } else {
       const idx = [1, 2, 0][op - 1]; // OP1→A9/AD, OP2→AA/AE, OP3→A8/AC
-      this._ym(0, 0xac + idx, high);
-      this._ym(0, 0xa8 + idx, low);
+      this._ymAlways(0, 0xac + idx, high);
+      this._ymAlways(0, 0xa8 + idx, low);
     }
   }
 

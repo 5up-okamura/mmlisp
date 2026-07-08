@@ -964,7 +964,8 @@ d_fm3_op_pitch:
     pop hl
     jp d_next
 
-; write_fm3_op_pitch: A = note, (G_ARG0) = op (1-4). Change-only writes.
+; write_fm3_op_pitch: A = note, (G_ARG0) = op (1-4). F-number writes are
+; unconditional (ym_write_always) — the high-byte latch is port-shared (§8).
 ; OP4 rides the CH3 base ($A6/$A2); OP1-3 use the special-mode F-number
 ; registers $AC+idx / $A8+idx with idx = op mod 3 (OP1→1, OP2→2, OP3→0).
 write_fm3_op_pitch:
@@ -991,25 +992,25 @@ wf3_idx:
     ld a,(G_ARG1)
     ld b,a
     ld d,0
-    call ym_write
+    call ym_write_always
     ld a,c
     add a,$a8               ; $A8+idx = low
     ld e,a
     ld a,(G_FNUM)
     ld b,a
     ld d,0
-    jp ym_write
+    jp ym_write_always
 wf3_op4:
     ld a,(G_ARG1)
     ld b,a
     ld d,0
     ld e,$a6
-    call ym_write
+    call ym_write_always
     ld a,(G_FNUM)
     ld b,a
     ld d,0
     ld e,$a2
-    jp ym_write
+    jp ym_write_always
 
 ; fm3_op_for: A = channel → A = OP (1-4) if it drives an FM3 operator in
 ; special mode, else 0. Clobbers C. (op1→ch2, op2-4→ch16-18.)
@@ -2399,14 +2400,14 @@ write_fm_pitch:
     ld a,$a4
     add a,c
     ld e,a
-    call ym_write
+    call ym_write_always
     ; $A0 = fnum low
     ld a,(G_FNUM)
     ld b,a
     ld a,$a0
     add a,c
     ld e,a
-    jp ym_write
+    jp ym_write_always
 
 ; calc_fnum_block: A = note → (G_FNUM) u16, (G_BLOCK) u8. Preserves DE.
 calc_fnum_block:
@@ -2788,6 +2789,20 @@ ym_shadow_read:
     ret z                   ; never written → A = 0
     ld a,(hl)
     ret
+
+; ym_write_always: like ym_write but never suppresses — always emits while
+; keeping the shadow current. For the F-number pair $A4-A6/$A0-A2, whose high
+; byte latches into a port-shared register that the low-byte write commits
+; (driver.md §8): a suppressed high byte lets the commit pick up another
+; channel's octave. B=data, D=port, E=addr. Preserves BC/DE.
+ym_write_always:
+    call ym_shadow_ptr      ; HL = value byte; (G_SHIDX) = index
+    push hl                 ; value ptr
+    call ym_valid_ptr       ; HL = valid byte, A = mask
+    or (hl)                 ; set valid bit (idempotent if already set)
+    ld (hl),a
+    pop hl                  ; value ptr
+    jr ymw_store            ; store B + always emit via ym_hw
 
 ; ym_write: B=data, D=port(0/1), E=addr. Change-only via the shadow; the first
 ; write to a register always goes out. Preserves BC/DE.
