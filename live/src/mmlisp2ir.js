@@ -2009,18 +2009,27 @@ function resolveVoice(name, typedDefs, diagnostics, seen = new Set()) {
   }
   seen.add(name);
   const td = typedDefs.get(name);
-  if (!td) return null;
-  if (td.tag === "fm-kw") {
-    const base = td.extends
-      ? resolveVoice(td.extends, typedDefs, diagnostics, seen)
-      : new Map();
-    if (base === null) return null;
-    // Child overrides parent
-    const merged = new Map(base);
-    for (const [k, v] of td.kwMap) merged.set(k, v);
-    return merged;
+  if (!td || td.tag !== "fm-kw") {
+    // Unknown or non-voice `:extend` base — error instead of silently emitting
+    // the child's own keys only (which leaves a half-set, broken patch).
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_EXTENDS_BASE_UNKNOWN",
+      `:extend base '${name}' is not a defined FM voice`,
+      null,
+      null,
+    );
+    return null;
   }
-  return null;
+  const base = td.extends
+    ? resolveVoice(td.extends, typedDefs, diagnostics, seen)
+    : new Map();
+  if (base === null) return null;
+  // Child overrides parent
+  const merged = new Map(base);
+  for (const [k, v] of td.kwMap) merged.set(k, v);
+  return merged;
 }
 
 function emitVoiceFromKwMap(kwMap, tick, events, src) {
@@ -3635,8 +3644,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     parsed,
     diagnostics,
   );
-  if (!typedDefs.has("@init-fm")) {
-    typedDefs.set("@init-fm", {
+  if (!typedDefs.has("init-fm")) {
+    typedDefs.set("init-fm", {
       tag: "fm-kw",
       extends: null,
       kwMap: createInitFmKwMap(),

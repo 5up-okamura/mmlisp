@@ -246,17 +246,12 @@ body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARIT
 
 ## 8. FM Voice Definitions
 
-FM voice defs use keyword maps (and can use `:extend`):
+An FM voice def is a keyword map of the YM2612 algorithm/operator parameters.
+The quickest way is to `:extend` the built-in neutral patch `init-fm` and
+override only what you need:
 
 ```lisp
-(def fm-init
-  :alg 0 :fb 0 :ams 0 :fms 0
-  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 127 :ks1 0 :ml1 0 :dt1 0
-  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 127 :ks2 0 :ml2 0 :dt2 0
-  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0
-  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0)
-
-(def brass :extend fm-init
+(def brass :extend init-fm
   :alg 7
   :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 
@@ -267,8 +262,11 @@ FM voice defs use keyword maps (and can use `:extend`):
     c e g e))
 ```
 
-The built-in `@init-fm` (a neutral full patch) is always available as an
-`:extend` base — see `docs/language.md` §9.
+`init-fm` (ALG 7, full envelope, TL 0 on all operators) is always available as
+an `:extend` base. You can also write a full patch from scratch — every operator's
+`:ar`/`:dr`/`:sr`/`:rr`/`:sl`/`:tl`/`:ks`/`:ml`/`:dt` plus `:alg`/`:fb`/`:ams`/`:fms`;
+unset params are not emitted, so start from a full patch or `:extend` one. See
+`docs/language.md` §9 for the full parameter list.
 
 ---
 

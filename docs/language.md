@@ -412,7 +412,7 @@ expands or applies it. Definitions are top-level: a `def`/`def-val` inside
 | `(def name item…)`                    | Snippet — inline expansion at the reference (recursion depth ≤ 16) |
 | `(def (name param…) item…)`           | Parametric snippet — call as `(name arg…)`; each `arg` node is substituted for its `param` in the body (§9.1) |
 | `(def name :alg … :tl1 … …)`          | FM voice, keyword map                   |
-| `(def name :extend base :tl1 … …)`    | FM voice inheriting `base` (child keys override; cycles are `E_EXTENDS_CYCLE`) |
+| `(def name :extend base :tl1 … …)`    | FM voice inheriting `base` (child keys override; unknown/non-voice base is `E_EXTENDS_BASE_UNKNOWN`, cycles `E_EXTENDS_CYCLE`) |
 | `(def name :sample :file "…" …)`      | PCM sample (§16)                        |
 | `(def name (macro :target spec …))`   | Macro preset — single or multi target   |
 | `(def name (macro :target none))`     | Clear-def — applying it clears that target's macro |
@@ -420,17 +420,24 @@ expands or applies it. Definitions are top-level: a `def`/`def-val` inside
 An FM voice def is recognized by its first keyword being one of the
 `:alg`/`:fb`/`:ar*`/`:tl*`/`:dr*`/`:sr*`/`:rr*` families (or `:extend`).
 Unset operator parameters are not emitted — start from a full patch (or
-`:extend` one) for deterministic timbres. The built-in voice `@init-fm`
+`:extend` one) for deterministic timbres. The built-in voice `init-fm`
 (ALG 7, AR 31, RR 15, ML 1, TL 0 on all operators) is always available:
 
 ```lisp
-(def lead :extend @init-fm
+(def lead :extend init-fm
   :alg 4 :fb 3
   :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 
 (score
   (fm1 lead c e g e))
 ```
+
+Voice names are plain identifiers — no special prefix (voices are recognized by
+their keyword content, not a sigil). The mucom importer, whose voice names are
+machine-generated, prefixes them with `@` (e.g. `@1`, `@brass`) purely as a
+name-mangling safety measure — a numeric mucom voice id would otherwise be a
+length token, and a name colliding with a note token could not be referenced.
+That `@` is an importer-output detail, not part of hand-written voice notation.
 
 Referencing a voice def mid-track re-emits its `PARAM_SET`s (patch switch).
 Macro defs apply to the track's active-macro state exactly like the inline
@@ -801,7 +808,7 @@ their presence enables the mode (`FM3_MODE op` at tick 0). The shared patch
 Macros and `(glide …)` are independent per `fm3-N` track.
 
 ```lisp
-(def kit :extend @init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)
+(def kit :extend init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 
 (score
   (fm3 kit)                     ; shared patch — no notes here
@@ -832,7 +839,7 @@ Valid rate range: 52–53270 Hz, clamped with `W_CSM_RATE_CLAMPED`. A score
 with neither source produces no Timer A retrigger (fm3-csm plays silently).
 
 ```lisp
-(def brass :extend @init-fm :alg 4 :tl1 24 :tl3 24)
+(def brass :extend init-fm :alg 4 :tl1 24 :tl3 24)
 
 (score
   (fm3-csm brass :oct 4 :len 2
