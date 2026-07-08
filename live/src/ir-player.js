@@ -399,6 +399,7 @@ export class IRPlayer {
   muteTrack(ti, muted) {
     if (muted) this._mutedTracks.add(ti);
     else this._mutedTracks.delete(ti);
+    this._applyAudibility();
   }
 
   /**
@@ -410,6 +411,7 @@ export class IRPlayer {
   soloTrack(ti, on) {
     if (on) this._soloTracks.add(ti);
     else this._soloTracks.delete(ti);
+    this._applyAudibility();
   }
 
   /** Clear all mute and solo state. */
@@ -425,6 +427,33 @@ export class IRPlayer {
   _isTrackAudible(ti) {
     if (this._soloTracks.size > 0) return this._soloTracks.has(ti);
     return !this._mutedTracks.has(ti);
+  }
+
+  /**
+   * Immediately silence any channel whose track just became inaudible, so a
+   * held/sustained note stops at once instead of only gating the next note-on.
+   * Audible channels are left alone and resume at their next note. No-op when
+   * not playing (nothing is sounding yet).
+   */
+  _applyAudibility() {
+    const ctx = this._audioContext;
+    if (!ctx) return;
+    const when = ctx.currentTime;
+    // FM: key off an inaudible channel — unless another audible track shares it
+    // (FM3 operator mode routes several tracks through channel 3's 0x28).
+    const audibleFm = new Set();
+    for (const [ti, ch] of this._trackChannel) {
+      if (this._isTrackAudible(ti)) audibleFm.add(ch);
+    }
+    for (const [ti, ch] of this._trackChannel) {
+      if (this._isTrackAudible(ti) || audibleFm.has(ch)) continue;
+      const port = ch >= 3 ? 1 : 0;
+      this._write(0, 0x28, (port << 2) | (ch % 3), when); // key off (opmask 0)
+    }
+    // PSG: force silent attenuation on an inaudible channel.
+    for (const [ti, psgCh] of this._psgTrackChannel) {
+      if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, 15, when);
+    }
   }
 
   /**
@@ -1458,12 +1487,14 @@ export class IRPlayer {
             );
             this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
           };
+          const fmOffset = () => this._chRegs[ch]?.pitchOffset ?? 0;
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
             gateTicks,
             basePitchWrite,
             macroLimit,
+            fmOffset,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
@@ -1471,6 +1502,7 @@ export class IRPlayer {
             gateTicks,
             basePitchWrite,
             macroLimit,
+            fmOffset,
           );
         } else {
           // FM3 OP1..3 notes use dedicated pitch registers; apply runtime pitch offset
@@ -1481,12 +1513,14 @@ export class IRPlayer {
           const fm3PitchWrite = (noteCentOffset, t) => {
             this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
           };
+          const fm3Offset = () => this._chRegs[ch]?.pitchOffset ?? 0;
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
             gateTicks,
             fm3PitchWrite,
             macroLimit,
+            fm3Offset,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
@@ -1494,6 +1528,7 @@ export class IRPlayer {
             gateTicks,
             fm3PitchWrite,
             macroLimit,
+            fm3Offset,
           );
         }
         this._scheduleFmVelMacro(
@@ -1859,6 +1894,10 @@ export class IRPlayer {
       case "FM_FMS": return regs.fms ?? 0;
       case "VOL": return regs.vol ?? 0;
       case "PAN": return regs.pan ?? 0;
+      // Inline `:pitch+ N` accumulates onto the running cent offset (else it
+      // would read 0 and overwrite rather than add).
+      case "NOTE_PITCH":
+      case "NOTE_SEMI": return regs.pitchOffset ?? 0;
       default: return 0;
     }
   }
@@ -2663,9 +2702,23 @@ export class IRPlayer {
 
   // Schedule a pitch macro for any channel (FM or PSG).
   // writeFn(centOffset, t) performs the hardware write for the channel.
-  _schedulePitchMacro(pitchMacro, when, gateTicks, writeFn, limitSecs = Infinity) {
+  // `offsetGetter`: when the macro is additive (`:pitch+`/`:semi+`), each sample
+  // is composed with the channel's live pitch offset (read fresh so it rides a
+  // running pitch sweep). Override macros (`:pitch`/`:semi`) pass it unchanged.
+  _schedulePitchMacro(
+    pitchMacro,
+    when,
+    gateTicks,
+    writeFn,
+    limitSecs = Infinity,
+    offsetGetter = null,
+  ) {
     if (!pitchMacro) return;
 
+    const wf =
+      pitchMacro.add && offsetGetter
+        ? (cents, t) => writeFn(cents + offsetGetter(), t)
+        : writeFn;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
@@ -2675,7 +2728,7 @@ export class IRPlayer {
       noteFrames,
       gateSecs,
       when,
-      writeFn,
+      wf,
       this._stepSecs(pitchMacro.step),
       limitSecs,
     );
@@ -2683,9 +2736,20 @@ export class IRPlayer {
 
   // Schedule a :semi macro (discrete semitone offsets) on the pitch write path.
   // Reuses the pitch writeFn; semitone values are ×100 to cents.
-  _scheduleSemiMacro(semiMacro, when, gateTicks, writeFn, limitSecs = Infinity) {
+  _scheduleSemiMacro(
+    semiMacro,
+    when,
+    gateTicks,
+    writeFn,
+    limitSecs = Infinity,
+    offsetGetter = null,
+  ) {
     if (!semiMacro) return;
 
+    const wf =
+      semiMacro.add && offsetGetter
+        ? (semi, t) => writeFn(semi * 100 + offsetGetter(), t)
+        : (semi, t) => writeFn(semi * 100, t);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
@@ -2695,7 +2759,7 @@ export class IRPlayer {
       noteFrames,
       gateSecs,
       when,
-      (semi, t) => writeFn(semi * 100, t),
+      wf,
       this._stepSecs(semiMacro.step),
       limitSecs,
     );
@@ -3089,12 +3153,14 @@ export class IRPlayer {
           this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
           const psgPitchWrite = (centOffset, t) =>
             this._psgSetPitch(psgCh, midi + centOffset / 100, t);
+          const psgOffset = () => this._psgPitchOffset[psgCh] ?? 0;
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
             psgGateTicks,
             psgPitchWrite,
             psgMacroLimit,
+            psgOffset,
           );
           this._scheduleSemiMacro(
             ev.args?.note_semi,
@@ -3102,6 +3168,7 @@ export class IRPlayer {
             psgGateTicks,
             psgPitchWrite,
             psgMacroLimit,
+            psgOffset,
           );
         } else {
           this._psgTriggerNoise(when);

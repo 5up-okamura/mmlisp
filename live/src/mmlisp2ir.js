@@ -382,6 +382,17 @@ function resolveGateTicks(gateSpec, lengthTicks) {
   return gateSpec.value;
 }
 
+// Offset macros (pitch/semi) keep their absolute values but record whether the
+// operator was `+` (additive: compose with the channel's live pitch offset at
+// play time) as an explicit `add` flag. Unlike VEL the values are not baked, so
+// the same lowered macro serves both centers; the player and the MMB exporter
+// read `add`. `op` is dropped — it was only a parse-time marker.
+function withAddFlag(spec) {
+  const out = { ...spec, add: spec.op === "+" };
+  delete out.op;
+  return out;
+}
+
 function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, bpm) {
   const gateTicks = resolveGateTicks(gateSpec, lengthTicks);
   const args = { pitch, length: lengthTicks };
@@ -392,7 +403,8 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, bpm) {
       // Each spec may carry its own .step (the per-macro :step clock). Resolve a
       // tick-unit `:len` to an absolute frame count at this note's tempo first.
       const spec = resolveMacroLen(spec0, bpm);
-      if (target === "NOTE_PITCH") args.pitchMacro = spec;
+      if (target === "NOTE_PITCH") args.pitchMacro = withAddFlag(spec);
+      else if (target === "NOTE_SEMI") args.note_semi = withAddFlag(spec);
       else if (target === "VEL") {
         // `:vel*`/`:vel+` combine the macro with this note's velocity, resolved
         // here so it tracks per-note vel changes → a plain absolute velMacro.
@@ -941,6 +953,11 @@ function scaleVelMacroSteps(spec, ratio) {
 // path and are not wired yet; add them here once that path tracks a base.
 const OP_BASE_TARGETS = new Set(["VEL"]);
 
+// Offset targets carry a runtime base (the channel's live pitch offset), so `+`
+// composes the macro with it — resolved in the player, not baked here like VEL.
+// `*` has no meaningful multiply of a signed offset and stays rejected.
+const OP_ADD_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
+
 // Split a trailing arithmetic operator off a keyword/atom:
 // "vel*" -> { stem: "vel", op: "*" }, "oct+" -> {stem:"oct", op:"+"}, "vel" -> {stem, op:null}.
 // Only `+` (add to base) and `*` (multiply base) are operators; no `-`/`/`.
@@ -993,16 +1010,13 @@ function macroTargetGroup(node) {
 
 // Validate a `+`/`*` operator against its target; pushes a diagnostic and
 // returns false when the target has no base value to add to / scale.
-function macroOpOk(target, sym, diagnostics, trackName) {
-  if (OP_BASE_TARGETS.has(target)) return true;
-  pushDiag(
-    diagnostics,
-    "error",
-    "E_MACRO_OP_NO_BASE",
-    `'${sym}' has no base value to combine with; +/* apply only to ${[...OP_BASE_TARGETS].join(", ").toLowerCase()}`,
-    null,
-    trackName,
-  );
+function macroOpOk(target, op, sym, diagnostics, trackName) {
+  if (OP_BASE_TARGETS.has(target)) return true; // VEL: + and * both bake a base
+  if (op === "+" && OP_ADD_TARGETS.has(target)) return true; // additive offset
+  const msg = OP_ADD_TARGETS.has(target)
+    ? `'${sym}' — offset targets (pitch/semi) accept + only, not *`
+    : `'${sym}' has no base value to combine with; +/* apply only to ${[...OP_BASE_TARGETS].join(", ").toLowerCase()}`;
+  pushDiag(diagnostics, "error", "E_MACRO_OP_NO_BASE", msg, null, trackName);
   return false;
 }
 
@@ -1252,7 +1266,7 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
         !op,
       );
       if (spec) {
-        if (op && !macroOpOk(irTarget, sym, diagnostics, trackName)) continue;
+        if (op && !macroOpOk(irTarget, op, sym, diagnostics, trackName)) continue;
         if (op) spec.op = op;
         if (macroStep) spec.step = macroStep;
         entries.push({ target: irTarget, spec });
@@ -3164,7 +3178,7 @@ function compileChannelBody(
                 if (
                   spec &&
                   op &&
-                  !macroOpOk(target, groupSym, diagnostics, trackName)
+                  !macroOpOk(target, op, groupSym, diagnostics, trackName)
                 ) {
                   // +/* misused — diagnostic pushed; drop this entry.
                 } else {

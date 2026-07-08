@@ -377,7 +377,7 @@ Macro descriptor (8 bytes):
 | Offset | Size | Field       | Notes                                            |
 | ------ | ---- | ----------- | ------------------------------------------------ |
 | 0x00   | 1    | target      | target id (opcodes.md §7); also fixes value width |
-| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bits1–7 reserved 0 |
+| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bits2–7 reserved 0 |
 | 0x02   | 1    | step        | `:step` clock in 60 Hz frames, 1–255 (ticks lowered at compile time) |
 | 0x03   | 1    | loop_start  | step index the sustain loop begins; `0xFF` = one-shot (hold the last attack value) |
 | 0x04   | 1    | release     | step index the release begins; `0xFF` = no release |

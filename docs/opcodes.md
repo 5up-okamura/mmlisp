@@ -234,7 +234,11 @@ Notes:
   change to NOTE_ON. `NOTE_ON_EX` `macro_ref` (§5.1) is the per-note one-shot.
   The exporter diffs each note's snapshotted macros into these sticky opcodes.
   Slice 1 lowers the `steps` form onto i8 targets (driver.md §13); the driver
-  keeps one active macro per channel for now.
+  keeps one active macro per channel for now. The descriptor `flags` byte
+  (mmb.md §15) carries bit0 = i16 values and bit1 = additive: an additive
+  `:pitch+`/`:semi+` macro composes each sample with the channel's live pitch
+  offset instead of overwriting it, so a static `:pitch N` shifts the macro's
+  center (driver.md §8).
 - **0xE4–0xEF** stay undefined. Undefined ⇒ fail-safe reject, not skip.
 
 ## 7. Target ID Table

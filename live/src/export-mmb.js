@@ -343,7 +343,10 @@ export function encodeMmb(ir, opts = {}) {
     }
     const lowered = lowerMacro(spec, target, trackLabel);
     if (!lowered) return null;
-    const flags = target === "NOTE_PITCH" ? 1 : 0; // bit0 = i16 values (cents)
+    // bit0 = i16 values (cents); bit1 = additive (`:pitch+`/`:semi+` — the driver
+    // composes each sample with the channel's live pitch offset, driver.md §8).
+    // The intern key folds in `flags`, so additive vs override intern separately.
+    const flags = (target === "NOTE_PITCH" ? 1 : 0) | (spec.add ? 2 : 0);
     const key = `${target}|${flags}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
       .map((v) => (v == null ? "_" : v))
       .join(",")}`;

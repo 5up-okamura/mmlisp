@@ -335,9 +335,16 @@ divide with a fraction (`:vel* 0.5`).
 
 - `vel`/`oct` have a compile-time base in the track state, so the IR carries
   plain absolute values.
-- In macros, `+`/`*` apply only to `:vel` (the one macro target with a base);
-  other targets raise `E_MACRO_OP_NO_BASE`. `:vel*` scales the macro by the
-  note's 0–1 vel ratio; `:vel+` offsets it by the note's vel.
+- In macros, `*` applies only to `:vel`. `+` applies to `:vel`, `:pitch`, and
+  `:semi`; any other target (or `*` on `:pitch`/`:semi`) raises
+  `E_MACRO_OP_NO_BASE`. `:vel*` scales the macro by the note's 0–1 vel ratio and
+  `:vel+` offsets it by the note's vel — both baked per note-on. `:pitch+` /
+  `:semi+` are **additive**: each frame writes `note + (live pitch offset +
+  macro sample)`, so a static `:pitch N` plus a shared vibrato macro wobbles
+  centered at `+N` cents (e.g. two voices sharing one LFO but detuned by their
+  own `:pitch` → chorus). Plain `:pitch` / `:semi` (no `+`) still **override**
+  the offset. The additive offset is read live, so the macro rides a running
+  pitch sweep.
 - Echo/delay taps are always relative, so an operator is **required**: bare
   `:vel` raises `E_ECHO_OP_REQUIRED` / `E_DELAY_OP_REQUIRED` (the clear forms
   `(delay none)` / `(delay :vel none)` excepted).
@@ -471,9 +478,9 @@ If the same target is set twice, the last one wins.
 
 | Keyword    | IR target    | Range        | Notes                                  |
 | ---------- | ------------ | ------------ | -------------------------------------- |
-| `:vel`     | `VEL`        | 0–15         | Only target accepting `+`/`*` (§7)     |
-| `:pitch`   | `NOTE_PITCH` | ±32768 cents | Continuous pitch offset, no retrigger  |
-| `:semi`    | `NOTE_SEMI`  | ±48          | Semitone steps (×100 cents), no retrigger — chiptune arpeggio |
+| `:vel`     | `VEL`        | 0–15         | Accepts `+` and `*` (§7)               |
+| `:pitch`   | `NOTE_PITCH` | ±32768 cents | Continuous pitch offset, no retrigger; `:pitch+` is additive over the live offset (§7) |
+| `:semi`    | `NOTE_SEMI`  | ±48          | Semitone steps (×100 cents), no retrigger — chiptune arpeggio; `:semi+` additive (§7) |
 | `:keyon`   | `KEYON`      | 0–1          | Retrigger gate, thresholded at ≥ 0.5   |
 | `:vol`     | `VOL`        | 0–31         |                                        |
 | `:master`  | `MASTER`     | 0–31         |                                        |
