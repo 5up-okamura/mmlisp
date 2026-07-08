@@ -1884,7 +1884,7 @@ function csmTrackPitch(trackState, noteName, diagnostics, src, trackName) {
   return `${noteName}${Math.max(0, oct)}`;
 }
 
-function canonicalTarget(symbol) {
+export function canonicalTarget(symbol) {
   const map = {
     // Sequencer / level
     ":vol": "VOL",

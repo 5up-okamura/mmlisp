@@ -305,6 +305,70 @@
       .cm-buildFlash { animation-duration: 0.01s; }
     }
 
+    /* ---- Interactive value editing ---- */
+    /* Hover affordance: whole-token dotted underline + faint wash. */
+    .cm-valHover {
+      border-radius: 2px;
+      text-decoration: underline dotted var(--foreground);
+      text-underline-offset: 3px;
+      background: color-mix(in srgb, var(--foreground) 10%, transparent);
+    }
+    /* Floating hint that follows the pointer over an editable value. */
+    .val-hint {
+      position: fixed; z-index: 60; display: none;
+      pointer-events: none;
+      background: color-mix(in srgb, var(--foreground) 12%, var(--background));
+      color: var(--high);
+      border: 1px solid var(--mid);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font: 11px 'Open Sans', sans-serif;
+      white-space: nowrap;
+    }
+    /* Shared popup: slider / stepper / piano / bar info. Matches the panels /
+       modals — pure-black fill, thin toned border, sharp 2px corners. */
+    .val-popup {
+      position: fixed; z-index: 70;
+      background: var(--background);
+      border: none;
+      border-radius: 2px;
+      padding: 8px 10px;
+      width: max-content; /* size to the content, not a fixed width */
+      font: 12px 'Open Sans', sans-serif;
+      color: var(--foreground);
+    }
+    .val-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+    .val-label { min-width: 34px; color: var(--mid); }
+    /* Steppers reuse the transport (.tb-btn) look; only the square size differs. */
+    .val-step {
+      width: 22px; height: 22px; flex: none;
+      padding: 0; font-size: 14px; line-height: 1;
+    }
+    .val-row input[type=range] { flex: 1; min-width: 90px; accent-color: var(--foreground); }
+    .val-num {
+      flex: 1; min-width: 70px; text-align: right;
+      background: var(--background); color: var(--foreground);
+      border: 1px solid var(--mid); border-radius: 2px; padding: 2px 4px;
+      -moz-appearance: textfield; appearance: textfield; /* no spinner */
+    }
+    .val-num::-webkit-outer-spin-button,
+    .val-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    /* One-octave piano for note tokens — same construction/look as the dock
+       keyboard (#kbKeys): white grid + absolute black overlay, .kb-key styling. */
+    .val-piano {
+      position: relative;
+      height: 4rem;
+      width: 182px;
+      user-select: none; touch-action: none;
+      overflow: hidden; border-radius: 2px;
+      background: var(--background);
+      margin: 4px 0 2px;
+    }
+    .val-piano .kb-key.cur { box-shadow: inset 0 0 0 2px var(--high); }
+    .val-bar-info { line-height: 1.5; }
+    .val-bar-head { color: var(--high); font-weight: 600; }
+    .val-stale { color: var(--error); font-weight: 400; }
+
     /* drag divider */
     #hDivider {
       height: 4px;
@@ -1283,8 +1347,8 @@
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp } from './src/import-mucom.js';
-    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi } from './src/ir-utils.js';
-    import { compileMMLisp } from './src/mmlisp2ir.js';
+    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
+    import { compileMMLisp, canonicalTarget } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
 
@@ -1464,6 +1528,543 @@
         return markers;
       },
     });
+
+
+    // ===================================================================
+    // Interactive value editing
+    // -------------------------------------------------------------------
+    // Every adjustable value written in the source — keyword numbers
+    // (:vel 12, :tl1 45, :pitch -40), any note-length form (8, 8., 16t,
+    // 16f, 3/4), note names (c, c+, c2, c4.), and v±/o± shifts — can be
+    // nudged in place. Three surfaces share ONE classifier: long-press
+    // popup (desktop + touch), Alt+drag scrub (desktop), and the
+    // Mod-Shift-. / Mod-Shift-, keyboard shortcuts. classifyToken() maps a
+    // document offset to the editable field(s) at that token; each Field
+    // owns its replace range and a writeBack() that regenerates the token
+    // text (preserving suffix / sign / fraction). The token is the unit of
+    // hover + popup; only Alt+drag resolves to a sub-field by pointer x.
+    // ===================================================================
+
+    // Length-token forms accepted by parseLengthToken (mmlisp2ir.js).
+    const LEN_TICK = /^(\d+)t$/, LEN_FRAME = /^(\d+)f$/, LEN_FRAC = /^(\d+)\/(\d+)$/,
+          LEN_DOT = /^(\d+)\.$/, LEN_PLAIN = /^\d+$/;
+    const NUM_LITERAL = /^[+-]?\d+(?:\.\d+)?$/;
+    const NOTE_BARE = /^[a-g][+-]?$/;
+    const NOTE_LEN = /^([a-g][+-]?)(.+)$/;
+    const VEL_SHIFT = /^v([+-])(\d*)$/, OCT_SHIFT = /^o([+-])(\d*)$/;
+    // Chromatic spelling used when the piano / semitone-nudge rewrites a note.
+    const CHROMA = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
+    const NOTE_TO_IDX = {
+      c: 0, 'c+': 1, 'd-': 1, d: 2, 'd+': 3, 'e-': 3, e: 4, f: 5, 'f+': 6,
+      'g-': 6, g: 7, 'g+': 8, 'a-': 8, a: 9, 'a+': 10, 'b-': 10, b: 11,
+    };
+
+    function isLengthForm(v) {
+      return LEN_PLAIN.test(v) || LEN_DOT.test(v) || LEN_TICK.test(v) ||
+             LEN_FRAME.test(v) || LEN_FRAC.test(v);
+    }
+    function rangeForTarget(target) {
+      if (!target) return null;
+      return MACRO_TARGET_RANGE[target] || MACRO_TARGET_RANGE[target.replace(/\d+$/, '')] || null;
+    }
+    function fmtNum(x, isFloat) {
+      return isFloat ? String(Math.round(x * 1000) / 1000) : String(Math.round(x));
+    }
+    function clampField(field, v) {
+      const lo = field.min ?? -Infinity, hi = field.max ?? Infinity;
+      return Math.max(lo, Math.min(hi, v));
+    }
+
+    // --- Field factories (each returns a Field descriptor) ---
+    function numberField(from, to, valueStr, keyword) {
+      const target = keyword ? canonicalTarget(keyword) : null;
+      const range = rangeForTarget(target);
+      const isFloat = valueStr.includes('.');
+      return {
+        kind: 'number', range: [from, to], value: Number(valueStr),
+        min: range?.min, max: range?.max, step: 1, isFloat, target,
+        label: keyword ? keyword.replace(/^:/, '') : 'value',
+        writeBack: (v) => fmtNum(v, isFloat),
+      };
+    }
+    function lengthField(from, to, valueStr) {
+      let m, suffix = '', frac = null, numStr = valueStr;
+      if ((m = LEN_TICK.exec(valueStr))) { numStr = m[1]; suffix = 't'; }
+      else if ((m = LEN_FRAME.exec(valueStr))) { numStr = m[1]; suffix = 'f'; }
+      else if ((m = LEN_DOT.exec(valueStr))) { numStr = m[1]; suffix = '.'; }
+      else if ((m = LEN_FRAC.exec(valueStr))) { numStr = m[1]; frac = m[2]; }
+      return {
+        kind: 'number', range: [from, to], value: parseInt(numStr, 10),
+        min: 0, max: undefined, step: 1, isFloat: false, label: 'len',
+        writeBack: (v) => {
+          const n = Math.max(0, Math.round(v));
+          if (frac != null) return `${n}/${frac}`;
+          return `${n}${suffix}`;
+        },
+      };
+    }
+    function shiftField(from, to, m, kind) {
+      const sign = m[1] === '-' ? -1 : 1;
+      const digits = m[2] === '' ? 1 : parseInt(m[2], 10);
+      return {
+        kind: 'number', range: [from, to], value: sign * digits,
+        min: kind === 'v' ? -15 : -9, max: kind === 'v' ? 15 : 9, step: 1,
+        isFloat: false, label: kind === 'v' ? 'vel±' : 'oct±',
+        writeBack: (v) => { const iv = Math.round(v); return `${kind}${iv < 0 ? '-' : '+'}${Math.abs(iv)}`; },
+      };
+    }
+    function pitchField(from, to, noteStr) {
+      return {
+        kind: 'pitch', range: [from, to], value: { note: noteStr.toLowerCase() },
+        label: 'note', writeBack: (name) => name,
+      };
+    }
+
+    function fieldsForAtom(v, from, to, keyword) {
+      let m;
+      if (NOTE_BARE.test(v)) return [pitchField(from, to, v)];
+      if ((m = NOTE_LEN.exec(v)) && isLengthForm(m[2])) {
+        const mid = from + m[1].length;
+        return [pitchField(from, mid, m[1]), lengthField(mid, to, m[2])];
+      }
+      if ((m = VEL_SHIFT.exec(v))) return [shiftField(from, to, m, 'v')];
+      if ((m = OCT_SHIFT.exec(v))) return [shiftField(from, to, m, 'o')];
+      if (keyword && NUM_LITERAL.test(v)) return [numberField(from, to, v, keyword)];
+      if (isLengthForm(v)) return [lengthField(from, to, v)];
+      if (NUM_LITERAL.test(v)) return [numberField(from, to, v, null)];
+      return null;
+    }
+
+    function atomOffsets(doc, node) {
+      const lineObj = doc.line(node.line);
+      const from = lineObj.from + (node.column - 1);
+      return [from, from + String(node.value).length];
+    }
+    // Walk the AST for the atom whose span contains `offset`, tracking the
+    // preceding sibling as keyword context (:vel 12 → keyword ":vel"). Numbers
+    // inside a `[…]` step array inherit the keyword that precedes the array, so
+    // `(macro :vel [15 14 …])` classifies each entry as a VEL value, not a len.
+    function findAtomAt(items, doc, offset, inheritedKw) {
+      for (let i = 0; i < items.length; i++) {
+        const n = items[i];
+        if (n.kind === 'atom') {
+          const [f, t] = atomOffsets(doc, n);
+          if (offset >= f && offset <= t) {
+            const prev = items[i - 1];
+            const kw = prev && prev.kind === 'atom' && prev.value.startsWith(':') ? prev.value : inheritedKw;
+            return { node: n, from: f, to: t, keyword: kw };
+          }
+        } else if (n.kind === 'list') {
+          const lf = doc.line(n.line).from + (n.column - 1);
+          const lt = doc.line(n.endLine).from + (n.endColumn - 1);
+          if (offset >= lf && offset <= lt) {
+            // `[…]` = step array: entries inherit the array's keyword.
+            // `(…)` = a sub-form (curve/call): its args carry their own keywords.
+            let childKw = null;
+            if (n.bracket === '[]') {
+              const prev = items[i - 1];
+              childKw = prev && prev.kind === 'atom' && prev.value.startsWith(':') ? prev.value : inheritedKw;
+            }
+            const r = findAtomAt(n.items, doc, offset, childKw);
+            if (r) return r;
+          }
+        }
+      }
+      return null;
+    }
+
+    // Map a document offset to the editable token at that position.
+    // Returns { tokenRange:[from,to], fields:[Field,...], keyword } or null.
+    function classifyToken(state, offset) {
+      const doc = state.doc;
+      let roots;
+      try { roots = parse(doc.toString()); } catch (_) { return null; }
+      const hit = findAtomAt(roots, doc, offset, null);
+      if (!hit) return null;
+      const fields = fieldsForAtom(String(hit.node.value), hit.from, hit.to, hit.keyword);
+      if (!fields) return null;
+      return { tokenRange: [hit.from, hit.to], fields, keyword: hit.keyword };
+    }
+
+    // --- Applying edits (with debounced hot-swap while playing) ---
+    let _hotSwapTimer = null;
+    function scheduleHotSwap() {
+      if (!player || typeof player.isPlaying !== 'function' || !player.isPlaying()) return;
+      clearTimeout(_hotSwapTimer);
+      _hotSwapTimer = setTimeout(() => {
+        const { ir, ok } = compileNow();
+        if (ok && player && typeof player.swapAtNextBar === 'function') player.swapAtNextBar(ir);
+      }, 140);
+    }
+    function applyText(from, to, text) {
+      if (editorView.state.sliceDoc(from, to) === text) return;
+      editorView.dispatch({ changes: { from, to, insert: text } });
+      scheduleHotSwap();
+    }
+    function applyFieldEdit(field, rawValue) {
+      const v = clampField(field, rawValue);
+      const text = field.writeBack(v);
+      applyText(field.range[0], field.range[1], text);
+      return v;
+    }
+    // Shift a note name by `dir` semitones, staying within the same octave
+    // (crossing b→c or c→b is out of scope: octave lives in :oct / > / <).
+    function nudgePitch(field, dir) {
+      const idx = NOTE_TO_IDX[field.value.note];
+      if (idx == null) return;
+      const next = idx + dir;
+      if (next < 0 || next > 11) return;
+      applyText(field.range[0], field.range[1], CHROMA[next]);
+    }
+    function nudgeAtCursor(dir, coarse) {
+      const st = editorView.state;
+      const info = classifyToken(st, st.selection.main.head);
+      if (!info) return false;
+      const field = info.fields[0];
+      if (field.kind === 'pitch') { nudgePitch(field, dir); return true; }
+      applyFieldEdit(field, field.value + dir * (field.step || 1) * (coarse ? 10 : 1));
+      return true;
+    }
+    function fieldAtOffset(info, offset) {
+      return info.fields.find((f) => offset >= f.range[0] && offset <= f.range[1]) || info.fields[0];
+    }
+
+    // --- Hover affordance (whole-token underline; DOM hint + cursor) ---
+    // Modifier-key interactions are invisible, so hovering an adjustable value
+    // marks the WHOLE token (c2 / c4. / v+2 are never split) and shows a hint.
+    const setHover = StateEffect.define();
+    const hoverMark = Decoration.mark({ class: 'cm-valHover' });
+    const hoverField = StateField.define({
+      create: () => Decoration.none,
+      update(deco, tr) {
+        deco = deco.map(tr.changes);
+        for (const e of tr.effects) {
+          if (e.is(setHover)) deco = e.value ? Decoration.set([hoverMark.range(e.value[0], e.value[1])]) : Decoration.none;
+        }
+        return deco;
+      },
+      provide: (f) => EditorView.decorations.from(f),
+    });
+
+    // --- Bar markers ( | ): follow edits like the playhead; info on tap. ---
+    // Positions are re-anchored on build and mapped through later edits; the
+    // tick count / ordinal are build-time values (marked stale after an edit).
+    const setBars = StateEffect.define();
+    const barField = StateField.define({
+      create: () => ({ list: [], stale: false }),
+      update(v, tr) {
+        let { list, stale } = v;
+        if (tr.docChanged && list.length) {
+          list = list
+            .map((b) => ({ ...b, from: tr.changes.mapPos(b.from, -1), to: tr.changes.mapPos(b.to, 1) }))
+            .filter((b) => b.to > b.from);
+          stale = true;
+        }
+        for (const e of tr.effects) if (e.is(setBars)) { list = e.value; stale = false; }
+        return list === v.list && stale === v.stale ? v : { list, stale };
+      },
+    });
+    function barAtOffset(state, offset) {
+      const { list, stale } = state.field(barField, false) ?? { list: [], stale: false };
+      const b = list.find((x) => offset >= x.from && offset <= x.to);
+      return b ? { ...b, stale } : null;
+    }
+    // Re-anchor bar markers to the just-compiled document. Called from compileNow.
+    function refreshBarMarkers() {
+      if (!editorView) return;
+      const doc = editorView.state.doc;
+      const out = [];
+      const tracks = _lastGoodIR?.tracks ?? [];
+      for (let ti = 0; ti < tracks.length; ti++) {
+        const bars = tracks[ti].bars;
+        if (!bars?.length) continue;
+        const head = _chStripModel.find((e) => e.trackIndex === ti)?.head ?? `track ${ti + 1}`;
+        let prev = 0;
+        for (const bar of bars) {
+          let r;
+          try { r = srcToRange(doc, { line: bar.line, column: bar.column, endLine: bar.line, endColumn: bar.column + 1 }); }
+          catch (_) { prev = bar.tick; continue; }
+          out.push({ from: r[0], to: r[1], ordinal: bar.ordinal, tick: bar.tick, barLen: bar.tick - prev, head });
+          prev = bar.tick;
+        }
+      }
+      editorView.dispatch({ effects: setBars.of(out) });
+    }
+
+    // --- Shared popup component (slider / stepper / piano / bar info) ---
+    // One reusable floating panel; its body is swapped per the token's fields.
+    // Long-press (desktop + touch) opens it; it stays until dismissed.
+    let _popup = null; // { el, tokenStart, kind }
+    function closePopup() {
+      if (!_popup) return;
+      _popup.el.remove();
+      _popup = null;
+      document.removeEventListener('pointerdown', onDocPointerForPopup, true);
+      document.removeEventListener('keydown', onKeyForPopup, true);
+    }
+    function onDocPointerForPopup(e) {
+      if (_popup && !_popup.el.contains(e.target)) closePopup();
+    }
+    function onKeyForPopup(e) {
+      if (e.key === 'Escape') { closePopup(); e.stopPropagation(); }
+    }
+    function positionPopup(el, offset) {
+      const c = editorView.coordsAtPos(offset);
+      if (!c) return;
+      el.style.left = Math.round(c.left) + 'px';
+      el.style.top = Math.round(c.bottom + 4) + 'px';
+    }
+    function makePopupShell(offset) {
+      closePopup();
+      const el = document.createElement('div');
+      el.className = 'val-popup';
+      // No close button — a pointerdown outside the popup (e.g. tapping the
+      // editor) dismisses it; Esc also closes. See onDocPointerForPopup.
+      document.body.appendChild(el);
+      positionPopup(el, offset);
+      // Defer the outside-click listener so the opening press does not close it.
+      setTimeout(() => {
+        document.addEventListener('pointerdown', onDocPointerForPopup, true);
+        document.addEventListener('keydown', onKeyForPopup, true);
+      }, 0);
+      return el;
+    }
+
+    // Re-fetch a field by index from the live document (offsets shift as we edit).
+    function liveField(tokenStart, idx) {
+      const info = classifyToken(editorView.state, tokenStart);
+      return info ? info.fields[idx] : null;
+    }
+    function buildNumberRow(el, tokenStart, idx, field) {
+      const row = document.createElement('div');
+      row.className = 'val-row';
+      const label = document.createElement('span');
+      label.className = 'val-label';
+      label.textContent = field.label;
+      row.appendChild(label);
+      const dec = document.createElement('button');
+      dec.className = 'tb-btn val-step'; dec.textContent = '−';
+      const inc = document.createElement('button');
+      inc.className = 'tb-btn val-step'; inc.textContent = '+';
+      const bounded = field.min != null && field.max != null;
+      let input;
+      if (bounded) {
+        input = document.createElement('input');
+        input.type = 'range';
+        input.min = field.min; input.max = field.max; input.step = field.step || 1;
+      } else {
+        input = document.createElement('input');
+        input.type = 'number';
+        input.step = field.step || 1;
+        input.className = 'val-num';
+      }
+      // The edited value is visible live in the editor source, so the row needs
+      // no separate readout — the control just reflects the current value.
+      input.value = field.value;
+      const commit = (v) => {
+        const f = liveField(tokenStart, idx);
+        if (!f) { closePopup(); return; }
+        input.value = applyFieldEdit(f, v);
+      };
+      input.oninput = () => commit(Number(input.value));
+      dec.onclick = () => { const f = liveField(tokenStart, idx); if (f) commit(f.value - (f.step || 1)); };
+      inc.onclick = () => { const f = liveField(tokenStart, idx); if (f) commit(f.value + (f.step || 1)); };
+      row.appendChild(input);
+      row.appendChild(dec);
+      row.appendChild(inc);
+      el.appendChild(row);
+    }
+    // Resolve the sounding pitch + hardware channel for a note token from the
+    // last built IR (so the piano can preview and highlight the current note).
+    function resolveNoteContext(tokenStart) {
+      const doc = editorView.state.doc;
+      const tracks = _lastGoodIR?.tracks ?? [];
+      for (const entry of _chStripModel) {
+        const evs = tracks[entry.trackIndex]?.events;
+        if (!evs) continue;
+        for (const ev of evs) {
+          if (ev.cmd !== 'NOTE_ON' || !ev.src) continue;
+          let r; try { r = srcToRange(doc, ev.src); } catch (_) { continue; }
+          if (r[0] === tokenStart) {
+            return { midi: pitchToMidi(ev.args?.pitch ?? 'c4'), chIndex: entry.selIndex ?? 0 };
+          }
+        }
+      }
+      return null;
+    }
+    function buildPitchRow(el, tokenStart, idx, field) {
+      const ctx = resolveNoteContext(tokenStart) ?? { midi: 60, chIndex: 0 };
+      const octaveBase = Math.floor(ctx.midi / 12) * 12;
+      const curIdx = NOTE_TO_IDX[field.value.note];
+      // Reuse the dock keyboard's construction (KB_WHITE_SEMITONES / KB_BLACK_DEFS
+      // + .kb-key classes), one octave, so it looks identical to the panel.
+      const piano = document.createElement('div');
+      piano.className = 'val-piano';
+      const whiteRow = document.createElement('div');
+      whiteRow.className = 'kb-white-row';
+      whiteRow.style.gridTemplateColumns = 'repeat(7, minmax(0, 1fr))';
+      const blackRow = document.createElement('div');
+      blackRow.className = 'kb-black-row';
+      const press = (s, btn) => {
+        const f = liveField(tokenStart, idx);
+        if (!f) { closePopup(); return; }
+        startPreviewNote(ctx.chIndex, octaveBase + s);
+        applyText(f.range[0], f.range[1], CHROMA[s]);
+        piano.querySelectorAll('.kb-key.cur').forEach((k) => k.classList.remove('cur'));
+        btn.classList.add('cur');
+      };
+      const mkKey = (s, cls) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = cls + (s === curIdx ? ' cur' : '');
+        btn.onpointerdown = (e) => { e.preventDefault(); btn.classList.add('down'); press(s, btn); };
+        btn.onpointerup = btn.onpointerleave = () => { btn.classList.remove('down'); previewNoteOff(ctx.chIndex); };
+        return btn;
+      };
+      for (const s of KB_WHITE_SEMITONES) whiteRow.appendChild(mkKey(s, 'kb-key'));
+      for (const def of KB_BLACK_DEFS) {
+        const btn = mkKey(def.semitone, 'kb-key black');
+        btn.style.left = `${(def.whiteAfter / 7) * 100}%`;
+        btn.style.width = 'calc((100% / 7) - 2px)';
+        blackRow.appendChild(btn);
+      }
+      piano.appendChild(whiteRow);
+      piano.appendChild(blackRow);
+      el.appendChild(piano);
+    }
+    function openTokenPopup(tokenStart) {
+      const info = classifyToken(editorView.state, tokenStart);
+      if (!info) return;
+      const el = makePopupShell(info.tokenRange[0]);
+      _popup = { el, tokenStart, kind: 'token' };
+      info.fields.forEach((f, i) => {
+        if (f.kind === 'pitch') buildPitchRow(el, tokenStart, i, f);
+        else buildNumberRow(el, tokenStart, i, f);
+      });
+    }
+    function openBarPopup(bar) {
+      const el = makePopupShell(bar.from);
+      _popup = { el, tokenStart: bar.from, kind: 'bar' };
+      const info = document.createElement('div');
+      info.className = 'val-bar-info';
+      const beats = Math.round((bar.barLen / 96) * 100) / 100;
+      info.innerHTML =
+        `<div class="val-bar-head">${bar.head}${bar.stale ? ' <span class="val-stale">(stale)</span>' : ''}</div>` +
+        `<div>Bar ${bar.ordinal}</div>` +
+        `<div>${bar.barLen} ticks · ${beats} beat${beats === 1 ? '' : 's'}</div>`;
+      el.appendChild(info);
+    }
+
+    // --- Pointer interactions: long-press → popup, Alt+drag → scrub ---
+    let _drag = null;       // { field, orig, curFrom, curLen, startX }
+    let _press = null;      // { offset, x, y, timer }
+    const LONG_PRESS_MS = 450, MOVE_CANCEL = 8, DRAG_PX_PER_STEP = 6;
+    function cancelPress() {
+      if (_press) { clearTimeout(_press.timer); _press = null; }
+    }
+    function endDrag() { _drag = null; }
+    let _hoverKey = '';
+    function updateHoverAt(view, e) {
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+      let range = null, hint = null, canScrub = false;
+      if (pos != null) {
+        const info = classifyToken(view.state, pos);
+        if (info) {
+          range = info.tokenRange;
+          const f = fieldAtOffset(info, pos);
+          canScrub = true;
+          hint = f.kind === 'pitch'
+            ? `note ${f.value.note} · long-press / Alt-drag`
+            : `${f.label} ${fmtNum(f.value, f.isFloat)}${f.min != null ? ` · ${f.min}–${f.max}` : ''} · long-press / Alt-drag`;
+        } else {
+          const bar = barAtOffset(view.state, pos);
+          if (bar) { range = [bar.from, bar.to]; hint = `Bar ${bar.ordinal} · ${bar.barLen} ticks · long-press`; }
+        }
+      }
+      // Only re-dispatch when the hovered token actually changed; mousemove
+      // fires far more often than the token under the pointer changes.
+      const key = range ? `${range[0]}:${range[1]}` : '';
+      if (key !== _hoverKey) {
+        _hoverKey = key;
+        view.dispatch({ effects: setHover.of(range) });
+      }
+      showHint(range && hint ? hint : null, e);
+      view.scrollDOM.style.cursor = (canScrub && e.altKey) ? 'ns-resize' : '';
+    }
+    let _hintEl = null;
+    function showHint(text, e) {
+      // A popup is the fuller affordance; don't double up with the hover hint.
+      if (!text || _popup) { if (_hintEl) _hintEl.style.display = 'none'; return; }
+      if (!_hintEl) {
+        _hintEl = document.createElement('div');
+        _hintEl.className = 'val-hint';
+        document.body.appendChild(_hintEl);
+      }
+      _hintEl.textContent = text;
+      _hintEl.style.display = 'block';
+      _hintEl.style.left = Math.round(e.clientX + 12) + 'px';
+      _hintEl.style.top = Math.round(e.clientY + 16) + 'px';
+    }
+
+    const valueEditHandlers = {
+      pointerdown(e, view) {
+        if (e.button != null && e.button !== 0) return false;
+        const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+        if (pos == null) return false;
+        // Alt+drag (mouse only) → immediate scrub of the field under the pointer.
+        if (e.altKey && e.pointerType !== 'touch') {
+          const info = classifyToken(view.state, pos);
+          if (info) {
+            const field = fieldAtOffset(info, pos);
+            if (field.kind !== 'pitch') {
+              _drag = { field, orig: field.value, curFrom: field.range[0], curLen: field.range[1] - field.range[0], startY: e.clientY };
+              e.preventDefault();
+              return true;
+            }
+          }
+        }
+        // Otherwise arm a long-press → popup (works for a token or a bar |).
+        const hasTarget = classifyToken(view.state, pos) || barAtOffset(view.state, pos);
+        if (hasTarget) {
+          cancelPress();
+          _press = {
+            offset: pos, x: e.clientX, y: e.clientY,
+            timer: setTimeout(() => {
+              const info = classifyToken(view.state, _press.offset);
+              if (info) openTokenPopup(info.tokenRange[0]);
+              else { const bar = barAtOffset(view.state, _press.offset); if (bar) openBarPopup(bar); }
+              _press = null;
+            }, LONG_PRESS_MS),
+          };
+        }
+        return false;
+      },
+      pointermove(e, view) {
+        if (_drag) {
+          // Drag up = increase, down = decrease (matches a slider / knob).
+          const steps = Math.round((_drag.startY - e.clientY) / DRAG_PX_PER_STEP) * (_drag.field.step || 1) * (e.shiftKey ? 10 : 1);
+          const v = clampField(_drag.field, _drag.orig + steps);
+          const text = _drag.field.writeBack(v);
+          applyText(_drag.curFrom, _drag.curFrom + _drag.curLen, text);
+          _drag.curLen = text.length;
+          e.preventDefault();
+          return true;
+        }
+        if (_press && (Math.abs(e.clientX - _press.x) > MOVE_CANCEL || Math.abs(e.clientY - _press.y) > MOVE_CANCEL)) cancelPress();
+        updateHoverAt(view, e);
+        return false;
+      },
+      pointerup() { endDrag(); cancelPress(); return false; },
+      pointercancel() { endDrag(); cancelPress(); return false; },
+      pointerleave(e, view) {
+        cancelPress();
+        _hoverKey = '';
+        view.dispatch({ effects: setHover.of(null) });
+        showHint(null, e);
+        view.scrollDOM.style.cursor = '';
+        return false;
+      },
+    };
 
 
     // MMLisp StreamLanguage for syntax highlighting.
@@ -2759,6 +3360,9 @@
       playheadField,
       playheadLayer,
       buildFlashLayer,
+      hoverField,
+      barField,
+      EditorView.domEventHandlers(valueEditHandlers),
       lineNumbers(),
       codeFolding({
         preparePlaceholder: (state, range) => summarizeFoldHead(state, range),
@@ -2786,6 +3390,13 @@
         ...historyKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
+        // Nudge the value under the cursor. `.`/`,` are the > / < keys, so the
+        // direction matches MML's > (up) / < (down); Alt makes a coarse step.
+        // Never binds an arrow, so caret movement / selection stay untouched.
+        { key: 'Mod-Shift-.', run: () => nudgeAtCursor(1, false) },
+        { key: 'Mod-Shift-,', run: () => nudgeAtCursor(-1, false) },
+        { key: 'Mod-Alt-Shift-.', run: () => nudgeAtCursor(1, true) },
+        { key: 'Mod-Alt-Shift-,', run: () => nudgeAtCursor(-1, true) },
       ]),
       EditorView.updateListener.of((update) => {
         // Compilation is manual (Build / Cmd-Ctrl+B); editing never compiles or
@@ -3254,6 +3865,8 @@
         // Later edits (without rebuild) are mapped from here so highlights track
         // the text. Edits compose into the field even while stopped.
         editorView.dispatch({ effects: setPlayheadBase.of(null) });
+        // Re-anchor bar markers ( | ) to the just-compiled document too.
+        refreshBarMarkers();
         return { ir, ok: true };
       } catch (e) {
         log('[compile] ' + e.message, 'err');

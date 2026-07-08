@@ -106,6 +106,9 @@ leading `|` needed). The Nth `|` closes bar N. There is no fixed meter, so bars
 may be any length; comparing a bar's tick count across tracks is the quick way to
 catch drift.
 
+In the live app, long-press (or tap) a `|` to pop up its bar number and tick
+count; the popup stays open and follows the marker as you edit above it (see §22).
+
 ```lisp
 (fm1 :oct 4 :len 8
   c c c c c c c c |
@@ -777,3 +780,31 @@ They can be used anywhere curve expressions are accepted, including `(macro ...)
   (noise
     c _ c _))
 ```
+
+---
+
+## 22. Editing values in the live app
+
+Every adjustable value in the source can be nudged in place — no retyping. This
+covers keyword numbers (`:vel 12`, `:tl1 45`, `:pitch -40`, `:oct 4`), every
+note-length form (`8`, `8.`, `16t`, `16f`, `3/4`), note names (`c`, `c+`), the
+note + length compound (`c4`, `e8.` — the note and the length edit separately),
+and the `v±` / `o±` shifts.
+
+Hover a value to confirm it is editable: the whole token gets a dotted underline
+and a hint shows its range. Three ways to change it:
+
+- **Long-press** the token (works with mouse and touch) to open a popup — a
+  slider + `−`/`+` steppers for a bounded number, or a one-octave piano for a
+  note (tap a key to audition and set it, staying in the current octave). The
+  popup stays open until you dismiss it (click away or `Esc`).
+- **Alt-drag** the token up/down to scrub it — up raises, down lowers, like a
+  slider (hold `Shift` for a coarse step). Desktop only; the pointer turns into
+  a resize cursor.
+- **`Cmd/Ctrl+Shift+.`** / **`Cmd/Ctrl+Shift+,`** nudge the value under the
+  cursor up / down (the `>` / `<` keys, matching MML's octave shifts); add
+  `Alt` for a coarse step.
+
+While the score is playing, an edit hot-swaps at the next bar so you hear it
+immediately; stopped, changes apply on the next **Build**. Long-press a bar
+marker `|` for its bar number and tick count (§4).
