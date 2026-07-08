@@ -159,7 +159,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     const c = body[i];
 
     if (/\s/.test(c)) { i++; continue; }
-    if (c === "|") { i++; continue; } // visual separator
+    if (c === "|") { i++; push({ t: "bar" }); continue; } // bar line → MMLisp |
     if (c === ";") { comment = body.slice(i).trim(); break; } // keep the comment
 
     // Note (lowercase a-g only; uppercase letters are commands like C/D/E). A
@@ -346,7 +346,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
 
     // Portamento {from len to}: a pitch glide occupying one note's time. mucom
     // {c2b} slides c->b over length 2 (octaves may be crossed with < / >). Map to
-    // MMLisp's portamento: :glide-from <start> :glide <len> then the target note.
+    // MMLisp's portamento: (glide <start> <len>), the target note, (glide none).
     if (c === "{") {
       i++;
       let bo = 0; // octave shift inside the braces (relative to the running octave)
@@ -755,6 +755,9 @@ function renderOps(ops, ctx, out, depth = 0) {
         // '~' and length are separate atoms in MMLisp; bare '~' uses :len.
         out.push(op.len ? `~ ${op.len}` : "~");
         break;
+      case "bar":
+        out.push("|"); // bar line — editorial marker, carried through verbatim
+        break;
       case "octUp":
         out.push(">"); ctx.oct++;
         break;
@@ -794,7 +797,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
         for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
         out.push(`${op.to.letter}${ACC(op.to.acc)}${op.len ?? ""}`);
-        out.push("(glide 0)"); // one porta note only; following notes don't glide
+        out.push("(glide none)"); // one porta note only; following notes don't glide
         break;
       }
       case "hwLfo":

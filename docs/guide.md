@@ -97,6 +97,19 @@ Examples:
 The tick grid is PPQN 96 (quarter = 96 ticks, whole = 384). See
 `docs/language.md` §4.
 
+### Bar markers — `|`
+
+Drop `|` between notes to mark bar lines. They are editorial only — no effect on
+playback — and let the editor show how many ticks a `| … |` region spans and
+which bar each marker is. There is no fixed meter, so bars may be any length;
+comparing a region's span across tracks is the quick way to catch drift.
+
+```lisp
+(fm1 :oct 4 :len 8
+  | c c c c c c c c
+  | c c c c c c c c |)
+```
+
 ---
 
 ## 5. Inline Modifiers (Persistent State)
@@ -123,10 +136,10 @@ Common modifiers:
   mutes**. Default (unset) = `31` (unity).
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
-- `:shuffle N` — swing ratio (`51`–`90`; `50` = straight). Head-only: write it
+- `:shuffle N` — swing ratio (`51`–`90`; `none` = straight). Head-only: write it
   right after the channel name (or as a score option), not mid-body
 - `(glide T)` — portamento from the previous note over duration `T` (same
-  length-token forms as `:len`); `(glide 0)` disables.
+  length-token forms as `:len`); `(glide none)` disables.
 - `(glide from-pitch T)` — glide from an explicit start pitch. The start pitch is
   an absolute pitch (note + octave, e.g. `f5`, where the trailing number is the
   **octave**); `T` is the duration. Example: `(glide f5 32)`.
@@ -195,6 +208,20 @@ distribution.
 ```
 
 `def` expands inline.
+
+### Parametric snippet — `(def (name param…) …)`
+
+When phrases differ by only a token or two, give the snippet parameters and call
+it as `(name arg…)`. Each argument node is substituted for its parameter in the
+body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARITY`.
+
+```lisp
+(def (beat n) (x 8 > n > n <))
+
+(score
+  (fm1 :oct 1
+    (beat c) (beat b-) (beat a) (beat f)))
+```
 
 ---
 

@@ -95,6 +95,7 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `scoreChannel` | string | Original channel head (`fm3-1`, `pcm2`, …) — preserved for UI labeling; also the label used in track diagnostics. |
 | `channel`      | string | Physical channel name. FM3 variants (`fm3-1..4`, `fm3-csm`, `fm3-csm-rate`) collapse to `fm3`. |
 | `events`       | array  | Time-ordered event list (see §4).                                        |
+| `bars`         | array  | Optional. Bar markers (`|`) for the editor: `{ordinal, tick, line, column}` per marker. Inspection metadata only — no playback effect; absent when the track has no `|`. |
 
 Tracks have no `name` field; the player routes purely by `channel`.
 

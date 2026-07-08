@@ -189,15 +189,18 @@ export class IRPlayer {
   }
 
   _resolveInitialTempo(irObj) {
+    // Last tick-0 TEMPO_SET wins (track order), matching the last-writer-wins
+    // resolution of mid-track tempo dispatch across parallel tracks.
+    let bpm = 120;
     for (const track of irObj?.tracks ?? []) {
       for (const ev of track.events ?? []) {
         if (ev?.cmd !== "TEMPO_SET") continue;
         if ((ev.tick ?? 0) !== 0) continue;
-        const bpm = Number(ev.args?.bpm);
-        if (Number.isFinite(bpm) && bpm > 0) return bpm;
+        const v = Number(ev.args?.bpm);
+        if (Number.isFinite(v) && v > 0) bpm = v;
       }
     }
-    return 120;
+    return bpm;
   }
 
   _loadIR(irObj) {

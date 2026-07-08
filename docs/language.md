@@ -24,7 +24,9 @@ A source file is a sequence of top-level forms:
 - `#name` atoms are labels (§13).
 - Inside `(score …)`, keyword pairs before the first channel form are score
   options; every list whose head is a channel name (§2) is a track form.
-  Lists with any other head inside `score` are ignored.
+  A list with any other head inside `score` is an error: an unknown head
+  (usually a channel-name typo) is `E_SCORE_UNKNOWN_FORM`, and a `def`/`def-val`
+  placed inside `score` is `E_DEF_IN_SCORE` (definitions must be top-level, §9).
 
 ### Score options
 
@@ -39,7 +41,7 @@ A source file is a sequence of top-level forms:
 | `:author`   | string               | Metadata                                      |
 | `:tempo`    | integer BPM or curve | Bare integer → `TEMPO_SET` at tick 0 (default 120; fractional BPM needs a mid-track `:tempo`). A curve → `TEMPO_SWEEP` from tick 0, e.g. `:tempo (linear :from 120 :to 80 :len 4)` (`:from` defaults to 120 if omitted) |
 | `:lfo-rate` | 0–8                  | YM2612 global LFO (`0` = off)                 |
-| `:shuffle`  | 51–90 (`50` = off)   | Score-wide swing default (§5)                 |
+| `:shuffle`  | 51–90 (`none` = off) | Score-wide swing default (§5)                 |
 
 ### Channel forms: append and layer
 
@@ -160,14 +162,12 @@ curve `:len`, macro `:step`, a `(wait Nf)` stage, and `def-val :unit frame`
 slots (the player runs these off its own frame clock).
 
 In **structural** contexts that advance the musical timeline — note length,
-`:gate`, `~` (tie), and rests — `Nf` is converted to ticks at the tempo active
-at compile time. So `c16f` lasts 16/60 s at the tempo it was authored under; a
-mid-track `:tempo` change before the note is accounted for, but a **runtime**
-tempo change (live `setTempo`, or a `TEMPO_SWEEP` spanning the note) scales it
-like any tick duration. Use `Nt` when you want an exact, tempo-proof tick count.
-
-> Not yet converted: `(glide T)` and `(delay … :time T)` still read `Nf` as raw
-> ticks. Use `Nt` there for now.
+`:gate`, `~` (tie), rests, `(glide T)`, and `(delay … :time T)` — `Nf` is
+converted to ticks at the tempo active at compile time. So `c16f` lasts 16/60 s
+at the tempo it was authored under; a mid-track `:tempo` change before the note
+is accounted for, but a **runtime** tempo change (live `setTempo`, or a
+`TEMPO_SWEEP` spanning the note) scales it like any tick duration. Use `Nt` when
+you want an exact, tempo-proof tick count.
 
 ---
 
@@ -184,7 +184,7 @@ of the same channel. Defaults:
 | `:vel`     | `15`               |
 | `:vol`     | `31`               |
 | `:prio`    | `8`                |
-| `:shuffle` | off (`50`)         |
+| `:shuffle` | off (`none`)       |
 | tempo      | 120 BPM            |
 
 ### Head-only options
@@ -218,7 +218,9 @@ head position, and equally as body directives.)
 :len L)` emits `TEMPO_SWEEP` over `L` (any non-`const` curve name works —
 there is no curve literally named `curve`). Tempo changes apply to all tracks.
 The same curve form works as a score option (§1), emitting the sweep from
-tick 0.
+tick 0. `:tempo`/`:master` are global, so if two tracks write one at the same
+tick the **last writer wins** (track order); the tick-0 initial tempo resolves
+the same way. Keep global automation on a single track to avoid ambiguity.
 
 On the `noise` channel, `:mode` sets the noise mode as **persistent channel
 state**: it emits `PARAM_SET NOISE_MODE`, and every noise note re-asserts the
@@ -251,7 +253,7 @@ with `E_UNKNOWN_KEYWORD` rather than silently dropped.
 
 ### 5.2 Shuffle
 
-`:shuffle R` (51–90; `50` = straight) swings note/rest pairs whose nominal
+`:shuffle R` (51–90; `none` = straight) swings note/rest pairs whose nominal
 length equals `:shuffle-base` (default: eighth). The pair spans 2× the base;
 the first beat takes `R` % of it. Score-level `:shuffle` sets the default for
 all tracks.
@@ -373,12 +375,13 @@ records these in a `dyn` map the player resolves at schedule time.
 ## 9. `def` forms
 
 `def` names any inline-writable notation; a bare reference in a channel body
-expands or applies it. Definitions are top-level (a `def` inside `(score …)`
-is ignored).
+expands or applies it. Definitions are top-level: a `def`/`def-val` inside
+`(score …)` is rejected with `E_DEF_IN_SCORE` (§1).
 
 | Form                                  | Kind                                    |
 | ------------------------------------- | --------------------------------------- |
 | `(def name item…)`                    | Snippet — inline expansion at the reference (recursion depth ≤ 16) |
+| `(def (name param…) item…)`           | Parametric snippet — call as `(name arg…)`; each `arg` node is substituted for its `param` in the body (§9.1) |
 | `(def name :alg … :tl1 … …)`          | FM voice, keyword map                   |
 | `(def name :extend base :tl1 … …)`    | FM voice inheriting `base` (child keys override; cycles are `E_EXTENDS_CYCLE`) |
 | `(def name :sample :file "…" …)`      | PCM sample (§16)                        |
@@ -403,6 +406,24 @@ Unset operator parameters are not emitted — start from a full patch (or
 Referencing a voice def mid-track re-emits its `PARAM_SET`s (patch switch).
 Macro defs apply to the track's active-macro state exactly like the inline
 `(macro …)` form; bare names may also be mixed inside `(macro …)` (§10).
+
+### 9.1 Parametric snippets
+
+`(def (name param…) body…)` is a snippet that takes arguments. A reference is a
+call form `(name arg…)`; each `arg` (one atom or list node) is substituted for
+the matching `param` wherever it appears in the body, then the result is
+expanded like any snippet. Substitution is **token-level only** — there is no
+computation — and a `param` **shadows** any note/length token of the same name
+inside the body. A call whose argument count differs from the parameter count is
+`E_DEF_ARITY`.
+
+```lisp
+(def (beat n) (x 8 > n > n <))      ; one bar of n, octave-bounced ×8
+
+(score
+  (fm1 :oct 1
+    (beat c) (beat b-) (beat a) (beat f)))
+```
 
 ---
 
@@ -713,7 +734,7 @@ the phrase.
 | ------------------ | ----------------------------------------------------------- |
 | `(glide T)`        | Portamento into each following note from the previous note over `T` (length token) |
 | `(glide from T)`   | One-shot override: next glide starts from absolute pitch `from` (note + octave, e.g. `f5`) |
-| `(glide 0)`        | Disable                                                     |
+| `(glide none)`     | Disable                                                     |
 
 Glide emits a bounded `NOTE_PITCH` sweep before the `NOTE_ON`: a cent offset
 running from `(previous − new) × 100` cents to 0 over `T`, then stopping (it
@@ -725,7 +746,7 @@ override accepts a raw Hz literal or a pitch.
 
 ```lisp
 (score
-  (fm1 (glide 8) c e (glide f5 32) g (glide 0) c))
+  (fm1 (glide 8) c e (glide f5 32) g (glide none) c))
 ```
 
 ---
@@ -857,4 +878,27 @@ game-state-driven sounds: the note holds until the host sends `KEY_OFF` or
 (score
   (sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])
     c))
+```
+
+---
+
+## 18. Bar markers — `|`
+
+`|` is a bar marker: a purely editorial aid for lining up and checking phrase
+lengths. It emits nothing to the event stream and has no effect on playback or
+the driver. Each `|` in a channel body records the running tick and a 1-based
+ordinal, surfaced per track as `bars` in the IR (`{ordinal, tick, line,
+column}`). The editor uses this to show how many ticks a `| … |` region spans
+(the difference between consecutive markers) and which bar a marker is.
+
+There is **no meter or time-signature concept** — a song may change bar length
+freely; markers only measure the spans you write between them. Compare a
+region's tick count across tracks to catch length drift before it becomes an
+audible phase slip.
+
+```lisp
+(score
+  (fm1 :oct 4 :len 8
+    | c c c c c c c c
+    | c c c c c c c c |))   ; two 384-tick bars
 ```

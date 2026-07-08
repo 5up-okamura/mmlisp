@@ -417,13 +417,15 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
   Dropped: part G (rhythm), part K (ADPCM).
 - **Notes / lengths** on mucom's clock grid: `len` → `floor(C/len)` clocks →
   ticks (`× 384/C`); `%<clocks>` direct lengths; dots; `^`/`&`→tie.
+- **Bar lines** `|` → MMLisp `|` (carried through verbatim as editorial markers).
 - **Octave** (FM reads one higher → `:oct N-1`; SSG no shift), relative `<`/`>`.
 - **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`.
 - **Loops**: single-line `[…]n` → `(x n …)`; multi-line `[…]n` → `#labelK …
   (go labelK n)`; `/` break → `:break`; global `L` → `#loop`/`(go loop)`.
 - **Voices**: inline `@n` FM defs, `@"name"`, external `.dat` bank load + merge.
 - **Macros** `*n` → `(def *n …)`, tokenized at the song's C resolution.
-- **Modulation**: portamento `{c2b}` → `:glide-from`/`:glide`; hardware LFO `H` →
+- **Modulation**: portamento `{c2b}` → `(glide <from> <len>)` … `(glide none)`;
+  hardware LFO `H` →
   `:lfo-rate`/`:fms`/`:ams`; software LFO `M` → `(def lfoN :macro :pitch
   (triangle …))` + `(wait …)` delay; off `MF0` → `(def lfo-off :macro :pitch none)`.
 - **Tempo**: `T` (BPM direct); `t` (Timer-B) via the driver formula

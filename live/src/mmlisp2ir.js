@@ -2082,6 +2082,23 @@ function compileChannelBody(
         continue;
       }
 
+      // Bar marker: | — an inspection aid, not a musical event. Records the
+      // running tick and a 1-based ordinal so the editor can show a region's
+      // span (difference between consecutive bars) and which bar a `|` is. No
+      // meter/time-signature concept — songs may change meter freely. Emits
+      // nothing to the event stream, so the driver is unaffected.
+      if (val === "|") {
+        const bars = (trackState.bars ??= []);
+        bars.push({
+          ordinal: bars.length + 1,
+          tick: trackState.tick,
+          line: node.line,
+          column: node.column,
+        });
+        i++;
+        continue;
+      }
+
       // Inline keyword modifier: :oct N, :len N, :gate N, :vol N, :tl1 30, etc.
       if (val.startsWith(":")) {
         i++;
@@ -2972,7 +2989,8 @@ function compileChannelBody(
           const key = atomValue(items[j]);
           const val = atomValue(items[j + 1]);
           if (key === ":by" && spec?.type === "param") spec.by = parseFloat(val);
-          else if (key === ":time") time = parseLengthToken(val, null);
+          else if (key === ":time")
+            time = parseLengthToken(val, null, trackState.currentTempo);
         }
         if (spec && time !== null && time > 0) {
           trackState.delaySpec = spec;
@@ -2992,13 +3010,17 @@ function compileChannelBody(
       }
 
       // Glide: (glide <time>) portamento from the previous note;
-      // (glide <from-pitch> <time>) sets an explicit start pitch; (glide 0) off.
+      // (glide <from-pitch> <time>) sets an explicit start pitch; (glide none) off.
       if (head === "glide") {
         const items = node.items;
         const has2 = items.length >= 3;
         if (has2) trackState.glideFrom = atomValue(items[1]);
         const tv = atomValue(items[has2 ? 2 : 1]);
-        const t = tv === "0" ? 0 : parseLengthToken(tv, null);
+        // `none` disables glide (off-unification: none = clear a feature).
+        const t =
+          tv === "none"
+            ? 0
+            : parseLengthToken(tv, null, trackState.currentTempo);
         if (t !== null) trackState.glide = Math.max(0, t);
         i++;
         continue;
@@ -3228,6 +3250,7 @@ function sortObject(value) {
 
 function collectDefs(roots, diagnostics) {
   const defs = new Map();
+  const paramDefs = new Map(); // (def (name param…) body…) parametric snippets
   const typedDefs = new Map();
   const sampleDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
@@ -3311,6 +3334,31 @@ function collectDefs(roots, diagnostics) {
     }
 
     if (head === "def") {
+      // Parametric snippet def: (def (name param…) body…). Token substitution
+      // only — no computation; params shadow note/length tokens inside the body.
+      const nameNode = root.items[1];
+      if (nameNode?.kind === "list") {
+        const sig = nameNode.items.filter((n) => n.kind !== "comment");
+        const pname = atomValue(sig[0]);
+        if (!pname) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_DEF_NAME",
+            "parametric def name must be a symbol",
+            nodeSrc(root),
+            null,
+          );
+          continue;
+        }
+        const params = sig
+          .slice(1)
+          .map((n) => atomValue(n))
+          .filter(Boolean);
+        const body = root.items.slice(2).filter((n) => n.kind !== "comment");
+        paramDefs.set(pname, { params, body, src: nodeSrc(root) });
+        continue;
+      }
       const name = atomValue(root.items[1]);
       if (!name) {
         pushDiag(
@@ -3394,29 +3442,68 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, typedDefs, sampleDefs, vals, remaining };
+  return { defs, paramDefs, typedDefs, sampleDefs, vals, remaining };
 }
 
-function expandNode(node, defs, depth) {
+// Replace bare atoms matching a parameter name with the caller's argument node
+// (lexically, within a parametric def body). Args are single nodes (atom/list).
+function substituteParams(node, paramMap) {
+  if (node.kind === "atom")
+    return paramMap.has(node.value) ? { ...paramMap.get(node.value) } : { ...node };
+  if (node.kind === "list")
+    return {
+      ...node,
+      items: node.items.map((it) => substituteParams(it, paramMap)),
+    };
+  return { ...node };
+}
+
+function expandNode(node, defs, paramDefs, depth, diagnostics) {
   if (depth > 16)
     throw new Error("Macro expansion depth exceeded (possible recursion)");
   if (node.kind === "atom" && defs.has(node.value))
-    return defs.get(node.value).map((n) => ({ ...n }));
+    return defs
+      .get(node.value)
+      .flatMap((n) => expandNode(n, defs, paramDefs, depth + 1, diagnostics));
   if (node.kind !== "list") return [node];
 
   const head = atomValue(node.items[0]);
+  // Parametric snippet call: (name arg…) — substitute then re-expand the body.
+  if (head && paramDefs.has(head)) {
+    const def = paramDefs.get(head);
+    const args = node.items.slice(1).filter((n) => n.kind !== "comment");
+    if (args.length !== def.params.length) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_DEF_ARITY",
+        `(${head} …) expects ${def.params.length} argument(s), got ${args.length}`,
+        nodeSrc(node),
+        null,
+      );
+      return [];
+    }
+    const paramMap = new Map();
+    def.params.forEach((p, idx) => paramMap.set(p, args[idx]));
+    return def.body.flatMap((n) =>
+      expandNode(substituteParams(n, paramMap), defs, paramDefs, depth + 1, diagnostics),
+    );
+  }
   if (head && defs.has(head) && node.items.length === 1)
-    return defs.get(head).map((n) => ({ ...n }));
+    return defs
+      .get(head)
+      .flatMap((n) => expandNode(n, defs, paramDefs, depth + 1, diagnostics));
 
   const newItems = [];
   for (const item of node.items)
-    newItems.push(...expandNode(item, defs, depth + 1));
+    newItems.push(...expandNode(item, defs, paramDefs, depth + 1, diagnostics));
   return [{ ...node, items: newItems }];
 }
 
-function expandRoots(roots, defs) {
+function expandRoots(roots, defs, paramDefs, diagnostics) {
   const result = [];
-  for (const root of roots) result.push(...expandNode(root, defs, 0));
+  for (const root of roots)
+    result.push(...expandNode(root, defs, paramDefs, 0, diagnostics));
   return result;
 }
 
@@ -3429,7 +3516,7 @@ function expandRoots(roots, defs) {
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, typedDefs, sampleDefs, vals, remaining } = collectDefs(
+  const { defs, paramDefs, typedDefs, sampleDefs, vals, remaining } = collectDefs(
     parsed,
     diagnostics,
   );
@@ -3441,7 +3528,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       src: null,
     });
   }
-  const roots = expandRoots(remaining, defs);
+  const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
   const score = roots.find(
     (node) =>
@@ -3540,7 +3627,23 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     if (!node || node.kind !== "list" || node.items.length === 0) continue;
 
     const head = atomValue(node.items[0]);
-    if (!head || !CHANNEL_NAMES.includes(head)) continue;
+    if (!head || !CHANNEL_NAMES.includes(head)) {
+      // Inside (score …) only channel forms are valid. A `def`/`def-val` placed
+      // here, or an unknown head (usually a channel-name typo), is an error — a
+      // silently-vanished track is worse than a diagnostic.
+      const isDef = head === "def" || head === "def-val";
+      pushDiag(
+        diagnostics,
+        "error",
+        isDef ? "E_DEF_IN_SCORE" : "E_SCORE_UNKNOWN_FORM",
+        isDef
+          ? `(${head} …) must be top-level, not inside (score …)`
+          : `unknown form head '${head ?? ""}' inside (score …); expected a channel name`,
+        nodeSrc(node.items[0]),
+        null,
+      );
+      continue;
+    }
 
     const isPcmTrack = isPcmTrackName(head);
 
@@ -3622,12 +3725,15 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         if (v !== null) defaultVel = Math.max(0, Math.min(15, v));
       }
       if (inlineOpts[":shuffle"] !== undefined) {
-        const rawTrackShuffle = parseIntLike(inlineOpts[":shuffle"]);
-        if (rawTrackShuffle !== null) {
-          shuffleRatio =
-            rawTrackShuffle === 50
-              ? 0
-              : Math.max(51, Math.min(90, rawTrackShuffle));
+        // `none` = straight (off-unification: none = clear a feature).
+        if (inlineOpts[":shuffle"] === "none") {
+          shuffleRatio = 0;
+        } else {
+          const rawTrackShuffle = parseIntLike(inlineOpts[":shuffle"]);
+          if (rawTrackShuffle !== null) {
+            shuffleRatio =
+              rawTrackShuffle < 51 ? 0 : Math.min(90, rawTrackShuffle);
+          }
         }
       }
       if (inlineOpts[":shuffle-base"] !== undefined) {
@@ -3795,6 +3901,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       loopCounter,
       vals,
     );
+
+    // Surface bar markers (| … |) for the editor — inspection metadata only.
+    if (trackState.bars?.length) trackData.bars = trackState.bars;
 
     if (trackState.isCsmTrack && trackState.hasCsmOn) {
       trackData.events.push({
