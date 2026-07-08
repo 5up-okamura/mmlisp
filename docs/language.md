@@ -738,6 +738,14 @@ the phrase.
   `E_JUMP_UNRESOLVED`.
 - `:break` binds to the innermost counted loop; infinite loops do not support
   it.
+- **A loop replays baked notes; body state does not accumulate.** The body is
+  compiled **once**, so sticky state changed inside it (octave `>`/`<`, `:oct`,
+  `:vel`, `:len`, …) is baked into that single pass and does **not** carry from
+  one iteration to the next. `(x 4 c >)` plays `c c c c`, not an ascending run —
+  the `>` shifts the octave only for whatever follows the loop. When a body has a
+  non-zero net octave (or other sticky) change and is reused or followed by more
+  notes, rebalance it explicitly, e.g. `(x 4 n > n <)`, so the state returns to
+  where it started after each invocation.
 
 ```lisp
 (score
