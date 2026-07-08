@@ -13,7 +13,7 @@
 (score :tempo 132 :lfo-rate 2
   (fm1 stab :oct 4 :len 8 :vel 14
     #loop
-    c e g > c1 ~ 2 <
+    c e g > c1 ~ c2 <
     :vel 4
     (x 2 (x 2 (x 2 (x 2 e16))))
     :vel 15
@@ -28,7 +28,7 @@
     (go loop))
 
   (fm4 stab :oct 2 :len 2 :vel 12
-    c < b1 ~ 1 > c4 c4
+    c < b1 ~ b1 > c4 c4
     :lfo-rate 7
     d1)
 

@@ -12,7 +12,7 @@
   f4. e8 e1 < g a >
   f4. e8 e1.
   f4. e8 e1 d e
-  f1 g32 g+4 ~ 16. g4. f
+  f1 g32 g+4 ~ g+16. g4. f
 )
 
 (score :tempo 152

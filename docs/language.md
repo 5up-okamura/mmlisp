@@ -103,8 +103,7 @@ Details for FM3/CSM in §15, PCM in §16.
 | `c4`, `e8.`, `f+12t`, `b-6f`, `a1/2` | Per-note length suffix (any length token, §4); affects only that note |
 | `_`            | Rest at the current `:len`                                     |
 | `_4`, `_4.`, `_14t`, `_1/2` | Explicit-length rest                              |
-| `~`            | Tie: extend the previous note by the current `:len`            |
-| `~ 4`          | Tie with an explicit length token                              |
+| `X ~ Y`        | Connector: same pitch **ties** (extends), different pitch **slurs** (legato — §3.1) |
 | `>` / `<`      | Octave up / down (±1)                                          |
 | `o+N` / `o-N`  | Octave shift (no number = ±1)                                  |
 | `v+N` / `v-N`  | Velocity shift (no number = ±1)                                |
@@ -114,6 +113,24 @@ MIDI 60). Enharmonic accidentals are equivalent (`c+` = `d-`).
 
 Note names shadow definitions: a `def` named `a`–`g` (or anything that parses
 as a note/length token) cannot be referenced in a channel body.
+
+### Tie and slur — `X ~ Y`
+
+`~` is a binary connector between two notes. It attaches to the **next real
+note**, skipping state tokens (`c ~ > d` slurs to the octave-up `d`). The right
+note keeps its own length, so `~` takes none.
+
+- **Same pitch → tie.** `c ~ c` (or `g8 ~ g8`) extends the first note by the
+  second's length — one attack, held longer. Equivalent to a longer length token.
+- **Different pitch → slur (legato).** `c ~ e` moves the frequency to `e`
+  **without re-keying** — the FM envelope (or the PSG tone) carries over from
+  `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
+
+For the slur to sustain across the connection the left note needs a **full gate**
+(the default); a `:gate`-cut (staccato) note keys off first, so the slur starts
+from a decaying tone. Slur/legato is an **FM/PSG** feature (the macro/keying
+model of channels 0–9); on other channels a different-pitch `~` is treated as a
+normal note. Encoded as `NOTE_ON_EX` bit3 (opcodes.md §5.1).
 
 ### Tuplets — `(t …)`
 
@@ -501,13 +518,16 @@ the current value until key-off; `(wait N)` waits a length token. `(const V
 
 ### `:step` — sampling clock
 
-`:step token` is an element inside `(macro …)`; it sets the sampling interval
-for the targets that **follow** it (until the next `:step`). Default: `1f`
-(one 60 Hz frame).
+`:step token` sets a macro's sampling interval. It is **position-free**: one
+`:step` applies to **every** target in the `(macro …)`, wherever it sits, so
+`(macro :vel […] :step 4 :tl1 …)` and `(macro :step 4 :vel […] :tl1 …)` are
+identical. A macro takes at most one `:step`; a second is `E_MACRO_STEP_DUP`.
+For two different clocks in one note, write two `(macro …)` forms — they
+compose. Default: `1f` (one 60 Hz frame).
 
 - A step vector advances one step per `:step`; a curve is sampled-and-held
   every `:step` (coarse step = stepped LFO; default keeps curves smooth).
-- Targets sharing one `:step` stay phase-locked.
+- All targets in a macro share its one `:step` and stay phase-locked.
 - `:step` governs both the sustain loop and the `:off` release section.
 - Each macro (and each def preset) carries its own step.
 

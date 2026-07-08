@@ -559,7 +559,10 @@ export class DrvPlayer {
   }
 
   // ── NOTE_ON execution ────────────────────────────────────────────────────
-  _noteOn(trk, note, dur, exGate) {
+  // `legato` (NOTE_ON_EX bit3, a slur to a different pitch): update the frequency
+  // and recompose levels/macros but do NOT re-key — the FM envelope (or the PSG
+  // tone) carries over from the previous note.
+  _noteOn(trk, note, dur, exGate, legato = false) {
     const ch = trk.channelId;
     const fm3op = this._fm3OpFor(ch);
     if (!fm3op && trk.unsupported) return; // pcm-softmix: timeline only (M3)
@@ -585,14 +588,16 @@ export class DrvPlayer {
         this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
       }
       this._writeFmPitch(ch, note, regs.pitchCents);
-      this._keyOn(ch);
+      if (!legato) this._keyOn(ch);
     } else if (ch < 10) {
       const psgCh = ch - 6;
       const st = this._psg[psgCh];
       st.currentNote = note;
       if (psgCh === 3) this._writeNoiseCfg();
       else this._writePsgPitch(psgCh, note, st.pitchCents);
-      this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
+      // Legato: keep the tone sounding (att = the PSG "key"); just the frequency
+      // moved. A non-sounding channel still needs its attenuation to start.
+      if (!legato || !st.sounding) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
     }
 
     // Re-trigger the channel's active macros (driver.md §13.1). The first step
@@ -662,7 +667,7 @@ export class DrvPlayer {
           }
           trk.pendingOff = false; // slur
           if (exVel != null) this._setLevel(trk.channelId, "vel", exVel);
-          this._noteOn(trk, note, dur.ticks, exGate);
+          this._noteOn(trk, note, dur.ticks, exGate, (flags & 0b1000) !== 0);
           trk.pc = pc;
           if (dur.ticks === 0 || exGate === 0) return; // held
           trk.wait = dur.ticks;

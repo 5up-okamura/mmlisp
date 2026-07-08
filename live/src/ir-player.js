@@ -1555,7 +1555,9 @@ export class IRPlayer {
             this._scheduleFm3OpKey(keyMask & 0xf0, when, offWhen);
           } else {
             const keyOnByte = keyMask | chKey;
-            this._write(0, 0x28, keyOnByte, when);
+            // Legato slur (NOTE_ON_EX bit3): the frequency already moved above;
+            // do not re-key so the envelope carries over from the previous note.
+            if (!ev.args?.legato) this._write(0, 0x28, keyOnByte, when);
             // :keyon retrigger gate (drum roll / echo tail). FM3-op notes share
             // the 0x28 register so retrigger there is deferred. When active, the
             // keyon macro owns the channel's keying: its end time becomes the

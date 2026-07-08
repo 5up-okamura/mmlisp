@@ -74,7 +74,7 @@ This affects only that note.
 ## 4. Length Syntax
 
 These formats are accepted wherever a length value appears — `:len`, note/rest
-suffix, `:gate` / `:gate-`, curve `:len`, macro `:step`, `~ N`, `(wait N)`,
+suffix, `:gate` / `:gate-`, curve `:len`, macro `:step`, `(wait N)`,
 `(glide T)`, `(delay … :time T)`, `:shuffle-base`:
 
 | Form  | Meaning                                                          |
@@ -413,9 +413,10 @@ keys off after the last retrigger.
 ### `:step` — sampling clock
 
 `:step token` lives inside the `(macro ...)` form and sets the **sampling
-interval** for the targets that **follow** it (until the next `:step`). Default
-`1f` (one 60 Hz frame). Each macro/target carries its own step, so different
-targets can run at different rates.
+interval**. It is **position-free**: one `:step` applies to every target in that
+macro, wherever you write it. Default `1f` (one 60 Hz frame). A macro takes at
+most one `:step` (a second is `E_MACRO_STEP_DUP`); for two different rates, use
+two `(macro …)` forms — they compose.
 
 It applies to every macro form: a **step vector** advances one step per `:step`;
 a **curve** is sampled-and-held every `:step` (so a coarse step turns a smooth
@@ -425,7 +426,9 @@ just a curve sampled at `:step`, so `:keyon (square …) :step 16` gates
 retriggers on the 1/16 grid.
 
 ```lisp
-(fm1 (macro :step 1/16 :semi [:hold 0 4 7]  :step 1/8 :keyon [0 :off 1 1 1])  c)
+(fm1 (macro :step 1/16 :semi [:hold 0 4 7])   ; arp on the 1/16 grid
+     (macro :step 1/8  :keyon [0 :off 1 1 1])  ; echo tail on the 1/8 grid
+     c)
 ```
 
 ### Echo-tail preset (1-channel delay on one note)
