@@ -1,39 +1,40 @@
 ; MMLisp demo 1
 
 (def bd (macro :vel [15 12 9 6 3 0]))
-
 (def sd (macro :vel [15 14 13 12 11 9 7 5 3 1 0]))
-
 (def hh (macro :vel [11 0]))
-
 (def down (macro :pitch (linear :from 0 :to -2400 :len 16)))
-
 (def melo
   f4. e8 e1 < g a >
   f4. e8 e1.
   f4. e8 e1 d e
   f1 g32 g+4 ~ g+16. g4. f
 )
+(def (bass n) (x 4 n > n <))
 
 (score :tempo 152
 
   (fm1 :oct 1
     #head
-    (x 8 > c > c <)
-    (x 8 b- > b- <)
-    (x 8 a > a <)
-    (x 5 f > f <)
-    < g > g < a > a < b- > b-
+    > (bass c) (bass c) <
+    (bass b-) (bass b-)
+    (bass a) (bass a)
+    (bass f)
+    f > f < g > g < a > a < b- > b-
     (go head)
   )
 
   (fm2 :oct 5 :len 4
-    #head melo (go head)
+    #head
+    melo
+    (go head)
   )
 
   (fm3 :oct 5 :len 4 :vel 12 :pitch 10
     _8.
-    #head melo (go head)
+    #head
+    melo
+    (go head)
   )
 
   (sqr1 :oct 4 :len 8 :vel 13

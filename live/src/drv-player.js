@@ -155,6 +155,10 @@ export class DrvPlayer {
     this._startAudioTime = 0;
     this._diagnostics = [];
     this._skippedOpcodes = new Map(); // opcode → count (reserved, not executed)
+    // Live mixer state — usable before playback starts (the app may mute/solo
+    // any time). Preserved across a hot-swap _reset.
+    this._mutedTracks = new Set();
+    this._soloTracks = new Set();
   }
 
   // ── Container loading ────────────────────────────────────────────────────
@@ -332,7 +336,12 @@ export class DrvPlayer {
     }));
     this._pcmDacOn = false;
 
-    this._trk = (song?.tracks ?? []).map((t) => ({
+    // Live mixer mute/solo (track index = position in the MMB/IR track list).
+    // Preserved across a hot-swap _reset so the mixer keeps its state.
+    if (!this._mutedTracks) this._mutedTracks = new Set();
+    if (!this._soloTracks) this._soloTracks = new Set();
+    this._trk = (song?.tracks ?? []).map((t, i) => ({
+      index: i,
       trackId: t.trackId,
       channelId: t.channelId,
       flags: t.flags,
@@ -570,6 +579,10 @@ export class DrvPlayer {
     const ch = trk.channelId;
     const fm3op = this._fm3OpFor(ch);
     if (!fm3op && trk.unsupported) return; // pcm-softmix: timeline only (M3)
+    // Live mixer: a muted / non-soloed track advances but does not sound — skip
+    // the key and its macros (which gate on the keyed state). Always true during
+    // the trace gate (nothing muted), so it doesn't affect verification.
+    const audible = this._isTrackAudible(trk.index);
     // A new note cancels loop sweeps on this channel (opcodes.md §6: loop
     // sweeps "run until PARAM_SWEEP_STOP / next note"). One-shot sweeps
     // (fades, glide) survive.
@@ -577,7 +590,7 @@ export class DrvPlayer {
     if (fm3op) {
       // FM3 independent-OP: the F-number was set by the preceding FM3_OP_PITCH;
       // this just keys the operator. Level/voice comes from the shared patch.
-      this._fm3KeyOp(fm3op, true);
+      if (audible) this._fm3KeyOp(fm3op, true);
     } else if (ch < 6) {
       const regs = this._fm[ch];
       regs.currentNote = note;
@@ -592,22 +605,25 @@ export class DrvPlayer {
         this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
       }
       this._writeFmPitch(ch, note, regs.pitchCents);
-      if (!legato) this._keyOn(ch);
+      if (!legato && audible) this._keyOn(ch);
     } else if (ch < 10) {
       const psgCh = ch - 6;
       const st = this._psg[psgCh];
       st.currentNote = note;
-      if (!legato) st.keyed = true; // the note is active (audible or not)
+      if (!legato && audible) st.keyed = true; // the note is active
       if (psgCh === 3) this._writeNoiseCfg();
       else this._writePsgPitch(psgCh, note, st.pitchCents);
       // Legato: keep the tone sounding (att = the PSG "key"); just the frequency
       // moved. A non-sounding channel still needs its attenuation to start.
-      if (!legato || !st.sounding) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
+      if (audible && (!legato || !st.sounding))
+        this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
     }
 
     // Re-trigger the channel's active macros (driver.md §13.1). The first step
-    // fires this frame in step 3, overriding the note-on's base level.
-    if (!fm3op && ch < 10) this._macroTrigger(ch);
+    // fires this frame in step 3, overriding the note-on's base level. A muted
+    // track skips it (its channel is keyed-off, so a retrigger would sound a
+    // release tail); gate scheduling below still runs so the track keeps time.
+    if (!fm3op && ch < 10 && audible) this._macroTrigger(ch);
 
     // Gate scheduling (opcodes.md §3.1). exGate: absolute ticks (NOTE_ON_EX);
     // 0 = hold until the host keys off.
@@ -1674,5 +1690,38 @@ export class DrvPlayer {
   /** UI op-enable checkboxes; applied at the next key-on. */
   setOpMask(ch, mask) {
     if (this._opMasks && ch >= 0 && ch < 6) this._opMasks[ch] = mask & 0xf0;
+  }
+
+  // ── Live mixer: mute / solo (same interface as IRPlayer) ─────────────────
+  // ti = track index (position in the MMB/IR track list). A muted (or, while any
+  // track is soloed, a non-soloed) track produces no sound: its notes don't key,
+  // so its macros don't run either (they gate on the keyed state, §13.3).
+  muteTrack(ti, muted) {
+    if (muted) this._mutedTracks.add(ti);
+    else this._mutedTracks.delete(ti);
+    this._applyAudibility();
+  }
+  soloTrack(ti, on) {
+    if (on) this._soloTracks.add(ti);
+    else this._soloTracks.delete(ti);
+    this._applyAudibility();
+  }
+  clearChannelStates() {
+    this._mutedTracks.clear();
+    this._soloTracks.clear();
+    this._applyAudibility();
+  }
+  _isTrackAudible(ti) {
+    if (this._soloTracks.size > 0) return this._soloTracks.has(ti);
+    return !this._mutedTracks.has(ti);
+  }
+  // Silence channels that just became inaudible; audible ones resume at their
+  // next note. (Live-only; never runs during the trace gate / A-B.)
+  _applyAudibility() {
+    if (!this._trk) return;
+    for (const trk of this._trk) {
+      if (trk.channelId < 10 && !this._isTrackAudible(trk.index))
+        this._channelOff(trk.channelId);
+    }
   }
 }
