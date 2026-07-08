@@ -405,6 +405,41 @@ Other:
 
 ---
 
+## v0.6 — score removal, compile-time eval, import (next)
+
+Design review (2026-07): the S-expression foundation only pays off if the
+compiler can **evaluate**. The channel body is an implicit **quasiquote** (bare
+atoms = literal note data; parenthesized forms = the compute boundary — the
+atom/list split already encodes it), so adding **compile-time eval** is a natural
+extension that also justifies the Lisp base. Constraints: eval is compile-time
+only and bakes to **static data** (Z80 driver unchanged); `$slot`/`def-val`
+remains the sole runtime-varying path.
+
+- **Phase 1 — remove `(score …)`.** 1 file = 1 score; the file *is* the score.
+  `title`/`author` → reserved defs; `:tempo`/`:lfo-rate` stay on tracks (global,
+  written on a track); `:shuffle`/`:shuffle-base` are per-track (the score-wide
+  default is dropped). Ordering by source order. Non-breaking to IR (gate 0-diff).
+- **Phase 2 — `import` (+ preset).** Compile-time merge of defs (voices, macros,
+  snippets, samples) from another file/preset, folded into IR (no runtime
+  dependency). This is the first increment of the fuller `import` / patch system
+  under **Future Vision** (`:from :stdlib`/`:patches`/URL, version pinning) —
+  same `(import …)` surface, built out later.
+- **Phase 3 — compile-time eval (centerpiece; own design pass).** Evaluable form
+  heads (`let`/`if`/`for`/`+ - * /`/generators) run at compile time and splice
+  into the note stream / directive values. Dissolves the ad-hoc operators
+  (`:pitch+`, `:vel±`, echo `:by`) into one arithmetic rule; curves become
+  in-language library functions that bake to identical LUTs. Open questions:
+  escape syntax, value/signal/stream types, `let`/functions, determinism, the
+  compile-vs-runtime (`$slot`) boundary.
+- **Phase 4 — enabled by eval.** Algorithmic composition, parametric phrases as
+  real functions, signal composition (`(+ (sin) (saw))`, `(* env lfo)`),
+  curves-as-a-standard-library.
+
+Detailed design is worked out incrementally and migrates into the canonical docs
+(language.md / ir.md) as each phase lands — no per-version spec file.
+
+---
+
 ## mucom88 Importer
 
 Converts a mucom88 `.muc` song (PC-8801 / YM2608 OPNA) to MMLisp source.
@@ -523,6 +558,11 @@ Parked (out of current scope, post-core features):
 ## Future Vision (post-MVP ideas)
 
 ### MMLisp `import` system
+
+The **core** `import` (compile-time merge of defs/presets from a file, folded
+into IR) is scheduled for **v0.6** (see the v0.6 section above). This is the
+fuller ecosystem built on that surface — remote sources, a stdlib, and version
+pinning.
 
 ```lisp
 (import "reverb"    :from :stdlib)
