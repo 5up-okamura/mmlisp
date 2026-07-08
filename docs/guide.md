@@ -106,8 +106,8 @@ leading `|` needed). The Nth `|` closes bar N. There is no fixed meter, so bars
 may be any length; comparing a bar's tick count across tracks is the quick way to
 catch drift.
 
-In the live app, long-press (or tap) a `|` to pop up its bar number and tick
-count; the popup stays open and follows the marker as you edit above it (see §22).
+In the live app, tap a `|` to pop up its bar number and tick count; the popup
+stays open and follows the marker as you edit above it (see §22).
 
 ```lisp
 (fm1 :oct 4 :len 8
@@ -806,5 +806,5 @@ and a hint shows its range. Three ways to change it:
   `Alt` for a coarse step.
 
 While the score is playing, an edit hot-swaps at the next bar so you hear it
-immediately; stopped, changes apply on the next **Build**. Long-press a bar
-marker `|` for its bar number and tick count (§4).
+immediately; stopped, changes apply on the next **Build**. Tap a bar marker `|`
+for its bar number and tick count (§4).

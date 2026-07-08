@@ -1764,9 +1764,12 @@
         return list === v.list && stale === v.stale ? v : { list, stale };
       },
     });
+    // A bar `|` is a single character, so allow a small slop (its own width
+    // plus a char of surrounding whitespace) to make the marker easy to hit.
+    const BAR_HIT_SLOP = 1;
     function barAtOffset(state, offset) {
       const { list, stale } = state.field(barField, false) ?? { list: [], stale: false };
-      const b = list.find((x) => offset >= x.from && offset <= x.to);
+      const b = list.find((x) => offset >= x.from - BAR_HIT_SLOP && offset <= x.to + BAR_HIT_SLOP);
       return b ? { ...b, stale } : null;
     }
     // Re-anchor bar markers to the just-compiled document. Called from compileNow.
@@ -1956,8 +1959,9 @@
     }
 
     // --- Pointer interactions: long-press → popup, Alt+drag → scrub ---
-    let _drag = null;       // { field, orig, curFrom, curLen, startX }
-    let _press = null;      // { offset, x, y, timer }
+    let _drag = null;       // { field, orig, curFrom, curLen, startY }
+    let _press = null;      // { offset, x, y, timer } — value-token long-press
+    let _tap = null;        // { offset, x, y } — bar-marker tap (opens on pointerup)
     const LONG_PRESS_MS = 450, MOVE_CANCEL = 8, DRAG_PX_PER_STEP = 6;
     function cancelPress() {
       if (_press) { clearTimeout(_press.timer); _press = null; }
@@ -1978,7 +1982,7 @@
             : `${f.label} ${fmtNum(f.value, f.isFloat)}${f.min != null ? ` · ${f.min}–${f.max}` : ''} · long-press / Alt-drag`;
         } else {
           const bar = barAtOffset(view.state, pos);
-          if (bar) { range = [bar.from, bar.to]; hint = `Bar ${bar.ordinal} · ${bar.barLen} ticks · long-press`; }
+          if (bar) { range = [bar.from, bar.to]; hint = `Bar ${bar.ordinal} · ${bar.barLen} ticks · tap`; }
         }
       }
       // Only re-dispatch when the hovered token actually changed; mousemove
@@ -2023,19 +2027,22 @@
             }
           }
         }
-        // Otherwise arm a long-press → popup (works for a token or a bar |).
-        const hasTarget = classifyToken(view.state, pos) || barAtOffset(view.state, pos);
-        if (hasTarget) {
-          cancelPress();
+        // A value token arms a long-press → popup (a plain tap still edits text).
+        // A bar marker | has nothing to edit, so it opens its info popup on a
+        // plain tap/click (resolved on pointerup so a drag/scroll is exempt).
+        cancelPress();
+        _tap = null;
+        if (classifyToken(view.state, pos)) {
           _press = {
             offset: pos, x: e.clientX, y: e.clientY,
             timer: setTimeout(() => {
               const info = classifyToken(view.state, _press.offset);
               if (info) openTokenPopup(info.tokenRange[0]);
-              else { const bar = barAtOffset(view.state, _press.offset); if (bar) openBarPopup(bar); }
               _press = null;
             }, LONG_PRESS_MS),
           };
+        } else if (barAtOffset(view.state, pos)) {
+          _tap = { offset: pos, x: e.clientX, y: e.clientY };
         }
         return false;
       },
@@ -2051,13 +2058,20 @@
           return true;
         }
         if (_press && (Math.abs(e.clientX - _press.x) > MOVE_CANCEL || Math.abs(e.clientY - _press.y) > MOVE_CANCEL)) cancelPress();
+        if (_tap && (Math.abs(e.clientX - _tap.x) > MOVE_CANCEL || Math.abs(e.clientY - _tap.y) > MOVE_CANCEL)) _tap = null;
         updateHoverAt(view, e);
         return false;
       },
-      pointerup() { endDrag(); cancelPress(); return false; },
-      pointercancel() { endDrag(); cancelPress(); return false; },
+      pointerup(e, view) {
+        endDrag();
+        cancelPress();
+        if (_tap) { const bar = barAtOffset(view.state, _tap.offset); if (bar) openBarPopup(bar); _tap = null; }
+        return false;
+      },
+      pointercancel() { endDrag(); cancelPress(); _tap = null; return false; },
       pointerleave(e, view) {
         cancelPress();
+        _tap = null;
         _hoverKey = '';
         view.dispatch({ effects: setHover.of(null) });
         showHint(null, e);
