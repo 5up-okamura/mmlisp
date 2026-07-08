@@ -563,6 +563,17 @@ function emitNoteForTrack(
         args: { length: lengthTicks },
         src,
       });
+      // Re-resolve the tied group head's gate against the full tied length. A
+      // relative gate (`:gate-` / `:gate*`) means "cut/fraction of the whole
+      // tied note", not of just the first segment, so the key-off must land near
+      // the tied end — otherwise the head keys off mid-tie and the tie breaks.
+      const head = trackState.tiedHead;
+      if (head) {
+        head.total += lengthTicks;
+        const g = resolveGateTicks(head.gateSpec, head.total);
+        if (g < head.total) head.ev.args.gate = g;
+        else delete head.ev.args.gate;
+      }
       trackState.tick += lengthTicks;
       updateLastNotePitch(trackState, cmpPitch);
       return;
@@ -716,6 +727,13 @@ function emitNoteForTrack(
   if (legato && !trackState.isFm3OpTrack) noteEv.args.legato = true;
   stampDelay(noteEv, trackState);
   events.push(noteEv);
+  // Head of a (possibly) tied group: a following TIE re-resolves a relative gate
+  // against the full tied length. Captured with the gate spec active *here*.
+  trackState.tiedHead = {
+    ev: noteEv,
+    gateSpec: trackState.defaultGate,
+    total: lengthTicks,
+  };
   trackState.tick += lengthTicks;
   updateLastNotePitch(trackState, fullPitch);
   // Feed the (echo …) history from the standard pitch path (FM3-op/PCM excluded).
@@ -2624,6 +2642,7 @@ function compileChannelBody(
           src: nodeSrc(node),
         });
         trackState.tick += ticks;
+        trackState.tiedHead = null; // a rest ends the tied group
         i++;
         continue;
       }

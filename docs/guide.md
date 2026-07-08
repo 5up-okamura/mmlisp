@@ -29,14 +29,14 @@ Default state:
 
 ## 2. Channel Reference
 
-| Name           | Hardware                                             |
-| -------------- | ---------------------------------------------------- |
-| `fm1`-`fm6`    | YM2612 FM channels (`fm6` also plays PCM via `:mode`)|
-| `fm3-1`-`fm3-4`| FM3 independent-operator mode (one track per OP)     |
-| `fm3-csm`, `fm3-csm-rate` | FM3 CSM mode (§17)                        |
-| `sqr1`-`sqr3`  | SN76489 square tone channels                         |
-| `noise`        | SN76489 noise channel                                |
-| `pcm1`-`pcm3`  | Software-mixed PCM channels (§19)                    |
+| Name                      | Hardware                                              |
+| ------------------------- | ----------------------------------------------------- |
+| `fm1`-`fm6`               | YM2612 FM channels (`fm6` also plays PCM via `:mode`) |
+| `fm3-1`-`fm3-4`           | FM3 independent-operator mode (one track per OP)      |
+| `fm3-csm`, `fm3-csm-rate` | FM3 CSM mode (§17)                                    |
+| `sqr1`-`sqr3`             | SN76489 square tone channels                          |
+| `noise`                   | SN76489 noise channel                                 |
+| `pcm1`-`pcm3`             | Software-mixed PCM channels (§19)                     |
 
 See `docs/language.md` §2 for mode-exclusivity rules.
 
@@ -99,15 +99,17 @@ The tick grid is PPQN 96 (quarter = 96 ticks, whole = 384). See
 
 ### Bar markers — `|`
 
-Drop `|` between notes to mark bar lines. They are editorial only — no effect on
-playback — and let the editor show how many ticks a `| … |` region spans and
-which bar each marker is. There is no fixed meter, so bars may be any length;
-comparing a region's span across tracks is the quick way to catch drift.
+Put `|` at the **end of each bar**. It is editorial only — no effect on playback
+— and lets the editor show a bar's tick count: each bar runs from the previous
+`|` up to this one, and the first bar counts implicitly from the track start (no
+leading `|` needed). The Nth `|` closes bar N. There is no fixed meter, so bars
+may be any length; comparing a bar's tick count across tracks is the quick way to
+catch drift.
 
 ```lisp
 (fm1 :oct 4 :len 8
-  | c c c c c c c c
-  | c c c c c c c c |)
+  c c c c c c c c |
+  c c c c c c c c |)
 ```
 
 ---
@@ -175,6 +177,23 @@ distribution.
 
 - `(x N ...)` repeats body `N` times.
 - `:break` skips the tail on the last pass.
+
+**`(x N …)` is a loop, not an unroll.** The body is compiled **once** and
+replayed `N` times, so sticky state changed inside the body (octave `>`/`<`,
+`:oct`, `:vel`, `:len`, …) does **not** accumulate across iterations — each pass
+replays the same baked notes. A net octave shift inside the body therefore does
+not climb:
+
+```lisp
+(x 4 c >)        ; plays c c c c — NOT c, c↑, c↑↑, c↑↑↑
+c > c > c > c    ; this climbs (spell it out, or (go … N) which is the same loop)
+```
+
+A trailing shift only moves the state for what comes **after** the loop:
+`(x 4 n > n <)` plays `n n↑` four times (the `<` is a no-op inside the loop),
+but the `<` keeps the octave from drifting up by one each time you re-invoke the
+snippet or continue with more notes. So use `<`/`o-` to rebalance a body whose
+net octave change is non-zero when it is reused or followed by more notes.
 
 ### Labels and `go`
 

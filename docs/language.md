@@ -231,6 +231,11 @@ head position, and equally as body directives.)
 | `:break`   | (no value)                | Early exit of the enclosing counted loop (§13)           |
 | hardware params | value / curve / `none` / `$slot` | `:alg :fb :ams :fms :lfo-rate :tl1`–`:tl4` `:ar :dr :sr :rr :sl :ml :dt :ks :ssg :am`(1–4) — §5.1 |
 
+The relative gates (`:gate*` / `:gate-`) resolve against the **whole tied note**,
+not just its first segment: for `c4 ~ c8` with `:gate- 1f` the key-off lands one
+frame before the tied end, so the tie stays connected. Absolute `:gate N` is
+unaffected by ties.
+
 `:tempo N` reanchors the timeline instantly; `:tempo (linear :from A :to B
 :len L)` emits `TEMPO_SWEEP` over `L` (any non-`const` curve name works —
 there is no curve literally named `curve`). Tempo changes apply to all tracks.
@@ -905,20 +910,21 @@ game-state-driven sounds: the note holds until the host sends `KEY_OFF` or
 ## 18. Bar markers — `|`
 
 `|` is a bar marker: a purely editorial aid for lining up and checking phrase
-lengths. It emits nothing to the event stream and has no effect on playback or
-the driver. Each `|` in a channel body records the running tick and a 1-based
-ordinal, surfaced per track as `bars` in the IR (`{ordinal, tick, line,
-column}`). The editor uses this to show how many ticks a `| … |` region spans
-(the difference between consecutive markers) and which bar a marker is.
+lengths. Put it at the **end of each bar**. It emits nothing to the event stream
+and has no effect on playback or the driver. Each `|` in a channel body records
+the running tick and a 1-based ordinal, surfaced per track as `bars` in the IR
+(`{ordinal, tick, line, column}`). Bar N runs from the previous `|` up to the
+Nth `|`; the first bar counts implicitly from the track start (no leading `|`),
+so the Nth `|` closes bar N and its tick count is the difference from the prior
+marker (or 0).
 
 There is **no meter or time-signature concept** — a song may change bar length
-freely; markers only measure the spans you write between them. Compare a
-region's tick count across tracks to catch length drift before it becomes an
-audible phase slip.
+freely; markers only measure the bars you write. Compare a bar's tick count
+across tracks to catch length drift before it becomes an audible phase slip.
 
 ```lisp
 (score
   (fm1 :oct 4 :len 8
-    | c c c c c c c c
-    | c c c c c c c c |))   ; two 384-tick bars
+    c c c c c c c c |
+    c c c c c c c c |))   ; two 384-tick bars
 ```
