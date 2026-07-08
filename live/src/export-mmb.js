@@ -266,20 +266,30 @@ export function encodeMmb(ir, opts = {}) {
       // Tick/Nf `:len` is resolved to a frame count upstream (mmlisp2ir
       // resolveMacroLen); a curve reaching here without one has no `:len`.
       if (!spec.lenFrames) return skip("requires a :len");
+      // `:wait N` (docs §11) is a pre-delay: hold the base value for waitFrames
+      // (as `null` hold-sentinel steps) before the curve, so it lowers to the
+      // same value blob shape the player/driver already skip. `:wait key-off` on
+      // a single curve has no MMB form (release is a stages concept).
+      if (spec.waitKeyOff)
+        return skip("(:wait key-off) on a single curve is not lowered; use stages");
+      const waitSteps = Math.min(254, Math.max(0, Math.round(Number(spec.waitFrames ?? 0) / step)));
+      const hold = Array.from({ length: waitSteps }, () => null);
+      const room = 255 - waitSteps;
       const baseFrames = Math.max(1, Math.round(Number(spec.frames ?? 1)));
       // A curve is pre-sampled every `step` frames (driver.md §13). A loop curve
       // fills the sustain region (one period, cycled); a one-shot fills the
-      // attack region and holds its last value.
+      // attack region and holds its last value. A wait prefix shifts loopStart
+      // past the hold steps so the loop replays only the curve.
       if (spec.loop) {
-        const period = Math.max(1, Math.min(255, Math.round(baseFrames / step)));
+        const period = Math.max(1, Math.min(room, Math.round(baseFrames / step)));
         const values = sampleCurveValues(spec, target, period, (i) => (i * step) / baseFrames);
-        return { step, loopStart: 0, release: 0xff, values };
+        return { step, loopStart: waitSteps, release: 0xff, values: [...hold, ...values] };
       }
-      const n = Math.max(1, Math.min(255, Math.ceil(baseFrames / step)));
+      const n = Math.max(1, Math.min(room, Math.ceil(baseFrames / step)));
       const values = sampleCurveValues(spec, target, n, (i) =>
         baseFrames <= 1 ? 1 : Math.min(1, (i * step) / (baseFrames - 1)),
       );
-      return { step, loopStart: 0xff, release: 0xff, values };
+      return { step, loopStart: 0xff, release: 0xff, values: [...hold, ...values] };
     }
 
     if (spec.type === "stages") return lowerStages(spec, target, trackLabel, step, skip);

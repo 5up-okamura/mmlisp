@@ -270,6 +270,11 @@ function resolveMacroLen(spec, bpm) {
       out.frames = ticksToFrames(out.frames, bpm);
       out.lenFrames = true;
     }
+    // `:wait N` is a pre-delay before the curve starts (docs §11); resolve it to
+    // frames so the MMB exporter can lower it to hold steps (mirrors stages).
+    if (out.waitTicks != null && out.waitFrames == null) {
+      out.waitFrames = ticksToFrames(out.waitTicks, bpm);
+    }
   } else if (out.type === "stages") {
     out.stages = (out.stages ?? []).map((st) => {
       const s = { ...st };
