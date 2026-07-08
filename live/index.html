@@ -1673,12 +1673,24 @@
       return null;
     }
 
+    // Parse cache: hover reclassifies on pointer moves, but the document only
+    // changes on edits. CM's doc is immutable, so key the parse on the doc
+    // object and reuse it (null = last parse failed) until the next edit.
+    let _astCacheDoc = null, _astCacheRoots = null;
+    function parseCached(doc) {
+      if (doc === _astCacheDoc) return _astCacheRoots;
+      _astCacheDoc = doc;
+      try { _astCacheRoots = parse(doc.toString()); }
+      catch (_) { _astCacheRoots = null; }
+      return _astCacheRoots;
+    }
+
     // Map a document offset to the editable token at that position.
     // Returns { tokenRange:[from,to], fields:[Field,...], keyword } or null.
     function classifyToken(state, offset) {
       const doc = state.doc;
-      let roots;
-      try { roots = parse(doc.toString()); } catch (_) { return null; }
+      const roots = parseCached(doc);
+      if (!roots) return null;
       const hit = findAtomAt(roots, doc, offset, null);
       if (!hit) return null;
       const fields = fieldsForAtom(String(hit.node.value), hit.from, hit.to, hit.keyword);
@@ -1968,29 +1980,39 @@
     }
     function endDrag() { _drag = null; }
     let _hoverKey = '';
+    // Cache the classification by pointer offset. mousemove fires per pixel but
+    // the character under it rarely changes; on the same offset we reuse the
+    // last result and skip classifyToken entirely (only the hint + Alt cursor,
+    // which are cheap, still update to track the pointer / modifier).
+    let _lastHover = { pos: -2, range: null, hint: null, canScrub: false };
     function updateHoverAt(view, e) {
       const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
-      let range = null, hint = null, canScrub = false;
-      if (pos != null) {
-        const info = classifyToken(view.state, pos);
-        if (info) {
-          range = info.tokenRange;
-          const f = fieldAtOffset(info, pos);
-          canScrub = true;
-          hint = f.kind === 'pitch'
-            ? `note ${f.value.note} · long-press / Alt-drag`
-            : `${f.label} ${fmtNum(f.value, f.isFloat)}${f.min != null ? ` · ${f.min}–${f.max}` : ''} · long-press / Alt-drag`;
-        } else {
-          const bar = barAtOffset(view.state, pos);
-          if (bar) { range = [bar.from, bar.to]; hint = `Bar ${bar.ordinal} · ${bar.barLen} ticks · tap`; }
+      let range, hint, canScrub;
+      if (pos === _lastHover.pos) {
+        ({ range, hint, canScrub } = _lastHover);
+      } else {
+        range = null; hint = null; canScrub = false;
+        if (pos != null) {
+          const info = classifyToken(view.state, pos);
+          if (info) {
+            range = info.tokenRange;
+            const f = fieldAtOffset(info, pos);
+            canScrub = true;
+            hint = f.kind === 'pitch'
+              ? `note ${f.value.note} · long-press / Alt-drag`
+              : `${f.label} ${fmtNum(f.value, f.isFloat)}${f.min != null ? ` · ${f.min}–${f.max}` : ''} · long-press / Alt-drag`;
+          } else {
+            const bar = barAtOffset(view.state, pos);
+            if (bar) { range = [bar.from, bar.to]; hint = `Bar ${bar.ordinal} · ${bar.barLen} ticks · tap`; }
+          }
         }
-      }
-      // Only re-dispatch when the hovered token actually changed; mousemove
-      // fires far more often than the token under the pointer changes.
-      const key = range ? `${range[0]}:${range[1]}` : '';
-      if (key !== _hoverKey) {
-        _hoverKey = key;
-        view.dispatch({ effects: setHover.of(range) });
+        _lastHover = { pos, range, hint, canScrub };
+        // Re-dispatch the underline only when the hovered token changed.
+        const key = range ? `${range[0]}:${range[1]}` : '';
+        if (key !== _hoverKey) {
+          _hoverKey = key;
+          view.dispatch({ effects: setHover.of(range) });
+        }
       }
       showHint(range && hint ? hint : null, e);
       view.scrollDOM.style.cursor = (canScrub && e.altKey) ? 'ns-resize' : '';
@@ -2073,6 +2095,7 @@
         cancelPress();
         _tap = null;
         _hoverKey = '';
+        _lastHover.pos = -2;
         view.dispatch({ effects: setHover.of(null) });
         showHint(null, e);
         view.scrollDOM.style.cursor = '';
@@ -3415,6 +3438,7 @@
       EditorView.updateListener.of((update) => {
         // Compilation is manual (Build / Cmd-Ctrl+B); editing never compiles or
         // applies — see buildAction(). Only the param/cursor UI tracks edits.
+        if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged || update.selectionSet) syncParamUI();
       }),
     ];
