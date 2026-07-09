@@ -9,13 +9,15 @@ tutorial; the full reference (every keyword, range, and rule) is
 ## 1. Minimal Score
 
 ```lisp
-(score
-  (fm1 c e g c))
+(fm1 c e g c)
 ```
 
-- `score` is the root form.
-- Channel forms are written directly as `(fm1 ...)`, `(sqr1 ...)`, `(noise ...)`.
+- The file is the score — no wrapper form. Channel forms are written directly
+  at top level as `(fm1 ...)`, `(sqr1 ...)`, `(noise ...)`.
 - Notes/rests/modifiers are written inline in the channel body.
+- File metadata is the reserved defs `(def title "…")` / `(def author "…")`;
+  global `:tempo` / `:lfo-rate` are written on any track (see
+  `docs/language.md` §1).
 
 Default state:
 
@@ -142,7 +144,7 @@ Common modifiers:
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `none` = straight). Head-only: write it
-  right after the channel name (or as a score option), not mid-body
+  right after the channel name, not mid-body; per-track (no score-wide default)
 - `(glide T)` — portamento from the previous note over duration `T` (same
   length-token forms as `:len`); `(glide none)` disables.
 - `(glide from-pitch T)` — glide from an explicit start pitch. The start pitch is
@@ -223,10 +225,9 @@ net octave change is non-zero when it is reused or followed by more notes.
 ```lisp
 (def riff c e g e)
 
-(score
-  (fm1 :oct 4 :len 8
-    riff
-    riff))
+(fm1 :oct 4 :len 8
+  riff
+  riff)
 ```
 
 `def` expands inline.
@@ -240,9 +241,8 @@ body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARIT
 ```lisp
 (def (beat n) (x 8 > n > n <))
 
-(score
-  (fm1 :oct 1
-    (beat c) (beat b-) (beat a) (beat f)))
+(fm1 :oct 1
+  (beat c) (beat b-) (beat a) (beat f))
 ```
 
 ---
@@ -259,10 +259,9 @@ override only what you need:
   :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 
 ; use by bare identifier:
-(score
-  (fm1 :oct 4 :len 8
-    brass
-    c e g e))
+(fm1 :oct 4 :len 8
+  brass
+  c e g e)
 ```
 
 `init-fm` (ALG 7, full envelope, TL 0 on all operators) is always available as
@@ -324,9 +323,8 @@ vibrato macro plus a per-voice static `:pitch` detune makes a chorus:
 ```lisp
 (def vib (macro :pitch+ (sin :from -40 :to 40 :len 8 :wait 4)))
 
-(score
-  (fm1 :oct 5          vib c e g)    ; wobble centered at 0
-  (fm2 :oct 5 :pitch 8 vib c e g))   ; centered at +8c → detuned against fm1
+(fm1 :oct 5          vib c e g)    ; wobble centered at 0
+(fm2 :oct 5 :pitch 8 vib c e g)   ; centered at +8c → detuned against fm1
 ```
 
 Plain `:pitch` / `:semi` (no `+`) **override** the offset instead. `*` on an
@@ -574,9 +572,8 @@ velocity, lowered by the delay's per-tap step.
 (def perc-buzz (macro :mode [white0 :hold periodic3]))
 (def hh-env (macro :vel [15 9 4 0]))
 
-(score
-  (noise :len 8 (macro perc-buzz hh-env)
-    c c c c))
+(noise :len 8 (macro perc-buzz hh-env)
+  c c c c)
 ```
 
 - The channel starts in `white0`; inline `:mode` sets the persistent mode
@@ -623,11 +620,10 @@ In both cases, KEY-OFF is triggered at runtime via `triggerKeyOff()`.
 Repeating the same channel form appends events and keeps sticky state.
 
 ```lisp
-(score
-  (fm1
-    c e g e)
-  (fm1
-    f g a g))
+(fm1
+  c e g e)
+(fm1
+  f g a g)
 ```
 
 ---
@@ -649,9 +645,8 @@ values.
   silenced at that point — no release tail in this version).
 
 ```lisp
-(score
-  (fm1 :prio 1  :len 4   c _ _ g _ _)   ; sparse lead — always sounds
-  (fm1 :prio 5  :len 16  e e e e e e e e e e e e))  ; filler — yields to the lead
+(fm1 :prio 1  :len 4   c _ _ g _ _)   ; sparse lead — always sounds
+(fm1 :prio 5  :len 16  e e e e e e e e e e e e)  ; filler — yields to the lead
 ```
 
 The whole thing is resolved at compile time into a single event stream, so the
@@ -666,9 +661,8 @@ not reconciled.
 Use `fm3-csm` when you want FM3 to run in CSM mode.
 
 ```lisp
-(score
-  (fm3-csm :csm-rate 60
-    c _ c _))
+(fm3-csm :csm-rate 60
+  c _ c _)
 ```
 
 - `fm3-csm` enables the FM3 special mode.
@@ -683,11 +677,10 @@ Use `fm3-csm` when you want FM3 to run in CSM mode.
 smooth changes:
 
 ```lisp
-(score :tempo 120
-  (fm1 :len 4
-    c e
-    :tempo (linear :from 120 :to 180 :len 8)
-    g c))
+(fm1 :tempo 120 :len 4
+  c e
+  :tempo (linear :from 120 :to 180 :len 8)
+  g c)
 ```
 
 - `:tempo N` changes tempo immediately (`TEMPO_SET`).
@@ -707,11 +700,10 @@ Declare a runtime value slot with `(def-val ...)` and reference it with
 (def-val cutoff 30 :from 0 :to 127)
 (def-val depth 20 :from 0 :to 60)
 
-(score
-  (fm1 :tl1 $cutoff                              ; absolute from the slot
-       :tl2+ $cutoff                             ; relative to the slot
-       (macro :pitch (sin :from -40 :to $depth)) ; dynamic LFO depth
-       c e g e))
+(fm1 :tl1 $cutoff                              ; absolute from the slot
+     :tl2+ $cutoff                             ; relative to the slot
+     (macro :pitch (sin :from -40 :to $depth)) ; dynamic LFO depth
+     c e g e)
 ```
 
 - `:from` / `:to` set the slider's endpoints (either direction); the
@@ -732,9 +724,8 @@ Samples are defined with `def :sample`, then used as the first positional argume
 (def kick  :sample :file "sounds/kick.wav")
 (def snare :sample :file "sounds/snare.wav" :rate 11025)
 
-(score :tempo 120
-  (pcm1 kick  :len 4  c _ c _)
-  (pcm2 snare :len 4  _ c _ c))
+(pcm1 kick :tempo 120  :len 4  c _ c _)
+(pcm2 snare :len 4  _ c _ c)
 ```
 
 - `:file` is required.
@@ -770,15 +761,14 @@ They can be used anywhere curve expressions are accepted, including `(macro ...)
   :vel [15 12 8 4 0]
   :pan [:hold left center right center]))
 
-(score
-  (fm1
-    brass
-    env
-    phrase
-    (x 2 phrase))
+(fm1
+  brass
+  env
+  phrase
+  (x 2 phrase))
 
-  (noise
-    c _ c _))
+(noise
+  c _ c _)
 ```
 
 ---

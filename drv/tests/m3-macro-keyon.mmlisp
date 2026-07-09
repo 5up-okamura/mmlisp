@@ -3,11 +3,10 @@
 ; soft-envelope macros (vol/pitch) restart from their attack. FM+PSG only.
 ; Covers: an FM roll (bare re-key), an FM note whose vol envelope is restarted by
 ; the retrigger, and a PSG note where the vol soft-envelope restart IS the effect.
-(score :tempo 120
-  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
-    (macro :step 3f :keyon [0 :hold 1]) :len 4  c e)
-  (fm2 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
-    (macro :step 1f :vol [31 :hold 24 18 12 6])
-    (macro :step 6f :keyon [0 :hold 1]) :len 4  g)
-  (sqr1 (macro :step 1f :vol [15 :hold 12 9 6 3])
-        (macro :step 4f :keyon [0 :hold 1]) :len 4  e))
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (macro :step 3f :keyon [0 :hold 1]) :len 4  c e)
+(fm2 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (macro :step 1f :vol [31 :hold 24 18 12 6])
+  (macro :step 6f :keyon [0 :hold 1]) :len 4  g)
+(sqr1 (macro :step 1f :vol [15 :hold 12 9 6 3])
+      (macro :step 4f :keyon [0 :hold 1]) :len 4  e)

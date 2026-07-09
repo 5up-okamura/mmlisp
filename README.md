@@ -51,15 +51,14 @@ game state at runtime.
 
 (def hat (macro :vel [15 8 2]))
 
-(score :tempo 112
-  (fm1 epiano :oct 4 :len 8      ; FM electric piano, arpeggiated line
-    c e g b > c e d c <)
+(fm1 :tempo 112 epiano :oct 4 :len 8      ; FM electric piano, arpeggiated line
+  c e g b > c e d c <)
 
-  (sqr1 :oct 5 :len 4 :vel 9     ; PSG square counter-line
-    e g a b)
+(sqr1 :oct 5 :len 4 :vel 9     ; PSG square counter-line
+  e g a b)
 
-  (noise :len 8 hat              ; PSG noise as a hi-hat via a velocity macro
-    c c c c  c c c c))
+(noise :len 8 hat              ; PSG noise as a hi-hat via a velocity macro
+  c c c c  c c c c)
 ```
 
 Paste it into [MMLisp Live](https://mmlisp.vercel.app/), press Cmd/Ctrl+Enter,

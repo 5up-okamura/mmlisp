@@ -953,8 +953,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "tempo":
         // Emit an inline :tempo only when it changes the running tempo. The
-        // first tempo already seeds the score header (ctx.tempo), so it's not
-        // repeated inline; mid-song changes are emitted here.
+        // first tempo already rides the first playable form (ctx.tempo), so
+        // it's not repeated inline; mid-song changes are emitted here.
         if (op.bpm !== ctx.tempo) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
         break;
     }
@@ -1035,16 +1035,17 @@ export function mucomToMmlisp(parsed) {
   }
 
   // #composer + #author, joined with " | " — but de-duplicated when identical.
+  // v0.6: no (score …) wrapper — title/author are the reserved metadata defs,
+  // and the tempo (score-global) rides the first playable form below.
   const author = [...new Set([meta.composer, meta.author].filter(Boolean))].join(" | ");
-  const scoreHead = ["(score"];
-  if (meta.title) scoreHead.push(`:title ${qstr(meta.title)}`);
-  if (author) scoreHead.push(`:author ${qstr(author)}`);
-  scoreHead.push(`:tempo ${tempo ?? 120}`);
+  const metaDefs = [];
+  if (meta.title) metaDefs.push(`(def title ${qstr(meta.title)})`);
+  if (author) metaDefs.push(`(def author ${qstr(author)})`);
   // LFO defs (if any) are spliced in here once rendering has discovered them.
   const lfoDefAnchor = lines.length;
   lines.push("");
   for (const c of scoreComments || []) lines.push(c);
-  lines.push(scoreHead.join(" "));
+  lines.push(...metaDefs);
 
   // Each part line becomes one (chN …) form; they merge per channel, so the
   // author's line order can be preserved verbatim. State (octave/vel/detune)
@@ -1102,14 +1103,24 @@ export function mucomToMmlisp(parsed) {
   }
   for (const [, f] of lastForm) f.text = `${f.text} (go loop)`.trim();
 
-  // Emit forms and in-music comments verbatim, in source order.
-  for (const it of scoreItems) {
-    if (it.kind === "comment") { lines.push(`  ${it.text}`); continue; }
-    if (it.text === "") { if (it.comment) lines.push(`  ${it.comment}`); continue; }
-    lines.push(`  (${it.ch} ${it.text})${it.comment ? `  ${it.comment}` : ""}`);
+  // Tempo rides the very first playable form (before its #loop/:oct prefix it
+  // would also be fine — :tempo is score-global wherever it appears).
+  const firstPlayable = scoreItems.find(
+    (it) => it.kind === "form" && it.text !== "",
+  );
+  if (firstPlayable) {
+    firstPlayable.text = `:tempo ${tempo ?? 120} ${firstPlayable.text}`.trim();
   }
 
-  lines.push(")", "");
+  // Emit forms and in-music comments verbatim, in source order (top level —
+  // there is no wrapper to indent under).
+  for (const it of scoreItems) {
+    if (it.kind === "comment") { lines.push(it.text); continue; }
+    if (it.text === "") { if (it.comment) lines.push(it.comment); continue; }
+    lines.push(`(${it.ch} ${it.text})${it.comment ? `  ${it.comment}` : ""}`);
+  }
+
+  lines.push("");
   return { source: lines.join("\n").replace(/^\n+/, ""), warnings };
 }
 

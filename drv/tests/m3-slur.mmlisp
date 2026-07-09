@@ -2,13 +2,12 @@
 ; different pitch → legato NOTE_ON (frequency moves, the note is not re-keyed).
 ; Covers FM legato chains, a same-pitch tie, a legato into a rest (key-off), and
 ; PSG legato (frequency moves, attenuation held).
-(score :tempo 120
-  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
-    c ~ d ~ e     ; legato chain: one attack, gliding through d and e
-    g ~ g         ; same pitch → tie (extend)
-    c ~ e _       ; legato then rest (key-off releases)
-    a)
-  (sqr1 :len 4
-    c ~ e ~ g     ; PSG legato: frequency moves, tone stays sounding
-    e ~ e
-    c _))
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
+  c ~ d ~ e     ; legato chain: one attack, gliding through d and e
+  g ~ g         ; same pitch → tie (extend)
+  c ~ e _       ; legato then rest (key-off releases)
+  a)
+(sqr1 :len 4
+  c ~ e ~ g     ; PSG legato: frequency moves, tone stays sounding
+  e ~ e
+  c _)

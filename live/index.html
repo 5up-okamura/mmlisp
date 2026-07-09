@@ -2150,8 +2150,7 @@
     // Autocomplete
     // -----------------------------------------------------------------------
     const AC_FORMS = [
-      'score','rest','tie',
-      'def','def-val','x','go','param-set',
+      'def','def-val','t','x','go','param-set',
       'echo','delay','glide','macro',
       'linear',
       'ease-in','ease-out','ease-inout',
@@ -2166,7 +2165,7 @@
       'ease-in-elastic','ease-out-elastic','ease-inout-elastic',
       'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
       'sin','triangle','square','saw','ramp',
-      'noise','pink','perlin',
+      'noise','pink','perlin','brown',
     ];
     const AC_TRACKS = [
       'fm1','fm2','fm3','fm3-csm','fm3-csm-rate','fm3-1','fm3-2','fm3-3','fm3-4',
@@ -2180,13 +2179,13 @@
     const AC_FM_OP_PARAMS = ['ar','dr','sr','rr','sl','tl','ml','dt','ks','am']
       .flatMap(p => [1, 2, 3, 4].map(op => `:${p}${op}`));
     const AC_PARAMS = [
-      // score / meta
-      ':title',':author',':tempo',':lfo-rate',':shuffle',':shuffle-base',
+      // global (written on a track; §1)
+      ':tempo',':lfo-rate',
       // track / channel
-      ':ch',':id',':prio',':oct',':len',':gate',':gate*',':gate-',':vel',':vel*',':vol',':volume',
-      ':master',':pan',':mode',':write',
+      ':ch',':prio',':oct',':len',':gate',':gate*',':gate-',':vel',':vel*',':vol',':volume',
+      ':master',':pan',':mode',':shuffle',':shuffle-base',
       // note dynamics / sequencer
-      ':pitch',':semi',':keyon',':by',':back',':time',':ratio',
+      ':pitch',':semi',':keyon',':by',':back',':time',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
       ':extend',':step',':loop',':loop-start',':loop-end',
@@ -2475,94 +2474,92 @@
 (def lfo (macro :pitch (sin :from -20 :to 20 :len 16 :wait 8)))
 (def down (macro :pitch (linear :from 0 :to -2400 :len 16f)))
 
-(score :tempo 120
-  ; FM
-  (fm1
-    #loop
-    (go loop)
-  )
-  (fm2
-    #loop
-    (go loop)
-  )
-  (fm3
-    #loop
-    (go loop)
-  )
-  (fm4
-    #loop
-    (go loop)
-  )
-  (fm5
-    #loop
-    (go loop)
-  )
-  (fm6
-    #loop
-    (go loop)
-  )
+; FM
+(fm1 :tempo 120
+  #loop
+  (go loop)
+)
+(fm2
+  #loop
+  (go loop)
+)
+(fm3
+  #loop
+  (go loop)
+)
+(fm4
+  #loop
+  (go loop)
+)
+(fm5
+  #loop
+  (go loop)
+)
+(fm6
+  #loop
+  (go loop)
+)
 
-  ; FM3
-;   (fm3-1
-;     #loop
-;     (go loop)
-;   )
-;   (fm3-2
-;     #loop
-;     (go loop)
-;   )
-;   (fm3-3
-;     #loop
-;     (go loop)
-;   )
-;   (fm3-4
-;     #loop
-;     (go loop)
-;   )
+; FM3
+; (fm3-1
+;   #loop
+;   (go loop)
+; )
+; (fm3-2
+;   #loop
+;   (go loop)
+; )
+; (fm3-3
+;   #loop
+;   (go loop)
+; )
+; (fm3-4
+;   #loop
+;   (go loop)
+; )
 
-  ; CSM
-;   (fm3-csm
-;     #loop
-;     (go loop)
-;   )
-;   (fm3-csm-rate
-;     #loop
-;     (go loop)
-;   )
+; CSM
+; (fm3-csm
+;   #loop
+;   (go loop)
+; )
+; (fm3-csm-rate
+;   #loop
+;   (go loop)
+; )
 
-  ; PCM
-;   (pcm1
-;     #loop
-;     (go loop)
-;   )
-;   (pcm2
-;     #loop
-;     (go loop)
-;   )
-;   (pcm3
-;     #loop
-;     (go loop)
-;   )
+; PCM
+; (pcm1
+;   #loop
+;   (go loop)
+; )
+; (pcm2
+;   #loop
+;   (go loop)
+; )
+; (pcm3
+;   #loop
+;   (go loop)
+; )
 
-  ; SQUARE
-  (sqr1
-    #loop
-    (go loop)
-  )
-  (sqr2
-    #loop
-    (go loop)
-  )
-  (sqr3
-    #loop
-    (go loop)
-  )
+; SQUARE
+(sqr1
+  #loop
+  (go loop)
+)
+(sqr2
+  #loop
+  (go loop)
+)
+(sqr3
+  #loop
+  (go loop)
+)
 
-  ; NOISE
-  (noise
-    #loop
-    (go loop)
-  )
+; NOISE
+(noise
+  #loop
+  (go loop)
 )`;
 
     function insertSnippetByKey(key) {

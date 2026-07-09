@@ -43,11 +43,12 @@ asymmetries matter for the Z80 driver.
 | `tracks`   | array  | Track objects in score order (see §3).                               |
 
 There is **no top-level tempo field.** The initial tempo travels as a
-`TEMPO_SET` event at tick 0 (unshifted into `tracks[0]` from the score's
-`:tempo`); the player scans all tracks for a tick-0 `TEMPO_SET` and falls back
-to 120 BPM. Score-level `:lfo-rate` likewise becomes a tick-0
-`PARAM_SET LFO_RATE`, and the presence of any `fm3-1..fm3-4` track prepends a
-tick-0 `FM3_MODE { mode: "op" }` — all on `tracks[0]`.
+`TEMPO_SET` event at tick 0, emitted by the track that carries the leading
+`:tempo` (the player scans all tracks for a tick-0 `TEMPO_SET` and falls back
+to 120 BPM); `:lfo-rate` likewise emits a `PARAM_SET LFO_RATE` on its own
+track. The presence of any `fm3-1..fm3-4` track prepends a tick-0
+`FM3_MODE { mode: "op" }` into `tracks[0]` — the only compiler-injected init
+event.
 
 ### 2.1 `metadata.vals[]` — dynamic value slots (`def-val`)
 
@@ -617,8 +618,8 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
   on the same track (validated; forward or backward).
 - **Post-passes** (in order): per-layer delay expansion → `:prio` layer
   flattening (note drop/truncate under higher-priority layers) → track
-  re-numbering → counted-jump conversion → validation → tick-0 init events
-  (`FM3_MODE`, `LFO_RATE`, `TEMPO_SET`) unshifted into `tracks[0]`.
+  re-numbering → counted-jump conversion → validation → tick-0 `FM3_MODE`
+  unshifted into `tracks[0]` (when fm3-1..4 tracks exist).
 - Transient fields (`_delay`) are stripped; `src` spans are the only
   non-semantic payload that remains.
 

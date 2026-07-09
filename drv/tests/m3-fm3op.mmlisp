@@ -8,9 +8,8 @@
   :ar2 31 :dr2 8 :sr2 2 :rr2 8 :sl2 2 :tl2 8 :ks2 0 :ml2 1 :dt2 0
   :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 28 :ks3 0 :ml3 4 :dt3 0
   :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
-(score :tempo 120
-  (fm3 kit)
-  (fm3-1 :oct 5 :len 4  c e g c)
-  (fm3-2 :oct 4 :len 4  e _ c e)
-  (fm3-3 :oct 3 :len 2  c g)
-  (fm3-4 :oct 4 :len 4  g c e g))
+(fm3 :tempo 120 kit)
+(fm3-1 :oct 5 :len 4  c e g c)
+(fm3-2 :oct 4 :len 4  e _ c e)
+(fm3-3 :oct 3 :len 2  c g)
+(fm3-4 :oct 4 :len 4  g c e g)

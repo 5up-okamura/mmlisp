@@ -11,37 +11,41 @@ behavior; the full IR format lives in `docs/ir.md`.
 
 ## 1. Source model
 
-A source file is a sequence of top-level forms:
+**1 file = 1 score.** There is no wrapper form — the file *is* the score. A
+source file is a sequence of top-level forms, in source order:
 
 | Form              | Role                                             |
 | ----------------- | ------------------------------------------------ |
 | `(def name …)`    | Named definition (snippet, voice, sample, macro) |
 | `(def-val name …)`| Runtime value slot declaration                   |
-| `(score …)`       | The score — exactly one is required              |
+| `(channel …)`     | Track form — any list whose head is a channel name (§2) |
 
 - `;` starts a line comment.
 - Strings use double quotes (`"…"`).
 - `#name` atoms are labels (§13).
-- Inside `(score …)`, keyword pairs before the first channel form are score
-  options; every list whose head is a channel name (§2) is a track form.
-  A list with any other head inside `score` is an error: an unknown head
-  (usually a channel-name typo) is `E_SCORE_UNKNOWN_FORM`, and a `def`/`def-val`
-  placed inside `score` is `E_DEF_IN_SCORE` (definitions must be top-level, §9).
+- `def`/`def-val` and track forms interleave freely; a def only needs to
+  precede its first use. Any other top-level list head (usually a channel-name
+  typo) is `E_UNKNOWN_TOPLEVEL_FORM`.
 
-### Score options
+### File metadata and global options
 
 ```lisp
-(score :title "Song" :author "Me" :tempo 140 :lfo-rate 5 :shuffle 66
-  (fm1 c e g e))
+(def title "Song")
+(def author "Me")
+
+(fm1 :tempo 140 :lfo-rate 5 c e g e)
 ```
 
-| Option      | Value                | Effect                                        |
-| ----------- | -------------------- | --------------------------------------------- |
-| `:title`    | string               | Metadata                                      |
-| `:author`   | string               | Metadata                                      |
-| `:tempo`    | integer BPM or curve | Bare integer → `TEMPO_SET` at tick 0 (default 120; fractional BPM needs a mid-track `:tempo`). A curve → `TEMPO_SWEEP` from tick 0, e.g. `:tempo (linear :from 120 :to 80 :len 4)` (`:from` defaults to 120 if omitted) |
-| `:lfo-rate` | 0–8                  | YM2612 global LFO (`0` = off)                 |
-| `:shuffle`  | 51–90 (`none` = off) | Score-wide swing default (§5)                 |
+- **`(def title "…")` / `(def author "…")`** — reserved defs carrying the file
+  metadata (only the string form is special; the names stay usable as ordinary
+  defs otherwise).
+- **`:tempo` / `:lfo-rate`** — score-global effects, written on any track
+  (leading position or mid-body); they apply to the whole song regardless of
+  which track carries them. `:tempo` takes a BPM number or a curve
+  (`TEMPO_SWEEP`, §5); the tempo at tick 0 also seeds `Nf` conversion (§4) for
+  every track. Default 120.
+- **`:shuffle` / `:shuffle-base`** — per-track head options (§5.2); there is no
+  score-wide default.
 
 ### Channel forms: append and layer
 
@@ -60,9 +64,8 @@ monophonic event stream:
   layers are not reconciled (`W_PRIO_LAYER_FLOW`); keep loops on one layer.
 
 ```lisp
-(score
-  (fm1 :prio 1 :len 4   c _ _ g _ _)                 ; lead — always sounds
-  (fm1 :prio 5 :len 16  e e e e e e e e e e e e))    ; filler — yields
+(fm1 :prio 1 :len 4   c _ _ g _ _)                 ; lead — always sounds
+(fm1 :prio 5 :len 16  e e e e e e e e e e e e)    ; filler — yields
 ```
 
 The flattened output is one track per channel; player and driver are
@@ -138,10 +141,9 @@ normal note. Encoded as `NOTE_ON_EX` bit3 (opcodes.md §5.1).
 (Bresenham distribution, so remainders spread evenly):
 
 ```lisp
-(score
-  (fm1 :len 4
-    c (t e g a) f     ; triplet inside one quarter
-    (t c _ c)))       ; rests allowed
+(fm1 :len 4
+  c (t e g a) f     ; triplet inside one quarter
+  (t c _ c))       ; rests allowed
 ```
 
 Elements may be notes, per-note-length atoms (their suffix is ignored — the
@@ -239,8 +241,8 @@ unaffected by ties.
 `:tempo N` reanchors the timeline instantly; `:tempo (linear :from A :to B
 :len L)` emits `TEMPO_SWEEP` over `L` (any non-`const` curve name works —
 there is no curve literally named `curve`). Tempo changes apply to all tracks.
-The same curve form works as a score option (§1), emitting the sweep from
-tick 0. `:tempo`/`:master` are global, so if two tracks write one at the same
+Written in a track's leading position it sets the song's initial tempo (§1).
+`:tempo`/`:master` are global, so if two tracks write one at the same
 tick the **last writer wins** (track order); the tick-0 initial tempo resolves
 the same way. Keep global automation on a single track to avoid ambiguity.
 
@@ -277,12 +279,11 @@ with `E_UNKNOWN_KEYWORD` rather than silently dropped.
 
 `:shuffle R` (51–90; `none` = straight) swings note/rest pairs whose nominal
 length equals `:shuffle-base` (default: eighth). The pair spans 2× the base;
-the first beat takes `R` % of it. Score-level `:shuffle` sets the default for
-all tracks.
+the first beat takes `R` % of it. Per-track (head option): each track sets its
+own swing.
 
 ```lisp
-(score
-  (sqr1 :shuffle 66 :len 8  c c c c))
+(sqr1 :shuffle 66 :len 8  c c c c)
 ```
 
 ---
@@ -361,13 +362,12 @@ score only reads slots — there are no score-side expressions.
 (def-val level 20 :from 0 :to 40 :step 2)
 (def-val depth 30)
 
-(score
-  (fm1 :tl1 $level               ; PARAM_FROM_VAL
-       :tl2+ $level              ; PARAM_ADD (slot-relative)
-       :vol* $level              ; PARAM_MUL
-       :ar1 $time                ; built-in source
-       (macro :pitch (sin :from -40 :to $depth :rate 2))
-       c e g e))
+(fm1 :tl1 $level               ; PARAM_FROM_VAL
+     :tl2+ $level              ; PARAM_ADD (slot-relative)
+     :vol* $level              ; PARAM_MUL
+     :ar1 $time                ; built-in source
+     (macro :pitch (sin :from -40 :to $depth :rate 2))
+     c e g e)
 ```
 
 `(def-val name init :from A :to B :step S :unit U)`:
@@ -405,8 +405,9 @@ records these in a `dyn` map the player resolves at schedule time.
 ## 9. `def` forms
 
 `def` names any inline-writable notation; a bare reference in a channel body
-expands or applies it. Definitions are top-level: a `def`/`def-val` inside
-`(score …)` is rejected with `E_DEF_IN_SCORE` (§1).
+expands or applies it. Definitions are top-level forms and interleave freely
+with track forms (§1). `title` and `author` are reserved for file metadata
+when given a string (§1).
 
 | Form                                  | Kind                                    |
 | ------------------------------------- | --------------------------------------- |
@@ -429,8 +430,7 @@ Unset operator parameters are not emitted — start from a full patch (or
   :alg 4 :fb 3
   :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 
-(score
-  (fm1 lead c e g e))
+(fm1 lead c e g e)
 ```
 
 Voice names are plain identifiers — no special prefix (voices are recognized by
@@ -457,9 +457,8 @@ inside the body. A call whose argument count differs from the parameter count is
 ```lisp
 (def (beat n) (x 8 > n > n <))      ; one bar of n, octave-bounced ×8
 
-(score
-  (fm1 :oct 1
-    (beat c) (beat b-) (beat a) (beat f)))
+(fm1 :oct 1
+  (beat c) (beat b-) (beat a) (beat f))
 ```
 
 ---
@@ -472,12 +471,11 @@ and runs them for that note. Setting a macro is sticky until cleared.
 ```lisp
 (def pluck (macro :vel [15 12 8 4 0]))
 
-(score
-  (fm1 pluck c                                ; bare def name
-       (macro :vel [15 10 5 0]) c             ; inline anonymous
-       (macro pluck :pan [left center right]) c   ; mix named + inline
-       (macro :vel none) c                    ; clear one target
-       (macro none) c))                       ; clear all
+(fm1 pluck c                                ; bare def name
+     (macro :vel [15 10 5 0]) c             ; inline anonymous
+     (macro pluck :pan [left center right]) c   ; mix named + inline
+     (macro :vel none) c                    ; clear one target
+     (macro none) c)                       ; clear all
 ```
 
 If the same target is set twice, the last one wins.
@@ -533,7 +531,7 @@ the current value until key-off; `(wait N)` waits a length token. `(const V
   (sin :from 13 :to 15 :len 4)        ; vibrato sustain — loops until key-off
   (ease-out :from 15 :to 0 :len 6)])) ; release
 
-(score (fm1 organ :len 2 c e))
+(fm1 organ :len 2 c e)
 ```
 
 ### `:step` — sampling clock
@@ -557,9 +555,8 @@ A `[]` vector of macro keywords in target position applies one spec to every
 listed target — pure compile-time sugar, values clamp per target:
 
 ```lisp
-(score
-  (fm1 (macro [:tl1 :tl2 :tl3 :tl4] (linear :from 40 :to 0 :len 8)) c
-       (macro [:tl1 :tl2] none) d))
+(fm1 (macro [:tl1 :tl2 :tl3 :tl4] (linear :from 40 :to 0 :len 8)) c
+     (macro [:tl1 :tl2] none) d)
 ```
 
 ### `:semi` and `:keyon`
@@ -584,11 +581,10 @@ steps after `:off` fire after note-off (a one-channel echo tail). While a
 | `:keyon (noise :from 0 :to 1)` | Probabilistic retrigger (~50 % per step)  |
 
 ```lisp
-(score
-  (fm1 (macro :step 32 :keyon 1) c)                            ; drum roll
-  (fm2 (macro :step 1/16 :semi [:hold 0 4 7] :keyon 1) c)      ; retriggered arp
-  (fm4 (macro :step 1/8 :keyon [0 :off 1 1 1]
-              :vel   [15 :off 11 7 3]) c))                     ; echo tail
+(fm1 (macro :step 32 :keyon 1) c)                            ; drum roll
+(fm2 (macro :step 1/16 :semi [:hold 0 4 7] :keyon 1) c)      ; retriggered arp
+(fm4 (macro :step 1/8 :keyon [0 :off 1 1 1]
+            :vel   [15 :off 11 7 3]) c)                     ; echo tail
 ```
 
 ---
@@ -660,13 +656,12 @@ Normalization rules:
   source always produces identical data.
 
 ```lisp
-(score
-  (fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995))
-    c e g e)
-  (sqr1 (macro :pitch (pink :from -40 :to 40 :len 8 :beta 1.2 :phase 32))
-    c c c c)
-  (fm2 (macro :pan (perlin :from -1 :to 1 :len 16 :octaves 4 :persistence 0.6))
-    c _ c _))
+(fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995))
+  c e g e)
+(sqr1 (macro :pitch (pink :from -40 :to 40 :len 8 :beta 1.2 :phase 32))
+  c c c c)
+(fm2 (macro :pan (perlin :from -1 :to 1 :len 16 :octaves 4 :persistence 0.6))
+  c _ c _)
 ```
 
 ---
@@ -691,10 +686,9 @@ Taps play at the **current** `:len`/`:gate` (mucom `\=` semantics), not the
 source note's.
 
 ```lisp
-(score
-  (fm1 c (echo :vel+ 3 :by -1)          ; vel−1, −2, −3 decaying trail
-       c (echo :vel* 3 :by 0.7)         ; ×0.7, ×0.49, ×0.343
-       c e (echo :vel+ 1 :by -4 :back 2)))  ; replay the c once at vel−4
+(fm1 c (echo :vel+ 3 :by -1)          ; vel−1, −2, −3 decaying trail
+     c (echo :vel* 3 :by 0.7)         ; ×0.7, ×0.49, ×0.343
+     c e (echo :vel+ 1 :by -4 :back 2))  ; replay the c once at vel−4
 ```
 
 ### `(delay …)` — compile-time overlay
@@ -723,11 +717,10 @@ the phrase.
   another channel.
 
 ```lisp
-(score
-  (fm1 (delay :vel+ 3 :by -4 :time 1/8)
-    c e g e)                                     ; phrase + 3 decaying repeats
-  (fm2 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)
-    c))
+(fm1 (delay :vel+ 3 :by -4 :time 1/8)
+  c e g e)                                     ; phrase + 3 decaying repeats
+(fm2 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)
+  c)
 ```
 
 ---
@@ -763,15 +756,14 @@ the phrase.
   where it started after each invocation.
 
 ```lisp
-(score
-  (fm1
-    (x 4 c d e :break f g)     ; body ×4; final pass stops before f g
-    #verse
-    c e g e
-    (go verse 2)               ; the #verse section plays twice
-    #head
-    c g
-    (go head)))                ; infinite outer loop
+(fm1
+  (x 4 c d e :break f g)     ; body ×4; final pass stops before f g
+  #verse
+  c e g e
+  (go verse 2)               ; the #verse section plays twice
+  #head
+  c g
+  (go head))                ; infinite outer loop
 ```
 
 ---
@@ -793,8 +785,7 @@ On `fm3-csm-rate`, glide instead slides Timer A Hz between rate notes: a swept
 override accepts a raw Hz literal or a pitch.
 
 ```lisp
-(score
-  (fm1 (glide 8) c e (glide f5 32) g (glide none) c))
+(fm1 (glide 8) c e (glide f5 32) g (glide none) c)
 ```
 
 ---
@@ -811,12 +802,11 @@ Macros and `(glide …)` are independent per `fm3-N` track.
 ```lisp
 (def kit :extend init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 
-(score
-  (fm3 kit)                     ; shared patch — no notes here
-  (fm3-1 :oct 5 :len 8  c c)
-  (fm3-2 :oct 3 :len 4  c _)
-  (fm3-3 :oct 4 :len 8  c c)
-  (fm3-4 :oct 2 :len 2  c _))
+(fm3 kit)                     ; shared patch — no notes here
+(fm3-1 :oct 5 :len 8  c c)
+(fm3-2 :oct 3 :len 4  c _)
+(fm3-3 :oct 4 :len 8  c c)
+(fm3-4 :oct 2 :len 2  c _)
 ```
 
 ### CSM mode
@@ -842,11 +832,10 @@ with neither source produces no Timer A retrigger (fm3-csm plays silently).
 ```lisp
 (def brass :extend init-fm :alg 4 :tl1 24 :tl3 24)
 
-(score
-  (fm3-csm brass :oct 4 :len 2
-    c _ e _ g _)
-  (fm3-csm-rate :oct 6 :len 1
-    c d e f  g a b 20000))    ; notes → Hz; raw Hz literal above oct 10
+(fm3-csm brass :oct 4 :len 2
+  c _ e _ g _)
+(fm3-csm-rate :oct 6 :len 1
+  c d e f  g a b 20000)    ; notes → Hz; raw Hz literal above oct 10
 ```
 
 ---
@@ -862,10 +851,9 @@ sample symbol).
 (def snare :sample :file "sounds/snare.wav" :rate 11025)
 (def pad   :sample :file "sounds/pad.wav" :loop-start 0 :loop-end 4096)
 
-(score :tempo 120
-  (pcm1 kick  :len 4  c _ c _)
-  (pcm2 snare :len 4  _ c _ c)
-  (pcm3 pad :len 0 :vol 8 :mode loop  c))
+(pcm1 kick :tempo 120  :len 4  c _ c _)
+(pcm2 snare :len 4  _ c _ c)
+(pcm3 pad :len 0 :vol 8 :mode loop  c)
 ```
 
 ### Sample def keys
@@ -923,9 +911,8 @@ game-state-driven sounds: the note holds until the host sends `KEY_OFF` or
 `STOP_TRACK`, firing any `:off` release macros.
 
 ```lisp
-(score
-  (sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])
-    c))
+(sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])
+  c)
 ```
 
 ---
@@ -946,8 +933,7 @@ freely; markers only measure the bars you write. Compare a bar's tick count
 across tracks to catch length drift before it becomes an audible phase slip.
 
 ```lisp
-(score
-  (fm1 :oct 4 :len 8
-    c c c c c c c c |
-    c c c c c c c c |))   ; two 384-tick bars
+(fm1 :oct 4 :len 8
+  c c c c c c c c |
+  c c c c c c c c |)   ; two 384-tick bars
 ```

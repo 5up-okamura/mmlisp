@@ -29,28 +29,33 @@ async function main() {
   const cases = [
     {
       label: "unknown atom",
-      src: "(score :tempo 120 (fm1 xyz))",
+      src: "(fm1 :tempo 120 xyz)",
       expected: ["E_UNKNOWN_ATOM"],
     },
     {
       label: "unknown list",
-      src: "(score :tempo 120 (fm1 (foo)))",
+      src: "(fm1 :tempo 120 (foo))",
       expected: ["E_UNKNOWN_LIST"],
     },
     {
       label: "empty list",
-      src: "(score :tempo 120 (fm1 ()))",
+      src: "(fm1 :tempo 120 ())",
       expected: ["E_UNKNOWN_LIST"],
     },
     {
       label: "unknown tuplet element",
-      src: "(score :tempo 120 (fm1 :len 4 (c (foo) d)))",
+      src: "(fm1 :tempo 120 :len 4 (t c (foo) d))",
       expected: ["E_UNKNOWN_TUPLET_ELEM"],
     },
     {
-      label: "goto arity",
-      src: "(score :tempo 120 (fm1 #a c (goto a 2)))",
-      expected: ["E_GOTO_ARITY"],
+      label: "go arity",
+      src: "(fm1 :tempo 120 #a c (go a 2 3))",
+      expected: ["E_GO_ARITY"],
+    },
+    {
+      label: "unknown top-level form",
+      src: "(zonk :tempo 120 c)",
+      expected: ["E_UNKNOWN_TOPLEVEL_FORM"],
     },
   ];
 

@@ -1,5 +1,4 @@
 ; PCM loop mode: a looped sample on pcm1 with a sustain loop + KEY-OFF.
 (def pad :sample :file "pad.wav" :loop-start 100 :loop-end 400)
-(score :tempo 120
-  (pcm1 pad :mode loop :oct 4 :len 2 :vel 14
-    c :gate* 0.5 e))
+(pcm1 pad :tempo 120 :mode loop :oct 4 :len 2 :vel 14
+  c :gate* 0.5 e)

@@ -5,11 +5,10 @@
 ; (:ar1 $time), and a mid-stream SET_VAL that the last note reads back.
 (def-val amp 24 :from 0 :to 127)
 (def-val fac 256 :from 0 :to 1024)
-(score :tempo 150
-  (fm1 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
-    :tl4 $amp   c
-    :tl4+ $amp  e
-    :vol* $fac  g
-    :vol* 2.0   c
-    :ar1 $time  e
-    :tl4 $amp   g))
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
+  :tl4 $amp   c
+  :tl4+ $amp  e
+  :vol* $fac  g
+  :vol* 2.0   c
+  :ar1 $time  e
+  :tl4 $amp   g)

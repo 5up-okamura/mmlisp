@@ -2103,23 +2103,6 @@ function pushDiag(diagnostics, severity, code, message, src, track) {
   });
 }
 
-function getKeywordMap(items, startIndex) {
-  const map = new Map();
-  let i = startIndex;
-  while (i < items.length) {
-    const key = items[i];
-    if (!(key && key.kind === "atom" && key.value.startsWith(":"))) {
-      i += 1;
-      continue;
-    }
-    const value = items[i + 1];
-    if (!value) break;
-    map.set(key.value, value);
-    i += 2;
-  }
-  return map;
-}
-
 // Source span for a node: { line, column } start plus { endLine, endColumn }
 // end, all 1-based; endColumn is one past the last character. Lists carry their
 // own end (from the parser); atom-likes span their literal text on one line.
@@ -3378,6 +3361,7 @@ function collectDefs(roots, diagnostics) {
   const typedDefs = new Map();
   const sampleDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
+  const fileMeta = { title: null, author: null }; // v0.6: (def title/author "…")
   const remaining = [];
 
   for (const root of roots) {
@@ -3495,6 +3479,16 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
+      // Reserved file-metadata defs (v0.6, replaces the score option tier):
+      // (def title "…") / (def author "…"). Only the string form is metadata;
+      // any other value keeps the name available as an ordinary def.
+      if (
+        (name === "title" || name === "author") &&
+        root.items[2]?.kind === "string"
+      ) {
+        fileMeta[name] = root.items[2].value;
+        continue;
+      }
       const maybeTag = atomValue(root.items[2]);
       const macroFnNode = root.items[2];
       if (
@@ -3566,7 +3560,7 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, paramDefs, typedDefs, sampleDefs, vals, remaining };
+  return { defs, paramDefs, typedDefs, sampleDefs, vals, fileMeta, remaining };
 }
 
 // Replace bare atoms matching a parameter name with the caller's argument node
@@ -3640,10 +3634,8 @@ function expandRoots(roots, defs, paramDefs, diagnostics) {
 export function compileMMLisp(src, filename = "untitled.mmlisp") {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, paramDefs, typedDefs, sampleDefs, vals, remaining } = collectDefs(
-    parsed,
-    diagnostics,
-  );
+  const { defs, paramDefs, typedDefs, sampleDefs, vals, fileMeta, remaining } =
+    collectDefs(parsed, diagnostics);
   if (!typedDefs.has("init-fm")) {
     typedDefs.set("init-fm", {
       tag: "fm-kw",
@@ -3654,43 +3646,39 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   }
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
-  const score = roots.find(
-    (node) =>
-      node.kind === "list" &&
-      node.items.length > 0 &&
-      isAtom(node.items[0], "score"),
-  );
-  if (!score) throw new Error("No (score ...) form found");
+  // v0.6: 1 file = 1 score. There is no (score …) wrapper — the post-expand
+  // root list *is* the score body: def/track forms interleave freely in source
+  // order. File metadata comes from the reserved (def title/author "…") forms.
+  const fileSrc = roots.length > 0 ? nodeSrc(roots[0]) : { line: 1, column: 1 };
 
-  const scoreOptions = getKeywordMap(score.items, 1);
-  const titleNode = scoreOptions.get(":title");
-  const authorNode = scoreOptions.get(":author");
-  const scoreTempoNode = scoreOptions.get(":tempo");
-  const scoreTempoVal = parseIntLike(atomValue(scoreTempoNode));
-  // Score-level tempo curve: (score :tempo (linear :from A :to B :len L) …).
-  // Build the tick-0 TEMPO_SWEEP up front so its `from` can seed the initial
-  // tempo used for track state and Nf frame conversion. Only attempted when the
-  // option is not a bare BPM integer.
-  const scoreTempoSweep =
-    scoreTempoVal === null && scoreTempoNode
-      ? buildTempoSweepFromCurve(
-          scoreTempoNode,
-          0,
-          120, // default start tempo when the curve omits :from
-          diagnostics,
-          nodeSrc(score),
-          "global",
-        )
-      : null;
-  // The tempo active at tick 0, for seeding track currentTempo / Nf conversion.
-  const scoreInitialBpm =
-    scoreTempoVal ?? (scoreTempoSweep ? scoreTempoSweep.event.args.from : null);
-  const scoreLfoRateNode = scoreOptions.get(":lfo-rate");
-  const scoreShuffleNode = scoreOptions.get(":shuffle");
-
-  const rawScoreShuffle = parseIntLike(atomValue(scoreShuffleNode)) ?? 0;
-  const scoreShuffleRatio =
-    rawScoreShuffle >= 51 ? Math.min(90, rawScoreShuffle) : 0;
+  // The tempo active at tick 0 seeds every track's currentTempo (tempo is
+  // score-global) and the Nf frame conversion. Prescan the leading `:key value`
+  // run of each track form, in source order, for the first `:tempo` — a bare
+  // BPM number or a curve (its :from, default 120).
+  let scoreInitialBpm = null;
+  outer: for (const node of roots) {
+    if (node?.kind !== "list" || node.items.length === 0) continue;
+    // PCM tracks carry the sample symbol as the first positional argument;
+    // the keyword run starts after it.
+    const start =
+      isPcmTrackName(atomValue(node.items[0])) && node.items.length > 2 ? 2 : 1;
+    for (let i = start; i + 1 < node.items.length; i += 2) {
+      const key = atomValue(node.items[i]);
+      if (typeof key !== "string" || !key.startsWith(":")) break;
+      if (key !== ":tempo") continue;
+      const valueNode = node.items[i + 1];
+      const bpm = parseNumberLike(atomValue(valueNode));
+      if (bpm !== null && bpm > 0) {
+        scoreInitialBpm = bpm;
+      } else {
+        // Curve form: seed from its :from without emitting diagnostics here —
+        // the body compiler re-parses it and reports errors once.
+        const swept = buildTempoSweepFromCurve(valueNode, 0, 120, [], null, null);
+        if (swept) scoreInitialBpm = swept.event.args.from;
+      }
+      break outer;
+    }
+  }
 
   // v0.4: Lists with a channel name as the form head are treated as tracks
   const CHANNEL_NAMES = [
@@ -3715,54 +3703,51 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     "pcm3",
   ];
 
-  const scoreChannelHeads = new Set();
-  for (const node of score.items) {
+  const channelHeads = new Set();
+  for (const node of roots) {
     if (!node || node.kind !== "list" || node.items.length === 0) continue;
     const head = atomValue(node.items[0]);
-    if (head) scoreChannelHeads.add(head);
+    if (head) channelHeads.add(head);
   }
 
   const hasCsmMode =
-    scoreChannelHeads.has("fm3-csm") || scoreChannelHeads.has("fm3-csm-rate");
+    channelHeads.has("fm3-csm") || channelHeads.has("fm3-csm-rate");
   const hasFm3OpTracks =
-    scoreChannelHeads.has("fm3-1") ||
-    scoreChannelHeads.has("fm3-2") ||
-    scoreChannelHeads.has("fm3-3") ||
-    scoreChannelHeads.has("fm3-4");
-  const hasFm3NormalOrOp = scoreChannelHeads.has("fm3") || hasFm3OpTracks;
+    channelHeads.has("fm3-1") ||
+    channelHeads.has("fm3-2") ||
+    channelHeads.has("fm3-3") ||
+    channelHeads.has("fm3-4");
+  const hasFm3NormalOrOp = channelHeads.has("fm3") || hasFm3OpTracks;
   if (hasCsmMode && hasFm3NormalOrOp) {
     pushDiag(
       diagnostics,
       "error",
       "E_FM3_MODE_CONFLICT",
       "fm3-csm/fm3-csm-rate cannot be mixed with fm3 or fm3-1..fm3-4 in the same score",
-      nodeSrc(score),
+      fileSrc,
       "global",
     );
   }
 
-  const hasCompanionCsmRateTrack = scoreChannelHeads.has("fm3-csm-rate");
+  const hasCompanionCsmRateTrack = channelHeads.has("fm3-csm-rate");
   let hasInlineCsmRate = false;
   const trackByKey = new Map();
   const trackOrder = [];
   const loopCounter = { count: 0 };
 
-  for (const node of score.items) {
+  for (const node of roots) {
     if (!node || node.kind !== "list" || node.items.length === 0) continue;
 
     const head = atomValue(node.items[0]);
     if (!head || !CHANNEL_NAMES.includes(head)) {
-      // Inside (score …) only channel forms are valid. A `def`/`def-val` placed
-      // here, or an unknown head (usually a channel-name typo), is an error — a
-      // silently-vanished track is worse than a diagnostic.
-      const isDef = head === "def" || head === "def-val";
+      // Defs were already collected, so any other top-level list head (usually
+      // a channel-name typo) is an error — a silently-vanished track is worse
+      // than a diagnostic.
       pushDiag(
         diagnostics,
         "error",
-        isDef ? "E_DEF_IN_SCORE" : "E_SCORE_UNKNOWN_FORM",
-        isDef
-          ? `(${head} …) must be top-level, not inside (score …)`
-          : `unknown form head '${head ?? ""}' inside (score …); expected a channel name`,
+        "E_UNKNOWN_TOPLEVEL_FORM",
+        `unknown top-level form head '${head ?? ""}'; expected a channel name or def`,
         nodeSrc(node.items[0]),
         null,
       );
@@ -3820,7 +3805,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       let defaultGate = null;
       let defaultVol = 31; // v0.4: default vol is 31 (no attenuation)
       let defaultVel = 15; // v0.4: default velocity 0-15
-      let shuffleRatio = scoreShuffleRatio;
+      let shuffleRatio = 0; // v0.6: shuffle is per-track (no score-wide default)
       let shuffleBase = Math.round(WHOLE_TICKS / 8);
 
       if (inlineOpts[":oct"] !== undefined) {
@@ -4048,7 +4033,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
       "error",
       "E_CSM_RATE_SOURCE_CONFLICT",
       "inline :csm-rate and fm3-csm-rate companion track are mutually exclusive per score",
-      nodeSrc(score),
+      fileSrc,
       "global",
     );
   }
@@ -4082,38 +4067,15 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
   for (const track of tracks) convertCountedJumps(track);
   for (const track of tracks) validateTrack(track, diagnostics);
 
-  if (tracks.length > 0) {
-    const initEvents = [];
-    const scoreSrc = nodeSrc(score);
-    if (hasFm3OpTracks) {
-      initEvents.push({
-        tick: 0,
-        cmd: "FM3_MODE",
-        args: { mode: "op" },
-        src: scoreSrc,
-      });
-    }
-    const lfoRateVal = parseIntLike(atomValue(scoreLfoRateNode));
-    if (lfoRateVal !== null) {
-      initEvents.push({
-        tick: 0,
-        cmd: "PARAM_SET",
-        args: { target: "LFO_RATE", value: lfoRateVal },
-        src: scoreSrc,
-      });
-    }
-    if (scoreTempoVal !== null) {
-      initEvents.push({
-        tick: 0,
-        cmd: "TEMPO_SET",
-        args: { bpm: scoreTempoVal },
-        src: scoreSrc,
-      });
-    } else if (scoreTempoSweep) {
-      // Score-level tempo curve → ramp from the start (TEMPO_SWEEP at tick 0).
-      initEvents.push(scoreTempoSweep.event);
-    }
-    if (initEvents.length > 0) tracks[0].events.unshift(...initEvents);
+  // v0.6: tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
+  // emit their own tick-0 events); the only derived init event is FM3 op mode.
+  if (tracks.length > 0 && hasFm3OpTracks) {
+    tracks[0].events.unshift({
+      tick: 0,
+      cmd: "FM3_MODE",
+      args: { mode: "op" },
+      src: fileSrc,
+    });
   }
 
   const sampleSourceBaseKnown = normalizePathSeparators(filename).includes("/");
@@ -4135,8 +4097,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
     version: 1,
     ppqn: PPQN,
     metadata: {
-      title: atomValue(titleNode) || filename,
-      author: atomValue(authorNode) || "unknown",
+      title: fileMeta.title || filename,
+      author: fileMeta.author || "unknown",
       source: filename,
       vals: [...vals.values()].map((v) => ({
         name: v.name,

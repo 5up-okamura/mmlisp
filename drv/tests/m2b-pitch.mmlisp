@@ -9,17 +9,16 @@
   :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 28 :ks3 0 :ml3 4 :dt3 0
   :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
 
-(score :tempo 120
-  ; FM: a static detune, then a rising pitch sweep, then a vibrato
-  (fm1 lead :oct 4 :len 2 :vel 13
-    :pitch 25
-    c e
-    :pitch 0
-    g :pitch (linear :from 0 :to 700 :len 60f) g
-    :pitch (sin :from -40 :to 40 :len 24f) c e)
+; FM: a static detune, then a rising pitch sweep, then a vibrato
+(fm1 :tempo 120 lead :oct 4 :len 2 :vel 13
+  :pitch 25
+  c e
+  :pitch 0
+  g :pitch (linear :from 0 :to 700 :len 60f) g
+  :pitch (sin :from -40 :to 40 :len 24f) c e)
 
-  ; PSG: pitch bends on the square (period interpolation path)
-  (sqr1 :oct 5 :len 2 :vel 10
-    c :pitch (ease-out :from 0 :to -1200 :len 48f) c
-    :pitch 0
-    e :pitch (sin :from -60 :to 60 :len 20f) g))
+; PSG: pitch bends on the square (period interpolation path)
+(sqr1 :oct 5 :len 2 :vel 10
+  c :pitch (ease-out :from 0 :to -1200 :len 48f) c
+  :pitch 0
+  e :pitch (sin :from -60 :to 60 :len 20f) g)

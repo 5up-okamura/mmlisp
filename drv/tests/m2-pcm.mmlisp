@@ -1,5 +1,4 @@
 ; PCM soft-mix, single voice (shot mode) on pcm1 through the fm6 DAC.
 (def blip :sample :file "blip.wav")
-(score :tempo 120
-  (pcm1 blip :oct 4 :len 4 :vel 15
-    c e g c))
+(pcm1 blip :tempo 120 :oct 4 :len 4 :vel 15
+  c e g c)

@@ -415,10 +415,11 @@ extension that also justifies the Lisp base. Constraints: eval is compile-time
 only and bakes to **static data** (Z80 driver unchanged); `$slot`/`def-val`
 remains the sole runtime-varying path.
 
-- **Phase 1 — remove `(score …)`.** 1 file = 1 score; the file *is* the score.
-  `title`/`author` → reserved defs; `:tempo`/`:lfo-rate` stay on tracks (global,
-  written on a track); `:shuffle`/`:shuffle-base` are per-track (the score-wide
-  default is dropped). Ordering by source order. Non-breaking to IR (gate 0-diff).
+- **Phase 1 — remove `(score …)`. DONE.** 1 file = 1 score; the file *is* the
+  score. `title`/`author` → reserved defs; `:tempo`/`:lfo-rate` stay on tracks
+  (global, written on a track); `:shuffle`/`:shuffle-base` are per-track (the
+  score-wide default is dropped). Ordering by source order. Gate 0-diff
+  confirmed; scores, importer, editor template, and docs migrated.
 - **Phase 2 — `import` (+ preset).** Compile-time merge of defs (voices, macros,
   snippets, samples) from another file/preset, folded into IR (no runtime
   dependency). This is the first increment of the fuller `import` / patch system

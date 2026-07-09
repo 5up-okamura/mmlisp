@@ -14,41 +14,38 @@
 )
 (def (bass n) (x 4 n > n <))
 
-(score :tempo 152
+(fm1 :tempo 152 :oct 1
+  #head
+  > (bass c) (bass c) <
+  (bass b-) (bass b-)
+  (bass a) (bass a)
+  (bass f)
+  f > f < g > g < a > a < b- > b-
+  (go head)
+)
 
-  (fm1 :oct 1
-    #head
-    > (bass c) (bass c) <
-    (bass b-) (bass b-)
-    (bass a) (bass a)
-    (bass f)
-    f > f < g > g < a > a < b- > b-
-    (go head)
-  )
+(fm2 :oct 5 :len 4
+  #head
+  melo
+  (go head)
+)
 
-  (fm2 :oct 5 :len 4
-    #head
-    melo
-    (go head)
-  )
+(fm3 :oct 5 :len 4 :vel 12 :pitch 10
+  _8.
+  #head
+  melo
+  (go head)
+)
 
-  (fm3 :oct 5 :len 4 :vel 12 :pitch 10
-    _8.
-    #head
-    melo
-    (go head)
-  )
+(sqr1 :oct 4 :len 8 :vel 13
+  down
+  #head
+  (x 16 c _ g _)
+  (go head)
+)
 
-  (sqr1 :oct 4 :len 8 :vel 13
-    down
-    #head
-    (x 16 c _ g _)
-    (go head)
-  )
-
-  (noise :len 16
-    #head
-    (x 16 bd c hh c c c sd c hh c c c)
-    (go head)
-  )
+(noise :len 16
+  #head
+  (x 16 bd c hh c c c sd c hh c c c)
+  (go head)
 )

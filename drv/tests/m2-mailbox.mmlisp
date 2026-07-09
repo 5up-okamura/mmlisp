@@ -5,10 +5,9 @@
   :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 10 :ks2 0 :ml2 2 :dt2 0
   :ar3 31 :dr3 5 :sr3 1 :rr3 6 :sl3 2 :tl3 20 :ks3 0 :ml3 3 :dt3 0
   :ar4 31 :dr4 8 :sr4 2 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
-(score :tempo 120
-  ; fm1: a len=0 hold — released by a KEY_OFF command
-  (fm1 v :oct 4 :len 4 :vel 15  g0)
-  ; fm2: a running melody — faded out by FADE_TRACK
-  (fm2 v :oct 3 :len 2 :vel 13  c e g c e g c e)
-  ; sqr1: a target for SET_PARAM (VOL)
-  (sqr1 :oct 5 :len 4 :vel 11  c d e f g a b c))
+; fm1: a len=0 hold — released by a KEY_OFF command
+(fm1 :tempo 120 v :oct 4 :len 4 :vel 15  g0)
+; fm2: a running melody — faded out by FADE_TRACK
+(fm2 v :oct 3 :len 2 :vel 13  c e g c e g c e)
+; sqr1: a target for SET_PARAM (VOL)
+(sqr1 :oct 5 :len 4 :vel 11  c d e f g a b c)

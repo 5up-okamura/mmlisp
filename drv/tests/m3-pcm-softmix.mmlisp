@@ -5,7 +5,6 @@
 ; the DAC enable/disable edges across the overlay-loaded setup.
 (def blip :sample :file "blip.wav")
 (def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
-(score :tempo 120
-  (pcm1 blip :oct 4 :len 4 :vel 15   c   e   g   c)
-  (pcm2 blip :oct 3 :len 4 :vel 15   g   c   e   _)
-  (pcm3 pad  :mode loop :oct 4 :len 2 :vel 12   c :gate* 0.5 e _ _))
+(pcm1 blip :tempo 120 :oct 4 :len 4 :vel 15   c   e   g   c)
+(pcm2 blip :oct 3 :len 4 :vel 15   g   c   e   _)
+(pcm3 pad  :mode loop :oct 4 :len 2 :vel 12   c :gate* 0.5 e _ _)

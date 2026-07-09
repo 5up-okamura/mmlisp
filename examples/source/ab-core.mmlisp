@@ -20,32 +20,31 @@
 ; track: a note *sounding across* a tempo change keeps its onset-tempo
 ; duration in the live player but is tick-exact in the driver — a documented
 ; acceptance waiver (driver.md §12), deliberately not exercised here.
-(score :tempo 120 :lfo-rate 4
-  (fm1 lead :oct 4 :len 8 :vel 12
-    c e g  c4 e8 g8 ~ g8
-    :vel 15
-    (x 2 c d e :break f g)
-    :tempo 96
-    :gate* 0.5
-    a g f e
-    :gate* 1.0
-    d2)
+(fm1 :tempo 120 :lfo-rate 4 lead :oct 4 :len 8 :vel 12
+  c e g  c4 e8 g8 ~ g8
+  :vel 15
+  (x 2 c d e :break f g)
+  :tempo 96
+  :gate* 0.5
+  a g f e
+  :gate* 1.0
+  d2)
 
-  (fm2 bass :oct 2 :len 4 :vel 13 :pan left
-    c _ < g _8 g8 > c ~ c4
-    :vol 24
-    c c8 c8 < g > c2)
+(fm2 bass :oct 2 :len 4 :vel 13 :pan left
+  c _ < g _8 g8 > c ~ c4
+  :vol 24
+  c c8 c8 < g > c2)
 
-  (sqr1 :oct 5 :len 4 :vel 10
-    e g a b  _2
-    :vel 8
-    e8 e8 _8 e8 g2)
+(sqr1 :oct 5 :len 4 :vel 10
+  e g a b  _2
+  :vel 8
+  e8 e8 _8 e8 g2)
 
-  (sqr2 :oct 4 :len 2 :vel 7
-    c e _ g)
+(sqr2 :oct 4 :len 2 :vel 7
+  c e _ g)
 
-  (noise :len 8 :vel 11
-    #beat
-    c c8. c16 _8 c c c8 c8
-    (go beat 2)
-    c2))
+(noise :len 8 :vel 11
+  #beat
+  c c8. c16 _8 c c c8 c8
+  (go beat 2)
+  c2)
