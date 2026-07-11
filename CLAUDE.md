@@ -47,6 +47,15 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 There is **no automated test suite**. Verify changes by playing them back in
 the live environment; call this out when a change is hard to verify that way.
 
+## Cross-session project memory
+
+`.claude/memory/` holds session-persistent project state (current status,
+remaining-work lists, in-flight feature plans) that the code and docs don't
+yet record — checked in so cloud and local sessions share it. **Before
+continuing multi-session work (e.g. the Z80 driver), read the relevant file
+there first** (`.claude/memory/README.md` is the index). Keep it current:
+update in place, delete files once the repo itself records the outcome.
+
 ## Working agreements
 
 The working agreements (English-only, no AI attribution, no legacy support,
