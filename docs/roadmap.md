@@ -425,13 +425,23 @@ remains the sole runtime-varying path.
   dependency). This is the first increment of the fuller `import` / patch system
   under **Future Vision** (`:from :stdlib`/`:patches`/URL, version pinning) —
   same `(import …)` surface, built out later.
-- **Phase 3 — compile-time eval (centerpiece; own design pass).** Evaluable form
-  heads (`let`/`if`/`for`/`+ - * /`/generators) run at compile time and splice
-  into the note stream / directive values. Dissolves the ad-hoc operators
-  (`:pitch+`, `:vel±`, echo `:by`) into one arithmetic rule; curves become
-  in-language library functions that bake to identical LUTs. Open questions:
-  escape syntax, value/signal/stream types, `let`/functions, determinism, the
-  compile-vs-runtime (`$slot`) boundary.
+- **Phase 3 — compile-time eval (centerpiece; design settled 2026-07).**
+  Evaluable form heads (`+ - * /`, `let`, `note`, `ticks`/`frames`, curve
+  names) run at compile time and splice into the note stream / directive
+  values; `if`/`for`/def-functions follow in Phase 4. The operator suffixes
+  (`:pitch+`, `:vel±`, hw `+`/`*`) become pure desugaring onto one arithmetic
+  rule with nameable bases (`$vel`/`$oct`/`$pitch`/self-refs); curves become
+  library functions baking to byte-identical LUTs; stochastic curves gain
+  `:seed`. Runtime variation is organized as **sampling tiers** (compile /
+  tick / note-on / frame): a compile-time shadow folds static bases; a
+  generic Z80 shadow read (derived from the existing op-param descriptor
+  table) plus param-as-accumulator opcode chains lower any left-linear
+  `$slot` expression at event ticks; slot-fed curve params cover note-on;
+  additive + scaled macro flags cover per-frame. What cannot lower is a
+  compile error. CALL/RET + an exporter dedup pass handle data-size reuse.
+  The driver budget for all of this is measured and funded (stack watermark,
+  size audit, overlay eviction). Normative record and ordered implementation
+  plan: `.claude/memory/design-eval.md`.
 - **Phase 4 — enabled by eval.** Algorithmic composition, parametric phrases as
   real functions, signal composition (`(+ (sin) (saw))`, `(* env lfo)`),
   curves-as-a-standard-library.
@@ -551,7 +561,6 @@ Parked (out of current scope, post-core features):
   removed in the v0.5 cleanup: zero usage, unhygienic parameter capture, and
   definition-site source maps. Redesign on demand when a composition needs it.
 - Dynamic performance branch primitives (`|` alternation, random part switching, random label jump)
-- Reproducible random sequence by seed-indexed LUT traversal (same seed => same sequence)
 - Label numbering + jump-address table for O(1) branch target resolution in Z80 driver
 
 ---

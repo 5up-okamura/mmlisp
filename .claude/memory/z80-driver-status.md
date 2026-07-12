@@ -23,14 +23,14 @@ This file is the compact continuation state.
    pass (voices currently ride as PARAM_SET runs — correctness-equal, just
    bigger streams); CALL/RET + encode-time dedup pass; NOTE_ON_EX
    `macro_ref` field.
-2. **`:pitch+` / `:semi+` additive macros** — live/compiler + MMB side LANDED
-   (committed). The **Z80 driver additive branch is still pending** (~50-60 B
-   resident code — fund by common-subroutining `psf_pitch`/`ps_psg_pitch`, or a
-   `DATA_BASE` bump). NOTE: the operator's surface/mechanism is being
-   reconsidered under **v0.6** (operator→arithmetic consolidation) — the runtime
-   add-per-frame becomes the lowering target for `(+ signal runtime)`. See
-   [plan-v0.6.md](plan-v0.6.md) "Operator consolidation"; hold the driver branch
-   until the eval design settles rather than build it as a one-off.
+2. **v0.6 driver track** — the eval design is settled
+   ([design-eval.md](design-eval.md) §10/§12); the driver-side sequence is:
+   measurement infra → budget prep (rare-handler overlay eviction, psf
+   commonization, DATA_BASE bump) → **generic shadow read** (`op_param_tab`
+   inverse, ~35-55 B) → **additive macro branch** (held since the `:pitch+`
+   landing; ~50-60 B) → **scaled macro flag** (~30-40 B) → M3 dyn slice →
+   CALL/RET (~45-60 B, control-stack tag already reserved in the TCB
+   layout). Costs and funding are measured — see the budget table below.
 3. **Hardware bring-up + cycle tuning** (the real frontier): run on a real
    Mega Drive / flashcart; measure worst-case frame cycles (PCM mix rate is
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait
@@ -45,16 +45,27 @@ This file is the compact continuation state.
 ## Extension budget — how much room is left, and where the next bytes come from
 
 Decision material for weighing any new driver-side feature (v0.6 lowering
-targets included). Numbers verified against `drv/src/mmlispdrv.z80` equ
-comments at 7bbbba5; re-check them there before relying on this table.
+targets included). Numbers **measured 2026-07-12** on a scratch copy at
+18abe79 (size audit: assemble via `tools/build-driver.mjs`, sort symbol
+addresses, diff = routine size; stack: min-SP hook in `z80cpu.mjs push16`,
+heaviest gate scores via `tools/verify.mjs` — traces stayed 0-diff with the
+hook). Re-measure before relying on exact values; making both a permanent
+`drv/tools/` report is a v0.6 implementation step.
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **~14 B free** (image 6370 B, code owns $0000–$18EF, `DATA_BASE=$18F0`) | The scarce resource. Everything per-frame must live here. |
-| Overlay slot | 451 B ($172D–$18EF); largest overlay 445 B → **6 B slack** | 4 overlays exist (boot/cmd/setup/pcm). A *new* overlay can be up to 451 B; growing an existing one has 6 B. |
+| Resident code | **24 B free** (resident 5848 B vs G_PCMV ceiling 5872 B) | The scarce resource. Everything per-frame must live here. |
+| Rare-event handlers resident | **527 B** total; pure cold setup ≈ 167 B gross (d_tempo_sweep 61, CSM setup ~48, d_marker 25, d_fm3_mode 21, d_tempo_set 12) | Evictable to a 5th overlay → **~100-130 B net** after trampolines. Overlay load ≈ 9.5k cycles (~16% frame), fine at rare-event rate. |
+| Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238 B | A *new* overlay can be up to 451 B; growing the largest has 6 B. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |
-| Stack | **~82 B slack** ($1FAE–$1FFF) | Worst-case interrupt depth (incl. PCM mix) NOT measured — measure before spending this. |
+| Stack | 82 B region; **worst case measured 37 B used** (m3-pcm-softmix / stress-m1 / m2-pcmloop / m3-macro-multi) | → DATA_BASE bump of ~24-32 B is safe by measurement (keep ≥ 45 B reserve); confirm on hardware. |
 | ROM side | effectively unlimited | LUT_TABLE MMB section (§0x0008), overlay blob, banked song data. |
+
+v0.6 near-term costs vs funding (design-eval.md §10): costs 160-215 B
+(generic read 35-55 + additive 50-60 + scaled 30-40 + CALL/RET 45-60) vs
+funding ~165-205 B (headroom 24 + eviction ~100-130 + DATA_BASE ~24-32 +
+psf commonization 15-20) — fits; the VAL-op reserve (~45-60 B) rides later
+funding.
 
 Funding menu, cheapest first (with precedent):
 
@@ -73,13 +84,13 @@ Funding menu, cheapest first (with precedent):
    published addresses, and driver.md §5.
 5. **68k offload** — architectural last resort (drv/README).
 
-v0.6 interplay (see plan-v0.6.md): eval is compile-time-only by design, so
-new language power should reach the driver as **static data (ROM) or
-existing opcodes**, not new per-frame engines. The only runtime carriers are
-`$slot` reads and the landed runtime-add lowering (`G_MADD` non-storing
-pitch path, pending ~50-60 B). Judge any v0.6 feature request against this
-table: per-frame resident cost is the expensive axis; data and cold code are
-cheap.
+v0.6 interplay (see design-eval.md): eval itself is compile-time-only; the
+driver gains **readers and flags, never an evaluator**. The runtime carriers
+are the sampling tiers — tick (`$slot`/RMW opcode chains over the generic
+shadow read), note-on (dyn slot reads at macro fire), frame (additive +
+scaled macro flags). Judge any v0.6 feature request against this table:
+per-frame resident cost is the expensive axis; data, cold code (overlays),
+and ROM are cheap.
 
 ## How to verify any driver change
 

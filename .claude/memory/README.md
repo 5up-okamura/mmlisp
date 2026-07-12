@@ -15,7 +15,12 @@ Index:
 
 - [z80-driver-status.md](z80-driver-status.md) — MMLispDRV: what's done, the
   remaining-work list, and how to verify.
-- [plan-v0.6.md](plan-v0.6.md) — v0.6 approved design: score removal,
-  compile-time eval (with the 5 open questions + the operator-consolidation
-  discussion material folded in from the retired `:pitch+` plan), and import.
-  Continue the design discussion from here; roadmap.md has the compact version.
+- [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
+  import, compile-time eval, phase status and sequencing. roadmap.md has the
+  compact public version.
+- [design-eval.md](design-eval.md) — v0.6 Phase 3 settled design: the
+  compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
+  operator desugaring, `let`), the value machine (sampling tiers, generic
+  shadow read, left-fold lowering, slot allocation), CALL/RET + dedup, the
+  measured Z80 budget + reduction ladder, and the ordered implementation
+  plan with per-step gates. Implement from here.
