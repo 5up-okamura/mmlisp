@@ -11,6 +11,7 @@
 
 import { parse } from "./mmlisp-parser.js";
 import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
+import { makeEnv, isEvalHead, evalScalarValue } from "./mmlisp-eval.js";
 
 // 96 ticks/quarter (384/whole). Divisible by both MMLisp's note fractions and
 // mucom's default 128-clock/whole grid (LCM 384), so imported 128th notes land
@@ -2161,7 +2162,12 @@ function compileChannelBody(
   typedDefs,
   loopCounter,
   vals,
+  env = null,
 ) {
+  // Lexical env for compile-time eval (`let`, step 4). Step 1 only ever sees
+  // the empty root, but the parameter is threaded through the body recursions
+  // now so later steps need no re-plumbing.
+  const evalEnv = env ?? makeEnv(null);
   let i = 0;
   while (i < items.length) {
     const node = items[i];
@@ -2571,6 +2577,26 @@ function compileChannelBody(
                 }
                 break;
               }
+              // Compile-time eval: `:tl1 (+ 20 10)` folds to a scalar PARAM_SET.
+              // Eval-builtin heads are disjoint from curve names, so this is
+              // checked before parseCurveSpec without disturbing curve dispatch.
+              if (
+                !op &&
+                items[i]?.kind === "list" &&
+                items[i].bracket === "()" &&
+                isEvalHead(atomValue(items[i].items?.[0]))
+              ) {
+                const scalar = evalScalarValue(items[i], evalEnv, {
+                  pushDiag,
+                  diagnostics,
+                  trackName,
+                  src: nodeSrc(node),
+                });
+                if (scalar !== null) {
+                  push("PARAM_SET", { target, value: Math.round(scalar) });
+                }
+                break;
+              }
               // Absolute: curve sweep or literal set.
               const curveSpec = parseCurveSpec(
                 items[i],
@@ -2884,6 +2910,7 @@ function compileChannelBody(
             typedDefs,
             loopCounter,
             vals,
+            evalEnv,
           );
           events.push({
             tick: trackState.tick,
@@ -2908,6 +2935,7 @@ function compileChannelBody(
             typedDefs,
             loopCounter,
             vals,
+            evalEnv,
           );
           trackState.currentLoopId = savedLoopId;
           events.push({
@@ -3201,7 +3229,23 @@ function compileChannelBody(
           const targetNode = node.items[j];
           const valueNode = node.items[j + 1];
           const target = canonicalTarget(atomValue(targetNode));
-          const value = parseIntLike(atomValue(valueNode)) ?? 0;
+          // Value may be a compile-time eval form: (param-set :tl1 (+ 20 10)).
+          let value;
+          if (
+            valueNode?.kind === "list" &&
+            valueNode.bracket === "()" &&
+            isEvalHead(atomValue(valueNode.items?.[0]))
+          ) {
+            const scalar = evalScalarValue(valueNode, evalEnv, {
+              pushDiag,
+              diagnostics,
+              trackName,
+              src: nodeSrc(targetNode),
+            });
+            value = scalar === null ? 0 : Math.round(scalar);
+          } else {
+            value = parseIntLike(atomValue(valueNode)) ?? 0;
+          }
           if (!PARAM_SET_TARGETS.has(target)) {
             pushDiag(
               diagnostics,
@@ -3459,6 +3503,17 @@ function collectDefs(roots, diagnostics) {
           );
           continue;
         }
+        if (isEvalHead(pname)) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_DEF_RESERVED",
+            `'${pname}' is a reserved eval builtin and cannot be a def name`,
+            nodeSrc(root),
+            null,
+          );
+          continue;
+        }
         const params = sig
           .slice(1)
           .map((n) => atomValue(n))
@@ -3474,6 +3529,17 @@ function collectDefs(roots, diagnostics) {
           "error",
           "E_DEF_NAME",
           "def name must be a symbol",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      if (isEvalHead(name)) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_DEF_RESERVED",
+          `'${name}' is a reserved eval builtin and cannot be a def name`,
           nodeSrc(root),
           null,
         );

@@ -700,11 +700,19 @@ add a size-audit script under `drv/tools/` so the budget table stays live.
 
 Compiler track (Tier A — no driver changes):
 
-1. **Evaluator core** — new `live/src/mmlisp-eval.js` (env chain, builtin
-   registry, scalar arithmetic, `evalNode`/`evalValue`); `compileChannelBody`
-   gains `env`; hook only the hw-param default case (:2506) and `param-set`
-   values. Reserved-name checks in `collectDefs`. Gate: 0-diff; IR snapshot
-   equality; unit tests for folding/diagnostics.
+1. **Evaluator core** — **DONE** (mmlisp-eval.js). Scalar core: env chain
+   (`makeEnv`), builtin registry (`+ - * / min max abs round floor`),
+   `evalNode`/`evalScalarValue`, depth-32 guard, `isEvalHead`/
+   `EVAL_BUILTIN_NAMES` exports. `compileChannelBody` gained `env` (threaded
+   through the two x-loop recursions + top call). Hooked: the hw-param default
+   case (`:tl1 (+ 20 10)` → PARAM_SET, `Math.round`, before parseCurveSpec —
+   eval heads are disjoint from curve names so curve dispatch is untouched) and
+   `param-set` values. `collectDefs` errors `E_DEF_RESERVED` on a def/paramDef
+   named after a builtin. `$ref` in an eval expr → `E_EVAL_NOT_LOWERABLE`
+   (value machine is step 8); bogus non-eval `()` head still → `E_UNKNOWN_CURVE`
+   (curve-builtin generalization to `E_EVAL_UNKNOWN_HEAD` is step 2). Gate met:
+   corpus IR+diagnostics byte-identical (A/B snapshot), verify:all 20/20
+   0-mismatch, strict 6/6, eval unit tests pass.
 2. **Curve builtins + affine folding + `:seed`** — curve heads in the
    registry (delegating to `parseCurveSpec`), `mapMacroValues`-based
    scalar⊕signal, memoized `buildStochasticLuts(seed)`. Gate: LUT
