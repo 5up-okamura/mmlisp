@@ -40,45 +40,122 @@ function envLookup(env, name) {
   return undefined;
 }
 
-// ── Builtin registry ───────────────────────────────────────────────────────
-// One entry per evaluable head. `arity` is [min, max] (max null = variadic).
-// `fn` receives already-evaluated scalar operands. This Map is the single
-// source of truth for both dispatch and the reserved-name check in collectDefs.
-const BUILTINS = new Map();
+// ── Value model ──────────────────────────────────────────────────────────
+// An eval value is a scalar (JS double) or a signal (a curve/stages/steps spec
+// object — the very object parseCurveSpec produces, kept symbolic so LUTs stay
+// byte-identical; design §2.2). Signals are opaque here except through the
+// ctx.mapMacroValues callback (owned by mmlisp2ir.js).
+const isSignal = (v) => v !== null && typeof v === "object";
 
-function defBuiltin(name, arity, fn) {
-  BUILTINS.set(name, { arity, fn });
+// ── Affine arithmetic (scalar ⊕ signal stays symbolic; design §2.3) ──────────
+// A running accumulator is either a scalar (spec === null → value = k) or an
+// affine transform of one signal (value = coeff·sample + offset). Only the four
+// affine operators reach here; `min`/`max`/etc. reject signals.
+function affineStart(v) {
+  return isSignal(v) ? { spec: v, coeff: 1, offset: 0 } : { spec: null, offset: v, coeff: 0 };
 }
 
-const need = (name, args, want) => {
-  if (args.length !== want) {
+function affineCombine(op, acc, x) {
+  const accScalar = acc.spec === null;
+  const xSignal = isSignal(x);
+  if (accScalar && !xSignal) {
+    // scalar ⊕ scalar
+    let k;
+    if (op === "+") k = acc.offset + x;
+    else if (op === "-") k = acc.offset - x;
+    else if (op === "*") k = acc.offset * x;
+    else {
+      if (x === 0) throw new EvalError("E_EVAL_DIV_ZERO", "division by zero");
+      k = acc.offset / x;
+    }
+    return { spec: null, offset: k, coeff: 0 };
+  }
+  if (!accScalar && !xSignal) {
+    // signal ⊕ scalar — affine
+    if (op === "+") return { ...acc, offset: acc.offset + x };
+    if (op === "-") return { ...acc, offset: acc.offset - x };
+    if (op === "*") return { spec: acc.spec, coeff: acc.coeff * x, offset: acc.offset * x };
+    if (x === 0) throw new EvalError("E_EVAL_DIV_ZERO", "division by zero");
+    return { spec: acc.spec, coeff: acc.coeff / x, offset: acc.offset / x };
+  }
+  if (accScalar && xSignal) {
+    // scalar ⊕ signal
+    if (op === "+") return { spec: x, coeff: 1, offset: acc.offset };
+    if (op === "-") return { spec: x, coeff: -1, offset: acc.offset }; // k − sample
+    if (op === "*") return { spec: x, coeff: acc.offset, offset: 0 };
     throw new EvalError(
-      "E_EVAL_ARITY",
-      `(${name} …) takes ${want} argument${want === 1 ? "" : "s"}, got ${args.length}`,
+      "E_EVAL_SIGNAL_NONAFFINE",
+      "cannot divide by a signal (result is non-affine)",
     );
   }
+  // signal ⊕ signal — pointwise materialization is a later step (design §2.3).
+  throw new EvalError(
+    "E_EVAL_NOT_LOWERABLE",
+    "combining two signals requires materialization (a later step)",
+  );
+}
+
+function affineFinish(acc, ctx) {
+  if (acc.spec === null) return acc.offset; // pure scalar
+  if (acc.coeff === 1 && acc.offset === 0) return acc.spec; // untouched — byte-identical
+  // Fold the affine transform into the signal's value axis. ctx.foldSignal
+  // leaves the time axis (rate/len/step) alone and does not clamp — clamping
+  // happens once at the binding site (design §2.2-2.3).
+  return ctx.foldSignal(acc.spec, (v) => acc.coeff * v + acc.offset);
+}
+
+// ── Builtin registry ───────────────────────────────────────────────────────
+// One entry per evaluable head. `arity` is [min, max] (max null = variadic).
+// `apply(args, ctx)` receives already-evaluated operands (scalar or signal) and
+// returns a value. This Map is the single source of truth for both dispatch and
+// the reserved-name check in collectDefs.
+const BUILTINS = new Map();
+
+const scalarsOnly = (name, args) => {
+  for (const a of args) {
+    if (isSignal(a)) {
+      throw new EvalError(
+        "E_EVAL_SIGNAL_NONAFFINE",
+        `(${name} …) is not defined on a signal`,
+      );
+    }
+  }
+  return args;
 };
 
-defBuiltin("+", [0, null], (a) => a.reduce((x, y) => x + y, 0));
-defBuiltin("*", [0, null], (a) => a.reduce((x, y) => x * y, 1));
-defBuiltin("-", [1, null], (a) =>
-  a.length === 1 ? -a[0] : a.reduce((x, y) => x - y),
-);
-defBuiltin("/", [1, null], (a) => {
-  const divide = (x, y) => {
-    if (y === 0) throw new EvalError("E_EVAL_DIV_ZERO", "division by zero");
-    return x / y;
-  };
-  return a.length === 1 ? divide(1, a[0]) : a.reduce(divide);
+// Affine operators: fold a left-to-right chain, tracking one signal affinely.
+const affineOp = (op, seed) => (args, ctx) => {
+  let acc = seed !== undefined ? affineStart(seed) : affineStart(args[0]);
+  const rest = seed !== undefined ? args : args.slice(1);
+  for (const x of rest) acc = affineCombine(op, acc, x);
+  return affineFinish(acc, ctx);
+};
+
+BUILTINS.set("+", { arity: [0, null], apply: affineOp("+", 0) });
+BUILTINS.set("*", { arity: [0, null], apply: affineOp("*", 1) });
+BUILTINS.set("-", {
+  arity: [1, null],
+  apply: (args, ctx) =>
+    args.length === 1
+      ? affineFinish(affineCombine("-", affineStart(0), args[0]), ctx) // negate
+      : affineOp("-")(args, ctx),
 });
-defBuiltin("min", [1, null], (a) => Math.min(...a));
-defBuiltin("max", [1, null], (a) => Math.max(...a));
-defBuiltin("abs", [1, 1], (a, name) => (need(name, a, 1), Math.abs(a[0])));
-defBuiltin("round", [1, 1], (a, name) => (need(name, a, 1), Math.round(a[0])));
-defBuiltin("floor", [1, 1], (a, name) => (need(name, a, 1), Math.floor(a[0])));
+BUILTINS.set("/", {
+  arity: [1, null],
+  apply: (args, ctx) =>
+    args.length === 1
+      ? affineFinish(affineCombine("/", affineStart(1), args[0]), ctx) // reciprocal
+      : affineOp("/")(args, ctx),
+});
+BUILTINS.set("min", { arity: [1, null], apply: (a, _c, n) => Math.min(...scalarsOnly(n, a)) });
+BUILTINS.set("max", { arity: [1, null], apply: (a, _c, n) => Math.max(...scalarsOnly(n, a)) });
+BUILTINS.set("abs", { arity: [1, 1], apply: (a, _c, n) => Math.abs(scalarsOnly(n, a)[0]) });
+BUILTINS.set("round", { arity: [1, 1], apply: (a, _c, n) => Math.round(scalarsOnly(n, a)[0]) });
+BUILTINS.set("floor", { arity: [1, 1], apply: (a, _c, n) => Math.floor(scalarsOnly(n, a)[0]) });
 
 /** True when `name` is a reserved eval builtin head (used for dispatch and the
- *  `E_DEF_RESERVED` check). */
+ *  `E_DEF_RESERVED` check). Curve names are handled separately (via ctx), so
+ *  they are not in this set. */
 export function isEvalHead(name) {
   return typeof name === "string" && BUILTINS.has(name);
 }
@@ -95,8 +172,10 @@ function looksLikeMusicToken(s) {
 }
 
 // ── The evaluator ────────────────────────────────────────────────────────
-// Returns a scalar (JS double). Floats are legal throughout; integerization
-// happens only at the binding site (design §2.1). Throws EvalError on failure.
+// Returns a scalar (JS double) or a signal (spec object). Floats are legal
+// throughout; integerization happens only at the binding site (design §2.1).
+// Curve heads (design §3) are resolved through ctx.parseCurve — the evaluator
+// stays free of curve internals. Throws EvalError on failure.
 function evalNode(node, env, ctx) {
   if (ctx.depth > MAX_DEPTH) {
     throw new EvalError("E_EVAL_DEPTH", "eval nesting too deep");
@@ -112,14 +191,14 @@ function evalNode(node, env, ctx) {
     // Numeric literal.
     if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(v)) return Number(v);
     // Runtime value reference — the value machine (a later step) lowers these;
-    // step 1 has no runtime path, so fail explicitly rather than mis-fold.
+    // there is no runtime path yet, so fail explicitly rather than mis-fold.
     if (v.startsWith("$")) {
       throw new EvalError(
         "E_EVAL_NOT_LOWERABLE",
         `runtime value ${v} cannot be used in a compile-time expression yet`,
       );
     }
-    // Bound name (let, step 4) — env is empty in step 1.
+    // Bound name (let, step 4) — env is empty until then.
     const bound = envLookup(env, v);
     if (bound !== undefined) return bound;
     if (looksLikeMusicToken(v)) {
@@ -134,6 +213,16 @@ function evalNode(node, env, ctx) {
   if (node.kind === "list") {
     const items = node.items.filter((n) => n.kind !== "comment");
     const head = items[0] && items[0].kind === "atom" ? items[0].value : null;
+
+    // Curve head → a symbolic signal (delegated to parseCurveSpec via ctx).
+    if (head && ctx.curveNames && ctx.curveNames.has(head)) {
+      const spec = ctx.parseCurve(node);
+      if (!spec) {
+        throw new EvalError("E_EVAL_UNKNOWN_HEAD", `bad curve '${head}'`);
+      }
+      return spec;
+    }
+
     const builtin = head && BUILTINS.get(head);
     if (!builtin) {
       throw new EvalError(
@@ -152,7 +241,7 @@ function evalNode(node, env, ctx) {
     const args = operands.map((n) =>
       evalNode(n, env, { ...ctx, depth: ctx.depth + 1 }),
     );
-    return builtin.fn(args, head);
+    return builtin.apply(args, ctx, head);
   }
 
   throw new EvalError("E_EVAL_OPERAND", "unrecognized node");
@@ -160,16 +249,19 @@ function evalNode(node, env, ctx) {
 
 /**
  * Value-position entry point. `node` is a `()` form already known to be an eval
- * builtin (the caller checks `isEvalHead`). Returns the scalar result, or null
- * after pushing one diagnostic on failure.
+ * builtin (the caller checks `isEvalHead`). Returns a discriminated result —
+ * `{kind:"scalar", value}` or `{kind:"signal", spec}` — or null after pushing
+ * one diagnostic on failure.
  *
  * @param {object} node   the `()` form
  * @param {object} env    lexical environment (makeEnv chain)
- * @param {{ pushDiag, diagnostics, trackName, src }} ctx  diagnostic sink + location
+ * @param {{ pushDiag, diagnostics, trackName, src, parseCurve, curveNames,
+ *           foldSignal }} ctx
  */
-export function evalScalarValue(node, env, ctx) {
+export function evalValue(node, env, ctx) {
   try {
-    return evalNode(node, env ?? makeEnv(null), { ...ctx, depth: 0 });
+    const r = evalNode(node, env ?? makeEnv(null), { ...ctx, depth: 0 });
+    return isSignal(r) ? { kind: "signal", spec: r } : { kind: "scalar", value: r };
   } catch (e) {
     if (e instanceof EvalError) {
       ctx.pushDiag(ctx.diagnostics, "error", e.code, e.message, ctx.src, ctx.trackName);
@@ -177,4 +269,25 @@ export function evalScalarValue(node, env, ctx) {
     }
     throw e;
   }
+}
+
+/**
+ * Scalar-only value position (e.g. `param-set`, length bridges). Returns the
+ * number, or null after a diagnostic — a signal result is `E_EVAL_TYPE`.
+ */
+export function evalScalarValue(node, env, ctx) {
+  const r = evalValue(node, env, ctx);
+  if (r === null) return null;
+  if (r.kind === "signal") {
+    ctx.pushDiag(
+      ctx.diagnostics,
+      "error",
+      "E_EVAL_TYPE",
+      "expected a number here, got a signal (curve)",
+      ctx.src,
+      ctx.trackName,
+    );
+    return null;
+  }
+  return r.value;
 }

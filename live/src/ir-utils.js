@@ -363,6 +363,22 @@ const STOCHASTIC_LUTS = buildStochasticLuts(
   STOCHASTIC_LUT_SEED,
 );
 
+// Per-seed stochastic LUT sets, memoized (v0.6 `:seed`). The default seed reuses
+// the module-level tables so seedless sources are byte-identical; other seeds
+// regenerate once and cache. Compile-time only — the driver replays the sampled
+// values, so the seed costs nothing on the Z80.
+const stochasticLutCache = new Map();
+export function getStochasticLuts(seed) {
+  if (seed == null || (seed >>> 0) === STOCHASTIC_LUT_SEED) return STOCHASTIC_LUTS;
+  const key = seed >>> 0;
+  let luts = stochasticLutCache.get(key);
+  if (!luts) {
+    luts = buildStochasticLuts(STOCHASTIC_LUT_SIZE, key);
+    stochasticLutCache.set(key, luts);
+  }
+  return luts;
+}
+
 const LOOP_CURVE_NAMES = new Set([
   "sin",
   "triangle",
@@ -412,10 +428,11 @@ function sampleStochasticCurve(curve, phase, params) {
   const hold = Math.max(1, Math.floor(Number(params?.hold) || 1));
   const jitter = clamp01(Number(params?.jitter) || 0);
 
-  const noiseLut = STOCHASTIC_LUTS.noise;
-  const pinkLut = STOCHASTIC_LUTS.pink;
-  const perlinLut = STOCHASTIC_LUTS.perlin;
-  const brownLut = STOCHASTIC_LUTS.brown;
+  const luts = getStochasticLuts(params?.seed);
+  const noiseLut = luts.noise;
+  const pinkLut = luts.pink;
+  const perlinLut = luts.perlin;
+  const brownLut = luts.brown;
 
   let base = phase;
   if (curve === "noise") {

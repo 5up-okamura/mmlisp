@@ -713,11 +713,26 @@ Compiler track (Tier A — no driver changes):
    (curve-builtin generalization to `E_EVAL_UNKNOWN_HEAD` is step 2). Gate met:
    corpus IR+diagnostics byte-identical (A/B snapshot), verify:all 20/20
    0-mismatch, strict 6/6, eval unit tests pass.
-2. **Curve builtins + affine folding + `:seed`** — curve heads in the
-   registry (delegating to `parseCurveSpec`), `mapMacroValues`-based
-   scalar⊕signal, memoized `buildStochasticLuts(seed)`. Gate: LUT
-   intern-identity test; seedless sources byte-identical; the §11.1
-   pitch-macro compile-check.
+2. **Curve builtins + affine folding + `:seed`** — **DONE**. The evaluator's
+   value model is now scalar | signal; curve heads resolve to symbolic signals
+   via `ctx.parseCurve` (delegating to parseCurveSpec — curves stay OUT of the
+   eval module). `+ - * /` do affine scalar⊕signal (one signal, tracked as
+   `coeff·sample + offset`, folded at the end via `ctx.foldSignal`); ≥2 signals
+   → E_EVAL_NOT_LOWERABLE (materialization is step 5), scalar÷signal /
+   min/max/abs/… on a signal → E_EVAL_SIGNAL_NONAFFINE. Wired at the hw-param
+   site (scalar→PARAM_SET, signal→PARAM_SWEEP) and parseMacroSpec's `()` branch
+   (signal→{type:"curve",…}, scalar→const steps) — both build a root-env ctx
+   locally (no env threading; `let` is step 4). `:seed N` (u32, default 0xDEAD)
+   on noise/pink/perlin/brown via memoized `getStochasticLuts` (ir-utils);
+   compile-time only, Z80 cost 0. **Key gotcha found**: mmlisp2ir's
+   `mapMacroValues` keys on `spec.type`, but parseCurveSpec output is type-less
+   → added `foldCurveValues` (shape-detecting, mirrors the curve branch's
+   `from??0`/`to??0`) as `ctx.foldSignal`. Gate met: `(+ (sin) 10)` byte-
+   identical to the shifted literal (inline PARAM_SWEEP AND macro MACRO_TABLE
+   LUT), seedless == 0xDEAD, seeded differs, pitch macro reaches MACRO_TABLE;
+   corpus IR+diag+MMB byte-identical (A/B), verify:all 20/20, strict 6/6.
+   **Deferred** (not gated): computed curve kwargs (`:from (- 0 40)`) — §3's
+   "one added capability"; bare-`$ref` dyn kwargs unchanged.
 3. **Compile shadow + operator desugar rewiring** — per-param shadow in
    `trackState` (voice-seeded, poisoning rules §4.2); all five sugar
    families through the evaluator; static bases fold. Gate: byte-identical

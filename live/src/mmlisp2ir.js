@@ -11,7 +11,12 @@
 
 import { parse } from "./mmlisp-parser.js";
 import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
-import { makeEnv, isEvalHead, evalScalarValue } from "./mmlisp-eval.js";
+import {
+  makeEnv,
+  isEvalHead,
+  evalValue,
+  evalScalarValue,
+} from "./mmlisp-eval.js";
 
 // 96 ticks/quarter (384/whole). Divisible by both MMLisp's note fractions and
 // mucom's default 128-clock/whole grid (LCM 384), so imported 128th notes land
@@ -1402,6 +1407,25 @@ function parseMacroSpec(
   }
   // Curve form: (ease-out :from 15 :to 0 :len 1)
   if (node.kind === "list" && node.bracket === "()") {
+    // Compile-time eval in macro position: `(macro :pitch (+ (sin …) 10))`
+    // folds affinely to a symbolic curve (byte-identical LUT), and a scalar
+    // expression becomes a constant signal. A bare curve head is disjoint from
+    // eval heads, so it falls through to parseCurveSpec unchanged.
+    if (isEvalHead(atomValue(node.items?.[0]))) {
+      const r = evalValue(
+        node,
+        makeEnv(null),
+        makeEvalCtx(diagnostics, trackName, nodeSrc(node)),
+      );
+      if (!r) return null;
+      if (r.kind === "signal") return { type: "curve", ...r.spec };
+      return {
+        type: "steps",
+        steps: [clampVal(r.value)],
+        loopIndex: 0,
+        releaseIndex: null,
+      };
+    }
     const curveSpec = parseCurveSpec(
       node,
       diagnostics,
@@ -1543,6 +1567,7 @@ function parseCurveSpec(
     ":lacunarity",
     ":persistence",
     ":leak",
+    ":seed",
   ]);
   const STOCHASTIC_CURVES = new Set(["noise", "pink", "perlin", "brown"]);
   const LOOP_WAVE_CURVES = new Set([
@@ -1558,6 +1583,7 @@ function parseCurveSpec(
     if (LOOP_WAVE_PARAM_KEYS.has(key)) return LOOP_WAVE_CURVES.has(curveName);
     if (!STOCHASTIC_PARAM_KEYS.has(key)) return false;
     if (!STOCHASTIC_CURVES.has(curveName)) return false;
+    if (key === ":seed") return true; // all four stochastic curves
     if (key === ":beta") return curveName === "pink";
     if (key === ":octaves" || key === ":lacunarity" || key === ":persistence") {
       return curveName === "perlin";
@@ -1750,6 +1776,14 @@ function parseCurveSpec(
             setParam("leak", clampWithWarning(n, 0, 0.9999, ":leak"));
           break;
         }
+        case ":seed": {
+          // u32 seed for stochastic LUT regeneration (compile-time; default
+          // 0xDEAD keeps seedless sources byte-identical). Independent
+          // statistical sequence, unlike :phase (a shift of the same table).
+          const n = parseIntLike(v);
+          if (n !== null) setParam("seed", n >>> 0);
+          break;
+        }
       }
       j++;
     }
@@ -1774,6 +1808,44 @@ function parseNumberLike(value) {
   if (typeof value !== "string" || value.trim() === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+// Build the context the compile-time evaluator needs (mmlisp-eval.js): the
+// diagnostic sink, and callbacks that keep curve internals inside this module —
+// `parseCurve` (a curve head → symbolic signal) and `mapMacroValues` (affine
+// value-axis fold). Curve names are the set the evaluator dispatches signals on.
+// Affine value-axis fold for the evaluator's symbolic signals. Unlike
+// `mapMacroValues` (which keys on `spec.type`), a parseCurveSpec output is
+// *type-less* (`{curve, from, to, …}`), so detect the shape by its fields. The
+// curve branch mirrors mapMacroValues exactly (`from ?? 0`, `to ?? 0`) so a
+// folded curve is byte-identical to the equivalent shifted literal.
+function foldCurveValues(spec, fn) {
+  if (Array.isArray(spec.steps)) {
+    return { ...spec, steps: spec.steps.map((v) => (v == null ? v : fn(v))) };
+  }
+  if (Array.isArray(spec.stages)) {
+    return {
+      ...spec,
+      stages: spec.stages.map((st) =>
+        st && st.from !== undefined
+          ? { ...st, from: fn(st.from), to: fn(st.to ?? 0) }
+          : st,
+      ),
+    };
+  }
+  return { ...spec, from: fn(spec.from ?? 0), to: fn(spec.to ?? 0) };
+}
+
+function makeEvalCtx(diagnostics, trackName, src) {
+  return {
+    pushDiag,
+    diagnostics,
+    trackName,
+    src,
+    curveNames: CURVE_NAMES,
+    parseCurve: (n) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false),
+    foldSignal: foldCurveValues,
+  };
 }
 
 // Build a tick-0-or-mid-track TEMPO_SWEEP event from a `(curve …)` value node,
@@ -2577,23 +2649,26 @@ function compileChannelBody(
                 }
                 break;
               }
-              // Compile-time eval: `:tl1 (+ 20 10)` folds to a scalar PARAM_SET.
-              // Eval-builtin heads are disjoint from curve names, so this is
-              // checked before parseCurveSpec without disturbing curve dispatch.
+              // Compile-time eval: a scalar expression folds to PARAM_SET
+              // (`:tl1 (+ 20 10)`); an expression producing a signal — e.g.
+              // affine `(+ (sin …) 10)` — folds to PARAM_SWEEP, byte-identical
+              // to the shifted literal curve. Eval-builtin heads are disjoint
+              // from curve names, so this precedes parseCurveSpec without
+              // disturbing bare-curve dispatch.
               if (
                 !op &&
                 items[i]?.kind === "list" &&
                 items[i].bracket === "()" &&
                 isEvalHead(atomValue(items[i].items?.[0]))
               ) {
-                const scalar = evalScalarValue(items[i], evalEnv, {
-                  pushDiag,
-                  diagnostics,
-                  trackName,
-                  src: nodeSrc(node),
-                });
-                if (scalar !== null) {
-                  push("PARAM_SET", { target, value: Math.round(scalar) });
+                const r = evalValue(
+                  items[i],
+                  evalEnv,
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node)),
+                );
+                if (r) {
+                  if (r.kind === "signal") push("PARAM_SWEEP", { target, ...r.spec });
+                  else push("PARAM_SET", { target, value: Math.round(r.value) });
                 }
                 break;
               }
@@ -3236,12 +3311,11 @@ function compileChannelBody(
             valueNode.bracket === "()" &&
             isEvalHead(atomValue(valueNode.items?.[0]))
           ) {
-            const scalar = evalScalarValue(valueNode, evalEnv, {
-              pushDiag,
-              diagnostics,
-              trackName,
-              src: nodeSrc(targetNode),
-            });
+            const scalar = evalScalarValue(
+              valueNode,
+              evalEnv,
+              makeEvalCtx(diagnostics, trackName, nodeSrc(targetNode)),
+            );
             value = scalar === null ? 0 : Math.round(scalar);
           } else {
             value = parseIntLike(atomValue(valueNode)) ?? 0;
