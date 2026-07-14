@@ -298,12 +298,15 @@ export class DrvPlayer {
     // Hardware shadow for change-only suppression (driver.md §5.4). Key ($28)
     // and raw PSG bytes are edges, not state — they bypass the shadow.
     this._shadow = [new Map(), new Map()]; // per YM port: addr → data (chip state)
-    // Batched flush (driver.md §5.4): _ym param writes defer into _pending and
-    // are flushed (change-only vs _shadow) at barriers — key ($28), F-number
-    // pair, DAC, and frame end. Coalesces the value machine's intermediate
-    // writes; RMW reads use the structured _fm state, not _shadow, so deferring
-    // the chip write is transparent to them.
-    this._pending = [new Map(), new Map()]; // per YM port: addr → deferred data
+    // Batched flush (driver.md §5.4): consecutive-coalesce. A _ym write to the
+    // register the previous one targeted overwrites the single pending slot; a
+    // write to a different register (or a barrier — key $28 / F-number / DAC /
+    // frame end) first flushes the slot (change-only vs the shadow). This
+    // collapses the value machine's consecutive same-register chain (and staged
+    // $B0/$B4 writes) to one chip write, with O(1) state the Z80 can mirror in
+    // ~4 bytes. RMW reads use the structured _fm state, so deferral is
+    // transparent to the value machine.
+    this._pend = null; // { port, addr, data } deferred write, or null
     this._opMasks = new Array(6).fill(0xf0); // UI op-enable mask per channel
 
     // M2 sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
@@ -392,29 +395,30 @@ export class DrvPlayer {
   // move in lockstep to keep verify:all's raw traces identical); tools/
   // batch-diff.mjs proves the batched frame-final state matches inline exactly.
   _ym(port, addr, data) {
+    const d = data & 0xff;
     if (this._batchYm) {
-      this._pending[port].set(addr, data & 0xff);
+      const p = this._pend;
+      if (p && p.port === port && p.addr === addr) p.data = d; // coalesce
+      else {
+        this._flushYm(); // register changed → flush the previous
+        this._pend = { port, addr, data: d };
+      }
       return;
     }
-    const d = data & 0xff;
     if (this._shadow[port].get(addr) === d) return;
     this._shadow[port].set(addr, d);
     this._writeCb(port, addr, d, this._when());
   }
-  // Flush deferred param writes to the chip, change-only against the shadow, in
-  // insertion order. Called before every barrier (key / F-number / DAC) and at
-  // frame end. The Z80 driver mirrors this to keep raw traces identical.
+  // Flush the single pending write to the chip, change-only against the shadow.
+  // Called before every barrier (key / F-number / DAC) and at frame end. The
+  // Z80 driver mirrors this to keep raw traces identical.
   _flushYm() {
-    for (let port = 0; port < 2; port++) {
-      const pend = this._pending[port];
-      if (pend.size === 0) continue;
-      for (const [addr, d] of pend) {
-        if (this._shadow[port].get(addr) === d) continue;
-        this._shadow[port].set(addr, d);
-        this._writeCb(port, addr, d, this._when());
-      }
-      pend.clear();
-    }
+    const p = this._pend;
+    if (!p) return;
+    this._pend = null;
+    if (this._shadow[p.port].get(p.addr) === p.data) return;
+    this._shadow[p.port].set(p.addr, p.data);
+    this._writeCb(p.port, p.addr, p.data, this._when());
   }
   // YM write that always emits (but keeps the shadow current). For the F-number
   // pair $A4-A6/$A0-A2: the high-byte write latches into a port-shared register
