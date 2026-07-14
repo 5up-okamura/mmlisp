@@ -733,8 +733,8 @@ Declare a runtime value slot with `(def-val ...)` and reference it with
 **Dynamic Parameters** slider per slot — drag it while the score plays.
 
 ```lisp
-(def-val cutoff 30 :from 0 :to 127)
-(def-val depth 20 :from 0 :to 60)
+(def-val cutoff 30 0..127)
+(def-val depth 20 0..60)
 
 (fm1 :tl1 $cutoff                              ; absolute from the slot
      :tl2+ $cutoff                             ; relative to the slot

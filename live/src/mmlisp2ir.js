@@ -3780,7 +3780,15 @@ function collectDefs(roots, diagnostics) {
       let maxOpt;
       let step = 1; // slider granularity (control resolution)
       let unit = "frame"; // time unit when this slot feeds :len/:step
-      for (let k = initPos === null ? 2 : 3; k + 1 < root.items.length; k += 2) {
+      let k = initPos === null ? 2 : 3;
+      // Positional range sugar: `(def-val amp 24 0..127)` ≡ `:from 0 :to 127`.
+      const range = parseRangeToken(atomValue(root.items[k]));
+      if (range) {
+        from = range.from;
+        to = range.to;
+        k += 1;
+      }
+      for (; k + 1 < root.items.length; k += 2) {
         const key = atomValue(root.items[k]);
         const raw = atomValue(root.items[k + 1]);
         if (key === ":unit") {

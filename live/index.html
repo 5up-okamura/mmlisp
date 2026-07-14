@@ -2470,9 +2470,9 @@
 )
 
 (def env1 (macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
-(def env2 (macro :vel (linear :from 15 :to 0 :len 16f)))
-(def lfo (macro :pitch (sin :from -20 :to 20 :len 16 :wait 8)))
-(def down (macro :pitch (linear :from 0 :to -2400 :len 16f)))
+(def env2 (macro :vel (linear 15..0 :len 16f)))
+(def lfo (macro :pitch (sin -20..20 :len 16 :wait 8)))
+(def down (macro :pitch (linear 0..-2400 :len 16f)))
 
 ; FM
 (fm1 :tempo 120

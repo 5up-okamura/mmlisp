@@ -14,11 +14,11 @@
   :pitch 25
   c e
   :pitch 0
-  g :pitch (linear :from 0 :to 700 :len 60f) g
-  :pitch (sin :from -40 :to 40 :len 24f) c e)
+  g :pitch (linear 0..700 :len 60f) g
+  :pitch (sin -40..40 :len 24f) c e)
 
 ; PSG: pitch bends on the square (period interpolation path)
 (sqr1 :oct 5 :len 2 :vel 10
-  c :pitch (ease-out :from 0 :to -1200 :len 48f) c
+  c :pitch (ease-out 0..-1200 :len 48f) c
   :pitch 0
-  e :pitch (sin :from -60 :to 60 :len 20f) g)
+  e :pitch (sin -60..60 :len 20f) g)

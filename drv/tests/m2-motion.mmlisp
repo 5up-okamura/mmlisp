@@ -11,20 +11,20 @@
 
 ; VOL fades: ease-out down, then a linear swell back up
 (fm1 :tempo 120 pad :oct 4 :len 2 :vel 13
-  c :vol (ease-out :from 31 :to 8 :len 90f) e
-  g :vol (linear :from 8 :to 31 :len 60f) c)
+  c :vol (ease-out 31..8 :len 90f) e
+  g :vol (linear 8..31 :len 60f) c)
 
 ; MASTER swell across the whole phrase (one-shot, spans notes)
 (fm2 pad :oct 3 :len 1 :vel 12
-  :master (ease-in :from 12 :to 31 :len 180f)
+  :master (ease-in 12..31 :len 180f)
   c e g e)
 
 ; looping tremolo on VOL: a sine loop, re-triggered (cancelled) each note
 (sqr1 :oct 5 :len 2 :vel 11
-  e :vol (sin :from 20 :to 6 :len 20f) g
-  b :vol (triangle :from 24 :to 10 :len 16f) e)
+  e :vol (sin 20..6 :len 20f) g
+  b :vol (triangle 24..10 :len 16f) e)
 
 ; PARAM_ADD accents via relative velocity, plus a tempo ramp
 (sqr2 :oct 4 :len 4 :vel 8
-  :tempo (linear :from 120 :to 168 :len 4)
+  :tempo (linear 120..168 :len 4)
   c :vel+ 4 e :vel+ -6 g :vel+ 4 c)

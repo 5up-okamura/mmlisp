@@ -475,7 +475,7 @@ Runtime values for interactive playback. Computation lives on the host; the
 score only reads slots — there are no score-side expressions.
 
 ```lisp
-(def-val level 20 :from 0 :to 40 :step 2)
+(def-val level 20 0..40 :step 2)
 (def-val depth 30)
 
 (fm1 :tl1 $level               ; PARAM_FROM_VAL
@@ -486,11 +486,13 @@ score only reads slots — there are no score-side expressions.
      c e g e)
 ```
 
-`(def-val name init :from A :to B :step S :unit U)`:
+`(def-val name init A..B :step S :unit U)` — or the explicit
+`:from A :to B` form:
 
 | Field      | Meaning                                                          |
 | ---------- | ---------------------------------------------------------------- |
-| `init`     | Positional default (integer). Omitted → defaults to `:from`      |
+| `init`     | Positional default (integer). Omitted → defaults to the range start |
+| `A..B`     | Positional range sugar (§11) for the slider endpoints — the same `:from A :to B`, so `90..10` runs the slider downward |
 | `:from` / `:to` | Order-free directional endpoints — the live slider runs from A to B (either direction, negatives fine). `:min` / `:max` are accepted synonyms |
 | `:step`    | Slider granularity, integer > 0 (default `1`)                    |
 | `:unit`    | `frame` (default) or `tick` — how the value is read when the slot feeds a curve `:len` |

@@ -3,8 +3,8 @@
 (def bd (macro :vel [15 12 9 6 3 0]))
 (def sd (macro :vel [15 14 13 12 11 9 7 5 3 1 0]))
 (def hh (macro :vel [11 0]))
-(def down (macro :pitch (linear :from 0 :to -2400 :len 16)))
-(def lfo (macro :pitch+ (sin :from -40 :to 40 :len 8 :wait 4)))
+(def down (macro :pitch (linear 0..-2400 :len 16)))
+(def lfo (macro :pitch+ (sin -40..40 :len 8 :wait 4)))
 (def melo
   lfo
   f4. e8 e1 < g a >

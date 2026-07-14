@@ -13,9 +13,9 @@
 ; sweeps land as PARAM_SWEEP opcodes; the M1 decoder skips them and the
 ; notes around them must stay aligned with the reference
 (fm1 :tempo 120 organ :oct 4 :len 4 :vel 12
-  c :vol (ease-out :from 31 :to 12 :len 60f) e g
+  c :vol (ease-out 31..12 :len 60f) e g
   :vol 31
-  :master (ease-in :from 20 :to 31 :len 30f)
+  :master (ease-in 20..31 :len 30f)
   c > c2 <
   d2)
 
@@ -28,5 +28,5 @@
   c e0)
 
 (sqr2 :oct 4 :len 4 :vel 8
-  :tempo (linear :from 120 :to 90 :len 2)
+  :tempo (linear 120..90 :len 2)
   c d e f g2)

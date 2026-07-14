@@ -821,7 +821,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           const factor = WHOLE_TICKS / op.wholeClocks; // mucom clocks -> ticks
           const cents = Math.round(lfo.amp * lfo.amt * (ctx.isSsg ? PSG_CENTS_PER_DETUNE : FM_CENTS_PER_DETUNE));
           const period = Math.max(1, Math.round(2 * lfo.amp * lfo.clock * factor));
-          const tri = `(triangle :from ${-cents} :to ${cents} :len ${period}t)`;
+          const tri = `(triangle ${-cents}..${cents} :len ${period}t)`;
           // delay>0: hold at the note's pitch for the delay, then the triangle loops.
           spec = lfo.delay > 0
             ? `[ (wait ${Math.max(1, Math.round(lfo.delay * factor))}t) ${tri} ]`

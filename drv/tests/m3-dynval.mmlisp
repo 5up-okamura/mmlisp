@@ -3,8 +3,8 @@
 ; dispatch time. Exercises PARAM_FROM_VAL (:tl4 $amp), PARAM_ADD_VAL (:tl4+ $amp),
 ; PARAM_MUL_VAL (:vol* $fac), PARAM_MUL (static :vol* 2.0), the $time source
 ; (:ar1 $time), and a mid-stream SET_VAL that the last note reads back.
-(def-val amp 24 :from 0 :to 127)
-(def-val fac 256 :from 0 :to 1024)
+(def-val amp 24 0..127)
+(def-val fac 256 0..1024)
 (fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
   :tl4 $amp   c
   :tl4+ $amp  e
