@@ -35,11 +35,14 @@ This file is the compact continuation state.
    since the `:pitch+` landing; ~50-60 B) → **scaled macro flag** (~30-40 B) →
    M3 dyn slice → CALL/RET (~45-60 B, control-stack tag already reserved in the
    TCB layout). Costs and funding are measured — see the budget table below.
-   **Batched frame flush + change-only comparator** (item 5) is now the
-   *decided* general fix for runtime write-count (§4.7 option A): the value
-   machine ships inline left-fold now, and this queue-style flush later absorbs
-   the multi-write cost for all writes — its own step (moves the exact-write
-   trace baseline; drv-player + Z80 change in lockstep).
+   **Batched frame flush** (item 5): model = **consecutive-coalesce** (§4.7
+   option a; full-frame needs ~38 B RAM the packed layout can't spare cheaply).
+   **Phase 1 DONE** (drv-player, opt-in `_batchYm`, commit 5d8aed0; proven
+   frame-final-identical via `npm run verify:batch`). **Phase 2 = the Z80 port,
+   fully scoped in design-eval §4.7** — 3 B pending at `G_BASE+$56` (free,
+   internal), `ym_write` defers, `ym_shadow_read` pending-aware, flush at
+   ym_key/ym_write_always/DAC/frame_step-end, then flip `_batchYm` on +
+   re-baseline verify:all. This is the next concrete driver task.
 3. **Hardware bring-up + cycle tuning** (the real frontier): run on a real
    Mega Drive / flashcart; measure worst-case frame cycles (PCM mix rate is
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait

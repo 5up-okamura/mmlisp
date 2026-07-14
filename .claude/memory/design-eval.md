@@ -531,20 +531,51 @@ Therefore:
   baseline (write order + count change), so drv-player.js **and** the Z80 must
   adopt it in lockstep and `verify:all`'s baseline is re-taken; order-sensitive
   sequences (freq→key-on, $28) need care. Its own step, not step 8.
-  **Phase 1 DONE (2026-07-15, commit 9c5c242): drv-player batched flush,
-  opt-in.** `_ym` defers into `_pending`, flushed change-only at barriers —
-  `_ymKey` ($28), `_ymAlways` (F-num pair), `_dacByte` ($2A), frame end (the
-  barrier line = the driver's existing `_ym` vs always/key/dac split; batchable
-  = `_ym`). RMW reads use the structured `_fm` state, so deferral is transparent
-  to the value machine. Gated behind `_batchYm` (default off = inline) so
-  verify:all stays 22/22 until the Z80 catches up. **Proof:** `npm run
-  verify:batch` (`tools/batch-diff.mjs`) shows the batched per-frame FINAL
-  register state is byte-identical to inline on all 22 scores (0 tolerance; $28
-  excluded as edges) — 404/6612 YM writes saved, up to 17% on value-machine
-  scores (the AR1 chain `$50=$46,$4c,$56` collapses to `$50=$56`). **Phase 2
-  (next): the same deferred-flush in the asm driver**, matching drv's flush
-  order for raw-trace equality, then flip `_batchYm` on + re-baseline verify:all
-  with both batched.
+  **Model = consecutive-coalesce (decided 2026-07-15, option (a)).** Full-frame
+  batch needs per-register pending; on the Z80 that means ~38 B dirty bitmap or
+  304 B chip-state because Z80 RMW reads the *shadow* directly (unlike
+  drv-player, whose RMW reads the structured `_fm`), and RAM is packed. So both
+  players defer only a **single** pending write: a `_ym` to the pending register
+  coalesces; a write to a different register or a barrier flushes it change-only.
+  This still collapses the value machine's consecutive same-register chain (the
+  goal) + staged `$B0/$B4` writes; the scattered dedup full-frame added is
+  forgone (~1% overall vs 6%, but value-machine scores still 4-5%).
+
+  **Phase 1 DONE (drv-player, commit 5d8aed0; earlier full-frame impl 9c5c242).**
+  `_ym` (drv-player.js): if `_batchYm`, coalesce into `_pend = {port,addr,data}`,
+  else inline. `_flushYm` writes the single `_pend` change-only vs `_shadow`.
+  Barriers flush first: `_ymAlways` (F-num), `_ymKey` ($28), `_dacByte` ($2A),
+  frame end (`stepFrame`). Gated behind `_batchYm` (default off = inline) so
+  verify:all stays 22/22 until the Z80 lands. **Proof:** `npm run verify:batch`
+  (`tools/batch-diff.mjs`) — batched per-frame FINAL register state byte-
+  identical to inline on all 22 scores (0 tolerance; $28 excluded as edges).
+
+  **Phase 2 (NEXT — Z80, fully scoped, all sites located in mmlispdrv.z80):**
+  - **RAM (3 B, free, internal):** put `G_PEND_A/P/D` at `G_BASE+$56..$58` —
+    G_PCM_MUL (`G_BASE+$52`) is only u32, leaving 17 B free before G_SHIDX
+    (`$67`); it's above the host-published region ($1930), so no DATA_BASE bump,
+    no mmlispdrv.c change. `G_PEND_A=0` = inactive (addr 0 never a param). Boot
+    RAM-clear zeroes it.
+  - **`ym_write` (2766):** defer. If pending matches (A==E, P==D) → set
+    `G_PEND_D=B`, ret (coalesce). Else `call ym_flush`, then store E/D/B into
+    G_PEND_A/P/D, ret. Rename the current body to the flush writer.
+  - **`ym_flush` (new):** if G_PEND_A==0 ret; else load D/E/B from G_PEND_*,
+    zero G_PEND_A, fall through to the old ym_write body (ym_shadow_ptr →
+    change-only vs shadow → ym_hw).
+  - **`ym_shadow_read` (2740):** pending-aware — if A==E and P==D return
+    G_PEND_D, else the existing shadow read. (Serves both the value-machine
+    accumulator read via read_op_param AND generic_op_param's RMW keep-bit read.)
+  - **Barriers — `call ym_flush` first at:** `ym_key` (2808), `ym_write_always`
+    (2755), the DAC write (`ld e,$2a; call ym_hw` @3386 — flush before), and
+    `frame_step` end (before the `ret` @348, after process_macros).
+  - **Activate:** flip drv-player `_batchYm` default → true (and/or set it in
+    `drv/tools/ref-trace.mjs`), then re-run verify:all — both batched, raw
+    traces must match (same coalesce + same flush points → same write sequence).
+    Keep `_batchYm` settable so batch-diff can still compare on/off.
+  - **Gotchas:** F-num ($A0-A6) uses ym_write_always (not ym_write) → never
+    pending, but must flush params before it. Only ym_write targets
+    ($22-$9F,$B0-B6) enter pending. The write ORDER within a frame must match
+    drv-player exactly (both flush on register-change + the 4 barriers).
 - **(b) temp-slot (VAL_SET/VAL_ADD_VAL, §4.5) is NOT built** — (c) subsumes it;
   (b) would be a local hack made redundant by the general fix. §4.5 stays a
   paper reserve only if a non-left-linearizable expression forces a true
