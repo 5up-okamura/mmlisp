@@ -1312,6 +1312,8 @@ function collectMacroEntriesFromItems(items, diagnostics, trackName) {
         diagnostics,
         trackName,
         !op,
+        null,
+        macroStep,
       );
       if (spec) {
         if (op && !macroOpOk(irTarget, op, sym, diagnostics, trackName)) continue;
@@ -1364,6 +1366,7 @@ function parseMacroSpec(
   trackName = null,
   clamp = true,
   env = null, // body eval env, so `(let …)` bindings reach macro values
+  step = null, // the macro's :step, for signal⊕signal materialization resolution
 ) {
   if (!node) return null;
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
@@ -1453,10 +1456,27 @@ function parseMacroSpec(
       const r = evalValue(
         node,
         env ?? makeEnv(null),
-        makeEvalCtx(diagnostics, trackName, nodeSrc(node)),
+        makeEvalCtx(
+          diagnostics,
+          trackName,
+          nodeSrc(node),
+          null,
+          macroStepFramesForEval(step),
+        ),
       );
       if (!r) return null;
-      if (r.kind === "signal") return { type: "curve", ...r.spec };
+      if (r.kind === "signal") {
+        // A materialized signal⊕signal result is a float step vector; a symbolic
+        // (affine-folded) curve stays a curve.
+        return r.spec.steps
+          ? {
+              type: "steps",
+              steps: r.spec.steps,
+              loopIndex: r.spec.loopIndex ?? null,
+              releaseIndex: r.spec.releaseIndex ?? null,
+            }
+          : { type: "curve", ...r.spec };
+      }
       return {
         type: "steps",
         steps: [clampVal(r.value)],
@@ -1924,7 +1944,7 @@ function isNoteStreamToken(name) {
   );
 }
 
-function makeEvalCtx(diagnostics, trackName, src, typedDefs = null) {
+function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames = 1) {
   return {
     pushDiag,
     diagnostics,
@@ -1935,7 +1955,16 @@ function makeEvalCtx(diagnostics, trackName, src, typedDefs = null) {
     foldSignal: foldCurveValues,
     isNoteStreamToken,
     isDefName: (n) => !!typedDefs && typedDefs.has(n),
+    stepFrames, // frame :step for signal⊕signal materialization (0 = tick, unsupported)
   };
+}
+
+// Frame count of a macro :step for materialization; a frame step passes through,
+// a tick step is not lowerable yet (0 → E_EVAL_SIGNAL_STEP), default is 1f.
+function macroStepFramesForEval(step) {
+  if (step?.unit === "frame") return step.value;
+  if (step?.unit === "tick") return 0;
+  return 1;
 }
 
 // Build a tick-0-or-mid-track TEMPO_SWEEP event from a `(curve …)` value node,
@@ -2784,8 +2813,22 @@ function compileChannelBody(
                   makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
                 );
                 if (r) {
-                  if (r.kind === "signal") push("PARAM_SWEEP", { target, ...r.spec });
-                  else push("PARAM_SET", { target, value: Math.round(r.value) });
+                  if (r.kind === "signal" && r.spec.steps) {
+                    // A materialized signal⊕signal step vector has no inline
+                    // PARAM_SWEEP form — it's a macro-only shape.
+                    pushDiag(
+                      diagnostics,
+                      "error",
+                      "E_EVAL_SIGNAL_SHAPE",
+                      `signal arithmetic ${val} is only valid in a (macro …), not an inline sweep`,
+                      nodeSrc(node),
+                      trackName,
+                    );
+                  } else if (r.kind === "signal") {
+                    push("PARAM_SWEEP", { target, ...r.spec });
+                  } else {
+                    push("PARAM_SET", { target, value: Math.round(r.value) });
+                  }
                 }
                 break;
               }
@@ -3399,6 +3442,7 @@ function compileChannelBody(
                   trackName,
                   !op,
                   evalEnv,
+                  macroStep,
                 );
                 if (spec && macroStep) spec.step = macroStep;
                 if (

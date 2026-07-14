@@ -770,9 +770,27 @@ Compiler track (Tier A — no driver changes):
    threaded through parseMacroSpec via the inline macro handler). **Deferred**
    (mechanical tail): ticks/frames at curve `:len` and macro `:step` (those
    parsers lack the eval ctx/env); bare-name at `:vol`/`:master`/`:tempo`.
-5. **Signal⊕signal materialization** — export-mmb phase formulas, region
-   composition, hold resolution, bind-time round/clamp. Gate: MMB blob
-   equals hand-computed samples; `ab-compare` vs hand-written step vectors.
+5. **Signal⊕signal materialization** — **DONE (MVP)**. `G⊕G` under `+ - * /`
+   samples both operands pointwise (mmlisp-eval.js `materializeSignals`, reusing
+   ir-utils `sampleCurveUnit` with the export-mmb.js phase formulas) into a float
+   `steps` signal. `affineCombine` gained `ctx`: it finalizes the accumulator's
+   affine transform, then materializes. Region composition: one-shot⊕one-shot →
+   one-shot (length = max, shorter extends with its final value); loop⊕loop →
+   loop with lcm period (>255 → `E_EVAL_SIGNAL_LEN`); loop⊕one-shot →
+   `E_EVAL_SIGNAL_SHAPE`. **MVP restrictions (each a specific error):** curve
+   operands only (step-vector operand → `E_EVAL_SIGNAL_SHAPE`), frame-based `:len`
+   required (tick → `E_EVAL_NOT_LOWERABLE`), no `:wait` (→ `E_EVAL_SIGNAL_HOLD`),
+   frame `:step` (tick → `E_EVAL_SIGNAL_STEP`). The macro `:step` is threaded
+   through parseMacroSpec → ctx.stepFrames (both macro callers pass it). Binding:
+   macro position wraps a materialized signal as `{type:"steps"}`; the inline
+   hw-param position rejects it (`E_EVAL_SIGNAL_SHAPE` — macro-only). export-mmb
+   lowerMacro's steps path now rounds+clamps at the binding site (§2.2 — no-op for
+   the integer step vectors the parser already clamps, quantizes materialized
+   floats; holds pass through). Gate met: hand-computed samples match;
+   `(+ (linear 0..10 :len 4f) (linear 0..20 :len 4f))` MMB blob == hand-written
+   `[0 10 20 30]`; corpus IR+diag+MMB byte-identical (A/B), verify:all 20/20,
+   strict 6/6. **Deferred**: step-vector operands + hold resolution, loop⊕one-shot
+   (baked AM), tick-len/step (needs the M3 tempo slice), gcd-clock resampling.
 
 Driver track (Tiers B-D + data; each step separately gated):
 

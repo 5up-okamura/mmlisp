@@ -251,7 +251,13 @@ export function encodeMmb(ir, opts = {}) {
     };
 
     if (spec.type === "steps") {
-      const values = spec.steps ?? [];
+      // Round + clamp at the binding site (§2.2): a no-op for the integer step
+      // vectors the parser already clamps, and the quantization point for the
+      // float values a signal⊕signal materialization produces. Hold sentinels
+      // (null) pass through untouched.
+      const values = (spec.steps ?? []).map((v) =>
+        v == null ? null : clampForTarget(target, Math.round(v)),
+      );
       if (values.length === 0 || values.length > 255) return null;
       return {
         step,

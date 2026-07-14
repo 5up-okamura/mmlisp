@@ -14,6 +14,8 @@
 // .claude/memory/design-eval.md §1-2, §7.
 // ---------------------------------------------------------------------------
 
+import { sampleCurveUnit } from "./ir-utils.js";
+
 const MAX_DEPTH = 32; // eval nesting guard, independent of def-expansion depth
 
 // A thrown evaluation failure. Caught at the value-position boundary
@@ -55,7 +57,101 @@ function affineStart(v) {
   return isSignal(v) ? { spec: v, coeff: 1, offset: 0 } : { spec: null, offset: v, coeff: 0 };
 }
 
-function affineCombine(op, acc, x) {
+// ── Signal ⊕ signal materialization (design §2.3) ────────────────────────────
+// Two signals combined by `+ - * /` cannot stay symbolic, so they are sampled
+// pointwise (mirroring the export-mmb.js curve sampling) into a float `steps`
+// spec. MVP scope: curve⊕curve, frame-based `:len` (Nf), a common frame `:step`;
+// each harder case is a specific error. Round/clamp is deferred to the binding
+// site (values stay float here).
+function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+function lcm(a, b) { return (a / gcd(a, b)) * b; }
+
+function combineOp(op, va, vb) {
+  if (op === "+") return va + vb;
+  if (op === "-") return va - vb;
+  if (op === "*") return va * vb;
+  if (vb === 0) throw new EvalError("E_EVAL_DIV_ZERO", "division by zero in signal arithmetic");
+  return va / vb;
+}
+
+// Sample one signal into { values: float[], loop, period }. Curve-only in MVP.
+function sampleSignal(spec, stepFrames) {
+  if (spec.steps) {
+    throw new EvalError(
+      "E_EVAL_SIGNAL_SHAPE",
+      "step-vector operands in signal arithmetic are not supported yet",
+    );
+  }
+  if (!spec.lenFrames) {
+    throw new EvalError(
+      "E_EVAL_NOT_LOWERABLE",
+      "signal arithmetic needs a frame-based :len (e.g. :len 8f)",
+    );
+  }
+  if (spec.waitFrames || spec.waitKeyOff) {
+    throw new EvalError(
+      "E_EVAL_SIGNAL_HOLD",
+      ":wait prefixes are not supported in signal arithmetic",
+    );
+  }
+  const from = Number(spec.from ?? 0);
+  const to = Number(spec.to ?? 0);
+  const baseFrames = Math.max(1, Math.round(Number(spec.frames ?? 1)));
+  const at = (phase) => from + (to - from) * sampleCurveUnit(spec.curve, phase, spec.params);
+  if (spec.loop) {
+    const period = Math.max(1, Math.round(baseFrames / stepFrames));
+    const values = Array.from({ length: period }, (_, i) => at((i * stepFrames) / baseFrames));
+    return { values, loop: true, period };
+  }
+  const n = Math.max(1, Math.ceil(baseFrames / stepFrames));
+  const values = Array.from({ length: n }, (_, i) =>
+    at(baseFrames <= 1 ? 1 : Math.min(1, (i * stepFrames) / (baseFrames - 1))),
+  );
+  return { values, loop: false };
+}
+
+function materializeSignals(op, aSpec, bSpec, ctx) {
+  const stepFrames = ctx.stepFrames;
+  if (!(stepFrames > 0)) {
+    throw new EvalError(
+      "E_EVAL_SIGNAL_STEP",
+      "signal arithmetic needs a frame :step (a tick :step is not lowered yet)",
+    );
+  }
+  const a = sampleSignal(aSpec, stepFrames);
+  const b = sampleSignal(bSpec, stepFrames);
+  if (a.loop !== b.loop) {
+    throw new EvalError(
+      "E_EVAL_SIGNAL_SHAPE",
+      "cannot combine a looping and a one-shot signal (MVP)",
+    );
+  }
+  let steps;
+  let loopIndex = null;
+  if (a.loop) {
+    const period = lcm(a.period, b.period);
+    if (period > 255) {
+      throw new EvalError("E_EVAL_SIGNAL_LEN", `combined loop period ${period} exceeds 255 steps`);
+    }
+    steps = Array.from({ length: period }, (_, i) =>
+      combineOp(op, a.values[i % a.period], b.values[i % b.period]),
+    );
+    loopIndex = 0;
+  } else {
+    const len = Math.max(a.values.length, b.values.length);
+    const last = (v) => v[v.length - 1];
+    steps = Array.from({ length: len }, (_, i) =>
+      combineOp(
+        op,
+        i < a.values.length ? a.values[i] : last(a.values),
+        i < b.values.length ? b.values[i] : last(b.values),
+      ),
+    );
+  }
+  return { steps, loopIndex, releaseIndex: null };
+}
+
+function affineCombine(op, acc, x, ctx) {
   const accScalar = acc.spec === null;
   const xSignal = isSignal(x);
   if (accScalar && !xSignal) {
@@ -88,11 +184,14 @@ function affineCombine(op, acc, x) {
       "cannot divide by a signal (result is non-affine)",
     );
   }
-  // signal ⊕ signal — pointwise materialization is a later step (design §2.3).
-  throw new EvalError(
-    "E_EVAL_NOT_LOWERABLE",
-    "combining two signals requires materialization (a later step)",
-  );
+  // signal ⊕ signal — finalize acc's affine into a concrete curve, then
+  // materialize the two signals pointwise into a float `steps` signal (§2.3).
+  const aSpec =
+    acc.coeff === 1 && acc.offset === 0
+      ? acc.spec
+      : ctx.foldSignal(acc.spec, (v) => acc.coeff * v + acc.offset);
+  const materialized = materializeSignals(op, aSpec, x, ctx);
+  return { spec: materialized, coeff: 1, offset: 0 };
 }
 
 function affineFinish(acc, ctx) {
@@ -123,11 +222,12 @@ const scalarsOnly = (name, args) => {
   return args;
 };
 
-// Affine operators: fold a left-to-right chain, tracking one signal affinely.
+// Affine operators: fold a left-to-right chain, tracking one signal affinely
+// (or materializing when two signals meet — affineCombine handles both).
 const affineOp = (op, seed) => (args, ctx) => {
   let acc = seed !== undefined ? affineStart(seed) : affineStart(args[0]);
   const rest = seed !== undefined ? args : args.slice(1);
-  for (const x of rest) acc = affineCombine(op, acc, x);
+  for (const x of rest) acc = affineCombine(op, acc, x, ctx);
   return affineFinish(acc, ctx);
 };
 
@@ -137,14 +237,14 @@ BUILTINS.set("-", {
   arity: [1, null],
   apply: (args, ctx) =>
     args.length === 1
-      ? affineFinish(affineCombine("-", affineStart(0), args[0]), ctx) // negate
+      ? affineFinish(affineCombine("-", affineStart(0), args[0], ctx), ctx) // negate
       : affineOp("-")(args, ctx),
 });
 BUILTINS.set("/", {
   arity: [1, null],
   apply: (args, ctx) =>
     args.length === 1
-      ? affineFinish(affineCombine("/", affineStart(1), args[0]), ctx) // reciprocal
+      ? affineFinish(affineCombine("/", affineStart(1), args[0], ctx), ctx) // reciprocal
       : affineOp("/")(args, ctx),
 });
 BUILTINS.set("min", { arity: [1, null], apply: (a, _c, n) => Math.min(...scalarsOnly(n, a)) });
