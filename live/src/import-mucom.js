@@ -747,13 +747,21 @@ function renderOps(ops, ctx, out, depth = 0) {
     switch (op.t) {
       case "note":
         out.push(`${op.letter}${ACC(op.acc)}${op.len ?? ""}`);
+        ctx.lastNote = { letter: op.letter, acc: op.acc };
         break;
       case "rest":
         out.push(`_${op.len ?? ""}`);
         break;
       case "tie":
-        // '~' and length are separate atoms in MMLisp; bare '~' uses :len.
-        out.push(op.len ? `~ ${op.len}` : "~");
+        // mucom `^` ties to the SAME pitch as the previous note. MMLisp's `~`
+        // is a connector to a note (X ~ Y); bare `~ <length>` is not valid, so
+        // repeat the last note's pitch: `~ <pitch><len>` (same pitch = a tie).
+        if (ctx.lastNote) {
+          const p = ctx.lastNote;
+          out.push(`~ ${p.letter}${ACC(p.acc)}${op.len ?? ""}`);
+        } else {
+          out.push("~"); // no preceding note (malformed) — best effort
+        }
         break;
       case "bar":
         out.push("|"); // bar line — editorial marker, carried through verbatim
@@ -853,7 +861,9 @@ function renderOps(ops, ctx, out, depth = 0) {
         // Emit on the 0-15 vel scale (peak = 15). `:vel*` scales the macro by
         // the note's vel/15 ratio, so peak 15 reproduces "the note's :vel is
         // the envelope peak".
-        const lv = (x) => Math.round((Math.max(0, Math.min(255, x)) / 255) * 15 * 100) / 100;
+        // Level on the 0-15 vel scale. Round to an integer: the vel domain is
+        // 0-15 and sub-integer values vanish under the final TL quantization.
+        const lv = (x) => Math.round((Math.max(0, Math.min(255, x)) / 255) * 15);
         const tm = (delta, rate) => Math.max(1, Math.round((rate > 0 ? delta / rate : 0) * factor));
         const al = lv(op.al), sl = lv(op.sl);
         const stages = [];
