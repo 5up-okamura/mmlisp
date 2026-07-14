@@ -1549,6 +1549,9 @@
     const LEN_TICK = /^(\d+)t$/, LEN_FRAME = /^(\d+)f$/, LEN_FRAC = /^(\d+)\/(\d+)$/,
           LEN_DOT = /^(\d+)\.$/, LEN_PLAIN = /^\d+$/;
     const NUM_LITERAL = /^[+-]?\d+(?:\.\d+)?$/;
+    // Curve range sugar `A..B` (parseRangeToken in mmlisp2ir.js) — one atom
+    // holding two editable endpoints.
+    const RANGE_TOKEN = /^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$/;
     const NOTE_BARE = /^[a-g][+-]?$/;
     const NOTE_LEN = /^([a-g][+-]?)(.+)$/;
     const VEL_SHIFT = /^v([+-])(\d*)$/, OCT_SHIFT = /^o([+-])(\d*)$/;
@@ -1626,6 +1629,14 @@
       if ((m = NOTE_LEN.exec(v)) && isLengthForm(m[2])) {
         const mid = from + m[1].length;
         return [pitchField(from, mid, m[1]), lengthField(mid, to, m[2])];
+      }
+      if ((m = RANGE_TOKEN.exec(v))) {
+        // Two endpoints in one atom: `-40..40` → from-field | `..` | to-field.
+        const midFrom = from + m[1].length, midTo = to - m[2].length;
+        const a = numberField(from, midFrom, m[1], keyword);
+        const b = numberField(midTo, to, m[2], keyword);
+        a.label = 'from'; b.label = 'to';
+        return [a, b];
       }
       if ((m = VEL_SHIFT.exec(v))) return [shiftField(from, to, m, 'v')];
       if ((m = OCT_SHIFT.exec(v))) return [shiftField(from, to, m, 'o')];
