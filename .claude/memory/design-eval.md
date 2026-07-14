@@ -876,9 +876,20 @@ Driver track (Tiers B-D + data; each step separately gated):
    DATA_BASE bump (hardware-gated) are NOT spent. Gate met: verify:all 20/20
    0-diff; worst-case stack unchanged (40 B / 42 B reserve — tramp path peaks
    38 B); ovl_rare 250 B < 451 slot.
-8. **The value machine — Unit A (correctness core)** — IN PROGRESS (started
-   2026-07-15). Generic shadow read (§4.1) + JS `read_param` parity + left-fold
-   lowering (§4.3) + errors. **Decisions locked this session:** write model =
+8. **The value machine — Unit A (correctness core)** — **DONE (2026-07-15;
+   A1 + A2 both green).** Generic shadow read (§4.1) + JS `read_param` parity +
+   left-fold lowering (§4.3) + errors. Commits: A1 `10a36cf`, A2 `102a144`.
+   Gate met at each: verify:all 22/22 0-diff (+ new m3-opparam, m3-valexpr);
+   headless A/B drv-player == ir-player 0 mismatches on both; strict 6/6; corpus
+   unchanged (no score used op-param relatives or `$ref` value expressions).
+   **Latent bug fixed in A2:** `d_param_add_val` / `dv_mul` assumed `read_param`
+   preserved BC/DE, but `read_op_param` (and the pre-existing TL path) clobber
+   them — the slot/factor is now saved across `read_param` (mirroring
+   `d_param_add`'s `G_SW_DELTA` save). Would have broken any TL/op-param
+   PARAM_MUL / PARAM_ADD_VAL. **Still open — Unit B (the tight follow-on):**
+   compile shadow (§4.2, static relatives → PARAM_SET fold, `E_SHADOW_LOOP_
+   DIVERGENT`) + operator-desugar rewiring (§5, route `:P+`/`:P*` through the
+   linearizer). Decisions locked this session: write model =
    option (A) per §4.7 (left-fold now, batched-flush later, no temp-slot); the
    compile shadow + operator-desugar rewiring (§4.2/§5) are **Unit B**, a tight
    follow-on (A-first de-risks the subtle poison logic onto working ground);

@@ -28,8 +28,10 @@ This file is the compact continuation state.
    ~~measurement infra~~ (DONE — `npm run size`/`budget`) → ~~budget prep~~
    (DONE — ovl_rare eviction freed 201 B; 235 B free now covers the near-term
    total, so psf/DATA_BASE held in reserve) → **generic shadow read**
-   (`op_param_tab` inverse, ~35-55 B — the value-machine Unit A, IN PROGRESS
-   2026-07-15, design-eval §12 step 8 / §4.7) → **additive macro branch** (held
+   (`op_param_tab` inverse — the value-machine Unit A, **DONE 2026-07-15**:
+   read_op_param + JS parity + left-fold lowering, verify:all 22/22 + A/B 0-diff,
+   commits 10a36cf/102a144; Unit B = compile shadow + desugar rewiring still
+   open; design-eval §12 step 8 / §4.7) → **additive macro branch** (held
    since the `:pitch+` landing; ~50-60 B) → **scaled macro flag** (~30-40 B) →
    M3 dyn slice → CALL/RET (~45-60 B, control-stack tag already reserved in the
    TCB layout). Costs and funding are measured — see the budget table below.
