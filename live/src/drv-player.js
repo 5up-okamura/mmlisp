@@ -297,7 +297,13 @@ export class DrvPlayer {
     }));
     // Hardware shadow for change-only suppression (driver.md §5.4). Key ($28)
     // and raw PSG bytes are edges, not state — they bypass the shadow.
-    this._shadow = [new Map(), new Map()]; // per YM port: addr → data
+    this._shadow = [new Map(), new Map()]; // per YM port: addr → data (chip state)
+    // Batched flush (driver.md §5.4): _ym param writes defer into _pending and
+    // are flushed (change-only vs _shadow) at barriers — key ($28), F-number
+    // pair, DAC, and frame end. Coalesces the value machine's intermediate
+    // writes; RMW reads use the structured _fm state, not _shadow, so deferring
+    // the chip write is transparent to them.
+    this._pending = [new Map(), new Map()]; // per YM port: addr → deferred data
     this._opMasks = new Array(6).fill(0xf0); // UI op-enable mask per channel
 
     // M2 sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
@@ -380,12 +386,35 @@ export class DrvPlayer {
       ? this._startAudioTime + this._frame / FRAMES_PER_SEC
       : undefined;
   }
-  // YM parameter write, change-only via the shadow file.
+  // YM parameter write. Inline change-only by default; when `_batchYm` is set it
+  // defers into _pending, flushed at the next barrier (key/F-num/DAC/frame end).
+  // Batching is opt-in until the Z80 driver adopts the same flush (both must
+  // move in lockstep to keep verify:all's raw traces identical); tools/
+  // batch-diff.mjs proves the batched frame-final state matches inline exactly.
   _ym(port, addr, data) {
+    if (this._batchYm) {
+      this._pending[port].set(addr, data & 0xff);
+      return;
+    }
     const d = data & 0xff;
     if (this._shadow[port].get(addr) === d) return;
     this._shadow[port].set(addr, d);
     this._writeCb(port, addr, d, this._when());
+  }
+  // Flush deferred param writes to the chip, change-only against the shadow, in
+  // insertion order. Called before every barrier (key / F-number / DAC) and at
+  // frame end. The Z80 driver mirrors this to keep raw traces identical.
+  _flushYm() {
+    for (let port = 0; port < 2; port++) {
+      const pend = this._pending[port];
+      if (pend.size === 0) continue;
+      for (const [addr, d] of pend) {
+        if (this._shadow[port].get(addr) === d) continue;
+        this._shadow[port].set(addr, d);
+        this._writeCb(port, addr, d, this._when());
+      }
+      pend.clear();
+    }
   }
   // YM write that always emits (but keeps the shadow current). For the F-number
   // pair $A4-A6/$A0-A2: the high-byte write latches into a port-shared register
@@ -394,12 +423,15 @@ export class DrvPlayer {
   // the shared latch since this channel's last note, a suppressed high byte lets
   // the low-byte commit pick up the wrong octave. Write the pair every note.
   _ymAlways(port, addr, data) {
+    this._flushYm(); // barrier: params (esp. the pitch's own regs) precede F-num
     const d = data & 0xff;
     this._shadow[port].set(addr, d);
     this._writeCb(port, addr, d, this._when());
   }
-  // YM key register — an edge, always written.
+  // YM key register — an edge, always written. A barrier: pending param writes
+  // (TL, envelope) must reach the chip before the note keys on.
   _ymKey(data) {
+    this._flushYm();
     this._writeCb(0, 0x28, data & 0xff, this._when());
   }
   // PSG byte — the SN76489 has no readable state; bytes always go out.
@@ -1354,6 +1386,7 @@ export class DrvPlayer {
 
   // ── PCM / DAC (driver.md §11, frame-quantized feed — see mmb.js) ──────────
   _dacByte(storedByte) {
+    this._flushYm(); // barrier: no-op after the first byte of a frame (pending empty)
     // Sample bytes are stored 8-bit signed (two's complement); the DAC ($2A)
     // is 8-bit unsigned (128 = zero) — XOR 0x80 converts.
     this._writeCb(0, 0x2a, (storedByte ^ 0x80) & 0xff, this._when());
@@ -1575,9 +1608,10 @@ export class DrvPlayer {
     if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
     this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)
     this._pcmFrame(); // DAC sample feed (driver.md §11)
-    // 4. Write flush — in this reference, writes go out inline through the
-    //    shadow (change-only) in dispatch order, which preserves the same
-    //    per-frame final state the batched Z80 flush produces.
+    // 4. Frame-end flush — any param writes not already forced out by a barrier
+    //    (sweeps/macros with no note this frame) reach the chip now. Same
+    //    per-frame final state as the old inline model, fewer writes.
+    this._flushYm();
     this._frame++;
   }
 
