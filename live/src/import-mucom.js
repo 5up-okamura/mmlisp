@@ -867,10 +867,10 @@ function renderOps(ops, ctx, out, depth = 0) {
         const tm = (delta, rate) => Math.max(1, Math.round((rate > 0 ? delta / rate : 0) * factor));
         const al = lv(op.al), sl = lv(op.sl);
         const stages = [];
-        if (al < 15) stages.push(`(linear :from ${al} :to 15 :len ${tm(255 - op.al, op.ar)}t)`);
-        stages.push(`(linear :from 15 :to ${sl} :len ${tm(255 - op.sl, op.dr)}t)`);
+        if (al < 15) stages.push(`(linear ${al}..15 :len ${tm(255 - op.al, op.ar)}t)`);
+        stages.push(`(linear 15..${sl} :len ${tm(255 - op.sl, op.dr)}t)`);
         stages.push("(wait key-off)");
-        stages.push(`(linear :from ${sl} :to 0 :len ${tm(op.sl, op.rr)}t)`);
+        stages.push(`(linear ${sl}..0 :len ${tm(op.sl, op.rr)}t)`);
         const spec = `[ ${stages.join(" ")} ]`;
         if (ctx.envRegistry) {
           let name = ctx.envRegistry.get(spec);
