@@ -720,8 +720,16 @@ and `(delay …)`:
 
 ```text
 (curve-name :from A :to B :len L …optional-params)
+(curve-name A..B :len L …)        ; positional range sugar for :from/:to
 (const V :len L)                  ; flat segment — positional value
 ```
+
+`A..B` is shorthand for `:from A :to B` (signed decimals; `40..0` descends).
+It works anywhere a curve does, including inside arithmetic
+(`(* (sin -1..1 :len 8f) 40)`) and score `:tempo (linear 120..80 :len 4)`.
+Combining it with an explicit `:from`/`:to`, or two ranges, is
+`E_CURVE_RANGE_CONFLICT`; a `..`-token that is not a clean `A..B` is
+`E_CURVE_RANGE_MALFORMED`.
 
 ### Names
 

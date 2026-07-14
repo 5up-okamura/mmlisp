@@ -18,9 +18,6 @@ Index:
 - [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
   import, compile-time eval, phase status and sequencing. roadmap.md has the
   compact public version.
-- [plan-range-sugar.md](plan-range-sugar.md) — deferred `A..B` curve range
-  sugar: settled design + implementation sketch, to land as its own small
-  commit later. Independent of the eval steps.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 settled design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic

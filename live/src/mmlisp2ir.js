@@ -1675,8 +1675,43 @@ function parseCurveSpec(
     hasParams = true;
   };
 
+  let rangeUsed = false; // positional `A..B` seen (conflicts with :from/:to)
   for (let j = 1; j < node.items.length; j++) {
     const k = atomValue(node.items[j]);
+    // Positional range sugar: `(sin -1..1 :rate 6 :len 4)` sets from/to.
+    const range = !isConst && parseRangeToken(k);
+    if (range) {
+      if (rangeUsed || from !== undefined || to !== undefined) {
+        if (diagnostics) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_CURVE_RANGE_CONFLICT",
+            `curve range ${k} conflicts with another range or :from/:to`,
+            src ?? nodeSrc(node),
+            trackName,
+          );
+        }
+      } else {
+        from = range.from;
+        to = range.to;
+        rangeUsed = true;
+      }
+      continue;
+    }
+    // A `..`-bearing token that is not a clean range is a range typo (no other
+    // token contains `..`); flag it instead of silently ignoring it.
+    if (!isConst && typeof k === "string" && k.includes("..") && diagnostics) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_CURVE_RANGE_MALFORMED",
+        `malformed range '${k}' (expected A..B)`,
+        src ?? nodeSrc(node),
+        trackName,
+      );
+      continue;
+    }
     if (k === ":loop") {
       // Value-less flag: force this curve to loop (forward), e.g. so an easing
       // curve can be a cycling sustain stage.
@@ -1685,6 +1720,20 @@ function parseCurveSpec(
     }
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
       const v = atomValue(node.items[j + 1]);
+      if ((k === ":from" || k === ":to") && rangeUsed) {
+        if (diagnostics) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_CURVE_RANGE_CONFLICT",
+            `${k} conflicts with the positional range on curve ${head}`,
+            src ?? nodeSrc(node),
+            trackName,
+          );
+        }
+        j++;
+        continue;
+      }
       if (
         !supportsParamKey(head, k) &&
         k !== ":from" &&
@@ -1890,6 +1939,17 @@ function resolveLengthNode(node, inherited, trackState, ctx, env) {
     }
   }
   return parseLengthToken(atomValue(node), inherited, trackState.currentTempo);
+}
+
+// Positional curve-range sugar: `A..B` → { from: A, to: B } (v0.6). Endpoints
+// are signed decimals; `40..0` is a valid descending range. Returns null for
+// anything that is not exactly a range token.
+const RANGE_RE = /^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$/;
+function parseRangeToken(value) {
+  if (typeof value !== "string") return null;
+  const m = RANGE_RE.exec(value);
+  if (!m) return null;
+  return { from: Number(m[1]), to: Number(m[2]) };
 }
 
 // Inverse of pitchToMidi for `(note <midi>)` (§2.5): MIDI → { note name, octave }
