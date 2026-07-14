@@ -3859,6 +3859,12 @@
       _lastFileName = 'untitled.mmlisp';
       _lastGoodIR = null;
       _lastSourceMap = null;
+      // Persisted per-channel mixer state (mute/solo/vol/master) is keyed by
+      // channel name and would otherwise carry into the new file — reset it.
+      _mutedChannels.clear();
+      _soloChannels.clear();
+      _channelVol.clear();
+      _masterVolUi = 31;
       setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
       compileNow();
       onStop();
