@@ -271,6 +271,11 @@ parameter write at the current tick:
 | `:tl1* 0.5`       | `PARAM_MUL`              | Runtime read-modify-write multiply  |
 | `:tl1 $x`         | `PARAM_FROM_VAL`         | Read a value slot (§8)              |
 | `:tl1+ $x` / `:tl1* $x` | `PARAM_ADD` / `PARAM_MUL` with `{src}` | Slot-relative     |
+| `:tl1 (+ $a (* $b 2))` | opcode chain            | Runtime `$slot` expression (§7.1.2) |
+
+The read-modify-write forms (`+` / `*` / self-ref) work on **every** FM
+op-param (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN), not just level/TL — the base is
+read live from the register shadow.
 
 `(param-set :target v :target v …)` batches absolute integer writes
 (`E_UNSUPPORTED_TARGET` for unknown targets).
@@ -343,6 +348,10 @@ divide with a fraction (`:vel* 0.5`).
 
 - `vel`/`oct` have a compile-time base in the track state, so the IR carries
   plain absolute values.
+- Inline hardware params (`:tl1+`, `:ar1*`, …) are runtime read-modify-write on
+  the register's live value — every FM op-param, not just level/TL. A full
+  `$slot` expression (`:tl1 (+ $a (* $b 2))`) lowers to a param-opcode chain;
+  see §7.1.2.
 - In macros, `*` applies only to `:vel`. `+` applies to `:vel`, `:pitch`, and
   `:semi`; any other target (or `*` on `:pitch`/`:semi`) raises
   `E_MACRO_OP_NO_BASE`. `:vel*` scales the macro by the note's 0–1 vel ratio and
@@ -386,10 +395,8 @@ Expressions are accepted in **value positions**: an inline param write
      c e g)
 ```
 
-`$slot` references (§8) are **not** compile-time — a `$slot` inside an
-expression is `E_EVAL_NOT_LOWERABLE` for now (runtime evaluation is a later
-milestone). Track-header options are not evaluated (write the expression in the
-body, not the head).
+Track-header options are not evaluated (write the expression in the body, not
+the head).
 
 ### 7.1.1 Arithmetic on curves
 
@@ -415,6 +422,37 @@ A curve (§11) is a value too, so arithmetic composes with it:
                     (sin :from 1 :to 0 :rate 4 :len 8f)))         ; two LFOs, baked
      c e g)
 ```
+
+### 7.1.2 Runtime value expressions (`$slot`) — the value machine
+
+A `$slot` (§8) makes an expression **runtime-valued**. In a hardware-param
+value position, such an expression lowers to a short chain of param opcodes
+with **the parameter itself as the accumulator** — no new opcodes, evaluated on
+the driver each time the write fires:
+
+```lisp
+(def-val tension 0 0..100)
+(fm1 brass
+     :tl1 (+ 40 (* $tension 2))    ; FROM_VAL $tension → MUL 2 → ADD 40
+     :ar1 (+ $ar1 5)               ; self-ref: read AR1's live value, +5
+     c e g)
+```
+
+- **Seed**: a constant → `PARAM_SET`; a `$slot` → `PARAM_FROM_VAL`; a self-ref
+  `$<param>` (naming the target being written) starts from the param's current
+  value (read live — works on **every** FM op-param via the generic shadow
+  read, not just level/TL).
+- **Terms**: `+ const` → `PARAM_ADD`; `+ $slot` → `PARAM_ADD` (slot); `× const`
+  → `PARAM_MUL`; `× $slot` → `PARAM_MUL` (slot). Constant sub-trees fold first.
+
+Not every shape lowers to this accumulator form (`E_EVAL_NOT_LOWERABLE`, the
+honest list): subtract-from / divide-by a slot and subtracting a slot (no
+`SUB_VAL` opcode — invert the slot's range instead); a product or sum of **two**
+runtime sub-expressions (needs a scratch slot — not built yet); multiply by a
+negative constant (`PARAM_MUL` is unsigned); and `× $slot` on an i16 target
+(`NOTE_PITCH` / `TEMPO_SCALE`). A chain over ~6 register writes warns
+`W_EVAL_CHAIN_LONG` — each op writes the register (intermediate values reach the
+chip within the same frame; a later batched flush collapses them).
 
 ### 7.2 `let` — local bindings
 
@@ -471,8 +509,10 @@ duration wrap the unit explicitly:
 
 ## 8. Dynamic values — `(def-val …)`, `$name`
 
-Runtime values for interactive playback. Computation lives on the host; the
-score only reads slots — there are no score-side expressions.
+Runtime values for interactive playback. The host writes slots; the score
+reads them — directly (`:tl1 $level`), as an operator operand (`:tl2+ $level`),
+or combined in a runtime value expression (`:tl1 (+ 40 (* $tension 2))`) that
+lowers to a param-opcode chain on the driver (§7.1.2).
 
 ```lisp
 (def-val level 20 0..40 :step 2)

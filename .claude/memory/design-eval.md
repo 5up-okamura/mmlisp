@@ -886,10 +886,19 @@ Driver track (Tiers B-D + data; each step separately gated):
    preserved BC/DE, but `read_op_param` (and the pre-existing TL path) clobber
    them — the slot/factor is now saved across `read_param` (mirroring
    `d_param_add`'s `G_SW_DELTA` save). Would have broken any TL/op-param
-   PARAM_MUL / PARAM_ADD_VAL. **Still open — Unit B (the tight follow-on):**
-   compile shadow (§4.2, static relatives → PARAM_SET fold, `E_SHADOW_LOOP_
-   DIVERGENT`) + operator-desugar rewiring (§5, route `:P+`/`:P*` through the
-   linearizer). Decisions locked this session: write model =
+   PARAM_MUL / PARAM_ADD_VAL. **Unit B — DEFERRED (decided 2026-07-15).** Once
+   A1 landed, the compile shadow (§4.2) became *pure optimization* (A1 already
+   makes `:P+`/`:P*` correct at runtime on every op-param, delivering §5's
+   functional promise). Its fold is **gate-invisible** — it rewrites the IR for
+   both players, so verify:all and A/B can't catch a wrong fold; it would need a
+   dedicated fold-ON/OFF differential test, and its correctness hinges on
+   complete poison coverage (macros, control-flow) for modest value. And
+   batched-flush (§4.7) subsumes it. So Unit B is parked; the §5 docs were
+   synced instead (option C — see step 13 note) and the next focus is the
+   **batched frame flush** (§4.7 (c)), which is bigger but general, decided, and
+   *state-level verifiable* (unlike the compile-shadow fold). If a real score
+   later needs cheap static-relative folding before batched-flush lands, revisit
+   Unit B with the differential test. Decisions locked this session: write model =
    option (A) per §4.7 (left-fold now, batched-flush later, no temp-slot); the
    compile shadow + operator-desugar rewiring (§4.2/§5) are **Unit B**, a tight
    follow-on (A-first de-risks the subtle poison logic onto working ground);
