@@ -3648,11 +3648,13 @@ d_param_from_val:
 d_param_add_val:
     call dv_head            ; A = slot
     ld c,a
+    push bc                 ; read_param may clobber BC/DE (op-param read) — save slot
     call read_param         ; HL = current
-    push hl
+    pop bc                  ; C = slot
+    push hl                 ; save current
     ld a,c
     call read_slot          ; HL = slot value
-    pop de
+    pop de                  ; DE = current
     add hl,de
     jr dv_write
 
@@ -3678,8 +3680,9 @@ d_param_mul:
     ld l,c
     ld h,b                  ; HL = factor
 dv_mul:
-    ex de,hl                ; DE = factor
+    push hl                 ; factor — read_param may clobber BC/DE (op-param read)
     call read_param         ; HL = current (levels are unsigned ≤127)
+    pop de                  ; DE = factor
     ld a,l
     call mul16x8_sh8        ; (DE * A) >> 8 → HL
 dv_write:

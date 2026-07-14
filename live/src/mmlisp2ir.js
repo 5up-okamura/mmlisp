@@ -1042,6 +1042,174 @@ function resolveValRef(raw, vals, diagnostics, trackName, src) {
   return name; // keep the IR well-formed; player treats a missing slot as 0
 }
 
+// ── Value-machine left-fold lowering (v0.6 §4.3) ──────────────────────────
+// A `$ref`-bearing hw-param expression lowers to a chain of the existing param
+// opcodes with the param itself as the accumulator: a seed (const→PARAM_SET,
+// $slot→PARAM_FROM_VAL, self-ref $P→none) then add/mul terms (PARAM_ADD /
+// PARAM_ADD/MUL with a {src} slot). Shapes that need a true temporary, a
+// subtract-from / divide-by / subtract-a-slot, a negative multiply, or ×$slot
+// on an i16 target are E_EVAL_NOT_LOWERABLE (the honest list). No new opcodes,
+// no new IR shapes — the exporter already lowers each event 1:1.
+const VALUE_ARITH = new Set(["+", "-", "*", "/"]);
+
+function exprHasValRef(node) {
+  if (node?.kind === "atom")
+    return typeof node.value === "string" && node.value.startsWith("$");
+  if (node?.kind === "list") return node.items.some(exprHasValRef);
+  return false;
+}
+
+// Fold a purely-constant subtree (numbers + let-bound scalars, no $ref) → number
+// | null. Keeps the linearizer from treating a computed constant as a term.
+function constFoldExpr(node, env) {
+  if (node?.kind === "atom") {
+    const n = parseNumberLike(node.value);
+    if (n !== null) return n;
+    const bound = lookupBound(env, node.value);
+    return typeof bound === "number" ? bound : null;
+  }
+  if (node?.kind === "list" && node.bracket === "()") {
+    const items = node.items.filter((x) => x.kind !== "comment");
+    const head = atomValue(items[0]);
+    if (VALUE_ARITH.has(head) && items.length === 3) {
+      const a = constFoldExpr(items[1], env);
+      const b = constFoldExpr(items[2], env);
+      if (a === null || b === null) return null;
+      if (head === "+") return a + b;
+      if (head === "-") return a - b;
+      if (head === "*") return a * b;
+      return b === 0 ? null : a / b;
+    }
+  }
+  return null;
+}
+
+// Linearize a value expression into a step chain, or an {error}. `target` is the
+// canonical param being written (for self-ref detection and the i16 caveat).
+function linearizeValueExpr(node, target, env, vals, diagnostics, trackName, src) {
+  const i16 = target === "NOTE_PITCH" || target === "TEMPO_SCALE";
+  const err = (code, msg) => ({ error: { code, msg } });
+
+  // A leaf → {const}|{slot}|{self}|{error}|null (null = not a leaf).
+  const leaf = (n) => {
+    if (n?.kind !== "atom") return null;
+    const v = n.value;
+    if (typeof v === "string" && v.startsWith("$")) {
+      const name = v.slice(1);
+      // Self-ref: $<param> naming the target being written (canonicalTarget keys
+      // on the `:` keyword form). Seed nothing — start from the current value.
+      if (name !== "time" && canonicalTarget(":" + name) === target) return { self: true };
+      return { slot: resolveValRef(v, vals, diagnostics, trackName, src) };
+    }
+    return { error: err("E_EVAL_OPERAND", `not a value operand: ${v}`).error };
+  };
+  // A leaf usable as an additive term (const or plain slot); self/expr → null.
+  const addTerm = (n) => {
+    const c = constFoldExpr(n, env);
+    if (c !== null) return { const: c };
+    const lf = leaf(n);
+    return lf && lf.slot !== undefined ? { slot: lf.slot } : null;
+  };
+  const scale = (chain, k) => {
+    if (chain.error) return chain;
+    if (k === 1) return chain;
+    if (k < 0) return err("E_EVAL_NOT_LOWERABLE",
+      "multiply by a negative constant (PARAM_MUL factor is unsigned 8.8)");
+    const s = chain.steps;
+    if (s.length === 1 && s[0].op === "set") return { steps: [{ op: "set", val: s[0].val * k }] };
+    return { steps: [...s, { op: "mul", val: k }] };
+  };
+  const mulval = (chain, ref) => {
+    if (chain.error) return chain;
+    if (i16) return err("E_EVAL_NOT_LOWERABLE",
+      "multiply by a $value on an i16 target (NOTE_PITCH/TEMPO_SCALE) is not sign-correct");
+    return { steps: [...chain.steps, { op: "mulval", ref }] };
+  };
+  const append = (chain, term) => {
+    if (chain.error) return chain;
+    if (term.const !== undefined) {
+      if (term.const === 0) return chain;
+      const s = chain.steps;
+      if (s.length === 1 && s[0].op === "set") return { steps: [{ op: "set", val: s[0].val + term.const }] };
+      return { steps: [...s, { op: "add", val: term.const }] };
+    }
+    return { steps: [...chain.steps, { op: "addval", ref: term.slot }] };
+  };
+
+  const lin = (n) => {
+    const c = constFoldExpr(n, env);
+    if (c !== null) return { steps: [{ op: "set", val: c }] };
+    const lf = leaf(n);
+    if (lf) {
+      if (lf.error) return { error: lf.error };
+      if (lf.self) return { steps: [{ op: "self" }] };
+      return { steps: [{ op: "fromval", ref: lf.slot }] };
+    }
+    if (n?.kind !== "list" || n.bracket !== "()")
+      return err("E_EVAL_OPERAND", "unsupported value operand");
+    const items = n.items.filter((x) => x.kind !== "comment");
+    const head = atomValue(items[0]);
+    if (!VALUE_ARITH.has(head) || items.length !== 3)
+      return err("E_EVAL_NOT_LOWERABLE",
+        `${head} with a runtime value has no param-opcode lowering`);
+    const [, A, B] = items;
+    const ca = constFoldExpr(A, env), cb = constFoldExpr(B, env);
+    if (head === "*") {
+      if (ca !== null) return scale(lin(B), ca);
+      if (cb !== null) return scale(lin(A), cb);
+      const lb = leaf(B), la = leaf(A);
+      if (lb && lb.slot !== undefined) return mulval(lin(A), lb.slot);
+      if (la && la.slot !== undefined) return mulval(lin(B), la.slot);
+      return err("E_EVAL_NOT_LOWERABLE",
+        "product of two runtime sub-expressions needs a temporary (not built; §4.5)");
+    }
+    if (head === "/") {
+      if (cb === 0) return err("E_EVAL_DIV_ZERO", "division by zero");
+      if (cb !== null) return scale(lin(A), 1 / cb);
+      return err("E_EVAL_NOT_LOWERABLE", "divide by a runtime value has no opcode");
+    }
+    if (head === "+") {
+      const tb = addTerm(B); if (tb) return append(lin(A), tb);
+      const ta = addTerm(A); if (ta) return append(lin(B), ta);
+      return err("E_EVAL_NOT_LOWERABLE",
+        "sum of two runtime sub-expressions needs a temporary (not built; §4.5)");
+    }
+    // head === "-"
+    if (cb !== null) return append(lin(A), { const: -cb });
+    const lb = leaf(B);
+    if (lb && lb.slot !== undefined)
+      return err("E_EVAL_NOT_LOWERABLE",
+        "subtract a runtime value has no SUB_VAL opcode (invert the slot's range instead)");
+    return err("E_EVAL_NOT_LOWERABLE",
+      "subtract-from a runtime value requires negation (not lowerable)");
+  };
+
+  return lin(node);
+}
+
+// Emit a `$ref` value expression as its param-opcode chain, or diagnose why it
+// cannot lower. `push(cmd, args)` appends an IR event on the current target.
+function lowerValueExpr(node, target, push, env, vals, diagnostics, trackName, src) {
+  const r = linearizeValueExpr(node, target, env, vals, diagnostics, trackName, src);
+  if (r.error) {
+    pushDiag(diagnostics, "error", r.error.code, r.error.msg, src, trackName);
+    return;
+  }
+  const writes = r.steps.filter((s) => s.op !== "self").length;
+  if (writes > 6)
+    pushDiag(diagnostics, "warning", "W_EVAL_CHAIN_LONG",
+      `expression lowers to ${writes} register writes (§4.7)`, src, trackName);
+  for (const s of r.steps) {
+    if (s.op === "self") continue;
+    if (s.op === "set") push("PARAM_SET", { target, value: Math.round(s.val) });
+    else if (s.op === "fromval") push("PARAM_FROM_VAL", { target, src: s.ref });
+    else if (s.op === "add") push("PARAM_ADD", { target, delta: Math.round(s.val) });
+    else if (s.op === "addval") push("PARAM_ADD", { target, delta: { src: s.ref } });
+    else if (s.op === "mul") push("PARAM_MUL", { target, factor: s.val });
+    else if (s.op === "mulval") push("PARAM_MUL", { target, factor: { src: s.ref } });
+  }
+}
+
 // Target group: a [] vector of macro keywords in target position, e.g.
 // (macro [:tl1 :tl2 :tl3 :tl4] spec) — one spec applied to every target.
 // Returns the keyword strings, or null if node is not an all-keyword vector.
@@ -2867,6 +3035,22 @@ function compileChannelBody(
                 items[i].bracket === "()" &&
                 isEvalHead(atomValue(items[i].items?.[0]))
               ) {
+                // A `$ref`-bearing expression is a runtime value-machine write:
+                // lower it to a param-opcode chain (§4.3). Pure-scalar / signal
+                // expressions (no $ref) fold via evalValue as before.
+                if (exprHasValRef(items[i])) {
+                  lowerValueExpr(
+                    items[i],
+                    target,
+                    push,
+                    evalEnv,
+                    vals,
+                    diagnostics,
+                    trackName,
+                    nodeSrc(node),
+                  );
+                  break;
+                }
                 const r = evalValue(
                   items[i],
                   evalEnv,
