@@ -733,14 +733,43 @@ Compiler track (Tier A — no driver changes):
    corpus IR+diag+MMB byte-identical (A/B), verify:all 20/20, strict 6/6.
    **Deferred** (not gated): computed curve kwargs (`:from (- 0 40)`) — §3's
    "one added capability"; bare-`$ref` dyn kwargs unchanged.
-3. **Compile shadow + operator desugar rewiring** — per-param shadow in
-   `trackState` (voice-seeded, poisoning rules §4.2); all five sugar
-   families through the evaluator; static bases fold. Gate: byte-identical
-   IR for the whole corpus vs the pre-change compiler (scripted A/B);
-   shadow-fold unit tests.
-4. **`let`, `note`, `ticks`/`frames`** — item branch before :3227;
-   `parseLengthValue`. Gate: 0-diff (no existing score uses them); new
-   scores exercising splice-in-loop and `(note …)` shuffle/tie interaction.
+3. **Compile shadow + operator desugar rewiring** — **NOT DONE; do as ONE
+   piece, no sub-splitting** (user directive 2026-07: "分割はしないでほしい…
+   step8のことは一旦忘れて、原則を守って実装できる範囲を全部やって"). The
+   investigation found: the shadow's payoff (folding static hw relatives to
+   PARAM_SET) is Z80-realizable, but the runtime/self-ref cases (`:ar1+` on a
+   poisoned base) need the generic shadow read (was §12 step 8) — so the whole
+   value machine (shadow + fold + left-fold lowering + generic read) is ONE
+   realizable unit; implement it together, not fragmented. Governing rule
+   (user): IR may change, but **never emit a form the Z80 driver can't run** —
+   gate on verify:all, not IR byte-identity. Corpus poisoning note: m3-dynval's
+   `:vol* 2.0` follows `:vol* $fac` (poisons VOL) so it stays PARAM_MUL even
+   with folding — likely still byte-identical. `:P±`/`$P` desugar depends on the
+   generic read; don't ship the 0-based RMW.
+4. **`let`, `note`, `ticks`/`frames`** — **DONE**. mmlisp-eval.js gained the
+   `let` special form (value position) + `evalLet` (item position, returns the
+   extended env for the body walk), `evalLengthValue` (`(ticks/frames expr)`
+   bridge), `lookupBound` (bare let-bound name in a value position), and split
+   `isEvalHead` (value dispatch: arith+let) from `isReservedHead`
+   (arith+let+note+ticks+frames → `E_DEF_RESERVED`). mmlisp2ir.js: item-position
+   `let` (child env, body spliced in place via compileChannelBody recursion) and
+   `(note expr [len])` (→ MIDI via `midiToNoteParts`, octave set-then-restored so
+   it doesn't leak, then `emitNoteForTrack` → ties/glide/shuffle/PCM/macros
+   identical to a literal note; `resolveLengthNode` for the optional length).
+   `let` names must fail the note-stream predicates (`isNoteStreamToken` →
+   `E_LET_NAME`, so single letters a–g are rejected) and not shadow a typedDef
+   (`E_LET_SHADOWS_DEF`). ticks/frames + bare-name wired at `:len`, `:gate`
+   (absolute), `:vel`, `:oct`, hw-param default, param-set, and note length.
+   Gate met: corpus IR+diag+MMB byte-identical (A/B), verify:all 20/20, strict
+   6/6, feature tests pass. **§2.4 amended (user decision 2026-07):** a bare
+   eval expression in a length position is NOT `E_EVAL_UNIT_REQUIRED` — its
+   numeric result is a **note denominator**, uniform with a literal number
+   (`(note 60 (+ 2 2))` ≡ `(note 60 4)` ≡ quarter; `:len (* 2 4)` ≡ `:len 8`).
+   `(ticks/frames …)` remain the explicit bridges for those units; a computed
+   value is otherwise a denominator. `let` also reaches macro values now (env
+   threaded through parseMacroSpec via the inline macro handler). **Deferred**
+   (mechanical tail): ticks/frames at curve `:len` and macro `:step` (those
+   parsers lack the eval ctx/env); bare-name at `:vol`/`:master`/`:tempo`.
 5. **Signal⊕signal materialization** — export-mmb phase formulas, region
    composition, hold resolution, bind-time round/clamp. Gate: MMB blob
    equals hand-computed samples; `ab-compare` vs hand-written step vectors.

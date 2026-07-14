@@ -153,20 +153,93 @@ BUILTINS.set("abs", { arity: [1, 1], apply: (a, _c, n) => Math.abs(scalarsOnly(n
 BUILTINS.set("round", { arity: [1, 1], apply: (a, _c, n) => Math.round(scalarsOnly(n, a)[0]) });
 BUILTINS.set("floor", { arity: [1, 1], apply: (a, _c, n) => Math.floor(scalarsOnly(n, a)[0]) });
 
-/** True when `name` is a reserved eval builtin head (used for dispatch and the
- *  `E_DEF_RESERVED` check). Curve names are handled separately (via ctx), so
- *  they are not in this set. */
+// Value-producing heads that dispatch to the evaluator in value positions:
+// the arithmetic/math builtins plus the `let` special form (§7).
+const VALUE_HEADS = new Set([...BUILTINS.keys(), "let"]);
+
+// Heads that also read as eval forms elsewhere (item/length positions) —
+// reserved so a def cannot shadow them. `note` is item-only (§2.5);
+// `ticks`/`frames` are length-only bridges (§2.4); they are handled in
+// mmlisp2ir.js, but naming a def after them is still `E_DEF_RESERVED`.
+const RESERVED_HEADS = new Set([...VALUE_HEADS, "note", "ticks", "frames"]);
+
+/** True when `name` dispatches to the evaluator in a value position (arithmetic
+ *  builtins + `let`). Curve names are handled separately (via ctx). */
 export function isEvalHead(name) {
-  return typeof name === "string" && BUILTINS.has(name);
+  return typeof name === "string" && VALUE_HEADS.has(name);
 }
 
-/** The reserved eval-builtin names, for diagnostics that want to list them. */
-export const EVAL_BUILTIN_NAMES = Object.freeze([...BUILTINS.keys()]);
+/** True when `name` is any reserved eval head (for the `E_DEF_RESERVED` check). */
+export function isReservedHead(name) {
+  return typeof name === "string" && RESERVED_HEADS.has(name);
+}
+
+/** The reserved eval-head names, for diagnostics that want to list them. */
+export const EVAL_BUILTIN_NAMES = Object.freeze([...RESERVED_HEADS]);
+
+const atomVal = (n) =>
+  n && (n.kind === "atom" || n.kind === "string") ? n.value : null;
+
+// Bind a `let` form's `((name expr) …)` list sequentially (let*) into a fresh
+// child env. Names must be symbols that are not note-stream tokens
+// (ctx.isNoteStreamToken → E_LET_NAME) and not def/paramDef names
+// (ctx.isDefName → E_LET_SHADOWS_DEF). Values evaluate in the growing env and
+// may be scalars or signals. Throws EvalError on any problem.
+function bindLet(items, env, ctx) {
+  const bindingList = items[1];
+  if (!bindingList || bindingList.kind !== "list") {
+    throw new EvalError("E_LET_BINDING", "let needs a ((name expr) …) list");
+  }
+  const child = makeEnv(env);
+  for (const b of bindingList.items.filter((n) => n.kind !== "comment")) {
+    const pair = b?.kind === "list" ? b.items.filter((n) => n.kind !== "comment") : null;
+    if (!pair || pair.length !== 2) {
+      throw new EvalError("E_LET_BINDING", "each let binding is (name expr)");
+    }
+    const name = atomVal(pair[0]);
+    if (!name || pair[0].kind !== "atom") {
+      throw new EvalError("E_LET_NAME", "let binding name must be a symbol");
+    }
+    if (ctx.isNoteStreamToken && ctx.isNoteStreamToken(name)) {
+      throw new EvalError(
+        "E_LET_NAME",
+        `let name '${name}' collides with a note/length token`,
+      );
+    }
+    if (ctx.isDefName && ctx.isDefName(name)) {
+      throw new EvalError(
+        "E_LET_SHADOWS_DEF",
+        `let name '${name}' shadows a def`,
+      );
+    }
+    const value = evalNode(pair[1], child, { ...ctx, depth: ctx.depth + 1 });
+    child.bindings.set(name, value);
+  }
+  return child;
+}
+
+/**
+ * Item-position `let`: bind the form's declarations and return the extended env
+ * for the body walk, or null after pushing a diagnostic. (The body is compiled
+ * in place by the caller — mmlisp2ir.js.)
+ */
+export function evalLet(node, env, ctx) {
+  const items = (node.items || []).filter((n) => n.kind !== "comment");
+  try {
+    return bindLet(items, env ?? makeEnv(null), { ...ctx, depth: 0 });
+  } catch (e) {
+    if (e instanceof EvalError) {
+      ctx.pushDiag(ctx.diagnostics, "error", e.code, e.message, ctx.src, ctx.trackName);
+      return null;
+    }
+    throw e;
+  }
+}
 
 // A length-grammar smell test: reject note/length/rest atoms as arithmetic
-// operands (no implicit note→number coercion — design §1.1, §2.4). Kept
-// deliberately loose in step 1; the note-stream predicates in mmlisp2ir.js are
-// the authority and will be shared in the `let`/`note` step.
+// operands (no implicit note→number coercion — design §1.1, §2.4). The
+// authoritative note-stream predicates live in mmlisp2ir.js and reach the
+// evaluator via ctx.isNoteStreamToken for `let` name validation.
 function looksLikeMusicToken(s) {
   return /^[_<>]|^[a-g][+-]?(\d|\/|\.|t$|f$)|^[ov][+-]/.test(s);
 }
@@ -213,6 +286,20 @@ function evalNode(node, env, ctx) {
   if (node.kind === "list") {
     const items = node.items.filter((n) => n.kind !== "comment");
     const head = items[0] && items[0].kind === "atom" ? items[0].value : null;
+
+    // `let` in a value/expression position: bind, then evaluate a single body
+    // expression in the extended env (§7).
+    if (head === "let") {
+      const child = bindLet(items, env, ctx);
+      const body = items.slice(2);
+      if (body.length !== 1) {
+        throw new EvalError(
+          "E_EVAL_ARITY",
+          "let in a value position takes exactly one body expression",
+        );
+      }
+      return evalNode(body[0], child, { ...ctx, depth: ctx.depth + 1 });
+    }
 
     // Curve head → a symbolic signal (delegated to parseCurveSpec via ctx).
     if (head && ctx.curveNames && ctx.curveNames.has(head)) {
@@ -290,4 +377,39 @@ export function evalScalarValue(node, env, ctx) {
     return null;
   }
   return r.value;
+}
+
+/** Look up a `let`-bound name in a value position (bare atom). Returns the
+ *  bound value (scalar or signal) or undefined. */
+export function lookupBound(env, name) {
+  return env ? envLookup(env, name) : undefined;
+}
+
+/**
+ * Length-position bridge (§2.4): resolve `(ticks expr)` / `(frames expr)` to a
+ * unit-tagged non-negative integer. Returns `{unit:"tick"|"frame", value}` for
+ * those heads, or null for any other node (the caller then uses the normal
+ * length-token parser). Diagnostics: a non-scalar or unknown head errors.
+ */
+export function evalLengthValue(node, env, ctx) {
+  if (!node || node.kind !== "list" || node.bracket !== "()") return null;
+  const items = node.items.filter((n) => n.kind !== "comment");
+  const head = atomVal(items[0]);
+  if (head !== "ticks" && head !== "frames") return null;
+  try {
+    if (items.length !== 2) {
+      throw new EvalError("E_EVAL_ARITY", `(${head} expr) takes one argument`);
+    }
+    const v = evalNode(items[1], env ?? makeEnv(null), { ...ctx, depth: 0 });
+    if (isSignal(v)) {
+      throw new EvalError("E_EVAL_TYPE", `(${head} …) needs a number, got a signal`);
+    }
+    return { unit: head === "frames" ? "frame" : "tick", value: Math.max(0, Math.round(v)) };
+  } catch (e) {
+    if (e instanceof EvalError) {
+      ctx.pushDiag(ctx.diagnostics, "error", e.code, e.message, ctx.src, ctx.trackName);
+      return { unit: "error", value: 0 };
+    }
+    throw e;
+  }
 }

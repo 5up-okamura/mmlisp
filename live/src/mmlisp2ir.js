@@ -14,8 +14,12 @@ import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
 import {
   makeEnv,
   isEvalHead,
+  isReservedHead,
   evalValue,
   evalScalarValue,
+  evalLet,
+  evalLengthValue,
+  lookupBound,
 } from "./mmlisp-eval.js";
 
 // 96 ticks/quarter (384/whole). Divisible by both MMLisp's note fractions and
@@ -770,6 +774,39 @@ function emitNoteForTrack(
     );
 }
 
+// `(note expr [len])` (§2.5): evaluate a MIDI number and emit one NOTE_ON at
+// that absolute pitch, reusing emitNoteForTrack so ties/glide/shuffle/PCM/macros
+// behave identically to a literal note. The octave is set from the MIDI number
+// (temporarily, so it does not leak into following notes) — the note name +
+// octave round-trips through pitchToMidi unchanged.
+function emitEvalNote(node, trackState, events, diagnostics, trackName, typedDefs, env) {
+  const items = node.items.filter((n) => n.kind !== "comment");
+  const ctx = makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs);
+  if (items.length < 2 || items.length > 3) {
+    pushDiag(diagnostics, "error", "E_NOTE_ARGS", "(note expr [len]) takes a pitch and optional length", nodeSrc(node), trackName);
+    return;
+  }
+  const scalar = evalScalarValue(items[1], env, ctx);
+  if (scalar === null) return; // diagnostic already pushed
+  const midi = Math.round(scalar);
+  if (midi < 0 || midi > 127) {
+    pushDiag(diagnostics, "error", "E_NOTE_RANGE", `note ${midi} out of MIDI range 0..127`, nodeSrc(node), trackName);
+    return;
+  }
+  const hasLen = items.length === 3;
+  const lengthTicks = hasLen
+    ? resolveLengthNode(items[2], trackState.defaultLength, trackState, ctx, env)
+    : trackState.defaultLength;
+  // An explicit per-note length skips shuffle (matching literal `c8`); a default
+  // length swings (matching a bare note).
+  const ticks = hasLen ? lengthTicks : resolveShuffleTicks(lengthTicks, trackState);
+  const { name, octave } = midiToNoteParts(midi);
+  const savedOct = trackState.defaultOct;
+  trackState.defaultOct = octave;
+  emitNoteForTrack(trackState, name, ticks, events, diagnostics, nodeSrc(node), trackName);
+  trackState.defaultOct = savedOct;
+}
+
 /**
  * v0.4: Emit glide PARAM_SWEEP before NOTE_ON if glide is active.
  * Inserts a portamento slide from lastNotePitch to newPitch over glideTicks.
@@ -1326,6 +1363,7 @@ function parseMacroSpec(
   diagnostics = null,
   trackName = null,
   clamp = true,
+  env = null, // body eval env, so `(let …)` bindings reach macro values
 ) {
   if (!node) return null;
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
@@ -1414,7 +1452,7 @@ function parseMacroSpec(
     if (isEvalHead(atomValue(node.items?.[0]))) {
       const r = evalValue(
         node,
-        makeEnv(null),
+        env ?? makeEnv(null),
         makeEvalCtx(diagnostics, trackName, nodeSrc(node)),
       );
       if (!r) return null;
@@ -1810,6 +1848,40 @@ function parseNumberLike(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Resolve a length in a structural position: a plain length-token atom, a
+// `(ticks expr)` / `(frames expr)` unit bridge (§2.4), or a bare eval
+// expression whose numeric result is a note denominator — `(+ 2 2)` ≡ `4` ≡ a
+// quarter note, uniform with a literal number. Frames convert to ticks at the
+// active tempo (like Nf, [[project-todo-2-nf-always-frame]]).
+function resolveLengthNode(node, inherited, trackState, ctx, env) {
+  if (node && node.kind === "list") {
+    const lv = evalLengthValue(node, env, ctx);
+    if (lv) {
+      if (lv.unit === "error") return inherited;
+      return lv.unit === "frame"
+        ? framesToTicks(lv.value, trackState.currentTempo)
+        : lv.value;
+    }
+    if (isEvalHead(atomValue(node.items?.[0]))) {
+      const n = evalScalarValue(node, env, ctx);
+      if (n === null) return inherited; // diagnostic already pushed
+      const d = Math.round(n);
+      return d === 0 ? 0 : Math.round(WHOLE_TICKS / d); // denominator, like a literal
+    }
+  }
+  return parseLengthToken(atomValue(node), inherited, trackState.currentTempo);
+}
+
+// Inverse of pitchToMidi for `(note <midi>)` (§2.5): MIDI → { note name, octave }
+// with sharps spelled `+`, matching the literal note grammar. C4 = 60.
+const MIDI_NOTE_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
+function midiToNoteParts(midi) {
+  return {
+    name: MIDI_NOTE_NAMES[((midi % 12) + 12) % 12],
+    octave: Math.floor(midi / 12) - 1,
+  };
+}
+
 // Build the context the compile-time evaluator needs (mmlisp-eval.js): the
 // diagnostic sink, and callbacks that keep curve internals inside this module —
 // `parseCurve` (a curve head → symbolic signal) and `mapMacroValues` (affine
@@ -1836,7 +1908,23 @@ function foldCurveValues(spec, fn) {
   return { ...spec, from: fn(spec.from ?? 0), to: fn(spec.to ?? 0) };
 }
 
-function makeEvalCtx(diagnostics, trackName, src) {
+// A name that would be a note-stream token cannot be a `let` binding name
+// (E_LET_NAME) — bindings must not shadow the literal note grammar.
+function isNoteStreamToken(name) {
+  return (
+    typeof name === "string" &&
+    (name === ">" ||
+      name === "<" ||
+      isNoteAtom(name) ||
+      isPerNoteLengthAtom(name) ||
+      isRestAtom(name) ||
+      isVelShiftAtom(name) ||
+      isOctShiftAtom(name) ||
+      parseLengthToken(name, null) !== null)
+  );
+}
+
+function makeEvalCtx(diagnostics, trackName, src, typedDefs = null) {
   return {
     pushDiag,
     diagnostics,
@@ -1845,6 +1933,8 @@ function makeEvalCtx(diagnostics, trackName, src) {
     curveNames: CURVE_NAMES,
     parseCurve: (n) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false),
     foldSignal: foldCurveValues,
+    isNoteStreamToken,
+    isDefName: (n) => !!typedDefs && typedDefs.has(n),
   };
 }
 
@@ -2310,7 +2400,13 @@ function compileChannelBody(
             case ":oct*": {
               // absolute / +add / *multiply against the running octave base
               const { op } = opSuffix(val);
-              const raw = op === "*" ? parseFloat(rawVal) : parseIntLike(rawVal);
+              const bound = lookupBound(evalEnv, rawVal); // let-bound scalar
+              const raw =
+                typeof bound === "number"
+                  ? bound
+                  : op === "*"
+                    ? parseFloat(rawVal)
+                    : parseIntLike(rawVal);
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultOct;
                 const next =
@@ -2320,15 +2416,30 @@ function compileChannelBody(
               break;
             }
             case ":len":
-              trackState.defaultLength = parseLengthToken(
-                rawVal,
+              trackState.defaultLength = resolveLengthNode(
+                items[i],
                 trackState.defaultLength,
-                trackState.currentTempo,
+                trackState,
+                makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
+                evalEnv,
               );
               break;
             case ":gate":
             case ":gate*":
             case ":gate-": {
+              // `(ticks/frames …)` are absolute times → only meaningful for
+              // `:gate`; ratios/cuts (`:gate*`/`:gate-`) keep the token parser.
+              if (val === ":gate" && items[i]?.kind === "list") {
+                const t = resolveLengthNode(
+                  items[i],
+                  0,
+                  trackState,
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
+                  evalEnv,
+                );
+                trackState.defaultGate = { type: "ticks", value: t };
+                break;
+              }
               const g = parseGateFamily(val, rawVal, trackState.currentTempo);
               if (g !== null) trackState.defaultGate = g;
               break;
@@ -2370,7 +2481,13 @@ function compileChannelBody(
               // per-note velocity (KEY-ON scoped, sticky): absolute / +add /
               // *multiply against the running vel base (default 15).
               const { op } = opSuffix(val);
-              const raw = op === "*" ? parseFloat(rawVal) : parseIntLike(rawVal);
+              const bound = lookupBound(evalEnv, rawVal); // let-bound scalar
+              const raw =
+                typeof bound === "number"
+                  ? bound
+                  : op === "*"
+                    ? parseFloat(rawVal)
+                    : parseIntLike(rawVal);
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultVel ?? 15;
                 const next =
@@ -2664,13 +2781,21 @@ function compileChannelBody(
                 const r = evalValue(
                   items[i],
                   evalEnv,
-                  makeEvalCtx(diagnostics, trackName, nodeSrc(node)),
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
                 );
                 if (r) {
                   if (r.kind === "signal") push("PARAM_SWEEP", { target, ...r.spec });
                   else push("PARAM_SET", { target, value: Math.round(r.value) });
                 }
                 break;
+              }
+              // Bare let-bound scalar: `(let ((x 30)) :tl1 x …)`.
+              if (!op) {
+                const bound = lookupBound(evalEnv, rawVal);
+                if (typeof bound === "number") {
+                  push("PARAM_SET", { target, value: Math.round(bound) });
+                  break;
+                }
               }
               // Absolute: curve sweep or literal set.
               const curveSpec = parseCurveSpec(
@@ -3273,6 +3398,7 @@ function compileChannelBody(
                   diagnostics,
                   trackName,
                   !op,
+                  evalEnv,
                 );
                 if (spec && macroStep) spec.step = macroStep;
                 if (
@@ -3314,11 +3440,15 @@ function compileChannelBody(
             const scalar = evalScalarValue(
               valueNode,
               evalEnv,
-              makeEvalCtx(diagnostics, trackName, nodeSrc(targetNode)),
+              makeEvalCtx(diagnostics, trackName, nodeSrc(targetNode), typedDefs),
             );
             value = scalar === null ? 0 : Math.round(scalar);
           } else {
-            value = parseIntLike(atomValue(valueNode)) ?? 0;
+            const bound = lookupBound(evalEnv, atomValue(valueNode));
+            value =
+              typeof bound === "number"
+                ? Math.round(bound)
+                : parseIntLike(atomValue(valueNode)) ?? 0;
           }
           if (!PARAM_SET_TARGETS.has(target)) {
             pushDiag(
@@ -3338,6 +3468,38 @@ function compileChannelBody(
           });
           j += 2;
         }
+        i++;
+        continue;
+      }
+
+      // Item-position `let` (§7): bind, then compile the body in the extended
+      // env, spliced in place so sticky state behaves as if unwrapped.
+      if (head === "let") {
+        const childEnv = evalLet(
+          node,
+          evalEnv,
+          makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
+        );
+        if (childEnv) {
+          compileChannelBody(
+            node.items.slice(2).filter((n) => n.kind !== "comment"),
+            trackState,
+            events,
+            diagnostics,
+            trackName,
+            typedDefs,
+            loopCounter,
+            vals,
+            childEnv,
+          );
+        }
+        i++;
+        continue;
+      }
+
+      // `(note expr [len])` (§2.5): a computed absolute-pitch NOTE_ON.
+      if (head === "note") {
+        emitEvalNote(node, trackState, events, diagnostics, trackName, typedDefs, evalEnv);
         i++;
         continue;
       }
@@ -3577,7 +3739,7 @@ function collectDefs(roots, diagnostics) {
           );
           continue;
         }
-        if (isEvalHead(pname)) {
+        if (isReservedHead(pname)) {
           pushDiag(
             diagnostics,
             "error",
@@ -3608,7 +3770,7 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      if (isEvalHead(name)) {
+      if (isReservedHead(name)) {
         pushDiag(
           diagnostics,
           "error",
