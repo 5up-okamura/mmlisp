@@ -550,7 +550,15 @@ Therefore:
   (`tools/batch-diff.mjs`) — batched per-frame FINAL register state byte-
   identical to inline on all 22 scores (0 tolerance; $28 excluded as edges).
 
-  **Phase 2 (NEXT — Z80, fully scoped, all sites located in mmlispdrv.z80):**
+  **Phase 2 DONE (Z80, commit 42b7e17).** Both players batch in lockstep;
+  verify:all 22/22 0-diff, batch-diff frame-final identical, the m3-valexpr AR1
+  chain collapses to one write on the Z80 too, driver 5815 B (67 B free).
+  As built (matches the plan below): `G_PEND_A/P/D` at `G_BASE+$56`; `ym_write`
+  defers (coalesce / flush-on-register-change via `ym_flush`, the old change-only
+  body); `ym_shadow_read` pending-aware; `call ym_flush` at ym_key /
+  ym_write_always / the DAC byte (pp_have) / frame_step end; drv-player default
+  `_batchYm` on (`!== false`, still overridable for batch-diff). Boot's RAM-clear
+  zeroes G_PEND_A. **The plan as executed (kept for reference):**
   - **RAM (3 B, free, internal):** put `G_PEND_A/P/D` at `G_BASE+$56..$58` —
     G_PCM_MUL (`G_BASE+$52`) is only u32, leaving 17 B free before G_SHIDX
     (`$67`); it's above the host-published region ($1930), so no DATA_BASE bump,
