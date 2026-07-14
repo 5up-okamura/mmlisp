@@ -442,6 +442,10 @@ remains the sole runtime-varying path.
   The driver budget for all of this is measured and funded (stack watermark,
   size audit, overlay eviction). Normative record and ordered implementation
   plan: `.claude/memory/design-eval.md`.
+  **Compiler track landed** (scalar + curve arithmetic, `:seed`, `let`, `note`,
+  `ticks`/`frames`, signal materialization; language.md §7). The operator-suffix
+  desugaring and the runtime tiers ride the driver track (generic shadow read +
+  value machine), which is the next arc.
 - **Phase 4 — enabled by eval.** Algorithmic composition, parametric phrases as
   real functions, signal composition (`(+ (sin) (saw))`, `(* env lfo)`),
   curves-as-a-standard-library.

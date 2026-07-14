@@ -247,6 +247,42 @@ body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARIT
 
 ---
 
+## 7b. Compile-time Expressions
+
+Parenthesized forms with an arithmetic head are computed at compile time and
+bake to static data — the sound is the same as if you'd typed the number, but
+you write intent. Full reference: `docs/language.md` §7.
+
+**Numbers.** `+ - * / min max abs round floor` in any value position:
+
+```lisp
+(fm1 :tl1 (+ 20 10)              ; = :tl1 30
+     :fb  (min 7 (round 5.4)))   ; = :fb 5
+```
+
+**Curves.** A curve is a value too. Shift or scale one and it stays a curve
+(zero cost); multiply two same-kind curves and it bakes to a step vector:
+
+```lisp
+(fm1 (macro :pitch (* (sin :from -1 :to 1 :rate 6 :len 4f) 40)))  ; ±40¢ vibrato
+```
+
+**`let`** binds a local value (number or curve) for its body — handy for a
+root note or a shared depth you tweak in one place:
+
+```lisp
+(fm1 :len 8
+  (let ((root 60))
+    (note root) (note (+ root 4)) (note (+ root 7))))   ; c e g, from one root
+```
+
+**`(note n)`** plays a computed MIDI number (C4 = 60), otherwise a normal note.
+An optional second argument is its length — a token (`4`, `20f`), `(ticks …)` /
+`(frames …)`, or an expression (a bare number is a denominator, so `(+ 2 2)` is
+a quarter). `let` names must be words, not note letters (`a`–`g`).
+
+---
+
 ## 8. FM Voice Definitions
 
 An FM voice def is a keyword map of the YM2612 algorithm/operator parameters.

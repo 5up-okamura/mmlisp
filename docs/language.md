@@ -176,6 +176,10 @@ Accepted wherever a length appears: `:len`, note/rest suffix, `:gate`,
 `:gate-`, curve `:len`, macro `:step`, `~ N`, `(wait N)`, `(glide T)`,
 `(delay … :time T)`, `:shuffle-base`.
 
+A **computed** length is also allowed at `:len`, `:gate`, and a note's second
+argument (§7.4): a bare expression is a denominator like a literal number
+(`(+ 2 2)` ≡ `4`), and `(ticks expr)` / `(frames expr)` give an explicit unit.
+
 `Nf` is a true 60 Hz frame count — scheduled per frame, tempo-independent — in
 curve `:len`, macro `:step`, a `(wait Nf)` stage, and `def-val :unit frame`
 slots (the player runs these off its own frame clock).
@@ -320,7 +324,9 @@ Tunable constants: `VEL_DB_PER_STEP`, `VOL_STEP_DB`, `VOL_UNITY` in
 
 ---
 
-## 7. Operators (`+` / `*`)
+## 7. Operators and expressions
+
+### 7.0 Operator suffixes (`+` / `*`)
 
 One rule across the language: a trailing operator on a target keyword combines
 the value with the target's base. No suffix = absolute, `+` = add, `*` =
@@ -350,6 +356,116 @@ divide with a fraction (`:vel* 0.5`).
 - Echo/delay taps are always relative, so an operator is **required**: bare
   `:vel` raises `E_ECHO_OP_REQUIRED` / `E_DELAY_OP_REQUIRED` (the clear forms
   `(delay none)` / `(delay :vel none)` excepted).
+
+### 7.1 Compile-time expressions
+
+A `()` form whose head is an arithmetic or math builtin is **evaluated at
+compile time** and folds to a static value — zero runtime cost. Heads:
+
+| Head | Arity | Notes |
+| ---- | ----- | ----- |
+| `+` `*` | 0+ | variadic; `(+)` = 0, `(*)` = 1 |
+| `-` | 1+ | `(- x)` negates; `(- a b c)` = `a − b − c` |
+| `/` | 1+ | `(/ x)` = `1/x`; `/` by zero → `E_EVAL_DIV_ZERO` |
+| `min` `max` | 1+ | scalar only |
+| `abs` `round` `floor` | 1 | scalar only |
+
+Operands are numbers, nested expressions, and `let`-bound names (§7.2).
+Floats flow through a computation; integerization happens only where the value
+binds (the target's own round/clamp). A note/length token as an operand is
+`E_EVAL_OPERAND` (no implicit note→number). Nesting deeper than 32 →
+`E_EVAL_DEPTH`; wrong argument count → `E_EVAL_ARITY`.
+
+Expressions are accepted in **value positions**: an inline param write
+(`:tl1 (+ 20 10)`), a `(param-set …)` value, and inside `let` / `note` /
+`(ticks …)` / `(frames …)`.
+
+```lisp
+(fm1 :tl1 (+ 20 10)              ; = :tl1 30
+     :fb  (min 7 (round 5.4))    ; = :fb 5
+     c e g)
+```
+
+`$slot` references (§8) are **not** compile-time — a `$slot` inside an
+expression is `E_EVAL_NOT_LOWERABLE` for now (runtime evaluation is a later
+milestone). Track-header options are not evaluated (write the expression in the
+body, not the head).
+
+### 7.1.1 Arithmetic on curves
+
+A curve (§11) is a value too, so arithmetic composes with it:
+
+- **Scalar ± / × a curve stays a symbolic curve** (affine, no cost).
+  `(+ (sin :from -40 :to 40 :len 8) 10)` is byte-identical to
+  `(sin :from -30 :to 50 :len 8)`; `(* (sin :from -1 :to 1 :len 8) 40)` scales a
+  normalized shape to ±40. `(- 40 curve)` flips and offsets. Non-affine
+  (scalar ÷ curve, or `min`/`max`/`abs`/… on a curve) → `E_EVAL_SIGNAL_NONAFFINE`.
+- **Two curves combined** (`(* a b)`, `(+ a b)`) are **materialized** — sampled
+  point-by-point into a baked step vector at compile time. MVP scope: frame-based
+  `:len` (`Nf`) on both, in a **macro** value only (an inline sweep cannot carry
+  a step vector → `E_EVAL_SIGNAL_SHAPE`). The two must be the **same region
+  kind** — both looping (`sin`/`saw`/… and the stochastic curves) or both
+  one-shot (`linear`/easings); mixing them, a tick `:len`, a `:wait` prefix, or a
+  combined loop period over 255 steps each raise a specific `E_EVAL_SIGNAL_*`
+  error. (Loop⊕one-shot — the classic `env × lfo` AM — is a later relaxation.)
+
+```lisp
+(fm1 (macro :pitch (* (sin :from -1 :to 1 :rate 6 :len 4f) 40))  ; ±40¢ vibrato
+     (macro :tl1 (* (sin :from 8 :to 0 :len 8f)
+                    (sin :from 1 :to 0 :rate 4 :len 8f)))         ; two LFOs, baked
+     c e g)
+```
+
+### 7.2 `let` — local bindings
+
+`(let ((name value) …) body…)` binds names for its body — sequential
+(`let*`: later bindings see earlier ones), lexically scoped, nestable.
+
+```lisp
+(fm1 :len 8
+  (let ((root 60))                       ; a value, not a phrase
+    (note root) (note (+ root 4)) (note (+ root 7)))   ; c e g
+  (let ((amp 40))
+    (macro :pitch (* (sin :from -1 :to 1 :len 4f) amp))))
+```
+
+- **Item position** (in the note stream): the body compiles in place — sticky
+  state changes inside behave as if unwrapped.
+- **Value position**: the body is one expression (`:tl1 (let ((x 30)) (+ x 5))`);
+  a bare bound name is also a value (`:vel v`).
+- **Bindable**: numbers and curves (a phrase/stream cannot be bound — use a
+  `def`, §9).
+- **Names** must not be note/length tokens (so single letters `a`–`g`, `_`,
+  `>`, `4t`, `v+` … are rejected — `E_LET_NAME`) and must not shadow a def
+  (`E_LET_SHADOWS_DEF`). Use multi-letter words (`root`, `amp`, `base`).
+
+`let` vs `def` (§9): `def` is **global token substitution** (a phrase, voice, or
+file-wide constant, expanded verbatim); `let` is a **local evaluated value**
+scoped to its body.
+
+### 7.3 `(note …)` — computed pitches
+
+`(note expr [length])` evaluates `expr` to a MIDI number (C4 = 60) and emits one
+note, behaving exactly like a literal note (ties, glide, shuffle, PCM, macros).
+The optional length is any length token (`4`, `24t`, `20f`, `1/2`), a
+`(ticks …)` / `(frames …)` bridge, or a bare expression (§7.4). Out of MIDI
+range 0–127 → `E_NOTE_RANGE`.
+
+```lisp
+(fm1 :len 8 (note 60) (note (+ 60 7)) (note (* 12 6)))   ; c4 g4 c6
+```
+
+### 7.4 Lengths from expressions — `ticks` / `frames`
+
+In a length position (`:len`, `:gate`, a note's second argument) a **bare
+number is a note denominator** — and a computed number is the same:
+`(+ 2 2)` ≡ `4` ≡ a quarter note; `(* 2 4)` ≡ `8` ≡ an eighth. For an absolute
+duration wrap the unit explicitly:
+
+- `(ticks expr)` — `expr` rounded, in ticks.
+- `(frames expr)` — `expr` rounded, in 60 Hz frames (converted to ticks at the
+  authoring tempo, §4). For a literal count the `Nt` / `Nf` suffix is shorter
+  (`24t`, `20f`); the form is for computed counts (`(frames (* base 2))`).
 
 ---
 
@@ -407,7 +523,15 @@ records these in a `dyn` map the player resolves at schedule time.
 `def` names any inline-writable notation; a bare reference in a channel body
 expands or applies it. Definitions are top-level forms and interleave freely
 with track forms (§1). `title` and `author` are reserved for file metadata
-when given a string (§1).
+when given a string (§1). A def (or parametric def) named after an eval builtin
+(`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `let`, `note`,
+`ticks`, `frames`) is rejected with `E_DEF_RESERVED`.
+
+`def` vs `let` (§7.2): a `def` is a **global** name bound by **token
+substitution** — the body is spliced verbatim wherever the name appears, so it
+can name a phrase (`(def riff c e g)`), a voice, a sample, or a file-wide
+constant (`(def depth 40)`, usable inside expressions). A `let` is a **local**,
+**evaluated** value scoped to one body.
 
 | Form                                  | Kind                                    |
 | ------------------------------------- | --------------------------------------- |
@@ -640,6 +764,7 @@ literal word `curve`) is rejected with `E_UNKNOWN_CURVE`.
 | --------- | -------------- | --------- | ------- | -------------------------------- |
 | all four  | `:hold`        | int ≥ 1   | `1`     | Sample-and-hold interval         |
 | all four  | `:jitter`      | 0.0–1.0   | `0.0`   | High-frequency randomness mix    |
+| all four  | `:seed`        | u32       | `0xDEAD`| RNG seed — a distinct sequence per seed (§11.1) |
 | `pink`    | `:beta`        | > 0       | `1.0`   | Spectral tilt                    |
 | `perlin`  | `:octaves`     | 1–8       | `3`     | Fractal octave count             |
 | `perlin`  | `:lacunarity`  | > 0       | `2.0`   | Frequency ratio per octave       |
@@ -652,8 +777,22 @@ Normalization rules:
 - Out-of-range values are clamped with `W_CURVE_PARAM_CLAMPED`.
 - All params are part of the LUT identity; identical curve + params
   combinations share one LUT.
-- Stochastic curves use one fixed compile-time seed (`0xDEAD`) — the same
-  source always produces identical data.
+
+### 11.1 Curves as values (`:seed`, arithmetic)
+
+A curve is a first-class value: arithmetic composes with it — a scalar shift or
+scale stays a symbolic curve, two curves multiply/add into a baked step vector.
+See §7.1.1.
+
+Stochastic curves (`noise`/`pink`/`perlin`/`brown`) default to seed `0xDEAD`, so
+a seedless source is always byte-identical. `:seed N` (any u32) regenerates a
+**statistically independent** sequence — unlike `:phase`, which shifts the same
+table. The seed is compile-time only (the driver replays the sampled values);
+distinct seeds bake distinct data.
+
+```lisp
+(sqr1 (macro :pitch (noise :from -60 :to 60 :len 4f :seed 1))  c c c c)
+```
 
 ```lisp
 (fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995))
