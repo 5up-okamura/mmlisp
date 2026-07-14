@@ -396,7 +396,7 @@ export class DrvPlayer {
   // batch-diff.mjs proves the batched frame-final state matches inline exactly.
   _ym(port, addr, data) {
     const d = data & 0xff;
-    if (this._batchYm) {
+    if (this._batchYm !== false) {
       const p = this._pend;
       if (p && p.port === port && p.addr === addr) p.data = d; // coalesce
       else {

@@ -117,6 +117,14 @@ G_CS_STEP   equ G_BASE+$4e      ; u16  phase step
 ; resampled (nearest) to that grid and the ≤3 signed samples hard-saturate to i8.
 G_SB        equ G_BASE+$50      ; u16  SAMPLE_BANK payload window addr (0 = none)
 G_PCM_MUL   equ G_BASE+$52      ; u32  scratch for the 16x16 multiply / divide
+; Batched flush (driver.md §5.4, §4.7): the one deferred YM param write
+; (consecutive-coalesce). A ym_write to the pending register overwrites it; a
+; write to a different register or a barrier (key/F-num/DAC/frame end) flushes
+; it change-only. ym_shadow_read is pending-aware so RMW / the value machine see
+; the deferred value. $56..$58 is free space below G_SHIDX ($67).
+G_PEND_A    equ G_BASE+$56      ; u8  pending YM addr (0 = none)
+G_PEND_P    equ G_BASE+$57      ; u8  pending port
+G_PEND_D    equ G_BASE+$58      ; u8  pending data
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
 ; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
@@ -342,6 +350,7 @@ fs_next:
     djnz fs_track
     call process_sweeps     ; step 3: sweep + tempo engines
     call process_macros     ; step 3: macro engine, after sweeps (§13.3)
+    call ym_flush           ; frame-end barrier: flush any param not forced out
     ld hl,(G_FRAME)         ; advance $time (after dispatch, like drv-player)
     inc hl
     ld (G_FRAME),hl
@@ -2738,6 +2747,18 @@ yvp_end:
 ; ym_shadow_read: D=port, E=addr → A = last written value (0 if never written).
 ; Preserves BC/DE; clobbers HL.
 ym_shadow_read:
+    ; pending-aware: the deferred write hasn't hit the shadow yet, so a read of
+    ; that register (RMW keep-bits, or the value machine's accumulator) must see
+    ; the pending value. Preserves BC/DE.
+    ld a,(G_PEND_A)
+    cp e
+    jr nz,ysr_shadow
+    ld a,(G_PEND_P)
+    cp d
+    jr nz,ysr_shadow
+    ld a,(G_PEND_D)         ; pending hit
+    ret
+ysr_shadow:
     call ym_shadow_ptr
     push hl                 ; value ptr
     call ym_valid_ptr
@@ -2753,34 +2774,79 @@ ym_shadow_read:
 ; (driver.md §8): a suppressed high byte lets the commit pick up another
 ; channel's octave. B=data, D=port, E=addr. Preserves BC/DE.
 ym_write_always:
+    push bc
+    push de                 ; barrier: flush pending params before the F-num pair
+    call ym_flush
+    pop de
+    pop bc
     call ym_shadow_ptr      ; HL = value byte; (G_SHIDX) = index
     push hl                 ; value ptr
     call ym_valid_ptr       ; HL = valid byte, A = mask
     or (hl)                 ; set valid bit (idempotent if already set)
     ld (hl),a
     pop hl                  ; value ptr
-    jr ymw_store            ; store B + always emit via ym_hw
+    jr ymf_store            ; store B + always emit via ym_hw
 
-; ym_write: B=data, D=port(0/1), E=addr. Change-only via the shadow; the first
-; write to a register always goes out. Preserves BC/DE.
+; ym_write: B=data, D=port(0/1), E=addr. Deferred (consecutive-coalesce): a
+; write to the pending register overwrites it in place; a write to a different
+; register flushes the old pending first. The chip write happens in ym_flush.
+; Preserves BC/DE (coalesce touches only A; ymw_new saves them across ym_flush).
 ym_write:
+    ld a,(G_PEND_A)
+    cp e
+    jr nz,ymw_new
+    ld a,(G_PEND_P)
+    cp d
+    jr nz,ymw_new
+    ld a,b                  ; same register → coalesce
+    ld (G_PEND_D),a
+    ret
+ymw_new:
+    push bc
+    push de                 ; ym_flush clobbers BC/DE with the old pending
+    call ym_flush
+    pop de
+    pop bc
+    ld a,e
+    ld (G_PEND_A),a
+    ld a,d
+    ld (G_PEND_P),a
+    ld a,b
+    ld (G_PEND_D),a
+    ret
+
+; ym_flush: emit the single pending YM param change-only via the shadow, then
+; clear it. No-op if none pending (addr 0). Called at every barrier
+; (key/F-num/DAC/frame end) and on a register change. Clobbers A/BC/DE/HL when
+; it flushes; A only on the no-op path.
+ym_flush:
+    ld a,(G_PEND_A)
+    or a
+    ret z
+    ld e,a                  ; E = addr
+    ld a,(G_PEND_P)
+    ld d,a                  ; D = port
+    ld a,(G_PEND_D)
+    ld b,a                  ; B = data
+    xor a
+    ld (G_PEND_A),a         ; clear before the write
     call ym_shadow_ptr
     push hl                 ; value ptr
     call ym_valid_ptr       ; HL = valid byte, A = mask
     ld (G_SHMASK),a
     and (hl)
-    jr nz,ymw_valid
+    jr nz,ymf_valid
     ld a,(G_SHMASK)         ; first write: set valid bit
     or (hl)
     ld (hl),a
-    pop hl                  ; value ptr
-    jr ymw_store
-ymw_valid:
-    pop hl                  ; value ptr
+    pop hl
+    jr ymf_store
+ymf_valid:
+    pop hl
     ld a,(hl)
     cp b
     ret z                   ; unchanged: suppress
-ymw_store:
+ymf_store:
     ld (hl),b
     ; fall through
 ; ym_hw: raw YM2612 write with BUSY polling. B=data, D=port, E=addr.
@@ -2804,8 +2870,13 @@ ymh_p1:
     pop hl
     ret
 
-; ym_key: B = $28 payload. Key edges bypass the shadow (always written).
+; ym_key: B = $28 payload. Key edges bypass the shadow (always written). A
+; barrier: pending param writes (TL/envelope) must reach the chip before the
+; note keys on.
 ym_key:
+    push bc                 ; ym_flush clobbers BC
+    call ym_flush
+    pop bc
     ld d,0
     ld e,$28
     jr ym_hw
@@ -3382,6 +3453,9 @@ pp_clipn:
 pp_have:
     xor $80                 ; signed i8 → unsigned DAC
     ld b,a
+    push bc                 ; barrier: flush pending params before the DAC byte
+    call ym_flush           ; (no-op after the first byte of the frame)
+    pop bc
     ld d,0
     ld e,$2a
     call ym_hw              ; raw DAC write (bypass shadow)
