@@ -3933,12 +3933,16 @@
       const { ir, ok } = compileNow();
       if (!ok) return;
       flashBuild();
-      if (player) {
+      if (player && typeof player.swapAtNextBar === 'function') {
         syncPcmSamplesToWorklet(ir).catch((e) => {
           log('PCM sync failed: ' + e.message, 'err');
         });
         player.swapAtNextBar(ir);
         log('Built — applies at next bar', 'info');
+      } else if (player) {
+        // Backend without gapless swap (MMLispDRV reference): keep the built IR;
+        // it applies on the next Play.
+        log('Built — restart playback to apply (MMLispDRV backend)', 'info');
       } else {
         log('Built', 'info');
       }
@@ -4295,13 +4299,16 @@
     function applyPlayerChannelState(p) {
       if (!p) return;
       p.clearChannelStates();
+      // Mute/solo work on both backends; live vol/master are IR-player only
+      // (the MMLispDRV reference has no live-vol API), so gate those.
+      const supportsVol = typeof p.setParam === 'function';
       for (const entry of _chStripModel) {
         if (_mutedChannels.has(entry.head)) p.muteTrack(entry.trackIndex, true);
         if (_soloChannels.has(entry.head)) p.soloTrack(entry.trackIndex, true);
         const vol = _channelVol.get(entry.head);
-        if (vol != null) setChannelVolLive(entry, vol);
+        if (vol != null && supportsVol) setChannelVolLive(entry, vol);
       }
-      p.setParam('MASTER', _masterVolUi, 0);
+      if (supportsVol) p.setParam('MASTER', _masterVolUi, 0);
     }
 
     window.toggleMute = toggleMute;
@@ -4550,7 +4557,8 @@
       // MMLispDRV reference backend: compile → MMB v0.2 → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
       // audible form of the A/B comparison. Line highlight / pause-resume /
-      // mute-solo are IR-player features and stay off in this mode.
+      // live vol are IR-player features and stay off in this mode; mute/solo
+      // are supported (re-applied from the persisted UI state below).
       if (_drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
         try {
           let mmbBytes;
@@ -4576,6 +4584,7 @@
             buildChStrips(_lastGoodIR);
             renderDynParams(_lastGoodIR);
             rebuildVizNotes();
+            applyPlayerChannelState(player); // re-apply persisted mute/solo
           }
           player.play(audioCtx);
           log('Playing (MMLispDRV reference)', 'info');
