@@ -492,6 +492,55 @@ bare `$refs` only. The strict must-lower-or-error rule applies to **new
 expression forms**; an *expression* (vs a bare `$ref`) in a dyn-able kwarg
 is `E_EVAL_NOT_LOWERABLE`, so the lenient surface cannot grow.
 
+### 4.7 Register-write timing & the batched-flush direction (settled 2026-07-15)
+
+The tick-tier left-fold (§4.3) writes one param register **N times per
+directive** — `:tl1 (+ $a (* $b 2))` = FROM_VAL/MUL/ADD_VAL = 3 writes, each a
+real YM write. User (hardware expert) flagged the cost; verified against
+external sources (SpritesMind YM2612 reference thread t=386 / t=2915; Plutiedev
+hardware notes; XGM & MDSDRV):
+
+- **The YM2612 BUSY flag is useless** — no real driver polls it; SMPS/GEMS did
+  and it's unreliable. Drivers use **fixed cycle delays**, or let Z80
+  instruction timing supply the gap.
+- **Op-param (operator) registers are the worst case**: Yamaha spec = 83 master
+  cycles per data write (~34–70 Z80 cycles; rule of thumb ~50); $30–$FF sit in
+  a rotating shift register (½-YM-cycle min = 33.6 Z80 cycles). The value
+  machine targets exactly these registers (TL/AR/DR/…), so N inline writes hit
+  the most expensive path.
+- (a) inline left-fold is **correct but wasteful** (each write is timing-correct
+  via `ym_write`; intermediates are same-frame, inaudible — not a bug).
+- **XGM** = a pre-computed per-frame register-write list, dedup done *offline*;
+  **MDSDRV** = 68k FM writes with fixed-delay routines. Neither applies runtime
+  dedup because neither has runtime expressions — but the value machine's
+  writes ARE runtime (`$slot`-dependent), so offline dedup can't help it.
+
+**Decision (write model): option (A).** Runtime write-count reduction is done
+the *general* way — a **batched frame flush + change-only comparator** (the
+"queue" model; already MMLispDrv's deferred deviation, drv/README §1): during a
+frame, param writes update only the shadow (RAM); at frame end, each *changed*
+register flushes once. This absorbs the value machine's intermediate writes
+(they never reach the chip) **and** speeds every write (XGM-class efficiency).
+Therefore:
+
+- **(a) left-fold ships in step 8** — zero new opcodes, simplest, correct; the
+  interim multi-write cost is small (value-machine writes are event-dispatched,
+  not per-frame).
+- **(c) batched flush + comparator is a separate, later step** — the general
+  fix that subsumes the multi-write concern. It moves the exact-write-trace
+  baseline (write order + count change), so drv-player.js **and** the Z80 must
+  adopt it in lockstep and `verify:all`'s baseline is re-taken; order-sensitive
+  sequences (freq→key-on, $28) need care. Its own step, not step 8.
+- **(b) temp-slot (VAL_SET/VAL_ADD_VAL, §4.5) is NOT built** — (c) subsumes it;
+  (b) would be a local hack made redundant by the general fix. §4.5 stays a
+  paper reserve only if a non-left-linearizable expression forces a true
+  temporary before (c) lands.
+
+`W_EVAL_CHAIN_LONG` (§4.3) still warns past ~6 ops as an interim signal until
+(c) removes the concern. The cycle win from (c) is a **real-hardware** effect
+`verify:all` cannot measure (the emulator reports never-BUSY, no cycle model);
+it is validated by trace-correctness + hardware bring-up.
+
 ## 5. Desugaring (Option B: suffixes are sugar)
 
 One rule, four documented tiers: **`:param+ X` ≡ `:param (+ <base> X)`,
@@ -827,9 +876,42 @@ Driver track (Tiers B-D + data; each step separately gated):
    DATA_BASE bump (hardware-gated) are NOT spent. Gate met: verify:all 20/20
    0-diff; worst-case stack unchanged (40 B / 42 B reserve — tramp path peaks
    38 B); ovl_rare 250 B < 451 slot.
-8. **Generic shadow read** (§4.1) + left-fold lowering in the compiler
-   (§4.3) + JS players' read_param parity. Gate: new trace score exercising
-   FROM_VAL/ADD/MUL chains on op params; m3-dynval unchanged.
+8. **The value machine — Unit A (correctness core)** — IN PROGRESS (started
+   2026-07-15). Generic shadow read (§4.1) + JS `read_param` parity + left-fold
+   lowering (§4.3) + errors. **Decisions locked this session:** write model =
+   option (A) per §4.7 (left-fold now, batched-flush later, no temp-slot); the
+   compile shadow + operator-desugar rewiring (§4.2/§5) are **Unit B**, a tight
+   follow-on (A-first de-risks the subtle poison logic onto working ground);
+   parity closes only the FM-op read gap this session (ir already reads full
+   op-env; drv/Z80 don't) — the pre-existing MASTER/VEL/GATE asymmetry (ir
+   lacks them) is left as a separate cleanup. Two independently-verifiable
+   increments:
+   - **A1 — generic read + JS parity.** Z80 `read_op_param`: reuse
+     `generic_op_param` prologue (mmlispdrv.z80 L2041-2064) → E=addr / keep_mask
+     / val_mask / shift; `ym_shadow_read`; mask `~keep_mask` (= val_mask<<shift);
+     shift right; HL zero-extended. Slot into `read_param` (L3478-3539) after the
+     TL range check (~L3499), range `0x16..0x3D` + `G_CH<6` guard; TL stays on
+     the `CHS_VTL` path. JS: widen drv-player `_readParam` (drv-player.js
+     L1508-1527) to return the op-env fields already stored in the shadow
+     (`_fm[ch].ops[i].{ar,dr,d2r,sl,rr,mul,dt,rs,amen,ssg}`), matching ir-player's
+     set (ir L1877-1903). Effect: existing op-param relatives (`:ar1+ 5`, which
+     already lower to PARAM_ADD at mmlisp2ir L2842-2857) stop reading silent-0
+     and read the real base — drv/Z80 rise to ir. Gate: new score with op-param
+     relatives; verify:all 0-diff; A/B drv≡ir.
+   - **A2 — left-fold lowering.** Replace the `$ref → E_EVAL_NOT_LOWERABLE` seam
+     (mmlisp-eval.js L368-373) in hw-param + param-set positions with a
+     linearizer: eval the tree, check left-linearity, emit **existing** events
+     (seed: const→PARAM_SET / `$x`→PARAM_FROM_VAL / self-ref `$P`→none; terms:
+     +const→PARAM_ADD, +$x→PARAM_ADD (delta {src}), ×const→PARAM_MUL, ×$x→
+     PARAM_MUL (factor {src})) — no new opcodes, no new IR shapes (exporter
+     already lowers each 1:1: PARAM_SET 0x60 / ADD 0x62 / MUL 0x63 / FROM_VAL
+     0x64 / ADD_VAL 0xe1 / MUL_VAL 0xe2, mmb.js). New errors:
+     `E_EVAL_NOT_LOWERABLE` refined list (`(- E $x)`/`(/ E $x)`; ×$x on i16
+     NOTE_PITCH/TEMPO_SCALE — mul path is unsigned, mmlispdrv L3628; cross-param
+     read), `E_PARAM_NOT_READABLE` (stateless: LFO rate / noise mode / CSM rate),
+     `W_EVAL_CHAIN_LONG` (>6 ops, interim until §4.7 (c)). Gate: new score with
+     `:tl1 (+ $a (* $b 2))`-style chains; verify:all; A/B drv≡ir; m3-dynval
+     unchanged.
 9. **Additive macro Z80 branch** (held since round 1; now unblocked) —
    `G_MADD` scratch, add-no-store in `psf_pitch`/`ps_psg_pitch`,
    `apply_note_semi` loads `CHS_PITCH`. Gate: new trace score incl. the

@@ -28,11 +28,16 @@ This file is the compact continuation state.
    ~~measurement infra~~ (DONE — `npm run size`/`budget`) → ~~budget prep~~
    (DONE — ovl_rare eviction freed 201 B; 235 B free now covers the near-term
    total, so psf/DATA_BASE held in reserve) → **generic shadow read**
-   (`op_param_tab`
-   inverse, ~35-55 B) → **additive macro branch** (held since the `:pitch+`
-   landing; ~50-60 B) → **scaled macro flag** (~30-40 B) → M3 dyn slice →
-   CALL/RET (~45-60 B, control-stack tag already reserved in the TCB
-   layout). Costs and funding are measured — see the budget table below.
+   (`op_param_tab` inverse, ~35-55 B — the value-machine Unit A, IN PROGRESS
+   2026-07-15, design-eval §12 step 8 / §4.7) → **additive macro branch** (held
+   since the `:pitch+` landing; ~50-60 B) → **scaled macro flag** (~30-40 B) →
+   M3 dyn slice → CALL/RET (~45-60 B, control-stack tag already reserved in the
+   TCB layout). Costs and funding are measured — see the budget table below.
+   **Batched frame flush + change-only comparator** (item 5) is now the
+   *decided* general fix for runtime write-count (§4.7 option A): the value
+   machine ships inline left-fold now, and this queue-style flush later absorbs
+   the multi-write cost for all writes — its own step (moves the exact-write
+   trace baseline; drv-player + Z80 change in lockstep).
 3. **Hardware bring-up + cycle tuning** (the real frontier): run on a real
    Mega Drive / flashcart; measure worst-case frame cycles (PCM mix rate is
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait
