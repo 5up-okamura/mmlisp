@@ -27,6 +27,8 @@ tools/mmb-build.mjs   .mmlisp → .mmb via the live/src toolchain
 tools/ref-trace.mjs   .mmb → JS-reference register-write log
 tools/run-trace.mjs   .mmb + driver.bin → Z80-emulated register-write log
 tools/verify.mjs      the bring-up gate: assemble, emulate, raw-diff traces
+tools/size-audit.mjs  static resident/overlay size report (`npm run size`)
+tools/budget.mjs      size audit + stack watermark over the gate corpus (`npm run budget`)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
 tools/emit-bin.mjs    emit the Z80 image as .bin + C array for SGDK/68k
 tools/wav.mjs         load WAV → 8-bit signed PCM for the SAMPLE_BANK (PCM songs)
@@ -60,6 +62,14 @@ in the MMB stream, so a test may carry a sidecar `<song>.cmds.json` holding
 `[{frame, cmd, a0, a1, a2}]`. The verify harness injects the same schedule into
 both players (the reference applies it at the top of the frame; the emulator
 posts it into the mailbox ring before that frame's interrupt).
+
+Every `verify` run also prints a `stack N B used / window · reserve` line — the
+lowest SP the emulator reached (min-SP hook in `z80cpu.mjs`) against the 82 B
+`STACK_FLOOR..STACK_TOP` window. `npm run size` reports resident/overlay
+sizes and free headroom; `npm run budget` combines that audit with the
+worst-case stack across the full gate corpus (the living design-eval.md §10
+budget table). Baseline: resident 5848 B, 34 B free under the G_PCMV ceiling;
+worst stack 40 B of 82 (on m3-macro-keyon).
 
 ## M2a — motion (sweeps / PARAM_ADD / TEMPO_SWEEP)
 

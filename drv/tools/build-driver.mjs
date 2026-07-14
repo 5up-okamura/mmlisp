@@ -30,7 +30,8 @@ export function buildDriver() {
     descTab: "ovl_desc_tab",
   });
   // The PCM voice structs live in the RAM gap just below OVERLAY_SLOT; assert the
-  // resident code does not grow into them (G_PCMV is $16F0). Assert each overlay
+  // resident code does not grow into them (G_PCMV is $16FA — the resident
+  // ceiling; `npm run size` reports the live headroom). Assert each overlay
   // still fits the shared slot.
   const gPcmv = built.symbols.get("G_PCMV");
   const slot = built.symbols.get("OVERLAY_SLOT");

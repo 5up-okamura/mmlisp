@@ -133,7 +133,9 @@ export function runTrace(
     if (!cpu.halted) throw new Error(`frame ${frame} did not finish`);
   }
 
-  return { frames, writes, ram };
+  // stackMin = the lowest SP reached across boot + every frame (the stack
+  // watermark; tools/budget.mjs turns it into "bytes used vs STACK_FLOOR").
+  return { frames, writes, ram, stackMin: cpu.spMin };
 }
 
 function readTrackTable(b) {

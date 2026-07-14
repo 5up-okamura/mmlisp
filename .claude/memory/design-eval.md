@@ -604,20 +604,30 @@ Confirmed feasible; the driver side was pre-designed at the TCB freeze:
   dedup targets another ~20-40% on structured songs. Matters when the
   cartridge is shared with game assets.
 
-## 10. Z80 budget — measured (2026-07-12, emulation)
+## 10. Z80 budget — measured (baseline 2026-07-14, emulation; now tool-emitted)
 
-Methodology (reproducible; run on a scratch copy, tree untouched):
-size audit = assemble via `tools/build-driver.mjs`, sort symbol addresses,
-diff = routine size. Stack = SP watermark (min-SP hook in
-`z80cpu.mjs push16`), run the heaviest gate scores via `tools/verify.mjs`
-(traces stayed 0-diff with the hook in place).
+Methodology is **permanent tooling** (step 6, DONE): `cd drv && npm run size`
+(static size audit — assemble via `tools/build-driver.mjs`, sort code symbols,
+gap-to-next = routine size) and `npm run budget` (size audit + the stack
+watermark across the *full* gate corpus). The watermark is a min-SP hook in
+`z80cpu.mjs push16`; every `verify.mjs` run also prints a `stack …` line.
+STACK_FLOOR is now a named equ ($1FAE) so the 82 B window is explicit in the
+source. Re-run after any driver change; these numbers are the tool output, not
+hand-measured.
 
-Measured state: resident image **5848 B**, ceiling G_PCMV **5872 B** → free
-**24 B**. Overlays 445/268/255/238 B in a 451 B slot. Stack: worst case
-**37 B used of 82 B** across m3-pcm-softmix, stress-m1, m2-pcmloop,
-m3-macro-multi. Rare-event handlers resident: **527 B total**, of which pure
-cold setup ≈ 167 B gross (d_tempo_sweep 61, CSM setup ~48, d_marker 25,
-d_fm3_mode 21, d_tempo_set 12).
+Baseline (`npm run budget`, drv/src unchanged since 18abe79): resident image
+**5848 B**, ceiling G_PCMV **5882 B** ($16FA) → free **34 B**. Overlays
+445/268/255/238 B in a 451 B slot (slack 6 B). Stack: worst case **40 B used
+of the 82 B window** (42 B reserve) on **m3-macro-keyon** — full-corpus scan,
+not the four scores the prior hand-measurement guessed. Rare-event cold setup
+**167 B gross** (d_tempo_sweep 61, CSM setup 48 = d_csm_on/off/rate 14/14/20,
+d_marker 25, d_fm3_mode 21, d_tempo_set 12).
+
+Corrections vs the 2026-07-12 hand-measurement (all surfaced by the new tools;
+drv/src was byte-identical, so these were stale figures, not regressions):
+ceiling 5872→**5882** (the build-driver comment's `$16F0` was 10 B stale), free
+24→**34**, worst stack 37→**40 B** on a score (m3-macro-keyon) the manual scan
+had not covered.
 
 | Cost item | B |
 |---|---|
@@ -630,11 +640,11 @@ d_fm3_mode 21, d_tempo_set 12).
 
 | Funding source | B | Basis |
 |---|---|---|
-| current headroom | 24 | measured |
+| current headroom | 34 | `npm run size` (free) |
 | rare-handler overlay eviction (167 gross − ~40 trampolines; 5th overlay, slot fits easily) | ~100-130 | measured sizes; proven overlay pattern |
-| DATA_BASE bump (keep ≥ 45 B stack reserve vs 37 B measured) | ~24-32 | measured (emulation; confirm on hardware) |
+| DATA_BASE bump (worst stack 40 B of 82; keep a hardware-interrupt reserve) | ~20-26 | `npm run budget` (reserve 42 B; confirm on hardware) |
 | psf_pitch/ps_psg_pitch commonization | 15-20 | known candidate |
-| **total** | **~165-205** | |
+| **total** | **~170-210** | |
 
 Near-term costs fit within sources; the reserve rides later funding (more
 commonization, further eviction). Overlay-load cost ≈ 9.5k cycles (~16% of a
@@ -650,8 +660,9 @@ shadow → Tier B (+35-55 B): generic read + left-fold chains → Tier C
 (+45-60 B, parallel track, data-size driven) → Tier E (demand-driven): VAL
 ops.
 
-Follow-up: make the SP watermark a permanent `verify.mjs` report line and
-add a size-audit script under `drv/tools/` so the budget table stays live.
+Done (step 6): the SP watermark is a permanent `verify.mjs` report line and
+`drv/tools/size-audit.mjs` + `budget.mjs` (`npm run size` / `npm run budget`)
+keep this table live.
 
 ## 11. Open risks & found issues
 
@@ -794,8 +805,17 @@ Compiler track (Tier A — no driver changes):
 
 Driver track (Tiers B-D + data; each step separately gated):
 
-6. **Measurement infra** — SP watermark as a permanent verify.mjs report;
-   size-audit script in `drv/tools/`. Gate: numbers reproduce §10.
+6. **Measurement infra** — **DONE**. `z80cpu.mjs` tracks min-SP in `push16`;
+   `run-trace.mjs` returns `stackMin`; `verify.mjs` prints a `stack N B used /
+   window · reserve` line every run. New `tools/size-audit.mjs` (`npm run size`
+   — resident/ceiling/free, overlay slot, cold-setup gross, fattest spans) and
+   `tools/budget.mjs` (`npm run budget` — size audit + worst-case stack over the
+   full gate corpus). Source gained a `STACK_FLOOR` equ ($1FAE, zero bytes) so
+   the 82 B stack window is explicit. Gate met: verify:all 20/20 0-diff;
+   per-routine sizes reproduce §10 exactly (d_tempo_sweep 61, cold-setup gross
+   167, overlays 445/268/255/238, resident 5848). **Surfaced 3 stale §10
+   figures** (drv/src byte-identical, so doc errors not regressions): ceiling
+   5872→5882 (free 24→34), worst stack 37→40 B on m3-macro-keyon — §10 updated.
 7. **Budget prep** — rare-handler eviction to a 5th overlay (`ovl_rare`);
    psf commonization; DATA_BASE bump sized from the watermark. Gate:
    verify:all 0-diff, headroom ≥ near-term costs.

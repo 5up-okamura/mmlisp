@@ -25,8 +25,9 @@ This file is the compact continuation state.
    `macro_ref` field.
 2. **v0.6 driver track** — the eval design is settled
    ([design-eval.md](design-eval.md) §10/§12); the driver-side sequence is:
-   measurement infra → budget prep (rare-handler overlay eviction, psf
-   commonization, DATA_BASE bump) → **generic shadow read** (`op_param_tab`
+   ~~measurement infra~~ (DONE — `npm run size`/`budget`) → budget prep
+   (rare-handler overlay eviction, psf commonization, DATA_BASE bump) →
+   **generic shadow read** (`op_param_tab`
    inverse, ~35-55 B) → **additive macro branch** (held since the `:pitch+`
    landing; ~50-60 B) → **scaled macro flag** (~30-40 B) → M3 dyn slice →
    CALL/RET (~45-60 B, control-stack tag already reserved in the TCB
@@ -45,20 +46,19 @@ This file is the compact continuation state.
 ## Extension budget — how much room is left, and where the next bytes come from
 
 Decision material for weighing any new driver-side feature (v0.6 lowering
-targets included). Numbers **measured 2026-07-12** on a scratch copy at
-18abe79 (size audit: assemble via `tools/build-driver.mjs`, sort symbol
-addresses, diff = routine size; stack: min-SP hook in `z80cpu.mjs push16`,
-heaviest gate scores via `tools/verify.mjs` — traces stayed 0-diff with the
-hook). Re-measure before relying on exact values; making both a permanent
-`drv/tools/` report is a v0.6 implementation step.
+targets included). Numbers are now **tool-emitted** (v0.6 step 6 DONE):
+`cd drv && npm run size` (static audit) and `npm run budget` (audit + stack
+watermark over the full gate corpus). Every `verify.mjs` run also prints a
+`stack …` line. Re-run after any driver change — values below are the
+2026-07-14 baseline (drv/src unchanged since 18abe79).
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **24 B free** (resident 5848 B vs G_PCMV ceiling 5872 B) | The scarce resource. Everything per-frame must live here. |
-| Rare-event handlers resident | **527 B** total; pure cold setup ≈ 167 B gross (d_tempo_sweep 61, CSM setup ~48, d_marker 25, d_fm3_mode 21, d_tempo_set 12) | Evictable to a 5th overlay → **~100-130 B net** after trampolines. Overlay load ≈ 9.5k cycles (~16% frame), fine at rare-event rate. |
+| Resident code | **34 B free** (resident 5848 B vs G_PCMV ceiling 5882 B / $16FA) | The scarce resource. Everything per-frame must live here. (Prior "24 B/5872" was a stale doc figure — the build-driver comment's $16F0 was 10 B off; `npm run size` is authoritative.) |
+| Rare-event handlers resident | pure cold setup **167 B gross** (d_tempo_sweep 61, CSM setup 48, d_marker 25, d_fm3_mode 21, d_tempo_set 12) | Evictable to a 5th overlay → **~100-130 B net** after trampolines. Overlay load ≈ 9.5k cycles (~16% frame), fine at rare-event rate. |
 | Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238 B | A *new* overlay can be up to 451 B; growing the largest has 6 B. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |
-| Stack | 82 B region; **worst case measured 37 B used** (m3-pcm-softmix / stress-m1 / m2-pcmloop / m3-macro-multi) | → DATA_BASE bump of ~24-32 B is safe by measurement (keep ≥ 45 B reserve); confirm on hardware. |
+| Stack | 82 B window ($1FAE STACK_FLOOR..$1FFF); **worst case 40 B used** on m3-macro-keyon (42 B reserve) | → DATA_BASE bump of ~20-26 B leaves a hardware-interrupt reserve; confirm on hardware. |
 | ROM side | effectively unlimited | LUT_TABLE MMB section (§0x0008), overlay blob, banked song data. |
 
 v0.6 near-term costs vs funding (design-eval.md §10): costs 160-215 B

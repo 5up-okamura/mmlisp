@@ -43,7 +43,7 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   const horizon = ref.frames;
 
   // 3. regenerate tables + assemble (resident + overlay ROM blob)
-  const { resident, overlay, overlayBank } = buildDriver();
+  const { resident, overlay, overlayBank, symbols } = buildDriver();
 
   // 4. emulate — the overlay blob (empty until cold code moves) rides a second
   //    ROM bank the driver loads from on demand.
@@ -76,6 +76,17 @@ export function verify(songPath, { frames, verbose = false } = {}) {
     if (mismatches.length >= 40) break;
   }
 
+  // Stack watermark: how deep this song drove the Z80 stack. STACK_TOP/
+  // STACK_FLOOR bound the 82 B window; used = STACK_TOP − lowest-SP,
+  // reserve = headroom left above the data region.
+  const stackTop = symbols.get("STACK_TOP");
+  const stackFloor = symbols.get("STACK_FLOOR");
+  const stack = {
+    used: stackTop - asm.stackMin,
+    reserve: asm.stackMin - stackFloor,
+    window: stackTop - stackFloor,
+  };
+
   return {
     ok: mismatches.length === 0,
     mismatches,
@@ -87,6 +98,7 @@ export function verify(songPath, { frames, verbose = false } = {}) {
       asmWrites: b.length,
       refEnded: ref.ended,
       skippedOpcodes: ref.skippedOpcodes,
+      stack,
     },
     ref: a,
     asm: b,
@@ -108,6 +120,10 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     `driver ${r.stats.binBytes} B · mmb ${r.stats.mmbBytes} B · ` +
       `frames ${r.stats.frames} · ref ${r.stats.refWrites} writes · ` +
       `asm ${r.stats.asmWrites} writes`,
+  );
+  const s = r.stats.stack;
+  console.log(
+    `stack ${s.used} B used / ${s.window} B window · ${s.reserve} B reserve`,
   );
   if (r.ok) {
     console.log("TRACE MATCH — 0 mismatches");

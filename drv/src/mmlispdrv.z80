@@ -176,7 +176,12 @@ SW_STEP     equ 10          ; u16 per-frame phase increment
 SHADOW      equ $1e58       ; 304 value bytes (port0 +0, port1 +152) ($1E58..$1F87)
 SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1FAD)
 
-STACK_TOP   equ $2000
+; The stack grows down from STACK_TOP; STACK_FLOOR is the first byte above the
+; data region, so [STACK_FLOOR, STACK_TOP) is the 82 B stack window the SP
+; watermark (tools/budget.mjs) measures against. Keep a reserve above the
+; worst-case use before bumping DATA_BASE into this window.
+STACK_FLOOR equ SHVALID + $26   ; $1FAE — SHVALID (38 B) top + 1
+STACK_TOP   equ $2000           ; 82 B window ($1FAE..$1FFF)
 
 ; ── Channel state block fields (driver.md §5.1) ───────────────────────────
 CHS_STATUS  equ $00         ; bit0 = keyed (note active; FM key / PSG note-on..off)
