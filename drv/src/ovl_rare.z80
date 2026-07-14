@@ -1,0 +1,162 @@
+; ovl_rare — overlay (v0.6 step 7, budget prep). Rarely-fired event-stream
+; handlers evicted from the resident image to reclaim per-frame code space:
+; TEMPO_SET / TEMPO_SWEEP, CSM_ON/OFF/RATE, FM3_MODE. Reached via the resident
+; `tramp_rare` trampoline, which loads this overlay and re-enters here with
+; A = the opcode. Each handler ends `jp d_next` (resident), returning to the
+; dispatch loop. Assembled at the slot with the resident image's symbols
+; preloaded, so it calls resident helpers (set_reg27, write_timer_a,
+; sweep_step) and reads G_*/IX offsets directly. MARKER stays resident (no gate
+; score exercises it, so its eviction could not be trace-verified).
+        org OVERLAY_SLOT
+ovl_rare:                   ; A = opcode, HL = PC (at opcode), IX = TCB
+    cp $80
+    jp z,d_tempo_set
+    cp $81
+    jp z,d_tempo_sweep
+    cp $a0
+    jp z,d_csm_on
+    cp $a1
+    jp z,d_csm_off
+    cp $a2
+    jp z,d_csm_rate
+    cp $a3
+    jp z,d_fm3_mode
+    jp d_next               ; fail-safe: only the six opcodes above trampoline here
+
+; ── TEMPO_SET (increment u16, per-MMB) ────────────────────────────────────
+d_tempo_set:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_INC),de
+    jp d_next
+
+; ── TEMPO_SWEEP (from u16, to u16, len u16, curve u8) ──────────────────────
+d_tempo_sweep:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_TS_FROM),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_TS_TO),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_LEN),de        ; reuse len scratch
+    ld (G_TS_LEFT),de       ; frames left = len
+    ld a,(hl)
+    inc hl
+    ld (G_TS_CURVE),a
+    push hl
+    ld hl,0
+    ld (G_TS_PHASE),hl
+    xor a                   ; one-shot
+    ld de,(G_SW_LEN)
+    call sweep_step
+    ld (G_TS_STEP),hl
+    ld a,1
+    ld (G_TS_ACTIVE),a
+    pop hl
+    jp d_next
+
+; ── CSM opcodes (driver.md §9) ─────────────────────────────────────────────
+d_csm_on:
+    inc hl
+    push hl
+    ld a,(G_REG27)
+    or $80
+    call set_reg27
+    pop hl
+    jp d_next
+d_csm_off:
+    inc hl
+    push hl
+    ld a,(G_REG27)
+    and $7f
+    call set_reg27
+    pop hl
+    jp d_next
+d_csm_rate:
+    inc hl
+    ld a,(hl)               ; flags
+    inc hl
+    bit 0,a
+    jr nz,dcr_swept
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    push hl
+    ex de,hl                ; HL = period
+    call write_timer_a
+    pop hl
+    jp d_next
+dcr_swept:
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_CS_FROM),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_CS_TO),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_LEN),de        ; reuse len scratch
+    ld (G_CS_LEFT),de
+    ld a,(hl)               ; curve
+    inc hl
+    ld (G_CS_CURVE),a
+    push hl
+    ld hl,0
+    ld (G_CS_PHASE),hl
+    xor a
+    ld de,(G_SW_LEN)
+    call sweep_step
+    ld (G_CS_STEP),hl
+    ld a,1
+    ld (G_CS_ACTIVE),a
+    pop hl
+    jp d_next
+
+; ── FM3 independent-OP: FM3_MODE (mode u8) ─────────────────────────────────
+; 0 normal, 1 special (independent-OP), 2 CSM.
+d_fm3_mode:
+    inc hl
+    ld a,(hl)               ; mode
+    inc hl
+    push hl
+    ld c,a                  ; mode
+    ld a,(G_REG27)
+    and $3f                 ; clear bit7 (CSM) + bit6 (special)
+    ld b,a
+    ld a,c
+    dec a
+    jr z,dfm_special        ; mode 1
+    dec a
+    jr z,dfm_csm            ; mode 2
+    ld a,b                  ; mode 0: normal
+    jr dfm_set
+dfm_special:
+    ld a,b
+    or $40
+    jr dfm_set
+dfm_csm:
+    ld a,b
+    or $80
+dfm_set:
+    call set_reg27
+    pop hl
+    jp d_next

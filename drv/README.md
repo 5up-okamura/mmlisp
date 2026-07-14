@@ -17,6 +17,7 @@ _MUL_VAL / PARAM_MUL + `$time`, driver.md §6.4), and **3-channel PCM soft-mix**
 
 ```
 src/mmlispdrv.z80   the driver (M1)
+src/ovl_*.z80       on-demand overlays (setup/cmd/pcm/boot/rare) loaded into OVERLAY_SLOT
 src/tables.z80      generated constant tables — do not edit (gen-tables.mjs)
 tools/z80asm.mjs    first-party two-pass Z80 assembler (subset, no deps)
 tools/z80cpu.mjs    first-party Z80 CPU emulator (same subset, no deps)
@@ -68,8 +69,15 @@ lowest SP the emulator reached (min-SP hook in `z80cpu.mjs`) against the 82 B
 `STACK_FLOOR..STACK_TOP` window. `npm run size` reports resident/overlay
 sizes and free headroom; `npm run budget` combines that audit with the
 worst-case stack across the full gate corpus (the living design-eval.md §10
-budget table). Baseline: resident 5848 B, 34 B free under the G_PCMV ceiling;
-worst stack 40 B of 82 (on m3-macro-keyon).
+budget table). Baseline: resident 5647 B, 235 B free under the G_PCMV ceiling
+(after the step-7 ovl_rare eviction freed 201 B); worst stack 40 B of 82 (on
+m3-macro-keyon).
+
+`ovl_rare` (overlay 4) holds rarely-fired event-stream handlers — TEMPO_SET/
+TEMPO_SWEEP, CSM_ON/OFF/RATE, FM3_MODE — evicted from the resident image to
+reclaim per-frame code space. A resident `tramp_rare` trampoline loads it and
+re-dispatches on the opcode; each handler ends `jp d_next` unchanged. MARKER
+stays resident (no gate score exercises it, so its eviction is unverifiable).
 
 ## M2a — motion (sweeps / PARAM_ADD / TEMPO_SWEEP)
 

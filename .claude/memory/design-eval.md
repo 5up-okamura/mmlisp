@@ -615,19 +615,18 @@ STACK_FLOOR is now a named equ ($1FAE) so the 82 B window is explicit in the
 source. Re-run after any driver change; these numbers are the tool output, not
 hand-measured.
 
-Baseline (`npm run budget`, drv/src unchanged since 18abe79): resident image
-**5848 B**, ceiling G_PCMV **5882 B** ($16FA) → free **34 B**. Overlays
-445/268/255/238 B in a 451 B slot (slack 6 B). Stack: worst case **40 B used
-of the 82 B window** (42 B reserve) on **m3-macro-keyon** — full-corpus scan,
-not the four scores the prior hand-measurement guessed. Rare-event cold setup
-**167 B gross** (d_tempo_sweep 61, CSM setup 48 = d_csm_on/off/rate 14/14/20,
-d_marker 25, d_fm3_mode 21, d_tempo_set 12).
+Baseline (`npm run budget`, **after step 7 eviction**): resident image
+**5647 B**, ceiling G_PCMV **5882 B** ($16FA) → free **235 B**. Overlays
+445/268/255/238/**250** (ovl_rare) B in a 451 B slot (slack 6 B). Stack: worst
+case **40 B used of the 82 B window** (42 B reserve) on **m3-macro-keyon**
+(the tramp_rare+load_overlay path peaks at 38 B, under the worst case).
+Rare-event cold setup now **25 B** resident (d_marker only; the rest evicted).
 
-Corrections vs the 2026-07-12 hand-measurement (all surfaced by the new tools;
-drv/src was byte-identical, so these were stale figures, not regressions):
-ceiling 5872→**5882** (the build-driver comment's `$16F0` was 10 B stale), free
-24→**34**, worst stack 37→**40 B** on a score (m3-macro-keyon) the manual scan
-had not covered.
+Step-6 corrections vs the 2026-07-12 hand-measurement (surfaced by the tools;
+drv/src was byte-identical, so stale figures not regressions): ceiling
+5872→**5882** (build-driver's `$16F0` comment was 10 B stale), free 24→**34**,
+worst stack 37→**40 B** on a score (m3-macro-keyon) the manual scan missed.
+Step 7 then freed **201 B** (34→235) via the ovl_rare eviction.
 
 | Cost item | B |
 |---|---|
@@ -640,18 +639,17 @@ had not covered.
 
 | Funding source | B | Basis |
 |---|---|---|
-| current headroom | 34 | `npm run size` (free) |
-| rare-handler overlay eviction (167 gross − ~40 trampolines; 5th overlay, slot fits easily) | ~100-130 | measured sizes; proven overlay pattern |
-| DATA_BASE bump (worst stack 40 B of 82; keep a hardware-interrupt reserve) | ~20-26 | `npm run budget` (reserve 42 B; confirm on hardware) |
-| psf_pitch/ps_psg_pitch commonization | 15-20 | known candidate |
-| **total** | **~170-210** | |
+| **current headroom (post-eviction)** | **235** | `npm run size` (free) — already covers the near-term total |
+| DATA_BASE bump (worst stack 40 B of 82; keep a hardware-interrupt reserve) | ~20-26 | `npm run budget` (reserve 42 B; confirm on hardware) — **not needed near-term** |
+| psf_pitch/ps_psg_pitch commonization | ~5 | measured (smaller than the old 15-20 estimate) — **not needed near-term** |
 
-Near-term costs fit within sources; the reserve rides later funding (more
-commonization, further eviction). Overlay-load cost ≈ 9.5k cycles (~16% of a
-frame) — acceptable at rare-event rate; keep d_marker resident if markers
-prove hot. Scaled-macro per-frame mul is negligible vs the PCM soft-mix
-(dominant term). Hardware bring-up re-validates both numbers (existing
-plan).
+The step-7 eviction alone (**201 B**, ovl_rare) over-funds the near-term total
+(160-215 B), so the DATA_BASE bump (hardware-gated) and psf commonization
+(marginal) are held in reserve, not spent. Overlay-load cost ≈ 9.5k cycles
+(~16% of a frame) — acceptable at rare-event rate; d_marker stays resident
+(no gate coverage + keeps markers hot if they prove frequent). Scaled-macro
+per-frame mul is negligible vs the PCM soft-mix. Hardware bring-up re-validates
+the stack numbers (existing plan).
 
 **Reduction ladder** (if budget falls short, stop anywhere — each tier is
 independently valuable): Tier A (0 B): all compile-time eval incl. compile
@@ -816,9 +814,19 @@ Driver track (Tiers B-D + data; each step separately gated):
    167, overlays 445/268/255/238, resident 5848). **Surfaced 3 stale §10
    figures** (drv/src byte-identical, so doc errors not regressions): ceiling
    5872→5882 (free 24→34), worst stack 37→40 B on m3-macro-keyon — §10 updated.
-7. **Budget prep** — rare-handler eviction to a 5th overlay (`ovl_rare`);
-   psf commonization; DATA_BASE bump sized from the watermark. Gate:
-   verify:all 0-diff, headroom ≥ near-term costs.
+7. **Budget prep** — **DONE (eviction only; over-funded, so the rest is held)**.
+   New `src/ovl_rare.z80` (overlay index 4, 250 B) hosts the rarely-fired
+   event-stream handlers TEMPO_SET/TEMPO_SWEEP, CSM_ON/OFF/RATE, FM3_MODE;
+   resident `tramp_rare` (~12 B) saves the opcode+PC across `load_overlay` and
+   `jp OVERLAY_SLOT`, the overlay re-dispatches on A, and each handler `jp
+   d_next` (resident) unchanged. The 6 dispatch entries retarget to tramp_rare.
+   **d_marker stays resident** — no gate score covers it, so its eviction
+   couldn't be trace-verified (candidate once a marker gate exists). Freed
+   **201 B** (resident 5848→5647; free 34→**235 B**), which alone covers the
+   near-term total (160-215) — so psf commonization (~5 B, marginal) and the
+   DATA_BASE bump (hardware-gated) are NOT spent. Gate met: verify:all 20/20
+   0-diff; worst-case stack unchanged (40 B / 42 B reserve — tramp path peaks
+   38 B); ovl_rare 250 B < 451 slot.
 8. **Generic shadow read** (§4.1) + left-fold lowering in the compiler
    (§4.3) + JS players' read_param parity. Gate: new trace score exercising
    FROM_VAL/ADD/MUL chains on op params; m3-dynval unchanged.

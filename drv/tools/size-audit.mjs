@@ -9,18 +9,10 @@
 //   node size-audit.mjs [--routines N]   (default N = 16 fattest spans)
 import { buildDriver } from "./build-driver.mjs";
 
-// Rare-event cold-setup handlers that are candidates for overlay eviction
-// (§10 funding menu). Reported as a named group so the "gross cold setup"
-// figure stays live.
-const COLD_SETUP = [
-  "d_tempo_sweep",
-  "d_csm_on",
-  "d_csm_off",
-  "d_csm_rate",
-  "d_marker",
-  "d_fm3_mode",
-  "d_tempo_set",
-];
+// Rare-event cold-setup handlers still resident and candidate for overlay
+// eviction (§10 funding menu). tempo set/sweep, CSM, and FM3 mode were evicted
+// to ovl_rare in v0.6 step 7; d_marker stays resident (no gate covers it).
+const COLD_SETUP = ["d_marker"];
 
 export function sizeAudit() {
   const b = buildDriver();

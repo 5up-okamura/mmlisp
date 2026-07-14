@@ -465,14 +465,29 @@ lo_hit:
     pop af
     ret
 
+; tramp_rare: resident trampoline for the rarely-fired event-stream opcodes
+; evicted to ovl_rare (TEMPO_SET/SWEEP, CSM_ON/OFF/RATE, FM3_MODE). Entry from
+; dispatch with A = opcode, HL = PC, IX = TCB. Save the opcode + PC across
+; load_overlay (which clobbers A/BC/DE/HL, not IX), then jump into the overlay
+; entry; the handler there ends `jp d_next`, so this uses jp, not call.
+tramp_rare:
+    push af                 ; opcode selector
+    push hl                 ; track PC
+    ld a,4                  ; overlay index 4 = ovl_rare
+    call load_overlay
+    pop hl
+    pop af
+    jp OVERLAY_SLOT
+
 ; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
 ; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd,
-; 2 = ovl_pcm, 3 = ovl_boot).
+; 2 = ovl_pcm, 3 = ovl_boot, 4 = ovl_rare).
 ovl_desc_tab:
     db 0,0,0,0              ; overlay 0 (ovl_setup)
     db 0,0,0,0              ; overlay 1 (ovl_cmd)
     db 0,0,0,0              ; overlay 2 (ovl_pcm)
     db 0,0,0,0              ; overlay 3 (ovl_boot)
+    db 0,0,0,0              ; overlay 4 (ovl_rare)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
@@ -506,7 +521,7 @@ d_next:
     cp $60
     jp z,d_param_set
     cp $80
-    jp z,d_tempo_set
+    jp z,tramp_rare         ; TEMPO_SET → ovl_rare
     ; M2 motion opcodes (real handlers)
     cp $61                  ; PARAM_SWEEP
     jp z,d_param_sweep
@@ -515,13 +530,13 @@ d_next:
     cp $65                  ; PARAM_SWEEP_STOP
     jp z,d_param_sweep_stop
     cp $81                  ; TEMPO_SWEEP
-    jp z,d_tempo_sweep
+    jp z,tramp_rare         ; → ovl_rare
     cp $a0                  ; CSM_ON
-    jp z,d_csm_on
+    jp z,tramp_rare         ; → ovl_rare
     cp $a1                  ; CSM_OFF
-    jp z,d_csm_off
+    jp z,tramp_rare         ; → ovl_rare
     cp $a2                  ; CSM_RATE
-    jp z,d_csm_rate
+    jp z,tramp_rare         ; → ovl_rare
     ; reserved opcodes: length-decode and skip (opcodes.md §1)
     cp $14                  ; VOICE_SET
     jp z,d_skip2
@@ -530,7 +545,7 @@ d_next:
     cp $64                  ; PARAM_FROM_VAL
     jp z,d_param_from_val
     cp $a3                  ; FM3_MODE
-    jp z,d_fm3_mode
+    jp z,tramp_rare         ; → ovl_rare
     cp $a4                  ; FM3_OP_PITCH
     jp z,d_fm3_op_pitch
     cp $c0                  ; PCM_NOTE_ON
@@ -834,16 +849,6 @@ d_ps_have:
     pop hl
     jp d_next
 
-; ── TEMPO_SET (increment u16, per-MMB) ────────────────────────────────────
-d_tempo_set:
-    inc hl
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_INC),de
-    jp d_next
-
 ; ── reserved-opcode skips ─────────────────────────────────────────────────
 d_skip1:
     inc hl
@@ -862,100 +867,7 @@ d_skip4:
     add hl,de
     jp d_next
 
-; ── CSM opcodes (driver.md §9) ─────────────────────────────────────────────
-d_csm_on:
-    inc hl
-    push hl
-    ld a,(G_REG27)
-    or $80
-    call set_reg27
-    pop hl
-    jp d_next
-d_csm_off:
-    inc hl
-    push hl
-    ld a,(G_REG27)
-    and $7f
-    call set_reg27
-    pop hl
-    jp d_next
-d_csm_rate:
-    inc hl
-    ld a,(hl)               ; flags
-    inc hl
-    bit 0,a
-    jr nz,dcr_swept
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    push hl
-    ex de,hl                ; HL = period
-    call write_timer_a
-    pop hl
-    jp d_next
-dcr_swept:
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_CS_FROM),de
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_CS_TO),de
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_SW_LEN),de        ; reuse len scratch
-    ld (G_CS_LEFT),de
-    ld a,(hl)               ; curve
-    inc hl
-    ld (G_CS_CURVE),a
-    push hl
-    ld hl,0
-    ld (G_CS_PHASE),hl
-    xor a
-    ld de,(G_SW_LEN)
-    call sweep_step
-    ld (G_CS_STEP),hl
-    ld a,1
-    ld (G_CS_ACTIVE),a
-    pop hl
-    jp d_next
-
 ; ── FM3 independent-OP opcodes (driver.md §5.1) ────────────────────────────
-; FM3_MODE (mode u8): 0 normal, 1 special (independent-OP), 2 CSM.
-d_fm3_mode:
-    inc hl
-    ld a,(hl)               ; mode
-    inc hl
-    push hl
-    ld c,a                  ; mode
-    ld a,(G_REG27)
-    and $3f                 ; clear bit7 (CSM) + bit6 (special)
-    ld b,a
-    ld a,c
-    dec a
-    jr z,dfm_special        ; mode 1
-    dec a
-    jr z,dfm_csm            ; mode 2
-    ld a,b                  ; mode 0: normal
-    jr dfm_set
-dfm_special:
-    ld a,b
-    or $40
-    jr dfm_set
-dfm_csm:
-    ld a,b
-    or $80
-dfm_set:
-    call set_reg27
-    pop hl
-    jp d_next
-
 ; FM3_OP_PITCH (op u8, note u8): write one operator's F-number.
 d_fm3_op_pitch:
     inc hl
@@ -2979,40 +2891,6 @@ dpa_have:
     add hl,de
     ld (G_VAL),hl
     call param_set
-    pop hl
-    jp d_next
-
-; ── dispatch: TEMPO_SWEEP (from u16, to u16, len u16, curve u8) ─────────────
-d_tempo_sweep:
-    inc hl
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_TS_FROM),de
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_TS_TO),de
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_SW_LEN),de        ; reuse len scratch
-    ld (G_TS_LEFT),de       ; frames left = len
-    ld a,(hl)
-    inc hl
-    ld (G_TS_CURVE),a
-    push hl
-    ld hl,0
-    ld (G_TS_PHASE),hl
-    xor a                   ; one-shot
-    ld de,(G_SW_LEN)
-    call sweep_step
-    ld (G_TS_STEP),hl
-    ld a,1
-    ld (G_TS_ACTIVE),a
     pop hl
     jp d_next
 

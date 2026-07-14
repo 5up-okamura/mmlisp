@@ -25,9 +25,10 @@ This file is the compact continuation state.
    `macro_ref` field.
 2. **v0.6 driver track** — the eval design is settled
    ([design-eval.md](design-eval.md) §10/§12); the driver-side sequence is:
-   ~~measurement infra~~ (DONE — `npm run size`/`budget`) → budget prep
-   (rare-handler overlay eviction, psf commonization, DATA_BASE bump) →
-   **generic shadow read** (`op_param_tab`
+   ~~measurement infra~~ (DONE — `npm run size`/`budget`) → ~~budget prep~~
+   (DONE — ovl_rare eviction freed 201 B; 235 B free now covers the near-term
+   total, so psf/DATA_BASE held in reserve) → **generic shadow read**
+   (`op_param_tab`
    inverse, ~35-55 B) → **additive macro branch** (held since the `:pitch+`
    landing; ~50-60 B) → **scaled macro flag** (~30-40 B) → M3 dyn slice →
    CALL/RET (~45-60 B, control-stack tag already reserved in the TCB
@@ -54,18 +55,18 @@ watermark over the full gate corpus). Every `verify.mjs` run also prints a
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **34 B free** (resident 5848 B vs G_PCMV ceiling 5882 B / $16FA) | The scarce resource. Everything per-frame must live here. (Prior "24 B/5872" was a stale doc figure — the build-driver comment's $16F0 was 10 B off; `npm run size` is authoritative.) |
-| Rare-event handlers resident | pure cold setup **167 B gross** (d_tempo_sweep 61, CSM setup 48, d_marker 25, d_fm3_mode 21, d_tempo_set 12) | Evictable to a 5th overlay → **~100-130 B net** after trampolines. Overlay load ≈ 9.5k cycles (~16% frame), fine at rare-event rate. |
-| Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238 B | A *new* overlay can be up to 451 B; growing the largest has 6 B. |
+| Resident code | **235 B free** (resident 5647 B vs G_PCMV ceiling 5882 B / $16FA) | The scarce resource. Step 7 freed 201 B via ovl_rare eviction; this alone covers the whole v0.6 near-term feature budget (160-215 B). |
+| Rare-event handlers resident | **25 B** (d_marker only) | tempo set/sweep, CSM, FM3 mode evicted to ovl_rare (step 7). d_marker stays resident — no gate covers it, so eviction is unverifiable until a marker gate exists. |
+| Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238/250 (ovl_rare) B | A *new* overlay can be up to 451 B; growing the largest (445) has 6 B. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |
 | Stack | 82 B window ($1FAE STACK_FLOOR..$1FFF); **worst case 40 B used** on m3-macro-keyon (42 B reserve) | → DATA_BASE bump of ~20-26 B leaves a hardware-interrupt reserve; confirm on hardware. |
 | ROM side | effectively unlimited | LUT_TABLE MMB section (§0x0008), overlay blob, banked song data. |
 
 v0.6 near-term costs vs funding (design-eval.md §10): costs 160-215 B
 (generic read 35-55 + additive 50-60 + scaled 30-40 + CALL/RET 45-60) vs
-funding ~165-205 B (headroom 24 + eviction ~100-130 + DATA_BASE ~24-32 +
-psf commonization 15-20) — fits; the VAL-op reserve (~45-60 B) rides later
-funding.
+**235 B free after the step-7 eviction** — already covered without spending
+the DATA_BASE bump (~20-26, hardware-gated) or psf commonization (~5). The
+VAL-op reserve (~45-60 B) rides those held-back sources if demand appears.
 
 Funding menu, cheapest first (with precedent):
 
