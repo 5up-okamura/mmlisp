@@ -1520,6 +1520,18 @@ export class DrvPlayer {
       if (target === TARGET_ID.FM_ALG) return regs.algorithm;
       if (target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4)
         return regs.ops[target - TARGET_ID.FM_TL1].voicedTl;
+      // Op-param fields (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN, 0x16..0x3D): mirror
+      // the Z80 read_op_param (§4.1) — family selects the field, low 2 bits the
+      // operator — reading the shadow the driver already stores. Closes the
+      // silent-0 gap so op-param relatives read their real base (matches
+      // ir-player, which already reads the full op-env set).
+      if (target >= TARGET_ID.FM_AR1 && target <= TARGET_ID.FM_AMEN4) {
+        const fam = (target - TARGET_ID.FM_AR1) >> 2;
+        const op = (target - TARGET_ID.FM_AR1) & 3;
+        return regs.ops[op][
+          ["ar", "dr", "d2r", "rr", "sl", "rs", "mul", "dt", "ssg", "amen"][fam]
+        ];
+      }
     } else if (ch < 10 && target === TARGET_ID.NOTE_PITCH) {
       return this._psg[ch - 6].pitchCents;
     }

@@ -2096,6 +2096,46 @@ op_e:
     ld e,a
     ret
 
+; read_op_param: A = target (0x16..0x3D), D = port, C = choff, IY = chs →
+; HL = the field's current value (h=0). The inverse of generic_op_param: reuse
+; the same op_param_tab row (reg_base + op_e → addr, val_mask, shift), read the
+; shadow byte, shift the field down, mask it. keep_mask is unused for a read.
+; (§4.1) — closes the silent-0 trap so op-param relatives read their real base.
+read_op_param:
+    sub $16
+    ld l,a
+    ld h,0
+    and 3
+    ld (G_OP),a            ; op index
+    ld a,l
+    and $fc                ; family * 4 = table offset
+    ld l,a
+    push de                ; preserve port (D)
+    ld de,op_param_tab
+    add hl,de
+    pop de
+    ld e,(hl)              ; reg_base (D=port intact)
+    push hl
+    ld a,(G_OP)
+    call op_e              ; E = register address (uses C=choff)
+    pop hl
+    inc hl                 ; skip keep_mask
+    inc hl
+    ld b,(hl)              ; B = val_mask
+    inc hl
+    ld c,(hl)              ; C = shift count
+    call ym_shadow_read    ; A = shadow byte (preserves BC/DE)
+rop_sh:
+    dec c
+    jp m,rop_shd
+    srl a
+    jr rop_sh
+rop_shd:
+    and b                  ; & val_mask → raw field value
+    ld l,a
+    ld h,0
+    ret
+
 ; clamp_val — clamp (G_VAL) as i16 into 0..B → A. Preserves C/DE (D often
 ; carries the YM port here).
 clamp_val:
@@ -3492,11 +3532,23 @@ read_param:
     jr z,rp_vel
     cp 9                    ; GATE
     jr z,rp_gate
-    ; FM TL1..4 (0x11..0x14) → voiced TL; other targets read 0
+    ; FM TL1..4 (0x11..0x14) → voiced TL; op-params 0x16..0x3D → read_op_param
+    ; (shadow-derived, §4.1); other targets read 0.
     cp $11
     jr c,rp_zero
     cp $15
-    jr nc,rp_zero
+    jr c,rp_tl             ; 0x11..0x14 → voiced TL
+    cp $16
+    jr c,rp_zero           ; 0x15 (ALG) not readable here
+    cp $3e
+    jr nc,rp_zero          ; >= 0x3e (AMS/FMS/PAN) not readable here
+    ld a,(G_CH)
+    cp 6
+    jr nc,rp_zero          ; op-params live only on FM ch 0..5
+    call fm_port_off       ; D=port, C=choff (IY set by chs_ptr_iy above)
+    ld a,(G_TARGET)
+    jp read_op_param       ; → HL = field value
+rp_tl:
     ld a,(G_CH)
     cp 6
     jr nc,rp_zero
