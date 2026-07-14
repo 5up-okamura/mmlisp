@@ -531,6 +531,20 @@ Therefore:
   baseline (write order + count change), so drv-player.js **and** the Z80 must
   adopt it in lockstep and `verify:all`'s baseline is re-taken; order-sensitive
   sequences (freq→key-on, $28) need care. Its own step, not step 8.
+  **Phase 1 DONE (2026-07-15, commit 9c5c242): drv-player batched flush,
+  opt-in.** `_ym` defers into `_pending`, flushed change-only at barriers —
+  `_ymKey` ($28), `_ymAlways` (F-num pair), `_dacByte` ($2A), frame end (the
+  barrier line = the driver's existing `_ym` vs always/key/dac split; batchable
+  = `_ym`). RMW reads use the structured `_fm` state, so deferral is transparent
+  to the value machine. Gated behind `_batchYm` (default off = inline) so
+  verify:all stays 22/22 until the Z80 catches up. **Proof:** `npm run
+  verify:batch` (`tools/batch-diff.mjs`) shows the batched per-frame FINAL
+  register state is byte-identical to inline on all 22 scores (0 tolerance; $28
+  excluded as edges) — 404/6612 YM writes saved, up to 17% on value-machine
+  scores (the AR1 chain `$50=$46,$4c,$56` collapses to `$50=$56`). **Phase 2
+  (next): the same deferred-flush in the asm driver**, matching drv's flush
+  order for raw-trace equality, then flip `_batchYm` on + re-baseline verify:all
+  with both batched.
 - **(b) temp-slot (VAL_SET/VAL_ADD_VAL, §4.5) is NOT built** — (c) subsumes it;
   (b) would be a local hack made redundant by the general fix. §4.5 stays a
   paper reserve only if a non-left-linearizable expression forces a true
