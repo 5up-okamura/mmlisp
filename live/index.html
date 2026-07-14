@@ -5672,13 +5672,18 @@
       buildKeyboardKeys();
     }
 
-    // True while the user is typing (CodeMirror or any input/textarea/editable),
-    // so the physical-keyboard piano stays out of the way of text entry.
+    // True while the user is typing (CodeMirror or a text-entry input/editable),
+    // so the physical-keyboard piano stays out of the way of text entry. A
+    // focused range slider (FM param knobs) is NOT editable text — the piano
+    // uses letter keys only (KB_PHYSICAL_LAYOUT), which never overlap a slider's
+    // arrow/page adjustment — so notes keep sounding while you tweak a slider.
     function isEditableTargetFocused() {
       if (editorView?.hasFocus) return true;
       const el = document.activeElement;
       if (!el) return false;
-      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+      if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
+      if (el.tagName === 'INPUT') return el.type !== 'range';
+      return false;
     }
 
     // Push the cursor-def voice onto the preview channel before auditioning, with
