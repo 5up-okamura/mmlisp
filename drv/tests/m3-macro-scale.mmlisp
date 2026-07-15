@@ -1,0 +1,14 @@
+; v0.6 scaled macro (§4.4, frame tier): a value slot is a per-frame depth knob.
+; `(macro :T (* <LFO> $depth))` writes (sample × depth) >> 8 each frame — a
+; live-controllable modulation depth (the canonical interactive knob). The host
+; changes $depth mid-wobble via SET_VAL (see m3-macro-scale.cmds.json); both
+; players read the slot live every frame, so the depth tracks it. depth 128 ≈
+; half; 255 ≈ full; 0 = off. fm1 = TL tremolo (i8); fm2 = pitch vibrato (i16,
+; the wide-value + appended-slot-offset path).
+(def-val depth 128 0..255)
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (macro :tl1 (* (triangle 0..40 :len 8f) $depth))
+  :len 2 c e g c)
+(fm2 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (macro :pitch (* (triangle -64..64 :len 8f) $depth))
+  :len 2 c e g c)

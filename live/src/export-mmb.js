@@ -359,17 +359,26 @@ export function encodeMmb(ir, opts = {}) {
     }
     const lowered = lowerMacro(spec, target, trackLabel);
     if (!lowered) return null;
+    // Scaled macro (v0.6 §4.4, frame tier): a value slot is a per-frame depth
+    // knob; the driver writes `(sample × slot) >> 8`. The slot id rides one byte
+    // appended after this macro's value blob (descriptor stays 8 bytes), gated
+    // by flags bit2. An unknown slot degrades to a plain (override) macro.
+    const scaleSlot = spec.scale != null ? slotId(spec.scale, trackLabel) : null;
     // bit0 = i16 values (cents); bit1 = additive (`:pitch+`/`:semi+` — the driver
-    // composes each sample with the channel's live pitch offset, driver.md §8).
-    // The intern key folds in `flags`, so additive vs override intern separately.
-    const flags = (target === "NOTE_PITCH" ? 1 : 0) | (spec.add ? 2 : 0);
-    const key = `${target}|${flags}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
+    // composes each sample with the channel's live pitch offset, driver.md §8);
+    // bit2 = scaled (§4.4). The intern key folds in `flags` + the scale slot, so
+    // additive/override/scaled and distinct slots intern separately.
+    const flags =
+      (target === "NOTE_PITCH" ? 1 : 0) |
+      (spec.add ? 2 : 0) |
+      (scaleSlot != null ? 4 : 0);
+    const key = `${target}|${flags}|${scaleSlot ?? ""}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
       .map((v) => (v == null ? "_" : v))
       .join(",")}`;
     const hit = macroRegistry.get(key);
     if (hit) return hit.id;
     const id = macroRegistry.size;
-    macroRegistry.set(key, { id, target, flags, ...lowered });
+    macroRegistry.set(key, { id, target, flags, scaleSlot, ...lowered });
     return id;
   };
 
@@ -1019,7 +1028,9 @@ export function encodeMmb(ir, opts = {}) {
 // MACRO_TABLE payload (mmb.md §15): entry_count u16, then entry_count × 8-byte
 // descriptors {target, flags, step, loop_start, release, count, blob_offset u16},
 // then the value blobs (i8, or i16 when flags bit0), byte-packed. Hold sentinel
-// 0x80 / 0x8000 marks a `_` (advance, write nothing).
+// 0x80 / 0x8000 marks a `_` (advance, write nothing). A scaled macro (flags
+// bit2) appends one slot-id byte immediately after its values — the descriptor
+// stays 8 bytes; the reader finds the slot at `blob_offset + count × width`.
 function buildMacroTable(registry) {
   const entries = [...registry.values()].sort((a, b) => a.id - b.id);
   const desc = new Writer();
@@ -1029,7 +1040,7 @@ function buildMacroTable(registry) {
   let off = 0;
   for (const e of entries) {
     offsets.push(off);
-    off += e.values.length * (e.flags & 1 ? 2 : 1);
+    off += e.values.length * (e.flags & 1 ? 2 : 1) + (e.flags & 4 ? 1 : 0);
   }
   entries.forEach((e, i) => {
     desc.u8(TARGET_ID[e.target]);
@@ -1045,6 +1056,7 @@ function buildMacroTable(registry) {
       if (e.flags & 1) blob.u16(v == null ? 0x8000 : v & 0xffff);
       else blob.u8(v == null ? 0x80 : v & 0xff);
     }
+    if (e.flags & 4) blob.u8(e.scaleSlot & 0xff); // scaled: appended slot id
   }
   return [...desc.bytes, ...blob.bytes];
 }

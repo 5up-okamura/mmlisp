@@ -468,6 +468,7 @@ All spec kinds may carry:
 | ------ | -------------------------------------- | ---------------------------------------------------------------- |
 | `type` | `"steps"` \| `"curve"` \| `"stages"`   | Discriminator.                                                    |
 | `step` | `{ "unit": "frame"\|"tick", "value": n }` | Per-macro sampling clock (`:step`). Absent ⇒ 1 frame = 60 Hz. For step vectors: time per step. For curves/stages: sample-and-hold interval. |
+| `scale` | string | **Scaled macro** (`(* <signal> $slot)`, language.md §7). A value-slot name (no `$`, or `"$time"`). The player/driver reads the slot **live every frame** and writes `(sample × (slot & 0xFF)) >> 8` (0..255 depth, magnitude multiply, re-signed toward zero). Applies to any target, before the target write. MMB → MACRO_TABLE flags bit2 + an appended slot byte (mmb.md §15). |
 
 ### 6.1 Step vector — `type: "steps"`
 

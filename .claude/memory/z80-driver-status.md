@@ -31,8 +31,10 @@ This file is the compact continuation state.
    (`op_param_tab` inverse — the value-machine Unit A, **DONE 2026-07-15**:
    read_op_param + JS parity + left-fold lowering, verify:all 22/22 + A/B 0-diff,
    commits 10a36cf/102a144; Unit B = compile shadow + desugar rewiring still
-   open; design-eval §12 step 8 / §4.7) → **additive macro branch** (held
-   since the `:pitch+` landing; ~50-60 B) → **scaled macro flag** (~30-40 B) →
+   open; design-eval §12 step 8 / §4.7) → **additive macro branch** (DONE,
+   step 9, commit e4a6bbb) → **scaled macro flag** (DONE, step 10 — `(macro :T
+   (* <LFO> $slot))` live depth knob, ~70 B Z80, gate m3-macro-scale,
+   verify:all 24/24; MMB flags bit2 + appended slot byte, mmb.md §15) →
    M3 dyn slice → CALL/RET (~45-60 B, control-stack tag already reserved in the
    TCB layout). Costs and funding are measured — see the budget table below.
    **Batched frame flush** (item 5): model = **consecutive-coalesce** (§4.7
@@ -64,7 +66,7 @@ watermark over the full gate corpus). Every `verify.mjs` run also prints a
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **235 B free** (resident 5647 B vs G_PCMV ceiling 5882 B / $16FA) | The scarce resource. Step 7 freed 201 B via ovl_rare eviction; this alone covers the whole v0.6 near-term feature budget (160-215 B). |
+| Resident code | **47 B free** (resident 5835 B vs G_PCMV ceiling 5882 B / $16FA) as of step 10 (`npm run size`) | The scarce resource. Step 7 freed 201 B (ovl_rare); steps 8/9/10 (read_op_param, additive, scaled ~70 B) spent most of it. Held reserves for the next features: DATA_BASE bump (~20-26, hardware-gated) + psf commonization (~5). |
 | Rare-event handlers resident | **25 B** (d_marker only) | tempo set/sweep, CSM, FM3 mode evicted to ovl_rare (step 7). d_marker stays resident — no gate covers it, so eviction is unverifiable until a marker gate exists. |
 | Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238/250 (ovl_rare) B | A *new* overlay can be up to 451 B; growing the largest (445) has 6 B. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |

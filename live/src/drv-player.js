@@ -108,6 +108,16 @@ const u32 = (b, o) =>
 const i8 = (v) => (v & 0x80 ? v - 0x100 : v);
 const i16 = (v) => (v & 0x8000 ? v - 0x10000 : v);
 
+// Scaled-macro sample (§4.4): `(sample × depth) >> 8`, depth = slot low byte
+// (0..255). The multiply is unsigned on magnitude then re-signed (toward zero),
+// matching the Z80 mul16x8_sh8 + sweep_value sign pattern so all three players
+// agree bit-for-bit. Depth 256 (≈×1) is not representable; 255 ≈ full.
+function scaleMacroSample(sample, slotValue) {
+  const depth = slotValue & 0xff;
+  const mag = (Math.abs(sample) * depth) >> 8;
+  return sample < 0 ? -mag : mag;
+}
+
 // Fresh per-FM-channel shadow state (voiced values; mirrors driver.md §5.1).
 function freshFmChannel() {
   return {
@@ -257,6 +267,8 @@ export class DrvPlayer {
             off += 1;
           }
         }
+        // Scaled macro (flags bit2, §4.4): one slot-id byte follows the values.
+        const scaleSlot = (flags & 4) !== 0 ? macroTable[off] : null;
         macros.push({
           target: macroTable[e],
           flags,
@@ -265,6 +277,7 @@ export class DrvPlayer {
           release: macroTable[e + 4],
           count,
           values,
+          scaleSlot,
         });
       }
     }
@@ -1255,8 +1268,12 @@ export class DrvPlayer {
       return false;
     }
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
-    const v = d.values[slot.cursor];
+    let v = d.values[slot.cursor];
     if (v !== null && v !== undefined) {
+      // Scaled macro (§4.4): a value slot is a per-frame depth knob. Multiply
+      // the sample by the slot low byte and shift 8 (toward-zero, signed by the
+      // sample) before it reaches the target — mirrors the Z80 mul16x8_sh8 path.
+      if (d.scaleSlot != null) v = scaleMacroSample(v, this._readSlot(d.scaleSlot));
       const add = (d.flags & 2) !== 0; // additive macro (§4.4): live offset + sample
       // NOTE_SEMI is a key-on pitch offset (chiptune arpeggio): write the pitch
       // register at note+semi without touching the sticky :pitch state.

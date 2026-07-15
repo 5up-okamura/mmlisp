@@ -362,6 +362,24 @@ divide with a fraction (`:vel* 0.5`).
   own `:pitch` → chorus). Plain `:pitch` / `:semi` (no `+`) still **override**
   the offset. The additive offset is read live, so the macro rides a running
   pitch sweep.
+- **Scaled macros — the interactive depth knob.** A macro value of the form
+  `(* <signal> $slot)` (an LFO/curve times a value slot, in either order)
+  multiplies each frame's sample by the slot, read **live every frame**:
+  `write((sample × depth) >> 8)`. The slot is a 0..255 depth (its low byte;
+  255 ≈ full, 0 = off), so the game scales a vibrato/tremolo in real time:
+
+  ```lisp
+  (def-val depth 128 0..255)
+  (fm1 (macro :pitch (* (sin :rate 6) $depth)) c e g)   ; live vibrato depth
+  (fm2 (macro :tl1 (* (triangle 0..40 :len 8f) $depth)) c e g) ; live tremolo
+  ```
+
+  Works on any macro target (the scale applies before the target write). The
+  operand must be a signal — `(* 2 $depth)` (scalar × slot) is `E_EVAL_TYPE`;
+  a bare `$slot` in a plain arithmetic macro value stays
+  `E_EVAL_NOT_LOWERABLE`. Scaling is orthogonal to `+` (additive): the MVP
+  covers `(* signal $slot)` only, so it cannot be combined with `:pitch+` in
+  one macro.
 - Echo/delay taps are always relative, so an operator is **required**: bare
   `:vel` raises `E_ECHO_OP_REQUIRED` / `E_DELAY_OP_REQUIRED` (the clear forms
   `(delay none)` / `(delay :vel none)` excepted).

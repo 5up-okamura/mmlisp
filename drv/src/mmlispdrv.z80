@@ -1583,6 +1583,10 @@ sm_wide:
     or a
     jr z,sm_noapply
 sm_pos:
+    bit 2,(iy+1)            ; scaled macro (§4.4)? multiply the sample by the slot
+    jr z,sm_noscale
+    call scale_sample       ; DE = (sample * slot) >> 8, signed
+sm_noscale:
     ld (G_VAL),de
     ld a,(iy+1)
     and 2                   ; add flag (bit1) → additive mode for pitch/semi
@@ -1648,6 +1652,53 @@ sm_adv_rel:
     ret c
 sm_done:
     ld (ix+MSL_DESC),$ff    ; slot finished
+    ret
+
+; scale_sample: DE = macro sample (i16), IY = descriptor → DE = (sample * slot)
+; >> 8 (§4.4 scaled macro). The slot id byte follows the value blob at
+; G_MBLOB + blob_offset + count*width (width 2 when flags bit0). Depth is the
+; slot's low byte (0..255); the multiply runs on the magnitude then re-signs
+; (toward zero), mirroring drv-player/ir-player scaleMacroSample. Preserves
+; IX/IY; clobbers A/BC/HL.
+scale_sample:
+    push de                 ; save sample across read_slot (which clobbers DE)
+    ld l,(iy+6)
+    ld h,(iy+7)             ; HL = blob_offset
+    ld c,(iy+5)
+    ld b,0                  ; BC = count
+    add hl,bc               ; + count (i8 width)
+    bit 0,(iy+1)
+    jr z,ss_w1
+    add hl,bc               ; i16 width: + count again
+ss_w1:
+    ld bc,(G_MBLOB)
+    add hl,bc               ; HL → appended slot-id byte
+    ld a,(hl)
+    call read_slot          ; HL = slot value
+    ld a,l                  ; A = depth (low byte)
+    pop de                  ; DE = sample
+    bit 7,d
+    jr z,ss_pos             ; sample >= 0
+    push af                 ; save depth
+    xor a
+    sub e
+    ld e,a
+    ld a,0
+    sbc a,d
+    ld d,a                  ; DE = |sample|
+    pop af                  ; A = depth
+    call mul16x8_sh8        ; HL = (|sample| * depth) >> 8
+    ex de,hl
+    xor a
+    sub e
+    ld e,a
+    ld a,0
+    sbc a,d
+    ld d,a                  ; DE = -(magnitude) = signed result
+    ret
+ss_pos:
+    call mul16x8_sh8        ; HL = (sample * depth) >> 8
+    ex de,hl               ; DE = result
     ret
 
 ; apply_note_semi: (G_CH) = channel, (G_VAL) low = semitone offset. Writes the

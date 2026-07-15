@@ -586,6 +586,15 @@ each running macro:
    region cycled while the note is keyed, jumping to the release region at
    key-off, then playing release once and ending.
 
+Two macro flags (MACRO_TABLE descriptor, mmb.md §15) modify the sample before
+it is applied. **Additive** (bit1, `:pitch+`/`:semi+`): the sample composes with
+the channel's live `:pitch` offset instead of overwriting it. **Scaled** (bit2,
+`(* <LFO> $slot)`): the sample is multiplied by a value slot read **live each
+frame** — `(sample × (slot & 0xFF)) >> 8`, magnitude multiply re-signed toward
+zero (the resident `mul16x8_sh8`). The slot id rides one byte appended after the
+value blob. This is the frame-tier interactive knob — the game writes a slot
+(SET_VAL) and a vibrato/tremolo depth follows in real time.
+
 `NOTE_SEMI`/`KEYON` (macro-only targets, opcodes.md §7) resolve here: `NOTE_SEMI`
 adds `value × 100` cents to the note pitch (no retrigger, chiptune arpeggio),
 `KEYON` retriggers key-on when the value crosses ≥ 0.5.

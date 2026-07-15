@@ -67,6 +67,15 @@ function gcd(a, b) {
   return a;
 }
 
+// Scaled-macro sample (§4.4): `(sample × depth) >> 8`, depth = slot low byte
+// (0..255), toward zero. Kept byte-identical with drv-player's copy and the
+// Z80 mul16x8_sh8 path so all three players agree.
+function scaleMacroSample(sample, slotValue) {
+  const depth = (slotValue & 0xff) >>> 0;
+  const mag = (Math.abs(sample) * depth) >> 8;
+  return sample < 0 ? -mag : mag;
+}
+
 function lcm(a, b) {
   a = Math.max(1, Math.round(a));
   b = Math.max(1, Math.round(b));
@@ -2468,6 +2477,17 @@ export class IRPlayer {
       writeFn = (v, t) => {
         if (t < limitSecs) inner(v, t);
       };
+    }
+
+    // Scaled macro (§4.4, frame tier): a value slot is a per-frame depth knob.
+    // Wrap every scheduled value with `(sample × slot) >> 8`, reading the slot
+    // per step (the driver reads it live per frame). Applies to every target
+    // uniformly, matching drv-player's pre-dispatch scale of the raw sample.
+    if (spec.scale != null) {
+      const inner = writeFn;
+      const slotName = spec.scale;
+      writeFn = (v, t) =>
+        inner(scaleMacroSample(Math.round(v), this._resolveSrc(slotName, t)), t);
     }
 
     // :step is the macro sampling clock. Curve/stage macros sample (and hold)

@@ -325,7 +325,7 @@ surface in the language is one of four tiers:
 | compile | compile time | constant folding + the compile shadow (§4.2) | new, 0 driver B |
 | tick | event dispatch | FROM_VAL/ADD/MUL/ADD_VAL/MUL_VAL chains over the param-as-accumulator (§4.3), enabled by the generic shadow read (§4.1) | read is new (~35-55 B) |
 | note-on | note/macro fire | curve `:from/:to/:rate/:len` ← slot (the tracked M3 dyn slice) | designed, unimplemented |
-| frame | every 60 Hz frame | additive macro flag (landed; Z80 branch pending ~50-60 B) + **scaled macro flag** (§4.4, new ~30-40 B) | additive pending / scaled new |
+| frame | every 60 Hz frame | additive macro flag (DONE, step 9) + **scaled macro flag** (§4.4, DONE step 10 — ~70 B Z80, all 5 layers, gate m3-macro-scale) | both DONE |
 
 Built-in `$`-references (added to `resolveValRef`, :986):
 
@@ -1002,37 +1002,43 @@ Driver track (Tiers B-D + data; each step separately gated):
    cents logic into `pitch_cents` (+25 B). **Budget is now TIGHT: 26 B free**
    (step 9 hit 1 B; commonization recovered to 26). The ovl_rare eviction funding
    is nearly spent (read_op_param 74 + batched flush ~94 + additive net ~40).
-10. **Scaled macro flag** (§4.4) — the interactive-knob standout: `(macro :pitch
-    (* (sin :rate 6) $depth))` = live vibrato/tremolo depth, `write((sample ×
-    slot) >> 8)` per frame. **NEXT — budget healthy (117 B free after the
-    batched-flush revert).** Investigated 2026-07-15: this is **monolithic and
-    NEW everywhere** (unlike step 9's additive, which reused existing flags) —
-    ir-player has `.add` but no `.scale`. It needs an **MMB descriptor FORMAT
-    change** (bit2 + a slot byte), so exporter + all 3 decoders + the Z80 change
-    together; no clean mid-way checkpoint. Concrete sites/plan:
-    - **Compiler** (`parseMacroSpec`, mmlisp2ir.js:1530; the `()` eval branch at
-      :1618): detect `(* <signal> $slot)` (one $slot operand + one signal
-      operand) BEFORE `evalValue` (which errors E_EVAL_NOT_LOWERABLE on the
-      `$slot`). Eval the signal operand to a symbolic curve, attach `spec.scale =
-      <slot name>`. Either thread `vals` into parseMacroSpec (+ callers :1477,
-      :3682) for resolveValRef, OR store the raw name and let the exporter's
-      `slotId` resolve it (as PARAM_FROM_VAL does). `macroOpOk` currently gates
-      `*` — check it allows this shape.
-    - **Exporter** (export-mmb.js): `flags` at :365 gains `| (spec.scale != null
-      ? 4 : 0)`; `internMacro` (:346) + the descriptor byte layout in
-      buildMacroTable gain a **slot byte** (conditional on bit2) via `slotId`;
-      fold the slot into the intern key (:366).
-    - **ir-player / drv-player**: decode the slot byte (bit2) in the macro
-      descriptor; in `_stepMacro` add a `.scale` apply path — `write((sample ×
-      slotValue) >> 8)` — mirroring the `.add` path (drv `_stepMacro` ~L1293, ir
-      `_schedulePitchMacro`/stepper). Reads the slot live each frame.
-    - **Z80** (`step_macro` :1523, `macro_desc_ptr`, the MACRO_TABLE decode): the
-      descriptor decode gains the conditional slot byte; `sm_pos` adds a scale
-      branch — read the slot (`read_slot`), `mul16x8_sh8` (resident) `(sample ×
-      slot) >> 8`, then apply. ~30-40 B.
-    - **Gate**: `m3-macro-scale` with `(* (sin) $depth)` + a `<song>.cmds.json`
-      sidecar doing mid-score SET_VAL (cmd 0x06) to change `$depth`; verify Z80
-      == drv-player and A/B drv == ir.
+10. **Scaled macro flag** (§4.4) — **DONE (2026-07-15).** `(macro :T (* <LFO>
+    $slot))` = live vibrato/tremolo depth, `write((sample × slot) >> 8)` per
+    frame, any macro target. Applied end-to-end across all 5 layers; gate
+    `m3-macro-scale` (fm1 TL tremolo i8 + fm2 pitch vibrato i16, cmds.json
+    SET_VALs $depth mid-wobble). verify:all 24/24 0-diff (Z80==drv exact incl.
+    the live depth changes on both i8 and i16 paths), strict 6/6, ab-core A/B
+    clean. **Settled decisions (concretized from the plan):**
+    - **Encoding = 8-byte descriptor unchanged + one slot byte appended after
+      the value blob** (at `blob_offset + count×width`), gated by flags **bit2**.
+      Chose append-to-blob over a 9-byte descriptor so `macro_desc_ptr` (id*8)
+      and the "frozen" 8-byte layout stay intact; only scaled macros pay the
+      byte. mmb.md §15 amended.
+    - **Arithmetic** (identical in all 3 players — `scaleMacroSample`, Z80
+      `scale_sample`): `sign(sample)·((|sample|·(slot&0xFF))>>8)`, toward zero.
+      Slot is an **8-bit depth** (low byte, 0..255; 255≈full, 256≈×1 not
+      representable) — the 16-bit operand is the sample so full-range pitch
+      cents fit; reuses resident `mul16x8_sh8` + the `sweep_value` sign pattern.
+    - **Compiler** (`detectScaledMacro` + `scaleSlotName`, mmlisp2ir.js before
+      parseMacroSpec): in the macro `()` eval branch, detect `(* <signal>
+      $slot)` (exactly 2 operands, one bare $slot, one non-slot) BEFORE
+      evalValue; eval the signal, `spec.scale = <FROM_VAL-form name>` (stored
+      un-validated, exporter's `slotId` resolves/warns). Scalar operand →
+      E_EVAL_TYPE. `macroOpOk` is NOT involved (the `*` is in the value, the
+      keyword has no suffix). Flows through `withAddFlag`/`makeNoteArgs` (spec
+      spread). Scale is **orthogonal to additive**; MVP is `(* signal $slot)`
+      only, so it can't combine with `:pitch+` in one macro.
+    - **Cost**: Z80 **~70 B resident** (higher than the §10 30-40 estimate — the
+      signed magnitude handling doubled it), free now **47 B** (was 117). Stack
+      worst-case unchanged (40 B, m3-macro-keyon). Trim candidate later: factor a
+      16-bit negate helper.
+    - **Pre-existing issue surfaced** (NOT scale): override looping-**curve**
+      pitch macros (`(macro :pitch (triangle …))`) show a small ir/drv A/B skew
+      at note boundaries (F-num ±8) — the existing corpus only had step-vector or
+      additive pitch macros, so it was never exercised. Proven scale-independent
+      (identical mismatch set with/without scale; TL tremolo voice A/B-clean). See
+      [[known-issue-drv-complex-songs.md]]. The gate keeps the pitch voice for
+      i16 verify:all coverage; A/B isolation is on the clean TL voice.
 11. **M3 dyn slice** (note-on tier) — slot-fed curve params at fire time
     (overlay-hosted per-note work, PCM precedent). Gate: dyn scores stop
     warning and trace-match live.

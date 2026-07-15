@@ -377,7 +377,7 @@ Macro descriptor (8 bytes):
 | Offset | Size | Field       | Notes                                            |
 | ------ | ---- | ----------- | ------------------------------------------------ |
 | 0x00   | 1    | target      | target id (opcodes.md §7); also fixes value width |
-| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bits2–7 reserved 0 |
+| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bit2 = scaled (`(* <LFO> $slot)` — driver multiplies each sample by a value slot read live per frame, §4.4; see the appended slot byte below); bits3–7 reserved 0 |
 | 0x02   | 1    | step        | `:step` clock in 60 Hz frames, 1–255 (ticks lowered at compile time) |
 | 0x03   | 1    | loop_start  | step index the sustain loop begins; `0xFF` = one-shot (hold the last attack value) |
 | 0x04   | 1    | release     | step index the release begins; `0xFF` = no release |
@@ -385,9 +385,16 @@ Macro descriptor (8 bytes):
 | 0x06   | 2    | blob_offset | u16, into the blob region (relative to its start) |
 
 The value blob is `count` values, i8 (or i16 if `flags` bit0), little-endian.
-The **hold sentinel** `0x80` (i8) / `0x8000` (i16) means "advance one step,
-write nothing" (the `_` token; NOTE_PITCH cents are practically ±32767, so
-−32768 is free as the sentinel). Regions inside the array:
+A **scaled** macro (`flags` bit2) appends one `scale_slot` byte immediately
+after its `count` values (found at `blob_offset + count × width`); the
+descriptor stays 8 bytes. Each frame the driver reads that value slot and writes
+`(sample × (slot & 0xFF)) >> 8` — the low byte is a 0..255 depth (255 ≈ full,
+256 ≈ ×1 is not representable), the multiply runs on the magnitude then
+re-signs toward zero (§4.4). `scale_slot` = 0xFF is the `$time` frame counter,
+0x00–0x0F a value slot. The **hold sentinel** `0x80` (i8) / `0x8000` (i16)
+means "advance one step, write nothing" (the `_` token; NOTE_PITCH cents are
+practically ±32767, so −32768 is free as the sentinel). Regions inside the
+array:
 
 ```
 [0 .. loop_start)        attack  — played once

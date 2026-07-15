@@ -31,6 +31,18 @@ is specifically about the DRV backend path.
   importer emission vs what the driver expects. Treat all of these as leads,
   not findings.
 
+## Related narrow finding (2026-07-15, step 10) — override curve-pitch A/B skew
+
+Surfaced while building the scaled-macro gate: an **override** looping-**curve**
+pitch macro (`(macro :pitch (triangle …))`, no `+`) shows a small ir↔drv A/B
+skew at note boundaries (F-num ±8 at the note-change frame). The existing corpus
+only had step-vector or **additive** (`:pitch+`) pitch macros, so this path was
+never exercised. Proven **unrelated to scale** (identical A/B mismatch set
+with/without the scale multiply; TL tremolo voice is A/B-clean). Likely the same
+class of drv/ir divergence as the complex-song drift above (continuous-clock vs
+frame-stepped pitch at note onset). A candidate minimal repro if this issue is
+picked up: `(fm2 (macro :pitch (triangle -32..32 :len 8f)) :len 2 c e g c)`.
+
 ## When resumed — first moves
 
 1. Get one concrete failing mucom song from the user (or a `.muc` to import).

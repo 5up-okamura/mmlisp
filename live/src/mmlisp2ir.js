@@ -1518,6 +1518,30 @@ function extractMacroStep(items, diagnostics, trackName) {
   return step;
 }
 
+// A bare value-slot operand (`$depth`) → its FROM_VAL-form name ("depth", or
+// "$time" for the frame counter); null for anything that isn't a `$name` atom.
+function scaleSlotName(node) {
+  const v = atomValue(node);
+  if (typeof v !== "string" || !v.startsWith("$")) return null;
+  const name = v.slice(1);
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+  return name === "time" ? "$time" : name;
+}
+
+// Recognize a scaled-macro expression `(* <signal> $slot)` (v0.6 §4.4): exactly
+// one bare value-slot operand and one non-slot operand. Returns
+// { signal, slot } (slot in FROM_VAL name form) or null. The caller evaluates
+// `signal` to a signal spec and attaches `spec.scale = slot`.
+function detectScaledMacro(node) {
+  const items = node.items?.filter((n) => n.kind !== "comment") ?? [];
+  if (atomValue(items[0]) !== "*" || items.length !== 3) return null;
+  const s1 = scaleSlotName(items[1]);
+  const s2 = scaleSlotName(items[2]);
+  if (s1 && !s2) return { slot: s1, signal: items[2] };
+  if (s2 && !s1) return { slot: s2, signal: items[1] };
+  return null;
+}
+
 /**
  * Parse a :macro spec node for any target.
  * Accepts both step-vector [...] and curve (...) forms.
@@ -1616,6 +1640,49 @@ function parseMacroSpec(
   }
   // Curve form: (ease-out :from 15 :to 0 :len 1)
   if (node.kind === "list" && node.bracket === "()") {
+    // Scaled macro (v0.6 §4.4, frame tier): `(macro :pitch (* (sin …) $depth))`
+    // rides a value slot as a per-frame depth knob — the driver writes
+    // `(sample × slot) >> 8` each frame. Detected here BEFORE evalValue, which
+    // would otherwise error E_EVAL_NOT_LOWERABLE on the bare `$slot`. Shape:
+    // `(* <signal> $slot)` (exactly two operands, one a value slot, one a
+    // signal). The signal folds to a symbolic/materialized spec; `spec.scale`
+    // carries the slot name (exporter → MMB flags bit2 + a slot byte).
+    const scaled = detectScaledMacro(node);
+    if (scaled) {
+      const r = evalValue(
+        scaled.signal,
+        env ?? makeEnv(null),
+        makeEvalCtx(
+          diagnostics,
+          trackName,
+          nodeSrc(node),
+          null,
+          macroStepFramesForEval(step),
+        ),
+      );
+      if (!r) return null;
+      if (r.kind !== "signal") {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_EVAL_TYPE",
+          "a scaled macro `(* signal $slot)` needs a signal operand (a curve/LFO), not a scalar",
+          nodeSrc(node),
+          trackName,
+        );
+        return null;
+      }
+      const base = r.spec.steps
+        ? {
+            type: "steps",
+            steps: r.spec.steps,
+            loopIndex: r.spec.loopIndex ?? null,
+            releaseIndex: r.spec.releaseIndex ?? null,
+          }
+        : { type: "curve", ...r.spec };
+      base.scale = scaled.slot;
+      return base;
+    }
     // Compile-time eval in macro position: `(macro :pitch (+ (sin …) 10))`
     // folds affinely to a symbolic curve (byte-identical LUT), and a scalar
     // expression becomes a constant signal. A bare curve head is disjoint from
