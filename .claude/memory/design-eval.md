@@ -1002,11 +1002,37 @@ Driver track (Tiers B-D + data; each step separately gated):
    cents logic into `pitch_cents` (+25 B). **Budget is now TIGHT: 26 B free**
    (step 9 hit 1 B; commonization recovered to 26). The ovl_rare eviction funding
    is nearly spent (read_op_param 74 + batched flush ~94 + additive net ~40).
-10. **Scaled macro flag** (§4.4) — MMB bit2 + slot byte; stepper branch +
-    `mul16x8_sh8` (resident). Gate: new trace score (`(* (sin) $depth)` with
-    mid-score SET_VAL via the cmd sidecar). The interactive-knob standout (live
-    vibrato/tremolo depth). **Budget now healthy after the batched-flush revert:
-    117 B free** (2026-07-15), so it fits without budget prep. NEXT.
+10. **Scaled macro flag** (§4.4) — the interactive-knob standout: `(macro :pitch
+    (* (sin :rate 6) $depth))` = live vibrato/tremolo depth, `write((sample ×
+    slot) >> 8)` per frame. **NEXT — budget healthy (117 B free after the
+    batched-flush revert).** Investigated 2026-07-15: this is **monolithic and
+    NEW everywhere** (unlike step 9's additive, which reused existing flags) —
+    ir-player has `.add` but no `.scale`. It needs an **MMB descriptor FORMAT
+    change** (bit2 + a slot byte), so exporter + all 3 decoders + the Z80 change
+    together; no clean mid-way checkpoint. Concrete sites/plan:
+    - **Compiler** (`parseMacroSpec`, mmlisp2ir.js:1530; the `()` eval branch at
+      :1618): detect `(* <signal> $slot)` (one $slot operand + one signal
+      operand) BEFORE `evalValue` (which errors E_EVAL_NOT_LOWERABLE on the
+      `$slot`). Eval the signal operand to a symbolic curve, attach `spec.scale =
+      <slot name>`. Either thread `vals` into parseMacroSpec (+ callers :1477,
+      :3682) for resolveValRef, OR store the raw name and let the exporter's
+      `slotId` resolve it (as PARAM_FROM_VAL does). `macroOpOk` currently gates
+      `*` — check it allows this shape.
+    - **Exporter** (export-mmb.js): `flags` at :365 gains `| (spec.scale != null
+      ? 4 : 0)`; `internMacro` (:346) + the descriptor byte layout in
+      buildMacroTable gain a **slot byte** (conditional on bit2) via `slotId`;
+      fold the slot into the intern key (:366).
+    - **ir-player / drv-player**: decode the slot byte (bit2) in the macro
+      descriptor; in `_stepMacro` add a `.scale` apply path — `write((sample ×
+      slotValue) >> 8)` — mirroring the `.add` path (drv `_stepMacro` ~L1293, ir
+      `_schedulePitchMacro`/stepper). Reads the slot live each frame.
+    - **Z80** (`step_macro` :1523, `macro_desc_ptr`, the MACRO_TABLE decode): the
+      descriptor decode gains the conditional slot byte; `sm_pos` adds a scale
+      branch — read the slot (`read_slot`), `mul16x8_sh8` (resident) `(sample ×
+      slot) >> 8`, then apply. ~30-40 B.
+    - **Gate**: `m3-macro-scale` with `(* (sin) $depth)` + a `<song>.cmds.json`
+      sidecar doing mid-score SET_VAL (cmd 0x06) to change `$depth`; verify Z80
+      == drv-player and A/B drv == ir.
 11. **M3 dyn slice** (note-on tier) — slot-fed curve params at fire time
     (overlay-hosted per-note work, PCM precedent). Gate: dyn scores stop
     warning and trace-match live.
