@@ -37,14 +37,11 @@ This file is the compact continuation state.
    TCB layout). Costs and funding are measured — see the budget table below.
    **Batched frame flush** (item 5): model = **consecutive-coalesce** (§4.7
    option a; full-frame needs ~38 B RAM the packed layout can't spare cheaply).
-   **Phase 1 DONE** (drv-player, commit 5d8aed0). **Phase 2 DONE** (Z80, commit
-   42b7e17): 3 B pending at `G_BASE+$56`, `ym_write` defers, `ym_shadow_read`
-   pending-aware, flush at ym_key/ym_write_always/DAC/frame_step-end, both
-   players batch by default. verify:all 22/22 0-diff (both batched), batch-diff
-   frame-final-identical, driver 5815 B (67 B free). The value machine's
-   consecutive same-register chain now collapses to one chip write on the Z80.
-   Follow-on (optional): full-frame dedup would need the ~38 B RAM / DATA_BASE
-   bump at the hardware phase.
+   **Built then REVERTED (commit 4ae2089).** Consecutive-coalesce landed in both
+   players and worked, but a budget review found it cost ~90 B resident for ~1%
+   write reduction — poor ratio, blocking higher-value features. Reverted
+   (reclaimed ~91 B); both players inline again. Redo at the hardware phase as
+   **full-frame** (needs the DATA_BASE bump). design-eval §4.7.
 3. **Hardware bring-up + cycle tuning** (the real frontier): run on a real
    Mega Drive / flashcart; measure worst-case frame cycles (PCM mix rate is
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait

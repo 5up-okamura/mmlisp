@@ -550,15 +550,19 @@ Therefore:
   (`tools/batch-diff.mjs`) — batched per-frame FINAL register state byte-
   identical to inline on all 22 scores (0 tolerance; $28 excluded as edges).
 
-  **Phase 2 DONE (Z80, commit 42b7e17).** Both players batch in lockstep;
-  verify:all 22/22 0-diff, batch-diff frame-final identical, the m3-valexpr AR1
-  chain collapses to one write on the Z80 too, driver 5815 B (67 B free).
-  As built (matches the plan below): `G_PEND_A/P/D` at `G_BASE+$56`; `ym_write`
-  defers (coalesce / flush-on-register-change via `ym_flush`, the old change-only
-  body); `ym_shadow_read` pending-aware; `call ym_flush` at ym_key /
-  ym_write_always / the DAC byte (pp_have) / frame_step end; drv-player default
-  `_batchYm` on (`!== false`, still overridable for batch-diff). Boot's RAM-clear
-  zeroes G_PEND_A. **The plan as executed (kept for reference):**
+  **REVERTED 2026-07-15 (commit 4ae2089) — poor byte/benefit ratio.** Phase 1+2
+  landed and worked (verify:all green, frame-final identical), but a holistic
+  budget review (after step 9 hit 1 B free) found the consecutive-coalesce flush
+  cost ~90 B of the scarce resident image for only ~1% write reduction overall —
+  and it was blocking the higher-value interactive-knob features (step 10+). The
+  *valuable* version is full-frame, which needs the hardware-gated DATA_BASE
+  bump. So the batched flush was reverted (Z80 ym_write back to inline; drv-player
+  back to inline; batch-diff removed), reclaiming ~91 B (resident 5856→5765, free
+  26→117). The value machine + additive macros are untouched — value-machine
+  chains write inline again (correct, inaudible, event-dispatched so rare).
+  **Do it at the hardware phase as full-frame** (once the DATA_BASE bump is
+  affordable). Prior plan for reference (the consecutive-coalesce that was
+  reverted; a full-frame redo would differ):
   - **RAM (3 B, free, internal):** put `G_PEND_A/P/D` at `G_BASE+$56..$58` —
     G_PCM_MUL (`G_BASE+$52`) is only u32, leaving 17 B free before G_SHIDX
     (`$67`); it's above the host-published region ($1930), so no DATA_BASE bump,
@@ -1000,9 +1004,9 @@ Driver track (Tiers B-D + data; each step separately gated):
    is nearly spent (read_op_param 74 + batched flush ~94 + additive net ~40).
 10. **Scaled macro flag** (§4.4) — MMB bit2 + slot byte; stepper branch +
     `mul16x8_sh8` (resident). Gate: new trace score (`(* (sin) $depth)` with
-    mid-score SET_VAL via the cmd sidecar). **Needs budget prep first** (~30-40 B
-    vs 26 B free) — more eviction (d_marker after adding a marker gate, or other
-    cold code) / commonization, or the hardware-gated DATA_BASE bump.
+    mid-score SET_VAL via the cmd sidecar). The interactive-knob standout (live
+    vibrato/tremolo depth). **Budget now healthy after the batched-flush revert:
+    117 B free** (2026-07-15), so it fits without budget prep. NEXT.
 11. **M3 dyn slice** (note-on tier) — slot-fed curve params at fire time
     (overlay-hosted per-note work, PCM precedent). Gate: dyn scores stop
     warning and trace-match live.
