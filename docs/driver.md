@@ -586,9 +586,14 @@ each running macro:
    region cycled while the note is keyed, jumping to the release region at
    key-off, then playing release once and ending.
 
+An **override** pitch macro (`:pitch`/`:semi`, no `+`) writes the note pitch from
+the sample alone each frame and does **not** persist to the channel's sticky
+`:pitch` base — so once the macro ends or is cleared (`(macro :pitch none)`) the
+following notes play at their true pitch, with no residual detune.
+
 Two macro flags (MACRO_TABLE descriptor, mmb.md §15) modify the sample before
 it is applied. **Additive** (bit1, `:pitch+`/`:semi+`): the sample composes with
-the channel's live `:pitch` offset instead of overwriting it. **Scaled** (bit2,
+the channel's live `:pitch` offset instead of replacing it. **Scaled** (bit2,
 `(* <LFO> $slot)`): the sample is multiplied by a value slot read **live each
 frame** — `(sample × (slot & 0xFF)) >> 8`, magnitude multiply re-signed toward
 zero (the resident `mul16x8_sh8`). The slot id rides one byte appended after the

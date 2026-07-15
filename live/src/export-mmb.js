@@ -416,6 +416,7 @@ export function encodeMmb(ir, opts = {}) {
     const activeMacros = new Map(); // sticky active macro per target id (driver.md §13.1)
     const markerIds = new Map(); // marker string id → u8
     const markerOffsets = new Map(); // marker string id → stream offset
+    const markerState = new Map(); // marker id → sticky {vel,gate,macros} snapshot
     const jumpFixups = []; // { at, to } forward-marker patches
     const breakFixups = new Map(); // loop id → [patch offsets]
 
@@ -599,6 +600,16 @@ export function encodeMmb(ir, opts = {}) {
           markerOffsets.set(a.id, stream.length);
           stream.u8(OPCODE.MARKER);
           stream.u8(markerIds.get(a.id));
+          // Snapshot the sticky state entering this marker. A backward JUMP here
+          // restores it (below) so iterations 2+ start from the same state as
+          // iteration 1 — the linear encoder omits opcodes whose value already
+          // matched the state at the marker, but the loop tail leaves a
+          // different state, which would otherwise bleed into the loop body.
+          markerState.set(a.id, {
+            velState,
+            gateState,
+            activeMacros: new Map(activeMacros),
+          });
           break;
         }
         case "JUMP": {
@@ -612,6 +623,36 @@ export function encodeMmb(ir, opts = {}) {
               label,
             );
             break;
+          }
+          // Backward loop: re-establish the sticky state the loop body assumes
+          // (the snapshot at its target marker) before jumping, so every
+          // iteration replays identically. Emitted only for state that drifted.
+          const snap = markerState.get(a.to);
+          if (snap) {
+            for (const target of [...activeMacros.keys()]) {
+              if (snap.activeMacros.get(target) !== activeMacros.get(target)) {
+                if (!snap.activeMacros.has(target)) {
+                  stream.u8(OPCODE.MACRO_CLEAR);
+                  stream.u8(TARGET_ID[target]);
+                  activeMacros.delete(target);
+                }
+              }
+            }
+            for (const [target, id] of snap.activeMacros) {
+              if (activeMacros.get(target) !== id) {
+                stream.u8(OPCODE.MACRO_SET);
+                stream.u8(id);
+                activeMacros.set(target, id);
+              }
+            }
+            if (velState !== snap.velState) {
+              emitParamState(TARGET_ID.VEL, snap.velState);
+              velState = snap.velState;
+            }
+            if (gateState !== snap.gateState) {
+              emitParamState(TARGET_ID.GATE, snap.gateState);
+              gateState = snap.gateState;
+            }
           }
           stream.u8(OPCODE.JUMP);
           if (markerOffsets.has(a.to)) {

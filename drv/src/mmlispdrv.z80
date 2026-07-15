@@ -117,11 +117,13 @@ G_CS_STEP   equ G_BASE+$4e      ; u16  phase step
 ; resampled (nearest) to that grid and the ≤3 signed samples hard-saturate to i8.
 G_SB        equ G_BASE+$50      ; u16  SAMPLE_BANK payload window addr (0 = none)
 G_PCM_MUL   equ G_BASE+$52      ; u32  scratch for the 16x16 multiply / divide
-; Additive macro flag (§4.4): set while a `:pitch+`/`:semi+` macro sample is
-; applied so psf_pitch / ps_psg_pitch / apply_note_semi write note at
-; CHS_PITCH+sample (ride the live offset) with no store-back, instead of
-; overriding CHS_PITCH. Cleared after each macro apply. ($56..$66 is free.)
-G_MADD      equ G_BASE+$56      ; u8  0 = override, nonzero = additive
+; Macro pitch-apply mode (§4.4): set for the span of a macro NOTE_PITCH/NOTE_SEMI
+; sample so psf_pitch / ps_psg_pitch / apply_note_semi / pitch_cents pick the
+; right rule. bit0 = macro apply (never store-back to CHS_PITCH, so an override
+; macro leaves no residual detune once it ends/clears); bit1 = additive (ride
+; CHS_PITCH+sample). override macro=1, additive=3; a directive PARAM_SET runs
+; with 0 (store the sticky base). Cleared after each macro apply. ($56..$66 free.)
+G_MADD      equ G_BASE+$56      ; u8  0=directive, 1=override macro, 3=additive
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
 ; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
@@ -678,6 +680,9 @@ d_rest:
     push hl
     ld a,(ix+T_CH)
     call channel_off
+    xor a                   ; a rest cancels any gate still counting (unclamped exGate)
+    ld (ix+T_GATELEFT),a
+    ld (ix+T_GATELEFT+1),a
     pop hl
     call read_dur
     ld (ix+T_PC),l
@@ -1162,14 +1167,9 @@ no_gate:
     ld a,h
     or l
     jr z,no_hold            ; exGate 0 = hold until host key-off
-    ; gateLeft = min(exGate, dur)
-    push hl
-    or a
-    sbc hl,de
-    pop hl
-    jr c,no_setgl
-    ld l,e
-    ld h,d
+    ; gateLeft = exGate — absolute ticks from note-on, counting across TIE
+    ; segments (not clamped to this segment's dur), so a gate spanning a tie
+    ; keys off mid-tie. REST clears it; the next NOTE_ON resets it.
     jr no_setgl
 no_stdgate:
     ld a,(iy+CHS_GATE)
@@ -1590,7 +1590,8 @@ sm_noscale:
     ld (G_VAL),de
     ld a,(iy+1)
     and 2                   ; add flag (bit1) → additive mode for pitch/semi
-    ld (G_MADD),a
+    or 1                    ; bit0 = macro apply: pitch never stores CHS_PITCH
+    ld (G_MADD),a           ; override=1, additive=3 (directive stays 0)
     ld a,(iy+0)             ; target
     cp 7                    ; NOTE_SEMI: key-on pitch offset (arpeggio)
     jr z,sm_semi
@@ -1715,7 +1716,7 @@ apply_note_semi:
     ld b,a
     ld hl,0                 ; cents 0 (override) …
     ld a,(G_MADD)
-    or a
+    bit 1,a                 ; additive (bit1)? override macro is now G_MADD=1
     jr z,ans_cents
     ld l,(iy+CHS_PITCH)     ; … or ride the live :pitch offset (additive)
     ld h,(iy+CHS_PITCH+1)
@@ -1968,15 +1969,22 @@ psf_vol:
     ld a,(G_CH)             ; IX may be a sweep slot here, not the TCB
     jp write_carrier_tls
 
-; pitch_cents: HL = sample, IY = chs → set G_PITCHC. Override (G_MADD=0): store
-; CHS_PITCH. Additive (G_MADD≠0): G_PITCHC = CHS_PITCH + sample, no store — ride
-; the live offset (:pitch+/:semi+). Preserves BC/DE (write_*_pitch needs port).
+; pitch_cents: HL = sample, IY = chs → set G_PITCHC. Three modes by G_MADD:
+;   0 (directive PARAM_SET): G_PITCHC = sample AND store CHS_PITCH (sticky base).
+;   1 (override macro):      G_PITCHC = sample, NO store — an override pitch
+;                            macro must not leave a residual detune on the next
+;                            note once it ends/clears (drv-player _stepMacro).
+;   bit1 set (additive):     G_PITCHC = CHS_PITCH + sample, no store — ride the
+;                            live offset (:pitch+/:semi+).
+; Preserves BC/DE (write_*_pitch needs port).
 pitch_cents:
     ld a,(G_MADD)
-    or a
+    bit 1,a
     jr nz,pc_add
     ld (G_PITCHC),hl
-    ld (iy+CHS_PITCH),l
+    or a
+    ret nz                  ; override macro (G_MADD=1): set G_PITCHC only
+    ld (iy+CHS_PITCH),l      ; directive (G_MADD=0): also store the sticky base
     ld (iy+CHS_PITCH+1),h
     ret
 pc_add:

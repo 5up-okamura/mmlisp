@@ -1,0 +1,15 @@
+; M3 gate: sticky state (GATE / VEL) is re-established at a loop point. The
+; linear MMB encoder omits a PARAM_SET whose value already matches the state at
+; the #loop marker, but the loop TAIL leaves a different sticky state that would
+; otherwise bleed into the loop body on iterations 2+ — playing the full-gate
+; head notes short (gh002/ACTRAISER fm1 `:gate- 0t`). The exporter restores the
+; marker's snapshot (gate/vel/active macros) before JUMP, so every iteration
+; replays identically. Both gate and vel drift here, on FM and PSG.
+(fm1 :tempo 200 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 8
+  #loop c e g
+  :gate* 0.5 :vel 8 c e g
+  (go loop))
+(sqr1 :len 8
+  #loop c e g
+  :gate* 0.5 :vel 6 c e g
+  (go loop))

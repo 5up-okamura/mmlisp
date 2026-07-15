@@ -25,7 +25,9 @@
 // Gate rule (opcodes.md §3.1 + language.md §5 legato): key-off fires at
 // dur×gate/8 ticks. With gate = 8 the key-off at dur expiry is *pending*: it
 // is cancelled if the next timed event on the track is a NOTE_ON (slur) or a
-// TIE (extension), and fires before a REST or END_OF_TRACK.
+// TIE (extension), and fires before a REST or END_OF_TRACK. A NOTE_ON_EX
+// absolute gate (`:gate-`, irregular gates) counts from note-on across TIE
+// segments — it may outlast this segment's dur and key off mid-tie.
 // ---------------------------------------------------------------------------
 
 import {
@@ -659,7 +661,11 @@ export class DrvPlayer {
     }
     trk.wait = dur;
     if (exGate != null) {
-      trk.gateLeft = exGate < dur ? exGate : dur;
+      // Absolute gate ticks from note-on. Counts down across TIE segments (a tie
+      // extends `wait`, never touches `gateLeft`), so a gate that outlasts this
+      // note's own `dur` — e.g. `:gate- Nt` resolved over a tied whole — keys off
+      // mid-tie, not clamped to the first segment's end. REST/next-note reset it.
+      trk.gateLeft = exGate;
       trk.pendingOff = false;
     } else if (gate < 8) {
       trk.gateLeft = Math.max(1, (dur * gate) >> 3);
@@ -720,6 +726,7 @@ export class DrvPlayer {
         }
         case OPCODE.REST: {
           trk.pendingOff = false;
+          trk.gateLeft = -1; // a rest cancels any gate still counting (unclamped exGate)
           this._channelOff(trk.channelId);
           const dur = readDuration(s, trk.pc + 1);
           trk.pc = dur.next;
@@ -1281,11 +1288,21 @@ export class DrvPlayer {
       // KEYON retrigger: a nonzero step re-attacks the note (driver.md §14).
       else if (d.target === TARGET_ID.KEYON) {
         if (v !== 0) this._keyonRetrigger(ch);
-      } else if (d.target === TARGET_ID.NOTE_PITCH && add) {
-        // Additive pitch macro: write note at (live pitch offset + sample) each
-        // frame, no store-back — a vibrato that rides the running :pitch offset.
-        if (ch < 6) this._writeFmPitch(ch, this._fm[ch].currentNote, this._fm[ch].pitchCents + v);
-        else if (ch - 6 < 3) this._writePsgPitch(ch - 6, this._psg[ch - 6].currentNote, this._psg[ch - 6].pitchCents + v);
+      } else if (d.target === TARGET_ID.NOTE_PITCH) {
+        // Pitch macro: write the note pitch each frame WITHOUT storing back to
+        // the sticky pitchCents (which holds the :pitch directive base). An
+        // override macro that clobbered pitchCents would leave a residual
+        // detune on every following note once it ends or is cleared. Additive
+        // rides the live offset (`pitchCents + v`); override replaces it (base
+        // 0 → `v` alone), matching ir-player's basePitchWrite.
+        if (ch < 6) {
+          const base = add ? this._fm[ch].pitchCents : 0;
+          this._writeFmPitch(ch, this._fm[ch].currentNote, base + v);
+        } else if (ch - 6 < 3) {
+          const p = ch - 6;
+          const base = add ? this._psg[p].pitchCents : 0;
+          this._writePsgPitch(p, this._psg[p].currentNote, base + v);
+        }
       } else this._paramSet(ch, d.target, v);
     }
     slot.stepClock = d.step - 1;

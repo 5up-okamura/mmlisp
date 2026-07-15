@@ -1,0 +1,11 @@
+; M3 gate: a note gate that spans a TIE. `:gate- Nt` resolves over the WHOLE
+; tied note, so the absolute gate can exceed the first NOTE_ON segment's own
+; length (here a quarter tied to an eighth, gate = tied-length − 2/3 ticks). The
+; driver must count the gate down across the tie — not clamp it to the first
+; segment — and key off mid-tie; a following REST cancels any still-counting
+; gate. Regression lock for the tied-note gate-clamp bug (fm2-5 of ACTRAISER
+; gh002 played the tied notes short). FM and PSG, with a plain gate-cut note too.
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 8 :gate- 2t
+  c4 ~ c e _ g4 ~ g c)
+(sqr1 :len 8 :gate- 3t
+  a4 ~ a c _ e4 ~ e a)

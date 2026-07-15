@@ -54,6 +54,23 @@ This file is the compact continuation state.
 5. Deferred/known-open (docs): batched frame flush + state-based comparator
    (drv/README deviations §1); ir.md §11 residual asymmetries (`:keyon` on
    FM3-op/PSG, inline-sweep `:wait`/`dyn.len`, PCM shot length).
+6. Residual ir↔drv **±1-2 frame** key-off skew on gate-cut notes where
+   `exGate < dur` (ir continuous clock vs drv frame-stepped tick accumulation) —
+   inherent quantization, accepted like the FM roughness. Seen on gh002 fm5
+   (`:gate- 6t`, 96-tick notes). Three drv/exporter bugs it used to hide behind,
+   all **fixed 2026-07-15** (found via ACTRAISER gh002 A/B), verify **27/27**:
+   - override-pitch-macro clobbered sticky `pitchCents` → detuned following notes
+     (drv-player + Z80 G_MADD 3-state; gate `m3-macro-pitchovr`).
+   - tied-note gate **clamp** (`gateLeft = min(exGate,dur)`) cut tied notes at the
+     tie boundary → `gateLeft = exGate`, counts across TIE, REST clears it
+     (drv-player + Z80; gate `m3-gate-tie`).
+   - **loop sticky-state bleed**: the linear MMB encoder omitted a PARAM_SET whose
+     value matched the state at `#loop`, but the loop tail left a different sticky
+     GATE/VEL/macro state → full-gate head notes played short on iterations 2+
+     (gh002 fm1 `:gate- 0t`). Fix: export-mmb snapshots sticky state at each
+     MARKER and restores it before a backward JUMP (gate `m3-loop-gate`).
+     **Encoder-only — no Z80 change; Z80≡drv holds because both replay the same
+     stream, so the regression lock is really the ir↔drv A/B, not verify:all.**
 
 ## Extension budget — how much room is left, and where the next bytes come from
 
@@ -66,7 +83,7 @@ watermark over the full gate corpus). Every `verify.mjs` run also prints a
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **47 B free** (resident 5835 B vs G_PCMV ceiling 5882 B / $16FA) as of step 10 (`npm run size`) | The scarce resource. Step 7 freed 201 B (ovl_rare); steps 8/9/10 (read_op_param, additive, scaled ~70 B) spent most of it. Held reserves for the next features: DATA_BASE bump (~20-26, hardware-gated) + psf commonization (~5). |
+| Resident code | **41 B free** (resident 5841 B vs G_PCMV ceiling 5882 B / $16FA) after the override-pitch-macro fix (`npm run size`) | The scarce resource. Step 7 freed 201 B (ovl_rare); steps 8/9/10 (read_op_param, additive, scaled ~70 B) + the 2026-07-15 override-pitch fix (+6 B, G_MADD 3-state) spent most of it. Held reserves: DATA_BASE bump (~20-26, hardware-gated) + psf commonization (~5). |
 | Rare-event handlers resident | **25 B** (d_marker only) | tempo set/sweep, CSM, FM3 mode evicted to ovl_rare (step 7). d_marker stays resident — no gate covers it, so eviction is unverifiable until a marker gate exists. |
 | Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238/250 (ovl_rare) B | A *new* overlay can be up to 451 B; growing the largest (445) has 6 B. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |

@@ -1,0 +1,12 @@
+; M3 gate: OVERRIDE curve pitch macro must not leave a residual detune. An
+; override `(macro :pitch <curve>)` writes the note pitch per frame WITHOUT
+; storing the sticky pitch base, so once the macro ends or is cleared with
+; `(macro :pitch none)` the following notes play at their true pitch. (Regression
+; lock for the stale-pitchCents bug: the override branch used to store back to
+; CHS_PITCH, detuning every note after a curve-pitch note.) FM and PSG.
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (macro :pitch (triangle -32..32 :len 8f)) :len 2
+  c (macro :pitch none) e g c)
+(sqr1 :len 2
+  (macro :pitch (triangle -40..40 :len 6f)) a
+  (macro :pitch none) c e a)

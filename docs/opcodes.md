@@ -73,8 +73,9 @@ host releases it (docs/language.md §17); the track suspends dispatch until then
 
 **0x11 REST** — key-off if still keyed, advance the clock by `dur`.
 
-**0x12 TIE** — extend the sounding note by `dur` without retrigger; the
-gate rule applies to the final segment.
+**0x12 TIE** — extend the sounding note by `dur` without retrigger. A sticky
+eighth-gate (NOTE_ON) applies per final segment; an absolute NOTE_ON_EX gate is
+counted from the original note-on and spans the tie (§5.1).
 
 **0x40 LOOP_BEGIN** — `count` = total iterations (2–255; 0 and 1 are
 reserved and must not be emitted — infinite repetition is a backward JUMP).
@@ -92,7 +93,12 @@ targets are resolved offsets. Zero-cost sync point.
 **0x43 JUMP** — unconditional jump to `dest`, a byte offset relative to the
 EVENT_STREAM payload start (same base as `event_offset`). Used for infinite
 loops (`#loop … (go loop)`). Finite `(go label n)` never reaches MMB — the
-compiler already rewrites it to LOOP_BEGIN/LOOP_END.
+compiler already rewrites it to LOOP_BEGIN/LOOP_END. The driver keeps its sticky
+state (VEL/GATE eighths, active macros) across the jump — the **encoder** is
+responsible for re-establishing, just before a backward JUMP, whatever sticky
+state the loop body assumes at its target marker, since the loop tail may leave a
+different state than the linear stream had at the marker (export-mmb.js). Without
+that, e.g. a full-gate `#loop` head note plays short on iterations 2+.
 
 **0x60 PARAM_SET** — set `target` to `value` (width per §7). Level targets
 (VEL/VOL/MASTER/GATE) update driver state; register targets write through
@@ -145,7 +151,7 @@ initial PARAM_SETs only for non-default values.
 | Bit | Field     | Size    | Meaning                                        |
 | --- | --------- | ------- | ---------------------------------------------- |
 | 0   | vel       | u8      | velocity for this note only (state untouched)  |
-| 1   | gate      | dur enc | absolute gate in ticks for this note only (covers `:gate-` and irregular gates) |
+| 1   | gate      | dur enc | absolute gate in ticks **from note-on** for this note only (covers `:gate-` and irregular gates). Counted down across TIE segments — a gate resolved over a tied whole may exceed this NOTE_ON_EX's own `dur`, keying off mid-tie; it is **not** clamped to the first segment. A following REST cancels a still-counting gate |
 | 2   | macro_ref | u8      | per-note one-shot: trigger MACRO_TABLE[macro_ref] for this note only, without touching the sticky active set (mmb.md §15, opcodes.md §6) |
 | 3   | legato    | —       | slur: write the F-number / recompose levels / re-snapshot macros but **do not re-key** (leave `$28`, the FM EG or PSG tone carries over). No field. `X ~ Y` different-pitch (language.md §3.1). FM/PSG only |
 | 4–7 | —         | —       | reserved; **must be 0** — a decoder seeing a set reserved bit must fail-safe (sizes unknown → not skippable) |
