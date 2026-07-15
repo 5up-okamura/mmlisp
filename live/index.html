@@ -3427,7 +3427,13 @@
       indentUnit.of('  '),
       mmlispIndent,
       mmlispParenFold,
-      autocompletion({ override: [mmlispCompletions] }),
+      // Cap rendered completion options. The full form/track list is ~69 items;
+      // rendering them all makes CodeMirror measure each option's geometry, and
+      // on this wrapped, large editor every measurement forces a full layout
+      // reflow — so opening the popup with `(` cost ~480ms of getBoundingClientRect
+      // (spamming `(` while playing then starved the audio pump). Rendering a
+      // small window (the list stays complete and scrollable) drops that ~6×.
+      autocompletion({ override: [mmlispCompletions], maxRenderedOptions: 12 }),
       keymap.of([
         indentWithTab,
         { key: 'Enter', run: insertNewlineAndIndent },
