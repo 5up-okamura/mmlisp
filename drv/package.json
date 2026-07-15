@@ -10,7 +10,6 @@
     "selftest": "node tools/selftest.mjs",
     "size": "node tools/size-audit.mjs",
     "budget": "node tools/budget.mjs",
-    "verify:batch": "node tools/batch-diff.mjs",
     "verify": "node tools/verify.mjs ../examples/source/ab-core.mmlisp",
     "verify:stress": "node tools/verify.mjs tests/stress-m1.mmlisp --frames 1800 && node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200",
     "verify:m2": "node tools/verify.mjs tests/m2-motion.mmlisp --frames 800 && node tools/verify.mjs tests/m2b-pitch.mmlisp --frames 500 && node tools/verify.mjs tests/m2-csm.mmlisp --frames 300 && node tools/verify.mjs tests/m2-pcm.mmlisp --frames 200 && node tools/verify.mjs tests/m2-pcmloop.mmlisp --frames 400 && node tools/verify.mjs tests/m2-mailbox.mmlisp --frames 400",
