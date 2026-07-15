@@ -1784,21 +1784,9 @@ param_set:
     ld c,b
     jp write_psg_att
 
-ps_psg_pitch:              ; store cents, re-emit period (noise has no pitch)
+ps_psg_pitch:              ; store/ride cents, re-emit period (noise has no pitch)
     ld hl,(G_VAL)
-    ld a,(G_MADD)
-    or a
-    jr nz,psp_add           ; additive macro: ride CHS_PITCH, no store
-    ld (G_PITCHC),hl
-    ld (iy+CHS_PITCH),l
-    ld (iy+CHS_PITCH+1),h
-    jr psp_emit
-psp_add:
-    ld e,(iy+CHS_PITCH)
-    ld d,(iy+CHS_PITCH+1)
-    add hl,de              ; HL = CHS_PITCH + sample
-    ld (G_PITCHC),hl
-psp_emit:
+    call pitch_cents
     ld a,(G_CH)
     cp 9
     ret z                  ; noise: no tone period
@@ -1938,23 +1926,29 @@ psf_vol:
     ld a,(G_CH)             ; IX may be a sweep slot here, not the TCB
     jp write_carrier_tls
 
-psf_pitch:                 ; store cents, re-emit F-number/block. C/D set by ps_fm.
-    ld hl,(G_VAL)
+; pitch_cents: HL = sample, IY = chs → set G_PITCHC. Override (G_MADD=0): store
+; CHS_PITCH. Additive (G_MADD≠0): G_PITCHC = CHS_PITCH + sample, no store — ride
+; the live offset (:pitch+/:semi+). Preserves BC/DE (write_*_pitch needs port).
+pitch_cents:
     ld a,(G_MADD)
     or a
-    jr nz,psf_pitch_add     ; additive macro: ride CHS_PITCH, no store
+    jr nz,pc_add
     ld (G_PITCHC),hl
     ld (iy+CHS_PITCH),l
     ld (iy+CHS_PITCH+1),h
-    ld a,(iy+CHS_NOTE)
-    jp write_fm_pitch
-psf_pitch_add:
-    push de                 ; D = port (needed by write_fm_pitch) — the add uses DE
+    ret
+pc_add:
+    push de
     ld e,(iy+CHS_PITCH)
     ld d,(iy+CHS_PITCH+1)
-    add hl,de              ; HL = CHS_PITCH + sample
+    add hl,de
     pop de
     ld (G_PITCHC),hl
+    ret
+
+psf_pitch:                 ; store/ride cents, re-emit F-number. C/D set by ps_fm.
+    ld hl,(G_VAL)
+    call pitch_cents
     ld a,(iy+CHS_NOTE)
     jp write_fm_pitch
 
