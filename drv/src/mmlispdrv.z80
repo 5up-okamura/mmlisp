@@ -125,6 +125,11 @@ G_PCM_MUL   equ G_BASE+$52      ; u32  scratch for the 16x16 multiply / divide
 G_PEND_A    equ G_BASE+$56      ; u8  pending YM addr (0 = none)
 G_PEND_P    equ G_BASE+$57      ; u8  pending port
 G_PEND_D    equ G_BASE+$58      ; u8  pending data
+; Additive macro flag (§4.4): set while a `:pitch+`/`:semi+` macro sample is
+; applied so psf_pitch / ps_psg_pitch / apply_note_semi write note at
+; CHS_PITCH+sample (ride the live offset) with no store-back, instead of
+; overriding CHS_PITCH. Cleared after each macro apply.
+G_MADD      equ G_BASE+$59      ; u8  0 = override, nonzero = additive
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
 ; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
@@ -1588,6 +1593,9 @@ sm_wide:
     jr z,sm_noapply
 sm_pos:
     ld (G_VAL),de
+    ld a,(iy+1)
+    and 2                   ; add flag (bit1) → additive mode for pitch/semi
+    ld (G_MADD),a
     ld a,(iy+0)             ; target
     cp 7                    ; NOTE_SEMI: key-on pitch offset (arpeggio)
     jr z,sm_semi
@@ -1613,6 +1621,8 @@ sm_keyon:
     pop ix
     pop iy
 sm_noapply:
+    xor a
+    ld (G_MADD),a           ; leave additive mode (default: override)
     ld a,(iy+2)             ; step
     dec a
     ld (ix+MSL_CLK),a
@@ -1661,8 +1671,14 @@ apply_note_semi:
     ld hl,(G_VAL)
     add a,l                 ; effective note = note + semi
     ld b,a
-    ld hl,0
-    ld (G_PITCHC),hl        ; cents 0
+    ld hl,0                 ; cents 0 (override) …
+    ld a,(G_MADD)
+    or a
+    jr z,ans_cents
+    ld l,(iy+CHS_PITCH)     ; … or ride the live :pitch offset (additive)
+    ld h,(iy+CHS_PITCH+1)
+ans_cents:
+    ld (G_PITCHC),hl
     ld a,(G_CH)
     cp 6
     jr nc,ans_psg
@@ -1770,9 +1786,19 @@ param_set:
 
 ps_psg_pitch:              ; store cents, re-emit period (noise has no pitch)
     ld hl,(G_VAL)
+    ld a,(G_MADD)
+    or a
+    jr nz,psp_add           ; additive macro: ride CHS_PITCH, no store
     ld (G_PITCHC),hl
     ld (iy+CHS_PITCH),l
     ld (iy+CHS_PITCH+1),h
+    jr psp_emit
+psp_add:
+    ld e,(iy+CHS_PITCH)
+    ld d,(iy+CHS_PITCH+1)
+    add hl,de              ; HL = CHS_PITCH + sample
+    ld (G_PITCHC),hl
+psp_emit:
     ld a,(G_CH)
     cp 9
     ret z                  ; noise: no tone period
@@ -1914,9 +1940,21 @@ psf_vol:
 
 psf_pitch:                 ; store cents, re-emit F-number/block. C/D set by ps_fm.
     ld hl,(G_VAL)
+    ld a,(G_MADD)
+    or a
+    jr nz,psf_pitch_add     ; additive macro: ride CHS_PITCH, no store
     ld (G_PITCHC),hl
     ld (iy+CHS_PITCH),l
     ld (iy+CHS_PITCH+1),h
+    ld a,(iy+CHS_NOTE)
+    jp write_fm_pitch
+psf_pitch_add:
+    push de                 ; D = port (needed by write_fm_pitch) — the add uses DE
+    ld e,(iy+CHS_PITCH)
+    ld d,(iy+CHS_PITCH+1)
+    add hl,de              ; HL = CHS_PITCH + sample
+    pop de
+    ld (G_PITCHC),hl
     ld a,(iy+CHS_NOTE)
     jp write_fm_pitch
 

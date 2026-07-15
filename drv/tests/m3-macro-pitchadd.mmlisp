@@ -1,0 +1,14 @@
+; v0.6 additive pitch macro (:pitch+, §4.4): a vibrato that RIDES the live
+; :pitch offset instead of overriding it. Each frame the register pitch is
+; note + (sticky :pitch + macro sample). Two voices share the LFO shape but sit
+; at different :pitch offsets → they stay detuned while wobbling in sync.
+
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  :pitch 24
+  (macro :pitch+ (triangle -20..20 :len 8f))
+  :len 2 c e g c)
+
+(fm2 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  :pitch -24
+  (macro :pitch+ (triangle -20..20 :len 8f))
+  :len 2 c e g c)

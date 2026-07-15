@@ -1243,12 +1243,14 @@ export class DrvPlayer {
 
   // NOTE_SEMI macro apply: pitch register at (current note + semitones), cents 0,
   // no change to the channel's sticky pitch offset (matches ir-player basePitchWrite).
-  _writeNoteSemi(ch, semi) {
+  // `add` (additive macro, §4.4): ride the live :pitch offset (cents) instead of
+  // overriding to 0 — for `:semi+` sharing a vibrato over a detuned base.
+  _writeNoteSemi(ch, semi, add = false) {
     if (ch < 6) {
-      this._writeFmPitch(ch, this._fm[ch].currentNote + semi, 0);
+      this._writeFmPitch(ch, this._fm[ch].currentNote + semi, add ? this._fm[ch].pitchCents : 0);
     } else if (ch < 10) {
       const p = ch - 6;
-      if (p < 3) this._writePsgPitch(p, this._psg[p].currentNote + semi, 0);
+      if (p < 3) this._writePsgPitch(p, this._psg[p].currentNote + semi, add ? this._psg[p].pitchCents : 0);
     }
   }
 
@@ -1291,12 +1293,18 @@ export class DrvPlayer {
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
     const v = d.values[slot.cursor];
     if (v !== null && v !== undefined) {
+      const add = (d.flags & 2) !== 0; // additive macro (§4.4): live offset + sample
       // NOTE_SEMI is a key-on pitch offset (chiptune arpeggio): write the pitch
       // register at note+semi without touching the sticky :pitch state.
-      if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v);
+      if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v, add);
       // KEYON retrigger: a nonzero step re-attacks the note (driver.md §14).
       else if (d.target === TARGET_ID.KEYON) {
         if (v !== 0) this._keyonRetrigger(ch);
+      } else if (d.target === TARGET_ID.NOTE_PITCH && add) {
+        // Additive pitch macro: write note at (live pitch offset + sample) each
+        // frame, no store-back — a vibrato that rides the running :pitch offset.
+        if (ch < 6) this._writeFmPitch(ch, this._fm[ch].currentNote, this._fm[ch].pitchCents + v);
+        else if (ch - 6 < 3) this._writePsgPitch(ch - 6, this._psg[ch - 6].currentNote, this._psg[ch - 6].pitchCents + v);
       } else this._paramSet(ch, d.target, v);
     }
     slot.stepClock = d.step - 1;
