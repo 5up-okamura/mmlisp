@@ -985,13 +985,24 @@ Driver track (Tiers B-D + data; each step separately gated):
      `W_EVAL_CHAIN_LONG` (>6 ops, interim until §4.7 (c)). Gate: new score with
      `:tl1 (+ $a (* $b 2))`-style chains; verify:all; A/B drv≡ir; m3-dynval
      unchanged.
-9. **Additive macro Z80 branch** (held since round 1; now unblocked) —
-   `G_MADD` scratch, add-no-store in `psf_pitch`/`ps_psg_pitch`,
-   `apply_note_semi` loads `CHS_PITCH`. Gate: new trace score incl. the
-   `(+ (sin) $detune)` composite.
+9. **Additive macro (`:pitch+`/`:semi+`)** — **DONE (commit e4a6bbb).** Rides
+   the live `:pitch` offset (note + CHS_PITCH + sample, no store-back) instead of
+   overriding. Compiler `spec.add` + exporter bit1 already existed; ir-player
+   already applied it — this brought drv-player (`_stepMacro` additive branch,
+   `_writeNoteSemi` add param) and the Z80 up. Z80: `G_MADD` flag (G_BASE+$59,
+   boot-cleared), no-store additive path in `psf_pitch`/`ps_psg_pitch`/
+   `apply_note_semi`, set/cleared around the stepper apply (`psf_pitch_add` saves
+   D — write_fm_pitch needs the port). Gate `m3-macro-pitchadd` (2 voices, shared
+   LFO, opposite `:pitch`): verify:all 23/23, additive drv == ir frame-final on
+   all F-num regs, strict 6/6. Then **commit a82e76b** commonized the duplicated
+   cents logic into `pitch_cents` (+25 B). **Budget is now TIGHT: 26 B free**
+   (step 9 hit 1 B; commonization recovered to 26). The ovl_rare eviction funding
+   is nearly spent (read_op_param 74 + batched flush ~94 + additive net ~40).
 10. **Scaled macro flag** (§4.4) — MMB bit2 + slot byte; stepper branch +
-    mul. Gate: new trace score (`(* (sin) $depth)` with mid-score SET_VAL
-    via the cmd sidecar).
+    `mul16x8_sh8` (resident). Gate: new trace score (`(* (sin) $depth)` with
+    mid-score SET_VAL via the cmd sidecar). **Needs budget prep first** (~30-40 B
+    vs 26 B free) — more eviction (d_marker after adding a marker gate, or other
+    cold code) / commonization, or the hardware-gated DATA_BASE bump.
 11. **M3 dyn slice** (note-on tier) — slot-fed curve params at fire time
     (overlay-hosted per-note work, PCM precedent). Gate: dyn scores stop
     warning and trace-match live.
