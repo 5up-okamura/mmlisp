@@ -101,6 +101,7 @@ export class IRPlayer {
     this._ppqn = 48;
     this._bpm = 120;
     this._tempoSweep = null;
+    this._tempoOverride = false; // set once the tempo is dialled in live
     this._startAudioTime = 0;
     this._audioContext = null;
     this._schedulerTimer = null;
@@ -222,6 +223,7 @@ export class IRPlayer {
     this._ppqn = irObj.ppqn ?? 48;
     this._bpm = this._resolveInitialTempo(irObj);
     this._tempoSweep = null;
+    this._tempoOverride = false; // a newly loaded score starts at its own tempo
     // v0.5 dynamic value slots: name → current value, seeded from def-val inits.
     // The host (or live UI) mutates these via setVal(); scores read them with
     // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
@@ -519,6 +521,10 @@ export class IRPlayer {
    */
   setTempo(bpm) {
     if (!Number.isFinite(bpm) || bpm <= 0) return;
+    // Dialled in live: hold it against the score's own tempo events (including
+    // the tick-0 one a loop replays) for the rest of this run. Loading an IR
+    // clears the override, so a fresh score still starts at its written tempo.
+    this._tempoOverride = true;
     this._tempoSweep = null;
     if (this._playing && this._tracks.length > 0 && this._audioContext) {
       const now = this._audioContext.currentTime;
@@ -1815,6 +1821,10 @@ export class IRPlayer {
   _dispatchGlobalEvent(ev, when) {
     switch (ev.cmd) {
       case "TEMPO_SET": {
+        // A live tempo (the panel) outranks the score until playback restarts.
+        // A loop re-fires the score's tick-0 TEMPO_SET on every lap, which would
+        // otherwise snap the dialled-in tempo back each time round.
+        if (this._tempoOverride) return true;
         const bpm = Number(ev.args?.bpm);
         if (Number.isFinite(bpm) && bpm > 0) {
           this._tempoSweep = null;
@@ -1826,6 +1836,7 @@ export class IRPlayer {
       }
 
       case "TEMPO_SWEEP": {
+        if (this._tempoOverride) return true;
         this._startTempoSweep(ev.args ?? {}, ev.tick ?? 0, when);
         return true;
       }
