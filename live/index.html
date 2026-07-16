@@ -1032,6 +1032,18 @@
           <span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
         </button>
+        <button class="menu-item" onclick="openFolder();closeMenus()"
+                title="Open a score's folder so its relative :file samples (wav next to the score) load. Session-scoped: reopen after a reload. Chrome blocks Desktop/Documents themselves; use a subfolder.">
+          <span>Open Folder…</span>
+          <span class="menu-item-shortcut" id="sourceDirLabel"></span>
+        </button>
+        <div class="menu-wrap submenu-wrap" id="menuFolderScores" hidden>
+          <button class="menu-item" onclick="toggleSubmenu('menuFolderScores')">
+            <span>Scores in Folder</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="folderScoresList"></div>
+        </div>
         <div class="menu-wrap submenu-wrap" id="menuImport">
           <button class="menu-item" onclick="toggleSubmenu('menuImport')">
             <span>Import</span>
@@ -3262,7 +3274,6 @@
     function loadMucomSource(source, warnings, fileName, label) {
       _sourceHandle = null;
       _sourceFileName = (fileName || 'mucom').replace(/\.[^.]*$/, '') + '.mmlisp';
-      _sourceDir = null;
       currentIrURL = null;
       _lastFileName = _sourceFileName;
       _lastGoodIR = null;
@@ -3526,10 +3537,27 @@
     let _lastFileName = 'untitled.mmlisp';
     let _sourceHandle = null;
     let _sourceFileName = null;
+    // Source folder (File > Open Folder…): the base a score's relative `:file`
+    // sample paths resolve against. Deliberately session-scoped — a reload
+    // starts clean rather than silently resolving samples against a folder from
+    // some earlier sitting.
     let _sourceDir = null;
+    let _sourceDirScores = []; // .mmlisp handles in _sourceDir, for the File menu
     let _unsavedSamplePathWarned = false;
     const _pcmSampleCache = new Map();
     const _pcmCompiledCache = new Map();
+
+    // Resolve to true only when the folder is readable now. Never throws: a lost
+    // grant just means we fall back to fetch. The picker grants read for the
+    // session, so this is normally a no-op query.
+    async function ensureSourceDirPermission() {
+      if (!_sourceDir) return false;
+      try {
+        return (await _sourceDir.queryPermission({ mode: 'read' })) === 'granted';
+      } catch {
+        return false;
+      }
+    }
 
     function toFetchablePath(path) {
       if (!path) return null;
@@ -3564,14 +3592,43 @@
       return mono;
     }
 
+    // Read a sample through the opened source folder. `:file` is relative to the
+    // score (language.md §PCM), and a file picked with showOpenFilePicker exposes
+    // no parent directory — so a local score's sibling wav is only reachable once
+    // the user has opened its folder (File > Open Folder…, remembered across
+    // sessions). Returns null when there is no folder or no such file, so the
+    // caller can fall back to fetch (URL / server-root paths).
+    async function sampleBytesFromSourceDir(path) {
+      if (!_sourceDir) return null;
+      const segs = String(path)
+        .split('/')
+        .filter((s) => s && s !== '.');
+      if (segs.length === 0 || segs.includes('..')) return null;
+      try {
+        if (!(await ensureSourceDirPermission())) return null;
+        let dir = _sourceDir;
+        for (const seg of segs.slice(0, -1)) {
+          dir = await dir.getDirectoryHandle(seg);
+        }
+        const fileHandle = await dir.getFileHandle(segs[segs.length - 1]);
+        return await (await fileHandle.getFile()).arrayBuffer();
+      } catch {
+        return null; // not in the folder — let the caller try fetch
+      }
+    }
+
     async function decodePcmSample(path) {
       const cached = _pcmSampleCache.get(path);
       if (cached) return cached;
-      const url = toFetchablePath(path);
-      if (!url || !audioCtx) return null;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const encoded = await res.arrayBuffer();
+      if (!audioCtx) return null;
+      let encoded = await sampleBytesFromSourceDir(path);
+      if (!encoded) {
+        const url = toFetchablePath(path);
+        if (!url) return null;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        encoded = await res.arrayBuffer();
+      }
       const decoded = await audioCtx.decodeAudioData(encoded.slice(0));
       const out = { data: audioBufferToMono(decoded), sampleRate: decoded.sampleRate };
       _pcmSampleCache.set(path, out);
@@ -3624,7 +3681,14 @@
             loopEnd: Number.isFinite(def.loopEnd) ? def.loopEnd : null,
           });
         } catch (e) {
-          log(`PCM load failed (${def.name}): ${e.message}`, 'err');
+          // The commonest cause is a relative :file with no folder open — the
+          // fetch fallback then 404s against the server root. Say what to do.
+          log(
+            _sourceDir
+              ? `PCM load failed (${def.name}): ${e.message}`
+              : `PCM ${def.name}: ${e.message} — use File > Open Folder… to load samples next to the score`,
+            'err',
+          );
         }
       }
 
@@ -3634,7 +3698,6 @@
     function setSourceContextFromHandle(handle) {
       _sourceHandle = handle;
       _sourceFileName = handle?.name || null;
-      _sourceDir = null;
       currentIrURL = null;
       _lastFileName = _sourceFileName || 'untitled.mmlisp';
     }
@@ -3649,8 +3712,7 @@
       if (/\.mmb(?:$|\?)/i.test(file.name)) {
         _sourceHandle = null;
         _sourceFileName = file.name;
-        _sourceDir = null;
-        currentIrURL = URL.createObjectURL(file);
+          currentIrURL = URL.createObjectURL(file);
         _lastGoodIR = null;
         _lastSourceMap = null;
         _lastFileName = file.name;
@@ -3670,9 +3732,118 @@
       const [handle] = await window.showOpenFilePicker({
         types: SOURCE_FILE_TYPES,
         multiple: false,
+        // Start in the opened folder when there is one, so Open lands on the
+        // project rather than wherever the OS picker was left.
+        ...(_sourceDir ? { startIn: _sourceDir } : {}),
       });
       await readFileHandle(handle);
     }
+
+    // Open a score's folder rather than the bare file: a handle from
+    // showOpenFilePicker exposes no parent directory, so this is the only way a
+    // local score can reach the wavs sitting next to it. The folder is
+    // remembered, so reopening later plays the PCM without picking again.
+    function setSourceDir(handle) {
+      _sourceDir = handle;
+      _pcmSampleCache.clear(); // paths now resolve against a different base
+      updateSourceDirLabel();
+    }
+
+    async function openFolder() {
+      let dir;
+      try {
+        dir = await window.showDirectoryPicker({ mode: 'read' });
+      } catch (e) {
+        // Cancel and "this folder contains system files" both surface as
+        // AbortError, so we cannot tell them apart — point at the fix for the
+        // latter, which is the only one worth acting on.
+        if (e?.name === 'AbortError') {
+          log(
+            'No folder opened. Chrome blocks well-known folders (Desktop, Documents, …) — put the score in a subfolder and open that.',
+            'info',
+          );
+          return;
+        }
+        log('Open Folder failed: ' + e.message, 'err');
+        return;
+      }
+      setSourceDir(dir);
+      const scores = await refreshFolderScores();
+
+      // Always land on a score, so opening a folder leaves you editing
+      // something playable rather than staring at an unchanged editor. The rest
+      // are one click away under File > Scores in Folder.
+      if (scores.length > 0) {
+        await openScoreFromFolder(0);
+        if (scores.length > 1) {
+          log(
+            `${scores.length - 1} more score${scores.length > 2 ? 's' : ''} under File > Scores in Folder`,
+            'info',
+          );
+        }
+        return;
+      }
+      log(`Folder ${dir.name} set for samples (no .mmlisp inside)`, 'info');
+      if (_lastGoodIR) compileNow(); // re-resolve samples against the new folder
+    }
+
+    // Enumerate the folder's scores and render them into the File menu.
+    async function refreshFolderScores() {
+      _sourceDirScores = [];
+      if (_sourceDir && (await ensureSourceDirPermission())) {
+        try {
+          for await (const [name, entry] of _sourceDir.entries()) {
+            if (entry.kind === 'file' && /\.mmlisp$/i.test(name)) {
+              _sourceDirScores.push(entry);
+            }
+          }
+          _sourceDirScores.sort((a, b) => a.name.localeCompare(b.name));
+        } catch {
+          _sourceDirScores = [];
+        }
+      }
+      renderFolderScores();
+      return _sourceDirScores;
+    }
+
+    function renderFolderScores() {
+      const wrap = document.getElementById('menuFolderScores');
+      const list = document.getElementById('folderScoresList');
+      if (!wrap || !list) return;
+      wrap.hidden = _sourceDirScores.length === 0;
+      list.innerHTML = '';
+      _sourceDirScores.forEach((entry, i) => {
+        const b = document.createElement('button');
+        b.className = 'menu-item';
+        // Same shape as the other menu items: label + right-aligned marker,
+        // with a check on the score that is currently open.
+        const name = document.createElement('span');
+        name.textContent = entry.name;
+        const mark = document.createElement('span');
+        mark.className = 'menu-item-shortcut';
+        mark.textContent = entry.name === _sourceFileName ? '✓' : '';
+        b.append(name, mark);
+        b.onclick = () => {
+          openScoreFromFolder(i);
+          closeMenus();
+        };
+        list.appendChild(b);
+      });
+    }
+
+    async function openScoreFromFolder(i) {
+      const entry = _sourceDirScores[i];
+      if (!entry) return;
+      await readFileHandle(entry);
+      log(`Opened ${entry.name} (folder ${_sourceDir?.name ?? '?'})`, 'info');
+      renderFolderScores(); // move the active marker
+    }
+
+    function updateSourceDirLabel() {
+      const el = document.getElementById('sourceDirLabel');
+      if (el) el.textContent = _sourceDir ? _sourceDir.name : '';
+    }
+
 
     async function saveFileAs() {
       const handle = await window.showSaveFilePicker({
@@ -3871,7 +4042,6 @@
     function newFile() {
       _sourceHandle = null;
       _sourceFileName = null;
-      _sourceDir = null;
       currentIrURL = null;
       _lastFileName = 'untitled.mmlisp';
       _lastGoodIR = null;
@@ -4708,7 +4878,6 @@
       onStop();
       _sourceHandle = null;
       _sourceFileName = null;
-      _sourceDir = null;
       if (/\.mmb(?:$|\?)/i.test(url)) {
         setEditorDoc('(binary MMB preset loaded)');
       } else {
@@ -4964,6 +5133,7 @@
     window.onStop       = onStop;
     window.newFile      = newFile;
     window.openFile     = openFile;
+    window.openFolder   = openFolder;
     window.saveFile     = saveFile;
     window.saveFileAs   = saveFileAs;
     window.exportVgm    = exportVgm;

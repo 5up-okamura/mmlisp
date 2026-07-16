@@ -1075,7 +1075,7 @@ sample symbol).
 
 | Key           | Meaning                                                        |
 | ------------- | -------------------------------------------------------------- |
-| `:file`       | WAV path, relative to the source file. Required (`E_SAMPLE_FILE`) |
+| `:file`       | WAV path, relative to the source file. Required (`E_SAMPLE_FILE`). See *Sample paths in the live editor* below |
 | `:rate`       | C4 playback rate in Hz (default: the WAV's native rate)        |
 | `:loop-start` / `:loop-end` | Sustain-loop points (sample frames)              |
 | `:bit-depth`  | Quantize to N bits (expanded to 8-bit for playback)            |
@@ -1085,6 +1085,27 @@ sample symbol).
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, data becomes
 raw 8-bit signed PCM.
+
+**Sample paths in the live editor.** A relative `:file` resolves against the
+score's folder, but a browser only hands the editor a *file* when you use
+`File > Open` — it never reveals that file's directory, so a sibling wav cannot
+be found (the compiler warns `W_SAMPLE_BASE_UNKNOWN`). Use **`File > Open
+Folder…`** to open the score's folder instead: the wav next to the score then
+loads, and paths into subfolders (`:file "sounds/kick.wav"`) work the same way.
+The folder is **session-scoped** — a reload starts clean, so open it again
+rather than have samples silently resolve against an earlier sitting's folder.
+
+Opening a folder loads its first score (alphabetically) straight away; any
+others are listed under **`File > Scores in Folder`** (a check marks the open
+one), so switching between a project's scores is one click and keeps the
+samples resolved.
+
+Chrome refuses to grant access to well-known folders themselves (`Desktop`,
+`Documents`, …, reported as "contains system files"), so keep a score in a
+subfolder — `~/Desktop/mysong/` opens, `~/Desktop/` does not.
+
+Without a folder, `:file` falls back to the dev server's root, so absolute
+server paths (`/drv/tests/blip.wav`) and full URLs (CORS permitting) also work.
 
 `pcm1`–`pcm3` are three voices **soft-mixed** by the Z80 to the single fm6 DAC
 at a fixed mix rate (~10.5 kHz): each voice is resampled to that grid, the
