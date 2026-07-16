@@ -163,6 +163,7 @@ Phase 3 entry condition:
 | v0.3    | frozen   | v0.3-freeze    | gate, shuffle, track append, voice reference, relative volume controls               |
 | v0.4    | frozen   | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model          |
 | v0.5    | complete | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, File I/O UI |
+| v0.6    | in progress | —           | Score removal, compile-time eval (`let`/`note`/`ticks`/curve library/`:seed`), the runtime value machine + interactive knobs (scaled-macro depth, slot-fed sweep endpoints), mucom import. Driver track landed in emulation; CALL/RET + hardware bring-up remain (see the v0.6 section below) |
 
 ### v0.4 Implementation Progress
 
@@ -443,9 +444,14 @@ remains the sole runtime-varying path.
   size audit, overlay eviction). Normative record and ordered implementation
   plan: `.claude/memory/design-eval.md`.
   **Compiler track landed** (scalar + curve arithmetic, `:seed`, `let`, `note`,
-  `ticks`/`frames`, signal materialization; language.md §7). The operator-suffix
-  desugaring and the runtime tiers ride the driver track (generic shadow read +
-  value machine), which is the next arc.
+  `ticks`/`frames`, signal materialization; language.md §7). **Driver track
+  landed** too: the generic shadow read + value machine (left-linear `$slot`
+  expressions at event ticks), additive `:pitch+`/`:semi+`, the **scaled-macro
+  depth knob** (`(* <LFO> $slot)`, per-frame), and **slot-fed sweep endpoints**
+  (note-on). All four sampling tiers now have Z80 support and gates
+  (`cd drv && npm run verify:all`). Remaining: CALL/RET + the exporter dedup
+  pass (data size, budget-gated), slot-fed macro-curve params, and the compile
+  shadow fold (parked). Hardware bring-up is the real frontier.
 - **Phase 4 — enabled by eval.** Algorithmic composition, parametric phrases as
   real functions, signal composition (`(+ (sin) (saw))`, `(* env lfo)`),
   curves-as-a-standard-library.

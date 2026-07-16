@@ -745,10 +745,36 @@ Declare a runtime value slot with `(def-val ...)` and reference it with
 - `:from` / `:to` set the slider's endpoints (either direction); the
   positional value is the initial setting.
 - `$time` is built in: elapsed 60 Hz frames since track start.
-- Curve `:from` / `:to` / `:rate` / `:len` accept `$name`, read once at each
-  note-on.
 
-See `docs/language.md` §8 for `:step`, `:unit`, and the IR mapping.
+**Expressions over slots.** A `$name` can sit inside an arithmetic expression;
+it is evaluated at the event, so the write tracks the slot live:
+
+```lisp
+(fm1 :tl1 (- 40 (* $tension 0.2))   ; brightness follows tension every write
+     c e g e)
+```
+
+**When each read happens (sampling tiers).** The same `$name` differs only in
+*when* it is read:
+
+- **event** — `:tl1 (+ $a 5)` reads at the directive (game writes → next write follows).
+- **note-on** — a sweep's `:from`/`:to` read when the sweep fires, so a later
+  note swells to a new target:  `:vol (linear :from $lo :to $hi :len 60f)`.
+- **frame** — a **scaled macro** `(* <LFO> $slot)` reads every frame, so the
+  slot is a live **depth knob**:
+
+```lisp
+(def-val depth 128 0..255)                       ; 0 = off, 255 ≈ full
+(fm1 (macro :pitch (* (sin :rate 6) $depth)) c e g)  ; live vibrato depth
+(fm2 (macro :tl1  (* (triangle 0..40 :len 8f) $depth)) c e g)  ; live tremolo
+```
+
+Curve `:from`/`:to`/`:rate`/`:len` also accept a bare `$name`, read once per
+note-on. (On the driver today, inline-sweep endpoints are slot-fed; slot-fed
+macro-curve params still bake to the slot's initial value.)
+
+See `docs/language.md` §7 (expressions, scaled macro) and §8 (`:step`, `:unit`,
+the IR mapping).
 
 ---
 
