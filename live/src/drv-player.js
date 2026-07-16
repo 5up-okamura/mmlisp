@@ -222,6 +222,30 @@ export class DrvPlayer {
       for (let i = 0; i < n; i++) valInits.push(i16(u16(valTable, 2 + i * 2)));
     }
 
+    // METADATA (mmb.md §5): repeated {u8 keyLen, key, u16 valLen, value}. The
+    // driver itself never reads this section — the Z80 skips it — but the
+    // exporter records each value slot's source name as `val_<slot>`, which is
+    // the only place a name survives compilation (the stream and VAL_TABLE are
+    // numeric). Recovering that map is what lets the UI drive `def-val` slots
+    // by name (setVal) on this backend, exactly as it does on the IR player.
+    const valNameToSlot = new Map();
+    const meta = sections.get(SECTION_ID.METADATA);
+    if (meta) {
+      const dec = new TextDecoder();
+      for (let p = 0; p + 3 <= meta.length; ) {
+        const kLen = meta[p];
+        if (p + 1 + kLen + 2 > meta.length) break;
+        const key = dec.decode(meta.subarray(p + 1, p + 1 + kLen));
+        const vLen = u16(meta, p + 1 + kLen);
+        const vAt = p + 1 + kLen + 2;
+        if (vAt + vLen > meta.length) break;
+        const m = /^val_(\d+)$/.exec(key);
+        if (m) valNameToSlot.set(dec.decode(meta.subarray(vAt, vAt + vLen)), +m[1]);
+        p = vAt + vLen;
+      }
+    }
+    this._valNameToSlot = valNameToSlot;
+
     // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs.
     // `blobBase` is the offset of the blob region within the section; entry
     // offsets are relative to it. We keep the section subarray + resolved
@@ -1821,6 +1845,25 @@ export class DrvPlayer {
   setPsgVol(psgCh, vol) {
     if (psgCh < 0 || psgCh > 3) return;
     this.setParam("VOL", vol, 6 + psgCh);
+  }
+
+  /**
+   * Live `def-val` slot write (same name-keyed interface as IRPlayer.setVal).
+   * Names come from the MMB metadata (loadMMB); the slot itself is what the
+   * stream reads, so this is the same write SET_VAL performs — a $slot-fed
+   * sweep or scaled macro picks it up on its next read.
+   */
+  setVal(name, value) {
+    const slot = this._valNameToSlot?.get(name);
+    if (slot === undefined || !this._valSlots || slot >= this._valSlots.length) return;
+    const v = Math.round(Number(value));
+    if (!Number.isFinite(v)) return;
+    this._valSlots[slot] = Math.max(-32768, Math.min(32767, v));
+  }
+
+  getVal(name) {
+    const slot = this._valNameToSlot?.get(name);
+    return slot === undefined ? undefined : this._valSlots?.[slot];
   }
 
   // ── Live mixer: mute / solo (same interface as IRPlayer) ─────────────────

@@ -4826,11 +4826,10 @@
 
       // MMLispDRV reference backend: compile → MMB v0.2 → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
-      // audible form of the A/B comparison. Mute/solo, live vol/master and the
-      // tempo fader are supported (re-applied from the persisted UI state
-      // below). Still IR-player-only here: line highlight, pause-resume,
-      // Dynamic Parameters (`setVal` keys slots by name; MMB carries only
-      // numeric slot ids) and PCM per-track gain.
+      // audible form of the A/B comparison. Mute/solo, live vol/master, the
+      // tempo fader and Dynamic Parameters are supported (re-applied from the
+      // persisted UI state below). Still IR-player-only here: line highlight,
+      // pause-resume and PCM per-track gain.
       if (_drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
         try {
           let mmbBytes;
@@ -4860,6 +4859,10 @@
             applyPlayerChannelState(player); // re-apply persisted mute/solo
           }
           player.play(audioCtx);
+          // After play(): the driver's reset is a power-on, reseeding every value
+          // slot from its def-val init, so the live slider values go in behind it
+          // (the IR player seeds slots on load instead, hence the earlier call there).
+          applyDynVals();
           log('Playing (MMLispDRV reference)', 'info');
           setPlayIcon(true);
           document.getElementById('btnPlay').classList.add('active');
