@@ -52,6 +52,29 @@ This file is the compact continuation state.
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait
    behavior on silicon, measure interrupt stack depth (relevant before any
    `DATA_BASE` bump). Emulator is not cycle-accurate by design.
+   **Decide PCM `:vel` here** — parked on this measurement (2026-07-17, user):
+   - **Confirmed bug**: `:vel` on a pcm track reaches the driver (export-mmb
+     emits it as `PARAM_SET VEL` on the pcm channel) but is **silently dropped**
+     — `_paramSet` bails at `channelId >= 6`, and the PCM voice has no amplitude.
+     Proof: DAC ($2A) output is **byte-identical across `:vel` 12/4/1** on
+     m3-pcm-softmix (52,500 samples). ir-player *does* honour it (worklet gain),
+     so this is an ir↔drv divergence the Z80≡drv gate can't see (both ignore it)
+     — same blind spot as the 2026-07-15 trio.
+   - **Design settled**: attenuate by **arithmetic shift**, not a multiply or a
+     LUT (user: "ビットシフトで十分"). `shift = (15 - vel) >> 2` → 0/-6/-12/-18 dB,
+     `vel 0` = silent (matches FM/PSG). Fits with no RAM growth: **PV_ACT spare
+     bits** (bit1 silent, bit4/5 = binary shift count) + sticky per-channel vel in
+     the free globals at `G_BASE+$57`. Snapshot the shift into the voice at
+     note-on and on live `PARAM_SET VEL`, so the mix loop stays one `sra` chain.
+   - **Blocked on bytes**: the mix loop is per-frame → resident. The shift alone
+     measured **+21 B vs 13 B free** (resident 5890 > G_PCMV ceiling 5882); the
+     whole feature needs ~50 B. Fund via **d_marker eviction (~25 B, needs a
+     marker gate first — see the rare-handler row)** + psf commonization, or the
+     `DATA_BASE` bump this item unblocks.
+   - **Cycles are the real question**: the shift runs 525×/frame on the already
+     dominant term. Measure here before spending the bytes.
+   - JS-reference-only is **not** shippable: drv would attenuate and Z80 would
+     not → verify:all breaks. Both sides land together or neither.
 4. **PAL correction** — deferred (driver.md §3.3): scale increments 6/5 at
    load or PAL-precomputed MMB via the reserved PAL_TIMEBASE header flag.
 5. Deferred/known-open (docs): batched frame flush + state-based comparator
