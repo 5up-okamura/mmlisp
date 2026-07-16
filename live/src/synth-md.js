@@ -146,6 +146,17 @@ export class MegaDriveSynth {
     this._ym._nopn_set_dac_enabled(next ? 1 : 0);
   }
 
+  /**
+   * Stage the 8-bit DAC value (0x80 = centre) for the next rendered sample.
+   * For callers that stream register 0x2a themselves (the MMLispDRV backend
+   * replays the driver's own DAC feed) — going through writeYM would spend the
+   * register path's 48 chip cycles on every byte, and at the driver's ~175
+   * bytes a frame that would race the chip well past its real rate.
+   */
+  setDacSample(value) {
+    this._ym._nopn_set_dac_sample(value & 0xff);
+  }
+
   setLpf(on, cutoffHz) {
     this._lpfOn = !!on;
     if (Number.isFinite(cutoffHz) && cutoffHz > 0) this._lpfCutoff = cutoffHz;

@@ -3654,6 +3654,63 @@
       return out;
     }
 
+    // Sample blobs for encodeMmb's SAMPLE_BANK (export-mmb.js §10): raw 8-bit
+    // signed PCM keyed by sample name. Without this the bank is omitted and the
+    // MMLispDRV backend (and any exported .mmb) has nothing to play. loopStart /
+    // loopEnd are left to the IR metadata — the compiled truth; baseRate must be
+    // supplied, since the exporter would otherwise fall back to 13000 Hz rather
+    // than the wav's own rate.
+    // encodeMmb reports more than dropped events (missing sample blobs, deferred
+    // macro tiers, …), so surface each diagnostic's own message instead of
+    // calling them all "events not in the M1 stream".
+    function reportMmbDiagnostics(diags) {
+      if (!diags?.length) return;
+      for (const d of diags) {
+        log(`MMB: ${d.message}`, d.severity === 'warning' ? 'warn' : 'err');
+      }
+      console.warn('encodeMmb diagnostics:', diags);
+    }
+
+    async function pcmSampleBlobsForMmb(ir) {
+      const defs = ir?.metadata?.samples;
+      if (!Array.isArray(defs) || defs.length === 0) return null;
+      const blobs = {};
+      for (const def of defs) {
+        if (!def?.name) continue;
+        try {
+          // Compiled samples are already signed-8; decode them straight to
+          // bytes rather than round-tripping through float and losing a bit.
+          const compiled = def?.compiled;
+          if (compiled?.format === 'pcm_s8' && compiled.dataBase64) {
+            const bin = atob(compiled.dataBase64);
+            const data = new Int8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) data[i] = (bin.charCodeAt(i) << 24) >> 24;
+            blobs[def.name] = {
+              data,
+              baseRate: Number(compiled.sourceSampleRate) || Number(def.rate) || undefined,
+            };
+            continue;
+          }
+          const sourcePath = def?.resolvedFile || def?.file;
+          if (!sourcePath) continue;
+          const decoded = await decodePcmSample(sourcePath);
+          if (!decoded) continue;
+          const mono = decoded.data;
+          const data = new Int8Array(mono.length);
+          for (let i = 0; i < mono.length; i++) {
+            data[i] = Math.max(-128, Math.min(127, Math.round(mono[i] * 127)));
+          }
+          blobs[def.name] = {
+            data,
+            baseRate: Number(def.rate) || decoded.sampleRate,
+          };
+        } catch (e) {
+          log(`PCM sample "${def.name}" not baked into MMB: ${e.message}`, 'err');
+        }
+      }
+      return Object.keys(blobs).length > 0 ? blobs : null;
+    }
+
     async function syncPcmSamplesToWorklet(ir) {
       if (!workletNode) return;
       const defs = ir?.metadata?.samples;
@@ -3934,15 +3991,13 @@
 
       let bytes, diags;
       try {
-        ({ bytes, diagnostics: diags } = encodeMmb(ir));
+        const samples = await pcmSampleBlobsForMmb(ir);
+        ({ bytes, diagnostics: diags } = encodeMmb(ir, samples ? { samples } : {}));
       } catch (e) {
         log('MMB export failed: ' + e.message, 'err');
         return;
       }
-      if (diags.length > 0) {
-        log(`MMB export: ${diags.length} event(s) not in the M1 stream (see console)`, 'err');
-        console.warn('encodeMmb diagnostics:', diags);
-      }
+      reportMmbDiagnostics(diags);
 
       const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
       const suggestedName = baseName + '.mmb';
@@ -4756,13 +4811,14 @@
         try {
           let mmbBytes;
           if (_lastGoodIR && _drvBackend) {
-            const { bytes, diagnostics } = encodeMmb(_lastGoodIR);
+            // Bake the samples in, or the driver has no SAMPLE_BANK to play.
+            const samples = await pcmSampleBlobsForMmb(_lastGoodIR);
+            const { bytes, diagnostics } = encodeMmb(
+              _lastGoodIR,
+              samples ? { samples } : {},
+            );
             mmbBytes = bytes;
-            const skipped = diagnostics.length;
-            if (skipped > 0) {
-              log(`MMB export: ${skipped} event(s) not in the M1 stream (see console)`, 'err');
-              console.warn('encodeMmb diagnostics:', diagnostics);
-            }
+            reportMmbDiagnostics(diagnostics);
           } else if (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL)) {
             log('Loading ' + currentIrURL + '…');
             const res = await fetch(currentIrURL);

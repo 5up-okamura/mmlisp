@@ -61,6 +61,9 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmVoices = [];
     this._pcmSamples = new Map();
     this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
+    // Whether our own voices claimed the DAC, so we only release what we took —
+    // a backend streaming 0x2a/0x2b (MMLispDRV) owns it on its own terms.
+    this._dacFromVoices = false;
 
     // Desired analog-LPF config, applied to the synth when it becomes ready and
     // on every set-analog-lpf message. Buffered here so a toggle that arrives
@@ -199,6 +202,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._pcmVoices = [];
         this._pcmSamples = new Map();
         this._pcmTrackGain = new Map();
+        this._dacFromVoices = false;
         this._scopeFreq.fill(0);
         this._fmFnumHi.fill(0);
         this._psgTone.fill(0);
@@ -210,6 +214,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._pcmTimedQueue = [];
         this._pcmVoices = [];
         this._synth?.setDacEnabled(false);
+        this._dacFromVoices = false;
       }
     };
   }
@@ -240,8 +245,36 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   // Apply a YM register write, latching per-channel pitch on the way in.
   _applyYmWrite(port, addr, data) {
-    this._latchYmPitch(port ?? 0, addr & 0xff, data & 0xff);
-    this._synth.writeYM(port ?? 0, addr, data);
+    const p = port ?? 0;
+    const a = addr & 0xff;
+    const d = data & 0xff;
+    // The DAC pair never goes through the register path. A backend that streams
+    // the DAC itself (MMLispDRV replays the driver's ~175 bytes a frame) would
+    // otherwise spend 48 chip cycles per byte and run the chip far too fast;
+    // set_dac_sample folds the byte into the next render's own clock budget.
+    // Tracking 0x2b through setDacEnabled also keeps the synth's notion of the
+    // DAC in step with the backend's, which decides the FM batch path.
+    if (p === 0 && a === 0x2a) {
+      this._synth.setDacSample(d);
+      return;
+    }
+    if (p === 0 && a === 0x2b) {
+      this._synth.setDacEnabled(!!(d & 0x80));
+      return;
+    }
+    this._latchYmPitch(p, a, d);
+    this._synth.writeYM(p, a, d);
+  }
+
+  // True while a backend has DAC bytes queued for this block. Each is meant for
+  // its own instant, so they must be applied per sample rather than collapsed
+  // into the block's last value.
+  _hasTimedDac(endFrame) {
+    const q = this._timedQueue;
+    for (let i = 0; i < q.length && q[i].frame < endFrame; i++) {
+      if ((q[i].port ?? 0) === 0 && (q[i].addr & 0xff) === 0x2a) return true;
+    }
+    return false;
   }
 
   // Apply a PSG byte, latching tone-channel pitch on the way in.
@@ -427,11 +460,16 @@ class YM2612Processor extends AudioWorkletProcessor {
       return true;
     }
 
-    // Apply this block's register writes up front (block-quantized timing).
+    // Apply this block's register writes up front (block-quantized timing) —
+    // unless a backend is streaming the DAC, whose bytes each need their own
+    // instant (see the onFrame path below).
+    const dacStreaming = this._hasTimedDac(blockEnd);
     this._drainImmediateYmWrites();
-    this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
-      this._applyYmWrite(op.port, op.addr, op.data);
-    });
+    if (!dacStreaming) {
+      this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
+        this._applyYmWrite(op.port, op.addr, op.data);
+      });
+    }
     this._drainImmediateQueue(this._psgWriteQueue, (data) => {
       this._applyPsgWrite(data);
     });
@@ -448,14 +486,32 @@ class YM2612Processor extends AudioWorkletProcessor {
       }
     });
 
-    // Enable the YM2612 DAC while any PCM voice is active (sacrifices FM6).
-    synth.setDacEnabled(this._pcmVoices.length > 0);
+    // The DAC belongs to whoever drives it. Our own PCM voices claim it while
+    // they sound (sacrificing FM6); a backend streaming 0x2a/0x2b owns it
+    // instead, so only release what we actually claimed — forcing it off every
+    // block would fight that backend's own enable.
+    if (this._pcmVoices.length > 0) {
+      synth.setDacEnabled(true);
+      this._dacFromVoices = true;
+    } else if (this._dacFromVoices) {
+      synth.setDacEnabled(false);
+      this._dacFromVoices = false;
+    }
 
-    // All writes for the block are already applied, so the synth renders the
-    // PSG block in one call (onFrame omitted); the DAC byte is mixed per FM
-    // native sample via _getDacByte.
+    // With the DAC streamed as timed writes, drain them per sample so each byte
+    // lands at its own instant; otherwise every write for the block is already
+    // applied and the synth can render PSG (and batch FM) in one call.
+    // getDacByte is ours to supply only when our voices own the DAC — passing it
+    // while a backend streams would overwrite the backend's bytes with silence.
+    const onFrame = dacStreaming
+      ? (i) =>
+          this._drainTimedQueue(this._timedQueue, currentFrame + i + 1, (op) => {
+            this._applyYmWrite(op.port, op.addr, op.data);
+          })
+      : null;
+    const getDacByte = this._pcmVoices.length > 0 ? this._getDacByte : null;
     const scope = this._scopeOn ? this._scopeScratchFor(blockSize) : null;
-    synth.renderInto(outL, outR, blockSize, null, this._getDacByte, scope);
+    synth.renderInto(outL, outR, blockSize, onFrame, getDacByte, scope);
     if (scope) this._scopeAccumulate(scope, blockSize);
 
     return true; // keep processor alive

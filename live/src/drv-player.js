@@ -1397,10 +1397,22 @@ export class DrvPlayer {
   }
 
   // ── PCM / DAC (driver.md §11, frame-quantized feed — see mmb.js) ──────────
-  _dacByte(storedByte) {
+  _dacByte(storedByte, tick = 0) {
     // Sample bytes are stored 8-bit signed (two's complement); the DAC ($2A)
     // is 8-bit unsigned (128 = zero) — XOR 0x80 converts.
-    this._writeCb(0, 0x2a, (storedByte ^ 0x80) & 0xff, this._when());
+    //
+    // `tick` places the byte at its own instant inside the frame. The driver
+    // emits PCM_MIX_RATE of these per frame, so stamping them all at the frame
+    // start (as _when does) would let a realtime consumer collapse them to the
+    // last value — the waveform would come out as a click. The register trace is
+    // unaffected: captureRegisterLog records the frame, not this timestamp.
+    this._writeCb(0, 0x2a, (storedByte ^ 0x80) & 0xff, this._whenTick(tick));
+  }
+
+  _whenTick(tick) {
+    return this._audioContext
+      ? this._startAudioTime + (this._frame + tick / PCM_MIX_RATE) / FRAMES_PER_SEC
+      : undefined;
   }
 
   _pcmNoteOn(channelId, sampleId, note) {
@@ -1535,7 +1547,7 @@ export class DrvPlayer {
       }
       // hard-saturate the summed voices to int8, then to the DAC
       acc = acc > 127 ? 127 : acc < -128 ? -128 : acc;
-      this._dacByte(acc);
+      this._dacByte(acc, t);
     }
     if (
       !voices[0].active &&
