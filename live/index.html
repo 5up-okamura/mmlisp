@@ -1163,7 +1163,7 @@
           </div>
           <div class="knob-wrap">
             <div class="knob-label">TEMPO <span class="val" id="val-tempo">120</span></div>
-            <input type="range" id="sl-tempo" min="20" max="300" value="120" oninput="onTempo(this)">
+            <input type="range" id="sl-tempo" min="20" max="400" value="120" oninput="onTempo(this)">
           </div>
           <div class="knob-wrap">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
@@ -6355,7 +6355,7 @@
       if (valEl) valEl.textContent = r;
       if (!_tempoDragging) {
         const sl = document.getElementById('sl-tempo');
-        if (sl) sl.value = Math.max(20, Math.min(300, r));
+        if (sl) sl.value = Math.max(20, Math.min(400, r));
       }
     }
     function onTempo(slider) {
