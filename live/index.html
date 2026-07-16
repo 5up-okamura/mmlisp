@@ -4506,7 +4506,10 @@
     function setChannelVolLive(entry, vol) {
       if (!player) initParamOnlyPlayer();
       if (!player) return;
-      if (entry.volKind === 'pcm') player.setPcmTrackVol(entry.trackIndex, vol);
+      // PCM track gain is an IR-player mixer feature: the MMLispDRV reference
+      // soft-mixes PCM into the DAC itself and has no per-track gain, so this
+      // no-ops there rather than throwing.
+      if (entry.volKind === 'pcm') player.setPcmTrackVol?.(entry.trackIndex, vol);
       else if (entry.volKind === 'psg') player.setPsgVol(entry.volIndex, vol);
       else if (entry.volIndex != null) player.setParam('VOL', vol, entry.volIndex);
     }
@@ -4565,8 +4568,9 @@
     function applyPlayerChannelState(p) {
       if (!p) return;
       p.clearChannelStates();
-      // Mute/solo work on both backends; live vol/master are IR-player only
-      // (the MMLispDRV reference has no live-vol API), so gate those.
+      // Mute/solo, live vol and master work on both backends (the MMLispDRV
+      // reference routes them through the driver's own PARAM_SET apply path).
+      // The guard stays for param-only//stub players that lack the API.
       const supportsVol = typeof p.setParam === 'function';
       for (const entry of _chStripModel) {
         if (_mutedChannels.has(entry.head)) p.muteTrack(entry.trackIndex, true);
@@ -4822,9 +4826,11 @@
 
       // MMLispDRV reference backend: compile → MMB v0.2 → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
-      // audible form of the A/B comparison. Line highlight / pause-resume /
-      // live vol are IR-player features and stay off in this mode; mute/solo
-      // are supported (re-applied from the persisted UI state below).
+      // audible form of the A/B comparison. Mute/solo, live vol/master and the
+      // tempo fader are supported (re-applied from the persisted UI state
+      // below). Still IR-player-only here: line highlight, pause-resume,
+      // Dynamic Parameters (`setVal` keys slots by name; MMB carries only
+      // numeric slot ids) and PCM per-track gain.
       if (_drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
         try {
           let mmbBytes;

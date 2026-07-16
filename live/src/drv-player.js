@@ -176,6 +176,9 @@ export class DrvPlayer {
   // ── Container loading ────────────────────────────────────────────────────
   /** Parse an MMB v0.2 byte buffer. Throws on a malformed container. */
   loadMMB(bytes) {
+    // A newly loaded song plays at its written tempo: drop any live override.
+    this._tempoOverride = false;
+    this._tempoOverrideInc = 0;
     const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (b.length < 12 || MAGIC.some((m, i) => b[i] !== m)) {
       throw new Error("not an MMB file (bad magic)");
@@ -292,7 +295,12 @@ export class DrvPlayer {
   _reset() {
     const song = this._song;
     this._frame = 0;
-    this._increment = bpmToTickIncrement(120); // song increment; TEMPO_SET replaces
+    // Song increment; TEMPO_SET replaces it — unless a live tempo override is
+    // held (setTempo), which outlives a restart the way it outlives the score's
+    // own tempo events. loadMMB clears it, so a fresh song starts as written.
+    this._increment = this._tempoOverride
+      ? this._tempoOverrideInc
+      : bpmToTickIncrement(120);
     this._diagnostics = [];
     this._skippedOpcodes = new Map();
     this._master = VOL_UNITY;
@@ -792,7 +800,9 @@ export class DrvPlayer {
           break;
         }
         case OPCODE.TEMPO_SET: {
-          this._increment = u16(s, trk.pc + 1);
+          // A live tempo override wins over the score's own tempo events —
+          // including the tick-0 one a loop replays (mirrors IRPlayer.setTempo).
+          if (!this._tempoOverride) this._increment = u16(s, trk.pc + 1);
           trk.pc += 3;
           break;
         }
@@ -830,6 +840,7 @@ export class DrvPlayer {
           const len = u16(s, trk.pc + 5);
           const curve = s[trk.pc + 7];
           trk.pc += 8;
+          if (this._tempoOverride) break; // live tempo held: ignore score tempo motion
           this._tempoSweep = {
             curveId: curve,
             from,
@@ -1767,6 +1778,49 @@ export class DrvPlayer {
   /** UI op-enable checkboxes; applied at the next key-on. */
   setOpMask(ch, mask) {
     if (this._opMasks && ch >= 0 && ch < 6) this._opMasks[ch] = mask & 0xf0;
+  }
+
+  /**
+   * Live tempo override (same interface as IRPlayer.setTempo). Held against the
+   * score's own TEMPO_SET/TEMPO_SWEEP — including the tick-0 one a loop replays
+   * — for the rest of this run; loadMMB clears it. The driver's tempo *is* the
+   * 8.8 per-frame tick increment, so this just replaces it.
+   * @param {number} bpm
+   */
+  setTempo(bpm) {
+    if (!Number.isFinite(bpm) || bpm <= 0) return;
+    this._tempoOverride = true;
+    this._tempoOverrideInc = bpmToTickIncrement(bpm);
+    this._tempoSweep = null;
+    this._increment = this._tempoOverrideInc;
+  }
+
+  /**
+   * Live parameter write from the UI (same interface as IRPlayer.setParam):
+   * a target *name* plus a channel index, routed through the driver's own
+   * per-target apply path — so MASTER/VOL/VEL recompose levels exactly as a
+   * PARAM_SET in the stream would.
+   * @param {string} target  TARGET_ID key, e.g. 'MASTER'
+   */
+  setParam(target, value, chIndex = 0) {
+    const id = TARGET_ID[target];
+    if (id === undefined) {
+      this._diag("W_DRV_UNKNOWN_TARGET", `setParam target ${target}`);
+      return;
+    }
+    if (!this._fm) return; // never reset — nothing to write yet
+    this._paramSet(chIndex, id, value);
+  }
+
+  /**
+   * Live PSG volume fader (same interface as IRPlayer.setPsgVol). The driver's
+   * VOL target already is this: it stores the channel's vol and re-pushes the
+   * attenuation only on a keyed channel, so a fader move never un-silences an
+   * idle one.
+   */
+  setPsgVol(psgCh, vol) {
+    if (psgCh < 0 || psgCh > 3) return;
+    this.setParam("VOL", vol, 6 + psgCh);
   }
 
   // ── Live mixer: mute / solo (same interface as IRPlayer) ─────────────────
