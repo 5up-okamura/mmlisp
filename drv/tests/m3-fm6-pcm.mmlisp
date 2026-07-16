@@ -1,0 +1,7 @@
+; M3 gate: fm6 FM coexisting with PCM. The DAC is claimed per PCM note and
+; released once every voice ends (driver.md §14), so fm6 sounds as FM in the
+; gaps. Locks in the enable/release edges around fm6's key-on: pcm1 shots on
+; beats 1/3 while fm6 keys FM on beats 2/4.
+(def blip :sample :file "blip.wav")
+(pcm1 blip :tempo 120 :oct 4 :len 4 :vel 15   c   _   c   _)
+(fm6           :oct 4 :len 4 :vel 15   _   e   _   e)

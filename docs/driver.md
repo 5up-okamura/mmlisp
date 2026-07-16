@@ -654,6 +654,12 @@ sets up its channel's voice (sample base/length/loop + a per-mix-tick increment)
 regardless). The heavy per-note setup is cold — it lives in the `ovl_pcm`
 overlay (§5.3), loaded on demand — so only the hot mixer stays resident.
 
+**The DAC is claimed, not owned.** `pcm_note_on` enables it (`$2B` bit7) and
+`process_pcm` releases it once `pcm_any_active` reports every voice done, so a
+score may use `fm6` and `pcmN` together: the chip mutes fm6 for exactly as long
+as the DAC is on, and fm6 sounds as FM in the gaps between PCM voices. The
+`m3-fm6-pcm` gate locks those enable/release edges around an fm6 key-on.
+
 **The mix (frame-quantized, matches the M2 burst-DAC deviation).** Each frame
 emits a fixed `R` DAC writes (the *mix rate*, `PCM_MIX_R = 175` ≈ 10.5 kHz). Per
 tick, every active voice is resampled to that grid by **nearest-neighbour**

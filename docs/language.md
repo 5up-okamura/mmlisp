@@ -78,7 +78,7 @@ unaffected by layering.
 | Name            | Hardware                | Notes                                             |
 | --------------- | ----------------------- | ------------------------------------------------- |
 | `fm1`–`fm5`     | YM2612 FM channels      |                                                   |
-| `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. Using any `pcmN` puts fm6 in DAC mode (the hardware shares one DAC) |
+| `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. fm6 is muted only while a PCM voice is sounding (they share one DAC), and sounds as FM in the gaps |
 | `fm3`           | YM2612 FM3, normal mode | Note-less `(fm3 voice)` declares the shared patch for independent-OP mode |
 | `fm3-1`–`fm3-4` | FM3 independent-OP mode | One track per operator F-number; presence enables the mode (`FM3_MODE op`) |
 | `fm3-csm`       | FM3 CSM mode            | Tonal center; standard note syntax                |
@@ -1106,8 +1106,11 @@ driver.md §14.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6).
 - PCM plays on `pcm1`–`pcm3`, three voices **soft-mixed** to the single fm6 DAC
-  (driver.md §14). `fm6` is FM only (`fm6 :mode shot`/`loop` is an error); using
-  any `pcmN` claims the DAC, so fm6 is unavailable as FM at the same time.
+  (driver.md §14). `fm6` is FM only (`fm6 :mode shot`/`loop` is an error).
+  `fm6` and `pcmN` may be used in the same score: the DAC is claimed while any
+  PCM voice is sounding and released once the last one ends, so fm6 sounds as FM
+  in the gaps. Only notes that actually overlap a sounding PCM voice are lost —
+  the chip mutes fm6 for exactly as long as the DAC is on.
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; an unknown
   sample name is `E_PCM_SAMPLE_UNDEFINED`.
 

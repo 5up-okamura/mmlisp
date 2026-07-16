@@ -345,7 +345,7 @@ Other:
 - [x] Stereo WAV → mono downmix `(L+R)/2` at compile time
 - [x] Sample path resolution relative to `.mmlisp` source file location
 - [x] `(pcm1 sample-name ...)` / `pcm2` / `pcm3` track forms → sample as first positional arg; emit `PCM_NOTE_ON` / `PCM_NOTE_OFF` IR events
-- [x] `fm6 :mode shot|loop` → PCM note events on fm6 DAC channel (`loop` = sustain loop)
+- [x] ~~`fm6 :mode shot|loop` → PCM note events on fm6 DAC channel~~ — retired by the 3-channel soft-mix; PCM is `pcm1`-`pcm3` and `fm6 :mode shot|loop` is now an error
 - [x] Pitch-to-rate mapping: `rate = 2^(semitones_from_C4 / 12)`; clamp C2–C6 with warning
 
 **Stochastic curves**

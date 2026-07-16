@@ -806,6 +806,16 @@ export const PSG_CH_NAME_TO_INDEX = {
   noise: 3,
 };
 
+// PCM channel name → 0-based soft-mix voice slot (0-2). These are software
+// voices summed to the single fm6 DAC (driver.md §14), not FM channels — the
+// chip mutes fm6 only while the DAC is on, so they must never be treated as
+// owning an FM channel.
+export const PCM_CH_NAME_TO_INDEX = {
+  pcm1: 0,
+  pcm2: 1,
+  pcm3: 2,
+};
+
 // PSG MASTER_CLOCK (NTSC Mega Drive)
 export const PSG_MASTER_CLOCK = 3579545;
 

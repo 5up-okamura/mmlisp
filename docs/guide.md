@@ -33,7 +33,7 @@ Default state:
 
 | Name                      | Hardware                                              |
 | ------------------------- | ----------------------------------------------------- |
-| `fm1`-`fm6`               | YM2612 FM channels (`fm6` also plays PCM via `:mode`) |
+| `fm1`-`fm6`               | YM2612 FM channels (PCM is `pcm1`-`pcm3`; it mutes `fm6` while sounding) |
 | `fm3-1`-`fm3-4`           | FM3 independent-operator mode (one track per OP)      |
 | `fm3-csm`, `fm3-csm-rate` | FM3 CSM mode (§17)                                    |
 | `sqr1`-`sqr3`             | SN76489 square tone channels                          |

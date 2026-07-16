@@ -37,6 +37,7 @@ import {
   fmCarrierOpsForAlg,
   CH_NAME_TO_INDEX,
   PSG_CH_NAME_TO_INDEX,
+  PCM_CH_NAME_TO_INDEX,
   PSG_MASTER_CLOCK,
   KEY_OFF_LEAD_SECS,
   HOLD_FRAMES,
@@ -128,6 +129,10 @@ export class IRPlayer {
 
     // Track → channel mapping (defaults to index 0 for demo)
     this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
+
+    // PCM channel routing. Kept out of _trackChannel: PCM voices own no FM
+    // channel, so they must not appear on the FM key-off path.
+    this._pcmTrackChannel = new Map(); // trackIndex → pcm voice slot (0-2)
 
     // PSG channel routing
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
@@ -237,6 +242,7 @@ export class IRPlayer {
     this._loopCount.clear();
     this._trackChannel.clear();
     this._psgTrackChannel.clear();
+    this._pcmTrackChannel.clear();
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
       this._assignChannel(i, irObj.tracks[i]);
     }
@@ -690,6 +696,15 @@ export class IRPlayer {
       this._psgTrackChannel.set(trackIndex, PSG_CH_NAME_TO_INDEX[name]);
       return;
     }
+    // PCM tracks own no FM channel: they are software voices summed to the fm6
+    // DAC, and the chip mutes fm6 only while the DAC is on. Leaving them out of
+    // _trackChannel keeps them off the FM key-off path — otherwise they fall to
+    // the index fallback below, land on channel 5, and make _applyAudibility
+    // treat an audible PCM track as an audible fm6 (so muting fm6 does nothing).
+    if (name != null && PCM_CH_NAME_TO_INDEX[name] != null) {
+      this._pcmTrackChannel.set(trackIndex, PCM_CH_NAME_TO_INDEX[name]);
+      return;
+    }
     // Otherwise treat as FM channel.
     // If the track declares a channel name (e.g. "fm2"), use it.
     // Otherwise fall back to track index (auto-increment), capped at 5.
@@ -977,7 +992,14 @@ export class IRPlayer {
     return this._ir.tracks.map((track, ti) => {
       const isPsg = this._psgTrackChannel.has(ti);
       const psgCh = isPsg ? this._psgTrackChannel.get(ti) : null;
-      const chIndex = isPsg ? 0 : (this._trackChannel.get(ti) ?? 0);
+      // PCM events carry their soft-mix voice slot (0-2) as _chIndex — that is
+      // what the worklet keys loop-voice replacement on. FM tracks carry their
+      // FM channel; PSG carries 0 (it routes via _psgCh).
+      const chIndex = isPsg
+        ? 0
+        : (this._pcmTrackChannel.get(ti) ??
+          this._trackChannel.get(ti) ??
+          0);
       const flatEvs = this._expandLoops(track.events ?? []);
       const events = flatEvs
         .map((ev) => ({
@@ -1741,6 +1763,10 @@ export class IRPlayer {
   }
 
   _dispatchPcmNoteOn(ev, when) {
+    // A muted PCM track must not sound. PCM owns no FM/PSG channel, so there is
+    // no key-off to suppress it after the fact (as _applyAudibility does for
+    // those) — the note has to be dropped here, like FM/PSG NOTE_ON do.
+    if (!this._isTrackAudible(ev._trackIndex)) return;
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
     const rate = Number(ev.args?.rate);
