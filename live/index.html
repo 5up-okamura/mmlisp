@@ -3274,6 +3274,7 @@
     function loadMucomSource(source, warnings, fileName, label) {
       _sourceHandle = null;
       _sourceFileName = (fileName || 'mucom').replace(/\.[^.]*$/, '') + '.mmlisp';
+      clearSourceDir(); // imported score — the old folder is not its base
       currentIrURL = null;
       _lastFileName = _sourceFileName;
       _lastGoodIR = null;
@@ -3793,6 +3794,10 @@
         // project rather than wherever the OS picker was left.
         ...(_sourceDir ? { startIn: _sourceDir } : {}),
       });
+      // Opening a score from outside the folder leaves it stale — reset. A file
+      // picked from within it (which startIn above makes the common case) is
+      // still that project, so keep the folder and its samples.
+      if (_sourceDir && !(await _sourceDir.resolve(handle))) clearSourceDir();
       await readFileHandle(handle);
     }
 
@@ -3804,6 +3809,18 @@
       _sourceDir = handle;
       _pcmSampleCache.clear(); // paths now resolve against a different base
       updateSourceDirLabel();
+    }
+
+    // Drop the folder once it stops being this score's own: its samples are not
+    // the new score's, and a stale base resolving `:file` to someone else's wav
+    // is worse than no base at all (which at least warns).
+    function clearSourceDir() {
+      if (!_sourceDir) return;
+      _sourceDir = null;
+      _sourceDirScores = [];
+      _pcmSampleCache.clear();
+      updateSourceDirLabel();
+      renderFolderScores();
     }
 
     async function openFolder() {
@@ -4097,6 +4114,7 @@
     function newFile() {
       _sourceHandle = null;
       _sourceFileName = null;
+      clearSourceDir(); // the folder belonged to the score we just left
       currentIrURL = null;
       _lastFileName = 'untitled.mmlisp';
       _lastGoodIR = null;
@@ -4934,6 +4952,7 @@
       onStop();
       _sourceHandle = null;
       _sourceFileName = null;
+      clearSourceDir(); // a URL score resolves its samples from the server
       if (/\.mmb(?:$|\?)/i.test(url)) {
         setEditorDoc('(binary MMB preset loaded)');
       } else {
