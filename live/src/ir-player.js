@@ -1112,11 +1112,24 @@ export class IRPlayer {
 
     this._bpm = bpm;
     const newSecsPerTick = this._secsPerTick;
-    const newTick0 = audioTimeOfChange - changeTick * newSecsPerTick;
 
     for (const track of this._tracks) {
-      track.audioTimeAtTick0 = newTick0;
-      track.startAudioTime = newTick0;
+      // Re-anchor each track on its *own* clock. Tracks stop sharing an anchor as
+      // soon as they loop (loops may differ in length), so pinning them all to
+      // track 0's tick would fling the rest off their timeline.
+      const localTick = Math.max(
+        0,
+        (audioTimeOfChange - track.audioTimeAtTick0) / oldSecsPerTick,
+      );
+      track.audioTimeAtTick0 = audioTimeOfChange - localTick * newSecsPerTick;
+      // startAudioTime is the *iteration-0* anchor: the loop restart recomputes
+      // audioTimeAtTick0 as startAudioTime + loopCount·loopDuration·secsPerTick.
+      // Writing the current anchor into it while loopCount stays put would add
+      // the iterations already played a second time on the next restart, firing
+      // the track's events a few loops into the future — i.e. silence.
+      track.startAudioTime =
+        track.audioTimeAtTick0 -
+        (track.loopCount ?? 0) * (track.loopDuration ?? 0) * newSecsPerTick;
     }
   }
 
