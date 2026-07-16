@@ -200,9 +200,12 @@ Notes:
 
 - **PARAM_SWEEP** is a fixed 9-byte payload (trivially skippable). `len` is
   in 60 Hz frames; for loop-curve ids it is the period. `flags` bit0 = loop
-  (run until PARAM_SWEEP_STOP / next note per IR semantics), bits1–7
-  reserved 0. From/to are in target units, i16 regardless of target width
-  (NOTE_PITCH cents need it; narrow targets just don't use the range).
+  (run until PARAM_SWEEP_STOP / next note per IR semantics), **bit1 = `from`
+  is a value-slot id** (in the field's low byte), **bit2 = `to` is a slot id**
+  (§4.6 note-on tier — the driver reads the slot live at dispatch, replacing
+  the field), bits3–7 reserved 0. From/to are in target units, i16 regardless
+  of target width (NOTE_PITCH cents need it; narrow targets just don't use the
+  range). `:rate`/`:len` slots are not yet slot-fed (baked to init).
 - **PARAM_MUL** (implemented) factor is unsigned 8.8 (0x0100 = ×1.0).
   Read-modify-write against the current value, clamped at the write. The driver
   multiplies the low byte of the current value (levels are ≤127), so signed/wide

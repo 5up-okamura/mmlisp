@@ -298,7 +298,7 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or an explicit `:loop` flag. |
 | `waitTicks` / `waitKeyOff` | int / bool | ticks | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
 | `params`     | object  | —     | no  | Curve shape params (§6.4).                                        |
-| `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. `len` is **not** resolved on PARAM_SWEEP — see §11. |
+| `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. **`from`/`to` are slot-fed in MMB too** (PARAM_SWEEP flags bit1/bit2, read live at dispatch — §4.6 note-on tier, opcodes.md); `rate`/`len` still bake to slot init on MMB — see §11. |
 | `bounded`    | bool    | —     | no  | Glide only: the sweep lasts exactly `frames` then stops (never extended to the next automation event). |
 
 ```json

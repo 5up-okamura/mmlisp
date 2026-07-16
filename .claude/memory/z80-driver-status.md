@@ -35,7 +35,10 @@ This file is the compact continuation state.
    step 9, commit e4a6bbb) → **scaled macro flag** (DONE, step 10 — `(macro :T
    (* <LFO> $slot))` live depth knob, ~70 B Z80, gate m3-macro-scale,
    verify:all 24/24; MMB flags bit2 + appended slot byte, mmb.md §15) →
-   M3 dyn slice → CALL/RET (~45-60 B, control-stack tag already reserved in the
+   **M3 dyn slice** (DONE for sweeps, step 11 — inline sweep `:from`/`:to`
+   slot-fed via PARAM_SWEEP flags bit1/2, read live at dispatch; gate
+   m3-dynsweep, verify:all 28/28; ~34 B. Deferred: macro-curve dyn + sweep
+   rate/len) → CALL/RET (~45-60 B, control-stack tag already reserved in the
    TCB layout). Costs and funding are measured — see the budget table below.
    **Batched frame flush** (item 5): model = **consecutive-coalesce** (§4.7
    option a; full-frame needs ~38 B RAM the packed layout can't spare cheaply).
@@ -83,7 +86,7 @@ watermark over the full gate corpus). Every `verify.mjs` run also prints a
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **41 B free** (resident 5841 B vs G_PCMV ceiling 5882 B / $16FA) after the override-pitch-macro fix (`npm run size`) | The scarce resource. Step 7 freed 201 B (ovl_rare); steps 8/9/10 (read_op_param, additive, scaled ~70 B) + the 2026-07-15 override-pitch fix (+6 B, G_MADD 3-state) spent most of it. Held reserves: DATA_BASE bump (~20-26, hardware-gated) + psf commonization (~5). |
+| Resident code | **13 B free** (resident 5869 B vs G_PCMV ceiling 5882 B / $16FA) after step 11 (`npm run size`) | The scarce resource, **nearly exhausted**. Step 7 freed 201 B (ovl_rare); steps 8/9/10 (read_op_param, additive, scaled ~70 B) + the override-pitch fix (+6 B, G_MADD 3-state) + step 11 dyn-sweep (~28 B) spent it to 13 B. The **next resident feature must fund first**: psf commonization (~5) + DATA_BASE bump (~20-26, hardware-gated), or evict cold code to an overlay. |
 | Rare-event handlers resident | **25 B** (d_marker only) | tempo set/sweep, CSM, FM3 mode evicted to ovl_rare (step 7). d_marker stays resident — no gate covers it, so eviction is unverifiable until a marker gate exists. |
 | Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238/250 (ovl_rare) B | A *new* overlay can be up to 451 B; growing the largest (445) has 6 B. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |

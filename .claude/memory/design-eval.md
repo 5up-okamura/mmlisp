@@ -324,7 +324,7 @@ surface in the language is one of four tiers:
 |---|---|---|---|
 | compile | compile time | constant folding + the compile shadow (§4.2) | new, 0 driver B |
 | tick | event dispatch | FROM_VAL/ADD/MUL/ADD_VAL/MUL_VAL chains over the param-as-accumulator (§4.3), enabled by the generic shadow read (§4.1) | read is new (~35-55 B) |
-| note-on | note/macro fire | curve `:from/:to/:rate/:len` ← slot (the tracked M3 dyn slice) | designed, unimplemented |
+| note-on | note/macro fire | curve `:from/:to/:rate/:len` ← slot (the tracked M3 dyn slice) | **sweeps DONE (step 11, from/to via PARAM_SWEEP flags bit1/2)**; macro-curve dyn + sweep rate/len deferred |
 | frame | every 60 Hz frame | additive macro flag (DONE, step 9) + **scaled macro flag** (§4.4, DONE step 10 — ~70 B Z80, all 5 layers, gate m3-macro-scale) | both DONE |
 
 Built-in `$`-references (added to `resolveValRef`, :986):
@@ -1039,9 +1039,29 @@ Driver track (Tiers B-D + data; each step separately gated):
       (identical mismatch set with/without scale; TL tremolo voice A/B-clean). See
       [[known-issue-drv-complex-songs.md]]. The gate keeps the pitch voice for
       i16 verify:all coverage; A/B isolation is on the clean TL voice.
-11. **M3 dyn slice** (note-on tier) — slot-fed curve params at fire time
-    (overlay-hosted per-note work, PCM precedent). Gate: dyn scores stop
-    warning and trace-match live.
+11. **M3 dyn slice** (note-on tier) — **DONE for sweeps (MVP, 2026-07-16); user
+    chose scope (a): inline-sweep `:from`/`:to` only.** A sweep's endpoints are
+    fed from value slots, read live at dispatch (drv-player `_startSweep` /
+    Z80 `d_param_sweep`). **Encoding**: reused the existing PARAM_SWEEP `flags`
+    byte — **bit1 = from is a slot id, bit2 = to is a slot id** (the field's low
+    byte holds the id); no wire-length change, non-dyn sweeps byte-identical.
+    Exporter sets the bits + drops the bake for from/to (keeps
+    `W_MMB_DYN_SWEEP_BAKED` only for `:rate`/`:len`, still baked). ir-player
+    unchanged (already `_curveFields`-resolves dyn at sweep start). Gate
+    `m3-dynsweep` (VOL sweep, cmds.json SET_VAL moves `$hi` mid-score →
+    later note sweeps to a new endpoint): verify:all 28/28 0-diff (Z80==drv
+    incl. the live change — proven at frame 183 the 2nd sweep tracks the slot),
+    strict 6/6. **A/B (drv==ir) is NOT clean for sweeps** — all PARAM_SWEEP
+    targets diverge in write density (ir continuous-clock writes ~1.5× drv's
+    change-only), a pre-existing property; dyn is A/B-transparent (static VOL
+    sweep == dyn VOL sweep, identical 128-mismatch set). **Cost**: Z80 ~34 B,
+    **free now only 13 B** (5869 B) — the resident budget is nearly exhausted;
+    the NEXT resident feature (CALL/RET step 12, ~45-60 B) MUST fund first
+    (psf commonization ~5, DATA_BASE bump ~20-26 hardware-gated).
+    **DEFERRED (not this MVP)**: slot-fed **macro-curve** dyn (needs a note-on
+    curve re-sampler, overlay-hosted per §12/PCM precedent — heavier) and sweep
+    `:rate`/`:len` dyn. Those still warn `W_MMB_MACRO_SKIPPED`/
+    `W_MMB_DYN_SWEEP_BAKED`. §4.6's fenced legacy path stays for them.
 12. **CALL/RET + dedup** (§9) — driver handlers + exporter pass. Gate:
     dedup on/off trace byte-equality across the corpus; size report.
 13. **Docs + formatter/syntax** per §8; VAL-op reserve (§4.5) only on

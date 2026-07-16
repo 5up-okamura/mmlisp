@@ -2975,7 +2975,24 @@ d_param_sweep:
     ld d,(hl)
     inc hl
     ld (G_SW_LEN),de
-    push hl
+    push hl                 ; save stream ptr — read_slot clobbers HL
+    ; Dynamic endpoints (§4.6, note-on tier): flags bit1/bit2 mark from/to as
+    ; slot ids (the field's low byte); read the slot live at dispatch.
+    ; read_slot preserves B, so keep the flags there across both.
+    ld a,(G_SW_FLG)
+    ld b,a
+    bit 1,b
+    jr z,dps_to
+    ld a,(G_SW_FROM)        ; low byte = slot id
+    call read_slot          ; HL = slot i16
+    ld (G_SW_FROM),hl
+dps_to:
+    bit 2,b
+    jr z,dps_go
+    ld a,(G_SW_TO)
+    call read_slot
+    ld (G_SW_TO),hl
+dps_go:
     call start_sweep
     pop hl
     jp d_next

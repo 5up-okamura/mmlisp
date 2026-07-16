@@ -36,6 +36,7 @@ const CORPUS = [
   [join(tests, "m3-slur.mmlisp"), 300],
   [join(tests, "m3-macro-vel.mmlisp"), 200],
   [join(tests, "m3-macro-scale.mmlisp"), 250],
+  [join(tests, "m3-dynsweep.mmlisp"), 250],
 ];
 
 const topN = (() => {

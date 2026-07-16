@@ -571,10 +571,18 @@ Dynamic Parameters slider per slot. Names must not start with `$`
   bounded integer slots the Z80 driver will hold.
 
 **Dynamic curve parameters.** A `$name` may feed a curve's `:from`, `:to`,
-`:rate`, or `:len`. The slot is read **once at note-on**, so the value is
-constant for that note. `:len` uses the slot's `def-val :unit` to pick
-frame/tick interpretation. The macro `:step` clock is static. The curve spec
-records these in a `dyn` map the player resolves at schedule time.
+`:rate`, or `:len`. The slot is read **once at note-on** (the note-on sampling
+tier), so the value is constant for that note. `:len` uses the slot's
+`def-val :unit` to pick frame/tick interpretation. The macro `:step` clock is
+static. The curve spec records these in a `dyn` map the player resolves at
+schedule time.
+
+On the MMB/Z80 driver, an **inline sweep's `:from`/`:to`** are fully slot-fed:
+the driver reads the slot when the sweep dispatches (PARAM_SWEEP flags, so a
+game-controlled `def-val` moves the swell target in real time). Slot-fed
+**macro-curve** params and sweep `:rate`/`:len` are not yet lowered — those bake
+to the slot init on MMB (`W_MMB_MACRO_SKIPPED` / `W_MMB_DYN_SWEEP_BAKED`),
+matching the live player only when the slot stays at its init.
 
 ---
 

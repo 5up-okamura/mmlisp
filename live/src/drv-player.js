@@ -801,8 +801,10 @@ export class DrvPlayer {
           const target = s[trk.pc + 1];
           const curve = s[trk.pc + 2];
           const flags = s[trk.pc + 3];
-          const from = i16(u16(s, trk.pc + 4));
-          const to = i16(u16(s, trk.pc + 6));
+          // Dynamic endpoints (§4.6, note-on tier): flags bit1/bit2 mark from/to
+          // as slot ids (in the field's low byte), read live at dispatch.
+          const from = flags & 2 ? this._readSlot(s[trk.pc + 4]) : i16(u16(s, trk.pc + 4));
+          const to = flags & 4 ? this._readSlot(s[trk.pc + 6]) : i16(u16(s, trk.pc + 6));
           const len = u16(s, trk.pc + 8);
           trk.pc += 10;
           this._startSweep(trk.channelId, target, curve, flags & 1, from, to, len);

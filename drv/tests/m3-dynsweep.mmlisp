@@ -1,0 +1,10 @@
+; v0.6 dyn slice (§4.6, note-on tier): a sweep's :from/:to are fed from value
+; slots, read live at sweep dispatch (drv-player _startSweep / Z80 d_param_sweep).
+; The host moves the swell target via SET_VAL (see m3-dynsweep.cmds.json), so a
+; later note's sweep runs to a different endpoint than an earlier one — a
+; game-controlled VOL swell. Non-dyn sweeps are byte-identical (flags bit1/2 = 0).
+(def-val lo 28 0..31)
+(def-val hi 6 0..31)
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :oct 4 :len 2 :vel 13
+  c :vol (linear :from $lo :to $hi :len 55f) e
+  g :vol (linear :from $lo :to $hi :len 55f) c)

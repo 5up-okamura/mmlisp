@@ -754,22 +754,32 @@ export function encodeMmb(ir, opts = {}) {
             );
             break;
           }
-          // Dynamic endpoints have no slot fields in the 9-byte layout; bake
-          // the slot's declared init so the sweep still plays.
+          // Dynamic endpoints (§4.6, note-on tier): the `flags` byte marks
+          // from/to as slot ids (bit1/bit2); the field then holds the slot id in
+          // its low byte, and the driver reads the slot at sweep-dispatch time
+          // (drv-player _startSweep / Z80 d_param_sweep). `:rate`/`:len` slots
+          // are not lowered yet — they stay baked to the slot init (warned).
           let { from, to } = a;
-          if (a.dyn) {
-            const bake = (slotName) => {
-              const v = (ir.metadata?.vals ?? []).find(
-                (x) => x.name === slotName,
-              );
-              return v ? v.init : 0;
-            };
-            if (a.dyn.from != null) from = bake(a.dyn.from);
-            if (a.dyn.to != null) to = bake(a.dyn.to);
+          let flags = a.loop ? 1 : 0;
+          if (a.dyn?.from != null) {
+            const sid = slotId(a.dyn.from, label);
+            if (sid != null) {
+              flags |= 2;
+              from = sid;
+            }
+          }
+          if (a.dyn?.to != null) {
+            const sid = slotId(a.dyn.to, label);
+            if (sid != null) {
+              flags |= 4;
+              to = sid;
+            }
+          }
+          if (a.dyn?.rate != null || a.dyn?.len != null) {
             diag(
               "warning",
               "W_MMB_DYN_SWEEP_BAKED",
-              `dynamic sweep endpoints baked to slot init values`,
+              `dynamic sweep :rate/:len baked to slot init (endpoints are slot-fed)`,
               label,
             );
           }
@@ -779,7 +789,7 @@ export function encodeMmb(ir, opts = {}) {
           stream.u8(OPCODE.PARAM_SWEEP);
           stream.u8(id);
           stream.u8(curveId(a.curve));
-          stream.u8(a.loop ? 1 : 0);
+          stream.u8(flags);
           stream.i16(Math.round(Number(from ?? 0)));
           stream.i16(Math.round(Number(to ?? 0)));
           stream.u16(Math.min(0xffff, frames));
