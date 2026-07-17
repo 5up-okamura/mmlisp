@@ -1,18 +1,18 @@
 # mucom88 PCM import (part K / ADPCM) — "one WAV + slicing" (approved plan)
 
-Status: **built 2026-07; two ear-gates open.** All stages below are implemented
-and the corpus compiles clean (46 songs, 0 errors; 40 emit a `pcm1` track, 167
-sliced defs). What is NOT yet confirmed is anything only listening can settle:
+Status: **done, 2026-07 — both ear-gates passed.** The ADPCM-B decoder and the
+pitch base (`MUCOM_PCM_OCT_SHIFT = 3`, samples baked at the driver's 10.5 kHz)
+were confirmed by ear against mucom88win by the user. The corpus compiles clean
+(46 songs, 0 errors; 40 emit a `pcm1` track). Volume then went through several
+rounds and landed on per-song normalization (see the `v` note below).
 
-1. **ADPCM-B decode fidelity** — no reference decoder existed, so the codec is
-   unverified against mucom88win by ear. Measured evidence that it is right: a
-   clamping accumulator beats a wrapping one decisively (high-DC samples 10/170
-   vs 109/170), sample lengths are drum-plausible (kick 244 ms, hihat 61 ms),
-   and all 10 corpus banks parse contiguously.
-2. **Pitch base** — `MUCOM_PCM_OCT_SHIFT = 3` with `:rate 16000` makes mucom o1
-   play at the native 16 kHz (unity), which agrees with the driver's ΔN table
-   (C ≈ 16.1 kHz). Corpus K only ever uses o1/o2, and nothing clamps except 4
-   notes in pcmt17 whose K line drifts to o3 via relative `>`.
+Keep this file only for what the repo still doesn't record; delete it once the
+open items move to roadmap.md. Open, all tracked in roadmap.md's mucom section:
+FM volume is absolute in mucom but relative here; parts slur where mucom
+re-attacks (a baseline `:gate- 1f` now covers parts with no `q`, but the real
+gap is unmeasured); loop drift (predates PCM — K joins it rather than causing
+it); 9 songs' samples alone overflow the 32KB bank window; `bos011` emits an
+empty `pcm1` at `:oct 9`.
 
 ## Context (the "why")
 

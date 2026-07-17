@@ -63,6 +63,10 @@ const MUCOM_PCM_VEL_DEFAULT = 64;
 const octShiftFor = (letter) =>
   letter in PCM_PARTS ? MUCOM_PCM_OCT_SHIFT : letter in SSG_PARTS ? 0 : -1;
 const MUCOM_DEFAULT_OCT = 6; // mucom's default octave when a part sets none
+// The smallest cut that re-attacks, for parts that never set mucom's `q` — one
+// frame is inaudible as a gap but restores the note-per-note attack mucom gives
+// for free. Not a fidelity claim: mucom's real key-off gap is unmeasured.
+const MUCOM_DEFAULT_GATE_CUT = "1f";
 
 /** Decode .muc bytes (usually Shift-JIS) to a string, UTF-8 fallback. */
 export function decodeMucText(bytes) {
@@ -746,6 +750,17 @@ export function parseMucom(text) {
   return { meta, tempo, voices, macros, scoreItems, scoreComments, warnings };
 }
 
+// True if the part ever sets mucom's `q` — then it states its own articulation
+// and we leave it alone. Otherwise it played on mucom's re-attack, which MMLisp
+// does not do for free (see MUCOM_DEFAULT_GATE_CUT).
+function hasGateCut(ops) {
+  for (const op of ops) {
+    if (op.t === "gateCut") return true;
+    if (op.t === "loop" && hasGateCut(op.body)) return true;
+  }
+  return false;
+}
+
 // True if the first sounding/octave op is an absolute `o` set — then the source
 // establishes the octave itself and we don't prepend a base.
 function startsWithAbsoluteOctave(ops) {
@@ -1275,6 +1290,10 @@ export function mucomToMmlisp(parsed) {
     const prefix = [];
     // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it.
     if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) prefix.push(`:oct ${MUCOM_DEFAULT_OCT + octShiftFor(letter)}`);
+    // mucom re-attacks every note; MMLisp holds a full-gate note into the next
+    // one as a slur, so a part that never sets `q` would run its notes together
+    // and lose them (guide.md, gate). Give it the smallest cut that re-attacks.
+    if (!hasGateCut(allOpsByLetter.get(letter) || [])) prefix.push(`:gate- ${MUCOM_DEFAULT_GATE_CUT}`);
     if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
     if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
   }

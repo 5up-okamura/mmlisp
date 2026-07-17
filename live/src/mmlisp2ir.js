@@ -3024,8 +3024,6 @@ function compileChannelBody(
                 }
               } else if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
                 trackState.pcmPendingMode = rawVal;
-              } else if (trackState.isFm6Track && rawVal === "fm") {
-                // fm6 is FM-only; `:mode fm` is an accepted no-op. PCM is pcm1-3.
               } else {
                 pushDiag(
                   diagnostics,
