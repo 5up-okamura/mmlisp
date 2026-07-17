@@ -961,7 +961,10 @@ export class DrvPlayer {
           const note = s[trk.pc + 2];
           const dur = readDuration(s, trk.pc + 3);
           trk.pc = dur.next;
-          this._pcmNoteOn(trk.channelId, sampleId, note);
+          // Live mixer: a muted / non-soloed PCM track advances but starts no
+          // voice (always audible during the trace gate, so A/B is unaffected).
+          if (this._isTrackAudible(trk.index))
+            this._pcmNoteOn(trk.channelId, sampleId, note);
           // Held (dur 0) PCM suspends the dispatcher like any hold; otherwise
           // advance the clock. The sample keeps feeding via step 3 regardless.
           if (dur.ticks === 0) {
@@ -1900,8 +1903,14 @@ export class DrvPlayer {
   _applyAudibility() {
     if (!this._trk) return;
     for (const trk of this._trk) {
-      if (trk.channelId < 10 && !this._isTrackAudible(trk.index))
-        this._channelOff(trk.channelId);
+      if (this._isTrackAudible(trk.index)) continue;
+      if (trk.channelId < 10) this._channelOff(trk.channelId);
+      else if (trk.channelId >= 20 && trk.channelId <= 22) {
+        // PCM is soft-mixed here (not a keyed channel), so muting stops the
+        // voice directly; _pcmFrame releases the DAC once no voice is active.
+        const v = this._pcmVoices[trk.channelId - 20];
+        if (v) v.active = false;
+      }
     }
   }
 }
