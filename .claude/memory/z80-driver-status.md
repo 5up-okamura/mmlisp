@@ -109,18 +109,21 @@ watermark over the full gate corpus). Every `verify.mjs` run also prints a
 
 | Resource | Now | Notes |
 | --- | --- | --- |
-| Resident code | **13 B free** (resident 5869 B vs G_PCMV ceiling 5882 B / $16FA) after step 11 (`npm run size`) | The scarce resource, **nearly exhausted**. Step 7 freed 201 B (ovl_rare); steps 8/9/10 (read_op_param, additive, scaled ~70 B) + the override-pitch fix (+6 B, G_MADD 3-state) + step 11 dyn-sweep (~28 B) spent it to 13 B. The **next resident feature must fund first**: psf commonization (~5) + DATA_BASE bump (~20-26, hardware-gated), or evict cold code to an overlay. |
+| Resident code | **178 B free** (resident 5881 B vs G_PCMV ceiling 6059 B / $17AB) after the ovl_setup/ovl_mmb split (`npm run size`) | The scarce resource. Was 13 B; **splitting the fat `ovl_setup` (445 B) into `ovl_setup`+`ovl_mmb` (220/222 B)** shrank the slot 451→274 and freed ~183 B resident (−12 B for the desc-tab entry + the two-load sequence = net +166 vs the old 13). This lever is now spent: the six overlays are 220–268 B, so further splits yield only ~13 B each. |
 | Rare-event handlers resident | **25 B** (d_marker only) | tempo set/sweep, CSM, FM3 mode evicted to ovl_rare (step 7). d_marker stays resident — no gate covers it, so eviction is unverifiable until a marker gate exists. |
-| Overlay slot | 451 B ($172D–$18EF); overlays 445/268/255/238/250 (ovl_rare) B | A *new* overlay can be up to 451 B; growing the largest (445) has 6 B. |
+| Overlay slot | 274 B ($17DE–$18EF); overlays 220/268/255/238/250/220 (ovl_mmb) B | Sized by the largest (ovl_cmd 268), 6 B slack. Every slot byte costs a resident byte — keep overlays balanced. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |
 | Stack | 82 B window ($1FAE STACK_FLOOR..$1FFF); **worst case 40 B used** on m3-macro-keyon (42 B reserve) | → DATA_BASE bump of ~20-26 B leaves a hardware-interrupt reserve; confirm on hardware. |
 | ROM side | effectively unlimited | LUT_TABLE MMB section (§0x0008), overlay blob, banked song data. |
 
-v0.6 near-term costs vs funding (design-eval.md §10): costs 160-215 B
-(generic read 35-55 + additive 50-60 + scaled 30-40 + CALL/RET 45-60) vs
-**235 B free after the step-7 eviction** — already covered without spending
-the DATA_BASE bump (~20-26, hardware-gated) or psf commonization (~5). The
-VAL-op reserve (~45-60 B) rides those held-back sources if demand appears.
+v0.6 near-term costs vs funding (design-eval.md §10): the VAL-op arithmetic
+was landed; **CALL/RET (~45-60 B)** is the remaining M3 resident item. Beyond
+M3 the requested set is PCM runtime volume, SE + BGM voice restore, DJ-style
+cross-MMB banking, and the PCM 32K-wall countermeasure (WIDE_OFFSETS,
+mmb.md §12). Funding is **178 B free** after the ovl_setup/ovl_mmb split, plus
+the still-unspent DATA_BASE bump (~20-26, hardware-gated) and psf
+commonization (~15-20). The split is what put cross-MMB banking (a per-frame
+resident cost) in reach at all.
 
 Funding menu, cheapest first (with precedent):
 

@@ -2,9 +2,11 @@
 ; OVERLAY_SLOT and run there (68k free, Z80 autonomous). Assembled at the slot
 ; with the resident image's symbols preloaded, so it calls resident helpers
 ; and uses resident equates directly. Entry = start_track (mailbox cmd 1).
+;
+; The MMB directory walk that used to open this routine now lives in ovl_mmb,
+; which START_TRACK loads and runs first — its results reach us in globals.
         org OVERLAY_SLOT
 start_track:
-    call mmb_locate
     ; find G_ARG0 in the track table
     ld hl,(G_TT)
     ld e,(hl)               ; track_count (≤16, low byte is enough)
@@ -125,138 +127,5 @@ st_active:
     add a,l
     ld l,a
     ld (hl),$80
-    ret
-
-; ── locate TRACK_TABLE / EVENT_STREAM payloads in the banked window ───────
-mmb_locate:
-    ld hl,(WINDOW+8)        ; section_count
-    ld b,l
-    ld hl,WINDOW+12         ; directory
-ml_sec:
-    ld a,(hl)               ; id low byte (ids are tiny)
-    cp 1
-    jr z,ml_tt
-    cp 2
-    jr z,ml_es
-    cp 4
-    jr z,ml_sb
-    cp 5
-    jr z,ml_val
-    cp 7
-    jr z,ml_macro
-    cp 8
-    jr z,ml_lut
-ml_next:
-    ld de,12
-    add hl,de
-    djnz ml_sec
-    jp compute_lut_bases    ; derive per-table pointers from G_LUT
-ml_tt:
-    call ml_payload
-    ld (G_TT),de
-    jr ml_next
-ml_es:
-    call ml_payload
-    ld (G_ES),de
-    jr ml_next
-ml_sb:
-    call ml_payload
-    ld (G_SB),de
-    jr ml_next
-ml_lut:
-    call ml_payload
-    ld (G_LUT),de
-    jr ml_next
-ml_val:
-    call ml_payload         ; DE = payload (count u16, then count × i16 inits)
-    push hl                 ; preserve the directory scan ptr
-    push bc                 ; preserve the section counter
-    ex de,hl                ; HL = payload
-    ld a,(hl)               ; count (low; ≤16)
-    inc hl
-    inc hl                  ; HL = &inits[0]
-    add a,a                 ; count * 2 bytes
-    ld c,a
-    ld b,0
-    ld de,VAL_SLOTS         ; seed declared slots (driver.md §6.3)
-    ldir
-    pop bc
-    pop hl
-    jr ml_next
-ml_macro:
-    push hl                 ; preserve the directory scan ptr
-    push bc                 ; preserve the section counter
-    call ml_payload         ; DE = payload (entry_count u16, then descriptors, blob)
-    push de
-    ld a,(de)               ; entry_count low
-    ld l,a
-    inc de
-    ld a,(de)               ; entry_count high
-    ld h,a                  ; HL = entry_count
-    add hl,hl
-    add hl,hl
-    add hl,hl               ; HL = entry_count * 8
-    pop de                  ; DE = payload
-    push de
-    add hl,de               ; HL = payload + count*8
-    inc hl
-    inc hl                  ; + 2 → blob base
-    ld (G_MBLOB),hl
-    pop de
-    inc de
-    inc de                  ; descriptor base = payload + 2
-    ld (G_MACRO),de
-    pop bc
-    pop hl
-    jr ml_next
-
-; compute_lut_bases: G_LUT + each table's byte offset (tables.z80) → base globals.
-compute_lut_bases:
-    ld bc,(G_LUT)
-    ld hl,FNUM_LUT_OFF
-    add hl,bc
-    ld (FNUM_LUT),hl
-    ld hl,PSG_PERIOD_LUT_OFF
-    add hl,bc
-    ld (PSG_PERIOD_LUT),hl
-    ld hl,VEL_TL4_OFF
-    add hl,bc
-    ld (VEL_TL4),hl
-    ld hl,VOL_TL4_OFF
-    add hl,bc
-    ld (VOL_TL4),hl
-    ld hl,VEL_PSG4_OFF
-    add hl,bc
-    ld (VEL_PSG4),hl
-    ld hl,VOL_PSG4_OFF
-    add hl,bc
-    ld (VOL_PSG4),hl
-    ld hl,CARRIER_MASK_OFF
-    add hl,bc
-    ld (CARRIER_MASK),hl
-    ld hl,OP_ADDR_OFF_OFF
-    add hl,bc
-    ld (OP_ADDR_OFF),hl
-    ld hl,SIN_LUT_OFF
-    add hl,bc
-    ld (SIN_LUT),hl
-    ld hl,PCM_MULT_FRAME_OFF
-    add hl,bc
-    ld (PCM_MULT_FRAME),hl
-    ret
-; DE = WINDOW + offset(u32, low u16 used — one 32KB window in M1)
-ml_payload:
-    push hl
-    inc hl
-    inc hl
-    inc hl
-    inc hl
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    ld hl,WINDOW
-    add hl,de
-    ex de,hl
-    pop hl
     ret
 

@@ -175,30 +175,34 @@ deterministic. PSG writes need no wait.
 
 > **Implementation note (M2/M3 build).** The image grew through the milestones,
 > so the reference/asm build places **all** RAM data above the code at
-> `DATA_BASE` (currently 0x18F0; code owns 0x0000–0x18EF, ~6.4 KB image, full
-> 16-track capacity, ~14 B headroom). From there: mailbox 0x18F0, val slots
-> 0x1930, driver globals 0x1950, channel state 0x19D8, TCB 0x1C58 (16 blocks),
-> shadow 0x1E58, valid bitmap 0x1F88, stack top 0x2000. Space reworks got it
-> under 8 KB: the shadow's valid plane is a **bit**-per-register bitmap (2×19 B,
-> not 2×152 B); the **constant LUTs moved out of Z80 RAM into ROM** (a LUT_TABLE
-> MMB section, mmb.md §16, ~726 B freed); and a **table-drive refactor** collapsed
-> the ten near-identical FM op-param handlers into one descriptor table + routine
-> (~169 B), which paid back the interim TCB trims and restored full 16-track
-> capacity. The monolith is now full; the remaining M3 moves to a 68k-offload
-> split (engines on the main 68000, the Z80 a thin register + PCM executor). The
-> mailbox and val slots are the only 68k-published addresses; they move with
-> `DATA_BASE`, so `drv/sgdk/mmlispdrv.c` uses the current values. See
+> `DATA_BASE` (currently 0x18F0). Below it, in ascending order, sit the resident
+> code (0x0000 up to the `G_PCMV` ceiling), the PCM voice structs (`G_PCMV`), and
+> the shared `OVERLAY_SLOT`; above `DATA_BASE`: mailbox 0x18F0, val slots 0x1930,
+> driver globals 0x1950, channel state 0x19D8, TCB 0x1C58 (16 blocks), shadow
+> 0x1E58, valid bitmap 0x1F88, stack top 0x2000. Space reworks got it under 8 KB:
+> the shadow's valid plane is a **bit**-per-register bitmap (2×19 B, not 2×152 B);
+> the **constant LUTs moved out of Z80 RAM into ROM** (a LUT_TABLE MMB section,
+> mmb.md §16, ~726 B freed); a **table-drive refactor** collapsed the ten
+> near-identical FM op-param handlers into one descriptor table + routine (~169 B);
+> and **splitting the fat `ovl_setup` overlay** (the MMB directory walk into
+> `ovl_mmb`, the TCB fill left in `ovl_setup`) shrank the slot 451→274 B, since a
+> slot is sized by its largest overlay and every slot byte costs a resident byte —
+> that freed ~183 B of resident image. The mailbox and val slots are the only
+> 68k-published addresses; they move with `DATA_BASE`, so `drv/sgdk/mmlispdrv.c`
+> uses the current values. `npm run size` reports the live resident headroom. See
 > `drv/README.md`.
 >
 > **Code overlays.** Cold code (rarely invoked, not the per-frame loop) lives in
 > a 32 KB-aligned **overlay ROM blob** (`mmlispdrv_ovl.bin`), not Z80 RAM. The
 > resident loader (`load_overlay`) banks the window to the overlay ROM, `LDIR`s
 > the requested overlay into a shared RAM buffer at `OVERLAY_SLOT`, banks back to
-> the MMB, and calls it. `start_track` + MMB parsing (`ovl_setup`) and the
-> mailbox command handlers (`ovl_cmd`) are the first two overlays; the resident
-> holds only the hot dispatch/note/sweep/macro/PCM path. This keeps the 68k free
-> (the Z80 stays autonomous) while freeing RAM. `MMLisp_init` publishes the
-> overlay bank at `G_OVL_BANK` (mailbox +0x34) after the reset.
+> the MMB, and calls it. START_TRACK spans two overlays run in sequence — the MMB
+> directory walk (`ovl_mmb`) then the TCB fill (`ovl_setup`), which cross only via
+> globals so nothing in the slot is live across the swap; the mailbox command
+> handlers (`ovl_cmd`) are another. The resident holds only the hot
+> dispatch/note/sweep/macro/PCM path. This keeps the 68k free (the Z80 stays
+> autonomous) while freeing RAM. `MMLisp_init` publishes the overlay bank at
+> `G_OVL_BANK` (mailbox +0x34) after the reset.
 
 The constant tables (F-number, PSG period, level ladders, carrier masks,
 operator offsets, the sin curve unit, PCM rate multipliers — §7, §8) are

@@ -17,7 +17,7 @@ _MUL_VAL / PARAM_MUL + `$time`, driver.md §6.4), and **3-channel PCM soft-mix**
 
 ```
 src/mmlispdrv.z80   the driver (M1)
-src/ovl_*.z80       on-demand overlays (setup/cmd/pcm/boot/rare) loaded into OVERLAY_SLOT
+src/ovl_*.z80       on-demand overlays (setup/cmd/pcm/boot/rare/mmb) loaded into OVERLAY_SLOT
 src/tables.z80      generated constant tables — do not edit (gen-tables.mjs)
 tools/z80asm.mjs    first-party two-pass Z80 assembler (subset, no deps)
 tools/z80cpu.mjs    first-party Z80 CPU emulator (same subset, no deps)
@@ -69,9 +69,9 @@ lowest SP the emulator reached (min-SP hook in `z80cpu.mjs`) against the 82 B
 `STACK_FLOOR..STACK_TOP` window. `npm run size` reports resident/overlay
 sizes and free headroom; `npm run budget` combines that audit with the
 worst-case stack across the full gate corpus (the living design-eval.md §10
-budget table). Baseline: resident 5647 B, 235 B free under the G_PCMV ceiling
-(after the step-7 ovl_rare eviction freed 201 B); worst stack 40 B of 82 (on
-m3-macro-keyon).
+budget table). Current: resident 5881 B, 178 B free under the G_PCMV ceiling
+(after splitting `ovl_setup`/`ovl_mmb` shrank the slot and freed ~183 B); worst
+stack 40 B of 82 (on m3-macro-keyon).
 
 `ovl_rare` (overlay 4) holds rarely-fired event-stream handlers — TEMPO_SET/
 TEMPO_SWEEP, CSM_ON/OFF/RATE, FM3_MODE — evicted from the resident image to
@@ -209,11 +209,15 @@ These are the deltas against the docs as written:
    A **Z80 code-overlay pass** then broke the ceiling without touching the 68k:
    cold code moves out of RAM into a 32 KB-aligned overlay ROM blob
    (`mmlispdrv_ovl.bin`) the driver LDIRs on demand into the shared
-   `OVERLAY_SLOT` ($172D), then runs there, keeping the per-frame loop resident
-   and the Z80 autonomous. Four overlays share the slot (a `G_CUR_OVL` guard
-   skips a reload when the wanted overlay is already in it): `ovl_setup`
-   (start_track + MMB parsing), `ovl_cmd` (the mailbox commands), `ovl_pcm`
-   (PCM per-note setup), and `ovl_boot` (the one-shot power-on init). The boot
+   `OVERLAY_SLOT`, then runs there, keeping the per-frame loop resident and the
+   Z80 autonomous. Overlays share the slot (a `G_CUR_OVL` guard skips a reload
+   when the wanted overlay is already in it): `ovl_mmb` (the MMB directory walk)
+   then `ovl_setup` (the TCB fill) run in sequence on START_TRACK, `ovl_cmd` (the
+   mailbox commands), `ovl_pcm` (PCM per-note setup), `ovl_boot` (the one-shot
+   power-on init), and `ovl_rare` (rarely-fired stream handlers). The slot is
+   sized by the largest overlay and each slot byte costs a resident byte, so
+   `ovl_setup` was split (MMB walk out to `ovl_mmb`) to shrink it 451→274 B and
+   reclaim ~183 B of resident image. The boot
    overlay is loaded once by a tiny resident reset stub, so the host must publish
    `G_OVL_BANK` **before releasing the Z80 from reset**, and `ovl_boot`'s RAM
    clear preserves the overlay-bank globals. That freed headroom carried the rest

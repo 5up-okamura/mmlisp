@@ -19,10 +19,22 @@ const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 // demand into that shared RAM buffer. The overlay ROM ships at OVERLAY_BANK.
 export const OVERLAY_BANK = 1;
 // Order defines the overlay index in ovl_desc_tab (0 = ovl_setup, 1 = ovl_cmd,
-// 2 = ovl_pcm, 3 = ovl_boot, 4 = ovl_rare). ovl_boot is loaded once by the
-// reset stub; ovl_rare hosts rarely-fired event-stream handlers (tempo/CSM/FM3
-// mode) evicted from the resident image via the tramp_rare trampoline.
-const OVERLAYS = ["ovl_setup.z80", "ovl_cmd.z80", "ovl_pcm.z80", "ovl_boot.z80", "ovl_rare.z80"];
+// 2 = ovl_pcm, 3 = ovl_boot, 4 = ovl_rare, 5 = ovl_mmb). ovl_boot is loaded once
+// by the reset stub; ovl_rare hosts rarely-fired event-stream handlers
+// (tempo/CSM/FM3 mode) evicted from the resident image via the tramp_rare
+// trampoline; ovl_mmb runs ahead of ovl_setup on the START_TRACK path.
+//
+// The slot is sized by the LARGEST overlay, and every byte of slot costs a byte
+// of resident code — so keep them balanced. ovl_setup+ovl_mmb were one 445 B
+// overlay that alone set the slot; splitting them freed 183 B of resident image.
+const OVERLAYS = [
+  "ovl_setup.z80",
+  "ovl_cmd.z80",
+  "ovl_pcm.z80",
+  "ovl_boot.z80",
+  "ovl_rare.z80",
+  "ovl_mmb.z80",
+];
 
 export function buildDriver() {
   writeFileSync(join(srcDir, "tables.z80"), generateTables());

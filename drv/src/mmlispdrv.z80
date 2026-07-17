@@ -47,7 +47,12 @@ VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 
 ; Overlay slot: a shared RAM buffer just above the resident code where cold-code
 ; overlays (ovl_setup / ovl_cmd) are loaded on demand and executed (driver.md §5).
-OVERLAY_SLOT equ $172d         ; slot $172D..DATA_BASE ($18F0) = 451 B ≥ max overlay 445; G_PCMV sits just below
+; Slot $17DE..DATA_BASE ($18F0) = 274 B ≥ max overlay 268 (ovl_cmd), 6 B slack.
+; Sized by the LARGEST overlay only, and it eats resident code space byte for
+; byte — so a lone fat overlay is expensive. Keep them balanced: splitting the
+; 445 B ovl_setup into ovl_setup+ovl_mmb dropped the slot 451→274 (+183 B
+; resident). `npm run size` reports the slack; G_PCMV sits just below.
+OVERLAY_SLOT equ $17de
 
 ; driver globals block
 G_BASE      equ MB_RING+$60     ; $17E0
@@ -137,7 +142,7 @@ PCM_V_SIZE  equ 17
 ; 3 voice slots live in the RAM gap between the resident code and OVERLAY_SLOT
 ; (the data region above DATA_BASE is packed). Boot zeroes the PV_ACT bytes; the
 ; build asserts code end ≤ G_PCMV. Anchored just below the slot.
-G_PCMV      equ $16fa          ; 3 × 17 B ($16FA..$172D)
+G_PCMV      equ $17ab          ; 3 × 17 B ($17AB..$17DE) — the resident ceiling
 G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
 G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
 ; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
@@ -385,13 +390,19 @@ md_loop:
     ld a,(hl)
     ld (G_ARG2),a
     push bc
-    ; Commands run from overlays (cold code, driver.md §5): cmd 1 → ovl_setup
-    ; (entry = start_track); cmds 2-6 → ovl_cmd (dispatches on the command byte
-    ; in D). D holds the command across load_overlay.
+    ; Commands run from overlays (cold code, driver.md §5): cmd 1 → ovl_mmb then
+    ; ovl_setup; cmds 2-6 → ovl_cmd (dispatches on the command byte in D). D
+    ; holds the command across load_overlay.
     ld a,d
     cp 1
     jr nz,md_cmd
-    xor a                  ; overlay 0 = ovl_setup
+    ; START_TRACK spans two overlays: locate the MMB sections, then fill the TCB.
+    ; They share the slot in sequence — safe because everything crosses in
+    ; globals, so nothing of ovl_mmb is live once ovl_setup overwrites it.
+    ld a,5                 ; overlay 5 = ovl_mmb (entry = mmb_locate)
+    call load_overlay
+    call OVERLAY_SLOT
+    xor a                  ; overlay 0 = ovl_setup (entry = start_track)
     call load_overlay
     call OVERLAY_SLOT
     jr md_done
@@ -488,13 +499,14 @@ tramp_rare:
 
 ; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
 ; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd,
-; 2 = ovl_pcm, 3 = ovl_boot, 4 = ovl_rare).
+; 2 = ovl_pcm, 3 = ovl_boot, 4 = ovl_rare, 5 = ovl_mmb).
 ovl_desc_tab:
     db 0,0,0,0              ; overlay 0 (ovl_setup)
     db 0,0,0,0              ; overlay 1 (ovl_cmd)
     db 0,0,0,0              ; overlay 2 (ovl_pcm)
     db 0,0,0,0              ; overlay 3 (ovl_boot)
     db 0,0,0,0              ; overlay 4 (ovl_rare)
+    db 0,0,0,0              ; overlay 5 (ovl_mmb)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
