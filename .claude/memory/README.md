@@ -18,11 +18,16 @@ Index:
 - [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
   import, compile-time eval, phase status and sequencing. roadmap.md has the
   compact public version.
-- [plan-dac-ownership.md](plan-dac-ownership.md) — fm6 vs PCM: approved and not
-  started. "Last KEY-ON wins" (fm6 preempts all three voices), why the other two
-  policies lose, the measured cost (no MMB change; the Z80 gets *cheaper*), and
-  the staged order — with a listening gate before the Z80, since reversing later
-  costs two trace-gate re-takes.
+- [plan-driver-features.md](plan-driver-features.md) — post-M3 driver feature
+  roadmap (budget-meeting outcome): the two-budget frame (resident bytes vs
+  per-frame cycles), the overlay split that freed 13→178 B, and the ordered plan
+  — CALL/RET, SE+VOICE_SET restore, DJ transitions, per-voice PCM volume,
+  32K-wall — plus `(trig N)` music→game triggers. Start here for what's next.
+- [plan-dac-ownership.md](plan-dac-ownership.md) — fm6 vs PCM: **SUPERSEDED.**
+  "Last KEY-ON wins" is on hold — mucom dropped as a policy input and the budget
+  wall gone, so the live direction is a *static* compile-time rule (likely
+  `:prio`), not runtime arbitration. Banner at top; measured cost table still
+  useful. See plan-driver-features.md.
 - [plan-mucom-pcm.md](plan-mucom-pcm.md) — mucom88 PCM (part K / ADPCM) import:
   **done**, both ear-gates passed. Kept only for the open items it lists (all
   also in roadmap.md); delete once those move out.

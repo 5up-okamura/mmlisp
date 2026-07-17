@@ -1,7 +1,41 @@
-# fm6 / PCM DAC ownership — last KEY-ON wins (approved plan)
+# fm6 / PCM DAC ownership
 
-Status: **approved 2026-07, not started.** Design settled with the user;
-implement in a separate chat, in the staged order below.
+Status: **SUPERSEDED 2026-07 — the "last KEY-ON wins" plan below is on hold.**
+A follow-up review changed the premise on two counts; read this banner before
+acting on anything under it. See [[plan-driver-features]] for the live direction.
+
+## What changed (read first)
+
+1. **mucom is no longer a driver-policy input.** The whole runtime-arbitration
+   case rested on "21 of 42 mucom songs collide on fm6+DAC." With mucom dropped
+   as a reason to shape driver policy, that justification is gone — the importer
+   is just one more voice that decides per-song whether to cede fm6 or move to
+   sqr1. No corpus forces the driver's hand.
+2. **The budget wall that made 18 B look unaffordable is gone.** DAC ownership
+   was entangled with the 13 B resident ceiling; the overlay split (commit
+   b069ef8) freed it to 178 B. Cost is no longer the deciding factor.
+
+**New direction (settled, not yet planned in detail): a STATIC rule, not runtime
+arbitration.** A PCM-using song cedes fm6, decided at **compile time** — the most
+promising shape is `:prio` treating fm6 and pcm1-3 as parallel layers of the one
+physical channel (language.md §channel-forms), so the collision is resolved in the
+compiler and the driver arbitrates **zero bytes** (and reclaims the ~12 B DAC
+release path). Open sub-problems for that: `:prio`'s single-monophonic-stream
+flatten can't yet express "fm6 vs the *group* {pcm1,pcm2,pcm3}" exclusion; and
+runtime-injected SE (START_TRACK, not in the compiled score) can't be flattened
+at compile time, so SE-over-PCM is a hardware fact (fm6 already spent), not a
+policy `:prio` can pre-decide.
+
+The measured facts below (cost table, JS-vs-Z80 gate mechanics) stay useful; the
+**decision** — last-KEY-ON-wins — does not. Do not implement the staged plan
+without re-confirming direction.
+
+---
+
+## (Superseded) original plan — last KEY-ON wins
+
+Status when written: **approved 2026-07, not started.** Design settled with the
+user; implement in a separate chat, in the staged order below.
 
 ## Context (the "why")
 
