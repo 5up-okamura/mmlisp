@@ -39,6 +39,7 @@ import {
 } from "./mmb.js";
 import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 import { buildLutBlob } from "./lut-blob.js";
+import { dedupEventStream } from "./mmb-dedup.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
@@ -385,8 +386,10 @@ export function encodeMmb(ir, opts = {}) {
   // ── EVENT_STREAM + per-track layout ─────────────────────────────────────
   const stream = new Writer();
   const trackEntries = []; // { trackId, channelId, flags, eventOffset }
+  const evBounds = []; // { offset, cmd, track } — one per emitted event (dedup)
 
   for (const track of ir.tracks ?? []) {
+    const trackSeq = trackEntries.length; // this track's index (pushed at tail)
     const label = track.scoreChannel ?? track.channel ?? String(track.id);
     const channelId = resolveChannelId(track.scoreChannel ?? track.channel);
     if (channelId === null) {
@@ -447,6 +450,7 @@ export function encodeMmb(ir, opts = {}) {
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
       const a = ev.args ?? {};
+      evBounds.push({ offset: stream.length, cmd: ev.cmd, track: trackSeq });
       switch (ev.cmd) {
         case "NOTE_ON": {
           syncClock(ev.tick);
@@ -935,6 +939,7 @@ export function encodeMmb(ir, opts = {}) {
       );
     }
 
+    evBounds.push({ offset: stream.length, cmd: "END_OF_TRACK", track: trackSeq });
     stream.u8(OPCODE.END_OF_TRACK);
     trackEntries.push({
       trackId: track.id ?? trackEntries.length,
@@ -942,6 +947,15 @@ export function encodeMmb(ir, opts = {}) {
       flags,
       eventOffset,
     });
+  }
+
+  // ── CALL/RET dedup (design-eval §9): factor repeated event runs. Pure
+  // encode transform — trackEntries.eventOffset and JUMP dests are relinked in
+  // place; the register trace is unchanged (verified by the ab-compare gate).
+  let eventBytes = stream.bytes;
+  if (opts.dedup !== false) {
+    const d = dedupEventStream(eventBytes, evBounds, trackEntries, OPCODE);
+    eventBytes = d.bytes;
   }
 
   // ── Sections ─────────────────────────────────────────────────────────────
@@ -963,7 +977,7 @@ export function encodeMmb(ir, opts = {}) {
   sections.push({
     id: SECTION_ID.EVENT_STREAM,
     flags: SECTION_FLAG.REQUIRED,
-    payload: stream.bytes,
+    payload: eventBytes,
   });
 
   const metadata = new Writer();

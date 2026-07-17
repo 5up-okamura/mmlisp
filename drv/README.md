@@ -56,7 +56,10 @@ host), and diffs the frame-stamped register log against
 values, same frames, same order (driver.md §12.4). Current status: all
 trace gate scores diff clean (`npm run verify:all`) — ab-core, the two
 stress scores, the M2 set (motion, pitch, CSM, PCM, PCM-loop, mailbox), and the
-M3 set (FM3-op, macros: step/curve/semi/dynval/pitch/multi/keyon, PCM soft-mix).
+M3 set (FM3-op, macros: step/curve/semi/dynval/pitch/multi/keyon, PCM soft-mix,
+CALL/RET dedup). Any score with repeated phrases now carries CALL/RET (the
+encode-time dedup pass, `live/src/mmb-dedup.js`), so the trace gate exercises
+`d_call`/`d_ret` on real streams; `m3-callret` is the dedicated case.
 
 `verify:all` also runs **`verify:ab`** (`tools/ab-gate.mjs`) — the *other* axis:
 `ir-player` ≡ `drv-player`, which the Z80↔drv trace gate cannot see (when both

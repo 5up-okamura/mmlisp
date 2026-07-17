@@ -90,8 +90,20 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
 
 1. **M3 tail**: VOICE_SET opcode + the exporter's VOICE_TABLE coalescing
    pass (voices currently ride as PARAM_SET runs — correctness-equal, just
-   bigger streams); CALL/RET + encode-time dedup pass; NOTE_ON_EX
-   `macro_ref` field.
+   bigger streams); NOTE_ON_EX `macro_ref` field.
+   **CALL/RET + encode-time dedup pass — DONE (2026-07-18).** Z80 `d_call`/`d_ret`
+   share the loop control stack (CALL entries tagged remaining=0xFF), ~101 B
+   resident (free 169→68 B — heavier than the 45-60 B estimate; a shared
+   `ctrl_entry` helper across d_loop_*/d_call/d_ret is the obvious later trim).
+   Encoder: `live/src/mmb-dedup.js` factors control-flow-free runs at loop
+   depth 0, within a track, ≥8 bytes, ≥2 occurrences → fragment pool + CALLs.
+   Pure encode transform (relinks track offsets + JUMP dests; **JUMP opcode is
+   the unit's last 3 bytes, not byte 0 — the backward-loop path emits a
+   sticky-state prelude first**, the one bug found). Saves ~4-8% on structured
+   scores (demo1 −54 B, stress −106 B). Verified two ways: trace gate exercises
+   Z80 CALL/RET on every factored M2/M3 score (m3-callret dedicated) **and**
+   ab-gate baseline is byte-unchanged (dedup is trace-neutral). verify:all
+   trace 31/31 + ab-gate 32 scores. Default-on in `encodeMmb` (`opts.dedup`).
 2. **v0.6 driver track** — the eval design is settled
    ([design-eval.md](design-eval.md) §10/§12); the driver-side sequence is:
    ~~measurement infra~~ (DONE — `npm run size`/`budget`) → ~~budget prep~~

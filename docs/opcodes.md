@@ -163,10 +163,19 @@ field by its fixed size (gate uses duration-operand length rules).
 
 - **CALL 0x44** `{dest u16}` — jump to `dest` (EVENT_STREAM-relative),
   pushing the return pointer on the track control stack. Shared-subsequence
-  reference: the target of the encode-time deduplication pass (M3). Depth:
-  CALL and LOOP entries share one 4-entry control stack (driver.md §5.2);
-  the encoder enforces combined depth ≤ 4.
-- **RET 0x45** — pop return pointer, continue there.
+  reference: emitted by the encode-time deduplication pass (`mmb-dedup.js`).
+  Depth: CALL and LOOP entries share one 4-entry control stack (driver.md
+  §5.2, CALL entries tagged remaining = 0xFF); the encoder only factors
+  control-flow-free runs at loop depth 0, so a CALL adds exactly one entry
+  (combined depth stays ≤ 4). **Implemented and gated** (`m3-callret`).
+- **RET 0x45** — pop the top (call-tagged) entry and continue at its return
+  pointer. **Implemented and gated.**
+
+The **dedup pass** (design-eval §9) is a pure encode transform: repeated
+event runs are stored once (fragment + RET) and each occurrence becomes a
+3-byte CALL. It changes MMB bytes, never the register trace — verified by the
+ab-compare gate (`drv/tools/ab-gate.mjs`), which replays the original IR and
+the deduped MMB and requires an unchanged mismatch baseline.
 - **LOOP_BREAK 0x46** `{skip u16}` — `:break`: on the **last** iteration of
   the innermost loop, pop its entry and jump forward `skip` bytes (measured
   from the end of this instruction, landing just past the matching

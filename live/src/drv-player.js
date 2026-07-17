@@ -815,6 +815,33 @@ export class DrvPlayer {
           trk.looped = true;
           break;
         }
+        case OPCODE.CALL: {
+          // dest is EVENT_STREAM-relative (like JUMP). Push the return pointer
+          // on the shared control stack, tagged as a call (remaining -1); RET
+          // pops it. driver.md §5.2 — CALL and LOOP share the 4-entry stack.
+          const dest = u16(s, trk.pc + 1);
+          const resumePc = trk.pc + 3;
+          if (trk.loops.length >= LOOP_STACK_DEPTH) {
+            this._diag("W_DRV_CALL_DEPTH", "control stack overflow; call ignored");
+            trk.pc = resumePc;
+            break;
+          }
+          trk.loops.push({ resumePc, remaining: -1, isCall: true });
+          trk.pc = dest;
+          break;
+        }
+        case OPCODE.RET: {
+          const top = trk.loops[trk.loops.length - 1];
+          if (top && top.isCall) {
+            trk.loops.pop();
+            trk.pc = top.resumePc;
+          } else {
+            // Malformed stream (RET without a matching CALL on top); step past.
+            this._diag("W_DRV_RET_UNMATCHED", "RET with no matching CALL");
+            trk.pc += 1;
+          }
+          break;
+        }
         case OPCODE.PARAM_SET: {
           const target = s[trk.pc + 1];
           const w = targetWidth(target);

@@ -535,6 +535,10 @@ d_next:
     jp z,d_marker
     cp $43
     jp z,d_jump
+    cp $44
+    jp z,d_call
+    cp $45
+    jp z,d_ret
     cp $46
     jp z,d_loop_break
     cp $60
@@ -838,6 +842,77 @@ d_jump:
     ld l,(ix+T_BASE)
     ld h,(ix+T_BASE+1)
     add hl,de
+    jp d_next
+
+; ── CALL (dest u16, EVENT_STREAM-relative) ────────────────────────────────
+; Shares the loop control stack (T_LOOPS, 4 × {resume u16, remaining u8}).
+; A call entry is tagged remaining = $FF so RET / LOOP_END can tell them apart.
+d_call:
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; DE = dest
+    inc hl                  ; HL = resume pc (past operand)
+    ld a,(ix+T_DEPTH)
+    cp 4
+    jp nc,d_next            ; overflow: skip the call, continue at resume
+    push de                 ; save dest
+    ld c,a
+    add a,a
+    add a,c
+    add a,T_LOOPS           ; A = entry offset = T_LOOPS + depth*3
+    ld e,a
+    ld d,0
+    push hl                 ; save resume pc
+    push ix
+    pop hl
+    add hl,de               ; HL = entry ptr
+    pop de                  ; DE = resume pc
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl
+    ld (hl),$ff             ; call tag
+    inc (ix+T_DEPTH)
+    pop de                  ; DE = dest
+    ld l,(ix+T_BASE)
+    ld h,(ix+T_BASE+1)
+    add hl,de               ; pc = T_BASE + dest
+    jp d_next
+
+; ── RET ───────────────────────────────────────────────────────────────────
+d_ret:
+    ld a,(ix+T_DEPTH)
+    or a
+    jr z,d_ret_bad          ; empty stack: HL still = stream pc
+    dec a
+    ld c,a
+    add a,a
+    add a,c
+    add a,T_LOOPS           ; A = top entry offset
+    push hl                 ; save stream pc
+    ld l,a
+    ld h,0
+    push ix
+    pop de
+    add hl,de               ; HL = entry ptr
+    inc hl
+    inc hl
+    ld a,(hl)               ; tag byte
+    inc a                   ; $FF → 0
+    jr nz,d_ret_notcall     ; not a call entry: malformed, leave stack
+    dec (ix+T_DEPTH)
+    dec hl
+    ld d,(hl)
+    dec hl
+    ld e,(hl)               ; DE = resume pc
+    pop hl                  ; discard saved stream pc
+    ex de,hl                ; HL = resume pc
+    jp d_next
+d_ret_notcall:
+    pop hl                  ; restore stream pc
+d_ret_bad:
+    inc hl                  ; step past RET
     jp d_next
 
 ; ── PARAM_SET (target u8, value i8/i16) ───────────────────────────────────

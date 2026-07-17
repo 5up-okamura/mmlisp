@@ -483,9 +483,11 @@ specified in mmb.md §11.
   PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL), the **scaled-macro depth knob**
   (§13.2), **slot-fed sweep endpoints** (PARAM_SWEEP flags bit1/bit2 read a
   value slot for `from`/`to` at dispatch — the note-on tier, §4.6 in the eval
-  design), and **multi-channel PCM soft mix** (§14) **are implemented and
-  gated**. Remaining: NOTE_ON_EX macro_ref, VOICE_SET, CALL/RET + the
-  encode-time dedup pass, plus slot-fed macro-curve params (`:rate`/`:len`).
+  design), **multi-channel PCM soft mix** (§14), and **CALL/RET + the
+  encode-time dedup pass** (§5.2; `d_call`/`d_ret` share the loop control stack,
+  CALL entries tagged count 0xFF) **are implemented and gated**. Remaining:
+  NOTE_ON_EX macro_ref, VOICE_SET, plus slot-fed macro-curve params
+  (`:rate`/`:len`).
 
 ## 12. Verification Strategy
 

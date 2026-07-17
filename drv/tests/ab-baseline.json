@@ -35,6 +35,12 @@
     "compileErrors": 0,
     "digest": "094eb705"
   },
+  "m3-callret.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-dynsweep.mmlisp": {
     "ok": false,
     "mismatches": 128,

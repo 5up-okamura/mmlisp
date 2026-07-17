@@ -1,0 +1,19 @@
+; M3 gate: CALL/RET via the encode-time dedup pass (design-eval §9). A phrase
+; that repeats byte-identically — within a track and across tracks — factors
+; into one shared fragment stored once (ending in RET) and CALLed from each
+; occurrence. verify:all proves two things at once: the Z80 d_call/d_ret ==
+; drv-player (trace gate, since the MMB now carries CALL/RET), and the deduped
+; stream replays identically to the original IR (ab-gate).
+;
+; The phrase stays within one octave (no `>`/`<`) and touches no sticky state
+; (vel/gate/macros default throughout), so both occurrences encode to identical
+; bytes — the precondition the dedup pass factors on.
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 8
+  c d e f g f e d    ; phrase P
+  g g g g
+  c d e f g f e d    ; P again → factored (same octave/sticky context)
+  c)
+(sqr1 :len 8
+  c d e f g f e d    ; same phrase P on another track → cross-track share
+  a a a a
+  c d e f g f e d)

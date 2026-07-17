@@ -46,13 +46,16 @@ and let hardware bring-up gate the hot/cycle items.
 
 ## Ordered plan
 
-### 1. CALL/RET — ~45-60 B, cold, confidence high
+### 1. CALL/RET — DONE (2026-07-18), ~101 B resident (not 45-60)
 
-Remaining M3 (design-eval.md §9). Event-stream subroutines; shares the existing
-4-entry loop-control stack (`T_LOOPS`/`T_DEPTH`, opcodes.md §5.2, 0x44/0x45).
-Resident (dispatch handlers) but cheap cycles. The **exporter dedup pass** rides
-with it (compile-side, 0 Z80 bytes) and *indirectly eases the 32K wall* by
-shrinking stream data.
+Event-stream subroutines sharing the 4-entry loop-control stack
+(`T_LOOPS`/`T_DEPTH`, opcodes.md §5.2, 0x44/0x45; CALL tagged remaining=0xFF).
+`d_call`/`d_ret` + 2 dispatch entries measured **~101 B** — heavier than the
+45-60 estimate; free 169→68 B. Later trim: a shared `ctrl_entry` helper across
+d_loop_*/d_call/d_ret. The **exporter dedup pass** (`live/src/mmb-dedup.js`,
+compile-side, 0 Z80 B) rides with it — factors control-flow-free depth-0 runs,
+~4-8% stream shrink (eases the 32K wall). Verified by trace gate (Z80 CALL/RET
+on factored scores) + ab-gate (dedup trace-neutral). See [[z80-driver-status]].
 
 ### 2. SE + BGM voice restore — bundle with VOICE_SET, ~30-50 B, cold
 
