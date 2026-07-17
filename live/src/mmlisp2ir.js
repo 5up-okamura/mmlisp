@@ -1400,6 +1400,8 @@ function parseSampleDef(root, diagnostics) {
   const sample = {
     file: null,
     rate: null,
+    offset: null,
+    frames: null,
     loopStart: null,
     loopEnd: null,
     bitDepth: null,
@@ -1416,6 +1418,12 @@ function parseSampleDef(root, diagnostics) {
     } else if (key === ":rate") {
       const rate = parseIntLike(rawVal);
       if (rate !== null) sample.rate = rate;
+    } else if (key === ":offset") {
+      const offset = parseIntLike(rawVal);
+      if (offset !== null) sample.offset = offset;
+    } else if (key === ":frames") {
+      const frames = parseIntLike(rawVal);
+      if (frames !== null) sample.frames = frames;
     } else if (key === ":loop-start") {
       const loopStart = parseIntLike(rawVal);
       if (loopStart !== null) sample.loopStart = loopStart;
@@ -1440,6 +1448,29 @@ function parseSampleDef(root, diagnostics) {
       "error",
       "E_SAMPLE_FILE",
       "def :sample requires :file",
+      nodeSrc(root),
+      null,
+    );
+  }
+
+  // :offset / :frames slice one file into many samples (a bank). Frames, not
+  // bytes — like :loop-start/:loop-end, which stay relative to the slice.
+  if (sample.offset !== null && sample.offset < 0) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_SAMPLE_SLICE",
+      `def :sample :offset must be >= 0 (got ${sample.offset})`,
+      nodeSrc(root),
+      null,
+    );
+  }
+  if (sample.frames !== null && sample.frames <= 0) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_SAMPLE_SLICE",
+      `def :sample :frames must be > 0 (got ${sample.frames})`,
       nodeSrc(root),
       null,
     );
@@ -4780,6 +4811,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp") {
         file: sample.file,
         resolvedFile: resolveSamplePath(sample.file, filename),
         rate: sample.rate,
+        offset: sample.offset,
+        frames: sample.frames,
         loopStart: sample.loopStart,
         loopEnd: sample.loopEnd,
         bitDepth: sample.bitDepth,

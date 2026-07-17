@@ -1077,6 +1077,8 @@ sample symbol).
 | ------------- | -------------------------------------------------------------- |
 | `:file`       | WAV path, relative to the source file. Required (`E_SAMPLE_FILE`). See *Sample paths in the live editor* below |
 | `:rate`       | C4 playback rate in Hz (default: the WAV's native rate)        |
+| `:offset`     | Start frame within the file (default 0). See *Sample banks*   |
+| `:frames`     | Frame count (default: to the end of the file)                 |
 | `:loop-start` / `:loop-end` | Sustain-loop points (sample frames)              |
 | `:bit-depth`  | Quantize to N bits (expanded to 8-bit for playback)            |
 | `:volume`     | Gain / normalization                                           |
@@ -1085,6 +1087,24 @@ sample symbol).
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, data becomes
 raw 8-bit signed PCM.
+
+### Sample banks (many samples in one file)
+
+`:offset` / `:frames` cut one sample out of a file that holds several — a drum
+kit in a single wav, or an imported instrument bank. Both count **frames**, not
+bytes, and a negative `:offset` or a non-positive `:frames` is `E_SAMPLE_SLICE`.
+
+```lisp
+(def kick  :sample :file "kit.wav" :offset 0    :frames 3904)
+(def snare :sample :file "kit.wav" :offset 3904 :frames 6400)
+
+(pcm1 :len 8  kick c snare c  kick c c)
+```
+
+The file is decoded once and shared by every def that slices it, so a bank costs
+no more than a single sample would. `:loop-start` / `:loop-end` are **relative to
+the slice**, not to the file — a def is one sample, so its loop points don't move
+when `:offset` changes.
 
 **Sample paths in the live editor.** A relative `:file` resolves against the
 score's folder, but a browser only hands the editor a *file* when you use

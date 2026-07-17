@@ -34,6 +34,18 @@ import {
   MD_LPF_DEFAULT_CUTOFF,
   SCOPE_CHANNELS,
 } from "./src/synth-md.js";
+import { TL_DB_PER_STEP, velToTlAtten } from "./src/ir-utils.js";
+
+/**
+ * PCM velocity -> linear gain, on the SAME ladder FM rides (velToTlAtten): 2 dB
+ * per step, vel 15 = unity, vel 0 = a -30 dB floor. `:vel` attenuates; it never
+ * mutes (silence is a rest, or vol/master 0) — so the same :vel means the same
+ * thing whether the track is FM or PCM.
+ */
+function pcmVelGain(vel) {
+  const dB = velToTlAtten(vel) * TL_DB_PER_STEP; // TL steps -> dB of attenuation
+  return Math.pow(10, -dB / 20);
+}
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 const SCOPE_FLUSH = 1024; // scope samples per batch posted to the main thread
@@ -330,10 +342,12 @@ class YM2612Processor extends AudioWorkletProcessor {
     const vel = Number(msg.vel);
     const sample = String(msg.sample ?? "");
     if (!sample) return;
-    const velGain = Math.max(
-      0,
-      Math.min(1, (Number.isFinite(vel) ? vel : 15) / 15),
-    );
+    // Same velocity ladder as FM (ir-utils velToTlAtten): 2 dB per step, vel 15
+    // = unity, vel 0 = a -30 dB floor rather than silence — `:vel` attenuates,
+    // it does not mute (silence is a rest, or vol/master 0). A linear vel/15
+    // would both mute at 0 and mean something different from the same :vel on an
+    // FM track.
+    const velGain = pcmVelGain(Number.isFinite(vel) ? vel : 15);
     const sampleEntry = this._pcmSamples.get(sample);
     const data = sampleEntry?.data;
     if (!data || data.length === 0) return; // missing sample: nothing to play

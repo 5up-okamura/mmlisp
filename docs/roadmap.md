@@ -469,8 +469,11 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
 
 ### Status — implemented
 
-- **Channels**: FM A–C / H–J → `fm1`–`fm6`, SSG D–F → `sqr1`–`sqr3`.
-  Dropped: part G (rhythm), part K (ADPCM).
+- **Channels**: FM A–C / H–J → `fm1`–`fm6`, SSG D–F → `sqr1`–`sqr3`,
+  ADPCM K → `pcm1`. Dropped: part G (rhythm).
+- **PCM (part K)**: the `#pcm` bank (`*pcm.bin`, up to 32 YM2608 ADPCM-B
+  samples) decodes to one WAV that per-sample defs slice (`:offset`/`:frames`);
+  `@n` (1-based) rebinds the track's sample. `v` 0–255 → `:vel` 0–15 is lossy.
 - **Notes / lengths** on mucom's clock grid: `len` → `floor(C/len)` clocks →
   ticks (`× 384/C`); `%<clocks>` direct lengths; dots; `^`/`&`→tie.
 - **Bar lines** `|` → MMLisp `|` (carried through verbatim as editorial markers).
@@ -522,8 +525,9 @@ By musical impact (each maps onto existing MMLisp primitives):
 
 ### Priority 3 — dropped channels (larger effort)
 
-- Part **G** rhythm (drums) → noise/PCM mapping + drum kit.
-- Part **K** ADPCM (PCM samples) → MMLisp PCM channel + sample conversion.
+- Part **G** rhythm (drums) → noise/PCM mapping + drum kit. Unlike part K there
+  is no data to import: the sounds are in the OPNA's rhythm ROM, so this needs a
+  drum kit from elsewhere.
 - `@%` register-dump voice format.
 
 ### Reference

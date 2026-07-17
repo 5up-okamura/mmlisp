@@ -75,7 +75,8 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `file`         | string      | As written in the source.                           |
 | `resolvedFile` | string      | `file` resolved against the source file's directory.|
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
-| `loopStart`, `loopEnd` | int\|null | Loop points in frames.                      |
+| `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
+| `loopStart`, `loopEnd` | int\|null | Loop points in frames, **relative to the slice**. |
 | `bitDepth`     | int\|null   | Declared bit depth.                                 |
 | `volume`, `compress`, `reverb` | string\|null | Raw option strings (host-side processing). |
 

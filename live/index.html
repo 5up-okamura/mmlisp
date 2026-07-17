@@ -130,8 +130,10 @@
             <button class="menu-item" onclick="importTfi();closeMenus()">TFI…</button>
             <button class="menu-item" onclick="importVgi();closeMenus()">VGI…</button>
             <button class="menu-item" onclick="importOpni();closeMenus()">OPNI…</button>
-            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc)…</button>
+            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
             <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voice Bank (.dat)…</button>
+            <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 PCM Bank (.bin)…</button>
+            <button class="menu-item" onclick="saveMucomPcmWav();closeMenus()">Save PCM Bank WAV…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -433,7 +435,7 @@
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
-    import { importMucom, voiceBankToMmlisp } from './src/import-mucom.js';
+    import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -1699,12 +1701,13 @@
       log(`Imported ${file.name} (${fmt.label}) as ${voiceName} — press Build to apply`, 'info');
     }
 
-    function pickFileWithInput(extensions) {
+    function pickFileWithInput(extensions, { multiple = false } = {}) {
       const accept = Array.isArray(extensions) ? extensions.join(',') : '';
       return new Promise((resolve, reject) => {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = accept;
+        input.multiple = !!multiple;
         input.style.position = 'fixed';
         input.style.left = '-9999px';
         input.style.width = '1px';
@@ -1725,10 +1728,10 @@
         };
 
         const onChange = () => {
-          const file = input.files && input.files[0];
-          if (!file) { abort(); return; }
+          const files = input.files ? [...input.files] : [];
+          if (files.length === 0) { abort(); return; }
           cleanup();
-          resolve(file);
+          resolve(multiple ? files : files[0]);
         };
 
         // Dismissing the file dialog fires 'cancel' (not 'change') in modern
@@ -1791,12 +1794,14 @@
       return importFmVoiceByKey('OPNI');
     }
 
-    // Remember the last imported mucom song so its voice bank can be applied
-    // afterwards (loading the .dat is a separate, user-initiated action so its
-    // file dialog always has a fresh user gesture and can't be blocked).
-    let _mucomSong = null; // { bytes, fileName }
+    // Remember the last imported mucom song so a bank can be applied afterwards.
+    // A song's banks are best picked with it in one multi-select dialog; the
+    // File-menu items exist for when they weren't, since each menu click is a
+    // fresh user gesture and so can always open a picker.
+    let _mucomSong = null; // { bytes, fileName, datBytes, pcmBytes }
+    let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
 
-    function loadMucomSource(source, warnings, fileName, label) {
+    function loadMucomSource(source, warnings, fileName, label, pcm = null) {
       _sourceHandle = null;
       _sourceFileName = (fileName || 'mucom').replace(/\.[^.]*$/, '') + '.mmlisp';
       clearSourceDir(); // imported score — the old folder is not its base
@@ -1805,6 +1810,15 @@
       _lastGoodIR = null;
       _lastSourceMap = null;
       onStop();
+      // A decoded PCM bank has no file on disk yet, and the score above has no
+      // folder — so seed the decode cache under the key `:file` resolves to (a
+      // bare name, since there is no base dir). The song then plays immediately;
+      // saving the wav beside the score is what makes it survive a reload.
+      _mucomPcm = pcm; // for File ▸ Save PCM Bank WAV…
+      if (pcm) {
+        _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
+        log(`mucom88: drums play from "${pcm.wavFile}" held in memory — File ▸ Save PCM Bank WAV… next to the score (then Open Folder…) to keep them after a reload`, 'info');
+      }
       setEditorDoc(source);
       compileNow();
       log(label, 'info');
@@ -1814,41 +1828,52 @@
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
     // new untitled document (FM + SSG only; rhythm/ADPCM/etc. are reported).
     async function importMucom88() {
-      let file;
+      // One dialog for the song AND its banks. Chaining a second picker after
+      // the first `await` loses the user gesture, so the browser blocks it —
+      // multi-select spends the one gesture we have on everything at once.
+      let picked;
       try {
-        file = await pickFileWithInput(['.muc', '.mml']);
+        picked = await pickFileWithInput(['.muc', '.mml', '.dat', '.bin'], { multiple: true });
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`mucom88 import failed: ${e?.message || e}`, 'err');
         return;
       }
+      const byExt = (re) => picked.find((f) => re.test(f.name));
+      const file = byExt(/\.(muc|mml)$/i);
+      if (!file) {
+        log('mucom88: no .muc/.mml in the selection — pick the song (and optionally its .dat / .bin) together', 'err');
+        return;
+      }
+      const datPick = byExt(/\.dat$/i);
+      const pcmPick = byExt(/\.bin$/i);
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        _mucomSong = { bytes, fileName: file.name };
-        // Load the song NOW (default voices) so picking the file always shows a
-        // result — even if the optional .dat picker below is dismissed or the
-        // browser blocks the chained dialog.
-        const first = importMucom(bytes, null);
-        loadMucomSource(first.source, first.warnings, file.name, `Imported ${file.name} (mucom88) — review and Build`);
-        // If it references an external voice bank (#voice xxx.dat), offer to load
-        // it now; selecting it re-converts with real voices. Cancel keeps default.
-        let voiceFile = null;
+        _mucomSong = {
+          bytes,
+          fileName: file.name,
+          datBytes: datPick ? new Uint8Array(await datPick.arrayBuffer()) : null,
+          pcmBytes: pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null,
+        };
+        const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes);
+        const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
+        loadMucomSource(res.source, res.warnings, file.name,
+          `Imported ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
+          res.pcm);
+
+        // Point at whatever the song wants but wasn't handed to us. Applying a
+        // bank from the File menu is a fresh gesture, so it always works.
+        let voiceFile = null, pcmFile = null;
         try {
           const head = new TextDecoder('shift-jis', { fatal: false }).decode(bytes.subarray(0, 4096));
-          const vm = head.match(/^#voice\s+(\S+)/im);
-          if (vm) voiceFile = vm[1];
+          voiceFile = (head.match(/^#voice\s+(\S+)/im) || [])[1] || null;
+          pcmFile = (head.match(/^#pcm\s+(\S+)/im) || [])[1] || null;
         } catch { /* detection is best-effort */ }
-        if (voiceFile) {
-          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — select that .dat to hear them (cancel to keep default voices; or load later via File ▸ Import ▸ mucom88 voice bank)`, 'info');
-          try {
-            const datFile = await pickFileWithInput(['.dat']);
-            const datBytes = new Uint8Array(await datFile.arrayBuffer());
-            const second = importMucom(bytes, datBytes);
-            loadMucomSource(second.source, second.warnings, file.name, `Reloaded ${file.name} with ${datFile.name} (mucom88)`);
-          } catch (e2) {
-            if (e2 && e2.name === 'AbortError') log('mucom88: no voice bank selected — keeping default voices', 'info');
-            else throw e2;
-          }
+        if (voiceFile && !datPick) {
+          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Load it via File ▸ Import ▸ mucom88 Voice Bank, or re-import selecting the .muc and .dat together`, 'info');
+        }
+        if (pcmFile && !pcmPick) {
+          log(`mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Load it via File ▸ Import ▸ mucom88 PCM Bank, or re-import selecting the .muc and .bin together`, 'info');
         }
       } catch (e) {
         log(`mucom88 import failed: ${e?.message || e}`, 'err');
@@ -1870,14 +1895,94 @@
       try {
         const datBytes = new Uint8Array(await datFile.arrayBuffer());
         if (_mucomSong) {
-          const { source, warnings } = importMucom(_mucomSong.bytes, datBytes);
-          loadMucomSource(source, warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`);
+          _mucomSong.datBytes = datBytes;
+          // Keep any PCM bank already applied — re-converting must not lose it.
+          const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes);
+          loadMucomSource(res.source, res.warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`, res.pcm);
         } else {
           const { source, warnings } = voiceBankToMmlisp(datBytes);
           loadMucomSource(source, warnings, datFile.name, `Loaded voice bank ${datFile.name} (mucom88) — ${(source.match(/\(def @/g) || []).length} voices`);
         }
       } catch (e) {
         log(`mucom88 voice bank failed: ${e?.message || e}`, 'err');
+      }
+    }
+
+    // Re-convert the remembered song with the banks we now hold, seeding the
+    // decoded drums so it plays at once, then offer to save the wav the emitted
+    // defs reference (the folder handle is read-only, so we cannot write it).
+    async function applyMucomPcmBank(bankName) {
+      const song = _mucomSong;
+      if (!song) return;
+      const res = importMucom(song.bytes, song.datBytes, song.pcmBytes);
+      const n = res.pcm?.entries.length ?? 0;
+      loadMucomSource(res.source, res.warnings, song.fileName, `Reloaded ${song.fileName} with PCM bank ${bankName} (mucom88) — ${n} samples decoded`, res.pcm);
+    }
+
+    // The bank decodes to one wav that every drum def slices, and it lives only
+    // in memory — the score plays from the seeded cache but needs the file to
+    // survive a reload. Saving is a deliberate menu action, never automatic: an
+    // import must not dump files in Downloads behind the user's back, and a
+    // menu click is a fresh user gesture, so the picker actually opens and the
+    // file lands where they choose (next to the score).
+    async function saveMucomPcmWav() {
+      if (!_mucomPcm) {
+        log('mucom88: no PCM bank loaded — import a .muc with its .bin, or the .bin on its own', 'err');
+        return;
+      }
+      const pcm = _mucomPcm;
+      const blob = new Blob([pcm.wav], { type: 'audio/wav' });
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: pcm.wavFile,
+            types: [{ description: 'WAV audio', accept: { 'audio/wav': ['.wav'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          log(`mucom88: wrote ${pcm.wavFile} — File ▸ Open Folder… on its folder to keep the drums after a reload`, 'info');
+          return;
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`mucom88: saving ${pcm.wavFile} failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = pcm.wavFile;
+      a.click();
+      URL.revokeObjectURL(url);
+      log(`mucom88: downloaded ${pcm.wavFile} — move it next to the score`, 'info');
+    }
+
+    // Load a mucom PCM bank (part K drums). If a song was just imported,
+    // re-convert it with the bank so its `@n` resolve; otherwise decode the bank
+    // on its own into a sample library — a drum kit, useful with no mucom song
+    // in sight (mirrors importMucomVoiceBank).
+    async function importMucomPcmBank() {
+      let pcmFile;
+      try {
+        pcmFile = await pickFileWithInput(['.bin']);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`mucom88 PCM bank failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      try {
+        const pcmBytes = new Uint8Array(await pcmFile.arrayBuffer());
+        if (_mucomSong) {
+          _mucomSong.pcmBytes = pcmBytes;
+          await applyMucomPcmBank(pcmFile.name);
+          return;
+        }
+        const res = pcmBankToMmlisp(pcmBytes, pcmFile.name);
+        loadMucomSource(res.source, res.warnings, pcmFile.name,
+          `Loaded PCM bank ${pcmFile.name} (mucom88) — ${res.pcm.entries.length} samples`, res.pcm);
+      } catch (e) {
+        log(`mucom88 PCM bank failed: ${e?.message || e}`, 'err');
       }
     }
 
@@ -1896,6 +2001,8 @@
     window.importOpni = importOpni;
     window.importMucom88 = importMucom88;
     window.importMucomVoiceBank = importMucomVoiceBank;
+    window.importMucomPcmBank = importMucomPcmBank;
+    window.saveMucomPcmWav = saveMucomPcmWav;
 
     function formatShortcutLabel(key) {
       const isMac = navigator.platform.toUpperCase().includes('MAC');
@@ -2106,6 +2213,28 @@
       return mono;
     }
 
+    // A def may slice one file into many samples (`:offset` / `:frames`, in
+    // frames) — that is how an imported instrument bank becomes many defs off
+    // one wav. The decode is cached per path (one decodeAudioData per bank,
+    // shared by every def), so the slice is applied per def here rather than
+    // being cached. Copies with `.slice()` — never `.subarray()`: postMessage
+    // structured-clones a view's whole backing buffer, which would ship the
+    // entire bank once per def. Returns null when the slice is empty.
+    function sliceDecodedSample(decoded, def) {
+      const total = decoded.data.length;
+      const offset = Number.isFinite(def?.offset) ? Math.max(0, def.offset) : 0;
+      const want = Number.isFinite(def?.frames) ? Math.max(0, def.frames) : total - offset;
+      if (offset === 0 && want >= total) return decoded; // whole file
+      if (offset >= total || want === 0) return null;
+      if (offset + want > total) {
+        log(`PCM ${def?.name}: :offset ${offset} + :frames ${want} exceeds ${total} frames — clamped`, 'err');
+      }
+      return {
+        data: decoded.data.slice(offset, Math.min(total, offset + want)),
+        sampleRate: decoded.sampleRate,
+      };
+    }
+
     function signedPcm8Base64ToMono(dataBase64) {
       const bin = atob(dataBase64);
       const len = bin.length;
@@ -2219,7 +2348,10 @@
           }
           const sourcePath = def?.resolvedFile || def?.file;
           if (!sourcePath) continue;
-          const decoded = await decodePcmSample(sourcePath);
+          // decodePcmSample returns the whole file (cached per path); a banked
+          // def takes its slice. The compiled path above is already sliced.
+          const whole = await decodePcmSample(sourcePath);
+          const decoded = whole && sliceDecodedSample(whole, def);
           if (!decoded) continue;
           const mono = decoded.data;
           const data = new Int8Array(mono.length);
@@ -2249,11 +2381,14 @@
       for (const def of defs) {
         if (!def?.name) continue;
         try {
+          // A compiled sample was already sliced at bake time; a file-backed one
+          // is decoded whole (cached per path) and sliced per def here.
           let decoded = decodeCompiledPcmSample(def);
           if (!decoded) {
             const sourcePath = def?.resolvedFile || def?.file;
             if (!sourcePath) continue;
-            decoded = await decodePcmSample(sourcePath);
+            const whole = await decodePcmSample(sourcePath);
+            decoded = whole && sliceDecodedSample(whole, def);
           }
           if (!decoded) continue;
           samples.push({

@@ -95,6 +95,37 @@ function parseWavFile(buffer) {
   };
 }
 
+// `:offset` / `:frames` (in frames) cut one sample out of a file holding many —
+// an instrument bank. Both are optional: no :offset starts at 0, no :frames
+// runs to the end. Overruns are clamped with a warning rather than failing, so
+// a slightly-off bank still plays.
+function sliceMono(mono, sample, diagnostics, name) {
+  const total = mono.length;
+  const offset = Number.isFinite(sample.offset) ? Math.max(0, sample.offset) : 0;
+  const want = Number.isFinite(sample.frames) ? Math.max(0, sample.frames) : total - offset;
+  if (offset === 0 && want >= total) return mono;
+  if (offset >= total || want === 0) {
+    diagnostics.push({
+      severity: "error",
+      code: "E_SAMPLE_SLICE",
+      message: `sample "${name}": :offset ${offset} is past the end of the file (${total} frames)`,
+      src: sample.src ?? null,
+      track: null,
+    });
+    return mono.slice(0, 0);
+  }
+  if (offset + want > total) {
+    diagnostics.push({
+      severity: "warning",
+      code: "W_SAMPLE_SLICE_CLAMPED",
+      message: `sample "${name}": :offset ${offset} + :frames ${want} exceeds ${total} frames — clamped`,
+      src: sample.src ?? null,
+      track: null,
+    });
+  }
+  return mono.slice(offset, Math.min(total, offset + want));
+}
+
 function quantizeMonoToSignedPcm8(mono, bitDepth = 8) {
   const depth = clamp(Number(bitDepth) || 8, 1, 8);
   const peak = Math.pow(2, depth - 1) - 1;
@@ -253,7 +284,10 @@ function compileSamplesIntoIr(ir, diagnostics, repoRoot) {
     try {
       const wavBuf = fs.readFileSync(absPath);
       const decoded = parseWavFile(wavBuf);
-      let processed = decoded.mono;
+      // `:offset` / `:frames` slice one file into many samples (a bank). Cut
+      // before the effects so a reverb tail cannot bleed in from the
+      // neighbouring sample, and so :volume/:compress see only this slice.
+      let processed = sliceMono(decoded.mono, sample, diagnostics, name);
       processed = applyVolumeEffect(
         processed,
         sample.volume,
@@ -283,7 +317,7 @@ function compileSamplesIntoIr(ir, diagnostics, repoRoot) {
         format: "pcm_s8",
         sourceSampleRate: decoded.sampleRate,
         channels: decoded.channels,
-        frames: decoded.mono.length,
+        frames: processed.length, // the slice, not the whole file
         dataBase64: pcm8.toString("base64"),
       };
     } catch (err) {

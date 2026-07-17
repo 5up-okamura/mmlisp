@@ -3,12 +3,16 @@
 //
 // mucom88 targets the PC-8801 / YM2608 (OPNA): FM A-C,H-J, SSG D-F, rhythm G,
 // ADPCM K. MMLisp targets the Mega Drive (YM2612 FM1-6 + SN76489 PSG). FM maps
-// near 1:1; SSG -> PSG square is an approximate pitch/level map; rhythm and
-// ADPCM have no target and are dropped with a warning.
+// near 1:1; SSG -> PSG square is an approximate pitch/level map; ADPCM K becomes
+// a PCM track (its `#pcm` bank is decoded to samples — see mucom-pcm.js); rhythm
+// G has no target (OPNA rhythm ROM, no data to import) and is dropped.
 //
 // This converts MML *text* into MMLisp *source text*. Anything not in the
 // supported subset is skipped and reported in `warnings`.
 // ---------------------------------------------------------------------------
+
+import { decodeMucomPcmBank } from "./mucom-pcm.js";
+import { encodeWav } from "./export-wav.js";
 
 const PPQN = 96; // must match mmlisp2ir.js
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
@@ -17,6 +21,9 @@ const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole no
 // part letter -> MMLisp channel
 const FM_PARTS = { A: "fm1", B: "fm2", C: "fm3", H: "fm4", I: "fm5", J: "fm6" };
 const SSG_PARTS = { D: "sqr1", E: "sqr2", F: "sqr3" };
+// K is the OPNA's single ADPCM channel; its samples come from the `#pcm` bank.
+// Only routed when that bank was supplied — otherwise K is dropped (see below).
+const PCM_PARTS = { K: "pcm1" };
 
 // mucom `D` detune is an F-Number offset, not cents — its pitch shift in cents
 // is note-dependent. We approximate with a single representative factor per chip
@@ -24,7 +31,36 @@ const SSG_PARTS = { D: "sqr1", E: "sqr2", F: "sqr3" };
 // See https://est.ceres.ne.jp/2021/09/04/mucom88-detune/
 const FM_CENTS_PER_DETUNE = 100 / 49;
 const PSG_CENTS_PER_DETUNE = 100 / 160;
-const DROP_PARTS = { G: "rhythm", K: "ADPCM" };
+// G is the OPNA's built-in rhythm generator: its sounds live in the chip's
+// rhythm ROM, not in the `#pcm` bank, so there is nothing to import them from.
+const DROP_PARTS = { G: "rhythm" };
+
+// mucom's K parts only ever use o1/o2, while MMLisp clamps sample pitch to MIDI
+// 36-84 — an FM-style -1 shift would clamp every drum. Shift up instead so o1
+// lands on :oct 4, and let the emitted :rate carry the real pitch (see
+// MUCOM_PCM_BASE_RATE in mucom-pcm.js).
+const MUCOM_PCM_OCT_SHIFT = 3;
+// mucom velocity is 0-255 on K but 0-15 on FM/SSG. On K it IS the ADPCM-B level
+// register: the driver writes `TOTALV*4 + v` to 0x0B, and TOTALV is 0 outside a
+// fade (music.asm PL1/PL2; PVMODE defaults 0, so the bank's pcmopt is not added
+// either). So v40 really is 16% of the register — yet it sounds full on an OPNA,
+// because that chip's ADPCM output is loud beside its own FM. That ratio does
+// not carry to the MD's DAC, so no faithful mapping exists and the balance is an
+// ear call. Songs put `v` at p25=25 / median=40 / p90=70 / max=130, so the scale
+// trades loudness against pinning the top at :vel 15: /255 and /128 leave the
+// median at 0.13/0.33 (both judged too quiet, 2026-07), while /40 pins 110 of
+// 256 notes and flattens v50..v130 into one step. 64 puts the median at 0.60 and
+// pins only 27.
+const MUCOM_PCM_VEL_FULL = 64;
+const MUCOM_PCM_VEL_MAX = 255; // register range, for clamping relative v+/v-
+// mucom K parts set `v` explicitly, so this only backs a bare v+/v- with none.
+const MUCOM_PCM_VEL_DEFAULT = 64;
+
+// mucom octave -> MMLisp :oct, per part kind. FM reads one higher than MMLisp;
+// SSG/PSG uses a different frequency table and needs no shift.
+const octShiftFor = (letter) =>
+  letter in PCM_PARTS ? MUCOM_PCM_OCT_SHIFT : letter in SSG_PARTS ? 0 : -1;
+const MUCOM_DEFAULT_OCT = 6; // mucom's default octave when a part sets none
 
 /** Decode .muc bytes (usually Shift-JIS) to a string, UTF-8 fallback. */
 export function decodeMucText(bytes) {
@@ -529,7 +565,7 @@ function scanLoopSpans(lines) {
 
 export function parseMucom(text) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const meta = { title: null, composer: null, author: null, voiceFile: null };
+  const meta = { title: null, composer: null, author: null, voiceFile: null, pcmFile: null };
   const voices = new Map();
   // The music in source order: one item per source line. A part line becomes a
   // { kind:"form", letter, ops, comment } (one per letter); an in-music comment
@@ -611,6 +647,7 @@ export function parseMucom(text) {
         else if (key === "composer") meta.composer = val;
         else if (key === "author") meta.author = val;
         else if (key === "voice") meta.voiceFile = val; // external @"name" bank (.dat)
+        else if (key === "pcm") meta.pcmFile = val; // external ADPCM bank (*pcm.bin)
       }
       continue;
     }
@@ -671,8 +708,11 @@ export function parseMucom(text) {
           droppedOps.push(...ops);
           continue;
         }
-        if (!(letter in FM_PARTS) && !(letter in SSG_PARTS)) continue;
-        const ch = FM_PARTS[letter] || SSG_PARTS[letter];
+        if (!(letter in FM_PARTS) && !(letter in SSG_PARTS) && !(letter in PCM_PARTS)) continue;
+        // K is always parsed — the song's tempo often lives on it, and `tempo`
+        // is resolved here from scoreItems. mucomToMmlisp drops the K forms if
+        // no `#pcm` bank was supplied (there'd be no samples to reference).
+        const ch = FM_PARTS[letter] || SSG_PARTS[letter] || PCM_PARTS[letter];
         const { ops, comment } = tokenizeBody(bodyStr, partState(letter), warnings, letter, macros);
         // A multi-letter line shares one trailing comment; keep it on the first.
         scoreItems.push({ kind: "form", letter, ch, ops, comment: letter === letters[0] ? comment : null });
@@ -774,15 +814,21 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "octSet":
         // mucom FM octaves read one higher than MMLisp's (drop one); SSG/PSG use
-        // a different frequency table and need no shift.
-        ctx.oct = op.n - (ctx.isSsg ? 0 : 1);
+        // a different frequency table and need no shift; PCM shifts up so mucom's
+        // o1/o2 drum octaves land inside MMLisp's MIDI 36-84 sample range (see
+        // MUCOM_PCM_OCT_SHIFT).
+        ctx.oct = op.n + ctx.octShift;
         out.push(`:oct ${ctx.oct}`);
         break;
       case "pan":
+        // PCM is a soft-mix voice on the fm6 DAC and owns no FM channel, so it
+        // has no pan lane.
+        if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmPan", "part K: pan (p) has no PCM equivalent; dropped"); break; }
         // mucom p: 0=off,1=right,2=left,3=center -> MMLisp :pan
         out.push(`:pan ${{ 1: "right", 2: "left" }[op.v] ?? "center"}`);
         break;
       case "detune": {
+        if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmDetune", "part K: detune (D) not supported on PCM; dropped"); break; }
         // Track the raw mucom D value (so relative D+ accumulates), then map to
         // cents with the chip's representative factor.
         const raw = op.rel ? (ctx.detune ?? 0) + op.val : op.val;
@@ -882,7 +928,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "vel":
-        if (op.v !== ctx.vel) { out.push(`:vel ${clamp(op.v, 0, 15)}`); ctx.vel = op.v; }
+        if (op.v !== ctx.vel) { out.push(`:vel ${velToken(op.v, ctx)}`); ctx.vel = op.v; }
         break;
       case "gateCut": {
         // mucom q<n> -> :gate- (key off n clocks early); convert clocks to ticks.
@@ -891,8 +937,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "velAdj": {
-        const nv = clamp((ctx.vel ?? 12) + op.d, 0, 15);
-        if (nv !== ctx.vel) { out.push(`:vel ${nv}`); ctx.vel = nv; }
+        const nv = clamp((ctx.vel ?? (ctx.isPcm ? MUCOM_PCM_VEL_DEFAULT : 12)) + op.d, 0, ctx.isPcm ? MUCOM_PCM_VEL_MAX : 15);
+        if (nv !== ctx.vel) { out.push(`:vel ${velToken(nv, ctx)}`); ctx.vel = nv; }
         break;
       }
       case "echo": {
@@ -921,6 +967,20 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         break;
       case "voice":
+        // On part K, @n selects a bank sample (1-based), not an FM voice. A bare
+        // symbol rebinds the PCM track's sample, so that is all we emit; the def
+        // is collected in pcmRegistry and spliced above the score.
+        if (ctx.isPcm) {
+          const entry = ctx.pcmEntries && ctx.pcmEntries.get(op.n);
+          if (entry) {
+            ctx.pcmRegistry.set(op.n, entry);
+            out.push(entry.label);
+          } else if (!ctx.warnedVoices.has(`pcm@${op.n}`)) {
+            ctx.warnedVoices.add(`pcm@${op.n}`);
+            ctx.warnings.push(`part K: @${op.n} is not in the PCM bank; dropped`);
+          }
+          break;
+        }
         // Only switch to voices actually defined in this file; an undefined
         // @N would be an "unknown token" error, so skip it (use the default).
         if (ctx.definedVoices.has(op.n)) out.push(`@${ctx.voiceLabels.get(op.n)}`);
@@ -973,6 +1033,26 @@ function renderOps(ops, ctx, out, depth = 0) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v | 0)); }
 
+// mucom velocity -> MMLisp :vel. FM/SSG share MMLisp's 0-15; K is rescaled from
+// its ADPCM-B level (see MUCOM_PCM_VEL_FULL). Lossy either way — 16 steps for a
+// range mucom writes to ~128 — so nearby drum volumes can collapse onto one
+// step. MMLisp has no finer PCM volume lane, so this is the honest mapping.
+function velToken(v, ctx) {
+  if (!ctx.isPcm) return clamp(v, 0, 15);
+  return clamp(Math.round((v * 15) / MUCOM_PCM_VEL_FULL), 0, 15);
+}
+
+// Bank sample name -> an MMLisp symbol. Real names include "kick+snare",
+// "hand clap", "C.Cymbal", "808openhihat" and Shift-JIS half-width katakana.
+function sanitizeSampleName(name, index) {
+  const base = String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!base) return `pcm${index}`;
+  return /^[0-9]/.test(base) ? `pcm-${base}` : base;
+}
+
 function voiceToDef(label, v) {
   const parts = [`:alg ${clamp(v.alg, 0, 7)} :fb ${clamp(v.fb, 0, 7)}`];
   for (let op = 0; op < 4; op++) {
@@ -1011,8 +1091,34 @@ const qstr = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
  * @returns {{ source:string, warnings:string[] }}
  */
 export function mucomToMmlisp(parsed) {
-  const { meta, tempo, voices, macros, scoreItems, scoreComments, warnings } = parsed;
+  const { meta, tempo, voices, macros, scoreItems, scoreComments, warnings, pcm } = parsed;
   const lines = [];
+
+  // Part K needs its `#pcm` bank to name samples; without one there is nothing
+  // to reference, so drop those forms (the song still imports, minus drums).
+  // The tempo was already resolved from them at parse time.
+  if (!pcm) {
+    for (const it of scoreItems) {
+      if (it.kind === "form" && it.letter in PCM_PARTS) it.dropped = true;
+    }
+    if (scoreItems.some((it) => it.dropped)) {
+      warnOnce(warnings, "partK", "part K (ADPCM) dropped: no #pcm bank supplied");
+    }
+  }
+  // @n (1-based) -> the sample def it selects, deduped into pcmRegistry as it is
+  // referenced so unused bank entries never reach the output (a bank holds up to
+  // 32, a song typically plays a handful) — the rule mergeDatVoices uses.
+  const pcmEntries = new Map();
+  const pcmRegistry = new Map();
+  if (pcm) {
+    const used = new Set([...voices.keys()].map((n) => `@${n}`));
+    for (const e of pcm.entries) {
+      let label = sanitizeSampleName(e.name, e.index);
+      while (used.has(label)) label = `${label}-${e.index}`; // share one namespace with voices/*n
+      used.add(label);
+      pcmEntries.set(e.index, { ...e, label });
+    }
+  }
   const definedVoices = new Set(voices.keys());
   const warnedVoices = new Set();
   const voiceLabels = buildVoiceLabels(voices);
@@ -1030,13 +1136,34 @@ export function mucomToMmlisp(parsed) {
   const envRegistry = new Map(); // distinct SSG soft envelopes -> (def envN :macro :vel …)
   const echoRegistry = new Map(); // distinct echoes -> (def ecN (echo …)), referenced by name
 
+  // A macro renders once into (def *n …), so a macro reached from part K must
+  // render with the PCM ctx — there its `@n` selects a bank sample, not an FM
+  // voice, and `v` runs 0-255. mucom songs never share a macro between K and
+  // another part, so one ctx per macro is unambiguous.
+  const pcmMacros = new Set();
+  if (pcm) {
+    const scan = (ops) => {
+      for (const op of ops) {
+        if (op.t === "macroCall") pcmMacros.add(op.n);
+        else if (op.t === "loop") scan(op.body);
+      }
+    };
+    for (const it of scoreItems) {
+      if (it.kind === "form" && it.letter in PCM_PARTS && !it.dropped) scan(it.ops);
+    }
+  }
+
   // Macros become (def *n …); only those with supported content are kept.
   const usableMacros = new Set();
   for (const [mn, mac] of [...(macros || new Map()).entries()].sort((a, b) => a[0] - b[0])) {
     const toks = [];
     // No lfoRegistry here: a `*n` body can't reference another def (:macro lfoN),
     // so its LFO renders inline. The *n def is already singular, so no duplication.
-    renderOps(mac.ops, { vel: null, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    // No lfo/env/echo registries here (see above); PCM is different — a K macro
+    // must resolve its @n against the bank, and a sample def IS referencable
+    // from a macro body by name.
+    const isPcm = pcmMacros.has(mn);
+    renderOps(mac.ops, { vel: null, isPcm, octShift: isPcm ? MUCOM_PCM_OCT_SHIFT : -1, pcmEntries, pcmRegistry, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = toks.join(" ").trim();
     if (!content) continue;
     usableMacros.add(mn);
@@ -1063,12 +1190,12 @@ export function mucomToMmlisp(parsed) {
   const ctxByLetter = new Map();
   const letterCtx = (letter) => {
     if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in SSG_PARTS ? 6 : 5, len: null, isSsg: letter in SSG_PARTS, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry });
+      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry });
     }
     return ctxByLetter.get(letter);
   };
 
-  const forms = scoreItems.filter((it) => it.kind === "form");
+  const forms = scoreItems.filter((it) => it.kind === "form" && !it.dropped);
 
   // Octave base per letter: mucom default o6 (= :oct 5 after the -1 shift),
   // unless that part opens with an absolute `o`.
@@ -1086,12 +1213,19 @@ export function mucomToMmlisp(parsed) {
     f.text = toks.join(" ");
   }
 
-  // Emit the discovered LFO / envelope / echo defs above the score (by name).
-  if (lfoRegistry.size || envRegistry.size || echoRegistry.size) {
+  // Emit the discovered LFO / envelope / echo / PCM defs above the score (by name).
+  if (lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
     const defLines = [];
     for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro :pitch ${spec}))`);
     for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} (macro :vel* ${spec}))`);
     for (const [form, name] of echoRegistry) defLines.push("", `(def ${name} (echo ${form}))`);
+    // Each referenced bank sample slices the one WAV the bank decoded to.
+    for (const [, e] of [...pcmRegistry].sort((a, b) => a[0] - b[0])) {
+      defLines.push(
+        "",
+        `(def ${e.label} :sample :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+      );
+    }
     lines.splice(lfoDefAnchor, 0, ...defLines);
   }
 
@@ -1107,7 +1241,7 @@ export function mucomToMmlisp(parsed) {
   for (const [letter, f] of firstForm) {
     const prefix = [];
     // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it.
-    if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) prefix.push(`:oct ${letter in SSG_PARTS ? 6 : 5}`);
+    if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) prefix.push(`:oct ${MUCOM_DEFAULT_OCT + octShiftFor(letter)}`);
     if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
     if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
   }
@@ -1116,7 +1250,7 @@ export function mucomToMmlisp(parsed) {
   // Tempo rides the very first playable form (before its #loop/:oct prefix it
   // would also be fine — :tempo is score-global wherever it appears).
   const firstPlayable = scoreItems.find(
-    (it) => it.kind === "form" && it.text !== "",
+    (it) => it.kind === "form" && !it.dropped && it.text !== "",
   );
   if (firstPlayable) {
     firstPlayable.text = `:tempo ${tempo ?? 120} ${firstPlayable.text}`.trim();
@@ -1126,6 +1260,7 @@ export function mucomToMmlisp(parsed) {
   // there is no wrapper to indent under).
   for (const it of scoreItems) {
     if (it.kind === "comment") { lines.push(it.text); continue; }
+    if (it.dropped) continue; // parsed for tempo only (part K with no #pcm bank)
     if (it.text === "") { if (it.comment) lines.push(it.comment); continue; }
     lines.push(`(${it.ch} ${it.text})${it.comment ? `  ${it.comment}` : ""}`);
   }
@@ -1192,12 +1327,39 @@ function mergeDatVoices(parsed, datVoices) {
 
 /**
  * Convenience: bytes -> { source, warnings }. Pass the referenced `.dat` voice
- * bank (Uint8Array) as `datBytes` to resolve external @"name"/@n voices.
+ * bank (Uint8Array) as `datBytes` to resolve external @"name"/@n voices, and the
+ * `#pcm` ADPCM bank (`*pcm.bin`) as `pcmBytes` to import part K — without it
+ * K is dropped, since its `@n` would have no samples to name.
  */
-export function importMucom(bytes, datBytes = null) {
+export function importMucom(bytes, datBytes = null, pcmBytes = null) {
   const parsed = parseMucom(decodeMucText(bytes));
   if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
-  return mucomToMmlisp(parsed);
+  if (pcmBytes) parsed.pcm = decodeMucomPcmForImport(parsed.meta.pcmFile, pcmBytes);
+  const out = mucomToMmlisp(parsed);
+  // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
+  // (what the emitted defs reference) and play `mono` before it exists on disk.
+  return parsed.pcm ? { ...out, pcm: parsed.pcm } : out;
+}
+
+/**
+ * Decode the `#pcm` bank into the shape mucomToMmlisp emits defs from. The bank
+ * becomes ONE wav (MMLisp reads one sample per file, so the defs slice it by
+ * `:offset`/`:frames`); the caller is responsible for saving those bytes next to
+ * the score under `wavFile`.
+ *
+ * @returns {{ entries:Array<object>, wavFile:string, rate:number,
+ *   wav:Uint8Array, mono:Float32Array }}
+ */
+function decodeMucomPcmForImport(pcmFile, pcmBytes) {
+  const { pcm, sampleRate, entries } = decodeMucomPcmBank(pcmBytes);
+  const base = String(pcmFile || "mucompcm.bin").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
+  return {
+    entries,
+    wavFile: `${base}.wav`,
+    rate: sampleRate,
+    wav: encodeWav(pcm, null, sampleRate),
+    mono: pcm,
+  };
 }
 
 /**
@@ -1213,4 +1375,34 @@ export function voiceBankToMmlisp(datBytes) {
     lines.push("", voiceToDef(labels.get(num), v));
   }
   return { source: lines.join("\n") + "\n", warnings: named.size ? [] : ["no named voices in this bank"] };
+}
+
+/**
+ * Convert a standalone `*pcm.bin` ADPCM bank into a sample library — the drum
+ * kit on its own, no song needed (the `.dat` counterpart above). The bank is
+ * decoded to one wav that every def slices, so the caller must save `pcm.wav`
+ * as `pcm.wavFile` next to the score.
+ *
+ * @param {Uint8Array} pcmBytes
+ * @param {string} [bankName] the .bin's filename, used to name the wav
+ * @returns {{ source:string, warnings:string[], pcm:object }}
+ */
+export function pcmBankToMmlisp(pcmBytes, bankName = "mucompcm.bin") {
+  const pcm = decodeMucomPcmForImport(bankName, pcmBytes);
+  const used = new Set();
+  const lines = [`; mucom88 PCM bank — ${pcm.entries.length} samples @ ${pcm.rate} Hz`];
+  for (const e of pcm.entries) {
+    let label = sanitizeSampleName(e.name, e.index);
+    while (used.has(label)) label = `${label}-${e.index}`;
+    used.add(label);
+    lines.push(
+      "",
+      `(def ${label} :sample :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+    );
+  }
+  return {
+    source: lines.join("\n") + "\n",
+    warnings: pcm.entries.length ? [] : ["no samples in this bank"],
+    pcm,
+  };
 }

@@ -1,7 +1,18 @@
 # mucom88 PCM import (part K / ADPCM) — "one WAV + slicing" (approved plan)
 
-Status: **approved 2026-07, not started.** Design settled with the user; no code
-written yet. Implement from here in a separate implementation chat.
+Status: **built 2026-07; two ear-gates open.** All stages below are implemented
+and the corpus compiles clean (46 songs, 0 errors; 40 emit a `pcm1` track, 167
+sliced defs). What is NOT yet confirmed is anything only listening can settle:
+
+1. **ADPCM-B decode fidelity** — no reference decoder existed, so the codec is
+   unverified against mucom88win by ear. Measured evidence that it is right: a
+   clamping accumulator beats a wrapping one decisively (high-DC samples 10/170
+   vs 109/170), sample lengths are drum-plausible (kick 244 ms, hihat 61 ms),
+   and all 10 corpus banks parse contiguously.
+2. **Pitch base** — `MUCOM_PCM_OCT_SHIFT = 3` with `:rate 16000` makes mucom o1
+   play at the native 16 kHz (unity), which agrees with the driver's ΔN table
+   (C ≈ 16.1 kHz). Corpus K only ever uses o1/o2, and nothing clamps except 4
+   notes in pcmt17 whose K line drifts to o3 via relative `>`.
 
 ## Context (the "why")
 
@@ -178,12 +189,22 @@ call unaffected. (drv/tools/wav.mjs only has `loadWav` — nothing to reuse.)
      `pcmRegistry` so **only referenced samples** get defs (the rule
      `mergeDatVoices` (:1180-1195) already applies to the 256-voice .dat).
      Unknown `@n` -> warnOnce + skip (like the `definedVoices` guard at :925).
-   - `case "vel"` / `"velAdj"`: keep `ctx.vel` in mucom's **0-255** domain for K
-     and convert at emit: `:vel clamp(round(v*15/255), 0, 15)`. **PCM vel is
-     0-15** (mmlisp2ir.js:663; worklet `velGain = vel/15`, worklet.js:333-336).
-     **Lossy** — the corpus's v16-v130 collapses onto `:vel 1`-`:vel 8`, so v40
-     and v45 become equal. There is no finer PCM volume path today: **record it,
-     do not add one.**
+   - `case "vel"` / `"velAdj"`: keep `ctx.vel` in mucom's 0-255 domain for K and
+     convert at emit. **Scale by 128, not 255** (`MUCOM_PCM_VEL_FULL`): measured
+     over the corpus, K's `v` peaks at **130** with a median of **40** — songs
+     never approach the register ceiling, because the OPNA's ADPCM is already
+     loud beside its FM. Dividing by 255 wasted half the range and left drums at
+     gain 0.13 (-17 dB) under an FM bed at ~-10 dB — which is exactly what the
+     user heard (2026-07, "PCM の音量がとても小さい"). By 128 the median v40 lands
+     on `:vel 5` (0.33 ≈ -10 dB, level with mucom's median FM v10) and v130
+     reaches full scale. Still lossy (16 steps), but the range is now used.
+   - **Do not confuse this with the parked driver bug.** MMLispDRV plays PCM at
+     full amplitude *because it drops `:vel` entirely* (z80-driver-status.md
+     §"Decide PCM `:vel`"; `_paramSet` bails at `channelId >= 6`, the PCM voice
+     has no amplitude field, and drv-player's mix is a bare
+     `acc += i8(data[...])`). So live↔drv PCM volume cannot agree until that is
+     unparked. The user intends to implement it — **the feature stays**; this
+     mapping is what the driver will honour once it does.
    - `case "octSet"` (:776-779): refactor to `ctx.oct = op.n + ctx.octShift`
      (FM `-1` / SSG `0` / PCM `+3`). Same at the octave prefix (:1108).
    - `case "pan"` (:781-784), `"detune"`, `"lfoSet"`, `"porta"`, the `E`

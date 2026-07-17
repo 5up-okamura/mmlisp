@@ -136,10 +136,10 @@ export function applyFade(L, R, fadeStartFrame, totalFrames) {
   }
 }
 
-/** Encode stereo float buffers as a 16-bit PCM WAV (RIFF). */
+/** Encode float buffers as a 16-bit PCM WAV (RIFF). `R` null = mono. */
 export function encodeWav(L, R, sampleRate) {
   const numFrames = L.length;
-  const channels = 2;
+  const channels = R ? 2 : 1;
   const bytesPerSample = 2;
   const blockAlign = channels * bytesPerSample;
   const dataSize = numFrames * blockAlign;
@@ -167,10 +167,13 @@ export function encodeWav(L, R, sampleRate) {
   let off = 44;
   for (let i = 0; i < numFrames; i++) {
     const l = Math.max(-1, Math.min(1, L[i]));
-    const r = Math.max(-1, Math.min(1, R[i]));
     dv.setInt16(off, Math.round(l * 32767), true);
-    dv.setInt16(off + 2, Math.round(r * 32767), true);
-    off += 4;
+    off += 2;
+    if (R) {
+      const r = Math.max(-1, Math.min(1, R[i]));
+      dv.setInt16(off, Math.round(r * 32767), true);
+      off += 2;
+    }
   }
   return buf;
 }
