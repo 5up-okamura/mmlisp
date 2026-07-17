@@ -69,11 +69,19 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
 
 ### Open action items
 
-1. **Automate ab-compare (driver.md §12, ir vs drv) into a CI gate.** The trace gate
-   only checks Z80 ≡ drv-player; both were wrong the same way, which is why Layer 1
-   hid. ab-compare is the ONLY thing that sees drv↔ir divergences and it is not run
-   by `verify:all`. Do NOT paper over Layer 2 by adding a same-frame-collapse
-   tolerance to ab-compare until the divergence itself is understood.
+1. **Automate ab-compare into a CI gate. DONE (2026-07-18).** `drv/tools/ab-gate.mjs`
+   + `npm run verify:ab`, folded into `verify:all`. It is a **characterization**
+   gate, not 0-diff: M2/M3 scores diverge by construction (exporter pre-samples
+   curves ir-player evaluates continuously — driver.md §12/§13), so each corpus
+   score's mismatch signature (count + FNV digest of the sorted mismatch list) is
+   frozen in `drv/tests/ab-baseline.json`; the gate fails when a signature
+   *changes*. Baseline: **31 scores, 17 clean, 14 with known divergence** (2530
+   total mismatches). Pure-M1 (ab-core) = 0. Layer-2 is NOT papered over — it is
+   recorded as m3-psg-release's 8-mismatch signature and any change re-surfaces.
+   Empirical finding when wiring it: all 14 divergences are the documented
+   pre-sample-vs-continuous class ($48/$4c macro-TL, $a4 pitch-macro, $24 CSM
+   timer, psg-att Layer-2) — **no surprise bugs**. Re-freeze after an intended
+   change: `cd drv && node tools/ab-gate.mjs --update`.
 2. **Investigate the Layer-2 gate/key-off/re-trigger timing** (drv-player + Z80) to
    make note-boundary silence match ir. Needs design — spans gate key-off timing,
    PSG key-off vs macro-write ordering, and `:vel*` curve-release re-trigger.

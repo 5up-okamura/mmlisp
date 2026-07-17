@@ -522,8 +522,19 @@ There is no automated test suite for audio; verification is comparative:
    separate; the driver lets the macro release value hold, so they connect.
    The gate key-off also lands on a slightly different frame in each. Not yet
    reconciled — see `.claude/memory/z80-driver-status.md` for the full arc.
-   Related: the `ir-player` A/B is **not** yet wired into an automated gate,
-   so drv↔ir divergences (unlike Z80↔drv, item 4) can slip through.
+   This divergence is now frozen in the A/B baseline (below), so it is watched
+   rather than silent.
+
+   **Automated A/B gate** (`drv/tools/ab-gate.mjs`, `npm run verify:ab`, folded
+   into `verify:all`). Because M2/M3 scores diverge by construction (the
+   exporter pre-samples curves that `ir-player` evaluates in continuous time),
+   this is a *characterization* gate, not a 0-diff one: each corpus score's
+   mismatch signature (count + digest) is frozen in `drv/tests/ab-baseline.json`
+   and the gate fails when a signature **changes**. Pure-M1 scores (ab-core)
+   baseline to zero. This closes the blind spot that let the PSG release bug
+   hide — any new drv↔ir divergence (or the disappearance of a known one) now
+   fails the gate. After an intended change, review the printed mismatches and
+   re-freeze with `node tools/ab-gate.mjs --update`.
 3. **LUT export.** The reference prints every constant table (F-number,
    PSG period, level offsets, PCM rate multipliers, curve units) as asm
    `db`/`dw` blocks for verbatim inclusion — the asm never re-derives a

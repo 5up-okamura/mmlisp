@@ -1,0 +1,188 @@
+{
+  "m2-csm.mmlisp": {
+    "ok": false,
+    "mismatches": 68,
+    "compileErrors": 0,
+    "digest": "0fa27c56"
+  },
+  "m2-mailbox.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m2-motion.mmlisp": {
+    "ok": false,
+    "mismatches": 1247,
+    "compileErrors": 0,
+    "digest": "29c3613c"
+  },
+  "m2-pcm.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m2-pcmloop.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m2b-pitch.mmlisp": {
+    "ok": false,
+    "mismatches": 630,
+    "compileErrors": 0,
+    "digest": "094eb705"
+  },
+  "m3-dynsweep.mmlisp": {
+    "ok": false,
+    "mismatches": 128,
+    "compileErrors": 0,
+    "digest": "8a809861"
+  },
+  "m3-dynval.mmlisp": {
+    "ok": false,
+    "mismatches": 8,
+    "compileErrors": 0,
+    "digest": "b8f15b38"
+  },
+  "m3-fm3op.mmlisp": {
+    "ok": false,
+    "mismatches": 24,
+    "compileErrors": 0,
+    "digest": "23127053"
+  },
+  "m3-fm6-pcm.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-gate-tie.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-loop-gate.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-macro-curve.mmlisp": {
+    "ok": false,
+    "mismatches": 4,
+    "compileErrors": 0,
+    "digest": "8fc01a75"
+  },
+  "m3-macro-keyon.mmlisp": {
+    "ok": false,
+    "mismatches": 32,
+    "compileErrors": 0,
+    "digest": "e00b6e76"
+  },
+  "m3-macro-multi.mmlisp": {
+    "ok": false,
+    "mismatches": 219,
+    "compileErrors": 0,
+    "digest": "e4be00b5"
+  },
+  "m3-macro-pitch.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-macro-pitchadd.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-macro-pitchovr.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-macro-scale.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-macro-semi.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-macro-vel.mmlisp": {
+    "ok": false,
+    "mismatches": 4,
+    "compileErrors": 0,
+    "digest": "3b55a7ae"
+  },
+  "m3-macro.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-opparam.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-pcm-softmix.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-psg-release.mmlisp": {
+    "ok": false,
+    "mismatches": 8,
+    "compileErrors": 0,
+    "digest": "4737f7a1"
+  },
+  "m3-slur.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-valexpr.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "stress-m1.mmlisp": {
+    "ok": false,
+    "mismatches": 29,
+    "compileErrors": 0,
+    "digest": "dc97bb59"
+  },
+  "stress-m2skip.mmlisp": {
+    "ok": false,
+    "mismatches": 92,
+    "compileErrors": 0,
+    "digest": "3803dcbb"
+  },
+  "ab-core.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "demo1.mmlisp": {
+    "ok": false,
+    "mismatches": 37,
+    "compileErrors": 0,
+    "digest": "5302c70d"
+  }
+}

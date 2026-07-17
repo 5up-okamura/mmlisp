@@ -54,9 +54,19 @@ driver, replays the MMB in the emulator (mailbox-started like a real 68000
 host), and diffs the frame-stamped register log against
 `drv-player.js` — **raw equality, zero tolerance**: same writes, same
 values, same frames, same order (driver.md §12.4). Current status: all
-eighteen gate scores diff clean (`npm run verify:all`) — ab-core, the two
+trace gate scores diff clean (`npm run verify:all`) — ab-core, the two
 stress scores, the M2 set (motion, pitch, CSM, PCM, PCM-loop, mailbox), and the
 M3 set (FM3-op, macros: step/curve/semi/dynval/pitch/multi/keyon, PCM soft-mix).
+
+`verify:all` also runs **`verify:ab`** (`tools/ab-gate.mjs`) — the *other* axis:
+`ir-player` ≡ `drv-player`, which the Z80↔drv trace gate cannot see (when both
+references share a bug it passes). Because M2/M3 scores diverge by construction
+(the exporter pre-samples curves `ir-player` evaluates continuously,
+driver.md §12/§13), this is a **characterization** gate: each corpus score's
+mismatch signature is frozen in `tests/ab-baseline.json` and the gate fails when
+one *changes*. Pure-M1 (ab-core) baselines to zero. After an intended behaviour
+change, review the printed mismatches and re-freeze with
+`node tools/ab-gate.mjs --update`.
 
 Host mailbox commands (KEY_OFF / SET_PARAM / FADE_TRACK) are host-driven, not
 in the MMB stream, so a test may carry a sidecar `<song>.cmds.json` holding
