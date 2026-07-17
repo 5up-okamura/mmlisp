@@ -1801,6 +1801,20 @@ ak_fm:
 ; PARAM_SET execution (opcodes.md §7; drv-player _paramSet order).
 ; In: (G_TARGET), (G_VAL) i16; IX = TCB.
 ; ===========================================================================
+; psg_att_gate: decide whether a PSG attenuation write should land. Returns Z
+; (caller does `ret z` to skip) only when the channel is keyed OFF and this is
+; NOT a macro apply. A macro owns the channel's envelope, so its writes must land
+; even after key-off — the `:off` release region runs entirely while keyed is
+; false and is exactly the decay tail (drv-player _paramSet `force`). Non-macro
+; writes (mailbox SET_PARAM, sweeps) keep the keyed guard so they never un-mute a
+; silenced channel. IY = chs. Clobbers A.
+psg_att_gate:
+    bit 0,(iy+CHS_STATUS)   ; keyed → write
+    ret nz
+    ld a,(G_MADD)
+    and 1                   ; macro apply (override=1 / additive=3) → write; else skip
+    ret
+
 param_set:
     ld a,(G_TARGET)
     cp 5                    ; MASTER (global)
@@ -1828,7 +1842,7 @@ param_set:
     ld b,31
     call clamp_val
     ld (iy+CHS_VOL),a
-    bit 0,(iy+CHS_STATUS)
+    call psg_att_gate       ; keyed or macro apply? else skip (never un-mute)
     ret z
     call compose_psg_att
     ld c,a
@@ -1925,7 +1939,7 @@ ps_vel:
     ld a,(G_CH)
     cp 6
     jp c,write_carrier_tls  ; FM: recompose every carrier TL (A = ch)
-    bit 0,(iy+CHS_STATUS)   ; PSG: re-att only on a keyed channel
+    call psg_att_gate       ; PSG: keyed, or a macro release driving the tail
     ret z
     call compose_psg_att
     ld c,a

@@ -1024,7 +1024,13 @@ export class DrvPlayer {
   }
 
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
-  _paramSet(channelId, target, value) {
+  // `force` (macro-driven writes): a macro is the channel's envelope authority,
+  // so its PSG attenuation writes must land even after key-off — the release
+  // region (`:off`) runs entirely while keyed is false and is exactly the decay
+  // tail. Non-macro writes (mailbox SET_PARAM, sweeps) keep the keyed guard so
+  // they never un-mute a silenced channel. Mirrors ir-player, whose macro engine
+  // writes att unconditionally while the guard only fences the VOL re-apply path.
+  _paramSet(channelId, target, value, force = false) {
     const name = TARGET_NAME[target];
     if (!name) {
       this._diag("W_DRV_UNKNOWN_TARGET", `PARAM_SET target 0x${target.toString(16)}`);
@@ -1075,7 +1081,7 @@ export class DrvPlayer {
         // note (even if currently silent, so a vel macro can bring it back up).
         if (target === TARGET_ID.VOL) st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
         else st.vel = value < 0 ? 0 : value > 15 ? 15 : value;
-        if (st.keyed) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
+        if (st.keyed || force) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
       } else if (target === TARGET_ID.NOTE_PITCH) {
         st.pitchCents = value;
         if (psgCh < 3) this._writePsgPitch(psgCh, st.currentNote, value);
@@ -1340,7 +1346,7 @@ export class DrvPlayer {
           const base = add ? this._psg[p].pitchCents : 0;
           this._writePsgPitch(p, this._psg[p].currentNote, base + v);
         }
-      } else this._paramSet(ch, d.target, v);
+      } else this._paramSet(ch, d.target, v, true); // macro owns the envelope
     }
     slot.stepClock = d.step - 1;
     if (slot.state === "run") {

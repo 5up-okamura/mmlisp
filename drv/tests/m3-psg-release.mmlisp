@@ -1,0 +1,9 @@
+; M3 gate: PSG soft-envelope RELEASE (:off) decay. PSG has no hardware EG, so the
+; macro IS the envelope — including the release tail, which runs entirely while
+; the channel is keyed OFF. A keyed guard on the PSG attenuation write silently
+; dropped it (the release "did nothing"); the macro-apply path must write att
+; even after key-off (param_set psg_att_gate / drv-player _paramSet force). gate*
+; keys off mid-note so the :off decay plays into the gap; two notes lock the
+; re-key + second release.
+(sqr1 :tempo 120 :len 4 :gate* 0.5 :vel 15
+  (macro :step 1/16 :vel [15 :off 12 9 6 3 0]) c _ c _)
