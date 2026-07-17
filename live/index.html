@@ -133,7 +133,6 @@
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
             <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voice Bank (.dat)…</button>
             <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 PCM Bank (.bin)…</button>
-            <button class="menu-item" onclick="saveMucomPcmWav();closeMenus()">Save PCM Bank WAV…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -145,6 +144,7 @@
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
             <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
+            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">mucom88 PCM Bank WAV…</button>
           </div>
         </div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
@@ -1814,10 +1814,10 @@
       // folder — so seed the decode cache under the key `:file` resolves to (a
       // bare name, since there is no base dir). The song then plays immediately;
       // saving the wav beside the score is what makes it survive a reload.
-      _mucomPcm = pcm; // for File ▸ Save PCM Bank WAV…
+      _mucomPcm = pcm; // for File ▸ Export ▸ mucom88 PCM Bank WAV…
       if (pcm) {
         _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
-        log(`mucom88: drums play from "${pcm.wavFile}" held in memory — File ▸ Save PCM Bank WAV… next to the score (then Open Folder…) to keep them after a reload`, 'info');
+        log(`mucom88: drums play from "${pcm.wavFile}" held in memory — File ▸ Export ▸ mucom88 PCM Bank WAV… next to the score (then Open Folder…) to keep them after a reload`, 'info');
       }
       setEditorDoc(source);
       compileNow();
@@ -1925,7 +1925,7 @@
     // import must not dump files in Downloads behind the user's back, and a
     // menu click is a fresh user gesture, so the picker actually opens and the
     // file lands where they choose (next to the score).
-    async function saveMucomPcmWav() {
+    async function exportMucomPcmWav() {
       if (!_mucomPcm) {
         log('mucom88: no PCM bank loaded — import a .muc with its .bin, or the .bin on its own', 'err');
         return;
@@ -2002,7 +2002,7 @@
     window.importMucom88 = importMucom88;
     window.importMucomVoiceBank = importMucomVoiceBank;
     window.importMucomPcmBank = importMucomPcmBank;
-    window.saveMucomPcmWav = saveMucomPcmWav;
+    window.exportMucomPcmWav = exportMucomPcmWav;
 
     function formatShortcutLabel(key) {
       const isMac = navigator.platform.toUpperCase().includes('MAC');

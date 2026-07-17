@@ -629,6 +629,21 @@ operation is chosen by the keyword so the argument is never ambiguous:
 (fm1 :len 8 :gate- 2t   c d e f)  ; minus:    KEY-OFF 2 ticks before each slot ends
 ```
 
+> **Notes at full gate run together.** With no gate cut a note fills its whole
+> slot, so the next KEY-ON lands with no gap and the two sound as one — the
+> attack of the second note is simply not heard. That is deliberate: it is what
+> makes legato possible, and MMLisp never inserts a key-off you did not ask for.
+> If a phrase sounds like it is losing notes, it usually wants a small cut:
+>
+> ```lisp
+> (fm1 :len 16 c c c c)           ; one long tone — the repeats vanish
+> (fm1 :len 16 :gate- 1f c c c c) ; four distinct attacks
+> ```
+>
+> `1f` (one frame) is enough to re-attack while staying audibly legato. Trackers
+> that key off between notes by default (mucom88 among them) rely on this, so
+> music imported from them may need a cut its source never spelled out.
+
 ### `:gate 0` — hold, timeline advances
 
 `:gate 0` fires KEY-ON and holds indefinitely, but the timeline still advances by `:len`. Use this when the channel needs to stay in sync with others while holding a note.

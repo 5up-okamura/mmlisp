@@ -13,6 +13,7 @@
 
 import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "./export-wav.js";
+import { VEL_DB_PER_STEP } from "./ir-utils.js";
 
 const PPQN = 96; // must match mmlisp2ir.js
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
@@ -41,17 +42,18 @@ const DROP_PARTS = { G: "rhythm" };
 // MUCOM_PCM_BASE_RATE in mucom-pcm.js).
 const MUCOM_PCM_OCT_SHIFT = 3;
 // mucom velocity is 0-255 on K but 0-15 on FM/SSG. On K it IS the ADPCM-B level
-// register: the driver writes `TOTALV*4 + v` to 0x0B, and TOTALV is 0 outside a
-// fade (music.asm PL1/PL2; PVMODE defaults 0, so the bank's pcmopt is not added
-// either). So v40 really is 16% of the register — yet it sounds full on an OPNA,
-// because that chip's ADPCM output is loud beside its own FM. That ratio does
-// not carry to the MD's DAC, so no faithful mapping exists and the balance is an
-// ear call. Songs put `v` at p25=25 / median=40 / p90=70 / max=130, so the scale
-// trades loudness against pinning the top at :vel 15: /255 and /128 leave the
-// median at 0.13/0.33 (both judged too quiet, 2026-07), while /40 pins 110 of
-// 256 notes and flattens v50..v130 into one step. 64 puts the median at 0.60 and
-// pins only 27.
-const MUCOM_PCM_VEL_FULL = 64;
+// register — the driver writes `TOTALV*4 + v` to 0x0B, TOTALV being 0 outside a
+// fade and PVMODE 0 by default (music.asm PCMVOL/PL1/PL2) — so `v` is a linear
+// absolute level. That absolute value is worthless to us: it means something
+// only inside the OPNA's mix, where the ADPCM output is loud beside its own FM,
+// and the YM2612's DAC has no such relationship. Songs also use only the bottom
+// half of the register (corpus max 130, median 40), so any fixed divisor throws
+// away headroom the MD could have used and leaves the drums under the FM bed.
+//
+// What DOES carry over is the song's own dynamics. So normalize per song: the
+// loudest drum becomes :vel 15 (full DAC) and every other note keeps its dB
+// distance from it, on the same 2 dB ladder FM rides. No magic constant, and
+// nothing is left on the table.
 const MUCOM_PCM_VEL_MAX = 255; // register range, for clamping relative v+/v-
 // mucom K parts set `v` explicitly, so this only backs a bare v+/v- with none.
 const MUCOM_PCM_VEL_DEFAULT = 64;
@@ -1033,13 +1035,17 @@ function renderOps(ops, ctx, out, depth = 0) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v | 0)); }
 
-// mucom velocity -> MMLisp :vel. FM/SSG share MMLisp's 0-15; K is rescaled from
-// its ADPCM-B level (see MUCOM_PCM_VEL_FULL). Lossy either way — 16 steps for a
-// range mucom writes to ~128 — so nearby drum volumes can collapse onto one
-// step. MMLisp has no finer PCM volume lane, so this is the honest mapping.
+// mucom velocity -> MMLisp :vel. FM/SSG share MMLisp's 0-15 one-to-one; K is
+// normalized against the song's own loudest drum (ctx.pcmVelMax), so that note
+// lands on :vel 15 and the rest keep their dB distance below it. `v` is a linear
+// amplitude, :vel is a 2 dB ladder, so the ratio becomes dB and the ladder
+// converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
   if (!ctx.isPcm) return clamp(v, 0, 15);
-  return clamp(Math.round((v * 15) / MUCOM_PCM_VEL_FULL), 0, 15);
+  const max = ctx.pcmVelMax || 0;
+  if (v <= 0 || max <= 0) return 0;
+  const dbBelowLoudest = 20 * Math.log10(max / v);
+  return clamp(Math.round(15 - dbBelowLoudest / VEL_DB_PER_STEP), 0, 15);
 }
 
 // Bank sample name -> an MMLisp symbol. Real names include "kick+snare",
@@ -1153,6 +1159,33 @@ export function mucomToMmlisp(parsed) {
     }
   }
 
+  // The loudest `v` anywhere K can reach — its own forms plus the macros it
+  // calls, since a drum's volume is often set inside the macro. velToken scales
+  // every K note against this so the loudest lands on :vel 15.
+  // mucom's `(`/`)` nudge the volume relative to wherever it already is, so this
+  // has to walk the same state renderOps does — reading a velAdj as an absolute
+  // level would invent a loudest drum that the song never plays. State flows
+  // across a letter's forms (and through loops, whose body is emitted once), and
+  // a macro starts fresh, exactly as when it is rendered.
+  const pcmVelMax = (() => {
+    let max = 0;
+    const scan = (ops, st) => {
+      for (const op of ops) {
+        if (op.t === "vel") st.v = op.v;
+        else if (op.t === "velAdj") st.v = clamp((st.v ?? MUCOM_PCM_VEL_DEFAULT) + op.d, 0, MUCOM_PCM_VEL_MAX);
+        else if (op.t === "loop") { scan(op.body, st); continue; }
+        else continue;
+        max = Math.max(max, st.v);
+      }
+    };
+    const st = { v: null };
+    for (const it of scoreItems) {
+      if (it.kind === "form" && it.letter in PCM_PARTS && !it.dropped) scan(it.ops, st);
+    }
+    for (const [mn, mac] of macros || new Map()) if (pcmMacros.has(mn)) scan(mac.ops, { v: null });
+    return max;
+  })();
+
   // Macros become (def *n …); only those with supported content are kept.
   const usableMacros = new Set();
   for (const [mn, mac] of [...(macros || new Map()).entries()].sort((a, b) => a[0] - b[0])) {
@@ -1163,7 +1196,7 @@ export function mucomToMmlisp(parsed) {
     // must resolve its @n against the bank, and a sample def IS referencable
     // from a macro body by name.
     const isPcm = pcmMacros.has(mn);
-    renderOps(mac.ops, { vel: null, isPcm, octShift: isPcm ? MUCOM_PCM_OCT_SHIFT : -1, pcmEntries, pcmRegistry, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    renderOps(mac.ops, { vel: null, isPcm, octShift: isPcm ? MUCOM_PCM_OCT_SHIFT : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = toks.join(" ").trim();
     if (!content) continue;
     usableMacros.add(mn);
@@ -1190,7 +1223,7 @@ export function mucomToMmlisp(parsed) {
   const ctxByLetter = new Map();
   const letterCtx = (letter) => {
     if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry });
+      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(letter);
   };

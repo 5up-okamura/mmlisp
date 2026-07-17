@@ -473,12 +473,21 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
   ADPCM K → `pcm1`. Dropped: part G (rhythm).
 - **PCM (part K)**: the `#pcm` bank (`*pcm.bin`, up to 32 YM2608 ADPCM-B
   samples) decodes to one WAV that per-sample defs slice (`:offset`/`:frames`);
-  `@n` (1-based) rebinds the track's sample. `v` 0–255 → `:vel` 0–15 is lossy.
+  `@n` (1-based) rebinds the track's sample. Baked at the driver's DAC grid
+  (`PCM_MIX_RATE × 60` = 10.5 kHz) — the soft-mix can emit no more, so mucom's
+  native 16 kHz would only be resampled away. A bank also imports standalone, as
+  a drum-kit library. `v` is the ADPCM-B level register (0–255), and its absolute
+  value means something only inside the OPNA's mix, so it is **normalized per
+  song**: the loudest drum becomes `:vel 15` and the rest keep their dB distance
+  below it (16 steps, so near-equal volumes can still collapse).
 - **Notes / lengths** on mucom's clock grid: `len` → `floor(C/len)` clocks →
   ticks (`× 384/C`); `%<clocks>` direct lengths; dots; `^`/`&`→tie.
 - **Bar lines** `|` → MMLisp `|` (carried through verbatim as editorial markers).
-- **Octave** (FM reads one higher → `:oct N-1`; SSG no shift), relative `<`/`>`.
-- **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`.
+- **Octave** (FM reads one higher → `:oct N-1`; SSG no shift; PCM `+3`, so the
+  o1/o2 mucom drums land inside MMLisp's MIDI 36–84 sample range and the real
+  pitch rides `:rate`), relative `<`/`>`.
+- **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`
+  (dropped on K — PCM is a soft-mix voice on the fm6 DAC and owns no pan lane).
 - **Loops**: single-line `[…]n` → `(x n …)`; multi-line `[…]n` → `#labelK …
   (go labelK n)`; `/` break → `:break`; global `L` → `#loop`/`(go loop)`.
 - **Voices**: inline `@n` FM defs, `@"name"`, external `.dat` bank load + merge.
@@ -490,6 +499,34 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
 - **Tempo**: `T` (BPM direct); `t` (Timer-B) via the driver formula
   `BPM = 830400 / ((256 − t) × C)`, deferred so a later `C` (and its first note)
   sets the resolution. First tempo seeds the score; changes emitted inline.
+
+### Known divergence — notes slur where mucom re-attacks
+
+mucom re-attacks every note; MMLisp holds a full-gate note into the next one as
+a slur (guide.md §gate). The importer only emits `:gate-` where mucom wrote
+`q<n>`, so a part that relied on mucom's default loses its attack here — the
+notes run together and individual hits vanish until `:gate- 1f` is added by hand.
+The fix is a baseline `:gate-` on imported parts; its size wants measuring
+against mucom's key-off rather than guessing.
+
+### Known divergence — FM volume is absolute in mucom, relative here
+
+mucom's `v` **overwrites** the carrier TL: `STV2` (music.asm) indexes `FMVDAT`
+with `TOTALV + v` and writes that byte straight to each carrier's `0x40+op`
+register, so the voice's own carrier TL never takes part in the volume. MMLisp's
+`:vel` instead **attenuates from** the patch — `_carrierTl` is
+`voicedTl + velToTlAtten(vel)`.
+
+The ladders agree, so this is not a decay problem: `FMVDAT` runs
+`2A,28,25,22,20,1D,1A,18,15,12,10,0D,0A,08,05,02`, i.e. steps of 2,3,3,2,… TL
+= 2.667 TL = **2 dB per step**, exactly `VEL_DB_PER_STEP`. Relative dynamics —
+including echo decay, where `\=n1,n2`'s n2 is a `v` delta — come out faithful.
+
+What differs is the **absolute** level: a voice with a quiet carrier TL plays
+that much quieter here than on mucom, which would have overridden it. Affects
+every imported FM track (not PCM: part K has its own level register). A fix
+belongs in the importer — compensating the emitted `:vel` for the voice's
+carrier TL — since MMLisp's relative model is deliberate, not an oversight.
 
 ### Priority 1 — track alignment
 
@@ -507,6 +544,16 @@ remaining classes of drift:
    tail). Needs per-song diagnosis. Remaining (spread in ticks):
    `pcmt12 12 · gh011 24 · pcmt31 48 · stk013/023 72 · stg001 96 ·
    sq1_103/disco4 192 · bare03 336 · pcmt16 384 · bos010(fm3) 768 · … bare21 7200`.
+
+Part K joins this picture rather than changing it: importing the PCM bank does
+**not** perturb any other track's period (verified with and without the bank),
+and the songs where `pcm1` disagrees are mostly ones whose parts already
+disagreed among themselves (`sq1_104` has seven distinct periods, `sq1_112`
+seven, `stk027` two). Worth a look once the classes above are understood:
+`pcm1` comes out shorter than every other part in all 10 affected songs, never
+longer, and in `stk004 25344/29184` and `disco1 24000/34752` the other parts do
+agree with each other — so K may lose time of its own on top of the general
+drift. `bare21`'s `12288/18432` is exactly 2/3.
 
 Method: compare a drifting part against a parallel aligned part to locate the
 divergent measure; confirm against the raw MML clock count.
