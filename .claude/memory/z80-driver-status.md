@@ -17,36 +17,39 @@ This file is the compact continuation state.
   code overlays (`ovl_boot`/`ovl_cmd`/`ovl_setup`/`ovl_pcm`) broke the 8KB
   ceiling; resident image ~6.3KB with **~14 B headroom** at `DATA_BASE=$18F0`.
 
-## Known bug — PSG (and FM re-attack) soft envelope: macro first value one frame late
+## PSG soft-envelope release decay — FIXED 2026-07-18 (commit e88e97e)
 
-**Found 2026-07-18, not fixed.** A macro-driven soft envelope diverges between
-ir-player (live/authoring reference, §12 gate A) and drv-player/Z80 (B) on the
-**note-on / re-attack frame**: the note-on frame emits the channel's **base
-vel/vol level**, and the macro's first value lands **one frame later**. ir-player
-emits the macro's frame-0 value at note-on with no base-level transient.
+The user's report "PSGのソフトエンベロープが効いてない" was the **release (`:off`)
+decay doing nothing** — the note jumped straight to silence at key-off instead of
+decaying. PSG has no hardware EG, so a `:vel`/`:vol` macro **is** the envelope,
+including the release tail, which runs **entirely while the channel is keyed off**.
+Both players gated the PSG attenuation write on the keyed state, so every
+release-region write was dropped.
 
-- **Audible on PSG** (coarse 0–15 att, no hardware EG to mask it) — this is what
-  the user noticed ("PSGのソフトエンベロープが効いてない"). FM shows the same at
-  **re-attacks** (f30/f60/… in a repeated-note run), less audible.
-- **Masked when base vel == macro's first value** (e.g. `:vel 15` + `(macro :vel
-  [15 …])` → base att 0 == macro[0] att 0). Exposed when they differ, e.g.
-  `:vel 13` + `(macro :vel [15 6 0])`.
-- **The trace gate cannot see it.** verify:all checks Z80 ≡ drv-player, and both
-  are wrong the same way. The divergence is drv-player ↔ ir-player, caught only by
-  **ab-compare.js (the driver.md §12 acceptance gate) — which is NOT wired into
-  `verify:all`.** That automation gap is why it slipped. Repro:
-  `abCompare("(sql1 :tempo 120 :len 4 :vel 13 (macro :vel [15 6 0]) c c c c)")`
-  → 4 mismatches at att0 f0–f2 (B = [2,0,9,15] vs A = [0,9,15]).
-- **Root cause (to nail in the fix chat):** drv-player's frame order is dispatch
-  (step 2) → process_macros (step 3), same frame, and the code comment at
-  drv-player.js:680 claims "the first step fires this frame … overriding the
-  note-on's base level" — but the measured B keeps the base level at f0, so step 3
-  is effectively a frame late. Code does not match its stated intent.
-- **Fix shape:** on a note-on where a macro owns the level target, the note-on
-  frame must reflect the macro's frame-0 value (suppress the base-level write, or
-  apply the macro's first step synchronously at note-on) — in **both** drv-player.js
-  and the Z80, then re-take verify:all AND ab-compare. **Action item: automate
-  ab-compare in verify:all** so §12 divergences can't hide behind the trace gate.
+Fix: a macro is the channel's envelope authority, so its writes land even after
+key-off; non-macro writes (mailbox SET_PARAM, sweeps) keep the keyed guard so they
+never un-mute a silenced channel. drv-player: `force` arg on `_paramSet` (set by
+the macro step). Z80: `psg_att_gate` helper keyed on `G_MADD` (already the
+macro-apply flag), +9 B (free 178→169). New gate `m3-psg-release`, verify:all
+30/30. **PCM-in-DrvPlayer mute** was fixed alongside (commit 717cdfe) so the
+channel can be isolated by ear.
+
+**Process lesson (still open):** the trace gate could not see this — it checks
+Z80 ≡ drv-player and both were wrong the same way. Only **ab-compare.js (the
+driver.md §12 gate, ir-player vs drv-player) exposes drv↔ir divergences, and it is
+NOT wired into `verify:all`.** *Action item: automate ab-compare in verify.*
+Deferred deliberately because of the next point.
+
+**Ground-truth caveat (unresolved):** after the fix the user suspects **drv-player
+may now be MORE correct than ir-player on the attack** ("the attack's linear ramp
+is only audible in MMLispDrv"). So do NOT assume ir-player is the reference and do
+NOT add a same-frame-collapse tolerance to ab-compare to force drv→ir agreement
+until this is settled by ear. The residual ab-compare mismatches after the fix are
+same-frame writes (base level then macro value) that are **frame-invisible** —
+drv-player PSG writes use `_when()` (frame-level timestamp), so both same-frame
+writes hit the synth at one instant and only the last is audible. That means the
+mismatch is a normalization artifact, not an audible difference — but which
+player's *attack* is right is the user's call, pending verification.
 
 ## Remaining work (in rough priority order)
 
