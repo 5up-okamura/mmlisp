@@ -17,6 +17,37 @@ This file is the compact continuation state.
   code overlays (`ovl_boot`/`ovl_cmd`/`ovl_setup`/`ovl_pcm`) broke the 8KB
   ceiling; resident image ~6.3KB with **~14 B headroom** at `DATA_BASE=$18F0`.
 
+## Known bug — PSG (and FM re-attack) soft envelope: macro first value one frame late
+
+**Found 2026-07-18, not fixed.** A macro-driven soft envelope diverges between
+ir-player (live/authoring reference, §12 gate A) and drv-player/Z80 (B) on the
+**note-on / re-attack frame**: the note-on frame emits the channel's **base
+vel/vol level**, and the macro's first value lands **one frame later**. ir-player
+emits the macro's frame-0 value at note-on with no base-level transient.
+
+- **Audible on PSG** (coarse 0–15 att, no hardware EG to mask it) — this is what
+  the user noticed ("PSGのソフトエンベロープが効いてない"). FM shows the same at
+  **re-attacks** (f30/f60/… in a repeated-note run), less audible.
+- **Masked when base vel == macro's first value** (e.g. `:vel 15` + `(macro :vel
+  [15 …])` → base att 0 == macro[0] att 0). Exposed when they differ, e.g.
+  `:vel 13` + `(macro :vel [15 6 0])`.
+- **The trace gate cannot see it.** verify:all checks Z80 ≡ drv-player, and both
+  are wrong the same way. The divergence is drv-player ↔ ir-player, caught only by
+  **ab-compare.js (the driver.md §12 acceptance gate) — which is NOT wired into
+  `verify:all`.** That automation gap is why it slipped. Repro:
+  `abCompare("(sql1 :tempo 120 :len 4 :vel 13 (macro :vel [15 6 0]) c c c c)")`
+  → 4 mismatches at att0 f0–f2 (B = [2,0,9,15] vs A = [0,9,15]).
+- **Root cause (to nail in the fix chat):** drv-player's frame order is dispatch
+  (step 2) → process_macros (step 3), same frame, and the code comment at
+  drv-player.js:680 claims "the first step fires this frame … overriding the
+  note-on's base level" — but the measured B keeps the base level at f0, so step 3
+  is effectively a frame late. Code does not match its stated intent.
+- **Fix shape:** on a note-on where a macro owns the level target, the note-on
+  frame must reflect the macro's frame-0 value (suppress the base-level write, or
+  apply the macro's first step synchronously at note-on) — in **both** drv-player.js
+  and the Z80, then re-take verify:all AND ab-compare. **Action item: automate
+  ab-compare in verify:all** so §12 divergences can't hide behind the trace gate.
+
 ## Remaining work (in rough priority order)
 
 1. **M3 tail**: VOICE_SET opcode + the exporter's VOICE_TABLE coalescing
