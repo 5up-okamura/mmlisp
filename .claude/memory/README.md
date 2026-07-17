@@ -18,6 +18,10 @@ Index:
 - [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
   import, compile-time eval, phase status and sequencing. roadmap.md has the
   compact public version.
+- [plan-mucom-pcm.md](plan-mucom-pcm.md) — mucom88 PCM (part K / ADPCM) import,
+  approved and not started: the bank format, the "one WAV + slicing" decision
+  (`:offset`/`:frames`), the ADPCM-B decoder + pitch calibration to do first,
+  and the staged plan. Implement from here.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 settled design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic
