@@ -515,6 +515,15 @@ There is no automated test suite for audio; verification is comparative:
    diff clean — currently **0 mismatches**. Songs using M2/M3 features
    (macros, sweeps, PCM, CSM) report skipped-event diagnostics and A-side
    surplus writes; expected, logged, not a failure.
+
+   **Known open divergence (bug, not a band).** A PSG soft-envelope on a
+   gate-cut note (`:gate-`/`:gate*`) diverges at the note boundary: the IR
+   player emits a 1-frame hard key-off (att 15) between notes, so they
+   separate; the driver lets the macro release value hold, so they connect.
+   The gate key-off also lands on a slightly different frame in each. Not yet
+   reconciled — see `.claude/memory/z80-driver-status.md` for the full arc.
+   Related: the `ir-player` A/B is **not** yet wired into an automated gate,
+   so drv↔ir divergences (unlike Z80↔drv, item 4) can slip through.
 3. **LUT export.** The reference prints every constant table (F-number,
    PSG period, level offsets, PCM rate multipliers, curve units) as asm
    `db`/`dw` blocks for verbatim inclusion — the asm never re-derives a

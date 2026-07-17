@@ -17,39 +17,66 @@ This file is the compact continuation state.
   code overlays (`ovl_boot`/`ovl_cmd`/`ovl_setup`/`ovl_pcm`) broke the 8KB
   ceiling; resident image ~6.3KB with **~14 B headroom** at `DATA_BASE=$18F0`.
 
-## PSG soft-envelope release decay — FIXED 2026-07-18 (commit e88e97e)
+## PSG soft-envelope: release-decay fix + a deeper ir↔drv divergence (2026-07-18)
 
-The user's report "PSGのソフトエンベロープが効いてない" was the **release (`:off`)
-decay doing nothing** — the note jumped straight to silence at key-off instead of
-decaying. PSG has no hardware EG, so a `:vel`/`:vol` macro **is** the envelope,
-including the release tail, which runs **entirely while the channel is keyed off**.
-Both players gated the PSG attenuation write on the keyed state, so every
-release-region write was dropped.
+This began as "PSGのソフトエンベロープが効いてない" and unfolded in layers. Recording
+the whole arc because it exposed a structural gate blind spot and an unresolved
+player divergence.
 
-Fix: a macro is the channel's envelope authority, so its writes land even after
-key-off; non-macro writes (mailbox SET_PARAM, sweeps) keep the keyed guard so they
-never un-mute a silenced channel. drv-player: `force` arg on `_paramSet` (set by
-the macro step). Z80: `psg_att_gate` helper keyed on `G_MADD` (already the
-macro-apply flag), +9 B (free 178→169). New gate `m3-psg-release`, verify:all
-30/30. **PCM-in-DrvPlayer mute** was fixed alongside (commit 717cdfe) so the
-channel can be isolated by ear.
+### Layer 1 — release (`:off`) decay dropped. FIXED (commit e88e97e).
 
-**Process lesson (still open):** the trace gate could not see this — it checks
-Z80 ≡ drv-player and both were wrong the same way. Only **ab-compare.js (the
-driver.md §12 gate, ir-player vs drv-player) exposes drv↔ir divergences, and it is
-NOT wired into `verify:all`.** *Action item: automate ab-compare in verify.*
-Deferred deliberately because of the next point.
+The audible complaint was the **release tail doing nothing** — the note jumped
+straight to silence at key-off. PSG has no hardware EG, so a `:vel`/`:vol` macro
+**is** the envelope, including the release, which runs **entirely while keyed off**.
+Both players gated the PSG att write on the keyed state, so every release-region
+write was dropped. Fix: a macro is the channel's envelope authority, so its writes
+land even after key-off; non-macro writes (mailbox SET_PARAM, sweeps) keep the
+keyed guard so they never un-mute a silenced channel. drv-player: `force` arg on
+`_paramSet` (set by the macro step). Z80: `psg_att_gate` helper keyed on `G_MADD`
+(already the macro-apply flag), +9 B (free 178→169). Gate `m3-psg-release`,
+verify:all 30/30. **PCM-in-DrvPlayer mute** fixed alongside (commit 717cdfe) —
+`_applyAudibility`/`_pcmNoteOn` ignored PCM tracks — so the channel can be soloed
+by ear.
 
-**Ground-truth caveat (unresolved):** after the fix the user suspects **drv-player
-may now be MORE correct than ir-player on the attack** ("the attack's linear ramp
-is only audible in MMLispDrv"). So do NOT assume ir-player is the reference and do
-NOT add a same-frame-collapse tolerance to ab-compare to force drv→ir agreement
-until this is settled by ear. The residual ab-compare mismatches after the fix are
-same-frame writes (base level then macro value) that are **frame-invisible** —
-drv-player PSG writes use `_when()` (frame-level timestamp), so both same-frame
-writes hit the synth at one instant and only the last is audible. That means the
-mismatch is a normalization artifact, not an audible difference — but which
-player's *attack* is right is the user's call, pending verification.
+### Layer 2 — the deeper divergence the fix EXPOSED. NOT fixed (left as-is per user).
+
+Diagnostic detours worth not repeating: (a) my first guess was "note-on macro value
+one frame late" — WRONG; drv writes the macro value same-frame (raw dump), the
+apparent lag was ab-compare not collapsing same-frame writes. (b) The residual
+ab-compare mismatches are **frame-invisible**: drv PSG writes use `_when()`
+(frame-level timestamp), so same-frame writes (base then macro) hit the synth at one
+instant, last wins. (c) The attack was fine in both players (an earlier "attack only
+in drv" suspicion did not hold).
+
+The real remaining bug surfaced on the user's actual score (`:vel*` curve envelope,
+`(wait key-off)`, long `(linear 11..0 :len 65t)` release, `:gate- 10t` → gate floored
+to 1 tick, notes re-triggering every ~7 frames):
+
+- ir inserts a **1-frame hard key-off (att 15 = silence) at each note boundary**
+  (writes the release step, then 15), so notes audibly separate.
+- drv writes the key-off (15) and the release value on the **same frame**, release
+  wins → no inter-note silence → the envelope **drones / notes connect**.
+- The key-off even lands on **different frames** in the two players (ir ~f7 vs drv
+  ~f4), so it is not purely a same-frame-ordering artifact — gate key-off *timing* ×
+  PSG key-off sequencing × `:vel*` curve-release re-trigger interact.
+
+Before the Layer-1 fix this was hidden (release dropped → boundaries silent →
+accidentally staccato). The fix is correct in isolation (simple release now decays,
+gated) but for this complex envelope it **made the user's specific song worse**
+(drone). **Ground truth is unknown** — the source is a finished *mucom* song, so
+neither ir nor drv is authoritatively right; the user's goal is simply **ir ≡ drv**.
+User chose to leave it as-is for now (keep both fixes; do NOT revert).
+
+### Open action items
+
+1. **Automate ab-compare (driver.md §12, ir vs drv) into a CI gate.** The trace gate
+   only checks Z80 ≡ drv-player; both were wrong the same way, which is why Layer 1
+   hid. ab-compare is the ONLY thing that sees drv↔ir divergences and it is not run
+   by `verify:all`. Do NOT paper over Layer 2 by adding a same-frame-collapse
+   tolerance to ab-compare until the divergence itself is understood.
+2. **Investigate the Layer-2 gate/key-off/re-trigger timing** (drv-player + Z80) to
+   make note-boundary silence match ir. Needs design — spans gate key-off timing,
+   PSG key-off vs macro-write ordering, and `:vel*` curve-release re-trigger.
 
 ## Remaining work (in rough priority order)
 
