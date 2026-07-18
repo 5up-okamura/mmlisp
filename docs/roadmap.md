@@ -421,11 +421,17 @@ remains the sole runtime-varying path.
   (global, written on a track); `:shuffle`/`:shuffle-base` are per-track (the
   score-wide default is dropped). Ordering by source order. Gate 0-diff
   confirmed; scores, importer, editor template, and docs migrated.
-- **Phase 2 — `import` (+ preset).** Compile-time merge of defs (voices, macros,
-  snippets, samples) from another file/preset, folded into IR (no runtime
-  dependency). This is the first increment of the fuller `import` / patch system
-  under **Future Vision** (`:from :stdlib`/`:patches`/URL, version pinning) —
-  same `(import …)` surface, built out later.
+- **Phase 2 — `import`. DONE.** `(import "path")` compile-time merges another
+  file's defs (voices, macros, snippets, samples) into the importing score,
+  folded into IR (no runtime dependency). Transitive; imports are overridable
+  defaults (local `def` wins), import-vs-import name clashes are
+  `E_IMPORT_CONFLICT`, cycles `E_IMPORT_CYCLE`. `def-val`/tracks in an imported
+  file are ignored (`W_IMPORT_IGNORED`) — defs only. Path resolves relative to
+  the importing file (source folder / server root), like a PCM `:file`;
+  `compileMMLisp` stays synchronous, the host pre-resolves import text
+  (language.md §9.2). This is the first increment of the fuller `import` / patch
+  system under **Future Vision** (`:from :stdlib`/`:patches`/URL, version
+  pinning) — same `(import …)` surface, built out later.
 - **Phase 3 — compile-time eval (centerpiece; design settled 2026-07).**
   Evaluable form heads (`+ - * /`, `let`, `note`, `ticks`/`frames`, curve
   names) run at compile time and splice into the note stream / directive

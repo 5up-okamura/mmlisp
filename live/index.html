@@ -437,7 +437,7 @@
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
-    import { compileMMLisp, canonicalTarget } from './src/mmlisp2ir.js';
+    import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, makeVoiceNameFromFile, detectFmImportFormatKey } from './src/import-fm-voices.js';
@@ -804,8 +804,8 @@
     function scheduleHotSwap() {
       if (!player || typeof player.isPlaying !== 'function' || !player.isPlaying()) return;
       clearTimeout(_hotSwapTimer);
-      _hotSwapTimer = setTimeout(() => {
-        const { ir, ok } = compileNow();
+      _hotSwapTimer = setTimeout(async () => {
+        const { ir, ok } = await refreshImportsAndCompile();
         if (ok && player && typeof player.swapAtNextBar === 'function') player.swapAtNextBar(ir);
       }, 140);
     }
@@ -2140,7 +2140,7 @@
         // carries token/macro source spans) instead of the precompiled
         // canonical IR. setEditorDoc replaces state without firing the
         // doc-change compile trigger, so do it explicitly (as file-open does).
-        compileNow();
+        await refreshImportsAndCompile();
       } catch (e) {
         setEditorDoc('(failed to load: ' + mmlispURL + ')');
       }
@@ -2270,6 +2270,54 @@
       } catch {
         return null; // not in the folder — let the caller try fetch
       }
+    }
+
+    // v0.6 Phase 2: (import "path") resolution. compileMMLisp is synchronous, so
+    // the host reads the imported files' text ahead of it (like PCM samples,
+    // resolved outside the pure compiler) into a cached map keyed by the literal
+    // path string. refreshImportSources re-walks the current source, following
+    // nested imports transitively; the awaited action paths (build/play/export/
+    // load) call it before compiling.
+    let _importSources = new Map();
+
+    async function importTextForPath(path) {
+      const bytes = await sampleBytesFromSourceDir(path);
+      if (bytes) return new TextDecoder().decode(new Uint8Array(bytes));
+      const url = toFetchablePath(path);
+      if (url) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) return await res.text();
+        } catch {
+          /* fall through — the compiler reports E_IMPORT_NOT_FOUND */
+        }
+      }
+      return null;
+    }
+
+    async function refreshImportSources(src) {
+      const map = new Map();
+      const seen = new Set();
+      const queue = collectImports(src);
+      while (queue.length) {
+        const path = queue.shift();
+        if (seen.has(path)) continue;
+        seen.add(path);
+        const text = await importTextForPath(path);
+        if (text == null) continue; // absent → E_IMPORT_NOT_FOUND at compile
+        map.set(path, text);
+        for (const nested of collectImports(text))
+          if (!seen.has(nested)) queue.push(nested);
+      }
+      _importSources = map;
+      return map;
+    }
+
+    // Resolve the current doc's imports, then compile. Async because file reads
+    // are; the user-action entry points await it.
+    async function refreshImportsAndCompile() {
+      await refreshImportSources(editorView.state.doc.toString());
+      return compileNow();
     }
 
     async function decodePcmSample(path) {
@@ -2443,7 +2491,7 @@
       _lastGoodIR = null;
       _lastSourceMap = null;
       setEditorDoc(src);
-      compileNow();
+      await refreshImportsAndCompile();
     }
 
     async function openFile() {
@@ -2596,7 +2644,8 @@
       const src = editorView.state.doc.toString();
       let ir;
       try {
-        const compiled = compileMMLisp(src, _lastFileName);
+        await refreshImportSources(src);
+        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources });
         const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
         if (errors.length > 0) {
           log('Cannot export VGM: source has compile errors', 'err');
@@ -2654,7 +2703,8 @@
       const src = editorView.state.doc.toString();
       let ir;
       try {
-        const compiled = compileMMLisp(src, _lastFileName);
+        await refreshImportSources(src);
+        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources });
         const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
         if (errors.length > 0) {
           log('Cannot export MMB: source has compile errors', 'err');
@@ -2706,7 +2756,8 @@
       const src = editorView.state.doc.toString();
       let ir;
       try {
-        const compiled = compileMMLisp(src, _lastFileName);
+        await refreshImportSources(src);
+        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources });
         const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
         if (errors.length > 0) {
           log('Cannot export WAV: source has compile errors', 'err');
@@ -2796,7 +2847,7 @@
     function compileNow() {
       const src = editorView.state.doc.toString();
       try {
-        const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName);
+        const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName, { imports: _importSources });
         const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
         const hasSamples = sampleDefs.length > 0;
         const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL);
@@ -2855,8 +2906,8 @@
 
     // Manual build (Tools > Build / Cmd-Ctrl+B): compile, then — if playing —
     // apply gaplessly at the next bar boundary. Errors keep the last good IR.
-    function buildAction() {
-      const { ir, ok } = compileNow();
+    async function buildAction() {
+      const { ir, ok } = await refreshImportsAndCompile();
       if (!ok) return;
       flashBuild();
       if (player && typeof player.swapAtNextBar === 'function') {
@@ -3478,7 +3529,7 @@
       // current source, so Play reflects the latest edits. On error, compileNow
       // keeps the last good IR; only binary/URL presets with no editable source
       // (currentIrURL set, nothing compiled yet) are left to the loader below.
-      if (_lastGoodIR || !currentIrURL) compileNow();
+      if (_lastGoodIR || !currentIrURL) await refreshImportsAndCompile();
       if (player) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });

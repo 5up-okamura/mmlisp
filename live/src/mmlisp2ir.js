@@ -4069,6 +4069,7 @@ function collectDefs(roots, diagnostics) {
   const sampleDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
   const fileMeta = { title: null, author: null }; // v0.6: (def title/author "…")
+  const imports = []; // v0.6 Phase 2: (import "path") — [{path, src}]
   const remaining = [];
 
   for (const root of roots) {
@@ -4077,6 +4078,27 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
     const head = atomValue(root.items[0]);
+
+    // (import "path") — compile-time merge of another file's defs (v0.6 Phase 2).
+    // The host resolves the path to source text (relative to the importing file)
+    // before compileMMLisp; here we only record it. Only the string-literal form
+    // is an import; anything else keeps flowing to the unknown-form checks.
+    if (head === "import") {
+      const pathNode = root.items[1];
+      if (pathNode?.kind !== "string" || typeof pathNode.value !== "string") {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_IMPORT_PATH",
+          "import path must be a string literal, e.g. (import \"voices/brass.mmlisp\")",
+          nodeSrc(root),
+          null,
+        );
+        continue;
+      }
+      imports.push({ path: pathNode.value, src: nodeSrc(root) });
+      continue;
+    }
 
     // (def-val name init :min M :max X) — declare a runtime value slot (Tier
     // 0/1 dynamic value). init is the default; :min/:max bound the live control
@@ -4297,7 +4319,182 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, paramDefs, typedDefs, sampleDefs, vals, fileMeta, remaining };
+  return { defs, paramDefs, typedDefs, sampleDefs, vals, fileMeta, imports, remaining };
+}
+
+// v0.6 Phase 2: the four def namespaces `import` folds across files. def-val
+// slots and tracks are deliberately NOT imported (a slot's index is the
+// importing file's host-visible layout; tracks are songs, not a library).
+const IMPORT_DEF_KINDS = ["defs", "paramDefs", "typedDefs", "sampleDefs"];
+
+// Scan source text for its top-level (import "path") forms. Exported so the host
+// can drive async file resolution (recursing through nested imports) before the
+// synchronous compileMMLisp — the compiler itself never does I/O.
+export function collectImports(src) {
+  const parsed = parse(src);
+  const paths = [];
+  for (const root of parsed) {
+    if (root.kind !== "list" || root.items.length < 2) continue;
+    if (atomValue(root.items[0]) !== "import") continue;
+    const pathNode = root.items[1];
+    if (pathNode?.kind === "string" && typeof pathNode.value === "string")
+      paths.push(pathNode.value);
+  }
+  return paths;
+}
+
+// Merge `incoming` def bundle into `base` with strict conflict detection. A name
+// already present for the same kind is E_IMPORT_CONFLICT *only if it traces back
+// to a different origin file* — a diamond (two imports pulling in the same third
+// file) resolves to one origin and dedups silently. Used to fold sibling imports.
+function mergeImportsStrict(base, incoming, diagnostics, conflictSrc) {
+  for (const kind of IMPORT_DEF_KINDS) {
+    for (const [name, def] of incoming[kind]) {
+      const incomingOrigin = incoming.origin[kind].get(name);
+      if (base[kind].has(name)) {
+        if (base.origin[kind].get(name) === incomingOrigin) continue; // diamond
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_IMPORT_CONFLICT",
+          `'${name}' is defined by more than one imported file`,
+          conflictSrc,
+          null,
+        );
+        continue;
+      }
+      base[kind].set(name, def);
+      base.origin[kind].set(name, incomingOrigin);
+    }
+  }
+}
+
+// Overlay a file's *own* defs onto `base` for the four def kinds; they silently
+// win (the importing file overrides imported defaults). `originPath` tags each
+// entry so a later strict merge can tell diamonds from true conflicts.
+function overlayDefs(base, own, originPath) {
+  for (const kind of IMPORT_DEF_KINDS) {
+    for (const [name, def] of own[kind]) {
+      base[kind].set(name, def);
+      base.origin[kind].set(name, originPath);
+    }
+  }
+}
+
+function emptyImportBundle() {
+  return {
+    defs: new Map(),
+    paramDefs: new Map(),
+    typedDefs: new Map(),
+    sampleDefs: new Map(),
+    origin: {
+      defs: new Map(),
+      paramDefs: new Map(),
+      typedDefs: new Map(),
+      sampleDefs: new Map(),
+    },
+  };
+}
+
+// Warn (once per file) about content in an imported file that import ignores:
+// def-val slots and track/other top-level forms. Defs-only is the MVP scope.
+function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
+  if (bundle.vals.size > 0) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_IMPORT_IGNORED",
+      `imported file '${importPath}' declares def-val slots; import folds defs only, so they are ignored`,
+      importSrc,
+      null,
+    );
+  }
+  const hasTracks = bundle.remaining.some(
+    (n) => n?.kind === "list" && n.items.length > 0,
+  );
+  if (hasTracks) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_IMPORT_IGNORED",
+      `imported file '${importPath}' contains track/other forms; import folds defs only, so they are ignored`,
+      importSrc,
+      null,
+    );
+  }
+}
+
+// Resolve one imported file to its merged def bundle (its own defs winning over
+// what it in turn imports). `stack` detects cycles; `cache` dedups diamonds.
+function resolveImportFile(path, importSrc, importSources, diagnostics, cache, stack) {
+  if (stack.includes(path)) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_IMPORT_CYCLE",
+      `import cycle: ${[...stack, path].join(" -> ")}`,
+      importSrc,
+      null,
+    );
+    return emptyImportBundle();
+  }
+  if (cache.has(path)) return cache.get(path);
+
+  const text = importSources ? importSources.get(path) : undefined;
+  if (typeof text !== "string") {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_IMPORT_NOT_FOUND",
+      `imported file '${path}' could not be resolved`,
+      importSrc,
+      null,
+    );
+    const empty = emptyImportBundle();
+    cache.set(path, empty);
+    return empty;
+  }
+
+  const bundle = collectDefs(parse(text), diagnostics);
+  warnImportIgnored(bundle, path, diagnostics, importSrc);
+
+  // Resolve this file's own imports first (siblings merged strictly), then let
+  // this file's defs overlay them.
+  const merged = emptyImportBundle();
+  const nextStack = [...stack, path];
+  for (const imp of bundle.imports) {
+    const sub = resolveImportFile(
+      imp.path,
+      imp.src,
+      importSources,
+      diagnostics,
+      cache,
+      nextStack,
+    );
+    mergeImportsStrict(merged, sub, diagnostics, imp.src);
+  }
+  overlayDefs(merged, bundle, path);
+
+  cache.set(path, merged);
+  return merged;
+}
+
+// Fold all of the root file's imports into one bundle (siblings merged strictly).
+function resolveImports(importForms, importSources, diagnostics) {
+  const merged = emptyImportBundle();
+  const cache = new Map();
+  for (const imp of importForms) {
+    const sub = resolveImportFile(
+      imp.path,
+      imp.src,
+      importSources,
+      diagnostics,
+      cache,
+      [],
+    );
+    mergeImportsStrict(merged, sub, diagnostics, imp.src);
+  }
+  return merged;
 }
 
 // Replace bare atoms matching a parameter name with the caller's argument node
@@ -4366,13 +4563,38 @@ function expandRoots(roots, defs, paramDefs, diagnostics) {
  * Compile MMLisp source string to IR.
  * @param {string} src - MMLisp source text
  * @param {string} [filename] - filename for metadata / source map
+ * @param {object} [options]
+ * @param {Map<string,string>} [options.imports] - resolved (import "path")
+ *   sources, keyed by the literal path string. Provided by the host, which does
+ *   the async file I/O (recursing through nested imports via collectImports)
+ *   before this synchronous compile. Absent paths surface E_IMPORT_NOT_FOUND.
  * @returns {{ ir: object, diagnostics: array, sourceMap: array }}
  */
-export function compileMMLisp(src, filename = "untitled.mmlisp") {
+export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
   const diagnostics = [];
   const parsed = parse(src);
-  const { defs, paramDefs, typedDefs, sampleDefs, vals, fileMeta, remaining } =
-    collectDefs(parsed, diagnostics);
+  const {
+    defs,
+    paramDefs,
+    typedDefs,
+    sampleDefs,
+    vals,
+    fileMeta,
+    imports,
+    remaining,
+  } = collectDefs(parsed, diagnostics);
+  // v0.6 Phase 2: fold imported defs in *under* this file's own — imports are
+  // overridable defaults (local wins); two imports defining the same name is
+  // E_IMPORT_CONFLICT. def-val slots and tracks are not imported (defs only).
+  if (imports.length > 0) {
+    const imported = resolveImports(imports, options.imports, diagnostics);
+    const local = { defs, paramDefs, typedDefs, sampleDefs };
+    overlayDefs(imported, local, filename); // local wins; `imported` = the union
+    for (const kind of IMPORT_DEF_KINDS) {
+      local[kind].clear();
+      for (const [name, def] of imported[kind]) local[kind].set(name, def);
+    }
+  }
   if (!typedDefs.has("init-fm")) {
     typedDefs.set("init-fm", {
       tag: "fm-kw",

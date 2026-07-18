@@ -18,6 +18,7 @@ source file is a sequence of top-level forms, in source order:
 | ----------------- | ------------------------------------------------ |
 | `(def name …)`    | Named definition (snippet, voice, sample, macro) |
 | `(def-val name …)`| Runtime value slot declaration                   |
+| `(import "…")`    | Fold another file's defs in at compile time (§9.2) |
 | `(channel …)`     | Track form — any list whose head is a channel name (§2) |
 
 - `;` starts a line comment.
@@ -652,6 +653,40 @@ inside the body. A call whose argument count differs from the parameter count is
 (fm1 :oct 1
   (beat c) (beat b-) (beat a) (beat f))
 ```
+
+### 9.2 `import` — reuse defs across files
+
+`(import "path")` folds another file's **defs** into this file at compile time.
+It is the way to share a voice bank, a macro set, or a snippet library between
+scores. Import resolves entirely at compile time and bakes into the IR — there
+is no runtime dependency, exactly as if the imported defs had been written
+inline.
+
+```lisp
+(import "voices-lib.mmlisp")     ; a defs-only library file
+
+(fm1 lead vib c e g e)           ; lead / vib come from the library
+```
+
+- **Path** is a string literal (bare atoms are `E_IMPORT_PATH`), resolved
+  relative to the importing file — through the opened source folder (File >
+  Open Folder…), like a PCM `:file` (§16); a served or URL score resolves it
+  from the server root. A path that cannot be read is `E_IMPORT_NOT_FOUND`.
+- **What is imported**: the four def namespaces — plain and parametric snippets
+  (`def`), FM voices, macro presets, and PCM sample defs. Imports are
+  transitive (an imported file may itself `import`).
+- **What is not imported**: `def-val` slots and track/other forms. A slot's
+  index is the importing file's host-visible layout, and tracks are songs, not
+  a library, so both are ignored with a `W_IMPORT_IGNORED` warning. Import
+  folds defs only.
+- **Collision policy**: imported defs are overridable **defaults** — a local
+  `def` of the same name **wins** silently (so you can import a bank and tweak
+  one patch inline). Two different imported files defining the same name is an
+  error (`E_IMPORT_CONFLICT`); a diamond (two imports pulling in the same third
+  file) dedups and is fine. An import cycle is `E_IMPORT_CYCLE`.
+
+This is the first increment of a fuller import/patch system (presets via
+`:from`, version pinning); the `(import "path")` surface stays as it grows.
 
 ---
 

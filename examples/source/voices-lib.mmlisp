@@ -1,0 +1,21 @@
+; Shared voice/macro library — a defs-only file meant to be pulled in with
+; (import "…"). It declares no tracks; import folds these defs into the
+; importing score exactly as if they had been written inline.
+
+(def lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def bass :alg 3 :fb 5
+  :ar1 31 :dr1 4 :sr1 0 :rr1 5 :sl1 1 :tl1 22 :ks1 0 :ml1 0 :dt1 0
+  :ar2 31 :dr2 6 :sr2 1 :rr2 6 :sl2 2 :tl2 28 :ks2 0 :ml2 2 :dt2 3
+  :ar3 31 :dr3 8 :sr3 1 :rr3 7 :sl3 2 :tl3 24 :ks3 0 :ml3 1 :dt3 0
+  :ar4 31 :dr4 12 :sr4 2 :rr4 10 :sl4 4 :tl4 2 :ks4 0 :ml4 1 :dt4 0)
+
+; A brass voice built by extending the lead patch.
+(def brass :extend lead :alg 6 :fb 6 :tl1 24 :tl3 20)
+
+; A shared vibrato macro.
+(def vib (macro :pitch+ (sin -30..30 :len 8 :wait 6)))

@@ -1,0 +1,16 @@
+; import demo — pull voices/macros from a shared library file (v0.6 Phase 2).
+; The path is resolved relative to this score (via File > Open Folder…, like a
+; PCM :file), or from the server root for a served/URL score. Imported defs are
+; overridable defaults: a local (def …) of the same name wins.
+
+(import "voices-lib.mmlisp")
+
+(def title "import demo")
+
+(fm1 :tempo 140 :oct 4 :len 8 :vel 13
+  lead vib
+  c e g > c < b g e c)
+
+(fm2 :oct 2 :len 4 :vel 12
+  bass
+  c g c g)
