@@ -311,7 +311,17 @@ export class DrvPlayer {
       }
     }
 
-    this._song = { stream, tracks, valInits, samples, sampleData, macros };
+    // VOICE_TABLE (mmb.md §11): N × 29-byte entries, applied by VOICE_SET.
+    const voices = [];
+    const voiceTable = sections.get(SECTION_ID.VOICE_TABLE);
+    if (voiceTable) {
+      const n = u16(voiceTable, 0);
+      for (let i = 0; i < n; i++) {
+        voices.push(voiceTable.subarray(2 + i * 29, 2 + i * 29 + 29));
+      }
+    }
+
+    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices };
     return this;
   }
 
@@ -354,6 +364,7 @@ export class DrvPlayer {
     // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
     // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
     this._macros = song?.macros ?? [];
+    this._voices = song?.voices ?? [];
     this._macroActive = Array.from({ length: 10 }, () => new Map()); // target → macro index
     this._macroSlots = Array.from({ length: 10 }, () => []); // running slots
     // M3 dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
@@ -854,6 +865,12 @@ export class DrvPlayer {
           this._paramSet(trk.channelId, target, raw);
           break;
         }
+        case OPCODE.VOICE_SET: {
+          const voiceId = s[trk.pc + 1];
+          trk.pc += 2;
+          this._voiceSet(trk.channelId, voiceId);
+          break;
+        }
         case OPCODE.TEMPO_SET: {
           // A live tempo override wins over the score's own tempo events —
           // including the tick-0 one a loop replays (mirrors IRPlayer.setTempo).
@@ -1064,6 +1081,61 @@ export class DrvPlayer {
   // tail. Non-macro writes (mailbox SET_PARAM, sweeps) keep the keyed guard so
   // they never un-mute a silenced channel. Mirrors ir-player, whose macro engine
   // writes att unconditionally while the guard only fences the VOL re-apply path.
+  // VOICE_SET (driver.md §10): apply a 29-byte VOICE_TABLE entry to an FM
+  // channel — the register-order block a full-voice PARAM_SET burst coalesced
+  // into. Populates the structured shadow (so later VEL recompose / relative
+  // reads stay correct) and queues the same register writes the burst emitted.
+  _voiceSet(channelId, voiceId) {
+    if (channelId >= 6) return;
+    const entry = this._voices[voiceId];
+    if (!entry) return;
+    const ch = channelId;
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const off = ch % 3;
+    // Change-only against the structured shadow (not _shadow): the burst only
+    // writes a register a PARAM_SET touched, so e.g. $90/SSG — which init never
+    // writes — must stay unwritten when the voice omits it. old byte is derived
+    // from the current op fields before they are overwritten.
+    const put = (addr, oldByte, newByte) => {
+      if (newByte !== oldByte) this._ym(port, addr, newByte);
+    };
+    for (let op = 0; op < 4; op++) {
+      const o = regs.ops[op];
+      const opOff = OP_ADDR_OFFSET[op];
+      const b30 = entry[0 + op];
+      put(0x30 + opOff + off, encode30(o), b30);
+      o.dt = (b30 >> 4) & 0x07;
+      o.mul = b30 & 0x0f;
+      const tl = entry[4 + op];
+      put(0x40 + opOff + off, o.tl, tl);
+      o.voicedTl = tl;
+      o.tl = tl;
+      const b50 = entry[8 + op];
+      put(0x50 + opOff + off, (o.rs << 6) | o.ar, b50);
+      o.rs = (b50 >> 6) & 0x03;
+      o.ar = b50 & 0x1f;
+      const b60 = entry[12 + op];
+      put(0x60 + opOff + off, encode60(o), b60);
+      o.amen = (b60 >> 7) & 0x01;
+      o.dr = b60 & 0x1f;
+      const b70 = entry[16 + op];
+      put(0x70 + opOff + off, o.d2r, b70);
+      o.d2r = b70 & 0x1f;
+      const b80 = entry[20 + op];
+      put(0x80 + opOff + off, encode80(o), b80);
+      o.sl = (b80 >> 4) & 0x0f;
+      o.rr = b80 & 0x0f;
+      const b90 = entry[24 + op];
+      put(0x90 + opOff + off, o.ssg, b90);
+      o.ssg = b90 & 0x0f;
+    }
+    const b0 = entry[28];
+    put(0xb0 + off, (regs.feedback << 3) | regs.algorithm, b0);
+    regs.feedback = (b0 >> 3) & 0x07;
+    regs.algorithm = b0 & 0x07;
+  }
+
   _paramSet(channelId, target, value, force = false) {
     const name = TARGET_NAME[target];
     if (!name) {

@@ -18,6 +18,10 @@ Index:
 - [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
   import, compile-time eval, phase status and sequencing. roadmap.md has the
   compact public version.
+- [plan-voice-set.md](plan-voice-set.md) — VOICE_SET/VOICE_TABLE **Part 1 in
+  progress**: exporter coalescing + drv-player handler done & verified, committed
+  behind an off-by-default flag; Z80 handler + an ab-compare granularity decision
+  (a: re-freeze vs b: per-frame-final collapse) remain. Cloud resumes here.
 - [plan-driver-features.md](plan-driver-features.md) — post-M3 driver feature
   roadmap (budget-meeting outcome): the two-budget frame (resident bytes vs
   per-frame cycles), the overlay split that freed 13→178 B, and the ordered plan

@@ -40,6 +40,7 @@ import {
 import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 import { buildLutBlob } from "./lut-blob.js";
 import { dedupEventStream } from "./mmb-dedup.js";
+import { planVoices } from "./mmb-voices.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
@@ -388,8 +389,16 @@ export function encodeMmb(ir, opts = {}) {
   const trackEntries = []; // { trackId, channelId, flags, eventOffset }
   const evBounds = []; // { offset, cmd, track } — one per emitted event (dedup)
 
+  // VOICE_TABLE coalescing (driver.md §10): fold full-voice PARAM_SET bursts
+  // into deduplicated 29-byte entries + VOICE_SET. Plans are keyed by track
+  // index; a null plan means the track has no coalescable voice.
+  // OFF by default until the Z80 VOICE_SET handler lands (see
+  // .claude/memory/plan-voice-set.md); opt in with opts.voiceCoalesce === true.
+  const voices = opts.voiceCoalesce === true ? planVoices(ir) : { table: [], plans: new Map() };
+
   for (const track of ir.tracks ?? []) {
     const trackSeq = trackEntries.length; // this track's index (pushed at tail)
+    const vplan = voices.plans.get(trackSeq) ?? null;
     const label = track.scoreChannel ?? track.channel ?? String(track.id);
     const channelId = resolveChannelId(track.scoreChannel ?? track.channel);
     if (channelId === null) {
@@ -450,6 +459,17 @@ export function encodeMmb(ir, opts = {}) {
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
       const a = ev.args ?? {};
+      // Voice coalescing: a full-voice PARAM_SET burst folds into one VOICE_SET
+      // emitted at its first voice param; the rest of the burst is dropped.
+      if (vplan && vplan.drop.has(i)) {
+        if (vplan.emit.has(i)) {
+          syncClock(ev.tick);
+          evBounds.push({ offset: stream.length, cmd: "VOICE_SET", track: trackSeq });
+          stream.u8(OPCODE.VOICE_SET);
+          stream.u8(vplan.emit.get(i));
+        }
+        continue;
+      }
       evBounds.push({ offset: stream.length, cmd: ev.cmd, track: trackSeq });
       switch (ev.cmd) {
         case "NOTE_ON": {
@@ -1022,6 +1042,13 @@ export function encodeMmb(ir, opts = {}) {
       "W_MMB_NO_SAMPLE_BANK",
       "PCM events present but no sample blobs supplied (opts.samples); SAMPLE_BANK omitted",
     );
+  }
+
+  if (voices.table.length > 0) {
+    const vt = new Writer();
+    vt.u16(voices.table.length);
+    for (const entry of voices.table) for (const b of entry) vt.u8(b);
+    sections.push({ id: SECTION_ID.VOICE_TABLE, flags: 0, payload: vt.bytes });
   }
 
   const vals = ir.metadata?.vals ?? [];
