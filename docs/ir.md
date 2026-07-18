@@ -220,7 +220,7 @@ the flattened runtime schedule.
 
 | Cmd      | Args                       | Semantics                                                                 |
 | -------- | -------------------------- | --------------------------------------------------------------------------- |
-| `MARKER` | `{ id }`                   | Label from `#name`, or the anchor of an uncounted `(x …)` (`"_xN"`).        |
+| `MARKER` | `{ id }` or `{ code }`     | `{ id }`: label from `#name`, or the anchor of an uncounted `(x …)` (`"_xN"`) — sequenced to a u8 and usable as a `JUMP` target. `{ code }`: an explicit id 0..63 from `(trig N)` — a music→game sync point, emitted verbatim, never a jump target. |
 | `JUMP`   | `{ to }` or `{ to, repeat }` | `to`: marker id. A **backward** `JUMP` without `repeat` is the track's structural loop point. `{ to, repeat }` is transient: converted to `LOOP_BEGIN`/`LOOP_END` when a backward marker exists on the same track; if it survives (forward target), the player ignores the repeat. |
 
 ```json

@@ -161,6 +161,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-trig.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-valexpr.mmlisp": {
     "ok": true,
     "mismatches": 0,

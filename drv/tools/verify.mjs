@@ -76,6 +76,25 @@ export function verify(songPath, { frames, verbose = false } = {}) {
     if (mismatches.length >= 40) break;
   }
 
+  // Marker gate: MARKER / `(trig N)` has no register effect — it lands in the
+  // track's 68k-readable status byte (MB_TSTAT). Diff the per-frame id bits of
+  // both players at zero tolerance so trig sync points are actually verified.
+  const markerMismatches = [];
+  const ra = ref.markerLog ?? [];
+  const ba = asm.markerLog ?? [];
+  for (let f = 0; f < horizon; f++) {
+    const rf = ra[f] ?? [];
+    const bf = ba[f] ?? [];
+    const t = Math.max(rf.length, bf.length);
+    for (let k = 0; k < t; k++) {
+      if ((rf[k] ?? 0) !== (bf[k] ?? 0)) {
+        markerMismatches.push({ frame: f, track: k, ref: rf[k] ?? 0, asm: bf[k] ?? 0 });
+        break;
+      }
+    }
+    if (markerMismatches.length >= 40) break;
+  }
+
   // Stack watermark: how deep this song drove the Z80 stack. STACK_TOP/
   // STACK_FLOOR bound the 82 B window; used = STACK_TOP − lowest-SP,
   // reserve = headroom left above the data region.
@@ -88,8 +107,9 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   };
 
   return {
-    ok: mismatches.length === 0,
+    ok: mismatches.length === 0 && markerMismatches.length === 0,
     mismatches,
+    markerMismatches,
     stats: {
       binBytes: resident.length + overlay.length,
       mmbBytes: mmb.length,
@@ -129,9 +149,17 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     console.log("TRACE MATCH — 0 mismatches");
     process.exit(0);
   }
-  console.log(`TRACE MISMATCH — ${r.mismatches.length}${r.mismatches.length >= 40 ? "+" : ""} diffs`);
-  for (const m of r.mismatches.slice(0, 20)) {
-    console.log(`  #${m.index}  ref ${fmtWrite(m.ref)}   asm ${fmtWrite(m.asm)}`);
+  if (r.mismatches.length) {
+    console.log(`TRACE MISMATCH — ${r.mismatches.length}${r.mismatches.length >= 40 ? "+" : ""} diffs`);
+    for (const m of r.mismatches.slice(0, 20)) {
+      console.log(`  #${m.index}  ref ${fmtWrite(m.ref)}   asm ${fmtWrite(m.asm)}`);
+    }
+  }
+  if (r.markerMismatches.length) {
+    console.log(`MARKER MISMATCH — ${r.markerMismatches.length}${r.markerMismatches.length >= 40 ? "+" : ""} diffs`);
+    for (const m of r.markerMismatches.slice(0, 20)) {
+      console.log(`  f${m.frame} track${m.track}: ref id ${m.ref}  asm id ${m.asm}`);
+    }
   }
   if (verbose) {
     // dump surrounding context of the first mismatch

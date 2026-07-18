@@ -13,6 +13,7 @@ export function refTrace(mmbBytes, { maxFrames = 36000, commands = [] } = {}) {
     frames: cap.frames,
     ended: cap.ended,
     writes: cap.writes,
+    markerLog: cap.markerLog,
     diagnostics: cap.diagnostics,
     skippedOpcodes: cap.skippedOpcodes,
   };

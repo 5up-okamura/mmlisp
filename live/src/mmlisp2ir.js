@@ -3586,6 +3586,47 @@ function compileChannelBody(
         continue;
       }
 
+      // Trigger: (trig N) — a music→game sync point. Emits the MARKER opcode
+      // (0x42) with an explicit id N (0..63); the driver mirrors it into the
+      // track's 68k-readable status byte (MB_TSTAT, driver.md §6.1). Unlike a
+      // `#name` label it is never a JUMP target, so its id is emitted verbatim
+      // rather than sequenced. The game polls MB_TSTAT and reads N.
+      if (head === "trig") {
+        if (node.items.length !== 2) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_TRIG_ARITY",
+            "trig takes one id: (trig N), N = 0..63",
+            nodeSrc(node.items[0]),
+            trackName,
+          );
+          i++;
+          continue;
+        }
+        const code = parseIntLike(atomValue(node.items[1]));
+        if (code === null || code < 0 || code > 63) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_TRIG_RANGE",
+            "trig id must be an integer 0..63 (MB_TSTAT is 6 bits)",
+            nodeSrc(node.items[0]),
+            trackName,
+          );
+          i++;
+          continue;
+        }
+        events.push({
+          tick: trackState.tick,
+          cmd: "MARKER",
+          args: { code },
+          src: nodeSrc(node),
+        });
+        i++;
+        continue;
+      }
+
       // Echo: (echo <target> <count> :by N [:back B]) — inline note-replay that
       // lengthens the phrase. Replays the single note B positions back (B=1 =
       // the last note), relative to that note's value; :vel adds, :vel*
@@ -3945,7 +3986,9 @@ function validateTrack(track, diagnostics) {
   const pendingJumps = [];
 
   for (const e of track.events) {
-    if (e.cmd === "MARKER") {
+    // `(trig N)` markers carry an explicit `code` and no label `id`; they are
+    // never JUMP targets, so they are exempt from the label-uniqueness check.
+    if (e.cmd === "MARKER" && e.args?.code == null) {
       const id = e.args?.id;
       if (markers.has(id)) {
         pushDiag(

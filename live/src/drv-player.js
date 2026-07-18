@@ -394,6 +394,7 @@ export class DrvPlayer {
       flags: t.flags,
       pc: t.eventOffset,
       acc: 0, // 8.8 fractional accumulator (low byte only is fractional)
+      markerId: 0, // last MARKER id → mailbox status byte (MB_TSTAT bits5-0)
       wait: 0, // ticks until the next timed event resumes
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
       pendingOff: false, // full-gate key-off awaiting the slur test
@@ -806,7 +807,10 @@ export class DrvPlayer {
           break;
         }
         case OPCODE.MARKER: {
-          trk.pc += 2; // id → mailbox status byte; no register effect
+          // id → the track's 68k-readable status byte (MB_TSTAT bits5-0). No
+          // register effect; mirrored here so the marker gate can compare it.
+          trk.markerId = s[trk.pc + 1] & 0x3f;
+          trk.pc += 2;
           break;
         }
         case OPCODE.JUMP: {
@@ -1792,6 +1796,9 @@ export class DrvPlayer {
       if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
       cmdByFrame.get(c.frame).push(c);
     }
+    // Per-frame snapshot of every track's status byte (MB_TSTAT bits5-0), so
+    // the marker gate can diff `(trig N)` sync points against the Z80's RAM.
+    const markerLog = [];
     try {
       this._audioContext = null;
       this._reset();
@@ -1801,11 +1808,13 @@ export class DrvPlayer {
           this._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
         }
         this.stepFrame();
+        markerLog.push(this._trk.map((t) => t.markerId & 0x3f));
         frames++;
         if (this._done()) break;
       }
       return {
         writes,
+        markerLog,
         frames,
         ended: this._done(),
         diagnostics: this._diagnostics.slice(),

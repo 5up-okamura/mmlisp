@@ -13,6 +13,7 @@ import { Z80Cpu } from "./z80cpu.mjs";
 const RAM_SIZE = 0x2000;
 const MB_BASE = 0x18f0; // mailbox (published); tracks the driver DATA_BASE
 const MB_HEAD = MB_BASE + 0x20;
+const MB_TSTAT = MB_BASE + 0x22; // 16 per-track status bytes (driver.md §6.1)
 const MB_READY = MB_BASE + 0x32;
 
 export function runTrace(
@@ -122,6 +123,7 @@ export function runTrace(
   };
 
   // Frame loop.
+  const markerLog = []; // per-frame snapshot of each track's MB_TSTAT id bits
   for (frame = 0; frame < frames; frame++) {
     for (const c of cmdByFrame.get(frame) ?? []) postCommand(c);
     cpu.intRequest();
@@ -131,11 +133,14 @@ export function runTrace(
       if (cpu.halted && !cpu.intPending) break;
     }
     if (!cpu.halted) throw new Error(`frame ${frame} did not finish`);
+    markerLog.push(
+      Array.from({ length: tracks.length }, (_, i) => ram[MB_TSTAT + i] & 0x3f),
+    );
   }
 
   // stackMin = the lowest SP reached across boot + every frame (the stack
   // watermark; tools/budget.mjs turns it into "bytes used vs STACK_FLOOR").
-  return { frames, writes, ram, stackMin: cpu.spMin };
+  return { frames, writes, ram, markerLog, stackMin: cpu.spMin };
 }
 
 function readTrackTable(b) {

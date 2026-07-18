@@ -1,0 +1,15 @@
+; M3 gate: (trig N) music->game sync points. `(trig N)` emits MARKER (0x42)
+; with an explicit id N (0..63); the driver mirrors it into the track's
+; 68k-readable status byte (MB_TSTAT). MARKER has no register effect, so this
+; is verified by the marker gate (verify.mjs diffs per-frame MB_TSTAT id bits
+; between the Z80 and drv-player), not the register trace.
+;
+; Two tracks fire distinct, sticky triggers at different beats; the ids persist
+; (last-wins) until the next trigger.
+(fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
+  (trig 1) c d e f
+  (trig 2) g a b > c
+  (trig 63) < g)
+(sqr1 :len 4
+  c e (trig 10) g e
+  c (trig 20) e g > c)

@@ -138,12 +138,30 @@ mid-stream banking. Format + driver change, biggest unknown. Do last — after t
 dedup pass (1) and cross-MMB banking (3) exist and the need is measured. A
 narrower option: bank the SAMPLE_BANK section independently of event/track data.
 
-## Music→game triggers — `(trig N)` (accepted: minimal-first)
+## Music→game triggers — `(trig N)` — DONE (2026-07-18, explicit form)
 
-The MARKER opcode (0x42) + `MB_TSTAT` (68k-readable, driver.md §6.1) is already a
-music→game position channel. `#name` emits MARKER but is the JUMP/loop **label**
-(overloaded); `|` is a compile/editor-only bar aid (emits nothing). So there is
-**no dedicated game-trigger verb** — but the plumbing exists.
+**Shipped.** `(trig N)` (N = 0..63) emits MARKER 0x42 with an explicit id (IR
+`{cmd:MARKER, args:{code}}`; export-mmb emits it verbatim, skips the label
+id/offset bookkeeping; exempt from `E_MARKER_DUP`). **0 Z80 bytes** (reuses the
+existing `d_marker` → MB_TSTAT path; free stayed 68 B). Errors `E_TRIG_ARITY`,
+`E_TRIG_RANGE`. **Auto-numbered `(trig)` deferred** — the useful form is
+explicit (the game knows N); auto needs a collision policy not worth designing
+until a real use appears.
+
+**The real work was the marker gate** (MARKER has no register effect, so the
+trace/ab gates couldn't see it). Added: drv-player tracks per-track `markerId`
+and `captureRegisterLog` returns a per-frame `markerLog`; `run-trace.mjs`
+snapshots `MB_TSTAT` (MB_BASE+0x22) per frame; `verify.mjs` diffs the id bits
+Z80≡drv-player at zero tolerance. Gate `m3-trig` (ids 1/2/63 + 10/20, sticky
+last-wins). **Bonus: this gated d_marker for the FIRST time** — every existing
+`#label`/`(go)` marker is now verified across the whole corpus (0 mismatches),
+which **unblocks the d_marker overlay eviction** (~25 B funding, was blocked on
+"no marker gate exists" — see [[z80-driver-status]] budget table).
+
+Original context (still true): the MARKER opcode (0x42) + `MB_TSTAT`
+(68k-readable, driver.md §6.1) is the music→game position channel. `#name` emits
+MARKER as the JUMP/loop **label** (overloaded); `|` is a compile/editor-only bar
+aid (emits nothing).
 
 Plan (accepted recommendation): **`(trig N)` / `(trig)` as a new surface that
 emits the existing 0x42** → new opcode 0 B, driver 0 B (d_marker exists), just

@@ -950,6 +950,7 @@ the phrase.
 | `(x N body…)`  | `LOOP_BEGIN`/`LOOP_END`| Counted loop sugar                          |
 | `(x body…)`    | `MARKER` + `JUMP`      | Infinite loop sugar                         |
 | `:break`       | `LOOP_BREAK`           | On the final pass of the enclosing counted loop, exit here |
+| `(trig N)`     | `MARKER {code}`        | Music→game sync point: writes id `N` to the track's status byte (`E_TRIG_ARITY`, `E_TRIG_RANGE`) |
 
 - `(go label N)` is rewritten post-merge into the same `LOOP_BEGIN`/`LOOP_END`
   as `(x N …)`, so the label and the `go` may live in different forms of the
@@ -961,6 +962,14 @@ the phrase.
   `E_JUMP_UNRESOLVED`.
 - `:break` binds to the innermost counted loop; infinite loops do not support
   it.
+- **`(trig N)`** marks a position for the game to read. It emits the `MARKER`
+  opcode (like `#label`) but with an explicit id `N` (0..63 — the status byte is
+  6 bits); the driver mirrors `N` into the track's 68k-readable status byte
+  (`MB_TSTAT`, driver.md §6.1), where the game polls it. Unlike `#label` it is
+  never a jump target, so its id is not sequenced and it is exempt from label
+  uniqueness. The byte is last-wins per track: if two triggers fire on the same
+  track between two game polls, only the later is seen (cross-track never drops).
+  Auto-numbered `(trig)` is not yet supported — give an explicit id.
 - **A loop replays baked notes; body state does not accumulate.** The body is
   compiled **once**, so sticky state changed inside it (octave `>`/`<`, `:oct`,
   `:vel`, `:len`, …) is baked into that single pass and does **not** carry from

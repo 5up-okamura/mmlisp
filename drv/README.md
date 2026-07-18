@@ -61,6 +61,13 @@ CALL/RET dedup). Any score with repeated phrases now carries CALL/RET (the
 encode-time dedup pass, `live/src/mmb-dedup.js`), so the trace gate exercises
 `d_call`/`d_ret` on real streams; `m3-callret` is the dedicated case.
 
+Every `verify` run also diffs the **marker gate**: `(trig N)` and `#label`
+markers have no register effect — they land in the track's 68k-readable status
+byte (`MB_TSTAT`, driver.md §6.1). `run-trace` snapshots those bytes per frame
+and `verify.mjs` diffs their id bits against drv-player (`markerLog`) at zero
+tolerance, so trig sync points (and every label marker, previously ungated) are
+verified Z80 ≡ drv-player. `m3-trig` is the dedicated case.
+
 `verify:all` also runs **`verify:ab`** (`tools/ab-gate.mjs`) — the *other* axis:
 `ir-player` ≡ `drv-player`, which the Z80↔drv trace gate cannot see (when both
 references share a bug it passes). Because M2/M3 scores diverge by construction

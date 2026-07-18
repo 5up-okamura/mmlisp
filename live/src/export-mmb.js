@@ -589,6 +589,13 @@ export function encodeMmb(ir, opts = {}) {
         }
         case "MARKER": {
           syncClock(ev.tick);
+          // Trigger marker `(trig N)`: an explicit id, never a JUMP target, so
+          // it is emitted verbatim and skips the label id/offset bookkeeping.
+          if (a.code != null) {
+            stream.u8(OPCODE.MARKER);
+            stream.u8(a.code & 0x3f);
+            break;
+          }
           if (!markerIds.has(a.id)) {
             if (markerIds.size >= 256) {
               diag(
