@@ -1,7 +1,8 @@
 # v0.6 — score removal, compile-time eval, import (approved design plan)
 
-Status: **Phase 1 landed; Phase 3 design settled.** Approved 2026-07 as the
-v0.6 direction. Phase 1 (score removal) shipped at 53a85b7. The Phase 3 (eval)
+Status: **Phase 1 + Phase 2 landed; Phase 3 design settled (compiler + most
+driver steps landed).** Approved 2026-07 as the v0.6 direction. Phase 1 (score
+removal) shipped at 53a85b7; Phase 2 (`import`) shipped 2026-07-18. The Phase 3 (eval)
 design session ran 2026-07-11 — the normative record is
 [design-eval.md](design-eval.md); implementation follows its §11 steps in
 separate implementation chats. roadmap.md has the compact public version;
@@ -67,13 +68,43 @@ remaining}` from top-level roots in source order. Touch points (mmlisp2ir.js):
 - Verify: all scores/importer/templates compile; `verify:all` 0-diff (pure
   front-end restructuring → same IR).
 
-## Phase 2 — `import` (+ preset) (independent, no eval)
-Compile-time merge of defs (voices/macros/snippets/samples) from another file or
-preset, folded into IR (no runtime dependency). Simplest model: AST merge — run
-`collectDefs` over merged roots; reuse the mucom `.dat` voice-bank load/merge
-pattern. Decide path resolution + name-collision policy. This is the **core** of
-the fuller Future-Vision `import` / patch system (`:from :stdlib`/`:patches`/URL,
-version pinning) — same `(import …)` surface, built out later.
+## Phase 2 — `import` (+ preset) (independent, no eval) — **DONE 2026-07-18**
+`(import "path")` compile-time merges another file's defs into the importing
+score, folded into IR (no runtime dependency). Settled decisions:
+- **Model**: `collectDefs` recognizes `(import "path")` → `imports[]`;
+  `resolveImports`/`resolveImportFile` (mmlisp2ir.js) recursively parse +
+  collectDefs each imported file and merge the four def namespaces
+  (defs/paramDefs/typedDefs/sampleDefs). `def-val` and tracks are **not**
+  imported (`W_IMPORT_IGNORED`) — a slot index is the importer's host-visible
+  layout; tracks are songs, not a library.
+- **Collision**: imports are overridable defaults — local `def` **wins**
+  silently; import-vs-import same-name = `E_IMPORT_CONFLICT` (origin-tracked, so
+  diamonds dedup); cycle = `E_IMPORT_CYCLE`; missing = `E_IMPORT_NOT_FOUND`;
+  non-string path = `E_IMPORT_PATH`.
+- **Resolution**: `compileMMLisp` stays **synchronous/pure** — takes
+  `options.imports` (Map path→text). The host (index.html) pre-resolves text
+  async via the exported `collectImports(src)` (BFS through nested imports),
+  reading through the source folder (like PCM `:file`) with a fetch fallback
+  (server root). Path key = the literal string as written (flat-namespace
+  limitation for nested relative paths — post-MVP refinement).
+- **Verify**: node harness 14/14 (merge, local-wins byte-identity, conflict,
+  cycle, not-found, ignored def-val/track, diamond); example
+  `examples/source/import-demo.mmlisp` + `voices-lib.mmlisp` compile clean;
+  `verify:all` green on feat/v0.6 (32 traces + ab-gate 33 scores — import is
+  additive, driver unchanged); in-browser (Chromium) mmlisp2ir.js import path
+  compiles the demo 0-error.
+  **Caveat**: the full app-shell wiring (buildAction/hot-swap/load paths in
+  index.html) could not be exercised end-to-end here — CodeMirror is CDN-loaded
+  (esm.sh) and blocked in the cloud env, so the shell can't boot; the module
+  script is syntax-validated and the resolver mirrors the working PCM pattern.
+  Live-verify the folder/served import flow when next in the live app.
+- **Editor/docs**: language.md §9.2 + §1 table; guide.md §7 import subsection;
+  autocomplete lists `import`/eval heads/`:seed`/operator suffixes; the
+  highlighter accents arithmetic call heads. roadmap Phase 2 → DONE.
+
+Deferred to the fuller Future-Vision system (same `(import …)` surface):
+`:from :stdlib`/`:patches`/URL, version pinning, per-path-relative nested
+resolution, mucom `.dat` external voice-bank auto-import.
 
 ## Phase 3 — Compile-time eval (centerpiece) — **design settled**
 
@@ -137,7 +168,7 @@ curves-as-a-standard-library.
 
 ## Sequencing
 Phase 1 first (concrete, non-breaking to IR, immediately shippable) — done.
-Phase 2 in parallel or next. **Phase 3 design is settled**
+Phase 2 (`import`) — done. **Phase 3 design is settled**
 ([design-eval.md](design-eval.md)); implementation follows its §11 ordered
 steps (evaluator core → curve builtins → desugar rewiring → runtime lowering →
 let/note/units → signal materialization → Z80 additive branch → docs), each
