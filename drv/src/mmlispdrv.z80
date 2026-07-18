@@ -532,7 +532,7 @@ d_next:
     cp $41
     jp z,d_loop_end
     cp $42
-    jp z,d_marker
+    jp z,tramp_rare         ; MARKER → ovl_rare
     cp $43
     jp z,d_jump
     cp $44
@@ -608,11 +608,16 @@ d_eot_st:
     ld a,(ix+T_MARKER)
     and $3f
     ld c,a
+    jp write_tstat          ; active bit cleared, last marker kept
+
+; write_tstat: C → this track's 68k-readable status byte (MB_TSTAT + T_INDEX,
+; IX = TCB). Shared by d_eot (resident) and MARKER (ovl_rare).
+write_tstat:
     ld hl,MB_TSTAT
     ld a,(ix+T_INDEX)
     add a,l
     ld l,a
-    ld (hl),c               ; active bit cleared, last marker kept
+    ld (hl),c
     ret
 
 ; ── NOTE_ON ───────────────────────────────────────────────────────────────
@@ -815,23 +820,8 @@ d_loop_break:
     dec (ix+T_DEPTH)
     jp d_next
 
-; ── MARKER (id u8) ────────────────────────────────────────────────────────
-d_marker:
-    inc hl
-    ld a,(hl)
-    inc hl
-    ld (ix+T_MARKER),a
-    and $3f
-    or $80
-    ld c,a
-    push hl
-    ld hl,MB_TSTAT
-    ld a,(ix+T_INDEX)
-    add a,l
-    ld l,a
-    ld (hl),c
-    pop hl
-    jp d_next
+; MARKER (0x42) is evicted to ovl_rare (reached via tramp_rare) — markers are
+; per-note-rare, and the marker gate (verify.mjs MB_TSTAT diff) verifies it.
 
 ; ── JUMP (dest u16, EVENT_STREAM-relative) ────────────────────────────────
 d_jump:

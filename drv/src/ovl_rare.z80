@@ -5,8 +5,8 @@
 ; A = the opcode. Each handler ends `jp d_next` (resident), returning to the
 ; dispatch loop. Assembled at the slot with the resident image's symbols
 ; preloaded, so it calls resident helpers (set_reg27, write_timer_a,
-; sweep_step) and reads G_*/IX offsets directly. MARKER stays resident (no gate
-; score exercises it, so its eviction could not be trace-verified).
+; sweep_step) and reads G_*/IX offsets directly. MARKER lives here too since
+; the marker gate (verify.mjs MB_TSTAT diff) now verifies its eviction.
         org OVERLAY_SLOT
 ovl_rare:                   ; A = opcode, HL = PC (at opcode), IX = TCB
     cp $80
@@ -21,7 +21,23 @@ ovl_rare:                   ; A = opcode, HL = PC (at opcode), IX = TCB
     jp z,d_csm_rate
     cp $a3
     jp z,d_fm3_mode
-    jp d_next               ; fail-safe: only the six opcodes above trampoline here
+    cp $42
+    jp z,d_marker
+    jp d_next               ; fail-safe: only the opcodes above trampoline here
+
+; ── MARKER (id u8) — id → MB_TSTAT status byte (bits5-0), sticky ───────────
+d_marker:
+    inc hl
+    ld a,(hl)
+    inc hl
+    ld (ix+T_MARKER),a
+    and $3f
+    or $80
+    ld c,a
+    push hl
+    call write_tstat        ; resident helper (also used by d_eot)
+    pop hl
+    jp d_next
 
 ; ── TEMPO_SET (increment u16, per-MMB) ────────────────────────────────────
 d_tempo_set:
