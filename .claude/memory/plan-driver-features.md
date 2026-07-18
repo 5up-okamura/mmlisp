@@ -57,6 +57,31 @@ compile-side, 0 Z80 B) rides with it — factors control-flow-free depth-0 runs,
 ~4-8% stream shrink (eases the 32K wall). Verified by trace gate (Z80 CALL/RET
 on factored scores) + ab-gate (dedup trace-neutral). See [[z80-driver-status]].
 
+**Extension candidate (2026-07-18, not started): factor shared loop bodies —
+lift the depth-0 restriction.** Today the dedup MVP only factors runs at loop
+depth 0, so a phrase *inside* an `(x N …)` loop is never shared. When the SAME
+looped phrase appears in ≥2 places (two tracks, or two loops), its body is
+stored once per site. Measured: two tracks each `(x 8 phrase)` = 940 B, dedup
+saves 0. Lifting the limit lets a loop body become `LOOP_BEGIN CALL LOOP_END` +
+one shared fragment (two sites, L=24 B body: 54→~37 B). Safe with one addition:
+the encoder must track the *real* control-stack depth (LOOP + CALL share the
+4-entry stack) and factor inside a loop only when `loop_depth + 1 ≤ 4`. Only
+pays off when the phrase is shared — a phrase in a single loop is already stored
+once, so wrapping it in CALL/RET would *add* bytes; gate the factoring on
+occurrence count ≥ 2.
+
+**Decision — keep LOOP and CALL/RET SEPARATE; do NOT add a count to CALL.** The
+tempting unification (a counted `CALL {dest,count}` that both repeats and
+shares) loses on the common case: a single-use `(x N phrase)` is L+3 B as a
+LOOP (body stays inline, count in LOOP_BEGIN) but L+5 B as a counted-CALL (body
+forced out-of-line + a RET + a dest pointer). Counted-CALL only wins ~4 B over
+`LOOP_BEGIN CALL LOOP_END` on the rarer *shared* looped phrase (33 vs 37), while
+taxing every ordinary loop 2 B and complicating the runtime (per-iteration
+re-entry re-invents LOOP_END's decrement). The count belongs to LOOP (in-place
+repeat); CALL/RET stays count-less (pure share). The synergy is **composition**
+(CALL nested in LOOP), not merger — no new opcode, both primitives stay small
+and direct.
+
 ### 2. SE + BGM voice restore — bundle with VOICE_SET, ~30-50 B, cold
 
 **Do not count SE-restore and VOICE_SET separately — they are one feature.** SE
