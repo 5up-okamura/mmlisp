@@ -245,6 +245,29 @@ body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARIT
   (beat c) (beat b-) (beat a) (beat f))
 ```
 
+### Sharing across files — `(import "…")`
+
+Put voices, macros, or snippets you reuse into their own file and pull them in
+with `import`. It merges those defs at compile time — no runtime cost, exactly
+as if you'd pasted them in.
+
+```lisp
+; voices-lib.mmlisp — a defs-only library (no tracks)
+(def lead :extend init-fm :alg 4 :fb 3 :tl1 30)
+(def vib  (macro :pitch+ (sin -30..30 :len 8)))
+```
+
+```lisp
+; song.mmlisp
+(import "voices-lib.mmlisp")
+(fm1 lead vib c e g e)          ; lead / vib come from the library
+```
+
+The path is relative to your score (open its folder with File > Open Folder…).
+An imported def is a **default you can override** — a local `(def lead …)` of
+the same name wins. Only defs are imported; `def-val` slots and tracks in the
+library file are ignored. Full reference: `docs/language.md` §9.2.
+
 ---
 
 ## 7b. Compile-time Expressions
@@ -814,8 +837,19 @@ Samples are defined with `def :sample`, then used as the first positional argume
 
 ## 20. Stochastic Curves
 
-The curve system now includes `noise`, `pink`, `perlin`, and `brown`.
-They can be used anywhere curve expressions are accepted, including `(macro ...)` and `:tempo`.
+The curve system includes `noise`, `pink`, `perlin`, and `brown`. They work
+anywhere a curve is accepted, including `(macro ...)` and `:tempo`.
+
+They are **deterministic** — the same source always bakes the same sequence.
+Add `:seed N` to pick a different (statistically independent) sequence; the
+default seed is fixed, so a seedless curve is stable across builds. `:seed`
+costs nothing at runtime (the values are baked at compile time).
+
+```lisp
+(fm1 (macro :tl1 (noise :from 8 :to 0 :len 8f))          ; one fixed sequence
+     (macro :tl2 (noise :from 8 :to 0 :len 8f :seed 42)) ; a different one
+     c e g)
+```
 
 ---
 

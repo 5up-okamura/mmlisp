@@ -1222,6 +1222,10 @@
         }
         if (stream.eat('(')) { state.head = true; return null; }
         if (stream.eat(')') || stream.eat('[') || stream.eat(']')) { state.head = false; return null; }
+        // Arithmetic eval heads (+ - * /) in call position get the call accent,
+        // like an identifier head. Guarded by `head` and a delimiter lookahead so
+        // an operand `+`/`-` (or a signed number) is untouched.
+        if (state.head && stream.match(/^[+\-*/](?=[\s()]|$)/)) { state.head = false; return 'keyword'; }
         if (stream.eat(':')) {
           stream.match(/^[a-zA-Z][a-zA-Z0-9#_-]*/);
           state.head = false;
@@ -1251,9 +1255,12 @@
     // Autocomplete
     // -----------------------------------------------------------------------
     const AC_FORMS = [
-      'def','def-val','t','x','go','param-set',
+      'def','def-val','import','t','x','go','param-set',
       'echo','delay','glide','macro',
-      'linear',
+      // compile-time eval heads (§7)
+      'let','note','ticks','frames',
+      'min','max','abs','round','floor',
+      'linear','const',
       'ease-in','ease-out','ease-inout',
       'ease-in-sine','ease-out-sine','ease-inout-sine',
       'ease-in-quad','ease-out-quad','ease-inout-quad',
@@ -1283,10 +1290,11 @@
       // global (written on a track; §1)
       ':tempo',':lfo-rate',
       // track / channel
-      ':ch',':prio',':oct',':len',':gate',':gate*',':gate-',':vel',':vel*',':vol',':volume',
+      ':ch',':prio',':oct',':oct+',':oct*',':len',':gate',':gate*',':gate-',
+      ':vel',':vel+',':vel*',':vol',':volume',
       ':master',':pan',':mode',':shuffle',':shuffle-base',
       // note dynamics / sequencer
-      ':pitch',':semi',':keyon',':by',':back',':time',
+      ':pitch',':pitch+',':semi',':semi+',':keyon',':by',':back',':time',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
       ':extend',':step',':loop',':loop-start',':loop-end',
@@ -1297,7 +1305,7 @@
       ':bit-depth',':compress',':reverb',
       // curve params
       ':from',':to',':phase',':wait',':duty',':skew',':hold',':jitter',
-      ':beta',':octaves',':lacunarity',':persistence',':leak',
+      ':beta',':octaves',':lacunarity',':persistence',':leak',':seed',
       // FM channel
       ':alg',':fb',':ams',':fms',
       // FM operator params (×4)
