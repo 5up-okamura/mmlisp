@@ -18,6 +18,10 @@ Index:
 - [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
   import (done), compile-time eval, phase status and sequencing. roadmap.md has
   the compact public version.
+- [plan-se.md](plan-se.md) — SE (sound effects) design in progress: bundle
+  control data + shared sample bank (32K-wall solution), suspend-not-evict the
+  displaced BGM track (T_STATUS=3) with a mid-sustain snapshot/restore per
+  channel family (FM/PSG/PCM). Design draft, not started. Read before SE work.
 - [plan-voice-set.md](plan-voice-set.md) — VOICE_SET/VOICE_TABLE **Part 1 DONE**
   (2026-07-19): coalescing ON by default, Z80 handler in ovl_voice, ab-compare
   (b) applied, verify:all green. **Part 2 (SE/BGM voice restore) remains** — and
