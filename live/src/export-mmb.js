@@ -1027,15 +1027,17 @@ export function encodeMmb(ir, opts = {}) {
     payload: metadata.bytes,
   });
 
+  // SAMPLE_BANK is NOT an MMB section — the PCM blobs (the 32K-wall term) live
+  // in a separate ROM bank the mixer latches per frame (plan-se.md), so the
+  // control MMB stays small. buildSampleBank returns the whole bank image
+  // (entry table + blobs); the host loads it into a bank and publishes its
+  // number. The MMB references samples by id (PCM_NOTE_ON) as before.
   const usesPcm = (ir.tracks ?? []).some((t) =>
     (t.events ?? []).some((e) => e.cmd === "PCM_NOTE_ON"),
   );
+  let sampleBank = null;
   if (usesPcm && opts.samples) {
-    sections.push({
-      id: SECTION_ID.SAMPLE_BANK,
-      flags: 0,
-      payload: buildSampleBank(ir, opts.samples, diag),
-    });
+    sampleBank = new Uint8Array(buildSampleBank(ir, opts.samples, diag));
   } else if (usesPcm) {
     diag(
       "warning",
@@ -1120,7 +1122,7 @@ export function encodeMmb(ir, opts = {}) {
     );
   }
 
-  return { bytes: new Uint8Array(file.bytes), diagnostics };
+  return { bytes: new Uint8Array(file.bytes), sampleBank, diagnostics };
 }
 
 // SAMPLE_BANK (mmb.md §10): entry table + raw 8-bit signed PCM blobs.

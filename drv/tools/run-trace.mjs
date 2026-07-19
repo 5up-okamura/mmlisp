@@ -28,6 +28,11 @@ export function runTrace(
     // model) and the bank register is tracked but otherwise inert.
     overlay = null,
     overlayBank = null,
+    // PCM sample bank (plan-se.md): a third ROM blob at its own bank the mixer
+    // latches per frame. The host publishes its number in G_SMP_BANK; when
+    // absent, no PCM banking happens.
+    sampleBank = null,
+    sampleBankNumber = 2,
   } = {},
 ) {
   if (driverBin.length > MB_BASE) {
@@ -53,6 +58,7 @@ export function runTrace(
       if (a >= 0x8000) {
         const off = a & 0x7fff;
         if (overlay && bankReg === overlayBank) return overlay[off] ?? 0;
+        if (sampleBank && bankReg === sampleBankNumber) return sampleBank[off] ?? 0;
         return mmbBytes[off] ?? 0; // MMB bank (the driver latches it as bank 0)
       }
       return 0xff;
@@ -83,6 +89,12 @@ export function runTrace(
   if (overlay) {
     ram[MB_BASE + 0x34] = overlayBank & 0xff;
     ram[MB_BASE + 0x35] = (overlayBank >> 8) & 0xff;
+  }
+  // Publish the PCM sample bank number (G_SMP_BANK = MB_BASE+0x39) the same way,
+  // so the mixer can latch it. 0 = none (no PCM banking).
+  if (sampleBank) {
+    ram[MB_BASE + 0x39] = sampleBankNumber & 0xff;
+    ram[MB_BASE + 0x3a] = (sampleBankNumber >> 8) & 0xff;
   }
 
   // Boot until the idle halt.

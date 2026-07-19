@@ -43,6 +43,7 @@ MB_VER      equ MB_RING+$33
 G_OVL_BANK  equ MB_RING+$34     ; u16 overlay ROM bank (host sets at init; published)
 G_MMB_BANK  equ MB_RING+$36     ; u16 current MMB bank (set by bank_latch; internal)
 G_CUR_OVL   equ MB_RING+$38     ; u8  overlay index currently in the slot (0xFF none)
+G_SMP_BANK  equ MB_RING+$39     ; u16 PCM sample-bank ROM number (host sets; 0 none)
 VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 
 ; Overlay slot: a shared RAM buffer just above the resident code where cold-code
@@ -120,7 +121,7 @@ G_CS_STEP   equ G_BASE+$4e      ; u16  phase step
 ; M3 PCM soft-mix (driver.md §14): pcm1–pcm3 → 3 voice slots summed to the
 ; single fm6 DAC. Each frame emits PCM_MIX_R DAC ticks; every active voice is
 ; resampled (nearest) to that grid and the ≤3 signed samples hard-saturate to i8.
-G_SB        equ G_BASE+$50      ; u16  SAMPLE_BANK payload window addr (0 = none)
+G_PV_RATE   equ G_BASE+$50      ; u16  pcm_note_on base_rate stash (across bank restore)
 G_PCM_MUL   equ G_BASE+$52      ; u32  scratch for the 16x16 multiply / divide
 ; Macro pitch-apply mode (§4.4): set for the span of a macro NOTE_PITCH/NOTE_SEMI
 ; sample so psf_pitch / ps_psg_pitch / apply_note_semi / pitch_cents pick the
@@ -3560,7 +3561,13 @@ pf_next:
 ; word is the per-tick signed accumulator.
 process_pcm:
     call pcm_any_active
-    ret z                   ; no voice active → DAC already off
+    ret z                   ; no voice active → DAC already off (MMB bank intact)
+    ; latch the PCM sample bank for the mix — pva_fetch reads sample bytes from
+    ; it (plan-se.md); the MMB bank is restored after the loop. process_pcm runs
+    ; last in frame_step and its only window read is the sample byte, so holding
+    ; a different bank here is safe.
+    ld hl,(G_SMP_BANK)
+    call latch_bank
     ld b,PCM_MIX_R
 pp_tick:
     push bc                 ; save tick counter
@@ -3603,6 +3610,10 @@ pp_have:
     call ym_hw              ; raw DAC write (bypass shadow)
     pop bc
     djnz pp_tick
+    ; restore the MMB bank before returning — the next frame's dispatch, LUT
+    ; reads, and macro/voice tables all live in it.
+    ld hl,(G_MMB_BANK)
+    call latch_bank
     ; all ticks done: if every voice ended, release the DAC
     call pcm_any_active
     ret nz

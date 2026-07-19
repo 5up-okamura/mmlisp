@@ -282,8 +282,18 @@ overlay is already in the slot. The host publishes `G_OVL_BANK` at init. **The
 boot code is itself an overlay** (`ovl_boot`): the resident reset stub loads it
 using `G_OVL_BANK`, so the host must write `G_OVL_BANK` into Z80 RAM **before
 releasing the Z80 from reset**, and `ovl_boot`'s RAM clear preserves the
-overlay-bank globals (`G_OVL_BANK` / `G_MMB_BANK` / `G_CUR_OVL`). The idle loop
-stays resident (a later overlay load overwrites the slot).
+overlay-bank globals (`G_OVL_BANK` / `G_MMB_BANK` / `G_CUR_OVL`, and
+`G_SMP_BANK`). The idle loop stays resident (a later overlay load overwrites the
+slot).
+
+**PCM sample bank (plan-se.md).** PCM blobs are no longer in the MMB window —
+they ride their own ROM bank whose number the host publishes in `G_SMP_BANK`
+(also boot-preserved). The per-frame PCM mixer (`process_pcm`) latches
+`G_SMP_BANK` for the mix and restores `G_MMB_BANK` before returning; `pcm_note_on`
+latches it to read the sample entry. This lifts the 32K wall for PCM data (only
+the small control MMB shares the one window) and is the enabler for BGM+SE
+concurrency via bundling. Cost: a per-frame bank latch on the dominant PCM path
+(hardware cycle validation pending).
 
 ## 6. Mailbox Protocol (68000 → Z80)
 

@@ -20,8 +20,6 @@ ml_sec:
     jr z,ml_tt
     cp 2
     jr z,ml_es
-    cp 4
-    jr z,ml_sb
     cp 5
     jr z,ml_val
     cp 6
@@ -42,10 +40,6 @@ ml_tt:
 ml_es:
     call ml_payload
     ld (G_ES),de
-    jr ml_next
-ml_sb:
-    call ml_payload
-    ld (G_SB),de
     jr ml_next
 ml_lut:
     call ml_payload

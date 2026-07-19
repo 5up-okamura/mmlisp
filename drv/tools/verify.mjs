@@ -25,8 +25,9 @@ function fmtWrite(w) {
 }
 
 export function verify(songPath, { frames, verbose = false } = {}) {
-  // 1. song → MMB
-  const { bytes: mmb } = buildMmb(songPath);
+  // 1. song → MMB (+ the separate sample bank, plan-se.md — PCM blobs live in
+  //    their own ROM bank the mixer latches, not inside the 32KB control MMB).
+  const { bytes: mmb, sampleBank } = buildMmb(songPath);
 
   // Optional host mailbox schedule: a sidecar "<song>.cmds.json" holding
   // [{frame, cmd, a0, a1, a2}] injected into both players (M2 KEY_OFF /
@@ -39,19 +40,20 @@ export function verify(songPath, { frames, verbose = false } = {}) {
   // 2. JS reference trace. `frames` caps how long it runs; the horizon is
   // where the reference actually ended (which may be earlier — e.g. a PCM
   // tail finishing — so the asm is run for exactly that many frames).
-  const ref = refTrace(mmb, { maxFrames: frames ?? 36000, commands });
+  const ref = refTrace(mmb, { maxFrames: frames ?? 36000, commands, sampleBank });
   const horizon = ref.frames;
 
   // 3. regenerate tables + assemble (resident + overlay ROM blob)
   const { resident, overlay, overlayBank, symbols } = buildDriver();
 
-  // 4. emulate — the overlay blob (empty until cold code moves) rides a second
-  //    ROM bank the driver loads from on demand.
+  // 4. emulate — the overlay blob rides ROM bank `overlayBank`; the PCM sample
+  //    bank (if any) rides `sampleBankNumber`, latched by the mixer.
   const asm = runTrace(resident, mmb, {
     frames: horizon,
     commands,
     overlay: overlay.length ? overlay : null,
     overlayBank,
+    sampleBank,
   });
 
   // 5. raw diff

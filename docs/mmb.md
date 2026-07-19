@@ -248,10 +248,17 @@ Required keys: `title`, `author`, `compiler_version`. Optional keys include
 `bpm` (display-only, see §7.5) and val-slot names. **The driver ignores this
 section entirely**; it exists for hosts and tools.
 
-## 10. SAMPLE_BANK Section (0x0004)
+## 10. SAMPLE_BANK (separate ROM bank, was section 0x0004)
 
-PCM data for `def :sample` (docs/language.md §9, §16). M2 content; the layout is
-frozen now. Structure:
+PCM data for `def :sample` (docs/language.md §9, §16). **As of the sample-bank
+separation (plan-se.md), this is NOT an MMB section — it is its own ROM bank**,
+so PCM blobs (the 32K-wall term) never crowd the 32KB control window. The
+exporter (`encodeMmb`) returns it separately (`{ bytes, sampleBank }`); the host
+loads it into a bank and publishes the bank number in `G_SMP_BANK`; the driver's
+PCM mixer latches that bank per frame (driver.md §14) and `pcm_note_on` latches
+it to read an entry. The image is unchanged in layout — the same
+`entry_count + entries + blobs` below — only its location moved out of the file.
+Section id 0x0004 is retired from the directory. Structure:
 
 ```
 entry_count : u16
@@ -272,9 +279,12 @@ Sample entry (20 bytes):
 | 0x10   | 4    | loop_end   | u32, byte offset into the sample             |
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
-Sample ids are assigned in IR declaration order. Note that a SAMPLE_BANK can
-push a file past the 32KB window; PCM-heavy songs are an M2 concern and may
-require the WIDE_OFFSETS escape or bank-splitting — decided in M2, not here.
+Sample ids are assigned in IR declaration order. `offset` is relative to this
+bank's payload (past `entry_count`). Because the bank is separate, PCM-heavy
+songs no longer push the control MMB past the 32KB window; a bank that itself
+exceeds 32KB (many/large samples) is the next relaxation — multiple sample banks
+or WIDE_OFFSETS-style wide offsets — deferred to the shared-bank bundler
+(plan-se.md), not needed for the single-bank case.
 
 ## 11. VOICE_TABLE Section (0x0006)
 

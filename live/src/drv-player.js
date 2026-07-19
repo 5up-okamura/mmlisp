@@ -175,7 +175,7 @@ export class DrvPlayer {
 
   // ── Container loading ────────────────────────────────────────────────────
   /** Parse an MMB v0.2 byte buffer. Throws on a malformed container. */
-  loadMMB(bytes) {
+  loadMMB(bytes, sampleBankBytes = null) {
     // A newly loaded song plays at its written tempo: drop any live override.
     this._tempoOverride = false;
     this._tempoOverrideInc = 0;
@@ -247,12 +247,19 @@ export class DrvPlayer {
     this._valNameToSlot = valNameToSlot;
 
     // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs.
-    // `blobBase` is the offset of the blob region within the section; entry
-    // offsets are relative to it. We keep the section subarray + resolved
-    // per-sample descriptors.
+    // No longer an MMB section — the blobs live in a separate ROM bank the mixer
+    // latches (plan-se.md), passed in as `sampleBankBytes`. `blobBase` is the
+    // offset of the blob region within the bank; entry offsets are relative to
+    // it. (The Z80 mirror latches G_SMP_BANK; the JS reference just reads the
+    // array, so the DAC trace stays bit-identical.)
     const samples = [];
     let sampleData = null;
-    const sampleBank = sections.get(SECTION_ID.SAMPLE_BANK);
+    const sampleBank =
+      sampleBankBytes == null
+        ? null
+        : sampleBankBytes instanceof Uint8Array
+          ? sampleBankBytes
+          : new Uint8Array(sampleBankBytes);
     if (sampleBank) {
       sampleData = sampleBank;
       const n = u16(sampleBank, 0);

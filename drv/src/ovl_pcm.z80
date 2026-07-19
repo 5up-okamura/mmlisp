@@ -6,10 +6,10 @@
 ; pcm_note_on: (G_ARG0)=sample id, (G_ARG1)=note, (G_ARG2)=voice index (0-2).
 ; Fills voice struct G_PCMV+vi*17. inc = per-mix-tick (16.16) = inc_frame / R.
 pcm_note_on:
-    ld hl,(G_SB)
+    ld hl,(G_SMP_BANK)
     ld a,h
     or l
-    ret z                   ; no SAMPLE_BANK
+    ret z                   ; no sample bank → no PCM
     ld a,(G_ARG2)
     cp 3
     ret nc                  ; voice index guard (pcm1-3 → 0-2)
@@ -27,7 +27,12 @@ pcm_note_on:
     add hl,de
     push hl
     pop ix                  ; IX = voice struct
-    ; SAMPLE_BANK entry = G_SB + 2 + id*20
+    ; ── latch the sample bank: its entry table + blobs are at WINDOW ──
+    ; (all sample-bank reads happen here, before the MMB bank is restored for
+    ; the PCM_MULT_FRAME LUT lookup below — plan-se.md).
+    ld hl,(G_SMP_BANK)
+    call latch_bank
+    ; entry = WINDOW + 2 + id*20
     ld a,(G_ARG0)
     ld l,a
     ld h,0
@@ -38,22 +43,20 @@ pcm_note_on:
     add hl,hl
     add hl,hl               ; id*16
     add hl,bc               ; id*20
-    ld bc,(G_SB)
-    add hl,bc
-    inc hl
-    inc hl                  ; skip u16 count → entry
-    inc hl                  ; skip sample_id (+0) → flags (+1)
-    ld a,(hl)               ; flags
+    ld bc,WINDOW+2
+    add hl,bc               ; HL = &entry.sample_id (skip u16 count)
+    inc hl                  ; → flags (+1)
+    ld a,(hl)
     and 1
     ld (ix+PV_ACT),a        ; provisional hasLoop (folded in below)
     inc hl                  ; → offset (+2)
     ld e,(hl)
     inc hl
     ld d,(hl)               ; DE = offset (low u16)
+    push de                 ; [offset]
     inc hl
     inc hl
     inc hl                  ; skip offset hi → +6 length
-    push de                 ; save offset
     ld e,(hl)
     inc hl
     ld d,(hl)               ; DE = length (low u16)
@@ -65,9 +68,50 @@ pcm_note_on:
     ld e,(hl)
     inc hl
     ld d,(hl)               ; DE = base_rate
+    ld (G_PV_RATE),de       ; stash across the bank restore
     inc hl                  ; +12 loop_start
-    push hl                 ; save ptr at loop_start
-    ; inc_frame = base_rate × MULT_FRAME[note-36]
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; loop_start (low u16)
+    inc hl
+    inc hl
+    inc hl                  ; skip loop_start hi → +16 loop_end
+    push de                 ; [offset, loop_start]
+    ld e,(hl)
+    inc hl
+    ld d,(hl)               ; loop_end (low u16)
+    ld (ix+PV_LOOPE),e
+    ld (ix+PV_LOOPE+1),d
+    pop bc                  ; BC = loop_start ; [offset]
+    ex de,hl                ; HL = loop_end
+    or a
+    sbc hl,bc               ; loop_end - loop_start
+    ld (ix+PV_LOOPL),l
+    ld (ix+PV_LOOPL+1),h
+    ; base = WINDOW + 2 + count*20 + offset (a sample-bank window address)
+    ld hl,WINDOW
+    ld c,(hl)
+    inc hl
+    ld b,(hl)               ; BC = count
+    ld l,c
+    ld h,b
+    add hl,hl
+    add hl,hl               ; count*4
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl               ; count*16
+    add hl,de               ; count*20
+    ld de,WINDOW+2
+    add hl,de               ; + 2 (past count) = blob base
+    pop de                  ; offset
+    add hl,de               ; sample base addr
+    ld (ix+PV_BASE),l
+    ld (ix+PV_BASE+1),h
+    ; ── restore the MMB bank (the LUTs + dispatch read from it) ──
+    ld hl,(G_MMB_BANK)
+    call latch_bank
+    ; inc_frame = base_rate × MULT_FRAME[note-36]  (MULT_FRAME is in the MMB LUT)
     ld a,(G_ARG1)
     sub 36
     jr nc,po_nlo
@@ -85,6 +129,7 @@ po_nok:
     ld c,(hl)
     inc hl
     ld b,(hl)               ; BC = MULT_FRAME[note-36]
+    ld de,(G_PV_RATE)       ; base_rate (stashed before the bank restore)
     call mul16x16           ; DE×BC → (G_PCM_MUL) u32 = inc_frame
     call div32_r            ; (G_PCM_MUL) /= PCM_MIX_R → inc_tick
     ld hl,(G_PCM_MUL)
@@ -93,48 +138,6 @@ po_nok:
     ld hl,(G_PCM_MUL+2)
     ld (ix+PV_INC+2),l
     ld (ix+PV_INC+3),h
-    ; loop_start / loop_end
-    pop hl                  ; ptr at loop_start (u32)
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; loop_start (low u16)
-    inc hl
-    inc hl
-    inc hl
-    push de                 ; loop_start
-    ld e,(hl)
-    inc hl
-    ld d,(hl)               ; loop_end (low u16)
-    ld (ix+PV_LOOPE),e
-    ld (ix+PV_LOOPE+1),d
-    pop bc                  ; loop_start
-    ex de,hl                ; HL = loop_end
-    or a
-    sbc hl,bc               ; loop_end - loop_start
-    ld (ix+PV_LOOPL),l
-    ld (ix+PV_LOOPL+1),h
-    ; base = G_SB + 2 + count*20 + offset
-    ld hl,(G_SB)
-    ld c,(hl)
-    inc hl
-    ld b,(hl)               ; BC = count
-    ld l,c
-    ld h,b
-    add hl,hl
-    add hl,hl               ; count*4
-    ld e,l
-    ld d,h
-    add hl,hl
-    add hl,hl               ; count*16
-    add hl,de               ; count*20
-    ld de,(G_SB)
-    add hl,de
-    inc hl
-    inc hl                  ; + 2 (past count) = blob base
-    pop de                  ; offset
-    add hl,de               ; sample base addr
-    ld (ix+PV_BASE),l
-    ld (ix+PV_BASE+1),h
     ; pos = 0
     xor a
     ld (ix+PV_POS),a

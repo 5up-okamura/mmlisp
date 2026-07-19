@@ -1,9 +1,42 @@
 # SE (sound effects) — design in progress (2026-07-19)
 
-Status: **design being drafted; NOT started.** VOICE_SET Part 1 (the FM restore
-mechanism) landed; this is the "Part 2" SE/BGM story, widened in a design chat
-with the user. Supersedes the terse item 2 in [[plan-driver-features]] and the
-Part 2 note in [[plan-voice-set]]. Implement only after the design is agreed.
+Status: **design agreed; sequencing step 1 (sample-bank separation) LANDED
+2026-07-19.** VOICE_SET Part 1 (the FM restore mechanism) landed earlier; this
+is the "Part 2" SE/BGM story. Supersedes the terse item 2 in
+[[plan-driver-features]] and the Part 2 note in [[plan-voice-set]].
+
+## Step 1 — sample-bank separation: LANDED (2026-07-19)
+
+PCM blobs moved out of the 32KB control MMB into a **separate ROM bank** the
+mixer latches per frame. Verified: all PCM gates (m2-pcm, m2-pcmloop,
+m3-pcm-softmix, m3-fm6-pcm) byte-identical; verify:all 33 TRACE MATCH + ab-gate
+34 scores. What changed:
+- **Format/exporter**: SAMPLE_BANK is no longer MMB section 0x0004 — `encodeMmb`
+  returns `{ bytes, sampleBank, diagnostics }`; the blob image (entry table +
+  blobs, same layout) is a separate artifact. mmb.md §10 updated.
+- **Driver**: new global `G_SMP_BANK` (MB_RING+$39, host-published, 0=none;
+  boot-preserved alongside the overlay-bank globals — the ovl_boot clear range
+  was extended to skip $34..$3a). `pcm_note_on` (ovl_pcm) latches G_SMP_BANK to
+  read the entry (entries+blobs at WINDOW=0x8000 in that bank), stashes base_rate
+  in G_PV_RATE across the restore, then restores G_MMB_BANK for the PCM_MULT_FRAME
+  LUT read. `process_pcm` latches G_SMP_BANK for the mix loop (the only window
+  read there is the sample byte) and restores G_MMB_BANK before returning. G_SB
+  retired; ovl_mmb no longer locates SAMPLE_BANK. Resident +12 B (two latch pairs
+  in process_pcm), 64 B free.
+- **drv-player**: `loadMMB(bytes, sampleBankBytes)` reads blobs from the separate
+  array (no banks in JS — the DAC trace stays bit-identical).
+- **Emulator/harness**: run-trace serves `sampleBank` when `bankReg ==
+  sampleBankNumber` (default 2) and pre-seeds G_SMP_BANK; verify/ref-trace/
+  mmb-build plumb it; the mmb-build CLI writes a `.smp` sidecar.
+- **Browser**: MMLispDRV-backend playback passes the sample bank to loadMMB;
+  File > Export MMB saves a `.smp` sidecar. **Not verified here** (CodeMirror CDN
+  blocked) — live-verify PCM on the drv backend + the export sidecar.
+
+**Cycle caveat**: the per-frame bank latch (18 BANK_REG writes ×2/frame when PCM
+active) is a hot addition on the dominant PCM path — trace-correct in emulation,
+needs hardware cycle validation.
+
+Remaining Part 2 steps below (suspend/restore core, PCM restore, bundler).
 
 ## Settled with the user (2026-07-19)
 

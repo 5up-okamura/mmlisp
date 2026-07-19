@@ -5,16 +5,17 @@
 ; symbols preloaded, so it calls resident helpers directly.
         org OVERLAY_SLOT
 boot_body:
-    ; clear driver RAM, PRESERVING the overlay-bank globals the host set before
-    ; reset: G_OVL_BANK/G_MMB_BANK/G_CUR_OVL ($34..$38). Two ranges skip them.
+    ; clear driver RAM, PRESERVING the bank globals the host set before reset:
+    ; G_OVL_BANK/G_MMB_BANK/G_CUR_OVL ($34..$38) and G_SMP_BANK ($39..$3a). Two
+    ; ranges skip them.
     ld hl,DATA_BASE
     ld de,DATA_BASE+1
     ld bc,G_OVL_BANK-DATA_BASE-1
     ld (hl),0
     ldir
-    ld hl,G_CUR_OVL+1
-    ld de,G_CUR_OVL+2
-    ld bc,$1fad-G_CUR_OVL-1
+    ld hl,G_SMP_BANK+2
+    ld de,G_SMP_BANK+3
+    ld bc,$1fad-G_SMP_BANK-2
     ld (hl),0
     ldir
     ; channel state defaults (matches drv-player freshFmChannel/_reset)

@@ -5,9 +5,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 
-export function refTrace(mmbBytes, { maxFrames = 36000, commands = [] } = {}) {
+export function refTrace(mmbBytes, { maxFrames = 36000, commands = [], sampleBank = null } = {}) {
   const drv = new DrvPlayer();
-  drv.loadMMB(mmbBytes);
+  drv.loadMMB(mmbBytes, sampleBank);
   const cap = drv.captureRegisterLog({ maxFrames, commands });
   return {
     frames: cap.frames,

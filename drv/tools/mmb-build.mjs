@@ -21,8 +21,8 @@ export function buildMmb(sourcePath) {
   if ((ir.metadata?.samples ?? []).length) {
     opts.samples = loadSamplesForIr(ir);
   }
-  const { bytes, diagnostics: exportDiags } = encodeMmb(ir, opts);
-  return { bytes, diagnostics: [...diagnostics, ...exportDiags] };
+  const { bytes, sampleBank, diagnostics: exportDiags } = encodeMmb(ir, opts);
+  return { bytes, sampleBank, diagnostics: [...diagnostics, ...exportDiags] };
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
@@ -31,8 +31,14 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     console.error("usage: node mmb-build.mjs <in.mmlisp> <out.mmb>");
     process.exit(2);
   }
-  const { bytes, diagnostics } = buildMmb(inPath);
+  const { bytes, sampleBank, diagnostics } = buildMmb(inPath);
   writeFileSync(outPath, bytes);
   console.log(`${outPath}: ${bytes.length} bytes`);
+  if (sampleBank && sampleBank.length) {
+    // PCM blobs ride a separate sample bank now (plan-se.md), not in the .mmb.
+    const smpPath = outPath.replace(/\.mmb$/, "") + ".smp";
+    writeFileSync(smpPath, sampleBank);
+    console.log(`${smpPath}: ${sampleBank.length} bytes (sample bank)`);
+  }
   for (const d of diagnostics) console.warn(`  ${d.severity}: ${d.message}`);
 }

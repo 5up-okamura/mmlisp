@@ -2724,10 +2724,10 @@
         return;
       }
 
-      let bytes, diags;
+      let bytes, sampleBank, diags;
       try {
         const samples = await pcmSampleBlobsForMmb(ir);
-        ({ bytes, diagnostics: diags } = encodeMmb(ir, samples ? { samples } : {}));
+        ({ bytes, sampleBank, diagnostics: diags } = encodeMmb(ir, samples ? { samples } : {}));
       } catch (e) {
         log('MMB export failed: ' + e.message, 'err');
         return;
@@ -2755,6 +2755,19 @@
           URL.revokeObjectURL(url);
         }
         log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+        // PCM blobs live in a separate sample bank now (plan-se.md), not inside
+        // the .mmb. Save it as a sidecar the game loads into its own ROM bank.
+        // (The shared-bank bundler that packs BGM+SE samples together is later.)
+        if (sampleBank && sampleBank.length) {
+          const smpBlob = new Blob([sampleBank], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(smpBlob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = baseName + '.smp';
+          a.click();
+          URL.revokeObjectURL(url);
+          log(`Exported ${baseName}.smp sample bank (${sampleBank.length} bytes)`, 'info');
+        }
       } catch (e) {
         if (e?.name !== 'AbortError') log('MMB save failed: ' + e.message, 'err');
       }
@@ -3552,14 +3565,19 @@
       if (_drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
         try {
           let mmbBytes;
+          let mmbSampleBank = null;
           if (_lastGoodIR && _drvBackend) {
-            // Bake the samples in, or the driver has no SAMPLE_BANK to play.
+            // PCM blobs ride a separate sample bank now (plan-se.md); pass it to
+            // the player alongside the control MMB. (In the JS player this is a
+            // plain array read — the on-hardware per-frame bank latch is the
+            // Z80's; see drv/tools/run-trace.mjs.)
             const samples = await pcmSampleBlobsForMmb(_lastGoodIR);
-            const { bytes, diagnostics } = encodeMmb(
+            const { bytes, sampleBank, diagnostics } = encodeMmb(
               _lastGoodIR,
               samples ? { samples } : {},
             );
             mmbBytes = bytes;
+            mmbSampleBank = sampleBank;
             reportMmbDiagnostics(diagnostics);
           } else if (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL)) {
             log('Loading ' + currentIrURL + '…');
@@ -3570,7 +3588,7 @@
             throw new Error('No compiled IR available for the current source');
           }
           player = new DrvPlayer(writeToWorklet);
-          player.loadMMB(mmbBytes);
+          player.loadMMB(mmbBytes, mmbSampleBank);
           if (_lastGoodIR) {
             buildChStrips(_lastGoodIR);
             renderDynParams(_lastGoodIR);
