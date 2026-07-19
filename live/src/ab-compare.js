@@ -52,6 +52,13 @@ function irWritesToFrames(writes) {
 function normalize(writes) {
   const ymRuns = new Map();
   const ymLast = new Map();
+  const ymPending = new Map(); // (b): per (port:addr) current-frame last write
+  const commitYm = (k, pend) => {
+    if (ymLast.get(k) === pend.value) return;
+    ymLast.set(k, pend.value);
+    if (!ymRuns.has(k)) ymRuns.set(k, []);
+    ymRuns.get(k).push({ frame: pend.frame, value: pend.value });
+  };
   const keys = {}; // $28 channel key (data & 0x07) → [{frame, data}]
   const psgLatch = { reg: 0, ch: 0, isAtt: false };
   const tone = [[], [], []];
@@ -118,12 +125,21 @@ function normalize(writes) {
       seq.push({ frame: w.frame, data: w.data });
       continue;
     }
+    // YM op/channel registers: collapse to the per-frame FINAL value (last
+    // write in the frame wins), then record a change-point only when that
+    // frame-final differs from the previous one. drv-player's clock is
+    // frame-quantized (`_when()` is frame-level), so same-frame writes hit the
+    // synth at one instant — last wins — and this makes the signature
+    // coalescing-invariant: a full-voice PARAM_SET burst (which writes some
+    // registers twice per frame, e.g. $30 = ML then DT) and the single
+    // VOICE_SET it folds into produce the same frame-final, so the baseline is
+    // stable across the coalescing pass ([[plan-voice-set]] decision (b)).
     const k = `${w.port}:${w.addr}`;
-    if (ymLast.get(k) === w.data) continue;
-    ymLast.set(k, w.data);
-    if (!ymRuns.has(k)) ymRuns.set(k, []);
-    ymRuns.get(k).push({ frame: w.frame, value: w.data });
+    const pend = ymPending.get(k);
+    if (pend && pend.frame !== w.frame) commitYm(k, pend);
+    ymPending.set(k, { frame: w.frame, value: w.data });
   }
+  for (const [k, pend] of ymPending) commitYm(k, pend);
   return { ymRuns, keys, psg: { tone, att, noise } };
 }
 

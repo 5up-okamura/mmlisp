@@ -1,9 +1,43 @@
-# VOICE_SET / VOICE_TABLE — Part 1 in progress (2026-07-18)
+# VOICE_SET / VOICE_TABLE — Part 1 DONE (2026-07-19)
 
-Status: **Part 1 (encoding + runtime) partly done — drv-player side works and is
-verified; Z80 handler + one verification-methodology decision remain.** Committed
-behind an **off-by-default** flag so `verify:all` stays green; a cloud session
-continues from here.
+Status: **Part 1 (encoding + runtime) COMPLETE — coalescing ON by default; Z80
+handler landed; ab-compare decision (b) applied; `verify:all` green (33 TRACE
+MATCH + ab-gate 34 scores, 20 clean).** Part 2 (SE/BGM voice restore) is the
+remaining work — see the updated scope note below (user flagged SE can steal
+PSG/PCM channels, not only FM).
+
+## Part 1 — what landed (2026-07-19)
+
+- **Z80 handler** in a NEW overlay `ovl_voice` (index 6), reached via resident
+  `tramp_voice` (~14 B resident: trampoline + ovl_desc_tab entry). Chosen over
+  resident because VOICE_SET is cold (per voice switch); the handler measured
+  ~166 B and the resident image had only ~76 B free. `load_overlay` re-latches
+  the MMB bank before the handler runs, so it reads the event stream + the
+  VOICE_TABLE from the window. `G_VOICE` = VOICE_TABLE base (`ovl_mmb` locates
+  section 0x0006 → payload+2). `G_VS_*` loop scratch at `G_BASE+$57..$5d`.
+- **Write order mirrors drv-player `_voiceSet` exactly** (zero-tolerance trace):
+  op outer (0..3), register inner ($30/$40/$50/$60/$70/$80/$90), then $B0.
+  Change-only via `ym_shadow_read` (unwritten reads 0 = drv init baseline, so an
+  SSG-omitting voice never writes $90). The four TL bytes seed `CHS_VTL`.
+- **Two Z80 bugs found + fixed (both real, keep):**
+  1. **CHS_ALG not updated** — VOICE_SET wrote $B0 raw but not the `CHS_ALG`
+     field `write_carrier_tls` reads to pick the carrier mask, so the vel/vol
+     recompose used a stale mask (boot ALG7 = all-carriers) and wrote extra
+     carrier TLs. Fix: `(iy+CHS_ALG) = entry[28] & 7` at the $B0 write (psf_alg
+     parity). Reproduces only with `:vel < 15` (attenuated recompose).
+  2. **`$B0` wrote the wrong port** — `ld de,28` (to index entry[28]) clobbered
+     D (= port) to 0, so fm4's (port 1) $B0 landed on port 0. Invisible for
+     port-0 channels. Fix: add 28 to HL via A, leaving D intact. Gate `m3-voice`
+     covers both ports + a mid-song switch specifically to lock these.
+- **ab-compare decision (b) applied**: `normalize` (live/src/ab-compare.js)
+  collapses same-frame YM (port 0/1) writes to the per-frame FINAL value
+  (drv-player's `_when()` is frame-level), so a full-voice burst (which writes
+  some registers twice/frame, e.g. $30 = ML then DT) and the VOICE_SET it folds
+  into share a signature → the ab baseline is coalescing-invariant. Baseline
+  re-frozen (`ab-gate --update`): counts only dropped (spurious transients
+  removed), no clean score broke, +1 clean (m3-voice).
+- **Flag**: `export-mmb.js` `voiceCoalesce !== false` (ON by default; pass
+  `false` to force the raw burst). Docs: driver.md §10 updated.
 
 Design is frozen: driver.md §10 (Option B), mmb.md §11 (29-byte entry, layout
 frozen), opcodes.md 0x14. This is the M3-tail encoding optimization + the
@@ -55,57 +89,41 @@ voiceCoalesce on vs off across the WHOLE corpus (drv-player probe). ab-core save
    value))` before storing. Without this, VOICE_SET wrote $34=0x64 vs the burst's
    0x04.
 
-## PENDING (cloud continues here)
+## Part 2 — SE + BGM voice restore (NOT started; scope widened 2026-07-19)
 
-1. **Z80 VOICE_SET handler + VOICE_TABLE reader.** Block-copy the 29-byte entry
-   into the raw Z80 op-shadow (304 B shadow region) and queue the register
-   writes. **Critical parity:** it must reproduce drv-player's *change-only*
-   behavior — drv-player's `_voiceSet` skips a register write when the new byte
-   equals the value derived from the STRUCTURED shadow (not `_shadow`), which
-   matters for **$90/SSG**: `_emitInitWrites` never writes $90, so a voice that
-   omits SSG must leave $90 unwritten (both burst and VOICE_SET). Make the Z80
-   side skip $90 (and any register) when unchanged vs its shadow, and ensure the
-   Z80 shadow treats $90 as its init value. Placement: cold (per-note-rare) so an
-   overlay fits, BUT ovl_rare is now full (0 slack after the d_marker eviction) —
-   so resident (~60-80 B; **90 B free** after eviction) or a new/rebalanced
-   overlay. Add a gate score `m3-voice.mmlisp` (2+ voices, a mid-song voice
-   change) once the Z80 side lands; verify:all Z80≡drv-player.
-2. **ab-compare granularity — DECISION NEEDED (user's call, was mid-discussion
-   when we checkpointed).** VOICE_SET inherently collapses same-frame *transient*
-   writes: the burst writes some registers twice (via two params each — $30=ML+DT,
-   $50=KS+AR, $60=DR+AMEN, $80=SL+RR, $B0=ALG+FB), VOICE_SET writes each once.
-   Per-frame FINAL state is identical (verified), but ab-compare compares
-   change-point RUNS (finer than the frame-quantized drv-player), so it flags the
-   collapsed transients — all at f0, all same-frame. ab-gate baseline therefore
-   changes for every voice-using score (e.g. m2-mailbox 0→16, m2-csm 68→76).
-   Options:
-   - **(a)** Re-freeze the ab-baseline (accept; many scores, incl. clean ones,
-     gain same-frame-collapse "mismatches" — pollutes ab-core's pristine role).
-   - **(b)** Change ab-compare's `normalize` to per-frame-final (collapse
-     same-frame writes to last-wins). This is the *correct* comparison for a
-     frame-quantized reference driver (drv-player's `_when()` is frame-level, so
-     same-frame writes hit the synth at one instant, last wins), keeps baselines
-     clean, and makes the baseline coalescing-invariant. **Recommended (b).**
-     Caveat: [[z80-driver-status]] cautioned "do NOT add a same-frame-collapse
-     tolerance to ab-compare until the divergence is understood" — that condition
-     is **now met** (the divergence is VOICE_SET's inherent transient collapse),
-     and same-frame YM collapse is provably safe w.r.t. the Layer-2 PSG issue
-     (that is a *cross-frame* key-off divergence; collapsing within a frame can't
-     hide it). Confirm (a) vs (b) with the user, then finish accordingly.
+Uses VOICE_SET at runtime to re-establish a displaced BGM voice after an SE
+ends. Prereq for the SE feature ([[plan-driver-features]] item 2). **Open design
+question**: does a BGM re-key restore the patch for free, or must a note *held
+under the SE* be restored mid-sustain (the hard case)? Needs the SE/channel-
+ownership mechanism (driver.md §2.2) studied.
 
-## Commit state / how to resume
+**User input 2026-07-19 (important scope correction):** SE is NOT FM-only — it
+can steal a **PSG (sqr1-3/noise)** or **PCM (pcm1-3)** channel too. The eviction
+side (driver.md §2.2 ownership) is already channel-type-agnostic; the RESTORE
+side must be designed per channel family, because "voice" means different things:
 
-- **`opts.voiceCoalesce` defaults OFF** in export-mmb.js, so no VOICE_SET is
-  emitted and `verify:all` is green with the WIP committed. The drv-player
-  handler + mmb-voices are dormant until the flag flips on.
-- Cloud sequence: (1) implement the Z80 VOICE_SET handler with change-only parity;
-  (2) get the (a)/(b) decision and apply it; (3) flip voiceCoalesce default ON;
-  (4) re-freeze / adjust ab-baseline; (5) add `m3-voice` gate; (6) verify:all
-  Z80≡drv-player + ab-gate; (7) docs (driver.md §10 status, mmb.md §11, opcodes
-  0x14, drv/README) + update this memory / mark Part 1 done.
-- Budget: **90 B free** (after the d_marker eviction). VOICE_SET Z80 handler is
-  the main new resident cost if not overlaid.
-- Verify the drv-player side without the Z80: the per-frame-final probe (compare
-  `encodeMmb(ir,{voiceCoalesce:false})` vs `{voiceCoalesce:true}` in drv-player,
-  last write per (port,addr) per frame — must be identical), and `abCompare` on a
-  voice score (currently shows the same-frame-collapse diffs described above).
+- **FM (fm1-6):** restore the 29-byte patch → this is VOICE_SET (Part 1 gives the
+  mechanism). The heavy case.
+- **PSG (sqr1-3/noise):** no patch table — state is tone period (pitch) + 4-bit
+  attenuation (+ soft-envelope/macro state). Restore is light: re-key or
+  re-write period+att. No VOICE_TABLE needed.
+- **PCM (pcm1-3):** state is sample assignment + `PV_VOL` (ties into
+  [[plan-driver-features]] item 4) + playback position. Restore = re-arm sample +
+  volume.
+
+Common hard sub-case across all three: a note/sample *held* under the SE (mid-
+sustain) vs one that re-keys naturally after. Design the restore for all three
+families together before implementing.
+
+## Part 1 history (superseded detail — kept for the two exporter bugs)
+
+The exporter/drv-player side (`live/src/mmb-voices.js` `planVoices`, export-mmb
+`voiceCoalesce`, drv-player `_voiceSet`) landed earlier and is verified. Two
+exporter bugs found + fixed then (keep):
+
+1. **encodeB0 field-name mismatch** — `encodeB0` read `regs.feedback/algorithm`
+   but the mmb-voices shadow uses `sh.fb/sh.alg` → $B0 came out 0. Fixed:
+   `b[28] = ((sh.fb&7)<<3)|(sh.alg&7)`.
+2. **DT clamp** — `FM_DT` range is `{0,7}` (raw 3-bit field), so PARAM_SET emits
+   `Math.round(clampForTarget("FM_DT3", -2))` = 0 (out-of-range clamps to 0, not
+   the 3-bit 6). mmb-voices must clamp the same way in `applyToShadow`.

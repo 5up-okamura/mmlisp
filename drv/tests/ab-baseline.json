@@ -13,9 +13,9 @@
   },
   "m2-motion.mmlisp": {
     "ok": false,
-    "mismatches": 1247,
+    "mismatches": 855,
     "compileErrors": 0,
-    "digest": "29c3613c"
+    "digest": "cd11f191"
   },
   "m2-pcm.mmlisp": {
     "ok": true,
@@ -31,9 +31,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 630,
+    "mismatches": 629,
     "compileErrors": 0,
-    "digest": "094eb705"
+    "digest": "fa4e9826"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -51,13 +51,13 @@
     "ok": false,
     "mismatches": 8,
     "compileErrors": 0,
-    "digest": "b8f15b38"
+    "digest": "a2453b30"
   },
   "m3-fm3op.mmlisp": {
     "ok": false,
-    "mismatches": 24,
+    "mismatches": 12,
     "compileErrors": 0,
-    "digest": "23127053"
+    "digest": "118fb7cf"
   },
   "m3-fm6-pcm.mmlisp": {
     "ok": true,
@@ -91,9 +91,9 @@
   },
   "m3-macro-multi.mmlisp": {
     "ok": false,
-    "mismatches": 219,
+    "mismatches": 218,
     "compileErrors": 0,
-    "digest": "e4be00b5"
+    "digest": "a9b5e175"
   },
   "m3-macro-pitch.mmlisp": {
     "ok": true,
@@ -173,17 +173,23 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-voice.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "stress-m1.mmlisp": {
     "ok": false,
-    "mismatches": 29,
+    "mismatches": 25,
     "compileErrors": 0,
-    "digest": "dc97bb59"
+    "digest": "3a4008da"
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
     "mismatches": 92,
     "compileErrors": 0,
-    "digest": "3803dcbb"
+    "digest": "820abb6e"
   },
   "ab-core.mmlisp": {
     "ok": true,
@@ -193,8 +199,8 @@
   },
   "demo1.mmlisp": {
     "ok": false,
-    "mismatches": 37,
+    "mismatches": 29,
     "compileErrors": 0,
-    "digest": "5302c70d"
+    "digest": "3dfc35dd"
   }
 }

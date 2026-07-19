@@ -127,8 +127,14 @@ G_PCM_MUL   equ G_BASE+$52      ; u32  scratch for the 16x16 multiply / divide
 ; right rule. bit0 = macro apply (never store-back to CHS_PITCH, so an override
 ; macro leaves no residual detune once it ends/clears); bit1 = additive (ride
 ; CHS_PITCH+sample). override macro=1, additive=3; a directive PARAM_SET runs
-; with 0 (store the sticky base). Cleared after each macro apply. ($56..$66 free.)
+; with 0 (store the sticky base). Cleared after each macro apply.
 G_MADD      equ G_BASE+$56      ; u8  0=directive, 1=override macro, 3=additive
+; VOICE_SET (0x14) — VOICE_TABLE base + d_voice_set loop scratch ($57..$5d).
+G_VOICE     equ G_BASE+$57      ; u16  VOICE_TABLE entry base (payload+2; 0 none)
+G_VS_ENT    equ G_BASE+$59      ; u16  d_voice_set current entry base
+G_VS_OP     equ G_BASE+$5b      ; u8   d_voice_set op index (0..3, outer loop)
+G_VS_GRP    equ G_BASE+$5c      ; u8   d_voice_set register-group index (0..6)
+G_VS_REG    equ G_BASE+$5d      ; u8   d_voice_set register base ($30..$90)  ($5e..$66 free)
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
 ; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
@@ -497,6 +503,16 @@ tramp_rare:
     pop af
     jp OVERLAY_SLOT
 
+; tramp_voice: resident trampoline for VOICE_SET (0x14), evicted to ovl_voice
+; (cold, per voice switch). Entry with HL = PC at the opcode, IX = TCB. The
+; overlay handler (d_voice_set) ends `jp d_next`.
+tramp_voice:
+    push hl                 ; track PC (opcode ptr)
+    ld a,6                  ; overlay index 6 = ovl_voice
+    call load_overlay
+    pop hl
+    jp OVERLAY_SLOT
+
 ; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
 ; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd,
 ; 2 = ovl_pcm, 3 = ovl_boot, 4 = ovl_rare, 5 = ovl_mmb).
@@ -507,6 +523,7 @@ ovl_desc_tab:
     db 0,0,0,0              ; overlay 3 (ovl_boot)
     db 0,0,0,0              ; overlay 4 (ovl_rare)
     db 0,0,0,0              ; overlay 5 (ovl_mmb)
+    db 0,0,0,0              ; overlay 6 (ovl_voice)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
@@ -560,9 +577,9 @@ d_next:
     jp z,tramp_rare         ; → ovl_rare
     cp $a2                  ; CSM_RATE
     jp z,tramp_rare         ; → ovl_rare
-    ; reserved opcodes: length-decode and skip (opcodes.md §1)
     cp $14                  ; VOICE_SET
-    jp z,d_skip2
+    jp z,tramp_voice        ; → ovl_voice
+    ; reserved opcodes: length-decode and skip (opcodes.md §1)
     cp $63                  ; PARAM_MUL
     jp z,d_param_mul
     cp $64                  ; PARAM_FROM_VAL

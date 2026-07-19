@@ -1,0 +1,126 @@
+; ovl_voice — overlay (index 6). Hosts VOICE_SET (0x14), which is cold
+; (per voice switch, not per frame), so it rides an overlay rather than the
+; scarce resident image. Reached via the resident `tramp_voice` trampoline,
+; which loads this overlay and jumps to its entry (d_voice_set) with HL = PC
+; at the opcode and IX = TCB; load_overlay re-latches the MMB bank before the
+; jump, so the handler can read the event stream and the VOICE_TABLE. The
+; handler ends `jp d_next` (resident). Assembled at the slot with the resident
+; image's symbols preloaded, so it calls resident helpers (chs_ptr_iy,
+; fm_port_off, op_e, ym_shadow_read, ym_write) and reads G_*/IX offsets.
+;
+; Apply a 29-byte VOICE_TABLE entry to the track's FM channel — the coalesced
+; form of a full-voice PARAM_SET burst (mmb.md §11). The write ORDER mirrors
+; drv-player _voiceSet exactly (zero-tolerance trace gate): op outer (0..3),
+; register inner ($30,$40,$50,$60,$70,$80,$90), then $B0. Entry bytes are laid
+; out register-major, so entry[group*4 + op]. Writes are change-only vs the
+; shadow; ym_shadow_read reads an unwritten register as 0, matching drv-player's
+; init baseline (so an SSG-omitting voice never writes $90, like the burst it
+; replaces). The $40/TL bytes ALSO seed CHS_VTL (voiced TL) like psf_tl, so a
+; later vel/vol recompose (write_carrier_tls) stays correct.
+        org OVERLAY_SLOT
+d_voice_set:                ; HL = PC at opcode, IX = TCB
+    inc hl
+    ld a,(hl)               ; voice_id
+    inc hl
+    push hl                 ; save stream continuation
+    ld c,a                  ; C = voice_id (temp, before choff)
+    ld hl,(G_VOICE)
+    ld a,h
+    or l
+    jp z,vs_ret             ; no VOICE_TABLE → nothing to apply
+    ld a,c                  ; entry base = G_VOICE + id*29
+    ld de,29
+    or a
+    jr z,vs_base
+vs_mul:
+    add hl,de
+    dec a
+    jr nz,vs_mul
+vs_base:
+    ld (G_VS_ENT),hl
+    ld a,(ix+T_CH)
+    cp 6
+    jp nc,vs_ret            ; non-FM channel: no voice patch
+    call chs_ptr_iy         ; IY = channel state (for CHS_VTL)
+    ld a,(ix+T_CH)
+    call fm_port_off        ; D = port, C = choff (held across the loops)
+    xor a
+    ld (G_VS_OP),a          ; op outer loop 0..3
+vs_oploop:
+    ld a,$30
+    ld (G_VS_REG),a
+    xor a
+    ld (G_VS_GRP),a         ; register-group inner loop 0..6
+vs_grploop:
+    ld a,(G_VS_GRP)         ; entry byte = (G_VS_ENT + group*4 + op)
+    add a,a
+    add a,a                 ; group*4
+    ld hl,G_VS_OP
+    add a,(hl)              ; + op
+    ld hl,(G_VS_ENT)
+    add a,l
+    ld l,a
+    jr nc,vs_noc
+    inc h
+vs_noc:
+    ld b,(hl)               ; B = data byte
+    ld a,(G_VS_OP)          ; addr = op_e(op, regbase, choff, port)
+    ld hl,G_VS_REG
+    ld e,(hl)               ; E = register base
+    call op_e               ; E = final addr; B/C/D preserved
+    ld a,(G_VS_REG)
+    cp $40                  ; $40/TL group → seed CHS_VTL[op]
+    jr nz,vs_wr
+    push de                 ; preserve port/addr
+    push bc                 ; preserve data/choff
+    ld a,(G_VS_OP)
+    add a,CHS_VTL
+    ld e,a
+    ld d,0
+    push iy
+    pop hl
+    add hl,de               ; HL = &CHS_VTL[op]
+    pop bc                  ; restore B = voiced TL
+    ld (hl),b
+    pop de                  ; restore port/addr
+vs_wr:
+    call vs_put             ; change-only write B → D:E
+    ld a,(G_VS_REG)         ; next register group
+    add a,$10
+    ld (G_VS_REG),a
+    ld hl,G_VS_GRP
+    inc (hl)
+    ld a,(hl)
+    cp 7
+    jr c,vs_grploop
+    ld hl,G_VS_OP           ; next op
+    inc (hl)
+    ld a,(hl)
+    cp 4
+    jp c,vs_oploop
+    ld hl,(G_VS_ENT)        ; $B0 = entry[28] (fb<<3 | alg); add 28 without
+    ld a,28                 ; touching D (= port), which vs_put needs
+    add a,l
+    ld l,a
+    jr nc,vs_b0n
+    inc h
+vs_b0n:
+    ld b,(hl)
+    ld a,b                  ; cache ALG in CHS_ALG (psf_alg parity) — the
+    and 7                   ; carrier-mask selector write_carrier_tls reads;
+    ld (iy+CHS_ALG),a       ; VOICE_SET replaces the folded PARAM_SET FM_ALG
+    ld a,$b0
+    add a,c                 ; + choff
+    ld e,a
+    call vs_put
+vs_ret:
+    pop hl                  ; restore stream ptr
+    jp d_next
+
+; vs_put: B = data, D = port, E = addr → write only if it differs from the
+; shadow (unwritten reads as 0). Mirrors drv-player _voiceSet's change-only put.
+vs_put:
+    call ym_shadow_read     ; A = current value (0 if never written); BC/DE kept
+    cp b
+    ret z                   ; unchanged → skip
+    jp ym_write

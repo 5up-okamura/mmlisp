@@ -24,6 +24,8 @@ ml_sec:
     jr z,ml_sb
     cp 5
     jr z,ml_val
+    cp 6
+    jr z,ml_voice
     cp 7
     jr z,ml_macro
     cp 8
@@ -48,6 +50,12 @@ ml_sb:
 ml_lut:
     call ml_payload
     ld (G_LUT),de
+    jr ml_next
+ml_voice:
+    call ml_payload         ; DE = payload (entry_count u16, then 29-B entries)
+    inc de
+    inc de                  ; skip entry_count → entry[0] base (VOICE_SET indexes it)
+    ld (G_VOICE),de
     jr ml_next
 ml_val:
     call ml_payload         ; DE = payload (count u16, then count × i16 inits)

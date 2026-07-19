@@ -391,10 +391,10 @@ export function encodeMmb(ir, opts = {}) {
 
   // VOICE_TABLE coalescing (driver.md §10): fold full-voice PARAM_SET bursts
   // into deduplicated 29-byte entries + VOICE_SET. Plans are keyed by track
-  // index; a null plan means the track has no coalescable voice.
-  // OFF by default until the Z80 VOICE_SET handler lands (see
-  // .claude/memory/plan-voice-set.md); opt in with opts.voiceCoalesce === true.
-  const voices = opts.voiceCoalesce === true ? planVoices(ir) : { table: [], plans: new Map() };
+  // index; a null plan means the track has no coalescable voice. ON by default
+  // (the Z80 VOICE_SET handler landed in ovl_voice); pass
+  // opts.voiceCoalesce === false to force the raw PARAM_SET burst.
+  const voices = opts.voiceCoalesce !== false ? planVoices(ir) : { table: [], plans: new Map() };
 
   for (const track of ir.tracks ?? []) {
     const trackSeq = trackEntries.length; // this track's index (pushed at tail)

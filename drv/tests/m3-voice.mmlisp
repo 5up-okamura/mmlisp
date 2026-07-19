@@ -1,0 +1,30 @@
+; VOICE_SET / VOICE_TABLE gate (M3, driver.md §10). Exercises the coalesced
+; full-voice opcode on BOTH ports (fm1 = port 0, fm4 = port 1 — the port bug
+; the $B0 write hit) and a MID-SONG voice switch under sustain (a second
+; VOICE_SET at a non-start position). Two ALGs (4 and 7) exercise the CHS_ALG
+; carrier-mask update VOICE_SET must do for the vel/vol recompose to be correct.
+; :vel < 15 forces the carrier TL attenuation path.
+
+(def lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def stab :alg 7 :fb 2
+  :ar1 31 :dr1 5 :sr1 0 :rr1 7 :sl1 1 :tl1 20 :ks1 0 :ml1 1 :dt1 1
+  :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 12 :ks2 0 :ml2 3 :dt2 0
+  :ar3 31 :dr3 5 :sr3 0 :rr3 7 :sl3 1 :tl3 20 :ks3 0 :ml3 1 :dt3 2
+  :ar4 31 :dr4 6 :sr4 1 :rr4 7 :sl4 2 :tl4 4 :ks4 0 :ml4 5 :dt4 0)
+
+; fm1 (port 0): start on lead, switch to stab mid-song, back to lead.
+(fm1 :tempo 150 :oct 4 :len 4 :vel 12
+  lead c e
+  stab g > c <
+  lead e c)
+
+; fm4 (port 1): the same two voices — locks the $B0 port write.
+(fm4 :oct 2 :len 2 :vel 13
+  stab c
+  lead g
+  stab c)

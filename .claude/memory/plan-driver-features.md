@@ -82,15 +82,18 @@ repeat); CALL/RET stays count-less (pure share). The synergy is **composition**
 (CALL nested in LOOP), not merger — no new opcode, both primitives stay small
 and direct.
 
-### 2. SE + BGM voice restore — bundle with VOICE_SET, ~30-50 B, cold
+### 2. SE + BGM voice restore — VOICE_SET (Part 1) DONE; restore = Part 2
 
-**Do not count SE-restore and VOICE_SET separately — they are one feature.** SE
-steals an FM channel (channel-ownership eviction already exists, driver.md §2.2);
-when it ends, the displaced BGM voice (its FM patch) must be re-established. That
-re-establishment **is** VOICE_SET (the remaining-M3 runtime patch opcode +
-export-time VOICE_TABLE coalescing). Open design question: does a BGM re-key
-restore the patch "for free," or must a note **held** under the SE be restored
-mid-sustain (the hard case)?
+VOICE_SET (the FM patch mechanism) **landed 2026-07-19** (see [[plan-voice-set]]).
+The remaining Part 2 is the runtime **restore** after an SE ends. SE steals a
+channel (ownership eviction exists, driver.md §2.2 — channel-type-agnostic);
+restoring the displaced BGM state is what's left. Open questions:
+- **Not FM-only (user, 2026-07-19):** SE can steal **PSG (sqr1-3/noise)** or
+  **PCM (pcm1-3)** too. Restore is per channel family: FM → VOICE_SET (29-B
+  patch); PSG → tone period + 4-bit att (no table, light); PCM → sample + PV_VOL
+  (item 4) + position. Design all three together.
+- Does a BGM re-key restore for free, or must a note/sample **held** under the SE
+  be restored mid-sustain (the hard case, all families)?
 
 ### 3. DJ-style transitions — same-MMB first (0 B), cross-MMB deferred
 

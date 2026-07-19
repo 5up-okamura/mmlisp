@@ -445,6 +445,19 @@ into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
 full-voice PARAM_SET bursts into VOICE_TABLE entries + `VOICE_SET` (0x14); the
 IR is unchanged. Rationale below.
 
+**Landed 2026-07-19 (coalescing ON by default).** The exporter pass
+(`live/src/mmb-voices.js`) and both players carry it. The Z80 `VOICE_SET`
+handler rides `ovl_voice` (overlay 6, cold — a voice switch is per-note-rare,
+not per-frame), reached through the resident `tramp_voice` trampoline; it
+block-copies the 29-byte entry in drv-player's exact write order (op outer,
+register inner, then `$B0`), change-only vs the shadow (an unwritten register
+reads as 0, so an SSG-omitting voice never writes `$90`), seeds the four
+`CHS_VTL` voiced-TL bytes like `psf_tl`, and updates `CHS_ALG` so the vel/vol
+carrier-TL recompose picks the right carrier mask. The ab-compare gate's
+`normalize` now collapses same-frame YM writes to the per-frame final value
+(drv-player's clock is frame-quantized), which makes the ab baseline
+coalescing-invariant (§12). Gate: `m3-voice` (both ports, mid-song switch).
+
 Today a full FM voice change compiles to ~30 same-tick PARAM_SET events:
 ~90 stream bytes and 30 dispatch iterations per change, repeated for every
 voice switch in the song.
