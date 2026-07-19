@@ -75,50 +75,84 @@ variant instead of *evict*.
 `T_STATUS`: 0 idle / 1 playing / 2 held (len=0). Add **3 = suspended** (has state,
 does not dispatch, does not own its channel).
 
-## Design (draft — for agreement)
+## Design (SETTLED with the user 2026-07-19)
 
-### A. Triggering an SE (suspend-not-evict)
+### A. Triggering an SE — decision: option 2, runtime `START_SE` command
 
-A normal `START_TRACK` evicts the owner. SE needs a variant that **suspends**:
-- **`START_SE` mailbox command** (or a flag bit on START_TRACK). Starts the SE's
-  track(s) from the bundled control MMB; for each channel the SE claims, the
-  current owner is **suspended (T_STATUS→3) and snapshotted** rather than stopped.
-- The SE's tracks play normally (they own the channels during the SE).
-- **SE end**: when every SE track on a suspended channel has ended (stream EOT or
-  STOP), the channel is **reclaimed**: restore the snapshot, resume the BGM TCB
-  (T_STATUS→1), and re-key if it was mid-note.
+- **`START_SE` = mailbox cmd 7** (NOT a source `:se` marker — the user chose the
+  runtime command; it needs no language/IR/MMB change, and the hard suspend/
+  restore core is identical either way). Same path as START_TRACK (walk the MMB
+  track table, init a TCB) but for each channel the SE claims, the current owner
+  is **suspended + snapshotted**, not evicted; the SE track's TCB is marked
+  isSe (a runtime flag) so SE-end can find and restore the displaced owner.
+- **SE-end reclaim = the SE track's EOT OR STOP_TRACK** (single-shot SEs
+  self-clean at EOT; held/looping SEs end on STOP). Hooks `d_eot` and
+  `stop_track`: before `CHS_OWNER=$ff`, if this track is an isSe that displaced a
+  suspended owner, restore that owner (snapshot back, `CHS_OWNER`→owner,
+  `T_STATUS`→1) and re-key its held note.
+- `T_STATUS`: 0 idle / 1 playing / 2 held → add **3 = suspended**.
 
-Open: SE-end detection — per-SE-track EOT vs an explicit `END_SE`/STOP_TRACK from
-the game. Leaning: reclaim when the SE track that suspended a given owner ends
-(EOT or STOP_TRACK), so single-shot SEs self-clean and held/looping SEs end on
-STOP.
+### B. Snapshot + restore (mid-sustain) — decision: essential fields
 
-### B. Snapshot + restore (mid-sustain), per channel family
+Snapshot the displaced channel's live state on suspend; restore + re-key on
+reclaim. **Essential fields only** (VOICE_SET reconstructs the FM patch):
 
-On suspend, snapshot the displaced channel's live state; on reclaim, restore it
-and re-key the sounding note. State to save differs per family:
+- **FM (fm1-6):** snapshot note/vel/vol/gate/pitch + **current voice id** (needs a
+  new `CHS_VOICE` byte written by VOICE_SET / the voice-ref path) + active macro
+  ids. Restore = VOICE_SET the id, re-apply level, **re-key** via the existing
+  `apply_keyon` (mmlispdrv.z80:1838 = channel_off + key_on of `CHS_NOTE`).
+- **PSG (sqr1-3/noise):** snapshot tone period + 4-bit att (+ macro state).
+  Restore = re-write period + att, re-key. Light.
+- **PCM (pcm1-3): loop restore IS required (user, 2026-07-19).** PCM is
+  soft-mixed (no `CHS_OWNER` — pcm ids 20-22 skip the channel block), so the
+  suspend/snapshot happens at a **different hook**: when an isSe track's
+  `pcm_note_on` is about to overwrite an **active** `G_PCMV[vi]` voice (a BGM
+  loop), snapshot the 17-B voice struct (PV_ACT/BASE/LEN/INC/**POS**/LOOPE/LOOPL);
+  on SE-end restore the 17 B. Restoring `PV_POS` resumes the loop **from where it
+  was = no dropout** (not time-synced; advancing pos by the elapsed SE frames is
+  a later refinement). Re-key semantics for FM/PSG is a re-attack (FM EG can't
+  resume mid-way) — matches the "don't drop the note" goal.
 
-- **FM (fm1-6):** the patch is re-establishable via VOICE_SET (Part 1) IF the
-  driver knows the BGM's current voice id — so **track a per-channel current
-  voice id** (a new `CHS_VOICE` byte, written by VOICE_SET / the voice-ref path).
-  Plus the live note/vel/vol/pitch/gate + active macro ids. Restore = VOICE_SET
-  the id, re-apply level, re-key the note (mid-sustain).
-- **PSG (sqr1-3/noise):** no patch table — snapshot tone period + 4-bit
-  attenuation (+ soft-envelope/macro state). Restore = re-write period + att,
-  re-key. Light.
-- **PCM (pcm1-3):** snapshot the sample id + PV_VOL (item 4) + playback position.
-  Restore = re-arm the voice. (Resuming a held PCM sample mid-buffer is the
-  analogue of mid-sustain — decide whether to resume at the saved position or
-  restart the sample.)
+Snapshot storage: a small fixed pool (start N=2-3 SE-stolen channels). FM/PSG use
+CH_STATE free bytes ($02-04/$07/$09-0b) or a `G_BASE` block ($5e..$66 free); PCM
+uses a per-voice 17-B snapshot slot.
 
-Snapshot storage: the channel-state block is 64B; save the essential subset
-(~20-30B) into a per-suspended-channel snapshot buffer. SE usually steals 1-few
-channels → a small pool (RAM budget: packed, but a snapshot region is feasible;
-size it to the max concurrent SE-stolen channels — start with a small fixed N).
+### CRITICAL FINDING — drv-player has NO track lifecycle (2026-07-19)
 
-Open: full-64B snapshot (simple, RAM-heavy) vs essential-fields (lean). Likely
-essential-fields; VOICE_SET already reconstructs the FM patch so only the
-note/level/macro/position state needs saving.
+**This is the real scope driver.** `live/src/drv-player.js` (the verify:all
+reference) has **no `_startTrack`, no channel ownership, no eviction** — every
+track is auto-started in `_reset` (`running:true` from frame 0) on statically
+assigned channels; START_TRACK/STOP_TRACK are Z80-only (JS treats them as
+auto-driven, `_applyMailbox` drv-player.js:1606 has no case 1/2). So to verify SE
+at zero tolerance, the **entire suspend/restore lifecycle must be BUILT in
+drv-player too**: suppress the SE track's auto-start, add a `case 0x07` START_SE
+(suspend the same-channel running track + snapshot + start the SE), and reclaim
+on SE EOT/STOP (restore + re-key), for FM/PSG/PCM. drv-player derives "the
+channel's owner" from the running track whose channelId matches (no CHS_OWNER
+needed there). This is the heavy part — the "option 2 is light" estimate was only
+true of the Z80/toolchain side.
+
+Harness (run-trace.mjs): auto-starts ALL tracks at frame 0 (:108-118). The SE
+gate must NOT auto-start the SE track. Since option 2 has no source marker, add a
+harness auto-start control — e.g. the `.cmds.json` drives the initial
+START_TRACKs explicitly and a flag disables auto-start-all — and BOTH players
+apply the same suppression. postCommand already forwards arbitrary cmd bytes, so
+cmd 7 posts without harness change; only the two drivers need the handler.
+
+### Implementation hooks (from the 2026-07-19 map — start here next session)
+
+- Z80 mailbox: `mbox_drain` mmlispdrv.z80:372; reserved gate `cp 7`→`cp 8` at
+  :419-420; route cmd 7 like cmd 1 (ovl_mmb + a setup path with a suspend flag).
+- Z80 start/evict→suspend: `ovl_setup.z80` start_track :9-130, **evict block
+  :99-116** is what SE replaces with suspend+snapshot; claim/defaults :117-122.
+- Z80 reclaim: `d_eot` mmlispdrv.z80:609-629 and `stop_track` ovl_cmd.z80:18-48
+  (before `CHS_OWNER=$ff`). Re-key: `apply_keyon` :1838; `key_on` :1386.
+- Z80 layout: TCB free byte **$1d** (displaced-owner index); T_FLAGS free bits;
+  CH_STATE gaps $02-04/$07/$09-0b; T_STATUS add 3.
+- drv-player: `_applyMailbox` :1606 (add case 7), `_reset` tracks :408-427
+  (suppress SE auto-start), END_OF_TRACK :738-745 + `_stopTrack` :1640-1645
+  (reclaim), `_noteOn`/`_keyOn` :585/:655 (re-key), `freshFmChannel` :124-152.
+- PCM: `pcm_note_on` (ovl_pcm.z80) snapshot hook; `G_PCMV` struct (17 B).
 
 ### C. Sample-bank separation (the 32K-wall enabler)
 
@@ -150,31 +184,27 @@ note/level/macro/position state needs saving.
 
 SE restore is **cold** (per suspend/reclaim event) → rides an overlay, ~0
 resident. New RAM: `CHS_VOICE` (1B/channel) + the snapshot pool. The sample-bank
-latch is the only hot addition (light, hardware-validated). Resident 76B free +
-overlay slot headroom + shared-sample-bank frees the control window. So bytes are
-not the constraint — the work is the design above + the toolchain bundler/link.
+latch is the only hot addition (light, hardware-validated). Resident 64B free
+(after step 1) + overlay slot headroom + the sample bank frees the control
+window. So bytes are not the constraint — the work is the drv-player lifecycle
+build (CRITICAL FINDING) + the Z80 mirror + the harness/gate.
 
-## Sequencing (proposed)
+## Sequencing
 
-1. **Sample-bank separation** (toolchain + driver) — the enabler; needed for PCM
-   anything. Gate: existing PCM scores play byte-identical with samples in the
-   shared bank; hardware cycle check.
-2. **Suspend/restore core (FM + PSG)** — T_STATUS=3, CHS_VOICE, snapshot pool,
-   START_SE/reclaim, mid-sustain re-key. Gate `m3-se`.
-3. **PCM restore** + PCM-SE gate.
-4. **Bundler/link tool** — pack BGM + SE control data into one MMB, shared sample
-   bank, sample-id namespace. (Can precede 1-3 for authoring, but 1 is the
-   feasibility gate.)
+1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at
+   top). The 32K-wall enabler for PCM.
+2. **Suspend/restore core** — **NEXT (not started).** START_SE (cmd 7),
+   T_STATUS=3 + snapshot + reclaim + re-key, on **both** the Z80 (light — has the
+   ownership model) AND drv-player (heavy — must build the whole track lifecycle,
+   see the CRITICAL FINDING). Implement in slices: (a) harness auto-start control
+   + `m3-se` gate + `.cmds.json`; (b) drv-player START_SE + suspend/reclaim/re-key
+   (the reference); (c) Z80 to match; then FM, PSG, PCM in turn; each `verify:all`
+   Z80≡drv-player. This is the substantial slice — budget a focused session.
+3. **Bundler/link tool** — pack BGM + SE control data into one MMB + the shared
+   sample bank (reuses step 1's format), sample-id namespace across sources.
+   Needed for real BGM+SE concurrency; compile-time, node-testable.
 
-Each step is independently gated; stop anywhere. Steps 1 and 4 are compile/
-driver work doable + verifiable in the cloud; the hot mixer latch (1) and the
-re-key timing (2) get final validation at hardware bring-up.
-
-## Open decisions to confirm before implementing
-
-- SE-end/reclaim trigger (per-SE-track EOT vs explicit END/STOP).
-- Snapshot granularity (essential fields vs full 64B).
-- Sample-id namespace + link model (how sources declare the shared bank).
-- PCM held-sample restore (resume at position vs restart).
-- Start point: sequencing above starts with sample-bank separation (feasibility
-  gate) — confirm vs starting with the FM/PSG suspend-restore core.
+Decisions locked (2026-07-19): option 2 (`START_SE` command, no source marker);
+reclaim on SE EOT/STOP; essential-field snapshot; PCM loop restore via 17-B
+G_PCMV snapshot resuming at PV_POS; re-key = re-attack. The one thing to design
+at implementation time is the harness auto-start-control shape.
