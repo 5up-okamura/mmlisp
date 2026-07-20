@@ -1,9 +1,13 @@
 # Post-M3 driver feature roadmap — budget meeting outcome (2026-07)
 
-Status: **ordered and costed, not started** (except the overlay split, which
-landed as the enabler). Decided with the user 2026-07 in a budget-driven design
-review. Implement in the order below, in separate implementation chats. Each
-item is independently valuable — stop anywhere.
+Status (updated 2026-07-20): **most items LANDED.** CALL/RET (1), SE + restore
+(2), PCM per-voice volume (4), and `(trig N)` are done in emulation; the
+sample-bank half of the 32K wall (5) landed too. **Remaining: DJ cross-MMB
+transitions (3, hardware-gated), WIDE_OFFSETS (5), and the CALL/RET
+shared-loop-body extension (1).** Decided with the user 2026-07 in a
+budget-driven design review; implemented in separate chats. Per-feature detail
+is now in [[z80-driver-status]] (Done list) and [[plan-se]]; this file keeps the
+budget frame + the still-open items.
 
 ## The reframe: two budgets, not one
 
@@ -82,18 +86,15 @@ repeat); CALL/RET stays count-less (pure share). The synergy is **composition**
 (CALL nested in LOOP), not merger — no new opcode, both primitives stay small
 and direct.
 
-### 2. SE + BGM voice restore — VOICE_SET (Part 1) DONE; restore = Part 2
+### 2. SE + BGM voice restore — DONE (2026-07-20)
 
-VOICE_SET (the FM patch mechanism) **landed 2026-07-19** (see [[plan-voice-set]]).
-The remaining Part 2 is the runtime **restore** after an SE ends. SE steals a
-channel (ownership eviction exists, driver.md §2.2 — channel-type-agnostic);
-restoring the displaced BGM state is what's left. Open questions:
-- **Not FM-only (user, 2026-07-19):** SE can steal **PSG (sqr1-3/noise)** or
-  **PCM (pcm1-3)** too. Restore is per channel family: FM → VOICE_SET (29-B
-  patch); PSG → tone period + 4-bit att (no table, light); PCM → sample + PV_VOL
-  (item 4) + position. Design all three together.
-- Does a BGM re-key restore for free, or must a note/sample **held** under the SE
-  be restored mid-sustain (the hard case, all families)?
+VOICE_SET (the FM patch mechanism) landed 2026-07-19; the full SE suspend/restore
+followed. **All landed:** `START_SE` (mailbox cmd 7), suspend-not-evict
+(`T_STATUS=3`), mid-sustain snapshot/restore for **FM + PSG + PCM**, and SE
+**priority** (N=1 slot). The mid-sustain-vs-re-key question resolved to
+per-family restore (FM → VOICE_SET 29-B patch; PSG → period+att re-attack; PCM →
+17-B `G_PCMV` snapshot resuming at `PV_POS`). Full detail + the remaining SE
+polish (N=1→pool, stop_track reclaim, bundler) live in [[plan-se]].
 
 ### 3. DJ-style transitions — same-MMB first (0 B), cross-MMB deferred
 
@@ -109,37 +110,27 @@ so no protocol change (driver.md §5.3). **Defer the cross-MMB cycle cost to
 hardware bring-up** — measure with budget.mjs before committing. This is also
 what BGM-MMB + SE-MMB (separate files) needs; same mechanism.
 
-### 4. PCM runtime volume — per-voice, bit-shift, ~25-40 B + hot cycles
+### 4. PCM runtime volume — DONE (2026-07-20), per-voice bit-shift
 
-PCM has **no** level path today (mmlispdrv.z80: "fm3-op/pcm: no level path"; the
-mixer adds raw signed samples). Samples stream from ROM live (pva_fetch every
-tick), so volume is **unavoidably per-sample** — there is no bake-and-forget like
-FM's TL. (My earlier "note-on scale avoids per-sample" was FM thinking, wrong for
-PCM.)
+Landed as `:vel`+`:vol`+`:master` composed to a per-voice arithmetic-shift
+(`sra`) attenuation with mute (`PV_SHIFT`), matching the FM/PSG loudness ladder.
+No new opcode (rides the existing `PARAM_SET VEL`/`VOL`/`MASTER`). Detail +
+budget reorg (evicted `start_sweep` to `ovl_sweep`) in [[plan-se]] and
+[[z80-driver-status]]. **Stretch goal still open:** a ROM multiply LUT for
+smoother/exact (non-pow2) gain — deferred by the user until the bit-shift version
+is confirmed. **Cycle** cost (per-sample `sra`, up to 175×3/frame on the heaviest
+routine) is trace-correct in emulation, hardware-unvalidated.
 
-Decided:
-- **Per-voice**, not master. A `PV_VOL` field per voice; the mixer applies it to
-  each fetched sample.
-- **Bit-shift** apply (user: "shift is enough"). Small shift count → a few
-  instructions per sample per voice.
-- **note-on latches `PV_VOL` from vel, and a macro can rewrite `PV_VOL` per
-  frame** — same field, no conflict. The per-sample apply just reads the current
-  value; the macro path (macro engine reaching `G_PCMV`) is the added byte cost
-  and buys the expressiveness.
-- **Multiply LUT = stretch goal.** A 256-B scaled table per level gives
-  constant-time arbitrary (non-pow2) gain — more expressive, adopt only if bytes
-  allow.
+### 5. PCM 32K wall — narrower half DONE (sample-bank separation); WIDE_OFFSETS still open
 
-Watch the **cycle** cost: per-voice-per-sample shift is up to 175×3 sites/frame
-in the already-heaviest routine. Validate on hardware.
-
-### 5. PCM 32K wall — WIDE_OFFSETS, ~50-100 B, confidence low, LAST
-
-MMB ≤ one 32KB bank window today; PCM-heavy songs push past it. The
-`WIDE_OFFSETS` flag is **reserved** (mmb.md §12 / header bit 0): u32 offsets +
-mid-stream banking. Format + driver change, biggest unknown. Do last — after the
-dedup pass (1) and cross-MMB banking (3) exist and the need is measured. A
-narrower option: bank the SAMPLE_BANK section independently of event/track data.
+The **narrower option — bank the sample data independently of event/track data
+— LANDED 2026-07-19** (PCM blobs moved to a dedicated ROM bank the mixer latches
+per frame, `G_SMP_BANK`; see [[plan-se]] Step 1). That lifts the wall for
+PCM-heavy songs and is the SE-bundling enabler. **Still open:** full
+`WIDE_OFFSETS` (mmb.md §12 / header bit 0 — u32 offsets + mid-stream control-data
+banking) for control streams that alone exceed 32KB. ~50-100 B, confidence low,
+LAST — after the dedup pass (1) and cross-MMB banking (3), when the need is
+measured.
 
 ## Music→game triggers — `(trig N)` — DONE (2026-07-18, explicit form)
 
@@ -194,11 +185,21 @@ the order above.
 real dense use-case appears; (b) ticks query vs delivered — if (a) goes dense, the
 ring answers both.
 
-## Related: DAC ownership is now a separate, de-risked decision
+## Related: DAC ownership — SUPERSEDED, folded here (plan-dac-ownership deleted)
 
-The 18 B "last KEY-ON wins" policy in [[plan-dac-ownership]] was blocked by the
-13 B wall and justified by mucom. With mucom dropped as a driver-policy input and
-the wall gone (178 B free), DAC ownership is **no longer a budget problem** — it's
-a pure design choice. The live direction is a **static** rule (PCM-using songs
-cede fm6, arbitrated at compile time, possibly via `:prio` treating fm6+pcm1-3 as
-layers of the one physical channel), not runtime arbitration. See that file.
+fm6 and the DAC are one physical channel (`$2B` bit7 selects); today **PCM wins
+unconditionally** (a PCM note-on writes `$2B=$80`, fm6 silent until all voices
+end). An earlier "last KEY-ON wins" **runtime**-arbitration plan (18 B) is
+**dropped** — its two premises fell: mucom is no longer a driver-policy input
+(so no corpus forces the driver's hand), and the byte wall that made it look
+costly is gone. **Live direction: a STATIC compile-time rule** — a PCM-using
+song cedes fm6, arbitrated in the compiler (most promising shape: `:prio`
+treating fm6 + pcm1-3 as parallel layers of the one channel), so the driver
+arbitrates **zero bytes** and could reclaim the ~12 B DAC-release path. Measured
+facts worth keeping: the MMB format is unaffected (runtime behaviour only), and
+`process_pcm` already early-outs (`call pcm_any_active / ret z`) so fm6 taking
+the channel *idles* the driver's most expensive routine — the cycle "saving" is
+paid in music (the drums stopped), not free. **Open sub-problems for the static
+rule:** `:prio`'s monophonic flatten can't yet express "fm6 vs the *group*
+{pcm1,pcm2,pcm3}"; and runtime SE (START_SE, not in the compiled score) can't be
+flattened at compile time, so SE-over-PCM stays a hardware fact.

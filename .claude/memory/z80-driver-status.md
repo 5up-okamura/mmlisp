@@ -1,21 +1,45 @@
 # MMLispDRV (Z80 driver) — status and remaining work
 
-Updated: 2026-07-07. Narrative history lives in `docs/roadmap.md` Phase 3;
+Updated: 2026-07-20. Narrative history lives in `docs/roadmap.md` Phase 3;
 architecture in `docs/driver.md`; port facts/deviations in `drv/README.md`.
-This file is the compact continuation state.
+This file is the compact continuation state. Live byte/stack figures come from
+`cd drv && npm run size` / `npm run budget` (authoritative; the numbers quoted
+below are the 2026-07-20 baseline).
 
-## Done (verified in emulation, `cd drv && npm run verify:all`, 18-19 trace scores, zero-diff)
+## Done (verified in emulation, `cd drv && npm run verify:all`, zero-diff, both ports)
 
-- M1 core + **all of M2** (sweeps/PARAM_ADD/TEMPO_SWEEP, cent-interpolated
-  NOTE_PITCH, CSM, single-DAC PCM, KEY_OFF/SET_PARAM/FADE_TRACK mailbox).
-- Most of M3: FM3 independent-OP, macro engine (MACRO_SET/CLEAR +
-  MACRO_TABLE §0x0007; step/curve/stage; `:semi`; i16 pitch macros; up to 3
-  concurrent macros/channel), dynamic value slots (SET_VAL,
-  PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, `$time`), 3-channel PCM soft-mix
-  (~10.5 kHz, hard-clip), `:keyon` retrigger, slur/legato (NOTE_ON_EX bit3).
+- **M1 core + all of M2**: sweeps/PARAM_ADD/TEMPO_SWEEP, cent-interpolated
+  NOTE_PITCH, CSM, single-DAC PCM, KEY_OFF/SET_PARAM/FADE_TRACK mailbox.
+- **M3**: FM3 independent-OP; macro engine (MACRO_SET/CLEAR + MACRO_TABLE
+  §0x0007; step/curve/stage; `:semi`; i16 pitch macros; up to 3 concurrent
+  macros/channel; **additive** + **scaled** macro branches — `(macro :T (* LFO
+  $slot))`); dynamic value slots (SET_VAL, PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL,
+  `$time`) + **M3 dyn slice** (inline sweep `:from`/`:to` slot-fed); 3-channel
+  PCM soft-mix (~10.5 kHz, hard-clip); `:keyon` retrigger; slur/legato
+  (NOTE_ON_EX bit3).
+- **M3 tail**: **CALL/RET** (0x44/0x45, shared loop-control stack) + encode-time
+  **dedup pass** (`live/src/mmb-dedup.js`, trace-neutral); **VOICE_SET/VOICE_TABLE**
+  (0x14 §0x0006, coalescing ON by default, `ovl_voice`); **`(trig N)`** music→game
+  triggers (MARKER 0x42 → MB_TSTAT, verified by the marker gate).
+- **v0.6 value machine**: generic shadow read (`read_op_param`, `op_param_tab`
+  inverse — all FM op params RMW-readable), left-fold lowering. Compile-side eval
+  is compile-time only; the driver gained readers + flags, never an evaluator.
+  (Batched frame flush was built then **reverted** — poor byte/benefit; redo as
+  full-frame at the hardware phase.)
+- **SE (sound effects)**: `START_SE` mailbox cmd 7; suspend-not-evict the
+  displaced BGM (`T_STATUS=3`) with mid-sustain snapshot/restore per channel
+  family — **FM + PSG + PCM all landed**; **priority** (N=1 slot, `a1`=prio:
+  higher preempts, lower dropped). Overlays `ovl_se`/`ovl_claim`; snapshot pools
+  `SE_SNAP`/`PCM_SNAP` carved off the stack. Sample-bank separation (PCM blobs
+  in a dedicated ROM bank the mixer latches per frame, `G_SMP_BANK`) is the
+  32K-wall enabler that rode in with it. Remaining SE work: [[plan-se]].
+- **PCM per-channel volume**: `:vel`+`:vol`+`:master` compose to a bit-shift
+  (`sra`) attenuation with mute (`PV_SHIFT`); matches FM/PSG loudness.
 - Infra: TCB=16 (full track capacity), LUTs in ROM (LUT_TABLE §0x0008),
-  code overlays (`ovl_boot`/`ovl_cmd`/`ovl_setup`/`ovl_pcm`) broke the 8KB
-  ceiling; resident image ~6.3KB with **~14 B headroom** at `DATA_BASE=$18F0`.
+  **10 code overlays** (`ovl_setup`/`ovl_cmd`/`ovl_pcm`/`ovl_boot`/`ovl_rare`/
+  `ovl_mmb`/`ovl_voice`/`ovl_se`/`ovl_sweep`/`ovl_claim`) broke the 8KB ceiling;
+  resident 6036 B with **~20 B headroom** under `G_PCMV` ($17A8), overlay slot
+  274 B, at `DATA_BASE=$18F0`.
 
 ## PSG soft-envelope: release-decay fix + a deeper ir↔drv divergence (2026-07-18)
 
@@ -88,9 +112,9 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
 
 ## Remaining work (in rough priority order)
 
-1. **M3 tail**: VOICE_SET opcode + the exporter's VOICE_TABLE coalescing
-   pass (voices currently ride as PARAM_SET runs — correctness-equal, just
-   bigger streams); NOTE_ON_EX `macro_ref` field.
+1. **M3 tail** — **VOICE_SET + VOICE_TABLE coalescing DONE (2026-07-19)** (0x14
+   §0x0006, ON by default, ovl_voice — see the Done list). Still open: NOTE_ON_EX
+   `macro_ref` field.
    **CALL/RET + encode-time dedup pass — DONE (2026-07-18).** Z80 `d_call`/`d_ret`
    share the loop control stack (CALL entries tagged remaining=0xFF), ~101 B
    resident (free 169→68 B — heavier than the 45-60 B estimate; a shared
@@ -133,29 +157,14 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait
    behavior on silicon, measure interrupt stack depth (relevant before any
    `DATA_BASE` bump). Emulator is not cycle-accurate by design.
-   **Decide PCM `:vel` here** — parked on this measurement (2026-07-17, user):
-   - **Confirmed bug**: `:vel` on a pcm track reaches the driver (export-mmb
-     emits it as `PARAM_SET VEL` on the pcm channel) but is **silently dropped**
-     — `_paramSet` bails at `channelId >= 6`, and the PCM voice has no amplitude.
-     Proof: DAC ($2A) output is **byte-identical across `:vel` 12/4/1** on
-     m3-pcm-softmix (52,500 samples). ir-player *does* honour it (worklet gain),
-     so this is an ir↔drv divergence the Z80≡drv gate can't see (both ignore it)
-     — same blind spot as the 2026-07-15 trio.
-   - **Design settled**: attenuate by **arithmetic shift**, not a multiply or a
-     LUT (user: "ビットシフトで十分"). `shift = (15 - vel) >> 2` → 0/-6/-12/-18 dB,
-     `vel 0` = silent (matches FM/PSG). Fits with no RAM growth: **PV_ACT spare
-     bits** (bit1 silent, bit4/5 = binary shift count) + sticky per-channel vel in
-     the free globals at `G_BASE+$57`. Snapshot the shift into the voice at
-     note-on and on live `PARAM_SET VEL`, so the mix loop stays one `sra` chain.
-   - **Blocked on bytes**: the mix loop is per-frame → resident. The shift alone
-     measured **+21 B vs 13 B free** (resident 5890 > G_PCMV ceiling 5882); the
-     whole feature needs ~50 B. Fund via **d_marker eviction (~25 B, needs a
-     marker gate first — see the rare-handler row)** + psf commonization, or the
-     `DATA_BASE` bump this item unblocks.
-   - **Cycles are the real question**: the shift runs 525×/frame on the already
-     dominant term. Measure here before spending the bytes.
-   - JS-reference-only is **not** shippable: drv would attenuate and Z80 would
-     not → verify:all breaks. Both sides land together or neither.
+   **PCM `:vel` — RESOLVED (PCM per-channel volume LANDED 2026-07-20).** The
+   parked "confirmed bug" (`:vel` silently dropped on pcm channels — `_paramSet`
+   bailed at `channelId >= 6`, no amplitude field) is fixed: `:vel`+`:vol`+
+   `:master` now compose to a bit-shift (`sra`) attenuation with mute
+   (`PV_SHIFT`), matching FM/PSG loudness — see the Done list and [[plan-se]].
+   What this item still holds is the **cycle** question: the per-sample `sra`
+   runs up to 175×3/frame on the dominant PCM term — trace-correct in emulation,
+   needs hardware cycle validation.
 4. **PAL correction** — deferred (driver.md §3.3): scale increments 6/5 at
    load or PAL-precomputed MMB via the reserved PAL_TIMEBASE header flag.
 5. Deferred/known-open (docs): batched frame flush + state-based comparator

@@ -13,36 +13,26 @@ Rules:
 
 Index:
 
-- [z80-driver-status.md](z80-driver-status.md) — MMLispDRV: what's done, the
-  remaining-work list, and how to verify.
-- [plan-v0.6.md](plan-v0.6.md) — v0.6 approved plan: score removal (done),
-  import (done), compile-time eval, phase status and sequencing. roadmap.md has
-  the compact public version.
-- [plan-se.md](plan-se.md) — SE (sound effects) design in progress: bundle
-  control data + shared sample bank (32K-wall solution), suspend-not-evict the
-  displaced BGM track (T_STATUS=3) with a mid-sustain snapshot/restore per
-  channel family (FM/PSG/PCM). Design draft, not started. Read before SE work.
-- [plan-voice-set.md](plan-voice-set.md) — VOICE_SET/VOICE_TABLE **Part 1 DONE**
-  (2026-07-19): coalescing ON by default, Z80 handler in ovl_voice, ab-compare
-  (b) applied, verify:all green. **Part 2 (SE/BGM voice restore) remains** — and
-  its scope widened: SE can steal PSG/PCM channels too, so restore is per
-  channel family (see the file).
+- [z80-driver-status.md](z80-driver-status.md) — MMLispDRV living status: the
+  Done list (M1–M3, v0.6 value machine, VOICE_SET, CALL/RET, SE, PCM volume,
+  trig), the remaining-work list (hardware bring-up, PAL, open ir↔drv
+  divergences), the byte/stack budget, and how to verify. **The driver's
+  compact record — roadmap.md does not cover driver internals.**
+- [plan-se.md](plan-se.md) — SE (sound effects): **core LANDED** (sample-bank
+  separation, FM/PSG/PCM suspend-restore, priority, PCM per-channel volume).
+  Kept for the remaining work — the BGM+SE bundler/link tool (not started),
+  the N=1→pool, stop_track reclaim, and the worklet/hardware follow-ups. The
+  SE implementation record.
 - [plan-driver-features.md](plan-driver-features.md) — post-M3 driver feature
   roadmap (budget-meeting outcome): the two-budget frame (resident bytes vs
-  per-frame cycles), the overlay split that freed 13→178 B, and the ordered plan
-  — CALL/RET, SE+VOICE_SET restore, DJ transitions, per-voice PCM volume,
-  32K-wall — plus `(trig N)` music→game triggers. Start here for what's next.
-- [plan-dac-ownership.md](plan-dac-ownership.md) — fm6 vs PCM: **SUPERSEDED.**
-  "Last KEY-ON wins" is on hold — mucom dropped as a policy input and the budget
-  wall gone, so the live direction is a *static* compile-time rule (likely
-  `:prio`), not runtime arbitration. Banner at top; measured cost table still
-  useful. See plan-driver-features.md.
-- [plan-mucom-pcm.md](plan-mucom-pcm.md) — mucom88 PCM (part K / ADPCM) import:
-  **done**, both ear-gates passed. Kept only for the open items it lists (all
-  also in roadmap.md); delete once those move out.
-- [design-eval.md](design-eval.md) — v0.6 Phase 3 settled design: the
+  per-frame cycles) + the overlay-split enabler. **Most items landed**
+  (CALL/RET, SE, PCM volume, trig, sample-bank); remaining = DJ cross-MMB
+  transitions (hardware-gated), WIDE_OFFSETS, the CALL/RET shared-loop-body
+  extension. Also holds the folded-in DAC-ownership decision (static `:prio`).
+- [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic
   shadow read, left-fold lowering, slot allocation), CALL/RET + dedup, the
   measured Z80 budget + reduction ladder, and the ordered implementation
-  plan with per-step gates. Implement from here.
+  plan with per-step gates. The design rationale record (language.md carries
+  the shipped spec).

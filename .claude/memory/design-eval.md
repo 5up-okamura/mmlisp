@@ -1,10 +1,13 @@
 # v0.6 Phase 3 — compile-time eval: settled design
 
-Status: **design settled 2026-07-12** (two design rounds; the five open
-questions from [plan-v0.6.md](plan-v0.6.md), the operator A/B question, and
-the runtime-boundary question are decided below). Implementation has NOT
-started — the ordered plan with per-step gates is §12. This file is the
-normative design record; language.md is amended as the implementation lands.
+Status: **design settled 2026-07-12; implementation largely landed** (the value
+machine — generic shadow read, left-fold lowering, additive + scaled macro
+branches, M3 dyn slice — plus CALL/RET are done in emulation; see
+[[z80-driver-status]]). Two design rounds decided the five open questions (the
+v0.6 approved-plan context now lives in roadmap.md's v0.6 section), the operator
+A/B question, and the runtime-boundary question, below. The ordered plan with
+per-step gates is §12. This file is the **normative design record** (the design
+rationale + value machine); language.md carries the shipped spec.
 
 Round 2 (user-driven) materially upgraded the runtime side and **reverses two
 round-1 decisions**:

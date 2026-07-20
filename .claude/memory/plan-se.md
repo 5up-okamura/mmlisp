@@ -1,9 +1,31 @@
-# SE (sound effects) — design in progress (2026-07-19)
+# SE (sound effects) — core LANDED; bundler + polish remain (updated 2026-07-20)
 
-Status: **design agreed; sequencing step 1 (sample-bank separation) LANDED
-2026-07-19.** VOICE_SET Part 1 (the FM restore mechanism) landed earlier; this
-is the "Part 2" SE/BGM story. Supersedes the terse item 2 in
-[[plan-driver-features]] and the Part 2 note in [[plan-voice-set]].
+Status: **SE core is DONE in emulation.** Sample-bank separation (step 1),
+suspend/restore for **FM + PSG + PCM** (step 2), SE **priority** (N=1), and PCM
+per-channel volume all landed and are verified (`cd drv && npm run verify:all` —
+37 trace scores 0-diff + ab-gate 38). This is the SE record (roadmap.md does not
+cover it). It supersedes the terse item 2 in [[plan-driver-features]]; the
+VOICE_SET mechanism it builds on is recorded in docs (driver.md §10, mmb.md §11,
+opcodes 0x14) and [[z80-driver-status]].
+
+**Remaining (why this file is kept):**
+- **Bundler / link tool (step 3, NOT started)** — pack BGM + SE control data
+  into one ≤32KB MMB + the shared sample bank; sample-id namespace across
+  sources. Compile-time, node-testable. The current SE gate fakes this with the
+  `.cmds.json` `remapChannels` stand-in.
+- **N=1 → small SE_SNAP pool** for two simultaneous SEs (FM+PSG), indexed by a
+  slot in the SE TCB. The gate's SEs are non-overlapping so N=1 suffices today.
+- **stop_track reclaim** for held/looping SEs (only `d_eot` reclaim is wired;
+  the gate SEs end at EOT). NOTE: reclaim-from-stop_track runs inside ovl_cmd, so
+  it must not self-overwrite by loading ovl_voice.
+- Live-verify PCM on the drv backend + the `.smp` export sidecar (blocked in the
+  cloud env — CodeMirror CDN). Worklet gap: `worklet.js` applies only `:vel` to
+  PCM, not `:vol`/`:master`/mute — align it so the browser preview matches the
+  driver (own task).
+- Hardware cycle validation of the per-frame sample-bank latch + the per-sample
+  volume `sra` (the dominant PCM path).
+
+The landed detail follows below (kept as the implementation record).
 
 ## Step 1 — sample-bank separation: LANDED (2026-07-19)
 
