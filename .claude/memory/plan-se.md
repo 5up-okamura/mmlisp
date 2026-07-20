@@ -19,9 +19,12 @@ opcodes 0x14) and [[z80-driver-status]].
   the gate SEs end at EOT). NOTE: reclaim-from-stop_track runs inside ovl_cmd, so
   it must not self-overwrite by loading ovl_voice.
 - Live-verify PCM on the drv backend + the `.smp` export sidecar (blocked in the
-  cloud env — CodeMirror CDN). Worklet gap: `worklet.js` applies only `:vel` to
-  PCM, not `:vol`/`:master`/mute — align it so the browser preview matches the
-  driver (own task).
+  cloud env — CodeMirror CDN). **Worklet gap CLOSED (2026-07-21):** the live
+  preview (ir-player.js → worklet.js) now composes `:vel`+`:vol`+`:master` into
+  the driver's bit-shift attenuation + mute, matching drv-player's
+  `_pcmComposeShift` (grid-verified 0-diff over all 16384 vel×vol×master). See
+  the "PCM worklet alignment" section below. Still needs an audible browser
+  playback pass (no automated worklet gate).
 - Hardware cycle validation of the per-frame sample-bank latch + the per-sample
   volume `sra` (the dominant PCM path).
 
@@ -255,10 +258,10 @@ the exporter already emits `PARAM_SET VEL` before every `PCM_NOTE_ON`, and `:vol
 - **Deferred (user):** a general-purpose **ROM** LUT (no RAM) to replace the bit-
   shift with a smoother/exact gain — *after* the bit-shift version is confirmed.
   Not needed yet.
-- **Deferred (worklet gap):** the live `worklet.js` still applies only `:vel`
-  (continuous 2 dB/step) + the UI fader to PCM — it does **not** compose the score's
-  `:vol`/`:master` or mute on 0. So the browser preview won't match the driver for
-  pcm `:vol`/`:master` until the worklet is aligned (own task).
+- **Worklet gap CLOSED (2026-07-21).** See the "PCM worklet alignment" section
+  at the end of this file — the live preview now reproduces the driver's
+  bit-shift attenuation + mute (design A, chosen by the user over a continuous
+  ideal).
 - **State (both ports).** `PV_SHIFT` (voice-struct offset 17): bits0-2 = `sra`
   count, bit7 = mute. `PCM_V_SIZE` 17→18; `G_PCMV` $17AB→$17A8. Compose inputs
   `vel`/`vol` live in globals (`G_PCM_VEL`/`G_PCM_VOL`, G_BASE+$60/$63) so master
@@ -368,3 +371,34 @@ Decisions locked (2026-07-19): option 2 (`START_SE` command, no source marker);
 reclaim on SE EOT/STOP; essential-field snapshot; PCM loop restore via 17-B
 G_PCMV snapshot resuming at PV_POS; re-key = re-attack. The one thing to design
 at implementation time is the harness auto-start-control shape.
+
+## PCM worklet alignment — LANDED (2026-07-21)
+
+The live browser preview (`live/src/ir-player.js` → `live/worklet.js`) now
+matches the driver's PCM soft-mix volume. **Design chosen by the user: A —
+reproduce the driver's 6 dB bit-shift grid** (not a continuous ideal), so the
+preview predicts the shipped Z80 output. Applied as a float `gain = 2^-shift`
+in the worklet mix (the worklet stores Float32 samples, so no integer `sra`);
+the loudness grid matches, quantization/truncation noise below the DAC is not
+reproduced.
+
+- **ir-player.js** owns the composition (mirrors drv-player's `_pcmComposeShift`,
+  grid-verified 0-diff over all 16384 vel×vol×master): new `_pcmComposeShift`,
+  per-slot sticky state `_pcmChanVel/_pcmChanVol` (3 slots), `_emitPcmShift`.
+  `_dispatchPcmNoteOn` sends `{shift, muted}` instead of `vel`. **Fixed a latent
+  bug**: a PCM track's `_chIndex` is its voice slot 0-2, which collided with FM
+  channel indices — a `PARAM_SET VOL` on a pcm track fell through to the FM
+  `_applyParam` and corrupted FM ch 1-3's TL. New `_dispatchPcmEvent` (routed by
+  a `_isPcm` flag, next to `_isPsg`) intercepts PCM tracks; PCM has no sweep
+  engine (mirrors the driver, `_startSweep` bails ch≥10) so sweeps/other cmds are
+  swallowed, not misrouted. MASTER refactored to `_applyMasterChange` (FM + PSG +
+  all PCM voices) so a `:master` on any track keeps all three in step.
+- **worklet.js**: `pcmVelGain`→`shiftToGain`; voice carries `shift/muted/shiftGain`;
+  muted voice contributes 0 but still advances (matches the driver); new timed
+  `pcm-set-shift` message recomposes a live loop voice mid-`:vol`/`:master`
+  (keyed by slot `ch`). The UI mixer fader (`pcm-set-vol`) stays a separate axis
+  multiplied on top.
+- **Verification**: composition is node-grid-verified identical to drv-player.
+  No automated worklet gate exists (worklet is browser-only; the drv gates cover
+  Z80≡drv-player). Remaining: an audible browser playback pass (e.g. the
+  `m3-pcm-volmix` score) to confirm the wiring by ear.

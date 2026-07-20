@@ -8,8 +8,10 @@
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
  *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate, loopStart?, loopEnd?}] }
- *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, vel: number, mode: 'shot'|'loop' }
- *   { type: 'pcm-note-off', when: number, sample: string }
+ *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, ch: number, track: number, shift: number, muted: boolean, mode: 'shot'|'loop' }
+ *   { type: 'pcm-note-off', when: number, sample: string, ch?: number }
+ *   { type: 'pcm-set-shift', when: number, ch: number, shift: number, muted: boolean }  — recompose a live pcm slot (score :vol / :master)
+ *   { type: 'pcm-set-vol', track: number, gain: number }  — live UI mixer fader (separate from the score)
  *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
@@ -34,17 +36,18 @@ import {
   MD_LPF_DEFAULT_CUTOFF,
   SCOPE_CHANNELS,
 } from "./src/synth-md.js";
-import { TL_DB_PER_STEP, velToTlAtten } from "./src/ir-utils.js";
 
 /**
- * PCM velocity -> linear gain, on the SAME ladder FM rides (velToTlAtten): 2 dB
- * per step, vel 15 = unity, vel 0 = a -30 dB floor. `:vel` attenuates; it never
- * mutes (silence is a rest, or vol/master 0) — so the same :vel means the same
- * thing whether the track is FM or PCM.
+ * PCM soft-mix gain from the driver's composed bit-shift attenuation. ir-player
+ * composes :vel + :vol + :master into `shift` (0-7) + `muted` on the driver's
+ * 6 dB grid (see _pcmComposeShift), matching the Z80 soft-mixer / drv-player;
+ * the mixer applies gain 2^-shift per sample (a float multiply here in place of
+ * the driver's per-sample `sra`, so the loudness grid matches). `muted` is true
+ * silence (vol/master 0); the voice still advances, as on the driver.
  */
-function pcmVelGain(vel) {
-  const dB = velToTlAtten(vel) * TL_DB_PER_STEP; // TL steps -> dB of attenuation
-  return Math.pow(10, -dB / 20);
+function shiftToGain(shift) {
+  const s = shift < 0 ? 0 : shift > 7 ? 7 : shift;
+  return Math.pow(2, -s);
 }
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
@@ -167,7 +170,13 @@ class YM2612Processor extends AudioWorkletProcessor {
             loopEnd: Number(s?.loopEnd),
           });
         }
-      } else if (msg.type === "pcm-note-on" || msg.type === "pcm-note-off") {
+      } else if (
+        msg.type === "pcm-note-on" ||
+        msg.type === "pcm-note-off" ||
+        msg.type === "pcm-set-shift"
+      ) {
+        // Timed so a mid-loop :vol / :master recompose lands with the score,
+        // like the note-ons themselves.
         const targetFrame =
           msg.when != null
             ? Math.round(msg.when * sampleRate)
@@ -175,13 +184,14 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._insertTimed(this._pcmTimedQueue, targetFrame, msg);
       } else if (msg.type === "pcm-set-vol") {
         // Live per-PCM-channel mixer fader, keyed by track index (matches the
-        // track sent on pcm-note-on). Applies to current and future voices.
+        // track sent on pcm-note-on). A separate axis from the score's
+        // vel/vol/master (which ride the composed shift), applied on top.
         const track = Number(msg.track);
         const g = Math.max(0, Math.min(1, Number(msg.gain)));
         if (Number.isFinite(track) && Number.isFinite(g)) {
           this._pcmTrackGain.set(track, g);
           for (const v of this._pcmVoices) {
-            if (v.track === track) v.gain = (v.velGain ?? v.gain) * g;
+            if (v.track === track) v.gain = (v.shiftGain ?? v.gain) * g;
           }
         }
       } else if (msg.type === "writes") {
@@ -339,15 +349,14 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   _startPcmVoice(msg) {
     const rate = Number(msg.rate);
-    const vel = Number(msg.vel);
     const sample = String(msg.sample ?? "");
     if (!sample) return;
-    // Same velocity ladder as FM (ir-utils velToTlAtten): 2 dB per step, vel 15
-    // = unity, vel 0 = a -30 dB floor rather than silence — `:vel` attenuates,
-    // it does not mute (silence is a rest, or vol/master 0). A linear vel/15
-    // would both mute at 0 and mean something different from the same :vel on an
-    // FM track.
-    const velGain = pcmVelGain(Number.isFinite(vel) ? vel : 15);
+    // ir-player already composed :vel + :vol + :master into the driver's
+    // bit-shift attenuation (shift 0-7) + mute; apply gain 2^-shift so the
+    // preview matches the Z80 soft-mixer / drv-player.
+    const shift = Number.isFinite(Number(msg.shift)) ? Number(msg.shift) : 0;
+    const muted = !!msg.muted;
+    const shiftGain = shiftToGain(shift);
     const sampleEntry = this._pcmSamples.get(sample);
     const data = sampleEntry?.data;
     if (!data || data.length === 0) return; // missing sample: nothing to play
@@ -382,8 +391,10 @@ class YM2612Processor extends AudioWorkletProcessor {
       sample,
       pos: 0,
       step,
-      velGain,
-      gain: velGain * trackGain,
+      shift,
+      muted,
+      shiftGain,
+      gain: shiftGain * trackGain,
       mode,
       released: false,
       loopStart,
@@ -412,6 +423,25 @@ class YM2612Processor extends AudioWorkletProcessor {
       if (v.sample !== sample) continue;
       if (hasCh && v.ch !== ch) continue;
       v.released = true;
+    }
+  }
+
+  // Recompose a live voice's volume mid-sound: a score :vol / :master change on
+  // this pcm slot. Keyed by ch (the voice slot), it updates every voice on that
+  // slot (a loop, or an overlapping shot). No-op when the slot has no voice.
+  _setPcmShift(msg) {
+    const ch = Number(msg.ch);
+    if (!Number.isFinite(ch)) return;
+    const shift = Number.isFinite(Number(msg.shift)) ? Number(msg.shift) : 0;
+    const muted = !!msg.muted;
+    const shiftGain = shiftToGain(shift);
+    for (const v of this._pcmVoices) {
+      if (v.ch !== ch) continue;
+      v.shift = shift;
+      v.muted = muted;
+      v.shiftGain = shiftGain;
+      const trackGain = this._pcmTrackGain.get(v.track) ?? 1;
+      v.gain = shiftGain * trackGain;
     }
   }
 
@@ -444,7 +474,9 @@ class YM2612Processor extends AudioWorkletProcessor {
           continue;
         }
       }
-      mixed += data[idx] * voice.gain;
+      // A muted voice (vol/master 0) contributes silence but still advances, so
+      // it resumes in phase when unmuted — matching the driver.
+      if (!voice.muted) mixed += data[idx] * voice.gain;
       voice.pos += voice.step;
       if (
         (voice.mode === "loop" && !voice.released) ||
@@ -497,6 +529,8 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._startPcmVoice(op);
       } else if (op.type === "pcm-note-off") {
         this._stopPcmVoice(op);
+      } else if (op.type === "pcm-set-shift") {
+        this._setPcmShift(op);
       }
     });
 

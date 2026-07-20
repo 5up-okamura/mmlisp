@@ -135,6 +135,13 @@ export class IRPlayer {
     // channel, so they must not appear on the FM key-off path.
     this._pcmTrackChannel = new Map(); // trackIndex → pcm voice slot (0-2)
 
+    // Per-PCM-slot volume state (soft-mix). vel arrives on each PCM_NOTE_ON;
+    // vol is sticky via PARAM_SET VOL. Composed with the global master into the
+    // driver's 6 dB bit-shift attenuation (see _pcmComposeShift), so the browser
+    // preview matches the Z80 soft-mixer. Indexed by pcm slot 0-2.
+    this._pcmChanVel = [15, 15, 15];
+    this._pcmChanVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY];
+
     // PSG channel routing
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
@@ -245,6 +252,8 @@ export class IRPlayer {
     this._trackChannel.clear();
     this._psgTrackChannel.clear();
     this._pcmTrackChannel.clear();
+    this._pcmChanVel = [15, 15, 15];
+    this._pcmChanVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY];
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
       this._assignChannel(i, irObj.tracks[i]);
     }
@@ -997,6 +1006,7 @@ export class IRPlayer {
 
     return this._ir.tracks.map((track, ti) => {
       const isPsg = this._psgTrackChannel.has(ti);
+      const isPcm = this._pcmTrackChannel.has(ti);
       const psgCh = isPsg ? this._psgTrackChannel.get(ti) : null;
       // PCM events carry their soft-mix voice slot (0-2) as _chIndex — that is
       // what the worklet keys loop-voice replacement on. FM tracks carry their
@@ -1013,6 +1023,7 @@ export class IRPlayer {
           _chIndex: chIndex,
           _trackIndex: ti,
           _isPsg: isPsg,
+          _isPcm: isPcm,
           _psgCh: psgCh,
         }))
         .sort((a, b) => a.tick - b.tick);
@@ -1465,6 +1476,14 @@ export class IRPlayer {
       return;
     }
 
+    // Route PCM (soft-mix) events. A PCM track's _chIndex is its voice slot
+    // (0-2), which collides with FM channel indices — its PARAM_SETs must NOT
+    // fall through to the FM path (they would corrupt FM ch 1-3's TL).
+    if (ev._isPcm) {
+      this._dispatchPcmEvent(ev, when);
+      return;
+    }
+
     const ch = ev._chIndex ?? 0;
     const port = ch >= 3 ? 1 : 0;
     const chOffset = ch % 3;
@@ -1768,16 +1787,83 @@ export class IRPlayer {
         this._writeFm3OpPitch(op, midi, when);
         break;
       }
+    }
+  }
 
-      case "PCM_NOTE_ON": {
+  // PCM (soft-mix) track dispatch. PCM owns no FM/PSG channel and has no sweep
+  // engine (mirrors the driver: _startSweep bails for ch>=10), so only note
+  // on/off and discrete vol/vel/master params act — everything else is ignored
+  // rather than misrouted to the FM path. Global events (tempo/markers/loops)
+  // are already handled by _dispatchGlobalEvent before we get here.
+  _dispatchPcmEvent(ev, when) {
+    const slot = ev._chIndex ?? 0;
+    switch (ev.cmd) {
+      case "PCM_NOTE_ON":
         this._dispatchPcmNoteOn(ev, when);
         break;
-      }
-
-      case "PCM_NOTE_OFF": {
+      case "PCM_NOTE_OFF":
         this._dispatchPcmNoteOff(ev, when);
         break;
+      case "PARAM_SET":
+        this._applyPcmParam(slot, ev.args, when);
+        break;
+      case "PARAM_FROM_VAL": {
+        const value = this._resolveSrc(ev.args?.src, when);
+        this._applyPcmParam(slot, { target: ev.args?.target, value }, when);
+        break;
       }
+      default:
+        break;
+    }
+  }
+
+  // Compose a pcm slot's vel + vol + master into the driver's per-voice
+  // attenuation, quantized to the 6 dB bit-shift grid (matches drv-player's
+  // _pcmComposeShift and the Z80 soft-mixer):
+  //   n = (15−vel) + (31−vol) + (31−master);  shift = min(7, round(n/3)).
+  // vol==0 or master==0 is a hard mute (true silence); vel never mutes (floors
+  // at shift 5 ≈ −30 dB when vol/master are unity). The worklet applies gain
+  // 2^−shift per sample (float mix), so the same :vel/:vol/:master mean the same
+  // loudness on PCM as on FM/PSG.
+  _pcmComposeShift(vel, vol, master) {
+    const muted = vol === 0 || master === 0;
+    const n = 15 - vel + (31 - vol) + (31 - master);
+    const shift = Math.floor((n + 1) / 3); // round(n/3)
+    return { shift: shift > 7 ? 7 : shift, muted };
+  }
+
+  // Recompose a pcm slot from its current vel/vol/master and push the shift+mute
+  // to any live voice on that slot (loop or shot). Timed to `when` so a mid-loop
+  // :vol / :master change lands at the right moment, like the note-ons.
+  _emitPcmShift(slot, when) {
+    const { shift, muted } = this._pcmComposeShift(
+      this._pcmChanVel[slot] ?? 15,
+      this._pcmChanVol[slot] ?? VOL_UNITY,
+      this._masterVol ?? VOL_UNITY,
+    );
+    this._write({ type: "pcm-set-shift", when, ch: slot, shift, muted });
+  }
+
+  // PARAM_SET on a pcm slot: VOL is sticky per-slot state; VEL updates the slot
+  // (normally vel rides the note, but a standalone PARAM_SET VEL is honored);
+  // MASTER is global (recomposes FM + PSG + all PCM voices).
+  _applyPcmParam(slot, args, when) {
+    const target = (args?.target ?? "").toUpperCase();
+    const value = args?.value ?? 0;
+    switch (target) {
+      case "VOL":
+        this._pcmChanVol[slot] = Math.max(0, Math.min(31, Math.round(value)));
+        this._emitPcmShift(slot, when);
+        break;
+      case "VEL":
+        this._pcmChanVel[slot] = Math.max(0, Math.min(15, Math.round(value)));
+        this._emitPcmShift(slot, when);
+        break;
+      case "MASTER":
+        this._applyMasterChange(value, when);
+        break;
+      default:
+        break; // PCM ignores FM/PSG-only params
     }
   }
 
@@ -1788,10 +1874,21 @@ export class IRPlayer {
     if (!this._isTrackAudible(ev._trackIndex)) return;
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
+    const slot = ev._chIndex ?? 0;
     const rate = Number(ev.args?.rate);
     const baseRate = Number(ev.args?.baseRate);
-    const vel = Number(ev.args?.vel ?? 15);
+    const velRaw = Number(ev.args?.vel ?? 15);
+    const vel = Number.isFinite(velRaw) ? Math.max(0, Math.min(15, velRaw)) : 15;
     const mode = ev.args?.mode === "loop" ? "loop" : "shot";
+    // vel rides the note; vol is the slot's sticky PARAM_SET state. Compose both
+    // with master into the driver's bit-shift attenuation + mute (see
+    // _pcmComposeShift) so the preview matches the Z80 soft-mixer.
+    this._pcmChanVel[slot] = vel;
+    const { shift, muted } = this._pcmComposeShift(
+      vel,
+      this._pcmChanVol[slot] ?? VOL_UNITY,
+      this._masterVol ?? VOL_UNITY,
+    );
     this._write({
       type: "pcm-note-on",
       when,
@@ -1800,7 +1897,8 @@ export class IRPlayer {
       sample,
       rate: Number.isFinite(rate) && rate > 0 ? rate : 1,
       baseRate: Number.isFinite(baseRate) && baseRate > 0 ? baseRate : null,
-      vel: Number.isFinite(vel) ? vel : 15,
+      shift,
+      muted,
       mode,
     });
   }
@@ -2252,43 +2350,51 @@ export class IRPlayer {
         break;
       }
 
-      case "MASTER": {
-        // Global master volume 0-31 (31=full). Re-applies carrier TL on all FM channels
-        // and PSG attenuation on all PSG channels.
-        const master = Math.max(0, Math.min(31, value));
-        this._masterVol = master;
-        // FM channels: update carrier TL
-        for (let ci = 0; ci < 6; ci++) {
-          const cr = this._chRegs[ci];
-          const cp = ci >= 3 ? 1 : 0;
-          const co = ci % 3;
-          const crs = fmCarrierOpsForAlg(cr.algorithm ?? 0);
-          for (const opIdx of crs) {
-            const tl = this._carrierTl(
-              cr.ops[opIdx],
-              cr.vel ?? 15,
-              cr.vol ?? VOL_UNITY,
-              master,
-            );
-            cr.ops[opIdx].tl = tl;
-            this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
-          }
-        }
-        // PSG channels: recalculate attenuation from vel * vol * master, but only
-        // for channels currently sounding — re-writing a non-silent att to an idle
-        // channel (e.g. at play start, before any note) would drone a tone.
-        for (let psgCh = 0; psgCh < 4; psgCh++) {
-          if (!this._psgSounding[psgCh]) continue;
-          const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
-          const vol = this._psgVolAtTime(psgCh, when); // 0-31
-          this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
-        }
+      case "MASTER":
+        this._applyMasterChange(value, when);
         break;
-      }
 
       default:
         break;
     }
+  }
+
+  // Global master volume 0-31 (31=full). Re-applies carrier TL on all FM
+  // channels, PSG attenuation on all sounding PSG channels, and recomposes every
+  // PCM soft-mix voice (the bit-shift attenuation rides master too). Reached from
+  // a PARAM_SET MASTER on any track (FM/PSG/PCM), so all three stay in step.
+  _applyMasterChange(value, when) {
+    const master = Math.max(0, Math.min(31, Math.round(value)));
+    this._masterVol = master;
+    // FM channels: update carrier TL
+    for (let ci = 0; ci < 6; ci++) {
+      const cr = this._chRegs[ci];
+      const cp = ci >= 3 ? 1 : 0;
+      const co = ci % 3;
+      const crs = fmCarrierOpsForAlg(cr.algorithm ?? 0);
+      for (const opIdx of crs) {
+        const tl = this._carrierTl(
+          cr.ops[opIdx],
+          cr.vel ?? 15,
+          cr.vol ?? VOL_UNITY,
+          master,
+        );
+        cr.ops[opIdx].tl = tl;
+        this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
+      }
+    }
+    // PSG channels: recalculate attenuation from vel * vol * master, but only
+    // for channels currently sounding — re-writing a non-silent att to an idle
+    // channel (e.g. at play start, before any note) would drone a tone.
+    for (let psgCh = 0; psgCh < 4; psgCh++) {
+      if (!this._psgSounding[psgCh]) continue;
+      const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
+      const vol = this._psgVolAtTime(psgCh, when); // 0-31
+      this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
+    }
+    // PCM soft-mix voices ride master too — recompose each slot's shift/mute and
+    // push it to any live voice (the worklet no-ops a slot with no voice).
+    for (let slot = 0; slot < 3; slot++) this._emitPcmShift(slot, when);
   }
 
   // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.
