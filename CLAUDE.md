@@ -14,13 +14,13 @@ The toolchain lives in `live/src/` and follows a single pipeline:
 Source (.mmlisp) → AST → IR (JSON) → Player
 ```
 
-| File                  | Role                                                          |
-| --------------------- | ------------------------------------------------------------- |
-| `mmlisp-parser.js`    | Tokenize + parse source into a generic list/atom AST          |
-| `mmlisp2ir.js`        | Compile AST → IR: voice resolution, macro parsing, event emit |
-| `ir-utils.js`         | Shared: pitch/MIDI conversion, target ranges, curve sampling  |
-| `ir-player.js`        | Runtime: schedule IR events, run macros, write chip registers |
-| `mmlisp-formatter.js` | Source formatter                                              |
+| File                            | Role                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `mmlisp-parser.js`              | Tokenize + parse source into a generic list/atom AST                    |
+| `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
+| `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
+| `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
+| `mmlisp-formatter.js`           | Source formatter                                                        |
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `player/wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
@@ -58,7 +58,14 @@ update in place, delete files once the repo itself records the outcome.
 
 ## Working agreements
 
-The working agreements (English-only, no AI attribution, no legacy support,
-output-side minimalism, directness, design-first workflow) live in
-`.claude/rules/working-agreements.md`, which Claude Code auto-loads. Read that
-file for the canonical rules.
+- **No legacy support.** v0.4-and-earlier behavior is not maintained; remove
+  dead code that only served deprecated specs rather than guarding it.
+- **Minimalism is about the output, not the tooling.** Every feature must
+  justify its cost in language/IR complexity and eventual Z80 driver footprint.
+  This constrains _what we expose and how it maps to hardware_ — it is not a
+  call to micro-optimize the JS toolchain.
+- **Directness.** Keep the path from MMLisp expression to driver instruction as
+  short as possible; prefer explicit, predictable behavior over implicit magic.
+- This is a design-heavy, collaborative project. For non-trivial language or
+  IR changes, confirm the design before implementing — the spec is decided
+  through discussion, not inferred.
