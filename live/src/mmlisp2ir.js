@@ -2746,6 +2746,23 @@ function compileChannelBody(
 
       // Inline keyword modifier: :oct N, :len N, :gate N, :vol N, :tl1 30, etc.
       if (val.startsWith(":")) {
+        // `:break` is the one valueless `:`-directive; handle it before stepping
+        // onto a value token. Otherwise a trailing `:break` (the last token of a
+        // form — e.g. a mucom `/` loop-break that falls on a line boundary) is
+        // silently dropped: the `if (i < items.length)` guard below skips the
+        // switch while `i` has already stepped past the `:break`. Id is the
+        // current (x …) loop, or null inside a `#label …(go label N)` loop where
+        // convertCountedJumps assigns it after the forms merge.
+        if (val === ":break") {
+          events.push({
+            tick: trackState.tick,
+            cmd: "LOOP_BREAK",
+            args: { id: trackState.currentLoopId ?? null },
+            src: nodeSrc(node),
+          });
+          i++;
+          continue;
+        }
         i++;
         if (i < items.length) {
           const rawVal = atomValue(items[i]);
@@ -3038,19 +3055,6 @@ function compileChannelBody(
               }
               break;
             }
-            case ":break":
-              // :break takes no value; the keyword path already stepped onto the
-              // next token, so back up to leave it for the next iteration. Id is
-              // the current (x …) loop, or null inside a #label…(go label N) loop
-              // where convertCountedJumps assigns it after the forms merge.
-              i--; // back up — :break has no value argument
-              events.push({
-                tick: trackState.tick,
-                cmd: "LOOP_BREAK",
-                args: { id: trackState.currentLoopId ?? null },
-                src: nodeSrc(node),
-              });
-              break;
             default: {
               // Inline hardware param write: :tl1 30, :tl1+ 5, :tl1 $x, ...
               // Absolute literal → PARAM_SET; curve → PARAM_SWEEP; +/* operator
@@ -3220,20 +3224,6 @@ function compileChannelBody(
         const sign = val[1] === "+" ? 1 : -1;
         const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
         trackState.defaultOct = Math.max(0, trackState.defaultOct + sign * delta);
-        i++;
-        continue;
-      }
-
-      // :break as standalone atom — emits LOOP_BREAK for the enclosing loop. Id
-      // is the current (x …) loop, or null inside a `#label …(go label N)` loop
-      // where convertCountedJumps assigns it after the forms merge.
-      if (val === ":break") {
-        events.push({
-          tick: trackState.tick,
-          cmd: "LOOP_BREAK",
-          args: { id: trackState.currentLoopId ?? null },
-          src: nodeSrc(node),
-        });
         i++;
         continue;
       }
