@@ -141,7 +141,22 @@ st_pcm:
     jp z,st_active
     ld de,PCM_SNAP
     ld bc,PCM_V_SIZE
-    ldir                    ; G_PCMV[vi] → PCM_SNAP
+    ldir                    ; G_PCMV[vi] → PCM_SNAP; DE now = PCM_SNAP+PCM_V_SIZE
+    ; also snapshot the compose inputs (vel, vol) — they live in globals, so the
+    ; struct copy above misses them; the SE will overwrite G_PCM_VEL/VOL[vi].
+    ld a,(ix+T_CH)
+    sub 20                  ; vi
+    ld l,a
+    ld h,0
+    ld bc,G_PCM_VEL
+    add hl,bc               ; HL = &G_PCM_VEL[vi]
+    ld a,(hl)
+    ld (de),a               ; PCM_SNAP[18] = vel
+    inc de
+    ld bc,3
+    add hl,bc               ; HL = &G_PCM_VOL[vi]
+    ld a,(hl)
+    ld (de),a               ; PCM_SNAP[19] = vol
     set T_ISSE,(ix+T_FLAGS)
 st_active:
     ld (ix+T_STATUS),1

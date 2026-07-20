@@ -85,5 +85,19 @@ se_restore_pcm:
     ex de,hl                ; DE = dst
     ld hl,PCM_SNAP          ; HL = snapshot (src)
     ld bc,PCM_V_SIZE
-    ldir
+    ldir                    ; struct restored; HL now = PCM_SNAP+PCM_V_SIZE
+    ; restore the compose inputs (vel, vol) to their globals
+    ld a,(ix+T_CH)
+    sub 20
+    ld c,a
+    ld b,0                  ; BC = vi
+    ld a,(hl)               ; PCM_SNAP[18] = vel
+    inc hl
+    ld e,(hl)               ; PCM_SNAP[19] = vol
+    ld hl,G_PCM_VEL
+    add hl,bc
+    ld (hl),a
+    ld hl,G_PCM_VOL
+    add hl,bc
+    ld (hl),e
     ret

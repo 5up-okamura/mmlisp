@@ -720,14 +720,25 @@ deactivates when a shot/tail passes the sample end; a non-releasing loop wraps b
 `loopLen` each tick. The DAC is enabled (`$2B`) on the first active voice and
 released when the last voice ends, both through the change-only shadow.
 
-**Per-channel volume (`:vel`).** A `PARAM_SET VEL` on a `pcmN` channel stores a
-per-voice attenuation `shift` (`PV_SHIFT`) that the mixer applies as an arithmetic
-right shift on each sample before summing — one `sra` per sample, so it stays off
-the critical path. The `vel → shift` map is `round((15 − vel) / 3)` (`0..5`),
-which best-fits the FM/PSG velocity ladder (2 dB/step) onto the 6 dB bit-shift
-grid, so the same `:vel` means the same loudness on a PCM voice as on FM/PSG. It
-is computed once per `PARAM_SET` (rare), persists across notes on that voice, and
-is carried by the SE snapshot; `vel 15` (`shift 0`) is unattenuated.
+**Per-channel volume (`:vel` + `:vol` + `:master`).** `:vel` and `:vol` on a
+`pcmN` channel and the global `:master` all ride the FM/PSG velocity/fader ladder
+(2 dB/step). The driver composes them into one per-voice attenuation the mixer
+applies as an arithmetic right shift on each sample before summing — one `sra`
+per sample, so volume stays off the critical path. Summing each control's
+steps-below-unity gives the total attenuation, quantized to the 6 dB shift grid:
+
+```
+n = (15 − vel) + (31 − vol) + (31 − master)
+shift = min(7, round(n / 3))          # PV_SHIFT bits0-2
+mute  = (vol == 0) || (master == 0)    # PV_SHIFT bit7 — true silence
+```
+
+so the same `:vel`/`:vol` mean the same loudness on a PCM voice as on FM/PSG.
+`vel` never mutes — with `vol`/`master` at unity it floors at `shift 5` (≈ −30 dB);
+`vol 0` or `master 0` is a hard mute (the muted voice still advances, matching FM
+where a note continues silently under a 0 fader). The compose runs once per
+`PARAM_SET VEL`/`VOL` (and for every voice on a `MASTER` change), never per sample;
+`vel`/`vol` persist per voice and, with `PV_SHIFT`, ride the SE snapshot.
 
 A single voice takes the same path (one active slot) — there is no separate
 fast path. The voice structs (18 B × 3) live in the RAM gap just below

@@ -142,7 +142,9 @@ G_VS_GRP    equ G_BASE+$5c      ; u8   d_voice_set register-group index (0..6)
 G_VS_REG    equ G_BASE+$5d      ; u8   d_voice_set register base ($30..$90)
 G_ISSE      equ G_BASE+$5e      ; u8   START_SE suspend flag for ovl_setup (1 = suspend)
 G_SE_ENTRY  equ G_BASE+$5f      ; u8   ovl_voice entry (0 = d_voice_set, 1 = se_restore)
-                                ;      ($60..$66 free)
+G_PCM_VEL   equ G_BASE+$60      ; u8[3] per-voice pcm velocity 0-15 (compose input)
+G_PCM_VOL   equ G_BASE+$63      ; u8[3] per-voice pcm volume 0-31 (compose input)
+                                ;      ($66 free)
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
 ; PCM voice struct (18 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
@@ -152,9 +154,9 @@ PV_INC      equ 5               ; u32 16.16 per-mix-tick increment
 PV_POS      equ 9               ; u32 16.16 position
 PV_LOOPE    equ 13              ; u16 loop end (sample index)
 PV_LOOPL    equ 15              ; u16 loop length (loopEnd - loopStart)
-PV_SHIFT    equ 17              ; u8  per-voice volume attenuation (0..5): sra
-                                ;     sample, PV_SHIFT times (0 = full). Set from
-                                ;     PARAM_SET VEL; snapshot with the struct for SE.
+PV_SHIFT    equ 17              ; u8  composed volume: bits0-2 = sra count (0..7),
+                                ;     bit7 = mute (vol/master 0 → silence). Set by
+                                ;     pcm_compose_shift; snapshot with the struct.
 PCM_V_SIZE  equ 18
 ; 3 voice slots live in the RAM gap between the resident code and OVERLAY_SLOT
 ; (the data region above DATA_BASE is packed). Boot zeroes the PV_ACT bytes; the
@@ -218,10 +220,12 @@ SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1
 SNP_LEN     equ 14              ; CHS_OWNER - CHS_NOTE + 1
 SE_SNAP     equ SHVALID + $26   ; $1FAE (14 B) — FM/PSG channel-state snapshot
 ; PCM SE (design C) snapshots the whole G_PCMV voice struct instead — soft-mix
-; voices have no CHS block. Its own slot, so a PCM SE can overlap an FM/PSG one.
-PCM_SNAP    equ SE_SNAP + SNP_LEN    ; $1FBC (PCM_V_SIZE B)
-STACK_FLOOR equ PCM_SNAP + PCM_V_SIZE ; $1FCE — PCM_SNAP top + 1
-STACK_TOP   equ $2000                ; 50 B window ($1FCE..$1FFF)
+; voices have no CHS block. Two trailing bytes hold the compose inputs (vel, vol)
+; that live in globals, not the struct, so a stolen BGM voice restores its volume
+; state too. Its own slot, so a PCM SE can overlap an FM/PSG one.
+PCM_SNAP    equ SE_SNAP + SNP_LEN         ; $1FBC — struct (PCM_V_SIZE) + vel + vol
+STACK_FLOOR equ PCM_SNAP + PCM_V_SIZE + 2 ; $1FD0 — PCM_SNAP top + 1
+STACK_TOP   equ $2000                      ; 48 B window ($1FD0..$1FFF)
 
 ; ── Channel state block fields (driver.md §5.1) ───────────────────────────
 CHS_STATUS  equ $00         ; bit0 = keyed (note active; FM key / PSG note-on..off)
@@ -2003,8 +2007,10 @@ param_set:
     ld a,(G_CH)
     cp 6
     jp c,ps_fm
+    cp 20
+    jp nc,ps_pcm            ; pcm1-3: VOL composes (VEL handled at ps_vel)
     cp 10
-    ret nc                  ; fm3-op / pcm ids: no M1 param path
+    ret nc                  ; fm3-op: no M1 param path
     ; ── PSG-channel targets ───────────────────────────────────────────
     call chs_ptr_iy
     ld a,(G_TARGET)
@@ -2070,6 +2076,14 @@ psm_next:
     ld a,c
     cp 4
     jr c,psm_psg
+    ; PCM soft-mix voices ride master too — recompose each voice's shift/mute.
+    ld a,2
+psm_pcm:
+    push af
+    call pcm_compose_shift  ; A = vi (2,1,0)
+    pop af
+    dec a
+    jp p,psm_pcm
     ret
 
 ps_lfo:
@@ -2126,21 +2140,91 @@ ps_vel:
     jp write_psg_att
 
 ps_vel_pcm:
-    ; PV_SHIFT = round((15 - vel) / 3) = (16 - vel) / 3  (0..5). vel in C (0..15).
-    ; Best-fits the FM/PSG 2 dB/step velocity ladder onto the 6 dB bit-shift grid
-    ; so :vel means the same loudness on PCM as on FM/PSG. process_pcm sra's each
-    ; sample PV_SHIFT times. Computed once per PARAM_SET, off the mix hot path.
-    ld a,16
-    sub c
-    ld b,$ff                ; quotient - 1 (first inc brings it to 0)
-psvp_div3:
+    ; store the clamped vel (C, 0-15) for voice vi = G_CH-20, then recompose.
+    ld a,(G_CH)
+    sub 20                  ; A = vi (0-2)
+    push af
+    ld l,a
+    ld h,0
+    ld de,G_PCM_VEL
+    add hl,de
+    ld (hl),c               ; G_PCM_VEL[vi] = vel
+    pop af                  ; A = vi
+    jr pcm_compose_shift
+
+ps_pcm:
+    ; pcm channel target dispatch: only VOL composes (VEL routed via ps_vel).
+    ld a,(G_TARGET)
+    cp 4                    ; VOL
+    ret nz                  ; other targets: no pcm effect
+    ld b,31
+    call clamp_val
+    ld c,a                  ; C = clamped vol 0-31
+    ; fall through to ps_pcm_vol
+ps_pcm_vol:
+    ; store the clamped vol (C, 0-31) for voice vi = G_CH-20, then recompose.
+    ld a,(G_CH)
+    sub 20
+    push af
+    ld l,a
+    ld h,0
+    ld de,G_PCM_VOL
+    add hl,de
+    ld (hl),c               ; G_PCM_VOL[vi] = vol
+    pop af                  ; A = vi
+    ; fall through to pcm_compose_shift
+
+; pcm_compose_shift: A = vi (0-2). Compose G_PCMV[vi].PV_SHIFT from vel+vol+master
+; (plan-se.md). n = (15-vel)+(31-vol)+(31-master) = 77-(vel+vol+master); shift =
+; min(7, round(n/3)) in bits0-2; bit7 = mute when vol==0 or master==0. All three
+; ride the FM/PSG 2 dB/step ladder, summed onto the 6 dB shift grid. Rare (per
+; PARAM_SET), off the mix hot path. Clobbers A/BC/DE/HL.
+pcm_compose_shift:
+    push af                 ; save vi
+    ld e,a
+    ld d,0                  ; DE = vi
+    ld hl,G_PCM_VEL
+    add hl,de
+    ld c,(hl)               ; C = vel
+    ld hl,G_PCM_VOL
+    add hl,de
+    ld b,(hl)               ; B = vol
+    ld a,(G_MASTER)
+    ld e,a                  ; E = master
+    ; mute = (vol==0) || (master==0)
+    ld d,0                  ; D = mute bits (0)
+    ld a,b
+    or a
+    jr z,pcs_mute
+    ld a,e
+    or a
+    jr nz,pcs_sum
+pcs_mute:
+    ld d,$80
+pcs_sum:
+    ; n = 77 - (vel+vol+master)
+    ld a,c
+    add a,b
+    add a,e                 ; A = vel+vol+master (0..77)
+    ld b,a
+    ld a,77
+    sub b                   ; A = n (0..77)
+    ; shift = round(n/3) = floor((n+1)/3), clamped to 7
+    inc a
+    ld b,$ff
+pcs_div3:
     inc b
     sub 3
-    jr nc,psvp_div3         ; while (16 - vel) - 3*(b+1) >= 0 (no borrow)
-    ld c,b                  ; C = floor((16 - vel) / 3) = shift
-    ld a,(G_CH)
-    sub 20                  ; vi = 0..2 → HL = &G_PCMV[vi].PV_SHIFT
-    ld l,a
+    jr nc,pcs_div3          ; B = floor((n+1)/3)
+    ld a,b
+    cp 8
+    jr c,pcs_clamped
+    ld a,7
+pcs_clamped:
+    or d                    ; A = shift(0-7) | mute(bit7)
+    ld c,a                  ; C = composed PV_SHIFT
+    pop af                  ; A = vi
+    ld l,a                  ; HL = &G_PCMV[vi].PV_SHIFT
     ld h,0
     ld e,l
     ld d,h
@@ -3230,84 +3314,6 @@ dpa_have:
     pop hl
     jp d_next
 
-; ── start_sweep — allocate/refresh a sweep slot on ix's channel ────────────
-; Uses G_SW_TGT/CRV/FLG/FROM/TO/LEN. Slot pick: same target, else empty,
-; else slot 0 (eviction). Fills the 12-byte slot; step from sweep_step.
-start_sweep:
-    ld a,(ix+T_CH)
-    cp 10
-    ret nc                  ; no sweep engine on fm3-op / pcm
-    call chs_ptr_iy
-    ld a,(G_SW_TGT)
-    ld b,a
-    ld a,(iy+SW_SLOT0+SW_TARGET)
-    cp b
-    jr z,ss_use0
-    ld a,(iy+SW_SLOT1+SW_TARGET)
-    cp b
-    jr z,ss_use1
-    ld a,(iy+SW_SLOT0+SW_TARGET)
-    or a
-    jr z,ss_use0
-    ld a,(iy+SW_SLOT1+SW_TARGET)
-    or a
-    jr z,ss_use1
-ss_use0:
-    ld a,SW_SLOT0
-    jr ss_fill
-ss_use1:
-    ld a,SW_SLOT1
-ss_fill:
-    ld (G_SW_OFF),a
-    ld a,(G_SW_FLG)
-    and 1
-    ld de,(G_SW_LEN)
-    call sweep_step         ; HL = step16
-    ld (G_SW_STEP),hl
-    push iy
-    pop hl
-    ld a,(G_SW_OFF)
-    ld c,a
-    ld b,0
-    add hl,bc               ; HL = slot base
-    ld a,(G_SW_TGT)
-    ld (hl),a               ; +0 target
-    inc hl
-    ld a,(G_SW_CRV)
-    and 7
-    ld c,a
-    ld a,(G_SW_FLG)
-    and 1
-    rrca                    ; loop → bit7
-    or c
-    ld (hl),a               ; +1 curve | loop
-    inc hl
-    ld de,(G_SW_FROM)
-    ld (hl),e
-    inc hl
-    ld (hl),d
-    inc hl                  ; +2 from
-    ld de,(G_SW_TO)
-    ld (hl),e
-    inc hl
-    ld (hl),d
-    inc hl                  ; +4 to
-    ld de,(G_SW_LEN)
-    ld (hl),e
-    inc hl
-    ld (hl),d
-    inc hl                  ; +6 frames left
-    xor a
-    ld (hl),a
-    inc hl
-    ld (hl),a
-    inc hl                  ; +8 phase = 0
-    ld de,(G_SW_STEP)
-    ld (hl),e
-    inc hl
-    ld (hl),d               ; +10 step
-    ret
-
 ; ── stop_sweep — free any slot on ix's channel matching target A ───────────
 stop_sweep:
     ld c,a
@@ -3741,10 +3747,13 @@ pva_fetch:
     ld e,(ix+PV_BASE)
     ld d,(ix+PV_BASE+1)
     add hl,de              ; HL = base + idx (window addr)
+    ld a,(ix+PV_SHIFT)     ; bit7 = mute, bits0-2 = sra count
+    bit 7,a
+    jr nz,pva_muted        ; vol/master 0 → contribute silence (still advance)
+    ld b,a                 ; B = shift 0-7 (bit7 clear here)
     ld a,(hl)              ; signed sample
-    ; per-voice attenuation: sra A, PV_SHIFT times (0 = full volume). sra is
+    ; per-voice attenuation: sra A, shift times (0 = full volume). sra is
     ; sign-preserving, matching the reference's arithmetic `sample >> shift`.
-    ld b,(ix+PV_SHIFT)
     inc b                  ; test-first loop so shift 0 does zero sra
     jr pva_shtest
 pva_shr:
@@ -3756,6 +3765,9 @@ pva_shtest:
     bit 7,a
     jr z,pva_add
     ld h,$ff              ; sign-extend
+    jr pva_add
+pva_muted:
+    ld hl,0               ; muted voice adds 0 to the accumulator
 pva_add:
     ld de,(G_PCM_MUL)
     add hl,de

@@ -59,3 +59,84 @@ dps_go:
     call start_sweep
     pop hl
     jp d_next
+
+; ── start_sweep — allocate/refresh a sweep slot on ix's channel ────────────
+; Uses G_SW_TGT/CRV/FLG/FROM/TO/LEN. Slot pick: same target, else empty,
+; else slot 0 (eviction). Fills the 12-byte slot; step from sweep_step. Moved
+; here from the resident image (its only caller is d_param_sweep above) to fund
+; the PCM vel+vol+master compose (plan-se.md); calls resident sweep_step /
+; chs_ptr_iy, which load_overlay keeps reachable.
+start_sweep:
+    ld a,(ix+T_CH)
+    cp 10
+    ret nc                  ; no sweep engine on fm3-op / pcm
+    call chs_ptr_iy
+    ld a,(G_SW_TGT)
+    ld b,a
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    cp b
+    jr z,ss_use0
+    ld a,(iy+SW_SLOT1+SW_TARGET)
+    cp b
+    jr z,ss_use1
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    or a
+    jr z,ss_use0
+    ld a,(iy+SW_SLOT1+SW_TARGET)
+    or a
+    jr z,ss_use1
+ss_use0:
+    ld a,SW_SLOT0
+    jr ss_fill
+ss_use1:
+    ld a,SW_SLOT1
+ss_fill:
+    ld (G_SW_OFF),a
+    ld a,(G_SW_FLG)
+    and 1
+    ld de,(G_SW_LEN)
+    call sweep_step         ; HL = step16
+    ld (G_SW_STEP),hl
+    push iy
+    pop hl
+    ld a,(G_SW_OFF)
+    ld c,a
+    ld b,0
+    add hl,bc               ; HL = slot base
+    ld a,(G_SW_TGT)
+    ld (hl),a               ; +0 target
+    inc hl
+    ld a,(G_SW_CRV)
+    and 7
+    ld c,a
+    ld a,(G_SW_FLG)
+    and 1
+    rrca                    ; loop → bit7
+    or c
+    ld (hl),a               ; +1 curve | loop
+    inc hl
+    ld de,(G_SW_FROM)
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl                  ; +2 from
+    ld de,(G_SW_TO)
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl                  ; +4 to
+    ld de,(G_SW_LEN)
+    ld (hl),e
+    inc hl
+    ld (hl),d
+    inc hl                  ; +6 frames left
+    xor a
+    ld (hl),a
+    inc hl
+    ld (hl),a
+    inc hl                  ; +8 phase = 0
+    ld de,(G_SW_STEP)
+    ld (hl),e
+    inc hl
+    ld (hl),d               ; +10 step
+    ret

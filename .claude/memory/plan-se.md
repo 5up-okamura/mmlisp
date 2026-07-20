@@ -216,29 +216,47 @@ dropped, then the BGM restores when SE-B ends.
   d_param_sweep→ovl_sweep eviction stays; it's what freed the room for the split's
   wider claim overlay). Budgets now healthy: resident 52 B, stack reserve 13 B.
 
-## PCM per-channel volume (bit-shift) — LANDED (2026-07-20)
+## PCM per-channel volume (bit-shift, vel+vol+master) — LANDED (2026-07-20)
 
-Decided with the user: **`:vel` on a `pcmN` channel sets a per-voice attenuation,
-applied by the soft-mixer as an arithmetic right shift (`sra`) — cheap, per
-channel.** The mechanism is bit-shift (the user's directive); the `vel → shift`
-map is `round((15 − vel) / 3)` → `0..5`, best-fitting the FM/PSG 2 dB/step
-velocity ladder onto the 6 dB bit-shift grid so **the same `:vel` means the same
-loudness on PCM as on FM/PSG** (matching what the live `worklet.js` already does
-on the continuous ladder). No new opcode — the exporter already emits `PARAM_SET
-VEL` before every `PCM_NOTE_ON`.
+Decided with the user: **`:vel` + `:vol` + global `:master` compose to a per-voice
+attenuation the soft-mixer applies as an arithmetic right shift (`sra`) — cheap,
+per channel.** Mechanism is bit-shift (the user's directive: multiply is too heavy
+per sample). The compose sums each control's steps-below-unity onto the 6 dB grid:
+`n = (15−vel)+(31−vol)+(31−master)`, `shift = min(7, round(n/3))`, `mute =
+vol==0 || master==0`. This best-fits the FM/PSG 2 dB/step ladder (measured error
+max 2.1 dB / RMS 0.57 dB vs the true linear gain), so **the same `:vel`/`:vol` mean
+the same loudness on PCM as on FM/PSG**. `vel` never mutes (floors at shift 5 =
+−30 dB when vol/master unity); `vol`/`master` 0 is true silence. No new opcode —
+the exporter already emits `PARAM_SET VEL` before every `PCM_NOTE_ON`, and `:vol`/
+`:master` are ordinary `PARAM_SET`s.
 
-- **Struct (both ports).** New `PV_SHIFT` byte at voice-struct offset 17
-  (`PCM_V_SIZE` 17 → 18; `G_PCMV` $17AB → $17A8, i.e. `OVERLAY_SLOT − 54`). It
-  persists across notes (only `PARAM_SET VEL` and boot write it; `pcm_note_on`
-  leaves it) and the SE snapshot (`PCM_SNAP`, now 18 B) carries it for free.
-- **Hot path.** `pcm_voice_acc` / `_pcmFrame` do `sra` (JS `>>`) `PV_SHIFT` times
-  per sample with a shift-0 fast path — one extra `djnz` loop, off the mix
-  critical path in the common (shift 0) case. The `vel → shift` divide is computed
-  once per `PARAM_SET VEL` (`ps_vel_pcm`, a subtract-by-3 loop), never per sample.
-- **Gate.** `m3-pcm-vol` sweeps a shot voice (vel 15/9/6/0 → shift 0/2/3/5) plus a
-  mid-level loop; `verify:all` green on both ports (37 ab scores, all trace gates).
-- **Resident cost.** Tight but positive — `npm run size` shows ~6 B free at the
-  G_PCMV ceiling after the struct grew and `ps_vel_pcm`/boot-init landed.
+- **Deferred (user):** a general-purpose **ROM** LUT (no RAM) to replace the bit-
+  shift with a smoother/exact gain — *after* the bit-shift version is confirmed.
+  Not needed yet.
+- **Deferred (worklet gap):** the live `worklet.js` still applies only `:vel`
+  (continuous 2 dB/step) + the UI fader to PCM — it does **not** compose the score's
+  `:vol`/`:master` or mute on 0. So the browser preview won't match the driver for
+  pcm `:vol`/`:master` until the worklet is aligned (own task).
+- **State (both ports).** `PV_SHIFT` (voice-struct offset 17): bits0-2 = `sra`
+  count, bit7 = mute. `PCM_V_SIZE` 17→18; `G_PCMV` $17AB→$17A8. Compose inputs
+  `vel`/`vol` live in globals (`G_PCM_VEL`/`G_PCM_VOL`, G_BASE+$60/$63) so master
+  can recompose without growing the struct; the PCM SE snapshot (`PCM_SNAP`, now
+  struct 18 + vel + vol = 20 B) restores them so a stolen BGM voice keeps its
+  volume state. drv-player keeps `vel`/`vol`/`shift`/`muted` on the voice object
+  (the `{...v}` SE snapshot carries them).
+- **Hot path.** `pcm_voice_acc` / `_pcmFrame`: test PV_SHIFT bit7 → muted adds 0
+  (still advances, matching FM); else `sra` bits0-2 times with a shift-0 fast path.
+  The compose (`pcm_compose_shift`, subtract-by-3 divide) runs once per `PARAM_SET
+  VEL`/`VOL` and for all 3 voices on `MASTER` — never per sample. `ps_master`
+  recomposes every voice; `ps_pcm` handles pcm `VOL`.
+- **Budget reorg.** The compose (~108 B resident) overran the G_PCMV ceiling.
+  Funded by evicting **`start_sweep`** (~76 B) to `ovl_sweep` — its only caller is
+  `d_param_sweep`, already in that overlay, so it's thematically clean cold code.
+  Resident back to **20 B free**; `ovl_sweep` 78→206 B (slot 274 unchanged).
+- **Gates.** `m3-pcm-vol` (vel sweep) + `m3-pcm-volmix` (vol sweep, `:vol 0` mute,
+  live `:master` recompose over a loop). `verify:all` green both ports; 38 ab
+  scores (the volmix master-on-idle-FM TL divergence is the known ir↔drv axis,
+  frozen).
 
 ## Sequencing
 

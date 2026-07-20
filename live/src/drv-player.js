@@ -403,9 +403,13 @@ export class DrvPlayer {
       inc: 0,
       pos: 0,
       releasing: false,
-      shift: 0, // per-voice volume attenuation: sample >>= shift (0 = full, 0..5);
-      // set from PARAM_SET VEL on the pcm channel, persists across notes, and is
-      // captured by the SE snapshot (mirrors the Z80 PV_SHIFT voice-struct byte).
+      vel: 15, // per-voice velocity 0-15 (raw); default = unattenuated
+      vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
+      shift: 0, // composed attenuation: sample >>= shift (0..7). Recomputed from
+      // vel+vol+master on any of those; the mixer sra's each sample by it.
+      muted: false, // vol==0 || master==0 → true silence (vel never mutes)
+      // vel/vol/shift/muted persist across notes and ride the SE snapshot; they
+      // mirror the Z80 G_PCM_VEL/G_PCM_VOL globals + PV_SHIFT / PV_ACT mute bit.
     }));
     this._pcmDacOn = false;
 
@@ -1191,6 +1195,8 @@ export class DrvPlayer {
         if (!this._psg[p].sounding) continue;
         this._writePsgAtt(p, this._psgAtt(this._psg[p].vel, this._psg[p].vol));
       }
+      // PCM soft-mix voices ride master too — recompose each voice's shift/mute.
+      for (let vi = 0; vi < 3; vi++) this._pcmComposeShift(vi);
       return;
     }
     if (target === TARGET_ID.LFO_RATE) {
@@ -1225,17 +1231,17 @@ export class DrvPlayer {
       }
       return;
     }
-    // PCM soft-mix volume (plan-se.md): VEL on a pcm channel sets a per-voice
-    // attenuation the mixer applies as an arithmetic right shift (cheap per
-    // sample). The vel→shift map (once per PARAM_SET, off the hot path) best-fits
-    // the FM/PSG velocity ladder (ir-utils: 2 dB/step) onto the 6 dB bit-shift
-    // grid — shift = round((15−vel)/3), 0..5 — so the same :vel means the same
-    // loudness on PCM as on FM/PSG. Persists across notes; the SE snapshot keeps it.
+    // PCM soft-mix volume (plan-se.md): vel+vol+master compose to a per-voice
+    // bit-shift the mixer applies as an arithmetic right shift (cheap per sample).
+    // VEL and VOL are per-voice state; MASTER is global (handled above, which
+    // recomposes every voice). Composition + mute are recomputed here, off the
+    // mix hot path. See _pcmComposeShift.
     if (channelId >= 20 && channelId <= 22) {
-      if (target === TARGET_ID.VEL) {
-        const vel = value < 0 ? 0 : value > 15 ? 15 : value;
-        this._pcmVoices[channelId - 20].shift = Math.floor((16 - vel) / 3);
-      }
+      const v = this._pcmVoices[channelId - 20];
+      if (target === TARGET_ID.VEL) v.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+      else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+      else return;
+      this._pcmComposeShift(channelId - 20);
       return;
     }
     if (channelId >= 6) return; // fm3-op ids: no M1 param path
@@ -1927,6 +1933,21 @@ export class DrvPlayer {
   }
 
   // One frame of DAC feed. Returns nothing; deactivates + DAC-off at end.
+  // Compose a pcm voice's attenuation from vel + vol + master (plan-se.md). All
+  // three ride the FM/PSG 2 dB/step ladder; summing their "steps below unity"
+  // gives the total attenuation, quantized to the 6 dB bit-shift grid:
+  //   n = (15−vel) + (31−vol) + (31−master);  shift = min(7, round(n/3)).
+  // vol==0 or master==0 is a hard mute (true silence); vel never mutes (it floors
+  // at shift 5 ≈ −30 dB when vol/master are unity). Rare (once per PARAM_SET), so
+  // the divide/round is off the mix hot path.
+  _pcmComposeShift(vi) {
+    const v = this._pcmVoices[vi];
+    v.muted = v.vol === 0 || this._master === 0;
+    const n = 15 - v.vel + (31 - v.vol) + (31 - this._master);
+    const shift = Math.floor((n + 1) / 3); // round(n/3)
+    v.shift = shift > 7 ? 7 : shift;
+  }
+
   _pcmFrame() {
     const voices = this._pcmVoices;
     if (!voices[0].active && !voices[1].active && !voices[2].active) return;
@@ -1942,7 +1963,9 @@ export class DrvPlayer {
           v.active = false;
           continue;
         }
-        acc += i8(data[v.base + idx]) >> v.shift; // sample, per-voice attenuated
+        // muted (vol/master 0) contributes silence but the voice still advances,
+        // matching FM where the note continues under a 0 fader.
+        if (!v.muted) acc += i8(data[v.base + idx]) >> v.shift;
         v.pos = (v.pos + v.inc) >>> 0;
         if (v.hasLoop && !v.releasing) {
           // keep the accumulator inside the loop region (bounds pos too)

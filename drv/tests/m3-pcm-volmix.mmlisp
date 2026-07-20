@@ -1,0 +1,13 @@
+; M3 gate: PCM vel + vol + master volume composition and mute (plan-se.md). :vel
+; and :vol on a pcm channel and the global :master all ride the FM/PSG 2 dB/step
+; ladder; their steps-below-unity sum onto the 6 dB bit-shift grid
+; (shift = min(7, round(n/3)), n = (15-vel)+(31-vol)+(31-master)). vol==0 or
+; master==0 is a hard mute (vel never mutes). pcm1 sweeps :vol against a fixed
+; vel and ends on a :vol 0 mute; pcm2 loops while :master steps down (recomposing
+; the live voice) and back up.
+(def blip :sample :file "blip.wav")
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(pcm1 blip :tempo 120 :oct 4 :len 4 :vel 15
+   :vol 31 c   :vol 16 c   :vol 8 c   :vol 0 c)
+(pcm2 pad  :mode loop :oct 4 :len 8 :vel 12 :vol 24
+   c :master 20 _ :master 31 _ _)
