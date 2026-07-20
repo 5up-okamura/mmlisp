@@ -35,6 +35,7 @@ const OVERLAYS = [
   "ovl_rare.z80",
   "ovl_mmb.z80",
   "ovl_voice.z80",
+  "ovl_se.z80",
 ];
 
 export function buildDriver() {

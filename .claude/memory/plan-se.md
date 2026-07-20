@@ -193,7 +193,18 @@ build (CRITICAL FINDING) + the Z80 mirror + the harness/gate.
 
 1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at
    top). The 32K-wall enabler for PCM.
-2. **Suspend/restore core** — **FM SUB-SLICE LANDED (2026-07-19); PSG + PCM next.**
+2. **Suspend/restore core** — **FM + PSG SUB-SLICES LANDED; PCM next.**
+   PSG (2026-07-20): `m3-se` grew a sustained sqr1 BGM + a sqr2→sqr1 PSG SE that
+   fires **after** the FM SE ends (non-overlapping, so the single `SE_SNAP` slot
+   still suffices — no pool yet). drv-player `_snapshotChannel`/`_restoreChannel`
+   got PSG branches (period+att re-attack, mirroring `_noteOn`). Z80: a **new
+   `ovl_se` (overlay index 7, 83 B)** hosts `se_restore_psg` (LDIR restore + owner
+   reactivate + period/att), because ovl_voice had no room and PSG needs no voice
+   patch; `se_reclaim` now **dispatches by channel** — FM(<6)→ovl_voice
+   se_restore, PSG(6-9)→ovl_se. `verify:all` **34 TRACE MATCH** + ab-gate 35.
+   **RESIDENT IS NOW 0 B FREE** (the se_reclaim dispatch used the last 13 B) — the
+   PCM slice must not add resident. ovl_se has ~190 B free for the PCM restore.
+   The FM sub-slice below still holds:
    START_SE (cmd 7), T_STATUS=3 + snapshot + reclaim + re-key, on **both** the Z80
    AND drv-player. `m3-se` FM gate passes (`verify:all` 34 TRACE MATCH + ab-gate
    35 scores). What landed:

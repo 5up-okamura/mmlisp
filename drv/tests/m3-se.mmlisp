@@ -29,3 +29,11 @@
 ; bundler will produce. START_SE suspends the fm1 BGM owner and snapshots it; the
 ; burst's END_OF_TRACK reclaims the channel and restores it.
 (fm2 sfx :oct 5 :len 8 :vel 15  g g)
+
+; track 2 (bgm-psg): sqr1 holds a sustained tone the PSG SE steals.
+(sqr1 :oct 5 :len 1 :vel 11  e e e)
+
+; track 3 (se-psg): authored on sqr2, remapped to sqr1 — a PSG SE that steals the
+; sqr1 BGM. It fires AFTER the fm SE has ended (non-overlapping), so the single
+; SE_SNAP slot suffices; restore re-writes the BGM's period + attenuation.
+(sqr2 :oct 6 :len 8 :vel 15  b b)

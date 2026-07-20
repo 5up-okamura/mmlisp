@@ -548,14 +548,23 @@ tramp_voice:
 ; (fs_track still walks TCBs through it); the overlay call clobbers it, so it is
 ; saved across both load_overlay and the run.
 se_reclaim:
+    ; Dispatch by the SE's channel: FM (<6) rebuilds its patch, so it rides
+    ; ovl_voice's se_restore (G_SE_ENTRY=1 selects it over d_voice_set); PSG (6-9)
+    ; needs no voice patch and rides ovl_se. G_SE_ENTRY is 0 on entry (reset on
+    ; the previous reclaim / cleared at boot), so the PSG path leaves it alone.
+    ld a,(ix+T_CH)
+    cp 6
+    ld a,7                  ; PSG → overlay 7 (ovl_se, se_restore_psg)
+    jr nc,ser_load
     ld a,1
-    ld (G_SE_ENTRY),a
+    ld (G_SE_ENTRY),a       ; FM → ovl_voice se_restore
+    ld a,6                  ; overlay 6 = ovl_voice
+ser_load:
     push ix
-    ld a,6                  ; overlay index 6 = ovl_voice
     call load_overlay
-    pop ix                  ; IX = SE TCB for se_restore
+    pop ix                  ; IX = SE TCB for the restore
     push ix
-    call OVERLAY_SLOT       ; se_restore
+    call OVERLAY_SLOT
     pop ix                  ; restore SE TCB for the fs_track loop
     xor a
     ld (G_SE_ENTRY),a       ; back to the VOICE_SET opcode entry
@@ -572,6 +581,7 @@ ovl_desc_tab:
     db 0,0,0,0              ; overlay 4 (ovl_rare)
     db 0,0,0,0              ; overlay 5 (ovl_mmb)
     db 0,0,0,0              ; overlay 6 (ovl_voice)
+    db 0,0,0,0              ; overlay 7 (ovl_se)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,

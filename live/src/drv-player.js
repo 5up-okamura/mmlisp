@@ -1756,6 +1756,17 @@ export class DrvPlayer {
         pitchCents: r.pitchCents,
       };
     }
+    if (ch < 10) {
+      const st = this._psg[ch - 6];
+      return {
+        kind: "psg",
+        note: st.currentNote,
+        vel: st.vel,
+        vol: st.vol,
+        gate: st.gate,
+        pitchCents: st.pitchCents,
+      };
+    }
     return null;
   }
 
@@ -1782,6 +1793,21 @@ export class DrvPlayer {
       }
       this._writeFmPitch(ch, snap.note, snap.pitchCents);
       this._applyKeyon(ch);
+    } else if (snap.kind === "psg") {
+      // PSG re-attack = re-write period + attenuation (the PSG "key"); mirrors a
+      // NOTE_ON (drv-player _noteOn PSG branch), which the Z80 se_restore_psg
+      // reproduces in the same order.
+      const psgCh = ch - 6;
+      const st = this._psg[psgCh];
+      st.vel = snap.vel;
+      st.vol = snap.vol;
+      st.gate = snap.gate;
+      st.pitchCents = snap.pitchCents;
+      st.currentNote = snap.note;
+      st.keyed = true;
+      if (psgCh === 3) this._writeNoiseCfg();
+      else this._writePsgPitch(psgCh, snap.note, snap.pitchCents);
+      this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
     }
   }
 

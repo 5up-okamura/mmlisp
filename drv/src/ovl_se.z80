@@ -1,0 +1,61 @@
+; ovl_se — overlay (index 7). Hosts the PSG (and, later, PCM) SE reclaim restore
+; (plan-se.md Step 2). Cold (per SE-end), reached via the resident se_reclaim
+; trampoline with IX = the SE TCB; load_overlay re-latches the MMB bank first, so
+; the LUT reads in write_psg_pitch/compose_psg_att resolve. FM restore stays in
+; ovl_voice (it needs voice_apply_id); PSG needs no voice patch, so it rides its
+; own overlay rather than crowding ovl_voice past the slot ceiling. Assembled at
+; the slot with the resident image's symbols preloaded, so it calls resident
+; helpers (chs_ptr_iy, write_psg_pitch, write_psg_att, compose_psg_att,
+; write_noise_cfg) and reads G_*/IX offsets. Ends `ret` (back to se_reclaim).
+;
+; Restore = the same LDIR of CHS_NOTE..CHS_OWNER from SE_SNAP as the FM path,
+; then a PSG re-attack: re-write the period + attenuation (the PSG "key"),
+; mirroring drv-player _restoreChannel's PSG branch and the driver's own no_psg
+; note-on order (period, keyed, att) so the trace matches bit-for-bit.
+        org OVERLAY_SLOT
+se_restore_psg:             ; IX = SE TCB
+    ld a,(ix+T_CH)
+    ld (G_CH),a
+    call chs_ptr_iy         ; IY = chs
+    ; restore CHS_NOTE..CHS_OWNER (note/voice/vel/vol/gate/pitch/owner)
+    push iy
+    pop hl
+    inc hl                  ; HL = &CHS_NOTE (dst)
+    ex de,hl                ; DE = dst
+    ld hl,SE_SNAP           ; HL = snapshot slot (src)
+    ld bc,SNP_LEN
+    ldir
+    ; re-activate the displaced owner's TCB (CHS_OWNER now holds its index)
+    ld a,(iy+CHS_OWNER)
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de
+    ld (hl),1               ; owner TCB T_STATUS = 1 (playing)
+    ; PSG re-attack: period (or noise cfg) then attenuation (drv-player _noteOn)
+    ld a,(G_CH)
+    sub 6
+    ld c,a                  ; C = psgCh (0..3)
+    cp 3
+    jr z,srp_noise
+    ld l,(iy+CHS_PITCH)
+    ld h,(iy+CHS_PITCH+1)
+    ld (G_PITCHC),hl
+    ld a,(iy+CHS_NOTE)
+    push bc
+    call write_psg_pitch    ; A = note, C = psgCh
+    pop bc
+    jr srp_key
+srp_noise:
+    call write_noise_cfg
+srp_key:
+    set 0,(iy+CHS_STATUS)   ; note active (keyed)
+    push bc
+    call compose_psg_att    ; IY = chs → A = attenuation (clobbers C)
+    pop bc
+    jp write_psg_att        ; A = att, C = psgCh, IY = chs; ends ret
