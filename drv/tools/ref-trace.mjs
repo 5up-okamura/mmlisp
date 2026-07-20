@@ -5,10 +5,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 
-export function refTrace(mmbBytes, { maxFrames = 36000, commands = [], sampleBank = null } = {}) {
+export function refTrace(
+  mmbBytes,
+  { maxFrames = 36000, commands = [], sampleBank = null, autoStart = true } = {},
+) {
   const drv = new DrvPlayer();
   drv.loadMMB(mmbBytes, sampleBank);
-  const cap = drv.captureRegisterLog({ maxFrames, commands });
+  const cap = drv.captureRegisterLog({ maxFrames, commands, autoStart });
   return {
     frames: cap.frames,
     ended: cap.ended,

@@ -24,23 +24,61 @@ function fmtWrite(w) {
     .padStart(2, "0")}`;
 }
 
+// Patch TRACK_TABLE channel ids in place (SE gate channel remap). `remap` is
+// {trackId: channelId}. Layout (mmb.md §6): section id 0x0001, payload = u16
+// count then count × 5 B {trackId, channelId, flags, eventOffset u16}.
+function remapMmbChannels(mmb, remap) {
+  const u16 = (o) => mmb[o] | (mmb[o + 1] << 8);
+  const u32 = (o) => (u16(o) | (u16(o + 2) << 16)) >>> 0;
+  const sectionCount = u16(8);
+  const headerSize = u16(10);
+  for (let i = 0; i < sectionCount; i++) {
+    const at = headerSize + i * 12;
+    if (u16(at) !== 0x0001) continue;
+    const off = u32(at + 4);
+    const count = u16(off);
+    for (let t = 0; t < count; t++) {
+      const e = off + 2 + t * 5;
+      const want = remap[mmb[e]]; // keyed by trackId
+      if (want != null) mmb[e + 1] = want & 0xff;
+    }
+    return;
+  }
+  throw new Error("remapChannels: MMB has no TRACK_TABLE");
+}
+
 export function verify(songPath, { frames, verbose = false } = {}) {
   // 1. song → MMB (+ the separate sample bank, plan-se.md — PCM blobs live in
   //    their own ROM bank the mixer latches, not inside the 32KB control MMB).
   const { bytes: mmb, sampleBank } = buildMmb(songPath);
 
-  // Optional host mailbox schedule: a sidecar "<song>.cmds.json" holding
-  // [{frame, cmd, a0, a1, a2}] injected into both players (M2 KEY_OFF /
-  // SET_PARAM / FADE_TRACK, which are host-driven, not in the MMB stream).
+  // Optional host mailbox schedule: a sidecar "<song>.cmds.json" injected into
+  // both players (M2 KEY_OFF / SET_PARAM / FADE_TRACK, and the SE gate's
+  // START_TRACK / START_SE — all host-driven, not in the MMB stream). Two
+  // shapes: a bare [{frame, cmd, a0, a1, a2}] array (auto-start every track, the
+  // default), or {autoStart, commands} where autoStart:false holds every track
+  // idle so the schedule drives starts explicitly (plan-se.md SE gate).
   const cmdPath = songPath.replace(/\.mmlisp$/, ".cmds.json");
-  const commands = existsSync(cmdPath)
+  const sidecar = existsSync(cmdPath)
     ? JSON.parse(readFileSync(cmdPath, "utf8"))
     : [];
+  const commands = Array.isArray(sidecar) ? sidecar : (sidecar.commands ?? []);
+  const autoStart = Array.isArray(sidecar) ? true : (sidecar.autoStart ?? true);
+  // Channel remap (SE gate): reassign a track's channel id in the built MMB so
+  // two tracks can share one physical channel — the layout the Step 3 bundler
+  // will emit. {"<trackId>": <channelId>}. A stand-in until the bundler lands.
+  const remapChannels = Array.isArray(sidecar) ? null : sidecar.remapChannels;
+  if (remapChannels) remapMmbChannels(mmb, remapChannels);
 
   // 2. JS reference trace. `frames` caps how long it runs; the horizon is
   // where the reference actually ended (which may be earlier — e.g. a PCM
   // tail finishing — so the asm is run for exactly that many frames).
-  const ref = refTrace(mmb, { maxFrames: frames ?? 36000, commands, sampleBank });
+  const ref = refTrace(mmb, {
+    maxFrames: frames ?? 36000,
+    commands,
+    sampleBank,
+    autoStart,
+  });
   const horizon = ref.frames;
 
   // 3. regenerate tables + assemble (resident + overlay ROM blob)
@@ -54,6 +92,7 @@ export function verify(songPath, { frames, verbose = false } = {}) {
     overlay: overlay.length ? overlay : null,
     overlayBank,
     sampleBank,
+    autoStart,
   });
 
   // 5. raw diff

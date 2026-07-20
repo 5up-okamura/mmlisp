@@ -1,0 +1,31 @@
+; SE suspend/restore gate (plan-se.md Step 2). A BGM FM track holds a sustained
+; note on fm1; an SE steals that channel mid-sustain via START_SE, plays a short
+; burst, then ends — and the BGM note must resume with its voice, level and
+; pitch restored and re-keyed. Both the initial START_TRACK (bgm) and the
+; mid-song START_SE (se) are host-driven from m3-se.cmds.json with auto-start
+; off, so the SE track stays idle until it is fired.
+;
+; :vel < 15 on the BGM forces the carrier-TL attenuation path, so the restore
+; must recompose the level (not just re-key) to match.
+
+(def bgm :alg 7 :fb 0
+  :ar1 31 :dr1 4 :sr1 1 :rr1 6 :sl1 2 :tl1 16 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 10 :ks2 0 :ml2 2 :dt2 0
+  :ar3 31 :dr3 5 :sr3 1 :rr3 6 :sl3 2 :tl3 20 :ks3 0 :ml3 3 :dt3 0
+  :ar4 31 :dr4 8 :sr4 2 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def sfx :alg 7 :fb 5
+  :ar1 31 :dr1 2 :sr1 0 :rr1 4 :sl1 0 :tl1 8 :ks1 0 :ml1 4 :dt1 0
+  :ar2 31 :dr2 3 :sr2 0 :rr2 5 :sl2 1 :tl2 6 :ks2 0 :ml2 7 :dt2 0
+  :ar3 31 :dr3 2 :sr3 0 :rr3 4 :sl3 0 :tl3 10 :ks3 0 :ml3 2 :dt3 0
+  :ar4 31 :dr4 4 :sr4 1 :rr4 6 :sl4 2 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+; track 0 (bgm-fm): fm1 holds three whole notes — a long sustain the SE steals.
+(fm1 :tempo 120 bgm :oct 4 :len 1 :vel 12  c c c)
+
+; track 1 (se-fm): authored on fm2 so the compiler emits it as a separate track
+; (one channel = one track), then m3-se.cmds.json remaps its channel to fm1 so
+; it *shares* fm1 with the BGM — the two-tracks-on-one-channel layout the Step 3
+; bundler will produce. START_SE suspends the fm1 BGM owner and snapshots it; the
+; burst's END_OF_TRACK reclaims the channel and restores it.
+(fm2 sfx :oct 5 :len 8 :vel 15  g g)

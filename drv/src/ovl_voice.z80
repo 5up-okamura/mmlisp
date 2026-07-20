@@ -1,47 +1,63 @@
-; ovl_voice — overlay (index 6). Hosts VOICE_SET (0x14), which is cold
-; (per voice switch, not per frame), so it rides an overlay rather than the
-; scarce resident image. Reached via the resident `tramp_voice` trampoline,
-; which loads this overlay and jumps to its entry (d_voice_set) with HL = PC
-; at the opcode and IX = TCB; load_overlay re-latches the MMB bank before the
-; jump, so the handler can read the event stream and the VOICE_TABLE. The
-; handler ends `jp d_next` (resident). Assembled at the slot with the resident
-; image's symbols preloaded, so it calls resident helpers (chs_ptr_iy,
-; fm_port_off, op_e, ym_shadow_read, ym_write) and reads G_*/IX offsets.
+; ovl_voice — overlay (index 6). Hosts VOICE_SET (0x14) and the SE reclaim
+; restore (plan-se.md Step 2), both cold: VOICE_SET is per voice switch, the
+; reclaim per SE-end, so neither belongs in the scarce resident image. The
+; overlay entry dispatches on G_SE_ENTRY — 0 = the VOICE_SET opcode handler
+; (reached via the resident tramp_voice trampoline with HL = PC, IX = TCB),
+; 1 = se_restore (reached via the resident se_reclaim trampoline with IX = the
+; SE TCB). load_overlay re-latches the MMB bank before the jump, so both can
+; read the VOICE_TABLE and LUTs from the window. Assembled at the slot with the
+; resident image's symbols preloaded, so it calls resident helpers (chs_ptr_iy,
+; fm_port_off, op_e, ym_shadow_read, ym_write, write_carrier_tls, write_fm_pitch,
+; apply_keyon) and reads G_*/IX offsets.
 ;
-; Apply a 29-byte VOICE_TABLE entry to the track's FM channel — the coalesced
-; form of a full-voice PARAM_SET burst (mmb.md §11). The write ORDER mirrors
-; drv-player _voiceSet exactly (zero-tolerance trace gate): op outer (0..3),
-; register inner ($30,$40,$50,$60,$70,$80,$90), then $B0. Entry bytes are laid
-; out register-major, so entry[group*4 + op]. Writes are change-only vs the
+; VOICE_SET applies a 29-byte VOICE_TABLE entry to the track's FM channel — the
+; coalesced form of a full-voice PARAM_SET burst (mmb.md §11). The write ORDER
+; mirrors drv-player _voiceSet exactly (zero-tolerance trace gate): op outer
+; (0..3), register inner ($30,$40,$50,$60,$70,$80,$90), then $B0. Entry bytes are
+; laid out register-major, so entry[group*4 + op]. Writes are change-only vs the
 ; shadow; ym_shadow_read reads an unwritten register as 0, matching drv-player's
-; init baseline (so an SSG-omitting voice never writes $90, like the burst it
-; replaces). The $40/TL bytes ALSO seed CHS_VTL (voiced TL) like psf_tl, so a
-; later vel/vol recompose (write_carrier_tls) stays correct.
+; init baseline (so an SSG-omitting voice never writes $90). The $40/TL bytes
+; ALSO seed CHS_VTL (voiced TL) like psf_tl, so a later vel/vol recompose
+; (write_carrier_tls) stays correct.
         org OVERLAY_SLOT
+        ld a,(G_SE_ENTRY)
+        or a
+        jp nz,se_restore
+; ── VOICE_SET opcode (0x14) ────────────────────────────────────────────────
 d_voice_set:                ; HL = PC at opcode, IX = TCB
     inc hl
     ld a,(hl)               ; voice_id
     inc hl
     push hl                 ; save stream continuation
+    call voice_apply_id     ; A = voice_id, IX = TCB → apply the 29-B patch
+    pop hl                  ; restore stream ptr
+    jp d_next
+
+; voice_apply_id: A = voice_id, IX = TCB. Apply the VOICE_TABLE entry to the
+; track's FM channel and record CHS_VOICE (the SE snapshot source). Non-FM
+; channel or no VOICE_TABLE → returns having done nothing. Ends `ret` — shared by
+; the opcode handler and se_restore, so the rebuilt patch is byte-identical.
+voice_apply_id:
     ld c,a                  ; C = voice_id (temp, before choff)
     ld hl,(G_VOICE)
     ld a,h
     or l
-    jp z,vs_ret             ; no VOICE_TABLE → nothing to apply
+    ret z                   ; no VOICE_TABLE → nothing to apply
     ld a,c                  ; entry base = G_VOICE + id*29
     ld de,29
     or a
-    jr z,vs_base
-vs_mul:
+    jr z,va_base
+va_mul:
     add hl,de
     dec a
-    jr nz,vs_mul
-vs_base:
+    jr nz,va_mul
+va_base:
     ld (G_VS_ENT),hl
     ld a,(ix+T_CH)
     cp 6
-    jp nc,vs_ret            ; non-FM channel: no voice patch
-    call chs_ptr_iy         ; IY = channel state (for CHS_VTL)
+    ret nc                  ; non-FM channel: no voice patch
+    call chs_ptr_iy         ; IY = channel state (for CHS_VTL / CHS_VOICE)
+    ld (iy+CHS_VOICE),c      ; record the live voice id (snapshotted on suspend)
     ld a,(ix+T_CH)
     call fm_port_off        ; D = port, C = choff (held across the loops)
     xor a
@@ -113,9 +129,7 @@ vs_b0n:
     add a,c                 ; + choff
     ld e,a
     call vs_put
-vs_ret:
-    pop hl                  ; restore stream ptr
-    jp d_next
+    ret
 
 ; vs_put: B = data, D = port, E = addr → write only if it differs from the
 ; shadow (unwritten reads as 0). Mirrors drv-player _voiceSet's change-only put.
@@ -124,3 +138,54 @@ vs_put:
     cp b
     ret z                   ; unchanged → skip
     jp ym_write
+
+; ── SE reclaim restore (plan-se.md design B) ───────────────────────────────
+; Reached via the resident se_reclaim trampoline at the SE track's END_OF_TRACK
+; / STOP_TRACK. IX = the SE TCB. Rebuild the displaced BGM owner and re-key it;
+; the write ORDER mirrors drv-player _restoreChannel exactly: VOICE_SET → carrier
+; level → pitch → re-key. Ends `ret` (back to se_reclaim).
+se_restore:
+    ld a,(ix+T_CH)
+    ld (G_CH),a             ; channel for the write helpers
+    call chs_ptr_iy         ; IY = the shared channel state
+    ; restore CHS_NOTE..CHS_OWNER (note/voice/vel/vol/gate/pitch/owner) — the SE
+    ; overwrote CHS_*; the LDIR reinstates CHS_OWNER = the BGM owner too.
+    push iy
+    pop hl
+    inc hl                  ; HL = &CHS_NOTE (dst)
+    ex de,hl                ; DE = dst
+    ld hl,SE_SNAP           ; HL = snapshot slot (src)
+    ld bc,SNP_LEN
+    ldir
+    ; re-activate the displaced owner's TCB (CHS_OWNER now holds its index)
+    ld a,(iy+CHS_OWNER)
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de
+    ld (hl),1               ; owner TCB T_STATUS = 1 (playing)
+    ; 1. VOICE_SET: rebuild the FM patch from the restored voice id. Leaves
+    ; IY = chs, which write_carrier_tls preserves too — so steps 2/3 skip the
+    ; chs_ptr_iy reloads.
+    ld a,(iy+CHS_VOICE)
+    call voice_apply_id     ; A = voice id, IX = SE TCB (T_CH = shared channel)
+    ; 2. re-apply carrier level (vel/vol were just restored)
+    ld a,(G_CH)
+    call write_carrier_tls  ; A = ch, IY = chs
+    ; 3. re-write pitch (cents = restored CHS_PITCH, note = restored CHS_NOTE)
+    ld l,(iy+CHS_PITCH)
+    ld h,(iy+CHS_PITCH+1)
+    ld (G_PITCHC),hl
+    ld b,(iy+CHS_NOTE)      ; B = note (preserved across fm_port_off)
+    ld a,(G_CH)
+    call fm_port_off        ; D = port, C = choff
+    ld a,b
+    call write_fm_pitch     ; A = note, cents in G_PITCHC, C = choff, D = port
+    ; 4. re-key (channel_off + key_on; macro-slot restart is a no-op here)
+    call apply_keyon        ; reads (G_CH)
+    ret

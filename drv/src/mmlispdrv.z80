@@ -135,7 +135,10 @@ G_VOICE     equ G_BASE+$57      ; u16  VOICE_TABLE entry base (payload+2; 0 none
 G_VS_ENT    equ G_BASE+$59      ; u16  d_voice_set current entry base
 G_VS_OP     equ G_BASE+$5b      ; u8   d_voice_set op index (0..3, outer loop)
 G_VS_GRP    equ G_BASE+$5c      ; u8   d_voice_set register-group index (0..6)
-G_VS_REG    equ G_BASE+$5d      ; u8   d_voice_set register base ($30..$90)  ($5e..$66 free)
+G_VS_REG    equ G_BASE+$5d      ; u8   d_voice_set register base ($30..$90)
+G_ISSE      equ G_BASE+$5e      ; u8   START_SE suspend flag for ovl_setup (1 = suspend)
+G_SE_ENTRY  equ G_BASE+$5f      ; u8   ovl_voice entry (0 = d_voice_set, 1 = se_restore)
+                                ;      ($60..$66 free)
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
 ; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
@@ -199,14 +202,26 @@ SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1
 ; data region, so [STACK_FLOOR, STACK_TOP) is the 82 B stack window the SP
 ; watermark (tools/budget.mjs) measures against. Keep a reserve above the
 ; worst-case use before bumping DATA_BASE into this window.
-STACK_FLOOR equ SHVALID + $26   ; $1FAE — SHVALID (38 B) top + 1
-STACK_TOP   equ $2000           ; 82 B window ($1FAE..$1FFF)
+; SE suspend snapshot (plan-se.md Step 2): one 14-byte slot holding a displaced
+; owner's CHS_NOTE..CHS_OWNER range (note, voice, vel, vol, gate, pitch, owner),
+; copied by LDIR on suspend and back on the SE-end reclaim. Single slot (N=1) —
+; one SE steals one channel at a time in this build; the PSG slice generalises it
+; to a small pool. Carved off the top of the stack window.
+SNP_LEN     equ 14              ; CHS_OWNER - CHS_NOTE + 1
+SE_SNAP     equ SHVALID + $26   ; $1FAE (14 B)
+STACK_FLOOR equ SE_SNAP + SNP_LEN   ; $1FBC — SE_SNAP top + 1
+STACK_TOP   equ $2000               ; 68 B window ($1FBC..$1FFF)
 
 ; ── Channel state block fields (driver.md §5.1) ───────────────────────────
 CHS_STATUS  equ $00         ; bit0 = keyed (note active; FM key / PSG note-on..off)
                             ; bit1 = PSG audible (att < 15). A vel macro can drive
                             ; att to 15 mid-note without un-keying (driver.md §13.3)
 CHS_NOTE    equ $01
+; SE suspend/restore (plan-se.md Step 2). CHS_VOICE is the channel's live
+; VOICE_SET id (voice_apply_id writes it), placed in a free CH_STATE byte that
+; sits inside the CHS_NOTE..CHS_OWNER range the suspend snapshot LDIRs — so it is
+; captured and restored for free with the rest of the essential state.
+CHS_VOICE   equ $02         ; u8  live voice id (0xFF = none)
 CHS_VEL     equ $05
 CHS_VOL     equ $06
 CHS_GATE    equ $08
@@ -230,9 +245,10 @@ MSL_CUR     equ 2           ; slot: cursor into the value array
 MSL_STATE   equ 3           ; slot: 0 run (attack/sustain), 1 hold, 2 release
 
 T_FADING    equ 3           ; T_FLAGS bit3: track is fading (still playing)
+T_ISSE      equ 4           ; T_FLAGS bit4: SE track that displaced a suspended owner
 
 ; ── Track control block fields (driver.md §5.2) ───────────────────────────
-T_STATUS    equ $00         ; 0 idle, 1 playing, 2 held
+T_STATUS    equ $00         ; 0 idle, 1 playing, 2 held, 3 suspended (SE displaced it)
 T_TRKID     equ $01
 T_CH        equ $02
 T_FLAGS     equ $03
@@ -402,10 +418,22 @@ md_loop:
     ; holds the command across load_overlay.
     ld a,d
     cp 1
-    jr nz,md_cmd
-    ; START_TRACK spans two overlays: locate the MMB sections, then fill the TCB.
-    ; They share the slot in sequence — safe because everything crosses in
-    ; globals, so nothing of ovl_mmb is live once ovl_setup overwrites it.
+    jr z,md_start_track    ; START_TRACK: claim the channel, evicting any owner
+    cp 7
+    jr z,md_start_se       ; START_SE: suspend + snapshot the owner instead
+    jr md_cmd
+md_start_se:
+    ld a,1
+    ld (G_ISSE),a          ; ovl_setup start_track: use the suspend variant
+    jr md_start_go
+md_start_track:
+    xor a
+    ld (G_ISSE),a
+md_start_go:
+    ; START_TRACK / START_SE span two overlays: locate the MMB sections, then
+    ; fill the TCB (ovl_setup reads G_ISSE for evict-vs-suspend). They share the
+    ; slot in sequence — safe because everything crosses in globals, so nothing
+    ; of ovl_mmb is live once ovl_setup overwrites it.
     ld a,5                 ; overlay 5 = ovl_mmb (entry = mmb_locate)
     call load_overlay
     call OVERLAY_SLOT
@@ -417,7 +445,7 @@ md_cmd:
     cp 2
     jr c,md_done           ; cmd 0/1 already handled
     cp 7
-    jr nc,md_done          ; cmd ≥ 7: reserved
+    jr nc,md_done          ; cmd ≥ 7 (7 handled above): reserved
     push de                ; preserve the command (D) across load_overlay
     ld a,1                 ; overlay 1 = ovl_cmd
     call load_overlay
@@ -513,6 +541,25 @@ tramp_voice:
     call load_overlay
     pop hl
     jp OVERLAY_SLOT
+
+; se_reclaim: resident trampoline for the SE-end restore (plan-se.md). Entry with
+; IX = the SE TCB. Selects ovl_voice's se_restore entry (G_SE_ENTRY=1), loads the
+; overlay, runs it, then resets the selector. IX is preserved for the caller
+; (fs_track still walks TCBs through it); the overlay call clobbers it, so it is
+; saved across both load_overlay and the run.
+se_reclaim:
+    ld a,1
+    ld (G_SE_ENTRY),a
+    push ix
+    ld a,6                  ; overlay index 6 = ovl_voice
+    call load_overlay
+    pop ix                  ; IX = SE TCB for se_restore
+    push ix
+    call OVERLAY_SLOT       ; se_restore
+    pop ix                  ; restore SE TCB for the fs_track loop
+    xor a
+    ld (G_SE_ENTRY),a       ; back to the VOICE_SET opcode entry
+    ret
 
 ; ovl_desc_tab: {rom_offset u16, length u16} per overlay — patched by
 ; build-overlays.mjs. Order matches the OVERLAYS list (0 = ovl_setup, 1 = ovl_cmd,
@@ -626,7 +673,12 @@ d_eot_st:
     ld a,(ix+T_MARKER)
     and $3f
     ld c,a
-    jp write_tstat          ; active bit cleared, last marker kept
+    call write_tstat        ; active bit cleared, last marker kept
+    ; SE reclaim (plan-se.md): a single-shot SE self-cleans at EOT — restore the
+    ; BGM owner it displaced. se_reclaim preserves IX for the fs_track loop.
+    bit T_ISSE,(ix+T_FLAGS)
+    ret z
+    jp se_reclaim
 
 ; write_tstat: C → this track's 68k-readable status byte (MB_TSTAT + T_INDEX,
 ; IX = TCB). Shared by d_eot (resident) and MARKER (ovl_rare).

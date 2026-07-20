@@ -33,6 +33,10 @@ export function runTrace(
     // absent, no PCM banking happens.
     sampleBank = null,
     sampleBankNumber = 2,
+    // Auto-start every track at frame 0 (the M1 default). With `false`
+    // (plan-se.md SE gate) no track auto-starts; the `commands` schedule drives
+    // START_TRACK / START_SE, so the SE track can be held back until mid-song.
+    autoStart = true,
   } = {},
 ) {
   if (driverBin.length > MB_BASE) {
@@ -105,17 +109,21 @@ export function runTrace(
     throw new Error(`driver_ready = 0x${ram[MB_READY].toString(16)}, want 0xD2`);
   }
 
-  // 68k role: START_TRACK for every track in the MMB track table.
+  // 68k role: START_TRACK for every track in the MMB track table — unless the
+  // caller drives starts explicitly (SE gate), where the command schedule posts
+  // START_TRACK / START_SE itself and the ring starts empty.
   const tracks = readTrackTable(mmbBytes);
   if (tracks.length > 8) throw new Error("more tracks than mailbox cells");
-  tracks.forEach((t, i) => {
-    const cell = MB_BASE + i * 4;
-    ram[cell + 1] = t.trackId; // a0
-    ram[cell + 2] = 0; // bank low
-    ram[cell + 3] = 0; // bank high
-    ram[cell] = 0x01; // cmd byte last (ring discipline)
-  });
-  ram[MB_HEAD] = tracks.length & 7;
+  if (autoStart) {
+    tracks.forEach((t, i) => {
+      const cell = MB_BASE + i * 4;
+      ram[cell + 1] = t.trackId; // a0
+      ram[cell + 2] = 0; // bank low
+      ram[cell + 3] = 0; // bank high
+      ram[cell] = 0x01; // cmd byte last (ring discipline)
+    });
+    ram[MB_HEAD] = tracks.length & 7;
+  }
 
   // Host mailbox schedule: post commands into the ring just before the frame's
   // interrupt so the Z80 drains them at the top of that frame (§4 step 1).

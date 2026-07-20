@@ -81,24 +81,26 @@ st_found:
     ; channel ownership (driver.md §2.2)
     ld a,(ix+T_CH)
     cp 10
-    jr nc,st_active         ; fm3-op/pcm ids: no channel block in M1
+    jp nc,st_active         ; fm3-op/pcm ids: no channel block in M1
     call chs_ptr_iy
     ld a,(iy+CHS_OWNER)
     cp $ff
-    jr z,st_claim
+    jp z,st_claim
     ld c,a                  ; previous owner index
     ld a,(G_TIDX)
     cp c
-    jr z,st_claim
+    jp z,st_claim
     ; a different track already owns this channel. ch2 is the FM3 shared
     ; channel (voice + op1 coexist in special mode): keep both, don't evict
-    ; or reset the shared level state. Any other channel: release the owner.
+    ; or reset the shared level state. Any other channel: release the owner
+    ; (START_TRACK) or suspend + snapshot it (START_SE, G_ISSE=1).
     ld a,(ix+T_CH)
     cp 2
-    jr z,st_active
+    jp z,st_active
     push bc
-    call channel_off
+    call channel_off        ; silence the owner's note (both paths)
     pop bc
+    ; owner TCB address (index C) — shared by the evict and suspend paths
     ld l,c
     ld h,0
     add hl,hl
@@ -107,7 +109,26 @@ st_found:
     add hl,hl
     add hl,hl
     ld de,TCB_BASE
-    add hl,de
+    add hl,de               ; HL = owner TCB base (T_STATUS at +0)
+    ld a,(G_ISSE)
+    or a
+    jr z,st_evict
+    ; START_SE: suspend the owner (T_STATUS=3, keeping its MB_TSTAT marker) and
+    ; snapshot CHS_NOTE..CHS_OWNER (note/voice/vel/vol/gate/pitch/owner — the
+    ; owner id rides along, still the BGM's here, before st_claim) into SE_SNAP.
+    ; The SE-end reclaim LDIRs it back and rebuilds the FM patch (design B).
+    ld (hl),3               ; owner TCB T_STATUS = 3 (suspended)
+    set T_ISSE,(ix+T_FLAGS) ; the SE remembers it displaced an owner
+    ld a,(ix+T_CH)
+    call chs_ptr_iy         ; IY = chs
+    push iy
+    pop hl
+    inc hl                  ; HL = &CHS_NOTE (src)
+    ld de,SE_SNAP           ; DE = snapshot slot (dst)
+    ld bc,SNP_LEN
+    ldir
+    jr st_claim
+st_evict:
     ld (hl),0               ; previous TCB → idle
     ld hl,MB_TSTAT
     ld a,c

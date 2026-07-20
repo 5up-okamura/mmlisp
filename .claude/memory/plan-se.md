@@ -193,13 +193,43 @@ build (CRITICAL FINDING) + the Z80 mirror + the harness/gate.
 
 1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at
    top). The 32K-wall enabler for PCM.
-2. **Suspend/restore core** — **NEXT (not started).** START_SE (cmd 7),
-   T_STATUS=3 + snapshot + reclaim + re-key, on **both** the Z80 (light — has the
-   ownership model) AND drv-player (heavy — must build the whole track lifecycle,
-   see the CRITICAL FINDING). Implement in slices: (a) harness auto-start control
-   + `m3-se` gate + `.cmds.json`; (b) drv-player START_SE + suspend/reclaim/re-key
-   (the reference); (c) Z80 to match; then FM, PSG, PCM in turn; each `verify:all`
-   Z80≡drv-player. This is the substantial slice — budget a focused session.
+2. **Suspend/restore core** — **FM SUB-SLICE LANDED (2026-07-19); PSG + PCM next.**
+   START_SE (cmd 7), T_STATUS=3 + snapshot + reclaim + re-key, on **both** the Z80
+   AND drv-player. `m3-se` FM gate passes (`verify:all` 34 TRACE MATCH + ab-gate
+   35 scores). What landed:
+   - **Harness auto-start control**: the `.cmds.json` sidecar grew an object form
+     `{autoStart, remapChannels, commands}`. `autoStart:false` holds every track
+     idle so the schedule drives START_TRACK/START_SE (run-trace.mjs + drv-player
+     `_reset(autoStart)` + captureRegisterLog both suppress auto-start-all).
+     `remapChannels {"<trackId>": ch}` patches the built MMB track table so two
+     tracks share one physical channel — a **stand-in for the Step 3 bundler**
+     (the compiler is one-track-per-channel; the SE gate authors the SE on fm2 and
+     remaps it to fm1). verify.mjs parses both.
+   - **drv-player lifecycle** (`_startTrack`/`_mailboxStop`/`_startSe` via
+     `_applyMailbox` case 1/2/7): claim resets channel level defaults (mirrors
+     st_claim); START_SE suspends+snapshots the FM owner; EOT/STOP reclaim restores
+     (`_voiceSet` → carrier level → pitch → re-key). `voiceId` tracked on `_fm[ch]`.
+   - **Z80**: mbox cmd 7 routes like cmd 1 with `G_ISSE`; ovl_setup start_track has
+     an evict-vs-suspend fork; `d_eot` hooks `se_reclaim` (resident trampoline) →
+     ovl_voice `se_restore` (dispatched by `G_SE_ENTRY`), which shares
+     `voice_apply_id` (refactored out of `d_voice_set`, sets `CHS_VOICE`).
+   - **KEY layout facts** (bit me — record for PSG/PCM): CH_STATE `$18-2f` is the
+     **two sweep slots** (`SW_SLOT0`=$18/`SW_SLOT1`=$24), NOT free — the design's
+     "$18-2f free" was wrong. Genuinely-free CH_STATE bytes are only the scattered
+     `$02-04/$07/$09-0b` (7). `CHS_VOICE` lives at **$02** (inside the contiguous
+     `$01..$0E` = CHS_NOTE..CHS_OWNER range the snapshot LDIRs, so it rides along
+     for free). Resident is **FULL** (code ends $17aa, G_PCMV $17ab — 0 gap), so
+     NO new resident helpers — the snapshot must be an LDIR of the contiguous
+     CHS_NOTE..CHS_OWNER range (small overlay code), not field-by-field (blows the
+     274 B overlay slot). Snapshot slot `SE_SNAP` (14 B, **N=1**) is carved off the
+     stack window ($1FAE; STACK_FLOOR→$1FBC; 68 B window, 30 B reserve).
+   - **PSG + PCM remaining**: extend `m3-se` with a sustained PSG note + PSG SE
+     (period+att snapshot, re-key) and a PCM-over-PCM case. **N=1 SE_SNAP must
+     become a small pool** for two simultaneous SEs (FM+PSG) — index by a slot in
+     the SE TCB. PCM uses the separate 17-B `G_PCMV` snapshot at `pcm_note_on`.
+     stop_track reclaim (held/looping SE) is also still TODO (only `d_eot` reclaim
+     is wired; the FM gate SE ends at EOT). NOTE: reclaim-from-stop_track runs
+     inside ovl_cmd, so it can't self-overwrite by loading ovl_voice — needs care.
 3. **Bundler/link tool** — pack BGM + SE control data into one MMB + the shared
    sample bank (reuses step 1's format), sample-id namespace across sources.
    Needed for real BGM+SE concurrency; compile-time, node-testable.

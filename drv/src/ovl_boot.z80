@@ -28,6 +28,7 @@ boot_ch:
     ld (iy+CHS_VOL),31
     ld (iy+CHS_GATE),8
     ld (iy+CHS_OWNER),$ff
+    ld (iy+CHS_VOICE),$ff       ; no voice yet (drv-player voiceId default)
     ld (iy+CHS_ALG),7
     ld (iy+CHS_MACT),$ff       ; macro engine: 3 empty active + 3 running slots
     ld (iy+CHS_MACT+1),$ff

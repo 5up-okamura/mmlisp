@@ -1,0 +1,8 @@
+{
+  "autoStart": false,
+  "remapChannels": { "1": 0 },
+  "commands": [
+    { "frame": 0, "cmd": 1, "a0": 0 },
+    { "frame": 30, "cmd": 7, "a0": 1 }
+  ]
+}

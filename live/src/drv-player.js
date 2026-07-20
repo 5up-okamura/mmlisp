@@ -133,6 +133,7 @@ function freshFmChannel() {
     gate: 8, // eighths of dur (opcodes.md §4)
     pitchCents: 0, // PARAM_SET NOTE_PITCH offset
     currentNote: 60,
+    voiceId: 0xff, // last VOICE_SET id (mirrors CHS_VOICE); 0xFF = none, for SE restore
     keyed: false,
     ops: Array.from({ length: 4 }, () => ({
       voicedTl: 0,
@@ -333,7 +334,11 @@ export class DrvPlayer {
   }
 
   // ── Playback state reset (driver "power-on + START_TRACK all") ──────────
-  _reset() {
+  // `autoStart` mirrors the harness auto-start-all (run-trace.mjs): true starts
+  // every track from frame 0 (the M1 default); false leaves them idle so the
+  // host mailbox schedule drives START_TRACK / START_SE explicitly (plan-se.md
+  // SE gate — the SE track must not auto-start).
+  _reset(autoStart = true) {
     const song = this._song;
     this._frame = 0;
     // Song increment; TEMPO_SET replaces it — unless a live tempo override is
@@ -410,13 +415,14 @@ export class DrvPlayer {
       trackId: t.trackId,
       channelId: t.channelId,
       flags: t.flags,
+      eventOffset: t.eventOffset, // stream start, for START_TRACK re-init
       pc: t.eventOffset,
       acc: 0, // 8.8 fractional accumulator (low byte only is fractional)
       markerId: 0, // last MARKER id → mailbox status byte (MB_TSTAT bits5-0)
       wait: 0, // ticks until the next timed event resumes
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
       pendingOff: false, // full-gate key-off awaiting the slur test
-      running: true,
+      running: autoStart,
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
       unsupported: t.channelId >= 23, // pcm1–pcm3 (20–22) are soft-mix PCM (M3)
@@ -424,6 +430,14 @@ export class DrvPlayer {
       fadeN: 0,
       fadeErr: 0,
       fadeVol: 0,
+      // SE suspend/restore (plan-se.md Step 2). A displaced BGM owner is
+      // `suspended` (T_STATUS=3: has state, does not dispatch, does not own its
+      // channel). An SE track that stole a channel carries `isSe` + the
+      // displaced owner's index + its channel snapshot, so SE-end can restore it.
+      suspended: false,
+      isSe: false,
+      displaced: null, // owner track index this SE displaced (null = none)
+      snapshot: null, // channel state captured at suspend
     }));
     for (const t of this._trk) {
       if (t.unsupported) {
@@ -741,6 +755,9 @@ export class DrvPlayer {
           // Stopping an fm3-csm track must clear CSM (driver.md §9).
           if (trk.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
           trk.running = false;
+          // A single-shot SE self-cleans at EOT: restore the BGM owner it stole
+          // the channel from (plan-se.md — reclaim = SE EOT or STOP_TRACK).
+          this._reclaimSe(trk);
           return;
         }
         case OPCODE.NOTE_ON: {
@@ -1098,6 +1115,7 @@ export class DrvPlayer {
     if (!entry) return;
     const ch = channelId;
     const regs = this._fm[ch];
+    regs.voiceId = voiceId; // record for SE snapshot/restore (CHS_VOICE mirror)
     const port = ch >= 3 ? 1 : 0;
     const off = ch % 3;
     // Change-only against the structured shadow (not _shadow): the burst only
@@ -1601,10 +1619,20 @@ export class DrvPlayer {
   }
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
-  //    of a frame. START/STOP are auto-driven in this reference; the M2
-  //    commands below arrive via captureRegisterLog's `commands` schedule.
+  //    of a frame. When the harness auto-starts every track (the M1 default)
+  //    START/STOP never arrive; with auto-start off (plan-se.md SE gate) the
+  //    `commands` schedule drives START_TRACK / START_SE / STOP_TRACK too.
   _applyMailbox(cmd, a0, a1, a2) {
     switch (cmd) {
+      case 0x01: // START_TRACK (track_id) — evict the channel's prior owner
+        this._startTrack(a0, false);
+        break;
+      case 0x02: // STOP_TRACK (track_id) — reclaim if it displaced a BGM owner
+        this._mailboxStop(a0);
+        break;
+      case 0x07: // START_SE (track_id) — suspend + snapshot the channel's owner
+        this._startTrack(a0, true);
+        break;
       case 0x03: // KEY_OFF (channel_id)
         this._mailboxKeyOff(a0);
         break;
@@ -1642,6 +1670,143 @@ export class DrvPlayer {
     if (t.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
     t.running = false;
     t.fading = false;
+  }
+
+  // ── Track lifecycle (plan-se.md Step 2) ──────────────────────────────────
+  // START_TRACK / START_SE. The MMB tracks already exist in `_trk` (built at
+  // _reset); starting one re-inits its dispatch state and claims its channel.
+  // With `asSe`, the channel's current owner is *suspended + snapshotted* (so
+  // SE-end can restore it) instead of *evicted* — this is the whole SE story.
+  // The Z80 mirror is ovl_setup start_track (evict block → suspend variant).
+  _startTrack(trackId, asSe) {
+    const trk = this._trk.find((t) => t.trackId === trackId);
+    if (!trk) return; // unknown track id
+    const ch = trk.channelId;
+    // Channel ownership: the current owner is the *other* running (non-suspended)
+    // track on this channel. ch2 is the FM3 shared channel (voice + op1 coexist);
+    // ids ≥ 10 (fm3-op/pcm) have no channel block — no owner to displace here.
+    if (ch < 10 && ch !== 2) {
+      const owner = this._trk.find(
+        (t) => t !== trk && t.running && !t.suspended && t.channelId === ch,
+      );
+      if (owner) {
+        if (asSe) {
+          this._channelOff(ch); // silence the owner's note before the SE keys
+          owner.snapshot = this._snapshotChannel(ch); // capture before the reset below
+          owner.running = false;
+          owner.suspended = true;
+          trk.displaced = owner.index;
+          trk.snapshot = owner.snapshot; // SE carries it for reclaim
+        } else {
+          this._stopTrack(owner); // scene transition: evict
+        }
+      }
+      // Claiming a channel resets its level state to defaults (ovl_setup
+      // st_claim: CHS_VEL=15 / CHS_VOL=31 / CHS_GATE=8) — so a track that relies
+      // on the default velocity (no PARAM_SET) sounds right after stealing it.
+      if (ch < 6) {
+        const r = this._fm[ch];
+        r.vel = 15;
+        r.vol = VOL_UNITY;
+        r.gate = 8;
+      } else {
+        const p = this._psg[ch - 6];
+        p.vel = 15;
+        p.vol = VOL_UNITY;
+        p.gate = 8;
+      }
+    }
+    // Re-init the track's dispatch state (mirrors ovl_setup TCB fill).
+    trk.pc = trk.eventOffset;
+    trk.acc = 0;
+    trk.wait = 0;
+    trk.gateLeft = -1;
+    trk.pendingOff = false;
+    trk.markerId = 0;
+    trk.loops = [];
+    trk.held = false;
+    trk.fading = false;
+    trk.running = true;
+    trk.suspended = false;
+    trk.isSe = asSe;
+  }
+
+  // STOP_TRACK (mailbox cmd 2): stop the track; if it is an SE that displaced a
+  // BGM owner, restore the owner first (held/looping SEs end on STOP, not EOT).
+  _mailboxStop(trackId) {
+    const t = this._trk.find((x) => x.trackId === trackId && x.running);
+    if (!t) return;
+    this._stopTrack(t);
+    this._reclaimSe(t);
+  }
+
+  // Snapshot a channel's live state at suspend — essential fields only; the
+  // restore reconstructs the FM patch via VOICE_SET (design B). FM: voice id +
+  // note/vel/vol/gate/pitch. (PSG/PCM added in later slices.)
+  _snapshotChannel(ch) {
+    if (ch < 6) {
+      const r = this._fm[ch];
+      return {
+        kind: "fm",
+        voiceId: r.voiceId,
+        note: r.currentNote,
+        vel: r.vel,
+        vol: r.vol,
+        gate: r.gate,
+        pitchCents: r.pitchCents,
+      };
+    }
+    return null;
+  }
+
+  // Restore a snapshotted channel and re-key its held note (design B). The write
+  // order — VOICE_SET, carrier level, pitch, re-key — is normative: the Z80
+  // mirror must emit the same registers in the same order.
+  _restoreChannel(ch, snap) {
+    if (!snap) return;
+    if (snap.kind === "fm") {
+      const regs = this._fm[ch];
+      if (snap.voiceId !== 0xff) this._voiceSet(ch, snap.voiceId);
+      regs.vel = snap.vel;
+      regs.vol = snap.vol;
+      regs.gate = snap.gate;
+      regs.pitchCents = snap.pitchCents;
+      regs.currentNote = snap.note;
+      // Re-apply carrier level (like _noteOn) so a vel/vol < unity lands.
+      const port = ch >= 3 ? 1 : 0;
+      const off = ch % 3;
+      for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
+        const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
+        regs.ops[opIdx].tl = tl;
+        this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
+      }
+      this._writeFmPitch(ch, snap.note, snap.pitchCents);
+      this._applyKeyon(ch);
+    }
+  }
+
+  // Re-attack a channel (apply_keyon): FM re-keys the EG ($28 off→on); PSG has
+  // no hardware EG so this is a no-op there (macro restart is added with PSG).
+  _applyKeyon(ch) {
+    if (ch < 6) {
+      this._keyOff(ch);
+      this._keyOn(ch);
+    }
+  }
+
+  // Restore the BGM owner an SE displaced (SE-end reclaim). Hooked at the SE
+  // track's END_OF_TRACK and STOP_TRACK, mirroring the Z80 d_eot / stop_track.
+  _reclaimSe(seTrk) {
+    if (!seTrk.isSe || seTrk.displaced == null) return;
+    const owner = this._trk[seTrk.displaced];
+    seTrk.isSe = false;
+    seTrk.displaced = null;
+    seTrk.snapshot = null;
+    if (!owner || !owner.suspended) return;
+    owner.suspended = false;
+    owner.running = true;
+    this._restoreChannel(owner.channelId, owner.snapshot);
+    owner.snapshot = null;
   }
 
   _mailboxFade(trackId, frames) {
@@ -1860,7 +2025,7 @@ export class DrvPlayer {
    * The same manual-clock idea as IRPlayer.captureRegisterLog, so the two
    * logs can be diffed by ab-compare.js.
    */
-  captureRegisterLog({ maxFrames = 36000, commands = [] } = {}) {
+  captureRegisterLog({ maxFrames = 36000, commands = [], autoStart = true } = {}) {
     if (!this._song) throw new Error("No MMB loaded");
     const writes = [];
     const saved = this._writeCb;
@@ -1880,7 +2045,7 @@ export class DrvPlayer {
     const markerLog = [];
     try {
       this._audioContext = null;
-      this._reset();
+      this._reset(autoStart);
       let frames = 0;
       while (frames < maxFrames) {
         for (const c of cmdByFrame.get(this._frame) ?? []) {
