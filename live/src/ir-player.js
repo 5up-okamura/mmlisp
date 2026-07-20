@@ -3054,6 +3054,24 @@ export class IRPlayer {
         );
         this._write(port, 0xa0 + chOffset, pf & 0xff, frameWhen);
       }
+      // A bounded glide must land exactly on its target `to`. The frame loop can
+      // stop a fraction short (budgetFrames is floored while the phase divides by
+      // baseFrames), so a short glide ends mid-slope — leaving a residual pitch
+      // offset that the note holds and every later NOTE_ON inherits (glide never
+      // resets pitchOffset; `(glide none)` only stops future glides). Snap to the
+      // final value so the note reaches true pitch and nothing leaks past it.
+      if (ev.args?.bounded) {
+        this._chRegs[ch].pitchOffset = to;
+        const { fnum: ef, block: eb } = midiToFnumBlock(baseMidi + to / 100);
+        const endWhen = when + budgetFrames / 60;
+        this._write(
+          port,
+          0xa4 + chOffset,
+          ((eb & 0x07) << 3) | ((ef >> 8) & 0x07),
+          endWhen,
+        );
+        this._write(port, 0xa0 + chOffset, ef & 0xff, endWhen);
+      }
       return;
     }
 
@@ -3500,6 +3518,12 @@ export class IRPlayer {
               baseMidi + centOffset / 100,
               when + frame / 60,
             );
+          }
+          // Bounded glide: snap to the exact target so a short glide that ends
+          // mid-slope leaves no residual offset for later notes (see the FM path).
+          if (ev.args?.bounded) {
+            this._psgPitchOffset[psgCh] = to;
+            this._psgSetPitch(psgCh, baseMidi + to / 100, when + budgetFrames / 60);
           }
         }
         break;
