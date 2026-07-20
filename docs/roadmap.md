@@ -495,6 +495,10 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
   pitch rides `:rate`), relative `<`/`>`.
 - **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`
   (dropped on K — PCM is a soft-mix voice on the fm6 DAC and owns no pan lane).
+- **Gate** `q<n>` → `:gate-` (key off n clocks early); parts that never set `q`
+  get a named `auto-gate` default (see below).
+- **SSG envelope** `E AL,AR,DR,SL,SR,RR` → a sticky `:macro :vel*` ADSR, emitted
+  once as a `(def envN …)` and referenced by name.
 - **Loops**: single-line `[…]n` → `(x n …)`; multi-line `[…]n` → `#labelK …
   (go labelK n)`; `/` break → `:break`; global `L` → `#loop`/`(go loop)`.
 - **Voices**: inline `@n` FM defs, `@"name"`, external `.dat` bank load + merge.
@@ -550,19 +554,25 @@ carrier TL — since MMLisp's relative model is deliberate, not an oversight.
 ### Priority 1 — track alignment
 
 Goal: every track in a song has the same total tick length (so they don't drift
-apart over the loop). Current: **19 / 46** reference songs align exactly. Two
-remaining classes of drift:
+apart over the loop). Current: **29 / 46** reference songs align exactly (up from
+19 — two structural root causes were fixed: a dotted note with no explicit
+length, `f.`, silently dropped its dot, and a trailing `:break` at a form
+boundary was dropped, so a multi-line `/`-break loop ran a pass long. That
+cleared gh011, bos010, pcmt12/16/31, stk013, stg001, sq1_103, disco4, bare03).
+Two remaining classes of drift:
 
 1. **Factor-rounding** — songs whose `C` doesn't divide the 384-tick grid
-   (e.g. `C112`: slp020, bare21) accumulate per-note ±1-tick rounding in the
+   (e.g. `C112`: slp020, spread 2) accumulate per-note ±1-tick rounding in the
    clocks→ticks step. Fix options: raise the tick grid to an LCM that covers the
    common `C` values, or dither the clocks→ticks conversion with a running
    remainder so the total stays exact.
 2. **Structural** — clean `C` but parts convert to different lengths. Either a
    conversion bug or a genuinely different part length (intro / non-looping
    tail). Needs per-song diagnosis. Remaining (spread in ticks):
-   `pcmt12 12 · gh011 24 · pcmt31 48 · stk013/023 72 · stg001 96 ·
-   sq1_103/disco4 192 · bare03 336 · pcmt16 384 · bos010(fm3) 768 · … bare21 7200`.
+   `stk023 52 · sq1_112 144 · pcmt20 1080 · stk020 1536 · bare12 1584 ·
+   bare09 2304 · bare16 3192 · stk004 3840 · bos011 4416 · sq1_115 4608 ·
+   slp010 5712 · sq1_104 5760 · bare21 6144 · hrock1 6144 · stk027 9408 ·
+   disco1 10752`.
 
 Part K joins this picture rather than changing it: importing the PCM bank does
 **not** perturb any other track's period (verified with and without the bank),
@@ -581,8 +591,7 @@ divergent measure; confirm against the raw MML clock count.
 
 By musical impact (each maps onto existing MMLisp primitives):
 
-- **High**: `q` quantize/gate (articulation — MMLisp has gate); `E` SSG soft
-  envelope (PSG volume envelope — map like the LFO); `K`/`k` key shift (transpose).
+- **High**: `K`/`k` key shift (transpose).
 - **Medium**: `w` noise wave (PSG noise pitch); `J` tag jump
   (→ `#label`/`(go)`); `P` mix port (SSG tone/noise enable); `V` total volume
   offset.
