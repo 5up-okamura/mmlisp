@@ -67,6 +67,10 @@ const MUCOM_DEFAULT_OCT = 6; // mucom's default octave when a part sets none
 // frame is inaudible as a gap but restores the note-per-note attack mucom gives
 // for free. Not a fidelity claim: mucom's real key-off gap is unmeasured.
 const MUCOM_DEFAULT_GATE_CUT = "1f";
+// Named def for that default cut, emitted once and referenced by every part
+// that never sets `q`. Naming it keeps the importer's re-attack default visibly
+// distinct in the output from a `:gate-` the composer wrote as articulation.
+const MUCOM_AUTO_GATE_DEF = "auto-gate";
 
 /** Decode .muc bytes (usually Shift-JIS) to a string, UTF-8 fallback. */
 export function decodeMucText(bytes) {
@@ -117,6 +121,39 @@ function lengthToken(num, dots, pct, wholeClocks) {
     return `${ticks}t`;
   }
   return null;
+}
+
+// Raw mucom clocks for a length spec (no MMLisp conversion). Mirrors
+// lengthToken's dot arithmetic; used to resolve dots against the running
+// default length.
+function lengthClocks(num, dots, pct, wholeClocks) {
+  if (pct != null) return pct;
+  if (num == null) return null;
+  let clocks = Math.floor(wholeClocks / num);
+  let add = clocks;
+  for (let d = 0; d < dots; d++) { add = Math.floor(add / 2); clocks += add; }
+  return clocks;
+}
+
+// Resolve a note/rest length token. A dots-only suffix (`f.`, `e-.` — dots but
+// no number) applies the dots to the running DEFAULT length: mucom multiplies
+// the note's current length by 1.5 per dot. lengthToken alone returns null when
+// num is absent, which silently dropped the dot (part ran short over the loop).
+function resolveLen(num, dots, pct, hasLen, state) {
+  if (!hasLen) return null;
+  if (num == null && pct == null && dots > 0) {
+    const def = state.defaultLen;
+    if (!def) return null; // no l/% seen yet — emit bare (best effort, rare)
+    // Plain fractional default: keep the readable `num.` form (e.g. l16 f. -> 16.).
+    if (def.num != null && !def.dots) return lengthToken(def.num, dots, null, state.wholeClocks);
+    // Dotted or clock-set default: dot from its resolved clocks.
+    let clocks = lengthClocks(def.num, def.dots, def.pct, state.wholeClocks);
+    if (clocks == null) return null;
+    let add = clocks;
+    for (let d = 0; d < dots; d++) { add = Math.floor(add / 2); clocks += add; }
+    return lengthToken(null, 0, clocks, state.wholeClocks);
+  }
+  return lengthToken(num, dots, pct, state.wholeClocks);
 }
 
 // mucom `t` sets the OPNA Timer-B directly. The realtime tempo also depends on
@@ -219,7 +256,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      const len = hasLen ? lengthToken(num, dots, pct, state.wholeClocks) : null;
+      const len = resolveLen(num, dots, pct, hasLen, state);
       push({ t: "note", letter: c, acc, len });
       continue;
     }
@@ -235,7 +272,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      push({ t: "rest", len: hasLen ? lengthToken(num, dots, pct, state.wholeClocks) : null });
+      push({ t: "rest", len: resolveLen(num, dots, pct, hasLen, state) });
       continue;
     }
 
@@ -248,11 +285,11 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     if (c === "l") {
       i++;
       let token = null;
-      if (body[i] === "%") { i++; const p = readInt() ?? 0; token = lengthToken(null, 0, p, state.wholeClocks); }
+      if (body[i] === "%") { i++; const p = readInt() ?? 0; token = lengthToken(null, 0, p, state.wholeClocks); state.defaultLen = { num: null, dots: 0, pct: p }; }
       else {
         const num = readInt(); let dots = 0;
         while (body[i] === ".") { dots++; i++; }
-        if (num != null) token = lengthToken(num, dots, null, state.wholeClocks);
+        if (num != null) { token = lengthToken(num, dots, null, state.wholeClocks); state.defaultLen = { num, dots, pct: null }; }
       }
       if (token) push({ t: "lenSet", token });
       continue;
@@ -264,7 +301,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     if (c === "%") {
       i++;
       const p = readInt();
-      if (p != null) push({ t: "lenSet", token: lengthToken(null, 0, p, state.wholeClocks) });
+      if (p != null) { push({ t: "lenSet", token: lengthToken(null, 0, p, state.wholeClocks) }); state.defaultLen = { num: null, dots: 0, pct: p }; }
       continue;
     }
 
@@ -350,7 +387,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
     if (c === "]") {
-      i++; const cnt = readInt();
+      // mucom tolerates whitespace before the repeat count (`] 2` == `]2`);
+      // skip it so the count is read, not left as a stray unknown token.
+      i++; skipSpaces(); const cnt = readInt();
       if (stack.length > 1) {
         // Close the innermost single-line loop (local nesting).
         stack.pop();
@@ -384,7 +423,10 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       push({ t: "tie", len: hasLen ? lengthToken(num, dots, pct, state.wholeClocks) : null });
       continue;
     }
-    if (c === "&") { i++; warnOnce(warn, "&", "slur (&) articulation dropped; notes play separately"); continue; }
+    // Slur/tie `&`: connects the previous note to the next without a re-key.
+    // MMLisp's `X ~ Y` connector has the same semantics — same pitch ties
+    // (extends), different pitch slurs (legato). Emit `~` between the two notes.
+    if (c === "&") { i++; push({ t: "slur" }); continue; }
 
     // Portamento {from len to}: a pitch glide occupying one note's time. mucom
     // {c2b} slides c->b over length 2 (octaves may be crossed with < / >). Map to
@@ -606,6 +648,7 @@ export function parseMucom(text) {
     if (!state.has(letter)) {
       state.set(letter, {
         wholeClocks: DEFAULT_WHOLE_CLOCKS,
+        defaultLen: null, // running `l`/`%` default, for dots-only notes (`f.`)
         decisions: loopDecisions.get(letter) || [],
         decisionIdx: 0,
         crossStack: [], // open cross-line loops (labels), persists across lines
@@ -820,6 +863,12 @@ function renderOps(ops, ctx, out, depth = 0) {
           out.push("~"); // no preceding note (malformed) — best effort
         }
         break;
+      case "slur":
+        // mucom `&` connector — legato to the next note (see the tokenizer).
+        // MMLisp's `~` attaches to the next real note, skipping state tokens,
+        // so a glide/octave/vel between `&` and the note stays intact.
+        out.push("~");
+        break;
       case "bar":
         out.push("|"); // bar line — editorial marker, carried through verbatim
         break;
@@ -880,14 +929,16 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         break;
       case "lfoSet": {
-        // Software pitch LFO -> sticky :macro :pitch. Depth/period scaling are
-        // representative approximations (like detune); tune by ear if needed.
+        // Software pitch LFO -> sticky :macro :pitch+. Additive (not override) so
+        // the vibrato rides a running glide/detune instead of clobbering it — a
+        // `:pitch` override would overwrite the portamento sweep on glided notes.
+        // Depth/period scaling are representative approximations (like detune).
         // mucom triangle: amp steps of +amt each up then down; peak = amp*amt
         // (F-number units -> cents), full cycle = 2*amp*clock mucom-clocks.
         const lfo = op.lfo;
         let spec;
         if (!lfo.on || lfo.amp * lfo.amt === 0 || lfo.clock === 0) {
-          spec = "none"; // LFO off -> (def lfo-off :macro :pitch none)
+          spec = "none"; // LFO off -> (def lfo-off :macro :pitch+ none)
         } else {
           const factor = WHOLE_TICKS / op.wholeClocks; // mucom clocks -> ticks
           const cents = Math.round(lfo.amp * lfo.amt * (ctx.isSsg ? PSG_CENTS_PER_DETUNE : FM_CENTS_PER_DETUNE));
@@ -899,7 +950,7 @@ function renderOps(ops, ctx, out, depth = 0) {
             : tri;
         }
         // Define each distinct LFO (and the off-clear) once as (def … :macro
-        // :pitch …) and reference it by name — compact and readable.
+        // :pitch+ …) and reference it by name — compact and readable.
         if (ctx.lfoRegistry) {
           let name = ctx.lfoRegistry.get(spec);
           if (!name) {
@@ -910,7 +961,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           }
           out.push(name); // bare reference — the def already carries :macro
         } else {
-          out.push(`(macro :pitch ${spec})`);
+          out.push(`(macro :pitch+ ${spec})`);
         }
         break;
       }
@@ -1152,7 +1203,7 @@ export function mucomToMmlisp(parsed) {
   }
 
   // Distinct software-LFO specs collected during rendering -> emitted as
-  // (def lfoN :macro :pitch …) above the score, referenced by name.
+  // (def lfoN :macro :pitch+ …) above the score, referenced by name.
   const lfoRegistry = new Map();
   const envRegistry = new Map(); // distinct SSG soft envelopes -> (def envN :macro :vel …)
   const echoRegistry = new Map(); // distinct echoes -> (def ecN (echo …)), referenced by name
@@ -1261,10 +1312,36 @@ export function mucomToMmlisp(parsed) {
     f.text = toks.join(" ");
   }
 
+  // Per channel: #loop (or octave base) on the first playable form, (go loop)
+  // on the last. mucom songs loop from L if present (emitted inline) else start.
+  const firstForm = new Map();
+  const lastForm = new Map();
+  for (const f of forms) {
+    if (f.text === "") continue;
+    if (!firstForm.has(f.letter)) firstForm.set(f.letter, f);
+    lastForm.set(f.letter, f);
+  }
+  let usesAutoGate = false;
+  for (const [letter, f] of firstForm) {
+    const prefix = [];
+    // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it.
+    if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) prefix.push(`:oct ${MUCOM_DEFAULT_OCT + octShiftFor(letter)}`);
+    // mucom re-attacks every note; MMLisp holds a full-gate note into the next
+    // one as a slur, so a part that never sets `q` would run its notes together
+    // and lose them (guide.md, gate). Reference the auto-gate def (emitted below)
+    // for the smallest cut that re-attacks — named so it reads apart from a `q`.
+    if (!hasGateCut(allOpsByLetter.get(letter) || [])) { prefix.push(MUCOM_AUTO_GATE_DEF); usesAutoGate = true; }
+    if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
+    if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
+  }
+  for (const [, f] of lastForm) f.text = `${f.text} (go loop)`.trim();
+
   // Emit the discovered LFO / envelope / echo / PCM defs above the score (by name).
-  if (lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
+  if (usesAutoGate || lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
     const defLines = [];
-    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro :pitch ${spec}))`);
+    if (usesAutoGate)
+      defLines.push("", `(def ${MUCOM_AUTO_GATE_DEF} :gate- ${MUCOM_DEFAULT_GATE_CUT})`);
+    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro :pitch+ ${spec}))`);
     for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} (macro :vel* ${spec}))`);
     for (const [form, name] of echoRegistry) defLines.push("", `(def ${name} (echo ${form}))`);
     // Each referenced bank sample slices the one WAV the bank decoded to.
@@ -1276,28 +1353,6 @@ export function mucomToMmlisp(parsed) {
     }
     lines.splice(lfoDefAnchor, 0, ...defLines);
   }
-
-  // Per channel: #loop (or octave base) on the first playable form, (go loop)
-  // on the last. mucom songs loop from L if present (emitted inline) else start.
-  const firstForm = new Map();
-  const lastForm = new Map();
-  for (const f of forms) {
-    if (f.text === "") continue;
-    if (!firstForm.has(f.letter)) firstForm.set(f.letter, f);
-    lastForm.set(f.letter, f);
-  }
-  for (const [letter, f] of firstForm) {
-    const prefix = [];
-    // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it.
-    if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) prefix.push(`:oct ${MUCOM_DEFAULT_OCT + octShiftFor(letter)}`);
-    // mucom re-attacks every note; MMLisp holds a full-gate note into the next
-    // one as a slur, so a part that never sets `q` would run its notes together
-    // and lose them (guide.md, gate). Give it the smallest cut that re-attacks.
-    if (!hasGateCut(allOpsByLetter.get(letter) || [])) prefix.push(`:gate- ${MUCOM_DEFAULT_GATE_CUT}`);
-    if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
-    if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
-  }
-  for (const [, f] of lastForm) f.text = `${f.text} (go loop)`.trim();
 
   // Tempo rides the very first playable form (before its #loop/:oct prefix it
   // would also be fine — :tempo is score-global wherever it appears).

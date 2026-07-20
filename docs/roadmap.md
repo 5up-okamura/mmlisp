@@ -487,7 +487,8 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
   song**: the loudest drum becomes `:vel 15` and the rest keep their dB distance
   below it (16 steps, so near-equal volumes can still collapse).
 - **Notes / lengths** on mucom's clock grid: `len` → `floor(C/len)` clocks →
-  ticks (`× 384/C`); `%<clocks>` direct lengths; dots; `^`/`&`→tie.
+  ticks (`× 384/C`); `%<clocks>` direct lengths; dots (incl. dots on the running
+  default length, `f.`); tie `^` and slur/tie `&` → the `~` connector.
 - **Bar lines** `|` → MMLisp `|` (carried through verbatim as editorial markers).
 - **Octave** (FM reads one higher → `:oct N-1`; SSG no shift; PCM `+3`, so the
   o1/o2 mucom drums land inside MMLisp's MIDI 36–84 sample range and the real
@@ -500,20 +501,32 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
 - **Macros** `*n` → `(def *n …)`, tokenized at the song's C resolution.
 - **Modulation**: portamento `{c2b}` → `(glide <from> <len>)` … `(glide none)`;
   hardware LFO `H` →
-  `:lfo-rate`/`:fms`/`:ams`; software LFO `M` → `(def lfoN :macro :pitch
-  (triangle …))` + `(wait …)` delay; off `MF0` → `(def lfo-off :macro :pitch none)`.
+  `:lfo-rate`/`:fms`/`:ams`; software LFO `M` → `(def lfoN :macro :pitch+
+  (triangle …))` + `(wait …)` delay (additive so the vibrato rides a running
+  glide/detune); off `MF0` → `(def lfo-off :macro :pitch+ none)`.
 - **Tempo**: `T` (BPM direct); `t` (Timer-B) via the driver formula
   `BPM = 830400 / ((256 − t) × C)`, deferred so a later `C` (and its first note)
   sets the resolution. First tempo seeds the score; changes emitted inline.
 
-### Known divergence — notes slur where mucom re-attacks
+### mucom re-attacks every note — handled via an `auto-gate` def
 
 mucom re-attacks every note; MMLisp holds a full-gate note into the next one as
-a slur (guide.md §gate). The importer only emits `:gate-` where mucom wrote
-`q<n>`, so a part that relied on mucom's default loses its attack here — the
-notes run together and individual hits vanish until `:gate- 1f` is added by hand.
-The fix is a baseline `:gate-` on imported parts; its size wants measuring
-against mucom's key-off rather than guessing.
+a slur (guide.md §gate). So a part that never sets mucom's `q<n>` would run its
+notes together and lose individual hits. The importer gives every such part a
+baseline cut — the smallest that re-attacks (`:gate- 1f`) — emitted **once** as
+a named def and referenced by each part that needs it:
+
+```lisp
+(def auto-gate :gate- 1f)   ; importer default; parts with `q` keep their own :gate-
+(fm2 auto-gate #loop :oct 5 …)
+```
+
+Naming it keeps the importer's re-attack default visibly distinct from a
+`:gate-` the composer wrote as articulation (which comes from `q<n>` and is
+emitted inline, not via `auto-gate`). The cut size is not a fidelity claim:
+mucom's real key-off gap is unmeasured, and `1f` is simply the smallest gap that
+still re-attacks. Constants live in `import-mucom.js` (`MUCOM_DEFAULT_GATE_CUT`,
+`MUCOM_AUTO_GATE_DEF`).
 
 ### Known divergence — FM volume is absolute in mucom, relative here
 
@@ -570,7 +583,7 @@ By musical impact (each maps onto existing MMLisp primitives):
 
 - **High**: `q` quantize/gate (articulation — MMLisp has gate); `E` SSG soft
   envelope (PSG volume envelope — map like the LFO); `K`/`k` key shift (transpose).
-- **Medium**: `&` slur (legato); `w` noise wave (PSG noise pitch); `J` tag jump
+- **Medium**: `w` noise wave (PSG noise pitch); `J` tag jump
   (→ `#label`/`(go)`); `P` mix port (SSG tone/noise enable); `V` total volume
   offset.
 - **Low**: `s` shuffle / key-on revise; `y` register write; `S` SE detune;
