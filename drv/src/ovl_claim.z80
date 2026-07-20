@@ -1,0 +1,152 @@
+; ovl_claim — overlay (index 9). Stage 2 of START_TRACK / START_SE: channel
+; ownership, the SE steal (fresh / preempt) + snapshot, level-default claim, and
+; the register-SE priority arbitration. Split out of ovl_setup (which had grown
+; into the fattest overlay) so this cold code has room and ovl_setup shrinks back
+; to just the TCB fill (plan-se.md Step 2). mbox_drain chains ovl_mmb → ovl_setup
+; → ovl_claim; IX (the TCB filled by ovl_setup) and the G_* globals cross in
+; place (load_overlay preserves IX). Assembled at the slot with the resident
+; image's symbols preloaded, so it calls resident helpers directly. Ends `ret`.
+;
+; Register SE (G_ISSE=1) is N=1 + priority: register SEs share one channel; a new
+; SE preempts a same-channel SE of ≤ priority (inheriting its displaced BGM so
+; only the last SE restores it) and is dropped by a higher-priority one. A BGM
+; owner is fresh-stolen (snapshot + suspend). START_TRACK (G_ISSE=0) evicts.
+        org OVERLAY_SLOT
+    ld a,(ix+T_CH)
+    cp 10
+    jp nc,st_pcm            ; fm3-op/pcm ids: no channel block in M1
+    call chs_ptr_iy
+    ld a,(iy+CHS_OWNER)
+    cp $ff
+    jp z,st_claim
+    ld c,a                  ; previous owner index
+    ld a,(G_TIDX)
+    cp c
+    jp z,st_claim
+    ; a different track owns this channel. ch2 is the FM3 shared channel — keep
+    ; both, don't evict/reset. Any other channel: START_TRACK evicts; START_SE
+    ; steals with priority.
+    ld a,(ix+T_CH)
+    cp 2
+    jp z,st_active
+    ; owner TCB address (index C). channel_off is per-path (AFTER the priority
+    ; drop check) so a dropped SE never silences the SE it lost to.
+    ld l,c
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld de,TCB_BASE
+    add hl,de               ; HL = owner TCB base (T_STATUS at +0)
+    ld a,(G_ISSE)
+    or a
+    jr z,st_evict
+    ; ── START_SE register (N=1 + priority) ──────────────────────────────────
+    ; Is the owner a BGM (fresh steal) or an already-playing SE (preempt)?
+    push hl
+    ld de,T_FLAGS
+    add hl,de
+    bit T_ISSE,(hl)
+    pop hl
+    jr z,se_fresh
+    ; preempt candidate: lower priority is dropped, equal/higher preempts.
+    push hl
+    ld de,T_PRIO
+    add hl,de
+    ld a,(G_ARG1)           ; new priority
+    cp (hl)                 ; vs the current SE's priority
+    pop hl
+    jr c,se_drop            ; new < current → drop
+    ; preempt: silence + stop the old SE (no re-snapshot — SE_SNAP already holds
+    ; the BGM, which stays suspended until this new SE ends).
+    push hl
+    ld a,(ix+T_CH)
+    call channel_off        ; leaves IY = chs
+    pop hl
+    ld (hl),0               ; old SE T_STATUS = 0
+    push hl
+    ld de,T_FLAGS
+    add hl,de
+    res T_ISSE,(hl)         ; the old SE no longer restores the BGM
+    pop hl
+    jr se_prio
+se_fresh:
+    ; silence + suspend the BGM (T_STATUS=3) and snapshot CHS_NOTE..CHS_OWNER
+    ; (note/voice/vel/vol/gate/pitch/owner — still the BGM's here) into SE_SNAP.
+    ; The SE-end reclaim LDIRs it back and rebuilds the FM patch (design B).
+    push hl
+    ld a,(ix+T_CH)
+    call channel_off
+    pop hl
+    ld (hl),3
+    ld a,(ix+T_CH)
+    call chs_ptr_iy         ; IY = chs
+    push iy
+    pop hl
+    inc hl                  ; HL = &CHS_NOTE (src)
+    ld de,SE_SNAP
+    ld bc,SNP_LEN
+    ldir
+se_prio:
+    set T_ISSE,(ix+T_FLAGS) ; the (new) SE restores the BGM at its EOT
+    ld a,(G_ARG1)
+    ld (ix+T_PRIO),a
+    jr st_claim
+se_drop:
+    ret                     ; a higher-priority SE holds the channel — drop
+st_evict:
+    push hl
+    ld a,(ix+T_CH)
+    call channel_off        ; leaves IY = chs
+    pop hl
+    ld (hl),0               ; previous TCB → idle
+    ld hl,MB_TSTAT
+    ld a,c
+    add a,l
+    ld l,a
+    ld (hl),0
+st_claim:
+    ld a,(G_TIDX)
+    ld (iy+CHS_OWNER),a
+    ld (iy+CHS_VEL),15      ; reset channel level state to defaults
+    ld (iy+CHS_VOL),31
+    ld (iy+CHS_GATE),8
+    jr st_active
+st_pcm:
+    ; PCM SE (design C): soft-mix voices have no channel block. If the SE is about
+    ; to steal a live BGM voice, snapshot the whole 17-byte G_PCMV struct now so
+    ; its END_OF_TRACK can restore it (loop resumes at PV_POS). T_ISSE is set only
+    ; when a snapshot was taken, so the reclaim never overwrites an idle voice.
+    ld a,(G_ISSE)
+    or a
+    jp z,st_active          ; START_TRACK, not START_SE
+    ld a,(ix+T_CH)
+    sub 20
+    jp c,st_active          ; fm3-op (10-18): no PCM voice
+    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*17
+    ld h,0
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; vi*16
+    add hl,de               ; vi*17
+    ld de,G_PCMV
+    add hl,de               ; HL = &G_PCMV[vi]
+    bit 0,(hl)              ; PV_ACT bit0 — only a live loop is worth saving
+    jp z,st_active
+    ld de,PCM_SNAP
+    ld bc,PV_LEN17
+    ldir                    ; G_PCMV[vi] → PCM_SNAP
+    set T_ISSE,(ix+T_FLAGS)
+st_active:
+    ld (ix+T_STATUS),1
+    ld hl,MB_TSTAT
+    ld a,(G_TIDX)
+    add a,l
+    ld l,a
+    ld (hl),$80
+    ret

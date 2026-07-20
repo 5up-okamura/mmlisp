@@ -1,7 +1,10 @@
-; ovl_setup — overlay (Stage 1, driver.md §5). Cold code loaded on demand into
-; OVERLAY_SLOT and run there (68k free, Z80 autonomous). Assembled at the slot
-; with the resident image's symbols preloaded, so it calls resident helpers
-; and uses resident equates directly. Entry = start_track (mailbox cmd 1).
+; ovl_setup — overlay (Stage 1, driver.md §5). START_TRACK / START_SE step 2:
+; find the track in the MMB table and fill its TCB. The channel ownership / SE
+; steal / priority arbitration is Stage 3 (ovl_claim), split out so this stays
+; small — mbox_drain chains ovl_mmb → ovl_setup → ovl_claim, crossing IX (the TCB
+; filled here) and the G_* globals in place (load_overlay preserves IX). Assembled
+; at the slot with the resident image's symbols preloaded, so it calls resident
+; helpers and uses resident equates directly. Ends `ret`.
 ;
 ; The MMB directory walk that used to open this routine now lives in ovl_mmb,
 ; which START_TRACK loads and runs first — its results reach us in globals.
@@ -73,110 +76,20 @@ st_found:
     ld (ix+T_MARKER),a
     ld a,(G_TIDX)
     ld (ix+T_INDEX),a
+    ; T_BANK: START_TRACK carries the bank in a1/a2; START_SE overloads a1 as the
+    ; priority and is always in the control MMB (bank 0), so zero the bank there.
+    ld a,(G_ISSE)
+    or a
+    jr nz,st_bank0
     ld a,(G_ARG1)
     ld (ix+T_BANK),a
     ld a,(G_ARG2)
     ld (ix+T_BANK+1),a
+    jr st_bank_done
+st_bank0:
+    xor a
+    ld (ix+T_BANK),a
+    ld (ix+T_BANK+1),a
+st_bank_done:
     call bank_latch
-    ; channel ownership (driver.md §2.2)
-    ld a,(ix+T_CH)
-    cp 10
-    jp nc,st_pcm            ; fm3-op/pcm ids: no channel block in M1
-    call chs_ptr_iy
-    ld a,(iy+CHS_OWNER)
-    cp $ff
-    jp z,st_claim
-    ld c,a                  ; previous owner index
-    ld a,(G_TIDX)
-    cp c
-    jp z,st_claim
-    ; a different track already owns this channel. ch2 is the FM3 shared
-    ; channel (voice + op1 coexist in special mode): keep both, don't evict
-    ; or reset the shared level state. Any other channel: release the owner
-    ; (START_TRACK) or suspend + snapshot it (START_SE, G_ISSE=1).
-    ld a,(ix+T_CH)
-    cp 2
-    jp z,st_active
-    push bc
-    call channel_off        ; silence the owner's note (both paths)
-    pop bc
-    ; owner TCB address (index C) — shared by the evict and suspend paths
-    ld l,c
-    ld h,0
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    ld de,TCB_BASE
-    add hl,de               ; HL = owner TCB base (T_STATUS at +0)
-    ld a,(G_ISSE)
-    or a
-    jr z,st_evict
-    ; START_SE: suspend the owner (T_STATUS=3, keeping its MB_TSTAT marker) and
-    ; snapshot CHS_NOTE..CHS_OWNER (note/voice/vel/vol/gate/pitch/owner — the
-    ; owner id rides along, still the BGM's here, before st_claim) into SE_SNAP.
-    ; The SE-end reclaim LDIRs it back and rebuilds the FM patch (design B).
-    ld (hl),3               ; owner TCB T_STATUS = 3 (suspended)
-    set T_ISSE,(ix+T_FLAGS) ; the SE remembers it displaced an owner
-    ld a,(ix+T_CH)
-    call chs_ptr_iy         ; IY = chs
-    push iy
-    pop hl
-    inc hl                  ; HL = &CHS_NOTE (src)
-    ld de,SE_SNAP           ; DE = snapshot slot (dst)
-    ld bc,SNP_LEN
-    ldir
-    jr st_claim
-st_evict:
-    ld (hl),0               ; previous TCB → idle
-    ld hl,MB_TSTAT
-    ld a,c
-    add a,l
-    ld l,a
-    ld (hl),0
-st_claim:
-    ld a,(G_TIDX)
-    ld (iy+CHS_OWNER),a
-    ld (iy+CHS_VEL),15      ; reset channel level state to defaults
-    ld (iy+CHS_VOL),31
-    ld (iy+CHS_GATE),8
-    jr st_active
-st_pcm:
-    ; PCM SE (design C): soft-mix voices have no channel block to suspend. If the
-    ; SE is about to steal a live BGM voice, snapshot the whole 17-byte G_PCMV
-    ; struct now (frozen while the SE plays) so its END_OF_TRACK can restore it and
-    ; the loop resumes at PV_POS. Marks T_ISSE only when a snapshot was taken, so
-    ; the reclaim never writes stale data back over an idle voice.
-    ld a,(G_ISSE)
-    or a
-    jp z,st_active          ; START_TRACK, not START_SE
-    ld a,(ix+T_CH)
-    sub 20
-    jp c,st_active          ; fm3-op (10-18): no PCM voice
-    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*17
-    ld h,0
-    ld e,l
-    ld d,h
-    add hl,hl
-    add hl,hl
-    add hl,hl
-    add hl,hl               ; vi*16
-    add hl,de               ; vi*17
-    ld de,G_PCMV
-    add hl,de               ; HL = &G_PCMV[vi]
-    bit 0,(hl)              ; PV_ACT bit0 — only a live loop is worth saving
-    jp z,st_active
-    ld de,PCM_SNAP
-    ld bc,PV_LEN17
-    ldir                    ; G_PCMV[vi] → PCM_SNAP
-    set T_ISSE,(ix+T_FLAGS)
-st_active:
-    ld (ix+T_STATUS),1
-    ld hl,MB_TSTAT
-    ld a,(G_TIDX)
-    add a,l
-    ld l,a
-    ld (hl),$80
-    ret
-
+    ret                     ; → ovl_claim (ownership / steal / priority)

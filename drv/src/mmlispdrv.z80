@@ -53,10 +53,11 @@ VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 ; byte — so a lone fat overlay is expensive. Keep them balanced: splitting the
 ; 445 B ovl_setup into ovl_setup+ovl_mmb dropped the slot 451→274 (+183 B
 ; resident). `npm run size` reports the slack; G_PCMV sits just below.
-OVERLAY_SLOT equ $17b0         ; lowered 46 B (was $17DE) after evicting
-                               ; d_param_sweep — grows the slot 274→320 B so the
-                               ; PCM SE snapshot fits ovl_setup with margin
-                               ; (plan-se.md Step 2)
+OVERLAY_SLOT equ $17de         ; slot = DATA_BASE - here = 274 B (sized by the
+                               ; largest overlay, ovl_rare). Splitting start_track
+                               ; into ovl_setup + ovl_claim (plan-se.md) kept both
+                               ; well under this, recovering the resident the PCM
+                               ; reorg had borrowed.
 
 ; driver globals block
 G_BASE      equ MB_RING+$60     ; $17E0
@@ -155,8 +156,8 @@ PCM_V_SIZE  equ 17
 ; 3 voice slots live in the RAM gap between the resident code and OVERLAY_SLOT
 ; (the data region above DATA_BASE is packed). Boot zeroes the PV_ACT bytes; the
 ; build asserts code end ≤ G_PCMV. Anchored just below the slot.
-G_PCMV      equ $177d          ; 3 × 17 B ($177D..$17AF) — the resident ceiling
-                               ; (= OVERLAY_SLOT - 51; lowered with the slot)
+G_PCMV      equ $17ab          ; 3 × 17 B ($17AB..$17DD) — the resident ceiling
+                               ; (= OVERLAY_SLOT - 51)
 G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
 G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
 ; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
@@ -271,6 +272,7 @@ T_GATELEFT  equ $0c         ; u16 ticks to scheduled key-off, 0 = none
 T_WAIT      equ $0e         ; u16 ticks until next timed dispatch
 T_LOOPS     equ $10         ; 4 × {resume u16, remaining u8}
 T_DEPTH     equ $1c
+T_PRIO      equ $1d         ; u8  register-SE priority (same-channel preempt/drop)
 T_MARKER    equ $1e
 T_INDEX     equ $1f         ; own TCB index (mailbox status slot)
 
@@ -446,7 +448,10 @@ md_start_go:
     ld a,5                 ; overlay 5 = ovl_mmb (entry = mmb_locate)
     call load_overlay
     call OVERLAY_SLOT
-    xor a                  ; overlay 0 = ovl_setup (entry = start_track)
+    xor a                  ; overlay 0 = ovl_setup (TCB fill; IX = TCB out)
+    call load_overlay
+    call OVERLAY_SLOT
+    ld a,9                 ; overlay 9 = ovl_claim (ownership / steal / priority)
     call load_overlay
     call OVERLAY_SLOT
     jr md_done
@@ -602,6 +607,7 @@ ovl_desc_tab:
     db 0,0,0,0              ; overlay 6 (ovl_voice)
     db 0,0,0,0              ; overlay 7 (ovl_se)
     db 0,0,0,0              ; overlay 8 (ovl_sweep)
+    db 0,0,0,0              ; overlay 9 (ovl_claim)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,

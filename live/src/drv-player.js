@@ -1701,7 +1701,8 @@ export class DrvPlayer {
           // SE is dropped; an equal/higher one preempts — stop the old SE and
           // inherit the BGM it displaced (the snapshot stays; only the last SE
           // restores it).
-          if (prio < owner.sePrio) return; // dropped
+          if (prio < owner.sePrio) return; // dropped — leave the old SE playing
+          this._channelOff(ch); // silence the old SE for the new one's re-attack
           trk.displaced = owner.displaced;
           trk.snapshot = owner.snapshot;
           owner.running = false;
