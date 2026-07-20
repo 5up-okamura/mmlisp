@@ -193,7 +193,34 @@ build (CRITICAL FINDING) + the Z80 mirror + the harness/gate.
 
 1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at
    top). The 32K-wall enabler for PCM.
-2. **Suspend/restore core** — **FM + PSG SUB-SLICES LANDED; PCM next.**
+2. **Suspend/restore core** — **FM + PSG SUB-SLICES LANDED; PCM BLOCKED ON A
+   DRIVER-BUDGET REORG (below).**
+   PCM (design C) mechanism is **proven in drv-player** (2026-07-20): snapshot the
+   whole soft-mix voice at START_SE, restore on the SE's EOT — traced the `pad`
+   loop resuming at its frozen `PV_POS` with no dropout (a blip SE steals voice 0,
+   silence while the SE owns it, loop resumes at the SE's END_OF_TRACK). Reverted
+   the WIP to keep the tree green; the reference logic is recorded here.
+   **The Z80 side is blocked by the driver's budget ceiling** (measured, not
+   estimated):
+   - The 17-byte `G_PCMV` voice snapshot must land at the moment the SE overwrites
+     the voice — the design's `pcm_note_on` hook (ovl_pcm), where the voice
+     pointer (IX) is already computed. Adding the isSe-stash + LDIR there makes
+     **ovl_pcm 298 B vs the 274 B slot — over by 24 B**; ovl_pcm has only 7 B slack.
+   - Snapshotting at START_SE (ovl_setup, 18 B slack) instead needs the `vi*17`
+     voice-pointer math + LDIR (~30 B) — also overflows. Marking `T_ISSE` there is
+     fine (fits); it's the copy that doesn't.
+   - **Resident is 0 B free**, so no new trampoline/dispatch can be added to route
+     the snapshot to a roomier overlay (ovl_se has ~190 B free and is fine for the
+     *restore* — only the *snapshot* placement is the wall).
+   - Snapshotting all 3 voices (plain `ld bc,51; ldir`, no `vi*17`) fits ovl_setup
+     code-wise but needs a 51-byte `PCM_SNAP` — the stack window can't spare it.
+   Resolution is a **design-level driver reorg** to reclaim ~24 B of overlay slot
+   or resident: e.g. evict a cold resident routine to an overlay (enlarging the
+   274 B slot by lowering OVERLAY_SLOT past a relocated G_PCMV), or trim ovl_pcm.
+   Confirm the tradeoff with the user before spending it. Everything else for PCM
+   (drv-player, the gate shape, ovl_se restore) is ready.
+
+   FM + PSG (landed):
    PSG (2026-07-20): `m3-se` grew a sustained sqr1 BGM + a sqr2→sqr1 PSG SE that
    fires **after** the FM SE ends (non-overlapping, so the single `SE_SNAP` slot
    still suffices — no pool yet). drv-player `_snapshotChannel`/`_restoreChannel`
