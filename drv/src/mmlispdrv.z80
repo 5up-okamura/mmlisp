@@ -53,7 +53,10 @@ VAL_SLOTS   equ MB_RING+$40     ; 16 × i16 (M3)  (published)
 ; byte — so a lone fat overlay is expensive. Keep them balanced: splitting the
 ; 445 B ovl_setup into ovl_setup+ovl_mmb dropped the slot 451→274 (+183 B
 ; resident). `npm run size` reports the slack; G_PCMV sits just below.
-OVERLAY_SLOT equ $17de
+OVERLAY_SLOT equ $17b0         ; lowered 46 B (was $17DE) after evicting
+                               ; d_param_sweep — grows the slot 274→320 B so the
+                               ; PCM SE snapshot fits ovl_setup with margin
+                               ; (plan-se.md Step 2)
 
 ; driver globals block
 G_BASE      equ MB_RING+$60     ; $17E0
@@ -152,7 +155,8 @@ PCM_V_SIZE  equ 17
 ; 3 voice slots live in the RAM gap between the resident code and OVERLAY_SLOT
 ; (the data region above DATA_BASE is packed). Boot zeroes the PV_ACT bytes; the
 ; build asserts code end ≤ G_PCMV. Anchored just below the slot.
-G_PCMV      equ $17ab          ; 3 × 17 B ($17AB..$17DE) — the resident ceiling
+G_PCMV      equ $177d          ; 3 × 17 B ($177D..$17AF) — the resident ceiling
+                               ; (= OVERLAY_SLOT - 51; lowered with the slot)
 G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
 G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
 ; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
@@ -208,9 +212,14 @@ SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1
 ; one SE steals one channel at a time in this build; the PSG slice generalises it
 ; to a small pool. Carved off the top of the stack window.
 SNP_LEN     equ 14              ; CHS_OWNER - CHS_NOTE + 1
-SE_SNAP     equ SHVALID + $26   ; $1FAE (14 B)
-STACK_FLOOR equ SE_SNAP + SNP_LEN   ; $1FBC — SE_SNAP top + 1
-STACK_TOP   equ $2000               ; 68 B window ($1FBC..$1FFF)
+SE_SNAP     equ SHVALID + $26   ; $1FAE (14 B) — FM/PSG channel-state snapshot
+; PCM SE (design C) snapshots the whole 17-byte G_PCMV voice struct instead —
+; soft-mix voices have no CHS block. Its own slot, so a PCM SE can overlap an
+; FM/PSG one.
+PV_LEN17    equ 17              ; sizeof a G_PCMV voice struct
+PCM_SNAP    equ SE_SNAP + SNP_LEN   ; $1FBC (17 B)
+STACK_FLOOR equ PCM_SNAP + PV_LEN17 ; $1FCD — PCM_SNAP top + 1
+STACK_TOP   equ $2000               ; 51 B window ($1FCD..$1FFF)
 
 ; ── Channel state block fields (driver.md §5.1) ───────────────────────────
 CHS_STATUS  equ $00         ; bit0 = keyed (note active; FM key / PSG note-on..off)
@@ -542,6 +551,16 @@ tramp_voice:
     pop hl
     jp OVERLAY_SLOT
 
+; tramp_sweep: resident trampoline for PARAM_SWEEP (cold, per sweep start),
+; evicted to ovl_sweep. Entry HL = PC at the opcode, IX = TCB (load_overlay
+; preserves IX). The overlay handler (d_param_sweep) ends `jp d_next`.
+tramp_sweep:
+    push hl                 ; track PC (opcode ptr)
+    ld a,8                  ; overlay index 8 = ovl_sweep
+    call load_overlay
+    pop hl
+    jp OVERLAY_SLOT
+
 ; se_reclaim: resident trampoline for the SE-end restore (plan-se.md). Entry with
 ; IX = the SE TCB. Selects ovl_voice's se_restore entry (G_SE_ENTRY=1), loads the
 ; overlay, runs it, then resets the selector. IX is preserved for the caller
@@ -582,6 +601,7 @@ ovl_desc_tab:
     db 0,0,0,0              ; overlay 5 (ovl_mmb)
     db 0,0,0,0              ; overlay 6 (ovl_voice)
     db 0,0,0,0              ; overlay 7 (ovl_se)
+    db 0,0,0,0              ; overlay 8 (ovl_sweep)
 
 ; ===========================================================================
 ; Event dispatch — runs stream events until a timed event loads T_WAIT,
@@ -621,8 +641,8 @@ d_next:
     cp $80
     jp z,tramp_rare         ; TEMPO_SET → ovl_rare
     ; M2 motion opcodes (real handlers)
-    cp $61                  ; PARAM_SWEEP
-    jp z,d_param_sweep
+    cp $61                  ; PARAM_SWEEP → ovl_sweep (cold, evicted)
+    jp z,tramp_sweep
     cp $62                  ; PARAM_ADD
     jp z,d_param_add
     cp $65                  ; PARAM_SWEEP_STOP
@@ -3120,53 +3140,10 @@ fpo_hi:
 ; ===========================================================================
 
 ; ── dispatch: PARAM_SWEEP (target, curve, flags, from i16, to i16, len u16) ─
-d_param_sweep:
-    inc hl
-    ld a,(hl)
-    ld (G_SW_TGT),a
-    inc hl
-    ld a,(hl)
-    ld (G_SW_CRV),a
-    inc hl
-    ld a,(hl)
-    ld (G_SW_FLG),a
-    inc hl
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_SW_FROM),de
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_SW_TO),de
-    ld e,(hl)
-    inc hl
-    ld d,(hl)
-    inc hl
-    ld (G_SW_LEN),de
-    push hl                 ; save stream ptr — read_slot clobbers HL
-    ; Dynamic endpoints (§4.6, note-on tier): flags bit1/bit2 mark from/to as
-    ; slot ids (the field's low byte); read the slot live at dispatch.
-    ; read_slot preserves B, so keep the flags there across both.
-    ld a,(G_SW_FLG)
-    ld b,a
-    bit 1,b
-    jr z,dps_to
-    ld a,(G_SW_FROM)        ; low byte = slot id
-    call read_slot          ; HL = slot i16
-    ld (G_SW_FROM),hl
-dps_to:
-    bit 2,b
-    jr z,dps_go
-    ld a,(G_SW_TO)
-    call read_slot
-    ld (G_SW_TO),hl
-dps_go:
-    call start_sweep
-    pop hl
-    jp d_next
+; PARAM_SWEEP setup moved to ovl_sweep (index 8), reached via tramp_sweep — cold
+; (per sweep start), evicted to free the resident headroom the PCM SE snapshot
+; needs (plan-se.md Step 2). The running sweep engine (process_sweeps) stays
+; resident.
 
 ; ── dispatch: PARAM_SWEEP_STOP (target) ────────────────────────────────────
 d_param_sweep_stop:

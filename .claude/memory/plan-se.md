@@ -193,32 +193,33 @@ build (CRITICAL FINDING) + the Z80 mirror + the harness/gate.
 
 1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at
    top). The 32K-wall enabler for PCM.
-2. **Suspend/restore core** — **FM + PSG SUB-SLICES LANDED; PCM BLOCKED ON A
-   DRIVER-BUDGET REORG (below).**
-   PCM (design C) mechanism is **proven in drv-player** (2026-07-20): snapshot the
-   whole soft-mix voice at START_SE, restore on the SE's EOT — traced the `pad`
-   loop resuming at its frozen `PV_POS` with no dropout (a blip SE steals voice 0,
-   silence while the SE owns it, loop resumes at the SE's END_OF_TRACK). Reverted
-   the WIP to keep the tree green; the reference logic is recorded here.
-   **The Z80 side is blocked by the driver's budget ceiling** (measured, not
-   estimated):
-   - The 17-byte `G_PCMV` voice snapshot must land at the moment the SE overwrites
-     the voice — the design's `pcm_note_on` hook (ovl_pcm), where the voice
-     pointer (IX) is already computed. Adding the isSe-stash + LDIR there makes
-     **ovl_pcm 298 B vs the 274 B slot — over by 24 B**; ovl_pcm has only 7 B slack.
-   - Snapshotting at START_SE (ovl_setup, 18 B slack) instead needs the `vi*17`
-     voice-pointer math + LDIR (~30 B) — also overflows. Marking `T_ISSE` there is
-     fine (fits); it's the copy that doesn't.
-   - **Resident is 0 B free**, so no new trampoline/dispatch can be added to route
-     the snapshot to a roomier overlay (ovl_se has ~190 B free and is fine for the
-     *restore* — only the *snapshot* placement is the wall).
-   - Snapshotting all 3 voices (plain `ld bc,51; ldir`, no `vi*17`) fits ovl_setup
-     code-wise but needs a 51-byte `PCM_SNAP` — the stack window can't spare it.
-   Resolution is a **design-level driver reorg** to reclaim ~24 B of overlay slot
-   or resident: e.g. evict a cold resident routine to an overlay (enlarging the
-   274 B slot by lowering OVERLAY_SLOT past a relocated G_PCMV), or trim ovl_pcm.
-   Confirm the tradeoff with the user before spending it. Everything else for PCM
-   (drv-player, the gate shape, ovl_se restore) is ready.
+2. **Suspend/restore core** — **FM + PSG + PCM ALL LANDED (2026-07-20).**
+   `verify:all` **34 TRACE MATCH** (both ports, zero tolerance) + ab-gate 35.
+   `m3-se` exercises all three SE families back-to-back (FM steal at f30, PSG at
+   f90, PCM at f150), non-overlapping so the single `SE_SNAP`/`PCM_SNAP` slots
+   suffice.
+
+   PCM (design C) — the soft-mix voice steal, which needed a **driver-budget
+   reorg** to fit (approved by the user):
+   - **Evicted `d_param_sweep` (58 B, cold — per sweep start) to a new `ovl_sweep`
+     overlay (index 8)** via a `tramp_sweep` resident trampoline. The running
+     sweep engine (process_sweeps) stays resident; only the setup moved. Freed
+     ~64 B resident.
+   - **Grew the overlay slot 274→320 B** by lowering `OVERLAY_SLOT` ($17DE→$17B0)
+     and `G_PCMV` ($17AB→$177D) into the freed resident. Slot size = DATA_BASE −
+     OVERLAY_SLOT; build asserts `resident ≤ G_PCMV` and `overlay ≤ slot`.
+   - **Snapshot rides `ovl_setup`** (START_SE, cohesive with the FM/PSG suspend —
+     NOT ovl_pcm): `vi*17` voice pointer + 17-B LDIR of `G_PCMV[vi]` → `PCM_SNAP`,
+     gated on `PV_ACT` bit0 (only a live loop) and `T_ISSE` set only then (so the
+     reclaim never writes stale data over an idle voice). drv-player snapshots at
+     `_startTrack` — same frame/point, identical value.
+   - **Restore rides `ovl_se`** (`se_restore_pcm`; the ovl_se entry now dispatches
+     PSG 6-9 vs PCM 20-22). Just LDIRs `PCM_SNAP` → `G_PCMV[vi]`; the resident
+     mixer resumes the loop at the restored `PV_POS` next frame. No re-key.
+   - `PCM_SNAP` (17 B) carved off the stack next to `SE_SNAP` (window now 51 B,
+     13 B reserve). Every overlay stays thematically pure (no code mixing).
+   **Budget after the reorg**: resident 18 B free, overlay slack 16 B (ovl_setup
+   304 B is the max), stack reserve 13 B.
 
    FM + PSG (landed):
    PSG (2026-07-20): `m3-se` grew a sustained sqr1 BGM + a sqr2→sqr1 PSG SE that

@@ -37,3 +37,16 @@
 ; sqr1 BGM. It fires AFTER the fm SE has ended (non-overlapping), so the single
 ; SE_SNAP slot suffices; restore re-writes the BGM's period + attenuation.
 (sqr2 :oct 6 :len 8 :vel 15  b b)
+
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(def blip :sample :file "blip.wav")
+
+; track 4 (bgm-pcm): pcm1 (soft-mix voice 0) plays a sustain-looping sample (a
+; never-ending loop, like m2-pcmloop — the gate frame count caps the horizon).
+(pcm1 pad :mode loop :oct 4 :len 1 :vel 12  c c c)
+
+; track 5 (se-pcm): a blip authored on pcm2, remapped to pcm1's channel so it
+; overwrites voice 0 — the PCM steal (design C). START_SE snapshots the live loop
+; voice struct; the SE's END_OF_TRACK writes it back so the loop resumes at its
+; frozen position (no dropout). Fires after the PSG SE (separate PCM_SNAP slot).
+(pcm2 blip :oct 5 :len 8 :vel 15  c)

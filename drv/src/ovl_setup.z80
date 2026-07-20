@@ -81,7 +81,7 @@ st_found:
     ; channel ownership (driver.md §2.2)
     ld a,(ix+T_CH)
     cp 10
-    jp nc,st_active         ; fm3-op/pcm ids: no channel block in M1
+    jp nc,st_pcm            ; fm3-op/pcm ids: no channel block in M1
     call chs_ptr_iy
     ld a,(iy+CHS_OWNER)
     cp $ff
@@ -141,6 +141,36 @@ st_claim:
     ld (iy+CHS_VEL),15      ; reset channel level state to defaults
     ld (iy+CHS_VOL),31
     ld (iy+CHS_GATE),8
+    jr st_active
+st_pcm:
+    ; PCM SE (design C): soft-mix voices have no channel block to suspend. If the
+    ; SE is about to steal a live BGM voice, snapshot the whole 17-byte G_PCMV
+    ; struct now (frozen while the SE plays) so its END_OF_TRACK can restore it and
+    ; the loop resumes at PV_POS. Marks T_ISSE only when a snapshot was taken, so
+    ; the reclaim never writes stale data back over an idle voice.
+    ld a,(G_ISSE)
+    or a
+    jp z,st_active          ; START_TRACK, not START_SE
+    ld a,(ix+T_CH)
+    sub 20
+    jp c,st_active          ; fm3-op (10-18): no PCM voice
+    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*17
+    ld h,0
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; vi*16
+    add hl,de               ; vi*17
+    ld de,G_PCMV
+    add hl,de               ; HL = &G_PCMV[vi]
+    bit 0,(hl)              ; PV_ACT bit0 — only a live loop is worth saving
+    jp z,st_active
+    ld de,PCM_SNAP
+    ld bc,PV_LEN17
+    ldir                    ; G_PCMV[vi] → PCM_SNAP
+    set T_ISSE,(ix+T_FLAGS)
 st_active:
     ld (ix+T_STATUS),1
     ld hl,MB_TSTAT

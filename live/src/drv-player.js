@@ -438,6 +438,8 @@ export class DrvPlayer {
       isSe: false,
       displaced: null, // owner track index this SE displaced (null = none)
       snapshot: null, // channel state captured at suspend
+      pcmSnap: null, // PCM SE (design C): stolen soft-mix voice struct to restore
+      pcmVi: 0, // which voice pcmSnap belongs to
     }));
     for (const t of this._trk) {
       if (t.unsupported) {
@@ -1715,6 +1717,19 @@ export class DrvPlayer {
         p.vol = VOL_UNITY;
         p.gate = 8;
       }
+    } else if (asSe && ch >= 20 && ch <= 22) {
+      // PCM SE (plan-se.md design C): soft-mix voices have no channel ownership,
+      // so nothing is suspended — the SE's PCM_NOTE_ON overwrites the voice slot.
+      // If a BGM loop is live there, snapshot the whole voice struct now (frozen
+      // while the SE plays) so SE-end can restore it (PV_POS resume = no dropout).
+      // Captured at START_SE, before this frame's mixer pass — the same point the
+      // Z80 ovl_setup snapshots, so both ports capture identical voice state.
+      const vi = ch - 20;
+      const v = this._pcmVoices[vi];
+      if (v.active) {
+        trk.pcmSnap = { ...v };
+        trk.pcmVi = vi;
+      }
     }
     // Re-init the track's dispatch state (mirrors ovl_setup TCB fill).
     trk.pc = trk.eventOffset;
@@ -1823,7 +1838,19 @@ export class DrvPlayer {
   // Restore the BGM owner an SE displaced (SE-end reclaim). Hooked at the SE
   // track's END_OF_TRACK and STOP_TRACK, mirroring the Z80 d_eot / stop_track.
   _reclaimSe(seTrk) {
-    if (!seTrk.isSe || seTrk.displaced == null) return;
+    if (!seTrk.isSe) return;
+    // PCM (design C): restore the stolen soft-mix voice struct — the loop resumes
+    // from its frozen position with no dropout. No owner track.
+    if (seTrk.pcmSnap != null) {
+      Object.assign(this._pcmVoices[seTrk.pcmVi], seTrk.pcmSnap);
+      seTrk.pcmSnap = null;
+      seTrk.isSe = false;
+      return;
+    }
+    if (seTrk.displaced == null) {
+      seTrk.isSe = false;
+      return;
+    }
     const owner = this._trk[seTrk.displaced];
     seTrk.isSe = false;
     seTrk.displaced = null;

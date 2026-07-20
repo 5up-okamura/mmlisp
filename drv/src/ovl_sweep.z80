@@ -1,0 +1,61 @@
+; ovl_sweep — overlay (index 8). Hosts PARAM_SWEEP setup (0x?? dispatch), which
+; is cold (per sweep START, not per frame — the running sweep engine
+; process_sweeps stays resident and hot). Evicting this 58-byte handler frees the
+; resident headroom the PCM SE snapshot needs (plan-se.md Step 2). Reached via the
+; resident tramp_sweep trampoline with HL = PC at the opcode and IX = TCB;
+; load_overlay preserves IX and re-latches the MMB bank first, so start_sweep
+; (resident) can read the track's channel and the value LUTs. The handler ends
+; `jp d_next` (resident), same contract as the other trampolined cold opcodes.
+;
+; Sets up a sweep slot on the track's channel from the stream operands (target,
+; curve, flags, from, to, len), resolving dynamic from/to endpoints from value
+; slots when flagged. Unchanged from its former resident form — only its home
+; moved.
+        org OVERLAY_SLOT
+d_param_sweep:              ; HL = PC at opcode, IX = TCB
+    inc hl
+    ld a,(hl)
+    ld (G_SW_TGT),a
+    inc hl
+    ld a,(hl)
+    ld (G_SW_CRV),a
+    inc hl
+    ld a,(hl)
+    ld (G_SW_FLG),a
+    inc hl
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_FROM),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_TO),de
+    ld e,(hl)
+    inc hl
+    ld d,(hl)
+    inc hl
+    ld (G_SW_LEN),de
+    push hl                 ; save stream ptr — read_slot clobbers HL
+    ; Dynamic endpoints (§4.6, note-on tier): flags bit1/bit2 mark from/to as
+    ; slot ids (the field's low byte); read the slot live at dispatch.
+    ; read_slot preserves B, so keep the flags there across both.
+    ld a,(G_SW_FLG)
+    ld b,a
+    bit 1,b
+    jr z,dps_to
+    ld a,(G_SW_FROM)        ; low byte = slot id
+    call read_slot          ; HL = slot i16
+    ld (G_SW_FROM),hl
+dps_to:
+    bit 2,b
+    jr z,dps_go
+    ld a,(G_SW_TO)
+    call read_slot
+    ld (G_SW_TO),hl
+dps_go:
+    call start_sweep
+    pop hl
+    jp d_next
