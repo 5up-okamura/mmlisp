@@ -440,6 +440,7 @@ export class DrvPlayer {
       snapshot: null, // channel state captured at suspend
       pcmSnap: null, // PCM SE (design C): stolen soft-mix voice struct to restore
       pcmVi: 0, // which voice pcmSnap belongs to
+      sePrio: 0, // register-SE priority (for same-channel preempt/drop)
     }));
     for (const t of this._trk) {
       if (t.unsupported) {
@@ -1632,8 +1633,8 @@ export class DrvPlayer {
       case 0x02: // STOP_TRACK (track_id) — reclaim if it displaced a BGM owner
         this._mailboxStop(a0);
         break;
-      case 0x07: // START_SE (track_id) — suspend + snapshot the channel's owner
-        this._startTrack(a0, true);
+      case 0x07: // START_SE (track_id, priority) — steal a channel; a1 = priority
+        this._startTrack(a0, true, a1);
         break;
       case 0x03: // KEY_OFF (channel_id)
         this._mailboxKeyOff(a0);
@@ -1680,7 +1681,7 @@ export class DrvPlayer {
   // With `asSe`, the channel's current owner is *suspended + snapshotted* (so
   // SE-end can restore it) instead of *evicted* — this is the whole SE story.
   // The Z80 mirror is ovl_setup start_track (evict block → suspend variant).
-  _startTrack(trackId, asSe) {
+  _startTrack(trackId, asSe, prio = 0) {
     const trk = this._trk.find((t) => t.trackId === trackId);
     if (!trk) return; // unknown track id
     const ch = trk.channelId;
@@ -1688,20 +1689,35 @@ export class DrvPlayer {
     // track on this channel. ch2 is the FM3 shared channel (voice + op1 coexist);
     // ids ≥ 10 (fm3-op/pcm) have no channel block — no owner to displace here.
     if (ch < 10 && ch !== 2) {
+      // The channel's current owner (running, not suspended). For a register SE
+      // it is either the BGM (fresh steal) or an already-playing SE (preempt).
       const owner = this._trk.find(
         (t) => t !== trk && t.running && !t.suspended && t.channelId === ch,
       );
-      if (owner) {
-        if (asSe) {
+      if (asSe) {
+        // Register-SE priority (N=1 — one SE_SNAP slot, one SE channel at a time).
+        if (owner && owner.isSe) {
+          // The channel already has an SE. Same-channel priority: a lower-priority
+          // SE is dropped; an equal/higher one preempts — stop the old SE and
+          // inherit the BGM it displaced (the snapshot stays; only the last SE
+          // restores it).
+          if (prio < owner.sePrio) return; // dropped
+          trk.displaced = owner.displaced;
+          trk.snapshot = owner.snapshot;
+          owner.running = false;
+          owner.isSe = false;
+        } else if (owner) {
+          // Fresh steal of the BGM owner: snapshot + suspend it.
           this._channelOff(ch); // silence the owner's note before the SE keys
           owner.snapshot = this._snapshotChannel(ch); // capture before the reset below
           owner.running = false;
           owner.suspended = true;
           trk.displaced = owner.index;
           trk.snapshot = owner.snapshot; // SE carries it for reclaim
-        } else {
-          this._stopTrack(owner); // scene transition: evict
         }
+        trk.sePrio = prio;
+      } else if (owner) {
+        this._stopTrack(owner); // START_TRACK scene transition: evict
       }
       // Claiming a channel resets its level state to defaults (ovl_setup
       // st_claim: CHS_VEL=15 / CHS_VOL=31 / CHS_GATE=8) — so a track that relies

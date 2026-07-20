@@ -155,6 +155,12 @@
     "compileErrors": 0,
     "digest": "4737f7a1"
   },
+  "m3-se-prio.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-se.mmlisp": {
     "ok": true,
     "mismatches": 0,

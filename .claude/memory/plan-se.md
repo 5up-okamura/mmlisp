@@ -189,6 +189,37 @@ latch is the only hot addition (light, hardware-validated). Resident 64B free
 window. So bytes are not the constraint — the work is the drv-player lifecycle
 build (CRITICAL FINDING) + the Z80 mirror + the harness/gate.
 
+## SE priority (N=1 + priority) — drv-player DONE; Z80 blocked on a budget reorg
+
+Decided with the user (2026-07-20): **register SEs share one channel (N=1 slot);
+same-channel contention is resolved by priority — a new SE preempts an equal/
+higher-priority one and is dropped by a lower/other-channel one.** Priority is a
+runtime `START_SE` arg (mailbox cmd 7, a1 = priority; no MMB change). Cross-channel
+register SE is out of scope (that's the N=2 pool, deferred).
+
+- **drv-player: DONE + proven.** `_startTrack(id, asSe, prio)` — per-channel: if
+  the channel's owner is an SE, compare `owner.sePrio` (preempt if `prio ≥`, drop
+  if `<`, inheriting the BGM snapshot so only the last SE restores it); if it's a
+  BGM, fresh-steal. `sePrio` on the track. Traced on `m3-se-prio` (tests/): f30
+  SE-A steals, f45 SE-B (prio 10) preempts, f60 SE-C (prio 3) dropped.
+- **Z80: BLOCKED on the driver's budget.** The priority + preempt logic (~40 B)
+  makes ovl_setup **348 B vs the 320 B slot** — 28 B over. ovl_setup is already the
+  fattest overlay (the PCM reorg grew the slot to 320 for it). Reverted the Z80 WIP
+  to keep the tree green; the drv-player model + `m3-se-prio` gate (NOT in
+  verify:all yet — needs both ports) are committed as the reference.
+  **Fix options (a structural decision — confirm before spending):**
+  - **A (recommended): split ovl_setup** into a TCB-fill overlay + an ownership/
+    steal/priority overlay. Resolves the fattest overlay → frees resident AND lets
+    the slot shrink back toward 274. Bigger refactor; +1 overlay load per track
+    start.
+  - **B: evict `d_call`/`d_ret` to a cohesive `ovl_call`**, grow the slot. Mechanical
+    (ovl_sweep pattern). Cost: an overlay load per CALL/RET.
+  - **C: cram it** (evict `d_param_sweep_stop` to ovl_sweep + grow slot) — fits at
+    ~0 slack. Fragile.
+  Wiring left once it fits: `T_PRIO` TCB byte ($1d, freed from T_DISP), the ovl_setup
+  fresh-vs-preempt branch (owner T_ISSE), the drop/preempt by priority, and adding
+  `m3-se-prio` to verify:all.
+
 ## Sequencing
 
 1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at
