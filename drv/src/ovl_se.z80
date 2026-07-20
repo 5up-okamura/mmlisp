@@ -64,13 +64,13 @@ srp_key:
     jp write_psg_att        ; A = att, C = psgCh, IY = chs; ends ret
 
 ; ── PCM SE reclaim (design C) ──────────────────────────────────────────────
-; Restore the 17-byte soft-mix voice struct the SE stole (vi = T_CH - 20) from
-; PCM_SNAP. No re-key: the resident mixer resumes the loop from the restored
-; PV_POS on the next frame. IX = SE TCB.
+; Restore the soft-mix voice struct the SE stole (vi = T_CH - 20) from PCM_SNAP.
+; No re-key: the resident mixer resumes the loop from the restored PV_POS on the
+; next frame. IX = SE TCB.
 se_restore_pcm:
     ld a,(ix+T_CH)
     sub 20
-    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*17
+    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*18
     ld h,0
     ld e,l
     ld d,h
@@ -79,10 +79,11 @@ se_restore_pcm:
     add hl,hl
     add hl,hl               ; vi*16
     add hl,de               ; vi*17
+    add hl,de               ; vi*18
     ld de,G_PCMV
     add hl,de               ; HL = &G_PCMV[vi] (dst)
     ex de,hl                ; DE = dst
     ld hl,PCM_SNAP          ; HL = snapshot (src)
-    ld bc,PV_LEN17
+    ld bc,PCM_V_SIZE
     ldir
     ret

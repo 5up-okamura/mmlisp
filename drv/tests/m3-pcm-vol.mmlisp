@@ -1,0 +1,11 @@
+; M3 gate: PCM per-channel bit-shift volume (plan-se.md). :vel on a pcm channel
+; sets a per-voice attenuation shift = round((15 - vel) / 3) (0..5) that the
+; soft-mix applies with an arithmetic right shift — the vel→shift map best-fits
+; the FM/PSG 2 dB/step velocity ladder onto the 6 dB grid. Sweeps a shot voice
+; across the range (vel 15/9/6/0 → shift 0/2/3/5, covering the shift-0 fast path
+; and the deepest attenuation) and runs a loop voice at a mid level so the shift is
+; exercised across many mix ticks and survives a note boundary.
+(def blip :sample :file "blip.wav")
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(pcm1 blip :tempo 120 :oct 4 :len 4   :vel 15 c   :vel 9 c   :vel 6 c   :vel 0 c)
+(pcm2 pad  :mode loop :oct 4 :len 8    :vel 7 c)

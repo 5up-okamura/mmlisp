@@ -4,7 +4,7 @@
 ; the resident image's symbols preloaded, so it calls resident helpers directly.
         org OVERLAY_SLOT
 ; pcm_note_on: (G_ARG0)=sample id, (G_ARG1)=note, (G_ARG2)=voice index (0-2).
-; Fills voice struct G_PCMV+vi*17. inc = per-mix-tick (16.16) = inc_frame / R.
+; Fills voice struct G_PCMV+vi*18. inc = per-mix-tick (16.16) = inc_frame / R.
 pcm_note_on:
     ld hl,(G_SMP_BANK)
     ld a,h
@@ -13,7 +13,7 @@ pcm_note_on:
     ld a,(G_ARG2)
     cp 3
     ret nc                  ; voice index guard (pcm1-3 → 0-2)
-    ; IX = G_PCMV + vi*17
+    ; IX = G_PCMV + vi*18
     ld l,a
     ld h,0
     ld e,l
@@ -23,6 +23,7 @@ pcm_note_on:
     add hl,hl
     add hl,hl               ; vi*16
     add hl,de               ; vi*17
+    add hl,de               ; vi*18
     ld de,G_PCMV
     add hl,de
     push hl

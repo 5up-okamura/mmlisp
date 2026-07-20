@@ -116,8 +116,8 @@ st_claim:
     jr st_active
 st_pcm:
     ; PCM SE (design C): soft-mix voices have no channel block. If the SE is about
-    ; to steal a live BGM voice, snapshot the whole 17-byte G_PCMV struct now so
-    ; its END_OF_TRACK can restore it (loop resumes at PV_POS). T_ISSE is set only
+    ; to steal a live BGM voice, snapshot the whole G_PCMV struct now so its
+    ; END_OF_TRACK can restore it (loop resumes at PV_POS). T_ISSE is set only
     ; when a snapshot was taken, so the reclaim never overwrites an idle voice.
     ld a,(G_ISSE)
     or a
@@ -125,7 +125,7 @@ st_pcm:
     ld a,(ix+T_CH)
     sub 20
     jp c,st_active          ; fm3-op (10-18): no PCM voice
-    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*17
+    ld l,a                  ; vi (0-2) → HL = G_PCMV + vi*18
     ld h,0
     ld e,l
     ld d,h
@@ -134,12 +134,13 @@ st_pcm:
     add hl,hl
     add hl,hl               ; vi*16
     add hl,de               ; vi*17
+    add hl,de               ; vi*18
     ld de,G_PCMV
     add hl,de               ; HL = &G_PCMV[vi]
     bit 0,(hl)              ; PV_ACT bit0 — only a live loop is worth saving
     jp z,st_active
     ld de,PCM_SNAP
-    ld bc,PV_LEN17
+    ld bc,PCM_V_SIZE
     ldir                    ; G_PCMV[vi] → PCM_SNAP
     set T_ISSE,(ix+T_FLAGS)
 st_active:

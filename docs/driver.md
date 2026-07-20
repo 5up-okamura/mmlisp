@@ -720,8 +720,17 @@ deactivates when a shot/tail passes the sample end; a non-releasing loop wraps b
 `loopLen` each tick. The DAC is enabled (`$2B`) on the first active voice and
 released when the last voice ends, both through the change-only shadow.
 
+**Per-channel volume (`:vel`).** A `PARAM_SET VEL` on a `pcmN` channel stores a
+per-voice attenuation `shift` (`PV_SHIFT`) that the mixer applies as an arithmetic
+right shift on each sample before summing — one `sra` per sample, so it stays off
+the critical path. The `vel → shift` map is `round((15 − vel) / 3)` (`0..5`),
+which best-fits the FM/PSG velocity ladder (2 dB/step) onto the 6 dB bit-shift
+grid, so the same `:vel` means the same loudness on a PCM voice as on FM/PSG. It
+is computed once per `PARAM_SET` (rare), persists across notes on that voice, and
+is carried by the SE snapshot; `vel 15` (`shift 0`) is unattenuated.
+
 A single voice takes the same path (one active slot) — there is no separate
-fast path. The voice structs (17 B × 3) live in the RAM gap just below
+fast path. The voice structs (18 B × 3) live in the RAM gap just below
 `OVERLAY_SLOT`. As with the rest of the driver the hard gate is asm↔`drv-player`
 at zero tolerance; the sub-frame feed *timing* (bytes burst at frame start, not
 spread) remains a hardware-bring-up concern.

@@ -144,7 +144,7 @@ G_ISSE      equ G_BASE+$5e      ; u8   START_SE suspend flag for ovl_setup (1 = 
 G_SE_ENTRY  equ G_BASE+$5f      ; u8   ovl_voice entry (0 = d_voice_set, 1 = se_restore)
                                 ;      ($60..$66 free)
 PCM_MIX_R   equ 175             ; DAC writes per frame (≈10.5 kHz effective)
-; PCM voice struct (17 B), one per pcm1/pcm2/pcm3:
+; PCM voice struct (18 B), one per pcm1/pcm2/pcm3:
 PV_ACT      equ 0               ; u8  bit0 active, bit2 hasLoop, bit3 releasing
 PV_BASE     equ 1               ; u16 sample base window addr
 PV_LEN      equ 3               ; u16 length
@@ -152,12 +152,15 @@ PV_INC      equ 5               ; u32 16.16 per-mix-tick increment
 PV_POS      equ 9               ; u32 16.16 position
 PV_LOOPE    equ 13              ; u16 loop end (sample index)
 PV_LOOPL    equ 15              ; u16 loop length (loopEnd - loopStart)
-PCM_V_SIZE  equ 17
+PV_SHIFT    equ 17              ; u8  per-voice volume attenuation (0..5): sra
+                                ;     sample, PV_SHIFT times (0 = full). Set from
+                                ;     PARAM_SET VEL; snapshot with the struct for SE.
+PCM_V_SIZE  equ 18
 ; 3 voice slots live in the RAM gap between the resident code and OVERLAY_SLOT
 ; (the data region above DATA_BASE is packed). Boot zeroes the PV_ACT bytes; the
 ; build asserts code end ≤ G_PCMV. Anchored just below the slot.
-G_PCMV      equ $17ab          ; 3 × 17 B ($17AB..$17DD) — the resident ceiling
-                               ; (= OVERLAY_SLOT - 51)
+G_PCMV      equ $17a8          ; 3 × 18 B ($17A8..$17DD) — the resident ceiling
+                               ; (= OVERLAY_SLOT - 54)
 G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
 G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
 ; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
@@ -214,13 +217,11 @@ SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1
 ; to a small pool. Carved off the top of the stack window.
 SNP_LEN     equ 14              ; CHS_OWNER - CHS_NOTE + 1
 SE_SNAP     equ SHVALID + $26   ; $1FAE (14 B) — FM/PSG channel-state snapshot
-; PCM SE (design C) snapshots the whole 17-byte G_PCMV voice struct instead —
-; soft-mix voices have no CHS block. Its own slot, so a PCM SE can overlap an
-; FM/PSG one.
-PV_LEN17    equ 17              ; sizeof a G_PCMV voice struct
-PCM_SNAP    equ SE_SNAP + SNP_LEN   ; $1FBC (17 B)
-STACK_FLOOR equ PCM_SNAP + PV_LEN17 ; $1FCD — PCM_SNAP top + 1
-STACK_TOP   equ $2000               ; 51 B window ($1FCD..$1FFF)
+; PCM SE (design C) snapshots the whole G_PCMV voice struct instead — soft-mix
+; voices have no CHS block. Its own slot, so a PCM SE can overlap an FM/PSG one.
+PCM_SNAP    equ SE_SNAP + SNP_LEN    ; $1FBC (PCM_V_SIZE B)
+STACK_FLOOR equ PCM_SNAP + PCM_V_SIZE ; $1FCE — PCM_SNAP top + 1
+STACK_TOP   equ $2000                ; 50 B window ($1FCE..$1FFF)
 
 ; ── Channel state block fields (driver.md §5.1) ───────────────────────────
 CHS_STATUS  equ $00         ; bit0 = keyed (note active; FM key / PSG note-on..off)
@@ -1224,6 +1225,7 @@ d_pcm_note_off:
     add hl,hl
     add hl,hl               ; vi*16
     add hl,de               ; vi*17
+    add hl,de               ; vi*18
     ld de,G_PCMV
     add hl,de               ; HL = &voice.PV_ACT
     ld a,(hl)
@@ -2100,10 +2102,12 @@ ps_noisemode:
 ps_vel:
     ld b,15
     call clamp_val
-    ld c,a
+    ld c,a                  ; C = clamped vel 0..15
     ld a,(G_CH)
+    cp 20
+    jr nc,ps_vel_pcm        ; pcm1..3: per-voice bit-shift volume (no CHS block)
     cp 10
-    ret nc                  ; fm3-op/pcm: no level path
+    ret nc                  ; fm3-op: no level path
     call chs_ptr_iy
     ld (iy+CHS_VEL),c
     ; vel composes into the level like vol — re-apply to the output.
@@ -2120,6 +2124,36 @@ ps_vel:
     ld a,c
     ld c,b
     jp write_psg_att
+
+ps_vel_pcm:
+    ; PV_SHIFT = round((15 - vel) / 3) = (16 - vel) / 3  (0..5). vel in C (0..15).
+    ; Best-fits the FM/PSG 2 dB/step velocity ladder onto the 6 dB bit-shift grid
+    ; so :vel means the same loudness on PCM as on FM/PSG. process_pcm sra's each
+    ; sample PV_SHIFT times. Computed once per PARAM_SET, off the mix hot path.
+    ld a,16
+    sub c
+    ld b,$ff                ; quotient - 1 (first inc brings it to 0)
+psvp_div3:
+    inc b
+    sub 3
+    jr nc,psvp_div3         ; while (16 - vel) - 3*(b+1) >= 0 (no borrow)
+    ld c,b                  ; C = floor((16 - vel) / 3) = shift
+    ld a,(G_CH)
+    sub 20                  ; vi = 0..2 → HL = &G_PCMV[vi].PV_SHIFT
+    ld l,a
+    ld h,0
+    ld e,l
+    ld d,h
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl               ; vi*16
+    add hl,de
+    add hl,de               ; vi*18
+    ld de,G_PCMV+PV_SHIFT
+    add hl,de
+    ld (hl),c
+    ret
 
 ps_gate:
     ld b,8
@@ -3680,8 +3714,9 @@ pcm_any_active:
     ret
 
 ; pcm_voice_acc: IX = voice. If active, add its current (nearest-neighbour)
-; signed sample to (G_PCM_MUL), advance pos by PV_INC, wrap the loop region or
-; deactivate at a shot/tail end. Preserves B (the tick counter).
+; signed sample (attenuated by PV_SHIFT) to (G_PCM_MUL), advance pos by PV_INC,
+; wrap the loop region or deactivate at a shot/tail end. Clobbers B (the caller
+; brackets the three calls with push/pop bc, so the tick counter survives).
 pcm_voice_acc:
     ld a,(ix+PV_ACT)
     or a
@@ -3707,6 +3742,15 @@ pva_fetch:
     ld d,(ix+PV_BASE+1)
     add hl,de              ; HL = base + idx (window addr)
     ld a,(hl)              ; signed sample
+    ; per-voice attenuation: sra A, PV_SHIFT times (0 = full volume). sra is
+    ; sign-preserving, matching the reference's arithmetic `sample >> shift`.
+    ld b,(ix+PV_SHIFT)
+    inc b                  ; test-first loop so shift 0 does zero sra
+    jr pva_shtest
+pva_shr:
+    sra a
+pva_shtest:
+    djnz pva_shr
     ld l,a
     ld h,0
     bit 7,a

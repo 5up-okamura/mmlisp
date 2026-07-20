@@ -403,6 +403,9 @@ export class DrvPlayer {
       inc: 0,
       pos: 0,
       releasing: false,
+      shift: 0, // per-voice volume attenuation: sample >>= shift (0 = full, 0..5);
+      // set from PARAM_SET VEL on the pcm channel, persists across notes, and is
+      // captured by the SE snapshot (mirrors the Z80 PV_SHIFT voice-struct byte).
     }));
     this._pcmDacOn = false;
 
@@ -1222,7 +1225,20 @@ export class DrvPlayer {
       }
       return;
     }
-    if (channelId >= 6) return; // fm3-op/pcm ids: no M1 param path
+    // PCM soft-mix volume (plan-se.md): VEL on a pcm channel sets a per-voice
+    // attenuation the mixer applies as an arithmetic right shift (cheap per
+    // sample). The vel→shift map (once per PARAM_SET, off the hot path) best-fits
+    // the FM/PSG velocity ladder (ir-utils: 2 dB/step) onto the 6 dB bit-shift
+    // grid — shift = round((15−vel)/3), 0..5 — so the same :vel means the same
+    // loudness on PCM as on FM/PSG. Persists across notes; the SE snapshot keeps it.
+    if (channelId >= 20 && channelId <= 22) {
+      if (target === TARGET_ID.VEL) {
+        const vel = value < 0 ? 0 : value > 15 ? 15 : value;
+        this._pcmVoices[channelId - 20].shift = Math.floor((16 - vel) / 3);
+      }
+      return;
+    }
+    if (channelId >= 6) return; // fm3-op ids: no M1 param path
 
     // FM-channel targets.
     const ch = channelId;
@@ -1926,7 +1942,7 @@ export class DrvPlayer {
           v.active = false;
           continue;
         }
-        acc += i8(data[v.base + idx]); // signed sample, nearest-neighbour
+        acc += i8(data[v.base + idx]) >> v.shift; // sample, per-voice attenuated
         v.pos = (v.pos + v.inc) >>> 0;
         if (v.hasLoop && !v.releasing) {
           // keep the accumulator inside the loop region (bounds pos too)

@@ -216,6 +216,30 @@ dropped, then the BGM restores when SE-B ends.
   d_param_sweep→ovl_sweep eviction stays; it's what freed the room for the split's
   wider claim overlay). Budgets now healthy: resident 52 B, stack reserve 13 B.
 
+## PCM per-channel volume (bit-shift) — LANDED (2026-07-20)
+
+Decided with the user: **`:vel` on a `pcmN` channel sets a per-voice attenuation,
+applied by the soft-mixer as an arithmetic right shift (`sra`) — cheap, per
+channel.** The mechanism is bit-shift (the user's directive); the `vel → shift`
+map is `round((15 − vel) / 3)` → `0..5`, best-fitting the FM/PSG 2 dB/step
+velocity ladder onto the 6 dB bit-shift grid so **the same `:vel` means the same
+loudness on PCM as on FM/PSG** (matching what the live `worklet.js` already does
+on the continuous ladder). No new opcode — the exporter already emits `PARAM_SET
+VEL` before every `PCM_NOTE_ON`.
+
+- **Struct (both ports).** New `PV_SHIFT` byte at voice-struct offset 17
+  (`PCM_V_SIZE` 17 → 18; `G_PCMV` $17AB → $17A8, i.e. `OVERLAY_SLOT − 54`). It
+  persists across notes (only `PARAM_SET VEL` and boot write it; `pcm_note_on`
+  leaves it) and the SE snapshot (`PCM_SNAP`, now 18 B) carries it for free.
+- **Hot path.** `pcm_voice_acc` / `_pcmFrame` do `sra` (JS `>>`) `PV_SHIFT` times
+  per sample with a shift-0 fast path — one extra `djnz` loop, off the mix
+  critical path in the common (shift 0) case. The `vel → shift` divide is computed
+  once per `PARAM_SET VEL` (`ps_vel_pcm`, a subtract-by-3 loop), never per sample.
+- **Gate.** `m3-pcm-vol` sweeps a shot voice (vel 15/9/6/0 → shift 0/2/3/5) plus a
+  mid-level loop; `verify:all` green on both ports (37 ab scores, all trace gates).
+- **Resident cost.** Tight but positive — `npm run size` shows ~6 B free at the
+  G_PCMV ceiling after the struct grew and `ps_vel_pcm`/boot-init landed.
+
 ## Sequencing
 
 1. **Sample-bank separation** — **DONE 2026-07-19** (see the "Step 1" section at

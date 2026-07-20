@@ -45,6 +45,9 @@ boot_ch:
     ld (G_PCMV+0*PCM_V_SIZE+PV_ACT),a
     ld (G_PCMV+1*PCM_V_SIZE+PV_ACT),a
     ld (G_PCMV+2*PCM_V_SIZE+PV_ACT),a
+    ld (G_PCMV+0*PCM_V_SIZE+PV_SHIFT),a  ; full volume until a PARAM_SET VEL
+    ld (G_PCMV+1*PCM_V_SIZE+PV_SHIFT),a
+    ld (G_PCMV+2*PCM_V_SIZE+PV_SHIFT),a
     ld hl,DEFAULT_INCREMENT
     ld (G_INC),hl
     ld a,31

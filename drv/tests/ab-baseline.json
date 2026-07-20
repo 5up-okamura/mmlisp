@@ -149,6 +149,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-pcm-vol.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-psg-release.mmlisp": {
     "ok": false,
     "mismatches": 8,
