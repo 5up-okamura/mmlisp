@@ -15,9 +15,11 @@
 
 #include <genesis.h>
 
-// Upload the resident Z80 image, spin until the driver reports ready (mailbox
-// driver_ready == 0xD2), then publish the overlay ROM bank. Call once at
-// startup, before any track ops. `overlay_rom` points at the 32 KB-aligned
+// Upload the resident Z80 image, publish the overlay ROM bank, boot the Z80 and
+// wait (up to ~1 s) for the driver to report ready (mailbox driver_ready ==
+// 0xD2). Check MMLisp_isReady() afterwards: on a failed bring-up this returns
+// with the driver dead rather than freezing the game. Call once at startup,
+// before any track ops. `overlay_rom` points at the 32 KB-aligned
 // mmlispdrv_ovl.bin blob in ROM — the Z80 loads cold code (start_track, mailbox
 // handlers, MMB parsing) from it on demand (driver.md §5). While MMLispDRV owns
 // the Z80 you must not use SGDK's own sound drivers (XGM/PCM); this driver

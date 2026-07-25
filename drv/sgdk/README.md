@@ -24,13 +24,17 @@ from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 ```
 drv/sgdk/mmlispdrv.h        host API (load driver, start/stop tracks)
 drv/sgdk/mmlispdrv.c        host implementation (mailbox, banking)
-drv/sgdk/mmlispdrv_bin.h    generated: the Z80 image as a C array
+drv/sgdk/mmlispdrv_bin.h    generated: the resident Z80 image as a C array
 drv/sgdk/mmlispdrv.bin      generated: the same image as a raw blob
+drv/sgdk/mmlispdrv_ovl.bin  generated: the overlay ROM blob (cold code the Z80 pages in)
+drv/sgdk/mmlispdrv_ovl_bin.h generated: the same overlay as a C array (reference
+                            only — a C array carries no 32 KB alignment, so the
+                            ROM copy must come from the BIN resource)
 drv/sgdk/example/main.c     minimal player program
-drv/sgdk/example/song.res   BIN resource for the MMB (32 KB aligned)
+drv/sgdk/example/song.res   BIN resources for the MMB + overlay (32 KB aligned)
 ```
 
-Regenerate the two generated files after any driver change:
+Regenerate the four generated files after any driver change:
 
 ```
 cd drv && node tools/emit-bin.mjs
@@ -58,7 +62,17 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
 
 2. **Drop the driver + glue into your SGDK project:**
    - `src/mmlispdrv.c`, `inc/mmlispdrv.h`, `inc/mmlispdrv_bin.h`
-   - `res/song.res` with `BIN song_mmb "song.mmb" 32768`
+   - `res/mmlispdrv_ovl.bin` (copy the blob itself into `res/`)
+   - `res/song.res` with both blobs, each 32 KB aligned:
+     ```
+     BIN song_mmb   "song.mmb"          32768
+     BIN mmlisp_ovl "mmlispdrv_ovl.bin" 32768
+     ```
+     SGDK's makefile runs rescomp over every `res/*.res` and generates
+     `res/song.h` declaring `song_mmb` / `mmlisp_ovl` — include that from your
+     `main.c`. Leave the compression field unset: a compressed BIN is unpacked
+     to RAM, and both blobs must stay in ROM for the Z80's bank window to reach
+     them.
    - your `src/main.c` (start from `example/main.c`)
 
 3. **`make`** with SGDK as usual, then run the `.bin`/`.md` in an emulator.
@@ -86,6 +100,14 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
   releases the bus. The Z80 drains the ring at the top of each frame. Use
   `MMLisp_fadeTrack` for DJ-style scene transitions (fade one scene's tracks
   while starting the next).
+
+- **Starting tracks: one per frame.** `MMLisp_startTrack` makes the Z80 load
+  three overlays and a full voice before the first note. A 60 Hz frame gives the
+  Z80 about 59,600 cycles; starting five tracks in one frame is several times
+  that, and the overrun is audible as a ragged opening bar. Post one
+  `MMLisp_startTrack` per frame instead (five tracks = 83 ms, inaudible) — see
+  `example/main.c`. The same applies to any host-side burst: keep per-frame work
+  on the Z80 bounded.
 
 - **Markers.** Each track mirrors the last `MARKER` it passed into a status
   byte; `MMLisp_trackStatus(i)` reads it (bit7 active, bit6 fading, bits5-0
@@ -133,6 +155,41 @@ check of *the glue + the bus/interrupt model*. In rough order of effort:
 `drv/tools/run-trace.mjs` runs the identical Z80 image under this repo's
 emulator, so if the real emulator diverges from `dump-trace`, the difference is
 in the Mega Drive bus/interrupt environment, not the driver.
+
+### Two tools that settle almost any "it sounds wrong" report
+
+Found the hard way during the first on-target bring-up (2026-07-26), and worth
+reaching for before theorising:
+
+- **VGM log = what the chips actually got.** In BlastEm, `m` starts/stops a VGM
+  recording (`ui.vgm_log`). Every YM2612/PSG write lands in it with timing, so
+  parsing it tells you whether the driver stopped writing, wrote something
+  wrong, or wrote correct music that you nonetheless could not hear. A silence
+  that shows a *uniform* write stream is not a driver bug.
+- **Driver state = what the driver thinks.** `example/main.c` reads the mailbox,
+  `G_FRAME`, `G_INC`, `G_MMB_BANK`, `G_MASTER` and each TCB's `T_STATUS`/`T_PC`/
+  `T_WAIT` on a button press. `G_FRAME` climbing proves the Z80 takes its
+  interrupt; `T_PC` moving inside EVENT_STREAM proves the score advances;
+  `T_STATUS` distinguishes playing (1) from held (2), which the 68k-facing
+  status byte does not.
+
+  Read this **on demand only**. Every read halts the Z80, and a read right after
+  `SYS_doVBlankProcess()` lands on the scanline where the Z80's own vblank
+  interrupt is asserted: sampling five values every frame stopped the score
+  outright, once a second was harmless.
+
+One emulator gotcha, since it cost an evening: **BlastEm's audio output on macOS
+dies after a few minutes** — a burst of noise, then permanent silence, while the
+emulated machine keeps running normally. Raising `audio { buffer 512 }` to 2048
+stops the crackling that precedes it but not the dropout itself. Restart the
+emulator, or use another one for long listening sessions.
+
+Three independent checks pinned that on the emulator rather than the driver, and
+they are the ones to repeat if playback ever "stops": driver state read back
+healthy (`G_FRAME` climbing, `T_STATUS`=1, `T_PC` moving inside EVENT_STREAM), a
+VGM log of the same session uniform end to end, and **BlastEm's oscilloscope
+(`o`, `ui.oscilloscope`) still showing waveforms while nothing is audible** —
+that last one takes two seconds and settles it outright.
 
 ## What plays (M1 + M2 + FM3-op)
 

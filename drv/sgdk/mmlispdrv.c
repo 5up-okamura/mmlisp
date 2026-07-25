@@ -1,10 +1,10 @@
 // MMLispDRV — SGDK host implementation. See mmlispdrv.h for the API and the
 // verification-status caveat.
 #include "mmlispdrv.h"
-#include "mmlispdrv_bin.h"   // generated: mmlispdrv_bin[], MMLISPDRV_SIZE
+#include "mmlispdrv_bin.h"   // generated: mmlispdrv_bin[], MMLISPDRV_BIN_SIZE
 
 // ── Z80 address space, as seen from the 68000 (Z80 RAM is at 0xA00000) ──────
-#define Z80_RAM(off)   ((vu8*)(0xA00000 + (off)))
+#define Z80_RAM_AT(off)   ((vu8*)(0xA00000 + (off)))
 
 // Mailbox layout (docs/driver.md §6.1), Z80-RAM offsets. The mailbox tracks
 // the driver's DATA_BASE, which moves as the image grows; it is still the only
@@ -33,17 +33,17 @@ static void mailbox_send(u8 cmd, u8 a0, u8 a1, u8 a2)
 {
     Z80_requestBus(TRUE);
 
-    u8 head = *Z80_RAM(MB_HEAD);
-    u8 tail = *Z80_RAM(MB_TAIL);
+    u8 head = *Z80_RAM_AT(MB_HEAD);
+    u8 tail = *Z80_RAM_AT(MB_TAIL);
     u8 next = (head + 1) & 7;
     if (next != tail)
     {
         u16 cell = MB_RING + (head << 2);
-        *Z80_RAM(cell + 1) = a0;
-        *Z80_RAM(cell + 2) = a1;
-        *Z80_RAM(cell + 3) = a2;
-        *Z80_RAM(cell + 0) = cmd;      // cmd byte last
-        *Z80_RAM(MB_HEAD)  = next;
+        *Z80_RAM_AT(cell + 1) = a0;
+        *Z80_RAM_AT(cell + 2) = a1;
+        *Z80_RAM_AT(cell + 3) = a2;
+        *Z80_RAM_AT(cell + 0) = cmd;      // cmd byte last
+        *Z80_RAM_AT(MB_HEAD)  = next;
     }
 
     Z80_releaseBus();
@@ -51,44 +51,45 @@ static void mailbox_send(u8 cmd, u8 a0, u8 a1, u8 a2)
 
 void MMLisp_init(const u8* overlay_rom)
 {
-    // The boot code itself now lives in an overlay (ovl_boot, driver.md §5.3), so
-    // the Z80 needs the overlay ROM bank in RAM (G_OVL_BANK) BEFORE it runs its
-    // reset vector — the reset stub loads ovl_boot with it, and ovl_boot's RAM
-    // clear preserves it. So upload the resident image AND publish the bank while
-    // the Z80 is held in reset, then release. This mirrors the trace harness
-    // (run-trace.mjs). The overlay blob must be 32 KB-aligned in ROM so its bank
-    // window base is overlay byte 0.
+    // Bring-up order mirrors SGDK's own Z80_loadDriverInternal, which is the
+    // sequence proven on hardware: take the bus (Z80_requestBus also *ends*
+    // reset), fill Z80 RAM while the Z80 is stopped but NOT held in reset, then
+    // pulse reset with the bus released so the Z80 restarts at PC=0. Loading
+    // while reset is asserted is the one order to avoid.
     //
-    // (SGDK bus/reset symbols vary across versions; adjust to your SGDK. The
-    // invariant is: G_OVL_BANK is written before the Z80 executes address 0.)
-    Z80_init();
+    // The boot code itself lives in an overlay (ovl_boot, driver.md §5.3), so the
+    // Z80 must see the overlay ROM bank (G_OVL_BANK) BEFORE it executes address
+    // 0 — the reset stub loads ovl_boot with it. Writing it here is safe across
+    // the reset pulse: a Z80 reset does not clear Z80 RAM, and ovl_boot's own RAM
+    // clear preserves this global. The overlay blob must be 32 KB-aligned in ROM
+    // so its bank window base is overlay byte 0.
+    SYS_disableInts();
     Z80_requestBus(TRUE);
-    Z80_startReset();
 
-    // Byte-wise upload — Z80 RAM at 0xA00000 is 8-bit; a 16-bit write corrupts
-    // the odd byte.
-    {
-        const u8* src = mmlispdrv_bin;
-        vu8* dst = (vu8*)0xA00000;
-        for (u16 i = 0; i < MMLISPDRV_SIZE; i++)
-            dst[i] = src[i];
-    }
+    Z80_clear();
+    Z80_upload(0, mmlispdrv_bin, MMLISPDRV_BIN_SIZE);
 
     u16 bank = (u16)((u32)overlay_rom >> 15);
-    *Z80_RAM(G_OVL_BANK)     = bank & 0xFF;
-    *Z80_RAM(G_OVL_BANK + 1) = (bank >> 8) & 0xFF;
+    *Z80_RAM_AT(G_OVL_BANK)     = bank & 0xFF;
+    *Z80_RAM_AT(G_OVL_BANK + 1) = (bank >> 8) & 0xFF;
 
-    Z80_endReset();     // release reset → boots at PC=0 with G_OVL_BANK already set
+    Z80_startReset();
     Z80_releaseBus();
+    waitSubTick(50);    // hold reset long enough for the Z80 to see it (SGDK's timing)
+    Z80_endReset();     // → boots at PC=0 with G_OVL_BANK already in place
+    SYS_enableInts();
 
-    while (!MMLisp_isReady())
-        ;
+    // Bounded wait: the driver reports ready within a frame or two, and a sound
+    // driver that fails to boot must not freeze the game. Poll ~1 s, then give
+    // up — the caller can ask MMLisp_isReady() what happened.
+    for (u16 i = 0; i < TICKPERSECOND && !MMLisp_isReady(); i++)
+        waitSubTick(SUBTICKPERSECOND / TICKPERSECOND);
 }
 
 bool MMLisp_isReady(void)
 {
     Z80_requestBus(TRUE);
-    u8 ready = *Z80_RAM(MB_READY);
+    u8 ready = *Z80_RAM_AT(MB_READY);
     Z80_releaseBus();
     return ready == 0xD2;
 }
@@ -135,7 +136,7 @@ s16 MMLisp_getVal(u8 slot)
 {
     // GET_VAL is a direct read of the published val-slot array — no round-trip.
     Z80_requestBus(TRUE);
-    vu8* p = Z80_RAM(VAL_SLOTS + ((slot & 0x0F) << 1));
+    vu8* p = Z80_RAM_AT(VAL_SLOTS + ((slot & 0x0F) << 1));
     s16 v = (s16)(p[0] | (p[1] << 8));
     Z80_releaseBus();
     return v;
@@ -144,7 +145,7 @@ s16 MMLisp_getVal(u8 slot)
 u8 MMLisp_trackStatus(u8 track_index)
 {
     Z80_requestBus(TRUE);
-    u8 s = *Z80_RAM(MB_TSTAT + (track_index & 0x0F));
+    u8 s = *Z80_RAM_AT(MB_TSTAT + (track_index & 0x0F));
     Z80_releaseBus();
     return s;
 }

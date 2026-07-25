@@ -152,8 +152,52 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
    write reduction — poor ratio, blocking higher-value features. Reverted
    (reclaimed ~91 B); both players inline again. Redo at the hardware phase as
    **full-frame** (needs the DATA_BASE bump). design-eval §4.7.
-3. **Hardware bring-up + cycle tuning** (the real frontier): run on a real
-   Mega Drive / flashcart; measure worst-case frame cycles (PCM mix rate is
+3. **Hardware bring-up + cycle tuning** (the real frontier).
+   **FIRST ON-TARGET PLAYBACK: 2026-07-26, BlastEm via SGDK** — demo1.mmlisp
+   (3 FM + 2 PSG, looping) plays, `MMLisp_stopTrack` from the pad works. What
+   the bring-up cost, all now fixed in-repo:
+   - `MMLisp_init` loaded the Z80 image *while holding the Z80 in reset* and had
+     no reset settle delay. Rewritten to mirror SGDK's own
+     `Z80_loadDriverInternal` order (requestBus → clear+upload → startReset →
+     releaseBus → waitSubTick(50) → endReset), and its ready-wait is now bounded
+     (~1 s) instead of an infinite spin.
+   - **START_TRACK read the bank window before latching the MMB bank** —
+     `md_start_go` ran `ovl_mmb`'s `mmb_locate` (which reads `WINDOW+8`
+     directly) with `G_MMB_BANK` still 0 from boot; the track's bank was only
+     latched later in `ovl_setup`. On hardware bank 0 is the 68k ROM head, so
+     the section directory was garbage. Fixed by publishing+latching the bank
+     from the command args first; `ovl_setup`'s START_SE path now inherits
+     `G_MMB_BANK` instead of forcing bank 0.
+   - **Why 19/19 gates missed it:** `run-trace.mjs` returned the MMB for *any*
+     bank register value, so a missing latch still read correctly. The harness
+     now puts the MMB on bank 4 and returns 0xFF for unmapped banks (and
+     `START_TRACK` schedules default their bank arg to it). Re-verified: all
+     traces 0-diff, ab-gate 38 scores.
+   - The shipped `drv/sgdk/mmlispdrv_bin.h` / `mmlispdrv_ovl.bin` were a stale
+     2026-07-08 build (pre-slur, pre-PCM-softmix). Regenerate with
+     `node tools/emit-bin.mjs` after *every* asm change — resident 6050 B,
+     overlay 2321 B as of this fix.
+   - **False alarm, recorded so it is not chased again:** "plays for 1-3 minutes,
+     bursts into noise, then permanent silence while the game still responds" is
+     **BlastEm's audio output dying on macOS**, not the driver and not the chip
+     state. Raising `audio { buffer 512 }` to 2048 removed the crackling but not
+     the dropout. Three independent proofs, in increasing order of speed to
+     obtain: driver state read back healthy at the moment of silence (T_STATUS=1
+     on all tracks, T_PC advancing inside EVENT_STREAM, G_INC/G_MASTER/
+     G_MMB_BANK correct); a VGM log of the failing session uniform across its
+     full 139.7 s (155-162 FM key-ons per 20 s, steady PSG writes, no TL-to-max,
+     no $2C/$22 writes); and **BlastEm's oscilloscope (`o`) still showing
+     waveforms with nothing audible** — two seconds, and conclusive.
+     **Reusable method for any "it sounds wrong" report: VGM log = what the chips
+     got, TCB/G_FRAME readback = what the driver thinks, oscilloscope = whether
+     the chips are sounding.** (The first two suspects — a VDP-DMA vs
+     Z80-ROM-read collision, and change-only writes never repairing a diverged
+     chip — were both wrong.)
+   - **Host-side frame budget is real:** starting 5 tracks in one frame is 172
+     register writes + 15 overlay LDIRs, several times the ~59,600 cycles a
+     60 Hz frame gives the Z80, and it is audible as a ragged opening. The
+     example now starts one track per frame; documented in drv/sgdk/README.
+   Still open on real silicon: worst-case frame cycles (PCM mix rate is
    the dominant term — ~10.5 kHz × 3ch soft-mix), validate YM BUSY-wait
    behavior on silicon, measure interrupt stack depth (relevant before any
    `DATA_BASE` bump). Emulator is not cycle-accurate by design.
