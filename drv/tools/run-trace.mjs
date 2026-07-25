@@ -33,6 +33,11 @@ export function runTrace(
     // absent, no PCM banking happens.
     sampleBank = null,
     sampleBankNumber = 2,
+    // The ROM bank the MMB itself rides. Deliberately non-zero: a host places
+    // the MMB wherever rescomp aligns it (drv/sgdk/README.md), so the driver
+    // must latch the bank the START_TRACK command carries before it reads the
+    // window. Bank 0 as the default would let an unlatched read pass.
+    mmbBank = 4,
     // Auto-start every track at frame 0 (the M1 default). With `false`
     // (plan-se.md SE gate) no track auto-starts; the `commands` schedule drives
     // START_TRACK / START_SE, so the SE track can be held back until mid-song.
@@ -63,7 +68,13 @@ export function runTrace(
         const off = a & 0x7fff;
         if (overlay && bankReg === overlayBank) return overlay[off] ?? 0;
         if (sampleBank && bankReg === sampleBankNumber) return sampleBank[off] ?? 0;
-        return mmbBytes[off] ?? 0; // MMB bank (the driver latches it as bank 0)
+        if (bankReg === mmbBank) return mmbBytes[off] ?? 0;
+        // Any other bank is NOT the MMB. Returning the MMB here regardless of
+        // the bank register (what this harness used to do) hides every missing
+        // bank latch: on hardware those reads hit unrelated ROM. 0xFF is the
+        // "wrong bank" marker — a driver that reads the window without latching
+        // now diverges here instead of only on a Mega Drive.
+        return 0xff;
       }
       return 0xff;
     },
@@ -118,8 +129,8 @@ export function runTrace(
     tracks.forEach((t, i) => {
       const cell = MB_BASE + i * 4;
       ram[cell + 1] = t.trackId; // a0
-      ram[cell + 2] = 0; // bank low
-      ram[cell + 3] = 0; // bank high
+      ram[cell + 2] = mmbBank & 0xff; // bank low
+      ram[cell + 3] = (mmbBank >> 8) & 0xff; // bank high
       ram[cell] = 0x01; // cmd byte last (ring discipline)
     });
     ram[MB_HEAD] = tracks.length & 7;
@@ -135,9 +146,13 @@ export function runTrace(
   const postCommand = (c) => {
     const head = ram[MB_HEAD];
     const cell = MB_BASE + head * 4;
+    // START_TRACK carries the MMB's ROM bank in a1/a2 — a real host always
+    // supplies it, so a schedule that omits it gets the harness's mmbBank
+    // rather than bank 0 (which no longer maps to the MMB).
+    const isStart = c.cmd === 0x01;
     ram[cell + 1] = c.a0 ?? 0;
-    ram[cell + 2] = c.a1 ?? 0;
-    ram[cell + 3] = c.a2 ?? 0;
+    ram[cell + 2] = c.a1 ?? (isStart ? mmbBank & 0xff : 0);
+    ram[cell + 3] = c.a2 ?? (isStart ? (mmbBank >> 8) & 0xff : 0);
     ram[cell] = c.cmd; // cmd byte last (ring discipline)
     ram[MB_HEAD] = (head + 1) & 7;
   };

@@ -77,7 +77,9 @@ st_found:
     ld a,(G_TIDX)
     ld (ix+T_INDEX),a
     ; T_BANK: START_TRACK carries the bank in a1/a2; START_SE overloads a1 as the
-    ; priority and is always in the control MMB (bank 0), so zero the bank there.
+    ; priority and always rides the control MMB, so it inherits whatever bank
+    ; that MMB is on (G_MMB_BANK) — NOT bank 0, which is only the control MMB's
+    ; bank in the emulated harness.
     ld a,(G_ISSE)
     or a
     jr nz,st_bank0
@@ -87,9 +89,9 @@ st_found:
     ld (ix+T_BANK+1),a
     jr st_bank_done
 st_bank0:
-    xor a
-    ld (ix+T_BANK),a
-    ld (ix+T_BANK+1),a
+    ld hl,(G_MMB_BANK)
+    ld (ix+T_BANK),l
+    ld (ix+T_BANK+1),h
 st_bank_done:
     call bank_latch
     ret                     ; → ovl_claim (ownership / steal / priority)

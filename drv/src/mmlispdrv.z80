@@ -445,6 +445,17 @@ md_start_se:
 md_start_track:
     xor a
     ld (G_ISSE),a
+    ; Publish and latch the MMB bank from the command args BEFORE anything reads
+    ; the window: ovl_mmb's mmb_locate walks the section directory straight out
+    ; of WINDOW, and load_overlay restores G_MMB_BANK after each overlay load —
+    ; so the bank has to be live here, not later in ovl_setup's bank_latch.
+    ; (Missing this only shows on hardware: any other bank still reads as ROM.)
+    ld a,(G_ARG1)
+    ld l,a
+    ld a,(G_ARG2)
+    ld h,a
+    ld (G_MMB_BANK),hl
+    call latch_bank
 md_start_go:
     ; START_TRACK / START_SE span two overlays: locate the MMB sections, then
     ; fill the TCB (ovl_setup reads G_ISSE for evict-vs-suspend). They share the

@@ -1,11 +1,15 @@
 // Assemble the driver and emit the artifacts an SGDK (or any 68k) project
 // links against:
-//   drv/sgdk/mmlispdrv.bin       raw Z80 image (for an SGDK BIN resource)
+//   drv/sgdk/mmlispdrv.bin       raw resident Z80 image (for an SGDK BIN resource)
 //   drv/sgdk/mmlispdrv_bin.h     the same image as a C array + size macro
+//   drv/sgdk/mmlispdrv_ovl.bin   raw overlay ROM blob (must be a 32 KB-aligned
+//                                BIN resource — the Z80 pages it in by bank)
+//   drv/sgdk/mmlispdrv_ovl_bin.h the same overlay as a C array (reference only;
+//                                a C array carries no 32 KB alignment)
 //
-// The image is position-independent data (uploaded to Z80 RAM at 0x0000), so
-// both forms are interchangeable; the .bin suits `BIN` resources, the header
-// suits a direct `Z80_loadCustomDriver(mmlispdrv_bin, MMLISPDRV_SIZE)`.
+// The resident image is position-independent data (uploaded to Z80 RAM at
+// 0x0000), so both of its forms are interchangeable; the header is what
+// `mmlispdrv.c` uploads (`mmlispdrv_bin`, `MMLISPDRV_BIN_SIZE`).
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
