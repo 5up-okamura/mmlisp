@@ -258,7 +258,11 @@ loads it into a bank and publishes the bank number in `G_SMP_BANK`; the driver's
 PCM mixer latches that bank per frame (driver.md §14) and `pcm_note_on` latches
 it to read an entry. The image is unchanged in layout — the same
 `entry_count + entries + blobs` below — only its location moved out of the file.
-Section id 0x0004 is retired from the directory. Structure:
+Section id 0x0004 is retired from the directory. Both exporters write the bank
+as a `.smp` sidecar next to the `.mmb` (`drv/tools/mmb-build.mjs` by name, the
+live app's File > Export > MMB… by a second save dialog opened in the `.mmb`'s
+folder) — a PCM song is the pair, and the driver plays noise if the bank is
+missing. Structure:
 
 ```
 entry_count : u16

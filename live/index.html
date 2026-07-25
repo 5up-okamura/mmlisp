@@ -2738,12 +2738,13 @@
       const suggestedName = baseName + '.mmb';
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       try {
+        let mmbHandle = null;
         if (window.showSaveFilePicker) {
-          const handle = await window.showSaveFilePicker({
+          mmbHandle = await window.showSaveFilePicker({
             suggestedName,
             types: [{ description: 'MMB', accept: { 'application/octet-stream': ['.mmb'] } }],
           });
-          const writable = await handle.createWritable();
+          const writable = await mmbHandle.createWritable();
           await writable.write(blob);
           await writable.close();
         } else {
@@ -2758,15 +2759,41 @@
         // PCM blobs live in a separate sample bank now (plan-se.md), not inside
         // the .mmb. Save it as a sidecar the game loads into its own ROM bank.
         // (The shared-bank bundler that packs BGM+SE samples together is later.)
+        //
+        // The pair only makes sense together (the SGDK res script names both out
+        // of one folder), so the bank must land beside the .mmb — but a saved
+        // file handle exposes no parent directory, so we cannot write it there
+        // silently. `startIn: mmbHandle` opens the second picker in exactly that
+        // folder with the name filled in: one confirm, right place. Without the
+        // picker API we can only fall back to the download folder.
         if (sampleBank && sampleBank.length) {
+          const smpName = baseName + '.smp';
           const smpBlob = new Blob([sampleBank], { type: 'application/octet-stream' });
-          const url = URL.createObjectURL(smpBlob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = baseName + '.smp';
-          a.click();
-          URL.revokeObjectURL(url);
-          log(`Exported ${baseName}.smp sample bank (${sampleBank.length} bytes)`, 'info');
+          if (mmbHandle) {
+            let smpHandle;
+            try {
+              smpHandle = await window.showSaveFilePicker({
+                suggestedName: smpName,
+                startIn: mmbHandle,
+                types: [{ description: 'MMLisp sample bank', accept: { 'application/octet-stream': ['.smp'] } }],
+              });
+            } catch (e) {
+              if (e?.name !== 'AbortError') throw e;
+              log(`${smpName} not saved — the MMB alone has no PCM data; the driver needs the sample bank`, 'err');
+              return;
+            }
+            const writable = await smpHandle.createWritable();
+            await writable.write(smpBlob);
+            await writable.close();
+          } else {
+            const url = URL.createObjectURL(smpBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = smpName;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+          log(`Exported ${smpName} sample bank (${sampleBank.length} bytes)`, 'info');
         }
       } catch (e) {
         if (e?.name !== 'AbortError') log('MMB save failed: ' + e.message, 'err');
