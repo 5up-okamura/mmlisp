@@ -40,6 +40,26 @@ Regenerate the four generated files after any driver change:
 cd drv && node tools/emit-bin.mjs
 ```
 
+## Installing into your project
+
+`tools/install-sgdk.mjs` copies the files above into an SGDK project in the
+layout below — use it instead of copying by hand after every driver change:
+
+```
+cd drv
+node tools/install-sgdk.mjs ~/path/to/project                 # driver files only
+node tools/install-sgdk.mjs ~/path/to/project --song mysong.mmlisp
+node tools/install-sgdk.mjs ~/path/to/project --dry-run       # show what would change
+```
+
+It regenerates the Z80 artifacts first (so a stale `mmlispdrv_bin.h` can never
+be installed), overwrites the four driver-owned files, and **only ever creates**
+the files that become yours to edit — `res/song.res` when the project has none,
+and `src/main.c` only with `--example`. Your `main.c` is never touched. With
+`--song` it also compiles the score to `res/song.mmb` (plus `res/song.smp` for
+PCM scores) and prints the track ids `MMLisp_startTrack` takes. Set
+`MMLISP_SGDK_PROJECT` to skip the path argument; `--help` lists every option.
+
 ## The pipeline
 
 ```
@@ -60,7 +80,8 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
    The tool prints the track count; track ids are `0..count-1` in declaration
    order.
 
-2. **Drop the driver + glue into your SGDK project:**
+2. **Drop the driver + glue into your SGDK project** (what
+   `node tools/install-sgdk.mjs <project>` does for you):
    - `src/mmlispdrv.c`, `inc/mmlispdrv.h`, `inc/mmlispdrv_bin.h`
    - `res/mmlispdrv_ovl.bin` (copy the blob itself into `res/`)
    - `res/song.res` with both blobs, each 32 KB aligned:

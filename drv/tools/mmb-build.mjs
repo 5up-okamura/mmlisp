@@ -22,7 +22,7 @@ export function buildMmb(sourcePath) {
     opts.samples = loadSamplesForIr(ir);
   }
   const { bytes, sampleBank, diagnostics: exportDiags } = encodeMmb(ir, opts);
-  return { bytes, sampleBank, diagnostics: [...diagnostics, ...exportDiags] };
+  return { bytes, sampleBank, ir, diagnostics: [...diagnostics, ...exportDiags] };
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

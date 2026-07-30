@@ -6,6 +6,7 @@
   "scripts": {
     "tables": "node tools/gen-tables.mjs",
     "emit-bin": "node tools/emit-bin.mjs",
+    "sgdk:install": "node tools/install-sgdk.mjs",
     "dump": "node tools/dump-trace.mjs",
     "selftest": "node tools/selftest.mjs",
     "size": "node tools/size-audit.mjs",

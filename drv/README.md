@@ -32,6 +32,8 @@ tools/size-audit.mjs  static resident/overlay size report (`npm run size`)
 tools/budget.mjs      size audit + stack watermark over the gate corpus (`npm run budget`)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
 tools/emit-bin.mjs    emit the Z80 image as .bin + C array for SGDK/68k
+tools/install-sgdk.mjs copy the sgdk/ host files (and optionally a compiled
+                      score) into an SGDK project (`npm run sgdk:install -- <dir>`)
 tools/wav.mjs         load WAV → 8-bit signed PCM for the SAMPLE_BANK (PCM songs)
 tests/*.mmlisp        trace-stress scores beyond ab-core's coverage (+ .wav fixtures)
 sgdk/                 SGDK (68k) integration — glue, sample, guide (sgdk/README.md)
