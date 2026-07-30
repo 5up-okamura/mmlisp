@@ -32,6 +32,16 @@ const PCM_PARTS = { K: "pcm1" };
 // See https://est.ceres.ne.jp/2021/09/04/mucom88-detune/
 const FM_CENTS_PER_DETUNE = 100 / 49;
 const PSG_CENTS_PER_DETUNE = 100 / 160;
+// The software LFO (`M`) depth is calibrated on its own, NOT reused from the `D`
+// detune factors above. mucom's SSG LFO right-shifts its pitch offset by
+// (octave-1) before adding it to the tone period; that shift cancels the
+// period->cents nonlinearity, so the vibrato width stays roughly constant in
+// cents across octaves — a single cents-per-unit factor is structurally right,
+// and only the magnitude was wrong. The old code reused PSG_CENTS_PER_DETUNE
+// (0.625, a detune-specific value) and rendered the vibrato several times too
+// wide. Tuned by ear against a real mucom render (Koshiro arg006, an o4 part
+// with `M…,30,4` -> ~30 cents peak). One knob: raise/lower to taste.
+const SSG_LFO_CENTS_PER_UNIT = 30 / (30 * 4); // 0.25
 // G is the OPNA's built-in rhythm generator: its sounds live in the chip's
 // rhythm ROM, not in the `#pcm` bank, so there is nothing to import them from.
 const DROP_PARTS = { G: "rhythm" };
@@ -942,17 +952,22 @@ function renderOps(ops, ctx, out, depth = 0) {
         // Software pitch LFO -> sticky :macro :pitch+. Additive (not override) so
         // the vibrato rides a running glide/detune instead of clobbering it — a
         // `:pitch` override would overwrite the portamento sweep on glided notes.
-        // Depth/period scaling are representative approximations (like detune).
-        // mucom triangle: amp steps of +amt each up then down; peak = amp*amt
-        // (F-number units -> cents), full cycle = 2*amp*clock mucom-clocks.
+        // From mucom's driver (LFOON/PLLFO, onitama/mucom88 ver1.2): the LFO
+        // integrates a per-step VECTOR (`amp`, a 16-bit velocity) onto the running
+        // F-number, one step every `clock` counter-ticks, reversing direction
+        // every `amt` steps (PEAK level). So the full triangle cycle spans
+        // `2*amt*clock` mucom-clocks and the peak deviation is `amp*amt/2` native
+        // units. NB the period is driven by `amt` (PEAK/step-count), NOT `amp`
+        // (the per-step velocity). Depth uses the ear-tuned SSG_LFO_CENTS_PER_UNIT
+        // (proportional to amp*amt; see its note).
         const lfo = op.lfo;
         let spec;
         if (!lfo.on || lfo.amp * lfo.amt === 0 || lfo.clock === 0) {
           spec = "none"; // LFO off -> (def lfo-off :macro :pitch+ none)
         } else {
           const factor = WHOLE_TICKS / op.wholeClocks; // mucom clocks -> ticks
-          const cents = Math.round(lfo.amp * lfo.amt * (ctx.isSsg ? PSG_CENTS_PER_DETUNE : FM_CENTS_PER_DETUNE));
-          const period = Math.max(1, Math.round(2 * lfo.amp * lfo.clock * factor));
+          const cents = Math.round(lfo.amp * lfo.amt * (ctx.isSsg ? SSG_LFO_CENTS_PER_UNIT : FM_CENTS_PER_DETUNE));
+          const period = Math.max(1, Math.round(2 * lfo.amt * lfo.clock * factor));
           const tri = `(triangle ${-cents}..${cents} :len ${period}t)`;
           // delay>0: hold at the note's pitch for the delay, then the triangle loops.
           spec = lfo.delay > 0
