@@ -26,8 +26,10 @@ CORE_TARGETS.add("FM_ALG");
 CORE_TARGETS.add("FM_FB");
 
 // Every op/ALG/FB target that belongs to a voice (folded into the entry and
-// dropped from the stream when a burst coalesces). SSG/AMEN included.
-const VOICE_TARGETS = new Set(CORE_TARGETS);
+// dropped from the stream when a burst coalesces). SSG/AMEN included. Exported
+// because "does this event disturb the voiced register state?" is the question
+// the loop-invariant VOICE_SET hoist in export-mmb.js has to answer.
+export const VOICE_TARGETS = new Set(CORE_TARGETS);
 for (const fam of ["FM_SSG", "FM_AMEN"]) for (let op = 1; op <= 4; op++) VOICE_TARGETS.add(`${fam}${op}`);
 
 // target name → { op: 0..3, field } for op params; { voice: 'alg'|'fb' } otherwise.

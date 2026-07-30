@@ -324,6 +324,12 @@ Detection rule (exporter): a same-tick PARAM_SET group covering the full voice
 parameter set (28 operator params + ALG/FB) becomes a `VOICE_SET`; partial
 groups stay as PARAM_SETs (driver.md §10).
 
+A `VOICE_SET` that sits immediately after a backward-JUMP target MARKER is
+emitted **before** that marker when the loop body cannot disturb the voiced
+registers, so looping does not re-apply it every iteration (driver.md §10.1). The
+stream order `VOICE_SET, MARKER` at a loop head is therefore normal output, not a
+compiler accident.
+
 ## 12. Size Budget and Banking
 
 - M1 constraint: **one MMB file ≤ one 32KB bank window** (0x8000–0xFFFF).

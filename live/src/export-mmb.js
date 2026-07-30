@@ -40,7 +40,7 @@ import {
 import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 import { buildLutBlob } from "./lut-blob.js";
 import { dedupEventStream } from "./mmb-dedup.js";
-import { planVoices } from "./mmb-voices.js";
+import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
@@ -83,6 +83,95 @@ const MACRO_ARG_KEYS = new Set([
     `fm_ssg${op}`,
   ]),
 ]);
+
+// ── Loop-invariant VOICE_SET hoist ─────────────────────────────────────────
+// mucom-style scores carry the voice at the loop head (`#loop @psg003`), so every
+// iteration re-applies the same 29 registers. Change-only suppression drops all of
+// those chip writes, but the driver still pays the per-register shadow bookkeeping
+// — measured at ~30k Z80 cycles per track, which put a 7-track import's loop frame
+// at 4.4× the 59,659-cycle frame budget and made the loop audibly stumble.
+//
+// When the loop body cannot disturb the channel's voiced state, that VOICE_SET can
+// be emitted BEFORE the marker: pass 1 still applies it and the backward JUMP lands
+// after it. MARKER itself writes no register, so moving a VOICE_SET across it
+// cannot reorder any chip write — the register trace is unchanged, which is what
+// the drv gate asserts.
+//
+// Returns Map<trackIndex, Map<markerEventIndex, voiceEmitEventIndex>>.
+function planVoiceHoists(ir, plans) {
+  const hoists = new Map();
+  const tracks = ir.tracks ?? [];
+  for (let ti = 0; ti < tracks.length; ti++) {
+    const plan = plans.get(ti);
+    if (!plan) continue;
+    const events = tracks[ti].events ?? [];
+
+    // JUMP-target markers only — a `(trig N)` marker carries `code` and is never
+    // a target. First occurrence wins, matching the encoder's markerOffsets.
+    const markerAt = new Map();
+    events.forEach((ev, i) => {
+      if (ev.cmd !== "MARKER") return;
+      const id = ev.args?.id;
+      if (id == null || ev.args?.code != null || markerAt.has(id)) return;
+      markerAt.set(id, i);
+    });
+
+    const candidates = new Map(); // marker event index → voice emit event index
+    const rejected = new Set();
+    for (let j = 0; j < events.length; j++) {
+      const ev = events[j];
+      if (ev.cmd !== "JUMP" || ev.args?.repeat != null) continue;
+      const m = markerAt.get(ev.args?.to);
+      if (m === undefined || m >= j) continue; // backward jumps only
+      // The VOICE_SET has to sit immediately after the marker at the same tick:
+      // with anything in between, hoisting would reorder that event's writes.
+      const v = m + 1;
+      if (!plan.emit.has(v) || events[v]?.tick !== events[m].tick) continue;
+      if (voicedStateDisturbed(events, m + 1, j, plan, v)) rejected.add(m);
+      else candidates.set(m, v);
+    }
+    for (const m of rejected) candidates.delete(m); // any dirty path un-hoists
+    if (candidates.size) hoists.set(ti, candidates);
+  }
+  return hoists;
+}
+
+// Can anything in events[from..to] leave the channel's voiced registers different
+// from what the loop-head VOICE_SET left them? Conservative: unknown means yes.
+function voicedStateDisturbed(events, from, to, plan, hoistedEmit) {
+  for (let k = from; k <= to && k < events.length; k++) {
+    const ev = events[k];
+    if (plan.drop.has(k)) {
+      // Coalesced burst member. Only a *second* voice change matters: then
+      // iteration 2 does need the head VOICE_SET back.
+      if (plan.emit.has(k) && k !== hoistedEmit) return true;
+      continue;
+    }
+    const a = ev.args ?? {};
+    switch (ev.cmd) {
+      case "PARAM_SET":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
+      case "PARAM_FROM_VAL":
+      case "PARAM_SWEEP":
+      case "PARAM_SWEEP_STOP":
+        if (VOICE_TARGETS.has(a.target)) return true;
+        break;
+      case "NOTE_ON":
+        // A macro on an op param keeps writing that register and where it stops
+        // is not a compile-time fact, so treat its presence as disturbed.
+        for (const key of Object.keys(a)) {
+          if (MACRO_ARG_KEYS.has(key) && VOICE_TARGETS.has(macroKeyToTarget(key))) {
+            return true;
+          }
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return false;
+}
 
 // ── Small byte-writer over a growable array ───────────────────────────────
 class Writer {
@@ -395,10 +484,17 @@ export function encodeMmb(ir, opts = {}) {
   // (the Z80 VOICE_SET handler landed in ovl_voice); pass
   // opts.voiceCoalesce === false to force the raw PARAM_SET burst.
   const voices = opts.voiceCoalesce !== false ? planVoices(ir) : { table: [], plans: new Map() };
+  // Which loop-head VOICE_SETs move above their marker (see planVoiceHoists).
+  // opts.voiceHoist === false keeps them in the loop body — an A/B switch for
+  // proving the move leaves the register trace alone.
+  const voiceHoists =
+    opts.voiceHoist === false ? new Map() : planVoiceHoists(ir, voices.plans);
 
   for (const track of ir.tracks ?? []) {
     const trackSeq = trackEntries.length; // this track's index (pushed at tail)
     const vplan = voices.plans.get(trackSeq) ?? null;
+    const hoistAt = voiceHoists.get(trackSeq) ?? null; // marker idx → voice emit idx
+    const hoisted = new Set(); // voice emit indices already written before a marker
     const label = track.scoreChannel ?? track.channel ?? String(track.id);
     const channelId = resolveChannelId(track.scoreChannel ?? track.channel);
     if (channelId === null) {
@@ -462,13 +558,23 @@ export function encodeMmb(ir, opts = {}) {
       // Voice coalescing: a full-voice PARAM_SET burst folds into one VOICE_SET
       // emitted at its first voice param; the rest of the burst is dropped.
       if (vplan && vplan.drop.has(i)) {
-        if (vplan.emit.has(i)) {
+        if (vplan.emit.has(i) && !hoisted.has(i)) {
           syncClock(ev.tick);
           evBounds.push({ offset: stream.length, cmd: "VOICE_SET", track: trackSeq });
           stream.u8(OPCODE.VOICE_SET);
           stream.u8(vplan.emit.get(i));
         }
         continue;
+      }
+      // Loop-invariant VOICE_SET: emit it ahead of the marker it followed, so the
+      // backward JUMP lands past it and iterations 2+ skip the whole re-apply.
+      if (hoistAt?.has(i)) {
+        const hv = hoistAt.get(i);
+        syncClock(ev.tick);
+        evBounds.push({ offset: stream.length, cmd: "VOICE_SET", track: trackSeq });
+        stream.u8(OPCODE.VOICE_SET);
+        stream.u8(vplan.emit.get(hv));
+        hoisted.add(hv);
       }
       evBounds.push({ offset: stream.length, cmd: ev.cmd, track: trackSeq });
       switch (ev.cmd) {

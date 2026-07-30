@@ -1,0 +1,37 @@
+; Loop-invariant VOICE_SET hoist gate (export-mmb.js planVoiceHoists).
+;
+; A voice sitting at the loop head is re-applied on every iteration — 29
+; registers of change-only bookkeeping that the chip never sees, ~30k Z80 cycles
+; per track. The encoder hoists that VOICE_SET above the marker when the loop
+; body provably cannot disturb the channel's voiced state, so iterations 2+ skip
+; it. This score pins all three outcomes at once; the hoist is only correct if
+; the register trace is identical either way, which is what this gate checks.
+;
+;   fm1 — clean body: hoisted (VOICE_SET before MARKER in the stream).
+;   fm2 — body switches voice mid-loop: NOT hoisted; iteration 2 needs `lead` back.
+;   fm4 — body writes a voiced register (:ar1+): NOT hoisted; the head VOICE_SET
+;         is what restores it, and its target sits on port 1 as well.
+
+(def lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def stab :alg 7 :fb 2
+  :ar1 31 :dr1 5 :sr1 0 :rr1 7 :sl1 1 :tl1 20 :ks1 0 :ml1 1 :dt1 1
+  :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 12 :ks2 0 :ml2 3 :dt2 0
+  :ar3 31 :dr3 5 :sr3 0 :rr3 7 :sl3 1 :tl3 20 :ks3 0 :ml3 1 :dt3 2
+  :ar4 31 :dr4 6 :sr4 1 :rr4 7 :sl4 2 :tl4 4 :ks4 0 :ml4 5 :dt4 0)
+
+(fm1 :tempo 150 :oct 4 :len 4 :vel 12
+  #loop lead c e g e
+  (go loop))
+
+(fm2 :oct 4 :len 4 :vel 11
+  #loop lead c e stab g > c <
+  (go loop))
+
+(fm4 :oct 2 :len 4 :vel 13
+  #loop lead c :ar1+ -8 e g
+  (go loop))
