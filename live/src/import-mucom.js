@@ -41,6 +41,12 @@ const DROP_PARTS = { G: "rhythm" };
 // lands on :oct 4, and let the emitted :rate carry the real pitch (see
 // MUCOM_PCM_BASE_RATE in mucom-pcm.js).
 const MUCOM_PCM_OCT_SHIFT = 3;
+// Default octave for a K part that never states an absolute one. mucom's o6
+// default + the +3 shift would be `:oct 9`, whose bare note is MIDI 120 → clamped
+// to 84 (4× — a degenerate over-transpose). Until the note→rate mapping is
+// reworked to match mucom's per-octave ADPCM behaviour, fall back to the native
+// reference (`:oct 4` = C4 = 1× rate) so a bare drum plays unshifted.
+const MUCOM_PCM_DEFAULT_OCT = 4;
 // mucom velocity is 0-255 on K but 0-15 on FM/SSG. On K it IS the ADPCM-B level
 // register — the driver writes `TOTALV*4 + v` to 0x0B, TOTALV being 0 outside a
 // fade and PVMODE 0 by default (music.asm PCMVOL/PL1/PL2) — so `v` is a linear
@@ -873,17 +879,21 @@ function renderOps(ops, ctx, out, depth = 0) {
         out.push("|"); // bar line — editorial marker, carried through verbatim
         break;
       case "octUp":
-        out.push(">"); ctx.oct++;
+        // PCM part K is INVERTED (see octSet): mucom `>` raises the octave number,
+        // which LOWERS the ADPCM pitch, so emit a MMLisp octave-DOWN.
+        if (ctx.isPcm) { out.push("<"); ctx.oct--; } else { out.push(">"); ctx.oct++; }
         break;
       case "octDown":
-        out.push("<"); ctx.oct--;
+        if (ctx.isPcm) { out.push(">"); ctx.oct++; } else { out.push("<"); ctx.oct--; }
         break;
       case "octSet":
-        // mucom FM octaves read one higher than MMLisp's (drop one); SSG/PSG use
-        // a different frequency table and need no shift; PCM shifts up so mucom's
-        // o1/o2 drum octaves land inside MMLisp's MIDI 36-84 sample range (see
-        // MUCOM_PCM_OCT_SHIFT).
-        ctx.oct = op.n + ctx.octShift;
+        // mucom FM octaves read one higher than MMLisp's (drop one); SSG/PSG use a
+        // different frequency table and need no shift. PCM part K is INVERTED: the
+        // driver plays a HIGHER octave number at a LOWER pitch — it right-shifts the
+        // sample-rate Δ-N by (octave-1), so o1 = native and each octave up halves
+        // the rate (PCMGFQ/PCMNMB in music.asm). Mirror the octave around the native
+        // reference (o1 -> MUCOM_PCM_DEFAULT_OCT) instead of shifting up.
+        ctx.oct = ctx.isPcm ? (MUCOM_PCM_DEFAULT_OCT + 1 - op.n) : (op.n + ctx.octShift);
         out.push(`:oct ${ctx.oct}`);
         break;
       case "pan":
@@ -1289,7 +1299,7 @@ export function mucomToMmlisp(parsed) {
   const ctxByLetter = new Map();
   const letterCtx = (letter) => {
     if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(letter);
   };
@@ -1324,13 +1334,20 @@ export function mucomToMmlisp(parsed) {
   let usesAutoGate = false;
   for (const [letter, f] of firstForm) {
     const prefix = [];
-    // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it.
-    if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) prefix.push(`:oct ${MUCOM_DEFAULT_OCT + octShiftFor(letter)}`);
-    // mucom re-attacks every note; MMLisp holds a full-gate note into the next
-    // one as a slur, so a part that never sets `q` would run its notes together
+    // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it; PCM
+    // uses a native-reference default (see MUCOM_PCM_DEFAULT_OCT) instead of the
+    // saturating :oct 9.
+    if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) {
+      const defOct = letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter);
+      prefix.push(`:oct ${defOct}`);
+    }
+    // mucom re-attacks every note; MMLisp holds a full-gate FM note into the next
+    // one as a slur, so an FM part that never sets `q` would run its notes together
     // and lose them (guide.md, gate). Reference the auto-gate def (emitted below)
     // for the smallest cut that re-attacks — named so it reads apart from a `q`.
-    if (!hasGateCut(allOpsByLetter.get(letter) || [])) { prefix.push(MUCOM_AUTO_GATE_DEF); usesAutoGate = true; }
+    // FM only: SSG re-attacks via its `E` volume envelope, and PCM re-triggers the
+    // sample on every note, so neither needs (nor benefits from) the default cut.
+    if (letter in FM_PARTS && !hasGateCut(allOpsByLetter.get(letter) || [])) { prefix.push(MUCOM_AUTO_GATE_DEF); usesAutoGate = true; }
     if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
     if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
   }
