@@ -214,7 +214,17 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
 5. Deferred/known-open (docs): batched frame flush + state-based comparator
    (drv/README deviations §1); ir.md §11 residual asymmetries (`:keyon` on
    FM3-op/PSG, inline-sweep `:wait`/`dyn.len`, PCM shot length).
-6. Residual ir↔drv **±1-2 frame** key-off skew on gate-cut notes where
+6b. **NEW ir↔drv divergence, and this one looks like an ir-player (live app) bug:
+   a track that changes voice inside a loop does not get its loop-head voice back
+   in ir-player, while drv-player restores it.** Surfaced by the new gate score
+   `m3-voice-loop.mmlisp` (fm2 switches `lead`→`stab` mid-loop): at the loop frame
+   drv writes the 29 `lead` registers back (`$b1 = $1C` = alg 4 / fb 3 etc.) and ir
+   writes nothing, so **the live player keeps playing `stab` from iteration 2 on**.
+   The score says the loop head binds `lead`, so **drv is right and live is wrong**.
+   Frozen as known divergence #15 in ab-baseline (30 mismatches, all at one frame)
+   — NOT caused by the VOICE_SET hoist: hoist on/off produces byte-identical
+   register logs. Fix belongs in `live/src/ir-player.js`'s loop handling.
+7. Residual ir↔drv **±1-2 frame** key-off skew on gate-cut notes where
    `exGate < dur` (ir continuous clock vs drv frame-stepped tick accumulation) —
    inherent quantization, accepted like the FM roughness. Seen on gh002 fm5
    (`:gate- 6t`, 96-tick notes). Three drv/exporter bugs it used to hide behind,
@@ -232,6 +242,45 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
      **Encoder-only — no Z80 change; Z80≡drv holds because both replay the same
      stream, so the regression lock is really the ir↔drv A/B, not verify:all.**
 
+## Frame-cycle budget — measured, 2026-07-30 (was the "hardware frontier")
+
+A frame is **59,659 Z80 cycles**. Overrun costs a whole frame (the vblank `/INT`
+lasts about a scanline, so a long frame simply misses the next one) and is audible.
+`tools/run-trace.mjs` + `cpu.step()`'s cycle return + a PC histogram against
+`buildDriver().symbols` gives per-frame cost and a per-routine profile; that is how
+all of the below was found. **Re-measure this way rather than guessing** — every
+guess in this session (DMA collisions, change-only never repairing a diverged chip,
+overlay thrash at the loop) was wrong, and the profile was right each time.
+
+gh002 (7-track mucom import, 12000 frames):
+
+| | before | after |
+| --- | --- | --- |
+| median | 28,132 (47%) | **18,866 (32%)** |
+| p99 | 68,458 (115%) | **58,574 (98%)** |
+| over budget | 3.8% | **0.77%** |
+| loop frame | 263,000 (**4.4×**) | **79,000 (1.3×)** |
+| start frame (f0) | 344,000 (5.8×) | 324,000 — **still open** |
+
+What was actually expensive:
+
+1. **Loop-head VOICE_SET, re-applied every iteration** — 29 registers of shadow
+   bookkeeping per track (~30k cycles) that the chip never sees, because mucom MML
+   puts `@n` at `#loop`. Fixed encode-side: `planVoiceHoists` in export-mmb.js
+   hoists it above the marker when the loop body cannot disturb voiced state
+   (driver.md §10.1, gate `m3-voice-loop`). Proven output-identical by A/B-ing
+   `opts.voiceHoist` on/off (27,036 writes on the real song, 0 differences).
+2. **`chs_ptr_iy` = 19% of every frame** — 32 calls × ~190 cycles, 92% of them from
+   three sites in the two ascending channel loops. Both loops now walk an induction
+   pointer (+64/channel); `process_slot` preserves IY so the sweep loop keeps its own.
+3. **`process_slot` spent ~180 cycles of prologue before reporting an empty slot**,
+   20× per frame. The caller now tests both target bytes first.
+
+Still at the top and genuinely working: `fs_tick` (3.6k) / `fs_wait` (2.7k) — the
+per-track tick accumulate and dispatch. Next candidates if more is needed: the
+16-TCB and 30-macro-slot scans (~4k combined) via an active mask, and the start
+frame, which needs the setup/first-note split (see the deferred item below).
+
 ## Extension budget — how much room is left, and where the next bytes come from
 
 Decision material for weighing any new driver-side feature (v0.6 lowering
@@ -248,6 +297,16 @@ watermark over the full gate corpus). Every `verify.mjs` run also prints a
 | Overlay slot | 274 B ($17DE–$18EF); overlays 220/268/255/238/250/220 (ovl_mmb) B | Sized by the largest (ovl_cmd 268), 6 B slack. Every slot byte costs a resident byte — keep overlays balanced. |
 | RAM data region | $18F0–$1FAD, **packed** (mailbox, val slots, globals, 10×64 B channel state, 16×32 B TCB, 304 B shadow + 38 B bitmap) | No free holes; per-channel state bytes must displace something. |
 | Stack | 82 B window ($1FAE STACK_FLOOR..$1FFF); **worst case 40 B used** on m3-macro-keyon (42 B reserve) | → DATA_BASE bump of ~20-26 B leaves a hardware-interrupt reserve; confirm on hardware. |
+
+**2026-07-30 update after the frame-cycle work:** resident is **6055 B with 1 B
+free** (ceiling G_PCMV 6056 / $17A8) — the cycle optimizations above had to be
+paid for in bytes, and three of them were re-coded purely to fit (`ld bc,10*256`
+for the two loop counters, `djnz` for both channel loops, a shorter `1<<bit` loop
+in `ym_valid_ptr`). **The next driver change needs bytes freed first.** Stack
+worst case is now **40 B / 48 B window (8 B reserve)** — `process_slot`'s added
+`push iy` costs 2 B and buys 3.4k cycles/frame; the RAM data region is exactly
+full ($18F0–$1FFF, 1808 B), which is why `CH_STATE` could **not** simply be
+page-aligned for a cheaper `chs_ptr_iy`.
 | ROM side | effectively unlimited | LUT_TABLE MMB section (§0x0008), overlay blob, banked song data. |
 
 v0.6 near-term costs vs funding (design-eval.md §10): the VAL-op arithmetic

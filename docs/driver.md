@@ -159,6 +159,38 @@ address and again before the data byte. Batching all writes into step 4
 bounds the per-frame chip-access time and keeps the write order
 deterministic. PSG writes need no wait.
 
+### 4.1 Frame cost
+
+A 60 Hz frame is **59,659 Z80 cycles** (3.579545 MHz ÷ 60). Overrun is not
+graceful: the vblank `/INT` is asserted for about one scanline, so a frame that
+runs long misses the next interrupt outright and the score loses a whole frame —
+audible as a stumble exactly where the music is densest.
+
+Measured on a 7-track mucom import (gh002, `tools/run-trace.mjs` cycle counts):
+
+| | before | after §10.1 + the step-3 rework |
+| --- | --- | --- |
+| median frame | 28,132 (47%) | **18,866 (32%)** |
+| p99 | 68,458 (115%) | **58,574 (98%)** |
+| frames over budget | 3.8% | **0.77%** |
+| loop frame | 263,000 (4.4×) | **79,000 (1.3×)** |
+
+Two structural facts came out of profiling and are worth keeping in mind when
+touching step 3:
+
+- **Do not recompute channel pointers per iteration.** `chs_ptr_iy`
+  (`IY = CH_STATE + ch*64`) was 19% of *every* frame — 32 calls, ~190 cycles
+  each — and 92% of those calls came from three sites inside the two ascending
+  channel loops. Both now walk an induction pointer (`+64` per channel);
+  `process_slot` preserves IY so the sweep loop keeps its own.
+- **Test emptiness before the call, not inside it.** `process_slot` spent ~180
+  cycles of prologue before it could report an empty sweep slot, 20 times a
+  frame. Both target bytes are one indexed load from the caller.
+
+What remains at the top is real work (`fs_tick` / `fs_wait`, the per-track tick
+accumulate and dispatch) plus the start frame, where seven tracks' setup and
+their first notes land together — see §10.1's neighbourhood and the roadmap.
+
 ## 5. Z80 RAM Map (8KB, 0x0000–0x1FFF)
 
 | Range           | Size   | Contents                                        |
@@ -487,6 +519,29 @@ params + ALG/FB) coalesces into a deduplicated VOICE_TABLE entry (mmb.md
 §11) + `VOICE_SET` (opcode 0x14); partial groups stay as PARAM_SETs. The
 29-byte register-order entry ($30,$40,$50,$60,$70,$80,$90 × 4 ops + $B0) is
 specified in mmb.md §11.
+
+### 10.1 Loop-invariant VOICE_SET (encode-time hoist)
+
+A `VOICE_SET` costs the driver 29 registers of shadow bookkeeping even when the
+chip sees nothing (change-only suppresses identical values) — **~30k Z80 cycles
+per track**, against a 59,659-cycle frame budget. Scores that carry the voice at
+the loop head (`#loop @psg003`, the shape every mucom import has) therefore pay
+it again on every iteration: a 7-track import measured **263k cycles at the loop
+frame, 4.4× the budget**, i.e. four dropped frames, clearly audible as the loop
+stumbling.
+
+`planVoiceHoists` (`live/src/export-mmb.js`) emits that VOICE_SET **before** the
+marker instead, so pass 1 applies it and the backward JUMP lands past it. Moving
+it across a MARKER cannot reorder any chip write (MARKER writes no register), so
+the register trace is unchanged — asserted by the gate, and by an A/B of the same
+song encoded with `opts.voiceHoist` on and off.
+
+The hoist is skipped when the loop body can leave the voiced registers different
+from what that VOICE_SET set: another voice change, a PARAM_SET/ADD/MUL/SWEEP on
+an op param / ALG / FB, or a macro on one of those (where it stops is not a
+compile-time fact). Those songs keep today's behaviour — the head VOICE_SET stays
+inside the loop and restores the voice each iteration. `drv/tests/m3-voice-loop.mmlisp`
+pins all three outcomes.
 
 ## 11. Milestones
 

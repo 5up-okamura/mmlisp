@@ -1681,16 +1681,16 @@ process_macros:
     ld a,h
     or l
     ret z                   ; no macro table
-    ld c,0                  ; channel
+    ld bc,10*256            ; B = channel counter (the slot loop's B rides the
+                            ; stack across push bc/pop bc), C = channel 0
+    ld ix,CH_STATE+CHS_MSLOT ; induction variable: &slot[0] of chs(c). The outer
+                            ; loop only needed IY to derive this, and IX survives
+                            ; step_macro — so walk it (+64 per channel) instead of
+                            ; recomputing chs_ptr_iy for all 10 channels every frame.
 pm_ch:
     push bc
     ld a,c
     ld (G_CH),a
-    call chs_ptr_iy         ; IY = chs
-    push iy
-    pop ix
-    ld de,CHS_MSLOT
-    add ix,de               ; IX = &slot[0] (step_macro never moves IX)
     ld b,3
 pm_slot:
     push bc
@@ -1706,10 +1706,10 @@ pm_snext:
     pop bc
     djnz pm_slot
     pop bc
+    ld de,64-3*4            ; the slot loop advanced IX by 3 slots; step to the
+    add ix,de               ; next channel's &slot[0]
     inc c
-    ld a,c
-    cp 10
-    jr c,pm_ch
+    djnz pm_ch
     ret
 
 ; step_macro: IX = slot base, IY = chs, (G_CH) = channel. Advances one slot
@@ -3128,15 +3128,14 @@ ym_valid_ptr:
     push de
     ld hl,(G_SHIDX)
     ld a,l
-    and 7
+    and 7                   ; Z when the bit position is 0 — `ld` keeps the flags
     ld d,a                  ; bit position 0..7
     ld a,1                  ; mask = 1 << bit (before DE is reused for SHVALID)
-    inc d
-yvp_lp:
-    dec d
     jr z,yvp_end
+yvp_lp:
     add a,a
-    jr yvp_lp
+    dec d
+    jr nz,yvp_lp
 yvp_end:
     push af                 ; save mask
     ld hl,(G_SHIDX)
@@ -3366,20 +3365,27 @@ cls_done:
 ; ── process_sweeps — step 3 of the frame (driver.md §4) ────────────────────
 ; Ascending channel 0..9, both slots, then the global tempo sweep.
 process_sweeps:
-    ld c,0
+    ld bc,10*256            ; B = channel counter (process_slot preserves BC), C = 0
+    ld iy,CH_STATE          ; induction variable: chs(c). Two chs_ptr_iy calls per
+                            ; channel used to be 30% of all its calls — 3.4k
+                            ; cycles/frame, on a 59.6k frame budget — and the
+                            ; blocks are simply 64 bytes apart in order.
 psw_ch:
-    ld a,c
-    call chs_ptr_iy
+    ; Both slots empty is the overwhelming case (2 × 10 every frame) and
+    ; process_slot burns ~180 cycles of prologue before it can say "empty". Both
+    ; target bytes are one indexed load away from here, so test them together.
+    ld a,(iy+SW_SLOT0+SW_TARGET)
+    or (iy+SW_SLOT1+SW_TARGET)
+    jr z,psw_next
     ld a,SW_SLOT0
-    call process_slot
-    ld a,c
-    call chs_ptr_iy         ; param_set inside may have moved IY
+    call process_slot       ; preserves IY (see psl_done)
     ld a,SW_SLOT1
     call process_slot
+psw_next:
+    ld de,64
+    add iy,de
     inc c
-    ld a,c
-    cp 10
-    jr c,psw_ch
+    djnz psw_ch
     call process_tempo_sweep
     call process_csm_sweep
     call process_fades
@@ -3390,6 +3396,10 @@ psw_ch:
 ; preserved for the caller's loop.
 process_slot:
     push bc                 ; preserve channel counter
+    push iy                 ; preserve the channel block for the caller: param_set
+                            ; clobbers IY, and process_sweeps walks the channels
+                            ; with IY as an induction variable (+64 per channel)
+                            ; rather than recomputing chs_ptr_iy twice per channel
     ld (G_SW_OFF),a         ; slot offset
     ld a,c
     ld (G_CH),a
@@ -3454,6 +3464,7 @@ psl_run:
     ld (ix+SW_LEFT),l
     ld (ix+SW_LEFT+1),h
 psl_done:
+    pop iy
     pop bc
     ret
 
