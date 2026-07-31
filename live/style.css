@@ -468,6 +468,11 @@
       justify-content: space-between;
     }
     .knob-label span.val { color: var(--foreground); }
+    /* Panel numbers are tap-to-edit (openPanelValuePopup). */
+    .knob-label span.val, .ch-vol-val { cursor: pointer; }
+    @media (hover: hover) {
+      .knob-label span.val:hover, .ch-vol-val:hover { text-decoration: underline dotted; }
+    }
     input[type=range] {
       appearance: none;
       -webkit-appearance: none;

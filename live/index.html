@@ -956,6 +956,96 @@
       return el;
     }
 
+    // --- Panel value editing: tap a number to open a stepper popup ---------
+    // Reuses the .val-popup component. A descriptor is {min,max,step,get,set};
+    // set() writes through the row's existing slider/knob path. Values are
+    // clamped to [min,max] when both are known (same range as the control).
+    function openPanelValuePopup(anchorEl, desc) {
+      closePopup();
+      const el = document.createElement('div');
+      el.className = 'val-popup';
+      const row = document.createElement('div');
+      row.className = 'val-row';
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'val-num';
+      const step = desc.step || 1;
+      const hasMin = Number.isFinite(desc.min), hasMax = Number.isFinite(desc.max);
+      if (hasMin) input.min = desc.min;
+      if (hasMax) input.max = desc.max;
+      input.step = step;
+      input.value = desc.get();
+      const clamp = (v) => {
+        if (hasMin) v = Math.max(desc.min, v);
+        if (hasMax) v = Math.min(desc.max, v);
+        return v;
+      };
+      const apply = (v, reflect) => {
+        if (!Number.isFinite(v)) return;
+        const c = clamp(v);
+        desc.set(c);
+        if (reflect || c !== v) input.value = c; // snap the field when clamped
+      };
+      input.oninput = () => {
+        if (input.value === '' || input.value === '-') return;
+        apply(Number(input.value), false);
+      };
+      input.onkeydown = (e) => { if (e.key === 'Enter') closePopup(); };
+      const dec = document.createElement('button');
+      dec.type = 'button'; dec.className = 'tb-btn val-step'; dec.textContent = '−';
+      dec.onclick = () => apply(desc.get() - step, true);
+      const inc = document.createElement('button');
+      inc.type = 'button'; inc.className = 'tb-btn val-step'; inc.textContent = '+';
+      inc.onclick = () => apply(desc.get() + step, true);
+      row.appendChild(input); row.appendChild(dec); row.appendChild(inc);
+      el.appendChild(row);
+      document.body.appendChild(el);
+      const r = anchorEl.getBoundingClientRect();
+      el.style.top = Math.round(r.bottom + 4) + 'px';
+      el.style.left = Math.round(Math.max(4, Math.min(r.left, window.innerWidth - el.offsetWidth - 8))) + 'px';
+      _popup = { el, kind: 'panel' };
+      setTimeout(() => {
+        document.addEventListener('pointerdown', onDocPointerForPopup, true);
+        document.addEventListener('keydown', onKeyForPopup, true);
+      }, 0);
+      input.focus(); input.select();
+    }
+    function sliderValueDesc(slider) {
+      return {
+        min: slider.min === '' ? NaN : Number(slider.min),
+        max: slider.max === '' ? NaN : Number(slider.max),
+        step: Number(slider.step) || 1,
+        get: () => Number(slider.value),
+        set: (v) => { slider.value = v; slider.dispatchEvent(new Event('input', { bubbles: true })); },
+      };
+    }
+    function channelVolDesc(head, valEl) {
+      const entry = _chStripModel.find((e) => e.head === head);
+      const knob = valEl.closest('.ch-col')?.querySelector('.ch-knob');
+      return {
+        min: 0, max: 31, step: 1,
+        get: () => _channelVol.get(head) ?? VOL_UNITY,
+        set: (v) => {
+          _channelVol.set(head, v);
+          if (knob) setKnobVisual(knob, v);
+          if (entry) setChannelVolLive(entry, v);
+          valEl.textContent = v;
+        },
+      };
+    }
+    // Delegated so dynamically-built rows (op/dyn params, channel strips) work.
+    document.addEventListener('click', (e) => {
+      const val = e.target.closest('.knob-label span.val, .ch-vol-val');
+      if (!val) return;
+      if (val.classList.contains('ch-vol-val')) {
+        const head = val.closest('.ch-col')?.querySelector('[data-head]')?.dataset.head;
+        if (head != null) openPanelValuePopup(val, channelVolDesc(head, val));
+        return;
+      }
+      const slider = val.closest('.knob-wrap')?.querySelector('input[type=range]');
+      if (slider && !slider.disabled) openPanelValuePopup(val, sliderValueDesc(slider));
+    });
+
     // Re-fetch a field by index from the live document (offsets shift as we edit).
     function liveField(tokenStart, idx) {
       const info = classifyToken(editorView.state, tokenStart);
