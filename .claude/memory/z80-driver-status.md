@@ -260,7 +260,7 @@ gh002 (7-track mucom import, 12000 frames):
 | p99 | 68,458 (115%) | **58,574 (98%)** |
 | over budget | 3.8% | **0.77%** |
 | loop frame | 263,000 (**4.4×**) | **79,000 (1.3×)** |
-| start frame (f0) | 344,000 (5.8×) | 324,000 — **still open** |
+| start frame (f0) | 344,000 (5.8×) | setup 69,000 — but see below |
 
 What was actually expensive:
 
@@ -276,8 +276,36 @@ What was actually expensive:
 3. **`process_slot` spent ~180 cycles of prologue before reporting an empty slot**,
    20× per frame. The caller now tests both target bytes first.
 
-Still at the top and genuinely working: `fs_tick` (3.6k) / `fs_wait` (2.7k) — the
-per-track tick accumulate and dispatch. Next candidates if more is needed: the
+**The start frame, 2026-07-31.** `T_STATUS` gained **2 = armed** (driver.md §4.2):
+the frame START_TRACK is drained in does not accumulate, so it stays silent
+however long it runs, and every track armed in it starts together on the next
+frame — frame-exact, tempo-independent, and it lets the host post all starts in
+one frame instead of staggering them (which had left the tracks permanently up to
+100 ms out of phase). Held moved 2→4 so promotion is one `dec`.
+
+**That fixed the phase, not the smear.** The measurement that matters: the setup
+frame is now 69k and silent, but the *score's* head — 7 `VOICE_SET`s at tick 0 —
+lands in the first dispatching frame with the first notes: **264k cycles, 4.4×
+budget**. Its profile says where to go next:
+
+| | cycles | |
+| --- | --- | --- |
+| `ym_valid_ptr` (+yvp_lp/yvp_end) | 50,600 | change-only valid-bit plane |
+| `ym_shadow_ptr` (+ysp_p0) | 33,500 | shadow index → pointer |
+| `ym_shadow_read` | 13,400 | |
+| `op_e` | 14,300 | operator address |
+| **total** | **112,000 (42%)** | **~550 cycles of bookkeeping per register write** |
+
+**The valid-bit plane (38 B) may be droppable entirely**: boot already writes a
+full neutral patch, so every shadow entry could be valid from frame 0 — that is
+50k off the start frame, less resident code, 38 B of RAM back, and it speeds up
+*every* write in *every* frame. Check first that the boot patch really covers all
+304 shadowed addresses (LFO $22, $27, $2B, PSG included). Also worth a look:
+`latch_bank`'s 9-bit shift loop is 39% of the setup frame (27k) because every
+overlay load re-latches two banks — a "currently latched" cache needs 2 B of RAM.
+
+Still at the top of an ordinary frame and genuinely working: `fs_tick` (3.6k) /
+`fs_wait` (2.7k) — the per-track tick accumulate and dispatch. Next candidates if more is needed: the
 16-TCB and 30-macro-slot scans (~4k combined) via an active mask, and the start
 frame, which needs the setup/first-note split (see the deferred item below).
 

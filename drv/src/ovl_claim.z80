@@ -159,7 +159,7 @@ st_pcm:
     ld (de),a               ; PCM_SNAP[19] = vol
     set T_ISSE,(ix+T_FLAGS)
 st_active:
-    ld (ix+T_STATUS),1
+    ld (ix+T_STATUS),2      ; ARMED: set up now, first dispatch next frame
     ld hl,MB_TSTAT
     ld a,(G_TIDX)
     add a,l

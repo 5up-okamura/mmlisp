@@ -430,6 +430,13 @@ export class DrvPlayer {
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
       pendingOff: false, // full-gate key-off awaiting the slur test
       running: autoStart,
+      // ARMED (Z80 T_STATUS 2): the frame START_TRACK set this track up in. It
+      // does not accumulate, so the setup frame — several tracks' worth of
+      // overlay loads and voice applies, far more than a frame's cycles on the
+      // Z80 — stays silent, and every track armed in it starts dispatching
+      // together on the next frame (driver.md §4.2). autoStart mirrors the
+      // harness posting START_TRACK for every track before frame 0.
+      armed: autoStart,
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
       unsupported: t.channelId >= 23, // pcm1–pcm3 (20–22) are soft-mix PCM (M3)
@@ -1781,6 +1788,7 @@ export class DrvPlayer {
     trk.held = false;
     trk.fading = false;
     trk.running = true;
+    trk.armed = true; // silent setup frame, first dispatch next frame
     trk.suspended = false;
     trk.isSe = asSe;
   }
@@ -2028,6 +2036,10 @@ export class DrvPlayer {
     // 2. Per track, ascending index: accumulate and dispatch.
     for (const trk of this._trk) {
       if (!trk.running || trk.held) continue;
+      if (trk.armed) {
+        trk.armed = false; // dispatches from the next frame (Z80: dec T_STATUS)
+        continue;
+      }
       trk.acc += this._increment;
       while (trk.acc >= 0x100) {
         trk.acc -= 0x100;

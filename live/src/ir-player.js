@@ -915,9 +915,15 @@ export class IRPlayer {
 
       this._fm3OpIntervals = [];
       this._tracks = this._flattenTracks();
+      // Start the score one frame after the preamble, matching the driver: there,
+      // START_TRACK's setup (overlay loads, voice apply) owns the frame it lands
+      // in and the first dispatch happens on the next one, so the setup frame
+      // stays silent however long it runs (driver.md §4.2). Capture-only — live
+      // playback has no setup frame to hide, so it keeps starting at BASE.
+      const DRV_SETUP_FRAME = 1 / 60;
       for (const t of this._tracks) {
-        t.audioTimeAtTick0 = BASE;
-        t.startAudioTime = BASE;
+        t.audioTimeAtTick0 = BASE + DRV_SETUP_FRAME;
+        t.startAudioTime = BASE + DRV_SETUP_FRAME;
         t.loopCount = 0;
         t.flatIndex = 0;
       }

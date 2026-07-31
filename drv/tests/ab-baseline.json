@@ -3,7 +3,7 @@
     "ok": false,
     "mismatches": 68,
     "compileErrors": 0,
-    "digest": "0fa27c56"
+    "digest": "31aa3761"
   },
   "m2-mailbox.mmlisp": {
     "ok": true,
@@ -13,9 +13,9 @@
   },
   "m2-motion.mmlisp": {
     "ok": false,
-    "mismatches": 855,
+    "mismatches": 913,
     "compileErrors": 0,
-    "digest": "cd11f191"
+    "digest": "7d624323"
   },
   "m2-pcm.mmlisp": {
     "ok": true,
@@ -33,7 +33,7 @@
     "ok": false,
     "mismatches": 629,
     "compileErrors": 0,
-    "digest": "fa4e9826"
+    "digest": "9c379f38"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -45,19 +45,19 @@
     "ok": false,
     "mismatches": 128,
     "compileErrors": 0,
-    "digest": "8a809861"
+    "digest": "9ea4b4d5"
   },
   "m3-dynval.mmlisp": {
     "ok": false,
     "mismatches": 8,
     "compileErrors": 0,
-    "digest": "a2453b30"
+    "digest": "c92bc635"
   },
   "m3-fm3op.mmlisp": {
     "ok": false,
     "mismatches": 12,
     "compileErrors": 0,
-    "digest": "118fb7cf"
+    "digest": "c54e03cf"
   },
   "m3-fm6-pcm.mmlisp": {
     "ok": true,
@@ -81,19 +81,19 @@
     "ok": false,
     "mismatches": 4,
     "compileErrors": 0,
-    "digest": "8fc01a75"
+    "digest": "1ed560c9"
   },
   "m3-macro-keyon.mmlisp": {
     "ok": false,
     "mismatches": 32,
     "compileErrors": 0,
-    "digest": "e00b6e76"
+    "digest": "1c20585c"
   },
   "m3-macro-multi.mmlisp": {
     "ok": false,
     "mismatches": 218,
     "compileErrors": 0,
-    "digest": "a9b5e175"
+    "digest": "97bbb8ea"
   },
   "m3-macro-pitch.mmlisp": {
     "ok": true,
@@ -129,7 +129,7 @@
     "ok": false,
     "mismatches": 4,
     "compileErrors": 0,
-    "digest": "3b55a7ae"
+    "digest": "3f1f91a4"
   },
   "m3-macro.mmlisp": {
     "ok": true,
@@ -165,7 +165,7 @@
     "ok": false,
     "mismatches": 8,
     "compileErrors": 0,
-    "digest": "4737f7a1"
+    "digest": "fd42b3f1"
   },
   "m3-se-prio.mmlisp": {
     "ok": true,
@@ -201,7 +201,7 @@
     "ok": false,
     "mismatches": 30,
     "compileErrors": 0,
-    "digest": "f8c77638"
+    "digest": "538c306a"
   },
   "m3-voice.mmlisp": {
     "ok": true,
@@ -213,13 +213,13 @@
     "ok": false,
     "mismatches": 25,
     "compileErrors": 0,
-    "digest": "3a4008da"
+    "digest": "77b7f38b"
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
-    "mismatches": 92,
+    "mismatches": 83,
     "compileErrors": 0,
-    "digest": "820abb6e"
+    "digest": "ff7d4cbe"
   },
   "ab-core.mmlisp": {
     "ok": true,
@@ -229,8 +229,8 @@
   },
   "demo1.mmlisp": {
     "ok": false,
-    "mismatches": 29,
+    "mismatches": 26,
     "compileErrors": 0,
-    "digest": "3dfc35dd"
+    "digest": "1aa330f2"
   }
 }

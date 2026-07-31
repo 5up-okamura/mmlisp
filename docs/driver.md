@@ -188,8 +188,38 @@ touching step 3:
   frame. Both target bytes are one indexed load from the caller.
 
 What remains at the top is real work (`fs_tick` / `fs_wait`, the per-track tick
-accumulate and dispatch) plus the start frame, where seven tracks' setup and
-their first notes land together — see §10.1's neighbourhood and the roadmap.
+accumulate and dispatch) plus the start frame — see §4.2.
+
+### 4.2 The armed frame (START_TRACK does not sound in its own frame)
+
+A track's clock starts on the frame the driver set it up in, so a host that
+staggers `MMLisp_startTrack` across frames leaves its tracks **permanently out of
+phase** by that many frames — 100 ms of flam for a 7-track score, on every chord,
+for the whole song. Starting them all in one frame instead costs that frame far
+more than its budget (7 tracks of MMB walk, TCB fill, channel claim and three
+overlay loads each), and a frame that takes five frame-times smears whatever it
+sounds across ~90 ms.
+
+So `T_STATUS` gains **2 = armed**: the state a track is in for the frame its
+START_TRACK was drained in. Armed tracks do not accumulate, so that frame stays
+silent however long it runs; the per-track loop promotes them with a single
+`dec (ix+T_STATUS)` and they all begin dispatching together on the next frame.
+Frame-exact and tempo-independent — a tick-based delay would have varied with the
+increment. (Held moved to 4 purely so that promotion could be one instruction;
+the resident image had two bytes free.)
+
+The JS reference mirrors this (`drv-player.js`, `armed`), and
+`ir-player.captureRegisterLog` starts its tracks one frame late so the A/B gate
+compares like with like — capture only, since the live player has no setup frame
+to hide.
+
+**Still open.** This takes the *setup* out of the sounding frame, not the score's
+own head: a mucom-style score puts its `VOICE_SET`s at tick 0, so the first
+dispatching frame carries seven voice applies plus the first notes — 264k cycles,
+still 4.4× budget. 42% of that is the change-only shadow bookkeeping (§5.4):
+~550 cycles per register write, recomputing the shadow index, the `>>3` byte
+index and a `1<<bit` mask for every one. That is the next thing to fix, and it
+pays off on every write, not just at the start.
 
 ## 5. Z80 RAM Map (8KB, 0x0000–0x1FFF)
 

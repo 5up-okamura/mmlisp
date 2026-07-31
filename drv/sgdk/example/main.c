@@ -38,7 +38,7 @@
 #define G_FRAME    0x19D5   // u16
 #define TCB_BASE   0x1C58   // 16 track control blocks, 32 bytes each
 #define TCB_STRIDE 32
-#define T_STATUS   0        // 0 idle, 1 playing, 2 held, 3 suspended
+#define T_STATUS   0        // 0 idle, 1 playing, 2 armed, 3 suspended, 4 held
 #define T_PC       4        // u16, stream pointer (window address)
 #define T_WAIT     0x0E     // u16, ticks until this track's next dispatch
 
@@ -61,9 +61,10 @@ typedef struct
     u8  tsActive;               // tempo sweep running?
     u16 wait[TRACK_COUNT];      // ticks each track is still waiting
     u8  status[TRACK_COUNT];    // MB_TSTAT: bit7 active, bit6 fading, bits5-0 marker
-    u8  tstate[TRACK_COUNT];    // T_STATUS: 0 idle, 1 playing, 2 HELD, 3 suspended.
-                                // `status` bit7 stays set for 2 and 3, but only 1
-                                // accumulates ticks — a stuck track shows up here.
+    u8  tstate[TRACK_COUNT];    // T_STATUS: 0 idle, 1 playing, 2 armed (its setup
+                                // frame), 3 suspended, 4 held. `status` bit7 stays
+                                // set for all of those, but only 1 accumulates
+                                // ticks — a stuck track shows up here.
     u16 pc[TRACK_COUNT];        // per-track stream pointer; must stay inside the
                                 // EVENT_STREAM, else the track is decoding junk
 } DrvState;
@@ -190,12 +191,18 @@ int main(bool hardReset)
             }
         }
 
-        // Start ONE track per frame. Starting a track costs the Z80 three
-        // overlay loads plus a full voice load; five in the same frame is well
-        // past the ~59,600 cycles a 60 Hz frame gives it, and the opening notes
-        // come out ragged. Spread over five frames it is inaudible (83 ms).
+        // Start every track in ONE frame. Each track's own clock starts on the
+        // frame the driver set it up in, so spreading the starts would leave the
+        // tracks permanently out of phase by that many frames. The driver keeps
+        // the setup frame silent (T_STATUS armed, driver.md §4.2), so the cost of
+        // starting several tracks at once is no longer audible as a ragged
+        // opening — they all begin dispatching together on the next frame.
         if (starting < TRACK_COUNT)
-            MMLisp_startTrack(song_mmb, starting++);
+        {
+            for (u8 id = 0; id < TRACK_COUNT; id++)
+                MMLisp_startTrack(song_mmb, id);
+            starting = TRACK_COUNT;
+        }
 
         SYS_doVBlankProcess();
     }

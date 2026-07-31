@@ -263,7 +263,12 @@ T_FADING    equ 3           ; T_FLAGS bit3: track is fading (still playing)
 T_ISSE      equ 4           ; T_FLAGS bit4: SE track that displaced a suspended owner
 
 ; ── Track control block fields (driver.md §5.2) ───────────────────────────
-T_STATUS    equ $00         ; 0 idle, 1 playing, 2 held, 3 suspended (SE displaced it)
+T_STATUS    equ $00         ; 0 idle, 1 playing, 2 armed, 3 suspended (SE displaced
+                            ; it), 4 held. ARMED is the frame START_TRACK set the
+                            ; track up in: it does not accumulate, so the setup
+                            ; frame stays silent, and frame_step promotes it with
+                            ; one `dec` (driver.md §4.2). Held is 4 rather than 2
+                            ; only because that `dec` had to be one byte.
 T_TRKID     equ $01
 T_CH        equ $02
 T_FLAGS     equ $03
@@ -338,8 +343,20 @@ frame_step:
 fs_track:
     push bc
     ld a,(ix+T_STATUS)
-    cp 1
-    jr nz,fs_next           ; idle or held: no accumulation
+    dec a
+    jr z,fs_play            ; 1 = playing
+    dec a
+    jr nz,fs_next           ; 0 idle / 3 suspended / 4 held: no accumulation
+    ; 2 = ARMED: the mailbox drain at the top of THIS frame set this track up.
+    ; Starting several tracks costs the Z80 far more than a frame (7 tracks of
+    ; overlay loads + voice applies measured at 324k cycles, 5.4x the budget), so
+    ; dispatching their first notes here would spread one chord over ~90 ms of
+    ; real time. Skip a frame: the expensive frame stays silent, and every track
+    ; armed in it starts dispatching together on the next one — in phase, and
+    ; independent of tempo (driver.md §4.2).
+    dec (ix+T_STATUS)       ; armed → playing
+    jr fs_next
+fs_play:
     ; acc += increment (per-MMB, read fresh — a TEMPO_SET decoded by an
     ; earlier track this frame already applies to later tracks)
     ld l,(ix+T_ACC)
@@ -1215,7 +1232,7 @@ d_pcm_note_on:
     ld a,d
     or e
     jr nz,d_pcm_wait
-    ld (ix+T_STATUS),2      ; dur 0 → hold; sample keeps feeding via step 3
+    ld (ix+T_STATUS),4      ; dur 0 → hold; sample keeps feeding via step 3
     ret
 d_pcm_wait:
     ld (ix+T_WAIT),e
@@ -1293,7 +1310,7 @@ note_on:
     call chs_ptr_iy
     call cancel_loop_sweeps ; a new note stops loop sweeps (opcodes.md §6)
     cp 6
-    jp nc,no_psg
+    jr nc,no_psg
     ; ── FM ────────────────────────────────────────────────────────────
     ld c,a                  ; ch
     ld a,(G_NOTE)
@@ -1433,7 +1450,7 @@ no_fullgate:
     ld (ix+T_GATELEFT+1),a
     ret
 no_hold:
-    ld (ix+T_STATUS),2      ; len=0: suspend the dispatcher (§2.4)
+    ld (ix+T_STATUS),4      ; len=0: suspend the dispatcher (§2.4)
     xor a
     ld (ix+T_GATELEFT),a
     ld (ix+T_GATELEFT+1),a
@@ -1447,7 +1464,7 @@ note_on_fm3:
     ld de,(G_DUR)
     ld a,d
     or e
-    jp z,no_hold
+    jr z,no_hold
     jp no_fullgate
 
 ; ===========================================================================
@@ -2269,7 +2286,7 @@ ps_fm:
     cp 1
     jp z,psf_pitch          ; NOTE_PITCH: cent-interpolated pitch (M2b)
     cp 4
-    jp z,psf_vol
+    jr z,psf_vol
     cp $10
     jp z,psf_fb
     cp $15
@@ -3400,13 +3417,12 @@ process_slot:
                             ; clobbers IY, and process_sweeps walks the channels
                             ; with IY as an induction variable (+64 per channel)
                             ; rather than recomputing chs_ptr_iy twice per channel
-    ld (G_SW_OFF),a         ; slot offset
+    ld b,a                  ; slot offset (B is free — BC is on the stack)
     ld a,c
     ld (G_CH),a
     push iy
     pop ix
-    ld a,(G_SW_OFF)
-    ld c,a
+    ld c,b
     ld b,0
     add ix,bc               ; IX = slot base
     ld a,(ix+SW_TARGET)
