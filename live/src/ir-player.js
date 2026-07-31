@@ -119,6 +119,12 @@ export class IRPlayer {
     this._pendingSwap = null; // { irObj, boundaryTick, boundaryTime } | null
     this._scheduleCapTime = Infinity; // audio time; old tracks don't schedule past this
     this._dispatchFloor = -Infinity; // audio time; events before this are skipped (not dispatched)
+    // Capture-only (see captureRegisterLog): seconds to pull a track's LEADING
+    // setup events forward by, so the A/B capture reproduces the driver's shape
+    // — a track's head (VOICE_SET/PARAM_SET/macro binds) is applied in the frame
+    // START_TRACK set it up in, and its first note comes a frame later
+    // (driver.md §4.2). 0 during live playback, which has no setup frame.
+    this._drvSetupShift = 0;
 
     // Per-channel register state for param application
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
@@ -788,7 +794,14 @@ export class IRPlayer {
           // pass re-anchors audioTimeAtTick0 for the NEW tempo — mapping later
           // events with a stale secsPerTick would schedule everything inside
           // the lookahead window after a tempo change at the wrong time.
-          const evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
+          let evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
+          if (
+            this._drvSetupShift &&
+            track.loopCount === 0 &&
+            track.flatIndex < track.drvSetupUntil
+          ) {
+            evTime -= this._drvSetupShift; // leading setup: one frame earlier
+          }
           if (evTime > horizon) break;
           // Pending swap: stop the outgoing tracks at the swap boundary so they
           // never emit past it (the incoming IR takes over there).
@@ -915,11 +928,22 @@ export class IRPlayer {
 
       this._fm3OpIntervals = [];
       this._tracks = this._flattenTracks();
-      // Start the score one frame after the preamble, matching the driver: a
-      // track does not sound in the frame START_TRACK set it up in (driver.md
-      // §4.2). Capture-only — live playback has no setup frame to hide.
+      // Reproduce the driver's track start (driver.md §4.2): the frame
+      // START_TRACK is drained in runs the score's LEADING setup — voice, params,
+      // macro binds — and the first event that sounds or consumes time waits for
+      // the next frame. So the timeline starts a frame late, and each track's
+      // head is pulled back onto the preamble frame. Capture-only.
       const DRV_SETUP_FRAME = 1 / 60;
+      // Land the head a quarter-frame in, not exactly on BASE: the preamble
+      // (_initDefaultVoices) writes at BASE, and the setup has to come after it
+      // for the same reason it does on the driver — the neutral patch is what the
+      // voice then overrides. A quarter frame still rounds to frame 0.
+      const HEAD_IN_FRAME = DRV_SETUP_FRAME / 4;
+      const TIMED = new Set(["NOTE_ON", "REST", "TIE", "PCM_NOTE_ON"]);
+      this._drvSetupShift = DRV_SETUP_FRAME - HEAD_IN_FRAME;
       for (const t of this._tracks) {
+        t.drvSetupUntil = t.events.findIndex((e) => TIMED.has(e.cmd));
+        if (t.drvSetupUntil < 0) t.drvSetupUntil = t.events.length;
         t.audioTimeAtTick0 = BASE + DRV_SETUP_FRAME;
         t.startAudioTime = BASE + DRV_SETUP_FRAME;
         t.loopCount = 0;
@@ -987,6 +1011,7 @@ export class IRPlayer {
       this._playing = saved.playing;
       this._bpm = saved.bpm;
       this._tempoSweep = saved.tempoSweep;
+      this._drvSetupShift = 0;
     }
 
     writes.sort((a, b) => a.sec - b.sec);

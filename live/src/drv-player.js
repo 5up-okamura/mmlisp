@@ -777,6 +777,11 @@ export class DrvPlayer {
     let guard = 0;
     while (trk.running && !trk.held && guard++ < 4096) {
       const op = s[trk.pc];
+      // An armed track runs the score's leading setup — VOICE_SET, PARAM_SET,
+      // macro binds — and stops at the first opcode that sounds or consumes
+      // time, so the frame it was started in makes no sound however long its
+      // voice applies take (driver.md §4.2; the same test sits in d_next).
+      if (trk.armed && op >= OPCODE.NOTE_ON && op <= OPCODE.NOTE_ON_EX) return;
       switch (op) {
         case OPCODE.END_OF_TRACK: {
           trk.pendingOff = false;
@@ -2049,7 +2054,8 @@ export class DrvPlayer {
     for (const trk of this._trk) {
       if (!trk.running || trk.held) continue;
       if (trk.armed) {
-        trk.armed = false; // dispatches from the next frame (Z80: dec T_STATUS)
+        this._dispatch(trk); // leading setup only — see the guard in _dispatch
+        trk.armed = false; // notes start next frame (Z80: dec T_STATUS)
         continue;
       }
       trk.acc += this._increment;

@@ -215,22 +215,28 @@ The JS reference mirrors this (`drv-player.js`, `armed`), and
 compares like with like — capture only, since the live player has no setup frame
 to hide.
 
-**Still open.** This takes the *setup* out of the sounding frame, not the score's
-own head: a mucom-style score puts its `VOICE_SET`s at tick 0, so the first
-dispatching frame carries seven voice applies plus the first notes — 165k cycles
-after §5.4's valid-plane removal, still 2.8× budget, so the opening note is held
-two or three frames longer than written.
+**The armed frame also runs the score's head.** Taking only the *setup* out of
+the sounding frame was not enough: a mucom-style score puts its `VOICE_SET`s at
+tick 0, so the first dispatching frame still carried seven voice applies plus the
+first notes and the opening note was held two or three frames long. So `d_next`
+returns early while the track is armed, at the first opcode that sounds or
+consumes time ($10..$13), writing `T_PC` back — the leading VOICE_SET/PARAM_SET/
+macro binds run in the armed frame, the notes wait for the next one.
 
-The fix is to let the armed frame run the score's *leading* setup opcodes and
-stop at the first one that sounds or consumes time ($10..$13) — then the voice
-applies happen where nothing is audible. It was built and works (driver and JS
-reference agree byte-for-byte), but **it is not landed**: it makes the driver and
-the live player structurally differ at track start — the driver applies the
-score's head a frame before its first note, ir-player applies both together — and
-a 1-frame skew is not expressible in ab-compare's run matcher for signals that
-change every frame. Nine previously-clean A/B scores went dirty, `m3-macro-pitchadd`
-from 0 to 482 mismatches. Landing it means teaching `ir-player.captureRegisterLog`
-the same split first; `ir ≡ drv` outranks the two frames.
+Measured on gh002 (7 tracks): the armed frame is **204k cycles with 262 register
+writes and no key-on**, and the first sounding frame is **31.8k — 53% of budget**.
+The armed frame overruns by three frame-times and nobody can hear it; playback
+simply begins ~50 ms after the host asked.
+
+`ir-player.captureRegisterLog` reproduces the same shape (`_drvSetupShift`): the
+timeline starts a frame late and each track's leading events are pulled back onto
+the preamble frame — a quarter-frame in, so they land after `_initDefaultVoices`
+just as the driver's do after boot. Capture only; live playback has no setup
+frame to hide. What that cannot reproduce is *when the level model recomposes*:
+the driver composes carrier TL once, in the armed frame, with the vel the head
+set; ir-player writes the voiced TL and recomposes at the note. Six A/B scores
+carry 4-12 mismatches of that shape (all TL, all at the track's first frame) —
+frozen in the baseline.
 
 ## 5. Z80 RAM Map (8KB, 0x0000–0x1FFF)
 

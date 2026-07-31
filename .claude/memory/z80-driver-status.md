@@ -307,19 +307,24 @@ the stack window (**48 → 86 B**, worst case 40 B used). Watch out: the boot pa
 itself must use `ym_write_always`, or its own zero-writes get suppressed against
 the cleared shadow and never reach the chip.
 
-**Built, verified, then REVERTED — "armed runs the score's head" (2026-07-31).**
-Letting the armed frame dispatch the leading setup opcodes and stop at the first
-timed one ($10..$13) is what actually fixes the long first note: the voice applies
-move into the silent frame. Z80 + drv-player agreed byte-for-byte (38 traces). It
-was reverted because it makes the driver and ir-player structurally differ at
-track start — driver applies the score's head a frame before its first note,
-ir-player applies both together — and ab-compare's run matcher cannot express a
-1-frame skew for signals that change every frame: **nine clean A/B scores went
-dirty, m3-macro-pitchadd 0 → 482**. To land it, teach
-`ir-player.captureRegisterLog` the same split first. `ir ≡ drv` outranks the two
-frames. (The reverted diff: a `cp $14 / bit 1,(ix+T_STATUS)` test at the top of
-`d_next` writing T_PC back before returning, `call dispatch` in fs_track's armed
-branch, and the mirror guard in drv-player `_dispatch`.)
+**"Armed runs the score's head" — LANDED (2026-07-31).** `d_next` returns early
+while armed, at the first opcode that sounds or consumes time ($10..$13),
+writing T_PC back; fs_track's armed branch calls `dispatch` first. gh002: the
+armed frame is **204k with 262 writes and no key-on**, the first sounding frame
+**31.8k (53% of budget)** — the long first note is gone.
+
+Landing it took one detour worth remembering: it changes *where* the driver and
+ir-player sit relative to each other at track start, and ab-compare's ±1-frame
+tolerance cannot absorb that for per-frame-varying signals. First attempt dirtied
+**nine clean scores (m3-macro-pitchadd 0 → 482)**. The fix was to teach
+`ir-player.captureRegisterLog` the same split (`_drvSetupShift`): timeline one
+frame late, each track's leading events pulled back onto the preamble frame — and
+critically **a quarter-frame in, not exactly on it**, or they sort ahead of
+`_initDefaultVoices` and the neutral patch overwrites the voice. Residual: six
+scores with 4-12 mismatches, all carrier TL at the track's first frame, because
+the driver composes TL once in the armed frame with the head's vel while
+ir-player recomposes at the note. Baseline now **17 clean / 22 with known
+divergence** (was 24/15).
 
 Also worth a look: `latch_bank`'s 9-bit shift loop is 39% of the setup frame
 (27k) because every overlay load re-latches two banks — a "currently latched"

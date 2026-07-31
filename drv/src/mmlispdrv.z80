@@ -355,6 +355,7 @@ fs_track:
     ; real time. Skip a frame: the expensive frame stays silent, and every track
     ; armed in it starts dispatching together on the next one — in phase, and
     ; independent of tempo (driver.md §4.2).
+    call dispatch           ; leading setup only (see d_next's armed test)
     dec (ix+T_STATUS)       ; armed → playing
     jr fs_next
 fs_play:
@@ -654,6 +655,22 @@ d_next:
     ld a,(hl)
     or a
     jp z,d_eot
+    ; An ARMED track (T_STATUS 2 — the frame START_TRACK set it up in) runs the
+    ; score's leading setup — VOICE_SET, PARAM_SET, macro binds — and stops at
+    ; the first opcode that sounds or consumes time ($10..$13). That is what
+    ; moves seven tracks' worth of voice applies (29 registers each) into a frame
+    ; that makes no sound: the frames it overruns are inaudible, and the first
+    ; note lands on a clean one instead of being held two or three frames long.
+    ; HL is the live stream pointer, so T_PC is written back here — the immediate
+    ; handlers only store it once they are done.
+    cp $14
+    jr nc,dn_run
+    bit 1,(ix+T_STATUS)
+    jr z,dn_run
+    ld (ix+T_PC),l
+    ld (ix+T_PC+1),h
+    ret
+dn_run:
     cp $10
     jp z,d_note_on
     cp $11
