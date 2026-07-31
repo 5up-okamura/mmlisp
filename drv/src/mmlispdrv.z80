@@ -163,8 +163,6 @@ PCM_V_SIZE  equ 18
 ; build asserts code end ≤ G_PCMV. Anchored just below the slot.
 G_PCMV      equ $17a8          ; 3 × 18 B ($17A8..$17DD) — the resident ceiling
                                ; (= OVERLAY_SLOT - 54)
-G_SHIDX     equ G_BASE+$67      ; u16  shadow register index 0..303 (valid bitmap)
-G_SHMASK    equ G_BASE+$69      ; u8   shadow valid bit mask (scratch)
 ; LUT base pointers — the constant LUTs live in ROM (LUT_TABLE section, read
 ; through the bank window); each is G_LUT + its <label>_OFF (tables.z80),
 ; computed once per MMB at START_TRACK. Accessed as `ld hl,(<label>)`.
@@ -202,11 +200,14 @@ SW_PHASE    equ 8           ; u16 phase 0..65535 (curve t = high byte)
 SW_STEP     equ 10          ; u16 per-frame phase increment
 
 ; shadow register file — change-only suppression (driver.md §5.4).
-; 2 × 152 value bytes covering YM addresses $22..$B9 per port, plus a
-; bit-per-register valid plane (2 × 152 bits = 2 × 19 B): a register is always
-; written the first time it changes.
+; 2 × 152 value bytes covering YM addresses $22..$B9 per port. There is no
+; "valid" plane any more: ovl_boot's neutral patch writes EVERY register anything
+; later writes through this layer, so the shadow is exact from frame 0 and a
+; value equal to it can always be suppressed. That deleted a bit-position
+; lookup — a >>3 and a 1<<bit loop — from every single register write (~275
+; cycles), which is most of what a 29-register VOICE_SET used to cost.
 SHADOW      equ $1e58       ; 304 value bytes (port0 +0, port1 +152) ($1E58..$1F87)
-SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1FAD)
+SHADOW_END  equ $1f88
 
 ; The stack grows down from STACK_TOP; STACK_FLOOR is the first byte above the
 ; data region, so [STACK_FLOOR, STACK_TOP) is the 82 B stack window the SP
@@ -218,7 +219,7 @@ SHVALID     equ $1f88       ; 38 B valid bitmap (index 0..303)        ($1F88..$1
 ; one SE steals one channel at a time in this build; the PSG slice generalises it
 ; to a small pool. Carved off the top of the stack window.
 SNP_LEN     equ 14              ; CHS_OWNER - CHS_NOTE + 1
-SE_SNAP     equ SHVALID + $26   ; $1FAE (14 B) — FM/PSG channel-state snapshot
+SE_SNAP     equ SHADOW_END       ; $1F88 (14 B) — FM/PSG channel-state snapshot
 ; PCM SE (design C) snapshots the whole G_PCMV voice struct instead — soft-mix
 ; voices have no CHS block. Two trailing bytes hold the compose inputs (vel, vol)
 ; that live in globals, not the struct, so a stolen BGM voice restores its volume
@@ -3119,7 +3120,7 @@ write_noise_cfg:
 ; ===========================================================================
 ; Register write layer (driver.md §4/§5.4)
 ; ===========================================================================
-; ym_shadow_ptr: D=port, E=addr → HL = value byte; (G_SHIDX) = index 0..303.
+; ym_shadow_ptr: D=port, E=addr → HL = the shadow byte for that register.
 ; index = (addr-0x22) + port*152. Preserves BC/DE.
 ym_shadow_ptr:
     ld a,e
@@ -3133,50 +3134,16 @@ ym_shadow_ptr:
     add hl,de
     pop de
 ysp_p0:
-    ld (G_SHIDX),hl         ; index
     push de
     ld de,SHADOW
     add hl,de               ; HL = SHADOW + index
     pop de
     ret
 
-; ym_valid_ptr: (G_SHIDX) → HL = valid bitmap byte, A = bit mask. Preserves BC/DE.
-ym_valid_ptr:
-    push de
-    ld hl,(G_SHIDX)
-    ld a,l
-    and 7                   ; Z when the bit position is 0 — `ld` keeps the flags
-    ld d,a                  ; bit position 0..7
-    ld a,1                  ; mask = 1 << bit (before DE is reused for SHVALID)
-    jr z,yvp_end
-yvp_lp:
-    add a,a
-    dec d
-    jr nz,yvp_lp
-yvp_end:
-    push af                 ; save mask
-    ld hl,(G_SHIDX)
-    srl h
-    rr l
-    srl h
-    rr l
-    srl h
-    rr l                    ; HL = index >> 3
-    ld de,SHVALID
-    add hl,de               ; HL = valid byte
-    pop af                  ; mask back
-    pop de
-    ret
-
-; ym_shadow_read: D=port, E=addr → A = last written value (0 if never written).
+; ym_shadow_read: D=port, E=addr → A = the register's current value.
 ; Preserves BC/DE; clobbers HL.
 ym_shadow_read:
     call ym_shadow_ptr
-    push hl                 ; value ptr
-    call ym_valid_ptr
-    and (hl)                ; valid bit set?
-    pop hl                  ; value ptr
-    ret z                   ; never written → A = 0
     ld a,(hl)
     ret
 
@@ -3186,30 +3153,13 @@ ym_shadow_read:
 ; (driver.md §8): a suppressed high byte lets the commit pick up another
 ; channel's octave. B=data, D=port, E=addr. Preserves BC/DE.
 ym_write_always:
-    call ym_shadow_ptr      ; HL = value byte; (G_SHIDX) = index
-    push hl                 ; value ptr
-    call ym_valid_ptr       ; HL = valid byte, A = mask
-    or (hl)                 ; set valid bit (idempotent if already set)
-    ld (hl),a
-    pop hl                  ; value ptr
+    call ym_shadow_ptr      ; HL = value byte
     jr ymw_store            ; store B + always emit via ym_hw
 
 ; ym_write: B=data, D=port(0/1), E=addr. Change-only via the shadow; the first
 ; write to a register always goes out. Preserves BC/DE.
 ym_write:
-    call ym_shadow_ptr
-    push hl                 ; value ptr
-    call ym_valid_ptr       ; HL = valid byte, A = mask
-    ld (G_SHMASK),a
-    and (hl)
-    jr nz,ymw_valid
-    ld a,(G_SHMASK)         ; first write: set valid bit
-    or (hl)
-    ld (hl),a
-    pop hl                  ; value ptr
-    jr ymw_store
-ymw_valid:
-    pop hl                  ; value ptr
+    call ym_shadow_ptr      ; HL = shadow byte for D:E
     ld a,(hl)
     cp b
     ret z                   ; unchanged: suppress

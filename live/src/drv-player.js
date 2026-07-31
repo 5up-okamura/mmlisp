@@ -529,6 +529,13 @@ export class DrvPlayer {
         this._ym(port, 0x90 + opOff + off, 0);
       }
     }
+    // The global registers, so the shadow covers every address anything writes
+    // through the change-only layer (driver.md §5.4). The Z80 has no "valid"
+    // plane: an uninitialised entry would let a first write of 0 be suppressed.
+    this._ym(0, 0x22, 0); // LFO off
+    this._ym(0, 0x27, 0); // CH3 normal mode, timers off
+    this._ym(0, 0x2a, 0); // DAC data centred
+    this._ym(0, 0x2b, 0); // DAC off
   }
 
   // ── Level composition (driver.md §7; integer end-to-end) ────────────────

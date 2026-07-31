@@ -71,12 +71,12 @@ boot_patch:
     ld a,$b0
     add a,c
     ld e,a
-    call ym_write
+    call ym_write_always
     ld b,$c0                ; B4: both speakers, ams/fms 0
     ld a,$b4
     add a,c
     ld e,a
-    call ym_write
+    call ym_write_always
     ld a,0                  ; op slots in slot order 0..3 = addr off 0,8,4,12
     call boot_slot
     ld a,8
@@ -89,6 +89,15 @@ boot_patch:
     inc a
     cp 6
     jr c,boot_patch
+    ; The global registers, so the shadow covers every address anything writes
+    ; through ym_write — without that, "no valid plane" would silently suppress a
+    ; first write of 0 (driver.md §5.4). Port 0 only: these are not per-channel.
+    xor a
+    ld (G_TMP),a            ; no per-channel offset
+    ld d,0                  ; port 0
+    ld hl,boot_glob_regs
+    ld b,4
+    call boot_wr_tab
     ; mailbox up (last, after the clear zeroed these)
     ld a,2
     ld (MB_VER),a
@@ -107,7 +116,9 @@ boot_slot:
     ld (G_TMP),a
     ld hl,boot_op_regs
     ld b,7
-bs_lp:
+; boot_wr_tab: HL = (register base, value) pairs, B = count, (G_TMP) = address
+; offset, D = port. Shared by the per-operator patch and the global registers.
+boot_wr_tab:
     push bc                 ; ym_write wants B = data
     ld a,(G_TMP)
     add a,(hl)              ; register base + op/channel offset
@@ -116,14 +127,20 @@ bs_lp:
     ld b,(hl)               ; neutral value
     inc hl
     push hl
-    call ym_write
-    pop hl
+    call ym_write_always    ; unconditional: this patch is what MAKES the shadow
+    pop hl                  ; true, so it must not be suppressed against it
     pop bc
-    djnz bs_lp
+    djnz boot_wr_tab
     ret
 
 ; register base, neutral value — same bytes and order as drv-player
 ; _emitInitWrites / ir-player _initDefaultVoices.
+boot_glob_regs:
+    db $22,$00              ; LFO off
+    db $27,$00              ; CH3 normal mode, timers off
+    db $2a,$00              ; DAC data centred
+    db $2b,$00              ; DAC off
+
 boot_op_regs:
     db $30,$01              ; DT/MUL: dt 0, mul 1
     db $40,$00              ; TL 0

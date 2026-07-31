@@ -296,13 +296,34 @@ budget**. Its profile says where to go next:
 | `op_e` | 14,300 | operator address |
 | **total** | **112,000 (42%)** | **~550 cycles of bookkeeping per register write** |
 
-**The valid-bit plane (38 B) may be droppable entirely**: boot already writes a
-full neutral patch, so every shadow entry could be valid from frame 0 — that is
-50k off the start frame, less resident code, 38 B of RAM back, and it speeds up
-*every* write in *every* frame. Check first that the boot patch really covers all
-304 shadowed addresses (LFO $22, $27, $2B, PSG included). Also worth a look:
-`latch_bank`'s 9-bit shift loop is 39% of the setup frame (27k) because every
-overlay load re-latches two banks — a "currently latched" cache needs 2 B of RAM.
+**The valid-bit plane is GONE (2026-07-31).** boot now writes every register the
+shadow covers — the op table gained `$90`/SSG-EG and the four globals
+(`$22 $27 $2A $2B`) were added, all through `ym_write_always` since that patch is
+what *makes* the shadow true — so an entry is never "unwritten" and a matching
+value can always be suppressed. Removed a `>>3` and a `1<<bit` loop from every
+write: first sounding frame 228k → **165k**, p99 58.6k → **53.3k**, over-budget
+0.78% → **0.30%**, resident **6054 → 5979 B (77 B free)**, and the 38 B went to
+the stack window (**48 → 86 B**, worst case 40 B used). Watch out: the boot patch
+itself must use `ym_write_always`, or its own zero-writes get suppressed against
+the cleared shadow and never reach the chip.
+
+**Built, verified, then REVERTED — "armed runs the score's head" (2026-07-31).**
+Letting the armed frame dispatch the leading setup opcodes and stop at the first
+timed one ($10..$13) is what actually fixes the long first note: the voice applies
+move into the silent frame. Z80 + drv-player agreed byte-for-byte (38 traces). It
+was reverted because it makes the driver and ir-player structurally differ at
+track start — driver applies the score's head a frame before its first note,
+ir-player applies both together — and ab-compare's run matcher cannot express a
+1-frame skew for signals that change every frame: **nine clean A/B scores went
+dirty, m3-macro-pitchadd 0 → 482**. To land it, teach
+`ir-player.captureRegisterLog` the same split first. `ir ≡ drv` outranks the two
+frames. (The reverted diff: a `cp $14 / bit 1,(ix+T_STATUS)` test at the top of
+`d_next` writing T_PC back before returning, `call dispatch` in fs_track's armed
+branch, and the mirror guard in drv-player `_dispatch`.)
+
+Also worth a look: `latch_bank`'s 9-bit shift loop is 39% of the setup frame
+(27k) because every overlay load re-latches two banks — a "currently latched"
+cache needs 2 B of RAM, and there is room now.
 
 Still at the top of an ordinary frame and genuinely working: `fs_tick` (3.6k) /
 `fs_wait` (2.7k) — the per-track tick accumulate and dispatch. Next candidates if more is needed: the

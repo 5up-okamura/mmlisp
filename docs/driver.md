@@ -151,7 +151,9 @@ exactly this order, and A/B verification (§12) depends on it:
    out now, in fixed order — YM channels fm1→fm6 (per channel: operator
    params, then channel params, then F-num/block, then key-on/off via $28),
    then globals ($22/$27), then PSG sqr1→sqr3→noise. Writes are
-   change-only: a value equal to the shadow register is skipped (§5.4).
+   change-only: a value equal to the shadow register is skipped (§5.4). The
+   shadow is exact from frame 0 — boot writes every register it covers — so
+   there is no "has this been written yet" bit to consult.
 
 **YM BUSY policy:** every YM2612 access goes through one write routine that
 polls the status byte (0x4000 bit 7, BUSY) until clear before writing the
@@ -215,11 +217,20 @@ to hide.
 
 **Still open.** This takes the *setup* out of the sounding frame, not the score's
 own head: a mucom-style score puts its `VOICE_SET`s at tick 0, so the first
-dispatching frame carries seven voice applies plus the first notes — 264k cycles,
-still 4.4× budget. 42% of that is the change-only shadow bookkeeping (§5.4):
-~550 cycles per register write, recomputing the shadow index, the `>>3` byte
-index and a `1<<bit` mask for every one. That is the next thing to fix, and it
-pays off on every write, not just at the start.
+dispatching frame carries seven voice applies plus the first notes — 165k cycles
+after §5.4's valid-plane removal, still 2.8× budget, so the opening note is held
+two or three frames longer than written.
+
+The fix is to let the armed frame run the score's *leading* setup opcodes and
+stop at the first one that sounds or consumes time ($10..$13) — then the voice
+applies happen where nothing is audible. It was built and works (driver and JS
+reference agree byte-for-byte), but **it is not landed**: it makes the driver and
+the live player structurally differ at track start — the driver applies the
+score's head a frame before its first note, ir-player applies both together — and
+a 1-frame skew is not expressible in ab-compare's run matcher for signals that
+change every frame. Nine previously-clean A/B scores went dirty, `m3-macro-pitchadd`
+from 0 to 482 mismatches. Landing it means teaching `ir-player.captureRegisterLog`
+the same split first; `ir ≡ drv` outranks the two frames.
 
 ## 5. Z80 RAM Map (8KB, 0x0000–0x1FFF)
 
@@ -241,8 +252,13 @@ pays off on every write, not just at the start.
 > code (0x0000 up to the `G_PCMV` ceiling), the PCM voice structs (`G_PCMV`), and
 > the shared `OVERLAY_SLOT`; above `DATA_BASE`: mailbox 0x18F0, val slots 0x1930,
 > driver globals 0x1950, channel state 0x19D8, TCB 0x1C58 (16 blocks), shadow
-> 0x1E58, valid bitmap 0x1F88, stack top 0x2000. Space reworks got it under 8 KB:
-> the shadow's valid plane is a **bit**-per-register bitmap (2×19 B, not 2×152 B);
+> 0x1E58, SE/PCM snapshots 0x1F88, stack top 0x2000. Space reworks got it under
+> 8 KB: the shadow's valid plane (a bit-per-register bitmap) is **gone entirely** —
+> boot writes every register the shadow covers, so an entry is never "unwritten"
+> and a matching value can always be suppressed. That removed a `>>3` and a
+> `1 << bit` loop from every register write (~275 cycles, most of what a
+> 29-register VOICE_SET cost), 75 B of resident code, and gave the stack window
+> its 38 B (48 → 86 B, worst case 40 B used);
 > the **constant LUTs moved out of Z80 RAM into ROM** (a LUT_TABLE MMB section,
 > mmb.md §16, ~726 B freed); a **table-drive refactor** collapsed the ten
 > near-identical FM op-param handlers into one descriptor table + routine (~169 B);
