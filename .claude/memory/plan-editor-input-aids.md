@@ -1,6 +1,6 @@
 # Plan: editor input aids (live CodeMirror)
 
-Batch 1 **landed** 2026-07-31 (`live/index.html`, `live/style.css`,
+Batches 1 and 2 **landed** 2026-07-31 (`live/index.html`, `live/style.css`,
 `docs/guide.md` §24, README). This file now only tracks what is left.
 
 ## Landed
@@ -33,15 +33,22 @@ highlight single vs multi-line, unclosed opener + stray/mismatched closer,
 badge text and jump, and coexistence with the playhead layer during playback.
 Build, format and completion unaffected; no console errors.
 
+Batch 2 (same day): `AC_SNIPPETS` template completions (`snippetCompletion`,
+body-only templates since the parens already exist; curve heads generated from
+one `A..B :len L` shape), `expandSelection` / `shrinkSelection` on
+`Alt-ArrowUp` / `Alt-ArrowDown` (contents → form → next level out, with a
+retrace stack), and `closeOpenBrackets` on `Mod-Alt-]` plus **Tools ▸ Close
+Open Brackets**. Both selection commands return `true` even when there is
+nothing to do — falling through to the browser's Alt-Up would move the cursor
+and drop the selection. `Mod-Shift-]` was avoided: Chrome reserves it.
+
 ## Still open
 
-- **Snippet completions** (`snippetCompletion`) for `macro` / `echo` /
-  `delay` / `glide` / `def` / `t` / `x`, e.g.
-  `(macro :step ${1:1/16} :vel [${2}])`. The largest remaining win.
-- **Expand-selection** (Alt-Up: innermost form → outward).
-- **Symbol bar for touch** — `(` `[` `:` are the painful keys on iPad.
-- **`Mod-Shift-]` "close all open forms at cursor"** — the explicit-insertion
-  counterpart to the detection-only policy below.
+- **Symbol bar for touch** — `(` `[` `:` are the painful keys on iPad, and the
+  value-editing UI is already tap-first. The only batch-1/2 item not done.
+- Possible follow-ups, not committed to: a token-level first step for
+  `Alt-ArrowUp` (currently the first step is the enclosing form's contents),
+  and snippets for `:param` completions.
 
 ## Standing decisions
 

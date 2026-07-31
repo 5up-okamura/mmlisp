@@ -949,7 +949,9 @@ and reopen the folder to keep it after a reload.
 
 ---
 
-## 24. Brackets in the live app
+## 24. Typing help in the live app
+
+### Brackets
 
 Typing `(`, `[` or `"` inserts the closer too, with the cursor between them.
 Typing the closer yourself steps over the one already there rather than adding
@@ -965,7 +967,37 @@ the editor.
 
 An unclosed `(` / `[`, or a closer with nothing to close, is underlined in the
 error color and counted in the badge at the top-right of the editor; click the
-badge to jump to the first one. Nothing is inserted for you — where a missing
-bracket belongs is a guess, and in a score a wrong guess silently changes what
-plays. Reformatting (**Tools ▸ Format Source**, `Cmd/Ctrl+Shift+F`) is the fastest
-way to see whether the structure is really what you meant.
+badge to jump to the first one. Nothing is repaired behind your back — where a
+missing bracket belongs is a guess, and in a score a wrong guess silently
+changes what plays. **Tools ▸ Close Open Brackets** (`Cmd/Ctrl+Alt+]`) closes
+them on request: it appends, at the cursor, the closers for every form still
+open there, innermost first. Reformatting (**Tools ▸ Format Source**,
+`Cmd/Ctrl+Shift+F`) is the fastest way to see whether the structure is really
+what you meant.
+
+### Selecting by form
+
+`Alt+↑` grows the selection one step outward — the contents of the form the
+cursor is in, then that form including its brackets, then the next level out.
+`Alt+↓` retraces the same steps inward. Combined with bracket-wrapping, this is
+the quick way to restructure: `Alt+↑` until the phrase you want is selected,
+then `(` to wrap it and type the head.
+
+### Completions
+
+Typing `(` opens the form and track list; `:` opens the keyword list. Forms
+with a fixed argument shape insert a filled-in template instead of a bare name,
+with `Tab` moving between the fields:
+
+| Typed          | Inserted                              |
+| -------------- | ------------------------------------- |
+| `(x`           | `(x 4 )`                              |
+| `(go`          | `(go head)`                           |
+| `(echo`        | `(echo :vel+ 3 :by -1)`               |
+| `(delay`       | `(delay :vel+ 3 :by -4 :time 1/8)`    |
+| `(def-val`     | `(def-val name 0 0..127)`             |
+| any curve head | `(linear 0..100 :len 8)`              |
+
+The placeholders are usable defaults, so leaving a template early (`Esc`) still
+leaves valid source. Forms whose shape genuinely varies — a track, `t`, the
+eval heads — insert just the name, as before.

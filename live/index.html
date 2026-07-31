@@ -193,6 +193,10 @@
           <span>Toggle Comment</span>
           <span class="menu-item-shortcut" id="toggleCommentShortcut"></span>
         </button>
+        <button class="menu-item" onclick="closeBracketsAction();closeMenus()">
+          <span>Close Open Brackets</span>
+          <span class="menu-item-shortcut" id="closeBracketsShortcut"></span>
+        </button>
         <div class="menu-wrap submenu-wrap" id="menuToolsSnippets">
           <button class="menu-item" onclick="toggleSubmenu('menuToolsSnippets')">
             <span>Snippets</span>
@@ -464,7 +468,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { tags } = await import('https://esm.sh/@lezer/highlight@1');
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent } = await import('https://esm.sh/@codemirror/commands@6');
-    const { autocompletion, closeBrackets, closeBracketsKeymap } = await import('https://esm.sh/@codemirror/autocomplete@6');
+    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
     // [from, to) document offset range, clamped to the document.
@@ -1422,6 +1426,31 @@
     ];
     const AC_MODE_VALUES = ['shot', 'loop'];
 
+    // Templates for the forms whose argument shape is fixed enough that filling
+    // it in beats typing it. Body only — the parens are already in the document
+    // (typing '(' auto-closes). `${n:text}` are tab stops whose placeholder is
+    // a usable default, so leaving the snippet early (Esc) still leaves valid
+    // source. Forms whose shape genuinely varies keep the plain name.
+    const AC_SNIPPETS = {
+      'def': 'def ${1:name} ${2}',
+      'def-val': 'def-val ${1:name} ${2:0} ${3:0..127}',
+      'import': 'import "${1:voices.mmlisp}"',
+      'x': 'x ${1:4} ${2}',
+      'go': 'go ${1:head}',
+      'macro': 'macro :${1:vel} ${2}',
+      'echo': 'echo :${1:vel+} ${2:3} :by ${3:-1}',
+      'delay': 'delay :${1:vel+} ${2:3} :by ${3:-4} :time ${4:1/8}',
+      'glide': 'glide ${1:1/8}',
+      'const': 'const ${1:0} :len ${2:4}',
+    };
+    // Every curve head takes the same `A..B :len L` shape (§11), so generate
+    // rather than list. `noise` is left out: as a head it is also a track name,
+    // and the track is what `(noise` almost always means.
+    for (const head of AC_FORMS) {
+      if (!/^(linear|sin|triangle|square|saw|ramp|pink|perlin|brown|ease-)/.test(head)) continue;
+      AC_SNIPPETS[head] = `${head} \${1:0}..\${2:100} :len \${3:8}`;
+    }
+
     function mmlispCompletions(context) {
       // After '(' — suggest forms and track names
       const formMatch = context.matchBefore(/\([a-zA-Z0-9_-]*/);
@@ -1429,7 +1458,9 @@
         const typed = formMatch.text.slice(1); // strip '('
         const options = [...AC_FORMS, ...AC_TRACKS]
           .filter(s => s.startsWith(typed))
-          .map(s => ({ label: s, type: 'keyword', apply: s + ' ' }));
+          .map(s => AC_SNIPPETS[s]
+            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword' })
+            : { label: s, type: 'keyword', apply: s + ' ' });
         if (options.length === 0 && !context.explicit) return null;
         return { from: formMatch.from + 1, options };
       }
@@ -1686,6 +1717,68 @@
         scrollIntoView: true,
       });
       editorView.focus();
+    }
+
+    // Insert the closers for every form still open at the cursor, innermost
+    // first. Only brackets the scan reports as unclosed are closed, so this
+    // never touches a form that is already complete further down the file.
+    function closeOpenBrackets(view) {
+      const state = view.state;
+      const pos = state.selection.main.head;
+      const opens = state.field(bracketField).bad
+        .filter(p => p < pos && /[([]/.test(state.doc.sliceString(p, p + 1)));
+      if (!opens.length) return false;
+      const insert = opens.reverse()
+        .map(p => state.doc.sliceString(p, p + 1) === '(' ? ')' : ']')
+        .join('');
+      view.dispatch({
+        changes: { from: pos, insert },
+        selection: { anchor: pos + insert.length },
+        scrollIntoView: true,
+        userEvent: 'input.complete',
+      });
+      return true;
+    }
+
+    // Expand the selection outward through the bracket structure: the contents
+    // of the enclosing form, then the form including its brackets, then the
+    // next level out. The stack lets the reverse key retrace those steps; any
+    // other selection change abandons it.
+    let _expandStack = [];
+    let _expandLast = null;
+
+    function expandSelection(view) {
+      const state = view.state;
+      const sel = state.selection.main;
+      const steps = [];
+      for (const p of state.field(bracketField).pairs) {
+        if (p.from > sel.from || sel.to > p.to + 1) continue;
+        steps.push({ from: p.from + 1, to: p.to }, { from: p.from, to: p.to + 1 });
+      }
+      steps.sort((a, b) => (a.to - a.from) - (b.to - b.from));
+      const next = steps.find(r =>
+        r.from <= sel.from && r.to >= sel.to && (r.from < sel.from || r.to > sel.to));
+      // Own the key even with nothing left to grow: falling through to the
+      // browser's Alt-Up would move the cursor and drop the selection.
+      if (!next) return true;
+      if (_expandLast && (_expandLast.from !== sel.from || _expandLast.to !== sel.to)) _expandStack = [];
+      _expandStack.push({ from: sel.from, to: sel.to });
+      _expandLast = next;
+      view.dispatch({ selection: EditorSelection.single(next.from, next.to), scrollIntoView: true });
+      return true;
+    }
+
+    function shrinkSelection(view) {
+      const sel = view.state.selection.main;
+      if (!_expandLast || _expandLast.from !== sel.from || _expandLast.to !== sel.to) {
+        _expandStack = [];
+        return true;
+      }
+      const prev = _expandStack.pop();
+      if (!prev) return true;
+      _expandLast = prev;
+      view.dispatch({ selection: EditorSelection.single(prev.from, prev.to), scrollIntoView: true });
+      return true;
     }
 
     function summarizeFoldHead(state, range) {
@@ -2263,6 +2356,7 @@
     window.buildAction = buildAction;
     window.formatSource = formatDocument;
     window.toggleCommentAction = toggleLineComment;
+    window.closeBracketsAction = () => { closeOpenBrackets(editorView); editorView.focus(); };
     window.insertSnippetFmVoice = insertSnippetFmVoice;
     window.importDefleMaskDmp = importDefleMaskDmp;
     window.importFui = importFui;
@@ -2283,6 +2377,7 @@
       if (key === 'Mod-Shift-f') return isMac ? '⌘⇧F' : 'Ctrl+Shift+F';
       if (key === 'Mod-/') return isMac ? '⌘/' : 'Ctrl+/';
       if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
+      if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
       return key;
     }
 
@@ -2293,6 +2388,7 @@
         ['saveFileAsShortcut', 'Mod-Shift-s'],
         ['formatSourceShortcut', 'Mod-Shift-f'],
         ['toggleCommentShortcut', 'Mod-/'],
+        ['closeBracketsShortcut', 'Mod-Alt-]'],
         ['buildShortcut', 'Mod-b'],
       ];
       for (const [id, key] of shortcutLabels) {
@@ -2361,6 +2457,10 @@
         ...historyKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
+        // Structure: grow/shrink the selection by form, and close what is open.
+        { key: 'Alt-ArrowUp', run: expandSelection },
+        { key: 'Alt-ArrowDown', run: shrinkSelection },
+        { key: 'Mod-Alt-]', run: closeOpenBrackets },
         // Nudge the value under the cursor. `.`/`,` are the > / < keys, so the
         // direction matches MML's > (up) / < (down); Alt makes a coarse step.
         // Never binds an arrow, so caret movement / selection stay untouched.
