@@ -685,6 +685,14 @@ inline.
   error (`E_IMPORT_CONFLICT`); a diamond (two imports pulling in the same third
   file) dedups and is fine. An import cycle is `E_IMPORT_CYCLE`.
 
+**Drag & drop in the live editor.** ⇧Shift-dropping a `.mmlisp` onto the window
+inserts its `(import "…")` line at the cursor rather than opening the file; a
+plain drop opens it. The path written is folder-relative when the file comes out
+of the opened source folder, and the bare file name otherwise — in which case
+the editor holds the file's text in memory so the score compiles at once, and
+warns that it must be moved next to the score to survive a reload. Drop rules
+are the same as for samples, below.
+
 This is the first increment of a fuller import/patch system (presets via
 `:from`, version pinning); the `(import "path")` surface stays as it grows.
 
@@ -1170,6 +1178,17 @@ subfolder — `~/Desktop/mysong/` opens, `~/Desktop/` does not.
 
 Without a folder, `:file` falls back to the dev server's root, so absolute
 server paths (`/drv/tests/blip.wav`) and full URLs (CORS permitting) also work.
+
+**Dropping a wav** writes its def at the cursor — `(def kick :sample :file "…")`,
+no `:rate`, so the wav's own rate stands. A wav dragged out of the opened folder
+gets the correct folder-relative path (`"sounds/kick.wav"`); one dragged from
+anywhere else gets its bare name and is decoded into memory, so it plays at once
+but needs to be moved next to the score (and the folder reopened) to survive a
+reload. Only `.wav` is accepted: the browser would decode mp3/flac/ogg too, but
+the exporters read RIFF WAV only, so those are refused with a message rather
+than left to break at export time.
+
+Full drop routing for every accepted format: `guide.md` §23.
 
 `pcm1`–`pcm3` are three voices **soft-mixed** by the Z80 to the single fm6 DAC
 at a fixed mix rate (~10.5 kHz): each voice is resampled to that grid, the

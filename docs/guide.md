@@ -264,6 +264,8 @@ as if you'd pasted them in.
 ```
 
 The path is relative to your score (open its folder with File > Open Folder…).
+In the live editor, **⇧Shift-dragging a `.mmlisp` onto the window** writes the
+`(import "…")` line for you — a plain drag opens the file instead.
 An imported def is a **default you can override** — a local `(def lead …)` of
 the same name wins. Only defs are imported; `def-val` slots and tracks in the
 library file are ignored. Full reference: `docs/language.md` §9.2.
@@ -833,6 +835,12 @@ Samples are defined with `def :sample`, then used as the first positional argume
 - Stereo WAV files are downmixed to mono at compile time.
 - WAV data is converted to 8-bit signed PCM at compile time.
 
+**Drag a `.wav` onto the live editor** and its `def` is written for you at the
+cursor. Drag it out of the folder you opened with `File > Open Folder…` and the
+`:file` path is the right relative one; drag it from anywhere else and the def
+gets the bare file name — it plays straight away from memory, but only survives
+a reload once the wav actually sits next to the score.
+
 ---
 
 ## 20. Stochastic Curves
@@ -909,3 +917,32 @@ and a hint shows its range. Three ways to change it:
 While the score is playing, an edit hot-swaps at the next bar so you hear it
 immediately; stopped, changes apply on the next **Build**. Tap a bar marker `|`
 for its bar number and tick count (§4).
+
+---
+
+## 23. Dragging files into the live app
+
+Drop files anywhere on the window. They are routed by extension — the same
+formats `File > Import` accepts:
+
+| Dropped                            | Result                                                    |
+| ---------------------------------- | --------------------------------------------------------- |
+| a folder                           | same as `File > Open Folder…`                             |
+| `.mmlisp`                          | opens it — **⇧Shift** inserts `(import "…")` instead (§7) |
+| `.mmb`                             | loads it as a binary preset                                |
+| `.wav`                             | inserts a sample def (§19)                                 |
+| `.dmp` `.fui` `.tfi` `.vgi` `.opni` | inserts the FM voice def                                  |
+| `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
+| `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
+
+Several files at once are fine. Everything except opening a document appends at
+the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press
+**Build** to apply them. Only one document can be open, so a multi-score drop
+opens the first and turns the rest into `(import …)` lines.
+
+**Paths follow the opened folder.** A file dragged out of the folder you opened
+with `File > Open Folder…` is written with its correct folder-relative path
+(`"sounds/kick.wav"`) — something the file picker cannot do, since a picked file
+never reveals its directory. A file dragged from anywhere else gets its bare
+name and is held in memory, so it works immediately; move it next to the score
+and reopen the folder to keep it after a reload.

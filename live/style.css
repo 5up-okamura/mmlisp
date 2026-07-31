@@ -850,6 +850,35 @@
       .loading-spinner { animation: none; }
     }
 
+    /* ---- file drop overlay ----
+       Shown while files are dragged over the window. pointer-events: none is
+       load-bearing: the overlay must never become the drag target itself, or
+       crossing into it would fire dragleave and hide it. */
+    #dropOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 300;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      background: color-mix(in srgb, var(--background) 82%, transparent);
+      outline: 2px dashed var(--accent);
+      outline-offset: -10px;
+      font: 14px 'Open Sans', sans-serif;
+      color: var(--foreground);
+      text-align: center;
+      padding: 0 1rem;
+    }
+    #dropOverlay[hidden] { display: none; }
+    .drop-hint { color: var(--mid); font-size: 12px; }
+    /* Shift held: the (import …) branch is the active one, so swap the emphasis. */
+    #dropOverlay.as-import .drop-open { color: var(--mid); }
+    #dropOverlay.as-import .drop-import { color: var(--high); }
+    #dropOverlay:not(.as-import) .drop-open { color: var(--high); }
+
     /* ---- modal (custom theme editor) ---- */
     .modal-overlay {
       position: fixed;

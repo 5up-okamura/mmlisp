@@ -465,13 +465,20 @@ function parseFuiFm(bytes) {
   return parseFuiOld(bytes);
 }
 
-function makeVoiceNameFromFile(fileName) {
+// A file name reduced to a legal MMLisp def name. Shared with the sample-def
+// side (a dropped wav names its def the same way), so it carries no sigil —
+// the `@` voice prefix is added by makeVoiceNameFromFile alone.
+function slugFromFileName(fileName, fallback = 'unnamed') {
   const base = String(fileName || '')
     .replace(/\.[^.]+$/, '')
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return '@' + (base || 'dmp-voice');
+  return base || fallback;
+}
+
+function makeVoiceNameFromFile(fileName) {
+  return '@' + slugFromFileName(fileName, 'dmp-voice');
 }
 
 function buildMmlispVoiceFromDmp(parsed, voiceName) {
@@ -558,6 +565,8 @@ function detectFmImportFormatKey(fileName) {
 export {
   FM_IMPORT_FORMATS,
   buildMmlispVoiceFromDmp,
+  slotToDisplayOps,
   makeVoiceNameFromFile,
+  slugFromFileName,
   detectFmImportFormatKey,
 };
