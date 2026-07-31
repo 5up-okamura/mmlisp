@@ -131,13 +131,15 @@ vs_b0n:
     call vs_put
     ret
 
-; vs_put: B = data, D = port, E = addr → write only if it differs from the
-; shadow (unwritten reads as 0). Mirrors drv-player _voiceSet's change-only put.
-vs_put:
-    call ym_shadow_read     ; A = current value (0 if never written); BC/DE kept
-    cp b
-    ret z                   ; unchanged → skip
-    jp ym_write
+; vs_put: B = data, D = port, E = addr → change-only write, which is exactly what
+; ym_write already is. It used to pre-read the shadow through ym_shadow_read and
+; compare here, so every one of the 29 registers in a voice paid for the shadow
+; index, the valid-bit lookup and the >>3 TWICE — ~900 cycles a register, ~26k a
+; voice, and seven voices land in one frame when a song starts. The pre-read is
+; pure duplication: boot's neutral patch has already written every register a
+; voice touches, so "equal to a valid shadow entry" (ym_write) and "equal to the
+; shadow, unwritten reading as 0" (the old check) always agree here.
+vs_put   equ ym_write
 
 ; ── SE reclaim restore (plan-se.md design B) ───────────────────────────────
 ; Reached via the resident se_reclaim trampoline at the SE track's END_OF_TRACK

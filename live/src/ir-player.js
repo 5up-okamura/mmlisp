@@ -3585,6 +3585,7 @@ export class IRPlayer {
         this._write(port, 0x60 + opOff + offset, 0); // DR=0
         this._write(port, 0x70 + opOff + offset, 0); // D2R=0
         this._write(port, 0x80 + opOff + offset, encode80(regs.ops[slot])); // SL=0, RR=15
+        this._write(port, 0x90 + opOff + offset, 0); // SSG-EG off
       }
     }
   }

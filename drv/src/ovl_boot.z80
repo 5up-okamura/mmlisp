@@ -97,35 +97,38 @@ boot_patch:
     ret                     ; back to the resident stub (ei + idle)
 
 ; one operator slot of the neutral patch. A = op addr offset, C/D live.
+; Table-driven: seven straight-line write blocks were 66 B, and the slot had one
+; byte left. $90/SSG-EG is in the table because the patch has to cover EVERY
+; register a voice writes — otherwise those shadow entries stay "never written",
+; VOICE_SET cannot suppress a matching value, and (on hardware) a power-on
+; SSG-EG bit would never be cleared.
 boot_slot:
     add a,c
     ld (G_TMP),a
-    add a,$30               ; DT/MUL: dt 0, mul 1
-    ld e,a
-    ld b,$01
-    call ym_write
+    ld hl,boot_op_regs
+    ld b,7
+bs_lp:
+    push bc                 ; ym_write wants B = data
     ld a,(G_TMP)
-    add a,$40               ; TL 0
+    add a,(hl)              ; register base + op/channel offset
     ld e,a
-    ld b,0
+    inc hl
+    ld b,(hl)               ; neutral value
+    inc hl
+    push hl
     call ym_write
-    ld a,(G_TMP)
-    add a,$50               ; KS/AR: ks 0, ar 31
-    ld e,a
-    ld b,$1f
-    call ym_write
-    ld a,(G_TMP)
-    add a,$60               ; AM/DR 0
-    ld e,a
-    ld b,0
-    call ym_write
-    ld a,(G_TMP)
-    add a,$70               ; SR 0
-    ld e,a
-    ld b,0
-    call ym_write
-    ld a,(G_TMP)
-    add a,$80               ; SL/RR: sl 0, rr 15
-    ld e,a
-    ld b,$0f
-    jp ym_write
+    pop hl
+    pop bc
+    djnz bs_lp
+    ret
+
+; register base, neutral value — same bytes and order as drv-player
+; _emitInitWrites / ir-player _initDefaultVoices.
+boot_op_regs:
+    db $30,$01              ; DT/MUL: dt 0, mul 1
+    db $40,$00              ; TL 0
+    db $50,$1f              ; KS/AR: ks 0, ar 31
+    db $60,$00              ; AM/DR 0
+    db $70,$00              ; SR 0
+    db $80,$0f              ; SL/RR: sl 0, rr 15
+    db $90,$00              ; SSG-EG off

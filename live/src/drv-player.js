@@ -522,6 +522,11 @@ export class DrvPlayer {
         this._ym(port, 0x60 + opOff + off, 0);
         this._ym(port, 0x70 + opOff + off, 0);
         this._ym(port, 0x80 + opOff + off, encode80(op));
+        // SSG-EG off. The patch has to cover every register a voice writes, or
+        // those shadow entries stay unwritten and VOICE_SET cannot suppress a
+        // matching value (ovl_voice vs_put) — and on hardware a power-on SSG-EG
+        // bit would never be cleared.
+        this._ym(port, 0x90 + opOff + off, 0);
       }
     }
   }
