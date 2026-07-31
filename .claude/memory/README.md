@@ -29,6 +29,11 @@ Index:
   (CALL/RET, SE, PCM volume, trig, sample-bank); remaining = DJ cross-MMB
   transitions (hardware-gated), WIDE_OFFSETS, the CALL/RET shared-loop-body
   extension. Also holds the folded-in DAC-ownership decision (static `:prio`).
+- [plan-editor-input-aids.md](plan-editor-input-aids.md) — live editor Lisp
+  input aids: **batch 1 landed** (auto-close, enclosing-form highlight,
+  unmatched-bracket marks + badge) with the implementation deviations worth
+  keeping; still open are snippet completions, expand-selection, a touch
+  symbol bar. Also holds the standing "never auto-repair brackets" decision.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic

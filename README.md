@@ -75,8 +75,9 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 
 `live/` hosts the full authoring workflow in the browser — no install:
 
-- CodeMirror editor with MMLisp syntax highlighting, autocomplete, and
-  format-on-demand
+- CodeMirror editor with MMLisp syntax highlighting, autocomplete,
+  format-on-demand, and bracket help (auto-close, enclosing-form highlight,
+  unmatched-bracket marks)
 - Hot-swap compile on edit: the score rebuilds while playing and resumes at
   the next bar boundary
 - Accurate FM sound via a Nuked-OPN2 (YM2612) WebAssembly core in an

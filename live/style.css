@@ -239,6 +239,40 @@
       border-radius: 2px;
       box-shadow: inset 0 0 0 1px var(--foreground);
     }
+    /* Bracket structure, drawn as a layer for the same reason as the playhead
+       (never touches the text DOM, so line wrapping is unaffected). */
+    .cm-bracketLayer { pointer-events: none; }
+    /* The form the cursor sits in — faint fill, single-line forms only */
+    .cm-bracketForm {
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    }
+    /* The matching pair itself */
+    .cm-bracketMatch {
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+    /* Unclosed opener / stray closer — underline, never auto-corrected */
+    .cm-bracketBad {
+      box-shadow: inset 0 -2px 0 var(--error);
+    }
+    /* Unmatched-bracket count, top-right of the editor; click to jump */
+    #bracketStatus {
+      position: absolute;
+      top: 0.25rem;
+      right: 0.75rem;
+      z-index: 2;
+      padding: 0.1rem 0.4rem;
+      border: none;
+      border-radius: 3px;
+      font: inherit;
+      font-size: 0.7rem;
+      color: var(--error);
+      background: color-mix(in srgb, var(--error) 12%, var(--background));
+      cursor: pointer;
+      opacity: 0.85;
+    }
+    #bracketStatus:hover { opacity: 1; }
     /* Build-confirmation flash: fill the background of the text (fitted to each
        line's text width, not the full line) then fade out. Uses --foreground
        (which always contrasts the background) so it shows on any theme. */

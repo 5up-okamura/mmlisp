@@ -946,3 +946,26 @@ with `File > Open Folder…` is written with its correct folder-relative path
 never reveals its directory. A file dragged from anywhere else gets its bare
 name and is held in memory, so it works immediately; move it next to the score
 and reopen the folder to keep it after a reload.
+
+---
+
+## 24. Brackets in the live app
+
+Typing `(`, `[` or `"` inserts the closer too, with the cursor between them.
+Typing the closer yourself steps over the one already there rather than adding
+a second, `Backspace` on an empty pair removes both, and typing a bracket with
+text selected wraps the selection instead of replacing it — so
+`(x 16 c _ g _)` can be built by selecting `c _ g _` and pressing `(`. `'` is
+an ordinary atom character in MMLisp and is left alone.
+
+The form the cursor sits in is highlighted: both of its brackets, plus a faint
+fill over the whole form when it is on one line. A form spanning several lines
+(a track, a long `def`) shows only its brackets, so the highlight never floods
+the editor.
+
+An unclosed `(` / `[`, or a closer with nothing to close, is underlined in the
+error color and counted in the badge at the top-right of the editor; click the
+badge to jump to the first one. Nothing is inserted for you — where a missing
+bracket belongs is a guess, and in a score a wrong guess silently changes what
+plays. Reformatting (**Tools ▸ Format Source**, `Cmd/Ctrl+Shift+F`) is the fastest
+way to see whether the structure is really what you meant.

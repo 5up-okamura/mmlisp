@@ -227,7 +227,11 @@
 
     <!-- Left column: editor + draggable divider + console -->
     <div id="leftCol">
-      <div id="editorWrap"><canvas id="vizCanvas"></canvas></div>
+      <div id="editorWrap">
+        <canvas id="vizCanvas"></canvas>
+        <button id="bracketStatus" type="button" hidden
+                title="Jump to the first unmatched bracket"></button>
+      </div>
       <div id="hDivider"></div>
       <div id="consolePane">
         <div id="log"></div>
@@ -460,7 +464,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { tags } = await import('https://esm.sh/@lezer/highlight@1');
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent } = await import('https://esm.sh/@codemirror/commands@6');
-    const { autocompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
+    const { autocompletion, closeBrackets, closeBracketsKeymap } = await import('https://esm.sh/@codemirror/autocomplete@6');
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
     // [from, to) document offset range, clamped to the document.
@@ -1310,6 +1314,11 @@
     // `:params`. Everything else (notes, numbers, macro names, brackets,
     // operators) stays the default foreground; comments are dimmed.
     const mmlispMode = StreamLanguage.define({
+      // Auto-close only the brackets MMLisp actually has. The defaults would
+      // also close `{` (unused) and `'` (an ordinary atom character here).
+      languageData: {
+        closeBrackets: { brackets: ['(', '[', '"'] },
+      },
       startState: () => ({ head: false }), // head: next identifier is in call position
       token(stream, state) {
         if (stream.eatSpace()) return null; // keep `head` across whitespace
@@ -1539,6 +1548,145 @@
 
       return null;
     });
+
+    // -----------------------------------------------------------------------
+    // Bracket structure: enclosing-form highlight + unmatched-bracket marks
+    // -----------------------------------------------------------------------
+
+    // One pass over the document, skipping strings and `;` comments, feeding
+    // both the enclosing-form highlight and the unmatched-bracket marks.
+    // Returns { pairs, bad }: `pairs` are matched brackets ({from, to} are the
+    // two bracket offsets), `bad` are offsets of unclosed openers and stray or
+    // mismatched closers. A mismatched closer does not pop the stack — that
+    // matches the parser, which reports the still-open bracket as unclosed.
+    function scanBrackets(src) {
+      const pairs = [];
+      const bad = [];
+      const stack = [];
+      for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === '"') {
+          i++;
+          while (i < src.length && src[i] !== '"') { if (src[i] === '\\') i++; i++; }
+          continue; // the loop's i++ steps past the closing quote
+        }
+        if (ch === ';') {
+          while (i < src.length && src[i] !== '\n') i++;
+          continue;
+        }
+        if (ch === '(' || ch === '[') { stack.push(i); continue; }
+        if (ch === ')' || ch === ']') {
+          const open = stack.length ? stack[stack.length - 1] : -1;
+          if (open >= 0 && src[open] === (ch === ')' ? '(' : '[')) {
+            stack.pop();
+            pairs.push({ from: open, to: i });
+          } else {
+            bad.push(i);
+          }
+        }
+      }
+      for (const open of stack) bad.push(open);
+      bad.sort((a, b) => a - b);
+      return { pairs, bad };
+    }
+
+    // The pair to highlight for a cursor at `pos`: a bracket the cursor is
+    // directly touching from the outside wins (classic match-at-cursor), then
+    // the innermost pair containing it. Returns a member of `pairs`, so the
+    // state field can compare by identity.
+    function enclosingForm(pairs, pos) {
+      let afterClose = null, beforeOpen = null, inner = null;
+      for (const p of pairs) {
+        if (p.to === pos - 1) afterClose = p;
+        if (p.from === pos) beforeOpen = p;
+        if (p.from < pos && pos <= p.to && (!inner || p.from > inner.from)) inner = p;
+      }
+      return afterClose || beforeOpen || inner;
+    }
+
+    function computeBrackets(state) {
+      const { pairs, bad } = scanBrackets(state.doc.toString());
+      return { pairs, bad, form: enclosingForm(pairs, state.selection.main.head) };
+    }
+
+    // Rescans only when the document changes; a bare cursor move re-picks the
+    // form from the existing pairs. Playback dispatches playhead effects at
+    // event rate, and those transactions touch neither, so they cost nothing.
+    const bracketField = StateField.define({
+      create: (state) => computeBrackets(state),
+      update(v, tr) {
+        if (tr.docChanged) return computeBrackets(tr.state);
+        if (!tr.selection) return v;
+        const form = enclosingForm(v.pairs, tr.state.selection.main.head);
+        return form === v.form ? v : { ...v, form };
+      },
+    });
+
+    // Drawn as a layer of rectangles for the same reason as the playhead: mark
+    // decorations split the text into inline boxes, which under lineWrapping
+    // can move the soft-wrap point as the highlight comes and goes.
+    const bracketLayer = layer({
+      above: false, // behind the glyphs — this is a fill, not an outline
+      class: 'cm-bracketLayer',
+      update: (update) =>
+        update.docChanged ||
+        update.viewportChanged ||
+        update.geometryChanged ||
+        update.startState.field(bracketField) !== update.state.field(bracketField),
+      markers: (view) => {
+        const state = view.state;
+        const doc = state.doc;
+        const v = state.field(bracketField);
+        const markers = [];
+        const add = (from, to, cls) => {
+          if (from >= to) return;
+          try {
+            for (const m of RectangleMarker.forRange(view, cls, EditorSelection.range(from, to))) {
+              markers.push(m);
+            }
+          } catch (_) {}
+        };
+        if (v.form) {
+          const { from, to } = v.form;
+          // Fill the span only for a form that lives on one document line —
+          // where the pair alone reads poorly because the line may soft-wrap.
+          // Filling a whole track or `def` block would dominate the editor, so
+          // those get the bracket marks only.
+          if (doc.lineAt(from).number === doc.lineAt(to).number) {
+            add(from, to + 1, 'cm-bracketForm');
+          }
+          add(from, from + 1, 'cm-bracketMatch');
+          add(to, to + 1, 'cm-bracketMatch');
+        }
+        for (const pos of v.bad) add(pos, pos + 1, 'cm-bracketBad');
+        return markers;
+      },
+    });
+
+    // Compact readout of unmatched brackets, top-right of the editor. Click
+    // jumps to the first one. Insertion is never automatic: where a missing
+    // bracket belongs is a guess, and in a music source a wrong guess silently
+    // changes what plays.
+    function syncBracketStatus() {
+      const el = document.getElementById('bracketStatus');
+      if (!el) return;
+      const n = editorView.state.field(bracketField).bad.length;
+      el.hidden = n === 0;
+      el.textContent = n === 1 ? '1 unmatched' : `${n} unmatched`;
+    }
+
+    document.getElementById('bracketStatus')?.addEventListener('click', () => jumpToUnmatched());
+
+    function jumpToUnmatched() {
+      const bad = editorView.state.field(bracketField).bad;
+      if (!bad.length) return;
+      const pos = bad[0];
+      editorView.dispatch({
+        selection: { anchor: pos, head: pos + 1 },
+        scrollIntoView: true,
+      });
+      editorView.focus();
+    }
 
     function summarizeFoldHead(state, range) {
       const openPos = Math.max(0, range.from - 1);
@@ -2171,6 +2319,8 @@
       playheadField,
       playheadLayer,
       buildFlashLayer,
+      bracketField,
+      bracketLayer,
       hoverField,
       barField,
       EditorView.domEventHandlers(valueEditHandlers),
@@ -2200,7 +2350,11 @@
       // (spamming `(` while playing then starved the audio pump). Rendering a
       // small window (the list stays complete and scrollable) drops that ~6×.
       autocompletion({ override: [mmlispCompletions], maxRenderedOptions: 12 }),
+      // Auto-close ( [ ", type over the closer, delete the pair on Backspace,
+      // and wrap the selection when a bracket is typed with text selected.
+      closeBrackets(),
       keymap.of([
+        ...closeBracketsKeymap,
         indentWithTab,
         { key: 'Enter', run: insertNewlineAndIndent },
         ...foldKeymap,
@@ -2219,6 +2373,7 @@
         // Compilation is manual (Build / Cmd-Ctrl+B); editing never compiles or
         // applies — see buildAction(). Only the param/cursor UI tracks edits.
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
+        if (update.docChanged) syncBracketStatus();
         if (update.docChanged || update.selectionSet) syncParamUI();
       }),
     ];
@@ -2231,6 +2386,7 @@
       parent: document.getElementById('editorWrap'),
     });
 
+    syncBracketStatus();
     initShortcutLabels();
 
     // IR preset → MMLisp source URL mapping
@@ -2274,6 +2430,7 @@
         doc: text,
         extensions: editorExtensions,
       }));
+      syncBracketStatus(); // setState fires no doc-change update
     }
 
     function highlightTrackLine(trackIdx, src) {
