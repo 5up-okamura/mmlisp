@@ -110,6 +110,29 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
    make note-boundary silence match ir. Needs design — spans gate key-off timing,
    PSG key-off vs macro-write ordering, and `:vel*` curve-release re-trigger.
 
+## PCM on hardware — two blockers, both outside the driver (2026-08-01)
+
+The Z80 PCM path is done and gate-verified; what is missing is on either side of
+it. Fix (2) BEFORE building a PCM song from the CLI, or the bank is silently
+wrong.
+
+1. **No host API publishes `G_SMP_BANK`.** `drv/sgdk/mmlispdrv.c` writes
+   `G_OVL_BANK` (0x1924) at init but nothing writes `G_SMP_BANK` (**0x1929**,
+   u16 LE, MB_RING+$39), so the mixer latches bank 0 and reads the 68k ROM head
+   as sample data — noise, not silence. Needs a `MMLisp_setSampleBank(const u8*)`
+   doing `bank = (u32)smp >> 15` exactly like `MMLisp_init`'s overlay publish, a
+   32 KB-aligned `BIN song_smp "song.smp" 32768` in `res/song.res` (the line is
+   already there, commented), and a note in drv/sgdk/README. The trace harness
+   does the same thing at `run-trace.mjs` (`ram[MB_BASE+0x39]`).
+2. **`drv/tools/wav.mjs loadSamplesForIr` ignores `:offset` / `:frames`.** It
+   loads the whole WAV for every sample def, so a mucom import — one bank WAV
+   that every def slices — gets the entire bank embedded once per sample, and
+   every sample plays from the bank's start. The browser path is correct
+   (`live/index.html sliceDecodedSample`), so **`mmb-build.mjs` and
+   `install-sgdk.mjs --song` are the broken ones**. Slice in `loadSamplesForIr`
+   the same way, honouring `s.offset`/`s.frames` (frames, not bytes) and clamping
+   to the file; `:loop-start`/`:loop-end` are relative to the slice.
+
 ## Remaining work (in rough priority order)
 
 1. **M3 tail** — **VOICE_SET + VOICE_TABLE coalescing DONE (2026-07-19)** (0x14
