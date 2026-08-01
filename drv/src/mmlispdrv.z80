@@ -3677,12 +3677,28 @@ pp_tick:
     push bc                 ; save tick counter
     ld hl,0
     ld (G_PCM_MUL),hl       ; acc = 0
+    ; Test each voice's PV_ACT here rather than inside pcm_voice_acc: an idle
+    ; voice then costs an absolute load and a branch (29) instead of a pointer
+    ; load, a call, an indexed load and a return (65). Two of the three are
+    ; usually idle, on every one of PCM_MIX_R ticks.
+    ld a,(G_PCMV+0*PCM_V_SIZE+PV_ACT)
+    or a
+    jr z,pp_v1
     ld ix,G_PCMV+0*PCM_V_SIZE
     call pcm_voice_acc
+pp_v1:
+    ld a,(G_PCMV+1*PCM_V_SIZE+PV_ACT)
+    or a
+    jr z,pp_v2
     ld ix,G_PCMV+1*PCM_V_SIZE
     call pcm_voice_acc
+pp_v2:
+    ld a,(G_PCMV+2*PCM_V_SIZE+PV_ACT)
+    or a
+    jr z,pp_sat
     ld ix,G_PCMV+2*PCM_V_SIZE
     call pcm_voice_acc
+pp_sat:
     ; saturate (G_PCM_MUL) i16 → i8 in A
     ld hl,(G_PCM_MUL)
     ld a,h
@@ -3746,9 +3762,7 @@ pcm_any_active:
 ; wrap the loop region or deactivate at a shot/tail end. Clobbers B (the caller
 ; brackets the three calls with push/pop bc, so the tick counter survives).
 pcm_voice_acc:
-    ld a,(ix+PV_ACT)
-    or a
-    ret z
+    ; the caller has already established PV_ACT is nonzero
     ld l,(ix+PV_POS+2)
     ld h,(ix+PV_POS+3)      ; HL = idx = pos>>16
     bit 2,(ix+PV_ACT)       ; hasLoop?
@@ -3795,20 +3809,37 @@ pva_add:
     add hl,de
     ld (G_PCM_MUL),hl     ; acc += sample
     ; pos += inc (32-bit)
-    ld l,(ix+PV_POS)
-    ld h,(ix+PV_POS+1)
-    ld e,(ix+PV_INC)
-    ld d,(ix+PV_INC+1)
-    add hl,de
-    ld (ix+PV_POS),l
-    ld (ix+PV_POS+1),h
-    ld l,(ix+PV_POS+2)
-    ld h,(ix+PV_POS+3)
-    ld e,(ix+PV_INC+2)
-    ld d,(ix+PV_INC+3)
-    adc hl,de
-    ld (ix+PV_POS+2),l
-    ld (ix+PV_POS+3),h
+    ; pos += inc, 32-bit. PV_INC ($5..$8) and PV_POS ($9..$C) are adjacent, so
+    ; walk them with DE/HL and chain the carry: (hl)/(de) cost 7 cycles where
+    ; (ix+d) costs 19, and the four bytes need no index arithmetic at all. This
+    ; ran 14 indexed accesses per voice per mix tick — 175 ticks a frame.
+    push ix
+    pop hl                  ; HL = voice
+    ld d,h
+    ld e,l                  ; DE = voice
+    ld bc,PV_INC
+    add hl,bc
+    ex de,hl                ; DE = &INC
+    ld bc,PV_POS
+    add hl,bc               ; HL = &POS
+    ld a,(de)               ; only (hl) can be an ALU operand, so the addend
+    add a,(hl)              ; comes through A and the sum lands back in POS
+    ld (hl),a
+    inc hl
+    inc de
+    ld a,(de)               ; ld does not touch flags, so the carry chains
+    adc a,(hl)
+    ld (hl),a
+    inc hl
+    inc de
+    ld a,(de)
+    adc a,(hl)
+    ld (hl),a
+    inc hl
+    inc de
+    ld a,(de)
+    adc a,(hl)
+    ld (hl),a
     ; loop wrap (non-releasing): while pos>>16 >= loopEnd: pos -= loopLen<<16
     bit 2,(ix+PV_ACT)
     ret z
