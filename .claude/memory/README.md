@@ -18,6 +18,12 @@ Index:
   trig), the remaining-work list (hardware bring-up, PAL, open ir↔drv
   divergences), the byte/stack budget, and how to verify. **The driver's
   compact record — roadmap.md does not cover driver internals.**
+- [plan-68k-split.md](plan-68k-split.md) — **architecture pivot (2026-08-02):
+  68k runs the sequencer, the Z80 becomes a PCM + chip-write engine.** The
+  measurements that forced it, the decisions taken (Z80 keeps the clock, SE to
+  the 68k, 3 PCM voices, no pre-resampling), what the freed RAM unlocks, and
+  the still-open interface questions. **Read this before touching the driver —
+  it supersedes the "68k offload is the last resort" line in drv/README.md.**
 - [plan-se.md](plan-se.md) — SE (sound effects): **core LANDED** (sample-bank
   separation, FM/PSG/PCM suspend-restore, priority, PCM per-channel volume).
   Kept for the remaining work — the BGM+SE bundler/link tool (not started),
