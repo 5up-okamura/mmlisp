@@ -1716,35 +1716,43 @@ process_macros:
     ld a,h
     or l
     ret z                   ; no macro table
-    ld bc,10*256            ; B = channel counter (the slot loop's B rides the
-                            ; stack across push bc/pop bc), C = channel 0
-    ld ix,CH_STATE+CHS_MSLOT ; induction variable: &slot[0] of chs(c). The outer
-                            ; loop only needed IY to derive this, and IX survives
-                            ; step_macro — so walk it (+64 per channel) instead of
-                            ; recomputing chs_ptr_iy for all 10 channels every frame.
+    ; Walk the 30 slots with HL, not IX. Nearly every slot is empty on nearly
+    ; every frame, so this loop is almost pure overhead — measured at 3,786
+    ; cycles a frame (6% of the budget) on a 9-track song with no macro running
+    ; at all. An empty slot now costs `ld a,(hl)` + `add hl,de` (18) instead of
+    ; `(ix+d)` + `add ix,de` (34), and the push/pop protecting the loop counters
+    ; moved onto the path that actually calls step_macro.
+    ld c,0                  ; C = channel
+    ld hl,CH_STATE+CHS_MSLOT ; induction variable: &slot[0] of chs(c)
+    ld de,4                 ; slot stride
 pm_ch:
-    push bc
     ld a,c
     ld (G_CH),a
     ld b,3
 pm_slot:
-    push bc
-    ld a,(ix+MSL_DESC)
-    cp $ff
+    ld a,(hl)               ; MSL_DESC — $FF is free, so inc sets Z on it
+    inc a
     jr z,pm_snext
-    ld a,(G_CH)
+    push bc
+    push hl
+    pop ix                  ; step_macro wants IX = slot base (HL unchanged)
+    push hl                 ; …and clobbers HL/BC/DE
+    ld a,c
     call chs_ptr_iy         ; restore IY = chs (step_macro leaves IY = descriptor)
     call step_macro
-pm_snext:
+    pop hl
+    pop bc
     ld de,4
-    add ix,de
-    pop bc
+pm_snext:
+    add hl,de
     djnz pm_slot
-    pop bc
-    ld de,64-3*4            ; the slot loop advanced IX by 3 slots; step to the
-    add ix,de               ; next channel's &slot[0]
+    ld de,64-3*4            ; the slot loop advanced HL by 3 slots; step to the
+    add hl,de               ; next channel's &slot[0]
+    ld de,4
     inc c
-    djnz pm_ch
+    ld a,c
+    cp 10
+    jr nz,pm_ch
     ret
 
 ; step_macro: IX = slot base, IY = chs, (G_CH) = channel. Advances one slot
