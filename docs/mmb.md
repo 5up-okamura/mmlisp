@@ -254,7 +254,8 @@ PCM data for `def :sample` (docs/language.md §9, §16). **As of the sample-bank
 separation (plan-se.md), this is NOT an MMB section — it is its own ROM bank**,
 so PCM blobs (the 32K-wall term) never crowd the 32KB control window. The
 exporter (`encodeMmb`) returns it separately (`{ bytes, sampleBank }`); the host
-loads it into a bank and publishes the bank number in `G_SMP_BANK`; the driver's
+loads it into a bank and publishes the bank number in `G_SMP_BANK` (SGDK:
+`MMLisp_setSampleBank(song_smp)` after `MMLisp_init`); the driver's
 PCM mixer latches that bank per frame (driver.md §14) and `pcm_note_on` latches
 it to read an entry. The image is unchanged in layout — the same
 `entry_count + entries + blobs` below — only its location moved out of the file.
@@ -288,7 +289,10 @@ bank's payload (past `entry_count`). Because the bank is separate, PCM-heavy
 songs no longer push the control MMB past the 32KB window; a bank that itself
 exceeds 32KB (many/large samples) is the next relaxation — multiple sample banks
 or WIDE_OFFSETS-style wide offsets — deferred to the shared-bank bundler
-(plan-se.md), not needed for the single-bank case.
+(plan-se.md), not needed for the single-bank case. Until then the **bank image
+(entry table + blobs) must fit one 32KB window**: `pcm_note_on` reads the low
+u16 of `offset` and addresses the blob from the window base, so a larger bank
+wraps and plays the wrong bytes. `encodeMmb` refuses to produce one.
 
 ## 11. VOICE_TABLE Section (0x0006)
 

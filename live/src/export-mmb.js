@@ -1144,6 +1144,18 @@ export function encodeMmb(ir, opts = {}) {
   let sampleBank = null;
   if (usesPcm && opts.samples) {
     sampleBank = new Uint8Array(buildSampleBank(ir, opts.samples, diag));
+    // The bank is its own window too: `pcm_note_on` reads the low u16 of an
+    // entry's offset and addresses blobs from the window base, so anything past
+    // 32KB wraps and plays another sample's bytes. Same wall as the MMB, and
+    // the same reserved way out (WIDE_OFFSETS, mmb.md §12) — refuse rather than
+    // ship a ROM that plays garbage. A mucom bank import is the usual way to
+    // hit it: trim `:frames`, drop unused samples, or lower `:rate`.
+    if (sampleBank.length > 0x8000) {
+      throw new RangeError(
+        `sample bank is ${sampleBank.length} bytes; exceeds the 32KB bank ` +
+          `window by ${sampleBank.length - 0x8000}`,
+      );
+    }
   } else if (usesPcm) {
     diag(
       "warning",
