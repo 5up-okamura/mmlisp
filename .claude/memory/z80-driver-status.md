@@ -110,28 +110,97 @@ User chose to leave it as-is for now (keep both fixes; do NOT revert).
    make note-boundary silence match ir. Needs design — spans gate key-off timing,
    PSG key-off vs macro-write ordering, and `:vel*` curve-release re-trigger.
 
-## PCM on hardware — two blockers, both outside the driver (2026-08-01)
+## PCM on hardware — the two blockers are FIXED (2026-08-01)
 
-The Z80 PCM path is done and gate-verified; what is missing is on either side of
-it. Fix (2) BEFORE building a PCM song from the CLI, or the bank is silently
-wrong.
+Both were outside the driver (the Z80 PCM path was already gate-verified), and a
+third silent-failure mode turned up while fixing them.
 
-1. **No host API publishes `G_SMP_BANK`.** `drv/sgdk/mmlispdrv.c` writes
-   `G_OVL_BANK` (0x1924) at init but nothing writes `G_SMP_BANK` (**0x1929**,
-   u16 LE, MB_RING+$39), so the mixer latches bank 0 and reads the 68k ROM head
-   as sample data — noise, not silence. Needs a `MMLisp_setSampleBank(const u8*)`
-   doing `bank = (u32)smp >> 15` exactly like `MMLisp_init`'s overlay publish, a
-   32 KB-aligned `BIN song_smp "song.smp" 32768` in `res/song.res` (the line is
-   already there, commented), and a note in drv/sgdk/README. The trace harness
-   does the same thing at `run-trace.mjs` (`ram[MB_BASE+0x39]`).
-2. **`drv/tools/wav.mjs loadSamplesForIr` ignores `:offset` / `:frames`.** It
-   loads the whole WAV for every sample def, so a mucom import — one bank WAV
-   that every def slices — gets the entire bank embedded once per sample, and
-   every sample plays from the bank's start. The browser path is correct
-   (`live/index.html sliceDecodedSample`), so **`mmb-build.mjs` and
-   `install-sgdk.mjs --song` are the broken ones**. Slice in `loadSamplesForIr`
-   the same way, honouring `s.offset`/`s.frames` (frames, not bytes) and clamping
-   to the file; `:loop-start`/`:loop-end` are relative to the slice.
+1. **`MMLisp_setSampleBank(const u8*)` — DONE.** `drv/sgdk/mmlispdrv.c`/`.h`
+   publish `G_SMP_BANK` (**0x1929**, u16 LE, MB_RING+$39) as `(u32)smp >> 15`,
+   bus-held, the same shape as `MMLisp_init`'s overlay publish. **Must be called
+   after `MMLisp_init`** — init's `Z80_clear()` wipes Z80 RAM. Unpublished is
+   **not** "noise" (an earlier note here said so — wrong): bank 0 means *none*,
+   `pcm_note_on` does `ret z` at its first instruction, so PCM notes are dropped
+   and the DAC is never even enabled — it sounds like a missing part. Noise is
+   what a *wrong non-zero* bank gives. `example/song.res`
+   documents the `BIN song_smp "song.smp" 32768` line (still shipped commented —
+   rescomp fails on a BIN whose file is absent), `example/main.c` carries the
+   commented call, README gained §PCM sample banks, and `install-sgdk --song`
+   **uncomments the BIN line itself when it created song.res that run** (never in
+   a project-owned one) and prints the remaining main.c step.
+2. **`loadSamplesForIr` now slices `:offset`/`:frames` — DONE.** It mirrors the
+   browser's `sliceDecodedSample` (frames, not bytes; clamps to the file; skips
+   an empty slice with a diagnostic; `:loop-start`/`:loop-end` stay relative to
+   the slice), and decodes each WAV **once, cached by path**, since a bank import
+   is one file that every def cuts up. `buildMmb` threads the new diagnostics out
+   with the compile/export ones. Gate: **`drv/tests/m3-pcm-slice.mmlisp`** (three
+   defs over one WAV incl. an open-ended `:offset`) — added to `verify:m3`,
+   ab-baseline re-frozen at **40 scores (18 clean)**. Verified byte-exactly by
+   decoding the `.smp`: 512 blob bytes for three slices of a 512-frame WAV, each
+   region matching, where before it was 3×512 all starting at frame 0.
+3. **NEW guard: a sample bank > 32 KB is now refused** (`encodeMmb`, RangeError
+   like the MMB one; mmb.md §10 updated). `pcm_note_on` reads only the **low u16**
+   of an entry's `offset` and addresses blobs from the window base, so a larger
+   bank silently wraps and plays another sample's bytes. This is the wall a real
+   mucom import is most likely to hit next; WIDE_OFFSETS / multi-bank remains the
+   deferred way out. Note fix (2) is also what makes the wall reachable at all —
+   before it, every def carried the whole bank.
+
+**First on-target attempt, same day — three host-side traps, none in the driver.**
+The user's SGDK project (`~/build/verify-hello-world`, a 9-track mucom import)
+had the driver files current and the `BIN song_smp` line uncommented, and still
+played no PCM. Diagnosis method worth repeating: **run their built `res/song.mmb`
++ `res/song.smp` straight through `runTrace` and count `$2A` writes** — 1 write
+per 600 frames vs 94,851 with the bank published settles it in seconds, without
+an emulator.
+
+1. `MMLisp_setSampleBank(song_smp)` was still commented out in *their* main.c.
+   The BIN line alone only puts the blob in ROM; nothing tells the Z80 where.
+2. `#define TRACK_COUNT 5` against a **9-track** song — ids 5..8 (the PCM track
+   is id 5, ch 20) were never started. `mmb-build` prints the real count.
+3. The **mailbox ring holds 7 entries, not 8** (`head == tail` = empty), and
+   `mailbox_send` drops the overflow silently — so >7 tracks cannot all start in
+   one frame, which is exactly what example/main.c told them to do. Docs and the
+   example now carry the ceiling; `install-sgdk` prints it when a score has >7
+   tracks. Also fixed the same off-by-one in `run-trace.mjs` (it guarded `> 8`,
+   so an 8-track autoStart would have set `head == tail` and started nothing).
+
+**PCM PLAYS ON TARGET (BlastEm, 2026-08-01) — and it is far too slow.** Tempo
+drags and the sample pitch sits way below where it belongs, i.e. the Z80 is
+missing interrupts. Measured, not guessed (`runTrace(..., {profile: symbols})`,
+new opt-in cycle profiler — see below), on their 9-track song over 900 frames:
+
+| | PCM on | same song, `G_SMP_BANK`=0 |
+| --- | --- | --- |
+| median | **211,784 (355%)** | 18,937 (32%) |
+| p99 | 257,023 (431%) | 57,966 (97%) |
+| over budget | **90.9%** | 0.9% |
+| effective rate | **1 frame per 3.32** | — |
+
+So the FM/PSG engine is fine (matches the gh002 baseline exactly); the soft-mixer
+alone is **~193k cycles/frame ≈ 3.2× the whole budget with ONE voice active**.
+Per mix tick (175/frame) it burns ~983 cycles: `pva_add` 292 (the 32-bit phase
+update, ~14 IX-indexed accesses at 19-20 cycles each), `pcm_voice_acc` entry ×3
+149, `pp_tick` body 156, `ym_hw` DAC write **115 (two BUSY polls)**, `pva_fetch`
+94, `pp_have` 59, `pva_shot` 58, `pva_shtest` 40. Reference point: XGM mixes 4
+channels at 14 kHz in ~25 cycles/sample/channel — it keeps state in registers and
+**does not resample**. Our 12× gap is architectural, not a Z80 limit. Note the
+emulator omits bank-window ROM wait states, so 3.55× is a **floor**.
+
+Ordered fix list (not started, design not yet confirmed):
+1. **DAC write without the BUSY poll** (`$2A` is port 0 and every MD PCM driver
+   writes it blind) — ~15.6k/frame, **26% of budget**, trace-identical, ~10 B.
+2. **Voice-outer restructure**: mix one voice for all 175 ticks with pos/inc
+   register-resident (alt set), into a 175 B mix buffer — **the overlay slot
+   ($17DE–$18EF, 274 B) is dead while `process_pcm` runs**, since it runs last in
+   `frame_step`. Target ~250 cyc/tick for 3 voices.
+3. `PCM_MIX_R` 175 → 128/96 as a quality/cycles knob (mirrored in
+   `live/src/mmb.js PCM_MIX_RATE`; changes output, so re-baseline the gates).
+
+**New tool: `runTrace(..., {profile: buildDriver().symbols})`** returns
+`frameCycles` + `byRoutine` (cycles attributed to the nearest preceding symbol;
+overlay code bucketed as `ovl<N>` via `G_CUR_OVL`). Opt-in, ~2× runtime. This is
+the measurement the notes above kept prescribing ad hoc — use it, do not guess.
 
 ## Remaining work (in rough priority order)
 
