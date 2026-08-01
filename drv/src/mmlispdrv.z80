@@ -3658,6 +3658,12 @@ process_pcm:
     ; a different bank here is safe.
     ld hl,(G_SMP_BANK)
     call latch_bank
+    ; Latch the DAC register ONCE for the whole mix loop. The YM2612 holds the
+    ; address written to port 0 until another address is written, and nothing
+    ; else touches the chip until the loop ends — so the per-tick write is just
+    ; the data byte. Saves the address write on every one of PCM_MIX_R ticks.
+    ld a,$2a
+    ld (YM_ADDR0),a
     ld b,PCM_MIX_R
 pp_tick:
     push bc                 ; save tick counter
@@ -3694,10 +3700,13 @@ pp_clipn:
     ld a,$80                ; -128
 pp_have:
     xor $80                 ; signed i8 → unsigned DAC
-    ld b,a
-    ld d,0
-    ld e,$2a
-    call ym_hw              ; raw DAC write (bypass shadow)
+    ; DAC feed: the data port only, WITHOUT the BUSY poll ym_hw does. The busy
+    ; flag guards the chip's internal write cycle for latched register writes;
+    ; the DAC data register is not one, and every Mega Drive PCM driver feeds it
+    ; blind. Polling it cost 115 cycles per tick — 20k a frame, a third of the
+    ; whole budget — waiting for something never set at a 10.5 kHz feed rate.
+    ; The same bytes still reach the chip, so register traces are unchanged.
+    ld (YM_DATA0),a
     pop bc
     djnz pp_tick
     ; restore the MMB bank before returning — the next frame's dispatch, LUT

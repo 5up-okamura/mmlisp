@@ -42,6 +42,12 @@ export function runTrace(
     // (plan-se.md SE gate) no track auto-starts; the `commands` schedule drives
     // START_TRACK / START_SE, so the SE track can be held back until mid-song.
     autoStart = true,
+    // Cycle profiling. Pass buildDriver()'s symbol map to get, per frame, the
+    // Z80 cycles the frame cost and where they went. A frame is 59,659 cycles;
+    // overrunning costs a whole frame (the next /INT is missed), which is
+    // audible as half-speed tempo and a detuned PCM feed — so this is the tool
+    // for "it plays but it drags". Off by default: it costs ~2x runtime.
+    profile = null,
   } = {},
 ) {
   if (driverBin.length > MB_BASE) {
@@ -124,8 +130,17 @@ export function runTrace(
   // caller drives starts explicitly (SE gate), where the command schedule posts
   // START_TRACK / START_SE itself and the ring starts empty.
   const tracks = readTrackTable(mmbBytes);
-  if (tracks.length > 8) throw new Error("more tracks than mailbox cells");
   if (autoStart) {
+    // The ring holds 8 cells but only 7 entries: head==tail means empty, so at
+    // 8 the head wraps onto the tail and the driver drains nothing. A song with
+    // more tracks than that is legal — the host just has to spread the starts
+    // over frames — so drive it with a command schedule instead of autoStart.
+    if (tracks.length > 7) {
+      throw new Error(
+        `${tracks.length} tracks exceeds the 7-entry mailbox ring; ` +
+          `pass autoStart:false and post START_TRACK over several frames`,
+      );
+    }
     tracks.forEach((t, i) => {
       const cell = MB_BASE + i * 4;
       ram[cell + 1] = t.trackId; // a0
@@ -157,16 +172,64 @@ export function runTrace(
     ram[MB_HEAD] = (head + 1) & 7;
   };
 
+  // Profiling: attribute each instruction's cycles to the nearest preceding
+  // symbol. Overlay code all lives at one address, so it is bucketed by the
+  // overlay index the driver has loaded (G_CUR_OVL) rather than by symbol.
+  const symEntries = profile
+    ? profile instanceof Map
+      ? [...profile]
+      : Object.entries(profile)
+    : null;
+  const OVERLAY_SLOT =
+    symEntries?.find(([n]) => n === "OVERLAY_SLOT")?.[1] ?? 0x17de;
+  const G_CUR_OVL = MB_BASE + 0x38;
+  const symTab = symEntries
+    ? symEntries
+        .filter(([n, a]) => typeof a === "number" && a > 0 && a < OVERLAY_SLOT &&
+          // tables.z80's LUT offsets are plain `equ` constants, not addresses.
+          // Small ones land inside the code region and would otherwise steal
+          // the cycles of whatever routine actually spans them.
+          !n.endsWith("_OFF"))
+        .sort((a, b) => a[1] - b[1])
+    : null;
+  const symAddrs = symTab?.map(([, a]) => a);
+  const byRoutine = new Map();
+  const frameCycles = [];
+  const siteFor = (pc) => {
+    if (pc >= OVERLAY_SLOT) return `ovl${ram[G_CUR_OVL]}`;
+    let lo = 0;
+    let hi = symAddrs.length - 1;
+    let best = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (symAddrs[mid] <= pc) {
+        best = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return symTab[best][0];
+  };
+
   // Frame loop.
   const markerLog = []; // per-frame snapshot of each track's MB_TSTAT id bits
   for (frame = 0; frame < frames; frame++) {
     for (const c of cmdByFrame.get(frame) ?? []) postCommand(c);
     cpu.intRequest();
     let s = 0;
+    let cycles = 0;
     while (s++ < maxStepsPerFrame) {
-      cpu.step();
+      if (profile) {
+        const pc = cpu.pc;
+        const c = cpu.step();
+        cycles += c;
+        const site = siteFor(pc);
+        byRoutine.set(site, (byRoutine.get(site) ?? 0) + c);
+      } else {
+        cpu.step();
+      }
       if (cpu.halted && !cpu.intPending) break;
     }
+    if (profile) frameCycles.push(cycles);
     if (!cpu.halted) throw new Error(`frame ${frame} did not finish`);
     markerLog.push(
       Array.from({ length: tracks.length }, (_, i) => ram[MB_TSTAT + i] & 0x3f),
@@ -175,7 +238,14 @@ export function runTrace(
 
   // stackMin = the lowest SP reached across boot + every frame (the stack
   // watermark; tools/budget.mjs turns it into "bytes used vs STACK_FLOOR").
-  return { frames, writes, ram, markerLog, stackMin: cpu.spMin };
+  return {
+    frames,
+    writes,
+    ram,
+    markerLog,
+    stackMin: cpu.spMin,
+    ...(profile ? { frameCycles, byRoutine } : {}),
+  };
 }
 
 function readTrackTable(b) {
