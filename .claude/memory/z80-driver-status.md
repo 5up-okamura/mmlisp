@@ -197,6 +197,26 @@ Ordered fix list (not started, design not yet confirmed):
 3. `PCM_MIX_R` 175 → 128/96 as a quality/cycles knob (mirrored in
    `live/src/mmb.js PCM_MIX_RATE`; changes output, so re-baseline the gates).
 
+**The FM/PSG side is the other half of the problem, and its shape is a tail.**
+Same song, sample bank withheld: median 20,380 (34%) but **p90 76%, p95 90%** —
+only 85% of frames leave 20k cycles free, 92% leave 10k. Since PCM cost is a
+near-constant per frame, the right question is not "does the median fit" but
+"what fraction of frames does a constant N push over", and at 175 ticks even
+2 natural-pitch voices (26.6k) puts **19.4%** of frames over. Landed so far:
+the 30-slot macro scan walked with HL instead of IX (3,786 → ~1,550 cyc/frame,
+3 B, 0-diff). Still on the table: the sweep/fade scans (~2,400) and the 16-TCB
+idle skip (~700) — but note the per-track tick loop (`fs_tick`/`fs_wait`,
+6,571) resists register-hoisting, because at ~2 ticks/track/frame the
+setup/spill cost cancels the per-tick win.
+
+**The tail itself is flat — there is no hotspot.** `profileSplitAt: 40000` says
+the note-onset frames (168 of 1200, avg 50,701 cyc) spread across 40+ routines,
+the largest being 6.6%. The recoverable clusters are **software arithmetic**
+(`mt_l` multiply 1,559 + `cfb_div` 1,351 + `dm100_lp` 1,865 = 4,775/heavy frame,
+9.4% — candidates for ROM LUTs, the LUT_TABLE pattern) and `chs_ptr_iy` (2,341).
+A level-composition cache (skip recomposing TL when voice/vel/vol/master are
+unchanged) is the untested structural idea. Expect ~20% off the tail, not more.
+
 **New tool: `runTrace(..., {profile: buildDriver().symbols})`** returns
 `frameCycles` + `byRoutine` (cycles attributed to the nearest preceding symbol;
 overlay code bucketed as `ovl<N>` via `G_CUR_OVL`). Opt-in, ~2× runtime. This is
