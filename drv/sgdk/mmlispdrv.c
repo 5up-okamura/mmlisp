@@ -15,6 +15,7 @@
 #define MB_TSTAT       0x1912   // 16 per-track status bytes
 #define MB_READY       0x1922   // 0xD2 when the driver main loop is up
 #define G_OVL_BANK     0x1924   // overlay ROM bank (host sets at init; driver.md §5)
+#define G_SMP_BANK     0x1929   // PCM sample-bank ROM bank (host sets; 0 = none)
 #define VAL_SLOTS      0x1930   // 16 x i16 dynamic value slots (68k read/write)
 
 // Command ids (docs/opcodes.md / driver.md §6.2).
@@ -27,8 +28,10 @@
 
 // Post one command into the mailbox ring. The 68k requests the Z80 bus (which
 // halts the Z80), so the access is fully serialized; we still write the cmd
-// byte last to honor the ring discipline. Drops the command if the ring is
-// full (8 pending) — with per-frame draining that never happens in practice.
+// byte last to honor the ring discipline. Drops the command **silently** once
+// the ring is full: 8 cells hold 7 entries, since head == tail means empty. The
+// Z80 drains every frame, so the only way to hit it is a burst — starting a
+// song with more than 7 tracks in one frame. Split those across two frames.
 static void mailbox_send(u8 cmd, u8 a0, u8 a1, u8 a2)
 {
     Z80_requestBus(TRUE);
@@ -92,6 +95,25 @@ bool MMLisp_isReady(void)
     u8 ready = *Z80_RAM_AT(MB_READY);
     Z80_releaseBus();
     return ready == 0xD2;
+}
+
+void MMLisp_setSampleBank(const u8* smp)
+{
+    // PCM blobs ride their own 32 KB-aligned ROM bank (song.smp), which the
+    // mixer latches per frame and swaps back to G_MMB_BANK before returning
+    // (driver.md §5, §14). Publishing it is a plain global write, not a mailbox
+    // command: the driver only ever reads it.
+    //
+    // Call this AFTER MMLisp_init — init's Z80_clear() wipes Z80 RAM — and
+    // before starting a PCM track. 0 means "no sample bank": pcm_note_on
+    // returns immediately, so every PCM note is dropped and the song plays FM
+    // and PSG only, with the DAC never even enabled. That is the failure you
+    // get by forgetting this call, and it looks exactly like a missing track.
+    u16 bank = smp ? (u16)((u32)smp >> 15) : 0;
+    Z80_requestBus(TRUE);
+    *Z80_RAM_AT(G_SMP_BANK)     = bank & 0xFF;
+    *Z80_RAM_AT(G_SMP_BANK + 1) = (bank >> 8) & 0xFF;
+    Z80_releaseBus();
 }
 
 void MMLisp_startTrack(const u8* mmb, u8 track_id)

@@ -94,6 +94,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
      `main.c`. Leave the compression field unset: a compressed BIN is unpacked
      to RAM, and both blobs must stay in ROM for the Z80's bank window to reach
      them.
+     A PCM score adds a third blob, `res/song.smp` — see "PCM sample banks".
    - your `src/main.c` (start from `example/main.c`)
 
 3. **`make`** with SGDK as usual, then run the `.bin`/`.md` in an emulator.
@@ -122,13 +123,18 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb ──rescomp(BIN)──▶ 
   `MMLisp_fadeTrack` for DJ-style scene transitions (fade one scene's tracks
   while starting the next).
 
-- **Starting tracks: one per frame.** `MMLisp_startTrack` makes the Z80 load
-  three overlays and a full voice before the first note. A 60 Hz frame gives the
-  Z80 about 59,600 cycles; starting five tracks in one frame is several times
-  that, and the overrun is audible as a ragged opening bar. Post one
-  `MMLisp_startTrack` per frame instead (five tracks = 83 ms, inaudible) — see
-  `example/main.c`. The same applies to any host-side burst: keep per-frame work
-  on the Z80 bounded.
+- **Starting tracks: all in one frame, up to seven.** Post every
+  `MMLisp_startTrack` in the same frame — each track's clock starts in the frame
+  the driver sets it up in, so staggering the starts leaves the tracks
+  permanently out of phase by that many frames. The setup frame is silent by
+  construction (`T_STATUS` armed, `docs/driver.md` §4.2), so a burst of starts
+  costs one long frame nobody hears rather than a ragged opening bar.
+
+  The limit is the ring, not the cycles: it has 8 cells but holds **7 entries**
+  (`head == tail` means empty), and `mailbox_send` drops anything past that
+  **silently**. A song with more than 7 tracks must split its starts across two
+  frames — those tracks then begin one frame late, which is the price. Same rule
+  for any host-side burst: at most 7 commands per frame.
 
 - **Markers.** Each track mirrors the last `MARKER` it passed into a status
   byte; `MMLisp_trackStatus(i)` reads it (bit7 active, bit6 fading, bits5-0
@@ -147,6 +153,49 @@ by construction (`docs/mmb.md` §12), so one aligned blob always fits one
 window. (If your rescomp rejects 32768, align via a linker section instead, or
 place the MMB first in a bank.) Multiple simultaneous tracks must come from the
 **same** MMB in M1 — one window, one bank.
+
+### PCM sample banks
+
+A score with `def :sample` compiles to **two** blobs: the MMB and a `song.smp`
+sidecar holding the raw 8-bit sample data (`docs/mmb.md` §10). The samples live
+outside the MMB because one window cannot hold both — so `song.smp` gets its own
+32 KB-aligned bank, which the soft-mixer latches for the mix and swaps back
+before returning (`docs/driver.md` §5, §14).
+
+Three things, all of them required:
+
+```
+res/song.res:   BIN song_smp "song.smp" 32768
+main.c:         MMLisp_init(mmlisp_ovl);
+                MMLisp_setSampleBank(song_smp);      // after init, before playing
+```
+
+The BIN line ships commented out in the seed `song.res` because rescomp fails on
+a BIN whose file does not exist; uncomment it for a PCM score.
+`MMLisp_setSampleBank` must come **after** `MMLisp_init` — init clears Z80 RAM,
+which would wipe an earlier publish. Non-PCM scores need no call at all.
+
+**Uncommenting the BIN line alone does nothing.** rescomp then puts `song.smp`
+in the ROM and declares the symbol, but nobody tells the Z80 where it is:
+`G_SMP_BANK` stays 0, `pcm_note_on` returns immediately, and the song plays FM
+and PSG with **every PCM note dropped and the DAC never enabled** — it sounds
+like a missing part, not like noise. Measured on a real 9-track import: 1 `$2A`
+write over 600 frames without the call, 94,851 with it. (Noise is what a
+*wrong* non-zero bank gives you.)
+
+Two more things that silence PCM without any error, both host-side:
+
+- **Your track count must cover the PCM tracks.** `mmb-build` prints
+  `N tracks — 0:fm1 1:fm2 …`; a `TRACK_COUNT` smaller than N simply never starts
+  the tail of that list, and the PCM tracks are usually near the end.
+- **The mailbox ring holds 7 entries, not 8** (`head == tail` means empty). A
+  song with more than 7 tracks cannot have all of its starts posted in one
+  frame — `mailbox_send` drops the overflow silently. Post 7, then the rest on
+  the next frame; those tracks begin one frame later.
+
+`node tools/install-sgdk.mjs <project> --song mysong.mmlisp` writes
+`res/song.smp` alongside `res/song.mmb` and prints whichever of the two steps
+above is still missing.
 
 ## Confirming it works
 

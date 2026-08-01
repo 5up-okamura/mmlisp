@@ -30,6 +30,15 @@ void MMLisp_init(const u8* overlay_rom);
 // for a non-blocking readiness check.
 bool MMLisp_isReady(void);
 
+// Publish the PCM sample bank. A score with `def :sample` compiles to two
+// blobs: the MMB and a `song.smp` sidecar holding the sample data, which rides
+// its own 32 KB-aligned ROM bank (`BIN song_smp "song.smp" 32768`). Pass the
+// rescomp symbol for it; the driver latches that bank around each frame's
+// soft-mix. Call once after MMLisp_init (init clears Z80 RAM) and before
+// starting a PCM track: with no bank published the driver drops every PCM note
+// and the song plays FM/PSG only. Non-PCM scores need no call.
+void MMLisp_setSampleBank(const u8* smp);
+
 // Start a track by its MMB track id (the id from the TRACK_TABLE; see the
 // build output of drv/tools/mmb-build.mjs). `mmb` points at the MMB blob in
 // ROM and MUST be aligned to a 32 KB boundary — the driver reads the file from

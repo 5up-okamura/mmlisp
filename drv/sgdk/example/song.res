@@ -12,6 +12,8 @@
 BIN song_mmb   "song.mmb"          32768
 BIN mmlisp_ovl "mmlispdrv_ovl.bin" 32768
 
-# A PCM song also exports a sample bank sidecar (song.smp, mmb.md §10). Add it
-# once the host glue can publish G_SMP_BANK:
+# A PCM song also exports a sample bank sidecar (song.smp, mmb.md §10) — it
+# rides its own bank, so it needs the same alignment. Uncomment it when your
+# score uses samples (rescomp fails on a BIN whose file is absent), and call
+# MMLisp_setSampleBank(song_smp) after MMLisp_init.
 # BIN song_smp "song.smp" 32768

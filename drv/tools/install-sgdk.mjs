@@ -143,10 +143,12 @@ const counts = { created: 0, updated: 0, unchanged: 0, kept: 0 };
 const plan = [...FILES];
 if (opts.example) plan.push({ src: "example/main.c", dest: "src/main.c", own: "seed" });
 
+let resState = null; // how res/song.res fared — a seed we wrote is ours to amend
 for (const f of plan) {
   const srcPath = join(sgdkDir, f.src);
   if (!existsSync(srcPath)) fail(`missing master file: ${relative(drvRoot, srcPath)}`);
   const state = install(srcPath, join(project, f.dest), f.own);
+  if (f.dest === "res/song.res") resState = state;
   counts[state]++;
   const note = state === "kept" ? "  (yours — left alone)" : "";
   console.log(`${dry}  ${MARK[state]} ${f.dest}${note}`);
@@ -163,7 +165,16 @@ if (opts.song) {
   console.log(`${dry}  > res/song.mmb  ${bytes.length} B  (${opts.song})`);
   // Track ids are the declaration order — what MMLisp_startTrack takes.
   const chans = (ir.tracks ?? []).map((t, i) => `${i}:${t.channel}`).join(" ");
-  console.log(`    ${ir.tracks?.length ?? 0} tracks — ${chans}`);
+  const trackCount = ir.tracks?.length ?? 0;
+  console.log(`    ${trackCount} tracks — ${chans}`);
+  // Both host-side ways to lose a track without any error: a TRACK_COUNT that
+  // stops short of this list, and a start burst deeper than the mailbox ring.
+  if (trackCount > 7) {
+    console.log(
+      `    (> 7: the mailbox ring drops the rest — post 7 starts, then the` +
+        ` remaining ${trackCount - 7} next frame)`,
+    );
+  }
   if (sampleBank?.length) {
     smpPath = join(project, "res", "song.smp");
     if (!opts.dryRun) writeFileSync(smpPath, sampleBank);
@@ -198,11 +209,29 @@ if (counts.kept && existsSync(resPath)) {
     );
   }
 }
+// A PCM score needs the sample bank declared as a BIN *and* published to the
+// driver. The BIN line alone is the trap: rescomp puts song.smp in the ROM and
+// declares the symbol, but G_SMP_BANK stays 0, so every PCM note is dropped and
+// the song plays FM/PSG only. The seed ships the BIN line commented out (rescomp refuses a BIN
+// whose file is missing), so uncomment it here now that song.smp exists — but
+// only in a song.res this run created. A project-owned one is never rewritten;
+// it just gets told. The bank publish is always the caller's own main.c.
 if (smpPath) {
+  let res = existsSync(resPath) ? readFileSync(resPath, "utf8") : "";
+  let hasSmpBin = /^\s*BIN\s+\S+\s+"?song\.smp/m.test(res);
+  const commented = /^#\s*(BIN\s+\S+\s+"?song\.smp.*)$/m;
+  if (!hasSmpBin && resState === "created" && commented.test(res)) {
+    res = res.replace(commented, "$1");
+    if (!opts.dryRun) writeFileSync(resPath, res);
+    console.log(`${dry}  ~ res/song.res  (enabled the song.smp BIN)`);
+    hasSmpBin = true;
+  }
   console.warn(
-    `\nnote: the score carries a PCM sample bank (res/song.smp), but the host` +
-      ` glue does not publish G_SMP_BANK yet — add the BIN line and the bank` +
-      ` publish before expecting sample playback (drv/sgdk/README.md).`,
+    `\nnote: this score carries a PCM sample bank (res/song.smp).` +
+      (hasSmpBin ? "" : `\n  - res/song.res: add   BIN song_smp "song.smp" 32768`) +
+      `\n  - main.c: call MMLisp_setSampleBank(song_smp) after MMLisp_init()` +
+      `\n    (REQUIRED — the BIN line alone leaves every PCM note dropped)` +
+      `\n  (drv/sgdk/README.md §PCM sample banks)`,
   );
 }
 console.log(

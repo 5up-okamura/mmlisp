@@ -372,7 +372,8 @@ slot).
 
 **PCM sample bank (plan-se.md).** PCM blobs are no longer in the MMB window —
 they ride their own ROM bank whose number the host publishes in `G_SMP_BANK`
-(also boot-preserved). The per-frame PCM mixer (`process_pcm`) latches
+(also boot-preserved; SGDK host API: `MMLisp_setSampleBank`, called after the
+image upload since that clears Z80 RAM). The per-frame PCM mixer (`process_pcm`) latches
 `G_SMP_BANK` for the mix and restores `G_MMB_BANK` before returning; `pcm_note_on`
 latches it to read the sample entry. This lifts the 32K wall for PCM data (only
 the small control MMB shares the one window) and is the enabler for BGM+SE

@@ -15,9 +15,11 @@
 #include "mmlispdrv.h"
 #include "song.h"        // rescomp: `song_mmb` and `mmlisp_ovl` (the overlay ROM)
 
-// Track ids come from the compile step:
+// Track ids come from the compile step, which prints the whole list:
 //   node drv/tools/mmb-build.mjs mysong.mmlisp res/song.mmb
-// (examples/source/demo1.mmlisp compiles to 5 tracks, ids 0..4.)
+// (examples/source/demo1.mmlisp compiles to 5 tracks, ids 0..4.) Set this to
+// that count — a smaller value silently leaves the tail of the list unstarted,
+// and PCM tracks tend to sit at the end.
 #define TRACK_COUNT 5
 
 // Driver state, at its published Z80 RAM addresses (docs/driver.md §5/§6.1).
@@ -106,6 +108,12 @@ int main(bool hardReset)
     // Bring up the Z80 driver: upload the resident image, publish the overlay
     // ROM bank (the driver loads cold code from it), boot, wait for ready.
     MMLisp_init(mmlisp_ovl);
+
+    // A score with `def :sample` also ships res/song.smp on its own ROM bank.
+    // Publish it here — uncommenting the BIN line in song.res is NOT enough:
+    // without this call the driver drops every PCM note and you hear FM/PSG
+    // only. demo1 has no PCM, so the call and its BIN line are both commented.
+    //   MMLisp_setSampleBank(song_smp);
 
     // NOT READY means the driver never reached its main loop, so the fault is
     // in the upload/reset path, not in the score (README "Confirming it works").
@@ -197,6 +205,10 @@ int main(bool hardReset)
         // the setup frame silent (T_STATUS armed, driver.md §4.2), so the cost of
         // starting several tracks at once is no longer audible as a ragged
         // opening — they all begin dispatching together on the next frame.
+        //
+        // Ceiling: the mailbox ring takes 7 entries per frame and drops the rest
+        // without a word. TRACK_COUNT > 7 (a mucom import easily has 9) must post
+        // the first 7 here and the remainder next frame.
         if (starting < TRACK_COUNT)
         {
             for (u8 id = 0; id < TRACK_COUNT; id++)
