@@ -48,6 +48,11 @@ export function runTrace(
     // audible as half-speed tempo and a detuned PCM feed — so this is the tool
     // for "it plays but it drags". Off by default: it costs ~2x runtime.
     profile = null,
+    // With `profile`, also bucket the routine costs of the frames that exceed
+    // this many cycles. The interesting frames are not the median ones — the
+    // median frame is cheap and the deadline is missed on the note-onset
+    // spikes, and a whole-run average hides what makes those spikes.
+    profileSplitAt = 0,
   } = {},
 ) {
   if (driverBin.length > MB_BASE) {
@@ -194,6 +199,9 @@ export function runTrace(
     : null;
   const symAddrs = symTab?.map(([, a]) => a);
   const byRoutine = new Map();
+  const byRoutineHeavy = new Map();
+  const thisFrame = new Map();
+  let heavyFrames = 0;
   const frameCycles = [];
   const siteFor = (pc) => {
     if (pc >= OVERLAY_SLOT) return `ovl${ram[G_CUR_OVL]}`;
@@ -224,12 +232,22 @@ export function runTrace(
         cycles += c;
         const site = siteFor(pc);
         byRoutine.set(site, (byRoutine.get(site) ?? 0) + c);
+        if (profileSplitAt) thisFrame.set(site, (thisFrame.get(site) ?? 0) + c);
       } else {
         cpu.step();
       }
       if (cpu.halted && !cpu.intPending) break;
     }
     if (profile) frameCycles.push(cycles);
+    if (profileSplitAt) {
+      if (cycles > profileSplitAt) {
+        heavyFrames++;
+        for (const [k, v] of thisFrame) {
+          byRoutineHeavy.set(k, (byRoutineHeavy.get(k) ?? 0) + v);
+        }
+      }
+      thisFrame.clear();
+    }
     if (!cpu.halted) throw new Error(`frame ${frame} did not finish`);
     markerLog.push(
       Array.from({ length: tracks.length }, (_, i) => ram[MB_TSTAT + i] & 0x3f),
@@ -245,6 +263,7 @@ export function runTrace(
     markerLog,
     stackMin: cpu.spMin,
     ...(profile ? { frameCycles, byRoutine } : {}),
+    ...(profileSplitAt ? { byRoutineHeavy, heavyFrames } : {}),
   };
 }
 
