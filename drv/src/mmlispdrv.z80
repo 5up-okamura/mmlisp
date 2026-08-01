@@ -3565,15 +3565,27 @@ pcs_run:
 ; Iterates TCBs ascending (matching the reference's per-track order); each
 ; fading track ramps its channel vol toward 0, then stops after N frames.
 process_fades:
-    ld ix,TCB_BASE
-    ld c,TCB_COUNT
+    ; Test the fading bit first, walking with HL. Almost no track is ever
+    ; fading, so this loop found nothing 16 times a frame at a cost of 1,432
+    ; cycles — 6% of the budget. bit n,(hl) is 12 cycles where (ix+d) is 19,
+    ; and both the status test and the IX the body needs move onto the path
+    ; that actually has a fade to run.
+    ld hl,TCB_BASE+T_FLAGS
+    ld b,TCB_COUNT
+    ld de,32
 pf_lp:
+    bit T_FADING,(hl)
+    jp z,pf_next            ; jp, not jr: taken on almost every iteration, and
+                            ; jp is 10 cycles where a taken jr is 12
+    push bc
+    push hl
+    push hl
+    pop ix
+    ld bc,-T_FLAGS
+    add ix,bc               ; IX = TCB base
     ld a,(ix+T_STATUS)
     or a
-    jp z,pf_next
-    bit T_FADING,(ix+T_FLAGS)
-    jp z,pf_next
-    push bc
+    jp z,pf_cont            ; idle track with a stale flag: nothing to fade
     ld a,(ix+T_CH)
     ld (G_CH),a
     call chs_ptr_iy         ; IY = channel block
@@ -3645,12 +3657,13 @@ pf_nocsm:
     ld l,a
     ld (hl),0
 pf_cont:
+    pop hl
     pop bc
+    ld de,32                ; the fade body clobbers DE
 pf_next:
-    ld de,32
-    add ix,de
-    dec c
-    jp nz,pf_lp
+    add hl,de
+    dec b
+    jp nz,pf_lp             ; the fade body is far past djnz's reach
     ret
 
 ; process_pcm: PCM soft-mix (driver.md §14). PCM_MIX_R ticks/frame; each tick
