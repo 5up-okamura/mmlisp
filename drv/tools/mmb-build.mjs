@@ -18,11 +18,17 @@ export function buildMmb(sourcePath) {
   // PCM songs need the sample blobs (SAMPLE_BANK); load the WAVs the compiler
   // resolved. Non-PCM songs skip this entirely.
   const opts = {};
+  const sampleDiags = [];
   if ((ir.metadata?.samples ?? []).length) {
-    opts.samples = loadSamplesForIr(ir);
+    opts.samples = loadSamplesForIr(ir, sampleDiags);
   }
   const { bytes, sampleBank, diagnostics: exportDiags } = encodeMmb(ir, opts);
-  return { bytes, sampleBank, ir, diagnostics: [...diagnostics, ...exportDiags] };
+  return {
+    bytes,
+    sampleBank,
+    ir,
+    diagnostics: [...diagnostics, ...sampleDiags, ...exportDiags],
+  };
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

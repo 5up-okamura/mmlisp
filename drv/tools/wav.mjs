@@ -54,13 +54,53 @@ export function loadWav(path) {
   return { data: out, sampleRate };
 }
 
+// One decode per file, shared by every def that slices it: an imported
+// instrument bank is one WAV that a dozen defs cut up, and re-reading it per
+// def is both slow and pointless.
+const wavCache = new Map();
+function loadWavCached(path) {
+  let wav = wavCache.get(path);
+  if (!wav) {
+    wav = loadWav(path);
+    wavCache.set(path, wav);
+  }
+  return wav;
+}
+
 // Build the encodeMmb `opts.samples` map from an IR's metadata.samples list.
-export function loadSamplesForIr(ir) {
+// `diagnostics`, when given, collects {severity, message} the caller prints.
+export function loadSamplesForIr(ir, diagnostics = null) {
+  const warn = (message) => {
+    if (diagnostics) diagnostics.push({ severity: "warning", message });
+    else console.warn(`wav: ${message}`);
+  };
   const samples = {};
   for (const s of ir.metadata?.samples ?? []) {
-    const { data, sampleRate } = loadWav(s.resolvedFile);
+    const { data, sampleRate } = loadWavCached(s.resolvedFile);
+    // A def may slice one file into many samples (`:offset` / `:frames`, in
+    // frames — mirrors sliceDecodedSample in the browser host). Without this a
+    // banked import embeds the whole bank once per def and every sample plays
+    // from the bank's start. `:loop-start`/`:loop-end` stay relative to the slice.
+    const total = data.length;
+    const offset = Number.isFinite(s.offset) ? Math.max(0, s.offset) : 0;
+    const want = Number.isFinite(s.frames) ? Math.max(0, s.frames) : total - offset;
+    if (offset >= total || want === 0) {
+      warn(
+        `sample "${s.name}": :offset ${offset} is past the end of ` +
+          `${s.file} (${total} frames) — empty, skipped`,
+      );
+      continue;
+    }
+    const end = Math.min(total, offset + want);
+    if (offset + want > total) {
+      warn(
+        `sample "${s.name}": :offset ${offset} + :frames ${want} exceeds ` +
+          `${total} frames — clamped to ${end - offset}`,
+      );
+    }
+    const slice = offset === 0 && end === total ? data : data.subarray(offset, end);
     samples[s.name] = {
-      data: Uint8Array.from(data, (v) => v & 0xff),
+      data: Uint8Array.from(slice, (v) => v & 0xff),
       baseRate: s.rate ?? sampleRate,
       loopStart: s.loopStart ?? null,
       loopEnd: s.loopEnd ?? null,

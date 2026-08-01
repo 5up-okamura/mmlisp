@@ -1,0 +1,11 @@
+; M3 gate: one WAV sliced into several samples by :offset / :frames (frames,
+; not bytes). This is how an imported instrument bank works — a single file
+; every def cuts a region out of — so the gate locks that the node loader
+; slices like the browser one instead of embedding the whole bank per def.
+; :loop-start / :loop-end are relative to the slice.
+(def hit  :sample :file "pad.wav" :offset 0   :frames 128)
+(def body :sample :file "pad.wav" :offset 128 :frames 256 :loop-start 20 :loop-end 200)
+(def tail :sample :file "pad.wav" :offset 384)
+(pcm1 hit  :tempo 120 :oct 4 :len 8 :vel 15  c e g c)
+(pcm2 body :mode loop :oct 4 :len 4 :vel 12  c _ e _)
+(pcm3 tail :oct 3 :len 4 :vel 13  _ g _ c)
