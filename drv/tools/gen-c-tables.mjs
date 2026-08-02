@@ -19,6 +19,7 @@ import {
   fmCarrierOpsForAlg,
   OP_ADDR_OFFSET,
 } from "../../live/src/ir-utils.js";
+import { SIN_LUT } from "../../live/src/mmb.js";
 
 const dst = join(dirname(fileURLToPath(import.meta.url)), "..", "68k", "tables.c");
 
@@ -92,6 +93,12 @@ ${rows(carrierMask, 8)}
 /* op1..op4 in OPN2 register space */
 const uint8_t MML_OP_ADDR_OFFSET[4] = {
 ${rows([...OP_ADDR_OFFSET], 4)}
+};
+
+/* sin loop waveform, (1 - cos(2*pi*t/256)) / 2 quantised to 0..255. The only
+ * curve that needs a table; the other seven are computed (driver.md §12.6). */
+const uint8_t MML_SIN_LUT[256] = {
+${rows([...SIN_LUT], 12)}
 };
 `,
 );

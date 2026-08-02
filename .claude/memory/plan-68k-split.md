@@ -159,13 +159,19 @@ pass solved that; the binding constraint is *cycles*.
   implements neither its PCM semantics nor its DAC ownership. `verify:all` is
   now selftest + the P0/P1 gates + the ir↔drv A/B. ab-baseline re-frozen: still
   **18 clean of 40**, with the PCM scores' signatures changed by design.
-- **P2 sequencer — M1 DONE 2026-08-03.** `drv/68k/{mmlispseq.h,mmlispseq.c,
+- **P2 sequencer — M1 + M2 DONE 2026-08-03.** `drv/68k/{mmlispseq.h,mmlispseq.c,
   gate_main.c}` + generated `tables.c`; gate `npm run c-gate` (tools/c-gate.mjs).
-  **6 scores byte-identical** (ab-core 392 slots, stress-m1, m3-voice,
-  m3-callret, m3-trig, m3-gate-tie); 5 PEND on opcodes not yet ported.
-  Remaining surface, straight off the gate: 0x61 PARAM_SWEEP, 0x62 PARAM_ADD,
-  0xE0 MACRO_SET, 0xC0 PCM_NOTE_ON — i.e. M2 motion, the M3 macro engine, PCM,
-  and the value machine.
+  **12 scores byte-identical**, 3 PEND. M2 covers the sweep engine
+  (PARAM_SWEEP/_STOP, 2 slots/channel, the 8 integer curves), PARAM_ADD +
+  read_param, TEMPO_SWEEP, cent pitch, CSM (ON/OFF/RATE const+swept), and the
+  §6.5 host API (key_off / set_param / fade_track's Bresenham ramp / set_val),
+  the last gated with a real host-command schedule (`m2-mailbox`, 3 cmds) —
+  c-gate grew sidecar `.cmds.json` support for that.
+  **M2 went in with zero gate failures on the first run**, which says the M1
+  groundwork (shadow validity, write paths, frame order) was the hard part.
+  **Remaining for M3, straight off the gate: 0xE0 MACRO_SET (+ the macro
+  engine), the value machine's stream ops, FM3_MODE/FM3_OP_PITCH, and 0xC0
+  PCM_NOTE_ON with PCM command emission.**
   Two things the C needs that the JS gets for free, both found BY the gate:
   - **a shadow-validity plane** — drv-player keys its shadow with a Map so an
     unwritten register never compares equal; a zero-initialised C array

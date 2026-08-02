@@ -298,10 +298,15 @@ the host too, so the gate runs both sides natively — no emulator, no assembler
 a debugger on each — and compares the SLOT STREAM, which is what the 68000
 actually hands the Z80.
 
-M1 is done and byte-identical on six corpus scores. Opcodes not yet ported stop
-their track fail-safe instead of mis-decoding a length, and the gate reports
-those scores as PEND with the opcode and the number of leading frames that
-matched — so the remaining surface reads straight off the gate output, and a
+M1 and M2 are done and byte-identical on twelve corpus scores — the core
+opcode set, the sweep engine and its eight integer curves, PARAM_ADD, tempo
+sweeps, cent pitch, CSM, and the host control API (key-off, set-param, the
+Bresenham fade), the last of these gated with a real host-command schedule.
+
+Opcodes not yet ported stop their track fail-safe instead of mis-decoding a
+length, and the gate reports those scores as PEND with the opcode and the
+number of leading frames that matched — so the remaining surface (the M3 macro
+engine, the value machine, FM3, PCM) reads straight off the gate output, and a
 regression upstream of a stop still shows up as that number falling.
 
 `68k/tables.c` is generated from `live/src/ir-utils.js` by `gen-c-tables.mjs`,

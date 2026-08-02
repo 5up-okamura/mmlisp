@@ -15,6 +15,8 @@
 #define SEC_TRACK_TABLE 0x0001
 #define SEC_EVENT_STREAM 0x0002
 #define SEC_VOICE_TABLE 0x0006
+#define SEC_VAL_TABLE 0x0005
+#define TRACK_FLAG_IS_CSM 0x02
 
 #define DUR_HOLD 0x00
 #define DUR_EXT 0xff
@@ -36,12 +38,20 @@ enum {
   OP_RET = 0x45,
   OP_LOOP_BREAK = 0x46,
   OP_PARAM_SET = 0x60,
-  OP_TEMPO_SET = 0x80
+  OP_PARAM_SWEEP = 0x61,
+  OP_PARAM_ADD = 0x62,
+  OP_PARAM_SWEEP_STOP = 0x65,
+  OP_TEMPO_SET = 0x80,
+  OP_TEMPO_SWEEP = 0x81,
+  OP_CSM_ON = 0xa0,
+  OP_CSM_OFF = 0xa1,
+  OP_CSM_RATE = 0xa2
 };
 
 /* Target ids (opcodes.md §7) */
 enum {
   T_NOTE_PITCH = 0x01,
+  T_TEMPO_SCALE = 0x03,
   T_VOL = 0x04,
   T_MASTER = 0x05,
   T_VEL = 0x06,
@@ -59,6 +69,7 @@ enum {
   T_FM_DT1 = 0x32,
   T_FM_SSG1 = 0x36,
   T_FM_AMEN1 = 0x3a,
+  T_FM_AMEN4 = 0x3d,
   T_FM_AMS = 0x3e,
   T_FM_FMS = 0x3f,
   T_PAN = 0x40,
@@ -133,6 +144,38 @@ static uint8_t enc_60(const MMLOp *o) {
 }
 static uint8_t enc_80(const MMLOp *o) {
   return (uint8_t)(((o->sl & 0x0f) << 4) | (o->rr & 0x0f));
+}
+
+/* ── Curves and sweeps (driver.md §4 step 3) ───────────────────────────────
+ * Integer-only and single-sourced: mmb.js curveUnit8 is THE definition, and
+ * both this and the Z80 are hand-ports of it, so the three cannot disagree.
+ * Ids 0-3 are one-shot easings, 4-7 periodic loop shapes. */
+static int curve_unit8(int id, int t) {
+  t &= 0xff;
+  switch (id) {
+    case 1: return (t * t) >> 8;                                  /* ease-in  */
+    case 2: return 255 - (((255 - t) * (255 - t)) >> 8);          /* ease-out */
+    case 3: return t < 128 ? (2 * t * t) >> 8
+                           : 255 - ((2 * (255 - t) * (255 - t)) >> 8);
+    case 4: return MML_SIN_LUT[t];
+    case 5: return t < 128 ? t << 1 : (255 - t) << 1;             /* triangle */
+    case 6: return t < 128 ? 0 : 255;                             /* square   */
+    default: return t;                                            /* linear/saw */
+  }
+}
+/* from + trunc((to-from)*unit/256) — truncating TOWARD ZERO, which is what
+ * the Z80's sign-magnitude shift does. */
+static int sweep_value(int from, int to, int unit8) {
+  int p = (to - from) * (unit8 & 0xff);
+  return from + (p < 0 ? -((-p) >> 8) : p >> 8);
+}
+static uint16_t sweep_step(int len, int loop) {
+  int n = len < 1 ? 1 : len;
+  long v;
+  if (loop) v = 65536L / n;
+  else if (n <= 1) return 0;
+  else v = 65536L / (n - 1);
+  return (uint16_t)(v > 0xffff ? 0xffff : v);
 }
 
 /* ── Level model (driver.md §7) ────────────────────────────────────────────
@@ -366,6 +409,102 @@ static void param_set(MMLSeq *s, int ch, int target, int value) {
 #undef OPRANGE
 }
 
+/* ── Reads (driver.md §6.4, §4.1) ─────────────────────────────────────────── */
+static int read_slot(const MMLSeq *s, uint8_t slot) {
+  /* Slot 0xFF is the built-in $time — frames since start, low 16 bits. */
+  if (slot == 0xff) return (int)(s->frame & 0xffff);
+  return s->val[slot & 0x0f];
+}
+
+/* The logical current value of a target, for the read-modify-write PARAM_ADD
+ * takes. Op-param fields mirror the Z80's read_op_param: the family selects
+ * the field, the low two bits the operator — reading state the sequencer
+ * already keeps, so a relative write has a real base instead of a silent 0. */
+static int read_param(const MMLSeq *s, int ch, int target) {
+  if (target == T_MASTER) return s->master;
+  if (target == T_VOL)
+    return ch < 6 ? s->fm[ch].vol : ch < 10 ? s->psg[ch - 6].vol : 31;
+  if (target == T_VEL)
+    return ch < 6 ? s->fm[ch].vel : ch < 10 ? s->psg[ch - 6].vel : 15;
+  if (target == T_GATE)
+    return ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
+  if (ch < 6) {
+    const MMLFmCh *c = &s->fm[ch];
+    if (target == T_NOTE_PITCH) return c->pitch_cents;
+    if (target == T_FM_FB) return c->feedback;
+    if (target == T_FM_ALG) return c->algorithm;
+    if (target >= T_FM_TL1 && target <= T_FM_TL1 + 3)
+      return c->ops[target - T_FM_TL1].voiced_tl;
+    if (target >= T_FM_AR1 && target <= T_FM_AMEN4) {
+      int fam = (target - T_FM_AR1) >> 2, op = (target - T_FM_AR1) & 3;
+      const MMLOp *o = &c->ops[op];
+      switch (fam) {
+        case 0: return o->ar;
+        case 1: return o->dr;
+        case 2: return o->d2r;
+        case 3: return o->rr;
+        case 4: return o->sl;
+        case 5: return o->rs;
+        case 6: return o->mul;
+        case 7: return o->dt;
+        case 8: return o->ssg;
+        default: return o->amen;
+      }
+    }
+  } else if (ch < 10 && target == T_NOTE_PITCH) {
+    return s->psg[ch - 6].pitch_cents;
+  }
+  return 0;
+}
+
+/* ── CSM (driver.md §9) ───────────────────────────────────────────────────── */
+static void set_reg27(MMLSeq *s, uint8_t value) {
+  s->reg27 = value;
+  ym(s, 0, 0x27, s->reg27);
+}
+static void write_timer_a(MMLSeq *s, int period) {
+  ym(s, 0, 0x24, (uint8_t)((period >> 2) & 0xff));
+  ym(s, 0, 0x25, (uint8_t)(period & 0x03));
+}
+
+/* ── Sweep slots ──────────────────────────────────────────────────────────── */
+static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int loop,
+                        int from, int to, int len) {
+  if (ch >= 10) return; /* fm3-op / pcm ids have no sweep engine */
+  MMLSweep *sl = s->sweeps[ch];
+  int idx = -1;
+  for (int i = 0; i < 2; i++)
+    if (sl[i].active && sl[i].target == target) { idx = i; break; }
+  if (idx < 0)
+    for (int i = 0; i < 2; i++)
+      if (!sl[i].active) { idx = i; break; }
+  if (idx < 0) idx = 0; /* overflow: evict slot 0, deterministically */
+  sl[idx].active = 1;
+  sl[idx].target = target;
+  sl[idx].curve_id = curve;
+  sl[idx].loop = (uint8_t)(loop ? 1 : 0);
+  sl[idx].from = from;
+  sl[idx].to = to;
+  sl[idx].len = (uint16_t)(len < 1 ? 1 : len);
+  sl[idx].frame = 0;
+  sl[idx].phase16 = 0;
+  sl[idx].step16 = sweep_step(len, loop);
+}
+static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
+  if (ch >= 10) return;
+  for (int i = 0; i < 2; i++)
+    if (s->sweeps[ch][i].active && s->sweeps[ch][i].target == target)
+      s->sweeps[ch][i].active = 0;
+}
+/* A new note cancels LOOP sweeps on its channel (opcodes.md §6: loop sweeps
+ * run "until PARAM_SWEEP_STOP / next note"). One-shots — fades, glides —
+ * survive it. */
+static void cancel_loop_sweeps(MMLSeq *s, int ch) {
+  if (ch >= 10) return;
+  for (int i = 0; i < 2; i++)
+    if (s->sweeps[ch][i].active && s->sweeps[ch][i].loop) s->sweeps[ch][i].active = 0;
+}
+
 /* ── VOICE_SET (driver.md §10) ──────────────────────────────────────────────
  * Apply a 29-byte VOICE_TABLE entry: the register-order block that a
  * full-voice PARAM_SET burst was coalesced into. Change-only is taken against
@@ -421,6 +560,7 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
 static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_gate,
                     int has_ex_gate, int legato) {
   int ch = t->channel_id;
+  cancel_loop_sweeps(s, ch);
   if (ch < 6) {
     MMLFmCh *c = &s->fm[ch];
     c->current_note = (uint8_t)note;
@@ -497,6 +637,9 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       case OP_END_OF_TRACK:
         t->pending_off = 0;
         channel_off(s, t->channel_id);
+        /* Stopping the fm3-csm track must clear CSM — the flag exists in the
+         * track table precisely so stopping never leaves the chip in it (§9). */
+        if (t->flags & TRACK_FLAG_IS_CSM) set_reg27(s, (uint8_t)(s->reg27 & ~0x80));
         t->running = 0;
         return;
       case OP_NOTE_ON: {
@@ -627,6 +770,78 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         voice_set(s, t->channel_id, st[t->pc + 1]);
         t->pc += 2;
         break;
+      case OP_PARAM_SWEEP: {
+        uint8_t target = st[t->pc + 1], curve = st[t->pc + 2], flags = st[t->pc + 3];
+        /* Dynamic endpoints: flags bit1/bit2 mark from/to as slot ids in the
+         * field's low byte, read live at dispatch (the note-on tier). */
+        int from = (flags & 2) ? read_slot(s, st[t->pc + 4])
+                               : (int16_t)rd16(st, t->pc + 4);
+        int to = (flags & 4) ? read_slot(s, st[t->pc + 6])
+                             : (int16_t)rd16(st, t->pc + 6);
+        int len = rd16(st, t->pc + 8);
+        t->pc += 10;
+        start_sweep(s, t->channel_id, target, curve, flags & 1, from, to, len);
+        break;
+      }
+      case OP_PARAM_SWEEP_STOP:
+        stop_sweep(s, t->channel_id, st[t->pc + 1]);
+        t->pc += 2;
+        break;
+      case OP_PARAM_ADD: {
+        uint8_t target = st[t->pc + 1];
+        int wide = (target == T_NOTE_PITCH || target == T_TEMPO_SCALE);
+        int delta = wide ? (int16_t)rd16(st, t->pc + 2) : (int8_t)st[t->pc + 2];
+        t->pc += (uint16_t)(2 + (wide ? 2 : 1));
+        param_set(s, t->channel_id, target,
+                  read_param(s, t->channel_id, target) + delta);
+        break;
+      }
+      case OP_TEMPO_SWEEP: {
+        int from = rd16(st, t->pc + 1), to = rd16(st, t->pc + 3);
+        int len = rd16(st, t->pc + 5);
+        uint8_t curve = st[t->pc + 7];
+        t->pc += 8;
+        s->tempo_sweep.active = 1;
+        s->tempo_sweep.curve_id = curve;
+        s->tempo_sweep.from = from;
+        s->tempo_sweep.to = to;
+        s->tempo_sweep.len = (uint16_t)(len < 1 ? 1 : len);
+        s->tempo_sweep.frame = 0;
+        s->tempo_sweep.phase16 = 0;
+        s->tempo_sweep.step16 = sweep_step(len, 0);
+        break;
+      }
+      case OP_CSM_ON:
+        t->pc += 1;
+        set_reg27(s, (uint8_t)(s->reg27 | 0x80));
+        break;
+      case OP_CSM_OFF:
+        t->pc += 1;
+        set_reg27(s, (uint8_t)(s->reg27 & ~0x80));
+        break;
+      case OP_CSM_RATE: {
+        uint8_t flags = st[t->pc + 1];
+        if (!(flags & 1)) {
+          /* The period reaches the driver precomputed; Hz never does. */
+          int period = rd16(st, t->pc + 2);
+          t->pc += 4;
+          write_timer_a(s, period);
+        } else {
+          int from = rd16(st, t->pc + 2), to = rd16(st, t->pc + 4);
+          int len = rd16(st, t->pc + 6);
+          uint8_t curve = st[t->pc + 8];
+          t->pc += 9;
+          s->csm_sweep.active = 1;
+          s->csm_sweep.curve_id = curve;
+          s->csm_sweep.from = from;
+          s->csm_sweep.to = to;
+          s->csm_sweep.len = (uint16_t)(len < 1 ? 1 : len);
+          s->csm_sweep.frame = 0;
+          s->csm_sweep.phase16 = 0;
+          s->csm_sweep.step16 = sweep_step(len, 0);
+        }
+        break;
+      }
       case OP_TEMPO_SET:
         /* Tempo is score-global: a TEMPO_SET on any track replaces the
          * increment for every track of its MMB (driver.md §3.2). */
@@ -645,6 +860,52 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         }
         return;
     }
+  }
+}
+
+/* ── Frame step 3: the engines (driver.md §4) ──────────────────────────────
+ * One sweep slot, one frame. Returns 1 when a one-shot completes and the
+ * caller should free the slot; loop sweeps never complete on their own. */
+static int process_sweep(MMLSeq *s, int ch, MMLSweep *sl) {
+  if (!sl->loop && sl->frame >= sl->len - 1) {
+    param_set(s, ch, sl->target, sl->to); /* land exactly on the endpoint */
+    return 1;
+  }
+  int unit = curve_unit8(sl->curve_id, sl->phase16 >> 8);
+  param_set(s, ch, sl->target, sweep_value(sl->from, sl->to, unit));
+  sl->phase16 = (uint16_t)(sl->phase16 + sl->step16);
+  if (!sl->loop) sl->frame++;
+  return 0;
+}
+static int process_global_sweep(MMLGlobalSweep *g, int *out) {
+  if (g->frame >= g->len - 1) {
+    *out = g->to;
+    return 1;
+  }
+  int unit = curve_unit8(g->curve_id, g->phase16 >> 8);
+  *out = sweep_value(g->from, g->to, unit);
+  g->phase16 = (uint16_t)(g->phase16 + g->step16);
+  g->frame++;
+  return 0;
+}
+static void stop_track(MMLSeq *s, MMLTrack *t) {
+  channel_off(s, t->channel_id);
+  if (t->flags & TRACK_FLAG_IS_CSM) set_reg27(s, (uint8_t)(s->reg27 & ~0x80));
+  t->running = 0;
+  t->fading = 0;
+}
+static void process_fades(MMLSeq *s) {
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *t = &s->trk[i];
+    if (!t->fading) continue;
+    t->fade_frame++;
+    t->fade_err += t->fade_vol;
+    while (t->fade_err >= (int32_t)t->fade_n) {
+      t->fade_err -= (int32_t)t->fade_n;
+      t->fade_cur--;
+    }
+    param_set(s, t->channel_id, T_VOL, t->fade_cur < 0 ? 0 : (int)t->fade_cur);
+    if (t->fade_frame >= t->fade_n) stop_track(s, t);
   }
 }
 
@@ -716,6 +977,25 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
       }
     }
   }
+  /* Step 3, in the normative order: sweeps ascending channel then slot, then
+   * the global tempo and CSM-rate sweeps, then the fades. */
+  for (int ch = 0; ch < 10; ch++) {
+    for (int i = 0; i < 2; i++) {
+      MMLSweep *sl = &s->sweeps[ch][i];
+      if (sl->active && process_sweep(s, ch, sl)) sl->active = 0;
+    }
+  }
+  if (s->tempo_sweep.active) {
+    int v;
+    if (process_global_sweep(&s->tempo_sweep, &v)) s->tempo_sweep.active = 0;
+    s->increment = (uint16_t)v;
+  }
+  if (s->csm_sweep.active) {
+    int v;
+    if (process_global_sweep(&s->csm_sweep, &v)) s->csm_sweep.active = 0;
+    write_timer_a(s, v);
+  }
+  process_fades(s);
   s->frame++;
   return encode_slot(s, slot_out);
 }
@@ -770,6 +1050,12 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     if (off + size > len) return -2;
     if (id == SEC_TRACK_TABLE) { track_table = mmb + off; track_table_len = size; }
     else if (id == SEC_EVENT_STREAM) { s->stream = mmb + off; s->stream_len = size; }
+    else if (id == SEC_VAL_TABLE && size >= 2) {
+      uint16_t vn = rd16(mmb, off);
+      if (vn > 16) vn = 16;
+      for (uint16_t k = 0; k < vn; k++)
+        s->val[k] = (int16_t)rd16(mmb, off + 2 + (uint32_t)k * 2);
+    }
     else if (id == SEC_VOICE_TABLE && size >= 2) {
       s->voice_count = rd16(mmb, off);
       s->voices = mmb + off + 2;
@@ -812,6 +1098,48 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   }
   emit_init_writes(s);
   return 0;
+}
+
+/* ── Host control (driver.md §6.5) ────────────────────────────────────────── */
+void mml_key_off(MMLSeq *s, uint8_t channel_id) {
+  channel_off(s, channel_id);
+  /* Release a len=0 hold: the track's dispatcher resumes. */
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].channel_id == channel_id && s->trk[i].held) s->trk[i].held = 0;
+}
+void mml_set_param(MMLSeq *s, uint8_t channel_id, uint8_t target, int value) {
+  param_set(s, channel_id, target, value);
+}
+void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames) {
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *t = &s->trk[i];
+    if (t->track_id != track_id || !t->running) continue;
+    if (frames == 0) {
+      stop_track(s, t);
+      return;
+    }
+    /* Bresenham vol ramp to 0 over `frames`, then stop — division-free. */
+    t->fading = 1;
+    t->fade_n = frames;
+    t->fade_err = 0;
+    t->fade_vol = read_param(s, t->channel_id, T_VOL);
+    t->fade_cur = t->fade_vol;
+    t->fade_frame = 0;
+    return;
+  }
+}
+void mml_set_val(MMLSeq *s, uint8_t slot, int16_t value) {
+  if (slot < 16) s->val[slot] = value;
+}
+
+void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2) {
+  switch (cmd) {
+    case 0x03: mml_key_off(s, a0); break;
+    case 0x04: mml_set_param(s, a0, a1, (int8_t)a2); break;
+    case 0x05: mml_fade_track(s, a0, a1); break;
+    case 0x06: mml_set_val(s, a0, (int16_t)(a1 | (a2 << 8))); break;
+    default: break; /* start/stop are driven by the host directly */
+  }
 }
 
 void mml_start_all(MMLSeq *s) {

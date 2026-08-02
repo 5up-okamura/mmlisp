@@ -11,7 +11,7 @@
 // that track fail-safe (mmb.md §13) and is reported as PENDING rather than
 // silently passing on a truncated stream.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,13 +69,27 @@ for (const score of scores) {
   const mmbPath = join(tmp, name.replace(/\.mmlisp$/, ".mmb"));
   writeFileSync(mmbPath, mmb);
 
+  // Host commands are not in the stream, so a score may carry a sidecar
+  // schedule — the same one the Z80 gates use. Both sides apply it at the top
+  // of the matching frame.
+  const cmdPath = score.replace(/\.mmlisp$/, ".cmds.json");
+  const commands = existsSync(cmdPath) ? JSON.parse(readFileSync(cmdPath, "utf8")) : [];
+  let cmdFile = null;
+  if (commands.length) {
+    cmdFile = join(tmp, name.replace(/\.mmlisp$/, ".cmds.txt"));
+    writeFileSync(
+      cmdFile,
+      commands.map((c) => `${c.frame} ${c.cmd} ${c.a0 ?? 0} ${c.a1 ?? 0} ${c.a2 ?? 0}`).join("\n") + "\n",
+    );
+  }
+
   const drv = new DrvPlayer();
   drv.loadMMB(mmb, sampleBank);
-  const ref = drv.captureSlotLog({ maxFrames: MAX_FRAMES, builder: new SlotBuilder() });
+  const ref = drv.captureSlotLog({ maxFrames: MAX_FRAMES, commands, builder: new SlotBuilder() });
 
   let out, incomplete = null;
   try {
-    out = execFileSync(exe, [mmbPath, String(MAX_FRAMES)], { maxBuffer: 1 << 28 });
+    out = execFileSync(exe, [mmbPath, String(MAX_FRAMES), ...(cmdFile ? [cmdFile] : [])], { maxBuffer: 1 << 28 });
   } catch (e) {
     if (e.status === 3) { out = e.stdout; incomplete = (e.stderr ?? "").toString().trim(); }
     else { console.error(`FAIL  ${name}: ${e.message}`); failures++; continue; }
@@ -118,7 +132,7 @@ for (const score of scores) {
     console.log(`FAIL  ${name} — ${bad}`);
     failures++;
   } else {
-    console.log(`ok    ${name} — ${ref.slots.length} slots, ${bytes} B, byte-identical`);
+    console.log(`ok    ${name} — ${ref.slots.length} slots, ${bytes} B${commands.length ? `, ${commands.length} host cmds` : ""}, byte-identical`);
   }
 }
 

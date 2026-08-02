@@ -36,6 +36,7 @@ extern const int16_t MML_VEL_PSG4[16];
 extern const int16_t MML_VOL_PSG4[32];
 extern const uint8_t MML_CARRIER_MASK[8];
 extern const uint8_t MML_OP_ADDR_OFFSET[4];
+extern const uint8_t MML_SIN_LUT[256];
 
 typedef struct {
   uint8_t voiced_tl, tl;
@@ -61,6 +62,24 @@ typedef struct {
   uint8_t sounding; /* attenuation < 15 */
 } MMLPsgCh;
 
+/* One sweep slot (driver.md §4 step 3). Two per channel, so a pitch glide and
+ * a volume fade can run at once. */
+typedef struct {
+  uint8_t active;
+  uint8_t target, curve_id, loop;
+  int32_t from, to;
+  uint16_t len, frame;
+  uint16_t phase16, step16;
+} MMLSweep;
+
+typedef struct {
+  uint8_t active;
+  uint8_t curve_id;
+  int32_t from, to;
+  uint16_t len, frame;
+  uint16_t phase16, step16;
+} MMLGlobalSweep;
+
 typedef struct {
   uint16_t resume_pc;
   int16_t remaining; /* -1 tags a CALL frame; LOOP frames carry the count */
@@ -75,6 +94,10 @@ typedef struct {
   int32_t gate_left; /* -1 = none */
   uint8_t pending_off;
   uint8_t marker_id;
+  /* FADE_TRACK: a division-free Bresenham vol ramp to 0, then stop (§6.5). */
+  uint8_t fading;
+  uint16_t fade_n, fade_frame;
+  int32_t fade_vol, fade_err, fade_cur;
   MMLCtrl ctrl[MML_LOOP_DEPTH];
   uint8_t depth;
 } MMLTrack;
@@ -94,7 +117,12 @@ typedef struct {
   uint8_t master;
   uint8_t noise_mode;
   uint8_t lfo_rate;
-  uint8_t reg27;
+  uint8_t reg27; /* CH3/CSM mode register (bit7 CSM, bit6 special) */
+
+  MMLSweep sweeps[10][2];
+  MMLGlobalSweep tempo_sweep;
+  MMLGlobalSweep csm_sweep;
+  int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */
 
   /* Change-only shadow, driver.md §4. Post-split this lives HERE, not on the
    * Z80 — which is what removed ~550 cycles of bookkeeping per write there.
@@ -138,5 +166,19 @@ uint16_t mml_pending(const MMLSeq *s);
 
 /* Every track idle or held. */
 int mml_done(const MMLSeq *s);
+
+/* ── Host control (driver.md §6.5) ─────────────────────────────────────────
+ * These execute IN the sequencer rather than being posted to it, so they take
+ * effect on the next frame rendered — and are therefore heard RING_DEPTH
+ * frames later (§3.4). */
+void mml_key_off(MMLSeq *s, uint8_t channel_id);
+void mml_set_param(MMLSeq *s, uint8_t channel_id, uint8_t target, int value);
+void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames);
+void mml_set_val(MMLSeq *s, uint8_t slot, int16_t value);
+
+/* Dispatch one host command by the v0.2 mailbox numbering. The transport is
+ * gone — these are ordinary calls now — but the numbering survives so the gate
+ * corpus's command schedules keep working unchanged. */
+void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2);
 
 #endif /* MMLISPSEQ_H */

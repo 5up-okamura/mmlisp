@@ -5,7 +5,10 @@
  * the gate run on the host, so comparing the C against drv-player.js needs no
  * emulator and no assembler, and both are debuggable.
  *
- *   gate_main <song.mmb> [max_frames]
+ *   gate_main <song.mmb> [max_frames] [commands.txt]
+ *
+ * commands.txt is one host command per line — "frame cmd a0 a1 a2" — applied at
+ * the top of the matching frame, which is where the reference applies them too.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +21,23 @@ int main(int argc, char **argv) {
     return 2;
   }
   long max_frames = argc > 2 ? strtol(argv[2], NULL, 10) : 36000;
+
+  /* Host command schedule (KEY_OFF / SET_PARAM / FADE_TRACK / SET_VAL). */
+  enum { MAX_CMDS = 256 };
+  static struct { long frame; int cmd, a0, a1, a2; } cmds[MAX_CMDS];
+  int ncmds = 0;
+  if (argc > 3) {
+    FILE *cf = fopen(argv[3], "r");
+    if (!cf) {
+      fprintf(stderr, "cannot open %s\n", argv[3]);
+      return 2;
+    }
+    while (ncmds < MAX_CMDS &&
+           fscanf(cf, "%ld %d %d %d %d", &cmds[ncmds].frame, &cmds[ncmds].cmd,
+                  &cmds[ncmds].a0, &cmds[ncmds].a1, &cmds[ncmds].a2) == 5)
+      ncmds++;
+    fclose(cf);
+  }
 
   FILE *f = fopen(argv[1], "rb");
   if (!f) {
@@ -44,6 +64,10 @@ int main(int argc, char **argv) {
 
   unsigned char slot[MML_SLOT_SIZE];
   for (long i = 0; i < max_frames; i++) {
+    for (int c = 0; c < ncmds; c++)
+      if (cmds[c].frame == i)
+        mml_command(&seq, (uint8_t)cmds[c].cmd, (uint8_t)cmds[c].a0,
+                    (uint8_t)cmds[c].a1, (uint8_t)cmds[c].a2);
     uint32_t n = mml_render_frame(&seq, slot);
     fputc((int)(n & 0xff), stdout);
     fputc((int)((n >> 8) & 0xff), stdout);
