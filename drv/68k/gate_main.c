@@ -6,11 +6,17 @@
  * emulator and no assembler, and both are debuggable.
  *
  *   gate_main <song.mmb> [max_frames] [--cmds commands.txt] [--samples bank.smp]
+ *                                    [--pump depth]
  *
  * commands.txt is one host command per line — "frame cmd a0 a1 a2" — applied at
  * the top of the matching frame, which is where the reference applies them too.
  * bank.smp is the SAMPLE_BANK a PCM score needs; it is a separate ROM bank on
  * the target, so it is a separate file here.
+ *
+ * --pump drives the stream through the REAL ring transport (mml_pump) with a
+ * model of the Z80 consuming one slot per its own vblank, instead of calling
+ * mml_render_frame directly. The bytes must come out identical — the ring is a
+ * pipeline, not a filter — which is what tools/ring-gate.mjs checks.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +41,56 @@ static unsigned char *slurp(const char *path, long *out_len) {
   return buf;
 }
 
+static void emit_slot(const unsigned char *bytes, unsigned len) {
+  fputc((int)(len & 0xff), stdout);
+  fputc((int)((len >> 8) & 0xff), stdout);
+  fwrite(bytes, 1, len, stdout);
+}
+
+/* ── --pump: the stream through the real ring ──────────────────────────────
+ * A model of the far side: the engine consumes exactly one slot per its own
+ * vblank, and the host calls MMLisp_frame once per frame — except every 7th,
+ * which stands in for a game frame that overran (driver.md §3.4: at depth N the
+ * ring absorbs N-1 of those). Emits exactly `frames` slots and stops, so the
+ * comparison against the plain path needs no agreement about where a song ends.
+ */
+enum { RING_MAX = 8 };
+static unsigned char ring[RING_MAX][MML_SLOT_SIZE];
+static uint16_t ring_len[RING_MAX];
+
+static void ring_sink(void *ctx, uint8_t index, const uint8_t *bytes, uint16_t len) {
+  (void)ctx;
+  memcpy(ring[index], bytes, len);
+  ring_len[index] = len;
+}
+
+static int run_pumped(MMLSeq *seq, int depth, long frames) {
+  if (depth < 2 || depth > RING_MAX) {
+    fprintf(stderr, "--pump depth must be 2..%d\n", RING_MAX);
+    return 2;
+  }
+  uint8_t head = 0, tail = 0;
+  long emitted = 0;
+  for (long host = 0; emitted < frames; host++) {
+    if (host % 7 != 6) {
+      head = mml_pump(seq, head, tail, (uint8_t)depth, ring_sink, NULL);
+      /* §6.6: the call tops the ring up, so it leaves the ring FULL and a
+       * second call in the same frame must do nothing at all. */
+      uint8_t again = mml_pump(seq, head, tail, (uint8_t)depth, ring_sink, NULL);
+      if (again != head) {
+        fprintf(stderr, "pump is not self-limiting: %u then %u\n", head, again);
+        return 2;
+      }
+    }
+    if (tail == head) continue; /* ring empty: the engine holds, not an error */
+    emit_slot(ring[tail], ring_len[tail]);
+    emitted++;
+    tail = (uint8_t)(tail + 1 >= depth ? 0 : tail + 1);
+  }
+  fflush(stdout);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr,
@@ -43,9 +99,19 @@ int main(int argc, char **argv) {
   }
   long max_frames = argc > 2 && argv[2][0] != '-' ? strtol(argv[2], NULL, 10) : 36000;
   const char *cmd_path = 0, *smp_path = 0;
+  int pump_depth = 0;
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "--cmds") && i + 1 < argc) cmd_path = argv[++i];
     else if (!strcmp(argv[i], "--samples") && i + 1 < argc) smp_path = argv[++i];
+    else if (!strcmp(argv[i], "--pump") && i + 1 < argc)
+      pump_depth = (int)strtol(argv[++i], NULL, 10);
+  }
+  if (pump_depth && cmd_path) {
+    /* Commands are keyed to HOST frames, and under the ring a host frame is not
+     * a render frame — so the two would not be comparable. The ring arithmetic
+     * does not depend on them anyway. */
+    fprintf(stderr, "--pump and --cmds are mutually exclusive\n");
+    return 2;
   }
 
   /* Host command schedule (KEY_OFF / SET_PARAM / FADE_TRACK / SET_VAL). */
@@ -93,15 +159,14 @@ int main(int argc, char **argv) {
   mml_start_all(&seq);
 
   unsigned char slot[MML_SLOT_SIZE];
+  if (pump_depth) return run_pumped(&seq, pump_depth, max_frames);
   for (long i = 0; i < max_frames; i++) {
     for (int c = 0; c < ncmds; c++)
       if (cmds[c].frame == i)
         mml_command(&seq, (uint8_t)cmds[c].cmd, (uint8_t)cmds[c].a0,
                     (uint8_t)cmds[c].a1, (uint8_t)cmds[c].a2);
     uint32_t n = mml_render_frame(&seq, slot);
-    fputc((int)(n & 0xff), stdout);
-    fputc((int)((n >> 8) & 0xff), stdout);
-    fwrite(slot, 1, n, stdout);
+    emit_slot(slot, n);
     if (mml_done(&seq)) break;
   }
   /* Drain whatever the write cap held back, so the stream is complete — the
@@ -110,9 +175,7 @@ int main(int argc, char **argv) {
    * invent traffic the reference never produces. */
   while (mml_pending(&seq)) {
     uint32_t n = mml_drain_frame(&seq, slot);
-    fputc((int)(n & 0xff), stdout);
-    fputc((int)((n >> 8) & 0xff), stdout);
-    fwrite(slot, 1, n, stdout);
+    emit_slot(slot, n);
   }
   fflush(stdout);
   if (seq.stopped) {

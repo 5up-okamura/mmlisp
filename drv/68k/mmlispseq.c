@@ -1627,6 +1627,24 @@ static void emit_init_writes(MMLSeq *s) {
   ym(s, 0, 0x2b, 0); /* DAC off — likewise */
 }
 
+/* rescomp hands the host a bare `const u8[]` with no length, so the container
+ * has to say how big it is: the end of the last section is the end of the file.
+ * `max_len` is only a sanity bound — pass the ROM size, or 0 for none. */
+uint32_t mml_mmb_size(const uint8_t *mmb, uint32_t max_len) {
+  if (!mmb || mmb[0] != MAGIC0 || mmb[1] != MAGIC1 || mmb[2] != MAGIC2 ||
+      mmb[3] != MAGIC3)
+    return 0;
+  uint16_t section_count = rd16(mmb, 8), header_size = rd16(mmb, 10);
+  uint32_t end = header_size + (uint32_t)section_count * 12;
+  for (uint16_t i = 0; i < section_count; i++) {
+    uint32_t at = header_size + (uint32_t)i * 12;
+    uint32_t off = rd32(mmb, at + 4), size = rd32(mmb, at + 8);
+    if (off + size > end) end = off + size;
+  }
+  if (max_len && end > max_len) return 0;
+  return end;
+}
+
 int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   memset(s, 0, sizeof(*s));
   if (len < 12 || mmb[0] != MAGIC0 || mmb[1] != MAGIC1 || mmb[2] != MAGIC2 ||
@@ -1667,7 +1685,8 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->trk[i].track_id = track_table[at];
     s->trk[i].channel_id = track_table[at + 1];
     s->trk[i].flags = track_table[at + 2];
-    s->trk[i].pc = rd16(track_table, at + 3);
+    s->trk[i].event_offset = rd16(track_table, at + 3);
+    s->trk[i].pc = s->trk[i].event_offset;
   }
 
   s->increment = (uint16_t)((120 * 512 + 37) / 75); /* bpmToTickIncrement(120) */
@@ -1702,9 +1721,9 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
 }
 
 int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len) {
-  if (!bank || len < 2) return -1;
+  if (!bank || (len && len < 2)) return -1;
   uint16_t n = rd16(bank, 0);
-  if (2 + (uint32_t)n * 20 > len) return -2;
+  if (len && 2 + (uint32_t)n * 20 > len) return -2;
   s->sample_count = n;
   s->sample_entries = bank + 2;
   /* Entry offsets are relative to the blob region, which follows the table. */
@@ -1746,11 +1765,13 @@ void mml_set_val(MMLSeq *s, uint8_t slot, int16_t value) {
 
 void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2) {
   switch (cmd) {
+    case 0x01: mml_start_track(s, a0); break;
+    case 0x02: mml_stop_track(s, a0); break;
     case 0x03: mml_key_off(s, a0); break;
     case 0x04: mml_set_param(s, a0, a1, (int8_t)a2); break;
     case 0x05: mml_fade_track(s, a0, a1); break;
     case 0x06: mml_set_val(s, a0, (int16_t)(a1 | (a2 << 8))); break;
-    default: break; /* start/stop are driven by the host directly */
+    default: break; /* START_SE is plan-se.md's, still unported */
   }
 }
 
@@ -1760,4 +1781,77 @@ void mml_start_all(MMLSeq *s) {
     s->trk[i].armed = 1; /* the armed frame, driver.md §4.2 */
     s->trk[i].gate_left = -1;
   }
+}
+
+/* ── Track lifecycle (driver.md §6.5, §2.2) ────────────────────────────────
+ * Ported from drv-player's _startTrack with the SE branches left out: SE is
+ * still unported (plan-se.md), and keeping this shaped like the reference is
+ * what lets those branches drop in later without re-deciding the rest.
+ */
+void mml_start_track(MMLSeq *s, uint8_t track_id) {
+  MMLTrack *t = 0;
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].track_id == track_id) { t = &s->trk[i]; break; }
+  if (!t) return;
+
+  int ch = t->channel_id;
+  /* Channel ownership. ch2 is the FM3 shared channel — its voice track and op1
+   * coexist by design — and ids >= 10 (fm3-op, pcm) have no channel block, so
+   * neither has an owner to displace. */
+  if (ch < 10 && ch != 2) {
+    for (uint8_t i = 0; i < s->track_count; i++) {
+      MMLTrack *o = &s->trk[i];
+      if (o != t && o->running && o->channel_id == ch) stop_track(s, o);
+    }
+    /* Claiming a channel resets its level state to defaults, so a track that
+     * relies on the default velocity (no PARAM_SET of its own) sounds right
+     * after stealing a channel someone else had faded. */
+    if (ch < 6) {
+      s->fm[ch].vel = 15;
+      s->fm[ch].vol = VOL_UNITY;
+      s->fm[ch].gate = 8;
+    } else {
+      s->psg[ch - 6].vel = 15;
+      s->psg[ch - 6].vol = VOL_UNITY;
+      s->psg[ch - 6].gate = 8;
+    }
+  }
+
+  t->pc = t->event_offset;
+  t->acc = 0;
+  t->wait = 0;
+  t->gate_left = -1;
+  t->pending_off = 0;
+  t->marker_id = 0;
+  t->depth = 0;
+  t->held = 0;
+  t->fading = 0;
+  t->running = 1;
+  t->armed = 1; /* silent setup frame; the first dispatch is the next one */
+}
+
+void mml_stop_track(MMLSeq *s, uint8_t track_id) {
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].track_id == track_id && s->trk[i].running)
+      stop_track(s, &s->trk[i]);
+}
+
+/* ── Ring transport (driver.md §6.6) ───────────────────────────────────────
+ * The policy half of MMLisp_frame: everything except the bus grab and the copy,
+ * so the host gate covers the arithmetic that is easy to get wrong.
+ */
+uint8_t mml_pump(MMLSeq *s, uint8_t head, uint8_t tail, uint8_t depth,
+                 MMLSlotSink sink, void *ctx) {
+  if (depth < 2) return head; /* a one-slot ring can never hold anything */
+  uint8_t slot[MML_SLOT_SIZE];
+  /* Bounded by construction — at most depth-1 slots fit — but the counter also
+   * means a corrupt tail cannot spin the 68k for a frame. */
+  for (uint8_t guard = 0; guard < depth; guard++) {
+    uint8_t next = (uint8_t)(head + 1 >= depth ? 0 : head + 1);
+    if (next == tail) break; /* full: we are as far ahead as depth allows */
+    uint32_t n = mml_render_frame(s, slot);
+    sink(ctx, head, slot, (uint16_t)n);
+    head = next;
+  }
+  return head;
 }

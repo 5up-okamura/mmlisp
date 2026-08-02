@@ -27,6 +27,7 @@ WINDOW      equ $8000
 ; ── Build constants (driver.md §5.3.1, §6.1) ───────────────────────────────
 RING_DEPTH  equ 2               ; slots of lookahead; a per-game knob (§3.4)
 SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
+SLOT_SHIFT  equ 8               ; log2(SLOT_SIZE); published for the 68k
 PCM_VOICES  equ 3
 
 ; ── RAM map (driver.md §5.2) ───────────────────────────────────────────────
@@ -95,7 +96,15 @@ H_FRAMES    equ HDR+2           ; u16 Z80-owned: frames CONSUMED — the audible
 H_READY     equ HDR+4           ; u8  $D2 once the engine is up
 H_VER       equ HDR+5           ; u8  protocol version
 H_SMPBANK   equ HDR+6           ; u16 68k-owned: PCM sample ROM bank (0 = none)
-PROTO_VER   equ 3
+; The ring's own geometry, so the 68k has ONE compile-time constant (HDR) and
+; reads everything else. Both sides have to agree on depth and a mismatch fails
+; silently — the 68k would either stall thinking the ring is full or write a
+; slot that does not exist — so exactly one side owns the truth, and it is the
+; side the numbers are built into.
+H_DEPTH     equ HDR+8           ; u8  ring depth in slots
+H_SLOTSH    equ HDR+9           ; u8  log2(SLOT_SIZE): a slot index is a shift
+H_RING      equ HDR+10          ; u16 ring base address in Z80 RAM
+PROTO_VER   equ 4
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -144,6 +153,14 @@ start:
         ld   (H_FRAMES+1),a
         ld   a,PROTO_VER
         ld   (H_VER),a
+        ; Ring geometry, published before ready so the host can read it the
+        ; moment H_READY appears.
+        ld   a,RING_DEPTH
+        ld   (H_DEPTH),a
+        ld   a,SLOT_SHIFT
+        ld   (H_SLOTSH),a
+        ld   hl,RING
+        ld   (H_RING),hl
         ld   a,READY_MARK
         ld   (H_READY),a
         ei

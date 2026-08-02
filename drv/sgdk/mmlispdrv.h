@@ -1,75 +1,120 @@
 // MMLispDRV — SGDK (Sega Genesis Dev Kit) host API.
 //
-// The 68000 side of the driver: load the Z80 image, then start/stop tracks
-// through the mailbox (docs/driver.md §6). The Z80 plays autonomously off its
-// own 60 Hz vblank interrupt — after starting tracks the 68k does nothing per
-// frame.
+// POST-SPLIT (docs/driver.md §1.1): the 68000 runs the sequencer and the Z80 is
+// a PCM mixer + chip-write engine. So the shape of this API changed even though
+// the names did not — these are now ordinary C calls into the sequencer
+// (mmlispseq.c, which the project compiles alongside this file), not commands
+// posted across the bus. The one thing that does cross the bus is the per-frame
+// slot: MMLisp_frame() renders write lists into a ring in Z80 RAM.
 //
-// STATUS: the Z80 driver's register output is verified against the JS
-// reference in emulation (drv/tools/verify.mjs). This C glue is written
-// against the SGDK ~1.6x Z80 API but has NOT yet been compiled or run on an
-// emulator/hardware. Treat it as a starting point; see drv/sgdk/README.md for
-// the on-target verification path.
+// The Z80 keeps the clock. It consumes exactly one slot per its own vblank, so
+// a game frame that runs long eats into the ring's lookahead instead of
+// stuttering the music.
+//
+// STATUS: the sequencer's output is verified against the JS reference on the
+// host (`cd drv && npm run c-gate`, 39 scores byte-identical) and the engine
+// against the slot stream in emulation (`npm run engine`, `npm run slots`).
+// This SGDK glue has NOT been compiled or run on an emulator or hardware — no
+// m68k toolchain lives in this repo. See drv/sgdk/README.md for the bring-up
+// path.
 #ifndef MMLISPDRV_H
 #define MMLISPDRV_H
 
 #include <genesis.h>
 
-// Upload the resident Z80 image, publish the overlay ROM bank, boot the Z80 and
-// wait (up to ~1 s) for the driver to report ready (mailbox driver_ready ==
-// 0xD2). Check MMLisp_isReady() afterwards: on a failed bring-up this returns
-// with the driver dead rather than freezing the game. Call once at startup,
-// before any track ops. `overlay_rom` points at the 32 KB-aligned
-// mmlispdrv_ovl.bin blob in ROM — the Z80 loads cold code (start_track, mailbox
-// handlers, MMB parsing) from it on demand (driver.md §5). While MMLispDRV owns
-// the Z80 you must not use SGDK's own sound drivers (XGM/PCM); this driver
-// writes the YM2612 and PSG directly.
-void MMLisp_init(const u8* overlay_rom);
+// ── Lifecycle ──────────────────────────────────────────────────────────────
 
-// True once the Z80 driver is up. MMLisp_init already waits for this; use it
-// for a non-blocking readiness check.
+// Upload the Z80 engine image, boot it, and wait (up to ~1 s) for it to report
+// ready. Check MMLisp_isReady() afterwards: on a failed bring-up this returns
+// with the engine dead rather than freezing the game. Call once at startup,
+// before anything else here.
+//
+// There is no overlay blob any more — the engine is a single ~2.6 KB resident
+// image. While MMLispDRV owns the Z80 you must not use SGDK's own sound drivers
+// (XGM/PCM); this one writes the YM2612 and PSG directly.
+void MMLisp_init(void);
+
+// True once the engine is up and its protocol version matches this build.
 bool MMLisp_isReady(void);
 
 // Publish the PCM sample bank. A score with `def :sample` compiles to two
 // blobs: the MMB and a `song.smp` sidecar holding the sample data, which rides
 // its own 32 KB-aligned ROM bank (`BIN song_smp "song.smp" 32768`). Pass the
-// rescomp symbol for it; the driver latches that bank around each frame's
+// rescomp symbol for it; the engine latches that bank around each frame's
 // soft-mix. Call once after MMLisp_init (init clears Z80 RAM) and before
-// starting a PCM track: with no bank published the driver drops every PCM note
-// and the song plays FM/PSG only. Non-PCM scores need no call.
+// starting a PCM track: with no bank published every PCM note is dropped and
+// the song plays FM/PSG only — a failure that looks exactly like a missing
+// track. Non-PCM scores need no call.
 void MMLisp_setSampleBank(const u8* smp);
 
-// Start a track by its MMB track id (the id from the TRACK_TABLE; see the
-// build output of drv/tools/mmb-build.mjs). `mmb` points at the MMB blob in
-// ROM and MUST be aligned to a 32 KB boundary — the driver reads the file from
-// the Z80 bank window base (docs constraint; see README). Starting an already
-// active track restarts it from the top. Start each track of a score with its
-// own call.
-void MMLisp_startTrack(const u8* mmb, u8 track_id);
+// Load a score. `mmb` points at the MMB blob in ROM — plain 68k memory now, so
+// unlike the pre-split driver it needs NO alignment: only the sample bank still
+// goes through the Z80's window. Loading resets all sequencer state and stops
+// everything; one score is loaded at a time. Returns FALSE on a malformed blob.
+bool MMLisp_loadScore(const u8* mmb);
 
-// Stop a track: key-off (release tail runs out), free its channel, mark idle.
+// ── The per-frame hook (driver.md §6.6) ────────────────────────────────────
+
+// Render slots into the ring. **Call this exactly once per vblank.** It tops
+// the ring UP rather than rendering exactly one slot, so the lookahead is an
+// invariant this call maintains and not something your game has to manage: an
+// empty ring renders a full ring's worth, steady state renders one, and a frame
+// you overran refills itself on the next call.
+//
+// It is self-limiting — called twice in a frame, the second call finds the ring
+// full and does nothing — so calling it from both a vblank handler and a game
+// loop is not a bug.
+//
+// Place it LAST in your frame, after the control calls below: they take effect
+// on the next frame rendered, so rendering after them costs no extra latency.
+// The call grabs the Z80 bus once, which stalls the mixer for the duration —
+// pick a point in your frame where that is cheapest.
+void MMLisp_frame(void);
+
+// ── Track control (driver.md §6.5) ─────────────────────────────────────────
+// Every call here takes effect on the next frame MMLisp_frame renders, so it is
+// HEARD one ring-depth of frames later. That latency is why the default depth
+// is shallow (§3.4).
+
+// Start a track by its MMB track id (the id from the TRACK_TABLE — see the
+// build output of drv/tools/mmb-build.mjs). Claiming a channel evicts its
+// current owner and resets the channel's level state to defaults. Starting an
+// already-running track restarts it from the top. Start each track of a score
+// with its own call; unlike the pre-split mailbox there is no queue to overflow,
+// so a score's whole start burst can go in one frame.
+void MMLisp_startTrack(u8 track_id);
+
+// Stop a track: key-off (the release tail runs out), free its channel, idle it.
 void MMLisp_stopTrack(u8 track_id);
 
 // Key-off one channel without stopping its track: releases a len=0 hold (the
-// dispatcher resumes) or truncates a sounding note (driver.md §6.2).
+// dispatcher resumes) or truncates a sounding note.
 void MMLisp_keyOff(u8 channel_id);
 
 // One-shot absolute parameter write on a channel, as if a PARAM_SET arrived in
 // the stream. `target` is a target id (docs/opcodes.md §7); `value` is i8.
 void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value);
 
-// Fade a track's channel to silence over `frames` frames, then stop it
-// (driver.md §6.3). Use for DJ-style scene transitions.
-void MMLisp_fadeTrack(u8 track_id, u8 frames);
+// Fade a track's volume to silence over `frames` frames, then stop it. Use for
+// DJ-style scene transitions.
+void MMLisp_fadeTrack(u8 track_id, u16 frames);
 
-// Dynamic value slots (driver.md §6.4): write/read one of the 16 i16 slots the
-// score reads via `$name` (PARAM_FROM_VAL / _ADD_VAL / _MUL_VAL). All arithmetic
-// lives on the host — e.g. drive an FM3 AMS/FMS depth, or a live tempo.
+// Dynamic value slots (driver.md §6.4): one of 16 i16 slots the score reads via
+// `$name` (PARAM_FROM_VAL / _ADD_VAL / _MUL_VAL). All arithmetic lives on the
+// host — e.g. drive an FM3 AMS/FMS depth, or a live tempo. Post-split these are
+// plain 68k memory, so a read is a read.
 void MMLisp_setVal(u8 slot, s16 value);
 s16 MMLisp_getVal(u8 slot);
 
-// Read a per-track mailbox status byte (0..15): bit7 active, bit6 fading,
-// bits5-0 the last MARKER id the track passed (host sync point).
-u8 MMLisp_trackStatus(u8 track_index);
+// ── Status ─────────────────────────────────────────────────────────────────
+
+// True while the track is running (dispatching or holding).
+bool MMLisp_trackActive(u8 track_id);
+
+// The engine's consumed-frame counter — the AUDIBLE clock. The sequencer runs
+// ahead of it by the ring's fill level, so anything that has to line up with
+// what the player hears compares against this, not against your own frame
+// counter (driver.md §6.4).
+u16 MMLisp_audibleFrame(void);
 
 #endif // MMLISPDRV_H

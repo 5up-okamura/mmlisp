@@ -62,8 +62,11 @@ tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
 tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (`npm run slots`)
 tools/gen-c-tables.mjs generates 68k/tables.c from live/src/ir-utils.js
 tools/c-gate.mjs      P2 hard gate: 68k C ≡ drv-player.js on the slot stream (`npm run c-gate`)
+tools/ring-gate.mjs   P3: the ring transport is a pipeline, not a filter (`npm run ring`)
+tools/sgdk-lint.mjs   P3: type-check the SGDK glue against mmlispseq.h (`npm run sgdk:lint`)
+tools/build-engine.mjs assemble src/engine.z80 + the generated mixer (the shipped image)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
-tools/emit-bin.mjs    emit the Z80 image as .bin + C array for SGDK/68k
+tools/emit-bin.mjs    emit the Z80 ENGINE image as .bin + C array for SGDK/68k
 tools/install-sgdk.mjs copy the sgdk/ host files (and optionally a compiled
                       score) into an SGDK project (`npm run sgdk:install -- <dir>`)
 tools/wav.mjs         load WAV → 8-bit signed PCM for the SAMPLE_BANK (PCM songs)
@@ -298,7 +301,7 @@ the host too, so the gate runs both sides natively — no emulator, no assembler
 a debugger on each — and compares the SLOT STREAM, which is what the 68000
 actually hands the Z80.
 
-M1, M2 and M3 are done and byte-identical on 38 corpus scores — the core
+M1, M2 and M3 are done and byte-identical on 39 corpus scores — the core
 opcode set, the sweep engine and its eight integer curves, PARAM_ADD, tempo
 sweeps, cent pitch, CSM and the host control API (key-off, set-param, the
 Bresenham fade, gated with a real host-command schedule), plus the macro engine,
@@ -320,6 +323,44 @@ suspend/restore, priority), whose gate scores are reported SKIP.
 `68k/tables.c` is generated from `live/src/ir-utils.js` by `gen-c-tables.mjs`,
 the same single-source rule the Z80 tables follow: neither side derives a
 constant table, so they cannot disagree.
+
+## P3 — the SGDK integration (`npm run ring`, `npm run sgdk:lint`)
+
+`sgdk/mmlispdrv.c` was rewritten for the split. The mailbox is gone: track
+control is now ordinary calls into `mmlispseq.c`, which the game compiles in
+alongside its generated tables, and the only thing crossing the bus per frame is
+the slot. `MMLisp_frame()` is the §6.6 hook — call it once per vblank, last in
+the frame — and it TOPS THE RING UP rather than rendering exactly one slot, so
+lookahead is an invariant the call maintains and a game frame that overran
+refills itself.
+
+The split inside that call is deliberate and load-bearing: **the policy
+(`mml_pump` — how many slots to render) lives in the sequencer where a gate can
+reach it; the mechanism (the bus grab, the byte copy) lives in the glue where
+none can.** Keeping the untestable part down to about ten lines is the point.
+
+Two gates, both host-side:
+
+- `npm run ring` runs a score twice — once calling `mml_render_frame` directly,
+  once through the real ring with a model of the Z80 consuming one slot per its
+  own vblank, at depths 2/3/4/8, skipping every seventh host frame to stand in
+  for an overrun — and requires the byte streams to be identical.
+- `npm run sgdk:lint` compiles the glue and the example against a hand-written
+  shim of the dozen SGDK symbols they use, with the real `mmlispseq.h` in the
+  include path. It catches the glue drifting out of step with the sequencer API,
+  which changes far more often than SGDK does, and it catches nothing else —
+  there is no m68k toolchain here and nothing has been run on hardware.
+
+The build path moved with it: `tools/build-engine.mjs` assembles `src/engine.z80`
+with the generated mixer, and `tools/emit-bin.mjs` emits the one resident image
+(2,668 B, 1,428 B free below the mix plane) plus the header constants. The
+overlay blob is deleted. `build-driver.mjs` still builds the superseded all-Z80
+driver; nothing ships from it.
+
+Two integration consequences worth knowing: the **score no longer needs 32 KB
+alignment** (the 68000 reads it from its own address space; only the sample bank
+still rides the Z80's window), and there is **no start-burst ceiling** any more
+(the mailbox ring held seven).
 
 ## Why a first-party assembler/emulator
 

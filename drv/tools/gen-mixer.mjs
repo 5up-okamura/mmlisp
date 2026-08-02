@@ -465,8 +465,15 @@ fr_voice:
 `;
 }
 
-if (process.argv[1] && process.argv[1].endsWith("gen-mixer.mjs")) {
+// Write src/mixer.z80 in the settled configuration (driver.md §5.3.1) — the
+// file engine.z80 includes. Exported so the engine build regenerates it rather
+// than trusting a checked-in copy to match.
+export function writeMixer() {
   const dst = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mixer.z80");
   writeFileSync(dst, generateMixerCore());
-  console.log(`wrote ${dst} (i8sat, R = 175, unroll 2 — the settled configuration)`);
+  return dst;
+}
+
+if (process.argv[1] && process.argv[1].endsWith("gen-mixer.mjs")) {
+  console.log(`wrote ${writeMixer()} (i8sat, R = 175, unroll 2 — the settled configuration)`);
 }

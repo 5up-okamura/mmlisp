@@ -141,6 +141,7 @@ typedef struct {
 typedef struct {
   uint8_t running, armed, held;
   uint8_t track_id, channel_id, flags;
+  uint16_t event_offset; /* stream start, for a restart */
   uint16_t pc;
   uint16_t acc;      /* 8.8 tick accumulator */
   int32_t wait;      /* ticks until the next timed dispatch */
@@ -230,12 +231,28 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len);
 
 /* Attach the sample bank (mmb.md §10) — a separate ROM bank, so it is a
  * separate call. Must follow mml_load, which clears the whole state. Scores
- * without PCM never make it. Returns 0 on success, negative on a bad table. */
+ * without PCM never make it. `len` bounds the table; pass 0 when the caller has
+ * only a ROM pointer and no size. Returns 0 on success, negative on a bad
+ * table. */
 int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len);
+
+/* Total MMB length, derived from its own section table. The host gets a bare
+ * pointer out of rescomp with no size attached, so the container tells it. */
+uint32_t mml_mmb_size(const uint8_t *mmb, uint32_t max_len);
 
 /* Start every track (what the gate harness does; the real host starts them
  * individually through the API driver.md §6.5 describes). */
 void mml_start_all(MMLSeq *s);
+
+/* Start one track by its MMB track id (driver.md §6.5): re-init its dispatch
+ * state, apply the channel-ownership rule (§2.2 — the current owner is evicted),
+ * reset the channel's level state to defaults, and enter the armed frame (§4.2).
+ * Starting an already-running track restarts it from the top. */
+void mml_start_track(MMLSeq *s, uint8_t track_id);
+
+/* Stop one track: key-off (the release tail runs out), free its channel, idle
+ * the TCB. On an fm3-csm track this clears the CSM bit (§9). */
+void mml_stop_track(MMLSeq *s, uint8_t track_id);
 
 /* Render one frame and close its slot. Returns the slot length in bytes. */
 uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
@@ -243,6 +260,22 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
 /* Close a slot WITHOUT running a frame — how the spill queue is drained once
  * the song is over. Returns the slot length in bytes. */
 uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out);
+
+/* ── Ring transport (driver.md §6.1, §6.6) ─────────────────────────────────
+ * The bus grab and the byte copy belong to the host layer; the arithmetic that
+ * decides HOW MANY slots to render belongs here, where the host gate can reach
+ * it. `mml_pump` renders while the ring has space and hands each slot to
+ * `sink`, returning the new head — which the caller publishes LAST, after the
+ * bytes are in place.
+ *
+ * `head == tail` is empty, so a depth-N ring holds N-1 slots, which is exactly
+ * §3.4's "at depth N the game may overrun N-1 frames". The call is therefore
+ * self-limiting: a second call in the same frame finds no space and renders
+ * nothing (§6.6). */
+typedef void (*MMLSlotSink)(void *ctx, uint8_t index, const uint8_t *bytes,
+                            uint16_t len);
+uint8_t mml_pump(MMLSeq *s, uint8_t head, uint8_t tail, uint8_t depth,
+                 MMLSlotSink sink, void *ctx);
 
 /* Writes still queued behind the cap. */
 uint16_t mml_pending(const MMLSeq *s);

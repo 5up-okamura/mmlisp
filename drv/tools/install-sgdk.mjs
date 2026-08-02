@@ -28,11 +28,17 @@ const sgdkDir = join(drvRoot, "sgdk");
 // src (under drv/sgdk/) → dest (under the project) → who owns the file.
 // "driver": regenerated/maintained here, overwritten on every install.
 // "seed":   the project's to edit; written only when absent.
+// Post-split the SEQUENCER is 68k code, so it is installed as source rather
+// than uploaded as a blob: mmlispseq.c + its generated tables compile into the
+// game. What crosses to the Z80 is only the engine image, which rides inside
+// mmlispdrv_bin.h. There is no overlay blob any more.
 const FILES = [
   { src: "mmlispdrv.c", dest: "src/mmlispdrv.c", own: "driver" },
   { src: "mmlispdrv.h", dest: "inc/mmlispdrv.h", own: "driver" },
   { src: "mmlispdrv_bin.h", dest: "inc/mmlispdrv_bin.h", own: "driver" },
-  { src: "mmlispdrv_ovl.bin", dest: "res/mmlispdrv_ovl.bin", own: "driver" },
+  { src: "../68k/mmlispseq.c", dest: "src/mmlispseq.c", own: "driver" },
+  { src: "../68k/mmlispseq.h", dest: "inc/mmlispseq.h", own: "driver" },
+  { src: "../68k/tables.c", dest: "src/mmlispseq_tables.c", own: "driver" },
   { src: "example/song.res", dest: "res/song.res", own: "seed" },
 ];
 
@@ -97,26 +103,30 @@ if (opts.song && !existsSync(opts.song)) fail(`no such score: ${opts.song}`);
 const dry = opts.dryRun ? "[dry-run] " : "";
 console.log(`${dry}project: ${project}`);
 
-// ---- regenerate the Z80 artifacts ----------------------------------------
-// mmlispdrv_bin.h / mmlispdrv_ovl.bin are build outputs of src/*.z80; copying
-// them stale is the classic way to ship a driver that does not match the repo.
+// ---- regenerate the generated artifacts ----------------------------------
+// mmlispdrv_bin.h is a build output of src/engine.z80 and 68k/tables.c one of
+// live/src/ir-utils.js; copying either stale is the classic way to ship a
+// driver that does not match the repo.
 if (opts.build) {
-  const { buildDriver } = await import("./build-driver.mjs");
-  const { resident, overlay } = buildDriver();
+  const { buildEngine } = await import("./build-engine.mjs");
+  const { bytes } = buildEngine();
   const current = readFileSync(join(sgdkDir, "mmlispdrv.bin"));
-  const stale =
-    current.length !== resident.length || !current.equals(Buffer.from(resident));
+  const stale = current.length !== bytes.length || !current.equals(Buffer.from(bytes));
   if (stale) {
     if (opts.dryRun) {
       console.log(
-        `${dry}sgdk/ artifacts are stale (${current.length} → ${resident.length} B)` +
+        `${dry}sgdk/ engine image is stale (${current.length} → ${bytes.length} B)` +
           ` — would run tools/emit-bin.mjs`,
       );
     } else {
-      await import("./emit-bin.mjs"); // writes the four generated files
+      await import("./emit-bin.mjs");
     }
   } else {
-    console.log(`  driver image up to date (${resident.length} B + ${overlay.length} B overlay)`);
+    console.log(`  engine image up to date (${bytes.length} B, no overlay)`);
+  }
+  if (!opts.dryRun) {
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("node", [join(here, "gen-c-tables.mjs")], { stdio: "pipe" });
   }
 }
 
@@ -167,14 +177,10 @@ if (opts.song) {
   const chans = (ir.tracks ?? []).map((t, i) => `${i}:${t.channel}`).join(" ");
   const trackCount = ir.tracks?.length ?? 0;
   console.log(`    ${trackCount} tracks — ${chans}`);
-  // Both host-side ways to lose a track without any error: a TRACK_COUNT that
-  // stops short of this list, and a start burst deeper than the mailbox ring.
-  if (trackCount > 7) {
-    console.log(
-      `    (> 7: the mailbox ring drops the rest — post 7 starts, then the` +
-        ` remaining ${trackCount - 7} next frame)`,
-    );
-  }
+  // The one host-side way left to lose a track without any error: a TRACK_COUNT
+  // that stops short of this list. The pre-split ceiling — a start burst deeper
+  // than the mailbox ring — is gone with the mailbox: starts are plain calls
+  // now, so a whole score can start in one frame however many tracks it has.
   if (sampleBank?.length) {
     smpPath = join(project, "res", "song.smp");
     if (!opts.dryRun) writeFileSync(smpPath, sampleBank);
@@ -190,22 +196,21 @@ const summary = Object.entries(counts)
   .join(", ");
 console.log(`${dry}${summary}`);
 
-// The seeded song.res is the only place the two ROM blobs get their 32 KB
-// alignment; a project-owned copy that predates a blob will not build.
+// A project-owned song.res predating the split still declares the overlay blob
+// that no longer exists — rescomp fails on a BIN whose file is missing, so say
+// so rather than let `make` do it cryptically.
 const resPath = join(project, "res", "song.res");
 if (counts.kept && existsSync(resPath)) {
   const res = readFileSync(resPath, "utf8");
-  const missing = [
-    ["song.mmb", /^\s*BIN\s+\S+\s+"?song\.mmb/m],
-    ["mmlispdrv_ovl.bin", /^\s*BIN\s+\S+\s+"?mmlispdrv_ovl\.bin/m],
-  ]
-    .filter(([, re]) => !re.test(res))
-    .map(([name]) => name);
-  if (missing.length) {
+  if (!/^\s*BIN\s+\S+\s+"?song\.mmb/m.test(res)) {
+    console.warn(`\nwarning: res/song.res declares no BIN for song.mmb.`);
+  }
+  if (/^\s*BIN\s+\S+\s+"?mmlispdrv_ovl\.bin/m.test(res)) {
     console.warn(
-      `\nwarning: res/song.res declares no BIN for ${missing.join(", ")} —` +
-        ` the Z80 reads both through its bank window and each needs align 32768` +
-        ` (see drv/sgdk/README.md §banking).`,
+      `\nwarning: res/song.res still declares mmlispdrv_ovl.bin, which the` +
+        ` post-split driver does not have — remove that BIN line, and drop the` +
+        ` 32768 alignment on song.mmb while you are there (the 68000 reads the` +
+        ` score directly now; only song.smp still goes through the Z80 window).`,
     );
   }
 }
@@ -235,7 +240,8 @@ if (smpPath) {
   );
 }
 console.log(
-  `\nNext: include "song.h" (rescomp generates it from res/song.res), call` +
-    ` MMLisp_init(mmlisp_ovl) then MMLisp_startTrack(song_mmb, id, ...) — one` +
-    ` per frame. Then \`make\`.`,
+  `\nNext: include "song.h" (rescomp generates it from res/song.res), then` +
+    ` MMLisp_init() → MMLisp_loadScore(song_mmb) → MMLisp_startTrack(id) per` +
+    ` track, and MMLisp_frame() once per vblank, last in your frame` +
+    ` (driver.md §6.6). Then \`make\`.`,
 );

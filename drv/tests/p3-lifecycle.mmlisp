@@ -1,0 +1,18 @@
+; P3 track lifecycle: STOP_TRACK / START_TRACK as host commands (driver.md
+; §6.5, §2.2). The schedule lives in p3-lifecycle.cmds.json.
+;
+; The point of the score's shape is the CHANNEL OWNERSHIP rule: tracks 0 and 1
+; both live on fm1, so starting one has to evict the other. Track 1 also plays
+; without setting its own :vel, so a restart proves the claim resets the
+; channel's level defaults rather than inheriting whatever track 0 left there.
+(def v :alg 7 :fb 0
+  :ar1 31 :dr1 4 :sr1 1 :rr1 6 :sl1 2 :tl1 16 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 10 :ks2 0 :ml2 2 :dt2 0
+  :ar3 31 :dr3 5 :sr3 1 :rr3 6 :sl3 2 :tl3 20 :ks3 0 :ml3 3 :dt3 0
+  :ar4 31 :dr4 8 :sr4 2 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+; track 0 — fm1, loud, and the channel's first owner
+(fm1 :tempo 120 v :oct 4 :len 4 :vel 15  c d e f g a b c)
+; track 1 — fm1 as well, and deliberately silent about :vel
+(fm1 v :oct 3 :len 2  c e g c)
+; track 2 — sqr1, restarted mid-flight to check a plain re-init
+(sqr1 :oct 5 :len 4 :vel 11  c d e f g a b c)

@@ -209,7 +209,45 @@ pass solved that; the binding constraint is *cycles*.
   suspend-restore / priority. Its gate scores (`m3-se`, `m3-se-prio`) carry a
   richer sidecar (`autoStart: false` + `remapChannels`) and c-gate reports them
   SKIP rather than crashing.
-- **P3 integration** — SGDK glue, hardware bring-up.
+- **P3 integration — the GLUE landed 2026-08-03; hardware has not.**
+  `drv/sgdk/{mmlispdrv.c,mmlispdrv.h}` rewritten for the split, plus
+  `example/{main.c,song.res}`, `install-sgdk.mjs`, and a new build path.
+  - **Build:** `tools/build-engine.mjs` (gen-mixer + assemble `src/engine.z80`)
+    → `tools/emit-bin.mjs` emits `sgdk/mmlispdrv.bin` + `mmlispdrv_bin.h`
+    (**2,668 B, 1,428 B free below MIXLO**). `mmlispdrv_ovl.bin` and
+    `_ovl_bin.h` DELETED. `build-driver.mjs` still builds the all-Z80 driver;
+    nothing ships from it.
+  - **Core additions:** `mml_start_track` / `mml_stop_track` (ported from
+    drv-player `_startTrack(false)` / `_mailboxStop`, SE branches omitted so
+    they drop in later), `mml_mmb_size`, `mml_pump`, `mml_drain_frame`,
+    `MMLTrack.event_offset`. `mml_command` now routes 0x01/0x02.
+  - **Header grew** (PROTO_VER 3 → **4**): `H_DEPTH`, `H_SLOTSH`, `H_RING`.
+    Decision on open item 1 — the Z80 publishes the ring's geometry and the 68k
+    reads it, so `MMLISPDRV_HDR` is the host's ONLY compile-time Z80 constant.
+    A depth mismatch fails silently, so exactly one side owns it.
+  - **Decision on open item 2:** policy (`mml_pump`) in the sequencer where a
+    gate reaches it, mechanism (bus grab + copy) in the glue where none can.
+    That is what keeps the untestable part ~10 lines.
+  - **New gates:** `npm run ring` (tools/ring-gate.mjs — plain vs pumped byte
+    streams identical at depths 2/3/4/8, every 7th host frame skipped to model
+    an overrun, and gate_main asserts §6.6 self-limiting inside the loop) and
+    `npm run sgdk:lint` (tools/sgdk-lint.mjs + tools/sgdk-shim/ — compiles the
+    glue AND example/main.c against the real mmlispseq.h). Both in `verify:all`.
+    New c-gate score `p3-lifecycle` (39 total) covers start/stop + eviction.
+  - Traps found while writing it, worth not rediscovering:
+    - `head == tail` is EMPTY, so a depth-N ring holds **N-1** slots — which is
+      exactly §3.4's "at depth N the game may overrun N-1 frames". Consistent,
+      but easy to misread as N.
+    - `mml_load` memsets everything, so a `setSampleBank` before `loadScore`
+      would be silently wiped. The glue remembers the pointer and re-applies it
+      on every load rather than documenting an order.
+    - Host-compiling 68k code needs `-Wno-pointer-to-int-cast
+      -Wno-int-to-pointer-cast` (pointers are 64-bit here, 32 on m68k) and, for
+      the example, `-Dmain=sgdk_main -Wno-unused-parameter` (SGDK's entry point
+      is `int main(bool hardReset)`, which a hosted compiler rejects outright).
+  - **Integration consequences:** the score no longer needs 32 KB alignment
+    (only `song.smp` still rides the Z80 window), and the 7-starts-per-frame
+    mailbox ceiling is gone.
 
 ## P3 entry — what is decided, and what has to be decided first
 
@@ -226,19 +264,10 @@ lands in the ring's fill level and never in the tempo.
 
 **Still to decide, roughly in the order P3 needs them:**
 
-1. **How the ring depth is shared.** Both the Z80 image (`RING_DEPTH equ 2`) and
-   the 68k must agree, and a mismatch fails silently (the 68k thinks the ring is
-   full and stops rendering, or writes a slot that does not exist). Suggestion:
-   the Z80 publishes depth and slot size in the header next to
-   `protocol_version`, and the 68k reads them — one side owns the truth.
-2. **Who owns the transport.** `mml_render_frame()` today just returns slot
-   bytes; nothing owns head/tail or the bus grab. Keeping the core PURE and
-   putting the ring in the SGDK layer preserves the host gate, which depends on
-   exactly that purity.
-3. **Per-track start/stop.** Only `mml_start_all()` exists (a gate-harness
-   convenience). §2.2 channel ownership and §2.3 scene transitions are
-   `mml_start_track` / `mml_stop_track` shaped, so the interactive model is not
-   actually implemented yet.
+~~1. How the ring depth is shared.~~ **DONE** — published in the header.
+~~2. Who owns the transport.~~ **DONE** — policy in the core, mechanism in the glue.
+~~3. Per-track start/stop.~~ **DONE** — `mml_start_track` / `mml_stop_track`.
+
 4. **`(trig N)` delivery — the biggest undesigned piece.** Markers are rendered
    AHEAD by the ring depth, so handing them straight to game code would fire
    them early. §6.4 says compare against the Z80's consumed-frame counter, but

@@ -739,8 +739,18 @@ builds. `drv/sgdk/mmlispdrv.c` carries the current values.
 | `tail` | Z80 | next slot to consume |
 | `frames_consumed` u16 | Z80 | **the audible clock.** The 68k runs ahead by the ring depth, so `(trig N)` must fire when the frame is *heard*, not when it was rendered — the host compares this counter against the frame it stamped the marker on (§6.5) |
 | `engine_ready` u8 | Z80 | 0x00 while booting |
-| `protocol_version` u8 | Z80 | = 3 |
+| `protocol_version` u8 | Z80 | = 4. The host refuses to run on a mismatch — it means this header's layout moved under it |
 | `smp_bank` u16 | 68k | PCM sample ROM bank; 0 = none. Must be published *after* the image upload, which clears Z80 RAM |
+| `ring_depth` u8 | Z80 | slots in the ring |
+| `slot_shift` u8 | Z80 | log2 of the slot stride — a slot index is a shift |
+| `ring_base` u16 | Z80 | where the ring starts in Z80 RAM |
+
+The last three exist so the header's **address** is the only Z80 constant the
+68k compiles in. Both sides have to agree on the ring's geometry and a mismatch
+fails *silently* — the 68k either stalls believing the ring is full or writes a
+slot that does not exist — so exactly one side owns those numbers, and it is the
+side they are built into. The host reads them once, at the moment
+`engine_ready` appears.
 
 ### 6.5 Host API and live control
 
@@ -808,8 +818,16 @@ ring's fill level and never in the tempo. That is what §1 is built on.
 
 Two consequences that follow from the choice:
 
-- **The bus is grabbed once per call, not once per slot.** Same argument §6
-  makes for not letting the 68k write the YM directly.
+- **The bus is grabbed per slot COPY, and never across the render.** The
+  original form of this rule — one grab per call — is wrong in the direction
+  that matters, and the P3 implementation corrected it: a grab halts the Z80,
+  and the work between two slot copies is the sequencer's entire frame. Holding
+  the bus across it would stall the mixer for **milliseconds**, an audible
+  dropout rather than the tens of microseconds §1.3 budgets. What the rule is
+  actually for is ruling out a grab per *write* — the same argument §6 makes for
+  not letting the 68k drive the YM directly. In the default depth-2
+  configuration a steady-state frame is three short grabs: read `tail`, copy one
+  256-byte slot, publish `head`.
 - **Control calls precede the render call within a frame.** §6.5's calls take
   effect on the next frame rendered, so putting `MMLisp_frame()` last in the
   host's frame means a track started this frame is rendered this frame.
@@ -1044,9 +1062,36 @@ The port milestones:
   16.16 countdown over the same mix grid. The cost is 3 × `PCM_MIX_RATE`
   add-and-compare per frame; a closed form exists for the non-looping case if a
   cycle count ever asks for it.
-- **P3 — integration and bring-up.** SGDK glue, the 68k-side frame hook, real
-  hardware. The open hardware questions are unchanged: YM BUSY behaviour on
-  silicon, and the DAC jitter the 68k's per-frame bus grab introduces (§1.3).
+- **P3 — integration and bring-up. The glue landed 2026-08-03; hardware has
+  not.** `drv/sgdk/{mmlispdrv.c,mmlispdrv.h}` was rewritten for the split: the
+  mailbox is gone, so track control is ordinary calls into `mmlispseq.c` (which
+  the game now compiles in, alongside its generated tables), and the only thing
+  crossing the bus per frame is the slot. `MMLisp_frame()` is §6.6's hook;
+  `mml_pump` is the policy half of it, kept in the sequencer so the host gate can
+  reach it. `MMLisp_init` takes no overlay argument, `MMLisp_loadScore` is new,
+  and the score no longer needs 32 KB alignment — only the sample bank still
+  goes through the Z80's window.
+
+  The build path changed with it: `tools/build-engine.mjs` assembles
+  `src/engine.z80` with the generated mixer and `tools/emit-bin.mjs` emits the
+  one resident image (2,668 B) plus its header constants. The overlay blob and
+  its C array are deleted. `build-driver.mjs` still builds the superseded
+  all-Z80 driver — nothing ships from it.
+
+  Two new gates, both host-side: `npm run ring` (§12.7) and `npm run sgdk:lint`,
+  which compiles the glue and the example against a hand-written shim of the
+  dozen SGDK symbols they use, with the real `mmlispseq.h` in the include path.
+  That catches the likeliest failure — the glue drifting out of step with the
+  sequencer API, which changes far more often than SGDK does — and it catches
+  nothing else, which is the honest claim to make for it.
+
+  **Still open, in the order P3 needs them:** per-score `(trig N)` delivery
+  (markers are rendered ahead by the ring depth, so they have to be released
+  against `frames_consumed` — §6.4 says what to compare, but there is no API
+  yet), more than one score loaded at once (§2.3's DJ transitions), the SE port
+  (plan-se.md), PAL (§3.3), and raising the mix rate (§5.3.1). The open hardware
+  questions are unchanged: YM BUSY behaviour on silicon, and the DAC jitter the
+  68k's per-frame bus grab introduces (§1.3).
 
 What the split unlocks, deliberately **not** scheduled until P3 lands: dynamic
 and ping-pong loop points (§6.3), cross-MMB DJ transitions (§2.3), PAL (§3.3),
@@ -1185,6 +1230,28 @@ The reference prints every constant table (F-number, PSG period, level offsets,
 PCM rate multipliers, curve units) for verbatim inclusion — as C arrays for the
 68k, as `db`/`dw` blocks for whatever the Z80 still needs. Neither side ever
 re-derives a table, so table divergence stays structurally impossible.
+
+### 12.7 The ring transport — a pipeline, not a filter
+
+`mml_pump` (§6.6) is eight lines of modular arithmetic that fail *silently* when
+they are wrong: a stalled ring reads as "the music stopped", a wrapped index as
+"the music got strange". So it gets its own gate rather than riding on the slot
+comparison.
+
+`npm run ring` runs a score through the harness twice — once calling
+`mml_render_frame` directly, once through the real ring with a model of the Z80
+consuming one slot per its own vblank — and requires the two byte streams to be
+**identical**. Every seventh host frame skips the call entirely, standing in for
+a game frame that overran; at depth N the ring absorbs N−1 of those (§3.4), so
+the stream has to survive that too. Depths 2, 3, 4 and 8 all run, which is what
+exercises the wrap. Inside the loop the harness also asserts §6.6's self-limiting
+property directly: the call tops the ring up, so a second call in the same frame
+must render nothing.
+
+What this deliberately does *not* cover is the bus grab and the byte copy —
+those live in the SGDK layer, which no gate here can reach. Keeping the split
+exactly there (policy in the sequencer, mechanism in the glue) is what makes the
+untestable part small enough to read.
 
 ## 13. Macro Engine (M3)
 
