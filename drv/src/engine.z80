@@ -1,0 +1,673 @@
+; ===========================================================================
+; MMLispDRV Z80 engine (docs/driver.md §5, §6)
+;
+; Post-split, the Z80 no longer sequences anything. Its whole job is:
+;   1. take one pre-rendered slot per vblank out of a ring the 68000 fills,
+;   2. put its bytes on the YM2612 and the PSG, pacing them itself,
+;   3. spend the rest of the frame software-mixing PCM into the fm6 DAC.
+;
+; It evaluates nothing: every value it writes arrives register-ready, and every
+; PCM field arrives pre-computed (increment, volume shift, segment shift). The
+; one piece of live state it owns is PCM sample position.
+;
+; The Z80 keeps the clock — it consumes exactly one slot per interrupt at its
+; own 60 Hz, so a heavy game frame eats into the ring's lookahead instead of
+; stuttering the music (driver.md §1).
+; ===========================================================================
+
+; ── Hardware ───────────────────────────────────────────────────────────────
+YM_ADDR0    equ $4000
+YM_DATA0    equ $4001
+YM_ADDR1    equ $4002
+YM_DATA1    equ $4003
+BANK_REG    equ $6000
+PSG_PORT    equ $7f11
+WINDOW      equ $8000
+
+; ── Build constants (driver.md §5.3.1, §6.1) ───────────────────────────────
+RING_DEPTH  equ 2               ; slots of lookahead; a per-game knob (§3.4)
+SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
+PCM_VOICES  equ 3
+
+; ── RAM map (driver.md §5.2) ───────────────────────────────────────────────
+; The engine is small enough that the 8 KB stops being a design input: no
+; overlays, no shadow file, no LUTs, no TCB, no channel state.
+;
+;   $0000..$0FFF  code                        4 KB
+;   $1000..$10FF  mix buffer plane            (i8sat uses one plane)
+;   $1100..$11FF  reserved: second plane for the i16 variant
+;   $1200..$125F  PCM voice state             3 × 32 B
+;   $1260..$12FF  engine scratch
+;   $1300..$133F  published header            68k-visible
+;   $1400..$15FF  slot ring                   RING_DEPTH × 256
+;   ..$1EFF       free (~2.5 KB)
+;   $1F00         stack top
+MIXLO       equ $1000
+MIXHI       equ $1100
+G_PCMV      equ $1200
+PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
+
+; Voice struct. Positions are WINDOW ADDRESSES so the mixer's fetch is a bare
+; `ld a,(de)`; distances are BYTE COUNTDOWNS so a sample can span ROM banks
+; without any absolute end address to rebase (driver.md §5.4).
+PV_PTR      equ 0               ; u16 current sample address in the window
+PV_FRAC     equ 2               ; u16 fractional position (low half of 16.16)
+PV_INCF     equ 4               ; u16 increment fraction
+PV_INCI     equ 6               ; u8  increment integer part
+PV_SHIFT    equ 7               ; u8  volume attenuation shift (0..7)
+PV_FLAGS    equ 8               ; u8  bit0 active, bit1 hasLoop, bit2 releasing
+PV_KSH      equ 9               ; u8  segment-bound shift: 2^KSH >= inc (see below)
+PV_BANK     equ 10              ; u16 sample ROM bank
+PV_LEFT     equ 12              ; u16 bytes until the current boundary
+PV_LOOPL    equ 14              ; u16 loop length in bytes
+PV_TAIL     equ 16              ; u16 bytes from loop end to sample end
+
+; Engine scratch
+G_BASE      equ $1260
+G_ANY       equ G_BASE+$00      ; u8  1 = at least one voice was active this frame
+G_DACON     equ G_BASE+$01      ; u8  1 = $2B DAC enable is currently set
+G_FIRST     equ G_BASE+$02      ; u8  0 until the storing voice has been chosen
+G_TICKS     equ G_BASE+$03      ; u8  ticks left in this voice's pass
+G_IDX       equ G_BASE+$04      ; u8  buffer tick index
+G_AVAIL     equ G_BASE+$05      ; u16 bytes safely consumable in this segment
+G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
+G_SLOT      equ G_BASE+$09      ; u16 slot cursor
+G_VPTR      equ G_BASE+$0b      ; u16 current voice struct
+G_TMP       equ G_BASE+$0d      ; u16 scratch
+G_STORE     equ G_BASE+$0f      ; u8  0 = this voice stores into the plane
+; Handed to the generated mixer core (tools/gen-mixer.mjs)
+G_SEG_N     equ G_BASE+$10      ; u8  ticks in the current segment
+G_SEG_L     equ G_BASE+$11      ; u8  accumulate flag
+G_SEG_I     equ G_BASE+$12      ; u8  buffer index
+G_SEG_R     equ G_BASE+$13      ; u8  remainder ticks
+G_BIASLO    equ G_BASE+$14      ; u8  (i16 variant only)
+G_BIASHI    equ G_BASE+$15
+
+; ── Published header (driver.md §6.4) ──────────────────────────────────────
+; The only Z80 addresses the 68000 needs to know, and the only ones that must
+; stay stable across builds.
+HDR         equ $1300
+H_HEAD      equ HDR+0           ; u8  68k-owned: next slot to fill
+H_TAIL      equ HDR+1           ; u8  Z80-owned: next slot to consume
+H_FRAMES    equ HDR+2           ; u16 Z80-owned: frames CONSUMED — the audible
+                                ;     clock. The 68k runs ahead by the ring
+                                ;     depth, so `(trig N)` fires against this.
+H_READY     equ HDR+4           ; u8  $D2 once the engine is up
+H_VER       equ HDR+5           ; u8  protocol version
+H_SMPBANK   equ HDR+6           ; u16 68k-owned: PCM sample ROM bank (0 = none)
+PROTO_VER   equ 3
+READY_MARK  equ $d2
+
+RING        equ $1400
+STACK_TOP   equ $1f00
+
+; ===========================================================================
+        org 0
+        jp   start
+
+; ── vblank interrupt (IM 1): one engine frame ─────────────────────────────
+        org $38
+int_handler:
+        push af
+        push bc
+        push de
+        push hl
+        push ix
+        call frame_step
+        pop  ix
+        pop  hl
+        pop  de
+        pop  bc
+        pop  af
+        ei
+        reti
+
+; ===========================================================================
+; Boot. The host uploads this image, publishes H_SMPBANK, then releases reset.
+; ===========================================================================
+start:
+        di
+        im   1
+        ld   sp,STACK_TOP
+        ; Clear RAM from the mix buffer up to the stack, but preserve the
+        ; header: the host may already have written H_SMPBANK, and the ring
+        ; head/tail must both start at zero anyway.
+        ld   hl,MIXLO
+        ld   de,MIXLO+1
+        ld   bc,STACK_TOP-MIXLO-1
+        ld   (hl),0
+        ldir
+        xor  a
+        ld   (H_HEAD),a
+        ld   (H_TAIL),a
+        ld   (H_FRAMES),a
+        ld   (H_FRAMES+1),a
+        ld   a,PROTO_VER
+        ld   (H_VER),a
+        ld   a,READY_MARK
+        ld   (H_READY),a
+        ei
+idle:
+        halt
+        jr   idle
+
+; ===========================================================================
+; One frame (driver.md §5.1)
+; ===========================================================================
+frame_step:
+        call consume_slot       ; 1-2: the slot's chip writes and PCM commands
+        call process_pcm        ; 3:   mix and feed the DAC
+        ld   hl,(H_FRAMES)      ; 4:   publish the consumed-frame counter
+        inc  hl
+        ld   (H_FRAMES),hl
+        ret
+
+; ===========================================================================
+; Consume one slot (driver.md §6.2)
+;
+;   [u8 n_psg][val…][u8 n_fm0][{reg,val}…][u8 n_fm1][…][u8 n_pcm][commands…]
+;
+; Length-prefixed runs, so the loop needs no per-write dispatch: three tight
+; loops with their port address fixed.
+;
+; Ring-empty is NOT an error — it means the game overran, so the chips simply
+; hold where they are and the mixer keeps running (no PCM gap).
+; ===========================================================================
+consume_slot:
+        ld   a,(H_TAIL)
+        ld   c,a
+        ld   a,(H_HEAD)
+        cp   c
+        ret  z                  ; ring empty: the 68k did not keep up
+        ; slot address = RING + tail*256, and RING is page-aligned
+        ld   a,c
+        add  a,RING>>8
+        ld   h,a
+        ld   l,0
+
+        ; ── PSG run: bare bytes, no wait needed ──
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        or   a
+        jr   z,cs_fm0
+cs_psg:
+        ld   a,(hl)
+        ld   (PSG_PORT),a
+        inc  hl
+        djnz cs_psg
+
+cs_fm0:
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        or   a
+        jr   z,cs_fm1
+cs_p0:
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_ADDR0),a
+        inc  hl
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_DATA0),a
+        inc  hl
+        djnz cs_p0
+
+cs_fm1:
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        or   a
+        jr   z,cs_pcm
+cs_p1:
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_ADDR1),a
+        inc  hl
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_DATA1),a
+        inc  hl
+        djnz cs_p1
+
+cs_pcm:
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        or   a
+        jr   z,cs_done
+cs_cmd:
+        push bc
+        call pcm_command        ; advances HL past the command
+        pop  bc
+        djnz cs_cmd
+
+cs_done:
+        ld   a,(H_TAIL)
+        inc  a
+        cp   RING_DEPTH
+        jr   c,cs_store
+        xor  a
+cs_store:
+        ld   (H_TAIL),a
+        ret
+
+; ym_busy0: poll the status byte until BUSY (bit 7) clears. The DAC data
+; register is exempt and is fed blind by the mixer (driver.md §5.1).
+ym_busy0:
+        ld   a,(YM_ADDR0)
+        rla
+        jr   c,ym_busy0
+        ret
+
+; ===========================================================================
+; PCM commands (driver.md §6.3). HL = command cursor, advanced past the
+; command on return. Every field arrives register-ready.
+; ===========================================================================
+PCMC_START  equ 1
+PCMC_STOP   equ 2
+PCMC_VOL    equ 3
+PCMC_LOOP   equ 4
+
+pcm_command:
+        ld   a,(hl)
+        inc  hl
+        dec  a
+        jp   z,pc_start
+        dec  a
+        jp   z,pc_stop
+        dec  a
+        jp   z,pc_vol
+        dec  a
+        jp   z,pc_loop
+        ret                     ; unknown opcode: the count already bounds us
+
+; voice_ptr: A = voice index → IX = &G_PCMV[A]. PCM_V_SIZE is a power of two,
+; so this is a shift, not a multiply.
+voice_ptr:
+        push hl
+        ld   l,a
+        ld   h,0
+        add  hl,hl              ; ×2
+        add  hl,hl              ; ×4
+        add  hl,hl              ; ×8
+        add  hl,hl              ; ×16
+        add  hl,hl              ; ×32
+        ld   de,G_PCMV
+        add  hl,de
+        push hl
+        pop  ix
+        pop  hl
+        ret
+
+; PCM_START — 17-byte payload:
+;   voice, flags, shift, ksh, bank u16, ptr u16, left u16, loopl u16,
+;   tail u16, incf u16, inci
+pc_start:
+        ld   a,(hl)
+        inc  hl
+        call voice_ptr
+        ld   a,(hl)
+        inc  hl
+        or   1                  ; the command itself means "active"
+        ld   (ix+PV_FLAGS),a
+        ld   a,(hl)
+        inc  hl
+        ld   (ix+PV_SHIFT),a
+        ld   a,(hl)
+        inc  hl
+        ld   (ix+PV_KSH),a
+        call rd16
+        ld   (ix+PV_BANK),e
+        ld   (ix+PV_BANK+1),d
+        call rd16
+        ld   (ix+PV_PTR),e
+        ld   (ix+PV_PTR+1),d
+        call rd16
+        ld   (ix+PV_LEFT),e
+        ld   (ix+PV_LEFT+1),d
+        call rd16
+        ld   (ix+PV_LOOPL),e
+        ld   (ix+PV_LOOPL+1),d
+        call rd16
+        ld   (ix+PV_TAIL),e
+        ld   (ix+PV_TAIL+1),d
+        call rd16
+        ld   (ix+PV_INCF),e
+        ld   (ix+PV_INCF+1),d
+        ld   a,(hl)
+        inc  hl
+        ld   (ix+PV_INCI),a
+        ld   (ix+PV_FRAC),0
+        ld   (ix+PV_FRAC+1),0
+        ret
+
+; PCM_STOP — voice. A looped voice starts its release tail: the boundary moves
+; from the loop end to the sample end, so it plays out instead of wrapping. A
+; shot is already heading for its end and is unaffected.
+pc_stop:
+        ld   a,(hl)
+        inc  hl
+        call voice_ptr
+        bit  0,(ix+PV_FLAGS)
+        ret  z
+        bit  1,(ix+PV_FLAGS)    ; hasLoop?
+        ret  z
+        res  1,(ix+PV_FLAGS)    ; stop wrapping
+        set  2,(ix+PV_FLAGS)    ; releasing
+        ld   e,(ix+PV_LEFT)     ; left += tail
+        ld   d,(ix+PV_LEFT+1)
+        ld   l,(ix+PV_TAIL)
+        ld   h,(ix+PV_TAIL+1)
+        add  hl,de
+        ld   (ix+PV_LEFT),l
+        ld   (ix+PV_LEFT+1),h
+        ret
+
+; PCM_VOL — voice, shift. Composed on the 68k from :vel + :vol + :master
+; (driver.md §14); the mixer applies it as an arithmetic shift per sample.
+pc_vol:
+        ld   a,(hl)
+        inc  hl
+        call voice_ptr
+        ld   a,(hl)
+        inc  hl
+        ld   (ix+PV_SHIFT),a
+        ret
+
+; PCM_LOOP — voice, loopl u16, left u16. Retargeting a running voice's loop
+; region costs the mixer nothing: a voice-outer pass reads the bounds once per
+; segment, never per tick (driver.md §1.2).
+pc_loop:
+        ld   a,(hl)
+        inc  hl
+        call voice_ptr
+        call rd16
+        ld   (ix+PV_LOOPL),e
+        ld   (ix+PV_LOOPL+1),d
+        call rd16
+        ld   (ix+PV_LEFT),e
+        ld   (ix+PV_LEFT+1),d
+        ret
+
+; rd16: DE = u16 at (HL), HL advanced.
+rd16:
+        ld   e,(hl)
+        inc  hl
+        ld   d,(hl)
+        inc  hl
+        ret
+
+; ===========================================================================
+; PCM (driver.md §5.3, §5.4)
+; ===========================================================================
+process_pcm:
+        call pcm_any_active
+        jr   nz,pp_run
+        ; nothing sounding: release the DAC once, then stay quiet
+        ld   a,(G_DACON)
+        or   a
+        ret  z
+        xor  a
+        ld   (G_DACON),a
+        ld   b,0
+        ld   c,$2b
+        jp   ym_write0
+
+pp_run:
+        ld   a,(G_DACON)
+        or   a
+        jr   nz,pp_mix
+        ld   a,1
+        ld   (G_DACON),a
+        ld   b,$80
+        ld   c,$2b              ; DAC enable — claimed, not owned (§14)
+        call ym_write0
+
+pp_mix:
+        xor  a
+        ld   (G_FIRST),a        ; no storing voice chosen yet
+        ld   ix,G_PCMV
+        ld   b,PCM_VOICES
+pp_voice:
+        push bc
+        push ix
+        bit  0,(ix+PV_FLAGS)
+        call nz,mix_voice_frame
+        pop  ix
+        ld   de,PCM_V_SIZE
+        add  ix,de
+        pop  bc
+        djnz pp_voice
+
+        ; Every active voice ended at tick 0, so nothing stored: the plane
+        ; still holds last frame's samples. Silence it rather than repeat them.
+        ld   a,(G_FIRST)
+        or   a
+        jr   nz,pp_out
+        ld   hl,MIXLO
+        ld   b,PCM_MIX_R
+        call fill_silence
+pp_out:
+        jp   out_pass
+
+; pcm_any_active: returns NZ if any voice is sounding.
+pcm_any_active:
+        ld   a,(G_PCMV+0*PCM_V_SIZE+PV_FLAGS)
+        and  1
+        ret  nz
+        ld   a,(G_PCMV+1*PCM_V_SIZE+PV_FLAGS)
+        and  1
+        ret  nz
+        ld   a,(G_PCMV+2*PCM_V_SIZE+PV_FLAGS)
+        and  1
+        ret
+
+; ---------------------------------------------------------------------------
+; mix_voice_frame: run one voice for a whole frame, split into segments that
+; cannot cross a loop or sample boundary. IX = voice.
+;
+; The split is the point of a voice-outer pass: the inner loop carries no
+; bounds check at all, and the check runs a handful of times per frame instead
+; of PCM_MIX_R times.
+;
+; Segment length is bounded conservatively — `avail >> KSH` where 2^KSH >= inc
+; — so the engine never has to divide. KSH arrives from the 68k with the note.
+; The bound is safe at any length because the fetch precedes the advance: while
+; one byte remains, one more tick is always legal.
+; ---------------------------------------------------------------------------
+mix_voice_frame:
+        ; The store/accumulate role is per VOICE, not per segment: the first
+        ; active voice writes the plane (which removes the frame-long clear),
+        ; every later one adds to it.
+        ld   a,(G_FIRST)
+        or   a
+        jr   nz,mvf_acc
+        ld   a,1
+        ld   (G_FIRST),a
+        xor  a                  ; 0 = store
+        jr   mvf_role
+mvf_acc:
+        ld   a,1                ; nonzero = accumulate
+mvf_role:
+        ld   (G_STORE),a
+        ld   l,(ix+PV_BANK)
+        ld   h,(ix+PV_BANK+1)
+        call latch_bank         ; once per voice per frame, not per tick
+        ld   a,PCM_MIX_R
+        ld   (G_TICKS),a
+        xor  a
+        ld   (G_IDX),a
+
+mvf_seg:
+        ld   a,(G_TICKS)
+        or   a
+        ret  z                  ; frame done
+
+        ; avail = min(PV_LEFT, bytes to the top of the window)
+        ld   l,(ix+PV_LEFT)
+        ld   h,(ix+PV_LEFT+1)
+        ld   a,(ix+PV_PTR)
+        neg
+        ld   c,a
+        ld   a,0
+        sbc  a,(ix+PV_PTR+1)
+        ld   b,a                ; BC = $10000 - ptr
+        or   a
+        sbc  hl,bc
+        add  hl,bc
+        jr   c,mvf_have         ; LEFT < window distance → keep LEFT
+        ld   h,b
+        ld   l,c
+mvf_have:
+        ; n = avail >> KSH, forced to at least 1
+        ld   a,(ix+PV_KSH)
+        or   a
+        jr   z,mvf_nsh
+        ld   b,a
+mvf_sh:
+        srl  h
+        rr   l
+        djnz mvf_sh
+mvf_nsh:
+        ld   a,h
+        or   a
+        jr   nz,mvf_cap         ; >= 256 ticks available: cap at the frame
+        ld   a,l
+        or   a
+        jr   nz,mvf_capl
+        inc  a                  ; forced progress
+        jr   mvf_capl
+mvf_cap:
+        ld   a,255
+mvf_capl:
+        ld   c,a
+        ld   a,(G_TICKS)
+        cp   c
+        jr   nc,mvf_n
+        ld   c,a                ; n = min(n, ticks left)
+mvf_n:
+        ld   l,(ix+PV_PTR)      ; remember the pointer to measure consumption
+        ld   h,(ix+PV_PTR+1)
+        ld   (G_OLDPTR),hl
+
+        push bc                 ; C = n
+        ld   b,c
+        ld   a,(G_IDX)
+        ld   l,a
+        ld   a,(G_STORE)
+        call mix_seg            ; returns L = next buffer index
+        ld   a,l
+        ld   (G_IDX),a
+        pop  bc
+        ld   a,(G_TICKS)
+        sub  c
+        ld   (G_TICKS),a
+
+        ; LEFT -= (ptr - oldptr)
+        ld   l,(ix+PV_PTR)
+        ld   h,(ix+PV_PTR+1)
+        ld   de,(G_OLDPTR)
+        or   a
+        sbc  hl,de              ; HL = bytes consumed
+        ex   de,hl
+        ld   l,(ix+PV_LEFT)
+        ld   h,(ix+PV_LEFT+1)
+        or   a
+        sbc  hl,de
+        jr   nc,mvf_left        ; the forced one-tick segment (avail >> KSH == 0)
+        ld   hl,0               ; may consume more than LEFT — clamp, or the
+mvf_left:                       ; countdown wraps and the voice runs off the end
+        ld   (ix+PV_LEFT),l
+        ld   (ix+PV_LEFT+1),h
+
+        ; window top crossed? the pointer left $8000..$FFFF, so step the bank
+        ld   a,(ix+PV_PTR+1)
+        cp   WINDOW>>8
+        jr   nc,mvf_bound
+        add  a,WINDOW>>8
+        ld   (ix+PV_PTR+1),a
+        ld   l,(ix+PV_BANK)
+        ld   h,(ix+PV_BANK+1)
+        inc  hl
+        ld   (ix+PV_BANK),l
+        ld   (ix+PV_BANK+1),h
+        call latch_bank
+
+mvf_bound:
+        ld   a,(ix+PV_LEFT)
+        or   (ix+PV_LEFT+1)
+        jp   nz,mvf_seg         ; still inside the region
+        bit  1,(ix+PV_FLAGS)    ; loops, and not releasing → wrap
+        jr   z,mvf_end
+        ld   l,(ix+PV_PTR)
+        ld   h,(ix+PV_PTR+1)
+        ld   e,(ix+PV_LOOPL)
+        ld   d,(ix+PV_LOOPL+1)
+        or   a
+        sbc  hl,de
+        ld   a,h
+        cp   WINDOW>>8
+        jr   nc,mvf_wr
+        add  a,WINDOW>>8        ; wrapped back below the window: previous bank
+        ld   h,a
+        push hl
+        ld   l,(ix+PV_BANK)
+        ld   h,(ix+PV_BANK+1)
+        dec  hl
+        ld   (ix+PV_BANK),l
+        ld   (ix+PV_BANK+1),h
+        call latch_bank
+        pop  hl
+mvf_wr:
+        ld   (ix+PV_PTR),l
+        ld   (ix+PV_PTR+1),h
+        ld   (ix+PV_LEFT),e     ; LEFT = loop length
+        ld   (ix+PV_LEFT+1),d
+        jp   mvf_seg
+
+mvf_end:
+        ; shot or release tail finished. If this was the storing voice, the
+        ; rest of the plane was never written, so fill it with silence.
+        res  0,(ix+PV_FLAGS)
+        ld   a,(G_TICKS)
+        or   a
+        ret  z
+        ld   b,a
+        ld   a,(G_STORE)
+        or   a
+        ret  nz                 ; an accumulating voice simply stops adding
+        ld   a,(G_IDX)
+        ld   l,a
+        ld   h,MIXLO>>8
+        jp   fill_silence
+
+; ---------------------------------------------------------------------------
+; latch_bank: HL = 9-bit ROM bank for the 0x8000 window. The Mega Drive bank
+; register is a shift register — nine writes of bit 0, LSB first.
+; ---------------------------------------------------------------------------
+latch_bank:
+        ld   b,9
+lb_loop:
+        ld   a,l
+        ld   (BANK_REG),a
+        srl  h
+        rr   l
+        djnz lb_loop
+        ret
+
+; ---------------------------------------------------------------------------
+; ym_write0: C = register, B = value, YM port 0. Used only for $2B; everything
+; else on the chip comes from a slot.
+; ---------------------------------------------------------------------------
+ym_write0:
+        call ym_busy0
+        ld   a,c
+        ld   (YM_ADDR0),a
+        call ym_busy0
+        ld   a,b
+        ld   (YM_DATA0),a
+        ret
+
+        include "mixer.z80"
