@@ -59,6 +59,7 @@ tools/budget.mjs      size audit + stack watermark over the gate corpus (`npm ru
 tools/gen-mixer.mjs   generates src/mixer.z80 (8 shift-specialised loops, unrolled)
 tools/mixer-bench.mjs the P0 cost+correctness gate for the mixer (`npm run mixer`)
 tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
+tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (`npm run slots`)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
 tools/emit-bin.mjs    emit the Z80 image as .bin + C array for SGDK/68k
 tools/install-sgdk.mjs copy the sgdk/ host files (and optionally a compiled
@@ -240,6 +241,13 @@ The segment split is what makes the inner loop cheap: a voice-outer pass bounds
 each run away from its loop and sample boundaries (conservatively, by
 `avail >> ksh`, so no division), and the inner loop then carries no bounds check
 at all.
+
+`tools/slot-gate.mjs` closes the loop with a real score: `.mmlisp` → MMB →
+`drv-player.js` → slot stream (through the real cap and spill queue in
+`live/src/slot-builder.js`) → the engine, asserting the chip writes *are* the
+sequencer's register writes and that the transport only ever delays one, never
+reorders or drops it. On the corpus the write cap binds only at a score's head
+and never in steady state.
 
 ## The mixer prototype (`npm run mixer`)
 

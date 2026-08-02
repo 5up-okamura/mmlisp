@@ -152,6 +152,8 @@ function freshFmChannel() {
   };
 }
 
+import { SlotBuilder } from "./slot-builder.js";
+
 export class DrvPlayer {
   /**
    * @param {function(port:number, addr:number, data:number, when?:number)} writeCallback
@@ -2204,6 +2206,63 @@ export class DrvPlayer {
         skippedOpcodes: Object.fromEntries(
           [...this._skippedOpcodes].map(([op, n]) => [OPCODE_NAME[op] ?? op, n]),
         ),
+      };
+    } finally {
+      this._writeCb = saved;
+    }
+  }
+
+  /**
+   * Deterministic offline run that emits what the 68000 actually hands the Z80:
+   * one slot per frame, through the real cap-and-spill queue (driver.md §6.2).
+   *
+   * This is the surface the §12.2 gate compares — the C sequencer must produce
+   * the identical slot stream — and the surface tools/slot-gate.mjs feeds
+   * straight into the Z80 engine.
+   *
+   * PCM commands are not emitted yet: the reference mixer still implements
+   * sum-then-saturate, which the settled configuration replaced with 8-bit
+   * saturating-add (§5.3.1), so re-basing it belongs with that change rather
+   * than with the transport.
+   */
+  captureSlotLog({ maxFrames = 36000, commands = [], autoStart = true, builder } = {}) {
+    if (!this._song) throw new Error("No MMB loaded");
+    const b = builder ?? new SlotBuilder();
+    const slots = [];
+    const writes = [];
+    const saved = this._writeCb;
+    this._writeCb = (port, addr, data) => {
+      writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
+      b.write(port, addr, data);
+    };
+    const cmdByFrame = new Map();
+    for (const c of commands) {
+      if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
+      cmdByFrame.get(c.frame).push(c);
+    }
+    try {
+      this._audioContext = null;
+      this._reset(autoStart);
+      let frames = 0;
+      while (frames < maxFrames) {
+        for (const c of cmdByFrame.get(this._frame) ?? []) {
+          this._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
+        }
+        this.stepFrame();
+        slots.push(b.endFrame());
+        frames++;
+        if (this._done()) break;
+      }
+      // Drain whatever the cap held back, so the stream is complete.
+      while (b.pending) slots.push(b.endFrame());
+      return {
+        slots,
+        writes,
+        frames,
+        ended: this._done(),
+        spillPeak: b.spillPeak,
+        spillFrames: b.spillFrames,
+        diagnostics: this._diagnostics.slice(),
       };
     } finally {
       this._writeCb = saved;

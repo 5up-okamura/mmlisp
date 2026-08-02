@@ -122,7 +122,25 @@ pass solved that; the binding constraint is *cycles*.
   - Distances (countdowns), not absolute end addresses, are what make ROM bank
     crossing free: the pointer wraps at the window top, the bank steps, the
     countdown is untouched.
-  **Remaining: the slot builder + cap/spill queue in `drv-player.js`.**
+  **Slot builder DONE too** — `live/src/slot-builder.js` (its own module: the
+  wire format and cap/spill are spec, not either player's business) plus
+  `DrvPlayer.captureSlotLog`. `npm run slots` runs a real score end to end and
+  asserts the chips receive exactly the sequencer's writes, in order, and that
+  the transport only ever DELAYS one. Corpus behaviour: the 95-write cap binds
+  only at a score's head (2 frames held back, ≤2 frames late) and never in
+  steady state, on scores from 395 to 1801 writes — i.e. the armed-frame burst
+  driver.md §4.2 predicted, and nothing else.
+
+  **REMAINING for P1: PCM commands from the sequencer side.** Blocked on
+  re-basing `drv-player.js`'s `_pcmFrame` from sum-then-saturate onto the
+  settled 8-bit saturating-add semantics, and onto the engine's countdown
+  boundary formulation (`LEFT`, checked after the advance) rather than its
+  current `idx >= len` check before the fetch — the two agree on which samples
+  play but can disagree by a frame on when a voice deactivates, which moves the
+  `$2B` DAC-release write. Also still missing: **shift index 8 = mute** in the
+  generated mixer (a body that advances the position and contributes nothing),
+  for `:vol 0` / `:master 0`, where the voice must keep advancing silently.
+  This is an audio change, so it re-freezes the PCM gate baselines.
 - **P2 sequencer** — `drv-player.js` → portable C, host-gated against it.
 - **P3 integration** — SGDK glue, hardware bring-up.
 

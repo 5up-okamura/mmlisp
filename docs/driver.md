@@ -935,13 +935,19 @@ The port milestones:
   decision are all back on the table, before anything was built on top of them.
   Settling §5.3.1's configuration is the gate on P1, because `SLOT_MAX_WRITES`
   falls out of whatever the mixer leaves (§6.2).
-- **P1 — the interface.** The ring, slot format and PCM command set (§6) on both
-  sides. **Z80 half DONE 2026-08-02** — `drv/src/engine.z80` (2560 B: boot,
-  vblank ISR, ring consume, PCM commands, published header, the segment-split
-  voice driver), gated by `npm run engine` across seven scenarios including loop
-  wrap, mid-frame voice end, ROM bank crossing and ring starvation. Remaining:
-  the slot builder and cap/spill queue in `drv-player.js`, so the reference
-  speaks the real protocol and the §12.2 gate compares slot streams.
+- **P1 — the interface. DONE for FM/PSG, 2026-08-02.** `drv/src/engine.z80`
+  (2560 B: boot, vblank ISR, ring consume, PCM commands, published header, the
+  segment-split voice driver), `live/src/slot-builder.js` (the wire format and
+  the cap/spill queue — deliberately its own module, since the interface is
+  part of the spec rather than either player's business), and
+  `DrvPlayer.captureSlotLog`. Two gates: `npm run engine` (seven scenarios
+  including loop wrap, mid-frame voice end, ROM bank crossing, ring starvation)
+  and `npm run slots` (a real score end to end — §12.3).
+
+  Remaining: **PCM commands from the sequencer side**, which is blocked on
+  re-basing `drv-player.js`'s mixer onto the settled 8-bit saturating-add
+  semantics (§5.3.1) — it still implements sum-then-saturate. That is an audio
+  change, so it re-freezes the PCM gate baselines and belongs in its own pass.
 - **P2 — the sequencer.** `drv-player.js` → portable C, gated against it on the
   host (§12.2). This is the bulk of the work and the least risky part of it:
   the spec is a complete, validated implementation in a portable language, which
@@ -984,11 +990,25 @@ language.
 
 ### 12.3 Z80 engine ≡ the slot stream
 
-The engine's contract is narrow enough to gate directly: feed the emulator a
-recorded slot stream and assert that (a) the chip writes it emits are exactly
-the slot's bytes, in order, on the right ports, and (b) the `$2A` DAC stream
-matches a JS model of §5.3 sample for sample. The existing first-party
-assembler/emulator/trace toolchain (`drv/tools/`) carries over unchanged.
+The engine's contract is narrow enough to gate directly, and it is gated two
+ways. The existing first-party assembler/emulator/trace toolchain (`drv/tools/`)
+carries over unchanged.
+
+**`npm run engine`** feeds hand-written slot streams and asserts that (a) the
+chip writes are exactly the slot's bytes, in order, on the right ports, and
+(b) the `$2A` DAC stream matches a JS model of §5.3 sample for sample. The
+scenarios exist to pin the segment arithmetic: a loop wrapping several times
+per frame, a shot ending mid-frame, a sample crossing a ROM bank boundary, a
+mid-flight `PCM_LOOP`, and a starved ring.
+
+**`npm run slots`** runs a real score the whole way — `.mmlisp` → MMB →
+`drv-player.js` → slot stream through the real cap/spill queue → the engine —
+and asserts the chip writes *are* the sequencer's register writes: same values,
+same ports, same order, nothing added or dropped. It also asserts the transport
+only ever **delays**: a write may arrive in its own frame or a later one, never
+earlier. On the corpus the cap binds only at a score's head (the burst §4.2
+describes) and never in steady state — 2 frames held back, at most 2 frames
+late, on scores from 395 to 1801 writes.
 
 ### 12.4 The mixer cycle gate
 
