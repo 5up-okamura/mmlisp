@@ -159,7 +159,25 @@ pass solved that; the binding constraint is *cycles*.
   implements neither its PCM semantics nor its DAC ownership. `verify:all` is
   now selftest + the P0/P1 gates + the ir↔drv A/B. ab-baseline re-frozen: still
   **18 clean of 40**, with the PCM scores' signatures changed by design.
-- **P2 sequencer** — `drv-player.js` → portable C, host-gated against it.
+- **P2 sequencer — M1 DONE 2026-08-03.** `drv/68k/{mmlispseq.h,mmlispseq.c,
+  gate_main.c}` + generated `tables.c`; gate `npm run c-gate` (tools/c-gate.mjs).
+  **6 scores byte-identical** (ab-core 392 slots, stress-m1, m3-voice,
+  m3-callret, m3-trig, m3-gate-tie); 5 PEND on opcodes not yet ported.
+  Remaining surface, straight off the gate: 0x61 PARAM_SWEEP, 0x62 PARAM_ADD,
+  0xE0 MACRO_SET, 0xC0 PCM_NOTE_ON — i.e. M2 motion, the M3 macro engine, PCM,
+  and the value machine.
+  Two things the C needs that the JS gets for free, both found BY the gate:
+  - **a shadow-validity plane** — drv-player keys its shadow with a Map so an
+    unwritten register never compares equal; a zero-initialised C array
+    suppresses the neutral patch's many writes of 0. (The Z80 dodged this by
+    writing every covered register at boot, which is why it could drop its own
+    plane.)
+  - **VOICE_SET compares against the STRUCTURED shadow**, not the register
+    shadow: the burst it replaced only wrote registers a PARAM_SET touched, so
+    e.g. $90/SSG must stay unwritten when the voice omits it.
+  Unported opcodes STOP the track fail-safe and the gate reports PEND with the
+  opcode + how many leading frames matched — a regression upstream of the stop
+  still shows as that number falling, so PEND is not a blind spot.
 - **P3 integration** — SGDK glue, hardware bring-up.
 
 ## Fixed limits (expectation-setting, unchanged by the split)

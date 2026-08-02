@@ -60,12 +60,15 @@ tools/gen-mixer.mjs   generates src/mixer.z80 (8 shift-specialised loops, unroll
 tools/mixer-bench.mjs the P0 cost+correctness gate for the mixer (`npm run mixer`)
 tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
 tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (`npm run slots`)
+tools/gen-c-tables.mjs generates 68k/tables.c from live/src/ir-utils.js
+tools/c-gate.mjs      P2 hard gate: 68k C ≡ drv-player.js on the slot stream (`npm run c-gate`)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
 tools/emit-bin.mjs    emit the Z80 image as .bin + C array for SGDK/68k
 tools/install-sgdk.mjs copy the sgdk/ host files (and optionally a compiled
                       score) into an SGDK project (`npm run sgdk:install -- <dir>`)
 tools/wav.mjs         load WAV → 8-bit signed PCM for the SAMPLE_BANK (PCM songs)
 tests/*.mmlisp        trace-stress scores beyond ab-core's coverage (+ .wav fixtures)
+68k/                  the POST-SPLIT sequencer in portable C99 (P2) — see below
 sgdk/                 SGDK (68k) integration — glue, sample, guide (sgdk/README.md)
 ```
 
@@ -286,6 +289,24 @@ hand-maintained -- the same pattern as `gen-tables.mjs`.
 Numbers are a **floor**: the emulator charges documented Z80 cycles with no
 bank-window wait states, and the loop's most-executed instruction is the sample
 fetch through that window.
+
+## P2 — the sequencer in C (`npm run c-gate`)
+
+`68k/mmlispseq.c` is the port of `live/src/drv-player.js` to the 68000. It is
+plain C99 with no SGDK dependency, which is the whole trick: it compiles for
+the host too, so the gate runs both sides natively — no emulator, no assembler,
+a debugger on each — and compares the SLOT STREAM, which is what the 68000
+actually hands the Z80.
+
+M1 is done and byte-identical on six corpus scores. Opcodes not yet ported stop
+their track fail-safe instead of mis-decoding a length, and the gate reports
+those scores as PEND with the opcode and the number of leading frames that
+matched — so the remaining surface reads straight off the gate output, and a
+regression upstream of a stop still shows up as that number falling.
+
+`68k/tables.c` is generated from `live/src/ir-utils.js` by `gen-c-tables.mjs`,
+the same single-source rule the Z80 tables follow: neither side derives a
+constant table, so they cannot disagree.
 
 ## Why a first-party assembler/emulator
 

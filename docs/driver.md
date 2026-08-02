@@ -951,10 +951,22 @@ The port milestones:
   `idx >= len` test — so the two now share a structure instead of merely
   agreeing on results. `npm run slots` checks the DAC stream sample for sample
   across the PCM corpus: 52,685 writes on `m3-pcm-softmix`, all matching.
-- **P2 — the sequencer.** `drv-player.js` → portable C, gated against it on the
-  host (§12.2). This is the bulk of the work and the least risky part of it:
-  the spec is a complete, validated implementation in a portable language, which
-  is exactly what the original Z80 port did not have.
+- **P2 — the sequencer. M1 landed 2026-08-03.** `drv/68k/mmlispseq.c` — plain
+  C99, no SGDK, so it compiles for the host as well as for m68k. Covers the core
+  opcode set, FM + PSG note paths, the level model, pitch, loops/CALL/RET,
+  tempo, VOICE_SET, the armed frame, and slot emission through the real
+  cap/spill queue. `npm run c-gate` diffs its slot stream against
+  `drv-player.js` byte for byte: **six corpus scores byte-identical**, including
+  `ab-core` (392 slots), `stress-m1`, `m3-voice`, `m3-callret`, `m3-trig` and
+  `m3-gate-tie`.
+
+  Opcodes not yet ported stop their track fail-safe (mmb.md §13) rather than
+  mis-decoding a length, and the gate reports those scores as **PEND** with the
+  opcode and how many leading frames were identical — so the port's remaining
+  surface reads straight off the gate output, and a regression upstream of the
+  stop still shows as that number falling. Remaining: `PARAM_SWEEP` (0x61),
+  `PARAM_ADD` (0x62), `MACRO_SET` (0xE0), `PCM_NOTE_ON` (0xC0) and their
+  relatives — i.e. M2 motion, the M3 macro engine, PCM, and the value machine.
 - **P3 — integration and bring-up.** SGDK glue, the 68k-side frame hook, real
   hardware. The open hardware questions are unchanged: YM BUSY behaviour on
   silicon, and the DAC jitter the 68k's per-frame bus grab introduces (§1.3).
@@ -983,7 +995,19 @@ interface too, not just the music.
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order.
+same ports, same frames, same order. `npm run c-gate`.
+
+Two things the port needs that the reference gets for free, both discovered by
+this gate:
+
+- **A shadow-validity plane.** `drv-player` keys its shadow with a Map, so an
+  unwritten register never compares equal to anything; a zero-initialised C
+  array would suppress the neutral patch's many writes of 0. (The Z80 solved
+  the same problem by writing every covered register at boot, which is what let
+  it drop its own plane — driver.md §5.)
+- **`VOICE_SET` compares against the STRUCTURED shadow**, not the register
+  shadow, because the burst it replaced only wrote registers some PARAM_SET
+  touched (§10).
 
 This is a straight replacement for the old asm↔reference trace gate and it is
 strictly easier: no emulator in the loop, no assembler, and a debugger on both

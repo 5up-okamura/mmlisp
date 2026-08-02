@@ -1,0 +1,823 @@
+/* MMLispDRV sequencer — 68000 half of the split (docs/driver.md §4).
+ *
+ * Ported from live/src/drv-player.js, which is the normative spec: the gate
+ * (tools/c-gate.mjs) diffs the two slot streams at zero tolerance. Comments
+ * here explain *why* a rule exists; the JS carries the same reasoning.
+ */
+#include "mmlispseq.h"
+
+#include <string.h>
+
+#define MAGIC0 0x4d
+#define MAGIC1 0x4d
+#define MAGIC2 0x42
+#define MAGIC3 0x30
+#define SEC_TRACK_TABLE 0x0001
+#define SEC_EVENT_STREAM 0x0002
+#define SEC_VOICE_TABLE 0x0006
+
+#define DUR_HOLD 0x00
+#define DUR_EXT 0xff
+#define VOL_UNITY 31
+
+/* Opcodes (opcodes.md) */
+enum {
+  OP_END_OF_TRACK = 0x00,
+  OP_NOTE_ON = 0x10,
+  OP_REST = 0x11,
+  OP_TIE = 0x12,
+  OP_NOTE_ON_EX = 0x13,
+  OP_VOICE_SET = 0x14,
+  OP_LOOP_BEGIN = 0x40,
+  OP_LOOP_END = 0x41,
+  OP_MARKER = 0x42,
+  OP_JUMP = 0x43,
+  OP_CALL = 0x44,
+  OP_RET = 0x45,
+  OP_LOOP_BREAK = 0x46,
+  OP_PARAM_SET = 0x60,
+  OP_TEMPO_SET = 0x80
+};
+
+/* Target ids (opcodes.md §7) */
+enum {
+  T_NOTE_PITCH = 0x01,
+  T_VOL = 0x04,
+  T_MASTER = 0x05,
+  T_VEL = 0x06,
+  T_GATE = 0x09,
+  T_FM_FB = 0x10,
+  T_FM_TL1 = 0x11,
+  T_FM_ALG = 0x15,
+  T_FM_AR1 = 0x16,
+  T_FM_DR1 = 0x1a,
+  T_FM_SR1 = 0x1e,
+  T_FM_RR1 = 0x22,
+  T_FM_SL1 = 0x26,
+  T_FM_KS1 = 0x2a,
+  T_FM_ML1 = 0x2e,
+  T_FM_DT1 = 0x32,
+  T_FM_SSG1 = 0x36,
+  T_FM_AMEN1 = 0x3a,
+  T_FM_AMS = 0x3e,
+  T_FM_FMS = 0x3f,
+  T_PAN = 0x40,
+  T_LFO_RATE = 0x41,
+  T_NOISE_MODE = 0x42
+};
+
+static uint16_t rd16(const uint8_t *b, uint32_t o) {
+  return (uint16_t)(b[o] | (b[o + 1] << 8));
+}
+static uint32_t rd32(const uint8_t *b, uint32_t o) {
+  return (uint32_t)b[o] | ((uint32_t)b[o + 1] << 8) | ((uint32_t)b[o + 2] << 16) |
+         ((uint32_t)b[o + 3] << 24);
+}
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* ── Write paths ───────────────────────────────────────────────────────────
+ * Everything the sequencer emits lands in the slot queue. $2A and $2B are the
+ * exception: post-split they belong to the mixer, which is the only thing that
+ * knows when a voice is sounding (driver.md §14). They still update the shadow
+ * — an unwritten shadow entry would let a later write of 0 be suppressed — but
+ * they never cross the bus.
+ */
+static void q_push(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+  if (port == 0 && (addr == 0x2a || addr == 0x2b)) return;
+  uint16_t next = (uint16_t)((s->q_head + 1) % MML_WRITE_QUEUE);
+  if (next == s->q_tail) return; /* queue full: cannot happen on real scores */
+  s->q[s->q_head].port = port;
+  s->q[s->q_head].addr = addr;
+  s->q[s->q_head].data = data;
+  s->q_head = next;
+}
+
+/* YM parameter write, change-only through the shadow. */
+static void ym(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+  if (s->shadow_set[port][addr] && s->shadow[port][addr] == data) return;
+  s->shadow_set[port][addr] = 1;
+  s->shadow[port][addr] = data;
+  q_push(s, port, addr, data);
+}
+
+/* YM write that always emits but keeps the shadow current. For the F-number
+ * pair $A4-A6/$A0-A2: the high byte latches into a register the chip shares
+ * across a port's three channels and the low byte commits {latch, low} to one
+ * of them, so suppressing the high byte would let another channel's
+ * intervening write pick the wrong octave (driver.md §8). */
+static void ym_always(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+  s->shadow_set[port][addr] = 1;
+  s->shadow[port][addr] = data;
+  q_push(s, port, addr, data);
+}
+
+/* $28 is a key EDGE, not state. */
+static void ym_key(MMLSeq *s, uint8_t data) { q_push(s, 0, 0x28, data); }
+
+/* The SN76489 has no readable state; its bytes always go out. */
+static void psg_byte(MMLSeq *s, uint8_t byte) { q_push(s, 2, 0, byte); }
+
+/* ── Register encoders (ir-utils.js) ───────────────────────────────────────── */
+static uint8_t enc_b0(const MMLFmCh *c) {
+  return (uint8_t)(((c->feedback & 7) << 3) | (c->algorithm & 7));
+}
+static uint8_t enc_b4(const MMLFmCh *c) {
+  uint8_t pan = c->pan < 0 ? 2 : c->pan > 0 ? 1 : 3;
+  return (uint8_t)((pan << 6) | ((c->ams & 3) << 4) | (c->fms & 7));
+}
+static uint8_t enc_30(const MMLOp *o) {
+  return (uint8_t)(((o->dt & 7) << 4) | (o->mul & 0x0f));
+}
+static uint8_t enc_60(const MMLOp *o) {
+  return (uint8_t)(((o->amen & 1) << 7) | (o->dr & 0x1f));
+}
+static uint8_t enc_80(const MMLOp *o) {
+  return (uint8_t)(((o->sl & 0x0f) << 4) | (o->rr & 0x0f));
+}
+
+/* ── Level model (driver.md §7) ────────────────────────────────────────────
+ * Offsets are stored in quarter steps and summed before a single rounding, so
+ * the runtime stays integer-only while landing inside the documented band. */
+static uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint8_t vol) {
+  int off4 = MML_VEL_TL4[vel] + MML_VOL_TL4[vol] + MML_VOL_TL4[s->master];
+  int tl = voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+  return (uint8_t)clampi(tl, 0, 127);
+}
+static uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
+  if (vol == 0 || s->master == 0) return 15; /* hard mute (language.md §6) */
+  int off4 = MML_VEL_PSG4[vel] + MML_VOL_PSG4[vol] + MML_VOL_PSG4[s->master];
+  int att = (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
+  return (uint8_t)clampi(att, 0, 15);
+}
+
+/* ── Pitch (driver.md §8) ─────────────────────────────────────────────────── */
+static void fold_cents(int *note, int *cents) {
+  int whole = *cents / 100; /* C truncates toward zero, like Math.trunc */
+  *note += whole;
+  *cents -= whole * 100;
+  if (*cents < 0) {
+    *note -= 1;
+    *cents += 100;
+  }
+  *note = clampi(*note, 0, 126);
+}
+static uint16_t fnum_block_for(int note, int cents) {
+  fold_cents(&note, &cents);
+  if (cents == 0) return MML_FNUM_BLOCK[note];
+  uint16_t e0 = MML_FNUM_BLOCK[note], e1 = MML_FNUM_BLOCK[note + 1];
+  int block = e0 >> 11, fnum0 = e0 & 0x7ff;
+  int shift = (e1 >> 11) - block;
+  if (shift < 0) shift = 0; /* 0 or 1 for adjacent notes */
+  int v1 = (e1 & 0x7ff) << shift; /* e1's F-number in block0 units */
+  int fnum = fnum0 + ((v1 - fnum0) * cents + 50) / 100; /* round half up */
+  while (fnum > 1023 && block < 7) {
+    block++;
+    fnum >>= 1;
+  }
+  return (uint16_t)(((block & 7) << 11) | (fnum & 0x7ff));
+}
+static uint16_t psg_period_for(int note, int cents) {
+  fold_cents(&note, &cents);
+  if (cents == 0) return MML_PSG_PERIOD[note];
+  /* Period falls as pitch rises, so the numerator stays non-negative — the
+   * same form the asm uses, which is what keeps all three players bit-equal. */
+  int p0 = MML_PSG_PERIOD[note];
+  int diff = p0 - MML_PSG_PERIOD[note + 1];
+  int p = p0 - (diff * cents + 50) / 100;
+  return (uint16_t)clampi(p, 1, 1023);
+}
+
+static void write_fm_pitch(MMLSeq *s, int ch, int note, int cents) {
+  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  uint16_t fb = fnum_block_for(note, cents);
+  ym_always(s, port, (uint8_t)(0xa4 + off),
+            (uint8_t)((((fb >> 11) & 7) << 3) | ((fb >> 8) & 7)));
+  ym_always(s, port, (uint8_t)(0xa0 + off), (uint8_t)(fb & 0xff));
+}
+static void write_psg_pitch(MMLSeq *s, int pc, int note, int cents) {
+  uint16_t p = psg_period_for(note, cents);
+  psg_byte(s, (uint8_t)(0x80 | ((pc & 3) << 5) | (p & 0x0f)));
+  psg_byte(s, (uint8_t)((p >> 4) & 0x3f));
+}
+static void write_psg_att(MMLSeq *s, int pc, uint8_t att) {
+  s->psg[pc].sounding = (att & 0x0f) < 15;
+  psg_byte(s, (uint8_t)(0x90 | ((pc & 3) << 5) | (att & 0x0f)));
+}
+static void write_noise_cfg(MMLSeq *s) {
+  psg_byte(s, (uint8_t)(0x80 | (3 << 5) | (s->noise_mode & 7)));
+}
+
+static void key_on(MMLSeq *s, int ch) {
+  MMLFmCh *c = &s->fm[ch];
+  uint8_t port = ch >= 3 ? 1 : 0;
+  uint8_t chkey = (uint8_t)((port << 2) | (ch % 3));
+  if (c->vol == 0 || s->master == 0) return; /* hard mute skips key-on */
+  c->keyed = 1;
+  ym_key(s, (uint8_t)(0xf0 | chkey));
+}
+static void key_off(MMLSeq *s, int ch) {
+  MMLFmCh *c = &s->fm[ch];
+  uint8_t port = ch >= 3 ? 1 : 0;
+  uint8_t chkey = (uint8_t)((port << 2) | (ch % 3));
+  if (!c->keyed) return;
+  c->keyed = 0;
+  ym_key(s, chkey);
+}
+static void channel_off(MMLSeq *s, int ch) {
+  if (ch < 6) {
+    key_off(s, ch);
+  } else if (ch < 10) {
+    s->psg[ch - 6].keyed = 0;
+    if (s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
+  }
+}
+
+static void recompose_carriers(MMLSeq *s, int ch) {
+  MMLFmCh *c = &s->fm[ch];
+  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
+  for (int op = 0; op < 4; op++) {
+    if (!(mask & (1 << op))) continue;
+    uint8_t tl = carrier_tl(s, c->ops[op].voiced_tl, c->vel, c->vol);
+    c->ops[op].tl = tl;
+    ym(s, port, (uint8_t)(0x40 + MML_OP_ADDR_OFFSET[op] + off), tl);
+  }
+}
+
+/* ── PARAM_SET (opcodes.md §7) ─────────────────────────────────────────────── */
+static void param_set(MMLSeq *s, int ch, int target, int value) {
+  if (target == T_MASTER) {
+    s->master = (uint8_t)clampi(value, 0, 31);
+    for (int c = 0; c < 6; c++) recompose_carriers(s, c);
+    for (int p = 0; p < 4; p++) {
+      if (!s->psg[p].sounding) continue;
+      write_psg_att(s, p, psg_att(s, s->psg[p].vel, s->psg[p].vol));
+    }
+    return;
+  }
+  if (target == T_LFO_RATE) {
+    int rate = clampi(value, 0, 8);
+    s->lfo_rate = (uint8_t)rate;
+    ym(s, 0, 0x22, (uint8_t)(rate == 0 ? 0x00 : 0x08 | ((rate - 1) & 7)));
+    return;
+  }
+  if (target == T_NOISE_MODE) {
+    s->noise_mode = (uint8_t)(value & 7);
+    if (s->psg[3].sounding) write_noise_cfg(s);
+    return;
+  }
+  if (target == T_GATE) {
+    uint8_t g = (uint8_t)clampi(value, 0, 8);
+    if (ch < 6) s->fm[ch].gate = g;
+    else if (ch < 10) s->psg[ch - 6].gate = g;
+    return;
+  }
+  if (ch >= 6 && ch < 10) {
+    int pc = ch - 6;
+    MMLPsgCh *st = &s->psg[pc];
+    if (target == T_VOL || target == T_VEL) {
+      if (target == T_VOL) st->vol = (uint8_t)clampi(value, 0, 31);
+      else st->vel = (uint8_t)clampi(value, 0, 15);
+      /* Re-apply on a keyed note even when currently silent, so a level macro
+       * can bring it back up (driver.md §13.3). */
+      if (st->keyed) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));
+    } else if (target == T_NOTE_PITCH) {
+      st->pitch_cents = (int16_t)value;
+      if (pc < 3) write_psg_pitch(s, pc, st->current_note, value);
+    }
+    return;
+  }
+  if (ch >= 6) return; /* fm3-op ids have no M1 param path */
+
+  MMLFmCh *c = &s->fm[ch];
+  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  if (target == T_NOTE_PITCH) {
+    c->pitch_cents = (int16_t)value;
+    write_fm_pitch(s, ch, c->current_note, value);
+    return;
+  }
+  if (target == T_VEL || target == T_VOL) {
+    if (target == T_VEL) c->vel = (uint8_t)clampi(value, 0, 15);
+    else c->vol = (uint8_t)clampi(value, 0, 31);
+    recompose_carriers(s, ch);
+    return;
+  }
+  if (target == T_FM_FB) {
+    c->feedback = (uint8_t)(value & 7);
+    ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
+    return;
+  }
+  if (target == T_FM_ALG) {
+    c->algorithm = (uint8_t)(value & 7);
+    ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
+    return;
+  }
+  if (target == T_FM_AMS || target == T_FM_FMS || target == T_PAN) {
+    if (target == T_FM_AMS) c->ams = (uint8_t)(value & 3);
+    else if (target == T_FM_FMS) c->fms = (uint8_t)(value & 7);
+    else c->pan = (int8_t)clampi(value, -1, 1);
+    ym(s, port, (uint8_t)(0xb4 + off), enc_b4(c));
+    return;
+  }
+
+#define OPRANGE(base) (target >= (base) && target <= (base) + 3)
+  int idx = -1;
+  if (OPRANGE(T_FM_TL1)) idx = target - T_FM_TL1;
+  else if (OPRANGE(T_FM_AR1)) idx = target - T_FM_AR1;
+  else if (OPRANGE(T_FM_DR1)) idx = target - T_FM_DR1;
+  else if (OPRANGE(T_FM_SR1)) idx = target - T_FM_SR1;
+  else if (OPRANGE(T_FM_RR1)) idx = target - T_FM_RR1;
+  else if (OPRANGE(T_FM_SL1)) idx = target - T_FM_SL1;
+  else if (OPRANGE(T_FM_KS1)) idx = target - T_FM_KS1;
+  else if (OPRANGE(T_FM_ML1)) idx = target - T_FM_ML1;
+  else if (OPRANGE(T_FM_DT1)) idx = target - T_FM_DT1;
+  else if (OPRANGE(T_FM_SSG1)) idx = target - T_FM_SSG1;
+  else if (OPRANGE(T_FM_AMEN1)) idx = target - T_FM_AMEN1;
+  if (idx < 0) return;
+  MMLOp *o = &c->ops[idx];
+  uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[idx] + off);
+  if (OPRANGE(T_FM_TL1)) {
+    o->voiced_tl = (uint8_t)clampi(value, 0, 127);
+    o->tl = o->voiced_tl;
+    ym(s, port, (uint8_t)(0x40 + oo), o->tl);
+  } else if (OPRANGE(T_FM_AR1) || OPRANGE(T_FM_KS1)) {
+    if (OPRANGE(T_FM_AR1)) o->ar = (uint8_t)(value & 0x1f);
+    else o->rs = (uint8_t)(value & 3);
+    ym(s, port, (uint8_t)(0x50 + oo), (uint8_t)((o->rs << 6) | o->ar));
+  } else if (OPRANGE(T_FM_DR1) || OPRANGE(T_FM_AMEN1)) {
+    if (OPRANGE(T_FM_DR1)) o->dr = (uint8_t)(value & 0x1f);
+    else o->amen = (uint8_t)(value & 1);
+    ym(s, port, (uint8_t)(0x60 + oo), enc_60(o));
+  } else if (OPRANGE(T_FM_SR1)) {
+    o->d2r = (uint8_t)(value & 0x1f);
+    ym(s, port, (uint8_t)(0x70 + oo), (uint8_t)(o->d2r & 0x1f));
+  } else if (OPRANGE(T_FM_RR1) || OPRANGE(T_FM_SL1)) {
+    if (OPRANGE(T_FM_RR1)) o->rr = (uint8_t)(value & 0x0f);
+    else o->sl = (uint8_t)(value & 0x0f);
+    ym(s, port, (uint8_t)(0x80 + oo), enc_80(o));
+  } else if (OPRANGE(T_FM_ML1) || OPRANGE(T_FM_DT1)) {
+    if (OPRANGE(T_FM_ML1)) o->mul = (uint8_t)(value & 0x0f);
+    else o->dt = (int8_t)value; /* enc_30 maps the sign into the register */
+    ym(s, port, (uint8_t)(0x30 + oo), enc_30(o));
+  } else if (OPRANGE(T_FM_SSG1)) {
+    o->ssg = (uint8_t)(value & 0x0f);
+    ym(s, port, (uint8_t)(0x90 + oo), o->ssg);
+  }
+#undef OPRANGE
+}
+
+/* ── VOICE_SET (driver.md §10) ──────────────────────────────────────────────
+ * Apply a 29-byte VOICE_TABLE entry: the register-order block that a
+ * full-voice PARAM_SET burst was coalesced into. Change-only is taken against
+ * the STRUCTURED shadow, not the register shadow — the burst only wrote a
+ * register some PARAM_SET touched, so e.g. $90/SSG (which the neutral patch
+ * never writes) has to stay unwritten when the voice omits it. The old byte is
+ * derived from the current op fields before they are overwritten.
+ */
+static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
+  if (ch >= 6 || voice_id >= s->voice_count) return;
+  const uint8_t *e = s->voices + (uint32_t)voice_id * 29;
+  MMLFmCh *c = &s->fm[ch];
+  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  for (int op = 0; op < 4; op++) {
+    MMLOp *o = &c->ops[op];
+    uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[op] + off);
+    uint8_t b;
+    b = e[0 + op];
+    if (b != enc_30(o)) ym(s, port, (uint8_t)(0x30 + oo), b);
+    o->dt = (int8_t)((b >> 4) & 7);
+    o->mul = (uint8_t)(b & 0x0f);
+    b = e[4 + op];
+    if (b != o->tl) ym(s, port, (uint8_t)(0x40 + oo), b);
+    o->voiced_tl = b;
+    o->tl = b;
+    b = e[8 + op];
+    if (b != (uint8_t)((o->rs << 6) | o->ar)) ym(s, port, (uint8_t)(0x50 + oo), b);
+    o->rs = (uint8_t)((b >> 6) & 3);
+    o->ar = (uint8_t)(b & 0x1f);
+    b = e[12 + op];
+    if (b != enc_60(o)) ym(s, port, (uint8_t)(0x60 + oo), b);
+    o->amen = (uint8_t)((b >> 7) & 1);
+    o->dr = (uint8_t)(b & 0x1f);
+    b = e[16 + op];
+    if (b != o->d2r) ym(s, port, (uint8_t)(0x70 + oo), b);
+    o->d2r = (uint8_t)(b & 0x1f);
+    b = e[20 + op];
+    if (b != enc_80(o)) ym(s, port, (uint8_t)(0x80 + oo), b);
+    o->sl = (uint8_t)((b >> 4) & 0x0f);
+    o->rr = (uint8_t)(b & 0x0f);
+    b = e[24 + op];
+    if (b != o->ssg) ym(s, port, (uint8_t)(0x90 + oo), b);
+    o->ssg = (uint8_t)(b & 0x0f);
+  }
+  uint8_t b0 = e[28];
+  if (b0 != (uint8_t)((c->feedback << 3) | c->algorithm))
+    ym(s, port, (uint8_t)(0xb0 + off), b0);
+  c->feedback = (uint8_t)((b0 >> 3) & 7);
+  c->algorithm = (uint8_t)(b0 & 7);
+}
+
+/* ── Note on (opcodes.md §3.1) ─────────────────────────────────────────────── */
+static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_gate,
+                    int has_ex_gate, int legato) {
+  int ch = t->channel_id;
+  if (ch < 6) {
+    MMLFmCh *c = &s->fm[ch];
+    c->current_note = (uint8_t)note;
+    /* Carrier TL is recomposed on every note, so a level change between notes
+     * always lands (matching the IR player). */
+    recompose_carriers(s, ch);
+    write_fm_pitch(s, ch, note, c->pitch_cents);
+    if (!legato) key_on(s, ch);
+  } else if (ch < 10) {
+    int pc = ch - 6;
+    MMLPsgCh *st = &s->psg[pc];
+    st->current_note = (uint8_t)note;
+    if (!legato) st->keyed = 1;
+    if (pc == 3) write_noise_cfg(s);
+    else write_psg_pitch(s, pc, note, st->pitch_cents);
+    /* Legato keeps the tone sounding — the attenuation IS the PSG's key — but a
+     * silent channel still has to start its attenuation. */
+    if (!legato || !st->sounding) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));
+  }
+
+  int gate = ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
+  if (dur == 0 || (has_ex_gate && ex_gate == 0)) {
+    t->held = 1;
+    t->gate_left = -1;
+    return;
+  }
+  t->wait = dur;
+  if (has_ex_gate) {
+    /* Absolute ticks from note-on. Counts across TIE segments (a tie extends
+     * `wait` and never touches this), so a gate outlasting its own note keys
+     * off mid-tie rather than being clamped to the first segment. */
+    t->gate_left = ex_gate;
+    t->pending_off = 0;
+  } else if (gate < 8) {
+    int32_t g = (dur * gate) >> 3;
+    t->gate_left = g < 1 ? 1 : g;
+    t->pending_off = 0;
+  } else {
+    t->gate_left = -1;
+    t->pending_off = 1; /* full gate: key-off waits on the slur test */
+  }
+}
+
+/* ── Dispatch ─────────────────────────────────────────────────────────────── */
+typedef struct {
+  int32_t ticks;
+  uint32_t next;
+} MMLDur;
+static MMLDur read_dur(const uint8_t *b, uint32_t o) {
+  MMLDur d;
+  if (b[o] == DUR_HOLD) {
+    d.ticks = 0;
+    d.next = o + 1;
+  } else if (b[o] == DUR_EXT) {
+    d.ticks = b[o + 1] | (b[o + 2] << 8);
+    d.next = o + 3;
+  } else {
+    d.ticks = b[o];
+    d.next = o + 1;
+  }
+  return d;
+}
+
+static void dispatch(MMLSeq *s, MMLTrack *t) {
+  const uint8_t *st = s->stream;
+  int guard = 0;
+  while (t->running && !t->held && guard++ < 4096) {
+    uint8_t op = st[t->pc];
+    /* An armed track runs the score's leading setup and stops at the first
+     * opcode that sounds or consumes time, so the frame it was started in
+     * makes no sound however long its voice applies take (driver.md §4.2). */
+    if (t->armed && op >= OP_NOTE_ON && op <= OP_NOTE_ON_EX) return;
+    switch (op) {
+      case OP_END_OF_TRACK:
+        t->pending_off = 0;
+        channel_off(s, t->channel_id);
+        t->running = 0;
+        return;
+      case OP_NOTE_ON: {
+        int note = st[t->pc + 1];
+        MMLDur d = read_dur(st, t->pc + 2);
+        t->pending_off = 0; /* slur: an incoming note cancels the key-off */
+        note_on(s, t, note, d.ticks, 0, 0, 0);
+        t->pc = (uint16_t)d.next;
+        if (d.ticks == 0) return;
+        t->wait = d.ticks;
+        return;
+      }
+      case OP_NOTE_ON_EX: {
+        uint32_t pc = t->pc + 1;
+        uint8_t flags = st[pc++];
+        int note = st[pc++];
+        int has_vel = (flags & 1) != 0;
+        int ex_vel = has_vel ? st[pc++] : 0;
+        MMLDur d = read_dur(st, pc);
+        pc = d.next;
+        int has_gate = (flags & 2) != 0;
+        int32_t ex_gate = 0;
+        if (has_gate) {
+          MMLDur g = read_dur(st, pc);
+          ex_gate = g.ticks;
+          pc = g.next;
+        }
+        t->pending_off = 0;
+        if (has_vel) {
+          if (t->channel_id < 6) s->fm[t->channel_id].vel = (uint8_t)ex_vel;
+          else if (t->channel_id < 10) s->psg[t->channel_id - 6].vel = (uint8_t)ex_vel;
+        }
+        note_on(s, t, note, d.ticks, ex_gate, has_gate, (flags & 8) != 0);
+        t->pc = (uint16_t)pc;
+        if (d.ticks == 0 || (has_gate && ex_gate == 0)) return;
+        t->wait = d.ticks;
+        return;
+      }
+      case OP_REST: {
+        t->pending_off = 0;
+        t->gate_left = -1; /* a rest cancels a gate still counting */
+        channel_off(s, t->channel_id);
+        MMLDur d = read_dur(st, t->pc + 1);
+        t->pc = (uint16_t)d.next;
+        t->wait = d.ticks == 0 ? 1 : d.ticks; /* defensive: no zero rests */
+        return;
+      }
+      case OP_TIE: {
+        t->pending_off = 0; /* an extension, not a retrigger */
+        MMLDur d = read_dur(st, t->pc + 1);
+        t->pc = (uint16_t)d.next;
+        t->wait = d.ticks == 0 ? 1 : d.ticks;
+        return;
+      }
+      case OP_LOOP_BEGIN: {
+        uint8_t count = st[t->pc + 1];
+        t->pc += 2;
+        if (t->depth >= MML_LOOP_DEPTH) break;
+        t->ctrl[t->depth].resume_pc = t->pc;
+        t->ctrl[t->depth].remaining = (int16_t)(count - 1);
+        t->depth++;
+        break;
+      }
+      case OP_LOOP_END: {
+        t->pc += 1;
+        if (!t->depth) break;
+        MMLCtrl *top = &t->ctrl[t->depth - 1];
+        if (top->remaining > 0) {
+          top->remaining--;
+          t->pc = top->resume_pc;
+        } else {
+          t->depth--;
+        }
+        break;
+      }
+      case OP_LOOP_BREAK: {
+        uint16_t skip = rd16(st, t->pc + 1);
+        t->pc += 3;
+        if (t->depth && t->ctrl[t->depth - 1].remaining == 0) {
+          t->pc = (uint16_t)(t->pc + skip); /* final pass: leave the loop */
+          t->depth--;
+        }
+        break;
+      }
+      case OP_MARKER:
+        t->marker_id = (uint8_t)(st[t->pc + 1] & 0x3f);
+        t->pc += 2;
+        break;
+      case OP_JUMP:
+        t->pc = rd16(st, t->pc + 1); /* EVENT_STREAM-relative */
+        break;
+      case OP_CALL: {
+        uint16_t dest = rd16(st, t->pc + 1);
+        uint16_t resume = (uint16_t)(t->pc + 3);
+        if (t->depth >= MML_LOOP_DEPTH) {
+          t->pc = resume;
+          break;
+        }
+        /* CALL and LOOP share the control stack; -1 tags a call (§5.2). */
+        t->ctrl[t->depth].resume_pc = resume;
+        t->ctrl[t->depth].remaining = -1;
+        t->depth++;
+        t->pc = dest;
+        break;
+      }
+      case OP_RET: {
+        if (t->depth && t->ctrl[t->depth - 1].remaining == -1) {
+          t->depth--;
+          t->pc = t->ctrl[t->depth].resume_pc;
+        } else {
+          t->pc += 1; /* malformed stream: step past */
+        }
+        break;
+      }
+      case OP_PARAM_SET: {
+        uint8_t target = st[t->pc + 1];
+        /* NOTE_PITCH is the one i16 target (opcodes.md §7). */
+        if (target == T_NOTE_PITCH) {
+          param_set(s, t->channel_id, target, (int16_t)rd16(st, t->pc + 2));
+          t->pc += 4;
+        } else {
+          param_set(s, t->channel_id, target, (int8_t)st[t->pc + 2]);
+          t->pc += 3;
+        }
+        break;
+      }
+      case OP_VOICE_SET:
+        voice_set(s, t->channel_id, st[t->pc + 1]);
+        t->pc += 2;
+        break;
+      case OP_TEMPO_SET:
+        /* Tempo is score-global: a TEMPO_SET on any track replaces the
+         * increment for every track of its MMB (driver.md §3.2). */
+        s->increment = rd16(st, t->pc + 1);
+        t->pc += 3;
+        break;
+      default:
+        /* Fail-safe, like the Z80's unknown-opcode rule (mmb.md §13): stop the
+         * track rather than mis-decode a length and walk into noise. M2/M3
+         * opcodes land here until they are ported. */
+        t->running = 0;
+        if (!s->stopped) {
+          s->stopped = 1;
+          s->stopped_op = op;
+          s->stopped_frame = s->frame;
+        }
+        return;
+    }
+  }
+}
+
+/* ── Frame ────────────────────────────────────────────────────────────────── */
+static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
+  /* Take up to the cap, in order, then bucket into the three runs. Bucketing
+   * loses cross-port order within a frame, which is safe by construction:
+   * everything whose order carries meaning is port-0-local (driver.md §4). */
+  uint16_t queued = mml_pending(s);
+  uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
+  uint8_t psg[MML_SLOT_MAX_WRITES];
+  uint8_t fm0[MML_SLOT_MAX_WRITES * 2], fm1[MML_SLOT_MAX_WRITES * 2];
+  uint16_t np = 0, n0 = 0, n1 = 0;
+  uint16_t cur = s->q_tail;
+  for (uint16_t i = 0; i < take; i++) {
+    uint8_t port = s->q[cur].port, addr = s->q[cur].addr, data = s->q[cur].data;
+    if (port == 2) psg[np++] = data;
+    else if (port == 1) { fm1[n1++] = addr; fm1[n1++] = data; }
+    else { fm0[n0++] = addr; fm0[n0++] = data; }
+    cur = (uint16_t)((cur + 1) % MML_WRITE_QUEUE);
+  }
+  s->q_tail = cur;
+
+  uint32_t o = 0;
+  out[o++] = (uint8_t)np;
+  memcpy(out + o, psg, np); o += np;
+  out[o++] = (uint8_t)(n0 / 2);
+  memcpy(out + o, fm0, n0); o += n0;
+  out[o++] = (uint8_t)(n1 / 2);
+  memcpy(out + o, fm1, n1); o += n1;
+  out[o++] = 0; /* n_pcm — PCM commands land with the M3 port */
+
+  uint16_t left = mml_pending(s);
+  if (left) {
+    s->spill_frames++;
+    if (left > s->spill_peak) s->spill_peak = left;
+  }
+  return o;
+}
+
+uint16_t mml_pending(const MMLSeq *s) {
+  return (uint16_t)((s->q_head + MML_WRITE_QUEUE - s->q_tail) % MML_WRITE_QUEUE);
+}
+
+uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *t = &s->trk[i];
+    if (!t->running || t->held) continue;
+    if (t->armed) {
+      dispatch(s, t); /* leading setup only — see the armed test in dispatch */
+      t->armed = 0;   /* notes start next frame */
+      continue;
+    }
+    t->acc = (uint16_t)(t->acc + s->increment);
+    while (t->acc >= 0x100) {
+      t->acc -= 0x100;
+      /* One tick: gate countdown first, then the wait countdown / dispatch. */
+      if (t->gate_left > 0) {
+        t->gate_left--;
+        if (t->gate_left == 0) {
+          channel_off(s, t->channel_id);
+          t->gate_left = -1;
+        }
+      }
+      if (t->wait > 0) t->wait--;
+      if (t->wait == 0) {
+        dispatch(s, t);
+        if (!t->running || t->held) break;
+      }
+    }
+  }
+  s->frame++;
+  return encode_slot(s, slot_out);
+}
+
+int mml_done(const MMLSeq *s) {
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].running && !s->trk[i].held) return 0;
+  return 1;
+}
+
+/* ── Load / start ─────────────────────────────────────────────────────────── */
+static void emit_init_writes(MMLSeq *s) {
+  /* The neutral power-on patch. It has to cover every register anything writes
+   * through the change-only layer: an unwritten shadow entry would let a first
+   * write of 0 be suppressed, and on hardware a power-on SSG-EG bit would never
+   * be cleared. */
+  for (int ch = 0; ch < 6; ch++) {
+    uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+    MMLFmCh *c = &s->fm[ch];
+    ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
+    ym(s, port, (uint8_t)(0xb4 + off), 0xc0);
+    for (int slot = 0; slot < 4; slot++) {
+      uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[slot] + off);
+      MMLOp *o = &c->ops[slot];
+      ym(s, port, (uint8_t)(0x30 + oo), enc_30(o));
+      ym(s, port, (uint8_t)(0x40 + oo), 0);
+      ym(s, port, (uint8_t)(0x50 + oo), 31);
+      ym(s, port, (uint8_t)(0x60 + oo), 0);
+      ym(s, port, (uint8_t)(0x70 + oo), 0);
+      ym(s, port, (uint8_t)(0x80 + oo), enc_80(o));
+      ym(s, port, (uint8_t)(0x90 + oo), 0);
+    }
+  }
+  ym(s, 0, 0x22, 0); /* LFO off */
+  ym(s, 0, 0x27, 0); /* CH3 normal mode, timers off */
+  ym(s, 0, 0x2a, 0); /* DAC data centred — shadow only, the mixer owns it */
+  ym(s, 0, 0x2b, 0); /* DAC off — likewise */
+}
+
+int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
+  memset(s, 0, sizeof(*s));
+  if (len < 12 || mmb[0] != MAGIC0 || mmb[1] != MAGIC1 || mmb[2] != MAGIC2 ||
+      mmb[3] != MAGIC3)
+    return -1;
+  uint16_t section_count = rd16(mmb, 8), header_size = rd16(mmb, 10);
+  const uint8_t *track_table = 0;
+  uint32_t track_table_len = 0;
+  for (uint16_t i = 0; i < section_count; i++) {
+    uint32_t at = header_size + (uint32_t)i * 12;
+    uint16_t id = rd16(mmb, at);
+    uint32_t off = rd32(mmb, at + 4), size = rd32(mmb, at + 8);
+    if (off + size > len) return -2;
+    if (id == SEC_TRACK_TABLE) { track_table = mmb + off; track_table_len = size; }
+    else if (id == SEC_EVENT_STREAM) { s->stream = mmb + off; s->stream_len = size; }
+    else if (id == SEC_VOICE_TABLE && size >= 2) {
+      s->voice_count = rd16(mmb, off);
+      s->voices = mmb + off + 2;
+    }
+  }
+  if (!track_table || !s->stream || track_table_len < 2) return -3;
+
+  uint16_t n = rd16(track_table, 0);
+  if (n > MML_MAX_TRACKS) n = MML_MAX_TRACKS;
+  s->track_count = (uint8_t)n;
+  for (uint16_t i = 0; i < n; i++) {
+    uint32_t at = 2 + (uint32_t)i * 5;
+    s->trk[i].track_id = track_table[at];
+    s->trk[i].channel_id = track_table[at + 1];
+    s->trk[i].flags = track_table[at + 2];
+    s->trk[i].pc = rd16(track_table, at + 3);
+  }
+
+  s->increment = (uint16_t)((120 * 512 + 37) / 75); /* bpmToTickIncrement(120) */
+  s->master = VOL_UNITY;
+  s->noise_mode = 4; /* white0; the compiler emits an explicit tick-0 set */
+  for (int ch = 0; ch < 6; ch++) {
+    MMLFmCh *c = &s->fm[ch];
+    c->algorithm = 7;
+    c->vel = 15;
+    c->vol = VOL_UNITY;
+    c->gate = 8;
+    c->current_note = 60;
+    for (int o = 0; o < 4; o++) {
+      c->ops[o].ar = 31;
+      c->ops[o].rr = 15;
+      c->ops[o].mul = 1;
+    }
+  }
+  for (int p = 0; p < 4; p++) {
+    s->psg[p].vel = 15;
+    s->psg[p].vol = VOL_UNITY;
+    s->psg[p].gate = 8;
+    s->psg[p].current_note = 60;
+  }
+  emit_init_writes(s);
+  return 0;
+}
+
+void mml_start_all(MMLSeq *s) {
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    s->trk[i].running = 1;
+    s->trk[i].armed = 1; /* the armed frame, driver.md §4.2 */
+    s->trk[i].gate_left = -1;
+  }
+}
