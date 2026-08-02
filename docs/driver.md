@@ -771,6 +771,58 @@ direct Z80-RAM read, is now an ordinary variable access.
 renders, so it is heard `RING_DEPTH` frames later — see §3.4, which is the
 reason the default depth is shallow.
 
+### 6.6 The per-frame hook — decided 2026-08-03
+
+**The host calls `MMLisp_frame()` once per vblank. The driver does not register
+itself with SGDK's vblank callback.**
+
+`MMLisp_frame()` **tops up the ring** rather than rendering exactly one slot, so
+the lookahead is an invariant the call maintains and not something the game has
+to manage: an empty ring at startup renders `RING_DEPTH` slots, steady state
+renders one, and a frame the game overran renders two and the lookahead refills
+itself. The contract on the host is exactly "call me once per frame" — the same
+contract a vblank registration would impose, only visible.
+
+It is also **self-limiting**: called twice in a frame, the second call finds no
+space and does nothing, so a host that calls it from both its vblank handler and
+its game loop is not broken by that.
+
+Why explicit, beyond the project's directness rule:
+
+- **The host chooses where in the frame the bus grab lands.** Writing a slot
+  takes the Z80 bus, which halts the mixer (§1.3's jitter). If SGDK's callback
+  owned the call, SGDK would choose that moment.
+- **SGDK's vblank callback is effectively a single slot.** A driver that claims
+  it forces the host to chain, and a broken chain is a classic "my callback
+  stopped firing" bug. Taking a resource the host may need is the kind of
+  implicit magic the working agreements exist to avoid.
+- **It is the same path the host gate already exercises** (`mml_render_frame` in
+  a loop), so no code path exists only on target.
+- **§3.4's "render N slots every N frames" comes free** — that is just calling
+  it every N frames, rather than a configuration knob.
+
+The usual argument for auto-registration — that it guarantees a regular
+interval — **does not apply here, and that is structural rather than lucky**:
+the Z80 owns the clock, so jitter in *when* the 68k renders shows up in the
+ring's fill level and never in the tempo. That is what §1 is built on.
+
+Two consequences that follow from the choice:
+
+- **The bus is grabbed once per call, not once per slot.** Same argument §6
+  makes for not letting the 68k write the YM directly.
+- **Control calls precede the render call within a frame.** §6.5's calls take
+  effect on the next frame rendered, so putting `MMLisp_frame()` last in the
+  host's frame means a track started this frame is rendered this frame.
+  Reversing the order costs an extra frame of latency — a placement rule that
+  only exists *because* the call is explicit.
+
+The honest cost: recovering lookahead after the game overran means one call
+writes two slots, so the bus grab — and the mixer stall — doubles exactly when
+things are already bad. It is bounded by the ring depth, which is one more
+reason to keep the default shallow. **No `MMLisp_autoVBlank()` convenience is
+shipped**: it would be a second path that the host gate cannot reach, and a host
+that wants it can write the one line itself.
+
 ## 7. Level Composition
 
 Implements the level model of docs/language.md §6 — signed dB offsets composed by
@@ -951,7 +1003,7 @@ The port milestones:
   `idx >= len` test — so the two now share a structure instead of merely
   agreeing on results. `npm run slots` checks the DAC stream sample for sample
   across the PCM corpus: 52,685 writes on `m3-pcm-softmix`, all matching.
-- **P2 — the sequencer. M1 + M2 landed 2026-08-03.** `drv/68k/mmlispseq.c` —
+- **P2 — the sequencer. M1 + M2 + M3 landed 2026-08-03.** `drv/68k/mmlispseq.c` —
   plain C99, no SGDK, so it compiles for the host as well as for m68k.
   - **M1:** the core opcode set, FM + PSG note paths, the level model, pitch,
     loops/CALL/RET, tempo, VOICE_SET, the armed frame, and slot emission
@@ -961,20 +1013,37 @@ The port milestones:
     `TEMPO_SWEEP`, cent-interpolated `NOTE_PITCH`, CSM (`CSM_ON`/`OFF`/`RATE`,
     constant and swept), and the host control API of §6.5 — `mml_key_off`,
     `mml_set_param`, `mml_fade_track` (the Bresenham vol ramp), `mml_set_val`.
+  - **M3:** the macro engine of §13 (sticky binds, note-on re-instantiation,
+    the attack/sustain/release regions, `NOTE_SEMI`, `NOTE_PITCH` override and
+    additive, scaled macros, the `KEYON` retrigger), the value machine's stream
+    ops (`PARAM_MUL` / `_FROM_VAL` / `_ADD_VAL` / `_MUL_VAL`), FM3
+    independent-OP mode (`FM3_MODE`, `FM3_OP_PITCH`, and the per-operator key
+    path §13.4 describes), and PCM — `PCM_NOTE_ON` / `_NOTE_OFF`, the level
+    composition of §14, and the §6.3 command emission with every field resolved
+    on this side.
 
   `npm run c-gate` diffs the slot stream against `drv-player.js` byte for byte:
-  **twelve corpus scores byte-identical**, including `ab-core`, `stress-m1`,
-  the whole M2 set (`m2-motion`, `m2b-pitch`, `m2-csm`, and `m2-mailbox` with
-  its host-command schedule), and the M1-expressible M3 scores.
+  **38 corpus scores byte-identical** — `ab-core`, `demo1`, both stress scores,
+  the whole M2 set (including `m2-mailbox` with its host-command schedule) and
+  the whole M3 set (macros, dynamic values, FM3-op, and the six PCM scores).
 
   Opcodes not yet ported stop their track fail-safe (mmb.md §13) rather than
   mis-decoding a length, and the gate reports those scores as **PEND** with the
   opcode and how many leading frames were identical — so the port's remaining
   surface reads straight off the gate output, and a regression upstream of the
-  stop still shows as that number falling. Remaining: `MACRO_SET` (0xE0) and
-  the rest of the M3 macro engine, the value machine's stream ops, `FM3_MODE` /
-  `FM3_OP_PITCH`, and `PCM_NOTE_ON` (0xC0) with the PCM command emission that
-  goes with it.
+  stop still shows as that number falling. Nothing in the corpus is PEND today;
+  what remains unported is **SE** (plan-se.md) — track lifecycle, START_SE,
+  suspend/restore and priority — whose gate scores carry a richer sidecar
+  (autoStart off + a channel remap) and are reported SKIP until it lands.
+
+  One thing the 68k has to carry that is not obvious from the opcode list: it
+  **shadows each PCM voice's position**. It never reads a sample byte — the
+  mixer is entirely the Z80's — but two of its own decisions depend on when a
+  voice retires (a `PCM_VOL` for a dead voice is not worth the slot bytes, and
+  `PCM_NOTE_OFF` on a finished shot must emit nothing), so it runs the same
+  16.16 countdown over the same mix grid. The cost is 3 × `PCM_MIX_RATE`
+  add-and-compare per frame; a closed form exists for the non-looping case if a
+  cycle count ever asks for it.
 - **P3 — integration and bring-up.** SGDK glue, the 68k-side frame hook, real
   hardware. The open hardware questions are unchanged: YM BUSY behaviour on
   silicon, and the DAC jitter the 68k's per-frame bus grab introduces (§1.3).
@@ -1016,6 +1085,14 @@ this gate:
 - **`VOICE_SET` compares against the STRUCTURED shadow**, not the register
   shadow, because the burst it replaced only wrote registers some PARAM_SET
   touched (§10).
+- **The drain must not render.** Once the song is over the harness closes slots
+  until the spill queue is empty; those slots have to be *encoded only*. Running
+  another frame there invents traffic (a sweep step, a retiring PCM voice) that
+  the reference, which only calls `endFrame`, never produces.
+
+A PCM score's sample bank is a separate ROM bank rather than an MMB section, so
+the gate hands it to the C as a separate file (`--samples`) — the same shape the
+68k will see through its bank window.
 
 This is a straight replacement for the old asm↔reference trace gate and it is
 strictly easier: no emulator in the loop, no assembler, and a debugger on both

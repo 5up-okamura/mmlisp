@@ -9,10 +9,12 @@
  * as well as for m68k — that is what makes the gate cheap: no emulator, no
  * assembler, a debugger on both sides.
  *
- * Scope so far: M1 (driver.md §11) — the core opcode set, FM + PSG note paths,
- * the level model, pitch, loops/calls, tempo, the armed frame, and slot
- * emission through the real cap/spill queue. M2/M3 opcodes stop the track
- * fail-safe rather than being silently mis-decoded.
+ * Scope so far: M1 + M2 + M3 (driver.md §11) — the core opcode set, FM + PSG
+ * note paths, the level model, pitch, loops/calls, tempo, the armed frame, slot
+ * emission through the real cap/spill queue, the sweep engine and host API, and
+ * now the macro engine, the value machine's stream ops, FM3 independent-OP mode
+ * and PCM command emission. Anything still unported stops the track fail-safe
+ * rather than being silently mis-decoded.
  */
 #ifndef MMLISPSEQ_H
 #define MMLISPSEQ_H
@@ -26,6 +28,11 @@
 #define MML_MAX_TRACKS 16
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */
+/* Macros bound per channel (driver.md §13.1 budgets 3 — one per target family;
+ * the extra room costs 2 bytes a slot and removes a silent-drop failure mode). */
+#define MML_MACRO_BINDS 8
+#define MML_PCM_VOICES 3
+#define MML_PCM_MIX_RATE 175 /* DAC writes per frame, the settled §5.3.1 rate */
 
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];
@@ -37,6 +44,7 @@ extern const int16_t MML_VOL_PSG4[32];
 extern const uint8_t MML_CARRIER_MASK[8];
 extern const uint8_t MML_OP_ADDR_OFFSET[4];
 extern const uint8_t MML_SIN_LUT[256];
+extern const uint16_t MML_PCM_MULT_FRAME[49];
 
 typedef struct {
   uint8_t voiced_tl, tl;
@@ -85,6 +93,51 @@ typedef struct {
   int16_t remaining; /* -1 tags a CALL frame; LOOP frames carry the count */
 } MMLCtrl;
 
+/* ── Macro engine (driver.md §13) ──────────────────────────────────────────
+ * MACRO_SET binds a macro to its target on the channel and is STICKY: the bind
+ * survives notes, and every NOTE_ON re-instantiates the whole active set into
+ * fresh running slots. So a channel carries two things — the binds (what is
+ * armed) and the slots (what is currently stepping). */
+typedef struct {
+  uint8_t target, macro_id;
+} MMLMacroBind;
+
+enum { MML_MACRO_RUN = 0, MML_MACRO_HOLD = 1, MML_MACRO_RELEASE = 2 };
+
+typedef struct {
+  uint8_t macro_id;
+  uint8_t state; /* MML_MACRO_RUN / _HOLD / _RELEASE */
+  uint8_t dead;  /* finished this frame; compacted after the pass */
+  uint16_t cursor;
+  int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
+} MMLMacroSlot;
+
+/* One descriptor, decoded from MACRO_TABLE on demand (mmb.md §15). Held by
+ * pointer rather than copied: the table is ROM on the target. */
+typedef struct {
+  uint8_t target, flags, step, loop_start, release, count;
+  const uint8_t *values;
+  uint8_t scale_slot, has_scale;
+} MMLMacro;
+
+/* ── PCM soft-mix voice (driver.md §14) ────────────────────────────────────
+ * The 68k does not mix — it only decides. But it does shadow each voice's
+ * POSITION, because two of its own decisions depend on when a voice ends: a
+ * PCM_VOL for a dead voice is not worth the slot bytes, and PCM_NOTE_OFF on a
+ * finished shot must emit nothing. The Z80 runs the same countdown over the
+ * same 16.16 increment, so the two agree tick for tick. */
+typedef struct {
+  uint8_t active, has_loop, releasing, muted;
+  uint32_t base, len, loop_start, loop_end, loop_len;
+  int32_t left; /* bytes to the current boundary, counted down (§6.3) */
+  int32_t tail; /* loop end -> sample end, added to `left` on release */
+  uint32_t inc; /* 16.16 samples per mix tick */
+  uint32_t pos;
+  uint8_t vel, vol;
+  uint8_t shift;      /* composed attenuation; the mixer sra's by it */
+  uint8_t sent_shift; /* last PCM_VOL byte sent, 0xFF = none */
+} MMLPcmVoice;
+
 typedef struct {
   uint8_t running, armed, held;
   uint8_t track_id, channel_id, flags;
@@ -107,6 +160,13 @@ typedef struct {
   uint32_t stream_len;
   const uint8_t *voices; /* VOICE_TABLE payload: N x 29-byte entries */
   uint16_t voice_count;
+  const uint8_t *macro_table; /* MACRO_TABLE section, descriptors then blob */
+  uint16_t macro_count;
+  /* SAMPLE_BANK (mmb.md §10) — a separate ROM bank, not an MMB section. Only
+   * the entry table is the sequencer's business; the blob belongs to the Z80. */
+  const uint8_t *sample_entries;
+  uint16_t sample_count;
+  uint32_t sample_blob_base;
   uint16_t increment; /* 8.8, per song (driver.md §3.2) */
 
   MMLTrack trk[MML_MAX_TRACKS];
@@ -117,9 +177,16 @@ typedef struct {
   uint8_t master;
   uint8_t noise_mode;
   uint8_t lfo_rate;
-  uint8_t reg27; /* CH3/CSM mode register (bit7 CSM, bit6 special) */
+  uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
+  uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
 
   MMLSweep sweeps[10][2];
+  MMLMacroBind binds[10][MML_MACRO_BINDS];
+  uint8_t bind_count[10];
+  MMLMacroSlot macro_slots[10][MML_MACRO_BINDS];
+  uint8_t macro_slot_count[10];
+  MMLPcmVoice pcm[MML_PCM_VOICES];
+  uint8_t pcm_dac_on;
   MMLGlobalSweep tempo_sweep;
   MMLGlobalSweep csm_sweep;
   int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */
@@ -145,6 +212,13 @@ typedef struct {
   uint16_t q_head, q_tail;
   uint16_t spill_peak, spill_frames;
 
+  /* PCM commands for the frame being built. They ride the slot's fourth run
+   * (§6.2) and are NOT capped — they are the frame's decisions, not its
+   * register traffic — but they do count against the slot's byte budget. */
+  uint8_t pcm_buf[MML_SLOT_SIZE];
+  uint16_t pcm_len;
+  uint8_t pcm_count;
+
   uint32_t frame;
   uint8_t stopped;    /* a track hit something this port cannot decode */
   uint8_t stopped_op; /* which opcode it was — the port's to-do list, in order */
@@ -154,12 +228,21 @@ typedef struct {
 /* Load an MMB. Returns 0 on success, negative on a malformed file. */
 int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len);
 
+/* Attach the sample bank (mmb.md §10) — a separate ROM bank, so it is a
+ * separate call. Must follow mml_load, which clears the whole state. Scores
+ * without PCM never make it. Returns 0 on success, negative on a bad table. */
+int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len);
+
 /* Start every track (what the gate harness does; the real host starts them
  * individually through the API driver.md §6.5 describes). */
 void mml_start_all(MMLSeq *s);
 
 /* Render one frame and close its slot. Returns the slot length in bytes. */
 uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
+
+/* Close a slot WITHOUT running a frame — how the spill queue is drained once
+ * the song is over. Returns the slot length in bytes. */
+uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out);
 
 /* Writes still queued behind the cap. */
 uint16_t mml_pending(const MMLSeq *s);

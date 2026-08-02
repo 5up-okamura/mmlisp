@@ -60,6 +60,7 @@ function parseStream(buf) {
 
 let failures = 0;
 let pending = 0;
+let skipped = 0;
 for (const score of scores) {
   const name = basename(score);
   const { bytes: mmb, sampleBank, diagnostics } = buildMmb(score);
@@ -68,12 +69,28 @@ for (const score of scores) {
   }
   const mmbPath = join(tmp, name.replace(/\.mmlisp$/, ".mmb"));
   writeFileSync(mmbPath, mmb);
+  // PCM scores carry their sample blobs in a separate ROM bank, not an MMB
+  // section — so the C reads it as a separate file, the way the 68k will map it.
+  let smpPath = null;
+  if (sampleBank && sampleBank.length) {
+    smpPath = join(tmp, name.replace(/\.mmlisp$/, ".smp"));
+    writeFileSync(smpPath, sampleBank);
+  }
 
   // Host commands are not in the stream, so a score may carry a sidecar
   // schedule — the same one the Z80 gates use. Both sides apply it at the top
   // of the matching frame.
   const cmdPath = score.replace(/\.mmlisp$/, ".cmds.json");
-  const commands = existsSync(cmdPath) ? JSON.parse(readFileSync(cmdPath, "utf8")) : [];
+  const sidecar = existsSync(cmdPath) ? JSON.parse(readFileSync(cmdPath, "utf8")) : [];
+  // The SE gates use a richer sidecar (autoStart off + a channel remap +
+  // START_TRACK / START_SE). SE track lifecycle is its own port milestone, so
+  // say so rather than crash or quietly pass on a mis-set-up run.
+  if (!Array.isArray(sidecar)) {
+    console.log(`SKIP  ${name} — SE-style schedule (autoStart/remap); not ported yet`);
+    skipped++;
+    continue;
+  }
+  const commands = sidecar;
   let cmdFile = null;
   if (commands.length) {
     cmdFile = join(tmp, name.replace(/\.mmlisp$/, ".cmds.txt"));
@@ -89,7 +106,13 @@ for (const score of scores) {
 
   let out, incomplete = null;
   try {
-    out = execFileSync(exe, [mmbPath, String(MAX_FRAMES), ...(cmdFile ? [cmdFile] : [])], { maxBuffer: 1 << 28 });
+    out = execFileSync(
+      exe,
+      [mmbPath, String(MAX_FRAMES),
+        ...(cmdFile ? ["--cmds", cmdFile] : []),
+        ...(smpPath ? ["--samples", smpPath] : [])],
+      { maxBuffer: 1 << 28 },
+    );
   } catch (e) {
     if (e.status === 3) { out = e.stdout; incomplete = (e.stderr ?? "").toString().trim(); }
     else { console.error(`FAIL  ${name}: ${e.message}`); failures++; continue; }
@@ -138,6 +161,6 @@ for (const score of scores) {
 
 if (!flags.includes("--keep")) rmSync(tmp, { recursive: true, force: true });
 console.log(
-  `\n${scores.length - failures - pending} passed · ${pending} pending · ${failures} failed`,
+  `\n${scores.length - failures - pending - skipped} passed · ${pending} pending · ${skipped} skipped · ${failures} failed`,
 );
 if (failures) process.exit(1);

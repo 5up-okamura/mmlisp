@@ -14,9 +14,19 @@
 #define MAGIC3 0x30
 #define SEC_TRACK_TABLE 0x0001
 #define SEC_EVENT_STREAM 0x0002
-#define SEC_VOICE_TABLE 0x0006
 #define SEC_VAL_TABLE 0x0005
+#define SEC_VOICE_TABLE 0x0006
+#define SEC_MACRO_TABLE 0x0007
 #define TRACK_FLAG_IS_CSM 0x02
+
+/* PCM command opcodes (driver.md §6.3; slot-builder.js is the definition). */
+#define PCM_START 1
+#define PCM_STOP 2
+#define PCM_VOL 3
+
+/* Channel ids beyond the 10 register channels (mmb.md §6.1). */
+#define CH_PCM1 20
+#define CH_PCM3 22
 
 #define DUR_HOLD 0x00
 #define DUR_EXT 0xff
@@ -40,12 +50,22 @@ enum {
   OP_PARAM_SET = 0x60,
   OP_PARAM_SWEEP = 0x61,
   OP_PARAM_ADD = 0x62,
+  OP_PARAM_MUL = 0x63,
+  OP_PARAM_FROM_VAL = 0x64,
   OP_PARAM_SWEEP_STOP = 0x65,
   OP_TEMPO_SET = 0x80,
   OP_TEMPO_SWEEP = 0x81,
   OP_CSM_ON = 0xa0,
   OP_CSM_OFF = 0xa1,
-  OP_CSM_RATE = 0xa2
+  OP_CSM_RATE = 0xa2,
+  OP_FM3_MODE = 0xa3,
+  OP_FM3_OP_PITCH = 0xa4,
+  OP_PCM_NOTE_ON = 0xc0,
+  OP_PCM_NOTE_OFF = 0xc1,
+  OP_MACRO_SET = 0xe0,
+  OP_PARAM_ADD_VAL = 0xe1,
+  OP_PARAM_MUL_VAL = 0xe2,
+  OP_MACRO_CLEAR = 0xe3
 };
 
 /* Target ids (opcodes.md §7) */
@@ -55,6 +75,8 @@ enum {
   T_VOL = 0x04,
   T_MASTER = 0x05,
   T_VEL = 0x06,
+  T_NOTE_SEMI = 0x07,
+  T_KEYON = 0x08,
   T_GATE = 0x09,
   T_FM_FB = 0x10,
   T_FM_TL1 = 0x11,
@@ -127,6 +149,79 @@ static void ym_key(MMLSeq *s, uint8_t data) { q_push(s, 0, 0x28, data); }
 
 /* The SN76489 has no readable state; its bytes always go out. */
 static void psg_byte(MMLSeq *s, uint8_t byte) { q_push(s, 2, 0, byte); }
+
+/* ── PCM command emission (driver.md §6.3) ─────────────────────────────────
+ * Every field is resolved HERE: the engine receives register-ready values and
+ * does no per-note arithmetic at all. Commands are appended to the frame's PCM
+ * run in order; unlike register writes they are never capped, because a
+ * deferred PCM_START would mean a note that simply did not play.
+ */
+static void pcm_emit(MMLSeq *s, const uint8_t *bytes, uint16_t n) {
+  if (s->pcm_len + n > MML_SLOT_SIZE) return; /* cannot happen: 3 voices max */
+  for (uint16_t i = 0; i < n; i++) s->pcm_buf[s->pcm_len++] = bytes[i];
+  s->pcm_count++;
+}
+
+/* MUTE_SHIFT (8) is a real table entry in the mixer: a muted voice keeps
+ * advancing and contributes nothing, matching FM where a note continues
+ * silently under a 0 fader (driver.md §14). */
+static uint8_t pcm_shift_byte(const MMLPcmVoice *v) {
+  return (uint8_t)(v->muted ? 8 : v->shift);
+}
+
+static void emit_pcm_start(MMLSeq *s, int vi, const MMLPcmVoice *v) {
+  /* The sample bank is bank-relative; the engine wants {ROM bank, window
+   * address} because that is what its $8000-window mapper takes. */
+  uint32_t abs = v->base;
+  uint8_t inc_i = (uint8_t)((v->inc >> 16) & 0xff);
+  /* 2^ksh >= the largest advance one tick can make, so the engine bounds a
+   * segment with a shift instead of a division. That is the bit length of the
+   * integer part: ceil(log2(inc_i + 1)). */
+  uint8_t ksh = 0;
+  while ((1u << ksh) < (uint32_t)inc_i + 1u) ksh++;
+  uint16_t bank = (uint16_t)(abs >> 15), addr = (uint16_t)(0x8000 + (abs & 0x7fff));
+  uint8_t c[18];
+  c[0] = PCM_START;
+  c[1] = (uint8_t)vi;
+  c[2] = (uint8_t)(1 | (v->has_loop ? 2 : 0));
+  c[3] = pcm_shift_byte(v);
+  c[4] = ksh;
+  c[5] = (uint8_t)(bank & 0xff);
+  c[6] = (uint8_t)(bank >> 8);
+  c[7] = (uint8_t)(addr & 0xff);
+  c[8] = (uint8_t)(addr >> 8);
+  c[9] = (uint8_t)(v->left & 0xff);
+  c[10] = (uint8_t)((v->left >> 8) & 0xff);
+  c[11] = (uint8_t)(v->loop_len & 0xff);
+  c[12] = (uint8_t)((v->loop_len >> 8) & 0xff);
+  c[13] = (uint8_t)(v->tail & 0xff);
+  c[14] = (uint8_t)((v->tail >> 8) & 0xff);
+  c[15] = (uint8_t)(v->inc & 0xff);
+  c[16] = (uint8_t)((v->inc >> 8) & 0xff);
+  c[17] = inc_i;
+  pcm_emit(s, c, 18);
+}
+
+/* vel + vol + master compose to a per-voice bit shift the mixer applies as an
+ * arithmetic right shift — one instruction per sample, which is the whole
+ * reason the level model is a shift here and a TL offset on FM:
+ *   n = (15-vel) + (31-vol) + (31-master);  shift = min(7, round(n/3)).
+ * vol == 0 or master == 0 is a hard mute; vel alone never mutes. Once per
+ * PARAM_SET, so the divide is nowhere near the mix path. */
+static void pcm_compose_shift(MMLSeq *s, int vi) {
+  MMLPcmVoice *v = &s->pcm[vi];
+  v->muted = (uint8_t)(v->vol == 0 || s->master == 0);
+  int n = (15 - v->vel) + (31 - v->vol) + (31 - s->master);
+  int shift = (n + 1) / 3; /* round(n/3); n is never negative */
+  v->shift = (uint8_t)(shift > 7 ? 7 : shift);
+  uint8_t byte = pcm_shift_byte(v);
+  /* A dead voice has nothing to re-level: the engine dropped its state. */
+  if (v->active && byte != v->sent_shift) {
+    v->sent_shift = byte;
+    uint8_t c[3] = {PCM_VOL, (uint8_t)vi, byte};
+    pcm_emit(s, c, 3);
+  }
+}
 
 /* ── Register encoders (ir-utils.js) ───────────────────────────────────────── */
 static uint8_t enc_b0(const MMLFmCh *c) {
@@ -250,6 +345,37 @@ static void write_noise_cfg(MMLSeq *s) {
   psg_byte(s, (uint8_t)(0x80 | (3 << 5) | (s->noise_mode & 7)));
 }
 
+/* ── FM3 independent-OP mode (driver.md §5.1, opcodes 0xA3/0xA4) ───────────
+ * In CH3 special mode ($27 bit6) the channel's four operators carry independent
+ * F-numbers and key bits. op1 rides channel 2 (fm3); op2-4 ride channels 16-18.
+ * Returns the 1-based operator, or 0 when this channel is an ordinary one. */
+static int fm3_op_for(const MMLSeq *s, int ch) {
+  if (!(s->reg27 & 0x40)) return 0;
+  if (ch == 2) return 1;
+  if (ch >= 16 && ch <= 18) return ch - 14;
+  return 0;
+}
+static void fm3_key_op(MMLSeq *s, int op, int on) {
+  uint8_t bit = (uint8_t)(0x10 << (op - 1)); /* OP1=0x10 .. OP4=0x80 */
+  if (on) s->fm3_op_mask |= bit;
+  else s->fm3_op_mask &= (uint8_t)~bit;
+  ym_key(s, (uint8_t)(s->fm3_op_mask | 0x02)); /* ch2 key = 0x02 */
+}
+static void write_fm3_op_pitch(MMLSeq *s, int op, int note) {
+  uint16_t fb = fnum_block_for(note, 0);
+  uint8_t high = (uint8_t)((((fb >> 11) & 7) << 3) | ((fb >> 8) & 7));
+  uint8_t low = (uint8_t)(fb & 0xff);
+  if (op == 4) {
+    ym_always(s, 0, 0xa6, high); /* op4 uses CH3's own F-number pair */
+    ym_always(s, 0, 0xa2, low);
+  } else {
+    static const uint8_t map[3] = {1, 2, 0}; /* OP1->A9/AD, OP2->AA/AE, OP3->A8/AC */
+    uint8_t idx = map[op - 1];
+    ym_always(s, 0, (uint8_t)(0xac + idx), high);
+    ym_always(s, 0, (uint8_t)(0xa8 + idx), low);
+  }
+}
+
 static void key_on(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0;
@@ -267,6 +393,11 @@ static void key_off(MMLSeq *s, int ch) {
   ym_key(s, chkey);
 }
 static void channel_off(MMLSeq *s, int ch) {
+  int op = fm3_op_for(s, ch);
+  if (op) {
+    fm3_key_op(s, op, 0);
+    return;
+  }
   if (ch < 6) {
     key_off(s, ch);
   } else if (ch < 10) {
@@ -287,8 +418,14 @@ static void recompose_carriers(MMLSeq *s, int ch) {
   }
 }
 
-/* ── PARAM_SET (opcodes.md §7) ─────────────────────────────────────────────── */
-static void param_set(MMLSeq *s, int ch, int target, int value) {
+/* ── PARAM_SET (opcodes.md §7) ─────────────────────────────────────────────
+ * `force` marks a macro-driven write. A macro is the channel's envelope
+ * authority, so its PSG attenuation has to land even after key-off — the
+ * release region (`:off`) runs entirely while keyed is false and IS the decay
+ * tail. Everything else (sweeps, the host API) keeps the keyed guard, so it can
+ * never un-mute a silenced channel.
+ */
+static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   if (target == T_MASTER) {
     s->master = (uint8_t)clampi(value, 0, 31);
     for (int c = 0; c < 6; c++) recompose_carriers(s, c);
@@ -296,6 +433,8 @@ static void param_set(MMLSeq *s, int ch, int target, int value) {
       if (!s->psg[p].sounding) continue;
       write_psg_att(s, p, psg_att(s, s->psg[p].vel, s->psg[p].vol));
     }
+    /* PCM voices ride master too — recompose each voice's shift/mute. */
+    for (int vi = 0; vi < MML_PCM_VOICES; vi++) pcm_compose_shift(s, vi);
     return;
   }
   if (target == T_LFO_RATE) {
@@ -323,14 +462,23 @@ static void param_set(MMLSeq *s, int ch, int target, int value) {
       else st->vel = (uint8_t)clampi(value, 0, 15);
       /* Re-apply on a keyed note even when currently silent, so a level macro
        * can bring it back up (driver.md §13.3). */
-      if (st->keyed) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));
+      if (st->keyed || force) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));
     } else if (target == T_NOTE_PITCH) {
       st->pitch_cents = (int16_t)value;
       if (pc < 3) write_psg_pitch(s, pc, st->current_note, value);
     }
     return;
   }
-  if (ch >= 6) return; /* fm3-op ids have no M1 param path */
+  /* PCM soft-mix levels: per-voice state, composed into the mixer's shift. */
+  if (ch >= CH_PCM1 && ch <= CH_PCM3) {
+    MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
+    if (target == T_VEL) v->vel = (uint8_t)clampi(value, 0, 15);
+    else if (target == T_VOL) v->vol = (uint8_t)clampi(value, 0, 31);
+    else return;
+    pcm_compose_shift(s, ch - CH_PCM1);
+    return;
+  }
+  if (ch >= 6) return; /* fm3-op ids have no register param path */
 
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
@@ -407,6 +555,10 @@ static void param_set(MMLSeq *s, int ch, int target, int value) {
     ym(s, port, (uint8_t)(0x90 + oo), o->ssg);
   }
 #undef OPRANGE
+}
+
+static void param_set(MMLSeq *s, int ch, int target, int value) {
+  param_set_ex(s, ch, target, value, 0);
 }
 
 /* ── Reads (driver.md §6.4, §4.1) ─────────────────────────────────────────── */
@@ -505,6 +657,321 @@ static void cancel_loop_sweeps(MMLSeq *s, int ch) {
     if (s->sweeps[ch][i].active && s->sweeps[ch][i].loop) s->sweeps[ch][i].active = 0;
 }
 
+/* ── Macro engine (driver.md §13) ──────────────────────────────────────────
+ * A macro is a per-frame value stream bound to a target. MACRO_SET binds it
+ * (sticky, one bind per target), NOTE_ON re-instantiates every bind into a
+ * fresh running slot, and step 3 advances each slot one frame.
+ *
+ * Descriptors are decoded from MACRO_TABLE on demand rather than copied at
+ * load: on the target the table is ROM, and this keeps the RAM cost of a song
+ * at its running slots alone.
+ */
+static int macro_desc(const MMLSeq *s, int id, MMLMacro *m) {
+  if (!s->macro_table || id < 0 || id >= (int)s->macro_count) return 0;
+  const uint8_t *e = s->macro_table + 2 + (uint32_t)id * 8;
+  uint32_t blob_base = 2 + (uint32_t)s->macro_count * 8;
+  m->target = e[0];
+  m->flags = e[1];
+  m->step = e[2];
+  m->loop_start = e[3];
+  m->release = e[4];
+  m->count = e[5];
+  m->values = s->macro_table + blob_base + rd16(e, 6);
+  /* Scaled macro (flags bit2): one value-slot id follows the values. */
+  m->has_scale = (uint8_t)((m->flags & 4) != 0);
+  m->scale_slot = m->has_scale ? m->values[(uint32_t)m->count * ((m->flags & 1) ? 2 : 1)] : 0;
+  return 1;
+}
+
+/* One sample. The hold sentinel (0x80 / 0x8000) means "no write this step" —
+ * which is how a macro leaves a parameter alone without knowing its value. */
+static int macro_value(const MMLMacro *m, int idx, int *hold) {
+  *hold = 1;
+  if (idx < 0 || idx >= (int)m->count) return 0;
+  if (m->flags & 1) {
+    uint16_t raw = rd16(m->values, (uint32_t)idx * 2);
+    if (raw == 0x8000) return 0;
+    *hold = 0;
+    return (int16_t)raw;
+  }
+  uint8_t raw = m->values[idx];
+  if (raw == 0x80) return 0;
+  *hold = 0;
+  return (int8_t)raw;
+}
+
+/* Scaled-macro sample (§4.4): `(sample x depth) >> 8`, depth = the slot's low
+ * byte. Magnitude-then-resign, so the truncation is toward zero and matches
+ * sweep_value — all three players agree bit for bit. */
+static int scale_macro_sample(int sample, int slot_value) {
+  int depth = slot_value & 0xff;
+  int mag = ((sample < 0 ? -sample : sample) * depth) >> 8;
+  return sample < 0 ? -mag : mag;
+}
+
+static int channel_keyed(const MMLSeq *s, int ch) {
+  if (ch < 6) return s->fm[ch].keyed;
+  if (ch < 10) return s->psg[ch - 6].keyed;
+  return 0;
+}
+
+static void macro_bind(MMLSeq *s, int ch, uint8_t target, uint8_t macro_id) {
+  if (ch >= 10) return;
+  for (int i = 0; i < s->bind_count[ch]; i++) {
+    if (s->binds[ch][i].target == target) {
+      s->binds[ch][i].macro_id = macro_id; /* replace in place: order is §13.3 */
+      return;
+    }
+  }
+  if (s->bind_count[ch] >= MML_MACRO_BINDS) return;
+  s->binds[ch][s->bind_count[ch]].target = target;
+  s->binds[ch][s->bind_count[ch]].macro_id = macro_id;
+  s->bind_count[ch]++;
+}
+static void macro_unbind(MMLSeq *s, int ch, uint8_t target) {
+  if (ch >= 10) return;
+  for (int i = 0; i < s->bind_count[ch]; i++) {
+    if (s->binds[ch][i].target != target) continue;
+    for (int k = i + 1; k < s->bind_count[ch]; k++) s->binds[ch][k - 1] = s->binds[ch][k];
+    s->bind_count[ch]--;
+    return;
+  }
+}
+
+/* NOTE_ON re-instantiates every bind into a fresh slot, in bind order (§13.1). */
+static void macro_trigger(MMLSeq *s, int ch) {
+  if (ch >= 10) return;
+  for (int i = 0; i < s->bind_count[ch]; i++) {
+    MMLMacroSlot *sl = &s->macro_slots[ch][i];
+    sl->macro_id = s->binds[ch][i].macro_id;
+    sl->state = MML_MACRO_RUN;
+    sl->dead = 0;
+    sl->cursor = 0;
+    sl->step_clock = 0;
+  }
+  s->macro_slot_count[ch] = s->bind_count[ch];
+}
+
+/* NOTE_SEMI apply: write the pitch register at (current note + semitones)
+ * without touching the channel's sticky :pitch offset — a chiptune arpeggio is
+ * a key-on offset, not a detune that should outlive the macro. `add` rides the
+ * live offset instead of overriding it to 0. */
+static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
+  if (ch < 6) {
+    write_fm_pitch(s, ch, s->fm[ch].current_note + semi, add ? s->fm[ch].pitch_cents : 0);
+  } else if (ch < 10) {
+    int p = ch - 6;
+    if (p < 3) write_psg_pitch(s, p, s->psg[p].current_note + semi, add ? s->psg[p].pitch_cents : 0);
+  }
+}
+
+/* KEYON retrigger (driver.md §14): re-attack the note. Restart every other
+ * running macro on the channel (they are the soft envelope) and, on FM, re-key
+ * the hardware EG. PSG has no hardware EG, so there the macro restart is the
+ * whole effect. */
+static void keyon_retrigger(MMLSeq *s, int ch) {
+  for (int i = 0; i < s->macro_slot_count[ch]; i++) {
+    MMLMacroSlot *sl = &s->macro_slots[ch][i];
+    if (sl->dead) continue;
+    MMLMacro d;
+    if (!macro_desc(s, sl->macro_id, &d) || d.target == T_KEYON) continue;
+    sl->cursor = 0;
+    sl->step_clock = 0;
+    sl->state = MML_MACRO_RUN;
+  }
+  int op = fm3_op_for(s, ch);
+  if (op) {
+    fm3_key_op(s, op, 0);
+    fm3_key_op(s, op, 1);
+  } else if (ch < 6) {
+    key_off(s, ch);
+    key_on(s, ch);
+  }
+}
+
+/* One running slot, one frame. Returns 1 when the slot is finished.
+ * Regions (mmb.md §15): attack [0..loop_start), sustain [loop_start..release)
+ * cycled while keyed, release [release..count) once after key-off. */
+static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
+  MMLMacro d;
+  if (!macro_desc(s, sl->macro_id, &d)) return 1;
+  /* Key-off leaves attack/sustain for the release region — or ends the slot. */
+  if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && !keyed) {
+    if (d.release != 0xff && d.release < d.count) {
+      sl->state = MML_MACRO_RELEASE;
+      sl->cursor = d.release;
+      sl->step_clock = 0; /* release[0] fires on the key-off frame */
+    } else {
+      return 1;
+    }
+  }
+  if (sl->step_clock > 0) {
+    sl->step_clock--;
+    return 0;
+  }
+  if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
+
+  int hold;
+  int v = macro_value(&d, (int)sl->cursor, &hold);
+  if (!hold) {
+    if (d.has_scale) v = scale_macro_sample(v, read_slot(s, d.scale_slot));
+    int add = (d.flags & 2) != 0;
+    if (d.target == T_NOTE_SEMI) {
+      write_note_semi(s, ch, v, add);
+    } else if (d.target == T_KEYON) {
+      if (v != 0) keyon_retrigger(s, ch);
+    } else if (d.target == T_NOTE_PITCH) {
+      /* Pitch macro: write the register every frame but never store back to
+       * pitch_cents, which holds the :pitch directive's base. An override macro
+       * that clobbered it would leave a residual detune on every later note. */
+      if (ch < 6) {
+        int base = add ? s->fm[ch].pitch_cents : 0;
+        write_fm_pitch(s, ch, s->fm[ch].current_note, base + v);
+      } else if (ch - 6 < 3) {
+        int p = ch - 6;
+        int base = add ? s->psg[p].pitch_cents : 0;
+        write_psg_pitch(s, p, s->psg[p].current_note, base + v);
+      }
+    } else {
+      param_set_ex(s, ch, d.target, v, 1); /* the macro owns the envelope */
+    }
+  }
+  sl->step_clock = (int16_t)(d.step - 1);
+  if (sl->state == MML_MACRO_RUN) {
+    sl->cursor++;
+    int sustain_end = d.release == 0xff ? d.count : d.release;
+    if (sl->cursor >= (uint16_t)sustain_end) {
+      if (d.loop_start != 0xff) sl->cursor = d.loop_start; /* sustain loop */
+      else sl->state = MML_MACRO_HOLD;                     /* hold last value */
+    }
+  } else {
+    sl->cursor++;
+    if (sl->cursor >= (uint16_t)d.count) return 1; /* release finished */
+  }
+  return 0;
+}
+
+static void process_macros(MMLSeq *s) {
+  for (int ch = 0; ch < 10; ch++) {
+    int n = s->macro_slot_count[ch];
+    if (!n) continue;
+    int keyed = channel_keyed(s, ch);
+    int dead = 0;
+    /* A KEYON step can reach back into this array (keyon_retrigger), so slots
+     * are marked dead in place and compacted only after the whole pass. */
+    for (int i = 0; i < n; i++) {
+      if (step_macro(s, ch, &s->macro_slots[ch][i], keyed)) {
+        s->macro_slots[ch][i].dead = 1;
+        dead = 1;
+      }
+    }
+    if (!dead) continue;
+    int w = 0;
+    for (int i = 0; i < n; i++) {
+      if (s->macro_slots[ch][i].dead) continue;
+      if (w != i) s->macro_slots[ch][w] = s->macro_slots[ch][i];
+      w++;
+    }
+    s->macro_slot_count[ch] = (uint8_t)w;
+  }
+}
+
+/* ── PCM voices (driver.md §14) ────────────────────────────────────────────
+ * The 68k resolves the note into a PCM_START the engine can act on with no
+ * arithmetic, then shadows the voice's position so it knows when the voice is
+ * gone. It never touches a sample byte — that is the Z80's entire job.
+ */
+static const uint8_t *find_sample(const MMLSeq *s, int id) {
+  for (uint16_t i = 0; i < s->sample_count; i++) {
+    const uint8_t *e = s->sample_entries + (uint32_t)i * 20;
+    if (e[0] == (uint8_t)id) return e;
+  }
+  return 0;
+}
+
+/* 16.16 position advance per mix tick. Computed at full precision then floored,
+ * so pitch stays accurate — a table pre-divided by the mix rate rounds far too
+ * coarsely (mmb.js pcmTickIncrement is the definition). */
+static uint32_t pcm_tick_increment(int base_rate, int note) {
+  int n = clampi(note, 36, 84);
+  uint32_t per_frame = (uint32_t)base_rate * MML_PCM_MULT_FRAME[n - 36];
+  return per_frame / MML_PCM_MIX_RATE;
+}
+
+static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int note) {
+  int vi = channel_id - CH_PCM1;
+  if (vi < 0 || vi >= MML_PCM_VOICES) return;
+  const uint8_t *e = find_sample(s, sample_id);
+  if (!e) return;
+  uint32_t len = rd32(e, 6);
+  if (len == 0) return;
+  MMLPcmVoice *v = &s->pcm[vi];
+  v->active = 1;
+  v->base = s->sample_blob_base + rd32(e, 2);
+  v->len = len;
+  v->has_loop = (uint8_t)(e[1] & 1);
+  v->loop_start = rd32(e, 12);
+  v->loop_end = v->has_loop ? rd32(e, 16) : len;
+  v->loop_len = v->loop_end - v->loop_start;
+  v->left = (int32_t)v->loop_end;        /* to the loop end, or the sample end */
+  v->tail = (int32_t)(len - v->loop_end); /* what a release still has to play */
+  v->inc = pcm_tick_increment(rd16(e, 10), note);
+  v->pos = 0;
+  v->releasing = 0;
+  /* $2B (DAC enable) is the ENGINE's: it is a consequence of voice activity,
+   * the one piece of state the Z80 already owns (driver.md §14). */
+  emit_pcm_start(s, vi, v);
+  v->sent_shift = pcm_shift_byte(v);
+}
+
+static void pcm_note_off(MMLSeq *s, int channel_id) {
+  /* A shot plays to its end regardless (opcodes.md §6); a loop leaves its loop
+   * region and plays out the tail to the sample end. */
+  int vi = channel_id - CH_PCM1;
+  if (vi < 0 || vi >= MML_PCM_VOICES) return;
+  MMLPcmVoice *v = &s->pcm[vi];
+  if (!v->active || !v->has_loop) return;
+  v->releasing = 1;
+  v->left += v->tail; /* the boundary moves from the loop end to the sample end */
+  uint8_t c[2] = {PCM_STOP, (uint8_t)vi};
+  pcm_emit(s, c, 2);
+}
+
+/* Advance every active voice over the frame's mix ticks. No samples are read —
+ * this is position bookkeeping only, mirroring the engine's loop so both sides
+ * retire a voice on the same tick. (A closed form exists for the non-looping
+ * case; it is not worth the divergence risk until a cycle count asks for it.) */
+static void pcm_frame(MMLSeq *s) {
+  int any = 0;
+  for (int i = 0; i < MML_PCM_VOICES; i++) any |= s->pcm[i].active;
+  if (!any) {
+    if (s->pcm_dac_on) {
+      s->pcm_dac_on = 0;
+      ym(s, 0, 0x2b, 0x00); /* release fm6 back to FM — shadow only, §14 */
+    }
+    return;
+  }
+  if (!s->pcm_dac_on) {
+    s->pcm_dac_on = 1;
+    ym(s, 0, 0x2b, 0x80);
+  }
+  for (int i = 0; i < MML_PCM_VOICES; i++) {
+    MMLPcmVoice *v = &s->pcm[i];
+    for (int t = 0; t < MML_PCM_MIX_RATE && v->active; t++) {
+      uint32_t before = v->pos >> 16;
+      v->pos += v->inc;
+      v->left -= (int32_t)((v->pos >> 16) - before);
+      if (v->left > 0) continue;
+      if (v->has_loop && !v->releasing) {
+        v->pos -= v->loop_len << 16;
+        v->left = (int32_t)v->loop_len;
+      } else {
+        v->active = 0;
+      }
+    }
+  }
+}
+
 /* ── VOICE_SET (driver.md §10) ──────────────────────────────────────────────
  * Apply a 29-byte VOICE_TABLE entry: the register-order block that a
  * full-voice PARAM_SET burst was coalesced into. Change-only is taken against
@@ -560,8 +1027,14 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
 static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_gate,
                     int has_ex_gate, int legato) {
   int ch = t->channel_id;
+  int fm3op = fm3_op_for(s, ch);
+  if (!fm3op && ch > CH_PCM3) return; /* no such channel: timeline only */
   cancel_loop_sweeps(s, ch);
-  if (ch < 6) {
+  if (fm3op) {
+    /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH,
+     * so this only keys the operator. Level and patch stay the shared CH3's. */
+    fm3_key_op(s, fm3op, 1);
+  } else if (ch < 6) {
     MMLFmCh *c = &s->fm[ch];
     c->current_note = (uint8_t)note;
     /* Carrier TL is recomposed on every note, so a level change between notes
@@ -581,7 +1054,11 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
     if (!legato || !st->sounding) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));
   }
 
-  int gate = ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
+  /* Re-trigger the channel's bound macros (driver.md §13.1). Their first step
+   * fires this frame in step 3, overriding the note-on's base level. */
+  if (!fm3op && ch < 10) macro_trigger(s, ch);
+
+  int gate = fm3op ? 8 : ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
   if (dur == 0 || (has_ex_gate && ex_gate == 0)) {
     t->held = 1;
     t->gate_left = -1;
@@ -796,6 +1273,40 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
                   read_param(s, t->channel_id, target) + delta);
         break;
       }
+      /* ── Value machine: the stream ops (driver.md §6.4, opcodes.md §6) ──
+       * The compiler lowers an expression to a left fold, so every one of these
+       * is "current value OP operand" and the driver never needs a stack. */
+      case OP_PARAM_MUL: {
+        uint8_t target = st[t->pc + 1];
+        int factor = rd16(st, t->pc + 2); /* unsigned 8.8 */
+        t->pc += 4;
+        param_set(s, t->channel_id, target,
+                  (read_param(s, t->channel_id, target) * factor) >> 8);
+        break;
+      }
+      case OP_PARAM_FROM_VAL: {
+        uint8_t target = st[t->pc + 1];
+        int v = read_slot(s, st[t->pc + 2]);
+        t->pc += 3;
+        param_set(s, t->channel_id, target, v);
+        break;
+      }
+      case OP_PARAM_ADD_VAL: {
+        uint8_t target = st[t->pc + 1];
+        int v = read_slot(s, st[t->pc + 2]);
+        t->pc += 3;
+        param_set(s, t->channel_id, target,
+                  read_param(s, t->channel_id, target) + v);
+        break;
+      }
+      case OP_PARAM_MUL_VAL: {
+        uint8_t target = st[t->pc + 1];
+        int factor = read_slot(s, st[t->pc + 2]); /* 8.8 */
+        t->pc += 3;
+        param_set(s, t->channel_id, target,
+                  (read_param(s, t->channel_id, target) * factor) >> 8);
+        break;
+      }
       case OP_TEMPO_SWEEP: {
         int from = rd16(st, t->pc + 1), to = rd16(st, t->pc + 3);
         int len = rd16(st, t->pc + 5);
@@ -839,6 +1350,58 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
           s->csm_sweep.frame = 0;
           s->csm_sweep.phase16 = 0;
           s->csm_sweep.step16 = sweep_step(len, 0);
+        }
+        break;
+      }
+      case OP_FM3_MODE: {
+        uint8_t mode = st[t->pc + 1]; /* 0 normal, 1 special (per-op), 2 CSM */
+        t->pc += 2;
+        uint8_t r = (uint8_t)(s->reg27 & ~0xc0);
+        if (mode == 1) r |= 0x40;
+        else if (mode == 2) r |= 0x80;
+        set_reg27(s, r);
+        break;
+      }
+      case OP_FM3_OP_PITCH: {
+        int opn = st[t->pc + 1], note = st[t->pc + 2];
+        t->pc += 3;
+        write_fm3_op_pitch(s, opn, note);
+        break;
+      }
+      case OP_PCM_NOTE_ON: {
+        int sample_id = st[t->pc + 1], note = st[t->pc + 2];
+        MMLDur d = read_dur(st, t->pc + 3);
+        t->pc = (uint16_t)d.next;
+        pcm_note_on(s, t->channel_id, sample_id, note);
+        /* A held (dur 0) PCM note suspends the dispatcher like any hold; the
+         * sample keeps feeding from step 3 either way. */
+        if (d.ticks == 0) {
+          t->held = 1;
+          return;
+        }
+        t->wait = d.ticks;
+        return;
+      }
+      case OP_PCM_NOTE_OFF:
+        t->pc += 1;
+        pcm_note_off(s, t->channel_id);
+        break;
+      case OP_MACRO_SET: {
+        uint8_t macro_id = st[t->pc + 1];
+        t->pc += 2;
+        MMLMacro d;
+        /* Sticky: this becomes the channel's macro for that target, replacing
+         * whatever was bound there (driver.md §13.1). */
+        if (macro_desc(s, macro_id, &d) && t->channel_id < 10)
+          macro_bind(s, t->channel_id, d.target, macro_id);
+        break;
+      }
+      case OP_MACRO_CLEAR: {
+        uint8_t target = st[t->pc + 1];
+        t->pc += 2;
+        if (t->channel_id < 10) {
+          if (target == 0xff) s->bind_count[t->channel_id] = 0;
+          else macro_unbind(s, t->channel_id, target);
         }
         break;
       }
@@ -920,6 +1483,21 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
   uint8_t fm0[MML_SLOT_MAX_WRITES * 2], fm1[MML_SLOT_MAX_WRITES * 2];
   uint16_t np = 0, n0 = 0, n1 = 0;
   uint16_t cur = s->q_tail;
+  /* The BYTE budget can bind before the write budget when PCM commands are
+   * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
+   * rather than overflow the slot. What is dropped stays queued, in order. */
+  {
+    uint32_t size = 4 + s->pcm_len; /* three run lengths + n_pcm + the commands */
+    uint16_t fit = 0, scan = cur;
+    for (uint16_t i = 0; i < take; i++) {
+      uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
+      if (size + cost > MML_SLOT_SIZE) break;
+      size += cost;
+      fit++;
+      scan = (uint16_t)((scan + 1) % MML_WRITE_QUEUE);
+    }
+    take = fit;
+  }
   for (uint16_t i = 0; i < take; i++) {
     uint8_t port = s->q[cur].port, addr = s->q[cur].addr, data = s->q[cur].data;
     if (port == 2) psg[np++] = data;
@@ -936,7 +1514,10 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
   memcpy(out + o, fm0, n0); o += n0;
   out[o++] = (uint8_t)(n1 / 2);
   memcpy(out + o, fm1, n1); o += n1;
-  out[o++] = 0; /* n_pcm — PCM commands land with the M3 port */
+  out[o++] = s->pcm_count;
+  memcpy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
+  s->pcm_count = 0;
+  s->pcm_len = 0;
 
   uint16_t left = mml_pending(s);
   if (left) {
@@ -978,13 +1559,15 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
     }
   }
   /* Step 3, in the normative order: sweeps ascending channel then slot, then
-   * the global tempo and CSM-rate sweeps, then the fades. */
+   * the macros (same write path, §13.3), the global tempo and CSM-rate sweeps,
+   * the fades, and finally the PCM voices. */
   for (int ch = 0; ch < 10; ch++) {
     for (int i = 0; i < 2; i++) {
       MMLSweep *sl = &s->sweeps[ch][i];
       if (sl->active && process_sweep(s, ch, sl)) sl->active = 0;
     }
   }
+  process_macros(s);
   if (s->tempo_sweep.active) {
     int v;
     if (process_global_sweep(&s->tempo_sweep, &v)) s->tempo_sweep.active = 0;
@@ -996,11 +1579,20 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
     write_timer_a(s, v);
   }
   process_fades(s);
+  pcm_frame(s);
   s->frame++;
   return encode_slot(s, slot_out);
 }
 
+uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out) {
+  return encode_slot(s, slot_out);
+}
+
 int mml_done(const MMLSeq *s) {
+  /* Still busy while the DAC is feeding: a shot or a loop tail plays past the
+   * note that started it, and past the end of its track. */
+  for (int i = 0; i < MML_PCM_VOICES; i++)
+    if (s->pcm[i].active) return 0;
   for (uint8_t i = 0; i < s->track_count; i++)
     if (s->trk[i].running && !s->trk[i].held) return 0;
   return 1;
@@ -1060,6 +1652,10 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
       s->voice_count = rd16(mmb, off);
       s->voices = mmb + off + 2;
     }
+    else if (id == SEC_MACRO_TABLE && size >= 2) {
+      s->macro_table = mmb + off;
+      s->macro_count = rd16(mmb, off);
+    }
   }
   if (!track_table || !s->stream || track_table_len < 2) return -3;
 
@@ -1096,7 +1692,23 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->psg[p].gate = 8;
     s->psg[p].current_note = 60;
   }
+  for (int v = 0; v < MML_PCM_VOICES; v++) {
+    s->pcm[v].vel = 15;
+    s->pcm[v].vol = VOL_UNITY;
+    s->pcm[v].sent_shift = 0xff; /* no PCM_VOL sent yet */
+  }
   emit_init_writes(s);
+  return 0;
+}
+
+int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len) {
+  if (!bank || len < 2) return -1;
+  uint16_t n = rd16(bank, 0);
+  if (2 + (uint32_t)n * 20 > len) return -2;
+  s->sample_count = n;
+  s->sample_entries = bank + 2;
+  /* Entry offsets are relative to the blob region, which follows the table. */
+  s->sample_blob_base = 2 + (uint32_t)n * 20;
   return 0;
 }
 

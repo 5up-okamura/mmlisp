@@ -19,7 +19,7 @@ import {
   fmCarrierOpsForAlg,
   OP_ADDR_OFFSET,
 } from "../../live/src/ir-utils.js";
-import { SIN_LUT } from "../../live/src/mmb.js";
+import { SIN_LUT, PCM_MULT_FRAME } from "../../live/src/mmb.js";
 
 const dst = join(dirname(fileURLToPath(import.meta.url)), "..", "68k", "tables.c");
 
@@ -99,6 +99,12 @@ ${rows([...OP_ADDR_OFFSET], 4)}
  * curve that needs a table; the other seven are computed (driver.md §12.6). */
 const uint8_t MML_SIN_LUT[256] = {
 ${rows([...SIN_LUT], 12)}
+};
+
+/* PCM resampling: note (C2..C6, 36..84) -> 16.16 samples per frame per Hz of
+ * base rate. The mix-tick increment divides this by PCM_MIX_RATE (mmb.js). */
+const uint16_t MML_PCM_MULT_FRAME[49] = {
+${rows([...PCM_MULT_FRAME], 8)}
 };
 `,
 );

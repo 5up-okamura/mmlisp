@@ -298,16 +298,24 @@ the host too, so the gate runs both sides natively — no emulator, no assembler
 a debugger on each — and compares the SLOT STREAM, which is what the 68000
 actually hands the Z80.
 
-M1 and M2 are done and byte-identical on twelve corpus scores — the core
+M1, M2 and M3 are done and byte-identical on 38 corpus scores — the core
 opcode set, the sweep engine and its eight integer curves, PARAM_ADD, tempo
-sweeps, cent pitch, CSM, and the host control API (key-off, set-param, the
-Bresenham fade), the last of these gated with a real host-command schedule.
+sweeps, cent pitch, CSM and the host control API (key-off, set-param, the
+Bresenham fade, gated with a real host-command schedule), plus the macro engine,
+the value machine's stream ops, FM3 independent-OP mode, and PCM command
+emission.
+
+PCM is the one place the sequencer carries state you would not guess from the
+opcode list: it **shadows each voice's position** — never a sample byte, the
+mixer is the Z80's — because it has to know when a voice retires before it can
+decide whether a PCM_VOL or a PCM_NOTE_OFF is worth emitting at all.
 
 Opcodes not yet ported stop their track fail-safe instead of mis-decoding a
 length, and the gate reports those scores as PEND with the opcode and the
-number of leading frames that matched — so the remaining surface (the M3 macro
-engine, the value machine, FM3, PCM) reads straight off the gate output, and a
-regression upstream of a stop still shows up as that number falling.
+number of leading frames that matched, so the remaining surface reads straight
+off the gate output and a regression upstream of a stop shows up as that number
+falling. Nothing is PEND today; what is left is SE (track lifecycle, START_SE,
+suspend/restore, priority), whose gate scores are reported SKIP.
 
 `68k/tables.c` is generated from `live/src/ir-utils.js` by `gen-c-tables.mjs`,
 the same single-source rule the Z80 tables follow: neither side derives a

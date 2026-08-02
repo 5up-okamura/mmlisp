@@ -159,20 +159,25 @@ pass solved that; the binding constraint is *cycles*.
   implements neither its PCM semantics nor its DAC ownership. `verify:all` is
   now selftest + the P0/P1 gates + the ir↔drv A/B. ab-baseline re-frozen: still
   **18 clean of 40**, with the PCM scores' signatures changed by design.
-- **P2 sequencer — M1 + M2 DONE 2026-08-03.** `drv/68k/{mmlispseq.h,mmlispseq.c,
-  gate_main.c}` + generated `tables.c`; gate `npm run c-gate` (tools/c-gate.mjs).
-  **12 scores byte-identical**, 3 PEND. M2 covers the sweep engine
-  (PARAM_SWEEP/_STOP, 2 slots/channel, the 8 integer curves), PARAM_ADD +
-  read_param, TEMPO_SWEEP, cent pitch, CSM (ON/OFF/RATE const+swept), and the
-  §6.5 host API (key_off / set_param / fade_track's Bresenham ramp / set_val),
-  the last gated with a real host-command schedule (`m2-mailbox`, 3 cmds) —
-  c-gate grew sidecar `.cmds.json` support for that.
-  **M2 went in with zero gate failures on the first run**, which says the M1
-  groundwork (shadow validity, write paths, frame order) was the hard part.
-  **Remaining for M3, straight off the gate: 0xE0 MACRO_SET (+ the macro
-  engine), the value machine's stream ops, FM3_MODE/FM3_OP_PITCH, and 0xC0
-  PCM_NOTE_ON with PCM command emission.**
-  Two things the C needs that the JS gets for free, both found BY the gate:
+- **P2 sequencer — M1 + M2 + M3 DONE 2026-08-03.** `drv/68k/{mmlispseq.h,
+  mmlispseq.c, gate_main.c}` + generated `tables.c`; gate `npm run c-gate`
+  (tools/c-gate.mjs). **38 scores byte-identical, 0 PEND** (was 12 at M2).
+  - M2 covers the sweep engine (PARAM_SWEEP/_STOP, 2 slots/channel, the 8
+    integer curves), PARAM_ADD + read_param, TEMPO_SWEEP, cent pitch, CSM
+    (ON/OFF/RATE const+swept), and the §6.5 host API (key_off / set_param /
+    fade_track's Bresenham ramp / set_val), the last gated with a real
+    host-command schedule (`m2-mailbox`) — c-gate grew sidecar `.cmds.json`
+    support for that.
+  - M3 covers the macro engine (sticky binds, note-on re-instantiation,
+    attack/sustain/release, NOTE_SEMI, NOTE_PITCH override+additive, scaled
+    macros, KEYON retrigger), the value machine's stream ops (PARAM_MUL /
+    _FROM_VAL / _ADD_VAL / _MUL_VAL), FM3_MODE + FM3_OP_PITCH with the
+    per-operator key path, and PCM_NOTE_ON/_OFF + §6.3 command emission.
+  - **Both M2 and M3 went in with zero gate failures on the first run**, which
+    says the M1 groundwork (shadow validity, write paths, frame order) really
+    was the hard part — and that porting from a *validated implementation*
+    rather than prose is what makes this cheap.
+  Things the C needs that the JS gets for free, all found BY the gate:
   - **a shadow-validity plane** — drv-player keys its shadow with a Map so an
     unwritten register never compares equal; a zero-initialised C array
     suppresses the neutral patch's many writes of 0. (The Z80 dodged this by
@@ -181,10 +186,77 @@ pass solved that; the binding constraint is *cycles*.
   - **VOICE_SET compares against the STRUCTURED shadow**, not the register
     shadow: the burst it replaced only wrote registers a PARAM_SET touched, so
     e.g. $90/SSG must stay unwritten when the voice omits it.
-  Unported opcodes STOP the track fail-safe and the gate reports PEND with the
-  opcode + how many leading frames matched — a regression upstream of the stop
-  still shows as that number falling, so PEND is not a blind spot.
+  - **the drain must not render.** `gate_main` closes slots until the spill
+    queue empties; those must be *encode-only* (`mml_drain_frame`). Running a
+    frame there invents traffic (a sweep step, a retiring PCM voice) the
+    reference — which only calls `endFrame` — never produces.
+  M3 design notes worth not rediscovering:
+  - **The 68k shadows each PCM voice's POSITION** (3 × 175 add/compare per
+    frame), never a sample byte. Not for the audio — for its own decisions: a
+    PCM_VOL for a dead voice is wasted slot bytes, and PCM_NOTE_OFF on a
+    finished shot must emit nothing. A closed form exists for the non-looping
+    case if a cycle count ever asks.
+  - **The slot's byte budget can bind before its write cap** once PCM commands
+    are in play (3 PCM_STARTs = 54 B), and PSG writes cost 1 byte while FM cost
+    2 — so the "longest prefix that fits" test has to count real costs, not
+    `take * 2`.
+  - The sample bank is a **separate ROM bank, not an MMB section**, so
+    `mml_load_samples` is a separate call and c-gate passes it as `--samples`.
+    Only the 20-byte entry table is the sequencer's business.
+  - Macro binds are an **ordered** map: replacing a target's macro keeps its
+    original position (JS Map semantics), and that order is the step order.
+  **Remaining for P2: SE** (plan-se.md) — track lifecycle / START_SE /
+  suspend-restore / priority. Its gate scores (`m3-se`, `m3-se-prio`) carry a
+  richer sidecar (`autoStart: false` + `remapChannels`) and c-gate reports them
+  SKIP rather than crashing.
 - **P3 integration** — SGDK glue, hardware bring-up.
+
+## P3 entry — what is decided, and what has to be decided first
+
+**Decided 2026-08-03: the per-frame hook.** `MMLisp_frame()`, called once per
+vblank by the host; the driver does NOT register with SGDK's vblank callback.
+The call **tops up the ring** rather than rendering one slot, so lookahead is an
+invariant it maintains, not the host's job — and it is self-limiting, so being
+called twice in a frame is harmless. Bus grabbed once per call, not per slot.
+Control calls go BEFORE the render call in the host's frame. No
+`MMLisp_autoVBlank()` convenience — it would be a second path the host gate
+cannot reach. Full rationale in driver.md §6.6; the load-bearing part is that
+explicit calling is safe *because the Z80 owns the clock*, so render jitter
+lands in the ring's fill level and never in the tempo.
+
+**Still to decide, roughly in the order P3 needs them:**
+
+1. **How the ring depth is shared.** Both the Z80 image (`RING_DEPTH equ 2`) and
+   the 68k must agree, and a mismatch fails silently (the 68k thinks the ring is
+   full and stops rendering, or writes a slot that does not exist). Suggestion:
+   the Z80 publishes depth and slot size in the header next to
+   `protocol_version`, and the 68k reads them — one side owns the truth.
+2. **Who owns the transport.** `mml_render_frame()` today just returns slot
+   bytes; nothing owns head/tail or the bus grab. Keeping the core PURE and
+   putting the ring in the SGDK layer preserves the host gate, which depends on
+   exactly that purity.
+3. **Per-track start/stop.** Only `mml_start_all()` exists (a gate-harness
+   convenience). §2.2 channel ownership and §2.3 scene transitions are
+   `mml_start_track` / `mml_stop_track` shaped, so the interactive model is not
+   actually implemented yet.
+4. **`(trig N)` delivery — the biggest undesigned piece.** Markers are rendered
+   AHEAD by the ring depth, so handing them straight to game code would fire
+   them early. §6.4 says compare against the Z80's consumed-frame counter, but
+   there is no API: the natural shape is a small queue of (marker, rendered
+   frame) that `MMLisp_frame()` releases as the counter catches up. The C keeps
+   `marker_id` per track today and never surfaces it.
+5. **Multiple scores loaded at once.** §2.3's DJ transitions became free with the
+   split, but `mml_load` fills one `MMLSeq`. Two sequencers would duplicate the
+   shadow and the slot queue; one sequencer with a per-track score pointer is
+   what §4.3 already describes.
+6. **SE port** ([[plan-se]]). The model (priority, suspend/restore, snapshots)
+   should carry over unchanged — SE moved to the 68k in decision 3, so the
+   ring-latency cost is already accepted. `m3-se` / `m3-se-prio` are SKIP in
+   c-gate today.
+7. **PAL** (§3.3) — the correction is now one multiply; undecided whether it
+   scales at load or at each TEMPO_SET. Needs a PAL target to settle.
+8. **Raising the mix rate** (10.5 → up to 10.9/11.3 kHz, §5.3.1) — deliberately
+   parked until hardware measurement gives a reason.
 
 ## Fixed limits (expectation-setting, unchanged by the split)
 

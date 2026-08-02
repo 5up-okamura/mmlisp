@@ -5,31 +5,57 @@
  * the gate run on the host, so comparing the C against drv-player.js needs no
  * emulator and no assembler, and both are debuggable.
  *
- *   gate_main <song.mmb> [max_frames] [commands.txt]
+ *   gate_main <song.mmb> [max_frames] [--cmds commands.txt] [--samples bank.smp]
  *
  * commands.txt is one host command per line — "frame cmd a0 a1 a2" — applied at
  * the top of the matching frame, which is where the reference applies them too.
+ * bank.smp is the SAMPLE_BANK a PCM score needs; it is a separate ROM bank on
+ * the target, so it is a separate file here.
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "mmlispseq.h"
 
+static unsigned char *slurp(const char *path, long *out_len) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  fseek(f, 0, SEEK_END);
+  long len = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  unsigned char *buf = malloc((size_t)len);
+  if (!buf || fread(buf, 1, (size_t)len, f) != (size_t)len) {
+    fclose(f);
+    free(buf);
+    return 0;
+  }
+  fclose(f);
+  *out_len = len;
+  return buf;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
-    fprintf(stderr, "usage: gate_main <song.mmb> [max_frames]\n");
+    fprintf(stderr,
+            "usage: gate_main <song.mmb> [max_frames] [--cmds f] [--samples f]\n");
     return 2;
   }
-  long max_frames = argc > 2 ? strtol(argv[2], NULL, 10) : 36000;
+  long max_frames = argc > 2 && argv[2][0] != '-' ? strtol(argv[2], NULL, 10) : 36000;
+  const char *cmd_path = 0, *smp_path = 0;
+  for (int i = 2; i < argc; i++) {
+    if (!strcmp(argv[i], "--cmds") && i + 1 < argc) cmd_path = argv[++i];
+    else if (!strcmp(argv[i], "--samples") && i + 1 < argc) smp_path = argv[++i];
+  }
 
   /* Host command schedule (KEY_OFF / SET_PARAM / FADE_TRACK / SET_VAL). */
   enum { MAX_CMDS = 256 };
   static struct { long frame; int cmd, a0, a1, a2; } cmds[MAX_CMDS];
   int ncmds = 0;
-  if (argc > 3) {
-    FILE *cf = fopen(argv[3], "r");
+  if (cmd_path) {
+    FILE *cf = fopen(cmd_path, "r");
     if (!cf) {
-      fprintf(stderr, "cannot open %s\n", argv[3]);
+      fprintf(stderr, "cannot open %s\n", cmd_path);
       return 2;
     }
     while (ncmds < MAX_CMDS &&
@@ -39,26 +65,30 @@ int main(int argc, char **argv) {
     fclose(cf);
   }
 
-  FILE *f = fopen(argv[1], "rb");
-  if (!f) {
-    fprintf(stderr, "cannot open %s\n", argv[1]);
+  long len = 0;
+  unsigned char *mmb = slurp(argv[1], &len);
+  if (!mmb) {
+    fprintf(stderr, "cannot read %s\n", argv[1]);
     return 2;
   }
-  fseek(f, 0, SEEK_END);
-  long len = ftell(f);
-  fseek(f, 0, SEEK_SET);
-  unsigned char *mmb = malloc((size_t)len);
-  if (fread(mmb, 1, (size_t)len, f) != (size_t)len) {
-    fprintf(stderr, "short read\n");
-    return 2;
-  }
-  fclose(f);
 
   static MMLSeq seq;
   int rc = mml_load(&seq, mmb, (uint32_t)len);
   if (rc) {
     fprintf(stderr, "mml_load failed: %d\n", rc);
     return 2;
+  }
+  if (smp_path) {
+    long slen = 0;
+    unsigned char *smp = slurp(smp_path, &slen);
+    if (!smp) {
+      fprintf(stderr, "cannot read %s\n", smp_path);
+      return 2;
+    }
+    if (mml_load_samples(&seq, smp, (uint32_t)slen)) {
+      fprintf(stderr, "bad sample bank\n");
+      return 2;
+    }
   }
   mml_start_all(&seq);
 
@@ -75,9 +105,11 @@ int main(int argc, char **argv) {
     if (mml_done(&seq)) break;
   }
   /* Drain whatever the write cap held back, so the stream is complete — the
-   * reference does the same at the end of captureSlotLog. */
+   * reference does the same at the end of captureSlotLog. These slots close
+   * without running a frame: the song is over, and rendering one more would
+   * invent traffic the reference never produces. */
   while (mml_pending(&seq)) {
-    uint32_t n = mml_render_frame(&seq, slot);
+    uint32_t n = mml_drain_frame(&seq, slot);
     fputc((int)(n & 0xff), stdout);
     fputc((int)((n >> 8) & 0xff), stdout);
     fwrite(slot, 1, n, stdout);
