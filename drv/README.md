@@ -1,5 +1,29 @@
 # MMLispDRV — Z80 assembly port (Phase 3, step 3)
 
+> ## ⚠ Superseded by the 68k/Z80 split (2026-08-02)
+>
+> Everything below describes the **all-Z80 driver**, in which the Z80 both
+> sequenced the score and mixed PCM. Cycle measurement showed those two
+> workloads do not fit in one Z80 — 2 PCM voices at the theoretical floor is
+> 99.7% of the frame with the sequencer executing zero instructions — so the
+> sequencer moves to the 68000 and the Z80 becomes a PCM mixer and chip-write
+> engine. See **`docs/driver.md` §1.1** for the measurement and the new
+> architecture, and `.claude/memory/plan-68k-split.md` for the decision record.
+>
+> **In particular, the "68k offload is the architectural last resort" position
+> in §2 of the deviations below no longer holds.** It was argued on *bytes*,
+> and the code-overlay pass solved the byte problem; the binding constraint is
+> now *cycles*, which no Z80-side technique moves by the required factor.
+>
+> What survives, and why this file is still worth reading: the MMB format,
+> opcodes, level model, macro semantics, SE model, voice tables, the language,
+> `export-mmb.js`, `drv-player.js`, `mmb-build`, `ab-gate`, the whole gate
+> corpus, banking, the SGDK glue skeleton, and the first-party Z80
+> assembler/emulator/trace toolchain in `tools/`. What is rewritten is ~5,600
+> bytes of Z80 sequencing assembly, which becomes C on the 68000 with
+> `drv-player.js` as its port spec. The measurements and the port deviations
+> recorded here are the reason the new design looks the way it does.
+
 The Z80 sound driver specified by `docs/driver.md` / `docs/mmb.md` /
 `docs/opcodes.md`, ported from the JS reference implementation
 (`live/src/drv-player.js`). Coverage: **M1 (core playback)**, **all of M2**
@@ -17,6 +41,8 @@ _MUL_VAL / PARAM_MUL + `$time`, driver.md §6.4), and **3-channel PCM soft-mix**
 
 ```
 src/mmlispdrv.z80   the driver (M1)
+src/engine.z80      the POST-SPLIT Z80 engine (ring consume + PCM mixer) — see "P0/P1"
+src/mixer.z80       GENERATED (tools/gen-mixer.mjs) — the mixer core engine.z80 includes
 src/ovl_*.z80       on-demand overlays (setup/cmd/pcm/boot/rare/mmb) loaded into OVERLAY_SLOT
 src/tables.z80      generated constant tables — do not edit (gen-tables.mjs)
 tools/z80asm.mjs    first-party two-pass Z80 assembler (subset, no deps)
@@ -30,6 +56,9 @@ tools/run-trace.mjs   .mmb + driver.bin → Z80-emulated register-write log
 tools/verify.mjs      the bring-up gate: assemble, emulate, raw-diff traces
 tools/size-audit.mjs  static resident/overlay size report (`npm run size`)
 tools/budget.mjs      size audit + stack watermark over the gate corpus (`npm run budget`)
+tools/gen-mixer.mjs   generates src/mixer.z80 (8 shift-specialised loops, unrolled)
+tools/mixer-bench.mjs the P0 cost+correctness gate for the mixer (`npm run mixer`)
+tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
 tools/emit-bin.mjs    emit the Z80 image as .bin + C array for SGDK/68k
 tools/install-sgdk.mjs copy the sgdk/ host files (and optionally a compiled
@@ -191,6 +220,53 @@ ir-player's float easing, exceeding the tight ±1-frame band on slow fades.
 Fades are musically faithful (same shape/endpoints); the hard gate is
 asm↔DrvPlayer raw equality, which is exact.
 
+## P0/P1 — the post-split engine (`npm run verify:engine`)
+
+`src/engine.z80` is the Z80 half of the 68k/Z80 split: it consumes one
+pre-rendered slot per vblank, paces its bytes onto the YM2612 and PSG, and
+spends the rest of the frame software-mixing PCM into the fm6 DAC. It sequences
+nothing and evaluates nothing — 2560 B against the old driver's 5.8 KB of
+sequencing assembly, with no overlays, no shadow file, no LUTs and no TCB.
+
+`tools/engine-gate.mjs` gates it against its contract (driver.md §12.3): feed a
+recorded slot stream and assert that the chip writes are exactly the slot's
+bytes in order on the right ports, and that the `$2A` DAC stream matches a JS
+model sample for sample. Seven scenarios, including the ones that pin the
+segment arithmetic — a loop wrapping several times per frame, a shot ending
+mid-frame, a sample crossing a ROM bank boundary, a mid-flight `PCM_LOOP`
+retarget, and a starved ring.
+
+The segment split is what makes the inner loop cheap: a voice-outer pass bounds
+each run away from its loop and sample boundaries (conservatively, by
+`avail >> ksh`, so no division), and the inner loop then carries no bounds check
+at all.
+
+## The mixer prototype (`npm run mixer`)
+
+`src/mixer.z80` is the voice-outer PCM mixer the 68k/Z80 split is built around
+(driver.md §5.3), written standalone so its cost could be measured before
+anything was built on top of it. `tools/mixer-bench.mjs` assembles it at each
+mix rate, runs one frame per configuration in the emulator with the cycle
+counter on, attributes cycles per routine, and **diffs every DAC byte against a
+JS model of the same mix** — cost and correctness in one gate, so a
+fast-but-wrong loop cannot pass.
+
+Going first was the right call. The estimate that motivated the split's PCM
+plan was **~50% optimistic**: it predicted 301 cycles per mix tick at 3 voices
+and the first honest implementation measured **449**. Shift specialisation, the
+increment in a register and a 2x unroll took that to **384** — still 113% of the
+frame, so 3 voices at 10.5 kHz does not fit with sum-then-saturate semantics;
+the knee is around 8.6 kHz. Full table, and the two decisions the measurement
+reopens (pre-resampling, i16 vs i8 buffer), in driver.md 5.3.1.
+
+`tools/gen-mixer.mjs` generates `src/mixer.z80`: the loop has to exist in eight
+shift-specialised copies and be unrolled, so it is generated rather than
+hand-maintained -- the same pattern as `gen-tables.mjs`.
+
+Numbers are a **floor**: the emulator charges documented Z80 cycles with no
+bank-window wait states, and the loop's most-executed instruction is the sample
+fetch through that window.
+
 ## Why a first-party assembler/emulator
 
 The driver needs only a well-understood subset of the Z80 (no undocumented
@@ -244,8 +320,10 @@ These are the deltas against the docs as written:
    `G_OVL_BANK` **before releasing the Z80 from reset**, and `ovl_boot`'s RAM
    clear preserves the overlay-bank globals. That freed headroom carried the rest
    of M3 — i16 pitch macros, 3 concurrent macros/channel, PCM soft-mix, and
-   `:keyon` retrigger — onto the Z80, so the 68k-offload architecture stays the
-   last resort. The resident image is **~5.77 KB**; the 3 PCM voice structs
+   `:keyon` retrigger — onto the Z80. **This is the passage the banner at the top
+   supersedes:** the overlay pass won the byte argument decisively, and that is
+   precisely why the *cycle* argument became the binding one. The resident image
+   is **~5.77 KB**; the 3 PCM voice structs
    (17 B × 3) live in the RAM gap just below `OVERLAY_SLOT` (the region above
    `DATA_BASE` is packed), zeroed at boot.
    The mailbox and val slots are the only 68k-published addresses; they **move

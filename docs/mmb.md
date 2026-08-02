@@ -336,9 +336,19 @@ compiler accident.
 
 ## 12. Size Budget and Banking
 
+> **The reason for these limits is gone (2026-08-02).** They exist because the
+> Z80 read song data through a single 32 KB bank window. After the 68k/Z80 split
+> (driver.md §1) the sequencer runs on the 68000, where the MMB is a directly
+> addressable ROM pointer, and the Z80's window is used for PCM samples only —
+> which a voice-outer mixer pass reads contiguously, so that wall falls too
+> (driver.md §5.4). The constraints below are still **enforced by today's
+> encoder** and remain accurate for the current tooling; relaxing them
+> (`WIDE_OFFSETS`, multi-bank sample data) is P2/P3 work, no longer blocked on
+> anything.
+
 - M1 constraint: **one MMB file ≤ one 32KB bank window** (0x8000–0xFFFF).
-  The bank is latched at START_TRACK; all tracks of a playing MMB live in
-  the same window (driver.md §5).
+  The bank is latched at track start; all tracks of a playing MMB live in
+  the same window.
 - The u16 `event_offset` in the track table encodes this limit structurally.
 - Escape hatch (reserved, not implemented in v0.2): header flag
   WIDE_OFFSETS widens `event_offset` to u32 and permits multi-bank

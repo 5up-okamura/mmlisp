@@ -129,19 +129,44 @@ Order of work:
    overlay** (`ovl_boot`): a tiny resident reset stub loads it, the host now
    publishes `G_OVL_BANK` before releasing the Z80 from reset, and `ovl_boot`'s
    RAM clear preserves the overlay-bank globals. `verify:all` is eighteen trace
-   scores, all zero-diff. Remaining M3: VOICE_SET, CALL/RET + dedup, NOTE_ON_EX
-   macro_ref. The 68k-offload architecture (engines on the main 68000,
-   `drv-player.js` the design) stays the last resort. Then hardware bring-up +
-   cycle tuning.
+   scores, all zero-diff. VOICE_SET, CALL/RET + dedup, SE, PCM per-channel
+   volume and `(trig N)` landed after that; M1–M3 are feature-complete in the
+   all-Z80 build. First on-target playback (BlastEm via SGDK) 2026-07-26.
+4. **Architecture pivot — 68k sequencer + Z80 PCM/write engine** (2026-08-02,
+   docs rewritten, implementation started). Hardware bring-up produced the
+   measurement that ended the all-Z80 design: with PCM active the Z80 ran at
+   **355% of its frame budget**, and the soft-mixer alone cost ~193k cycles with
+   *one* voice. Rewritten to the theoretical floor for the same semantics, two
+   voices at 10.5 kHz still consume **99.7% of the frame with the sequencer
+   executing zero instructions** — so the two workloads do not fit in one Z80,
+   and the sequencer's own cost (median 33%) is not the reason.
+
+   The sequencer therefore moves to the 68000 as portable C, with
+   `drv-player.js` as its port spec; the Z80 keeps the clock and becomes a PCM
+   mixer + chip-write engine, consuming one pre-rendered register-write list per
+   vblank from a lookahead ring. This makes the write-list interface part of the
+   spec (driver.md §6) and re-bases the gate on 68k C ≡ `drv-player.js`, which
+   runs entirely on the host. It also retires the constraints that shaped Phase
+   3: the 8 KB ceiling, code overlays, the byte-funding menu, the 32 KB MMB and
+   sample-bank walls, `WIDE_OFFSETS`, and the cross-MMB and PAL deferrals.
+   Everything else survives — MMB format, opcodes, level model, macro
+   semantics, SE, the language, the exporter, and the Z80 toolchain.
+
+   Port milestones (driver.md §11): **P0** mixer prototype (validates the cost
+   estimate the architecture rests on) → **P1** ring/slot interface → **P2** the
+   C sequencer → **P3** SGDK integration and hardware bring-up.
 
 Milestone staging (full definitions in driver.md §11):
 
 - **M1 — core playback**: core opcodes, FM + PSG, level tables,
-  START_TRACK/STOP_TRACK, channel ownership, len=0 holds.
+  start/stop track, channel ownership, len=0 holds.
 - **M2 — motion**: PARAM_SWEEP/STOP + glide, PARAM_ADD, TEMPO_SWEEP,
-  LOOP_BREAK, CSM, single-channel PCM DAC, KEY_OFF/SET_PARAM/FADE_TRACK.
+  LOOP_BREAK, CSM, single-channel PCM DAC, key-off/set-param/fade-track.
 - **M3 — expression**: NOTE_ON_EX + macro engine, FM3 independent-OP,
   dynamic value slots, multi-channel PCM soft mix, CALL/RET + dedup pass.
+
+M1–M3 define *what the driver does* and are unchanged by the pivot; P0–P3
+define *where the code runs*.
 
 Phase 3 entry condition:
 

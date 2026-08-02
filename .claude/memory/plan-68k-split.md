@@ -1,153 +1,133 @@
 # Architecture pivot: 68k sequencer + Z80 PCM engine (decided 2026-08-02)
 
-Supersedes the "68k offload is the last resort" position in `drv/README.md`
-§2. That position was argued on **bytes**, and the overlay pass solved the byte
-problem. The binding constraint is now **cycles**, which no Z80-side technique
-can move by the required factor.
+**The design now lives in `docs/driver.md`** (rewritten 2026-08-02: §1.1 the
+measurement, §4 the 68k frame, §5 the Z80 engine, §6 the ring/slot interface,
+§11 the port milestones, §12 the gates). `drv/README.md` carries a banner
+superseding its "68k offload is the last resort" position.
 
-## What the measurements settled
+This file keeps only what the docs do not: the decision record, and the port's
+running state.
 
-Z80 frame = 59,659 cycles. PCM soft-mix measured (after this session's
-optimisations): **~240 cycles per voice per mix tick + ~260 fixed per tick**,
-i.e. 3 voices = 972/tick = 170k/frame = 285% of the budget.
+## Why (the measurement that settled it)
 
-Rewritten to the theoretical floor for the current semantics (16.16 resampling
-+ per-voice volume + i16 sum): ~110/voice + ~120 fixed →
+Z80 frame = 59,659 cycles. The all-Z80 PCM soft-mix measured **~240 cyc per
+voice per mix tick + ~260 fixed per tick**; 3 voices × 175 ticks = 170k = 285%
+of budget. Rewritten to the theoretical floor for the same semantics (16.16
+resampling + per-voice volume + i16 sum), ~110/voice + ~120 fixed →
 
-- 2 voices × 175 ticks = **59,500 cycles = 99.7% of the frame, with the
-  sequencer running zero instructions**.
+- 2 voices × 175 ticks = **59,500 = 99.7% of the frame, sequencer executing
+  zero instructions**.
 
-So a Z80 that also sequences cannot do 2 voices at 10.5 kHz, and the
-sequencer's own cost is not the reason — its median is only 19.7k (33%). The
-two workloads simply do not fit in one Z80.
+The sequencer is not the reason — its median is 19.7k (33%). The two workloads
+do not fit in one Z80. The old position was argued on *bytes* and the overlay
+pass solved that; the binding constraint is *cycles*.
 
-## Decisions
+## Decisions (all 2026-08-02)
 
-1. **Split (option C).** 68k runs the sequencer; the Z80 becomes a PCM mixer +
-   chip-write engine.
-2. **The Z80 keeps the clock.** The 68k pre-renders per-frame register-write
-   lists into a ring in Z80 RAM; the Z80 consumes one per frame at its own
-   vblank. Tempo stays 60 Hz-exact and a heavy game frame is absorbed by the
-   ring instead of stuttering the music — this is the property that motivated
-   the all-Z80 design in the first place, and it survives the split.
-3. **SE moves to the 68k** (2026-08-02). Keeps the Z80 a pure engine; costs SE
-   1–2 frames of latency, accepted.
-4. **PCM voice count fixed at 3** (2026-08-02). Lets the mixer be fully
-   specialised (three passes, no voice-count loop).
-5. **No compile-time pre-resampling** (the "option B" idea is dropped). After
-   the split, runtime 16.16 resampling costs ~25 cyc/voice/tick — 11% of the
-   PCM budget — so per-note PCM pitch is affordable and the ROM cost and loss
-   of freedom are not worth paying.
+1. **Split (option C).** 68k sequences; Z80 = PCM mixer + chip-write engine.
+2. **The Z80 keeps the clock.** 68k pre-renders per-frame write lists into a
+   ring in Z80 RAM; the Z80 consumes one per its own vblank. Tempo stays
+   60 Hz-exact and a heavy game frame is absorbed by the ring — the property
+   that motivated the all-Z80 design, preserved.
+3. **SE moves to the 68k.** Keeps the Z80 a pure engine; costs SE 1–2 frames.
+4. **PCM voice count fixed at 3.** Lets the mixer be fully specialised.
+5. **No compile-time pre-resampling** ("option B" dropped) — per-note PCM pitch
+   and dynamic loop points are worth more than the cycles. **Re-examined after
+   P0 and upheld**: the resampler measured ~37 cyc/voice/tick (29% of the mixer,
+   not the 11% assumed) and removing it would lift the 3-voice ceiling from
+   10.9 kHz to 17.2 — but the chosen configuration fits without it.
+6. **Ring depth default 2, a per-game knob.** Deep lookahead and continuous
+   live control are mutually exclusive (driver.md §3.4). Escape hatch if 2
+   proves too shallow: indirect write-list entries ("write reg X from slot S"),
+   deliberately deferred — it puts resolution logic back on the Z80.
+7. ~~16-bit mix buffer~~ → **SUPERSEDED by P0 measurement. 8-bit
+   saturating-add, 3 voices, `PCM_MIX_R` = 175 (10.5 kHz), unroll 2**
+   (2026-08-02). 89% of the frame, 95 chip writes left. i16 sum-then-saturate
+   could not hold 10.5 kHz at 3 voices (113%) and its knee was 8.6 kHz. The
+   deciding argument was asymmetry of cost: i8sat is **bit-identical to i16
+   below 3 simultaneous voices** and its divergence above that is avoidable by
+   backing off `:vol`, whereas the mix rate is paid on every sample of every
+   score. **The rate stays a knob to raise** (ceiling 10.9 kHz at unroll 2,
+   11.3 at unroll 4) if a real score and hardware leave room — raising it
+   re-freezes every gate baseline, so it needs a measured reason.
+8. **Change-only suppression moves to the 68k.** It holds the shadow and emits
+   only changed registers, so the Z80's shadow file, valid plane and the ~550
+   cyc/write of bookkeeping all disappear.
+9. **Writes are appended in dispatch order, not coalesced full-frame.** Keeps
+   the slot's per-port write sequence byte-identical to `drv-player.js`, so the
+   zero-tolerance gate survives. Full-frame coalescing saves ~1% of writes and
+   costs that gate — not worth it unless a write-cap squeeze forces it.
+10. **Per-slot write cap with 68k-side spill** (default 64 writes). Bound is
+    *cycles*, not bytes: the Z80 frame is shared with the mixer. Excess writes
+    keep their order and prepend to the next slot — never dropped, never
+    reordered. `drv-player.js` models the same cap/spill so the gate stays at
+    zero tolerance.
+11. **Implementation order: Z80 mixer first** (chosen 2026-08-02). The §5.3
+    cost estimate is load-bearing for the whole architecture, and the prototype
+    that tests it is small — so it goes before anything is built on top of it.
 
-## Why the mixer gets fast: the RAM, not just the cycles
+## Port state
 
-The sequencer leaving frees **~7 KB of Z80 RAM** (5.6 KB of code plus TCB 512 B,
-channel state 640 B, shadow 304 B, macro/sweep state). That is what makes the
-real fix possible: **voice-outer passes over a full-frame mix buffer**. Today's
-mixer is tick-outer and therefore re-reads every voice's state from RAM on every
-tick; with a buffer, one voice owns the register file for its whole 175-tick
-pass. The buffer had nowhere to live before.
+- **Docs rewritten — DONE 2026-08-02** (`docs/driver.md`, `drv/README.md`,
+  roadmap, README, CLAUDE.md, mmb.md §12, sgdk/README).
+- **P0 mixer prototype — DONE 2026-08-02.** `drv/tools/gen-mixer.mjs`
+  (generates `src/mixer.z80`) + `drv/tools/mixer-bench.mjs` (`npm run mixer`);
+  every configuration verified against a JS model of the mix, so cost and
+  correctness gate together. Full table in driver.md §5.3.1.
+  **The estimate was ~50% optimistic** — 301 predicted vs **449** measured at
+  3 voices, i16, R = 175; optimization took it to **384**, still 113%.
+  - **3 voices at 10.5 kHz does not fit with sum-then-saturate.** The knee for
+    those semantics is ~8.6 kHz (R = 144, 91%, 83 FM writes).
+  - **It DOES fit with an 8-bit saturating-add buffer** — 305 cyc/tick, 89%,
+    95 writes at R = 175, ceiling **10.9 kHz**. `add a,(hl)` sets P/V on signed
+    overflow, so the common path is one not-taken `jp pe` (10) against the i16
+    high plane's ~26. Costs: clips earlier and is order-dependent — but it is
+    **bit-identical to i16 at 1 and 2 voices** (one add = one saturation point
+    either way), so the cost exists only at 3 simultaneous voices, measures 5.1%
+    of samples on worst-case full-scale noise, and disappears under any `:vol`
+    below unity.
+  - Mix-rate ceilings at 3 voices (60 writes/frame reserved): i16 **8.6 kHz**,
+    i8sat **10.9**, i16 pre-resampled **12.2**, i8sat pre-resampled **17.2**.
+  - **i8 headroom is dominated and is out** — slower than saturating-add (the
+    per-voice `ceil(log2 N)` attenuation is extra `sra`s in the hot loop) *and*
+    worse (the headroom tracks the active voice count, so a sustained voice
+    jumps 12 dB when another starts — pumping).
+  - **2 voices fit at 10.5 kHz in every variant** (79%, 197 writes).
+  - Z80 techniques worth not rediscovering: accumulate **biased-unsigned**
+    (`sample ^ $80`) — then the i16 sum needs no sign extension anywhere, the
+    high plane only ever takes a carry, and the output pass subtracts 128*(N−1).
+    Two page-aligned planes let one 8-bit index address both (`inc h`/`dec h`).
+    The 16.16 advance is one 32-bit add split across the register sets, because
+    **`exx` is flag-transparent** so the frac carry chains into the pointer add
+    — but `exx` swaps BC too, so load the increment into C *after* it. Shift
+    specialisation (8 loop copies) removes a 12-cycle per-tick dispatch `jr`;
+    unroll 2 is the size/speed knee (`djnz` can't reach across an unrolled body).
+  - Numbers are a **floor** — no bank-window wait states in the emulator, and
+    the sample fetch is the most exposed instruction.
+- **Configuration SETTLED 2026-08-02** — see decision 7. `SLOT_MAX_WRITES`
+  therefore starts at **95** (what the mixer leaves at R = 175).
+- **P1 interface — Z80 HALF DONE 2026-08-02.** `drv/src/engine.z80` (2560 B,
+  ends $9FB, under MIXLO $1000): boot, vblank ISR, ring consume (PSG/FM0/FM1
+  length-prefixed runs), PCM commands, published header at $1300, and the
+  segment-split per-voice driver. `npm run engine` gates it — 7 scenarios, chip
+  writes byte-exact vs the slot AND the DAC stream vs a JS model.
+  Gotchas worth not rediscovering:
+  - `ld (nn),bc` stores C first, so reading back a tick count stored that way
+    gets the wrong register.
+  - The gate harness must run the CPU to its idle `halt` *before* the first
+    interrupt, or every frame's slot is serviced one frame late.
+  - The forced one-tick segment (when `avail >> ksh` rounds to 0) can consume
+    more than `LEFT`, so the countdown needs a clamp at 0 — otherwise it wraps
+    and the voice runs off the end of the sample.
+  - Distances (countdowns), not absolute end addresses, are what make ROM bank
+    crossing free: the pointer wraps at the window top, the bank steps, the
+    countdown is untouched.
+  **Remaining: the slot builder + cap/spill queue in `drv-player.js`.**
+- **P2 sequencer** — `drv-player.js` → portable C, host-gated against it.
+- **P3 integration** — SGDK glue, hardware bring-up.
 
-Estimated per tick (same instruction-level model that matched the measured
-240/voice): output pass 26, first voice 60, each further voice +71.
+## Fixed limits (expectation-setting, unchanged by the split)
 
-| voices | cyc/tick | max rate at ~55k cycles |
-| --- | --- | --- |
-| 1 | 86 | ~38 kHz |
-| 2 | 157 | 21 kHz |
-| 3 | **228** | **14.5 kHz** |
-| 4 | 299 | 11 kHz |
-
-3 voices at 10.5 kHz = 40k = **73% of a dedicated Z80**. With a 16-bit mix
-buffer (sum then saturate, preserving per-voice dynamic range) it is ~301/tick
-= 52.7k = 96% — fits, with 160 ticks (9.6 kHz) as the fallback. **16-bit chosen**
-unless measurement says otherwise: RAM is free now, so do not trade audio
-quality first.
-
-## What this unlocks beyond voice count
-
-- **Dynamic loop points are free.** Voice-outer loads loop start/end into
-  registers once per frame, so changing them costs nothing per tick and takes
-  effect the next frame. Ping-pong loops and macro-modulated loop length become
-  cheap the same way. This was the user's reason for rejecting pre-resampling.
-- **The 32 KB sample-bank wall dies.** A voice reads a contiguous run of ~175
-  samples per frame, so each voice pass can latch its own ROM bank (at most one
-  boundary crossing per frame to handle). Sample memory becomes ROM-sized.
-- **The 8 KB ceiling stops governing the design** — overlays, the byte-funding
-  menu, DATA_BASE bumps, WIDE_OFFSETS/cross-MMB/PAL deferrals all go away.
-
-## Fixed limits (expectation-setting)
-
-8-bit DAC (YM2612), nearest-neighbour only (interpolation needs a multiply per
-sample — impossible at any rate), and DAC jitter from the 68k's per-frame bus
-grab (~tens of µs, ~0.2%; **measure on hardware**).
-
-## The interface (proposed, not yet settled)
-
-Chip writes stay on the Z80 rather than the 68k writing the YM directly: the
-68k would have to hold the Z80 bus for every write plus BUSY waits (100+ µs,
-an audible DAC gap), whereas dumping ~150–250 bytes into Z80 RAM is one short
-grab and the Z80 paces the writes itself (~61 cycles per FM write, ~3.7k/frame
-at 60 writes).
-
-One ring slot = one frame, holding both the chip writes and that frame's PCM
-voice commands, so a PCM note-on lands in the same frame as the music:
-
-```
-[u8 psg_count][bytes…]
-[u8 fm0_count][reg,val…]     ; length-prefixed runs, so the consume loop
-[u8 fm1_count][reg,val…]     ; needs no per-write dispatch
-[u8 pcm_count][pcm commands…] ; start/stop voice, set vol/inc/loop points
-```
-
-**Ring depth: default 2, and treat it as a per-game tuning knob, not a design
-constant** (decided 2026-08-02).
-
-Depth is lookahead, not decimation — the Z80 still consumes one slot per vblank,
-so the music keeps 60 Hz resolution at any depth. What depth buys is tolerance:
-at depth N the game may overrun N-1 frames without the music stuttering. What it
-costs is the latency of **every host→music operation**, and SE is only the most
-obvious one: `MMLisp_setVal` (`$slot` live control), `setParam`, `fadeTrack` and
-`stopTrack` all inherit it.
-
-Re-rendering the ring on invalidation rescues a one-shot (an SE start, a fade),
-at a cost of depth × the per-frame sequencer work — ~24k 68k cycles at depth 4,
-19% of a frame. It does **not** rescue continuous control: a game driving
-`setVal` every frame would re-render every frame, throwing the lookahead away
-*and* paying depth-times the cost — the worst case of both. So **deep lookahead
-and continuous live control are mutually exclusive**, and since interactive
-music is a stated goal of the language, the shallow default is the honest one.
-
-If depth 2 later proves too shallow for a real game, the escape is **indirect
-write-list entries** ("write register X from val slot S"), resolved by the Z80
-at consume time, which keeps live control at one frame while the music stays
-pre-rendered. Deliberately deferred: it puts a little resolution logic back on
-the Z80 and blurs the "pure engine" line, so it should be paid for by a measured
-need, not designed in up front.
-
-Independent of depth: the Z80 must publish a consumed-frame counter so the 68k
-can fire `(trig N)` when the frame is actually heard rather than when it was
-rendered, since the 68k runs ahead by the ring depth.
-
-Also available at any depth: the 68k may render N slots in one burst every N
-frames rather than one slot per frame, moving its sequencer work to 60/N Hz.
-That trades a steady ~5% load for an N× taller spike at 1/N the rate — better or
-worse depending on the game's own frame-budget shape, so it is a per-game choice
-too, not part of the interface.
-
-## What survives, what is rewritten
-
-**Survives:** the MMB format, opcodes, level model, macro semantics, SE model,
-voice tables, the language, `export-mmb.js`, `drv-player.js`, `mmb-build`,
-`ab-gate`, the gate corpus, banking, the SGDK glue skeleton, and the Z80
-assembler/emulator/trace toolchain.
-
-**Rewritten:** ~5,600 bytes of Z80 sequencing assembly → C on the 68k.
-**`drv-player.js` is the port spec** — it is already a complete, validated
-implementation of the sequencer in a portable language, which is why this port
-is far less risky than the original Z80 one was. The gate becomes "68k C vs
-drv-player.js" (both host-runnable, easier than the emulator gate), plus a
-smaller Z80 gate for the mixer and the write-list consumer.
-
-**Next:** settle the ring depth and the slot format, then rewrite
-`docs/driver.md`'s architecture sections before any code.
+8-bit DAC, nearest-neighbour only (interpolation needs a multiply per sample),
+DAC jitter from the 68k's per-frame bus grab (~tens of µs, ~0.2%; **measure on
+hardware**).

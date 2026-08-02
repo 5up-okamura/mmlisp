@@ -3,13 +3,13 @@
 MMLisp is a Lisp-like music language for the Sega Mega Drive (YM2612 FM +
 SN76489 PSG). You write scores as s-expressions, audition them instantly in a
 browser authoring environment running a cycle-accurate chip emulator, and
-compile them to a compact binary for a Z80 sound driver — with a design built
-around *interactive* music: tracks that start, stop, layer, and respond to
+compile them to a compact binary for a Mega Drive sound driver — with a design
+built around *interactive* music: tracks that start, stop, layer, and respond to
 game state at runtime.
 
 - **Try it now:** https://mmlisp.vercel.app/
-- **Playback driver:** MMLispDRV (Z80, SGDK integration) — trace-verified
-  against the JS reference in emulation.
+- **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
+  integration) — trace-verified against the JS reference in emulation.
 
 ## Highlights
 
@@ -30,11 +30,13 @@ game state at runtime.
 - **Interactive by design.** Tracks start / stop / layer / fade at runtime, and
   `def-val` slots let game code drive parameters live via `$name` — built for
   game music, not just linear playback.
-- **Keeps the 68000 free.** Compiles to a compact (~6 KB) autonomous Z80 driver,
-  **MMLispDRV**, that runs off the vblank interrupt on its own — the main CPU
-  stays yours for the game. SGDK integration included. (Verified in emulation;
-  real-hardware bring-up is the next milestone.)
-- **Provably faithful.** Every register write the Z80 driver makes is checked
+- **The music keeps its own clock.** **MMLispDRV** splits across both CPUs: the
+  68000 sequences the score into per-frame register-write lists, and the Z80
+  consumes exactly one per vblank while software-mixing the PCM. So a heavy game
+  frame is absorbed by a lookahead ring instead of stuttering the music, and the
+  sequencer costs the 68000 a few percent of a frame. SGDK integration included.
+  (Verified in emulation; real-hardware bring-up is the next milestone.)
+- **Provably faithful.** Every register write the driver makes is checked
   **byte-for-byte** against a JS reference at zero tolerance — so what you hear
   in the browser is what the driver emits.
 - **Bring your own voices.** Import FM patches from DefleMask (DMP), Furnace
@@ -99,20 +101,30 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 
 ## MMLispDRV (the hardware driver)
 
-MMLispDRV plays a compiled score (`.mmb`) on the Mega Drive's Z80, driven by the
-60 Hz vblank interrupt and controlled by the 68000 through a small mailbox
-(start / stop / fade tracks, live parameter and value writes). It plays
-everything the language expresses — FM + PSG voices and the full level model,
-motion (sweeps / glide / vibrato / tempo ramps), FM3 independent-operator mode
-and CSM, the macro engine, dynamic value slots, and 3-channel PCM soft-mixing —
-reading song data from banked ROM so it needs only ~6 KB of Z80 RAM, and leaves
-the 68000 free for the game.
+MMLispDRV plays a compiled score (`.mmb`) using both Mega Drive CPUs. The
+**68000** runs the sequencer — it walks the score, runs the tick accumulators,
+sweeps and macros, composes levels and pitch, and pre-renders each frame into a
+list of register writes. The **Z80** is a dedicated engine: it consumes one
+frame's list per vblank, paces the writes onto the YM2612 and PSG itself, and
+spends the rest of its frame software-mixing PCM into the DAC.
+
+Because the Z80 holds the clock, the music runs at its own 60 Hz however the
+game's frame behaves — a slow frame eats into the lookahead ring rather than
+stuttering the score. The split exists because measurement showed the two
+workloads cannot share one Z80: at the theoretical floor, two PCM voices alone
+consume 99.7% of a Z80 frame with the sequencer executing zero instructions
+([docs/driver.md](docs/driver.md) §1.1).
+
+It plays everything the language expresses — FM + PSG voices and the full level
+model, motion (sweeps / glide / vibrato / tempo ramps), FM3 independent-operator
+mode and CSM, the macro engine, dynamic value slots, and 3-channel PCM
+soft-mixing.
 
 It's built reference-first: a JS implementation (`drv-player.js`) validated in
-MMLisp Live, then a Z80 assembly port whose **every register write is checked
-byte-for-byte against it at zero tolerance** (18 trace scores, `drv/`). The
-driver is verified in emulation today; real-hardware bring-up is the next
-milestone. See [docs/driver.md](docs/driver.md) for the architecture,
+MMLisp Live, then ports whose **every register write is checked byte-for-byte
+against it at zero tolerance** (31 trace scores, `drv/`). Verified in emulation
+today; real-hardware bring-up is the next milestone. See
+[docs/driver.md](docs/driver.md) for the architecture,
 [drv/README.md](drv/README.md) for the port and verification, and
 [docs/roadmap.md](docs/roadmap.md) for detailed status.
 
@@ -120,8 +132,8 @@ milestone. See [docs/driver.md](docs/driver.md) for the architecture,
 
 - `docs/` — language reference, driver design, formats
 - `live/` — MMLisp Live web authoring environment (editor, compiler, player)
-- `drv/` — MMLispDRV Z80 driver: assembly source, first-party toolchain
-  (assembler, Z80 emulator, trace harness), and SGDK integration
+- `drv/` — MMLispDRV: Z80 engine source, first-party toolchain (assembler,
+  Z80 emulator, trace harness), and SGDK integration
 - `examples/` — demo songs and test assets
 - `tools/` — command-line compiler and validation scripts
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`

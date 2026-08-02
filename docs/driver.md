@@ -1,34 +1,97 @@
-# MMLispDRV v0.2 Architecture
+# MMLispDRV v0.3 Architecture — 68k sequencer + Z80 PCM/write engine
 
-Status: **design frozen for review**. This document defines the Z80 sound
-driver that consumes MMB v0.2 (`docs/mmb.md`, `docs/opcodes.md`). It gates
-implementation: first a JS reference implementation (`drv-player.js`), then
-the Z80 assembly — both against this spec (§12).
+Status: **architecture pivot, 2026-08-02.** MMLispDRV was an all-Z80 driver
+through v0.2 (M1–M3, gate-verified in emulation). Cycle measurement on real
+scores showed that the sequencer and a multi-voice PCM soft-mix cannot share
+one Z80 — see §1.1. The sequencer therefore moves to the 68000 and the Z80
+becomes a dedicated PCM mixer and chip-write engine.
 
-This document also absorbs the interactive-playback design vision that
-previously lived in `docs/spec-v0.5.md` §4; **this is now its canonical
-home** (§2).
+This document defines both halves and the interface between them (§6). It
+consumes MMB v0.2 unchanged (`docs/mmb.md`, `docs/opcodes.md`) and absorbs the
+interactive-playback design vision that previously lived in `docs/spec-v0.5.md`
+§4; **this is its canonical home** (§2).
 
 ## 1. Role and Constraints
 
-MMLispDRV runs entirely on the Mega Drive Z80 (8KB RAM at 0x0000–0x1FFF),
-reading song data in place from the banked 68k-ROM window (0x8000–0xFFFF)
-and writing the YM2612 (0x4000–0x4003) and SN76489 (0x7F11) directly. The
-68000 never touches the sound chips; it talks to the driver through a
-mailbox in Z80 RAM (§6).
+Two processors, one clock:
+
+- **68000 — the sequencer.** Walks the MMB, runs the tick accumulators,
+  dispatch, sweeps and macros, composes levels and pitch, and **pre-renders
+  each frame into a register-write list** which it deposits in a ring in Z80
+  RAM (§6). The MMB lives in 68k ROM and is read as a plain byte array — no
+  bank window, no 32 KB wall.
+- **Z80 — the engine.** Consumes one ring slot per vblank, paces the writes
+  to the YM2612 (0x4000–0x4003) and SN76489 (0x7F11) itself, and spends the
+  rest of its frame on the PCM soft-mix feeding the fm6 DAC (§5.3). It
+  evaluates nothing: every value it writes arrives register-ready.
+
+**The Z80 keeps the clock.** It consumes exactly one slot per vblank at its own
+interrupt, so tempo stays 60 Hz-exact and a heavy game frame is absorbed by the
+ring rather than stuttering the music. That autonomy is what motivated the
+all-Z80 design in the first place, and it is the one property the split had to
+preserve.
 
 Design principles (working agreements applied to the driver):
 
 - **Pointer walking only.** The MMB is decoded in place; no parsing pass,
   no unpacking, no allocation.
-- **The driver stays dumb.** All computation that can happen at compile
-  time does: BPM → tick increments, note names → MIDI numbers, Hz → Timer A
-  periods, easing vocabulary → a 4-shape curve set. All *runtime*
-  computation the score needs (health → volume, speed → pitch) happens on
-  the 68000, which feeds results into value slots (§6.4).
+- **The engine stays dumb.** All computation that can happen at compile time
+  does: BPM → tick increments, note names → MIDI numbers, Hz → Timer A
+  periods, easing vocabulary → a 4-shape curve set. Everything else happens on
+  the 68000 — including all *runtime* computation the score needs (health →
+  volume, speed → pitch, §6.5). The Z80 owns exactly one piece of live state:
+  PCM sample position.
 - **Determinism.** Frame-by-frame register output is a pure function of
-  (MMB bytes, mailbox command history). The JS reference and the asm must
-  produce matching write logs (§12).
+  (MMB bytes, host command history). The JS reference and the 68k C must
+  produce matching write logs; the Z80 must reproduce the slot's writes and
+  the mixer's DAC stream exactly (§12).
+
+### 1.1 Why the split — the measurement that forced it
+
+A 60 Hz Z80 frame is **59,659 cycles** (3.579545 MHz ÷ 60), and overrun is not
+graceful: the vblank `/INT` is asserted for about one scanline, so a long frame
+misses the next interrupt outright and the score loses a whole frame.
+
+The all-Z80 PCM soft-mix measured **~240 cycles per voice per mix tick plus
+~260 fixed per tick** after the optimisation pass — 3 voices at `PCM_MIX_R`
+= 175 ticks/frame is 972/tick = 170k/frame = **285% of the budget**. Rewritten
+to the theoretical floor for the same semantics (16.16 resampling, per-voice
+volume, i16 sum), ~110/voice + ~120 fixed gives:
+
+> 2 voices × 175 ticks = **59,500 cycles = 99.7% of the frame, with the
+> sequencer executing zero instructions.**
+
+So the ceiling is not the sequencer's fault — its median frame is only 19.7k
+(33%). The two workloads simply do not fit in one Z80, and no Z80-side
+technique moves the gap by the required factor. The earlier position that "68k
+offload is the architectural last resort" was argued on **bytes**, and the code
+overlay pass solved the byte problem; the binding constraint is now **cycles**.
+
+### 1.2 What the split buys beyond voice count
+
+The sequencer leaving frees **~7 KB of Z80 RAM** (5.6 KB of code plus TCB 512 B,
+channel state 640 B, shadow 304 B, macro/sweep state). That is what makes the
+real mixer fix possible — a **voice-outer pass over a full-frame mix buffer**
+(§5.3), which had nowhere to live before. Consequences:
+
+- **Dynamic loop points become free.** A voice-outer pass loads loop
+  start/end into registers once per frame, so changing them costs nothing per
+  tick and takes effect the next frame. Ping-pong loops and macro-modulated
+  loop length become cheap the same way.
+- **The 32 KB sample-bank wall dies.** A voice reads a contiguous run of ~175
+  samples per frame, so each voice pass latches its own ROM bank and handles at
+  most one boundary crossing per frame. Sample memory becomes ROM-sized.
+- **The 8 KB Z80 ceiling stops governing the design.** Overlays, the
+  byte-funding menu, `DATA_BASE` bumps, `WIDE_OFFSETS`, cross-MMB and PAL
+  deferrals all go away — the first three because the Z80 image is small again,
+  the last three because the 68k reads ROM directly.
+
+### 1.3 Fixed limits (expectation-setting)
+
+Unchanged by the split, and not worth re-litigating: **8-bit DAC output**
+(YM2612), **nearest-neighbour resampling only** (interpolation needs a multiply
+per sample — impossible at any usable rate), and **DAC jitter from the 68k's
+per-frame bus grab** (~tens of µs, ~0.2%; measure on hardware).
 
 ## 2. Interactive Playback Model
 
@@ -45,13 +108,13 @@ independently (hence per-track tick accumulators, §3).
 
 The unit of runtime control is the **track**, not the score. A score is a
 named collection of tracks; the game starts and stops tracks individually
-(`START_TRACK` / `STOP_TRACK` / `FADE_TRACK`, §6.3).
+(`MMLisp_startTrack` / `stopTrack` / `fadeTrack`, §6.5).
 
 **Channel ownership rule:** when a newly started track claims a channel
 already owned by a running track, the running track is released on that
 channel — with its release tail if the voice defines one (key-off, envelope
 runs out), otherwise immediately. The channel-state block records the
-owning track id (§5.1) to arbitrate this.
+owning track id (§4.3) to arbitrate this.
 
 **Exception — the FM3 shared channel.** Channel 2 is exempt from eviction:
 in FM3 independent-OP mode the note-less `(fm3 …)` voice track and the
@@ -63,31 +126,44 @@ and never arbitrate.)
 
 ### 2.3 Layering and scene transitions
 
-Multiple MMBs' tracks may be active at once (M1 limits this to tracks of
-one MMB per bank window; see §5.3). The canonical transition:
+Tracks from **any number of MMBs** may be active at once. The pre-split
+"one MMB per bank window" restriction is gone: the sequencer runs on the 68000,
+where every MMB is a directly addressable ROM pointer, so a track control block
+simply carries the pointer to its own score. The canonical transition:
 
-```
-68000:
-  START_TRACK(sceneB.fm2)
-  START_TRACK(sceneB.sqr2)
-  FADE_TRACK(sceneA.fm1, 60)   ; 60 frames ≈ 1 s
-  FADE_TRACK(sceneA.sqr1, 60)
+```c
+MMLisp_startTrack(&sceneB, FM2);
+MMLisp_startTrack(&sceneB, SQR2);
+MMLisp_fadeTrack(&sceneA, FM1, 60);   /* 60 frames ≈ 1 s */
+MMLisp_fadeTrack(&sceneA, SQR1, 60);
 ```
 
 ### 2.4 `len=0` — indefinite hold
 
 A NOTE_ON with duration byte 0x00 keys on and **suspends the track's
-dispatcher** until the host sends `KEY_OFF` (on the channel) or
-`STOP_TRACK`. Use cases: state-length sound effects (engine rumble,
+dispatcher** until the host calls `MMLisp_keyOff` (on the channel) or
+`MMLisp_stopTrack`. Use cases: state-length sound effects (engine rumble,
 charge-up), pad chords under a scene, PCM loops held open. Sweeps/macros
 already running on the channel keep running while held.
+
+### 2.5 Sound effects run on the 68000
+
+SE is sequencer work — priority arbitration, suspend/restore of the displaced
+BGM channel, snapshot of mid-sustain state — so it moves to the 68000 with the
+rest of it, and the Z80 stays a pure engine. The cost is that an SE start
+inherits the ring's lookahead latency (§3.4): **1–2 frames**, accepted.
 
 ## 3. Timing
 
 ### 3.1 Clock source and accumulators
 
-The driver runs from the **60 Hz vblank interrupt** (Z80 INT, driven by the
-VDP). Each frame, every active track advances by its tempo increment in an
+The **Z80** runs from the 60 Hz vblank interrupt (Z80 INT, driven by the VDP)
+and consumes exactly one ring slot per interrupt — that is the audible clock.
+The **68000** renders slots from its own vblank handler, running ahead of the
+Z80 by the ring depth (§3.4). A 68k frame that overruns does not retime the
+music; it only eats into the lookahead.
+
+Each rendered frame, every active track advances by its tempo increment in an
 **8.8 fixed-point tick accumulator**:
 
 ```
@@ -128,331 +204,571 @@ PPQN 96 at 60 fps gives fractional ticks per frame for almost every tempo
 
 ### 3.3 PAL
 
-On PAL (50 Hz vblank) the same increments play 60/50 = 1.2× slower.
-Correction (scaling increments by 6/5 at load, or PAL-precomputed files via
-the reserved PAL_TIMEBASE header flag, mmb.md §4) is **deferred**; M1 is
-NTSC-timed.
+On PAL (50 Hz vblank) the same increments play 60/50 = 1.2× slower. The
+correction is a 6/5 scale of the increment, and post-split it is **a single 68k
+multiply at TEMPO_SET** rather than something the Z80 has to be talked out of —
+the PAL_TIMEBASE header flag (mmb.md §4) and the PAL-precomputed-file idea are
+both unnecessary. Still unimplemented, no longer deferred for cost reasons.
 
-## 4. Main Loop
+Note the PCM mixer is unaffected in *pitch* (its increment is per mix tick) but
+gains 20% more cycles per frame on PAL, so `PCM_MIX_R` could rise there. Left
+NTSC-fixed until there is a PAL target to measure.
 
-Frame order is **fixed and normative** — the JS reference implements
-exactly this order, and A/B verification (§12) depends on it:
+### 3.4 Ring depth — lookahead vs live control
 
-1. **Drain mailbox** (§6.2): consume all pending commands (≤ 8), in ring
-   order. START/STOP/KEY_OFF effects apply before any dispatch this frame.
-2. **Per track, ascending track index:** run the §3.1 accumulator loop;
-   each consumed tick counts down `wait_ticks` and, at zero, executes
-   stream events (immediate events run back-to-back; the next timed event
-   reloads `wait_ticks`). Key-offs scheduled by the gate rule fire on their
-   tick inside this loop.
-3. **(M2+) Engines, ascending channel index:** sweep interpolators, then
-   (M3) macro steppers — each computes new values into the shadow state.
-4. **Flush the write queue:** all register writes generated this frame go
-   out now, in fixed order — YM channels fm1→fm6 (per channel: operator
-   params, then channel params, then F-num/block, then key-on/off via $28),
-   then globals ($22/$27), then PSG sqr1→sqr3→noise. Writes are
-   change-only: a value equal to the shadow register is skipped (§5.4). The
-   shadow is exact from frame 0 — boot writes every register it covers — so
-   there is no "has this been written yet" bit to consult.
+**Default depth 2, and it is a per-game tuning knob, not a design constant.**
 
-**YM BUSY policy:** every YM2612 access goes through one write routine that
-polls the status byte (0x4000 bit 7, BUSY) until clear before writing the
-address and again before the data byte. Batching all writes into step 4
-bounds the per-frame chip-access time and keeps the write order
-deterministic. PSG writes need no wait.
+Depth is lookahead, not decimation: the Z80 still consumes one slot per vblank,
+so the music keeps 60 Hz resolution at any depth. What depth buys is tolerance —
+at depth N the game may overrun N−1 frames without the music stuttering. What it
+costs is latency on **every host→music operation**: `MMLisp_startSe` is only the
+most obvious one; `setVal` (`$slot` live control), `setParam`, `fadeTrack` and
+`stopTrack` all inherit it.
 
-### 4.1 Frame cost
+Re-rendering the ring on invalidation rescues a one-shot (an SE start, a fade)
+at a cost of depth × the per-frame sequencer work — ~24k 68k cycles at depth 4,
+19% of a frame. It does **not** rescue continuous control: a game driving
+`setVal` every frame would re-render every frame, throwing the lookahead away
+*and* paying depth-times the cost, which is the worst case of both. So **deep
+lookahead and continuous live control are mutually exclusive**, and since
+interactive music is a stated goal of the language (§2), the shallow default is
+the honest one.
 
-A 60 Hz frame is **59,659 Z80 cycles** (3.579545 MHz ÷ 60). Overrun is not
-graceful: the vblank `/INT` is asserted for about one scanline, so a frame that
-runs long misses the next interrupt outright and the score loses a whole frame —
-audible as a stumble exactly where the music is densest.
+If depth 2 later proves too shallow for a real game, the escape is **indirect
+write-list entries** ("write register X from val slot S"), resolved by the Z80
+at consume time, which keeps live control at one frame while the music stays
+pre-rendered. Deliberately deferred: it puts resolution logic back on the Z80
+and blurs the pure-engine line, so it should be paid for by a measured need.
 
-Measured on a 7-track mucom import (gh002, `tools/run-trace.mjs` cycle counts):
+Independent of depth: the 68k may render N slots in one burst every N frames
+rather than one per frame, moving its sequencer work to 60/N Hz. That trades a
+steady ~5% load for an N× taller spike at 1/N the rate — better or worse
+depending on the game's own frame-budget shape, so it is a per-game choice too,
+not part of the interface.
 
-| | before | after §10.1 + the step-3 rework |
+## 4. The 68k Frame — rendering one slot
+
+Frame order is **fixed and normative** — `drv-player.js` implements exactly
+this order and the 68k C must reproduce it (§12):
+
+1. **Drain the host command queue:** consume all commands posted since the last
+   render, in order. Start/stop/key-off effects apply before any dispatch this
+   frame.
+2. **Per track, ascending track index:** run the §3.1 accumulator loop; each
+   consumed tick counts down `wait_ticks` and, at zero, executes stream events
+   (immediate events run back-to-back; the next timed event reloads
+   `wait_ticks`). Key-offs scheduled by the gate rule fire on their tick inside
+   this loop.
+3. **Engines, ascending channel index:** sweep interpolators, then macro
+   steppers (§13.3).
+4. **Publish the slot** (§6.2).
+
+Register writes are **appended to the slot as they are generated**, in dispatch
+order, change-only against the 68k's shadow — so the slot's per-port write
+sequence is byte-identical to the sequence `drv-player.js` emits. That is a
+deliberate choice: full-frame coalescing (emitting each register once, at its
+final value) would save ~1% of writes and cost the zero-tolerance raw-equality
+gate, which is this project's strongest verification asset. If a future write-cap
+squeeze makes coalescing worth it, the gate rebases on per-frame register
+*state* — but not before.
+
+The slot buckets writes into three runs (PSG, YM port 0, YM port 1), so
+cross-bucket ordering within a frame is not preserved. This is safe by
+construction: the two YM ports address disjoint channels, the PSG is a different
+chip, and everything whose ordering carries meaning is port-0-local — `$28` key
+edges, the `$22`/`$27`/`$2A`/`$2B` globals, and the `$A4`→`$A0` F-number pair
+whose shared latch §8 describes.
+
+**YM BUSY policy:** the Z80's consume loop is the only thing that touches the
+chip, and it paces itself — see §5.1. The 68000 never writes a sound chip.
+
+### 4.1 Where the cycles went, and where they go now
+
+The all-Z80 sequencer was optimised hard before the split, and the numbers are
+kept here because they are the evidence for §1.1 — not as a live budget. Measured
+on a 7-track mucom import (gh002, `tools/run-trace.mjs` cycle counts):
+
+| | before the optimisation pass | after |
 | --- | --- | --- |
 | median frame | 28,132 (47%) | **18,866 (32%)** |
 | p99 | 68,458 (115%) | **58,574 (98%)** |
 | frames over budget | 3.8% | **0.77%** |
 | loop frame | 263,000 (4.4×) | **79,000 (1.3×)** |
 
-Two structural facts came out of profiling and are worth keeping in mind when
-touching step 3:
+A well-tuned Z80 sequencer therefore sits at a third of the frame with a tail
+reaching the ceiling — fine on its own, and hopeless with a 40–53k PCM mixer
+beside it. The tail is also **flat**: a profile split at 40k found the heavy
+frames spread across 40+ routines with the largest at 6.6%, so there was no
+hotspot left to remove.
 
-- **Do not recompute channel pointers per iteration.** `chs_ptr_iy`
-  (`IY = CH_STATE + ch*64`) was 19% of *every* frame — 32 calls, ~190 cycles
-  each — and 92% of those calls came from three sites inside the two ascending
-  channel loops. Both now walk an induction pointer (`+64` per channel);
-  `process_slot` preserves IY so the sweep loop keeps its own.
-- **Test emptiness before the call, not inside it.** `process_slot` spent ~180
-  cycles of prologue before it could report an empty sweep slot, 20 times a
-  frame. Both target bytes are one indexed load from the caller.
+**On the 68000 this workload is not a budget item.** The 68k runs at 7.67 MHz
+with 16/32-bit registers and a hardware multiplier, against a Z80 doing 16-bit
+arithmetic in 8-bit pieces; the sequencer is expected to land near ~5% of a
+68k frame. The number to *measure* on the 68k is not the median but the
+re-render burst (§3.4) and the start frame.
 
-What remains at the top is real work (`fs_tick` / `fs_wait`, the per-track tick
-accumulate and dispatch) plus the start frame — see §4.2.
+Two structural lessons from the Z80 profiling survive the port and are worth
+applying to the C:
 
-### 4.2 The armed frame (START_TRACK does not sound in its own frame)
+- **Do not recompute per-channel pointers inside the ascending loops.** Walking
+  an induction pointer instead cost 19% of *every* Z80 frame to discover.
+- **Test emptiness before the call, not inside it.** The sweep-slot scan spent
+  ~180 cycles of prologue before it could report an empty slot, 20× a frame.
 
-A track's clock starts on the frame the driver set it up in, so a host that
-staggers `MMLisp_startTrack` across frames leaves its tracks **permanently out of
-phase** by that many frames — 100 ms of flam for a 7-track score, on every chord,
-for the whole song. Starting them all in one frame instead costs that frame far
-more than its budget (7 tracks of MMB walk, TCB fill, channel claim and three
-overlay loads each), and a frame that takes five frame-times smears whatever it
-sounds across ~90 ms.
+### 4.2 The armed frame (starting a track does not sound in its own frame)
 
-So `T_STATUS` gains **2 = armed**: the state a track is in for the frame its
-START_TRACK was drained in. Armed tracks do not accumulate, so that frame stays
-silent however long it runs; the per-track loop promotes them with a single
-`dec (ix+T_STATUS)` and they all begin dispatching together on the next frame.
-Frame-exact and tempo-independent — a tick-based delay would have varied with the
-increment. (Held moved to 4 purely so that promotion could be one instruction;
-the resident image had two bytes free.)
+A track's clock starts on the frame it was set up in, so a host that staggers
+`MMLisp_startTrack` across frames leaves its tracks **permanently out of phase**
+by that many frames — 100 ms of flam for a 7-track score, on every chord, for
+the whole song.
 
-The JS reference mirrors this (`drv-player.js`, `armed`), and
-`ir-player.captureRegisterLog` starts its tracks one frame late so the A/B gate
-compares like with like — capture only, since the live player has no setup frame
-to hide.
+So track status carries **armed**: the state a track is in for the frame its
+start was drained in. Armed tracks do not accumulate; they are promoted at the
+top of the next frame and all begin dispatching together. Frame-exact and
+tempo-independent — a tick-based delay would have varied with the increment.
 
-**The armed frame also runs the score's head.** Taking only the *setup* out of
-the sounding frame was not enough: a mucom-style score puts its `VOICE_SET`s at
-tick 0, so the first dispatching frame still carried seven voice applies plus the
-first notes and the opening note was held two or three frames long. So `d_next`
-returns early while the track is armed, at the first opcode that sounds or
-consumes time ($10..$13), writing `T_PC` back — the leading VOICE_SET/PARAM_SET/
-macro binds run in the armed frame, the notes wait for the next one.
+**The armed frame also runs the score's head.** A mucom-style score puts its
+`VOICE_SET`s at tick 0, so without this the first dispatching frame carries
+seven voice applies *plus* the first notes. Dispatch therefore returns early
+while the track is armed, at the first opcode that sounds or consumes time
+(`$10..$13`): the leading VOICE_SET / PARAM_SET / macro binds run in the armed
+frame, the notes wait for the next one.
 
-Measured on gh002 (7 tracks): the armed frame is **204k cycles with 262 register
-writes and no key-on**, and the first sounding frame is **31.8k — 53% of budget**.
-The armed frame overruns by three frame-times and nobody can hear it; playback
-simply begins ~50 ms after the host asked.
+**Why this survives the split even though the 68k setup cost vanished.** The
+original rationale was Z80 cycles — 7 tracks of MMB walk, TCB fill and overlay
+loads measured 204k, over three frame-times. That cost is gone. What is *not*
+gone is that the head still generates **262 register writes**, against a
+per-slot write cap (§6.2) measuring in the tens. So the head spills across
+several slots either way;
+arming keeps the voice applies ahead of the notes, so no note ever sounds under
+a half-applied patch. The armed frame is now a **write-budget** device, not a
+CPU-time one.
 
-`ir-player.captureRegisterLog` reproduces the same shape (`_drvSetupShift`): the
-timeline starts a frame late and each track's leading events are pulled back onto
-the preamble frame — a quarter-frame in, so they land after `_initDefaultVoices`
-just as the driver's do after boot. Capture only; live playback has no setup
-frame to hide. What that cannot reproduce is *when the level model recomposes*:
-the driver composes carrier TL once, in the armed frame, with the vel the head
-set; ir-player writes the voiced TL and recomposes at the note. Six A/B scores
-carry 4-12 mismatches of that shape (all TL, all at the track's first frame) —
-frozen in the baseline.
+`drv-player.js` implements this (`armed`), and `ir-player.captureRegisterLog`
+mirrors it (`_drvSetupShift`) so the A/B gate compares like with like: the
+timeline starts a frame late and each track's leading events are pulled back
+onto the preamble frame — a quarter-frame in, so they land after
+`_initDefaultVoices` rather than being overwritten by the neutral patch. Capture
+only; live playback has no setup frame to hide. What that cannot reproduce is
+*when the level model recomposes*: the sequencer composes carrier TL once, in
+the armed frame, with the vel the head set, while ir-player writes the voiced TL
+and recomposes at the note. Six A/B scores carry 4–12 mismatches of that shape
+(all TL, all at the track's first frame) — frozen in the baseline.
 
-## 5. Z80 RAM Map (8KB, 0x0000–0x1FFF)
+### 4.3 Sequencer state (68000)
 
-| Range           | Size   | Contents                                        |
-| --------------- | ------ | ----------------------------------------------- |
-| 0x0000–0x11FF   | 4608 B | driver code + constant tables (budget ≤ 4.5KB)  |
-| 0x1200–0x147F   | 640 B  | channel state: 10 × 64 B (§5.1)                 |
-| 0x1480–0x167F   | 512 B  | track control blocks: 16 × 32 B (§5.2)          |
-| 0x1680–0x16BF   | 64 B   | mailbox — 68k-visible (§6.1)                    |
-| 0x16C0–0x16DF   | 32 B   | val slots: 16 × i16 — 68k-readable (§6.4)       |
-| 0x16E0–0x179F   | 192 B  | YM + PSG shadow registers (§5.4)                |
-| 0x17A0–0x1DFF   | 1632 B | **reserved:** M2 PCM ring buffers               |
-| 0x1E00–0x1F7F   | 384 B  | reserved headroom                               |
-| 0x1F80–0x1FFF   | 128 B  | stack                                           |
+The pre-split layouts were byte-packed to fit 8 KB of Z80 RAM. On the 68000 they
+are ordinary structs and the offsets stop mattering; what follows is the model,
+not a memory map. Constant tables (F-number, PSG period, level ladders, carrier
+masks, operator offsets, the sin curve unit — §7, §8) are ROM data the C links
+directly; both `drv-player.js` (`buildLuts`) and the C take them from
+`live/src/lut-blob.js`, so §12 divergence stays structurally impossible.
 
-> **Implementation note (M2/M3 build).** The image grew through the milestones,
-> so the reference/asm build places **all** RAM data above the code at
-> `DATA_BASE` (currently 0x18F0). Below it, in ascending order, sit the resident
-> code (0x0000 up to the `G_PCMV` ceiling), the PCM voice structs (`G_PCMV`), and
-> the shared `OVERLAY_SLOT`; above `DATA_BASE`: mailbox 0x18F0, val slots 0x1930,
-> driver globals 0x1950, channel state 0x19D8, TCB 0x1C58 (16 blocks), shadow
-> 0x1E58, SE/PCM snapshots 0x1F88, stack top 0x2000. Space reworks got it under
-> 8 KB: the shadow's valid plane (a bit-per-register bitmap) is **gone entirely** —
-> boot writes every register the shadow covers, so an entry is never "unwritten"
-> and a matching value can always be suppressed. That removed a `>>3` and a
-> `1 << bit` loop from every register write (~275 cycles, most of what a
-> 29-register VOICE_SET cost), 75 B of resident code, and gave the stack window
-> its 38 B (48 → 86 B, worst case 40 B used);
-> the **constant LUTs moved out of Z80 RAM into ROM** (a LUT_TABLE MMB section,
-> mmb.md §16, ~726 B freed); a **table-drive refactor** collapsed the ten
-> near-identical FM op-param handlers into one descriptor table + routine (~169 B);
-> and **splitting the fat `ovl_setup` overlay** (the MMB directory walk into
-> `ovl_mmb`, the TCB fill left in `ovl_setup`) shrank the slot 451→274 B, since a
-> slot is sized by its largest overlay and every slot byte costs a resident byte —
-> that freed ~183 B of resident image. The mailbox and val slots are the only
-> 68k-published addresses; they move with `DATA_BASE`, so `drv/sgdk/mmlispdrv.c`
-> uses the current values. `npm run size` reports the live resident headroom. See
-> `drv/README.md`.
->
-> **Code overlays.** Cold code (rarely invoked, not the per-frame loop) lives in
-> a 32 KB-aligned **overlay ROM blob** (`mmlispdrv_ovl.bin`), not Z80 RAM. The
-> resident loader (`load_overlay`) banks the window to the overlay ROM, `LDIR`s
-> the requested overlay into a shared RAM buffer at `OVERLAY_SLOT`, banks back to
-> the MMB, and calls it. START_TRACK spans two overlays run in sequence — the MMB
-> directory walk (`ovl_mmb`) then the TCB fill (`ovl_setup`), which cross only via
-> globals so nothing in the slot is live across the swap; the mailbox command
-> handlers (`ovl_cmd`) are another. The resident holds only the hot
-> dispatch/note/sweep/macro/PCM path. This keeps the 68k free (the Z80 stays
-> autonomous) while freeing RAM. `MMLisp_init` publishes the overlay bank at
-> `G_OVL_BANK` (mailbox +0x34) after the reset.
+**Channel state**, one per channel 0–9 (fm1–fm6, sqr1–sqr3, noise; mmb.md §6.1).
+fm3 operator sub-tracks (ids 16–18) keep their per-op pitch inside fm3's block;
+PCM voices (20–22) have their own state (§5.4).
 
-The constant tables (F-number, PSG period, level ladders, carrier masks,
-operator offsets, the sin curve unit, PCM rate multipliers — §7, §8) are
-**read-only and identical for every song**, so they live in ROM (the LUT_TABLE
-section, mmb.md §16), read through the bank window. The driver derives a window
-pointer per table at START_TRACK; they no longer consume Z80 work RAM. Both
-the JS reference (`buildLuts`) and the asm use the same bytes (via
-`live/src/lut-blob.js`), so §12 divergence stays structurally impossible.
+| Field | Notes |
+| ----- | ----- |
+| status | bit0 keyed (note active), bit1 PSG audible (att < 15) |
+| note | MIDI |
+| fnum / PSG period | current, including bend |
+| block | FM |
+| vel (0–15), vol (0–31), master (0–31) | level model, §7 |
+| gate (0–8) | |
+| pan (i8 −1/0/1) | |
+| key-off countdown | ticks; sentinel = none/held |
+| pitch offset | cents, i16 |
+| owner track id | channel-ownership arbitration, §2.2 |
+| algorithm | selects the carrier mask |
+| voiced TL × 4 ops | level-composition base |
+| fade counters | Bresenham N/V/err/cur + frames-left |
+| sweep engine | 2 slots × {target, curve, flags, phase, from, to, len, step} |
+| macro engine | 3 active-macro ids + 3 running slots × {descriptor idx, step clock, cursor, state} (§13) |
 
-### 5.1 Channel state block (64 B × 10 channels)
+**Track control block**, one per active track. Track capacity was 16 on the Z80
+because 16 × 32 B was what the RAM allowed; on the 68k it is a build constant
+with no such pressure.
 
-Channels 0–9 (fm1–fm6, sqr1–sqr3, noise; mmb.md §6.1). fm3 operator
-sub-tracks (ids 16–18) store their per-op pitch inside fm3's block; PCM
-voices (20–22) live in the M2 ring-buffer area. The 64-byte layout is
-**reserved in full now** so M2/M3 never reshuffle:
+| Field | Notes |
+| ----- | ----- |
+| status | idle / playing / armed / held / fading / suspended |
+| track id, channel id | |
+| flags | hasLoop / isCsm / isFm3Op |
+| stream pointer, stream base | **68k ROM pointers.** JUMP/CALL destinations are relative to the base |
+| score pointer | the MMB this track belongs to — this is what makes cross-MMB layering free (§2.3) |
+| tick accumulator, tempo increment | 8.8 (§3.1) |
+| wait_ticks | until the next timed dispatch |
+| control stack | 4 × {ptr, count}; LOOP entries carry the remaining count, CALL entries are tagged |
+| fade counter | |
+| last MARKER id | published to the host for `(trig N)` sync (§6.5) |
 
-| Offset    | Size | Field           | Stage |
-| --------- | ---- | --------------- | ----- |
-| 0x00      | 1    | status (bit0 keyed = note active; bit1 = PSG audible, att < 15; bits2–7 reserved) | M1 |
-| 0x01      | 1    | note (MIDI)     | M1    |
-| 0x02      | 2    | fnum / PSG period (current, incl. bend) | M1 |
-| 0x04      | 1    | block           | M1    |
-| 0x05      | 1    | vel state (0–15) | M1   |
-| 0x06      | 1    | vol (0–31)      | M1    |
-| 0x07      | 1    | master (0–31)   | M1    |
-| 0x08      | 1    | gate state (0–8) | M1   |
-| 0x09      | 1    | pan (i8 −1/0/1) | M1    |
-| 0x0A      | 2    | key-off countdown (ticks; 0xFFFF = none/held) | M1 |
-| 0x0C      | 2    | pitch offset (cents, i16) | M2 |
-| 0x0E      | 1    | owner track id (0xFF = free) | M1 |
-| 0x0F      | 1    | algorithm (carrier mask lookup) | M1 |
-| 0x10–0x13 | 4    | voiced TL, op1–op4 (level-composition base) | M1 |
-| 0x14–0x17 | 4    | FADE_TRACK Bresenham counters (N, V, err, cur; M2 mailbox) | M2 |
-| 0x18–0x2F | 24   | sweep engine: 2 slots × 12 B (target, curve, flags, phase u16, from i16, to i16, len u16, step u16) | M2 |
-| 0x30–0x3E | 15   | macro engine (§13): 3 active-macro ids (0x30–0x32) + 3 running slots × {descriptor idx, step clock, cursor, state} = 4 B (0x33–0x3E) | M3 |
-| 0x3F      | 1    | FADE frames-left | M2 |
+## 5. The Z80 Engine
 
-M1 uses offsets 0x00–0x13 (~24 B of the 64). (The implementation moved a few
-M2 fields — FADE counters into 0x14–0x17/0x3E, the M2 shadow to a bitmap valid
-plane — see `drv/README.md`; the 64-byte block is unchanged.)
+The Z80 no longer sequences. Its whole job is: take one slot per vblank, put
+its bytes on the chips, and spend the rest of the frame mixing PCM.
 
-### 5.2 Track control block (32 B × 16 tracks)
+### 5.1 Frame loop
 
-| Offset    | Size | Field                                            |
-| --------- | ---- | ------------------------------------------------ |
-| 0x00      | 1    | status (0 idle, 1 playing, 2 held, 3 fading)     |
-| 0x01      | 1    | track_id (from MMB track table)                  |
-| 0x02      | 1    | channel_id                                       |
-| 0x03      | 1    | track flags (hasLoop/isCsm/isFm3Op)              |
-| 0x04      | 2    | stream pointer (Z80 address in window)           |
-| 0x06      | 2    | stream base (window address of EVENT_STREAM payload; JUMP/CALL dests are relative to this) |
-| 0x08      | 2    | bank (9-bit index of the 32KB window)            |
-| 0x0A      | 2    | tick accumulator (8.8)                           |
-| 0x0C      | 2    | tempo increment (8.8)                            |
-| 0x0E      | 2    | wait_ticks (until next timed dispatch)           |
-| 0x10–0x1B | 12   | control stack: 4 × {ptr u16, count u8} — LOOP entries carry the remaining count; CALL entries are tagged count = 0xFF (M3) |
-| 0x1C      | 1    | control stack depth                              |
-| 0x1D      | 1    | fade counter (M2)                                |
-| 0x1E      | 1    | last MARKER id (mirrored to mailbox status)      |
-| 0x1F      | 1    | reserved                                         |
+1. **Claim a slot.** If the ring is empty, skip step 2 — the 68k did not keep
+   up. The mixer still runs (PCM must not gap), so the music holds rather than
+   glitches.
+2. **Consume the slot** (§6.2): three length-prefixed runs — PSG bytes, YM port
+   0 `{reg,val}` pairs, YM port 1 pairs — then the PCM command list. Runs are
+   length-prefixed precisely so the loop needs no per-write dispatch.
+3. **Mix PCM** (§5.3) and feed the DAC.
+4. **Publish** the consumed-frame counter (§6.4).
 
-### 5.3 Banking
+**YM BUSY policy.** Every latched YM register write polls the status byte
+(0x4000 bit 7) before the address and before the data byte. The **DAC data
+register `$2A` is exempt** and is fed blind: the busy flag guards the chip's
+internal write cycle for latched registers, `$2A` is not one, and every Mega
+Drive PCM driver feeds it blind. Polling it cost 115 cycles per mix tick — 20k a
+frame, a third of the whole budget — waiting for something that is never set at
+a 10.5 kHz feed rate. PSG writes need no wait.
 
-Song data is read through the 0x8000–0xFFFF banked window; the bank is
-**latched at START_TRACK** (§6.3). M1 restriction: **one MMB per window** —
-all simultaneously playing tracks must come from the same MMB/bank, because
-the Z80 has one window. (Cross-MMB layering — the §2.3 vision across two
-scores — requires bank switching between track dispatches; deferred, the
-mailbox protocol already carries the per-command bank so no protocol change
-will be needed.)
+### 5.2 RAM map
 
-**Code overlays.** Cold code lives in a 32 KB-aligned overlay ROM blob at
-`G_OVL_BANK`; `load_overlay` banks the window to it, `LDIR`s the overlay into
-the shared `OVERLAY_SLOT` RAM buffer, banks back, and the caller runs it there
-(§11 lists the overlays). A `G_CUR_OVL` guard skips the copy when the wanted
-overlay is already in the slot. The host publishes `G_OVL_BANK` at init. **The
-boot code is itself an overlay** (`ovl_boot`): the resident reset stub loads it
-using `G_OVL_BANK`, so the host must write `G_OVL_BANK` into Z80 RAM **before
-releasing the Z80 from reset**, and `ovl_boot`'s RAM clear preserves the
-overlay-bank globals (`G_OVL_BANK` / `G_MMB_BANK` / `G_CUR_OVL`, and
-`G_SMP_BANK`). The idle loop stays resident (a later overlay load overwrites the
-slot).
+The engine is small enough that the 8 KB stops being a design input. Sizes, not
+addresses — the build assigns the addresses and publishes the two the host needs
+(§6.4).
 
-**PCM sample bank (plan-se.md).** PCM blobs are no longer in the MMB window —
-they ride their own ROM bank whose number the host publishes in `G_SMP_BANK`
-(also boot-preserved; SGDK host API: `MMLisp_setSampleBank`, called after the
-image upload since that clears Z80 RAM). The per-frame PCM mixer (`process_pcm`) latches
-`G_SMP_BANK` for the mix and restores `G_MMB_BANK` before returning; `pcm_note_on`
-latches it to read the sample entry. This lifts the 32K wall for PCM data (only
-the small control MMB shares the one window) and is the enabler for BGM+SE
-concurrency via bundling. Cost: a per-frame bank latch on the dominant PCM path
-(hardware cycle validation pending).
+As built (`drv/src/engine.z80` + the generated mixer):
 
-## 6. Mailbox Protocol (68000 → Z80)
+| Region | Address | Size | Contents |
+| ------ | ------- | ---- | -------- |
+| code | `$0000` | 2560 B | boot, ISR, consume loop, PCM commands, mixer |
+| mix buffer | `$1000` | 256 B | one plane; `$1100` reserved for the i16 variant's second |
+| PCM voice state | `$1200` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
+| engine scratch | `$1260` | 160 B | |
+| published header | `$1300` | 64 B | ring control, status, consumed-frame counter (§6.4) |
+| slot ring | `$1400` | depth × 256 B | 512 B at the default depth 2 |
+| stack | `$1F00` | 256 B | |
+| | | **~3.6 KB** | leaving ~4.5 KB unallocated |
 
-Realizes the §2 control interface (formerly spec-v0.5 §4.3). The 68000 writes commands
-into a ring in Z80 RAM (taking the Z80 bus briefly); the Z80 drains the
-ring at the top of every frame (§4 step 1) and clears consumed cells.
+The mixer is most of the code: shift specialisation means eight copies of each
+loop (§5.3.1), which is why 2.5 KB buys what 5.8 KB of sequencer used to.
 
-### 6.1 Layout (64 B at 0x1680)
+Everything the old design fought for is gone with the sequencer: no code
+overlays, no overlay ROM blob, no `DATA_BASE`, no shadow file (change-only now
+happens on the 68k, §4), no LUTs, no TCB, no channel state. The ~6 KB left over
+is the budget any future engine-side idea gets to spend, and the mix buffer is
+the first thing that spends it.
 
-| Offset    | Size | Field                                            |
-| --------- | ---- | ------------------------------------------------ |
-| 0x00–0x1F | 32   | command ring: 8 cells × 4 B {cmd u8, a0 u8, a1 u8, a2 u8} |
-| 0x20      | 1    | head (68k-owned: next cell to write)             |
-| 0x21      | 1    | tail (Z80-owned: next cell to read)              |
-| 0x22–0x31 | 16   | per-track status bytes (Z80-owned, 68k-readable): bit7 active, bit6 fading, bits5–0 last MARKER id (markers used for host sync must be ≤ 63) |
-| 0x32      | 1    | driver_ready (0x00 while booting, 0xD2 when the main loop is up) |
-| 0x33      | 1    | protocol_version (= 2)                           |
-| 0x34–0x3F | 12   | reserved                                         |
+### 5.3 The mixer — voice-outer over a full-frame buffer
 
-Ring discipline: the 68k writes the cell at `head` (cmd byte last), then
-increments `head` mod 8. The Z80 consumes while `tail != head`: execute,
-zero the cmd byte, increment `tail` mod 8. The ring is full when
-`(head + 1) mod 8 == tail`; the 68k must not overwrite — with per-frame
-draining, 8 commands/frame is the burst budget.
+This is the change the split exists to enable. The old mixer was **tick-outer**:
+for each of R ticks, visit each voice. That re-reads every voice's position,
+increment, loop bounds and volume from RAM on every tick — 14 indexed accesses
+per voice per tick, and it measured 240 cycles/voice/tick.
 
-### 6.2 Command set
+The new mixer is **voice-outer**: each voice owns the register file for its
+entire R-tick pass, writing into a frame-long mix buffer.
 
-| Cmd  | Name        | a0        | a1        | a2       | Stage |
-| ---- | ----------- | --------- | --------- | -------- | ----- |
-| 0x00 | (empty)     | —         | —         | —        | —     |
-| 0x01 | START_TRACK | track_id  | bank low  | bank high| M1    |
-| 0x02 | STOP_TRACK  | track_id  | —         | —        | M1    |
-| 0x03 | KEY_OFF     | channel_id| —         | —        | M2    |
-| 0x04 | SET_PARAM   | channel_id| target_id | value i8 | M2    |
-| 0x05 | FADE_TRACK  | track_id  | frames    | —        | M2    |
-| 0x06 | SET_VAL     | slot      | value low | value high | M3  |
-| 0x07 | GET_VAL     | —         | —         | —        | reserved — realized as a direct 68k read of the val-slot array (§6.4), no command round-trip |
+```
+if no voice active: release the DAC (change-only), return
+for each active voice v, in slot order:
+    latch v's sample ROM bank            # once per frame, not per tick
+    load pos/inc/loop bounds/shift into registers
+    for t in 0..R-1:
+        s = sample[pos >> 16] >> shift   # nearest neighbour, sra = sign-preserving
+        mixbuf[t] = s                    # first active voice stores...
+        mixbuf[t] += s                   # ...the rest accumulate
+        pos += inc
+        wrap the loop region, or end the voice
+    write pos back
+for t in 0..R-1:                         # output pass, DAC address latched once
+    write saturate_i8(mixbuf[t]) ^ 0x80 to $2A
+```
 
-### 6.3 Command semantics
+Two details that matter:
 
-- **START_TRACK** — latch the bank, look up `track_id` in the MMB track
-  table, initialize the TCB (stream ptr = base + event_offset, accumulator
-  0, increment from the stream's first TEMPO_SET — the compiler guarantees
-  one before the first timed event), apply the channel ownership rule
-  (§2.2), reset channel level state to defaults (vel 15, vol 31, master 31,
-  gate 8), and initialize declared val slots not yet host-written (mmb.md
-  §8). Restarting an active track restarts it from the top.
-- **STOP_TRACK** — key-off (release tail runs out naturally), free the
-  channel, mark the TCB idle. On the fm3-csm track this **clears the CSM
-  bit in reg $27** (§9).
-- **KEY_OFF** — key-off one channel without stopping its track: releases a
-  `len=0` hold (the track's dispatcher resumes) or truncates a sounding
-  note (its release envelope fires).
-- **SET_PARAM** — one-shot absolute write of `target_id` (opcodes.md §7) on
-  a channel, as if a PARAM_SET arrived in the stream. Value is i8; the two
-  i16 targets (NOTE_PITCH cents) are host-drivable via val slots +
-  `PARAM_FROM_VAL` instead.
-- **FADE_TRACK** — attenuate the track's channel by stepping `master` down
-  to 0 over `frames` frames, then behave as STOP_TRACK.
-- **SET_VAL** — write i16 into a val slot; takes effect at the next
-  dispatch that reads the slot (`PARAM_FROM_VAL`/`_ADD_VAL`/`_MUL_VAL`,
-  dynamic curve params). The host does all arithmetic; the driver only
-  stores and applies (docs/language.md §8).
+- **The first active voice stores instead of accumulating**, which removes the
+  frame-long buffer clear entirely.
+- **Buffer width is the live decision** (§5.3.1). Three candidates, all measured:
+  **i16 sum-then-saturate** (the v0.2 semantics — widest dynamic range, most
+  expensive); **i8 saturating-add** (one plane, clamp at every add — clips
+  earlier and is order-dependent, but never attenuates); and **i8 headroom**
+  (pre-attenuate each voice by `ceil(log2 N)` so the sum cannot overflow —
+  measured slower *and* worse than saturating-add, so it is out).
 
-### 6.4 Val slots
+### 5.3.1 Measured cost (P0, 2026-08-02)
 
-16 × i16 at the published `VAL_SLOTS` address (mailbox floor + 0x40; see the
-§5 note for the current value). Written by the Z80 (init from VAL_TABLE at
-START_TRACK, then `SET_VAL` commands); read directly by the 68k for GET_VAL.
-Slot index = VAL_TABLE index; slot 0xFF in stream operands is the built-in
-`$time` source (elapsed 60 Hz frames, low 16 bits), never stored in this array.
-(The reference/asm implement `$time` as frames since boot; for the M1
-single-MMB model, tracks start together so this equals frames since track
-start.)
+`drv/tools/gen-mixer.mjs` generates the mixer (→ `drv/src/mixer.z80`) and
+`drv/tools/mixer-bench.mjs` (`npm run mixer`) runs one frame per configuration
+in the emulator with the cycle counter on, checking **every DAC byte against a
+JS model of the same mix** — cost and correctness in one gate, so a
+fast-but-wrong loop cannot pass. Every figure below verifies against the model.
+
+**The estimate was ~50% optimistic.** It predicted 301 cyc/tick at 3 voices with
+the i16 buffer; the first honest implementation measured **449**. Three
+optimizations then took it to **384**:
+
+- **Shift specialisation.** A single loop must dispatch into the `sra` chain
+  every tick (a `jr`, 12 cycles). Eight copies of the loop, one per shift, bake
+  the chain in and cost exactly 8·shift with no dispatch — the caller picks the
+  copy once per voice per frame from an 8-entry table.
+- **Increment in a register.** Register C is free for the whole pass (the loop
+  uses only A, DE, HL, B), so `adc a,c` (4) replaces a self-modified
+  `adc a,n` (7) and the self-modification disappears with it.
+- **Unroll.** `dec b`/`jp nz` amortised over U ticks. U = 2 is the size/speed
+  knee: it takes 402 → 384 cyc/tick for 1.5 KB of code, where U = 4 buys 10 more
+  for 3.2 KB. (`djnz` is a ±128 relative branch and an unrolled body outruns it.)
+
+At **3 voices** (the binding case), measured at unroll 2. "max rate" is the
+highest `PCM_MIX_R` the configuration sustains once a typical frame's ~60 chip
+writes and the consume loop are reserved; "vs i16" is how far the output lands
+from sum-then-saturate on the same voices:
+
+| buffer | cyc/tick | at R = 175 | **max rate** | vs i16 |
+| --- | --- | --- | --- | --- |
+| i16 sum-then-saturate | 384 | **113%** — does not fit | **8.6 kHz** | — |
+| **i8 saturating-add** | **305** | 89%, 95 writes left | **10.9 kHz** | 5.1% of samples, ≤ 31/255 |
+| i8 headroom | 326 | 96%, 34 writes | 10.2 kHz | *(attenuates instead)* |
+| i16, pre-resampled | 273 | 80%, 186 writes | 12.2 kHz | — |
+| i8 saturating-add, pre-resampled | 193 | 57%, 416 writes | **17.2 kHz** | 6.3%, ≤ 18/255 |
+
+At **1 and 2 voices** every variant fits at 10.5 kHz (i16: 47% and 79%), and
+**i8 saturating-add is bit-identical to i16 there** — with a single add there is
+only one saturation point either way, so the divergence measures 0.0%. The 8-bit
+buffer's cost exists *only* at three simultaneous voices.
+
+Unroll 4 buys ~11 cyc/tick more (i8sat 305 → 294, max rate 10.9 → 11.3 kHz) for
+double the code; unroll 2 is the default.
+
+**i8 headroom is out.** It is both slower than saturating-add (the per-voice
+`ceil(log2 N)` attenuation is extra `sra` instructions in the hot loop) and
+worse: the headroom tracks the *active voice count*, so a sustained voice jumps
+12 dB when another starts — audible pumping. Making it static instead costs a
+fixed 12 dB of an already 8-bit DAC. The row stays only so the comparison is on
+the record.
+
+**What i8 saturating-add actually costs.** It clamps at every add rather than
+summing wide and clamping once, so the result depends on voice order (+100,
++100, −100 gives 100 wide, but 127 then 27 saturating). The Z80 has no
+saturating add, but `add a,(hl)` sets P/V on signed overflow, so the common path
+is one not-taken `jp pe` — 10 cycles against the ~26 the i16 high plane costs.
+The 5.1% divergence figure is a **worst case**: the bench mixes full-scale
+uniform noise at shifts 0/1/2, which overflows far more often than real material,
+and any per-voice `:vol` below unity removes the overflow entirely. In other
+words the cost is "leave a little headroom in a 3-voice mix", which is ordinary
+practice — whereas the mix rate is paid on every sample of every score.
+
+Where the cycles go (3 voices, R = 175, i16): accumulating voices 214/tick, the
+first voice 87, the output pass 74, per-frame setup 10.
+
+Two caveats, in opposite directions:
+
+- **These are a floor.** The emulator charges documented Z80 cycles with no
+  bank-window wait states, and every tick reads its sample from 68k ROM through
+  that window. Silicon adds bus arbitration to the instruction the loop executes
+  most.
+- **The segment split and the per-voice bank latch are not modelled.** Both are
+  per-frame, not per-tick: the latch is ~117 cycles per voice.
+
+`PCM_MIX_R` is a build constant shared with `live/src/mmb.js` (`PCM_MIX_RATE`);
+changing it changes the output, so the gate baselines must be re-frozen with it.
+
+#### Settled (2026-08-02)
+
+**8-bit saturating-add, 3 voices, `PCM_MIX_R` = 175 (10.5 kHz), unroll 2.**
+89% of the frame, 95 chip writes left, and bit-identical to sum-then-saturate
+whenever fewer than three voices sound.
+
+**The mix rate stays a knob to raise, not a frozen constant.** The measured
+ceiling for this configuration is 10.9 kHz at unroll 2 and 11.3 kHz at unroll 4,
+so there is 4–8% in hand; take it only if a real score's write budget and
+hardware measurement leave room, since raising R changes the output and re-freezes
+every gate baseline. The far larger step — 17.2 kHz — needs pre-resampling and is
+not on the table (§14).
+
+#### What the measurement says about the two reopened decisions
+
+- **Pre-resampling** was rejected in the pivot on an estimate of ~25
+  cyc/voice/tick, "11% of the PCM budget". Measured, the runtime resampler costs
+  **~37 cyc/voice/tick — 29% of the mixer**, and it remains the largest single
+  lever. But it is no longer *needed*: with the optimizations above, 3 voices fit
+  at 10.5 kHz with the i8 saturating-add buffer and at 8.6 kHz with i16. So the
+  question is only whether more headroom is worth losing per-note PCM pitch and
+  dynamic loop points.
+- **Buffer width** is a straight choice between two working configurations rather
+  than a question of what fits: **i8 saturating-add at 10.5 kHz** or **i16
+  sum-then-saturate at 8.6 kHz**. The measurement argues for the former, and the
+  reason is that the two costs are not paid at the same rate:
+  - The wide buffer's benefit appears **only at three simultaneous voices**, on
+    5.1% of samples in the worst case, and vanishes entirely if any voice sits
+    below unity `:vol`. At one and two voices the two are bit-identical.
+  - The mix rate is paid **on every sample of every score**. 8.6 kHz is a 4.3 kHz
+    Nyquist against 10.5 kHz's 5.25 kHz — 22% less bandwidth, plainly audible on
+    hats and snares, and with nearest-neighbour resampling (no anti-aliasing
+    filter, §1.3) a lower rate also aliases more.
+
+  The counter-case is a score whose PCM is tonal rather than percussive, where
+  clipping intermodulation is less masked; there the composer can back off `:vol`
+  and get i16's behaviour anyway. The headroom variant decision 7 weighed against
+  is dominated by saturating-add on both axes and is not a candidate.
+
+### 5.4 PCM voices and sample banking
+
+A voice's state is `{active/loop/releasing flags, bank, cur, end, loop_start,
+loop_end, pos (16.16), inc (16.16), shift}`. Everything in it arrives from the
+68k register-ready (§6.3): the sequencer resolves the sample entry, computes the
+per-tick increment `floor(inc_frame / R)` and composes the volume shift, so the
+Z80 does no per-note arithmetic at all. The old `ovl_pcm` overlay and its
+32-bit ÷ 175 are gone.
+
+Samples live in their own ROM banks, read through the 0x8000–0xFFFF window.
+Because a voice-outer pass reads a **contiguous run of ~R samples per frame**, it
+latches its bank once and can cross at most one 32 KB boundary per frame — so the
+old 32 KB sample-bank wall (and the `WIDE_OFFSETS` countermeasure it needed) is
+gone. The window is now used for nothing else: MMB data is read by the 68k
+directly from ROM.
+
+**Per-voice volume** composes `:vel` + `:vol` + `:master` on the 68k into one
+attenuation the mixer applies as an arithmetic right shift per sample, so volume
+stays off the critical path (§14).
+
+## 6. The Interface (68000 → Z80)
+
+The 68000 deposits pre-rendered frames into a ring in Z80 RAM; the Z80 consumes
+one per vblank. This replaces the v0.2 command mailbox entirely — the host no
+longer sends the driver commands, because the host *is* the driver. What crosses
+the bus is finished work.
+
+**Why the chip writes go through the Z80 at all.** The 68k could write the YM
+directly, but it would have to hold the Z80 bus for every write plus its BUSY
+waits — 100+ µs, an audible DAC gap. Dumping ~150–250 bytes into Z80 RAM is one
+short grab, and the Z80 paces the writes itself.
+
+### 6.1 The ring
+
+`RING_DEPTH` slots of `SLOT_SIZE` = 256 B each, plus a head/tail pair in the
+published header (§6.4). Depth defaults to **2** and is a per-game knob — see
+§3.4 for what depth costs and buys.
+
+Discipline mirrors the old mailbox: the 68k fills the slot at `head` and
+increments it last; the Z80 consumes while `tail != head`. **Ring-empty is not
+an error** — it means the game overran, and the Z80 simply holds the chips where
+they are and keeps mixing. Ring-full means the 68k has run as far ahead as the
+depth allows and skips rendering that frame.
+
+### 6.2 Slot format
+
+One slot is one frame, holding both that frame's chip writes and its PCM voice
+commands — so a PCM note-on lands in the same frame as the music that cues it.
+
+```
+[u8 n_psg] [val × n_psg]              ; SN76489, port 0x7F11
+[u8 n_fm0] [{reg,val} × n_fm0]        ; YM2612 port 0 (0x4000/0x4001)
+[u8 n_fm1] [{reg,val} × n_fm1]        ; YM2612 port 1 (0x4002/0x4003)
+[u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
+```
+
+Length-prefixed runs mean the consume loop needs no per-write dispatch: three
+tight loops, each with its port address fixed.
+
+**The write cap and spill.** `SLOT_MAX_WRITES` bounds `n_psg + n_fm0 + n_fm1`.
+The bound exists for **cycles, not bytes** — the Z80 frame is shared with the
+mixer, and what is left after the mixer is the whole budget:
+
+```
+SLOT_MAX_WRITES = (59,659 − mixer − ~500 interrupt/consume overhead) / ~61
+```
+
+The mixer term is the dominant one and it is a configuration choice, so the cap
+is not a fixed number until §5.3.1's configuration is settled. From the measured
+table there: 23 writes at (i16, runtime resampling, R = 128), 106 at (i16,
+pre-resampled, R = 160), 142 at (i8, R = 128), 270 at (i16, pre-resampled,
+R = 128).
+
+A typical frame emits ~60 writes, so anything above ~64 binds only on voice
+changes and score heads — but the tightest configurations sit *below* that, which
+is a real argument in the §5.3.1 decision and not just a tuning detail.
+
+When a frame generates more, the 68k keeps the excess **in order** and prepends
+it to the next slot. Writes are never dropped and never reordered, so the chip
+state converges; the cost is that a key-on in a write-dense frame can land one
+frame late. This is the runtime analogue of the armed frame (§4.2), and the two
+together are why a 262-write score head is a non-event.
+
+The reference implements the same cap and spill (`drv-player.js`, `slotWriteCap`)
+so the §12 gate stays at zero tolerance — the interface is part of the spec, not
+an implementation detail of the C.
+
+### 6.3 PCM commands
+
+Variable-length, opcode-first. Every field arrives register-ready; the Z80
+computes nothing (§5.4).
+
+| Op | Name | Payload |
+| -- | ---- | ------- |
+| 0x01 | `PCM_START` | voice u8, flags u8, shift u8, ksh u8, bank u16, ptr u16, left u16, loop_len u16, tail u16, inc_frac u16, inc_int u8 — 17 B |
+| 0x02 | `PCM_STOP` | voice u8 — a looped voice starts its release tail; a shot is unaffected (it plays to its end) |
+| 0x03 | `PCM_VOL` | voice u8, shift u8 |
+| 0x04 | `PCM_LOOP` | voice u8, loop_len u16, left u16 — retarget a running voice's loop region |
+
+Two of `PCM_START`'s fields are worth explaining, because both exist to keep
+arithmetic off the Z80:
+
+- **Distances, not end addresses.** `left` is the byte countdown to the current
+  boundary (loop end, or sample end for a shot) and `tail` is the extra distance
+  from the loop end to the sample end, which `PCM_STOP` adds to `left` when the
+  release begins. Countdowns rather than absolute addresses are what let a
+  sample span ROM banks without anything to rebase: the pointer wraps at the
+  window top, the bank steps, and the countdown is unaffected (§5.4).
+- **`ksh` is the segment bound.** The engine splits each voice's frame at loop
+  and sample boundaries and needs to know how many ticks fit before the next
+  one. Rather than divide, it uses `avail >> ksh` where `2^ksh ≥ inc_int + 1`
+  — conservative, so it never overruns, and one shift instead of a division.
+  The 68k computes `ksh = ceil(log2(inc_int + 1))` once at note-on.
+
+`PCM_LOOP` is new and costs the mixer nothing: a voice-outer pass loads the loop
+bounds once per segment, never per tick (§1.2). It is what makes ping-pong and
+macro-modulated loop length affordable.
+
+### 6.4 Published Z80 addresses
+
+The engine publishes a 64-byte header at a fixed address — the only Z80
+addresses the 68k needs to know, and the only ones that must stay stable across
+builds. `drv/sgdk/mmlispdrv.c` carries the current values.
+
+| Field | Owner | Notes |
+| ----- | ----- | ----- |
+| `head` | 68k | next slot to fill |
+| `tail` | Z80 | next slot to consume |
+| `frames_consumed` u16 | Z80 | **the audible clock.** The 68k runs ahead by the ring depth, so `(trig N)` must fire when the frame is *heard*, not when it was rendered — the host compares this counter against the frame it stamped the marker on (§6.5) |
+| `engine_ready` u8 | Z80 | 0x00 while booting |
+| `protocol_version` u8 | Z80 | = 3 |
+| `smp_bank` u16 | 68k | PCM sample ROM bank; 0 = none. Must be published *after* the image upload, which clears Z80 RAM |
+
+### 6.5 Host API and live control
+
+The v0.2 command set survives as C entry points rather than mailbox commands,
+with the same semantics; what changes is that they now execute *in* the
+sequencer rather than being posted to it.
+
+| Call | Semantics |
+| ---- | --------- |
+| `MMLisp_startTrack(score, track)` | look up the track, initialize its TCB (stream ptr = base + event_offset, accumulator 0, increment from the stream's first TEMPO_SET — the compiler guarantees one before the first timed event), apply the channel-ownership rule (§2.2), reset channel level state to defaults (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track enters **armed** (§4.2) |
+| `MMLisp_stopTrack(score, track)` | key-off (the release tail runs out naturally), free the channel, mark the TCB idle. On an `fm3-csm` track this clears the CSM bit in `$27` (§9) |
+| `MMLisp_keyOff(channel)` | key-off one channel without stopping its track: releases a `len=0` hold (the dispatcher resumes) or truncates a sounding note |
+| `MMLisp_setParam(channel, target, value)` | one-shot absolute write of `target` (opcodes.md §7), as if a PARAM_SET arrived in the stream |
+| `MMLisp_fadeTrack(score, track, frames)` | step `master` down to 0 over `frames`, then stop |
+| `MMLisp_setVal(slot, value)` | write i16 into a val slot |
+| `MMLisp_getVal(slot)` | plain read — the slots are 68k memory now |
+| `MMLisp_startSe(...)` | §2.5 |
+
+**Val slots.** 16 × i16 in 68k RAM, initialized from the score's VAL_TABLE at
+track start and thereafter host-written. Slot index = VAL_TABLE index; slot 0xFF
+in stream operands is the built-in `$time` source (elapsed 60 Hz frames, low 16
+bits), never stored in the array. The host does all arithmetic; the sequencer
+only stores and applies (docs/language.md §8). They no longer cross the bus —
+`GET_VAL`, which the v0.2 protocol reserved a command for and then realized as a
+direct Z80-RAM read, is now an ordinary variable access.
+
+**Latency.** Every call in this table takes effect on the next frame the 68k
+renders, so it is heard `RING_DEPTH` frames later — see §3.4, which is the
+reason the default depth is shallow.
 
 ## 7. Level Composition
 
@@ -466,9 +782,9 @@ PSG:
     att = clamp(0, 15,  vel_psg[vel] + vol_psg[vol] + vol_psg[master])
 ```
 
-Offset tables in the driver image, **generated from the `ir-utils.js`
-constants** (`TL_DB_PER_STEP` 0.75, `PSG_DB_PER_STEP` 2, `VEL_DB_PER_STEP`
-2, `VOL_STEP_DB` 2, `VOL_UNITY` 31):
+Offset tables in 68k ROM, **generated from the `ir-utils.js` constants**
+(`TL_DB_PER_STEP` 0.75, `PSG_DB_PER_STEP` 2, `VEL_DB_PER_STEP` 2,
+`VOL_STEP_DB` 2, `VOL_UNITY` 31):
 
 - `vel_tl[16]` = round((15 − v) × 2 / 0.75) =
   `[40,37,35,32,29,27,24,21,19,16,13,11,8,5,3,0]` (v = 0…15)
@@ -484,7 +800,7 @@ Rules:
 - Velocity never mutes (vel 0 = −30 dB floor); silence is a rest.
 - Carrier ops per algorithm come from the `fmCarrierOpsForAlg` table
   (alg 0–3 → op4; 4 → op2,4; 5–6 → op2,3,4; 7 → all).
-- **Same-table requirement:** the JS reference and the asm use these
+- **Same-table requirement:** the JS reference and the 68k C use these
   byte-identical integer tables. The tables round per term, whereas
   `ir-player.js` sums floats and quantizes once — a known divergence of at
   most ±2 TL steps (±1.5 dB) / ±1 PSG step, inside the §12 acceptance band.
@@ -492,8 +808,8 @@ Rules:
 ## 8. Pitch Tables
 
 Both tables are generated by the JS reference **from the same code as
-`ir-utils.js`** (`midiToFnumBlock`, `PSG_MASTER_CLOCK`) and pasted verbatim
-into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
+`ir-utils.js`** (`midiToFnumBlock`, `PSG_MASTER_CLOCK`) and emitted as C arrays
+the 68k links (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
 
 - **FM:** `FNUM_LUT[12]` u16, A-rooted so every entry falls in the 512–1023
   window `midiToFnumBlock` normalizes to:
@@ -517,20 +833,21 @@ into the asm (§12). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
   block was unchanged, another channel's intervening high-byte write would have
   clobbered the shared latch, and the low-byte commit would pick up the wrong
   octave — audible pitch corruption that worsens with more active FM channels.
-  So `write_fm_pitch` / `write_fm3_op_pitch` (and drv-player `_writeFmPitch` /
-  `_writeFm3OpPitch`) write the `$A4`/`$A0` pair every note via
-  `ym_write_always` / `_ymAlways`, keeping the shadow current but always
-  emitting. This is the one place M1 deliberately bypasses change-only
-  suppression besides the `$28` key edge.
+  So the pitch writers (`drv-player` `_writeFmPitch` / `_writeFm3OpPitch` and
+  their C counterparts) emit the `$A4`/`$A0` pair every note through the
+  always-write path, keeping the shadow current but never suppressing. This is
+  the one place the sequencer deliberately bypasses change-only suppression
+  besides the `$28` key edge. Both writes land in the same port run of the same
+  slot (§4), so the pair stays adjacent on the way to the chip.
 
 ## 9. CSM Rule
 
 - The compiler emits `CSM_ON` once at the start and `CSM_OFF` only at
   **end-of-stream** of an fm3-csm track; mid-track rests do **not** toggle
   the CSM bit (Timer A just keeps retriggering a released envelope).
-- The driver's invariant: `STOP_TRACK` (and END_OF_TRACK, and the stop side
-  of FADE_TRACK) on the track flagged `isCsm` clears the CSM bits in reg
-  $27 — the flag exists in the track table precisely so stopping never
+- The sequencer's invariant: `MMLisp_stopTrack` (and END_OF_TRACK, and the stop
+  side of `MMLisp_fadeTrack`) on the track flagged `isCsm` clears the CSM bits
+  in reg `$27` — the flag exists in the track table precisely so stopping never
   leaves the chip in CSM mode.
 
 ## 10. Decided — Voice Representation
@@ -541,17 +858,20 @@ full-voice PARAM_SET bursts into VOICE_TABLE entries + `VOICE_SET` (0x14); the
 IR is unchanged. Rationale below.
 
 **Landed 2026-07-19 (coalescing ON by default).** The exporter pass
-(`live/src/mmb-voices.js`) and both players carry it. The Z80 `VOICE_SET`
-handler rides `ovl_voice` (overlay 6, cold — a voice switch is per-note-rare,
-not per-frame), reached through the resident `tramp_voice` trampoline; it
+(`live/src/mmb-voices.js`) and both players carry it. The `VOICE_SET` handler
 block-copies the 29-byte entry in drv-player's exact write order (op outer,
 register inner, then `$B0`), change-only vs the shadow (an unwritten register
 reads as 0, so an SSG-omitting voice never writes `$90`), seeds the four
-`CHS_VTL` voiced-TL bytes like `psf_tl`, and updates `CHS_ALG` so the vel/vol
-carrier-TL recompose picks the right carrier mask. The ab-compare gate's
-`normalize` now collapses same-frame YM writes to the per-frame final value
-(drv-player's clock is frame-quantized), which makes the ab baseline
-coalescing-invariant (§12). Gate: `m3-voice` (both ports, mid-song switch).
+voiced-TL bytes, and updates the channel's algorithm so the vel/vol carrier-TL
+recompose picks the right carrier mask. The ab-compare gate's `normalize`
+collapses same-frame YM writes to the per-frame final value (drv-player's clock
+is frame-quantized), which makes the ab baseline coalescing-invariant (§12).
+Gate: `m3-voice` (both ports, mid-song switch).
+
+Post-split the *stream* saving in the table below still stands, but the "driver
+cost" column no longer decides anything: 29 shadow compares are nothing on a
+68000, and a VOICE_SET whose registers already match emits no slot writes at
+all. Voice coalescing is now purely a ROM-size optimization.
 
 Today a full FM voice change compiles to ~30 same-tick PARAM_SET events:
 ~90 stream bytes and 30 dispatch iterations per change, repeated for every
@@ -575,13 +895,13 @@ specified in mmb.md §11.
 
 ### 10.1 Loop-invariant VOICE_SET (encode-time hoist)
 
-A `VOICE_SET` costs the driver 29 registers of shadow bookkeeping even when the
-chip sees nothing (change-only suppresses identical values) — **~30k Z80 cycles
-per track**, against a 59,659-cycle frame budget. Scores that carry the voice at
-the loop head (`#loop @psg003`, the shape every mucom import has) therefore pay
-it again on every iteration: a 7-track import measured **263k cycles at the loop
-frame, 4.4× the budget**, i.e. four dropped frames, clearly audible as the loop
-stumbling.
+**Retained but no longer load-bearing.** The pass was built because a
+`VOICE_SET` cost the *Z80* 29 registers of shadow bookkeeping even when the chip
+saw nothing — ~30k cycles per track, and a 7-track import measured **263k cycles
+at the loop frame, 4.4× the budget**: four dropped frames, clearly audible as
+the loop stumbling. On the 68000 that cost is negligible and the pass is kept
+only because it is free and trace-neutral. The description below is the record
+of why it exists.
 
 `planVoiceHoists` (`live/src/export-mmb.js`) emits that VOICE_SET **before** the
 marker instead, so pass 1 applies it and the backward JUMP lands past it. Moving
@@ -598,42 +918,101 @@ pins all three outcomes.
 
 ## 11. Milestones
 
-- **M1 — core playback.** Core opcodes (opcodes.md §3), FM + PSG note
-  paths, level tables (§7), pitch LUTs (§8), mailbox with
-  START_TRACK/STOP_TRACK, channel ownership, `len=0` holds, MARKER status
-  feedback. Skip-decode of all reserved opcodes.
-- **M2 — motion.** PARAM_SWEEP / PARAM_SWEEP_STOP (glide, vibrato via loop
-  curves), PARAM_ADD, TEMPO_SWEEP, LOOP_BREAK, CSM (ON/OFF/RATE const +
-  swept), single-channel PCM through the DAC (ring buffer in the reserved
-  area), KEY_OFF / SET_PARAM / FADE_TRACK commands. Note: a `shot` sample
-  plays to its end — a note's `length`/`gate` do not truncate it (only `loop`
-  mode honors KEY-OFF). Gated / length-limited one-shots are a later milestone.
-- **M3 — expression.** FM3 independent-OP (FM3_MODE/FM3_OP_PITCH, §13.4), the
-  macro engine (`:step` clocks; VOL/VEL/FM/i16-NOTE_PITCH/NOTE_SEMI/KEYON macros;
-  up to 3 concurrent per channel), dynamic value slots (SET_VAL,
-  PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL, PARAM_MUL), the **scaled-macro depth knob**
-  (§13.2), **slot-fed sweep endpoints** (PARAM_SWEEP flags bit1/bit2 read a
-  value slot for `from`/`to` at dispatch — the note-on tier, §4.6 in the eval
-  design), **multi-channel PCM soft mix** (§14), and **CALL/RET + the
-  encode-time dedup pass** (§5.2; `d_call`/`d_ret` share the loop control stack,
-  CALL entries tagged count 0xFF) **are implemented and gated**. Remaining:
-  NOTE_ON_EX macro_ref, VOICE_SET, plus slot-fed macro-curve params
-  (`:rate`/`:len`).
+**M1–M3 are feature-complete and gate-verified** in the all-Z80 build (core
+playback; motion — sweeps, PARAM_ADD, TEMPO_SWEEP, cent pitch, CSM; expression —
+FM3 independent-OP, the macro engine, dynamic value slots, PCM soft-mix,
+CALL/RET, VOICE_SET, slur, SE). That work is not lost: **`drv-player.js` carries
+every one of those features** and is the port spec (§12). What the split
+re-plans is *where* the code runs, not *what it does*.
+
+The port milestones:
+
+- **P0 — mixer prototype. DONE 2026-08-02, and it paid for itself.**
+  `drv/tools/gen-mixer.mjs` + `npm run mixer` (§5.3.1). Going first was the right
+  call: the estimate was 50% optimistic, and even after the optimizations it
+  found, **3 voices at 10.5 kHz does not fit with sum-then-saturate** — the knee
+  for those semantics is ~8.6 kHz. Mix rate, buffer width and the pre-resampling
+  decision are all back on the table, before anything was built on top of them.
+  Settling §5.3.1's configuration is the gate on P1, because `SLOT_MAX_WRITES`
+  falls out of whatever the mixer leaves (§6.2).
+- **P1 — the interface.** The ring, slot format and PCM command set (§6) on both
+  sides. **Z80 half DONE 2026-08-02** — `drv/src/engine.z80` (2560 B: boot,
+  vblank ISR, ring consume, PCM commands, published header, the segment-split
+  voice driver), gated by `npm run engine` across seven scenarios including loop
+  wrap, mid-frame voice end, ROM bank crossing and ring starvation. Remaining:
+  the slot builder and cap/spill queue in `drv-player.js`, so the reference
+  speaks the real protocol and the §12.2 gate compares slot streams.
+- **P2 — the sequencer.** `drv-player.js` → portable C, gated against it on the
+  host (§12.2). This is the bulk of the work and the least risky part of it:
+  the spec is a complete, validated implementation in a portable language, which
+  is exactly what the original Z80 port did not have.
+- **P3 — integration and bring-up.** SGDK glue, the 68k-side frame hook, real
+  hardware. The open hardware questions are unchanged: YM BUSY behaviour on
+  silicon, and the DAC jitter the 68k's per-frame bus grab introduces (§1.3).
+
+What the split unlocks, deliberately **not** scheduled until P3 lands: dynamic
+and ping-pong loop points (§6.3), cross-MMB DJ transitions (§2.3), PAL (§3.3),
+and revisiting the 3-voice PCM limit. All of them are cheap now; none of them
+is a reason to delay the port.
 
 ## 12. Verification Strategy
 
-There is no automated test suite for audio; verification is comparative:
+There is no automated test suite for audio; verification is comparative. The
+split changes which pairs get compared, not the method — and it makes the
+central gate **cheaper**, because both sides of it now run on the host.
 
-1. **JS reference implementation** (`drv-player.js`): executes MMB v0.2
-   with the §4 loop order and **integer-only math** (8.8 accumulators, the
-   §7/§8 integer tables — no floats), in the live environment as an
-   alternate backend. It is the executable form of this spec.
-2. **Register-write log A/B** (`ab-compare.js`; `window.__abCompare()` in
-   the live app). The reference driver's frame-stamped register log is
-   diffed against `ir-player.js` output as per-register *state runs* (raw
-   write streams are incomparable: the IR player runs a continuous clock
-   and repeats values; the driver is frame-quantized and change-only).
-   Acceptance bands:
+### 12.1 `drv-player.js` — the executable spec
+
+Executes MMB v0.2 with the §4 loop order and **integer-only math** (8.8
+accumulators, the §7/§8 integer tables — no floats), in the live environment as
+an alternate backend. It is the executable form of this document, and P1 extends
+it to emit real slots through the real cap/spill queue (§6.2) so it specifies the
+interface too, not just the music.
+
+### 12.2 68k C ≡ `drv-player.js` — the hard gate
+
+The C sequencer compiles for the host as well as for m68k (its core is plain C
+with no SGDK dependency), so the gate is: run both over the same MMB, dump the
+per-frame slot stream, diff at **zero tolerance** — same writes, same values,
+same ports, same frames, same order.
+
+This is a straight replacement for the old asm↔reference trace gate and it is
+strictly easier: no emulator in the loop, no assembler, and a debugger on both
+sides. It is also why the port is far less risky than the original Z80 one —
+that one had a prose spec, this one has a validated implementation in a portable
+language.
+
+### 12.3 Z80 engine ≡ the slot stream
+
+The engine's contract is narrow enough to gate directly: feed the emulator a
+recorded slot stream and assert that (a) the chip writes it emits are exactly
+the slot's bytes, in order, on the right ports, and (b) the `$2A` DAC stream
+matches a JS model of §5.3 sample for sample. The existing first-party
+assembler/emulator/trace toolchain (`drv/tools/`) carries over unchanged.
+
+### 12.4 The mixer cycle gate
+
+**New kind of gate, and a hard one.** §5.3's cost is load-bearing for the entire
+architecture, so it gets asserted rather than assumed. `drv/tools/mixer-bench.mjs`
+(`npm run mixer`) runs one frame per configuration in the emulator with the cycle
+counter on, attributes cycles per routine, and diffs every DAC byte against a JS
+model of the mix — correctness and cost in one gate, so a fast-but-wrong loop
+cannot pass. Results: §5.3.1.
+
+Cycles are a *specified* property of this driver now, not something discovered on
+hardware. That is the lesson of §1.1 — an unmeasured estimate survived three
+milestones and then forced an architecture pivot — and the P0 run earned it
+again immediately: the replacement estimate was itself 50% optimistic, and found
+that out in an afternoon instead of on silicon.
+
+### 12.5 `ir-player` A/B — characterization
+
+**Register-write log A/B** (`ab-compare.js`; `window.__abCompare()` in
+the live app). The reference driver's frame-stamped register log is
+diffed against `ir-player.js` output as per-register *state runs* (raw
+write streams are incomparable: the IR player runs a continuous clock
+and repeats values; the sequencer is frame-quantized and change-only).
+Unchanged by the split. Acceptance bands:
    - **±1 frame** timing skew on every state change and key edge.
    - **TL data ±2 steps** (integer offset tables vs float-sum-then-round);
      **F-number low byte ±1** (LUT cent interpolation vs float pow).
@@ -668,15 +1047,12 @@ There is no automated test suite for audio; verification is comparative:
    hide — any new drv↔ir divergence (or the disappearance of a known one) now
    fails the gate. After an intended change, review the printed mismatches and
    re-freeze with `node tools/ab-gate.mjs --update`.
-3. **LUT export.** The reference prints every constant table (F-number,
-   PSG period, level offsets, PCM rate multipliers, curve units) as asm
-   `db`/`dw` blocks for verbatim inclusion — the asm never re-derives a
-   table, so JS/asm table divergence is structurally impossible.
-4. **Asm bring-up (per milestone).** The Z80 build replays the same MMBs in
-   an emulator with a register-write trace; the trace must match the JS
-   reference log exactly (same math, same tables, same order — zero
-   tolerance at this stage, the ±1-frame band applies only to the
-   ir-player comparison).
+### 12.6 LUT export
+
+The reference prints every constant table (F-number, PSG period, level offsets,
+PCM rate multipliers, curve units) for verbatim inclusion — as C arrays for the
+68k, as `db`/`dw` blocks for whatever the Z80 still needs. Neither side ever
+re-derives a table, so table divergence stays structurally impossible.
 
 ## 13. Macro Engine (M3)
 
@@ -687,11 +1063,13 @@ coercion — is **lowered at compile time** to one uniform runtime shape (mmb.md
 §15): a per-`:step` value array in three regions (attack / sustain-loop /
 release). Curves and stages are pre-sampled; the driver never evaluates a curve
 or easing at macro time. This keeps the engine tiny and reproduces `ir-player`
-`_scheduleMacro` exactly, so the JS reference and asm share it under the §12
-trace gate.
+`_scheduleMacro` exactly, so the JS reference and the port share it under the
+§12 gate.
 
-**Implementation status.** The engine is implemented and gated (`verify:m3`)
-for the `steps`, `curve`, and `stages` macro forms on i8 targets that ride the
+**Implementation status.** Everything below is implemented and gate-verified in
+`drv-player.js` and in the all-Z80 build; the split re-targets it to the 68k C
+(P2, §11) with no semantic change. Coverage is the `steps`, `curve`, and
+`stages` macro forms on i8 targets that ride the
 PARAM_SET apply path — the common envelope/LFO case (VOL/VEL/FM_TL/…). Curve
 and stage macros are pre-sampled at the `:step` clock in the exporter (a
 one-shot curve fills the attack region and holds its last value; a looping
@@ -701,7 +1079,7 @@ semitone offset written to the pitch register at note+semi each `:step` (no
 retrigger, no change to the sticky `:pitch` state) — the classic chiptune
 arpeggio, on FM and PSG. The i16 target **NOTE_PITCH** is implemented (pitch
 envelopes / vibrato shapes): its descriptor carries flags bit0 (i16), the value
-blob is 2 bytes per `:step` (cents, hold sentinel `0x8000`), and `sm_fire`
+blob is 2 bytes per `:step` (cents, hold sentinel `0x8000`), and the stepper
 reads it wide and rides the PARAM_SET apply path (`NOTE_PITCH` cents offset) —
 gated by `m3-macro-pitch` on FM and PSG. **Multiple macros per channel** run
 together (up to 3, keyed by target — e.g. a VOL envelope + a NOTE_PITCH vibrato
@@ -728,7 +1106,7 @@ macros (the exporter pre-samples what `ir-player` evaluates in continuous time).
 `MACRO_SET {macro_id}` binds MACRO_TABLE[macro_id] as the **active macro for
 its target** on the track (sticky, replacing any active macro on that target);
 `MACRO_CLEAR {target}` clears one (`0xFF` = all). The channel holds up to **3**
-active-macro ids (§5.1). On **any** `NOTE_ON` the driver instantiates each
+active-macro ids (§4.3). On **any** `NOTE_ON` the sequencer instantiates each
 active macro into a **running slot** (3 slots × {descriptor index, step clock,
 cursor, flags}); `NOTE_ON_EX` `macro_ref` adds a per-note one-shot. When a
 channel's active set would exceed 3, the *exporter* drops the extras with a
@@ -756,9 +1134,9 @@ it is applied. **Additive** (bit1, `:pitch+`/`:semi+`): the sample composes with
 the channel's live `:pitch` offset instead of replacing it. **Scaled** (bit2,
 `(* <LFO> $slot)`): the sample is multiplied by a value slot read **live each
 frame** — `(sample × (slot & 0xFF)) >> 8`, magnitude multiply re-signed toward
-zero (the resident `mul16x8_sh8`). The slot id rides one byte appended after the
-value blob. This is the frame-tier interactive knob — the game writes a slot
-(SET_VAL) and a vibrato/tremolo depth follows in real time.
+zero. The slot id rides one byte appended after the value blob. This is the
+frame-tier interactive knob — the game writes a slot (`MMLisp_setVal`) and a
+vibrato/tremolo depth follows in real time, at the ring's latency (§3.4).
 
 `NOTE_SEMI`/`KEYON` (macro-only targets, opcodes.md §7) resolve here: `NOTE_SEMI`
 adds `value × 100` cents to the note pitch (no retrigger, chiptune arpeggio),
@@ -802,54 +1180,61 @@ gate is used (the operator keys off at the next rest / end-of-track). The
 driver derives the operator from the channel id (2→1, 16-18→2-4); F-numbers
 go through the change-only shadow, key edges bypass it.
 
-## 14. PCM Soft-Mix (M3)
+## 14. PCM Soft-Mix — musical model
+
+The mixer's mechanism and cost live in §5.3; this section is the model the
+language and the sequencer commit to.
 
 `pcm1`–`pcm3` are three PCM voice slots summed in software to the single fm6
-DAC. (`fm6` itself is FM-only; it is no longer a PCM channel.) Each `PCM_NOTE_ON`
-sets up its channel's voice (sample base/length/loop + a per-mix-tick increment);
-`PCM_NOTE_OFF` starts a looped voice's release tail (a `shot` plays to its end
-regardless). The heavy per-note setup is cold — it lives in the `ovl_pcm`
-overlay (§5.3), loaded on demand — so only the hot mixer stays resident.
+DAC. (`fm6` itself is FM-only; it is no longer a PCM channel.) **Three is a
+fixed count, decided 2026-08-02**, so the mixer can be fully specialised — three
+passes, no voice-count loop. A `PCM_NOTE_ON` in the stream becomes a `PCM_START`
+command in the frame's slot (§6.3); `PCM_NOTE_OFF` becomes `PCM_STOP`, which
+starts a looped voice's release tail — a `shot` plays to its end regardless.
 
-**The DAC is claimed, not owned.** `pcm_note_on` enables it (`$2B` bit7) and
-`process_pcm` releases it once `pcm_any_active` reports every voice done, so a
-score may use `fm6` and `pcmN` together: the chip mutes fm6 for exactly as long
-as the DAC is on, and fm6 sounds as FM in the gaps between PCM voices. The
-`m3-fm6-pcm` gate locks those enable/release edges around an fm6 key-on.
+**Per-note pitch vs pre-resampling — reopened by measurement (§5.3.1).** The
+pivot rejected compiling samples to a fixed playback rate ("option B") on the
+grounds that the runtime resampler costs ~25 cyc/voice/tick, 11% of the PCM
+budget. Measured, it costs **~40 cyc/voice/tick, 27% of the mixer**, and
+removing it is the single largest lever on the frame budget: it takes 3 voices
+at R = 175 from 132% to 96%. The trade is unchanged in kind — pre-resampling
+costs per-note PCM pitch, dynamic loop freedom and ROM — but its price is now
+known rather than assumed. Undecided; §5.3.1 lists the configurations.
 
-**The mix (frame-quantized, matches the M2 burst-DAC deviation).** Each frame
-emits a fixed `R` DAC writes (the *mix rate*, `PCM_MIX_R = 175` ≈ 10.5 kHz). Per
-tick, every active voice is resampled to that grid by **nearest-neighbour**
-(sample at `pos >> 16`, then `pos += inc`), the ≤3 signed samples are **summed
-and hard-saturated to int8**, and the result is written to `$2A`. `inc` is the
-16.16 per-tick increment `= floor(inc_frame / R)` (full-precision divide so pitch
-stays accurate; a table pre-divided by `R` would round too coarsely). A voice
-deactivates when a shot/tail passes the sample end; a non-releasing loop wraps by
-`loopLen` each tick. The DAC is enabled (`$2B`) on the first active voice and
-released when the last voice ends, both through the change-only shadow.
+While runtime resampling stands, `inc` is `floor(inc_frame / R)` computed on the
+68k at full precision (a table pre-divided by `R` would round too coarsely).
+
+**The DAC is claimed, not owned.** The first active voice enables it (`$2B`
+bit 7) and the mixer releases it once every voice is done, so a score may use
+`fm6` and `pcmN` together: the chip mutes fm6 for exactly as long as the DAC is
+on, and fm6 sounds as FM in the gaps between PCM voices. The `m3-fm6-pcm` gate
+locks those enable/release edges around an fm6 key-on.
 
 **Per-channel volume (`:vel` + `:vol` + `:master`).** `:vel` and `:vol` on a
 `pcmN` channel and the global `:master` all ride the FM/PSG velocity/fader ladder
-(2 dB/step). The driver composes them into one per-voice attenuation the mixer
+(2 dB/step). The sequencer composes them into one per-voice attenuation the mixer
 applies as an arithmetic right shift on each sample before summing — one `sra`
 per sample, so volume stays off the critical path. Summing each control's
 steps-below-unity gives the total attenuation, quantized to the 6 dB shift grid:
 
 ```
 n = (15 − vel) + (31 − vol) + (31 − master)
-shift = min(7, round(n / 3))          # PV_SHIFT bits0-2
-mute  = (vol == 0) || (master == 0)    # PV_SHIFT bit7 — true silence
+shift = min(7, round(n / 3))           # the voice's shift, bits0-2
+mute  = (vol == 0) || (master == 0)    # bit7 — true silence
 ```
 
 so the same `:vel`/`:vol` mean the same loudness on a PCM voice as on FM/PSG.
 `vel` never mutes — with `vol`/`master` at unity it floors at `shift 5` (≈ −30 dB);
 `vol 0` or `master 0` is a hard mute (the muted voice still advances, matching FM
-where a note continues silently under a 0 fader). The compose runs once per
-`PARAM_SET VEL`/`VOL` (and for every voice on a `MASTER` change), never per sample;
-`vel`/`vol` persist per voice and, with `PV_SHIFT`, ride the SE snapshot.
+where a note continues silently under a 0 fader). The compose runs on the 68k,
+once per `PARAM_SET VEL`/`VOL` (and for every voice on a `MASTER` change), never
+per sample, and reaches the Z80 as a `PCM_VOL` command; `vel`/`vol` persist per
+voice and ride the SE snapshot.
 
-A single voice takes the same path (one active slot) — there is no separate
-fast path. The voice structs (18 B × 3) live in the RAM gap just below
-`OVERLAY_SLOT`. As with the rest of the driver the hard gate is asm↔`drv-player`
-at zero tolerance; the sub-frame feed *timing* (bytes burst at frame start, not
-spread) remains a hardware-bring-up concern.
+A single voice takes the same path — there is no separate fast path.
+
+**What remains a hardware question.** The frame-stamped gate fixes *which*
+samples play in *which* frame; it does not fix the sub-frame feed timing. In the
+all-Z80 build the DAC bytes burst at frame start; §5.3's output pass spreads them
+across the frame by construction, but the 68k's per-frame bus grab adds ~0.2%
+jitter on top (§1.3). Both need silicon.

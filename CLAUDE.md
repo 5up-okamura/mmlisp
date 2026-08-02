@@ -1,7 +1,9 @@
 # MMLisp
 
 MMLisp is a Lisp-like DSL for composing expressive, interactive music for the
-Sega Mega Drive (YM2612 FM + PSG), ultimately compiled to a Z80 sound driver.
+Sega Mega Drive (YM2612 FM + PSG), ultimately compiled for MMLispDRV — a driver
+split across both CPUs: the 68000 sequences the score into per-frame
+register-write lists, the Z80 consumes one per vblank and software-mixes PCM.
 
 Current baseline: **v0.5**. The phase is "use and adjust" — the language and
 API evolve from practical composition needs.
@@ -27,11 +29,16 @@ The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.2), `drv-player.js` (JS reference driver), and
 `ab-compare.js` (register-log A/B) in the same directory.
 
-The Z80 driver port (Phase 3) lives in `drv/`: `src/mmlispdrv.z80` (M1
-driver) plus a first-party node toolchain in `drv/tools/` (Z80 assembler,
-Z80 CPU emulator, trace harness — no external binaries). Its gate:
-`cd drv && npm run verify:all` must show zero trace mismatches against
-`drv-player.js`.
+The driver port (Phase 3) lives in `drv/`: `src/*.z80` plus a first-party node
+toolchain in `drv/tools/` (Z80 assembler, Z80 CPU emulator, trace harness — no
+external binaries). Its gate: `cd drv && npm run verify:all` must show zero
+trace mismatches against `drv-player.js`.
+
+**The architecture pivoted on 2026-08-02** (68k sequencer + Z80 PCM/write
+engine, `docs/driver.md` §1.1) — `drv/src/*.z80` is the superseded all-Z80
+build, kept because its measurements and deviations are the reason the new
+design looks the way it does. Read `.claude/memory/plan-68k-split.md` before
+touching the driver.
 
 Docs: `docs/language.md` is the canonical language reference;
 `docs/guide.md` is the tutorial. Driver/format design: `docs/driver.md`,
@@ -61,7 +68,7 @@ update in place, delete files once the repo itself records the outcome.
 - **No legacy support.** v0.4-and-earlier behavior is not maintained; remove
   dead code that only served deprecated specs rather than guarding it.
 - **Minimalism is about the output, not the tooling.** Every feature must
-  justify its cost in language/IR complexity and eventual Z80 driver footprint.
+  justify its cost in language/IR complexity and eventual driver footprint.
   This constrains _what we expose and how it maps to hardware_ — it is not a
   call to micro-optimize the JS toolchain.
 - **Directness.** Keep the path from MMLisp expression to driver instruction as

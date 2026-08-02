@@ -1,10 +1,21 @@
 # MMLispDRV (Z80 driver) — status and remaining work
 
-Updated: 2026-07-20. Narrative history lives in `docs/roadmap.md` Phase 3;
+> **Read [[plan-68k-split]] first (2026-08-02).** The architecture pivoted: the
+> sequencer moves to the 68000 and the Z80 becomes a PCM mixer + chip-write
+> engine. This file is now mostly the **record of the all-Z80 build**.
+>
+> - **Still current:** every feature semantic in the Done list (they all live in
+>   `drv-player.js`, which is the port spec), the ir↔drv divergences, the
+>   verification method, and the PCM-on-hardware findings — the 193k-cycle
+>   soft-mixer measurement below is *the evidence that forced the pivot*.
+> - **No longer current:** the resident-byte budget, the overlay/funding menu,
+>   the `DATA_BASE` and stack figures, the 32 KB sample wall, and the
+>   remaining-work priority order. The 8 KB ceiling stops governing the design.
+
+Updated: 2026-08-02. Narrative history lives in `docs/roadmap.md` Phase 3;
 architecture in `docs/driver.md`; port facts/deviations in `drv/README.md`.
-This file is the compact continuation state. Live byte/stack figures come from
-`cd drv && npm run size` / `npm run budget` (authoritative; the numbers quoted
-below are the 2026-07-20 baseline).
+Live byte/stack figures come from `cd drv && npm run size` / `npm run budget`
+(the numbers quoted below are the 2026-07-20 baseline).
 
 ## Done (verified in emulation, `cd drv && npm run verify:all`, zero-diff, both ports)
 

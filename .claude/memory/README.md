@@ -13,17 +13,19 @@ Rules:
 
 Index:
 
+- [plan-68k-split.md](plan-68k-split.md) — **architecture pivot (2026-08-02):
+  68k runs the sequencer, the Z80 becomes a PCM + chip-write engine.** The
+  measurement that forced it, the 11 decisions taken, and the port state
+  (P0 mixer prototype → P1 interface → P2 sequencer → P3 bring-up). **Read this
+  first before touching the driver.** The design itself now lives in
+  `docs/driver.md`; this file is the decision record and the running state.
 - [z80-driver-status.md](z80-driver-status.md) — MMLispDRV living status: the
   Done list (M1–M3, v0.6 value machine, VOICE_SET, CALL/RET, SE, PCM volume,
   trig), the remaining-work list (hardware bring-up, PAL, open ir↔drv
-  divergences), the byte/stack budget, and how to verify. **The driver's
-  compact record — roadmap.md does not cover driver internals.**
-- [plan-68k-split.md](plan-68k-split.md) — **architecture pivot (2026-08-02):
-  68k runs the sequencer, the Z80 becomes a PCM + chip-write engine.** The
-  measurements that forced it, the decisions taken (Z80 keeps the clock, SE to
-  the 68k, 3 PCM voices, no pre-resampling), what the freed RAM unlocks, and
-  the still-open interface questions. **Read this before touching the driver —
-  it supersedes the "68k offload is the last resort" line in drv/README.md.**
+  divergences), the byte/stack budget, and how to verify. **Now largely the
+  record of the all-Z80 build** — its feature semantics all survive in
+  `drv-player.js` (the port spec), but its byte/cycle budgets describe an
+  architecture [[plan-68k-split]] replaced.
 - [plan-se.md](plan-se.md) — SE (sound effects): **core LANDED** (sample-bank
   separation, FM/PSG/PCM suspend-restore, priority, PCM per-channel volume).
   Kept for the remaining work — the BGM+SE bundler/link tool (not started),

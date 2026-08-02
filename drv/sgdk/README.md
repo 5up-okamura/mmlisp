@@ -3,6 +3,14 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator)
 from an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
+> **Note (2026-08-02): this integration targets the all-Z80 driver, which is
+> being replaced.** The architecture pivoted to a 68k sequencer + Z80 PCM/write
+> engine (`docs/driver.md` §1.1). The host API names below survive, but they
+> become ordinary C calls into the sequencer rather than mailbox posts, and
+> `MMLisp_init` will upload a much smaller Z80 image with no overlay blob. The
+> pipeline (`mmb-build` → `song.mmb` → rescomp BIN) and the `install-sgdk` tool
+> are unaffected. Re-verified glue lands with P3 (driver.md §11).
+
 > **Verification status.** The Z80 driver (the same ~6.5 KB image this
 > integration ships) covers **all of M1 and M2** plus several M3 features —
 > **FM3 independent-operator mode**, the **macro engine** (step/curve/stage +
