@@ -39,6 +39,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+export const MUTE_SHIFT = 8;   // PV_SHIFT value meaning "silent, keep advancing"
 export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr"];
 
 let uid = 0;
@@ -57,11 +58,30 @@ function body(variant, role, shift, deferred = []) {
   const nr = variant.endsWith("nr");        // pre-resampled control case
   const sat = variant.startsWith("i8sat");  // 8-bit, saturate at every add
   const wide = variant.startsWith("i16");   // two planes, sum then saturate
+  // Shift index 8 is MUTE: `:vol 0` / `:master 0` silences a voice but it must
+  // keep advancing, matching FM where a note continues under a 0 fader
+  // (driver.md §14). Dropping the fetch and the accumulate is also the one
+  // case where the specialised loops are faster than the general one.
+  const mute = shift === MUTE_SHIFT;
 
-  push("ld   a,(de)             ; sample");
-  for (let i = 0; i < shift; i++) push("sra  a");
+  if (!mute) {
+    push("ld   a,(de)             ; sample");
+    for (let i = 0; i < shift; i++) push("sra  a");
+  }
 
-  if (role === "first") {
+  if (mute) {
+    if (role === "first") {
+      // Nothing has written this tick's slot yet, so store the value that
+      // means silence for this plane's encoding.
+      push(`ld   (hl),${sat ? "0" : "$80"}   ; muted, but the position still advances`);
+      if (wide) {
+        push("inc  h");
+        push("ld   (hl),0");
+        push("dec  h");
+      }
+    }
+    // An accumulating muted voice contributes nothing at all.
+  } else if (role === "first") {
     // i8sat keeps the plane SIGNED (the output pass biases); the other variants
     // bias here, which makes their output pass a bare copy.
     if (!sat) push("xor  $80               ; bias: the plane is the reference point");
@@ -149,12 +169,13 @@ function loop(name, variant, role, shift, U) {
 // tick, and the boundary segment never has to run on a slow generic path.
 function loopSet(prefix, variant, role, U) {
   const out = [];
-  for (let s = 0; s < 8; s++) out.push(loop(`${prefix}_s${s}`, variant, role, s, U));
-  for (let s = 0; s < 8; s++) out.push(loop(`${prefix}1_s${s}`, variant, role, s, 1));
+  const N = MUTE_SHIFT + 1;               // shifts 0..7 plus the mute entry
+  for (let s = 0; s < N; s++) out.push(loop(`${prefix}_s${s}`, variant, role, s, U));
+  for (let s = 0; s < N; s++) out.push(loop(`${prefix}1_s${s}`, variant, role, s, 1));
   out.push(`${prefix}_tab:`);
-  out.push(`        dw   ${[...Array(8)].map((_, s) => `${prefix}_s${s}`).join(", ")}`);
+  out.push(`        dw   ${[...Array(N)].map((_, s) => `${prefix}_s${s}`).join(", ")}`);
   out.push(`${prefix}1_tab:`);
-  out.push(`        dw   ${[...Array(8)].map((_, s) => `${prefix}1_s${s}`).join(", ")}`);
+  out.push(`        dw   ${[...Array(N)].map((_, s) => `${prefix}1_s${s}`).join(", ")}`);
   return out.join("\n");
 }
 

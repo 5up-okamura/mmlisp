@@ -305,6 +305,33 @@ np15:
         dec  b
         jp   nz,mix_first_s7_lp
         ret
+mix_first_s8:
+mix_first_s8_lp:
+        ld   (hl),0   ; muted, but the position still advances
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np16
+        inc  d
+np16:
+        ld   (hl),0   ; muted, but the position still advances
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np17
+        inc  d
+np17:
+        dec  b
+        jp   nz,mix_first_s8_lp
+        ret
 mix_first1_s0:
 mix_first1_s0_lp:
         ld   a,(de)             ; sample
@@ -316,9 +343,9 @@ mix_first1_s0_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np16
+        jr   nc,np18
         inc  d
-np16:
+np18:
         djnz mix_first1_s0_lp
         ret
 mix_first1_s1:
@@ -333,9 +360,9 @@ mix_first1_s1_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np17
+        jr   nc,np19
         inc  d
-np17:
+np19:
         djnz mix_first1_s1_lp
         ret
 mix_first1_s2:
@@ -351,9 +378,9 @@ mix_first1_s2_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np18
+        jr   nc,np20
         inc  d
-np18:
+np20:
         djnz mix_first1_s2_lp
         ret
 mix_first1_s3:
@@ -370,9 +397,9 @@ mix_first1_s3_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np19
+        jr   nc,np21
         inc  d
-np19:
+np21:
         djnz mix_first1_s3_lp
         ret
 mix_first1_s4:
@@ -390,9 +417,9 @@ mix_first1_s4_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np20
+        jr   nc,np22
         inc  d
-np20:
+np22:
         djnz mix_first1_s4_lp
         ret
 mix_first1_s5:
@@ -411,9 +438,9 @@ mix_first1_s5_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np21
+        jr   nc,np23
         inc  d
-np21:
+np23:
         djnz mix_first1_s5_lp
         ret
 mix_first1_s6:
@@ -433,9 +460,9 @@ mix_first1_s6_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np22
+        jr   nc,np24
         inc  d
-np22:
+np24:
         djnz mix_first1_s6_lp
         ret
 mix_first1_s7:
@@ -456,24 +483,14 @@ mix_first1_s7_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np23
+        jr   nc,np25
         inc  d
-np23:
+np25:
         djnz mix_first1_s7_lp
         ret
-mix_first_tab:
-        dw   mix_first_s0, mix_first_s1, mix_first_s2, mix_first_s3, mix_first_s4, mix_first_s5, mix_first_s6, mix_first_s7
-mix_first1_tab:
-        dw   mix_first1_s0, mix_first1_s1, mix_first1_s2, mix_first1_s3, mix_first1_s4, mix_first1_s5, mix_first1_s6, mix_first1_s7
-R_FIRST_END:
-R_ADD_BEG:
-mix_add_s0:
-mix_add_s0_lp:
-        ld   a,(de)             ; sample
-        add  a,(hl)
-        jp   pe,ov24
-dn25:
-        ld   (hl),a
+mix_first1_s8:
+mix_first1_s8_lp:
+        ld   (hl),0   ; muted, but the position still advances
         inc  l
         exx
         add  hl,de             ; frac += incFrac
@@ -484,6 +501,16 @@ dn25:
         jr   nc,np26
         inc  d
 np26:
+        djnz mix_first1_s8_lp
+        ret
+mix_first_tab:
+        dw   mix_first_s0, mix_first_s1, mix_first_s2, mix_first_s3, mix_first_s4, mix_first_s5, mix_first_s6, mix_first_s7, mix_first_s8
+mix_first1_tab:
+        dw   mix_first1_s0, mix_first1_s1, mix_first1_s2, mix_first1_s3, mix_first1_s4, mix_first1_s5, mix_first1_s6, mix_first1_s7, mix_first1_s8
+R_FIRST_END:
+R_ADD_BEG:
+mix_add_s0:
+mix_add_s0_lp:
         ld   a,(de)             ; sample
         add  a,(hl)
         jp   pe,ov27
@@ -499,27 +526,7 @@ dn28:
         jr   nc,np29
         inc  d
 np29:
-        dec  b
-        jp   nz,mix_add_s0_lp
-        ret
-ov24:
-        jp   m,ov24_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn25
-ov24_hi:
-        ld   a,$7f
-        jp   dn25
-ov27:
-        jp   m,ov27_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn28
-ov27_hi:
-        ld   a,$7f
-        jp   dn28
-mix_add_s1:
-mix_add_s1_lp:
         ld   a,(de)             ; sample
-        sra  a
         add  a,(hl)
         jp   pe,ov30
 dn31:
@@ -534,6 +541,25 @@ dn31:
         jr   nc,np32
         inc  d
 np32:
+        dec  b
+        jp   nz,mix_add_s0_lp
+        ret
+ov27:
+        jp   m,ov27_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn28
+ov27_hi:
+        ld   a,$7f
+        jp   dn28
+ov30:
+        jp   m,ov30_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn31
+ov30_hi:
+        ld   a,$7f
+        jp   dn31
+mix_add_s1:
+mix_add_s1_lp:
         ld   a,(de)             ; sample
         sra  a
         add  a,(hl)
@@ -550,27 +576,7 @@ dn34:
         jr   nc,np35
         inc  d
 np35:
-        dec  b
-        jp   nz,mix_add_s1_lp
-        ret
-ov30:
-        jp   m,ov30_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn31
-ov30_hi:
-        ld   a,$7f
-        jp   dn31
-ov33:
-        jp   m,ov33_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn34
-ov33_hi:
-        ld   a,$7f
-        jp   dn34
-mix_add_s2:
-mix_add_s2_lp:
         ld   a,(de)             ; sample
-        sra  a
         sra  a
         add  a,(hl)
         jp   pe,ov36
@@ -586,6 +592,25 @@ dn37:
         jr   nc,np38
         inc  d
 np38:
+        dec  b
+        jp   nz,mix_add_s1_lp
+        ret
+ov33:
+        jp   m,ov33_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn34
+ov33_hi:
+        ld   a,$7f
+        jp   dn34
+ov36:
+        jp   m,ov36_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn37
+ov36_hi:
+        ld   a,$7f
+        jp   dn37
+mix_add_s2:
+mix_add_s2_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -603,27 +628,7 @@ dn40:
         jr   nc,np41
         inc  d
 np41:
-        dec  b
-        jp   nz,mix_add_s2_lp
-        ret
-ov36:
-        jp   m,ov36_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn37
-ov36_hi:
-        ld   a,$7f
-        jp   dn37
-ov39:
-        jp   m,ov39_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn40
-ov39_hi:
-        ld   a,$7f
-        jp   dn40
-mix_add_s3:
-mix_add_s3_lp:
         ld   a,(de)             ; sample
-        sra  a
         sra  a
         sra  a
         add  a,(hl)
@@ -640,6 +645,25 @@ dn43:
         jr   nc,np44
         inc  d
 np44:
+        dec  b
+        jp   nz,mix_add_s2_lp
+        ret
+ov39:
+        jp   m,ov39_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn40
+ov39_hi:
+        ld   a,$7f
+        jp   dn40
+ov42:
+        jp   m,ov42_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn43
+ov42_hi:
+        ld   a,$7f
+        jp   dn43
+mix_add_s3:
+mix_add_s3_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -658,27 +682,7 @@ dn46:
         jr   nc,np47
         inc  d
 np47:
-        dec  b
-        jp   nz,mix_add_s3_lp
-        ret
-ov42:
-        jp   m,ov42_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn43
-ov42_hi:
-        ld   a,$7f
-        jp   dn43
-ov45:
-        jp   m,ov45_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn46
-ov45_hi:
-        ld   a,$7f
-        jp   dn46
-mix_add_s4:
-mix_add_s4_lp:
         ld   a,(de)             ; sample
-        sra  a
         sra  a
         sra  a
         sra  a
@@ -696,6 +700,25 @@ dn49:
         jr   nc,np50
         inc  d
 np50:
+        dec  b
+        jp   nz,mix_add_s3_lp
+        ret
+ov45:
+        jp   m,ov45_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn46
+ov45_hi:
+        ld   a,$7f
+        jp   dn46
+ov48:
+        jp   m,ov48_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn49
+ov48_hi:
+        ld   a,$7f
+        jp   dn49
+mix_add_s4:
+mix_add_s4_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -715,27 +738,7 @@ dn52:
         jr   nc,np53
         inc  d
 np53:
-        dec  b
-        jp   nz,mix_add_s4_lp
-        ret
-ov48:
-        jp   m,ov48_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn49
-ov48_hi:
-        ld   a,$7f
-        jp   dn49
-ov51:
-        jp   m,ov51_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn52
-ov51_hi:
-        ld   a,$7f
-        jp   dn52
-mix_add_s5:
-mix_add_s5_lp:
         ld   a,(de)             ; sample
-        sra  a
         sra  a
         sra  a
         sra  a
@@ -754,6 +757,25 @@ dn55:
         jr   nc,np56
         inc  d
 np56:
+        dec  b
+        jp   nz,mix_add_s4_lp
+        ret
+ov51:
+        jp   m,ov51_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn52
+ov51_hi:
+        ld   a,$7f
+        jp   dn52
+ov54:
+        jp   m,ov54_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn55
+ov54_hi:
+        ld   a,$7f
+        jp   dn55
+mix_add_s5:
+mix_add_s5_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -774,27 +796,7 @@ dn58:
         jr   nc,np59
         inc  d
 np59:
-        dec  b
-        jp   nz,mix_add_s5_lp
-        ret
-ov54:
-        jp   m,ov54_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn55
-ov54_hi:
-        ld   a,$7f
-        jp   dn55
-ov57:
-        jp   m,ov57_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn58
-ov57_hi:
-        ld   a,$7f
-        jp   dn58
-mix_add_s6:
-mix_add_s6_lp:
         ld   a,(de)             ; sample
-        sra  a
         sra  a
         sra  a
         sra  a
@@ -814,6 +816,25 @@ dn61:
         jr   nc,np62
         inc  d
 np62:
+        dec  b
+        jp   nz,mix_add_s5_lp
+        ret
+ov57:
+        jp   m,ov57_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn58
+ov57_hi:
+        ld   a,$7f
+        jp   dn58
+ov60:
+        jp   m,ov60_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn61
+ov60_hi:
+        ld   a,$7f
+        jp   dn61
+mix_add_s6:
+mix_add_s6_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -835,27 +856,7 @@ dn64:
         jr   nc,np65
         inc  d
 np65:
-        dec  b
-        jp   nz,mix_add_s6_lp
-        ret
-ov60:
-        jp   m,ov60_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn61
-ov60_hi:
-        ld   a,$7f
-        jp   dn61
-ov63:
-        jp   m,ov63_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn64
-ov63_hi:
-        ld   a,$7f
-        jp   dn64
-mix_add_s7:
-mix_add_s7_lp:
         ld   a,(de)             ; sample
-        sra  a
         sra  a
         sra  a
         sra  a
@@ -876,6 +877,25 @@ dn67:
         jr   nc,np68
         inc  d
 np68:
+        dec  b
+        jp   nz,mix_add_s6_lp
+        ret
+ov63:
+        jp   m,ov63_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn64
+ov63_hi:
+        ld   a,$7f
+        jp   dn64
+ov66:
+        jp   m,ov66_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn67
+ov66_hi:
+        ld   a,$7f
+        jp   dn67
+mix_add_s7:
+mix_add_s7_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -898,26 +918,14 @@ dn70:
         jr   nc,np71
         inc  d
 np71:
-        dec  b
-        jp   nz,mix_add_s7_lp
-        ret
-ov66:
-        jp   m,ov66_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn67
-ov66_hi:
-        ld   a,$7f
-        jp   dn67
-ov69:
-        jp   m,ov69_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn70
-ov69_hi:
-        ld   a,$7f
-        jp   dn70
-mix_add1_s0:
-mix_add1_s0_lp:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        sra  a
         add  a,(hl)
         jp   pe,ov72
 dn73:
@@ -932,8 +940,16 @@ dn73:
         jr   nc,np74
         inc  d
 np74:
-        djnz mix_add1_s0_lp
+        dec  b
+        jp   nz,mix_add_s7_lp
         ret
+ov69:
+        jp   m,ov69_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn70
+ov69_hi:
+        ld   a,$7f
+        jp   dn70
 ov72:
         jp   m,ov72_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
@@ -941,13 +957,37 @@ ov72:
 ov72_hi:
         ld   a,$7f
         jp   dn73
-mix_add1_s1:
-mix_add1_s1_lp:
+mix_add_s8:
+mix_add_s8_lp:
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np75
+        inc  d
+np75:
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np76
+        inc  d
+np76:
+        dec  b
+        jp   nz,mix_add_s8_lp
+        ret
+mix_add1_s0:
+mix_add1_s0_lp:
         ld   a,(de)             ; sample
-        sra  a
         add  a,(hl)
-        jp   pe,ov75
-dn76:
+        jp   pe,ov77
+dn78:
         ld   (hl),a
         inc  l
         exx
@@ -956,26 +996,53 @@ dn76:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np77
+        jr   nc,np79
         inc  d
-np77:
+np79:
+        djnz mix_add1_s0_lp
+        ret
+ov77:
+        jp   m,ov77_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn78
+ov77_hi:
+        ld   a,$7f
+        jp   dn78
+mix_add1_s1:
+mix_add1_s1_lp:
+        ld   a,(de)             ; sample
+        sra  a
+        add  a,(hl)
+        jp   pe,ov80
+dn81:
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np82
+        inc  d
+np82:
         djnz mix_add1_s1_lp
         ret
-ov75:
-        jp   m,ov75_hi        ; overflow inverts the sign, so a negative
+ov80:
+        jp   m,ov80_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn76
-ov75_hi:
+        jp   dn81
+ov80_hi:
         ld   a,$7f
-        jp   dn76
+        jp   dn81
 mix_add1_s2:
 mix_add1_s2_lp:
         ld   a,(de)             ; sample
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov78
-dn79:
+        jp   pe,ov83
+dn84:
         ld   (hl),a
         inc  l
         exx
@@ -984,18 +1051,18 @@ dn79:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np80
+        jr   nc,np85
         inc  d
-np80:
+np85:
         djnz mix_add1_s2_lp
         ret
-ov78:
-        jp   m,ov78_hi        ; overflow inverts the sign, so a negative
+ov83:
+        jp   m,ov83_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn79
-ov78_hi:
+        jp   dn84
+ov83_hi:
         ld   a,$7f
-        jp   dn79
+        jp   dn84
 mix_add1_s3:
 mix_add1_s3_lp:
         ld   a,(de)             ; sample
@@ -1003,8 +1070,8 @@ mix_add1_s3_lp:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov81
-dn82:
+        jp   pe,ov86
+dn87:
         ld   (hl),a
         inc  l
         exx
@@ -1013,18 +1080,18 @@ dn82:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np83
+        jr   nc,np88
         inc  d
-np83:
+np88:
         djnz mix_add1_s3_lp
         ret
-ov81:
-        jp   m,ov81_hi        ; overflow inverts the sign, so a negative
+ov86:
+        jp   m,ov86_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn82
-ov81_hi:
+        jp   dn87
+ov86_hi:
         ld   a,$7f
-        jp   dn82
+        jp   dn87
 mix_add1_s4:
 mix_add1_s4_lp:
         ld   a,(de)             ; sample
@@ -1033,8 +1100,8 @@ mix_add1_s4_lp:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov84
-dn85:
+        jp   pe,ov89
+dn90:
         ld   (hl),a
         inc  l
         exx
@@ -1043,18 +1110,18 @@ dn85:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np86
+        jr   nc,np91
         inc  d
-np86:
+np91:
         djnz mix_add1_s4_lp
         ret
-ov84:
-        jp   m,ov84_hi        ; overflow inverts the sign, so a negative
+ov89:
+        jp   m,ov89_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn85
-ov84_hi:
+        jp   dn90
+ov89_hi:
         ld   a,$7f
-        jp   dn85
+        jp   dn90
 mix_add1_s5:
 mix_add1_s5_lp:
         ld   a,(de)             ; sample
@@ -1064,8 +1131,8 @@ mix_add1_s5_lp:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov87
-dn88:
+        jp   pe,ov92
+dn93:
         ld   (hl),a
         inc  l
         exx
@@ -1074,18 +1141,18 @@ dn88:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np89
+        jr   nc,np94
         inc  d
-np89:
+np94:
         djnz mix_add1_s5_lp
         ret
-ov87:
-        jp   m,ov87_hi        ; overflow inverts the sign, so a negative
+ov92:
+        jp   m,ov92_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn88
-ov87_hi:
+        jp   dn93
+ov92_hi:
         ld   a,$7f
-        jp   dn88
+        jp   dn93
 mix_add1_s6:
 mix_add1_s6_lp:
         ld   a,(de)             ; sample
@@ -1096,8 +1163,8 @@ mix_add1_s6_lp:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov90
-dn91:
+        jp   pe,ov95
+dn96:
         ld   (hl),a
         inc  l
         exx
@@ -1106,18 +1173,18 @@ dn91:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np92
+        jr   nc,np97
         inc  d
-np92:
+np97:
         djnz mix_add1_s6_lp
         ret
-ov90:
-        jp   m,ov90_hi        ; overflow inverts the sign, so a negative
+ov95:
+        jp   m,ov95_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn91
-ov90_hi:
+        jp   dn96
+ov95_hi:
         ld   a,$7f
-        jp   dn91
+        jp   dn96
 mix_add1_s7:
 mix_add1_s7_lp:
         ld   a,(de)             ; sample
@@ -1129,8 +1196,8 @@ mix_add1_s7_lp:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov93
-dn94:
+        jp   pe,ov98
+dn99:
         ld   (hl),a
         inc  l
         exx
@@ -1139,22 +1206,36 @@ dn94:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np95
+        jr   nc,np100
         inc  d
-np95:
+np100:
         djnz mix_add1_s7_lp
         ret
-ov93:
-        jp   m,ov93_hi        ; overflow inverts the sign, so a negative
+ov98:
+        jp   m,ov98_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn94
-ov93_hi:
+        jp   dn99
+ov98_hi:
         ld   a,$7f
-        jp   dn94
+        jp   dn99
+mix_add1_s8:
+mix_add1_s8_lp:
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np101
+        inc  d
+np101:
+        djnz mix_add1_s8_lp
+        ret
 mix_add_tab:
-        dw   mix_add_s0, mix_add_s1, mix_add_s2, mix_add_s3, mix_add_s4, mix_add_s5, mix_add_s6, mix_add_s7
+        dw   mix_add_s0, mix_add_s1, mix_add_s2, mix_add_s3, mix_add_s4, mix_add_s5, mix_add_s6, mix_add_s7, mix_add_s8
 mix_add1_tab:
-        dw   mix_add1_s0, mix_add1_s1, mix_add1_s2, mix_add1_s3, mix_add1_s4, mix_add1_s5, mix_add1_s6, mix_add1_s7
+        dw   mix_add1_s0, mix_add1_s1, mix_add1_s2, mix_add1_s3, mix_add1_s4, mix_add1_s5, mix_add1_s6, mix_add1_s7, mix_add1_s8
 R_ADD_END:
 R_OUT_BEG:
 ; The plane is signed (saturated at every add), so the output pass biases.

@@ -300,6 +300,47 @@ scenarios.push({
   ],
 });
 
+// The exact shape a real score produces (m3-pcm-softmix, voice 2): a loop
+// region a little longer than one frame's span, so the boundary lands at a
+// different point in every frame and the segment sizing has to converge.
+scenarios.push({
+  name: "loop region just over one frame's span",
+  why: "the segment bound shrinks toward the boundary; every frame ends mid-region",
+  frames: Array.from({ length: 20 }, (_, i) =>
+    i === 0
+      ? { pcm: [pcmStart(2, { flags: 3, shift: 1, bank: 0, ptr: 0x811a, left: 400, loopl: 300, tail: 112, incF: 0x0cbc, incI: 1 })] }
+      : {},
+  ),
+});
+
+// A retrigger: STOP and START for the same voice in ONE slot, with other
+// commands around them. This is what a real score does when a looped PCM note
+// is re-attacked, and it is the case that catches a handler which fails to
+// return the command cursor untouched — the earlier stop-only scenarios could
+// not, because nothing followed the STOP in their slot.
+scenarios.push({
+  name: "STOP and START in the same slot",
+  why: "every PCM handler must leave HL on the command cursor, or the rest of the slot is garbage",
+  frames: [
+    {
+      pcm: [
+        pcmStart(0, { flags: 1, shift: 0, bank: 1, ptr: WINDOW + 0x60, left: 4000, loopl: 0, tail: 0, incF: 0x4000, incI: 1 }),
+        pcmStart(2, { flags: 3, shift: 1, bank: 3, ptr: WINDOW + 0x300, left: 400, loopl: 300, tail: 112, incF: 0x2000, incI: 1 }),
+      ],
+    },
+    {}, {},
+    {
+      pcm: [
+        pcmStart(1, { flags: 1, shift: 2, bank: 2, ptr: WINDOW + 0x900, left: 3000, loopl: 0, tail: 0, incF: 0x8000, incI: 1 }),
+        pcmStop(2),
+        pcmStart(2, { flags: 3, shift: 1, bank: 4, ptr: WINDOW + 0x120, left: 500, loopl: 400, tail: 90, incF: 0x1000, incI: 1 }),
+        pcmVol(0, 3),
+      ],
+    },
+    {}, {}, {}, {},
+  ],
+});
+
 // ── Check ──────────────────────────────────────────────────────────────────
 let failures = 0;
 for (const sc of scenarios) {

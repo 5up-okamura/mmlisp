@@ -356,13 +356,15 @@ pc_stop:
         ret  z
         res  1,(ix+PV_FLAGS)    ; stop wrapping
         set  2,(ix+PV_FLAGS)    ; releasing
-        ld   e,(ix+PV_LEFT)     ; left += tail
-        ld   d,(ix+PV_LEFT+1)
-        ld   l,(ix+PV_TAIL)
-        ld   h,(ix+PV_TAIL+1)
-        add  hl,de
+        push hl                 ; HL is the COMMAND CURSOR — every handler must
+        ld   l,(ix+PV_LEFT)     ; return it untouched, or the rest of the slot's
+        ld   h,(ix+PV_LEFT+1)   ; commands are read from garbage
+        ld   e,(ix+PV_TAIL)
+        ld   d,(ix+PV_TAIL+1)
+        add  hl,de              ; left += tail
         ld   (ix+PV_LEFT),l
         ld   (ix+PV_LEFT+1),h
+        pop  hl
         ret
 
 ; PCM_VOL — voice, shift. Composed on the 68k from :vel + :vol + :master

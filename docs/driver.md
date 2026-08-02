@@ -703,6 +703,7 @@ computes nothing (§5.4).
 | Op | Name | Payload |
 | -- | ---- | ------- |
 | 0x01 | `PCM_START` | voice u8, flags u8, shift u8, ksh u8, bank u16, ptr u16, left u16, loop_len u16, tail u16, inc_frac u16, inc_int u8 — 17 B |
+| | | `shift` 0–7 is the attenuation; **8 means mute** — a real entry in the mixer's specialised-loop table, because `:vol 0` has to keep the voice advancing silently (§14) |
 | 0x02 | `PCM_STOP` | voice u8 — a looped voice starts its release tail; a shot is unaffected (it plays to its end) |
 | 0x03 | `PCM_VOL` | voice u8, shift u8 |
 | 0x04 | `PCM_LOOP` | voice u8, loop_len u16, left u16 — retarget a running voice's loop region |
@@ -944,10 +945,12 @@ The port milestones:
   including loop wrap, mid-frame voice end, ROM bank crossing, ring starvation)
   and `npm run slots` (a real score end to end — §12.3).
 
-  Remaining: **PCM commands from the sequencer side**, which is blocked on
-  re-basing `drv-player.js`'s mixer onto the settled 8-bit saturating-add
-  semantics (§5.3.1) — it still implements sum-then-saturate. That is an audio
-  change, so it re-freezes the PCM gate baselines and belongs in its own pass.
+  **PCM landed too, 2026-08-02.** `drv-player.js`'s mixer was re-based onto the
+  settled semantics — voice-outer over a frame-long plane, 8-bit
+  saturating-add, and the engine's countdown boundary rather than an
+  `idx >= len` test — so the two now share a structure instead of merely
+  agreeing on results. `npm run slots` checks the DAC stream sample for sample
+  across the PCM corpus: 52,685 writes on `m3-pcm-softmix`, all matching.
 - **P2 — the sequencer.** `drv-player.js` → portable C, gated against it on the
   host (§12.2). This is the bulk of the work and the least risky part of it:
   the spec is a complete, validated implementation in a portable language, which
@@ -1229,6 +1232,14 @@ bit 7) and the mixer releases it once every voice is done, so a score may use
 `fm6` and `pcmN` together: the chip mutes fm6 for exactly as long as the DAC is
 on, and fm6 sounds as FM in the gaps between PCM voices. The `m3-fm6-pcm` gate
 locks those enable/release edges around an fm6 key-on.
+
+**Post-split, `$2A` and `$2B` are the engine's and never cross the bus.** The
+sequencer could compute when a shot ends and send the `$2B` edges itself, but
+that would make both sides responsible for agreeing on the exact frame — a
+coupling worth not having, when voice activity is the one piece of state the
+Z80 already owns. So the slot never carries them, and the gate compares the
+engine's DAC traffic against the reference *mixer's*, separately from the
+power-on patch (which still writes both, for parity with `ir-player`).
 
 **Per-channel volume (`:vel` + `:vol` + `:master`).** `:vel` and `:vol` on a
 `pcmN` channel and the global `:master` all ride the FM/PSG velocity/fader ladder

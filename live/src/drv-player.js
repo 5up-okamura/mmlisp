@@ -152,7 +152,12 @@ function freshFmChannel() {
   };
 }
 
-import { SlotBuilder } from "./slot-builder.js";
+import {
+  SlotBuilder,
+  PCM_START,
+  PCM_STOP,
+  PCM_VOL,
+} from "./slot-builder.js";
 
 export class DrvPlayer {
   /**
@@ -174,6 +179,10 @@ export class DrvPlayer {
     // any time). Preserved across a hot-swap _reset.
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
+    this._pcmPlane = new Int8Array(PCM_MIX_RATE);
+    this._slotSink = null;       // set by captureSlotLog
+    this._pcmLog = null;         // mixer-produced $2A/$2B, set by captureSlotLog
+    this._sampleBankBase = 0;    // ROM bank the sample blob starts at
   }
 
   // ── Container loading ────────────────────────────────────────────────────
@@ -402,6 +411,12 @@ export class DrvPlayer {
       loopStart: 0,
       loopEnd: 0,
       loopLen: 0,
+      // Distance to the current boundary, in bytes, counted down — the same
+      // formulation the Z80 engine uses (driver.md §6.3). An absolute end
+      // index would have to be rebased every time a sample crossed a ROM bank;
+      // a countdown never does, and the two agree tick for tick.
+      left: 0,
+      tail: 0, // loop end → sample end, added to `left` when the release starts
       inc: 0,
       pos: 0,
       releasing: false,
@@ -538,6 +553,12 @@ export class DrvPlayer {
     this._ym(0, 0x27, 0); // CH3 normal mode, timers off
     this._ym(0, 0x2a, 0); // DAC data centred
     this._ym(0, 0x2b, 0); // DAC off
+    // These two stay in the neutral patch for parity with ir-player, but they
+    // do NOT cross the bus: post-split $2A and $2B belong to the mixer, which
+    // is the only thing that knows when a voice is sounding (driver.md §14).
+    // captureSlotLog keeps them out of the slot and records the mixer's own
+    // DAC traffic separately, in _pcmLog — so the engine and the reference can
+    // be compared on what the mixer produced, not on the power-on patch.
   }
 
   // ── Level composition (driver.md §7; integer end-to-end) ────────────────
@@ -1629,7 +1650,9 @@ export class DrvPlayer {
     // start (as _when does) would let a realtime consumer collapse them to the
     // last value — the waveform would come out as a click. The register trace is
     // unaffected: captureRegisterLog records the frame, not this timestamp.
-    this._writeCb(0, 0x2a, (storedByte ^ 0x80) & 0xff, this._whenTick(tick));
+    const byte = (storedByte ^ 0x80) & 0xff;
+    if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2a, data: byte });
+    this._writeCb(0, 0x2a, byte, this._whenTick(tick));
   }
 
   _whenTick(tick) {
@@ -1651,13 +1674,17 @@ export class DrvPlayer {
     v.loopStart = s.loopStart;
     v.loopEnd = s.hasLoop ? s.loopEnd : s.len;
     v.loopLen = v.loopEnd - v.loopStart;
+    v.left = v.loopEnd;                 // to the loop end, or the sample end
+    v.tail = s.len - v.loopEnd;         // what a release still has to play
     v.inc = pcmTickIncrement(s.baseRate, note); // 16.16 samples/mix-tick
     v.pos = 0;
     v.releasing = false;
-    if (!this._pcmDacOn) {
-      this._pcmDacOn = true;
-      this._ym(0, 0x2b, 0x80); // DAC enable (fm6 → DAC)
-    }
+    // $2B (DAC enable) is the ENGINE's, not the sequencer's: it is a
+    // consequence of voice activity, which is the one piece of state the Z80
+    // owns. Claiming it here instead would need the two sides to agree on the
+    // exact frame a shot ends, which is a coupling worth not having. Both
+    // sides now do it in the mix step (see _pcmFrame).
+    this._emitPcmStart(vi, v);
   }
 
   _pcmNoteOff(channelId) {
@@ -1666,7 +1693,10 @@ export class DrvPlayer {
     const vi = channelId - 20;
     if (vi < 0 || vi > 2) return;
     const v = this._pcmVoices[vi];
-    if (v.active && v.hasLoop) v.releasing = true;
+    if (!v.active || !v.hasLoop) return;
+    v.releasing = true;
+    v.left += v.tail; // the boundary moves from the loop end to the sample end
+    this._pcmCmd([PCM_STOP, vi]);
   }
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
@@ -1973,46 +2003,104 @@ export class DrvPlayer {
     const n = 15 - v.vel + (31 - v.vol) + (31 - this._master);
     const shift = Math.floor((n + 1) / 3); // round(n/3)
     v.shift = shift > 7 ? 7 : shift;
+    const byte = this._pcmShiftByte(v);
+    if (v.active && byte !== v._sentShift) {
+      v._sentShift = byte;
+      this._pcmCmd([PCM_VOL, vi, byte]);
+    }
   }
 
+  // ── PCM command emission (driver.md §6.3) ────────────────────────────────
+  // Every field is resolved HERE, on the sequencer side: the engine receives
+  // register-ready values and does no per-note arithmetic at all.
+  _pcmCmd(bytes) {
+    if (this._slotSink) this._slotSink.pcm(bytes);
+  }
+  _emitPcmStart(vi, v) {
+    if (!this._slotSink) return;
+    const u16 = (x) => [x & 0xff, (x >> 8) & 0xff];
+    const abs = this._sampleBankBase * 0x8000 + v.base;
+    const incI = (v.inc >>> 16) & 0xff;
+    this._pcmCmd([
+      PCM_START,
+      vi,
+      1 | (v.hasLoop ? 2 : 0),
+      this._pcmShiftByte(v),
+      // 2^ksh >= the largest advance one tick can make, so the engine bounds a
+      // segment with a shift instead of a division (driver.md §6.3).
+      Math.ceil(Math.log2(incI + 1)),
+      ...u16(abs >> 15),                 // ROM bank
+      ...u16(0x8000 + (abs & 0x7fff)),   // window address
+      ...u16(v.left),
+      ...u16(v.loopLen),
+      ...u16(v.tail),
+      ...u16(v.inc & 0xffff),
+      incI,
+    ]);
+    v._sentShift = this._pcmShiftByte(v);
+  }
+  // MUTE_SHIFT (8) is a real table entry in the mixer: a muted voice keeps
+  // advancing and contributes nothing, matching FM where a note continues
+  // silently under a 0 fader (driver.md §14).
+  _pcmShiftByte(v) {
+    return v.muted ? 8 : v.shift;
+  }
+
+  // ── The mixer (driver.md §5.3) ───────────────────────────────────────────
+  // Voice-outer over a frame-long plane, 8-bit saturating-add: the first active
+  // voice STORES (which is what removes the buffer clear) and the rest add with
+  // a clamp at every add. This mirrors the engine's structure exactly rather
+  // than merely agreeing with it — including where the DAC is claimed and
+  // released, and the countdown boundary — so the two cannot drift.
   _pcmFrame() {
     const voices = this._pcmVoices;
-    if (!voices[0].active && !voices[1].active && !voices[2].active) return;
+    if (!voices[0].active && !voices[1].active && !voices[2].active) {
+      if (this._pcmDacOn) {
+        this._pcmDacOn = false;
+        if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2b, data: 0 });
+        this._ym(0, 0x2b, 0x00); // release fm6 back to FM
+      }
+      return;
+    }
+    if (!this._pcmDacOn) {
+      this._pcmDacOn = true;
+      if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2b, data: 0x80 });
+      this._ym(0, 0x2b, 0x80); // DAC enable (fm6 → DAC)
+    }
     const data = this._song.sampleData;
-    for (let t = 0; t < PCM_MIX_RATE; t++) {
-      let acc = 0;
-      for (let vi = 0; vi < 3; vi++) {
-        const v = voices[vi];
-        if (!v.active) continue;
-        const idx = v.pos >>> 16;
-        if (!(v.hasLoop && !v.releasing) && idx >= v.len) {
-          // shot / releasing tail reached the sample end
-          v.active = false;
-          continue;
+    const plane = this._pcmPlane;
+    let storing = true;
+    for (const v of voices) {
+      if (!v.active) continue;
+      let t = 0;
+      for (; t < PCM_MIX_RATE && v.active; t++) {
+        const s = v.muted ? 0 : i8(data[v.base + (v.pos >>> 16)]) >> v.shift;
+        if (storing) plane[t] = s;
+        else {
+          const a = plane[t] + s;
+          plane[t] = a > 127 ? 127 : a < -128 ? -128 : a;
         }
-        // muted (vol/master 0) contributes silence but the voice still advances,
-        // matching FM where the note continues under a 0 fader.
-        if (!v.muted) acc += i8(data[v.base + idx]) >> v.shift;
+        const before = v.pos >>> 16;
         v.pos = (v.pos + v.inc) >>> 0;
-        if (v.hasLoop && !v.releasing) {
-          // keep the accumulator inside the loop region (bounds pos too)
-          while (v.pos >>> 16 >= v.loopEnd)
+        v.left -= (v.pos >>> 16) - before;
+        if (v.left <= 0) {
+          if (v.hasLoop && !v.releasing) {
             v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
+            v.left = v.loopLen;
+          } else {
+            v.active = false;
+          }
         }
       }
-      // hard-saturate the summed voices to int8, then to the DAC
-      acc = acc > 127 ? 127 : acc < -128 ? -128 : acc;
-      this._dacByte(acc, t);
+      // The storing voice ended part-way through: nothing wrote the rest of
+      // the plane, so it has to be silenced rather than repeat last frame.
+      if (storing) {
+        for (; t < PCM_MIX_RATE; t++) plane[t] = 0;
+        storing = false;
+      }
     }
-    if (
-      !voices[0].active &&
-      !voices[1].active &&
-      !voices[2].active &&
-      this._pcmDacOn
-    ) {
-      this._pcmDacOn = false;
-      this._ym(0, 0x2b, 0x00); // release fm6 back to FM
-    }
+    if (storing) plane.fill(0); // every active voice ended at tick 0
+    for (let t = 0; t < PCM_MIX_RATE; t++) this._dacByte(plane[t], t);
   }
 
   // Logical current value of a target, for PARAM_ADD read-modify-write.
@@ -2231,8 +2319,15 @@ export class DrvPlayer {
     const slots = [];
     const writes = [];
     const saved = this._writeCb;
+    const savedSink = this._slotSink;
+    this._slotSink = b;
+    const pcmLog = [];
+    this._pcmLog = pcmLog;
     this._writeCb = (port, addr, data) => {
       writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
+      // $2A (the DAC feed) and $2B (its enable) never cross the bus: the mixer
+      // produces one and owns the other. Everything else is the slot.
+      if (port === 0 && (addr === 0x2a || addr === 0x2b)) return;
       b.write(port, addr, data);
     };
     const cmdByFrame = new Map();
@@ -2260,12 +2355,15 @@ export class DrvPlayer {
         writes,
         frames,
         ended: this._done(),
+        pcmLog,
         spillPeak: b.spillPeak,
         spillFrames: b.spillFrames,
         diagnostics: this._diagnostics.slice(),
       };
     } finally {
       this._writeCb = saved;
+      this._slotSink = savedSink;
+      this._pcmLog = null;
     }
   }
 

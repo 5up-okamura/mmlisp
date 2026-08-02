@@ -75,10 +75,22 @@ Everything runs on plain node — no external assembler or emulator binaries:
 
 ```
 cd drv
-npm run selftest    # assembler/emulator self-tests
-npm run verify      # ab-core.mmlisp: the M1 acceptance gate
-node tools/verify.mjs tests/stress-m1.mmlisp --frames 1800
-node tools/verify.mjs tests/stress-m2skip.mmlisp --frames 1200
+npm run verify:all   # selftest + the post-split gates + the ir↔drv A/B
+```
+
+> **The all-Z80 trace gate is retired** (it survives as `npm run legacy:verify`
+> and friends, and no longer passes). `drv-player.js` is the port spec, and it
+> now specifies the *post-split* architecture: 8-bit saturating-add PCM
+> (driver.md §5.3.1) and DAC registers owned by the engine. The superseded
+> all-Z80 driver implements neither, so the two diverge by construction. Keeping
+> that gate green would have meant freezing the reference, which is exactly what
+> the port cannot do.
+
+The historical description of that gate follows, since the mechanism (assemble,
+emulate, raw-diff traces) is what the P0/P1 gates reuse:
+
+```
+npm run legacy:verify    # ab-core.mmlisp against the all-Z80 driver — now diverges
 ```
 
 `verify` recompiles the score, regenerates `tables.z80`, assembles the

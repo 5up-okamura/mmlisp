@@ -131,16 +131,34 @@ pass solved that; the binding constraint is *cycles*.
   steady state, on scores from 395 to 1801 writes — i.e. the armed-frame burst
   driver.md §4.2 predicted, and nothing else.
 
-  **REMAINING for P1: PCM commands from the sequencer side.** Blocked on
-  re-basing `drv-player.js`'s `_pcmFrame` from sum-then-saturate onto the
-  settled 8-bit saturating-add semantics, and onto the engine's countdown
-  boundary formulation (`LEFT`, checked after the advance) rather than its
-  current `idx >= len` check before the fetch — the two agree on which samples
-  play but can disagree by a frame on when a voice deactivates, which moves the
-  `$2B` DAC-release write. Also still missing: **shift index 8 = mute** in the
-  generated mixer (a body that advances the position and contributes nothing),
-  for `:vol 0` / `:master 0`, where the voice must keep advancing silently.
-  This is an audio change, so it re-freezes the PCM gate baselines.
+  **PCM DONE too (2026-08-02).** `drv-player._pcmFrame` re-based onto the
+  engine's structure (voice-outer plane, 8-bit saturating-add, `LEFT` countdown
+  checked after the advance); `MUTE_SHIFT = 8` added to the generated mixer for
+  `:vol 0`; PCM_START/STOP/VOL emitted from the sequencer side with every field
+  resolved there. `npm run slots` compares the DAC stream sample for sample
+  across the PCM corpus (52,685 writes on m3-pcm-softmix, all matching).
+
+  **The bug worth remembering:** `pc_stop` computed `left += tail` in HL — which
+  is the *command cursor*. A STOP alone was fine, so four gate scenarios missed
+  it; a real score retriggers a looped note with STOP+START in ONE slot, and
+  everything after the STOP was then read from garbage. Rule: **every PCM
+  handler must return HL untouched.** Gate scenario "STOP and START in the same
+  slot" now covers it.
+
+  **$2A/$2B ownership.** Both are the engine's and never enter a slot. The
+  sequencer *could* predict the `$2B` edges (it knows when a shot ends) but then
+  both sides would have to agree on the exact frame — a coupling worth avoiding
+  when voice activity is the one piece of state the Z80 already owns. The
+  neutral patch still writes them for ir-player parity (removing them cost
+  ab-core its 0-diff property, which is worth more), and `DrvPlayer._pcmLog`
+  records mixer-produced DAC traffic separately so the gate compares like with
+  like.
+
+  **The all-Z80 trace gate is retired** (`legacy:verify*`, no longer passing):
+  drv-player now specifies the post-split architecture and the old driver
+  implements neither its PCM semantics nor its DAC ownership. `verify:all` is
+  now selftest + the P0/P1 gates + the ir↔drv A/B. ab-baseline re-frozen: still
+  **18 clean of 40**, with the PCM scores' signatures changed by design.
 - **P2 sequencer** — `drv-player.js` → portable C, host-gated against it.
 - **P3 integration** — SGDK glue, hardware bring-up.
 
