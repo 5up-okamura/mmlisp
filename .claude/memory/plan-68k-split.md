@@ -309,6 +309,99 @@ lands in the ring's fill level and never in the tempo.
 8. **Raising the mix rate** (10.5 → up to 10.9/11.3 kHz, §5.3.1) — deliberately
    parked until hardware measurement gives a reason.
 
+## The DAC feed is BURST, not paced — the open hardware bug (2026-08-03)
+
+**Measured three ways and confirmed on a real BlastEm VGM log of the reporter's
+own ROM.** `out_pass` in the generated mixer dumps all 175 samples in one tight
+`djnz` loop:
+
+- emulator: span 7,134 cyc = 1,993 us = **12% of the frame**, gap 41 cyc,
+  effective **87 kHz** against an intended 10.5, then 6 ms holding one value.
+- BlastEm VGM: 175 writes in **94 of 735 samples = 13% of the frame**, every
+  frame, 3,788 frames of it.
+
+So every PCM sample plays ~8x too fast in a 2 ms burst, 60 times a second. This
+is the "sub-frame feed timing is a hardware bring-up item" note in mmb.js and
+driver.md coming due. **The gates cannot see it**: they compare sample VALUES,
+never their timing — which is why it survived every zero-tolerance gate and cost
+three bring-up rounds.
+
+**The structural cause is P0's voice-outer decision.** Paced output needs
+175 x 341 = 59,675 cyc ~ the whole frame, so output and mixing must overlap; but
+voice-outer only finalises a sample after the LAST voice adds to it, so output
+can only happen at the end. P0 chose voice-outer on mixing cost alone and never
+considered output pacing — that is the actual oversight, not an implementation
+slip. Correct pacing needs the emit interleaved into the mix at a small
+granularity (re-entering mix_seg with a small B, paying the register-file reload
+more often) and padded to a constant tick period. `npm run mixer` is the tool
+for pricing it; 10.5 kHz may have to come down.
+
+**Everything else about the timing is exact**, so this is the only bug left:
+
+- engine frame period from the VGM: mean **735.32 samples = 59.974 Hz**, i.e.
+  every interrupt taken.
+- ring starvation: **1 single-frame hole in 3,834 DAC-active frames**.
+- note onsets land on exact frame multiples (inter-onset intervals cluster at
+  7.00 / 8.00 / 15.00 frames).
+
+So the reported "tempo wobbles" is NOT the sequencer, the transport or the ring
+— it is the burst, heard on a rhythm the PCM carries. One fix, two symptoms.
+
+### The fix, costed (2026-08-03) — designed, not yet built
+
+Arithmetic first, because it rules out the obvious approaches:
+
+- Paced output needs `R x frame/R` = the whole frame, so output and mixing MUST
+  overlap. Any "mix then emit" or "emit then mix" ordering is dead on arrival.
+- Per output sample the budget is 341 cyc; 3 voices of mixing is 261 and the
+  emit ~30. **291 fits.** The total was never the problem.
+- What does not fit is SAMPLE-OUTER (emit + all voices per tick): switching the
+  register file three times per tick costs several hundred cycles. That is
+  exactly what voice-outer buys, and why P0 chose it.
+
+So: keep voice-outer, interleave the emit at a **chunk** granularity. Split each
+voice's R ticks into chunks of ~8 and emit the proportional number of samples
+between chunks. Voice switches drop from 525/frame to ~66, so the register-file
+reload costs ~6.6k cyc, and the emit jitter is one chunk ≈ 0.2 ms — inaudible,
+and nothing like an 87% gap.
+
+Two things this needs:
+
+1. **Double-buffer the plane** (MIXHI is already reserved and free). A sample is
+   only final after the last voice adds to it, so the frame being emitted has to
+   be the one mixed last frame. Costs one frame of latency, and `drv-player.js`
+   has to model that delay or the gates stop meaning anything.
+2. **Always run 3 voice passes**, muting the inactive ones. Otherwise the mix
+   duration tracks the voice count (30% of the frame at 1 voice) and the emits
+   bunch into it again. The wasted cycles are ones the Z80 would idle away, so
+   this is close to free — revisit only if the cycle budget ever bites.
+
+Touches: `gen-mixer.mjs` (the generator owns the loops), `engine.z80` (pass
+structure, plane swap), `drv-player.js` (the frame of latency), and every gate
+baseline. `npm run dac` is the regression test and fails today by design.
+
+## Per-note timing: what 60 Hz costs (reported 2026-08-03, deferred behind PCM)
+
+Reported as "notes speed up and slow down". Measured on the reporter's song —
+`TEMPO_SET increment 874` = 3.4141 ticks/frame = **128.03 BPM**, PPQN 96:
+
+| value | frames | lands on |
+| --- | --- | --- |
+| 1/4 | 28.119 | 28 or 29 (12% long) |
+| 1/8 | 14.059 | 14 or 15 (6% long) |
+| 1/16 | **7.030** | 7 or 8 (**3% long**) |
+| 1/8 triplet | **9.373** | 9 or 10 (**37% long**) |
+
+The 8.8 accumulator distributes this optimally (Bresenham), so it is the 60 Hz
+grid, not a driver bug — but a note that is 14% long 3% of the time is still
+audible in a fast passage, and triplets are far worse at this tempo.
+
+**Not investigated further yet, deliberately**: the DAC burst mangles the attack
+timing of every PCM hit, and rhythm is perceived from attacks, so most of what
+is being heard is probably that. Re-listen after the pacing fix before chasing
+this. If it survives: separate triplets (37%) from 16ths (3%) in a VGM log, and
+consider nudging the tempo so 1/16 lands on a frame boundary.
+
 ## Fixed limits (expectation-setting, unchanged by the split)
 
 8-bit DAC, nearest-neighbour only (interpolation needs a multiply per sample),
