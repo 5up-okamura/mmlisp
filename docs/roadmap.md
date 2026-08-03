@@ -95,8 +95,8 @@ Order of work:
    **M2a** = sweep engine (PARAM_SWEEP/STOP), PARAM_ADD, TEMPO_SWEEP with a
    single-sourced integer curve model (`mmb.js` `curveUnit8`). **M2b** =
    cent-interpolated NOTE_PITCH (glide/vibrato/detune). **M2 CSM** = FM3 CSM
-   mode. **M2 PCM** = single-channel DAC (shot/loop), frame-quantized (the
-   sub-frame feed timing is a hardware concern). **M2 mailbox** = KEY_OFF /
+   mode. **M2 PCM** = single-channel DAC (shot/loop), frame-quantized (sub-frame
+   feed timing: driver.md §5.1, fixed 2026-08-03). **M2 mailbox** = KEY_OFF /
    SET_PARAM / FADE_TRACK (host-driven; a sidecar cmd schedule is injected
    into both players). The shadow's valid plane is now a bitmap (fit 8 KB).
    Deviations in `drv/README.md`. **M3 binary formats frozen** (2026-07-07): the

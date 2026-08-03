@@ -29,22 +29,31 @@ RING_DEPTH  equ 2               ; slots of lookahead; a per-game knob (§3.4)
 SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
 SLOT_SHIFT  equ 8               ; log2(SLOT_SIZE); published for the 68k
 PCM_VOICES  equ 3
+MVF_TAIL    equ 16              ; bound below which a region's tail is counted
+MVF_MAX     equ 32              ; ticks one such count will walk
 
 ; ── RAM map (driver.md §5.2) ───────────────────────────────────────────────
 ; The engine is small enough that the 8 KB stops being a design input: no
 ; overlays, no shadow file, no LUTs, no TCB, no channel state.
 ;
 ;   $0000..$0FFF  code                        4 KB
-;   $1000..$10FF  mix buffer plane            (i8sat uses one plane)
-;   $1100..$11FF  reserved: second plane for the i16 variant
+;   $1000..$10FF  mix buffer plane A
+;   $1100..$11FF  mix buffer plane B
 ;   $1200..$125F  PCM voice state             3 × 32 B
-;   $1260..$12FF  engine scratch
+;   $1260..$12FF  engine scratch (idle voice struct at $1280)
 ;   $1300..$133F  published header            68k-visible
 ;   $1400..$15FF  slot ring                   RING_DEPTH × 256
 ;   ..$1EFF       free (~2.5 KB)
 ;   $1F00         stack top
+;
+; The two planes are the pacing fix (§5.1): a sample is only final once the LAST
+; voice has added to it, so a paced feed — which occupies the whole frame — can
+; only be feeding the plane the PREVIOUS frame finished. One frame of PCM
+; latency is what that costs. Both are page-aligned, and they differ in exactly
+; one bit of the high byte, so swapping them is an `xor`.
 MIXLO       equ $1000
 MIXHI       equ $1100
+MIX_SWAP    equ (MIXLO>>8)^(MIXHI>>8)
 G_PCMV      equ $1200
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
@@ -65,9 +74,9 @@ PV_TAIL     equ 16              ; u16 bytes from loop end to sample end
 
 ; Engine scratch
 G_BASE      equ $1260
-G_ANY       equ G_BASE+$00      ; u8  1 = at least one voice was active this frame
+G_ACT       equ G_BASE+$00      ; u8  1 = a voice was sounding at frame start
 G_DACON     equ G_BASE+$01      ; u8  1 = $2B DAC enable is currently set
-G_FIRST     equ G_BASE+$02      ; u8  0 until the storing voice has been chosen
+G_PEND      equ G_BASE+$02      ; u8  1 = the mixed plane still owes a frame of feed
 G_TICKS     equ G_BASE+$03      ; u8  ticks left in this voice's pass
 G_IDX       equ G_BASE+$04      ; u8  buffer tick index
 G_AVAIL     equ G_BASE+$05      ; u16 bytes safely consumable in this segment
@@ -75,14 +84,31 @@ G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
 G_SLOT      equ G_BASE+$09      ; u16 slot cursor
 G_VPTR      equ G_BASE+$0b      ; u16 current voice struct
 G_TMP       equ G_BASE+$0d      ; u16 scratch
-G_STORE     equ G_BASE+$0f      ; u8  0 = this voice stores into the plane
+G_STORE     equ G_BASE+$0f      ; u8  0 = this pass stores into the plane
 ; Handed to the generated mixer core (tools/gen-mixer.mjs)
-G_SEG_N     equ G_BASE+$10      ; u8  ticks in the current segment
+G_SEG_N     equ G_BASE+$10      ; u8  unrolled iterations in the current segment
 G_SEG_L     equ G_BASE+$11      ; u8  accumulate flag
 G_SEG_I     equ G_BASE+$12      ; u8  buffer index
 G_SEG_R     equ G_BASE+$13      ; u8  remainder ticks
-G_BIASLO    equ G_BASE+$14      ; u8  (i16 variant only)
-G_BIASHI    equ G_BASE+$15
+G_MIXP      equ G_BASE+$14      ; u8  high byte of the plane being MIXED
+; The pacing loop (§5.1): what the pad holds a tick to, and the three
+; measurements the frame's debt is estimated from.
+G_PAD       equ G_BASE+$15      ; u8  pad for the current segment, in 16-cycle units
+G_NSEG      equ G_BASE+$16      ; u8  segments run so far this frame
+G_NSEGL     equ G_BASE+$17      ; u8  segments the last frame ran
+G_NWR       equ G_BASE+$18      ; u8  chip writes this frame's slot carried
+G_DEBT      equ G_BASE+$19      ; u8  pad units the frame's overhead costs
+G_ACTM      equ G_BASE+$1a      ; u8  which voices were sounding at frame start
+G_BIASLO    equ G_BASE+$1b      ; u8  (i16 variant only)
+G_BIASHI    equ G_BASE+$1c
+
+; A voice struct that is permanently silent. Every frame runs PCM_PASSES passes
+; whether or not there are voices to fill them — the feed's cadence is one sample
+; per PCM_PASSES ticks, so a missing pass would bunch the samples up — and this
+; is what an absent or finished voice runs instead. PV_SHIFT = PCM_MUTE_SH, so
+; the mute loops store silence (as the first pass) or add nothing (as a later
+; one), and no real voice state is touched.
+G_IDLEV     equ $1280
 
 ; ── Published header (driver.md §6.4) ──────────────────────────────────────
 ; The only Z80 addresses the 68000 needs to know, and the only ones that must
@@ -127,7 +153,9 @@ int_handler:
         push de
         push hl
         push ix
+        push iy                 ; the mixer's feed cursor (§5.1)
         call frame_step
+        pop  iy
         pop  ix
         pop  hl
         pop  de
@@ -168,6 +196,12 @@ start:
         ld   (H_RING),hl
         ld   hl,0
         ld   (H_STARVE),hl
+        ; PCM: plane A is mixed first (B is fed, and starts silent), and the
+        ; idle voice is silent forever.
+        ld   a,MIXLO>>8
+        ld   (G_MIXP),a
+        ld   a,PCM_IDLE_SH
+        ld   (G_IDLEV+PV_SHIFT),a
         ld   a,READY_MARK
         ld   (H_READY),a
         ei
@@ -198,6 +232,8 @@ frame_step:
 ; hold where they are and the mixer keeps running (no PCM gap).
 ; ===========================================================================
 consume_slot:
+        xor  a
+        ld   (G_NWR),a          ; the PCM feed pays for this loop out of its pad
         ld   a,(H_TAIL)
         ld   c,a
         ld   a,(H_HEAD)
@@ -220,6 +256,7 @@ cs_have:
         ld   b,(hl)
         inc  hl
         ld   a,b
+        call cs_count
         or   a
         jr   z,cs_fm0
 cs_psg:
@@ -232,6 +269,7 @@ cs_fm0:
         ld   b,(hl)
         inc  hl
         ld   a,b
+        call cs_count
         or   a
         jr   z,cs_fm1
 cs_p0:
@@ -249,6 +287,7 @@ cs_fm1:
         ld   b,(hl)
         inc  hl
         ld   a,b
+        call cs_count
         or   a
         jr   z,cs_pcm
 cs_p1:
@@ -282,6 +321,23 @@ cs_done:
         xor  a
 cs_store:
         ld   (H_TAIL),a
+        ret
+
+; cs_count: add A writes to this frame's tally, saturating. The PCM feed pays
+; for the consume loop out of its own pad (§5.1), and a slot carrying a patch
+; dump costs several times what a steady-state one does — enough that guessing
+; is worth replacing with counting. A is preserved.
+cs_count:
+        push af
+        push hl
+        ld   hl,G_NWR
+        add  a,(hl)
+        jr   nc,csc_st
+        ld   a,255
+csc_st:
+        ld   (hl),a
+        pop  hl
+        pop  af
         ret
 
 ; ym_busy0: poll the status byte until BUSY (bit 7) clears. The DAC data
@@ -435,10 +491,19 @@ rd16:
 ; ===========================================================================
 ; PCM (driver.md §5.3, §5.4)
 ; ===========================================================================
+; One frame: feed the plane the last frame finished, mixing this frame's into
+; the other one as it goes. The feed is INSIDE the mix loops (§5.1) — one $2A
+; write every PCM_PASSES ticks — so the frame's PCM_MIX_R samples come out
+; spread across the frame instead of in a burst at the end of it.
 process_pcm:
         call pcm_any_active
+        ld   (G_ACT),a          ; 1 = a voice was sounding at frame start
+        or   a
         jr   nz,pp_run
-        ; nothing sounding: release the DAC once, then stay quiet
+        ld   a,(G_PEND)
+        or   a
+        jr   nz,pp_run          ; silent now, but a frame of feed is still owed
+        ; nothing sounding and nothing owed: release the DAC once, stay quiet
         ld   a,(G_DACON)
         or   a
         ret  z
@@ -451,39 +516,191 @@ process_pcm:
 pp_run:
         ld   a,(G_DACON)
         or   a
-        jr   nz,pp_mix
+        jr   nz,pp_feed
         ld   a,1
         ld   (G_DACON),a
         ld   b,$80
         ld   c,$2b              ; DAC enable — claimed, not owned (§14)
         call ym_write0
+        ; The plane this frame feeds has not been mixed for it, so a burst opens
+        ; with a frame of silence. Nothing has to clear it: boot zeroes both
+        ; planes, and the flush frame that ended the last burst (below) mixed
+        ; silence into this one on its way out.
 
-pp_mix:
+pp_feed:
+        ; The pad holds each tick to the true period, so it also has to give
+        ; back everything the frame spends OUTSIDE the loops — mostly
+        ; per-segment register-file traffic, ~13k cycles a frame, which would
+        ; otherwise end the frame 20% late.
+        ;
+        ; How many segments THIS frame will run is not knowable yet, so it
+        ; starts from the last frame's count and ms_set_pad raises it as this
+        ; one turns out heavier. That estimate is why the silent passes run
+        ; LAST (above): they hold nearly all of the pad, and by the time they
+        ; run the count is measured rather than guessed.
+        ld   hl,G_NSEG
+        ld   a,(hl)
+        ld   (hl),0
+        ld   (G_NSEGL),a
+        call pcm_debt           ; -> G_DEBT, the pad units this frame owes
+
+        ld   a,$2a
+        ld   (YM_ADDR0),a       ; latched once a frame; the feed writes blind
+        call feed_plane
+        push hl
+        pop  iy                 ; IY = the feed cursor, for the whole frame
+
+        ; Which voices are sounding, taken now: a voice can end DURING its pass,
+        ; and the count of passes is what the feed's cadence rests on.
+        ld   a,(G_PCMV+0*PCM_V_SIZE+PV_FLAGS)
+        and  1
+        ld   c,a
+        ld   a,(G_PCMV+1*PCM_V_SIZE+PV_FLAGS)
+        and  1
+        add  a,a
+        or   c
+        ld   c,a
+        ld   a,(G_PCMV+2*PCM_V_SIZE+PV_FLAGS)
+        and  1
+        add  a,a
+        add  a,a
+        or   c
+        ld   (G_ACTM),a
+
         xor  a
-        ld   (G_FIRST),a        ; no storing voice chosen yet
-        ld   ix,G_PCMV
-        ld   b,PCM_VOICES
-pp_voice:
-        push bc
-        push ix
-        bit  0,(ix+PV_FLAGS)
-        call nz,mix_voice_frame
-        pop  ix
-        ld   de,PCM_V_SIZE
-        add  ix,de
-        pop  bc
-        djnz pp_voice
+        ld   (G_STORE),a        ; the first pass stores, which removes the clear
 
-        ; Every active voice ended at tick 0, so nothing stored: the plane
-        ; still holds last frame's samples. Silence it rather than repeat them.
-        ld   a,(G_FIRST)
+        ; The sounding voices go first and the silent passes after them, because
+        ; the silent ones hold nearly all of the frame's pad — and by the time
+        ; they run, the frame's real cost (its segment count) is known rather
+        ; than estimated. Order does not change the mix: a silent pass adds
+        ; nothing, and the sounding voices keep their own order, which is what
+        ; the saturating add depends on.
+        ld   c,0
+pp_act:
+        call pp_voice_at
+        jr   nz,pp_act_run
+        jr   pp_act_next
+pp_act_run:
+        push bc                 ; the mixer owns BC for its register file
+        call mix_voice_frame
+        pop  bc
+        ld   a,1
+        ld   (G_STORE),a        ; every pass after the first accumulates
+pp_act_next:
+        inc  c
+        ld   a,c
+        cp   PCM_VOICES
+        jr   c,pp_act
+
+        ld   c,0
+pp_idle:
+        call pp_voice_at
+        jr   z,pp_idle_run
+        jr   pp_idle_next
+pp_idle_run:
+        ld   ix,G_IDLEV
+        push bc
+        call mix_voice_frame
+        pop  bc
+        ld   a,1
+        ld   (G_STORE),a
+pp_idle_next:
+        inc  c
+        ld   a,c
+        cp   PCM_VOICES
+        jr   c,pp_idle
+
+        ; Samples the interleave could not reach: a segment shorter than the
+        ; cadence leaves its ticks to the single-tick loop, and PCM_MIX_R is not
+        ; a multiple of PCM_PASSES. Normally one sample, at the frame's end.
+        push iy
+        pop  hl
+        ld   a,PCM_MIX_R
+        sub  l                  ; the plane is page-aligned, so L is the index
+        ld   b,a
+        call flush_rest
+
+        ; This frame's mix is next frame's feed.
+        ld   a,(G_MIXP)
+        xor  MIX_SWAP
+        ld   (G_MIXP),a
+        ld   a,(G_ACT)
+        ld   (G_PEND),a
         or   a
-        jr   nz,pp_out
-        ld   hl,MIXLO
-        ld   b,PCM_MIX_R
-        call fill_silence
-pp_out:
-        jp   out_pass
+        ret  nz
+        ; The tail is out and nothing is sounding: release the DAC (§14).
+        xor  a
+        ld   (G_DACON),a
+        ld   b,0
+        ld   c,$2b
+        jp   ym_write0
+
+; pcm_debt: G_DEBT = pad units this frame owes for what it spends OUTSIDE the
+; paced loops — mixer segments, and the slot's own chip writes. The pad gives
+; those cycles back (§5.1); what it cannot give back, the frame runs late by.
+pcm_debt:
+        push bc                 ; the mixer's register file is live across this
+        ld   hl,G_NSEG
+        ld   a,(G_NSEGL)
+        cp   (hl)
+        jr   nc,pd_est          ; the last frame's count still stands
+        ld   a,(hl)             ; this one has already run more than that
+pd_est:
+        cp   PCM_SEG_MAX
+        jr   c,pd_cap
+        ld   a,PCM_SEG_MAX
+pd_cap:
+        ld   hl,debt_tab
+        add  a,l
+        ld   l,a
+        ld   a,0
+        adc  a,h
+        ld   h,a
+        ld   c,(hl)             ; the segments' share
+        ; The slot's writes cost ~61 cycles each, and one pad unit is 16 cycles
+        ; on every one of PCM_MIX_R samples — so a unit is about 46 writes.
+        ld   a,(G_NWR)
+        srl  a
+        srl  a
+        srl  a
+        srl  a
+        srl  a
+        srl  a                  ; writes / 64
+        ld   b,a
+        srl  b                  ; writes / 128
+        add  a,b                ; ~ writes / 43
+        add  a,c
+        ld   (G_DEBT),a
+        pop  bc
+        ret
+
+; pp_voice_at: IX = voice C, Z clear if it was sounding at frame start. C is
+; preserved; A and the flags are not.
+pp_voice_at:
+        push bc
+        ld   a,c
+        call voice_ptr
+        ld   a,(G_ACTM)
+        inc  c
+pv_sh:
+        dec  c
+        jr   z,pv_test
+        rrca
+        jr   pv_sh
+pv_test:
+        and  1
+        pop  bc
+        ret
+
+; feed_plane: HL = base of the plane being FED — the one the last frame mixed,
+; never the one this frame is writing.
+feed_plane:
+        ld   a,(G_MIXP)
+        xor  MIX_SWAP
+        ld   h,a
+        ld   l,0
+        ret
 
 ; pcm_any_active: returns NZ if any voice is sounding.
 pcm_any_active:
@@ -499,7 +716,13 @@ pcm_any_active:
 
 ; ---------------------------------------------------------------------------
 ; mix_voice_frame: run one voice for a whole frame, split into segments that
-; cannot cross a loop or sample boundary. IX = voice.
+; cannot cross a loop or sample boundary. IX = voice, G_STORE = this pass's role.
+;
+; The pass always runs its full PCM_MIX_R ticks — silently, through G_IDLEV, if
+; the voice is absent or ends part-way. That is what makes the interleaved feed
+; work: R ticks × PCM_PASSES passes carry exactly R samples, whatever is
+; sounding. It also subsumes the old early-end silence fill, since a silent
+; storing pass writes the plane's silence value as it goes.
 ;
 ; The split is the point of a voice-outer pass: the inner loop carries no
 ; bounds check at all, and the check runs a handful of times per frame instead
@@ -511,27 +734,15 @@ pcm_any_active:
 ; one byte remains, one more tick is always legal.
 ; ---------------------------------------------------------------------------
 mix_voice_frame:
-        ; The store/accumulate role is per VOICE, not per segment: the first
-        ; active voice writes the plane (which removes the frame-long clear),
-        ; every later one adds to it.
-        ld   a,(G_FIRST)
-        or   a
-        jr   nz,mvf_acc
-        ld   a,1
-        ld   (G_FIRST),a
-        xor  a                  ; 0 = store
-        jr   mvf_role
-mvf_acc:
-        ld   a,1                ; nonzero = accumulate
-mvf_role:
-        ld   (G_STORE),a
-        ld   l,(ix+PV_BANK)
-        ld   h,(ix+PV_BANK+1)
-        call latch_bank         ; once per voice per frame, not per tick
         ld   a,PCM_MIX_R
         ld   (G_TICKS),a
         xor  a
         ld   (G_IDX),a
+        bit  0,(ix+PV_FLAGS)
+        jp   z,mvf_idle         ; no voice here: a silent pass, for the cadence
+        ld   l,(ix+PV_BANK)
+        ld   h,(ix+PV_BANK+1)
+        call latch_bank         ; once per voice per frame, not per tick
 
 mvf_seg:
         ld   a,(G_TICKS)
@@ -554,6 +765,7 @@ mvf_seg:
         ld   h,b
         ld   l,c
 mvf_have:
+        ld   (G_AVAIL),hl       ; the exact tail below needs the byte count
         ; n = avail >> KSH, forced to at least 1
         ld   a,(ix+PV_KSH)
         or   a
@@ -578,8 +790,20 @@ mvf_capl:
         ld   c,a
         ld   a,(G_TICKS)
         cp   c
-        jr   nc,mvf_n
+        jr   nc,mvf_tail
         ld   c,a                ; n = min(n, ticks left)
+        jr   mvf_n              ; the pass ends before the region does
+mvf_tail:
+        ; The shift bound is conservative by up to 2x, so approaching a boundary
+        ; it HALVES: 21 ticks, 10, 5, 2, 1, 1 — five segments and ~8k cycles to
+        ; mix a handful of samples. Once it has collapsed to a handful, count the
+        ; tail exactly instead and take the whole thing in one segment. That is
+        ; most of this engine's per-frame overhead, and the paced feed (§5.1) has
+        ; to give that overhead back out of the DAC's own budget.
+        ld   a,c
+        cp   MVF_TAIL+1
+        jr   nc,mvf_n
+        call mvf_exact
 mvf_n:
         ld   l,(ix+PV_PTR)      ; remember the pointer to measure consumption
         ld   h,(ix+PV_PTR+1)
@@ -661,20 +885,71 @@ mvf_wr:
         jp   mvf_seg
 
 mvf_end:
-        ; shot or release tail finished. If this was the storing voice, the
-        ; rest of the plane was never written, so fill it with silence.
+        ; Shot or release tail finished — the rest of the pass runs silent.
         res  0,(ix+PV_FLAGS)
+
+; mvf_idle: run what is left of this pass through the mute loop. As the storing
+; pass it writes silence into the plane; as a later one it adds nothing. Either
+; way it keeps the feed's cadence, which is the reason it runs at all.
+mvf_idle:
         ld   a,(G_TICKS)
         or   a
         ret  z
         ld   b,a
-        ld   a,(G_STORE)
-        or   a
-        ret  nz                 ; an accumulating voice simply stops adding
         ld   a,(G_IDX)
         ld   l,a
-        ld   h,MIXLO>>8
-        jp   fill_silence
+        ld   ix,G_IDLEV
+        ld   a,(G_STORE)
+        jp   mix_seg
+
+; ---------------------------------------------------------------------------
+; mvf_exact: how many ticks the tail of this region really holds.
+;
+;   in    C = the conservative bound (>= 1), G_AVAIL = bytes to the boundary
+;   out   C = ticks consuming at most G_AVAIL bytes, capped at MVF_MAX — or
+;         untouched, if the tail is more than a page, which means the shift
+;         bound had not collapsed onto a boundary after all
+;
+; Walks the 16.16 advance a tick at a time: 75 cycles a tick, against the ~2k
+; each halving step it removes costs as a segment of its own. Safe at any cap,
+; because every tick it counts is one it has simulated.
+; ---------------------------------------------------------------------------
+mvf_exact:
+        ld   hl,(G_AVAIL)
+        ld   a,h
+        or   a
+        ret  nz                 ; more than a page to go: not a tail after all
+        ld   a,(G_TICKS)
+        cp   MVF_MAX+1
+        jr   c,mve_cap
+        ld   a,MVF_MAX
+mve_cap:
+        ld   b,a                ; iteration cap
+        ld   c,0                ; ticks counted
+        ld   d,(ix+PV_INCI)
+        exx
+        ld   l,(ix+PV_FRAC)
+        ld   h,(ix+PV_FRAC+1)
+        ld   e,(ix+PV_INCF)
+        ld   d,(ix+PV_INCF+1)
+        exx                     ; HL' = frac, DE' = incFrac, as in the mixer
+mve_lp:
+        ld   a,l
+        or   a                  ; bytes left? (and the carry starts clear)
+        jr   z,mve_done
+        inc  c
+        exx
+        add  hl,de              ; frac += incFrac
+        exx                     ; flag-transparent: the carry survives
+        ld   a,l
+        sbc  a,d                ; bytes -= incInt + frac carry
+        jr   nc,mve_st
+        xor  a                  ; this tick reaches past the boundary
+mve_st:
+        ld   l,a
+        djnz mve_lp
+mve_done:
+        ret
 
 ; ---------------------------------------------------------------------------
 ; latch_bank: HL = 9-bit ROM bank for the 0x8000 window. The Mega Drive bank

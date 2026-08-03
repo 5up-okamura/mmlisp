@@ -243,8 +243,10 @@ asm↔DrvPlayer raw equality, which is exact.
 
 `src/engine.z80` is the Z80 half of the 68k/Z80 split: it consumes one
 pre-rendered slot per vblank, paces its bytes onto the YM2612 and PSG, and
-spends the rest of the frame software-mixing PCM into the fm6 DAC. It sequences
-nothing and evaluates nothing — 2560 B against the old driver's 5.8 KB of
+spends the rest of the frame software-mixing PCM into the fm6 DAC — and feeding
+it *from inside the mix loop*, one sample every three ticks, so the DAC gets its
+bytes at its own rate instead of in a burst (driver.md §5.1). It sequences
+nothing and evaluates nothing — 3982 B against the old driver's 5.8 KB of
 sequencing assembly, with no overlays, no shadow file, no LUTs and no TCB.
 
 `tools/engine-gate.mjs` gates it against its contract (driver.md §12.3): feed a
@@ -258,7 +260,17 @@ retarget, and a starved ring.
 The segment split is what makes the inner loop cheap: a voice-outer pass bounds
 each run away from its loop and sample boundaries (conservatively, by
 `avail >> ksh`, so no division), and the inner loop then carries no bounds check
-at all.
+at all. It is also **the engine's biggest per-frame cost** — ~2.4k cycles a
+segment, 5–10 a frame — which is invisible to the per-tick mixer bench and is
+what limits how evenly the DAC can be fed (`npm run dac`). `mvf_exact` counts a
+region's tail exactly once the shift bound collapses, instead of halving toward
+it a segment at a time; the rest is still on the table.
+
+`tools/dac-gate.mjs` (`npm run dac`) gates the feed's TIMING, which every other
+gate here is structurally unable to see: they all compare sample values. It
+measures, per frame, how much of the frame the writes span and how far each
+sample lands from its own instant. The burst it exists to catch spans 12% and
+wanders 14.7 ms; the engine spans ~90% and wanders ~3.4 ms.
 
 `tools/slot-gate.mjs` closes the loop with a real score: `.mmlisp` → MMB →
 `drv-player.js` → slot stream (through the real cap and spill queue in
@@ -285,9 +297,12 @@ frame, so 3 voices at 10.5 kHz does not fit with sum-then-saturate semantics;
 the knee is around 8.6 kHz. Full table, and the two decisions the measurement
 reopens (pre-resampling, i16 vs i8 buffer), in driver.md 5.3.1.
 
-`tools/gen-mixer.mjs` generates `src/mixer.z80`: the loop has to exist in eight
-shift-specialised copies and be unrolled, so it is generated rather than
-hand-maintained -- the same pattern as `gen-tables.mjs`.
+`tools/gen-mixer.mjs` generates `src/mixer.z80`: the loop has to exist in ten
+copies (eight shifts, mute, idle) x two roles and be unrolled by three, so it is
+generated rather than hand-maintained -- the same pattern as `gen-tables.mjs`.
+The generator also owns the pacing model: it prices the instructions it emits,
+and from that bakes each copy's pad. The bench keeps the unpaced form, since
+what it measures is mixing throughput.
 
 Numbers are a **floor**: the emulator charges documented Z80 cycles with no
 bank-window wait states, and the loop's most-executed instruction is the sample

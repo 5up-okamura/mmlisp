@@ -122,25 +122,38 @@ class ModelVoice {
   }
 }
 
-function modelFrame(voices) {
-  if (!voices.some((v) => v.active)) return null; // DAC released, no writes
+// One frame of MIXING. Every voice runs a full pass whether or not it is
+// sounding — pass 0 stores (so an absent or finished voice writes silence),
+// later passes add with a clamp. That uniformity is what the paced feed needs
+// (driver.md §5.1) and it subsumes the old early-end fill.
+function mixFrame(voices) {
   const plane = new Int8Array(R);
-  let storing = true;
-  for (const v of voices) {
-    if (!v.active) continue;
-    let t = 0;
-    for (; t < R && v.active; t++) {
-      const s = v.tick();
-      if (storing) plane[t] = s;
+  voices.forEach((v, i) => {
+    for (let t = 0; t < R; t++) {
+      const s = v.active ? v.tick() : 0;
+      if (i === 0) plane[t] = s;
       else plane[t] = Math.max(-128, Math.min(127, plane[t] + s));
     }
-    if (storing) {
-      for (; t < R; t++) plane[t] = 0;   // the storing voice ended early
-      storing = false;
-    }
+  });
+  return plane;
+}
+
+// What the engine FEEDS in a frame, which is what the previous frame mixed: the
+// feed occupies the whole frame, so it can only be one plane behind (§5.1). A
+// burst therefore opens with a frame of silence and ends with one extra frame
+// carrying the tail — and the DAC is released only after that tail is out.
+class ModelFeed {
+  constructor() { this.pending = null; this.dacOn = false; }
+  frame(voices) {
+    const active = voices.some((v) => v.active);
+    if (!active && !this.pending) { this.dacOn = false; return null; }
+    const out = this.dacOn ? this.pending : new Int8Array(R); // enable: silence
+    this.dacOn = true;
+    const mixed = mixFrame(voices);
+    this.pending = active ? mixed : null;
+    if (!active) this.dacOn = false;
+    return Array.from(out, (s) => (s ^ 0x80) & 0xff);
   }
-  if (storing) plane.fill(0);            // every active voice ended at tick 0
-  return Array.from(plane, (s) => (s ^ 0x80) & 0xff);
 }
 
 // ── Run the engine ─────────────────────────────────────────────────────────
@@ -345,6 +358,7 @@ scenarios.push({
 let failures = 0;
 for (const sc of scenarios) {
   const voices = [new ModelVoice(), new ModelVoice(), new ModelVoice()];
+  const feed = new ModelFeed();
   const { perFrame } = run(sc.frames);
   const problems = [];
 
@@ -381,7 +395,7 @@ for (const sc of scenarios) {
         voices[v].left = c[4] | (c[5] << 8);
       }
     }
-    const wantDac = modelFrame(voices);
+    const wantDac = feed.frame(voices);
     if (wantDac === null) {
       if (got.dac.length) problems.push(`f${f}: ${got.dac.length} DAC writes with no voice active`);
     } else if (got.dac.length !== R) {

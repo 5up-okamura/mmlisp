@@ -416,8 +416,41 @@ its bytes on the chips, and spend the rest of the frame mixing PCM.
 2. **Consume the slot** (§6.2): three length-prefixed runs — PSG bytes, YM port
    0 `{reg,val}` pairs, YM port 1 pairs — then the PCM command list. Runs are
    length-prefixed precisely so the loop needs no per-write dispatch.
-3. **Mix PCM** (§5.3) and feed the DAC.
+3. **Mix PCM** (§5.3) while feeding the DAC — the same loop does both.
 4. **Publish** the consumed-frame counter (§6.4).
+
+**DAC PACING (2026-08-03).** The feed is *inside* the mix loops, one `$2A` write
+every three ticks, and not a pass of its own. A separate output pass is what the
+engine did until this date, and it put a frame's 175 samples out in **12% of the
+frame** — right values, ~8x too fast, then a 14 ms hold. Byte-identical to the
+reference and unlistenable; it cost three hardware bring-up rounds because every
+gate in the repo compared sample *values* and none could see *when* one was
+written. `drv/tools/dac-gate.mjs` (`npm run dac`) is the gate that can.
+
+Three things follow from pacing, and they shape the engine:
+
+- **The plane is double-buffered, so PCM lags by one frame.** A sample is final
+  only once the last voice has added to it, so a feed that occupies the whole
+  frame can only be feeding what the *previous* frame finished. A burst opens
+  with a frame of silence and closes with an extra frame carrying the tail; the
+  DAC is released after that tail, not before it. `drv-player.js` models the
+  same delay, or the gates would stop meaning anything.
+- **Every frame runs exactly three voice passes**, silently (through `G_IDLEV`)
+  where there is no voice — otherwise the cadence would depend on how many
+  voices sound, and the samples would bunch into whatever the mix took.
+- **Each iteration is padded to the frame's tick period**, `frame / R`. The pad
+  is a baked constant per (role, shift) — the generator knows each loop copy's
+  cycle cost — minus a runtime **debt**: what the frame spends *outside* the
+  loops, which is ~13k cycles of mixer segment set-up plus the slot's own
+  writes. Without that subtraction a frame ends ~20% late, which is a slow tempo
+  and eventually a dropped frame. The debt is estimated from the previous
+  frame's segment count and revised as the frame proves heavier; the silent
+  passes run last, after the count is known, because that is where the pad is.
+
+What it does not fix: those ~13k cycles are real and are not spent feeding, so
+between segments the feed still pauses and in between it runs ~20% fast to make
+up for it. Measured wander is ~3.4 ms against the burst's 14.7 ms. **Cutting the
+per-segment cost is what tightens it further** — see §5.3.
 
 **YM BUSY policy.** Every latched YM register write polls the status byte
 (0x4000 bit 7) before the address and before the data byte. The **DAC data
@@ -437,17 +470,20 @@ As built (`drv/src/engine.z80` + the generated mixer):
 
 | Region | Address | Size | Contents |
 | ------ | ------- | ---- | -------- |
-| code | `$0000` | 2560 B | boot, ISR, consume loop, PCM commands, mixer |
-| mix buffer | `$1000` | 256 B | one plane; `$1100` reserved for the i16 variant's second |
+| code | `$0000` | 3982 B | boot, ISR, consume loop, PCM commands, mixer |
+| mix buffer | `$1000` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
 | PCM voice state | `$1200` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
-| engine scratch | `$1260` | 160 B | |
+| engine scratch | `$1260` | 160 B | includes the always-silent voice struct at `$1280` |
 | published header | `$1300` | 64 B | ring control, status, consumed-frame counter (§6.4) |
 | slot ring | `$1400` | depth × 256 B | 512 B at the default depth 2 |
 | stack | `$1F00` | 256 B | |
-| | | **~3.6 KB** | leaving ~4.5 KB unallocated |
+| | | **~5 KB** | leaving ~3 KB unallocated |
 
-The mixer is most of the code: shift specialisation means eight copies of each
-loop (§5.3.1), which is why 2.5 KB buys what 5.8 KB of sequencer used to.
+The mixer is most of the code: shift specialisation means ten copies of each
+loop (§5.3.1) — eight shifts, mute, and idle — and pacing unrolls each of them
+by three (§5.1). That is 3.4 KB of the image, and it leaves **114 B** below the
+mix plane: the next thing the engine grows will have to move the RAM map up
+rather than squeeze in.
 
 Everything the old design fought for is gone with the sequencer: no code
 overlays, no overlay ROM blob, no `DATA_BASE`, no shadow file (change-only now
@@ -466,25 +502,31 @@ The new mixer is **voice-outer**: each voice owns the register file for its
 entire R-tick pass, writing into a frame-long mix buffer.
 
 ```
-if no voice active: release the DAC (change-only), return
-for each active voice v, in slot order:
+if nothing sounding and nothing owed: release the DAC (change-only), return
+latch $2A once; point the feed cursor at the plane the LAST frame finished
+for each voice v — sounding ones first, silent passes after them:
     latch v's sample ROM bank            # once per frame, not per tick
     load pos/inc/loop bounds/shift into registers
     for t in 0..R-1:
+        every third tick:                # §5.1: the feed IS the mix loop
+            write plane_fed[i++] ^ 0x80 to $2A
+            pad to the frame's tick period
         s = sample[pos >> 16] >> shift   # nearest neighbour, sra = sign-preserving
-        mixbuf[t] = s                    # first active voice stores...
+        mixbuf[t] = s                    # the first pass stores...
         mixbuf[t] += s                   # ...the rest accumulate
         pos += inc
-        wrap the loop region, or end the voice
+        wrap the loop region, or run the rest of the pass silent
     write pos back
-for t in 0..R-1:                         # output pass, DAC address latched once
-    write saturate_i8(mixbuf[t]) ^ 0x80 to $2A
+flush any sample the interleave could not reach; swap the planes
 ```
 
-Two details that matter:
+Three details that matter:
 
-- **The first active voice stores instead of accumulating**, which removes the
-  frame-long buffer clear entirely.
+- **The first pass stores instead of accumulating**, which removes the
+  frame-long buffer clear entirely. Since a silent pass stores the plane's zero,
+  it also subsumes the old early-end silence fill.
+- **A pass always runs its full R ticks**, silently once its voice ends, because
+  the feed's cadence rests on the tick count and not on what is sounding (§5.1).
 - **Buffer width is the live decision** (§5.3.1). Three candidates, all measured:
   **i16 sum-then-saturate** (the v0.2 semantics — widest dynamic range, most
   expensive); **i8 saturating-add** (one plane, clamp at every add — clips
@@ -565,6 +607,18 @@ Two caveats, in opposite directions:
   most.
 - **The segment split and the per-voice bank latch are not modelled.** Both are
   per-frame, not per-tick: the latch is ~117 cycles per voice.
+
+**And the second caveat turned out to be the binding one.** Measured on whole
+frames of real scores (2026-08-03), the segment split costs **~2.4k cycles per
+segment and 5–10 segments a frame — 13k to 18k, a fifth of the frame** — against
+which the bench's per-tick figures are a rounding error. Half of it was the
+conservative `avail >> KSH` bound *halving* toward a region's end (21 ticks, 10,
+5, 2, 1 — a segment each); `mvf_exact` now counts the tail exactly once the
+bound collapses, at 75 cycles a tick, which took a typical frame from 8 segments
+to 5. What remains is `mix_seg`'s register file in and out plus the caller's
+boundary arithmetic, and it is now **the** number to beat: it is why the paced
+feed (§5.1) still runs 20% fast between segments, and cutting it is the only
+thing that tightens that.
 
 `PCM_MIX_R` is a build constant shared with `live/src/mmb.js` (`PCM_MIX_RATE`);
 changing it changes the output, so the gate baselines must be re-frozen with it.
@@ -1448,8 +1502,8 @@ voice and ride the SE snapshot.
 
 A single voice takes the same path — there is no separate fast path.
 
-**What remains a hardware question.** The frame-stamped gate fixes *which*
-samples play in *which* frame; it does not fix the sub-frame feed timing. In the
-all-Z80 build the DAC bytes burst at frame start; §5.3's output pass spreads them
-across the frame by construction, but the 68k's per-frame bus grab adds ~0.2%
-jitter on top (§1.3). Both need silicon.
+**Sub-frame feed timing** was the open item here, and it was real: the engine put
+each frame's samples out in 12% of the frame until 2026-08-03. §5.1 is the fix
+and `npm run dac` is the gate. What is left for silicon is the 68k's per-frame
+bus grab, ~0.2% jitter on top (§1.3), and whether the residual pacing wander
+(~3.4 ms, §5.1) is audible under real material.

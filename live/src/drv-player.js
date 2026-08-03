@@ -179,7 +179,10 @@ export class DrvPlayer {
     // any time). Preserved across a hot-swap _reset.
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
+    // Two planes, as in the engine: one being mixed, one being fed (§5.1).
     this._pcmPlane = new Int8Array(PCM_MIX_RATE);
+    this._pcmPlaneB = new Int8Array(PCM_MIX_RATE);
+    this._pcmPending = null;     // the plane the next frame owes the DAC
     this._slotSink = null;       // set by captureSlotLog
     this._pcmLog = null;         // mixer-produced $2A/$2B, set by captureSlotLog
     this._sampleBankBase = 0;    // ROM bank the sample blob starts at
@@ -429,6 +432,7 @@ export class DrvPlayer {
       // mirror the Z80 G_PCM_VEL/G_PCM_VOL globals + PV_SHIFT / PV_ACT mute bit.
     }));
     this._pcmDacOn = false;
+    this._pcmPending = null;
 
     // Live mixer mute/solo (track index = position in the MMB/IR track list).
     // Preserved across a hot-swap _reset so the mixer keeps its state.
@@ -495,11 +499,11 @@ export class DrvPlayer {
       : undefined;
   }
   // YM parameter write, change-only via the shadow file.
-  _ym(port, addr, data) {
+  _ym(port, addr, data, when = undefined) {
     const d = data & 0xff;
     if (this._shadow[port].get(addr) === d) return;
     this._shadow[port].set(addr, d);
-    this._writeCb(port, addr, d, this._when());
+    this._writeCb(port, addr, d, when ?? this._when());
   }
   // YM write that always emits (but keeps the shadow current). For the F-number
   // pair $A4-A6/$A0-A2: the high-byte write latches into a port-shared register
@@ -1650,7 +1654,7 @@ export class DrvPlayer {
     return false;
   }
 
-  // ── PCM / DAC (driver.md §11, frame-quantized feed — see mmb.js) ──────────
+  // ── PCM / DAC (driver.md §11 for which samples, §5.1 for when) ────────────
   _dacByte(storedByte, tick = 0) {
     // Sample bytes are stored 8-bit signed (two's complement); the DAC ($2A)
     // is 8-bit unsigned (128 = zero) — XOR 0x80 converts.
@@ -2057,14 +2061,23 @@ export class DrvPlayer {
   }
 
   // ── The mixer (driver.md §5.3) ───────────────────────────────────────────
-  // Voice-outer over a frame-long plane, 8-bit saturating-add: the first active
-  // voice STORES (which is what removes the buffer clear) and the rest add with
-  // a clamp at every add. This mirrors the engine's structure exactly rather
+  // Voice-outer over a frame-long plane, 8-bit saturating-add: the first voice
+  // STORES (which is what removes the buffer clear) and the rest add with a
+  // clamp at every add. This mirrors the engine's structure exactly rather
   // than merely agreeing with it — including where the DAC is claimed and
   // released, and the countdown boundary — so the two cannot drift.
+  //
+  // ONE FRAME OF LATENCY (driver.md §5.1). The engine feeds the DAC from inside
+  // the mix loops, spread across the whole frame, so what it can be feeding is
+  // the plane the PREVIOUS frame finished — a sample is only final once the last
+  // voice has added to it. A burst therefore opens with a frame of silence and
+  // closes with an extra frame carrying the tail, and the DAC is released only
+  // after that tail is out. The reference has to model the delay or the gates
+  // stop meaning anything.
   _pcmFrame() {
     const voices = this._pcmVoices;
-    if (!voices[0].active && !voices[1].active && !voices[2].active) {
+    const active = voices.some((v) => v.active);
+    if (!active && !this._pcmPending) {
       if (this._pcmDacOn) {
         this._pcmDacOn = false;
         if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2b, data: 0 });
@@ -2072,6 +2085,9 @@ export class DrvPlayer {
       }
       return;
     }
+    // The plane this frame FEEDS: what the last one mixed, or silence if this is
+    // the frame the DAC is claimed on.
+    const out = this._pcmPending ?? new Int8Array(PCM_MIX_RATE);
     if (!this._pcmDacOn) {
       this._pcmDacOn = true;
       if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2b, data: 0x80 });
@@ -2079,38 +2095,45 @@ export class DrvPlayer {
     }
     const data = this._song.sampleData;
     const plane = this._pcmPlane;
-    let storing = true;
-    for (const v of voices) {
-      if (!v.active) continue;
-      let t = 0;
-      for (; t < PCM_MIX_RATE && v.active; t++) {
-        const s = v.muted ? 0 : i8(data[v.base + (v.pos >>> 16)]) >> v.shift;
-        if (storing) plane[t] = s;
+    // Every voice runs a FULL pass, silently if it has nothing to play: the
+    // engine needs the pass count fixed for the feed's cadence (§5.1), and a
+    // silent first pass writing the plane's zero subsumes the old early-end
+    // fill. Silent passes add nothing, so the mix is unchanged by it.
+    voices.forEach((v, i) => {
+      for (let t = 0; t < PCM_MIX_RATE; t++) {
+        let s = 0;
+        if (v.active) {
+          s = v.muted ? 0 : i8(data[v.base + (v.pos >>> 16)]) >> v.shift;
+          const before = v.pos >>> 16;
+          v.pos = (v.pos + v.inc) >>> 0;
+          v.left -= (v.pos >>> 16) - before;
+          if (v.left <= 0) {
+            if (v.hasLoop && !v.releasing) {
+              v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
+              v.left = v.loopLen;
+            } else {
+              v.active = false;
+            }
+          }
+        }
+        if (i === 0) plane[t] = s;
         else {
           const a = plane[t] + s;
           plane[t] = a > 127 ? 127 : a < -128 ? -128 : a;
         }
-        const before = v.pos >>> 16;
-        v.pos = (v.pos + v.inc) >>> 0;
-        v.left -= (v.pos >>> 16) - before;
-        if (v.left <= 0) {
-          if (v.hasLoop && !v.releasing) {
-            v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
-            v.left = v.loopLen;
-          } else {
-            v.active = false;
-          }
-        }
       }
-      // The storing voice ended part-way through: nothing wrote the rest of
-      // the plane, so it has to be silenced rather than repeat last frame.
-      if (storing) {
-        for (; t < PCM_MIX_RATE; t++) plane[t] = 0;
-        storing = false;
-      }
+    });
+    // This frame's mix is next frame's feed; a frame entered with nothing
+    // sounding was the tail, and owes nothing further.
+    this._pcmPending = active ? plane : null;
+    this._pcmPlane = this._pcmPlaneB;   // mix into the other one next frame
+    this._pcmPlaneB = plane;
+    for (let t = 0; t < PCM_MIX_RATE; t++) this._dacByte(out[t], t);
+    if (!active) {
+      this._pcmDacOn = false;
+      if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2b, data: 0 });
+      this._ym(0, 0x2b, 0x00, this._whenTick(PCM_MIX_RATE)); // after the tail
     }
-    if (storing) plane.fill(0); // every active voice ended at tick 0
-    for (let t = 0; t < PCM_MIX_RATE; t++) this._dacByte(plane[t], t);
   }
 
   // Logical current value of a target, for PARAM_ADD read-modify-write.

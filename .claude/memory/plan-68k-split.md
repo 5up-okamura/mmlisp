@@ -309,7 +309,7 @@ lands in the ring's fill level and never in the tempo.
 8. **Raising the mix rate** (10.5 → up to 10.9/11.3 kHz, §5.3.1) — deliberately
    parked until hardware measurement gives a reason.
 
-## The DAC feed is BURST, not paced — the open hardware bug (2026-08-03)
+## The DAC feed was BURST, not paced — FIXED 2026-08-03
 
 **Measured three ways and confirmed on a real BlastEm VGM log of the reporter's
 own ROM.** `out_pass` in the generated mixer dumps all 175 samples in one tight
@@ -325,6 +325,9 @@ is the "sub-frame feed timing is a hardware bring-up item" note in mmb.js and
 driver.md coming due. **The gates cannot see it**: they compare sample VALUES,
 never their timing — which is why it survived every zero-tolerance gate and cost
 three bring-up rounds.
+
+**FIXED 2026-08-03 — see "the fix, as built" below.** What follows is the
+diagnosis, kept because the numbers are the reason the fix looks as it does.
 
 **The structural cause is P0's voice-outer decision.** Paced output needs
 175 x 341 = 59,675 cyc ~ the whole frame, so output and mixing must overlap; but
@@ -347,40 +350,64 @@ for pricing it; 10.5 kHz may have to come down.
 So the reported "tempo wobbles" is NOT the sequencer, the transport or the ring
 — it is the burst, heard on a rhythm the PCM carries. One fix, two symptoms.
 
-### The fix, costed (2026-08-03) — designed, not yet built
+### The fix, as built (2026-08-03) — DONE, `npm run dac` is in verify:all
 
-Arithmetic first, because it rules out the obvious approaches:
+The design above survived contact only in part. What shipped:
 
-- Paced output needs `R x frame/R` = the whole frame, so output and mixing MUST
-  overlap. Any "mix then emit" or "emit then mix" ordering is dead on arrival.
-- Per output sample the budget is 341 cyc; 3 voices of mixing is 261 and the
-  emit ~30. **291 fits.** The total was never the problem.
-- What does not fit is SAMPLE-OUTER (emit + all voices per tick): switching the
-  register file three times per tick costs several hundred cycles. That is
-  exactly what voice-outer buys, and why P0 chose it.
+- **The feed is inside the mix loop**, not between chunks: one `$2A` write at the
+  head of every unrolled iteration, IY as the cursor. Chunk granularity was
+  dropped because re-entering `mix_seg` costs ~2.4k cycles, not the ~100 the
+  estimate assumed (see below) — the register-file reload was never the price of
+  a chunk, the SEGMENT was.
+- **Unroll 3, three passes, always.** R x 3 tick bodies carry exactly R samples,
+  so the cadence is one emit per 3 ticks and needs no counter. An absent or
+  finished voice runs a pass through `G_IDLEV` at PV_SHIFT = 9 (IDLE — like MUTE
+  but it does not advance a position, 35 cycles a tick cheaper, and those cycles
+  are the pad). Order: sounding voices first, silent passes last.
+- **Double-buffered plane**, so PCM lags one frame. `drv-player.js` models it;
+  `engine-gate.mjs` grew a `ModelFeed` for it. A burst opens with a frame of
+  silence and closes with a flush frame that carries the tail, and `$2B` is
+  released after that, not before.
+- **Pad = baked base − runtime debt.** The base is per (role, shift), computed by
+  the generator from its own emitted instructions (it prices them, and throws on
+  an instruction it cannot price). The debt is what the frame spends outside the
+  loops, in 16-cycle units spread over all R samples.
 
-So: keep voice-outer, interleave the emit at a **chunk** granularity. Split each
-voice's R ticks into chunks of ~8 and emit the proportional number of samples
-between chunks. Voice switches drop from 525/frame to ~66, so the register-file
-reload costs ~6.6k cyc, and the emit jitter is one chunk ≈ 0.2 ms — inaudible,
-and nothing like an 87% gap.
+**The number that dominated everything: the segment costs ~2.4k cycles**, and a
+frame runs 5–10 of them — 13k to 18k, a FIFTH of the frame, none of it feeding.
+Nothing in the repo had measured this before (the mixer bench is per-tick and
+says the segment split "is not modelled"). Consequences:
 
-Two things this needs:
+- The paced stretches have to run ~20% fast to give those cycles back, so the
+  feed is right on average and pauses at each segment. Wander is ~3.4 ms against
+  the burst's 14.7 ms — better by 4x, not fixed. **Cutting the per-segment cost
+  is the only thing that tightens it**, and it is now the top driver item.
+- Half the segments were the conservative `avail >> KSH` bound HALVING toward a
+  region end (21 ticks, 10, 5, 2, 1 — a segment each). `mvf_exact` walks the tail
+  a tick at a time (75 cyc/tick) once the bound collapses below 16, and takes it
+  in one segment: 8 segments a frame down to 5.
+- The debt is estimated from the last frame's segment count, revised upward
+  within the frame as it proves heavier, plus the slot's own write count (a
+  patch-dump frame costs 10k cycles more than a steady one). The silent passes
+  run last precisely so the biggest pads are spent against a measured count.
 
-1. **Double-buffer the plane** (MIXHI is already reserved and free). A sample is
-   only final after the last voice adds to it, so the frame being emitted has to
-   be the one mixed last frame. Costs one frame of latency, and `drv-player.js`
-   has to model that delay or the gates stop meaning anything.
-2. **Always run 3 voice passes**, muting the inactive ones. Otherwise the mix
-   duration tracks the voice count (30% of the frame at 1 voice) and the emits
-   bunch into it again. The wasted cycles are ones the Z80 would idle away, so
-   this is close to free — revisit only if the cycle budget ever bites.
+Measured, on the three PCM gate scores, 300 frames each: **frame length 94–98%
+of budget** (was 49–58% before pacing, because the driver simply idled the rest
+away), 2–56 frames over budget out of ~300, **feed spans ~90% of the frame**
+(was 12%), 96–100% of frames inside the gate's tolerances.
 
-Touches: `gen-mixer.mjs` (the generator owns the loops), `engine.z80` (pass
-structure, plane swap), `drv-player.js` (the frame of latency), and every gate
-baseline. `npm run dac` is the regression test and fails today by design.
+Known limits, all measured and none new to pacing:
 
-## Per-note timing: what 60 Hz costs (reported 2026-08-03, deferred behind PCM)
+- **Three loud voices do not fit** and never did: 3 x (61 + 8·shift) cycles a
+  tick plus the feed exceeds the frame at shift ≥ 2. The pad is already zero
+  there, so pacing neither helps nor hurts — the frame just runs long.
+- The first frames of a score run 120–145% (patch dump + a cold estimator). One
+  off, at the start, before anything is audible.
+- The pad quantum is 16 cycles a sample = 2.8k cycles a frame = 4.7%, so the
+  frame length can only be tuned in steps that coarse. PACE_RESERVE picks which
+  side of the step to land on; it is set to land under.
+
+## Per-note timing: what 60 Hz costs## Per-note timing: what 60 Hz costs (reported 2026-08-03, deferred behind PCM)
 
 Reported as "notes speed up and slow down". Measured on the reporter's song —
 `TEMPO_SET increment 874` = 3.4141 ticks/frame = **128.03 BPM**, PPQN 96:

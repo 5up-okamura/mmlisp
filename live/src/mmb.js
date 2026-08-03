@@ -295,11 +295,11 @@ export function sweepStep(len, loop) {
 }
 
 // ── PCM per-frame rate (driver.md §11, opcodes.md §6) — frame-quantized DAC ─
-// The single-channel DAC feed is modelled frame-quantized (option A): each
-// 60 Hz frame advances a 16.16 sample-position accumulator by `increment` and
-// bursts the covered sample bytes to $2A. This verifies rate/indexing/loop
-// deterministically (asm↔reference exact); the real sub-frame feed timing is a
-// hardware-bring-up concern (samples burst at frame start here, not spread).
+// The DAC feed is modelled frame-quantized (option A): each 60 Hz frame advances
+// a 16.16 sample-position accumulator by `increment` and covers PCM_MIX_RATE
+// sample bytes. That fixes WHICH samples a frame carries; WHEN each one reaches
+// $2A is the engine's own business (driver.md §5.1 — it interleaves the feed
+// into the mix loop and lags a frame behind it, which `drv-player.js` models).
 //
 // increment (16.16 samples/frame) = base_rate × MULT_FRAME[note-36], where
 // MULT_FRAME[n] = round(2^((note-60)/12) × 65536 / 60) for C2..C6 (note 36..84).
