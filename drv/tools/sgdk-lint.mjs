@@ -57,7 +57,7 @@ try {
   cc(join(drv, "sgdk", "example", "main.c"), exArgs);
   // …and again with the PCM switch on, or that branch is never compiled — which
   // is the branch every PCM project turns on and nobody here tests by running.
-  cc(join(drv, "sgdk", "example", "main.c"), [...exArgs, "-DMMLISP_PCM_SAMPLES"]);
+  cc(join(drv, "sgdk", "example", "main.c"), [...exArgs, "-DMMLISP_PCM_SAMPLES=1"]);
   console.log("ok    sgdk/example/main.c agrees with the host API (both PCM paths)");
   console.log("      (a type-check only — it says nothing about SGDK or hardware)");
 } catch (e) {

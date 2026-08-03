@@ -997,6 +997,13 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
   const uint8_t *e = s->voices + (uint32_t)voice_id * 29;
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  /* Carrier TL goes out COMPOSED, not raw (§7): the voice's :tl is a voiced
+   * level and the chip gets that plus vel/vol/master. Raw would step the level
+   * by up to +10 dB on whatever note is still sounding — inaudible at track
+   * start (the armed frame keeps it silent) but audible at every loop point
+   * that re-applies a voice. The algorithm picks the carriers, so read it here
+   * even though its own register still goes out last. */
+  uint8_t mask = MML_CARRIER_MASK[e[28] & 7];
   for (int op = 0; op < 4; op++) {
     MMLOp *o = &c->ops[op];
     uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[op] + off);
@@ -1006,8 +1013,9 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
     o->dt = (int8_t)((b >> 4) & 7);
     o->mul = (uint8_t)(b & 0x0f);
     b = e[4 + op];
-    if (b != o->tl) ym(s, port, (uint8_t)(0x40 + oo), b);
     o->voiced_tl = b;
+    if (mask & (1 << op)) b = carrier_tl(s, b, c->vel, c->vol);
+    if (b != o->tl) ym(s, port, (uint8_t)(0x40 + oo), b);
     o->tl = b;
     b = e[8 + op];
     if (b != (uint8_t)((o->rs << 6) | o->ar)) ym(s, port, (uint8_t)(0x50 + oo), b);

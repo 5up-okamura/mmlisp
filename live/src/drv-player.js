@@ -1182,6 +1182,15 @@ export class DrvPlayer {
     const put = (addr, oldByte, newByte) => {
       if (newByte !== oldByte) this._ym(port, addr, newByte);
     };
+    // Carrier TL goes out COMPOSED, not raw (driver.md §7). The voice's :tl is a
+    // voiced level; what the chip gets is that level plus vel/vol/master. Writing
+    // it raw would be a step of up to +10 dB on whatever note is still sounding —
+    // silent at track start (the armed frame), audible at every loop point that
+    // re-applies a voice, which is exactly where it was heard. The algorithm
+    // decides which operators are carriers, so it has to be read before the loop
+    // even though its register still goes out last.
+    const newAlg = entry[28] & 0x07;
+    const carriers = new Set(fmCarrierOpsForAlg(newAlg));
     for (let op = 0; op < 4; op++) {
       const o = regs.ops[op];
       const opOff = OP_ADDR_OFFSET[op];
@@ -1189,9 +1198,10 @@ export class DrvPlayer {
       put(0x30 + opOff + off, encode30(o), b30);
       o.dt = (b30 >> 4) & 0x07;
       o.mul = b30 & 0x0f;
-      const tl = entry[4 + op];
+      const voicedTl = entry[4 + op];
+      const tl = carriers.has(op) ? this._carrierTl(voicedTl, regs.vel, regs.vol) : voicedTl;
       put(0x40 + opOff + off, o.tl, tl);
-      o.voicedTl = tl;
+      o.voicedTl = voicedTl;
       o.tl = tl;
       const b50 = entry[8 + op];
       put(0x50 + opOff + off, (o.rs << 6) | o.ar, b50);

@@ -13,18 +13,24 @@
 #include "mmlispdrv.h"
 #include "song.h"        // rescomp: `song_mmb` (and `song_smp` for a PCM score)
 
-// ── PCM scores: flip this one switch ────────────────────────────────────────
-// A score with `def :sample` ships res/song.smp beside res/song.mmb, and it
-// needs BOTH of these or not one PCM note plays:
+// ── PCM scores ──────────────────────────────────────────────────────────────
+// A score with `def :sample` ships res/song.smp beside res/song.mmb, and needs
+// BOTH of these or not one PCM note plays:
 //
 //   1. uncomment the `BIN song_smp "song.smp" 32768` line in res/song.res
-//   2. uncomment the #define below
+//   2. set MMLISP_PCM_SAMPLES to 1 below
 //
-// It is a #define rather than a bare call because `song_smp` does not exist as
-// a symbol until step 1 is done, so a non-PCM project would not link. If you get
-// this wrong the program below refuses to start and says so — the failure is
-// otherwise completely silent (the song plays, the drums do not).
-// #define MMLISP_PCM_SAMPLES
+// It is conditional because `song_smp` is not a symbol until step 1 is done, so
+// a non-PCM project would fail to link. Deliberately a 0/1 value rather than a
+// commented-out #define: a `// #define …` on the last line of a comment block is
+// exactly what a formatter reflows into the prose above it, which is how this
+// switch got lost once already. A real preprocessor line survives that.
+//
+// Get it wrong and the program below refuses to start and says so — the failure
+// is otherwise completely silent (the song plays, the drums do not).
+#ifndef MMLISP_PCM_SAMPLES          // (or pass -DMMLISP_PCM_SAMPLES=1)
+#define MMLISP_PCM_SAMPLES 0
+#endif
 
 // There is deliberately no TRACK_COUNT here. The MMB knows how many tracks it
 // has, so asking it (MMLisp_trackCount) removes a constant that has to be kept
@@ -54,7 +60,7 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
-#ifdef MMLISP_PCM_SAMPLES
+#if MMLISP_PCM_SAMPLES
     MMLisp_setSampleBank(song_smp);
 #endif
 
