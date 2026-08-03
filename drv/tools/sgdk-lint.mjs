@@ -24,7 +24,8 @@ const tmp = mkdtempSync(join(tmpdir(), "sgdklint-"));
 
 // The example is what people copy, so it is linted too — against a stub of the
 // `song.h` rescomp would generate.
-writeFileSync(join(tmp, "song.h"), "extern const u8 song_mmb[];\n");
+writeFileSync(join(tmp, "song.h"),
+  "extern const u8 song_mmb[];\nextern const u8 song_smp[];\n");
 
 const cc = (src, extra = []) =>
   execFileSync(
@@ -52,9 +53,12 @@ try {
   // rejects on sight and whose parameter its own templates never use. Rename it
   // and let that one parameter be unused, rather than write an example that
   // does not look like every other SGDK program.
-  cc(join(drv, "sgdk", "example", "main.c"),
-     ["-DSGDK_GCC", "-I", tmp, "-Dmain=sgdk_main", "-Wno-unused-parameter"]);
-  console.log("ok    sgdk/example/main.c agrees with the host API");
+  const exArgs = ["-DSGDK_GCC", "-I", tmp, "-Dmain=sgdk_main", "-Wno-unused-parameter"];
+  cc(join(drv, "sgdk", "example", "main.c"), exArgs);
+  // …and again with the PCM switch on, or that branch is never compiled — which
+  // is the branch every PCM project turns on and nobody here tests by running.
+  cc(join(drv, "sgdk", "example", "main.c"), [...exArgs, "-DMMLISP_PCM_SAMPLES"]);
+  console.log("ok    sgdk/example/main.c agrees with the host API (both PCM paths)");
   console.log("      (a type-check only — it says nothing about SGDK or hardware)");
 } catch (e) {
   console.error(e.stderr?.toString() ?? e.message);

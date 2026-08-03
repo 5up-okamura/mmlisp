@@ -11,7 +11,20 @@
 // Controls: A / START = play, B = stop, C = show state.
 #include <genesis.h>
 #include "mmlispdrv.h"
-#include "song.h"        // rescomp: `song_mmb`
+#include "song.h"        // rescomp: `song_mmb` (and `song_smp` for a PCM score)
+
+// ── PCM scores: flip this one switch ────────────────────────────────────────
+// A score with `def :sample` ships res/song.smp beside res/song.mmb, and it
+// needs BOTH of these or not one PCM note plays:
+//
+//   1. uncomment the `BIN song_smp "song.smp" 32768` line in res/song.res
+//   2. uncomment the #define below
+//
+// It is a #define rather than a bare call because `song_smp` does not exist as
+// a symbol until step 1 is done, so a non-PCM project would not link. If you get
+// this wrong the program below refuses to start and says so — the failure is
+// otherwise completely silent (the song plays, the drums do not).
+// #define MMLISP_PCM_SAMPLES
 
 // There is deliberately no TRACK_COUNT here. The MMB knows how many tracks it
 // has, so asking it (MMLisp_trackCount) removes a constant that has to be kept
@@ -41,11 +54,9 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
-    // A score with `def :sample` also ships res/song.smp on its own 32 KB-aligned
-    // ROM bank. Uncomment BOTH this and the song.smp BIN line in song.res —
-    // either one alone leaves every PCM note dropped, with the song playing
-    // FM/PSG only. (demo1 has no PCM, so both ship commented out.)
-    //   MMLisp_setSampleBank(song_smp);
+#ifdef MMLISP_PCM_SAMPLES
+    MMLisp_setSampleBank(song_smp);
+#endif
 
     if (!MMLisp_loadScore(song_mmb))
     {
@@ -53,11 +64,18 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
-    // …and this is why the reminder above is not enough on its own. The score
-    // says it plays PCM and no bank was published, which is silent by nature —
-    // so say it out loud instead of letting it be chased as a missing part.
+    // The score plays PCM and no sample bank was published. Refuse to run
+    // rather than play on: this misconfiguration is silent by construction —
+    // every PCM note dropped, the DAC never enabled — so it presents as a part
+    // that was never written, and a warning that shares the screen with normal
+    // output is one you scroll past. A comment did not stop it happening twice.
     if (MMLisp_needsSampleBank())
-        VDP_drawText("!! PCM SCORE, NO SAMPLE BANK", 2, 19);
+    {
+        VDP_drawText("PCM SCORE, NO SAMPLE BANK", 2, 2);
+        VDP_drawText("1. res/song.res: uncomment song_smp BIN", 2, 4);
+        VDP_drawText("2. main.c: #define MMLISP_PCM_SAMPLES", 2, 5);
+        while (TRUE) SYS_doVBlankProcess();
+    }
 
     VDP_drawText("MMLispDRV ready", 2, 2);
     VDP_drawText("A/START play  B stop  C stat", 2, 3);

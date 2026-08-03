@@ -209,11 +209,17 @@ res/song.res:   BIN song_smp "song.smp" 32768
 main.c:         MMLisp_setSampleBank(song_smp);
 ```
 
-The BIN line ships commented out in the seed `song.res` because rescomp fails on
-a BIN whose file does not exist; uncomment it for a PCM score. Call
-`MMLisp_setSampleBank` after `MMLisp_init` — init clears Z80 RAM, which would
-wipe an earlier publish. Its order against `MMLisp_loadScore` does not matter:
-the pointer is remembered and re-applied on every load.
+Both ship commented out — the BIN because rescomp fails on a BIN whose file does
+not exist, and the call because `song_smp` is not a symbol until the BIN exists,
+so a non-PCM project would not link. In `example/main.c` step 2 is a single
+`#define MMLISP_PCM_SAMPLES` near the top rather than a call buried in `main`,
+and the program **refuses to start** if the score plays PCM and no bank was
+published. That is deliberate: the misconfiguration is silent by construction,
+and a warning sharing the screen with normal output is one you scroll past.
+
+Call `MMLisp_setSampleBank` after `MMLisp_init` — init clears Z80 RAM, which
+would wipe an earlier publish. Its order against `MMLisp_loadScore` does not
+matter: the pointer is remembered and re-applied on every load.
 
 **Uncommenting the BIN line alone does nothing.** rescomp then puts `song.smp`
 in the ROM and declares the symbol, but nobody tells the driver where it is:
