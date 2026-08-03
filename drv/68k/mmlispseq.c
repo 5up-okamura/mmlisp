@@ -184,7 +184,7 @@ static uint8_t pcm_shift_byte(const MMLPcmVoice *v) {
 static void emit_pcm_start(MMLSeq *s, int vi, const MMLPcmVoice *v) {
   /* The sample bank is bank-relative; the engine wants {ROM bank, window
    * address} because that is what its $8000-window mapper takes. */
-  uint32_t abs = v->base;
+  uint32_t abs = s->sample_rom_base + v->base;
   uint8_t inc_i = (uint8_t)((v->inc >> 16) & 0xff);
   /* 2^ksh >= the largest advance one tick can make, so the engine bounds a
    * segment with a shift instead of a division. That is the bit length of the
@@ -1732,7 +1732,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   return 0;
 }
 
-int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len) {
+int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_base) {
   if (!bank || (len && len < 2)) return -1;
   uint16_t n = rd16(bank, 0);
   if (len && 2 + (uint32_t)n * 20 > len) return -2;
@@ -1740,6 +1740,14 @@ int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len) {
   s->sample_entries = bank + 2;
   /* Entry offsets are relative to the blob region, which follows the table. */
   s->sample_blob_base = 2 + (uint32_t)n * 20;
+  s->sample_rom_base = rom_base;
+  return 0;
+}
+
+int mml_needs_samples(const MMLSeq *s) {
+  if (s->sample_count) return 0;
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].channel_id >= CH_PCM1 && s->trk[i].channel_id <= CH_PCM3) return 1;
   return 0;
 }
 

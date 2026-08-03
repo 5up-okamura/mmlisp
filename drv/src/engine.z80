@@ -104,7 +104,12 @@ H_SMPBANK   equ HDR+6           ; u16 68k-owned: PCM sample ROM bank (0 = none)
 H_DEPTH     equ HDR+8           ; u8  ring depth in slots
 H_SLOTSH    equ HDR+9           ; u8  log2(SLOT_SIZE): a slot index is a shift
 H_RING      equ HDR+10          ; u16 ring base address in Z80 RAM
-PROTO_VER   equ 4
+; Frames the engine had to hold the chips because the ring was empty. Not an
+; error (driver.md §6.1) — it means the 68k did not keep up, which is otherwise
+; INAUDIBLE AS A CAUSE: it presents as the music wobbling, with nothing to point
+; at. A counter turns that into a number.
+H_STARVE    equ HDR+12          ; u16 Z80-owned: starved frames since boot
+PROTO_VER   equ 5
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -161,6 +166,8 @@ start:
         ld   (H_SLOTSH),a
         ld   hl,RING
         ld   (H_RING),hl
+        ld   hl,0
+        ld   (H_STARVE),hl
         ld   a,READY_MARK
         ld   (H_READY),a
         ei
@@ -195,7 +202,14 @@ consume_slot:
         ld   c,a
         ld   a,(H_HEAD)
         cp   c
-        ret  z                  ; ring empty: the 68k did not keep up
+        jr   nz,cs_have
+        ; Ring empty: the 68k did not keep up. Hold the chips, keep mixing, and
+        ; count it — this is the one failure that is otherwise unattributable.
+        ld   hl,(H_STARVE)
+        inc  hl
+        ld   (H_STARVE),hl
+        ret
+cs_have:
         ; slot address = RING + tail*256, and RING is page-aligned
         ld   a,c
         add  a,RING>>8

@@ -108,8 +108,27 @@ s16 MMLisp_getVal(u8 slot);
 
 // ── Status ─────────────────────────────────────────────────────────────────
 
+// True when the loaded score plays PCM but no sample bank was published — the
+// one misconfiguration that fails ENTIRELY silently: every PCM note dropped,
+// the DAC never enabled, sounding exactly like a track that was never started.
+// Check it after MMLisp_loadScore and put it on screen; it costs one call and
+// saves an afternoon.
+bool MMLisp_needsSampleBank(void);
+
 // True while the track is running (dispatching or holding).
 bool MMLisp_trackActive(u8 track_id);
+
+// Frames the engine had to hold the chips because the ring was empty — the
+// 68k did not call MMLisp_frame in time. **This is what "the tempo wobbles"
+// looks like from the inside**, and it is otherwise unattributable: the music
+// keeps playing, just not evenly, with nothing to point at.
+//
+// It should stay at 0. If it climbs, the 68k is not keeping up with 60 Hz, and
+// the fix is either less work per frame or a deeper ring (RING_DEPTH in
+// engine.z80 — depth N absorbs N-1 late frames, at N frames of control latency;
+// driver.md §3.4). Note that a shallow ring makes an occasional long frame
+// audible, so this climbing does NOT necessarily mean the driver is slow.
+u16 MMLisp_starvedFrames(void);
 
 // The engine's consumed-frame counter — the AUDIBLE clock. The sequencer runs
 // ahead of it by the ring's fill level, so anything that has to line up with

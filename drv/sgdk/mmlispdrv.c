@@ -26,6 +26,7 @@
 #define H_DEPTH    (MMLISPDRV_HDR + 8)
 #define H_SLOTSH   (MMLISPDRV_HDR + 9)
 #define H_RING     (MMLISPDRV_HDR + 10)  // u16 ring base in Z80 RAM
+#define H_STARVE   (MMLISPDRV_HDR + 12)  // u16 Z80-owned: starved frames
 
 static MMLSeq     seq;
 static bool       ready     = FALSE;
@@ -98,9 +99,10 @@ bool MMLisp_isReady(void)
 
 void MMLisp_setSampleBank(const u8* smp)
 {
-    // PCM blobs ride their own 32 KB-aligned ROM bank (song.smp), which the
-    // mixer latches per frame (driver.md §5, §14). This is a plain publish, not
-    // a command: the engine only ever reads it.
+    // PCM blobs ride their own 32 KB-aligned ROM bank (song.smp). The bank the
+    // mixer actually latches travels inside each PCM_START (driver.md §6.3) —
+    // this header field is the protocol's reserved slot for it, kept current so
+    // a debugger sees the same value the sequencer is resolving against.
     //
     // Call AFTER MMLisp_init — init's Z80_clear wipes Z80 RAM. Order against
     // MMLisp_loadScore does not matter: the pointer is remembered and re-applied
@@ -114,10 +116,12 @@ void MMLisp_setSampleBank(const u8* smp)
     Z80_releaseBus();
 
     // The sequencer resolves every PCM field itself (driver.md §6.3), so it
-    // needs the bank's entry table — the 20-byte-per-sample directory that
-    // precedes the blobs. It reads that straight out of ROM; the blob itself is
-    // the Z80's business alone.
-    if (smp && loaded) mml_load_samples(&seq, smp, 0);
+    // needs two things: the bank's entry table — the 20-byte-per-sample
+    // directory that precedes the blobs, read straight out of ROM — and the
+    // bank's ADDRESS, because PCM_START carries an absolute {bank, window
+    // offset} and nothing but the host knows where rescomp linked the blob.
+    // The blob itself is the Z80's business alone.
+    if (smp && loaded) mml_load_samples(&seq, smp, 0, (u32)smp);
 }
 
 bool MMLisp_loadScore(const u8* mmb)
@@ -128,7 +132,7 @@ bool MMLisp_loadScore(const u8* mmb)
     u32 len = mml_mmb_size(mmb, 0);
     if (!len) return FALSE;
     loaded = (mml_load(&seq, mmb, len) == 0);
-    if (loaded && smpBank) mml_load_samples(&seq, smpBank, 0);
+    if (loaded && smpBank) mml_load_samples(&seq, smpBank, 0, (u32)smpBank);
     return loaded;
 }
 
@@ -206,11 +210,24 @@ s16 MMLisp_getVal(u8 slot)
 
 // ── Status ─────────────────────────────────────────────────────────────────
 
+bool MMLisp_needsSampleBank(void)
+{
+    return loaded && mml_needs_samples(&seq);
+}
+
 bool MMLisp_trackActive(u8 track_id)
 {
     for (u8 i = 0; i < seq.track_count; i++)
         if (seq.trk[i].track_id == track_id) return seq.trk[i].running != 0;
     return FALSE;
+}
+
+u16 MMLisp_starvedFrames(void)
+{
+    Z80_requestBus(TRUE);
+    u16 n = (u16)(*Z80_RAM_AT(H_STARVE) | (*Z80_RAM_AT(H_STARVE + 1) << 8));
+    Z80_releaseBus();
+    return n;
 }
 
 u16 MMLisp_audibleFrame(void)

@@ -42,9 +42,9 @@ int main(bool hardReset)
     }
 
     // A score with `def :sample` also ships res/song.smp on its own 32 KB-aligned
-    // ROM bank. Publish it — uncommenting the BIN line in song.res is NOT enough:
-    // without this call every PCM note is dropped and you hear FM/PSG only.
-    // demo1 has no PCM, so the call and its BIN line are both commented out.
+    // ROM bank. Uncomment BOTH this and the song.smp BIN line in song.res —
+    // either one alone leaves every PCM note dropped, with the song playing
+    // FM/PSG only. (demo1 has no PCM, so both ship commented out.)
     //   MMLisp_setSampleBank(song_smp);
 
     if (!MMLisp_loadScore(song_mmb))
@@ -53,10 +53,17 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
+    // …and this is why the reminder above is not enough on its own. The score
+    // says it plays PCM and no bank was published, which is silent by nature —
+    // so say it out loud instead of letting it be chased as a missing part.
+    if (MMLisp_needsSampleBank())
+        VDP_drawText("!! PCM SCORE, NO SAMPLE BANK", 2, 19);
+
     VDP_drawText("MMLispDRV ready", 2, 2);
     VDP_drawText("A/START play  B stop  C stat", 2, 3);
     VDP_drawText("pad:", 2, 5);
     VDP_drawText("audible frame:", 2, 7);
+    VDP_drawText("starved:", 18, 7);
     VDP_drawText("track active:", 2, 8);
 
     u16 prev = 0;
@@ -96,7 +103,10 @@ int main(bool hardReset)
         // not taking its 60 Hz interrupt.
         if (pressed & BUTTON_C)
         {
-            drawHex(MMLisp_audibleFrame(), 4, 17, 7);
+            drawHex(MMLisp_audibleFrame(), 4, 16, 7);
+            // Should stay 0. Climbing = the ring ran dry, i.e. MMLisp_frame did
+            // not run in time — which is exactly what an uneven tempo is.
+            drawHex(MMLisp_starvedFrames(), 4, 27, 7);
             for (u8 id = 0; id < TRACK_COUNT; id++)
                 drawHex(MMLisp_trackActive(id) ? 1 : 0, 1, 17 + id, 8);
         }

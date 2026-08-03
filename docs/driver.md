@@ -739,11 +739,19 @@ builds. `drv/sgdk/mmlispdrv.c` carries the current values.
 | `tail` | Z80 | next slot to consume |
 | `frames_consumed` u16 | Z80 | **the audible clock.** The 68k runs ahead by the ring depth, so `(trig N)` must fire when the frame is *heard*, not when it was rendered — the host compares this counter against the frame it stamped the marker on (§6.5) |
 | `engine_ready` u8 | Z80 | 0x00 while booting |
-| `protocol_version` u8 | Z80 | = 4. The host refuses to run on a mismatch — it means this header's layout moved under it |
+| `protocol_version` u8 | Z80 | = 5. The host refuses to run on a mismatch — it means this header's layout moved under it |
 | `smp_bank` u16 | 68k | PCM sample ROM bank; 0 = none. Must be published *after* the image upload, which clears Z80 RAM |
 | `ring_depth` u8 | Z80 | slots in the ring |
 | `slot_shift` u8 | Z80 | log2 of the slot stride — a slot index is a shift |
 | `ring_base` u16 | Z80 | where the ring starts in Z80 RAM |
+| `starved_frames` u16 | Z80 | frames the engine held the chips because the ring was empty (§6.1) |
+
+`starved_frames` exists because ring-empty is the one failure with **no
+signature**: the music keeps playing, just not evenly, and nothing in the trace
+says why. It is what "the tempo wobbles" looks like from the inside. It should
+stay at 0; if it climbs, the 68k missed 60 Hz, and the answer is either less
+work per frame or a deeper ring (§3.4) — depth N absorbs N-1 late frames, so
+the default of 2 absorbs exactly one and makes a single long frame audible.
 
 The last three exist so the header's **address** is the only Z80 constant the
 68k compiles in. Both sides have to agree on the ring's geometry and a mismatch

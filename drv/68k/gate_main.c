@@ -151,7 +151,9 @@ int main(int argc, char **argv) {
       fprintf(stderr, "cannot read %s\n", smp_path);
       return 2;
     }
-    if (mml_load_samples(&seq, smp, (uint32_t)slen)) {
+    /* rom_base 0 — the reference models the bank at ROM address 0 too, so the
+     * absolute {bank, offset} in every PCM_START matches byte for byte. */
+    if (mml_load_samples(&seq, smp, (uint32_t)slen, 0)) {
       fprintf(stderr, "bad sample bank\n");
       return 2;
     }

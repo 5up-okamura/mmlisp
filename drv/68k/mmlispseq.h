@@ -184,6 +184,11 @@ typedef struct {
   const uint8_t *sample_entries;
   uint16_t sample_count;
   uint32_t sample_blob_base;
+  /* Where the bank sits in the 68k ADDRESS SPACE. The Z80 reaches samples
+   * through its 32 KB window, so PCM_START must carry an absolute {bank,
+   * offset} — and only the host knows where rescomp put the blob. The gate
+   * passes 0, which is what drv-player's _sampleBankBase models. */
+  uint32_t sample_rom_base;
   uint16_t increment; /* 8.8, per song (driver.md §3.2) */
 
   MMLTrack trk[MML_MAX_TRACKS];
@@ -248,9 +253,17 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len);
 /* Attach the sample bank (mmb.md §10) — a separate ROM bank, so it is a
  * separate call. Must follow mml_load, which clears the whole state. Scores
  * without PCM never make it. `len` bounds the table; pass 0 when the caller has
- * only a ROM pointer and no size. Returns 0 on success, negative on a bad
- * table. */
-int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len);
+ * only a ROM pointer and no size. `rom_base` is the bank's address in the 68k
+ * address space — PCM_START carries an absolute {bank, window offset} and only
+ * the host knows where the blob was linked. Returns 0 on success, negative on a
+ * bad table. */
+int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_base);
+
+/* True when the loaded score plays PCM but no sample bank is attached — the
+ * one configuration that fails ENTIRELY silently (every PCM note dropped, the
+ * DAC never even enabled, sounding exactly like a missing part). Worth showing
+ * on screen rather than letting someone chase it. */
+int mml_needs_samples(const MMLSeq *s);
 
 /* Total MMB length, derived from its own section table. The host gets a bare
  * pointer out of rescomp with no size attached, so the container tells it. */
