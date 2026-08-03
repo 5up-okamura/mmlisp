@@ -1558,7 +1558,14 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
     if (t->armed) {
       dispatch(s, t); /* leading setup only — see the armed test in dispatch */
       t->armed = 0;   /* notes start next frame */
-      continue;
+      /* ...except a PCM track, which starts THIS frame and so runs one frame
+       * ahead of every other track for the rest of the score. That is the
+       * compensation for the mixer's feed: it runs one frame behind the mix by
+       * construction (driver.md §5.1), so a PCM command issued a frame early is
+       * heard on the beat. The lead is exactly one frame and stays that way —
+       * every track advances by the same increment per frame. */
+      if (t->channel_id < CH_PCM1 || t->channel_id > CH_PCM3) continue;
+      if (!t->running || t->held) continue;
     }
     t->acc = (uint16_t)(t->acc + s->increment);
     while (t->acc >= 0x100) {

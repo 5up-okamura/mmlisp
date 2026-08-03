@@ -364,7 +364,10 @@ The design above survived contact only in part. What shipped:
   finished voice runs a pass through `G_IDLEV` at PV_SHIFT = 9 (IDLE — like MUTE
   but it does not advance a position, 35 cycles a tick cheaper, and those cycles
   are the pad). Order: sounding voices first, silent passes last.
-- **Double-buffered plane**, so PCM lags one frame. `drv-player.js` models it;
+- **Double-buffered plane**, so PCM lags one frame — which the sequencer then
+  cancels by promoting PCM tracks in their own armed frame, so they run one
+  frame ahead of every other track for the rest of the score (driver.md §4.2).
+  Reported the same day it shipped: 16.7 ms drags audibly on a drum part. `drv-player.js` models it;
   `engine-gate.mjs` grew a `ModelFeed` for it. A burst opens with a frame of
   silence and closes with a flush frame that carries the tail, and `$2B` is
   released after that, not before.

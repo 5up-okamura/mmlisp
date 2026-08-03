@@ -334,6 +334,19 @@ while the track is armed, at the first opcode that sounds or consumes time
 (`$10..$13`): the leading VOICE_SET / PARAM_SET / macro binds run in the armed
 frame, the notes wait for the next one.
 
+**PCM tracks are the exception, and they lead by one frame (2026-08-03).** The
+mixer feeds the DAC from a plane the previous frame finished (§5.1), so a PCM
+command issued in frame N is first *heard* in frame N+1. That delay is exactly
+one frame and never varies, so the sequencer cancels it: a PCM track is promoted
+in its own armed frame instead of the next one, and from then on runs one frame
+ahead of every other track — permanently, since all tracks advance by the same
+increment. A PCM hit and an FM hit written on the same beat therefore sound
+together. (Its first note already fell in the armed frame, because the early
+return above stops at `$10..$13` and `PCM_NOTE_ON` is not one of them, so that
+note needed no correction and now gets none.) Without this the PCM part of a
+score drags 16.7 ms behind the rest — small on paper, audible on anything the
+drums carry.
+
 **Why this survives the split even though the 68k setup cost vanished.** The
 original rationale was Z80 cycles — 7 tracks of MMB walk, TCB fill and overlay
 loads measured 204k, over three frame-times. That cost is gone. What is *not*
@@ -434,7 +447,9 @@ Three things follow from pacing, and they shape the engine:
   frame can only be feeding what the *previous* frame finished. A burst opens
   with a frame of silence and closes with an extra frame carrying the tail; the
   DAC is released after that tail, not before it. `drv-player.js` models the
-  same delay, or the gates would stop meaning anything.
+  same delay, or the gates would stop meaning anything. **The sequencer cancels
+  it** by running PCM tracks one frame ahead of the rest (§4.2), so the delay
+  costs latency against the host's input, never alignment against the music.
 - **Every frame runs exactly three voice passes**, silently (through `G_IDLEV`)
   where there is no voice — otherwise the cadence would depend on how many
   voices sound, and the samples would bunch into whatever the mix took.

@@ -108,6 +108,8 @@ const u16 = (b, o) => b[o] | (b[o + 1] << 8);
 const u32 = (b, o) =>
   (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
 const i8 = (v) => (v & 0x80 ? v - 0x100 : v);
+// pcm1-pcm3, the three soft-mix voices (driver.md §14)
+const isPcmChannel = (ch) => ch >= 20 && ch <= 22;
 const i16 = (v) => (v & 0x8000 ? v - 0x10000 : v);
 
 // Scaled-macro sample (§4.4): `(sample × depth) >> 8`, depth = slot low byte
@@ -2179,7 +2181,14 @@ export class DrvPlayer {
       if (trk.armed) {
         this._dispatch(trk); // leading setup only — see the guard in _dispatch
         trk.armed = false; // notes start next frame (Z80: dec T_STATUS)
-        continue;
+        // ...except a PCM track, which starts THIS frame and so runs one frame
+        // ahead of every other track for the rest of the score. That is the
+        // compensation for the mixer's feed: it is one frame behind the mix by
+        // construction (driver.md §5.1), so a PCM command issued a frame early
+        // is heard on the beat. The lead is exactly one frame and stays that
+        // way — every track advances by the same increment per frame.
+        if (!isPcmChannel(trk.channelId)) continue;
+        if (!trk.running || trk.held) continue;
       }
       trk.acc += this._increment;
       while (trk.acc >= 0x100) {
