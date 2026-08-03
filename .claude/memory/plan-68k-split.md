@@ -248,6 +248,28 @@ pass solved that; the binding constraint is *cycles*.
   - **Integration consequences:** the score no longer needs 32 KB alignment
     (only `song.smp` still rides the Z80 window), and the 7-starts-per-frame
     mailbox ceiling is gone.
+  - **FIRST REAL SGDK BUILD 2026-08-03** — SGDK 2.x + m68k-elf-gcc 13.2.0,
+    clean compile + link to a 256 KB ROM at `~/build/verify-hello-world`.
+    **Not run yet** (hardware/emulator behaviour still establishes nothing).
+    It exposed three things the host gate could not see, all now fixed AND
+    covered by `sgdk:lint` (which gained `-DSGDK_GCC` + a faithful shim; the
+    old tidy shim had hidden every one of them):
+    - **SGDK's `types.h` `#define`s `uint8_t`/`int8_t`/`size_t`/`ptrdiff_t` as
+      MACROS**, so `<stdint.h>` after `<genesis.h>` is a hard error.
+      `mmlispseq.h` now takes SGDK's types under `SGDK_GCC`.
+    - **SGDK's `s8` is `char`**, not `signed char` — implementation-defined
+      signedness that every i8 value here rides on. Compile-time assertion added.
+    - **SGDK's `<string.h>` is not standalone-includable** (prototypes typed with
+      u16/s8, assumes types.h first) and has NO memcpy/memset (those are
+      `<memory.h>`, different signature). mmlispseq.c now uses zero libc —
+      `mml_zero` / `mml_copy` — which also makes good on its header comment.
+    - **GNU Make 3.81 (Apple's) fails SILENTLY** — `make: *** [release] Error 2`
+      and nothing else — during `-include $(DEPS)` when `out/<build>/res/song.o`
+      is stale or missing, because the .d rules list it as a prerequisite and
+      errors in that phase are suppressed. Bites once, on any project whose
+      `out/` predates a `song.res` change (i.e. every pre-split migration).
+      `rm -rf out res/song.h` fixes it; `make CLEAN=TRUE <target>` shows the
+      real error. Not our bug, but it costs an hour if you do not know it.
 
 ## P3 entry — what is decided, and what has to be decided first
 

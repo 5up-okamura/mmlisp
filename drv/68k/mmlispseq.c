@@ -6,7 +6,19 @@
  */
 #include "mmlispseq.h"
 
-#include <string.h>
+/* No libc. `memset`/`memcpy` would be the only calls, and reaching for them
+ * costs more than they are worth here: SGDK's <string.h> is not standalone-
+ * includable (it types its prototypes with SGDK's own u16/s8 and assumes
+ * <types.h> came first), and its memcpy has a different signature from the
+ * standard one, so a local declaration would clash. Two loops keep this file
+ * exactly as freestanding as its header comment claims. */
+static void mml_zero(void *dst, uint32_t n) {
+  uint8_t *p = (uint8_t *)dst;
+  while (n--) *p++ = 0;
+}
+static void mml_copy(uint8_t *dst, const uint8_t *src, uint16_t n) {
+  while (n--) *dst++ = *src++;
+}
 
 #define MAGIC0 0x4d
 #define MAGIC1 0x4d
@@ -1509,13 +1521,13 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
 
   uint32_t o = 0;
   out[o++] = (uint8_t)np;
-  memcpy(out + o, psg, np); o += np;
+  mml_copy(out + o, psg, np); o += np;
   out[o++] = (uint8_t)(n0 / 2);
-  memcpy(out + o, fm0, n0); o += n0;
+  mml_copy(out + o, fm0, n0); o += n0;
   out[o++] = (uint8_t)(n1 / 2);
-  memcpy(out + o, fm1, n1); o += n1;
+  mml_copy(out + o, fm1, n1); o += n1;
   out[o++] = s->pcm_count;
-  memcpy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
+  mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
   s->pcm_count = 0;
   s->pcm_len = 0;
 
@@ -1646,7 +1658,7 @@ uint32_t mml_mmb_size(const uint8_t *mmb, uint32_t max_len) {
 }
 
 int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
-  memset(s, 0, sizeof(*s));
+  mml_zero(s, (uint32_t)sizeof(*s));
   if (len < 12 || mmb[0] != MAGIC0 || mmb[1] != MAGIC1 || mmb[2] != MAGIC2 ||
       mmb[3] != MAGIC3)
     return -1;

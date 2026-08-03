@@ -10,11 +10,16 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > stream in emulation (`npm run engine`, `npm run slots`), and the ring
 > transport has its own gate (`npm run ring`).
 >
-> What is **not** proven is this SGDK glue on a real bus and interrupt model.
-> `npm run sgdk:lint` type-checks it against the sequencer API, which catches
-> the likeliest kind of breakage and nothing else; no m68k toolchain lives in
-> this repo, so the code below has never been compiled by SGDK or run. Follow
-> "Confirming it works" on an emulator before trusting it.
+> The glue **has now been built for real** — SGDK 2.x + m68k-elf-gcc 13.2.0,
+> clean compile and link to a 256 KB ROM. It has **not been run**, on hardware
+> or in an emulator, so nothing about its behaviour is established yet. Follow
+> "Confirming it works" below before trusting it.
+>
+> No m68k toolchain lives in this repo, so `npm run sgdk:lint` stands in for the
+> compiler: it builds the sequencer, the glue and the example against a shim of
+> the SGDK symbols they use — with `-DSGDK_GCC` and a `types.h` that mirrors
+> SGDK's macro conventions, because a friendlier shim hid three real build
+> failures once already.
 
 ## What changed with the split
 
@@ -222,6 +227,46 @@ the PCM tracks.** `mmb-build` prints `N tracks — 0:fm1 1:fm2 …`; a `TRACK_CO
 smaller than N never starts the tail of that list, and PCM tracks are usually
 near the end. `install-sgdk.mjs --song` prints the list and warns about whichever
 step is missing.
+
+### Two SGDK-specific traps, both found on the first real build
+
+- **`<stdint.h>` cannot follow `<genesis.h>`.** SGDK's `types.h` `#define`s
+  `uint8_t`, `int8_t`, `size_t`, `ptrdiff_t` and friends as **macros** over its
+  own `u8`/`s8` types, so a standard header included afterwards goes on to
+  declare names that are no longer identifiers — dozens of confusing errors far
+  from the cause. `mmlispseq.h` therefore takes SGDK's types under `SGDK_GCC`
+  and the standard ones everywhere else. The same applies to any file of yours
+  that includes both.
+
+  A consequence worth knowing: SGDK's `s8` is plain `char`, whose signedness is
+  implementation-defined. The sequencer asserts it is signed at compile time,
+  because getting that wrong would be an audible bug rather than a crash.
+
+- **SGDK's `<string.h>` is not standalone-includable** — it types its prototypes
+  with `u16`/`s8` and assumes `types.h` came first, and it does not declare
+  `memcpy`/`memset` at all (those are in `<memory.h>`, with a different
+  signature from the standard one). The sequencer uses no libc for exactly this
+  reason.
+
+### If `make` fails with no output at all
+
+GNU Make 3.81 — the one Apple ships, and what SGDK's makefile runs under on
+macOS — can fail **silently** during its `-include $(DEPS)` phase when
+`out/<build>/res/song.o` is missing or stale, because the dependency rules list
+it as a prerequisite and errors in that phase are suppressed. You get
+`make: *** [release] Error 2` and not one line more.
+
+It bites exactly once, when an existing `out/` predates a change to
+`res/song.res` — which is every project migrating from the pre-split driver. The
+fix is a clean build:
+
+```
+rm -rf out res/song.h && make -f $GDK/makefile.gen
+```
+
+A clean tree builds fine, so this is a migration hazard rather than a standing
+one. (If you want to see what make is hiding: `make CLEAN=TRUE <target>` skips
+the include phase and prints the real error.)
 
 ## Confirming it works
 

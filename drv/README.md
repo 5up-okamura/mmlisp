@@ -345,11 +345,20 @@ Two gates, both host-side:
   once through the real ring with a model of the Z80 consuming one slot per its
   own vblank, at depths 2/3/4/8, skipping every seventh host frame to stand in
   for an overrun — and requires the byte streams to be identical.
-- `npm run sgdk:lint` compiles the glue and the example against a hand-written
-  shim of the dozen SGDK symbols they use, with the real `mmlispseq.h` in the
-  include path. It catches the glue drifting out of step with the sequencer API,
-  which changes far more often than SGDK does, and it catches nothing else —
-  there is no m68k toolchain here and nothing has been run on hardware.
+- `npm run sgdk:lint` compiles the sequencer, the glue and the example against a
+  hand-written shim of the SGDK symbols they use — with `-DSGDK_GCC` and a
+  `types.h` that mirrors SGDK's macro conventions rather than a tidy one,
+  because "it builds on the host" turned out not to imply "it builds for SGDK".
+  The first real SGDK build found three failures the earlier, friendlier shim
+  had hidden: `<stdint.h>` cannot follow `<genesis.h>` (SGDK `#define`s
+  `uint8_t`/`size_t`/… as macros), SGDK's `<string.h>` is not
+  standalone-includable and has no `memcpy`/`memset`, and its `s8` is `char`
+  rather than `signed char`. The sequencer now takes SGDK's types under
+  `SGDK_GCC`, uses no libc at all, and asserts `char` is signed at compile time.
+
+  The glue **has been built for real** since — SGDK 2.x + m68k-elf-gcc 13.2.0,
+  clean compile and link to a 256 KB ROM — but never run, so nothing about its
+  behaviour is established.
 
 The build path moved with it: `tools/build-engine.mjs` assembles `src/engine.z80`
 with the generated mixer, and `tools/emit-bin.mjs` emits the one resident image

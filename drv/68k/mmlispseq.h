@@ -19,8 +19,24 @@
 #ifndef MMLISPSEQ_H
 #define MMLISPSEQ_H
 
-#include <stddef.h>
+/* Fixed-width types, from whichever source this translation unit is allowed.
+ *
+ * SGDK's <types.h> #DEFINES `uint8_t`, `int8_t`, `size_t` and friends as MACROS
+ * over its own u8/s8 types. Once <genesis.h> has been seen, pulling in
+ * <stdint.h> is therefore a hard error — the standard header goes on to declare
+ * names that are no longer identifiers. So on that target we take SGDK's, which
+ * supply every fixed-width name this file uses; everywhere else (the host gate)
+ * the standard headers. SGDK defines SGDK_GCC on the command line. */
+#ifdef SGDK_GCC
+#include <types.h>
+/* SGDK's s8 — and therefore int8_t here — is plain `char`, whose signedness is
+ * implementation-defined. Every signed 8-bit value in this file depends on it
+ * (operator detune, macro samples), and getting it wrong would be an audible
+ * bug rather than a crash. Make it a compile error instead. */
+typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
+#else
 #include <stdint.h>
+#endif
 
 /* ── Build constants (driver.md §6.2) ─────────────────────────────────────── */
 #define MML_SLOT_SIZE 256

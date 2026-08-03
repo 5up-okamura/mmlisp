@@ -42,14 +42,18 @@ const cc = (src, extra = []) =>
   );
 
 try {
-  cc(join(drv, "sgdk", "mmlispdrv.c"));
+  // -DSGDK_GCC selects the same type source the real build uses.
+  cc(join(drv, "68k", "mmlispseq.c"), ["-DSGDK_GCC"]);
+  cc(join(drv, "68k", "tables.c"), ["-DSGDK_GCC"]);
+  console.log("ok    68k/mmlispseq.c + tables.c build under SGDK's type conventions");
+  cc(join(drv, "sgdk", "mmlispdrv.c"), ["-DSGDK_GCC"]);
   console.log("ok    sgdk/mmlispdrv.c agrees with 68k/mmlispseq.h");
   // SGDK's entry point is `int main(bool hardReset)`, which a hosted compiler
   // rejects on sight and whose parameter its own templates never use. Rename it
   // and let that one parameter be unused, rather than write an example that
   // does not look like every other SGDK program.
   cc(join(drv, "sgdk", "example", "main.c"),
-     ["-I", tmp, "-Dmain=sgdk_main", "-Wno-unused-parameter"]);
+     ["-DSGDK_GCC", "-I", tmp, "-Dmain=sgdk_main", "-Wno-unused-parameter"]);
   console.log("ok    sgdk/example/main.c agrees with the host API");
   console.log("      (a type-check only — it says nothing about SGDK or hardware)");
 } catch (e) {
