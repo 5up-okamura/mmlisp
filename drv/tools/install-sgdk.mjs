@@ -177,10 +177,17 @@ if (opts.song) {
   const chans = (ir.tracks ?? []).map((t, i) => `${i}:${t.channel}`).join(" ");
   const trackCount = ir.tracks?.length ?? 0;
   console.log(`    ${trackCount} tracks — ${chans}`);
-  // The one host-side way left to lose a track without any error: a TRACK_COUNT
-  // that stops short of this list. The pre-split ceiling — a start burst deeper
-  // than the mailbox ring — is gone with the mailbox: starts are plain calls
-  // now, so a whole score can start in one frame however many tracks it has.
+  // The one host-side way left to lose a track without any error: starting a
+  // count of your own that stops short of this list. (The pre-split ceiling — a
+  // start burst deeper than the mailbox ring — is gone with the mailbox.)
+  const pcm = (ir.tracks ?? []).filter((t) => /^pcm/.test(t.channel)).length;
+  if (pcm) {
+    console.log(
+      `    ${pcm} PCM track${pcm > 1 ? "s" : ""} — start the WHOLE list` +
+        ` (MMLisp_trackCount/trackId), not a constant: PCM sits at the end,` +
+        ` so a short count silently drops it`,
+    );
+  }
   if (sampleBank?.length) {
     smpPath = join(project, "res", "song.smp");
     if (!opts.dryRun) writeFileSync(smpPath, sampleBank);

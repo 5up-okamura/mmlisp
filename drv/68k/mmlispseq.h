@@ -309,6 +309,13 @@ uint8_t mml_pump(MMLSeq *s, uint8_t head, uint8_t tail, uint8_t depth,
 /* Writes still queued behind the cap. */
 uint16_t mml_pending(const MMLSeq *s);
 
+/* The loaded score's tracks. The MMB knows how many there are and what their
+ * ids are, so nothing downstream should be hardcoding either: a count that
+ * stops short of the list silently never starts the tail of it, and PCM tracks
+ * tend to sit at the end. */
+uint8_t mml_track_count(const MMLSeq *s);
+uint8_t mml_track_id(const MMLSeq *s, uint8_t index);
+
 /* Every track idle or held. */
 int mml_done(const MMLSeq *s);
 

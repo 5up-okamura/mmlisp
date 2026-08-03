@@ -210,6 +210,9 @@ s16 MMLisp_getVal(u8 slot)
 
 // ── Status ─────────────────────────────────────────────────────────────────
 
+u8 MMLisp_trackCount(void)        { return loaded ? mml_track_count(&seq) : 0; }
+u8 MMLisp_trackId(u8 index)       { return loaded ? mml_track_id(&seq, index) : 0; }
+
 bool MMLisp_needsSampleBank(void)
 {
     return loaded && mml_needs_samples(&seq);

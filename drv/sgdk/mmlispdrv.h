@@ -87,6 +87,18 @@ void MMLisp_startTrack(u8 track_id);
 // Stop a track: key-off (the release tail runs out), free its channel, idle it.
 void MMLisp_stopTrack(u8 track_id);
 
+// How many tracks the loaded score has, and the id of the i-th one. Use these
+// to start a whole score rather than a constant of your own:
+//
+//     for (u8 i = 0; i < MMLisp_trackCount(); i++)
+//         MMLisp_startTrack(MMLisp_trackId(i));
+//
+// A hardcoded count that stops short of the list never starts the tail of it,
+// with no error — and PCM tracks tend to sit at the end, so the symptom is
+// "the drums are missing" rather than anything pointing at a count.
+u8 MMLisp_trackCount(void);
+u8 MMLisp_trackId(u8 index);
+
 // Key-off one channel without stopping its track: releases a len=0 hold (the
 // dispatcher resumes) or truncates a sounding note.
 void MMLisp_keyOff(u8 channel_id);

@@ -222,11 +222,19 @@ missing part rather than like noise. Measured on a real 9-track import: 1 `$2A`
 write over 600 frames without the call, 94,851 with it. (Noise is what a *wrong*
 non-zero bank gives you.)
 
-One more way to silence PCM with no error at all: **your track count must cover
-the PCM tracks.** `mmb-build` prints `N tracks — 0:fm1 1:fm2 …`; a `TRACK_COUNT`
-smaller than N never starts the tail of that list, and PCM tracks are usually
-near the end. `install-sgdk.mjs --song` prints the list and warns about whichever
-step is missing.
+One more way to silence PCM with no error at all: **start the whole track list,
+not a count of your own.** PCM tracks sit near the end of it, so a constant that
+stops short drops exactly them — and nothing reports it. Ask the MMB instead:
+
+```c
+for (u8 i = 0; i < MMLisp_trackCount(); i++)
+    MMLisp_startTrack(MMLisp_trackId(i));
+```
+
+This is the second-most-common way to lose PCM and it looks identical to the
+first (the missing sample bank): the song plays, the drums do not.
+`MMLisp_needsSampleBank()` tells the two apart — true means the bank, false with
+missing PCM means the count.
 
 ### Two SGDK-specific traps, both found on the first real build
 
@@ -247,6 +255,25 @@ step is missing.
   `memcpy`/`memset` at all (those are in `<memory.h>`, with a different
   signature from the standard one). The sequencer uses no libc for exactly this
   reason.
+
+### Diagnosing an uneven tempo
+
+`MMLisp_starvedFrames()` is the engine's count of frames it had to hold the
+chips because the ring was empty. Ring-empty is not an error by design (§6.1) —
+the engine keeps mixing and the music simply does not advance that frame — which
+means a 68k that misses 60 Hz presents as **the tempo wobbling, with nothing to
+point at**. The counter is what makes it attributable.
+
+It should stay at 0. If it climbs, `MMLisp_frame()` is not running every frame,
+and the answer is either less work per frame or a deeper ring: `RING_DEPTH` in
+`engine.z80` absorbs N-1 late frames at N frames of control latency (§3.4). The
+default of 2 absorbs exactly **one**, so a single long frame is already audible
+— and how close a song runs to that edge depends on its own per-frame work
+(voice applies, macro steps, sweeps, PCM voice bookkeeping), which is why an
+uneven tempo can show up on one song and not another.
+
+Only the 68k side needs changing for a depth experiment on the engine — the host
+reads depth out of the published header.
 
 ### If `make` fails with no output at all
 

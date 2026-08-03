@@ -1600,6 +1600,11 @@ uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out) {
   return encode_slot(s, slot_out);
 }
 
+uint8_t mml_track_count(const MMLSeq *s) { return s->track_count; }
+uint8_t mml_track_id(const MMLSeq *s, uint8_t index) {
+  return index < s->track_count ? s->trk[index].track_id : 0;
+}
+
 int mml_done(const MMLSeq *s) {
   /* Still busy while the DAC is feeding: a shot or a loop tail plays past the
    * note that started it, and past the end of its track. */

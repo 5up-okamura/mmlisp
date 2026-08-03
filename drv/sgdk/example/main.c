@@ -13,12 +13,12 @@
 #include "mmlispdrv.h"
 #include "song.h"        // rescomp: `song_mmb`
 
-// Track ids come from the compile step, which prints the whole list:
-//   node drv/tools/mmb-build.mjs mysong.mmlisp res/song.mmb
-// (examples/source/demo1.mmlisp compiles to 5 tracks, ids 0..4.) Set this to
-// that count — a smaller value silently leaves the tail of the list unstarted,
-// and PCM tracks tend to sit at the end.
-#define TRACK_COUNT 5
+// There is deliberately no TRACK_COUNT here. The MMB knows how many tracks it
+// has, so asking it (MMLisp_trackCount) removes a constant that has to be kept
+// in step with the score by hand — and getting that constant wrong is silent:
+// the tail of the track list simply never starts, and PCM tracks tend to sit at
+// the end, so it presents as "the drums are missing".
+#define MAX_SHOWN_TRACKS 10
 
 static void drawHex(u32 value, u16 digits, u16 x, u16 y)
 {
@@ -85,13 +85,15 @@ int main(bool hardReset)
             // permanently out of phase — and the setup frame is silent anyway
             // (§4.2), so they all begin together on the next one. There is no
             // mailbox ring to overflow now, so track count does not matter.
-            for (u8 id = 0; id < TRACK_COUNT; id++) MMLisp_startTrack(id);
+            for (u8 i = 0; i < MMLisp_trackCount(); i++)
+                MMLisp_startTrack(MMLisp_trackId(i));
             VDP_drawText("PLAY", 2, 17);
         }
 
         if (pressed & BUTTON_B)
         {
-            for (u8 id = 0; id < TRACK_COUNT; id++) MMLisp_stopTrack(id);
+            for (u8 i = 0; i < MMLisp_trackCount(); i++)
+                MMLisp_stopTrack(MMLisp_trackId(i));
             VDP_drawText("STOP", 2, 17);
         }
 
@@ -107,8 +109,10 @@ int main(bool hardReset)
             // Should stay 0. Climbing = the ring ran dry, i.e. MMLisp_frame did
             // not run in time — which is exactly what an uneven tempo is.
             drawHex(MMLisp_starvedFrames(), 4, 27, 7);
-            for (u8 id = 0; id < TRACK_COUNT; id++)
-                drawHex(MMLisp_trackActive(id) ? 1 : 0, 1, 17 + id, 8);
+            u8 n = MMLisp_trackCount();
+            if (n > MAX_SHOWN_TRACKS) n = MAX_SHOWN_TRACKS;
+            for (u8 i = 0; i < n; i++)
+                drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 8);
         }
 
         // ── The one hard rule: once per frame, and last ──────────────────────
