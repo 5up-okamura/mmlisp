@@ -94,8 +94,6 @@ G_IDX       equ G_BASE+$04      ; u8  buffer tick index
 G_AVAIL     equ G_BASE+$05      ; u16 bytes safely consumable in this segment
 G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
 G_SLOT      equ G_BASE+$09      ; u16 slot cursor
-G_VPTR      equ G_BASE+$0b      ; u16 current voice struct
-G_TMP       equ G_BASE+$0d      ; u16 scratch
 G_STORE     equ G_BASE+$0f      ; u8  0 = this pass stores into the plane
 ; Handed to the generated mixer core (tools/gen-mixer.mjs)
 G_SEG_N     equ G_BASE+$10      ; u8  unrolled iterations in the current segment
@@ -107,7 +105,13 @@ G_MIXP      equ G_BASE+$14      ; u8  high byte of the plane being MIXED
 ; measurements the frame's debt is estimated from.
 G_PAD       equ G_BASE+$15      ; u8  pad for the current segment, in 16-cycle units
 G_NSEG      equ G_BASE+$16      ; u8  segments run so far this frame
-G_NSEGL     equ G_BASE+$17      ; u8  segments the last frame ran
+; The frame's EXACT segment total, once it is known — 0 until then. The pads
+; that carry any authority all sit in the silent passes (see pp_idle), and by
+; the time those run every sounding segment has been counted, so the total is
+; this plus one per silent pass still to come. That is what replaced estimating
+; it from the previous frame: an estimate that was one segment out mis-padded
+; the frame by ~4%, at frame rate, which is what the DAC wander was.
+G_NSEGF     equ G_BASE+$17      ; u8  exact segments this frame, 0 = not yet known
 G_NWR       equ G_BASE+$18      ; u8  chip writes this frame's slot carried
 G_DEBT      equ G_BASE+$19      ; u8  pad units the frame's overhead costs
 G_ACTM      equ G_BASE+$1a      ; u8  which voices were sounding at frame start
@@ -119,6 +123,7 @@ G_BIASHI    equ G_BASE+$1c
 ; instants the remaining sub-slots go out on.
 G_SUB       equ G_BASE+$1d      ; u8  next sub-slot index, SLOT_SUBS = done
 G_PASS      equ G_BASE+$1e      ; u8  voice passes run so far this frame
+G_NIDLE     equ G_BASE+$1f      ; u8  passes with no voice behind them this frame
 
 ; A voice struct that is permanently silent. Every frame runs PCM_PASSES passes
 ; whether or not there are voices to fill them — the feed's cadence is one sample
@@ -255,17 +260,20 @@ consume_rest:
 ; ===========================================================================
 ; Consume one slot (driver.md §6.2)
 ;
-;   { [u8 n_psg][val…][u8 n_fm0][{reg,val}…][u8 n_fm1][…] } × SLOT_SUBS
+;   [u8 n_writes]
 ;   [u8 n_pcm][commands…]
+;   { [u8 n_psg][val…][u8 n_fm0][{reg,val}…][u8 n_fm1][…] } × SLOT_SUBS
 ;
 ; Length-prefixed runs, so the loop needs no per-write dispatch: three tight
 ; loops with their port address fixed. That property is exactly why the frame
 ; is divided into sub-slot BLOCKS rather than per-write timestamps.
 ;
-; Only sub-slot 0 goes out here. The rest wait for the mixer's voice-pass
-; boundaries (§3.5), so this walks past them to reach the frame's PCM command
-; list — which the mixer needs before it runs — counting their writes on the
-; way, because the pacing debt wants the frame's total at the frame head.
+; The two frame-level fields LEAD, and that is not cosmetic: both are wanted
+; here, at the frame head — the PCM commands before the mixer runs, `n_writes`
+; before `pcm_debt` sizes the frame's pad (§5.1) — while sub-slots 1..K-1 are
+; not consumed until a third and two thirds of the way in (§3.5). With them
+; trailing, this routine had to walk past every sub-slot to reach them and tally
+; every run on the way, which measured ~1,700 cycles a frame.
 ;
 ; The tail is NOT released until the last sub-slot has been read: while the 68k
 ; owns head/tail, the slot's bytes stay ours for the whole frame.
@@ -295,34 +303,26 @@ cs_have:
         add  a,RING>>8
         ld   h,a
         ld   l,0
-        call cs_runs            ; sub-slot 0, at the frame head as always
-        ld   (G_SLOT),hl        ; where sub-slot 1 begins
-        ld   a,1
-        ld   (G_SUB),a
-        ld   a,SLOT_SUBS-1
-        or   a
-        jr   z,cs_pcm
-        ld   b,a
-cs_walk:
-        push bc
-        call cs_skip            ; step over it, but count what it will write
-        pop  bc
-        djnz cs_walk
+        ld   a,(hl)             ; the frame's chip writes, all sub-slots
+        inc  hl
+        ld   (G_NWR),a
 
-cs_pcm:
         ld   b,(hl)
         inc  hl
         ld   a,b
         or   a
-        jr   z,cs_done
+        jr   z,cs_subs
 cs_cmd:
         push bc
         call pcm_command        ; advances HL past the command
         pop  bc
         djnz cs_cmd
 
-cs_done:
-        ld   a,(G_SUB)
+cs_subs:
+        call cs_runs            ; sub-slot 0, at the frame head as always
+        ld   (G_SLOT),hl        ; where sub-slot 1 begins
+        ld   a,1
+        ld   (G_SUB),a
         cp   SLOT_SUBS
         ret  c                  ; sub-slots still owed: the slot stays ours
 cs_tail:
@@ -339,9 +339,6 @@ cs_store:
 ; consume_sub: put the next sub-slot on the chips, if the frame still owes one.
 ; Called at the mixer's voice-pass boundaries — which sit at 1/3 and 2/3 of a
 ; paced frame (§5.1), so the sub-tick instants come for free.
-;
-; G_NWR is restored around the run: consume_slot already counted every sub-slot
-; for the pacing debt, and the tally is a FRAME total, not a running one.
 ; ---------------------------------------------------------------------------
 consume_sub:
         ld   a,(G_SUB)
@@ -349,8 +346,6 @@ consume_sub:
         ret  nc
         inc  a
         ld   (G_SUB),a
-        ld   a,(G_NWR)
-        push af
         ld   hl,(G_SLOT)
         call cs_runs
         ld   (G_SLOT),hl
@@ -361,8 +356,6 @@ consume_sub:
         call ym_busy0
         ld   a,$2a
         ld   (YM_ADDR0),a
-        pop  af
-        ld   (G_NWR),a
         ld   a,(G_SUB)
         cp   SLOT_SUBS
         ret  c
@@ -374,10 +367,9 @@ consume_sub:
 ; ---------------------------------------------------------------------------
 cs_runs:
         ; ── PSG run: bare bytes, no wait needed ──
-        ld   b,(hl)
+        ld   a,(hl)
         inc  hl
-        ld   a,b
-        call cs_count
+        ld   b,a
         or   a
         jr   z,cr_fm0
 cr_psg:
@@ -387,10 +379,9 @@ cr_psg:
         djnz cr_psg
 
 cr_fm0:
-        ld   b,(hl)
+        ld   a,(hl)
         inc  hl
-        ld   a,b
-        call cs_count
+        ld   b,a
         or   a
         jr   z,cr_fm1
 cr_p0:
@@ -405,10 +396,9 @@ cr_p0:
         djnz cr_p0
 
 cr_fm1:
-        ld   b,(hl)
+        ld   a,(hl)
         inc  hl
-        ld   a,b
-        call cs_count
+        ld   b,a
         or   a
         ret  z
 cr_p1:
@@ -421,46 +411,6 @@ cr_p1:
         ld   (YM_DATA1),a
         inc  hl
         djnz cr_p1
-        ret
-
-; ---------------------------------------------------------------------------
-; cs_skip: step HL over one sub-slot's runs without writing anything, adding
-; what it WILL write to the frame's tally. The pad has to give those cycles
-; back (§5.1) and the debt is computed once, at the frame head — before the
-; passes that put these sub-slots out have run.
-; ---------------------------------------------------------------------------
-cs_skip:
-        ld   b,3                ; psg, then the two YM ports
-ck_run:
-        ld   a,(hl)
-        inc  hl
-        call cs_count
-        ld   e,a
-        ld   d,0
-        add  hl,de
-        ld   a,b
-        cp   3
-        jr   z,ck_next          ; a PSG write is one bare byte
-        add  hl,de              ; a YM write is {reg,val}
-ck_next:
-        djnz ck_run
-        ret
-
-; cs_count: add A writes to this frame's tally, saturating. The PCM feed pays
-; for the consume loop out of its own pad (§5.1), and a slot carrying a patch
-; dump costs several times what a steady-state one does — enough that guessing
-; is worth replacing with counting. A is preserved.
-cs_count:
-        push af
-        push hl
-        ld   hl,G_NWR
-        add  a,(hl)
-        jr   nc,csc_st
-        ld   a,255
-csc_st:
-        ld   (hl),a
-        pop  hl
-        pop  af
         ret
 
 ; ym_busy0: poll the status byte until BUSY (bit 7) clears. The DAC data
@@ -686,15 +636,16 @@ pp_feed:
         ; per-segment register-file traffic, ~13k cycles a frame, which would
         ; otherwise end the frame 20% late.
         ;
-        ; How many segments THIS frame will run is not knowable yet, so it
-        ; starts from the last frame's count and ms_set_pad raises it as this
-        ; one turns out heavier. That estimate is why the silent passes run
-        ; LAST (above): they hold nearly all of the pad, and by the time they
-        ; run the count is measured rather than guessed.
-        ld   hl,G_NSEG
-        ld   a,(hl)
-        ld   (hl),0
-        ld   (G_NSEGL),a
+        ; How many segments THIS frame will run is not knowable yet — but it
+        ; does not have to be. The pads that carry any authority are all in the
+        ; SILENT passes (pad 14-16 units against a sounding pass's 0-5, which
+        ; the debt clamps to the floor anyway), and those run LAST: by then
+        ; every sounding segment has been counted and each remaining silent pass
+        ; is worth exactly one more. So the total is exact where it matters, and
+        ; nothing is carried over from the previous frame.
+        xor  a
+        ld   (G_NSEG),a
+        ld   (G_NSEGF),a        ; not known yet — pcm_debt uses the running count
         call pcm_debt           ; -> G_DEBT, the pad units this frame owes
 
         ld   a,$2a
@@ -720,13 +671,27 @@ pp_feed:
         or   c
         ld   (G_ACTM),a
 
+        ; …and how many passes have NO voice behind them, which is the rest of
+        ; the frame's segment total: one apiece, since a silent pass is a single
+        ; segment by construction (mvf_idle).
+        ld   b,PCM_VOICES
+        ld   c,0
+pp_nidle:
+        rrca
+        jr   c,pp_ni_next
+        inc  c
+pp_ni_next:
+        djnz pp_nidle
+        ld   a,c
+        ld   (G_NIDLE),a
+
         xor  a
         ld   (G_STORE),a        ; the first pass stores, which removes the clear
         ld   (G_PASS),a         ; and the pass boundaries are the sub-ticks
 
         ; The sounding voices go first and the silent passes after them, because
         ; the silent ones hold nearly all of the frame's pad — and by the time
-        ; they run, the frame's real cost (its segment count) is known rather
+        ; they run, the frame's real cost (its segment count) is KNOWN rather
         ; than estimated. Order does not change the mix: a silent pass adds
         ; nothing, and the sounding voices keep their own order, which is what
         ; the saturating add depends on.
@@ -746,9 +711,18 @@ pp_act_next:
         cp   PCM_VOICES
         jr   c,pp_act
 
+        ; Every sounding pass is done, so the frame's segment total is now
+        ; settled: what has run, plus one for each silent pass still to come.
+        ; From here the debt is a measurement, not a guess — and this is the
+        ; point at which the pad it sizes actually starts to matter.
+        ld   a,(G_NSEG)
+        ld   hl,G_NIDLE
+        add  a,(hl)
+        ld   (G_NSEGF),a
+
         ld   c,0
 pp_idle:
-        call pp_voice_at
+        call pp_sounding_at     ; no IX: G_IDLEV replaces it below anyway
         jr   z,pp_idle_run
         jr   pp_idle_next
 pp_idle_run:
@@ -807,11 +781,10 @@ pp_pass_done:
 ; those cycles back (§5.1); what it cannot give back, the frame runs late by.
 pcm_debt:
         push bc                 ; the mixer's register file is live across this
-        ld   hl,G_NSEG
-        ld   a,(G_NSEGL)
-        cp   (hl)
-        jr   nc,pd_est          ; the last frame's count still stands
-        ld   a,(hl)             ; this one has already run more than that
+        ld   a,(G_NSEGF)
+        or   a
+        jr   nz,pd_est          ; the frame's exact total is settled — use it
+        ld   a,(G_NSEG)         ; not yet: charge only what has actually run
 pd_est:
         cp   PCM_SEG_MAX
         jr   c,pd_cap
@@ -847,6 +820,16 @@ pp_voice_at:
         push bc
         ld   a,c
         call voice_ptr
+        pop  bc
+        ; fall through — the pointer is set, now answer the question
+
+; pp_sounding_at: Z clear if voice C was sounding at frame start, WITHOUT
+; touching IX. The silent-pass loop overwrites IX with G_IDLEV the moment it
+; decides, so computing a voice pointer for it was ~470 cycles a frame spent on
+; a value that is thrown away — and those cycles come straight off the DAC's
+; pad (§5.1). C is preserved; A and the flags are not.
+pp_sounding_at:
+        push bc
         ld   a,(G_ACTM)
         inc  c
 pv_sh:

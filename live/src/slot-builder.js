@@ -8,10 +8,18 @@
 //
 // One slot is one frame, subdivided into SLOT_SUBS sub-slots:
 //
-//   { [u8 n_psg] [val × n_psg]           SN76489
-//     [u8 n_fm0] [{reg,val} × n_fm0]     YM2612 port 0
-//     [u8 n_fm1] [{reg,val} × n_fm1] } × SLOT_SUBS
+//   [u8 n_writes]                      frame total, for the engine's pacing debt
 //   [u8 n_pcm] [pcm command × n_pcm]   variable length, §6.3, frame-level
+//   { [u8 n_psg] [val × n_psg]         SN76489
+//     [u8 n_fm0] [{reg,val} × n_fm0]   YM2612 port 0
+//     [u8 n_fm1] [{reg,val} × n_fm1] } × SLOT_SUBS
+//
+// The frame-level fields lead, and that ordering is load-bearing: the engine
+// needs both of them at the frame head — the PCM commands before it mixes, the
+// write count before it sizes the frame's pad (driver.md §5.1) — while sub-slots
+// 1..K-1 are not consumed until a third and two thirds of the way in. Putting
+// them last would make the engine walk past every sub-slot to reach them, and
+// tally the runs itself, which measured ~1,700 cycles a frame.
 //
 // Length-prefixed runs so the Z80's consume loop needs no per-write dispatch.
 // Bucketing by port loses cross-bucket ordering within a frame, which is safe
@@ -125,7 +133,12 @@ export class SlotBuilder {
   }
 
   _encode(writes, marks) {
-    const out = [];
+    // n_writes leads: the engine charges its pacing pad for the frame's chip
+    // writes and needs the total at the frame head, before sub-slots 1..K-1
+    // exist on the chips. One byte here replaces the engine tallying every run
+    // as it goes, which is why the count is a field and not a derivation.
+    const out = [writes.length, this._pcm.length];
+    for (const c of this._pcm) out.push(...c);
     let start = 0;
     for (let j = 0; j < this._subs; j++) {
       const end = Math.min(marks[j], writes.length);
@@ -141,8 +154,6 @@ export class SlotBuilder {
       out.push(psg.length, ...psg, fm0.length >> 1, ...fm0, fm1.length >> 1, ...fm1);
       if (end > start) start = end;
     }
-    out.push(this._pcm.length);
-    for (const c of this._pcm) out.push(...c);
     return Uint8Array.from(out);
   }
 }
@@ -150,6 +161,16 @@ export class SlotBuilder {
 /** Decode a slot back to its runs — used by the gates to state expectations. */
 export function decodeSlot(bytes, subs = SLOT_SUBS) {
   let i = 0;
+  const nWrites = bytes[i++];
+  const pcm = [];
+  const npcm = bytes[i++];
+  const LEN = { [PCM_START]: 18, [PCM_STOP]: 2, [PCM_VOL]: 3, [PCM_LOOP]: 6 };
+  for (let n = npcm; n > 0; n--) {
+    const len = LEN[bytes[i]];
+    if (!len) throw new Error(`unknown PCM opcode ${bytes[i]}`);
+    pcm.push(Array.from(bytes.slice(i, i + len)));
+    i += len;
+  }
   const subSlots = [];
   for (let j = 0; j < subs; j++) {
     const psg = [];
@@ -160,18 +181,10 @@ export function decodeSlot(bytes, subs = SLOT_SUBS) {
     for (let n = bytes[i++]; n > 0; n--) fm1.push([bytes[i++], bytes[i++]]);
     subSlots.push({ psg, fm0, fm1 });
   }
-  const pcm = [];
-  const npcm = bytes[i++];
-  const LEN = { [PCM_START]: 18, [PCM_STOP]: 2, [PCM_VOL]: 3, [PCM_LOOP]: 6 };
-  for (let n = npcm; n > 0; n--) {
-    const len = LEN[bytes[i]];
-    if (!len) throw new Error(`unknown PCM opcode ${bytes[i]}`);
-    pcm.push(Array.from(bytes.slice(i, i + len)));
-    i += len;
-  }
   // `subs` is the per-sub-tick view; the flat runs are the frame's whole
   // traffic on each port, in order, for callers that only care about that.
   return {
+    nWrites,
     subs: subSlots,
     psg: subSlots.flatMap((s) => s.psg),
     fm0: subSlots.flatMap((s) => s.fm0),

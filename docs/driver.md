@@ -486,12 +486,11 @@ its bytes on the chips, and spend the rest of the frame mixing PCM.
 1. **Claim a slot.** If the ring is empty, skip step 2 — the 68k did not keep
    up. The mixer still runs (PCM must not gap), so the music holds rather than
    glitches.
-2. **Consume sub-slot 0** (§6.2): three length-prefixed runs — PSG bytes, YM
-   port 0 `{reg,val}` pairs, YM port 1 pairs. Runs are length-prefixed precisely
-   so the loop needs no per-write dispatch. Then walk past the remaining
-   sub-slots — counting their writes, because the pacing debt below wants the
-   frame's total *here* — to reach the PCM command list, which the mixer needs
-   before it runs.
+2. **Read the frame-level head** (§6.2) — the write count the pacing debt needs
+   and the PCM commands the mixer needs — then **consume sub-slot 0**: three
+   length-prefixed runs, PSG bytes, YM port 0 `{reg,val}` pairs, YM port 1
+   pairs. Runs are length-prefixed precisely so the loop needs no per-write
+   dispatch.
 3. **Mix PCM** (§5.3) while feeding the DAC — the same loop does both — and put
    **sub-slots 1 and 2** out at the voice-pass boundaries (§3.5). Each such run
    re-latches `$2A` afterwards, because the feed writes it blind. When nothing
@@ -526,11 +525,19 @@ Three things follow from pacing, and they shape the engine:
 - **Each iteration is padded to the frame's tick period**, `frame / R`. The pad
   is a baked constant per (role, shift) — the generator knows each loop copy's
   cycle cost — minus a runtime **debt**: what the frame spends *outside* the
-  loops, which is ~13k cycles of mixer segment set-up plus the slot's own
+  loops, which is ~10k cycles of mixer segment set-up plus the slot's own
   writes. Without that subtraction a frame ends ~20% late, which is a slow tempo
-  and eventually a dropped frame. The debt is estimated from the previous
-  frame's segment count and revised as the frame proves heavier; the silent
-  passes run last, after the count is known, because that is where the pad is.
+  and eventually a dropped frame.
+
+  **The debt is a measurement, not an estimate.** The pads that carry any
+  authority are all in the *silent* passes — measured, a sounding pass's pad is
+  0–5 units against a silent one's 14–16, and the debt clamps the former to its
+  floor anyway — and the silent passes run **last**. By the time the first one
+  chooses its pad, every sounding segment has been counted and each remaining
+  silent pass is worth exactly one more, so the frame's total is exact. It used
+  to be carried over from the *previous* frame and revised only upward within
+  this one; one segment of error is ~4% of a frame, at frame rate, which is what
+  the DAC wander was. Nothing crosses a frame boundary now.
 
 What it does not fix: those ~13k cycles are real and are not spent feeding, so
 between segments the feed still pauses and in between it runs ~20% fast to make
@@ -555,7 +562,7 @@ As built (`drv/src/engine.z80` + the generated mixer):
 
 | Region | Address | Size | Contents |
 | ------ | ------- | ---- | -------- |
-| code | `$0000` | 4134 B | boot, ISR, consume loop, PCM commands, mixer |
+| code | `$0000` | 4095 B | boot, ISR, consume loop, PCM commands, mixer |
 | published header | `$1300` | 64 B | ring control, status, consumed-frame counter (§6.4) |
 | slot ring | `$1400` | depth × 256 B | 512 B at the default depth 2 |
 | mix buffer | `$1600` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
@@ -575,7 +582,7 @@ have to move the map rather than squeeze in, and this was it. Growing *upward*
 into the free space is the move that does not make the host's build stale: the
 header's address is the one Z80 constant the 68k compiles in (§6.4), so it
 stayed at `$1300` and no protocol version had to change. Code now has the whole
-span below the header — 1218 B of headroom — and everything above the ring is
+span below the header — 1257 B of headroom — and everything above the ring is
 the engine's own working memory. The boot clear covers that region only, which
 means the published header survives it.
 
@@ -808,12 +815,21 @@ The chip writes are divided into `SLOT_SUBS` **sub-slots**, one per sub-tick
 (§3.5); the PCM commands are frame-level.
 
 ```
+[u8 n_writes]                         ; frame total, for the engine's pacing debt
+[u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
 { [u8 n_psg] [val × n_psg]            ; SN76489, port 0x7F11
   [u8 n_fm0] [{reg,val} × n_fm0]      ; YM2612 port 0 (0x4000/0x4001)
   [u8 n_fm1] [{reg,val} × n_fm1] }    ; YM2612 port 1 (0x4002/0x4003)
   × SLOT_SUBS
-[u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
 ```
+
+**The two frame-level fields lead, and that ordering is load-bearing.** Both are
+wanted at the frame head — the PCM commands before the mixer runs, `n_writes`
+before the pacing debt sizes the frame's pad (§5.1) — while sub-slots 1..K-1 are
+not consumed until a third and two thirds of the way in. With them trailing, the
+engine had to walk past every sub-slot to reach them and tally every run on the
+way, which measured **~1,400 cycles a frame**: 2.3% of the Z80's budget spent
+re-deriving a number the 68000 already had.
 
 Length-prefixed runs mean the consume loop needs no per-write dispatch: three
 tight loops, each with its port address fixed. **That property is exactly why

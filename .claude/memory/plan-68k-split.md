@@ -536,7 +536,7 @@ already-accepted "a key-on in a write-dense frame can land one frame late".
 a voice's algorithm on a channel that is still sounding — check that first, since
 the reporter's score never did it once.
 
-### (1)+(2) The mixer's segments — CAUSE IDENTIFIED, NOT FIXED
+### (1)+(2) The mixer's segments — CAUSE IDENTIFIED, DEBT FIXED 2026-08-05
 
 The chain: `mvf_seg` splits a voice's frame at every loop/sample/bank boundary;
 crossings per frame are `R x inc / loop_len`, so **pitching a looped sample up
@@ -555,82 +555,111 @@ Also unaccounted, smaller: `tickCost` prices the i8sat clip branch `jp pe,ov` at
 not-taken only — a clipping sample costs **27 uncounted cycles**, so loud
 passages run long.
 
-#### MEASURED 2026-08-05 — `drv/tools/seg-bench.mjs` (commit d48b168)
+#### MEASURED 2026-08-05 — `drv/tools/seg-bench.mjs`
 
 The tool attributes every executed cycle to the nearest engine label over a real
 score, and regresses per-frame cycles on per-frame segment count. Frame
-composition (m2-pcmloop, 240 frames):
+composition (m2-pcmloop, 240 frames), AFTER the fixes below:
 
 | | cyc/frame | share |
 | --- | --- | --- |
-| pad (idle by design) | 22,047 | 37.0% |
-| mix tick bodies | 18,269 | 30.6% |
-| **segment set-up** | **9,873** | **16.5%** |
-| slot consume | 1,681 | 2.8% |
-| pad accounting (`pcm_debt`) | 1,377 | 2.3% |
-| other | 5,478 | 9.2% |
+| pad (idle by design) | ~22,000 | 37% |
+| mix tick bodies | ~18,300 | 31% |
+| **segment set-up** | **~9,900** | **17%** |
+| slot consume | 293 | 0.5% |
+| pad accounting (`pcm_debt`) | ~1,400 | 2.3% |
 
-- **A segment costs ~940 cycles, not 2,400.** `PACE_SEG` was never decomposed.
-- **What the pad actually needs is the MARGINAL cost, and it measures
-  1,083–1,457** by regression — so `PACE_SEG` is **1.7–2.2× too steep**.
-- Segment count swings **6..18** per frame (0..22 on `m3-pcm-slice`). At ~1,060
-  cycles of mis-pad per extra segment that is **12,700 cycles = 21% of a frame
-  = 3.5 ms** — and the gate measures 3.18–3.85 ms. **The wander mechanism is
-  closed quantitatively.**
-- `PACE_RESERVE = 7200` looks close to right (implied constant ~6,950).
-- **58–72% of frames overrun the budget.** This contradicts the "2–56 frames
-  over budget out of ~300" above, which predates sub-ticks and may have used a
-  different definition — **reconcile before quoting either**. The marginal-cost
-  finding does not depend on it (it is a slope, not an absolute).
-- Secondary: **`PCM_START` costs ~1,960 cycles** (`ps_in`), which is part of why
-  note-on frames reach 144–152%.
+**Two numbers in the first version of this section were wrong. Do not quote the
+old ones.**
 
-#### Tuning the constants alone does NOT work — tried and measured
+- **The segment count was doubled.** `seg-bench` counted entries into the
+  `mix_seg` *label bucket*, and control re-enters that bucket on the return from
+  `ms_call_unrolled` — so every segment counted twice. Real count is **3..11 per
+  frame, mean 5.3–6.2**, not 6..18/10.7. The tool now reads the engine's own
+  `G_NSEG`, which is the only count comparable to `PACE_SEG` because it is the
+  one `pcm_debt` itself reads.
+- **`PACE_SEG = 2400` was therefore never "1.7–2.2x too steep".** Against the
+  corrected count the marginal cost measured **2,146–4,403** — i.e. 2400 sits
+  inside the range and low for `m3-pcm-slice`. That is why halving it made
+  frames longer and overruns worse: it was under-charging, not over-charging.
+  **Constants were re-measured and left at 2400 / 7200.**
+- **The over-budget discrepancy is resolved, and it was sub-ticks.** Measured on
+  the same tool across the commit: pre-sub-tick (7f5f102) p50 frame = 57,042 cyc
+  (95.6%), **2/240 over budget**; post-sub-tick p50 = 59,821 (100.3%),
+  **139/240 over**. Both earlier figures were right about different engines. The
+  slot-block consume added ~2,780 cyc/frame that nothing charged the pad for.
+- Secondary, still true: **`PCM_START` costs ~1,960 cycles** (`ps_in`), part of
+  why note-on frames reach 140–150%.
 
-| PACE_SEG | RESERVE | wander | span | over budget | `npm run dac` |
+#### FIXED 2026-08-05 — the debt is a measurement now
+
+**(a) The plan pass was not built, and should not be.** The idea was to hoist
+`mvf_seg`'s boundary math to a frame-head scan so the segment count is known
+before the first pad is chosen. Measuring the pad tables killed it:
+
+    pad_first_tab  5,3,2,0,0,0,0,0,6,14      (by PV_SHIFT; 8 = mute, 9 = idle)
+    pad_add_tab    2,0,0,0,0,0,0,0,8,16
+
+A *sounding* pass holds 0–5 pad units and the debt (≥3) clamps it to the floor
+of 1 — confirmed in a live probe, which shows pads `1,1,1,1,9,8` every frame.
+**All of the frame's ~22,000 cycles of pad live in the silent passes**, and
+those run last. So "the count before the first pad that matters" needs nothing
+hoisted: at the start of `pp_idle` every sounding segment has been counted and
+each remaining silent pass is worth exactly one more.
+
+A literal plan pass would also have to *predict byte consumption* over n ticks
+to reproduce the same boundaries — a 24x8 multiply per segment, ~600 T-states,
+~3,000 cyc/frame on a frame already at 100% of budget. It buys nothing the cheap
+version does not.
+
+**What shipped instead:**
+
+1. `G_NSEGF` — the frame's exact segment total, pinned at the start of
+   `pp_idle` as `G_NSEG + G_NIDLE`. `pcm_debt` uses it once set, and the running
+   `G_NSEG` before that. `G_NSEGL` is deleted: **nothing crosses a frame
+   boundary any more.** Frame-length spread collapsed 87–104% -> 98–102%.
+2. **Slot head fields** (docs/driver.md §6.2): `n_writes` and the PCM command
+   list moved to the FRONT of the slot. The engine wants both at the frame head;
+   with them trailing the sub-slots it had to walk past every block and tally
+   every run — `cs_skip`/`cs_count`, deleted. Slot consume 1,682 -> 293
+   cyc/frame.
+3. `pp_idle` calls `pp_sounding_at`, not `pp_voice_at`: it overwrites IX with
+   `G_IDLEV` immediately, so computing a voice pointer for it was ~470 cyc/frame
+   thrown away.
+
+**Result vs the pre-sub-tick baseline** (probe over 240 frames; `npm run dac`
+share of paced frames):
+
+| score | dac % paced | over budget | wander p50 | wander max | span worst |
 | --- | --- | --- | --- | --- | --- |
-| 2400 | 7200 (shipped) | 3.22 ms | 92% | 58% | pass |
-| 1200 | 7200 | **2.11** | 99% | — | pass |
-| 1200 | 10000 | 2.40 | 96% | 81% | pass |
-| 1200 | 12500 | 2.92 | 92% | 64% | pass |
-| 1200 | 19900 | 4.26 | 85% | **1%** | **FAIL** |
+| m2-pcmloop | 100 -> **100** | 2 -> **2** | 3.45 -> **3.15** | 4.16 -> **4.14** | 76 -> **83%** |
+| m3-pcm-softmix | 98 -> **99** | 24 -> **16** | 3.39 -> **3.10** | 4.68 -> 4.70 | 77 -> **84%** |
+| m3-pcm-slice | 96 -> **98** | 43 -> 57 | 4.07 -> **3.58** | 8.49 -> **5.08** | 49 -> **82%** |
 
-Wander and overrun trade against each other: frame lengths cluster tightly
-around the budget, so a mean at 100% overruns 6 frames in 10, and pushing the
-mean to 92% stops the overruns but shortens the frame until the feed no longer
-spans it — the burst symptom returning in miniature. **Constants were reverted;
-`gen-mixer.mjs` is untouched and `npm run dac` reproduces the baseline exactly.**
+Every gate metric improved. The one regression is `m3-pcm-slice`'s overrun
+count, and it is a knife-edge artifact, not a structural loss: its p50 frame is
+58,671 -> 58,867 cyc against a 59,659 budget, so ~200 cycles of residual
+sub-tick cost move 14 frames across a line the distribution is already piled
+against. **Frame length is not a tunable here** — every (PACE_SEG, PACE_RESERVE)
+pair that pushes slice's overruns below baseline fails `npm run dac` on slice's
+wander tail. Tried and measured: 3200/4200 gives over 2/24/20 but dac
+FAIL 54% on slice; 2800/7200 gives 2/12/7 and the same failure. Wander and
+overrun are the same axis once the variance is gone — longer frame, better
+feed span, more overruns.
 
-#### The fix: make the debt exact, not better-guessed
-
-Non-pad work is only ~62% of the frame, so the pad has 38% of room and **every
-frame could land exactly on budget**. It does not because the debt is estimated
-from the *previous* frame's segment count (`G_NSEGL`) and revised only upward
-within the frame.
-
-**Hoist the boundary math into a per-frame plan pass.** Run `mvf_seg`'s boundary
-logic for all three voices at frame head, storing each segment's tick count in a
-small array, then mix the plan. The boundary math is already paid the same
-number of times — this only reorders it — but the segment count is then known
-*before the first pad is chosen*, so the debt becomes exact and the swing
-disappears. Only then do `PACE_SEG ≈ 1200` and a measured `PACE_RESERVE` behave,
-and wander and overrun improve together instead of trading.
-
-It is also the precondition for (b) below: with the plan in hand, whether the
-next segment belongs to the same voice is known, which is what lets the register
-file carry across.
-
-Then, in order: (a) the plan pass above; (b) carry the register file across a
-voice's consecutive segments — pos/inc/shift/bank do not change, so most of
-`mix_seg`'s entry/exit (`mix_seg` 1,981 + `ms_enter` 1,035 + `ms_done` 678 +
-`ms_call_unrolled` 480 ≈ 4,200/frame) is waste; (c) re-measure with seg-bench
-and set the two constants from the numbers.
+**(b) is now the only lever left**: carry the mixer's register file across a
+voice's consecutive segments. `mix_seg` entry/exit is ~4,200 cyc/frame
+(`mix_seg` 1,981 + `ms_enter` 1,035 + `ms_done` 678 + `ms_call_unrolled` 480)
+and pos/inc/shift/bank do not change between them. That is ~7% of the frame —
+an order more than the residual — and it is what would let slice's overruns go
+below baseline while keeping the wander that was won here.
 
 A hardware-side measurement worth building: the engine counts ring starvation
 (`MMLisp_starvedFrames`) but **nothing counts a Z80 frame overrun**. A flag set
 at frame start and cleared at its end, tested in the ISR, published in the §6.4
 header, separates "68k too slow" from "Z80 dropped a frame" from "60 Hz
-quantisation" with two numbers on screen.
+quantisation" with two numbers on screen. With slice at 24% of frames over
+budget in emulation, this is no longer hypothetical.
 
 ## Per-note timing: what 60 Hz costs (reported 2026-08-03, ADDRESSED 2026-08-05)
 

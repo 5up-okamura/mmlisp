@@ -63,7 +63,10 @@ const toI8 = (b) => (b < 128 ? b : b - 256);
 // otherwise everything rides sub-slot 0 and the rest go out empty.
 function encodeSlot({ psg = [], fm0 = [], fm1 = [], pcm = [], subs = null }) {
   const blocks = subs ?? [{ psg, fm0, fm1 }];
-  const out = [];
+  const nWrites = blocks.reduce(
+    (t, b) => t + (b.psg ?? []).length + (b.fm0 ?? []).length + (b.fm1 ?? []).length, 0);
+  const out = [nWrites, pcm.length];
+  for (const c of pcm) out.push(...c);
   for (let j = 0; j < SLOT_SUBS; j++) {
     const b = blocks[j] ?? {};
     const p = b.psg ?? [], f0 = b.fm0 ?? [], f1 = b.fm1 ?? [];
@@ -72,8 +75,6 @@ function encodeSlot({ psg = [], fm0 = [], fm1 = [], pcm = [], subs = null }) {
     out.push(f1.length);
     for (const [r, v] of f1) out.push(r, v);
   }
-  out.push(pcm.length);
-  for (const c of pcm) out.push(...c);
   if (out.length > SLOT_SIZE) throw new Error(`slot ${out.length} B > ${SLOT_SIZE}`);
   return out;
 }

@@ -118,6 +118,13 @@ try {
     const cost = new Float64Array(marks.length);
     const hits = new Float64Array(marks.length);
     const SEGB = bucketName.indexOf("mix_seg");
+    // Segments come from the ENGINE'S OWN counter, not from bucket entries.
+    // `mix_seg`'s bucket runs to the next label, so control re-enters it on the
+    // return from `ms_call_unrolled` and a bucket-entry count reads ~2x high —
+    // which silently doubles the x-axis of the regression below and made
+    // PACE_SEG look 2x too steep when it was not. G_NSEG is what `pcm_debt`
+    // itself reads, so it is the only count that can be compared to PACE_SEG.
+    const G_NSEG = sym("G_NSEG");
     const obs = [];   // per frame: [segments, total cycles] — the regression below
     let frames = 0, total = 0, worst = 0;
     let posted = 0;
@@ -130,18 +137,18 @@ try {
         ram[sym("H_HEAD")] = next;
       }
       cpu.intRequest();
-      let cyc = 0, g = 0, prev = -1, segs = 0;
+      let cyc = 0, g = 0, prev = -1;
       while (cpu.halted && g++ < 1000) cyc += cpu.step();
       while (!cpu.halted && g++ < 3_000_000) {
         const b = owner[cpu.pc];
         const c = cpu.step();
         if (b !== 0xffff) {
           cost[b] += c;
-          if (b !== prev) { hits[b]++; prev = b; if (b === SEGB) segs++; }
+          if (b !== prev) { hits[b]++; prev = b; }
         }
         cyc += c;
       }
-      frames++; total += cyc; obs.push([segs, cyc]);
+      frames++; total += cyc; obs.push([ram[G_NSEG], cyc]);
       if (cyc > worst) worst = cyc;
     }
     if (!frames) { console.log(`skip  ${name} — no frames ran`); continue; }
@@ -167,8 +174,8 @@ try {
       const label = g < GROUPS.length ? GROUPS[g][0] : "other";
       console.log(`  ${label.padEnd(22)}${per(gcost[g])}${pct(gcost[g])}`);
     }
-    const segs = hits[SEGB] / frames;
-    console.log(`  → ${segs.toFixed(1)} segments/frame, ` +
+    const segs = obs.reduce((s, o) => s + o[0], 0) / frames;
+    console.log(`  → ${segs.toFixed(1)} segments/frame (engine's G_NSEG), ` +
       `${(gcost[2] / frames / segs).toFixed(0)} cyc each by attribution`);
     // What PACE_SEG is actually FOR: the pad is cut by `segs x PACE_SEG`, so
     // what has to be right is the MARGINAL cost of one more segment, not its
@@ -183,11 +190,16 @@ try {
     if (sxx > 0) {
       const slope = sxy / sxx;
       const lo = Math.min(...obs.map((o) => o[0])), hi = Math.max(...obs.map((o) => o[0]));
+      const { PACE_SEG, PACE_RESERVE } = await import("./gen-mixer.mjs");
       console.log(`  → marginal cost of one segment: ${slope.toFixed(0)} cyc ` +
-        `(PACE_SEG charges 2400 — ${(2400 / slope).toFixed(1)}x), ` +
+        `(PACE_SEG charges ${PACE_SEG} — ${(PACE_SEG / slope).toFixed(2)}x), ` +
         `segment count ranges ${lo}..${hi}`);
-      console.log(`     mis-pad per extra segment: ${(2400 - slope).toFixed(0)} cyc = ` +
-        `${(100 * (2400 - slope) / FRAME_CYCLES).toFixed(1)}% of a frame`);
+      console.log(`     mis-pad per extra segment: ${(PACE_SEG - slope).toFixed(0)} cyc = ` +
+        `${(100 * (PACE_SEG - slope) / FRAME_CYCLES).toFixed(1)}% of a frame`);
+      // The intercept is what PACE_RESERVE is for: the frame's fixed cost with
+      // no segments at all, minus the pad it is allowed to keep.
+      console.log(`     implied fixed cost (intercept): ${(my - slope * mx).toFixed(0)} cyc ` +
+        `(PACE_RESERVE charges ${PACE_RESERVE})`);
     }
     console.log(`  ${"label".padEnd(22)}${"cyc/frame".padStart(10)}${"share".padStart(8)}${"entries".padStart(9)}`);
     const rank = [...cost.keys()]

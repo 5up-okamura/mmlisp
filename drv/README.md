@@ -259,7 +259,7 @@ pre-rendered slot per vblank, paces its bytes onto the YM2612 and PSG, and
 spends the rest of the frame software-mixing PCM into the fm6 DAC — and feeding
 it *from inside the mix loop*, one sample every three ticks, so the DAC gets its
 bytes at its own rate instead of in a burst (driver.md §5.1). It sequences
-nothing and evaluates nothing — 4134 B against the old driver's 5.8 KB of
+nothing and evaluates nothing — 4095 B against the old driver's 5.8 KB of
 sequencing assembly, with no overlays, no shadow file, no LUTs and no TCB.
 
 Since 2026-08-05 it also delivers the slot in `SLOT_SUBS` = 3 **sub-slots**
@@ -271,6 +271,15 @@ not entered at all, so that path runs a small paced idle loop to give the same
 two boundaries. The image growing past 4 KB is what moved the mix planes above
 the ring — the published header's address is unchanged, so no host rebuild is
 implied beyond the new `mmlispdrv.bin`.
+
+The slot's frame-level fields (`n_writes`, then the PCM command list) lead the
+sub-slots because the engine wants both at the frame head — the commands before
+it mixes, the count before `pcm_debt` sizes the frame's pad. And that pad is now
+sized from a **measured** segment count rather than the previous frame's:
+`G_NSEGF` is pinned once every sounding pass is done, which is before the first
+pad that carries any authority (see driver.md §5.1). Frame-length spread went
+87-104% -> 98-102% and every `npm run dac` metric improved; `tools/seg-bench.mjs`
+is the profiler those numbers come from.
 
 `tools/engine-gate.mjs` gates it against its contract (driver.md §12.3): feed a
 recorded slot stream and assert that the chip writes are exactly the slot's
@@ -401,7 +410,7 @@ Two gates, both host-side:
 
 The build path moved with it: `tools/build-engine.mjs` assembles `src/engine.z80`
 with the generated mixer, and `tools/emit-bin.mjs` emits the one resident image
-(4,134 B, 1,498 B free below the mix plane) plus the header constants. The
+(4,095 B, 1,537 B free below the mix plane) plus the header constants. The
 overlay blob is deleted. `build-driver.mjs` still builds the superseded all-Z80
 driver; nothing ships from it.
 

@@ -1566,8 +1566,8 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
    * rather than overflow the slot. What is dropped stays queued, in order. */
   {
-    /* one run-length triple per sub-slot, plus n_pcm and the commands */
-    uint32_t size = 3 * MML_SLOT_SUBS + 1 + s->pcm_len;
+    /* n_writes + n_pcm + the commands + one run-length triple per sub-slot */
+    uint32_t size = 2 + 3 * MML_SLOT_SUBS + s->pcm_len;
     uint16_t fit = 0, scan = cur;
     for (uint16_t i = 0; i < take; i++) {
       uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
@@ -1580,6 +1580,17 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
   }
 
   uint32_t o = 0;
+  /* The frame-level fields lead. The engine wants both at the frame head — the
+   * PCM commands before it mixes, the write count before it sizes the frame's
+   * pad — while sub-slots 1..K-1 are not consumed until a third and two thirds
+   * of the way in. Trailing them would cost the engine a walk past every
+   * sub-slot plus a tally of every run: ~1,700 cycles a frame, measured. */
+  out[o++] = (uint8_t)take;
+  out[o++] = s->pcm_count;
+  mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
+  s->pcm_count = 0;
+  s->pcm_len = 0;
+
   uint16_t done = 0; /* writes already placed in an earlier sub-slot */
   for (int j = 0; j < MML_SLOT_SUBS; j++) {
     /* The last sub-slot always closes the frame, whatever was marked: nothing
@@ -1604,11 +1615,6 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
     mml_copy(out + o, fm1, n1); o += n1;
   }
   s->q_tail = cur;
-
-  out[o++] = s->pcm_count;
-  mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
-  s->pcm_count = 0;
-  s->pcm_len = 0;
 
   uint16_t left = mml_pending(s);
   if (left) {
