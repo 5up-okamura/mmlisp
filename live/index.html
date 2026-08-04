@@ -151,9 +151,9 @@
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
+            <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
-            <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
             <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">mucom88 PCM Bank WAV…</button>
           </div>
         </div>
@@ -4353,17 +4353,44 @@
       document.querySelectorAll('.menu-wrap').forEach(el => el.classList.remove('open'));
     }
 
-    function toggleSubmenu(id) {
-      const wrap = document.getElementById(id);
-      if (!wrap) return;
-      const isOpen = wrap.classList.contains('open');
+    // Open a submenu, closing any sibling submenu under the same parent. Closing
+    // a sibling also closes ITS descendants (querySelectorAll is recursive), so
+    // moving between top-level submenus never leaves a deeper one dangling.
+    function openSubmenu(wrap) {
       const parentWrap = wrap.parentElement?.closest('.menu-wrap');
       if (parentWrap) {
         parentWrap.querySelectorAll('.menu-wrap.open').forEach(el => {
-          if (el !== wrap) el.classList.remove('open');
+          if (el !== wrap && !el.contains(wrap)) el.classList.remove('open');
         });
       }
-      if (!isOpen) wrap.classList.add('open');
+      wrap.classList.add('open');
+    }
+
+    function toggleSubmenu(id) {
+      const wrap = document.getElementById(id);
+      if (!wrap) return;
+      if (wrap.classList.contains('open')) wrap.classList.remove('open');
+      else openSubmenu(wrap);
+    }
+
+    // Hover-to-open: a submenu opens on its own after a short dwell, and closes
+    // when the pointer leaves. Click still works and opens immediately. The
+    // delay keeps a menu from flickering open as the pointer passes over it.
+    const SUBMENU_HOVER_DELAY = 250;
+    for (const wrap of document.querySelectorAll('.submenu-wrap')) {
+      let timer = null;
+      const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      wrap.addEventListener('mouseenter', () => {
+        cancel();
+        // Only auto-open once this submenu's own menu chain is showing, so a
+        // hidden top-level menu is never popped open by a stray hover.
+        if (!wrap.parentElement?.closest('.menu-wrap.open')) return;
+        timer = setTimeout(() => { timer = null; openSubmenu(wrap); }, SUBMENU_HOVER_DELAY);
+      });
+      wrap.addEventListener('mouseleave', () => {
+        cancel();
+        wrap.classList.remove('open');
+      });
     }
 
     function loadExample(url) {
