@@ -1,9 +1,9 @@
 {
   "m2-csm.mmlisp": {
     "ok": false,
-    "mismatches": 76,
+    "mismatches": 83,
     "compileErrors": 0,
-    "digest": "0a59e7ac"
+    "digest": "4db1b0aa"
   },
   "m2-mailbox.mmlisp": {
     "ok": false,
@@ -13,9 +13,9 @@
   },
   "m2-motion.mmlisp": {
     "ok": false,
-    "mismatches": 817,
+    "mismatches": 809,
     "compileErrors": 0,
-    "digest": "69072d21"
+    "digest": "dfdfea17"
   },
   "m2-pcm.mmlisp": {
     "ok": true,
@@ -31,9 +31,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 633,
+    "mismatches": 577,
     "compileErrors": 0,
-    "digest": "4cb54214"
+    "digest": "8af08efb"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -45,7 +45,7 @@
     "ok": false,
     "mismatches": 132,
     "compileErrors": 0,
-    "digest": "374d2b5d"
+    "digest": "b5102454"
   },
   "m3-dynval.mmlisp": {
     "ok": false,
@@ -108,10 +108,10 @@
     "digest": "811c9dc5"
   },
   "m3-macro-pitchadd.mmlisp": {
-    "ok": true,
-    "mismatches": 0,
+    "ok": false,
+    "mismatches": 2,
     "compileErrors": 0,
-    "digest": "811c9dc5"
+    "digest": "87c1b5f9"
   },
   "m3-macro-pitchovr.mmlisp": {
     "ok": true,
@@ -120,10 +120,10 @@
     "digest": "811c9dc5"
   },
   "m3-macro-scale.mmlisp": {
-    "ok": true,
-    "mismatches": 0,
+    "ok": false,
+    "mismatches": 2,
     "compileErrors": 0,
-    "digest": "811c9dc5"
+    "digest": "0bad97b8"
   },
   "m3-macro-semi.mmlisp": {
     "ok": true,
@@ -241,9 +241,9 @@
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
-    "mismatches": 315,
+    "mismatches": 293,
     "compileErrors": 0,
-    "digest": "7e19c24d"
+    "digest": "4eef30ba"
   },
   "ab-core.mmlisp": {
     "ok": false,
@@ -253,8 +253,8 @@
   },
   "demo1.mmlisp": {
     "ok": false,
-    "mismatches": 26,
+    "mismatches": 39,
     "compileErrors": 0,
-    "digest": "1aa330f2"
+    "digest": "5720b471"
   }
 }

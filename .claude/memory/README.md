@@ -19,6 +19,14 @@ Index:
   (P0 mixer prototype → P1 interface → P2 sequencer → P3 bring-up). **Read this
   first before touching the driver.** The design itself now lives in
   `docs/driver.md`; this file is the decision record and the running state.
+- [plan-subtick-timing.md](plan-subtick-timing.md) — **sub-frame note timing:
+  step 1 LANDED 2026-08-05** (`SLOT_SUBS = 3`, all three ports, gates green;
+  the design is now `docs/driver.md` §3.5). Note onsets ride the mixer's three
+  voice-pass boundaries, which already sit at 1/3 and 2/3 of a paced frame — no
+  new Z80 structure, no extra chip writes. Kept for the measurement behind the
+  dispatch/engines split, the four implementation deviations (PCM not
+  subdivided, `pcm_frame` last, the `$2A` re-latch, the RAM map move), and
+  steps 2-3, which macro/sweep subdivision waits on in [[plan-68k-split]].
 - [z80-driver-status.md](z80-driver-status.md) — MMLispDRV living status: the
   Done list (M1–M3, v0.6 value machine, VOICE_SET, CALL/RET, SE, PCM volume,
   trig), the remaining-work list (hardware bring-up, PAL, open ir↔drv

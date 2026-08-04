@@ -93,7 +93,10 @@ npm run verify:all   # selftest + the post-split gates + the ir↔drv A/B
 > (driver.md §5.3.1) and DAC registers owned by the engine. The superseded
 > all-Z80 driver implements neither, so the two diverge by construction. Keeping
 > that gate green would have meant freezing the reference, which is exactly what
-> the port cannot do.
+> the port cannot do. Sub-ticks (driver.md §3.5) widened the gap again — 3 of
+> the corpus mismatched before them, 11 after — so `npm run size` / `npm run
+> budget`, which run over that driver, report the stack watermark against a
+> known-diverging build.
 
 The historical description of that gate follows, since the mechanism (assemble,
 emulate, raw-diff traces) is what the P0/P1 gates reuse:
@@ -256,16 +259,27 @@ pre-rendered slot per vblank, paces its bytes onto the YM2612 and PSG, and
 spends the rest of the frame software-mixing PCM into the fm6 DAC — and feeding
 it *from inside the mix loop*, one sample every three ticks, so the DAC gets its
 bytes at its own rate instead of in a burst (driver.md §5.1). It sequences
-nothing and evaluates nothing — 3982 B against the old driver's 5.8 KB of
+nothing and evaluates nothing — 4134 B against the old driver's 5.8 KB of
 sequencing assembly, with no overlays, no shadow file, no LUTs and no TCB.
+
+Since 2026-08-05 it also delivers the slot in `SLOT_SUBS` = 3 **sub-slots**
+(driver.md §3.5): sub-slot 0 at the frame head as before, the other two at the
+mixer's voice-pass boundaries, which already sit at 1/3 and 2/3 of a paced
+frame. Note onsets therefore land within 5.56 ms instead of 16.7 ms, at no extra
+chip writes and no new engine structure. When no PCM is sounding the mixer is
+not entered at all, so that path runs a small paced idle loop to give the same
+two boundaries. The image growing past 4 KB is what moved the mix planes above
+the ring — the published header's address is unchanged, so no host rebuild is
+implied beyond the new `mmlispdrv.bin`.
 
 `tools/engine-gate.mjs` gates it against its contract (driver.md §12.3): feed a
 recorded slot stream and assert that the chip writes are exactly the slot's
 bytes in order on the right ports, and that the `$2A` DAC stream matches a JS
-model sample for sample. Seven scenarios, including the ones that pin the
+model sample for sample. Ten scenarios, including the ones that pin the
 segment arithmetic — a loop wrapping several times per frame, a shot ending
 mid-frame, a sample crossing a ROM bank boundary, a mid-flight `PCM_LOOP`
-retarget, and a starved ring.
+retarget, and a starved ring — plus one that places writes in every sub-slot,
+with and without PCM sounding, so both delivery paths are covered.
 
 The segment split is what makes the inner loop cheap: a voice-outer pass bounds
 each run away from its loop and sample boundaries (conservatively, by
@@ -387,7 +401,7 @@ Two gates, both host-side:
 
 The build path moved with it: `tools/build-engine.mjs` assembles `src/engine.z80`
 with the generated mixer, and `tools/emit-bin.mjs` emits the one resident image
-(2,668 B, 1,428 B free below the mix plane) plus the header constants. The
+(4,134 B, 1,498 B free below the mix plane) plus the header constants. The
 overlay blob is deleted. `build-driver.mjs` still builds the superseded all-Z80
 driver; nothing ships from it.
 

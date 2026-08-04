@@ -569,7 +569,7 @@ at frame start and cleared at its end, tested in the ISR, published in the §6.4
 header, separates "68k too slow" from "Z80 dropped a frame" from "60 Hz
 quantisation" with two numbers on screen.
 
-## Per-note timing: what 60 Hz costs (reported 2026-08-03, deferred behind PCM)
+## Per-note timing: what 60 Hz costs (reported 2026-08-03, ADDRESSED 2026-08-05)
 
 Reported as "notes speed up and slow down". Measured on the reporter's song —
 `TEMPO_SET increment 874` = 3.4141 ticks/frame = **128.03 BPM**, PPQN 96:
@@ -585,11 +585,14 @@ The 8.8 accumulator distributes this optimally (Bresenham), so it is the 60 Hz
 grid, not a driver bug — but a note that is 14% long 3% of the time is still
 audible in a fast passage, and triplets are far worse at this tempo.
 
-**Not investigated further yet, deliberately**: the DAC burst mangles the attack
-timing of every PCM hit, and rhythm is perceived from attacks, so most of what
-is being heard is probably that. Re-listen after the pacing fix before chasing
-this. If it survives: separate triplets (37%) from 16ths (3%) in a VGM log, and
-consider nudging the tempo so 1/16 lands on a frame boundary.
+**Resolved by sub-ticks** ([[plan-subtick-timing]], driver.md §3.5): note
+dispatch runs three times a frame on the mixer's voice-pass boundaries, so the
+grid above is three times finer — a 1/8 triplet is now up to a sixth of a frame
+out instead of half. FM and PSG only; **PCM onsets are still on the 60 Hz grid**
+and are gated on cutting the mixer's per-segment cost, which is the (1)+(2) item
+in this file. Since rhythm is perceived from attacks and the drums are the
+attacks, that remains the part most likely still audible — re-listen and, if it
+survives, separate triplets (37%) from 16ths (3%) in a VGM log.
 
 ## Fixed limits (expectation-setting, unchanged by the split)
 

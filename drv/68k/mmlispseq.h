@@ -41,6 +41,11 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* ── Build constants (driver.md §6.2) ─────────────────────────────────────── */
 #define MML_SLOT_SIZE 256
 #define MML_SLOT_MAX_WRITES 95 /* what the settled mixer leaves, §5.3.1 */
+/* Sub-ticks per frame (driver.md §3.5). Note dispatch runs on every one of
+ * them; the engines still run once a frame. Must match the engine's SLOT_SUBS
+ * and PACE_PASSES — the Z80 consumes the extra sub-slots on the mixer's voice
+ * pass boundaries, and there are exactly three of those. */
+#define MML_SLOT_SUBS 3
 #define MML_MAX_TRACKS 16
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */
@@ -159,6 +164,9 @@ typedef struct {
 
 typedef struct {
   uint8_t running, armed, held;
+  /* The frame the armed setup ran in. The armed frame advances no ticks at ALL
+   * of its sub-ticks, not only the one that ran the setup (driver.md §3.5). */
+  uint32_t armed_frame;
   uint8_t track_id, channel_id, flags;
   uint16_t event_offset; /* stream start, for a restart */
   uint16_t pc;
@@ -235,6 +243,10 @@ typedef struct {
     uint8_t port, addr, data;
   } q[MML_WRITE_QUEUE];
   uint16_t q_head, q_tail;
+  /* Queue depth at each sub-tick boundary — where one sub-slot's run ends and
+   * the next begins. Recorded as a COUNT, not an index, so the ring's wrap
+   * never has to be reasoned about at encode time. */
+  uint16_t sub_mark[MML_SLOT_SUBS];
   uint16_t spill_peak, spill_frames;
 
   /* PCM commands for the frame being built. They ride the slot's fourth run
@@ -245,6 +257,7 @@ typedef struct {
   uint8_t pcm_count;
 
   uint32_t frame;
+  uint8_t sub;        /* which sub-tick of the frame is dispatching (§3.5) */
   uint8_t stopped;    /* a track hit something this port cannot decode */
   uint8_t stopped_op; /* which opcode it was — the port's to-do list, in order */
   uint32_t stopped_frame;

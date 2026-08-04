@@ -29,6 +29,11 @@ RING_DEPTH  equ 2               ; slots of lookahead; a per-game knob (§3.4)
 SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
 SLOT_SHIFT  equ 8               ; log2(SLOT_SIZE); published for the 68k
 PCM_VOICES  equ 3
+; Sub-slots per slot (driver.md §3.5). Sub-slot 0 goes out at the frame head as
+; it always did; the rest ride the mixer's voice-pass boundaries, which already
+; sit at 1/3 and 2/3 of a paced frame — so finer note timing costs the engine no
+; new structure and no extra chip writes. Must match the 68k's MML_SLOT_SUBS.
+SLOT_SUBS   equ 3
 MVF_TAIL    equ 16              ; bound below which a region's tail is counted
 MVF_MAX     equ 32              ; ticks one such count will walk
 
@@ -36,25 +41,32 @@ MVF_MAX     equ 32              ; ticks one such count will walk
 ; The engine is small enough that the 8 KB stops being a design input: no
 ; overlays, no shadow file, no LUTs, no TCB, no channel state.
 ;
-;   $0000..$0FFF  code                        4 KB
-;   $1000..$10FF  mix buffer plane A
-;   $1100..$11FF  mix buffer plane B
-;   $1200..$125F  PCM voice state             3 × 32 B
-;   $1260..$12FF  engine scratch (idle voice struct at $1280)
-;   $1300..$133F  published header            68k-visible
+;   $0000..$12FF  code                        4.7 KB
+;   $1300..$133F  published header            68k-visible, and a FIXED address
 ;   $1400..$15FF  slot ring                   RING_DEPTH × 256
-;   ..$1EFF       free (~2.5 KB)
+;   $1600..$16FF  mix buffer plane A
+;   $1700..$17FF  mix buffer plane B
+;   $1800..$185F  PCM voice state             3 × 32 B
+;   $1860..$18FF  engine scratch (idle voice struct at $1880)
+;   ..$1EFF       free (~1.5 KB)
 ;   $1F00         stack top
+;
+; The planes and the voice state sit ABOVE the ring rather than below it because
+; the header's address is the one Z80 constant the 68k compiles in (§6.4): the
+; sub-slot consume loop pushed the image past 4 KB, and growing upward into the
+; free space is the move that does not make the host's build stale. Code now has
+; the whole span below the header, and everything above the ring is the
+; engine's own.
 ;
 ; The two planes are the pacing fix (§5.1): a sample is only final once the LAST
 ; voice has added to it, so a paced feed — which occupies the whole frame — can
 ; only be feeding the plane the PREVIOUS frame finished. One frame of PCM
 ; latency is what that costs. Both are page-aligned, and they differ in exactly
 ; one bit of the high byte, so swapping them is an `xor`.
-MIXLO       equ $1000
-MIXHI       equ $1100
+MIXLO       equ $1600
+MIXHI       equ $1700
 MIX_SWAP    equ (MIXLO>>8)^(MIXHI>>8)
-G_PCMV      equ $1200
+G_PCMV      equ $1800
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
 ; Voice struct. Positions are WINDOW ADDRESSES so the mixer's fetch is a bare
@@ -73,7 +85,7 @@ PV_LOOPL    equ 14              ; u16 loop length in bytes
 PV_TAIL     equ 16              ; u16 bytes from loop end to sample end
 
 ; Engine scratch
-G_BASE      equ $1260
+G_BASE      equ $1860
 G_ACT       equ G_BASE+$00      ; u8  1 = a voice was sounding at frame start
 G_DACON     equ G_BASE+$01      ; u8  1 = $2B DAC enable is currently set
 G_PEND      equ G_BASE+$02      ; u8  1 = the mixed plane still owes a frame of feed
@@ -101,6 +113,12 @@ G_DEBT      equ G_BASE+$19      ; u8  pad units the frame's overhead costs
 G_ACTM      equ G_BASE+$1a      ; u8  which voices were sounding at frame start
 G_BIASLO    equ G_BASE+$1b      ; u8  (i16 variant only)
 G_BIASHI    equ G_BASE+$1c
+; The sub-slot cursor (§3.5). G_SUB is the NEXT sub-slot to put on the chips —
+; SLOT_SUBS means the frame has none left, which is also what a starved frame
+; starts at. G_PASS counts voice passes, because their boundaries are the
+; instants the remaining sub-slots go out on.
+G_SUB       equ G_BASE+$1d      ; u8  next sub-slot index, SLOT_SUBS = done
+G_PASS      equ G_BASE+$1e      ; u8  voice passes run so far this frame
 
 ; A voice struct that is permanently silent. Every frame runs PCM_PASSES passes
 ; whether or not there are voices to fill them — the feed's cadence is one sample
@@ -108,7 +126,7 @@ G_BIASHI    equ G_BASE+$1c
 ; is what an absent or finished voice runs instead. PV_SHIFT = PCM_MUTE_SH, so
 ; the mute loops store silence (as the first pass) or add nothing (as a later
 ; one), and no real voice state is touched.
-G_IDLEV     equ $1280
+G_IDLEV     equ $1880
 
 ; ── Published header (driver.md §6.4) ──────────────────────────────────────
 ; The only Z80 addresses the 68000 needs to know, and the only ones that must
@@ -171,9 +189,12 @@ start:
         di
         im   1
         ld   sp,STACK_TOP
-        ; Clear RAM from the mix buffer up to the stack, but preserve the
-        ; header: the host may already have written H_SMPBANK, and the ring
-        ; head/tail must both start at zero anyway.
+        ; Clear the engine's own RAM — the mix planes, the voice state and the
+        ; scratch — which all sit above the ring now. The header is below it and
+        ; is left alone on purpose: the host may already have written
+        ; H_SMPBANK, and head/tail are zeroed explicitly below anyway. The ring
+        ; needs no clearing either; a slot is only read once head says it is
+        ; there.
         ld   hl,MIXLO
         ld   de,MIXLO+1
         ld   bc,STACK_TOP-MIXLO-1
@@ -213,20 +234,41 @@ idle:
 ; One frame (driver.md §5.1)
 ; ===========================================================================
 frame_step:
-        call consume_slot       ; 1-2: the slot's chip writes and PCM commands
-        call process_pcm        ; 3:   mix and feed the DAC
+        call consume_slot       ; 1-2: sub-slot 0's writes, and the PCM commands
+        call process_pcm        ; 3:   mix and feed the DAC, sub-slots 1..K-1
+        call consume_rest       ;      anything the passes could not reach
         ld   hl,(H_FRAMES)      ; 4:   publish the consumed-frame counter
         inc  hl
         ld   (H_FRAMES),hl
         ret
 
+; consume_rest: drain whatever sub-slots are still owed. Normally nothing —
+; there is one voice pass per sub-slot past the first — but the tail must not
+; be released until the slot is fully read, so the frame ends by making sure.
+consume_rest:
+        ld   a,(G_SUB)
+        cp   SLOT_SUBS
+        ret  nc
+        call consume_sub
+        jr   consume_rest
+
 ; ===========================================================================
 ; Consume one slot (driver.md §6.2)
 ;
-;   [u8 n_psg][val…][u8 n_fm0][{reg,val}…][u8 n_fm1][…][u8 n_pcm][commands…]
+;   { [u8 n_psg][val…][u8 n_fm0][{reg,val}…][u8 n_fm1][…] } × SLOT_SUBS
+;   [u8 n_pcm][commands…]
 ;
 ; Length-prefixed runs, so the loop needs no per-write dispatch: three tight
-; loops with their port address fixed.
+; loops with their port address fixed. That property is exactly why the frame
+; is divided into sub-slot BLOCKS rather than per-write timestamps.
+;
+; Only sub-slot 0 goes out here. The rest wait for the mixer's voice-pass
+; boundaries (§3.5), so this walks past them to reach the frame's PCM command
+; list — which the mixer needs before it runs — counting their writes on the
+; way, because the pacing debt wants the frame's total at the frame head.
+;
+; The tail is NOT released until the last sub-slot has been read: while the 68k
+; owns head/tail, the slot's bytes stay ours for the whole frame.
 ;
 ; Ring-empty is NOT an error — it means the game overran, so the chips simply
 ; hold where they are and the mixer keeps running (no PCM gap).
@@ -234,6 +276,8 @@ frame_step:
 consume_slot:
         xor  a
         ld   (G_NWR),a          ; the PCM feed pays for this loop out of its pad
+        ld   a,SLOT_SUBS
+        ld   (G_SUB),a          ; nothing to consume, unless the ring has a slot
         ld   a,(H_TAIL)
         ld   c,a
         ld   a,(H_HEAD)
@@ -251,55 +295,19 @@ cs_have:
         add  a,RING>>8
         ld   h,a
         ld   l,0
-
-        ; ── PSG run: bare bytes, no wait needed ──
-        ld   b,(hl)
-        inc  hl
-        ld   a,b
-        call cs_count
-        or   a
-        jr   z,cs_fm0
-cs_psg:
-        ld   a,(hl)
-        ld   (PSG_PORT),a
-        inc  hl
-        djnz cs_psg
-
-cs_fm0:
-        ld   b,(hl)
-        inc  hl
-        ld   a,b
-        call cs_count
-        or   a
-        jr   z,cs_fm1
-cs_p0:
-        call ym_busy0
-        ld   a,(hl)
-        ld   (YM_ADDR0),a
-        inc  hl
-        call ym_busy0
-        ld   a,(hl)
-        ld   (YM_DATA0),a
-        inc  hl
-        djnz cs_p0
-
-cs_fm1:
-        ld   b,(hl)
-        inc  hl
-        ld   a,b
-        call cs_count
+        call cs_runs            ; sub-slot 0, at the frame head as always
+        ld   (G_SLOT),hl        ; where sub-slot 1 begins
+        ld   a,1
+        ld   (G_SUB),a
+        ld   a,SLOT_SUBS-1
         or   a
         jr   z,cs_pcm
-cs_p1:
-        call ym_busy0
-        ld   a,(hl)
-        ld   (YM_ADDR1),a
-        inc  hl
-        call ym_busy0
-        ld   a,(hl)
-        ld   (YM_DATA1),a
-        inc  hl
-        djnz cs_p1
+        ld   b,a
+cs_walk:
+        push bc
+        call cs_skip            ; step over it, but count what it will write
+        pop  bc
+        djnz cs_walk
 
 cs_pcm:
         ld   b,(hl)
@@ -314,6 +322,10 @@ cs_cmd:
         djnz cs_cmd
 
 cs_done:
+        ld   a,(G_SUB)
+        cp   SLOT_SUBS
+        ret  c                  ; sub-slots still owed: the slot stays ours
+cs_tail:
         ld   a,(H_TAIL)
         inc  a
         cp   RING_DEPTH
@@ -321,6 +333,117 @@ cs_done:
         xor  a
 cs_store:
         ld   (H_TAIL),a
+        ret
+
+; ---------------------------------------------------------------------------
+; consume_sub: put the next sub-slot on the chips, if the frame still owes one.
+; Called at the mixer's voice-pass boundaries — which sit at 1/3 and 2/3 of a
+; paced frame (§5.1), so the sub-tick instants come for free.
+;
+; G_NWR is restored around the run: consume_slot already counted every sub-slot
+; for the pacing debt, and the tally is a FRAME total, not a running one.
+; ---------------------------------------------------------------------------
+consume_sub:
+        ld   a,(G_SUB)
+        cp   SLOT_SUBS
+        ret  nc
+        inc  a
+        ld   (G_SUB),a
+        ld   a,(G_NWR)
+        push af
+        ld   hl,(G_SLOT)
+        call cs_runs
+        ld   (G_SLOT),hl
+        ; The mixer's feed writes $2A BLIND (§5.1) — the address is latched once
+        ; a frame and never again. A sub-slot carrying any YM port-0 write moves
+        ; that latch, so put it back before the next mix tick, or the rest of
+        ; the frame's samples land in whatever register the slot touched last.
+        call ym_busy0
+        ld   a,$2a
+        ld   (YM_ADDR0),a
+        pop  af
+        ld   (G_NWR),a
+        ld   a,(G_SUB)
+        cp   SLOT_SUBS
+        ret  c
+        jr   cs_tail            ; the last one is out: the slot is the 68k's again
+
+; ---------------------------------------------------------------------------
+; cs_runs: put one sub-slot's three runs on the chips. HL = its first byte on
+; entry, the byte after its last run on exit.
+; ---------------------------------------------------------------------------
+cs_runs:
+        ; ── PSG run: bare bytes, no wait needed ──
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        call cs_count
+        or   a
+        jr   z,cr_fm0
+cr_psg:
+        ld   a,(hl)
+        ld   (PSG_PORT),a
+        inc  hl
+        djnz cr_psg
+
+cr_fm0:
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        call cs_count
+        or   a
+        jr   z,cr_fm1
+cr_p0:
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_ADDR0),a
+        inc  hl
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_DATA0),a
+        inc  hl
+        djnz cr_p0
+
+cr_fm1:
+        ld   b,(hl)
+        inc  hl
+        ld   a,b
+        call cs_count
+        or   a
+        ret  z
+cr_p1:
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_ADDR1),a
+        inc  hl
+        call ym_busy0
+        ld   a,(hl)
+        ld   (YM_DATA1),a
+        inc  hl
+        djnz cr_p1
+        ret
+
+; ---------------------------------------------------------------------------
+; cs_skip: step HL over one sub-slot's runs without writing anything, adding
+; what it WILL write to the frame's tally. The pad has to give those cycles
+; back (§5.1) and the debt is computed once, at the frame head — before the
+; passes that put these sub-slots out have run.
+; ---------------------------------------------------------------------------
+cs_skip:
+        ld   b,3                ; psg, then the two YM ports
+ck_run:
+        ld   a,(hl)
+        inc  hl
+        call cs_count
+        ld   e,a
+        ld   d,0
+        add  hl,de
+        ld   a,b
+        cp   3
+        jr   z,ck_next          ; a PSG write is one bare byte
+        add  hl,de              ; a YM write is {reg,val}
+ck_next:
+        djnz ck_run
         ret
 
 ; cs_count: add A writes to this frame's tally, saturating. The PCM feed pays
@@ -506,12 +629,42 @@ process_pcm:
         ; nothing sounding and nothing owed: release the DAC once, stay quiet
         ld   a,(G_DACON)
         or   a
-        ret  z
+        jr   z,pp_quiet
         xor  a
         ld   (G_DACON),a
         ld   b,0
         ld   c,$2b
-        jp   ym_write0
+        call ym_write0
+
+; The mixer was not entered, so there are no voice passes for the remaining
+; sub-slots to ride. Pace them by hand — otherwise a score with no PCM in it
+; would silently lose its sub-ticks and put the whole frame out at once, which
+; is precisely the timing this exists to remove. Costs nothing when the frame
+; owes no sub-slots (SLOT_SUBS = 1, or a starved ring).
+pp_quiet:
+        ld   a,(G_SUB)
+        cp   SLOT_SUBS
+        ret  nc
+        call pace_sub
+        call consume_sub
+        jr   pp_quiet
+
+; pace_sub: burn one sub-tick's worth of frame. A frame is 59,659 Z80 cycles,
+; so a third of one is 19,886. The inner `djnz` costs 13 cycles an iteration,
+; making an outer pass 13·N + 18 and the whole loop 12 + M·(13·N + 18):
+; M = 10, N = 152 gives 19,952 — 0.3% long, ~18 µs, an order of magnitude
+; inside the millisecond this is trying to hit. Retune both if SLOT_SUBS moves.
+PACE_IDLE_M equ 10
+PACE_IDLE_N equ 152
+pace_sub:
+        ld   d,PACE_IDLE_M
+ps_out:
+        ld   b,PACE_IDLE_N
+ps_in:
+        djnz ps_in
+        dec  d
+        jr   nz,ps_out
+        ret
 
 pp_run:
         ld   a,(G_DACON)
@@ -569,6 +722,7 @@ pp_feed:
 
         xor  a
         ld   (G_STORE),a        ; the first pass stores, which removes the clear
+        ld   (G_PASS),a         ; and the pass boundaries are the sub-ticks
 
         ; The sounding voices go first and the silent passes after them, because
         ; the silent ones hold nearly all of the frame's pad — and by the time
@@ -584,9 +738,8 @@ pp_act:
 pp_act_run:
         push bc                 ; the mixer owns BC for its register file
         call mix_voice_frame
+        call pp_pass_done
         pop  bc
-        ld   a,1
-        ld   (G_STORE),a        ; every pass after the first accumulates
 pp_act_next:
         inc  c
         ld   a,c
@@ -602,9 +755,8 @@ pp_idle_run:
         ld   ix,G_IDLEV
         push bc
         call mix_voice_frame
+        call pp_pass_done
         pop  bc
-        ld   a,1
-        ld   (G_STORE),a
 pp_idle_next:
         inc  c
         ld   a,c
@@ -635,6 +787,20 @@ pp_idle_next:
         ld   b,0
         ld   c,$2b
         jp   ym_write0
+
+; pp_pass_done: one voice pass is over. Every pass after the first accumulates
+; into the plane instead of storing, and every boundary but the last is a
+; sub-tick (§3.5): the passes already divide a paced frame into thirds, so the
+; sub-slots ride the boundaries that were there anyway.
+pp_pass_done:
+        ld   a,1
+        ld   (G_STORE),a
+        ld   hl,G_PASS
+        inc  (hl)
+        ld   a,(hl)
+        cp   PCM_VOICES
+        ret  nc                 ; the last pass: nothing follows it in the frame
+        jp   consume_sub
 
 ; pcm_debt: G_DEBT = pad units this frame owes for what it spends OUTSIDE the
 ; paced loops — mixer segments, and the slot's own chip writes. The pad gives

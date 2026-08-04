@@ -163,10 +163,19 @@ function freshFmChannel() {
 
 import {
   SlotBuilder,
+  SLOT_SUBS,
   PCM_START,
   PCM_STOP,
   PCM_VOL,
 } from "./slot-builder.js";
+
+// Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
+// step_j = ((j+1)·inc)/K − (j·inc)/K, so the K steps sum to exactly `inc` and
+// §3.2's zero-drift-over-loops property is untouched — the frame still advances
+// the same number of ticks it always did, only in K instalments.
+function subIncrement(inc, sub, subs) {
+  return Math.floor(((sub + 1) * inc) / subs) - Math.floor((sub * inc) / subs);
+}
 
 export class DrvPlayer {
   /**
@@ -364,6 +373,7 @@ export class DrvPlayer {
   _reset(autoStart = true) {
     const song = this._song;
     this._frame = 0;
+    this._sub = 0; // which sub-tick of the frame is dispatching (§3.5)
     // Song increment; TEMPO_SET replaces it — unless a live tempo override is
     // held (setTempo), which outlives a restart the way it outlives the score's
     // own tempo events. loadMMB clears it, so a fresh song starts as written.
@@ -469,6 +479,9 @@ export class DrvPlayer {
       // together on the next frame (driver.md §4.2). autoStart mirrors the
       // harness posting START_TRACK for every track before frame 0.
       armed: autoStart,
+      // The frame the armed setup ran in. The armed frame advances no ticks at
+      // ALL of its sub-ticks, not just the one that ran the setup (§3.5).
+      armedFrame: -1,
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
       unsupported: t.channelId >= 23, // pcm1–pcm3 (20–22) are soft-mix PCM (M3)
@@ -504,9 +517,14 @@ export class DrvPlayer {
   }
 
   // ── Write paths ──────────────────────────────────────────────────────────
+  // A write is stamped at its own sub-tick, not at the frame head: that is what
+  // the sub-slots buy on the Z80 (driver.md §3.5) and here it costs nothing to
+  // hand a realtime consumer the same resolution. Offline runs (the gates) have
+  // no audio context and get `undefined`, so the traces are unaffected.
   _when() {
     return this._audioContext
-      ? this._startAudioTime + this._frame / FRAMES_PER_SEC
+      ? this._startAudioTime +
+          (this._frame + this._sub / SLOT_SUBS) / FRAMES_PER_SEC
       : undefined;
   }
   // YM parameter write, change-only via the shadow file.
@@ -790,7 +808,16 @@ export class DrvPlayer {
     // fires this frame in step 3, overriding the note-on's base level. A muted
     // track skips it (its channel is keyed-off, so a retrigger would sound a
     // release tail); gate scheduling below still runs so the track keeps time.
-    if (!fm3op && ch < 10 && audible) this._macroTrigger(ch);
+    if (!fm3op && ch < 10 && audible) {
+      this._macroTrigger(ch);
+      // Past the frame's first sub-tick the step pass has already run, so the
+      // first step fires HERE instead (driver.md §3.5). §13.1 requires it in the
+      // same frame and after the note-on, and leaving it to sub-tick 0 of the
+      // next frame would invert that order. A channel that stepped at sub-tick 0
+      // and then takes a note-on steps twice in the frame — correct, because the
+      // note-on re-instantiated the macros: those are two different instances.
+      if (this._sub > 0) this._stepChannelMacros(ch);
+    }
 
     // Gate scheduling (opcodes.md §3.1). exGate: absolute ticks (NOTE_ON_EX);
     // 0 = hold until the host keys off.
@@ -1550,19 +1577,23 @@ export class DrvPlayer {
   }
 
   _processMacros() {
-    for (let ch = 0; ch < 10; ch++) {
-      const slots = this._macroSlots[ch];
-      if (slots.length === 0) continue;
-      const keyed = this._channelKeyed(ch);
-      let dead = false;
-      for (let i = 0; i < slots.length; i++) {
-        if (this._stepMacro(ch, slots[i], keyed)) {
-          slots[i] = null;
-          dead = true;
-        }
+    for (let ch = 0; ch < 10; ch++) this._stepChannelMacros(ch);
+  }
+
+  // One channel's running slots, one step. Split out of _processMacros because
+  // a note-on past sub-tick 0 has to step its own channel on the spot (§3.5).
+  _stepChannelMacros(ch) {
+    const slots = this._macroSlots[ch];
+    if (slots.length === 0) return;
+    const keyed = this._channelKeyed(ch);
+    let dead = false;
+    for (let i = 0; i < slots.length; i++) {
+      if (this._stepMacro(ch, slots[i], keyed)) {
+        slots[i] = null;
+        dead = true;
       }
-      if (dead) this._macroSlots[ch] = slots.filter(Boolean);
     }
+    if (dead) this._macroSlots[ch] = slots.filter(Boolean);
   }
 
   // One running slot, one frame. Returns true when the slot is finished.
@@ -1907,6 +1938,7 @@ export class DrvPlayer {
     trk.fading = false;
     trk.running = true;
     trk.armed = true; // silent setup frame, first dispatch next frame
+    trk.armedFrame = -1;
     trk.suspended = false;
     trk.isSe = asSe;
   }
@@ -2230,55 +2262,83 @@ export class DrvPlayer {
   }
 
   // ── The vblank step (driver.md §4, normative order) ──────────────────────
+  // The frame is divided into SLOT_SUBS sub-ticks (§3.5). Note dispatch runs on
+  // every one of them; the engines run once a frame, at sub-tick 0. That split
+  // is what the measurement bought: note dispatch is under 1% of steady-state
+  // write traffic, so subdividing it costs nothing, while macro/sweep stepping
+  // is essentially all of it and would multiply the frame's writes by K.
   stepFrame() {
     // 1. Mailbox drain — stub in the reference (all tracks auto-started).
-    // 2. Per track, ascending index: accumulate and dispatch.
-    for (const trk of this._trk) {
-      if (!trk.running || trk.held) continue;
-      if (trk.armed) {
-        this._dispatch(trk); // leading setup only — see the guard in _dispatch
-        trk.armed = false; // notes start next frame (Z80: dec T_STATUS)
-        // ...except a PCM track, which starts THIS frame and so runs one frame
-        // ahead of every other track for the rest of the score. That is the
-        // compensation for the mixer's feed: it is one frame behind the mix by
-        // construction (driver.md §5.1), so a PCM command issued a frame early
-        // is heard on the beat. The lead is exactly one frame and stays that
-        // way — every track advances by the same increment per frame.
-        if (!isPcmChannel(trk.channelId)) continue;
+    for (let sub = 0; sub < SLOT_SUBS; sub++) {
+      this._sub = sub;
+      const step = subIncrement(this._increment, sub, SLOT_SUBS);
+      // 2. Per track, ascending index: accumulate and dispatch.
+      for (const trk of this._trk) {
         if (!trk.running || trk.held) continue;
-      }
-      trk.acc += this._increment;
-      while (trk.acc >= 0x100) {
-        trk.acc -= 0x100;
-        // One tick: gate countdown, then wait countdown / dispatch.
-        if (trk.gateLeft > 0) {
-          trk.gateLeft--;
-          if (trk.gateLeft === 0) {
-            this._channelOff(trk.channelId);
-            trk.gateLeft = -1;
+        // PCM onsets stay on the frame grid: a soft-mix voice's pass covers the
+        // whole frame, so starting one mid-frame would need a leading idle
+        // segment the engine cannot afford yet. Subdividing them here would only
+        // move the note EARLIER than the frame that owns it, since the engine
+        // applies the frame's whole PCM command list before it mixes.
+        const pcm = isPcmChannel(trk.channelId);
+        if (trk.armed) {
+          if (sub !== 0) continue; // the setup runs once, at the frame head
+          this._dispatch(trk); // leading setup only — see the guard in _dispatch
+          trk.armed = false; // notes start next frame (Z80: dec T_STATUS)
+          trk.armedFrame = this._frame; // ...and this frame advances no ticks
+          // ...except a PCM track, which starts THIS frame and so runs one frame
+          // ahead of every other track for the rest of the score. That is the
+          // compensation for the mixer's feed: it is one frame behind the mix by
+          // construction (driver.md §5.1), so a PCM command issued a frame early
+          // is heard on the beat. The lead is exactly one frame and stays that
+          // way — every track advances by the same increment per frame.
+          if (!pcm) continue;
+          if (!trk.running || trk.held) continue;
+        } else if (trk.armedFrame === this._frame && !pcm) {
+          continue; // the armed frame is silent setup, at any sub-tick
+        }
+        if (pcm && sub !== 0) continue;
+        trk.acc += pcm ? this._increment : step;
+        while (trk.acc >= 0x100) {
+          trk.acc -= 0x100;
+          // One tick: gate countdown, then wait countdown / dispatch.
+          if (trk.gateLeft > 0) {
+            trk.gateLeft--;
+            if (trk.gateLeft === 0) {
+              this._channelOff(trk.channelId);
+              trk.gateLeft = -1;
+            }
+          }
+          if (trk.wait > 0) trk.wait--;
+          if (trk.wait === 0) {
+            this._dispatch(trk);
+            if (!trk.running || trk.held) break;
           }
         }
-        if (trk.wait > 0) trk.wait--;
-        if (trk.wait === 0) {
-          this._dispatch(trk);
-          if (!trk.running || trk.held) break;
+      }
+      if (sub === 0) {
+        // 3. Sweep engines (driver.md §4 step 3): ascending channel, ascending
+        //    slot, then the global tempo sweep. Each writes into the shadow.
+        for (let ch = 0; ch < 10; ch++) {
+          const slots = this._sweeps[ch];
+          for (let si = 0; si < slots.length; si++) {
+            if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
+          }
         }
+        this._processMacros(); // §13.3: macros after sweeps, same write path
+        if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
+        if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
+        this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)
       }
+      // The mix runs after the LAST sub-tick, because the engine applies the
+      // frame's whole PCM command list at the frame head and then mixes: a
+      // PCM_VOL a late sub-tick generated (a MASTER move, say) has to be in
+      // force for this frame's samples on both sides or the two mixers diverge.
+      if (sub === SLOT_SUBS - 1) this._pcmFrame(); // DAC sample feed (§11)
+      // 4. Writes go out inline through the shadow (change-only) in dispatch
+      //    order; the sub-tick boundary is what buckets them into sub-slots.
+      this._slotSink?.endSub();
     }
-    // 3. Sweep engines (driver.md §4 step 3): ascending channel, ascending
-    //    slot, then the global tempo sweep. Each writes into the shadow.
-    for (let ch = 0; ch < 10; ch++) {
-      const slots = this._sweeps[ch];
-      for (let si = 0; si < slots.length; si++) {
-        if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
-      }
-    }
-    this._processMacros(); // §13.3: macros after sweeps, same write path
-    if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
-    if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
-    this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)
-    this._pcmFrame(); // DAC sample feed (driver.md §11)
-    // 4. Writes go out inline through the shadow (change-only) in dispatch order.
     this._frame++;
   }
 

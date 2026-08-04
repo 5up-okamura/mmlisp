@@ -37,6 +37,7 @@ const R = sym("PCM_MIX_R");
 const RING = sym("RING");
 const RING_DEPTH = sym("RING_DEPTH");
 const SLOT_SIZE = sym("SLOT_SIZE");
+const SLOT_SUBS = sym("SLOT_SUBS"); // taken from the engine, so it cannot drift
 const H_HEAD = sym("H_HEAD");
 const H_TAIL = sym("H_TAIL");
 const H_FRAMES = sym("H_FRAMES");
@@ -57,11 +58,20 @@ const romAt = (bank, addr) => rom[bank * BANK_SIZE + (addr - WINDOW)] ?? 0;
 const toI8 = (b) => (b < 128 ? b : b - 256);
 
 // ── Slot encoding (driver.md §6.2 / §6.3) ──────────────────────────────────
-function encodeSlot({ psg = [], fm0 = [], fm1 = [], pcm = [] }) {
-  const out = [psg.length, ...psg, fm0.length];
-  for (const [r, v] of fm0) out.push(r, v);
-  out.push(fm1.length);
-  for (const [r, v] of fm1) out.push(r, v);
+// A slot is SLOT_SUBS blocks of three runs, then the frame's PCM commands. A
+// spec may give `subs` explicitly to place writes in a particular sub-slot;
+// otherwise everything rides sub-slot 0 and the rest go out empty.
+function encodeSlot({ psg = [], fm0 = [], fm1 = [], pcm = [], subs = null }) {
+  const blocks = subs ?? [{ psg, fm0, fm1 }];
+  const out = [];
+  for (let j = 0; j < SLOT_SUBS; j++) {
+    const b = blocks[j] ?? {};
+    const p = b.psg ?? [], f0 = b.fm0 ?? [], f1 = b.fm1 ?? [];
+    out.push(p.length, ...p, f0.length);
+    for (const [r, v] of f0) out.push(r, v);
+    out.push(f1.length);
+    for (const [r, v] of f1) out.push(r, v);
+  }
   out.push(pcm.length);
   for (const c of pcm) out.push(...c);
   if (out.length > SLOT_SIZE) throw new Error(`slot ${out.length} B > ${SLOT_SIZE}`);
@@ -242,6 +252,31 @@ scenarios.push({
   ],
 });
 
+// Writes placed in every sub-slot of the frame (driver.md §3.5). Two different
+// engine paths have to deliver them: the mixer's voice-pass boundaries while
+// PCM is sounding, and the paced idle loop when it is not — and a PCM-less
+// score silently losing its sub-ticks is exactly the failure worth a gate.
+const subSpread = (base) =>
+  Array.from({ length: SLOT_SUBS }, (_, j) => ({
+    psg: [0x80 | (j << 5) | 0x0f],
+    fm0: [[0x30 + j, base + j]],
+  }));
+
+scenarios.push({
+  name: "writes spread across the frame's sub-slots",
+  why: "sub-slot 0 rides the frame head, the rest ride pass boundaries — or a paced idle loop when nothing is sounding",
+  frames: [
+    { subs: subSpread(0x10) },                       // nothing sounding: idle path
+    {
+      subs: subSpread(0x20),
+      pcm: [pcmStart(0, { flags: 1, shift: 0, bank: 2, ptr: WINDOW + 0x100,
+                          left: 2000, loopl: 0, tail: 0, incF: 0x8000, incI: 1 })],
+    },
+    { subs: subSpread(0x30) },                       // sounding: pass boundaries
+    { subs: subSpread(0x40) },
+  ],
+});
+
 scenarios.push({
   name: "ring starvation",
   why: "an empty ring holds the chips and keeps mixing — it is a game overrun, not an error",
@@ -365,12 +400,17 @@ for (const sc of scenarios) {
   sc.frames.forEach((spec, f) => {
     const got = perFrame[f];
 
-    // (a) chip writes == the slot, exactly
+    // (a) chip writes == the slot, exactly — sub-slot by sub-slot, in order.
+    // Sub-slot 0 goes out at the frame head and the rest at the mixer's voice
+    // pass boundaries (driver.md §3.5), so the frame's whole write sequence is
+    // the blocks concatenated.
     const want = [];
     if (spec) {
-      for (const v of spec.psg ?? []) want.push({ port: "psg", val: v });
-      for (const [r, v] of spec.fm0 ?? []) want.push({ port: 0, reg: r, val: v });
-      for (const [r, v] of spec.fm1 ?? []) want.push({ port: 1, reg: r, val: v });
+      for (const b of spec.subs ?? [spec]) {
+        for (const v of b.psg ?? []) want.push({ port: "psg", val: v });
+        for (const [r, v] of b.fm0 ?? []) want.push({ port: 0, reg: r, val: v });
+        for (const [r, v] of b.fm1 ?? []) want.push({ port: 1, reg: r, val: v });
+      }
     }
     // $2B (DAC enable) is the engine's own — it is claimed on the first active
     // voice and released when the last one ends (driver.md §14).

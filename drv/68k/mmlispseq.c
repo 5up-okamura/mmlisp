@@ -895,29 +895,33 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
   return 0;
 }
 
-static void process_macros(MMLSeq *s) {
-  for (int ch = 0; ch < 10; ch++) {
-    int n = s->macro_slot_count[ch];
-    if (!n) continue;
-    int keyed = channel_keyed(s, ch);
-    int dead = 0;
-    /* A KEYON step can reach back into this array (keyon_retrigger), so slots
-     * are marked dead in place and compacted only after the whole pass. */
-    for (int i = 0; i < n; i++) {
-      if (step_macro(s, ch, &s->macro_slots[ch][i], keyed)) {
-        s->macro_slots[ch][i].dead = 1;
-        dead = 1;
-      }
+/* One channel's running slots, one step. Split out of process_macros because a
+ * note-on past sub-tick 0 has to step its own channel on the spot (§3.5). */
+static void step_channel_macros(MMLSeq *s, int ch) {
+  int n = s->macro_slot_count[ch];
+  if (!n) return;
+  int keyed = channel_keyed(s, ch);
+  int dead = 0;
+  /* A KEYON step can reach back into this array (keyon_retrigger), so slots
+   * are marked dead in place and compacted only after the whole pass. */
+  for (int i = 0; i < n; i++) {
+    if (step_macro(s, ch, &s->macro_slots[ch][i], keyed)) {
+      s->macro_slots[ch][i].dead = 1;
+      dead = 1;
     }
-    if (!dead) continue;
-    int w = 0;
-    for (int i = 0; i < n; i++) {
-      if (s->macro_slots[ch][i].dead) continue;
-      if (w != i) s->macro_slots[ch][w] = s->macro_slots[ch][i];
-      w++;
-    }
-    s->macro_slot_count[ch] = (uint8_t)w;
   }
+  if (!dead) return;
+  int w = 0;
+  for (int i = 0; i < n; i++) {
+    if (s->macro_slots[ch][i].dead) continue;
+    if (w != i) s->macro_slots[ch][w] = s->macro_slots[ch][i];
+    w++;
+  }
+  s->macro_slot_count[ch] = (uint8_t)w;
+}
+
+static void process_macros(MMLSeq *s) {
+  for (int ch = 0; ch < 10; ch++) step_channel_macros(s, ch);
 }
 
 /* ── PCM voices (driver.md §14) ────────────────────────────────────────────
@@ -1120,7 +1124,16 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
 
   /* Re-trigger the channel's bound macros (driver.md §13.1). Their first step
    * fires this frame in step 3, overriding the note-on's base level. */
-  if (!fm3op && ch < 10) macro_trigger(s, ch);
+  if (!fm3op && ch < 10) {
+    macro_trigger(s, ch);
+    /* Past the frame's first sub-tick the step pass has already run, so the
+     * first step fires HERE instead (§3.5). §13.1 requires it in the same frame
+     * and after the note-on; leaving it to sub-tick 0 of the next frame would
+     * invert that order. A channel that stepped at sub-tick 0 and then takes a
+     * note-on steps twice in the frame — correct, because the note-on
+     * re-instantiated the macros: those are two different instances. */
+    if (s->sub > 0) step_channel_macros(s, ch);
+  }
 
   int gate = fm3op ? 8 : ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
   if (dur == 0 || (has_ex_gate && ex_gate == 0)) {
@@ -1535,20 +1548,26 @@ static void process_fades(MMLSeq *s) {
 
 /* ── Frame ────────────────────────────────────────────────────────────────── */
 static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
-  /* Take up to the cap, in order, then bucket into the three runs. Bucketing
-   * loses cross-port order within a frame, which is safe by construction:
-   * everything whose order carries meaning is port-0-local (driver.md §4). */
+  /* Take up to the cap, in order, then bucket into the three runs of whichever
+   * sub-slot the write was generated in. Bucketing loses cross-port order
+   * within a sub-slot, which is safe by construction: everything whose order
+   * carries meaning is port-0-local (driver.md §4).
+   *
+   * The cap is a FRAME total — it bounds the Z80's cycles per frame, not per
+   * sub-slot — so the queue is walked exactly once and the sub-slots fill in
+   * order. What does not fit stays queued and leads the next frame's sub-slot
+   * 0, as it always did. */
   uint16_t queued = mml_pending(s);
   uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
   uint8_t psg[MML_SLOT_MAX_WRITES];
   uint8_t fm0[MML_SLOT_MAX_WRITES * 2], fm1[MML_SLOT_MAX_WRITES * 2];
-  uint16_t np = 0, n0 = 0, n1 = 0;
   uint16_t cur = s->q_tail;
   /* The BYTE budget can bind before the write budget when PCM commands are
    * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
    * rather than overflow the slot. What is dropped stays queued, in order. */
   {
-    uint32_t size = 4 + s->pcm_len; /* three run lengths + n_pcm + the commands */
+    /* one run-length triple per sub-slot, plus n_pcm and the commands */
+    uint32_t size = 3 * MML_SLOT_SUBS + 1 + s->pcm_len;
     uint16_t fit = 0, scan = cur;
     for (uint16_t i = 0; i < take; i++) {
       uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
@@ -1559,22 +1578,33 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
     }
     take = fit;
   }
-  for (uint16_t i = 0; i < take; i++) {
-    uint8_t port = s->q[cur].port, addr = s->q[cur].addr, data = s->q[cur].data;
-    if (port == 2) psg[np++] = data;
-    else if (port == 1) { fm1[n1++] = addr; fm1[n1++] = data; }
-    else { fm0[n0++] = addr; fm0[n0++] = data; }
-    cur = (uint16_t)((cur + 1) % MML_WRITE_QUEUE);
+
+  uint32_t o = 0;
+  uint16_t done = 0; /* writes already placed in an earlier sub-slot */
+  for (int j = 0; j < MML_SLOT_SUBS; j++) {
+    /* The last sub-slot always closes the frame, whatever was marked: nothing
+     * may be left behind the marks (a drain frame has none at all). */
+    uint16_t end = j == MML_SLOT_SUBS - 1 ? take : s->sub_mark[j];
+    if (end > take) end = take;
+    if (end < done) end = done;
+    uint16_t np = 0, n0 = 0, n1 = 0;
+    for (uint16_t i = done; i < end; i++) {
+      uint8_t port = s->q[cur].port, addr = s->q[cur].addr, data = s->q[cur].data;
+      if (port == 2) psg[np++] = data;
+      else if (port == 1) { fm1[n1++] = addr; fm1[n1++] = data; }
+      else { fm0[n0++] = addr; fm0[n0++] = data; }
+      cur = (uint16_t)((cur + 1) % MML_WRITE_QUEUE);
+    }
+    done = end;
+    out[o++] = (uint8_t)np;
+    mml_copy(out + o, psg, np); o += np;
+    out[o++] = (uint8_t)(n0 / 2);
+    mml_copy(out + o, fm0, n0); o += n0;
+    out[o++] = (uint8_t)(n1 / 2);
+    mml_copy(out + o, fm1, n1); o += n1;
   }
   s->q_tail = cur;
 
-  uint32_t o = 0;
-  out[o++] = (uint8_t)np;
-  mml_copy(out + o, psg, np); o += np;
-  out[o++] = (uint8_t)(n0 / 2);
-  mml_copy(out + o, fm0, n0); o += n0;
-  out[o++] = (uint8_t)(n1 / 2);
-  mml_copy(out + o, fm1, n1); o += n1;
   out[o++] = s->pcm_count;
   mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
   s->pcm_count = 0;
@@ -1592,67 +1622,104 @@ uint16_t mml_pending(const MMLSeq *s) {
   return (uint16_t)((s->q_head + MML_WRITE_QUEUE - s->q_tail) % MML_WRITE_QUEUE);
 }
 
+/* Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
+ * step_j = ((j+1)·inc)/K − (j·inc)/K, so the K steps sum to exactly `inc` and
+ * §3.2's zero-drift-over-loops property is untouched — the frame advances the
+ * same number of ticks it always did, only in K instalments. */
+static uint16_t sub_increment(uint16_t inc, int sub) {
+  uint32_t hi = ((uint32_t)(sub + 1) * inc) / MML_SLOT_SUBS;
+  uint32_t lo = ((uint32_t)sub * inc) / MML_SLOT_SUBS;
+  return (uint16_t)(hi - lo);
+}
+
 uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
-  for (uint8_t i = 0; i < s->track_count; i++) {
-    MMLTrack *t = &s->trk[i];
-    if (!t->running || t->held) continue;
-    if (t->armed) {
-      dispatch(s, t); /* leading setup only — see the armed test in dispatch */
-      t->armed = 0;   /* notes start next frame */
-      /* ...except a PCM track, which starts THIS frame and so runs one frame
-       * ahead of every other track for the rest of the score. That is the
-       * compensation for the mixer's feed: it runs one frame behind the mix by
-       * construction (driver.md §5.1), so a PCM command issued a frame early is
-       * heard on the beat. The lead is exactly one frame and stays that way —
-       * every track advances by the same increment per frame. */
-      if (t->channel_id < CH_PCM1 || t->channel_id > CH_PCM3) continue;
+  for (int sub = 0; sub < MML_SLOT_SUBS; sub++) {
+    s->sub = (uint8_t)sub;
+    uint16_t step = sub_increment(s->increment, sub);
+    for (uint8_t i = 0; i < s->track_count; i++) {
+      MMLTrack *t = &s->trk[i];
       if (!t->running || t->held) continue;
-    }
-    t->acc = (uint16_t)(t->acc + s->increment);
-    while (t->acc >= 0x100) {
-      t->acc -= 0x100;
-      /* One tick: gate countdown first, then the wait countdown / dispatch. */
-      if (t->gate_left > 0) {
-        t->gate_left--;
-        if (t->gate_left == 0) {
-          channel_off(s, t->channel_id);
-          t->gate_left = -1;
+      /* PCM onsets stay on the frame grid: a soft-mix voice's pass covers the
+       * whole frame, so starting one mid-frame would need a leading idle
+       * segment the engine cannot afford yet (plan-subtick-timing, step 2).
+       * Subdividing them here would only move the note EARLIER than the frame
+       * that owns it, since the engine applies the frame's whole PCM command
+       * list before it mixes. */
+      int pcm = t->channel_id >= CH_PCM1 && t->channel_id <= CH_PCM3;
+      if (t->armed) {
+        if (sub != 0) continue; /* the setup runs once, at the frame head */
+        dispatch(s, t);         /* leading setup only — see the armed test there */
+        t->armed = 0;           /* notes start next frame */
+        t->armed_frame = s->frame; /* ...and this frame advances no ticks */
+        /* ...except a PCM track, which starts THIS frame and so runs one frame
+         * ahead of every other track for the rest of the score. That is the
+         * compensation for the mixer's feed: it runs one frame behind the mix
+         * by construction (driver.md §5.1), so a PCM command issued a frame
+         * early is heard on the beat. The lead is exactly one frame and stays
+         * that way — every track advances by the same increment per frame. */
+        if (!pcm) continue;
+        if (!t->running || t->held) continue;
+      } else if (t->armed_frame == s->frame && !pcm) {
+        continue; /* the armed frame is silent setup, at any sub-tick */
+      }
+      if (pcm && sub != 0) continue;
+      t->acc = (uint16_t)(t->acc + (pcm ? s->increment : step));
+      while (t->acc >= 0x100) {
+        t->acc -= 0x100;
+        /* One tick: gate countdown first, then the wait countdown / dispatch. */
+        if (t->gate_left > 0) {
+          t->gate_left--;
+          if (t->gate_left == 0) {
+            channel_off(s, t->channel_id);
+            t->gate_left = -1;
+          }
+        }
+        if (t->wait > 0) t->wait--;
+        if (t->wait == 0) {
+          dispatch(s, t);
+          if (!t->running || t->held) break;
         }
       }
-      if (t->wait > 0) t->wait--;
-      if (t->wait == 0) {
-        dispatch(s, t);
-        if (!t->running || t->held) break;
+    }
+    if (sub == 0) {
+      /* Step 3, in the normative order: sweeps ascending channel then slot,
+       * then the macros (same write path, §13.3), the global tempo and CSM-rate
+       * sweeps, and the fades. Once a frame — subdividing them would multiply
+       * 99% of the frame's write traffic by K (plan-subtick-timing). */
+      for (int ch = 0; ch < 10; ch++) {
+        for (int i = 0; i < 2; i++) {
+          MMLSweep *sl = &s->sweeps[ch][i];
+          if (sl->active && process_sweep(s, ch, sl)) sl->active = 0;
+        }
       }
+      process_macros(s);
+      if (s->tempo_sweep.active) {
+        int v;
+        if (process_global_sweep(&s->tempo_sweep, &v)) s->tempo_sweep.active = 0;
+        s->increment = (uint16_t)v;
+      }
+      if (s->csm_sweep.active) {
+        int v;
+        if (process_global_sweep(&s->csm_sweep, &v)) s->csm_sweep.active = 0;
+        write_timer_a(s, v);
+      }
+      process_fades(s);
     }
+    /* The voices advance after the LAST sub-tick, because the engine applies
+     * the frame's whole PCM command list at the frame head and then mixes: a
+     * PCM_VOL a late sub-tick generated (a MASTER move, say) has to be in force
+     * for this frame's samples on both sides or the two mixers diverge. */
+    if (sub == MML_SLOT_SUBS - 1) pcm_frame(s);
+    s->sub_mark[sub] = mml_pending(s);
   }
-  /* Step 3, in the normative order: sweeps ascending channel then slot, then
-   * the macros (same write path, §13.3), the global tempo and CSM-rate sweeps,
-   * the fades, and finally the PCM voices. */
-  for (int ch = 0; ch < 10; ch++) {
-    for (int i = 0; i < 2; i++) {
-      MMLSweep *sl = &s->sweeps[ch][i];
-      if (sl->active && process_sweep(s, ch, sl)) sl->active = 0;
-    }
-  }
-  process_macros(s);
-  if (s->tempo_sweep.active) {
-    int v;
-    if (process_global_sweep(&s->tempo_sweep, &v)) s->tempo_sweep.active = 0;
-    s->increment = (uint16_t)v;
-  }
-  if (s->csm_sweep.active) {
-    int v;
-    if (process_global_sweep(&s->csm_sweep, &v)) s->csm_sweep.active = 0;
-    write_timer_a(s, v);
-  }
-  process_fades(s);
-  pcm_frame(s);
   s->frame++;
   return encode_slot(s, slot_out);
 }
 
 uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out) {
+  /* Nothing was dispatched, so nothing marked a boundary: what the cap held
+   * back leads sub-slot 0, which is exactly where a spill belongs. */
+  for (int j = 0; j < MML_SLOT_SUBS; j++) s->sub_mark[j] = mml_pending(s);
   return encode_slot(s, slot_out);
 }
 
@@ -1760,6 +1827,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->trk[i].flags = track_table[at + 2];
     s->trk[i].event_offset = rd16(track_table, at + 3);
     s->trk[i].pc = s->trk[i].event_offset;
+    s->trk[i].armed_frame = 0xffffffffu; /* never armed; frame 0 is a real one */
   }
 
   s->increment = (uint16_t)((120 * 512 + 37) / 75); /* bpmToTickIncrement(120) */
@@ -1863,6 +1931,7 @@ void mml_start_all(MMLSeq *s) {
   for (uint8_t i = 0; i < s->track_count; i++) {
     s->trk[i].running = 1;
     s->trk[i].armed = 1; /* the armed frame, driver.md §4.2 */
+    s->trk[i].armed_frame = 0xffffffffu;
     s->trk[i].gate_left = -1;
   }
 }
@@ -1914,6 +1983,7 @@ void mml_start_track(MMLSeq *s, uint8_t track_id) {
   t->fading = 0;
   t->running = 1;
   t->armed = 1; /* silent setup frame; the first dispatch is the next one */
+  t->armed_frame = 0xffffffffu;
 }
 
 void mml_stop_track(MMLSeq *s, uint8_t track_id) {

@@ -219,7 +219,8 @@ NTSC-fixed until there is a PAL target to measure.
 **Default depth 2, and it is a per-game tuning knob, not a design constant.**
 
 Depth is lookahead, not decimation: the Z80 still consumes one slot per vblank,
-so the music keeps 60 Hz resolution at any depth. What depth buys is tolerance —
+so the music keeps its resolution at any depth — 60 Hz for the engines, and
+`SLOT_SUBS` × that for note onsets (§3.5). What depth buys is tolerance —
 at depth N the game may overrun N−1 frames without the music stuttering. What it
 costs is latency on **every host→music operation**: `MMLisp_startSe` is only the
 most obvious one; `setVal` (`$slot` live control), `setParam`, `fadeTrack` and
@@ -246,6 +247,62 @@ steady ~5% load for an N× taller spike at 1/N the rate — better or worse
 depending on the game's own frame-budget shape, so it is a per-game choice too,
 not part of the interface.
 
+### 3.5 Sub-ticks — note onsets below the frame
+
+`SLOT_SUBS = 3`, a build constant, and it must equal the mixer's `PACE_PASSES`.
+
+A frame is divided into **K = `SLOT_SUBS` sub-ticks**. Note dispatch runs on
+every one of them; the engines still run once a frame. That asymmetry is the
+whole design, and it comes from a measurement (`m3-macro-multi`, steady state,
+97 frames, 641 writes): key on/off is **0.8%** of write traffic, while F-num,
+TL and PSG attenuation — sweep and macro stepping — are the other 99%. So
+subdividing dispatch costs **zero extra chip writes**, and subdividing the
+engines would multiply the frame's traffic by K, blow `SLOT_MAX_WRITES` every
+frame, and put the writes back a frame late — reintroducing exactly the error
+this removes.
+
+What it buys: onset error goes from 16.7 ms to 5.56 ms ± the DAC feed's ~3.4 ms
+wander (§5.1). At 128 BPM a 1/8 triplet is 9.373 frames, so every onset was up
+to half a frame out; now it is up to a sixth.
+
+**The accumulator.** Each frame's tempo increment is distributed over the K
+sub-ticks by Bresenham:
+
+```
+step_j = ((j+1) × increment) / K − (j × increment) / K
+```
+
+The K steps sum to exactly `increment`, so §3.2's zero-drift-over-loops property
+is untouched and **every dispatch still happens in the frame it always did** —
+only its position inside that frame moves.
+
+**Per sub-tick:** the accumulator drain and event dispatch, every opcode.
+**Per frame, at sub-tick 0:** sweep stepping, macro stepping, `FADE_TRACK`'s
+ramp. **After the last sub-tick:** PCM position bookkeeping, because the engine
+applies a frame's whole PCM command list at the frame head and then mixes — a
+`PCM_VOL` a late sub-tick generated has to be in force for this frame's samples
+on both sides, or the two mixers diverge.
+
+**Macro phase.** A note-on at sub-tick j > 0 runs *that channel's* macro first
+step immediately, right after the trigger — §13.1 requires the first step in the
+same frame and after the note-on, and the step pass has already run. A channel
+that stepped at sub-tick 0 and then takes a note-on steps twice in the frame:
+correct, because the note-on re-instantiated the macros, so those are two
+different instances.
+
+**Not subdivided: PCM onsets.** A soft-mix voice's pass covers the whole frame
+(§5.3), so starting one mid-frame needs a leading IDLE segment — ~2,400 cycles
+per note-on. PCM tracks therefore take their whole increment at sub-tick 0 and
+keep exactly the frame-grid timing they had. The part that matters most for
+drums is waiting on the mixer's per-segment cost coming down.
+
+**What it costs the Z80: nothing structural.** The mixer already runs exactly
+three voice passes a frame, silent voices included, and the pacing pad holds
+every tick body to the same period — so the two pass boundaries already sit at
+1/3 and 2/3 of the frame, and the sub-slots ride boundaries that were there
+anyway (§5.1, §6.2). The subdivision points are a by-product of the DAC pacing
+fix.
+
 ## 4. The 68k Frame — rendering one slot
 
 Frame order is **fixed and normative** — `drv-player.js` implements exactly
@@ -254,14 +311,17 @@ this order and the 68k C must reproduce it (§12):
 1. **Drain the host command queue:** consume all commands posted since the last
    render, in order. Start/stop/key-off effects apply before any dispatch this
    frame.
-2. **Per track, ascending track index:** run the §3.1 accumulator loop; each
+2. **For each of the K sub-ticks (§3.5), per track, ascending track index:** run
+   the §3.1 accumulator loop over that sub-tick's share of the increment; each
    consumed tick counts down `wait_ticks` and, at zero, executes stream events
    (immediate events run back-to-back; the next timed event reloads
    `wait_ticks`). Key-offs scheduled by the gate rule fire on their tick inside
    this loop.
-3. **Engines, ascending channel index:** sweep interpolators, then macro
-   steppers (§13.3).
-4. **Publish the slot** (§6.2).
+3. **Engines, ascending channel index — at sub-tick 0 only:** sweep
+   interpolators, then macro steppers (§13.3). Dispatch at sub-ticks 1 and 2
+   therefore follows the frame's engine writes rather than preceding them.
+4. **Publish the slot** (§6.2), its writes bucketed by the sub-tick that
+   generated them.
 
 Register writes are **appended to the slot as they are generated**, in dispatch
 order, change-only against the 68k's shadow — so the slot's per-port write
@@ -426,11 +486,21 @@ its bytes on the chips, and spend the rest of the frame mixing PCM.
 1. **Claim a slot.** If the ring is empty, skip step 2 — the 68k did not keep
    up. The mixer still runs (PCM must not gap), so the music holds rather than
    glitches.
-2. **Consume the slot** (§6.2): three length-prefixed runs — PSG bytes, YM port
-   0 `{reg,val}` pairs, YM port 1 pairs — then the PCM command list. Runs are
-   length-prefixed precisely so the loop needs no per-write dispatch.
-3. **Mix PCM** (§5.3) while feeding the DAC — the same loop does both.
-4. **Publish** the consumed-frame counter (§6.4).
+2. **Consume sub-slot 0** (§6.2): three length-prefixed runs — PSG bytes, YM
+   port 0 `{reg,val}` pairs, YM port 1 pairs. Runs are length-prefixed precisely
+   so the loop needs no per-write dispatch. Then walk past the remaining
+   sub-slots — counting their writes, because the pacing debt below wants the
+   frame's total *here* — to reach the PCM command list, which the mixer needs
+   before it runs.
+3. **Mix PCM** (§5.3) while feeding the DAC — the same loop does both — and put
+   **sub-slots 1 and 2** out at the voice-pass boundaries (§3.5). Each such run
+   re-latches `$2A` afterwards, because the feed writes it blind. When nothing
+   is sounding the mixer is not entered at all, so that path runs a **paced idle
+   loop** instead, giving the same two boundaries; without it a score with no
+   PCM in it would silently lose its sub-ticks.
+4. **Release the slot** — the tail only advances once the last sub-slot has been
+   read, so the 68k cannot refill a slot the frame is still consuming — and
+   **publish** the consumed-frame counter (§6.4).
 
 **DAC PACING (2026-08-03).** The feed is *inside* the mix loops, one `$2A` write
 every three ticks, and not a pass of its own. A separate output pass is what the
@@ -485,20 +555,29 @@ As built (`drv/src/engine.z80` + the generated mixer):
 
 | Region | Address | Size | Contents |
 | ------ | ------- | ---- | -------- |
-| code | `$0000` | 3982 B | boot, ISR, consume loop, PCM commands, mixer |
-| mix buffer | `$1000` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
-| PCM voice state | `$1200` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
-| engine scratch | `$1260` | 160 B | includes the always-silent voice struct at `$1280` |
+| code | `$0000` | 4134 B | boot, ISR, consume loop, PCM commands, mixer |
 | published header | `$1300` | 64 B | ring control, status, consumed-frame counter (§6.4) |
 | slot ring | `$1400` | depth × 256 B | 512 B at the default depth 2 |
+| mix buffer | `$1600` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
+| PCM voice state | `$1800` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
+| engine scratch | `$1860` | 160 B | includes the always-silent voice struct at `$1880` |
 | stack | `$1F00` | 256 B | |
-| | | **~5 KB** | leaving ~3 KB unallocated |
+| | | **~5 KB** | leaving ~1.5 KB unallocated |
 
 The mixer is most of the code: shift specialisation means ten copies of each
 loop (§5.3.1) — eight shifts, mute, and idle — and pacing unrolls each of them
-by three (§5.1). That is 3.4 KB of the image, and it leaves **114 B** below the
-mix plane: the next thing the engine grows will have to move the RAM map up
-rather than squeeze in.
+by three (§5.1). That is 3.4 KB of the image.
+
+**The planes moved above the ring when the sub-slot consume loop (§3.5) pushed
+the image past 4 KB.** They used to sit at `$1000`, directly above the code,
+with 114 B of headroom — the doc said then that the next thing to grow would
+have to move the map rather than squeeze in, and this was it. Growing *upward*
+into the free space is the move that does not make the host's build stale: the
+header's address is the one Z80 constant the 68k compiles in (§6.4), so it
+stayed at `$1300` and no protocol version had to change. Code now has the whole
+span below the header — 1218 B of headroom — and everything above the ring is
+the engine's own working memory. The boot clear covers that region only, which
+means the published header survives it.
 
 Everything the old design fought for is gone with the sequencer: no code
 overlays, no overlay ROM blob, no `DATA_BASE`, no shadow file (change-only now
@@ -725,19 +804,40 @@ depth allows and skips rendering that frame.
 
 One slot is one frame, holding both that frame's chip writes and its PCM voice
 commands — so a PCM note-on lands in the same frame as the music that cues it.
+The chip writes are divided into `SLOT_SUBS` **sub-slots**, one per sub-tick
+(§3.5); the PCM commands are frame-level.
 
 ```
-[u8 n_psg] [val × n_psg]              ; SN76489, port 0x7F11
-[u8 n_fm0] [{reg,val} × n_fm0]        ; YM2612 port 0 (0x4000/0x4001)
-[u8 n_fm1] [{reg,val} × n_fm1]        ; YM2612 port 1 (0x4002/0x4003)
+{ [u8 n_psg] [val × n_psg]            ; SN76489, port 0x7F11
+  [u8 n_fm0] [{reg,val} × n_fm0]      ; YM2612 port 0 (0x4000/0x4001)
+  [u8 n_fm1] [{reg,val} × n_fm1] }    ; YM2612 port 1 (0x4002/0x4003)
+  × SLOT_SUBS
 [u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
 ```
 
 Length-prefixed runs mean the consume loop needs no per-write dispatch: three
-tight loops, each with its port address fixed.
+tight loops, each with its port address fixed. **That property is exactly why
+the frame is divided into blocks rather than given per-write timestamps** — a
+timestamp would put a comparison in the inner loop and cost more than the timing
+it bought. `SLOT_SUBS` is a build constant, so the count is not on the wire; the
+cost is 6 B a slot at K = 3, and `SLOT_SUBS = 1` collapses the format back to
+the single-block one, byte for byte.
 
-**The write cap and spill.** `SLOT_MAX_WRITES` bounds `n_psg + n_fm0 + n_fm1`.
-The bound exists for **cycles, not bytes** — the Z80 frame is shared with the
+**Which sub-slot a write lands in** is simply the sub-tick that generated it.
+One ordered queue feeds all of them, as before, and the 68k records the queue
+depth at each sub-tick boundary; those depths are the bucket ends. Order,
+change-only and the shadow are all unchanged, and per port the whole frame's
+sequence is the buckets concatenated — so the transport still only ever *delays*
+a write.
+
+**The write cap and spill.** `SLOT_MAX_WRITES` bounds
+`n_psg + n_fm0 + n_fm1` **summed over the whole slot**: it exists for the Z80's
+cycles per frame, not per sub-slot. The queue is walked once and the buckets
+fill in order, so overflow out of one bucket lands in the next bucket of the
+*same* frame; only what does not fit at all waits, and it leads the next frame's
+sub-slot 0 exactly as it always did.
+
+The bound is **cycles, not bytes** — the Z80 frame is shared with the
 mixer, and what is left after the mixer is the whole budget:
 
 ```
@@ -1274,7 +1374,11 @@ chip writes are exactly the slot's bytes, in order, on the right ports, and
 (b) the `$2A` DAC stream matches a JS model of §5.3 sample for sample. The
 scenarios exist to pin the segment arithmetic: a loop wrapping several times
 per frame, a shot ending mid-frame, a sample crossing a ROM bank boundary, a
-mid-flight `PCM_LOOP`, and a starved ring.
+mid-flight `PCM_LOOP`, and a starved ring. One more pins the sub-slots (§3.5):
+writes placed in *every* sub-slot, once with PCM sounding and once without, so
+both delivery paths — the mixer's voice-pass boundaries and the paced idle loop
+— have to produce the frame's whole write sequence in order. A PCM-less score
+silently losing its sub-ticks is otherwise an invisible failure.
 
 **`npm run slots`** runs a real score the whole way — `.mmlisp` → MMB →
 `drv-player.js` → slot stream through the real cap/spill queue → the engine —
@@ -1306,7 +1410,8 @@ that out in an afternoon instead of on silicon.
 the live app). The reference driver's frame-stamped register log is
 diffed against `ir-player.js` output as per-register *state runs* (raw
 write streams are incomparable: the IR player runs a continuous clock
-and repeats values; the sequencer is frame-quantized and change-only).
+and repeats values; the sequencer is change-only, and quantized to the
+frame for its engines and to the sub-tick for note onsets, §3.5).
 Unchanged by the split. Acceptance bands:
    - **±1 frame** timing skew on every state change and key edge.
    - **TL data ±2 steps** (integer offset tables vs float-sum-then-round);
