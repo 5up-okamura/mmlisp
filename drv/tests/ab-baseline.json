@@ -131,6 +131,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-macro-vel-clear.mmlisp": {
+    "ok": false,
+    "mismatches": 29,
+    "compileErrors": 0,
+    "digest": "d7c95b37"
+  },
   "m3-macro-vel.mmlisp": {
     "ok": false,
     "mismatches": 4,

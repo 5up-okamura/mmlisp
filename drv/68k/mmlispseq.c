@@ -300,6 +300,31 @@ static uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   return (uint8_t)clampi(att, 0, 15);
 }
 
+/* Note-on velocity: the score's sticky base, or this note's own override
+ * (NOTE_ON_EX bit0, which rides one note without becoming the base). Only the
+ * shadow moves — the caller recomposes carriers / att / shift right after.
+ *
+ * A channel with a VEL macro bound is skipped: the note-on retrigger
+ * re-instantiates that bind and its attack sample lands in the same frame
+ * (step 3), so restoring the base here would only add a register write that is
+ * overwritten before it can be heard. When the bind is cleared, the next note
+ * has nothing to overwrite it and this is what puts the score's velocity back. */
+static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
+  uint8_t *vel = 0, base = 15;
+  if (ex_vel < 0 && ch < 10) {
+    for (int i = 0; i < s->bind_count[ch]; i++)
+      if (s->binds[ch][i].target == T_VEL) return;
+  }
+  if (ch < 6) { vel = &s->fm[ch].vel; base = s->fm[ch].vel_base; }
+  else if (ch < 10) { vel = &s->psg[ch - 6].vel; base = s->psg[ch - 6].vel_base; }
+  else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
+    vel = &s->pcm[ch - CH_PCM1].vel;
+    base = s->pcm[ch - CH_PCM1].vel_base;
+  }
+  if (!vel) return;
+  *vel = ex_vel >= 0 ? (uint8_t)clampi(ex_vel, 0, 15) : base;
+}
+
 /* ── Pitch (driver.md §8) ─────────────────────────────────────────────────── */
 static void fold_cents(int *note, int *cents) {
   int whole = *cents / 100; /* C truncates toward zero, like Math.trunc */
@@ -471,7 +496,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     MMLPsgCh *st = &s->psg[pc];
     if (target == T_VOL || target == T_VEL) {
       if (target == T_VOL) st->vol = (uint8_t)clampi(value, 0, 31);
-      else st->vel = (uint8_t)clampi(value, 0, 15);
+      else {
+        st->vel = (uint8_t)clampi(value, 0, 15);
+        if (!force) st->vel_base = st->vel; /* score's vel; a macro moves only the live one */
+      }
       /* Re-apply on a keyed note even when currently silent, so a level macro
        * can bring it back up (driver.md §13.3). */
       if (st->keyed || force) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));
@@ -484,8 +512,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   /* PCM soft-mix levels: per-voice state, composed into the mixer's shift. */
   if (ch >= CH_PCM1 && ch <= CH_PCM3) {
     MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
-    if (target == T_VEL) v->vel = (uint8_t)clampi(value, 0, 15);
-    else if (target == T_VOL) v->vol = (uint8_t)clampi(value, 0, 31);
+    if (target == T_VEL) {
+      v->vel = (uint8_t)clampi(value, 0, 15);
+      if (!force) v->vel_base = v->vel; /* score's vel; a macro moves only the live one */
+    } else if (target == T_VOL) v->vol = (uint8_t)clampi(value, 0, 31);
     else return;
     pcm_compose_shift(s, ch - CH_PCM1);
     return;
@@ -500,8 +530,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     return;
   }
   if (target == T_VEL || target == T_VOL) {
-    if (target == T_VEL) c->vel = (uint8_t)clampi(value, 0, 15);
-    else c->vol = (uint8_t)clampi(value, 0, 31);
+    if (target == T_VEL) {
+      c->vel = (uint8_t)clampi(value, 0, 15);
+      if (!force) c->vel_base = c->vel; /* score's vel; a macro moves only the live one */
+    } else c->vol = (uint8_t)clampi(value, 0, 31);
     recompose_carriers(s, ch);
     return;
   }
@@ -918,6 +950,10 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int note) {
   uint32_t len = rd32(e, 6);
   if (len == 0) return;
   MMLPcmVoice *v = &s->pcm[vi];
+  /* Same per-note velocity restore as the FM/PSG note_on (driver.md §7.1);
+   * ir-player's "vel arrives on each PCM_NOTE_ON" is the model. */
+  restore_vel_base(s, channel_id, -1);
+  pcm_compose_shift(s, vi);
   v->active = 1;
   v->base = s->sample_blob_base + rd32(e, 2);
   v->len = len;
@@ -1044,11 +1080,19 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
 }
 
 /* ── Note on (opcodes.md §3.1) ─────────────────────────────────────────────── */
+/* `ex_vel` < 0 means "no per-note velocity" — take the sticky base. */
 static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_gate,
-                    int has_ex_gate, int legato) {
+                    int has_ex_gate, int legato, int ex_vel) {
   int ch = t->channel_id;
   int fm3op = fm3_op_for(s, ch);
   if (!fm3op && ch > CH_PCM3) return; /* no such channel: timeline only */
+  /* Every note starts from the score's velocity (driver.md §7.1). The stream
+   * carries VEL as change-only sticky state, so once a macro has driven the
+   * live vel nothing is left to re-assert it — without this copy the macro's
+   * last sample would be the channel's velocity for the rest of the song,
+   * which is how a level macro anywhere in a loop left every following note at
+   * full volume. ir-player does the same with `regs.vel = noteVel`. */
+  if (!fm3op) restore_vel_base(s, ch, ex_vel);
   cancel_loop_sweeps(s, ch);
   if (fm3op) {
     /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH,
@@ -1143,7 +1187,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         int note = st[t->pc + 1];
         MMLDur d = read_dur(st, t->pc + 2);
         t->pending_off = 0; /* slur: an incoming note cancels the key-off */
-        note_on(s, t, note, d.ticks, 0, 0, 0);
+        note_on(s, t, note, d.ticks, 0, 0, 0, -1);
         t->pc = (uint16_t)d.next;
         if (d.ticks == 0) return;
         t->wait = d.ticks;
@@ -1165,11 +1209,8 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
           pc = g.next;
         }
         t->pending_off = 0;
-        if (has_vel) {
-          if (t->channel_id < 6) s->fm[t->channel_id].vel = (uint8_t)ex_vel;
-          else if (t->channel_id < 10) s->psg[t->channel_id - 6].vel = (uint8_t)ex_vel;
-        }
-        note_on(s, t, note, d.ticks, ex_gate, has_gate, (flags & 8) != 0);
+        note_on(s, t, note, d.ticks, ex_gate, has_gate, (flags & 8) != 0,
+                has_vel ? ex_vel : -1);
         t->pc = (uint16_t)pc;
         if (d.ticks == 0 || (has_gate && ex_gate == 0)) return;
         t->wait = d.ticks;
@@ -1727,6 +1768,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   for (int ch = 0; ch < 6; ch++) {
     MMLFmCh *c = &s->fm[ch];
     c->algorithm = 7;
+    c->vel_base = 15;
     c->vel = 15;
     c->vol = VOL_UNITY;
     c->gate = 8;
@@ -1738,12 +1780,14 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     }
   }
   for (int p = 0; p < 4; p++) {
+    s->psg[p].vel_base = 15;
     s->psg[p].vel = 15;
     s->psg[p].vol = VOL_UNITY;
     s->psg[p].gate = 8;
     s->psg[p].current_note = 60;
   }
   for (int v = 0; v < MML_PCM_VOICES; v++) {
+    s->pcm[v].vel_base = 15;
     s->pcm[v].vel = 15;
     s->pcm[v].vol = VOL_UNITY;
     s->pcm[v].sent_shift = 0xff; /* no PCM_VOL sent yet */
@@ -1847,10 +1891,12 @@ void mml_start_track(MMLSeq *s, uint8_t track_id) {
      * relies on the default velocity (no PARAM_SET of its own) sounds right
      * after stealing a channel someone else had faded. */
     if (ch < 6) {
+      s->fm[ch].vel_base = 15;
       s->fm[ch].vel = 15;
       s->fm[ch].vol = VOL_UNITY;
       s->fm[ch].gate = 8;
     } else {
+      s->psg[ch - 6].vel_base = 15;
       s->psg[ch - 6].vel = 15;
       s->psg[ch - 6].vol = VOL_UNITY;
       s->psg[ch - 6].gate = 8;

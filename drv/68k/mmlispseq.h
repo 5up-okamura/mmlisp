@@ -72,14 +72,17 @@ typedef struct {
   MMLOp ops[4];
   uint8_t algorithm, feedback, ams, fms;
   int8_t pan;
-  uint8_t vel, vol, gate;
+  /* vel is TWO values (driver.md §7.1): vel_base is the score's sticky
+   * velocity, written only by a PARAM_SET VEL out of the stream; vel is the
+   * live one a macro drives. note_on copies base -> live. */
+  uint8_t vel_base, vel, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
   uint8_t keyed;
 } MMLFmCh;
 
 typedef struct {
-  uint8_t vel, vol, gate;
+  uint8_t vel_base, vel, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
   uint8_t keyed;   /* a note is active */
@@ -149,7 +152,7 @@ typedef struct {
   int32_t tail; /* loop end -> sample end, added to `left` on release */
   uint32_t inc; /* 16.16 samples per mix tick */
   uint32_t pos;
-  uint8_t vel, vol;
+  uint8_t vel_base, vel, vol;
   uint8_t shift;      /* composed attenuation; the mixer sra's by it */
   uint8_t sent_shift; /* last PCM_VOL byte sent, 0xFF = none */
 } MMLPcmVoice;

@@ -1,0 +1,37 @@
+; M3 gate: the score's :vel survives a level macro (driver.md §7.1).
+;
+; The IR carries vel on every NOTE_ON and ir-player re-applies it there; the MMB
+; carries VEL as change-only sticky track state, so nothing in the stream
+; re-asserts it. A :vel macro writes the channel's live vel every frame, so
+; without a separate base the macro's LAST sample stayed the channel's velocity
+; for the rest of the song — every note after the macro played at the macro's
+; level instead of the score's. With an accent macro at a loop head that means
+; the whole loop body comes back at full volume, which is what was heard on
+; hardware and in live's MMLDrv (ir-player was correct throughout).
+;
+;   fm1  — accent macro on the loop's first note, plain notes after it
+;   sqr1 — the same on PSG (attenuation path)
+;   fm2  — a vel macro that is never cleared: it owns the level throughout, and
+;          the note-on must NOT add a base write the macro overwrites anyway
+(def lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(fm1 lead :tempo 150 :oct 4 :len 4 :vel 6
+  #loop
+  (macro :vel [15 15 15 15]) c
+  (macro :vel none) e g e
+  (go loop))
+
+(sqr1 :oct 5 :len 4 :vel 5
+  #loop
+  (macro :vel [15 12 9]) c
+  (macro :vel none) e g e
+  (go loop))
+
+(fm2 lead :oct 3 :len 2 :vel 9
+  #loop
+  (macro :vel [15 9 4]) c g
+  (go loop))

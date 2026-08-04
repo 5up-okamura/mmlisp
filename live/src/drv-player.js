@@ -130,6 +130,13 @@ function freshFmChannel() {
     ams: 0,
     fms: 0,
     pan: 0, // -1/0/+1; B4 defaults to both speakers
+    // vel is TWO values (driver.md §7.1). velBase is the score's sticky
+    // velocity, written only by a PARAM_SET VEL out of the stream; vel is the
+    // live one a macro drives. Every note-on copies base → live, which is what
+    // makes the note's own velocity land — the IR carries vel on every NOTE_ON,
+    // the MMB carries it as change-only sticky state, so without the copy a
+    // macro's last sample would stay the channel's velocity forever.
+    velBase: 15,
     vel: 15,
     vol: VOL_UNITY,
     gate: 8, // eighths of dur (opcodes.md §4)
@@ -370,6 +377,7 @@ export class DrvPlayer {
     this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
     this._fm = Array.from({ length: 6 }, freshFmChannel);
     this._psg = Array.from({ length: 4 }, () => ({
+      velBase: 15, // score's sticky velocity; vel is the macro-driven live one
       vel: 15,
       vol: VOL_UNITY,
       gate: 8,
@@ -425,6 +433,7 @@ export class DrvPlayer {
       inc: 0,
       pos: 0,
       releasing: false,
+      velBase: 15, // score's sticky velocity; vel is the macro-driven live one
       vel: 15, // per-voice velocity 0-15 (raw); default = unattenuated
       vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
       shift: 0, // composed attenuation: sample >>= shift (0..7). Recomputed from
@@ -724,10 +733,19 @@ export class DrvPlayer {
   // `legato` (NOTE_ON_EX bit3, a slur to a different pitch): update the frequency
   // and recompose levels/macros but do NOT re-key — the FM envelope (or the PSG
   // tone) carries over from the previous note.
-  _noteOn(trk, note, dur, exGate, legato = false) {
+  // `exVel` (NOTE_ON_EX bit0): a velocity that rides this note only, replacing
+  // the sticky base without becoming it.
+  _noteOn(trk, note, dur, exGate, legato = false, exVel = null) {
     const ch = trk.channelId;
     const fm3op = this._fm3OpFor(ch);
     if (!fm3op && trk.unsupported) return; // pcm-softmix: timeline only (M3)
+    // Every note starts from the score's velocity (driver.md §7.1). The stream
+    // carries VEL as change-only sticky state, so once a macro has driven the
+    // live vel there is nothing left to re-assert it — without this copy the
+    // macro's last sample would be the channel's velocity for the rest of the
+    // song, which is how a level macro anywhere in a loop left every following
+    // note at full volume. ir-player does the same with `regs.vel = noteVel`.
+    if (!fm3op) this._restoreVelBase(ch, exVel);
     // Live mixer: a muted / non-soloed track advances but does not sound — skip
     // the key and its macros (which gate on the keyed state). Always true during
     // the trace gate (nothing muted), so it doesn't affect verification.
@@ -848,8 +866,7 @@ export class DrvPlayer {
             pc = g.next;
           }
           trk.pendingOff = false; // slur
-          if (exVel != null) this._setLevel(trk.channelId, "vel", exVel);
-          this._noteOn(trk, note, dur.ticks, exGate, (flags & 0b1000) !== 0);
+          this._noteOn(trk, note, dur.ticks, exGate, (flags & 0b1000) !== 0, exVel);
           trk.pc = pc;
           if (dur.ticks === 0 || exGate === 0) return; // held
           trk.wait = dur.ticks;
@@ -1161,6 +1178,31 @@ export class DrvPlayer {
     else if (channelId < 10) this._psg[channelId - 6][key] = value;
   }
 
+  // Note-on velocity: the score's sticky base, or this note's own override.
+  // Composition is left to the caller (it recomposes carriers / att / shift
+  // right after), so this only moves the shadow.
+  //
+  // A channel with a VEL macro bound is skipped: the note-on retrigger
+  // re-instantiates that bind and its attack sample lands in the same frame
+  // (step 3), so restoring the base here would only add a register write that
+  // is overwritten before it can be heard. When the bind is cleared, the next
+  // note has nothing to overwrite it and this is what puts the score's
+  // velocity back.
+  _restoreVelBase(channelId, exVel = null) {
+    if (exVel == null && channelId < 10 && this._macroActive[channelId]?.has(TARGET_ID.VEL))
+      return;
+    const st =
+      channelId < 6
+        ? this._fm[channelId]
+        : channelId < 10
+          ? this._psg[channelId - 6]
+          : channelId >= 20 && channelId <= 22
+            ? this._pcmVoices[channelId - 20]
+            : null;
+    if (!st) return;
+    st.vel = exVel != null ? (exVel < 0 ? 0 : exVel > 15 ? 15 : exVel) : st.velBase;
+  }
+
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
   // `force` (macro-driven writes): a macro is the channel's envelope authority,
   // so its PSG attenuation writes must land even after key-off — the release
@@ -1286,7 +1328,10 @@ export class DrvPlayer {
         // vel and vol both compose into the PSG attenuation — re-apply on a keyed
         // note (even if currently silent, so a vel macro can bring it back up).
         if (target === TARGET_ID.VOL) st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
-        else st.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+        else {
+          st.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+          if (!force) st.velBase = st.vel; // score's vel; a macro moves only the live one
+        }
         if (st.keyed || force) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
       } else if (target === TARGET_ID.NOTE_PITCH) {
         st.pitchCents = value;
@@ -1301,8 +1346,10 @@ export class DrvPlayer {
     // mix hot path. See _pcmComposeShift.
     if (channelId >= 20 && channelId <= 22) {
       const v = this._pcmVoices[channelId - 20];
-      if (target === TARGET_ID.VEL) v.vel = value < 0 ? 0 : value > 15 ? 15 : value;
-      else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+      if (target === TARGET_ID.VEL) {
+        v.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+        if (!force) v.velBase = v.vel; // score's vel; a macro moves only the live one
+      } else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
       else return;
       this._pcmComposeShift(channelId - 20);
       return;
@@ -1326,8 +1373,10 @@ export class DrvPlayer {
       case target === TARGET_ID.VEL:
       case target === TARGET_ID.VOL: {
         // vel and vol both compose into the carrier TL — recompose every carrier.
-        if (target === TARGET_ID.VEL) regs.vel = value < 0 ? 0 : value > 15 ? 15 : value;
-        else regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+        if (target === TARGET_ID.VEL) {
+          regs.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+          if (!force) regs.velBase = regs.vel; // score's vel; a macro moves only the live one
+        } else regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
         for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
           const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
           regs.ops[opIdx].tl = tl;
@@ -1683,6 +1732,10 @@ export class DrvPlayer {
     const s = this._song.samples[sampleId];
     if (!s || s.len === 0) return;
     const v = this._pcmVoices[vi];
+    // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1);
+    // ir-player's "vel arrives on each PCM_NOTE_ON" is the model.
+    this._restoreVelBase(channelId);
+    this._pcmComposeShift(vi);
     v.active = true;
     v.base = s.base;
     v.len = s.len;
@@ -1877,6 +1930,7 @@ export class DrvPlayer {
         kind: "fm",
         voiceId: r.voiceId,
         note: r.currentNote,
+        velBase: r.velBase, // the score's vel, so the resumed track's next note is right
         vel: r.vel,
         vol: r.vol,
         gate: r.gate,
@@ -1888,6 +1942,7 @@ export class DrvPlayer {
       return {
         kind: "psg",
         note: st.currentNote,
+        velBase: st.velBase,
         vel: st.vel,
         vol: st.vol,
         gate: st.gate,
@@ -1905,6 +1960,7 @@ export class DrvPlayer {
     if (snap.kind === "fm") {
       const regs = this._fm[ch];
       if (snap.voiceId !== 0xff) this._voiceSet(ch, snap.voiceId);
+      regs.velBase = snap.velBase;
       regs.vel = snap.vel;
       regs.vol = snap.vol;
       regs.gate = snap.gate;
@@ -1926,6 +1982,7 @@ export class DrvPlayer {
       // reproduces in the same order.
       const psgCh = ch - 6;
       const st = this._psg[psgCh];
+      st.velBase = snap.velBase;
       st.vel = snap.vel;
       st.vol = snap.vol;
       st.gate = snap.gate;
