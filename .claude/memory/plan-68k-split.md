@@ -410,7 +410,166 @@ Known limits, all measured and none new to pacing:
   frame length can only be tuned in steps that coarse. PACE_RESERVE picks which
   side of the step to land on; it is set to land under.
 
-## Per-note timing: what 60 Hz costs## Per-note timing: what 60 Hz costs (reported 2026-08-03, deferred behind PCM)
+## Hardware round 2026-08-04 — three symptoms, two causes, both located
+
+Reported after the pacing fix: (1) tempo still wobbles, (2) **pitch-shifted PCM
+sounds like a fine LFO / an effect**, (3) **a loud FM blast at every loop point**.
+
+**The decisive test — playing with PCM removed — settled the split**: no PCM, no
+tempo wobble; the loop blast reproduces anyway. So (1)+(2) are the mixer, (3) is
+its own thing, and they are unrelated. (3) was attributed to VOICE_SET at the
+time; that attribution was **wrong** — see §(3).
+
+Doing that test needed `sgdk/example/main.c` unblocked: it halted forever on
+`MMLisp_needsSampleBank()`. **Removed 2026-08-04** — it warns in the ready line
+and plays with PCM muted. A project's own `main.c` is never overwritten by
+`install-sgdk.mjs`, so existing projects must delete their own copy of the
+`while (TRUE)`.
+
+### (3) The loop-point blast — SOLVED 2026-08-04 (commit 4494a21)
+
+**It was the ENCODER, not the driver.** `export-mmb.js` restored sticky VEL at
+the backward JUMP from a snapshot taken at the target MARKER. A marker at the
+top of a track snapshots the encoder's *initial* vel 15, so the restore emitted
+`PARAM_SET VEL 15` **while the previous iteration's last note was still
+sounding** — and VEL is the one sticky param the driver acts on immediately (it
+recomposes carrier TL). Measured on the reporter's score (`sin008.muc`, mucom88
+import): **+21.8 dB on fm4/fm5 at the loop point, held 787 frames = 13 s**,
+because the loop head starts with a long rest and nothing re-asserts vel until
+the body's next note. Confirmed in the stream bytes: `60 06 0f` immediately
+before the `43` JUMP.
+
+Fixed by *not* restoring VEL at the JUMP: a backward-JUMP target MARKER
+invalidates the encoder's VEL tracking instead, so the body re-asserts its own
+velocity where it needs it (docs/opcodes.md §4.1). GATE and macro binds keep the
+snapshot-restore — they are silent state, so they cannot disturb a sounding note.
+Gate: `m3-loop-vel-hold`. Reproducing needs **all three** of: marker at the top
+of the track, a quiet `:vel`, and rests at the loop head — with a note right
+after the marker the wrong level lasts under a frame and is invisible.
+
+**How it was found, and the tool that now does it for you**:
+`npm run level-diff -- <song.mmlisp>` (drv/tools/level-diff.mjs, docs
+driver.md §12.5) — prints every span where the driver plays LOUDER than
+ir-player, in dB, with the loop frames alongside. Point it at any score that
+blasts; it names the channel, the register and the frame range.
+
+`ab-compare` had been reporting this bug all along as `missing-in-b` on a `$4x`
+register mid-body — ir writes a TL the driver never writes. That class reads
+like frame-0 seeding noise in a gate summary and is trivially skimmed past,
+which is why the tool exists. Two traps it took two wrong versions to learn:
+(1) **tile ir's loop** — `captureRegisterLog` captures ONE pass and reports
+loopStartSec/endSec, so without re-emitting the body at +P (like export-wav)
+every later iteration reads as "driver louder" and the loop point itself falls
+outside the comparison; (2) **drop spans < 3 frames** — the allowed ±1 frame
+note skew shows up as a level difference on every note. Self-check it by
+stubbing `DrvPlayer.prototype._restoreVelBase` to a no-op and running it on
+`m3-macro-vel-clear`: it must report +18 dB. Also useful and headless: the nuked
+cores load fine in node, so a per-frame peak render is available if needed.
+
+**Process note, worth more than the fix**: three rounds were burned on the
+driver because the hypothesis below (§3c) was inherited and never re-tested
+against a failing input. Getting the reporter's actual song took the diagnosis
+from "no reproduction anywhere in the corpus" to a named register in under half
+an hour. **Ask for the failing input first.**
+
+### (3b) Driver: `vel` needed a base and a live value — BUILT (commit be090fc)
+
+A real bug found while chasing the above, but **not** the reported symptom. A
+`:vel` macro writes the channel's live vel every frame, and nothing in the MMB
+stream re-asserts the score's own (the IR carries vel per NOTE_ON; the stream
+carries it as change-only sticky state). So the macro's **last sample became the
+channel's velocity for the rest of the song** — every note after a cleared level
+macro played at the macro's level. Fixed by splitting `vel_base` (score,
+PARAM_SET only) from `vel` (live, macro), copying base → live at every note-on,
+on FM/PSG/PCM alike; a channel with a VEL macro *bound* is skipped (its
+retrigger writes the attack the same frame, so copying would only add a register
+write). Without that guard the A/B went 4 → 27 on `m3-macro-vel` and 26 → 270 on
+`demo1`. Docs driver.md §7.1, gate `m3-macro-vel-clear`.
+
+Not reachable from a mucom88 import (every note carries a vel macro, so nothing
+ever clears), which is why it changed nothing for the reporter.
+
+### (3c) Fix A — VOICE_SET algorithm change: BUILT, then REVERTED 2026-08-04
+
+Fix A muted (TL=127, before `$B0`) the ops in
+`old_carrier_mask & ~new_carrier_mask` and wrote their real TL after `$B0`. It
+was built, gated and correct — and then **reverted, because it never fixed an
+audible symptom**. Do not re-implement it without a measurement first.
+
+Why it was reverted:
+
+- The loop blast it was decided for turned out to be §(3), the encoder. Fix A
+  was attributed to a symptom it did not cause.
+- **Measured on the reporter's score**: 15 VOICE_SET calls, 7 needing the mute,
+  **0 of them on a keyed channel**. Nothing was sounding, so there was nothing
+  to protect.
+- In `drv-player` / live it is unobservable by construction — a frame's writes
+  reach the chip together, and both gates (c-gate byte-identical, ab baseline
+  unchanged) were indifferent to adding *or* removing it. That indifference is
+  itself the tell: nothing we can measure could see it.
+
+The hazard is still real on hardware, and this is the analysis, kept so it does
+not have to be re-derived. Confirmed by `tools/dump-trace.mjs` on a
+two-algorithm repro; three facts compose into it:
+
+1. `voice_set` writes `$B0` (algorithm) **last**, after all four TLs.
+2. TLs are composed against the **new** algorithm's carrier mask, so an op that
+   is a modulator under the new algorithm goes out as its **raw** `voiced_tl` —
+   a small number, i.e. loud.
+3. `encode_slot` cuts the write queue at an arbitrary prefix (95 writes / 256 B)
+   — **nothing keeps a VOICE_SET's 29 writes together**.
+
+So where several tracks re-apply voices in one frame, the burst splits and `$B0`
+lands a frame late. For that frame the chip runs **old algorithm × new TLs**, and
+an op that was a carrier under the old algorithm emits its raw modulator TL
+straight to the output: **16.7 ms at full volume**, not a click. Normally the
+window is only the ~340 µs the writes themselves take. e12e096 (composed carrier
+TL) fixed the +10 dB step; this is what it did not reach.
+
+**Fix B — grouping the queue so `encode_slot` cannot split a VOICE_SET — was
+considered and REJECTED.** It only shrinks the blast (16.7 ms → 340 µs) where A
+removes it, and it edits the §6.2 wire format, which is spec. What B would still
+leave after A is one frame of channel mute — the same class as the
+already-accepted "a key-on in a write-dense frame can land one frame late".
+
+**Bring A back only if the blast is heard on hardware**, on a score that changes
+a voice's algorithm on a channel that is still sounding — check that first, since
+the reporter's score never did it once.
+
+### (1)+(2) The mixer's segments — CAUSE IDENTIFIED, NOT FIXED
+
+The chain: `mvf_seg` splits a voice's frame at every loop/sample/bank boundary;
+crossings per frame are `R x inc / loop_len`, so **pitching a looped sample up
+multiplies them**. Each segment costs ~2,400 cycles during which the feed does
+not run, and `pcm_debt` charges them at a **fixed** `PACE_SEG` estimated from the
+*previous* frame's count, revisable only upward within the frame. So a frame
+whose segment count moves is a frame whose length moves: one segment of error is
+**4% of the frame = ~68 cents of pitch deviation**, at frame rate — which is the
+"fine LFO" — and the same error on the over-budget side drops the vblank INT
+outright, which is the tempo wobble. `dac-gate.mjs`'s own header already
+documents the mechanism ("one that crosses a loop point runs several times as
+many mixer segments as its neighbours") and its bar is a *share* of frames, so
+**the gate passes while this is audible**.
+
+Also unaccounted, smaller: `tickCost` prices the i8sat clip branch `jp pe,ov` at
+not-taken only — a clipping sample costs **27 uncounted cycles**, so loud
+passages run long.
+
+Next steps, in order: (a) have the 68k compute the exact ticks-to-boundary and
+send it with the note, killing both the `avail >> KSH` halving cascade and
+`mvf_exact`; (b) carry the register file across a voice's consecutive segments —
+pos/inc/shift/bank do not change, so most of `mix_seg`'s entry/exit is waste;
+(c) only then re-measure the debt. **Sub-frame note timing (below) is blocked on
+this** — spreading writes into a frame that is already 94–98% full and sometimes
+overruns has no pad to absorb them.
+
+A hardware-side measurement worth building: the engine counts ring starvation
+(`MMLisp_starvedFrames`) but **nothing counts a Z80 frame overrun**. A flag set
+at frame start and cleared at its end, tested in the ISR, published in the §6.4
+header, separates "68k too slow" from "Z80 dropped a frame" from "60 Hz
+quantisation" with two numbers on screen.
+
+## Per-note timing: what 60 Hz costs (reported 2026-08-03, deferred behind PCM)
 
 Reported as "notes speed up and slow down". Measured on the reporter's song —
 `TEMPO_SET increment 874` = 3.4141 ticks/frame = **128.03 BPM**, PPQN 96:

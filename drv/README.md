@@ -66,6 +66,9 @@ tools/ring-gate.mjs   P3: the ring transport is a pipeline, not a filter (`npm r
 tools/sgdk-lint.mjs   P3: type-check the SGDK glue against mmlispseq.h (`npm run sgdk:lint`)
 tools/build-engine.mjs assemble src/engine.z80 + the generated mixer (the shipped image)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
+tools/level-diff.mjs  where is the driver LOUDER than ir-player, and by how much
+                      (`npm run level-diff -- <song.mmlisp>`) — the diagnostic to
+                      reach for when a score blasts; see driver.md §12.5
 tools/emit-bin.mjs    emit the Z80 ENGINE image as .bin + C array for SGDK/68k
 tools/install-sgdk.mjs copy the sgdk/ host files (and optionally a compiled
                       score) into an SGDK project (`npm run sgdk:install -- <dir>`)
@@ -127,6 +130,13 @@ mismatch signature is frozen in `tests/ab-baseline.json` and the gate fails when
 one *changes*. Pure-M1 (ab-core) baselines to zero. After an intended behaviour
 change, review the printed mismatches and re-freeze with
 `node tools/ab-gate.mjs --update`.
+
+When a *specific score* misbehaves rather than the corpus, the gate is the wrong
+tool — it answers "did the divergence set move", not "what is wrong here". Use
+**`npm run level-diff -- <song.mmlisp>`**: it prints every span where the driver
+plays louder than `ir-player`, in dB, with the loop frames alongside. That is how
+the loop-point blast of 2026-08-04 was finally located after three wrong guesses
+(opcodes.md §4.1).
 
 Host mailbox commands (KEY_OFF / SET_PARAM / FADE_TRACK) are host-driven, not
 in the MMB stream, so a test may carry a sidecar `<song>.cmds.json` holding

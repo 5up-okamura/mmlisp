@@ -1343,6 +1343,27 @@ Unchanged by the split. Acceptance bands:
    fails the gate. After an intended change, review the printed mismatches and
    re-freeze with `node tools/ab-gate.mjs --update`.
 
+   **`npm run level-diff <song.mmlisp>`** (`drv/tools/level-diff.mjs`) is the
+   companion for the question the gate cannot answer: *where is the driver
+   louder than the reference, and by how much*. The gate reports whether the
+   divergence set moved; this replays both logs into a register file, samples
+   the level state per frame (carrier TL under the algorithm in force, PSG
+   attenuation), and prints only the spans where the **driver is the louder of
+   the two**, in dB, with the loop frames alongside. It exists because a level
+   bug reads as an unremarkable `missing-in-b` line in a gate summary — that is
+   how the §7.1 velocity bug hid for a release. Two things it must do to be
+   trustworthy, both learned by getting them wrong first:
+
+   - **Tile ir's loop.** `ir-player.captureRegisterLog` captures one pass and
+     reports `loopStartSec`/`endSec`; the driver actually loops. Without
+     re-emitting the body at +P (as `export-wav.js` does) every iteration after
+     the first reads as "the driver is louder" — and the loop point, which is
+     where these bugs live, falls outside the comparison entirely.
+   - **Ignore spans shorter than `--hold` (default 3 frames).** The ±1 frame
+     note-timing skew of §12.5 shows up as a level difference whenever one
+     player has keyed off and the other has not. A blast is a level that is
+     wrong for a whole note, not for a frame.
+
 ### 12.6 LUT export
 
 The reference prints every constant table (F-number, PSG period, level offsets,
