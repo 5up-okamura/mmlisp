@@ -134,6 +134,33 @@ Under B, defaults at track start are vel = 15, gate = 8 (both "no
 attenuation / full length"), matching compiler defaults — the exporter emits
 initial PARAM_SETs only for non-default values.
 
+### 4.1 Sticky state across a backward JUMP
+
+The encoder emits sticky params (VEL, GATE, macro binds) change-only against a
+**linear** walk of the track, but a backward JUMP re-enters the body with the
+state the *tail* left. Something has to reconcile the two, and which mechanism
+is used is not a free choice:
+
+- **GATE and macro binds are restored at the JUMP**, from a snapshot taken when
+  the target MARKER was emitted. They are silent state — nothing reaches a
+  register until the next note — so re-establishing them at the loop boundary
+  cannot disturb anything.
+- **VEL is not.** The driver acts on `PARAM_SET VEL` immediately: it recomposes
+  every carrier's TL (driver.md §7.1). Emitting one at the JUMP writes a level
+  into whatever is still sounding. Instead, a MARKER that is a backward-JUMP
+  target **invalidates the encoder's VEL tracking**, so the body re-asserts its
+  own velocity at the note that needs it and depends on nothing established
+  before the marker.
+
+The old behaviour restored VEL at the JUMP like the others, and it was the
+loop-point blast heard on hardware: a marker at the top of a track snapshots the
+encoder's *initial* vel 15, so the restore fired `PARAM_SET VEL 15` into a note
+held across the loop — **+21.8 dB on a sustained chord for 13 s**, until the body
+reached its next note. `ir-player` carries vel on every NOTE_ON and was
+unaffected, which is what made it look like a driver bug for three rounds.
+Gate: `m3-loop-vel-hold` (marker at the top, quiet `:vel`, rests at the loop head
+so the wrong level lasts — all three are needed to reproduce it).
+
 ## 5. Reserved Opcodes — Control Flow and Notes (layouts frozen)
 
 | Op   | Name       | Payload                        | Stage |

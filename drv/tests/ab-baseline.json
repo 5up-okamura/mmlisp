@@ -77,6 +77,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-loop-vel-hold.mmlisp": {
+    "ok": false,
+    "mismatches": 6,
+    "compileErrors": 0,
+    "digest": "27d239bf"
+  },
   "m3-macro-curve.mmlisp": {
     "ok": false,
     "mismatches": 4,

@@ -1,0 +1,37 @@
+; M3 gate: a sound still ringing across a loop point keeps its level (opcodes.md §4.1).
+;
+; The encoder tracks sticky VEL linearly and used to restore the loop target's
+; snapshot just before the JUMP. When the marker sits at the top of the track
+; that snapshot is the encoder's INITIAL vel 15 — so the restore fired
+; `PARAM_SET VEL 15` at the loop point, and VEL is the one sticky param the
+; driver acts on immediately (it recomposes carrier TL, driver.md §7.1). Whatever
+; was still sounding therefore jumped to full volume, and stayed there until the
+; body reached its next note — on the score this was found on, +21.8 dB for 13 s.
+; ir-player carries vel per NOTE_ON and was unaffected, which is the signature.
+;
+; The shape that reproduces it needs all three:
+;   1. the marker at the top of the track, so the snapshot is the default vel 15
+;   2. a quiet :vel, so "restored" 15 is louder than the music
+;   3. RESTS at the loop head, so nothing re-asserts the velocity for a while —
+;      with a note right after the marker the wrong level lasts under a frame
+;
+;   fm1 — that shape, with a long release ringing through the loop head
+;   fm2 — the body changes vel mid-loop: iteration 2 must start from the body's
+;         own velocity, not from whatever the tail left
+(def pad :alg 4 :fb 3
+  :ar1 18 :dr1 4 :sr1 0 :rr1 1 :sl1 2 :tl1 22 :ks1 0 :ml1 1 :dt1 0
+  :ar2 22 :dr2 4 :sr2 0 :rr2 1 :sl2 1 :tl2 16 :ks2 0 :ml2 1 :dt2 0
+  :ar3 18 :dr3 4 :sr3 0 :rr3 1 :sl3 2 :tl3 23 :ks3 0 :ml3 2 :dt3 1
+  :ar4 22 :dr4 4 :sr4 0 :rr4 1 :sl4 1 :tl4 16 :ks4 0 :ml4 1 :dt4 0)
+
+(fm1 pad :tempo 120 :oct 3 :vel 4
+  #loop
+  _1 _1          ; loop head: the previous iteration's release rings through here
+  c1 ~ c1        ; ends tied, so its tail is what crosses the JUMP
+  (go loop))
+
+(fm2 pad :oct 4 :vel 12
+  #loop
+  _1
+  :len 4 c e :vel 5 g :vel 12 e
+  (go loop))

@@ -524,9 +524,15 @@ export function encodeMmb(ir, opts = {}) {
     const activeMacros = new Map(); // sticky active macro per target id (driver.md §13.1)
     const markerIds = new Map(); // marker string id → u8
     const markerOffsets = new Map(); // marker string id → stream offset
-    const markerState = new Map(); // marker id → sticky {vel,gate,macros} snapshot
+    const markerState = new Map(); // marker id → sticky {gate,macros} snapshot
     const jumpFixups = []; // { at, to } forward-marker patches
     const breakFixups = new Map(); // loop id → [patch offsets]
+    // Markers this track jumps back to. Known before the linear pass because a
+    // loop target has to invalidate the sticky VEL tracking when it is emitted
+    // — see the MARKER case.
+    const jumpTargets = new Set(
+      (track.events ?? []).filter((e) => e.cmd === "JUMP").map((e) => e.args?.to),
+    );
 
     // Synthesize RESTs for clock gaps (e.g. notes dropped by :prio layers).
     const syncClock = (tick) => {
@@ -742,11 +748,25 @@ export function encodeMmb(ir, opts = {}) {
           // iteration 1 — the linear encoder omits opcodes whose value already
           // matched the state at the marker, but the loop tail leaves a
           // different state, which would otherwise bleed into the loop body.
+          //
+          // VEL is deliberately NOT in that snapshot. Restoring it happens at
+          // the JUMP, i.e. while the previous iteration's last note may still be
+          // sounding — and PARAM_SET VEL is the one sticky param the driver acts
+          // on immediately (it recomposes carrier TL, driver.md §7.1). A loop
+          // whose marker sits at the top of the track snapshots the encoder's
+          // *initial* vel 15, so the restore fired `VEL 15` into a note held
+          // across the loop: +21.8 dB on a sustained chord, for as long as the
+          // body took to reach its next note. That is the loop-point blast.
+          //
+          // Instead a loop target invalidates the tracking, so the body
+          // re-asserts its own velocity at the note that needs it and depends on
+          // nothing established before the marker. Same bytes, no level event on
+          // a sounding note.
           markerState.set(a.id, {
-            velState,
             gateState,
             activeMacros: new Map(activeMacros),
           });
+          if (jumpTargets.has(a.id)) velState = null;
           break;
         }
         case "JUMP": {
@@ -782,10 +802,10 @@ export function encodeMmb(ir, opts = {}) {
                 activeMacros.set(target, id);
               }
             }
-            if (velState !== snap.velState) {
-              emitParamState(TARGET_ID.VEL, snap.velState);
-              velState = snap.velState;
-            }
+            // VEL is not restored here — the loop body re-asserts it (see the
+            // MARKER case). GATE and the macro binds are silent state: nothing
+            // reaches a register until the next note, so restoring them at the
+            // jump cannot disturb one that is still sounding.
             if (gateState !== snap.gateState) {
               emitParamState(TARGET_ID.GATE, snap.gateState);
               gateState = snap.gateState;
