@@ -555,13 +555,76 @@ Also unaccounted, smaller: `tickCost` prices the i8sat clip branch `jp pe,ov` at
 not-taken only — a clipping sample costs **27 uncounted cycles**, so loud
 passages run long.
 
-Next steps, in order: (a) have the 68k compute the exact ticks-to-boundary and
-send it with the note, killing both the `avail >> KSH` halving cascade and
-`mvf_exact`; (b) carry the register file across a voice's consecutive segments —
-pos/inc/shift/bank do not change, so most of `mix_seg`'s entry/exit is waste;
-(c) only then re-measure the debt. **Sub-frame note timing (below) is blocked on
-this** — spreading writes into a frame that is already 94–98% full and sometimes
-overruns has no pad to absorb them.
+#### MEASURED 2026-08-05 — `drv/tools/seg-bench.mjs` (commit d48b168)
+
+The tool attributes every executed cycle to the nearest engine label over a real
+score, and regresses per-frame cycles on per-frame segment count. Frame
+composition (m2-pcmloop, 240 frames):
+
+| | cyc/frame | share |
+| --- | --- | --- |
+| pad (idle by design) | 22,047 | 37.0% |
+| mix tick bodies | 18,269 | 30.6% |
+| **segment set-up** | **9,873** | **16.5%** |
+| slot consume | 1,681 | 2.8% |
+| pad accounting (`pcm_debt`) | 1,377 | 2.3% |
+| other | 5,478 | 9.2% |
+
+- **A segment costs ~940 cycles, not 2,400.** `PACE_SEG` was never decomposed.
+- **What the pad actually needs is the MARGINAL cost, and it measures
+  1,083–1,457** by regression — so `PACE_SEG` is **1.7–2.2× too steep**.
+- Segment count swings **6..18** per frame (0..22 on `m3-pcm-slice`). At ~1,060
+  cycles of mis-pad per extra segment that is **12,700 cycles = 21% of a frame
+  = 3.5 ms** — and the gate measures 3.18–3.85 ms. **The wander mechanism is
+  closed quantitatively.**
+- `PACE_RESERVE = 7200` looks close to right (implied constant ~6,950).
+- **58–72% of frames overrun the budget.** This contradicts the "2–56 frames
+  over budget out of ~300" above, which predates sub-ticks and may have used a
+  different definition — **reconcile before quoting either**. The marginal-cost
+  finding does not depend on it (it is a slope, not an absolute).
+- Secondary: **`PCM_START` costs ~1,960 cycles** (`ps_in`), which is part of why
+  note-on frames reach 144–152%.
+
+#### Tuning the constants alone does NOT work — tried and measured
+
+| PACE_SEG | RESERVE | wander | span | over budget | `npm run dac` |
+| --- | --- | --- | --- | --- | --- |
+| 2400 | 7200 (shipped) | 3.22 ms | 92% | 58% | pass |
+| 1200 | 7200 | **2.11** | 99% | — | pass |
+| 1200 | 10000 | 2.40 | 96% | 81% | pass |
+| 1200 | 12500 | 2.92 | 92% | 64% | pass |
+| 1200 | 19900 | 4.26 | 85% | **1%** | **FAIL** |
+
+Wander and overrun trade against each other: frame lengths cluster tightly
+around the budget, so a mean at 100% overruns 6 frames in 10, and pushing the
+mean to 92% stops the overruns but shortens the frame until the feed no longer
+spans it — the burst symptom returning in miniature. **Constants were reverted;
+`gen-mixer.mjs` is untouched and `npm run dac` reproduces the baseline exactly.**
+
+#### The fix: make the debt exact, not better-guessed
+
+Non-pad work is only ~62% of the frame, so the pad has 38% of room and **every
+frame could land exactly on budget**. It does not because the debt is estimated
+from the *previous* frame's segment count (`G_NSEGL`) and revised only upward
+within the frame.
+
+**Hoist the boundary math into a per-frame plan pass.** Run `mvf_seg`'s boundary
+logic for all three voices at frame head, storing each segment's tick count in a
+small array, then mix the plan. The boundary math is already paid the same
+number of times — this only reorders it — but the segment count is then known
+*before the first pad is chosen*, so the debt becomes exact and the swing
+disappears. Only then do `PACE_SEG ≈ 1200` and a measured `PACE_RESERVE` behave,
+and wander and overrun improve together instead of trading.
+
+It is also the precondition for (b) below: with the plan in hand, whether the
+next segment belongs to the same voice is known, which is what lets the register
+file carry across.
+
+Then, in order: (a) the plan pass above; (b) carry the register file across a
+voice's consecutive segments — pos/inc/shift/bank do not change, so most of
+`mix_seg`'s entry/exit (`mix_seg` 1,981 + `ms_enter` 1,035 + `ms_done` 678 +
+`ms_call_unrolled` 480 ≈ 4,200/frame) is waste; (c) re-measure with seg-bench
+and set the two constants from the numbers.
 
 A hardware-side measurement worth building: the engine counts ring starvation
 (`MMLisp_starvedFrames`) but **nothing counts a Z80 frame overrun**. A flag set
