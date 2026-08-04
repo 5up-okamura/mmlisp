@@ -70,20 +70,12 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
-    // The score plays PCM and no sample bank was published. Refuse to run
-    // rather than play on: this misconfiguration is silent by construction —
-    // every PCM note dropped, the DAC never enabled — so it presents as a part
-    // that was never written, and a warning that shares the screen with normal
-    // output is one you scroll past. A comment did not stop it happening twice.
-    if (MMLisp_needsSampleBank())
-    {
-        VDP_drawText("PCM SCORE, NO SAMPLE BANK", 2, 2);
-        VDP_drawText("1. res/song.res: uncomment song_smp BIN", 2, 4);
-        VDP_drawText("2. main.c: #define MMLISP_PCM_SAMPLES", 2, 5);
-        while (TRUE) SYS_doVBlankProcess();
-    }
+    // The score plays PCM and no sample bank was published: every PCM note is
+    // dropped and the DAC never enabled. Warn, but play — running the score
+    // without its PCM is a useful thing to be able to do on purpose.
+    const bool noSamples = MMLisp_needsSampleBank();
 
-    VDP_drawText("MMLispDRV ready", 2, 2);
+    VDP_drawText(noSamples ? "READY (NO SAMPLE BANK: PCM MUTE)" : "MMLispDRV ready", 2, 2);
     VDP_drawText("A/START play  B stop  C stat", 2, 3);
     VDP_drawText("pad:", 2, 5);
     VDP_drawText("audible frame:", 2, 7);
