@@ -26,6 +26,10 @@ void SYS_enableInts(void);
 void waitSubTick(u32 subtick);
 
 /* Used by example/main.c only. */
+/* SGDK increments this from its own vertical interrupt handler, so it counts
+ * REAL frames whether or not the main loop kept up — which is the only clock
+ * the music's speed can honestly be measured against. */
+extern u32 vtimer;
 #define JOY_1        0
 #define BUTTON_A     0x0040
 #define BUTTON_B     0x0010

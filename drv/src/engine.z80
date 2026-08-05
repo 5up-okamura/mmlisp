@@ -25,7 +25,14 @@ PSG_PORT    equ $7f11
 WINDOW      equ $8000
 
 ; ── Build constants (driver.md §5.3.1, §6.1) ───────────────────────────────
-RING_DEPTH  equ 2               ; slots of lookahead; a per-game knob (§3.4)
+; Depth 3, not 2, and the reason is §3.5: the sub-slots are read at 1/3 and 2/3
+; of the frame, so the slot being consumed stays OURS for the whole frame and
+; the 68k must not touch it. One ring slot is therefore always in use, and the
+; pending lookahead is depth-2 — at depth 2 that is ZERO and the ring starves
+; every other frame (measured: 50%, half-speed music). Depth 3 restores exactly
+; the one-slot lookahead the pre-sub-tick engine had at depth 2, at one more
+; frame of host->music latency (§3.4).
+RING_DEPTH  equ 3               ; slots of lookahead; a per-game knob (§3.4)
 SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
 SLOT_SHIFT  equ 8               ; log2(SLOT_SIZE); published for the 68k
 PCM_VOICES  equ 3
@@ -43,12 +50,12 @@ MVF_MAX     equ 32              ; ticks one such count will walk
 ;
 ;   $0000..$12FF  code                        4.7 KB
 ;   $1300..$133F  published header            68k-visible, and a FIXED address
-;   $1400..$15FF  slot ring                   RING_DEPTH × 256
-;   $1600..$16FF  mix buffer plane A
-;   $1700..$17FF  mix buffer plane B
-;   $1800..$185F  PCM voice state             3 × 32 B
-;   $1860..$18FF  engine scratch (idle voice struct at $1880)
-;   ..$1EFF       free (~1.5 KB)
+;   $1400..$16FF  slot ring                   RING_DEPTH × 256
+;   $1700..$17FF  mix buffer plane A
+;   $1800..$18FF  mix buffer plane B
+;   $1900..$195F  PCM voice state             3 × 32 B
+;   $1960..$19FF  engine scratch (idle voice struct at $1980)
+;   ..$1EFF       free (~1.2 KB)
 ;   $1F00         stack top
 ;
 ; The planes and the voice state sit ABOVE the ring rather than below it because
@@ -63,10 +70,10 @@ MVF_MAX     equ 32              ; ticks one such count will walk
 ; only be feeding the plane the PREVIOUS frame finished. One frame of PCM
 ; latency is what that costs. Both are page-aligned, and they differ in exactly
 ; one bit of the high byte, so swapping them is an `xor`.
-MIXLO       equ $1600
-MIXHI       equ $1700
+MIXLO       equ $1700
+MIXHI       equ $1800
 MIX_SWAP    equ (MIXLO>>8)^(MIXHI>>8)
-G_PCMV      equ $1800
+G_PCMV      equ $1900
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
 ; Voice struct. Positions are WINDOW ADDRESSES so the mixer's fetch is a bare
@@ -85,7 +92,7 @@ PV_LOOPL    equ 14              ; u16 loop length in bytes
 PV_TAIL     equ 16              ; u16 bytes from loop end to sample end
 
 ; Engine scratch
-G_BASE      equ $1860
+G_BASE      equ $1960
 G_ACT       equ G_BASE+$00      ; u8  1 = a voice was sounding at frame start
 G_DACON     equ G_BASE+$01      ; u8  1 = $2B DAC enable is currently set
 G_PEND      equ G_BASE+$02      ; u8  1 = the mixed plane still owes a frame of feed
@@ -94,6 +101,7 @@ G_IDX       equ G_BASE+$04      ; u8  buffer tick index
 G_AVAIL     equ G_BASE+$05      ; u16 bytes safely consumable in this segment
 G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
 G_SLOT      equ G_BASE+$09      ; u16 slot cursor
+G_STARVED   equ G_BASE+$0b      ; u8  1 = this frame found the ring empty
 G_STORE     equ G_BASE+$0f      ; u8  0 = this pass stores into the plane
 ; Handed to the generated mixer core (tools/gen-mixer.mjs)
 G_SEG_N     equ G_BASE+$10      ; u8  unrolled iterations in the current segment
@@ -131,7 +139,7 @@ G_NIDLE     equ G_BASE+$1f      ; u8  passes with no voice behind them this fram
 ; is what an absent or finished voice runs instead. PV_SHIFT = PCM_MUTE_SH, so
 ; the mute loops store silence (as the first pass) or add nothing (as a later
 ; one), and no real voice state is touched.
-G_IDLEV     equ $1880
+G_IDLEV     equ $1980
 
 ; ── Published header (driver.md §6.4) ──────────────────────────────────────
 ; The only Z80 addresses the 68000 needs to know, and the only ones that must
@@ -158,7 +166,7 @@ H_RING      equ HDR+10          ; u16 ring base address in Z80 RAM
 ; INAUDIBLE AS A CAUSE: it presents as the music wobbling, with nothing to point
 ; at. A counter turns that into a number.
 H_STARVE    equ HDR+12          ; u16 Z80-owned: starved frames since boot
-PROTO_VER   equ 5
+PROTO_VER   equ 6
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -169,6 +177,17 @@ STACK_TOP   equ $1f00
         jp   start
 
 ; ── vblank interrupt (IM 1): one engine frame ─────────────────────────────
+;
+; Interrupts stay OFF for the whole frame. An earlier version enabled them here
+; to count frames that overran their budget — the successor's vblank would
+; re-enter and tally itself. It does not work: the VDP holds Z80 /INT for about
+; a scanline, so the SAME vblank re-triggers the moment `ei` executes and every
+; frame counts one. Measured on hardware as 1602 "overruns" in 1603 frames.
+;
+; The number is available from the host anyway and more honestly: frames the
+; engine consumed against real elapsed frames (§6.4). If that ratio is below 1
+; while `starved_frames` is flat, the Z80 is dropping interrupts — which is what
+; an overrun IS.
         org $38
 int_handler:
         push af
@@ -242,7 +261,19 @@ frame_step:
         call consume_slot       ; 1-2: sub-slot 0's writes, and the PCM commands
         call process_pcm        ; 3:   mix and feed the DAC, sub-slots 1..K-1
         call consume_rest       ;      anything the passes could not reach
-        ld   hl,(H_FRAMES)      ; 4:   publish the consumed-frame counter
+        ; 4: publish the consumed-frame counter. A STARVED frame consumed no
+        ; slot and the music did not advance on it, so it must not tick this —
+        ; §6.4 calls it the audible clock and `(trig N)` fires against it.
+        ; Counting interrupts here instead made the host's own speed readout
+        ; blind to a ring that was starving half the time.
+        ld   a,(G_SUB)
+        cp   SLOT_SUBS
+        ret  nz                 ; still owed sub-slots: cannot happen after
+                                ; consume_rest, but a starved frame is the case
+        ld   a,(G_STARVED)
+        or   a
+        ret  nz                 ; nothing was consumed this frame
+        ld   hl,(H_FRAMES)
         inc  hl
         ld   (H_FRAMES),hl
         ret
@@ -283,6 +314,7 @@ consume_rest:
 ; ===========================================================================
 consume_slot:
         xor  a
+        ld   (G_STARVED),a
         ld   (G_NWR),a          ; the PCM feed pays for this loop out of its pad
         ld   a,SLOT_SUBS
         ld   (G_SUB),a          ; nothing to consume, unless the ring has a slot
@@ -296,6 +328,8 @@ consume_slot:
         ld   hl,(H_STARVE)
         inc  hl
         ld   (H_STARVE),hl
+        ld   a,1
+        ld   (G_STARVED),a      ; the audible clock does not tick on this frame
         ret
 cs_have:
         ; slot address = RING + tail*256, and RING is page-aligned
@@ -892,6 +926,12 @@ mix_voice_frame:
         ld   l,(ix+PV_BANK)
         ld   h,(ix+PV_BANK+1)
         call latch_bank         ; once per voice per frame, not per tick
+        ; Bind the pass's specialised loop copies and its pad. (role, shift) is
+        ; constant for the whole pass, so this belongs here and not in the
+        ; per-segment path where it used to sit.
+        ld   a,(G_STORE)
+        ld   (G_SEG_L),a
+        call ms_bind
 
 mvf_seg:
         ld   a,(G_TICKS)
@@ -1048,6 +1088,9 @@ mvf_idle:
         ld   a,(G_IDX)
         ld   l,a
         ld   ix,G_IDLEV
+        ld   a,(G_STORE)
+        ld   (G_SEG_L),a
+        call ms_bind            ; the shift under this pass just became IDLE
         ld   a,(G_STORE)
         jp   mix_seg
 

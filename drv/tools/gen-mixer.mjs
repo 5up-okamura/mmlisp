@@ -546,43 +546,63 @@ ms_done:
         ld   l,a
         ret
 
-; Pick the shift-specialised copy out of the right table. Done per segment (a
-; handful of times per frame), never per tick.
+; Entry to the shift-specialised copies. Both are bare self-modified jumps that
+; ms_bind has already pointed at the right loop, so the per-segment path is ONE
+; instruction — the register file in HL/DE is live here and nothing may touch
+; it. The copy rets to mix_seg, which is why these are jumps and not calls.
 ms_call_unrolled:
+ms_go_u:
+        jp   0
+ms_call_single:
+ms_go_s:
+        jp   0
+
+; ms_bind: point both entries at this PASS's copies${paced ? ", and size its pad" : ""}.
+;
+; The copy is chosen by (role, shift) and BOTH are constant for a whole voice
+; pass — a pass is one voice, and PV_SHIFT only moves when a PCM_VOL arrives,
+; which happens between passes. Doing this per SEGMENT re-derived it five or six
+; times a frame${paced ? ", along with a pad that had not changed either" : ""}: ~1,700 cycles spent on values that were
+; already known. Rebind after anything that changes the voice under the pass —
+; engine.z80 does it at pass entry and again when a pass falls through to the
+; silent loop.
+ms_bind:
         push hl
-${paced ? `        push de
-        call ms_set_pad
-        pop  de
-` : ""}        ld   hl,mix_add_tab
+        push de
+        push bc
+        ld   a,(ix+PV_SHIFT)
+        add  a,a                ; word table
+        ld   e,a
+        ld   d,0
+        ld   hl,mix_add_tab
         ld   a,(G_SEG_L)
         or   a
-        jr   nz,mcu_have
+        jr   nz,msb_u
         ld   hl,mix_first_tab
-mcu_have:
-        jr   ms_enter
-ms_call_single:
-        push hl
+msb_u:
+        add  hl,de
+        ld   a,(hl)
+        inc  hl
+        ld   h,(hl)
+        ld   l,a
+        ld   (ms_go_u+1),hl
         ld   hl,mix_add1_tab
         ld   a,(G_SEG_L)
         or   a
-        jr   nz,mcs_have
+        jr   nz,msb_s
         ld   hl,mix_first1_tab
-mcs_have:
-ms_enter:
-        ld   a,(ix+PV_SHIFT)
-        add  a,a                ; word table
-        push de
-        ld   e,a
-        ld   d,0
+msb_s:
         add  hl,de
-        ld   e,(hl)
+        ld   a,(hl)
         inc  hl
-        ld   d,(hl)
-        ld   (ms_go+1),de
+        ld   h,(hl)
+        ld   l,a
+        ld   (ms_go_s+1),hl
+${paced ? `        call ms_set_pad
+` : ""}        pop  bc
         pop  de
         pop  hl
-ms_go:
-        jp   0                  ; tail-call the specialised loop (it rets to us)
+        ret
 `);
 
   if (paced) {
@@ -699,6 +719,12 @@ frame:
         ld   (G_VIDX),a
 fr_voice:
         ld   ix,(G_VPTR)
+        ld   a,(G_VIDX)
+        ; The specialised copies are bound per PASS, not per segment, so a
+        ; caller that drives mix_seg itself has to bind too — the entries are
+        ; self-modified jumps and are not valid until it does.
+        ld   (G_SEG_L),a
+        call ms_bind
         ld   a,(G_VIDX)
         ld   b,PCM_MIX_R
         ld   l,0

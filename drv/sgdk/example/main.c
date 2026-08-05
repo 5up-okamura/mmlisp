@@ -78,11 +78,36 @@ int main(bool hardReset)
     VDP_drawText(noSamples ? "READY (NO SAMPLE BANK: PCM MUTE)" : "MMLispDRV ready", 2, 2);
     VDP_drawText("A/START play  B stop  C stat", 2, 3);
     VDP_drawText("pad:", 2, 5);
-    VDP_drawText("audible frame:", 2, 7);
-    VDP_drawText("starved:", 18, 7);
-    VDP_drawText("track active:", 2, 8);
+    // ── The tempo readout ───────────────────────────────────────────────────
+    // `music` is the music's real speed: frames the engine consumed against
+    // frames that actually elapsed, x256, so 0x100 is dead on and 0x080 is half
+    // speed. The reference is SGDK's `vtimer`, which is incremented from the
+    // vertical interrupt and therefore keeps counting when THIS LOOP misses a
+    // frame. Measuring against a loop counter instead makes a slow main loop
+    // read as fast music, which is exactly the wrong answer.
+    //
+    // `host` is this loop's own health on the same scale — 0x100 means one
+    // iteration per frame. If it is low, the 68k side is the problem before any
+    // of the driver's numbers mean anything.
+    //
+    // `starv` then says whose fault a low `music` is: climbing = the ring ran
+    // dry, flat = the Z80 is not taking every interrupt (its frame is over
+    // budget). `audible` is the raw consumed-frame count behind `music`.
+    VDP_drawText("music x256:", 2, 7);
+    VDP_drawText("host x256:", 18, 7);
+    VDP_drawText("starv:", 2, 8);
+    VDP_drawText("audible:", 2, 9);
+    VDP_drawText("track active:", 2, 11);
 
     u16 prev = 0;
+    // Sampled rarely and on purpose. Reading the counters stops the Z80 for the
+    // length of a bus grab, so a per-frame readout costs the engine frames and
+    // then reports them as overruns — the instrument becoming the fault it
+    // measures. Once every 32 frames is two orders below that.
+    u16  loops       = 0;
+    u32  baseTimer   = vtimer;
+    u16  baseAudible = 0;
+    MMLispStats st = { 0, 0 };
 
     while (TRUE)
     {
@@ -96,6 +121,12 @@ int main(bool hardReset)
 
         if (pressed & (BUTTON_A | BUTTON_START))
         {
+            // Both clocks start together, or the ratio is measuring the silence
+            // before the music as well as the music.
+            MMLisp_readStats(&st);
+            baseTimer   = vtimer;
+            baseAudible = st.audible;
+            loops       = 0;
             // Every track in one frame. Each track's clock starts on the frame
             // it was set up in, so spreading the starts would leave them
             // permanently out of phase — and the setup frame is silent anyway
@@ -113,22 +144,26 @@ int main(bool hardReset)
             VDP_drawText("STOP", 2, 17);
         }
 
-        // Bring-up readout. Post-split almost all of it is 68k memory, so this
-        // is just function calls — the pre-split version of this example had to
-        // halt the Z80 and read a dozen hardcoded RAM offsets, and doing that
-        // every frame made the driver miss its own interrupts. Only the audible
-        // frame counter still crosses the bus; if it is not climbing, the Z80 is
-        // not taking its 60 Hz interrupt.
+        // One bus grab every 32 frames, and the numbers only move then. A
+        // tempo problem is a moving number so it does have to be shown live —
+        // but sampling it per frame is what makes it move (see above).
+        if ((loops & 31) == 0)
+        {
+            MMLisp_readStats(&st);
+            const u32 elapsed = vtimer - baseTimer;      // real frames, always
+            const u16 music   = (u16)(st.audible - baseAudible);
+            drawHex(elapsed ? ((u32)music << 8) / elapsed : 0, 4, 14, 7);
+            drawHex(elapsed ? ((u32)loops << 8) / elapsed : 0, 4, 29, 7);
+            drawHex(st.starved, 4, 9, 8);
+            drawHex(st.audible, 4, 11, 9);
+        }
+
         if (pressed & BUTTON_C)
         {
-            drawHex(MMLisp_audibleFrame(), 4, 16, 7);
-            // Should stay 0. Climbing = the ring ran dry, i.e. MMLisp_frame did
-            // not run in time — which is exactly what an uneven tempo is.
-            drawHex(MMLisp_starvedFrames(), 4, 27, 7);
             u8 n = MMLisp_trackCount();
             if (n > MAX_SHOWN_TRACKS) n = MAX_SHOWN_TRACKS;
             for (u8 i = 0; i < n; i++)
-                drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 8);
+                drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 11);
         }
 
         // ── The one hard rule: once per frame, and last ──────────────────────
@@ -139,6 +174,7 @@ int main(bool hardReset)
         MMLisp_frame();
 
         SYS_doVBlankProcess();
+        loops++;
     }
 
     return 0;

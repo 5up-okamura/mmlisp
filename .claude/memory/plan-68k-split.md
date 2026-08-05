@@ -647,19 +647,123 @@ FAIL 54% on slice; 2800/7200 gives 2/12/7 and the same failure. Wander and
 overrun are the same axis once the variance is gone — longer frame, better
 feed span, more overruns.
 
-**(b) is now the only lever left**: carry the mixer's register file across a
-voice's consecutive segments. `mix_seg` entry/exit is ~4,200 cyc/frame
-(`mix_seg` 1,981 + `ms_enter` 1,035 + `ms_done` 678 + `ms_call_unrolled` 480)
-and pos/inc/shift/bank do not change between them. That is ~7% of the frame —
-an order more than the residual — and it is what would let slice's overruns go
-below baseline while keeping the wander that was won here.
+#### 2026-08-06 — reported: the tempo is EXTREMELY slow on hardware
 
-A hardware-side measurement worth building: the engine counts ring starvation
-(`MMLisp_starvedFrames`) but **nothing counts a Z80 frame overrun**. A flag set
-at frame start and cleared at its end, tested in the ISR, published in the §6.4
-header, separates "68k too slow" from "Z80 dropped a frame" from "60 Hz
-quantisation" with two numbers on screen. With slice at 24% of frames over
-budget in emulation, this is no longer hypothetical.
+Three things landed in response. The first two are instruments, because the
+report arrived with no numbers and there was no way to get any.
+
+**1. `overrun_frames`, published in the §6.4 header
+(`MMLisp_overrunFrames()`).** A Z80 frame that runs past its budget loses the
+next vblank outright — the VDP holds `/INT` for about a scanline — so the engine
+consumes one slot where it owed two and the music runs slow **with nothing
+anywhere to point at**. It is unobservable from inside the Z80 unless the
+handler lets the interrupt in, so the handler now runs the frame with interrupts
+ENABLED: the successor re-enters, finds `G_BUSY` set, counts itself and leaves.
+Everything else is unchanged — the frame still finishes late and still loses
+that slot. Gated by an engine-gate scenario that asserts `/INT` mid-handler,
+because no emulated frame runs out of cycles and it would otherwise ship
+untested.
+
+**2. `sgdk/example/main.c` shows the speed directly**: `audibleFrame` against
+the program's own vblank count, as a ratio x256 (0x100 = correct), with
+`overrun` and `starved` under it, redrawn every frame. Those two are mutually
+exclusive and name the culprit — overrun = the Z80 is over budget, starved = the
+68k is late. **This is the first measurement to take on hardware**, before
+changing anything.
+
+**3. The `ms_bind` hoist — most of (b), and it is large.** The specialised loop
+copy is chosen by (role, shift) and BOTH are constant for a whole voice pass,
+yet it was resolved per SEGMENT along with a pad that had not changed either.
+Binding once per pass (and again when a pass falls through to the silent loop,
+the one thing that changes the shift under a running pass) turns the per-segment
+path into a single self-modified `jp`.
+
+Measured, against the pre-sub-tick baseline (7f5f102) — the honest reference,
+since sub-ticks are what put the frame over budget in the first place:
+
+| score | dac % paced | over budget | wander p50 | wander max | span worst |
+| --- | --- | --- | --- | --- | --- |
+| m2-pcmloop | 100 -> **100** | 2 -> **2** | 3.45 -> **3.08** | 4.16 -> 4.20 | 76 -> **81%** |
+| m3-pcm-softmix | 98 -> **100** | 24 -> **12** | 3.39 -> **3.10** | 4.68 -> **4.15** | 77 -> **82%** |
+| m3-pcm-slice | 96 -> **99** | 43 -> **6** | 4.07 -> **3.63** | 8.49 -> **4.59** | 49 -> **81%** |
+
+Mean frame length 94-96% of budget (was 98-100% before this, 95.6-98.3% at the
+baseline). **Every metric is now past the baseline**, and `m3-pcm-slice` — the
+score that was 24% over budget — is at 3%. `PACE_SEG`/`PACE_RESERVE` were NOT
+touched; see the note above on why they cannot be.
+
+**What is left of (b): the register file itself, ~2,659 cyc/frame (4.5%).**
+`mix_seg` 1,981 (its IX-indexed load of frac/incF/incI/ptr) + `ms_done` 678 (the
+store back). Carrying those across a voice's consecutive segments needs
+`mvf_seg`'s boundary math to stop reading `PV_PTR` from the struct and work out
+of DE instead — with IX and IY both already committed, that means parking
+`oldptr` in the alternate `BC'`. It is a real rewrite of the interlock between
+hand-written `mvf_seg` and generated `mix_seg`, verifiable only in emulation.
+**Deliberately not attempted yet**: the margin recovered above is already larger
+than the deficit, and the hardware numbers from (1)+(2) should say whether more
+is needed before that risk is taken.
+
+#### 2026-08-06 — the slow tempo was RING GEOMETRY, not cycles
+
+Two hardware runs, and the first one measured only itself.
+
+**Run 1** (`audible 08E9 / vbl 0789 / over 090A / starv 0471`) was invalid:
+`vbl` counted main-loop iterations, and a loop that misses a frame waits for the
+next vblank, so it under-counts elapsed time and the ratio came out **1.18** —
+above 1, which the music cannot do. And the readout took four Z80 bus grabs per
+frame; the Z80 does not run while the 68000 holds its bus, so those grabs cost
+the engine frames that `over` then counted. Reference clock must be `vtimer`
+(SGDK increments it from the vertical interrupt); counters must be read in ONE
+grab, rarely.
+
+**Run 2** (`music 00FF / host 00FF / over 0642 / starv 0323 / audible 0643`)
+gave the answer, and two more of my own bugs with it:
+
+- `over` (1602) ≈ `audible` (1603). The overrun counter was nonsense. It ran the
+  frame with interrupts enabled so the successor's vblank could re-enter and
+  tally itself — but the VDP holds Z80 `/INT` for about a scanline, so the
+  **same** vblank re-triggers the instant `ei` executes, every frame. **Removed,
+  along with the interrupts-enabled ISR.** The ratio below answers the same
+  question from the host with nothing added to the engine.
+- `music` read 0xFF (correct speed) while `starv` was 50% — impossible, and the
+  reason is that `H_FRAMES` ticked on starved frames too. §6.4 calls it the
+  audible clock; a starved frame plays nothing, so **it counts consumed slots
+  now**. The metric had been blind to the only failure it existed to catch.
+- **`starv` 803/1603 = 50.1% is the actual fault, and it is mine.** Sub-ticks
+  moved the ring's tail release from the frame head to ~2/3 of the frame (the
+  last sub-slot). The consumed slot is therefore held for the WHOLE frame, so
+  pending lookahead is `depth-2` — at depth 2, zero. The 68k renders from a loop
+  woken by the same vblank, so its render lands inside the engine's frame, sees
+  a full ring, produces nothing, and the next vblank starves. Every other frame.
+  Half-speed music.
+
+**Fix: `RING_DEPTH` 2 -> 3** (+256 B Z80 RAM, the map moves up a page; +1 frame
+of host->music latency, §3.4). That restores exactly the one slot of lookahead
+depth 2 gave before sub-ticks. Rejected alternative: release the tail at the
+frame head and `ldir` the remaining sub-slots to scratch — ~100 cycles typical
+but ~4,000 on a patch-dump frame, and this driver has no cycles to spare.
+
+**Why no gate caught it.** `slot-gate.mjs` posted its slots BEFORE the
+interrupt. A real 68k renders *during* the engine's frame, which fills ~95% of
+the period. That ordering difference hid the fault completely. The gate now
+renders ~20% into the frame and fails on any starvation: at depth 2 it reports
+128/250 = 51% starved and a 1,400-sample DAC divergence, at depth 3 it is clean.
+**Reproducing a hardware fault in a gate before fixing it is the only reason the
+fix is trustworthy** — the two previous attempts at this were guesses.
+
+#### The A/B that attributes it, if hardware still drags#### The A/B that attributes it, if hardware still drags
+
+Set `SLOT_SUBS` to 1 in all three ports and rebuild:
+
+    live/src/slot-builder.js   export const SLOT_SUBS = 1
+    drv/68k/mmlispseq.h        #define MML_SLOT_SUBS 1
+    drv/src/engine.z80         SLOT_SUBS   equ 1
+    cd drv && npm run emit-bin      # then re-copy mmlispdrv.bin to the project
+
+K=1 is byte-identical to the pre-sub-tick slot format by design, so if the tempo
+comes back the cost is sub-ticks and nothing else; if it does not, suspect
+something outside this file. **Put K back to 3 afterwards** — the gate suite
+only ever runs at the shipped value.
 
 ## Per-note timing: what 60 Hz costs (reported 2026-08-03, ADDRESSED 2026-08-05)
 

@@ -216,13 +216,24 @@ NTSC-fixed until there is a PAL target to measure.
 
 ### 3.4 Ring depth — lookahead vs live control
 
-**Default depth 2, and it is a per-game tuning knob, not a design constant.**
+**Default depth 3, and it is a per-game tuning knob, not a design constant.**
 
 Depth is lookahead, not decimation: the Z80 still consumes one slot per vblank,
 so the music keeps its resolution at any depth — 60 Hz for the engines, and
-`SLOT_SUBS` × that for note onsets (§3.5). What depth buys is tolerance —
-at depth N the game may overrun N−1 frames without the music stuttering. What it
-costs is latency on **every host→music operation**: `MMLisp_startSe` is only the
+`SLOT_SUBS` × that for note onsets (§3.5). What depth buys is tolerance.
+
+**One slot is always in use.** Since §3.5 the engine reads sub-slots at 1/3 and
+2/3 of the frame, so the slot being consumed stays the Z80's for the whole frame
+and the tail is released at its end. The 68000 renders from a loop that woke on
+the *same* vblank, so its render lands **inside** that frame — it sees the ring
+still holding the slot. Pending lookahead is therefore `depth − 2`, and at depth
+2 that is **zero**: the host finds the ring full every frame, renders nothing,
+and the next vblank starves. Measured at 50% of frames, on hardware and in the
+gate, heard as half-speed music. Depth 3 restores the one slot of lookahead the
+pre-sub-tick engine had at depth 2.
+
+So at depth N the game may overrun N−2 frames without the music stuttering. What
+it costs is latency on **every host→music operation**: `MMLisp_startSe` is only the
 most obvious one; `setVal` (`$slot` live control), `setParam`, `fadeTrack` and
 `stopTrack` all inherit it.
 
@@ -562,14 +573,14 @@ As built (`drv/src/engine.z80` + the generated mixer):
 
 | Region | Address | Size | Contents |
 | ------ | ------- | ---- | -------- |
-| code | `$0000` | 4095 B | boot, ISR, consume loop, PCM commands, mixer |
+| code | `$0000` | 4141 B | boot, ISR, consume loop, PCM commands, mixer |
 | published header | `$1300` | 64 B | ring control, status, consumed-frame counter (§6.4) |
-| slot ring | `$1400` | depth × 256 B | 512 B at the default depth 2 |
-| mix buffer | `$1600` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
-| PCM voice state | `$1800` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
-| engine scratch | `$1860` | 160 B | includes the always-silent voice struct at `$1880` |
+| slot ring | `$1400` | depth × 256 B | 768 B at the default depth 3 (§3.4) |
+| mix buffer | `$1700` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
+| PCM voice state | `$1900` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
+| engine scratch | `$1960` | 160 B | includes the always-silent voice struct at `$1980` |
 | stack | `$1F00` | 256 B | |
-| | | **~5 KB** | leaving ~1.5 KB unallocated |
+| | | **~5.3 KB** | leaving ~1.2 KB unallocated |
 
 The mixer is most of the code: shift specialisation means ten copies of each
 loop (§5.3.1) — eight shifts, mute, and idle — and pacing unrolls each of them
@@ -582,7 +593,7 @@ have to move the map rather than squeeze in, and this was it. Growing *upward*
 into the free space is the move that does not make the host's build stale: the
 header's address is the one Z80 constant the 68k compiles in (§6.4), so it
 stayed at `$1300` and no protocol version had to change. Code now has the whole
-span below the header — 1257 B of headroom — and everything above the ring is
+span below the header — 1211 B of headroom — and everything above the ring is
 the engine's own working memory. The boot clear covers that region only, which
 means the published header survives it.
 
@@ -620,6 +631,15 @@ for each voice v — sounding ones first, silent passes after them:
     write pos back
 flush any sample the interleave could not reach; swap the planes
 ```
+
+**The specialised copy is bound once per PASS, not per segment.** Which of the
+ten loops runs is decided by (role, shift), and both are constant for a whole
+voice pass — a pass is one voice, and `PV_SHIFT` only moves when a `PCM_VOL`
+arrives, which happens between passes. Resolving it per segment, along with a
+pad that had not changed either, cost **~1,700 cycles a frame** re-deriving
+known values; `ms_bind` now does it at pass entry, and again if a pass falls
+through to the silent loop (which is the one thing that changes the shift under
+a running pass). The per-segment path is a single self-modified `jp`.
 
 Three details that matter:
 
@@ -802,7 +822,10 @@ published header (§6.4). Depth defaults to **2** and is a per-game knob — see
 §3.4 for what depth costs and buys.
 
 Discipline mirrors the old mailbox: the 68k fills the slot at `head` and
-increments it last; the Z80 consumes while `tail != head`. **Ring-empty is not
+increments it last; the Z80 consumes while `tail != head`. **The tail is not
+advanced until the frame's last sub-slot has been read** (§3.5), so the slot
+under the Z80 is never one the 68k may write — which is why depth carries one
+more slot than the lookahead it provides (§3.4). **Ring-empty is not
 an error** — it means the game overran, and the Z80 simply holds the chips where
 they are and keeps mixing. Ring-full means the 68k has run as far ahead as the
 depth allows and skips rendering that frame.
@@ -931,12 +954,49 @@ builds. `drv/sgdk/mmlispdrv.c` carries the current values.
 | `ring_base` u16 | Z80 | where the ring starts in Z80 RAM |
 | `starved_frames` u16 | Z80 | frames the engine held the chips because the ring was empty (§6.1) |
 
+`frames_consumed` counts **slots actually consumed**, not interrupts taken: a
+starved frame plays nothing, so it must not advance the audible clock. Getting
+that wrong once made a host-side speed readout show correct tempo while the ring
+was starving half the time — the metric was blind to the only failure it existed
+to catch.
+
 `starved_frames` exists because ring-empty is the one failure with **no
 signature**: the music keeps playing, just not evenly, and nothing in the trace
 says why. It is what "the tempo wobbles" looks like from the inside. It should
 stay at 0; if it climbs, the 68k missed 60 Hz, and the answer is either less
-work per frame or a deeper ring (§3.4) — depth N absorbs N-1 late frames, so
-the default of 2 absorbs exactly one and makes a single long frame audible.
+work per frame or a deeper ring (§3.4).
+
+Together with a real-time frame count on the host, those two name the culprit:
+
+```
+frames_consumed / REAL elapsed frames    the music's real speed
+  ~1.0, starved_frames flat              the driver is keeping up
+  < 1 and starved_frames climbing        the ring ran dry — the 68k is late
+  < 1 and starved_frames flat            the Z80 is not taking every interrupt,
+                                         i.e. its frame is over budget (§5.3.1)
+```
+
+**Three traps, all of which produced a wrong reading the first time this was
+used on hardware.**
+
+*The reference clock must be real frames, not the host's loop count.* A main
+loop that misses a frame waits for the next vblank, so counting its own
+iterations under-counts elapsed time and the ratio comes out **above** 1 — a
+slow 68k reads as fast music, which is the opposite of the truth. Use a counter
+driven by the vertical interrupt (SGDK's `vtimer`).
+
+*Reading the counters costs the thing being measured.* The 68000 must hold the
+Z80 bus to touch Z80 RAM, and the Z80 does not run while it is held — a grab
+that spans a vblank costs the engine that frame exactly as an over-long mix
+would. Take every counter in **one** grab (`MMLisp_readStats`) and sample every
+~32 frames.
+
+*There is no Z80-side overrun counter, and one cannot be built this way.* The
+obvious design — run the frame with interrupts enabled so the successor's vblank
+re-enters and tallies itself — does not work: the VDP holds Z80 `/INT` for about
+a scanline, so the **same** vblank re-triggers the moment `ei` executes and
+every frame counts one. Measured on hardware as 1602 "overruns" in 1603 frames.
+The ratio above answers the same question without touching the engine.
 
 The last three exist so the header's **address** is the only Z80 constant the
 68k compiles in. Both sides have to agree on the ring's geometry and a mismatch
@@ -1401,7 +1461,11 @@ silently losing its sub-ticks is otherwise an invisible failure.
 and asserts the chip writes *are* the sequencer's register writes: same values,
 same ports, same order, nothing added or dropped. It also asserts the transport
 only ever **delays**: a write may arrive in its own frame or a later one, never
-earlier. On the corpus the cap binds only at a score's head (the burst §4.2
+earlier — **and that the engine never starves**. The host model renders from
+*inside* the engine's frame, ~20% in, because that is where a 68000 woken by the
+same vblank actually gets its turn; rendering before the interrupt (which this
+gate did until 2026-08-06) hides a ring-geometry fault completely, and one
+reached hardware as half-speed music. On the corpus the cap binds only at a score's head (the burst §4.2
 describes) and never in steady state — 2 frames held back, at most 2 frames
 late, on scores from 395 to 1801 writes.
 

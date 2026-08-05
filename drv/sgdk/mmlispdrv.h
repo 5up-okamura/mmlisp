@@ -142,6 +142,33 @@ bool MMLisp_trackActive(u8 track_id);
 // audible, so this climbing does NOT necessarily mean the driver is slow.
 u16 MMLisp_starvedFrames(void);
 
+typedef struct {
+    u16 audible;  // frames the engine has CONSUMED — the audible clock. A
+                  // starved frame does not tick it: nothing was played on it.
+    u16 starved;  // frames the ring was empty
+} MMLispStats;
+
+// Both counters in ONE bus grab. Prefer this over the individual accessors:
+// each of those stops the Z80 on its own, and sampling several times a frame is
+// enough to cost the engine the frames it then reports — measure the thing
+// rarely or you measure your own instrument.
+//
+// Sample every 32 frames or so, and compare against SGDK's `vtimer`, NOT
+// against your own loop counter: vtimer is incremented from the vertical
+// interrupt, so it keeps counting real frames when your loop misses one, and
+// only then does the ratio mean the music's speed.
+//
+//   audible_delta / vtimer_delta   the music's real speed (1.0 = correct)
+//     ~1.0, starved flat         -> the driver is keeping up
+//     < 1 and starved climbing   -> the ring ran dry. Check your own loop
+//                                   against vtimer first: if it is below 60 Hz
+//                                   the fix is there, not in the driver.
+//     < 1 and starved flat       -> the Z80 is not taking every interrupt, i.e.
+//                                   its frame is over budget (driver.md §5.3.1)
+//                                   — fewer PCM voices, a lower mix rate, or
+//                                   less pitch-shifting.
+void MMLisp_readStats(MMLispStats* out);
+
 // The engine's consumed-frame counter — the AUDIBLE clock. The sequencer runs
 // ahead of it by the ring's fill level, so anything that has to line up with
 // what the player hears compares against this, not against your own frame

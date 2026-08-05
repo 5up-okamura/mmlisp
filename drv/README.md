@@ -259,7 +259,7 @@ pre-rendered slot per vblank, paces its bytes onto the YM2612 and PSG, and
 spends the rest of the frame software-mixing PCM into the fm6 DAC — and feeding
 it *from inside the mix loop*, one sample every three ticks, so the DAC gets its
 bytes at its own rate instead of in a burst (driver.md §5.1). It sequences
-nothing and evaluates nothing — 4095 B against the old driver's 5.8 KB of
+nothing and evaluates nothing — 4141 B against the old driver's 5.8 KB of
 sequencing assembly, with no overlays, no shadow file, no LUTs and no TCB.
 
 Since 2026-08-05 it also delivers the slot in `SLOT_SUBS` = 3 **sub-slots**
@@ -280,6 +280,30 @@ sized from a **measured** segment count rather than the previous frame's:
 pad that carries any authority (see driver.md §5.1). Frame-length spread went
 87-104% -> 98-102% and every `npm run dac` metric improved; `tools/seg-bench.mjs`
 is the profiler those numbers come from.
+
+A real Mega Drive then reported an extremely slow tempo, and it was **the ring
+geometry, not the cycle budget**. Since sub-ticks the engine reads sub-slots at
+1/3 and 2/3 of the frame, so the slot it is consuming stays its own for the whole
+frame and the tail is released at the end — but the 68k renders from a loop woken
+by the *same* vblank, so its render lands inside that frame and sees a full ring.
+Pending lookahead is `RING_DEPTH - 2`, which at depth 2 is zero: the host
+produced nothing, the next vblank starved, and the music advanced every other
+frame. Measured at 50% of frames on hardware and 51% in the gate. `RING_DEPTH`
+is now **3**, restoring the one slot of lookahead depth 2 gave before sub-ticks,
+at one more frame of host->music latency (driver.md §3.4).
+
+Two things about that are worth carrying forward. `slot-gate.mjs` posted its
+slots *before* the interrupt, so it never modelled a host rendering mid-frame
+and could not see this at all — it now renders ~20% into the engine's frame and
+fails on any starvation. And `frames_consumed` used to tick on a starved frame,
+so a host-side speed readout showed correct tempo while half the frames played
+nothing; it counts consumed slots now.
+
+The mixer's specialised loop copy is also bound **once per voice pass** rather
+than per segment — (role, shift) is constant for a whole pass, so resolving it
+per segment was ~1,700 cycles a frame re-deriving known values — which took the
+mean frame from 98-100% of budget to 94-96% and `m3-pcm-slice` from 24% of
+frames over budget to 3%.
 
 `tools/engine-gate.mjs` gates it against its contract (driver.md §12.3): feed a
 recorded slot stream and assert that the chip writes are exactly the slot's
@@ -410,7 +434,7 @@ Two gates, both host-side:
 
 The build path moved with it: `tools/build-engine.mjs` assembles `src/engine.z80`
 with the generated mixer, and `tools/emit-bin.mjs` emits the one resident image
-(4,095 B, 1,537 B free below the mix plane) plus the header constants. The
+(4,141 B, 1,467 B free below the mix plane) plus the header constants. The
 overlay blob is deleted. `build-driver.mjs` still builds the superseded all-Z80
 driver; nothing ships from it.
 

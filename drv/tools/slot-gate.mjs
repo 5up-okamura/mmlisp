@@ -94,10 +94,17 @@ cpu.pc = 0;
 for (let i = 0; i < 2_000_000 && !(ram[H_READY] === 0xd2 && cpu.halted); i++) cpu.step();
 if (ram[H_READY] !== 0xd2) throw new Error("engine never reported ready");
 
-// The host: fill the ring ahead of each vblank, exactly as MMLisp_render would.
+// The host: render into the ring the way a 68000 actually does — from a frame
+// loop that woke on the SAME vblank the engine did, so its render lands INSIDE
+// the engine's frame, not before it. That distinction is not academic: the
+// engine holds the slot it is consuming for the whole frame now (§3.5), so a
+// host that renders before the slot is released sees a full ring and produces
+// nothing. Posting before the interrupt (which this gate used to do) hides that
+// completely, and it reached hardware as half-speed music.
 let posted = 0;
 let starved = 0;
-for (engFrame = 0; engFrame < cap.slots.length || posted < cap.slots.length; engFrame++) {
+let frameSteps = 0;             // measured on frame 0, then used as the clock
+const post = () => {
   while (posted < cap.slots.length) {
     const head = ram[H_HEAD];
     const next = (head + 1) % RING_DEPTH;
@@ -107,12 +114,23 @@ for (engFrame = 0; engFrame < cap.slots.length || posted < cap.slots.length; eng
     ram.set(s, RING + head * SLOT_SIZE);
     ram[H_HEAD] = next;
   }
+};
+post();                                              // MMLisp_init primes it
+for (engFrame = 0; engFrame < cap.slots.length || posted < cap.slots.length; engFrame++) {
   if (ram[H_HEAD] === ram[H_TAIL]) starved++;
   cpu.intRequest();
   let guard = 0;
+  let steps = 0;
   while (cpu.halted && guard++ < 1000) cpu.step();
-  while (!cpu.halted && guard++ < 3_000_000) cpu.step();
+  while (!cpu.halted && guard++ < 3_000_000) {
+    cpu.step();
+    steps++;
+    // ~20% in: a real host is a few hundred microseconds behind the vblank it
+    // woke on, and the engine's frame fills ~95% of the period.
+    if (frameSteps && steps === Math.floor(frameSteps / 5)) post();
+  }
   if (guard >= 3_000_000) throw new Error("frame did not complete");
+  if (!frameSteps) { frameSteps = steps; post(); }
   if (engFrame > cap.slots.length + RING_DEPTH + 4) break;
 }
 
@@ -192,6 +210,11 @@ console.log(`${basename(SCORE)} — ${cap.frames} frames, ${total} register writ
 console.log(`  slots ${cap.slots.length} · cap ${builder._maxWrites} writes/slot · ring depth ${RING_DEPTH}`);
 console.log(`  spill: ${cap.spillFrames} frames held work back, deepest queue ${cap.spillPeak} writes`);
 console.log(`  delivery: max ${maxDelay} frame(s) late · engine idled ${starved} frame(s)`);
+if (starved > 1) {
+  // One at the very end (the host runs out of slots) is expected; a pattern is
+  // the ring geometry being wrong, which is inaudible in any value comparison.
+  problems.push(`engine starved on ${starved} frames — the ring never had a slot ready`);
+}
 if (wantDac.length) {
   console.log(`  PCM: ${dac.length} DAC samples, ${dacEn.length} $2B edges — engine vs reference`);
 }

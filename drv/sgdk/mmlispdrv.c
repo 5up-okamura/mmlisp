@@ -240,3 +240,15 @@ u16 MMLisp_audibleFrame(void)
     Z80_releaseBus();
     return f;
 }
+
+// One grab for all three. The Z80 is stopped for the duration of a grab, so
+// four separate calls a frame perturb exactly what they are trying to measure —
+// this exists so the diagnostic does not have to be its own worst source of
+// error (driver.md §6.4).
+void MMLisp_readStats(MMLispStats* out)
+{
+    Z80_requestBus(TRUE);
+    out->audible = (u16)(*Z80_RAM_AT(H_FRAMES) | (*Z80_RAM_AT(H_FRAMES + 1) << 8));
+    out->starved = (u16)(*Z80_RAM_AT(H_STARVE) | (*Z80_RAM_AT(H_STARVE + 1) << 8));
+    Z80_releaseBus();
+}

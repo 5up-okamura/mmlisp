@@ -41,6 +41,7 @@ const SLOT_SUBS = sym("SLOT_SUBS"); // taken from the engine, so it cannot drift
 const H_HEAD = sym("H_HEAD");
 const H_TAIL = sym("H_TAIL");
 const H_FRAMES = sym("H_FRAMES");
+const H_STARVE = sym("H_STARVE");
 const H_READY = sym("H_READY");
 
 // ── Sample ROM ─────────────────────────────────────────────────────────────
@@ -236,7 +237,12 @@ function run(frames) {
     if (guard >= 3_000_000) throw new Error("frame did not complete");
     perFrame.push({ writes: writes.slice(w0), dac: dac.slice(d0) });
   }
-  return { perFrame, frames: ram[H_FRAMES] | (ram[H_FRAMES + 1] << 8), ram };
+  return {
+    perFrame,
+    frames: ram[H_FRAMES] | (ram[H_FRAMES + 1] << 8),
+    starved: ram[H_STARVE] | (ram[H_STARVE + 1] << 8),
+    ram,
+  };
 }
 
 // ── Scenarios ──────────────────────────────────────────────────────────────
@@ -395,8 +401,16 @@ let failures = 0;
 for (const sc of scenarios) {
   const voices = [new ModelVoice(), new ModelVoice(), new ModelVoice()];
   const feed = new ModelFeed();
-  const { perFrame } = run(sc.frames);
+  const { perFrame, starved } = run(sc.frames);
   const problems = [];
+  // The ring is topped up before every frame, so nothing may starve — except in
+  // the scenario that starves it on purpose (a `null` frame spec). A slot the
+  // engine holds for the WHOLE frame (§3.5) is what made this bite on hardware,
+  // and RING_DEPTH is what pays for it.
+  const deliberate = sc.frames.filter((f) => !f).length;
+  if (starved !== deliberate) {
+    problems.push(`${starved} starved frame(s), expected ${deliberate}`);
+  }
 
   sc.frames.forEach((spec, f) => {
     const got = perFrame[f];
