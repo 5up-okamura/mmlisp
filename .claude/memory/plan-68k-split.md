@@ -805,6 +805,27 @@ wobble is still audible, the remaining lever is structural (the in-frame
 10.6-period holds at pass boundaries / the head consume), and the write-pump
 idea (writes ride the mix loop) is the next design discussion.
 
+#### PROPOSED 2026-08-06 (awaiting sign-off): move PCM MIXING to the 68k
+
+Prompted by "can pitch/volume be faster — LUTs?". Z80-side LUTs were priced
+and are the wrong size: a page-aligned volume table via BC' is 19 cyc flat
+(wins only at shift >= 3 — quiet voices, not the crunch), a step-pattern
+table saves ~10 cyc/tick; both are fractions of one 2.8k debt quantum. The
+real answer: the 68k has the multiplier, the flat address space, and ALREADY
+shadows every PCM voice's position. Proposal: the 68k mixes 175 bytes/frame
+into a buffer that rides the ring next to the slot; the Z80 becomes writes +
+a uniform local-RAM feed. Deletes: window fetch stalls (−2.5k), segments,
+banks, pass boundaries — the wobble's entire mechanism — and the knife edge
+(feed ~5k, 3 voices trivial, catch-up becomes rare insurance). Gains: real
+multiply volume, free pitch, mixer verified in C against drv-player by
+c-gate (stronger than emulated asm). Subsumes the 1-variable+2-fixed plan.
+Costs: §6.2 wire change (PCM data block replaces PCM commands), gate
+re-freeze, 68k +15-25% (measure first), and the bus-grab stall (~1.6k) must
+be CHUNKED (~32 B per grab) so no single feed hold exceeds a sample period —
+note the CURRENT one-piece slot copy also holds the feed on hardware and no
+harness models it. Build order if approved: (1) port drv-player's _pcmFrame
+to C under c-gate, (2) wire format + slot builder, (3) shrink the Z80.
+
 #### The original proposal, kept for the reasoning
 
 The knife edge exists because a missed vblank INT loses a frame of MUSIC. The
