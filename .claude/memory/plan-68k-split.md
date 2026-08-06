@@ -940,6 +940,25 @@ existing measurements; neither is the stall coming back.
   cheap way to put numbers on this BEFORE any design discussion — nothing has
   to touch hardware to scope it.
 
+#### 2026-08-06 — "XGM/MDSDRV manage 3-4 PCM voices" — the comparison, priced
+
+Raised as doubt about the split itself. The split is not the gap: those
+drivers' multi-voice PCM is FIXED-RATE and pre-baked (no per-note pitch = no
+16.16 resampler, no dynamic loop/slice boundaries = no segment machinery), and
+this repo's own P0 bench prices this engine at that same configuration:
+**i8sat pre-resampled ceiling = 17.2 kHz at 3 voices** — the same class of
+number on the same Z80. The difference is the per-voice feature bill, chosen
+in decision 5 (per-note pitch + dynamic loops > cycles), not the architecture.
+Rough per-tick arithmetic (bench-derived, needs a real mixed-mode bench before
+being claimed): pitched ~88 cyc/voice/tick, fixed ~51 → 3 pitched ≈ 264,
+1 pitched + 2 fixed ≈ 190 (saves ~13k/frame ≈ the measured 2v gap), 3 fixed
+≈ 153 (fits with margin). The candidate design, NOT yet agreed: **per-sample
+opt-in pre-resampling** — a sample flagged fixed-pitch is resampled at export
+and mixed by a no-resampler loop copy; drums go cheap, one voice keeps pitch.
+Costs: export-side resampling in the MMB tool, mixed-mode loop copies (code
+size vs 1,724 B free), and the gate baselines. Decision 5 gets re-examined
+with these numbers, in a design discussion, before any code.
+
 **A real instrument, still unbuilt**: the YM2612's Timer B is unused (CSM takes
 Timer A), so the engine could time its own frame on hardware and publish the
 max. Four hypotheses have now been argued from emulated cycle counts against a
