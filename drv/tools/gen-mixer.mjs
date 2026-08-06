@@ -81,7 +81,7 @@ export const PACE_PASSES = 3;       // voice passes per frame = the emit cadence
 // are, and the segments are usually in the loud one. It is estimated from the
 // last frame's segment count — frames come in the same shape as their
 // predecessor, and a frame that ran long simply pads less on the next.
-export const PACE_RESERVE = 4800;   // frame-level: consume, pass set-up, flush,
+export const PACE_RESERVE = 7200;   // frame-level: consume, pass set-up, flush,
                                     // plus the margin that keeps the typical
                                     // frame just UNDER its budget rather than
                                     // just over — late is worse than short

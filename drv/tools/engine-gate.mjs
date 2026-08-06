@@ -63,12 +63,16 @@ const toI8 = (b) => (b < 128 ? b : b - 256);
 // A slot is SLOT_SUBS blocks of three runs, then the frame's PCM commands. A
 // spec may give `subs` explicitly to place writes in a particular sub-slot;
 // otherwise everything rides sub-slot 0 and the rest go out empty.
-function encodeSlot({ psg = [], fm0 = [], fm1 = [], pcm = [], subs = null }) {
+function encodeSlot({ psg = [], fm0 = [], fm1 = [], pcm = [], subs = null }, plan = null) {
   const blocks = subs ?? [{ psg, fm0, fm1 }];
   const nWrites = blocks.reduce(
     (t, b) => t + (b.psg ?? []).length + (b.fm0 ?? []).length + (b.fm1 ?? []).length, 0);
   const out = [nWrites, pcm.length];
   for (const c of pcm) out.push(...c);
+  // The frame's segment plan (§6.3.1) — one count-prefixed run per voice, from
+  // the same model the DAC stream is checked against, so the gate exercises the
+  // plan path rather than the engine's fallback.
+  out.push(...(plan ?? new Array(3).fill(0)));
   for (let j = 0; j < SLOT_SUBS; j++) {
     const b = blocks[j] ?? {};
     const p = b.psg ?? [], f0 = b.fm0 ?? [], f1 = b.fm1 ?? [];
@@ -113,6 +117,7 @@ class ModelVoice {
   // boundary. The fetch precedes the advance, which is why one more tick is
   // always legal while a single byte remains.
   tick() {
+    this.broke = false;   // set when a LOGICAL break falls on this tick
     const s = toI8(romAt(this.bank, this.ptr)) >> this.shift;
     const before = this.ptr;
     this.frac += this.incF;
@@ -123,6 +128,7 @@ class ModelVoice {
     this.left = this.left - consumed;
     if (this.ptr < WINDOW) { this.ptr += WINDOW; this.bank++; }   // window top
     if (this.left <= 0) {
+      this.broke = true;   // a loop wrap or the end — what the plan records
       if (this.hasLoop) {
         this.ptr -= this.loopl;
         if (this.ptr < WINDOW) { this.ptr += WINDOW; this.bank--; }
@@ -140,15 +146,48 @@ class ModelVoice {
 // later passes add with a clamp. That uniformity is what the paced feed needs
 // (driver.md §5.1) and it subsumes the old early-end fill.
 function mixFrame(voices) {
+  return mixFramePlan(voices).plane;
+}
+
+// The same pass, also reporting where each voice BROKE — which is the slot's
+// segment plan (§6.3.1). One model produces both, so a plan the engine follows
+// and the samples it is checked against cannot disagree.
+function mixFramePlan(voices) {
   const plane = new Int8Array(R);
+  const plan = [];
   voices.forEach((v, i) => {
+    const segs = [];
+    let last = 0;
     for (let t = 0; t < R; t++) {
       const s = v.active ? v.tick() : 0;
+      if (v.broke) { segs.push(t + 1 - last); last = t + 1; }
       if (i === 0) plane[t] = s;
       else plane[t] = Math.max(-128, Math.min(127, plane[t] + s));
     }
+    if (v.active) segs.push(R);   // no further break this frame
+    plan.push(segs.length, ...segs);
   });
-  return plane;
+  return { plane, plan };
+}
+
+// The PCM command list, applied to a set of model voices. Shared by the plan
+// pre-pass and the check, so both read a slot the same way.
+function applyPcm(voices, spec) {
+  for (const c of spec?.pcm ?? []) {
+    const [op, v] = c;
+    if (op === 1) {
+      voices[v].start({
+        flags: c[2], shift: c[3], bank: c[5] | (c[6] << 8), ptr: c[7] | (c[8] << 8),
+        left: c[9] | (c[10] << 8), loopl: c[11] | (c[12] << 8), tail: c[13] | (c[14] << 8),
+        incF: c[15] | (c[16] << 8), incI: c[17],
+      });
+    } else if (op === 2) voices[v].stop();
+    else if (op === 3) voices[v].shift = c[2];
+    else if (op === 4) {
+      voices[v].loopl = c[2] | (c[3] << 8);
+      voices[v].left = c[4] | (c[5] << 8);
+    }
+  }
 }
 
 // What the engine FEEDS in a frame, which is what the previous frame mixed: the
@@ -218,6 +257,12 @@ function run(frames) {
   while (boot++ < 2_000_000 && !(ram[H_READY] === 0xd2 && cpu.halted)) cpu.step();
   if (ram[H_READY] !== 0xd2) throw new Error("engine never reported ready");
 
+  // The plan is the sequencer's, so the harness has to play sequencer: one
+  // model run in lockstep with the schedule, one plan per slot POSTED (the
+  // engine mixes once per slot it consumes), and one silent advance per frame
+  // that posts nothing, so a starved frame leaves the model in step.
+  const planVoices = [new ModelVoice(), new ModelVoice(), new ModelVoice()];
+
   const perFrame = [];
   for (const spec of frames) {
     if (spec) {
@@ -227,15 +272,19 @@ function run(frames) {
       // the stamp at 0 and the engine resyncs silently, which is also the
       // behaviour of every harness in this repo that predates the stamp.
       for (const one of [spec, ...(spec.extra ?? [])]) {
+        applyPcm(planVoices, one);
+        const { plan } = mixFramePlan(planVoices);
         const head = ram[H_HEAD];
         const next = (head + 1) % RING_DEPTH;
         if (next !== ram[H_TAIL]) {                      // room in the ring
-          const bytes = encodeSlot(one);
+          const bytes = encodeSlot(one, plan);
           ram.set(bytes, RING + head * SLOT_SIZE);
           ram[H_HEAD] = next;
         } else if (VERBOSE) console.log("  (ring full, slot dropped)");
       }
       if (spec.vbl !== undefined) ram[H_VBL] = spec.vbl;
+    } else {
+      mixFramePlan(planVoices);   // starved: the engine mixes, with no plan
     }
     const w0 = writes.length;
     const d0 = dac.length;
@@ -444,21 +493,7 @@ for (const sc of scenarios) {
     }
 
     // (b) DAC stream == the model
-    for (const c of spec?.pcm ?? []) {
-      const [op, v] = c;
-      if (op === 1) {
-        voices[v].start({
-          flags: c[2], shift: c[3], bank: c[5] | (c[6] << 8), ptr: c[7] | (c[8] << 8),
-          left: c[9] | (c[10] << 8), loopl: c[11] | (c[12] << 8), tail: c[13] | (c[14] << 8),
-          incF: c[15] | (c[16] << 8), incI: c[17],
-        });
-      } else if (op === 2) voices[v].stop();
-      else if (op === 3) voices[v].shift = c[2];
-      else if (op === 4) {
-        voices[v].loopl = c[2] | (c[3] << 8);
-        voices[v].left = c[4] | (c[5] << 8);
-      }
-    }
+    applyPcm(voices, spec);
     const wantDac = feed.frame(voices);
     if (wantDac === null) {
       if (got.dac.length) problems.push(`f${f}: ${got.dac.length} DAC writes with no voice active`);

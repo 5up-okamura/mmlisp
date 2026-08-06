@@ -41,8 +41,6 @@ PCM_VOICES  equ 3
 ; sit at 1/3 and 2/3 of a paced frame — so finer note timing costs the engine no
 ; new structure and no extra chip writes. Must match the 68k's MML_SLOT_SUBS.
 SLOT_SUBS   equ 3
-MVF_TAIL    equ 16              ; bound below which a region's tail is counted
-MVF_MAX     equ 32              ; ticks one such count will walk
 
 ; ── RAM map (driver.md §5.2) ───────────────────────────────────────────────
 ; The engine is small enough that the 8 KB stops being a design input: no
@@ -98,7 +96,6 @@ G_DACON     equ G_BASE+$01      ; u8  1 = $2B DAC enable is currently set
 G_PEND      equ G_BASE+$02      ; u8  1 = the mixed plane still owes a frame of feed
 G_TICKS     equ G_BASE+$03      ; u8  ticks left in this voice's pass
 G_IDX       equ G_BASE+$04      ; u8  buffer tick index
-G_AVAIL     equ G_BASE+$05      ; u16 bytes safely consumable in this segment
 G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
 G_SLOT      equ G_BASE+$09      ; u16 slot cursor
 G_STARVED   equ G_BASE+$0b      ; u8  1 = this frame found the ring empty
@@ -142,6 +139,24 @@ G_NIDLE     equ G_BASE+$1f      ; u8  passes with no voice behind them this fram
 ; the mute loops store silence (as the first pass) or add nothing (as a later
 ; one), and no real voice state is touched.
 G_IDLEV     equ $1980
+
+; ── The frame's segment plan (driver.md §6.3.1) ────────────────────────────
+; The sequencer already advances every voice's position tick by tick, so it
+; knows where each voice's mix has to break — a loop wrap or the end of a
+; sample — before the engine does. It ships that as a run of tick counts per
+; voice and the engine simply follows them. What it replaces was a 16-bit min,
+; a shift loop and, approaching a boundary, a tick-by-tick walk: a per-segment
+; cost that swung by an order of magnitude frame to frame, which is exactly the
+; kind of variance the pacing pad (§5.1) cannot absorb.
+;
+; ROM WINDOW crossings are NOT in the plan. The engine owns the bank, a crossing
+; can split any planned segment, and it consumes no plan entry — it only ever
+; shortens one.
+G_PLAN      equ $19a0           ; 3 × {u8 entries left, u16 cursor}, per voice
+G_PLANL     equ $19a9           ; u8  entries left in the running pass's run
+G_PLANC     equ $19aa           ; u16 cursor into it
+G_PLANR     equ $19ac           ; u8  ticks to the next break; 0 = derive it
+G_NEARH     equ $19ad           ; u8  ptr high byte at which a window top is near
 
 ; ── Published header (driver.md §6.4) ──────────────────────────────────────
 ; The only Z80 addresses the 68000 needs to know, and the only ones that must
@@ -368,6 +383,12 @@ consume_slot:
         xor  a
         ld   (G_STARVED),a
         ld   (G_NWR),a          ; the PCM feed pays for this loop out of its pad
+        ; No slot means no plan. Zeroing the runs here is what makes a STARVED
+        ; frame derive its own bounds instead of replaying the last frame's
+        ; breaks, which have already been passed.
+        ld   (G_PLAN+0),a
+        ld   (G_PLAN+3),a
+        ld   (G_PLAN+6),a
         ld   a,SLOT_SUBS
         ld   (G_SUB),a          ; nothing to consume, unless the ring has a slot
         ld   a,(H_TAIL)
@@ -397,12 +418,33 @@ cs_have:
         inc  hl
         ld   a,b
         or   a
-        jr   z,cs_subs
+        jr   z,cs_plans         ; no commands, but the plan still has to be read
 cs_cmd:
         push bc
         call pcm_command        ; advances HL past the command
         pop  bc
         djnz cs_cmd
+
+        ; The segment plan: PCM_VOICES count-prefixed runs (§6.3.1). Recording
+        ; where each voice's run STARTS is all that is needed here; the pass
+        ; reads its own entries as it breaks.
+cs_plans:
+        ld   de,G_PLAN
+        ld   b,PCM_VOICES
+cs_plan:
+        ld   a,(hl)             ; entries in this voice's run
+        inc  hl
+        ld   (de),a
+        inc  de
+        ex   de,hl
+        ld   (hl),e             ; …and where they start
+        inc  hl
+        ld   (hl),d
+        inc  hl
+        ex   de,hl
+        add  a,l                ; step over them (a slot never crosses a page)
+        ld   l,a
+        djnz cs_plan
 
 cs_subs:
         call cs_runs            ; sub-slot 0, at the frame head as always
@@ -791,6 +833,21 @@ pp_act:
         jr   pp_act_next
 pp_act_run:
         push bc                 ; the mixer owns BC for its register file
+        ; Bind this voice's plan run before the pass reads it.
+        ld   a,c
+        add  a,a
+        add  a,c                ; ×3: {entries, cursor}
+        ld   hl,G_PLAN
+        add  a,l
+        ld   l,a
+        ld   a,(hl)
+        ld   (G_PLANL),a
+        inc  hl
+        ld   a,(hl)
+        inc  hl
+        ld   h,(hl)
+        ld   l,a
+        ld   (G_PLANC),hl
         call mix_voice_frame
         call pp_pass_done
         pop  bc
@@ -1004,6 +1061,24 @@ mix_voice_frame:
         ld   a,(G_STORE)
         ld   (G_SEG_L),a
         call ms_bind
+        ; How close to the ROM window top the pointer has to be before a
+        ; crossing is possible at all: a pass consumes at most R << KSH bytes.
+        ; Below this the window test is two instructions and always falls
+        ; through, which is what nearly every segment of nearly every frame
+        ; does.
+        ld   hl,PCM_MIX_R
+        ld   a,(ix+PV_KSH)
+        or   a
+        jr   z,mvf_nearh
+mvf_nsh2:
+        add  hl,hl
+        dec  a
+        jr   nz,mvf_nsh2
+mvf_nearh:
+        ld   a,255
+        sub  h
+        ld   (G_NEARH),a
+        call plan_next          ; ticks to this voice's first break
         ; The register file — DE = ptr, C = incInt, HL' = frac, DE' = incFrac
         ; — is LIVE for the whole pass (§5.1 (b)): loaded once here, stored
         ; once at pass end, and every boundary below works on the registers
@@ -1014,24 +1089,41 @@ mvf_seg:
         ld   a,(G_TICKS)
         or   a
         jp   z,ms_pstore        ; pass done — flush the file, ret to the caller
+        ld   b,a                ; ticks this pass still owes
+        ld   a,(G_PLANR)
+        or   a
+        jr   z,mvf_derive       ; no plan for this stretch: work the bound out
+        cp   b
+        jr   nc,mvf_win         ; the break is past the end of the pass
+        ld   b,a                ; n = ticks to the break
+mvf_win:
+        ; A window top can split a planned segment. It consumes no plan entry —
+        ; it only ever shortens this one — and below G_NEARH it cannot happen.
+        ld   a,(G_NEARH)
+        cp   d
+        jr   nc,mvf_n
+        call mvf_wincap
+        jr   mvf_n
 
-        ; avail = min(PV_LEFT, bytes to the top of the window). LEFT + ptr
-        ; carries out of 16 bits exactly when the window top is the nearer
-        ; bound, so the min needs no second register pair.
+mvf_derive:
+        ; No plan: a starved frame carries none, and a loop that breaks more
+        ; often than a run can carry runs out of one. Bound the segment the way
+        ; the engine did before the plan existed — avail = min(PV_LEFT, bytes to
+        ; the window top), n = avail >> KSH. Conservative by up to 2x, so it
+        ; halves toward a boundary and costs extra segments; that is the price
+        ; of a path that only rare frames take.
         ld   l,(ix+PV_LEFT)
         ld   h,(ix+PV_LEFT+1)
-        add  hl,de
-        jr   c,mvf_dist
+        add  hl,de              ; LEFT + ptr carries out of 16 bits exactly
+        jr   c,mvf_dist         ; when the window top is the nearer bound
         sbc  hl,de              ; carry is clear: HL = LEFT again
-        jr   mvf_have
+        jr   mvf_shift
 mvf_dist:
-        xor  a                  ; avail = $10000 - ptr (and the carry clears)
+        xor  a
         ld   l,a
         ld   h,a
-        sbc  hl,de
-mvf_have:
-        ld   (G_AVAIL),hl       ; the exact tail below needs the byte count
-        ; n = avail >> KSH, forced to at least 1
+        sbc  hl,de              ; avail = $10000 - ptr
+mvf_shift:
         ld   a,(ix+PV_KSH)
         or   a
         jr   z,mvf_nsh
@@ -1055,20 +1147,8 @@ mvf_capl:
         ld   b,a                ; B = n — C belongs to the live file now
         ld   a,(G_TICKS)
         cp   b
-        jr   nc,mvf_tail
-        ld   b,a                ; n = min(n, ticks left)
-        jr   mvf_n              ; the pass ends before the region does
-mvf_tail:
-        ; The shift bound is conservative by up to 2x, so approaching a boundary
-        ; it HALVES: 21 ticks, 10, 5, 2, 1, 1 — five segments and ~8k cycles to
-        ; mix a handful of samples. Once it has collapsed to a handful, count the
-        ; tail exactly instead and take the whole thing in one segment. That is
-        ; most of this engine's per-frame overhead, and the paced feed (§5.1) has
-        ; to give that overhead back out of the DAC's own budget.
-        ld   a,b
-        cp   MVF_TAIL+1
         jr   nc,mvf_n
-        call mvf_exact
+        ld   b,a                ; n = min(n, ticks left)
 mvf_n:
         ld   (G_OLDPTR),de      ; consumption is measured on the live pointer
         push bc                 ; B = n; the copies count it down to 0
@@ -1077,6 +1157,12 @@ mvf_n:
         ld   a,(G_TICKS)
         sub  b
         ld   (G_TICKS),a
+        ld   a,(G_PLANR)        ; the break is B ticks nearer (0 stays 0)
+        sub  b
+        jr   nc,mvf_planr
+        xor  a
+mvf_planr:
+        ld   (G_PLANR),a
 
         ; LEFT -= (ptr - oldptr), touching neither DE nor C
         ld   hl,(G_OLDPTR)
@@ -1126,6 +1212,7 @@ mvf_bound:
         ex   de,hl              ; DE = wrapped ptr, HL = loop length
         ld   (ix+PV_LEFT),l     ; LEFT = loop length
         ld   (ix+PV_LEFT+1),h
+        call plan_next          ; the wrap consumed one break
         ld   a,d
         cp   WINDOW>>8
         jp   nc,mvf_seg
@@ -1161,55 +1248,68 @@ mvf_idle:
         jp   mix_seg
 
 ; ---------------------------------------------------------------------------
-; mvf_exact: how many ticks the tail of this region really holds.
+; plan_next: G_PLANR = ticks to this voice's next logical break, from the slot's
+; segment plan (§6.3.1). Zero when the run is spent — a starved frame carries no
+; plan, and a run is bounded — and mvf_seg then derives the bound itself.
 ;
-;   in    B = the conservative bound (>= 1), G_AVAIL = bytes to the boundary,
-;         the LIVE register file (C = incInt, HL' = frac, DE' = incFrac)
-;   out   B = ticks consuming at most G_AVAIL bytes, capped at MVF_MAX — or
-;         untouched, if the tail is more than a page, which means the shift
-;         bound had not collapsed onto a boundary after all.
-;         DE, C and the alternate set are preserved.
-;
-; Walks the 16.16 advance a tick at a time: 75 cycles a tick, against the ~2k
-; each halving step it removes costs as a segment of its own. Safe at any cap,
-; because every tick it counts is one it has simulated. The walk advances the
-; LIVE frac in HL', so it is pushed here and popped back unmoved.
+; Clobbers A and HL. DE (the live pointer) and C (the live increment) are the
+; register file's and are untouched.
 ; ---------------------------------------------------------------------------
-mvf_exact:
-        ld   hl,(G_AVAIL)
+plan_next:
+        xor  a
+        ld   (G_PLANR),a
+        ld   hl,G_PLANL
+        ld   a,(hl)
+        or   a
+        ret  z                  ; run spent: mvf_seg derives its own bound
+        dec  (hl)
+        ld   hl,(G_PLANC)
+        ld   a,(hl)
+        inc  hl
+        ld   (G_PLANC),hl
+        ld   (G_PLANR),a
+        ret
+
+; ---------------------------------------------------------------------------
+; mvf_wincap: shorten B to what is left below the ROM window top.
+;
+;   in    B = the segment so far, DE = the live pointer, PV_KSH the voice's
+;         shift bound
+;   out   B = min(B, (65536 - ptr) >> KSH), never 0
+;
+; Only called when the pointer is within one pass's reach of the top, which is
+; a handful of segments per sample, not per frame.
+; ---------------------------------------------------------------------------
+mvf_wincap:
+        push bc                 ; C is the live increment
+        xor  a
+        ld   l,a
+        ld   h,a
+        sbc  hl,de              ; HL = 65536 - ptr (ptr >= WINDOW, so never 0)
+        ld   a,(ix+PV_KSH)
+        or   a
+        jr   z,mwc_have
+        ld   b,a
+mwc_sh:
+        srl  h
+        rr   l
+        djnz mwc_sh
+mwc_have:
         ld   a,h
         or   a
-        ret  nz                 ; more than a page to go: not a tail after all
-        exx
-        push hl                 ; the live frac — the walk moves it
-        exx
-        ld   a,(G_TICKS)
-        cp   MVF_MAX+1
-        jr   c,mve_cap
-        ld   a,MVF_MAX
-mve_cap:
-        ld   b,a                ; iteration cap
-        ld   h,0                ; ticks counted (avail < 256, so L is bytes)
-mve_lp:
+        jr   nz,mwc_keep        ; >= 256 ticks of window: nothing to cap
         ld   a,l
-        or   a                  ; bytes left? (and the carry starts clear)
-        jr   z,mve_done
-        inc  h
-        exx
-        add  hl,de              ; frac += incFrac
-        exx                     ; flag-transparent: the carry survives
-        ld   a,l
-        sbc  a,c                ; bytes -= incInt + frac carry (C is live)
-        jr   nc,mve_st
-        xor  a                  ; this tick reaches past the boundary
-mve_st:
-        ld   l,a
-        djnz mve_lp
-mve_done:
-        ld   b,h                ; the exact tail, where the bound was
-        exx
-        pop  hl                 ; the live frac, unmoved
-        exx
+        or   a
+        jr   nz,mwc_cmp
+        inc  a                  ; forced progress, as the derived bound does
+mwc_cmp:
+        pop  bc
+        cp   b
+        ret  nc
+        ld   b,a
+        ret
+mwc_keep:
+        pop  bc
         ret
 
 ; ---------------------------------------------------------------------------

@@ -10,6 +10,8 @@
 //
 //   [u8 n_writes]                      frame total, for the engine's pacing debt
 //   [u8 n_pcm] [pcm command × n_pcm]   variable length, §6.3, frame-level
+//   { [u8 n_seg] [ticks × n_seg] } × 3 the frame's SEGMENT PLAN, one run per
+//                                      PCM voice, §6.3.1
 //   { [u8 n_psg] [val × n_psg]         SN76489
 //     [u8 n_fm0] [{reg,val} × n_fm0]   YM2612 port 0
 //     [u8 n_fm1] [{reg,val} × n_fm1] } × SLOT_SUBS
@@ -20,6 +22,22 @@
 // 1..K-1 are not consumed until a third and two thirds of the way in. Putting
 // them last would make the engine walk past every sub-slot to reach them, and
 // tally the runs itself, which measured ~1,700 cycles a frame.
+//
+// The segment plan is the sequencer telling the engine where each voice's mix
+// has to break this frame. The sequencer already advances every voice's
+// position tick by tick (it needs that for its own decisions), so the boundary
+// list is a by-product of work already done — while on the Z80 deriving it cost
+// a 16-bit min, a shift loop and, near a boundary, a tick-by-tick walk, at a
+// cost that varied by an order of magnitude frame to frame. That VARIANCE was
+// the problem: the pacing pad is sized from an estimate of the frame's
+// overhead (§5.1), and an overhead that moves is a feed that stutters.
+//
+// A run is the ticks from one LOGICAL boundary to the next — a loop wrap or the
+// end of a sample. ROM window crossings are not in it: they are the engine's
+// own business (it owns the bank) and they do not consume a run. The last entry
+// of a still-sounding voice is PCM_MIX_R, meaning "no further boundary this
+// frame"; a voice that ends needs no such sentinel, and a silent voice's run is
+// empty.
 //
 // Length-prefixed runs so the Z80's consume loop needs no per-write dispatch.
 // Bucketing by port loses cross-bucket ordering within a frame, which is safe
@@ -48,6 +66,10 @@ export const SLOT_SUBS = 3;
 // and score heads.
 export const SLOT_MAX_WRITES = 95;
 
+// PCM voices, and therefore segment-plan runs per slot. A build constant on
+// both sides (the engine's PCM_VOICES).
+export const PCM_VOICES = 3;
+
 export const PCM_START = 1;
 export const PCM_STOP = 2;
 export const PCM_VOL = 3;
@@ -61,6 +83,7 @@ export class SlotBuilder {
     this._queue = []; // writes not yet placed in a slot, in emission order
     this._marks = []; // queue depth at each sub-tick boundary — the bucket ends
     this._pcm = [];
+    this._plan = null;
     this.spillPeak = 0; // deepest the queue ever got
     this.spillFrames = 0; // frames that could not carry everything
   }
@@ -82,6 +105,16 @@ export class SlotBuilder {
   /** Append one PCM command (an array of bytes, §6.3). Never capped. */
   pcm(bytes) {
     this._pcm.push(bytes);
+  }
+
+  /**
+   * The frame's segment plan (§6.3.1): PCM_VOICES count-prefixed runs, already
+   * flattened. A frame that never calls this — no PCM in the score, or a frame
+   * the mixer skipped entirely — encodes empty runs, which is what a slot with
+   * nothing sounding says anyway.
+   */
+  plan(bytes) {
+    this._plan = bytes;
   }
 
   /** Writes still waiting for a slot. */
@@ -125,6 +158,7 @@ export class SlotBuilder {
     this._queue = this._queue.slice(take);
     this._marks = [];
     this._pcm = [];
+    this._plan = null;
     if (this._queue.length) {
       this.spillFrames++;
       this.spillPeak = Math.max(this.spillPeak, this._queue.length);
@@ -139,6 +173,10 @@ export class SlotBuilder {
     // as it goes, which is why the count is a field and not a derivation.
     const out = [writes.length, this._pcm.length];
     for (const c of this._pcm) out.push(...c);
+    // The plan rides the head with the PCM commands: the engine wants both
+    // before it mixes, and the plan is per-voice-pass, so it is read the moment
+    // a pass starts.
+    out.push(...(this._plan ?? new Array(PCM_VOICES).fill(0)));
     let start = 0;
     for (let j = 0; j < this._subs; j++) {
       const end = Math.min(marks[j], writes.length);
@@ -171,6 +209,12 @@ export function decodeSlot(bytes, subs = SLOT_SUBS) {
     pcm.push(Array.from(bytes.slice(i, i + len)));
     i += len;
   }
+  const plan = [];
+  for (let v = 0; v < PCM_VOICES; v++) {
+    const n = bytes[i++];
+    plan.push(Array.from(bytes.slice(i, i + n)));
+    i += n;
+  }
   const subSlots = [];
   for (let j = 0; j < subs; j++) {
     const psg = [];
@@ -190,5 +234,6 @@ export function decodeSlot(bytes, subs = SLOT_SUBS) {
     fm0: subSlots.flatMap((s) => s.fm0),
     fm1: subSlots.flatMap((s) => s.fm1),
     pcm,
+    plan,
   };
 }

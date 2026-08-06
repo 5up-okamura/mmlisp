@@ -41,6 +41,11 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* ── Build constants (driver.md §6.2) ─────────────────────────────────────── */
 #define MML_SLOT_SIZE 256
 #define MML_SLOT_MAX_WRITES 95 /* what the settled mixer leaves, §5.3.1 */
+/* Longest segment run a slot carries per voice. A voice that breaks more often
+ * than this — a loop under ~11 mix ticks long — simply runs out of plan, and
+ * the engine falls back to one-tick segments for the rest of its pass: correct,
+ * slower, and never reached by real material. */
+#define MML_PCM_PLAN_MAX 16
 /* Sub-ticks per frame (driver.md §3.5). Note dispatch runs on every one of
  * them; the engines still run once a frame. Must match the engine's SLOT_SUBS
  * and PACE_PASSES — the Z80 consumes the extra sub-slots on the mixer's voice
@@ -254,6 +259,11 @@ typedef struct {
    * register traffic — but they do count against the slot's byte budget. */
   uint8_t pcm_buf[MML_SLOT_SIZE];
   uint16_t pcm_len;
+  /* The frame's segment plan (driver.md §6.3.1): one count-prefixed run per
+   * PCM voice, giving the ticks from one logical break to the next. Built by
+   * the position advance the sequencer runs anyway. */
+  uint8_t plan_buf[MML_PCM_VOICES * (MML_PCM_PLAN_MAX + 1)];
+  uint16_t plan_len;
   uint8_t pcm_count;
 
   uint32_t frame;

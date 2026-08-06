@@ -993,8 +993,15 @@ static void pcm_note_off(MMLSeq *s, int channel_id) {
  * this is position bookkeeping only, mirroring the engine's loop so both sides
  * retire a voice on the same tick. (A closed form exists for the non-looping
  * case; it is not worth the divergence risk until a cycle count asks for it.) */
+static void plan_push(MMLSeq *s, uint16_t at, int ticks) {
+  if (s->plan_buf[at] >= MML_PCM_PLAN_MAX) return; /* the engine falls back */
+  s->plan_buf[at]++;
+  s->plan_buf[s->plan_len++] = (uint8_t)ticks;
+}
+
 static void pcm_frame(MMLSeq *s) {
   int any = 0;
+  s->plan_len = 0;
   for (int i = 0; i < MML_PCM_VOICES; i++) any |= s->pcm[i].active;
   if (!any) {
     if (s->pcm_dac_on) {
@@ -1009,11 +1016,17 @@ static void pcm_frame(MMLSeq *s) {
   }
   for (int i = 0; i < MML_PCM_VOICES; i++) {
     MMLPcmVoice *v = &s->pcm[i];
+    /* The run's count byte, filled in by plan_push as breaks are found. */
+    uint16_t at = s->plan_len++;
+    int last = 0;
+    s->plan_buf[at] = 0;
     for (int t = 0; t < MML_PCM_MIX_RATE && v->active; t++) {
       uint32_t before = v->pos >> 16;
       v->pos += v->inc;
       v->left -= (int32_t)((v->pos >> 16) - before);
       if (v->left > 0) continue;
+      plan_push(s, at, t + 1 - last);
+      last = t + 1;
       if (v->has_loop && !v->releasing) {
         v->pos -= v->loop_len << 16;
         v->left = (int32_t)v->loop_len;
@@ -1021,6 +1034,10 @@ static void pcm_frame(MMLSeq *s) {
         v->active = 0;
       }
     }
+    /* Still sounding: a final run meaning "no further break this frame", which
+     * the engine clamps to the ticks its pass has left. A voice that ended
+     * needs none — its pass falls through to the silent loop. */
+    if (v->active) plan_push(s, at, MML_PCM_MIX_RATE);
   }
 }
 
@@ -1566,8 +1583,10 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
    * rather than overflow the slot. What is dropped stays queued, in order. */
   {
-    /* n_writes + n_pcm + the commands + one run-length triple per sub-slot */
-    uint32_t size = 2 + 3 * MML_SLOT_SUBS + s->pcm_len;
+    /* n_writes + n_pcm + the commands + the segment plan + one run-length
+     * triple per sub-slot */
+    uint32_t size = 2 + 3 * MML_SLOT_SUBS + s->pcm_len +
+                    (s->plan_len ? s->plan_len : MML_PCM_VOICES);
     uint16_t fit = 0, scan = cur;
     for (uint16_t i = 0; i < take; i++) {
       uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
@@ -1588,8 +1607,15 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
   out[o++] = (uint8_t)take;
   out[o++] = s->pcm_count;
   mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
+  /* The segment plan follows the commands, still at the frame head: the engine
+   * reads a voice's run the moment that voice's pass starts (§6.3.1). A frame
+   * the mixer never ran carries empty runs, which is what "nothing sounding"
+   * says anyway. */
+  if (s->plan_len) { mml_copy(out + o, s->plan_buf, s->plan_len); o += s->plan_len; }
+  else { for (int i = 0; i < MML_PCM_VOICES; i++) out[o++] = 0; }
   s->pcm_count = 0;
   s->pcm_len = 0;
+  s->plan_len = 0;
 
   uint16_t done = 0; /* writes already placed in an earlier sub-slot */
   for (int j = 0; j < MML_SLOT_SUBS; j++) {

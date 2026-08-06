@@ -2190,7 +2190,14 @@ export class DrvPlayer {
     // engine needs the pass count fixed for the feed's cadence (§5.1), and a
     // silent first pass writing the plane's zero subsumes the old early-end
     // fill. Silent passes add nothing, so the mix is unchanged by it.
+    // The pass also RECORDS where it broke (§6.3.1). The advance is happening
+    // anyway; the boundary list is free here and expensive on the Z80, which
+    // had to re-derive it with a shift bound and a tick-by-tick tail walk whose
+    // cost swung by an order of magnitude frame to frame.
+    const planBlock = [];
     voices.forEach((v, i) => {
+      const segs = [];
+      let last = 0;                     // tick index of this voice's last break
       for (let t = 0; t < PCM_MIX_RATE; t++) {
         let s = 0;
         if (v.active) {
@@ -2199,6 +2206,8 @@ export class DrvPlayer {
           v.pos = (v.pos + v.inc) >>> 0;
           v.left -= (v.pos >>> 16) - before;
           if (v.left <= 0) {
+            segs.push(t + 1 - last);
+            last = t + 1;
             if (v.hasLoop && !v.releasing) {
               v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
               v.left = v.loopLen;
@@ -2213,7 +2222,13 @@ export class DrvPlayer {
           plane[t] = a > 127 ? 127 : a < -128 ? -128 : a;
         }
       }
+      // Still sounding at the frame's end: one more run saying "no boundary
+      // from here", which the engine clamps to the ticks it has left. A voice
+      // that ended needs none — its pass falls through to the silent loop.
+      if (v.active) segs.push(PCM_MIX_RATE);
+      planBlock.push(segs.length, ...segs);
     });
+    this._slotSink?.plan(planBlock);
     // This frame's mix is next frame's feed; a frame entered with nothing
     // sounding was the tail, and owes nothing further.
     this._pcmPending = active ? plane : null;
