@@ -497,19 +497,23 @@ its bytes on the chips, and spend the rest of the frame mixing PCM.
 1. **Claim a slot.** If the ring is empty, skip step 2 — the 68k did not keep
    up. The mixer still runs (PCM must not gap), so the music holds rather than
    glitches.
-2. **Read the frame-level head** (§6.2) — the write count the pacing debt needs
-   and the PCM commands the mixer needs — then **consume sub-slot 0**: three
-   length-prefixed runs, PSG bytes, YM port 0 `{reg,val}` pairs, YM port 1
-   pairs. Runs are length-prefixed precisely so the loop needs no per-write
-   dispatch.
-3. **Mix PCM** (§5.3) while feeding the DAC — the same loop does both — and put
-   **sub-slots 1 and 2** out at the voice-pass boundaries (§3.5). Each such run
+2. **Read the frame-level head** (§6.2) — the write count, which both sizes the
+   pacing debt and decides whether the write pump runs (§5.1.1), and the PCM
+   commands the mixer needs — then **consume sub-slot 0**: three length-prefixed
+   runs, PSG bytes, YM port 0 `{reg,val}` pairs, YM port 1 pairs. Runs are
+   length-prefixed precisely so the loop needs no per-write dispatch. The PSG
+   bytes go out here; the YM runs are normally **queued for the write pump**.
+3. **Mix PCM** (§5.3) while feeding the DAC — the same loop does both, and it
+   also drains the queued chip writes, one per iteration (§5.1.1) — and put
+   **sub-slots 1 and 2** out at the voice-pass boundaries (§3.5). Every YM write
    re-latches `$2A` afterwards, because the feed writes it blind. When nothing
    is sounding the mixer is not entered at all, so that path runs a **paced idle
    loop** instead, giving the same two boundaries; without it a score with no
-   PCM in it would silently lose its sub-ticks.
-4. **Release the slot** — the tail only advances once the last sub-slot has been
-   read, so the 68k cannot refill a slot the frame is still consuming — and
+   PCM in it would silently lose its sub-ticks (and with no iterations to drain
+   it, such a frame writes its YM runs directly).
+4. **Release the slot** — the tail only advances at the end of the frame, once
+   the last sub-slot has been read *and* the pump has finished reading the runs
+   in place, so the 68k cannot refill a slot the frame is still consuming — and
    **publish** the consumed-frame counter (§6.4).
 
 **DAC PACING (2026-08-03).** The feed is *inside* the mix loops, one `$2A` write
@@ -565,10 +569,50 @@ Three things follow from pacing, and they shape the engine:
   to tune on hardware: raise it while `lost/s` in the example's readout is
   non-zero on a one-voice score, lower it if `npm run dac` loses its span.
 
+  **And it is what caps PCM at two voices.** Measured across four scores with
+  `npm run budget:frame` / `seg-bench --stall-read`: a frame with one voice
+  sounding always fits, a frame with **two never does** (42/42, 6/6, 4/4 over
+  budget), by 1–8%. Sweeping the charge on the same frames — 2/42 over at 0
+  cycles, 22/42 at 4, 37/42 at 7, 42/42 at 14 — puts the whole overrun on the
+  stall and nothing else: each sounding pass makes R = 175 window reads, so a
+  second voice costs ~2,450 cycles of pure bus arbitration and the frame does
+  not have them.
+
+  Note what this does *not* argue for. The "1 variable + 2 fixed voices" plan
+  addresses mix cycles, and mix cycles are not the binding constraint — a
+  fixed-pitch voice reads one sample byte per tick like any other and pays the
+  same stall. What would cut reads is a loop variant for `incI == 0` (below the
+  sample's own rate the same byte serves several ticks, and register C is free
+  in that variant to cache it) or a lower `PCM_MIX_R`. Neither is costed, and
+  `PACE_WINDOW` was back-fitted from one song's loss rate rather than measured.
+
+  **And it explains nothing about a ONE-voice song**, which is the case that is
+  actually still reported as wobbling. Attribute those frames on the song
+  itself — `seg-bench <song>.mmb --stall-read 14` reads an SGDK project's `res/`
+  directly — rather than on a synthetic score.
+
 What it does not fix: those cycles are real and are not spent feeding, so
 between segments the feed still pauses and in between it runs ~20% fast to make
-up for it. Measured wander is ~3.4 ms against the burst's 14.7 ms. **Cutting the
+up for it. Measured wander is ~2.5 ms against the burst's 14.7 ms. **Cutting the
 per-segment cost is what tightens it further** — see §5.3.
+
+**Unspent pad is not slack; it is silence.** A frame that finishes its R samples
+early does not stop making sound — it holds the DAC at its last value until the
+next vblank. On a one-voice song running at 90% of budget that was 23 sample
+periods (2.2 ms) of frozen DAC at the end of *every* frame, at 60 Hz, which is a
+periodic discontinuity, and the samples that did play came out ~10% fast across
+the rest. So `PACE_RESERVE` is not free to be generous with: it was re-derived
+from 7200 to **5600**, the last step that takes sample periods off every score's
+boundary hold while moving no score's over-budget count. `PACE_SEG` stays at
+2400 despite measuring ~1,000, because the over-charge is what keeps a
+segment-heavy frame inside its budget (cutting it takes m3-pcm-softmix from 12
+over-budget frames to 179).
+
+What blocks the rest is **quantisation**: the debt is whole 16-cycle pad units
+and one unit is 16 × R = 2,800 cycles, so the tuning cliff is one unit wide.
+Keeping the remainder and handing an extra unit to some of the three passes
+(per *pass*, not per sample — the hot loop must not grow a branch) would take
+the granularity to ~1 ms and let the margin come down the rest of the way.
 
 **The register file is live for the whole pass** (the "(b)" rewrite): a
 sounding pass loads DE = ptr, C = incInt, HL' = frac, DE' = incFrac once
@@ -587,6 +631,85 @@ Drive PCM driver feeds it blind. Polling it cost 115 cycles per mix tick — 20k
 frame, a third of the whole budget — waiting for something that is never set at
 a 10.5 kHz feed rate. PSG writes need no wait.
 
+### 5.1.1 The write pump — chip writes ride the mix loop (2026-08-06)
+
+A slot's YM writes used to go out in a **burst** at their sub-tick instant, and
+for as long as that burst ran the DAC held its last sample. On a score with real
+chip traffic the worst in-frame hold measured **17.5 sample periods**, and the
+gap it opens is the one thing the pacing pad cannot absorb: the pad is spread
+thinly over the whole frame and the burst is not.
+
+So the writes are not fed into the consume; **the consume is fed into the feed**.
+Every unrolled mix iteration already holds itself to the frame's tick period
+(§5.1), and a YM register write costs about half of one — so the pump gives one
+queued write to each iteration. The writes land at the instants the pad
+occupied, and on a write-heavy frame the writes *are* the pad.
+
+- **Queued, not copied.** `cs_runs` records where the sub-slot's two YM runs
+  start and how many pairs each holds; the pump walks them **in place**. The
+  cursor lives in the pump's own self-modified `ld bc,nn`, and the target port is
+  baked into its two `ld (nn),a` operands, so the per-write path carries no
+  dispatch. That the queue *is* the slot is why the ring tail is now released at
+  the **end of the frame** rather than when the last sub-slot is read
+  (`slot_release`) — otherwise the 68k could refill a slot the pump is reading.
+- **It costs a loop with nothing to pump nothing at all.** There is no test in
+  the hot path: while writes are queued, the bound copy's own first instruction
+  — `ld a,(iy+0)`, three bytes, exactly the size of a `jp` — is overwritten with
+  a jump to the pump, and put back when the queue empties. `ms_bind` binds one
+  unrolled copy per pass, so exactly one site is ever patched. (That is also why
+  a second *generated* set of pumping loop copies was not the answer: a queue
+  empties mid-pass, and a bound copy cannot be swapped without leaving the loop.)
+- **Order and port are preserved exactly**, which is the transport's whole
+  contract (§12.3): port 0's pairs drain before port 1's, and a write may not
+  cross its own sub-tick boundary — whatever the pump still holds at a pass
+  boundary goes out before the next sub-slot is queued.
+- **PSG bytes are not pumped.** A PSG write is 13 cycles and holds nothing; a
+  whole run is under one sample period.
+- **A write-dense frame does not use the pump at all** (`PCM_DRAIN` = 56, tested
+  against the slot's leading write count, §6.2). A pass has 58 unrolled
+  iterations, so past that the queue cannot drain anyway — and such a frame (a
+  score head's patch dump, a dense voice change) is over its cycle budget
+  whichever way the writes go out. Threading them through the mix then buys
+  nothing while making the feed's own rate visibly uneven, whereas a burst
+  landing *before* the frame's first sample is a constant offset and inaudible.
+- **The pad pays for it.** A pumped iteration costs ~236 cycles more than a
+  plain one (`PUMP_CYCLES` in gen-mixer.mjs), so while armed the pad it holds to
+  is the plain figure less `PCM_PUMP_U` units — floored at 1, like every other
+  pad. The `$2A` latch has to be restored after every pumped write, since the
+  feed writes it blind; that re-latch is the pump's one irreducible overhead.
+
+**It ships OFF (`PUMP_ON = 0`), because the frame cannot afford it.** On a score
+carrying both FM/PSG traffic and three PCM voices it does what it was built to
+do — worst in-frame hold **16.1 → 14.3** periods, frame-boundary hold **21.7 →
+19.9**, span 88% → 89%. It also takes **17.9% → 24.6% of frames over their
+59,659-cycle budget**. A pumped write costs ~236 cycles against a bursted one's
+~113: an extra BUSY poll, the `$2A` re-latch, and the queue's bookkeeping, none
+of which the burst pays. At 40 writes a frame that is ~5% of the whole budget,
+on a driver that already measures 98–102%.
+
+Every over-budget frame loses its vblank outright, is consumed late by the
+catch-up (§6.7), and hiccups the DAC once on the way through. Seven more points
+of that is ~4 extra hiccups a second — reported from hardware as clicking with
+the tempo wobbling behind it, which is how the switch came to exist. Two sample
+periods of hold do not buy four hiccups a second.
+
+The gates cannot see either side of that trade: an emulated frame never runs out
+of cycles and its YM is never BUSY. So both builds are gated (`npm run engine`
+assembles the engine twice) and the choice is made on the machine.
+
+**What it does not fix, and this is the correction it forced:** the median
+in-frame hold was never the writes. Profiled, it is the **voice-pass transition**
+— `ms_load`, `pcm_debt`, the voice-pointer arithmetic, `ms_bind`, `mvf_idle` —
+~3.2k cycles with no sample fed, at every pass boundary. That is the (1)+(2)
+per-segment cost §5.3 already points at, it is the frame's real overhead, and it
+is what has to be cut before the pump becomes affordable. Both problems have the
+same answer, which is why the pump waits rather than being reworked.
+
+**One piece of it landed anyway and is on in every build:** the burst path's
+BUSY polls are now *inline* rather than `call ym_busy0`. A call/ret is 27 cycles
+on each of two polls a write — ~2.2k on a 40-write frame, spent while the DAC is
+holding. It takes a 95-write frame from 69.4k cycles to 64.3k.
+
 ### 5.2 RAM map
 
 The engine is small enough that the 8 KB stops being a design input. Sizes, not
@@ -597,14 +720,14 @@ As built (`drv/src/engine.z80` + the generated mixer):
 
 | Region | Address | Size | Contents |
 | ------ | ------- | ---- | -------- |
-| code | `$0000` | 4141 B | boot, ISR, consume loop, PCM commands, mixer |
+| code | `$0000` | 4756 B | boot, ISR, consume loop, PCM commands, write pump, mixer |
 | published header | `$1300` | 64 B | ring control, status, consumed-frame counter (§6.4) |
 | slot ring | `$1400` | depth × 256 B | 768 B at the default depth 3 (§3.4) |
 | mix buffer | `$1700` | 2 × 256 B | two planes: one being mixed, one being fed (§5.1) |
 | PCM voice state | `$1900` | 3 × 32 B | 32 is a power-of-two stride, so indexing is shifts |
-| engine scratch | `$1960` | 160 B | includes the always-silent voice struct at `$1980` |
+| engine scratch | `$1960` | 160 B | the always-silent voice struct at `$1980`, the frame's segment plan at `$19A0`, the write pump's queue state at `$19B0` |
 | stack | `$1F00` | 256 B | |
-| | | **~5.3 KB** | leaving ~1.2 KB unallocated |
+| | | **~5.8 KB** | leaving ~1.2 KB unallocated |
 
 The mixer is most of the code: shift specialisation means ten copies of each
 loop (§5.3.1) — eight shifts, mute, and idle — and pacing unrolls each of them
@@ -617,7 +740,7 @@ have to move the map rather than squeeze in, and this was it. Growing *upward*
 into the free space is the move that does not make the host's build stale: the
 header's address is the one Z80 constant the 68k compiles in (§6.4), so it
 stayed at `$1300` and no protocol version had to change. Code now has the whole
-span below the header — 1211 B of headroom — and everything above the ring is
+span below the header — 1132 B of headroom — and everything above the ring is
 the engine's own working memory. The boot clear covers that region only, which
 means the published header survives it.
 
@@ -862,7 +985,7 @@ The chip writes are divided into `SLOT_SUBS` **sub-slots**, one per sub-tick
 (§3.5); the PCM commands are frame-level.
 
 ```
-[u8 n_writes]                         ; frame total, for the engine's pacing debt
+[u8 n_writes]                         ; frame total: the pacing debt, and §5.1.1
 [u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
 { [u8 n_psg] [val × n_psg]            ; SN76489, port 0x7F11
   [u8 n_fm0] [{reg,val} × n_fm0]      ; YM2612 port 0 (0x4000/0x4001)
@@ -872,8 +995,10 @@ The chip writes are divided into `SLOT_SUBS` **sub-slots**, one per sub-tick
 
 **The two frame-level fields lead, and that ordering is load-bearing.** Both are
 wanted at the frame head — the PCM commands before the mixer runs, `n_writes`
-before the pacing debt sizes the frame's pad (§5.1) — while sub-slots 1..K-1 are
-not consumed until a third and two thirds of the way in. With them trailing, the
+before the pacing debt sizes the frame's pad (§5.1) *and* before the engine
+decides whether this frame's writes ride the write pump or burst (§5.1.1) —
+while sub-slots 1..K-1 are not consumed until a third and two thirds of the way
+in. With them trailing, the
 engine had to walk past every sub-slot to reach them and tally every run on the
 way, which measured **~1,400 cycles a frame**: 2.3% of the Z80's budget spent
 re-deriving a number the 68000 already had.

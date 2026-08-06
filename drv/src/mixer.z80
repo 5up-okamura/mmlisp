@@ -25,8 +25,6 @@ PCM_IDLE_SH equ 9      ; PV_SHIFT meaning "no voice here at all"
 PCM_PASSES  equ 3      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ 340     ; the period one paced iteration holds to
 PCM_SEG_MAX equ 31      ; debt_tab's last entry (segments per frame)
-PCM_PUMP_U  equ 15      ; pad units an iteration gives up to pump a
-                        ; chip write (236 cycles — engine.z80, §5.1.1)
 
 R_FIRST_BEG:
 mix_first_s0:
@@ -1961,14 +1959,6 @@ msb_s:
         ld   l,a
         ld   (ms_go_s+1),hl
         call ms_set_pad
-        ; The write pump patches the head of the copy bound just above, so a
-        ; rebind has to move the patch with it (engine.z80, driver.md §5.1.1).
-        ; It reads G_PADN, so it follows ms_set_pad — and an empty queue means
-        ; nothing is patched (pump_one disarms as it empties), so the test here
-        ; is the whole idle cost of the pump at a pass boundary.
-        ld   a,(G_QN0)
-        or   a
-        call nz,pump_sync
         pop  bc
         pop  de
         pop  hl
@@ -1979,10 +1969,9 @@ msb_s:
 ; hold to. Floored at 1 — the pad loop counts DOWN from G_PAD, so zero would be
 ; 256 — which is also what a frame with no slack left to give does.
 ;
-; It is kept as G_PADN as well as in G_PAD, because the write pump swaps G_PAD
-; for a shorter figure while it is armed (§5.1.1) and has to be able to put this
-; one back. G_PADN is set even for a copy that carries no pad code at all, so it
-; is never stale when the pump reads it.
+; Kept as G_PADN as well as in G_PAD so a caller that wants the unmodified
+; figure has it; G_PADN is set even for a copy that carries no pad code at all,
+; so it is never stale.
 ms_set_pad:
         call pcm_debt           ; re-estimated per segment: a frame that turns
                                 ; out heavier than its predecessor tightens from
@@ -2009,7 +1998,7 @@ msp_min:
         ld   a,1
 msp_store:
         ld   (G_PADN),a
-        ld   (G_PAD),a          ; …and pump_arm overrides this if it arms
+        ld   (G_PAD),a
         ret
 
 ; Pad each copy would need to hit 340 cycles with the frame to itself, by
@@ -2020,11 +2009,11 @@ pad_first_tab:
 pad_add_tab:
         db   2,0,0,0,0,0,0,0,8,16
 
-; debt_tab[segments] = 7200 + segments x 2400 cycles of per-frame overhead, in
+; debt_tab[segments] = 5600 + segments x 2400 cycles of per-frame overhead, in
 ; 16-cycle pad units, spread over all PCM_MIX_R samples of the frame.
 debt_tab:
-        db   3,3,4,5,6,7,8,9,9,10,11,12,13,14,15,15
-        db   16,17,18,19,20,21,21,22,23,24,25,26,27,27,28,29
+        db   2,3,4,5,5,6,7,8,9,10,11,11,12,13,14,15
+        db   16,17,17,18,19,20,21,22,23,23,24,25,26,27,28,29
 
 ; pace_win_tab[sounding passes] = the ROM-window fetch stall (PACE_WINDOW = 14
 ; cycles per sample read, hardware-only — see gen-mixer.mjs), in pad units.

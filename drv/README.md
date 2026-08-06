@@ -259,7 +259,7 @@ pre-rendered slot per vblank, paces its bytes onto the YM2612 and PSG, and
 spends the rest of the frame software-mixing PCM into the fm6 DAC — and feeding
 it *from inside the mix loop*, one sample every three ticks, so the DAC gets its
 bytes at its own rate instead of in a burst (driver.md §5.1). It sequences
-nothing and evaluates nothing — 4141 B against the old driver's 5.8 KB of
+nothing and evaluates nothing — 4756 B against the old driver's 5.8 KB of
 sequencing assembly, with no overlays, no shadow file, no LUTs and no TCB.
 
 Since 2026-08-05 it also delivers the slot in `SLOT_SUBS` = 3 **sub-slots**
@@ -271,6 +271,39 @@ not entered at all, so that path runs a small paced idle loop to give the same
 two boundaries. The image growing past 4 KB is what moved the mix planes above
 the ring — the published header's address is unchanged, so no host rebuild is
 implied beyond the new `mmlispdrv.bin`.
+
+The **write pump** (driver.md §5.1.1) is built and gated but **ships off**
+(`PUMP_ON` in `src/engine.z80`). It makes the slot's YM writes ride the mix loop
+instead of bursting at their sub-tick instant: `cs_runs` queues the two runs in
+place, and each unrolled iteration takes one write in the cycles it would
+otherwise have padded. The hot path pays nothing — while writes are queued the
+bound loop copy's first instruction (`ld a,(iy+0)`, three bytes, the size of a
+`jp`) is patched to jump into the pump and restored when the queue empties, so
+an unarmed loop is the unmodified code.
+
+It works, and it is still not worth it yet. On a score carrying both FM/PSG
+traffic and three PCM voices: worst in-frame DAC hold 16.1 -> 14.3 periods,
+frame-boundary hold 21.7 -> 19.9 — **and 17.9% -> 24.6% of frames over their
+59,659-cycle budget**, because a pumped write costs ~236 cycles against a
+bursted one's ~113. Every over-budget frame is a lost vblank, a catch-up and one
+DAC hiccup, and seven more points of that is ~4 extra hiccups a second: on
+hardware it reads as clicking with the tempo wobbling behind it. No gate here
+can see that trade (an emulated frame never runs out of cycles and its YM is
+never BUSY), so `npm run engine` assembles the engine **both ways** and the
+choice is made on the machine.
+
+**The pump also corrected the diagnosis it was built from**, and that correction
+is what the next round follows. The median in-frame DAC hold is not the chip
+writes at all — profiled, it is the ~3.2k cycles of voice-pass transition
+(`ms_load`, `pcm_debt`, the voice-pointer arithmetic, `ms_bind`, `mvf_idle`)
+during which no sample is fed. That is simultaneously the frame's real overhead
+and the hold the pump was aimed at by mistake; cutting it is what makes the pump
+affordable.
+
+One piece landed in every build regardless: **the burst path's BUSY polls are
+inline** rather than `call ym_busy0`. 27 cycles of call/ret on each of two polls
+a write is ~2.2k on a 40-write frame, spent while the DAC holds; a 95-write
+frame went 69.4k -> 64.3k cycles.
 
 The slot's frame-level fields (`n_writes`, then the PCM command list) lead the
 sub-slots because the engine wants both at the frame head — the commands before
@@ -328,6 +361,17 @@ gate here is structurally unable to see: they all compare sample values. It
 measures, per frame, how much of the frame the writes span and how far each
 sample lands from its own instant. The burst it exists to catch spans 12% and
 wanders 14.7 ms; the engine spans ~90% and wanders ~3.4 ms.
+
+`tools/frame-budget.mjs` (`npm run budget:frame`) answers the one question none
+of the others do: **does the frame fit?** Cycles per frame, with the ROM-window
+stall charged, and the share of frames past 59,659 — each of which is a vblank
+the Z80 never sees, a catch-up, and one DAC hiccup. It exists because the write
+pump improved every `npm run dac` number on a busy score while taking 17.9% ->
+24.6% of its frames over budget, and the machine reported that as clicking and a
+wobbling tempo while every gate here said "ok". There is no pass/fail bar — a
+patch-dump frame is *supposed* to run long — so run it before and after anything
+that touches the frame and compare. `--pump` prices the write pump switch
+without editing the source.
 
 `tools/slot-gate.mjs` closes the loop with a real score: `.mmlisp` → MMB →
 `drv-player.js` → slot stream (through the real cap and spill queue in

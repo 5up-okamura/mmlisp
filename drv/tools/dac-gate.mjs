@@ -38,12 +38,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
 const argv = process.argv.slice(2);
 const fIdx = argv.indexOf("--frames");
-const FRAMES = fIdx >= 0 ? Number(argv[fIdx + 1]) : 240;
 let scores = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWith("--"));
 if (!scores.length) {
   scores = ["tests/m3-pcm-softmix.mmlisp", "tests/m2-pcmloop.mmlisp", "tests/m3-pcm-slice.mmlisp"]
     .map((p) => join(drv, p));
 }
+// 240 frames is FOUR SECONDS — a fair sample of a gate score, which is short
+// and deterministic by construction, and no sample at all of a real song. The
+// holds that matter are at the loop point, the section change, the dense bar,
+// and a song has none of those in its first four seconds: measured on one, the
+// worst boundary hold read 29.7 periods over 240 frames and 45.5 over 4000. A
+// `.mmb` is a real song, so it gets a minute of it unless told otherwise.
+const FRAMES = fIdx >= 0 ? Number(argv[fIdx + 1])
+  : (scores.some((f) => f.endsWith(".mmb")) ? 4000 : 240);
 
 const FRAME_CYCLES = 59659;      // Z80 at 3.579545 MHz, 59.92 Hz
 // A frame's writes must cover at least this much of it. The burst this gate

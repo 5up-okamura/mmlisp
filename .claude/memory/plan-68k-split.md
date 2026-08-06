@@ -803,7 +803,9 @@ watch `lost/s` and `music`. Expected: wobble narrower (boundary hold −35%),
 `lost/s` ~0 with `music` = 0x100 (spikes heal), `starv` unchanged. If the
 wobble is still audible, the remaining lever is structural (the in-frame
 10.6-period holds at pass boundaries / the head consume), and the write-pump
-idea (writes ride the mix loop) is the next design discussion.
+idea (writes ride the mix loop) is the next design discussion. **The write pump
+was built on 2026-08-06 — see the section below, and note that it also proved
+those in-frame holds are the PASS TRANSITION, not the head consume.**
 
 #### PROPOSED 2026-08-06 (awaiting sign-off): move PCM MIXING to the 68k
 
@@ -1171,29 +1173,313 @@ and is smaller. Constants sweep confirms it: the hold only moves in ~5-8 period
 steps, and no (PACE_SEG, PACE_RESERVE) pair reaches below ~15 without putting
 most frames over budget.
 
-### The next piece of work: the WRITE PUMP
+### The WRITE PUMP — BUILT 2026-08-06 (driver.md §5.1.1)
 
-**The cheap version does not exist.** "Emit `$2A` during the consume" fails on
-arithmetic, not cycles: the mixer emits exactly one sample per unrolled
-iteration over R ticks x 3 passes, i.e. exactly R samples. A sample emitted
-outside that loop is one too many — IY runs off the plane and `flush_rest`
-computes a negative tail.
+Shipped as designed: **do not feed inside the consume, consume inside the
+FEED.** `cs_runs` queues the sub-slot's two YM runs in place (nothing is
+copied) and every unrolled mix iteration takes one write out of the queue.
 
-So invert it: **do not feed inside the consume, consume inside the FEED.** Each
-mix iteration already pads ~16-80 cycles to hold the tick period, and a YM
-write costs ~90. Let the mix loop take one pending chip write per iteration
-instead of padding; `cs_runs` shrinks to queueing. The writes then land at the
-instants the pad occupies today, the DAC never stops, and on write-heavy frames
-the writes ARE the pad.
+How the four open design points were settled:
 
-Design points to settle before building it:
-- a write may not cross its sub-tick boundary (§3.5), so the pump needs the
-  sub-slot marks, not just a flat queue;
-- per-write cost is not constant (PSG is a bare byte, YM pays two busy polls);
-- a patch-dump frame has more writes than iterations, so a burst path stays;
-- the baked pads become (period - tick - write) for pumping copies, which means
-  either a second set of generated loop copies or a runtime branch in the hot
-  loop — and avoiding exactly that branch is why shift specialisation exists.
+- **A write may not cross its sub-tick boundary.** Kept. Whatever the pump still
+  holds is flushed at the pass boundary before the next sub-slot is queued.
+- **Per-write cost is not constant.** PSG bytes are NOT pumped — a PSG write is
+  13 cycles and a whole run is under one sample period. Only the YM runs go
+  through the pump, and the port is baked into two self-modified `ld (nn),a`
+  operands so the write path has no dispatch.
+- **A patch-dump frame has more writes than iterations.** Decided the other way
+  round: such a frame does not use the pump AT ALL. `PCM_DRAIN` = 56 is tested
+  against the slot's leading `n_writes` at the frame head; past it the frame
+  bursts exactly as before. A pass only has 58 iterations, and a frame that
+  dense is over budget however its writes go out — while spreading them makes
+  the feed's own rate uneven (dac-gate WANDER went 3.3 -> 9.3 ms when it did),
+  whereas a burst landing before the frame's first sample is a constant offset
+  and inaudible. A first attempt draining two writes an iteration was measured
+  and dropped for the same reason.
+- **The pad, and the branch.** Neither a second set of generated copies nor a
+  runtime branch. The bound copy's own first instruction — `ld a,(iy+0)`, three
+  bytes, exactly the size of a `jp` — is PATCHED to jump into the pump while
+  writes are queued and restored when the queue empties, so an unarmed loop is
+  the unmodified code and pays nothing. Only one copy is bound at a time
+  (`ms_bind`), so only one site is ever patched; `pump_sync` moves it on rebind.
+  While armed the pad drops by `PCM_PUMP_U` = 15 units (`PUMP_CYCLES` = 236,
+  priced in gen-mixer.mjs), which is where the write's cycles come from.
+
+One structural consequence: **the ring tail is released at the END of the frame**
+(`slot_release`), not when the last sub-slot is read, because the pump keeps
+reading the slot in place after that.
+
+### …and it SHIPS OFF. Hardware said so.
+
+Turned on, it was reported from the machine as **clicking with the tempo
+wobbling**. Reproduced in emulation the moment the right thing was measured —
+not the DAC hold, the FRAME BUDGET. On a scratch score with demo1's FM/PSG
+traffic plus three PCM voices (240 frames, ROM-window stall charged):
+
+| | pre-pump | pump OFF (as shipped) | pump ON |
+| --- | --- | --- | --- |
+| frame cycles, p50 | 57,370 | 57,752 | 58,707 |
+| **frames over 59,659** | **18.3%** | **17.9%** | **24.6%** |
+| in-frame hold, worst | 17.5 periods | 16.1 | **14.3** |
+| frame-boundary hold, p50 | 22.6 | 21.7 | **19.9** |
+
+A pumped write is ~236 cycles against a bursted one's ~113 (the extra BUSY poll,
+the `$2A` re-latch, the queue bookkeeping). At 40 writes a frame that is ~5% of
+the budget on a driver already at 98-102%. **Every over-budget frame is a lost
+vblank, a catch-up and one DAC hiccup (§6.7)** — +6.7 points is ~4 extra hiccups
+a second. Two sample periods of hold do not buy that.
+
+`PUMP_ON` in engine.z80 is the switch; the default is 0. `npm run engine`
+assembles the engine BOTH ways and gates both, so the off-by-default path cannot
+rot. Nothing in this repo can decide the switch — an emulated frame never runs
+out of cycles and its YM is never BUSY — so it is decided by ear on hardware,
+and the budget table above is the thing to re-run first when it is reconsidered.
+
+**Lesson worth keeping: `npm run dac` was the wrong gate to optimise against.**
+It measures hold and wander and reports both as "ok"; it says nothing about
+whether the frame fits. The scratch budget harness (frame cycles p50/p95/max +
+over-budget share, with `PACE_WINDOW` charged per window read) is the one that
+predicted the hardware report, and it should be run on any change that touches
+the frame — it belongs in `tools/`.
+
+### 2026-08-06 — a re-run of a DISPROVED hypothesis, and what it cost
+
+The wobble was reported again (pump on, then pump off — so the pump was never
+it). The response was to measure a synthetic two-PCM-voice score and conclude
+"2 voices do not fit". That is hypothesis 1 in the "tried and disproved" list
+above, verbatim, and the correction is written five paragraphs above it: **the
+reporter's song sounds ONE PCM voice.** Measured on the wrong score, twice, a
+day apart.
+
+The rule this file already states, restated because it did not take: **before
+proposing a cause, run `node tools/seg-bench.mjs <the song>.mmb --stall-read 14`
+on the ACTUAL song** — the SGDK project's `res/` holds the `.mmb` and `.smp`, no
+new tool is needed, and it prints the over-budget frames with their voice and
+segment counts. A synthetic score answers a question nobody asked.
+
+Two things did come out of it and are worth keeping.
+
+**A build hole, now closed.** The engine's code runs from `$0000` and must stop
+below `HDR = $1300`. Nothing checked it. An engine that grew past it assembled
+cleanly, overwrote the header and the ring with its own code, and presented as
+the mixer executing data. `npm run engine` now gates it, both builds, and prints
+the margin — which is **71 B**. That number is the real constraint on every
+remaining mixer idea, and it was not written down anywhere.
+
+**The padless-twin idea is now PRICED: it does not fit.** The "second, unpriced
+idea for (b-the-sawtooth)" in the levers list — let a debt-clamped pad bind the
+UNPADDED loop copy instead of flooring at 1 — was built. It works and it is
+worth ~1.4k cycles a frame on the sounding pass, delivered exactly where the
+stall is charged. It costs **~500 B** (a twin for every copy whose baked pad is
+non-zero: first s0/s1/s2/mute/idle, add s0/mute/idle) against 71 B of headroom,
+and reverted. Restricted to the copies that matter (`first` s0-s2, the only ones
+a one-voice frame ever clamps) it is still ~180 B. **It needs the RAM map moved
+first, and the header cannot move** (§6.4). Half of it is available for free —
+patching the bound copy's `ld a,(G_PAD)` to a `jr` over the pad, the write
+pump's own trick — for 12 of the 24 cycles a sample; unbuilt.
+
+Also cut while looking, live in every build: **`pcm_debt`'s frame-constant half
+hoisted** out of the per-bind path (`pcm_debt_base`, ~135 cyc x 4 calls a frame)
+and **`latch_bank` skips a bank that is already latched** (414 cyc a call, and a
+song's samples are normally all in one bank). ~900 cycles a frame.
+
+### The write pump: REMOVED 2026-08-06. Design kept, code not.
+
+Built, gated, switched off, then deleted — and the deletion is the right call,
+not a retreat. Three measured reasons:
+
+1. What it fixes is second-order. It took the worst in-frame hold from write
+   bursts 17.5 -> 14.3 periods, while the sample clock's median interval sits
+   29% off nominal with sidebands above the carrier. Polish on the wrong face.
+2. On this architecture it does not pay: ~236 cyc a pumped write against ~113
+   bursted (with the polls inlined), and it pushed a busy score from 17.9% to
+   24.6% of frames over budget.
+3. **287 B in an image with 71 B of headroom.** It is why the padless-twin
+   experiment overflowed the published header. Removing it took the image
+   4793 -> 4424 B and headroom 71 -> 440 B, which is what the frame-loop rewrite
+   will need.
+
+**In the rewrite it comes back, mandatory rather than optional** — a 20-write
+burst is 2,200+ cycles, six sample intervals, and by definition a clock break.
+But the shape changes: the current version is built to be an OPTIONAL add-on to
+a mix-driven loop, which is where the self-modified patch site, the PCM_DRAIN
+gate and the flush fallback come from. Under a feed-driven loop the dispatch is
+unconditional and all three disappear. Re-derive it from these, which is all
+that was worth keeping:
+
+- queue the slot's runs IN PLACE; nothing is copied.
+- bake the port into the two `ld (nn),a` operands by self-modification, so the
+  write path carries no dispatch at all.
+- **one `$2A` re-latch plus a BUSY poll per YM write is unavoidable** (~44 cyc)
+  because the feed writes `$2A` blind. This is a direct input to the rewrite's
+  per-sample slice budget: a slice must be able to hold ~113-160 cycles.
+- order rules: per-port order is the transport's contract; a write may not cross
+  its sub-tick boundary.
+- measured cost: ~113 cyc/write bursted, ~236 through the optional machinery.
+
+What stayed from that work, because it is independent and unconditional: the
+burst path's **BUSY polls are inlined** (167 -> 113 cyc a write; a 95-write
+frame 69.4k -> 64.3k), `pcm_debt`'s frame-constant half hoisted, `latch_bank`
+skipping a bank already latched, the image-size gate, `npm run budget:frame`,
+`npm run dac:clock`, and the `.mmb` sample-length defaults.
+
+### 2026-08-06 — THE SAMPLE CLOCK. The pacing design does not work.
+
+`npm run dac:clock` (new, `tools/dac-clock.mjs`). Nominal sample period at
+R = 175 is 341 Z80 cycles. Measured, on the reporter's song and on a synthesised
+steady tone:
+
+    interval  min 41  p10 243  p50 243  p90 319  p99 3558  max 8213   (nominal 341)
+    68% of samples arrive EARLY (<90% of nominal), 2.3% are held past 150%
+    the DAC's instantaneous rate swings 0.4 kHz .. 87 kHz   (nominal 10.5 kHz)
+
+**The median interval is 243 cycles — 29% short.** Two thirds of every frame's
+samples come out ~40% fast, and the frame squares its average up by stopping.
+A DAC does not average; it is a zero-order hold. So a steady 1 kHz tone comes
+back with sidebands at multiples of the frame rate that are LOUDER THAN THE
+TONE:
+
+    offset        real    same bytes, uniform clock
+    f0 + 1x60Hz   +5.1 dB        -48.3 dB
+    f0 + 2x60Hz   +6.5 dB        -58.6 dB
+    f0 + 3x60Hz   +7.9 dB        -64.0 dB
+    f0 + 4x60Hz   +8.6 dB        -67.6 dB
+
+Same bytes in both columns. The only difference is WHEN each was written. That
+is the "プチプチ", it is the "テンポよれ" on anything pitched, and it is why one
+PCM voice has never once sounded right while the frame sits at 92% of budget.
+
+**Why, mechanically.** The pad is baked per loop copy as (period − that copy's
+tick cost), so a SOUNDING copy gets 0-5 units and a MUTE/IDLE copy gets 14-16 —
+and `pcm_debt` then subtracts a CONSTANT from all of them. At a typical debt of
+5-6 units the sounding copy's pad clamps to the floor and the idle copies keep
+8-10. The pass that produces the audio therefore runs completely unpaced, and
+the silent passes stretch to make the frame come out with exactly R samples.
+gen-mixer.mjs already states the first half of this ("the fetching loops have no
+pad to take away… all of the frame's ~23,000 cycles of pad live in the MUTE and
+IDLE passes") — as an explanation for why a per-fetch charge did nothing. The
+conclusion was never drawn.
+
+**No constant fixes it, and that is the point.** `PACE_RESERVE`, `PACE_SEG`,
+`PACE_WINDOW`, the segment plan, the write pump — every one of them moves the
+frame's AVERAGE, which every gate here measures, and none of them can make an
+interval constant. To hold the interval, the ~12k cycles of per-frame overhead
+(pass transitions, segment set-up, the frame head, the slot consume) must be cut
+into slices small enough to fit BETWEEN two sample writes, and the feed has to
+become the outer structure that dispatches them — not an interleave inside the
+mix. That is the same inversion the write pump did for chip writes, applied to
+everything, and it is a rewrite of the frame loop, not a tuning pass.
+
+**Gate it before rebuilding it.** `npm run dac:clock` reports the interval
+distribution and the tone's sidebands; `dac-gate` cannot see either, and it is
+what let this ship. The target is a flat interval distribution — p10 = p50 =
+p90 = 341 — and sidebands at the uniform-clock column.
+
+### 2026-08-06 — the song ITSELF, profiled. Frames are NOT overrunning.
+
+**Read the frame count before reading anything else.** Every tool here defaulted
+to `--frames 240`, which is FOUR SECONDS, and every measurement in this session
+was taken on it. A gate score is short and deterministic and four seconds is all
+of it; a song's interesting frames are the loop point, the section change and
+the dense bar, and it has none of those in its first four seconds. On this song
+the worst frame-boundary hold reads **29.7 periods over 240 frames and 45.5 over
+4000**. The defaults are fixed — `seg-bench`, `dac-gate` and `frame-budget` all
+give a `.mmb` 4000 frames unless told otherwise, and `frame-budget` prints the
+seconds covered — but the habit is the thing: state the sample length, or the
+number is not a measurement.
+
+`seg-bench ~/Developer/gendev/verify-hello-world/res/song.mmb --stall-read 14`
+over the whole song:
+
+    4000 frames (66.8 s), mean 54,650 cyc (92% of budget), worst 64,025 (107%)
+    OVER BUDGET: 4/4000 (0.1%) — f0, f1 (score head), f788, f901 (100-101%)
+    by PCM voices sounding: 0v 0/865   1v 4/3135
+
+**So lost vblanks are not the cause of anything this song does.** That rules out
+the whole family — the write pump, the 2-voice limit, the frame budget. The
+frame has 10% of headroom and spends it on nothing.
+
+What it does instead, from `npm run dac` on the same file, 3344 full frames:
+
+    span 87% of the frame
+    feed hold p50: in-frame 10.7 periods, FRAME BOUNDARY 23.2 periods
+    feed hold MAX: in-frame 28.1,          FRAME BOUNDARY 45.5  (f788, f901)
+
+The p50 is the continuous one — every frame, at 60 Hz. The max is two spikes in
+56 seconds, at exactly the two frames that overran; those are the hardware's
+"`lost` 4 at specific spots" and they are 4 ms holes, but twice a minute is not
+what "プチプチ" describes. The p50 is.
+
+**The DAC is frozen for ~18% of every frame, in two chunks, at 60 Hz** — 2.2 ms
+at the boundary plus 1.0 ms mid-frame. A frame that finishes its R samples early
+does not go quiet, it HOLDS its last value, so the unspent pad is not slack: it
+is a periodic discontinuity at frame rate. That is the shape of "プチプチ", and
+the same arithmetic explains the pitched wobble — the samples that do play come
+out ~10% fast across the 87%, then stop.
+
+**`PACE_RESERVE` 7200 -> 5600, measured, and re-measured over the whole song
+after the 240-frame default was caught.** It was a safety margin nobody had
+priced. 5600 is the last step down that costs nothing anywhere: 3-8 sample
+periods off every score's boundary hold, every score's OVER BUDGET count
+unchanged (song 4/4000, softmix 12, slice 6, pcmloop 2). The song reads 23.2 ->
+20.5 periods p50 and 45.5 -> 42.8 max, span 87% -> 88%. The cliff is one step
+below and it is steep at full length too: 5000 takes the song from 4 over-budget
+frames to **428**.
+
+**`PACE_SEG` is 2.36x its measured marginal cost (1,016) and must STAY there.**
+Cutting it to 1,200 takes another 5 periods off the hold — but only off
+segment-heavy frames, which are the multi-voice ones with no headroom:
+m3-pcm-softmix goes 12 -> 179 over-budget frames. Measured, do not re-try.
+
+**What blocks the rest is QUANTISATION, and that is the next lever.**
+`paceDebt` rounds to whole 16-cycle pad units, and one unit is 16 x R = 2,800
+cycles = 8 sample periods spread over the frame. There is no way to ask for
+half a unit, so the tuning cliff is one unit wide: 5600 is safe and 5000 costs
+the song 27 frames. The fix is free and per-PASS, not per-sample: keep the
+remainder as well as the quotient and hand one extra unit to some of the three
+passes (`debt_frac_tab[segs]`, compared against `G_PASS` in `pcm_debt`), which
+takes the granularity from 2,800 to ~930-1,400 cycles and lets PACE_RESERVE come
+down the rest of the way. ~40 cycles a bind. UNBUILT.
+
+**And the tempo is a separate, already-documented thing.** With 2 lost frames in
+240 the tempo cannot be drifting from lost vblanks. What remains is
+[[plan-subtick-timing]] steps 2-3: **PCM note onsets are still on the 60 Hz
+grid** while FM/PSG ride the three sub-ticks. If the rhythm is carried by the
+PCM — and drums are the attacks — a 1/16 lands up to 3% long and a triplet up to
+37%, at 128 BPM. That is the reported "テンポよれ" and it is a known unbuilt
+item, not a regression.
+
+### One piece landed regardless: the burst path's BUSY polls are INLINE
+
+`cr_p0`/`cr_p1` called `ym_busy0`; a call/ret is 27 cycles on each of two polls
+a write. Inlined, that is ~2.2k cycles back on a 40-write frame — spent while
+the DAC is holding its last sample. A 95-write frame went 69.4k -> 64.3k. On in
+every build, pump or no pump.
+
+### THE CORRECTION: the median hold was never the chip writes
+
+The entry above this one attributed both holds to `cs_runs`. **Profiled, that is
+wrong** — and the profile is `scratchpad/gap.mjs`-style PC sampling over the
+largest `$2A` gap of each frame, which is what should have been run first.
+
+On the baseline, the median in-frame gap is 3,643 cycles and `cs_runs`
+contributes 159 of them. The rest is the **voice-pass transition**: `voice_ptr`
+286, `ms_load` 227, `pcm_debt` 200, `pv_sh` 172, `mvf_planr` 149, `mix_seg` 137,
+`pp_act_next` 123, `mvf_idle` 123, `ms_bind` 106 … ~3.4k cycles of per-pass
+set-up during which no sample is fed. Only the WORST frames' gaps were the
+writes, which is exactly what the pump fixed.
+
+So the next piece of work is not another transport idea: it is the (1)+(2)
+per-segment/per-pass cost already listed in this file. Concretely, the largest
+single items to attack are `ms_load` (the idle path still round-trips the voice
+struct per segment), `pcm_debt` (recomputed per bind for a value that moves
+once), and the voice-pointer arithmetic in `pp_voice_at`/`pv_sh`.
+
+**And it is the same work that would pay for the pump**: those cycles are both
+the median DAC hold AND the frame overhead that leaves no room for the pump's
+~123 cycles a write. Cut ~3k a frame there and `PUMP_ON = 1` becomes a real
+option — which is why the pump is parked behind a switch rather than reworked
+or deleted.
 
 ## External data point 2026-08-06 — 吉村ことり's Mega Drive driver
 
@@ -1217,3 +1503,36 @@ without stopping the feed — our measured wobble (in-frame 10.7 sample periods,
 boundary 15.3). Voice count and feed uniformity are separate problems; his
 voice count says nothing about how he solved the second one, and that is the
 part worth learning.
+
+## 2026-08-06 — MDSDRV / XGM2 の実コード調査(決定を変える3点)
+
+読んだのは実アセンブラ(MDSDRV `src/mdssub.z80`+`mdsdrv.68k`、XGM2 は
+`Stephane-D/SGDK` の `src/snd/xgm2/drv_xgm2.s80` + `*.i80`)。README ではない。
+
+1. **どちらもリサンプラを持たない。** MDSDRV = 8段の離散レート(`nop`/`inc hl`
+   を自己書き換えでばら撒く、N/8 の整数分周)、2声@18kHz または 3声@13.5kHz。
+   XGM2 = 等速 or 半速のみ、基準レートは全チャンネル共通。我々の 16.16
+   リサンプラは両者より高機能で、声数の差はその請求書。決定5の分析が実コードで
+   裏付けられた。
+2. **XGM2 の DAC ペーシングは YM Timer A のフラグポーリング**
+   (`drv_xgm2_pcm_mac.i80` `sampleOutput`: `BIT 0,(HL) / JR Z,.wait` →
+   `$2A` 書き込み)。サイクル計算のパッドは存在しない。レートはチップが強制し、
+   ドライバの義務は「十分な頻度で `sampleOutput` に到達すること」だけ。
+   **これは我々の PACE_SEG / PACE_RESERVE / pcm_debt / パッド量子(8.2周期)を
+   まるごと置き換える。** 我々は Timer B を「計測器」としてしか検討しなかった。
+3. **XGM2 の設計規則: `sampleOutput` 間は最大 ~168 サイクル。** 29レジスタの
+   音色ロード(`FM_loadInst`)の中に 16 個、V-int ハンドラの中に 8 個、DMA 待ちの
+   ポーリングループにも入っている。つまりライトポンプの正解は「1周に1書き込み」
+   ではなく「コード全域で 168 サイクルごとに DAC を出す」。我々のポンプが失敗した
+   のは 1書き込み 236 サイクルにしたから(ビジーポール追加)。XGM2 はタイマーが
+   ゲートなのでブラインドで書ける。
+4. 劣化の優先順位が逆。XGM2 は **DAC を守り音楽フレームを捨てる**
+   (`MISSED_FRAME++`、バッファ150未満でフレーム処理を飛ばす)。我々は逆に
+   フレームを守って DAC に穴を開けている。MDSDRV は 68k がバスを掴む間 Z80 が
+   止まるので、キーオン+音色転送で **最悪 ~313us = 5-6サンプル周期の穴を許容**
+   している。つまり穴自体は許容範囲の概念で、我々の 14-20 周期は約3倍大きい。
+
+**次の一手(証拠付き): DAC のペーシングを YM タイマーに移す。** 決めるべき衝突が
+一つ — CSM が Timer A を使っている。Timer B は空いているが分解能が粗い
+(Timer A = 12x(1024-TA)/clk、Timer B = その 16 倍刻み)ので 10.5kHz を正確に
+出せるか要検証。CSM と Timer A のどちらを取るかは設計判断。

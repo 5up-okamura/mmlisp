@@ -81,11 +81,37 @@ export const PACE_PASSES = 3;       // voice passes per frame = the emit cadence
 // are, and the segments are usually in the loud one. It is estimated from the
 // last frame's segment count — frames come in the same shape as their
 // predecessor, and a frame that ran long simply pads less on the next.
-export const PACE_RESERVE = 7200;   // frame-level: consume, pass set-up, flush,
-                                    // plus the margin that keeps the typical
-                                    // frame just UNDER its budget rather than
-                                    // just over — late is worse than short
-export const PACE_SEG = 2400;       // per segment: mix_seg in and out, boundary math
+// Frame-level: consume, pass set-up, flush, plus the margin that keeps the
+// typical frame just UNDER its budget rather than just over — late is worse
+// than short.
+//
+// **But short is not free, and 7200 was paying for a margin nobody measured.**
+// A frame that finishes its R samples early does not stop making sound: it
+// holds the DAC at its last value until the next vblank. On the reporter's
+// song that was 23 SAMPLE PERIODS of frozen DAC at the end of every frame —
+// 2.2 ms, at 60 Hz, which is a periodic discontinuity heard as clicking, while
+// the samples that did play came out ~10% fast across the other 87% of the
+// frame, which is the pitched-PCM wobble. The pad is not slack to be hoarded;
+// every cycle of it that goes unspent is silence at the frame boundary.
+//
+// 5600 is the last step down that costs NOTHING. Measured with `npm run dac`
+// and `seg-bench --stall-read 14` over the reporter's song and the whole PCM
+// corpus: 3-8 sample periods off every score's frame-boundary hold, and every
+// score's OVER BUDGET count exactly where it was. The next step is a cliff —
+// at 5000 that same song goes from 2 over-budget frames to 29.
+//
+// Re-derive it, do not guess it: lower it while every score's OVER BUDGET line
+// holds and the frame-boundary hold falls; stop at the first value that moves
+// either.
+export const PACE_RESERVE = 5600;
+// Per segment: mix_seg in and out, boundary math. `seg-bench` measures the true
+// marginal cost at ~1,000 cycles and says so on every run ("PACE_SEG charges
+// 2400 - 2.36x"), and cutting it to that takes another 5 periods off the hold
+// — but it takes them off SEGMENT-HEAVY frames specifically, and those are the
+// multi-voice ones with no headroom: measured, m3-pcm-softmix goes from 12
+// over-budget frames to 179. This over-charge is what keeps a segment storm
+// inside its frame, and it stays until the per-segment cost itself comes down.
+export const PACE_SEG = 2400;
 // Extra cycles a sample fetch costs BEYOND the Z80's own timing, because it is
 // not a Z80 memory read: `ld a,(de)` with DE in the $8000 window goes out over
 // the 68000's bus, arbitrated and wait-stated. The COST table below prices that
@@ -112,14 +138,6 @@ export const PACE_SEG = 2400;       // per segment: mix_seg in and out, boundary
 // is 16 cycles on every sample, so the charge moves in steps of 16/R of this.
 export const PACE_WINDOW = 14;
 export const PACE_SEG_MAX = 31;     // segments the debt table goes up to
-// What one PUMPED iteration costs over a plain one (engine.z80, the write pump,
-// driver.md §5.1.1): the `jp` at the patched site, the exx pair and the cursor,
-// three BUSY polls, the {reg,val} pair, the counter, the `$2A` re-latch and the
-// jump back. An armed iteration gives that many cycles of its pad back, which is
-// the whole reason the pad exists — on a write-heavy frame the writes ARE the
-// pad. Priced here rather than in the engine so the pad and the thing the pad
-// pays for are derived in one place.
-export const PUMP_CYCLES = 236;
 export const paceTarget = (R) => Math.floor(FRAME_CYCLES / R);
 export const paceDebt = (R, segs) =>
   Math.min(255, Math.round((PACE_RESERVE + segs * PACE_SEG) / (16 * R)));
@@ -383,8 +401,6 @@ PCM_IDLE_SH equ ${IDLE_SHIFT}      ; PV_SHIFT meaning "no voice here at all"
 ${paced ? `PCM_PASSES  equ ${PACE_PASSES}      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ ${paceTarget(R)}     ; the period one paced iteration holds to
 PCM_SEG_MAX equ ${PACE_SEG_MAX}      ; debt_tab's last entry (segments per frame)
-PCM_PUMP_U  equ ${Math.round(PUMP_CYCLES / 16)}      ; pad units an iteration gives up to pump a
-                        ; chip write (${PUMP_CYCLES} cycles — engine.z80, §5.1.1)
 ` : ""}`);
 
   L.push("R_FIRST_BEG:");
@@ -717,14 +733,6 @@ msb_s:
         ld   l,a
         ld   (ms_go_s+1),hl
 ${paced ? `        call ms_set_pad
-        ; The write pump patches the head of the copy bound just above, so a
-        ; rebind has to move the patch with it (engine.z80, driver.md §5.1.1).
-        ; It reads G_PADN, so it follows ms_set_pad — and an empty queue means
-        ; nothing is patched (pump_one disarms as it empties), so the test here
-        ; is the whole idle cost of the pump at a pass boundary.
-        ld   a,(G_QN0)
-        or   a
-        call nz,pump_sync
 ` : ""}        pop  bc
         pop  de
         pop  hl
@@ -738,10 +746,9 @@ ${paced ? `        call ms_set_pad
 ; hold to. Floored at 1 — the pad loop counts DOWN from G_PAD, so zero would be
 ; 256 — which is also what a frame with no slack left to give does.
 ;
-; It is kept as G_PADN as well as in G_PAD, because the write pump swaps G_PAD
-; for a shorter figure while it is armed (§5.1.1) and has to be able to put this
-; one back. G_PADN is set even for a copy that carries no pad code at all, so it
-; is never stale when the pump reads it.
+; Kept as G_PADN as well as in G_PAD so a caller that wants the unmodified
+; figure has it; G_PADN is set even for a copy that carries no pad code at all,
+; so it is never stale.
 ms_set_pad:
         call pcm_debt           ; re-estimated per segment: a frame that turns
                                 ; out heavier than its predecessor tightens from
@@ -768,7 +775,7 @@ msp_min:
         ld   a,1
 msp_store:
         ld   (G_PADN),a
-        ld   (G_PAD),a          ; …and pump_arm overrides this if it arms
+        ld   (G_PAD),a
         ret
 
 ; Pad each copy would need to hit ${paceTarget(R)} cycles with the frame to itself, by

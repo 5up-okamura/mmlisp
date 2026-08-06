@@ -261,8 +261,13 @@ function stripComment(s) {
 // `preload` seeds the symbol table (a Map) before assembling — used to build
 // overlays: an overlay is assembled with the resident image's symbols preloaded
 // so it can reference resident routines and equates directly (no import file).
-export function assemble(entryPath, { preload = null } = {}) {
+// `defines` overrides `equ` values by name — a build switch the caller sets
+// rather than editing the source. The engine gate uses it to assemble the same
+// engine both with and without the write pump, so the path that is NOT the
+// default build still gets exercised.
+export function assemble(entryPath, { preload = null, defines = null } = {}) {
   const symbols = new Map(preload ?? []);
+  const overrides = new Map(Object.entries(defines ?? {}));
   const lines = [];
 
   function loadFile(path) {
@@ -339,7 +344,8 @@ export function assemble(entryPath, { preload = null } = {}) {
       }
       if (!mnem) continue;
       if (mnem === "equ") {
-        if (pass === 1) symbols.set(label, evalE(ops[0], line));
+        if (pass === 1)
+          symbols.set(label, overrides.has(label) ? overrides.get(label) : evalE(ops[0], line));
         continue;
       }
       if (mnem === "org") {

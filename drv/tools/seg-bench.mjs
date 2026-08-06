@@ -36,7 +36,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? Number(argv[i + 1]) : d; };
-const FRAMES = opt("frames", 240);
+// 240 frames is FOUR SECONDS. That is a fine sample of a gate score, which is
+// short and deterministic by construction, and it is no sample at all of a real
+// song: the frames that matter are the loop point, the section change, the
+// dense bar — and a song has none of those in its first four seconds. A `.mmb`
+// is a real song, so it gets a minute of it unless told otherwise.
+const DEFAULT_FRAMES = (list) => (list.some((f) => f.endsWith(".mmb")) ? 4000 : 240);
 const TOP = opt("top", 18);
 // Z80 cycles the 68000 steals each frame by holding the Z80 bus. MMLisp_frame
 // takes it three times — to read `tail`, to copy the slot, to write `head` —
@@ -58,6 +63,7 @@ if (!scores.length) {
   scores = ["tests/m3-pcm-softmix.mmlisp", "tests/m2-pcmloop.mmlisp", "tests/m3-pcm-slice.mmlisp"]
     .map((p) => join(drv, p));
 }
+const FRAMES = opt("frames", DEFAULT_FRAMES(scores));
 
 const FRAME_CYCLES = 59659;
 

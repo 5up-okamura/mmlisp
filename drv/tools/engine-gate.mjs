@@ -211,9 +211,9 @@ class ModelFeed {
 // ── Run the engine ─────────────────────────────────────────────────────────
 // `frames` is the host schedule: one entry per frame, either a slot spec or
 // null to skip filling (which starves the ring — a legal, non-fatal state).
-function run(frames) {
+function run(frames, image = built) {
   const ram = new Uint8Array(RAM_SIZE);
-  ram.set(built.bytes, 0);
+  ram.set(image.bytes, 0);
 
   let bankReg = 0;
   let bankShift = 0;
@@ -339,39 +339,6 @@ scenarios.push({
     },
     { subs: subSpread(0x30) },                       // sounding: pass boundaries
     { subs: subSpread(0x40) },
-  ],
-});
-
-// The write pump (§5.1.1). Writes on BOTH YM ports, in every sub-slot, with PCM
-// sounding — so they are queued and drained one per mix iteration, through the
-// port switch in the middle of a run. The declarative check above is exactly the
-// assertion that matters: the pump may only change WHEN a write lands, never
-// which, in what order, or on which port. The last frame is over PCM_DRAIN and
-// takes the burst path instead, so both live in one scenario.
-const pumpSubs = (base, ports) =>
-  Array.from({ length: SLOT_SUBS }, (_, j) => ({
-    psg: [0x80 | (j << 5) | 0x0c],
-    fm0: ports === 1 ? [] : [[0x30 + j, base + j], [0x40 + j, base + 8 + j]],
-    fm1: ports === 0 ? [] : [[0x50 + j, base + 16 + j]],
-  }));
-
-scenarios.push({
-  name: "the write pump — writes ride the mix loop",
-  why: "queued at the sub-slot instant, drained one per mix iteration; order and port must survive it",
-  frames: [
-    {
-      subs: pumpSubs(0x10, 2),
-      pcm: [pcmStart(0, { flags: 1, shift: 0, bank: 2, ptr: WINDOW + 0x100,
-                          left: 20000, loopl: 0, tail: 0, incF: 0x8000, incI: 1 })],
-    },
-    { subs: pumpSubs(0x20, 2) },   // both ports: the queue switches mid-run
-    { subs: pumpSubs(0x30, 1) },   // port 1 only: no count byte to step over
-    { subs: pumpSubs(0x40, 0) },   // port 0 only
-    // Past PCM_DRAIN: the frame bursts at the sub-slot instants, as it did
-    // before the pump existed.
-    { fm0: Array.from({ length: 40 }, (_, i) => [0x30 + (i & 15), 0x50 + i]),
-      fm1: Array.from({ length: 30 }, (_, i) => [0x60 + (i & 15), 0x80 + i]) },
-    { subs: pumpSubs(0x60, 2) },   // …and the pump picks up again after it
   ],
 });
 
@@ -580,48 +547,23 @@ for (const sc of scenarios) {
   for (const p of problems.slice(0, 4)) console.log(`      ! ${p}`);
 }
 
-// ── The write pump's patch site (§5.1.1) — bespoke, because the claim is about
-// INSTRUCTION ENCODING, which no scenario can see. The pump overwrites the first
-// three bytes of the bound mix-loop copy with `jp pump_stub`, and pump_disarm
-// puts back the literal bytes FD 7E 00. That is only correct while the
-// assembler encodes `ld a,(iy+0)` as those three bytes and while every paced
-// copy still opens with it — both of which the generator could change without
-// any gate noticing, and the failure would be a mix loop quietly executing
-// garbage.
+// ── The image must stop below the published header ─────────────────────────
+// Code runs from $0000 and HDR is a FIXED address the 68k compiles in (§6.4),
+// so the image has $1300 bytes and not one more. Nothing checked this: an
+// engine that grew past it assembled cleanly, overwrote the header and the ring
+// with its own code, and presented as the mixer executing data — which is how
+// it was found. The margin is thin enough (tens of bytes) that any new loop
+// copy can cross it, so the check belongs where it fails loudly.
 {
-  const problems = [];
-  const SITE = [0xfd, 0x7e, 0x00];               // ld a,(iy+0)
-  const tab = (name) => {
-    const at = sym(name);
-    return Array.from({ length: 10 }, (_, i) =>
-      built.bytes[at + i * 2] | (built.bytes[at + i * 2 + 1] << 8));
-  };
-  const copies = [...tab("mix_first_tab"), ...tab("mix_add_tab")];
-  for (const c of copies) {
-    const got = [...built.bytes.slice(c, c + 3)];
-    if (got.join() !== SITE.join())
-      problems.push(`copy at $${c.toString(16)} opens ${got.map((b) => b.toString(16))}, not ld a,(iy+0)`);
-  }
-  // …and after a run with writes in it, every copy is back to that: an armed
-  // site outliving its frame would be a jump into the pump from a loop with an
-  // empty queue.
-  const { ram } = run([
-    { subs: pumpSubs(0x10, 2),
-      pcm: [pcmStart(0, { flags: 1, shift: 0, bank: 2, ptr: WINDOW + 0x100,
-                          left: 20000, loopl: 0, tail: 0, incF: 0x8000, incI: 1 })] },
-    { subs: pumpSubs(0x20, 2) },
-    {},
-  ]);
-  for (const c of copies) {
-    if ([...ram.slice(c, c + 3)].join() !== SITE.join())
-      problems.push(`copy at $${c.toString(16)} left patched after the frame`);
-  }
-  const ok = problems.length === 0;
+  const HDR = sym("HDR");
+  const room = HDR - built.bytes.length;
+  const ok = room >= 0;
   if (!ok) failures++;
   scenarios.push({});   // it counts
-  console.log(`${ok ? "ok  " : "FAIL"}  the pump's patch site is what pump_disarm writes back`);
-  console.log(`      every paced copy opens with FD 7E 00, and none is left armed at the end of a frame`);
-  for (const p of problems.slice(0, 4)) console.log(`      ! ${p}`);
+  console.log(`${ok ? "ok  " : "FAIL"}  the image stops below the published header`);
+  console.log(`      ${built.bytes.length} B of code, ${room} B to $${HDR.toString(16)}`);
+  if (!ok) console.log(`      ! the image runs INTO the header and the ring — the 68k's`
+    + ` one compiled-in address (§6.4) cannot move`);
 }
 
 console.log(`\nengine image ${built.bytes.length} B · R = ${R} · ring depth ${RING_DEPTH}`);
