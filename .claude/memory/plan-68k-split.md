@@ -1139,3 +1139,58 @@ survives, separate triplets (37%) from 16ths (3%) in a VGM log.
 8-bit DAC, nearest-neighbour only (interpolation needs a multiply per sample),
 DAC jitter from the 68k's per-frame bus grab (~tens of µs, ~0.2%; **measure on
 hardware**).
+
+## 2026-08-06 (late) — segment plan shipped; the wobble is the CHIP WRITES
+
+Committed this session, in order: the ROM-window stall charge (815b7fb,
+hardware-confirmed), missed-vblank catch-up (549a909), the segment plan
+(1801317). Also proposed and NOT taken: moving PCM mixing to the 68k — the
+68000 is the game's CPU and spending 15-25% of it on the mixer is the wrong
+currency, and it would leave the Z80 idle. Direction agreed instead was
+1 variable + 2 fixed (pitch AND volume baked) PCM voices, still unbuilt.
+
+### The segment plan (§6.3.1) — built, gated, and it did not move the wobble
+
+The sequencer ships each voice's break list (loop wrap / sample end) in the
+slot; the engine follows it. Free on the 68k (its position advance already
+finds the breaks) and it deletes `mvf_exact`'s tick-by-tick tail walk, the
+worst per-segment spike. Fallback to the old avail/shift bound survives for a
+starved frame (no slot) and for a run longer than `MML_PCM_PLAN_MAX` = 16.
+**Measured on the reporter's song: segment-count spread 3..6 -> 3..4, cycles
+neutral, DAC hold unchanged.** Keep it — it removes a real variance source that
+a pitched-up looping score DOES pay — but it was not this song's problem.
+
+### What the wobble actually is, measured
+
+`dac-gate` now reports feed HOLDS (the largest silence between consecutive
+`$2A` writes), which the per-frame WANDER metric could not see. On the song:
+**in-frame p50 10.7 sample periods, frame boundary p50 15.3.** Both are
+`cs_runs` — the slot's chip writes, at ~90 cycles each with the YM busy poll.
+The pad quantum (16 cyc/sample = 2.8k/frame = 8.2 periods) is the other term
+and is smaller. Constants sweep confirms it: the hold only moves in ~5-8 period
+steps, and no (PACE_SEG, PACE_RESERVE) pair reaches below ~15 without putting
+most frames over budget.
+
+### The next piece of work: the WRITE PUMP
+
+**The cheap version does not exist.** "Emit `$2A` during the consume" fails on
+arithmetic, not cycles: the mixer emits exactly one sample per unrolled
+iteration over R ticks x 3 passes, i.e. exactly R samples. A sample emitted
+outside that loop is one too many — IY runs off the plane and `flush_rest`
+computes a negative tail.
+
+So invert it: **do not feed inside the consume, consume inside the FEED.** Each
+mix iteration already pads ~16-80 cycles to hold the tick period, and a YM
+write costs ~90. Let the mix loop take one pending chip write per iteration
+instead of padding; `cs_runs` shrinks to queueing. The writes then land at the
+instants the pad occupies today, the DAC never stops, and on write-heavy frames
+the writes ARE the pad.
+
+Design points to settle before building it:
+- a write may not cross its sub-tick boundary (§3.5), so the pump needs the
+  sub-slot marks, not just a flat queue;
+- per-write cost is not constant (PSG is a bare byte, YM pays two busy polls);
+- a patch-dump frame has more writes than iterations, so a burst path stays;
+- the baked pads become (period - tick - write) for pumping copies, which means
+  either a second set of generated loop copies or a runtime branch in the hot
+  loop — and avoiding exactly that branch is why shift specialisation exists.
