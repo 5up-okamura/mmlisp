@@ -401,9 +401,31 @@ away), 2–56 frames over budget out of ~300, **feed spans ~90% of the frame**
 
 Known limits, all measured and none new to pacing:
 
-- **Three loud voices do not fit** and never did: 3 x (61 + 8·shift) cycles a
-  tick plus the feed exceeds the frame at shift ≥ 2. The pad is already zero
-  there, so pacing neither helps nor hurts — the frame just runs long.
+- **TWO loud voices do not fit — not three. Measured 2026-08-06**, and this is
+  the sharpest number in this file, so do not restate it from the old estimate:
+
+  | PCM voices sounding | frames | over budget |
+  | --- | --- | --- |
+  | 1 | 228 | **0** |
+  | 2 | 6 | **6** |
+  | 3 | 6 | **6** |
+
+  (`m3-pcm-softmix`, 240 frames, `probe`/`seg-bench`.) The correlation is
+  total: every frame with a second voice sounding overruns, every single-voice
+  frame fits. Attribution on those frames: **+11,198 cycles** against a
+  one-voice frame, nearly all of it in the per-tick mix bodies of the added
+  voice (`mix_add_s1_lp` +4,414, the unrolled bodies +2,500..2,900 each), while
+  the pad had already collapsed by **−14,154** giving back everything it had.
+  Pacing neither helps nor hurts here; the frame is simply 19% too long.
+
+  Pre-existing, NOT a sub-tick regression: the same 6/6 and 6/6 at 7f5f102. What
+  did change is the single-voice case, 12 over-budget frames -> 0.
+
+  **This is what a periodic tempo wobble on hardware sounds like**, because
+  overlapping drum hits are exactly how a score gets two voices at once. Closing
+  an 11.2k gap needs more than (b) (2,659): the levers are the score's PCM
+  overlap, `PCM_MIX_R`, or a cheaper mixer variant (§5.3.1) — all of which have
+  to be measured before being claimed.
 - The first frames of a score run 120–145% (patch dump + a cold estimator). One
   off, at the start, before anything is audible.
 - The pad quantum is 16 cycles a sample = 2.8k cycles a frame = 4.7%, so the
@@ -751,7 +773,151 @@ renders ~20% into the frame and fails on any starvation: at depth 2 it reports
 **Reproducing a hardware fault in a gate before fixing it is the only reason the
 fix is trustworthy** — the two previous attempts at this were guesses.
 
-#### The A/B that attributes it, if hardware still drags#### The A/B that attributes it, if hardware still drags
+#### 2026-08-06 — the ~2.2% steady loss: ROM-window fetch stall. CONFIRMED on
+#### hardware (PCM-muted A/B), fix BUILT and gated; one flash still owed
+
+**State: the decisive experiment ran and localised the cost to the mixer's
+sample fetches. The fix — the stall charged to the frame debt via
+`pace_win_tab` — is implemented, reproduced-then-cleared in a gate, and passes
+`verify:all`. It is DELIBERATELY UNCOMMITTED: nothing gets committed until the
+rebuilt `mmlispdrv.bin` is flashed and `lost/s` actually drops — see "what to
+run on hardware" at the end. If it does drop, commit the working tree as one
+fix; if it does not, the model is wrong for this song and the working tree is
+the record of what was tried.**
+
+Hardware (`verify-hello-world`, the reporter's song, 1 PCM voice):
+
+| | value | reading |
+| --- | --- | --- |
+| `music x256` | 0x00F8 | 96.9% of correct speed, cumulative |
+| `1s` / `lost/s` | 0x00F3 / 3 | **2-3 frames lost every second, steadily** |
+| `worst 1s` | 0x00DD | 86.3% — no second is much worse than the rest |
+| `starv` | 34 of ~3973 | 0.9%, and `host` reads 0x00FD (98.8%) — these match |
+| interrupts not taken | ~89 | **2.2%: the Z80's frame ran over budget** |
+
+**The loss is STEADY, not event-driven.** That is the one thing the counters
+have settled, and it kills the whole family of "a loop point / a note-on / a
+particular bar" hypotheses: those would swing `lost/s` between 0 and 10 and put
+`worst 1s` far lower. A flat 2-3 per second means a per-frame cost that is
+always slightly over the line.
+
+The same song in emulation: **mean 90% of budget, 5 over-budget frames in 2400**
+(3 of them the score head). `seg-bench --stall N` charges N cycles a frame for
+work the harness does not model and finds the cliff:
+
+    stall 0 -> 0.2%   2000 -> 0.5%   2400 -> 3%   2700 -> 10%   4000 -> 74%
+
+So the missing cost is **~2,400-2,600 Z80 cycles per frame**, and it is
+something no gate here models. Candidates, none verified: the 68000 holding the
+Z80 bus (three grabs per `MMLisp_frame`), Z80 wait states on YM writes, and
+contention between the Z80's $8000 ROM window (175 sample reads a frame) and the
+68000's own bus traffic.
+
+**Three hypotheses tried and disproved — do not re-run these:**
+
+1. *"Two or more PCM voices do not fit."* True (measured, see above), but the
+   reporter's song plays ONE voice. Measured on the wrong score.
+2. *"The segment bound is too coarse, so note-on frames run long."* `MVF_TAIL`
+   swept 16/24/32/48: raising it does cut segments (9-seg frames 6 -> 0) but
+   `mve_lp`'s walk costs more than the segments it saves — over-budget went
+   12 -> 26 -> 102. **16 is already optimal; leave it.**
+3. *"Too many Z80 bus grabs per frame."* Staged the slot copy so `MMLisp_frame`
+   took the bus twice instead of three-to-four times. **Hardware: `music` 249 ->
+   248. No measurable effect.** Reverted; the handshake count is not the cost.
+
+**RUN, and it localised the cost.** Same song with `MMLISP_PCM_SAMPLES 0`
+(PCM muted, FM/PSG only):
+
+| | with PCM | PCM muted |
+| --- | --- | --- |
+| `music x256` | 0x00F8 (96.9%) | **0x00FF (99.6%)** |
+| `lost/s` | 3 | **1** |
+| `worst 1s` | 0x00DD (86.3%) | **0x00FB (98.0%)** |
+| `starv` | 34 / ~3973 | 6 / ~1818 (matches `host` 99.6%) |
+
+**Z80-side loss goes to zero when nothing fetches a sample.** The cost is in the
+mixer path, and the only per-tick bus traffic there is `ld a,(de)` with DE in
+the $8000 window — a 68000-bus access, arbitrated and wait-stated, that the
+generator's COST table prices at the Z80's own 7 cycles. `body()` emits that
+fetch only for shifts 0-7; MUTE and IDLE do not fetch, which is exactly the
+shape of the experiment's result. 175 fetches a frame against a ~2,500 cycle
+deficit implies **~14 cycles of un-modelled cost per fetch**.
+
+**4. Hypothesis four, also disproved: charging that penalty in `padFor`.**
+Added `PACE_WINDOW = 14`, subtracted per fetch from the fetching loops' pads.
+Hardware: no change. **The reason is visible in the pad table and is worth
+keeping** —
+
+    first s0:2 s1:1 s2:0 s3:0 s4:0 s5:0 s6:0 s7:0 mute:6 idle:14
+    add   s0:0 s1:0 s2:0 s3:0 s4:0 s5:0 s6:0 s7:0 mute:8 idle:16
+
+**the fetching loops have no pad to take away.** At shift >= 2 it is already 0,
+and every `add`-role loop is 0 at every shift. All of the frame's ~23,000 cycles
+of pad live in the MUTE and IDLE passes — the ones that do NOT fetch. So a
+per-fetch charge applied through `padFor` is a near no-op; it only moved
+`first` at shifts 0 and 1.
+
+**Where it belongs instead**: `pcm_debt`, which is the frame-level charge and is
+what sizes the idle passes' pads. The count is available exactly where the debt
+is computed — `G_ACTM` holds the sounding-voice mask at frame head, and each
+sounding voice fetches `PCM_MIX_R` times:
+
+    debt += (popcount(G_ACTM) * PCM_MIX_R * PACE_WINDOW) / (16 * PCM_MIX_R)
+          =  popcount(G_ACTM) * PACE_WINDOW / 16          ~= 1 pad unit per voice
+
+That was the untried fix. **BUILT 2026-08-06 (later the same day), and it is
+exactly that**: `pace_win_tab[sounding passes]` (generated next to `debt_tab`,
+`= round(i * PACE_WINDOW / 16)` = 0,1,2,3) added inside `pcm_debt`;
+`G_ACTM`/`G_NIDLE` computed BEFORE the first debt call so the charge is exact
+from the frame head. The `padFor` subtraction is reverted — one mechanism, and
+the one that reaches the pads that exist. MUTE/IDLE charge nothing, so a
+PCM-muted song is untouched, which is what the decisive experiment demands.
+
+**Reproduced in a gate before trusting it** (the RING_DEPTH lesson):
+`seg-bench --stall-read 14` charges every $8000-window read on the instruction
+that made it. Over-budget frames, 240 each, softmix / pcmloop / slice:
+
+| | softmix | pcmloop | slice |
+| --- | --- | --- | --- |
+| no charge + stall-read 14 (= hardware today) | 70 (58 on 1v) | 25 (all 1v) | 86 (81 on 1v) |
+| charge + stall-read 14 (= fixed hardware) | 12 (**0** on 1v) | 2 | 8 (3 on 1v) |
+| charge, no stall (= plain emulation) | 11 | 2 | 6 |
+| old baseline (no charge, no stall) | 12 | 2 | 6 |
+
+The reproduction has the hardware's exact shape — a steady loss concentrated
+on one-voice frames — and the charge removes it under the same model. What
+stays over budget is the known 2–3-voice limit and score heads.
+
+**The price, and its shape is forced**: the stall lands on the SOUNDING third
+of the feed while the give-back can only come from the silent passes, which
+run last (that ordering is what makes the segment count a measurement). One
+debt unit across two silent passes returns 16 x 2R/3 = ~1,870 cyc, so the feed
+error swings +800/−1,870 ≈ **+0.5 ms of wander on every PCM score** — measured,
+matching that arithmetic. `dac-gate` now models the same per-read stall (spans
+read 87–88%, closer to hardware) and `MAX_WANDER` is repriced 0.25 -> 0.31 with
+this derivation in the file. Cutting the mixer's real per-segment cost — the
+deferred (b) rewrite — is still what tightens wander; the bar move only prices
+a cost that was always there and newly visible.
+
+`mmlispdrv.bin` rebuilt: **4,164 B, 1,724 B free below the mix plane.**
+
+**What to run on hardware, in order:**
+
+1. **The fix**: copy `sgdk/mmlispdrv.bin` + `sgdk/mmlispdrv_bin.h` into the
+   project, rebuild, same song with PCM on. Expect `lost/s` 3 -> ~0-1 and
+   `music` 0x0F8 -> ~0x100 (the PCM-muted run's residual `lost/s` 1 / `starv`
+   0.9% is host-side and this does not touch it).
+2. **If `lost/s` is still up**: sweep `PACE_WINDOW` in gen-mixer.mjs upward —
+   the debt quantum is 16 cycles/sample, so meaningful steps are ~16: try 22,
+   then 30 (`npm run emit-bin`, re-copy). `npm run dac` guards the far side.
+   The knob only moves PCM-voiced frames; it cannot mask a slot-path cost.
+
+**A real instrument, still unbuilt**: the YM2612's Timer B is unused (CSM takes
+Timer A), so the engine could time its own frame on hardware and publish the
+max. Four hypotheses have now been argued from emulated cycle counts against a
+machine whose bus they do not model; that number would end the argument.
+
+#### The A/B that attributes it, if hardware still drags
 
 Set `SLOT_SUBS` to 1 in all three ports and rebuild:
 

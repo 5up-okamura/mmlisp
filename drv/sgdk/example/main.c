@@ -94,9 +94,17 @@ int main(bool hardReset)
     // dry, flat = the Z80 is not taking every interrupt (its frame is over
     // budget). `audible` is the raw consumed-frame count behind `music`.
     VDP_drawText("music x256:", 2, 7);
-    VDP_drawText("host x256:", 18, 7);
-    VDP_drawText("starv:", 2, 8);
-    VDP_drawText("audible:", 2, 9);
+    VDP_drawText("host x256:", 19, 7);
+    // Cumulative tells you THAT frames are being lost; it cannot tell you WHEN,
+    // and "when" is the whole diagnosis. A steady 0x0F8 every second means a
+    // per-frame cost sitting just over the line; 0x100 most seconds with
+    // occasional dips means specific events (a loop point, a note-on) and the
+    // fix is somewhere else entirely. `lost/s` is the same thing as a raw count.
+    VDP_drawText("1s:", 2, 8);
+    VDP_drawText("worst 1s:", 12, 8);
+    VDP_drawText("lost/s:", 26, 8);
+    VDP_drawText("starv:", 2, 9);
+    VDP_drawText("audible:", 14, 9);
     VDP_drawText("track active:", 2, 11);
 
     u16 prev = 0;
@@ -107,6 +115,9 @@ int main(bool hardReset)
     u16  loops       = 0;
     u32  baseTimer   = vtimer;
     u16  baseAudible = 0;
+    u32  markTimer   = vtimer;   // start of the current one-second window
+    u16  markAudible = 0;
+    u16  worst1s     = 0x100;
     MMLispStats st = { 0, 0 };
 
     while (TRUE)
@@ -126,6 +137,9 @@ int main(bool hardReset)
             MMLisp_readStats(&st);
             baseTimer   = vtimer;
             baseAudible = st.audible;
+            markTimer   = vtimer;
+            markAudible = st.audible;
+            worst1s     = 0x100;
             loops       = 0;
             // Every track in one frame. Each track's clock starts on the frame
             // it was set up in, so spreading the starts would leave them
@@ -144,18 +158,27 @@ int main(bool hardReset)
             VDP_drawText("STOP", 2, 17);
         }
 
-        // One bus grab every 32 frames, and the numbers only move then. A
-        // tempo problem is a moving number so it does have to be shown live —
-        // but sampling it per frame is what makes it move (see above).
-        if ((loops & 31) == 0)
+        // One bus grab per WINDOW, not per frame: the Z80 stops while the
+        // 68000 holds its bus, so a per-frame readout costs the engine the very
+        // frames it then reports. One second is two orders below that.
+        if ((u16)(vtimer - markTimer) >= 60)
         {
             MMLisp_readStats(&st);
-            const u32 elapsed = vtimer - baseTimer;      // real frames, always
+            const u32 win  = vtimer - markTimer;             // real frames
+            const u16 got  = (u16)(st.audible - markAudible); // consumed in them
+            const u16 now  = (u16)(((u32)got << 8) / win);
+            if (now < worst1s) worst1s = now;
+            const u32 elapsed = vtimer - baseTimer;
             const u16 music   = (u16)(st.audible - baseAudible);
             drawHex(elapsed ? ((u32)music << 8) / elapsed : 0, 4, 14, 7);
-            drawHex(elapsed ? ((u32)loops << 8) / elapsed : 0, 4, 29, 7);
-            drawHex(st.starved, 4, 9, 8);
-            drawHex(st.audible, 4, 11, 9);
+            drawHex(elapsed ? ((u32)loops << 8) / elapsed : 0, 4, 30, 7);
+            drawHex(now, 4, 6, 8);
+            drawHex(worst1s, 4, 22, 8);
+            drawHex(win > got ? win - got : 0, 4, 34, 8);
+            drawHex(st.starved, 4, 9, 9);
+            drawHex(st.audible, 4, 23, 9);
+            markTimer   = vtimer;
+            markAudible = st.audible;
         }
 
         if (pressed & BUTTON_C)

@@ -57,7 +57,20 @@ const MIN_SPAN = 0.70;
 // ~14k cycles a frame go on mixer segment set-up, outside the paced loop, and
 // the feed has to run that much faster in between to end the frame on time
 // (driver.md §5.1). Cutting THAT is what tightens this number — not retuning it.
-const MAX_WANDER = 0.25;
+//
+// 0.05 of it is the ROM-window stall, priced in when the harness started
+// charging it — and its shape is forced, not tunable: the stall lands on the
+// SOUNDING third of the feed (+PACE_WINDOW a sample, R/3 x 14 = ~800 cycles of
+// drift by the pass boundary), while the debt can only give it back from the
+// SILENT passes, which run last (their pads are the frame's one reservoir, and
+// running them last is what makes the segment count a measurement — engine.z80
+// pp_feed). One debt unit across two silent passes returns 16 x 2R/3 = ~1,870
+// cycles, so the error swings +800 then -1,870: ~0.045 of the frame, measured
+// as +0.5 ms on every PCM score the day the charge landed. The alternative is
+// not charging at all, which reads 0.05 better here and loses 2-3 whole frames
+// a second on hardware. Same rule as above: cutting the mixer's real cost is
+// what tightens this — not retuning it.
+const MAX_WANDER = 0.31;
 // Share of feeding frames that must meet both.
 const MIN_OK = 0.95;
 
@@ -70,7 +83,7 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer } = await import("./gen-mixer.mjs");
+  const { writeMixer, PACE_WINDOW } = await import("./gen-mixer.mjs");
   writeMixer();
   const built = assemble(join(drv, "src", "engine.z80"));
   const sym = (n) => built.symbols.get(n);
@@ -93,13 +106,18 @@ try {
     const RAM = 0x2000, RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
     const ram = new Uint8Array(RAM); ram.set(built.bytes, 0);
     const smp = sampleBank;
-    let bankReg = 0, cyc = 0, stamps = [];
+    // The harness charges PACE_WINDOW cycles on every read through the $8000
+    // window, because that is what a sample fetch costs on hardware over the
+    // 68000's bus and what the engine's pace_win_tab budgets the pad for
+    // (gen-mixer.mjs). Without the charge this gate times an emulator-shaped
+    // frame the pad is deliberately NOT tuned to, and fails the real thing.
+    let bankReg = 0, cyc = 0, stamps = [], winReads = 0;
     const addr = [0, 0];
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < RAM) return ram[a];
         if (a === 0x4000) return 0;
-        if (a >= 0x8000) return smp[bankReg * 0x8000 + (a - 0x8000)] ?? 0;
+        if (a >= 0x8000) { winReads++; return smp[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
         if (a < RAM) { ram[a] = d; return; }
@@ -125,7 +143,7 @@ try {
       cpu.intRequest();
       let g = 0;
       while (cpu.halted && g++ < 1000) cyc += cpu.step();
-      while (!cpu.halted && g++ < 3_000_000) cyc += cpu.step();
+      while (!cpu.halted && g++ < 3_000_000) { winReads = 0; cyc += cpu.step() + winReads * PACE_WINDOW; }
       if (stamps.length < R) continue;          // no full feed this frame
       spans.push((stamps[stamps.length - 1] - stamps[0]) / FRAME_CYCLES);
       // WANDER: how far a sample lands from where it belongs, as a share of the

@@ -86,6 +86,31 @@ export const PACE_RESERVE = 7200;   // frame-level: consume, pass set-up, flush,
                                     // frame just UNDER its budget rather than
                                     // just over — late is worse than short
 export const PACE_SEG = 2400;       // per segment: mix_seg in and out, boundary math
+// Extra cycles a sample fetch costs BEYOND the Z80's own timing, because it is
+// not a Z80 memory read: `ld a,(de)` with DE in the $8000 window goes out over
+// the 68000's bus, arbitrated and wait-stated. The COST table below prices that
+// instruction at 7 because that is what it costs the CPU; on hardware it is
+// several times that, and the pad — which is sized by SUBTRACTING the modelled
+// tick cost from the period — therefore comes out too big and the frame runs
+// long. Every frame. Only the fetching loops pay it: shifts 0-7 read a sample,
+// MUTE and IDLE do not, which is exactly why a song played with PCM muted loses
+// no frames while the same song with PCM loses two or three a second.
+//
+// The charge goes to the FRAME DEBT (`pace_win_tab`, added into `pcm_debt` per
+// sounding pass), NOT into the baked pads: a sounding pass's baked pad is 0-5
+// units and the runtime debt clamps it to the floor anyway, so cycles taken
+// off it never come back out — measured as a ~0-900 cyc/frame effect against
+// the ~2,450 owed. The pad that can actually give the stall back lives in the
+// SILENT passes (8-16 units an iteration), and the debt is the only thing that
+// reaches them. `seg-bench --stall-read N` models the same cost per window
+// read, so the charge is verifiable in emulation before hardware sees it.
+//
+// **This is the one constant to tune from hardware.** Raise it until `lost/s`
+// in the example's readout reaches 0, lower it if the DAC feed stops spanning
+// the frame (`npm run dac`). 14 is what the reporter's song implies: ~2,500
+// cycles a frame short over 175 fetches. Note the debt quantum: one pad unit
+// is 16 cycles on every sample, so the charge moves in steps of 16/R of this.
+export const PACE_WINDOW = 14;
 export const PACE_SEG_MAX = 31;     // segments the debt table goes up to
 export const paceTarget = (R) => Math.floor(FRAME_CYCLES / R);
 export const paceDebt = (R, segs) =>
@@ -265,6 +290,9 @@ const feedCost = (pad) => 49 + (pad > 0 ? 16 * pad + 8 : 0);
 // back, so the copy is generated without a pad at all and simply runs long.
 function padFor(variant, role, shift, U, R) {
   // One iteration carries exactly one sample, so its period IS the tick period.
+  // The window penalty (PACE_WINDOW) does NOT ride here — subtracting it from
+  // a baked pad the debt clamps to the floor gives nothing back; it is charged
+  // to the frame debt instead (pace_win_tab), where the silent passes pay it.
   const n = Math.floor((paceTarget(R)
     - U * tickCost(variant, role, shift) - feedCost(0) - 14 - 8) / 16);
   return n < 1 ? 0 : Math.min(n, 255);
@@ -506,6 +534,10 @@ ${paced ? `        ld   h,0                ; the cadence is 3, so the divide is 
         ; iterations = ticks / MIX_UNROLL (MIX_UNROLL is a power of two)
 ${unroll === 1 ? "" : `${[...Array(Math.log2(unroll) | 0)].map(() => "        srl  a").join("\n")}\n`}        ld   (G_SEG_N),a`}
         ; --- load the register file ---
+        ; Its own label so the profiler can price it: this block and ms_done's
+        ; store are the whole of what carrying the register file across a
+        ; voice's consecutive segments could remove.
+ms_load:
         ld   l,(ix+PV_FRAC)
         ld   h,(ix+PV_FRAC+1)
         ld   e,(ix+PV_INCF)
@@ -652,6 +684,18 @@ debt_tab:`);
     const debt = [...Array(PACE_SEG_MAX + 1)].map((_, n) => paceDebt(R, n));
     for (let i = 0; i <= PACE_SEG_MAX; i += 16)
       L.push(`        db   ${debt.slice(i, i + 16).join(",")}`);
+    // Each sounding pass reads R sample bytes through the $8000 window, and on
+    // hardware every one of those reads stalls the Z80 for ~PACE_WINDOW cycles
+    // of 68000-bus arbitration the COST table cannot see. In debt units that is
+    // i·R·PACE_WINDOW / (16·R) = i·PACE_WINDOW/16 for i sounding passes.
+    const win = [...Array(PACE_PASSES + 1)]
+      .map((_, i) => Math.min(255, Math.round((i * PACE_WINDOW) / 16)));
+    L.push(`
+; pace_win_tab[sounding passes] = the ROM-window fetch stall (PACE_WINDOW = ${PACE_WINDOW}
+; cycles per sample read, hardware-only — see gen-mixer.mjs), in pad units.
+; MUTE and IDLE passes fetch nothing and pay nothing.
+pace_win_tab:
+        db   ${win.join(",")}`);
   }
 
   // The cadence is 3, which is the one divisor the Z80 cannot shift. A segment

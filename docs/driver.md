@@ -550,6 +550,21 @@ Three things follow from pacing, and they shape the engine:
   this one; one segment of error is ~4% of a frame, at frame rate, which is what
   the DAC wander was. Nothing crosses a frame boundary now.
 
+  **The debt also charges what only hardware pays: the ROM-window fetch stall**
+  (`PACE_WINDOW`, gen-mixer.mjs; `pace_win_tab`, added per *sounding* pass —
+  MUTE and IDLE fetch nothing). A sample fetch is not a Z80 memory read: the
+  `$8000` window goes out over the 68000's bus, and each read waits
+  ~`PACE_WINDOW` cycles on its arbiter — ~2,450 cycles a frame per sounding
+  voice that no emulator-priced pad knew about, which on hardware was a steady
+  2–3 lost frames every second on a *one-voice* song. The charge cannot land on
+  the sounding pass itself (its pad is clamped to the floor), so the silent
+  passes pay it and the feed's error swings by ~0.05 of a frame — priced into
+  the dac-gate bar, and the gates model the same stall per window read
+  (`dac-gate`, `seg-bench --stall-read`), so the charge and the cost are
+  verified against each other in emulation. `PACE_WINDOW` is the one constant
+  to tune on hardware: raise it while `lost/s` in the example's readout is
+  non-zero on a one-voice score, lower it if `npm run dac` loses its span.
+
 What it does not fix: those ~13k cycles are real and are not spent feeding, so
 between segments the feed still pauses and in between it runs ~20% fast to make
 up for it. Measured wander is ~3.4 ms against the burst's 14.7 ms. **Cutting the

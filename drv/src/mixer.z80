@@ -1786,6 +1786,10 @@ mix_seg:
         sub  l
         ld   (G_SEG_R),a        ; remainder ticks (0..2)
         ; --- load the register file ---
+        ; Its own label so the profiler can price it: this block and ms_done's
+        ; store are the whole of what carrying the register file across a
+        ; voice's consecutive segments could remove.
+ms_load:
         ld   l,(ix+PV_FRAC)
         ld   h,(ix+PV_FRAC+1)
         ld   e,(ix+PV_INCF)
@@ -1928,6 +1932,12 @@ pad_add_tab:
 debt_tab:
         db   3,3,4,5,6,7,8,9,9,10,11,12,13,14,15,15
         db   16,17,18,19,20,21,21,22,23,24,25,26,27,27,28,29
+
+; pace_win_tab[sounding passes] = the ROM-window fetch stall (PACE_WINDOW = 14
+; cycles per sample read, hardware-only — see gen-mixer.mjs), in pad units.
+; MUTE and IDLE passes fetch nothing and pay nothing.
+pace_win_tab:
+        db   0,1,2,3
 
 ; div_tab[n] = n / 3, for n = 0..PCM_MIX_R
 div_tab:

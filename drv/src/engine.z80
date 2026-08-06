@@ -642,12 +642,12 @@ PACE_IDLE_M equ 10
 PACE_IDLE_N equ 152
 pace_sub:
         ld   d,PACE_IDLE_M
-ps_out:
+pq_out:
         ld   b,PACE_IDLE_N
-ps_in:
-        djnz ps_in
+pq_in:
+        djnz pq_in
         dec  d
-        jr   nz,ps_out
+        jr   nz,pq_out
         ret
 
 pp_run:
@@ -680,16 +680,11 @@ pp_feed:
         xor  a
         ld   (G_NSEG),a
         ld   (G_NSEGF),a        ; not known yet — pcm_debt uses the running count
-        call pcm_debt           ; -> G_DEBT, the pad units this frame owes
-
-        ld   a,$2a
-        ld   (YM_ADDR0),a       ; latched once a frame; the feed writes blind
-        call feed_plane
-        push hl
-        pop  iy                 ; IY = the feed cursor, for the whole frame
 
         ; Which voices are sounding, taken now: a voice can end DURING its pass,
-        ; and the count of passes is what the feed's cadence rests on.
+        ; and the count of passes is what the feed's cadence rests on. Taken
+        ; BEFORE the first pcm_debt call, because the debt charges each sounding
+        ; pass for its ROM-window fetch stall (pace_win_tab).
         ld   a,(G_PCMV+0*PCM_V_SIZE+PV_FLAGS)
         and  1
         ld   c,a
@@ -718,6 +713,14 @@ pp_ni_next:
         djnz pp_nidle
         ld   a,c
         ld   (G_NIDLE),a
+
+        call pcm_debt           ; -> G_DEBT, the pad units this frame owes
+
+        ld   a,$2a
+        ld   (YM_ADDR0),a       ; latched once a frame; the feed writes blind
+        call feed_plane
+        push hl
+        pop  iy                 ; IY = the feed cursor, for the whole frame
 
         xor  a
         ld   (G_STORE),a        ; the first pass stores, which removes the clear
@@ -843,6 +846,23 @@ pd_cap:
         ld   b,a
         srl  b                  ; writes / 128
         add  a,b                ; ~ writes / 43
+        add  a,c
+        ; …and the ROM-window fetch stall: every sample read of a SOUNDING pass
+        ; crosses the 68000's bus and waits on its arbiter, ~PACE_WINDOW cycles
+        ; the emulator never sees (gen-mixer.mjs). Hardware-only, charged per
+        ; sounding pass — MUTE and IDLE fetch nothing.
+        ld   c,a
+        ld   a,(G_NIDLE)
+        ld   b,a
+        ld   a,PCM_VOICES
+        sub  b                  ; A = sounding passes this frame
+        ld   hl,pace_win_tab
+        add  a,l
+        ld   l,a
+        ld   a,0
+        adc  a,h
+        ld   h,a
+        ld   a,(hl)
         add  a,c
         ld   (G_DEBT),a
         pop  bc

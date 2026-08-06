@@ -1,7 +1,12 @@
 // Where a frame's cycles actually go — a symbol-bucketed profile of the REAL
 // engine running a REAL score.
 //
-//   node tools/seg-bench.mjs [score.mmlisp …] [--frames N] [--top N]
+//   node tools/seg-bench.mjs [score.mmlisp | song.mmb …] [--frames N] [--top N]
+//                            [--stall N] [--stall-read N]
+//
+// A .mmb is taken as-is with its sample bank read from `<name>.smp` beside it —
+// which is what an SGDK project's res/ actually holds, so a song can be profiled
+// without its source.
 //
 // `mixer-bench.mjs` prices one mix TICK and says so: the segment split "is not
 // modelled". But a segment measured ~2,400 cycles and a frame runs five to ten
@@ -19,7 +24,7 @@
 // Not a gate: nothing here can fail. `npm run dac` is the gate that watches the
 // number this tool exists to move.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +38,21 @@ const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? Number(argv[i + 1]) : d; };
 const FRAMES = opt("frames", 240);
 const TOP = opt("top", 18);
+// Z80 cycles the 68000 steals each frame by holding the Z80 bus. MMLisp_frame
+// takes it three times — to read `tail`, to copy the slot, to write `head` —
+// and the Z80 executes NOTHING while it is held. Every harness in this repo
+// writes the slot into Z80 RAM as a free array assignment, so this cost is
+// absent from all of them; it is real on hardware and it comes straight off the
+// frame's margin. Sweep it to see how much headroom a song actually has.
+const STALL = opt("stall", 0);
+// Z80 cycles EACH READ through the $8000 ROM window costs beyond the CPU's own
+// 7, waiting for the 68000's bus arbiter. This is the mixer-path hypothesis for
+// the steady hardware frame loss, made runnable: `--stall-read 14` charges what
+// the hardware numbers imply (~2,450 cyc per sounding voice per frame), lands
+// it on the exact instructions that pay it, and lets the engine's pace_win_tab
+// charge be tested against it — over-budget frames must return to the
+// stall-free counts when the two agree.
+const STALL_READ = opt("stall-read", 0);
 let scores = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWith("--"));
 if (!scores.length) {
   scores = ["tests/m3-pcm-softmix.mmlisp", "tests/m2-pcmloop.mmlisp", "tests/m3-pcm-slice.mmlisp"]
@@ -52,7 +72,13 @@ const GROUPS = [
   ["segment set-up", /^(mix_seg|ms_|mvf_|mve_|voice_ptr)/],
   ["pad accounting", /^(pd_|pcm_debt)/],
   ["slot consume", /^(cs|csc)/],
-  ["PCM commands", /^(pc_|ps_)/],
+  ["PCM commands", /^pc_/],
+  // The frame has no PCM at all, so the mixer is never entered and the two
+  // remaining sub-slots have no voice-pass boundaries to ride (driver.md §3.5).
+  // pace_sub burns the frame by hand to place them. Deliberate idle, like the
+  // pad — and it is NOT a PCM command, which is what it read as while these
+  // labels were called ps_*.
+  ["paced idle (no PCM)", /^(pace_sub|pq_)/],
 ];
 const groupOf = (n) => GROUPS.findIndex(([, re]) => re.test(n));
 
@@ -86,7 +112,20 @@ try {
 
   for (const score of scores) {
     const name = basename(score);
-    const { bytes: mmb, sampleBank } = buildMmb(score);
+    // A .mmb is already compiled; its blobs live in the sibling .smp (mmb.md
+    // §10 — the sample bank is a separate ROM bank, not an MMB section).
+    let mmb, sampleBank;
+    if (score.endsWith(".mmb")) {
+      mmb = readFileSync(score);
+      const smp = score.replace(/\.mmb$/, ".smp");
+      if (!existsSync(smp)) {
+        console.log(`skip  ${name} — no ${basename(smp)} beside it; a PCM song needs its sample bank`);
+        continue;
+      }
+      sampleBank = readFileSync(smp);
+    } else {
+      ({ bytes: mmb, sampleBank } = buildMmb(score));
+    }
     if (!sampleBank?.length) { console.log(`skip  ${name} — no sample bank`); continue; }
     const mmbPath = join(tmp, "s.mmb"), smpPath = join(tmp, "s.smp");
     writeFileSync(mmbPath, mmb); writeFileSync(smpPath, sampleBank);
@@ -98,13 +137,13 @@ try {
 
     const RAM = 0x2000, RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
     const ram = new Uint8Array(RAM); ram.set(built.bytes, 0);
-    let bankReg = 0;
+    let bankReg = 0, winReads = 0;
     const addr = [0, 0];
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < RAM) return ram[a];
         if (a === 0x4000) return 0;
-        if (a >= 0x8000) return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0;
+        if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
         if (a < RAM) { ram[a] = d; return; }
@@ -125,6 +164,7 @@ try {
     // PACE_SEG look 2x too steep when it was not. G_NSEG is what `pcm_debt`
     // itself reads, so it is the only count that can be compared to PACE_SEG.
     const G_NSEG = sym("G_NSEG");
+    const G_ACTM = sym("G_ACTM");   // which PCM voices were sounding at frame start
     const obs = [];   // per frame: [segments, total cycles] — the regression below
     let frames = 0, total = 0, worst = 0;
     let posted = 0;
@@ -141,14 +181,19 @@ try {
       while (cpu.halted && g++ < 1000) cyc += cpu.step();
       while (!cpu.halted && g++ < 3_000_000) {
         const b = owner[cpu.pc];
-        const c = cpu.step();
+        winReads = 0;
+        let c = cpu.step();
+        c += winReads * STALL_READ;   // the stall lands on the instruction that fetched
         if (b !== 0xffff) {
           cost[b] += c;
           if (b !== prev) { hits[b]++; prev = b; }
         }
         cyc += c;
       }
-      frames++; total += cyc; obs.push([ram[G_NSEG], cyc]);
+      const m = ram[G_ACTM];
+      const nv = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+      cyc += STALL;   // the bus the 68000 holds; see STALL above
+      frames++; total += cyc; obs.push([ram[G_NSEG], cyc, nv, f]);
       if (cyc > worst) worst = cyc;
     }
     if (!frames) { console.log(`skip  ${name} — no frames ran`); continue; }
@@ -164,11 +209,33 @@ try {
     // about one scanline, so the interrupt is missed outright and the score
     // loses a whole frame (driver.md §1.1). This count is the tempo wobble.
     const over = obs.filter((o) => o[1] > FRAME_CYCLES).length;
+    const slotBytes = slots.reduce((t, x) => t + x.length, 0) / slots.length;
+    const slotMax = Math.max(...slots.map((x) => x.length));
     console.log(`\n${name} — ${frames} frames, mean ${(total / frames).toFixed(0)} cyc ` +
       `(${(100 * total / frames / FRAME_CYCLES).toFixed(0)}% of budget), worst ${worst} ` +
       `(${(100 * worst / FRAME_CYCLES).toFixed(0)}%)`);
     console.log(`  OVER BUDGET: ${over}/${frames} frames (${(100 * over / frames).toFixed(0)}%) ` +
-      `— each one is a missed interrupt and a lost frame of music`);
+      `— each one is a missed interrupt and a lost frame of music` +
+      (STALL ? `  [with a ${STALL}-cycle bus stall charged per frame]` : "") +
+      (STALL_READ ? `  [with ${STALL_READ} cycles charged per $8000-window read]` : ""));
+    console.log(`  slot: ${slotBytes.toFixed(0)} B mean, ${slotMax} B worst ` +
+      `— what the 68000 copies across the bus each frame, with the Z80 stopped`);
+    // WHICH frames, and with how many PCM voices sounding. Both times this tool
+    // was pointed at a tempo complaint, the answer was in this correlation and
+    // not in the averages below: a frame's cost is dominated by how many voices
+    // it mixes, and the over-budget ones cluster on note-ons and score heads.
+    if (over) {
+      const byV = {};
+      for (const [, c, nv] of obs) {
+        (byV[nv] ??= [0, 0])[0]++;
+        if (c > FRAME_CYCLES) byV[nv][1]++;
+      }
+      console.log(`    by PCM voices sounding: ` +
+        Object.entries(byV).map(([v, [n, o]]) => `${v}v ${o}/${n}`).join("   "));
+      const list = obs.filter((o) => o[1] > FRAME_CYCLES).slice(0, 10)
+        .map(([sg, c, nv, f]) => `f${f} ${(100 * c / FRAME_CYCLES).toFixed(0)}% ${nv}v ${sg}seg`);
+      console.log(`    ${list.join("  ")}${over > 10 ? "  …" : ""}`);
+    }
     for (let g = 0; g <= GROUPS.length; g++) {
       if (!gcost[g]) continue;
       const label = g < GROUPS.length ? GROUPS[g][0] : "other";
