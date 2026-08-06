@@ -776,14 +776,18 @@ fix is trustworthy** — the two previous attempts at this were guesses.
 #### 2026-08-06 — the ~2.2% steady loss: ROM-window fetch stall. CONFIRMED on
 #### hardware (PCM-muted A/B), fix BUILT and gated; one flash still owed
 
-**State: the decisive experiment ran and localised the cost to the mixer's
-sample fetches. The fix — the stall charged to the frame debt via
-`pace_win_tab` — is implemented, reproduced-then-cleared in a gate, and passes
-`verify:all`. It is DELIBERATELY UNCOMMITTED: nothing gets committed until the
-rebuilt `mmlispdrv.bin` is flashed and `lost/s` actually drops — see "what to
-run on hardware" at the end. If it does drop, commit the working tree as one
-fix; if it does not, the model is wrong for this song and the working tree is
-the record of what was tried.**
+**State: VERIFIED ON HARDWARE 2026-08-06 and committed (815b7fb). The steady
+loss is gone — "much better", no more flat 2-3/s. What remains, reported the
+same day: (1) event spikes of `lost` 4 at specific spots — the expected
+residual, i.e. multi-voice overlap / PCM note-on / score-head frames, all
+measured limits; (2) pitched PCM still audibly wobbles — the per-segment feed
+pauses plus the fix's own +0.5 ms give-back shape, see "levers" below.
+CORRECTION same day: the reporter's song never sounds 2 PCM voices, so for THAT
+song the spike candidates are note-on frames, segment-storm frames (the 1v
+overruns in the corpus are 8+seg frames sitting at 100-116%), score head — or
+starvation, which `lost/s` also counts; the `starv` line at the same moment is
+what distinguishes them. Spikes and wobble likely co-locate: both scale with
+R x inc / loop_len on the pitched loop, and the (b) rewrite attacks both.**
 
 Hardware (`verify-hello-world`, the reporter's song, 1 PCM voice):
 
@@ -901,16 +905,40 @@ a cost that was always there and newly visible.
 
 `mmlispdrv.bin` rebuilt: **4,164 B, 1,724 B free below the mix plane.**
 
-**What to run on hardware, in order:**
+**Hardware ran it 2026-08-06: steady loss GONE.** Residual: `lost` 4 at
+specific spots, and the pitched-PCM wobble persists. Both were predicted by
+existing measurements; neither is the stall coming back.
 
-1. **The fix**: copy `sgdk/mmlispdrv.bin` + `sgdk/mmlispdrv_bin.h` into the
-   project, rebuild, same song with PCM on. Expect `lost/s` 3 -> ~0-1 and
-   `music` 0x0F8 -> ~0x100 (the PCM-muted run's residual `lost/s` 1 / `starv`
-   0.9% is host-side and this does not touch it).
-2. **If `lost/s` is still up**: sweep `PACE_WINDOW` in gen-mixer.mjs upward —
-   the debt quantum is 16 cycles/sample, so meaningful steps are ~16: try 22,
-   then 30 (`npm run emit-bin`, re-copy). `npm run dac` guards the far side.
-   The knob only moves PCM-voiced frames; it cannot mask a slot-path cost.
+#### The levers that remain, with their measured sizes (discussion state)
+
+- **Event spikes (`lost` 4 at spots).** The measured causes, in likely order:
+  frames with 2+ PCM voices sounding (EVERY such frame overruns, +11.2k cyc
+  net of a fully-collapsed pad), PCM note-on frames (`ps_in` ~1,960 cyc,
+  140-150% frames), score head (patch dump, 120-145%). Attribution needs no
+  new tool: `node tools/seg-bench.mjs path/to/song.mmb --stall-read 14` reads
+  the SGDK project's own res/ files and lists the over-budget frames with
+  voice count and segment count.
+- **The wobble on pitched PCM.** Two known components: (a) the feed pauses
+  ~2.4k cyc at every segment and a pitched-up loop multiplies segments
+  (`R x inc / loop_len`); (b) the stall fix's give-back rides the silent
+  passes, so the feed has a 60 Hz sawtooth component (+800/−1,870 cyc). The
+  measured next lever is the deferred **(b) register-file carry** (~2,659
+  cyc/frame: `ms_load` 1,981 + `ms_done` 678) — it directly shrinks the pauses
+  of (a). A second, unpriced idea for (b-the-sawtooth): let a debt-clamped pad
+  bind the UNPADDED loop copy instead of flooring at 1 — that hands the
+  sounding pass 16 cyc/sample right where the stall costs 14, cancelling in
+  place; costs code size (1,724 B free) and needs the bind path to know.
+- **3 simultaneous voices: NOT at R = 175, measured** (the 2-voice table
+  above). P0's 10.9 kHz ceiling was mixing-only — no segments, no feed, no
+  bus stall — and reality is well under it. The levers, each a design trade:
+  `PCM_MIX_R` down (~8-9 kHz territory; costs fidelity on ALL PCM, re-freezes
+  every gate baseline), compile-time pre-resampling (saves ~37 cyc/voice/tick
+  ≈ 19k at 3v — the single biggest lever, but decision 5 traded it away for
+  per-note pitch and dynamic loop points; a per-sample opt-in flag would be a
+  middle path and new design), and the (b) rewrite (~2.7k, helps but small).
+  An emulation sweep with `--stall-read 14` over candidate R values is the
+  cheap way to put numbers on this BEFORE any design discussion — nothing has
+  to touch hardware to scope it.
 
 **A real instrument, still unbuilt**: the YM2612's Timer B is unused (CSM takes
 Timer A), so the engine could time its own frame on hardware and publish the
