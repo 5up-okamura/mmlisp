@@ -342,6 +342,39 @@ scenarios.push({
   ],
 });
 
+// The write pump (§5.1.1). Writes on BOTH YM ports, in every sub-slot, with PCM
+// sounding — so they are queued and drained one per mix iteration, through the
+// port switch in the middle of a run. The declarative check above is exactly the
+// assertion that matters: the pump may only change WHEN a write lands, never
+// which, in what order, or on which port. The last frame is over PCM_DRAIN and
+// takes the burst path instead, so both live in one scenario.
+const pumpSubs = (base, ports) =>
+  Array.from({ length: SLOT_SUBS }, (_, j) => ({
+    psg: [0x80 | (j << 5) | 0x0c],
+    fm0: ports === 1 ? [] : [[0x30 + j, base + j], [0x40 + j, base + 8 + j]],
+    fm1: ports === 0 ? [] : [[0x50 + j, base + 16 + j]],
+  }));
+
+scenarios.push({
+  name: "the write pump — writes ride the mix loop",
+  why: "queued at the sub-slot instant, drained one per mix iteration; order and port must survive it",
+  frames: [
+    {
+      subs: pumpSubs(0x10, 2),
+      pcm: [pcmStart(0, { flags: 1, shift: 0, bank: 2, ptr: WINDOW + 0x100,
+                          left: 20000, loopl: 0, tail: 0, incF: 0x8000, incI: 1 })],
+    },
+    { subs: pumpSubs(0x20, 2) },   // both ports: the queue switches mid-run
+    { subs: pumpSubs(0x30, 1) },   // port 1 only: no count byte to step over
+    { subs: pumpSubs(0x40, 0) },   // port 0 only
+    // Past PCM_DRAIN: the frame bursts at the sub-slot instants, as it did
+    // before the pump existed.
+    { fm0: Array.from({ length: 40 }, (_, i) => [0x30 + (i & 15), 0x50 + i]),
+      fm1: Array.from({ length: 30 }, (_, i) => [0x60 + (i & 15), 0x80 + i]) },
+    { subs: pumpSubs(0x60, 2) },   // …and the pump picks up again after it
+  ],
+});
+
 scenarios.push({
   name: "ring starvation",
   why: "an empty ring holds the chips and keeps mixing — it is a game overrun, not an error",
@@ -544,6 +577,50 @@ for (const sc of scenarios) {
   scenarios.push({});   // it counts
   console.log(`${ok ? "ok  " : "FAIL"}  missed vblank is caught up, not lost`);
   console.log(`      the 68k's H_VBL stamp is ahead of the answered count, so the engine consumes the owed slot late`);
+  for (const p of problems.slice(0, 4)) console.log(`      ! ${p}`);
+}
+
+// ── The write pump's patch site (§5.1.1) — bespoke, because the claim is about
+// INSTRUCTION ENCODING, which no scenario can see. The pump overwrites the first
+// three bytes of the bound mix-loop copy with `jp pump_stub`, and pump_disarm
+// puts back the literal bytes FD 7E 00. That is only correct while the
+// assembler encodes `ld a,(iy+0)` as those three bytes and while every paced
+// copy still opens with it — both of which the generator could change without
+// any gate noticing, and the failure would be a mix loop quietly executing
+// garbage.
+{
+  const problems = [];
+  const SITE = [0xfd, 0x7e, 0x00];               // ld a,(iy+0)
+  const tab = (name) => {
+    const at = sym(name);
+    return Array.from({ length: 10 }, (_, i) =>
+      built.bytes[at + i * 2] | (built.bytes[at + i * 2 + 1] << 8));
+  };
+  const copies = [...tab("mix_first_tab"), ...tab("mix_add_tab")];
+  for (const c of copies) {
+    const got = [...built.bytes.slice(c, c + 3)];
+    if (got.join() !== SITE.join())
+      problems.push(`copy at $${c.toString(16)} opens ${got.map((b) => b.toString(16))}, not ld a,(iy+0)`);
+  }
+  // …and after a run with writes in it, every copy is back to that: an armed
+  // site outliving its frame would be a jump into the pump from a loop with an
+  // empty queue.
+  const { ram } = run([
+    { subs: pumpSubs(0x10, 2),
+      pcm: [pcmStart(0, { flags: 1, shift: 0, bank: 2, ptr: WINDOW + 0x100,
+                          left: 20000, loopl: 0, tail: 0, incF: 0x8000, incI: 1 })] },
+    { subs: pumpSubs(0x20, 2) },
+    {},
+  ]);
+  for (const c of copies) {
+    if ([...ram.slice(c, c + 3)].join() !== SITE.join())
+      problems.push(`copy at $${c.toString(16)} left patched after the frame`);
+  }
+  const ok = problems.length === 0;
+  if (!ok) failures++;
+  scenarios.push({});   // it counts
+  console.log(`${ok ? "ok  " : "FAIL"}  the pump's patch site is what pump_disarm writes back`);
+  console.log(`      every paced copy opens with FD 7E 00, and none is left armed at the end of a frame`);
   for (const p of problems.slice(0, 4)) console.log(`      ! ${p}`);
 }
 

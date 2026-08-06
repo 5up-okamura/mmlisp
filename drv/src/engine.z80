@@ -158,6 +158,32 @@ G_PLANC     equ $19aa           ; u16 cursor into it
 G_PLANR     equ $19ac           ; u8  ticks to the next break; 0 = derive it
 G_NEARH     equ $19ad           ; u8  ptr high byte at which a window top is near
 
+; ── The write pump (driver.md §5.1.1) ──────────────────────────────────────
+; The queue is the slot itself: the two YM runs are walked in place, so the only
+; state is how many pairs are left and where the cursor is (that one lives in
+; the pump's own `ld bc,nn`, self-modified — see pm_cur).
+G_PUMP      equ $19b0
+G_QN0       equ G_PUMP+$00      ; u8  pairs left on the port being drained
+G_QN1       equ G_PUMP+$01      ; u8  …and on port 1, once that one is spent
+G_PMSITE    equ G_PUMP+$02      ; u16 the loop copy whose head is patched, 0=none
+G_PADN      equ G_PUMP+$04      ; u8  the pad a plain iteration holds to
+G_PUMPOK    equ G_PUMP+$05      ; u8  1 = the pump runs this frame, so queue
+
+; A pass has PCM_MIX_R / PCM_PASSES = 58 unrolled iterations, so one write an
+; iteration drains at most that many in the pass a sub-slot is read at the head
+; of — a little fewer once a segmented pass has spent some of its ticks on the
+; unpaced single-tick copies, hence 56.
+;
+; A frame carrying MORE writes than this does not use the pump at all: it bursts
+; them where it always did. Such a frame — a score head's patch dump, a dense
+; voice change — is over its cycle budget whichever way the writes go out, and
+; threading them through the mix then buys nothing while making the feed's own
+; rate visibly uneven (it is what dac-gate's WANDER measures, and a burst that
+; lands before the frame's first sample is invisible to it). The frame's write
+; count leads the slot (§6.2) precisely so this costs one byte, read before
+; anything is committed.
+PCM_DRAIN   equ 56
+
 ; ── Published header (driver.md §6.4) ──────────────────────────────────────
 ; The only Z80 addresses the 68000 needs to know, and the only ones that must
 ; stay stable across builds.
@@ -328,7 +354,11 @@ frame_step:
         call consume_slot       ; 1-2: sub-slot 0's writes, and the PCM commands
         call process_pcm        ; 3:   mix and feed the DAC, sub-slots 1..K-1
         call consume_rest       ;      anything the passes could not reach
-        ; 4: publish the consumed-frame counter. A STARVED frame consumed no
+        ld   a,(G_QN0)          ;      …and any queued write they could not drain
+        or   a
+        call nz,pump_flush
+        call slot_release       ; 4:   the slot is the 68k's again
+        ; 5: publish the consumed-frame counter. A STARVED frame consumed no
         ; slot and the music did not advance on it, so it must not tick this —
         ; §6.4 calls it the audible clock and `(trig N)` fires against it.
         ; Counting interrupts here instead made the host's own speed readout
@@ -380,7 +410,15 @@ consume_rest:
 ; hold where they are and the mixer keeps running (no PCM gap).
 ; ===========================================================================
 consume_slot:
+        ; Last frame's slot is the 68k's again, so nothing may still point into
+        ; it. frame_step drains and disarms the pump before releasing, so this is
+        ; belt and braces — but a loop copy left patched would be a very quiet
+        ; kind of wrong.
+        call pump_disarm
         xor  a
+        ld   (G_QN0),a
+        ld   (G_QN1),a
+        ld   (G_PUMPOK),a
         ld   (G_STARVED),a
         ld   (G_NWR),a          ; the PCM feed pays for this loop out of its pad
         ; No slot means no plan. Zeroing the runs here is what makes a STARVED
@@ -446,20 +484,52 @@ cs_plan:
         ld   l,a
         djnz cs_plan
 
+        ; Can the write pump run this frame (§5.1.1)? Two conditions, both
+        ; settled here, before a single run has been read.
+        ;
+        ; The mixer has to run, because its iterations are what drains the
+        ; queue. The PCM commands have been read by now, so this is the same
+        ; question process_pcm asks a moment later, and it gets the same answer.
+        call pcm_any_active
+        or   a
+        jr   nz,cs_pnwr
+        ld   a,(G_PEND)
+        or   a
+        jr   z,cs_subs
+cs_pnwr:
+        ; …and the frame's writes have to fit in what a pass can drain
+        ; (PCM_DRAIN). Past that, they burst.
+        ld   a,(G_NWR)
+        cp   PCM_DRAIN+1
+        jr   nc,cs_subs
+        ld   a,1
+        ld   (G_PUMPOK),a
+
 cs_subs:
         call cs_runs            ; sub-slot 0, at the frame head as always
         ld   (G_SLOT),hl        ; where sub-slot 1 begins
         ld   a,1
         ld   (G_SUB),a
-        cp   SLOT_SUBS
-        ret  c                  ; sub-slots still owed: the slot stays ours
-cs_tail:
+        ret
+
+; ---------------------------------------------------------------------------
+; slot_release: hand the slot back. It is held for the WHOLE frame, not until
+; its last sub-slot is read: sub-slots 1..K-1 go out at the voice-pass
+; boundaries (§3.5) and the write pump then walks that sub-slot's YM runs IN
+; PLACE, one write per mix iteration, well past the point where they were read.
+; Releasing on the last read — which is what the engine did before the pump —
+; would let the 68k refill a slot the pump is still reading from.
+; ---------------------------------------------------------------------------
+slot_release:
+        ld   a,(G_STARVED)
+        or   a
+        ret  nz                 ; nothing was taken this frame
         ld   a,(H_TAIL)
         inc  a
         cp   RING_DEPTH
-        jr   c,cs_store
+        jr   c,sr_store
         xor  a
-cs_store:
+sr_store:
         ld   (H_TAIL),a
         ret
 
@@ -472,6 +542,14 @@ consume_sub:
         ld   a,(G_SUB)
         cp   SLOT_SUBS
         ret  nc
+        ; A write may not cross its own sub-tick boundary (§3.5), so whatever
+        ; the pump still holds from the LAST sub-slot goes out before this one's
+        ; is queued. Normally the queue is empty and this is three instructions,
+        ; which matters: this runs inside the pass-boundary gap.
+        ld   a,(G_QN0)
+        or   a
+        call nz,pump_flush
+        ld   a,(G_SUB)
         inc  a
         ld   (G_SUB),a
         ld   hl,(G_SLOT)
@@ -481,13 +559,11 @@ consume_sub:
         ; a frame and never again. A sub-slot carrying any YM port-0 write moves
         ; that latch, so put it back before the next mix tick, or the rest of
         ; the frame's samples land in whatever register the slot touched last.
+        ; (The pump does the same after every write it makes.)
         call ym_busy0
         ld   a,$2a
         ld   (YM_ADDR0),a
-        ld   a,(G_SUB)
-        cp   SLOT_SUBS
-        ret  c
-        jr   cs_tail            ; the last one is out: the slot is the 68k's again
+        ret
 
 ; ---------------------------------------------------------------------------
 ; cs_runs: put one sub-slot's three runs on the chips. HL = its first byte on
@@ -499,12 +575,23 @@ cs_runs:
         inc  hl
         ld   b,a
         or   a
-        jr   z,cr_fm0
+        jr   z,cr_fm
 cr_psg:
         ld   a,(hl)
         ld   (PSG_PORT),a
         inc  hl
         djnz cr_psg
+
+cr_fm:
+        ; ── YM runs: QUEUED, not written ──
+        ; The write pump (§5.1.1) hands one of these to each mix iteration, so
+        ; the DAC is never held through a burst. A PSG byte is 13 cycles and
+        ; holds nothing, which is why only the YM runs go this way. A frame the
+        ; mixer will not run has no iterations to give, so it writes them here,
+        ; the way every frame used to.
+        ld   a,(G_PUMPOK)
+        or   a
+        jp   nz,pump_queue
 
 cr_fm0:
         ld   a,(hl)
@@ -547,6 +634,258 @@ ym_busy0:
         ld   a,(YM_ADDR0)
         rla
         jr   c,ym_busy0
+        ret
+
+; ===========================================================================
+; The write pump (driver.md §5.1.1)
+;
+; A slot's YM writes used to go out in a BURST at their sub-tick instant, and
+; for as long as that burst ran the DAC held its last sample. Measured on a
+; real song: the largest in-frame silence between two $2A writes sat at ~10
+; sample periods and the frame boundary at ~15. That is the wobble, and the
+; pacing pad cannot absorb it — the pad is spread thinly over the whole frame
+; and the burst is not.
+;
+; The fix is not to feed inside the consume; it is to consume inside the FEED.
+; Every unrolled mix iteration already pads itself out to the frame's tick
+; period (§5.1) and a YM register write costs about half of one, so the pump
+; gives one queued write to each iteration. The writes land at the instants the
+; pad occupied, and on a write-heavy frame the writes ARE the pad.
+;
+; **It costs a loop with nothing to pump exactly nothing**, and that is the
+; design. There is no test in the hot path: while writes are queued, the bound
+; copy's own first instruction — `ld a,(iy+0)`, three bytes, the size of a `jp`
+; — is overwritten with a jump into pump_stub, and put back when the queue runs
+; out. ms_bind binds exactly one unrolled copy per pass, so exactly one site is
+; ever patched. That is also why the alternative (a second generated set of
+; pumping loop copies) was not taken: a queue empties mid-pass, and a bound copy
+; cannot be swapped without leaving the loop.
+;
+; The queue is the slot itself — the runs are walked in place, nothing is copied
+; — which is what moved the ring tail release to the end of the frame
+; (slot_release).
+; ===========================================================================
+
+; ---------------------------------------------------------------------------
+; pump_queue: hand this sub-slot's two YM runs to the pump. Tail-called from
+; cs_runs, so it returns the caller's cursor.
+;
+;   in   HL = the n_fm0 count byte
+;   out  HL = the byte after the fm1 run
+; ---------------------------------------------------------------------------
+; Most sub-slots of most frames carry no YM write at all, and this sits inside
+; the pass-boundary gap the DAC is already holding through — so the empty case
+; leaves in 84 cycles and never touches a pointer.
+pump_queue:
+        ld   a,(hl)             ; n_fm0
+        inc  hl
+        ld   (G_QN0),a
+        or   a
+        jr   nz,pq_run
+        ld   a,(hl)             ; none on port 0, so HL is already n_fm1
+        or   a
+        jr   nz,pq_run1
+        inc  hl                 ; nothing at all: HL is the caller's cursor
+        ret
+
+pq_run1:
+        ; Port 1 is all there is. Its pairs follow its count byte directly, so
+        ; there is no count byte in the middle for the pump to step over — which
+        ; is why this case cannot just fall into the one below.
+        inc  hl
+        ld   (G_QN0),a
+        ld   (pm_cur+1),hl
+        ld   e,a
+        ld   d,0
+        xor  a
+        ld   (G_QN1),a
+        add  hl,de
+        add  hl,de              ; -> the caller's cursor
+        ld   a,$02
+        jr   pq_ports
+
+pq_run:
+        ld   (pm_cur+1),hl      ; port 0's pairs — where the pump starts
+        ld   e,a
+        ld   d,0
+        add  hl,de
+        add  hl,de              ; step over them: two bytes a pair
+        ld   a,(hl)             ; n_fm1
+        inc  hl
+        ld   (G_QN1),a
+        ld   e,a
+        add  hl,de
+        add  hl,de              ; -> the caller's cursor
+        xor  a                  ; …and port 0 drains first
+pq_ports:
+        ld   (pm_a+1),a         ; the port is baked into the pump's two stores,
+        inc  a                  ; so its write path carries no port test at all
+        ld   (pm_d+1),a
+        ret
+
+; ---------------------------------------------------------------------------
+; pump_one: put ONE queued register write on the chip.
+;
+; Called from inside the mix loop (through pump_stub) and from pump_flush, so it
+; may not disturb the loop's register file: DE = sample pointer, HL = plane
+; cursor, C = increment, HL'/DE' = the fraction. Inside `exx` only BC is free —
+; and a cursor is all the pump needs, which is why the queue is a byte stream
+; walked with `ld a,(bc)`.
+;
+; A slot never crosses a page, so only the cursor's LOW byte is written back.
+; ---------------------------------------------------------------------------
+pump_one:
+        exx
+pm_cur: ld   bc,0               ; self-modified: the cursor into the slot
+pm_w1:  ld   a,(YM_ADDR0)       ; BUSY. Inlined — this is the hot path now, and
+        rla                     ; a call/ret here is 27 cycles off the DAC's pad
+        jr   c,pm_w1
+        ld   a,(bc)             ; the register
+        inc  bc
+pm_a:   ld   (YM_ADDR0),a       ; operand patched to this run's port
+pm_w2:  ld   a,(YM_ADDR0)
+        rla
+        jr   c,pm_w2
+        ld   a,(bc)             ; …and its value
+        inc  bc
+pm_d:   ld   (YM_DATA0),a
+        ld   a,(G_QN0)
+        dec  a
+        ld   (G_QN0),a
+        jr   z,pm_switch
+pm_save:
+        ld   a,c
+        ld   (pm_cur+1),a
+        exx
+        ret
+pm_switch:
+        ld   a,(G_QN1)
+        or   a
+        jr   z,pm_spent
+        ld   (G_QN0),a          ; port 0 is drained; port 1 follows it
+        xor  a
+        ld   (G_QN1),a
+        inc  bc                 ; …past the n_fm1 count byte between the runs
+        ld   a,$02
+        ld   (pm_a+1),a
+        inc  a
+        ld   (pm_d+1),a
+        jr   pm_save
+pm_spent:
+        ld   a,c
+        ld   (pm_cur+1),a
+        exx
+        push hl                 ; the loop owns both of these
+        push de
+        call pump_disarm
+        pop  de
+        pop  hl
+        ret
+
+; ---------------------------------------------------------------------------
+; pump_stub: where a patched loop copy jumps. It makes the write, puts the $2A
+; latch back — the copy's feed is about to write it blind — and then performs
+; the instruction the patch displaced.
+;
+; The order matters: the register write happens BEFORE this iteration's sample,
+; so the gap between it and the re-latch is one BUSY poll, while the gap between
+; the re-latch and the sample write is the same it has always been.
+; ---------------------------------------------------------------------------
+pump_stub:
+        call pump_one
+pm_latch:
+        ld   a,(YM_ADDR0)       ; the write above moved the latch off $2A
+        rla
+        jr   c,pm_latch
+        ld   a,$2a
+        ld   (YM_ADDR0),a
+        ld   a,(iy+0)           ; the three bytes the site is holding
+pm_ret: jp   0                  ; …and back into the copy, at its `xor $80`
+
+; ---------------------------------------------------------------------------
+; pump_sync: ms_bind chose a different copy — move the patch with it. It runs at
+; every pass boundary, which is already the frame's longest DAC hold, so it
+; falls through into pump_arm rather than calling it, and both halves leave
+; early when there is nothing to do.
+; ---------------------------------------------------------------------------
+pump_sync:
+        call pump_disarm
+        ; fall through
+
+; pump_arm: patch the head of the copy ms_bind just chose. Clobbers A, HL, DE —
+; every caller either owns them or has saved them.
+pump_arm:
+        ld   a,(G_QN0)
+        or   a
+        ret  z                  ; nothing queued: leave the loop alone
+        ld   hl,(ms_go_u+1)     ; the unrolled copy bound for this pass
+        ld   a,h
+        or   l
+        ret  z                  ; never bound (boot): there is no site yet
+        ld   (G_PMSITE),hl
+        inc  hl
+        inc  hl
+        inc  hl
+        ld   (pm_ret+1),hl      ; where the stub hands control back
+        ld   de,pump_stub
+        ld   hl,(G_PMSITE)
+        ld   (hl),$c3           ; jp nn
+        inc  hl
+        ld   (hl),e
+        inc  hl
+        ld   (hl),d
+        ; While armed, EVERY iteration pumps, so the pad it holds to is the
+        ; plain one less what the write costs. Derived here rather than in
+        ; ms_set_pad because arming is rare and binding is not.
+        ld   a,(G_PADN)
+        sub  PCM_PUMP_U
+        jr   nc,pa_pad
+        xor  a
+pa_pad:
+        or   a
+        jr   nz,pa_set
+        inc  a                  ; the pad loop counts DOWN: zero would be 256
+pa_set:
+        ld   (G_PAD),a
+        ret
+
+; pump_disarm: put `ld a,(iy+0)` back. Idempotent, and safe to call before
+; anything has ever been armed.
+pump_disarm:
+        ld   hl,(G_PMSITE)
+        ld   a,h
+        or   l
+        ret  z
+        ld   (hl),$fd           ; ld a,(iy+0) = FD 7E 00. engine-gate holds the
+        inc  hl                 ; assembler to that encoding.
+        ld   (hl),$7e
+        inc  hl
+        ld   (hl),0
+        ld   hl,0
+        ld   (G_PMSITE),hl
+        ld   a,(G_PADN)
+        ld   (G_PAD),a
+        ret
+
+; ---------------------------------------------------------------------------
+; pump_flush: put whatever is still queued on the chips the old way, in a burst.
+; Reached when the mix iterations could not drain it — a sub-slot with more
+; writes than the pass has iterations, or a frame the mixer never ran — and at
+; the end of every frame, because the slot is released there and the pump reads
+; it in place.
+; ---------------------------------------------------------------------------
+pump_flush:
+        ld   a,(G_QN0)
+        or   a
+        ret  z
+pf_loop:
+        call pump_one
+        ld   a,(G_QN0)
+        or   a
+        jr   nz,pf_loop
+        call ym_busy0
+        ld   a,$2a
+        ld   (YM_ADDR0),a       ; the feed writes it blind (§5.1)
         ret
 
 ; ===========================================================================

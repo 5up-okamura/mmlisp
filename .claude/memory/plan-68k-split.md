@@ -1194,3 +1194,26 @@ Design points to settle before building it:
 - the baked pads become (period - tick - write) for pumping copies, which means
   either a second set of generated loop copies or a runtime branch in the hot
   loop — and avoiding exactly that branch is why shift specialisation exists.
+
+## External data point 2026-08-06 — 吉村ことり's Mega Drive driver
+
+Reported by the user (Star Cruiser etc.; driver + editor in progress):
+**PCM 8 voices fixed-pitch <-> PCM 2 voices with pitch, SWITCHABLE**, plus FM 5
+and SSG 3. Not verified by us — no results seen, the source post is behind a
+login.
+
+Why it matters here: that switch is the same axis this project already agreed
+on (1 variable + 2 fixed, "the feature bill, not the architecture"). It is
+independent confirmation that fixed-vs-pitched is THE lever for PCM voice count
+on this machine, and the 8:2 ratio says the gap is far wider than our estimate
+(pitched ~88 vs fixed ~51 cyc/voice/tick, only 1.7x). If fixed-pitch really
+buys 4x, our "2 fixed voices" target is conservative and the fixed inner loop
+deserves its own cost design rather than being a resampler with the resampler
+removed.
+
+What it does NOT answer, and what to look for if his work becomes visible: any
+driver feeding a software-mixed DAC has to interleave the frame's chip writes
+without stopping the feed — our measured wobble (in-frame 10.7 sample periods,
+boundary 15.3). Voice count and feed uniformity are separate problems; his
+voice count says nothing about how he solved the second one, and that is the
+part worth learning.

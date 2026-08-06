@@ -112,6 +112,14 @@ export const PACE_SEG = 2400;       // per segment: mix_seg in and out, boundary
 // is 16 cycles on every sample, so the charge moves in steps of 16/R of this.
 export const PACE_WINDOW = 14;
 export const PACE_SEG_MAX = 31;     // segments the debt table goes up to
+// What one PUMPED iteration costs over a plain one (engine.z80, the write pump,
+// driver.md §5.1.1): the `jp` at the patched site, the exx pair and the cursor,
+// three BUSY polls, the {reg,val} pair, the counter, the `$2A` re-latch and the
+// jump back. An armed iteration gives that many cycles of its pad back, which is
+// the whole reason the pad exists — on a write-heavy frame the writes ARE the
+// pad. Priced here rather than in the engine so the pad and the thing the pad
+// pays for are derived in one place.
+export const PUMP_CYCLES = 236;
 export const paceTarget = (R) => Math.floor(FRAME_CYCLES / R);
 export const paceDebt = (R, segs) =>
   Math.min(255, Math.round((PACE_RESERVE + segs * PACE_SEG) / (16 * R)));
@@ -375,6 +383,8 @@ PCM_IDLE_SH equ ${IDLE_SHIFT}      ; PV_SHIFT meaning "no voice here at all"
 ${paced ? `PCM_PASSES  equ ${PACE_PASSES}      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ ${paceTarget(R)}     ; the period one paced iteration holds to
 PCM_SEG_MAX equ ${PACE_SEG_MAX}      ; debt_tab's last entry (segments per frame)
+PCM_PUMP_U  equ ${Math.round(PUMP_CYCLES / 16)}      ; pad units an iteration gives up to pump a
+                        ; chip write (${PUMP_CYCLES} cycles — engine.z80, §5.1.1)
 ` : ""}`);
 
   L.push("R_FIRST_BEG:");
@@ -707,6 +717,14 @@ msb_s:
         ld   l,a
         ld   (ms_go_s+1),hl
 ${paced ? `        call ms_set_pad
+        ; The write pump patches the head of the copy bound just above, so a
+        ; rebind has to move the patch with it (engine.z80, driver.md §5.1.1).
+        ; It reads G_PADN, so it follows ms_set_pad — and an empty queue means
+        ; nothing is patched (pump_one disarms as it empties), so the test here
+        ; is the whole idle cost of the pump at a pass boundary.
+        ld   a,(G_QN0)
+        or   a
+        call nz,pump_sync
 ` : ""}        pop  bc
         pop  de
         pop  hl
@@ -716,9 +734,14 @@ ${paced ? `        call ms_set_pad
   if (paced) {
     const IT = Math.floor(R / PACE_PASSES) + 1;   // iterations a segment can hold
     L.push(`
-; ms_set_pad: G_PAD = base(role, shift) − G_DEBT, the pad this segment's copies
+; ms_set_pad: G_PADN = base(role, shift) − G_DEBT, the pad this pass's copies
 ; hold to. Floored at 1 — the pad loop counts DOWN from G_PAD, so zero would be
 ; 256 — which is also what a frame with no slack left to give does.
+;
+; It is kept as G_PADN as well as in G_PAD, because the write pump swaps G_PAD
+; for a shorter figure while it is armed (§5.1.1) and has to be able to put this
+; one back. G_PADN is set even for a copy that carries no pad code at all, so it
+; is never stale when the pump reads it.
 ms_set_pad:
         call pcm_debt           ; re-estimated per segment: a frame that turns
                                 ; out heavier than its predecessor tightens from
@@ -734,7 +757,8 @@ msp_role:
         add  hl,de
         ld   a,(hl)
         or   a
-        ret  z                  ; this copy carries no pad — nothing to hold to
+        jr   z,msp_min          ; this copy carries no pad — nothing to hold to,
+                                ; but the values still have to be current
         ld   hl,G_DEBT
         sub  (hl)
         jr   c,msp_min
@@ -743,7 +767,8 @@ msp_role:
 msp_min:
         ld   a,1
 msp_store:
-        ld   (G_PAD),a
+        ld   (G_PADN),a
+        ld   (G_PAD),a          ; …and pump_arm overrides this if it arms
         ret
 
 ; Pad each copy would need to hit ${paceTarget(R)} cycles with the frame to itself, by
