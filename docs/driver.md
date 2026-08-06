@@ -565,10 +565,19 @@ Three things follow from pacing, and they shape the engine:
   to tune on hardware: raise it while `lost/s` in the example's readout is
   non-zero on a one-voice score, lower it if `npm run dac` loses its span.
 
-What it does not fix: those ~13k cycles are real and are not spent feeding, so
+What it does not fix: those cycles are real and are not spent feeding, so
 between segments the feed still pauses and in between it runs ~20% fast to make
 up for it. Measured wander is ~3.4 ms against the burst's 14.7 ms. **Cutting the
 per-segment cost is what tightens it further** — see §5.3.
+
+**The register file is live for the whole pass** (the "(b)" rewrite): a
+sounding pass loads DE = ptr, C = incInt, HL' = frac, DE' = incFrac once
+(`ms_pload`), every segment runs through `mix_seg_live` without touching the
+voice struct, and the position is stored back once at pass end (`ms_pstore`).
+The boundary math between segments — window-top bank step, loop wrap, the
+exact-tail walk — operates on the live registers, so `ms_load`/`ms_done`
+survive only on the idle path. Measured: ~1.4–1.8k cycles a frame returned to
+the pad, and one fewer over-budget frame class on segment-heavy scores.
 
 **YM BUSY policy.** Every latched YM register write polls the status byte
 (0x4000 bit 7) before the address and before the data byte. The **DAC data
@@ -962,12 +971,13 @@ builds. `drv/sgdk/mmlispdrv.c` carries the current values.
 | `tail` | Z80 | next slot to consume |
 | `frames_consumed` u16 | Z80 | **the audible clock.** The 68k runs ahead by the ring depth, so `(trig N)` must fire when the frame is *heard*, not when it was rendered — the host compares this counter against the frame it stamped the marker on (§6.5) |
 | `engine_ready` u8 | Z80 | 0x00 while booting |
-| `protocol_version` u8 | Z80 | = 5. The host refuses to run on a mismatch — it means this header's layout moved under it |
+| `protocol_version` u8 | Z80 | = 7. The host refuses to run on a mismatch — it means this header's layout moved under it |
 | `smp_bank` u16 | 68k | PCM sample ROM bank; 0 = none. Must be published *after* the image upload, which clears Z80 RAM |
 | `ring_depth` u8 | Z80 | slots in the ring |
 | `slot_shift` u8 | Z80 | log2 of the slot stride — a slot index is a shift |
 | `ring_base` u16 | Z80 | where the ring starts in Z80 RAM |
 | `starved_frames` u16 | Z80 | frames the engine held the chips because the ring was empty (§6.1) |
+| `vblank_stamp` u8 | 68k | the 68k's own vblank count, low byte — what missed-vblank catch-up compares against (§6.7) |
 
 `frames_consumed` counts **slots actually consumed**, not interrupts taken: a
 starved frame plays nothing, so it must not advance the audible clock. Getting
@@ -1108,6 +1118,43 @@ things are already bad. It is bounded by the ring depth, which is one more
 reason to keep the default shallow. **No `MMLisp_autoVBlank()` convenience is
 shipped**: it would be a second path that the host gate cannot reach, and a host
 that wants it can write the one line itself.
+
+### 6.7 Missed-vblank catch-up
+
+A Z80 frame that runs past its budget loses the next vblank **outright**: the
+VDP holds Z80 `/INT` for about a scanline, so an interrupt that is not taken
+while the frame is still working simply never happens. Before this section the
+consequence was a lost frame of *music* — the tempo slipped and nothing
+anywhere said why. The Z80 cannot detect it alone; an earlier attempt (an
+interrupts-enabled handler counting re-entries) failed because the same pulse
+re-triggers the moment `ei` executes.
+
+The 68000 can see what the Z80 cannot: its own vertical interrupt is not
+missable the same way. So `MMLisp_frame` stamps the low byte of SGDK's
+`vtimer` into `vblank_stamp` inside the bus grab it already takes, and the
+engine compares that against the vblanks it has **answered** (its own counter,
+incremented once per interrupt and once per catch-up). If the stamp is ahead,
+the difference is missed frames, and the handler consumes them *immediately*,
+before returning — the frame is late, the DAC hiccups once, and the music
+does not lose a frame.
+
+Why the test cannot fire spuriously: a stamp can never arrive *earlier* than
+its own vblank, while the Z80's frame starts *at* the vblank — so the stamp
+running ahead of the answered count always means a real miss. A host that
+stamps late only delays detection. Anything outside a small window (boot, a
+host restart) resyncs silently and catches up nothing; the loop is capped at
+two frames per interrupt, so a wild stamp cannot stall the engine and a real
+backlog heals one frame per interrupt.
+
+**What catch-up does NOT license: chronic overrun.** A steady frame that
+exceeds its budget every time is caught up every time, but the ring then
+throttles the 68k and the music runs slow by exactly the overrun — smoothly,
+with no counter climbing. The pacing constants must still land the *typical*
+frame under budget; catch-up converts the **transient** spikes (a note-on
+burst, a patch dump, a segment storm) from tempo slips into one-off
+hiccups. That is also what let `PACE_RESERVE` drop 7200 → 4800: one debt
+quantum less insurance, ~8 sample periods shaved off the every-frame feed
+hold at the frame boundary, paid for by spikes that now self-heal.
 
 ## 7. Level Composition
 

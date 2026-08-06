@@ -26,7 +26,7 @@
 // every frame of every score, so a share is enough to catch it, and it is the
 // honest bar for a driver whose frame is nearly full (driver.md §5.1).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,7 +92,17 @@ try {
 
   for (const score of scores) {
     const name = basename(score);
-    const { bytes: mmb, sampleBank } = buildMmb(score);
+    // A .mmb is taken as-is with its sample bank from the sibling .smp — an
+    // SGDK project's res/ profiles directly, the same as seg-bench.
+    let mmb, sampleBank;
+    if (score.endsWith(".mmb")) {
+      mmb = readFileSync(score);
+      const smp = score.replace(/\.mmb$/, ".smp");
+      if (!existsSync(smp)) { console.log(`skip  ${name} — no .smp beside it`); continue; }
+      sampleBank = readFileSync(smp);
+    } else {
+      ({ bytes: mmb, sampleBank } = buildMmb(score));
+    }
     const mmbPath = join(tmp, "s.mmb"), smpPath = join(tmp, "s.smp");
     writeFileSync(mmbPath, mmb);
     if (!sampleBank?.length) { console.log(`skip  ${name} — no sample bank`); continue; }
@@ -131,6 +141,13 @@ try {
 
     let posted = 0;
     const spans = [], gaps = [];
+    // The ear hears the FEED, not the frame: track the largest silence between
+    // consecutive DAC writes — inside a frame (a segment or sub-slot pause)
+    // and across the frame boundary (head-consume delay, which the per-frame
+    // WANDER metric deliberately removes as "constant offset" but which
+    // varies frame to frame with the slot's write count).
+    let maxGapIn = 0, maxGapAt = -1, maxBound = 0, maxBoundAt = -1, lastTail = -1;
+    const bounds = [], inGaps = [];
     for (let f = 0; f < slots.length; f++) {
       while (posted < slots.length) {
         const head = ram[sym("H_HEAD")], next = (head + 1) % DEPTH;
@@ -144,6 +161,21 @@ try {
       let g = 0;
       while (cpu.halted && g++ < 1000) cyc += cpu.step();
       while (!cpu.halted && g++ < 3_000_000) { winReads = 0; cyc += cpu.step() + winReads * PACE_WINDOW; }
+      if (stamps.length) {
+        if (lastTail >= 0) {
+          const b = (FRAME_CYCLES - lastTail) + stamps[0];
+          bounds.push(b);
+          if (b > maxBound) { maxBound = b; maxBoundAt = f; }
+        }
+        lastTail = stamps[stamps.length - 1];
+        let fmax = 0;
+        for (let i = 1; i < stamps.length; i++) {
+          const g = stamps[i] - stamps[i - 1];
+          if (g > fmax) fmax = g;
+          if (g > maxGapIn) { maxGapIn = g; maxGapAt = f; }
+        }
+        inGaps.push(fmax);
+      } else lastTail = -1;
       if (stamps.length < R) continue;          // no full feed this frame
       spans.push((stamps[stamps.length - 1] - stamps[0]) / FRAME_CYCLES);
       // WANDER: how far a sample lands from where it belongs, as a share of the
@@ -173,6 +205,14 @@ try {
       `span ${(100 * pct(spans, 0.5)).toFixed(0)}% of the frame (worst ${(100 * pct(spans, 0)).toFixed(0)}%), ` +
       `wander ${ms(pct(gaps, 0.5))} ms (worst ${ms(pct(gaps, 1))})`,
     );
+    const per = (c) => (c / WANT_GAP).toFixed(1);
+    const p50 = (a) => a.length ? [...a].sort((x, y) => x - y)[Math.floor((a.length - 1) * 0.5)] : 0;
+    // The frame-boundary hole is the one the per-frame WANDER metric cannot
+    // see, and at 60 Hz it is the flutter a listener calls "the wobble": the
+    // feed exhausts its R samples early by however much the debt over-charged,
+    // and the DAC holds through the remainder plus the next frame's head.
+    console.log(`        feed hold, p50/max: in-frame ${per(p50(inGaps))}/${per(maxGapIn)} periods, ` +
+      `frame boundary ${per(p50(bounds))}/${per(maxBound)} periods (worst f${maxGapAt}/f${maxBoundAt})`);
     if (!ok) failures++;
   }
 } finally {

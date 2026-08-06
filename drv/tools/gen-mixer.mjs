@@ -81,7 +81,7 @@ export const PACE_PASSES = 3;       // voice passes per frame = the emit cadence
 // are, and the segments are usually in the loud one. It is estimated from the
 // last frame's segment count — frames come in the same shape as their
 // predecessor, and a frame that ran long simply pads less on the next.
-export const PACE_RESERVE = 7200;   // frame-level: consume, pass set-up, flush,
+export const PACE_RESERVE = 4800;   // frame-level: consume, pass set-up, flush,
                                     // plus the margin that keeps the typical
                                     // frame just UNDER its budget rather than
                                     // just over — late is worse than short
@@ -588,6 +588,82 @@ ms_go_u:
 ms_call_single:
 ms_go_s:
         jp   0
+${paced ? `
+; ── the live-file segment path (§5.1 (b)) ───────────────────────────────────
+; A sounding pass keeps its register file LIVE across its consecutive
+; segments: ms_pload fills it once at pass entry, mix_seg_live runs one
+; segment without touching the struct, and ms_pstore writes the position back
+; once when the pass ends. The boundary math between segments (engine.z80
+; mvf_seg) works on the live registers — DE = ptr, C = incInt, HL' = frac,
+; DE' = incFrac are its to preserve. What this removes is ms_load + ms_done
+; on every segment after a pass's first, measured at ~2.7k cycles a frame.
+; mix_seg above keeps the load/store shape for the IDLE path, which runs one
+; segment a pass on G_IDLEV and would gain nothing.
+
+; ms_pload: fill the register file from the voice struct, once per pass. The
+; plane cursor is NOT built here — mix_seg_live rebuilds HL every segment,
+; because the boundary math needs HL and the index is parked in G_IDX.
+ms_pload:
+        ld   l,(ix+PV_FRAC)
+        ld   h,(ix+PV_FRAC+1)
+        ld   e,(ix+PV_INCF)
+        ld   d,(ix+PV_INCF+1)
+        exx                     ; HL' = frac, DE' = incFrac
+        ld   c,(ix+PV_INCI)     ; AFTER the exx — exx swaps BC too
+        ld   e,(ix+PV_PTR)
+        ld   d,(ix+PV_PTR+1)
+        ret
+
+; ms_pstore: the pass is over — write the live position back, once.
+ms_pstore:
+        ld   (ix+PV_PTR),e
+        ld   (ix+PV_PTR+1),d
+        exx
+        ld   (ix+PV_FRAC),l
+        ld   (ix+PV_FRAC+1),h
+        exx
+        ret
+
+; mix_seg_live: one segment on the LIVE register file.
+;   B = ticks (1..255); G_IDX = plane index; G_SEG_L was set at bind time
+mix_seg_live:
+        ld   hl,G_NSEG          ; what this frame is costing the NEXT one
+        inc  (hl)
+        push de                 ; the divide needs DE; the file owns it
+        ld   h,0                ; the cadence is 3, so the divide is a table
+        ld   l,b
+        ld   de,div_tab
+        add  hl,de
+        ld   a,(hl)
+        pop  de
+        ld   (G_SEG_N),a        ; iterations
+        ld   l,a
+        add  a,a
+        add  a,l                ; 3 x iterations
+        ld   l,a
+        ld   a,b
+        sub  l
+        ld   (G_SEG_R),a        ; remainder ticks (0..2)
+        ld   a,(G_IDX)
+        ld   l,a
+        ld   a,(G_MIXP)
+        ld   h,a                ; plane cursor rebuilt; the rest is live
+        ld   a,(G_SEG_N)
+        or   a
+        jr   z,msl_rem
+        ld   b,a
+        call ms_call_unrolled
+msl_rem:
+        ld   a,(G_SEG_R)
+        or   a
+        jr   z,msl_done
+        ld   b,a
+        call ms_call_single
+msl_done:
+        ld   a,l
+        ld   (G_IDX),a          ; park the plane index for the boundary math
+        ret
+` : ""}
 
 ; ms_bind: point both entries at this PASS's copies${paced ? ", and size its pad" : ""}.
 ;

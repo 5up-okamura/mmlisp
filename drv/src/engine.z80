@@ -102,6 +102,8 @@ G_AVAIL     equ G_BASE+$05      ; u16 bytes safely consumable in this segment
 G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
 G_SLOT      equ G_BASE+$09      ; u16 slot cursor
 G_STARVED   equ G_BASE+$0b      ; u8  1 = this frame found the ring empty
+G_INTS      equ G_BASE+$0c      ; u8  vblanks this engine has ANSWERED — the
+                                ;     count H_VBL is compared against (§6.7)
 G_STORE     equ G_BASE+$0f      ; u8  0 = this pass stores into the plane
 ; Handed to the generated mixer core (tools/gen-mixer.mjs)
 G_SEG_N     equ G_BASE+$10      ; u8  unrolled iterations in the current segment
@@ -166,7 +168,14 @@ H_RING      equ HDR+10          ; u16 ring base address in Z80 RAM
 ; INAUDIBLE AS A CAUSE: it presents as the music wobbling, with nothing to point
 ; at. A counter turns that into a number.
 H_STARVE    equ HDR+12          ; u16 Z80-owned: starved frames since boot
-PROTO_VER   equ 6
+; The 68k's vblank counter, stamped by MMLisp_frame inside the bus grab it
+; already takes (§6.7). The Z80 cannot see a missed vblank — the VDP holds
+; /INT for about a scanline, so an interrupt that is not taken is simply gone
+; — but the 68000's own vblank interrupt is not missable the same way. The
+; stamp is what lets a frame that ran over budget CATCH UP instead of losing
+; a frame of music.
+H_VBL       equ HDR+14          ; u8  68k-owned: vblank count, low byte
+PROTO_VER   equ 7
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -197,6 +206,42 @@ int_handler:
         push ix
         push iy                 ; the mixer's feed cursor (§5.1)
         call frame_step
+        ; ── missed-vblank catch-up (§6.7) ───────────────────────────────────
+        ; A frame that ran past its budget lost the next vblank OUTRIGHT (see
+        ; above — the /INT pulse is a scanline, there is nothing to take late).
+        ; But the 68k can see what the Z80 cannot: MMLisp_frame stamps the
+        ; 68k's own vblank count into H_VBL. If the stamp is ahead of the
+        ; vblanks this handler has answered, the difference is missed frames —
+        ; consume them NOW, late, instead of losing them from the music. The
+        ; DAC hiccups once; the tempo does not slip.
+        ;
+        ; A stamp cannot arrive EARLIER than its own vblank, so a positive
+        ; difference always means a real miss — the test cannot fire
+        ; spuriously. Anything outside the small window (boot, a host that
+        ; stamps late, a host restart) resyncs silently and catches up
+        ; nothing. Capped per interrupt so a wild stamp cannot stall the
+        ; engine; a real backlog heals one frame per interrupt.
+        ld   hl,G_INTS
+        inc  (hl)               ; this interrupt answered one vblank
+        ld   b,CATCH_MAX
+ih_catch:
+        ld   a,(H_VBL)
+        sub  (hl)
+        jr   z,ih_done          ; in step
+        cp   CATCH_WIN+1
+        jr   nc,ih_sync         ; not a plausible miss: adopt the stamp
+        inc  (hl)               ; one missed vblank, answered late
+        push bc
+        push hl
+        call frame_step
+        pop  hl
+        pop  bc
+        djnz ih_catch
+        jr   ih_done
+ih_sync:
+        ld   a,(H_VBL)
+        ld   (hl),a
+ih_done:
         pop  iy
         pop  ix
         pop  hl
@@ -205,6 +250,11 @@ int_handler:
         pop  af
         ei
         reti
+
+; One frame per missed vblank, at most this many per interrupt.
+CATCH_MAX   equ 2
+; How far ahead a stamp can plausibly run before it reads as noise, not backlog.
+CATCH_WIN   equ 8
 
 ; ===========================================================================
 ; Boot. The host uploads this image, publishes H_SMPBANK, then releases reset.
@@ -241,6 +291,8 @@ start:
         ld   (H_RING),hl
         ld   hl,0
         ld   (H_STARVE),hl
+        xor  a
+        ld   (H_VBL),a          ; so the first catch-up check reads in-step
         ; PCM: plane A is mixed first (B is fed, and starts silent), and the
         ; idle voice is silent forever.
         ld   a,MIXLO>>8
@@ -834,18 +886,18 @@ pd_cap:
         adc  a,h
         ld   h,a
         ld   c,(hl)             ; the segments' share
-        ; The slot's writes cost ~61 cycles each, and one pad unit is 16 cycles
-        ; on every one of PCM_MIX_R samples — so a unit is about 46 writes.
+        ; The slot's writes cost ~90 cycles each ONCE THE BUSY WAIT IS COUNTED
+        ; — a dense run of port writes pays ym_busy in full, measured at ~3.8k
+        ; on a 95-write frame against ~5.8k of bare writes. One pad unit is 16
+        ; cycles on every one of PCM_MIX_R samples, so a unit is ~32 writes;
+        ; the old /43 (bare 61 cyc/write) under-charged exactly the frames the
+        ; hardware was losing.
         ld   a,(G_NWR)
         srl  a
         srl  a
         srl  a
         srl  a
-        srl  a
-        srl  a                  ; writes / 64
-        ld   b,a
-        srl  b                  ; writes / 128
-        add  a,b                ; ~ writes / 43
+        srl  a                  ; writes / 32
         add  a,c
         ; …and the ROM-window fetch stall: every sample read of a SOUNDING pass
         ; crosses the 68000's bus and waits on its arbiter, ~PACE_WINDOW cycles
@@ -952,27 +1004,31 @@ mix_voice_frame:
         ld   a,(G_STORE)
         ld   (G_SEG_L),a
         call ms_bind
+        ; The register file — DE = ptr, C = incInt, HL' = frac, DE' = incFrac
+        ; — is LIVE for the whole pass (§5.1 (b)): loaded once here, stored
+        ; once at pass end, and every boundary below works on the registers
+        ; instead of round-tripping the struct each segment.
+        call ms_pload
 
 mvf_seg:
         ld   a,(G_TICKS)
         or   a
-        ret  z                  ; frame done
+        jp   z,ms_pstore        ; pass done — flush the file, ret to the caller
 
-        ; avail = min(PV_LEFT, bytes to the top of the window)
+        ; avail = min(PV_LEFT, bytes to the top of the window). LEFT + ptr
+        ; carries out of 16 bits exactly when the window top is the nearer
+        ; bound, so the min needs no second register pair.
         ld   l,(ix+PV_LEFT)
         ld   h,(ix+PV_LEFT+1)
-        ld   a,(ix+PV_PTR)
-        neg
-        ld   c,a
-        ld   a,0
-        sbc  a,(ix+PV_PTR+1)
-        ld   b,a                ; BC = $10000 - ptr
-        or   a
-        sbc  hl,bc
-        add  hl,bc
-        jr   c,mvf_have         ; LEFT < window distance → keep LEFT
-        ld   h,b
-        ld   l,c
+        add  hl,de
+        jr   c,mvf_dist
+        sbc  hl,de              ; carry is clear: HL = LEFT again
+        jr   mvf_have
+mvf_dist:
+        xor  a                  ; avail = $10000 - ptr (and the carry clears)
+        ld   l,a
+        ld   h,a
+        sbc  hl,de
 mvf_have:
         ld   (G_AVAIL),hl       ; the exact tail below needs the byte count
         ; n = avail >> KSH, forced to at least 1
@@ -996,11 +1052,11 @@ mvf_nsh:
 mvf_cap:
         ld   a,255
 mvf_capl:
-        ld   c,a
+        ld   b,a                ; B = n — C belongs to the live file now
         ld   a,(G_TICKS)
-        cp   c
+        cp   b
         jr   nc,mvf_tail
-        ld   c,a                ; n = min(n, ticks left)
+        ld   b,a                ; n = min(n, ticks left)
         jr   mvf_n              ; the pass ends before the region does
 mvf_tail:
         ; The shift bound is conservative by up to 2x, so approaching a boundary
@@ -1009,51 +1065,45 @@ mvf_tail:
         ; tail exactly instead and take the whole thing in one segment. That is
         ; most of this engine's per-frame overhead, and the paced feed (§5.1) has
         ; to give that overhead back out of the DAC's own budget.
-        ld   a,c
+        ld   a,b
         cp   MVF_TAIL+1
         jr   nc,mvf_n
         call mvf_exact
 mvf_n:
-        ld   l,(ix+PV_PTR)      ; remember the pointer to measure consumption
-        ld   h,(ix+PV_PTR+1)
-        ld   (G_OLDPTR),hl
-
-        push bc                 ; C = n
-        ld   b,c
-        ld   a,(G_IDX)
-        ld   l,a
-        ld   a,(G_STORE)
-        call mix_seg            ; returns L = next buffer index
-        ld   a,l
-        ld   (G_IDX),a
+        ld   (G_OLDPTR),de      ; consumption is measured on the live pointer
+        push bc                 ; B = n; the copies count it down to 0
+        call mix_seg_live
         pop  bc
         ld   a,(G_TICKS)
-        sub  c
+        sub  b
         ld   (G_TICKS),a
 
-        ; LEFT -= (ptr - oldptr)
-        ld   l,(ix+PV_PTR)
-        ld   h,(ix+PV_PTR+1)
-        ld   de,(G_OLDPTR)
-        or   a
-        sbc  hl,de              ; HL = bytes consumed
-        ex   de,hl
-        ld   l,(ix+PV_LEFT)
-        ld   h,(ix+PV_LEFT+1)
-        or   a
-        sbc  hl,de
-        jr   nc,mvf_left        ; the forced one-tick segment (avail >> KSH == 0)
-        ld   hl,0               ; may consume more than LEFT — clamp, or the
-mvf_left:                       ; countdown wraps and the voice runs off the end
-        ld   (ix+PV_LEFT),l
-        ld   (ix+PV_LEFT+1),h
-
-        ; window top crossed? the pointer left $8000..$FFFF, so step the bank
-        ld   a,(ix+PV_PTR+1)
+        ; LEFT -= (ptr - oldptr), touching neither DE nor C
+        ld   hl,(G_OLDPTR)
+        ld   a,e
+        sub  l
+        ld   l,a
+        ld   a,d
+        sbc  a,h
+        ld   h,a                ; HL = bytes consumed
+        ld   a,(ix+PV_LEFT)
+        sub  l
+        ld   (ix+PV_LEFT),a
+        ld   a,(ix+PV_LEFT+1)
+        sbc  a,h
+        ld   (ix+PV_LEFT+1),a
+        jr   nc,mvf_wtop        ; the forced one-tick segment (avail >> KSH == 0)
+        xor  a                  ; may consume more than LEFT — clamp, or the
+        ld   (ix+PV_LEFT),a     ; countdown wraps and the voice runs off the end
+        ld   (ix+PV_LEFT+1),a
+mvf_wtop:
+        ; window top crossed? the pointer left $8000..$FFFF, so step the bank.
+        ; The pointer is live: fix D in place.
+        ld   a,d
         cp   WINDOW>>8
         jr   nc,mvf_bound
         add  a,WINDOW>>8
-        ld   (ix+PV_PTR+1),a
+        ld   d,a
         ld   l,(ix+PV_BANK)
         ld   h,(ix+PV_BANK+1)
         inc  hl
@@ -1067,30 +1117,26 @@ mvf_bound:
         jp   nz,mvf_seg         ; still inside the region
         bit  1,(ix+PV_FLAGS)    ; loops, and not releasing → wrap
         jr   z,mvf_end
-        ld   l,(ix+PV_PTR)
-        ld   h,(ix+PV_PTR+1)
-        ld   e,(ix+PV_LOOPL)
-        ld   d,(ix+PV_LOOPL+1)
+        ; ptr -= loop length, LEFT = loop length — on the live file
+        ld   l,(ix+PV_LOOPL)
+        ld   h,(ix+PV_LOOPL+1)
+        ex   de,hl              ; DE = loop length, HL = ptr
         or   a
         sbc  hl,de
-        ld   a,h
+        ex   de,hl              ; DE = wrapped ptr, HL = loop length
+        ld   (ix+PV_LEFT),l     ; LEFT = loop length
+        ld   (ix+PV_LEFT+1),h
+        ld   a,d
         cp   WINDOW>>8
-        jr   nc,mvf_wr
+        jp   nc,mvf_seg
         add  a,WINDOW>>8        ; wrapped back below the window: previous bank
-        ld   h,a
-        push hl
+        ld   d,a
         ld   l,(ix+PV_BANK)
         ld   h,(ix+PV_BANK+1)
         dec  hl
         ld   (ix+PV_BANK),l
         ld   (ix+PV_BANK+1),h
         call latch_bank
-        pop  hl
-mvf_wr:
-        ld   (ix+PV_PTR),l
-        ld   (ix+PV_PTR+1),h
-        ld   (ix+PV_LEFT),e     ; LEFT = loop length
-        ld   (ix+PV_LEFT+1),d
         jp   mvf_seg
 
 mvf_end:
@@ -1117,50 +1163,53 @@ mvf_idle:
 ; ---------------------------------------------------------------------------
 ; mvf_exact: how many ticks the tail of this region really holds.
 ;
-;   in    C = the conservative bound (>= 1), G_AVAIL = bytes to the boundary
-;   out   C = ticks consuming at most G_AVAIL bytes, capped at MVF_MAX — or
+;   in    B = the conservative bound (>= 1), G_AVAIL = bytes to the boundary,
+;         the LIVE register file (C = incInt, HL' = frac, DE' = incFrac)
+;   out   B = ticks consuming at most G_AVAIL bytes, capped at MVF_MAX — or
 ;         untouched, if the tail is more than a page, which means the shift
-;         bound had not collapsed onto a boundary after all
+;         bound had not collapsed onto a boundary after all.
+;         DE, C and the alternate set are preserved.
 ;
 ; Walks the 16.16 advance a tick at a time: 75 cycles a tick, against the ~2k
 ; each halving step it removes costs as a segment of its own. Safe at any cap,
-; because every tick it counts is one it has simulated.
+; because every tick it counts is one it has simulated. The walk advances the
+; LIVE frac in HL', so it is pushed here and popped back unmoved.
 ; ---------------------------------------------------------------------------
 mvf_exact:
         ld   hl,(G_AVAIL)
         ld   a,h
         or   a
         ret  nz                 ; more than a page to go: not a tail after all
+        exx
+        push hl                 ; the live frac — the walk moves it
+        exx
         ld   a,(G_TICKS)
         cp   MVF_MAX+1
         jr   c,mve_cap
         ld   a,MVF_MAX
 mve_cap:
         ld   b,a                ; iteration cap
-        ld   c,0                ; ticks counted
-        ld   d,(ix+PV_INCI)
-        exx
-        ld   l,(ix+PV_FRAC)
-        ld   h,(ix+PV_FRAC+1)
-        ld   e,(ix+PV_INCF)
-        ld   d,(ix+PV_INCF+1)
-        exx                     ; HL' = frac, DE' = incFrac, as in the mixer
+        ld   h,0                ; ticks counted (avail < 256, so L is bytes)
 mve_lp:
         ld   a,l
         or   a                  ; bytes left? (and the carry starts clear)
         jr   z,mve_done
-        inc  c
+        inc  h
         exx
         add  hl,de              ; frac += incFrac
         exx                     ; flag-transparent: the carry survives
         ld   a,l
-        sbc  a,d                ; bytes -= incInt + frac carry
+        sbc  a,c                ; bytes -= incInt + frac carry (C is live)
         jr   nc,mve_st
         xor  a                  ; this tick reaches past the boundary
 mve_st:
         ld   l,a
         djnz mve_lp
 mve_done:
+        ld   b,h                ; the exact tail, where the bound was
+        exx
+        pop  hl                 ; the live frac, unmoved
+        exx
         ret
 
 ; ---------------------------------------------------------------------------

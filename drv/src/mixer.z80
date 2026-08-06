@@ -1841,6 +1841,82 @@ ms_call_single:
 ms_go_s:
         jp   0
 
+; ── the live-file segment path (§5.1 (b)) ───────────────────────────────────
+; A sounding pass keeps its register file LIVE across its consecutive
+; segments: ms_pload fills it once at pass entry, mix_seg_live runs one
+; segment without touching the struct, and ms_pstore writes the position back
+; once when the pass ends. The boundary math between segments (engine.z80
+; mvf_seg) works on the live registers — DE = ptr, C = incInt, HL' = frac,
+; DE' = incFrac are its to preserve. What this removes is ms_load + ms_done
+; on every segment after a pass's first, measured at ~2.7k cycles a frame.
+; mix_seg above keeps the load/store shape for the IDLE path, which runs one
+; segment a pass on G_IDLEV and would gain nothing.
+
+; ms_pload: fill the register file from the voice struct, once per pass. The
+; plane cursor is NOT built here — mix_seg_live rebuilds HL every segment,
+; because the boundary math needs HL and the index is parked in G_IDX.
+ms_pload:
+        ld   l,(ix+PV_FRAC)
+        ld   h,(ix+PV_FRAC+1)
+        ld   e,(ix+PV_INCF)
+        ld   d,(ix+PV_INCF+1)
+        exx                     ; HL' = frac, DE' = incFrac
+        ld   c,(ix+PV_INCI)     ; AFTER the exx — exx swaps BC too
+        ld   e,(ix+PV_PTR)
+        ld   d,(ix+PV_PTR+1)
+        ret
+
+; ms_pstore: the pass is over — write the live position back, once.
+ms_pstore:
+        ld   (ix+PV_PTR),e
+        ld   (ix+PV_PTR+1),d
+        exx
+        ld   (ix+PV_FRAC),l
+        ld   (ix+PV_FRAC+1),h
+        exx
+        ret
+
+; mix_seg_live: one segment on the LIVE register file.
+;   B = ticks (1..255); G_IDX = plane index; G_SEG_L was set at bind time
+mix_seg_live:
+        ld   hl,G_NSEG          ; what this frame is costing the NEXT one
+        inc  (hl)
+        push de                 ; the divide needs DE; the file owns it
+        ld   h,0                ; the cadence is 3, so the divide is a table
+        ld   l,b
+        ld   de,div_tab
+        add  hl,de
+        ld   a,(hl)
+        pop  de
+        ld   (G_SEG_N),a        ; iterations
+        ld   l,a
+        add  a,a
+        add  a,l                ; 3 x iterations
+        ld   l,a
+        ld   a,b
+        sub  l
+        ld   (G_SEG_R),a        ; remainder ticks (0..2)
+        ld   a,(G_IDX)
+        ld   l,a
+        ld   a,(G_MIXP)
+        ld   h,a                ; plane cursor rebuilt; the rest is live
+        ld   a,(G_SEG_N)
+        or   a
+        jr   z,msl_rem
+        ld   b,a
+        call ms_call_unrolled
+msl_rem:
+        ld   a,(G_SEG_R)
+        or   a
+        jr   z,msl_done
+        ld   b,a
+        call ms_call_single
+msl_done:
+        ld   a,l
+        ld   (G_IDX),a          ; park the plane index for the boundary math
+        ret
+
+
 ; ms_bind: point both entries at this PASS's copies, and size its pad.
 ;
 ; The copy is chosen by (role, shift) and BOTH are constant for a whole voice
@@ -1927,11 +2003,11 @@ pad_first_tab:
 pad_add_tab:
         db   2,0,0,0,0,0,0,0,8,16
 
-; debt_tab[segments] = 7200 + segments x 2400 cycles of per-frame overhead, in
+; debt_tab[segments] = 4800 + segments x 2400 cycles of per-frame overhead, in
 ; 16-cycle pad units, spread over all PCM_MIX_R samples of the frame.
 debt_tab:
-        db   3,3,4,5,6,7,8,9,9,10,11,12,13,14,15,15
-        db   16,17,18,19,20,21,21,22,23,24,25,26,27,27,28,29
+        db   2,3,3,4,5,6,7,8,9,9,10,11,12,13,14,15
+        db   15,16,17,18,19,20,21,21,22,23,24,25,26,27,27,28
 
 ; pace_win_tab[sounding passes] = the ROM-window fetch stall (PACE_WINDOW = 14
 ; cycles per sample read, hardware-only — see gen-mixer.mjs), in pad units.

@@ -179,6 +179,8 @@ try {
       cpu.intRequest();
       let cyc = 0, g = 0, prev = -1;
       while (cpu.halted && g++ < 1000) cyc += cpu.step();
+      const tgt = process.env.SEG_FRAME !== undefined && f === Number(process.env.SEG_FRAME);
+      const fcost = tgt ? new Float64Array(marks.length) : null;
       while (!cpu.halted && g++ < 3_000_000) {
         const b = owner[cpu.pc];
         winReads = 0;
@@ -186,9 +188,16 @@ try {
         c += winReads * STALL_READ;   // the stall lands on the instruction that fetched
         if (b !== 0xffff) {
           cost[b] += c;
+          if (fcost) fcost[b] += c;
           if (b !== prev) { hits[b]++; prev = b; }
         }
         cyc += c;
+      }
+      if (fcost) {
+        const rows = [...fcost.keys()].filter((i) => fcost[i] > 0)
+          .sort((a2, b2) => fcost[b2] - fcost[a2]).slice(0, 24);
+        console.log(`  [frame ${f}: ${cyc} cyc]`);
+        for (const i of rows) console.log(`    ${bucketName[i].padEnd(18)} ${fcost[i].toFixed(0)}`);
       }
       const m = ram[G_ACTM];
       const nv = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);

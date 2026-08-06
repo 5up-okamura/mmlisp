@@ -27,6 +27,7 @@
 #define H_SLOTSH   (MMLISPDRV_HDR + 9)
 #define H_RING     (MMLISPDRV_HDR + 10)  // u16 ring base in Z80 RAM
 #define H_STARVE   (MMLISPDRV_HDR + 12)  // u16 Z80-owned: starved frames
+#define H_VBL      (MMLISPDRV_HDR + 14)  // u8 68k-owned: vblank count stamp
 
 static MMLSeq     seq;
 static bool       ready     = FALSE;
@@ -163,8 +164,15 @@ void MMLisp_frame(void)
     // back. A stale tail is safe by construction — tail only ever advances,
     // which only ever frees space, so reading it early makes this call render
     // conservatively and never over-fill.
+    //
+    // The vblank stamp rides the same grab (§6.7): the Z80 cannot see a
+    // missed vblank, the 68k cannot miss one, so the engine compares this
+    // against the vblanks it answered and consumes what it owes. vtimer is
+    // SGDK's own vertical-interrupt counter; writing the low byte is
+    // idempotent, so calling MMLisp_frame twice in a frame stays harmless.
     Z80_requestBus(TRUE);
     u8 tail = *Z80_RAM_AT(H_TAIL);
+    *Z80_RAM_AT(H_VBL) = (u8)vtimer;
     Z80_releaseBus();
 
     u8 next = mml_pump(&seq, ringHead, tail, ringDepth, slot_to_z80, NULL);

@@ -39,6 +39,7 @@ const RING_DEPTH = sym("RING_DEPTH");
 const SLOT_SIZE = sym("SLOT_SIZE");
 const SLOT_SUBS = sym("SLOT_SUBS"); // taken from the engine, so it cannot drift
 const H_HEAD = sym("H_HEAD");
+const H_VBL = sym("H_VBL");
 const H_TAIL = sym("H_TAIL");
 const H_FRAMES = sym("H_FRAMES");
 const H_STARVE = sym("H_STARVE");
@@ -220,13 +221,21 @@ function run(frames) {
   const perFrame = [];
   for (const spec of frames) {
     if (spec) {
-      const head = ram[H_HEAD];
-      const next = (head + 1) % RING_DEPTH;
-      if (next !== ram[H_TAIL]) {                        // room in the ring
-        const bytes = encodeSlot(spec);
-        ram.set(bytes, RING + head * SLOT_SIZE);
-        ram[H_HEAD] = next;
-      } else if (VERBOSE) console.log("  (ring full, slot dropped)");
+      // `extra` posts further slots in the same host frame — the catch-up
+      // scenario needs a backlog in the ring. `vbl` stamps the 68k's vblank
+      // counter the way MMLisp_frame does (§6.7); specs that omit it leave
+      // the stamp at 0 and the engine resyncs silently, which is also the
+      // behaviour of every harness in this repo that predates the stamp.
+      for (const one of [spec, ...(spec.extra ?? [])]) {
+        const head = ram[H_HEAD];
+        const next = (head + 1) % RING_DEPTH;
+        if (next !== ram[H_TAIL]) {                      // room in the ring
+          const bytes = encodeSlot(one);
+          ram.set(bytes, RING + head * SLOT_SIZE);
+          ram[H_HEAD] = next;
+        } else if (VERBOSE) console.log("  (ring full, slot dropped)");
+      }
+      if (spec.vbl !== undefined) ram[H_VBL] = spec.vbl;
     }
     const w0 = writes.length;
     const d0 = dac.length;
@@ -471,6 +480,36 @@ for (const sc of scenarios) {
   console.log(`      ${sc.why}`);
   for (const p of problems.slice(0, 4)) console.log(`      ! ${p}`);
   if (problems.length > 4) console.log(`      ! …and ${problems.length - 4} more`);
+}
+
+// ── Missed-vblank catch-up (§6.7) — bespoke, because the assertion is about
+// slot COUNT per interrupt, which the declarative loop assumes is one. A
+// frame that runs over budget loses its next /INT outright; the 68k's stamp
+// is what lets the engine consume the owed slot late instead of never. No
+// emulated frame ever runs out of cycles, so without this scenario the whole
+// path would ship untested (the overrun-counter lesson, all over again).
+{
+  const mk = (r, v) => ({ fm0: [[r, v]] });
+  const { perFrame, frames: consumed, starved } = run([
+    { ...mk(0x30, 0x11), vbl: 1 },                        // in step: no catch-up
+    { ...mk(0x32, 0x22), vbl: 3, extra: [mk(0x34, 0x33)] }, // stamp says one vblank was missed
+    { ...mk(0x36, 0x44), vbl: 4 },                        // back in step
+  ]);
+  const problems = [];
+  const w = (f) => JSON.stringify(perFrame[f].writes);
+  const want = (...ws) => JSON.stringify(ws.map(([r, v]) => ({ port: 0, reg: r, val: v })));
+  if (w(0) !== want([0x30, 0x11])) problems.push(`f0 ${w(0)} — a spurious catch-up?`);
+  if (w(1) !== want([0x32, 0x22], [0x34, 0x33]))
+    problems.push(`f1 ${w(1)} — expected the owed slot consumed in the same interrupt`);
+  if (w(2) !== want([0x36, 0x44])) problems.push(`f2 ${w(2)} — catch-up did not stop at the stamp`);
+  if (consumed !== 4) problems.push(`H_FRAMES = ${consumed}, expected 4 (the audible clock counts the caught-up frame)`);
+  if (starved) problems.push(`${starved} starved frame(s)`);
+  const ok = problems.length === 0;
+  if (!ok) failures++;
+  scenarios.push({});   // it counts
+  console.log(`${ok ? "ok  " : "FAIL"}  missed vblank is caught up, not lost`);
+  console.log(`      the 68k's H_VBL stamp is ahead of the answered count, so the engine consumes the owed slot late`);
+  for (const p of problems.slice(0, 4)) console.log(`      ! ${p}`);
 }
 
 console.log(`\nengine image ${built.bytes.length} B · R = ${R} · ring depth ${RING_DEPTH}`);

@@ -714,16 +714,116 @@ baseline). **Every metric is now past the baseline**, and `m3-pcm-slice` — the
 score that was 24% over budget — is at 3%. `PACE_SEG`/`PACE_RESERVE` were NOT
 touched; see the note above on why they cannot be.
 
-**What is left of (b): the register file itself, ~2,659 cyc/frame (4.5%).**
-`mix_seg` 1,981 (its IX-indexed load of frac/incF/incI/ptr) + `ms_done` 678 (the
-store back). Carrying those across a voice's consecutive segments needs
-`mvf_seg`'s boundary math to stop reading `PV_PTR` from the struct and work out
-of DE instead — with IX and IY both already committed, that means parking
-`oldptr` in the alternate `BC'`. It is a real rewrite of the interlock between
-hand-written `mvf_seg` and generated `mix_seg`, verifiable only in emulation.
-**Deliberately not attempted yet**: the margin recovered above is already larger
-than the deficit, and the hardware numbers from (1)+(2) should say whether more
-is needed before that risk is taken.
+**What was left of (b) — the register file itself — BUILT 2026-08-06,
+UNCOMMITTED pending a hardware listen.** The shape that shipped: `ms_pload`
+fills DE = ptr / C = incInt / HL' = frac / DE' = incFrac once at pass entry,
+`mix_seg_live` runs a segment without touching the struct, `ms_pstore` writes
+back once at pass end; the idle path keeps the old `mix_seg`. `mvf_seg`'s
+boundary math was rewritten onto the live file: avail via the `LEFT + ptr`
+carry trick (no second register pair), consumption measured as `DE −
+(G_OLDPTR)` with 8-bit chains, window-top and loop-wrap fix `D`/`DE` in place,
+and `mvf_exact` takes/returns the bound in B, walks the LIVE `HL'` and
+push/pops it (C is the live incInt it subtracts). `oldptr` went to `G_OLDPTR`
+(`ld (nn),de`), not `BC'` — cheaper than the exx dance. Measured (stall-read
+14): −1.4–1.8k cyc/frame; slice 1v overruns 3 → 1, over-budget 8 → 6; dac
+100% paced on all three, spans 84-86%. Engine 4,214 B (1,674 free), gates all
+green (engine 10 scenarios incl. bank crossing, c-gate 41, ring, ab).
+Segment marginal cost is now BELOW `PACE_SEG` = 2400 (seg-bench's regression
+goes noisy, −736..3136 range) — overcharge lands frames early = the safe
+side; retune only with a hardware reason, same rule as always.
+**Hardware listened 2026-08-06: NO audible change — correctly, in hindsight:
+wander had measured 4.13 -> 4.13 before the flash. (b) is budget recovery,
+not a smoothness fix. Kept (it funds what follows), still uncommitted.**
+
+#### 2026-08-06 — the wobble MEASURED on the reporter's song, and what it is
+
+The song itself (`~/Developer/gendev/verify-hello-world/res/song.mmb` +
+`.smp`) profiles directly now: `seg-bench` and `dac-gate` both take a `.mmb`,
+and dac-gate reports **feed holds** — the largest silences between consecutive
+DAC writes, in-frame and across the frame boundary (the boundary one is
+invisible to WANDER, which removes per-frame offset).
+
+- The song: 3.1 segments/frame (NOT a segment storm), mean 89% of budget with
+  the stall model, **5 over-budget frames in 2400**. The steady `lost 4`
+  spikes at spots are NOT over-budget frames in this model.
+- **The wobble is the feed holds: p50 10.6 periods in-frame PLUS 23.4 periods
+  (~8k cycles = 2.2 ms) at EVERY frame boundary — a 60 Hz hold/catch-up
+  cycle covering ~19% of every frame.** The live reference is uniform; this
+  is the entire audible difference.
+- Constants sweep (SEG x RES, with the new gap metric): **hole p50 tracks
+  headroom exactly** — SEG=1200/RES=2400 reaches boundary p50 1.6 periods
+  (near-uniform) at 83% of frames over budget. The identity behind it:
+  **uniform feed occupies 100.0% of the frame by construction** (R x period =
+  frame), so hole size IS the only overrun insurance. "Wander and overrun are
+  the same axis" was this, made exact.
+- `SLOT_MAX_WRITES` 95 -> 48 -> 32 sweep: gaps 12.5k -> 11.3k -> 8.8k — writes
+  are NOT the dominant gap either. Cap stays 95.
+- f788 anatomy (the +9k over-budget spike class, = burst-open+1 with a heavy
+  slot): `cr_p1` 4.8k + `ym_busy0` 3.8k — **the write charge under-priced
+  writes because the YM busy-wait is real**: ~90 cyc/write, not 61. `pcm_debt`
+  write charge fixed to /32 (was /43). Worst frame 70.2k -> 68.2k, gates
+  green. In the tree, uncommitted.
+
+#### Catch-up BUILT 2026-08-06 (approved same day) — awaiting hardware
+
+Implemented as proposed below, plus what building it settled:
+
+- `H_VBL` = HDR+14 (68k-owned, low byte of SGDK `vtimer`), stamped in
+  `MMLisp_frame`'s existing tail-read grab. **PROTO_VER 6 -> 7.**
+- Engine: `G_INTS` (G_BASE+$0c) counts ANSWERED vblanks; after `frame_step`
+  the handler compares, catches up `delta` in 1..8 (CATCH_WIN) at most 2 per
+  interrupt (CATCH_MAX), resyncs silently outside the window. Boot zeroes
+  H_VBL so the first check reads in-step. Harnesses that never stamp resync
+  every frame = behavior unchanged — that is why every pre-existing gate
+  passes untouched.
+- **Why it cannot fire spuriously**: a stamp cannot arrive EARLIER than its
+  own vblank, and the Z80's frame starts AT the vblank — so stamp-ahead
+  always means a real miss. A late-stamping host only delays detection.
+- **Chronic overrun is still forbidden** (measured reasoning, driver.md
+  §6.7): a steady-over engine gets caught up every frame, the ring throttles
+  the 68k, and the music runs smoothly SLOW by the overrun. Catch-up heals
+  transients only; typical frames must land under budget. This is what
+  bounded the constants below.
+- Constants: `PACE_RESERVE` 7200 -> **4800** (one debt quantum — the next
+  step lands the steady frame ON the line = chronic). With the /32 write
+  charge: the song's boundary hold 23.6 -> **15.4 periods** (wander 2.54 ->
+  2.03 ms, span 91%), over-budget 5 -> 89/2400 — ALL of which catch-up now
+  converts to one-off hiccups. Corpus: 14/5/6 over (was 12/2/6), same deal.
+  The debt quantum (16 x R = 2.8k cyc) is the floor on further tightening.
+- Gate: engine-gate scenario 11, "missed vblank is caught up, not lost" —
+  stamps H_VBL two ahead with a backlog posted, asserts both slots consumed
+  in ONE interrupt, the audible clock counting both, and no spurious
+  catch-up on the in-step frames. `verify:all` green, 4,244 B, proto 7.
+- `pcm_debt`'s write charge /43 -> **/32** (~90 cyc/write measured with the
+  ym_busy wait — the +9k f788-class spikes were under-charged writes).
+
+**Hardware next (everything uncommitted until then):** copy
+`sgdk/mmlispdrv.bin` + `mmlispdrv_bin.h`, rebuild, listen for the wobble and
+watch `lost/s` and `music`. Expected: wobble narrower (boundary hold −35%),
+`lost/s` ~0 with `music` = 0x100 (spikes heal), `starv` unchanged. If the
+wobble is still audible, the remaining lever is structural (the in-frame
+10.6-period holds at pass boundaries / the head consume), and the write-pump
+idea (writes ride the mix loop) is the next design discussion.
+
+#### The original proposal, kept for the reasoning
+
+The knife edge exists because a missed vblank INT loses a frame of MUSIC. The
+Z80 cannot see a missed edge (the VDP holds /INT one scanline), but the 68000
+can: `MMLisp_frame` already grabs the bus every vblank — it can stamp a
+vblank counter byte into Z80 RAM. Then a frame that ran long finds, on
+finishing, that the stamp advanced by 2: it consumes the next slot
+IMMEDIATELY instead of halting — the frame is late, the DAC hiccups once,
+but the music does not lose a frame. **That decouples the axis**: with
+overruns self-healing, PACE_RESERVE/PACE_SEG can be tightened toward the
+measured costs and the boundary hole drops from ~23 periods toward ~4-7
+(flutter down ~4-6x), leaving rare hiccups where the insurance used to be
+paid every frame. Surface: +1 header byte (proto bump), one 68k write per
+frame inside the existing grab, an engine idle-loop check, a catch-up cap of
+one frame, and an engine-gate scenario that forces an over-budget frame and
+asserts the next slot still gets consumed. Design questions to settle first:
+where the stamp lives in the header, interaction with `H_FRAMES`/starvation
+accounting (a caught-up frame must not count as starved), and whether
+catch-up frames skip their pads (they should — they are late by definition).
 
 #### 2026-08-06 — the slow tempo was RING GEOMETRY, not cycles
 
@@ -958,6 +1058,16 @@ and mixed by a no-resampler loop copy; drums go cheap, one voice keeps pitch.
 Costs: export-side resampling in the MMB tool, mixed-mode loop copies (code
 size vs 1,724 B free), and the gate baselines. Decision 5 gets re-examined
 with these numbers, in a design discussion, before any code.
+
+**Direction agreed 2026-08-06 (spec still to be written): 1 variable + 2 fixed
+voices, and a fixed voice bakes VOLUME as well as pitch** (the user's point:
+baking both is what makes a voice truly fixed — no resampler AND no shift in
+its loop). Open spec questions for that discussion: what PCM_VOL / a :vol
+macro means on a fixed voice (probably ignored except :vol 0 = MUTE), whether
+fixed voices still slice (segments exist without a resampler), MMB format for
+pre-resampled blobs, and which voice index is the variable one. Order agreed:
+(b) register-file rewrite FIRST (unconditional win), then the mixed-mode
+bench, then the spec.
 
 **A real instrument, still unbuilt**: the YM2612's Timer B is unused (CSM takes
 Timer A), so the engine could time its own frame on hardware and publish the
