@@ -1536,3 +1536,48 @@ part worth learning.
 一つ — CSM が Timer A を使っている。Timer B は空いているが分解能が粗い
 (Timer A = 12x(1024-TA)/clk、Timer B = その 16 倍刻み)ので 10.5kHz を正確に
 出せるか要検証。CSM と Timer A のどちらを取るかは設計判断。
+
+## Timer-B pacing + sample ring — PARAMETERS LOCKED 2026-08-07 (decided: try it)
+
+CSM keeps Timer A, so pacing rides Timer B. All numbers below are derived, not
+measured; they are the spec the implementation works to.
+
+    YM2612 NTSC FM sample rate      53267 Hz   (7.67 MHz / 144)
+    Timer B step                    16 FM samples = 300.37 us  (Timer A x 16)
+    TB = 255  (k = 256-TB = 1)      one gate every 300.37 us = 3329.2 Hz
+    GROUP = 3 samples per gate      PCM rate = 9987.6 Hz   (was 10483)
+    Z80 cycles per sample           358.4  (was 341 — 5% MORE room per sample)
+    Z80 cycles per group            1075.2
+    frame = 16.6882 ms              55.56 gates = 166.68 samples per frame
+
+**Samples per frame is 166 or 167, never constant** — that is the whole reason a
+ring is mandatory, and why both MDSDRV and XGM2 have one and we do not. Nothing
+about G or k removes it: frame rate and 53267 Hz are not nicely commensurate.
+
+Gate placement: emit at the gate, then 2 more samples cycle-paced. The timer
+pulls the phase back every 3 samples, so pad error cannot accumulate — the pad
+quantum (16 cyc) only ever spans 2 samples. **Hole bound = 1 gate = 3 sample
+periods** (measured today: 14-20). Larger GROUP keeps 10.5 kHz (GROUP 19, k 6 =
+10542 Hz) but re-admits drift across the group; 3/9988 is Timer B's best point.
+
+Ring: 256 B, replacing the 2 x 256 B double-buffered planes at $1700-$18FF (net
+-256 B of RAM). Thresholds to copy from XGM2's shape: refill below ~192, and
+**drop a music frame rather than a DAC sample** below ~150 — the opposite of
+this driver's current priority, and the one both reference drivers chose.
+
+What is deleted with this: `PACE_SEG`, `PACE_RESERVE`, `pcm_debt`, `debt_tab`,
+`pad_first_tab`/`pad_add_tab`, `G_DEBT`/`G_NSEG*`/`G_PAD`, `pace_win_tab`, the
+whole per-frame overhead estimator, and the plane swap. The segment plan (§6.3.1)
+SURVIVES and gets easier: the mixer produces into the ring in chunks, so a
+segment no longer has to align with a frame's tick count.
+
+Build order (JS first so quality is a number before any Z80 is written):
+1. `drv-player.js`: ring + Timer-B-timed consumption model; `PCM_MIX_RATE` ->
+   9988-equivalent (166/167 per frame). Keep the DAC value log so the existing
+   zero-tolerance comparison survives the rate change.
+2. `dac-gate.mjs`: drive the model, assert the hole bound (<= 3 sample periods)
+   and no underrun. This is the number that decides whether to continue.
+3. Only then the Z80: `sampleOutput` macro (BIT poll on $4000 status bit 1 for
+   Timer B overflow, reset via $27), ring producer/consumer, delete the pacing
+   machinery above.
+4. Re-freeze every gate baseline; `PCM_MIX_R` changes so all DAC streams change.
