@@ -44,7 +44,7 @@
 // values are right and the sound is not. So in the shipped configuration the
 // feed is INTERLEAVED into the mix: one `$2A` write every PACE_PASSES ticks,
 // inside the loop, plus a pad that holds the iteration to a constant period.
-// That is what fixes the unroll at PACE_PASSES and the pass count at three.
+// That is what fixes the unroll at PACE_PASSES and the pass count to match.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,7 +62,7 @@ export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr"];
 // ── The pacing model ───────────────────────────────────────────────────────
 // Every frame runs exactly PACE_PASSES voice passes of R ticks (silent voices
 // included — see engine.z80), so R·PACE_PASSES tick bodies carry exactly R
-// samples: one emit every PACE_PASSES ticks, which is why the unroll is 3.
+// samples: one emit every PACE_PASSES ticks, which is why the unroll follows it.
 //
 // The pad exists because the mix is CHEAPER than the frame at anything under a
 // full three-voice load: without it the feed would simply finish early and hold,
@@ -70,77 +70,49 @@ export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr"];
 // (role, shift), so its per-tick cost is a constant the generator can compute —
 // and the pad it needs is therefore a baked immediate, not a runtime lookup.
 export const FRAME_CYCLES = 59659;  // Z80 at 3.579545 MHz, one 59.92 Hz frame
-export const PACE_PASSES = 3;       // voice passes per frame = the emit cadence
-// The pad is sized against the true period, FRAME_CYCLES / R — and then the
-// frame's work OUTSIDE the loops is charged back against it, because a frame
-// that pads to the full period and then spends 13k cycles on segment set-up
-// ends 20% late, which is a slow tempo and eventually a dropped frame.
-//
-// That charge is a debt in 16-cycle pad units, spread over all R samples rather
-// than over the segment that incurred it: the pad lives where the SILENT passes
-// are, and the segments are usually in the loud one. It is estimated from the
-// last frame's segment count — frames come in the same shape as their
-// predecessor, and a frame that ran long simply pads less on the next.
-// Frame-level: consume, pass set-up, flush, plus the margin that keeps the
-// typical frame just UNDER its budget rather than just over — late is worse
-// than short.
-//
-// **But short is not free, and 7200 was paying for a margin nobody measured.**
-// A frame that finishes its R samples early does not stop making sound: it
-// holds the DAC at its last value until the next vblank. On the reporter's
-// song that was 23 SAMPLE PERIODS of frozen DAC at the end of every frame —
-// 2.2 ms, at 60 Hz, which is a periodic discontinuity heard as clicking, while
-// the samples that did play came out ~10% fast across the other 87% of the
-// frame, which is the pitched-PCM wobble. The pad is not slack to be hoarded;
-// every cycle of it that goes unspent is silence at the frame boundary.
-//
-// 5600 is the last step down that costs NOTHING. Measured with `npm run dac`
-// and `seg-bench --stall-read 14` over the reporter's song and the whole PCM
-// corpus: 3-8 sample periods off every score's frame-boundary hold, and every
-// score's OVER BUDGET count exactly where it was. The next step is a cliff —
-// at 5000 that same song goes from 2 over-budget frames to 29.
-//
-// Re-derive it, do not guess it: lower it while every score's OVER BUDGET line
-// holds and the frame-boundary hold falls; stop at the first value that moves
-// either.
-export const PACE_RESERVE = 5600;
-// Per segment: mix_seg in and out, boundary math. `seg-bench` measures the true
-// marginal cost at ~1,000 cycles and says so on every run ("PACE_SEG charges
-// 2400 - 2.36x"), and cutting it to that takes another 5 periods off the hold
-// — but it takes them off SEGMENT-HEAVY frames specifically, and those are the
-// multi-voice ones with no headroom: measured, m3-pcm-softmix goes from 12
-// over-budget frames to 179. This over-charge is what keeps a segment storm
-// inside its frame, and it stays until the per-segment cost itself comes down.
-export const PACE_SEG = 2400;
-// Extra cycles a sample fetch costs BEYOND the Z80's own timing, because it is
-// not a Z80 memory read: `ld a,(de)` with DE in the $8000 window goes out over
-// the 68000's bus, arbitrated and wait-stated. The COST table below prices that
-// instruction at 7 because that is what it costs the CPU; on hardware it is
-// several times that, and the pad — which is sized by SUBTRACTING the modelled
-// tick cost from the period — therefore comes out too big and the frame runs
-// long. Every frame. Only the fetching loops pay it: shifts 0-7 read a sample,
-// MUTE and IDLE do not, which is exactly why a song played with PCM muted loses
-// no frames while the same song with PCM loses two or three a second.
-//
-// The charge goes to the FRAME DEBT (`pace_win_tab`, added into `pcm_debt` per
-// sounding pass), NOT into the baked pads: a sounding pass's baked pad is 0-5
-// units and the runtime debt clamps it to the floor anyway, so cycles taken
-// off it never come back out — measured as a ~0-900 cyc/frame effect against
-// the ~2,450 owed. The pad that can actually give the stall back lives in the
-// SILENT passes (8-16 units an iteration), and the debt is the only thing that
-// reaches them. `seg-bench --stall-read N` models the same cost per window
-// read, so the charge is verifiable in emulation before hardware sees it.
-//
-// **This is the one constant to tune from hardware.** Raise it until `lost/s`
-// in the example's readout reaches 0, lower it if the DAC feed stops spanning
-// the frame (`npm run dac`). 14 is what the reporter's song implies: ~2,500
-// cycles a frame short over 175 fetches. Note the debt quantum: one pad unit
-// is 16 cycles on every sample, so the charge moves in steps of 16/R of this.
+// TWO, not three. A pass's iteration is PACE_PASSES ticks of ONE voice plus an
+// emit, and it must fit one sample period: P*(tick+PACE_WINDOW) + 134 <= 358.
+// A 16.16-resampling tick is 78 cycles, so P=2 costs 318 (ok) and P=3 costs 410
+// — 15% OVER, at every volume. Three variable voices never fitted the clock;
+// the value gates said 3ch because they compare mixers, not clocks (§5.1.3).
+export const PACE_PASSES = 2;       // voice passes per frame = the emit cadence
+// The Timer-B sample clock (driver.md §5.1.2): the gate is 16 FM samples =
+// 2304 YM clocks and GROUP samples come out per gate. The Z80 and the YM run
+// off the same crystal at master/15 and master/7, so a YM clock is 7/15 of a
+// Z80 one and the period converts exactly.
+export const PCM_GROUP = 3;
+export const SAMPLE_CYCLES = Math.round((2304 / PCM_GROUP) * (7 / 15)); // 358
+// What the pad actually holds an iteration to: one quantum SHORT of the period.
+// Every loop must be able to run slightly fast, because the frame spends cycles
+// outside them (the slot's writes, the pass transitions) and a loop padded to
+// the exact period could never give those back — it would fall behind by them
+// every frame, for ever. The gate is the upper bound in the other direction, so
+// running 4% fast costs nothing: sample 1 of each group waits for Timer B
+// anyway. It is the one number here that is a judgement rather than a
+// measurement; `npm run dac:wav` is what re-judges it.
+export const PAD_TARGET = SAMPLE_CYCLES - 16;
+// Under Timer B the pad's whole job is the interval between samples 2 and 3 of
+// a gate's group: the gate itself re-synchronises sample 1, so nothing the pad
+// does can accumulate and nothing outside the loop has to be charged against
+// it. It is therefore a baked constant per (role, shift) — the runtime debt,
+// its estimator (PACE_RESERVE / PACE_SEG), its tables and the per-frame segment
+// count are all deleted, along with the ~20% slow frame they existed to stop.
+// The history is in .claude/memory/plan-68k-split.md; the short version is that
+// no constant can make an interval constant, which is what a clock is for.
 export const PACE_WINDOW = 14;
-export const PACE_SEG_MAX = 31;     // segments the debt table goes up to
+// A -> A x `unroll`, for turning an ITERATION count into a TICK count. It was
+// written as `add a,a / add a,l` (x3) when the unroll was fixed at three, in
+// TWO generated sites — and a stale factor here cuts a voice pass short, which
+// presents as the mixer diverging at a ring page edge several hundred samples
+// later. Derived from the unroll now; anything past 4 needs a real multiply and
+// says so rather than emitting silently wrong code.
+export function mulByUnroll(u) {
+  if (u === 2) return "        add  a,a                ; x2 = ticks";
+  if (u === 3) return "        add  a,a\n        add  a,l                ; x3 = ticks";
+  if (u === 4) return "        add  a,a\n        add  a,a                ; x4 = ticks";
+  throw new Error(`gen-mixer: no iterations->ticks multiply for unroll ${u}`);
+}
 export const paceTarget = (R) => Math.floor(FRAME_CYCLES / R);
-export const paceDebt = (R, segs) =>
-  Math.min(255, Math.round((PACE_RESERVE + segs * PACE_SEG) / (16 * R)));
 
 // Documented Z80 cycle counts for exactly the instructions `body()` emits, so
 // the pad is derived from the generated code rather than from a hand-kept copy
@@ -164,7 +136,7 @@ function costOf(line) {
 // The carry paths (`jr nc,k` over an `inc`) are the one place where the count
 // depends on data: taken costs 12, the fall-through 11. Price the taken path and
 // skip what it jumps over — the difference is one cycle in ninety.
-function tickCost(variant, role, shift) {
+export function tickCost(variant, role, shift) {
   const lines = body(variant, role, shift, []);
   let n = 0, skipTo = null;
   for (const l of lines) {
@@ -290,37 +262,115 @@ function body(variant, role, shift, deferred = []) {
 // points it at the finished plane once and every loop in every pass advances the
 // same register, so the cadence survives the segment splits and the pass
 // boundaries without anything having to hand it over.
+// The gate, inline: hold for Timer B on the group's first sample and step the
+// phase. Every emit in the engine begins with exactly this block.
+//
+// THE PHASE LIVES IN A', THE SHADOW ACCUMULATOR, AND NOWHERE ELSE. It used to
+// be a RAM byte behind `call gate_step`, which cost 69 cycles of the ~165 an
+// emit gets — 11,000 a frame to maintain a counter that never exceeds 3. `ex
+// af,af'` is 4 cycles and reaches it directly, so the whole step is 24, inline,
+// in 8 bytes.
+//
+// What that buys has a price, and it is a global one: `ex af,af'` is now
+// RESERVED for the pacing, everywhere in the engine, for the whole life of the
+// driver. Nothing else may use AF' — not the mixer, not the sequencer, not a
+// future interrupt path (the handler's push/pop af does not touch it, which is
+// what makes this work across the frame boundary). `exx` is unaffected and the
+// mixer's own use of it is fine. A second user of AF' would not fail a gate; it
+// would drift the DAC's phase and read as jitter, so it is called out here and
+// at the definition of gate_wait.
+function gatePrologue() {
+  const k = lbl("gt");
+  return [
+    "        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue",
+    "        dec  a",
+    `        jr   nz,${k}            ; not this sample's turn to wait`,
+    "        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP",
+    `${k}:`,
+    "        ex   af,af'            ; …and the mixer's A and flags come back",
+  ];
+}
+
 function feed(pad) {
   const o = [];
   const push = (s) => o.push("        " + s);
-  push("ld   a,(iy+0)          ; the sample the LAST frame finished");
-  push("xor  $80               ; the plane is signed, the DAC is not");
-  push("ld   (YM_DATA0),a      ; $2A: latched once a frame, then fed blind");
-  push("inc  iy");
-  if (pad > 0) {
-    // Whether a copy pads at all is baked (its cost is known here); HOW MUCH is
-    // not, because the segment charges its own overhead against it — see
-    // ms_set_pad. G_PAD is written once per segment, never per tick.
+  // The gate. Timer B overflows every GROUP samples, so one emit in GROUP holds
+  // for it and the other two are placed by the code — the pad below is what
+  // places them. The counter is CONTINUOUS across frames on purpose: a frame
+  // carries 166 or 167 samples and neither divides GROUP, so a phase that
+  // restarted per frame would put a wait at every frame boundary.
+  o.push(...gatePrologue());
+  push("ld   a,(iy+0)          ; the ring: what an earlier frame finished");
+  push("xor  $80               ; the ring is signed, the DAC is not");
+  push("ld   (YM_DATA0),a      ; $2A, fed blind");
+  push("inc  iy                ; wraps at a SEGMENT boundary, never here");
+  if (pad === "runtime") {
+    // The IDLE copies alone take a RUNTIME pad. They are where all of a frame's
+    // slack lives — a silent iteration's own work is ~75 cycles against a
+    // sounding one's 339 — so how much of it the frame can afford is the one
+    // pacing number that is not a constant. engine.z80's pcm_pad sizes it once
+    // a frame from what the frame is doing (§5.1.2).
     const k = lbl("pd");
-    push("ld   a,(G_PAD)         ; pace: hold the tick to the frame's period");
+    push("ld   a,(G_PAD)         ; pace: what this frame can afford to hold to");
+    o.push(`${k}:`);
+    push("dec  a");
+    push(`jr   nz,${k}`);
+  } else if (pad > 0) {
+    // BAKED, not looked up. Under Timer B the pad is no longer compensating for
+    // anything the frame does — the gate re-synchronises the group's first
+    // sample every time (§5.1.2) — so all it has to do is space samples 2 and 3
+    // of a group, whose interval nothing else sets. That makes it a constant of
+    // (role, shift), which is exactly what this generator knows, and it takes
+    // the whole runtime debt estimator with it.
+    const k = lbl("pd");
+    push(`ld   a,${pad}${" ".repeat(Math.max(1, 17 - String(pad).length))}; pace: hold the tick to the sample period`);
     o.push(`${k}:`);
     push("dec  a");
     push(`jr   nz,${k}`);
   }
   return o;
 }
-// Cycles a feed costs at pad n: 49 for the emit, 16n + 8 for the pad.
-const feedCost = (pad) => 49 + (pad > 0 ? 16 * pad + 8 : 0);
-// The pad that brings one unrolled iteration (U ticks + a feed + `dec b`/`jp nz`)
-// up to the frame's tick period. Below one iteration there is nothing to give
-// back, so the copy is generated without a pad at all and simply runs long.
-function padFor(variant, role, shift, U, R) {
-  // One iteration carries exactly one sample, so its period IS the tick period.
-  // The window penalty (PACE_WINDOW) does NOT ride here — subtracting it from
-  // a baked pad the debt clamps to the floor gives nothing back; it is charged
-  // to the frame debt instead (pace_win_tab), where the silent passes pay it.
-  const n = Math.floor((paceTarget(R)
-    - U * tickCost(variant, role, shift) - feedCost(0) - 14 - 8) / 16);
+// What one inline emit costs — the WHOLE block `feed()` emits, gate and all.
+//
+//   ex  af,af'      4        ld  a,(iy+0)      19
+//   dec a           4        xor $80            7
+//   jr  nz,gt       12       ld  (YM_DATA0),a  13
+//   ex  af,af'      4        inc iy            10
+//
+// = 73, and it is the NON-gate path: two of every PCM_GROUP emits take it,
+// which is what the pad has to space (the third re-synchronises on the timer,
+// so whatever it costs is absorbed by the wait it replaces).
+//
+// This was 49 — the four instructions on the right — from before Timer B
+// existed, and Stage B put `call gate_step` in front of the block without
+// moving the number. The gap was 69 cycles charged ~165 times a frame, so the
+// baked pads over-ran a sample period by that much and `pass_cost_tab` under-
+// reported a pass by ~4,000 cycles, which handed `pcm_pad` ~13,000 cycles of
+// pad the frame did not have. That was the bulk of the frame's overrun, and the
+// other half of the fix was to make the step itself cost 24 instead of 69
+// (gatePrologue).
+export const EMIT_CYCLES = 73;
+// What the GATING emit costs on top of the other two, once per PCM_GROUP: the
+// taken branch into `gate_wait`, its flag reset, the $2A re-latch, and the
+// reload of the phase. Only the frame's total cares (`pass_cost_tab`); the pad
+// does not, because this emit's interval is the timer's and not the pad's.
+//
+//   jr nz not taken 7 · call gate_wait 17 · gate_wait's body incl. its
+//   `ld a,PCM_GROUP` 129 · minus the 12-cycle taken jr it replaces = 141
+export const GATE_CYCLES = 141;
+// The pad that brings one unrolled iteration (U ticks + an emit + `dec b`/`jp
+// nz`) up to ONE SAMPLE PERIOD. Below a period there is nothing to hold back,
+// so the copy is generated without pad code at all.
+//
+// The window stall DOES ride here now. It is time the tick really takes on
+// hardware, and the pad is what a sample period has left over after the tick —
+// so a copy that fetches has that much less slack, and one that does not
+// (MUTE, IDLE) keeps it. Under the old debt this could not be expressed: the
+// sounding copy's pad was clamped to its floor and the silent passes paid.
+function padFor(variant, role, shift, U) {
+  const fetches = shift <= 7 ? U : 0;      // MUTE and IDLE read no samples
+  const n = Math.floor((PAD_TARGET - U * tickCost(variant, role, shift)
+    - fetches * PACE_WINDOW - EMIT_CYCLES - 14) / 16);
   return n < 1 ? 0 : Math.min(n, 255);
 }
 
@@ -354,7 +404,7 @@ function loopSet(prefix, variant, role, U, paced, R) {
   const N = IDLE_SHIFT + 1;               // shifts 0..7, then mute, then idle
   for (let s = 0; s < N; s++)
     out.push(loop(`${prefix}_s${s}`, variant, role, s, U,
-      paced ? padFor(variant, role, s, U, R) : null));
+      paced ? (s === IDLE_SHIFT ? "runtime" : padFor(variant, role, s, U)) : null));
   for (let s = 0; s < N; s++) out.push(loop(`${prefix}1_s${s}`, variant, role, s, 1));
   out.push(`${prefix}_tab:`);
   out.push(`        dw   ${[...Array(N)].map((_, s) => `${prefix}_s${s}`).join(", ")}`);
@@ -366,6 +416,7 @@ function loopSet(prefix, variant, role, U, paced, R) {
 export function generateMixerCore(
   { variant = "i8sat", R = 175, unroll = 2, paced = false } = {},
 ) {
+  const MUL_U = mulByUnroll(unroll);
   if (!VARIANTS.includes(variant)) throw new Error(`unknown variant ${variant}`);
   if (paced && variant !== "i8sat")
     throw new Error("paced feed is written for the shipped i8sat plane only");
@@ -390,8 +441,8 @@ export function generateMixerCore(
 ${paced ? `;
 ; The DAC feed is INTERLEAVED, not a pass of its own (§5.1): the head of every
 ; unrolled iteration writes one sample of the plane the LAST frame finished, and
-; the pad after it holds the iteration to ${paceTarget(R)} cycles. Three passes of R ticks
-; carry R samples, so the frame's feed comes out at its own rate by construction.
+; the pad after it holds the iteration to ${SAMPLE_CYCLES} cycles — the sample period,
+; which is Timer B's and not the frame's.
 ` : ""}; ===========================================================================
 
 PCM_MIX_R   equ ${R}
@@ -399,8 +450,9 @@ MIX_UNROLL  equ ${unroll}
 PCM_MUTE_SH equ ${MUTE_SHIFT}      ; PV_SHIFT meaning "silent, keep advancing"
 PCM_IDLE_SH equ ${IDLE_SHIFT}      ; PV_SHIFT meaning "no voice here at all"
 ${paced ? `PCM_PASSES  equ ${PACE_PASSES}      ; passes per frame — the feed's cadence
-PCM_TICK_CY equ ${paceTarget(R)}     ; the period one paced iteration holds to
-PCM_SEG_MAX equ ${PACE_SEG_MAX}      ; debt_tab's last entry (segments per frame)
+PCM_TICK_CY equ ${SAMPLE_CYCLES}     ; the sample period one iteration holds to
+PCM_IDLE_PAD equ ${padFor(variant, "add", IDLE_SHIFT, unroll)}      ; the most an idle iteration may hold to
+PCM_GROUP   equ ${PCM_GROUP}       ; samples per Timer B gate (§5.1.2)
 ` : ""}`);
 
   L.push("R_FIRST_BEG:");
@@ -418,17 +470,40 @@ PCM_SEG_MAX equ ${PACE_SEG_MAX}      ; debt_tab's last entry (segments per frame
   // them. Normally one sample; a heavily segmented frame, a few more.
   L.push("R_OUT_BEG:");
   if (paced) {
-    L.push(`; flush_rest: HL = plane cursor, B = samples still owed (0 = none).
+    L.push(`; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
+; as the inline emit — a sample that comes out here is still a sample.
 flush_rest:
         ld   a,b
         or   a
         ret  z
 fr_loop:
-        ld   a,(hl)
-        xor  $80
-        inc  l
-        ld   (YM_DATA0),a       ; $2A is fed blind — driver.md §5.1
+        push bc
+        call feed_one
+        pop  bc
         djnz fr_loop
+        ret
+
+; feed_one: one sample out of the ring, gate and all — the out-of-line twin of
+; the emit the loops carry inline (§5.1.2). Every stretch of work longer than a
+; sample period calls this, which is what stops the frame's chip writes and its
+; pass transitions from being dead time the DAC spends holding. Touches A, HL
+; and the flags; IY is the feed cursor and G_EMITS the frame's remaining debt.
+feed_one:
+        ld   a,(G_EMITS)
+        or   a
+        ret  z                  ; the frame's samples are all out
+        dec  a
+        ld   (G_EMITS),a
+        push hl                 ; HL is the slot cursor at most call sites
+${gatePrologue().join("\n")}
+        ld   a,$2a              ; the call sites are chip writes: re-latch
+        ld   (YM_ADDR0),a
+        ld   a,(iy+0)
+        xor  $80
+        ld   (YM_DATA0),a       ; $2A is fed blind
+        inc  iy
+        call feed_wrap          ; no segment bound protects THIS one
+        pop  hl
         ret`);
   } else if (wide) {
     L.push(`; DAC byte = clamp(sum - 128*(N-1), 0, 255). inc/dec/ld leave the carry
@@ -534,25 +609,43 @@ mix_seg:
         ld   (G_SEG_L),a        ; accumulate flag (A is needed for other things)
         ld   a,l
         ld   (G_SEG_I),a        ; buffer index to resume at
-${paced ? `        ld   hl,G_NSEG          ; what this frame is costing the NEXT one
-        inc  (hl)
-` : ""}
+
         ; --- split B into unrolled iterations + single-tick remainder ---
         ; Done here, before the register file is loaded, because it is the last
         ; moment HL and DE are free.
-${paced ? `        ld   h,0                ; the cadence is 3, so the divide is a table
+${paced ? `        ld   a,(G_EMITS)        ; nothing to feed: single-tick copies only
+        or   a
+        jr   nz,ms_paced
+        ld   (G_SEG_N),a
+        ld   a,b
+        ld   (G_SEG_R),a
+        jr   ms_split
+ms_paced:
+        ld   h,0                ; the cadence is 3, so the divide is a table
         ld   l,b
         ld   de,div_tab
         add  hl,de
         ld   a,(hl)
+        ; …capped by what the frame still owes, and charged, exactly as
+        ; mix_seg_live does it — this is the path a SILENT pass takes, and it
+        ; emits too.
+        ld   hl,G_EMITS
+        cp   (hl)
+        jr   c,ms_owed
+        ld   a,(hl)
+ms_owed:
         ld   (G_SEG_N),a        ; iterations
+        neg
+        add  a,(hl)
+        ld   (hl),a
+        ld   a,(G_SEG_N)
         ld   l,a
-        add  a,a
-        add  a,l                ; 3 x iterations
+${MUL_U}
         ld   l,a
         ld   a,b
         sub  l
-        ld   (G_SEG_R),a        ; remainder ticks (0..2)` :
+        ld   (G_SEG_R),a        ; ticks the single-tick copies take
+ms_split:` :
 `        ld   a,b
         and  MIX_UNROLL-1
         ld   (G_SEG_R),a        ; remainder ticks
@@ -653,8 +746,17 @@ ms_pstore:
 ; mix_seg_live: one segment on the LIVE register file.
 ;   B = ticks (1..255); G_IDX = plane index; G_SEG_L was set at bind time
 mix_seg_live:
-        ld   hl,G_NSEG          ; what this frame is costing the NEXT one
-        inc  (hl)
+        ; A frame with nothing to feed — a PRIME frame building the ring's lead
+        ; (§5.1.2) — runs entirely on the SINGLE-TICK copies, which carry no
+        ; emit. Slower per tick by the djnz, and it is one frame per burst.
+        ld   a,(G_EMITS)
+        or   a
+        jr   nz,msl_paced
+        ld   (G_SEG_N),a
+        ld   a,b
+        ld   (G_SEG_R),a
+        jr   msl_go
+msl_paced:
         push de                 ; the divide needs DE; the file owns it
         ld   h,0                ; the cadence is 3, so the divide is a table
         ld   l,b
@@ -662,14 +764,28 @@ mix_seg_live:
         add  hl,de
         ld   a,(hl)
         pop  de
-        ld   (G_SEG_N),a        ; iterations
+        ; The loop emits one sample per iteration and does NOT check whether the
+        ; frame still owes any — that check is HERE, once a segment, where it is
+        ; free. Anything the loop may not emit runs through the single-tick
+        ; copies instead, which carry no emit at all. That is also what pays for
+        ; the samples the frame's other emit points (feed_one) took.
+        ld   hl,G_EMITS
+        cp   (hl)
+        jr   c,msl_owed
+        ld   a,(hl)             ; fewer owed than iterations: emit only those
+msl_owed:
+        ld   (G_SEG_N),a        ; iterations, and samples, this segment carries
+        neg
+        add  a,(hl)
+        ld   (hl),a             ; charge them to the frame
+        ld   a,(G_SEG_N)
         ld   l,a
-        add  a,a
-        add  a,l                ; 3 x iterations
+${MUL_U}
         ld   l,a
         ld   a,b
         sub  l
-        ld   (G_SEG_R),a        ; remainder ticks (0..2)
+        ld   (G_SEG_R),a        ; ticks the single-tick copies take
+msl_go:
         ld   a,(G_IDX)
         ld   l,a
         ld   a,(G_MIXP)
@@ -691,12 +807,12 @@ msl_done:
         ret
 ` : ""}
 
-; ms_bind: point both entries at this PASS's copies${paced ? ", and size its pad" : ""}.
+; ms_bind: point both entries at this PASS's copies.
 ;
 ; The copy is chosen by (role, shift) and BOTH are constant for a whole voice
 ; pass — a pass is one voice, and PV_SHIFT only moves when a PCM_VOL arrives,
 ; which happens between passes. Doing this per SEGMENT re-derived it five or six
-; times a frame${paced ? ", along with a pad that had not changed either" : ""}: ~1,700 cycles spent on values that were
+; times a frame: ~1,700 cycles spent on values that were
 ; already known. Rebind after anything that changes the voice under the pass —
 ; engine.z80 does it at pass entry and again when a pass falls through to the
 ; silent loop.
@@ -732,78 +848,33 @@ msb_s:
         ld   h,(hl)
         ld   l,a
         ld   (ms_go_s+1),hl
-${paced ? `        call ms_set_pad
-` : ""}        pop  bc
+        pop  bc
         pop  de
         pop  hl
         ret
 `);
 
+  // What ONE PASS costs, unpadded, by shift — R/PACE_PASSES iterations of
+  // (U ticks + an emit + the loop's back edge + the window stall). The engine
+  // sums three of these to find what a frame has left for the silent passes'
+  // pad, and a table is what removes the multiply from that path. Priced with
+  // the "add" role for every entry: the first pass is cheaper, so the sum comes
+  // out high, so the pad comes out small — which is the safe direction.
+  //
+  // The emit is priced at its AVERAGE here, not at the pad's non-gate figure:
+  // one emit in PCM_GROUP takes the gate path, and the frame really does spend
+  // those cycles even though the pad has no interest in them.
   if (paced) {
-    const IT = Math.floor(R / PACE_PASSES) + 1;   // iterations a segment can hold
+    const iters = Math.floor(R / PACE_PASSES);
+    const emit = EMIT_CYCLES + Math.round(GATE_CYCLES / PCM_GROUP);
+    const cost = [...Array(IDLE_SHIFT + 1)].map((_, s) => Math.min(65535, iters *
+      (unroll * tickCost(variant, "add", s) + (s <= 7 ? unroll * PACE_WINDOW : 0)
+        + emit + 14)));
     L.push(`
-; ms_set_pad: G_PADN = base(role, shift) − G_DEBT, the pad this pass's copies
-; hold to. Floored at 1 — the pad loop counts DOWN from G_PAD, so zero would be
-; 256 — which is also what a frame with no slack left to give does.
-;
-; Kept as G_PADN as well as in G_PAD so a caller that wants the unmodified
-; figure has it; G_PADN is set even for a copy that carries no pad code at all,
-; so it is never stale.
-ms_set_pad:
-        call pcm_debt           ; re-estimated per segment: a frame that turns
-                                ; out heavier than its predecessor tightens from
-                                ; the segment where it finds out
-        ld   hl,pad_add_tab
-        ld   a,(G_SEG_L)
-        or   a
-        jr   nz,msp_role
-        ld   hl,pad_first_tab
-msp_role:
-        ld   d,0
-        ld   e,(ix+PV_SHIFT)
-        add  hl,de
-        ld   a,(hl)
-        or   a
-        jr   z,msp_min          ; this copy carries no pad — nothing to hold to,
-                                ; but the values still have to be current
-        ld   hl,G_DEBT
-        sub  (hl)
-        jr   c,msp_min
-        or   a
-        jr   nz,msp_store
-msp_min:
-        ld   a,1
-msp_store:
-        ld   (G_PADN),a
-        ld   (G_PAD),a
-        ret
-
-; Pad each copy would need to hit ${paceTarget(R)} cycles with the frame to itself, by
-; shift, mute last. 0 = the copy is already at or over the period, and is
-; generated without pad code at all.
-pad_first_tab:
-        db   ${[...Array(IDLE_SHIFT + 1)].map((_, s) => padFor(variant, "first", s, unroll, R)).join(",")}
-pad_add_tab:
-        db   ${[...Array(IDLE_SHIFT + 1)].map((_, s) => padFor(variant, "add", s, unroll, R)).join(",")}
-
-; debt_tab[segments] = ${PACE_RESERVE} + segments x ${PACE_SEG} cycles of per-frame overhead, in
-; 16-cycle pad units, spread over all PCM_MIX_R samples of the frame.
-debt_tab:`);
-    const debt = [...Array(PACE_SEG_MAX + 1)].map((_, n) => paceDebt(R, n));
-    for (let i = 0; i <= PACE_SEG_MAX; i += 16)
-      L.push(`        db   ${debt.slice(i, i + 16).join(",")}`);
-    // Each sounding pass reads R sample bytes through the $8000 window, and on
-    // hardware every one of those reads stalls the Z80 for ~PACE_WINDOW cycles
-    // of 68000-bus arbitration the COST table cannot see. In debt units that is
-    // i·R·PACE_WINDOW / (16·R) = i·PACE_WINDOW/16 for i sounding passes.
-    const win = [...Array(PACE_PASSES + 1)]
-      .map((_, i) => Math.min(255, Math.round((i * PACE_WINDOW) / 16)));
-    L.push(`
-; pace_win_tab[sounding passes] = the ROM-window fetch stall (PACE_WINDOW = ${PACE_WINDOW}
-; cycles per sample read, hardware-only — see gen-mixer.mjs), in pad units.
-; MUTE and IDLE passes fetch nothing and pay nothing.
-pace_win_tab:
-        db   ${win.join(",")}`);
+; pass_cost_tab[shift] = ${iters} iterations x one unpadded iteration, in cycles.
+pass_cost_tab:`);
+    for (let i = 0; i <= IDLE_SHIFT; i += 5)
+      L.push(`        dw   ${cost.slice(i, i + 5).join(", ")}`);
   }
 
   // The cadence is 3, which is the one divisor the Z80 cannot shift. A segment
@@ -907,11 +978,11 @@ if (process.argv[1] && process.argv[1].endsWith("gen-mixer.mjs")) {
   const dst = writeMixer();
   console.log(`wrote ${dst} (i8sat, R = 175, unroll ${PACE_PASSES}, paced feed`
     + ` — the settled configuration)`);
-  console.log(`  tick period ${paceTarget(175)} cyc; pads`);
+  console.log(`  sample period ${SAMPLE_CYCLES} cyc, pads hold to ${PAD_TARGET}; pads`);
   for (const role of ["first", "add"]) {
     const pads = [...Array(IDLE_SHIFT + 1)].map((_, s) =>
       `${s === MUTE_SHIFT ? "mute" : s === IDLE_SHIFT ? "idle" : `s${s}`}`
-      + `:${padFor("i8sat", role, s, PACE_PASSES, 175)}`);
+      + `:${padFor("i8sat", role, s, PACE_PASSES)}`);
     console.log(`  ${role.padEnd(5)} ${pads.join(" ")}`);
   }
 }

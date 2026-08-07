@@ -20,6 +20,9 @@ dist/
 *.swp
 live/.certs/
 
+# rendered DAC audio (npm run dac:wav)
+drv/out/
+
 # generated IR snapshots
 examples/ir/*.generated.json
 examples/ir/*.diagnostics.generated.json

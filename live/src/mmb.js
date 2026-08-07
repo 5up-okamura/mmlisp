@@ -294,12 +294,13 @@ export function sweepStep(len, loop) {
   return n <= 1 ? 0 : Math.min(0xffff, Math.floor(65536 / (n - 1)));
 }
 
-// ── PCM per-frame rate (driver.md §11, opcodes.md §6) — frame-quantized DAC ─
-// The DAC feed is modelled frame-quantized (option A): each 60 Hz frame advances
-// a 16.16 sample-position accumulator by `increment` and covers PCM_MIX_RATE
-// sample bytes. That fixes WHICH samples a frame carries; WHEN each one reaches
-// $2A is the engine's own business (driver.md §5.1 — it interleaves the feed
-// into the mix loop and lags a frame behind it, which `drv-player.js` models).
+// ── PCM per-frame rate (driver.md §11, opcodes.md §6) ──────────────────────
+// Each frame advances a 16.16 sample-position accumulator by `increment` and
+// covers the frame's share of the sample clock (pcmFrameSamples below — 166 or
+// 167, never a constant). That fixes WHICH samples a frame carries; WHEN each
+// one reaches $2A is the engine's own business (driver.md §5.1 — the feed is
+// paced by Timer B and drains a ring the mixer fills a frame ahead of it, which
+// `drv-player.js` models).
 //
 // increment (16.16 samples/frame) = base_rate × MULT_FRAME[note-36], where
 // MULT_FRAME[n] = round(2^((note-60)/12) × 65536 / 60) for C2..C6 (note 36..84).
@@ -317,17 +318,67 @@ export function pcmIncrement(baseRate, note) {
   return (baseRate * PCM_MULT_FRAME[n - 36]) >>> 0;
 }
 
+// ── The sample clock — YM Timer B (driver.md §5.1) ─────────────────────────
 // PCM soft-mix (driver.md §14): pcm1–pcm3 are summed in software to the single
-// fm6 DAC. Each frame emits a fixed R DAC writes ("mix ticks"); every active
-// voice is resampled (nearest-neighbour) to that grid and the ≤3 signed samples
-// are summed then hard-saturated to int8. R is the effective sample rate / 60.
-export const PCM_MIX_RATE = 175; // DAC writes per frame ≈ 10.5 kHz
+// fm6 DAC. Every active voice is resampled (nearest-neighbour) to the sample
+// clock's grid and the ≤3 signed samples are summed then hard-saturated to int8.
+//
+// The grid is not the frame. The DAC is paced by YM Timer B — TB = 255 gates
+// every 16 FM samples and the engine emits PCM_SAMPLE_GROUP samples per gate —
+// so the rate is fixed by the YM's own clock and has nothing to do with 60 Hz:
+//
+//   master 53693175 Hz / 7 = YM clock, / 144 = FM sample rate (53267 Hz)
+//   Timer B step = 16 FM samples; TB = 255 → one gate per step (3329.2 Hz)
+//   × 3 samples a gate = master / 5376 = 9987.6 Hz
+//   a frame is 262 lines × 3420 master cycles = master / 896040 (59.92 Hz)
+//   → 896040 / 5376 = 166.674 samples a frame, which is NOT an integer
+//
+// That non-integer is the whole reason the engine holds a sample RING rather
+// than a frame-long buffer, and why every "R samples a frame" constant is gone.
+export const PCM_SAMPLES_NUM = 37335; // samples per PCM_SAMPLES_DEN frames…
+export const PCM_SAMPLES_DEN = 224; // …i.e. 896040/5376 in lowest terms
+export const PCM_SAMPLES_PER_FRAME = PCM_SAMPLES_NUM / PCM_SAMPLES_DEN; // 166.67
 
-// 16.16 per-mix-tick increment: the per-frame increment divided across R ticks.
-// Computed at full 16.16 precision then floored so pitch stays accurate (a table
-// pre-divided by R would round too coarsely).
+// Index of the first sample of `frame`, counting from the driver's frame 0.
+// Both producer and feed derive their counts from this, so the two cannot
+// disagree about how many samples a frame owes. (The 68k/Z80 mirrors keep a
+// running remainder instead — the product overflows 32 bits after ~32 minutes.)
+export function pcmSampleIndex(frame) {
+  return Math.floor((frame * PCM_SAMPLES_NUM) / PCM_SAMPLES_DEN);
+}
+
+/** Samples the DAC takes during `frame` — 166 or 167, never constant. */
+export function pcmFrameSamples(frame) {
+  return pcmSampleIndex(frame + 1) - pcmSampleIndex(frame);
+}
+
+// The ring the mixer produces into and the feed drains (driver.md §5.1.2).
+//
+// TARGET is how many FINISHED samples the ring carries ahead of the feed. A
+// burst's first frame builds all of them and feeds nothing (the DAC is parked
+// at silence for that one frame); every frame after it mixes exactly what the
+// feed just took. That is what keeps the engine's two counts equal — it emits
+// one sample per three mix ticks, so "mixed this frame" and "fed this frame"
+// are the same number — and it is why there is no per-frame catch-up rule.
+//
+// BYTES is twice TARGET because the mixer is voice-outer: while a frame's chunk
+// is being built, none of it is playable until the last voice pass has added to
+// it, so the finished samples and the ones under construction are live at the
+// same time. 256 B could hold one or the other, never both.
+// 255, not 256: a voice pass's tick count is a single byte in the engine
+// (G_TICKS), and the prime frame mixes exactly TARGET of them. The slack it
+// leaves the feed is 255 - 167 = 88 samples either way.
+export const PCM_RING_TARGET = 255;
+export const PCM_RING_BYTES = 512;
+
+// 16.16 per-sample position increment: the per-frame increment divided across
+// the frame's samples. Computed at full 16.16 precision then floored so pitch
+// stays accurate (a table pre-divided by the rate would round too coarsely).
+// The divisor is the AVERAGE samples per frame, not a given frame's 166/167:
+// the rate the ear hears is the sample clock's, and the ring is what absorbs
+// the difference. (Mirrors need 64 bits for the product — 68k pcm_tick_increment.)
 export function pcmTickIncrement(baseRate, note) {
-  return Math.floor(pcmIncrement(baseRate, note) / PCM_MIX_RATE) >>> 0;
+  return Math.floor((pcmIncrement(baseRate, note) * PCM_SAMPLES_DEN) / PCM_SAMPLES_NUM) >>> 0;
 }
 
 // ── Duration operand (mmb.md §7.2) ────────────────────────────────────────

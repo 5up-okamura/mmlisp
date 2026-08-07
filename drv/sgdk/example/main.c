@@ -90,9 +90,22 @@ int main(bool hardReset)
     // iteration per frame. If it is low, the 68k side is the problem before any
     // of the driver's numbers mean anything.
     //
-    // `starv` then says whose fault a low `music` is: climbing = the ring ran
-    // dry, flat = the Z80 is not taking every interrupt (its frame is over
-    // budget). `audible` is the raw consumed-frame count behind `music`.
+    // `starv` then says WHOSE FAULT a low `music` is, and it is the whole
+    // diagnosis because the two answers have opposite fixes:
+    //
+    //   music < 0x100 and starv/s > 0   the ring ran DRY — the 68k side is late.
+    //                                   Check `host` first; if that is low the
+    //                                   fix is in this loop, not in the driver.
+    //                                   Otherwise: deeper RING_DEPTH, or less
+    //                                   work per frame on the 68k.
+    //   music < 0x100 and starv/s == 0  the Z80 is not taking every interrupt —
+    //                                   its frame is over budget (§5.1.3).
+    //                                   Fewer PCM voices, or a lower mix rate.
+    //
+    // `starv` alone is cumulative, and cumulative can only say THAT the ring ran
+    // dry, never whether it still is — a number that climbed once and stopped
+    // looks identical to one climbing now. `starv/s` is the one that answers it.
+    // `audible` is the raw consumed-frame count behind `music`.
     VDP_drawText("music x256:", 2, 7);
     VDP_drawText("host x256:", 19, 7);
     // Cumulative tells you THAT frames are being lost; it cannot tell you WHEN,
@@ -105,7 +118,11 @@ int main(bool hardReset)
     VDP_drawText("lost/s:", 26, 8);
     VDP_drawText("starv:", 2, 9);
     VDP_drawText("audible:", 14, 9);
-    VDP_drawText("track active:", 2, 11);
+    VDP_drawText("starv/s:", 28, 9);
+    // The decision table on screen, because this is read while looking at the
+    // machine and not at the source.
+    VDP_drawText("music<100: starv/s>0=68k  =0=z80", 2, 10);
+    VDP_drawText("track active:", 2, 12);
 
     u16 prev = 0;
     // Sampled rarely and on purpose. Reading the counters stops the Z80 for the
@@ -117,6 +134,7 @@ int main(bool hardReset)
     u16  baseAudible = 0;
     u32  markTimer   = vtimer;   // start of the current one-second window
     u16  markAudible = 0;
+    u16  markStarved = 0;
     u16  worst1s     = 0x100;
     MMLispStats st = { 0, 0 };
 
@@ -139,6 +157,7 @@ int main(bool hardReset)
             baseAudible = st.audible;
             markTimer   = vtimer;
             markAudible = st.audible;
+            markStarved = st.starved;
             worst1s     = 0x100;
             loops       = 0;
             // Every track in one frame. Each track's clock starts on the frame
@@ -177,8 +196,10 @@ int main(bool hardReset)
             drawHex(win > got ? win - got : 0, 4, 34, 8);
             drawHex(st.starved, 4, 9, 9);
             drawHex(st.audible, 4, 23, 9);
+            drawHex((u16)(st.starved - markStarved), 4, 36, 9);
             markTimer   = vtimer;
             markAudible = st.audible;
+            markStarved = st.starved;
         }
 
         if (pressed & BUTTON_C)
@@ -186,7 +207,7 @@ int main(bool hardReset)
             u8 n = MMLisp_trackCount();
             if (n > MAX_SHOWN_TRACKS) n = MAX_SHOWN_TRACKS;
             for (u8 i = 0; i < n; i++)
-                drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 11);
+                drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 12);
         }
 
         // ── The one hard rule: once per frame, and last ──────────────────────

@@ -15,7 +15,7 @@
  */
 
 import { encodeWav } from "./export-wav.js";
-import { PCM_MIX_RATE } from "./mmb.js";
+import { PCM_SAMPLES_PER_FRAME } from "./mmb.js";
 
 const DIR_ENTRIES = 32;
 const DIR_ENTRY_SIZE = 32;
@@ -25,14 +25,15 @@ const BODY_START = 0x400;
 export const MUCOM_ADPCM_RATE = 16000;
 
 /**
- * What the bank is resampled to. The driver's soft-mix writes the DAC
- * PCM_MIX_RATE times per 60 Hz frame, so ~10.5 kHz is all it can ever emit —
- * keeping mucom's native 16 kHz would store ~1.5x the bytes only to have the
- * driver throw them away again (and resample twice). Other MD drivers store at
- * their playback rate for the same reason (XGM 14 kHz, MDSDRV ~17.5 kHz).
- * Derived, not hardcoded: this follows PCM_MIX_RATE if the budget moves.
+ * What the bank is resampled to. The driver's soft-mix writes the DAC on the
+ * Timer-B sample clock — PCM_SAMPLES_PER_FRAME a frame, ~10 kHz — so keeping
+ * mucom's native 16 kHz would store ~1.6x the bytes only to have the driver
+ * throw them away again (and resample twice). Other MD drivers store at their
+ * playback rate for the same reason (XGM 14 kHz, MDSDRV ~17.5 kHz). Derived,
+ * not hardcoded: this follows the sample clock if the pacing moves. Rounded
+ * because a sample's declared base rate is a u16 in the bank.
  */
-export const MUCOM_PCM_RATE = PCM_MIX_RATE * 60;
+export const MUCOM_PCM_RATE = Math.round(PCM_SAMPLES_PER_FRAME * 60);
 
 /**
  * Resample mono float by nearest-neighbour — the same thing the driver's mix

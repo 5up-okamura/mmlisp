@@ -937,13 +937,20 @@ static const uint8_t *find_sample(const MMLSeq *s, int id) {
   return 0;
 }
 
-/* 16.16 position advance per mix tick. Computed at full precision then floored,
- * so pitch stays accurate — a table pre-divided by the mix rate rounds far too
- * coarsely (mmb.js pcmTickIncrement is the definition). */
+/* 16.16 position advance per mixed sample. Computed at full precision then
+ * floored, so pitch stays accurate — a table pre-divided by the rate rounds far
+ * too coarsely (mmb.js pcmTickIncrement is the definition).
+ *
+ * The divisor is the AVERAGE samples per frame, not this frame's 166 or 167:
+ * what the ear hears is the sample clock's rate and the ring absorbs the rest.
+ * floor(a x DEN / NUM) with a x DEN overflowing 32 bits is split by the exact
+ * identity floor(a x b / c) = (a/c) x b + floor((a%c) x b / c), whose largest
+ * intermediate is (NUM-1) x DEN — 8.4M, and no 64-bit divide on the 68000. */
 static uint32_t pcm_tick_increment(int base_rate, int note) {
   int n = clampi(note, 36, 84);
   uint32_t per_frame = (uint32_t)base_rate * MML_PCM_MULT_FRAME[n - 36];
-  return per_frame / MML_PCM_MIX_RATE;
+  uint32_t q = per_frame / MML_PCM_SAMPLES_NUM, r = per_frame % MML_PCM_SAMPLES_NUM;
+  return q * MML_PCM_SAMPLES_DEN + (r * MML_PCM_SAMPLES_DEN) / MML_PCM_SAMPLES_NUM;
 }
 
 static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int note) {
@@ -1003,24 +1010,46 @@ static void pcm_frame(MMLSeq *s) {
   int any = 0;
   s->plan_len = 0;
   for (int i = 0; i < MML_PCM_VOICES; i++) any |= s->pcm[i].active;
-  if (!any) {
-    if (s->pcm_dac_on) {
-      s->pcm_dac_on = 0;
-      ym(s, 0, 0x2b, 0x00); /* release fm6 back to FM — shadow only, §14 */
-    }
-    return;
+  /* The feed's clock runs whether or not anything sounds, so its remainder is
+   * carried before any early exit — otherwise the schedule slips a frame every
+   * time the DAC is idle and the sequencer stops agreeing with the engine. */
+  uint16_t want = MML_PCM_SAMPLES_NUM / MML_PCM_SAMPLES_DEN;
+  s->pcm_sched += MML_PCM_SAMPLES_NUM % MML_PCM_SAMPLES_DEN;
+  if (s->pcm_sched >= MML_PCM_SAMPLES_DEN) {
+    s->pcm_sched -= MML_PCM_SAMPLES_DEN;
+    want++;
   }
+  /* fm6 IS CLAIMED FOR THE REST OF THE SCORE. Once PCM has sounded once the
+   * ring is kept topped up with silence and the DAC is never released, because
+   * releasing it makes the NEXT hit a PRIME frame — and a prime frame feeds
+   * nothing while it builds the lead, measured at 135 to 355 sample periods of
+   * silence, one to two whole frames, once per burst. On percussion that is a
+   * click per hit. The cost is fm6 (§14 — claimed, not owned, becomes claimed
+   * and kept); a score with no PCM never claims and is unaffected. */
+  if (!any && !s->pcm_dac_on) return;
   if (!s->pcm_dac_on) {
     s->pcm_dac_on = 1;
     ym(s, 0, 0x2b, 0x80);
   }
+  /* An empty ring is a PRIME frame: it builds the whole lead and feeds nothing
+   * (§5.1.2). Otherwise the DAC took `want` — the engine feeds before it mixes,
+   * a sample being final only after the last voice pass, so the ring drains
+   * first here too or the two disagree about the chunk length. */
+  int prime = s->pcm_fill == 0;
+  if (!prime) s->pcm_fill = s->pcm_fill > want ? (uint16_t)(s->pcm_fill - want) : 0;
+  /* The lead on a prime frame, otherwise exactly what was fed. This chunk is
+   * what the engine must mix: the plan below is tick distances measured against
+   * it, and the engine's emit count follows it one sample per three ticks. */
+  uint16_t chunk = prime ? MML_PCM_RING_TARGET : want;
+  s->pcm_fill += chunk;
+  s->pcm_chunk = prime ? 0 : (uint8_t)want;
   for (int i = 0; i < MML_PCM_VOICES; i++) {
     MMLPcmVoice *v = &s->pcm[i];
     /* The run's count byte, filled in by plan_push as breaks are found. */
     uint16_t at = s->plan_len++;
     int last = 0;
     s->plan_buf[at] = 0;
-    for (int t = 0; t < MML_PCM_MIX_RATE && v->active; t++) {
+    for (int t = 0; t < (int)chunk && v->active; t++) {
       uint32_t before = v->pos >> 16;
       v->pos += v->inc;
       v->left -= (int32_t)((v->pos >> 16) - before);
@@ -1034,10 +1063,10 @@ static void pcm_frame(MMLSeq *s) {
         v->active = 0;
       }
     }
-    /* Still sounding: a final run meaning "no further break this frame", which
-     * the engine clamps to the ticks its pass has left. A voice that ended
-     * needs none — its pass falls through to the silent loop. */
-    if (v->active) plan_push(s, at, MML_PCM_MIX_RATE);
+    /* Still sounding: a final run meaning "no further break in this chunk",
+     * which the engine clamps to the ticks its pass has left. A voice that
+     * ended needs none — its pass falls through to the silent loop. */
+    if (v->active) plan_push(s, at, chunk);
   }
 }
 
@@ -1583,9 +1612,9 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
    * rather than overflow the slot. What is dropped stays queued, in order. */
   {
-    /* n_writes + n_pcm + the commands + the segment plan + one run-length
-     * triple per sub-slot */
-    uint32_t size = 2 + 3 * MML_SLOT_SUBS + s->pcm_len +
+    /* n_writes + chunk + n_pcm + the commands + the segment plan + one
+     * run-length triple per sub-slot */
+    uint32_t size = 3 + 3 * MML_SLOT_SUBS + s->pcm_len +
                     (s->plan_len ? s->plan_len : MML_PCM_VOICES);
     uint16_t fit = 0, scan = cur;
     for (uint16_t i = 0; i < take; i++) {
@@ -1605,6 +1634,12 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * of the way in. Trailing them would cost the engine a walk past every
    * sub-slot plus a tally of every run: ~1,700 cycles a frame, measured. */
   out[o++] = (uint8_t)take;
+  /* How many samples the engine mixes this frame (§5.1.2). It cannot derive it
+   * — the plan's tick distances are measured against it and a starved frame
+   * would desync the two — and 0 encodes a PRIME frame, since the lead does not
+   * fit in a byte. */
+  out[o++] = s->pcm_chunk;
+  s->pcm_chunk = 0;
   out[o++] = s->pcm_count;
   mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
   /* The segment plan follows the commands, still at the frame head: the engine

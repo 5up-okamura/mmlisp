@@ -105,7 +105,8 @@ const uint8_t MML_SIN_LUT[256] = {
 };
 
 /* PCM resampling: note (C2..C6, 36..84) -> 16.16 samples per frame per Hz of
- * base rate. The mix-tick increment divides this by PCM_MIX_RATE (mmb.js). */
+ * base rate. The per-sample increment divides this by the sample clock's
+ * average samples a frame (mmb.js pcmTickIncrement, driver.md §5.1.2). */
 const uint16_t MML_PCM_MULT_FRAME[49] = {
     273, 289, 307, 325, 344, 365, 386, 409,
     433, 459, 487, 515, 546, 579, 613, 649,

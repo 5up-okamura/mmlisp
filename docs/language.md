@@ -1191,7 +1191,8 @@ than left to break at export time.
 Full drop routing for every accepted format: `guide.md` §23.
 
 `pcm1`–`pcm3` are three voices **soft-mixed** by the Z80 to the single fm6 DAC
-at a fixed mix rate (~10.5 kHz): each voice is resampled to that grid, the
+at a fixed mix rate (~10 kHz, paced by the YM's own timer): each voice is
+resampled to that grid, the
 voices are summed and **hard-clipped**, so loud simultaneous hits distort by
 design (headroom is the composer's to manage via `:vel`/`:vol`). A `shot` plays
 to its end; a `loop` sustains until `KEY_OFF` then plays its tail. See

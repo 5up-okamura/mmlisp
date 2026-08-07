@@ -9,11 +9,8 @@
 // without its source.
 //
 // `mixer-bench.mjs` prices one mix TICK and says so: the segment split "is not
-// modelled". But a segment measured ~2,400 cycles and a frame runs five to ten
-// of them, so a fifth of the frame is spent somewhere that nothing in this repo
-// has ever decomposed — and `PACE_SEG` charges the pad a flat constant for it.
-// That constant is the reason the DAC feed still wanders ~3.4 ms
-// (driver.md §5.1), and it cannot be improved by guessing at its parts.
+// modelled". But a frame runs five to ten segments, so a fifth of the frame is
+// spent somewhere that nothing in this repo has ever decomposed.
 //
 // So this tool attributes every executed cycle to the nearest preceding label
 // and reports the per-frame total. Labels are the engine's own, which is what
@@ -21,8 +18,28 @@
 // It answers exactly one question — of the cycles a frame does not spend inside
 // a paced loop body, which label holds them.
 //
-// Not a gate: nothing here can fail. `npm run dac` is the gate that watches the
-// number this tool exists to move.
+// Under Timer B that question has a sharp form, and the summary below states it:
+//
+//   the frame emits `chunk` samples and the timer spaces them, so the frame
+//   cannot be shorter than chunk x SAMPLE_CYCLES however fast the code is. The
+//   mix loops PAD themselves up to exactly that period, so their cycles are
+//   free — they are the pacing. Everything else a frame does (the slot's chip
+//   writes, the PCM commands, the segment set-ups, the frame's head) is NOT
+//   paced, and every one of those cycles is added to the period rather than
+//   hidden inside it. `npm run budget:frame` reports the sum; this reports the
+//   NAMES.
+//
+// So read the "outside the paced loops" line first, and the ranking under it is
+// the work list, largest first.
+//
+// The gate is modelled the way frame-budget.mjs models it: the Timer B overflow
+// flag is satisfied on demand, so a gate wait costs what the CODE costs and the
+// profile shows work rather than spin. Window reads are charged PACE_WINDOW by
+// default (dac-gate's charge) — `--stall-read 0` prices an emulator-shaped
+// frame that hardware never runs.
+//
+// Not a gate: nothing here can fail. `npm run budget:frame` and `npm run dac`
+// are the gates that watch the numbers this tool exists to move.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,13 +68,11 @@ const TOP = opt("top", 18);
 // frame's margin. Sweep it to see how much headroom a song actually has.
 const STALL = opt("stall", 0);
 // Z80 cycles EACH READ through the $8000 ROM window costs beyond the CPU's own
-// 7, waiting for the 68000's bus arbiter. This is the mixer-path hypothesis for
-// the steady hardware frame loss, made runnable: `--stall-read 14` charges what
-// the hardware numbers imply (~2,450 cyc per sounding voice per frame), lands
-// it on the exact instructions that pay it, and lets the engine's pace_win_tab
-// charge be tested against it — over-budget frames must return to the
-// stall-free counts when the two agree.
-const STALL_READ = opt("stall-read", 0);
+// 7, waiting for the 68000's bus arbiter. It defaults to PACE_WINDOW — the same
+// charge dac-gate, frame-budget and the mixer generator's pads all use — so the
+// three tools price the same frame. `--stall-read 0` removes it, which times an
+// emulator-shaped frame that hardware never runs.
+const STALL_READ_OPT = opt("stall-read", -1);
 let scores = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWith("--"));
 if (!scores.length) {
   scores = ["tests/m3-pcm-softmix.mmlisp", "tests/m2-pcmloop.mmlisp", "tests/m3-pcm-slice.mmlisp"]
@@ -68,17 +83,28 @@ const FRAMES = opt("frames", DEFAULT_FRAMES(scores));
 const FRAME_CYCLES = 59659;
 
 // Cycles inside a paced loop body are the work the frame is FOR, and the pad is
-// deliberate idle — neither is overhead however large it reads. Only the third
-// group is what `PACE_SEG` charges the pad for, and it is the one this tool
-// exists to size. Names come from the generator's `lbl()` counter, so the rules
-// are on PREFIX, and `pd<digits>` (a pad loop) is not `pd_<word>` (pcm_debt).
+// deliberate idle — neither is overhead however large it reads, because the
+// loop holds itself to the sample period either way. Everything below the rule
+// is what ADDS to the period, and it is what this tool exists to size. Names
+// come from the generator's `lbl()` counter, so the rules are on PREFIX, and
+// `pd<digits>` (a pad loop) is not `pd_<word>`.
+//
+// `PACED` marks the groups that are inside a padded loop body — their cycles
+// are covered by the pacing and cost the frame nothing extra.
+const PACED = 3;
 const GROUPS = [
   ["pad (idle by design)", /^pd\d+$/],
-  ["mix tick bodies", /^(mix_(first|add)_s\d+|np\d+|ov\d+(_hi)?|nc\d+|dn\d+)/],
-  ["segment set-up", /^(mix_seg|ms_|mvf_|mve_|voice_ptr)/],
-  ["pad accounting", /^(pd_|pcm_debt)/],
+  // `gt<digits>` is the inline gate's skip label — it sits INSIDE a loop copy,
+  // so the emit and pad after it belong to that copy and not to a bucket of
+  // their own. Without this rule a third of the frame reads as "other".
+  ["mix tick bodies", /^(mix_(first|add)_s\d+|np\d+|ov\d+(_hi)?|nc\d+|dn\d+|gt\d+)/],
+  // The gate's own spin. Modelled as satisfied-on-demand (see the header), so
+  // what lands here is the cost of ASKING, not of waiting.
+  ["gate + emit", /^(gate_|feed_one|fo_|fr_|flush_rest)/],
+  // ── everything below this line is added to the sample period ──────────────
+  ["segment set-up", /^(mix_seg|ms_|mvf_|mve_|voice_ptr|mix_voice|mp_|pv_)/],
   ["slot consume", /^(cs|csc)/],
-  ["PCM commands", /^pc_/],
+  ["PCM commands", /^(pc_|pp_|process_pcm|pcm_)/],
   // The frame has no PCM at all, so the mixer is never entered and the two
   // remaining sub-slots have no voice-pass boundaries to ride (driver.md §3.5).
   // pace_sub burns the frame by hand to place them. Deliberate idle, like the
@@ -96,8 +122,9 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer } = await import("./gen-mixer.mjs");
+  const { writeMixer, PACE_WINDOW, SAMPLE_CYCLES } = await import("./gen-mixer.mjs");
   writeMixer();
+  const STALL_READ = STALL_READ_OPT < 0 ? PACE_WINDOW : STALL_READ_OPT;
   const built = assemble(join(drv, "src", "engine.z80"));
   const sym = (n) => built.symbols.get(n);
 
@@ -132,7 +159,12 @@ try {
     } else {
       ({ bytes: mmb, sampleBank } = buildMmb(score));
     }
-    if (!sampleBank?.length) { console.log(`skip  ${name} — no sample bank`); continue; }
+    // A score with no PCM still HAS a frame: the slot's chip writes, the
+    // sub-slot pacing, the sequencer's own head. Skipping it meant every cycle
+    // number in this repo came from a PCM score, and the PCM gate scores are
+    // musically trivial — 19 B slots — so the write stream was never measured
+    // at any density. An empty bank runs it fine; only PCM commands read one.
+    if (!sampleBank?.length) sampleBank = new Uint8Array(0);
     const mmbPath = join(tmp, "s.mmb"), smpPath = join(tmp, "s.smp");
     writeFileSync(mmbPath, mmb); writeFileSync(smpPath, sampleBank);
     const out = execFileSync(exe, [mmbPath, String(FRAMES), "--samples", smpPath], { maxBuffer: 1 << 28 });
@@ -144,34 +176,77 @@ try {
     const RAM = 0x2000, RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
     const ram = new Uint8Array(RAM); ram.set(built.bytes, 0);
     let bankReg = 0, winReads = 0;
+    // Timer B's overflow flag, modelled as frame-budget.mjs models it: it is
+    // already up once the frame has run GATE_CY cycles, so `gate_wait` reads it
+    // once and falls through. That is deliberate — a profile of the engine
+    // SPINNING says only that the gate works, and what has to be sized here is
+    // the work that does not fit between two overflows.
+    const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
+    let fcyc = 0, fed = 0, enableB = false;
+    // YM2612 BUSY: 32 internal cycles after a DATA write (Nuked-OPN2's
+    // `write_busy_cnt >> 5`), an internal cycle is 6 YM clocks, a YM clock is
+    // 7/15 of a Z80 one — 90 Z80 cycles. The consume loop polls it before every
+    // data write and no harness here used to make it spin.
+    // Judged on a MONOTONIC counter — `fcyc` restarts every frame, and against
+    // that the chip read BUSY at every frame boundary.
+    const BUSY_CY = Math.round(32 * 6 * 7 / 15);
+    let tcyc = 0, lastData = -1e9;
     const addr = [0, 0];
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < RAM) return ram[a];
-        if (a === 0x4000) return 0;
+        // ENABLE B ($27 bit 3) gates the flag on the chip — Nuked-OPN2 only ever
+        // sets it as `timer_b_overflow & timer_b_enable` (ym3438.c). Modelled
+        // here too so this tool cannot report a frame the hardware never runs.
+        if (a === 0x4000) return (tcyc - lastData < BUSY_CY ? 0x80 : 0)
+          | (enableB && fcyc >= GATE_CY ? 0x02 : 0);
         if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
         if (a < RAM) { ram[a] = d; return; }
         if (a === 0x6000) { bankReg = ((bankReg >> 1) | ((d & 1) << 8)) & 0x1ff; return; }
         if (a === 0x4000) { addr[0] = d; return; }
+        if (a === 0x4001 || a === 0x4003) lastData = tcyc;
+        if (a === 0x4001 && addr[0] === 0x2a) sinceEmit = 0;   // between emits now
+        if (a === 0x4001 && addr[0] === 0x27) { enableB = (d & 0x08) !== 0; return; }
+        // $2A on port 0 is the DAC. Counting the writes is how many samples the
+        // frame actually fed, which is what the timer paces — and it is the
+        // engine's own answer, not a re-derivation of the schedule.
+        if (a === 0x4001 && addr[0] === 0x2a) { fed++; return; }
         if (a === 0x4002) { addr[1] = d; return; } },
     });
     cpu.pc = 0;
-    for (let i = 0; i < 2_000_000 && !(ram[sym("H_READY")] === 0xd2 && cpu.halted); i++) cpu.step();
+    for (let i = 0; i < 2_000_000 && !(ram[sym("H_READY")] === 0xd2 && cpu.halted); i++) tcyc += cpu.step();
 
     const cost = new Float64Array(marks.length);
     const hits = new Float64Array(marks.length);
-    const SEGB = bucketName.indexOf("mix_seg");
-    // Segments come from the ENGINE'S OWN counter, not from bucket entries.
-    // `mix_seg`'s bucket runs to the next label, so control re-enters it on the
-    // return from `ms_call_unrolled` and a bucket-entry count reads ~2x high —
-    // which silently doubles the x-axis of the regression below and made
-    // PACE_SEG look 2x too steep when it was not. G_NSEG is what `pcm_debt`
-    // itself reads, so it is the only count that can be compared to PACE_SEG.
-    const G_NSEG = sym("G_NSEG");
+    // ── the DEAD ZONE ────────────────────────────────────────────────────────
+    // Stage D's rule is that no stretch of work between two samples may exceed
+    // one sample period (§5.1.2). Total work can be well UNDER the clock's own
+    // floor and the frame still overrun, because a stretch longer than a period
+    // pushes every later sample back and the delays accumulate — which is
+    // exactly what `dac-gate`'s "in-frame hold 6.5/23.6 periods" is reporting.
+    //
+    // So: charge every cycle spent more than one period after the last DAC
+    // write to the label running at the time. That ranks the code that needs an
+    // emit point, which is a different list from the one ranked by total cost —
+    // a label can be cheap and still hold the DAC through a hole, and a label
+    // can be expensive and cost the feed nothing because it emits as it goes.
+    // Only BETWEEN two emits, and only on a frame that emits at all: a frame
+    // with no PCM feeds nothing by design (pace_sub burns it on purpose to
+    // place the sub-slots), so there is no feed there to starve and charging it
+    // ranked `pq_in` first — 5,115 cyc/frame of "dead time" on frames where the
+    // DAC is not running. -1 means "no emit yet this frame".
+    const dead = new Float64Array(marks.length);
+    let sinceEmit = -1, deadTotal = 0;
+    // The biggest single holes, with WHERE in the frame they fell. A flat
+    // per-label ranking cannot tell "one 8,000-cycle hole at the head" from
+    // "forty 200-cycle holes spread through the passes", and those need
+    // completely different fixes.
+    let gapRun = 0, gapAt = 0, gapLbl = -1;
+    const worstGaps = [];
     const G_ACTM = sym("G_ACTM");   // which PCM voices were sounding at frame start
-    const obs = [];   // per frame: [segments, total cycles] — the regression below
+    const obs = [];   // per frame: [samples fed, total cycles, voices, index]
     let frames = 0, total = 0, worst = 0;
     let posted = 0;
     for (let f = 0; f < slots.length; f++) {
@@ -184,7 +259,8 @@ try {
       }
       cpu.intRequest();
       let cyc = 0, g = 0, prev = -1;
-      while (cpu.halted && g++ < 1000) cyc += cpu.step();
+      fcyc = 0; fed = 0; sinceEmit = -1;
+      while (cpu.halted && g++ < 1000) { const c = cpu.step(); cyc += c; tcyc += c; }
       const tgt = process.env.SEG_FRAME !== undefined && f === Number(process.env.SEG_FRAME);
       const fcost = tgt ? new Float64Array(marks.length) : null;
       while (!cpu.halted && g++ < 3_000_000) {
@@ -192,12 +268,23 @@ try {
         winReads = 0;
         let c = cpu.step();
         c += winReads * STALL_READ;   // the stall lands on the instruction that fetched
+        // Everything past the first period is dead time the ear hears as a hold.
+        if (sinceEmit >= 0) sinceEmit += c;
+        if (sinceEmit > SAMPLE_CYCLES && b !== 0xffff) {
+          const over = Math.min(c, sinceEmit - SAMPLE_CYCLES);
+          dead[b] += over; deadTotal += over;
+          if (gapRun === 0) { gapAt = fcyc; gapLbl = b; }
+          gapRun += over;
+        } else if (gapRun > 0) {
+          worstGaps.push([gapRun, gapLbl, gapAt, f]);
+          gapRun = 0;
+        }
         if (b !== 0xffff) {
           cost[b] += c;
           if (fcost) fcost[b] += c;
           if (b !== prev) { hits[b]++; prev = b; }
         }
-        cyc += c;
+        cyc += c; fcyc += c; tcyc += c;
       }
       if (fcost) {
         const rows = [...fcost.keys()].filter((i) => fcost[i] > 0)
@@ -208,7 +295,7 @@ try {
       const m = ram[G_ACTM];
       const nv = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
       cyc += STALL;   // the bus the 68000 holds; see STALL above
-      frames++; total += cyc; obs.push([ram[G_NSEG], cyc, nv, f]);
+      frames++; total += cyc; obs.push([fed, cyc, nv, f]);
       if (cyc > worst) worst = cyc;
     }
     if (!frames) { console.log(`skip  ${name} — no frames ran`); continue; }
@@ -240,52 +327,74 @@ try {
     // not in the averages below: a frame's cost is dominated by how many voices
     // it mixes, and the over-budget ones cluster on note-ons and score heads.
     if (over) {
+      // Cost BY VOICE COUNT, which is the number that sets expectations: a
+      // sounding pass is ~26k cycles against an idle one's ~11k, so what fits
+      // is decided by how many voices sound and not by any of the overhead
+      // below. Printed as mean % of a frame, with the over-budget share.
       const byV = {};
       for (const [, c, nv] of obs) {
-        (byV[nv] ??= [0, 0])[0]++;
-        if (c > FRAME_CYCLES) byV[nv][1]++;
+        const e = (byV[nv] ??= [0, 0, 0]);
+        e[0]++; e[2] += c;
+        if (c > FRAME_CYCLES) e[1]++;
       }
-      console.log(`    by PCM voices sounding: ` +
-        Object.entries(byV).map(([v, [n, o]]) => `${v}v ${o}/${n}`).join("   "));
+      console.log(`    by PCM voices sounding: ` + Object.entries(byV)
+        .map(([v, [n, o, t]]) =>
+          `${v}v ${(100 * t / n / FRAME_CYCLES).toFixed(0)}% (${o}/${n} over)`).join("   "));
       const list = obs.filter((o) => o[1] > FRAME_CYCLES).slice(0, 10)
-        .map(([sg, c, nv, f]) => `f${f} ${(100 * c / FRAME_CYCLES).toFixed(0)}% ${nv}v ${sg}seg`);
+        .map(([sm, c, nv, f]) => `f${f} ${(100 * c / FRAME_CYCLES).toFixed(0)}% ${nv}v ${sm}smp`);
       console.log(`    ${list.join("  ")}${over > 10 ? "  …" : ""}`);
     }
     for (let g = 0; g <= GROUPS.length; g++) {
       if (!gcost[g]) continue;
       const label = g < GROUPS.length ? GROUPS[g][0] : "other";
-      console.log(`  ${label.padEnd(22)}${per(gcost[g])}${pct(gcost[g])}`);
+      console.log(`  ${(g === PACED ? "· " : "  ") + label}`.padEnd(24)
+        + `${per(gcost[g])}${pct(gcost[g])}`);
     }
-    const segs = obs.reduce((s, o) => s + o[0], 0) / frames;
-    console.log(`  → ${segs.toFixed(1)} segments/frame (engine's G_NSEG), ` +
-      `${(gcost[2] / frames / segs).toFixed(0)} cyc each by attribution`);
-    // What PACE_SEG is actually FOR: the pad is cut by `segs x PACE_SEG`, so
-    // what has to be right is the MARGINAL cost of one more segment, not its
-    // average. Least squares over the frames gives it directly — and if the
-    // slope is not PACE_SEG, every frame whose segment count differs from the
-    // last one is mis-padded by the difference. That is the wander.
-    const n = obs.length;
-    const mx = obs.reduce((s, o) => s + o[0], 0) / n;
-    const my = obs.reduce((s, o) => s + o[1], 0) / n;
-    const sxy = obs.reduce((s, o) => s + (o[0] - mx) * (o[1] - my), 0);
-    const sxx = obs.reduce((s, o) => s + (o[0] - mx) ** 2, 0);
-    if (sxx > 0) {
-      const slope = sxy / sxx;
-      const lo = Math.min(...obs.map((o) => o[0])), hi = Math.max(...obs.map((o) => o[0]));
-      const { PACE_SEG, PACE_RESERVE } = await import("./gen-mixer.mjs");
-      console.log(`  → marginal cost of one segment: ${slope.toFixed(0)} cyc ` +
-        `(PACE_SEG charges ${PACE_SEG} — ${(PACE_SEG / slope).toFixed(2)}x), ` +
-        `segment count ranges ${lo}..${hi}`);
-      console.log(`     mis-pad per extra segment: ${(PACE_SEG - slope).toFixed(0)} cyc = ` +
-        `${(100 * (PACE_SEG - slope) / FRAME_CYCLES).toFixed(1)}% of a frame`);
-      // The intercept is what PACE_RESERVE is for: the frame's fixed cost with
-      // no segments at all, minus the pad it is allowed to keep.
-      console.log(`     implied fixed cost (intercept): ${(my - slope * mx).toFixed(0)} cyc ` +
-        `(PACE_RESERVE charges ${PACE_RESERVE})`);
-    }
+    // ── the one number this tool exists for ──────────────────────────────────
+    // The frame feeds `smp` samples and Timer B spaces them, so it cannot end
+    // before smp x SAMPLE_CYCLES however fast the code is: that is the FLOOR.
+    // The gate is satisfied on demand here, so what is measured is WORK, and
+    // the frame really lasts whichever of the two is larger. Work above the
+    // floor is the engine outrunning its own clock, and it is what the ranking
+    // below is a work list for.
+    //
+    // The inside/outside split says where the slack is rather than what it
+    // costs: the padded loops can always be made to fill more of the floor
+    // (pcm_pad does exactly that), so only the OUTSIDE figure competes with it.
+    const smp = obs.reduce((s, o) => s + o[0], 0) / frames;
+    const paced = gcost.slice(0, PACED).reduce((s, v) => s + v, 0) / frames;
+    const work = total / frames;
+    const floor = smp * SAMPLE_CYCLES;
+    const pc = (v) => `${(100 * v / FRAME_CYCLES).toFixed(1)}%`;
+    console.log(`  → ${smp.toFixed(1)} samples fed/frame x ${SAMPLE_CYCLES} cyc = `
+      + `${floor.toFixed(0)} the timer's floor (${pc(floor)} of a frame)`);
+    console.log(`     work ${work.toFixed(0)} (${pc(work)}) — `
+      + (work > floor
+        ? `${(work - floor).toFixed(0)} OVER its own clock, so the frame is the work`
+        : `${(floor - work).toFixed(0)} under its own clock, so the frame is the floor`));
+    console.log(`     of that, ${paced.toFixed(0)} inside the padded loops and `
+      + `${(work - paced).toFixed(0)} outside them — only the second competes with the floor`);
+    const gap = Math.max(work, floor) - FRAME_CYCLES;
+    console.log(`     ⇒ ${gap > 0 ? `OVER the vblank by ${gap.toFixed(0)} cyc (${pc(gap)})`
+      : `fits the vblank, ${(-gap).toFixed(0)} cyc spare`}`);
+    // The work list Stage D actually needs, ranked by dead time rather than by
+    // cost. `npm run dac`'s in-frame hold is the number this moves.
+    console.log(`  DEAD TIME (DAC holding, past one ${SAMPLE_CYCLES}-cycle period): `
+      + `${(deadTotal / frames).toFixed(0)} cyc/frame `
+      + `(${(100 * deadTotal / frames / FRAME_CYCLES).toFixed(1)}% of a frame) — `
+      + `each of these wants an emit point`);
+    worstGaps.sort((a, b) => b[0] - a[0]);
+    console.log(`    biggest single holes: ` + worstGaps.slice(0, 6)
+      .map(([g, l, at, f]) => `${(g / SAMPLE_CYCLES).toFixed(1)}p in ${bucketName[l]}`
+        + ` @${(100 * at / FRAME_CYCLES).toFixed(0)}% f${f}`).join("  "));
+    const deadRank = [...dead.keys()].filter((i) => dead[i] > 0)
+      .sort((a, b) => dead[b] - dead[a]).slice(0, 8);
+    for (const i of deadRank)
+      console.log(`    ${bucketName[i].padEnd(20)}${(dead[i] / frames).toFixed(0).padStart(7)}`
+        + `${(dead[i] / Math.max(1, hits[i])).toFixed(0).padStart(8)} cyc/visit`);
     console.log(`  ${"label".padEnd(22)}${"cyc/frame".padStart(10)}${"share".padStart(8)}${"entries".padStart(9)}`);
     const rank = [...cost.keys()]
-      .filter((i) => { const g = groupOf(bucketName[i]); return (g < 0 || g >= 2) && cost[i] > 0; })
+      .filter((i) => { const g = groupOf(bucketName[i]); return (g < 0 || g >= PACED) && cost[i] > 0; })
       .sort((a, b) => cost[b] - cost[a]).slice(0, TOP);
     for (const i of rank)
       console.log(`  ${bucketName[i].padEnd(22)}${per(cost[i])}${pct(cost[i])}` +

@@ -50,15 +50,26 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
  * them; the engines still run once a frame. Must match the engine's SLOT_SUBS
  * and PACE_PASSES — the Z80 consumes the extra sub-slots on the mixer's voice
  * pass boundaries, and there are exactly three of those. */
-#define MML_SLOT_SUBS 3
+#define MML_SLOT_SUBS 2
 #define MML_MAX_TRACKS 16
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */
 /* Macros bound per channel (driver.md §13.1 budgets 3 — one per target family;
  * the extra room costs 2 bytes a slot and removes a silent-drop failure mode). */
 #define MML_MACRO_BINDS 8
-#define MML_PCM_VOICES 3
-#define MML_PCM_MIX_RATE 175 /* DAC writes per frame, the settled §5.3.1 rate */
+#define MML_PCM_VOICES 2
+/* The Timer-B sample clock (driver.md §5.1.2), mirroring live/src/mmb.js. The
+ * DAC's rate is the YM's, not the frame's: 37335/224 = 166.674 samples a frame,
+ * so a frame owes it 166 or 167 and never a constant. The mixer produces into a
+ * ring instead of a frame-long buffer, and the sequencer models the ring's fill
+ * because the segment plan's tick distances are only valid for the chunk length
+ * it planned them against. */
+#define MML_PCM_SAMPLES_NUM 37335
+#define MML_PCM_SAMPLES_DEN 224
+/* Finished samples the ring runs ahead of the feed. A burst's first frame
+ * builds all of them and feeds nothing; every frame after it mixes exactly what
+ * the feed took. (The engine's buffer is twice this — §5.1.2.) */
+#define MML_PCM_RING_TARGET 255 /* a pass's tick count is a byte on the Z80 */
 
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];
@@ -225,6 +236,9 @@ typedef struct {
   uint8_t macro_slot_count[10];
   MMLPcmVoice pcm[MML_PCM_VOICES];
   uint8_t pcm_dac_on;
+  uint16_t pcm_fill;  /* samples mixed into the ring and not yet fed (§5.1.2) */
+  uint8_t pcm_chunk;  /* samples this frame's slot tells the engine to mix; 0 = prime */
+  uint16_t pcm_sched; /* remainder of the sample clock's 166.674 a frame */
   MMLGlobalSweep tempo_sweep;
   MMLGlobalSweep csm_sweep;
   int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */

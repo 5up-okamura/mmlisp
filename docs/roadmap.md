@@ -505,7 +505,7 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
 - **PCM (part K)**: the `#pcm` bank (`*pcm.bin`, up to 32 YM2608 ADPCM-B
   samples) decodes to one WAV that per-sample defs slice (`:offset`/`:frames`);
   `@n` (1-based) rebinds the track's sample. Baked at the driver's DAC grid
-  (`PCM_MIX_RATE × 60` = 10.5 kHz) — the soft-mix can emit no more, so mucom's
+  (`PCM_SAMPLES_PER_FRAME × 60` ≈ 10 kHz) — the soft-mix can emit no more, so mucom's
   native 16 kHz would only be resampled away. A bank also imports standalone, as
   a drum-kit library. `v` is the ADPCM-B level register (0–255), and its absolute
   value means something only inside the OPNA's mix, so it is **normalized per

@@ -1581,3 +1581,1100 @@ Build order (JS first so quality is a number before any Z80 is written):
    Timer B overflow, reset via $27), ring producer/consumer, delete the pacing
    machinery above.
 4. Re-freeze every gate baseline; `PCM_MIX_R` changes so all DAC streams change.
+
+### Step 1 LANDED 2026-08-07 — the ring is in `drv-player.js` (the port spec)
+
+`live/src/mmb.js` + `live/src/drv-player.js`. `PCM_MIX_RATE` is GONE; the sample
+clock is a rational, not a count:
+
+    PCM_SAMPLES_NUM/DEN = 37335/224 = 166.674 samples a frame  (896040/5376)
+    pcmSampleIndex(frame), pcmFrameSamples(frame) -> 166 or 167
+    PCM_RING_SIZE 256, PCM_CHUNK_MAX 192
+    pcmTickIncrement now divides by the AVERAGE (x224/37335), not by 175
+
+Measured on the PCM gate scores (m3-pcm-softmix, m2-pcmloop, m3-pcm-slice,
+m2-pcm, m3-pcm-vol, m3-fm6-pcm): every feeding frame's count is exactly
+`pcmFrameSamples(frame)`, 0 off-schedule, **0 underruns**, `$2B` claim/release
+edges unchanged in shape. Pitch is preserved and slightly better quantised:
+worst per-frame advance error 41.7 ppm (0.072 cents) against 175's 48.9 ppm.
+
+Four decisions taken while implementing that the locked parameters did not name:
+
+- **Feed first, then mix, inside `_pcmFrame`.** That ordering IS the one frame
+  of latency — the frame's chunk is not final until its last voice pass, so the
+  feed can only drain what the previous frame produced. §4.2's one-frame PCM
+  lead still cancels it. Mixing first would have silently deleted the lag and
+  put PCM a frame ahead of the score.
+- **Chunk = min(192, 256 - fill)**, i.e. top the ring up, capped. Uncapped, a
+  burst's opening frame mixes all 256 (1.5x a steady frame) — a lost vblank at
+  every note start. Capped, the fill climbs to the 256 ceiling over ~4 frames
+  and then sits between ~89 and 256; the ~89 floor is the jitter margin that
+  the old frame-boundary hold (23 periods, p50) was eating.
+- **The chunk length is the SEQUENCER's.** The segment plan is tick distances
+  off the 68k's own voice positions, so the engine must mix exactly what was
+  planned or the two desync. The ring's fill absorbs the model-vs-timer phase
+  error; an overrun that exhausts it must DROP samples, never shorten a chunk.
+- **Underrun = a dry ring with the mixer still running.** The two dry rings that
+  are not underruns: the claim frame (the opening frame of silence) and the
+  frame a tail runs out in. Both are written as silence, which closes a burst
+  without the DC hold. Without that distinction m2-pcm reads 464 "underruns"
+  that are just short shots ending.
+
+Gate fallout, expected and left red on purpose: `npm run c-gate` and
+`npm run slots` FAIL on PCM scores (the 68k C and the Z80 both still mix 175 a
+frame — c-gate's first divergence is the `PCM_START` increment, byte 17 of f0).
+Non-PCM scores stay byte-identical; `ab-gate`, `ring`, `selftest` green. The C
+mirror is ~20 lines (a fill counter + a remainder accumulator + a 64-bit
+divide) and is the cheapest thing to do next if a green c-gate is wanted before
+the Z80 work; note the slot must then carry the chunk length for the engine.
+
+### Step 2 + the 68k C mirror LANDED 2026-08-07
+
+**`npm run dac:model`** (`drv/tools/dac-model.mjs`, new) is step 2's gate. It
+drives `drv-player.js` and asserts what `npm run dac` structurally cannot see
+now that a timer, not the engine, decides when a sample goes out: schedule
+integrity (every feeding frame takes exactly `pcmFrameSamples(frame)`), zero
+underrun under a running mixer, and the ring's SLACK. Over the six PCM gate
+scores and `verify-hello-world/res/song.mmb` (4000 frames, 592,191 samples):
+
+    0 off-schedule, 0 underruns, fill peak 256/256
+    slack 89 samples = 8.9 ms steady, 25 = 2.5 ms at a burst's 2nd frame
+
+Two metric definitions took a try to get right, and both are worth keeping:
+slack is only meaningful **in frames the mixer ran in** (a ring emptying under
+an idle mixer is a burst ENDING, not starvation — counting those read -167) and
+**not on the claim frame** (empty by construction; that is the opening frame of
+silence). Without both filters the gate reads FAIL on healthy scores.
+
+**89 samples does not cover a lost frame (167), and cannot at 256 B** — the fill
+has to peak a whole chunk above its floor, so covering one would need ~512 B.
+The consequence: the XGM2-derived "drop a music frame below ~150" threshold is
+meaningless at this geometry (the fill sits at ~89 EVERY frame, so it would fire
+always). The rule that survives is the plain one: **PCM mixing outranks the
+slot**; a frame that cannot do both drops the music frame. If a 512 B ring is
+ever wanted, it costs exactly the RAM the two planes used to (net 0 vs before
+this change) and buys cover for one lost vblank — an open, priced option.
+
+**The 68k C mirrors the ring** (`68k/mmlispseq.{c,h}`): `pcm_fill` + `pcm_sched`
+(a 151/224 remainder accumulator, advanced BEFORE any early exit or the schedule
+slips a frame whenever the DAC is idle), feed-then-mix ordering, the same
+`min(192, 256-fill)` chunk, and `pcm_tick_increment` via the exact 32-bit
+identity `floor(a*b/c) = (a/c)*b + floor((a%c)*b/c)` — no 64-bit divide on the
+68000. **`npm run c-gate` 41/41 byte-identical.**
+
+Left: the Z80 (step 3). Two expected reds until it lands, both the same cause —
+the engine is handed plans measured against a chunk length it does not mix:
+`npm run slots` on every PCM score, and `npm run dac` on m3-pcm-slice (91%
+paced, worst wander 6.40 ms against 3.54 before). `verify:all` stops at the
+first. Everything else is green: selftest, engine, ring, c-gate 41/41, ab-gate,
+sgdk:lint, dac:model.
+
+**Do not re-copy the 68k C into an SGDK project before the Z80 lands** — a
+project running the new `mmlispseq.c` against the shipped `mmlispdrv_bin.h`
+would have the two sides disagreeing about the chunk (5% pitch error and wrong
+loop points). `npm run sgdk:install` copies mmlispseq.c/.h + tables.c, and all
+three moved in this change. The engine also
+needs the chunk length; it is not in the slot format yet, and the cheapest place
+is beside the segment plan in the frame head (§6.2).
+
+### 2026-08-07 — designing step 3 broke two locked parameters. Corrected.
+
+Both were found by working the Z80 loop out on paper before writing it, and both
+are already fixed in the reference + the 68k C (c-gate 41/41, dac:model green).
+
+**1. The 256 B ring cannot work, and the arithmetic says so in one line.** The
+mixer is voice-outer, so while a chunk is being built NONE of it is playable —
+and the finished samples must still be there to play. Both regions are live:
+`fill + chunk`. The feed takes `want` during a frame whose chunk is not ready
+until its end, so `fill >= want = 167`; and `fill + chunk <= RING`. With
+chunk = want that needs RING >= 334. **512 B buffer, 256-sample lead**
+(`PCM_RING_BYTES` / `PCM_RING_TARGET`). It is exactly the two planes' footprint,
+so it costs nothing against what it replaces — the "net -256 B" line was written
+before the two-region requirement existed. The only way to a 256 B ring is
+BLOCK-WISE mixing (3 voices over <=128 samples, then the next block), which
+triples the ~3.2k-cycle voice-pass transitions to save RAM the engine has spare.
+Rejected on that trade, and priced here so it is not re-proposed.
+
+**2. The chunk cap / 4-frame ramp had to go.** The engine emits one sample per
+three mix ticks, so ticks-mixed and samples-fed are THE SAME NUMBER. A frame
+that mixes 192 while the feed owes 167 would have to wait out 25 extra gates and
+lose its vblank — a dropped frame at every burst start. So: **chunk = want,
+always**, and the lead is built by a PRIME frame (any frame starting with an
+empty ring) that mixes `PCM_RING_TARGET` and feeds nothing but a single silence
+byte to park the DAC. Consequences, all measured with `npm run dac:model`:
+slack is a constant 89 samples (8.9 ms) from the first fed frame — the ramp's
+2.5 ms dip at a burst's second frame is gone — and the price is the prime
+frame's 256-tick mix (1.5x a steady frame's), one per burst: 210 of them over
+the song's 4000 frames. Fine at 1-2 voices; a 3-voice simultaneous burst start
+is the one frame that can overrun.
+
+**Still open, and it wants the hardware judgement, not the code's:** Timer B
+gates every 3 samples, so the emit needs to know which of the three it is. The
+cheapest form is a phase counter at the emit site (~30 cyc/emit, ~5k a frame,
+8%) — no code-size growth, CSM keeps Timer A. The alternative is **Timer A at
+1:1** (step = 144 YM clocks = one FM sample; 5 steps = 10653 Hz, a BETTER rate
+than Timer B's 9988, and no phase counter at ~28 cyc/emit) at the cost of CSM,
+which cannot share it: reprogramming Timer A to 94 us keys FM3 at 10.6 kHz.
+Default taken: **Timer B + phase counter**, because it breaks nothing.
+
+Also settled for the engine, both engine-local: the flag reset writes `$27`,
+which also carries the CH3/CSM mode bits, so the engine SNOOPS `$27` in the
+port-0 run loop and merges (bits 6-7 the sequencer's, 0-5 its own); and the slot
+gains one frame-head byte for the chunk length, so a starved frame can fall back
+instead of guessing.
+
+### 2026-08-07 — the model that had to be built to hear it, and what it proved
+
+`npm run dac:wav` (`tools/dac-wav.mjs`, new) renders the DAC as .wav by
+zero-order hold: **a-today** is the committed engine MEASURED (built and run out
+of a detached `git worktree` of `--baseline`, default HEAD, so a half-converted
+tree cannot contaminate it), **b-timerb** is the Timer-B design modelled from
+this repo's own measured costs, **c-nopad** is that design with one rule
+forgotten, **d-flat** is a perfect clock. On the synthesised tone:
+
+    sideband at 1x/2x/3x the frame rate, dB relative to the tone
+    a-today   +3.6 / -5.2 / -19.6      <- the 1x sideband is LOUDER than the tone
+    b-timerb  -28.5 / -33.8 / -39.9
+    d-flat    -28.3 / -35.0 / -40.5    <- b IS the flat clock, to within noise
+    interval p10/p50/p90: today 243/243/319 cyc, b 358/358/358 (nominal 358)
+
+**Building it proved the thing that reshapes step 3.** A frame's emission span
+IS the frame: 166.674 samples x 358.4 cycles = 59,736 = one frame, by
+construction. So a cycle spent NOT emitting is not a hole to catch up from
+later — it is a sample that never goes out, and Timer B cannot give it back
+because the overflow flag is ONE BIT: however many gates were missed, the engine
+gets one group and then the gate rate again. Modelled with the emit only inside
+the mix loop (the "stage 1" this file proposed), every frame slipped ~5k cycles
+and the render was unlistenable.
+
+Therefore **the "<=1 sample period between emits, EVERYWHERE" rule is mandatory
+from the first line, not a later polish stage** — the slot's chip-write run, the
+voice-pass transition, the segment set-up and the frame head all carry emit
+points. That is XGM2's "<=168 cycles between sample outputs everywhere",
+arrived at from the other end. Consequence for the loop structure: emits are no
+longer 1:1 with mix iterations, so the frame needs an EMIT BUDGET counter
+(samples still owed) that every emit point decrements, and the mix loop's emit
+becomes conditional on it.
+
+Second consequence: **Timer B gates only every third sample and the Z80 cannot
+read a clock, so samples 2 and 3 of each group are paced by CODE PLACEMENT.** A
+loop copy cheaper than a sample period (mute/idle: ~100 cyc against 358) bunches
+its three against the gate unless padded. So the baked per-copy pad SURVIVES the
+timer — as a constant, with none of the debt/estimator machinery. Measured cost
+of forgetting it (c-nopad): a few dB at 3x the frame rate and no frame-rate
+sidebands at all, i.e. real but second-order — worth doing, not worth blocking on.
+
+The 3-voice limit shows up here too and unchanged: on m3-pcm-softmix the model
+reports 6 frames in 600 costing more than a frame (lost vblanks).
+
+### 2026-08-07 — the judgement call, and what the spec is aiming at
+
+**Heard and accepted** ("思ったより いいよ"), so step 3 proceeds on Timer B. The
+listening set is `npm run dac:wav`; the file that settles it is **a-today vs
+a2-flat — the same bytes, uniformly clocked**, because that isolates the clock
+from every other difference. On the synthesised 1 kHz tone:
+
+    partial          1000 Hz   1420 Hz   +-60 Hz
+    a-today (real)    -27.3     -18.8    -23.3 / -22.8
+    a2-flat (same     -11.0     -79.6    -54.2 / -53.0
+    bytes, uniform)
+
+i.e. today a SPURIOUS partial 40% sharp is 8.5 dB LOUDER than the note being
+played, and the frame-rate sidebands are louder than it too. Uniform: the note
+gains 16 dB and everything else falls 40+. That is the whole case, in one A/B.
+
+**The spec the work is aiming at**, from the per-sample budget at 9987.6 Hz
+(358.4 Z80 cycles a sample; mix priced from gen-mixer's own model at shift 0,
++8 cyc per shift step per voice):
+
+    voices  mix   emit  frame overhead  ROM stall  total  max rate
+      1      69    90        105           14       278   12.9 kHz
+      2     143    90        105           28       366    9.8 kHz
+      3     217    90        105           42       454    7.9 kHz
+
+So: **3 slots, 2 sounding, 9988 Hz, 8-bit, nearest-neighbour, saturating add,
+flat clock.** 2 voices land at ~102% of the sample budget — the ~10 cyc/sample
+that closes it has to come out of the 105 of frame overhead (chip writes 27,
+voice-pass transitions 45, segments 30), not out of a constant. 3 voices need
+the rate down at ~8 kHz (Timer B point k=5,G=12 = 7990 Hz).
+
+**DECIDED: voice count and rate become per-song settings** ("同時発音数と音質は
+設定できても良さそう"). Not yet built — but nothing may hardcode the rate from
+here on: the 68k computes increments from it, the Z80's Timer B config is two
+bytes ($26/$27), and the ring geometry scales with it. `PCM_SAMPLES_NUM/DEN`
+in mmb.js is the single source; keep it that way.
+
+Landed for it already: **the slot carries `chunk`** — a new frame-head byte
+after `n_writes`, 0 meaning a prime frame (driver.md §6.2). c-gate 41/41 with it.
+
+**One sizing note for whoever writes the emit block:** inline it is ~30 B x 20
+loop copies = ~600 B against 440 B of image headroom, and making it a `call`
+costs ~27 cyc/emit (4.5k a frame) which takes 2 voices from 102% to 110% of
+budget. The order that resolves it: DELETE the pacing machinery first
+(`div_tab` alone is 176 B, plus `debt_tab`, `pad_*_tab`, `pace_win_tab`,
+`pcm_debt`/`pcm_debt_base`), which returns ~400-500 B, and only then inline.
+
+### 2026-08-07 — the two cursors, and why the ring wraps at SEGMENT boundaries
+
+Writing the emit block ran straight into the thing that decides the ring's
+shape, so it is settled here before any asm exists.
+
+A 512-byte ring has two cursors in it and both have to wrap:
+
+- the MIXER's is HL, and the body's `inc l` only wraps inside a 256-byte page;
+- the FEED's is IY (`ld a,(iy+0)` / `inc iy`), and `inc iy` walks straight out
+  of the ring's top instead of round to its base.
+
+Everything cheap needs undocumented opcodes — `inc iyl` sets Z on the wrap in
+8 cycles — and **`tools/z80asm.mjs` deliberately does not assemble them**
+("Not supported (deliberately): … undocumented opcodes"), nor does z80cpu's
+`stepIndex`. Teaching both is possible; doing it to save cycles in one loop is
+how a first-party toolchain stops being trustworthy.
+
+Everything documented is expensive per sample: reading IYH at all costs
+`push iy` / `pop hl` (24 cycles), and a page flip in the mix body would put
++7 cycles on every one of ~500 tick bodies (3.5k a frame).
+
+**So neither cursor wraps in the hot path. Both wrap at SEGMENT boundaries.**
+The mixer already splits a pass into segments at the plan's breaks and the ROM
+window's top, and the machinery for "how many ticks until X" is exactly what a
+bound is — so the ring's page edge and the feed's ring top become two more
+bounds. Cost: a compare per segment (~5-10 a frame), and one extra segment per
+256 samples (~0.65 a frame). Per sample: nothing.
+
+Consequences to carry into the code:
+- `mvf_seg`'s bound becomes `min(plan break, window top, mix page edge,
+  3 x samples to the feed's ring top, ticks left)`.
+- IY is loaded once a frame and reset to the ring base at the segment boundary
+  that hits the top; H is set per segment for the same reason.
+- The 512-byte ring must be 512-ALIGNED, so a page edge is `L == 0` and the
+  page bit is one bit of H.
+
+Rejected on the way, with the reason, so they are not re-proposed:
+- **two 256-byte planes swapped per frame** (today's shape, no wrap at all):
+  the lead is then exactly one frame and the slack at the frame boundary is
+  ZERO, which is the artifact this whole change exists to remove.
+- **feed cursor = mix cursor XOR $100** (the lead is half the ring, so the two
+  addresses differ in one bit): the mixer advances 3 positions per emit in a
+  voice-outer pass, so there is no constant offset between them.
+- **SP as the feed cursor** (`pop` reads two samples in 10 cycles): the mixer
+  calls, so the stack is not free.
+
+### 2026-08-07 — step 3 STAGE A landed: the debt is gone, the pads are baked
+
+`gen-mixer.mjs` + `engine.z80`, and the tree still assembles and gates:
+
+    engine image 4424 -> 4186 B, headroom to $1300 440 -> 678 B
+    npm run engine: 12/12 scenarios pass
+    deleted: PACE_RESERVE, PACE_SEG, PACE_SEG_MAX, paceDebt, debt_tab,
+             pace_win_tab, pad_first_tab/pad_add_tab, ms_set_pad, pcm_debt,
+             pcm_debt_base, G_DEBT, G_DEBTC, G_NSEG, G_NSEGF, G_NIDLE, G_PADN,
+             G_PAD and the per-segment segment counter
+    added:   SAMPLE_CYCLES = 358 (2304 YM clocks / GROUP, x7/15), PCM_GROUP,
+             PAD_TARGET = SAMPLE_CYCLES - 16, EMIT_CYCLES = 49
+
+**`PAD_TARGET` is one quantum SHORT of the period on purpose.** A loop padded to
+the exact period could never give back the cycles the frame spends outside it
+(the slot's writes, the pass transitions) — it would fall behind by them every
+frame for ever. The gate bounds the other direction for free, since sample 1 of
+each group waits for Timer B anyway. This is the one number here that is a
+judgement rather than a measurement; `npm run dac:wav` re-judges it.
+
+**And the pads exposed the next problem, which is real and structural.** With
+the ROM-window stall charged where it belongs (in the tick, not in a debt), one
+unrolled iteration — 3 ticks + emit + `dec b`/`jp nz` — costs:
+
+    shift   0    1    2    3    4    5    6    7   mute  idle
+    cycles 339  363  387  411  435  459  483  507  340   339   (period 358)
+
+So **only an UNATTENUATED voice keeps up at 3 ticks per emit.** Every 6 dB of
+attenuation is 8 cycles a tick on the `sra` chain, 24 an iteration, and at
+shift 1 the pass is already 1.4% slow, at shift 7 it is 42% slow. The mix work
+per emit, not the frame's total, is what has to fit — that is what a clock
+means.
+
+Two ways out, and the second is the one to build:
+
+- vary the unroll per copy (U ticks per emit, U = (PAD_TARGET-63)/tick). It
+  works per pass but the three passes must satisfy `sum(1/U_pass) = 1` or the
+  frame stops emitting exactly `chunk` samples, so U cannot be a property of a
+  copy alone. Rejected as a first move.
+- **a runtime pad on the IDLE and MUTE copies only.** They are the passes with
+  slack (their iteration is 339 against a 507 worst case), they run last, and
+  everything their pad needs is known AT FRAME START: the shifts, the chunk, and
+  the slot's write count. One divide a frame, no estimation, no carry-over from
+  the previous frame — the debt's job without the debt's guesswork. It also
+  degrades correctly: three sounding voices leave no idle pass to absorb
+  anything, which is exactly the case that already does not fit.
+
+Remaining for step 3: Stage B (ring + Timer B + prime/steady + the chunk byte
+the slot already carries), Stage C (that runtime idle pad), Stage D (emit points
+in the slot-consume loop and the pass transitions, the <=1 period rule).
+
+### 2026-08-07 — step 3 STAGE B: the ring and Timer B are IN, one bug open
+
+`engine.z80` + `gen-mixer.mjs` + `engine-gate.mjs`. The engine now assembles at
+**4649 B (215 B headroom)** and runs on the timer; **4 of 12 engine scenarios
+pass**, the other 8 fail on one localised bug (below).
+
+What landed:
+
+- **512 B sample ring at $1A00**, 512-aligned, replacing the two planes.
+  `G_RD`/`G_WR`/`G_FILL` + `G_WRP`/`G_WRI` (the frame's write base, restored per
+  pass because every pass covers the same chunk).
+- **Timer B**: `$26` = 255 and Load B at boot; `gate_step`/`gate_wait` — one
+  emit in GROUP holds for the overflow flag, the other two are placed by the
+  baked pad. The phase counter is continuous across frames.
+- **`$27` is snooped** in the port-0 run (`cs_r27`): bits 6-7 are the score's
+  CH3/CSM, bits 0-5 the engine's, and the gate's flag reset has to write the
+  same register. It re-latches `$2A` afterwards because the feed writes blind.
+- **prime / steady / tail** in `process_pcm`, with the fill settled at the
+  decision rather than at the frame's end; the slot's `chunk` byte read in
+  `consume_slot`; `PCM_RING_TARGET` = **255**, not 256, because a pass's tick
+  count is a byte.
+- **Neither cursor wraps in a hot loop**: `mvf_ringcap` bounds a segment by the
+  mixer's page edge and by 3x the feed's distance to the ring top, and the
+  wrap/page-step happens at the segment boundary (`feed_wrap`).
+- `engine-gate` now **models Timer B** (status bit 1 rises GATE_CY after the
+  last reset; the `$27` bit-5 write advances it), encodes the chunk byte, and
+  its expectation model is the ring — including the sequencer's own tick count,
+  which is TARGET while the ring is empty and the chunk after.
+- **`WATCH=<hex>`** in engine-gate names the code that wrote a RAM byte. It is
+  what localised the bug below in one run, and the ring's cursor bugs are
+  invisible in the DAC stream until several frames later.
+
+**That bug: FOUND and FIXED.** The ring-edge block was inserted immediately
+before `mvf_wtop`, and `mvf_seg`'s LEFT-clamp does `jr nc,mvf_wtop` — so the
+common path (no clamp) **jumped straight over the page flip**, and a segment
+that had stopped on the page edge carried on writing into the base page, over
+the samples the feed had not read yet. It now sits immediately after
+`call mix_seg_live`, before anything conditional. **12/12 engine scenarios
+pass**, and `npm run slots` is byte-exact on ab-core again.
+
+The lesson is about the tool, not the bug: `WATCH=<hex>` in engine-gate (and now
+slot-gate) prints who wrote a RAM byte, and it took this from "the DAC is wrong
+several frames later" to a program counter in one run. Both cursors' bugs look
+like that, so reach for it first.
+
+One trade taken to fit the image: **the emit's phase step is a `call
+gate_step`, not inline** — inline costs 11 B in each of 20 copies (220 B) and
+the image had tens to spare. It is 27 cycles an emit, so it comes back per copy,
+hottest first, once the frame budget is measured.
+
+### 2026-08-07 — STAGE B is in: the engine runs on Timer B
+
+    npm run engine   12/12 scenarios         image 4654 B (210 B headroom)
+    npm run slots    ab-core byte-exact; PCM scores match for 60 FRAMES
+                     (10,090 samples) then diverge — see below
+    npm run c-gate   41/41                   npm run dac:model  green
+
+`slot-gate` and `engine-gate` both model Timer B now (status bit 1 rises
+GATE_CY = 1075 cycles after the last reset; the `$27` bit-5 write advances it to
+the next multiple, because the timer free-runs). Two register-ownership rules
+came out of it and are in both harnesses: **`$26` is never the sequencer's**,
+and **`$27` is compared by its mode bits alone** (bits 6-7 the score's CH3/CSM,
+0-5 the engine's Load B and flag reset) — plus the engine's boot writes are not
+part of any frame.
+
+**The one open divergence.** On m2-pcmloop the engine's DAC stream is
+byte-identical to `drv-player` for 10,090 samples and then, at the FIRST sample
+of frame 60's chunk (ring position $1B69), the engine mixes **0** where the
+reference has 67. The writes around it are contiguous and single (one voice, so
+the two idle passes correctly add nothing), so nothing is being skipped or
+double-written — the first tick of that chunk simply mixed silence. Suspects, in
+order: a 1-tick segment at a chunk boundary binding the MUTE copy; a loop wrap
+landing on the frame boundary and the engine taking it one tick early; the
+`forced progress` path in `mvf_ringcap`. `WATCH=1b60` in slot-gate prints the
+window; the next step is the same trick on the reference side to see which tick
+the two disagree about.
+
+Still to do after it: Stage C (the runtime idle/mute pad), Stage D (emit points
+in the slot-consume loop and the pass transitions), then re-freeze the gates and
+re-run `npm run dac:wav` to hear it.
+
+### 2026-08-07 — the install path was BROKEN by the ring, and is fixed
+
+`tools/build-engine.mjs` asserted the image against **`MIXLO`**, the mix planes'
+base — which the ring deleted — so `npm run sgdk:install` died with
+"engine.z80 defines no MIXLO" before copying anything. It now asserts against
+**`HDR`**, which is the real ceiling and the one address the 68k compiles in:
+growing past it overwrites H_HEAD/H_TAIL and the slot ring with code, which
+presents as the mixer executing data. `headroom` is now measured to the header
+too (210 B at 4654 B).
+
+The FILE LIST needed nothing: `install-sgdk.mjs` already copies
+`mmlispdrv_bin.h` + `68k/mmlispseq.c` + `68k/mmlispseq.h` + `68k/tables.c`, and
+its staleness check regenerates the image (it reported `4424 -> 4654 B`).
+`npm run sgdk:lint` is green. **All four must move together** — the C and the
+Z80 image now agree about the ring, the chunk byte and `$27`'s ownership, and a
+project with one old and one new is a 5% pitch error and wrong loop points.
+
+### The remaining slot-gate divergence, narrowed
+
+On m2-pcmloop the engine matches `drv-player` for 10,090 samples and then
+**drops exactly one sample** — the reference's stream has a 195 the engine's
+does not, and everything after is the same sequence shifted by one. What is
+ruled out, each by measurement rather than reasoning:
+
+- **not a tick-count error.** Ring writes per frame are 167/166/167/167/166,
+  exactly the schedule (`COUNT=1 node tools/slot-gate.mjs …` prints them).
+- **not a read past the sample bank.** `PROBE=1` makes an out-of-range read
+  return $55 instead of 0; the stray sample stays 0, so it is a real sample
+  byte.
+- **not the LEFT clamp** (a segment consuming more than the boundary): a probe
+  counter on that path never fired.
+- **not a ROM window crossing**: no bank bits are shifted anywhere near it.
+
+So one tick advanced the position twice, or a loop wrap subtracted one too few,
+and it happens once in ~10k samples. The tooling to finish it is in place:
+`COUNT=1` also prints the engine's `PV_PTR/PV_FRAC/PV_LEFT` beside the
+reference's per frame — but BEWARE, the two are not the same frame (the engine
+consumes a slot up to RING_DEPTH frames after the sequencer emitted it), so they
+have to be aligned by matching fractions before the numbers mean anything. That
+alignment is the next step.
+
+### 2026-08-07 — STAGE B COMPLETE: `npm run verify:all` is GREEN on the ring
+
+Every value gate passes: **engine 12/12, slot-gate byte-exact AND
+"the mixers agree sample for sample" on every PCM score, c-gate 41/41, ring,
+ab-gate, sgdk:lint, dac:model.** Image 4643 B.
+
+Three bugs closed after the ring landed, all of them state-machine edges:
+
+1. **The prime frame's length disagreed** — `PCM_RING_TARGET` was 255 in the
+   engine (a pass's tick count is a byte) and 256 in mmb.js/the C. One extra
+   tick in the reference, once per burst, which showed up 10,000 samples later
+   as a single dropped sample. **255 everywhere now.**
+2. **`$2B` was released when the last VOICE ended, not when the RING ran dry** —
+   so a tail toggled fm6 back to FM and re-claimed it the next frame (16 edges
+   against 8).
+3. **The write cursor is DERIVED, not stepped.** A tail frame feeds a chunk and
+   mixes silence, so `read` and `fill` do not move together and `G_WR += chunk`
+   drifted. It is now recomputed as `G_RD + G_FILL` at the frame's end, which is
+   what "the mixer writes at read + fill" means and cannot drift.
+
+Also settled: **a tail frame mixes SILENCE into the ring** (it stores, it does
+not skip) so that a burst ends in silence rather than in whatever an earlier lap
+left there — that is what makes the engine's blind `inc iy` agree with the
+reference's fill-guarded read. And the slot carries the sample count on a tail
+frame too, or the engine replays the last chunk and feeds 167 where the schedule
+says 166.
+
+**`npm run dac` now measures the right thing, and it says the frame does not
+fit.** It models Timer B (like slot-gate and engine-gate) and its period is the
+sample clock's, not the frame's:
+
+    span 140% of the frame (worst 132%) · wander ~7 ms
+    in-frame hold p50 8-10 periods, max 13-15
+
+The values are right and **the frame takes ~1.4x too long** — exactly the
+arithmetic that made Stage D mandatory, now measured instead of predicted. The
+two levers, in order:
+
+- **Stage C first, because it is the bigger one.** With one voice sounding, two
+  of every three iterations are IDLE and each is padded to 342 cycles when its
+  own work is ~75 — that is ~30k cycles a frame of pure padding. Sizing the
+  idle/mute pad at runtime from what the frame has left (the shifts, the chunk
+  and the slot's write count are all known at frame start) hands those cycles
+  back to the head and the transitions.
+- **Stage D then removes the HOLES** (the 8-10 period in-frame hold is the pass
+  transitions) by putting emit points in the slot-consume loop and the
+  transitions, per the <=1 sample period rule.
+
+### 2026-08-07 — Stage C landed, Stage D partly, and the IMAGE is now the wall
+
+**Stage C (the runtime idle pad) is in and it works.** `pcm_pad` sizes what an
+IDLE iteration holds to, once a frame, from what the frame is doing: a
+`pass_cost_tab` (generated: one pass's unpadded cost by shift) summed over the
+three passes, subtracted from `PCM_BUDGET`, divided by the silent passes as a
+SHIFT (896 -> 1024, 1792 -> 2048, 2688 -> 4096 — each rounds the pad down, and
+down is the safe direction: an under-padded frame bunches a group slightly, an
+over-padded one loses its vblank). Only the IDLE copies read `G_PAD`; MUTE keeps
+its baked pad, and the sounding copies have none to give. Measured: span
+**140% -> 127%** of the frame.
+
+**Stage D is half in.** `feed_one` — the out-of-line twin of the loops' inline
+emit — is called from the slot's YM write runs (**every fourth write**, ~450
+cycles, near one sample period; every write was three times the frame's fair
+share and starved the mix passes instead), and 2-3 times per voice-pass
+transition. The accounting that makes it possible is per SEGMENT, not per
+sample: `mix_seg_live`/`mix_seg` cap their iteration count by `G_EMITS` and
+charge it in one subtraction, so the hot loop's emit stays bare and whatever the
+loop may not emit runs through the single-tick copies. The frame's budget is
+settled in `consume_slot`, BEFORE the head's writes spend part of it; a starved
+frame (which never gets that far) re-arms it in `pp_emits`.
+
+Gates: **engine 12/12, slot-gate byte-exact and sample-for-sample, c-gate 41/41,
+dac:model green.** `npm run dac` reads span **128-133%**, in-frame hold ~10
+periods.
+
+**What is left, and what blocks it.** The remaining ~30% of a frame with no
+sample in it is the segment set-ups (~5 x 1k, no emit points at all), the rest
+of each pass transition, and the frame's fixed head. Each needs one more
+`call feed_one` — and **the image has 4 BYTES of headroom** (4860 B against
+$1300). That is now the binding constraint, not cycles.
+
+The unlock is a **two-segment upload**: $0000-$12FF as now, plus a second span
+at $1C00+ (the ring is $1A00-$1BFF and the stack tops at $1F00, so ~700 B is
+free there). It cannot be one contiguous blob — that would zero the published
+header, which the host may already have written H_SMPBANK into — so
+`emit-bin.mjs` and `sgdk/mmlispdrv.c` have to upload two ranges. Cold routines
+go there first (`pcm_pad` alone is ~120 B and runs once a frame).
+
+### 2026-08-07 — Stage D in (minus one piece), `verify:all` GREEN including `dac`
+
+**The image ceiling is gone.** Cold code — `pcm_pad`, which runs once a frame —
+now lives at **`org $1c00`**, above the sample ring, behind a `CODE_END` label.
+The blob spans the gap (7270 B) and that is safe: the host uploads BEFORE the
+Z80 boots and writes H_SMPBANK after it, so zeroing the header on the way past
+costs nothing. **The boot RAM clear had to stop at `RING_TOP`** — it used to run
+to the stack and would have erased the routine it was about to call.
+`build-engine`/`engine-gate` now check `CODE_END` against `$1300` and the blob
+against the stack: **94 B free below the header, and ~700 B above the ring.**
+
+**Stage D's emit points are in** at the pass transitions (3 per pass), the
+segment bounds, `mvf_bound`'s wrap/window/plan work, and the silent pass's own
+segment loop. Two ordering rules came out of it, both learned the hard way:
+
+- **`feed_one` goes BEFORE `mvf_ringcap`, never after.** The bound is measured
+  from IY, and an emit advances IY — computing the bound first let a segment
+  overrun the ring's top by up to 3 ticks.
+- The frame's emit budget is settled in `consume_slot` and must NOT be reset in
+  `process_pcm` (only a starved frame re-arms it), or the head's emits are free
+  extras.
+
+**`PCM_BUDGET` = 42000**, tuned with `npm run dac`: what the LOOPS may take, so
+the pad leaves room for everything they do not do. 46000 still reads 96-100%
+paced; below 42000 the span stops moving.
+
+    npm run verify:all — GREEN, exit 0 (engine 12/12, slots sample-for-sample,
+    c-gate 41/41, ring, sgdk:lint, ab-gate, and `dac` now 96-100% paced,
+    wander 3.7-4.3 ms against the old design's 2.5 ms of a wrong clock)
+
+**Two things are left, and both are named.**
+
+1. **The frame still costs 123-127%** (`npm run budget:frame`, which now models
+   Timer B too — it was reporting 44000% because `gate_wait` spun into the
+   guard). The emission alone is 100.4% of dac-gate's 59,659 (167 samples x
+   358.4 = the true NTSC frame), so the excess is ~14k cycles of work that does
+   not overlap a gate wait. **Every frame is a lost vblank until it comes down.**
+2. **The write-loop emit is in on PORT 0 and out on PORT 1.** `ld a,b / and 3 /
+   call z,feed_one` after each YM write is correct in `cr_p0` (gates green, and
+   port 0 carries the bulk of a frame's traffic) and breaks the mix in `cr_p1`:
+   the prime frame's 255 ticks all get mixed, the cursor ends where it should,
+   and every sample comes out ZERO — the voice's ROM reads return nothing, which
+   is a wrong bank, from a routine that touches neither $6000 nor anything the
+   bank depends on. Narrowed by measurement, not yet explained. Ruled out on the
+   way: starvation (0), the PCM command never running (`pc_start` does), the
+   tick count (255 mixed), `G_TICKSF`/`G_WRP`/`G_WRI`/`G_EMITS` (all correct in
+   the trace), and the assembler's `call cc,nn` encoding (correct). The comment
+   at the site says all of this so it is not re-added blind.
+
+**Where the 123-127% actually goes, for whoever picks this up.** The emission
+itself is 100.4% (167 samples x 358.4 = the true NTSC frame, against dac-gate's
+59,659). So there is ~14k cycles of work a frame that does not overlap a gate
+wait, and the emit points added so far do not reach it. The candidates, in the
+order they are worth attacking: the port-1 write loop (blocked on the bug
+above), the frame's fixed head (slot claim, PCM commands, `pcm_pad` itself), and
+`consume_sub` at the two sub-tick boundaries. `npm run budget:frame` is the
+gate that answers it — and it now models Timer B, so its numbers mean something
+again.
+
+### 2026-08-07 — the frame FITS: the 14k was the pacing model's own error
+
+`npm run budget:frame` **123-127% -> 97%**, over-budget frames **100% -> 4.6%**,
+and `npm run verify:all` is GREEN (engine 12/12, slots byte-exact and
+sample-for-sample, c-gate 41/41, ring, sgdk:lint, ab-gate, dac). Image 7270 B
+with **26 B free below the header** — that is now the tightest constraint again.
+
+The ~14k of "work that does not overlap a gate wait" was not work. It was three
+things, and the first is the one to remember:
+
+1. **`EMIT_CYCLES` was 49 — the emit as it existed BEFORE Timer B.** Stage B put
+   `call gate_step` in front of the block and never moved the constant, so the
+   generator was 69 cycles short on every emit. It propagates twice: the baked
+   pads over-ran a sample period by 69, and `pass_cost_tab` under-reported a
+   pass by ~4,000 — so `pcm_pad` subtracted three passes from `PCM_BUDGET`
+   against a sum ~12,000 too small and **handed the idle passes ~13,000 cycles
+   of pad the frame did not have.** A model that under-prices the work pads
+   harder, which is backwards in exactly the case that cannot afford it. Alone:
+   123% -> 110%.
+2. **The phase counter cost 69 of a sample's 358.** `gate_step` kept a 1..GROUP
+   countdown in a RAM byte behind a call. **It is A' now** — the shadow
+   accumulator — and the step is inline in 8 bytes: `ex af,af'` / `dec a` /
+   `jr nz` / `call gate_wait` / `ex af,af'`, **24 cycles**, with `gate_wait`
+   returning `A = PCM_GROUP` so the gating emit reloads the phase for free.
+   110% -> 98%. `EMIT_CYCLES` = 73, and `GATE_CYCLES` = 141 (what the gating
+   emit adds, once per group) is priced SEPARATELY because the pad has no
+   interest in an interval the timer sets.
+
+3. **`feed_wrap` used a 16-bit compare** (`push de`/`push iy`/`pop hl`/
+   `sbc hl,de`/`pop de`, 86 cycles, ~17 calls a frame) to find a wrap that fires
+   once per 512 samples. The ring is 512-ALIGNED and the cursor can only be
+   `RING_BUF..RING_TOP`, so **the high byte alone answers it** — 47 cycles and
+   5 B smaller. Worth only ~740 cycles, and it took the over-budget share from
+   **24% to 4.6%**: that is what "the clock leaves no slack" means in practice —
+   the 1-voice frame sat a hair over the line and nearly all of it crossed back
+   at once. Expect that shape again; near the floor, small trims are cliffs.
+
+**AF' IS RESERVED FOR THE PACING, ENGINE-WIDE.** Nothing else may use
+`ex af,af'`. The ISR's `push af`/`pop af` does not, which is what carries the
+phase across the frame boundary — and it must be continuous, because neither 166
+nor 167 divides GROUP. `exx` is unaffected. A second user would not fail a gate;
+it would drift the DAC's phase and read as jitter. Called out at `gate_wait`, at
+`gatePrologue` in gen-mixer, and in driver.md §5.1.3.
+
+`npm run dac` moved with it: wander **3.74-4.26 -> 2.31-2.73 ms**, span
+**121-124% -> 111-114%**, paced **96-100% -> 100%**.
+
+**The tool that found it, and it had rotted.** `tools/seg-bench.mjs` was written
+before Timer B: it returned 0 for the YM status byte, so `gate_wait` spun into
+the 3M-step guard and every run read 42,000% of budget, and it still imported
+the deleted `PACE_SEG`/`PACE_RESERVE`/`G_NSEG`. It is repaired and is now
+`npm run seg-bench`. It models the gate the way `frame-budget.mjs` does — the
+overflow flag is satisfied ON DEMAND, so the profile shows WORK and not spin —
+charges `PACE_WINDOW` per window read by default, counts the frame's DAC writes
+to get the chunk, and prints the arithmetic that actually decides everything:
+
+    165.3 samples x 358 = 59174 the timer's floor (99.2% of a frame)
+    work 59314 (99.4%) — 140 OVER its own clock, so the frame is the work
+    of that, 41686 inside the padded loops and 17628 outside them
+
+The frame cannot be shorter than the floor, so **only the out-of-loop work
+competes with it** and the loops' pad can always be resized to fill the rest.
+Reach for this before theorising about where a frame goes.
+
+**WHAT IS LEFT IS POLYPHONY, AND IT IS A RATE DECISION — NOT AN OPTIMISATION.**
+`seg-bench` now prints the frame's mean cost by voices sounding, which is the
+number that sets expectations:
+
+    0v  72%          1v  95-97%  (0/189 over)
+    2v  120-136%     3v  150%
+
+A sounding voice costs **~25-30% of a frame** — 167 ticks x (78 mixing + 14
+ROM-window) ~ 15.4k — and that is the mixer at the floor §5.3.1 already computed
+for these semantics, not slack. **The engine fits ONE PCM voice at 9987.6 Hz.**
+§1.1 predicted precisely this before the split ("2 voices x 175 ticks = 99.7% of
+the frame with the sequencer executing zero instructions"); the split bought the
+sequencer's 19.7k, which is one voice. The 3ch soft-mix target is met in value
+terms (every gate is 0-diff) and NOT in cycles.
+
+The only lever with the required size is the **sample rate**, because ticks
+scale with it one-for-one: `GROUP = 2` is 6658.4 Hz and ~111 ticks a pass,
+buying back ~1/3 of both the mix and the emits. It trades bandwidth for
+polyphony and moves `mmb.js` + `drv-player.js` + the C together, so it is a
+DECISION to take with the user, not a patch. Do not try to grind it out of the
+overhead instead: out-of-loop work is ~16.7k total, spread flat over ~40 labels
+(`ms_load`, `mvf_*`, `pp_*`, none above 800 cyc), and a second voice needs 15.4k.
+
+Still open from the previous section, unchanged: **the write-loop emit is in on
+port 0 and out on port 1** (`cr_p1` mixes all 255 prime ticks to ZERO; ruled out:
+starvation, the PCM command, the tick count, the globals, the `call cc,nn`
+encoding). The comment at the site carries the list.
+
+**The image is the wall again: 21 B.** The next emit point, or any inlining,
+needs `org $1c00` (~640 B free above the ring, behind `CODE_END`) — and only cold
+code may go there.
+
+### 2026-08-07 — HARDWARE: `$27` needed ENABLE B. One note, then a hang.
+
+Reported from blastem: **one note sounded and the driver stopped.** Root cause,
+and it had shipped past every gate in the repo.
+
+**`$27` bit 3 (Enable B) was never set.** Boot wrote `$27 = $02` (Load B alone)
+and `cs_r27` ORed `$02` into every `$27` the sequencer sent. Load B runs the
+counter; **Enable B is what publishes the overflow to the status byte the gate
+polls.** Nuked-OPN2 is the authority and it is one line (`third_party/
+Nuked-OPN2/ym3438.c`, `OPN2_DoTimerB`):
+
+    timer_b_overflow_flag |= timer_b_overflow & timer_b_enable;
+
+So the counter ran and the flag never appeared: `gate_wait` spun for ever at the
+FIRST emit of the FIRST frame. The frame's chip writes had already gone out —
+one note — and nothing came after. **Fixed: `$0A` = Load B | Enable B, at boot
+and in `cs_r27`.** Enable B also gates the YM2612's `/IRQ`, which is not
+connected on the Mega Drive, so it costs nothing; it is the normal idiom for a
+polling driver.
+
+**Why nothing caught it, and this is the part worth carrying.** `engine-gate`,
+`slot-gate`, `dac-gate`, `frame-budget` and `seg-bench` ALL modelled Timer B as
+"status bit 1 rises GATE_CY cycles after the last reset". That model was written
+from §5.1.2 — from the DESIGN — and the design never mentioned bit 3, so all
+five harnesses raised the flag whether or not the engine had enabled the timer.
+Every one of them was green against an engine that cannot run on hardware.
+
+> **A harness that models a peripheral from the design document cannot fail on a
+> register the design document forgot.** When a model of a chip is written, read
+> the chip — `third_party/Nuked-OPN2/ym3438.c` is IN THIS REPO and is the same
+> core `live` plays through.
+
+All five now read bit 3. `engine-gate` additionally reports the poll-with-it-
+clear case by name (`the engine polled Timer B's flag N times with ENABLE B
+CLEAR`) instead of letting it present as "frame did not complete" — a spin is
+otherwise indistinguishable from a hang anywhere else. Confirmed by running the
+corrected model against the OLD engine: 599,937 polls, no frame.
+
+Also learned in the same round, about where the fault could NOT be:
+- The engine's DAC stream is healthy on every PCM gate score, measured
+  absolutely rather than by comparison (a scratch dump of `$2A`/`$2B`):
+  m2-pcm 62% non-silent, m2-pcmloop 100%, m3-pcm-slice 98.5%, `$2B` toggling
+  once per burst. **The gates compare the engine to `drv-player` and would be
+  green if BOTH were silent** — keep an absolute check in reach.
+- `live` on the MMLispDRV backend plays fine, because `drv-player.js` is a JS
+  reimplementation and never polls a real timer. A hardware-only fault is
+  invisible there by construction.
+
+### 2026-08-07 — BUSY modelled too; and the Z80 frame does NOT explain "very slow"
+
+Hardware after the Enable B fix: **sound plays, but the tempo is very slow and
+the DAC crackles.** Two things came out of chasing it.
+
+**1. BUSY was the other free lunch, and it is small.** Every harness returned
+status bit 7 clear, so `cr_p0d`/`cr_p1d`/`cs_r27d` never spun. Nuked-OPN2 holds
+BUSY 32 internal cycles after a DATA write (`write_busy_cnt >> 5`) = 6 YM clocks
+each = **90 Z80 cycles**. Now charged in `budget:frame` and `seg-bench`.
+Measured: **~1k cycles a frame, no verdict changes** — `feed_one` every fourth
+write already spaces data writes wider than 90. Charged anyway; "checked, small"
+is not "never looked".
+
+> **Judge BUSY on a MONOTONIC counter.** First cut compared against the
+> per-frame `cyc`, which restarts — so the chip read BUSY at every frame
+> boundary and `ym_busy0` spun 13,800 cycles A CALL, showing p95 186% and
+> `m3-fm6-pcm` at 123%. All invented. An instrumentation bug that fabricates a
+> plausible hardware cost is worse than none.
+
+**2. With every known cost charged, the Z80 frame still reads p50 96-97% and
+0.8-4.6% over.** That does NOT predict a large slowdown, so the cause is
+probably NOT the Z80's frame. The one cost still unmodelled everywhere is the
+**68000's bus grab** (`seg-bench --stall`, off by default because it has never
+been measured on hardware) and its sensitivity is brutal: stall 500 takes the
+over-budget share 6% -> 20%, stall 2000 -> 48%. The frame's margin is ~1,900
+cycles (3%).
+
+**The measurement that settles it is on the machine, and the driver already
+publishes it.** `MMLisp_readStats` (audible / starved) against SGDK's `vtimer`,
+per the contract in `sgdk/mmlispdrv.h`:
+
+    audible_delta / vtimer_delta ~ 1.0, starved flat -> the driver is keeping up
+    < 1 and starved CLIMBING  -> the ring ran dry: the 68k/host loop is late
+    < 1 and starved FLAT      -> the Z80 is missing interrupts: its frame is over
+
+Sample every ~32 frames (each read grabs the bus; sampling often costs the
+engine the frames it then reports). Until that number exists, do not optimise
+either side — the two diagnoses have opposite fixes (deeper RING_DEPTH / less
+host work vs. less Z80 work per frame).
+
+### 2026-08-07 — HARDWARE READOUT: it is the Z80's frame, and the 68k bus grab is ~1000 cyc
+
+blastem, mucom song, the example's readout:
+
+    music x256 00C1 (75%)   host x256 00FF (the 68k loop is fine)
+    lost/s 000F             starv 001C cumulative   audible 04DF
+
+**~400 lost frames against 28 starved, with `host` at 0xFF.** Both other
+branches of the header's decision table are ruled out by measurement: the host
+loop keeps up, and the ring is not running dry. So the Z80 is missing about a
+quarter of its interrupts — **its frame is over budget on hardware while
+`budget:frame` said 4.6%.**
+
+**The gap is the 68000's BUS GRAB, and it is now charged by default.**
+`MMLisp_frame` holds the Z80 bus to read `tail`, copy the slot and write `head`,
+and the Z80 executes nothing meanwhile; every harness here writes the slot in as
+a free array assignment. `frame-budget.mjs` now charges **1000 cycles a frame**
+(`--stall N` overrides). 1000 is CALIBRATED, not derived: it is the value that
+reproduces the machine (24% over budget against the measured ~25% loss).
+
+**Then `pcm_pad` turned out to be dead weight — ~1,200 cycles a frame.** Stage C
+sizes the idle pad from `PCM_BUDGET` minus the three passes' cost, and once the
+emit was priced honestly there is nothing left to hand out: with ANY voice
+sounding the answer is the floor (1) at every shift. It was computing that with
+three `pp_sounding_at` calls and a divide. Now an early-out on `G_ACTM`, 59
+cycles, and **`build-engine.mjs` asserts the shortcut** by running pcm_pad's own
+arithmetic over the roomiest sounding frame and requiring a pad of 1.
+
+> That assertion earned itself immediately: my first version compared against
+> `>= PCM_BUDGET` and FAILED THE BUILD, because the roomiest sounding frame is
+> 40,716 against a budget of 42,000. The conclusion still held (1,284 >> 11 = 0,
+> floored to 1) but the reasoning I had written in the comment did not. Assert
+> the routine's arithmetic, not your paraphrase of it.
+
+    budget:frame with the bus grab charged:
+      over budget 24.2% -> 4.6% (softmix), 21.3% -> 0.4% (pcmloop)
+
+Predicts `music x256` moving 0x0C1 -> ~0x0F3. **UNCONFIRMED — needs the machine.**
+
+Also: the working tree moved under this session (`gen-mixer` gained the inline
+AF' gate, `EMIT_CYCLES` 118 -> 73). Re-read generated constants before quoting
+them; the seg-bench GROUPS regex needing `gt\d+` was the tell.
+
+### 2026-08-08 — the fix did NOT work, and the calibration was fitted to a coincidence
+
+Second hardware round, same song: `music x256 0x0BF` (74.6%) against the
+previous 0x0C1 (75.4%). **Unchanged.** `host 0x0FE`, `lost/s 15`, and the new
+`starv/s` reads **6** — so the ring IS running dry, on top of ~9 missed
+interrupts a second. "starv flat" in the previous round was a misreading of a
+cumulative counter; that is what `starv/s` was added for.
+
+**The frame's real length, from `music`:** 3,579,545 cycles a second / 44.8
+consumed frames = **~80,000 cycles = 134% of budget**. `budget:frame` says 95%.
+The model is short by ~22,000 cycles a frame — not by the ~1,200 `pcm_pad` gave
+back, and not by any bus grab.
+
+> **The 1000-cycle bus-grab default has been WITHDRAWN.** It was fitted because
+> it made `m3-pcm-softmix` report 24% over against a machine losing ~25% of its
+> frames. Different score, and the very next reading (134%) contradicts it. A
+> constant that matches one number and breaks on the next is worse than no
+> constant. `--stall N` still sweeps it; the grab is real and its SIZE HAS NEVER
+> BEEN MEASURED. Do not put a number back without measuring the grab.
+
+**And the corpus cannot reproduce it.** Both cycle tools were SKIPPING every
+score without a sample bank, so every cycle number in this repo has come from
+PCM gate scores — and those are musically trivial: **18-23 B mean slots**.
+Lifted (an empty bank runs fine; only PCM commands read one), and now
+demo1 / ab-core / stress-m1 / m2-motion all measure — at **71-72%**, with the
+same 18-23 B slots. Nothing here is dense. The heaviest thing in the repo is
+still 95%.
+
+So the next step is not another guess: **profile THEIR song.** `budget:frame`
+and `seg-bench` both take a `.mmb` with its `.smp` beside it, which is exactly
+what an SGDK `res/` holds. Asked for `res/song.mmb` + `res/song.smp`.
+
+Standing suspicion to test with it, not before: a mucom import drives 6 FM + PSG
+with envelopes every frame, so its slot is many times the corpus's 20 B, and the
+consume loop costs ~100 cycles a write. 200 writes would be ~20k — the right
+size for the gap. UNVERIFIED.
+
+### 2026-08-08 — THE TOOL WAS MEASURING THE WRONG QUANTITY
+
+Their song profiled (`res/song.mmb`, 4000 frames): **slot 20 B mean — the same
+density as the corpus.** The "a mucom song is denser" hypothesis is DEAD; it was
+never the score.
+
+`budget:frame` said 88% / 0.2% over. `dac-gate` said **span 110%**. The machine
+said **134%**. Two of this repo's own gates disagreed by 22 points and nobody
+had reconciled them.
+
+**`budget:frame` modelled Timer B as satisfied-on-demand, so gate waits were
+free and it reported the frame's WORK.** A frame is not its work:
+
+    167 samples x 358.4 cyc = 59,853 = 100.3% of a vblank, BY ITSELF
+
+The sample clock alone consumes the whole frame, and every cycle of work that
+does not land inside a gate wait is added ON TOP. `seg-bench` had the right
+arithmetic in its summary all along (floor + outside-the-loops):
+59,853 + 18,705 = 78,558 = 132%, against the machine's 134%.
+
+Fixed: the timer free-runs on the monotonic clock and the engine really waits.
+Now reads **116% / 83.7% over** on their song, agreeing with dac-gate and with
+the machine's direction.
+
+> **When two gates disagree, do not average them and do not trust the friendlier
+> one — find out which measures the quantity you care about.** `dac-gate` had
+> been reporting span > 100% for months while the tool literally named "does the
+> frame fit" said 88%.
+
+**The real work list is now visible and it has not changed shape**: ~18,700
+cycles a frame OUTSIDE the paced loops, flat across ~40 labels (`ms_load`,
+`mvf_*`, `pq_in`, `feed_wrap`, `pp_*`). The clock leaves nothing, so all of it
+is overrun. Cutting it is the task; the sample rate (ticks scale 1:1 with it) is
+still the only lever big enough to change the shape.
+
+### 2026-08-08 — dead-time ranking: the holes are PRIME FRAMES + a flat 19%
+
+Added to `seg-bench`: charge every cycle spent more than one sample period after
+the last `$2A` write to the label running at the time, and report the biggest
+single holes with where in the frame they fell. Cost-ranking cannot answer this
+— a cheap label can hold the DAC through a hole and an expensive one can cost
+the feed nothing because it emits as it goes.
+
+Two instrument bugs found on the way, both the same shape as the BUSY one:
+charge it only BETWEEN two emits (a no-PCM frame feeds nothing by design, so
+`pace_sub` ranked first at 5,115 cyc/frame of "dead time" on frames where the
+DAC is not running), and only on frames that emit at all.
+
+Their song, corrected:
+
+    DEAD TIME 11,466 cyc/frame (19.2% of a frame)
+    biggest single holes: 355p / 135p / 135p / 135p / 126p — ALL in pp_setup, all at 4% into the frame
+    then flat: gate_wait 1355, mix_first1_s0_lp 1043, ms_load 760,
+               mix_add1_s9_lp 634, mvf_idle_seg 451, feed_one 435, gt* ~700
+
+**Two separate problems, and they need different fixes.**
+
+1. **PRIME FRAMES.** A burst's first frame builds the whole lead and feeds
+   NOTHING — 135 to 355 sample periods of DAC silence, one to two whole frames.
+   ~4-5 per 67 s in their song (the `1smp` frames: f1363, f2425, f2875, f3739).
+   Each is a discrete audible click. The ring drains between PCM bursts and the
+   next hit has to prime again.
+
+   **Proposed, NOT implemented (needs the user):** when no voice sounds, mix
+   SILENCE into the ring instead of `pace_sub` burning 19,952 cycles doing
+   nothing. Then the ring never drains and no burst ever needs a prime frame.
+   Cycle cost is comparable (three idle passes ~25,400 against pace_sub's
+   19,952) and a 0-voice frame is at 78%, so there is room. The design
+   consequence is that fm6/`$2B` stays claimed for PCM continuously, which
+   collides with a score that wants fm6 for FM (§14) — that is the call to make.
+
+2. **A FLAT 19.2%.** No single hole; ~8 labels between 300 and 1,400. This is
+   the steady-state overrun (116% modelled / 134% measured). No cause isolated
+   yet — do not guess at it again.
+
+**Answered with measurement, for the record:** coarser pitch resampling does NOT
+fix it. The mix loops hold only ~2,400 of the 11,466 dead cycles, so a free
+mixer still leaves ~9,000. And lowering the sample rate is not the lever either.
+
+### 2026-08-08 — fm6 IS NOW CLAIMED FOR THE WHOLE SCORE (user approved the trade)
+
+The prime-frame holes are gone. Once PCM has sounded once, the ring is kept
+topped up with SILENCE and `$2B` is never released, so a later hit is a STEADY
+frame and never a PRIME one. Cost: fm6 stops being available as an FM channel
+for the rest of the score (§14's "claimed, not owned" becomes claimed and kept).
+A score with no PCM never claims and is untouched.
+
+Landed in all THREE implementations together, which is the only way this works:
+`live/src/drv-player.js` (the port spec), `drv/68k/mmlispseq.c`, `drv/src/
+engine.z80` — plus `engine-gate`'s model, whose scenarios asserted the old rule
+("175 DAC writes with no voice active") and had to be taught the new one.
+
+    their song: worst frame 519% -> 145%; the recurring 135/355-period holes are
+    gone, the one left is 163p at f1 — the score's first frame, which must prime
+    verify:all exit 0 (engine 12/12, c-gate 41/41, slots sample-for-sample,
+    ring, dac, sgdk:lint, ab-gate)
+
+**`pp_tail` is deleted.** A tail frame and a steady frame are now the same
+thing: mix `chunk`, feed `chunk`, `fill` unchanged. The real tail plays out
+ahead of the silence in FIFO order.
+
+> **`_done()` in drv-player had to stop consulting `_pcmFill`.** It read "the
+> ring still holds a tail, so the song is not over" — which became permanently
+> true once the ring is deliberately kept full, so the reference ran forever
+> while the C stopped at `mml_done` (121 slots vs 400). The C's predicate
+> (voices active + tracks running) was always the right one and the two now
+> agree. Expect this shape whenever a "still busy" test reads a buffer that
+> something else decides to keep full.
+
+**What is NOT fixed: the steady-state 116%.** p50 is unchanged — the flat 19.2%
+of dead time spread over ~8 labels is a separate problem and still has no
+isolated cause. The clicks should be much better; the slow tempo will not be.
+
+### 2026-08-08 — PCM_PASSES 3 -> 2 landed. THREE coupled constants, all baked at 3.
+
+The pass count is the emit cadence, and a pass's iteration is `PACE_PASSES`
+ticks of ONE voice plus an emit, which must fit ONE sample period:
+
+    P*(tick + PACE_WINDOW) + 134 <= 358      (tick = 78 variable, ~40 fixed)
+    variable: P=2 318 ok, P=3 410 OVER (15%, AT EVERY VOLUME)
+    fixed:    P=2 242,  P=3 296,  P=4 350 — all ok
+
+**Three voices never fitted the clock.** The value gates said 3ch because they
+compare mixers to each other, never to a clock.
+
+Changing the constant was not enough — THREE places had 3 baked in, and each one
+presents as something else entirely:
+
+1. **`ms_owed` / `msl_owed` (GENERATED, two sites)** — `add a,a / add a,l`,
+   "3 x iterations", converting an iteration count to a tick count. A 175-tick
+   pass ran 96 ticks and the DAC diverged at ring position 511 (the page edge),
+   which reads as a mixer bug. Now `mulByUnroll(unroll)` in gen-mixer, which
+   throws past 4 rather than emitting silently wrong code.
+2. **`mvf_ringcap` (hand-written)** — the same x3, samples -> ticks for the ring
+   top bound. `build-engine.mjs` asserts `PCM_PASSES == 2` against that site.
+3. **`SLOT_SUBS = 3`** — the sub-slots "ride the mixer's voice-pass boundaries,
+   which sit at 1/3 and 2/3". With two passes there is only 1/2, so the third
+   sub-slot had no boundary and `pace_sub` placed it by hand. **The user heard
+   this as clicks on TIMBRE CHANGES** — a patch dump is ~30 FM writes and they
+   were landing in the hand-placed sub-slot. Now 2, in engine.z80 +
+   slot-builder.js + mmlispseq.h.
+
+Also: `m3-pcm-softmix` / `m3-pcm-slice` rewritten to two voices, drv-player
+ignores a voice index this build lacks, engine-gate's scenarios and its
+hardcoded `new Array(3)` plan block parameterised from `PCM_VOICES`, ab baseline
+re-frozen (6 scores moved — sub-slot placement changed; 2 improved to 0).
+
+    verify:all exit 0 · image 7282 B, headroom 75 -> 506 B
+    their song: p50 116% -> 114%, dead time 11,466 -> 8,957 cyc/frame
+
+**HARDWARE SAID IT GOT WORSE, on the build that still had SLOT_SUBS = 3:**
+`music x256` 0x0BF (74.6%) -> **0x087 (52.7%)**, `starv/s` 6 -> 14. That build
+had the mismatch above. UNVERIFIED whether SLOT_SUBS = 2 recovers it — that is
+the next hardware run and it is the question to answer before anything else.
+
+**The tempo win did NOT arrive.** The sounding pass now fits its period (pads
+went 0 -> positive, which is the proof) and the model moved 116% -> 114%. The
+remaining 15% of dead time is led by `gate_wait` at 37 cyc/visit — the engine
+arriving LATE at gates — and has no isolated cause. Do not predict again; measure.
+
+### 2026-08-08 — SLOT_SUBS fix CONFIRMED on hardware. The gap is a CONSTANT ~22k.
+
+    music x256 0x0BC (73.4%)   host 0x0FE   lost/s 16   starv/s 0000   starv 123
+
+Both kinds of click are gone (user confirmed) and **starvation is now ZERO** —
+6 at P=3, 14 on the broken SLOT_SUBS=3/P=2 build, 0 now. `music` recovered
+0x087 -> 0x0BC, so the regression WAS the sub-slot mismatch.
+
+The decision table is now unambiguous for the first time: **`music < 1` with
+`starv/s == 0` = the Z80 is not taking every interrupt.** The host and the ring
+are both exonerated by measurement.
+
+**And the model's error is a CONSTANT, not a proportion:**
+
+    P=3   model 116%   hardware 134%    gap ~22,000 cyc
+    P=2   model 114%   hardware 136%    gap ~22,000 cyc
+
+Same gap across a configuration change that moved the whole workload. That is
+the signature of a fixed per-frame cost the emulator does not charge — chase
+THAT, not the workload.
+
+**Ruled out this round: the host's bus grab.** `MMLisp_frame` (sgdk/
+mmlispdrv.c) takes the bus three times and each is scoped tight — read `tail` +
+stamp `H_VBL`, the per-slot copy in `slot_to_z80`, write `head`. **`mml_pump`
+renders the sequencer WITHOUT holding the bus.** A ~20 B slot cannot be 22k Z80
+cycles. Already ruled out earlier: YM BUSY (~1k, modelled), the ROM-window
+charge (PACE_WINDOW=14, would need ~240/read), the score's write density
+(20 B mean slots — same as the corpus).
+
+Still unexplained. Candidates not yet measured: the Z80's real access time to
+$4000-$4003 and to the $8000 window while the 68k/VDP hold the bus during
+ACTIVE DISPLAY (all harnesses charge a flat PACE_WINDOW and nothing for YM
+port access at all), and the interrupt-acceptance path itself.
+
+**P=2's verdict, honestly: neutral on tempo** (0.746 at P=3 -> 0.734 now),
+**good on starvation** (6 -> 0) and it freed 430 B of image. It cost a voice.
+
+### 2026-08-08 — THE ~22k GAP DID NOT EXIST. The harness never let the vblank arrive.
+
+`budget:frame` now reproduces the machine EXACTLY on the one song with ground
+truth:
+
+    model    music x256 00bc (74%) · lost 16/s
+    machine  music x256 00BC       · lost/s 0010 = 16
+
+The missing ingredient was never a hidden per-frame cost. **The harness ran
+frames back to back** — `intRequest`, run to halt, `intRequest` again — so the
+Z80 never idled, the vblank never arrived on its own clock, Timer B never had
+real time to advance in, and the catch-up never engaged. Every conclusion drawn
+from the difference was an artifact, including the "constant ~22,000 cycles a
+frame" I twice called a signature. It was my instrument.
+
+What the model needed:
+
+- the Z80 SLEEPS to the next vblank when it finishes early (`tcyc = nextVbl`),
+  because it gets FRAME_CYCLES of real time per vblank whether it works or not;
+- /INT is asserted for ~one scanline (INT_WINDOW = 228 Z80 cycles) and a frame
+  still inside the ISR when the window closes LOSES that interrupt;
+- the host stamps `H_VBL` every real vblank, which is what arms the catch-up;
+- **`music` is CONSUMED frames (the engine's own H_FRAMES) over real vblanks**,
+  not interrupts taken. Counting interrupts read 26% where the machine said
+  74%, because catch-up makes one interrupt consume up to CATCH_MAX frames —
+  the interrupt count and the music's clock are different numbers. This is the
+  same class of error as everything else this session: measuring a quantity
+  that resembles the one you want.
+
+**The actionable number is now: one frame of MUSIC costs 114% of a vblank.**
+(m3-pcm-softmix 117%, m2-pcmloop 116%, m3-fm6-pcm 111%.) Cut 14% and it fits.
+
+> CAVEAT, unresolved: all three corpus scores report the SAME music ratio
+> (74%) and lost/s (16) despite different per-frame costs (111-117%). The ratio
+> looks pinned by the catch-up saturating rather than by the work, so trust the
+> "cost per music frame" line and treat the ratio as calibrated on one song
+> until a second ground truth exists. Get `music x256` for a LIGHT score.

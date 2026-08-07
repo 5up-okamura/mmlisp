@@ -35,9 +35,9 @@
 // A run is the ticks from one LOGICAL boundary to the next — a loop wrap or the
 // end of a sample. ROM window crossings are not in it: they are the engine's
 // own business (it owns the bank) and they do not consume a run. The last entry
-// of a still-sounding voice is PCM_MIX_R, meaning "no further boundary this
-// frame"; a voice that ends needs no such sentinel, and a silent voice's run is
-// empty.
+// of a still-sounding voice is the frame's whole mix chunk, meaning "no further
+// boundary in it"; a voice that ends needs no such sentinel, and a silent
+// voice's run is empty.
 //
 // Length-prefixed runs so the Z80's consume loop needs no per-write dispatch.
 // Bucketing by port loses cross-bucket ordering within a frame, which is safe
@@ -56,9 +56,9 @@ export const SLOT_SIZE = 256;
 
 // Sub-ticks per frame. A build constant, and it must equal the engine's
 // PACE_PASSES: the boundaries the Z80 consumes on are the mixer's voice-pass
-// boundaries, and there are exactly three of those. SLOT_SUBS = 1 collapses
+// boundaries, and there are exactly PCM_VOICES of those. SLOT_SUBS = 1 collapses
 // the format back to the single-block one and is byte-identical to it.
-export const SLOT_SUBS = 3;
+export const SLOT_SUBS = 2;
 
 // Bounded by CYCLES, not bytes: the Z80's frame is shared with the PCM mixer,
 // and 95 is what the settled mixer configuration leaves (driver.md §5.3.1,
@@ -68,7 +68,7 @@ export const SLOT_MAX_WRITES = 95;
 
 // PCM voices, and therefore segment-plan runs per slot. A build constant on
 // both sides (the engine's PCM_VOICES).
-export const PCM_VOICES = 3;
+export const PCM_VOICES = 2;
 
 export const PCM_START = 1;
 export const PCM_STOP = 2;
@@ -84,6 +84,7 @@ export class SlotBuilder {
     this._marks = []; // queue depth at each sub-tick boundary — the bucket ends
     this._pcm = [];
     this._plan = null;
+    this._chunk = 0;   // samples the engine mixes this frame; 0 = a prime frame
     this.spillPeak = 0; // deepest the queue ever got
     this.spillFrames = 0; // frames that could not carry everything
   }
@@ -115,6 +116,18 @@ export class SlotBuilder {
    */
   plan(bytes) {
     this._plan = bytes;
+  }
+
+  /**
+   * How many samples the engine mixes this frame (§5.1.2). The plan's tick
+   * distances are measured against it, so the engine cannot derive it — it has
+   * to be told, or a starved frame would desync the two.
+   *
+   * 0 means a PRIME frame: mix PCM_RING_TARGET and feed nothing. That encoding
+   * is what keeps the field one byte, since the lead does not fit in one.
+   */
+  chunk(samples) {
+    this._chunk = samples;
   }
 
   /** Writes still waiting for a slot. */
@@ -159,6 +172,7 @@ export class SlotBuilder {
     this._marks = [];
     this._pcm = [];
     this._plan = null;
+    this._chunk = 0;
     if (this._queue.length) {
       this.spillFrames++;
       this.spillPeak = Math.max(this.spillPeak, this._queue.length);
@@ -171,7 +185,7 @@ export class SlotBuilder {
     // writes and needs the total at the frame head, before sub-slots 1..K-1
     // exist on the chips. One byte here replaces the engine tallying every run
     // as it goes, which is why the count is a field and not a derivation.
-    const out = [writes.length, this._pcm.length];
+    const out = [writes.length, this._chunk ?? 0, this._pcm.length];
     for (const c of this._pcm) out.push(...c);
     // The plan rides the head with the PCM commands: the engine wants both
     // before it mixes, and the plan is per-voice-pass, so it is read the moment
@@ -200,6 +214,7 @@ export class SlotBuilder {
 export function decodeSlot(bytes, subs = SLOT_SUBS) {
   let i = 0;
   const nWrites = bytes[i++];
+  const chunk = bytes[i++];
   const pcm = [];
   const npcm = bytes[i++];
   const LEN = { [PCM_START]: 18, [PCM_STOP]: 2, [PCM_VOL]: 3, [PCM_LOOP]: 6 };
@@ -229,6 +244,7 @@ export function decodeSlot(bytes, subs = SLOT_SUBS) {
   // traffic on each port, in order, for callers that only care about that.
   return {
     nWrites,
+    chunk,
     subs: subSlots,
     psg: subSlots.flatMap((s) => s.psg),
     fm0: subSlots.flatMap((s) => s.fm0),

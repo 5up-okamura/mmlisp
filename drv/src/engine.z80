@@ -35,12 +35,15 @@ WINDOW      equ $8000
 RING_DEPTH  equ 3               ; slots of lookahead; a per-game knob (§3.4)
 SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
 SLOT_SHIFT  equ 8               ; log2(SLOT_SIZE); published for the 68k
-PCM_VOICES  equ 3
+PCM_VOICES  equ 2
 ; Sub-slots per slot (driver.md §3.5). Sub-slot 0 goes out at the frame head as
-; it always did; the rest ride the mixer's voice-pass boundaries, which already
-; sit at 1/3 and 2/3 of a paced frame — so finer note timing costs the engine no
-; new structure and no extra chip writes. Must match the 68k's MML_SLOT_SUBS.
-SLOT_SUBS   equ 3
+; it always did; the rest ride the mixer's VOICE-PASS BOUNDARIES — so this is
+; coupled to PCM_PASSES and is not a free parameter. With three passes the
+; boundaries sat at 1/3 and 2/3 and SLOT_SUBS was 3; with two they sit at 1/2,
+; and a third sub-slot would have no boundary to ride — pace_sub would have to
+; place it by hand, which is dead time the DAC spends holding. Must match the
+; 68k's MML_SLOT_SUBS.
+SLOT_SUBS   equ 2
 
 ; ── RAM map (driver.md §5.2) ───────────────────────────────────────────────
 ; The engine is small enough that the 8 KB stops being a design input: no
@@ -49,11 +52,11 @@ SLOT_SUBS   equ 3
 ;   $0000..$12FF  code                        4.7 KB
 ;   $1300..$133F  published header            68k-visible, and a FIXED address
 ;   $1400..$16FF  slot ring                   RING_DEPTH × 256
-;   $1700..$17FF  mix buffer plane A
-;   $1800..$18FF  mix buffer plane B
+;   $1700..$17FF  free
 ;   $1900..$195F  PCM voice state             3 × 32 B
 ;   $1960..$19FF  engine scratch (idle voice struct at $1980)
-;   ..$1EFF       free (~1.2 KB)
+;   $1A00..$1BFF  SAMPLE RING                 512 B, 512-aligned
+;   ..$1EFF       free
 ;   $1F00         stack top
 ;
 ; The planes and the voice state sit ABOVE the ring rather than below it because
@@ -63,14 +66,31 @@ SLOT_SUBS   equ 3
 ; the whole span below the header, and everything above the ring is the
 ; engine's own.
 ;
-; The two planes are the pacing fix (§5.1): a sample is only final once the LAST
-; voice has added to it, so a paced feed — which occupies the whole frame — can
-; only be feeding the plane the PREVIOUS frame finished. One frame of PCM
-; latency is what that costs. Both are page-aligned, and they differ in exactly
-; one bit of the high byte, so swapping them is an `xor`.
-MIXLO       equ $1700
-MIXHI       equ $1800
-MIX_SWAP    equ (MIXLO>>8)^(MIXHI>>8)
+; The SAMPLE RING (§5.1.2). A sample is only final once the LAST voice has added
+; to it, so what the feed can be draining is what the previous frame's mix
+; finished — one frame of PCM latency, exactly as the two planes it replaces
+; cost. What the ring buys is that the two counts no longer have to be equal:
+; Timer B asks for 166 or 167 samples a frame depending on where its phase
+; falls, and the mixer just tops the ring back up.
+;
+; 512 bytes, and 512-ALIGNED, because both regions are live at once — the
+; finished samples waiting to be played and the chunk being built. A page edge
+; is therefore `L == 0` and the page is one bit of H, which is what lets the
+; cursors stay `inc l` / `inc iy` in the hot loops and wrap at SEGMENT
+; boundaries instead (see mvf_seg).
+RING_BUF    equ $1a00
+RING_TOP    equ $1c00
+RING_PAGE   equ 1               ; the bit of H that names the ring's two pages
+; What a frame has for the LOOPS, in Z80 cycles. Well short of the frame's
+; 59,659: what is missing is everything the loops do not do — the slot's writes,
+; the pass transitions, the segment set-ups — which the pad must leave room for
+; or the frame ends late. Tuned by `npm run dac`: 46000 still reads 96-100%
+; paced, and below 42000 the span stops moving, so this is the knee.
+PCM_BUDGET  equ 42000
+; Finished samples the ring carries ahead of the feed. 255 rather than 256
+; because a pass's tick count is a byte (G_TICKS) and the prime frame mixes
+; exactly this many; the slack it leaves the feed is 255 - 167 = 88 samples.
+PCM_RING_TARGET equ 255
 G_PCMV      equ $1900
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
@@ -93,7 +113,6 @@ PV_TAIL     equ 16              ; u16 bytes from loop end to sample end
 G_BASE      equ $1960
 G_ACT       equ G_BASE+$00      ; u8  1 = a voice was sounding at frame start
 G_DACON     equ G_BASE+$01      ; u8  1 = $2B DAC enable is currently set
-G_PEND      equ G_BASE+$02      ; u8  1 = the mixed plane still owes a frame of feed
 G_TICKS     equ G_BASE+$03      ; u8  ticks left in this voice's pass
 G_IDX       equ G_BASE+$04      ; u8  buffer tick index
 G_OLDPTR    equ G_BASE+$07      ; u16 pointer at segment start
@@ -107,20 +126,12 @@ G_SEG_N     equ G_BASE+$10      ; u8  unrolled iterations in the current segment
 G_SEG_L     equ G_BASE+$11      ; u8  accumulate flag
 G_SEG_I     equ G_BASE+$12      ; u8  buffer index
 G_SEG_R     equ G_BASE+$13      ; u8  remainder ticks
-G_MIXP      equ G_BASE+$14      ; u8  high byte of the plane being MIXED
-; The pacing loop (§5.1): what the pad holds a tick to, and the three
-; measurements the frame's debt is estimated from.
-G_PAD       equ G_BASE+$15      ; u8  pad for the current segment, in 16-cycle units
-G_NSEG      equ G_BASE+$16      ; u8  segments run so far this frame
-; The frame's EXACT segment total, once it is known — 0 until then. The pads
-; that carry any authority all sit in the silent passes (see pp_idle), and by
-; the time those run every sounding segment has been counted, so the total is
-; this plus one per silent pass still to come. That is what replaced estimating
-; it from the previous frame: an estimate that was one segment out mis-padded
-; the frame by ~4%, at frame rate, which is what the DAC wander was.
-G_NSEGF     equ G_BASE+$17      ; u8  exact segments this frame, 0 = not yet known
+G_MIXP      equ G_BASE+$14      ; u8  high byte of the ring page being MIXED
+; The pacing loop (§5.1.2): every pad is now a BAKED constant of (role, shift)
+; — the gate re-synchronises each group's first sample, so nothing outside the
+; loop has to be charged against it and the runtime debt, its estimator and its
+; three measurements are gone.
 G_NWR       equ G_BASE+$18      ; u8  chip writes this frame's slot carried
-G_DEBT      equ G_BASE+$19      ; u8  pad units the frame's overhead costs
 G_ACTM      equ G_BASE+$1a      ; u8  which voices were sounding at frame start
 G_BIASLO    equ G_BASE+$1b      ; u8  (i16 variant only)
 G_BIASHI    equ G_BASE+$1c
@@ -130,7 +141,6 @@ G_BIASHI    equ G_BASE+$1c
 ; instants the remaining sub-slots go out on.
 G_SUB       equ G_BASE+$1d      ; u8  next sub-slot index, SLOT_SUBS = done
 G_PASS      equ G_BASE+$1e      ; u8  voice passes run so far this frame
-G_NIDLE     equ G_BASE+$1f      ; u8  passes with no voice behind them this frame
 
 ; A voice struct that is permanently silent. Every frame runs PCM_PASSES passes
 ; whether or not there are voices to fill them — the feed's cadence is one sample
@@ -158,12 +168,34 @@ G_PLANC     equ $19aa           ; u16 cursor into it
 G_PLANR     equ $19ac           ; u8  ticks to the next break; 0 = derive it
 G_NEARH     equ $19ad           ; u8  ptr high byte at which a window top is near
 
-; Two caches, both bought back from the pass-boundary path — the stretch of the
-; frame where no sample is fed and the DAC is holding (§5.1).
-G_DEBTC     equ $19bc           ; u8  the frame-constant half of pcm_debt
+; Bought back from the pass-boundary path — the stretch of the frame where no
+; sample is fed and the DAC is holding (§5.1.2).
 G_BANKL     equ $19bd           ; u16 the ROM bank currently latched, $FFFF = none
 G_HELD      equ $19bf           ; u8  1 = a ring slot is taken and not yet released
-G_PADN      equ $19c0           ; u8  the pad ms_set_pad computed, before clamping
+
+; ── The sample ring's own state (§5.1.2) ───────────────────────────────────
+; The feed's cursor lives in IY for the whole frame and is parked here across
+; frames; the mixer's lives in HL inside a segment and is parked in G_WR.
+G_RD        equ $19c0           ; u16 next sample the feed takes
+G_WR        equ $19c2           ; u16 where the mixer writes next
+G_FILL      equ $19c4           ; u16 FINISHED samples not yet fed
+G_EMITS     equ $19c6           ; u8  samples this frame still owes the DAC
+; $19c7 was G_PHASE, the gate countdown. It lives in A' now — the emit gets ~165
+; cycles and a RAM byte behind a call spent 69 of them on a counter that never
+; exceeds 3 (gate_wait, and gen-mixer.mjs gatePrologue for the rule that AF' is
+; the pacing's and nobody else's). Free.
+; Our copy of $27. Bits 6-7 are the SEQUENCER's (CH3 mode / CSM, §9) and reach
+; us through the slot, which cs_r27 snoops; bits 0-5 are ours (Load B, and the
+; flag reset the gate pulses). Neither side may clobber the other's.
+G_R27       equ $19c8           ; u8  $27 as we last wrote it
+G_CHUNK     equ $19c9           ; u8  samples to mix this frame; 0 = a prime frame
+G_TICKSF    equ $19ca           ; u8  ticks each pass runs this frame
+; The frame's write base, split the way the mixer wants it. Every pass covers
+; the SAME chunk, so each one restores these — while a pass may step the page
+; mid-way (mvf_ringcap) and must not leave that behind for the next one.
+G_WRP       equ $19cb           ; u8  ring page the chunk starts in
+G_WRI       equ $19cc           ; u8  index within it
+G_PAD       equ $19cd           ; u8  what an IDLE iteration holds to (§5.1.2)
 
 
 ; ── Published header (driver.md §6.4) ──────────────────────────────────────
@@ -292,9 +324,12 @@ start:
         ; H_SMPBANK, and head/tail are zeroed explicitly below anyway. The ring
         ; needs no clearing either; a slot is only read once head says it is
         ; there.
-        ld   hl,MIXLO
-        ld   de,MIXLO+1
-        ld   bc,STACK_TOP-MIXLO-1
+        ; …up to the SAMPLE RING's top and not one byte further: $1C00 and above
+        ; is cold CODE now (§5.2), and clearing it would erase the routine that
+        ; is about to be called.
+        ld   hl,$1700
+        ld   de,$1701
+        ld   bc,RING_TOP-$1700-1
         ld   (hl),0
         ldir
         xor  a
@@ -316,12 +351,46 @@ start:
         ld   (H_STARVE),hl
         xor  a
         ld   (H_VBL),a          ; so the first catch-up check reads in-step
-        ; PCM: plane A is mixed first (B is fed, and starts silent), and the
-        ; idle voice is silent forever.
-        ld   a,MIXLO>>8
+        ; PCM: an empty ring (the first frame to sound is a PRIME frame), and
+        ; the idle voice is silent forever.
+        ld   hl,RING_BUF
+        ld   (G_RD),hl
+        ld   (G_WR),hl
+        ld   a,RING_BUF>>8
         ld   (G_MIXP),a
+        ld   a,1
+        ex   af,af'             ; A' = the gate phase; the first emit waits
         ld   a,PCM_IDLE_SH
         ld   (G_IDLEV+PV_SHIFT),a
+        ; Timer B: TB = 255, so it overflows every 16 FM samples and the engine
+        ; emits PCM_GROUP samples per overflow — 9987.6 Hz (§5.1.2).
+        ;
+        ; $0A = Load B (bit 1) | ENABLE B (bit 3), and BOTH are required. Load B
+        ; runs the counter; Enable B is what publishes its overflow to the
+        ; status byte the gate polls. Nuked-OPN2 states it in one line
+        ; (ym3438.c, OPN2_DoTimerB):
+        ;
+        ;     timer_b_overflow_flag |= timer_b_overflow & timer_b_enable;
+        ;
+        ; With bit 3 clear the counter runs and the flag NEVER appears, so
+        ; gate_wait spins for ever: the first frame's writes reach the chips —
+        ; one note — and the driver never returns. Every harness here modelled
+        ; the flag on time regardless of bit 3, so all of them passed against it.
+        ;
+        ; Enable B also gates the YM2612's /IRQ pin, which is not connected on
+        ; the Mega Drive (the Z80's /INT is the VDP's vblank), so setting it
+        ; costs nothing and is the ordinary idiom for a driver that polls.
+        ;
+        ; Both bits have to STAY set from here on, which is why cs_r27 ORs them
+        ; back into every $27 the sequencer sends.
+        ld   b,255
+        ld   c,$26
+        call ym_write0
+        ld   a,$0a
+        ld   (G_R27),a
+        ld   b,a
+        ld   c,$27
+        call ym_write0
         ; No bank is latched yet, and the register is write-only, so say so with
         ; a value no sample bank can have — the RAM clear would otherwise leave
         ; latch_bank believing bank 0 is live when nothing is.
@@ -397,7 +466,7 @@ consume_slot:
         xor  a
         ld   (G_HELD),a
         ld   (G_STARVED),a
-        ld   (G_NWR),a          ; the PCM feed pays for this loop out of its pad
+        ld   (G_NWR),a
         ; No slot means no plan. Zeroing the runs here is what makes a STARVED
         ; frame derive its own bounds instead of replaying the last frame's
         ; breaks, which have already been passed.
@@ -430,6 +499,32 @@ cs_have:
         ld   a,(hl)             ; the frame's chip writes, all sub-slots
         inc  hl
         ld   (G_NWR),a
+        ; What the mixer owes this frame (§5.1.2). It is a field, not something
+        ; derived here, because the segment plan below measures its tick
+        ; distances against it — a starved frame that guessed would desync the
+        ; two. 0 means a PRIME frame, and process_pcm reads that from an empty
+        ; ring rather than from here, so a starved frame simply keeps the last
+        ; chunk and stays in step.
+        ld   a,(hl)
+        inc  hl
+        or   a
+        jr   z,cs_nochunk
+        ld   (G_CHUNK),a
+cs_nochunk:
+        ; The frame's emit budget is settled HERE, before its first long stretch
+        ; of work, because that stretch is the slot's own writes and they carry
+        ; samples now (§5.1.2). A PRIME frame — an empty ring — owes nothing yet;
+        ; process_pcm reads the same G_FILL and agrees.
+        ld   de,(G_FILL)
+        ld   a,(G_DACON)
+        or   a
+        jr   z,cs_emits         ; not claimed yet: nothing to feed
+        ld   a,d
+        or   e
+        jr   z,cs_emits         ; prime: the lead is built, nothing is fed
+        ld   a,(G_CHUNK)
+cs_emits:
+        ld   (G_EMITS),a        ; both skips leave A = 0, which is the answer
 
         ld   b,(hl)
         inc  hl
@@ -561,6 +656,8 @@ cr_p0:
         rla
         jr   c,cr_p0
         ld   a,(hl)
+        cp   $27
+        jr   z,cs_r27           ; shared with the sample clock — merge, not clobber
         ld   (YM_ADDR0),a
         inc  hl
 cr_p0d:
@@ -570,6 +667,39 @@ cr_p0d:
         ld   a,(hl)
         ld   (YM_DATA0),a
         inc  hl
+        ; …and a sample goes out with every FOURTH one. A run of chip writes is
+        ; the longest stretch of work a frame has — 40 of them is 12 sample
+        ; periods of the DAC holding its last byte (§5.1.2) — and four writes is
+        ; ~450 cycles, near enough one sample period. Every write would be three
+        ; times the frame's fair share and would starve the mix passes of budget
+        ; instead, which is the same dead time moved somewhere else.
+        djnz cr_p0
+        jr   cr_fm1
+
+; $27 is the one register both CPUs write. Bits 6-7 are the sequencer's (CH3
+; mode / CSM, §9); bits 0-5 are the engine's, and Load B AND Enable B among them
+; have to stay set or the sample clock stops — Load B runs the counter, Enable B
+; is what puts its overflow in the status byte the gate polls, and dropping
+; either one hangs gate_wait for ever (see the boot's $27 write). So the byte is
+; merged on its way through and remembered, because the gate's flag reset
+; (gate_wait) has to write the same register without losing the mode the score
+; asked for.
+cs_r27:
+        ld   (YM_ADDR0),a
+        inc  hl
+        ld   a,(hl)
+        or   $0a                ; Load B | Enable B — ours, always
+        ld   (G_R27),a
+cs_r27d:
+        ld   a,(YM_ADDR0)
+        rla
+        jr   c,cs_r27d
+        ld   a,(G_R27)
+        ld   (YM_DATA0),a
+        inc  hl
+        ld   a,b
+        and  3
+        call z,feed_one
         djnz cr_p0
 
 cr_fm1:
@@ -592,6 +722,13 @@ cr_p1d:
         ld   a,(hl)
         ld   (YM_DATA1),a
         inc  hl
+        ; NO emit here, and it is not an oversight: the same `ld a,b / and 3 /
+        ; call z,feed_one` that is correct in the port-0 loop above makes the
+        ; prime frame mix SILENCE when it is added here — the voice's sample
+        ; reads come back as zeros, which is a wrong ROM bank, from a routine
+        ; that writes neither $6000 nor anything the bank depends on. Not
+        ; understood yet; the port-0 loop carries the bulk of a frame's traffic,
+        ; so this costs little until it is.
         djnz cr_p1
         ret
 
@@ -746,27 +883,28 @@ rd16:
 ; ===========================================================================
 ; PCM (driver.md §5.3, §5.4)
 ; ===========================================================================
-; One frame: feed the plane the last frame finished, mixing this frame's into
-; the other one as it goes. The feed is INSIDE the mix loops (§5.1) — one $2A
-; write every PCM_PASSES ticks — so the frame's PCM_MIX_R samples come out
-; spread across the frame instead of in a burst at the end of it.
+; One frame: drain the ring into the DAC at Timer B's rate while mixing this
+; frame's chunk into it. The feed is INSIDE the mix loops (§5.1.2) — one $2A
+; write every PCM_PASSES ticks, each group's first sample held to the gate — so
+; the samples come out on the YM's own clock and not on the frame's.
 process_pcm:
         call pcm_any_active
         ld   (G_ACT),a          ; 1 = a voice was sounding at frame start
         or   a
         jr   nz,pp_run
-        ld   a,(G_PEND)
-        or   a
-        jr   nz,pp_run          ; silent now, but a frame of feed is still owed
-        ; nothing sounding and nothing owed: release the DAC once, stay quiet
+        ; fm6 IS CLAIMED FOR THE REST OF THE SCORE. Once PCM has sounded once
+        ; the ring is kept topped up with silence and the DAC is never
+        ; released, because releasing it makes the NEXT hit a PRIME frame — and
+        ; a prime frame feeds nothing while it builds the lead, measured at 135
+        ; to 355 sample periods of DAC silence, one to two whole frames, once
+        ; per burst. On a percussion track that is a click on every hit.
+        ;
+        ; The cost is fm6: §14's "claimed, not owned" becomes claimed and kept.
+        ; A score with no PCM in it never claims, so it keeps fm6 and reaches
+        ; pp_quiet as before.
         ld   a,(G_DACON)
         or   a
-        jr   z,pp_quiet
-        xor  a
-        ld   (G_DACON),a
-        ld   b,0
-        ld   c,$2b
-        call ym_write0
+        jr   nz,pp_run          ; claimed: keep the ring fed, silence and all
 
 ; The mixer was not entered, so there are no voice passes for the remaining
 ; sub-slots to ride. Pace them by hand — otherwise a score with no PCM in it
@@ -807,32 +945,56 @@ pp_run:
         ld   b,$80
         ld   c,$2b              ; DAC enable — claimed, not owned (§14)
         call ym_write0
-        ; The plane this frame feeds has not been mixed for it, so a burst opens
-        ; with a frame of silence. Nothing has to clear it: boot zeroes both
-        ; planes, and the flush frame that ended the last burst (below) mixed
-        ; silence into this one on its way out.
 
 pp_feed:
-        ; The pad holds each tick to the true period, so it also has to give
-        ; back everything the frame spends OUTSIDE the loops — mostly
-        ; per-segment register-file traffic, ~13k cycles a frame, which would
-        ; otherwise end the frame 20% late.
+        ; PRIME or STEADY (§5.1.2)? An empty ring is a burst's first frame (or a
+        ; recovery after one ran dry): it builds the whole lead and feeds
+        ; nothing, parking the DAC at silence with one byte so claiming fm6
+        ; cannot step it to whatever the last burst left latched. Every frame
+        ; after it mixes exactly what the feed takes, which is what keeps the
+        ; two counts equal — one emit per PCM_PASSES ticks, so a frame that
+        ; mixes `chunk` feeds `chunk`.
+        ld   a,$2a
+        ld   (YM_ADDR0),a       ; latched once a frame; the feed writes blind
         ;
-        ; How many segments THIS frame will run is not knowable yet — but it
-        ; does not have to be. The pads that carry any authority are all in the
-        ; SILENT passes (pad 14-16 units against a sounding pass's 0-5, which
-        ; the debt clamps to the floor anyway), and those run LAST: by then
-        ; every sounding segment has been counted and each remaining silent pass
-        ; is worth exactly one more. So the total is exact where it matters, and
-        ; nothing is carried over from the previous frame.
+        ; The ring's fill is settled HERE rather than at the frame's end,
+        ; because at this point it is a constant of which case we are in:
+        ;   prime   +TARGET and feed nothing
+        ;   steady  mix what is fed, so the fill does not move at all
+        ;   tail    nothing to mix, feed `chunk` out of what is left
+        ld   hl,(G_FILL)
+        ld   a,h
+        or   l
+        jr   nz,pp_steady
+        ld   a,$80
+        ld   (YM_DATA0),a       ; park the DAC at silence for this one frame
+        ld   a,PCM_RING_TARGET
+        ld   (G_TICKSF),a
+        ld   hl,PCM_RING_TARGET
+        ld   (G_FILL),hl
         xor  a
-        ld   (G_NSEG),a
-        ld   (G_NSEGF),a        ; not known yet — pcm_debt uses the running count
-
+        ld   (G_EMITS),a        ; …and feed nothing while the lead is built
+        jr   pp_setup
+pp_steady:
+        ; Mix what the feed takes, so the fill stays put — and that now holds
+        ; whether or not anything is SOUNDING. A silent frame runs its passes
+        ; through G_IDLEV and stores silence, which is what keeps the ring from
+        ; draining; the burst's real tail plays out ahead of it in FIFO order.
+        ; The separate draining `pp_tail` case is gone with the release.
+        ld   a,(G_CHUNK)
+        ld   (G_TICKSF),a
+pp_emits:
+        ; The budget was settled in consume_slot, BEFORE the head's writes spent
+        ; part of it (§5.1.2) — so it must not be reset here. A STARVED frame
+        ; never got that far, and still owes the DAC a frame.
+        ld   a,(G_STARVED)
+        or   a
+        jr   z,pp_setup
+        ld   a,(G_CHUNK)
+        ld   (G_EMITS),a
+pp_setup:
         ; Which voices are sounding, taken now: a voice can end DURING its pass,
-        ; and the count of passes is what the feed's cadence rests on. Taken
-        ; BEFORE the first pcm_debt call, because the debt charges each sounding
-        ; pass for its ROM-window fetch stall (pace_win_tab).
+        ; and the count of passes is what the feed's cadence rests on.
         ld   a,(G_PCMV+0*PCM_V_SIZE+PV_FLAGS)
         and  1
         ld   c,a
@@ -848,32 +1010,17 @@ pp_feed:
         or   c
         ld   (G_ACTM),a
 
-        ; …and how many passes have NO voice behind them, which is the rest of
-        ; the frame's segment total: one apiece, since a silent pass is a single
-        ; segment by construction (mvf_idle).
-        ld   b,PCM_VOICES
-        ld   c,0
-pp_nidle:
-        rrca
-        jr   c,pp_ni_next
-        inc  c
-pp_ni_next:
-        djnz pp_nidle
-        ld   a,c
-        ld   (G_NIDLE),a
-
-        call pcm_debt_base      ; the write and window terms, once for the frame
-        call pcm_debt           ; -> G_DEBT, the pad units this frame owes
-
-        ld   a,$2a
-        ld   (YM_ADDR0),a       ; latched once a frame; the feed writes blind
-        call feed_plane
-        push hl
-        pop  iy                 ; IY = the feed cursor, for the whole frame
+        call pcm_pad            ; what the silent passes may hold to
+        ld   iy,(G_RD)          ; the feed cursor, for the whole frame
+        ld   hl,(G_WR)          ; …and where this frame's chunk is written
+        ld   a,l
+        ld   (G_WRI),a
+        ld   a,h
+        ld   (G_WRP),a
 
         xor  a
+        ld   (G_PASS),a         ; the pass boundaries are the sub-ticks
         ld   (G_STORE),a        ; the first pass stores, which removes the clear
-        ld   (G_PASS),a         ; and the pass boundaries are the sub-ticks
 
         ; The sounding voices go first and the silent passes after them, because
         ; the silent ones hold nearly all of the frame's pad — and by the time
@@ -912,15 +1059,6 @@ pp_act_next:
         cp   PCM_VOICES
         jr   c,pp_act
 
-        ; Every sounding pass is done, so the frame's segment total is now
-        ; settled: what has run, plus one for each silent pass still to come.
-        ; From here the debt is a measurement, not a guess — and this is the
-        ; point at which the pad it sizes actually starts to matter.
-        ld   a,(G_NSEG)
-        ld   hl,G_NIDLE
-        add  a,(hl)
-        ld   (G_NSEGF),a
-
         ld   c,0
 pp_idle:
         call pp_sounding_at     ; no IX: G_IDLEV replaces it below anyway
@@ -938,25 +1076,43 @@ pp_idle_next:
         cp   PCM_VOICES
         jr   c,pp_idle
 
-        ; Samples the interleave could not reach: a segment shorter than the
-        ; cadence leaves its ticks to the single-tick loop, and PCM_MIX_R is not
-        ; a multiple of PCM_PASSES. Normally one sample, at the frame's end.
-        push iy
-        pop  hl
-        ld   a,PCM_MIX_R
-        sub  l                  ; the plane is page-aligned, so L is the index
+        ; Whatever the frame still owes: a segment shorter than the cadence
+        ; leaves its ticks to the single-tick copies, which carry no emit.
+        ; G_EMITS is the debt itself now — every emit site charges it, and the
+        ; mix loops charge theirs a segment at a time — so there is nothing to
+        ; reconstruct here. Normally one sample, at the frame's end.
+        ld   a,(G_EMITS)
         ld   b,a
         call flush_rest
-
-        ; This frame's mix is next frame's feed.
-        ld   a,(G_MIXP)
-        xor  MIX_SWAP
-        ld   (G_MIXP),a
+        ld   (G_RD),iy          ; park the feed cursor for the next frame
+        ; …and put the write cursor back where it belongs: RIGHT AFTER the
+        ; finished samples, which is what "the mixer writes at read + fill"
+        ; means. DERIVED rather than stepped, because the two do not move
+        ; together — a tail frame feeds a chunk and mixes silence, so the cursor
+        ; advances by however much of the chunk the tail could not cover — and an
+        ; incremental version of that drifts the moment a case is missed.
+        ld   hl,(G_RD)
+        ld   de,(G_FILL)
+        add  hl,de
+        ld   a,h
+        cp   RING_TOP>>8
+        jr   c,pp_wrst
+        ld   de,RING_TOP-RING_BUF
+        or   a
+        sbc  hl,de
+pp_wrst:
+        ld   (G_WR),hl
         ld   a,(G_ACT)
-        ld   (G_PEND),a
         or   a
         ret  nz
-        ; The tail is out and nothing is sounding: release the DAC (§14).
+        ; Nothing is sounding — but the RING may still owe a tail, and releasing
+        ; fm6 while it does would hand the channel back to FM mid-sample and
+        ; claim it again next frame. So the DAC is released on the frame the ring
+        ; runs dry, not the frame the last voice ends (§14).
+        ld   hl,(G_FILL)
+        ld   a,h
+        or   l
+        ret  nz
         xor  a
         ld   (G_DACON),a
         ld   b,0
@@ -976,75 +1132,6 @@ pp_pass_done:
         cp   PCM_VOICES
         ret  nc                 ; the last pass: nothing follows it in the frame
         jp   consume_sub
-
-; pcm_debt: G_DEBT = pad units this frame owes for what it spends OUTSIDE the
-; paced loops — mixer segments, and the slot's own chip writes. The pad gives
-; those cycles back (§5.1); what it cannot give back, the frame runs late by.
-; Only the SEGMENT term moves within a frame — ms_bind calls this three to six
-; times a frame and the other two terms cannot have changed in between. They are
-; computed once, by pcm_debt_base, which took ~135 cycles a call off a routine
-; that runs where the DAC is already waiting.
-pcm_debt:
-        push bc                 ; the mixer's register file is live across this
-        ld   a,(G_NSEGF)
-        or   a
-        jr   nz,pd_est          ; the frame's exact total is settled — use it
-        ld   a,(G_NSEG)         ; not yet: charge only what has actually run
-pd_est:
-        cp   PCM_SEG_MAX
-        jr   c,pd_cap
-        ld   a,PCM_SEG_MAX
-pd_cap:
-        ld   hl,debt_tab
-        add  a,l
-        ld   l,a
-        ld   a,0
-        adc  a,h
-        ld   h,a
-        ld   a,(hl)             ; the segments' share
-        ld   hl,G_DEBTC
-        add  a,(hl)             ; …plus the frame's constant half
-        ld   (G_DEBT),a
-        pop  bc
-        ret
-
-; pcm_debt_base: G_DEBTC — the part of the frame's debt that does not depend on
-; how many segments have run. Called once the frame's sounding-pass count is
-; known (pp_feed).
-pcm_debt_base:
-        ; The slot's writes cost ~90 cycles each ONCE THE BUSY WAIT IS COUNTED
-        ; — a dense run of port writes pays ym_busy in full, measured at ~3.8k
-        ; on a 95-write frame against ~5.8k of bare writes. One pad unit is 16
-        ; cycles on every one of PCM_MIX_R samples, so a unit is ~32 writes;
-        ; the old /43 (bare 61 cyc/write) under-charged exactly the frames the
-        ; hardware was losing.
-        push bc
-        ld   a,(G_NWR)
-        srl  a
-        srl  a
-        srl  a
-        srl  a
-        srl  a                  ; writes / 32
-        ; …and the ROM-window fetch stall: every sample read of a SOUNDING pass
-        ; crosses the 68000's bus and waits on its arbiter, ~PACE_WINDOW cycles
-        ; the emulator never sees (gen-mixer.mjs). Hardware-only, charged per
-        ; sounding pass — MUTE and IDLE fetch nothing.
-        ld   c,a
-        ld   a,(G_NIDLE)
-        ld   b,a
-        ld   a,PCM_VOICES
-        sub  b                  ; A = sounding passes this frame
-        ld   hl,pace_win_tab
-        add  a,l
-        ld   l,a
-        ld   a,0
-        adc  a,h
-        ld   h,a
-        ld   a,(hl)
-        add  a,c
-        ld   (G_DEBTC),a
-        pop  bc
-        ret
 
 ; pp_voice_at: IX = voice C, Z clear if it was sounding at frame start. C is
 ; preserved; A and the flags are not.
@@ -1074,13 +1161,42 @@ pv_test:
         pop  bc
         ret
 
-; feed_plane: HL = base of the plane being FED — the one the last frame mixed,
-; never the one this frame is writing.
-feed_plane:
-        ld   a,(G_MIXP)
-        xor  MIX_SWAP
-        ld   h,a
-        ld   l,0
+; gate_wait: hold until Timer B overflows, then clear its flag (§5.1.2).
+;
+; This is the whole of the pacing. GROUP samples come out per overflow, so one
+; emit in GROUP calls this and the other two are placed by the code that follows
+; — which is what the loops' pad is for. The phase that decides which is A', the
+; SHADOW ACCUMULATOR: `ex af,af'` reaches it in 4 cycles where a RAM byte behind
+; a call cost 69, and an emit only gets ~165. See gen-mixer.mjs gatePrologue for
+; the block every emit site carries, and for the one rule that comes with it —
+; **AF' BELONGS TO THE PACING AND NOTHING ELSE MAY USE IT.** The interrupt
+; handler's push/pop af does not, which is why the phase survives the frame
+; boundary; it is CONTINUOUS on purpose, because a frame carries 166 or 167
+; samples, neither divides GROUP, and a phase that restarted per frame would put
+; a wait at every frame boundary — a hole 60 times a second.
+;
+; The flag is bit 1 of the YM status byte and is cleared by writing $27 with bit
+; 5 — the register that also carries the CH3/CSM mode bits, which is why G_R27
+; exists and why cs_r27 keeps it current. That write costs the DAC's address
+; latch, so $2A is re-latched before returning: the feed writes it blind.
+;
+; Called from inside the mixer's loops, where the register file is live — it
+; touches A and the flags and nothing else, and it RETURNS A = PCM_GROUP, which
+; is the caller's reloaded phase.
+gate_wait:
+        ld   a,(YM_ADDR0)
+        add  a,a                ; bit7 BUSY -> carry, bit1 (Timer B) -> bit2
+        jr   c,gate_wait
+        bit  2,a
+        jr   z,gate_wait
+        ld   a,$27
+        ld   (YM_ADDR0),a
+        ld   a,(G_R27)
+        or   $20                ; reset flag B; the mode bits are the score's
+        ld   (YM_DATA0),a
+        ld   a,$2a
+        ld   (YM_ADDR0),a       ; re-latch: the feed writes $2A blind
+        ld   a,PCM_GROUP        ; the caller's phase, reloaded
         ret
 
 ; pcm_any_active: returns NZ if any voice is sounding.
@@ -1091,23 +1207,21 @@ pcm_any_active:
         ld   a,(G_PCMV+1*PCM_V_SIZE+PV_FLAGS)
         and  1
         ret  nz
-        ld   a,(G_PCMV+2*PCM_V_SIZE+PV_FLAGS)
-        and  1
         ret
 
 ; ---------------------------------------------------------------------------
 ; mix_voice_frame: run one voice for a whole frame, split into segments that
 ; cannot cross a loop or sample boundary. IX = voice, G_STORE = this pass's role.
 ;
-; The pass always runs its full PCM_MIX_R ticks — silently, through G_IDLEV, if
+; The pass always runs its full G_TICKSF ticks — silently, through G_IDLEV, if
 ; the voice is absent or ends part-way. That is what makes the interleaved feed
-; work: R ticks × PCM_PASSES passes carry exactly R samples, whatever is
+; work: chunk ticks × PCM_PASSES passes carry exactly chunk samples, whatever is
 ; sounding. It also subsumes the old early-end silence fill, since a silent
-; storing pass writes the plane's silence value as it goes.
+; storing pass writes the ring's silence value as it goes.
 ;
 ; The split is the point of a voice-outer pass: the inner loop carries no
 ; bounds check at all, and the check runs a handful of times per frame instead
-; of PCM_MIX_R times.
+; of chunk times.
 ;
 ; Segment length is bounded conservatively — `avail >> KSH` where 2^KSH >= inc
 ; — so the engine never has to divide. KSH arrives from the 68k with the note.
@@ -1115,15 +1229,19 @@ pcm_any_active:
 ; one byte remains, one more tick is always legal.
 ; ---------------------------------------------------------------------------
 mix_voice_frame:
-        ld   a,PCM_MIX_R
+        ld   a,(G_TICKSF)
         ld   (G_TICKS),a
-        xor  a
+        ld   a,(G_WRI)          ; every pass covers the same chunk of the ring
         ld   (G_IDX),a
+        ld   a,(G_WRP)
+        ld   (G_MIXP),a
         bit  0,(ix+PV_FLAGS)
         jp   z,mvf_idle         ; no voice here: a silent pass, for the cadence
-        ld   l,(ix+PV_BANK)
+        call feed_one           ; a pass transition is ~7 sample periods of
+        ld   l,(ix+PV_BANK)     ; work with no sample in it (§5.1.2)
         ld   h,(ix+PV_BANK+1)
         call latch_bank         ; once per voice per frame, not per tick
+        call feed_one
         ; Bind the pass's specialised loop copies and its pad. (role, shift) is
         ; constant for the whole pass, so this belongs here and not in the
         ; per-segment path where it used to sit.
@@ -1135,7 +1253,9 @@ mix_voice_frame:
         ; Below this the window test is two instructions and always falls
         ; through, which is what nearly every segment of nearly every frame
         ; does.
-        ld   hl,PCM_MIX_R
+        ld   a,(G_TICKSF)
+        ld   l,a
+        ld   h,0
         ld   a,(ix+PV_KSH)
         or   a
         jr   z,mvf_nearh
@@ -1148,6 +1268,7 @@ mvf_nearh:
         sub  h
         ld   (G_NEARH),a
         call plan_next          ; ticks to this voice's first break
+        call feed_one
         ; The register file — DE = ptr, C = incInt, HL' = frac, DE' = incFrac
         ; — is LIVE for the whole pass (§5.1 (b)): loaded once here, stored
         ; once at pass end, and every boundary below works on the registers
@@ -1170,8 +1291,17 @@ mvf_win:
         ; it only ever shortens this one — and below G_NEARH it cannot happen.
         ld   a,(G_NEARH)
         cp   d
-        jr   nc,mvf_n
+        jr   nc,mvf_ring
         call mvf_wincap
+mvf_ring:
+        ; …and so can the RING's two edges (§5.1.2). Neither cursor may wrap
+        ; inside a loop — the mixer's is `inc l` and the feed's is `inc iy`, and
+        ; making either of them page-aware would cost cycles on every tick of
+        ; every frame. So both are bounds here instead, where a compare costs
+        ; nothing: a segment simply stops at the edge and the next one starts
+        ; after it.
+        call feed_one           ; a segment's bound is ~3 periods of work, and
+        call mvf_ringcap        ; the bound is measured from IY, so it goes first
         jr   mvf_n
 
 mvf_derive:
@@ -1216,12 +1346,31 @@ mvf_capl:
         ld   b,a                ; B = n — C belongs to the live file now
         ld   a,(G_TICKS)
         cp   b
-        jr   nc,mvf_n
+        jr   nc,mvf_dcap
         ld   b,a                ; n = min(n, ticks left)
+mvf_dcap:
+        call feed_one           ; …and a DERIVED bound is longer still
+        call mvf_ringcap
 mvf_n:
         ld   (G_OLDPTR),de      ; consumption is measured on the live pointer
         push bc                 ; B = n; the copies count it down to 0
         call mix_seg_live
+        pop  bc
+        ; Ring edges (§5.1.2), taken FIRST because everything below this is
+        ; conditional and one of those branches used to jump straight over it:
+        ; a segment that ended on the page edge then carried on writing into the
+        ; base page, over the samples the feed had not read yet. mvf_ringcap
+        ; made sure the segment stopped ON an edge if it reached one, so this is
+        ; a test and not arithmetic.
+        push bc
+        ld   a,(G_IDX)
+        or   a
+        jr   nz,mvf_rfeed
+        ld   a,(G_MIXP)
+        xor  RING_PAGE          ; the ring's two pages differ in one bit
+        ld   (G_MIXP),a
+mvf_rfeed:
+        call feed_wrap
         pop  bc
         ld   a,(G_TICKS)
         sub  b
@@ -1267,7 +1416,8 @@ mvf_wtop:
         call latch_bank
 
 mvf_bound:
-        ld   a,(ix+PV_LEFT)
+        call feed_one           ; the wrap / window step / plan refill between
+        ld   a,(ix+PV_LEFT)     ; two segments carries a sample too
         or   (ix+PV_LEFT+1)
         jp   nz,mvf_seg         ; still inside the region
         bit  1,(ix+PV_FLAGS)    ; loops, and not releasing → wrap
@@ -1306,15 +1456,61 @@ mvf_idle:
         ld   a,(G_TICKS)
         or   a
         ret  z
-        ld   b,a
-        ld   a,(G_IDX)
-        ld   l,a
         ld   ix,G_IDLEV
         ld   a,(G_STORE)
         ld   (G_SEG_L),a
         call ms_bind            ; the shift under this pass just became IDLE
+        ; A silent pass is one segment as far as the VOICE is concerned — there
+        ; is no voice — but the RING's edges still bound it (§5.1.2), and it
+        ; still carries the feed, so it walks both cursors. Running it as one
+        ; 255-tick segment wrapped `inc l` inside its own page and wrote over
+        ; the samples the feed had not read yet.
+mvf_idle_seg:
+        ld   a,(G_TICKS)
+        or   a
+        ret  z
+        ld   b,a
+        call feed_one           ; the silent pass's segments too
+        call mvf_ringcap
+        push bc
+        ld   a,(G_IDX)
+        ld   l,a
         ld   a,(G_STORE)
-        jp   mix_seg
+        call mix_seg
+        ld   a,l
+        ld   (G_IDX),a
+        pop  bc
+        ld   a,(G_TICKS)
+        sub  b
+        ld   (G_TICKS),a
+        ld   a,(G_IDX)
+        or   a
+        jr   nz,mvf_idle_feed
+        ld   a,(G_MIXP)
+        xor  RING_PAGE
+        ld   (G_MIXP),a
+mvf_idle_feed:
+        call feed_wrap
+        jr   mvf_idle_seg
+
+; feed_wrap: take the feed cursor back to the ring's base if it has reached the
+; top. mvf_ringcap guarantees a segment can only leave it AT the top, never
+; past, so this is a test and not arithmetic. Preserves DE and the live file;
+; clobbers A and HL, which every call site already rebuilds.
+;
+; The HIGH BYTE alone answers it. The ring is 512-aligned at RING_BUF and the
+; cursor can only be RING_BUF..RING_TOP, so `H == RING_TOP>>8` happens at
+; exactly one address. That is the whole routine: 47 cycles against the 86 a
+; 16-bit `sbc hl,de` cost, ~17 times a frame — and the wrap itself fires once
+; per 512 samples, so essentially all of those calls only ask the question.
+feed_wrap:
+        push iy
+        pop  hl
+        ld   a,h
+        cp   RING_TOP>>8
+        ret  nz
+        ld   iy,RING_BUF
+        ret
 
 ; ---------------------------------------------------------------------------
 ; plan_next: G_PLANR = ticks to this voice's next logical break, from the slot's
@@ -1337,6 +1533,60 @@ plan_next:
         inc  hl
         ld   (G_PLANC),hl
         ld   (G_PLANR),a
+        ret
+
+; ---------------------------------------------------------------------------
+; mvf_ringcap: shorten B so this segment cannot walk either ring cursor over an
+; edge (§5.1.2).
+;
+;   the MIXER's cursor is (G_MIXP:G_IDX) and advances one per tick, so its page
+;   has 256 - G_IDX ticks left in it;
+;   the FEED's is IY and advances one per PCM_PASSES ticks, so the ring's top is
+;   at least 3 x (RING_TOP - IY) ticks away — a lower bound, because the
+;   remainder ticks of a segment carry no emit at all.
+;
+; Both are compared in 8 bits where they can be: the mixer's page always fits,
+; and the feed's distance only matters when it is under 256/3.
+; Preserves DE and the alternate set; B is the segment length in and out.
+mvf_ringcap:
+        push hl
+        ld   a,(G_IDX)
+        neg                     ; 256 - index, and 0 means a full page
+        jr   z,mvf_rc_feed
+        cp   b
+        jr   nc,mvf_rc_feed
+        ld   b,a
+mvf_rc_feed:
+        push de
+        push iy
+        pop  hl
+        ld   de,RING_TOP
+        ex   de,hl
+        or   a
+        sbc  hl,de              ; HL = samples before the feed leaves the ring
+        pop  de
+        ld   a,h
+        or   a
+        jr   nz,mvf_rc_done     ; >= 256 samples away: nothing can reach it
+        ld   a,l
+        ; SAMPLES -> TICKS, and the factor is PCM_PASSES: the feed advances one
+        ; per PCM_PASSES ticks. This was `add a,a / add a,l` (x3) written when
+        ; the pass count was three, and it is the one place the count is baked
+        ; into hand-written code rather than read from the equ — so the mixer's
+        ; pass count moving to two made a segment overrun the ring's top and the
+        ; DAC diverge at exactly sample 511, the wrap. build-engine.mjs asserts
+        ; PCM_PASSES = 2 against this site.
+        add  a,a                ; x2 = ticks, and a carry means far enough
+        jr   c,mvf_rc_done
+        cp   b
+        jr   nc,mvf_rc_done
+        or   a
+        jr   nz,mvf_rc_cap
+        inc  a                  ; forced progress; the wrap lands next segment
+mvf_rc_cap:
+        ld   b,a
+mvf_rc_done:
+        pop  hl
         ret
 
 ; ---------------------------------------------------------------------------
@@ -1422,3 +1672,142 @@ ym_write0:
         ret
 
         include "mixer.z80"
+
+; ===========================================================================
+; COLD CODE — above the sample ring (driver.md §5.2)
+;
+; Everything below $1300 is what the frame runs; the header sits there and
+; cannot move, so that is the ceiling for the hot code. What runs ONCE a frame
+; or once a boot does not have to be under it: $1C00..$1EFF is free (the ring
+; ends at $1BFF, the stack tops at $1F00), and the uploaded image simply spans
+; the gap. That is safe because the host uploads BEFORE the Z80 boots and writes
+; H_SMPBANK after it — the only header field it owns.
+; ===========================================================================
+CODE_END:
+        org  $1c00
+; pcm_pad: G_PAD — what one IDLE iteration holds to, in 16-cycle units.
+;
+; The sounding copies are already at or past the sample period, so ALL of a
+; frame's slack lives in the silent passes; the pad is what hands it to them
+; instead of leaving the frame to end early and hold. How much there is depends
+; on what else the frame is doing, and every term is known here, at frame start:
+; the chunk, each pass's shift, and the slot's write count.
+;
+; Every approximation rounds the pad DOWN, on purpose. An under-padded frame
+; bunches its samples slightly inside a Timer B group, which is second-order
+; (measured: a few dB at 3x the frame rate, no frame-rate sidebands). An
+; over-padded one loses its vblank, which is a hiccup.
+;
+;   BUDGET - writes x 128 - the three passes' unpadded cost
+;   ------------------------------------------------------  , floored
+;            896 x idle passes  (taken as a shift)
+;
+; The divide is a shift by 10, 11 or 12 for one, two or three silent passes:
+; 896 -> 1024, 1792 -> 2048, 2688 -> 4096. Each rounds the pad down.
+pcm_pad:
+        ; ANY voice sounding and the answer is the floor, so do not spend ~1,500
+        ; cycles proving it. One sounding pass plus two silent ones already
+        ; exceeds PCM_BUDGET at every shift — the cheapest sounding pass is
+        ; 26,390 against a budget of 42,000 with 22,156 of silent passes under
+        ; it — so the subtraction below can only go negative and fall through to
+        ; pp_pad_min. build-engine.mjs asserts that from pass_cost_tab and fails
+        ; the build if it ever stops holding, which is the only way this shortcut
+        ; can go wrong.
+        ;
+        ; It reads as slack that vanished, and it is: the pad was sized when an
+        ; emit was priced at 49 cycles. Pricing it at its real 118 (gen-mixer's
+        ; EMIT_CYCLES) took every spare cycle with it, and a frame with a voice
+        ; in it has nothing left to hand the silent passes. Only the wholly
+        ; silent frame still has a choice to make, and it has the budget to.
+        ld   a,(G_ACTM)
+        or   a
+        jr   nz,pp_pad_floor
+        push bc
+        push de
+        push ix
+        ; The slot's writes are NOT charged: they carry samples now (feed_one in
+        ; the consume loop), so their cycles are emission time and charging them
+        ; here would take the same cycles away twice.
+        ld   hl,PCM_BUDGET
+        ; each pass costs its own shift if it sounds, IDLE if it does not
+        ld   c,0                ; silent passes so far
+        ld   b,0                ; voice index
+pp_cost:
+        push bc
+        ld   c,b
+        call pp_sounding_at     ; NZ if voice C was sounding at frame start
+        jr   z,pp_cost_idle
+        push hl
+        ld   a,b
+        call voice_ptr
+        ld   a,(ix+PV_SHIFT)
+        pop  hl
+        jr   pp_cost_have
+pp_cost_idle:
+        pop  bc
+        inc  c
+        push bc
+        ld   a,PCM_IDLE_SH
+pp_cost_have:
+        add  a,a                ; word table
+        ld   e,a
+        ld   d,0
+        push hl
+        ld   hl,pass_cost_tab
+        add  hl,de
+        ld   e,(hl)
+        inc  hl
+        ld   d,(hl)
+        pop  hl
+        or   a
+        sbc  hl,de
+        pop  bc
+        inc  b
+        ld   a,b
+        cp   PCM_VOICES
+        jr   c,pp_cost
+        ; Nothing silent to give it to, or nothing left to give: the floor is
+        ; 1, because the pad loop counts DOWN and zero would be 256.
+        ld   a,c
+        or   a
+        jr   z,pp_pad_min       ; three sounding voices: no slack anywhere
+        bit  7,h
+        jr   nz,pp_pad_min      ; already over budget
+        ; >> (9 + silent passes): 896 -> 1024, 1792 -> 2048, 2688 -> 4096, each
+        ; rounding the pad down.
+        ld   a,9
+        add  a,c
+        ld   b,a
+pp_pad_sh:
+        srl  h
+        rr   l
+        djnz pp_pad_sh
+        ld   a,h
+        or   a
+        jr   nz,pp_pad_max      ; >= 256 units
+        ld   a,l
+        cp   PCM_IDLE_PAD+1
+        jr   c,pp_pad_store
+pp_pad_max:
+        ld   a,PCM_IDLE_PAD     ; never longer than the sample period itself
+        jr   pp_pad_store
+pp_pad_min:
+        ld   a,1
+pp_pad_store:
+        or   a
+        jr   nz,pp_pad_st
+        inc  a
+pp_pad_st:
+        ld   (G_PAD),a
+        pop  ix
+        pop  de
+        pop  bc
+        ret
+
+; The floor, reached without touching a register: the pad loop counts DOWN, so
+; zero would be 256 and 1 is the shortest hold there is.
+pp_pad_floor:
+        ld   a,1
+        ld   (G_PAD),a
+        ret
+

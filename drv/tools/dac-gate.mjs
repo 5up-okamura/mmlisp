@@ -94,8 +94,13 @@ try {
   writeMixer();
   const built = assemble(join(drv, "src", "engine.z80"));
   const sym = (n) => built.symbols.get(n);
+  // The feed's period is the SAMPLE CLOCK's now, not the frame's (§5.1.2): the
+  // gate is Timer B's and a frame carries 166 or 167 samples, never a constant.
   const R = sym("PCM_MIX_R");
-  const WANT_GAP = FRAME_CYCLES / R;
+  const WANT_GAP = sym("PCM_TICK_CY");
+  // A frame that fed enough to say anything about pacing. The schedule is
+  // 166.674 a frame; a PRIME frame feeds one byte and is not a feed at all.
+  const FULL = 150;
 
   for (const score of scores) {
     const name = basename(score);
@@ -130,10 +135,18 @@ try {
     // frame the pad is deliberately NOT tuned to, and fails the real thing.
     let bankReg = 0, cyc = 0, stamps = [], winReads = 0;
     const addr = [0, 0];
+    // Timer B's overflow flag — the engine's sample clock (§5.1.2). Without it
+    // gate_wait never returns and the frame simply runs out of guard.
+    const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
+    let gateAt = GATE_CY, frameT0 = 0;
+    // ENABLE B ($27 bit 3): Nuked-OPN2 only ever sets the status flag as
+    // `timer_b_overflow & timer_b_enable`, so a timer that is loaded but not
+    // enabled counts silently and gate_wait never returns (ym3438.c).
+    let enableB = false;
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < RAM) return ram[a];
-        if (a === 0x4000) return 0;
+        if (a === 0x4000) return enableB && cyc >= gateAt ? 0x02 : 0;
         if (a >= 0x8000) { winReads++; return smp[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
@@ -141,7 +154,12 @@ try {
         if (a === 0x6000) { bankReg = ((bankReg >> 1) | ((d & 1) << 8)) & 0x1ff; return; }
         if (a === 0x4000) { addr[0] = d; return; }
         if (a === 0x4002) { addr[1] = d; return; }
-        if (a === 0x4001 && addr[0] === 0x2a) stamps.push(cyc); },
+        if (a !== 0x4001) return;
+        if (addr[0] === 0x2a) stamps.push(cyc - frameT0);
+        else if (addr[0] === 0x27) {
+          enableB = (d & 0x08) !== 0;
+          if (d & 0x20) while (gateAt <= cyc) gateAt += GATE_CY; // it free-runs
+        } },
     });
     cpu.pc = 0;
     for (let i = 0; i < 2_000_000 && !(ram[sym("H_READY")] === 0xd2 && cpu.halted); i++) cpu.step();
@@ -163,7 +181,9 @@ try {
         ram.set(slots[posted++], RING + head * SLOT);
         ram[sym("H_HEAD")] = next;
       }
-      stamps = []; cyc = 0;
+      // `cyc` stays MONOTONIC — Timer B free-runs and does not restart with the
+      // frame — so the stamps are taken relative to the frame's own start.
+      stamps = []; frameT0 = cyc;
       cpu.intRequest();
       let g = 0;
       while (cpu.halted && g++ < 1000) cyc += cpu.step();
@@ -183,7 +203,7 @@ try {
         }
         inGaps.push(fmax);
       } else lastTail = -1;
-      if (stamps.length < R) continue;          // no full feed this frame
+      if (stamps.length < FULL) continue;       // prime frame, or no feed
       spans.push((stamps[stamps.length - 1] - stamps[0]) / FRAME_CYCLES);
       // WANDER: how far a sample lands from where it belongs, as a share of the
       // frame. Sample i should be written at i x frame/R; the whole feed sitting
@@ -193,7 +213,7 @@ try {
       // describe the instantaneous rate, and a feed can hold the right average
       // rate while a sample still lands two milliseconds from its own time.
       let lo = Infinity, hi = -Infinity;
-      for (let i = 0; i < R; i++) {
+      for (let i = 0; i < stamps.length; i++) {
         const e = stamps[i] - i * WANT_GAP;
         if (e < lo) lo = e;
         if (e > hi) hi = e;

@@ -1,9 +1,9 @@
 {
   "m2-csm.mmlisp": {
     "ok": false,
-    "mismatches": 83,
+    "mismatches": 76,
     "compileErrors": 0,
-    "digest": "4db1b0aa"
+    "digest": "0a59e7ac"
   },
   "m2-mailbox.mmlisp": {
     "ok": false,
@@ -31,9 +31,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 577,
+    "mismatches": 633,
     "compileErrors": 0,
-    "digest": "8af08efb"
+    "digest": "4cb54214"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -45,7 +45,7 @@
     "ok": false,
     "mismatches": 132,
     "compileErrors": 0,
-    "digest": "b5102454"
+    "digest": "374d2b5d"
   },
   "m3-dynval.mmlisp": {
     "ok": false,
@@ -108,10 +108,10 @@
     "digest": "811c9dc5"
   },
   "m3-macro-pitchadd.mmlisp": {
-    "ok": false,
-    "mismatches": 2,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "87c1b5f9"
+    "digest": "811c9dc5"
   },
   "m3-macro-pitchovr.mmlisp": {
     "ok": true,
@@ -120,10 +120,10 @@
     "digest": "811c9dc5"
   },
   "m3-macro-scale.mmlisp": {
-    "ok": false,
-    "mismatches": 2,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "0bad97b8"
+    "digest": "811c9dc5"
   },
   "m3-macro-semi.mmlisp": {
     "ok": true,
@@ -253,8 +253,8 @@
   },
   "demo1.mmlisp": {
     "ok": false,
-    "mismatches": 39,
+    "mismatches": 33,
     "compileErrors": 0,
-    "digest": "5720b471"
+    "digest": "3020bb16"
   }
 }

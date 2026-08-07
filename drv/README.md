@@ -63,6 +63,11 @@ tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (
 tools/gen-c-tables.mjs generates 68k/tables.c from live/src/ir-utils.js
 tools/c-gate.mjs      P2 hard gate: 68k C ≡ drv-player.js on the slot stream (`npm run c-gate`)
 tools/ring-gate.mjs   P3: the ring transport is a pipeline, not a filter (`npm run ring`)
+tools/dac-model.mjs   the SAMPLE ring on the reference: schedule, underruns, slack
+                      (`npm run dac:model`) — driver.md §5.1.2
+tools/dac-wav.mjs     RENDER the DAC to .wav — today's engine (measured, out of a
+                      git worktree) against the Timer-B design (modelled), so the
+                      clock can be listened to (`npm run dac:wav`)
 tools/sgdk-lint.mjs   P3: type-check the SGDK glue against mmlispseq.h (`npm run sgdk:lint`)
 tools/build-engine.mjs assemble src/engine.z80 + the generated mixer (the shipped image)
 tools/dump-trace.mjs  decode a trace to readable lines (KEY-ON, F-num, TL…)
@@ -219,6 +224,17 @@ centre).
 (~10.5 kHz); per tick every active voice is resampled nearest-neighbour to that
 grid (`sample[pos>>16]`, `pos += inc`), the ≤3 signed samples are summed and
 **hard-saturated to int8**, and written to $2A (signed→unsigned via XOR 0x80).
+
+> **The reference has moved off this rate (2026-08-07).** `drv-player.js` and
+> the 68k C now pace the DAC from YM Timer B — 9987.6 Hz, 166 or 167 samples a
+> frame, mixed into a 256-byte ring (driver.md §5.1.2). `npm run c-gate` is
+> green on all 41 scores and `npm run dac:model` measures the ring (0 underruns
+> and 8.9 ms of slack on every PCM score and on a 66 s song). **The Z80 engine
+> is what is left**: it still mixes `R` = 175 a frame, so `npm run slots` fails
+> on every PCM score and `npm run dac` on m3-pcm-slice (the engine is being fed
+> plans measured against a chunk length it does not mix) — and `verify:all` with
+> them. Those two reds are the step, and they close together when it lands.
+
 The per-tick increment is `floor(inc_frame / R)`, computed once at note-on
 (`mmb.js` `pcmTickIncrement`; a 16×16→32 multiply then a 32-bit ÷175). `$2B`
 enables/releases the DAC (change-only, first voice on / last voice off). A
@@ -312,7 +328,10 @@ sized from a **measured** segment count rather than the previous frame's:
 `G_NSEGF` is pinned once every sounding pass is done, which is before the first
 pad that carries any authority (see driver.md §5.1). Frame-length spread went
 87-104% -> 98-102% and every `npm run dac` metric improved; `tools/seg-bench.mjs`
-is the profiler those numbers come from.
+(`npm run seg-bench`) is the profiler those numbers come from. It buckets every
+executed cycle by the engine's own labels, models Timer B, charges the ROM
+window, and prints the floor-vs-work arithmetic above: `budget:frame` says
+whether the frame fits, `seg-bench` says which label to cut.
 
 A real Mega Drive then reported an extremely slow tempo, and it was **the ring
 geometry, not the cycle budget**. Since sub-ticks the engine reads sub-slots at
@@ -372,6 +391,35 @@ wobbling tempo while every gate here said "ok". There is no pass/fail bar — a
 patch-dump frame is *supposed* to run long — so run it before and after anything
 that touches the frame and compare. `--pump` prices the write pump switch
 without editing the source.
+
+**Under Timer B it is the gate that matters most, because the clock leaves no
+slack.** The frame feeds `chunk` samples at 358 cycles each — 99.2% of a vblank
+before the engine does anything else — so whatever the code costs above that
+floor is a lost frame. It cost 123-127% until two things were fixed together
+(driver.md §5.1.3): `EMIT_CYCLES` still said **49**, the pre-Timer-B emit, so
+every pad and `pass_cost_tab` entry was 69 cycles short and `pcm_pad` handed the
+idle passes ~13k cycles of pad the frame did not have; and the phase counter
+itself was a RAM byte behind a `call`, 69 cycles of a sample's 358 to maintain a
+number that never exceeds 3. **The phase is A' now** — `ex af,af'` reaches it in
+4 — and the step is inline in 8 bytes, 24 cycles. A third fix followed from the
+profile: `feed_wrap` used a 16-bit compare to find a wrap that fires once per
+512 samples, and the ring is 512-aligned, so **the high byte alone answers it**
+(86 -> 47 cycles, 5 B smaller). Together: p50 **123% -> 97%**, frames over
+budget **100% -> 4.6%**, `dac` wander 3.74-4.26 ms -> **2.11-2.48 ms**, span
+121-124% -> **111-112%**, paced **100%**.
+
+`AF'` is therefore **reserved for the pacing engine-wide** — nothing else may
+use it. The ISR's `push af` does not touch it, which is what carries the phase
+across the frame boundary. `exx` is unaffected.
+
+**What is left is polyphony.** `npm run seg-bench` prints the frame's mean cost
+by voices sounding: **0v 72%, 1v 95-97% (0/189 frames over budget), 2v 120-136%,
+3v 150%**. A sounding voice costs ~25-30% of a frame — 167 ticks x (78 mixing +
+14 ROM-window) ~ 15.4k — which is the mixer at the floor driver.md §5.3.1
+computed for these semantics. **The engine fits one PCM voice at 9987.6 Hz**,
+which is what §1.1 predicted before the split. The only lever big enough is the
+sample rate (ticks scale with it one-for-one); the remaining out-of-loop work is
+~16.7k spread flat over ~40 labels and cannot buy a 15.4k voice.
 
 `tools/slot-gate.mjs` closes the loop with a real score: `.mmlisp` → MMB →
 `drv-player.js` → slot stream (through the real cap and spill queue in

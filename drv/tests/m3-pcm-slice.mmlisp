@@ -8,4 +8,3 @@
 (def tail :sample :file "pad.wav" :offset 384)
 (pcm1 hit  :tempo 120 :oct 4 :len 8 :vel 15  c e g c)
 (pcm2 body :mode loop :oct 4 :len 4 :vel 12  c _ e _)
-(pcm3 tail :oct 3 :len 4 :vel 13  _ g _ c)
