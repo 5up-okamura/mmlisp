@@ -181,6 +181,38 @@ try {
     // once and falls through. That is deliberate — a profile of the engine
     // SPINNING says only that the gate works, and what has to be sized here is
     // the work that does not fit between two overflows.
+    // ── the DEAD ZONE ────────────────────────────────────────────────────────
+    // Stage D's rule is that no stretch of work between two samples may exceed
+    // one sample period (§5.1.2). Total work can be well UNDER the clock's own
+    // floor and the frame still overrun, because a stretch longer than a period
+    // pushes every later sample back and the delays accumulate — which is
+    // exactly what `dac-gate`'s "in-frame hold 6.5/23.6 periods" is reporting.
+    //
+    // So: charge every cycle spent more than one period after the last DAC
+    // write to the label running at the time. That ranks the code that needs an
+    // emit point, which is a different list from the one ranked by total cost —
+    // a label can be cheap and still hold the DAC through a hole, and a label
+    // can be expensive and cost the feed nothing because it emits as it goes.
+    // Only BETWEEN two emits, and only on a frame that emits at all: a frame
+    // with no PCM feeds nothing by design (pace_sub burns it on purpose to
+    // place the sub-slots), so there is no feed there to starve and charging it
+    // ranked `pq_in` first — 5,115 cyc/frame of "dead time" on frames where the
+    // DAC is not running. -1 means "no emit yet this frame".
+    const dead = new Float64Array(marks.length);
+    let sinceEmit = -1, deadTotal = 0;
+    // The INTERVAL between consecutive DAC writes, measured. This is the ground
+    // truth for "does one iteration fit a sample period" — gen-mixer computes
+    // 318 cyc/sample for a shift-0 pass from its own instruction model, and a
+    // model is a claim about the code, not the code. Two of every PCM_GROUP
+    // intervals are set by the loop alone; the third is the gate's and is
+    // whatever the timer says, so they are reported apart.
+    const gaps = [];
+    // Split by WHICH emit: one in PCM_GROUP waits on the timer and then resets
+    // its flag through $27, the other two are the loop's alone. If the gating
+    // emit is the slow one, the fix is in gate_wait; if they are all slow, it
+    // is the loop. Tagged from the $27 bit-5 write itself, not inferred.
+    const gapsGate = [], gapsLoop = [];
+    let gateArmed = false;
     const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
     let fcyc = 0, fed = 0, enableB = false;
     // YM2612 BUSY: 32 internal cycles after a DATA write (Nuked-OPN2's
@@ -228,38 +260,6 @@ try {
 
     const cost = new Float64Array(marks.length);
     const hits = new Float64Array(marks.length);
-    // ── the DEAD ZONE ────────────────────────────────────────────────────────
-    // Stage D's rule is that no stretch of work between two samples may exceed
-    // one sample period (§5.1.2). Total work can be well UNDER the clock's own
-    // floor and the frame still overrun, because a stretch longer than a period
-    // pushes every later sample back and the delays accumulate — which is
-    // exactly what `dac-gate`'s "in-frame hold 6.5/23.6 periods" is reporting.
-    //
-    // So: charge every cycle spent more than one period after the last DAC
-    // write to the label running at the time. That ranks the code that needs an
-    // emit point, which is a different list from the one ranked by total cost —
-    // a label can be cheap and still hold the DAC through a hole, and a label
-    // can be expensive and cost the feed nothing because it emits as it goes.
-    // Only BETWEEN two emits, and only on a frame that emits at all: a frame
-    // with no PCM feeds nothing by design (pace_sub burns it on purpose to
-    // place the sub-slots), so there is no feed there to starve and charging it
-    // ranked `pq_in` first — 5,115 cyc/frame of "dead time" on frames where the
-    // DAC is not running. -1 means "no emit yet this frame".
-    const dead = new Float64Array(marks.length);
-    let sinceEmit = -1, deadTotal = 0;
-    // The INTERVAL between consecutive DAC writes, measured. This is the ground
-    // truth for "does one iteration fit a sample period" — gen-mixer computes
-    // 318 cyc/sample for a shift-0 pass from its own instruction model, and a
-    // model is a claim about the code, not the code. Two of every PCM_GROUP
-    // intervals are set by the loop alone; the third is the gate's and is
-    // whatever the timer says, so they are reported apart.
-    const gaps = [];
-    // Split by WHICH emit: one in PCM_GROUP waits on the timer and then resets
-    // its flag through $27, the other two are the loop's alone. If the gating
-    // emit is the slow one, the fix is in gate_wait; if they are all slow, it
-    // is the loop. Tagged from the $27 bit-5 write itself, not inferred.
-    const gapsGate = [], gapsLoop = [];
-    let gateArmed = false;
     // The biggest single holes, with WHERE in the frame they fell. A flat
     // per-label ranking cannot tell "one 8,000-cycle hole at the head" from
     // "forty 200-cycle holes spread through the passes", and those need

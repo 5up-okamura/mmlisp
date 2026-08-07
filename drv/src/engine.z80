@@ -188,6 +188,12 @@ G_EMITS     equ $19c6           ; u8  samples this frame still owes the DAC
 ; us through the slot, which cs_r27 snoops; bits 0-5 are ours (Load B, and the
 ; flag reset the gate pulses). Neither side may clobber the other's.
 G_R27       equ $19c8           ; u8  $27 as we last wrote it
+; The same byte with bit 5 (reset flag B) already in it. gate_wait writes $27
+; once per Timer B group — ~56 times a frame — and `or $20` there is 7 cycles
+; each time on the one emit in the group that is already the frame's slowest
+; (measured at 408 cycles against a 358-cycle period). Kept in step wherever
+; G_R27 is written; there are only three such places and they are all here.
+G_R27G      equ $19cf           ; u8  G_R27 | $20, for the gate's flag reset
 G_CHUNK     equ $19c9           ; u8  samples to mix this frame; 0 = a prime frame
 G_TICKSF    equ $19ca           ; u8  ticks each pass runs this frame
 ; The frame's write base, split the way the mixer wants it. Every pass covers
@@ -388,6 +394,8 @@ start:
         call ym_write0
         ld   a,$0a
         ld   (G_R27),a
+        or   $20
+        ld   (G_R27G),a
         ld   b,a
         ld   c,$27
         call ym_write0
@@ -698,6 +706,10 @@ cs_r27:
         ld   a,(hl)
         or   $0a                ; Load B | Enable B — ours, always
         ld   (G_R27),a
+        push af
+        or   $20
+        ld   (G_R27G),a         ; …and the gate's copy, kept in step here
+        pop  af
 cs_r27d:
         ld   a,(YM_ADDR0)
         rla
@@ -1209,8 +1221,7 @@ gate_wait:
         jr   z,gate_wait
         ld   a,$27
         ld   (YM_ADDR0),a
-        ld   a,(G_R27)
-        or   $20                ; reset flag B; the mode bits are the score's
+        ld   a,(G_R27G)         ; reset flag B; the mode bits are the score's
         ld   (YM_DATA0),a
         ld   a,$2a
         ld   (YM_ADDR0),a       ; re-latch: the feed writes $2A blind
