@@ -207,7 +207,15 @@ try {
         if (a === 0x6000) { bankReg = ((bankReg >> 1) | ((d & 1) << 8)) & 0x1ff; return; }
         if (a === 0x4000) { addr[0] = d; return; }
         if (a === 0x4001 || a === 0x4003) lastData = tcyc;
-        if (a === 0x4001 && addr[0] === 0x2a) sinceEmit = 0;   // between emits now
+        if (a === 0x4001 && addr[0] === 0x27 && (d & 0x20)) gateArmed = true;
+        if (a === 0x4001 && addr[0] === 0x2a) {
+          if (sinceEmit >= 0) {
+            gaps.push(sinceEmit);
+            (gateArmed ? gapsGate : gapsLoop).push(sinceEmit);
+          }
+          gateArmed = false;
+          sinceEmit = 0;   // between emits now
+        }
         if (a === 0x4001 && addr[0] === 0x27) { enableB = (d & 0x08) !== 0; return; }
         // $2A on port 0 is the DAC. Counting the writes is how many samples the
         // frame actually fed, which is what the timer paces — and it is the
@@ -239,6 +247,19 @@ try {
     // DAC is not running. -1 means "no emit yet this frame".
     const dead = new Float64Array(marks.length);
     let sinceEmit = -1, deadTotal = 0;
+    // The INTERVAL between consecutive DAC writes, measured. This is the ground
+    // truth for "does one iteration fit a sample period" — gen-mixer computes
+    // 318 cyc/sample for a shift-0 pass from its own instruction model, and a
+    // model is a claim about the code, not the code. Two of every PCM_GROUP
+    // intervals are set by the loop alone; the third is the gate's and is
+    // whatever the timer says, so they are reported apart.
+    const gaps = [];
+    // Split by WHICH emit: one in PCM_GROUP waits on the timer and then resets
+    // its flag through $27, the other two are the loop's alone. If the gating
+    // emit is the slow one, the fix is in gate_wait; if they are all slow, it
+    // is the loop. Tagged from the $27 bit-5 write itself, not inferred.
+    const gapsGate = [], gapsLoop = [];
+    let gateArmed = false;
     // The biggest single holes, with WHERE in the frame they fell. A flat
     // per-label ranking cannot tell "one 8,000-cycle hole at the head" from
     // "forty 200-cycle holes spread through the passes", and those need
@@ -379,6 +400,29 @@ try {
       : `fits the vblank, ${(-gap).toFixed(0)} cyc spare`}`);
     // The work list Stage D actually needs, ranked by dead time rather than by
     // cost. `npm run dac`'s in-frame hold is the number this moves.
+    if (gaps.length) {
+      const g = [...gaps].sort((a, b) => a - b);
+      const q = (f) => g[Math.floor((g.length - 1) * f)];
+      // The loop's own interval is the LOWER band — the gate's emit waits for
+      // the timer and lands high, so the median of the bottom two thirds is
+      // what the generator's number should be compared against.
+      const loopBand = g.slice(0, Math.floor(g.length * 2 / 3));
+      console.log(`  MEASURED sample interval (${gaps.length} emits): `
+        + `p10 ${q(0.1)} · p50 ${q(0.5)} · p90 ${q(0.9)} · max ${q(1)} cyc`
+        + ` — the period is ${SAMPLE_CYCLES}`);
+      const band = (arr, label) => {
+        if (!arr.length) return;
+        const a = [...arr].sort((x, y) => x - y);
+        const p = (f) => a[Math.floor((a.length - 1) * f)];
+        const mean = a.reduce((t, v) => t + v, 0) / a.length;
+        console.log(`    ${label.padEnd(18)} n=${String(a.length).padStart(7)} `
+          + `p50 ${String(p(0.5)).padStart(4)} · p90 ${String(p(0.9)).padStart(5)} · `
+          + `mean ${mean.toFixed(0).padStart(4)} cyc`
+          + (mean > SAMPLE_CYCLES ? `  OVER the period by ${(mean - SAMPLE_CYCLES).toFixed(0)}` : ""));
+      };
+      band(gapsLoop, "loop's own emits");
+      band(gapsGate, "the GATING emit");
+    }
     console.log(`  DEAD TIME (DAC holding, past one ${SAMPLE_CYCLES}-cycle period): `
       + `${(deadTotal / frames).toFixed(0)} cyc/frame `
       + `(${(100 * deadTotal / frames / FRAME_CYCLES).toFixed(1)}% of a frame) — `

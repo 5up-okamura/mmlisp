@@ -407,6 +407,14 @@ idle:
 ; One frame (driver.md §5.1)
 ; ===========================================================================
 frame_step:
+        ; The FEED CURSOR, for the whole frame — loaded HERE and not inside
+        ; process_pcm, because consume_slot's write runs carry samples too
+        ; (feed_one) and they run first. It used to be loaded after pcm_pad, so
+        ; at the head IY was merely whatever the previous frame's `ld (G_RD),iy`
+        ; had left in it: correct by luck, and only while nothing between the
+        ; two touched IY. An emit at the head is either valid or it is not, and
+        ; that should not depend on a register surviving an interrupt.
+        ld   iy,(G_RD)
         call consume_slot       ; 1-2: sub-slot 0's writes, and the PCM commands
         call process_pcm        ; 3:   mix and feed the DAC, sub-slots 1..K-1
         call consume_rest       ;      anything the passes could not reach
@@ -722,13 +730,17 @@ cr_p1d:
         ld   a,(hl)
         ld   (YM_DATA1),a
         inc  hl
-        ; NO emit here, and it is not an oversight: the same `ld a,b / and 3 /
-        ; call z,feed_one` that is correct in the port-0 loop above makes the
-        ; prime frame mix SILENCE when it is added here — the voice's sample
-        ; reads come back as zeros, which is a wrong ROM bank, from a routine
-        ; that writes neither $6000 nor anything the bank depends on. Not
-        ; understood yet; the port-0 loop carries the bulk of a frame's traffic,
-        ; so this costs little until it is.
+        ; …and a sample goes out with every fourth one here too. This used to
+        ; zero every sample, and the cause was the FEED CURSOR: `ld iy,(G_RD)`
+        ; lived inside process_pcm, which runs AFTER consume_slot, so at the
+        ; frame head IY was only whatever the previous frame's `ld (G_RD),iy`
+        ; had left in it. The port-0 loop got away with it; a second emit site
+        ; walked IY far enough off that the mixer's own reads came back wrong,
+        ; which presented as a bad ROM bank. IY is loaded in frame_step now, so
+        ; an emit at the head is valid by construction rather than by luck.
+        ld   a,b
+        and  3
+        call z,feed_one
         djnz cr_p1
         ret
 
@@ -1011,7 +1023,6 @@ pp_setup:
         ld   (G_ACTM),a
 
         call pcm_pad            ; what the silent passes may hold to
-        ld   iy,(G_RD)          ; the feed cursor, for the whole frame
         ld   hl,(G_WR)          ; …and where this frame's chunk is written
         ld   a,l
         ld   (G_WRI),a
@@ -1131,6 +1142,13 @@ pp_pass_done:
         ld   a,(hl)
         cp   PCM_VOICES
         ret  nc                 ; the last pass: nothing follows it in the frame
+        ; A pass boundary carries a sample. Measured, this was the largest
+        ; RECURRING hole in the feed — 30 sample periods with no $2A write —
+        ; because the bookkeeping above runs straight into consume_sub's run of
+        ; chip writes, and port 1's loop carries no emit of its own (see cr_p1).
+        ; The loops around it emit at 266 cycles against a 358 period, so the
+        ; frame has the slack; it just was not spent here.
+        call feed_one
         jp   consume_sub
 
 ; pp_voice_at: IX = voice C, Z clear if it was sounding at frame start. C is
