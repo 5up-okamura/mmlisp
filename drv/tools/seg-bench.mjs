@@ -266,6 +266,11 @@ try {
     // completely different fixes.
     let gapRun = 0, gapAt = 0, gapLbl = -1;
     const worstGaps = [];
+    // Which LABEL opens the holes in the band that dominates. The biggest-hole
+    // list shows only the extremes, and the per-label ranking sums every size
+    // into one number; this names the recurring middle, which is where the
+    // cycles actually are.
+    const bandLbl = new Map();
     const G_ACTM = sym("G_ACTM");   // which PCM voices were sounding at frame start
     const obs = [];   // per frame: [samples fed, total cycles, voices, index]
     let frames = 0, total = 0, worst = 0;
@@ -298,6 +303,12 @@ try {
           gapRun += over;
         } else if (gapRun > 0) {
           worstGaps.push([gapRun, gapLbl, gapAt, f]);
+          const tot = gapRun + SAMPLE_CYCLES;
+          if (tot >= 800 && tot < 1500) {
+            const k = bucketName[gapLbl];
+            const e = bandLbl.get(k) ?? [0, 0];
+            e[0] += gapRun; e[1]++; bandLbl.set(k, e);
+          }
           gapRun = 0;
         }
         if (b !== 0xffff) {
@@ -422,6 +433,26 @@ try {
       };
       band(gapsLoop, "loop's own emits");
       band(gapsGate, "the GATING emit");
+      // WHERE the dead time lives, by hole size. Many medium holes and a few
+      // huge ones need opposite fixes — an emit point inside a hot path is
+      // wrong for the first and right for the second — and the per-label
+      // ranking cannot tell them apart because it sums both into one number.
+      const bins = [[358, 500], [500, 800], [800, 1500], [1500, 4000], [4000, 1e9]];
+      console.log(`    dead time by HOLE SIZE (cyc/frame, and how many a frame):`);
+      for (const [lo, hi] of bins) {
+        let cyc = 0, n = 0;
+        for (const v of gaps) if (v >= lo && v < hi) { cyc += v - SAMPLE_CYCLES; n++; }
+        if (!n) continue;
+        console.log(`      ${String(lo).padStart(5)}..${hi > 1e8 ? "  up" : String(hi).padStart(4)} `
+          + `${(cyc / frames).toFixed(0).padStart(6)} cyc  ${(n / frames).toFixed(1).padStart(6)} holes`
+          + `  ${(100 * cyc / deadTotal).toFixed(0).padStart(3)}% of the dead time`);
+      }
+    }
+    if (bandLbl.size) {
+      console.log(`    the 800..1500 band, by the label that OPENS the hole:`);
+      for (const [k, [c, n]] of [...bandLbl].sort((a, b) => b[1][0] - a[1][0]).slice(0, 6))
+        console.log(`      ${k.padEnd(20)}${(c / frames).toFixed(0).padStart(6)} cyc`
+          + `${(n / frames).toFixed(1).padStart(6)} a frame`);
     }
     console.log(`  DEAD TIME (DAC holding, past one ${SAMPLE_CYCLES}-cycle period): `
       + `${(deadTotal / frames).toFixed(0)} cyc/frame `
