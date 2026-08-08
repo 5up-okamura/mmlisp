@@ -707,7 +707,19 @@ ${unroll === 1 ? "" : `${[...Array(Math.log2(unroll) | 0)].map(() => "        sr
         ; store are the whole of what carrying the register file across a
         ; voice's consecutive segments could remove.
 ms_load:
-        ld   l,(ix+PV_FRAC)
+${paced ? `        ; NO REGISTER FILE — in the PACED build, and only there. The shipped
+        ; engine calls mix_seg from mvf_idle_seg alone (engine.z80), with
+        ; IX = G_IDLEV, so the copy ms_bind picks is always the IDLE shift and
+        ; its whole tick body is one inc l: no sample read, no position
+        ; advanced, the fraction and the increment never looked at. Loading them
+        ; was seven ld r,(ix+d) at 19 cycles each — the Z80's dearest
+        ; addressing mode — and storing them back four more, every segment.
+        ;
+        ; The bench image (mixer-bench.mjs, paced: false) uses mix_seg as the
+        ; GENERAL path, sounding voices included, so it keeps the file.
+        ; The shipped sounding path is mix_seg_live, which carries its file
+        ; across a whole pass and is untouched either way.
+` : `        ld   l,(ix+PV_FRAC)
         ld   h,(ix+PV_FRAC+1)
         ld   e,(ix+PV_INCF)
         ld   d,(ix+PV_INCF+1)
@@ -715,7 +727,7 @@ ms_load:
         ld   c,(ix+PV_INCI)     ; AFTER the exx — exx swaps BC too
         ld   e,(ix+PV_PTR)
         ld   d,(ix+PV_PTR+1)
-        ld   a,(G_SEG_I)
+`}        ld   a,(G_SEG_I)
         ld   l,a
         ld   a,(G_MIXP)         ; the plane being mixed this frame
         ld   h,a
@@ -734,7 +746,10 @@ ms_rem:
         ld   b,a
         call ms_call_single
 ms_done:
-        ; --- write the position back ---
+${paced ? `        ; Only the resume index — see ms_load: the idle pass moved no position.
+        ld   a,l
+        ld   (G_SEG_I),a
+        ret` : `        ; --- write the position back ---
         ld   (ix+PV_PTR),e
         ld   (ix+PV_PTR+1),d
         ld   a,l
@@ -745,7 +760,7 @@ ms_done:
         exx
         ld   a,(G_SEG_I)
         ld   l,a
-        ret
+        ret`}
 
 ; Entry to the shift-specialised copies. Both are bare self-modified jumps that
 ; ms_bind has already pointed at the right loop, so the per-segment path is ONE
