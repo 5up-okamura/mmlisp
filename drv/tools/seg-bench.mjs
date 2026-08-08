@@ -458,9 +458,28 @@ try {
       console.log(`    OVER budget: ${(100 * nOver / groups.length).toFixed(0)}% of groups,`
         + ` and their excess totals ${(over / frames).toFixed(0)} cyc/frame`
         + ` — this is the overrun, and nothing else can be`);
+      // By KIND, not by label. "which label" says mvf_rc_feed and ms_load; only
+      // "which kind" says whether the fix is in the segment machinery, in the
+      // slot's chip writes, or in the frame's fixed head — and those are three
+      // different pieces of work.
+      const kind = new Float64Array(GROUPS.length + 2);
+      for (let i = 0; i < marks.length; i++) {
+        if (!heavy[i]) continue;
+        const n = bucketName[i];
+        const g = groupOf(n);
+        // the frame's own head, which no GROUPS rule covers
+        const head = /^(frame_step|consume_slot|cs_|cr_|ih_|slot_)/.test(n);
+        kind[g < 0 ? (head ? GROUPS.length + 1 : GROUPS.length) : g] += heavy[i];
+      }
+      for (let g = 0; g < kind.length; g++) {
+        if (!kind[g]) continue;
+        const label = g < GROUPS.length ? GROUPS[g][0]
+          : g === GROUPS.length ? "other" : "the frame's head (slot + chip writes)";
+        console.log(`      ${label.padEnd(34)}${(kind[g] / frames).toFixed(0).padStart(6)} cyc/frame`);
+      }
       const hr = [...heavy.keys()].filter((i) => heavy[i] > 0)
         .sort((a, b) => heavy[b] - heavy[a]).slice(0, 10);
-      console.log(`    what is IN the over-budget groups:`);
+      console.log(`    what is IN the over-budget groups, by kind:`);
       for (const i of hr)
         console.log(`      ${bucketName[i].padEnd(20)}${(heavy[i] / frames).toFixed(0).padStart(6)} cyc/frame`);
     }
