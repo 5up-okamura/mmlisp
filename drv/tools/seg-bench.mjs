@@ -254,6 +254,7 @@ try {
           }
           gateArmed = false;
           sinceEmit = 0;   // between emits now
+          frameTail.length = 0;   // everything so far is not the tail
         }
         if (a === 0x4001 && addr[0] === 0x27) { enableB = (d & 0x08) !== 0; return; }
         // $2A on port 0 is the DAC. Counting the writes is how many samples the
@@ -278,6 +279,9 @@ try {
     // into one number; this names the recurring middle, which is where the
     // cycles actually are.
     const bandLbl = new Map();
+    // Cycles executed after the frame's LAST $2A write, by label.
+    const tail = new Float64Array(marks.length);
+    let tailTotal = 0, frameTail = [];
     const G_ACTM = sym("G_ACTM");   // which PCM voices were sounding at frame start
     const obs = [];   // per frame: [samples fed, total cycles, voices, index]
     let frames = 0, total = 0, worst = 0;
@@ -324,6 +328,7 @@ try {
           if (b !== prev) { hits[b]++; prev = b; }
         }
         cyc += c; fcyc += c; tcyc += c;
+        if (b !== 0xffff) frameTail.push([b, c]);   // trimmed at each emit
       }
       if (fcost) {
         const rows = [...fcost.keys()].filter((i) => fcost[i] > 0)
@@ -334,6 +339,8 @@ try {
       const m = ram[G_ACTM];
       const nv = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
       cyc += STALL;   // the bus the 68000 holds; see STALL above
+      for (const [b, c] of frameTail) { tail[b] += c; tailTotal += c; }
+      frameTail.length = 0;
       frames++; total += cyc; obs.push([fed, cyc, nv, f]);
       if (cyc > worst) worst = cyc;
     }
@@ -454,6 +461,22 @@ try {
           + `${(cyc / frames).toFixed(0).padStart(6)} cyc  ${(n / frames).toFixed(1).padStart(6)} holes`
           + `  ${(100 * cyc / deadTotal).toFixed(0).padStart(3)}% of the dead time`);
       }
+    }
+    // What runs AFTER the frame's last sample. The frame ends when the ISR
+    // halts, and the last emit is gated — so the frame is (the last emit's
+    // instant) + (whatever work follows it), and only the second half is
+    // reducible. Emit PLACEMENT cannot touch it: the frame's emit total is
+    // fixed at `chunk` by G_EMITS, so moving an emit earlier only stops a loop
+    // emitting later — measured, adding or removing emit points leaves the
+    // frame at the same cycle.
+    if (tailTotal) {
+      console.log(`  AFTER THE LAST SAMPLE: ${(tailTotal / frames).toFixed(0)} cyc/frame`
+        + ` (${(100 * tailTotal / frames / FRAME_CYCLES).toFixed(1)}% of a frame)`
+        + ` — the part of the overrun that emit points cannot reach`);
+      const tr = [...tail.keys()].filter((i) => tail[i] > 0)
+        .sort((a, b) => tail[b] - tail[a]).slice(0, 8);
+      for (const i of tr)
+        console.log(`    ${bucketName[i].padEnd(20)}${(tail[i] / frames).toFixed(0).padStart(6)} cyc`);
     }
     if (bandLbl.size) {
       console.log(`    the 800..1500 band, by the label that OPENS the hole:`);
