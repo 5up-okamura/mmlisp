@@ -1214,11 +1214,16 @@ pv_test:
 ; touches A and the flags and nothing else, and it RETURNS A = PCM_GROUP, which
 ; is the caller's reloaded phase.
 gate_wait:
+        ; One test for both conditions. BUSY is bit 7 and Timer B's overflow is
+        ; bit 1, and what this loop wants is "not busy AND the flag is up" —
+        ; which is the two bits being exactly $02. The shift-and-branch pair it
+        ; replaces (add a,a / jr c / bit 2,a / jr z) asked them separately for
+        ; 39 cycles; this is 34, on the emit that is already the frame's
+        ; slowest and runs ~56 times.
         ld   a,(YM_ADDR0)
-        add  a,a                ; bit7 BUSY -> carry, bit1 (Timer B) -> bit2
-        jr   c,gate_wait
-        bit  2,a
-        jr   z,gate_wait
+        and  $82
+        cp   $02
+        jr   nz,gate_wait
         ld   a,$27
         ld   (YM_ADDR0),a
         ld   a,(G_R27G)         ; reset flag B; the mode bits are the score's
