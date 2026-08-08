@@ -77,7 +77,11 @@ export function buildEngine() {
   const left = sym("PCM_BUDGET")
     - Math.min(...[...Array(8)].map((_, s) => passCost(s)))
     - silent * passCost(sym("PCM_IDLE_SH"));
-  const pad = left < 0 ? 1
+  // `silent === 0` is pp_pad_min in the routine — with every pass sounding
+  // there is no silent pass to hand a pad to, whatever the budget says. The
+  // check has to carry that rule too, or it fails the build on a configuration
+  // the code handles correctly (it did, at PCM_PASSES = 1).
+  const pad = silent === 0 || left < 0 ? 1
     : Math.max(1, Math.min(sym("PCM_IDLE_PAD"), left >> (9 + silent)));
   if (pad > 1) {
     throw new Error(

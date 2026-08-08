@@ -24,7 +24,7 @@ PCM_MUTE_SH equ 8      ; PV_SHIFT meaning "silent, keep advancing"
 PCM_IDLE_SH equ 9      ; PV_SHIFT meaning "no voice here at all"
 PCM_PASSES  equ 2      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ 358     ; the sample period one iteration holds to
-PCM_IDLE_PAD equ 15      ; the most an idle iteration may hold to
+PCM_IDLE_PAD equ 10      ; the most an idle iteration may hold to
 PCM_GROUP   equ 3       ; samples per Timer B gate (§5.1.2)
 
 R_FIRST_BEG:
@@ -40,7 +40,7 @@ gt1:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,6                ; pace: hold the tick to the sample period
+        ld   a,1                ; pace: hold the tick to the sample period
 pd2:
         dec  a
         jr   nz,pd2
@@ -83,10 +83,19 @@ gt6:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,5                ; pace: hold the tick to the sample period
-pd7:
-        dec  a
-        jr   nz,pd7
+        ld   a,(de)             ; sample
+        sra  a
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np7
+        inc  d
+np7:
         ld   a,(de)             ; sample
         sra  a
         ld   (hl),a
@@ -100,19 +109,6 @@ pd7:
         jr   nc,np8
         inc  d
 np8:
-        ld   a,(de)             ; sample
-        sra  a
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np9
-        inc  d
-np9:
         dec  b
         jp   nz,mix_first_s1_lp
         ret
@@ -120,18 +116,14 @@ mix_first_s2:
 mix_first_s2_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt11            ; not this sample's turn to wait
+        jr   nz,gt10            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt11:
+gt10:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,4                ; pace: hold the tick to the sample period
-pd12:
-        dec  a
-        jr   nz,pd12
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -143,9 +135,9 @@ pd12:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np13
+        jr   nc,np11
         inc  d
-np13:
+np11:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -157,9 +149,9 @@ np13:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np14
+        jr   nc,np12
         inc  d
-np14:
+np12:
         dec  b
         jp   nz,mix_first_s2_lp
         ret
@@ -167,18 +159,14 @@ mix_first_s3:
 mix_first_s3_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt16            ; not this sample's turn to wait
+        jr   nz,gt14            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt16:
+gt14:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,3                ; pace: hold the tick to the sample period
-pd17:
-        dec  a
-        jr   nz,pd17
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -191,10 +179,41 @@ pd17:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np18
+        jr   nc,np15
         inc  d
-np18:
+np15:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np16
+        inc  d
+np16:
+        dec  b
+        jp   nz,mix_first_s3_lp
+        ret
+mix_first_s4:
+mix_first_s4_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,gt18            ; not this sample's turn to wait
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+gt18:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,(de)             ; sample
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -209,26 +228,39 @@ np18:
         jr   nc,np19
         inc  d
 np19:
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np20
+        inc  d
+np20:
         dec  b
-        jp   nz,mix_first_s3_lp
+        jp   nz,mix_first_s4_lp
         ret
-mix_first_s4:
-mix_first_s4_lp:
+mix_first_s5:
+mix_first_s5_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt21            ; not this sample's turn to wait
+        jr   nz,gt22            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt21:
+gt22:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,2                ; pace: hold the tick to the sample period
-pd22:
-        dec  a
-        jr   nz,pd22
         ld   a,(de)             ; sample
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -249,6 +281,7 @@ np23:
         sra  a
         sra  a
         sra  a
+        sra  a
         ld   (hl),a
         inc  l
         exx
@@ -261,10 +294,10 @@ np23:
         inc  d
 np24:
         dec  b
-        jp   nz,mix_first_s4_lp
+        jp   nz,mix_first_s5_lp
         ret
-mix_first_s5:
-mix_first_s5_lp:
+mix_first_s6:
+mix_first_s6_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
         jr   nz,gt26            ; not this sample's turn to wait
@@ -275,11 +308,26 @@ gt26:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,1                ; pace: hold the tick to the sample period
-pd27:
-        dec  a
-        jr   nz,pd27
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np27
+        inc  d
+np27:
+        ld   a,(de)             ; sample
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -296,7 +344,24 @@ pd27:
         jr   nc,np28
         inc  d
 np28:
+        dec  b
+        jp   nz,mix_first_s6_lp
+        ret
+mix_first_s7:
+mix_first_s7_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,gt30            ; not this sample's turn to wait
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+gt30:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -310,25 +375,11 @@ np28:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np29
+        jr   nc,np31
         inc  d
-np29:
-        dec  b
-        jp   nz,mix_first_s5_lp
-        ret
-mix_first_s6:
-mix_first_s6_lp:
-        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
-        dec  a
-        jr   nz,gt31            ; not this sample's turn to wait
-        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt31:
-        ex   af,af'            ; …and the mixer's A and flags come back
-        ld   a,(iy+0)          ; the ring: what an earlier frame finished
-        xor  $80               ; the ring is signed, the DAC is not
-        ld   (YM_DATA0),a      ; $2A, fed blind
-        inc  iy                ; wraps at a SEGMENT boundary, never here
+np31:
         ld   a,(de)             ; sample
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -346,48 +397,26 @@ gt31:
         jr   nc,np32
         inc  d
 np32:
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np33
-        inc  d
-np33:
         dec  b
-        jp   nz,mix_first_s6_lp
+        jp   nz,mix_first_s7_lp
         ret
-mix_first_s7:
-mix_first_s7_lp:
+mix_first_s8:
+mix_first_s8_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt35            ; not this sample's turn to wait
+        jr   nz,gt34            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt35:
+gt34:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        ld   (hl),a
+        ld   a,3                ; pace: hold the tick to the sample period
+pd35:
+        dec  a
+        jr   nz,pd35
+        ld   (hl),0   ; muted, but the position still advances
         inc  l
         exx
         add  hl,de             ; frac += incFrac
@@ -398,15 +427,7 @@ gt35:
         jr   nc,np36
         inc  d
 np36:
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        ld   (hl),a
+        ld   (hl),0   ; muted, but the position still advances
         inc  l
         exx
         add  hl,de             ; frac += incFrac
@@ -418,65 +439,24 @@ np36:
         inc  d
 np37:
         dec  b
-        jp   nz,mix_first_s7_lp
-        ret
-mix_first_s8:
-mix_first_s8_lp:
-        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
-        dec  a
-        jr   nz,gt39            ; not this sample's turn to wait
-        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt39:
-        ex   af,af'            ; …and the mixer's A and flags come back
-        ld   a,(iy+0)          ; the ring: what an earlier frame finished
-        xor  $80               ; the ring is signed, the DAC is not
-        ld   (YM_DATA0),a      ; $2A, fed blind
-        inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,8                ; pace: hold the tick to the sample period
-pd40:
-        dec  a
-        jr   nz,pd40
-        ld   (hl),0   ; muted, but the position still advances
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np41
-        inc  d
-np41:
-        ld   (hl),0   ; muted, but the position still advances
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np42
-        inc  d
-np42:
-        dec  b
         jp   nz,mix_first_s8_lp
         ret
 mix_first_s9:
 mix_first_s9_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt43            ; not this sample's turn to wait
+        jr   nz,gt38            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt43:
+gt38:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
         ld   a,(G_PAD)         ; pace: what this frame can afford to hold to
-pd44:
+pd39:
         dec  a
-        jr   nz,pd44
+        jr   nz,pd39
         ld   (hl),0   ; no voice: the plane's silence
         inc  l
         ld   (hl),0   ; no voice: the plane's silence
@@ -495,9 +475,9 @@ mix_first1_s0_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np45
+        jr   nc,np40
         inc  d
-np45:
+np40:
         djnz mix_first1_s0_lp
         ret
 mix_first1_s1:
@@ -512,9 +492,9 @@ mix_first1_s1_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np46
+        jr   nc,np41
         inc  d
-np46:
+np41:
         djnz mix_first1_s1_lp
         ret
 mix_first1_s2:
@@ -530,9 +510,9 @@ mix_first1_s2_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np47
+        jr   nc,np42
         inc  d
-np47:
+np42:
         djnz mix_first1_s2_lp
         ret
 mix_first1_s3:
@@ -549,9 +529,9 @@ mix_first1_s3_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np48
+        jr   nc,np43
         inc  d
-np48:
+np43:
         djnz mix_first1_s3_lp
         ret
 mix_first1_s4:
@@ -569,9 +549,9 @@ mix_first1_s4_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np49
+        jr   nc,np44
         inc  d
-np49:
+np44:
         djnz mix_first1_s4_lp
         ret
 mix_first1_s5:
@@ -590,9 +570,9 @@ mix_first1_s5_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np50
+        jr   nc,np45
         inc  d
-np50:
+np45:
         djnz mix_first1_s5_lp
         ret
 mix_first1_s6:
@@ -612,9 +592,9 @@ mix_first1_s6_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np51
+        jr   nc,np46
         inc  d
-np51:
+np46:
         djnz mix_first1_s6_lp
         ret
 mix_first1_s7:
@@ -635,9 +615,9 @@ mix_first1_s7_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np52
+        jr   nc,np47
         inc  d
-np52:
+np47:
         djnz mix_first1_s7_lp
         ret
 mix_first1_s8:
@@ -650,9 +630,9 @@ mix_first1_s8_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np53
+        jr   nc,np48
         inc  d
-np53:
+np48:
         djnz mix_first1_s8_lp
         ret
 mix_first1_s9:
@@ -671,22 +651,18 @@ mix_add_s0:
 mix_add_s0_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt57            ; not this sample's turn to wait
+        jr   nz,gt52            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt57:
+gt52:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,4                ; pace: hold the tick to the sample period
-pd58:
-        dec  a
-        jr   nz,pd58
         ld   a,(de)             ; sample
         add  a,(hl)
-        jp   pe,ov59
-dn60:
+        jp   pe,ov53
+dn54:
         ld   (hl),a
         inc  l
         exx
@@ -695,13 +671,13 @@ dn60:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np61
+        jr   nc,np55
         inc  d
-np61:
+np55:
         ld   a,(de)             ; sample
         add  a,(hl)
-        jp   pe,ov62
-dn63:
+        jp   pe,ov56
+dn57:
         ld   (hl),a
         inc  l
         exx
@@ -710,47 +686,43 @@ dn63:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np64
+        jr   nc,np58
         inc  d
-np64:
+np58:
         dec  b
         jp   nz,mix_add_s0_lp
         ret
-ov59:
-        jp   m,ov59_hi        ; overflow inverts the sign, so a negative
+ov53:
+        jp   m,ov53_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn60
-ov59_hi:
+        jp   dn54
+ov53_hi:
         ld   a,$7f
-        jp   dn60
-ov62:
-        jp   m,ov62_hi        ; overflow inverts the sign, so a negative
+        jp   dn54
+ov56:
+        jp   m,ov56_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn63
-ov62_hi:
+        jp   dn57
+ov56_hi:
         ld   a,$7f
-        jp   dn63
+        jp   dn57
 mix_add_s1:
 mix_add_s1_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt68            ; not this sample's turn to wait
+        jr   nz,gt62            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt68:
+gt62:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,3                ; pace: hold the tick to the sample period
-pd69:
-        dec  a
-        jr   nz,pd69
         ld   a,(de)             ; sample
         sra  a
         add  a,(hl)
-        jp   pe,ov70
-dn71:
+        jp   pe,ov63
+dn64:
         ld   (hl),a
         inc  l
         exx
@@ -759,10 +731,56 @@ dn71:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np72
+        jr   nc,np65
         inc  d
-np72:
+np65:
         ld   a,(de)             ; sample
+        sra  a
+        add  a,(hl)
+        jp   pe,ov66
+dn67:
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np68
+        inc  d
+np68:
+        dec  b
+        jp   nz,mix_add_s1_lp
+        ret
+ov63:
+        jp   m,ov63_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn64
+ov63_hi:
+        ld   a,$7f
+        jp   dn64
+ov66:
+        jp   m,ov66_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn67
+ov66_hi:
+        ld   a,$7f
+        jp   dn67
+mix_add_s2:
+mix_add_s2_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,gt72            ; not this sample's turn to wait
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+gt72:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,(de)             ; sample
+        sra  a
         sra  a
         add  a,(hl)
         jp   pe,ov73
@@ -778,16 +796,26 @@ dn74:
         jr   nc,np75
         inc  d
 np75:
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov76
+dn77:
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np78
+        inc  d
+np78:
         dec  b
-        jp   nz,mix_add_s1_lp
+        jp   nz,mix_add_s2_lp
         ret
-ov70:
-        jp   m,ov70_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn71
-ov70_hi:
-        ld   a,$7f
-        jp   dn71
 ov73:
         jp   m,ov73_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
@@ -795,96 +823,32 @@ ov73:
 ov73_hi:
         ld   a,$7f
         jp   dn74
-mix_add_s2:
-mix_add_s2_lp:
-        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
-        dec  a
-        jr   nz,gt79            ; not this sample's turn to wait
-        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt79:
-        ex   af,af'            ; …and the mixer's A and flags come back
-        ld   a,(iy+0)          ; the ring: what an earlier frame finished
-        xor  $80               ; the ring is signed, the DAC is not
-        ld   (YM_DATA0),a      ; $2A, fed blind
-        inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,2                ; pace: hold the tick to the sample period
-pd80:
-        dec  a
-        jr   nz,pd80
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        add  a,(hl)
-        jp   pe,ov81
-dn82:
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np83
-        inc  d
-np83:
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        add  a,(hl)
-        jp   pe,ov84
-dn85:
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np86
-        inc  d
-np86:
-        dec  b
-        jp   nz,mix_add_s2_lp
-        ret
-ov81:
-        jp   m,ov81_hi        ; overflow inverts the sign, so a negative
+ov76:
+        jp   m,ov76_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn82
-ov81_hi:
+        jp   dn77
+ov76_hi:
         ld   a,$7f
-        jp   dn82
-ov84:
-        jp   m,ov84_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn85
-ov84_hi:
-        ld   a,$7f
-        jp   dn85
+        jp   dn77
 mix_add_s3:
 mix_add_s3_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt90            ; not this sample's turn to wait
+        jr   nz,gt82            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt90:
+gt82:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,1                ; pace: hold the tick to the sample period
-pd91:
-        dec  a
-        jr   nz,pd91
         ld   a,(de)             ; sample
         sra  a
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov92
-dn93:
+        jp   pe,ov83
+dn84:
         ld   (hl),a
         inc  l
         exx
@@ -893,16 +857,16 @@ dn93:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np94
+        jr   nc,np85
         inc  d
-np94:
+np85:
         ld   a,(de)             ; sample
         sra  a
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov95
-dn96:
+        jp   pe,ov86
+dn87:
         ld   (hl),a
         inc  l
         exx
@@ -911,33 +875,33 @@ dn96:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np97
+        jr   nc,np88
         inc  d
-np97:
+np88:
         dec  b
         jp   nz,mix_add_s3_lp
         ret
-ov92:
-        jp   m,ov92_hi        ; overflow inverts the sign, so a negative
+ov83:
+        jp   m,ov83_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn93
-ov92_hi:
+        jp   dn84
+ov83_hi:
         ld   a,$7f
-        jp   dn93
-ov95:
-        jp   m,ov95_hi        ; overflow inverts the sign, so a negative
+        jp   dn84
+ov86:
+        jp   m,ov86_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn96
-ov95_hi:
+        jp   dn87
+ov86_hi:
         ld   a,$7f
-        jp   dn96
+        jp   dn87
 mix_add_s4:
 mix_add_s4_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt101            ; not this sample's turn to wait
+        jr   nz,gt92            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt101:
+gt92:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
@@ -949,8 +913,8 @@ gt101:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov102
-dn103:
+        jp   pe,ov93
+dn94:
         ld   (hl),a
         inc  l
         exx
@@ -959,17 +923,17 @@ dn103:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np104
+        jr   nc,np95
         inc  d
-np104:
+np95:
         ld   a,(de)             ; sample
         sra  a
         sra  a
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov105
-dn106:
+        jp   pe,ov96
+dn97:
         ld   (hl),a
         inc  l
         exx
@@ -978,33 +942,33 @@ dn106:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np107
+        jr   nc,np98
         inc  d
-np107:
+np98:
         dec  b
         jp   nz,mix_add_s4_lp
         ret
-ov102:
-        jp   m,ov102_hi        ; overflow inverts the sign, so a negative
+ov93:
+        jp   m,ov93_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn103
-ov102_hi:
+        jp   dn94
+ov93_hi:
         ld   a,$7f
-        jp   dn103
-ov105:
-        jp   m,ov105_hi        ; overflow inverts the sign, so a negative
+        jp   dn94
+ov96:
+        jp   m,ov96_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn106
-ov105_hi:
+        jp   dn97
+ov96_hi:
         ld   a,$7f
-        jp   dn106
+        jp   dn97
 mix_add_s5:
 mix_add_s5_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt111            ; not this sample's turn to wait
+        jr   nz,gt102            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt111:
+gt102:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
@@ -1017,8 +981,8 @@ gt111:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov112
-dn113:
+        jp   pe,ov103
+dn104:
         ld   (hl),a
         inc  l
         exx
@@ -1027,9 +991,9 @@ dn113:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np114
+        jr   nc,np105
         inc  d
-np114:
+np105:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1037,8 +1001,8 @@ np114:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov115
-dn116:
+        jp   pe,ov106
+dn107:
         ld   (hl),a
         inc  l
         exx
@@ -1047,33 +1011,33 @@ dn116:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np117
+        jr   nc,np108
         inc  d
-np117:
+np108:
         dec  b
         jp   nz,mix_add_s5_lp
         ret
-ov112:
-        jp   m,ov112_hi        ; overflow inverts the sign, so a negative
+ov103:
+        jp   m,ov103_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn113
-ov112_hi:
+        jp   dn104
+ov103_hi:
         ld   a,$7f
-        jp   dn113
-ov115:
-        jp   m,ov115_hi        ; overflow inverts the sign, so a negative
+        jp   dn104
+ov106:
+        jp   m,ov106_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn116
-ov115_hi:
+        jp   dn107
+ov106_hi:
         ld   a,$7f
-        jp   dn116
+        jp   dn107
 mix_add_s6:
 mix_add_s6_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt121            ; not this sample's turn to wait
+        jr   nz,gt112            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt121:
+gt112:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
@@ -1087,8 +1051,8 @@ gt121:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov122
-dn123:
+        jp   pe,ov113
+dn114:
         ld   (hl),a
         inc  l
         exx
@@ -1097,9 +1061,9 @@ dn123:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np124
+        jr   nc,np115
         inc  d
-np124:
+np115:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1108,8 +1072,8 @@ np124:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov125
-dn126:
+        jp   pe,ov116
+dn117:
         ld   (hl),a
         inc  l
         exx
@@ -1118,33 +1082,33 @@ dn126:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np127
+        jr   nc,np118
         inc  d
-np127:
+np118:
         dec  b
         jp   nz,mix_add_s6_lp
         ret
-ov122:
-        jp   m,ov122_hi        ; overflow inverts the sign, so a negative
+ov113:
+        jp   m,ov113_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn123
-ov122_hi:
+        jp   dn114
+ov113_hi:
         ld   a,$7f
-        jp   dn123
-ov125:
-        jp   m,ov125_hi        ; overflow inverts the sign, so a negative
+        jp   dn114
+ov116:
+        jp   m,ov116_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn126
-ov125_hi:
+        jp   dn117
+ov116_hi:
         ld   a,$7f
-        jp   dn126
+        jp   dn117
 mix_add_s7:
 mix_add_s7_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt131            ; not this sample's turn to wait
+        jr   nz,gt122            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt131:
+gt122:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
@@ -1159,8 +1123,8 @@ gt131:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov132
-dn133:
+        jp   pe,ov123
+dn124:
         ld   (hl),a
         inc  l
         exx
@@ -1169,9 +1133,9 @@ dn133:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np134
+        jr   nc,np125
         inc  d
-np134:
+np125:
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1181,8 +1145,8 @@ np134:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov135
-dn136:
+        jp   pe,ov126
+dn127:
         ld   (hl),a
         inc  l
         exx
@@ -1191,42 +1155,120 @@ dn136:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np137
+        jr   nc,np128
         inc  d
-np137:
+np128:
         dec  b
         jp   nz,mix_add_s7_lp
         ret
-ov132:
-        jp   m,ov132_hi        ; overflow inverts the sign, so a negative
+ov123:
+        jp   m,ov123_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn133
-ov132_hi:
+        jp   dn124
+ov123_hi:
         ld   a,$7f
-        jp   dn133
-ov135:
-        jp   m,ov135_hi        ; overflow inverts the sign, so a negative
+        jp   dn124
+ov126:
+        jp   m,ov126_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn136
-ov135_hi:
+        jp   dn127
+ov126_hi:
         ld   a,$7f
-        jp   dn136
+        jp   dn127
 mix_add_s8:
 mix_add_s8_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt139            ; not this sample's turn to wait
+        jr   nz,gt130            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt139:
+gt130:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,10               ; pace: hold the tick to the sample period
-pd140:
+        ld   a,4                ; pace: hold the tick to the sample period
+pd131:
         dec  a
-        jr   nz,pd140
+        jr   nz,pd131
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np132
+        inc  d
+np132:
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np133
+        inc  d
+np133:
+        dec  b
+        jp   nz,mix_add_s8_lp
+        ret
+mix_add_s9:
+mix_add_s9_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,gt134            ; not this sample's turn to wait
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+gt134:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,(G_PAD)         ; pace: what this frame can afford to hold to
+pd135:
+        dec  a
+        jr   nz,pd135
+        inc  l
+        inc  l
+        dec  b
+        jp   nz,mix_add_s9_lp
+        ret
+mix_add1_s0:
+mix_add1_s0_lp:
+        ld   a,(de)             ; sample
+        add  a,(hl)
+        jp   pe,ov136
+dn137:
+        ld   (hl),a
+        inc  l
+        exx
+        add  hl,de             ; frac += incFrac
+        exx                    ; flag-transparent: the carry survives
+        ld   a,e
+        adc  a,c               ; ptr += incInt + frac carry
+        ld   e,a
+        jr   nc,np138
+        inc  d
+np138:
+        djnz mix_add1_s0_lp
+        ret
+ov136:
+        jp   m,ov136_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn137
+ov136_hi:
+        ld   a,$7f
+        jp   dn137
+mix_add1_s1:
+mix_add1_s1_lp:
+        ld   a,(de)             ; sample
+        sra  a
+        add  a,(hl)
+        jp   pe,ov139
+dn140:
+        ld   (hl),a
         inc  l
         exx
         add  hl,de             ; frac += incFrac
@@ -1237,6 +1279,24 @@ pd140:
         jr   nc,np141
         inc  d
 np141:
+        djnz mix_add1_s1_lp
+        ret
+ov139:
+        jp   m,ov139_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn140
+ov139_hi:
+        ld   a,$7f
+        jp   dn140
+mix_add1_s2:
+mix_add1_s2_lp:
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov142
+dn143:
+        ld   (hl),a
         inc  l
         exx
         add  hl,de             ; frac += incFrac
@@ -1244,36 +1304,24 @@ np141:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np142
+        jr   nc,np144
         inc  d
-np142:
-        dec  b
-        jp   nz,mix_add_s8_lp
+np144:
+        djnz mix_add1_s2_lp
         ret
-mix_add_s9:
-mix_add_s9_lp:
-        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
-        dec  a
-        jr   nz,gt143            ; not this sample's turn to wait
-        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt143:
-        ex   af,af'            ; …and the mixer's A and flags come back
-        ld   a,(iy+0)          ; the ring: what an earlier frame finished
-        xor  $80               ; the ring is signed, the DAC is not
-        ld   (YM_DATA0),a      ; $2A, fed blind
-        inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,(G_PAD)         ; pace: what this frame can afford to hold to
-pd144:
-        dec  a
-        jr   nz,pd144
-        inc  l
-        inc  l
-        dec  b
-        jp   nz,mix_add_s9_lp
-        ret
-mix_add1_s0:
-mix_add1_s0_lp:
+ov142:
+        jp   m,ov142_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn143
+ov142_hi:
+        ld   a,$7f
+        jp   dn143
+mix_add1_s3:
+mix_add1_s3_lp:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
         add  a,(hl)
         jp   pe,ov145
 dn146:
@@ -1288,7 +1336,7 @@ dn146:
         jr   nc,np147
         inc  d
 np147:
-        djnz mix_add1_s0_lp
+        djnz mix_add1_s3_lp
         ret
 ov145:
         jp   m,ov145_hi        ; overflow inverts the sign, so a negative
@@ -1297,9 +1345,12 @@ ov145:
 ov145_hi:
         ld   a,$7f
         jp   dn146
-mix_add1_s1:
-mix_add1_s1_lp:
+mix_add1_s4:
+mix_add1_s4_lp:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
         sra  a
         add  a,(hl)
         jp   pe,ov148
@@ -1315,7 +1366,7 @@ dn149:
         jr   nc,np150
         inc  d
 np150:
-        djnz mix_add1_s1_lp
+        djnz mix_add1_s4_lp
         ret
 ov148:
         jp   m,ov148_hi        ; overflow inverts the sign, so a negative
@@ -1324,9 +1375,12 @@ ov148:
 ov148_hi:
         ld   a,$7f
         jp   dn149
-mix_add1_s2:
-mix_add1_s2_lp:
+mix_add1_s5:
+mix_add1_s5_lp:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
         sra  a
         sra  a
         add  a,(hl)
@@ -1343,7 +1397,7 @@ dn152:
         jr   nc,np153
         inc  d
 np153:
-        djnz mix_add1_s2_lp
+        djnz mix_add1_s5_lp
         ret
 ov151:
         jp   m,ov151_hi        ; overflow inverts the sign, so a negative
@@ -1352,9 +1406,12 @@ ov151:
 ov151_hi:
         ld   a,$7f
         jp   dn152
-mix_add1_s3:
-mix_add1_s3_lp:
+mix_add1_s6:
+mix_add1_s6_lp:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -1372,7 +1429,7 @@ dn155:
         jr   nc,np156
         inc  d
 np156:
-        djnz mix_add1_s3_lp
+        djnz mix_add1_s6_lp
         ret
 ov154:
         jp   m,ov154_hi        ; overflow inverts the sign, so a negative
@@ -1381,9 +1438,12 @@ ov154:
 ov154_hi:
         ld   a,$7f
         jp   dn155
-mix_add1_s4:
-mix_add1_s4_lp:
+mix_add1_s7:
+mix_add1_s7_lp:
         ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
         sra  a
         sra  a
         sra  a
@@ -1402,7 +1462,7 @@ dn158:
         jr   nc,np159
         inc  d
 np159:
-        djnz mix_add1_s4_lp
+        djnz mix_add1_s7_lp
         ret
 ov157:
         jp   m,ov157_hi        ; overflow inverts the sign, so a negative
@@ -1411,102 +1471,6 @@ ov157:
 ov157_hi:
         ld   a,$7f
         jp   dn158
-mix_add1_s5:
-mix_add1_s5_lp:
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        add  a,(hl)
-        jp   pe,ov160
-dn161:
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np162
-        inc  d
-np162:
-        djnz mix_add1_s5_lp
-        ret
-ov160:
-        jp   m,ov160_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn161
-ov160_hi:
-        ld   a,$7f
-        jp   dn161
-mix_add1_s6:
-mix_add1_s6_lp:
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        add  a,(hl)
-        jp   pe,ov163
-dn164:
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np165
-        inc  d
-np165:
-        djnz mix_add1_s6_lp
-        ret
-ov163:
-        jp   m,ov163_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn164
-ov163_hi:
-        ld   a,$7f
-        jp   dn164
-mix_add1_s7:
-mix_add1_s7_lp:
-        ld   a,(de)             ; sample
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        sra  a
-        add  a,(hl)
-        jp   pe,ov166
-dn167:
-        ld   (hl),a
-        inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
-        ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
-        ld   e,a
-        jr   nc,np168
-        inc  d
-np168:
-        djnz mix_add1_s7_lp
-        ret
-ov166:
-        jp   m,ov166_hi        ; overflow inverts the sign, so a negative
-        ld   a,$80             ; result means the true value was positive
-        jp   dn167
-ov166_hi:
-        ld   a,$7f
-        jp   dn167
 mix_add1_s8:
 mix_add1_s8_lp:
         inc  l
@@ -1516,9 +1480,9 @@ mix_add1_s8_lp:
         ld   a,e
         adc  a,c               ; ptr += incInt + frac carry
         ld   e,a
-        jr   nc,np169
+        jr   nc,np160
         inc  d
-np169:
+np160:
         djnz mix_add1_s8_lp
         ret
 mix_add1_s9:
@@ -1559,9 +1523,9 @@ feed_one:
         push hl                 ; HL is the slot cursor at most call sites
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt170            ; not this sample's turn to wait
+        jr   nz,gt161            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt170:
+gt161:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a

@@ -77,11 +77,22 @@ export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr"];
 // frame instead of three cycles below it — which reads as "the sample rate
 // cannot fit a frame even with zero work", and that is not true.
 export const FRAME_CYCLES = 59736;  // 896040 master clocks / 15
-// TWO, not three. A pass's iteration is PACE_PASSES ticks of ONE voice plus an
-// emit, and it must fit one sample period: P*(tick+PACE_WINDOW) + 134 <= 358.
-// A 16.16-resampling tick is 78 cycles, so P=2 costs 318 (ok) and P=3 costs 410
-// — 15% OVER, at every volume. Three variable voices never fitted the clock;
-// the value gates said 3ch because they compare mixers, not clocks (§5.1.3).
+// ONE. A pass's iteration is PACE_PASSES ticks of ONE voice plus an emit, and
+// it must fit a sample period: P*(tick+PACE_WINDOW) + 134 <= 358. With a
+// 16.16-resampling tick at 78 that is 226 for P=1, 318 for P=2 and 410 for P=3
+// — so three never fitted at any volume and two fitted only just.
+//
+// "Just" is not enough, and the reason is the GATE rather than the period. The
+// timer passes PCM_GROUP samples per overflow, so a group gets 3 x 358 = 1,075
+// cycles for its mixing AND for whatever out-of-loop work falls in it, and a
+// group that runs long is never made up (two of its three samples can be early,
+// the third waits for the timer regardless). Per group:
+//
+//     P=2   3 x 318 = 954   -> 121 cycles for everything else
+//     P=1   3 x 226 = 678   -> 397 cycles for everything else
+//
+// The frame's out-of-loop work is ~16k over ~55 groups, ~290 a group on
+// average and lumpy — which P=2 cannot absorb and P=1 can.
 export const PACE_PASSES = 2;       // voice passes per frame = the emit cadence
 // The Timer-B sample clock (driver.md §5.1.2): the gate is 16 FM samples =
 // 2304 YM clocks and GROUP samples come out per gate. The Z80 and the YM run
@@ -97,7 +108,22 @@ export const SAMPLE_CYCLES = Math.round((2304 / PCM_GROUP) * (7 / 15)); // 358
 // running 4% fast costs nothing: sample 1 of each group waits for Timer B
 // anyway. It is the one number here that is a judgement rather than a
 // measurement; `npm run dac:wav` is what re-judges it.
-export const PAD_TARGET = SAMPLE_CYCLES - 16;
+// What the pad holds an iteration to. NOT the sample period, and that is the
+// whole point: a Timer B group gets 3 x 358 = 1,075 cycles for the mixing AND
+// for the out-of-loop work that falls in it, and a group that runs long is
+// never made up. Padding each iteration to the full period spends every spare
+// cycle on even spacing and leaves the frame's ~290 cycles a group of segment
+// set-ups and chip writes with nowhere to go — measured, that is the whole
+// overrun. So the pad gets what is left after both:
+//
+//     1075 / PCM_GROUP  -  out-of-loop work per sample  =  ~260
+//
+// Below the sample period the group's samples bunch slightly and then wait at
+// the gate, which `npm run dac` measures as span and wander; above it the frame
+// loses its vblank, which is a hiccup and a lost frame of music. This is the
+// one number here that is a judgement rather than a measurement, and it is
+// re-judged with `npm run dac` and `npm run dac:wav`.
+export const PAD_TARGET = 260;
 // Under Timer B the pad's whole job is the interval between samples 2 and 3 of
 // a gate's group: the gate itself re-synchronises sample 1, so nothing the pad
 // does can accumulate and nothing outside the loop has to be charged against
@@ -114,6 +140,7 @@ export const PACE_WINDOW = 14;
 // later. Derived from the unroll now; anything past 4 needs a real multiply and
 // says so rather than emitting silently wrong code.
 export function mulByUnroll(u) {
+  if (u === 1) return "        ; x1 = ticks: the unroll is one, the count is already in ticks";
   if (u === 2) return "        add  a,a                ; x2 = ticks";
   if (u === 3) return "        add  a,a\n        add  a,l                ; x3 = ticks";
   if (u === 4) return "        add  a,a\n        add  a,a                ; x4 = ticks";
