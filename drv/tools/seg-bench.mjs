@@ -80,7 +80,14 @@ if (!scores.length) {
 }
 const FRAMES = opt("frames", DEFAULT_FRAMES(scores));
 
-const FRAME_CYCLES = 59659;
+// A NTSC Mega Drive frame is 262 lines x 3420 master clocks = 896,040, and the
+// Z80 runs at master/15 — so 59,736 Z80 cycles, not 59,659. 59,659 is
+// 3,579,545 / 60, i.e. a 60 Hz frame, while every comment beside it said
+// 59.92 Hz. The 77-cycle error is 0.13% and would not matter, except that it
+// put the DAC's own clock (166.67 samples x 358.4 = 59,733) just ABOVE the
+// frame instead of three cycles below it — which reads as "the sample rate
+// cannot fit a frame even with zero work", and that is not true.
+const FRAME_CYCLES = 59736;
 
 // Cycles inside a paced loop body are the work the frame is FOR, and the pad is
 // deliberate idle — neither is overhead however large it reads, because the

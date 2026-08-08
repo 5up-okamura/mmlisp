@@ -52,7 +52,7 @@ if (!scores.length) {
 const FRAMES = fIdx >= 0 ? Number(argv[fIdx + 1])
   : (scores.some((f) => f.endsWith(".mmb")) ? 4000 : 240);
 
-const FRAME_CYCLES = 59659;      // Z80 at 3.579545 MHz, 59.92 Hz
+const FRAME_CYCLES = 59736;      // 262 lines x 3420 master clocks / 15
 // A frame's writes must cover at least this much of it. The burst this gate
 // exists to catch covers 0.12. Loose on purpose: WANDER below is the real bar,
 // and it already sees a feed that finishes early — this one is here so a

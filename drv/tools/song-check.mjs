@@ -107,7 +107,7 @@ try {
   // Cycles the ENGINE spends per frame. The Z80 keeps the clock by taking one
   // vblank interrupt per frame, so work that overruns the frame is work that
   // makes it miss the next interrupt — which is what an uneven tempo is.
-  const FRAME_CYCLES = 59659;   // Z80 at 3.58 MHz, 60 Hz
+  const FRAME_CYCLES = 59736;   // Z80 at master/15, a 59.92 Hz frame
   const perFrame = [];
   let posted = 0;
   for (let f = 0; f < slots.length; f++) {

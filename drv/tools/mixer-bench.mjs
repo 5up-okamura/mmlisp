@@ -21,7 +21,7 @@ import { assemble } from "./z80asm.mjs";
 import { generateBenchImage, VARIANTS } from "./gen-mixer.mjs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
-const FRAME_CYCLES = 59659; // 3.579545 MHz / 60
+const FRAME_CYCLES = 59736; // 896040 master clocks / 15 — a 59.92 Hz frame
 const RAM_SIZE = 0x2000;
 const WINDOW = 0x8000;
 const PCM_V_SIZE = 8;

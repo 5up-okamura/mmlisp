@@ -60,7 +60,7 @@ const BASELINE = opt("baseline", "HEAD");
 let scores = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWith("--"));
 
 const Z80HZ = 3579545, SR = 44100;
-const FRAME_CYCLES = 59659;            // one 59.92 Hz frame of Z80 (gen-mixer)
+const FRAME_CYCLES = 59736;            // one 59.92 Hz frame of Z80 (gen-mixer)
 // The sample clock (driver.md §5.1.2): Timer B gates every 16 FM samples —
 // 2304 YM clocks — and the engine emits GROUP samples per gate.
 const GROUP = 3;

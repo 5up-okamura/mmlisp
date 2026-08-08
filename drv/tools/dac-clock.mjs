@@ -48,7 +48,7 @@ const FRAMES = fIdx >= 0 ? Number(argv[fIdx + 1]) : 240;
 const NOSTALL = argv.includes("--no-stall");
 const scores = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWith("--"));
 
-const FRAME_CYCLES = 59659, Z80HZ = 3579545, SR = 44100, FRAME_HZ = 59.92;
+const FRAME_CYCLES = 59736, Z80HZ = 3579545, SR = 44100, FRAME_HZ = 59.92;
 
 // The tone case, synthesised here so it needs nothing checked in: 16 whole
 // cycles in 256 samples, so the loop is seamless and any sideband in the output

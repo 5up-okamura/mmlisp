@@ -69,7 +69,14 @@ export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr"];
 // which is the same bug in smaller print. Each loop copy is specialised on
 // (role, shift), so its per-tick cost is a constant the generator can compute —
 // and the pad it needs is therefore a baked immediate, not a runtime lookup.
-export const FRAME_CYCLES = 59659;  // Z80 at 3.579545 MHz, one 59.92 Hz frame
+// A NTSC Mega Drive frame is 262 lines x 3420 master clocks = 896,040, and the
+// Z80 runs at master/15 — so 59,736 Z80 cycles, not 59,659. 59,659 is
+// 3,579,545 / 60, i.e. a 60 Hz frame, while every comment beside it said
+// 59.92 Hz. The 77-cycle error is 0.13% and would not matter, except that it
+// put the DAC's own clock (166.67 samples x 358.4 = 59,733) just ABOVE the
+// frame instead of three cycles below it — which reads as "the sample rate
+// cannot fit a frame even with zero work", and that is not true.
+export const FRAME_CYCLES = 59736;  // 896040 master clocks / 15
 // TWO, not three. A pass's iteration is PACE_PASSES ticks of ONE voice plus an
 // emit, and it must fit one sample period: P*(tick+PACE_WINDOW) + 134 <= 358.
 // A 16.16-resampling tick is 78 cycles, so P=2 costs 318 (ok) and P=3 costs 410
