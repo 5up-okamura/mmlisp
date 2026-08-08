@@ -2678,3 +2678,219 @@ What the model needed:
 > looks pinned by the catch-up saturating rather than by the work, so trust the
 > "cost per music frame" line and treat the ratio as calibrated on one song
 > until a second ground truth exists. Get `music x256` for a LIGHT score.
+
+### 2026-08-08 — the port-1 emit bug was the FEED CURSOR's ordering, not a bank
+
+`ld iy,(G_RD)` lived inside `process_pcm`, which runs AFTER `consume_slot` —
+so at the frame head IY held only whatever the previous frame's `ld (G_RD),iy`
+had left in it. The port-0 write loop's emit got away with that by luck; a
+SECOND emit site walked IY far enough off that the mixer's own reads came back
+wrong, which is why it presented as "a wrong ROM bank from a routine that
+touches neither $6000 nor anything the bank depends on". Moved to `frame_step`,
+before `consume_slot`. The port-1 emit then just works. ab-gate's clean scores
+17 -> 19; `cr_p0`, `cr_fm0` and `pp_pass_done` all left the biggest-hole list.
+
+**A voice change stops being a click** — that was a ~30-register patch dump
+running with no emit in it.
+
+**THE FRAME'S ARITHMETIC, settled:**
+
+    clock floor (167 x 358.4)  59,853
+    + dead time                 +8,695
+    = 68,548   vs measured 67,881, vs the vblank's 59,659
+
+So **frame = floor + dead time**, and cutting dead time IS cutting tempo — the
+earlier note that holes buy "smoothness, not tempo" was wrong. What is true is
+that the holes closed so far were RARE (specific frames); the steady 8,695 is
+what moves the number.
+
+**Where the steady dead time is**, measured by splitting the interval between
+consecutive $2A writes:
+
+    loop's own emits  n=165,567  mean 267 cyc   (period 358 — 91 UNDER)
+    the GATING emit   n= 82,779  mean 401 cyc   (43 OVER)
+
+One in PCM_GROUP emits is the slow one and it is `gate_wait`: the poll, the
+$27 flag reset and the $2A re-latch. 56 x 43 = ~2,400 of the 8,695. Precomputing
+`G_R27 | $20` (G_R27G) took 7 of those cycles and moved the frame 68,045 ->
+67,881 — the first prediction today that matched its measurement.
+
+**Still on the table in gate_wait:** feed_one re-latches $2A immediately after
+`call gate_wait`, which already re-latched it — 20 cycles duplicated on the
+gate path. Restructuring costs a `jr`, so net ~8; measure before believing it.
+
+**The rest of the 8,695 is not yet located.** `mvf_idle_seg` shows at 11-22
+periods on scattered frames. Do not guess at it — the interval split above is
+the instrument that works.
+
+### 2026-08-08 — the remaining 14%, located precisely
+
+`seg-bench` now buckets dead time by HOLE SIZE and names the label that opens
+each hole. Their song, 1500 frames:
+
+    358.. 500   2414 cyc  33.8 holes/frame  28%   the GATING emit (43 over each)
+    500.. 800    872       3.1              10%
+    800..1500   2981       5.3              34%   <- the target
+    1500..4000  1220       0.8              14%
+
+The 800-1500 band opens at the SEGMENT SET-UP, which Stage D's emit points at
+the segment BOUNDS do not cover:
+
+    mix_add1_s9_lp 689   mix_seg 621   mvf_idle_seg 573
+    mvf_n 472            mix_first1_s0_lp 439   msb_s 375     = 3,169 cyc/frame
+
+Each hole is ~1,120 cycles = 3 sample periods, so each wants two or three
+emits, not one. **NOT attempted, and the reason matters:** `mix_seg`'s entry has
+A (the store flag) and L (the buffer index) LIVE, and `feed_one` clobbers A, HL,
+IY and the flags. A naive `call feed_one` there corrupts the mix. Doing it needs
+either a save/restore whose cost has to be weighed against the ~358 cycles each
+emit recovers, or an emit variant that preserves A and HL.
+
+Order of value, measured:
+1. 5.3 segment-set-up holes  ~3,000 cyc  (needs the register problem solved)
+2. the gating emit           ~2,400 cyc  (43 over x 56; $2A is re-latched
+                                          twice on the gate path, worth ~8 net)
+3. the 1500-4000 band        ~1,200 cyc  (0.8 a frame — find them first)
+
+`budget:frame` reproduces the machine, so any of these can be checked before
+believing it. That is the thing that was missing all day.
+
+### 2026-08-08 — ATTEMPTED and REVERTED: an emit in mix_seg's set-up
+
+Tried the #1 item above — `call feed_one` immediately after `ld (G_SEG_I),a` in
+`mix_seg` (gen-mixer.mjs). **The register worry was unfounded** and worth
+recording: the two stores at mix_seg's entry have just spilled A and L (which is
+what its own comment means by "the last moment HL and DE are free"), and
+feed_one touches A, HL (saved), IY and the flags — never B, IX or DE. So the
+placement is register-safe.
+
+**It broke the sample ACCOUNTING**: 5 of 12 engine scenarios failed with one
+EXTRA sample in the stream (`got 128,186,128…` against `want 128,128,128…`,
+everything after shifted by one). Reverted; the branch is green.
+
+Ruled out while looking:
+- not re-entry — `mix_seg` is called once per segment (engine.z80:1508) and
+  `ms_call_unrolled` is INSIDE it, not a second entry;
+- the obvious balance holds on paper: feed_one charges G_EMITS, the split then
+  caps `G_SEG_N` by G_EMITS and charges it too, single-tick copies do not emit.
+
+**CAUSE FOUND on the second attempt, and it is a rule already written down:**
+
+> `feed_one` goes BEFORE `mvf_ringcap`, never after. The bound is measured from
+> IY, and an emit advances IY.
+
+`mix_seg` runs AFTER `mvf_ringcap` has computed the segment's bound, so an emit
+in its set-up walks IY past what the bound reserved and the segment overruns the
+ring's top. The symptom fits exactly: the emit COUNT is unchanged (166.3 a frame
+with and without) and a single VALUE is wrong — slot-gate, m2-pcmloop,
+DAC[4097] frame 25: engine 186, reference 218. It was never an accounting bug;
+the "extra sample" in engine-gate was the same overrun seen from the model side.
+
+**So the hole cannot be closed by an emit where it is.** The set-up sits between
+the bound and the loop by construction. The options, none tried:
+
+1. RESERVE a sample in `mvf_ringcap` — compute the bound from (distance - 1) so
+   the set-up's emit is already paid for. One `dec` per segment; the awkward
+   part is distance 0, which currently takes the forced-progress path.
+2. Move the set-up ABOVE `mvf_ringcap` — the split, the bind and the register
+   load do not depend on the bound, only the ITERATION COUNT does. Bigger
+   change, and it removes the hole rather than filling it.
+3. Leave it and take the other two bands first (the gating emit, the 1500-4000
+   holes), which do not have this constraint.
+
+**Option 1 was BUILT and MEASURED, then reverted — it is net negative as one
+emit, and the arithmetic says three would win.** `mvf_ringcap` reserving a
+sample (`or a / jr z / dec a` before the x2) and a `call feed_one` after
+`ld (G_SEG_I),a` GATES CLEAN — verify:all exit 0, engine 12/12, slot-gate
+sample-for-sample. The mechanism is sound. But:
+
+    800..1500   5.3 holes -> 3.2   (-1,149 cyc)
+    500.. 800   3.1 holes -> 7.4   (+1,016 cyc)
+    dead time   8,695 -> 8,684 (-11)      frame 67,881 -> 67,954 (+73)
+
+**One emit only SPLITS a hole, it does not close it.** A 1,120-cycle hole
+halved is two 560s, and 560 is still over the 358-cycle period, so the dead time
+is conserved while the emit's own ~70 cycles are added. The frame got worse.
+
+The arithmetic for doing it properly, which is why this is worth returning to:
+a 1,120-cycle hole needs THREE emits to land four ~280-cycle stretches, all
+under the period — that removes 762 cyc per hole x 5.3 = **~4,000 cycles a
+frame**, against 2 extra emits x 5.3 x ~70 = ~740. **Net ~+3,300, half the
+overrun.** Each emit needs its own reserved sample in the bound and a
+register-safe site inside the set-up; only one such site (after
+`ld (G_SEG_I),a`) has been found so far. Finding two more is the task.
+
+> The general rule this taught: an emit point pays only if it leaves EVERY
+> resulting stretch under one sample period. Splitting a hole in two buys
+> nothing and costs the emit. Size the hole first, then decide how many.
+
+**A SECOND emit was then added (after ms_load's register-file load, with
+PCM_SETUP_EMITS = 2 reserved in the bound). It gated clean and changed NOTHING:**
+
+    baseline    67,881 cyc/frame
+    +1 emit     67,954  (+73)
+    +2 emits    68,119  (+238)     dead-time distribution IDENTICAL to +1
+
+The hole distribution did not move at all between one emit and two, so the
+second landed outside any hole: after the first emit, the split and the register
+load are only ~200-300 cycles, already under a period. The prediction of "three
+emits per hole" was wrong about WHERE the rest of the hole is.
+
+**The 3.2 remaining 800..1500 holes open at `mvf_n`, which is the LIVE path —
+`mix_seg_live`, the SOUNDING pass.** `mix_seg` (instrumented above) is the IDLE
+path only. That is the next site if this line is resumed.
+
+> **Three attempts at this band, all net negative.** Every emit costs ~70
+> cycles and only pays where the DAC is actually holding. `seg-bench`'s
+> band-by-label line is what says where that is — read it BEFORE choosing a
+> site, not after. All three of these were chosen from the per-label ranking,
+> which sums holes of every size and pointed at the wrong path.
+
+Also gate on the BENCH build: `generateMixerCore` is called with `paced: false`
+by mixer-bench.mjs, where `feed_one` does not exist — guard any new call site
+with `${paced ? … : ""}` or `npm run mixer` fails to assemble.
+
+### 2026-08-08 — WHY the emit points do nothing: the frame is invariant to them
+
+Four experiments, one conclusion.
+
+    baseline                        67,884 cyc/frame
+    + 1 emit in mix_seg's set-up    67,954
+    + 2 emits                       68,119
+    - the two write-loop emits      67,884   (unchanged)
+
+**The frame does not move when emits are added OR removed.** `G_EMITS` fixes a
+frame's emit TOTAL at `chunk`, so an emit at a boundary only stops a loop
+emitting later: pure redistribution. Every "close the holes" plan — mine and
+Stage D's remaining list — is zero-sum on the frame's length. It buys DAC
+SMOOTHNESS, which is real (it is what killed the voice-change clicks), and
+nothing else.
+
+**Where the overrun is, by elimination:**
+
+    the timer's floor        59,630   (166.6 samples x 358.4 — 99.8% of a frame)
+    work after the last emit  1,587   (2.7%, measured — NOT the problem)
+    the frame                67,884
+    => ~6,700 is the last emit itself arriving LATE
+
+**And lateness is permanent.** The gate passes PCM_GROUP samples per Timer B
+overflow — 3 per 1,075 cycles. Two of the three can be emitted as fast as the
+code likes; the third waits for the timer whatever happens. So a group that
+runs long is never made up, and a group with slack cannot give it away.
+
+    work per group   51,421 / 55.5 = 926 cyc      available 1,075
+
+**It fits ON AVERAGE and fails UNEVENLY.** The blocks of out-of-loop work — the
+segment set-ups, the slot's chip writes, pcm_pad, the frame head — push
+individual groups past 1,075, and only the excess accumulates.
+
+So the two routes that can actually work:
+
+1. **Even out the work per group.** Not emit points — the WORK has to be broken
+   up and interleaved with the mixing so no group exceeds 1,075. Deep.
+2. **Less total work**, which lowers every group at once. The user's own
+   BAKED-voice idea does exactly this: no 16.16 advance is ~40 cycles a tick
+   instead of 78, so a 1-voice frame drops ~6,300 cycles and every group gains
+   ~115 of margin. It needs no hole filled at all.
+
+> Do not add emit points to fix TEMPO again. Four measurements say they cannot.
