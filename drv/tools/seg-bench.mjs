@@ -220,6 +220,20 @@ try {
     // is the loop. Tagged from the $27 bit-5 write itself, not inferred.
     const gapsGate = [], gapsLoop = [];
     let gateArmed = false;
+    // Cycles per TIMER B GROUP. A group is PCM_GROUP samples and the timer
+    // gives it PCM_GROUP x SAMPLE_CYCLES cycles for the mixing AND for whatever
+    // out-of-loop work falls inside it. Two of its samples can be emitted
+    // early; the third waits for the overflow regardless — so a group that runs
+    // long is never made up and a group with slack cannot give it away. The sum
+    // of the EXCESSES is therefore the frame's overrun, and this is the only
+    // view that shows it: per-frame averages say the work fits.
+    const groups = [];
+    let groupCyc = 0, groupN = 0;
+    // What is IN the groups that blow the budget. Only ~11% of groups do, and
+    // they carry the whole overrun, so a frame-wide or even a hole-wide ranking
+    // averages them away — this is the only view that names them.
+    const heavy = new Float64Array(marks.length);
+    let groupLbl = [];
     const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
     let fcyc = 0, fed = 0, enableB = false;
     // YM2612 BUSY: 32 internal cycles after a DATA write (Nuked-OPN2's
@@ -251,6 +265,12 @@ try {
           if (sinceEmit >= 0) {
             gaps.push(sinceEmit);
             (gateArmed ? gapsGate : gapsLoop).push(sinceEmit);
+          }
+          if (++groupN === 3) {
+            groups.push(groupCyc);
+            if (groupCyc > SAMPLE_CYCLES * 3)
+              for (const [bb, cc] of groupLbl) heavy[bb] += cc;
+            groupCyc = 0; groupN = 0; groupLbl.length = 0;
           }
           gateArmed = false;
           sinceEmit = 0;   // between emits now
@@ -327,7 +347,8 @@ try {
           if (fcost) fcost[b] += c;
           if (b !== prev) { hits[b]++; prev = b; }
         }
-        cyc += c; fcyc += c; tcyc += c;
+        cyc += c; fcyc += c; tcyc += c; groupCyc += c;
+        if (b !== 0xffff) groupLbl.push([b, c]);
         if (b !== 0xffff) frameTail.push([b, c]);   // trimmed at each emit
       }
       if (fcost) {
@@ -425,6 +446,24 @@ try {
       : `fits the vblank, ${(-gap).toFixed(0)} cyc spare`}`);
     // The work list Stage D actually needs, ranked by dead time rather than by
     // cost. `npm run dac`'s in-frame hold is the number this moves.
+    if (groups.length) {
+      const GROUP_CY = SAMPLE_CYCLES * 3;
+      const g = [...groups].sort((a, b) => a - b);
+      const q = (f) => g[Math.floor((g.length - 1) * f)];
+      const over = groups.reduce((t, v) => t + Math.max(0, v - GROUP_CY), 0);
+      const nOver = groups.filter((v) => v > GROUP_CY).length;
+      console.log(`  PER TIMER B GROUP (budget ${GROUP_CY} cyc, ${(groups.length / frames).toFixed(1)} a frame):`);
+      console.log(`    p10 ${q(0.1)} · p50 ${q(0.5)} · p90 ${q(0.9)} · max ${q(1)} cyc`
+        + ` · mean ${(groups.reduce((t, v) => t + v, 0) / groups.length).toFixed(0)}`);
+      console.log(`    OVER budget: ${(100 * nOver / groups.length).toFixed(0)}% of groups,`
+        + ` and their excess totals ${(over / frames).toFixed(0)} cyc/frame`
+        + ` — this is the overrun, and nothing else can be`);
+      const hr = [...heavy.keys()].filter((i) => heavy[i] > 0)
+        .sort((a, b) => heavy[b] - heavy[a]).slice(0, 10);
+      console.log(`    what is IN the over-budget groups:`);
+      for (const i of hr)
+        console.log(`      ${bucketName[i].padEnd(20)}${(heavy[i] / frames).toFixed(0).padStart(6)} cyc/frame`);
+    }
     if (gaps.length) {
       const g = [...gaps].sort((a, b) => a - b);
       const q = (f) => g[Math.floor((g.length - 1) * f)];

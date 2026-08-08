@@ -536,7 +536,23 @@ ${gatePrologue().join("\n")}
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
         inc  iy
-        call feed_wrap          ; no segment bound protects THIS one
+        ; feed_wrap, INLINE. It is 47 cycles of body behind a 27-cycle call, and
+        ; the out-of-line emit already costs over twice what the loops' inline
+        ; one does — measured, the emit machinery (this, gate_wait and the gate
+        ; prologue) is more than a third of what is inside the ~11% of Timer B
+        ; groups that overrun, and those groups ARE the frame's overrun.
+        ;
+        ; The wrap itself stays: no segment bound protects this emit, unlike the
+        ; loops', so the cursor really can reach the top here. It fires once per
+        ; RING_TOP-RING_BUF samples; the rest of the time this is four
+        ; instructions asking.
+        push iy
+        pop  hl
+        ld   a,h
+        cp   RING_TOP>>8
+        jr   nz,fo_nowrap
+        ld   iy,RING_BUF
+fo_nowrap:
         pop  hl
         ret`);
   } else if (wide) {
