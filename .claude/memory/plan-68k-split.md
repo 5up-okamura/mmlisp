@@ -2894,3 +2894,81 @@ So the two routes that can actually work:
    ~115 of margin. It needs no hole filled at all.
 
 > Do not add emit points to fix TEMPO again. Four measurements say they cannot.
+
+## HANDOFF — 2026-08-09, branch `drv/timer-b` (12 commits, verify:all green)
+
+**Where it stands.** The driver plays on real hardware. It did not at the start
+of the last session — it emitted one note and hung.
+
+    hardware   music x256 0x00BB (73%) · lost/s 16 · starv/s 0 · no clicks
+    model      one frame of music 65,593 cyc = 110% of a vblank (was 123-127%)
+    image      7,282 B, 532 B free below the header
+
+`backup-timer-b-16commits` holds the pre-squash history if anything is missing.
+
+### The one thing to read first
+
+`npm run budget:frame <song.mmb>` **reproduces the machine**: it prints
+`music x256` and `lost/s` and both match the hardware readout on two separate
+runs. Anything you change can be checked before you believe it. That did not
+exist a session ago and three tools disagreed by 22 points; getting it was worth
+more than any of the code changes.
+
+Its companion is `node tools/seg-bench.mjs <song.mmb> --top 0`, which prints, in
+order of usefulness:
+
+1. **PER TIMER B GROUP** — the distribution and the total excess. This is the
+   overrun and nothing else is.
+2. **what is IN the over-budget groups, by kind** — the work list.
+3. the measured interval between $2A writes, split into the loop's own emits
+   and the gating one.
+4. dead time by hole size, and the label that opens each hole.
+
+### The target, measured
+
+    per group: budget 1,074 · mean 897 · only 10% exceed it
+    their excess: 7,415 cyc/frame  == the frame's overrun
+
+    inside those groups:   segment set-up 4,235   mix bodies 2,132
+                           PCM commands   1,715   gate+emit  1,447
+                           frame's head     816   slot consume 466
+
+**SEGMENT SET-UP is the target — 4,235.** Chip writes are not (816). The lever
+is FEWER SEGMENTS, not cheaper ones: ~6 a frame at ~700 cycles of set-up each.
+Four things split a segment — the plan's breaks (loop/end points, musical), the
+ROM window top (hardware), **the ring's 256-byte page edge**, and **the feed's
+distance to the ring top**. The last two are artefacts of holding a 512-byte
+ring in 256-byte-page addressing, not of the music. `mvf_rc_feed` (364) and
+`feed_wrap` sit exactly there. Changing the ring's shape is a design question,
+not a patch — that is where the last session stopped.
+
+### Rules this cost real time to learn
+
+- **"Fewer instructions" and "less time" are different things.** Inside a
+  timer-paced stretch, removing work only lengthens the wait. Four experiments
+  adding and removing emit points left the frame at the SAME cycle; PAD_TARGET
+  swept 180..290 is flat. Only work that pushes a GROUP past 1,074 costs time.
+- **An emit point pays only if every resulting stretch is under one sample
+  period.** Splitting a 1,120-cycle hole in two buys nothing and costs the emit.
+- **`feed_one` must precede `mvf_ringcap`**, because the segment bound is
+  measured from IY and an emit advances it. `mix_seg` runs after the bound, so
+  an emit there needs a sample reserved in the bound (built, gated clean,
+  measured net-negative, reverted).
+- **Model peripherals from the chip, not from docs/driver.md.** The Enable B
+  hang and the unmodelled BUSY both came from harnesses written off our own
+  design document. `third_party/Nuked-OPN2/ym3438.c` is checked in.
+- **Judge anything time-based on a MONOTONIC counter.** A per-frame counter
+  made BUSY read as 13,800 cycles a call — an invented hardware cost.
+- Do not commit per experiment. Six docs(memory) commits were squashed into one.
+
+### Not taken, with numbers
+
+- **PACE_PASSES = 1** (one variable PCM voice): 64,671 cyc, **108%**, DAC hold
+  2.6/5.4 periods — better than the shipped 2-voice build on both counts. Costs
+  `pcm2` in the language and touches five test scores. Set `PACE_PASSES = 1` in
+  gen-mixer plus PCM_VOICES / SLOT_SUBS / MML_PCM_VOICES / slot-builder /
+  drv-player, and mvf_ringcap's x2 becomes x1 (build-engine asserts it).
+- Voice kinds (variable vs fixed per channel): the arithmetic is in the
+  2026-08-08 entry — variable needs P<=2, fixed allows P<=4, and per-channel U
+  is feasible when sum(1/U_i) = 1. **The user has asked not to be offered this
+  again; do not raise it unprompted.**
