@@ -2972,3 +2972,320 @@ not a patch — that is where the last session stopped.
   2026-08-08 entry — variable needs P<=2, fixed allows P<=4, and per-channel U
   is feasible when sum(1/U_i) = 1. **The user has asked not to be offered this
   again; do not raise it unprompted.**
+
+## 2026-08-09 — INVESTIGATION ONLY. Timer B's WINDOW is the thing that is wrong.
+
+Nothing shipped this session. The engine, the format and the language are
+untouched; only `drv/tools/` moved. What follows is what was measured, and it
+changes where the work goes.
+
+**The song under test is `res/song.mmb` — ONE PCM voice, pitched.** That is the
+cheapest configuration there is, and it runs at 110%. Two and three voices were
+never the question.
+
+### The finding, in one line
+
+> Timer B converts a TOTAL budget into a PER-GROUP one. The frame's whole work
+> is 49,708 cyc = **83% of a vblank** — nothing here is too slow. What fails is
+> that a group of 3 samples is too small a window to average over.
+
+Inside a group only the first sample waits; the rest run at code speed, so the
+loop banks (period − iteration) a sample and that is the entire budget for
+catching up after an out-of-loop block:
+
+    recoverable lump = PCM_GROUP x (period − iteration cost)
+                     = 3 x 87..98  =  261..295
+
+Measured out-of-loop lumps are **819..1053**. That is the whole 110%.
+
+**And PCM_GROUP = 3 was never a design decision.** engine.z80 says it: `TB = 255`
+is the timer's SHORTEST period, and 3 samples per overflow fell out of it. The
+window is free — TB = 256−k gives PCM_GROUP = 3k at the SAME sample rate.
+
+### The window sweep, frame-accurate
+
+`seg-bench` now replays the recorded per-emit costs on frame-budget's wall clock
+(the Z80 sleeps to the vblank, the ISR emits `chunk`, Timer B free-runs). N=3
+flat IS the shipping engine, so it calibrates everything: it reads 64,421 where
+`budget:frame` measures 65,593 — **every row is ~2 points optimistic.**
+
+    PCM_GROUP  3 flat   64,421 (108%)   holes >=2p 21.7  >=4p  1.8   <- shipping
+    PCM_GROUP 12 flat   59,790 (100%)              13.7      10.0
+    PCM_GROUP 24 flat   55,451 ( 93%)               8.2       5.0
+    PCM_GROUP 48 flat   50,022 ( 84%)               5.7       3.0
+    PCM_GROUP 12 aimed  60,877 (102%)               4.6       1.8
+    PCM_GROUP 24 aimed  57,375 ( 96%)               4.5       1.8
+    PCM_GROUP 32 aimed  55,462 ( 93%)               4.7       1.8
+    PCM_GROUP 48 aimed  52,068 ( 87%)               4.5       1.8
+
+- **Widening alone (flat) fixes tempo and WRECKS the spacing**: the slack the
+  loop banks lands as one hold at the group's end, 4p holes 1.8 -> 10.0. That is
+  a regular artefact at 9987/N Hz.
+- **An AIMED pad** — hold sample i to groupStart + i x period instead of to a
+  constant — pins 4p holes at the shipping 1.8 at every window, and *improves*
+  2p holes 21.7 -> 4.5. It costs 2-3 points of tempo, which is the slack being
+  spent on spacing instead of on absorbing blocks.
+- The two are a SET. Either alone is worse than useless.
+
+**Not modelled: the aimed pad's own cost.** A debt counter is ~15-25 cyc/sample
+= 2,500-4,200 cyc/frame, against ~1,200 of margin at N=24 and ~6,700 at N=48.
+That is what points at **N=48 + aimed** (TB=240, 36,864 YM clocks/overflow), and
+it is the next thing to build and measure. Note this debt is the mechanism
+Timer B *deleted*; the difference is that a 48-sample window can repay it.
+
+### Method notes that cost time
+
+- **`Σ max(0, group − budget)` OVERSTATES the frame's overrun by ~55%** (7,372
+  against 4,766 frame-accurate). A group that finishes early while the engine is
+  ALREADY late runs straight through and recovers — "a group with slack cannot
+  give it away" holds only when the engine is on time. Judge on the wall clock.
+- **The engine only runs inside the ISR.** A simulation that replays the emit
+  stream continuously reports ZERO lateness for an engine the machine measures
+  at 110%, because it lets a frame borrow from the next one.
+- Both deadlines are ABSOLUTE (`j x period`). Targeting a group's actual start
+  compounds a late start and the run diverges — 25M cyc/frame of nonsense.
+- Counterfactuals per KIND ("if this alone cost nothing") do NOT add: each is
+  measured with the others present, so a group can only ever return its own
+  excess. Only the joint one is a ceiling.
+
+### What the counterfactuals said before the window idea
+
+Breaking the blocks up — the road this branch was on — **does not close it.**
+
+    ALL out-of-loop work removed          leaves    1 of excess (P=2) /   9 (P=1)
+    …minus the pass's entry+exit          leaves 1256              /  823
+      => ~101-102%, against a budget of 81 cyc/frame of lateness
+
+The vblank has **81 cycles** left once the DAC's own clock (166.674 x 358.4 =
+59,655) is paid. That is the entire margin, and it is why nothing else fits.
+
+### Segment splits, by the bound that caused them (new in seg-bench)
+
+Every path bounds B then calls `mvf_ringcap`, so a call there is one segment; B
+at entry / `mvf_rc_feed` / `mvf_rc_done` names the bound that ended it.
+
+    the ring's page edge      1.29 a frame   926 cyc/frame   819 each
+    the feed's ring top       0.33           239             727
+    the plan's break          0.05            52             990
+    the ROM window top        0               —
+    (ran to the pass end)     2.00          1882            1053
+    (the pass's own entry)                  1132
+
+**1.62 of the 1.7 splits a frame are the ring's SHAPE, not the music.** Two
+counts validate the attribution against arithmetic: 1.29 = 333 ticks / 256, and
+0.33 = 166.6 samples / 512. Reshaping the ring (256 B in one 256-aligned page,
+so `inc l` wraps for free) returns a measured **1,052 cyc/frame**. Real, and
+much smaller than the window.
+
+### Voice kinds — the fit criterion, corrected
+
+The bar is **`PAD_TARGET` (260), not the sample period**, and the generator's own
+test is `padFor()`. One iteration is `U x (tick + 14) + 87`, so per-pass cadence
+(`sum(1/U_i) = 1`, rational U allowed) is feasible **iff `Σ(tick_i + 14) <= 173`**.
+
+    VARIABLE first 61   VARIABLE add 78      (shift 0; +8 per 6 dB of attenuation)
+    FIXED    first 24   FIXED    add 41      (pre-resampled AND volume baked)
+
+    可変1        75 OK      固定3        148 OK      可変1+固定2  185 NO
+    固定2        93 OK      可変2        167 OK      固定4        203 NO
+    可変1+固定1 130 OK                                可変3        259 NO
+
+- **The shipped 2-variable build is already 11 cycles past the bar at FULL
+  volume** (add iter 271 vs 260) — consistent with the 110%.
+- 可変2 and 固定3 need per-pass emit cadence, which is uniform today.
+- A LUT for volume is a LOSS: no free 16-bit pointer exists in the tick body
+  (A/A'/DE/HL/HL'/DE'/C/B/IY all live), so the cheapest lookup is `ld ixl,a` +
+  `ld a,(ix+0)` = **27 cycles flat**, against `sra a` = 8 x shift. It only wins
+  below −24 dB and costs 27 where shift 0 costs nothing. Runtime volume at zero
+  per-tick cost is a ROM problem — pre-attenuated copies selected by a pointer
+  offset — not a Z80 one. (`add a,a` is 4 and `sra a` is 8: amplifying is half
+  the price of attenuating.)
+- **Playback position costs nothing.** `pcm_compose_start` already sends an
+  absolute `{bank, window addr}` (`abs = sample_rom_base + v->base`), so an
+  offset is 68k arithmetic and the Z80's 18-byte command is unchanged.
+
+### PACE_PASSES = 1, re-measured — and a cost the handoff did not record
+
+64,546 cyc = **108%**, reproducing the recorded number exactly. But it forces
+`SLOT_SUBS` to 1, because sub-slots ride voice-pass boundaries and one pass has
+no interior one. `docs/driver.md` §3.5: onset error goes back from 8.35 ms to
+**16.7 ms**, for every score, PCM or not. That is on top of losing pcm2/pcm3.
+Reverted; the tree is 2-voice.
+
+### A harness bug found and fixed on the way
+
+`slot-gate` timed the host's post at a fraction of frame 0's INSTRUCTION COUNT.
+At `SLOT_SUBS = 1` a frame with no PCM is **81 instructions** against a threshold
+of 317, so the host never posted again — 120 starved frames the hardware would
+not have had. It is on Z80 CYCLES now. The 68000 renders from its own vblank
+loop and does not care whether the Z80 is still running.
+
+### 2026-08-09 (later) — LANDED: the window is 24 samples, and the song fits
+
+    before   65,593 cyc (110%) · music x256 00bc (74%) · lost 16/s · hold 3.6/5.1
+    after    58,731 cyc ( 98%) · music x256 00fe (99%) · lost  0/s · hold 7.4/8.3
+    image    7,282 B, 564 B free below the header · verify:all exit 0
+
+**`TIMER_B_K` is the one knob** (`gen-mixer.mjs`): k = 256 − TB buys 2304k YM
+clocks a gate and 3k samples out of it, at the SAME sample rate. k = 8, so
+PCM_GROUP = 24 and the engine writes TB = 248 to `$26`. Everything that models
+the timer now imports `GATE_CY` from the generator instead of re-deriving 2304 —
+that constant had SEVEN copies, which is what made every previous change to it a
+bug hunt. `PCM_TB` is generated into mixer.z80 so the engine's own `$26` byte
+cannot drift from the harnesses'.
+
+The measured trade, on `budget:frame` + `npm run dac`, sweeping k alone:
+
+    k= 1 (GROUP  3)   74% · lost 16/s · 110% · hold  3.6      <- was shipping
+    k= 2 (GROUP  6)   74% · lost 16/s · 106% · hold  4.4
+    k= 4 (GROUP 12)   82% · lost 11/s · 101% · hold  8.4
+    k= 8 (GROUP 24)  100% · lost  0/s ·  97% · hold 16.4      <- the knee
+    k=16 (GROUP 48)  100% · lost  0/s ·  95% · hold 29.7
+
+**Widening alone doubles the DAC's hold, and the cause was NOT the pad's bank
+rate** — at k=8 the hold sat at 16.4 for every `PAD_TARGET` from 260 to 340.
+It was `pcm_pad`'s shortcut: any voice sounding and it stored a pad of **1**, so
+the SILENT pass ran at full speed, banked the time it did not spend, and the
+gate handed it back as one hold at the group's end. At GROUP = 3 that was three
+samples' worth and invisible; at 24 it is the whole in-frame hold.
+
+`pp_pad_floor` now stores **`PCM_IDLE_PAD`** — the pad the generator already
+computes for an idle iteration. Sweeping it alone:
+
+    floor  1   97% · lost  0/s · hold 16.4
+    floor 10   98% · lost  0/s · hold  7.4      <- PCM_IDLE_PAD, taken
+    floor 14   99% · lost  3/s · hold  4.8
+    floor 16  102% · lost 13/s · hold  3.6      <- the old hold, at the old tempo
+
+That last row is the frontier stated plainly: the pre-existing 3.6-period hold
+was only ever available at 102%+. **7.4 periods is what full-speed music costs.**
+
+> **build-engine's pcm_pad assertion fired, and it was right.** The wider window
+> amortises the gating emit's 141-cycle premium over 24 samples instead of 3, so
+> a sounding frame got cheap enough to afford a real pad and the old shortcut
+> would have kept handing out the floor. The check is now one-sided — the
+> shortcut may be GENEROUS, never stingy — and compares against PCM_IDLE_PAD.
+> Note `verify:all` does NOT run build-engine, so this only fires on
+> `node tools/build-engine.mjs` / `emit-bin`; worth wiring into the gate.
+
+**Still open, and the reason the hold is 7.4 rather than 3.6:** the pad is a
+constant, so a group's unspent slack still lands at its end. An AIMED pad (hold
+sample i to groupStart + i x period) simulated at 4.5/1.8 holes a frame against
+the flat pad's 4.5/10.0 — see the earlier entry. It needs a debt counter the
+per-sample cost of which is not yet priced.
+
+### 2026-08-10 — hardware after the window change, and where the clicks are now
+
+Readout (BlastEm, their example program), against the previous 74% / lost 16:
+
+    Music x256 00FC (98.4%) · host 00FE · 1s 00F7 · worst 1s 00DD
+    lost/s 2 · starv 0127 · starv/s 1 · audible 13CB
+
+**`starv/s` was 0 and is now 1, and the program's own hint line reads that as
+"the 68000 is the bottleneck".** It is not a regression in the 68k: the Z80 went
+from consuming 74% of the frames to 99%, so it now drains the slot ring at the
+rate the host fills it and the host's jitter stopped being hidden by a slow
+engine. **RING_DEPTH 3 -> 4**, which costs nothing — $1700..$17FF was already
+reserved and unused, and the 68k reads the depth out of the published header at
+runtime, so only the blob changes.
+
+The model is ~2 points optimistic against this readout (it says 99% / lost 0
+where the machine says 98.4% / lost 2). That gap is the 68000's bus grab, which
+`--stall` prices and no default charges. **Assume ~2 points of hardware margin
+on every number below.**
+
+#### The clicks, located — and they are ONE cause with two faces
+
+    PAD_TARGET   music  lost/s   in-frame hold   frame-boundary hold
+       260        99%     0        7.4/8.3          10.9/130.6
+       280        99%     1        6.2/7.1          11.0
+       300        98%     1        4.1/6.0          11.3
+       310        79%    13        3.6/5.1            —
+
+- **`PAD_TARGET` is capped at ~302 by arithmetic, and the cliff is measured
+  there**: pad + mix + out-of-loop = 166.6 x PAD + 9,395, which passes 59,736 at
+  PAD = 302. Nothing above that is reachable without removing out-of-loop work.
+- **The frame-boundary hold does not respond to the pad at all** (10.9 -> 11.3).
+  It is ~3,900 cycles = the ISR's tail + the Z80's idle + the next frame's head
+  before its first emit. At PCM_GROUP = 3 it was NEGATIVE (-5.6, i.e. no hold)
+  for an ugly reason: the engine was 10% over budget and never finished early,
+  so it emitted right up to the interrupt. **Fixing the tempo created the idle
+  time the DAC now holds through.**
+- Re-sweeping the window WITH the idle-pad fix in place (the earlier k sweep
+  predates it) still puts the knee at k=8; the hold rises monotonically with k
+  and k=8 is the only point with lost 0/s:
+
+      k=3 (GROUP  9)  74% · lost 16/s · hold 3.6      k=6 (18)  96% · lost 3/s · hold 6.3
+      k=4 (12)        78% · lost 13/s · hold 4.4      k=8 (24)  99% · lost 0/s · hold 7.4
+      k=5 (15)        87% · lost  8/s · hold 5.3
+
+**Both holds are the same mechanism**: inside a group the loop runs ahead of the
+timer and the wait lands as ONE gap — at the group's end (7.4 periods, ~7 a
+frame, ~415 Hz) and at the frame's start (10.9 periods, 60 Hz). No constant
+removes it; the pad is a constant and cannot know how much of the group is left.
+**The AIMED pad is now the only item left on this line**, and the earlier
+simulation put it at 4.5/1.8 holes a frame against the flat pad's 4.5/10.0.
+
+Settled: k=8, PAD_TARGET 260, pp_pad_floor = PCM_IDLE_PAD, RING_DEPTH 4.
+
+### 2026-08-10 (2) — depth 4 confirmed on hardware; the PAD is now the tempo cost
+
+    starv 0127 -> 0007 · starv/s 1 -> 0        RING_DEPTH 4 worked
+    clicks: GONE (their ear)                   the PCM_IDLE_PAD floor worked
+    Music x256 00FA (97.7%) · lost/s 9 (peak C) · 1s 00D9 (84.8%) · worst 1s 00CC
+
+**Removing the starvation made `lost/s` WORSE (2 -> 9), and that is not a
+regression — starvation was a relief valve.** A frame with no slot is a cheap
+frame; with the ring always full the engine does a full frame's work every
+frame, sits at ~100%, and any jitter tips it into a missed interrupt. The
+catch-up then makes the next ISR do two frames, which misses again: that
+cascade is the `1s` dropping to 85% while the average stays at 97.7%.
+
+**`seg-bench`'s PER TIMER B GROUP section was still hardcoded to 3 samples** —
+it did not follow PCM_GROUP, so every per-kind number printed after the window
+change was measuring the wrong window. Fixed (it derives the budget from
+GATE_CY / PCM_GROUP now). With the right window:
+
+    OVER budget: 33% of groups, excess 4,472 cyc/frame
+      if this kind alone cost nothing:
+        pad (idle by design)   3537    <- the largest single item
+        mix tick bodies        3531
+        segment set-up         2382
+        PCM commands           ~1650
+
+**The pad that fixed the clicks is now the biggest thing costing tempo.** That
+is the same trade as before, seen from the other side: a pad in a group with
+slack is FREE (the group ends when the timer says it does either way), and a pad
+in a group already over budget is pure loss.
+
+#### ATTEMPTED and REVERTED: making the gate switch the pad off when behind
+
+The signal is free — if Timer B's overflow is up on the FIRST look in
+`gate_wait`, the engine arrived late rather than early. Test bit 1 alone, not
+the combined `and $82 / cp $02`, because BUSY is normally set there (the emit
+just wrote $2A) and asking for both reads "not late" every time.
+
+Built, gated clean (verify:all exit 0), frame 58,731 -> 57,995 (98% -> 97%),
+music x256 00ff. **But the DAC's in-frame hold went straight back to 16.4 —
+the no-pad value — so the "late" branch fires nearly every group and the pad is
+effectively disabled.** That trades the clicks back for the tempo, which is the
+wrong direction from where their ear is. Reverted.
+
+Worth knowing before the next attempt: the engine emits its 24 samples in
+~7,600 cycles against a group of 8,602, so it should arrive EARLY most of the
+time. It does not. Find out why before rebuilding this — the flag may be up
+from an overflow inside the group (the gate only clears it at the group's end),
+in which case the test needs to distinguish "up since before I started" from
+"up because the group boundary passed while I worked".
+
+#### Where the margin has to come from
+
+`budget:frame --stall` cannot reproduce the machine's lost/s even at 2000
+cycles of bus grab: it stays at lost 0/s and 100%. The frame is simply AT the
+line — 59,547 of 59,736 at stall 2000, **189 cycles of margin.** Widening the
+window further buys almost nothing (k=8 98%, k=12 97%, k=16 96%) and costs the
+DAC (in-frame hold 7.4 -> 10.2 -> 11.3), so it is not the lever.
+
+The measured levers left, in order: the pad made conditional (3,537, needs the
+question above answered), the ring reshaped to one 256-aligned page (1,052,
+measured earlier and costs no DAC quality), PCM commands (~1,650).
