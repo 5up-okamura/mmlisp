@@ -32,7 +32,15 @@ WINDOW      equ $8000
 ; every other frame (measured: 50%, half-speed music). Depth 3 restores exactly
 ; the one-slot lookahead the pre-sub-tick engine had at depth 2, at one more
 ; frame of host->music latency (§3.4).
-RING_DEPTH  equ 3               ; slots of lookahead; a per-game knob (§3.4)
+; Slots of lookahead; a per-game knob (§3.4). It went to 4 when the Timer B
+; window widened: the Z80 went from consuming 74% of the frames to 99%, so it
+; drains the ring at the rate the 68000 fills it and the host's jitter stopped
+; being hidden by a slow engine. On hardware that showed up as `starv/s` 1 —
+; the readout's own hint line reads that as "the 68000 is the bottleneck".
+; The fourth slot is free: $1700..$17FF was already reserved and unused, and
+; the 68k reads the depth out of the published header at runtime (§6.4), so
+; nothing on that side has to be recompiled.
+RING_DEPTH  equ 4
 SLOT_SIZE   equ 256             ; page-aligned, so a slot address is one byte
 SLOT_SHIFT  equ 8               ; log2(SLOT_SIZE); published for the 68k
 PCM_VOICES  equ 2
@@ -51,8 +59,7 @@ SLOT_SUBS   equ 2
 ;
 ;   $0000..$12FF  code                        4.7 KB
 ;   $1300..$133F  published header            68k-visible, and a FIXED address
-;   $1400..$16FF  slot ring                   RING_DEPTH × 256
-;   $1700..$17FF  free
+;   $1400..$17FF  slot ring                   RING_DEPTH × 256
 ;   $1900..$195F  PCM voice state             3 × 32 B
 ;   $1960..$19FF  engine scratch (idle voice struct at $1980)
 ;   $1A00..$1BFF  SAMPLE RING                 512 B, 512-aligned
@@ -368,8 +375,12 @@ start:
         ex   af,af'             ; A' = the gate phase; the first emit waits
         ld   a,PCM_IDLE_SH
         ld   (G_IDLEV+PV_SHIFT),a
-        ; Timer B: TB = 255, so it overflows every 16 FM samples and the engine
-        ; emits PCM_GROUP samples per overflow — 9987.6 Hz (§5.1.2).
+        ; Timer B: it overflows every 16 x (256 - PCM_TB) FM samples and the
+        ; engine emits PCM_GROUP samples per overflow — 9987.6 Hz (§5.1.2)
+        ; whatever PCM_TB is, because the two scale together. Both come from
+        ; the mixer generator, so the period and the sample count cannot drift
+        ; apart; the window they set is the one the engine may average its
+        ; out-of-loop work over (see .claude/memory/plan-68k-split.md).
         ;
         ; $0A = Load B (bit 1) | ENABLE B (bit 3), and BOTH are required. Load B
         ; runs the counter; Enable B is what publishes its overflow to the
@@ -389,7 +400,7 @@ start:
         ;
         ; Both bits have to STAY set from here on, which is why cs_r27 ORs them
         ; back into every $27 the sequencer sends.
-        ld   b,255
+        ld   b,PCM_TB
         ld   c,$26
         call ym_write0
         ld   a,$0a
@@ -1841,7 +1852,24 @@ pp_pad_st:
 ; The floor, reached without touching a register: the pad loop counts DOWN, so
 ; zero would be 256 and 1 is the shortest hold there is.
 pp_pad_floor:
-        ld   a,1
+        ; The idle pass gets its OWN generated pad, not a floor of 1.
+        ;
+        ; A silent pass with a floor pad runs at full speed and banks the time it
+        ; did not spend, and the gate hands that back as ONE hold at the group's
+        ; end. At PCM_GROUP = 3 that was 3 samples' worth and invisible; at 24 it
+        ; is the whole in-frame hold. Measured on song.mmb, sweeping this
+        ; constant alone — the frame and the DAC trade against each other and
+        ; PCM_IDLE_PAD is the knee:
+        ;
+        ;     floor  1   97% · lost 0/s · hold 16.4 periods
+        ;     floor 10   98% · lost 0/s · hold  7.4      <- PCM_IDLE_PAD
+        ;     floor 14   99% · lost 3/s · hold  4.8
+        ;     floor 16  102% · lost 13/s · hold  3.6
+        ;
+        ; It is PCM_IDLE_PAD rather than a number so it follows PAD_TARGET: the
+        ; generator already computes what holds an idle iteration to the target,
+        ; and that is exactly what this pass should be held to.
+        ld   a,PCM_IDLE_PAD
         ld   (G_PAD),a
         ret
 

@@ -60,13 +60,18 @@ export function buildEngine() {
         `\`add a,a / add a,l\`, x4 is \`add a,a / add a,a\` — and this check.`,
     );
   }
-  // `pcm_pad` takes a shortcut: any voice sounding at all and it stores the
-  // minimum pad without computing anything, because the cheapest sounding pass
-  // plus the silent ones it runs beside already exceed PCM_BUDGET. That is a
-  // property of the generated cost table and of one constant, so it is checked
-  // here rather than trusted — if the mixer ever gets cheap enough (or the
-  // budget generous enough) for a sounding frame to afford a real pad, the
-  // shortcut would silently keep handing out the floor.
+  // `pcm_pad` takes a shortcut: any voice sounding at all and it stores
+  // PCM_IDLE_PAD without computing anything. The invariant that makes that safe
+  // is one-sided — the shortcut may be GENEROUS, never stingy. A silent pass
+  // that is under-padded runs at full speed and banks the time it did not
+  // spend, and the gate hands that back as one hold at the group's end; at
+  // PCM_GROUP = 24 that is the whole in-frame hold the DAC gate measures.
+  //
+  // So: fail the build if the real computation ever wants MORE pad than the
+  // shortcut hands out. (It used to fail if the computation wanted more than
+  // the FLOOR of 1, which is the same check against the old shortcut — the
+  // wider Timer B window made the mix cheap enough for a sounding frame to
+  // afford a real pad, the assertion fired, and this is that fix.)
   // The routine's own arithmetic, run over the frame with the MOST slack that
   // still has a voice in it — one sounding pass (at its cheapest shift) beside
   // two silent ones. If even that comes out at the floor, no sounding frame can
@@ -83,12 +88,16 @@ export function buildEngine() {
   // the code handles correctly (it did, at PCM_PASSES = 1).
   const pad = silent === 0 || left < 0 ? 1
     : Math.max(1, Math.min(sym("PCM_IDLE_PAD"), left >> (9 + silent)));
-  if (pad > 1) {
+  const shortcut = sym("PCM_IDLE_PAD");
+  if (pad > shortcut) {
     throw new Error(
-      `pcm_pad's "any voice ⇒ minimum pad" shortcut no longer holds: the ` +
-        `roomiest sounding frame has ${left} cycles spare against PCM_BUDGET ` +
-        `${sym("PCM_BUDGET")}, which is a pad of ${pad}, not the floor. Remove ` +
-        `the G_ACTM early-out in pcm_pad (engine.z80), or re-tune PCM_BUDGET.`,
+      `pcm_pad's shortcut is now STINGY: the roomiest sounding frame has ` +
+        `${left} cycles spare against PCM_BUDGET ${sym("PCM_BUDGET")}, which is ` +
+        `a pad of ${pad}, and the shortcut hands out PCM_IDLE_PAD ${shortcut}. ` +
+        `A silent pass padded below its share banks the difference and the DAC ` +
+        `holds it at the group's end (npm run dac's in-frame hold). Raise ` +
+        `PAD_TARGET so PCM_IDLE_PAD covers it, or remove the G_ACTM early-out ` +
+        `in pcm_pad (engine.z80) and let it compute.`,
     );
   }
   return {
