@@ -98,8 +98,24 @@ export const PACE_PASSES = 2;       // voice passes per frame = the emit cadence
 // 2304 YM clocks and GROUP samples come out per gate. The Z80 and the YM run
 // off the same crystal at master/15 and master/7, so a YM clock is 7/15 of a
 // Z80 one and the period converts exactly.
-export const PCM_GROUP = 3;
-export const SAMPLE_CYCLES = Math.round((2304 / PCM_GROUP) * (7 / 15)); // 358
+// Timer B's period is 16 x (256 - TB) FM samples and an FM sample is 144 YM
+// clocks, so TB is the ONE knob here: k = 256 - TB buys 2304k YM clocks a gate
+// and 3k samples out of it — the SAME sample rate for every k, because both
+// sides scale together. k is therefore the window the engine may average over,
+// and it was never chosen: k = 1 is the timer's shortest period and PCM_GROUP
+// = 3 fell out of it. See .claude/memory/plan-68k-split.md 2026-08-09.
+export const TIMER_B_K = 1;                  // 256 - TB
+export const TIMER_B_TB = 256 - TIMER_B_K;    // the byte the engine writes to $26
+export const GATE_YM = 2304 * TIMER_B_K;      // YM clocks per overflow
+export const PCM_GROUP = 3 * TIMER_B_K;       // samples the gate hands out
+export const SAMPLE_CYCLES = Math.round((GATE_YM / PCM_GROUP) * (7 / 15)); // 358
+// The gate's period in Z80 cycles, EXACT — not SAMPLE_CYCLES x PCM_GROUP.
+// Rounding 358.4 down to 358 loses 0.4 a sample, which is 66 cycles a frame
+// against the 81 the vblank has left once the DAC's own clock is paid. Every
+// harness that models the timer imports THIS rather than re-deriving 2304 from
+// scratch, because seven copies of a constant is what made every previous
+// change to it a bug hunt.
+export const GATE_CY = (GATE_YM / (53693175 / 7)) * 3579545;
 // What the pad actually holds an iteration to: one quantum SHORT of the period.
 // Every loop must be able to run slightly fast, because the frame spends cycles
 // outside them (the slot's writes, the pass transitions) and a loop padded to
@@ -487,6 +503,9 @@ ${paced ? `PCM_PASSES  equ ${PACE_PASSES}      ; passes per frame — the feed's
 PCM_TICK_CY equ ${SAMPLE_CYCLES}     ; the sample period one iteration holds to
 PCM_IDLE_PAD equ ${padFor(variant, "add", IDLE_SHIFT, unroll)}      ; the most an idle iteration may hold to
 PCM_GROUP   equ ${PCM_GROUP}       ; samples per Timer B gate (§5.1.2)
+PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
+                        ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
+                        ; of each one. Generated, so the two cannot drift.
 ` : ""}`);
 
   L.push("R_FIRST_BEG:");

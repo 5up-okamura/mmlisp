@@ -96,7 +96,7 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer, PACE_WINDOW } = await import("./gen-mixer.mjs");
+  const { writeMixer, PACE_WINDOW, GATE_CY } = await import("./gen-mixer.mjs");
   writeMixer();
   const built = assemble(join(drv, "src", "engine.z80"),
     PUMP ? { defines: { PUMP_ON: 1 } } : {});
@@ -138,7 +138,7 @@ try {
     // The Timer B gate in Z80 cycles: 2304 YM clocks, one crystal. It FREE-RUNS
     // — `gateAt` is an absolute instant on the monotonic clock, never a delay
     // from wherever the engine happens to be.
-    const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
+
     let gateAt = GATE_CY;
     // YM2612 BUSY, from the chip rather than from our own design doc — the
     // mistake that let an unenabled Timer B ship. Nuked-OPN2 holds BUSY for 32

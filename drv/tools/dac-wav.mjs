@@ -42,7 +42,7 @@ import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder } from "../../live/src/slot-builder.js";
 import { PCM_RING_TARGET, pcmSampleIndex } from "../../live/src/mmb.js";
 import { buildMmb } from "./mmb-build.mjs";
-import { tickCost, PACE_WINDOW } from "./gen-mixer.mjs";
+import { tickCost, PACE_WINDOW, PCM_GROUP, GATE_CY } from "./gen-mixer.mjs";
 import { assemble } from "./z80asm.mjs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
@@ -61,11 +61,10 @@ let scores = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWi
 
 const Z80HZ = 3579545, SR = 44100;
 const FRAME_CYCLES = 59736;            // one 59.92 Hz frame of Z80 (gen-mixer)
-// The sample clock (driver.md §5.1.2): Timer B gates every 16 FM samples —
-// 2304 YM clocks — and the engine emits GROUP samples per gate.
-const GROUP = 3;
-const YM_HZ = 53693175 / 7;
-const GATE_CY = (2304 / YM_HZ) * Z80HZ; // 1075.2 Z80 cycles
+// The sample clock (driver.md §5.1.2), from the generator that also writes the
+// engine's own $26 byte — so this harness cannot model a timer the engine does
+// not run. That drift is exactly how an unenabled Timer B once shipped.
+const GROUP = PCM_GROUP;
 const SAMPLE_CY = GATE_CY / GROUP;      // 358.4
 
 // ── What a frame spends, in Z80 cycles ─────────────────────────────────────

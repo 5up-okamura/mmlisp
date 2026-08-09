@@ -26,6 +26,9 @@ PCM_PASSES  equ 2      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ 358     ; the sample period one iteration holds to
 PCM_IDLE_PAD equ 10      ; the most an idle iteration may hold to
 PCM_GROUP   equ 3       ; samples per Timer B gate (§5.1.2)
+PCM_TB      equ 255       ; the $26 byte: Timer B overflows every
+                        ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
+                        ; of each one. Generated, so the two cannot drift.
 
 R_FIRST_BEG:
 mix_first_s0:

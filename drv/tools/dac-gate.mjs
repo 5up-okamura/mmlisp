@@ -90,7 +90,7 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer, PACE_WINDOW } = await import("./gen-mixer.mjs");
+  const { writeMixer, PACE_WINDOW, GATE_CY } = await import("./gen-mixer.mjs");
   writeMixer();
   const built = assemble(join(drv, "src", "engine.z80"));
   const sym = (n) => built.symbols.get(n);
@@ -137,7 +137,7 @@ try {
     const addr = [0, 0];
     // Timer B's overflow flag — the engine's sample clock (§5.1.2). Without it
     // gate_wait never returns and the frame simply runs out of guard.
-    const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
+
     let gateAt = GATE_CY, frameT0 = 0;
     // ENABLE B ($27 bit 3): Nuked-OPN2 only ever sets the status flag as
     // `timer_b_overflow & timer_b_enable`, so a timer that is loaded but not

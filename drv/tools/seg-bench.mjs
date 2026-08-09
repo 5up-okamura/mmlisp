@@ -120,6 +120,7 @@ const GROUPS = [
   ["paced idle (no PCM)", /^(pace_sub|pq_)/],
 ];
 const groupOf = (n) => GROUPS.findIndex(([, re]) => re.test(n));
+const SETUP = GROUPS.findIndex(([n]) => n === "segment set-up");
 
 const tmp = mkdtempSync(join(tmpdir(), "segbench-"));
 try {
@@ -129,7 +130,7 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer, PACE_WINDOW, SAMPLE_CYCLES } = await import("./gen-mixer.mjs");
+  const { writeMixer, PACE_WINDOW, SAMPLE_CYCLES, PCM_GROUP, GATE_CY } = await import("./gen-mixer.mjs");
   writeMixer();
   const STALL_READ = STALL_READ_OPT < 0 ? PACE_WINDOW : STALL_READ_OPT;
   const built = assemble(join(drv, "src", "engine.z80"));
@@ -148,6 +149,47 @@ try {
   for (let i = 0; i < marks.length; i++) {
     const end = i + 1 < marks.length ? marks[i + 1][1] : IMG;
     owner.fill(i, marks[i][1], end);
+  }
+
+  // ── what BOUNDS each segment ───────────────────────────────────────────────
+  // A segment costs a set-up, and the set-up is the largest single kind of work
+  // inside the over-budget groups. FOUR things can end a segment (§5.1.2): the
+  // plan's break, the ROM window top, the ring's 256-byte page edge, and the
+  // feed's distance to the ring's top. Only the last two are artefacts of the
+  // ring's SHAPE rather than of the music, so only they can be removed by
+  // changing that shape — and until this counted them, nothing said how many of
+  // the ~6 segments a frame each one costs.
+  //
+  // Every path bounds B and then calls `mvf_ringcap`, so a call there is exactly
+  // one segment. B is read at the routine's entry, at `mvf_rc_feed` (after the
+  // page cap) and at `mvf_rc_done` (final); whichever constraint LAST lowered it
+  // is the one that ended the segment. A segment that nothing lowered ran to the
+  // end of its pass — that is not a split, and it is counted apart, because
+  // splits are what a shape change can remove and pass ends are not.
+  // bucket → GROUPS index, once. The step loop needs it per instruction to
+  // charge set-up cycles to the bound that caused them, and `groupOf` is a
+  // regex sweep — far too slow to run 60 million times.
+  const groupIdx = Int8Array.from(bucketName, (n) => groupOf(n));
+  // …and the same mapping the per-kind report uses, which adds two buckets the
+  // GROUPS rules do not cover: the frame's own head, and everything else.
+  const KINDS = [...GROUPS.map(([n]) => n), "other", "the frame's head"];
+  const kindIdx = Int8Array.from(bucketName, (n) => {
+    const g = groupOf(n);
+    if (g >= 0) return g;
+    return /^(frame_step|consume_slot|cs_|cr_|ih_|slot_)/.test(n) ? GROUPS.length + 1 : GROUPS.length;
+  });
+  const CAUSES = [
+    "the ring's page edge", "the feed's distance to the ring top",
+    "the ROM window top", "the plan's break", "the derived bound",
+    "(ran to the pass end — not a split)",
+  ];
+  const [C_PAGE, C_FEED, C_WIN, C_PLAN, C_DERIVED, C_PASSEND] = CAUSES.map((_, i) => i);
+  const MARK = new Uint8Array(0x10000);
+  for (const [n, v] of [["mvf_seg", 1], ["mvf_win", 2], ["mvf_ring", 3], ["mvf_dcap", 4],
+    ["mvf_idle_seg", 5], ["mvf_ringcap", 6], ["mvf_rc_feed", 7], ["mvf_rc_done", 8]]) {
+    const a = sym(n);
+    if (a === undefined) throw new Error(`seg-bench: ${n} is gone — the split attribution is stale`);
+    MARK[a] = v;
   }
 
   for (const score of scores) {
@@ -227,14 +269,109 @@ try {
     // long is never made up and a group with slack cannot give it away. The sum
     // of the EXCESSES is therefore the frame's overrun, and this is the only
     // view that shows it: per-frame averages say the work fits.
+    // ── how big does the averaging window have to be? ─────────────────────────
+    // Timer B turns a TOTAL budget into a PER-GROUP one, and the window the
+    // engine may average over is PCM_GROUP samples. That window is not a design
+    // decision — it fell out of TB=255, the timer's SHORTEST period — and it is
+    // free: the same sample rate comes out of (Timer B period x k, PCM_GROUP x k)
+    // for any k, because TB=256-k.
+    //
+    // Within a group only the first sample waits; the rest are emitted as fast
+    // as the loop runs, so the loop banks (period - iteration) cycles a sample
+    // and that is the whole budget for catching up after an out-of-loop block:
+    //
+    //     recoverable lump = PCM_GROUP x (period - iteration cost)
+    //
+    // At PCM_GROUP=3 that is ~261-295 cycles against measured lumps of 819-1053.
+    // So: record what each emit costs and re-bucket the SAME trace at other
+    // window sizes. It does not simulate a different engine — the work would
+    // shift a little — but the work and its lumpiness are what decide this and
+    // neither moves.
+    const SWEEP = [3, 4, 6, 8, 12, 16, 24, 32, 48];
+    const sweepEx = new Float64Array(SWEEP.length);
+    // The TRUE sample period. SAMPLE_CYCLES is this rounded to 358, and rounding
+    // down 0.4 a sample is 67 cycles a frame — most of the 81 the vblank allows,
+    // so the sweep cannot afford it.
+    const PERIOD = GATE_CY / PCM_GROUP;     // 358.4
+    // The gating emit costs GATE_CYCLES more than the other two and is paid ONCE
+    // per group, so a wider window pays it less often. The trace was taken at
+    // 3, so every gating emit past the first in a re-bucketed group is credited
+    // back — otherwise the sweep charges a premium the wider engine never pays.
+    const GATE_PREMIUM = 141;
+    // Per emit: what it cost, and whether it took the gate path. Plus, per
+    // frame, where its emits end and what ran AFTER its last one — because the
+    // engine only runs inside the ISR. It emits `chunk` samples, halts, and
+    // sleeps until the next vblank while Timer B keeps overflowing without it.
+    // A frame therefore cannot borrow time from the next one, and a simulation
+    // that runs the emit stream continuously reports zero lateness for an engine
+    // the machine measures at 110%.
+    const emitCyc = [], emitGate = [], frameBound = [], frameTailCyc = [];
+    let sinceMark = 0;
     const groups = [];
     let groupCyc = 0, groupN = 0;
+    // The COUNTERFACTUAL: the same excess with the ring's two bounds removed.
+    // "Set-up cycles inside the over-budget groups" is a gross figure and it
+    // over-states what removing them returns — a group at 1,200 owes 126 of
+    // excess however much set-up it contains, so shedding 819 there returns 126
+    // and not 819. The excess is what the frame pays, so it is the excess that
+    // has to be recomputed: take the ring-caused set-up out of each group and
+    // re-sum max(0, cyc - budget). Assumes the removed cycles leave THAT group
+    // and nothing re-crosses a group boundary — which is why it is still an
+    // upper bound, just a far tighter one.
+    let excessNow = 0, excessNoRing = 0;
+    // The same counterfactual per KIND of work: what the excess would be if this
+    // kind alone cost nothing. This is the work list for "what has to go for the
+    // frame to fit", and it is the only honest form of that list — a kind's
+    // gross cycles inside the over-budget groups over-states it, because a group
+    // 100 over owes 100 whatever it contains.
+    //
+    // The rows DO NOT ADD. Each is measured with the others still present, and
+    // a group can only ever give back its own excess, so removing two kinds
+    // returns LESS than the two rows suggest. `all out-of-loop` is the joint
+    // one, and it is the real ceiling.
+    const kindCF = new Float64Array(KINDS.length);
+    const gk = new Float64Array(KINDS.length);
+    let excessNoOutOfLoop = 0;
+    // The REACHABLE version of that ceiling. "All out-of-loop work vanishes" is
+    // not a plan — the pass's own entry and exit are the register file being
+    // loaded and stored, which is the one block with nowhere to go. So price
+    // the bundle that splitting COULD reach: everything out of the loop except
+    // those two. If the frame still does not fit with that gone, no amount of
+    // breaking blocks up will fit it and the answer is a different design.
+    let excessSplittable = 0;
     // What is IN the groups that blow the budget. Only ~11% of groups do, and
     // they carry the whole overrun, so a frame-wide or even a hole-wide ranking
     // averages them away — this is the only view that names them.
     const heavy = new Float64Array(marks.length);
     let groupLbl = [];
-    const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
+    // Segments, by the constraint that ended them (see CAUSES above), counted
+    // over the whole run and again over only the groups that blow the budget —
+    // the second is the one that matters, because only those carry the overrun.
+    const segN = new Float64Array(CAUSES.length);
+    const segHeavy = new Float64Array(CAUSES.length);
+    let groupSeg = [];
+    // …and the set-up CYCLES each bound is responsible for, measured rather than
+    // shared out at a flat mean — the first segment of a pass sets up a whole
+    // register file and a mid-pass split does not, so a mean over-prices the
+    // splits. Every cycle in the "segment set-up" group is charged to the bound
+    // that ended the segment being set up. The charge is offset by one segment:
+    // the run that follows a bound is its own set-up plus the PREVIOUS
+    // segment's teardown, and both disappear together when two segments merge,
+    // which is what the number is for.
+    // …plus one bucket for the set-up that runs BEFORE the frame's first
+    // segment is bound — the pass's own entry (mix_voice_frame, voice_ptr,
+    // ms_pload). No bound caused it and no bound can remove it, but it is a
+    // quarter of the set-up, so the table has to carry it or the shares below
+    // read against a total they do not sum to.
+    const HEAD = CAUSES.length;
+    const segCost = new Float64Array(CAUSES.length + 1);
+    const segCostHeavy = new Float64Array(CAUSES.length + 1);
+    const groupCause = new Float64Array(CAUSES.length + 1);
+    let lastCause = -1;
+    const G_TICKS = sym("G_TICKS");
+    let sgTicks = 0, sgAfterPlan = 0, sgPlanCap = false, sgWinCap = false;
+    let sgDerived = false, sgIn = 0, sgMid = 0;
+
     let fcyc = 0, fed = 0, enableB = false;
     // YM2612 BUSY: 32 internal cycles after a DATA write (Nuked-OPN2's
     // `write_busy_cnt >> 5`), an internal cycle is 6 YM clocks, a YM clock is
@@ -266,11 +403,34 @@ try {
             gaps.push(sinceEmit);
             (gateArmed ? gapsGate : gapsLoop).push(sinceEmit);
           }
-          if (++groupN === 3) {
+          emitCyc.push(sinceMark); emitGate.push(gateArmed); sinceMark = 0;
+          if (++groupN === PCM_GROUP) {
             groups.push(groupCyc);
-            if (groupCyc > SAMPLE_CYCLES * 3)
+            const BUD = PERIOD * PCM_GROUP;
+            excessNow += Math.max(0, groupCyc - BUD);
+            excessNoRing += Math.max(0, groupCyc - groupCause[C_PAGE] - groupCause[C_FEED] - BUD);
+            gk.fill(0);
+            for (const [bb, cc] of groupLbl) gk[kindIdx[bb]] += cc;
+            for (let k = 0; k < gk.length; k++)
+              kindCF[k] += Math.max(0, groupCyc - gk[k] - BUD);
+            // …and with EVERY kind that is not a paced loop body removed at once.
+            let outOfLoop = 0;
+            for (let k = PACED; k < gk.length; k++) outOfLoop += gk[k];
+            excessNoOutOfLoop += Math.max(0, groupCyc - outOfLoop - BUD);
+            // The pad rides on the PACED side of the rule, so it is not in
+            // `outOfLoop` — but a pad inside a group that is ALREADY over
+            // budget is deliberate idle making a late group later, and the one
+            // kind of work that can simply not happen. It belongs in the
+            // reachable bundle, and it is the second-largest item in it.
+            const stuck = groupCause[C_PASSEND] + groupCause[HEAD];
+            excessSplittable += Math.max(0, groupCyc - (outOfLoop - stuck) - gk[0] - BUD);
+            if (groupCyc > PERIOD * PCM_GROUP) {
               for (const [bb, cc] of groupLbl) heavy[bb] += cc;
-            groupCyc = 0; groupN = 0; groupLbl.length = 0;
+              for (const cz of groupSeg) segHeavy[cz]++;
+              for (let i = 0; i < groupCause.length; i++) segCostHeavy[i] += groupCause[i];
+            }
+            groupCyc = 0; groupN = 0; groupLbl.length = 0; groupSeg.length = 0;
+            groupCause.fill(0);
           }
           gateArmed = false;
           sinceEmit = 0;   // between emits now
@@ -316,15 +476,49 @@ try {
       }
       cpu.intRequest();
       let cyc = 0, g = 0, prev = -1;
-      fcyc = 0; fed = 0; sinceEmit = -1;
+      fcyc = 0; fed = 0; sinceEmit = -1; lastCause = -1;
       while (cpu.halted && g++ < 1000) { const c = cpu.step(); cyc += c; tcyc += c; }
       const tgt = process.env.SEG_FRAME !== undefined && f === Number(process.env.SEG_FRAME);
       const fcost = tgt ? new Float64Array(marks.length) : null;
       while (!cpu.halted && g++ < 3_000_000) {
         const b = owner[cpu.pc];
+        // B, sampled BEFORE the instruction at each of the bounding sites runs.
+        // Every one of them is a push or a call, so none of them touches B.
+        const mk = MARK[cpu.pc];
+        if (mk) {
+          if (mk === 1) {            // mvf_seg — B is about to become G_TICKS
+            sgTicks = ram[G_TICKS]; sgAfterPlan = sgTicks;
+            sgPlanCap = false; sgWinCap = false; sgDerived = false;
+          } else if (mk === 2) {     // mvf_win — the plan's break has been applied
+            sgAfterPlan = cpu.b; sgPlanCap = cpu.b < sgTicks;
+          } else if (mk === 3) {     // mvf_ring — mvf_wincap has been applied
+            sgWinCap = cpu.b < sgAfterPlan;
+          } else if (mk === 4) {     // mvf_dcap — the no-plan path derived its own
+            sgDerived = true;
+          } else if (mk === 5) {     // mvf_idle_seg — the silent pass, G_TICKS only
+            sgTicks = ram[G_TICKS]; sgAfterPlan = sgTicks;
+            sgPlanCap = false; sgWinCap = false; sgDerived = false;
+          } else if (mk === 6) {     // mvf_ringcap entry
+            sgIn = cpu.b;
+          } else if (mk === 7) {     // mvf_rc_feed — after the mixer's page cap
+            sgMid = cpu.b;
+          } else {                   // mvf_rc_done — B is final; the segment is set
+            const cz = cpu.b < sgMid ? C_FEED
+              : sgMid < sgIn ? C_PAGE
+              : sgWinCap ? C_WIN
+              : sgPlanCap ? C_PLAN
+              : sgDerived ? C_DERIVED
+              : C_PASSEND;
+            segN[cz]++; groupSeg.push(cz); lastCause = cz;
+          }
+        }
         winReads = 0;
         let c = cpu.step();
         c += winReads * STALL_READ;   // the stall lands on the instruction that fetched
+        if (b !== 0xffff && groupIdx[b] === SETUP) {
+          const cz = lastCause < 0 ? HEAD : lastCause;
+          segCost[cz] += c; groupCause[cz] += c;
+        }
         // Everything past the first period is dead time the ear hears as a hold.
         if (sinceEmit >= 0) sinceEmit += c;
         if (sinceEmit > SAMPLE_CYCLES && b !== 0xffff) {
@@ -347,7 +541,7 @@ try {
           if (fcost) fcost[b] += c;
           if (b !== prev) { hits[b]++; prev = b; }
         }
-        cyc += c; fcyc += c; tcyc += c; groupCyc += c;
+        cyc += c; fcyc += c; tcyc += c; groupCyc += c; sinceMark += c;
         if (b !== 0xffff) groupLbl.push([b, c]);
         if (b !== 0xffff) frameTail.push([b, c]);   // trimmed at each emit
       }
@@ -359,6 +553,8 @@ try {
       }
       const m = ram[G_ACTM];
       const nv = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1);
+      frameBound.push(emitCyc.length);
+      frameTailCyc.push(sinceMark); sinceMark = 0;   // after this frame's last emit
       cyc += STALL;   // the bus the 68000 holds; see STALL above
       for (const [b, c] of frameTail) { tail[b] += c; tailTotal += c; }
       frameTail.length = 0;
@@ -447,7 +643,7 @@ try {
     // The work list Stage D actually needs, ranked by dead time rather than by
     // cost. `npm run dac`'s in-frame hold is the number this moves.
     if (groups.length) {
-      const GROUP_CY = SAMPLE_CYCLES * 3;
+      const GROUP_CY = PERIOD * PCM_GROUP;
       const g = [...groups].sort((a, b) => a - b);
       const q = (f) => g[Math.floor((g.length - 1) * f)];
       const over = groups.reduce((t, v) => t + Math.max(0, v - GROUP_CY), 0);
@@ -479,9 +675,158 @@ try {
       }
       const hr = [...heavy.keys()].filter((i) => heavy[i] > 0)
         .sort((a, b) => heavy[b] - heavy[a]).slice(0, 10);
-      console.log(`    what is IN the over-budget groups, by kind:`);
+      // What each kind is WORTH, which is a different and much smaller number
+      // than what it costs. The frame pays the excess.
+      console.log(`    if this kind alone cost nothing, the excess would fall by`
+        + ` (rows do NOT add — see the note in the source):`);
+      const cfRows = [...kindCF.keys()]
+        .map((k) => [k, (excessNow - kindCF[k]) / frames])
+        .filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]);
+      for (const [k, v] of cfRows)
+        console.log(`      ${KINDS[k].padEnd(34)}${v.toFixed(0).padStart(6)} cyc/frame`);
+      console.log(`      ${"ALL of them at once (the ceiling)".padEnd(34)}`
+        + `${((excessNow - excessNoOutOfLoop) / frames).toFixed(0).padStart(6)} cyc/frame`
+        + `  — leaves ${(excessNoOutOfLoop / frames).toFixed(0)} of excess in the LOOP itself`);
+      console.log(`      ${"REACHABLE (+ the pad, − pass in/out)".padEnd(34)}`
+        + `${((excessNow - excessSplittable) / frames).toFixed(0).padStart(6)} cyc/frame`
+        + `  — leaves ${(excessSplittable / frames).toFixed(0)}`);
+      // ── the window sweep ─────────────────────────────────────────────────────
+      for (let s = 0; s < SWEEP.length; s++) {
+        const N = SWEEP[s];
+        for (let i = 0; i < emitCyc.length; i += N) {
+          const end = Math.min(i + N, emitCyc.length);
+          let sum = 0, gates = 0;
+          for (let j = i; j < end; j++) { sum += emitCyc[j]; if (emitGate[j]) gates++; }
+          sum -= GATE_PREMIUM * Math.max(0, gates - 1);
+          sweepEx[s] += Math.max(0, sum - (end - i) * PERIOD);
+        }
+      }
+      // 81 cycles is what the vblank has left after the DAC's own clock
+      // (59,736 - 166.674 x 358.4). It is the entire budget for lateness.
+      const ALLOWED = FRAME_CYCLES - (FRAME_CYCLES / PERIOD) * PERIOD + 81;
+      console.log(`    GROUP SIZE SWEEP — the same trace re-bucketed. Timer B's TB=256-k, so`);
+      console.log(`    (period x k, PCM_GROUP x k) is the SAME sample rate. 81 cyc/frame is all`);
+      console.log(`    the vblank has left once the DAC's own clock is paid:`);
+      for (let s = 0; s < SWEEP.length; s++) {
+        const e = sweepEx[s] / frames;
+        console.log(`      PCM_GROUP ${String(SWEEP[s]).padStart(2)} (TB ${256 - SWEEP[s] / 3})`
+          + `  excess ${e.toFixed(0).padStart(6)} cyc/frame`
+          + `${e <= ALLOWED ? "   ← fits the vblank" : ""}`);
+      }
+      // ── and what a wider window does to the DAC ──────────────────────────────
+      // A wider window fixes the tempo by letting the loop catch up inside the
+      // group — but the catching up is SLACK, and slack the engine does not
+      // spend lands as one hold at the group's end. At 48 samples that is a
+      // regular artefact at 9987/48 = 208 Hz, which is not a tempo problem but
+      // is squarely audible.
+      //
+      // The slack costs nothing to spend: the group ends when the timer says it
+      // does whether the engine waited once at the end or a little at a time.
+      // What stops it being spent is that the pad is a CONSTANT — it has no idea
+      // how much the group has left. It does not need a clock to know: the Z80
+      // cannot read time, but it CAN carry a running sum of the cycles it has
+      // spent since the gate, because its own code cost is deterministic per
+      // loop copy. Pad sample i up to (i+1) x period minus that sum.
+      //
+      // So simulate both against the same trace: `flat` is the pad as it is
+      // (whatever the code costs, then wait at the gate), `aimed` is the pad
+      // with that target. Holes are measured in sample periods.
+      // Timer B FREE-RUNS, so every deadline is at an absolute j x period — both
+      // the gate's and the aimed pad's. Targeting the group's ACTUAL start
+      // instead compounds a late start into the next group and the run diverges.
+      //
+      // Lateness is therefore a reflected walk, not a sum of excesses: a group
+      // that finishes early WAITS (t = max(t, gate)) and its slack is lost, but
+      // a group that finishes early while the engine is ALREADY late runs
+      // straight through and the slack is recovered. That is why the excess sum
+      // above reads ~25% higher than the frame's real overrun.
+      // frame-budget.mjs's wall clock, replayed on the recorded emit costs: the
+      // Z80 sleeps until the vblank, runs the ISR until `chunk` samples are out,
+      // and Timer B free-runs throughout — an engine that arrives late does not
+      // get a fresh period, it gets what is left of the current one. The ISR's
+      // mean length is exactly what `budget:frame` prints as the cost of one
+      // frame of music, so N=3 here is checkable against 65,593.
+      const sim = (N, aimed) => {
+        let t = 0, prev = 0, gateAt = N * PERIOD, inGroup = 0;
+        let vbl = FRAME_CYCLES, isr = 0, lost = 0, big2 = 0, big4 = 0, idx = 0;
+        for (let f = 0; f < frameBound.length; f++) {
+          if (t < vbl - FRAME_CYCLES) t = vbl - FRAME_CYCLES;   // sleep to the vblank
+          const start = t;
+          for (; idx < frameBound[f]; idx++) {
+            if (inGroup === 0) {
+              t = Math.max(t, gateAt);
+              while (gateAt <= t) gateAt += N * PERIOD;
+            }
+            // the gate premium is paid once a group, so a wider window pays it
+            // on fewer emits than the trace recorded
+            if (emitGate[idx] && inGroup !== 0) t -= GATE_PREMIUM;
+            t += emitCyc[idx];
+            // The aimed pad: hold this sample to its slot in the group rather
+            // than letting the loop run ahead and bank the slack for the end.
+            // The Z80 cannot read a clock, but it can carry the cycles it has
+            // spent since the gate — its own code cost is deterministic.
+            if (aimed) t = Math.max(t, gateAt - (N - inGroup) * PERIOD);
+            const hole = (t - prev) / PERIOD;
+            if (hole >= 2) big2++;
+            if (hole >= 4) big4++;
+            prev = t;
+            inGroup = (inGroup + 1) % N;
+          }
+          t += frameTailCyc[f];
+          isr += t - start;
+          while (t > vbl) { vbl += FRAME_CYCLES; lost++; }
+          vbl += FRAME_CYCLES;
+        }
+        const n = frameBound.length;
+        return { isr: isr / n, big2: big2 / n, big4: big4 / n };
+      };
+      // CALIBRATE against the tool that reproduces the machine, and say the
+      // offset out loud: this replays recorded emit costs and models neither the
+      // ring, nor the 68k's bus, nor the catch-up that lets one interrupt
+      // consume several frames. N=3 flat IS the shipping engine, so whatever it
+      // reads against budget:frame is the error on every other row.
+      const base = sim(3, false).isr;
+      console.log(`    THE FRAME AND THE DAC, at each window. N=3 flat is the shipping engine,`);
+      console.log(`    so it calibrates the rest: this reads ${base.toFixed(0)} where budget:frame`);
+      console.log(`    measures 65593 — every row below is that much optimistic.`);
+      for (const [N, aimed] of [[3, false], [12, false], [16, false], [24, false], [32, false],
+        [48, false], [12, true], [16, true], [24, true], [32, true], [48, true]]) {
+        const r = sim(N, aimed);
+        console.log(`      PCM_GROUP ${String(N).padStart(2)} ${aimed ? "aimed" : "flat "} pad`
+          + `   frame ${r.isr.toFixed(0).padStart(6)} (${(100 * r.isr / FRAME_CYCLES).toFixed(0).padStart(3)}%)`
+          + `   holes >=2p ${r.big2.toFixed(1).padStart(5)}  >=4p ${r.big4.toFixed(1).padStart(5)}  a frame`);
+      }
+      console.log(`    what is IN the over-budget groups, by label:`);
       for (const i of hr)
         console.log(`      ${bucketName[i].padEnd(20)}${(heavy[i] / frames).toFixed(0).padStart(6)} cyc/frame`);
+      // ── the SPLITS, which is the work list for the set-up line above ────────
+      // "segment set-up" is the largest kind in those groups, and the lever on
+      // it is FEWER segments rather than cheaper ones. This says how many
+      // segments each of the four bounds costs, and — by pricing them at the
+      // set-up the heavy groups actually paid — what removing one would return.
+      const segTot = segN.reduce((t, v) => t + v, 0);
+      const splits = segTot - segN[C_PASSEND];
+      console.log(`    SEGMENTS: ${(segTot / frames).toFixed(1)} a frame`
+        + ` = ${(splits / frames).toFixed(1)} splits + ${(segN[C_PASSEND] / frames).toFixed(1)} pass ends.`
+        + `  set-up cyc/frame is charged to the bound, inside the over-budget groups only:`);
+      for (let i = 0; i < CAUSES.length; i++) {
+        if (!segN[i]) continue;
+        console.log(`      ${CAUSES[i].padEnd(37)}${(segN[i] / frames).toFixed(2).padStart(6)} a frame`
+          + `${(segHeavy[i] / frames).toFixed(2).padStart(7)} over budget`
+          + `${(segCostHeavy[i] / frames).toFixed(0).padStart(7)} cyc/frame`
+          + `${(segCostHeavy[i] / Math.max(1, segHeavy[i])).toFixed(0).padStart(6)} each`);
+      }
+      console.log(`      ${"(the pass's own entry — before any bound)".padEnd(37)}`
+        + `${"".padStart(6)}${"".padStart(7)}`
+        + `${(segCostHeavy[HEAD] / frames).toFixed(0).padStart(7)} cyc/frame`);
+      const shape = (segCostHeavy[C_PAGE] + segCostHeavy[C_FEED]) / frames;
+      console.log(`      ⇒ the ring's SHAPE (the top two) holds ${shape.toFixed(0)} cyc/frame`
+        + ` of the ${(kind[SETUP] / frames).toFixed(0)} set-up in those groups`);
+      // …and what that is actually WORTH, which is a smaller number: the frame
+      // pays the EXCESS, not the set-up.
+      console.log(`      ⇒ take those cycles out of their groups and the excess goes`
+        + ` ${(excessNow / frames).toFixed(0)} → ${(excessNoRing / frames).toFixed(0)}`
+        + ` = ${((excessNow - excessNoRing) / frames).toFixed(0)} cyc/frame returned`);
     }
     if (gaps.length) {
       const g = [...gaps].sort((a, b) => a - b);

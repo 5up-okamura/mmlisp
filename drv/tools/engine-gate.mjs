@@ -18,6 +18,7 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { GATE_CY } from "./gen-mixer.mjs";
 import { assemble } from "./z80asm.mjs";
 import { Z80Cpu } from "./z80cpu.mjs";
 
@@ -45,6 +46,12 @@ const SLOT_SUBS = sym("SLOT_SUBS"); // taken from the engine, so it cannot drift
 // voice, so a hardcoded 3 here silently misaligns every byte after it the
 // moment the mixer's pass count moves.
 const PCM_VOICES = sym("PCM_VOICES");
+// A scenario that needs a SECOND voice cannot run at PCM_VOICES = 1, and one
+// that merely happens to have been written on voice 1 can — it is the shape
+// being pinned, not the index. V2 is the second voice where there is one and
+// the first where there is not; scenarios that need two DISTINCT voices carry
+// `needs: 2` and are SKIPPED OUT LOUD rather than quietly re-indexed onto one.
+const V2 = Math.min(1, PCM_VOICES - 1);
 const H_HEAD = sym("H_HEAD");
 const H_VBL = sym("H_VBL");
 const H_TAIL = sym("H_TAIL");
@@ -265,7 +272,8 @@ function run(frames, image = built) {
   // The Timer B model: the gate the engine's feed waits on (§5.1.2). `cyc` is
   // advanced by the run loop below, so the flag rises on time and the engine's
   // pacing is exercised rather than short-circuited.
-  const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);   // 1075
+  // GATE_CY comes from the generator that also writes the engine's $26 byte, so
+  // this harness cannot model a timer the engine does not run.
   let cyc = 0, gateAt = GATE_CY;
   // ENABLE B ($27 bit 3). Nuked-OPN2 is the authority and it is one line
   // (ym3438.c, OPN2_DoTimerB):
@@ -496,6 +504,7 @@ scenarios.push({
 scenarios.push({
   name: "two voices, different rates and volumes",
   why: "saturating-add order, per-voice shift, and the storing/accumulating split",
+  needs: 2,
   frames: [
     {
       pcm: [
@@ -537,7 +546,7 @@ scenarios.push({
   why: "the segment bound shrinks toward the boundary; every frame ends mid-region",
   frames: Array.from({ length: 20 }, (_, i) =>
     i === 0
-      ? { pcm: [pcmStart(1, { flags: 3, shift: 1, bank: 0, ptr: 0x811a, left: 400, loopl: 300, tail: 112, incF: 0x0cbc, incI: 1 })] }
+      ? { pcm: [pcmStart(V2, { flags: 3, shift: 1, bank: 0, ptr: 0x811a, left: 400, loopl: 300, tail: 112, incF: 0x0cbc, incI: 1 })] }
       : {},
   ),
 });
@@ -552,16 +561,19 @@ scenarios.push({
   why: "every PCM handler must leave HL on the command cursor, or the rest of the slot is garbage",
   frames: [
     {
+      // The neighbouring voice is scenery here — the retrigger below is the
+      // test — so at one voice it is simply absent and the slot still carries
+      // a STOP, a START and a VOL for the cursor to walk.
       pcm: [
-        pcmStart(0, { flags: 1, shift: 0, bank: 1, ptr: WINDOW + 0x60, left: 4000, loopl: 0, tail: 0, incF: 0x4000, incI: 1 }),
-        pcmStart(1, { flags: 3, shift: 1, bank: 3, ptr: WINDOW + 0x300, left: 400, loopl: 300, tail: 112, incF: 0x2000, incI: 1 }),
+        ...(V2 ? [pcmStart(0, { flags: 1, shift: 0, bank: 1, ptr: WINDOW + 0x60, left: 4000, loopl: 0, tail: 0, incF: 0x4000, incI: 1 })] : []),
+        pcmStart(V2, { flags: 3, shift: 1, bank: 3, ptr: WINDOW + 0x300, left: 400, loopl: 300, tail: 112, incF: 0x2000, incI: 1 }),
       ],
     },
     {}, {},
     {
       pcm: [
-        pcmStop(1),
-        pcmStart(1, { flags: 3, shift: 1, bank: 4, ptr: WINDOW + 0x120, left: 500, loopl: 400, tail: 90, incF: 0x1000, incI: 1 }),
+        pcmStop(V2),
+        pcmStart(V2, { flags: 3, shift: 1, bank: 4, ptr: WINDOW + 0x120, left: 500, loopl: 400, tail: 90, incF: 0x1000, incI: 1 }),
         pcmVol(0, 3),
       ],
     },
@@ -572,6 +584,14 @@ scenarios.push({
 // ── Check ──────────────────────────────────────────────────────────────────
 let failures = 0;
 for (const sc of scenarios) {
+  // Skipping is reported, never silent: a build with fewer voices than a
+  // scenario needs has LESS coverage, and a gate that prints "all ok" without
+  // saying so is claiming something it did not check.
+  if (sc.needs > PCM_VOICES) {
+    console.log(`skip  ${sc.name}`);
+    console.log(`      needs ${sc.needs} PCM voices, this build has ${PCM_VOICES}`);
+    continue;
+  }
   const voices = Array.from({ length: PCM_VOICES }, () => new ModelVoice());
   const feed = new ModelFeed();
   const { perFrame, starved } = run(sc.frames);

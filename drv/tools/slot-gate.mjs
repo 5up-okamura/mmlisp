@@ -21,6 +21,7 @@ import { Z80Cpu } from "./z80cpu.mjs";
 import { buildMmb } from "./mmb-build.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder } from "../../live/src/slot-builder.js";
+import { GATE_CY } from "./gen-mixer.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2).filter((a) => !a.startsWith("--"));
@@ -78,7 +79,7 @@ let ringWrites = 0, bankBits = 0, lastDelta = null;
 const WATCH = process.env.WATCH ? parseInt(process.env.WATCH, 16) : -1;
 // The Timer B gate, in Z80 cycles: 2304 YM clocks, and the two run off one
 // crystal at master/7 and master/15.
-const GATE_CY = Math.round((2304 / (53693175 / 7)) * 3579545);
+
 let cyc = 0, gateAt = GATE_CY;
 let engFrame = 0;
 let bankReg = 0;
@@ -164,7 +165,14 @@ booting = false;
 // completely, and it reached hardware as half-speed music.
 let posted = 0;
 let starved = 0;
-let frameSteps = 0;             // measured on frame 0, then used as the clock
+// When the host's render lands, measured in Z80 CYCLES from the interrupt. It
+// used to be a fraction of frame 0's INSTRUCTION COUNT, which is only a proxy
+// for wall-clock and stops being one the moment the engine's frame gets short:
+// at SLOT_SUBS = 1 a frame with no PCM is 81 instructions, the threshold from
+// frame 0 was 317, and the host simply never posted again — 120 starved frames
+// that the hardware would not have had. The 68000 renders from its own vblank
+// loop and does not care whether the Z80 is still running.
+const POST_AT = Math.floor(59736 / 5);   // ~20% into the frame
 const post = () => {
   while (posted < cap.slots.length) {
     const head = ram[H_HEAD];
@@ -181,17 +189,22 @@ for (engFrame = 0; engFrame < cap.slots.length || posted < cap.slots.length; eng
   if (ram[H_HEAD] === ram[H_TAIL]) starved++;
   cpu.intRequest();
   let guard = 0;
-  let steps = 0;
+  let fcyc = 0, postedInFrame = false;
   while (cpu.halted && guard++ < 1000) cpu.step();
   while (!cpu.halted && guard++ < 3_000_000) {
-    cyc += cpu.step();
-    steps++;
+    const c = cpu.step();
+    cyc += c; fcyc += c;
     // ~20% in: a real host is a few hundred microseconds behind the vblank it
-    // woke on, and the engine's frame fills ~95% of the period.
-    if (frameSteps && steps === Math.floor(frameSteps / 5)) post();
+    // woke on. Posting BEFORE the interrupt would hide the fact that the engine
+    // holds its slot for the whole frame (§3.5) — that is what this timing is
+    // for, and it reached hardware once as half-speed music.
+    if (!postedInFrame && fcyc >= POST_AT) { post(); postedInFrame = true; }
   }
   if (guard >= 3_000_000) throw new Error("frame did not complete");
-  if (!frameSteps) { frameSteps = steps; post(); }
+  // The engine can HALT before the host's render lands. That is not the host
+  // being early — the vblank has not come yet — so the post still belongs to
+  // this frame.
+  if (!postedInFrame) post();
   if (process.env.COUNT) {
     // Align by SLOTS CONSUMED, not by frame: the engine eats a slot up to
     // RING_DEPTH frames after the sequencer emitted it, so H_FRAMES is the only
