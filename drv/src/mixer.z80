@@ -25,8 +25,8 @@ PCM_IDLE_SH equ 9      ; PV_SHIFT meaning "no voice here at all"
 PCM_PASSES  equ 2      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ 358     ; the sample period one iteration holds to
 PCM_IDLE_PAD equ 10      ; the most an idle iteration may hold to
-PCM_GROUP   equ 24       ; samples per Timer B gate (§5.1.2)
-PCM_TB      equ 248       ; the $26 byte: Timer B overflows every
+PCM_GROUP   equ 48       ; samples per Timer B gate (§5.1.2)
+PCM_TB      equ 240       ; the $26 byte: Timer B overflows every
                         ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
                         ; of each one. Generated, so the two cannot drift.
 
@@ -1807,8 +1807,8 @@ msb_s:
 
 ; pass_cost_tab[shift] = 87 iterations x one unpadded iteration, in cycles.
 pass_cost_tab:
-        dw   24099, 25491, 26883, 28275, 29667
-        dw   31059, 32451, 33843, 16269, 8787
+        dw   23838, 25230, 26622, 28014, 29406
+        dw   30798, 32190, 33582, 16008, 8526
 
 ; div_tab[n] = n / 2, for n = 0..PCM_MIX_R
 div_tab:

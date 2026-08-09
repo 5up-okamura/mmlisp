@@ -3289,3 +3289,91 @@ DAC (in-frame hold 7.4 -> 10.2 -> 11.3), so it is not the lever.
 The measured levers left, in order: the pad made conditional (3,537, needs the
 question above answered), the ring reshaped to one 256-aligned page (1,052,
 measured earlier and costs no DAC quality), PCM commands (~1,650).
+
+### 2026-08-10 (3) — the window is 36 samples. Hardware picked it, not the model.
+
+    k= 8 (GROUP 24)   music 98.0% · 1s 84.8% · worst 1s 81.6% · lost/s 9 (peak B) · starv/s 0
+    k=12 (GROUP 36)   music 99.2% · 1s 98.0% · worst 1s 96.5% · lost/s 1 (peak 2) · starv/s 1
+
+**The model said this was worth one point (98% -> 97%) and on hardware it was
+worth the whole cascade.** `1s` going 84.8% -> 98.0% and `worst 1s` 81.6% ->
+96.5% is the catch-up loop breaking: at k=8 the frame sat close enough to the
+line that a missed interrupt made the next ISR do two frames, which missed
+again. One more point of margin stops the first miss and the rest never happens.
+
+> **A model that reports a linear cost can be hiding a threshold.** Nothing in
+> `budget:frame` distinguishes 98% from 97% — both read `lost 0/s`. The machine
+> distinguishes them by a factor of nine. Sweep on hardware near the line.
+
+The DAC's in-frame hold goes 7.4 -> 10.2 periods and the frame boundary 10.9 ->
+10.0. Their ear: the clicks did NOT come back; occasional dropouts remain, and
+`starv/s` is back to 1 (16 in 6,320 frames) — the engine now drains the slot
+ring faster still. $1800..$18FF is free, so RING_DEPTH 5 is the next free thing
+to try against that, at one more frame of host->music latency.
+
+### 2026-08-10 (4) — RING_DEPTH 5. The dropouts are gone; the arc is 74% -> 99.6%.
+
+    depth 4   music 99.2% · 1s 98.0% · worst 96.5% · lost/s 1 · starv 16/6320 · starv/s 1
+    depth 5   music 99.6% · 1s 98.0% · worst 94.9% · lost/s 1 · starv  5/5722 · starv/s 0
+
+Their ear: **the dropouts are gone**, the tempo wobbles only very occasionally.
+The fifth slot went into $1800..$18FF, which was free; the image is still
+7,282 B and the 68k reads the depth out of the published header, so only the
+blob changed. Cost is one more frame of host->music latency (five now).
+
+**The whole round, on the machine:**
+
+    before   music x256 00BC (74%) · lost 16/s · clicks · one note then a hang earlier still
+    after    music x256 00FF (99.6%) · lost 1/s (peak 2) · no clicks · no dropouts
+
+Three constants did it — `TIMER_B_K` 1 -> 12, `pp_pad_floor` -> PCM_IDLE_PAD,
+`RING_DEPTH` 3 -> 5 — and none of them would have been found without the
+per-kind counterfactual and the window sweep saying the frame's total work was
+never the problem.
+
+**Where the last 0.4% is.** `host x256` reads 00FE (99.2%), i.e. the 68k's own
+main loop misses ~0.8% of vblanks, and `starv/s` is 0 so the ring is not dry.
+By the example program's own diagnosis that puts the remainder on the Z80 —
+but the two numbers are now within noise of each other and of 100%, and
+`budget:frame` cannot resolve differences this small (it reads lost 0/s across
+the whole region). **Do not tune further against the model; only the machine
+can see it.**
+
+### 2026-08-10 (5) — PCM_GROUP 48. The machine reads 0x0100 across the board.
+
+    Music x256 0100 (100%) · host 00FE · 1s 0100 · worst 1s 0100 · lost/s 0
+    starv 5 · starv/s 0 · no clicks · no dropouts · no tempo wobble
+
+The hardware sweep, all with RING_DEPTH 5 and pp_pad_floor = PCM_IDLE_PAD:
+
+    k= 8 (GROUP 24)   music 98.0% · 1s 84.8% · worst 81.6% · lost/s 9 (peak B)
+    k=12 (GROUP 36)   music 99.2% · 1s 98.0% · worst 96.5% · lost/s 1 (peak 2)
+    k=16 (GROUP 48)   music  100% · 1s  100% · worst  100% · lost/s 0
+
+> **`dac-gate`'s hold number measures SPACING, not audibility, and I twice
+> treated it as the second.** It flagged a real problem exactly once — the idle
+> pass banking time with a floor pad, which was audible as clicks — and has
+> over-predicted every time since. Going 24 -> 36 -> 48 took the in-frame hold
+> 7.4 -> 10.2 -> 11.4 periods and the frame boundary 10.9 -> 10.0 -> 14.8, and
+> NONE of it was audible. A frame-boundary hold is a regular 60 Hz jitter of the
+> sample instant; the clicks came from irregular holes inside the group. Do not
+> refuse a tempo win on the strength of this number alone — check it on the
+> machine.
+
+`host x256` is 00FE, so the 68k's own loop still misses ~0.8% of vblanks while
+the music reads a clean 0x0100. Nothing left to chase on the Z80 side for one
+variable voice.
+
+**Budget for the dac1-3 spec, measured** (tests/budget-2v.mmlisp is the probe —
+the shipped gate scores only overlap for a handful of ATTACK frames, which are
+the most expensive frames there are and useless for a budget question):
+
+    a pass, per frame at R = 175:   IDLE 700 · FIXED add 7,175 · VARIABLE add 13,650
+    two VARIABLE voices, steady:    work 64,238 = 108% — over the vblank by 4,502
+    one VARIABLE + one FIXED:       ~57,763 = 97%   — fits
+    two FIXED:                      ~51,288 = 86%   — comfortable
+
+So the spec's shape is right: **per-channel fixed/variable is what makes a
+second channel affordable**, and two variable voices are 4,502 short against
+~8,000 of identified-but-unspent cycles (pad 6,852, the ring's shape ~860, PCM
+commands and the frame head ~2,400) — every one of which costs something.

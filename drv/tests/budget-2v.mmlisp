@@ -1,0 +1,10 @@
+; BUDGET PROBE, not a gate: two PCM voices sounding in STEADY STATE.
+; The shipped gate scores only overlap for a handful of attack frames, so their
+; "2v" column is a sample of the frames that also carry two PCM_STARTs — which
+; is the most expensive frame there is and not what a budget question is asking.
+; Both voices loop, so after the first bar every frame has two voices mixing and
+; nothing else happening.
+(def blip :sample :file "blip.wav")
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(pcm1 pad  :mode loop :tempo 120 :oct 4 :len 1 :vel 15   c c c c c c c c)
+(pcm2 pad  :mode loop :tempo 120 :oct 5 :len 1 :vel 15   c c c c c c c c)
