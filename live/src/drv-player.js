@@ -51,6 +51,7 @@ import {
   PCM_SAMPLES_PER_FRAME,
   PCM_RING_TARGET,
   PCM_RING_BYTES,
+  PCM_MAX_SHIFT,
 } from "./mmb.js";
 import {
   midiToFnumBlock,
@@ -2129,7 +2130,7 @@ export class DrvPlayer {
     v.muted = v.vol === 0 || this._master === 0;
     const n = 15 - v.vel + (31 - v.vol) + (31 - this._master);
     const shift = Math.floor((n + 1) / 3); // round(n/3)
-    v.shift = shift > 7 ? 7 : shift;
+    v.shift = shift > PCM_MAX_SHIFT ? PCM_MAX_SHIFT : shift;
     const byte = this._pcmShiftByte(v);
     if (v.active && byte !== v._sentShift) {
       v._sentShift = byte;

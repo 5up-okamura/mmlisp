@@ -225,7 +225,7 @@ static void pcm_compose_shift(MMLSeq *s, int vi) {
   v->muted = (uint8_t)(v->vol == 0 || s->master == 0);
   int n = (15 - v->vel) + (31 - v->vol) + (31 - s->master);
   int shift = (n + 1) / 3; /* round(n/3); n is never negative */
-  v->shift = (uint8_t)(shift > 7 ? 7 : shift);
+  v->shift = (uint8_t)(shift > MML_PCM_MAX_SHIFT ? MML_PCM_MAX_SHIFT : shift);
   uint8_t byte = pcm_shift_byte(v);
   /* A dead voice has nothing to re-level: the engine dropped its state. */
   if (v->active && byte != v->sent_shift) {

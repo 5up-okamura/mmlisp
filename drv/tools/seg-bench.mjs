@@ -388,8 +388,19 @@ try {
         // ENABLE B ($27 bit 3) gates the flag on the chip — Nuked-OPN2 only ever
         // sets it as `timer_b_overflow & timer_b_enable` (ym3438.c). Modelled
         // here too so this tool cannot report a frame the hardware never runs.
+        // Timer B's overflow is ALWAYS up here, which is what "satisfied on
+        // demand" in the header means: this tool profiles WORK, so a gate must
+        // cost what asking costs and never what waiting costs.
+        //
+        // It used to read `fcyc >= GATE_CY` — the flag appears once the frame
+        // has run one gate period — which is the same thing while a period is
+        // 1,075 cycles and is catastrophically not while it is 17,203: every
+        // frame then opened with `gate_wait` spinning up to a third of a frame,
+        // and that spin was attributed to whatever label happened to be running.
+        // It inflated one 2-voice frame from ~57k to 76.5k, and every per-kind
+        // number taken after the window widened was wrong by that much.
         if (a === 0x4000) return (tcyc - lastData < BUSY_CY ? 0x80 : 0)
-          | (enableB && fcyc >= GATE_CY ? 0x02 : 0);
+          | (enableB ? 0x02 : 0);
         if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;

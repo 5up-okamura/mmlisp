@@ -3377,3 +3377,52 @@ So the spec's shape is right: **per-channel fixed/variable is what makes a
 second channel affordable**, and two variable voices are 4,502 short against
 ~8,000 of identified-but-unspent cycles (pad 6,852, the ring's shape ~860, PCM
 commands and the frame head ~2,400) — every one of which costs something.
+
+### 2026-08-10 (6) — volume costs NOTHING until the work reaches the floor
+
+Two measurement errors of mine, corrected, and then the rule that actually holds.
+
+**Error 1: `seg-bench`'s gate model did not follow the window.** It returned
+Timer B's flag as up once `fcyc >= GATE_CY`, which is harmless while a period is
+1,075 cycles and catastrophic at 17,203: every frame opened with `gate_wait`
+spinning up to a third of a frame, charged to whatever label was running. One
+2-voice frame read 76,500 instead of 61,173. **Every per-kind number I took
+after the window widened was inflated by it.** The flag is now simply up
+whenever enabled, which is what "satisfied on demand" in the header always
+meant. Two conclusions built on the bad number were withdrawn: that two
+variable voices cost 108% (they cost 99%), and that the sample rate had to drop
+to fit them (it does not).
+
+**Error 2: `seg-bench`'s "pad" is cycles SPENT in pad loops, not cycles the
+frame would get back.** Sweeping PAD_TARGET 260 -> 120 returns only 948 cycles
+at two voices and 515 at one, while the DAC's in-frame hold goes 11.4 -> 29.7
+periods. The pad is free where there is slack and refunds almost nothing where
+there is not. **Do not treat it as headroom.**
+
+#### The rule, measured
+
+    vel 15 / 7 / 0     1 voice   57,215 / 57,230 / 57,224 cyc   (96%, flat)
+                       2 voices  59,001 / 64,847 / 67,331 cyc   (99% / 109% / 113%)
+
+**One sounding voice pays nothing for attenuation anywhere in the range** — its
+work is ~20,000 under the timer's floor, so the `sra` chain is absorbed by gate
+waits. Two voices sit AT the floor at 0 dB, so every step costs its full
+1,460 cyc/frame immediately. The cost is not per step; it is
+`max(0, work + volume - floor)`.
+
+#### PCM_MAX_SHIFT = 4 (live/src/mmb.js, MML_PCM_MAX_SHIFT in mmlispseq.h)
+
+The samples are 8-bit signed, so shift 5 leaves 3 bits, 6 leaves 2, 7 leaves 1 —
+quantisation noise, not a quiet sample. Capping at 4 costs nothing audible and
+bounds the two-voice worst case from 118% to 113% (2,920 cycles). It CLAMPS
+rather than mutes, so `vol 0` / `master 0` remain the only hard mutes and the
+documented "vel alone never silences a voice" still holds. The Z80's loop copies
+for 5..7 are still generated and simply never selected — leaving them costs 
+image bytes we have and makes the cap one constant to undo.
+
+Also checked and rejected: a cheaper attenuation. `sra a` at 8 cycles is optimal
+for one step (`cp $80 / ccf / rra` is 15), and a 256-byte LUT is flat 27 cycles
+via `ld ixl,a` + `ld a,(ix+0)` — it wins from shift 4 up and would give smooth
+256-level fades, but the table has to be rebuilt whenever the level moves (~5,000
+cycles on the Z80, i.e. every frame during a fade) and `ld ixl,a` is undocumented
+and absent from this repo's assembler and emulator. Parked.

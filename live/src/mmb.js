@@ -371,6 +371,26 @@ export function pcmFrameSamples(frame) {
 export const PCM_RING_TARGET = 255;
 export const PCM_RING_BYTES = 512;
 
+// How far a PCM voice may be attenuated, in 6 dB shift steps. It is a BUDGET
+// constant, and the range it removes was never audible anyway.
+//
+// The mixer attenuates with a chain of `sra a`, 8 Z80 cycles a step, on every
+// tick of every sounding voice — 1,460 cycles a frame per step per voice
+// (measured). A frame has ~2,400 cycles spare with one voice sounding and ~700
+// with two, so the deep end of this range is not affordable: two voices at
+// -12 dB measured 109% of a vblank and lost frames.
+//
+// And it buys nothing. The samples are 8-bit signed, so a shift of 5 leaves 3
+// bits, 6 leaves 2 and 7 leaves 1 — those levels are quantisation noise, not a
+// quiet sample. 4 leaves 4 bits, which is the last one that still carries the
+// waveform.
+//
+// Above this the level CLAMPS rather than mutes: `vol 0` and `master 0` remain
+// the only hard mutes, so the documented "vel alone never silences a voice"
+// still holds. Mirrored by MML_PCM_MAX_SHIFT in drv/68k/mmlispseq.h; the c-gate
+// diffs the two slot streams, so they cannot drift apart silently.
+export const PCM_MAX_SHIFT = 4;
+
 // 16.16 per-sample position increment: the per-frame increment divided across
 // the frame's samples. Computed at full 16.16 precision then floored so pitch
 // stays accurate (a table pre-divided by the rate would round too coarsely).

@@ -58,6 +58,14 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
  * the extra room costs 2 bytes a slot and removes a silent-drop failure mode). */
 #define MML_MACRO_BINDS 8
 #define MML_PCM_VOICES 2
+/* How far a PCM voice may be attenuated, in 6 dB shift steps. A BUDGET
+ * constant: the mixer attenuates with a chain of `sra a`, 8 Z80 cycles a step,
+ * on every tick of every sounding voice — 1,460 cycles a frame per step per
+ * voice, measured, against ~700 spare with two voices sounding. And the range
+ * it removes was never audible: the samples are 8-bit, so shift 5 leaves 3
+ * bits and 7 leaves 1. Above this the level CLAMPS; `vol 0` and `master 0`
+ * stay the only hard mutes. Mirrors PCM_MAX_SHIFT in live/src/mmb.js. */
+#define MML_PCM_MAX_SHIFT 4
 /* The Timer-B sample clock (driver.md §5.1.2), mirroring live/src/mmb.js. The
  * DAC's rate is the YM's, not the frame's: 37335/224 = 166.674 samples a frame,
  * so a frame owes it 166 or 167 and never a constant. The mixer produces into a
