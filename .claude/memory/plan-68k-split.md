@@ -3426,3 +3426,132 @@ via `ld ixl,a` + `ld a,(ix+0)` — it wins from shift 4 up and would give smooth
 256-level fades, but the table has to be rebuilt whenever the level moves (~5,000
 cycles on the Z80, i.e. every frame during a fade) and `ld ixl,a` is undocumented
 and absent from this repo's assembler and emulator. Parked.
+
+### 2026-08-11 — XGM2's PCM loop, read. My reconstruction of it was wrong.
+
+Read for structure only (`Stephane-D/SGDK`, `src/snd/xgm2/drv_xgm2_pcm_mac.i80`),
+same terms as the 2026-08-06 pass: numbers and design decisions, no code.
+
+**It is VOICE-OUTER, like ours** — one channel mixed across a destination buffer,
+not all channels per output sample. Saturation is decided at RUNTIME on the
+parity flag, not avoided by pre-scaling the data. There is no per-voice volume
+in the inner loop at all. Source lives in the banked $8000 window and the bank
+register is written once at macro entry, not per read. The mix buffer is 64
+bytes; `sampleOutput` polls Timer A's flag and writes `$27` then `$2A`.
+
+**So none of the three things I had reconstructed were true.** I had argued
+sample-outer mixing, four channel pointers in DE/HL/IX/IY, and free saturation
+from bake-time scaling — a coherent story built backwards from "14 kHz 4ch",
+presented before checking. The real difference is two constants:
+
+    per sample per channel   XGM2 42 T-states   ours 41 (+14 window) = 55
+    per emit                 XGM2 ~67           ours 87
+
+    4 voices at 14 kHz, period 256 cycles
+      XGM2   4 x 42 + 67 = 235   fits
+      ours   4 x 55 + 87 = 307   does not
+
+**The whole 72-cycle gap is PACE_WINDOW (52 of it) and the emit (20).** The mix
+loops are the same cost. There is no structural magic.
+
+#### PACE_WINDOW = 14 is now the biggest unverified assumption in the repo
+
+It charges every read through the $8000 window 14 Z80 cycles beyond the CPU's
+own 7, for the 68000's bus arbiter. At four voices that is 52 cycles a sample —
+over 12,000 a frame — and it is an ESTIMATE, never measured. XGM2 reads through
+the same window and budgets nothing for it (its gate is a timer, so a slow read
+eats margin instead of breaking). `seg-bench` and `frame-budget` both take
+`--stall-read`, so bracketing 0 against 14 and comparing to the machine settles
+it. **Every rate/voice table in this file is derived with 14 and moves if it is
+wrong.**
+
+#### Still unexploited from the 2026-08-06 read
+
+`sampleOutput` is sprinkled at ~189-cycle intervals through ALL of their code,
+not just the mix loop. I concluded "emit points cannot help" from measurements
+taken when PCM_GROUP was 3; that premise expired when the window went to 48.
+Re-evaluate. Their emit is not tied to the voice-pass count — the buffer
+decouples it — and we have the same ring.
+
+---
+
+## PLAN — agreed 2026-08-11, to implement in a fresh session
+
+Order is deliberate: each step's numbers depend on the one before it.
+
+### 0. Calibrate PACE_WINDOW against hardware  (measurement only)
+
+Everything below is costed with it. Build a config that sits NEAR the line (the
+current one is clean at 100%, so it cannot discriminate) — two variable voices
+is the natural probe, `drv/tests/budget-2v.mmlisp` already exists. Run
+`budget:frame --stall-read 0` and `--stall-read 14`, put both beside the
+machine's `music x256` / `lost/s`, and keep whichever reproduces it. If 14 is
+too high, re-derive the rate x voice map before doing anything else.
+
+### 1. Move MASTER volume out of the per-voice shift  (fixes fades)
+
+`_pcmComposeShift` folds `(31 - master)` into EVERY sounding voice's shift, so a
+master fade multiplies its cost by the voice count: three voices at -24 dB is
+16,800 cyc/frame against ~9,000 of room, i.e. a fade-out breaks any multi-voice
+build. Master is by definition common to all voices, so apply it ONCE per
+sample in `feed_one` instead: 8 cycles a step per SAMPLE (1,333/frame) rather
+than per voice-tick (1,400 x voices).
+
+- `live/src/drv-player.js` (the spec), `drv/68k/mmlispseq.c`, and the generated
+  `feed_one` in `drv/tools/gen-mixer.mjs` move together.
+- **Saturation order changes**: today each voice is attenuated before the
+  saturating add; after this the sum saturates at full scale and is then
+  attenuated. That is a real audio change and `slot-gate`'s sample-for-sample
+  comparison will move. Re-baseline deliberately, do not paper over it.
+- Deep master + deep voice exceeds one period (348 + 32 > 358.4 at three
+  voices), so mute past the point where both are deep.
+
+### 2. Fixed (pitch-baked) voices
+
+The measured prize: a fixed voice's tick is 41 against a variable voice's 78, so
+three fixed voices cost 85% of a vblank where two variable ones cost 99%.
+
+- **No MMB format change is needed.** "Pitch baked" simply means the 16.16
+  increment comes out exactly 1.0, and `PCM_START` already carries `incF`/`incI`.
+  The engine picks the no-resampler loop copy at `ms_bind` on
+  `incI == 1 && incF == 0` — once per segment, not per tick.
+- Generate the `nr` loop copies (`i8satnr` is already priced in gen-mixer as a
+  control case) and dispatch to them.
+- Export side: resample to the DAC rate at each note actually used, dedup
+  identical blobs by hash. **One-shots only** — resampling moves a loop's points
+  off integer samples, so looped material stays variable.
+- **Bake ONE-SHOT PITCH, not volume.** Volume baking multiplies blobs again
+  (pitch x level), permanently destroys bits at 8 bit, and buys nothing: volume
+  is free while work stays under the timer's floor, and a fixed voice's runtime
+  shift is 41+8s, still far cheaper than variable.
+- **Stamp the bake rate in the MMB and check it at load.** Baked data is
+  rate-bound; without a stamp a rate change becomes "the pitch is slightly off",
+  which is the least debuggable failure there is. A shared sample bank is
+  therefore bound to one rate.
+
+### 3. Then re-decide the rate  (depends on 0 and 2)
+
+Derived map, at PACE_WINDOW 14 — treat as provisional until step 0:
+
+    rate    可変1   可変1+固定1   可変2   固定2   固定3
+    10 kHz   58%      74%         84%     63%     82%
+    12 kHz   68%      86%         98%     74%     95%
+    14 kHz   77%      98%         period  84%    108%
+    16 kHz   86%      period      period  94%     period
+    18 kHz   95%      period      period 104%     period
+
+"period" = one iteration no longer fits a sample period, which bites before the
+frame budget does as the rate rises. Raising the rate touches
+`PCM_SAMPLES_NUM/DEN` in three implementations, so it is a bigger change than
+the window was; do it after the cheap wins, not before.
+
+### Not doing, and why
+
+- **Volume LUT.** Flat 27 cycles beats the `sra` chain from shift 4 up and would
+  give smooth 256-level fades, but the table must be rebuilt whenever the level
+  moves (~5,000 cycles on the Z80, i.e. every frame during a fade) and `ld ixl,a`
+  is undocumented and absent from this repo's assembler and emulator.
+- **Per-channel max-attenuation declaration.** Dropped in priority: volume costs
+  nothing while work stays under the floor, so the single `PCM_MAX_SHIFT = 4`
+  suffices. That cap is also load-bearing for three voices — at U = 3 a fixed
+  voice at shift 5 needs 372 cycles against a 358.4 period.

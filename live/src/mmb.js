@@ -323,13 +323,21 @@ export function pcmIncrement(baseRate, note) {
 // fm6 DAC. Every active voice is resampled (nearest-neighbour) to the sample
 // clock's grid and the ≤3 signed samples are summed then hard-saturated to int8.
 //
-// The grid is not the frame. The DAC is paced by YM Timer B — TB = 255 gates
-// every 16 FM samples and the engine emits PCM_SAMPLE_GROUP samples per gate —
-// so the rate is fixed by the YM's own clock and has nothing to do with 60 Hz:
+// The grid is not the frame. The DAC is paced by YM Timer B, so the rate is
+// fixed by the YM's own clock and has nothing to do with 60 Hz:
 //
 //   master 53693175 Hz / 7 = YM clock, / 144 = FM sample rate (53267 Hz)
-//   Timer B step = 16 FM samples; TB = 255 → one gate per step (3329.2 Hz)
-//   × 3 samples a gate = master / 5376 = 9987.6 Hz
+//   Timer B overflows every 16 × (256 − TB) FM samples, and the engine emits
+//   PCM_GROUP samples per overflow
+//   → 16 × (256 − TB) / PCM_GROUP FM samples per DAC sample
+//
+// **That ratio is the rate, and it is 16/3 whatever k = 256 − TB is**, because
+// the engine's generator derives PCM_GROUP = 3k from the same k (gen-mixer.mjs,
+// TIMER_B_K). The window k is a scheduling choice — how many samples the engine
+// may average its out-of-loop work over — and it has moved from 1 to 16 without
+// the rate moving at all. Do not re-derive this from a particular TB.
+//
+//   16/3 FM samples a DAC sample = master / 5376 = 9987.6 Hz
 //   a frame is 262 lines × 3420 master cycles = master / 896040 (59.92 Hz)
 //   → 896040 / 5376 = 166.674 samples a frame, which is NOT an integer
 //

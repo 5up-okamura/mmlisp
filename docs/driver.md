@@ -723,10 +723,14 @@ arrived early, and a steady 1 kHz tone came back with frame-rate sidebands
 and the ear hears the intervals. The pacing has to come from a clock, and the
 YM2612 has one.
 
-**The clock.** `Timer B` with `TB = 255` overflows every 16 FM samples; the
+**The clock.** `Timer B` overflows every 16 x (256 - TB) FM samples; the
 engine polls the overflow flag (status bit 1 at `$4000`, cleared through `$27`)
-and emits `GROUP = 3` samples per gate, the first at the gate and the other two
-cycle-paced behind it. Timer A is not available — CSM owns it (§9).
+and emits `PCM_GROUP` samples per gate, the first at the gate and the rest
+cycle-paced behind it. **TB and `PCM_GROUP` move together** — the generator
+derives both from one knob (`TIMER_B_K` in gen-mixer.mjs, k = 256 - TB, and
+`PCM_GROUP` = 3k) — so the RATE is 16/3 FM samples a DAC sample whatever k is.
+k is the window the engine may average its out-of-loop work over, and it is 16:
+TB = 240, `PCM_GROUP` = 48. At k = 1 the song ran at 74% of speed. Timer A is not available — CSM owns it (§9).
 
 **`$27` must carry `$0A`, not `$02` — Load B *and* Enable B.** Load B (bit 1)
 runs the counter; **Enable B (bit 3) is what publishes its overflow to the
@@ -791,8 +795,11 @@ fit".
 
 ```
 YM clock = master/7,  FM sample = /144 = 53267 Hz
-Timer B step = 16 FM samples = 300.4 us      → gate 3329.2 Hz
-x 3 samples a gate                            → 9987.6 Hz = master/5376
+Timer B step = 16k FM samples (k = 256 - TB) → gate 3329.2/k Hz
+x 3k samples a gate                           → 9987.6 Hz = master/5376
+   k cancels — the rate is 16/3 FM samples a DAC sample for every k.
+   k = 16 today (TB = 240, GROUP = 48); it is the averaging window,
+   not the rate. See §5.1.2.
 358.4 Z80 cycles a sample (5% MORE room than R = 175's 341)
 frame = master/896040                         → 166.674 samples a frame
 ```

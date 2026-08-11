@@ -94,10 +94,12 @@ export const FRAME_CYCLES = 59736;  // 896040 master clocks / 15
 // The frame's out-of-loop work is ~16k over ~55 groups, ~290 a group on
 // average and lumpy — which P=2 cannot absorb and P=1 can.
 export const PACE_PASSES = 2;       // voice passes per frame = the emit cadence
-// The Timer-B sample clock (driver.md §5.1.2): the gate is 16 FM samples =
-// 2304 YM clocks and GROUP samples come out per gate. The Z80 and the YM run
-// off the same crystal at master/15 and master/7, so a YM clock is 7/15 of a
-// Z80 one and the period converts exactly.
+// The Timer-B sample clock (driver.md §5.1.2): the gate is 16k FM samples =
+// 2304k YM clocks and 3k samples come out of it, so the RATE is 16/3 FM samples
+// a DAC sample for every k — 9987.6 Hz — and k only decides how many samples
+// the engine may average its out-of-loop work over. The Z80 and the YM run off
+// the same crystal at master/15 and master/7, so a YM clock is 7/15 of a Z80
+// one and the period converts exactly.
 // Timer B's period is 16 x (256 - TB) FM samples and an FM sample is 144 YM
 // clocks, so TB is the ONE knob here: k = 256 - TB buys 2304k YM clocks a gate
 // and 3k samples out of it — the SAME sample rate for every k, because both
