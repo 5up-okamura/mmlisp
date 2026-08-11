@@ -3555,3 +3555,50 @@ the window was; do it after the cheap wins, not before.
   nothing while work stays under the floor, so the single `PCM_MAX_SHIFT = 4`
   suffices. That cap is also load-bearing for three voices — at U = 3 a fixed
   voice at shift 5 needs 372 cycles against a 358.4 period.
+
+### 2026-08-11 (2) — step 0's probe, corrected twice
+
+**The plan's `budget:frame --stall-read` does not exist.** That flag is
+`seg-bench`'s. `frame-budget` had `--frames`, `--pump` and `--stall`, and
+`--stall` is the 68000's bus grab in cyc/frame — a different, also unmeasured
+quantity, left at 0.
+
+**And sweeping PACE_WINDOW itself is a bad probe, because it acts twice in
+opposite directions.** `padFor` SUBTRACTS `fetches x PACE_WINDOW` when it sizes
+the generated pad; `frame-budget` ADDS `winReads x PACE_WINDOW` when it times
+the frame. Lowering the constant grows the pad in the ROM while shrinking the
+model's frame and the two nearly cancel — the sweep moved a two-voice frame ~600
+cycles where the charge itself is 4,667. That reads as "the probe cannot tell",
+and it is a property of the sweep, not of the question.
+
+`frame-budget` now takes **`--pace N`**, overriding the MODEL's charge only. The
+build is held fixed and only the model is swept, which is the right shape: the
+machine is what we are trying to identify.
+
+**The second correction: the observable saturates below 100%.** Held fixed and
+swept, `budget-2v` gives
+
+    --pace  0   56,429 (94%)   music x256 00fa (98%)   lost 1/s
+    --pace 14   59,001 (99%)   music x256 00f9 (97%)   lost 2/s
+
+— the frame moves 4.3% and `music x256` moves ONE count, because nothing crosses
+100% and the catch-up cascade never starts. Same lesson as k=8 vs k=12: this
+system's observable is a threshold, so a probe has to STRADDLE it.
+
+**`drv/tests/budget-2v-edge.mmlisp`** is tuned to do that — two voices, one
+attenuated a single 6 dB step (vel 12 -> shift 1, +1,460 cyc/frame):
+
+    --pace  0   56,704 ( 95%)   music x256 00fa (98%)   lost 1/s
+    --pace 14   59,736 (100%)   music x256 00ed (93%)   lost 5/s
+
+Five counts and a 5x on `lost/s`. Deeper is WORSE, not better — both voices at
+one step lands at 99% and collapses back to a single count, because it stops
+straddling.
+
+Flashable build: `drv/out/probe/song.mmb` + `song.smp` (976 B / 534 B). Copy
+over an SGDK project's `res/` — **back the real song up first**, the names
+collide.
+
+**Step 0 is blocked on one hardware reading**: that probe's `music x256` and
+`lost/s`. ~98/1 says the window read is free and every rate x voice table in
+this file is pessimistic; ~93/5 says PACE_WINDOW = 14 is right and they stand.

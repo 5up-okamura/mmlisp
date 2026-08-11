@@ -1,0 +1,15 @@
+; CALIBRATION PROBE for PACE_WINDOW, not a gate.
+;
+; The question is what the MACHINE pays for a $8000-window read. The model
+; charges PACE_WINDOW (14, an estimate that has never been measured) and the
+; frame moves 2,572 cycles between charging 0 and 14 — but at 94..99% of a
+; vblank the music rate barely moves, because nothing crosses 100% and the
+; catch-up cascade never starts. A probe that cannot cross the line cannot
+; answer the question.
+;
+; So this one is tuned to STRADDLE it: two voices, one attenuated by a single
+; 6 dB step (vel 12 -> shift 1, +1,460 cyc/frame). The model then predicts a
+; clean frame at --pace 0 and an overrun at --pace 14, and the machine picks.
+(def pad :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(pcm1 pad :mode loop :tempo 120 :oct 4 :len 1 :vel 15   c c c c c c c c)
+(pcm2 pad :mode loop :tempo 120 :oct 5 :len 1 :vel 12   c c c c c c c c)

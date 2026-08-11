@@ -87,6 +87,24 @@ const FRAME_CYCLES = 59736;      // 896040 master clocks / 15
 // the grab itself.
 const sIdx = argv.indexOf("--stall");
 const STALL = sIdx >= 0 ? Number(argv[sIdx + 1]) : 0;
+// `--pace N` overrides what THIS MODEL charges a $8000-window read, and nothing
+// else. It defaults to the generator's PACE_WINDOW.
+//
+// It has to be separate from that constant, because PACE_WINDOW acts in two
+// places that pull opposite ways: `padFor` SUBTRACTS `fetches x PACE_WINDOW`
+// when it sizes the generated pad, and this file ADDS `winReads x PACE_WINDOW`
+// when it times the frame. Lowering the constant therefore grows the pad in the
+// ROM while shrinking the model's frame, and the two nearly cancel — sweeping
+// it moved a two-voice frame by about 600 cycles when the charge itself is
+// 4,667 (333 reads a frame at 14). That reads as "the probe cannot tell",
+// which is a property of the sweep and not of the question.
+//
+// The question is what the MACHINE pays a window read, so the build must be
+// held FIXED and only the model swept: flash one ROM, read its `music x256` and
+// `lost/s`, then run this at --pace 0 / 7 / 14 and keep whichever reproduces
+// them. PACE_WINDOW itself is an estimate that has never been measured.
+const pIdx = argv.indexOf("--pace");
+const PACE_OVERRIDE = pIdx >= 0 ? Number(argv[pIdx + 1]) : null;
 
 const tmp = mkdtempSync(join(tmpdir(), "budget-"));
 try {
@@ -96,7 +114,9 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer, PACE_WINDOW, GATE_CY } = await import("./gen-mixer.mjs");
+  const { writeMixer, PACE_WINDOW: PACE_GEN, GATE_CY } = await import("./gen-mixer.mjs");
+  // The model's charge only; the generated pad keeps the generator's value.
+  const PACE_WINDOW = PACE_OVERRIDE ?? PACE_GEN;
   writeMixer();
   const built = assemble(join(drv, "src", "engine.z80"),
     PUMP ? { defines: { PUMP_ON: 1 } } : {});
@@ -105,6 +125,8 @@ try {
   console.log(`engine ${built.bytes.length} B · write pump `
     + `${sym("PUMP_ON") ? "ON" : "off"}${PUMP ? " (--pump)" : ""} · budget ${FRAME_CYCLES} cyc/frame`
     + (STALL ? ` · 68k bus grab ${STALL} cyc/frame (--stall)` : ""));
+  if (PACE_OVERRIDE !== null)
+    console.log(`  window read charged ${PACE_WINDOW} cyc (--pace; the generator built the pads at ${PACE_GEN})`);
 
   for (const score of scores) {
     const name = basename(score);
