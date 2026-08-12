@@ -93,14 +93,16 @@ function tokenizeExpr(s) {
       i = j;
       continue;
     }
-    if (c === "<" && s[i + 1] === "<") {
-      toks.push({ t: "op", v: "<<" });
+    // Two-character operators first, longest match — `<<` before `<`.
+    const two = s.slice(i, i + 2);
+    if (["<<", ">>", "<=", ">=", "==", "!="].includes(two)) {
+      toks.push({ t: "op", v: two });
       i += 2;
       continue;
     }
-    if (c === ">" && s[i + 1] === ">") {
-      toks.push({ t: "op", v: ">>" });
-      i += 2;
+    if (c === "<" || c === ">") {
+      toks.push({ t: "op", v: c });
+      i++;
       continue;
     }
     if ("+-*/%&^|~()".includes(c)) {
@@ -119,17 +121,26 @@ function evalExpr(s, resolve, here) {
   let pos = 0;
   const peek = () => toks[pos];
   const next = () => toks[pos++];
+  // Comparisons sit below the bitwise operators, C-like, and yield 1 or 0.
+  // They exist for `assert`, which is the only thing that reads a boolean —
+  // addresses are unsigned 16-bit here, so an address comparison is exact.
   const PREC = {
-    "|": 1,
-    "^": 2,
-    "&": 3,
-    "<<": 4,
-    ">>": 4,
-    "+": 5,
-    "-": 5,
-    "*": 6,
-    "/": 6,
-    "%": 6,
+    "<": 1,
+    ">": 1,
+    "<=": 1,
+    ">=": 1,
+    "==": 1,
+    "!=": 1,
+    "|": 2,
+    "^": 3,
+    "&": 4,
+    "<<": 5,
+    ">>": 5,
+    "+": 6,
+    "-": 6,
+    "*": 7,
+    "/": 7,
+    "%": 7,
   };
   function primary() {
     const t = next();
@@ -168,6 +179,12 @@ function evalExpr(s, resolve, here) {
         case "*": lhs = (lhs * rhs) & 0xffff; break;
         case "/": lhs = Math.trunc(lhs / rhs); break;
         case "%": lhs %= rhs; break;
+        case "<": lhs = lhs < rhs ? 1 : 0; break;
+        case ">": lhs = lhs > rhs ? 1 : 0; break;
+        case "<=": lhs = lhs <= rhs ? 1 : 0; break;
+        case ">=": lhs = lhs >= rhs ? 1 : 0; break;
+        case "==": lhs = lhs === rhs ? 1 : 0; break;
+        case "!=": lhs = lhs !== rhs ? 1 : 0; break;
       }
     }
     return lhs & 0xffff;
@@ -437,6 +454,16 @@ function encodeLine(mnem, ops, ctx) {
     case "dw":
     case "defw": {
       for (const o of ops) emitW(pass === 2 ? evalE(o) : 0);
+      return;
+    }
+    // A build-time check that emits nothing. The engine's hot code has to end
+    // below a FIXED, 68k-visible address, and nothing else in this assembler
+    // notices when it does not: `org` past a region simply keeps going and the
+    // overrun shows up as a corrupted header at run time, on hardware. Second
+    // operand is the message.
+    case "assert": {
+      if (pass === 2 && !evalE(ops[0]))
+        err(`assertion failed: ${ops[0]}${ops[1] ? ` — ${ops.slice(1).join(",").trim()}` : ""}`);
       return;
     }
     case "ds":
