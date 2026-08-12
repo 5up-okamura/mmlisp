@@ -1371,6 +1371,8 @@ computes nothing (§5.4).
 | 0x02 | `PCM_STOP` | voice u8 — a looped voice starts its release tail; a shot is unaffected (it plays to its end) |
 | 0x03 | `PCM_VOL` | voice u8, shift u8 |
 | 0x04 | `PCM_LOOP` | voice u8, loop_len u16, left u16 — retarget a running voice's loop region |
+| 0x05 | `PCM_MASTER` | shift u8 — the attenuation the emit applies to the finished SUM, once per DAC sample (§14.1) |
+| | | The only VOICELESS command, and it does not go in a voice struct: the engine PATCHES it into every emit's chain. Sent when the shift moves, not when `master` does |
 
 Two of `PCM_START`'s fields are worth explaining, because both exist to keep
 arithmetic off the Z80:
@@ -1390,6 +1392,10 @@ arithmetic off the Z80:
 `PCM_LOOP` is new and costs the mixer nothing: a voice-outer pass loads the loop
 bounds once per segment, never per tick (§1.2). It is what makes ping-pong and
 macro-modulated loop length affordable.
+
+`PCM_MASTER` is the one command whose handler writes CODE rather than state, and
+it is the reason `:master` can take PCM below −24 dB at all — §14.1 has the
+mechanism, the fade it fixes, and what it costs.
 
 ### 6.4 Published Z80 addresses
 
@@ -2236,28 +2242,121 @@ Z80 already owns. So the slot never carries them, and the gate compares the
 engine's DAC traffic against the reference *mixer's*, separately from the
 power-on patch (which still writes both, for parity with `ir-player`).
 
-**Per-channel volume (`:vel` + `:vol` + `:master`).** `:vel` and `:vol` on a
-`pcmN` channel and the global `:master` all ride the FM/PSG velocity/fader ladder
-(2 dB/step). The sequencer composes them into one per-voice attenuation the mixer
-applies as an arithmetic right shift on each sample before summing — one `sra`
-per sample, so volume stays off the critical path. Summing each control's
-steps-below-unity gives the total attenuation, quantized to the 6 dB shift grid:
+**Per-channel volume (`:vel` + `:vol`).** `:vel` and `:vol` on a `pcmN` channel
+ride the FM/PSG velocity/fader ladder (2 dB/step). The sequencer composes them
+into one per-voice attenuation the mixer applies as an arithmetic right shift on
+each sample before summing — one `sra` per sample, so volume stays off the
+critical path. Summing each control's steps-below-unity gives the attenuation,
+quantized to the 6 dB shift grid:
 
 ```
-n = (15 − vel) + (31 − vol) + (31 − master)
-shift = min(7, round(n / 3))           # the voice's shift, bits0-2
-mute  = (vol == 0) || (master == 0)    # bit7 — true silence
+n = (15 − vel) + (31 − vol)
+shift = min(PCM_MAX_SHIFT, round(n / 3))    # the voice's shift, bits0-2
+mute  = (vol == 0) || (master == 0)
+        || (shift + master_shift >= PCM_TOTAL_MAX_SHIFT)    # bit7 — true silence
 ```
 
 so the same `:vel`/`:vol` mean the same loudness on a PCM voice as on FM/PSG.
-`vel` never mutes — with `vol`/`master` at unity it floors at `shift 5` (≈ −30 dB);
-`vol 0` or `master 0` is a hard mute (the muted voice still advances, matching FM
-where a note continues silently under a 0 fader). The compose runs on the 68k,
-once per `PARAM_SET VEL`/`VOL` (and for every voice on a `MASTER` change), never
-per sample, and reaches the Z80 as a `PCM_VOL` command; `vel`/`vol` persist per
-voice and ride the SE snapshot.
+`vel` never mutes — `vol 0` is a hard mute, and so are the two master conditions
+in §14.1 (a muted voice still advances, matching FM where a note continues
+silently under a 0 fader). The compose runs on the 68k, once per `PARAM_SET
+VEL`/`VOL` (and for every voice on a `MASTER` change, because master decides the
+mute), never per sample, and reaches the Z80 as a `PCM_VOL` command; `vel`/`vol`
+persist per voice and ride the SE snapshot.
 
 A single voice takes the same path — there is no separate fast path.
+
+### 14.1 `:master` rides the sum, not the voices
+
+**`:master` is not in the per-voice shift.** It is common to every voice by
+definition, so the mixer applies it ONCE PER DAC SAMPLE, in the emit, to the
+finished and already-saturated sum:
+
+```
+master_shift = min(PCM_MASTER_MAX_SHIFT, round((31 − master) / 3))
+```
+
+and it reaches the Z80 as `PCM_MASTER` (§6.3) — the one voiceless PCM command.
+
+**Why it moved is the ceiling, not the cycles.** Folded in, master shared
+`PCM_MAX_SHIFT` with `vel`/`vol`, and that ceiling exists for a per-tick cost
+master does not have. The result was a PCM voice that would not fade: measured
+on the DAC stream, peak per step, one voice at unity `vel`/`vol` —
+
+```
+master   31    28    25    22    19    16    13    10     7     4     1     0
+before  -3.1  -9.1 -14.9 -20.6 -26.6 -26.6 -26.6 -26.6 -26.6 -26.6 -26.6  -inf
+after   -3.1  -9.1 -14.9 -20.6 -26.6 -32.6 -36.1 -36.1 -36.1 -36.1 -36.1  -inf
+```
+
+FM went on down the TL ladder and PSG down its 4-bit one while PCM held at
+−26.6 dB and then fell off a cliff. The defect was that PCM did not follow the
+fader at all past a point, not that it followed it coarsely: it now reaches two
+rungs further and lands on silence from −36 dB. `master 12..1` still share the
+bottom rung, and the drop from there to silence is still a step.
+
+**A stepped DAC level is by design, not a shortfall (decided 2026-08-12).**
+Smoothness is not a requirement for PCM — 6 dB rungs are the model, the same
+way `PCM_MAX_SHIFT` clamps `vel`/`vol` at four of them. What the level has to do
+is MOVE when the fader moves and reach silence at `master 0`; how finely it
+subdivides on the way is not something this mix is asked to deliver. Anything
+that would buy resolution here (below) is therefore out of scope, not deferred.
+
+**Saturation order changed, deliberately.** Each voice used to be attenuated
+before the saturating add; the sum now saturates at full scale and is attenuated
+after. A fade-out therefore holds whatever the mix clipped and takes THAT down,
+rather than un-clipping as it goes. That is what a master fader does, and it is
+a real audio change: gate scores that move master move with it.
+
+**Deep is muted, not mixed.** `shift + master_shift >= PCM_TOTAL_MAX_SHIFT` (7)
+silences the voice — the same "inaudible, so do not sound it" rule
+`PCM_MAX_SHIFT` states, applied to the total. 7 leaves one bit of an 8-bit
+sample, and muting also hands the frame the voice's whole per-tick cost back,
+which is what keeps the new deep rungs affordable.
+
+**How the Z80 holds it (§5.3).** The emit is inlined into all twenty loop copies
+and has no free register to read a shift from and no cycles to fetch one with —
+`A` is the sample, `A'` the gate phase, `HL`/`DE`/`BC` the mixer's register file,
+`IY` the ring cursor. So the shift is PATCHED INTO THE CODE. Every emit carries
+two copies:
+
+- the **plain** one, byte-for-byte what the engine ran before this change, and
+  the fall-through;
+- the **attenuated** one, carrying `PCM_MASTER_MAX_SHIFT` two-byte chain slots
+  that `pc_master` fills with `sra a` plus a jump over the rest.
+
+The gate's own `jr nz` chooses between them, with its displacement patched — the
+branch was already there, so unity pays nothing for the choice. `mst_tab` /
+`mst_tab1` in the generated mixer list every site; `gen-mixer.mjs` emits the
+displacements as label arithmetic so a re-layout cannot silently rot them.
+
+This is affordable only because the shift moves on the 6 dB grid: three `master`
+steps to a rung, so a full fade rewrites the sites about seven times rather than
+once a frame. The 68k emits `PCM_MASTER` on the SHIFT, never on `master` itself.
+
+**What it costs**, measured with `budget:frame`, two voices looping at unity
+`vel`/`vol`, cycles per frame against a 59,736 budget:
+
+```
+master   31      28      25      22      19      16      13
+before   59,132  59,439  62,440  64,894  67,416  67,416  67,416
+after    59,199  62,760  63,956  65,178  66,415  67,670  68,975
+```
+
+Unity is free (+67, 0.1%: the gate's own sample and `feed_one` always take the
+general form). Past that the attenuated path costs a flat 12 cycles a sample —
+one branch, structural, because the plain copy's prologue sits between the chain
+and the shared tail — plus 8 a step. So a shallow master costs ~3,300 cycles
+where the fold cost ~300, and a deep one is a wash. **This change does not buy
+frame budget. It buys the fade.**
+
+The alternative that keeps coming up is a 256-entry lookup table, flat in cost
+and smooth at 256 levels instead of 6 dB steps. **It is closed by the decision
+above** — it buys resolution nobody asked for. Its mechanics are recorded only
+so the question does not get reopened as if it were cheap: the table needs a
+register pair pointing at it at emit time, and the only way to load one there is
+`ld ixl,a`, which is undocumented and absent from this repo's assembler and
+emulator. So it would cost a resolution requirement AND two new tools.
 
 **Sub-frame feed timing** was the open item here, and it was real: the engine put
 each frame's samples out in 12% of the frame until 2026-08-03. §5.1 is the fix

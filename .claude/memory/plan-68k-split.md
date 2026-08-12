@@ -3488,7 +3488,61 @@ is the natural probe, `drv/tests/budget-2v.mmlisp` already exists. Run
 machine's `music x256` / `lost/s`, and keep whichever reproduces it. If 14 is
 too high, re-derive the rate x voice map before doing anything else.
 
-### 1. Move MASTER volume out of the per-voice shift  (fixes fades)
+### 1. Move MASTER volume out of the per-voice shift  —  DONE 2026-08-11
+
+Landed, but NOT for the reason written below. The costing here was wrong twice
+and the change is worth having anyway:
+
+- **The fold was not costing 16,800.** The baked pads absorb roughly half of a
+  shift chain. Measured, two voices going from shift 0 to shift 4 cost +8,624
+  cyc/frame, and the first step is nearly free (+570). The plan's per-voice
+  figure was the instruction count, not the frame's.
+- **Applying master once per sample costs a dispatch the plan did not count.**
+  The emit is inlined into twenty loop copies and has no free register, so the
+  choice between a plain and an attenuated emit has to be a branch: a flat 12
+  cycles a sample (2,000/frame) whenever master is not unity, on top of the 8
+  a step. Net, at two voices: unity +67, shallow master ~+3,300, deep master a
+  wash. **It buys no frame budget.**
+- **What it does buy is the fade.** Folded in, master shared PCM_MAX_SHIFT with
+  vel/vol, so a PCM voice stopped attenuating at -24 dB, held there for
+  `master 12..1`, and fell off a cliff at 0 while FM and PSG kept going. Now
+  master has its own deeper ceiling (PCM_MASTER_MAX_SHIFT = 6, -36 dB) and a
+  total-shift mute (PCM_TOTAL_MAX_SHIFT = 7). Measured peak, one voice:
+
+      master   31    28    25    22    19    16    13    10     7     4     1     0
+      before  -3.1  -9.1 -14.9 -20.6 -26.6 -26.6 -26.6 -26.6 -26.6 -26.6 -26.6  -inf
+      after   -3.1  -9.1 -14.9 -20.6 -26.6 -32.6 -36.1 -36.1 -36.1 -36.1 -36.1  -inf
+
+Four things the plan did not mention and which cost most of the work:
+
+1. **It is a format change.** Master had no path to the engine once it left
+   PCM_VOL. `PCM_MASTER` (op 0x05, one byte) is new, and PROTO_VER went 7 -> 8
+   because pcm_command RETURNS on an unknown opcode — an old image would ignore
+   master silently.
+2. **21 emit sites**, all from `feed()` and `feed_one` in gen-mixer, so one
+   generator edit reaches all of them. The shift lives as PATCHED CODE
+   (`mst_tab`/`mst_tab1`, `mst_apply` in engine.z80); affordable only because
+   the 6 dB grid means a full fade patches ~7 times, not once a frame.
+3. **The hot code ran into the header.** +512 bytes took CODE_END from ~$10EE
+   past HDR ($1300) and NOTHING NOTICED — `org` keeps assembling. Fixed by
+   moving `mst_apply` into the $1C00 once-a-frame region (140 B headroom left)
+   and by giving z80asm an `assert` directive plus comparison operators, with
+   `assert CODE_END <= HDR` in place. Check that first next time space is tight.
+4. **Saturation order changed** — the sum saturates then attenuates, so a fade
+   holds what the mix clipped and takes it down. Deliberate, recorded in
+   driver.md §14.1.
+
+Re-baseline came out exactly as proposed: five master-invariant PCM scores are
+BIT-IDENTICAL on the DAC stream before and after, and only the master-moving one
+moved (546/20002 samples, max delta 11). New gate `tests/m3-pcm-master.mmlisp`
+walks master to 0 and is in `verify:engine`, along with `m3-pcm-volmix` which was
+not there before — the Z80 sample-for-sample gate had NO master coverage at all,
+and it is what caught a chain-displacement bug in this work.
+
+The original text follows.
+
+#### (original plan text)
+
 
 `_pcmComposeShift` folds `(31 - master)` into EVERY sounding voice's shift, so a
 master fade multiplies its cost by the voice count: three voices at -24 dB is
@@ -3547,10 +3601,13 @@ the window was; do it after the cheap wins, not before.
 
 ### Not doing, and why
 
-- **Volume LUT.** Flat 27 cycles beats the `sra` chain from shift 4 up and would
-  give smooth 256-level fades, but the table must be rebuilt whenever the level
-  moves (~5,000 cycles on the Z80, i.e. every frame during a fade) and `ld ixl,a`
-  is undocumented and absent from this repo's assembler and emulator.
+- **Volume LUT.** CLOSED 2026-08-12, on requirements rather than cost: a stepped
+  DAC level is the model, so the smooth 256-level fade it buys is not wanted
+  (driver.md §14.1). The cost arguments stand behind that and are recorded so
+  the question is not reopened as if it were cheap — the table must be rebuilt
+  whenever the level moves (~5,000 cycles on the Z80, i.e. every frame during a
+  fade) and `ld ixl,a` is undocumented and absent from this repo's assembler and
+  emulator.
 - **Per-channel max-attenuation declaration.** Dropped in priority: volume costs
   nothing while work stays under the floor, so the single `PCM_MAX_SHIFT = 4`
   suffices. That cap is also load-bearing for three voices — at U = 3 a fixed

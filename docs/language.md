@@ -1209,7 +1209,16 @@ driver.md §14.
   > `length`/`gate` (they are not forwarded to the mixer worklet); only `loop`
   > mode honors KEY-OFF. Gated / length-limited one-shots are a later milestone.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
-- `:vel`, `:vol`, `:master` compose through the standard level stack (§6).
+- `:vel`, `:vol`, `:master` compose through the standard level stack (§6), but a
+  PCM voice's resolution is COARSER than FM's or PSG's: the mixer attenuates by
+  an arithmetic shift, so the ladder is 6 dB per step, not 2. `:vel` + `:vol`
+  reach −24 dB and clamp there (deeper is quantisation noise at 8 bit, and it
+  costs the mixer a cycle a sample per step); `:master` rides the summed mix
+  instead and reaches −36 dB before the voice mutes. So a PCM fade is stepped
+  where an FM one is smooth, and it lands on silence from −36 dB rather than
+  gliding there. That is the model, not a limitation to work around: a PCM
+  fade is stepped on purpose (driver.md §14.1). Automate `:vol` on FM or PSG
+  when a fade has to be smooth.
 - PCM plays on `pcm1`–`pcm3`, three voices **soft-mixed** to the single fm6 DAC
   (driver.md §14). `fm6` is FM only (`fm6 :mode shot`/`loop` is an error).
   `fm6` and `pcmN` may be used in the same score: the DAC is claimed while any

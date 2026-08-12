@@ -235,6 +235,17 @@ grid (`sample[pos>>16]`, `pos += inc`), the ≤3 signed samples are summed and
 > plans measured against a chunk length it does not mix) — and `verify:all` with
 > them. Those two reds are the step, and they close together when it lands.
 
+`:master` is NOT part of that per-voice attenuation (driver.md §14.1): the emit
+applies it once per DAC sample to the finished sum, and the shift lives as
+PATCHED CODE in every one of the twenty inlined emit copies, because the emit
+has no free register to read it from. `PCM_MASTER` (op 0x05) is what patches
+them. It buys the fade, not the frame budget — unity costs +67 cyc/frame and an
+attenuated master costs a flat 12 cycles a sample plus 8 a step, against a fold
+that the baked pads were already absorbing about half of. What it fixes is that
+a PCM voice used to stop fading at −24 dB and then fall off a cliff; the gate is
+`tests/m3-pcm-master.mmlisp`, which walks master to 0 and compares the engine
+against the reference sample for sample at every rung.
+
 The per-tick increment is `floor(inc_frame / R)`, computed once at note-on
 (`mmb.js` `pcmTickIncrement`; a 16×16→32 multiply then a 32-bit ÷175). `$2B`
 enables/releases the DAC (change-only, first voice on / last voice off). A

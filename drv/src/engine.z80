@@ -187,6 +187,11 @@ G_RD        equ $19c0           ; u16 next sample the feed takes
 G_WR        equ $19c2           ; u16 where the mixer writes next
 G_FILL      equ $19c4           ; u16 FINISHED samples not yet fed
 G_EMITS     equ $19c6           ; u8  samples this frame still owes the DAC
+; Master's shift, as last patched into the emits. Only mst_apply reads it back
+; — the emits themselves hold it as CODE, which is the whole point (§14.1) —
+; but a fade that re-enters the same rung must not rewrite twenty sites, and
+; this is what tells it not to.
+G_MASTER_SH equ $19c7           ; u8  master shift now patched into the emits
 ; $19c7 was G_PHASE, the gate countdown. It lives in A' now — the emit gets ~165
 ; cycles and a RAM byte behind a call spent 69 of them on a counter that never
 ; exceeds 3 (gate_wait, and gen-mixer.mjs gatePrologue for the rule that AF' is
@@ -243,7 +248,12 @@ H_STARVE    equ HDR+12          ; u16 Z80-owned: starved frames since boot
 ; stamp is what lets a frame that ran over budget CATCH UP instead of losing
 ; a frame of music.
 H_VBL       equ HDR+14          ; u8  68k-owned: vblank count, low byte
-PROTO_VER   equ 7
+; Bumped to 8 when the slot gained PCM_MASTER (§6.3): pcm_command RETURNS on an
+; unknown opcode — correct, since the count already bounds the walk — so an old
+; image fed a new sequencer's slots would simply ignore master on PCM and say
+; nothing about it. The host's `ver == MMLISPDRV_PROTO_VER` check is what turns
+; that into a refusal to start.
+PROTO_VER   equ 8
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -375,6 +385,12 @@ start:
         ex   af,af'             ; A' = the gate phase; the first emit waits
         ld   a,PCM_IDLE_SH
         ld   (G_IDLEV+PV_SHIFT),a
+        ; Master back to unity. The emits carry their shift as PATCHED CODE and
+        ; the code is RAM, so a song that ended mid-fade left every site
+        ; attenuated — and the 68k's `pcm_sent_master` starts at 0 believing
+        ; otherwise. One of the two has to put it back, and it is this one.
+        xor  a
+        call mst_apply
         ; Timer B: it overflows every 16 x (256 - PCM_TB) FM samples and the
         ; engine emits PCM_GROUP samples per overflow — 9987.6 Hz (§5.1.2)
         ; whatever PCM_TB is, because the two scale together. Both come from
@@ -783,6 +799,7 @@ PCMC_START  equ 1
 PCMC_STOP   equ 2
 PCMC_VOL    equ 3
 PCMC_LOOP   equ 4
+PCMC_MASTER equ 5
 
 pcm_command:
         ld   a,(hl)
@@ -795,6 +812,8 @@ pcm_command:
         jp   z,pc_vol
         dec  a
         jp   z,pc_loop
+        dec  a
+        jp   z,pc_master
         ret                     ; unknown opcode: the count already bounds us
 
 ; voice_ptr: A = voice index → IX = &G_PCMV[A]. PCM_V_SIZE is a power of two,
@@ -1729,6 +1748,12 @@ ym_write0:
 ; H_SMPBANK after it — the only header field it owns.
 ; ===========================================================================
 CODE_END:
+        ; …and this is the check that says so. The overrun is otherwise SILENT:
+        ; `org` past the header keeps assembling happily, the image uploads, and
+        ; the corruption only shows up as the 68k reading a garbage header on
+        ; hardware. Adding the master chain to twenty emit copies is what first
+        ; ran into it (§14.1) — it cost 512 bytes and left two to spare.
+        assert CODE_END <= HDR, hot code has run into the published header
         org  $1c00
 ; pcm_pad: G_PAD — what one IDLE iteration holds to, in 16-cycle units.
 ;
@@ -1873,3 +1898,109 @@ pp_pad_floor:
         ld   (G_PAD),a
         ret
 
+; PCM_MASTER — shift. The ONE voiceless PCM command: master belongs to the mix,
+; not to a voice (driver.md §14.1). The mixer applies it once per DAC sample, to
+; the finished and already-saturated sum, in the emit — and the emit is inlined
+; into all twenty loop copies, where nothing is free to hold a shift count and
+; nothing is spare to fetch one. So the shift is PATCHED INTO THE CODE: each
+; site's chain becomes `shift` x `sra a` plus a jump over the slots left, and
+; each inline site's dispatch byte is aimed at the plain emit or the attenuated
+; one.
+;
+; This is affordable only because the shift moves on the 6 dB grid: three
+; `master` steps to a rung, so a fade down from 31 patches seven times, not once
+; a frame. The 68k emits this command on the SHIFT, never on `master` itself.
+pc_master:
+        ld   a,(hl)
+        inc  hl
+        push hl                 ; HL is the COMMAND CURSOR
+        call mst_apply
+        pop  hl
+        ret
+
+; mst_apply: A = master shift (0..MST_SLOTS). Rewrites every emit. ~2,500 cycles
+; and it may not run inside a frame's mixing — the slot is consumed at the frame
+; head, which is where every PCM command already lands.
+mst_apply:
+        ld   (G_MASTER_SH),a
+        ld   hl,mst_tab
+        ld   b,MST_N
+mst_in:
+        push bc
+        call mst_next           ; DE = chain, HL past the entry
+        push hl
+        ld   c,MST_SKIP-2
+        call mst_chain
+        ; The dispatch: the `jr nz` displacement MST_CHAIN_D bytes before the
+        ; chain, which the gate's own branch reads every sample. Unity aims it
+        ; at the plain emit, and the plain emit is then byte-for-byte the one
+        ; this engine ran before master moved out of the per-voice shift.
+        ld   hl,-MST_CHAIN_D
+        add  hl,de
+        ld   a,(G_MASTER_SH)
+        or   a
+        ld   a,MST_D_PLAIN
+        jr   z,mst_st
+        ld   a,MST_D_ATTEN
+mst_st:
+        ld   (hl),a
+        pop  hl
+        pop  bc
+        djnz mst_in
+        ; …and the out-of-line emits (feed_one), which have no dispatch: their
+        ; chain's own skip runs on every call, and they are called a handful of
+        ; times a frame.
+        ld   hl,mst_tab1
+        ld   b,MST_N1
+mst_out:
+        push bc
+        call mst_next
+        push hl
+        ld   c,MST_SKIP1-2
+        call mst_chain
+        pop  hl
+        pop  bc
+        djnz mst_out
+        ret
+
+; mst_next: DE = the u16 at (HL), HL advanced. rd16's twin, kept apart because
+; rd16 is the SLOT cursor's and this walks a table in ROM-image code space.
+mst_next:
+        ld   e,(hl)
+        inc  hl
+        ld   d,(hl)
+        inc  hl
+        ret
+
+; mst_chain: write one emit's chain at DE, C = how far past the chain's start its
+; tail is, less 2 — G_MASTER_SH x `sra a` ($CB $2F), then `jr` ($18) over the
+; slots that are left. At the deepest shift every slot
+; is an `sra` and there is no jump to write; at unity slot 0 IS the jump, which
+; is also the form the generator emits, so an unpatched build is a unity build.
+mst_chain:
+        ld   h,d
+        ld   l,e
+        ld   a,(G_MASTER_SH)
+        or   a
+        jr   z,mst_c_jr
+        ld   b,a
+mst_c_sra:
+        ld   (hl),$cb
+        inc  hl
+        ld   (hl),$2f
+        inc  hl
+        djnz mst_c_sra
+mst_c_jr:
+        ld   a,(G_MASTER_SH)
+        cp   MST_SLOTS
+        ret  z                  ; every slot used: nothing to jump over
+        ld   (hl),$18           ; jr d
+        inc  hl
+        add  a,a                ; 2 x shift
+        ld   b,a
+        ; …past the end of the chain AND past the jump that follows it, straight
+        ; into the shared tail: one branch on the attenuated path, not two.
+        ld   a,c                ; d = (tail - chain - 2) - 2 x shift
+        sub  b
+        ld   (hl),a
+        ret

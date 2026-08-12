@@ -35,6 +35,7 @@ static void mml_copy(uint8_t *dst, const uint8_t *src, uint16_t n) {
 #define PCM_START 1
 #define PCM_STOP 2
 #define PCM_VOL 3
+#define PCM_MASTER 5
 
 /* Channel ids beyond the 10 register channels (mmb.md §6.1). */
 #define CH_PCM1 20
@@ -214,24 +215,46 @@ static void emit_pcm_start(MMLSeq *s, int vi, const MMLPcmVoice *v) {
   pcm_emit(s, c, 18);
 }
 
-/* vel + vol + master compose to a per-voice bit shift the mixer applies as an
- * arithmetic right shift — one instruction per sample, which is the whole
- * reason the level model is a shift here and a TL offset on FM:
- *   n = (15-vel) + (31-vol) + (31-master);  shift = min(7, round(n/3)).
- * vol == 0 or master == 0 is a hard mute; vel alone never mutes. Once per
- * PARAM_SET, so the divide is nowhere near the mix path. */
+/* vel + vol compose to a per-voice bit shift the mixer applies as an arithmetic
+ * right shift — one instruction per sample, which is the whole reason the level
+ * model is a shift here and a TL offset on FM:
+ *   n = (15-vel) + (31-vol);  shift = min(MML_PCM_MAX_SHIFT, round(n/3)).
+ * MASTER IS NOT IN HERE (driver.md §14.1) — it rides the sum, once per DAC
+ * sample, see pcm_compose_master. What master still decides here is the mute:
+ * `master 0`, `vol 0`, and a total past MML_PCM_TOTAL_MAX_SHIFT are the three
+ * hard mutes; vel alone never mutes. Once per PARAM_SET, so the divide is
+ * nowhere near the mix path. */
 static void pcm_compose_shift(MMLSeq *s, int vi) {
   MMLPcmVoice *v = &s->pcm[vi];
-  v->muted = (uint8_t)(v->vol == 0 || s->master == 0);
-  int n = (15 - v->vel) + (31 - v->vol) + (31 - s->master);
+  int n = (15 - v->vel) + (31 - v->vol);
   int shift = (n + 1) / 3; /* round(n/3); n is never negative */
   v->shift = (uint8_t)(shift > MML_PCM_MAX_SHIFT ? MML_PCM_MAX_SHIFT : shift);
+  v->muted = (uint8_t)(v->vol == 0 || s->master == 0
+                       || v->shift + s->pcm_master_shift
+                            >= MML_PCM_TOTAL_MAX_SHIFT);
   uint8_t byte = pcm_shift_byte(v);
   /* A dead voice has nothing to re-level: the engine dropped its state. */
   if (v->active && byte != v->sent_shift) {
     v->sent_shift = byte;
     uint8_t c[3] = {PCM_VOL, (uint8_t)vi, byte};
     pcm_emit(s, c, 3);
+  }
+}
+
+/* Master's own shift, on the same 6 dB grid and its own deeper ceiling. Emitted
+ * only when the SHIFT moves, not when master does: three `master` steps to a
+ * rung, so a fade patches the engine's self-modified emit sites about seven
+ * times on the way down instead of once a frame (driver.md §14.1). */
+static void pcm_compose_master(MMLSeq *s) {
+  int n = 31 - s->master;
+  int shift = (n + 1) / 3; /* round(n/3) */
+  s->pcm_master_shift = (uint8_t)(shift > MML_PCM_MASTER_MAX_SHIFT
+                                    ? MML_PCM_MASTER_MAX_SHIFT
+                                    : shift);
+  if (s->pcm_master_shift != s->pcm_sent_master) {
+    s->pcm_sent_master = s->pcm_master_shift;
+    uint8_t c[2] = {PCM_MASTER, s->pcm_master_shift};
+    pcm_emit(s, c, 2);
   }
 }
 
@@ -470,7 +493,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
       if (!s->psg[p].sounding) continue;
       write_psg_att(s, p, psg_att(s, s->psg[p].vel, s->psg[p].vol));
     }
-    /* PCM voices ride master too — recompose each voice's shift/mute. */
+    /* PCM: master rides the SUM, so the voices' shifts do not move — but the
+     * master shift does, and it decides their mute, so both are recomposed and
+     * in that order (the mute reads the new master shift). */
+    pcm_compose_master(s);
     for (int vi = 0; vi < MML_PCM_VOICES; vi++) pcm_compose_shift(s, vi);
     return;
   }
@@ -1899,6 +1925,10 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
 
   s->increment = (uint16_t)((120 * 512 + 37) / 75); /* bpmToTickIncrement(120) */
   s->master = VOL_UNITY;
+  s->pcm_master_shift = 0;
+  /* The engine resets its emit sites to unity, so 0 is what it already has:
+   * a score that merely restates `master 31` must emit nothing. */
+  s->pcm_sent_master = 0;
   s->noise_mode = 4; /* white0; the compiler emits an explicit tick-0 set */
   for (int ch = 0; ch < 6; ch++) {
     MMLFmCh *c = &s->fm[ch];

@@ -48,6 +48,7 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PCM_MASTER_MAX_SHIFT } from "../../live/src/mmb.js";
 
 export const MUTE_SHIFT = 8;   // PV_SHIFT value meaning "silent, keep advancing"
 // PV_SHIFT for a pass with no voice behind it at all (engine.z80's G_IDLEV).
@@ -151,6 +152,12 @@ export const PAD_TARGET = 260;
 // The history is in .claude/memory/plan-68k-split.md; the short version is that
 // no constant can make an interval constant, which is what a clock is for.
 export const PACE_WINDOW = 14;
+
+// Master's ceiling, and therefore the number of `sra a` slots every emit
+// reserves for the master chain. IMPORTED, not mirrored: the sequencer composes
+// the shift and the mixer holds the code it patches into, so a drift between
+// the two would overflow the chain rather than merely mis-level the mix.
+export { PCM_MASTER_MAX_SHIFT };
 // A -> A x `unroll`, for turning an ITERATION count into a TICK count. It was
 // written as `add a,a / add a,l` (x3) when the unroll was fixed at three, in
 // TWO generated sites — and a stale factor here cuts a voice pass short, which
@@ -203,6 +210,12 @@ export function tickCost(variant, role, shift) {
 
 let uid = 0;
 const lbl = (p) => `${p}${uid++}`;
+
+// Every emit's master chain, in generation order — the addresses engine.z80's
+// pc_master patches. Inline (loop-copy) sites and out-of-line ones are kept
+// apart because only the inline ones carry a dispatch byte to patch as well.
+let masterInline = [];
+let masterOutOfLine = [];
 
 // ── The loop body, once ────────────────────────────────────────────────────
 // variant: i16   two planes, biased unsigned, sum then saturate at output
@@ -343,6 +356,25 @@ function gatePrologue() {
   ];
 }
 
+// The master chain: PCM_MASTER_MAX_SHIFT two-byte slots that engine.z80's
+// pc_master writes `sra a` into, followed by a `jr` over the ones the shift did
+// not use. Generated in its UNITY form — the jump first, so a chain that is
+// never patched attenuates by nothing, which is what a build that never sees a
+// PCM_MASTER command must do.
+//
+// It is code rather than data because the emit has nowhere to put a count: A
+// holds the sample, A' the gate phase, HL/DE/BC the mixer's register file and
+// IY the ring cursor, so a runtime shift would have to FETCH its count every
+// sample — more than the shift itself costs. Master moves on a 6 dB grid, so a
+// full fade rewrites these about seven times (driver.md §14.1).
+function masterChain(ms, tail) {
+  const o = [`${ms}:`];
+  o.push(`        jr   ${tail}${" ".repeat(Math.max(1, 18 - tail.length))}; master chain, slot 0 — PATCHED`);
+  for (let i = 1; i < PCM_MASTER_MAX_SHIFT; i++)
+    o.push("        sra  a                 ; …slot — PATCHED");
+  return o;
+}
+
 function feed(pad) {
   const o = [];
   const push = (s) => o.push("        " + s);
@@ -351,8 +383,35 @@ function feed(pad) {
   // places them. The counter is CONTINUOUS across frames on purpose: a frame
   // carries 166 or 167 samples and neither divides GROUP, so a phase that
   // restarted per frame would put a wait at every frame boundary.
-  o.push(...gatePrologue());
+  //
+  // TWO COPIES OF THE EMIT, and the gate's own branch chooses between them
+  // (driver.md §14.1). The plain one is byte-for-byte what this emitted before
+  // master moved out of the per-voice shift, and it is the FALL-THROUGH, so at
+  // `master 31` — every frame of most songs — the mix costs exactly what it
+  // used to. The attenuated copy carries the master chain and a jump back, 24
+  // cycles a sample that only a fade pays for. There is no third way: the emit
+  // is inlined into all twenty loop copies, so the choice cannot be a register
+  // test (nothing is free) and cannot be free (a branch is 12 either way) — it
+  // has to be the branch that is already there, with its target patched.
+  const n = uid++;
+  const ea = `ea${n}`, ep = `ep${n}`, ms = `ms${n}`, ex = `ex${n}`;
+  masterInline.push({ ms, ea, ep, ex });
+  o.push(`        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue`);
+  o.push(`        dec  a`);
+  o.push(`        jr   nz,${ep}${" ".repeat(Math.max(1, 15 - ep.length))}; PATCHED: ${ep} at unity, ${ea} under a shift`);
+  o.push(`        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP`);
+  // The gate's own sample falls in here rather than being dispatched, so it
+  // takes the general form always — one sample in PCM_GROUP paying the chain's
+  // skip and the jump back, ~80 cycles a frame, against a second patch site.
+  o.push(`${ea}:`);
+  o.push(`        ex   af,af'            ; …and the mixer's A and flags come back`);
+  o.push(`        ld   a,(iy+0)          ; the ring: what an earlier frame finished`);
+  o.push(...masterChain(ms, ex));
+  o.push(`        jr   ${ex}               ; …and into the tail the plain copy shares`);
+  o.push(`${ep}:`);
+  o.push(`        ex   af,af'            ; …and the mixer's A and flags come back`);
   push("ld   a,(iy+0)          ; the ring: what an earlier frame finished");
+  o.push(`${ex}:`);
   push("xor  $80               ; the ring is signed, the DAC is not");
   push("ld   (YM_DATA0),a      ; $2A, fed blind");
   push("inc  iy                ; wraps at a SEGMENT boundary, never here");
@@ -475,6 +534,8 @@ export function generateMixerCore(
   if (paced && unroll !== PACE_PASSES)
     throw new Error(`paced feed needs unroll = PACE_PASSES (${PACE_PASSES})`);
   uid = 0;
+  masterInline = [];
+  masterOutOfLine = [];
   const wide = variant.startsWith("i16");
   const L = [];
   L.push(`; ===========================================================================
@@ -524,6 +585,7 @@ PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
   // feed, and R is not a multiple of the cadence — so the frame ends by flushing
   // them. Normally one sample; a heavily segmented frame, a few more.
   L.push("R_OUT_BEG:");
+  if (paced) masterOutOfLine.push("fo_ms");
   if (paced) {
     L.push(`; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
 ; as the inline emit — a sample that comes out here is still a sample.
@@ -554,6 +616,9 @@ ${gatePrologue().join("\n")}
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
         ld   a,(iy+0)
+${masterChain("fo_ms", "fo_ex").join("\n")}
+        jr   fo_ex
+fo_ex:
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
         inc  iy
@@ -639,6 +704,36 @@ o8_loop:
         ret`);
   }
   L.push("R_OUT_END:");
+
+  // ── master patch sites (driver.md §14.1) ─────────────────────────────────
+  // Where the master shift LIVES: engine.z80's pc_master writes the chain at
+  // every address below, and for the inline sites the dispatch byte eight bytes
+  // ahead of it as well. Generated rather than hand-kept because there is one
+  // entry per loop copy and a missed one is a copy that ignores master — which
+  // still makes sound, just at the wrong level, and only while that copy runs.
+  if (paced) {
+    const first = masterInline[0];
+    L.push(`
+; The two values the dispatch byte takes. Label arithmetic, not literals: the
+; block's layout is this generator's business and the assembler is what proves
+; the offsets still hold.
+MST_D_PLAIN equ ${first.ep}-${first.ms}+7   ; fall through to the unpatched emit
+MST_D_ATTEN equ ${first.ea}-${first.ms}+7   ; …or into the one with the chain
+MST_SLOTS   equ ${PCM_MASTER_MAX_SHIFT}      ; chain slots, = PCM_MASTER_MAX_SHIFT
+MST_CHAIN_D equ 8       ; chain address - dispatch byte address
+; How far past a chain its tail is — where the jump over the unused slots has to
+; land. It differs between the two shapes: an inline site's tail sits behind the
+; plain copy's own prologue, feed_one's does not. Label arithmetic per shape, so
+; neither can be re-laid-out without this following.
+MST_SKIP    equ ${first.ex}-${first.ms}
+MST_SKIP1   equ fo_ex-fo_ms
+MST_N       equ ${masterInline.length}
+MST_N1      equ ${masterOutOfLine.length}
+mst_tab:
+        dw   ${masterInline.map((m) => m.ms).join(", ")}
+mst_tab1:
+        dw   ${masterOutOfLine.join(", ")}`);
+  }
 
   // ── silence fill ─────────────────────────────────────────────────────────
   // If the storing voice ends part-way through a frame the rest of the plane

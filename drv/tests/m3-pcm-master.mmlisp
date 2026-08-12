@@ -1,0 +1,21 @@
+; M3 gate: MASTER on the PCM mix (driver.md §14.1). Master is not part of the
+; per-voice shift — the mixer's emit applies it once per DAC sample to the
+; finished, already-saturated sum — so this walks it the whole way down while a
+; voice loops at unity vel/vol, and the engine has to agree with the reference
+; sample for sample at every rung.
+;
+; The rungs BELOW -24 dB are the point: folded into the per-voice shift, master
+; stopped there (PCM_MAX_SHIFT) and held until `master 0` dropped it off a
+; cliff. Peak of the DAC stream, per step, measured:
+;
+;   master  31    28    25    22    19    16    13    10     7     4     1    0
+;   before -3.1  -9.1 -14.9 -20.6 -26.6 -26.6 -26.6 -26.6 -26.6 -26.6 -26.6 -inf
+;   after  -3.1  -9.1 -14.9 -20.6 -26.6 -32.6 -36.1 -36.1 -36.1 -36.1 -36.1 -inf
+;
+; The last two rungs exercise the deepest chain slots, which nothing else does:
+; the engine patches those slots into twenty inlined emit copies, and a slot it
+; gets wrong is silent in every score that never reaches it.
+(def pad :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(pcm1 pad :mode loop :tempo 150 :oct 4 :len 8 :vel 15 :vol 31
+   c :master 28 c :master 25 c :master 22 c :master 19 c :master 16 c
+     :master 13 c :master 10 c :master 7 c :master 4 c :master 1 c :master 0 c)

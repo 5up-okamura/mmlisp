@@ -52,6 +52,8 @@ import {
   PCM_RING_TARGET,
   PCM_RING_BYTES,
   PCM_MAX_SHIFT,
+  PCM_MASTER_MAX_SHIFT,
+  PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
 import {
   midiToFnumBlock,
@@ -171,6 +173,7 @@ import {
   PCM_START,
   PCM_STOP,
   PCM_VOL,
+  PCM_MASTER,
 } from "./slot-builder.js";
 
 // Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
@@ -392,6 +395,13 @@ export class DrvPlayer {
     this._diagnostics = [];
     this._skippedOpcodes = new Map();
     this._master = VOL_UNITY;
+    // The shift the DAC feed applies to the finished sum, and the last value
+    // sent as PCM_MASTER (0xFF = none sent). Master rides the SUM, not the
+    // voices — see _pcmComposeMaster.
+    this._pcmMasterShift = 0;
+    // The engine resets its emit sites to unity, so 0 is what it already has:
+    // a score that merely restates `master 31` must emit nothing.
+    this._pcmSentMaster = 0;
     this._lfoRate = null;
     this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
     this._fm = Array.from({ length: 6 }, freshFmChannel);
@@ -456,9 +466,10 @@ export class DrvPlayer {
       velBase: 15, // score's sticky velocity; vel is the macro-driven live one
       vel: 15, // per-voice velocity 0-15 (raw); default = unattenuated
       vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
-      shift: 0, // composed attenuation: sample >>= shift (0..7). Recomputed from
-      // vel+vol+master on any of those; the mixer sra's each sample by it.
-      muted: false, // vol==0 || master==0 → true silence (vel never mutes)
+      shift: 0, // composed attenuation: sample >>= shift (0..4). Recomputed from
+      // vel+vol on either; the mixer sra's each of this voice's samples by it.
+      // MASTER is not in here — it rides the sum, once per DAC sample.
+      muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
       // vel/vol/shift/muted persist across notes and ride the SE snapshot; they
       // mirror the Z80 G_PCM_VEL/G_PCM_VOL globals + PV_SHIFT / PV_ACT mute bit.
     }));
@@ -1340,7 +1351,10 @@ export class DrvPlayer {
         if (!this._psg[p].sounding) continue;
         this._writePsgAtt(p, this._psgAtt(this._psg[p].vel, this._psg[p].vol));
       }
-      // PCM soft-mix voices ride master too — recompose each voice's shift/mute.
+      // PCM: master rides the SUM, so the voices' shifts do not move — but the
+      // master shift does, and it decides their mute, so both are recomposed
+      // and in that order (the mute reads the new master shift).
+      this._pcmComposeMaster();
       for (let vi = 0; vi < 3; vi++) this._pcmComposeShift(vi);
       return;
     }
@@ -2117,24 +2131,49 @@ export class DrvPlayer {
   }
 
   // One frame of DAC feed. Returns nothing; deactivates + DAC-off at end.
-  // Compose a pcm voice's attenuation from vel + vol + master (plan-se.md). All
-  // three ride the FM/PSG 2 dB/step ladder; summing their "steps below unity"
-  // gives the total attenuation, quantized to the 6 dB bit-shift grid:
-  //   n = (15−vel) + (31−vol) + (31−master);  shift = min(7, round(n/3)).
-  // vol==0 or master==0 is a hard mute (true silence); vel never mutes (it floors
-  // at shift 5 ≈ −30 dB when vol/master are unity). Rare (once per PARAM_SET), so
-  // the divide/round is off the mix hot path.
+  // Compose a pcm voice's attenuation from vel + vol (plan-se.md, driver.md
+  // §14.1). Both ride the FM/PSG 2 dB/step ladder; summing their "steps below
+  // unity" gives the attenuation, quantized to the 6 dB bit-shift grid:
+  //   n = (15−vel) + (31−vol);  shift = min(PCM_MAX_SHIFT, round(n/3)).
+  // MASTER IS NOT IN HERE. It is common to every voice, so the mixer applies it
+  // once per DAC sample to the finished sum (_pcmComposeMaster) instead of once
+  // per tick to each voice — which is what lifts a master fade off this
+  // ceiling. What master still decides here is the MUTE: `master 0` is a hard
+  // mute, and so is a total past PCM_TOTAL_MAX_SHIFT, which hands the frame the
+  // voice's whole per-tick cost back at the depth where it stops being audible.
+  // vol==0 is the other hard mute; vel alone never mutes.
+  // Rare (once per PARAM_SET), so the divide/round is off the mix hot path.
   _pcmComposeShift(vi) {
     const v = this._pcmVoices[vi];
     if (!v) return;   // a voice this build does not have (pcm3 at PCM_VOICES=2)
-    v.muted = v.vol === 0 || this._master === 0;
-    const n = 15 - v.vel + (31 - v.vol) + (31 - this._master);
+    const n = 15 - v.vel + (31 - v.vol);
     const shift = Math.floor((n + 1) / 3); // round(n/3)
     v.shift = shift > PCM_MAX_SHIFT ? PCM_MAX_SHIFT : shift;
+    v.muted = v.vol === 0 || this._master === 0
+      || v.shift + this._pcmMasterShift >= PCM_TOTAL_MAX_SHIFT;
     const byte = this._pcmShiftByte(v);
     if (v.active && byte !== v._sentShift) {
       v._sentShift = byte;
       this._pcmCmd([PCM_VOL, vi, byte]);
+    }
+  }
+
+  // Master's own shift, applied to the SUM once per DAC sample. Same 6 dB grid,
+  // its own ceiling: PCM_MASTER_MAX_SHIFT is deeper than the per-voice one
+  // because this cost does not multiply by the voice count.
+  //
+  // Emitted only when the SHIFT moves, not when master does — three `master`
+  // steps to a rung means a fade patches the engine's emit sites about seven
+  // times on the way down rather than once a frame, which is what makes the
+  // engine's self-modifying dispatch affordable (driver.md §14.1).
+  _pcmComposeMaster() {
+    const n = 31 - this._master;
+    const shift = Math.floor((n + 1) / 3); // round(n/3)
+    this._pcmMasterShift =
+      shift > PCM_MASTER_MAX_SHIFT ? PCM_MASTER_MAX_SHIFT : shift;
+    if (this._pcmMasterShift !== this._pcmSentMaster) {
+      this._pcmSentMaster = this._pcmMasterShift;
+      this._pcmCmd([PCM_MASTER, this._pcmMasterShift]);
     }
   }
 
@@ -2247,7 +2286,15 @@ export class DrvPlayer {
           this._pcmRead = (this._pcmRead + 1) & (PCM_RING_BYTES - 1);
           this._pcmFill--;
         } else if (active) this._pcmUnderruns++;
-        this._dacByte(s, base + i);
+        // MASTER, here and nowhere else (driver.md §14.1). The sum has already
+        // saturated by the time it reaches the ring, so this attenuates a
+        // CLIPPED mix rather than clipping an attenuated one — a fade-out holds
+        // whatever the mix clipped and takes it down, which is what a master
+        // fader does and is a deliberate change from the per-voice fold.
+        // It reads the CURRENT shift against a byte an earlier frame mixed,
+        // exactly as the engine's emit does — master moves at the DAC, not in
+        // the ring.
+        this._dacByte(s >> this._pcmMasterShift, base + i);
       }
     }
     // The engine cannot derive the frame's sample count (a starved frame would

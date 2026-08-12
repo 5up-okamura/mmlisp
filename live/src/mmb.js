@@ -393,11 +393,37 @@ export const PCM_RING_BYTES = 512;
 // quiet sample. 4 leaves 4 bits, which is the last one that still carries the
 // waveform.
 //
-// Above this the level CLAMPS rather than mutes: `vol 0` and `master 0` remain
-// the only hard mutes, so the documented "vel alone never silences a voice"
-// still holds. Mirrored by MML_PCM_MAX_SHIFT in drv/68k/mmlispseq.h; the c-gate
+// Above this the level CLAMPS rather than mutes, so the documented "vel alone
+// never silences a voice" still holds: `vol 0` and `master 0` are the hard
+// mutes, and PCM_TOTAL_MAX_SHIFT below is the only other way a voice goes
+// silent — and that one needs master's help to reach.
+// Mirrored by MML_PCM_MAX_SHIFT in drv/68k/mmlispseq.h; the c-gate
 // diffs the two slot streams, so they cannot drift apart silently.
 export const PCM_MAX_SHIFT = 4;
+
+// ── Master (driver.md §14.1) ──────────────────────────────────────────────
+// Master is NOT part of the per-voice shift above. It is common to every voice
+// by definition, so the mixer applies it ONCE per DAC sample — to the finished,
+// already-saturated sum, in the emit — instead of once per tick per voice.
+//
+// The reason is the ceiling, not the cycles. Folded in, master shared
+// PCM_MAX_SHIFT with vel/vol: a master fade stopped attenuating PCM at -24 dB,
+// held there for `master 12..1`, and then fell off a cliff to silence at 0 —
+// while FM went on down the TL ladder and PSG down its 4-bit one. PCM was the
+// one voice in the mix that would not fade.
+//
+// Riding the sum instead lifts it off that ceiling. Its own is deeper because
+// its cost no longer multiplies by the voice count, but it is still a 6 dB
+// ladder: 6 steps is -36 dB, and `master 12..1` still share the bottom rung.
+// The cliff is not gone, it is two rungs further down.
+export const PCM_MASTER_MAX_SHIFT = 6;
+
+// Voice shift + master shift at which the voice is MUTED rather than mixed —
+// the same "inaudible, so do not sound it" rule PCM_MAX_SHIFT states, applied
+// to the total. 7 leaves a single bit of an 8-bit sample, and muting also
+// returns the voice's whole per-tick cost to the frame, which is what keeps a
+// deep fade affordable now that master can reach past the old ceiling.
+export const PCM_TOTAL_MAX_SHIFT = 7;
 
 // 16.16 per-sample position increment: the per-frame increment divided across
 // the frame's samples. Computed at full 16.16 precision then floored so pitch

@@ -63,9 +63,20 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
  * on every tick of every sounding voice — 1,460 cycles a frame per step per
  * voice, measured, against ~700 spare with two voices sounding. And the range
  * it removes was never audible: the samples are 8-bit, so shift 5 leaves 3
- * bits and 7 leaves 1. Above this the level CLAMPS; `vol 0` and `master 0`
- * stay the only hard mutes. Mirrors PCM_MAX_SHIFT in live/src/mmb.js. */
+ * bits and 7 leaves 1. Above this the level CLAMPS; `vol 0`, `master 0` and
+ * MML_PCM_TOTAL_MAX_SHIFT are the hard mutes. Mirrors PCM_MAX_SHIFT in
+ * live/src/mmb.js. */
 #define MML_PCM_MAX_SHIFT 4
+/* Master is NOT in the per-voice shift (driver.md §14.1): it is common to every
+ * voice, so the mixer's emit applies it once per DAC sample to the finished sum
+ * instead of once per tick per voice. Its ceiling is therefore deeper than the
+ * per-voice one — the cost does not multiply by the voice count — which is what
+ * lets a master fade take PCM past -24 dB instead of holding there and then
+ * falling off a cliff at `master 0`. Mirrors PCM_MASTER_MAX_SHIFT /
+ * PCM_TOTAL_MAX_SHIFT in live/src/mmb.js. */
+#define MML_PCM_MASTER_MAX_SHIFT 6
+/* Voice shift + master shift at which the voice is muted instead of mixed. */
+#define MML_PCM_TOTAL_MAX_SHIFT 7
 /* The Timer-B sample clock (driver.md §5.1.2), mirroring live/src/mmb.js. The
  * DAC's rate is the YM's, not the frame's: 37335/224 = 166.674 samples a frame,
  * so a frame owes it 166 or 167 and never a constant. The mixer produces into a
@@ -232,6 +243,10 @@ typedef struct {
   MMLFmCh fm[6];
   MMLPsgCh psg[4];
   uint8_t master;
+  /* Master's own shift, applied to the SUM once per DAC sample, and the last
+   * value sent as PCM_MASTER (0xFF = none). See pcm_compose_master. */
+  uint8_t pcm_master_shift;
+  uint8_t pcm_sent_master;
   uint8_t noise_mode;
   uint8_t lfo_rate;
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */

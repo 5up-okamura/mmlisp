@@ -35,11 +35,23 @@ mix_first_s0:
 mix_first_s0_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt1            ; not this sample's turn to wait
+        jr   nz,ep1            ; PATCHED: ep1 at unity, ea1 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt1:
+ea1:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms1:
+        jr   ex1               ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex1               ; …and into the tail the plain copy shares
+ep1:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex1:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -78,11 +90,23 @@ mix_first_s1:
 mix_first_s1_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt6            ; not this sample's turn to wait
+        jr   nz,ep6            ; PATCHED: ep6 at unity, ea6 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt6:
+ea6:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms6:
+        jr   ex6               ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex6               ; …and into the tail the plain copy shares
+ep6:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex6:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -119,11 +143,23 @@ mix_first_s2:
 mix_first_s2_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt10            ; not this sample's turn to wait
+        jr   nz,ep10           ; PATCHED: ep10 at unity, ea10 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt10:
+ea10:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms10:
+        jr   ex10              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex10               ; …and into the tail the plain copy shares
+ep10:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex10:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -162,11 +198,23 @@ mix_first_s3:
 mix_first_s3_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt14            ; not this sample's turn to wait
+        jr   nz,ep14           ; PATCHED: ep14 at unity, ea14 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt14:
+ea14:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms14:
+        jr   ex14              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex14               ; …and into the tail the plain copy shares
+ep14:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex14:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -207,11 +255,23 @@ mix_first_s4:
 mix_first_s4_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt18            ; not this sample's turn to wait
+        jr   nz,ep18           ; PATCHED: ep18 at unity, ea18 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt18:
+ea18:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms18:
+        jr   ex18              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex18               ; …and into the tail the plain copy shares
+ep18:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex18:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -254,11 +314,23 @@ mix_first_s5:
 mix_first_s5_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt22            ; not this sample's turn to wait
+        jr   nz,ep22           ; PATCHED: ep22 at unity, ea22 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt22:
+ea22:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms22:
+        jr   ex22              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex22               ; …and into the tail the plain copy shares
+ep22:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex22:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -303,11 +375,23 @@ mix_first_s6:
 mix_first_s6_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt26            ; not this sample's turn to wait
+        jr   nz,ep26           ; PATCHED: ep26 at unity, ea26 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt26:
+ea26:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms26:
+        jr   ex26              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex26               ; …and into the tail the plain copy shares
+ep26:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex26:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -354,11 +438,23 @@ mix_first_s7:
 mix_first_s7_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt30            ; not this sample's turn to wait
+        jr   nz,ep30           ; PATCHED: ep30 at unity, ea30 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt30:
+ea30:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms30:
+        jr   ex30              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex30               ; …and into the tail the plain copy shares
+ep30:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex30:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -407,11 +503,23 @@ mix_first_s8:
 mix_first_s8_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt34            ; not this sample's turn to wait
+        jr   nz,ep34           ; PATCHED: ep34 at unity, ea34 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt34:
+ea34:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms34:
+        jr   ex34              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex34               ; …and into the tail the plain copy shares
+ep34:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex34:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -448,11 +556,23 @@ mix_first_s9:
 mix_first_s9_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt38            ; not this sample's turn to wait
+        jr   nz,ep38           ; PATCHED: ep38 at unity, ea38 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt38:
+ea38:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms38:
+        jr   ex38              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex38               ; …and into the tail the plain copy shares
+ep38:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex38:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -654,11 +774,23 @@ mix_add_s0:
 mix_add_s0_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt52            ; not this sample's turn to wait
+        jr   nz,ep52           ; PATCHED: ep52 at unity, ea52 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt52:
+ea52:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms52:
+        jr   ex52              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex52               ; …and into the tail the plain copy shares
+ep52:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex52:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -713,11 +845,23 @@ mix_add_s1:
 mix_add_s1_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt62            ; not this sample's turn to wait
+        jr   nz,ep62           ; PATCHED: ep62 at unity, ea62 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt62:
+ea62:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms62:
+        jr   ex62              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex62               ; …and into the tail the plain copy shares
+ep62:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex62:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -774,11 +918,23 @@ mix_add_s2:
 mix_add_s2_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt72            ; not this sample's turn to wait
+        jr   nz,ep72           ; PATCHED: ep72 at unity, ea72 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt72:
+ea72:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms72:
+        jr   ex72              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex72               ; …and into the tail the plain copy shares
+ep72:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex72:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -837,11 +993,23 @@ mix_add_s3:
 mix_add_s3_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt82            ; not this sample's turn to wait
+        jr   nz,ep82           ; PATCHED: ep82 at unity, ea82 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt82:
+ea82:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms82:
+        jr   ex82              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex82               ; …and into the tail the plain copy shares
+ep82:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex82:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -902,11 +1070,23 @@ mix_add_s4:
 mix_add_s4_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt92            ; not this sample's turn to wait
+        jr   nz,ep92           ; PATCHED: ep92 at unity, ea92 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt92:
+ea92:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms92:
+        jr   ex92              ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex92               ; …and into the tail the plain copy shares
+ep92:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex92:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -969,11 +1149,23 @@ mix_add_s5:
 mix_add_s5_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt102            ; not this sample's turn to wait
+        jr   nz,ep102          ; PATCHED: ep102 at unity, ea102 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt102:
+ea102:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms102:
+        jr   ex102             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex102               ; …and into the tail the plain copy shares
+ep102:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex102:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -1038,11 +1230,23 @@ mix_add_s6:
 mix_add_s6_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt112            ; not this sample's turn to wait
+        jr   nz,ep112          ; PATCHED: ep112 at unity, ea112 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt112:
+ea112:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms112:
+        jr   ex112             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex112               ; …and into the tail the plain copy shares
+ep112:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex112:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -1109,11 +1313,23 @@ mix_add_s7:
 mix_add_s7_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt122            ; not this sample's turn to wait
+        jr   nz,ep122          ; PATCHED: ep122 at unity, ea122 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt122:
+ea122:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms122:
+        jr   ex122             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex122               ; …and into the tail the plain copy shares
+ep122:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex122:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -1182,11 +1398,23 @@ mix_add_s8:
 mix_add_s8_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt130            ; not this sample's turn to wait
+        jr   nz,ep130          ; PATCHED: ep130 at unity, ea130 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt130:
+ea130:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms130:
+        jr   ex130             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex130               ; …and into the tail the plain copy shares
+ep130:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex130:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -1221,11 +1449,23 @@ mix_add_s9:
 mix_add_s9_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt134            ; not this sample's turn to wait
+        jr   nz,ep134          ; PATCHED: ep134 at unity, ea134 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt134:
+ea134:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms134:
+        jr   ex134             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex134               ; …and into the tail the plain copy shares
+ep134:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex134:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -1533,6 +1773,15 @@ gt161:
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
         ld   a,(iy+0)
+fo_ms:
+        jr   fo_ex             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   fo_ex
+fo_ex:
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
         inc  iy
@@ -1556,6 +1805,26 @@ fo_nowrap:
         pop  hl
         ret
 R_OUT_END:
+
+; The two values the dispatch byte takes. Label arithmetic, not literals: the
+; block's layout is this generator's business and the assembler is what proves
+; the offsets still hold.
+MST_D_PLAIN equ ep1-ms1+7   ; fall through to the unpatched emit
+MST_D_ATTEN equ ea1-ms1+7   ; …or into the one with the chain
+MST_SLOTS   equ 6      ; chain slots, = PCM_MASTER_MAX_SHIFT
+MST_CHAIN_D equ 8       ; chain address - dispatch byte address
+; How far past a chain its tail is — where the jump over the unused slots has to
+; land. It differs between the two shapes: an inline site's tail sits behind the
+; plain copy's own prologue, feed_one's does not. Label arithmetic per shape, so
+; neither can be re-laid-out without this following.
+MST_SKIP    equ ex1-ms1
+MST_SKIP1   equ fo_ex-fo_ms
+MST_N       equ 20
+MST_N1      equ 1
+mst_tab:
+        dw   ms1, ms6, ms10, ms14, ms18, ms22, ms26, ms30, ms34, ms38, ms52, ms62, ms72, ms82, ms92, ms102, ms112, ms122, ms130, ms134
+mst_tab1:
+        dw   fo_ms
 
 ; mix_seg: run one segment of a voice pass — the ticks the caller has already
 ; proved cannot cross a loop or end boundary.

@@ -74,6 +74,11 @@ export const PCM_START = 1;
 export const PCM_STOP = 2;
 export const PCM_VOL = 3;
 export const PCM_LOOP = 4;
+// PCM_MASTER — one byte, the shift the mixer's emit applies to the finished sum
+// (mmb.md §6.3). It is a VOICELESS command, the only one: master belongs to the
+// mix, not to a voice, which is the whole point of it having its own opcode
+// rather than riding PCM_VOL with a pseudo-voice index.
+export const PCM_MASTER = 5;
 
 export class SlotBuilder {
   constructor({ maxWrites = SLOT_MAX_WRITES, slotSize = SLOT_SIZE, subs = SLOT_SUBS } = {}) {
