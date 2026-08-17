@@ -1,0 +1,14 @@
+; M3 gate: PITCH-BAKED voices take the no-resampler copies (driver.md §14.2).
+;
+; A voice whose 16.16 increment comes out exactly 1.0 — incI == 1, incF == 0 —
+; advances one sample a tick, so the loop copy WITHOUT the resampler computes
+; the same positions for it, 37 Z80 cycles a tick cheaper. ms_bind picks it once
+; a pass on that test alone; no MMB field says "baked" and none needs to.
+;
+; `:rate 10003` at note 60 is one of the exact solutions against the Timer B
+; sample clock. pcm1 is therefore baked and pcm2, a semitone up on the same
+; sample, is not — so this gate runs both copy sets in the same frame and the
+; two must still agree with the reference sample for sample.
+(def flat :sample :file "pad.wav" :rate 10003 :loop-start 100 :loop-end 400)
+(pcm1 flat :mode loop :tempo 120 :oct 4 :len 1 :vel 15  c c c c c c c c)
+(pcm2 flat :mode loop :tempo 120 :oct 4 :len 1 :vel 15  c+ c+ c+ c+ c+ c+ c+ c+)

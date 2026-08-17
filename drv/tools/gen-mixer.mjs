@@ -520,6 +520,34 @@ function loop(name, variant, role, shift, U, pad = null) {
 const shiftsFor = () =>
   [...Array(PCM_MAX_SHIFT + 1).keys(), MUTE_SHIFT, IDLE_SHIFT];
 
+// Pitch-baked voices get a second set of the UNROLLED copies only, with the
+// 16.16 resampler replaced by `inc de` (driver.md §14.2). Three things are
+// deliberately NOT duplicated, because the resampling copy is already CORRECT
+// for a baked voice and only costs more:
+//   - the single-tick copies. With unroll 2 a segment leaves at most one tick
+//     to them, and `frac += 0 / ptr += 1` is what the general path computes
+//     anyway.
+//   - MUTE, for the same reason: it advances the position and nothing else.
+//   - IDLE, which does not advance at all, so the two are the same code.
+// That is half the copies for nearly all of the saving.
+const NR_SHIFTS = [...Array(PCM_MAX_SHIFT + 1).keys()];
+
+// The nr set and its table. The table is the SAME WIDTH as the resampling one so
+// ms_bind can swap between them with one pointer and no second index, and every
+// slot the nr set does not fill points at the resampling copy — which is not a
+// fallback but the right code for that slot.
+function nrLoopSet(prefix, variant, role, U) {
+  const out = [];
+  const N = IDLE_SHIFT + 1;
+  for (const s of NR_SHIFTS)
+    out.push(loop(`${prefix}nr_s${s}`, variant, role, s, U, padFor(variant, role, s, U)));
+  out.push(`${prefix}nr_tab:`);
+  out.push(`        dw   ${[...Array(N)].map((_, s) =>
+    NR_SHIFTS.includes(s) ? `${prefix}nr_s${s}`
+      : `${prefix}_s${shiftsFor().includes(s) ? s : MUTE_SHIFT}`).join(", ")}`);
+  return out.join("\n");
+}
+
 function loopSet(prefix, variant, role, U, paced, R) {
   const out = [];
   const N = IDLE_SHIFT + 1;               // the TABLE's width — PV_SHIFT is the index
@@ -589,6 +617,12 @@ PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
   L.push("R_ADD_BEG:");
   L.push(loopSet("mix_add", variant, "add", unroll, paced, R));
   L.push("R_ADD_END:");
+  if (paced) {
+    L.push("R_NR_BEG:");
+    for (const role of ["first", "add"])
+      L.push(nrLoopSet(`mix_${role}`, `${variant}nr`, role, unroll));
+    L.push("R_NR_END:");
+  }
 
   // ── output pass ──────────────────────────────────────────────────────────
   // Paced builds have no output PASS: the samples went out inside the mix. What
@@ -1017,6 +1051,27 @@ ms_bind:
         add  a,a                ; word table
         ld   e,a
         ld   d,0
+${paced ? `        ; PITCH BAKED? incI == 1 and incF == 0 means the 16.16 resampler would
+        ; advance the position by exactly one sample a tick — so the copy that
+        ; has no resampler is not an approximation of this voice, it is the same
+        ; arithmetic with 37 cycles a tick taken out (driver.md §14.2). Decided
+        ; ONCE A PASS here, never per tick, and it costs four instructions.
+        ;
+        ; Only the UNROLLED entry swaps. The single-tick copies below keep the
+        ; resampling table on purpose: a segment leaves them at most one tick and
+        ; the general path computes the same +1 for a baked voice anyway.
+        ld   a,(ix+PV_INCI)
+        dec  a
+        or   (ix+PV_INCF)
+        or   (ix+PV_INCF+1)
+        jr   nz,msb_rs
+        ld   hl,mix_addnr_tab
+        ld   a,(G_SEG_L)
+        or   a
+        jr   nz,msb_u
+        ld   hl,mix_firstnr_tab
+        jr   msb_u
+msb_rs:` : ""}
         ld   hl,mix_add_tab
         ld   a,(G_SEG_L)
         or   a

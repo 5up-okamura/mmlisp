@@ -1138,6 +1138,534 @@ mix_add_tab:
 mix_add1_tab:
         dw   mix_add1_s0, mix_add1_s1, mix_add1_s2, mix_add1_s3, mix_add1_s4, mix_add1_s8, mix_add1_s8, mix_add1_s8, mix_add1_s8, mix_add1_s9
 R_ADD_END:
+R_NR_BEG:
+mix_firstnr_s0:
+mix_firstnr_s0_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep107          ; PATCHED: ep107 at unity, ea107 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea107:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms107:
+        jr   ex107             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex107               ; …and into the tail the plain copy shares
+ep107:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex107:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,6                ; pace: hold the tick to the sample period
+pd108:
+        dec  a
+        jr   nz,pd108
+        ld   a,(de)             ; sample
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_firstnr_s0_lp
+        ret
+mix_firstnr_s1:
+mix_firstnr_s1_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep109          ; PATCHED: ep109 at unity, ea109 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea109:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms109:
+        jr   ex109             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex109               ; …and into the tail the plain copy shares
+ep109:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex109:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,5                ; pace: hold the tick to the sample period
+pd110:
+        dec  a
+        jr   nz,pd110
+        ld   a,(de)             ; sample
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_firstnr_s1_lp
+        ret
+mix_firstnr_s2:
+mix_firstnr_s2_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep111          ; PATCHED: ep111 at unity, ea111 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea111:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms111:
+        jr   ex111             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex111               ; …and into the tail the plain copy shares
+ep111:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex111:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,4                ; pace: hold the tick to the sample period
+pd112:
+        dec  a
+        jr   nz,pd112
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_firstnr_s2_lp
+        ret
+mix_firstnr_s3:
+mix_firstnr_s3_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep113          ; PATCHED: ep113 at unity, ea113 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea113:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms113:
+        jr   ex113             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex113               ; …and into the tail the plain copy shares
+ep113:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex113:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,3                ; pace: hold the tick to the sample period
+pd114:
+        dec  a
+        jr   nz,pd114
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_firstnr_s3_lp
+        ret
+mix_firstnr_s4:
+mix_firstnr_s4_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep115          ; PATCHED: ep115 at unity, ea115 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea115:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms115:
+        jr   ex115             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex115               ; …and into the tail the plain copy shares
+ep115:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex115:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,2                ; pace: hold the tick to the sample period
+pd116:
+        dec  a
+        jr   nz,pd116
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_firstnr_s4_lp
+        ret
+mix_firstnr_tab:
+        dw   mix_firstnr_s0, mix_firstnr_s1, mix_firstnr_s2, mix_firstnr_s3, mix_firstnr_s4, mix_first_s8, mix_first_s8, mix_first_s8, mix_first_s8, mix_first_s9
+mix_addnr_s0:
+mix_addnr_s0_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep119          ; PATCHED: ep119 at unity, ea119 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea119:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms119:
+        jr   ex119             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex119               ; …and into the tail the plain copy shares
+ep119:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex119:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,3                ; pace: hold the tick to the sample period
+pd120:
+        dec  a
+        jr   nz,pd120
+        ld   a,(de)             ; sample
+        add  a,(hl)
+        jp   pe,ov121
+dn122:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        add  a,(hl)
+        jp   pe,ov123
+dn124:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_addnr_s0_lp
+        ret
+ov121:
+        jp   m,ov121_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn122
+ov121_hi:
+        ld   a,$7f
+        jp   dn122
+ov123:
+        jp   m,ov123_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn124
+ov123_hi:
+        ld   a,$7f
+        jp   dn124
+mix_addnr_s1:
+mix_addnr_s1_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep127          ; PATCHED: ep127 at unity, ea127 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea127:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms127:
+        jr   ex127             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex127               ; …and into the tail the plain copy shares
+ep127:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex127:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,2                ; pace: hold the tick to the sample period
+pd128:
+        dec  a
+        jr   nz,pd128
+        ld   a,(de)             ; sample
+        sra  a
+        add  a,(hl)
+        jp   pe,ov129
+dn130:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        add  a,(hl)
+        jp   pe,ov131
+dn132:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_addnr_s1_lp
+        ret
+ov129:
+        jp   m,ov129_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn130
+ov129_hi:
+        ld   a,$7f
+        jp   dn130
+ov131:
+        jp   m,ov131_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn132
+ov131_hi:
+        ld   a,$7f
+        jp   dn132
+mix_addnr_s2:
+mix_addnr_s2_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep135          ; PATCHED: ep135 at unity, ea135 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea135:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms135:
+        jr   ex135             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex135               ; …and into the tail the plain copy shares
+ep135:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex135:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,1                ; pace: hold the tick to the sample period
+pd136:
+        dec  a
+        jr   nz,pd136
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov137
+dn138:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov139
+dn140:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_addnr_s2_lp
+        ret
+ov137:
+        jp   m,ov137_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn138
+ov137_hi:
+        ld   a,$7f
+        jp   dn138
+ov139:
+        jp   m,ov139_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn140
+ov139_hi:
+        ld   a,$7f
+        jp   dn140
+mix_addnr_s3:
+mix_addnr_s3_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep143          ; PATCHED: ep143 at unity, ea143 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea143:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms143:
+        jr   ex143             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex143               ; …and into the tail the plain copy shares
+ep143:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex143:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov144
+dn145:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov146
+dn147:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_addnr_s3_lp
+        ret
+ov144:
+        jp   m,ov144_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn145
+ov144_hi:
+        ld   a,$7f
+        jp   dn145
+ov146:
+        jp   m,ov146_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn147
+ov146_hi:
+        ld   a,$7f
+        jp   dn147
+mix_addnr_s4:
+mix_addnr_s4_lp:
+        ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
+        dec  a
+        jr   nz,ep150          ; PATCHED: ep150 at unity, ea150 under a shift
+        call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
+ea150:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ms150:
+        jr   ex150             ; master chain, slot 0 — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        sra  a                 ; …slot — PATCHED
+        jr   ex150               ; …and into the tail the plain copy shares
+ep150:
+        ex   af,af'            ; …and the mixer's A and flags come back
+        ld   a,(iy+0)          ; the ring: what an earlier frame finished
+ex150:
+        xor  $80               ; the ring is signed, the DAC is not
+        ld   (YM_DATA0),a      ; $2A, fed blind
+        inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov151
+dn152:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        ld   a,(de)             ; sample
+        sra  a
+        sra  a
+        sra  a
+        sra  a
+        add  a,(hl)
+        jp   pe,ov153
+dn154:
+        ld   (hl),a
+        inc  l
+        inc  de                ; pre-resampled: one sample per tick
+        dec  b
+        jp   nz,mix_addnr_s4_lp
+        ret
+ov151:
+        jp   m,ov151_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn152
+ov151_hi:
+        ld   a,$7f
+        jp   dn152
+ov153:
+        jp   m,ov153_hi        ; overflow inverts the sign, so a negative
+        ld   a,$80             ; result means the true value was positive
+        jp   dn154
+ov153_hi:
+        ld   a,$7f
+        jp   dn154
+mix_addnr_tab:
+        dw   mix_addnr_s0, mix_addnr_s1, mix_addnr_s2, mix_addnr_s3, mix_addnr_s4, mix_add_s8, mix_add_s8, mix_add_s8, mix_add_s8, mix_add_s9
+R_NR_END:
 R_OUT_BEG:
 ; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
 ; as the inline emit — a sample that comes out here is still a sample.
@@ -1166,9 +1694,9 @@ feed_one:
         push hl                 ; HL is the slot cursor at most call sites
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt107            ; not this sample's turn to wait
+        jr   nz,gt155            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt107:
+gt155:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
@@ -1219,10 +1747,10 @@ MST_CHAIN_D equ 8       ; chain address - dispatch byte address
 ; neither can be re-laid-out without this following.
 MST_SKIP    equ ex1-ms1
 MST_SKIP1   equ fo_ex-fo_ms
-MST_N       equ 14
+MST_N       equ 24
 MST_N1      equ 1
 mst_tab:
-        dw   ms1, ms6, ms10, ms14, ms18, ms22, ms26, ms37, ms47, ms57, ms67, ms77, ms85, ms89
+        dw   ms1, ms6, ms10, ms14, ms18, ms22, ms26, ms37, ms47, ms57, ms67, ms77, ms85, ms89, ms107, ms109, ms111, ms113, ms115, ms119, ms127, ms135, ms143, ms150
 mst_tab1:
         dw   fo_ms
 
@@ -1444,6 +1972,27 @@ ms_bind:
         add  a,a                ; word table
         ld   e,a
         ld   d,0
+        ; PITCH BAKED? incI == 1 and incF == 0 means the 16.16 resampler would
+        ; advance the position by exactly one sample a tick — so the copy that
+        ; has no resampler is not an approximation of this voice, it is the same
+        ; arithmetic with 37 cycles a tick taken out (driver.md §14.2). Decided
+        ; ONCE A PASS here, never per tick, and it costs four instructions.
+        ;
+        ; Only the UNROLLED entry swaps. The single-tick copies below keep the
+        ; resampling table on purpose: a segment leaves them at most one tick and
+        ; the general path computes the same +1 for a baked voice anyway.
+        ld   a,(ix+PV_INCI)
+        dec  a
+        or   (ix+PV_INCF)
+        or   (ix+PV_INCF+1)
+        jr   nz,msb_rs
+        ld   hl,mix_addnr_tab
+        ld   a,(G_SEG_L)
+        or   a
+        jr   nz,msb_u
+        ld   hl,mix_firstnr_tab
+        jr   msb_u
+msb_rs:
         ld   hl,mix_add_tab
         ld   a,(G_SEG_L)
         or   a
