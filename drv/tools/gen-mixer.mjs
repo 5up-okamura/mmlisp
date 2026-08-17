@@ -48,7 +48,7 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PCM_MASTER_MAX_SHIFT } from "../../live/src/mmb.js";
+import { PCM_MASTER_MAX_SHIFT, PCM_MAX_SHIFT } from "../../live/src/mmb.js";
 
 export const MUTE_SHIFT = 8;   // PV_SHIFT value meaning "silent, keep advancing"
 // PV_SHIFT for a pass with no voice behind it at all (engine.z80's G_IDLEV).
@@ -510,17 +510,29 @@ function loop(name, variant, role, shift, U, pad = null) {
 // Each shift gets an unrolled entry (B = unrolled iterations) and a single-tick
 // entry (B = ticks) for the remainder — with U = 2 the remainder is at most one
 // tick, and the boundary segment never has to run on a slow generic path.
+// Which shifts get a copy. NOT 0..7: PV_SHIFT only ever arrives from the slot,
+// the sequencer composes it, and PCM_MAX_SHIFT clamps it — so 5, 6 and 7 were
+// twelve loop copies (both roles, unrolled and single-tick) that nothing could
+// ever reach. The table stays the full width so the index is still the raw
+// PV_SHIFT byte, with the unreachable entries aimed at the MUTE copy: a shift
+// that somehow got past the clamp then goes SILENT, which is noticed, instead
+// of playing at a level nobody chose.
+const shiftsFor = () =>
+  [...Array(PCM_MAX_SHIFT + 1).keys(), MUTE_SHIFT, IDLE_SHIFT];
+
 function loopSet(prefix, variant, role, U, paced, R) {
   const out = [];
-  const N = IDLE_SHIFT + 1;               // shifts 0..7, then mute, then idle
-  for (let s = 0; s < N; s++)
+  const N = IDLE_SHIFT + 1;               // the TABLE's width — PV_SHIFT is the index
+  const live = shiftsFor();
+  const copy = (base, s) => `${base}_s${live.includes(s) ? s : MUTE_SHIFT}`;
+  for (const s of live)
     out.push(loop(`${prefix}_s${s}`, variant, role, s, U,
       paced ? (s === IDLE_SHIFT ? "runtime" : padFor(variant, role, s, U)) : null));
-  for (let s = 0; s < N; s++) out.push(loop(`${prefix}1_s${s}`, variant, role, s, 1));
+  for (const s of live) out.push(loop(`${prefix}1_s${s}`, variant, role, s, 1));
   out.push(`${prefix}_tab:`);
-  out.push(`        dw   ${[...Array(N)].map((_, s) => `${prefix}_s${s}`).join(", ")}`);
+  out.push(`        dw   ${[...Array(N)].map((_, s) => copy(prefix, s)).join(", ")}`);
   out.push(`${prefix}1_tab:`);
-  out.push(`        dw   ${[...Array(N)].map((_, s) => `${prefix}1_s${s}`).join(", ")}`);
+  out.push(`        dw   ${[...Array(N)].map((_, s) => copy(`${prefix}1`, s)).join(", ")}`);
   return out.join("\n");
 }
 
