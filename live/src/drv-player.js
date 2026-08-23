@@ -51,6 +51,7 @@ import {
   PCM_SAMPLES_PER_FRAME,
   PCM_RING_TARGET,
   PCM_RING_BYTES,
+  PCM_BAKE_STAMP,
   PCM_MAX_SHIFT,
   PCM_MASTER_MAX_SHIFT,
   PCM_TOTAL_MAX_SHIFT,
@@ -308,11 +309,29 @@ export class DrvPlayer {
     if (sampleBank) {
       sampleData = sampleBank;
       const n = u16(sampleBank, 0);
-      const blobBase = 2 + n * 20;
+      // The bank stamps the sample clock its BAKED blobs were resampled for
+      // (mmb.md §10). Baked data is bound to that clock: play it under another
+      // and the pitch is quietly wrong, which is the least debuggable failure
+      // there is — so the mismatch is reported here rather than heard later.
+      const stamp = u16(sampleBank, 2);
+      if (stamp !== PCM_BAKE_STAMP) {
+        this._diagnostics.push({
+          severity: "error",
+          code: "E_MMB_BAKE_RATE",
+          message: `sample bank baked for ${stamp} Hz; this build runs at ${PCM_BAKE_STAMP} Hz`,
+        });
+      }
+      const blobBase = 4 + n * 20;
       for (let i = 0; i < n; i++) {
-        const e = 2 + i * 20;
+        const e = 4 + i * 20;
+        const flags = sampleBank[e + 1];
         samples[sampleBank[e]] = {
-          hasLoop: (sampleBank[e + 1] & 1) !== 0,
+          hasLoop: (flags & 1) !== 0,
+          // Bit 1 = pitch baked: the blob already advances one byte a DAC tick
+          // at its anchor note, and bits 4-7 are how many OCTAVES above that
+          // anchor this entry is — so the increment is a shift, not a divide.
+          baked: (flags & 2) !== 0,
+          bakeShift: (flags >> 4) & 0x0f,
           base: blobBase + u32(sampleBank, e + 2),
           len: u32(sampleBank, e + 6),
           baseRate: u16(sampleBank, e + 10),
@@ -1809,7 +1828,14 @@ export class DrvPlayer {
     v.loopLen = v.loopEnd - v.loopStart;
     v.left = v.loopEnd;                 // to the loop end, or the sample end
     v.tail = s.len - v.loopEnd;         // what a release still has to play
-    v.inc = pcmTickIncrement(s.baseRate, note); // 16.16 sample bytes per mix sample
+    // 16.16 sample bytes per mix sample. A BAKED entry does not go through the
+    // pitch table at all: it was resampled so its anchor note advances exactly
+    // one byte a tick, and an octave above that is exactly two (driver.md
+    // §14.2). Computing it instead would land a fraction off and lose the
+    // mixer's no-resampler loop for the sake of a value we already know.
+    v.inc = s.baked
+      ? (0x10000 << s.bakeShift) >>> 0
+      : pcmTickIncrement(s.baseRate, note);
     v.pos = 0;
     v.releasing = false;
     // $2B (DAC enable) is the ENGINE's, not the sequencer's: it is a

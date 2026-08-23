@@ -267,24 +267,60 @@ missing. Structure:
 
 ```
 entry_count : u16
+bake_stamp  : u16   the sample clock the baked blobs were resampled for
 entries     : entry_count × 20 bytes
 blobs       : raw sample data (8-bit signed PCM), byte-packed
 ```
+
+`bake_stamp` is `round(60 × PCM_SAMPLES_PER_FRAME)` — 10000 — and a loader
+**refuses a bank whose stamp is not its own** (`mml_load_samples` returns -3).
+Baked data is bound to the clock it was baked for; played under another the
+pitch is quietly wrong, which is the least debuggable failure there is. An
+unbaked bank carries the same stamp, so the check costs nothing to keep true.
 
 Sample entry (20 bytes):
 
 | Offset | Size | Field      | Notes                                        |
 | ------ | ---- | ---------- | -------------------------------------------- |
 | 0x00   | 1    | sample_id  | u8, referenced by PCM_NOTE_ON                |
-| 0x01   | 1    | flags      | bit0 = has_loop; bits1–7 reserved            |
+| 0x01   | 1    | flags      | bit0 = has_loop; bit1 = pitch baked; bits4–7 = octaves above the bake anchor; bits2–3 reserved |
 | 0x02   | 4    | offset     | u32, blob start relative to SAMPLE_BANK payload |
 | 0x06   | 4    | length     | u32, bytes                                   |
 | 0x0A   | 2    | base_rate  | u16, playback rate in Hz at C4               |
 | 0x0C   | 4    | loop_start | u32, byte offset into the sample             |
 | 0x10   | 4    | loop_end   | u32, byte offset into the sample             |
 
+### 10.1 Pitch baking
+
+An entry with **flags bit1** was resampled at build time to the rate that makes
+it advance *exactly one byte a DAC tick* at the note it is played at, so
+`base_rate` is that rate and the sequencer does **not** compute the increment
+for it — it takes `0x10000 << (flags >> 4)` directly. Exactness is the point:
+the mixer keeps a loop copy with `inc de` where the 16.16 resampler sits, worth
+37 Z80 cycles a tick, and a value one fraction off cannot use it (driver.md
+§14.2). Deriving the rate through `pcmTickIncrement` instead cannot reach it at
+all — `base_rate` is a u16, too coarse a knob above the low octaves, and only
+22 of the 49 notes have an integer rate that lands on a power of two.
+
+What is baked: every **unlooped** sample, at every note the score plays it,
+one blob per note, deduplicated by content hash. Looped samples are never
+baked — resampling moves the loop points off integer samples, and rounding them
+back detunes the sustained part by the rounding error over the loop length.
+
+One blob per NOTE rather than per pitch class is deliberate. Grouping by pitch
+class needs only one blob per class, because the octaves above it are reachable
+by advancing 2^k bytes a tick — but a runtime-variable advance costs a branch
+(12 cycles) or a nop fill (4) inside the tick body, charged to *every* baked
+tick against a baked tick of 41. That trades mixer cycles, which are the binding
+constraint, for sample ROM, which measures in hundreds of bytes against a 32KB
+window. If a score ever runs the window out, the octave shift is the thing to
+reach for. Measured cost of baking on the gate scores: +24% (m3-fm6-pcm), +68%
+(m3-pcm-softmix), +35% (m3-pcm-slice), **−11%** (m3-se — a high note bakes to a
+lower rate and the blob shrinks).
+
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
-Sample ids are assigned in IR declaration order. `offset` is relative to this
+Sample ids are entry indices, so a sample played at several notes occupies
+several ids. `offset` is relative to this
 bank's payload (past `entry_count`). Because the bank is separate, PCM-heavy
 songs no longer push the control MMB past the 32KB window; a bank that itself
 exceeds 32KB (many/large samples) is the next relaxation — multiple sample banks

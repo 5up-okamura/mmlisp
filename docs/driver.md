@@ -2363,3 +2363,49 @@ each frame's samples out in 12% of the frame until 2026-08-03. §5.1 is the fix
 and `npm run dac` is the gate. What is left for silicon is the 68k's per-frame
 bus grab, ~0.2% jitter on top (§1.3), and whether the residual pacing wander
 (~3.4 ms, §5.1) is audible under real material.
+
+### 14.2 Pitch-baked voices
+
+A PCM voice's position advances by a 16.16 increment every tick, and computing
+that advance — `frac += incF` with the carry into a 16-bit pointer — is 37 of
+the 78 Z80 cycles a resampling tick costs. When the increment is exactly 1.0 the
+whole block collapses to `inc de`, and the mixer keeps a second set of the
+unrolled loop copies that does exactly that (`i8satnr`, 820 B, shifts
+0..PCM_MAX_SHIFT, both roles). `ms_bind` chooses between the two once a pass, on
+`incI == 1 && incF == 0` — four instructions, never per tick. The single-tick,
+MUTE and IDLE copies are not duplicated: for a baked voice the resampling copy
+computes the same result, it just costs more, and a segment leaves it at most
+one tick.
+
+**Making the increment come out at 1.0 is the exporter's job** (mmb.md §10.1):
+every unlooped sample is resampled at build time to the rate at which the note
+it is played at advances one byte a DAC tick. The sample entry then says so —
+flags bit1 — and the sequencer takes `0x10000` as a constant instead of deriving
+it. It has to be a declaration rather than a derivation: `base_rate` is a u16,
+and above the low octaves consecutive integer rates step the increment by more
+than one 16.16 unit, so only 22 of the 49 notes have a rate that lands exactly
+on a power of two. The plan for this step said no format change would be needed;
+that was wrong, and this is why.
+
+**Where the saving goes.** Measured on a score that overruns — two voices, dense
+one-shots, shift 4:
+
+```
+before  63,041 cyc (106%)  music x256 00cb (79%)  lost 12/s
+after   59,376 cyc ( 99%)  music x256 00f0 (94%)  lost  4/s
+```
+
+Inside the budget the same pair differ by under a thousand cycles, and that is a
+different regime rather than a smaller win: Timer B paces the frame, so a mixer
+that finishes early spends the difference waiting in `gate_wait`. **Baking does
+not make a working song cheaper — it makes a broken configuration work.** That
+is what the third PCM voice and any rate increase have to be bought with.
+
+**Octaves are not exploited, and that is measured too.** An octave is exactly a
+doubling of the increment, so one blob could serve every octave of its pitch
+class with the mixer advancing 2^k bytes a tick — twelve blobs a sample instead
+of one per note. But a runtime-variable advance needs a branch (12 cycles) or a
+nop fill (4) inside the tick body, charged to every baked tick against a baked
+tick of 41. It buys sample ROM (hundreds of bytes against a 32KB window) with
+mixer cycles (the binding constraint). Revisit it when a score runs the sample
+window out, not before.

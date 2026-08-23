@@ -77,6 +77,9 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 #define MML_PCM_MASTER_MAX_SHIFT 6
 /* Voice shift + master shift at which the voice is muted instead of mixed. */
 #define MML_PCM_TOTAL_MAX_SHIFT 7
+/* The sample clock a baked sample bank is resampled for, stamped in the bank
+ * and checked by mml_load_samples. Mirrors PCM_BAKE_STAMP in live/src/mmb.js. */
+#define MML_PCM_BAKE_STAMP 10000
 /* The Timer-B sample clock (driver.md §5.1.2), mirroring live/src/mmb.js. The
  * DAC's rate is the YM's, not the frame's: 37335/224 = 166.674 samples a frame,
  * so a frame owes it 166 or 167 and never a constant. The mixer produces into a

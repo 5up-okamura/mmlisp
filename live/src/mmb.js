@@ -451,6 +451,32 @@ export const PCM_TOTAL_MAX_SHIFT = 7;
 // The divisor is the AVERAGE samples per frame, not a given frame's 166/167:
 // the rate the ear hears is the sample clock's, and the ring is what absorbs
 // the difference. (Mirrors need 64 bits for the product — 68k pcm_tick_increment.)
+// ── Pitch baking (driver.md §14.2) ────────────────────────────────────────
+// A sample stored at THIS rate advances exactly one byte a DAC tick when played
+// at `note` — the inverse of the convention pcmTickIncrement encodes, so a
+// baked voice sounds identical to the resampled one it replaces rather than
+// merely close. The reference is 60 x PCM_SAMPLES_PER_FRAME and not the DAC's
+// true 9987.6 Hz on purpose: PCM_MULT_FRAME divides by a nominal 60 frames a
+// second, so that is the rate the rest of the pitch model already assumes, and
+// baking has to agree with the model it is an optimisation of, not with the
+// hardware the model approximates.
+export const PCM_BAKE_RATE_REF = (60 * PCM_SAMPLES_NUM) / PCM_SAMPLES_DEN;
+
+// The rate to resample to so `note` comes out at one byte a tick. Float, and
+// deliberately not rounded to the u16 the sample entry carries: a baked entry
+// does not go through pcmTickIncrement at all — the sequencer takes its
+// increment from the octave shift alone — so the only place this number has to
+// be accurate is the resampler, where it is exact.
+export function pcmBakeRate(note) {
+  return PCM_BAKE_RATE_REF / Math.pow(2, (note - 60) / 12);
+}
+
+// The stamp a baked bank carries, and what a loader checks it against. Baked
+// data is bound to the sample clock it was baked for; without this a rate
+// change reads as "the pitch is slightly off", which is the least debuggable
+// failure there is (plan-68k-split.md, step 2).
+export const PCM_BAKE_STAMP = Math.round(PCM_BAKE_RATE_REF);
+
 export function pcmTickIncrement(baseRate, note) {
   return Math.floor((pcmIncrement(baseRate, note) * PCM_SAMPLES_DEN) / PCM_SAMPLES_NUM) >>> 0;
 }

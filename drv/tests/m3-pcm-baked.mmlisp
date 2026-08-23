@@ -1,14 +1,26 @@
-; M3 gate: PITCH-BAKED voices take the no-resampler copies (driver.md §14.2).
+; M3 gate: PITCH-BAKED samples and the mixer loop that has no resampler
+; (driver.md §14.2, mmb.md §10).
 ;
-; A voice whose 16.16 increment comes out exactly 1.0 — incI == 1, incF == 0 —
-; advances one sample a tick, so the loop copy WITHOUT the resampler computes
-; the same positions for it, 37 Z80 cycles a tick cheaper. ms_bind picks it once
-; a pass on that test alone; no MMB field says "baked" and none needs to.
+; The exporter resamples every UNLOOPED sample to the rate that makes it advance
+; exactly one byte a DAC tick at the note it is played at, one blob per note,
+; deduplicated by content. The sequencer then takes that voice's increment as a
+; constant instead of computing it, and ms_bind puts the voice on the loop copy
+; with `inc de` where the 16.16 resampler used to be — 37 Z80 cycles a tick.
 ;
-; `:rate 10003` at note 60 is one of the exact solutions against the Timer B
-; sample clock. pcm1 is therefore baked and pcm2, a semitone up on the same
-; sample, is not — so this gate runs both copy sets in the same frame and the
-; two must still agree with the reference sample for sample.
-(def flat :sample :file "pad.wav" :rate 10003 :loop-start 100 :loop-end 400)
-(pcm1 flat :mode loop :tempo 120 :oct 4 :len 1 :vel 15  c c c c c c c c)
-(pcm2 flat :mode loop :tempo 120 :oct 4 :len 1 :vel 15  c+ c+ c+ c+ c+ c+ c+ c+)
+; Measured on a score that overruns (two voices, dense shots, shift 4):
+;   before  63,041 cyc (106%)  music x256 00cb (79%)  lost 12/s
+;   after   59,376 cyc ( 99%)  music x256 00f0 (94%)  lost  4/s
+; Inside the budget the two are indistinguishable, and that is not a smaller
+; version of the same thing: Timer B paces the frame, so a cheaper mixer waits
+; longer at the gate. The saving is collectable only where the frame is
+; work-bound.
+;
+; Both paths run in the same frame here, which is the point of the gate:
+;   pcm1  one-shot blip at three notes -> three baked entries, no resampler
+;   pcm2  a LOOPED pad -> never baked (resampling moves the loop points off
+;         integer samples, and rounding them back detunes the sustain), so it
+;         stays on the 16.16 copies
+(def blip :sample :file "blip.wav")
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(pcm1 blip :tempo 120 :oct 4 :len 8 :vel 15   c e g c e g c e g c e g)
+(pcm2 pad  :mode loop :tempo 120 :oct 4 :len 2 :vel 12   c _ c _ c _)

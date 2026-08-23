@@ -1000,7 +1000,13 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int note) {
   v->loop_len = v->loop_end - v->loop_start;
   v->left = (int32_t)v->loop_end;        /* to the loop end, or the sample end */
   v->tail = (int32_t)(len - v->loop_end); /* what a release still has to play */
-  v->inc = pcm_tick_increment(rd16(e, 10), note);
+  /* A BAKED entry does not go through the pitch table: it was resampled so its
+   * anchor note advances exactly one byte a tick, and flags bits 4-7 say how
+   * many octaves above that anchor this entry sits — so the increment is a
+   * shift (driver.md §14.2). Computing it would land a fraction off and cost
+   * the mixer its no-resampler loop for a value already known exactly. */
+  v->inc = (e[1] & 2) ? ((uint32_t)0x10000u << ((e[1] >> 4) & 0x0f))
+                      : pcm_tick_increment(rd16(e, 10), note);
   v->pos = 0;
   v->releasing = 0;
   /* $2B (DAC enable) is the ENGINE's: it is a consequence of voice activity,
@@ -1962,13 +1968,19 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
 }
 
 int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_base) {
-  if (!bank || (len && len < 2)) return -1;
+  if (!bank || (len && len < 4)) return -1;
   uint16_t n = rd16(bank, 0);
-  if (len && 2 + (uint32_t)n * 20 > len) return -2;
+  /* The bank stamps the sample clock its BAKED blobs were resampled for
+   * (mmb.md §10, driver.md §14.2). Baked data is bound to that clock; under a
+   * different one the pitch is quietly wrong, so a mismatch is refused here
+   * rather than heard later. An unbaked bank stamps the same value, so this
+   * costs nothing to keep true. */
+  if (rd16(bank, 2) != MML_PCM_BAKE_STAMP) return -3;
+  if (len && 4 + (uint32_t)n * 20 > len) return -2;
   s->sample_count = n;
-  s->sample_entries = bank + 2;
+  s->sample_entries = bank + 4;
   /* Entry offsets are relative to the blob region, which follows the table. */
-  s->sample_blob_base = 2 + (uint32_t)n * 20;
+  s->sample_blob_base = 4 + (uint32_t)n * 20;
   s->sample_rom_base = rom_base;
   return 0;
 }

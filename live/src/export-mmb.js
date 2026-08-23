@@ -36,6 +36,8 @@ import {
   resolveChannelId,
   encodeDuration,
   bpmToTickIncrement,
+  pcmBakeRate,
+  PCM_BAKE_STAMP,
 } from "./mmb.js";
 import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 import { buildLutBlob } from "./lut-blob.js";
@@ -282,6 +284,13 @@ export function encodeMmb(ir, opts = {}) {
   const valSlots = new Map(
     (ir.metadata?.vals ?? []).map((v) => [v.name, v.slot]),
   );
+  // The sample bank is PLANNED here, before the event stream, because baking
+  // splits one sample into several entries and PCM_NOTE_ON has to name the one
+  // its note belongs to (driver.md §14.2). `sampleIds` survives for diagnostics
+  // — it is what tells a bad `:sample` name from a note the plan skipped.
+  const bankPlan = opts.samples
+    ? buildSampleBank(ir, opts.samples, diag, collectPcmUsage(ir))
+    : null;
   const sampleIds = new Map(
     (ir.metadata?.samples ?? []).map((s, i) => [s.name, i]),
   );
@@ -1027,7 +1036,9 @@ export function encodeMmb(ir, opts = {}) {
         }
         case "PCM_NOTE_ON": {
           syncClock(ev.tick);
-          const sampleId = sampleIds.get(a.sample);
+          const sampleId = bankPlan
+            ? bankPlan.idFor(a.sample, midiNote(a.pitch))
+            : sampleIds.get(a.sample);
           if (sampleId === undefined) {
             diag(
               "warning",
@@ -1163,7 +1174,7 @@ export function encodeMmb(ir, opts = {}) {
   );
   let sampleBank = null;
   if (usesPcm && opts.samples) {
-    sampleBank = new Uint8Array(buildSampleBank(ir, opts.samples, diag));
+    sampleBank = new Uint8Array(bankPlan.bytes);
     // The bank is its own window too: `pcm_note_on` reads the low u16 of an
     // entry's offset and addresses blobs from the window base, so anything past
     // 32KB wraps and plays another sample's bytes. Same wall as the MMB, and
@@ -1300,11 +1311,79 @@ function buildMacroTable(registry) {
   return [...desc.bytes, ...blob.bytes];
 }
 
-function buildSampleBank(ir, blobs, diag) {
+// ── Pitch baking (driver.md §14.2) ─────────────────────────────────────────
+// Which notes each PCM sample is actually played at. The exporter bakes per
+// PITCH CLASS, not per note: an octave is exactly a doubling of the increment,
+// so one blob serves every octave of its pitch class and the mixer reaches the
+// others by advancing 2^k bytes a tick. Per note it would be up to 49 blobs a
+// sample; this is at most 12.
+function collectPcmUsage(ir) {
+  const use = new Map(); // sample name -> Set<midi note>
+  for (const track of ir.tracks ?? []) {
+    for (const ev of track.events ?? []) {
+      if (ev.cmd !== "PCM_NOTE_ON") continue;
+      const a = ev.args ?? {};
+      const n = midiNote(a.pitch);
+      if (!use.has(a.sample)) use.set(a.sample, new Set());
+      use.get(a.sample).add(n);
+    }
+  }
+  return use;
+}
+
+// Linear resample of an 8-bit signed blob from `from` Hz to `to` Hz. Linear and
+// not nearest-neighbour on purpose: this runs once, at build time, where the
+// better filter is free — the mixer's own nearest-neighbour step is what baking
+// REMOVES, so the baked copy should not carry its artefacts forward.
+function resample8(data, from, to) {
+  const ratio = from / to;
+  const outLen = Math.max(1, Math.round(data.length / ratio));
+  const out = new Int8Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const x = i * ratio;
+    const i0 = Math.floor(x);
+    const i1 = i0 + 1 < data.length ? i0 + 1 : i0;
+    const f = x - i0;
+    const s0 = (data[i0] << 24) >> 24;
+    const s1 = (data[i1] << 24) >> 24;
+    let v = Math.round(s0 + (s1 - s0) * f);
+    out[i] = v > 127 ? 127 : v < -128 ? -128 : v;
+  }
+  return out;
+}
+
+function buildSampleBank(ir, blobs, diag, usage = new Map()) {
   const samples = ir.metadata?.samples ?? [];
   const entries = new Writer();
   const blobBytes = [];
-  entries.u16(samples.length);
+  const rows = [];                 // one per ENTRY, in id order
+  const entryIdFor = new Map();    // `${name}|${note}` -> entry id
+  const fallbackFor = new Map();   // name -> entry id, for notes with no plan
+  // Blob dedup. Two pitch classes of the same sample can resample to the same
+  // bytes (a short one-shot, adjacent semitones), and so can two samples that
+  // were the same file. Hash first, then compare — a collision must not silently
+  // alias two different blobs together.
+  const pool = new Map();          // hash -> [{ off, len, bytes }]
+  const intern = (bytes) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < bytes.length; i++) h = ((h ^ (bytes[i] & 0xff)) * 0x01000193) >>> 0;
+    const key = `${bytes.length}:${h}`;
+    for (const c of pool.get(key) ?? []) {
+      let same = true;
+      for (let i = 0; i < bytes.length; i++) {
+        if ((c.bytes[i] & 0xff) !== (bytes[i] & 0xff)) { same = false; break; }
+      }
+      if (same) return c.off;
+    }
+    const off = blobBytes.length;
+    for (const b of bytes) blobBytes.push(b & 0xff);
+    if (!pool.has(key)) pool.set(key, []);
+    pool.get(key).push({ off, len: bytes.length, bytes });
+    return off;
+  };
+  const push = (row) => { rows.push(row); return rows.length - 1; };
+  let bakedEntries = 0, bakedBlobBytes = 0, bakedSources = 0, bakedSourceBytes = 0;
+
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i];
     const blob = blobs[s.name];
@@ -1319,14 +1398,111 @@ function buildSampleBank(ir, blobs, diag) {
     const loopStart = blob?.loopStart ?? s.loopStart;
     const loopEnd = blob?.loopEnd ?? s.loopEnd;
     const hasLoop = loopStart != null && loopEnd != null;
-    entries.u8(i);
-    entries.u8(hasLoop ? 1 : 0);
-    entries.u32(blobBytes.length);
-    entries.u32(data.length);
-    entries.u16(blob?.baseRate ?? s.rate ?? 13000);
-    entries.u32(hasLoop ? loopStart : 0);
-    entries.u32(hasLoop ? loopEnd : 0);
-    for (const b of data) blobBytes.push(b & 0xff);
+    const rate = blob?.baseRate ?? s.rate ?? 13000;
+    const notes = [...(usage.get(s.name) ?? [])].sort((x, y) => x - y);
+
+    // Looped material is never baked: resampling moves the loop points off
+    // integer samples, and rounding them back detunes the sustained part by the
+    // rounding error over the loop length. One-shots have no such point.
+    const bakeable = !hasLoop && data.length > 0 && notes.length > 0;
+    if (!bakeable) {
+      fallbackFor.set(s.name, push({
+        flags: hasLoop ? 1 : 0,
+        off: intern(data), len: data.length, rate,
+        loopStart: hasLoop ? loopStart : 0, loopEnd: hasLoop ? loopEnd : 0,
+      }));
+      continue;
+    }
+
+    // ONE BLOB PER NOTE, not per pitch class — and that is a measured choice
+    // rather than the obvious one. Grouping by pitch class needs one blob for
+    // every octave of it, because the mixer would reach the other octaves by
+    // advancing 2^k bytes a tick; but a runtime-variable advance needs either a
+    // branch (12 cycles) or a nop fill (4) inside the tick body, and that is
+    // charged to EVERY baked tick including the k = 0 ones, against a baked
+    // tick of 41. It buys sample ROM, which measures in hundreds of bytes
+    // against a 32 KB window, with mixer cycles, which are the constraint this
+    // whole exercise exists to relieve. So: every note gets its own blob, k is
+    // always 0, and the mixer's advance stays a bare `inc de`.
+    //
+    // The hash pool below still collapses whatever is genuinely identical. If a
+    // score ever does run the sample window out, the octave shift is the thing
+    // to reach for — see driver.md §14.2.
+    bakedSources++;
+    bakedSourceBytes += data.length;
+    const byNote = new Map();
+    for (const n of notes) byNote.set(n, [n]);
+    for (const [, ns] of byNote) {
+      const anchor = ns[0];
+      const baked = resample8(data, rate, pcmBakeRate(anchor));
+      const before = blobBytes.length;
+      const off = intern(baked);
+      bakedBlobBytes += blobBytes.length - before;   // dedup hits cost nothing
+      bakedEntries++;
+      for (const n of ns) {
+        const k = (n - anchor) / 12;
+        // A pitch class is 12 apart by construction, so k is a whole number;
+        // the guard is against a future change to the grouping, not the data.
+        if (!Number.isInteger(k) || k < 0 || k > 15) {
+          diag("warning", "W_MMB_BAKE_RANGE",
+            `sample "${s.name}" note ${n} is ${k} octaves from its anchor; left unbaked`);
+          continue;
+        }
+        entryIdFor.set(`${s.name}|${n}`, push({
+          flags: 2 | (k << 4), off, len: baked.length,
+          rate: Math.round(pcmBakeRate(anchor)), loopStart: 0, loopEnd: 0,
+        }));
+      }
+    }
+    // NO unbaked fallback entry. Every note this sample is played at came from
+    // the same walk that built the plan, so a miss is impossible without a
+    // change to the grouping above — and keeping one would carry a second full
+    // copy of the blob for a case that cannot arise. A miss falls back to the
+    // sample's lowest baked entry and says so.
   }
-  return [...entries.bytes, ...blobBytes];
+
+  // What baking cost, in the one unit that can run out. Reported rather than
+  // silent: a sample played at many notes multiplies its blob, and the bank has
+  // to fit one 32KB window (§12). Nothing here decides anything — it is the
+  // number a composer needs to see before the window refuses the song.
+  if (bakedBlobBytes > 0) {
+    diag(
+      "info",
+      "I_MMB_BAKE_COST",
+      `pitch baking: ${bakedEntries} entries from ${bakedSources} samples, ` +
+        `${bakedBlobBytes} B of blobs (unbaked they were ${bakedSourceBytes} B)`,
+    );
+  }
+  if (rows.length > 256) {
+    diag("error", "E_MMB_SAMPLE_ENTRIES",
+      `${rows.length} sample entries; the id byte holds 256`);
+  }
+  entries.u16(rows.length);
+  entries.u16(PCM_BAKE_STAMP);   // the sample clock the baked blobs assume
+  rows.forEach((r, id) => {
+    entries.u8(id);
+    entries.u8(r.flags);
+    entries.u32(r.off);
+    entries.u32(r.len);
+    entries.u16(r.rate);
+    entries.u32(r.loopStart);
+    entries.u32(r.loopEnd);
+  });
+  return {
+    bytes: [...entries.bytes, ...blobBytes],
+    idFor: (name, note) => {
+      const id = entryIdFor.get(`${name}|${note}`);
+      if (id !== undefined) return id;
+      const fb = fallbackFor.get(name);
+      if (fb !== undefined) return fb;
+      const any = [...entryIdFor.entries()].find(([k]) => k.startsWith(`${name}|`));
+      if (any) {
+        diag("warning", "W_MMB_BAKE_MISS",
+          `sample "${name}" note ${note} has no baked entry; using its anchor`);
+        return any[1];
+      }
+      return undefined;
+    },
+  };
 }
+
