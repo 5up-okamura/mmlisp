@@ -304,11 +304,31 @@ export function sweepStep(len, loop) {
 //
 // increment (16.16 samples/frame) = base_rate × MULT_FRAME[note-36], where
 // MULT_FRAME[n] = round(2^((note-60)/12) × 65536 / 60) for C2..C6 (note 36..84).
+// OCTAVE-EXACT, and that is a property of the table rather than a side effect
+// of it. Rounding all 49 entries independently — which this did — left an
+// octave up to 2.99 cents wide (note 37 -> 49; 0.66 cents on average). An
+// octave is the interval whose mistuning the ear catches first, so that was a
+// defect on its own; the fix is to round ONE octave and derive the rest by
+// doubling, which makes every 2:1 exactly 2:1 by construction.
+//
+// It costs nothing in accuracy. The worst error against equal temperament is
+// 2.78 cents either way — the rounding is redistributed, not increased — and
+// the top entry is 4368 against the u16 ceiling. What it moves is 29 of the 49
+// entries, by 1.01 cents on average and 2.99 at worst, so a PCM note that
+// already existed can shift by that much. Deliberate, and the A/B baselines
+// were re-frozen for it.
+//
+// It is also what makes pitch-baked samples affordable (driver.md §14.2): an
+// octave is then EXACTLY a doubling of the 16.16 increment, so one baked blob
+// per pitch class covers all of its octaves and the mixer reaches them by
+// advancing 2^k samples a tick instead of resampling. Per note it would be up
+// to 49 blobs a sample; per pitch class it is at most 12.
 export const PCM_MULT_FRAME = (() => {
   const t = new Uint16Array(49);
-  for (let n = 36; n <= 84; n++) {
+  for (let n = 36; n <= 47; n++) {
     t[n - 36] = Math.round((Math.pow(2, (n - 60) / 12) * 65536) / 60);
   }
+  for (let n = 48; n <= 84; n++) t[n - 36] = t[n - 36 - 12] * 2;
   return t;
 })();
 
