@@ -24,7 +24,7 @@ PCM_MUTE_SH equ 8      ; PV_SHIFT meaning "silent, keep advancing"
 PCM_IDLE_SH equ 9      ; PV_SHIFT meaning "no voice here at all"
 PCM_PASSES  equ 2      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ 538     ; the sample period one iteration holds to
-PCM_IDLE_PAD equ 18      ; the most an idle iteration may hold to
+PCM_IDLE_PAD equ 24      ; the most an idle iteration may hold to
 PCM_GROUP   equ 32       ; samples per Timer B gate (§5.1.2)
 PCM_TB      equ 240       ; the $26 byte: Timer B overflows every
                         ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
@@ -55,7 +55,7 @@ ex1:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,9                ; pace: hold the tick to the sample period
+        ld   a,15               ; pace: hold the tick to the sample period
 pd2:
         dec  a
         jr   nz,pd2
@@ -110,7 +110,7 @@ ex6:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,8                ; pace: hold the tick to the sample period
+        ld   a,14               ; pace: hold the tick to the sample period
 pd7:
         dec  a
         jr   nz,pd7
@@ -167,7 +167,7 @@ ex11:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,7                ; pace: hold the tick to the sample period
+        ld   a,13               ; pace: hold the tick to the sample period
 pd12:
         dec  a
         jr   nz,pd12
@@ -226,7 +226,7 @@ ex16:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,6                ; pace: hold the tick to the sample period
+        ld   a,12               ; pace: hold the tick to the sample period
 pd17:
         dec  a
         jr   nz,pd17
@@ -287,7 +287,7 @@ ex21:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,5                ; pace: hold the tick to the sample period
+        ld   a,11               ; pace: hold the tick to the sample period
 pd22:
         dec  a
         jr   nz,pd22
@@ -350,7 +350,7 @@ ex26:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,12               ; pace: hold the tick to the sample period
+        ld   a,17               ; pace: hold the tick to the sample period
 pd27:
         dec  a
         jr   nz,pd27
@@ -555,7 +555,7 @@ ex41:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,7                ; pace: hold the tick to the sample period
+        ld   a,13               ; pace: hold the tick to the sample period
 pd42:
         dec  a
         jr   nz,pd42
@@ -630,7 +630,7 @@ ex52:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,6                ; pace: hold the tick to the sample period
+        ld   a,12               ; pace: hold the tick to the sample period
 pd53:
         dec  a
         jr   nz,pd53
@@ -707,7 +707,7 @@ ex63:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,5                ; pace: hold the tick to the sample period
+        ld   a,11               ; pace: hold the tick to the sample period
 pd64:
         dec  a
         jr   nz,pd64
@@ -786,7 +786,7 @@ ex74:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,4                ; pace: hold the tick to the sample period
+        ld   a,10               ; pace: hold the tick to the sample period
 pd75:
         dec  a
         jr   nz,pd75
@@ -867,7 +867,7 @@ ex85:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,3                ; pace: hold the tick to the sample period
+        ld   a,9                ; pace: hold the tick to the sample period
 pd86:
         dec  a
         jr   nz,pd86
@@ -950,7 +950,7 @@ ex94:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,13               ; pace: hold the tick to the sample period
+        ld   a,18               ; pace: hold the tick to the sample period
 pd95:
         dec  a
         jr   nz,pd95
@@ -1199,7 +1199,7 @@ ex116:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,14               ; pace: hold the tick to the sample period
+        ld   a,20               ; pace: hold the tick to the sample period
 pd117:
         dec  a
         jr   nz,pd117
@@ -1238,7 +1238,7 @@ ex118:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,13               ; pace: hold the tick to the sample period
+        ld   a,19               ; pace: hold the tick to the sample period
 pd119:
         dec  a
         jr   nz,pd119
@@ -1279,7 +1279,7 @@ ex120:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,12               ; pace: hold the tick to the sample period
+        ld   a,18               ; pace: hold the tick to the sample period
 pd121:
         dec  a
         jr   nz,pd121
@@ -1322,7 +1322,7 @@ ex122:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,11               ; pace: hold the tick to the sample period
+        ld   a,17               ; pace: hold the tick to the sample period
 pd123:
         dec  a
         jr   nz,pd123
@@ -1367,7 +1367,7 @@ ex124:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,10               ; pace: hold the tick to the sample period
+        ld   a,16               ; pace: hold the tick to the sample period
 pd125:
         dec  a
         jr   nz,pd125
@@ -1416,7 +1416,7 @@ ex128:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,12               ; pace: hold the tick to the sample period
+        ld   a,17               ; pace: hold the tick to the sample period
 pd129:
         dec  a
         jr   nz,pd129
@@ -1475,7 +1475,7 @@ ex136:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,11               ; pace: hold the tick to the sample period
+        ld   a,16               ; pace: hold the tick to the sample period
 pd137:
         dec  a
         jr   nz,pd137
@@ -1536,7 +1536,7 @@ ex144:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,10               ; pace: hold the tick to the sample period
+        ld   a,15               ; pace: hold the tick to the sample period
 pd145:
         dec  a
         jr   nz,pd145
@@ -1599,7 +1599,7 @@ ex152:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,9                ; pace: hold the tick to the sample period
+        ld   a,14               ; pace: hold the tick to the sample period
 pd153:
         dec  a
         jr   nz,pd153
@@ -1664,7 +1664,7 @@ ex160:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,8                ; pace: hold the tick to the sample period
+        ld   a,13               ; pace: hold the tick to the sample period
 pd161:
         dec  a
         jr   nz,pd161
