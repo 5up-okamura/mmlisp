@@ -112,7 +112,16 @@ export const PACE_PASSES = 2;       // voice passes per frame = the emit cadence
 // sides scale together. k is therefore the window the engine may average over,
 // and it was never chosen: k = 1 is the timer's shortest period and PCM_GROUP
 // = 3 fell out of it. See .claude/memory/plan-68k-split.md 2026-08-09.
-export const TIMER_B_K = 1;                  // 256 - TB
+// K is the WINDOW the engine may average its out-of-loop work over: one gate
+// per PCM_GROUP = PCM_SAMPLES_PER_GATE x K samples, at the same sample rate for
+// every K, so a large K amortises the gate's 141 cycles and a small one spends
+// them. 16 is the shipped value — 48 samples a gate, ~3.5 gates a frame.
+//
+// K = 1 with PCM_SAMPLES_PER_GATE = 1 is the OTHER end: every sample gated, the
+// only shape Timer B can hold an exact clock in, and it costs 55 gates a frame
+// instead of 3.5. That is the whole trade — see plan-68k-split.md 2026-08-27.
+// Anything between is the worst of both: the gate's cost without its clock.
+export const TIMER_B_K = Number(process.env.TIMER_B_K ?? 16);   // 256 - TB
 export const TIMER_B_TB = 256 - TIMER_B_K;    // the byte the engine writes to $26
 export const GATE_YM = 2304 * TIMER_B_K;      // YM clocks per overflow
 export const PCM_GROUP = PCM_SAMPLES_PER_GATE * TIMER_B_K;
