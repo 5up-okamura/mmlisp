@@ -214,11 +214,14 @@ async function captureBaseline(ref, score, tmp) {
     const RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
     const ram = new Uint8Array(0x2000); ram.set(built.bytes, 0);
     let bank = 0, cyc = 0, win = 0, dacOn = false;
+    // TIMER B, as dac-gate.mjs models it. Without it gate_wait spins for ever
+    // on a status port answering a flat zero and a-today yields no samples.
+    let gateAt = GATE_CY, enableB = false;
     const addr = [0, 0], ev = [];
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < 0x2000) return ram[a];
-        if (a === 0x4000) return 0;
+        if (a === 0x4000) return enableB && cyc >= gateAt ? 0x02 : 0;
         if (a >= 0x8000) { win++; return sampleBank[bank * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
@@ -227,7 +230,10 @@ async function captureBaseline(ref, score, tmp) {
         if (a === 0x4000) { addr[0] = d; return; }
         if (a === 0x4002) { addr[1] = d; return; }
         if (a !== 0x4001) return;
-        if (addr[0] === 0x2b) { dacOn = (d & 0x80) !== 0; if (!dacOn) ev.push([cyc, null]); }
+        if (addr[0] === 0x27) {
+          enableB = (d & 0x08) !== 0;
+          if (d & 0x20) while (gateAt <= cyc) gateAt += GATE_CY;
+        } else if (addr[0] === 0x2b) { dacOn = (d & 0x80) !== 0; if (!dacOn) ev.push([cyc, null]); }
         else if (addr[0] === 0x2a && dacOn) ev.push([cyc, d]);
       },
     });
@@ -247,9 +253,16 @@ async function captureBaseline(ref, score, tmp) {
       // in the timeline. A frame that overran starts the next one late.
       cyc = Math.max(cyc, base);
       cpu.intRequest();
+      // One loop with run-trace.mjs's exit condition. Stepping "while halted"
+      // then "while not halted" never got past the first frame: the interrupt
+      // is pending while the CPU is still halted.
       let g = 0;
-      while (cpu.halted && g++ < 1000) cyc += cpu.step();
-      while (!cpu.halted && g++ < 3_000_000) { win = 0; cyc += cpu.step() + win * PACE_WINDOW; }
+      while (g++ < 3_000_000) {
+        win = 0;
+        cyc += cpu.step() + win * PACE_WINDOW;
+        if (cpu.halted && !cpu.intPending) break;
+      }
+      if (!cpu.halted) throw new Error(`baseline frame ${f} did not finish`);
       base += FRAME_CYCLES;
     }
     return { ev, period: FRAME_CYCLES / sym("PCM_MIX_R") };
