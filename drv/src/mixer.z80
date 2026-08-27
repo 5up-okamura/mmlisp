@@ -24,7 +24,12 @@ PCM_MUTE_SH equ 8      ; PV_SHIFT meaning "silent, keep advancing"
 PCM_IDLE_SH equ 9      ; PV_SHIFT meaning "no voice here at all"
 PCM_PASSES  equ 2      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ 1075     ; the sample period one iteration holds to
-PCM_IDLE_PAD equ 0      ; the most an idle iteration may hold to
+PCM_IDLE_PAD equ 1      ; the most an idle iteration may hold to
+                        ; FLOORED AT 1: the pad loop counts DOWN, so a zero here
+                        ; is 256 iterations — ~4,000 cycles an idle tick, which
+                        ; pp_pad_floor stores unguarded. A pad target small
+                        ; enough to leave nothing over (PCM_GROUP = 1, where the
+                        ; gate does all the spacing) hit exactly that.
 PCM_GROUP   equ 1       ; samples per Timer B gate (§5.1.2)
 PCM_TB      equ 255       ; the $26 byte: Timer B overflows every
                         ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out

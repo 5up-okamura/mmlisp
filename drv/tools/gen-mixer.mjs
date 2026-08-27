@@ -613,7 +613,12 @@ PCM_MUTE_SH equ ${MUTE_SHIFT}      ; PV_SHIFT meaning "silent, keep advancing"
 PCM_IDLE_SH equ ${IDLE_SHIFT}      ; PV_SHIFT meaning "no voice here at all"
 ${paced ? `PCM_PASSES  equ ${PACE_PASSES}      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ ${SAMPLE_CYCLES}     ; the sample period one iteration holds to
-PCM_IDLE_PAD equ ${padFor(variant, "add", IDLE_SHIFT, unroll)}      ; the most an idle iteration may hold to
+PCM_IDLE_PAD equ ${Math.max(1, padFor(variant, "add", IDLE_SHIFT, unroll))}      ; the most an idle iteration may hold to
+                        ; FLOORED AT 1: the pad loop counts DOWN, so a zero here
+                        ; is 256 iterations — ~4,000 cycles an idle tick, which
+                        ; pp_pad_floor stores unguarded. A pad target small
+                        ; enough to leave nothing over (PCM_GROUP = 1, where the
+                        ; gate does all the spacing) hit exactly that.
 PCM_GROUP   equ ${PCM_GROUP}       ; samples per Timer B gate (§5.1.2)
 PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
                         ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
