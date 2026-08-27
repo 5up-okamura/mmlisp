@@ -1313,6 +1313,12 @@ mix_voice_frame:
         ld   (G_IDX),a
         ld   a,(G_WRP)
         ld   (G_MIXP),a
+        ; BOTH paths, and before the test: a pass transition runs from
+        ; pp_pass_done through consume_sub's writes, the voice lookup and
+        ; ms_bind before either path reaches an emit, and on the SILENT path
+        ; that whole stretch used to carry none — 1,960 cycles, the largest
+        ; recurring hole left after the frame boundary was closed.
+        call feed_one
         bit  0,(ix+PV_FLAGS)
         jp   z,mvf_idle         ; no voice here: a silent pass, for the cadence
         call feed_one           ; a pass transition is ~7 sample periods of

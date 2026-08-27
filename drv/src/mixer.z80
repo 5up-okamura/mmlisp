@@ -43,7 +43,7 @@ PCM_GROUP   equ 1       ; samples per Timer B gate (§5.1.2)
 ; second: measured at 3.45 sample periods a frame, and it is the 60 Hz sideband
 ; npm run dac:wav reports. This is XGM2's "<=168 cycles between sample outputs
 ; EVERYWHERE" rule in the form Timer B forces on us.
-PCM_EMIT_RESERVE equ 8  ; samples held back for the boundary
+PCM_EMIT_RESERVE equ 3  ; samples held back for the boundary
 PCM_TB      equ 255       ; the $26 byte: Timer B overflows every
                         ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
                         ; of each one. Generated, so the two cannot drift.
