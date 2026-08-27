@@ -112,7 +112,7 @@ export const PACE_PASSES = 2;       // voice passes per frame = the emit cadence
 // sides scale together. k is therefore the window the engine may average over,
 // and it was never chosen: k = 1 is the timer's shortest period and PCM_GROUP
 // = 3 fell out of it. See .claude/memory/plan-68k-split.md 2026-08-09.
-export const TIMER_B_K = 16;                  // 256 - TB
+export const TIMER_B_K = 1;                  // 256 - TB
 export const TIMER_B_TB = 256 - TIMER_B_K;    // the byte the engine writes to $26
 export const GATE_YM = 2304 * TIMER_B_K;      // YM clocks per overflow
 export const PCM_GROUP = PCM_SAMPLES_PER_GATE * TIMER_B_K;
