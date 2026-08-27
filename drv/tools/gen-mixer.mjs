@@ -384,6 +384,56 @@ function masterChain(ms, tail) {
   return o;
 }
 
+// PCM_GROUP = 1 — EVERY sample is gated, which is the only shape Timer B can
+// hold to (its shortest period is 16 FM samples = one sample at 3,329 Hz). With
+// no ungated samples there is no phase to keep, so AF' carries nothing, the
+// dispatch branch the phase doubled as is gone, and the whole emit collapses
+// into ONE out-of-line routine instead of twenty-four inline copies with a
+// master chain apiece.
+//
+// It is a smaller emit as well as a smaller image. Measured against the phase
+// form it replaces: 226 cycles a sample became 182, and a frame emits ~55 of
+// them — 2,400 cycles, which is the same order as the whole frame's overrun.
+export const ONE_GATE = PCM_GROUP === 1;
+
+// Samples the mix loops must leave for the frame's boundary. See the equ's
+// comment below for what it buys; the size is the boundary's own length in
+// sample periods, rounded up.
+export const PCM_EMIT_RESERVE = Number(process.env.PCM_RESERVE ?? 3);
+
+// emit_gate: one gated DAC sample. Poll Timer B, clear its flag, re-latch $2A
+// (the flag clear costs the address register), then the ring byte through the
+// master chain. Touches A, the flags and IY; nothing else. The RING WRAP is not
+// here — the loops' segment bounds keep the cursor short of the top, and
+// feed_one, which has no such bound, does the test itself.
+function emitGate() {
+  return [
+    "; emit_gate: THE emit — one gated sample, shared by every site (§5.1.2).",
+    "; A and the flags are dead at every call site; IY is the ring cursor.",
+    "emit_gate:",
+    "eg_w:",
+    "        ld   a,(YM_ADDR0)      ; not busy AND flag B up = exactly $02",
+    "        and  $82",
+    "        cp   $02",
+    "        jr   nz,eg_w",
+    "        ld   a,$27",
+    "        ld   (YM_ADDR0),a",
+    "eg_r27:",
+    "        ld   a,$2a             ; PATCHED by cs_r27: $27 with RESET B in it,",
+    "        ld   (YM_DATA0),a      ; over a RAM read, which cost 6 a sample",
+    "        ld   a,$2a",
+    "        ld   (YM_ADDR0),a      ; re-latch: the write below is blind",
+    "        ld   a,(iy+0)          ; the ring: what an earlier frame finished",
+    ...masterChain("eg_ms", "eg_ex"),
+    "        jr   eg_ex",
+    "eg_ex:",
+    "        xor  $80               ; the ring is signed, the DAC is not",
+    "        ld   (YM_DATA0),a      ; $2A, fed blind",
+    "        inc  iy",
+    "        ret",
+  ];
+}
+
 function feed(pad) {
   const o = [];
   const push = (s) => o.push("        " + s);
@@ -402,6 +452,13 @@ function feed(pad) {
   // is inlined into all twenty loop copies, so the choice cannot be a register
   // test (nothing is free) and cannot be free (a branch is 12 either way) — it
   // has to be the branch that is already there, with its target patched.
+  if (ONE_GATE) {
+    // No phase, no dispatch, no chain: one call, and the master chain lives in
+    // the single copy the call reaches.
+    o.push("        call emit_gate         ; one gated sample (§5.1.2)");
+    o.push(...padBlock(pad));
+    return o;
+  }
   const n = uid++;
   const ea = `ea${n}`, ep = `ep${n}`, ms = `ms${n}`, ex = `ex${n}`;
   masterInline.push({ ms, ea, ep, ex });
@@ -424,6 +481,14 @@ function feed(pad) {
   push("xor  $80               ; the ring is signed, the DAC is not");
   push("ld   (YM_DATA0),a      ; $2A, fed blind");
   push("inc  iy                ; wraps at a SEGMENT boundary, never here");
+  o.push(...padBlock(pad));
+  return o;
+}
+
+// The pace pad, shared by both emit shapes.
+function padBlock(pad) {
+  const o = [];
+  const push = (s) => o.push("        " + s);
   if (pad === "runtime") {
     // The IDLE copies alone take a RUNTIME pad. They are where all of a frame's
     // slack lives — a silent iteration's own work is ~75 cycles against a
@@ -469,7 +534,7 @@ function feed(pad) {
 // pad the frame did not have. That was the bulk of the frame's overrun, and the
 // other half of the fix was to make the step itself cost 24 instead of 69
 // (gatePrologue).
-export const EMIT_CYCLES = 73;
+export const EMIT_CYCLES = ONE_GATE ? 182 : 73;
 // What the GATING emit costs on top of the other two, once per PCM_GROUP: the
 // taken branch into `gate_wait`, its flag reset, the $2A re-latch, and the
 // reload of the phase. Only the frame's total cares (`pass_cost_tab`); the pad
@@ -477,7 +542,14 @@ export const EMIT_CYCLES = 73;
 //
 //   jr nz not taken 7 · call gate_wait 17 · gate_wait's body incl. its
 //   `ld a,PCM_GROUP` 129 · minus the 12-cycle taken jr it replaces = 141
-export const GATE_CYCLES = 141;
+//
+// At PCM_GROUP = 1 there is no such thing: EVERY emit gates, so the gate is
+// inside EMIT_CYCLES and there is nothing to charge on top of it.
+//
+//   call emit_gate 17 · poll, last pass 34 · $27 + its data 40 · $2A re-latch 20
+//   · ld a,(iy+0) 19 · the chain's skip 12 · xor 7 · ld (YM_DATA0),a 13
+//   · inc iy 10 · ret 10 = 182
+export const GATE_CYCLES = ONE_GATE ? 0 : 141;
 // The pad that brings one unrolled iteration (U ticks + an emit + `dec b`/`jp
 // nz`) up to ONE SAMPLE PERIOD. Below a period there is nothing to hold back,
 // so the copy is generated without pad code at all.
@@ -620,6 +692,19 @@ PCM_IDLE_PAD equ ${Math.max(1, padFor(variant, "add", IDLE_SHIFT, unroll))}     
                         ; enough to leave nothing over (PCM_GROUP = 1, where the
                         ; gate does all the spacing) hit exactly that.
 PCM_GROUP   equ ${PCM_GROUP}       ; samples per Timer B gate (§5.1.2)
+; What the mix loops may NOT emit, so that the frame's BOUNDARY can.
+;
+; A gated emit pins the frame: CHUNK samples at one gate period each span
+; CHUNK x PCM_TICK_CY however cheap the code between them is, and anything the
+; frame does OUTSIDE that span is added to it. The boundary — the pass tails,
+; the ring bookkeeping, the ISR's own prologue and epilogue, and the next
+; frame's slot head before its first chip write — is ~2.5 sample periods of
+; exactly that, and with the loops claiming every sample the frame owes there
+; was no sample left for it to send. So the DAC held, once a frame, 60 times a
+; second: measured at 3.45 sample periods a frame, and it is the 60 Hz sideband
+; npm run dac:wav reports. This is XGM2's "<=168 cycles between sample outputs
+; EVERYWHERE" rule in the form Timer B forces on us.
+PCM_EMIT_RESERVE equ ${PCM_EMIT_RESERVE}  ; samples held back for the boundary
 PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
                         ; 16 x (256 - TB) FM samples, and PCM_GROUP comes out
                         ; of each one. Generated, so the two cannot drift.
@@ -645,7 +730,8 @@ PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
   // feed, and R is not a multiple of the cadence — so the frame ends by flushing
   // them. Normally one sample; a heavily segmented frame, a few more.
   L.push("R_OUT_BEG:");
-  if (paced) masterOutOfLine.push("fo_ms");
+  if (paced) masterOutOfLine.push(ONE_GATE ? "eg_ms" : "fo_ms");
+  if (paced && ONE_GATE) L.push(emitGate().join("\n"));
   if (paced) {
     L.push(`; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
 ; as the inline emit — a sample that comes out here is still a sample.
@@ -672,7 +758,7 @@ feed_one:
         dec  a
         ld   (G_EMITS),a
         push hl                 ; HL is the slot cursor at most call sites
-${gatePrologue().join("\n")}
+${ONE_GATE ? "        call emit_gate         ; the one emit, shared with the loops" : `${gatePrologue().join("\n")}
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
         ld   a,(iy+0)
@@ -681,7 +767,7 @@ ${masterChain("fo_ms", "fo_ex").join("\n")}
 fo_ex:
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
-        inc  iy
+        inc  iy`}
         ; feed_wrap, INLINE. It is 47 cycles of body behind a 27-cycle call, and
         ; the out-of-line emit already costs over twice what the loops' inline
         ; one does — measured, the emit machinery (this, gate_wait and the gate
@@ -772,7 +858,12 @@ o8_loop:
   // entry per loop copy and a missed one is a copy that ignores master — which
   // still makes sound, just at the wrong level, and only while that copy runs.
   if (paced) {
-    const first = masterInline[0];
+    // At PCM_GROUP = 1 there are no inline sites at all: the loops call the one
+    // emit, so its chain is the only one and the dispatch byte does not exist.
+    // The three equs stay defined — engine.z80's mst_apply is not generated and
+    // reads them unconditionally — and MST_N = 0 is what stops it walking a
+    // table that is not there.
+    const first = masterInline[0] ?? { ms: "eg_ms", ea: "eg_ms", ep: "eg_ms", ex: "eg_ex" };
     L.push(`
 ; The two values the dispatch byte takes. Label arithmetic, not literals: the
 ; block's layout is this generator's business and the assembler is what proves
@@ -786,11 +877,16 @@ MST_CHAIN_D equ 8       ; chain address - dispatch byte address
 ; plain copy's own prologue, feed_one's does not. Label arithmetic per shape, so
 ; neither can be re-laid-out without this following.
 MST_SKIP    equ ${first.ex}-${first.ms}
-MST_SKIP1   equ fo_ex-fo_ms
+MST_SKIP1   equ ${ONE_GATE ? "eg_ex-eg_ms" : "fo_ex-fo_ms"}
 MST_N       equ ${masterInline.length}
 MST_N1      equ ${masterOutOfLine.length}
+; EG_R27P: the byte cs_r27 patches with the gated $27. At PCM_GROUP = 1 it is
+; the emit's own immediate — 6 cycles a sample cheaper than the RAM read it
+; replaces; otherwise it IS that RAM byte, so the write is a harmless repeat of
+; the one cs_r27 already makes.
+EG_R27P     equ ${ONE_GATE ? "eg_r27+1" : "G_R27G"}
 mst_tab:
-        dw   ${masterInline.map((m) => m.ms).join(", ")}
+        dw   ${(masterInline.length ? masterInline.map((m) => m.ms) : ["0"]).join(", ")}
 mst_tab1:
         dw   ${masterOutOfLine.join(", ")}`);
   }
@@ -856,9 +952,19 @@ ms_paced:
         ; mix_seg_live does it — this is the path a SILENT pass takes, and it
         ; emits too.
         ld   hl,G_EMITS
-        cp   (hl)
-        jr   c,ms_owed
+        push bc
+        ld   b,a                ; the segment's iterations
         ld   a,(hl)
+        sub  PCM_EMIT_RESERVE   ; …less what the FRAME BOUNDARY is owed
+        jr   nc,ms_av
+        xor  a                  ; the reserve is all that is left
+ms_av:
+        cp   b
+        jr   nc,ms_take        ; spare >= iterations: the loop takes them all
+        ld   b,a                ; …otherwise only what is spare
+ms_take:
+        ld   a,b
+        pop  bc
 ms_owed:
         ld   (G_SEG_N),a        ; iterations
         neg
@@ -1011,9 +1117,19 @@ msl_paced:
         ; copies instead, which carry no emit at all. That is also what pays for
         ; the samples the frame's other emit points (feed_one) took.
         ld   hl,G_EMITS
-        cp   (hl)
-        jr   c,msl_owed
-        ld   a,(hl)             ; fewer owed than iterations: emit only those
+        push bc
+        ld   b,a                ; the segment's iterations
+        ld   a,(hl)
+        sub  PCM_EMIT_RESERVE   ; …less what the FRAME BOUNDARY is owed
+        jr   nc,msl_av
+        xor  a                  ; the reserve is all that is left
+msl_av:
+        cp   b
+        jr   nc,msl_take        ; spare >= iterations: the loop takes them all
+        ld   b,a                ; …otherwise only what is spare
+msl_take:
+        ld   a,b
+        pop  bc
 msl_owed:
         ld   (G_SEG_N),a        ; iterations, and samples, this segment carries
         neg

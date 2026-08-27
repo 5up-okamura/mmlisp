@@ -579,6 +579,14 @@ cs_cmd:
         call pcm_command        ; advances HL past the command
         pop  bc
         djnz cs_cmd
+        ; The first of the BOUNDARY's samples, here and not before the commands:
+        ; the stretch from the previous frame's last sample to this frame's first
+        ; chip write is ~2.5 sample periods and used to carry none at all
+        ; (§5.1.2, the PCM_EMIT_RESERVE comment in mixer.z80) — but a PCM_MASTER
+        ; in this slot rewrites the emit, and a sample sent BEFORE the command
+        ; would go out at the previous frame's level. The reference feeds the
+        ; frame after its commands, and so does this.
+        call feed_one
 
         ; The segment plan: PCM_VOICES count-prefixed runs (§6.3.1). Recording
         ; where each voice's run STARTS is all that is needed here; the pass
@@ -601,6 +609,7 @@ cs_plan:
         ld   l,a
         djnz cs_plan
 
+        call feed_one           ; …and the second, before the writes begin
 
 cs_subs:
         call cs_runs            ; sub-slot 0, at the frame head as always
@@ -736,6 +745,8 @@ cs_r27:
         push af
         or   $20
         ld   (G_R27G),a         ; …and the gate's copy, kept in step here
+        ld   (EG_R27P),a        ; …in the emit's own immediate, where the gate
+                                ; reads it (generated: see EG_R27P)
         pop  af
 cs_r27d:
         ld   a,(YM_ADDR0)
@@ -1134,6 +1145,9 @@ pp_idle_next:
         ; G_EMITS is the debt itself now — every emit site charges it, and the
         ; mix loops charge theirs a segment at a time — so there is nothing to
         ; reconstruct here. Normally one sample, at the frame's end.
+        ; The TAIL's own sample, before the ring bookkeeping below and the ISR's
+        ; epilogue after it. What is left of PCM_EMIT_RESERVE then flushes.
+        call feed_one
         ld   a,(G_EMITS)
         ld   b,a
         call flush_rest
@@ -1925,6 +1939,10 @@ mst_apply:
         ld   (G_MASTER_SH),a
         ld   hl,mst_tab
         ld   b,MST_N
+        ld   a,b
+        or   a
+        jr   z,mst_noin         ; PCM_GROUP = 1: the loops CALL the one emit, so
+                                ; there are no inline chains and no dispatch byte
 mst_in:
         push bc
         call mst_next           ; DE = chain, HL past the entry
@@ -1947,6 +1965,7 @@ mst_st:
         pop  hl
         pop  bc
         djnz mst_in
+mst_noin:
         ; …and the out-of-line emits (feed_one), which have no dispatch: their
         ; chain's own skip runs on every call, and they are called a handful of
         ; times a frame.
