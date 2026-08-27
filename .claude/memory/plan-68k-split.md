@@ -3659,3 +3659,103 @@ collide.
 **Step 0 is blocked on one hardware reading**: that probe's `music x256` and
 `lost/s`. ~98/1 says the window read is free and every rate x voice table in
 this file is pessimistic; ~93/5 says PACE_WINDOW = 14 is right and they stand.
+
+## 2026-08-27 — THE DAC HOLE, FOUND AND MEASURED. Branch `drv/dac-rate-probe`.
+
+Every earlier attempt tuned a constant (PAD_TARGET, PACE_WINDOW, the rate, the
+voice count) and none of them moved the artifact. They could not: the defect was
+never a constant.
+
+### The arithmetic that ends the guessing
+
+A gated emit PINS the frame. `chunk` samples at one gate period each span
+`chunk × PCM_TICK_CY` cycles however cheap the code between them is, and every
+cycle the frame spends OUTSIDE that span is added to it — with the DAC holding
+throughout, because there is no sample to send. So
+
+    the DAC's hole per frame  =  frame code cycles  −  samples × sample period
+
+and that hole falls in one contiguous stretch at the frame boundary, 60 times a
+second. THAT is the 60 Hz sideband. Nothing else was ever wrong: `a2-flat` (the
+same bytes on a flat clock) has always been −46 dB.
+
+The corollary is why the emit's own cost is NOT the lever: making the emit 44
+cycles cheaper moved the frame by 84 cycles, because the saved cycles went into
+the gate's spin, not into the frame. Only work REMOVED from the boundary, or
+covered by an emit, shortens it.
+
+### Why the boundary carried no emit
+
+`G_EMITS` is the frame's quota, and `mix_seg_live` claimed every sample of it.
+By the time the last pass ended the quota was zero, so `feed_one` — which is
+already called at the pass transitions and every fourth chip write — returned
+without emitting for the whole of the frame's tail, the ISR's epilogue and
+prologue, and the next frame's slot head. Measured: 2 holes a frame, 3.45 sample
+periods lost, both at 98–102 % of the frame.
+
+### The fix (three parts, all measured)
+
+1. **`PCM_EMIT_RESERVE = 3`** — `ms_paced`/`msl_paced` claim
+   `min(iterations, G_EMITS − RESERVE)`, so the boundary has samples to send.
+2. **Emit points through the boundary**: after the slot's PCM commands, after
+   the segment plan, and in the frame's tail before `flush_rest`.
+3. **An emit at the top of `mix_voice_frame`, BEFORE the sounding test** — the
+   silent path (`mvf_idle`) ran pp_pass_done → consume_sub → voice_ptr →
+   pp_sounding_at → ms_bind with no emit at all: 1,960 cycles, the largest
+   recurring hole once the boundary was closed.
+
+`out/diag/b-pcm1.mmlisp`, PCM_SPG=1, 150 frames:
+
+    holes ≥1.5 periods   1.99/frame → 0.11/frame
+    sample periods lost  3.45/frame → 0.40/frame  (and 0.40 is mostly frame 1)
+    frame                61,782 cyc (103%) → 59,849 (100%)
+    lost frames          16/s → ~5/s
+    60/120/180 Hz        −12.5 / −10.4 / −17.8 dB → −19.3 / −28.9 / −23.3 dB
+
+Ordering note that cost a gate failure: the head's emit must go AFTER the slot's
+PCM commands. `PCM_MASTER` rewrites the emit, and a sample sent before the
+command goes out at the previous frame's level — `m3-pcm-volmix` frame 15,
+engine 132 vs reference 128.
+
+### Also on the branch
+
+* **`PCM_IDLE_PAD` could be generated as 0**, and the pad loop counts DOWN — 256
+  iterations, ~4,000 cycles an idle tick, stored unguarded by `pp_pad_floor`.
+  That is what made PAD_FRACTION=0.05 read 209 %. Floored at 1.
+* **`emit_gate`** — at `PCM_GROUP = 1` every sample gates, so there is no phase
+  to keep: AF' carries nothing, the dispatch branch the phase doubled as is
+  gone, and the emit collapses from 24 inline copies with a master chain apiece
+  into ONE out-of-line routine. 226 → 182 cycles a sample and ~1,100 bytes back.
+  `MST_N = 0`; `mst_apply` needed a guard for it. `EG_R27P` lets `cs_r27` patch
+  the $27 byte into the emit's own immediate (−6 a sample).
+
+### THE STANDING CONSTRAINT — Timer B cannot gate faster than 3,329 Hz
+
+Its shortest period is 16 FM samples. Per-sample gating therefore needs
+`PCM_GROUP = 1`, which is `PCM_SAMPLES_PER_GATE = 1` — 3,329 Hz. Timer A's
+shortest is one FM sample (53 kHz), which is why XGM2 uses it and we cannot.
+
+Same tree, same score, the two rates:
+
+    S=1  3,329 Hz  every sample gated   100% of a vblank  −19.3 / −28.9 / −23.3 dB
+    S=3  9,987 Hz  1 sample in 3 gated  112%              −6.5 / −20.7 / −17.9 dB
+                                        27.8% of samples held past 150%
+
+Above 3,329 Hz the intermediate samples are paced by CODE PLACEMENT, and no pad
+constant makes lumpy out-of-loop work uniform. **The rate and the artifact are
+the same decision.**
+
+### Where the remaining 13 dB is
+
+`d-flat` — these values on a perfect clock — is −32.2 dB, so that is the ceiling
+for this test, not −46. We are 13 dB under it, and `seg-bench` names the cause:
+937 cyc/frame "after the last sample" that no emit point can reach — the ISR's
+epilogue, `reti`, the next interrupt's prologue, and `frame_step`'s head before
+the quota is settled. It shows up as the emit interval by tenth of the frame:
+
+    1001  1074  1075  1075  1075  1075  1083  1067  1075  1165   (nominal 1075)
+
+— exact through the middle, 8 % long in the last tenth, catching up in the
+first. A clean sawtooth at 60 Hz, and it is the whole of what is left.
+
+**NOT VERIFIED ON HARDWARE.** Nothing here has been to a Mega Drive.
