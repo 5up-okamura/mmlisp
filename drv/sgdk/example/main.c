@@ -6,6 +6,7 @@
 //   src/mmlispseq.c     the sequencer       ) drv/tools/install-sgdk.mjs
 //   src/tables.c        its constant tables/
 //   inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlispdrv_bin.h (generated)
+//   inc/mml_rate.h      the sample clock — mmlispseq.h includes it
 //   res/song.res        the BIN resource for the MMB (no alignment needed)
 //
 // Controls: A / START = play, B = stop, C = show state.

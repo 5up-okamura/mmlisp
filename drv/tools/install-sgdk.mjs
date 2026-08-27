@@ -38,6 +38,10 @@ const FILES = [
   { src: "mmlispdrv_bin.h", dest: "inc/mmlispdrv_bin.h", own: "driver" },
   { src: "../68k/mmlispseq.c", dest: "src/mmlispseq.c", own: "driver" },
   { src: "../68k/mmlispseq.h", dest: "inc/mmlispseq.h", own: "driver" },
+  // mmlispseq.h includes this one, so it has to land beside it in inc/.
+  // Leaving it out is not a link error, it is `#include "mml_rate.h"` failing
+  // at mmlispseq.h:89 in a project that was building a moment earlier.
+  { src: "../68k/mml_rate.h", dest: "inc/mml_rate.h", own: "driver" },
   { src: "../68k/tables.c", dest: "src/mmlispseq_tables.c", own: "driver" },
   { src: "example/song.res", dest: "res/song.res", own: "seed" },
 ];

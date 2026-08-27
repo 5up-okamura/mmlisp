@@ -88,7 +88,7 @@ src/main.c                yours
 src/mmlispdrv.c           host glue
 src/mmlispseq.c           the sequencer
 src/mmlispseq_tables.c    its constant tables
-inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlispdrv_bin.h
+inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlispdrv_bin.h  inc/mml_rate.h
 res/song.res  res/song.mmb  [res/song.smp]
 ```
 
