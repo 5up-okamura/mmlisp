@@ -363,8 +363,16 @@ export function pcmIncrement(baseRate, note) {
 //
 // That non-integer is the whole reason the engine holds a sample RING rather
 // than a frame-long buffer, and why every "R samples a frame" constant is gone.
-export const PCM_SAMPLES_NUM = 37335; // samples per PCM_SAMPLES_DEN frames…
-export const PCM_SAMPLES_DEN = 224; // …i.e. 896040/5376 in lowest terms
+// THE RATE KNOB: DAC samples per 2304 YM clocks.
+//     rate = PCM_SAMPLES_PER_GATE x (master/7) / 2304
+//     3 -> 9987.6 Hz     2 -> 6658.4 Hz     4 -> 13316.8 Hz
+// Mirrored by MML_PCM_SAMPLES_NUM/DEN and MML_PCM_BAKE_STAMP in
+// drv/68k/mmlispseq.h, and by PCM_GROUP in drv/tools/gen-mixer.mjs.
+export const PCM_SAMPLES_PER_GATE = Number(process.env.PCM_SPG ?? 3);
+const _gcd = (a, b) => (b ? _gcd(b, a % b) : a);
+const _n = 896040 * PCM_SAMPLES_PER_GATE, _d = 2304 * 7;
+export const PCM_SAMPLES_NUM = _n / _gcd(_n, _d);
+export const PCM_SAMPLES_DEN = _d / _gcd(_n, _d);
 export const PCM_SAMPLES_PER_FRAME = PCM_SAMPLES_NUM / PCM_SAMPLES_DEN; // 166.67
 
 // Index of the first sample of `frame`, counting from the driver's frame 0.

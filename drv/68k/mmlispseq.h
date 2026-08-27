@@ -79,15 +79,16 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 #define MML_PCM_TOTAL_MAX_SHIFT 7
 /* The sample clock a baked sample bank is resampled for, stamped in the bank
  * and checked by mml_load_samples. Mirrors PCM_BAKE_STAMP in live/src/mmb.js. */
-#define MML_PCM_BAKE_STAMP 10000
+#define MML_PCM_BAKE_STAMP MML_SPG_STAMP
 /* The Timer-B sample clock (driver.md §5.1.2), mirroring live/src/mmb.js. The
  * DAC's rate is the YM's, not the frame's: 37335/224 = 166.674 samples a frame,
  * so a frame owes it 166 or 167 and never a constant. The mixer produces into a
  * ring instead of a frame-long buffer, and the sequencer models the ring's fill
  * because the segment plan's tick distances are only valid for the chunk length
  * it planned them against. */
-#define MML_PCM_SAMPLES_NUM 37335
-#define MML_PCM_SAMPLES_DEN 224
+#include "mml_rate.h"
+#define MML_PCM_SAMPLES_NUM MML_SPG_NUM
+#define MML_PCM_SAMPLES_DEN MML_SPG_DEN
 /* Finished samples the ring runs ahead of the feed. A burst's first frame
  * builds all of them and feeds nothing; every frame after it mixes exactly what
  * the feed took. (The engine's buffer is twice this — §5.1.2.) */

@@ -914,7 +914,7 @@ ex85:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,4                ; pace: hold the tick to the sample period
+        ld   a,5                ; pace: hold the tick to the sample period
 pd86:
         dec  a
         jr   nz,pd86
@@ -1380,7 +1380,7 @@ ex119:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,3                ; pace: hold the tick to the sample period
+        ld   a,4                ; pace: hold the tick to the sample period
 pd120:
         dec  a
         jr   nz,pd120
@@ -1439,7 +1439,7 @@ ex127:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,2                ; pace: hold the tick to the sample period
+        ld   a,3                ; pace: hold the tick to the sample period
 pd128:
         dec  a
         jr   nz,pd128
@@ -1500,7 +1500,7 @@ ex135:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
-        ld   a,1                ; pace: hold the tick to the sample period
+        ld   a,2                ; pace: hold the tick to the sample period
 pd136:
         dec  a
         jr   nz,pd136
@@ -1563,13 +1563,17 @@ ex143:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
+        ld   a,1                ; pace: hold the tick to the sample period
+pd144:
+        dec  a
+        jr   nz,pd144
         ld   a,(de)             ; sample
         sra  a
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov144
-dn145:
+        jp   pe,ov145
+dn146:
         ld   (hl),a
         inc  l
         inc  de                ; pre-resampled: one sample per tick
@@ -1578,49 +1582,49 @@ dn145:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov146
-dn147:
+        jp   pe,ov147
+dn148:
         ld   (hl),a
         inc  l
         inc  de                ; pre-resampled: one sample per tick
         dec  b
         jp   nz,mix_addnr_s3_lp
         ret
-ov144:
-        jp   m,ov144_hi        ; overflow inverts the sign, so a negative
+ov145:
+        jp   m,ov145_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn145
-ov144_hi:
+        jp   dn146
+ov145_hi:
         ld   a,$7f
-        jp   dn145
-ov146:
-        jp   m,ov146_hi        ; overflow inverts the sign, so a negative
+        jp   dn146
+ov147:
+        jp   m,ov147_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn147
-ov146_hi:
+        jp   dn148
+ov147_hi:
         ld   a,$7f
-        jp   dn147
+        jp   dn148
 mix_addnr_s4:
 mix_addnr_s4_lp:
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,ep150          ; PATCHED: ep150 at unity, ea150 under a shift
+        jr   nz,ep151          ; PATCHED: ep151 at unity, ea151 under a shift
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-ea150:
+ea151:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
-ms150:
-        jr   ex150             ; master chain, slot 0 — PATCHED
+ms151:
+        jr   ex151             ; master chain, slot 0 — PATCHED
         sra  a                 ; …slot — PATCHED
         sra  a                 ; …slot — PATCHED
         sra  a                 ; …slot — PATCHED
         sra  a                 ; …slot — PATCHED
         sra  a                 ; …slot — PATCHED
-        jr   ex150               ; …and into the tail the plain copy shares
-ep150:
+        jr   ex151               ; …and into the tail the plain copy shares
+ep151:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
-ex150:
+ex151:
         xor  $80               ; the ring is signed, the DAC is not
         ld   (YM_DATA0),a      ; $2A, fed blind
         inc  iy                ; wraps at a SEGMENT boundary, never here
@@ -1630,8 +1634,8 @@ ex150:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov151
-dn152:
+        jp   pe,ov152
+dn153:
         ld   (hl),a
         inc  l
         inc  de                ; pre-resampled: one sample per tick
@@ -1641,28 +1645,28 @@ dn152:
         sra  a
         sra  a
         add  a,(hl)
-        jp   pe,ov153
-dn154:
+        jp   pe,ov154
+dn155:
         ld   (hl),a
         inc  l
         inc  de                ; pre-resampled: one sample per tick
         dec  b
         jp   nz,mix_addnr_s4_lp
         ret
-ov151:
-        jp   m,ov151_hi        ; overflow inverts the sign, so a negative
+ov152:
+        jp   m,ov152_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn152
-ov151_hi:
+        jp   dn153
+ov152_hi:
         ld   a,$7f
-        jp   dn152
-ov153:
-        jp   m,ov153_hi        ; overflow inverts the sign, so a negative
+        jp   dn153
+ov154:
+        jp   m,ov154_hi        ; overflow inverts the sign, so a negative
         ld   a,$80             ; result means the true value was positive
-        jp   dn154
-ov153_hi:
+        jp   dn155
+ov154_hi:
         ld   a,$7f
-        jp   dn154
+        jp   dn155
 mix_addnr_tab:
         dw   mix_addnr_s0, mix_addnr_s1, mix_addnr_s2, mix_addnr_s3, mix_addnr_s4, mix_add_s8, mix_add_s8, mix_add_s8, mix_add_s8, mix_add_s9
 R_NR_END:
@@ -1694,9 +1698,9 @@ feed_one:
         push hl                 ; HL is the slot cursor at most call sites
         ex   af,af'            ; A' is the gate phase (1..GROUP); see gatePrologue
         dec  a
-        jr   nz,gt155            ; not this sample's turn to wait
+        jr   nz,gt156            ; not this sample's turn to wait
         call gate_wait         ; hold for Timer B; returns A = PCM_GROUP
-gt155:
+gt156:
         ex   af,af'            ; …and the mixer's A and flags come back
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
@@ -1750,7 +1754,7 @@ MST_SKIP1   equ fo_ex-fo_ms
 MST_N       equ 24
 MST_N1      equ 1
 mst_tab:
-        dw   ms1, ms6, ms10, ms14, ms18, ms22, ms26, ms37, ms47, ms57, ms67, ms77, ms85, ms89, ms107, ms109, ms111, ms113, ms115, ms119, ms127, ms135, ms143, ms150
+        dw   ms1, ms6, ms10, ms14, ms18, ms22, ms26, ms37, ms47, ms57, ms67, ms77, ms85, ms89, ms107, ms109, ms111, ms113, ms115, ms119, ms127, ms135, ms143, ms151
 mst_tab1:
         dw   fo_ms
 
