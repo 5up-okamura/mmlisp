@@ -694,6 +694,18 @@ PCM_MUTE_SH equ ${MUTE_SHIFT}      ; PV_SHIFT meaning "silent, keep advancing"
 PCM_IDLE_SH equ ${IDLE_SHIFT}      ; PV_SHIFT meaning "no voice here at all"
 ${paced ? `PCM_PASSES  equ ${PACE_PASSES}      ; passes per frame — the feed's cadence
 PCM_TICK_CY equ ${SAMPLE_CYCLES}     ; the sample period one iteration holds to
+; Whether sizing the idle pad at runtime can produce anything but its floor.
+; pcm_pad's result is clamped to [1, PCM_IDLE_PAD], so when the pad target
+; leaves room for exactly one 16-cycle unit the whole estimator — the pass cost
+; table, the 16-bit shift, the clamp — is ~870 cycles a frame spent deriving the
+; number 1. That is not a rounding error: at PCM_GROUP = 1 it sits inside the
+; frame head's hole, which is the DAC's largest recurring one.
+; How often the slot's chip-write loops stop to feed the DAC: every
+; (mask + 1) writes. A run of writes is otherwise a stretch with no sample in
+; it, and at PCM_GROUP = 1 a sample period is ~8 writes, so 4 was already
+; marginal and a short sub-slot could pass through without pumping at all.
+PCM_PUMP_MASK equ ${ONE_GATE ? 1 : 3}
+PCM_PAD_LIVE equ ${Math.max(1, padFor(variant, "add", IDLE_SHIFT, unroll)) > 1 ? 1 : 0}
 PCM_IDLE_PAD equ ${Math.max(1, padFor(variant, "add", IDLE_SHIFT, unroll))}      ; the most an idle iteration may hold to
                         ; FLOORED AT 1: the pad loop counts DOWN, so a zero here
                         ; is 256 iterations — ~4,000 cycles an idle tick, which

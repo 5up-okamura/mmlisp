@@ -320,6 +320,11 @@ ih_sync:
         ld   a,(H_VBL)
         ld   (hl),a
 ih_done:
+        ; The epilogue's own sample. Everything from the mixer's last emit to the
+        ; next frame's first chip write is dead time for the DAC otherwise, and
+        ; at PCM_GROUP = 1 that stretch is larger than the frame's whole slack.
+        ; pcm_edge re-parks the cursor, so the emit is as valid here as anywhere.
+        call pcm_edge
         pop  iy
         pop  ix
         pop  hl
@@ -450,6 +455,11 @@ frame_step:
         ; two touched IY. An emit at the head is either valid or it is not, and
         ; that should not depend on a register surviving an interrupt.
         ld   iy,(G_RD)
+        ; The prologue's sample, out of what the LAST frame did not spend — so it
+        ; carries the previous frame's master, which is what the reference does
+        ; with it too. Before consume_slot, because consume_slot's own head is
+        ; part of the stretch this exists to cover.
+        call pcm_edge
         call consume_slot       ; 1-2: sub-slot 0's writes, and the PCM commands
         call process_pcm        ; 3:   mix and feed the DAC, sub-slots 1..K-1
         call consume_rest       ;      anything the passes could not reach
@@ -756,7 +766,7 @@ cs_r27d:
         ld   (YM_DATA0),a
         inc  hl
         ld   a,b
-        and  3
+        and  PCM_PUMP_MASK
         call z,feed_one
         djnz cr_p0
 
@@ -789,7 +799,7 @@ cr_p1d:
         ; which presented as a bad ROM bank. IY is loaded in frame_step now, so
         ; an emit at the head is valid by construction rather than by luck.
         ld   a,b
-        and  3
+        and  PCM_PUMP_MASK
         call z,feed_one
         djnz cr_p1
         ret
@@ -1145,12 +1155,23 @@ pp_idle_next:
         ; G_EMITS is the debt itself now — every emit site charges it, and the
         ; mix loops charge theirs a segment at a time — so there is nothing to
         ; reconstruct here. Normally one sample, at the frame's end.
-        ; The TAIL's own sample, before the ring bookkeeping below and the ISR's
-        ; epilogue after it. What is left of PCM_EMIT_RESERVE then flushes.
+        ; The TAIL's own sample, before the ring bookkeeping below.
         call feed_one
+        ; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the
+        ; frame here. What follows this — pp_wrst, consume_rest, slot_release,
+        ; the ISR's own epilogue, the halt, the next interrupt's prologue and
+        ; frame_step's head — is ~760 cycles with no sample in it, and at
+        ; PCM_GROUP = 1 the frame has only ~280 to spare over the timer's floor.
+        ; Those cycles are why the frame reads 101% of a vblank; the samples
+        ; that cover them are these.
         ld   a,(G_EMITS)
+        sub  PCM_EMIT_RESERVE
+        jr   nc,pp_flush
+        xor  a
+pp_flush:
         ld   b,a
         call flush_rest
+pcm_park:
         ld   (G_RD),iy          ; park the feed cursor for the next frame
         ; …and put the write cursor back where it belongs: RIGHT AFTER the
         ; finished samples, which is what "the mixer writes at read + fill"
@@ -1794,7 +1815,46 @@ CODE_END:
 ;
 ; The divide is a shift by 10, 11 or 12 for one, two or three silent passes:
 ; 896 -> 1024, 1792 -> 2048, 2688 -> 4096. Each rounds the pad down.
+; pcm_edge: one sample at a frame EDGE — the ISR's epilogue and its prologue —
+; out of whatever PCM_EMIT_RESERVE the frame left, and then re-park. It is a
+; separate entry point rather than a bare `call feed_one` because the ring's
+; write cursor is DERIVED from the read cursor: an emit that moved IY without
+; re-deriving G_WR would put the mixer one sample past the finished data.
+;
+; Silent when the DAC is not claimed, and silent when the frame owes nothing —
+; both are a `ret` away, which is what makes it safe to call unconditionally
+; from the interrupt handler.
+pcm_edge:
+        ld   a,(G_DACON)
+        or   a
+        ret  z
+        ld   a,(G_EMITS)
+        or   a
+        ret  z
+        push hl
+        push de
+        push bc
+        call feed_one
+        call pcm_park
+        pop  bc
+        pop  de
+        pop  hl
+        ret
+
 pcm_pad:
+        ; Nothing to size (PCM_PAD_LIVE = 0): the target leaves the pad one
+        ; 16-cycle unit, the clamp below returns it whatever the frame is doing,
+        ; and the estimator — the pass cost table, the 16-bit shift, the clamp —
+        ; is ~870 cycles of the FRAME HEAD, which at PCM_GROUP = 1 is where the
+        ; DAC's largest recurring hole is. Measured, not reasoned: `pp_pad_sh`
+        ; and `pp_cost*` were 874 cycles of a 3,021-cycle hole.
+        ld   a,PCM_PAD_LIVE
+        or   a
+        jr   nz,pp_pad_live
+        ld   a,PCM_IDLE_PAD
+        ld   (G_PAD),a
+        ret
+pp_pad_live:
         ; ANY voice sounding and the answer is the floor, so do not spend ~1,500
         ; cycles proving it. One sounding pass plus two silent ones already
         ; exceeds PCM_BUDGET at every shift — the cheapest sounding pass is
