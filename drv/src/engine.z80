@@ -177,6 +177,7 @@ G_PLANL     equ $19a9           ; u8  entries left in the running pass's run
 G_PLANC     equ $19aa           ; u16 cursor into it
 G_PLANR     equ $19ac           ; u8  ticks to the next break; 0 = derive it
 G_NEARH     equ $19ad           ; u8  ptr high byte at which a window top is near
+G_NOMIX     equ $19ae           ; u8  this frame is a CATCH-UP: consume, do not mix
 
 ; Bought back from the pass-boundary path — the stretch of the frame where no
 ; sample is fed and the DAC is holding (§5.1.2).
@@ -324,7 +325,23 @@ ih_catch:
         inc  (hl)               ; one missed vblank, answered late
         push bc
         push hl
+        ; A CAUGHT-UP FRAME DOES NOT MIX.
+        ;
+        ; Its audio is a frame late and there is nowhere to put it: the DAC is
+        ; already playing the current frame's samples at Timer B's rate and the
+        ; ring cannot run ahead. Mixing it anyway is what made the loss STEADY
+        ; rather than transient — the catch-up ISR runs two frames' work inside
+        ; one vblank, overruns it, loses the next interrupt, and catches up
+        ; again. The machine reported exactly that shape: music 79%, 12 lost a
+        ; second, starv 0 — the Z80 behind, the ring healthy, and staying there.
+        ;
+        ; So the slot is consumed and the music advances, which is the whole
+        ; point of catching up; only the sound of that one frame is dropped.
+        ld   a,1
+        ld   (G_NOMIX),a
         call frame_step
+        xor  a
+        ld   (G_NOMIX),a
         pop  hl
         pop  bc
         djnz ih_catch
@@ -1071,6 +1088,10 @@ pp_feed:
         ;   prime   +TARGET and feed nothing
         ;   steady  mix what is fed, so the fill does not move at all
         ;   tail    nothing to mix, feed `chunk` out of what is left
+        ; A caught-up frame (ih_catch) never mixes: see there.
+        ld   a,(G_NOMIX)
+        or   a
+        ret  nz
         ; A frame whose audio has NOWHERE TO GO does not mix it.
         ;
         ; The catch-up (§6.7) runs up to three frames in one interrupt, and each

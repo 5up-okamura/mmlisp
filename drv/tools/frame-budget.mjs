@@ -256,8 +256,19 @@ try {
       // engine first reaches its idle loop. What follows is the DAC feed,
       // which is meant to fill the rest of the frame; counting it would report
       // 100% for every score and say nothing.
+      // TWO PHASES, and the split is the whole point of this tool now.
+      //
+      // Phase 1 runs the INTERRUPT to completion — until the engine reaches its
+      // idle loop — with no cycle cap at all. An ISR that needs more than a
+      // frame is exactly the failure this reports, and capping the loop at
+      // FRAME_CYCLES (which is what "run a frame of wall clock" did) makes that
+      // failure invisible: the frame is truncated, the vblank it blew through
+      // is never counted, and every score reads 0 lost. It read 0 against a
+      // machine losing 12 frames a second.
+      //
+      // Phase 2 is the idle feed, which fills whatever is left of the frame.
       let fcyc = 0, isr = 0, inIsr = true, left = false;
-      while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
+      while (g++ < 3_000_000 && (inIsr || fcyc < FRAME_CYCLES)) {
         const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
         if (!left) { if (!idling) left = true; }
         else if (inIsr && idling) { isr = fcyc; inIsr = false; }
@@ -282,6 +293,13 @@ try {
       costs.push((inIsr ? tcyc - start : isr) + STALL);   // the bus the 68000 holds; see STALL
     }
     if (!costs.length) { console.log(`skip  ${name} — no frames`); continue; }
+    // The share of INTERRUPTS that ran past their own vblank. That vblank is
+    // gone (the VDP's /INT is a pulse), and the catch-up then has to run TWO
+    // frames inside the next one — which overruns again on anything but a light
+    // score, and settles into a steady loss. It is the number the machine
+    // reports as `lost/s`, and this tool could not see it at all while the
+    // frame loop stopped at FRAME_CYCLES.
+    const isrOver = costs.filter((c) => c > FRAME_CYCLES).length;
     const pct = (q) => [...costs].sort((a, b) => a - b)[Math.floor((costs.length - 1) * q)];
     const over = costs.filter((c) => c > FRAME_CYCLES).length;
     const totalCyc = costs.reduce((t, c) => t + c, 0);
@@ -312,6 +330,9 @@ try {
       Math.round(music * 256).toString(16).padStart(4, "0")} (${(100 * music).toFixed(0)}%)`
       + ` · ${consumed} frames consumed in ${vbl} vblanks`
       + ` · lost ${(60 * (vbl - consumed) / Math.max(1, vbl)).toFixed(0)}/s`);
+    console.log(`      ISR past its own vblank: ${isrOver}/${costs.length} `
+      + `(${(100 * isrOver / costs.length).toFixed(1)}%) — each one is a lost interrupt, `
+      + `and the catch-up runs two frames inside the next`);
     console.log(`      one frame of MUSIC costs ${(totalCyc / Math.max(1, consumed)).toFixed(0)}`
       + ` cyc (${(100 * totalCyc / Math.max(1, consumed) / FRAME_CYCLES).toFixed(0)}%`
       + ` of a vblank) — over 100% and the music runs slow by exactly that much`);
