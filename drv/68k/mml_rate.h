@@ -2,8 +2,8 @@
 #ifndef MML_RATE_H
 #define MML_RATE_H
 
-#define MML_SPG_NUM 37335
+#define MML_SPG_NUM 12445
 #define MML_SPG_DEN 224
-#define MML_SPG_STAMP 10000
+#define MML_SPG_STAMP 3333
 
 #endif

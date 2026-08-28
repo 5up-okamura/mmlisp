@@ -417,14 +417,43 @@ export const PCM_EMIT_RESERVE = Number(process.env.PCM_RESERVE ?? 3);
 // feed_one, which has no such bound, does the test itself.
 function emitGate() {
   return [
-    "; emit_gate: THE emit — one gated sample, shared by every site (§5.1.2).",
-    "; A and the flags are dead at every call site; IY is the ring cursor.",
-    "emit_gate:",
-    "eg_w:",
-    "        ld   a,(YM_ADDR0)      ; not busy AND flag B up = exactly $02",
-    "        and  $82",
-    "        cp   $02",
-    "        jr   nz,eg_w",
+    "; emit_try: one sample IF Timer B says one is due, and NOTHING otherwise.",
+    ";",
+    "; This is the whole pacing model, and it is the opposite of the one it",
+    "; replaces. Waiting for the gate put the timer INSIDE the interrupt: 55",
+    "; samples x one period each is 97% of a vblank of pure spin, measured at",
+    "; 35,688 of the ISR's 59,290 cycles against 23,602 of actual work. An ISR",
+    "; that long loses the next vblank outright whenever a frame runs heavy, and",
+    "; a lost vblank is a lost frame of music — the tempo wobble, not a hiccup.",
+    ";",
+    "; So nothing blocks. The mixer runs at its own speed and every stretch of",
+    "; code ASKS, at most a sample period apart; whoever is running when the",
+    "; timer comes due is the one that sends it. That is XGM2's structure and",
+    "; its <=168-cycles-between-outputs rule is what makes it work.",
+    ";",
+    "; 38 cycles to answer no (55 with the call), and it is answered ~55 times a",
+    "; frame from the loops plus the idle feed. A and the flags are dead at every",
+    "; call site; IY is the ring cursor.",
+    "emit_try:",
+    "        ld   a,(YM_ADDR0)",
+    "        and  $02               ; flag B ALONE — see below",
+    "        ret  z                 ; not due — the caller carries straight on",
+    "        ; DUE. Only now does BUSY matter, and it is worth WAITING for: the",
+    "        ; combined `(a & $82) == $02` test this replaces read \"busy\" as",
+    "        ; \"not due\" and returned — and the call sites that keep the YM",
+    "        ; busiest are the slot's own write loops, which are the longest",
+    "        ; stretches a frame has. Measured: a recurring 2,700-cycle hole in",
+    "        ; cr_p0 where the timer had been due the whole time and every ask",
+    "        ; was answered no. BUSY is tens of cycles; the sample is 1,075.",
+    "et_busy:",
+    "        ld   a,(YM_ADDR0)",
+    "        rla",
+    "        jr   c,et_busy",
+    "        ld   a,(G_EMITS)       ; due, but the frame may owe nothing",
+    "        or   a",
+    "        ret  z",
+    "        dec  a",
+    "        ld   (G_EMITS),a",
     "        ld   a,$27",
     "        ld   (YM_ADDR0),a",
     "eg_r27:",
@@ -464,7 +493,7 @@ function feed(pad) {
   if (ONE_GATE) {
     // No phase, no dispatch, no chain: one call, and the master chain lives in
     // the single copy the call reaches.
-    o.push("        call emit_gate         ; one gated sample (§5.1.2)");
+    o.push("        call emit_try          ; a sample IF one is due (§5.1.2)");
     o.push(...padBlock(pad));
     return o;
   }
@@ -756,7 +785,15 @@ PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
   if (paced) {
     L.push(`; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
 ; as the inline emit — a sample that comes out here is still a sample.
-flush_rest:
+${ONE_GATE ? `flush_rest:
+        ; NOTHING BLOCKS at PCM_GROUP = 1 (see emit_try), so there is nothing to
+        ; flush: a sample the frame still owes goes out the moment the timer
+        ; comes due, from whatever code is running — the mixer, the slot's write
+        ; loops, or the idle feed after the interrupt has returned. Draining the
+        ; debt here would be the one place that waits, which is the thing this
+        ; design removed.
+        ret
+` : `flush_rest:
         ld   a,b
         or   a
         ret  z
@@ -766,20 +803,20 @@ fr_loop:
         pop  bc
         djnz fr_loop
         ret
-
+`}
 ; feed_one: one sample out of the ring, gate and all — the out-of-line twin of
 ; the emit the loops carry inline (§5.1.2). Every stretch of work longer than a
 ; sample period calls this, which is what stops the frame's chip writes and its
 ; pass transitions from being dead time the DAC spends holding. Touches A, HL
 ; and the flags; IY is the feed cursor and G_EMITS the frame's remaining debt.
 feed_one:
-        ld   a,(G_EMITS)
+${ONE_GATE ? "" : `        ld   a,(G_EMITS)
         or   a
         ret  z                  ; the frame's samples are all out
         dec  a
         ld   (G_EMITS),a
-        push hl                 ; HL is the slot cursor at most call sites
-${ONE_GATE ? "        call emit_gate         ; the one emit, shared with the loops" : `${gatePrologue().join("\n")}
+`}        push hl                 ; HL is the slot cursor at most call sites
+${ONE_GATE ? "        call emit_try          ; the one emit, and the debt is ITS business" : `${gatePrologue().join("\n")}
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
         ld   a,(iy+0)
@@ -972,7 +1009,12 @@ ms_paced:
         ; …capped by what the frame still owes, and charged, exactly as
         ; mix_seg_live does it — this is the path a SILENT pass takes, and it
         ; emits too.
-        ld   hl,G_EMITS
+${ONE_GATE ? `        ; PCM_GROUP = 1: the loop does not RESERVE samples and does not charge
+        ; them up front. Every iteration asks emit_try, emit_try charges what it
+        ; actually sends, and a segment that asks more often than the timer
+        ; answers simply gets fewer — which is the correct answer, not an
+        ; overrun. The cap this replaces existed to keep a BLOCKING emit inside
+        ; the frame's debt; nothing blocks now.` : `        ld   hl,G_EMITS
         push bc
         ld   b,a                ; the segment's iterations
         ld   a,(hl)
@@ -981,16 +1023,16 @@ ms_paced:
         xor  a                  ; the reserve is all that is left
 ms_av:
         cp   b
-        jr   nc,ms_take        ; spare >= iterations: the loop takes them all
+        jr   nc,ms_take      ; spare >= iterations: the loop takes them all
         ld   b,a                ; …otherwise only what is spare
 ms_take:
         ld   a,b
-        pop  bc
+        pop  bc`}
 ms_owed:
         ld   (G_SEG_N),a        ; iterations
-        neg
+${ONE_GATE ? "" : `        neg
         add  a,(hl)
-        ld   (hl),a
+        ld   (hl),a`}
         ld   a,(G_SEG_N)
         ld   l,a
 ${MUL_U}
@@ -1137,7 +1179,12 @@ msl_paced:
         ; free. Anything the loop may not emit runs through the single-tick
         ; copies instead, which carry no emit at all. That is also what pays for
         ; the samples the frame's other emit points (feed_one) took.
-        ld   hl,G_EMITS
+${ONE_GATE ? `        ; PCM_GROUP = 1: the loop does not RESERVE samples and does not charge
+        ; them up front. Every iteration asks emit_try, emit_try charges what it
+        ; actually sends, and a segment that asks more often than the timer
+        ; answers simply gets fewer — which is the correct answer, not an
+        ; overrun. The cap this replaces existed to keep a BLOCKING emit inside
+        ; the frame's debt; nothing blocks now.` : `        ld   hl,G_EMITS
         push bc
         ld   b,a                ; the segment's iterations
         ld   a,(hl)
@@ -1146,16 +1193,16 @@ msl_paced:
         xor  a                  ; the reserve is all that is left
 msl_av:
         cp   b
-        jr   nc,msl_take        ; spare >= iterations: the loop takes them all
+        jr   nc,msl_take      ; spare >= iterations: the loop takes them all
         ld   b,a                ; …otherwise only what is spare
 msl_take:
         ld   a,b
-        pop  bc
+        pop  bc`}
 msl_owed:
         ld   (G_SEG_N),a        ; iterations, and samples, this segment carries
-        neg
+${ONE_GATE ? "" : `        neg
         add  a,(hl)
-        ld   (hl),a             ; charge them to the frame
+        ld   (hl),a             ; charge them to the frame`}
         ld   a,(G_SEG_N)
         ld   l,a
 ${MUL_U}

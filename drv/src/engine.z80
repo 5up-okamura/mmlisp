@@ -439,7 +439,35 @@ start:
         ld   a,READY_MARK
         ld   (H_READY),a
         ei
+; The engine's main loop. It is not a halt any more.
+;
+; With the emit non-blocking (emit_try), the interrupt does the frame's WORK —
+; ~40% of a vblank — and returns. The other 60% used to be `halt`: the Z80
+; asleep while the DAC held its last byte. It is the single largest stretch a
+; frame has, and the samples the frame still owes are exactly what belongs in
+; it. So the idle path ASKS, over and over, and sends one whenever Timer B says
+; one is due.
+;
+; The cursor is re-read and re-parked around each send rather than held in IY,
+; because the interrupt can land between any two instructions here and it owns
+; G_RD for the length of a frame.
 idle:
+        ld   a,(G_DACON)
+        or   a
+        jr   z,idle_halt        ; no PCM in this score: sleep as before
+        ld   a,(G_EMITS)
+        or   a
+        jr   z,idle_halt        ; the frame's samples are all out: sleep until
+                                ; the next one, which is what a halt is for
+        ld   a,(YM_ADDR0)       ; not busy AND flag B up = exactly $02
+        and  $82
+        cp   $02
+        jr   nz,idle            ; not due yet — keep asking
+        ld   iy,(G_RD)
+        call feed_one
+        ld   (G_RD),iy
+        jr   idle
+idle_halt:
         halt
         jr   idle
 
@@ -605,6 +633,7 @@ cs_plans:
         ld   de,G_PLAN
         ld   b,PCM_VOICES
 cs_plan:
+        call feed_one
         ld   a,(hl)             ; entries in this voice's run
         inc  hl
         ld   (de),a
@@ -1068,6 +1097,8 @@ pp_emits:
         ld   a,(G_CHUNK)
         ld   (G_EMITS),a
 pp_setup:
+        call feed_one           ; the head's scan is ~1,000 cycles of asking
+                                ; nothing (§5.1.2, the emit_try comment)
         ; Which voices are sounding, taken now: a voice can end DURING its pass,
         ; and the count of passes is what the feed's cadence rests on.
         ld   a,(G_PCMV+0*PCM_V_SIZE+PV_FLAGS)
@@ -1135,6 +1166,7 @@ pp_act_next:
 
         ld   c,0
 pp_idle:
+        call feed_one
         call pp_sounding_at     ; no IX: G_IDLEV replaces it below anyway
         jr   z,pp_idle_run
         jr   pp_idle_next
