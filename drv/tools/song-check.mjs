@@ -71,6 +71,7 @@ try {
   const built = assemble(join(drv, "src", "engine.z80"));
   const sym = (n) => built.symbols.get(n);
   const RAM = 0x2000, RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
+  const IDLE = sym("idle"), IDLE_END = sym("idle_halt");
   const ram = new Uint8Array(RAM);
   ram.set(built.bytes, 0);
   let bankReg = 0, dacEn = 0, fm = 0, psg = 0;
@@ -119,9 +120,25 @@ try {
       ram[sym("H_HEAD")] = next;
     }
     cpu.intRequest();
-    let g = 0, cyc = 0;
-    while (cpu.halted && g++ < 1000) cpu.step();
-    while (!cpu.halted && g++ < 3_000_000) cyc += cpu.step();
+    // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts": the
+    // engine feeds the DAC from its idle loop and only halts in a score with no
+    // PCM in it. A halted Z80 burns 4-cycle NOPs here, exactly as it waits out
+    // the rest of a frame on hardware.
+    // …and the FRAME COST is the part of it the INTERRUPT owns: cycles until
+    // the engine first reaches its idle loop. Everything after that is the DAC
+    // feed, which is meant to fill the rest of the frame and says nothing about
+    // whether the engine is keeping up.
+    let g = 0, cyc = 0, isr = 0, inIsr = true, left = false;
+    while (g++ < 3_000_000 && cyc < FRAME_CYCLES) {
+      const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
+      // The CPU is ALREADY idling when the frame opens — it has to leave the
+      // loop (take the interrupt) before coming back to it means anything.
+      if (!left) { if (!idling) left = true; }
+      else if (inIsr && idling) { isr = cyc; inIsr = false; }
+      cyc += cpu.step();
+    }
+    if (inIsr) isr = cyc;
+    cyc = isr;
     if (g >= 3_000_000) throw new Error(`frame ${f} never completed`);
     perFrame.push(cyc);
   }

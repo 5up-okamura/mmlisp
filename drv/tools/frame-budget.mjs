@@ -223,6 +223,7 @@ try {
     // `music x256` — which is the only number this tool has ever been trying to
     // predict.
     const INT_WINDOW = 228;   // ~one scanline of asserted /INT, in Z80 cycles
+    const IDLE = sym("idle"), IDLE_END = sym("idle_halt");
     let posted = 0, missed = 0, nextVbl = 0;
     const costs = [];
     const postSlots = () => {
@@ -251,8 +252,15 @@ try {
       // the engine feeds the DAC from its idle loop and only halts in a
       // score with no PCM in it. A halted Z80 burns 4-cycle NOPs here,
       // exactly as it waits out the rest of a frame on hardware.
-      let fcyc = 0;
+      // The frame's COST is the part the interrupt owns — cycles until the
+      // engine first reaches its idle loop. What follows is the DAC feed,
+      // which is meant to fill the rest of the frame; counting it would report
+      // 100% for every score and say nothing.
+      let fcyc = 0, isr = 0, inIsr = true, left = false;
       while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
+        const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
+        if (!left) { if (!idling) left = true; }
+        else if (inIsr && idling) { isr = fcyc; inIsr = false; }
         winReads = 0;
         const c = cpu.step() + winReads * PACE_WINDOW;
         tcyc += c; fcyc += c;
@@ -267,7 +275,10 @@ try {
           ram[sym("H_VBL")] = vbl & 0xff;
         }
       }
-      costs.push(tcyc - start + STALL);   // the bus the 68000 holds; see STALL
+      // The ISR's own length, not the frame's: the DAC feed fills the rest of
+      // the frame by design (engine.z80 `idle`), so counting to the vblank
+      // would report 100% for every score.
+      costs.push((inIsr ? tcyc - start : isr) + STALL);   // the bus the 68000 holds; see STALL
     }
     if (!costs.length) { console.log(`skip  ${name} — no frames`); continue; }
     const pct = (q) => [...costs].sort((a, b) => a - b)[Math.floor((costs.length - 1) * q)];

@@ -3759,3 +3759,77 @@ the quota is settled. It shows up as the emit interval by tenth of the frame:
 first. A clean sawtooth at 60 Hz, and it is the whole of what is left.
 
 **NOT VERIFIED ON HARDWARE.** Nothing here has been to a Mega Drive.
+
+## 2026-08-29 — THE DAC IS A PRODUCER/CONSUMER NOW. Branch `drv/dac-rate-probe`.
+
+Waiting for the gate put Timer B INSIDE the interrupt. At one sample per gate
+that is 55 waits of a full period — 97% of a vblank of pure spin against 40% of
+actual work — and an ISR that long loses the next vblank outright whenever a
+frame runs heavy. A lost vblank is a lost frame of music, which is the tempo
+wobble, not a hiccup. Measured before the change: work 23,602 cyc, wall 59,290.
+
+**Nothing blocks any more.**
+
+* `emit_try` replaces `emit_gate`: 38 cycles to answer "not due", and the caller
+  carries straight on. Whoever is running when the timer comes due sends the
+  sample. This is XGM2's structure and its "≤168 cycles between sample outputs
+  EVERYWHERE" rule is what makes it work — the rule is not advice, it is the
+  contract, because **Timer B's flag is ONE BIT and a missed overflow is gone.**
+* `idle:` is a feed loop, not a `halt`. The interrupt does the frame's work and
+  returns; the other ~67% of the frame is the DAC being fed.
+* The per-frame emit debt is gone. The **ring's fill** is the accounting: the
+  mixer adds what it wrote, every send takes one back, and a send is legal
+  exactly when something is finished. A frame quota cannot survive a
+  non-blocking send — the count a frame gets out varies, and resetting per frame
+  turns the surplus into skipped and repeated samples.
+
+`~/Desktop/sin008.mmlisp`, 3,329 Hz, 1,800 frames (30 s):
+
+    ISR                 p50 19,831 cyc (33% of a frame) · p95 40%
+    tempo               1,800 frames in 1,800 vblanks · lost 0/s · x256 = 0100
+    sample stream       a2-flat -46.6 / -53.1 / -52.2 dB (correct)
+    DAC clock           -21.5 / -36.9 / -29.5 dB   (d-flat's ceiling: -32.2 / -47.2 / -49.7)
+    holes               0.51 sample periods a frame (was 3.45)
+    startup silence     gone (the prime frame no longer parks the DAC)
+
+### Three bugs this cost, all of them invisible without measurement
+
+1. **The idle loop and the interrupt raced for `G_RD`.** Read, advance,
+   write-back is not atomic against a vblank landing inside it: the handler runs
+   a whole frame, advances the cursor, and then the idle loop writes its stale
+   copy back. The cursor rewinds, `G_FILL` stops matching it, and since the
+   mixer takes its write cursor from `G_RD + G_FILL` it walks out of the ring
+   and over the engine's own code. Presented as a hang. Fixed with `di`/`ei` —
+   ~200 cycles against the VDP's ~228-cycle /INT, so a vblank inside it is
+   delayed, never lost.
+2. **The prime frame counted the lead twice** (510 in a 512-sample ring).
+3. **`mix_seg_live` still tested the debt that no longer existed**, so every
+   segment took the unpaced path and the mixer emitted nothing at all. Fixing it
+   took `a2-flat` from −24 dB back to −46.6.
+
+`G_FILL` is clamped at `PCM_FILL_MAX` as a backstop: the mixer adds a chunk a
+frame whatever happens and the feed only sends when a gate is BOTH due and
+asked for, so a persistent deficit climbs until the write cursor leaves the ring.
+The clamp turns "the driver hangs" into "a sample is lost"; the fix is that no
+stretch runs longer than a period.
+
+### Harnesses
+
+`halt` no longer means "the frame is done". Every harness runs a frame for
+FRAME_CYCLES instead, which is what the hardware does anyway (a halted Z80 burns
+4-cycle NOPs). Changed: run-trace, slot-gate, engine-gate, dac-gate, dac-wav,
+song-check, frame-budget. frame-budget and song-check now report the ISR's own
+length — cycles until the engine first reaches `idle` — because counting to the
+vblank would report 100% for every score and say nothing.
+
+### NOT DONE
+
+* **`engine-gate` fails 8 of 12 scenarios.** The DAC's per-frame write count
+  changed by design (the prime frame sends 25 samples where it used to park with
+  one write). `drv-player.js` is the port spec and has NOT been moved to the
+  ring-fill model. **This is the remaining work.** `c-gate` (the 68k sequencer),
+  `ring-gate` and `sgdk-lint` are all clean — nothing on the 68k side moved.
+* 0.51 sample periods a frame still lost. `scratchpad/asks.mjs` measures the
+  stretches that cause it directly.
+* **9,987 Hz (K=16) is broken by this** — the build is 3,329 Hz only.
+* Never run on hardware.
