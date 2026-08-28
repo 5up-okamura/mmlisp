@@ -493,6 +493,27 @@ function emitGate() {
     "        xor  $80               ; the ring is signed, the DAC is not",
     "        ld   (YM_DATA0),a      ; $2A, fed blind",
     "        inc  iy",
+    "        ; THE WRAP, on the send path only.",
+    "        ;",
+    "        ; It used to live in feed_one alone, because the loops' segment",
+    "        ; bounds kept the FEED cursor short of the top — true only while the",
+    "        ; feed advanced in step with the mix. It does not any more: the idle",
+    "        ; loop feeds between interrupts, so the cursor crosses RING_TOP",
+    "        ; wherever it happens to be, and an unwrapped one walks out of the",
+    "        ; ring and reads the engine's own code as samples.",
+    "        ;",
+    "        ; HL is the mixer's plane cursor at the inline call sites, so it is",
+    "        ; saved — but only here, past every early return, so the ~25-cycle",
+    "        ; \"not due\" answer is untouched.",
+    "        push hl",
+    "        push iy",
+    "        pop  hl",
+    "        ld   a,h",
+    "        cp   RING_TOP>>8",
+    "        jr   nz,et_nw",
+    "        ld   iy,RING_BUF",
+    "et_nw:",
+    "        pop  hl",
     "        ret",
   ];
 }
@@ -851,23 +872,7 @@ fo_ex:
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
         inc  iy`}
-        ; feed_wrap, INLINE. It is 47 cycles of body behind a 27-cycle call, and
-        ; the out-of-line emit already costs over twice what the loops' inline
-        ; one does — measured, the emit machinery (this, gate_wait and the gate
-        ; prologue) is more than a third of what is inside the ~11% of Timer B
-        ; groups that overrun, and those groups ARE the frame's overrun.
-        ;
-        ; The wrap itself stays: no segment bound protects this emit, unlike the
-        ; loops', so the cursor really can reach the top here. It fires once per
-        ; RING_TOP-RING_BUF samples; the rest of the time this is four
-        ; instructions asking.
-        push iy
-        pop  hl
-        ld   a,h
-        cp   RING_TOP>>8
-        jr   nz,fo_nowrap
-        ld   iy,RING_BUF
-fo_nowrap:
+        ; No wrap here: emit_try does it, on the send path, for every caller.
         pop  hl
         ret`);
   } else if (wide) {
