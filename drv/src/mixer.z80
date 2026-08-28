@@ -1213,11 +1213,30 @@ et_lo:
 et_have:
         ld   a,$27
         ld   (YM_ADDR0),a
+et_b2:
+        ld   a,(YM_ADDR0)      ; BUSY between every write, as cr_p0 does.
+        rla                    ; The emit used to wait once and then make
+        jr   c,et_b2           ; four writes back to back — tolerable at
+                               ; 3.5 gates a frame, which is what it was
+                               ; written for. Per-sample gating makes it 55,
+                               ; so the frame's YM traffic went from 14
+                               ; writes to 220 and the chip is being written
+                               ; while it is still busy fifteen times as
+                               ; often. Nothing in this repo models BUSY, so
+                               ; no gate here can fail on it.
 eg_r27:
         ld   a,$2a             ; PATCHED by cs_r27: $27 with RESET B in it,
         ld   (YM_DATA0),a      ; over a RAM read, which cost 6 a sample
+et_b3:
+        ld   a,(YM_ADDR0)
+        rla
+        jr   c,et_b3
         ld   a,$2a
         ld   (YM_ADDR0),a      ; re-latch: the write below is blind
+et_b4:
+        ld   a,(YM_ADDR0)
+        rla
+        jr   c,et_b4
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
 eg_ms:
         jr   eg_ex             ; master chain, slot 0 — PATCHED
