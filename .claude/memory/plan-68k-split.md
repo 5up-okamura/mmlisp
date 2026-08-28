@@ -3833,3 +3833,74 @@ vblank would report 100% for every score and say nothing.
   stretches that cause it directly.
 * **9,987 Hz (K=16) is broken by this** — the build is 3,329 Hz only.
 * Never run on hardware.
+
+## 2026-08-29 — HARNESS CALIBRATION: it FAILED, and that is the finding.
+
+Two points from the machine (BlastEm), same score (`sin008.mmlisp`, 3,329 Hz),
+two engine revisions:
+
+    A  badd4fa   music x256 00CB (79%)   lost/s 12   starv/s 0   host 99%
+    B  4d73e40   music x256 0100 (100%)  lost/s 0    starv/s 0   host 99.6%
+
+`frame-budget` at its defaults reports **100% / 0 lost for BOTH**. So the model
+is wrong, and the question was whether a constant fixes it.
+
+### The sweep
+
+Three knobs, swept against both points at once — two points with opposite
+outcomes, so a fit cannot be the coincidence the 2026-08 note warns about:
+
+* `--pace` (the $8000 window read): 0…250. Moves A from 91% to 70%; never
+  moves B. On its own it cannot reach 79% with 12 lost.
+* `--busy` (YM2612 BUSY after a data write): 90…600. **450 reproduces both
+  points exactly, hex digit for hex digit.**
+* `--ym` (a flat cost on EVERY $4000–$4003 access, a different shape): 0…80.
+  **55 also lands near both points.**
+
+### Why both fits are spurious
+
+At the fitted values the model's own internal state contradicts its output:
+
+    --busy 450 : ISR p50 335% of a vblank, 98.2% of interrupts overrun → music 79%
+    --ym   55  : ISR p50 346% of a vblank, 100%  of interrupts overrun → music 74%
+
+An engine that overruns EVERY interrupt by 3.5x cannot be consuming 79% of its
+frames. The knobs are not finding the machine's cost; they are pushing the
+model over a cliff, and past the cliff `music` SATURATES at ~73% no matter how
+large the constant gets (55 → 74%, 58 → 74%, 60 → 73%, 80 → 72%).
+
+**The tool's host/interrupt coupling is a step function, not a curve, so there
+is nothing to calibrate against.** Fitting a constant to it would have produced
+exactly the kind of number the earlier note warns about — one that matches the
+measurement it was fitted to and mispredicts the next change.
+
+### What the model is actually missing
+
+Its ISR distribution is **p50 43%, p95 54%, max 128%**. The machine's 12 lost/s
+means ~20% of frames run past a vblank. There is no mechanism in the model that
+puts a fifth of frames past 100% while the median sits at 43% — the shape is
+wrong, not the scale. Whatever the machine charges, it charges it with far more
+VARIANCE than anything modelled here.
+
+### Harness fixes made along the way (these are real, and they stay)
+
+* **`z80cpu.mjs`: /INT is a PULSE, not a latch** (`Z80Cpu.INT_PULSE = 228`,
+  `decay()`). The latch made a `di` of any length free, which is how a `di`
+  longer than the VDP's pulse reached a ROM and played nothing at all while
+  every gate stayed green. Harnesses age it now.
+* **The frame loop no longer stops at FRAME_CYCLES.** It ran the ISR to
+  completion first; capping it hid every overrun and reported 0 lost against a
+  machine losing 12 a second.
+* **`frame-budget` reports "ISR past its own vblank"** — the share of interrupts
+  that overran. That is the number the machine's `lost/s` is.
+* **`--stall` is charged as REAL TIME at the frame head.** It used to be added
+  to the reported cost after the fact, so sweeping it could not change whether
+  the interrupt overran — it moved the number and nothing else.
+* **`--busy` and `--ym`** are knobs for the two distinguishable YM cost shapes.
+
+### The next job, and it is not speculative
+
+Make the model's host/engine coupling match the C: the Z80 takes an interrupt
+only if it is not still inside the previous ISR, and the catch-up is driven by
+`H_VBL` exactly as `mmlispdrv.c` drives it. Until `music` responds to load as a
+CURVE, no constant in this tool means anything.

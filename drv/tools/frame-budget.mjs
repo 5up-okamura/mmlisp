@@ -112,6 +112,15 @@ const PACE_OVERRIDE = pIdx >= 0 ? Number(argv[pIdx + 1]) : null;
 // unmeasured cost in the model, which is why it is a knob and not a constant.
 const bIdx = argv.indexOf("--busy");
 const BUSY_OVERRIDE = bIdx >= 0 ? Number(argv[bIdx + 1]) : null;
+// `--ym N` charges N Z80 cycles on EVERY access to $4000-$4003, read or write.
+// A different shape from --busy, and the two are distinguishable: BUSY is a
+// window after a DATA write that the engine polls out, while this is a flat
+// cost on every touch of the chip — including the status polls, of which the
+// engine now makes hundreds a frame. Which one the machine actually charges
+// decides whether "gate every sample" is affordable at all, so it is a knob
+// until a measurement settles it.
+const yIdx = argv.indexOf("--ym");
+const YM_COST = yIdx >= 0 ? Number(argv[yIdx + 1]) : 0;
 
 const tmp = mkdtempSync(join(tmpdir(), "budget-"));
 try {
@@ -181,7 +190,7 @@ try {
     // against it made the chip read BUSY at every frame boundary and the poll
     // loops spun until the frame caught up — 13k cycles a call.
     const BUSY_CY = BUSY_OVERRIDE ?? Math.round(32 * 6 * 7 / 15);
-    let tcyc = 0, lastData = -1e9;
+    let tcyc = 0, lastData = -1e9, ymTouch = 0;
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < 0x2000) return ram[a];
@@ -192,6 +201,7 @@ try {
         // ENABLE B ($27 bit 3) gates the flag on the chip — Nuked-OPN2 only ever
         // sets it as `timer_b_overflow & timer_b_enable` (ym3438.c). Modelled
         // here too so this tool cannot report a frame the hardware never runs.
+        if (a >= 0x4000 && a <= 0x4003) ymTouch += YM_COST;
         if (a === 0x4000) return (tcyc - lastData < BUSY_CY ? 0x80 : 0)
           | (enableB && tcyc >= gateAt ? 0x02 : 0);
         if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
@@ -208,6 +218,7 @@ try {
           // whatever is left of the current one.
           if (d & 0x20) while (gateAt <= tcyc) gateAt += GATE_CY;
         }
+        if (a >= 0x4000 && a <= 0x4003) ymTouch += YM_COST;
         if (a === 0x4001 || a === 0x4003) lastData = tcyc; },
     });
     cpu.pc = 0;
@@ -253,6 +264,15 @@ try {
       postSlots();
       ram[sym("H_VBL")] = vbl & 0xff;
       const start = tcyc;
+      // THE 68000'S BUS GRAB, charged as REAL TIME at the frame head.
+      //
+      // MMLisp_frame takes the Z80 bus to read `tail`, copy the slot and write
+      // `head`, and the Z80 executes NOTHING while it is held. It used to be
+      // added to the frame's COST after the fact — which meant sweeping it
+      // could not change whether the interrupt overran its vblank, so `--stall`
+      // moved the reported number and nothing else. It is time the Z80 does not
+      // have, at the moment the interrupt needs it most, so it is spent here.
+      tcyc += STALL;
       cpu.intRequest();
       let g = 0;
       // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts":
@@ -279,8 +299,8 @@ try {
         const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
         if (!left) { if (!idling) left = true; }
         else if (inIsr && idling) { isr = fcyc; inIsr = false; }
-        winReads = 0;
-        const c = cpu.step() + winReads * PACE_WINDOW;
+        winReads = 0; ymTouch = 0;
+        const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
         cpu.decay(c);
         tcyc += c; fcyc += c;
         // Blew past a vblank while still inside the ISR: its window closed and
@@ -297,7 +317,7 @@ try {
       // The ISR's own length, not the frame's: the DAC feed fills the rest of
       // the frame by design (engine.z80 `idle`), so counting to the vblank
       // would report 100% for every score.
-      costs.push((inIsr ? tcyc - start : isr) + STALL);   // the bus the 68000 holds; see STALL
+      costs.push(inIsr ? tcyc - start : isr + STALL);
     }
     if (!costs.length) { console.log(`skip  ${name} — no frames`); continue; }
     // The share of INTERRUPTS that ran past their own vblank. That vblank is
