@@ -105,6 +105,13 @@ const STALL = sIdx >= 0 ? Number(argv[sIdx + 1]) : 0;
 // them. PACE_WINDOW itself is an estimate that has never been measured.
 const pIdx = argv.indexOf("--pace");
 const PACE_OVERRIDE = pIdx >= 0 ? Number(argv[pIdx + 1]) : null;
+// `--busy N` overrides the YM2612's BUSY time in Z80 cycles. The default is the
+// datasheet's 32 internal cycles converted to the Z80's clock; the number the
+// CHIP takes has never been measured here, and the engine spins on it after
+// every write — 340 times a frame once every sample is gated. It is the largest
+// unmeasured cost in the model, which is why it is a knob and not a constant.
+const bIdx = argv.indexOf("--busy");
+const BUSY_OVERRIDE = bIdx >= 0 ? Number(argv[bIdx + 1]) : null;
 
 const tmp = mkdtempSync(join(tmpdir(), "budget-"));
 try {
@@ -173,7 +180,7 @@ try {
     // Judged on a MONOTONIC counter: `cyc` restarts every frame, so comparing
     // against it made the chip read BUSY at every frame boundary and the poll
     // loops spun until the frame caught up — 13k cycles a call.
-    const BUSY_CY = Math.round(32 * 6 * 7 / 15);
+    const BUSY_CY = BUSY_OVERRIDE ?? Math.round(32 * 6 * 7 / 15);
     let tcyc = 0, lastData = -1e9;
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
