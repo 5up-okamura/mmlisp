@@ -1018,14 +1018,14 @@ mix_seg:
         ; --- split B into unrolled iterations + single-tick remainder ---
         ; Done here, before the register file is loaded, because it is the last
         ; moment HL and DE are free.
-${paced ? `        ld   a,(G_EMITS)        ; nothing to feed: single-tick copies only
+${paced ? `${ONE_GATE ? "" : `        ld   a,(G_EMITS)        ; nothing to feed: single-tick copies only
         or   a
         jr   nz,ms_paced
         ld   (G_SEG_N),a
         ld   a,b
         ld   (G_SEG_R),a
         jr   ms_split
-ms_paced:
+ms_paced:`}
         ld   h,0                ; the cadence is 3, so the divide is a table
         ld   l,b
         ld   de,div_tab
@@ -1184,14 +1184,14 @@ mix_seg_live:
         ; A frame with nothing to feed — a PRIME frame building the ring's lead
         ; (§5.1.2) — runs entirely on the SINGLE-TICK copies, which carry no
         ; emit. Slower per tick by the djnz, and it is one frame per burst.
-        ld   a,(G_EMITS)
+${ONE_GATE ? "" : `        ld   a,(G_EMITS)
         or   a
         jr   nz,msl_paced
         ld   (G_SEG_N),a
         ld   a,b
         ld   (G_SEG_R),a
         jr   msl_go
-msl_paced:
+msl_paced:`}
         push de                 ; the divide needs DE; the file owns it
         ld   h,0                ; the cadence is 3, so the divide is a table
         ld   l,b
