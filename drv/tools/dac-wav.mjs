@@ -256,13 +256,17 @@ async function captureBaseline(ref, score, tmp) {
       // One loop with run-trace.mjs's exit condition. Stepping "while halted"
       // then "while not halted" never got past the first frame: the interrupt
       // is pending while the CPU is still halted.
-      let g = 0;
-      while (g++ < 3_000_000) {
+      // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts": the
+      // engine feeds the DAC from its idle loop and only halts in a score with
+      // no PCM in it. A halted Z80 burns 4-cycle NOPs here, exactly as it waits
+      // out the rest of a frame on hardware — and running the frame out is what
+      // puts the idle loop's own samples in this trace.
+      let g = 0, fcyc = 0;
+      while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
         win = 0;
-        cyc += cpu.step() + win * PACE_WINDOW;
-        if (cpu.halted && !cpu.intPending) break;
+        const c = cpu.step() + win * PACE_WINDOW;
+        cyc += c; fcyc += c;
       }
-      if (!cpu.halted) throw new Error(`baseline frame ${f} did not finish`);
       base += FRAME_CYCLES;
     }
     return { ev, period: FRAME_CYCLES / sym("PCM_MIX_R") };
