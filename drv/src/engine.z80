@@ -100,7 +100,7 @@ PCM_BUDGET  equ 42000
 PCM_RING_TARGET equ 255
 ; The most FINISHED samples the ring may hold. G_WR = G_RD + G_FILL, so this
 ; bounds the mixer's write cursor inside RING_BUF..RING_TOP with one wrap.
-PCM_FILL_MAX equ 384
+PCM_FILL_MAX equ 320
 G_PCMV      equ $1900
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
@@ -1071,6 +1071,27 @@ pp_feed:
         ;   prime   +TARGET and feed nothing
         ;   steady  mix what is fed, so the fill does not move at all
         ;   tail    nothing to mix, feed `chunk` out of what is left
+        ; A frame whose audio has NOWHERE TO GO does not mix it.
+        ;
+        ; The catch-up (§6.7) runs up to three frames in one interrupt, and each
+        ; one hands the ring another chunk — but the DAC still only plays at
+        ; Timer B's rate, so the ring cannot take them. Left alone the fill
+        ; climbs a chunk per caught-up frame (measured: 249 -> 465 in one
+        ; interrupt) until the write cursor, which is G_RD + G_FILL, leaves the
+        ; ring. Clamping the fill instead is worse: it moves the write cursor
+        ; BACK, over samples that have not been fed, which is a wrong sample
+        ; rather than a missing one.
+        ;
+        ; So the slot is consumed — the music advances, which is the whole point
+        ; of catching up — and this frame's audio is dropped. A dropped frame
+        ; sounds like a dropped frame.
+        ld   hl,(G_FILL)
+        ld   de,PCM_FILL_MAX
+        or   a
+        sbc  hl,de
+        jr   c,pp_canmix
+        ret                     ; the ring is full: drop this frame's audio
+pp_canmix:
         ld   hl,(G_FILL)
         ld   a,h
         or   l
@@ -1193,28 +1214,6 @@ pp_idle_next:
         ld   d,0
         ld   hl,(G_FILL)
         add  hl,de
-        ; …and CLAMPED. The mixer adds a chunk a frame whatever happens, but the
-        ; feed only sends when Timer B comes due AND some code asks — so a frame
-        ; that runs a stretch longer than a sample period sends one fewer, for
-        ; ever. Measured at ~4 samples a frame, the fill climbed 241 -> 516 over
-        ; sixty frames, and since the mixer's write cursor is G_RD + G_FILL it
-        ; walked out of the 512-sample ring and over the engine's own code.
-        ;
-        ; The clamp drops the surplus rather than the ring: whatever the DAC
-        ; could not keep up with is not played. It is a backstop, not the fix —
-        ; the fix is that no stretch runs longer than a period (emit_try) — but
-        ; a backstop is what turns "the driver hangs" into "a sample is lost".
-        ld   de,PCM_FILL_MAX+1
-        or   a
-        sbc  hl,de
-        jr   c,pp_fill_ok
-        ld   hl,PCM_FILL_MAX-PCM_FILL_MAX
-        ld   de,PCM_FILL_MAX
-        add  hl,de
-        jr   pp_fill_set
-pp_fill_ok:
-        add  hl,de              ; undo the compare's subtract
-pp_fill_set:
         ld   (G_FILL),hl
         call feed_one
         ; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the

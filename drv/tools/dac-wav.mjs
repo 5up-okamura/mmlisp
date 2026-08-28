@@ -252,6 +252,12 @@ async function captureBaseline(ref, score, tmp) {
       // it; an early finish is dead time the DAC spends holding, so it belongs
       // in the timeline. A frame that overran starts the next one late.
       cyc = Math.max(cyc, base);
+      // What the host does every real frame (sgdk/mmlispdrv.c MMLisp_frame):
+      // stamp the vblank the engine's catch-up compares against. Without it the
+      // engine believes it is behind on every frame and runs the catch-up for
+      // ever — which is a harness artefact, and it looked exactly like a ring
+      // accounting bug.
+      ram[sym("H_VBL")] = (f + 1) & 0xff;
       cpu.intRequest();
       // One loop with run-trace.mjs's exit condition. Stepping "while halted"
       // then "while not halted" never got past the first frame: the interrupt
