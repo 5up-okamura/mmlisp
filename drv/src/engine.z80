@@ -285,7 +285,17 @@ int_handler:
         push de
         push hl
         push ix
-        push iy                 ; the mixer's feed cursor (§5.1)
+        ; IY IS NOT SAVED. It is the ring's feed cursor and it belongs to the
+        ; WHOLE DRIVER, not to a frame: the idle loop feeds from it between
+        ; interrupts and the mixer feeds from it inside them, and the two must
+        ; be the same cursor or one of them is stale. Saving and restoring it
+        ; here would hand the idle loop back a cursor a frame behind.
+        ;
+        ; It is what replaced the read/advance/write-back through G_RD, which
+        ; could not be made safe: a `di` long enough to cover it is longer than
+        ; the VDP's /INT pulse and destroys the vblank, and without one the
+        ; interrupt lands inside it and the store rewinds the ring. A register
+        ; the interrupt does not touch has neither problem.
         call frame_step
         ; ── missed-vblank catch-up (§6.7) ───────────────────────────────────
         ; A frame that ran past its budget lost the next vblank OUTRIGHT (see
@@ -328,7 +338,6 @@ ih_done:
         ; at PCM_GROUP = 1 that stretch is larger than the frame's whole slack.
         ; pcm_edge re-parks the cursor, so the emit is as valid here as anywhere.
         call pcm_edge
-        pop  iy
         pop  ix
         pop  hl
         pop  de
@@ -387,6 +396,7 @@ start:
         ld   hl,RING_BUF
         ld   (G_RD),hl
         ld   (G_WR),hl
+        ld   iy,RING_BUF        ; THE feed cursor, for the life of the driver
         ld   a,RING_BUF>>8
         ld   (G_MIXP),a
         ld   a,1
@@ -467,50 +477,14 @@ idle:
         ; This is what stopped `halt` meaning "the frame is done". Every harness
         ; that watched for it now runs a frame for FRAME_CYCLES instead, which
         ; is what the hardware does anyway.
-        ; Ask FIRST, and only take the cursor when the answer is yes.
-        ;
-        ; G_RD has two owners now — this loop and the interrupt — and read,
-        ; advance, write-back is not atomic against a vblank landing inside it:
-        ; the handler runs a whole frame, advances G_RD by a chunk, and then
-        ; this loop writes its stale copy back. The cursor rewinds, G_FILL no
-        ; longer matches G_RD, and since the mixer takes its write cursor from
-        ; G_RD + G_FILL it walks straight out of the ring and over the code.
-        ; That is a hang, not a glitch, and it is what it was.
-        ;
-        ; So the update runs with interrupts off. The VDP holds Z80 /INT for
-        ; about a scanline (228 cycles) and this is ~200 at its longest, so a
-        ; vblank that lands inside is DELAYED to the `ei` and never lost.
-        ld   a,(YM_ADDR0)
-        and  $02
-        jr   z,idle             ; nothing due — no cursor to move
-        ; NO `di` HERE, and that is the point.
-        ;
-        ; G_RD has two owners — this loop and the interrupt — and read, advance,
-        ; write-back is not atomic against a vblank landing inside it. The
-        ; obvious guard is `di`, and it is WRONG on this machine: the VDP holds
-        ; the Z80's /INT low for one scanline and then DROPS it. A `di` longer
-        ; than that pulse does not delay the interrupt, it DESTROYS it — the
-        ; frame never runs, the ring stops being consumed, and the music does
-        ; not play at all. The emit is ~240 cycles against a ~228-cycle pulse,
-        ; so the guard was reliably eating vblanks.
-        ;
-        ; Nothing here modelled that: z80cpu.mjs LATCHED /INT, which makes a
-        ; `di` of any length free. It is a pulse now (Z80Cpu.INT_PULSE) and the
-        ; harnesses age it, so this class of bug fails a gate instead of a ROM.
-        ;
-        ; So: work from a COPY, and store it back only if the interrupt did not
-        ; move the cursor underneath us. If it did, its cursor is the live one
-        ; and ours is dropped — the sample still went out, which is what the
-        ; ring's fill already recorded.
-        ld   de,(G_RD)
-        push de
-        pop  iy
-        call feed_one
-        ld   hl,(G_RD)
-        or   a
-        sbc  hl,de
-        jr   nz,idle            ; a frame ran under us: drop our stale copy
-        ld   (G_RD),iy
+        ; No cursor traffic and no `di`: IY IS the cursor, the interrupt does not
+        ; save it, and feed_one sends one sample only if Timer B has come due.
+        ; Two earlier shapes of this loop are why it is written that way — a
+        ; `di` around a read/advance/write-back of G_RD (longer than the VDP's
+        ; /INT pulse, so it ate the vblank and nothing played at all), and the
+        ; same without the `di` (the interrupt landed inside it and the store
+        ; rewound the ring, which reads as a wrong sample once a frame).
+        call feed_one           ; sends one IF Timer B has come due
         jr   idle
 idle_halt:
         halt
@@ -520,14 +494,8 @@ idle_halt:
 ; One frame (driver.md §5.1)
 ; ===========================================================================
 frame_step:
-        ; The FEED CURSOR, for the whole frame — loaded HERE and not inside
-        ; process_pcm, because consume_slot's write runs carry samples too
-        ; (feed_one) and they run first. It used to be loaded after pcm_pad, so
-        ; at the head IY was merely whatever the previous frame's `ld (G_RD),iy`
-        ; had left in it: correct by luck, and only while nothing between the
-        ; two touched IY. An emit at the head is either valid or it is not, and
-        ; that should not depend on a register surviving an interrupt.
-        ld   iy,(G_RD)
+        ; The feed cursor is NOT loaded here: IY carries it across the whole
+        ; life of the driver (see the interrupt's prologue).
         ; The prologue's sample, out of what the LAST frame did not spend — so it
         ; carries the previous frame's master, which is what the reference does
         ; with it too. Before consume_slot, because consume_slot's own head is
@@ -1257,7 +1225,7 @@ pp_fill_set:
         ; Those cycles are why the frame reads 101% of a vblank; the samples
         ; that cover them are these.
 pcm_park:
-        ld   (G_RD),iy          ; park the feed cursor for the next frame
+        ld   (G_RD),iy          ; a MIRROR of IY, for the write cursor below
         ; …and put the write cursor back where it belongs: RIGHT AFTER the
         ; finished samples, which is what "the mixer writes at read + fill"
         ; means. DERIVED rather than stepped, because the two do not move
