@@ -57,6 +57,8 @@ const H_VBL = sym("H_VBL");
 const H_TAIL = sym("H_TAIL");
 const H_FRAMES = sym("H_FRAMES");
 const H_STARVE = sym("H_STARVE");
+// One frame of wall clock: 262 lines x 3420 master clocks / 15.
+const FRAME_CYCLES = 59736;
 const H_READY = sym("H_READY");
 
 // ── Sample ROM ─────────────────────────────────────────────────────────────
@@ -400,8 +402,12 @@ function run(frames, image = built) {
     const d0 = dac.length;
     cpu.intRequest();
     let guard = 0;
-    while (cpu.halted && guard++ < 1000) cyc += cpu.step();       // take the int
-    while (!cpu.halted && guard++ < 3_000_000) cyc += cpu.step(); // run the ISR
+  // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts": the
+  // engine feeds the DAC from its idle loop and only halts in a score with
+  // no PCM in it (engine.z80 `idle`). A halted Z80 burns 4-cycle NOPs here,
+  // which is exactly how it waits out the rest of a frame on hardware.
+    let fcyc = 0;
+    while (guard++ < 3_000_000 && fcyc < FRAME_CYCLES) { const c = cpu.step(); cyc += c; fcyc += c; }
     if (guard >= 3_000_000) {
       // Name the one cause that reads as a hang and is invisible otherwise: on
       // the chip an unenabled timer's flag never appears, so `gate_wait` is an

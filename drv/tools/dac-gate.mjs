@@ -186,8 +186,16 @@ try {
       stamps = []; frameT0 = cyc;
       cpu.intRequest();
       let g = 0;
-      while (cpu.halted && g++ < 1000) cyc += cpu.step();
-      while (!cpu.halted && g++ < 3_000_000) { winReads = 0; cyc += cpu.step() + winReads * PACE_WINDOW; }
+  // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts": the
+  // engine feeds the DAC from its idle loop and only halts in a score with
+  // no PCM in it (engine.z80 `idle`). A halted Z80 burns 4-cycle NOPs here,
+  // which is exactly how it waits out the rest of a frame on hardware.
+      let fcyc = 0;
+      while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
+        winReads = 0;
+        const c = cpu.step() + winReads * PACE_WINDOW;
+        cyc += c; fcyc += c;
+      }
       if (stamps.length) {
         if (lastTail >= 0) {
           const b = (FRAME_CYCLES - lastTail) + stamps[0];

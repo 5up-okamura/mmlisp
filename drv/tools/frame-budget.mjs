@@ -247,10 +247,15 @@ try {
       const start = tcyc;
       cpu.intRequest();
       let g = 0;
-      while (cpu.halted && g++ < 1000) tcyc += cpu.step();
-      while (!cpu.halted && g++ < 3_000_000) {
+      // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts":
+      // the engine feeds the DAC from its idle loop and only halts in a
+      // score with no PCM in it. A halted Z80 burns 4-cycle NOPs here,
+      // exactly as it waits out the rest of a frame on hardware.
+      let fcyc = 0;
+      while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
         winReads = 0;
-        tcyc += cpu.step() + winReads * PACE_WINDOW;
+        const c = cpu.step() + winReads * PACE_WINDOW;
+        tcyc += c; fcyc += c;
         // Blew past a vblank while still inside the ISR: its window closed and
         // that frame is gone. The engine's catch-up (§6.7) picks the slot up
         // later off the H_VBL stamp, which is why `missed` is not simply lost

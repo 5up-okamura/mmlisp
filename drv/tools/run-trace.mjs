@@ -16,6 +16,10 @@ const MB_HEAD = MB_BASE + 0x20;
 const MB_TSTAT = MB_BASE + 0x22; // 16 per-track status bytes (driver.md §6.1)
 const MB_READY = MB_BASE + 0x32;
 
+// One frame of wall clock: 3579545 / 60. A frame runs for this long
+// whatever the engine does inside it — see the loop below.
+const FRAME_CYCLES = Math.round(3579545 / 60);
+
 export function runTrace(
   driverBin,
   mmbBytes,
@@ -225,7 +229,11 @@ export function runTrace(
     cpu.intRequest();
     let s = 0;
     let cycles = 0;
-    while (s++ < maxStepsPerFrame) {
+    // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts". The
+    // engine feeds the DAC from its idle loop now (engine.z80 `idle`), so it
+    // only halts in a score with no PCM in it — and a halted Z80 burns 4-cycle
+    // NOPs here exactly as it waits for the next vblank on hardware.
+    while (s++ < maxStepsPerFrame && cycles < FRAME_CYCLES) {
       if (profile) {
         const pc = cpu.pc;
         const c = cpu.step();
@@ -234,9 +242,8 @@ export function runTrace(
         byRoutine.set(site, (byRoutine.get(site) ?? 0) + c);
         if (profileSplitAt) thisFrame.set(site, (thisFrame.get(site) ?? 0) + c);
       } else {
-        cpu.step();
+        cycles += cpu.step();
       }
-      if (cpu.halted && !cpu.intPending) break;
     }
     if (profile) frameCycles.push(cycles);
     if (profileSplitAt) {
@@ -248,7 +255,7 @@ export function runTrace(
       }
       thisFrame.clear();
     }
-    if (!cpu.halted) throw new Error(`frame ${frame} did not finish`);
+
     markerLog.push(
       Array.from({ length: tracks.length }, (_, i) => ram[MB_TSTAT + i] & 0x3f),
     );

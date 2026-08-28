@@ -66,6 +66,8 @@ const RING_DEPTH = sym("RING_DEPTH");
 const SLOT_SIZE = sym("SLOT_SIZE");
 const H_HEAD = sym("H_HEAD");
 const H_TAIL = sym("H_TAIL");
+// One frame of wall clock: 262 lines x 3420 master clocks / 15.
+const FRAME_CYCLES = 59736;
 const H_READY = sym("H_READY");
 
 const ram = new Uint8Array(RAM_SIZE);
@@ -190,8 +192,11 @@ for (engFrame = 0; engFrame < cap.slots.length || posted < cap.slots.length; eng
   cpu.intRequest();
   let guard = 0;
   let fcyc = 0, postedInFrame = false;
-  while (cpu.halted && guard++ < 1000) cpu.step();
-  while (!cpu.halted && guard++ < 3_000_000) {
+  // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts": the
+  // engine feeds the DAC from its idle loop and only halts in a score with
+  // no PCM in it (engine.z80 `idle`). A halted Z80 burns 4-cycle NOPs here,
+  // which is exactly how it waits out the rest of a frame on hardware.
+  while (guard++ < 3_000_000 && fcyc < FRAME_CYCLES) {
     const c = cpu.step();
     cyc += c; fcyc += c;
     // ~20% in: a real host is a few hundred microseconds behind the vblank it

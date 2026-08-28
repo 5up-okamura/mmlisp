@@ -98,6 +98,9 @@ PCM_BUDGET  equ 42000
 ; because a pass's tick count is a byte (G_TICKS) and the prime frame mixes
 ; exactly this many; the slack it leaves the feed is 255 - 167 = 88 samples.
 PCM_RING_TARGET equ 255
+; The most FINISHED samples the ring may hold. G_WR = G_RD + G_FILL, so this
+; bounds the mixer's write cursor inside RING_BUF..RING_TOP with one wrap.
+PCM_FILL_MAX equ 384
 G_PCMV      equ $1900
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
@@ -455,19 +458,36 @@ idle:
         ld   a,(G_DACON)
         or   a
         jr   z,idle_halt        ; no PCM in this score: sleep as before
-        ; Feed until the ring is back down to its LEAD. Above the lead the frame
-        ; has samples it has not sent; at the lead it has only the cushion the
-        ; next frame's holes will need, and there is nothing to do but sleep —
-        ; which is also what keeps `halt` meaning "the frame is done" for every
-        ; harness that watches for it.
-        ld   hl,(G_FILL)
-        ld   de,PCM_RING_TARGET+1
-        or   a
-        sbc  hl,de
-        jr   c,idle_halt
+        ; While PCM is claimed this loop NEVER SLEEPS. Feeding is the engine's
+        ; steady state and the interrupt is the interruption, not the other way
+        ; round: the frame's work is ~40% of a vblank and the other 60% used to
+        ; be `halt` — the Z80 asleep with the DAC holding its last byte, once
+        ; every frame, which is the 60 Hz artefact in its purest form.
+        ;
+        ; This is what stopped `halt` meaning "the frame is done". Every harness
+        ; that watched for it now runs a frame for FRAME_CYCLES instead, which
+        ; is what the hardware does anyway.
+        ; Ask FIRST, and only take the cursor when the answer is yes.
+        ;
+        ; G_RD has two owners now — this loop and the interrupt — and read,
+        ; advance, write-back is not atomic against a vblank landing inside it:
+        ; the handler runs a whole frame, advances G_RD by a chunk, and then
+        ; this loop writes its stale copy back. The cursor rewinds, G_FILL no
+        ; longer matches G_RD, and since the mixer takes its write cursor from
+        ; G_RD + G_FILL it walks straight out of the ring and over the code.
+        ; That is a hang, not a glitch, and it is what it was.
+        ;
+        ; So the update runs with interrupts off. The VDP holds Z80 /INT for
+        ; about a scanline (228 cycles) and this is ~200 at its longest, so a
+        ; vblank that lands inside is DELAYED to the `ei` and never lost.
+        ld   a,(YM_ADDR0)
+        and  $02
+        jr   z,idle             ; nothing due — no cursor to move
+        di
         ld   iy,(G_RD)
-        call feed_one           ; sends one IF Timer B has come due
+        call feed_one
         ld   (G_RD),iy
+        ei
         jr   idle
 idle_halt:
         halt
@@ -1068,8 +1088,10 @@ pp_feed:
         ld   (YM_DATA0),a       ; park the DAC at silence for this one frame
         ld   a,PCM_RING_TARGET
         ld   (G_TICKSF),a
-        ld   hl,PCM_RING_TARGET
-        ld   (G_FILL),hl        ; the lead, and the mixer fills it below
+        ; The fill is NOT set here any more: the tail adds whatever the passes
+        ; wrote (G_TICKSF), and this frame's G_TICKSF is the lead itself. Setting
+        ; it here as well counted the lead twice — 510 in a 512-sample ring —
+        ; and the engine then fed a third fewer samples than it mixed.
         jr   pp_setup
 pp_steady:
         ; Mix what the feed takes, so the fill stays put — and that now holds
@@ -1180,6 +1202,28 @@ pp_idle_next:
         ld   d,0
         ld   hl,(G_FILL)
         add  hl,de
+        ; …and CLAMPED. The mixer adds a chunk a frame whatever happens, but the
+        ; feed only sends when Timer B comes due AND some code asks — so a frame
+        ; that runs a stretch longer than a sample period sends one fewer, for
+        ; ever. Measured at ~4 samples a frame, the fill climbed 241 -> 516 over
+        ; sixty frames, and since the mixer's write cursor is G_RD + G_FILL it
+        ; walked out of the 512-sample ring and over the engine's own code.
+        ;
+        ; The clamp drops the surplus rather than the ring: whatever the DAC
+        ; could not keep up with is not played. It is a backstop, not the fix —
+        ; the fix is that no stretch runs longer than a period (emit_try) — but
+        ; a backstop is what turns "the driver hangs" into "a sample is lost".
+        ld   de,PCM_FILL_MAX+1
+        or   a
+        sbc  hl,de
+        jr   c,pp_fill_ok
+        ld   hl,PCM_FILL_MAX-PCM_FILL_MAX
+        ld   de,PCM_FILL_MAX
+        add  hl,de
+        jr   pp_fill_set
+pp_fill_ok:
+        add  hl,de              ; undo the compare's subtract
+pp_fill_set:
         ld   (G_FILL),hl
         call feed_one
         ; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the
