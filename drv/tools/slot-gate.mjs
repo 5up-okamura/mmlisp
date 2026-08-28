@@ -198,6 +198,7 @@ for (engFrame = 0; engFrame < cap.slots.length || posted < cap.slots.length; eng
   // which is exactly how it waits out the rest of a frame on hardware.
   while (guard++ < 3_000_000 && fcyc < FRAME_CYCLES) {
     const c = cpu.step();
+    cpu.decay(c);
     cyc += c; fcyc += c;
     // ~20% in: a real host is a few hundred microseconds behind the vblank it
     // woke on. Posting BEFORE the interrupt would hide the fact that the engine

@@ -237,12 +237,15 @@ export function runTrace(
       if (profile) {
         const pc = cpu.pc;
         const c = cpu.step();
+        cpu.decay(c);   // /INT is a pulse (z80cpu.mjs), not a latch
         cycles += c;
         const site = siteFor(pc);
         byRoutine.set(site, (byRoutine.get(site) ?? 0) + c);
         if (profileSplitAt) thisFrame.set(site, (thisFrame.get(site) ?? 0) + c);
       } else {
-        cycles += cpu.step();
+        const c = cpu.step();
+        cpu.decay(c);
+        cycles += c;
       }
     }
     if (profile) frameCycles.push(cycles);

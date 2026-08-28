@@ -194,6 +194,7 @@ try {
       while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
         winReads = 0;
         const c = cpu.step() + winReads * PACE_WINDOW;
+        cpu.decay(c);
         cyc += c; fcyc += c;
       }
       if (stamps.length) {

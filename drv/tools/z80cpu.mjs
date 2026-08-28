@@ -10,9 +10,21 @@
 // cycle-driven); step() returns rough documented cycle counts for later
 // budget estimates only.
 //
-// Interrupts: IM 1 only (Mega Drive Z80 vblank). intRequest() latches a
-// pending maskable interrupt which is accepted when IFF1 is set (with the
-// standard one-instruction EI delay), pushing PC and jumping to 0x38.
+// Interrupts: IM 1 only (Mega Drive Z80 vblank). intRequest() raises /INT,
+// accepted when IFF1 is set (with the standard one-instruction EI delay),
+// pushing PC and jumping to 0x38.
+//
+// /INT IS A PULSE, NOT A LATCH. The VDP holds the Z80's /INT low for ONE
+// SCANLINE and then drops it — a vblank the Z80 does not take inside that
+// window is GONE, and no amount of `ei` later brings it back. This used to be
+// latched here, which made a `di` of any length free: the interrupt was always
+// waiting when it lifted. It is not, and a driver with a `di` longer than the
+// pulse silently stops advancing frames on hardware while every harness in
+// this repo reports it healthy. Pass the pulse width to intRequest() (default
+// INT_PULSE) and call decay() with each step's cycles to model it.
+
+// One scanline of asserted /INT: 3420 master clocks / 15.
+const INT_PULSE = 228;
 
 const FLAG_C = 0x01;
 const FLAG_N = 0x02;
@@ -29,6 +41,8 @@ for (let i = 0; i < 256; i++) {
 }
 
 export class Z80Cpu {
+  static INT_PULSE = INT_PULSE;
+
   constructor({ read, write }) {
     this.read = read;
     this.write = write;
@@ -55,8 +69,17 @@ export class Z80Cpu {
     this.spMin = this.sp;
   }
 
-  intRequest() {
+  intRequest(pulse = Z80Cpu.INT_PULSE) {
     this.intPending = true;
+    this.intLeft = pulse;
+  }
+
+  // Age /INT by `cyc` Z80 cycles. Callers that never call this keep the old
+  // latched behaviour, which is what every non-timing harness wants.
+  decay(cyc) {
+    if (!this.intPending) return;
+    this.intLeft -= cyc;
+    if (this.intLeft <= 0) this.intPending = false;
   }
 
   // ── register pair helpers ────────────────────────────────────────────────
@@ -264,6 +287,7 @@ export class Z80Cpu {
   maybeInterrupt() {
     if (!this.intPending || this.eiDelay || !this.iff1) return false;
     this.intPending = false;
+    this.intLeft = 0;
     this.iff1 = this.iff2 = false;
     if (this.halted) {
       this.halted = false;

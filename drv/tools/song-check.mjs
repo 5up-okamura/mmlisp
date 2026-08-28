@@ -135,7 +135,9 @@ try {
       // loop (take the interrupt) before coming back to it means anything.
       if (!left) { if (!idling) left = true; }
       else if (inIsr && idling) { isr = cyc; inIsr = false; }
-      cyc += cpu.step();
+      const c = cpu.step();
+      cpu.decay(c);
+      cyc += c;
     }
     if (inIsr) isr = cyc;
     cyc = isr;

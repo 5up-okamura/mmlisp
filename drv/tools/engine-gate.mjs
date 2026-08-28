@@ -407,7 +407,7 @@ function run(frames, image = built) {
   // no PCM in it (engine.z80 `idle`). A halted Z80 burns 4-cycle NOPs here,
   // which is exactly how it waits out the rest of a frame on hardware.
     let fcyc = 0;
-    while (guard++ < 3_000_000 && fcyc < FRAME_CYCLES) { const c = cpu.step(); cyc += c; fcyc += c; }
+    while (guard++ < 3_000_000 && fcyc < FRAME_CYCLES) { const c = cpu.step(); cpu.decay(c); cyc += c; fcyc += c; }
     if (guard >= 3_000_000) {
       // Name the one cause that reads as a hang and is invisible otherwise: on
       // the chip an unenabled timer's flag never appears, so `gate_wait` is an

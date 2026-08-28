@@ -263,6 +263,7 @@ try {
         else if (inIsr && idling) { isr = fcyc; inIsr = false; }
         winReads = 0;
         const c = cpu.step() + winReads * PACE_WINDOW;
+        cpu.decay(c);
         tcyc += c; fcyc += c;
         // Blew past a vblank while still inside the ISR: its window closed and
         // that frame is gone. The engine's catch-up (§6.7) picks the slot up

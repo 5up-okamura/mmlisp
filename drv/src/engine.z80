@@ -483,11 +483,34 @@ idle:
         ld   a,(YM_ADDR0)
         and  $02
         jr   z,idle             ; nothing due — no cursor to move
-        di
-        ld   iy,(G_RD)
+        ; NO `di` HERE, and that is the point.
+        ;
+        ; G_RD has two owners — this loop and the interrupt — and read, advance,
+        ; write-back is not atomic against a vblank landing inside it. The
+        ; obvious guard is `di`, and it is WRONG on this machine: the VDP holds
+        ; the Z80's /INT low for one scanline and then DROPS it. A `di` longer
+        ; than that pulse does not delay the interrupt, it DESTROYS it — the
+        ; frame never runs, the ring stops being consumed, and the music does
+        ; not play at all. The emit is ~240 cycles against a ~228-cycle pulse,
+        ; so the guard was reliably eating vblanks.
+        ;
+        ; Nothing here modelled that: z80cpu.mjs LATCHED /INT, which makes a
+        ; `di` of any length free. It is a pulse now (Z80Cpu.INT_PULSE) and the
+        ; harnesses age it, so this class of bug fails a gate instead of a ROM.
+        ;
+        ; So: work from a COPY, and store it back only if the interrupt did not
+        ; move the cursor underneath us. If it did, its cursor is the live one
+        ; and ours is dropped — the sample still went out, which is what the
+        ; ring's fill already recorded.
+        ld   de,(G_RD)
+        push de
+        pop  iy
         call feed_one
+        ld   hl,(G_RD)
+        or   a
+        sbc  hl,de
+        jr   nz,idle            ; a frame ran under us: drop our stale copy
         ld   (G_RD),iy
-        ei
         jr   idle
 idle_halt:
         halt

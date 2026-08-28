@@ -265,6 +265,7 @@ async function captureBaseline(ref, score, tmp) {
       while (g++ < 3_000_000 && fcyc < FRAME_CYCLES) {
         win = 0;
         const c = cpu.step() + win * PACE_WINDOW;
+        cpu.decay(c);
         cyc += c; fcyc += c;
       }
       base += FRAME_CYCLES;
