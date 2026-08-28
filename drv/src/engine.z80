@@ -455,16 +455,18 @@ idle:
         ld   a,(G_DACON)
         or   a
         jr   z,idle_halt        ; no PCM in this score: sleep as before
-        ld   a,(G_EMITS)
+        ; Feed until the ring is back down to its LEAD. Above the lead the frame
+        ; has samples it has not sent; at the lead it has only the cushion the
+        ; next frame's holes will need, and there is nothing to do but sleep —
+        ; which is also what keeps `halt` meaning "the frame is done" for every
+        ; harness that watches for it.
+        ld   hl,(G_FILL)
+        ld   de,PCM_RING_TARGET+1
         or   a
-        jr   z,idle_halt        ; the frame's samples are all out: sleep until
-                                ; the next one, which is what a halt is for
-        ld   a,(YM_ADDR0)       ; not busy AND flag B up = exactly $02
-        and  $82
-        cp   $02
-        jr   nz,idle            ; not due yet — keep asking
+        sbc  hl,de
+        jr   c,idle_halt
         ld   iy,(G_RD)
-        call feed_one
+        call feed_one           ; sends one IF Timer B has come due
         ld   (G_RD),iy
         jr   idle
 idle_halt:
@@ -592,20 +594,12 @@ cs_have:
         jr   z,cs_nochunk
         ld   (G_CHUNK),a
 cs_nochunk:
-        ; The frame's emit budget is settled HERE, before its first long stretch
-        ; of work, because that stretch is the slot's own writes and they carry
-        ; samples now (§5.1.2). A PRIME frame — an empty ring — owes nothing yet;
-        ; process_pcm reads the same G_FILL and agrees.
-        ld   de,(G_FILL)
-        ld   a,(G_DACON)
-        or   a
-        jr   z,cs_emits         ; not claimed yet: nothing to feed
-        ld   a,d
-        or   e
-        jr   z,cs_emits         ; prime: the lead is built, nothing is fed
-        ld   a,(G_CHUNK)
-cs_emits:
-        ld   (G_EMITS),a        ; both skips leave A = 0, which is the answer
+        ; NO EMIT BUDGET. It used to be settled here, per frame, and the send
+        ; charged against it. The ring's own fill is the budget now (see
+        ; emit_try): the mixer adds what it wrote, every send takes one back,
+        ; and a send is legal exactly when something is finished — which is the
+        ; only rule that still holds once the send can happen after the
+        ; interrupt has returned.
 
         ld   b,(hl)
         inc  hl
@@ -1075,9 +1069,7 @@ pp_feed:
         ld   a,PCM_RING_TARGET
         ld   (G_TICKSF),a
         ld   hl,PCM_RING_TARGET
-        ld   (G_FILL),hl
-        xor  a
-        ld   (G_EMITS),a        ; …and feed nothing while the lead is built
+        ld   (G_FILL),hl        ; the lead, and the mixer fills it below
         jr   pp_setup
 pp_steady:
         ; Mix what the feed takes, so the fill stays put — and that now holds
@@ -1087,15 +1079,6 @@ pp_steady:
         ; The separate draining `pp_tail` case is gone with the release.
         ld   a,(G_CHUNK)
         ld   (G_TICKSF),a
-pp_emits:
-        ; The budget was settled in consume_slot, BEFORE the head's writes spent
-        ; part of it (§5.1.2) — so it must not be reset here. A STARVED frame
-        ; never got that far, and still owes the DAC a frame.
-        ld   a,(G_STARVED)
-        or   a
-        jr   z,pp_setup
-        ld   a,(G_CHUNK)
-        ld   (G_EMITS),a
 pp_setup:
         call feed_one           ; the head's scan is ~1,000 cycles of asking
                                 ; nothing (§5.1.2, the emit_try comment)
@@ -1187,7 +1170,17 @@ pp_idle_next:
         ; G_EMITS is the debt itself now — every emit site charges it, and the
         ; mix loops charge theirs a segment at a time — so there is nothing to
         ; reconstruct here. Normally one sample, at the frame's end.
-        ; The TAIL's own sample, before the ring bookkeeping below.
+        ; What the mixer just wrote is now FINISHED, so the ring's fill grows by
+        ; it. This is the other half of emit_try's decrement, and the pair is
+        ; the whole of the ring's accounting: G_WR = G_RD + G_FILL stays true
+        ; under BOTH, which is why feeding after the interrupt has returned
+        ; cannot invalidate the write cursor derived below.
+        ld   a,(G_TICKSF)
+        ld   e,a
+        ld   d,0
+        ld   hl,(G_FILL)
+        add  hl,de
+        ld   (G_FILL),hl
         call feed_one
         ; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the
         ; frame here. What follows this — pp_wrst, consume_rest, slot_release,
@@ -1196,13 +1189,6 @@ pp_idle_next:
         ; PCM_GROUP = 1 the frame has only ~280 to spare over the timer's floor.
         ; Those cycles are why the frame reads 101% of a vblank; the samples
         ; that cover them are these.
-        ld   a,(G_EMITS)
-        sub  PCM_EMIT_RESERVE
-        jr   nc,pp_flush
-        xor  a
-pp_flush:
-        ld   b,a
-        call flush_rest
 pcm_park:
         ld   (G_RD),iy          ; park the feed cursor for the next frame
         ; …and put the write cursor back where it belongs: RIGHT AFTER the
@@ -1858,9 +1844,6 @@ CODE_END:
 ; from the interrupt handler.
 pcm_edge:
         ld   a,(G_DACON)
-        or   a
-        ret  z
-        ld   a,(G_EMITS)
         or   a
         ret  z
         push hl
