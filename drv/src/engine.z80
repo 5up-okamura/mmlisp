@@ -100,10 +100,7 @@ PCM_BUDGET  equ 42000
 PCM_RING_TARGET equ 255
 ; The most FINISHED samples the ring may hold. G_WR = G_RD + G_FILL, so this
 ; bounds the mixer's write cursor inside RING_BUF..RING_TOP with one wrap.
-PCM_FILL_MAX equ 448
-; Where the ring is TRIMMED back to, one sample at a time (see pp_trim). Just
-; above the lead, so the trim is a steady dribble rather than a burst.
-PCM_FILL_TRIM equ 272
+PCM_FILL_MAX equ 320
 G_PCMV      equ $1900
 PCM_V_SIZE  equ 32              ; power-of-two stride: index × 32 is five adds
 
@@ -1239,39 +1236,6 @@ pp_idle_next:
         ld   hl,(G_FILL)
         add  hl,de
         ld   (G_FILL),hl
-        ; …and TRIMMED, one sample at a time.
-        ;
-        ; The mixer writes a chunk a frame — 55.48 samples at 3,329 Hz — and the
-        ; feed only sends when a gate is BOTH due and asked for. Timer B's flag
-        ; is one bit, so a gate nobody asked for is gone: the frame sends 55.3
-        ; and the ring keeps the difference. Measured, the fill climbed 247 to
-        ; 270 in sixty frames, and on hardware, where the frame is heavier, far
-        ; faster.
-        ;
-        ; What that costs depends entirely on the UNIT of the correction. This
-        ; used to drop the whole frame's audio when the ring filled: 16 ms of
-        ; silence inside a drum, once every few seconds, which is what "the
-        ; tempo wobbles" sounds like on a percussion track. Dropping the OLDEST
-        ; SAMPLE instead is one sample period of skip — 0.3 ms, and it happens
-        ; at most once or twice a frame.
-pp_trim:
-        ld   hl,(G_FILL)
-        ld   de,PCM_FILL_TRIM
-        or   a
-        sbc  hl,de
-        jr   c,pp_trim_done     ; at or under the trim point: nothing to drop
-        ld   hl,(G_FILL)
-        dec  hl
-        ld   (G_FILL),hl
-        inc  iy                 ; the feed skips one
-        push iy
-        pop  hl
-        ld   a,h
-        cp   RING_TOP>>8
-        jr   nz,pp_trim
-        ld   iy,RING_BUF
-        jr   pp_trim
-pp_trim_done:
         call feed_one
         ; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the
         ; frame here. What follows this — pp_wrst, consume_rest, slot_release,

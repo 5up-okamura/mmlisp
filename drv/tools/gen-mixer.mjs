@@ -408,19 +408,6 @@ export const ONE_GATE = PCM_GROUP === 1;
 // Samples the mix loops must leave for the frame's boundary. See the equ's
 // comment below for what it buys; the size is the boundary's own length in
 // sample periods, rounded up.
-// Whether the emit waits for BUSY between EVERY YM write, or only once at the
-// start as it did before per-sample gating. The two shapes differ by three
-// status reads a sample — 8 YM accesses an emit against 5 — and they exist as a
-// switch because THAT IS THE EXPERIMENT: if the machine's missing cost is per
-// YM access, the cheap shape is measurably faster on it and the model's fitted
-// 55 cycles an access is real. If it is not, the constant is a coincidence.
-// DEFAULT OFF, and that is a measurement, not a preference. Under the model's
-// calibrated per-YM-access cost the three extra status reads cost 4.2 samples a
-// frame (48.9 emitted against 53.1) and nearly double the DAC's holes. The
-// shape without them is also the one that was demonstrably playing before they
-// were added. `EMIT_BUSY=1` builds them back.
-export const EMIT_BUSY_POLLS = process.env.EMIT_BUSY === "1";
-
 export const PCM_EMIT_RESERVE = Number(process.env.PCM_RESERVE ?? 3);
 
 // emit_gate: one gated DAC sample. Poll Timer B, clear its flag, re-latch $2A
@@ -494,7 +481,6 @@ function emitGate() {
     "et_have:",
     "        ld   a,$27",
     "        ld   (YM_ADDR0),a",
-    ...(EMIT_BUSY_POLLS ? [
     "et_b2:",
     "        ld   a,(YM_ADDR0)      ; BUSY between every write, as cr_p0 does.",
     "        rla                    ; The emit used to wait once and then make",
@@ -506,24 +492,19 @@ function emitGate() {
     "                               ; while it is still busy fifteen times as",
     "                               ; often. Nothing in this repo models BUSY, so",
     "                               ; no gate here can fail on it.",
-    ] : []),
     "eg_r27:",
     "        ld   a,$2a             ; PATCHED by cs_r27: $27 with RESET B in it,",
     "        ld   (YM_DATA0),a      ; over a RAM read, which cost 6 a sample",
-    ...(EMIT_BUSY_POLLS ? [
     "et_b3:",
     "        ld   a,(YM_ADDR0)",
     "        rla",
     "        jr   c,et_b3",
-    ] : []),
     "        ld   a,$2a",
     "        ld   (YM_ADDR0),a      ; re-latch: the write below is blind",
-    ...(EMIT_BUSY_POLLS ? [
     "et_b4:",
     "        ld   a,(YM_ADDR0)",
     "        rla",
     "        jr   c,et_b4",
-    ] : []),
     "        ld   a,(iy+0)          ; the ring: what an earlier frame finished",
     ...masterChain("eg_ms", "eg_ex"),
     "        jr   eg_ex",
