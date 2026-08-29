@@ -3904,3 +3904,36 @@ Make the model's host/engine coupling match the C: the Z80 takes an interrupt
 only if it is not still inside the previous ISR, and the catch-up is driven by
 `H_VBL` exactly as `mmlispdrv.c` drives it. Until `music` responds to load as a
 CURVE, no constant in this tool means anything.
+
+### 2026-08-29 (later) — the harness IS calibratable now, and there is a test
+
+The step function was the tool's own **host/interrupt coupling**. It ran one
+ISR per iteration and re-aligned the clock to the vblank at the top of each
+(`if (tcyc < nextVbl) tcyc = nextVbl`), so an overrun could never delay the next
+interrupt and the interrupt was always delivered. `frame-budget` is a loop over
+INSTRUCTIONS now, with vblanks at fixed instants: /INT is requested at the
+instant and taken only if the Z80 can take it. An interrupt that arrives while
+IFF1 is clear is LOST, which is the one rule that makes `music` move.
+
+With that, `music` responds as a curve, and one constant reproduces the machine:
+
+    --ym 55   (Z80 cycles charged on EVERY $4000-$4003 access, read or write)
+      badd4fa  music 00C7 (78%)  lost 13/s     machine: 00CB (79%)  lost 12/s
+      4d73e40  music 0100 (100%) lost 0/s      machine: 0100 (100%) lost 0/s
+
+**It is one constant fitted to one observable, and the mechanism is unverified.**
+A and B differ only in the catch-up, not in YM traffic, so they do not
+discriminate the cost's SHAPE. The falsifiable test is the pair that does:
+
+    ym=55 predicts   90bd83f (no per-write BUSY polls, 5 YM accesses an emit)  -> 100%
+                     badd4fa (with them,               8 YM accesses an emit)  ->  78%
+
+If the machine runs 90bd83f at 100%, the per-access cost is real. If it still
+reads ~79%, the constant is a coincidence and the real cost is elsewhere.
+
+Consequence either way: **the three per-write BUSY polls added in badd4fa were a
+regression.** Under the calibrated cost they take the frame from 53.1 emitted
+samples to 48.9 (against 55.48 nominal) and nearly double the DAC's holes
+(1.86 -> 3.12 a frame). `EMIT_BUSY_POLLS` defaults OFF now; `EMIT_BUSY=1`
+builds them back. The shape without them is what was demonstrably playing
+before they were added.

@@ -242,8 +242,7 @@ try {
     // predict.
     const INT_WINDOW = 228;   // ~one scanline of asserted /INT, in Z80 cycles
     const IDLE = sym("idle"), IDLE_END = sym("idle_halt");
-    let posted = 0, missed = 0, nextVbl = 0;
-    const costs = [];
+    let posted = 0;
     const postSlots = () => {
       while (posted < slots.length) {
         const head = ram[sym("H_HEAD")], next = (head + 1) % DEPTH;
@@ -253,72 +252,55 @@ try {
         ram[sym("H_HEAD")] = next;
       }
     };
-    let vbl = 0;   // real vblanks elapsed — the host's clock, not the engine's
-    while (costs.length + missed < slots.length && vbl < 4 * slots.length) {
-      // The Z80 sleeps until the vblank actually arrives.
-      if (tcyc < nextVbl) tcyc = nextVbl;
-      vbl++;
-      nextVbl += FRAME_CYCLES;
-      // What the host does every real frame (sgdk/mmlispdrv.c MMLisp_frame):
-      // top the ring up and stamp the vblank the engine compares against.
-      postSlots();
-      ram[sym("H_VBL")] = vbl & 0xff;
-      const start = tcyc;
-      // THE 68000'S BUS GRAB, charged as REAL TIME at the frame head.
-      //
-      // MMLisp_frame takes the Z80 bus to read `tail`, copy the slot and write
-      // `head`, and the Z80 executes NOTHING while it is held. It used to be
-      // added to the frame's COST after the fact — which meant sweeping it
-      // could not change whether the interrupt overran its vblank, so `--stall`
-      // moved the reported number and nothing else. It is time the Z80 does not
-      // have, at the moment the interrupt needs it most, so it is spent here.
-      tcyc += STALL;
-      cpu.intRequest();
-      let g = 0;
-      // A frame is FRAME_CYCLES of wall clock, not "until the CPU halts":
-      // the engine feeds the DAC from its idle loop and only halts in a
-      // score with no PCM in it. A halted Z80 burns 4-cycle NOPs here,
-      // exactly as it waits out the rest of a frame on hardware.
-      // The frame's COST is the part the interrupt owns — cycles until the
-      // engine first reaches its idle loop. What follows is the DAC feed,
-      // which is meant to fill the rest of the frame; counting it would report
-      // 100% for every score and say nothing.
-      // TWO PHASES, and the split is the whole point of this tool now.
-      //
-      // Phase 1 runs the INTERRUPT to completion — until the engine reaches its
-      // idle loop — with no cycle cap at all. An ISR that needs more than a
-      // frame is exactly the failure this reports, and capping the loop at
-      // FRAME_CYCLES (which is what "run a frame of wall clock" did) makes that
-      // failure invisible: the frame is truncated, the vblank it blew through
-      // is never counted, and every score reads 0 lost. It read 0 against a
-      // machine losing 12 frames a second.
-      //
-      // Phase 2 is the idle feed, which fills whatever is left of the frame.
-      let fcyc = 0, isr = 0, inIsr = true, left = false;
-      while (g++ < 3_000_000 && (inIsr || fcyc < FRAME_CYCLES)) {
-        const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
-        if (!left) { if (!idling) left = true; }
-        else if (inIsr && idling) { isr = fcyc; inIsr = false; }
-        winReads = 0; ymTouch = 0;
-        const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
-        cpu.decay(c);
-        tcyc += c; fcyc += c;
-        // Blew past a vblank while still inside the ISR: its window closed and
-        // that frame is gone. The engine's catch-up (§6.7) picks the slot up
-        // later off the H_VBL stamp, which is why `missed` is not simply lost
-        // music — but it IS a lost interrupt, and that is what the machine
-        // reports as `lost/s`.
-        while (tcyc > nextVbl + INT_WINDOW) {
-          missed++; vbl++; nextVbl += FRAME_CYCLES;
-          postSlots();
-          ram[sym("H_VBL")] = vbl & 0xff;
-        }
+    // ── THE MACHINE, in continuous time ─────────────────────────────────
+    //
+    // Not a loop over frames. A loop over INSTRUCTIONS, with vblanks arriving
+    // at fixed instants, because the thing being measured is precisely what a
+    // per-frame loop cannot express: **an interrupt that arrives while the Z80
+    // is still inside the last one is LOST.** The VDP holds /INT for a scanline
+    // and drops it; if IFF1 is clear for that whole window the frame is gone,
+    // and the engine only gets it back through the H_VBL catch-up.
+    //
+    // The old loop ran one ISR per iteration and re-aligned the clock to the
+    // vblank at the top of each ("if (tcyc < nextVbl) tcyc = nextVbl"), so an
+    // overrun could never delay the next interrupt and the interrupt was always
+    // delivered. That made `music` a STEP: 100% until the model fell off a
+    // cliff, then saturating at ~73% however large the cost got. Nothing on
+    // that curve could be calibrated against a machine reporting 79%.
+    //
+    // Here the interrupt is REQUESTED at the vblank instant and taken only if
+    // the Z80 can take it — which is the one rule that makes the number move.
+    let vbl = 0;
+    let nextVbl = FRAME_CYCLES;
+    const costs = [];
+    let isrStart = -1, wasInIsr = false;
+    let guard = 0;
+    const INT_VEC = 0x38;
+    while (vbl < slots.length && guard++ < 400_000_000) {
+      // Entering / leaving the handler, for the ISR's own length. The engine is
+      // "in the ISR" from the vector until it first reaches its idle loop.
+      const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
+      if (!wasInIsr && cpu.pc === INT_VEC) { wasInIsr = true; isrStart = tcyc; }
+      else if (wasInIsr && idling) { costs.push(tcyc - isrStart); wasInIsr = false; }
+
+      winReads = 0; ymTouch = 0;
+      const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
+      cpu.decay(c);
+      tcyc += c;
+
+      if (tcyc >= nextVbl) {
+        vbl++;
+        nextVbl += FRAME_CYCLES;
+        // What the host does every real frame (sgdk/mmlispdrv.c MMLisp_frame):
+        // take the Z80 bus, top the ring up, stamp the vblank the engine's
+        // catch-up compares against — then the VDP raises /INT.
+        tcyc += STALL;
+        postSlots();
+        ram[sym("H_VBL")] = vbl & 0xff;
+        cpu.intRequest();
       }
-      // The ISR's own length, not the frame's: the DAC feed fills the rest of
-      // the frame by design (engine.z80 `idle`), so counting to the vblank
-      // would report 100% for every score.
-      costs.push(inIsr ? tcyc - start : isr + STALL);
     }
+    if (wasInIsr && isrStart >= 0) costs.push(tcyc - isrStart);
     if (!costs.length) { console.log(`skip  ${name} — no frames`); continue; }
     // The share of INTERRUPTS that ran past their own vblank. That vblank is
     // gone (the VDP's /INT is a pulse), and the catch-up then has to run TWO
