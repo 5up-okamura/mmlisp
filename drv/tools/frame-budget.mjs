@@ -121,6 +121,22 @@ const BUSY_OVERRIDE = bIdx >= 0 ? Number(argv[bIdx + 1]) : null;
 // until a measurement settles it.
 const yIdx = argv.indexOf("--ym");
 const YM_COST = yIdx >= 0 ? Number(argv[yIdx + 1]) : 0;
+// `--probe-log <file>` writes the SAME 8-byte records the patched emulator
+// writes (drv/blastem/probe.patch), so tools/dac-log.mjs reads a run of this
+// model and a run of the machine with one reader and no arithmetic in between.
+// That comparison is the only way to find out whether this file's cycle counts
+// mean anything, and it is what the 2026-08-29 calibration round lacked.
+//
+// Cycles here are Z80 cycles; the emulator's are MASTER clocks. They are
+// written out multiplied by 15 so both logs are in the same unit.
+const lIdx = argv.indexOf("--probe-log");
+const PROBE_LOG = lIdx >= 0 ? argv[lIdx + 1] : null;
+// `--starve` answers the one question the emulator cannot: WHICH CODE runs
+// while the DAC is waiting. Every cycle executed after the sample clock is
+// already overdue is charged to the PC executing it, and the worst offenders
+// are reported against the engine's own symbols. A hole is not a mystery once
+// you can see the routine sitting in it.
+const STARVE = argv.includes("--starve");
 
 const tmp = mkdtempSync(join(tmpdir(), "budget-"));
 try {
@@ -131,6 +147,10 @@ try {
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
   const { writeMixer, PACE_WINDOW: PACE_GEN, GATE_CY } = await import("./gen-mixer.mjs");
+  // What one DAC sample is worth, in Z80 cycles. GATE_CY is the timer's period
+  // and the engine emits one sample per gate at PCM_GROUP = 1, so they are the
+  // same number — but ask the generator rather than assuming it.
+  const SAMPLE_CY = GATE_CY;
   // The model's charge only; the generated pad keeps the generator's value.
   const PACE_WINDOW = PACE_OVERRIDE ?? PACE_GEN;
   writeMixer();
@@ -173,6 +193,19 @@ try {
     const ram = new Uint8Array(0x2000);
     ram.set(built.bytes, 0);
     let bankReg = 0, cyc = 0, winReads = 0, enableB = false, addr0 = 0;
+    // Same record layout as drv/blastem/probe.patch: kind, pad, value:u16,
+    // cycle:u32 little-endian. Only built when asked for.
+    const probe = PROBE_LOG ? [] : null;
+    // PCM_TICK_CY: what the engine's own clock owes a sample, in Z80 cycles.
+    // Taken from the generator so this cannot drift from the build under test.
+    const starve = STARVE ? new Map() : null;
+    let lastDac = 0;
+    const rec = (kind, value, zcyc) => {
+      const b = Buffer.alloc(8);
+      b[0] = kind; b.writeUInt16LE(value & 0xffff, 2);
+      b.writeUInt32LE((zcyc * 15) >>> 0, 4);
+      probe.push(b);
+    };
     // The Timer B gate in Z80 cycles: 2304 YM clocks, one crystal. It FREE-RUNS
     // — `gateAt` is an absolute instant on the monotonic clock, never a delay
     // from wherever the engine happens to be.
@@ -219,6 +252,15 @@ try {
           if (d & 0x20) while (gateAt <= tcyc) gateAt += GATE_CY;
         }
         if (a >= 0x4000 && a <= 0x4003) ymTouch += YM_COST;
+        // Unlike the emulator's x86 JIT, this Z80 interprets — so it knows
+        // exactly which instruction wrote the sample, and a hole can be
+        // attributed to the code that caused it rather than to the emit
+        // routine that ended it.
+        if (a === 0x4001 && addr0 === 0x2a) {
+          if (probe) { rec(1, d, tcyc); rec(6, cpu.pc & 0xffff, tcyc); }
+          lastDac = tcyc;
+        }
+        if (probe && a === 0x4001 && addr0 === 0x2b) rec(5, d, tcyc);
         if (a === 0x4001 || a === 0x4003) lastData = tcyc; },
     });
     cpu.pc = 0;
@@ -284,16 +326,24 @@ try {
       else if (wasInIsr && idling) { costs.push(tcyc - isrStart); wasInIsr = false; }
 
       winReads = 0; ymTouch = 0;
+      const pcBefore = cpu.pc;
       const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
+      // Charged only past the deadline: cycles inside the sample's own period
+      // are the engine doing its job, and counting them would bury the answer
+      // under the mixer.
+      if (starve && tcyc - lastDac > SAMPLE_CY)
+        starve.set(pcBefore, (starve.get(pcBefore) ?? 0) + c);
       cpu.decay(c);
       tcyc += c;
 
       if (tcyc >= nextVbl) {
         vbl++;
+        if (probe) rec(4, 0, tcyc);
         nextVbl += FRAME_CYCLES;
         // What the host does every real frame (sgdk/mmlispdrv.c MMLisp_frame):
         // take the Z80 bus, top the ring up, stamp the vblank the engine's
         // catch-up compares against — then the VDP raises /INT.
+        if (probe && STALL) { rec(2, 0, tcyc); rec(3, 0, tcyc + STALL); }
         tcyc += STALL;
         postSlots();
         ram[sym("H_VBL")] = vbl & 0xff;
@@ -342,6 +392,37 @@ try {
     console.log(`      ISR past its own vblank: ${isrOver}/${costs.length} `
       + `(${(100 * isrOver / costs.length).toFixed(1)}%) — each one is a lost interrupt, `
       + `and the catch-up runs two frames inside the next`);
+    if (starve && starve.size) {
+      // Nearest symbol at or below the PC, from the image's own table.
+      const syms = [...built.symbols.entries()]
+        .filter(([, v]) => typeof v === "number" && v < 0x2000)
+        .sort((a, b) => a[1] - b[1]);
+      const nameOf = (pc) => {
+        let lo = 0, hi = syms.length - 1, best = null;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (syms[mid][1] <= pc) { best = syms[mid]; lo = mid + 1; } else hi = mid - 1;
+        }
+        return best ? `${best[0]}+${pc - best[1]}` : `0x${pc.toString(16)}`;
+      };
+      const byRoutine = new Map();
+      for (const [pc, c] of starve) {
+        const r = nameOf(pc).split("+")[0];
+        byRoutine.set(r, (byRoutine.get(r) ?? 0) + c);
+      }
+      const total = [...byRoutine.values()].reduce((t, c) => t + c, 0);
+      const frames = Math.max(1, consumed);
+      console.log(`      cycles spent PAST the sample deadline: ${(total / frames).toFixed(0)} a frame`
+        + ` (${(total / frames / SAMPLE_CY).toFixed(1)} sample periods) — by routine:`);
+      for (const [r, c] of [...byRoutine.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12))
+        console.log(`        ${r.padEnd(24)} ${(c / frames).toFixed(0).padStart(6)} cyc/frame`
+          + `  ${(100 * c / total).toFixed(1).padStart(5)}%`);
+    }
+    if (probe) {
+      writeFileSync(PROBE_LOG, Buffer.concat(probe));
+      console.log(`      probe log -> ${PROBE_LOG} (${probe.length} records;`
+        + ` read it with tools/dac-log.mjs)`);
+    }
     console.log(`      one frame of MUSIC costs ${(totalCyc / Math.max(1, consumed)).toFixed(0)}`
       + ` cyc (${(100 * totalCyc / Math.max(1, consumed) / FRAME_CYCLES).toFixed(0)}%`
       + ` of a vblank) — over 100% and the music runs slow by exactly that much`);
