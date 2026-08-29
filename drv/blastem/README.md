@@ -34,6 +34,22 @@ against a stock core to check that our patch is not itself the finding. The
 mirror's default branch is `libretro`, not `master` — `master` there is an old
 snapshot with no `Makefile.libretro`.
 
+## The probe log
+
+`MMLISP_PROBE_LOG=<file>` makes the patched core write an 8-byte record per
+event: every `$2A` write, every 68000 bus grab and release, and the instant of
+each Z80 vblank. Cycles are master clocks. `tools/dac-log.mjs` reads it.
+
+Nothing is written when the variable is unset — the emulated machine's timing
+must not depend on whether it is being watched.
+
+One caveat on `MML_PROBE_DACPC`, the Z80 PC at each DAC write: the x86 JIT does
+not keep `context->pc` current between basic blocks, so it reports 0 about 40%
+of the time and otherwise only ever names the emit routine itself — which is
+where the write is, not where the time went. Attributing a hole to the code
+that caused it needs the JS harness (`drv/tools/z80cpu.mjs`), which interprets
+and therefore knows. The record is logged anyway because it costs nothing.
+
 ## What it is worth
 
 BlastEm is the reference we are arguing with while the hardware round is

@@ -1,0 +1,131 @@
+diff --git a/genesis.c b/genesis.c
+index 4f41271..d063957 100644
+--- a/genesis.c
++++ b/genesis.c
+@@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
+ 	genesis_context * gen = z_context->system;
+ #ifdef NEW_Z80
+ 	z_context->int_cycle = vdp_next_vint_z80(gen->vdp);
++	mml_probe_log(MML_PROBE_VINT, 0, z_context->int_cycle);
+ 	z_context->int_end_cycle = z_context->int_cycle + Z80_INT_PULSE_MCLKS;
+ 	z_context->int_value = 0xFF;
+ 	z80_sync_cycle(z_context, z_context->sync_cycle);
+ #else
+ 	z_context->int_pulse_start = vdp_next_vint_z80(gen->vdp);
++	mml_probe_log(MML_PROBE_VINT, 0, z_context->int_pulse_start);
+ 	z_context->int_pulse_end = z_context->int_pulse_start + Z80_INT_PULSE_MCLKS;
+ 	z_context->im2_vector = 0xFF;
+ #endif
+@@ -1387,6 +1389,8 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+ 		} else {
+ 			uint32_t masked = location & 0xFFF00;
+ 			if (masked == 0x11100) {
++				mml_probe_log(value & 1 ? MML_PROBE_GRAB : MML_PROBE_RELEASE,
++				              0, context->cycles);
+ 				if (value & 1) {
+ 					dputs("bus requesting Z80");
+ 					if (z80_enabled) {
+@@ -1766,6 +1770,11 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
+ 	genesis_context * gen = context->system;
+ 	sync_sound(gen, context->Z80_CYCLE);
+ 	if (location & 1) {
++		// The Z80's PC at the moment it fed the DAC. A hole in the sample clock
++		// is a stretch of engine code that ran without asking; this is what
++		// turns "the ISR starves it" into the name of a routine.
++		if (gen->ym->selected_reg == 0x2A && !gen->ym->selected_part)
++			mml_probe_log(MML_PROBE_DACPC, context->pc, gen->ym->current_cycle);
+ 		ym_data_write(gen->ym, value);
+ 	} else if (location & 2) {
+ 		ym_address_write_part2(gen->ym, value);
+diff --git a/util.c b/util.c
+index 2cba3fa..9afdf26 100644
+--- a/util.c
++++ b/util.c
+@@ -1109,3 +1109,25 @@ FILE* fopen_wrapper(const char *path, const char *mode)
+ 
+ #endif //defined(__ANDROID__) && !defined(IS_LIB)
+ 
++// ── MMLispDRV probe (see util.h) ───────────────────────────────────────────
++// Eight bytes a record, little-endian, so that a run of a few minutes is a few
++// megabytes and the reader is four lines of JavaScript. Buffered by stdio and
++// flushed at exit; a run that crashes loses at most a buffer, and a run that
++// crashes has already told you what you needed.
++static FILE *mml_probe_file;
++static int   mml_probe_tried;
++
++void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle)
++{
++	if (!mml_probe_tried) {
++		mml_probe_tried = 1;
++		const char *path = getenv("MMLISP_PROBE_LOG");
++		if (path && *path) mml_probe_file = fopen(path, "wb");
++	}
++	if (!mml_probe_file) return;
++	uint8_t rec[8] = {
++		kind, 0, value & 0xFF, value >> 8,
++		cycle & 0xFF, cycle >> 8, cycle >> 16, cycle >> 24
++	};
++	fwrite(rec, 1, sizeof(rec), mml_probe_file);
++}
+diff --git a/util.h b/util.h
+index 8b7d75d..fbfd6a3 100644
+--- a/util.h
++++ b/util.h
+@@ -2,6 +2,7 @@
+ #define UTIL_H_
+ 
+ #include <stdio.h>
++#include <stdint.h>
+ #include <time.h>
+ #include <wchar.h>
+ #include <stdarg.h>
+@@ -112,4 +113,21 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+ FILE* fopen_wrapper(const char *path, const char *mode);
+ #endif
+ 
++// ── MMLispDRV probe ────────────────────────────────────────────────────────
++// A timestamped log of the few events the MMLisp driver's DAC work turns on:
++// every $2A write, every Z80 bus grab, and the instant of each Z80 vblank. All
++// cycles are MASTER clocks (53,693,175 Hz NTSC), which is what every subsystem
++// in this emulator counts in.
++//
++// Off unless MMLISP_PROBE_LOG names a file, and it writes nothing at all in
++// that case — the emulated machine's timing must not depend on whether it is
++// being watched.
++#define MML_PROBE_DAC     1   /* value = the byte written to $2A            */
++#define MML_PROBE_GRAB    2   /* the 68000 asserted BUSREQ                  */
++#define MML_PROBE_RELEASE 3   /* ...and released it                         */
++#define MML_PROBE_VINT    4   /* the instant the Z80's /INT is due          */
++#define MML_PROBE_DACEN   5   /* value = the byte written to $2B            */
++#define MML_PROBE_DACPC   6   /* value = the Z80 PC that wrote $2A          */
++void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
++
+ #endif //UTIL_H_
+diff --git a/ym2612.c b/ym2612.c
+index c2973d1..de647c7 100644
+--- a/ym2612.c
++++ b/ym2612.c
+@@ -10,6 +10,7 @@
+ #include "wave.h"
+ #include "blastem.h"
+ #include "event_log.h"
++#include "util.h"   // mml_probe_log
+ 
+ //#define DO_DEBUG_PRINT
+ #ifdef DO_DEBUG_PRINT
+@@ -786,6 +787,7 @@ void ym_data_write(ym2612_context * context, uint8_t value)
+ 			break;
+ 		}
+ 		case REG_DAC:
++			mml_probe_log(MML_PROBE_DAC, value, context->current_cycle);
+ 			if (context->dac_enable) {
+ 				context->channels[5].output = (((int16_t)value) - 0x80) << 6;
+ 				//printf("DAC Write %X(%d) @ %d\n", value, context->channels[5].output, context->current_cycle);
+@@ -793,6 +795,7 @@ void ym_data_write(ym2612_context * context, uint8_t value)
+ 			break;
+ 		case REG_DAC_ENABLE:
+ 			//printf("DAC Enable: %X\n", value);
++			mml_probe_log(MML_PROBE_DACEN, value, context->current_cycle);
+ 			context->dac_enable = value & 0x80;
+ 			break;
+ 		}
