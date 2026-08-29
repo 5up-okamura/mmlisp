@@ -28,8 +28,12 @@ void waitSubTick(u32 subtick);
 /* Used by example/main.c only. */
 /* SGDK increments this from its own vertical interrupt handler, so it counts
  * REAL frames whether or not the main loop kept up — which is the only clock
- * the music's speed can honestly be measured against. */
-extern u32 vtimer;
+ * the music's speed can honestly be measured against.
+ *
+ * VOLATILE, and it has to be: the value changes in an interrupt, so a loop that
+ * waits on it is an infinite loop the moment the compiler decides one load will
+ * do. That is exactly what happened to verify-rom's frame wait at -Os. */
+extern vu32 vtimer;
 #define JOY_1        0
 #define BUTTON_A     0x0040
 #define BUTTON_B     0x0010

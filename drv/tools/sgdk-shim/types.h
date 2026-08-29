@@ -26,6 +26,7 @@ typedef unsigned short u16;  typedef short  s16;
 typedef unsigned int   u32;  typedef int    s32;
 typedef volatile u8    vu8;
 typedef volatile u16   vu16;
+typedef volatile u32   vu32;
 typedef u16 bool;
 
 #if !defined(uint8_t) && !defined(__int8_t_defined)
