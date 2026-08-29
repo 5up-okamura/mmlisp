@@ -19,6 +19,13 @@ Index:
   (P0 mixer prototype → P1 interface → P2 sequencer → P3 bring-up). **Read this
   first before touching the driver.** The design itself now lives in
   `docs/driver.md`; this file is the decision record and the running state.
+  **Its LAST section is a HANDOFF (2026-08-29) — read that first.** The DAC work
+  on branch `drv/dac-rate-probe` is unfinished and the user's verdict on it is
+  "it has never once been good": the machine reports 100% music with 0 lost
+  frames and it still sounds unstable, because what wobbles is the SAMPLE CLOCK
+  and not the frame budget. Three hardware bugs there were invisible to every
+  gate, and one fitted model constant was falsified by the machine. **The model
+  cannot predict this machine — fix that before changing the engine again.**
 - [plan-subtick-timing.md](plan-subtick-timing.md) — **sub-frame note timing:
   step 1 LANDED 2026-08-05** (`SLOT_SUBS = 3`, all three ports, gates green;
   the design is now `docs/driver.md` §3.5). Note onsets ride the mixer's three

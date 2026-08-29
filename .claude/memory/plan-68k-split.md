@@ -3937,3 +3937,102 @@ samples to 48.9 (against 55.48 nominal) and nearly double the DAC's holes
 (1.86 -> 3.12 a frame). `EMIT_BUSY_POLLS` defaults OFF now; `EMIT_BUSY=1`
 builds them back. The shape without them is what was demonstrably playing
 before they were added.
+
+# =====================================================================
+# HANDOFF — 2026-08-29. Read THIS section first; the rest is detail.
+# =====================================================================
+
+Branch `drv/dac-rate-probe`, 65 commits ahead of `main`. **`main` is untouched
+and is the pre-DAC-work state.** Everything below is the probe branch.
+
+Build the probe branch with BOTH knobs set, or you get a broken configuration:
+
+    PCM_SPG=1 TIMER_B_K=1 node tools/install-sgdk.mjs <proj> --song <score>
+
+## THE ONE FACT THAT SHOULD SHAPE WHAT YOU DO NEXT
+
+The machine (BlastEm, `verify-hello-world`, `~/Desktop/sin008.mmlisp` — a PCM
+drum track) reports, on the engine now on the branch:
+
+    music x256 0100 (100%)   lost/s 0   starv/s 0   host 99.6%
+
+**and it still sounds badly unstable.** The frame budget is NOT the problem. The
+sequencer is consuming exactly one slot per vblank. What wobbles is the SAMPLE
+CLOCK: the intervals between $2A writes. On a percussion track that is
+indistinguishable from tempo wobble by ear, which is why it was misdiagnosed as
+one for several rounds.
+
+So: stop looking at `music x256`. It is green and it is not the question. The
+question is why the emit interval is not 1075 cycles every time.
+
+## WHAT IS VERIFIED ON THE MACHINE
+
+Three bugs, all found by running on BlastEm, none of them visible to any gate:
+
+1. **A `di` longer than the VDP's /INT pulse destroys the vblank.** The pulse is
+   ~228 Z80 cycles and it is DROPPED, not latched. An idle loop guarded by `di`
+   played nothing at all. `z80cpu.mjs` models /INT as a pulse now
+   (`Z80Cpu.INT_PULSE`, `decay()`) and the harnesses age it.
+2. **The ring cursor must wrap on every emit path.** The inline emit relied on
+   the mixer's segment bounds keeping it short of RING_TOP — true only while the
+   feed advanced in step with the mix, which it stopped doing when the idle loop
+   began feeding. It read the engine's own code as samples.
+3. **The catch-up compounds.** An ISR that overruns loses the next interrupt;
+   the catch-up then runs two frames inside the following one and overruns
+   again. It settles into a steady loss (measured 79% music, 12 lost/s) and
+   never recovers. A caught-up frame now consumes its slot without mixing.
+
+## WHAT IS FALSIFIED
+
+**"The machine charges N cycles per YM access" is WRONG.** `frame-budget --ym 55`
+reproduced both hardware points exactly, and predicted that removing the
+per-write BUSY polls would take the losing revision from 79% to 100%. On the
+machine that change made things AUDIBLY WORSE. So:
+
+* the fitted constant was a coincidence — do not resurrect it;
+* **the per-write BUSY polls matter.** Writing the YM without waiting out BUSY
+  loses writes on this machine, and a lost $2A write is a dropped sample.
+  `EMIT_BUSY_POLLS` is ON in the engine now on the branch.
+
+## WHAT IS STILL UNKNOWN, AND IT IS THE BLOCKER
+
+**The model cannot predict this machine.** `frame-budget` puts the ISR at p50
+43% of a vblank; the machine's behaviour on the revision it lost frames on
+requires ~20% of frames past 100%. The shape is wrong, not the scale, and the
+three knobs (`--pace` the $8000 window, `--busy` the YM BUSY window, `--stall`
+the 68000's bus grab) cannot produce it. Every attempt to fit one produced a
+number that matched the observable and mispredicted the next change.
+
+Until the model predicts the machine, every engine change is a guess, and each
+guess costs a build-and-listen round of the user's time. **Do not spend those
+rounds on guesses.** Fix the model first, or measure the machine directly.
+
+## THE TOOLS, AND WHAT THEY ARE WORTH NOW
+
+* `frame-budget` — rewritten as a loop over INSTRUCTIONS with vblanks at fixed
+  instants: /INT is requested at the instant and taken only if the Z80 can take
+  it. This is what made `music` a curve instead of a step. Reports the ISR's own
+  length (cycles to the idle loop) and "ISR past its own vblank". Trustworthy in
+  SHAPE; its absolute cost model is not calibrated.
+* `scratchpad/holes.mjs` — emit-interval and hole analysis on the real $2A
+  stream, with the interval broken down by tenth of the frame. **This is the
+  tool that matters for the remaining problem.**
+* `scratchpad/asks.mjs` — the XGM2 rule, measured directly: the stretches where
+  the engine runs longer than a sample period without asking `emit_try`. Every
+  one of those is a Timer B overflow lost for ever (the flag is one bit).
+* `engine-gate` FAILS 8 of 12. The DAC's per-frame write count changed by design
+  (the ring's fill drives the feed now, not a per-frame quota) and
+  `drv-player.js` — the port spec — has NOT been moved to that model. `c-gate`
+  (the 68k sequencer), `ring-gate`, `selftest` and `sgdk-lint` are all clean;
+  nothing on the 68k side moved.
+* **9,987 Hz (TIMER_B_K=16) is broken by this work.** The branch is 3,329 Hz only.
+
+## PROCESS, AND THIS IS THE PART I GOT WORST
+
+* I shipped stacked changes and then could not attribute a regression. **One
+  variable per build.**
+* I reported metric movement as progress. The user's judgement — "it has never
+  once been good" — is the correct summary of the whole line of work.
+* I asked for listening tests that were my experiments, not improvements. If a
+  build is an experiment, say so, and only ask when the answer actually
+  discriminates between hypotheses.
