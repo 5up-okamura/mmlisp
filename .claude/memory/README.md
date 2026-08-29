@@ -57,6 +57,13 @@ Index:
   unmatched-bracket marks + badge) with the implementation deviations worth
   keeping; still open are snippet completions, expand-selection, a touch
   symbol bar. Also holds the standing "never auto-repair brackets" decision.
+- [plan-68k-split.md](plan-68k-split.md) — the 68k-sequencer/Z80-PCM-engine
+  split: the decision record, the port's running state, and every hardware and
+  emulator round since. **Read its HANDOFF section (top of file) before
+  touching the driver.** Currently: the measurement loop is closed (BlastEm as
+  a libretro core + a probe ROM, all in-container, no listening round), and the
+  DAC delivers 68% of the samples it owes because the mixer's pacing pads spin
+  without asking `emit_try`.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic

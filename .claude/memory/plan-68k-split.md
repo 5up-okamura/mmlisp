@@ -3939,7 +3939,116 @@ builds them back. The shape without them is what was demonstrably playing
 before they were added.
 
 # =====================================================================
-# HANDOFF — 2026-08-29. Read THIS section first; the rest is detail.
+# HANDOFF — 2026-08-30. Read THIS section first; the rest is detail.
+# =====================================================================
+
+Branch `claude/plan-68k-split-handoff-2dlw0v`, from `drv/dac-rate-probe`.
+**`main` is untouched.** The engine is UNCHANGED — still ea020d4's revert to
+4d73e40, the only state a machine has measured at 100%.
+
+## THE LOOP IS CLOSED. You can measure without asking anyone.
+
+    sh drv/blastem/setup.sh                                    # once
+    node drv/tools/blastem-probe.mjs drv/tests/m3-pcm-softmix.mmlisp --seconds 10
+
+BlastEm builds as a libretro core with no SDL and no display, and
+`drv/verify-rom/` is a Mega Drive ROM that plays a score through the SHIPPED
+glue (mmlispdrv.c, mmlispseq.c, the engine image) and publishes the example
+program's counters into 68000 work RAM, which the frontend reads straight out
+of the core. Output: the four numbers, plus the YM2612's own 53 kHz stereo
+output as a .wav. **No listening round, no desktop, no hardware.**
+
+Add `MMLISP_PROBE_LOG=<file>` and the patched core logs every $2A write, every
+68000 bus grab and every Z80 vblank; `tools/dac-log.mjs` reads it.
+
+Three toolchain traps are documented in `drv/verify-rom/README.md` and all
+three present as the ROM dying silently — read that file before touching the
+build.
+
+## THE DIAGNOSIS, AND IT IS MECHANICAL NOW
+
+    music x256 0100 (100%) · host 00ff · lost/s 0 · starv/s 0
+    rate 2267 Hz measured against 3329 nominal — 68.1% of the samples owed
+    17.89 sample periods LOST a frame
+    by tenth of the frame:  2412 3380 1606 1149 1181 1148 1117 1086 1252 1568
+
+The sequencer is exactly on time and a THIRD OF THE SAMPLES NEVER HAPPEN. That
+is why "it sounds unstable" survived every green gate: `music` counts FRAMES,
+and a frame can be on time while the samples inside it are not.
+
+`tools/frame-budget.mjs --starve` charges every cycle executed after the sample
+clock is already overdue to the PC executing it (the emulator's x86 JIT cannot
+do this; the JS Z80 interprets, so it can):
+
+    cycles spent PAST the sample deadline: 20267 a frame (18.8 sample periods)
+      pd85     6378  31.5%    mix_add_s9_lp's pacing pad — a MUTED voice
+      pd5      3960  19.5%    mix_first_s1_lp's pacing pad
+      et_busy  2026  10.0%    the emit's own YM BUSY poll
+      emit_try  691   3.4%
+
+`pd*` are the mixer's pacing delay loops (`src/mixer.z80`, generated):
+
+    mix_add_s9_lp:
+            call emit_try          ; a sample IF one is due
+            ld   a,(G_PAD)         ; pace: what this frame can afford
+    pd85:   dec  a
+            jr   nz,pd85
+            ...
+
+One ask, then a spin of up to a few thousand cycles. **Timer B's overflow flag
+is ONE BIT — a missed overflow is gone for ever**, so every spin longer than a
+sample period is a permanently lost sample. That is XGM2's rule
+("<=168 cycles between sample outputs EVERYWHERE") being violated by the pacing
+mechanism itself, and it accounts for over half the deficit on its own.
+
+## THE MODEL IS NOT THE BLOCKER IT WAS DECLARED TO BE
+
+The 2026-08-29 note ended "the model cannot predict this machine ... every
+engine change is a guess". That was about `music x256`/`lost/s` on a different
+revision. For **the DAC's sample clock** the model and the machine agree to
+within a percent:
+
+                         model     machine
+      rate             2271 Hz     2267 Hz
+      p05/p50/p95   782 1083 1630   781 1081 1641
+      periods lost/frame 18.08       17.89
+
+    PCM_SPG=1 TIMER_B_K=1 node tools/frame-budget.mjs <score> --probe-log out/model.log
+    node tools/dac-log.mjs out/model.log      # and out/probe.log for the machine
+
+So the DAC work can be done in JS at JS speed. Keep the comparison honest by
+re-running the emulator after each change rather than trusting the model alone.
+
+Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
+`music` reads 0x0100 in the same run. The DAC numbers are sound; that internal
+inconsistency is not, and nothing should be concluded from the ISR percentiles.
+
+## THE OBVIOUS FIX, NOT YET AGREED
+
+Make the pacing pads ask. A pad loop that calls `emit_try` instead of `dec a`
+both paces and feeds, which is XGM2's structure. It changes the pad's
+granularity (emit_try is ~38 cycles when not due) and needs the generator's pad
+arithmetic reworked, so it is a design change and not a patch. Confirm before
+implementing (CLAUDE.md).
+
+## WHAT IS STILL TRUE FROM BEFORE
+
+* The three machine-found bugs and their fixes stand (/INT is a pulse, the ring
+  cursor must wrap on every emit path, a caught-up frame consumes its slot
+  without mixing).
+* The per-write BUSY polls are ON and removing them made the machine audibly
+  worse; note that `et_busy` is now measured at 10% of the starvation, so this
+  is a real trade and not a free win either way.
+* `engine-gate` fails 8 of 12: `drv-player.js` has not been moved to the
+  ring-fill DAC model. Unchanged, still the remaining port work.
+* 9,987 Hz (TIMER_B_K=16) is broken; the branch is 3,329 Hz only.
+* Never run on real hardware.
+* The 68000's bus grab measures 665 cycles a frame across three grabs — about
+  1% of the frame. It is not a candidate for anything, and frame-budget's fixed
+  `--stall` charge is not what is missing from the model.
+
+# =====================================================================
+# HANDOFF — 2026-08-29 (superseded by the section above; kept for detail)
 # =====================================================================
 
 Branch `drv/dac-rate-probe`, 65 commits ahead of `main`. **`main` is untouched
