@@ -62,8 +62,9 @@ Index:
   emulator round since. **Read its HANDOFF section (top of file) before
   touching the driver.** Currently: the measurement loop is closed (BlastEm as
   a libretro core + a probe ROM, all in-container, no listening round), and the
-  DAC delivers 68% of the samples it owes because the mixer's pacing pads spin
-  without asking `emit_try`.
+  DAC's 32% sample deficit is FIXED — the pacing pad was 41% of the interrupt,
+  which pushed it past its vblank and made the mixer run every other frame.
+  Next: a hardware round, and `drv-player.js` on the ring-fill model.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic

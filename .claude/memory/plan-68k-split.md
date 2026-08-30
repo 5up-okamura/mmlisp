@@ -3942,6 +3942,107 @@ before they were added.
 # HANDOFF — 2026-08-30. Read THIS section first; the rest is detail.
 # =====================================================================
 
+## FIXED. The DAC delivers 99% of its samples, and the fix is one constant.
+
+`PAD_FRACTION` 0.73 -> 0.40 in `tools/gen-mixer.mjs` (conditional on
+PCM_GROUP == 1; the unmeasured PCM_GROUP > 1 path keeps 0.73).
+
+    PAD 0.73   ISR p50 121% of a vblank · 64% of interrupts overran · DAC 68%
+    PAD 0.40   ISR p50  74%             ·  0.3%                     · DAC 99%
+
+    per score, on the emulator (rate / worst hole in sample periods):
+      m3-pcm-softmix  68.1% 147.4  ->  99.1%  2.3
+      m2-pcmloop      68.5% 149.8  ->  99.3% 11.8
+      m3-pcm-slice    69.1% 295.0  ->  98.8%  2.4
+      m3-pcm-volmix   97.4%  20.7  ->  97.5%  2.9
+      m3-fm6-pcm      97.5%   2.9  ->  97.5%  2.9
+
+THE CHAIN, and every link is measured: the pads are 41% of the interrupt (pd85
+21.3%, pd5 19.8%, both `dec a / jr nz` spins) -> the interrupt does not fit in
+a vblank -> the VDP's /INT is a PULSE so the next one is lost outright -> the
+catch-up consumes that frame's slot WITHOUT MIXING, deliberately (§6.7) -> the
+mixer runs every OTHER frame -> the ring drains, the DAC starves, and the
+sequencer re-primes with a silent frame every dozen frames, which on percussion
+is a click.
+
+**`music x256` reads a perfect 0x0100 the whole time**, because the catch-up
+keeps the FRAME count right while the samples inside the frames go missing.
+That is why this survived every gate, every hardware round and every reading of
+the on-screen counters, and why it presented as "tempo wobble" for months.
+
+WHY THE PAD WAS WRONG rather than merely too big: its job is spacing samples 2
+and 3 of a Timer B group, and **at PCM_GROUP = 1 there is no group** — every
+sample is gated and the timer re-synchronises every one of them. Not zero,
+though: below 0.30 the mixer bursts its whole chunk at the frame head and a
+single 73-period hole appears where the ring's clamp drops samples.
+
+## THE LOOP IS CLOSED. You can measure without asking anyone.
+
+    sh drv/blastem/setup.sh                                    # once
+    node drv/tools/blastem-probe.mjs drv/tests/m3-pcm-softmix.mmlisp --seconds 10
+
+BlastEm builds as a libretro core with no SDL and no display, and
+`drv/verify-rom/` is a Mega Drive ROM that plays a score through the SHIPPED
+glue (mmlispdrv.c, mmlispseq.c, the engine image) and publishes the example
+program's counters into 68000 work RAM, which the frontend reads straight out
+of the core. Output: the four numbers, plus the YM2612's own 53 kHz stereo
+output as a .wav. **No listening round, no desktop, no hardware.**
+
+`MMLISP_PROBE_LOG=<file>` makes the patched core log every $2A write, every
+68000 bus grab and every Z80 vblank; `tools/dac-log.mjs` reads it.
+
+Three toolchain traps are documented in `drv/verify-rom/README.md` and all
+three present as the ROM dying silently — read that file before touching the
+build.
+
+## THE INSTRUMENTS, AND WHICH QUESTION EACH ANSWERS
+
+* `tools/dac-log.mjs` — the sample clock's distribution, its holes, and where
+  in the frame they fall. Reads BOTH the emulator's log and frame-budget's.
+* `frame-budget --asks` — separates the two ways a sample dies, which have
+  OPPOSITE fixes: the ASK INTERVAL (a stretch longer than a sample period
+  throws a Timer B overflow away for ever, the flag being one bit) and an EMPTY
+  RING (the ask arrived and the mixer had nothing ready). Measured before the
+  fix: 0.28 overflows a frame thrown away against 24 empty-ring asks a frame —
+  the call sites were never the problem.
+* `frame-budget --profile` — every cycle inside the handler charged to the
+  routine executing it. This is what named the pads.
+* `frame-budget --starve` — cycles spent past the sample deadline, by routine.
+  Related but not the same question; --profile is the one for "why does the ISR
+  not fit".
+
+## THE MODEL IS NOT THE BLOCKER IT WAS DECLARED TO BE
+
+The 2026-08-29 note ended "the model cannot predict this machine ... every
+engine change is a guess". That was about `music x256`/`lost/s` on a different
+revision. For **the DAC's sample clock** the model and the machine agree to
+within a percent (2271 vs 2267 Hz; 18.08 vs 17.89 periods lost a frame), which
+is how the fix above was found in JS and only then confirmed on the emulator.
+
+Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
+`music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
+suspect — the catch-up is exactly why both are true at once.
+
+## WHAT IS NEXT, IN ORDER
+
+1. **Hardware.** Nothing here has ever run on a real Mega Drive. The emulator
+   agreed with the machine on every number that was checked, but the last round
+   is still owed.
+2. `engine-gate` fails 8 of 12: `drv-player.js` has not been moved to the
+   ring-fill DAC model. Unchanged, still the remaining port work.
+3. **`src/mixer.z80`, `sgdk/mmlispdrv_bin.h` and `sgdk/mmlispdrv.bin` are STALE
+   in the repo** — at HEAD no combination of the knobs reproduces the committed
+   `mixer.z80`, so the generator has moved since they were last written. They
+   were left alone rather than regenerated silently, because that changes the
+   shipped engine's bytes. Regenerating them is its own reviewed change; until
+   then every tool run leaves them dirty and that diff is not work anyone did.
+4. 9,987 Hz (TIMER_B_K=16) is still broken; the branch is 3,329 Hz only. The
+   pad default is conditional so reviving it does not inherit 0.40 untested.
+5. Every gate needs `PCM_SPG=1 TIMER_B_K=1` in the environment or it fails on
+   the sample bank's stamp — `mml_rate.h` is committed at SPG=1 while the
+   generators default to 3. Pre-existing, and worth making consistent.
+
+
 Branch `claude/plan-68k-split-handoff-2dlw0v`, from `drv/dac-rate-probe`.
 **`main` is untouched.** The engine is UNCHANGED — still ea020d4's revert to
 4d73e40, the only state a machine has measured at 100%.
