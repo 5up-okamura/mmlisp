@@ -221,7 +221,12 @@ try {
     const starve = STARVE ? new Map() : null;
     const prof = PROFILE ? new Map() : null;
     let lastDac = 0;
-    const EMIT_TRY = sym("emit_try");
+    // `emit_try` exists only in the PCM_GROUP = 1 build; the other shape gates
+    // inline and has no single ask site. The ask statistics are therefore
+    // optional, but the SENDS and the ring's fill are not — they are what a run
+    // is measured by, and reporting them only when the symbol happened to exist
+    // is how a PCM_GROUP > 1 run came back looking like it emitted nothing.
+    const EMIT_TRY = sym("emit_try") ?? -1;
     const G_FILL = sym("G_FILL");
     let lastAsk = 0, askGaps = null, dueEmpty = 0, dueSent = 0, asks = 0;
     if (ASKS) askGaps = [];
@@ -441,26 +446,28 @@ try {
     console.log(`      ISR past its own vblank: ${isrOver}/${costs.length} `
       + `(${(100 * isrOver / costs.length).toFixed(1)}%) — each one is a lost interrupt, `
       + `and the catch-up runs two frames inside the next`);
-    if (askGaps && askGaps.length) {
-      const g = [...askGaps].sort((a, b) => a - b);
-      const q = (x) => g[Math.floor((g.length - 1) * x)];
-      const late = askGaps.filter((v) => v > SAMPLE_CY);
-      // Overflows thrown away: a gap of n periods records one and loses n-1.
-      const thrown = late.reduce((t, v) => t + Math.floor(v / SAMPLE_CY) - 1, 0);
+    if (askGaps) {
       const frames = Math.max(1, consumed);
-      console.log(`      asks ${(asks / frames).toFixed(1)} a frame`
-        + ` · gap p50 ${q(0.5).toFixed(0)} · p95 ${q(0.95).toFixed(0)} · max ${q(1).toFixed(0)}`
-        + ` (a sample is ${SAMPLE_CY.toFixed(0)})`);
-      console.log(`      gaps past a sample period: ${late.length}`
-        + ` (${(late.length / frames).toFixed(2)} a frame) —`
-        + ` ${(thrown / frames).toFixed(2)} overflows a frame THROWN AWAY`);
+      if (askGaps.length) {
+        const g = [...askGaps].sort((a, b) => a - b);
+        const q = (x) => g[Math.floor((g.length - 1) * x)];
+        const late = askGaps.filter((v) => v > SAMPLE_CY);
+        // Overflows thrown away: a gap of n periods records one and loses n-1.
+        const thrown = late.reduce((t, v) => t + Math.floor(v / SAMPLE_CY) - 1, 0);
+        console.log(`      asks ${(asks / frames).toFixed(1)} a frame`
+          + ` · gap p50 ${q(0.5).toFixed(0)} · p95 ${q(0.95).toFixed(0)} · max ${q(1).toFixed(0)}`
+          + ` (a sample is ${SAMPLE_CY.toFixed(0)})`);
+        console.log(`      gaps past a sample period: ${late.length}`
+          + ` (${(late.length / frames).toFixed(2)} a frame) —`
+          + ` ${(thrown / frames).toFixed(2)} overflows a frame THROWN AWAY`);
+      }
       if (fillTrace.length)
         console.log("      ring fill at each vblank: "
           + fillTrace.map(([f, v]) => `${f}:${v}`).join(" "));
       console.log(`      DAC SENT ${(sends / frames).toFixed(1)} samples a frame`
         + ` against ${(FRAME_CYCLES / SAMPLE_CY).toFixed(1)} the clock owes`
         + ` — ${(100 * sends / frames / (FRAME_CYCLES / SAMPLE_CY)).toFixed(1)}%`);
-      console.log(`      asks that found the timer due: ${dueSent} sent,`
+      if (asks) console.log(`      asks that found the timer due: ${dueSent} sent,`
         + ` ${dueEmpty} found the ring EMPTY`
         + ` (${(dueEmpty / frames).toFixed(2)} a frame)`);
     }
