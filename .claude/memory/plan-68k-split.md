@@ -3976,6 +3976,64 @@ sample is gated and the timer re-synchronises every one of them. Not zero,
 though: below 0.30 the mixer bursts its whole chunk at the frame head and a
 single 73-period hole appears where the ring's clamp drops samples.
 
+## TIMER B ABOVE 3,329 Hz — PROBED 2026-08-30, NOT ADOPTED
+
+Timer B's shortest period is 16 FM samples, so 3,329 Hz is the ceiling for
+gating EVERY sample. Above it the rate is 3,329 x N with one gate per N
+samples, and samples 2..N have no clock at all — their spacing is code
+placement, i.e. the pad.
+
+**Why a PCM_GROUP > 1 build emits nothing, and it is not what it looks like.**
+It assembles (7,417 B at N=3), `gate_wait` and `G_R27G` are all present. But
+`G_EMITS` — the per-frame emit debt the group's emit charges every send
+against — is now ONLY an `equ`: the code that settled it per frame went out
+with the quota it belonged to (5bf1a15, "ring-fill accounting replaces the
+per-frame emit quota"), so it reads 0 for ever and the gated emit never fires
+once. The generated mixer still reads and writes it in 7 places.
+
+Restoring that settle (verbatim from 5bf1a15^) DOES make the emit fire —
+measured 106 samples a frame at N=2, 152 at N=3. It is still not enough: the
+group's emit charges `G_EMITS` and never touches `G_FILL`, so the ring's fill
+only ever grows, `pp_canmix` sees a full ring every frame and drops the audio,
+and the DAC plays whatever the lead contained. Settling the fill from
+`G_EBASE - G_EMITS` at the frame's HEAD (the feed keeps running after the ISR
+returns, so a tail settle misses those sends) then makes the fill UNDERFLOW —
+the mixer never produced, because it had already been dropping.
+
+**So it is not two wires.** The producer/consumer rework changed a SET of
+coupled ring invariants — what the prime frame leaves, what `G_TICKSF` means,
+when the fill is settled, when a frame drops its audio — and the group path
+depends on the OLD set. Reviving it means restoring that set, not reconnecting
+a symbol. The engine was reverted; none of the above is on the branch.
+
+**The jitter, measured anyway.** Even half-wired, the $2A timestamps are
+produced by the real group mechanism, so the CLOCK is representative even
+though the sample values are stale:
+
+    3,329 Hz  p05  739 · p50 1027 · p95 1536   nominal 1075
+    6,658 Hz  p05  228 · p50  402 · p95  864   nominal  538
+    9,987 Hz  p05  228 · p50  242 · p95  630   nominal  358
+
+    by tenth of the frame, 6,658 Hz:  701 541 537 537 538 538 541 537 538 570
+
+The MEAN is exact — the timer holds it. The instantaneous spacing is BIMODAL:
+the ungated samples bunch (228) and the gated one waits (864), a swing of about
++/-60% around the period. That is structural, not a tuning problem: the short
+gap is whatever code sits between two inline emits, and the pad is what is
+supposed to stretch it to a period — the same pad that at PCM_GROUP = 1 was
+41% of the interrupt and cost a third of the samples. Here it cannot be removed,
+because it IS the sample positions.
+
+Caveat kept honest: the mixer was not running in those N=2/N=3 runs, so the
+work between emits is not what a working build would have. The bunching is
+inherent to the shape; the exact percentiles are not final.
+
+**Timer A** would make every sample gated at any rate (52-53,270 Hz, 1 FM
+sample resolution) with the current `emit_try` unchanged — no group, no pad.
+CSM owns it (§9), but only for scores with an `fm3-csm` track, and `isCsm` is
+already a per-track flag. Making the DAC rate a compile-time property of the
+score is the unexplored option and looks cheaper than reviving the group.
+
 ## THE LOOP IS CLOSED. You can measure without asking anyone.
 
     sh drv/blastem/setup.sh                                    # once
