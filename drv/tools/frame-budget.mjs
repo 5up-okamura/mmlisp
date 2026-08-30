@@ -137,6 +137,26 @@ const PROBE_LOG = lIdx >= 0 ? argv[lIdx + 1] : null;
 // are reported against the engine's own symbols. A hole is not a mystery once
 // you can see the routine sitting in it.
 const STARVE = argv.includes("--starve");
+// `--asks` measures the two things that can lose a sample, separately, because
+// they have opposite fixes:
+//
+//   the ASK INTERVAL   — how long the engine runs between calls to emit_try.
+//                        Timer B's overflow flag is ONE BIT, so any stretch
+//                        longer than a sample period throws an overflow away
+//                        and no later ask can get it back. This is XGM2's
+//                        "<=168 cycles between outputs EVERYWHERE" rule, and
+//                        it is a property of where the calls are.
+//   an EMPTY RING      — the ask arrived, the timer was due, and there was no
+//                        finished sample to send. Nothing is thrown away here;
+//                        the sample is late, and the fix is in the MIXER's
+//                        production, not in the call sites.
+const ASKS = argv.includes("--asks");
+// `--profile` charges EVERY cycle spent inside the interrupt handler to the
+// routine executing it. Not the same question as --starve: that one asks who is
+// running while the DAC waits, this one asks why the handler does not fit in a
+// vblank — and an ISR that does not fit loses the next one outright, because
+// the VDP's /INT is a pulse and there is nothing to take late.
+const PROFILE = argv.includes("--profile");
 
 const tmp = mkdtempSync(join(tmpdir(), "budget-"));
 try {
@@ -199,7 +219,22 @@ try {
     // PCM_TICK_CY: what the engine's own clock owes a sample, in Z80 cycles.
     // Taken from the generator so this cannot drift from the build under test.
     const starve = STARVE ? new Map() : null;
+    const prof = PROFILE ? new Map() : null;
     let lastDac = 0;
+    const EMIT_TRY = sym("emit_try");
+    const G_FILL = sym("G_FILL");
+    let lastAsk = 0, askGaps = null, dueEmpty = 0, dueSent = 0, asks = 0;
+    if (ASKS) askGaps = [];
+    // The ring's fill, sampled at each vblank, and the sends counted exactly.
+    //
+    // NOT summed from per-instruction deltas of G_FILL, which is what this did
+    // first and got a wrong answer from: G_FILL is 16 bits held as two bytes and
+    // emit_try borrows across them (low 0 -> high-1, low = 255), so every
+    // crossing of a 256 boundary looks like +255 of production. It reads
+    // correctly while the ring stays under 256 and inflates fivefold above it,
+    // which is exactly the regime a fix moves it into. Sends are unambiguous.
+    let sends = 0;
+    const fillTrace = [];
     const rec = (kind, value, zcyc) => {
       const b = Buffer.alloc(8);
       b[0] = kind; b.writeUInt16LE(value & 0xffff, 2);
@@ -258,6 +293,7 @@ try {
         // routine that ended it.
         if (a === 0x4001 && addr0 === 0x2a) {
           if (probe) { rec(1, d, tcyc); rec(6, cpu.pc & 0xffff, tcyc); }
+          sends++;
           lastDac = tcyc;
         }
         if (probe && a === 0x4001 && addr0 === 0x2b) rec(5, d, tcyc);
@@ -327,18 +363,31 @@ try {
 
       winReads = 0; ymTouch = 0;
       const pcBefore = cpu.pc;
+      if (askGaps && pcBefore === EMIT_TRY) {
+        asks++;
+        if (lastAsk) askGaps.push(tcyc - lastAsk);
+        lastAsk = tcyc;
+        // The two failure modes, told apart at the only moment they differ.
+        if (enableB && tcyc >= gateAt) {
+          const fill = ram[G_FILL] | (ram[G_FILL + 1] << 8);
+          if (fill) dueSent++; else dueEmpty++;
+        }
+      }
       const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
       // Charged only past the deadline: cycles inside the sample's own period
       // are the engine doing its job, and counting them would bury the answer
       // under the mixer.
       if (starve && tcyc - lastDac > SAMPLE_CY)
         starve.set(pcBefore, (starve.get(pcBefore) ?? 0) + c);
+      if (prof && wasInIsr) prof.set(pcBefore, (prof.get(pcBefore) ?? 0) + c);
       cpu.decay(c);
       tcyc += c;
 
       if (tcyc >= nextVbl) {
         vbl++;
         if (probe) rec(4, 0, tcyc);
+        if (askGaps && (vbl <= 24 || vbl % 8 === 0) && fillTrace.length < 48)
+          fillTrace.push([vbl, ram[G_FILL] | (ram[G_FILL + 1] << 8)]);
         nextVbl += FRAME_CYCLES;
         // What the host does every real frame (sgdk/mmlispdrv.c MMLisp_frame):
         // take the Z80 bus, top the ring up, stamp the vblank the engine's
@@ -392,32 +441,57 @@ try {
     console.log(`      ISR past its own vblank: ${isrOver}/${costs.length} `
       + `(${(100 * isrOver / costs.length).toFixed(1)}%) — each one is a lost interrupt, `
       + `and the catch-up runs two frames inside the next`);
-    if (starve && starve.size) {
-      // Nearest symbol at or below the PC, from the image's own table.
-      const syms = [...built.symbols.entries()]
-        .filter(([, v]) => typeof v === "number" && v < 0x2000)
-        .sort((a, b) => a[1] - b[1]);
-      const nameOf = (pc) => {
-        let lo = 0, hi = syms.length - 1, best = null;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          if (syms[mid][1] <= pc) { best = syms[mid]; lo = mid + 1; } else hi = mid - 1;
-        }
-        return best ? `${best[0]}+${pc - best[1]}` : `0x${pc.toString(16)}`;
-      };
-      const byRoutine = new Map();
-      for (const [pc, c] of starve) {
-        const r = nameOf(pc).split("+")[0];
-        byRoutine.set(r, (byRoutine.get(r) ?? 0) + c);
+    if (askGaps && askGaps.length) {
+      const g = [...askGaps].sort((a, b) => a - b);
+      const q = (x) => g[Math.floor((g.length - 1) * x)];
+      const late = askGaps.filter((v) => v > SAMPLE_CY);
+      // Overflows thrown away: a gap of n periods records one and loses n-1.
+      const thrown = late.reduce((t, v) => t + Math.floor(v / SAMPLE_CY) - 1, 0);
+      const frames = Math.max(1, consumed);
+      console.log(`      asks ${(asks / frames).toFixed(1)} a frame`
+        + ` · gap p50 ${q(0.5).toFixed(0)} · p95 ${q(0.95).toFixed(0)} · max ${q(1).toFixed(0)}`
+        + ` (a sample is ${SAMPLE_CY.toFixed(0)})`);
+      console.log(`      gaps past a sample period: ${late.length}`
+        + ` (${(late.length / frames).toFixed(2)} a frame) —`
+        + ` ${(thrown / frames).toFixed(2)} overflows a frame THROWN AWAY`);
+      if (fillTrace.length)
+        console.log("      ring fill at each vblank: "
+          + fillTrace.map(([f, v]) => `${f}:${v}`).join(" "));
+      console.log(`      DAC SENT ${(sends / frames).toFixed(1)} samples a frame`
+        + ` against ${(FRAME_CYCLES / SAMPLE_CY).toFixed(1)} the clock owes`
+        + ` — ${(100 * sends / frames / (FRAME_CYCLES / SAMPLE_CY)).toFixed(1)}%`);
+      console.log(`      asks that found the timer due: ${dueSent} sent,`
+        + ` ${dueEmpty} found the ring EMPTY`
+        + ` (${(dueEmpty / frames).toFixed(2)} a frame)`);
+    }
+    // Nearest symbol at or below the PC, from the image's own table.
+    const syms = [...built.symbols.entries()]
+      .filter(([, v]) => typeof v === "number" && v < 0x2000)
+      .sort((a, b) => a[1] - b[1]);
+    const nameOf = (pc) => {
+      let lo = 0, hi = syms.length - 1, best = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (syms[mid][1] <= pc) { best = syms[mid]; lo = mid + 1; } else hi = mid - 1;
       }
+      return best ? best[0] : `0x${pc.toString(16)}`;
+    };
+    const report = (map, headline) => {
+      const byRoutine = new Map();
+      for (const [pc, c] of map) byRoutine.set(nameOf(pc), (byRoutine.get(nameOf(pc)) ?? 0) + c);
       const total = [...byRoutine.values()].reduce((t, c) => t + c, 0);
       const frames = Math.max(1, consumed);
-      console.log(`      cycles spent PAST the sample deadline: ${(total / frames).toFixed(0)} a frame`
-        + ` (${(total / frames / SAMPLE_CY).toFixed(1)} sample periods) — by routine:`);
-      for (const [r, c] of [...byRoutine.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12))
+      console.log(`      ${headline(total / frames, total)}`);
+      for (const [r, c] of [...byRoutine.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14))
         console.log(`        ${r.padEnd(24)} ${(c / frames).toFixed(0).padStart(6)} cyc/frame`
           + `  ${(100 * c / total).toFixed(1).padStart(5)}%`);
-    }
+    };
+    if (starve && starve.size)
+      report(starve, (perFrame) => `cycles spent PAST the sample deadline: ${perFrame.toFixed(0)}`
+        + ` a frame (${(perFrame / SAMPLE_CY).toFixed(1)} sample periods) — by routine:`);
+    if (prof && prof.size)
+      report(prof, (perFrame) => `INTERRUPT cost ${perFrame.toFixed(0)} cyc a frame of music`
+        + ` (${(100 * perFrame / FRAME_CYCLES).toFixed(0)}% of a vblank) — by routine:`);
     if (probe) {
       writeFileSync(PROBE_LOG, Buffer.concat(probe));
       console.log(`      probe log -> ${PROBE_LOG} (${probe.length} records;`

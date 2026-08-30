@@ -141,24 +141,53 @@ export const GATE_CY = (GATE_YM / (53693175 / 7)) * 3579545;
 // running 4% fast costs nothing: sample 1 of each group waits for Timer B
 // anyway. It is the one number here that is a judgement rather than a
 // measurement; `npm run dac:wav` is what re-judges it.
-// What the pad holds an iteration to. NOT the sample period, and that is the
-// whole point: a Timer B group gets 3 x 358 = 1,075 cycles for the mixing AND
-// for the out-of-loop work that falls in it, and a group that runs long is
-// never made up. Padding each iteration to the full period spends every spare
-// cycle on even spacing and leaves the frame's ~290 cycles a group of segment
-// set-ups and chip writes with nowhere to go — measured, that is the whole
-// overrun. So the pad gets what is left after both:
+// What the pad holds an iteration to, as a FRACTION of the sample period — a
+// fraction because a fixed pad silently stops matching the period when the rate
+// knob moves.
 //
-//     1075 / PCM_GROUP  -  out-of-loop work per sample  =  ~260
+// 0.40, AND IT IS A MEASUREMENT NOW. It was 0.73, reasoned from the group
+// arithmetic below, and 0.73 is what made the driver never once sound right:
 //
-// Below the sample period the group's samples bunch slightly and then wait at
-// the gate, which `npm run dac` measures as span and wander; above it the frame
-// loses its vblank, which is a hiccup and a lost frame of music. This is the
-// one number here that is a judgement rather than a measurement, and it is
-// re-judged with `npm run dac` and `npm run dac:wav`.
-// A FRACTION of the sample period. A fixed pad silently stops matching the
-// period when the rate knob moves.
-export const PAD_FRACTION = Number(process.env.PAD_FRACTION ?? 0.73);
+//   PAD 0.73    ISR p50 121% of a vblank · 64% of interrupts overran
+//               DAC delivered 68% of the samples the clock owed
+//   PAD 0.40    ISR p50  74%             ·  0.3%
+//               DAC delivered 99%
+//
+// The chain, measured end to end on an emulated Mega Drive (see
+// drv/verify-rom/, and .claude/memory/plan-68k-split.md for the round): the
+// pads are 41% of the interrupt, the interrupt therefore does not fit in a
+// vblank, the VDP's /INT is a PULSE so the next one is lost outright, the
+// catch-up consumes that frame's slot WITHOUT MIXING (§6.7, deliberately) — and
+// the mixer ends up running every OTHER frame. The ring drains, the DAC starves
+// a third of the time, and `music x256` reads a perfect 0x0100 throughout,
+// because the catch-up keeps the FRAME count right while the samples inside the
+// frames go missing.
+//
+// The old reasoning, and why it stopped applying: a Timer B group was 3 x 358 =
+// 1,075 cycles for the mixing AND the out-of-loop work in it, so the pad got
+// what was left after both — ~1075/PCM_GROUP minus ~260 of out-of-loop work.
+// **At PCM_GROUP = 1 there is no group.** Every sample is gated and Timer B
+// re-synchronises every one of them, so spacing "samples 2 and 3 of a group" is
+// a job that does not exist at this rate, and the cycles spent on it are the
+// overrun. The pad still earns its keep below the deadline: at 0.20 and below
+// the mixer bursts its whole chunk at the frame head and a single 73-period
+// hole appears where the ring's clamp drops samples, against 2.3 periods at
+// 0.30-0.40. So it is not zero — it is what spreads production without
+// crowding out the frame.
+//
+// Measured across five PCM scores; 0.40 is better than 0.73 on four and equal
+// on the fifth, and never worse.
+//
+// The default is therefore conditional, not flat: every one of those runs was at
+// PCM_GROUP = 1, and at PCM_GROUP > 1 the group is real and the pad's original
+// job with it. That path is unmeasured under this engine (9,987 Hz is broken on
+// this branch anyway), so it keeps the number it had rather than inheriting a
+// finding that does not apply to it. Re-measure before changing it:
+//
+//   PAD_FRACTION=<f> node tools/build-verify-rom.mjs drv/tests/<score>.mmlisp
+//   MMLISP_PROBE_LOG=out/p.log out/blastem/host ... && node tools/dac-log.mjs out/p.log
+export const PAD_FRACTION = Number(
+  process.env.PAD_FRACTION ?? (PCM_GROUP === 1 ? 0.40 : 0.73));
 export const PAD_TARGET = Math.round(SAMPLE_CYCLES * PAD_FRACTION);
 // Under Timer B the pad's whole job is the interval between samples 2 and 3 of
 // a gate's group: the gate itself re-synchronises sample 1, so nothing the pad
