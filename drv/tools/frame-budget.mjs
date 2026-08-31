@@ -302,6 +302,11 @@ try {
           lastDac = tcyc;
         }
         if (probe && a === 0x4001 && addr0 === 0x2b) rec(5, d, tcyc);
+        // $28 is key-on/off. The FM parts go out in the slot's own frame, but a
+        // PCM sample only reaches the DAC after the RING'S LEAD has drained —
+        // so the two are not simultaneous by construction, and this is what
+        // measures the gap.
+        if (probe && a === 0x4001 && addr0 === 0x28) rec(7, d, tcyc);
         if (a === 0x4001 || a === 0x4003) lastData = tcyc; },
     });
     cpu.pc = 0;

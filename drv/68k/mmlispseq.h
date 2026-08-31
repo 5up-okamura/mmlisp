@@ -92,7 +92,11 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* Finished samples the ring runs ahead of the feed. A burst's first frame
  * builds all of them and feeds nothing; every frame after it mixes exactly what
  * the feed took. (The engine's buffer is twice this — §5.1.2.) */
-#define MML_PCM_RING_TARGET 255 /* a pass's tick count is a byte on the Z80 */
+/* Finished samples the ring runs ahead of the feed, and therefore how far the
+ * PCM lags FM and PSG. ~1.3 frames at 3,329 Hz. Was 255, which was 1.5 frames
+ * when a frame carried 167 samples and is 4.6 of them now. Under 256: a pass's
+ * tick count is a byte on the Z80. Mirrors live/src/mmb.js. */
+#define MML_PCM_RING_TARGET 128
 
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];

@@ -409,10 +409,33 @@ export function pcmFrameSamples(frame) {
 // is being built, none of it is playable until the last voice pass has added to
 // it, so the finished samples and the ones under construction are live at the
 // same time. 256 B could hold one or the other, never both.
-// 255, not 256: a voice pass's tick count is a single byte in the engine
-// (G_TICKS), and the prime frame mixes exactly TARGET of them. The slack it
-// leaves the feed is 255 - 167 = 88 samples either way.
-export const PCM_RING_TARGET = 255;
+// THE LEAD IS A NUMBER OF FRAMES, and 255 stopped being one.
+//
+// It was chosen when a frame carried 167 samples: 255 was 1.5 frames of
+// lookahead, enough to absorb one the 68000 overran, and the comment here said
+// exactly that ("the slack it leaves the feed is 255 - 167 = 88"). At 3,329 Hz
+// a frame carries 55.6, so the same constant became 4.6 FRAMES — three times
+// the lookahead anyone chose — and every one of those frames is LATENCY: the
+// mixer writes a sample now and the DAC plays it once the lead has drained.
+//
+// That is audible, and it was heard before it was measured. FM and PSG go out
+// in their own frame's slot, so the PCM lagged them by ~60 ms: half a sixteenth
+// at 128 BPM, which reads as the drums and the melody not being in time.
+// Measured on a nine-channel conversion (drv/tests/sin008.mmlisp):
+//
+//   lead 255   fill ~200   60 ms   DAC 99.1%   ring empty 0.04 a frame
+//   lead 128   fill  ~70   21 ms   DAC 99.0%   ring empty 0.26
+//   lead  83   fill  ~45   14 ms   DAC 99.0%   ring empty 0.42
+//
+// 128 keeps ~1.3 frames of absorption — the property the lead exists for — and
+// costs nothing measurable in delivery. Below it the margin halves again to buy
+// 7 ms nobody can hear.
+//
+// Under 256 either way: a voice pass's tick count is a single byte in the
+// engine (G_TICKS) and the prime frame mixes exactly TARGET of them. Mirrored
+// by PCM_RING_TARGET in drv/src/engine.z80 and MML_PCM_RING_TARGET in
+// drv/68k/mmlispseq.h — all three must agree.
+export const PCM_RING_TARGET = 128;
 export const PCM_RING_BYTES = 512;
 
 // How far a PCM voice may be attenuated, in 6 dB shift steps. It is a BUDGET
