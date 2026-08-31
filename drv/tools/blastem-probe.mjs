@@ -75,7 +75,7 @@ const m = Object.fromEntries(F.map((k, i) => [k, w[i] ?? 0]));
 const hex = (v, n = 4) => "0x" + v.toString(16).padStart(n, "0");
 
 console.log(`\nblastem-probe: ${basename(score)} — ${seconds}s`
-  + ` · PCM_SPG=${meta.pcmSpg} TIMER_B_K=${meta.timerBK}`);
+  + ` · Timer ${meta.timer ?? "B"}, ${(53693175 / 7 / 144 / (meta.fmPerSample ?? 16 / meta.pcmSpg)).toFixed(0)} Hz`);
 
 // Everything below is worthless if the program did not actually run, so say so
 // first and say it unambiguously. A green `music` from a ROM that crashed

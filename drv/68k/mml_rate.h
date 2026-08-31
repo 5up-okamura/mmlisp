@@ -6,4 +6,12 @@
 #define MML_SPG_DEN 224
 #define MML_SPG_STAMP 3333
 
+/* Finished samples the ring runs ahead of the feed: ONE FRAME, which is exactly
+ * what mml_render_frame() cancels by dispatching a PCM track a frame early. Any
+ * other value offsets the PCM against the FM and PSG and nothing takes it out.
+ * It moves with the sample clock, which is why it is generated: it was
+ * hand-kept at 255 — 1.5 frames at 167 samples a frame, 4.6 of them at 55.6.
+ * Mirrors PCM_RING_TARGET in live/src/mmb.js and in drv/src/rate.z80. */
+#define MML_PCM_RING_TARGET 56
+
 #endif

@@ -11,7 +11,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "./z80asm.mjs";
-import { MIXER_PATH, mixerSource, PCM_GROUP } from "./gen-mixer.mjs";
+import { generatedSources, PCM_GROUP } from "./gen-mixer.mjs";
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
@@ -46,7 +46,7 @@ export function buildEngine() {
   // every time — including under `install-sgdk --dry-run`, which promises to
   // write nothing at all.
   const built = assemble(join(srcDir, "engine.z80"),
-    { sources: { [MIXER_PATH]: mixerSource() } });
+    { sources: generatedSources() });
   const sym = (n) => {
     const v = built.symbols.get(n);
     if (v === undefined) throw new Error(`engine.z80 defines no ${n}`);

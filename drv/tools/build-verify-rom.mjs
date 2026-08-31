@@ -32,6 +32,11 @@ import { fileURLToPath } from "node:url";
 // PCM note is silently dropped — which is what a mismatched build looks like.
 process.env.PCM_SPG ??= "1";
 process.env.TIMER_B_K ??= "1";
+// PCM_TIMER=A with PCM_FM=<FM samples a DAC sample> is the Timer A shape: the
+// period is (1024 - NA) FM samples across a 10-bit register, so the rate is any
+// value up to 53,267 Hz instead of Timer B's ceiling of 3,329. Both defaults
+// stay on Timer B, which is what a score with a CSM track has to use.
+if (process.env.PCM_TIMER?.toUpperCase() === "A") process.env.PCM_FM ??= "16";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
@@ -152,6 +157,8 @@ const meta = {
   score: basename(score),
   pcmSpg: Number(process.env.PCM_SPG),
   timerBK: Number(process.env.TIMER_B_K),
+  timer: (process.env.PCM_TIMER ?? "B").toUpperCase(),
+  fmPerSample: Number(process.env.PCM_FM ?? 16 / Number(process.env.PCM_SPG)),
   probeWords: 18,
   mmbBytes: mmb.length,
   sampleBytes: sampleBank.length,
@@ -163,5 +170,6 @@ writeFileSync(romPath.replace(/\.[^.]+$/, "") + ".json", JSON.stringify(meta, nu
 const romBytes = readFileSync(romPath).length;
 console.log(`verify-rom: ${basename(romPath)} — ${romBytes} B`
   + ` · mmb ${mmb.length} B · samples ${sampleBank.length} B`
-  + ` · PCM_SPG=${process.env.PCM_SPG} TIMER_B_K=${process.env.TIMER_B_K}`
+  + ` · Timer ${meta.timer}, ${meta.fmPerSample} FM samples a sample`
+  + ` (${(53693175 / 7 / 144 / meta.fmPerSample).toFixed(0)} Hz)`
   + ` · probe @ 0x${probeAddr.toString(16)} (work RAM +0x${meta.probeOffset.toString(16)})`);

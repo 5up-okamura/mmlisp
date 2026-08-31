@@ -61,8 +61,12 @@ const measured = (w.length - 1) / seconds;
 
 // The nominal rate: taken from the log unless given, because a probe run and
 // the tree it was built from can disagree and the log is the one that happened.
+// PCM_FM (FM samples a DAC sample) is the knob both timers share — Timer A
+// takes any integer, Timer B only 16/SPG — so the fallback derives from it.
+const FM_PER_SAMPLE = Number(process.env.PCM_FM ?? 0)
+  || 16 / Number(process.env.PCM_SPG ?? 1);
 const NOMINAL = arg("--rate", 0) || Number(process.env.PCM_RATE ?? 0)
-  || Math.round(MCLK_NTSC / 7 / 2304 * (Number(process.env.PCM_SPG ?? 1)));
+  || Math.round(MCLK_NTSC / 7 / 144 / FM_PER_SAMPLE);
 const period = MCLK_NTSC / NOMINAL / MCLKS_PER_Z80;   // Z80 cycles a sample
 
 const iv = [];

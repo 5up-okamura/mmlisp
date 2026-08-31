@@ -1248,10 +1248,11 @@ R_OUT_BEG:
 ; call site; IY is the ring cursor.
 emit_try:
         ld   a,(YM_ADDR0)
-        and  $02               ; flag B ALONE — see below
+        and  PCM_TFLAG         ; THIS timer's flag alone — see below
         ret  z                 ; not due — the caller carries straight on
         ; DUE. Only now does BUSY matter, and it is worth WAITING for: the
-        ; combined `(a & $82) == $02` test this replaces read "busy" as
+        ; combined `(a & ($80|PCM_TFLAG)) == PCM_TFLAG` test this replaces
+        ; read "busy" as
         ; "not due" and returned — and the call sites that keep the YM
         ; busiest are the slot's own write loops, which are the longest
         ; stretches a frame has. Measured: a recurring 2,700-cycle hole in

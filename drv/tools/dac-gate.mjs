@@ -90,9 +90,9 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { MIXER_PATH, mixerSource, PACE_WINDOW, GATE_CY } = await import("./gen-mixer.mjs");
+  const { generatedSources, PACE_WINDOW, GATE_CY } = await import("./gen-mixer.mjs");
   const built = assemble(join(drv, "src", "engine.z80"),
-    { sources: { [MIXER_PATH]: mixerSource() } });
+    { sources: generatedSources() });
   const sym = (n) => built.symbols.get(n);
   // The feed's period is the SAMPLE CLOCK's now, not the frame's (§5.1.2): the
   // gate is Timer B's and a frame carries 166 or 167 samples, never a constant.

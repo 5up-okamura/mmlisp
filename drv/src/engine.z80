@@ -15,6 +15,13 @@
 ; stuttering the music (driver.md §1).
 ; ===========================================================================
 
+; ── The sample clock ───────────────────────────────────────────────────────
+; GENERATED (tools/gen-mixer.mjs, rateSource) and included HERE rather than with
+; the mixer core at the bottom, because the boot's timer setup and the ring
+; target below both use it. It carries which timer gates the DAC, the four
+; \$27/status values that shape comes down to, and PCM_RING_TARGET.
+        include "rate.z80"
+
 ; ── Hardware ───────────────────────────────────────────────────────────────
 YM_ADDR0    equ $4000
 YM_DATA0    equ $4001
@@ -94,14 +101,11 @@ RING_PAGE   equ 1               ; the bit of H that names the ring's two pages
 ; or the frame ends late. Tuned by `npm run dac`: 46000 still reads 96-100%
 ; paced, and below 42000 the span stops moving, so this is the knee.
 PCM_BUDGET  equ 42000
-; Finished samples the ring carries ahead of the feed — ONE FRAME, because that
-; is exactly what the sequencer cancels: a PCM track is dispatched a frame early
-; (mmlispseq.c, mml_render_frame) so the command lands on the beat. Any other
-; value is an offset between the PCM and the FM/PSG that nothing takes out.
-; It was 255, which was 1.5 frames when a frame carried 167 samples and is 4.6
-; of them at 3,329 Hz — 37 ms of drums behind the melody. Under 256: a pass's
-; tick count is a byte (G_TICKS). live/src/mmb.js carries the measurements.
-PCM_RING_TARGET equ 56
+; PCM_RING_TARGET — finished samples the ring carries ahead of the feed — is in
+; the generated rate.z80 above: it is ONE FRAME of samples, so it moves with the
+; sample clock. It was hand-kept at 255, which was 1.5 frames when a frame
+; carried 167 samples and 4.6 of them at 3,329 Hz — 37 ms of drums behind the
+; melody. live/src/mmb.js carries the measurements and the derivation.
 ; The most FINISHED samples the ring may hold. G_WR = G_RD + G_FILL, so this
 ; bounds the mixer's write cursor inside RING_BUF..RING_TOP with one wrap.
 PCM_FILL_MAX equ 320
@@ -205,15 +209,16 @@ G_MASTER_SH equ $19c7           ; u8  master shift now patched into the emits
 ; exceeds 3 (gate_wait, and gen-mixer.mjs gatePrologue for the rule that AF' is
 ; the pacing's and nobody else's). Free.
 ; Our copy of $27. Bits 6-7 are the SEQUENCER's (CH3 mode / CSM, §9) and reach
-; us through the slot, which cs_r27 snoops; bits 0-5 are ours (Load B, and the
-; flag reset the gate pulses). Neither side may clobber the other's.
+; us through the slot, which cs_r27 snoops; bits 0-5 are ours (the DAC timer's
+; Load/Enable, and the flag reset the gate pulses). Neither side may clobber the
+; other's.
 G_R27       equ $19c8           ; u8  $27 as we last wrote it
-; The same byte with bit 5 (reset flag B) already in it. gate_wait writes $27
-; once per Timer B group — ~56 times a frame — and `or $20` there is 7 cycles
+; The same byte with the DAC timer's flag-reset bit already in it. gate_wait writes $27
+; once per timer group — ~56 times a frame — and `or PCM_TRESET` there is 7 cycles
 ; each time on the one emit in the group that is already the frame's slowest
 ; (measured at 408 cycles against a 358-cycle period). Kept in step wherever
 ; G_R27 is written; there are only three such places and they are all here.
-G_R27G      equ $19cf           ; u8  G_R27 | $20, for the gate's flag reset
+G_R27G      equ $19cf           ; u8  G_R27 | PCM_TRESET, for the gate's flag reset
 G_CHUNK     equ $19c9           ; u8  samples to mix this frame; 0 = a prime frame
 G_TICKSF    equ $19ca           ; u8  ticks each pass runs this frame
 ; The frame's write base, split the way the mixer wants it. Every pass covers
@@ -430,37 +435,52 @@ start:
         ; otherwise. One of the two has to put it back, and it is this one.
         xor  a
         call mst_apply
-        ; Timer B: it overflows every 16 x (256 - PCM_TB) FM samples and the
-        ; engine emits PCM_GROUP samples per overflow — 9987.6 Hz (§5.1.2)
-        ; whatever PCM_TB is, because the two scale together. Both come from
-        ; the mixer generator, so the period and the sample count cannot drift
-        ; apart; the window they set is the one the engine may average its
-        ; out-of-loop work over (see .claude/memory/plan-68k-split.md).
+        ; THE SAMPLE CLOCK. Timer B overflows every 16 x (256 - PCM_TB) FM
+        ; samples and the engine emits PCM_GROUP samples per overflow; Timer A
+        ; overflows every (1024 - NA) and emits exactly one. Which one, the
+        ; period, and the $27 bits all come from the generated rate.z80, so the
+        ; period and the sample count cannot drift apart.
         ;
-        ; $0A = Load B (bit 1) | ENABLE B (bit 3), and BOTH are required. Load B
-        ; runs the counter; Enable B is what publishes its overflow to the
-        ; status byte the gate polls. Nuked-OPN2 states it in one line
-        ; (ym3438.c, OPN2_DoTimerB):
+        ; Timer A is the higher-rate shape — 1 FM sample of resolution instead
+        ; of 16, so any rate up to 53,267 Hz instead of a ceiling of 3,329 —
+        ; and the reason both survive is CSM: a score with an fm3-csm track
+        ; drives its key-ons off Timer A and the DAC falls back to Timer B.
+        ;
+        ; PCM_TLOAD is Load | ENABLE, and BOTH are required. Load runs the
+        ; counter; Enable is what publishes its overflow to the status byte the
+        ; gate polls. Nuked-OPN2 states it in one line (ym3438.c, OPN2_DoTimerB):
         ;
         ;     timer_b_overflow_flag |= timer_b_overflow & timer_b_enable;
         ;
-        ; With bit 3 clear the counter runs and the flag NEVER appears, so
-        ; gate_wait spins for ever: the first frame's writes reach the chips —
+        ; With the enable bit clear the counter runs and the flag NEVER appears,
+        ; so gate_wait spins for ever: the first frame's writes reach the chips —
         ; one note — and the driver never returns. Every harness here modelled
-        ; the flag on time regardless of bit 3, so all of them passed against it.
+        ; the flag on time regardless of it, so all of them passed against it.
         ;
-        ; Enable B also gates the YM2612's /IRQ pin, which is not connected on
+        ; Enable also gates the YM2612's /IRQ pin, which is not connected on
         ; the Mega Drive (the Z80's /INT is the VDP's vblank), so setting it
         ; costs nothing and is the ordinary idiom for a driver that polls.
         ;
         ; Both bits have to STAY set from here on, which is why cs_r27 ORs them
         ; back into every $27 the sequencer sends.
+        ; BOTH periods are written and only PCM_TLOAD decides which one runs.
+        ; The alternative is conditional assembly for four bytes at boot; this
+        ; assembler has none, and the unused timer is inert with its enable bit
+        ; clear. (When Timer B gates the DAC, a CSM track's own $24/$25 writes
+        ; land on top of these — CSM is the sequencer's, and it is exactly the
+        ; case where the DAC is NOT on Timer A.)
+        ld   b,PCM_TA_HI
+        ld   c,$24
+        call ym_write0
+        ld   b,PCM_TA_LO
+        ld   c,$25
+        call ym_write0
         ld   b,PCM_TB
         ld   c,$26
         call ym_write0
-        ld   a,$0a
+        ld   a,PCM_TLOAD
         ld   (G_R27),a
-        or   $20
+        or   PCM_TRESET
         ld   (G_R27G),a
         ld   b,a
         ld   c,$27
@@ -794,21 +814,27 @@ cr_p0d:
         jr   cr_fm1
 
 ; $27 is the one register both CPUs write. Bits 6-7 are the sequencer's (CH3
-; mode / CSM, §9); bits 0-5 are the engine's, and Load B AND Enable B among them
-; have to stay set or the sample clock stops — Load B runs the counter, Enable B
-; is what puts its overflow in the status byte the gate polls, and dropping
-; either one hangs gate_wait for ever (see the boot's $27 write). So the byte is
-; merged on its way through and remembered, because the gate's flag reset
-; (gate_wait) has to write the same register without losing the mode the score
-; asked for.
+; mode / CSM, §9); bits 0-5 are the engine's, and the DAC timer's Load AND
+; Enable among them have to stay set or the sample clock stops — Load runs the
+; counter, Enable is what puts its overflow in the status byte the gate polls,
+; and dropping either one hangs gate_wait for ever (see the boot's $27 write).
+; So the byte is merged on its way through and remembered, because the gate's
+; flag reset (gate_wait) has to write the same register without losing the mode
+; the score asked for.
+;
+; PCM_TLOAD/PCM_TRESET and not $0a/$20: which timer these are is the generated
+; rate.z80's business. Hard-coded here they merged Timer B's bits into a Timer A
+; build — the sequencer's first $27 stopped the clock, and the flag reset went
+; to the wrong bit so the overflow flag never came down and emit_try read "due"
+; for ever, draining the ring in one burst and then holding for 6 ms.
 cs_r27:
         ld   (YM_ADDR0),a
         inc  hl
         ld   a,(hl)
-        or   $0a                ; Load B | Enable B — ours, always
+        or   PCM_TLOAD          ; Load | Enable for the DAC's timer — ours, always
         ld   (G_R27),a
         push af
-        or   $20
+        or   PCM_TRESET
         ld   (G_R27G),a         ; …and the gate's copy, kept in step here
         ld   (EG_R27P),a        ; …in the emit's own immediate, where the gate
                                 ; reads it (generated: see EG_R27P)
@@ -1369,19 +1395,19 @@ pv_test:
 ; touches A and the flags and nothing else, and it RETURNS A = PCM_GROUP, which
 ; is the caller's reloaded phase.
 gate_wait:
-        ; One test for both conditions. BUSY is bit 7 and Timer B's overflow is
-        ; bit 1, and what this loop wants is "not busy AND the flag is up" —
-        ; which is the two bits being exactly $02. The shift-and-branch pair it
-        ; replaces (add a,a / jr c / bit 2,a / jr z) asked them separately for
-        ; 39 cycles; this is 34, on the emit that is already the frame's
-        ; slowest and runs ~56 times.
+        ; One test for both conditions. BUSY is bit 7 and the timer's overflow
+        ; is PCM_TFLAG, and what this loop wants is "not busy AND the flag is
+        ; up" — which is the two bits being exactly PCM_TFLAG. The
+        ; shift-and-branch pair it replaces (add a,a / jr c / bit 2,a / jr z)
+        ; asked them separately for 39 cycles; this is 34, on the emit that is
+        ; already the frame's slowest and runs ~56 times.
         ld   a,(YM_ADDR0)
-        and  $82
-        cp   $02
+        and  $80|PCM_TFLAG
+        cp   PCM_TFLAG
         jr   nz,gate_wait
         ld   a,$27
         ld   (YM_ADDR0),a
-        ld   a,(G_R27G)         ; reset flag B; the mode bits are the score's
+        ld   a,(G_R27G)         ; reset the flag; the mode bits are the score's
         ld   (YM_DATA0),a
         ld   a,$2a
         ld   (YM_ADDR0),a       ; re-latch: the feed writes $2A blind

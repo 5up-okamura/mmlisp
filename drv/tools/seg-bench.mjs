@@ -130,10 +130,10 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { MIXER_PATH, mixerSource, PACE_WINDOW, SAMPLE_CYCLES, PCM_GROUP, GATE_CY } = await import("./gen-mixer.mjs");
+  const { generatedSources, PACE_WINDOW, SAMPLE_CYCLES, PCM_GROUP, GATE_CY } = await import("./gen-mixer.mjs");
   const STALL_READ = STALL_READ_OPT < 0 ? PACE_WINDOW : STALL_READ_OPT;
   const built = assemble(join(drv, "src", "engine.z80"),
-    { sources: { [MIXER_PATH]: mixerSource() } });
+    { sources: generatedSources() });
   const sym = (n) => built.symbols.get(n);
 
   // ── address → label bucket ────────────────────────────────────────────────
