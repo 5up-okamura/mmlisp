@@ -707,7 +707,21 @@ function padBlock(pad) {
 // pad the frame did not have. That was the bulk of the frame's overrun, and the
 // other half of the fix was to make the step itself cost 24 instead of 69
 // (gatePrologue).
-export const EMIT_CYCLES = ONE_GATE ? 182 : 73;
+// **182 IS WRONG AND IT STAYS.** Measured 2026-08-31 by running `emit_try` on
+// tools/z80cpu.mjs with the flag up, the ring non-empty and NO BUSY waits: 384
+// cycles including the call. The comment above counts one BUSY poll where the
+// routine has four, and predates both the G_FILL decrement and the ring wrap
+// moving onto the send path.
+//
+// Correcting it is not an improvement. padFor reads it, so 384 takes
+// PCM_IDLE_PAD from 14 to 1 — and the idle pad is what stops a SILENT pass from
+// racing ahead and banking time the frame then gives back in one hold. On
+// BlastEm, sin008 (whose drum voice leaves one pass idle most of the time) went
+// 99.1% -> 96.9% with a 175-sample-period hole in it; budget-2v, where both
+// passes sound, went 99.5% -> 99.6%. So the estimator wants two numbers — what
+// the emit costs, and what a silent iteration must be held to — and it has one.
+// Left as the knob MMLISP_EMIT_CY until that is untangled.
+export const EMIT_CYCLES = ONE_GATE ? Number(process.env.MMLISP_EMIT_CY ?? 182) : 73;
 // What the GATING emit costs on top of the other two, once per PCM_GROUP: the
 // taken branch into `gate_wait`, its flag reset, the $2A re-latch, and the
 // reload of the phase. Only the frame's total cares (`pass_cost_tab`); the pad
