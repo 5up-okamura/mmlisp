@@ -19,6 +19,8 @@
 #define MMLISP_PROBE_H
 #include "genesis.h"
 
+#define PROBE_SECS           24      /* one-second windows kept in sec_music[] */
+
 #define PROBE_MAGIC          0x4D4C      /* 'ML' — main() reached, struct valid */
 
 #define PROBE_ST_READY       0x0001      /* the engine answered its ready mark   */
@@ -58,6 +60,10 @@ typedef struct {
     u16 lost_1s;        /* frames lost in the last second                     */
     u16 starved;        /* cumulative: the ring ran dry                       */
     u16 starv_1s;
+    /* music256 for each of the first PROBE_SECS one-second windows. A single
+     * average cannot tell a clock that runs steadily fast from one that swings,
+     * and "the tempo wobbles" is a statement about the swing. */
+    u16 sec_music[PROBE_SECS];
 } probe_mailbox;
 
 #define PROBE_WORDS (sizeof(probe_mailbox) / 2)
