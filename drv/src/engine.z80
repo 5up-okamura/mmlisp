@@ -94,14 +94,14 @@ RING_PAGE   equ 1               ; the bit of H that names the ring's two pages
 ; or the frame ends late. Tuned by `npm run dac`: 46000 still reads 96-100%
 ; paced, and below 42000 the span stops moving, so this is the knee.
 PCM_BUDGET  equ 42000
-; Finished samples the ring carries ahead of the feed — and therefore the PCM's
-; LATENCY against FM and PSG, which go out in their own frame's slot. 128 is
-; ~1.3 frames at 3,329 Hz, 21 ms. It was 255, chosen when a frame carried 167
-; samples and 255 was 1.5 frames of it; at 55.6 samples a frame the same number
-; is 4.6 frames and 60 ms, which is half a sixteenth at 128 BPM. Under 256: a
-; pass's tick count is a byte (G_TICKS) and the prime frame mixes exactly this
-; many. live/src/mmb.js carries the measurements; all three copies must agree.
-PCM_RING_TARGET equ 128
+; Finished samples the ring carries ahead of the feed — ONE FRAME, because that
+; is exactly what the sequencer cancels: a PCM track is dispatched a frame early
+; (mmlispseq.c, mml_render_frame) so the command lands on the beat. Any other
+; value is an offset between the PCM and the FM/PSG that nothing takes out.
+; It was 255, which was 1.5 frames when a frame carried 167 samples and is 4.6
+; of them at 3,329 Hz — 37 ms of drums behind the melody. Under 256: a pass's
+; tick count is a byte (G_TICKS). live/src/mmb.js carries the measurements.
+PCM_RING_TARGET equ 56
 ; The most FINISHED samples the ring may hold. G_WR = G_RD + G_FILL, so this
 ; bounds the mixer's write cursor inside RING_BUF..RING_TOP with one wrap.
 PCM_FILL_MAX equ 320

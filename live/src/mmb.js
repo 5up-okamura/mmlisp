@@ -409,33 +409,35 @@ export function pcmFrameSamples(frame) {
 // is being built, none of it is playable until the last voice pass has added to
 // it, so the finished samples and the ones under construction are live at the
 // same time. 256 B could hold one or the other, never both.
-// THE LEAD IS A NUMBER OF FRAMES, and 255 stopped being one.
+// THE LEAD IS EXACTLY ONE FRAME, and it must stay that way.
 //
-// It was chosen when a frame carried 167 samples: 255 was 1.5 frames of
-// lookahead, enough to absorb one the 68000 overran, and the comment here said
-// exactly that ("the slack it leaves the feed is 255 - 167 = 88"). At 3,329 Hz
-// a frame carries 55.6, so the same constant became 4.6 FRAMES — three times
-// the lookahead anyone chose — and every one of those frames is LATENCY: the
-// mixer writes a sample now and the DAC plays it once the lead has drained.
+// mml_render_frame() compensates for it: a PCM track starts on its armed frame
+// while every other track starts on the next, "so a PCM command issued a frame
+// early is heard on the beat. The lead is exactly one frame and stays that way."
+// The compensation is ONE FRAME. Anything else here is an offset between the
+// PCM and the FM/PSG that nothing cancels.
 //
-// That is audible, and it was heard before it was measured. FM and PSG go out
-// in their own frame's slot, so the PCM lagged them by ~60 ms: half a sixteenth
-// at 128 BPM, which reads as the drums and the melody not being in time.
-// Measured on a nine-channel conversion (drv/tests/sin008.mmlisp):
+// It was 255, chosen when a frame carried 167 samples — 1.5 frames, already
+// half a frame past what the sequencer cancels. At 3,329 Hz a frame carries
+// 55.6 and the same constant is 4.6 frames, so the drums played 37 ms behind
+// the melody: audible, and reported by ear as "the FM and the DAC are not in
+// time". Every gate here was green through it, because the DAC's own clock is
+// fine and nothing compared the two against each other.
 //
-//   lead 255   fill ~200   60 ms   DAC 99.1%   ring empty 0.04 a frame
-//   lead 128   fill  ~70   21 ms   DAC 99.0%   ring empty 0.26
-//   lead  83   fill  ~45   14 ms   DAC 99.0%   ring empty 0.42
+// Measured on drv/tests/sin008.mmlisp, a nine-channel conversion. "Residual" is
+// the steady ring fill less one frame, which is what the compensation leaves:
 //
-// 128 keeps ~1.3 frames of absorption — the property the lead exists for — and
-// costs nothing measurable in delivery. Below it the margin halves again to buy
-// 7 ms nobody can hear.
+//   lead 255   fill 179   +37.1 ms   DAC 99.1%   ring empty 0.04 a frame
+//   lead 128   fill  70    +4.4 ms   DAC 99.0%   ring empty 0.26
+//   lead  56   fill  50    -1.6 ms   DAC 98.8%   ring empty 0.68
 //
-// Under 256 either way: a voice pass's tick count is a single byte in the
-// engine (G_TICKS) and the prime frame mixes exactly TARGET of them. Mirrored
-// by PCM_RING_TARGET in drv/src/engine.z80 and MML_PCM_RING_TARGET in
-// drv/68k/mmlispseq.h — all three must agree.
-export const PCM_RING_TARGET = 128;
+// So: ceil(PCM_SAMPLES_PER_FRAME). If the sample clock moves, this moves with
+// it — that is the whole lesson of the 255. Under 256 either way: a voice
+// pass's tick count is a single byte in the engine (G_TICKS) and the prime
+// frame mixes exactly TARGET of them. Mirrored by PCM_RING_TARGET in
+// drv/src/engine.z80 and MML_PCM_RING_TARGET in drv/68k/mmlispseq.h — all three
+// must agree.
+export const PCM_RING_TARGET = 56;
 export const PCM_RING_BYTES = 512;
 
 // How far a PCM voice may be attenuated, in 6 dB shift steps. It is a BUDGET
