@@ -1,0 +1,113 @@
+(def @dgt1
+  :alg 1 :fb 5
+  :ar1 31 :dr1 0 :sr1 0 :rr1 6 :sl1 0 :tl1 30 :ks1 0 :ml1 2 :dt1 1
+  :ar2 31 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2 33 :ks2 0 :ml2 2 :dt2 1
+  :ar3 31 :dr3 0 :sr3 0 :rr3 6 :sl3 0 :tl3 13 :ks3 0 :ml3 8 :dt3 5
+  :ar4 31 :dr4 0 :sr4 0 :rr4 6 :sl4 0 :tl4 0 :ks4 0 :ml4 2 :dt4 5)
+
+(def @2
+  :alg 0 :fb 7
+  :ar1 31 :dr1 18 :sr1 0 :rr1 6 :sl1 2 :tl1 36 :ks1 0 :ml1 10 :dt1 3
+  :ar2 31 :dr2 14 :sr2 4 :rr2 6 :sl2 2 :tl2 45 :ks2 0 :ml2 0 :dt2 3
+  :ar3 31 :dr3 10 :sr3 4 :rr3 6 :sl3 2 :tl3 18 :ks3 1 :ml3 0 :dt3 3
+  :ar4 31 :dr4 10 :sr4 3 :rr4 6 :sl4 2 :tl4 0 :ks4 1 :ml4 0 :dt4 3)
+
+(def @4
+  :alg 0 :fb 0
+  :ar1 0 :dr1 0 :sr1 0 :rr1 0 :sl1 0 :tl1 0 :ks1 0 :ml1 0 :dt1 0
+  :ar2 0 :dr2 0 :sr2 0 :rr2 0 :sl2 0 :tl2 0 :ks2 0 :ml2 0 :dt2 0
+  :ar3 0 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 0 :ks3 0 :ml3 0 :dt3 0
+  :ar4 0 :dr4 0 :sr4 0 :rr4 0 :sl4 0 :tl4 0 :ks4 0 :ml4 0 :dt4 0)
+
+(def @5
+  :alg 0 :fb 0
+  :ar1 0 :dr1 0 :sr1 0 :rr1 0 :sl1 0 :tl1 0 :ks1 0 :ml1 0 :dt1 0
+  :ar2 0 :dr2 0 :sr2 0 :rr2 0 :sl2 0 :tl2 0 :ks2 0 :ml2 0 :dt2 0
+  :ar3 0 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 0 :ks3 0 :ml3 0 :dt3 0
+  :ar4 0 :dr4 0 :sr4 0 :rr4 0 :sl4 0 :tl4 0 :ks4 0 :ml4 0 :dt4 0)
+
+(def @6
+  :alg 0 :fb 0
+  :ar1 0 :dr1 0 :sr1 0 :rr1 0 :sl1 0 :tl1 0 :ks1 0 :ml1 0 :dt1 0
+  :ar2 0 :dr2 0 :sr2 0 :rr2 0 :sl2 0 :tl2 0 :ks2 0 :ml2 0 :dt2 0
+  :ar3 0 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 0 :ks3 0 :ml3 0 :dt3 0
+  :ar4 0 :dr4 0 :sr4 0 :rr4 0 :sl4 0 :tl4 0 :ks4 0 :ml4 0 :dt4 0)
+
+(def @efc001
+  :alg 0 :fb 0
+  :ar1 6 :dr1 6 :sr1 2 :rr1 15 :sl1 3 :tl1 16 :ks1 0 :ml1 0 :dt1 6
+  :ar2 6 :dr2 0 :sr2 0 :rr2 15 :sl2 2 :tl2 25 :ks2 0 :ml2 2 :dt2 3
+  :ar3 8 :dr3 0 :sr3 0 :rr3 15 :sl3 2 :tl3 26 :ks3 0 :ml3 2 :dt3 3
+  :ar4 14 :dr4 4 :sr4 4 :rr4 15 :sl4 4 :tl4 0 :ks4 0 :ml4 0 :dt4 3)
+
+(def @orc004
+  :alg 4 :fb 5
+  :ar1 31 :dr1 0 :sr1 0 :rr1 0 :sl1 0 :tl1 22 :ks1 0 :ml1 4 :dt1 7
+  :ar2 18 :dr2 0 :sr2 1 :rr2 6 :sl2 3 :tl2 16 :ks2 0 :ml2 4 :dt2 7
+  :ar3 31 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 23 :ks3 0 :ml3 4 :dt3 3
+  :ar4 31 :dr4 0 :sr4 1 :rr4 6 :sl4 3 :tl4 16 :ks4 0 :ml4 4 :dt4 3)
+
+(def @sbass2
+  :alg 1 :fb 0
+  :ar1 31 :dr1 20 :sr1 0 :rr1 10 :sl1 5 :tl1 30 :ks1 0 :ml1 7 :dt1 0
+  :ar2 31 :dr2 10 :sr2 0 :rr2 10 :sl2 5 :tl2 20 :ks2 0 :ml2 0 :dt2 0
+  :ar3 31 :dr3 14 :sr3 0 :rr3 10 :sl3 10 :tl3 23 :ks3 0 :ml3 0 :dt3 0
+  :ar4 31 :dr4 31 :sr4 0 :rr4 10 :sl4 0 :tl4 0 :ks4 0 :ml4 0 :dt4 0)
+
+(def @7thv05
+  :alg 4 :fb 5
+  :ar1 31 :dr1 5 :sr1 6 :rr1 0 :sl1 1 :tl1 12 :ks1 0 :ml1 3 :dt1 2
+  :ar2 18 :dr2 16 :sr2 1 :rr2 7 :sl2 3 :tl2 12 :ks2 0 :ml2 3 :dt2 2
+  :ar3 31 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 16 :ks3 0 :ml3 4 :dt3 7
+  :ar4 31 :dr4 16 :sr4 1 :rr4 7 :sl4 3 :tl4 12 :ks4 0 :ml4 4 :dt4 7)
+
+(def auto-gate :gate- 1f)
+
+(def env1 (macro :vel* [ (linear 15..11 :len 1t) (wait key-off) (linear 11..0 :len 65t) ]))
+
+(def env2 (macro :vel* [ (linear 15..15 :len 1t) (wait key-off) (linear 15..0 :len 3t) ]))
+
+(def kick :sample :file "shinobipcm.wav" :rate 10000 :offset 0 :frames 2440)
+
+(def snare :sample :file "shinobipcm.wav" :rate 10000 :offset 2440 :frames 4000)
+
+(def hihat :sample :file "shinobipcm.wav" :rate 10000 :offset 9720 :frames 610)
+
+(def tom :sample :file "shinobipcm.wav" :rate 10000 :offset 10330 :frames 1640)
+
+(def open-h :sample :file "shinobipcm.wav" :rate 10000 :offset 11970 :frames 3080)
+
+(def title "CHINA TOWN")
+(def author "Yuzo Koshiro")
+(fm1 :tempo 128 #loop @7thv05 :oct 4 :pitch 8 :vel 7 :len 16 :gate- 10t (x 4 d d d d c _ d _ < g _ a _ _ _ _ _ :break d d d d d _ :vel 4 d d d d d _ :vel 7 _ _ _ _) _1)
+(fm3 #loop @7thv05 :oct 4 :pitch 0 :vel 2 :len 16 _4 :gate- 10t (x 4 d d d d c _ d _ < g _ a _ _ _ _ _ :break d d d d d _ :vel 0 d d d d d _ :vel 2 _ _ _ _) _1)
+(fm5 :oct 5 auto-gate #loop (x 7 _1) :len 16 @efc001 :oct 3 :vel 5 :lfo-rate 7 :fms 4 :ams 1 d2. ~ d _8. @orc004 :vel 4 :lfo-rate 4 :fms 3 :ams 0)
+(fm4 :oct 5 auto-gate #loop (x 7 _1) :len 16 @efc001 :oct 3 :vel 5 :pitch 4 :lfo-rate 7 :fms 4 :ams 1 d2. ~ d _8. @orc004 :vel 4 :pitch 12 :lfo-rate 4 :fms 3 :ams 0)
+(fm2 auto-gate #loop @sbass2 :oct 2 :len 8 :vel 11 d4 _ d _ d d _ _ _ _ _ _2 b-4 _ b- _ b- _ _ _ _ _ _ _2 g4 _ g _ g g _ _ _ _ _ _2 d4 _ d _ d d _ _ _ _ _ _ _ _ _)
+(pcm1 #loop :oct 4 :vel 15 :len 16 (x 4 kick g8 open-h c8 snare c8 kick g8 hihat c c kick g8 snare c8 kick g8 :break kick g8 g8 snare c8 open-h c8 hihat c c tom c8 snare c8 tom g8) g4 hihat c4 c8 kick c16 c16 snare c4)
+(sqr1 #loop env1 :oct 5 :vel 10 :len 16 :gate- 10t (x 4 d d d d c _ d _ < g _ a _ _ _ _ _ :break d d d d d _ _ _ _ _ _ _ _ _ _ _) _1)
+(sqr2 #loop env2 :oct 3 :vel 8 :len 16 :pitch 10 (x 2 d1 ~ d2 f8 e4 d c d1 a1 g1 g2 c2 :break d1 _1) d1 ~ d1)
+(sqr3 #loop env2 :oct 3 :vel 8 :len 16 (x 2 d1 ~ d2 f8 e4 d c d1 a1 g1 g2 c2 :break d1 _1) d1 ~ d1)
+(pcm1 (x 8 kick g8 open-h c8 snare c8 kick g8 hihat c c kick g8 snare c8 kick g8 kick g8 g8 snare c8 open-h c8 hihat c c :break tom c8 snare c8 tom g8) snare c8 c c c c)
+(fm5 :oct 3 a1. g4 a4 d1. c4 d4 g1. g4 f4 e1 ~ e2. d4 a1. g4 a4 d1. c4 d4 g1. g4 a4 > c1.)
+(fm4 :oct 2 a1. g4 a4 d1. c4 d4 g1. g4 f4 e1 ~ e2. d4 a1. g4 a4 d1. c4 d4 g1. g4 a4 > c1.)
+(fm2 (x 2 d4 _ d _ d d _ _ _ _ _ _ :len 16 :vel 10 < a > c d f d c :vel 11 :len 8 b-4 _ b- _ b- _ _ _ _ _ _ _2 g4 _ g _ g g _ _ _ _ _ _2 :break d4 _ d _ d d _ _ _ _ _ _ d16 c16 g16 a16 > c8 <) > c4 _ c _ c _ _ < _ _ c c _ g16 f16 g16 a16 > c8 <)
+(fm1 :oct 4 (x 7 d d d d c _ d _ < g _ a _ _ _ _ _ d d d d d _ c _ d _ g _ a _ :break > c _ <) g _ (x 2 g _ > c c c c d _ c _ < g _ _ _ _ _ >))
+(fm3 :oct 4 (x 7 d d d d c _ d _ < g _ a _ _ _ _ _ d d d d d _ c _ d _ g _ a _ :break > c _ <) g _ (x 2 g _ > c c c c d _ c _ < g _ :break _ _ _ _ >))
+(sqr1 :oct 5 (x 7 d d d d c _ d _ < g _ a _ _ _ _ _ d d d d d _ c _ d _ g _ a _ :break > c _ <) g _ (x 2 g _ > c c c c d _ c _ < g _ _ _ _ _ >))
+(sqr2 d1 ~ d2 f8 e4 d c d1 a1 g1 g2. a4 g1. _2)
+(sqr3 d1 ~ d2 f8 e4 d c d1 a1 g1 g2. a4 g1. _2)
+(fm5 :oct 4 < a4 > c4 d2. < a4 g2. a4 d1 ~ d4. c8 e8 f8 e4 d1 ~ d1 ~ d1 ~ > c4 < b-4 a4 g4)
+(fm4 :oct 3 < a4 > c4 d2. < a4 g2. a4 d1 ~ d4. c8 e8 f8 e4 d1 ~ d1 ~ d1 ~ > c4 < b-4 a4 g4)
+(fm1 @orc004 :vel 2 :oct 3 :pitch 0 a2. f4 d2 e4 e4 < a1 a1 a1 ~ a2. > ~ g4 a1 ~ a1)
+(fm2 (x 4 > d4 _ d _ d > d < d c c _ c _ _ _ _ < b-4 _ b- _ b- > b- < b- > c c _ c _ _ _ _) (go loop))
+(fm3 :pitch 8 :vel 7 (x 16 d d d d < d _ d _ > d _ d _ < d _ d _ >) (go loop))
+(sqr1 (x 16 d d d d < d _ d _ > d _ d _ < d _ d _ >) (go loop))
+(sqr2 :oct 4 env2 :vel 6 f2. d4 c2. c4 < f1 g1 d1 d1 d1 d1 >)
+(sqr3 :oct 4 env2 :vel 6 f2. d4 c2. c4 < f1 g1 d1 d1 d1 d1 >)
+(pcm1 (x 8 kick g8 open-h c8 snare c8 kick g8 hihat c c kick g8 snare c8 kick g8 kick g8 g8 snare c8 open-h c8 hihat c c :break tom c8 snare c8 tom g8) snare c8 c c c8 (go loop))
+(fm5 a1 > d1 a1 ~ a4 g4 f4 g4 e1 ~ e2. c4 d1 ~ d1 (go loop))
+(fm4 a1 > d1 a1 ~ a4 g4 f4 g4 e1 ~ e2. c4 d1 ~ d1 (go loop))
+(fm1 :oct 2 :vel 3 d1 e2. f8 g8 a1 < a1 > d1 e2. f8 g8 a1 ~ a1 (go loop))
+(sqr3 d2. a4 g2. a4 d1 ~ d4. c8 e8 f8 g8 e8 d1 ~ d1 ~ d1 ~ d1 (go loop))
+(sqr2 d2. a4 g2. a4 d1 ~ d4. c8 e8 f8 g8 e8 d1 ~ d1 ~ d1 ~ d1 (go loop))
