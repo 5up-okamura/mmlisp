@@ -4088,12 +4088,15 @@ suspect — the catch-up is exactly why both are true at once.
    is still owed.
 2. `engine-gate` fails 8 of 12: `drv-player.js` has not been moved to the
    ring-fill DAC model. Unchanged, still the remaining port work.
-3. **`src/mixer.z80`, `sgdk/mmlispdrv_bin.h` and `sgdk/mmlispdrv.bin` are STALE
-   in the repo** — at HEAD no combination of the knobs reproduces the committed
-   `mixer.z80`, so the generator has moved since they were last written. They
-   were left alone rather than regenerated silently, because that changes the
-   shipped engine's bytes. Regenerating them is its own reviewed change; until
-   then every tool run leaves them dirty and that diff is not work anyone did.
+3. **Three committed artifacts are at a configuration the generators do not
+   produce by default** — `68k/mml_rate.h` (stamp 3333 = PCM_SPG 1, against a
+   default of 3 = 10000), `sgdk/mmlispdrv_bin.h` and `sgdk/mmlispdrv.bin`. So
+   any tool that regenerates them leaves them modified and that diff is not
+   work anyone did; `git checkout` them. **Deliberately deferred** (decided
+   2026-08-30): the plan is Timer B at 3.3 kHz and Timer A for the higher
+   rates, so the defaults move once — to whatever that spec says — rather than
+   twice. `src/mixer.z80` is no longer among them: assembling hands the
+   generated mixer to z80asm in memory (`sources`), so a read no longer writes.
 4. 9,987 Hz (TIMER_B_K=16) is still broken; the branch is 3,329 Hz only. The
    pad default is conditional so reviving it does not inherit 0.40 untested.
 5. Every gate needs `PCM_SPG=1 TIMER_B_K=1` in the environment or it fails on

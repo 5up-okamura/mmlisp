@@ -81,14 +81,20 @@ common as bugs.
 across three generated things: the MMB's baked sample bank, the generated mixer,
 and `mml_rate.h`.
 
-Building the ROM therefore **rewrites tracked files in place** — `src/mixer.z80`,
-`sgdk/mmlispdrv_bin.h` and `sgdk/mmlispdrv.bin` — under the probe's knobs, the
-same way `npm run verify:engine` and `tools/frame-budget.mjs` already do. Those
-files are committed at the generator's DEFAULTS, not at the probe's, so a build
-leaves the tree dirty and the diff is not a change anyone made. Restore them
-(`git checkout drv/src/mixer.z80 drv/sgdk/mmlispdrv_bin.h drv/sgdk/mmlispdrv.bin`)
-rather than committing them, unless the intent really is to move the branch's
-baseline configuration. They default here to the branch's only working configuration —
+Building the ROM therefore **rewrites three tracked files** —
+`68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `sgdk/mmlispdrv.bin` — because it
+regenerates them under the probe's knobs while they are committed at values the
+generators do not produce by default. The diff is not a change anyone made;
+restore them (`git checkout drv/68k/mml_rate.h drv/sgdk/mmlispdrv_bin.h
+drv/sgdk/mmlispdrv.bin`) rather than committing them.
+
+That mismatch is deliberate for now: the plan is Timer B at 3.3 kHz and Timer A
+for the higher rates, so the generators' defaults stay where they are until that
+spec settles and the artifacts can be regenerated once against it. `src/mixer.z80`
+is NOT in the list any more — assembling hands the generated mixer to z80asm in
+memory (`sources`), so measuring the engine no longer writes anything.
+
+The knobs default here to the branch's only working configuration —
 `PCM_SPG=1 TIMER_B_K=1`, every sample gated, 3,329 Hz. Mismatch them and
 `mml_load_samples` refuses the bank on its stamp: the song plays and every PCM
 note is silently dropped, which the probe reports as `PCM MUTE`.
