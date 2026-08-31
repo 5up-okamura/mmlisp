@@ -4034,6 +4034,48 @@ CSM owns it (§9), but only for scores with an `fm3-csm` track, and `isCsm` is
 already a per-track flag. Making the DAC rate a compile-time property of the
 score is the unexplored option and looks cheaper than reviving the group.
 
+## THE DRIFT — 2026-08-31. NOT FIXED, and it is the requirement, not a bug list.
+
+The user hears the PCM drift against the FM over a song. It is a RATE error and
+every attempt to treat it as an offset has failed, because:
+
+**ANY LOST SAMPLE IS PERMANENT DRIFT.** Timer B's overflow flag is one bit. A
+stretch longer than a sample period with no `emit_try` throws an overflow away;
+the DAC then holds a period longer, the PCM stream stretches by that period, and
+nothing ever takes it back. The sequencer keeps the FM on the frame grid, so the
+two separate for ever.
+
+**So the target is 100.0% of nominal, not 99%.** This branch has been reporting
+98-99% as "good" for weeks. It is not good — 0.9% is 135 ms of drift over
+fifteen seconds, which is what "だんだんずれていく" is. Every DAC number in this
+file before today was judged against the wrong bar.
+
+Two separate things were fixed on the way and neither was the drift:
+
+* The ring's lead was 255 samples = 4.6 frames while `mml_render_frame()`
+  cancels exactly ONE ("The lead is exactly one frame and stays that way").
+  The uncancelled 3.6 frames were a 37 ms CONSTANT offset — the drums behind
+  the melody. Now 56 = one frame, residual -1.6 ms. An intermediate commit set
+  it to 128, which only made the offset smaller; that was the wrong shape of
+  fix and the user rejected it correctly.
+* Asks through the frame's PCM setup: 0.27 -> 0.08 overflows thrown away a
+  frame, rate 98.8% -> 99.1%.
+
+**WHAT IS LEFT, measured on drv/tests/sin008.mmlisp (the user's own conversion,
+DAC 1 + FM 5 + PSG 3):**
+
+1. 11 gaps over two sample periods still begin at `feed_one`, worst 16,640
+   cycles. `frame-budget --asks` names them: it records where the engine WAS
+   when it last asked, so a gap is attributed to the stretch that caused it and
+   not to the emit that ended it. Use it; do not sprinkle calls by guesswork.
+2. The ring runs EMPTY 1.09 times a frame. A one-frame lead has no room for the
+   dip inside a frame — the mixer adds at the head and the feed drains all
+   frame. The lead cannot simply be raised: it is the offset. If more lead is
+   needed, `mml_render_frame()`'s compensation must be raised to match it, and
+   that is sequencer surgery, not a constant.
+
+The two pull against each other and that tension IS the remaining problem.
+
 ## THE LOOP IS CLOSED. You can measure without asking anyone.
 
     sh drv/blastem/setup.sh                                    # once
