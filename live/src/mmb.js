@@ -377,8 +377,23 @@ export function pcmIncrement(baseRate, note) {
 export const PCM_SAMPLES_PER_GATE = Number(
   (typeof process !== "undefined" ? process.env?.PCM_SPG : undefined) ?? 3,
 );
+// THE SAME KNOB, IN THE UNIT BOTH TIMERS SHARE: P = FM samples per DAC sample.
+// Timer B's period is 16 x (256 - TB) FM samples and the engine takes SPG
+// samples out of each one, so P = 16 / SPG and only P = 16, 8, 16/3, 4 ... are
+// reachable. TIMER A's period is (1024 - NA) FM samples with NA a 10-bit
+// register, so P is any integer 1..1024 — the rate is no longer quantised to
+// multiples of 3,329 Hz, which is the whole reason to reach for it (CSM owns
+// Timer A, so a score that uses CSM keeps Timer B; see docs/driver.md).
+//
+// P is carried as an exact fraction because 16/3 is one of its values and the
+// frame's sample count must stay a ratio of integers — the engine and the
+// sequencer both step a remainder, and a rounded P is a drift.
+const _pn = (typeof process !== "undefined" ? process.env?.PCM_FM : undefined);
+export const PCM_FM_NUM = _pn != null ? Number(_pn) : 16;
+export const PCM_FM_DEN = _pn != null ? 1 : PCM_SAMPLES_PER_GATE;
+export const PCM_FM_PER_SAMPLE = PCM_FM_NUM / PCM_FM_DEN;
 const _gcd = (a, b) => (b ? _gcd(b, a % b) : a);
-const _n = 896040 * PCM_SAMPLES_PER_GATE, _d = 2304 * 7;
+const _n = 896040 * PCM_FM_DEN, _d = 1008 * PCM_FM_NUM;
 export const PCM_SAMPLES_NUM = _n / _gcd(_n, _d);
 export const PCM_SAMPLES_DEN = _d / _gcd(_n, _d);
 export const PCM_SAMPLES_PER_FRAME = PCM_SAMPLES_NUM / PCM_SAMPLES_DEN; // 166.67
@@ -435,10 +450,19 @@ export function pcmFrameSamples(frame) {
 // it — that is the whole lesson of the 255. Under 256 either way: a voice
 // pass's tick count is a single byte in the engine (G_TICKS) and the prime
 // frame mixes exactly TARGET of them. Mirrored by PCM_RING_TARGET in
-// drv/src/engine.z80 and MML_PCM_RING_TARGET in drv/68k/mmlispseq.h — all three
-// must agree.
-export const PCM_RING_TARGET = 56;
+// drv/src/engine.z80 and MML_PCM_RING_TARGET in drv/68k/mml_rate.h — all three
+// must agree, so all three are now DERIVED from this one line rather than
+// hand-kept: the Z80's comes out of gen-mixer.mjs and the C one out of
+// gen-c-tables.mjs. A hand-kept 255 is exactly how the 37 ms happened.
+export const PCM_RING_TARGET = Math.ceil(PCM_SAMPLES_PER_FRAME);
 export const PCM_RING_BYTES = 512;
+if (PCM_RING_TARGET > 255)
+  throw new Error(
+    `PCM_RING_TARGET ${PCM_RING_TARGET} > 255: the engine's tick count is a byte ` +
+      `(G_TICKS), so ${(60 * PCM_SAMPLES_NUM) / PCM_SAMPLES_DEN | 0} Hz is past what this ring shape holds`,
+  );
+if (2 * PCM_RING_TARGET > PCM_RING_BYTES)
+  throw new Error(`ring of ${PCM_RING_BYTES} B cannot hold 2 x ${PCM_RING_TARGET}`);
 
 // How far a PCM voice may be attenuated, in 6 dB shift steps. It is a BUDGET
 // constant, and the range it removes was never audible anyway.

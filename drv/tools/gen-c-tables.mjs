@@ -25,6 +25,7 @@ import {
   PCM_SAMPLES_NUM,
   PCM_SAMPLES_DEN,
   PCM_BAKE_STAMP,
+  PCM_RING_TARGET,
 } from "../../live/src/mmb.js";
 
 const k68 = join(dirname(fileURLToPath(import.meta.url)), "..", "68k");
@@ -45,6 +46,14 @@ writeFileSync(
 #define MML_SPG_NUM ${PCM_SAMPLES_NUM}
 #define MML_SPG_DEN ${PCM_SAMPLES_DEN}
 #define MML_SPG_STAMP ${PCM_BAKE_STAMP}
+
+/* Finished samples the ring runs ahead of the feed: ONE FRAME, which is exactly
+ * what mml_render_frame() cancels by dispatching a PCM track a frame early. Any
+ * other value offsets the PCM against the FM and PSG and nothing takes it out.
+ * It moves with the sample clock, which is why it is generated: it was
+ * hand-kept at 255 — 1.5 frames at 167 samples a frame, 4.6 of them at 55.6.
+ * Mirrors PCM_RING_TARGET in live/src/mmb.js and in drv/src/rate.z80. */
+#define MML_PCM_RING_TARGET ${PCM_RING_TARGET}
 
 #endif
 `,
