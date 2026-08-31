@@ -1158,6 +1158,16 @@ pp_setup:
         or   c
         ld   (G_ACTM),a
 
+        ; ASK HERE. Everything from the last ask (pp_setup) to the first mix
+        ; loop is one stretch — the flag scan, pcm_pad's costing, the voice
+        ; walk — and it measured as the ONLY place a gap over two sample
+        ; periods ever begins: 91 times in 400 frames, 2,797 cycles mean,
+        ; 16,640 worst. Timer B's flag is one bit, so every period inside such
+        ; a stretch is an overflow THROWN AWAY, and a thrown-away sample is not
+        ; a hiccup — the DAC holds a period longer, the PCM stream stretches,
+        ; and it drifts against the FM for the rest of the song. A and the
+        ; flags are dead here; HL is not loaded until below.
+        call feed_one
         call pcm_pad            ; what the silent passes may hold to
         ld   hl,(G_WR)          ; …and where this frame's chunk is written
         ld   a,l
@@ -1177,6 +1187,9 @@ pp_setup:
         ; the saturating add depends on.
         ld   c,0
 pp_act:
+        call feed_one           ; …and once per voice through the walk: C is the
+                                ; index and feed_one touches A, HL and the flags
+                                ; alone, so the loop is untouched.
         call pp_voice_at
         jr   nz,pp_act_run
         jr   pp_act_next
