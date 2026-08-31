@@ -1,0 +1,49 @@
+; A LOAD stress score: 1 PCM + 5 FM + 3 PSG all sounding at once, looping.
+;
+; Every PCM measurement in this repo up to 2026-08-30 was made on a two-track
+; gate score, and a user's MUCOM conversion — DAC 1, FM 5, PSG 3 — went silent
+; in stretches on a build those gates called 99% delivered. Nine channels is a
+; different frame: the slot carries every one of their chip writes, and the
+; mixer gets what is left. If the interrupt does not fit, the catch-up consumes
+; the frame WITHOUT MIXING (driver.md §6.7), the ring drains, and the DAC goes
+; quiet until the sequencer re-primes it — which is what "silence, then it comes
+; back, then silence" sounds like.
+;
+; It is deliberately dense and deliberately loops for ever: what is being
+; measured is the steady state of a full song, not a two-second gate.
+(def lead :alg 4 :fb 3
+  :ar1 31 :dr1 6 :sr1 3 :rr1 7 :sl1 2 :tl1 14 :ks1 1 :ml1 1 :dt1 0
+  :ar2 30 :dr2 8 :sr2 2 :rr2 8 :sl2 3 :tl2 18 :ks2 0 :ml2 2 :dt2 1
+  :ar3 31 :dr3 7 :sr3 2 :rr3 7 :sl3 2 :tl3 22 :ks3 1 :ml3 1 :dt3 -1
+  :ar4 31 :dr4 9 :sr4 3 :rr4 9 :sl4 4 :tl4 4  :ks4 0 :ml4 1 :dt4 0)
+
+(def bass :alg 7 :fb 1
+  :ar1 31 :dr1 10 :sr1 1 :rr1 8 :sl1 4 :tl1 8  :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 12 :sr2 1 :rr2 8 :sl2 5 :tl2 24 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 12 :sr3 1 :rr3 8 :sl3 5 :tl3 24 :ks3 0 :ml3 1 :dt3 0
+  :ar4 31 :dr4 11 :sr4 2 :rr4 9 :sl4 3 :tl4 6  :ks4 0 :ml4 1 :dt4 0)
+
+(def kit :sample :file "blip.wav")
+
+(pcm1 kit :tempo 140 :oct 4 :len 8 :vel 15
+  #loop  c c > c < c  c c > c < c  (go loop))
+
+(fm1 lead :tempo 140 :oct 5 :len 8 :vel 13
+  #loop  c e g b  > c < b g e  f a > c e  < a f d c  (go loop))
+(fm2 lead :tempo 140 :oct 4 :len 16 :vel 11
+  #loop  c d e f g a b > c < b a g f e d c
+         d e f g a b > c d < c b a g f e d  (go loop))
+(fm3 lead :tempo 140 :oct 4 :len 8 :vel 10
+  #loop  e g > c < g  e g > c < g  f a > d < a  f a > d < a  (go loop))
+(fm4 bass :tempo 140 :oct 2 :len 8 :vel 15
+  #loop  c c g c  c c g c  f f > c < f  f f > c < f  (go loop))
+(fm5 lead :tempo 140 :oct 5 :len 16 :vel 8
+  #loop  g b > d f  e c < b g  a > c e g  f d < b a
+         g b > d f  e c < b g  a > c e g  f d < b a  (go loop))
+
+(sqr1 :tempo 140 :oct 5 :len 16 :vel 12
+  #loop  c e g > c < g e c e  d f a > d < a f d f  (go loop))
+(sqr2 :tempo 140 :oct 4 :len 16 :vel 10
+  #loop  g > c e g  < b > d f a  g > c e g  < a > c e g  (go loop))
+(sqr3 :tempo 140 :oct 3 :len 8 :vel 9
+  #loop  c g c g  f > c < f > c <  (go loop))

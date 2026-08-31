@@ -11,11 +11,36 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "./z80asm.mjs";
-import { MIXER_PATH, mixerSource } from "./gen-mixer.mjs";
+import { MIXER_PATH, mixerSource, PCM_GROUP } from "./gen-mixer.mjs";
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
 export function buildEngine() {
+  // PCM_GROUP > 1 BUILDS NO WORKING DAC, and it is the DEFAULT.
+  //
+  // At PCM_GROUP = 1 every sample is gated by Timer B and the emit is
+  // `emit_try`, the non-blocking shape the 2026-08-29 rework left behind. Above
+  // 1 the generator still emits the shape that came before it — a blocking
+  // `gate_wait` charged against a per-frame debt in G_EMITS — and the code that
+  // settled that debt went out with the quota it belonged to. Nothing writes
+  // G_EMITS, so it reads 0 for ever and the gated emit never fires.
+  //
+  // Measured, 600 frames of a nine-channel score: 30,045 $2A writes at
+  // PCM_GROUP 1, and ONE at the default PCM_GROUP 48. FM and PSG play
+  // perfectly either way, which is exactly why this is worth an exception —
+  // the song comes out sounding like the drums were never in it, and every
+  // gate in this repo stays green.
+  //
+  // Set PCM_SPG=1 TIMER_B_K=1, which is the only configuration this branch
+  // runs. MMLISP_ALLOW_BROKEN_GROUP=1 builds it anyway, for probing the group
+  // shape on purpose (.claude/memory/plan-68k-split.md).
+  if (PCM_GROUP !== 1 && !process.env.MMLISP_ALLOW_BROKEN_GROUP) {
+    throw new Error(
+      `PCM_GROUP is ${PCM_GROUP}, and only 1 has a working DAC on this branch.\n`
+      + `  Every PCM note would be silently dropped — FM and PSG would play fine.\n`
+      + `  Build with:  PCM_SPG=1 TIMER_B_K=1 <your command>\n`
+      + `  (or MMLISP_ALLOW_BROKEN_GROUP=1 to build the broken shape deliberately)`);
+  }
   // The mixer is generated, and handed to the assembler in memory: building the
   // engine is a READ of the tree, and it used to leave src/mixer.z80 modified
   // every time — including under `install-sgdk --dry-run`, which promises to

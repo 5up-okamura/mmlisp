@@ -51,18 +51,26 @@ int main(void)
     // so this is a flag on the result, not a refusal.
     if (MMLisp_needsSampleBank()) probe.status |= PROBE_ST_PCM_MUTE;
 
+    MMLispStats st = { 0, 0 };
     probe.track_count = MMLisp_trackCount();
     // Every track in the same frame: each track's clock starts in the frame it
     // was set up in, so staggered starts stay permanently out of phase.
     for (u8 i = 0; i < probe.track_count; i++) MMLisp_startTrack(MMLisp_trackId(i));
     probe.stage = 5;
 
+    // BOTH CLOCKS START TOGETHER, and the engine's does not start at zero: it
+    // has been consuming frames since MMLisp_init, through the score load, and
+    // counting those against a window that begins here reads as music running
+    // FAST — 0x114, 108%, which is not a thing that can happen. The example
+    // program takes the same reading when PLAY is pressed; this one has no
+    // button, so it takes it now.
+    MMLisp_readStats(&st);
     const u32 base_vbl = vtimer;
     u32 mark_vbl  = vtimer;
-    u16 base_audible = 0, mark_audible = 0, mark_starved = 0;
+    u16 base_audible = st.audible, mark_audible = st.audible,
+        mark_starved = st.starved;
     u16 worst_1s = 0xFFFF;
     u32 loops = 0;
-    MMLispStats st = { 0, 0 };
 
     for (;;)
     {
