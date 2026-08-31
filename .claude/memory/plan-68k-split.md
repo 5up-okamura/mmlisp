@@ -4116,6 +4116,121 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## TIMER A: HOW FAR THE RATE ACTUALLY GOES (2026-08-31, measured on BlastEm)
+
+The question was "Timer B tops out at 3,329 Hz for a per-sample gate — how high
+can Timer A go?". Timer A's period is (1024 - NA) FM samples across a 10-bit
+register, i.e. 52 Hz to 53,267 Hz at one-FM-sample resolution, against Timer B's
+16-FM-sample quantum. So the TIMER is not the limit. **The emit path is.**
+
+`sin008.mmlisp` (the mucom conversion: 1 DAC + 5 FM + 3 PSG), 12 s each,
+`node tools/dac-log.mjs` on the emulator's own $2A log:
+
+| FM samples/sample | nominal | delivered | % of the samples the clock owed |
+| --- | --- | --- | --- |
+| 16 (Timer B)      | 3,329 Hz  | 3,300 | 99.1% |
+| 16 (Timer A)      | 3,329 Hz  | 3,285 | 98.7% |
+| 14                | 3,805 Hz  | 3,714 | 97.6% |
+| 12                | 4,439 Hz  | 4,234 | 95.4% |
+| 11                | 4,842 Hz  | 4,483 | 92.6% |
+| 10                | 5,327 Hz  | 4,814 | 90.4% |
+| 9                 | 5,919 Hz  | 4,821 | 81.4% |
+| 8                 | 6,658 Hz  | 4,580 | 68.8% |
+| 6                 | 8,878 Hz  | 4,883 | 55.0% |
+| 5                 | 10,653 Hz | 5,204 | 48.9% |
+| 4                 | 13,317 Hz | 5,320 | 39.9% |
+
+**Delivered saturates around 4,800-5,300 Hz however high you ask.** The clean
+region ends at ~4,400 Hz; past it the deficit is not a stall in one place, it is
+uniform — the by-tenth-of-frame profile stays flat.
+
+With the FM and PSG traffic taken away and the PCM sounding CONTINUOUSLY
+(`tests/budget-2v.mmlisp`, and a one-voice cut of it) it is lower, because
+sin008's drum track leaves the mixer idle much of the time:
+
+| | 3,329 Hz | saturates at |
+| --- | --- | --- |
+| 2 voices sounding | 99.5% | ~4,350 Hz |
+| 1 voice sounding  | 99.7% | ~5,000 Hz |
+
+### Why: the emit costs 384 cycles, not the 182 the generator models
+
+Measured, not counted by hand — `emit_try` run on tools/z80cpu.mjs with the flag
+up, the ring non-empty and **no BUSY waits at all**, so this is the floor:
+
+    due, ring has a sample   384 cyc (incl. the call)
+    due, ring EMPTY          101
+    not due                   48
+
+and by phase, of the 367 inside the routine:
+
+    the wrap + the $2A data write (eg_ex)     109
+    BUSY poll + the G_FILL decrement           70
+    $2A re-latch and its BUSY poll (et_b3)     44
+    the ring read and its BUSY poll (et_b4)    43
+    $27 address latch + its poll               44
+    $27 data — THE FLAG RESET                  20
+    the status read and the flag test          25
+    the master chain's skip                    12
+
+Two lines of that are worth naming:
+
+* **The flag reset costs 108 cycles** ($27 address, its BUSY poll, the data
+  write, and the $2A re-latch it forces with another poll). It is 28% of the
+  emit, and it is unavoidable for a POLLED per-sample gate: the YM2612's
+  overflow flag latches until $27 clears it.
+* **The ring-wrap check costs 79** (`push hl / push iy / pop hl / ld a,h / cp /
+  jr nz / pop hl`) — paid on every sample to notice a boundary that happens once
+  in 512. HL is live at the inline call sites, which is what pays for the
+  push/pop pair.
+
+`gen-mixer.mjs`'s `EMIT_CYCLES = 182` is therefore about half the truth, and its
+comment's own breakdown shows why: it counts one BUSY poll instead of four and
+predates both the G_FILL decrement and the wrap moving into the send path. The
+pad estimator that reads it is under-charging every sample by ~200 cycles.
+
+Sanity check on the whole picture: measured floor between two $2A writes is 518
+cycles (p05, every rate at or above 6,658 Hz), and 384 + two `add`-role ticks at
+78 = 540. The model and the machine agree here.
+
+### What that means for the spec
+
+Timer A buys **arbitrary rates and about +33% of rate** over Timer B, not a
+doubling — with the emit path as it is today. The honest numbers to write into a
+spec are ~4,400 Hz with two voices sounding and ~4,800 Hz with one; 3,329 Hz is
+the only rate with margin to spare.
+
+Raising it further is an EMIT problem, and there are only two levers:
+1. shorten the send (the wrap's 79 is the cheap one — a 256-aligned ring, or
+   `ld a,iyh` if the assembler learns the undocumented opcode); or
+2. stop gating every sample — N samples per overflow, cycle-paced inside the
+   group, which is the shape that was there before and was removed because its
+   PER-FRAME DEBT accounting was wrong, not because the idea was. The flag reset
+   is then paid once per N instead of once per sample.
+
+Neither is decided. Both are engine changes, so neither belongs in the language
+spec.
+
+### What changed in the tree for this (commit cee0557)
+
+* The rate knob is now **P = FM samples per DAC sample** (`PCM_FM`), the unit
+  both timers share; Timer B is the case P = 16/SPG. `PCM_TIMER=A|B` selects.
+* Which timer it is comes down to four generated values — the status bit, the
+  $27 Load|Enable pair, the $27 flag-reset bit, the period registers — in a new
+  generated `drv/src/rate.z80` that `engine.z80` includes at the top.
+* **`cs_r27` had `$0a` and `$20` written into it.** On a Timer A build the
+  sequencer's first $27 dropped Load A and the reset hit the wrong bit, so the
+  flag never came down: `emit_try` read "due" for ever, drained the ring in one
+  burst and then held the DAC for 6 ms. Fixed to PCM_TLOAD/PCM_TRESET. This is
+  the third hand-kept constant on this branch to fail exactly this way.
+* `PCM_RING_TARGET` is derived from the rate (one frame of samples) and
+  generated into all three mirrors instead of hand-kept at 56. `mmb.js` now
+  refuses a rate whose frame does not fit the engine's byte-wide tick count —
+  which is a HARD CEILING of 15,325 Hz on the current ring shape, well above
+  anything the emit path can reach.
+* Timer B is unchanged end to end: sin008 still delivers 99.1% with the same
+  interval percentiles.
+
 ## WHAT IS NEXT, IN ORDER
 
 1. **Hardware.** Nothing here has ever run on a real Mega Drive. The emulator
