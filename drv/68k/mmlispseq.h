@@ -89,14 +89,12 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 #include "mml_rate.h"
 #define MML_PCM_SAMPLES_NUM MML_SPG_NUM
 #define MML_PCM_SAMPLES_DEN MML_SPG_DEN
-/* Finished samples the ring runs ahead of the feed. A burst's first frame
- * builds all of them and feeds nothing; every frame after it mixes exactly what
- * the feed took. (The engine's buffer is twice this — §5.1.2.) */
-/* Finished samples the ring runs ahead of the feed, and therefore how far the
- * PCM lags FM and PSG. ~1.3 frames at 3,329 Hz. Was 255, which was 1.5 frames
- * when a frame carried 167 samples and is 4.6 of them now. Under 256: a pass's
- * tick count is a byte on the Z80. Mirrors live/src/mmb.js. */
-#define MML_PCM_RING_TARGET 128
+/* Finished samples the ring runs ahead of the feed: ONE FRAME, which is exactly
+ * what mml_render_frame() cancels by dispatching a PCM track a frame early. Any
+ * other value offsets the PCM against the FM and PSG and nothing takes it out.
+ * Was 255 — 1.5 frames at 167 samples a frame, 4.6 of them at 55.6. Under 256:
+ * a pass's tick count is a byte on the Z80. Mirrors live/src/mmb.js. */
+#define MML_PCM_RING_TARGET 56
 
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];
