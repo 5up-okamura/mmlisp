@@ -94,6 +94,7 @@ int main(void)
             probe.worst_1s = worst_1s;
             probe.lost_1s  = (u16)(win > got ? win - got : 0);
             probe.starv_1s = (u16)(st.starved - mark_starved);
+            if (probe.seconds < PROBE_SECS) probe.sec_music[probe.seconds] = now;
             probe.seconds++;
 
             drawHex(probe.music256, 4, 2, 2);
