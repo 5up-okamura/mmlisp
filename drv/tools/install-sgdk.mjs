@@ -157,12 +157,14 @@ const counts = { created: 0, updated: 0, unchanged: 0, kept: 0 };
 const plan = [...FILES];
 if (opts.example) plan.push({ src: "example/main.c", dest: "src/main.c", own: "seed" });
 
-let resState = null; // how res/song.res fared — a seed we wrote is ours to amend
+let resState = null;  // how res/song.res fared — a seed we wrote is ours to amend
+let mainState = null; // …and the same for src/main.c under --example
 for (const f of plan) {
   const srcPath = join(sgdkDir, f.src);
   if (!existsSync(srcPath)) fail(`missing master file: ${relative(drvRoot, srcPath)}`);
   const state = install(srcPath, join(project, f.dest), f.own);
   if (f.dest === "res/song.res") resState = state;
+  if (f.dest === "src/main.c") mainState = state;
   counts[state]++;
   const note = state === "kept" ? "  (yours — left alone)" : "";
   console.log(`${dry}  ${MARK[state]} ${f.dest}${note}`);
@@ -242,11 +244,29 @@ if (smpPath) {
     console.log(`${dry}  ~ res/song.res  (enabled the song.smp BIN)`);
     hasSmpBin = true;
   }
+  // The same trap as the BIN line, one file over: example/main.c ships with
+  // MMLISP_PCM_SAMPLES at 0, so MMLisp_setSampleBank() is never called and the
+  // song plays FM and PSG with every drum missing — silently, and identically
+  // to a driver bug. We already know the score has a bank; if we also WROTE the
+  // main.c this run, it is ours to set, exactly as song.res is.
+  let mainSet = false;
+  const mainPath = join(project, "src", "main.c");
+  if (mainState === "created" && existsSync(mainPath)) {
+    const before = readFileSync(mainPath, "utf8");
+    const after = before.replace(/^#define MMLISP_PCM_SAMPLES 0$/m,
+      "#define MMLISP_PCM_SAMPLES 1   // set by install-sgdk: this score has a bank");
+    if (after !== before) {
+      if (!opts.dryRun) writeFileSync(mainPath, after);
+      console.log(`${dry}  ~ src/main.c  (set MMLISP_PCM_SAMPLES 1)`);
+      mainSet = true;
+    }
+  }
   console.warn(
     `\nnote: this score carries a PCM sample bank (res/song.smp).` +
       (hasSmpBin ? "" : `\n  - res/song.res: add   BIN song_smp "song.smp" 32768`) +
-      `\n  - main.c: call MMLisp_setSampleBank(song_smp) after MMLisp_init()` +
-      `\n    (REQUIRED — the BIN line alone leaves every PCM note dropped)` +
+      (mainSet ? "" :
+        `\n  - main.c: call MMLisp_setSampleBank(song_smp) after MMLisp_init()` +
+        `\n    (REQUIRED — the BIN line alone leaves every PCM note dropped)`) +
       `\n  (drv/sgdk/README.md §PCM sample banks)`,
   );
 }
