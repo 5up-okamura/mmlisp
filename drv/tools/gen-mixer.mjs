@@ -1492,10 +1492,22 @@ fr_voice:
 // Write src/mixer.z80 in the settled configuration (driver.md §5.3.1) — the
 // file engine.z80 includes. Exported so the engine build regenerates it rather
 // than trusting a checked-in copy to match.
+// Where engine.z80's `include "mixer.z80"` resolves to.
+export const MIXER_PATH =
+  join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mixer.z80");
+
+// The mixer's source, WITHOUT writing it. Pass it to assemble()'s `sources` and
+// the engine builds from it with the working tree untouched — which is what
+// every tool that only wants to measure should do (see the note in z80asm.mjs).
+export function mixerSource() {
+  return generateMixerCore({ unroll: PACE_PASSES, paced: true });
+}
+
+// Writing it is for `node tools/gen-mixer.mjs` and for install-sgdk's explicit
+// regeneration — the two places that mean to change the tree.
 export function writeMixer() {
-  const dst = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mixer.z80");
-  writeFileSync(dst, generateMixerCore({ unroll: PACE_PASSES, paced: true }));
-  return dst;
+  writeFileSync(MIXER_PATH, mixerSource());
+  return MIXER_PATH;
 }
 
 if (process.argv[1] && process.argv[1].endsWith("gen-mixer.mjs")) {

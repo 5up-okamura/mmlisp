@@ -66,9 +66,9 @@ try {
   }
 
   // ── The Z80 engine ───────────────────────────────────────────────────────
-  const { writeMixer } = await import("./gen-mixer.mjs");
-  writeMixer();
-  const built = assemble(join(drv, "src", "engine.z80"));
+  const { MIXER_PATH, mixerSource } = await import("./gen-mixer.mjs");
+  const built = assemble(join(drv, "src", "engine.z80"),
+    { sources: { [MIXER_PATH]: mixerSource() } });
   const sym = (n) => built.symbols.get(n);
   const RAM = 0x2000, RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
   const IDLE = sym("idle"), IDLE_END = sym("idle_halt");

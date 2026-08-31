@@ -195,8 +195,10 @@ async function captureBaseline(ref, score, tmp) {
         join(wdrv, "68k", "mmlispseq.c"), join(wdrv, "68k", "tables.c")], { stdio: "pipe" });
     const gen = await import(join(wdrv, "tools", "gen-mixer.mjs"));
     const mmbMod = await import(join(wdrv, "tools", "mmb-build.mjs"));
-    gen.writeMixer();
-    const built = assemble(join(wdrv, "src", "engine.z80"));
+    // In memory, like every other tool: the mixer is generated, not authored,
+    // and assembling it is a read (see z80asm.mjs's `sources`).
+    const built = assemble(join(wdrv, "src", "engine.z80"),
+      { sources: { [gen.MIXER_PATH]: gen.mixerSource() } });
     const sym = (n) => built.symbols.get(n);
     let mmb, sampleBank;
     if (score.endsWith(".mmb")) {

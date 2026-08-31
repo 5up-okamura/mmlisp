@@ -84,9 +84,11 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer, PACE_WINDOW } = await import("./gen-mixer.mjs");
-  writeMixer();
-  const built = assemble(join(drv, "src", "engine.z80"));
+  const { MIXER_PATH, mixerSource, PACE_WINDOW } = await import("./gen-mixer.mjs");
+  // The generated mixer goes to the assembler in memory: measuring the engine
+  // is a READ, and writing src/mixer.z80 to do it left the tree modified.
+  const built = assemble(join(drv, "src", "engine.z80"),
+    { sources: { [MIXER_PATH]: mixerSource() } });
   const sym = (n) => built.symbols.get(n);
   const R = sym("PCM_MIX_R");
   const NOMINAL = FRAME_CYCLES / R;

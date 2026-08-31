@@ -11,13 +11,17 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "./z80asm.mjs";
-import { writeMixer } from "./gen-mixer.mjs";
+import { MIXER_PATH, mixerSource } from "./gen-mixer.mjs";
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
 export function buildEngine() {
-  writeMixer(); // regenerate src/mixer.z80, which engine.z80 includes
-  const built = assemble(join(srcDir, "engine.z80"));
+  // The mixer is generated, and handed to the assembler in memory: building the
+  // engine is a READ of the tree, and it used to leave src/mixer.z80 modified
+  // every time — including under `install-sgdk --dry-run`, which promises to
+  // write nothing at all.
+  const built = assemble(join(srcDir, "engine.z80"),
+    { sources: { [MIXER_PATH]: mixerSource() } });
   const sym = (n) => {
     const v = built.symbols.get(n);
     if (v === undefined) throw new Error(`engine.z80 defines no ${n}`);

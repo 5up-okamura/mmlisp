@@ -166,16 +166,16 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { writeMixer, PACE_WINDOW: PACE_GEN, GATE_CY } = await import("./gen-mixer.mjs");
+  const { MIXER_PATH, mixerSource, PACE_WINDOW: PACE_GEN, GATE_CY } = await import("./gen-mixer.mjs");
   // What one DAC sample is worth, in Z80 cycles. GATE_CY is the timer's period
   // and the engine emits one sample per gate at PCM_GROUP = 1, so they are the
   // same number — but ask the generator rather than assuming it.
   const SAMPLE_CY = GATE_CY;
   // The model's charge only; the generated pad keeps the generator's value.
   const PACE_WINDOW = PACE_OVERRIDE ?? PACE_GEN;
-  writeMixer();
   const built = assemble(join(drv, "src", "engine.z80"),
-    PUMP ? { defines: { PUMP_ON: 1 } } : {});
+    { sources: { [MIXER_PATH]: mixerSource() },
+      ...(PUMP ? { defines: { PUMP_ON: 1 } } : {}) });
   const sym = (n) => built.symbols.get(n);
   const RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
   console.log(`engine ${built.bytes.length} B · write pump `
