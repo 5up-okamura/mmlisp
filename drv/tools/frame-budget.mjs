@@ -229,6 +229,8 @@ try {
     const EMIT_TRY = sym("emit_try") ?? -1;
     const G_FILL = sym("G_FILL");
     let lastAsk = 0, askGaps = null, dueEmpty = 0, dueSent = 0, asks = 0;
+    let lastAskPc = 0, lastPc = 0;
+    const longGaps = [];
     if (ASKS) askGaps = [];
     // The ring's fill, sampled at each vblank, and the sends counted exactly.
     //
@@ -375,19 +377,32 @@ try {
       const pcBefore = cpu.pc;
       if (askGaps && pcBefore === EMIT_TRY) {
         asks++;
-        if (lastAsk) askGaps.push(tcyc - lastAsk);
-        lastAsk = tcyc;
+        if (lastAsk) {
+          const gap = tcyc - lastAsk;
+          askGaps.push(gap);
+          // Where the engine WAS when it stopped asking. A gap is a stretch of
+          // code, and the stretch is named by where it began — sprinkling calls
+          // by guesswork is how the last one of these was missed.
+          if (gap > 2 * SAMPLE_CY) longGaps.push([gap, lastAskPc]);
+        }
+        lastAsk = tcyc; lastAskPc = lastPc;
         // The two failure modes, told apart at the only moment they differ.
         if (enableB && tcyc >= gateAt) {
           const fill = ram[G_FILL] | (ram[G_FILL + 1] << 8);
           if (fill) dueSent++; else dueEmpty++;
         }
       }
+      lastPc = pcBefore;
       const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
       // Charged only past the deadline: cycles inside the sample's own period
       // are the engine doing its job, and counting them would bury the answer
       // under the mixer.
-      if (starve && tcyc - lastDac > SAMPLE_CY)
+      // Charged past the ASK deadline, not the send deadline. A sample the ring
+      // could not supply is late; a Timer B overflow nobody asked about is GONE,
+      // because the flag is one bit — and gone samples are what make the PCM
+      // drift against the FM for ever. So this names the code that runs without
+      // asking, which is the only thing that can cause the drift.
+      if (starve && lastAsk && tcyc - lastAsk > SAMPLE_CY)
         starve.set(pcBefore, (starve.get(pcBefore) ?? 0) + c);
       if (prof && wasInIsr) prof.set(pcBefore, (prof.get(pcBefore) ?? 0) + c);
       cpu.decay(c);
@@ -451,6 +466,18 @@ try {
     console.log(`      ISR past its own vblank: ${isrOver}/${costs.length} `
       + `(${(100 * isrOver / costs.length).toFixed(1)}%) — each one is a lost interrupt, `
       + `and the catch-up runs two frames inside the next`);
+    // Nearest symbol at or below the PC, from the image's own table.
+    const syms = [...built.symbols.entries()]
+      .filter(([, v]) => typeof v === "number" && v < 0x2000)
+      .sort((a, b) => a[1] - b[1]);
+    const nameOf = (pc) => {
+      let lo = 0, hi = syms.length - 1, best = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (syms[mid][1] <= pc) { best = syms[mid]; lo = mid + 1; } else hi = mid - 1;
+      }
+      return best ? best[0] : `0x${pc.toString(16)}`;
+    };
     if (askGaps) {
       const frames = Math.max(1, consumed);
       if (askGaps.length) {
@@ -472,22 +499,23 @@ try {
       console.log(`      DAC SENT ${(sends / frames).toFixed(1)} samples a frame`
         + ` against ${(FRAME_CYCLES / SAMPLE_CY).toFixed(1)} the clock owes`
         + ` — ${(100 * sends / frames / (FRAME_CYCLES / SAMPLE_CY)).toFixed(1)}%`);
+      if (longGaps.length) {
+        const by = new Map();
+        for (const [g, pc] of longGaps) {
+          const r = nameOf(pc);
+          const e = by.get(r) ?? { n: 0, cyc: 0, max: 0 };
+          e.n++; e.cyc += g; if (g > e.max) e.max = g;
+          by.set(r, e);
+        }
+        console.log(`      gaps over TWO sample periods, by where the engine last asked:`);
+        for (const [r, e] of [...by.entries()].sort((a, b) => b[1].cyc - a[1].cyc).slice(0, 8))
+          console.log(`        ${r.padEnd(22)} ${String(e.n).padStart(5)} times`
+            + ` · ${(e.cyc / e.n).toFixed(0).padStart(6)} cyc mean · max ${e.max}`);
+      }
       if (asks) console.log(`      asks that found the timer due: ${dueSent} sent,`
         + ` ${dueEmpty} found the ring EMPTY`
         + ` (${(dueEmpty / frames).toFixed(2)} a frame)`);
     }
-    // Nearest symbol at or below the PC, from the image's own table.
-    const syms = [...built.symbols.entries()]
-      .filter(([, v]) => typeof v === "number" && v < 0x2000)
-      .sort((a, b) => a[1] - b[1]);
-    const nameOf = (pc) => {
-      let lo = 0, hi = syms.length - 1, best = null;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (syms[mid][1] <= pc) { best = syms[mid]; lo = mid + 1; } else hi = mid - 1;
-      }
-      return best ? best[0] : `0x${pc.toString(16)}`;
-    };
     const report = (map, headline) => {
       const byRoutine = new Map();
       for (const [pc, c] of map) byRoutine.set(nameOf(pc), (byRoutine.get(nameOf(pc)) ?? 0) + c);
