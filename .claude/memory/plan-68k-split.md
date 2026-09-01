@@ -4116,6 +4116,84 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## THE RATE BARELY MOVED, AND HERE IS THE ARITHMETIC (2026-09-01)
+
+The waste pass below took the emit from 384 cycles to 230 and the interrupt
+from 83% of a vblank to 57%. **The usable rate went from 3,329 Hz to about
+5,300 — 1.6x, against a 4x gap to XGM2.** That is the honest headline and the
+section below oversold it by quoting per-rate percentages instead.
+
+Why 1.6x and not 2.5x, measured rather than reasoned:
+
+    budget-2v @ 6,658 Hz, from the emulator's own $2A log
+      p05 interval   400 cyc   = emit 230 + two resampling ticks at 78
+      p50 interval   568 cyc   = that plus ~180 of everything else
+      by-tenth       flat      -> not a stall anywhere, just arithmetic
+
+**I removed 154 cycles from a 568-cycle sample.** XGM2 fits three voices at
+13,317 Hz into 269 cycles a sample, everything included — our emit alone is
+230 of that.
+
+### Two levers left, and they are the SAME change
+
+    per sample, two voices        now      after
+      emit                        230      155   (measured, see below)
+      mix ticks                   156       82   (78 -> 41, the `nr` loops)
+      floor                       386      237
+
+Both need HL'/DE' free, and today the 16.16 fraction lives there. **Dropping
+the runtime resampler is what buys both.**
+
+**Lever 1, baking — MEASURED, and it is already implemented.**
+`drv/tests/budget-2v-baked.mmlisp` is budget-2v's shape from a one-shot, so it
+runs the `nr` loops the generator already emits:
+
+                      4,439   6,658   8,878   10,653 Hz
+      budget-2v        98.8    91.0    50.1      —
+      budget-2v-baked  98.1    93.0    91.3    84.8
+
+Delivered rate tops out at ~6,100 Hz looped and **~9,000 Hz baked**; the p05
+floor moves 400 -> 347. Nothing in the engine had to change for that.
+
+**And sin008 is already fully baked** — five one-shot drum slices, seven
+entries, no loops — so real drum-style PCM has been getting this all along.
+`budget-2v` is an artificial worst case (a looped pad on both voices) and this
+file has been quoting it as if it were typical.
+
+**Lever 2, the ports in the shadow set — PRICED, not guessed.**
+`drv/tools/emit2.z80` is the proposed emit written out and run on z80cpu:
+HL' = $4000, DE' = $4001, BC' = the ring cursor in a 256-aligned page.
+
+      ask + send, due       155 cyc   (against 230 today)
+      ask alone, not due     31       (unchanged)
+
+`ld (hl),$27` is 10 where `ld a,n / ld (nn),a` is 20, `ld (de),a` is 7 where
+`ld (nn),a` is 13, and `ld a,(bc) / inc c` is 11 where `ld a,(iy+0)` plus the
+page flip is 39. Priced BEFORE as a loss (80 vs 73) because the emit is a
+`call` and HL had to be spilled — that pricing assumed the ports had to be
+LOADED each time. Resident in the shadow set they are not, and the earlier
+conclusion was wrong.
+
+Projection from the measured 8,102 Hz delivered at two baked voices: mean
+interval 442 cycles, less 75 -> 367 -> **~9,800 Hz**. Three voices would land
+near XGM2's shape.
+
+### The design question this puts to the language
+
+A mixer that cannot resample means PCM pitch comes entirely from the bank:
+
+- **one-shot samples**: baked per note, which is what already happens.
+- **looped samples**: cannot be resampled at build time either, because
+  rounding the loop points detunes the sustained part. Two ways out —
+  (a) bake at one anchor and reach other pitches by the 2^k octave shift, which
+  is exact and free in ROM but restricts a looped voice to octaves; or
+  (b) bake per note with the bake rate nudged so the loop LENGTH lands on an
+  integer, which costs a blob per note and a pitch error of 1/(2 x loopLen)
+  — under 3 cents for a 300-sample loop, 29 for a 30-sample one.
+
+NOT DECIDED. It is a language/format change and the spec is decided by
+discussion (CLAUDE.md).
+
 ## WHERE THE ENGINE STANDS AFTER THE WASTE PASS (2026-09-01)
 
 Delivered samples as a share of what the clock owed, BlastEm, 10-12 s each:

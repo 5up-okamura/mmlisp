@@ -1,0 +1,47 @@
+; THE PROPOSED EMIT, priced. XGM2's shape: the YM ports resident in the shadow
+; set, the ring cursor a single byte in a 256-aligned page. Only reachable if
+; the mixer stops resampling, because HL'/DE' carry the 16.16 fraction today.
+;
+;   HL' = $4000 (address port)   DE' = $4001 (data port)
+;   BC' = the ring cursor, C the byte, B the page
+YM_ADDR0    equ $4000
+G_FILL      equ $19c0
+RING_BASE   equ $1a00
+        org $0100
+emit_send2:
+        exx                     ; 4   the ports and the cursor are the shadow's
+        ld   (hl),$27           ; 10  [1/4] the flag-reset register's address
+        ; the fill accounting rides behind it, exactly as it does today
+        ld   a,(G_FILL)         ; 13
+        or   a                  ; 4
+        jr   nz,e2_lo           ; 12
+        ld   a,(G_FILL+1)       ; 13
+        or   a                  ; 4
+        jr   z,e2_dry           ; 12
+        dec  a                  ; 4
+        ld   (G_FILL+1),a       ; 13
+        ld   a,255              ; 7
+        ld   (G_FILL),a         ; 13
+        jr   e2_have            ; 12
+e2_lo:
+        dec  a                  ; 4
+        ld   (G_FILL),a         ; 13
+e2_have:
+        ld   a,$2a              ; 7   PATCHED: $27 with the timer's reset bit
+        ld   (de),a             ; 7   [2/4] the flag reset
+        ld   (hl),$2a           ; 10  [3/4] the DAC's address
+        ld   a,(bc)             ; 7   the ring, a byte at a time
+        inc  c                  ; 4   …and it wraps inside its 256-byte page
+        xor  $80                ; 7   the ring is signed, the DAC is not
+        ld   (de),a             ; 7   [4/4] the sample is out
+        exx                     ; 4
+        ret                     ; 10
+e2_dry:
+        exx
+        ret
+; and the ask, inline at the call site, unchanged in shape
+ask:
+        ld   a,(YM_ADDR0)       ; 13
+        bit  1,a                ; 8
+        call nz,emit_send2      ; 17 / 10
+        halt
