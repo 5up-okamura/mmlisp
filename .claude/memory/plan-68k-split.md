@@ -4116,6 +4116,102 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## WHAT THE OTHER DRIVERS DO ABOUT THE WRITE WAIT (2026-09-01, read from source)
+
+Cloned `Stephane-D/SGDK` and read `src/snd/drv_xgm.s80` (XGM1) and
+`src/snd/xgm2/*` (XGM2). **XGM2's header carries the author's hardware
+measurement of the YM2612's write timing**, and it settles the question this
+engine had been guessing at:
+
+    address write needs 6 Z80 cycles before its data (17 YM cycles = 8 by spec,
+                                                      "6 seems to be enough")
+    NO WAIT between writes to $21-$2F, except $28
+    $28 (key on/off)   ~112 YM cycles = 53 Z80
+    $30-$9E             83 YM cycles = 39 Z80
+    $A0-$B6             47 YM cycles = 22 Z80
+    a data write can take up to 53 Z80 cycles to acknowledge
+
+**`$27` and `$2A` are both in `$21-$2F`. The sample feed needs no wait at all.**
+That is now in docs/driver.md §5.1 so it cannot be re-derived from folklore.
+
+- **XGM1 polls BUSY**, but with the port address in HL: `BIT 7,(HL) / JP NZ` =
+  22 cycles, not the 24 an `ld a,(nn)` form costs.
+- **XGM2 polls nothing.** Fixed waits sized from the table
+  (`wait27/31/34/37/46/50/54/73/81_func`), and address and data writes sit back
+  to back with zero cycles between them (`LD (HL),C` / `LD (DE),A`).
+
+### Their sample output is 80 cycles; ours was 384 and is now 247
+
+XGM2's `sampleOutput` (the Timer-A-polling variant, RST $8, 101 with the call):
+
+    EXX                      4    YM ports live PERMANENTLY in HL'/DE'
+    LD A,IXL                 8    the $27 value is resident in IXL
+    BIT 0,(HL) / JR Z       19    Timer A's flag, through the port in HL
+    LD (HL),$27 / LD (DE),A 17    flag reset, nothing between the two
+    LD A,(BC)                7    a byte from the ring
+    LD (HL),$2A / INC C     14
+    LD (DE),A                7    the sample
+    EXX                      4
+
+The gap to ours is structural, not clever:
+
+| | XGM2 | here |
+| --- | --- | --- |
+| the four YM accesses | `ld (hl),n` / `ld (de),a` = **34** | `ld a,n` + `ld (nn),a` = **73** |
+| the ring cursor | `INC C`, 256 B aligned, **no wrap test** | `inc iy` + wrap = **39** |
+| fill accounting | not in the output path at all | **66** |
+| BUSY | **0** | 42, now 0 |
+
+They can hold the ports in the shadow set because **XGM2 does not resample** —
+every sample plays at one rate (half-speed is the only variant). Our HL'/DE'
+carry the 16.16 fraction. That is the trade, stated plainly: per-note PCM pitch
+costs us the register file XGM2 spends on addressing.
+
+### Their mixer, for scale
+
+    writePCM1 (first voice, LDI)        19 cyc/sample   (16+3)
+    mixPCM1   (each further voice)      42 cyc/sample   (+8 on overflow)
+    unsignPCM1 (output pass)            22 cyc/sample
+    3 voices                           125 cyc/sample
+
+Ours, baked: 24 first + 41 add = **65 for two voices**, and the bias is 7 cycles
+inside the emit rather than a 22-cycle pass — **the mix core is not our problem
+and never was**. Unbaked it is 61 + 78 = 139, and that 74 is the resampler.
+
+XGM2 fits 3 voices at 13,317 Hz (Timer A = 1020) into 269 cycles a sample,
+covering PCM sync, the mix, the output and the XGM command parsing. Its own
+header calls the output's 79/87 cycles "a huge cost ... leaving only about
+190/182 for other tasks :'(".
+
+### PACE_WINDOW: a second opinion, and it is 3, not 14
+
+XGM2's mix macros count `ADD (HL)` as **7+3** and `LDI` as **16+3** for a read
+through the $8000 window. Ours charges **14**, never measured, 28 cycles a
+sample at two voices — and it also SHRINKS the generated pads, so it pulls both
+ways. Now the knob `MMLISP_PACE`. Sweeping it on BlastEm cannot settle it (the
+constant only resizes pads there): 3 / 7 / 14 gave 99.2 / 99.2 / 98.6 for
+budget-2v at 3,329 Hz and no difference at all at 6,658. Default stays 14 until
+a machine says otherwise.
+
+### Where that leaves the emit
+
+    384 -> 263 (interleave, cheap wrap) -> 247 (no BUSY, per the table)
+
+Delivered samples on BlastEm, after:
+
+                    3,329   4,439   5,327   6,658   8,878 Hz
+      sin008         98.9    98.2    97.2    93.1    87.9
+      budget-2v      98.5    98.4    94.7    75.5    46.3
+
+Two voices sounding continuously hold 98% to 4.4 kHz and 95% to 5.3 kHz; the
+same score was at 75% at 4.4 kHz before this run of work.
+
+The remaining 247 is ~73 of `ld a,n / ld (nn),a` addressing, 66 of fill
+accounting, 39 of cursor and wrap, and 32 to ask. **Closing the rest of the gap
+to XGM2's 80 means giving the emit a register pair for the YM ports and a
+byte-wide cursor into a 256-aligned output page** — which is a register-file and
+buffer-layout change, not a peephole, and it collides with the resampler.
+
 ## THE EMIT WAS THE CEILING, AND IT IS 121 CYCLES SMALLER (2026-09-01)
 
 The section below measured the DAC saturating around 4,800-5,300 Hz however
