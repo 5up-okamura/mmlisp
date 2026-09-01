@@ -522,7 +522,12 @@ try {
       const total = [...byRoutine.values()].reduce((t, c) => t + c, 0);
       const frames = Math.max(1, consumed);
       console.log(`      ${headline(total / frames, total)}`);
-      for (const [r, c] of [...byRoutine.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14))
+      // `--rows N` widens the list. 14 names the top of it, which is enough to
+      // say "the pads" or "the emit"; a question like "where is the OTHER half
+      // going" needs the tail, and the tail is where the small routines that
+      // add up to a third of a frame live.
+      const ROWS = (() => { const i = argv.indexOf("--rows"); return i >= 0 ? Number(argv[i + 1]) : 14; })();
+      for (const [r, c] of [...byRoutine.entries()].sort((a, b) => b[1] - a[1]).slice(0, ROWS))
         console.log(`        ${r.padEnd(24)} ${(c / frames).toFixed(0).padStart(6)} cyc/frame`
           + `  ${(100 * c / total).toFixed(1).padStart(5)}%`);
     };
