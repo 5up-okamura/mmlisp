@@ -513,6 +513,37 @@ export class Z80Cpu {
       this.aluOp((op >> 3) & 7, this.read(addr));
       return 19;
     }
+    // ── The undocumented HALF-INDEX registers ────────────────────────────
+    // Under a DD/FD prefix the H and L fields of an ordinary 8-bit opcode name
+    // the index register's own halves (ixh/ixl, iyh/iyl) instead of H and L.
+    // Every real Z80 does this — the prefix is decoded as "use IX/IY wherever
+    // HL would be", and the 8-bit forms fall out of that — and the Mega Drive's
+    // is a real Z80. The engine uses `ld a,iyh` to test the ring's page without
+    // spilling HL, which is otherwise 51 cycles a sample of push/pop.
+    // The (ix+d) forms above take precedence, which is why this sits last:
+    // `ld h,(ix+d)` is DD 66 and loads the REAL H.
+    const half = (r) => (r === 4 ? (get() >> 8) & 0xff : get() & 0xff);
+    const setHalf = (r, v) => set(r === 4
+      ? ((v & 0xff) << 8) | (get() & 0xff)
+      : (get() & 0xff00) | (v & 0xff));
+    const isHalf = (r) => r === 4 || r === 5;
+    if (op >= 0x40 && op <= 0x7f && (op & 7) !== 6 && op !== 0x76) {
+      const d = (op >> 3) & 7, sr = op & 7;
+      if (isHalf(d) || isHalf(sr)) {
+        const v = isHalf(sr) ? half(sr) : this.getR(sr);
+        if (isHalf(d)) setHalf(d, v); else this.setR(d, v);
+        return 8;
+      }
+    }
+    if (op === 0x26 || op === 0x2e) { setHalf(op === 0x26 ? 4 : 5, this.fetch()); return 11; }
+    if (op === 0x24 || op === 0x2c) { const r = op === 0x24 ? 4 : 5;
+      setHalf(r, this.inc8(half(r))); return 8; }
+    if (op === 0x25 || op === 0x2d) { const r = op === 0x25 ? 4 : 5;
+      setHalf(r, this.dec8(half(r))); return 8; }
+    if (op >= 0x80 && op <= 0xbf && isHalf(op & 7)) {
+      this.aluOp((op >> 3) & 7, half(op & 7));
+      return 8;
+    }
     throw new Error(`unimplemented ${name.toUpperCase()} opcode 0x${op.toString(16)}`);
   }
 }
