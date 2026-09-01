@@ -1,0 +1,12 @@
+; BUDGET PROBE: two PCM voices sounding, both from a BAKED (one-shot) sample.
+; budget-2v uses a looped sample, which the exporter can never bake, so its mix
+; ticks carry the 16.16 resampler. This is the same shape with the resampler
+; out — the `nr` loops the generator already emits — and the difference between
+; the two runs is what per-note pitch costs at the sample rate.
+(def blip :sample :file "blip.wav")
+(pcm1 blip :tempo 120 :oct 4 :len 16 :vel 15
+  c c c c  c c c c  c c c c  c c c c
+  c c c c  c c c c  c c c c  c c c c)
+(pcm2 blip :tempo 120 :oct 5 :len 16 :vel 15
+  c c c c  c c c c  c c c c  c c c c
+  c c c c  c c c c  c c c c  c c c c)
