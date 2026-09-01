@@ -1263,21 +1263,27 @@ emit_try:
         ld   a,(YM_ADDR0)      ; the ONE status read: our flag and BUSY
         bit  1,a               ; PCM_TFLAG alone — see below
         ret  z                 ; not due — the caller carries straight on
-        ; DUE, and A still holds the byte that said so. BUSY is bit 7 of it
-        ; and it is worth WAITING for: the combined `(a & $82) == $02` test
-        ; an earlier revision used read "busy" as "not due" and RETURNED —
-        ; and the call sites that keep the YM busiest are the slot's own
-        ; write loops, the longest stretches a frame has. Measured: a
-        ; recurring 2,700-cycle hole in cr_p0 where the timer had been due
-        ; the whole time and every ask was answered no. So the two are
-        ; asked separately, but out of ONE read.
-        rla                    ; carry = BUSY
-        jr   nc,et_go
-et_busy:
-        ld   a,(YM_ADDR0)
-        rla
-        jr   c,et_busy
-et_go:
+        ; DUE, and THERE IS NOTHING TO WAIT FOR. This routine writes $27 and
+        ; $2A and nothing else, and both are inside the range the YM2612
+        ; acknowledges immediately. XGM2's header carries the measurement
+        ; (SGDK, src/snd/xgm2/drv_xgm2.s80), taken on hardware:
+        ;
+        ;   address write needs 6 Z80 cycles before its data (8 by spec)
+        ;   NO WAIT between writes to $21-$2F, except $28
+        ;   $28 (key on/off)  53 Z80 cycles between writes
+        ;   $30-$9E           39
+        ;   $A0-$B6           22
+        ;   a data write can take up to 53 to acknowledge
+        ;
+        ; So the DAC and the timer's flag reset are the two cheapest things
+        ; on the chip, and this routine spent 96 cycles a sample polling
+        ; BUSY between them plus a spin that could only ever fire on someone
+        ; else's write. XGM2 polls nothing here either — its whole sample
+        ; output is 80 cycles and its two register writes sit back to back.
+        ;
+        ; The BUSY that IS real belongs to the slot's FM writes, and it is a
+        ; wait between writes to the SAME range rather than a property of the
+        ; chip being unavailable; cr_p0 is where that question lives.
         ld   a,$27
         ld   (YM_ADDR0),a      ; [1/4] the flag-reset register's address
         ; …and the RING accounting fills the gap behind it. This is the
