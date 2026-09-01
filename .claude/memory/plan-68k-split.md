@@ -4116,6 +4116,111 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## THE EMIT WAS THE CEILING, AND IT IS 121 CYCLES SMALLER (2026-09-01)
+
+The section below measured the DAC saturating around 4,800-5,300 Hz however
+high Timer A was asked, and priced the emit at 384 cycles a sample against
+XGM2's ~67 for the same four chip accesses. **That gap was the ceiling, not the
+hardware.** Commits f6a316b and before.
+
+### What was actually wasted
+
+`emit_try` read the YM status FOUR times a sample — once to ask whether a
+sample was due, then once before each of the three writes that followed. The
+answer to the last three was already in the first read's bit 7. 96 cycles a
+sample, asking a question twice.
+
+The polls were buying SPACING between chip accesses, and the routine had work
+to give away: the fill accounting, the cursor's wrap and the sample fetch all
+ran BEFORE the writes, so the writes came out back to back with nothing between
+them. Interleaved — one block of work behind each write — every access is
+followed by 27-46 cycles of real work, which is MORE separation than a
+satisfied poll gave, and the polls are gone.
+
+The ring wrap moved from behind the advance to ahead of the read (so it can sit
+in one of those gaps) and stopped spilling HL through the stack: **79 -> 27**,
+using `ld a,iyh`. Both halves of the toolchain learned the undocumented
+half-index registers to allow it (commit before f6a316b); every real Z80
+decodes them, the Mega Drive's included.
+
+`mvf_ringcap`'s existing forced `inc a` already covers the cursor resting on
+RING_TOP between sends — a one-tick segment whose end wraps it. A guard added
+there cost 0.4 points of delivered samples and bought nothing; it was removed.
+
+    emit_try, measured on tools/z80cpu.mjs, no BUSY waits
+      before   384 cyc with the call
+      after    263 cyc, and 49 to answer "not due"
+      by phase status+flag 42 · $27 addr + fill 66 · flag reset 47
+               · wrap + $2A addr 39 · master chain 12 · the sample out 40
+
+### What it bought, on BlastEm
+
+Delivered samples as a share of what the clock owed:
+
+                       3,329   4,439   5,327   6,658   8,878 Hz
+      sin008 before     99.1    95.4    90.4    68.8    55.0
+             after      98.7    98.3    96.9    92.3    87.2
+      2 voices before   99.5    75.4    61.7    56.9      —
+             after      99.3    98.2    93.5    69.7      —
+
+**The clean ceiling (>=98%) moves from 3.3 kHz to 4.4 kHz with two voices
+sounding continuously, and to 5.3 kHz for a score whose DAC is a drum track.**
+The interrupt at 3,329 Hz went from 83% of a vblank to 64% (two voices) and
+from 73% to 56% (sin008).
+
+**NOT VERIFIED ON HARDWARE, AND THIS EMULATOR CANNOT VERIFY IT.** BlastEm's
+`ym_data_write` applies every write unconditionally; `busy_start`/`busy_cycles`
+(32 internal steps = ~90 Z80 cycles) only change what `ym_read_status` returns.
+So a write issued too early is never refused there. The argument for the change
+is that the gaps are wider than the polls they replace, not that the emulator
+agreed. The hardware round is owed on this specifically.
+
+### THE PACING PAD IS NOT WASTE. This was the wrong hypothesis, measured out.
+
+It looks like the next obvious 6,100 cycles a frame — 16% of the interrupt
+spent holding a loop back, sized from an `EMIT_CYCLES` of 182 that measurement
+put at 263. Correcting it is worse every way round:
+
+      EMIT_CYCLES  PAD_TARGET      sin008 @ 3,329 / 4,439 / 6,658 / 8,878
+      182 (wrong)  0.40 x period     98.7   98.3   92.3   87.2
+      263 (real)   0.40 x period     97.4   98.6   92.3     —
+      263 (real)   max(that, iter)   98.3   98.1   74.2   45.8
+
+The mixer is not free-running: it mixes exactly the frame's chunk and stops. So
+the pad costs no throughput — it decides WHERE IN THE FRAME the mixing happens.
+Unpadded, the interrupt burns through its chunk in the first third and returns,
+leaving two thirds of the frame with only the idle loop to send from.
+**PAD_FRACTION is how much of the frame the interrupt spans**, and 0.40 is the
+measured value; sweeping it at 6,658 and 8,878 Hz changes nothing below 0.50
+(the pads are already at their floor there) and only hurts above it.
+`EMIT_CYCLES` therefore stays at 182 and is labelled as a pad tuning constant,
+with the real cost recorded beside it.
+
+### Where the frame goes now (two voices, 3,329 Hz, 37,959 cyc = 64%)
+
+      pads (deliberate span control)      6,100   16%
+      the emit path                      10,900   29%
+      the mix ticks                       6,400   17%
+      segment / plan / ISR machinery     14,500   38%
+
+The last block is FLAT — no routine in it is over 1.5% of a frame — so there is
+no single lever left there. `frame-budget --rows N` widens the profile to see
+it. The 16-bit fill decrement inside the emit (46 cyc) was costed and left: an
+8-bit counter saves 7, and PCM_FILL_MAX is 320.
+
+### What is still on the table for rate
+
+1. **Baking.** A baked tick is 41 cycles against 78; the `nr` loops already
+   exist and the sequencer already takes the increment from the entry's octave
+   shift. Looped samples can never be baked, which is why budget-2v (two looped
+   voices) is the worst case measured here.
+2. **The group.** N samples per overflow, cycle-paced inside the group, pays
+   the flag reset (47) and the status read (42) once per N instead of once per
+   sample. That is the shape that was there before and was removed because its
+   PER-FRAME DEBT accounting was wrong, not because the idea was.
+3. **PACE_WINDOW = 14**, still never measured, still 28 cycles a sample at two
+   voices.
+
 ## TIMER A: HOW FAR THE RATE ACTUALLY GOES (2026-08-31, measured on BlastEm)
 
 The question was "Timer B tops out at 3,329 Hz for a per-sample gate — how high
