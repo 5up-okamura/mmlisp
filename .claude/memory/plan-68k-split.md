@@ -4116,6 +4116,77 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## WHERE THE ENGINE STANDS AFTER THE WASTE PASS (2026-09-01)
+
+Delivered samples as a share of what the clock owed, BlastEm, 10-12 s each:
+
+                        3,329   4,439   5,327   6,658   8,878 Hz
+      sin008 before      99.1    95.4    90.4    68.8    55.0
+             after       99.2    98.7    97.3    93.2    89.9
+      budget-2v before   99.5    75.4    61.7    56.9      —
+             after       99.2    98.8    96.6    91.0    50.1
+
+The interrupt at 3,329 Hz: two voices 83% of a vblank -> 57%, sin008 73% -> 50%.
+The emit: 384 cycles -> 230, and the ask 49 -> 31. Timer B on the shipped path
+is 99.2% with 0.93 holes a frame against 99.1% and 1.41 at the start.
+
+**A score with two voices sounding continuously now holds 98% to 4.4 kHz and
+96% to 5.3.** It was pinned at 3.3 kHz.
+
+Five changes, each measured on its own:
+
+1. **The emit stopped polling what it already knew** (f6a316b). Four status
+   reads a sample became one; the writes are spaced by the work that used to
+   run in front of them. 384 -> 263.
+2. **`ld a,iyh` instead of spilling HL** for the ring's page test: 79 -> 27,
+   after teaching z80asm and z80cpu the undocumented index halves.
+3. **No BUSY handling at all** (ac3d34a), on XGM2's measured table: `$27` and
+   `$2A` are inside `$21-$2F`, which the YM2612 acknowledges immediately.
+   263 -> 247.
+4. **The feed cursor wraps itself** (4051f8f). The ring is two 256-byte pages,
+   so `inc iyl` cannot leave its page and sets Z on the carry out; the page bit
+   flips in IYH. 20 cycles against 37 — and a cursor that cannot overrun the
+   ring deleted `feed_wrap` outright and took `mvf_ringcap`'s feed-distance
+   bound with it (a spill, a 16-bit subtract, the samples-to-ticks conversion
+   that baked PCM_PASSES into hand-written code, and the forced `inc a`).
+   247 -> 230.
+5. **The ask went inline** (bb3d0e6); only `emit_send` is still a call. "Not
+   due" is 31 instead of 49, and feed_one asks before its spill.
+
+Then **PAD_FRACTION 0.40 -> 0.55**: the pad is how much of the frame the
+interrupt spans, and an interrupt that shrank from 83% to 57% has to put those
+cycles back or the mixing bunches into the first half of the frame. The plateau
+is 0.50-0.60 and there is a cliff at 0.85 (65% delivered at every rate) — the
+padded iteration is longer than the sample period there.
+
+### What did NOT work, and stays written down
+
+- **Correcting `EMIT_CYCLES` to its measured value.** It is a pad tuning
+  number, not a cost model; see the table at PAD_TARGET in gen-mixer.mjs.
+- **A `feed_wrap` guard in `mvf_ringcap`** for the cursor resting on RING_TOP:
+  the existing forced `inc a` already covered it, and the guard cost 0.4 points.
+- **Putting the YM ports in a register pair**, XGM2-style. Priced: the emit is a
+  `call`, so HL must be spilled — `push hl` + `ld hl,nn` + `pop hl` is 31, which
+  eats the 10-per-write `ld (hl),n` buys. 80 against the current 73. XGM2 wins
+  there only because its ports live PERMANENTLY in the shadow set, and that is
+  free for them because they do not resample. Do not retry without freeing HL'.
+- **Sweeping PACE_WINDOW on BlastEm.** The constant only resizes our pads there,
+  so the sweep cannot answer what the machine charges.
+
+### What is left, in the order it is worth doing
+
+1. **Hardware.** Nothing here has run on a real Mega Drive, and item 3 above is
+   specifically unfalsifiable on this emulator: BlastEm's `ym_data_write`
+   applies every write unconditionally and models BUSY only in what a status
+   read returns.
+2. **Baking.** 41 cycles a tick against 78. budget-2v is the worst case
+   precisely because looped samples can never be baked.
+3. **The group** (N samples per overflow, cycle-paced inside it): pays the flag
+   reset and the status read once per N. The shape that was removed because its
+   per-frame debt accounting was wrong, not because the idea was.
+4. **The fill accounting** (46 cycles in the send). Cheap in isolation, but the
+   68k sequencer models ring fill too, so it is a two-sided change.
+
 ## WHAT THE OTHER DRIVERS DO ABOUT THE WRITE WAIT (2026-09-01, read from source)
 
 Cloned `Stephane-D/SGDK` and read `src/snd/drv_xgm.s80` (XGM1) and
