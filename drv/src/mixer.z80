@@ -1229,7 +1229,7 @@ mix_addnr_tab:
         dw   mix_addnr_s0, mix_addnr_s1, mix_addnr_s2, mix_addnr_s3, mix_addnr_s4, mix_add_s8, mix_add_s8, mix_add_s8, mix_add_s8, mix_add_s9
 R_NR_END:
 R_OUT_BEG:
-; emit_try: one sample IF Timer B says one is due, and NOTHING otherwise.
+; emit_try: one sample IF the timer says one is due, and NOTHING otherwise.
 ;
 ; This is the whole pacing model, and it is the opposite of the one it
 ; replaces. Waiting for the gate put the timer INSIDE the interrupt: 55
@@ -1243,30 +1243,48 @@ R_OUT_BEG:
 ; timer comes due is the one that sends it. That is XGM2's structure and
 ; its <=168-cycles-between-outputs rule is what makes it work.
 ;
-; 38 cycles to answer no (55 with the call), and it is answered ~55 times a
-; frame from the loops plus the idle feed. A and the flags are dead at every
-; call site; IY is the ring cursor.
+; ONE STATUS READ, AND THE WRITES ARE SPACED BY WORK RATHER THAN BY POLLS.
+; This routine used to read the status FOUR times — once to ask, and once
+; before each of the three writes that follow — for 96 cycles a sample of
+; asking a question whose answer was already in the first read's bit 7.
+; Measured at 384 cycles a sample against XGM2's ~67 for the same four chip
+; accesses (.claude/memory/plan-68k-split.md, 2026-08-11 and 2026-09-01).
+;
+; What the polls were buying is SPACING between accesses, and the routine
+; had plenty of work to give: the ring's fill accounting, the cursor's wrap
+; and the sample fetch were all done in one run BEFORE the writes, so the
+; writes ended up back to back with nothing between them. Interleaved, each
+; write is followed by 27-46 cycles of real work before the next one — more
+; separation than a satisfied poll gave — and the polls are gone.
+;
+; A and the flags are dead at every call site; IY is the ring cursor, and
+; IYH is now read directly, so HL is never touched and never spilled.
 emit_try:
-        ld   a,(YM_ADDR0)
-        and  PCM_TFLAG         ; THIS timer's flag alone — see below
+        ld   a,(YM_ADDR0)      ; the ONE status read: our flag and BUSY
+        bit  1,a               ; PCM_TFLAG alone — see below
         ret  z                 ; not due — the caller carries straight on
-        ; DUE. Only now does BUSY matter, and it is worth WAITING for: the
-        ; combined `(a & ($80|PCM_TFLAG)) == PCM_TFLAG` test this replaces
-        ; read "busy" as
-        ; "not due" and returned — and the call sites that keep the YM
-        ; busiest are the slot's own write loops, which are the longest
-        ; stretches a frame has. Measured: a recurring 2,700-cycle hole in
-        ; cr_p0 where the timer had been due the whole time and every ask
-        ; was answered no. BUSY is tens of cycles; the sample is 1,075.
+        ; DUE, and A still holds the byte that said so. BUSY is bit 7 of it
+        ; and it is worth WAITING for: the combined `(a & $82) == $02` test
+        ; an earlier revision used read "busy" as "not due" and RETURNED —
+        ; and the call sites that keep the YM busiest are the slot's own
+        ; write loops, the longest stretches a frame has. Measured: a
+        ; recurring 2,700-cycle hole in cr_p0 where the timer had been due
+        ; the whole time and every ask was answered no. So the two are
+        ; asked separately, but out of ONE read.
+        rla                    ; carry = BUSY
+        jr   nc,et_go
 et_busy:
         ld   a,(YM_ADDR0)
         rla
         jr   c,et_busy
-        ; …and the RING must have a finished sample. This is the whole of
-        ; the accounting now: no per-frame debt, no reserve, no flush. The
-        ; mixer adds what it wrote to G_FILL and every send takes one back,
-        ; which is what a ring IS — and it is what lets the send happen from
-        ; anywhere, including after the interrupt has returned.
+et_go:
+        ld   a,$27
+        ld   (YM_ADDR0),a      ; [1/4] the flag-reset register's address
+        ; …and the RING accounting fills the gap behind it. This is the
+        ; whole of the accounting now: no per-frame debt, no reserve, no
+        ; flush. The mixer adds what it wrote to G_FILL and every send takes
+        ; one back, which is what a ring IS — and it is what lets the send
+        ; happen from anywhere, including after the interrupt has returned.
         ;
         ; A frame quota could not survive that: with the send no longer
         ; blocking, the count a frame gets out varies, and a quota reset per
@@ -1292,32 +1310,28 @@ et_lo:
         dec  a
         ld   (G_FILL),a
 et_have:
-        ld   a,$27
-        ld   (YM_ADDR0),a
-et_b2:
-        ld   a,(YM_ADDR0)      ; BUSY between every write, as cr_p0 does.
-        rla                    ; The emit used to wait once and then make
-        jr   c,et_b2           ; four writes back to back — tolerable at
-                               ; 3.5 gates a frame, which is what it was
-                               ; written for. Per-sample gating makes it 55,
-                               ; so the frame's YM traffic went from 14
-                               ; writes to 220 and the chip is being written
-                               ; while it is still busy fifteen times as
-                               ; often. Nothing in this repo models BUSY, so
-                               ; no gate here can fail on it.
 eg_r27:
-        ld   a,$2a             ; PATCHED by cs_r27: $27 with RESET B in it,
-        ld   (YM_DATA0),a      ; over a RAM read, which cost 6 a sample
-et_b3:
-        ld   a,(YM_ADDR0)
-        rla
-        jr   c,et_b3
+        ld   a,$2a             ; PATCHED by cs_r27: $27 with the timer's
+        ld   (YM_DATA0),a      ; [2/4] RESET bit in it, over a RAM read
+        ; THE WRAP, ahead of the read rather than behind the advance.
+        ;
+        ; It used to live in feed_one alone, because the loops' segment
+        ; bounds kept the FEED cursor short of the top — true only while the
+        ; feed advanced in step with the mix. It does not any more: the idle
+        ; loop feeds between interrupts, so the cursor crosses RING_TOP
+        ; wherever it happens to be, and an unwrapped one walks out of the
+        ; ring and reads the engine's own code as samples.
+        ;
+        ; Wrapping BEFORE the read instead of after the advance is what lets
+        ; it sit here, in the gap behind a chip write, and costs the same
+        ; either way: the cursor is only ever read while it is valid.
+        ld   a,iyh
+        cp   RING_TOP>>8
+        jr   nz,et_ok
+        ld   iy,RING_BUF
+et_ok:
         ld   a,$2a
-        ld   (YM_ADDR0),a      ; re-latch: the write below is blind
-et_b4:
-        ld   a,(YM_ADDR0)
-        rla
-        jr   c,et_b4
+        ld   (YM_ADDR0),a      ; [3/4] the DAC's address
         ld   a,(iy+0)          ; the ring: what an earlier frame finished
 eg_ms:
         jr   eg_ex             ; master chain, slot 0 — PATCHED
@@ -1329,29 +1343,8 @@ eg_ms:
         jr   eg_ex
 eg_ex:
         xor  $80               ; the ring is signed, the DAC is not
-        ld   (YM_DATA0),a      ; $2A, fed blind
+        ld   (YM_DATA0),a      ; [4/4] $2A, and the sample is out
         inc  iy
-        ; THE WRAP, on the send path only.
-        ;
-        ; It used to live in feed_one alone, because the loops' segment
-        ; bounds kept the FEED cursor short of the top — true only while the
-        ; feed advanced in step with the mix. It does not any more: the idle
-        ; loop feeds between interrupts, so the cursor crosses RING_TOP
-        ; wherever it happens to be, and an unwrapped one walks out of the
-        ; ring and reads the engine's own code as samples.
-        ;
-        ; HL is the mixer's plane cursor at the inline call sites, so it is
-        ; saved — but only here, past every early return, so the ~25-cycle
-        ; "not due" answer is untouched.
-        push hl
-        push iy
-        pop  hl
-        ld   a,h
-        cp   RING_TOP>>8
-        jr   nz,et_nw
-        ld   iy,RING_BUF
-et_nw:
-        pop  hl
         ret
 ; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
 ; as the inline emit — a sample that comes out here is still a sample.
