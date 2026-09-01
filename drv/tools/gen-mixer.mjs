@@ -226,8 +226,28 @@ export const GATE_CY = (GATE_YM / (53693175 / 7)) * 3579545;
 //
 //   PAD_FRACTION=<f> node tools/build-verify-rom.mjs drv/tests/<score>.mmlisp
 //   MMLISP_PROBE_LOG=out/p.log out/blastem/host ... && node tools/dac-log.mjs out/p.log
+// 0.55 at PCM_GROUP = 1, re-measured 2026-09-01 after the emit came down from
+// 384 cycles to 230 and the interrupt from 83% of a vblank to 57%. The pad is
+// what puts those cycles back into the frame's span, so the value had to move
+// with them; 0.40 was right when the interrupt was full.
+//
+// sin008 / budget-2v, delivered samples, BlastEm:
+//
+//   PAD_FRACTION   3,329 Hz     4,439 Hz     6,658 Hz
+//     0.40        98.6 / —     98.5 / —     93.7 / —
+//     0.45        98.6 / 99.0  97.8 / 98.4  93.6 / 91.1
+//     0.50        99.1 / 98.8  98.4 / 98.3  93.5 / 91.1
+//     0.55        99.3 / 99.3  98.7 / 98.7  93.2 / 91.1
+//     0.60        99.3 / 99.6  98.5 / 98.7  93.1 / 91.1
+//     0.70        97.9 / —     97.4 / —     92.9 / —
+//     0.85        64.4 / —     65.9 / —     65.2 / —
+//
+// The plateau is 0.50-0.60 and the cliff past it is real — at 0.85 the padded
+// iteration is longer than the sample period and the frame cannot keep up at
+// any rate. 0.55 is the middle of the plateau rather than its edge, which is
+// where a knob with a cliff belongs.
 export const PAD_FRACTION = Number(
-  process.env.PAD_FRACTION ?? (PCM_GROUP === 1 ? 0.40 : 0.73));
+  process.env.PAD_FRACTION ?? (PCM_GROUP === 1 ? 0.55 : 0.73));
 // THE PAD IS NOT DEAD TIME, and this was worth one wrong hypothesis to learn.
 //
 // It looks like waste — 6,100 cycles a frame at two voices, 16% of the
