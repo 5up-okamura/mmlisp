@@ -221,14 +221,15 @@ try {
     const starve = STARVE ? new Map() : null;
     const prof = PROFILE ? new Map() : null;
     let lastDac = 0;
-    // `emit_try` exists only in the PCM_GROUP = 1 build; the other shape gates
-    // inline and has no single ask site. The ask statistics are therefore
-    // optional, but the SENDS and the ring's fill are not — they are what a run
-    // is measured by, and reporting them only when the symbol happened to exist
-    // is how a PCM_GROUP > 1 run came back looking like it emitted nothing.
-    const EMIT_TRY = sym("emit_try") ?? -1;
+    // The SENDS and the ring's fill are counted unconditionally, never off a
+    // symbol: reporting them only when a symbol happened to exist is how a
+    // PCM_GROUP > 1 run once came back looking like it emitted nothing. The
+    // ASKS are recognised in the instruction stream — see the loop below.
     const G_FILL = sym("G_FILL");
     let lastAsk = 0, askGaps = null, dueEmpty = 0, dueSent = 0, asks = 0;
+    // Set by the read hook when the status port is touched — an ask is a READ,
+    // not an entry to a routine, now that the two instructions are inline.
+    let askedThisStep = false;
     let lastAskPc = 0, lastPc = 0;
     const longGaps = [];
     if (ASKS) askGaps = [];
@@ -277,8 +278,9 @@ try {
         // sets it as `timer_b_overflow & timer_b_enable` (ym3438.c). Modelled
         // here too so this tool cannot report a frame the hardware never runs.
         if (a >= 0x4000 && a <= 0x4003) ymTouch += YM_COST;
-        if (a === 0x4000) return (tcyc - lastData < BUSY_CY ? 0x80 : 0)
-          | (enableB && tcyc >= gateAt ? 0x02 : 0);
+        if (a === 0x4000) { askedThisStep = true;
+          return (tcyc - lastData < BUSY_CY ? 0x80 : 0)
+            | (enableB && tcyc >= gateAt ? 0x02 : 0); }
         if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
@@ -373,9 +375,23 @@ try {
       if (!wasInIsr && cpu.pc === INT_VEC) { wasInIsr = true; isrStart = tcyc; }
       else if (wasInIsr && idling) { costs.push(tcyc - isrStart); wasInIsr = false; }
 
-      winReads = 0; ymTouch = 0;
+      winReads = 0; ymTouch = 0; askedThisStep = false;
       const pcBefore = cpu.pc;
-      if (askGaps && pcBefore === EMIT_TRY) {
+      lastPc = pcBefore;
+      const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
+      // AN ASK IS A READ OF THE STATUS PORT FOLLOWED BY A `bit`, and it is
+      // counted after the step that made it. It used to be an entry to
+      // `emit_try`, back when the ask was a call; the two instructions live in
+      // every loop copy now.
+      //
+      // The `bit` is what separates an ask from a BUSY poll: both read $4000,
+      // but the slot writer follows its read with `rla` and tests bit 7, and a
+      // poll can never send a sample. `ld a,(nn)` is three bytes, so the
+      // opcode after it is at pc+3 and a CB prefix there means the timer's flag
+      // is what is about to be looked at. Counting every read instead put the
+      // ask rate at 327 a frame against a real 112.
+      if (askGaps && askedThisStep
+          && ram[pcBefore] === 0x3a && ram[(pcBefore + 3) & 0xffff] === 0xcb) {
         asks++;
         if (lastAsk) {
           const gap = tcyc - lastAsk;
@@ -392,8 +408,7 @@ try {
           if (fill) dueSent++; else dueEmpty++;
         }
       }
-      lastPc = pcBefore;
-      const c = cpu.step() + winReads * PACE_WINDOW + ymTouch;
+
       // Charged only past the deadline: cycles inside the sample's own period
       // are the engine doing its job, and counting them would bury the answer
       // under the mixer.
