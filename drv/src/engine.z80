@@ -1591,7 +1591,6 @@ mvf_n:
         xor  RING_PAGE          ; the ring's two pages differ in one bit
         ld   (G_MIXP),a
 mvf_rfeed:
-        call feed_wrap
         pop  bc
         ld   a,(G_TICKS)
         sub  b
@@ -1711,25 +1710,13 @@ mvf_idle_seg:
         xor  RING_PAGE
         ld   (G_MIXP),a
 mvf_idle_feed:
-        call feed_wrap
         jr   mvf_idle_seg
 
-; feed_wrap: take the feed cursor back to the ring's base if it has reached the
-; top. mvf_ringcap guarantees a segment can only leave it AT the top, never
-; past, so this is a test and not arithmetic. Preserves DE, HL and the live
-; file; clobbers A alone.
-;
-; The HIGH BYTE alone answers it. The ring is 512-aligned at RING_BUF and the
-; cursor can only be RING_BUF..RING_TOP, so `IYH == RING_TOP>>8` happens at
-; exactly one address. That is the whole routine: 27 cycles against the 86 a
-; 16-bit `sbc hl,de` cost, ~17 times a frame — and the wrap itself fires once
-; per 512 samples, so essentially all of those calls only ask the question.
-feed_wrap:
-        ld   a,iyh              ; the half register, not `push iy / pop hl`:
-        cp   RING_TOP>>8        ; HL belongs to the mixer everywhere this is
-        ret  nz                 ; reached from, and spilling it cost 20 cycles
-        ld   iy,RING_BUF        ; for a byte the Z80 can address directly
-        ret
+; feed_wrap IS GONE. The emit advances the feed cursor with `inc iyl`, which
+; cannot leave the 256-byte page it is in, and flips RING_PAGE in IYH on the
+; carry out — so the cursor wraps itself at the moment it needs to, and the
+; segment boundaries have nothing left to fix up. It was ~27 cycles a call and
+; ~17 calls a frame, all but one of which only ever asked the question.
 
 ; ---------------------------------------------------------------------------
 ; plan_next: G_PLANR = ticks to this voice's next logical break, from the slot's
@@ -1755,65 +1742,33 @@ plan_next:
         ret
 
 ; ---------------------------------------------------------------------------
-; mvf_ringcap: shorten B so this segment cannot walk either ring cursor over an
-; edge (§5.1.2).
+; mvf_ringcap: shorten B so this segment cannot walk the MIXER's ring cursor
+; over a page edge (§5.1.2).
 ;
-;   the MIXER's cursor is (G_MIXP:G_IDX) and advances one per tick, so its page
-;   has 256 - G_IDX ticks left in it;
-;   the FEED's is IY and advances one per PCM_PASSES ticks, so the ring's top is
-;   at least 3 x (RING_TOP - IY) ticks away — a lower bound, because the
-;   remainder ticks of a segment carry no emit at all.
+; That cursor is (G_MIXP:G_IDX) and advances one per tick with an `inc l`, so
+; its page has 256 - G_IDX ticks left in it and the segment stops there.
 ;
-; Both are compared in 8 bits where they can be: the mixer's page always fits,
-; and the feed's distance only matters when it is under 256/3.
-; Preserves DE and the alternate set; B is the segment length in and out.
+; The FEED used to be bounded here too, from `RING_TOP - IY`. It is not any
+; more: the emit advances it with `inc iyl`, which cannot leave its page, and
+; flips RING_PAGE in IYH on the carry out — so it wraps itself and there is
+; nothing to bound. Preserves DE and the alternate set; B in and out.
 mvf_ringcap:
         push hl
-        ; THE FEED MAY BE SITTING EXACTLY ON THE TOP, and that is fine. emit_try
-        ; wraps before it READS rather than after it advances — which is what
-        ; lets the test ride in the gap behind a chip write instead of costing a
-        ; spill — so a send that took the ring's last byte leaves the cursor at
-        ; RING_TOP until the next one. The distance below then comes out zero,
-        ; and `mvf_rc_cap`'s forced `inc a` already turns that into a one-tick
-        ; segment rather than a `djnz` of 256: the wrap lands at its end, in
-        ; feed_wrap, exactly as it does for a segment that merely reached the
-        ; edge. A guard here cost 43 cycles x ~17 segments a frame and bought
-        ; nothing — measured, 99.0% -> 98.6% of the samples delivered.
         ld   a,(G_IDX)
         neg                     ; 256 - index, and 0 means a full page
-        jr   z,mvf_rc_feed
-        cp   b
-        jr   nc,mvf_rc_feed
-        ld   b,a
-mvf_rc_feed:
-        push de
-        push iy
-        pop  hl
-        ld   de,RING_TOP
-        ex   de,hl
-        or   a
-        sbc  hl,de              ; HL = samples before the feed leaves the ring
-        pop  de
-        ld   a,h
-        or   a
-        jr   nz,mvf_rc_done     ; >= 256 samples away: nothing can reach it
-        ld   a,l
-        ; SAMPLES -> TICKS, and the factor is PCM_PASSES: the feed advances one
-        ; per PCM_PASSES ticks. This was `add a,a / add a,l` (x3) written when
-        ; the pass count was three, and it is the one place the count is baked
-        ; into hand-written code rather than read from the equ — so the mixer's
-        ; pass count moving to two made a segment overrun the ring's top and the
-        ; DAC diverge at exactly sample 511, the wrap. build-engine.mjs asserts
-        ; PCM_PASSES = 2 against this site.
-        add  a,a                ; x2 = ticks, and a carry means far enough
-        jr   c,mvf_rc_done
+        jr   z,mvf_rc_done
         cp   b
         jr   nc,mvf_rc_done
-        or   a
-        jr   nz,mvf_rc_cap
-        inc  a                  ; forced progress; the wrap lands next segment
-mvf_rc_cap:
         ld   b,a
+        ; THE FEED IS NOT BOUNDED HERE ANY MORE. It used to be: the segment was
+        ; shortened so the feed could not walk past RING_TOP inside a loop,
+        ; because `inc iy` cannot wrap. The emit advances with `inc iyl` now —
+        ; the ring is two 256-byte pages and the low byte cannot leave the one
+        ; it is in — so the cursor wraps itself, wherever it happens to be, and
+        ; there is nothing left to bound. What went with it: a `push iy / pop
+        ; hl` spill, a 16-bit subtract, the samples-to-ticks conversion that
+        ; baked PCM_PASSES into hand-written code, and the forced `inc a` that
+        ; kept a zero-length segment from becoming a djnz of 256.
 mvf_rc_done:
         pop  hl
         ret
