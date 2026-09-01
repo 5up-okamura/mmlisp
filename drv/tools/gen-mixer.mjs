@@ -228,6 +228,29 @@ export const GATE_CY = (GATE_YM / (53693175 / 7)) * 3579545;
 //   MMLISP_PROBE_LOG=out/p.log out/blastem/host ... && node tools/dac-log.mjs out/p.log
 export const PAD_FRACTION = Number(
   process.env.PAD_FRACTION ?? (PCM_GROUP === 1 ? 0.40 : 0.73));
+// THE PAD IS NOT DEAD TIME, and this was worth one wrong hypothesis to learn.
+//
+// It looks like waste — 6,100 cycles a frame at two voices, 16% of the
+// interrupt, spent holding a loop back — and the obvious move is to charge the
+// emit its real cost so padFor stops handing out pad the frame cannot afford.
+// Measured on BlastEm, every version of that is WORSE:
+//
+//   EMIT_CYCLES  PAD_TARGET       sin008 @ 3,329 / 4,439 / 6,658 / 8,878 Hz
+//   182 (wrong)  0.40 x period      98.7   98.3   92.3   87.2
+//   263 (real)   0.40 x period      97.4   98.6   92.3     —
+//   263 (real)   max(that, iter)    98.3   98.1   74.2   45.8
+//
+// The reason is that the mixer is not free-running. It mixes exactly the
+// frame's chunk and stops, so the pad does not cost throughput — it decides
+// WHERE IN THE FRAME the mixing happens. Unpadded, the interrupt bursts through
+// its chunk in the first third of the frame and returns, and the remaining two
+// thirds have only the idle loop's feed to send samples from. Padded, the
+// interrupt spans the frame and the emit points are spread through it, which is
+// XGM2's "<=168 cycles between outputs EVERYWHERE" in this engine's shape.
+//
+// So PAD_FRACTION is not an efficiency knob, it is HOW MUCH OF THE FRAME THE
+// INTERRUPT SPANS, and 0.40 is the measured value. EMIT_CYCLES below is part of
+// the same tuning and not a cost model — see its comment.
 export const PAD_TARGET = Math.round(SAMPLE_CYCLES * PAD_FRACTION);
 // Under Timer B the pad's whole job is the interval between samples 2 and 3 of
 // a gate's group: the gate itself re-synchronises sample 1, so nothing the pad
@@ -701,20 +724,16 @@ function padBlock(pad) {
 // pad the frame did not have. That was the bulk of the frame's overrun, and the
 // other half of the fix was to make the step itself cost 24 instead of 69
 // (gatePrologue).
-// **182 IS WRONG AND IT STAYS.** Measured 2026-08-31 by running `emit_try` on
-// tools/z80cpu.mjs with the flag up, the ring non-empty and NO BUSY waits: 384
-// cycles including the call. The comment above counts one BUSY poll where the
-// routine has four, and predates both the G_FILL decrement and the ring wrap
-// moving onto the send path.
+// **THIS IS A PAD TUNING CONSTANT, NOT THE EMIT'S COST.** The emit measures 263
+// cycles with the call (and 49 to answer "not due") on tools/z80cpu.mjs with no
+// BUSY waits; 182 predates the fill accounting and the wrap moving onto the
+// send path, and it counted one BUSY poll where there were four.
 //
-// Correcting it is not an improvement. padFor reads it, so 384 takes
-// PCM_IDLE_PAD from 14 to 1 — and the idle pad is what stops a SILENT pass from
-// racing ahead and banking time the frame then gives back in one hold. On
-// BlastEm, sin008 (whose drum voice leaves one pass idle most of the time) went
-// 99.1% -> 96.9% with a 175-sample-period hole in it; budget-2v, where both
-// passes sound, went 99.5% -> 99.6%. So the estimator wants two numbers — what
-// the emit costs, and what a silent iteration must be held to — and it has one.
-// Left as the knob MMLISP_EMIT_CY until that is untangled.
+// It stays at 182 because padFor is the only thing that reads it, and what
+// padFor produces is `PAD_TARGET - EMIT_CYCLES` of pad — a SPAN, not a cost.
+// Correcting the number shortens that span and the interrupt stops covering the
+// frame; see PAD_TARGET above for the three measurements. Change it only
+// together with PAD_FRACTION, against the same table.
 export const EMIT_CYCLES = ONE_GATE ? Number(process.env.MMLISP_EMIT_CY ?? 182) : 73;
 // What the GATING emit costs on top of the other two, once per PCM_GROUP: the
 // taken branch into `gate_wait`, its flag reset, the $2A re-latch, and the
