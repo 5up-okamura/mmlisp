@@ -519,8 +519,17 @@ export const PCM_EMIT_RESERVE = Number(process.env.PCM_RESERVE ?? 3);
 // master chain. Touches A, the flags and IY; nothing else. The RING WRAP is not
 // here — the loops' segment bounds keep the cursor short of the top, and
 // feed_one, which has no such bound, does the test itself.
+// The ask: one status read and one bit test, and NZ means a sample is due. Its
+// two instructions are inline at every call site — the answer is "no" about
+// half the time, and a call/ret round trip around them is 27 cycles for it.
+function askBlock() {
+  return [
+    "        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)",
+    `        bit  ${TIMER_FLAG === 0x01 ? 0 : 1},a               ; this timer's flag: NZ = a sample is due`,
+  ];
+}
+
 function emitGate() {
-  const flagBit = TIMER_FLAG === 0x01 ? 0 : 1;
   return [
     "; emit_try: one sample IF the timer says one is due, and NOTHING otherwise.",
     ";",
@@ -553,9 +562,9 @@ function emitGate() {
     "; A and the flags are dead at every call site; IY is the ring cursor, and",
     "; IYH is now read directly, so HL is never touched and never spilled.",
     "emit_try:",
-    "        ld   a,(YM_ADDR0)      ; the ONE status read: our flag and BUSY",
-    `        bit  ${flagBit},a               ; PCM_TFLAG alone — see below`,
+    ...askBlock(),
     "        ret  z                 ; not due — the caller carries straight on",
+    "emit_send:                     ; …and the entry every inline ask calls into",
     "        ; DUE, and THERE IS NOTHING TO WAIT FOR. This routine writes \$27 and",
     "        ; \$2A and nothing else, and both are inside the range the YM2612",
     "        ; acknowledges immediately. XGM2's header carries the measurement",
@@ -664,7 +673,12 @@ function feed(pad) {
   if (ONE_GATE) {
     // No phase, no dispatch, no chain: one call, and the master chain lives in
     // the single copy the call reaches.
-    o.push("        call emit_try          ; a sample IF one is due (§5.1.2)");
+    // THE ASK IS INLINE; ONLY THE SEND IS A CALL. "Not due" is the answer about
+    // half the time and it used to cost 49 cycles, 27 of them the call and the
+    // ret around a three-instruction test. Here it is 31, and the `call nz`
+    // costs the due path nothing it was not already paying.
+    o.push(...askBlock());
+    o.push("        call nz,emit_send      ; …and only then, the sample (§5.1.2)");
     o.push(...padBlock(pad));
     return o;
   }
@@ -990,14 +1004,20 @@ fr_loop:
 ; sample period calls this, which is what stops the frame's chip writes and its
 ; pass transitions from being dead time the DAC spends holding. Touches A, HL
 ; and the flags; IY is the feed cursor and G_EMITS the frame's remaining debt.
+;
+; The ASK is inline here too, ahead of the spill: "not due" is the answer most
+; of the time, and saving HL to find that out cost 21 cycles for nothing.
 feed_one:
 ${ONE_GATE ? "" : `        ld   a,(G_EMITS)
         or   a
         ret  z                  ; the frame's samples are all out
         dec  a
         ld   (G_EMITS),a
-`}        push hl                 ; HL is the slot cursor at most call sites
-${ONE_GATE ? "        call emit_try          ; the one emit, and the debt is ITS business" : `${gatePrologue().join("\n")}
+`}${ONE_GATE ? `${askBlock().join("\n")}
+        ret  z                  ; not due — and nothing was saved to restore
+        push hl                 ; HL is the slot cursor at most call sites
+        call emit_send          ; the one emit, and the debt is ITS business` : `        push hl                 ; HL is the slot cursor at most call sites
+${gatePrologue().join("\n")}
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
         ld   a,(iy+0)
@@ -1007,7 +1027,7 @@ fo_ex:
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
         inc  iy`}
-        ; No wrap here: emit_try does it, on the send path, for every caller.
+        ; No wrap here: emit_send does it, on the send path, for every caller.
         pop  hl
         ret`);
   } else if (wide) {

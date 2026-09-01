@@ -63,7 +63,9 @@ PCM_TB      equ 255       ; the $26 byte: Timer B overflows every
 R_FIRST_BEG:
 mix_first_s0:
 mix_first_s0_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,5                ; pace: hold the tick to the sample period
 pd1:
         dec  a
@@ -97,7 +99,9 @@ np3:
         ret
 mix_first_s1:
 mix_first_s1_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,4                ; pace: hold the tick to the sample period
 pd5:
         dec  a
@@ -133,7 +137,9 @@ np7:
         ret
 mix_first_s2:
 mix_first_s2_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,3                ; pace: hold the tick to the sample period
 pd9:
         dec  a
@@ -171,7 +177,9 @@ np11:
         ret
 mix_first_s3:
 mix_first_s3_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,2                ; pace: hold the tick to the sample period
 pd13:
         dec  a
@@ -211,7 +219,9 @@ np15:
         ret
 mix_first_s4:
 mix_first_s4_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,1                ; pace: hold the tick to the sample period
 pd17:
         dec  a
@@ -253,7 +263,9 @@ np19:
         ret
 mix_first_s8:
 mix_first_s8_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,7                ; pace: hold the tick to the sample period
 pd21:
         dec  a
@@ -285,7 +297,9 @@ np23:
         ret
 mix_first_s9:
 mix_first_s9_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,(G_PAD)         ; pace: what this frame can afford to hold to
 pd24:
         dec  a
@@ -416,7 +430,9 @@ R_FIRST_END:
 R_ADD_BEG:
 mix_add_s0:
 mix_add_s0_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,3                ; pace: hold the tick to the sample period
 pd34:
         dec  a
@@ -470,7 +486,9 @@ ov38_hi:
         jp   dn39
 mix_add_s1:
 mix_add_s1_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,2                ; pace: hold the tick to the sample period
 pd44:
         dec  a
@@ -526,7 +544,9 @@ ov48_hi:
         jp   dn49
 mix_add_s2:
 mix_add_s2_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,1                ; pace: hold the tick to the sample period
 pd54:
         dec  a
@@ -584,7 +604,9 @@ ov58_hi:
         jp   dn59
 mix_add_s3:
 mix_add_s3_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -640,7 +662,9 @@ ov67_hi:
         jp   dn68
 mix_add_s4:
 mix_add_s4_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -698,7 +722,9 @@ ov76_hi:
         jp   dn77
 mix_add_s8:
 mix_add_s8_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,8                ; pace: hold the tick to the sample period
 pd80:
         dec  a
@@ -728,7 +754,9 @@ np82:
         ret
 mix_add_s9:
 mix_add_s9_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,(G_PAD)         ; pace: what this frame can afford to hold to
 pd83:
         dec  a
@@ -905,7 +933,9 @@ R_ADD_END:
 R_NR_BEG:
 mix_firstnr_s0:
 mix_firstnr_s0_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,9                ; pace: hold the tick to the sample period
 pd100:
         dec  a
@@ -923,7 +953,9 @@ pd100:
         ret
 mix_firstnr_s1:
 mix_firstnr_s1_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,8                ; pace: hold the tick to the sample period
 pd101:
         dec  a
@@ -943,7 +975,9 @@ pd101:
         ret
 mix_firstnr_s2:
 mix_firstnr_s2_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,7                ; pace: hold the tick to the sample period
 pd102:
         dec  a
@@ -965,7 +999,9 @@ pd102:
         ret
 mix_firstnr_s3:
 mix_firstnr_s3_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,6                ; pace: hold the tick to the sample period
 pd103:
         dec  a
@@ -989,7 +1025,9 @@ pd103:
         ret
 mix_firstnr_s4:
 mix_firstnr_s4_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,5                ; pace: hold the tick to the sample period
 pd104:
         dec  a
@@ -1017,7 +1055,9 @@ mix_firstnr_tab:
         dw   mix_firstnr_s0, mix_firstnr_s1, mix_firstnr_s2, mix_firstnr_s3, mix_firstnr_s4, mix_first_s8, mix_first_s8, mix_first_s8, mix_first_s8, mix_first_s9
 mix_addnr_s0:
 mix_addnr_s0_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,7                ; pace: hold the tick to the sample period
 pd107:
         dec  a
@@ -1055,7 +1095,9 @@ ov110_hi:
         jp   dn111
 mix_addnr_s1:
 mix_addnr_s1_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,6                ; pace: hold the tick to the sample period
 pd114:
         dec  a
@@ -1095,7 +1137,9 @@ ov117_hi:
         jp   dn118
 mix_addnr_s2:
 mix_addnr_s2_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,5                ; pace: hold the tick to the sample period
 pd121:
         dec  a
@@ -1137,7 +1181,9 @@ ov124_hi:
         jp   dn125
 mix_addnr_s3:
 mix_addnr_s3_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,4                ; pace: hold the tick to the sample period
 pd128:
         dec  a
@@ -1181,7 +1227,9 @@ ov131_hi:
         jp   dn132
 mix_addnr_s4:
 mix_addnr_s4_lp:
-        call emit_try          ; a sample IF one is due (§5.1.2)
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        call nz,emit_send      ; …and only then, the sample (§5.1.2)
         ld   a,3                ; pace: hold the tick to the sample period
 pd135:
         dec  a
@@ -1260,9 +1308,10 @@ R_OUT_BEG:
 ; A and the flags are dead at every call site; IY is the ring cursor, and
 ; IYH is now read directly, so HL is never touched and never spilled.
 emit_try:
-        ld   a,(YM_ADDR0)      ; the ONE status read: our flag and BUSY
-        bit  1,a               ; PCM_TFLAG alone — see below
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
         ret  z                 ; not due — the caller carries straight on
+emit_send:                     ; …and the entry every inline ask calls into
         ; DUE, and THERE IS NOTHING TO WAIT FOR. This routine writes $27 and
         ; $2A and nothing else, and both are inside the range the YM2612
         ; acknowledges immediately. XGM2's header carries the measurement
@@ -1369,10 +1418,16 @@ flush_rest:
 ; sample period calls this, which is what stops the frame's chip writes and its
 ; pass transitions from being dead time the DAC spends holding. Touches A, HL
 ; and the flags; IY is the feed cursor and G_EMITS the frame's remaining debt.
+;
+; The ASK is inline here too, ahead of the spill: "not due" is the answer most
+; of the time, and saving HL to find that out cost 21 cycles for nothing.
 feed_one:
+        ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
+        bit  1,a               ; this timer's flag: NZ = a sample is due
+        ret  z                  ; not due — and nothing was saved to restore
         push hl                 ; HL is the slot cursor at most call sites
-        call emit_try          ; the one emit, and the debt is ITS business
-        ; No wrap here: emit_try does it, on the send path, for every caller.
+        call emit_send          ; the one emit, and the debt is ITS business
+        ; No wrap here: emit_send does it, on the send path, for every caller.
         pop  hl
         ret
 R_OUT_END:
