@@ -1716,21 +1716,19 @@ mvf_idle_feed:
 
 ; feed_wrap: take the feed cursor back to the ring's base if it has reached the
 ; top. mvf_ringcap guarantees a segment can only leave it AT the top, never
-; past, so this is a test and not arithmetic. Preserves DE and the live file;
-; clobbers A and HL, which every call site already rebuilds.
+; past, so this is a test and not arithmetic. Preserves DE, HL and the live
+; file; clobbers A alone.
 ;
 ; The HIGH BYTE alone answers it. The ring is 512-aligned at RING_BUF and the
-; cursor can only be RING_BUF..RING_TOP, so `H == RING_TOP>>8` happens at
-; exactly one address. That is the whole routine: 47 cycles against the 86 a
+; cursor can only be RING_BUF..RING_TOP, so `IYH == RING_TOP>>8` happens at
+; exactly one address. That is the whole routine: 27 cycles against the 86 a
 ; 16-bit `sbc hl,de` cost, ~17 times a frame — and the wrap itself fires once
 ; per 512 samples, so essentially all of those calls only ask the question.
 feed_wrap:
-        push iy
-        pop  hl
-        ld   a,h
-        cp   RING_TOP>>8
-        ret  nz
-        ld   iy,RING_BUF
+        ld   a,iyh              ; the half register, not `push iy / pop hl`:
+        cp   RING_TOP>>8        ; HL belongs to the mixer everywhere this is
+        ret  nz                 ; reached from, and spilling it cost 20 cycles
+        ld   iy,RING_BUF        ; for a byte the Z80 can address directly
         ret
 
 ; ---------------------------------------------------------------------------
@@ -1771,6 +1769,16 @@ plan_next:
 ; Preserves DE and the alternate set; B is the segment length in and out.
 mvf_ringcap:
         push hl
+        ; THE FEED MAY BE SITTING EXACTLY ON THE TOP, and that is fine. emit_try
+        ; wraps before it READS rather than after it advances — which is what
+        ; lets the test ride in the gap behind a chip write instead of costing a
+        ; spill — so a send that took the ring's last byte leaves the cursor at
+        ; RING_TOP until the next one. The distance below then comes out zero,
+        ; and `mvf_rc_cap`'s forced `inc a` already turns that into a one-tick
+        ; segment rather than a `djnz` of 256: the wrap lands at its end, in
+        ; feed_wrap, exactly as it does for a segment that merely reached the
+        ; edge. A guard here cost 43 cycles x ~17 segments a frame and bought
+        ; nothing — measured, 99.0% -> 98.6% of the samples delivered.
         ld   a,(G_IDX)
         neg                     ; 256 - index, and 0 means a full page
         jr   z,mvf_rc_feed
