@@ -626,13 +626,35 @@ exact-tail walk — operates on the live registers, so `ms_load`/`ms_done`
 survive only on the idle path. Measured: ~1.4–1.8k cycles a frame returned to
 the pad, and one fewer over-budget frame class on segment-heavy scores.
 
-**YM BUSY policy.** Every latched YM register write polls the status byte
-(0x4000 bit 7) before the address and before the data byte. The **DAC data
-register `$2A` is exempt** and is fed blind: the busy flag guards the chip's
-internal write cycle for latched registers, `$2A` is not one, and every Mega
-Drive PCM driver feeds it blind. Polling it cost 115 cycles per mix tick — 20k a
-frame, a third of the whole budget — waiting for something that is never set at
-a 10.5 kHz feed rate. PSG writes need no wait.
+**YM BUSY policy.** What the YM2612 actually requires between writes is not a
+busy flag but a **settling time that depends on the register**, and XGM2 carries
+the author's hardware measurement of it (SGDK, `src/snd/xgm2/drv_xgm2.s80`),
+in Z80 cycles:
+
+| between | cycles |
+| --- | --- |
+| an address write and its own data write | **6** (8 by spec) |
+| writes to `$21`–`$2F`, except `$28` | **none** |
+| writes to `$28` (key on/off) | **53** |
+| writes to `$30`–`$9E` | **39** |
+| writes to `$A0`–`$B6` | **22** |
+| a data write, before the chip acknowledges | up to **53** |
+
+So `$27` (the timer's flag reset) and `$2A` (the DAC) are the two cheapest
+registers on the chip and **the sample feed needs no wait of any kind** — which
+is why XGM2's whole sample output is 80 cycles with its two register writes back
+to back, and why `emit_try` polls nothing. It cost this engine 96 cycles a
+sample to learn: the emit polled the status byte before each of its writes, for
+an answer the table gives for free.
+
+The **slot's** FM writes are the ones the table charges, and the engine still
+polls the status byte (0x4000 bit 7) before the address and before the data
+there — a poll covers `$28`'s 53 and `$30`–`$9E`'s 39 without having to know
+which range a write is in. PSG writes need no wait.
+
+Never re-derive this from "the busy flag exists". Emulators are no help: BlastEm
+applies every write unconditionally and models BUSY only in what a status read
+returns, so a write issued too early is never refused there.
 
 ### 5.1.1 The write pump — chip writes ride the mix loop (2026-08-06)
 

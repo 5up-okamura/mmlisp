@@ -260,7 +260,19 @@ export const PAD_TARGET = Math.round(SAMPLE_CYCLES * PAD_FRACTION);
 // count are all deleted, along with the ~20% slow frame they existed to stop.
 // The history is in .claude/memory/plan-68k-split.md; the short version is that
 // no constant can make an interval constant, which is what a clock is for.
-export const PACE_WINDOW = 14;
+// What a read through the $8000 ROM window costs beyond the Z80's own 7 — the
+// 68000's bus arbiter. NEVER MEASURED HERE, and it is 14 because 14 was the
+// estimate that got written down; at two voices it is 28 cycles a sample.
+//
+// XGM2 charges 3. Its mix macros count `ADD (HL)` as "7+3" and `LDI` as "16+3"
+// for exactly this read (SGDK, src/snd/xgm2/drv_xgm2_pcm_mac.i80), which is a
+// second opinion from a driver that ships and is 4.7x smaller than ours.
+//
+// It pulls two ways, which is why it is a knob and not a constant: padFor
+// SUBTRACTS `fetches x PACE_WINDOW` when it sizes the pad, so a smaller value
+// makes the generated pads BIGGER, while frame-budget ADDS it when it times the
+// frame. Only the machine can settle it — sweep MMLISP_PACE against dac-log.
+export const PACE_WINDOW = Number(process.env.MMLISP_PACE ?? 14);
 
 // Master's ceiling, and therefore the number of `sra a` slots every emit
 // reserves for the master chain. IMPORTED, not mirrored: the sequencer composes
