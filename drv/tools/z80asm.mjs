@@ -22,6 +22,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const R8 = { b: 0, c: 1, d: 2, e: 3, h: 4, l: 5, a: 7 };
+// Undocumented halves of IX/IY: the H(4)/L(5) fields under a DD/FD prefix.
+const R8H = {
+  ixh: { code: 4, pfx: 0xdd }, ixl: { code: 5, pfx: 0xdd },
+  iyh: { code: 4, pfx: 0xfd }, iyl: { code: 5, pfx: 0xfd },
+};
 const RP = { bc: 0, de: 1, hl: 2, sp: 3 };
 const RP2 = { bc: 0, de: 1, hl: 2, af: 3 }; // push/pop
 const CC = { nz: 0, z: 1, nc: 2, c: 3, po: 4, pe: 5, p: 6, m: 7 };
@@ -208,6 +213,11 @@ function classify(op) {
   const s = op.trim();
   const low = s.toLowerCase();
   if (low in R8) return { k: "r8", code: R8[low] };
+  // The undocumented HALF-INDEX registers. Under a DD/FD prefix the H and L
+  // fields of an ordinary 8-bit opcode name the index register's halves; every
+  // real Z80 decodes it that way, the Mega Drive's included. `ld a,iyh` is what
+  // lets the engine test the ring's page without spilling HL.
+  if (low in R8H) return { k: "r8h", code: R8H[low].code, pfx: R8H[low].pfx };
   if (low === "af'") return { k: "afp" };
   if (["bc", "de", "hl", "sp", "af", "ix", "iy"].includes(low))
     return { k: "rp", name: low };
@@ -485,6 +495,26 @@ function encodeLine(mnem, ops, ctx) {
     case "ld": {
       const [d, s] = A;
       if (!d || !s) err("ld needs 2 operands");
+      // Half-index forms. Mixing a half with H or L is impossible on the chip
+      // (the prefix renames BOTH fields), so it is rejected rather than
+      // silently assembled into something else.
+      if (d.k === "r8h" || s.k === "r8h") {
+        const pfx = d.k === "r8h" ? d.pfx : s.pfx;
+        if (d.k === "r8h" && s.k === "r8h" && d.pfx !== s.pfx)
+          err("ld between IX and IY halves");
+        const plain = (o) => {
+          if (o.k !== "r8") return null;
+          if (o.code === 4 || o.code === 5)
+            err("h/l cannot be used with an index half — the prefix renames both");
+          return o.code;
+        };
+        if (d.k === "r8h" && s.k === "expr")
+          return emit(pfx, 0x06 | (d.code << 3), imm8(s));
+        const dc = d.k === "r8h" ? d.code : plain(d);
+        const sc = s.k === "r8h" ? s.code : plain(s);
+        if (dc === null || sc === null) err("bad ld with an index half");
+        return emit(pfx, 0x40 | (dc << 3) | sc);
+      }
       // r8 ← r8 / (hl) / (ix+d) / imm / (nn) [a only] / (bc)/(de) [a only]
       if (d.k === "r8") {
         if (s.k === "r8") return emit(0x40 | (d.code << 3) | s.code);
@@ -608,6 +638,7 @@ function encodeLine(mnem, ops, ctx) {
         err(`bad ${mnem} operands`);
       const base = ALU[mnem];
       if (src.k === "r8") return emit(0x80 | (base << 3) | src.code);
+      if (src.k === "r8h") return emit(src.pfx, 0x80 | (base << 3) | src.code);
       if (src.k === "mem-hl") return emit(0x86 | (base << 3));
       if (src.k === "mem-ix" || src.k === "mem-iy")
         return emit(ixPfx(src.k), 0x86 | (base << 3), disp(src));
@@ -621,6 +652,7 @@ function encodeLine(mnem, ops, ctx) {
       const [d] = A;
       const decBit = mnem === "dec" ? 1 : 0;
       if (d.k === "r8") return emit(0x04 | (d.code << 3) | decBit);
+      if (d.k === "r8h") return emit(d.pfx, 0x04 | (d.code << 3) | decBit);
       if (d.k === "mem-hl") return emit(0x34 | decBit);
       if (d.k === "mem-ix" || d.k === "mem-iy")
         return emit(ixPfx(d.k), 0x34 | decBit, disp(d));
