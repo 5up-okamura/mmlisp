@@ -60,6 +60,11 @@ typedef struct {
     u16 lost_1s;        /* frames lost in the last second                     */
     u16 starved;        /* cumulative: the ring ran dry                       */
     u16 starv_1s;
+    /* The PCM ring's fill, in samples at the score's own rate. The sequencer
+     * cancels MML_PCM_RING_TARGET of it, so `fill - target` is how far the DAC
+     * sits from the FM — the number that decides whether a layered drum hits
+     * once or twice, and the one thing no gate here could see before. */
+    u16 pcm_fill;
     /* music256 for each of the first PROBE_SECS one-second windows. A single
      * average cannot tell a clock that runs steadily fast from one that swings,
      * and "the tempo wobbles" is a statement about the swing. */

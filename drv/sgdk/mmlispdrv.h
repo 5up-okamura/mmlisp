@@ -146,6 +146,12 @@ typedef struct {
     u16 audible;  // frames the engine has CONSUMED — the audible clock. A
                   // starved frame does not tick it: nothing was played on it.
     u16 starved;  // frames the ring was empty
+    // The PCM ring's fill, as the engine last reported it, in SAMPLES at the
+    // score's own rate. The sequencer cancels MML_PCM_RING_TARGET of it by
+    // starting a PCM track a frame early, so `fill - target` is how far the DAC
+    // sits from the FM and PSG — the number that says whether a drum layered
+    // across both hits once or twice. Zero when the score has no PCM.
+    u16 pcmFill;
 } MMLispStats;
 
 // Both counters in ONE bus grab. Prefer this over the individual accessors:

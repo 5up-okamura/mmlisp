@@ -89,6 +89,7 @@ int main(void)
             probe.vblanks  = (u16)elapsed;
             probe.audible  = (u16)(st.audible - base_audible);
             probe.starved  = st.starved;
+            probe.pcm_fill = st.pcmFill;
             probe.music256 = elapsed ? (u16)(((u32)probe.audible << 8) / elapsed) : 0;
             probe.host256  = elapsed ? (u16)((loops << 8) / elapsed) : 0;
             probe.worst_1s = worst_1s;

@@ -261,12 +261,21 @@ H_STARVE    equ HDR+12          ; u16 Z80-owned: starved frames since boot
 ; stamp is what lets a frame that ran over budget CATCH UP instead of losing
 ; a frame of music.
 H_VBL       equ HDR+14          ; u8  68k-owned: vblank count, low byte
+; THE RING'S REAL FILL, published once a frame so the sequencer can stop
+; guessing it. mml_render_frame() models the fill as "the feed took exactly what
+; the clock owed" — true only while the engine keeps up, and above ~4.4 kHz it
+; does not: the surplus accumulates and the lead grows from the one frame the
+; sequencer cancels to two or four. The DAC then plays 17-50 ms behind the FM
+; and a drum layered across FM and PCM hits twice (measured 2026-09-02; see
+; .claude/memory/plan-68k-split.md). The 68k reads this inside the bus grab it
+; already takes, where the Z80 is frozen and a 16-bit read is atomic.
+H_FILL      equ HDR+16          ; u16 Z80-owned: FINISHED samples in the ring
 ; Bumped to 8 when the slot gained PCM_MASTER (§6.3): pcm_command RETURNS on an
 ; unknown opcode — correct, since the count already bounds the walk — so an old
 ; image fed a new sequencer's slots would simply ignore master on PCM and say
 ; nothing about it. The host's `ver == MMLISPDRV_PROTO_VER` check is what turns
 ; that into a refusal to start.
-PROTO_VER   equ 8
+PROTO_VER   equ 9
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -1306,6 +1315,11 @@ pcm_park:
         sbc  hl,de
 pp_wrst:
         ld   (G_WR),hl
+        ; …and tell the 68k what the fill really is. Once a frame, 16 cycles,
+        ; and it is the difference between a lead the sequencer REGULATES and
+        ; one it assumes (H_FILL).
+        ld   hl,(G_FILL)
+        ld   (H_FILL),hl
         ld   a,(G_ACT)
         or   a
         ret  nz

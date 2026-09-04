@@ -28,6 +28,7 @@
 #define H_RING     (MMLISPDRV_HDR + 10)  // u16 ring base in Z80 RAM
 #define H_STARVE   (MMLISPDRV_HDR + 12)  // u16 Z80-owned: starved frames
 #define H_VBL      (MMLISPDRV_HDR + 14)  // u8 68k-owned: vblank count stamp
+#define H_FILL     (MMLISPDRV_HDR + 16)  // u16 Z80-owned: FINISHED samples in the ring
 
 static MMLSeq     seq;
 static bool       ready     = FALSE;
@@ -170,10 +171,17 @@ void MMLisp_frame(void)
     // against the vblanks it answered and consumes what it owes. vtimer is
     // SGDK's own vertical-interrupt counter; writing the low byte is
     // idempotent, so calling MMLisp_frame twice in a frame stays harmless.
+    // The PCM ring's real fill rides the same grab. Without it the sequencer
+    // assumes the feed took exactly what the sample clock owed, which holds
+    // only while the engine keeps up; above ~4.4 kHz the surplus accumulates
+    // and the DAC drifts behind the FM (mmlispseq.c, mml_pcm_ring_fill). The
+    // Z80 is frozen inside the grab, so the 16-bit read is atomic.
     Z80_requestBus(TRUE);
     u8 tail = *Z80_RAM_AT(H_TAIL);
+    u16 fill = (u16)(*Z80_RAM_AT(H_FILL) | (*Z80_RAM_AT(H_FILL + 1) << 8));
     *Z80_RAM_AT(H_VBL) = (u8)vtimer;
     Z80_releaseBus();
+    mml_pcm_ring_fill(&seq, fill);
 
     u8 next = mml_pump(&seq, ringHead, tail, ringDepth, slot_to_z80, NULL);
     if (next == ringHead) return;   // ring full: nothing rendered, nothing to say
@@ -258,5 +266,6 @@ void MMLisp_readStats(MMLispStats* out)
     Z80_requestBus(TRUE);
     out->audible = (u16)(*Z80_RAM_AT(H_FRAMES) | (*Z80_RAM_AT(H_FRAMES + 1) << 8));
     out->starved = (u16)(*Z80_RAM_AT(H_STARVE) | (*Z80_RAM_AT(H_STARVE + 1) << 8));
+    out->pcmFill = (u16)(*Z80_RAM_AT(H_FILL) | (*Z80_RAM_AT(H_FILL + 1) << 8));
     Z80_releaseBus();
 }

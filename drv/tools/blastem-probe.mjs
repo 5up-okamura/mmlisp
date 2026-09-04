@@ -69,7 +69,7 @@ const F = [
   "magic", "status", "fault", "fault_addr_hi", "fault_addr_lo",
   "fault_pc_hi", "fault_pc_lo", "stage", "seconds", "track_count",
   "vblanks", "audible", "music256", "host256", "worst_1s", "lost_1s",
-  "starved", "starv_1s",
+  "starved", "starv_1s", "pcm_fill",
 ];
 const m = Object.fromEntries(F.map((k, i) => [k, w[i] ?? 0]));
 const hex = (v, n = 4) => "0x" + v.toString(16).padStart(n, "0");
@@ -112,6 +112,15 @@ console.log(`  tracks ${m.track_count}`
 console.log(`  music  ${pc(m.music256)}   worst 1s ${pc(m.worst_1s)}`);
 console.log(`  host   ${pc(m.host256)}   ${m.audible} frames consumed in ${m.vblanks} vblanks`);
 console.log(`  lost/s ${m.lost_1s}   starv ${m.starved} (${m.starv_1s}/s)`);
+// The ring's lead, which no number here could see until 2026-09-02. The
+// sequencer cancels exactly one frame of it; the rest is how far the DAC sits
+// from the FM, and it is what "the snare goes ta-tan" measures as.
+if (m.pcm_fill) {
+  const target = Math.ceil(53693175 / 7 / 144 / (meta.fmPerSample ?? 16 / meta.pcmSpg) / 59.9227);
+  const ms = (m.pcm_fill - target) / (53693175 / 7 / 144 / (meta.fmPerSample ?? 16 / meta.pcmSpg)) * 1000;
+  console.log(`  ring   fill ${m.pcm_fill} against a target of ${target}`
+    + `  ->  the DAC is ${ms >= 0 ? "+" : ""}${ms.toFixed(1)} ms from the FM`);
+}
 // The decision table from the example program, because this is read in a
 // terminal by somebody who has not got driver.md open.
 if (m.music256 < 0xf8) {

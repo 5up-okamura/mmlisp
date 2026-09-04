@@ -262,6 +262,10 @@ typedef struct {
   MMLPcmVoice pcm[MML_PCM_VOICES];
   uint8_t pcm_dac_on;
   uint16_t pcm_fill;  /* samples mixed into the ring and not yet fed (§5.1.2) */
+  /* …and whether that number came from the ENGINE or from this model's own
+   * arithmetic. Set by mml_pcm_ring_fill(); zero means nobody has told us and
+   * pcm_fill is the assumption it always was. */
+  uint8_t pcm_fill_known;
   uint8_t pcm_chunk;  /* samples this frame's slot tells the engine to mix; 0 = prime */
   uint16_t pcm_sched; /* remainder of the sample clock's 166.674 a frame */
   MMLGlobalSweep tempo_sweep;
@@ -349,6 +353,32 @@ void mml_start_track(MMLSeq *s, uint8_t track_id);
 void mml_stop_track(MMLSeq *s, uint8_t track_id);
 
 /* Render one frame and close its slot. Returns the slot length in bytes. */
+/* THE RING'S REAL FILL, from the engine's published header (H_FILL).
+ *
+ * Call it once a frame, before mml_render_frame(), inside the bus grab the host
+ * already takes. Without it the sequencer ASSUMES the feed took exactly what
+ * the sample clock owed — true only while the engine keeps up, and above about
+ * 4.4 kHz it does not: the surplus accumulates, the lead grows from the one
+ * frame mml_render_frame() cancels to two or four, and the DAC plays 17-50 ms
+ * behind the FM. With it, the chunk is corrected each frame and the lead is
+ * regulated instead of assumed. */
+void mml_pcm_ring_fill(MMLSeq *s, uint16_t fill);
+
+/* How much of the fill's error one frame's chunk corrects — the reciprocal, so
+ * 8 means an eighth. It has to be larger than the loop's DEAD TIME, and the
+ * dead time is the slot ring's depth: mml_pump renders as far ahead as the ring
+ * has room, so a chunk decided now plays up to that many frames later against a
+ * fill reading that is that many frames old. At a gain of one the loop
+ * oscillates — measured, 78% of samples delivered at 3,329 Hz against 99.1%
+ * with no correction at all. */
+#define MML_PCM_FILL_GAIN 8
+
+/* What the engine last said the ring holds, for a host that wants to SEE the
+ * lead rather than infer it. It is the one number that says whether the DAC is
+ * in time with the FM: the sequencer cancels exactly MML_PCM_RING_TARGET of it
+ * by starting a PCM track a frame early, so anything else is an offset. */
+uint16_t mml_pcm_fill(const MMLSeq *s);
+
 uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
 
 /* Close a slot WITHOUT running a frame — how the spill queue is drained once

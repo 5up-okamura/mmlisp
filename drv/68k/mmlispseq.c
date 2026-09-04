@@ -1068,13 +1068,66 @@ static void pcm_frame(MMLSeq *s) {
    * a sample being final only after the last voice pass, so the ring drains
    * first here too or the two disagree about the chunk length. */
   int prime = s->pcm_fill == 0;
-  if (!prime) s->pcm_fill = s->pcm_fill > want ? (uint16_t)(s->pcm_fill - want) : 0;
-  /* The lead on a prime frame, otherwise exactly what was fed. This chunk is
-   * what the engine must mix: the plan below is tick distances measured against
-   * it, and the engine's emit count follows it one sample per three ticks. */
-  uint16_t chunk = prime ? MML_PCM_RING_TARGET : want;
-  s->pcm_fill += chunk;
-  s->pcm_chunk = prime ? 0 : (uint8_t)want;
+  uint16_t chunk;
+  if (s->pcm_fill_known) {
+    /* THE ENGINE SAID WHAT THE FILL IS, so aim the chunk at the target instead
+     * of assuming the feed kept up.
+     *
+     *   chunk = want + (TARGET - fill)
+     *
+     * …with the error divided by MML_PCM_FILL_GAIN, because THIS LOOP HAS
+     * DEAD TIME. mml_pump renders as many slots as the ring has room for, so
+     * the chunk decided here is played up to RING_DEPTH frames later, and the
+     * fill read here is that many frames old. Correcting the whole error every
+     * frame against five frames of delay is a textbook oscillator, and it
+     * measures like one: 78% of samples delivered at 3,329 Hz, where the
+     * uncorrected model gives 99.1%, with holes of 322 sample periods.
+     *
+     * Why it is needed: the branch below assumes the feed took exactly `want`,
+     * which holds only while the engine can send everything the clock owes. At
+     * 6,658 Hz it sends 93.7%, the surplus accumulates, and the lead grows from
+     * the one frame this function cancels (a PCM track starts on its armed
+     * frame, everything else on the next) to two or four — the DAC then plays
+     * 17-50 ms behind the FM and a drum layered across FM and PCM hits twice.
+     * Measured on BlastEm: fill 39 at 3,329 Hz against a target of 56, and 226
+     * (peak 445) at 6,658 against 112.
+     *
+     * FLOORED AT ONE, not zero: `pcm_chunk == 0` is the slot's sentinel for a
+     * prime frame, so a chunk of zero would tell the engine to build the whole
+     * lead again. One tick a frame against a hundred fed is the same
+     * correction. */
+    prime = s->pcm_fill == 0;
+    int32_t err = (int32_t)MML_PCM_RING_TARGET - (int32_t)s->pcm_fill;
+    /* PROPORTIONAL ONLY, and that is a measured choice rather than a first cut.
+     *
+     * An integral term drives the error to zero — measured at +0.3, 0.0 and
+     * -3.0 ms across 3,329 / 4,439 / 6,658 Hz, against +2.7, -0.9 and +9.8 with
+     * this — and it costs EIGHT POINTS of delivered samples to do it, because
+     * THE CHUNK IS ALSO THE EMIT SCHEDULE. A pass runs `chunk` ticks and the
+     * loops carry one emit per PCM_PASSES of them, so shrinking the chunk to
+     * what the feed manages also shrinks the number of times the frame asks the
+     * timer, and the idle loop cannot make all of it up. The integral converges
+     * to exactly that shrunken chunk and stays there.
+     *
+     * So the lead is pulled back but not pinned: 50 ms of drift becomes 10, and
+     * the delivered rate gives up half a point instead of eight. Pinning it
+     * needs the emit schedule separated from the mix length, which is a change
+     * to the loop generator and not to this arithmetic.
+     */
+    int32_t aim = (int32_t)want + err / MML_PCM_FILL_GAIN;
+    if (aim < 1) aim = 1;
+    if (aim > 255) aim = 255;
+    chunk = prime ? MML_PCM_RING_TARGET : (uint16_t)aim;
+  } else {
+    if (!prime) s->pcm_fill = s->pcm_fill > want ? (uint16_t)(s->pcm_fill - want) : 0;
+    /* The lead on a prime frame, otherwise exactly what was fed. This chunk is
+     * what the engine must mix: the plan below is tick distances measured
+     * against it, and the engine's emit count follows it one sample per three
+     * ticks. */
+    chunk = prime ? MML_PCM_RING_TARGET : want;
+    s->pcm_fill += chunk;
+  }
+  s->pcm_chunk = prime ? 0 : (uint8_t)chunk;
   for (int i = 0; i < MML_PCM_VOICES; i++) {
     MMLPcmVoice *v = &s->pcm[i];
     /* The run's count byte, filled in by plan_push as breaks are found. */
@@ -1730,6 +1783,16 @@ static uint16_t sub_increment(uint16_t inc, int sub) {
   uint32_t lo = ((uint32_t)sub * inc) / MML_SLOT_SUBS;
   return (uint16_t)(hi - lo);
 }
+
+/* The engine's own fill, out of H_FILL. Latched rather than acted on here: the
+ * host reads it inside the bus grab it already takes, and the sequencer uses it
+ * on its next frame. See the header. */
+void mml_pcm_ring_fill(MMLSeq *s, uint16_t fill) {
+  s->pcm_fill = fill;
+  s->pcm_fill_known = 1;
+}
+
+uint16_t mml_pcm_fill(const MMLSeq *s) { return s->pcm_fill; }
 
 uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
   for (int sub = 0; sub < MML_SLOT_SUBS; sub++) {
