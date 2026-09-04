@@ -184,6 +184,7 @@ try {
       ...(PUMP ? { defines: { PUMP_ON: 1 } } : {}) });
   const sym = (n) => built.symbols.get(n);
   const RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
+  const FEED_ONE = sym("feed_one") ?? -1;
   console.log(`engine ${built.bytes.length} B · write pump `
     + `${sym("PUMP_ON") ? "ON" : "off"}${PUMP ? " (--pump)" : ""} · budget ${FRAME_CYCLES} cyc/frame`
     + (STALL ? ` · 68k bus grab ${STALL} cyc/frame (--stall)` : ""));
@@ -237,6 +238,7 @@ try {
     // not an entry to a routine, now that the two instructions are inline.
     let askedThisStep = false;
     let lastAskPc = 0, lastPc = 0;
+    let lastAskFrom = 0, sendsAtAsk = 0;
     const longGaps = [];
     if (ASKS) askGaps = [];
     // The ring's fill, sampled at each vblank, and the sends counted exactly.
@@ -411,9 +413,20 @@ try {
           // Where the engine WAS when it stopped asking. A gap is a stretch of
           // code, and the stretch is named by where it began — sprinkling calls
           // by guesswork is how the last one of these was missed.
-          if (gap > SAMPLE_CY) longGaps.push([gap, lastAskPc]);
+          // …and whether the stretch had an EMIT in it. An emit is ~250 cycles
+          // of the sample period all by itself, so a site whose stretch only
+          // goes long when it sends is asking for a cheaper emit, and one that
+          // goes long either way is asking for another ask. Different fixes.
+          if (gap > SAMPLE_CY) longGaps.push([gap, lastAskPc, lastAskFrom, sends !== sendsAtAsk]);
         }
         lastAsk = tcyc; lastAskPc = lastPc;
+        // feed_one is not a place, it is a subroutine every stretch of the
+        // frame calls. Naming it names nothing — so when the ask is the one at
+        // feed_one's head, the stretch is named by the CALLER, which is still
+        // on the stack because the spill (`push hl`) comes after the ask.
+        lastAskFrom = pcBefore === FEED_ONE
+          ? ram[cpu.sp] | (ram[(cpu.sp + 1) & 0xffff] << 8) : 0;
+        sendsAtAsk = sends;
         // The two failure modes, told apart at the only moment they differ.
         if (timerOn && tcyc >= gateAt) {
           const fill = ram[G_FILL] | (ram[G_FILL + 1] << 8);
@@ -497,13 +510,18 @@ try {
     const syms = [...built.symbols.entries()]
       .filter(([, v]) => typeof v === "number" && v < 0x2000)
       .sort((a, b) => a[1] - b[1]);
-    const nameOf = (pc) => {
+    const nameOf = (pc, exact) => {
       let lo = 0, hi = syms.length - 1, best = null;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         if (syms[mid][1] <= pc) { best = syms[mid]; lo = mid + 1; } else hi = mid - 1;
       }
-      return best ? best[0] : `0x${pc.toString(16)}`;
+      if (!best) return `0x${pc.toString(16)}`;
+      // A label names a routine, not a line, and several call sites can share
+      // one. `+n` is what tells them apart — without it four `call feed_one`
+      // in mix_voice_frame reported as one 740-cycle stretch that no single
+      // one of them was.
+      return exact && pc !== best[1] ? `${best[0]}+${pc - best[1]}` : best[0];
     };
     if (askGaps) {
       const frames = Math.max(1, consumed);
@@ -511,8 +529,14 @@ try {
         const g = [...askGaps].sort((a, b) => a - b);
         const q = (x) => g[Math.floor((g.length - 1) * x)];
         const late = askGaps.filter((v) => v > SAMPLE_CY);
-        // Overflows thrown away: a gap of n periods records one and loses n-1.
-        const thrown = late.reduce((t, v) => t + Math.floor(v / SAMPLE_CY) - 1, 0);
+        // Overflows thrown away. The clock ticks every SAMPLE_CY whatever the
+        // engine is doing, so a stretch of g cycles contains g/SAMPLE_CY of
+        // them and the engine can answer at most ONE — the flag is a single
+        // bit. So a late gap throws away g/SAMPLE_CY - 1, in expectation over
+        // the phase. Counting whole periods (floor) instead reported 0.77 a
+        // frame where the delivered rate said 7, because a 1.3-period stretch
+        // floors to one overflow and looks free; it is not, it throws 0.3.
+        const thrown = late.reduce((t, v) => t + v / SAMPLE_CY - 1, 0);
         console.log(`      asks ${(asks / frames).toFixed(1)} a frame`
           + ` · gap p50 ${q(0.5).toFixed(0)} · p95 ${q(0.95).toFixed(0)} · max ${q(1).toFixed(0)}`
           + ` (a sample is ${SAMPLE_CY.toFixed(0)})`);
@@ -528,16 +552,19 @@ try {
         + ` — ${(100 * sends / frames / (FRAME_CYCLES / SAMPLE_CY)).toFixed(1)}%`);
       if (longGaps.length) {
         const by = new Map();
-        for (const [g, pc] of longGaps) {
-          const r = nameOf(pc);
-          const e = by.get(r) ?? { n: 0, cyc: 0, max: 0 };
-          e.n++; e.cyc += g; if (g > e.max) e.max = g;
+        for (const [g, pc, from, sent] of longGaps) {
+          // The caller's name, and the return address is one past the `call`,
+          // so step back three bytes to land inside it.
+          const r = from ? `${nameOf((from - 3) & 0xffff, true)} →feed_one` : nameOf(pc);
+          const e = by.get(r) ?? { n: 0, cyc: 0, max: 0, sent: 0 };
+          e.n++; e.cyc += g; if (g > e.max) e.max = g; if (sent) e.sent++;
           by.set(r, e);
         }
         console.log(`      gaps over ONE sample period, by where the engine last asked:`);
-        for (const [r, e] of [...by.entries()].sort((a, b) => b[1].cyc - a[1].cyc).slice(0, 8))
-          console.log(`        ${r.padEnd(22)} ${String(e.n).padStart(5)} times`
-            + ` · ${(e.cyc / e.n).toFixed(0).padStart(6)} cyc mean · max ${e.max}`);
+        for (const [r, e] of [...by.entries()].sort((a, b) => b[1].cyc - a[1].cyc).slice(0, 12))
+          console.log(`        ${r.padEnd(32)} ${String(e.n).padStart(5)} times`
+            + ` · ${(e.cyc / e.n).toFixed(0).padStart(6)} cyc mean · max ${String(e.max).padStart(5)}`
+            + ` · ${(100 * e.sent / e.n).toFixed(0).padStart(3)}% with an emit in them`);
       }
       if (asks) console.log(`      asks that found the timer due: ${dueSent} sent,`
         + ` ${dueEmpty} found the ring EMPTY`
