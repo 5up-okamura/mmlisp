@@ -1230,6 +1230,9 @@ pp_act:
         jr   pp_act_next
 pp_act_run:
         push bc                 ; the mixer owns BC for its register file
+        ; pp_voice_at and the plan bind below sit between this pass's first two
+        ; asks, and with an emit in front of them the pair is over a period.
+        call feed_one
         ; Bind this voice's plan run before the pass reads it.
         ld   a,c
         add  a,a
@@ -1926,6 +1929,11 @@ pcm_edge:
         push bc
         call feed_one
         call pcm_park
+        ; …and again on the way out. What follows the return is consume_slot's
+        ; head — the $27 patch, the PCM commands, the plan walk — and the stretch
+        ; from this feed_one's emit to the first ask in there was over a sample
+        ; period twice a frame.
+        call feed_one
         pop  bc
         pop  de
         pop  hl

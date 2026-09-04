@@ -1505,6 +1505,12 @@ msb_u:
         ld   h,(hl)
         ld   l,a
         ld   (ms_go_u+1),hl
+        ; Halfway. ms_bind is ~230 cycles of straight line that a pass runs
+        ; once, and the emit that precedes it is another 250 — together more
+        ; than a sample period at PCM_FM = 8, which is one overflow thrown away
+        ; per pass per frame. The registers are already spilled above, so the
+        ; ask costs the 43 cycles it takes to find the timer not due.
+        call feed_one
         ld   hl,mix_add1_tab
         ld   a,(G_SEG_L)
         or   a
