@@ -159,7 +159,7 @@ const meta = {
   timerBK: Number(process.env.TIMER_B_K),
   timer: (process.env.PCM_TIMER ?? "B").toUpperCase(),
   fmPerSample: Number(process.env.PCM_FM ?? 16 / Number(process.env.PCM_SPG)),
-  probeWords: 18,
+  probeWords: 19,
   mmbBytes: mmb.length,
   sampleBytes: sampleBank.length,
   probeAddr,
