@@ -268,6 +268,15 @@ typedef struct {
   uint8_t pcm_fill_known;
   uint8_t pcm_chunk;  /* samples this frame's slot tells the engine to mix; 0 = prime */
   uint16_t pcm_sched; /* remainder of the sample clock's 166.674 a frame */
+  /* WHAT THE DAC ACTUALLY TAKES, measured, in samples x 256; 0 = not yet.
+   * Production minus consumption is the change in fill, so over a window of
+   * MML_PCM_RATE_WIN frames the consumption is (what was mixed) + (the fill
+   * then) - (the fill now) — exact in the average however deep the pump's
+   * lookahead is, because the delay is the same at both ends of the window. */
+  int32_t pcm_take_q;
+  uint32_t pcm_prod;   /* samples mixed since the window opened */
+  uint16_t pcm_mark;   /* the fill when it opened */
+  uint8_t pcm_win;     /* frames since it opened */
   MMLGlobalSweep tempo_sweep;
   MMLGlobalSweep csm_sweep;
   int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */
@@ -372,6 +381,11 @@ void mml_pcm_ring_fill(MMLSeq *s, uint16_t fill);
  * oscillates — measured, 78% of samples delivered at 3,329 Hz against 99.1%
  * with no correction at all. */
 #define MML_PCM_FILL_GAIN 8
+
+/* Frames the DAC's real rate is averaged over. Long enough that the pump's
+ * lookahead and the ±1 in the sample clock's own remainder wash out, short
+ * enough that the lead comes in within half a second. */
+#define MML_PCM_RATE_WIN 24
 
 /* What the engine last said the ring holds, for a host that wants to SEE the
  * lead rather than infer it. It is the one number that says whether the DAC is

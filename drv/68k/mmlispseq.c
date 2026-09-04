@@ -1114,10 +1114,48 @@ static void pcm_frame(MMLSeq *s) {
      * needs the emit schedule separated from the mix length, which is a change
      * to the loop generator and not to this arithmetic.
      */
-    int32_t aim = (int32_t)want + err / MML_PCM_FILL_GAIN;
+    /* …around what the DAC REALLY TAKES, and not around what the clock owes.
+     *
+     * The proportional term alone leaves a steady-state error, and at a short
+     * sample period that error is the whole problem. The engine cannot send
+     * everything the clock owes — at 8,878 Hz it sends ~93% — so equilibrium
+     * is production = consumption, which this loop reaches by holding the
+     * error at err = GAIN x (take - want): 8 x (138 - 148) = -80 samples of
+     * lead that never comes in. Measured on BlastEm, m3-pcm-softmix at
+     * 8,878 Hz: fill 245 against a target of 149, the DAC 10.8 ms behind
+     * the FM.
+     *
+     * Centring on the measured rate moves the equilibrium to err = 0 and
+     * NOT the chunk: at balance `aim` is the same number either way, which
+     * is why this is not the integral term that was tried and rejected here.
+     * That one kept pushing past balance and shrank the chunk — and THE CHUNK
+     * IS ALSO THE EMIT SCHEDULE, so it cost eight points of delivered samples
+     * to pin the lead. This changes what the correction is measured FROM. */
+    int32_t take = s->pcm_take_q ? (s->pcm_take_q + 128) / 256 : (int32_t)want;
+    int32_t aim = take + err / MML_PCM_FILL_GAIN;
     if (aim < 1) aim = 1;
     if (aim > 255) aim = 255;
     chunk = prime ? MML_PCM_RING_TARGET : (uint16_t)aim;
+    /* The window. A prime frame is a discontinuity — it builds the whole lead
+     * and feeds nothing — so it opens a fresh one rather than polluting the
+     * average with a frame that is not steady state. */
+    if (prime) { s->pcm_win = 0; s->pcm_prod = 0; s->pcm_mark = s->pcm_fill; }
+    else {
+      s->pcm_prod += chunk;
+      if (++s->pcm_win >= MML_PCM_RATE_WIN) {
+        int32_t took = (int32_t)s->pcm_prod
+                     + (int32_t)s->pcm_mark - (int32_t)s->pcm_fill;
+        int32_t q = (took * 256) / MML_PCM_RATE_WIN;
+        /* The DAC can never take MORE than the clock owes, and a reading that
+         * says it did is the pump's lookahead moving, not the chip. Half the
+         * nominal rate is the floor: below that the engine is not running the
+         * DAC at all and the fill error is the honest signal. */
+        if (q > (int32_t)want * 256) q = (int32_t)want * 256;
+        if (q < (int32_t)want * 128) q = (int32_t)want * 128;
+        s->pcm_take_q = q;
+        s->pcm_win = 0; s->pcm_prod = 0; s->pcm_mark = s->pcm_fill;
+      }
+    }
   } else {
     if (!prime) s->pcm_fill = s->pcm_fill > want ? (uint16_t)(s->pcm_fill - want) : 0;
     /* The lead on a prime frame, otherwise exactly what was fed. This chunk is
