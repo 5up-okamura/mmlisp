@@ -4116,6 +4116,71 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## "THE SNARE GOES TA-TAN": THE RING'S LEAD IS NOT REGULATED (2026-09-02)
+
+The user built at `PCM_FM=8` (6,658 Hz) through install-sgdk with the example
+main.c and heard the DAC double — a snare hitting twice — plus tempo wobble.
+The on-screen counters were HEALTHY: `music 0101`, `host 00FE`, `lost/s 0000`,
+`starv/s 0000`. Nothing in the frame budget was wrong.
+
+**It is not a replay.** `tools/dac-replay.mjs` (new — nothing here had ever
+looked at the DAC's CONTENT, only its clock) finds zero verbatim 24-sample
+repeats at 3,329, 4,439 or 6,658 Hz. The engine never puts the same bytes out
+twice.
+
+**It is the LEAD.** `mml_render_frame()` starts a PCM track exactly one frame
+early to cancel one frame of ring lead. The lead is not held there:
+
+      rate      target   fill (min/median/max)   lead    cancelled   RESIDUAL
+      3,329 Hz    56       13 /  39 /  51        11.7ms    16.7ms     -5 ms
+      4,439       75       33 /  64 / 105        14.4      16.7       -2
+      6,658      112      109 / 226 / 445        34 (67)   16.7      +17..+50
+
+At 6,658 Hz the engine mixes `G_CHUNK` = 111 samples a frame and the feed only
+sends 104, so **the surplus accumulates in the ring and nothing pulls it back**.
+The DAC ends up 17-50 ms behind the FM, and a drum layered across FM/PSG and
+PCM — which is what a MUCOM conversion is — hits twice.
+
+This is the SAME CLASS as the 255 -> 56 bug fixed earlier on this branch, and
+the same lesson: the lead is an INVARIANT the sequencer cancels, and every gate
+here stays green while it drifts, because the DAC's own clock is fine and
+nothing compares the two against each other.
+
+### Where the 576 cycles a sample actually go (6,658 Hz, sin008, measured)
+
+A sample period is 538 cycles and the engine takes 576, which is the 93.7%.
+
+      ~300   the emit — the $27 reset, the $2A send, and the asks answered "no"
+        95   the pacing pads (deliberate: how much of the frame the ISR spans)
+        43   the mix tick                  <- baking only ever touched THIS
+      ~140   the rest (ISR, slot writes, the segment/plan machinery)
+
+**The mix is 7% of the budget.** That is why baking (78 -> 41 a tick) moved the
+delivered rate so little, and it is the answer to "if the pitch is baked there
+should not be this much difference" — the instinct was right, the mixer was
+never where the cycles were. The shadow-set emit is worth 30 of the 576, 5%.
+
+XGM1 does FOUR voices at 14 kHz in 254 cycles a sample, everything included.
+The mix cores are level (XGM2's `mixPCM1` is 42 against our baked 41); the
+whole gap is the surroundings — they have no pacing pad, an 80-cycle emit, and
+no segment/plan machinery at all (no resampling and no tick-accurate loop
+points to plan for).
+
+### What to do, in order
+
+1. **Regulate the lead.** There is no feedback that returns the fill to
+   PCM_RING_TARGET; `pp_steady` mixes `G_CHUNK` a frame and assumes the feed
+   keeps up. It does at 3,329 Hz and does not above the ceiling. This is a
+   CORRECTNESS gap, not a rate one — fix it first.
+2. The emit and the idle spin (the structural gap above).
+3. `PCM_FILL_MAX 320` is a hand-kept constant sized when the target was 56; it
+   is 5.7x the target there and 2.9x at 6,658. It should be derived.
+
+**Until then the usable rate is 4,439 Hz (PCM_FM=12): fill 64 against a target
+of 75, residual -2 ms, 98.5% delivered.** 6,658 Hz is out of spec and was
+offered as if it were not — that was my error, and the user found it by ear
+before any gate here did.
+
 ## THE BAKED-ONLY MIXER: WHAT LANDED, AND WHERE 2b STOPPED (2026-09-02)
 
 Agreed with the user: **(b) — bake per note — as the rule, with automatic loop
