@@ -152,6 +152,11 @@ typedef struct {
     // sits from the FM and PSG — the number that says whether a drum layered
     // across both hits once or twice. Zero when the score has no PCM.
     u16 pcmFill;
+    // Asks that found the sample ring EMPTY, since boot. A hole in the DAC's
+    // output is either a stretch with no ask in it or a sample the ring could
+    // not supply, and the two have opposite fixes; this is the second one, and
+    // it is the only way to tell them apart on a running machine.
+    u16 pcmDry;
 } MMLispStats;
 
 // Both counters in ONE bus grab. Prefer this over the individual accessors:

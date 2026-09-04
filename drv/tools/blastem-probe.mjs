@@ -69,7 +69,7 @@ const F = [
   "magic", "status", "fault", "fault_addr_hi", "fault_addr_lo",
   "fault_pc_hi", "fault_pc_lo", "stage", "seconds", "track_count",
   "vblanks", "audible", "music256", "host256", "worst_1s", "lost_1s",
-  "starved", "starv_1s", "pcm_fill",
+  "starved", "starv_1s", "pcm_fill", "pcm_dry_1s",
 ];
 const m = Object.fromEntries(F.map((k, i) => [k, w[i] ?? 0]));
 const hex = (v, n = 4) => "0x" + v.toString(16).padStart(n, "0");
@@ -120,6 +120,12 @@ if (m.pcm_fill) {
   const ms = (m.pcm_fill - target) / (53693175 / 7 / 144 / (meta.fmPerSample ?? 16 / meta.pcmSpg)) * 1000;
   console.log(`  ring   fill ${m.pcm_fill} against a target of ${target}`
     + `  ->  the DAC is ${ms >= 0 ? "+" : ""}${ms.toFixed(1)} ms from the FM`);
+  // WHICH KIND OF HOLE. dac-log counts the holes; only the engine can say
+  // whether it was there and empty-handed or simply not asking, and the two
+  // want opposite fixes (the lead and the mixer, or the ask sites and the
+  // emit's cost).
+  console.log(`  dry    ${m.pcm_dry_1s} asks a second found the ring EMPTY`
+    + ` — ${(m.pcm_dry_1s / 59.9227).toFixed(2)} a frame`);
 }
 // The decision table from the example program, because this is read in a
 // terminal by somebody who has not got driver.md open.

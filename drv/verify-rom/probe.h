@@ -65,6 +65,11 @@ typedef struct {
      * sits from the FM — the number that decides whether a layered drum hits
      * once or twice, and the one thing no gate here could see before. */
     u16 pcm_fill;
+    /* …and how often it had NOTHING to give, in the last second. A hole in the
+     * DAC's output is either a stretch of code with no ask in it or a sample
+     * the ring could not supply; they have opposite fixes and every other
+     * number here reports them together. */
+    u16 pcm_dry_1s;
     /* music256 for each of the first PROBE_SECS one-second windows. A single
      * average cannot tell a clock that runs steadily fast from one that swings,
      * and "the tempo wobbles" is a statement about the swing. */

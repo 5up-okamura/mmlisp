@@ -29,6 +29,7 @@
 #define H_STARVE   (MMLISPDRV_HDR + 12)  // u16 Z80-owned: starved frames
 #define H_VBL      (MMLISPDRV_HDR + 14)  // u8 68k-owned: vblank count stamp
 #define H_FILL     (MMLISPDRV_HDR + 16)  // u16 Z80-owned: FINISHED samples in the ring
+#define H_DRY      (MMLISPDRV_HDR + 18)  // u16 Z80-owned: asks that found it empty
 
 static MMLSeq     seq;
 static bool       ready     = FALSE;
@@ -267,5 +268,6 @@ void MMLisp_readStats(MMLispStats* out)
     out->audible = (u16)(*Z80_RAM_AT(H_FRAMES) | (*Z80_RAM_AT(H_FRAMES + 1) << 8));
     out->starved = (u16)(*Z80_RAM_AT(H_STARVE) | (*Z80_RAM_AT(H_STARVE + 1) << 8));
     out->pcmFill = (u16)(*Z80_RAM_AT(H_FILL) | (*Z80_RAM_AT(H_FILL + 1) << 8));
+    out->pcmDry  = (u16)(*Z80_RAM_AT(H_DRY)  | (*Z80_RAM_AT(H_DRY  + 1) << 8));
     Z80_releaseBus();
 }
