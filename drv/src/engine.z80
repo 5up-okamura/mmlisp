@@ -315,6 +315,28 @@ int_handler:
         ; the VDP's /INT pulse and destroys the vblank, and without one the
         ; interrupt lands inside it and the store rewinds the ring. A register
         ; the interrupt does not touch has neither problem.
+        ;
+        ; ── THE EMIT'S BANK, RE-ESTABLISHED WITHOUT KNOWING WHICH IS LIVE ────
+        ; emit_send keeps the two YM port addresses in HL'/DE' and reaches them
+        ; with a balanced `exx` pair. Interrupts are OFF for this whole handler,
+        ; so the only code that can be interrupted between those two `exx` is
+        ; the idle loop — and when that happens the handler starts with the
+        ; banks swapped and its own emits would write the sample through the
+        ; mixer's HL instead of through $4000.
+        ;
+        ; `di` around the emit cannot fix it: the window is ~150 cycles and the
+        ; VDP holds /INT for 171.5, so a vblank arriving early in it is lost.
+        ; This does, in four instructions and without a test. Whichever bank is
+        ; live, `exx` puts the OTHER one in reach, the constants go there, and
+        ; `exx` puts it back — so the bank the emit's own `exx` will reach holds
+        ; the ports in BOTH cases. What it costs is the idle loop's HL and DE,
+        ; which are dead there; what it can leave behind is a permanent parity
+        ; flip, which costs nothing because the mixer loads its file from RAM
+        ; and the pair is a constant in whichever bank ends up holding it.
+        exx
+        ld   hl,YM_ADDR0
+        ld   de,YM_DATA0
+        exx
         call frame_step
         ; ── missed-vblank catch-up (§6.7) ───────────────────────────────────
         ; A frame that ran past its budget lost the next vblank OUTRIGHT (see
@@ -499,6 +521,16 @@ start:
         ; latch_bank believing bank 0 is live when nothing is.
         ld   hl,$ffff
         ld   (G_BANKL),hl
+        ; THE EMIT'S PORT PAIR, once and for ever. HL' = YM_ADDR0 and
+        ; DE' = YM_DATA0 are constants the emit reaches with one `exx`, which
+        ; buys `ld (hl),a` (7) in place of `ld (nn),a` (13) on all four of its
+        ; chip accesses. Nothing else in the driver uses the shadow set — the
+        ; mixer stopped resampling and gave it up — so the pair is stable, and
+        ; int_handler re-establishes it every frame whichever bank is live.
+        exx
+        ld   hl,YM_ADDR0
+        ld   de,YM_DATA0
+        exx
         ld   a,READY_MARK
         ld   (H_READY),a
         ei

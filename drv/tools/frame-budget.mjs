@@ -185,6 +185,16 @@ try {
   const sym = (n) => built.symbols.get(n);
   const RING = sym("RING"), DEPTH = sym("RING_DEPTH"), SLOT = sym("SLOT_SIZE");
   const FEED_ONE = sym("feed_one") ?? -1;
+  // The emit keeps the two YM port addresses in the shadow pair, so between
+  // its opening `exx` and its closing one the banks are swapped — and the
+  // handler can be entered right there, because the idle loop emits with
+  // interrupts on. int_handler re-establishes the pair without knowing which
+  // bank is live; these two counters are what say it works: the first proves
+  // the case is REACHED at all (a fixup nothing exercises proves nothing) and
+  // the second is the failure it prevents — an emit whose `ld (hl),a` lands in
+  // Z80 RAM instead of on $4000.
+  const EMIT_LO = sym("emit_send") ?? -1, EMIT_HI = sym("et_none") ?? -1;
+  const inEmit = (pc) => EMIT_LO >= 0 && pc > EMIT_LO && pc <= EMIT_HI;
   console.log(`engine ${built.bytes.length} B · write pump `
     + `${sym("PUMP_ON") ? "ON" : "off"}${PUMP ? " (--pump)" : ""} · budget ${FRAME_CYCLES} cyc/frame`
     + (STALL ? ` · 68k bus grab ${STALL} cyc/frame (--stall)` : ""));
@@ -249,7 +259,7 @@ try {
     // crossing of a 256 boundary looks like +255 of production. It reads
     // correctly while the ring stays under 256 and inflates fivefold above it,
     // which is exactly the regime a fix moves it into. Sends are unambiguous.
-    let sends = 0;
+    let sends = 0, emitStray = 0, isrMidEmit = 0;
     const fillTrace = [];
     const rec = (kind, value, zcyc) => {
       const b = Buffer.alloc(8);
@@ -292,7 +302,18 @@ try {
         if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
-        if (a < 0x2000) { ram[a] = d; return; }
+        // Only the PORT writes: the emit legitimately writes G_FILL in RAM.
+        // `ld (hl),a` is 0x77 and `ld (de),a` is 0x12, and inside the emit
+        // those two are the four chip accesses and nothing else. `cpu.pc` has
+        // moved past the opcode by the time the instruction writes, so equal
+        // PCs mean the write is the INTERRUPT pushing its return address over
+        // an `ld (hl),a` it has not run yet — which is the very case the bank
+        // fixup exists for, and counting it as the failure hid whether the
+        // fixup worked.
+        if (a < 0x2000) {
+          if (inEmit(lastPc) && cpu.pc !== lastPc
+              && (ram[lastPc] === 0x77 || ram[lastPc] === 0x12)) emitStray++;
+          ram[a] = d; return; }
         if (a === 0x6000) bankReg = ((bankReg >> 1) | ((d & 1) << 8)) & 0x1ff;
         else if (a === 0x4000) addr0 = d;
         else if (a === 0x4001 && addr0 === 0x27) {
@@ -386,7 +407,8 @@ try {
       // Entering / leaving the handler, for the ISR's own length. The engine is
       // "in the ISR" from the vector until it first reaches its idle loop.
       const idling = cpu.pc >= IDLE && cpu.pc < IDLE_END;
-      if (!wasInIsr && cpu.pc === INT_VEC) { wasInIsr = true; isrStart = tcyc; }
+      if (!wasInIsr && cpu.pc === INT_VEC) { wasInIsr = true; isrStart = tcyc;
+        if (inEmit(lastPc)) isrMidEmit++; }
       else if (wasInIsr && idling) { costs.push(tcyc - isrStart); wasInIsr = false; }
 
       winReads = 0; ymTouch = 0; askedThisStep = false;
@@ -566,6 +588,10 @@ try {
             + ` · ${(e.cyc / e.n).toFixed(0).padStart(6)} cyc mean · max ${String(e.max).padStart(5)}`
             + ` · ${(100 * e.sent / e.n).toFixed(0).padStart(3)}% with an emit in them`);
       }
+      console.log(`      handler entered mid-emit ${isrMidEmit} times`
+        + ` (banks swapped; the prologue re-establishes the port pair) —`
+        + ` ${emitStray} emit write${emitStray === 1 ? "" : "s"} landed outside the YM ports`
+        + `${emitStray ? "  ***" : ""}`);
       if (asks) console.log(`      asks that found the timer due: ${dueSent} sent,`
         + ` ${dueEmpty} found the ring EMPTY`
         + ` (${(dueEmpty / frames).toFixed(2)} a frame)`);
