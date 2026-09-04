@@ -49,12 +49,15 @@ writeFileSync(
 
 /* RATE-STAMP ${PCM_BAKE_STAMP} ${PCM_RING_TARGET} — see tools/rate-mirrors.mjs. */
 
-/* Finished samples the ring runs ahead of the feed: ONE FRAME, which is exactly
- * what mml_render_frame() cancels by dispatching a PCM track a frame early. Any
- * other value offsets the PCM against the FM and PSG and nothing takes it out.
- * It moves with the sample clock, which is why it is generated: it was
- * hand-kept at 255 — 1.5 frames at 167 samples a frame, 4.6 of them at 55.6.
- * Mirrors PCM_RING_TARGET in live/src/mmb.js and in drv/src/rate.z80. */
+/* Finished samples the ring runs ahead of the feed: one frame — which is what
+ * mml_render_frame() cancels by dispatching a PCM track a frame early — PLUS A
+ * QUARTER, which it does not. Production is a burst inside the interrupt and
+ * drainage is continuous, so the fill sawtooths a frame deep and a target of
+ * exactly one frame puts the trough at zero; the margin is what keeps the ring
+ * from running dry, at the price of 4.2 ms of PCM behind the FM. Measured:
+ * live/src/mmb.js, PCM_RING_LEAD. It moves with the sample clock, which is why
+ * it is generated — it was hand-kept at 255 once, 4.6 frames at 55.6 samples a
+ * frame, and the drums played 37 ms late. */
 #define MML_PCM_RING_TARGET ${PCM_RING_TARGET}
 
 #endif
