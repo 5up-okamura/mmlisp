@@ -4116,6 +4116,97 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## THE COUNT WAS NEVER THE CLOCK, AND frame-budget IS THE WRONG INSTRUMENT
+## FOR THE RING (2026-09-04, later still)
+
+READ THIS BEFORE TRUSTING A NUMBER IN THE SECTION BELOW.
+
+**1. Delivered COUNT is not the sample clock.** A DAC is a zero-order hold, so
+the INTERVAL between $2A writes is the rate, moment to moment. frame-budget now
+reports that distribution, and at 6,658 Hz — where the count read 97.5% and
+looked finished — one sample in five was more than 10% out of place. The floor
+under that jitter is the ASK GAP (p50 131 cycles, p95 400) and it cannot be
+polled away: halving it means doubling ~330 asks a frame at 21 cycles, which is
+the frame.
+
+**2. HOLES are a different fault from jitter and they were the real problem.** A
+stretch with no $2A write at all is the DAC repeating its last byte. At 6,658 Hz
+there were 3.95 a frame, 8.2 sample periods lost a frame.
+
+**3. THE MODEL CANNOT SEE THE RING.** tools/frame-budget.mjs runs a host that
+never calls mml_pcm_ring_fill(), so `pcm_fill_known` is 0 and the whole
+regulator branch is dead there: its ring has NO RESTORING FORCE. An early
+transient lowers the fill permanently, and the hole count does not respond to
+the lead at all. Swept there, the lead looked useless (25-78 holes, no trend)
+and I nearly wrote it off. frame-budget also reads **3-6 points HIGH** on
+delivered rate at every clock.
+
+    For the ring, the real rate, or anything the regulator touches:
+      MMLISP_PROBE_LOG=out/probe.log node tools/blastem-probe.mjs <score>
+      node tools/dac-log.mjs out/probe.log
+    frame-budget answers ONE question well: where the engine stops asking.
+
+**4. THE LEAD NEEDED A QUARTER FRAME OF MARGIN, and that is now the default.**
+One frame is the lead the sequencer CANCELS; it is not the lead the ring can
+live on. Production is a burst inside the interrupt, drainage is continuous
+across the frame, so the fill sawtooths and a one-frame target puts the trough
+at zero. dac-log, m3-pcm-softmix, 8 s:
+
+    lead    6658 Hz                      4439 Hz
+    1.00    94.0%  8.20 periods lost     94.5%  4.90
+    1.15    96.6%  5.47
+    1.25    97.5%  4.48
+    1.40    98.2%  3.73
+    1.50    98.3%  3.60                  99.9%  0.78
+
+`PCM_RING_LEAD` = 1.25 in live/src/mmb.js. The cost is a quarter frame of PCM
+behind the FM (4.2 ms) that the one-frame dispatch does not cancel — inside
+what already shipped. Going further is capped by the ring shape: G_TICKS is a
+byte and the 512 B ring holds the finished samples AND the ones under
+construction, so the lead cannot pass ~2 frames at 6.6 kHz or 1.7 at 8.9.
+
+    delivered share of the clock, dac-log, before -> after
+
+                  4439 Hz        6658 Hz        8878 Hz
+      softmix   94.5 -> 99.5   94.0 -> 97.5   90.5 -> 92.7
+      sin008    92.7 -> 98.6   92.6 -> 94.5   90.2 -> 91.0
+      pcmloop           99.3           98.3           93.0
+
+**5. TWO HYPOTHESES FALSIFIED CHEAPLY, both worth not re-running.**
+* *A systematic stall halfway through the frame.* dac-log's per-tenth MEAN
+  showed tenth 6 at 1284 cycles against a nominal 806, on two scores. The
+  MEDIAN is flat — it was one big recurring hole landing there, not a stall.
+  The tool prints both now.
+* *The 68000's bus grab.* The Z80 executes nothing while the bus is held, so
+  it looked like a guaranteed hole every frame (3 grabs, 673 cyc, max 1056).
+  dac-log now attributes holes that overlap a grab: 0.01 to 0.25 periods lost
+  a frame against 4.9 to 12.3 total. It is not the 68000.
+
+**6. THE RATE MIRRORS WERE ALL DIFFERENT, and verify:all was breaking them.**
+src/rate.z80 said 9,987 Hz, mml_rate.h said 6,658, ask-dense.z80 was built for
+a 358-cycle period, mixer.z80 was at the default PCM_GROUP > 1 shape and the
+engine image was assembled for 3,329. An SGDK project links three of those.
+`verify:engine` ran `node tools/gen-mixer.mjs` first, which WRITES rate.z80 and
+mixer.z80 at the default (broken) configuration — the gate was corrupting the
+tree it checks. Each mirror now carries `RATE-STAMP <Hz> <lead>` and
+`npm run mirrors` (first in verify:all) fails when they disagree. Probing at
+another rate still dirties them; that is now visible instead of silent.
+
+    Regenerate all five at one configuration:
+      PCM_SPG=1 TIMER_B_K=1 node tools/gen-c-tables.mjs
+      PCM_SPG=1 TIMER_B_K=1 node -e "import('./tools/gen-mixer.mjs').then(m=>{m.writeRate();m.writeMixer()})"
+      PCM_SPG=1 TIMER_B_K=1 node tools/emit-bin.mjs
+
+WHERE IT LEAVES THE RATES. 4,439 Hz is essentially clean (99.3-99.5%,
+~1.2 periods lost a frame). 6,658 is good (94.5-98.3%). 8,878 is 91-93% and
+that residual is CYCLES, not lead — raising the lead to its 1.71 ceiling there
+buys 0.6 of a point. The emit's floor (previous section) is what stands in the
+way, and past it the gating model has to change.
+
+STILL STALE: tools/dac-clock.mjs asks the same question as dac-log and has
+rotted through the rate generalisation — it reports "1 samples" and NaN at
+every rate. Either fix it or delete it; it is a trap as it stands.
+
 ## 8,878 Hz WORKS NOW, AND THE LEAD IS PINNED (2026-09-04, later)
 
 Four changes past the section below, and the last one is the important one.
