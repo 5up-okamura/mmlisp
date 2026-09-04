@@ -1,0 +1,9 @@
+; GENERATED (tools/gen-mixer.mjs, askDenseSource) — DO NOT EDIT BY HAND.
+;
+; Included at the two places a pass transition runs longest without asking:
+; after mvf_ringcap on the sounding path and on the silent one. At a short
+; sample period they are worth their 43 cycles and at a long one they are not,
+; so the sample clock decides and not this file. See ASK_DENSE_CY.
+;
+; The sample period here is 1075 Z80 cycles against a threshold of 600.
+; (nothing: the period is long enough that these stretches fit inside one)

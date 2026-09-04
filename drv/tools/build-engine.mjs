@@ -8,6 +8,7 @@
 // One resident image, no overlays: the engine evaluates nothing, so it holds no
 // shadow file, no LUTs, no channel state and no TCB, and the 8 KB that ruled the
 // old build stopped being a design input.
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "./z80asm.mjs";
@@ -45,8 +46,29 @@ export function buildEngine() {
   // engine is a READ of the tree, and it used to leave src/mixer.z80 modified
   // every time — including under `install-sgdk --dry-run`, which promises to
   // write nothing at all.
-  const built = assemble(join(srcDir, "engine.z80"),
-    { sources: generatedSources() });
+  const sources = generatedSources();
+  // FEED_ONE DESTROYS THE FLAGS, and it is placed by hand at ~20 sites. Put one
+  // between a `call` and the branch that reads its answer and the branch takes
+  // whatever the emit's own `or a` left — which is not a crash, it is a mixer
+  // that runs the wrong pass. Measured when it happened: four scores at 8,878
+  // Hz went 93.6/93.0/93.8/91.9 to 87.6/68.5/93.9/50.8, and only the last two
+  // looked wrong enough to notice. So the placement is checked instead of
+  // remembered.
+  for (const [name, text] of [[join(srcDir, "engine.z80"), readFileSync(join(srcDir, "engine.z80"), "utf8")],
+                              ...Object.entries(sources)]) {
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^\s*call\s+feed_one\s*(;.*)?$/.test(lines[i])) continue;
+      // The next line that is neither blank nor a whole-line comment.
+      let j = i + 1;
+      while (j < lines.length && /^\s*(;.*)?$/.test(lines[j])) j++;
+      if (j < lines.length && /^\s*(jr|jp|ret|call)\s+(n?z|n?c|po|pe|p|m)\b/i.test(lines[j]))
+        throw new Error(`${name}:${j + 1}: a flag-conditional follows \`call feed_one\`\n`
+          + `  ${lines[j].trim()}\n`
+          + `  feed_one clobbers the flags — move the ask above whatever set them.`);
+    }
+  }
+  const built = assemble(join(srcDir, "engine.z80"), { sources });
   const sym = (n) => {
     const v = built.symbols.get(n);
     if (v === undefined) throw new Error(`engine.z80 defines no ${n}`);

@@ -1581,6 +1581,7 @@ mvf_ring:
         ; after it.
         call feed_one           ; a segment's bound is ~3 periods of work, and
         call mvf_ringcap        ; the bound is measured from IY, so it goes first
+        include "ask-dense.z80"
         jr   mvf_n
 
 mvf_derive:
@@ -1750,6 +1751,9 @@ mvf_idle_seg:
         ld   b,a
         call feed_one           ; the silent pass's segments too
         call mvf_ringcap
+        ; …and again before the loop's own cadence starts, IF the sample period
+        ; is short enough to be worth 43 cycles (generated: see ASK_DENSE_CY).
+        include "ask-dense.z80"
         push bc
         ld   a,(G_IDX)
         ld   l,a
