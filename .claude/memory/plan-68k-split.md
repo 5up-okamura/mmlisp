@@ -4116,6 +4116,111 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## THE LIMIT AT HIGH RATES IS ASK DENSITY, NOT CYCLES (2026-09-04)
+
+The engine at PCM_TIMER=A PCM_FM=8 (6,658 Hz) delivered 93.4% of the samples
+the clock owed. I first told the user 38% of the frame was structurally
+recoverable — the pacing pads plus the idle loop's spin. **That was wrong and
+the measurement said so**: at 6,658 the ISR is 59% of the frame and the idle
+loop 41%, so the idle spin is LEFTOVER TIME, not waste, and removing the pads
+entirely gains one point (92.7 -> 93.7). The engine is not cycle-bound at this
+rate.
+
+What binds is that **the timer's flag is a single bit**. A stretch of g cycles
+contains g/SAMPLE_CY overflows and the engine can answer exactly one, so it
+throws g/SAMPLE_CY - 1 away and those samples are never sent. Delivered rate is
+therefore a function of the LONGEST STRETCHES BETWEEN ASKS, not of total cycles
+spent. XGM2 states the same rule as a design constraint ("<=168 cycles between
+outputs everywhere") and reaches it by construction rather than by a timer.
+
+`frame-budget --asks` could not see this. It named every gap `feed_one`, which
+is the subroutine every part of the frame calls — naming it named nothing. Two
+changes made it useful:
+
+* the ask at `feed_one`'s head runs BEFORE the spill, so the caller's return
+  address is still on the stack: report the CALL SITE (`nameOf(from - 3)`, and
+  `+n` within the label, because four `call feed_one` share `mix_voice_frame`);
+* report whether an emit was INSIDE the gap. A site that only goes long when it
+  sends wants a cheaper emit; one that goes long either way wants another ask.
+  Different fixes, and the column tells them apart.
+
+It also under-reported the loss by 6x: `floor(g/SAMPLE_CY) - 1` says a
+1.3-period stretch is free. It is not, it throws 0.3.
+
+WHAT THE REPORT THEN SAID, and each fix was measured one at a time on
+`tests/sin008.mmlisp`, 200 frames:
+
+    baseline                                        93.4%
+    + ask in ms_bind (~230 cyc, once a pass)        94.9%
+    + ask after pcm_park                            95.8%
+    + ask in pp_act_run (voice lookup + plan bind)  96.1%
+    + feed_one tail-calls emit_send                 96.9%
+    + ask before the port-0 write run (cr_fm0)      97.2%
+
+`feed_one` was spilling HL around `emit_send` and returning through its own
+`ret`. **emit_send does not touch HL** — it decrements the fill through A alone
+for exactly that reason — so that was 38 cycles of saving a register nothing
+writes. `jp emit_send`.
+
+A fourth ask, on the silent pass's entry (`pp_idle_run`), made the gap count go
+down and the delivered rate go down with it. 43 cycles a call is not free, and
+it only pays where it splits a stretch that was actually over. Reverted.
+
+    PCM_FM        16     12     10      8      6
+    Hz          3329   4439   5327   6658   8878
+    before     98.0%  97.5%  97.5%  93.4%  90.4%
+    after      98.0%  97.8%  97.6%  97.2%  92.5%
+
+BlastEm, 6 s of sin008 at 6,658: worst second 98.0% -> 100.0%, and the ring's
+lead comes in from +6.9 ms to +2.4 ms (fill 128 against a target of 112). The
+lead is the honest end-to-end number here — the regulator can only hold it when
+the DAC actually sends what the mixer produced.
+
+**8,878 Hz is still not usable.** 92.5% delivered leaves the mixer ahead of the
+DAC, the lead runs out to +13.4 ms, and that is the same offset that made the
+snare read as "ta-tan". The user's target for 3 voices is ~9.6 kHz, so this is
+the gap that matters.
+
+WHAT STANDS BETWEEN HERE AND THERE, and it is now a single number. Nearly every
+remaining long stretch is **574-602 cycles against a 538-cycle period**, and
+~100% of them have an emit in them. The emit path is ~215 cycles:
+
+    ask + call                     38
+    $27 address + data pair        40   two `ld (nn),a` at 13
+    fill, 16-bit dec through A     46   the largest single item
+    $2A address                    20
+    ld a,(iy+0) + master jr        31
+    xor + $2A data                 20
+    inc iyl + wrap test            20
+
+So ~60 more cycles clears the whole class. The two candidates both want a
+register pair the main bank does not have:
+
+* **ports in HL'/DE'** ($4000/$4001, constants set once at boot). Four
+  `ld (hl),a`/`ld (de),a` at 7 instead of four `ld (nn),a` at 13, minus 8 for
+  the `exx` pair: -16, and it also removes any need to spill.
+* **the fill in BC'**: `dec bc` + `ld a,b / or c` = 22 against 46.
+
+Together ~50-60 cycles, which is the number. THE BLOCKER IS REENTRANCY, and it
+has a clean answer that has not been tried: the emit runs both inside the ISR
+(interrupts off for the whole frame) and in the idle loop (interrupts on), so
+an interrupt landing between the emit's two `exx` leaves the ISR running in the
+wrong bank. `di` around the emit does not work — the window is ~150 cycles and
+the VDP holds /INT for 171.5, so it is too close to the pulse. But the ISR
+prologue can normalise the bank WITHOUT knowing which one is live:
+
+        exx
+        ld   hl,YM_ADDR0
+        ld   de,YM_DATA0
+        exx
+
+In both cases the constants land in the bank that is not live at the end, which
+is the bank the emit's own `exx` reaches. The only code that can be interrupted
+mid-emit is the idle loop, where HL and DE are dead, so the parity flip that
+this can leave behind costs nothing. An earlier attempt at "handler fixup"
+measured 85.6% and was recorded as unexplained — it is worth redoing from this
+reasoning rather than from that memory.
+
 ## "THE SNARE GOES TA-TAN": THE RING'S LEAD IS NOT REGULATED (2026-09-02)
 
 The user built at `PCM_FM=8` (6,658 Hz) through install-sgdk with the example
