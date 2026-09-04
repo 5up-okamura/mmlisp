@@ -788,6 +788,10 @@ cr_psg:
         djnz cr_psg
 
 cr_fm0:
+        ; The port-0 loop asks on every SECOND write, so a run entered with an
+        ; odd count does not ask until its second one — and what precedes this
+        ; is pp_pass_done's emit, consume_sub's head and the PSG run.
+        call feed_one
         ld   a,(hl)
         inc  hl
         ld   b,a
@@ -1323,6 +1327,11 @@ pp_wrst:
         ; one it assumes (H_FILL).
         ld   hl,(G_FILL)
         ld   (H_FILL),hl
+        ; Both of this routine's callers run into a long ask-free stretch after
+        ; it — the frame head into consume_slot's $27 patch and plan walk, and
+        ; the frame tail into consume_rest, slot_release and the ISR's epilogue.
+        ; One ask here covers both, where two at the call sites covered one each.
+        call feed_one
         ld   a,(G_ACT)
         or   a
         ret  nz
@@ -1929,11 +1938,6 @@ pcm_edge:
         push bc
         call feed_one
         call pcm_park
-        ; …and again on the way out. What follows the return is consume_slot's
-        ; head — the $27 patch, the PCM commands, the plan walk — and the stretch
-        ; from this feed_one's emit to the first ask in there was over a sample
-        ; period twice a frame.
-        call feed_one
         pop  bc
         pop  de
         pop  hl
