@@ -4116,6 +4116,92 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## THE BAKED-ONLY MIXER: WHAT LANDED, AND WHERE 2b STOPPED (2026-09-02)
+
+Agreed with the user: **(b) — bake per note — as the rule, with automatic loop
+multiplication; (a) — the 2^k octave shift — kept as a ROM escape.** The reason
+to prefer (b) is NOT cycles (the octave shift is cheap, measured below) but
+ALIASING: advancing 2 bytes a tick is unfiltered decimation, which is exactly
+what a build-time linear resample removes, and the user's named use case is
+sustained chorus where that matters. Glitch loops do not care, and (a) is not a
+regression there — it is what the runtime resampler already did.
+
+Measured, the advance alone (tools/adv-cost, z80cpu):
+
+    k=0  `inc de`                     6 cyc      tick 41
+    k=1  `inc de` x2                 12          tick 47
+    k>=2 `add a,c` (C = 2^k)         24          tick 59
+    the 16.16 resampler              43          tick 78
+
+### LANDED
+
+**1. Looped samples are baked** (live/src/export-mmb.js). The loop REGION is
+repeated until its baked length clears 430 samples, which puts the rounding of
+the loop point under 2 cents for any loop; repeating is bit-exact and costs at
+most ~450 bytes once. No engine change — `ms_bind` already picks the
+no-resampler loops when the increment is exactly one byte a tick.
+
+    budget-2v (two looped voices)  4,439   5,327   6,658   8,878   10,653 Hz
+      before                        98.8    96.6    91.0    50.1      —
+      after                         98.9    97.8    93.1    80.2     62.8
+
+Its delivered ceiling: ~4,450 Hz -> ~7,120.
+
+**2. The runtime resampler is gone** (tools/gen-mixer.mjs). A scan of all 50
+corpus scores produces no unbaked sounding entry, so the 16.16 path had nothing
+left to play. The general loop set is generated from a new `i8satsh` variant
+(the octave shift) and ms_bind's decision site did not change. A note that
+reaches a non-baked entry is now `E_MMB_UNBAKED_NOTE`, an error.
+
+**All 76 `exx` in the mixer were the resampler's, and ms_pload carried
+HL' = frac / DE' = incFrac for the life of every pass. There are none now** —
+HL'/DE'/BC' belong to nobody. The hot image also dropped 947 bytes.
+
+ab-gate: 50 scores match baseline, the same 27 known divergences. Unchanged.
+
+### 2b — THE PORTS IN THE SHADOW SET — REVERTED, AND WHY
+
+The emit was rewritten to XGM2's shape: `exx`, then `ld (hl),$27` (10 against
+20) and `ld (de),a` (7 against 13). **It works and it is correct** — a trace
+harness confirms the four chip writes, the ring byte, IY's advance, the caller's
+registers and the shadow set all come out right, and the cost goes 230 -> 200
+with the call. Inside the interrupt alone it runs at the nominal interval.
+
+It was reverted because of what happens OUTSIDE the interrupt, and the number
+that decides it is worth writing down:
+
+> **The VDP's /INT pulse to the Z80 is 2573 master cycles = 171.5 Z80 cycles,
+> MEASURED** (BlastEm, `Z80_INT_PULSE_MCLKS`, "measured value is ~171.5 Z80
+> clocks"). This engine's comments say "a scanline", which is 228, and that is
+> wrong by a quarter.
+
+The idle loop feeds between frames with interrupts ON, and between emit_send's
+two `exx` the ports are in the MAIN set — a vblank there leaves the handler's
+own emits addressing whatever the mixer had in HL'. Two fixes were tried:
+
+- **`di` around the send.** 178 cycles against a 171.5-cycle pulse: it loses
+  vblanks. Measured 95.0% of samples with one 5.7 ms hold.
+- **Detect it in the handler** — compare the interrupted PC against the `exx`
+  span, swap the banks back on entry and again on exit, ~180 cycles a frame.
+  Measured **85.6%**, with the loss concentrated in the LAST TENTH of the frame
+  (mean interval 2457 against a nominal 1075; every other tenth is healthy).
+
+**I do not understand the second result**, and that is the reason for the
+revert rather than a shipped 200-cycle emit. What is known: the ISR-internal
+path alone is clean (p50 1067 with the idle feed disabled), the emit body is
+verifiably correct in isolation, and the damage is at the frame boundary. The
+likely shape is the in-flight idle-loop emit being cut in half by the vblank —
+the `$27` flag reset written, the `$2A` sample not — but that is one sample a
+frame at most and the loss is fourteen.
+
+Next time: instrument it. The probe log carries the Z80 PC of every `$2A` write
+(MML_PROBE_DACPC, kind 6) and nothing reads it yet; a report of "where was the
+engine when the gap started" against the interrupt timestamps would answer this
+in one run.
+
+Baseline after the revert, unchanged: sin008 on Timer B 99.4%, 0.88 holes a
+frame.
+
 ## THE RATE BARELY MOVED, AND HERE IS THE ARITHMETIC (2026-09-01)
 
 The waste pass below took the emit from 384 cycles to 230 and the interrupt
