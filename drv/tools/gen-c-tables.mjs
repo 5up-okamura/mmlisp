@@ -47,6 +47,8 @@ writeFileSync(
 #define MML_SPG_DEN ${PCM_SAMPLES_DEN}
 #define MML_SPG_STAMP ${PCM_BAKE_STAMP}
 
+/* RATE-STAMP ${PCM_BAKE_STAMP} ${PCM_RING_TARGET} — see tools/rate-mirrors.mjs. */
+
 /* Finished samples the ring runs ahead of the feed: ONE FRAME, which is exactly
  * what mml_render_frame() cancels by dispatching a PCM track a frame early. Any
  * other value offsets the PCM against the FM and PSG and nothing takes it out.
