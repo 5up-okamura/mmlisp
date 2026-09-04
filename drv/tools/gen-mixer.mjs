@@ -1046,8 +1046,9 @@ fr_loop:
 ; feed_one: one sample out of the ring, gate and all — the out-of-line twin of
 ; the emit the loops carry inline (§5.1.2). Every stretch of work longer than a
 ; sample period calls this, which is what stops the frame's chip writes and its
-; pass transitions from being dead time the DAC spends holding. Touches A, HL
-; and the flags; IY is the feed cursor and G_EMITS the frame's remaining debt.
+; pass transitions from being dead time the DAC spends holding. Touches A and
+; the flags — NOT HL; IY is the feed cursor and G_EMITS the frame's remaining
+; debt.
 ;
 ; The ASK is inline here too, ahead of the spill: "not due" is the answer most
 ; of the time, and saving HL to find that out cost 21 cycles for nothing.
@@ -1059,8 +1060,13 @@ ${ONE_GATE ? "" : `        ld   a,(G_EMITS)
         ld   (G_EMITS),a
 `}${ONE_GATE ? `${askBlock().join("\n")}
         ret  z                  ; not due — and nothing was saved to restore
-        push hl                 ; HL is the slot cursor at most call sites
-        call emit_send          ; the one emit, and the debt is ITS business` : `        push hl                 ; HL is the slot cursor at most call sites
+        ; NO SPILL AND NO RETURN. emit_send does not touch HL — it decrements
+        ; the ring's 16-bit fill through A alone for exactly that reason, so
+        ; the inline sites can call it with the plane cursor live — so the
+        ; \`push hl / call / pop hl / ret\` this used to be was 38 cycles of
+        ; saving a register nothing writes and returning through a routine that
+        ; had already returned. It is a tail call.
+        jp   emit_send          ; the one emit, and the debt is ITS business` : `        push hl                 ; HL is the slot cursor at most call sites
 ${gatePrologue().join("\n")}
         ld   a,$2a              ; the call sites are chip writes: re-latch
         ld   (YM_ADDR0),a
@@ -1070,10 +1076,10 @@ ${masterChain("fo_ms", "fo_ex").join("\n")}
 fo_ex:
         xor  $80
         ld   (YM_DATA0),a       ; $2A is fed blind
-        inc  iy`}
+        inc  iy
         ; No wrap here: emit_send does it, on the send path, for every caller.
         pop  hl
-        ret`);
+        ret`}`);
   } else if (wide) {
     L.push(`; DAC byte = clamp(sum - 128*(N-1), 0, 255). inc/dec/ld leave the carry
 ; alone, so the borrow out of \`sub e\` reaches \`sbc a,d\` across the plane read.

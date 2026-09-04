@@ -1621,8 +1621,9 @@ fr_loop:
 ; feed_one: one sample out of the ring, gate and all — the out-of-line twin of
 ; the emit the loops carry inline (§5.1.2). Every stretch of work longer than a
 ; sample period calls this, which is what stops the frame's chip writes and its
-; pass transitions from being dead time the DAC spends holding. Touches A, HL
-; and the flags; IY is the feed cursor and G_EMITS the frame's remaining debt.
+; pass transitions from being dead time the DAC spends holding. Touches A and
+; the flags — NOT HL; IY is the feed cursor and G_EMITS the frame's remaining
+; debt.
 ;
 ; The ASK is inline here too, ahead of the spill: "not due" is the answer most
 ; of the time, and saving HL to find that out cost 21 cycles for nothing.
