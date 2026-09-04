@@ -285,6 +285,7 @@ try {
     // loops spun until the frame caught up — 13k cycles a call.
     const BUSY_CY = BUSY_OVERRIDE ?? Math.round(32 * 6 * 7 / 15);
     let tcyc = 0, lastData = -1e9, ymTouch = 0;
+    const dacGaps = []; let asksAtDac = 0, emptyAtDac = 0;
     const cpu = new Z80Cpu({
       read: (a) => { a &= 0xffff;
         if (a < 0x2000) return ram[a];
@@ -338,6 +339,13 @@ try {
         if (a === 0x4001 && addr0 === 0x2a) {
           if (probe) { rec(1, d, tcyc); rec(6, cpu.pc & 0xffff, tcyc); }
           sends++;
+          // THE INTERVAL IS THE CLOCK. A DAC does not average — it holds the
+          // value it was last given until it is given another — so how far
+          // apart the writes are IS the sample rate, moment to moment, and a
+          // count of them is not. An engine that sends 97% of what the clock
+          // owes can still send them in pairs.
+          if (lastDac) dacGaps.push([tcyc - lastDac, vbl, asks - asksAtDac, dueEmpty - emptyAtDac]);
+          asksAtDac = asks; emptyAtDac = dueEmpty;
           lastDac = tcyc;
         }
         if (probe && a === 0x4001 && addr0 === 0x2b) rec(5, d, tcyc);
@@ -587,6 +595,33 @@ try {
           console.log(`        ${r.padEnd(32)} ${String(e.n).padStart(5)} times`
             + ` · ${(e.cyc / e.n).toFixed(0).padStart(6)} cyc mean · max ${String(e.max).padStart(5)}`
             + ` · ${(100 * e.sent / e.n).toFixed(0).padStart(3)}% with an emit in them`);
+      }
+      if (dacGaps.length > 8) {
+        const g = dacGaps.map((x) => x[0]).sort((a, b) => a - b);
+        const q = (x) => g[Math.floor((g.length - 1) * x)];
+        const early = dacGaps.filter(([v]) => v < SAMPLE_CY * 0.9).length;
+        const late = dacGaps.filter(([v]) => v > SAMPLE_CY * 1.5).length;
+        console.log(`      $2A INTERVAL — the clock itself, not the count:`
+          + ` p10 ${q(0.1)} · p50 ${q(0.5)} · p90 ${q(0.9)} · p99 ${q(0.99)}`
+          + ` · max ${q(1)}  (nominal ${SAMPLE_CY.toFixed(0)})`);
+        // …and the HOLES, which are a different fault from jitter: a stretch
+        // with no $2A write at all is the DAC repeating its last byte, and one
+        // of them is worth more complaint than a thousand samples 10% late.
+        const holes = dacGaps.filter(([v]) => v > SAMPLE_CY * 3);
+        console.log(`        ${(100 * early / dacGaps.length).toFixed(1)}% arrive EARLY`
+          + ` (under 90% of nominal), ${(100 * late / dacGaps.length).toFixed(1)}% are HELD`
+          + ` past 150% — the two halves of the same jitter`);
+        console.log(`        holes past 3 periods: ${holes.length}`
+          + ` (${(holes.length / frames).toFixed(2)} a frame)`
+          + (holes.length
+            ? ` · longest ${(Math.max(...holes.map(([v]) => v)) / SAMPLE_CY).toFixed(0)} periods`
+            // WHAT THE ENGINE WAS DOING INSIDE THEM, which is the whole
+            // diagnosis: asking and finding the ring EMPTY is a mixer that did
+            // not produce, and asking rarely is a stretch of code with no ask
+            // in it. They are different faults and they have different fixes.
+            + ` · inside them ${holes.reduce((t, h) => t + h[3], 0)} of`
+            + ` ${holes.reduce((t, h) => t + h[2], 0)} asks found the ring EMPTY`
+            : ""));
       }
       console.log(`      handler entered mid-emit ${isrMidEmit} times`
         + ` (banks swapped; the prologue re-establishes the port pair) —`
