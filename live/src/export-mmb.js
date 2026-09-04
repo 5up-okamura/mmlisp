@@ -1352,6 +1352,58 @@ function resample8(data, from, to) {
   return out;
 }
 
+// The shortest a BAKED loop may be, in output samples. Resampling maps the loop
+// points off integer samples and they have to round back, which moves where the
+// loop repeats by up to half a sample — and when the loop is one waveform cycle,
+// that period IS the perceived pitch. The error is 0.5/L, so:
+//
+//     20 samples   42.8 cents      200 samples   4.3 cents
+//     50           17.2            430           2.0
+//    100            8.6           4000           0.2
+//
+// A chorus or pad loop is already thousands of samples and never notices. A
+// glitch loop is tens and would be 40 cents out — so the loop REGION is repeated
+// until it clears this bar, which is bit-exact (repeating is literally what
+// playback does) and costs at most this many bytes once. 430 puts every loop
+// inside 2 cents, which is under what an ear catches against FM.
+const MIN_BAKED_LOOP = 430;
+
+// Bake a LOOPED sample for one note. Resample the whole blob, map the loop
+// points through the same ratio, and repeat the loop region so its baked length
+// clears MIN_BAKED_LOOP. The layout the engine wants is
+//
+//     [0 .. loopEnd)  the attack, played once
+//     [loopStart .. loopEnd) repeated  the sustain
+//     [loopEnd .. len)  the tail a release plays out
+//
+// so the repeats are spliced in ahead of the tail and loopEnd moves with them.
+function bakeLooped(data, from, to, loopStart, loopEnd, name, diag) {
+  const all = resample8(data, from, to);
+  const ratio = from / to;
+  const map = (p) => Math.min(all.length, Math.max(0, Math.round(p / ratio)));
+  const ls = map(loopStart);
+  let le = map(loopEnd);
+  if (le <= ls) {
+    // A loop that resampled to nothing cannot be repeated into existence. It is
+    // a bad loop in the source, not a rounding problem, so say so and play the
+    // blob straight through rather than emitting a zero-length loop the engine
+    // would spin in.
+    diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
+      `sample "${name}" has a loop of ${loopEnd - loopStart} frames that resampled `
+        + `to ${le - ls}; baked without a loop`);
+    return { bytes: all, loopStart: 0, loopEnd: 0 };
+  }
+  const reps = Math.max(1, Math.ceil(MIN_BAKED_LOOP / (le - ls)));
+  if (reps === 1) return { bytes: all, loopStart: ls, loopEnd: le };
+  const region = all.subarray(ls, le);
+  const out = new Int8Array(all.length + (reps - 1) * region.length);
+  out.set(all.subarray(0, le), 0);
+  for (let r = 1; r < reps; r++) out.set(region, le + (r - 1) * region.length);
+  const grown = le + (reps - 1) * region.length;
+  out.set(all.subarray(le), grown);
+  return { bytes: out, loopStart: ls, loopEnd: grown };
+}
+
 function buildSampleBank(ir, blobs, diag, usage = new Map()) {
   const samples = ir.metadata?.samples ?? [];
   const entries = new Writer();
@@ -1401,10 +1453,9 @@ function buildSampleBank(ir, blobs, diag, usage = new Map()) {
     const rate = blob?.baseRate ?? s.rate ?? 13000;
     const notes = [...(usage.get(s.name) ?? [])].sort((x, y) => x - y);
 
-    // Looped material is never baked: resampling moves the loop points off
-    // integer samples, and rounding them back detunes the sustained part by the
-    // rounding error over the loop length. One-shots have no such point.
-    const bakeable = !hasLoop && data.length > 0 && notes.length > 0;
+    // LOOPED MATERIAL IS BAKED TOO, and the rounding it used to be refused for
+    // is bought off with a few hundred bytes — see bakeLooped below.
+    const bakeable = data.length > 0 && notes.length > 0;
     if (!bakeable) {
       fallbackFor.set(s.name, push({
         flags: hasLoop ? 1 : 0,
@@ -1434,9 +1485,12 @@ function buildSampleBank(ir, blobs, diag, usage = new Map()) {
     for (const n of notes) byNote.set(n, [n]);
     for (const [, ns] of byNote) {
       const anchor = ns[0];
-      const baked = resample8(data, rate, pcmBakeRate(anchor));
+      const to = pcmBakeRate(anchor);
+      const b = hasLoop
+        ? bakeLooped(data, rate, to, loopStart, loopEnd, s.name, diag)
+        : { bytes: resample8(data, rate, to), loopStart: 0, loopEnd: 0 };
       const before = blobBytes.length;
-      const off = intern(baked);
+      const off = intern(b.bytes);
       bakedBlobBytes += blobBytes.length - before;   // dedup hits cost nothing
       bakedEntries++;
       for (const n of ns) {
@@ -1449,8 +1503,8 @@ function buildSampleBank(ir, blobs, diag, usage = new Map()) {
           continue;
         }
         entryIdFor.set(`${s.name}|${n}`, push({
-          flags: 2 | (k << 4), off, len: baked.length,
-          rate: Math.round(pcmBakeRate(anchor)), loopStart: 0, loopEnd: 0,
+          flags: (hasLoop ? 1 : 0) | 2 | (k << 4), off, len: b.bytes.length,
+          rate: Math.round(to), loopStart: b.loopStart, loopEnd: b.loopEnd,
         }));
       }
     }

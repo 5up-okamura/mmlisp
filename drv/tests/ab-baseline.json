@@ -1,4 +1,10 @@
 {
+  "budget-2v-baked.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "budget-2v-edge.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -256,6 +262,18 @@
     "mismatches": 0,
     "compileErrors": 0,
     "digest": "811c9dc5"
+  },
+  "sin008.mmlisp": {
+    "ok": false,
+    "mismatches": 680,
+    "compileErrors": 0,
+    "digest": "5f511f7e"
+  },
+  "stress-9ch.mmlisp": {
+    "ok": false,
+    "mismatches": 34,
+    "compileErrors": 0,
+    "digest": "dbb9f362"
   },
   "stress-m1.mmlisp": {
     "ok": false,
