@@ -446,15 +446,45 @@ export function pcmFrameSamples(frame) {
 //   lead 128   fill  70    +4.4 ms   DAC 99.0%   ring empty 0.26
 //   lead  56   fill  50    -1.6 ms   DAC 98.8%   ring empty 0.68
 //
-// So: ceil(PCM_SAMPLES_PER_FRAME). If the sample clock moves, this moves with
-// it — that is the whole lesson of the 255. Under 256 either way: a voice
-// pass's tick count is a single byte in the engine (G_TICKS) and the prime
-// frame mixes exactly TARGET of them. Mirrored by PCM_RING_TARGET in
-// drv/src/engine.z80 and MML_PCM_RING_TARGET in drv/68k/mml_rate.h — all three
-// must agree, so all three are now DERIVED from this one line rather than
-// hand-kept: the Z80's comes out of gen-mixer.mjs and the C one out of
-// gen-c-tables.mjs. A hand-kept 255 is exactly how the 37 ms happened.
-export const PCM_RING_TARGET = Math.ceil(PCM_SAMPLES_PER_FRAME);
+// …AND A QUARTER OF A FRAME OF MARGIN ON TOP, which the paragraph above got
+// wrong. One frame exactly is the lead the sequencer CANCELS; it is not enough
+// lead for the ring to survive on, because production is a BURST and drainage
+// is continuous. The mixer writes a whole frame of samples inside the
+// interrupt, at ~60% of a vblank, and the DAC takes them out one at a time
+// across the whole frame — so the fill sawtooths, and with a target of exactly
+// one frame the trough sits at zero. Every perturbation from there is a hole,
+// and a hole is the DAC repeating its last byte.
+//
+// MEASURED on the emulator, not modelled — the model could not see this at all,
+// because tools/frame-budget.mjs runs a host that never calls
+// mml_pcm_ring_fill(), so its ring has no restoring force and its hole count
+// does not respond to the lead. That cost an afternoon. drv/tools/dac-log.mjs
+// reads the emulator's own record of every $2A write; m3-pcm-softmix, 8 s:
+//
+//   lead    6658 Hz            4439 Hz
+//   1.00    94.0%  8.20 periods lost a frame     94.5%  4.90
+//   1.15    96.6%  5.47
+//   1.25    97.5%  4.48
+//   1.40    98.2%  3.73
+//   1.50    98.3%  3.60                          99.9%  0.78
+//
+// The knee is at 1.25 and the cost is a QUARTER FRAME — 4.2 ms of PCM behind
+// the FM that the sequencer's one-frame dispatch does not cancel. That is
+// inside what already shipped (the regulator's own residual measured -0.9 to
+// +5.1 ms across scores) and well under the ~10 ms where a layered FM+PCM hit
+// reads as a flam. Going further is not free either way: the tick count is a
+// byte in the engine (G_TICKS) and the ring is 512 B holding both the finished
+// samples and the ones under construction, so the lead is capped near 2 frames
+// at 6.6 kHz and 1.7 at 8.9.
+//
+// If the sample clock moves, this moves with it — that is the whole lesson of
+// the 255. Mirrored by PCM_RING_TARGET in drv/src/rate.z80 and
+// MML_PCM_RING_TARGET in drv/68k/mml_rate.h; all of them are DERIVED from this
+// one line rather than hand-kept, and tools/rate-mirrors.mjs checks they still
+// agree. A hand-kept 255 is exactly how the 37 ms happened.
+export const PCM_RING_LEAD = Number(process.env.PCM_RING_LEAD ?? 1.25);
+export const PCM_RING_TARGET =
+  Math.ceil(PCM_SAMPLES_PER_FRAME * PCM_RING_LEAD);
 export const PCM_RING_BYTES = 512;
 if (PCM_RING_TARGET > 255)
   throw new Error(
