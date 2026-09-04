@@ -68,7 +68,7 @@ int main(void)
     const u32 base_vbl = vtimer;
     u32 mark_vbl  = vtimer;
     u16 base_audible = st.audible, mark_audible = st.audible,
-        mark_starved = st.starved;
+        mark_starved = st.starved, mark_dry = st.pcmDry;
     u16 worst_1s = 0xFFFF;
     u32 loops = 0;
 
@@ -90,6 +90,7 @@ int main(void)
             probe.audible  = (u16)(st.audible - base_audible);
             probe.starved  = st.starved;
             probe.pcm_fill = st.pcmFill;
+            probe.pcm_dry_1s = (u16)(st.pcmDry - mark_dry);
             probe.music256 = elapsed ? (u16)(((u32)probe.audible << 8) / elapsed) : 0;
             probe.host256  = elapsed ? (u16)((loops << 8) / elapsed) : 0;
             probe.worst_1s = worst_1s;
@@ -106,6 +107,7 @@ int main(void)
             mark_vbl     = vtimer;
             mark_audible = st.audible;
             mark_starved = st.starved;
+            mark_dry = st.pcmDry;
         }
 
         // Once per frame and LAST: control calls take effect on the next frame

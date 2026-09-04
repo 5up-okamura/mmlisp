@@ -1273,7 +1273,7 @@ emit_send:                     ; …and the entry every inline ask calls into
         jr   nz,et_lo
         ld   a,(G_FILL+1)
         or   a
-        jr   z,et_none         ; the ring is empty — nothing finished to send
+        jr   z,et_dry          ; the ring is empty — nothing finished to send
         dec  a
         ld   (G_FILL+1),a
         ld   a,255
@@ -1322,6 +1322,20 @@ et_nw:
 et_none:
         exx                    ; …and the caller's registers come back
         ret
+; THE RING HAD NOTHING. Counted, because a hole in the DAC's output has two
+; causes with opposite fixes — nobody asked inside the period, or somebody
+; asked and there was nothing to send — and every number this branch has had
+; reports them together (engine.z80, H_DRY). Off the send path entirely, so
+; it costs the sample clock nothing.
+et_dry:
+        ld   a,(H_DRY)
+        inc  a
+        ld   (H_DRY),a
+        jr   nz,et_none
+        ld   a,(H_DRY+1)
+        inc  a
+        ld   (H_DRY+1),a
+        jr   et_none
 ; flush_rest: IY = ring cursor, B = samples still owed (0 = none). Same gate
 ; as the inline emit — a sample that comes out here is still a sample.
 flush_rest:

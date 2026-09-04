@@ -270,12 +270,23 @@ H_VBL       equ HDR+14          ; u8  68k-owned: vblank count, low byte
 ; .claude/memory/plan-68k-split.md). The 68k reads this inside the bus grab it
 ; already takes, where the Z80 is frozen and a 16-bit read is atomic.
 H_FILL      equ HDR+16          ; u16 Z80-owned: FINISHED samples in the ring
+; …and how often it had NOTHING. A hole in the DAC's output has two possible
+; causes and they have opposite fixes: the engine did not ASK inside a sample
+; period (a pacing fault, fix it with the ask sites and the emit's cost) or it
+; asked, the timer said due, and the ring was EMPTY (a production fault, fix it
+; with the lead or the mixer). Every number this branch has had reports the two
+; together, and tools/frame-budget.mjs cannot tell them apart on the real path
+; at all — its host never calls mml_pcm_ring_fill(), so its ring has no
+; restoring force and its emptiness is its own model's, not the engine's.
+;
+; So the engine counts it, on a path that only runs when it happens.
+H_DRY       equ HDR+18          ; u16 Z80-owned: asks that found the ring empty
 ; Bumped to 8 when the slot gained PCM_MASTER (§6.3): pcm_command RETURNS on an
 ; unknown opcode — correct, since the count already bounds the walk — so an old
 ; image fed a new sequencer's slots would simply ignore master on PCM and say
 ; nothing about it. The host's `ver == MMLISPDRV_PROTO_VER` check is what turns
 ; that into a refusal to start.
-PROTO_VER   equ 9
+PROTO_VER   equ 10
 READY_MARK  equ $d2
 
 RING        equ $1400
@@ -434,6 +445,8 @@ start:
         ld   (H_TAIL),a
         ld   (H_FRAMES),a
         ld   (H_FRAMES+1),a
+        ld   (H_DRY),a          ; the header is below the RAM clear, so by hand
+        ld   (H_DRY+1),a
         ld   a,PROTO_VER
         ld   (H_VER),a
         ; Ring geometry, published before ready so the host can read it the
