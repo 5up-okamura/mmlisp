@@ -4181,6 +4181,79 @@ of 75, residual -2 ms, 98.5% delivered.** 6,658 Hz is out of spec and was
 offered as if it were not — that was my error, and the user found it by ear
 before any gate here did.
 
+## THE LEAD IS REGULATED NOW, AND THAT IS WHAT MADE IT SOUND RIGHT (2026-09-02)
+
+**User verdict: "直った / 全体的にまともになっている".** The DAC is usable across
+the rate range for the first time on this branch. Read this before touching the
+sequencer's PCM path.
+
+### The bug
+
+`mml_render_frame()` modelled the ring's fill as "the feed took exactly what the
+sample clock owed" — it subtracted `want` and added `want`, so `s->pcm_fill` sat
+at MML_PCM_RING_TARGET for ever. **That is only true while the engine can send
+everything the clock asks for.** Above ~4.4 kHz it cannot (93.7% at 6,658 Hz),
+the surplus accumulated with nothing to pull it back, and the lead grew from the
+one frame the sequencer cancels to two or four.
+
+The user heard it as **a snare layered across FM and PCM going "ta-tan" instead
+of "tan"** — the DAC sitting 17 to 50 ms behind the FM. **Every counter here was
+green**: music 101%, host 99%, lost 0, starv 0, and the DAC's own clock at 93%.
+Nothing compared the two clocks against each other. Same class as the 255 -> 56
+lead bug earlier on this branch, and it took the same route to being found: the
+ear first, the instrument second.
+
+### The fix
+
+The engine publishes the real fill (`H_FILL`, proto 8 -> 9) and the host reads it
+inside the bus grab it already takes, where the Z80 is frozen and a 16-bit read
+is atomic. `mml_pcm_ring_fill()` latches it and the chunk aims at the target:
+
+    chunk = want + (TARGET - fill) / MML_PCM_FILL_GAIN
+
+    rate        before              after
+    3,329 Hz    fill 39   -5.0 ms   fill 65   +2.7 ms   98.5% delivered
+    4,439       fill 64   -2.0      fill 71   -0.9      97.4
+    6,658       fill 226  +17..+50  fill 177  +9.8      92.7
+
+### Two wrong turns, both worth keeping
+
+* **Gain 1 oscillates.** `mml_pump` renders as far ahead as the slot ring has
+  room, so the loop has RING_DEPTH (5) frames of DEAD TIME: the chunk decided
+  now plays five frames later against a fill reading five frames old. Correcting
+  the whole error each frame measured **78% of samples delivered at 3,329 Hz**
+  (against 99.1% with no correction) and holes of 322 sample periods. An eighth
+  is stable.
+* **An integral term costs eight points of delivered samples.** It pins the
+  error at zero (+0.3 / 0.0 / -3.0 ms) — and delivery falls to 90 / 90 / 86%,
+  because **THE CHUNK IS ALSO THE EMIT SCHEDULE**: a pass runs `chunk` ticks and
+  the loops carry one emit per PCM_PASSES of them, so shrinking the chunk to
+  what the feed manages shrinks how often the frame asks the timer, and the idle
+  loop cannot make it up. The integral converges to exactly that shrunken chunk
+  and stays there. **Pinning the lead needs the emit schedule separated from the
+  mix length** — a change to the loop generator, not to this arithmetic.
+
+### THE LEAD IS NOW VISIBLE, and it was not before
+
+`MMLispStats.pcmFill`, the probe ROM's mailbox, and one line from
+`blastem-probe`:
+
+    ring   fill 177 against a target of 112  ->  the DAC is +9.8 ms from the FM
+
+It is the one number that says whether a layered drum hits once or twice, and no
+gate in this repo could see it. Every future PCM change gets checked against it.
+
+### Where the rate stands
+
+    PCM_FM   rate      delivered   lead        verdict
+      16     3,329 Hz    98.5%     +2.7 ms     use
+      12     4,439       97.4      -0.9        use
+      10     5,327       ~97       ~+3         edge
+       8     6,658       92.7      +9.8        past the engine
+
+`PCM_FM=12` is the working recommendation. Ship the default there once the rate
+spec settles (the three stale generated artifacts are still deferred).
+
 ## THE BAKED-ONLY MIXER: WHAT LANDED, AND WHERE 2b STOPPED (2026-09-02)
 
 Agreed with the user: **(b) — bake per note — as the rule, with automatic loop
