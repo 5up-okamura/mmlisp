@@ -166,7 +166,13 @@ try {
     ["-std=c99", "-O1", "-o", exe,
       join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
     { stdio: "pipe" });
-  const { generatedSources, PACE_WINDOW: PACE_GEN, GATE_CY } = await import("./gen-mixer.mjs");
+  const { generatedSources, PACE_WINDOW: PACE_GEN, GATE_CY, TIMER_FLAG, TIMER_LOAD, TIMER_RESET }
+    = await import("./gen-mixer.mjs");
+  // The three $27/status bits this model has to know, taken from the same place
+  // the engine takes them. Timer B is flag $02 / enable $08 / reset $20 and
+  // Timer A is $01 / $04 / $10; hard-coding the first set is what made every
+  // Timer A run report no DAC.
+  const TFLAG = TIMER_FLAG, TENABLE = TIMER_LOAD & ~0x03, TRESET = TIMER_RESET;
   // What one DAC sample is worth, in Z80 cycles. GATE_CY is the timer's period
   // and the engine emits one sample per gate at PCM_GROUP = 1, so they are the
   // same number — but ask the generator rather than assuming it.
@@ -212,7 +218,7 @@ try {
 
     const ram = new Uint8Array(0x2000);
     ram.set(built.bytes, 0);
-    let bankReg = 0, cyc = 0, winReads = 0, enableB = false, addr0 = 0;
+    let bankReg = 0, cyc = 0, winReads = 0, timerOn = false, addr0 = 0;
     // Same record layout as drv/blastem/probe.patch: kind, pad, value:u16,
     // cycle:u32 little-endian. Only built when asked for.
     const probe = PROBE_LOG ? [] : null;
@@ -280,7 +286,7 @@ try {
         if (a >= 0x4000 && a <= 0x4003) ymTouch += YM_COST;
         if (a === 0x4000) { askedThisStep = true;
           return (tcyc - lastData < BUSY_CY ? 0x80 : 0)
-            | (enableB && tcyc >= gateAt ? 0x02 : 0); }
+            | (timerOn && tcyc >= gateAt ? TFLAG : 0); }
         if (a >= 0x8000) { winReads++; return sampleBank[bankReg * 0x8000 + (a - 0x8000)] ?? 0; }
         return 0xff; },
       write: (a, d) => { a &= 0xffff;
@@ -288,12 +294,18 @@ try {
         if (a === 0x6000) bankReg = ((bankReg >> 1) | ((d & 1) << 8)) & 0x1ff;
         else if (a === 0x4000) addr0 = d;
         else if (a === 0x4001 && addr0 === 0x27) {
-          enableB = (d & 0x08) !== 0;
+          // WHICH TIMER, from the generator rather than from Timer B's bits.
+          // This modelled $27 bit 3 (Enable B), bit 1 (its flag) and bit 5 (its
+          // reset) as literals, so a Timer A build — which uses bits 2, 0 and 4
+          // — never saw its flag raised here: the engine asked 673 times a
+          // frame, was told "not due" every time, and the run came back
+          // reporting an interrupt of 4% and no DAC at all.
+          timerOn = (d & TENABLE) !== 0;
           // The gate's flag reset. The timer free-runs, so the next overflow is
           // the next MULTIPLE of the period, not one period from here — an
           // engine that arrives late does not get a fresh period, it gets
           // whatever is left of the current one.
-          if (d & 0x20) while (gateAt <= tcyc) gateAt += GATE_CY;
+          if (d & TRESET) while (gateAt <= tcyc) gateAt += GATE_CY;
         }
         if (a >= 0x4000 && a <= 0x4003) ymTouch += YM_COST;
         // Unlike the emulator's x86 JIT, this Z80 interprets — so it knows
@@ -403,7 +415,7 @@ try {
         }
         lastAsk = tcyc; lastAskPc = lastPc;
         // The two failure modes, told apart at the only moment they differ.
-        if (enableB && tcyc >= gateAt) {
+        if (timerOn && tcyc >= gateAt) {
           const fill = ram[G_FILL] | (ram[G_FILL + 1] << 8);
           if (fill) dueSent++; else dueEmpty++;
         }
