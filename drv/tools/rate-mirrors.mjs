@@ -2,8 +2,8 @@
 //
 //   node tools/rate-mirrors.mjs
 //
-// src/rate.z80, src/ask-dense.z80, 68k/mml_rate.h and sgdk/mmlispdrv_bin.h are
-// each generated for
+// src/mixer.z80, src/rate.z80, src/ask-dense.z80, 68k/mml_rate.h and
+// sgdk/mmlispdrv_bin.h are each generated for
 // whatever the environment said when somebody last ran a tool that writes them
 // — and every probe run does. Twice in one session they ended up describing
 // three different clocks: the Z80 include at 9,987 Hz, the C header at 6,658
@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const drv = join(dirname(fileURLToPath(import.meta.url)), "..");
 const files = [
+  ["src/mixer.z80", "the generated mixer core"],
   ["src/rate.z80", "the Z80 engine's include"],
   ["src/ask-dense.z80", "the ask the engine includes only at short periods"],
   ["68k/mml_rate.h", "the 68k sequencer's header"],

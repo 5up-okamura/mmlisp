@@ -7,5 +7,5 @@
 ;
 ; The sample period here is 1075 Z80 cycles against a threshold of 600.
 ;
-; RATE-STAMP 3333 56 — see tools/rate-mirrors.mjs.
+; RATE-STAMP 3333 70 — see tools/rate-mirrors.mjs.
 ; (nothing: the period is long enough that these stretches fit inside one)

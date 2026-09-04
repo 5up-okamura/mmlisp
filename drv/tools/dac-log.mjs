@@ -94,6 +94,32 @@ console.log(`  holes    ${(holes.length / frames).toFixed(2)} a frame`
   + ` · ${(lost / frames).toFixed(2)} sample periods lost a frame`
   + ` · worst ${(pct(1) / period).toFixed(1)} periods`);
 
+// HOW MANY OF THEM ARE THE 68000'S. The Z80 executes nothing while the 68000
+// holds its bus, so a hole that contains a grab is not the engine's pacing at
+// all and no amount of asking will close it — it is the slot upload, and it
+// belongs to drv/sgdk/mmlispdrv.c. Attributed here because the two faults look
+// identical in every other number and have completely different fixes.
+{
+  const spans = [];
+  for (let i = 1; i < grab.length; i++)
+    if (grab[i - 1] > 0 && grab[i] < 0) spans.push([grab[i - 1], -grab[i]]);
+  spans.sort((a, b) => a[0] - b[0]);
+  let gi = 0, nGrabbed = 0, lostGrabbed = 0;
+  for (const h of holes) {
+    const from = h.at - h.v * MCLKS_PER_Z80, to = h.at;
+    while (gi < spans.length && spans[gi][1] < from) gi++;
+    let j = gi, held = 0;
+    while (j < spans.length && spans[j][0] < to) {
+      held += Math.min(to, spans[j][1]) - Math.max(from, spans[j][0]);
+      j++;
+    }
+    if (held > 0) { nGrabbed++; lostGrabbed += held / MCLKS_PER_Z80 / period; }
+  }
+  console.log(`           ${nGrabbed} of them overlap a 68k BUS GRAB`
+    + ` — ${(lostGrabbed / frames).toFixed(2)} of those periods a frame are the`
+    + ` 68000 holding the bus, not the engine failing to ask`);
+}
+
 // ── Where in the frame ─────────────────────────────────────────────────────
 // The interval by tenth of the frame. A clock that is even is flat here; a
 // clock whose work does not fit is long at one end and catching up at the
@@ -102,7 +128,7 @@ console.log(`  holes    ${(holes.length / frames).toFixed(2)} a frame`
 if (vint.length > 2) {
   const vb = vint.filter((c) => c >= w[0] && c <= w[w.length - 1]).sort((a, b) => a - b);
   if (vb.length > 2) {
-    const bins = Array.from({ length: 10 }, () => ({ sum: 0, n: 0 }));
+    const bins = Array.from({ length: 10 }, () => ({ sum: 0, n: 0, all: [] }));
     let vi = 0;
     for (let i = 1; i < w.length; i++) {
       while (vi + 1 < vb.length && vb[vi + 1] <= w[i - 1]) vi++;
@@ -112,10 +138,22 @@ if (vint.length > 2) {
       if (f < 0 || f >= 1) continue;
       const b = bins[Math.floor(f * 10)];
       b.sum += (w[i] - w[i - 1]) / MCLKS_PER_Z80; b.n++;
+      b.all.push((w[i] - w[i - 1]) / MCLKS_PER_Z80);
     }
     const cells = bins.map((b) => b.n ? (b.sum / b.n).toFixed(0).padStart(5) : "    -");
+    // MEAN AND MEDIAN, because they answer different questions and the mean
+    // alone got read wrong once already: a tenth whose mean is 60% long and
+    // whose median is nominal is not a stall in that part of the frame, it is
+    // one big recurring hole landing there. Only the median says the CLOCK is
+    // uneven; only the mean says how much was lost.
+    const meds = bins.map((b) => {
+      if (!b.n) return "    -";
+      const a = [...b.all].sort((x, y) => x - y);
+      return a[a.length >> 1].toFixed(0).padStart(5);
+    });
     console.log(`  by tenth of the frame (nominal ${period.toFixed(0)}):`);
-    console.log(`   ${cells.join("")}`);
+    console.log(`     mean ${cells.join("")}`);
+    console.log(`     med  ${meds.join("")}`);
   }
 }
 
