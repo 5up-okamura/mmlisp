@@ -411,7 +411,7 @@ try {
           // Where the engine WAS when it stopped asking. A gap is a stretch of
           // code, and the stretch is named by where it began — sprinkling calls
           // by guesswork is how the last one of these was missed.
-          if (gap > 2 * SAMPLE_CY) longGaps.push([gap, lastAskPc]);
+          if (gap > SAMPLE_CY) longGaps.push([gap, lastAskPc]);
         }
         lastAsk = tcyc; lastAskPc = lastPc;
         // The two failure modes, told apart at the only moment they differ.
@@ -534,7 +534,7 @@ try {
           e.n++; e.cyc += g; if (g > e.max) e.max = g;
           by.set(r, e);
         }
-        console.log(`      gaps over TWO sample periods, by where the engine last asked:`);
+        console.log(`      gaps over ONE sample period, by where the engine last asked:`);
         for (const [r, e] of [...by.entries()].sort((a, b) => b[1].cyc - a[1].cyc).slice(0, 8))
           console.log(`        ${r.padEnd(22)} ${String(e.n).padStart(5)} times`
             + ` · ${(e.cyc / e.n).toFixed(0).padStart(6)} cyc mean · max ${e.max}`);
