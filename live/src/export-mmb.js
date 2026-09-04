@@ -1547,8 +1547,20 @@ function buildSampleBank(ir, blobs, diag, usage = new Map()) {
     idFor: (name, note) => {
       const id = entryIdFor.get(`${name}|${note}`);
       if (id !== undefined) return id;
+      // A NOTE THAT REACHES A NON-BAKED ENTRY CANNOT BE PLAYED IN TUNE. The
+      // engine's mixer has no resampler: it advances a whole number of bytes a
+      // tick and takes that number from the entry, so an entry whose increment
+      // carries a fraction plays at the wrong pitch and says nothing about it.
+      // Both paths below hand back exactly such an entry, so both are errors
+      // rather than the warnings they were when a fraction still worked.
       const fb = fallbackFor.get(name);
-      if (fb !== undefined) return fb;
+      if (fb !== undefined) {
+        diag("error", "E_MMB_UNBAKED_NOTE",
+          `sample "${name}" is played at note ${note} but has no baked entry for it `
+            + `(the sample has no usable data, or its loop resampled to nothing) — `
+            + `the mixer has no resampler and cannot pitch it`);
+        return fb;
+      }
       const any = [...entryIdFor.entries()].find(([k]) => k.startsWith(`${name}|`));
       if (any) {
         diag("warning", "W_MMB_BAKE_MISS",

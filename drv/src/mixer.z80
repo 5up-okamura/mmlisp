@@ -66,18 +66,15 @@ mix_first_s0_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,15               ; pace: hold the tick to the sample period
+        ld   a,17               ; pace: hold the tick to the sample period
 pd1:
         dec  a
         jr   nz,pd1
         ld   a,(de)             ; sample
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np2
         inc  d
@@ -85,11 +82,8 @@ np2:
         ld   a,(de)             ; sample
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np3
         inc  d
@@ -102,7 +96,7 @@ mix_first_s1_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,14               ; pace: hold the tick to the sample period
+        ld   a,16               ; pace: hold the tick to the sample period
 pd5:
         dec  a
         jr   nz,pd5
@@ -110,11 +104,8 @@ pd5:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np6
         inc  d
@@ -123,11 +114,8 @@ np6:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np7
         inc  d
@@ -140,7 +128,7 @@ mix_first_s2_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,13               ; pace: hold the tick to the sample period
+        ld   a,15               ; pace: hold the tick to the sample period
 pd9:
         dec  a
         jr   nz,pd9
@@ -149,11 +137,8 @@ pd9:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np10
         inc  d
@@ -163,11 +148,8 @@ np10:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np11
         inc  d
@@ -180,7 +162,7 @@ mix_first_s3_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,12               ; pace: hold the tick to the sample period
+        ld   a,14               ; pace: hold the tick to the sample period
 pd13:
         dec  a
         jr   nz,pd13
@@ -190,11 +172,8 @@ pd13:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np14
         inc  d
@@ -205,11 +184,8 @@ np14:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np15
         inc  d
@@ -222,7 +198,7 @@ mix_first_s4_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,11               ; pace: hold the tick to the sample period
+        ld   a,13               ; pace: hold the tick to the sample period
 pd17:
         dec  a
         jr   nz,pd17
@@ -233,11 +209,8 @@ pd17:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np18
         inc  d
@@ -249,11 +222,8 @@ np18:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np19
         inc  d
@@ -266,28 +236,22 @@ mix_first_s8_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,17               ; pace: hold the tick to the sample period
+        ld   a,19               ; pace: hold the tick to the sample period
 pd21:
         dec  a
         jr   nz,pd21
         ld   (hl),0   ; muted, but the position still advances
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np22
         inc  d
 np22:
         ld   (hl),0   ; muted, but the position still advances
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np23
         inc  d
@@ -316,11 +280,8 @@ mix_first1_s0_lp:
         ld   a,(de)             ; sample
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np25
         inc  d
@@ -333,11 +294,8 @@ mix_first1_s1_lp:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np26
         inc  d
@@ -351,11 +309,8 @@ mix_first1_s2_lp:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np27
         inc  d
@@ -370,11 +325,8 @@ mix_first1_s3_lp:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np28
         inc  d
@@ -390,11 +342,8 @@ mix_first1_s4_lp:
         sra  a
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np29
         inc  d
@@ -405,11 +354,8 @@ mix_first1_s8:
 mix_first1_s8_lp:
         ld   (hl),0   ; muted, but the position still advances
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np30
         inc  d
@@ -433,7 +379,7 @@ mix_add_s0_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,13               ; pace: hold the tick to the sample period
+        ld   a,15               ; pace: hold the tick to the sample period
 pd34:
         dec  a
         jr   nz,pd34
@@ -443,11 +389,8 @@ pd34:
 dn36:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np37
         inc  d
@@ -458,11 +401,8 @@ np37:
 dn39:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np40
         inc  d
@@ -489,7 +429,7 @@ mix_add_s1_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,12               ; pace: hold the tick to the sample period
+        ld   a,14               ; pace: hold the tick to the sample period
 pd44:
         dec  a
         jr   nz,pd44
@@ -500,11 +440,8 @@ pd44:
 dn46:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np47
         inc  d
@@ -516,11 +453,8 @@ np47:
 dn49:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np50
         inc  d
@@ -547,7 +481,7 @@ mix_add_s2_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,11               ; pace: hold the tick to the sample period
+        ld   a,13               ; pace: hold the tick to the sample period
 pd54:
         dec  a
         jr   nz,pd54
@@ -559,11 +493,8 @@ pd54:
 dn56:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np57
         inc  d
@@ -576,11 +507,8 @@ np57:
 dn59:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np60
         inc  d
@@ -607,7 +535,7 @@ mix_add_s3_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,10               ; pace: hold the tick to the sample period
+        ld   a,12               ; pace: hold the tick to the sample period
 pd64:
         dec  a
         jr   nz,pd64
@@ -620,11 +548,8 @@ pd64:
 dn66:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np67
         inc  d
@@ -638,11 +563,8 @@ np67:
 dn69:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np70
         inc  d
@@ -669,7 +591,7 @@ mix_add_s4_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,9                ; pace: hold the tick to the sample period
+        ld   a,11               ; pace: hold the tick to the sample period
 pd74:
         dec  a
         jr   nz,pd74
@@ -683,11 +605,8 @@ pd74:
 dn76:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np77
         inc  d
@@ -702,11 +621,8 @@ np77:
 dn79:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np80
         inc  d
@@ -733,26 +649,20 @@ mix_add_s8_lp:
         ld   a,(YM_ADDR0)      ; the ONE status read (see emit_send)
         bit  1,a               ; this timer's flag: NZ = a sample is due
         call nz,emit_send      ; …and only then, the sample (§5.1.2)
-        ld   a,18               ; pace: hold the tick to the sample period
+        ld   a,21               ; pace: hold the tick to the sample period
 pd82:
         dec  a
         jr   nz,pd82
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np83
         inc  d
 np83:
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np84
         inc  d
@@ -782,11 +692,8 @@ mix_add1_s0_lp:
 dn87:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np88
         inc  d
@@ -809,11 +716,8 @@ mix_add1_s1_lp:
 dn90:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np91
         inc  d
@@ -837,11 +741,8 @@ mix_add1_s2_lp:
 dn93:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np94
         inc  d
@@ -866,11 +767,8 @@ mix_add1_s3_lp:
 dn96:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np97
         inc  d
@@ -896,11 +794,8 @@ mix_add1_s4_lp:
 dn99:
         ld   (hl),a
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np100
         inc  d
@@ -917,11 +812,8 @@ ov98_hi:
 mix_add1_s8:
 mix_add1_s8_lp:
         inc  l
-        exx
-        add  hl,de             ; frac += incFrac
-        exx                    ; flag-transparent: the carry survives
         ld   a,e
-        adc  a,c               ; ptr += incInt + frac carry
+        add  a,c               ; C = 2^k bytes a tick, the octave shift
         ld   e,a
         jr   nc,np101
         inc  d
@@ -951,11 +843,11 @@ pd102:
         ld   a,(de)             ; sample
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_firstnr_s0_lp
         ret
@@ -972,12 +864,12 @@ pd103:
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_firstnr_s1_lp
         ret
@@ -995,13 +887,13 @@ pd104:
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_firstnr_s2_lp
         ret
@@ -1020,14 +912,14 @@ pd105:
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         sra  a
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_firstnr_s3_lp
         ret
@@ -1047,7 +939,7 @@ pd106:
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1055,7 +947,7 @@ pd106:
         sra  a
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_firstnr_s4_lp
         ret
@@ -1076,14 +968,14 @@ pd109:
 dn111:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         add  a,(hl)
         jp   pe,ov112
 dn113:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_addnr_s0_lp
         ret
@@ -1117,7 +1009,7 @@ pd116:
 dn118:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         add  a,(hl)
@@ -1125,7 +1017,7 @@ dn118:
 dn120:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_addnr_s1_lp
         ret
@@ -1160,7 +1052,7 @@ pd123:
 dn125:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1169,7 +1061,7 @@ dn125:
 dn127:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_addnr_s2_lp
         ret
@@ -1205,7 +1097,7 @@ pd130:
 dn132:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1215,7 +1107,7 @@ dn132:
 dn134:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_addnr_s3_lp
         ret
@@ -1252,7 +1144,7 @@ pd137:
 dn139:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         ld   a,(de)             ; sample
         sra  a
         sra  a
@@ -1263,7 +1155,7 @@ dn139:
 dn141:
         ld   (hl),a
         inc  l
-        inc  de                ; pre-resampled: one sample per tick
+        inc  de                ; baked at this note: one sample per tick
         dec  b
         jp   nz,mix_addnr_s4_lp
         ret
@@ -1575,12 +1467,10 @@ ms_go_s:
 ; plane cursor is NOT built here — mix_seg_live rebuilds HL every segment,
 ; because the boundary math needs HL and the index is parked in G_IDX.
 ms_pload:
-        ld   l,(ix+PV_FRAC)
-        ld   h,(ix+PV_FRAC+1)
-        ld   e,(ix+PV_INCF)
-        ld   d,(ix+PV_INCF+1)
-        exx                     ; HL' = frac, DE' = incFrac
-        ld   c,(ix+PV_INCI)     ; AFTER the exx — exx swaps BC too
+        ; NO FRACTION. It used to load HL' = frac and DE' = incFrac and the pass
+        ; carried them for its whole life; there is no fraction any more, and
+        ; THE SHADOW SET IS NOT THE MIXER'S — the emit keeps the YM ports there.
+        ld   c,(ix+PV_INCI)     ; bytes a tick: 1, or 2^k for an octave shift
         ld   e,(ix+PV_PTR)
         ld   d,(ix+PV_PTR+1)
         ret
@@ -1589,10 +1479,6 @@ ms_pload:
 ms_pstore:
         ld   (ix+PV_PTR),e
         ld   (ix+PV_PTR+1),d
-        exx
-        ld   (ix+PV_FRAC),l
-        ld   (ix+PV_FRAC+1),h
-        exx
         ret
 
 ; mix_seg_live: one segment on the LIVE register file.

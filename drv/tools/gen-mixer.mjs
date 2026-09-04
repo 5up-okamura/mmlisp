@@ -67,7 +67,7 @@ export const MUTE_SHIFT = 8;   // PV_SHIFT value meaning "silent, keep advancing
 // those are the cycles the pad has to give back to the frame — an idle pass is
 // where nearly all of a light frame's slack lives.
 export const IDLE_SHIFT = 9;
-export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr"];
+export const VARIANTS = ["i16", "i8", "i8sat", "i16nr", "i8satnr", "i8satsh"];
 
 // ── The pacing model ───────────────────────────────────────────────────────
 // Every frame runs exactly PACE_PASSES voice passes of R ticks (silent voices
@@ -322,7 +322,7 @@ const COST = [
   [/^ld\s+a,\(de\)$/, 7], [/^ld\s+a,e$/, 4], [/^ld\s+e,a$/, 4],
   [/^ld\s+\(hl\),a$/, 7], [/^ld\s+\(hl\),\S+$/, 10],
   [/^sra\s+a$/, 8], [/^xor\s+\S+$/, 7],
-  [/^add\s+a,\(hl\)$/, 7], [/^adc\s+a,c$/, 4], [/^add\s+hl,de$/, 11],
+  [/^add\s+a,\(hl\)$/, 7], [/^adc\s+a,c$/, 4], [/^add\s+a,c$/, 4], [/^add\s+hl,de$/, 11],
   [/^inc\s+de$/, 6], [/^inc\s+\(hl\)$/, 11], [/^(inc|dec)\s+[hlde]$/, 4],
   [/^exx$/, 4],
   [/^jp\s+pe,/, 10],   // not taken: the common path, saturation is the exception
@@ -369,7 +369,13 @@ let masterOutOfLine = [];
 function body(variant, role, shift, deferred = []) {
   const o = [];
   const push = (s) => o.push("        " + s);
-  const nr = variant.endsWith("nr");        // pre-resampled control case
+  const nr = variant.endsWith("nr");        // baked at the note: one byte a tick
+  // Baked at an ANCHOR, played 2^k above it: the advance is a whole number of
+  // bytes and C carries it. 24 cycles against 6 for `inc de` and 43 for the
+  // 16.16 resampler — measured, tools/adv-cost. This is what an octave shift
+  // costs, and it is the reason the resampler could go: nothing needs a
+  // fraction any more.
+  const sh = variant.endsWith("sh");
   const sat = variant.startsWith("i8sat");  // 8-bit, saturate at every add
   const wide = variant.startsWith("i16");   // two planes, sum then saturate
   // Shift index 8 is MUTE: `:vol 0` / `:master 0` silences a voice but it must
@@ -445,7 +451,15 @@ function body(variant, role, shift, deferred = []) {
 
   if (idle) return o;      // nothing to advance, and that is the whole point
   if (nr) {
-    push("inc  de                ; pre-resampled: one sample per tick");
+    push("inc  de                ; baked at this note: one sample per tick");
+  } else if (sh) {
+    push("ld   a,e");
+    push("add  a,c               ; C = 2^k bytes a tick, the octave shift");
+    push("ld   e,a");
+    const k = lbl("np");
+    push(`jr   nc,${k}`);
+    push("inc  d");
+    o.push(`${k}:`);
   } else {
     push("exx");
     push("add  hl,de             ; frac += incFrac");
@@ -905,6 +919,8 @@ export function generateMixerCore(
   if (!VARIANTS.includes(variant)) throw new Error(`unknown variant ${variant}`);
   if (paced && variant !== "i8sat")
     throw new Error("paced feed is written for the shipped i8sat plane only");
+  // (the paced build then swaps its ADVANCE to i8satsh below — the plane is
+  // still i8sat, which is what this guard is about)
   if (paced && unroll !== PACE_PASSES)
     throw new Error(`paced feed needs unroll = PACE_PASSES (${PACE_PASSES})`);
   uid = 0;
@@ -975,11 +991,19 @@ PCM_TB      equ ${TIMER_B_TB}       ; the \$26 byte: Timer B overflows every
                         ; of each one. Generated, so the two cannot drift.
 ` : ""}`);
 
+  // TWO ADVANCE FORMS, AND NEITHER IS A RESAMPLER. `mix_*_s*` is the octave
+  // shift (C = 2^k bytes a tick) and `mix_*nr_s*` is one byte a tick; ms_bind
+  // picks between them once a pass on the voice's increment, exactly as it used
+  // to pick between the resampler and nr. Every sounding entry in a bank is
+  // baked now (live/src/export-mmb.js bakes looped material too), so the 16.16
+  // path had nothing left to play — and taking it out is what frees HL'/DE'
+  // for the emit, which was the whole point.
+  const advance = paced ? `${variant}sh` : variant;
   L.push("R_FIRST_BEG:");
-  L.push(loopSet("mix_first", variant, "first", unroll, paced, R));
+  L.push(loopSet("mix_first", advance, "first", unroll, paced, R));
   L.push("R_FIRST_END:");
   L.push("R_ADD_BEG:");
-  L.push(loopSet("mix_add", variant, "add", unroll, paced, R));
+  L.push(loopSet("mix_add", advance, "add", unroll, paced, R));
   L.push("R_ADD_END:");
   if (paced) {
     L.push("R_NR_BEG:");
@@ -1338,12 +1362,10 @@ ${paced ? `
 ; plane cursor is NOT built here — mix_seg_live rebuilds HL every segment,
 ; because the boundary math needs HL and the index is parked in G_IDX.
 ms_pload:
-        ld   l,(ix+PV_FRAC)
-        ld   h,(ix+PV_FRAC+1)
-        ld   e,(ix+PV_INCF)
-        ld   d,(ix+PV_INCF+1)
-        exx                     ; HL' = frac, DE' = incFrac
-        ld   c,(ix+PV_INCI)     ; AFTER the exx — exx swaps BC too
+        ; NO FRACTION. It used to load HL' = frac and DE' = incFrac and the pass
+        ; carried them for its whole life; there is no fraction any more, and
+        ; THE SHADOW SET IS NOT THE MIXER'S — the emit keeps the YM ports there.
+        ld   c,(ix+PV_INCI)     ; bytes a tick: 1, or 2^k for an octave shift
         ld   e,(ix+PV_PTR)
         ld   d,(ix+PV_PTR+1)
         ret
@@ -1352,10 +1374,6 @@ ms_pload:
 ms_pstore:
         ld   (ix+PV_PTR),e
         ld   (ix+PV_PTR+1),d
-        exx
-        ld   (ix+PV_FRAC),l
-        ld   (ix+PV_FRAC+1),h
-        exx
         ret
 
 ; mix_seg_live: one segment on the LIVE register file.
