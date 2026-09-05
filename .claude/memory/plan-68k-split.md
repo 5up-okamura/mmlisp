@@ -4116,6 +4116,86 @@ Still suspect in `frame-budget`: it reports "ISR past its own vblank 61%" while
 `music` reads 0x0100 in the same run. That is now UNDERSTOOD rather than
 suspect — the catch-up is exactly why both are true at once.
 
+## THE BLOCK MIXER: IT FIXES THE TROUGH, AND ONE BUG STOPS IT SHIPPING
+## (2026-09-05, work in progress — .claude/memory/wip-block-mixer.patch)
+
+THE STRUCTURE THAT WAS IN THE WAY. The mixer produced a whole frame of samples
+inside the vblank interrupt, finishing at ~60% of a vblank, while the DAC drains
+one sample at a time across the WHOLE frame. So the ring's fill sawtoothed a
+frame deep and its trough sat at zero — and by the H_DRY counter that trough is
+essentially all of the remaining loss (one lost sample per empty ask).
+
+THE CHANGE, in `wip-block-mixer.patch`:
+
+* the handler QUEUES the frame (`G_PEND`) instead of running it; the catch-up
+  tops the queue up instead of calling frame_step. The handler is now the
+  register spill, the bank fixup and one emit.
+* the main loop runs `frame_step` off that queue, and works the frame's mixing
+  debt (`G_OWED`) off in BLOCKS against the ring's own low-water mark
+  (`PCM_MIX_GO = PCM_RING_TARGET - PCM_MIX_BLOCK`), so production follows
+  consumption instead of arriving a frame at a time.
+* `pcm_mix_block` runs every voice pass over one block, then advances G_WRI /
+  G_WRP and publishes the block to G_FILL. Plan cursors are written back per
+  voice (`pp_plan_save`) because a block leaves a run PARTLY spent, where a
+  frame-long pass always spent it.
+* the forced catch-up (`pcm_mix_owed`, at the frame head and on a prime frame)
+  mixes the whole remainder as ONE block: a block costs a per-voice pass setup
+  and the reason to pay it is pacing, which a catch-up does not want.
+* MOVING THE MIXER OUT OF THE HANDLER IS WHAT MAKES IT SAFE. A block in the
+  main loop would otherwise be re-entered by a vblank, and the mixer holds a
+  register file, a pass counter and a plane. Nothing re-enters if the handler
+  does no work.
+
+WHAT IT ACHIEVES, measured on BlastEm at a ONE-FRAME lead (dac-log):
+
+                       HEAD (burst, lead 1.25)   block mixer (lead 1.00)
+    worst hole              46-100 periods            2-7 periods
+    max $2A interval        43,005 cycles             2,047 cycles
+    asks finding it EMPTY   1.4-6.9 a frame           0.00 a frame
+    delivered               97.5%                     97.1%
+    PCM behind the FM       +4.2 ms (uncancelled)     -0.8 ms
+
+The delivered share is a wash. What goes is THE AUDIBLE DEFECT: a hole of 80
+sample periods is 12 ms of held DAC, it happened every ~12 frames, and it is
+gone — worst 3 periods, 0.6 ms. And the lead comes back to exactly the one
+frame the sequencer cancels, so the quarter-frame offset is recovered too.
+
+WHY IT IS NOT COMMITTED. At some block counts it collapses, reproducibly:
+
+    MIX_BLOCKS   m2-pcmloop at 4,439 Hz, frames consumed / 300
+      1, 2, 6, 8   299            (delivered 99.5%)
+      4            172            (delivered 53.1%)
+
+frame-budget names it: **the engine spins at `cr_fm0` — the slot writer's BUSY
+poll — for 29,385 cycles at a time, 397 times in 300 frames, with no emit in
+any of them.** `cr_p0` polls BUSY before every FM write, and the DAC's own two
+data writes a sample each set BUSY for ~90 cycles. Inside the handler that was
+harmless: interrupts were off, so only the write loop's own paced emits could
+set it. In the main loop the emit preempts the poll, and when the ring has run
+dry the timer's flag stays set (the empty path writes $27's address and never
+its data), so the engine emits as fast as it can ask and the poll starves.
+
+THAT POLL IS THE NEXT THING TO FIX, and it is wrong on its own terms. XGM2's
+hardware table (docs/driver.md §5.1) says the wait is BETWEEN WRITES TO THE
+SAME RANGE — $30-$9E 39 cycles, $A0-$B6 22, $28 53 — and not a property of the
+chip being unavailable. emit_send already acts on that and polls nothing. The
+slot writer should space its writes by cycles too, and then nothing the DAC
+does can starve it. Modelling BUSY as zero (`--busy 0`) confirms the direction:
+frames consumed goes 172 -> 239. It does not fix it alone — delivered falls to
+23.3% in that run — so there is at least one more fault behind it, and it has
+not been found.
+
+DO NOT re-try these, all measured worse in this round:
+* publishing each segment of the LAST pass as it finishes, without moving the
+  mixer out of the handler (12.25 -> 13.18 empty asks a frame: the trough is
+  between frames, not inside the passes);
+* stretching PAD_FRACTION so the handler spans more of the frame (empty asks
+  7.24 -> 3.27, but the pads are blind dead time that delays the emits too, and
+  delivered fell 95.3% -> 91.9%);
+* mixing a REMAINDER shorter than a block in the idle loop — a block costs a
+  per-voice pass setup whatever its length, so three ticks cost ~1,500 cycles
+  and the loop does it again and again. Guarded in the patch already.
+
 ## THE COUNT WAS NEVER THE CLOCK, AND frame-budget IS THE WRONG INSTRUMENT
 ## FOR THE RING (2026-09-04, later still)
 

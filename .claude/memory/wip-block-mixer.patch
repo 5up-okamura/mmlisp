@@ -1,0 +1,378 @@
+diff --git a/drv/src/engine.z80 b/drv/src/engine.z80
+index 04fdc53..8cd39b9 100644
+--- a/drv/src/engine.z80
++++ b/drv/src/engine.z80
+@@ -227,6 +227,18 @@ G_TICKSF    equ $19ca           ; u8  ticks each pass runs this frame
+ G_WRP       equ $19cb           ; u8  ring page the chunk starts in
+ G_WRI       equ $19cc           ; u8  index within it
+ G_PAD       equ $19cd           ; u8  what an IDLE iteration holds to (§5.1.2)
++; TICKS THIS FRAME STILL OWES THE MIXER. The frame's chunk is no longer mixed
++; in one burst inside the interrupt — see pcm_mix_block — so this is what is
++; left of it, and the idle loop works it off a block at a time against the
++; ring's own level.
++G_OWED      equ $19ce           ; u8  ticks of this frame's chunk not yet mixed
++G_BLKN      equ $19d0           ; u8  ticks in the block being mixed
++; VBLANKS THE MAIN LOOP STILL OWES. The handler queues, the loop consumes.
++; Capped: a queue that grows is a main loop that is behind, and stacking frames
++; on top of it only makes the next one later. Dropping the surplus loses that
++; frame's music, which is what a missed vblank always cost.
++G_PEND      equ $19d1           ; u8  frames queued by the handler
++PEND_MAX    equ 3
+ 
+ 
+ ; ── Published header (driver.md §6.4) ──────────────────────────────────────
+@@ -348,58 +360,53 @@ int_handler:
+         ld   hl,YM_ADDR0
+         ld   de,YM_DATA0
+         exx
+-        call frame_step
+-        ; ── missed-vblank catch-up (§6.7) ───────────────────────────────────
+-        ; A frame that ran past its budget lost the next vblank OUTRIGHT (see
+-        ; above — the /INT pulse is a scanline, there is nothing to take late).
+-        ; But the 68k can see what the Z80 cannot: MMLisp_frame stamps the
+-        ; 68k's own vblank count into H_VBL. If the stamp is ahead of the
+-        ; vblanks this handler has answered, the difference is missed frames —
+-        ; consume them NOW, late, instead of losing them from the music. The
+-        ; DAC hiccups once; the tempo does not slip.
++        ; ── THE HANDLER DOES NOT RUN THE FRAME ANY MORE (§5.1.3) ────────────
++        ; It queues it. The frame's work — the slot's chip writes and, above
++        ; all, the mixing — is the main loop's now, because the mixing has to
++        ; be PACED against the ring's level and a handler cannot be paced: it
++        ; runs to completion, produces a frame of samples in one burst at ~60%
++        ; of a vblank, and leaves the ring's fill sawtoothing a frame deep with
++        ; its trough at zero. That trough is where every remaining lost sample
++        ; came from — measured, 12.25 asks a frame finding the ring EMPTY at
++        ; 6,658 Hz against 11.5 sample periods a frame lost.
+         ;
+-        ; A stamp cannot arrive EARLIER than its own vblank, so a positive
+-        ; difference always means a real miss — the test cannot fire
+-        ; spuriously. Anything outside the small window (boot, a host that
+-        ; stamps late, a host restart) resyncs silently and catches up
+-        ; nothing. Capped per interrupt so a wild stamp cannot stall the
+-        ; engine; a real backlog heals one frame per interrupt.
++        ; It also settles the reentrancy that blocked this: with the mixer in
++        ; the main loop, a vblank landing inside a block would have re-entered
++        ; it from the handler, and the mixer holds a register file, a pass
++        ; counter and a plane. Nothing re-enters if the handler does no work.
+         ld   hl,G_INTS
+-        inc  (hl)               ; this interrupt answered one vblank
++        inc  (hl)
++        call ih_queue           ; this vblank, for the main loop
++        ; …and any the Z80 lost outright. The 68k stamps its own vblank count
++        ; into H_VBL, so a stamp ahead of the interrupts answered is a real
++        ; miss; anything past the window is a host that restarted, and the
++        ; count re-syncs to it silently.
+         ld   b,CATCH_MAX
+ ih_catch:
++        ld   hl,G_INTS
+         ld   a,(H_VBL)
+         sub  (hl)
+         jr   z,ih_done          ; in step
+         cp   CATCH_WIN+1
+         jr   nc,ih_sync         ; not a plausible miss: adopt the stamp
+         inc  (hl)               ; one missed vblank, answered late
+-        push bc
+-        push hl
+-        ; A CAUGHT-UP FRAME DOES NOT MIX.
+-        ;
+-        ; Its audio is a frame late and there is nowhere to put it: the DAC is
+-        ; already playing the current frame's samples at Timer B's rate and the
+-        ; ring cannot run ahead. Mixing it anyway is what made the loss STEADY
+-        ; rather than transient — the catch-up ISR runs two frames' work inside
+-        ; one vblank, overruns it, loses the next interrupt, and catches up
+-        ; again. The machine reported exactly that shape: music 79%, 12 lost a
+-        ; second, starv 0 — the Z80 behind, the ring healthy, and staying there.
+-        ;
+-        ; So the slot is consumed and the music advances, which is the whole
+-        ; point of catching up; only the sound of that one frame is dropped.
+-        ld   a,1
+-        ld   (G_NOMIX),a
+-        call frame_step
+-        xor  a
+-        ld   (G_NOMIX),a
+-        pop  hl
+-        pop  bc
++        call ih_queue
+         djnz ih_catch
+         jr   ih_done
+ ih_sync:
+         ld   a,(H_VBL)
+-        ld   (hl),a
++        ld   (hl),a             ; HL is G_INTS
++        jr   ih_done
++; ih_queue: one more frame for the main loop, unless it is already behind.
++; Stacking frames on a loop that cannot keep up only makes the next one later,
++; and the surplus was always going to be lost music.
++ih_queue:
++        ld   hl,G_PEND
++        ld   a,(hl)
++        cp   PEND_MAX
++        ret  nc
++        inc  (hl)
++        ret
+ ih_done:
+         ; The epilogue's own sample. Everything from the mixer's last emit to the
+         ; next frame's first chip write is dead time for the DAC otherwise, and
+@@ -560,6 +567,13 @@ start:
+ ; because the interrupt can land between any two instructions here and it owns
+ ; G_RD for the length of a frame.
+ idle:
++        ; A QUEUED FRAME FIRST. frame_step consumes the slot and sets the
++        ; frame's mixing debt; the loop below works that debt off against the
++        ; ring's own level, so the two together are what used to be one burst
++        ; inside the handler.
++        ld   a,(G_PEND)
++        or   a
++        jr   nz,idle_frame
+         ld   a,(G_DACON)
+         or   a
+         jr   z,idle_halt        ; no PCM in this score: sleep as before
+@@ -580,6 +594,33 @@ idle:
+         ; same without the `di` (the interrupt landed inside it and the store
+         ; rewound the ring, which reads as a wrong sample once a frame).
+         call feed_one           ; sends one IF Timer B has come due
++        ; …AND THIS IS WHERE THE FRAME IS MIXED NOW (§5.1.3). The debt is worked
++        ; off against the RING'S OWN LEVEL: a block is mixed only while the fill
++        ; is under its target, so production follows consumption instead of
++        ; arriving a frame at a time, and the fill's trough is one block deep
++        ; instead of one frame. That is what the lead's margin was paying for.
++        ; A WHOLE BLOCK OR NOTHING. A block costs one per-voice pass setup
++        ; whatever its length, so mixing a REMAINDER of three ticks out here
++        ; pays ~1,500 cycles for three samples — and with the fill under the
++        ; mark the loop does it again, and again. Measured as the engine
++        ; consuming 60-80% of its frames, and once as 0% with the slot ring
++        ; starving 30 times a second. The remainder goes with the next frame's
++        ; head, where pcm_mix_owed takes it in one piece.
++        ld   a,(G_OWED)
++        cp   PCM_MIX_BLOCK
++        jr   c,idle
++        ld   hl,(G_FILL)
++        ld   de,PCM_MIX_GO
++        or   a
++        sbc  hl,de
++        jr   nc,idle            ; still above the low-water mark: let the DAC
++                                ; drain, and mix when it has taken a block
++        call pcm_mix_block
++        jr   idle
++idle_frame:
++        ld   hl,G_PEND
++        dec  (hl)
++        call frame_step
+         jr   idle
+ idle_halt:
+         halt
+@@ -596,6 +637,12 @@ frame_step:
+         ; with it too. Before consume_slot, because consume_slot's own head is
+         ; part of the stretch this exists to cover.
+         call pcm_edge
++        ; WHATEVER THE LAST FRAME STILL OWES, finished now. consume_slot is
++        ; about to apply the next frame's PCM commands — a start, a stop, a new
++        ; volume — and the ticks still owed belong to the frame BEFORE them.
++        ; Normally there is nothing here: the idle loop paces the debt against
++        ; the ring and it runs out about when the frame does.
++        call pcm_mix_owed
+         call consume_slot       ; 1-2: sub-slot 0's writes, and the PCM commands
+         call process_pcm        ; 3:   mix and feed the DAC, sub-slots 1..K-1
+         call consume_rest       ;      anything the passes could not reach
+@@ -1269,6 +1316,61 @@ pp_setup:
+         ; than estimated. Order does not change the mix: a silent pass adds
+         ; nothing, and the sounding voices keep their own order, which is what
+         ; the saturating add depends on.
++        ; THE FRAME'S MIXING IS NOT DONE HERE ANY MORE (§5.1.3).
++        ;
++        ; It used to be: three voice passes over the whole chunk, inside the
++        ; interrupt, finishing at ~60% of a vblank. The DAC drains one sample at
++        ; a time across the WHOLE frame, so the ring's fill sawtoothed a frame
++        ; deep and its trough sat at zero — measured on the emulator at 6,658 Hz
++        ; as 12.25 asks a frame finding the ring EMPTY and 11.5 sample periods a
++        ; frame lost, one lost sample per empty ask. The lead had to be carried
++        ; at 1.25 frames to halve it, and that quarter frame is 4.2 ms of PCM
++        ; behind the FM that nothing cancels.
++        ;
++        ; Two cheaper shapes were tried and MEASURED WORSE, so do not re-try
++        ; them: publishing each segment of the last pass as it finished (the
++        ; trough is between frames, not inside the passes — 12.25 -> 13.18), and
++        ; stretching the pads so the interrupt spans more of the frame (the
++        ; emptiness halves, 7.24 -> 3.27, but the pads are blind dead time that
++        ; delays the emits too, and the delivered rate fell 95.3% -> 91.9%).
++        ;
++        ; So the chunk becomes a DEBT, and the idle loop works it off against
++        ; the ring's own level: production follows consumption, and the trough
++        ; is one block deep instead of one frame.
++        ld   a,(G_TICKSF)
++        ld   (G_OWED),a
++        ; A PRIME frame is the exception — the ring is empty and there is
++        ; nothing for the level to throttle against, so it builds the whole lead
++        ; now, as it always did.
++        ld   hl,(G_FILL)
++        ld   a,h
++        or   l
++        ret  nz
++        jp   pcm_mix_owed
++
++; ---------------------------------------------------------------------------
++; pcm_mix_block: mix up to PCM_MIX_BLOCK ticks of the frame's remaining debt,
++; through every voice pass, and hand the result to the feed.
++;
++; This is the old process_pcm tail with the chunk replaced by a block and the
++; ring cursor advanced per block instead of per frame. G_TICKSF is the BLOCK's
++; tick count now, which is what mix_voice_frame has always read.
++; ---------------------------------------------------------------------------
++pcm_mix_block:
++        ld   a,(G_OWED)
++        or   a
++        ret  z
++        cp   PCM_MIX_BLOCK
++        jr   c,pmb_n
++        ld   a,PCM_MIX_BLOCK
++pmb_n:
++        ld   (G_TICKSF),a
++        ld   (G_BLKN),a         ; …kept, because the passes count G_TICKS down
++pmb_go:
++        xor  a
++        ld   (G_PASS),a         ; the pass boundaries are the sub-ticks
++        ld   (G_STORE),a        ; the first pass of a BLOCK stores, and the
++                                ; rest add into what it laid down
+         ld   c,0
+ pp_act:
+         call feed_one           ; …and once per voice through the walk: C is the
+@@ -1298,6 +1400,7 @@ pp_act_run:
+         ld   l,a
+         ld   (G_PLANC),hl
+         call mix_voice_frame
++        call pp_plan_save       ; the run is PARTLY spent: a block is not a frame
+         call pp_pass_done
+         pop  bc
+ pp_act_next:
+@@ -1334,20 +1437,88 @@ pp_idle_next:
+         ; the whole of the ring's accounting: G_WR = G_RD + G_FILL stays true
+         ; under BOTH, which is why feeding after the interrupt has returned
+         ; cannot invalidate the write cursor derived below.
+-        ld   a,(G_TICKSF)
++        ld   a,(G_BLKN)
+         ld   e,a
+         ld   d,0
+         ld   hl,(G_FILL)
+         add  hl,de
+         ld   (G_FILL),hl
++        ; …and the BLOCK's own bookkeeping: the debt shrinks by what was mixed
++        ; and the next block starts where this one ended. G_WRI is a byte index
++        ; into a 256-byte page and G_WRP names the page, so the carry out of the
++        ; index is the page flip — the same two-page ring the feed cursor walks
++        ; with `inc iyl`.
++        ld   a,(G_OWED)
++        sub  e
++        ld   (G_OWED),a
++        ld   a,(G_WRI)
++        add  a,e
++        ld   (G_WRI),a
++        jr   nc,pmb_done
++        ld   a,(G_WRP)
++        xor  RING_PAGE
++        ld   (G_WRP),a
++pmb_done:
+         call feed_one
+-        ; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the
+-        ; frame here. What follows this — pp_wrst, consume_rest, slot_release,
+-        ; the ISR's own epilogue, the halt, the next interrupt's prologue and
+-        ; frame_step's head — is ~760 cycles with no sample in it, and at
+-        ; PCM_GROUP = 1 the frame has only ~280 to spare over the timer's floor.
+-        ; Those cycles are why the frame reads 101% of a vblank; the samples
+-        ; that cover them are these.
++        ret                     ; ONE BLOCK. pcm_park is the FRAME's business and
++                                ; pcm_edge already runs it at both ends of the
++                                ; interrupt; a block must not re-park the cursor
++                                ; under a feed that is still walking it.
++
++; ---------------------------------------------------------------------------
++; pcm_mix_owed: work the whole debt off now, without waiting on the ring.
++;
++; Two callers, and both are cases where the level cannot be the throttle: a
++; PRIME frame (the ring is empty, so there is nothing to throttle against and
++; the lead has to be built) and the frame head (the next slot's PCM commands
++; are about to land, so whatever the last frame still owes has to be finished
++; against the OLD commands first).
++; ---------------------------------------------------------------------------
++pcm_mix_owed:
++        ld   a,(G_OWED)
++        or   a
++        ret  z
++        ; IN ONE GO, not in blocks. A block costs one per-voice pass setup —
++        ; ms_bind, latch_bank, plan_next, ms_pload — and the reason to pay it is
++        ; PACING, which is exactly what these two callers do not want. Cutting a
++        ; forced catch-up into blocks pays the setup four times for nothing.
++        ld   (G_BLKN),a
++        ld   (G_TICKSF),a
++        jp   pmb_go
++
++; ---------------------------------------------------------------------------
++; pp_plan_save: put this voice's plan cursor back where the next BLOCK will
++; find it. A pass used to be a whole frame, so the run was spent when it ended
++; and the bind at pp_act_run could start it over from G_PLAN every time. A
++; block leaves it PARTLY spent, and re-binding then replays the same segment
++; breaks against the rest of the chunk — the voice's own breaks, applied at the
++; wrong ticks, which is a wrong sample rather than a missing one.
++;
++; C = the voice index; A, HL and DE are dead at the call site.
++; ---------------------------------------------------------------------------
++pp_plan_save:
++        ld   a,c
++        add  a,a
++        add  a,c                ; ×3: {entries, cursor}
++        ld   hl,G_PLAN
++        add  a,l
++        ld   l,a
++        ld   a,(G_PLANL)
++        ld   (hl),a
++        inc  hl
++        ld   de,(G_PLANC)
++        ld   (hl),e
++        inc  hl
++        ld   (hl),d
++        ret
++
++; …and the flush leaves PCM_EMIT_RESERVE behind rather than draining the
++; frame here. What follows this — pp_wrst, consume_rest, slot_release,
++; the ISR's own epilogue, the halt, the next interrupt's prologue and
++; frame_step's head — is ~760 cycles with no sample in it, and at
++; PCM_GROUP = 1 the frame has only ~280 to spare over the timer's floor.
++; Those cycles are why the frame reads 101% of a vblank; the samples
++; that cover them are these.
+ pcm_park:
+         ld   (G_RD),iy          ; a MIRROR of IY, for the write cursor below
+         ; …and put the write cursor back where it belongs: RIGHT AFTER the
+diff --git a/drv/tools/gen-mixer.mjs b/drv/tools/gen-mixer.mjs
+index 9dad8be..03665b0 100644
+--- a/drv/tools/gen-mixer.mjs
++++ b/drv/tools/gen-mixer.mjs
+@@ -1709,6 +1709,8 @@ export const RATE_PATH =
+ //
+ // So the threshold sits between 672 and 538 — 600, which is the only number
+ // here that was chosen rather than measured.
++export const MIX_BLOCKS = Number(process.env.MIX_BLOCKS ?? 4);
++const MIX_BLOCK_N = Math.max(8, Math.ceil(PCM_RING_TARGET / MIX_BLOCKS));
+ export const ASK_DENSE_CY = 600;
+ // A frame is 896040 master clocks / 15 = 59736 Z80 cycles, and it carries
+ // PCM_SAMPLES_PER_FRAME of them — the same arithmetic frame-budget's SAMPLE_CY
+@@ -1767,6 +1769,21 @@ PCM_TA_LO   equ 0`}
+ ; PCM track a frame early. Anything else is an offset between the PCM and the
+ ; FM that nothing takes back out (live/src/mmb.js, PCM_RING_TARGET).
+ PCM_RING_TARGET equ ${PCM_RING_TARGET}
++
++; TICKS THE MIXER DOES IN ONE GO before it looks at the ring again (§5.1.3).
++; The frame's chunk is worked off in blocks by the idle loop, so this is the
++; grain of the ring's fill: its trough is one block deep, and one block of
++; per-pass setup (ms_bind, latch_bank, plan_next, ms_pload — about 500 cycles a
++; voice) is what a block costs over doing the frame in one piece. A quarter of a
++; frame is the balance: four blocks a frame is ~1,500 extra cycles, 2.5% of a
++; vblank, against a trough that was a whole frame deep.
++PCM_MIX_BLOCK equ ${MIX_BLOCK_N}
++
++; …and the LOW-WATER MARK it waits for. The idle loop mixes a block only once
++; the DAC has taken one, so the fill oscillates in a band one block wide just
++; under the target instead of sawtoothing a whole frame. Production then tracks
++; consumption by construction, which is the thing the lead's margin was buying.
++PCM_MIX_GO  equ ${Math.max(1, PCM_RING_TARGET - MIX_BLOCK_N)}
+ `;
+ }
+ 
