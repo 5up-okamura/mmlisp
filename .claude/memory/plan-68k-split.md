@@ -1,5 +1,15 @@
 # Architecture pivot: 68k sequencer + Z80 PCM engine (decided 2026-08-02)
 
+> **2026-09-06 — EVERY CYCLE FIGURE IN THIS FILE IS UNDER-CHARGED.**
+> `tools/z80cpu.mjs` charged 4 T-states for `ld r,(hl)`, `ld (hl),r` and
+> `alu a,(hl)`, which are 7, and 7 for `ld (hl),n`, which is 10. The mixer's
+> hot loop is `ld a,(hl)` + `add a,(hl)`, so the per-voice/per-tick numbers
+> quoted below (240, 449, 384, 305, ~110, and every rate ceiling derived from
+> them) are low by roughly 3 cycles per memory access on the path. Fixed in
+> [[plan-dac-stream]] with a selftest; the figures here have NOT been
+> re-measured. Re-run `npm run mixer` before trusting any of them — and note
+> that bench is currently broken on an unrelated missing symbol.
+
 **The design now lives in `docs/driver.md`** (rewritten 2026-08-02: §1.1 the
 measurement, §4 the 68k frame, §5 the Z80 engine, §6 the ring/slot interface,
 §11 the port milestones, §12 the gates). `drv/README.md` carries a banner

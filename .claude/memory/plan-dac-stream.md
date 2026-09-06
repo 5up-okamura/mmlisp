@@ -1,0 +1,105 @@
+# DAC engine redesign — P0 and P1 (2026-09-06)
+
+The instruction is `docs/dac-engine-implementation.md`. The prototype is
+`drv/experimental/dac-stream/` and its README carries the numbers. This file is
+the decision record and the running state.
+
+**Read this before continuing: P2 has not started, and three bugs found on the
+way through change numbers that older notes in [[plan-68k-split]] quote.**
+
+## P0 — the baseline, and what it says
+
+`cd drv && npm run baseline` (`tools/baseline.mjs`) writes
+`drv/out/baseline/<commit>.{json,md}`: identity, the configuration actually in
+effect, five mirror stamps, artifact hashes, every gate run INDEPENDENTLY, and
+the existing DAC instruments on four fixed cases with VALUE / TIME / BUS kept
+apart. A failing gate is re-run once and both verdicts recorded, so a flake is
+distinguishable from a failure.
+
+What it found at `b702ca7`, and none of it was written down anywhere:
+
+* **`npm run engine` fails 8 of 12 scenarios and has since `a48bacc`** — the
+  "probe: carry an emit reserve across the ISR edges (gates not yet …)" commit,
+  ~40 commits back. Bisected. Every PCM scenario reports 3-4 DAC writes where
+  it wants 64. `verify:all` chains with `&&` and stops there, so `dac`, `ring`,
+  `c-gate`, `sgdk:lint` and `ab` had not been run in that window at all.
+* **`npm run mixer` crashes** — `undefined symbol "feed_one"`; the bench image
+  references a routine that now lives in `engine.z80`.
+* **`npm run sgdk:lint` fails** to compile the host files (this machine).
+* `slot-gate` on `m3-pcm-softmix` fails 3 problems; `dac`, `ring`, `ab`,
+  `slots:ab-core`, `selftest`, `mirrors` and `c-gate` (41/41) pass.
+* The tools default to `TIMER_B_K=16` while the committed mirrors are at 1, so
+  a bare `node tools/<x>.mjs` builds a different engine than the tree ships.
+  Always `PCM_SPG=1 TIMER_B_K=1`.
+
+## P1 — the isolated output engine PASSES, in the JS model
+
+`npm run dac-stream`. At **9,987.57 Hz**, 10 s a case (60 s on the
+representative one): mean rate **+0.0000%**, every interval 358 or 359 cycles,
+worst phase error **0.8 cycles (0.22% of T)**, drift **−0.6 cycles over 60 s**,
+**zero** holes, and the clock adds **−0.1 dB** to a 39 Hz tone's worst non-tone
+bin — i.e. nothing above the measurement floor. 567 B of code. It holds with
+Timer B observed and reset every group, with CSM programmed and writing, and
+with five FM writes crowded into one slot (69.1% of that interval, ceiling 80%).
+3,329 Hz and 13,317 Hz come out at +0.0000% from the same generator.
+
+**Emulator only.** No BlastEm (`setup.sh` not run here) and no hardware; this
+environment has no m68k toolchain. §6.4's second column is empty.
+
+Three decisions worth not re-litigating:
+
+1. **The slot boundary IS the `$2A` write.** Every interval starts with
+   `ld (de),a`, so the interval equals the slot length by construction and work
+   can only eat the pad. "Does CSM change the PCM period" becomes a property of
+   the generated code rather than a measurement to hope about.
+2. **No interrupt at all.** `di` from boot, the vblank is never taken. The
+   clock is the instruction stream — 5 slots = 1,792 cycles EXACTLY at
+   9,987.6 Hz, so nothing accumulates — and Timer B is the phase reference,
+   read once a group with the harness recording every read's cycle. An ISR is
+   ~90 cycles landing anywhere in a 358-cycle slot: a quarter of the period
+   against a 5% tolerance, and reserving room for it in every slot is 25% of
+   the budget for an event that happens once per 167 samples.
+3. **The pad is solved, not tuned.** `schedule.mjs` finds an instruction
+   sequence costing exactly what the slot has left and throws if it cannot.
+   No `PAD_FRACTION`. 1, 2, 3, 5 and 9 cycles are the only unreachable
+   residuals (no 5- or 9-cycle instruction destroys nothing) — a slot landing
+   on one has to move an op, never round.
+
+## THREE BUGS, ALL OUTSIDE THE PROTOTYPE, ALL INVISIBLE TO EVERY GATE
+
+**1. `tools/z80asm.mjs`: `$` was the address of the NEXT instruction.** So
+`djnz $` assembled as a jump past itself — a 26-iteration pad loop that ran
+once, a sample clock 4.5x too fast, no error anywhere. Fixed to the instruction
+start (sjasmplus, which that file's header promises); `db`/`dw` keep the
+item-by-item meaning `selftest` pins. New selftest case.
+
+**2. `tools/z80cpu.mjs`: every `(HL)` operand was charged 3 cycles too few.**
+`ld r,(hl)`, `ld (hl),r`, `alu a,(hl)` are 7 T-states, not 4; `ld (hl),n` is
+10, not 7. **The PCM mixer's hot loop is `ld a,(hl)` and `add a,(hl)`.** So
+every cycle budget in this repository was computed against an under-charged
+model: `mixer-bench`, `frame-budget`, `PAD_TARGET`, `EMIT_CYCLES`, and the
+per-voice/per-tick figures quoted throughout [[plan-68k-split]] (240, 449, 384,
+305, 110 cyc…). Fixed, with a selftest pinning the documented counts. Across
+the fix, modelled DAC delivery moves on `m3-pcm-softmix` 98.3% → 99.1% and on
+`m2-pcm` 63.2% → 75.9%, and the `$2A` interval p50 moves 1062 → 1068. No gate
+changed verdict (c-gate stayed 41/41).
+
+**3. A pad filler destroyed the sample in flight.** `ld a,0` is the solver's
+only odd-cost filler and the sample fetch sat before the pad. At 9,987.6 Hz the
+pads happened to be a bare `djnz` and nothing showed; at 3,329 Hz the tail took
+an `ld a,0` and every other sample went out as zero. The fetch now runs after
+the pad. **It was caught only because a second profile was in the case list** —
+one clock would have passed clean.
+
+## What is next, in order
+
+1. **P2**: the block mixer. `config.mjs` already closes the 5-slot group
+   against a 16-sample block at 80 slots (`cycleSlots`), and `blocks`/`voices`
+   are carried but unused. Order per §5/P2: 1ch → 2ch → independent volume →
+   master → loop → ROM bank boundary, each compared value and time.
+2. Get BlastEm built somewhere and run the P1 image there. Until then every P1
+   number is "the placement arithmetic is right", not "the hardware does this".
+3. Decide what to do about the four red gates P0 recorded. They are not this
+   work's doing and they are not this work's to fix, but P4 replaces the paths
+   three of them cover, and §5/P4 forbids finishing with unresolved failures in
+   the range being replaced.

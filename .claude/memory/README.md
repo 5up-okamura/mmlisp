@@ -65,6 +65,16 @@ Index:
   DAC's 32% sample deficit is FIXED — the pacing pad was 41% of the interrupt,
   which pushed it past its vblank and made the mixer run every other frame.
   Next: a hardware round, and `drv-player.js` on the ring-fill model.
+- [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
+  (`docs/dac-engine-implementation.md`), P0 and P1 DONE 2026-09-06.** The
+  baseline tool and what it found (`npm run engine` has been red for ~40
+  commits and `verify:all`'s `&&` was hiding four gates behind it), the
+  output-centred prototype in `drv/experimental/dac-stream/` (9,987.57 Hz at
+  +0.0000%, zero holes, in the JS model only), the three structural decisions —
+  the slot boundary is the `$2A` write, there is no interrupt, the pad is
+  solved — and **three bugs it found in the shared toolchain, one of which
+  under-charged every cycle budget in the repository by 3 cycles per `(HL)`
+  access.** Read before continuing to P2.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic
