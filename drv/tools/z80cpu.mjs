@@ -376,12 +376,20 @@ export class Z80Cpu {
     if ((op & 0xcf) === 0x0b) { const p = (op >> 4) & 3; this.setRP(p, (this.getRP(p) - 1) & 0xffff); return 6; }
     if ((op & 0xc7) === 0x04) { const r = (op >> 3) & 7; this.setR(r, this.inc8(this.getR(r))); return r === 6 ? 11 : 4; }
     if ((op & 0xc7) === 0x05) { const r = (op >> 3) & 7; this.setR(r, this.dec8(this.getR(r))); return r === 6 ? 11 : 4; }
-    if ((op & 0xc7) === 0x06) { this.setR((op >> 3) & 7, this.fetch()); return 7; }
+    // ANY (HL) OPERAND COSTS THE MEMORY CYCLE. `ld r,(hl)`, `ld (hl),r` and
+    // `alu a,(hl)` are 7 T-states, not 4, and `ld (hl),n` is 10, not 7 — the
+    // register code 6 is a memory access, not a register. This was 4/7 here for
+    // the life of the tool, which under-reported EVERY loop that touches memory
+    // through HL by 3 cycles apiece: the PCM mixer's `ld a,(hl)` and
+    // `add a,(hl)` are exactly that, and so is every pad calibrated against
+    // them. Documented timings, Zilog Z80 CPU User Manual.
+    if ((op & 0xc7) === 0x06) { const r = (op >> 3) & 7; this.setR(r, this.fetch()); return r === 6 ? 10 : 7; }
     if (op >= 0x40 && op <= 0x7f) { // ld r,r' (0x76 handled above)
-      this.setR((op >> 3) & 7, this.getR(op & 7));
-      return 4;
+      const d = (op >> 3) & 7, s = op & 7;
+      this.setR(d, this.getR(s));
+      return d === 6 || s === 6 ? 7 : 4;
     }
-    if (op >= 0x80 && op <= 0xbf) { this.aluOp((op >> 3) & 7, this.getR(op & 7)); return 4; }
+    if (op >= 0x80 && op <= 0xbf) { const s = op & 7; this.aluOp((op >> 3) & 7, this.getR(s)); return s === 6 ? 7 : 4; }
     if ((op & 0xc7) === 0xc6) { this.aluOp((op >> 3) & 7, this.fetch()); return 7; }
     if ((op & 0xc7) === 0xc2) { const addr = this.fetch16();
       if (this.cond((op >> 3) & 7)) this.pc = addr; return 10; }

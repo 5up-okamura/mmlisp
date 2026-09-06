@@ -134,6 +134,33 @@ check("$ is the current instruction", [...asm(`
   0xc3, 0x0a, 0x00,   // at $000A, its own address
 ]);
 
+// DOCUMENTED CYCLE COUNTS, for the forms a cycle budget is actually built on.
+// Every (HL) operand pays a memory cycle: 4 becomes 7 and `ld (hl),n` is 10.
+// The emulator charged 4 and 7 here until 2026-09-06, which under-reported the
+// PCM mixer's hot loop — `ld a,(hl)`, `add a,(hl)` — by 3 cycles an iteration,
+// and every pad ever calibrated against it inherited the error.
+{
+  const bytes = asm(`
+    org 0
+    ld a,b
+    ld a,(hl)
+    ld (hl),a
+    ld (hl),9
+    add a,b
+    add a,(hl)
+    inc (hl)
+    ld a,(de)
+    ld (nn_),a
+nn_ equ $1800
+`);
+  const mem = new Uint8Array(0x10000);
+  mem.set(bytes, 0);
+  const cpu = new Z80Cpu({ read: (a) => mem[a], write: (a, v) => { mem[a] = v; } });
+  const got = [];
+  for (let i = 0; i < 9; i++) got.push(cpu.step());
+  check("(hl) operands cost their memory cycle", got, [4, 7, 7, 10, 4, 7, 11, 7, 13]);
+}
+
 // ── 2. behavioral runs ─────────────────────────────────────────────────────
 function run(src, { maxSteps = 200000, ram = 0x10000 } = {}) {
   const bytes = asm(src);
