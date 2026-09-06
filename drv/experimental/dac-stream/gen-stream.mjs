@@ -29,6 +29,7 @@
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
 import { stampLine, YM } from "./config.mjs";
+import { buildLut, buildClamp, CLAMP_SIZE, LEVELS, SILENCE } from "./lut.mjs";
 import { op, cost, laySlot, placementTable } from "./schedule.mjs";
 
 const hex = (n) => `$${n.toString(16)}`;
@@ -74,19 +75,44 @@ const readStatus = () => [
 function slotWork(cfg, slotIndex) {
   const work = [];
   const g = slotIndex % cfg.groupSlots;
-  // Timer B: observed once a group, and its flag reset unconditionally. There
-  // is no branch on it — a conditional would make the slot's length depend on
-  // the chip, which is exactly the coupling §3.2 says not to build.
-  if (cfg.observeTimerB && g === 0) {
+  // Which sample of a BUILT block this slot builds. The edge belongs to the
+  // built stream, not to the slot index, so it moves with the lead.
+  const b = (slotIndex + cfg.lead) % cfg.blockSamples;
+  // Timer B: observed, and its flag reset, on a fixed cadence. There is no
+  // branch on the result — a conditional would make the slot's length depend
+  // on the chip, which is exactly the coupling §3.2 says not to build.
+  //
+  // With a mixer in the slot the two halves are SPLIT ACROSS TWO SLOTS and run
+  // once a block instead of once a group: reset in one, read in another, a
+  // fixed distance apart. That is a better phase measurement than reading a
+  // flag that was reset an instruction earlier — what it now reports is
+  // whether an overflow fell inside a known window — and it keeps the worst
+  // slot inside the §4 ceiling instead of 8 points past it.
+  if (cfg.observeTimerB && !cfg.voices && g === 0) {
     work.push(...readStatus());
     work.push(...ymWrite(YM.R_TIMER_CTL, "R27_RESET", "timer flag reset"));
   }
-  // CSM: one note's two frequency writes a group. CSM keys CH3 off Timer A by
-  // itself; what a driver actually spends cycles on is the register traffic
-  // around it, so that is what is placed here.
-  if (cfg.csm && g === 2) {
+  if (cfg.observeTimerB && cfg.voices) {
+    if (b === 4) work.push(...ymWrite(YM.R_TIMER_CTL, "R27_RESET", "timer flag reset"));
+    if (b === 12) work.push(...readStatus());
+  }
+  // CSM: CH3 keys itself off Timer A; what a driver actually spends cycles on
+  // is the register traffic around it, so that is what is placed here.
+  //
+  // ONE WRITE PER SLOT once there is a mixer, on two separate slots a block
+  // apart. Two writes in one slot is 112 cycles on top of a 207-cycle mix and
+  // the slot overruns — which the generator refuses to emit rather than
+  // quietly deliver late. §3.5 asks for exactly this: an FM transaction split
+  // across intervals, each piece re-latching `$2A` behind it. The chip sees
+  // the pair 358 cycles apart, and since the frequency latches on the LSB
+  // write ($A8, second), that is a coherent write either way.
+  if (cfg.csm && !cfg.voices && g === 2) {
     work.push(...ymWrite(0xac, "(G_CSMHI)", "CSM ch3 op frequency hi"));
     work.push(...ymWrite(0xa8, "(G_CSMLO)", "CSM ch3 op frequency lo"));
+  }
+  if (cfg.csm && cfg.voices) {
+    if (b === 6) work.push(...ymWrite(0xac, "(G_CSMHI)", "CSM ch3 op frequency hi"));
+    if (b === 8) work.push(...ymWrite(0xa8, "(G_CSMLO)", "CSM ch3 op frequency lo"));
   }
   // A burst of FM register writes in ONE slot — §6.3's "FM音色変更が集中する
   // 時刻". This is the case that decides whether a voice change has to be
@@ -96,8 +122,101 @@ function slotWork(cfg, slotIndex) {
       work.push(...ymWrite(0x30 + i, `${hex(0x71 + i)}`, `FM burst ${i}`));
   }
   if (work.some((o) => o.writes?.some((w) => w.kind === "addr"))) work.push(...relatchDac());
+  if (cfg.voices) {
+    // The mix runs in EVERY slot — one sample built for every sample played.
+    work.push(...callMix(cfg));
+    // The block edge rides the LAST slot of a block, so what it writes takes
+    // effect on the next one and no block is ever built at two volumes.
+    if (b === cfg.blockSamples - 1) work.push(...blockEdge(cfg));
+  }
   return work;
 }
+
+// ── P2: the block mixer ────────────────────────────────────────────────────
+//
+// EVERY SLOT'S WORK IS CONSTANT TIME, and that is a hard constraint, not a
+// style. A cycle-placed schedule has no clock to wait on: if a slot's work can
+// finish early it finishes early, and the next DAC write moves. So the mixer
+// carries no data-dependent branch — the volume is a table lookup, not a loop;
+// the ring's cursors are `inc c`/`inc l` inside one page, so no wrap is ever
+// tested; and where a branch becomes unavoidable (the saturating add of a
+// second voice) both arms have to be padded to the same length before it can
+// go in. That is the price of the structure and it is worth stating up front.
+//
+// PRODUCTION IS LOCKED TO CONSUMPTION. Slot i plays sample i and builds sample
+// i+16, one of each, for ever. So the ring cannot drain and cannot overrun,
+// there is no fill counter, no low-water mark and no regulator — the property
+// the shipped engine spent four rounds trying to obtain by measurement is here
+// a consequence of the schedule. What the 16-sample lead buys is the block:
+// a volume change lands on a block boundary and is whole (§3.4), and a note
+// onset can be quantised to one (§3.7).
+const mixRoutine = (cfg) => (cfg.voices >= 2 ? [
+  // Two voices. Voice 0's contribution is parked in the ring slot the sample
+  // is being built in — the play cursor is LEAD samples behind, so nothing can
+  // ever read it half-built, which is §3.3's ownership rule made structural
+  // rather than counted.
+  op("        exx", 4, { what: "to the mixer's register set" }),
+  op("        ld   a,(de)", 7, { what: "voice 0's byte, through the 68k window" }),
+  op("        inc  e", 4, { what: "…E alone: the source page wraps free" }),
+  op("        ld   l,a", 4),
+  op("mix_v0: ld   h,0", 7, { what: "voice 0's level page — SELF-MODIFIED at the block edge" }),
+  op("        ld   a,(hl)", 7, { what: "x vel0" }),
+  op("        ld   (bc),a", 7, { what: "parked in the slot being built" }),
+  op("        ld   a,(ix+0)", 19, { what: "voice 1's byte — IX is the price of a second pointer" }),
+  op("        inc  ixl", 8),
+  op("        ld   l,a", 4),
+  op("mix_v1: ld   h,0", 7, { what: "voice 1's level page — likewise" }),
+  op("        ld   a,(hl)", 7, { what: "x vel1" }),
+  op("        ld   h,b", 4, { what: "HL = the slot being built" }),
+  op("        ld   l,c", 4),
+  op("        add  a,(hl)", 7, { what: "9-bit sum in (carry, A) — both operands biased" }),
+  op("        ld   l,a", 4),
+  op("        ld   a,0", 7, { what: "…`ld` leaves the carry alone, which is the whole trick" }),
+  op("        adc  a,CLAMP>>8", 7, { what: "the carry picks the table's second page" }),
+  op("        ld   h,a", 4),
+  op("        ld   a,(hl)", 7, { what: "saturated, branch-free, constant time" }),
+  op("        ld   l,a", 4),
+  op("mix_mp: ld   h,0", 7, { what: "the master's page" }),
+  op("        ld   a,(hl)", 7, { what: "x master, in that order, so the rounding is the reference's" }),
+  op("        ld   (bc),a", 7, { what: "the finished sample" }),
+  op("        inc  c", 4),
+  op("        exx", 4),
+  op("        ret", 10),
+] : [
+  op("        exx", 4, { what: "to the mixer's register set" }),
+  op("        ld   a,(de)", 7, { what: "source byte, through the 68k window" }),
+  op("        inc  e", 4, { what: "…one byte a sample; E alone, so the page wraps free" }),
+  op("        ld   l,a", 4),
+  op("mix_v0: ld   h,0", 7, { what: "the voice's level page — SELF-MODIFIED at the block edge" }),
+  op("        ld   a,(hl)", 7, { what: "x vel" }),
+  op("        ld   l,a", 4),
+  op("mix_mp: ld   h,0", 7, { what: "the master's page — likewise" }),
+  op("        ld   a,(hl)", 7, { what: "x master, in that order, so the rounding is the reference's" }),
+  op("        ld   (bc),a", 7, { what: "into the ring, LEAD samples ahead of the play cursor" }),
+  op("        inc  c", 4),
+  op("        exx", 4),
+  op("        ret", 10),
+]);
+
+// THE CALL IS COSTED WITH THE ROUTINE INSIDE IT. A slot's pad is what the slot
+// has left, and what it has left includes everything the call runs — 17 for the
+// call plus the routine's own cycles, `ret` included. Costing the three bytes
+// and not the body is how a schedule ends up ~180 cycles a sample optimistic
+// and still looks like arithmetic.
+const callMix = (cfg) => [
+  op("call mix_one", 17 + cost(mixRoutine(cfg)), { what: "the mix, one sample (call + routine)" }),
+];
+
+const blockEdge = (cfg) => [
+  op("ld a,(G_V0PAGE)", 13, { what: "the levels the next block runs at" }),
+  op("ld (mix_v0+1),a", 13),
+  ...(cfg.voices >= 2 ? [
+    op("ld a,(G_V1PAGE)", 13),
+    op("ld (mix_v1+1),a", 13),
+  ] : []),
+  op("ld a,(G_MPAGE)", 13),
+  op("ld (mix_mp+1),a", 13, { what: "…so a change is whole-block, never half of one" }),
+];
 
 // ── §4's 経路別サイクル表 ───────────────────────────────────────────────────
 // Costed from the encodings, not measured and not fitted. Every path P1 can
@@ -107,19 +226,30 @@ export function cyclePaths(cfg) {
   const c = (ops) => cost(ops);
   const rows = [
     ["DAC sample write", 7, "`ld (de),a` — DE holds $4001 for the life of the run"],
-    ["next-sample fetch", 11, "`ld a,(hl)` + `inc l`; the page wraps for free"],
+    ["next-sample fetch", 11, "`ld a,(hl)` + `inc l`; the ring page wraps for free"],
     ["one YM register write", c(ymWrite(0x30, 0x00)), "address + data, both through A"],
     ["one YM write, value from RAM", c(ymWrite(0x30, "(G_CSMHI)")), "`ld a,(nn)` is 13, not 7"],
     ["$2A re-latch", c(relatchDac()), "charged to the slot that disturbed the address port"],
     ["Timer B observation", c(readStatus()), "status read + stash; no branch on the result"],
     ["Timer B flag reset", c(ymWrite(YM.R_TIMER_CTL, "R27_RESET")), "through the $27 shadow"],
-    ["slot with nothing else", 7 + 11, "the floor: 5.0% of a 358-cycle interval"],
-    ["group (5 slots)", cfg.groupCycles, "EXACT — no residue survives a group"],
   ];
+  if (cfg.voices) {
+    rows.push(["mix, one sample", c(callMix(cfg)),
+      `call + routine, ${cfg.voices} voice${cfg.voices > 1 ? "s" : ""} incl. master`]);
+    rows.push(["…of which the 2nd voice", cfg.voices >= 2 ? 19 + 8 + 4 + 7 + 7 : 0,
+      "`ld a,(ix+0)` + `inc ixl` is 27 where DE's is 11 — the price of a 2nd pointer"]);
+    rows.push(["…of which the clamp", cfg.voices >= 2 ? 7 + 4 + 7 + 7 + 4 + 7 : 0,
+      "add, then a 512 B table indexed by the carry — branch-free, constant time"]);
+    rows.push(["block edge (level change)", c(blockEdge(cfg)),
+      `${cfg.voices >= 2 ? 3 : 2} pages into the mix routine's own immediates, once per ${cfg.blockSamples}`]);
+  }
+  rows.push(["slot with nothing else", 7 + 11, `the floor: ${(100 * 18 / cfg.periodCycles).toFixed(1)}% of an interval`]);
+  rows.push(["group", cfg.groupCycles, `${cfg.groupSlots} slots, EXACT — no residue survives a group`]);
   const pending = [
-    ["per-voice mix tick", "P2 — the block mixer"],
-    ["volume / master", "P2 — LUT vs shift, measured then chosen"],
-    ["loop wrap, ROM bank step", "P2 — boundary work, split into bounded pieces"],
+    ...(cfg.voices >= 2 ? [] : [["a second voice", "P2 — measured at 2 voices, see the two-voice cases"]]),
+    ["a third voice", "P5 — not attempted; §5 says one dimension at a time"],
+    ["loop wrap, ROM bank step", "NOT BUILT. The source is one 256 B page and `inc e` wraps it"],
+    ["voice start / stop / end", "NOT BUILT — needs the command protocol"],
     ["command dispatch", "P3 — sample-timed commands"],
     ["interrupt entry", "NOT TAKEN. This engine runs with interrupts disabled"],
     ["bus-grab recovery", "P3 — measured, not modelled: see the grab case"],
@@ -145,11 +275,24 @@ export function generate(cfg) {
   P("");
   P(`YM_ADDR0    equ ${hex(YM.addr0)}`);
   P(`YM_DATA0    equ ${hex(YM.data0)}`);
-  P(`WAVE        equ ${hex(cfg.ram.wave[0])}       ; 256 B, page aligned`);
+  if (cfg.voices) {
+    P(`LUT         equ ${hex(cfg.ram.lut[0])}       ; ${LEVELS} pages, one per level (lut.mjs)`);
+    P(`CLAMP       equ ${hex(cfg.ram.clamp[0])}       ; ${CLAMP_SIZE} B — the saturating add, as a table`);
+    P(`RING        equ ${hex(cfg.ram.ring[0])}       ; 256 B — the finished samples`);
+    P(`WINDOW      equ $8000              ; the 68k bank window the source lives in`);
+    P(`LEAD        equ ${cfg.lead}                  ; the build cursor runs this far ahead`);
+  } else {
+    P(`WAVE        equ ${hex(cfg.ram.wave[0])}       ; 256 B, page aligned`);
+  }
   P(`G_BASE      equ ${hex(cfg.ram.glob[0])}`);
   P("G_STATUS    equ G_BASE+$00      ; u8  last YM status byte read");
   P("G_CSMHI     equ G_BASE+$01      ; u8  CSM ch3 frequency, block/hi");
   P("G_CSMLO     equ G_BASE+$02      ; u8  CSM ch3 frequency, lo");
+  if (cfg.voices) {
+    P("G_V0PAGE    equ G_BASE+$03      ; u8  LUT page for voice 0's level (the host writes it)");
+    P("G_V1PAGE    equ G_BASE+$04      ; u8  …voice 1's");
+    P("G_MPAGE     equ G_BASE+$05      ; u8  …and the master's");
+  }
   P(`STACK_TOP   equ ${hex(cfg.ram.stack[1])}`);
   P("");
   // The $27 shadow (§3.5): one byte that carries CH3 mode, both timers' load
@@ -198,13 +341,46 @@ export function generate(cfg) {
   P("        ld   a,$69");
   P("        ld   (G_CSMLO),a");
   P("");
+  if (cfg.voices) {
+    P("; Levels start at unity. The host writes G_VPAGE / G_MPAGE whenever it");
+    P("; likes; the block edge is what makes the change take effect, and it");
+    P("; takes effect whole (§3.4).");
+    P(`        ld   a,(LUT>>8)+${LEVELS - 1}`);
+    P("        ld   (G_V0PAGE),a");
+    if (cfg.voices >= 2) P("        ld   (G_V1PAGE),a");
+    P("        ld   (G_MPAGE),a");
+    P("        ld   (mix_v0+1),a");
+    if (cfg.voices >= 2) P("        ld   (mix_v1+1),a");
+    P("        ld   (mix_mp+1),a");
+    P("");
+    P("; The ring starts at silence, and the first LEAD samples out of the DAC");
+    P("; are that silence — the declared start-up exclusion (§6.2).");
+    P("        ld   hl,RING");
+    P("        ld   b,0                ; 256");
+    P("bootsil:");
+    P(`        ld   (hl),${hex(SILENCE)}`);
+    P("        inc  l");
+    P("        djnz bootsil");
+    P("");
+    P("; The mixer's register set: DE' = voice 0's source in the 68k window,");
+    P("; BC' = the build cursor exactly LEAD ahead of the play cursor, HL' = the");
+    P("; table scratch. Nothing in the loop reloads any of them.");
+    P("        exx");
+    P("        ld   de,WINDOW");
+    P("        ld   bc,RING+LEAD");
+    P("        ld   hl,0");
+    P("        exx");
+    if (cfg.voices >= 2) P("        ld   ix,WINDOW+$100     ; voice 1's own page");
+    P("");
+  }
   P("; The DAC's address latch is written ONCE. Every slot writes data only,");
   P("; and any slot that disturbs the address port puts it back itself.");
   P(`        ld   a,${hex(YM.R_DAC)}`);
   P("        ld   (YM_ADDR0),a");
-  P("        ld   hl,WAVE");
+  P(`        ld   hl,${cfg.voices ? "RING" : "WAVE"}`);
   P("        ld   de,YM_DATA0");
   P("        ld   a,(hl)             ; prime the first sample");
+
   P("        inc  l");
   P("");
   P("; ── The output loop ───────────────────────────────────────────────────");
@@ -242,11 +418,33 @@ export function generate(cfg) {
     for (const o of laid.ops) for (const l of o.asm) P(`        ${l}`);
   }
   P("");
+  if (cfg.voices) {
+    P("; ── The mix, one sample ───────────────────────────────────────────────");
+    P("; Constant time, no branch, no test. Called from every slot.");
+    P("mix_one:");
+    for (const o of mixRoutine(cfg)) for (const l of o.asm) P(l);
+    P("");
+  }
   P("code_end:");
   P(`; total ${cfg.cycleSlots} slots = ${slots.reduce((t, s) => t + s.cycles, 0)} cycles`);
   P(`        assert code_end <= ${hex(cfg.ram.code[1])}, "the loop overran its code region"`);
   P("");
-  P(`        ds   ${hex(cfg.ram.wave[0])}-$, 0     ; the waveform page the harness fills`);
+  if (cfg.voices) {
+    P(`        ds   ${hex(cfg.ram.clamp[0])}-$, 0     ; up to the clamp table`);
+    P(`; ${CLAMP_SIZE} B: the 9-bit sum of two biased contributions, saturated and re-biased.`);
+    const clamp = buildClamp();
+    for (let i = 0; i < clamp.length; i += 16)
+      P(`        db   ${[...clamp.slice(i, i + 16)].join(",")}`);
+    P(`        ds   ${hex(cfg.ram.lut[0])}-$, 0     ; up to the level tables`);
+    P(`; ${LEVELS} pages of ${LEVELS === 16 ? "256" : "?"} bytes: level k maps a signed sample to round(s*k/15),`);
+    P("; clamped. Level 15 is bit-exact unity and level 0 is silence (lut.mjs).");
+    const lut = buildLut();
+    for (let i = 0; i < lut.length; i += 16)
+      P(`        db   ${[...lut.slice(i, i + 16)].join(",")}`);
+    P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);
+  } else {
+    P(`        ds   ${hex(cfg.ram.wave[0])}-$, 0     ; the waveform page the harness fills`);
+  }
   P("");
 
   return { text: L.join("\n"), slots, placement: placementTable(slots, cfg.periodCycles) };

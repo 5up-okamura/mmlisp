@@ -27,12 +27,22 @@ import { YM } from "./config.mjs";
 const RAM_SIZE = 0x2000;
 
 export class Machine {
-  constructor(cfg, { bytes, symbols }, { wave = null, grabs = [] } = {}) {
+  constructor(cfg, { bytes, symbols }, { wave = null, grabs = [], rom = null, pokes = [], watch = [] } = {}) {
     this.cfg = cfg;
     this.symbols = symbols;
     this.ram = new Uint8Array(RAM_SIZE);
     this.ram.set(bytes, 0);
     if (wave) this.ram.set(wave, cfg.ram.wave[0]);
+    // The sample data lives where it really lives: 68k ROM, seen through the
+    // $8000 bank window. On silicon that read pays bus arbitration this model
+    // does not charge — the one instruction in the mix that is exposed to it.
+    this.rom = rom;
+    // The host's writes into Z80 RAM, scheduled by cycle. This is the 68000
+    // poking a level, WITHOUT the bus grab it would really cost: §3.6 is P3's
+    // question and this is not an answer to it.
+    this.pokes = [...pokes].sort((a, b) => a.at - b.at);
+    this.pokeIdx = 0;
+    this.watch = new Set(watch);
     this.masterPerZ80 = cfg.machine.z80Div;
     this.cycles = 0;          // Z80 cycles since reset — a double, exact to 2^53
     this.instrStart = 0;      // stamp used for everything one instruction does
@@ -57,6 +67,8 @@ export class Machine {
       statusRead: [],                   // cycle, value — the phase reference
       dacEnable: [],                    // $2B edges: the DAC-enable intervals
       overflow: [],                     // when the timers REALLY overflowed
+      globRead: [],                     // reads of watched RAM: cycle, addr, value
+      pokes: [],                        // the host's writes, as applied
       grabs: [],                        // 68000 bus held: [start, end]
       stray: [],                        // writes to no device — a value fault
     };
@@ -74,14 +86,17 @@ export class Machine {
 
   // ── Memory / device map ──────────────────────────────────────────────────
   read(a) {
-    if (a < RAM_SIZE) return this.ram[a];
+    if (a < RAM_SIZE) {
+      if (this.watch.has(a)) this.trace.globRead.push([this.instrStart, a, this.ram[a]]);
+      return this.ram[a];
+    }
     if (a >= YM.addr0 && a <= YM.data1) {
       // All four YM addresses read the same status byte on a YM2612.
       const v = this.statusByte();
       this.trace.statusRead.push([this.instrStart, v]);
       return v;
     }
-    if (a >= 0x8000) return 0xff;   // the 68k window — unused in P1
+    if (a >= 0x8000) return this.rom ? this.rom[(a - 0x8000) % this.rom.length] : 0xff;
     return 0xff;
   }
 
@@ -184,6 +199,11 @@ export class Machine {
       // it is charged as stopped time rather than skipped. §3.6 is the reason
       // this exists before there is anything to transfer — a hole is a hole
       // whether or not the buffer was full.
+      while (this.pokeIdx < this.pokes.length && this.pokes[this.pokeIdx].at <= this.cycles) {
+        const p = this.pokes[this.pokeIdx++];
+        this.ram[p.addr] = p.value & 0xff;
+        this.trace.pokes.push([this.cycles, p.addr, p.value & 0xff]);
+      }
       const g = this.grabs[this.grabIdx];
       if (g && this.cycles >= g.at) {
         this.trace.grabs.push([this.cycles, this.cycles + g.cycles]);

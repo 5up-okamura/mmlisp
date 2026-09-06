@@ -100,7 +100,18 @@ export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead })
   // belongs there, and it belongs there because a jump placed before the pad
   // would jump over it. It is still charged to this slot.
   const used = cost([dacWrite, ...work, ...tail]);
-  const pad = padTo(cycles - used, { dead });
+  let pad;
+  try {
+    pad = padTo(cycles - used, { dead });
+  } catch (e) {
+    // Name the slot and everything in it. "slot overrun by 38 cycles" with no
+    // context is a puzzle; "slot 22 wants 396 of 358, carrying the mix, a CSM
+    // write and the timer reset" is the answer.
+    throw new Error(`slot ${index}: ${e.message}\n`
+      + `  wants ${used} of ${cycles} cycles, carrying:\n`
+      + [dacWrite, ...work, ...tail]
+        .map((o) => `    ${String(o.cycles).padStart(4)}  ${o.what ?? o.asm[0]}`).join("\n"));
+  }
   return {
     index, cycles, ops: [dacWrite, ...work, ...pad, ...tail],
     row: {

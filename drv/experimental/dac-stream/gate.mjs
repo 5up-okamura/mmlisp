@@ -17,6 +17,7 @@ import {
   analyzeValue, analyzeTime, analyzeBus, analyzeWrites, analyzeTimerPhase, analyzeDacEnable,
 } from "./analyze.mjs";
 import { compareClock } from "./spectrum.mjs";
+import { mixOne, mixTwo, LEVELS, SILENCE } from "./lut.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -50,6 +51,50 @@ const waves = {
     : Math.round(128 + 60 * Math.sin((2 * Math.PI * i) / 64))) & 0xff),
 };
 
+// A 256-byte source page in the 68k window, in the shape §6.3 asks for: a
+// constant, a ramp, a tone. Fixed pitch, one byte a sample (§3.4).
+// Page 0 is voice 0's source and page 1 is voice 1's, so a two-voice run mixes
+// two DIFFERENT things and a swapped pointer cannot pass.
+const sources = {
+  romsine: () => Uint8Array.from({ length: 512 }, (_, i) => (i < 256
+    ? Math.round(128 + 120 * Math.sin((2 * Math.PI * i) / 256))
+    : Math.round(128 + 90 * Math.sin((2 * Math.PI * (i - 256) * 3) / 256))) & 0xff),
+  romramp: () => Uint8Array.from({ length: 512 }, (_, i) => (i < 256 ? i : 255 - (i - 256))),
+  // Both voices at full scale in the same direction — the only input that can
+  // reach the clamp at all, and therefore the only one that tests it.
+  romfull: () => Uint8Array.from({ length: 512 }, (_, i) => ((i % 256) < 128 ? 0xff : 0x00)),
+};
+
+/**
+ * The §6.1 reference for a mixed run: an INDEPENDENT statement of what the
+ * bytes should be, not a transcription of the assembly. The engine's structure
+ * enters it in exactly two places, and both are properties being asserted:
+ * the build cursor runs `lead` samples ahead of the play cursor, and a level
+ * change takes effect at a block edge and applies to the whole block.
+ *
+ * The level sequence comes from the block edges the machine was OBSERVED to
+ * read, which is why the caller also checks that each of those reads landed in
+ * the last slot of its block — otherwise a reference built from them would
+ * follow the engine wherever it went.
+ */
+function referenceMix(cfg, src, edges) {
+  const B = cfg.blockSamples;
+  const boot = { v0: LEVELS - 1, v1: LEVELS - 1, master: LEVELS - 1 };
+  return (i) => {
+    if (i < cfg.lead) return SILENCE;   // the declared start-up silence
+    const j = i - cfg.lead;             // the slot that built it
+    // A block edge runs in the slot that builds the LAST sample of a block, so
+    // the levels it reads are the ones block b+2 is built at. Two, not one,
+    // because the lead is 17: the edge is one slot before the slot boundary
+    // the built block starts on.
+    const b = Math.floor(i / B);
+    const e = b < 2 ? boot : edges[b - 2] ?? edges[edges.length - 1] ?? boot;
+    return cfg.voices >= 2
+      ? mixTwo(src[j % 256], e.v0, src[256 + (j % 256)], e.v1, e.master)
+      : mixOne(src[j % 256], e.v0, e.master);
+  };
+}
+
 const CASES = [
   { name: "constant", wave: "constant", cfg: {} },
   { name: "ramp", wave: "ramp", cfg: {} },
@@ -65,6 +110,29 @@ const CASES = [
   { name: "68000 bus grab (informational)", wave: "sine", cfg: { csm: true }, grabPhase: true, informational: true },
   { name: "3.3 kHz, the shipped clock", wave: "sine", cfg: { profile: "p3k3" } },
   { name: "13.3 kHz (informational)", wave: "sine", cfg: { profile: "p13k" }, informational: true },
+
+  // ── P2: one voice through the block mixer ────────────────────────────────
+  { name: "P2 one voice, unity", src: "romsine", cfg: { voices: 1 } },
+  { name: "P2 one voice, full scale", src: "romfull", cfg: { voices: 1 } },
+  { name: "P2 one voice + CSM", src: "romsine", cfg: { voices: 1, csm: true } },
+  // Every level, walked one block at a time — §6.3's "全音量段階".
+  { name: "P2 all 16 levels", src: "romramp", cfg: { voices: 1 }, levels: "walk" },
+  // Full scale to silence and back, on the master alone (§6.3's fade).
+  { name: "P2 master fade to silence", src: "romsine", cfg: { voices: 1 }, levels: "fade" },
+  // The two composed, in opposite directions, which is the case that catches a
+  // build that folded them into one lookup: the rounding differs.
+  { name: "P2 vel and master, opposed", src: "romsine", cfg: { voices: 1 }, levels: "opposed" },
+
+  // ── P2: two voices ───────────────────────────────────────────────────────
+  { name: "P2 two voices, unity", src: "romsine", cfg: { voices: 2 } },
+  // Both at full scale and in phase: the sum leaves the range on most samples,
+  // so this is what exercises the clamp table.
+  { name: "P2 two voices, clipping", src: "romfull", cfg: { voices: 2 } },
+  { name: "P2 two voices + CSM", src: "romsine", cfg: { voices: 2, csm: true } },
+  { name: "P2 two voices, all levels", src: "romramp", cfg: { voices: 2 }, levels: "walk" },
+  { name: "P2 two voices, master fade", src: "romsine", cfg: { voices: 2 }, levels: "fade" },
+  // The §6.3 "声部別の逆向きフェード": voice 0 up while voice 1 goes down.
+  { name: "P2 two voices, opposed fades", src: "romsine", cfg: { voices: 2 }, levels: "opposed" },
 ];
 
 const build = (cfgIn) => {
@@ -76,9 +144,36 @@ const build = (cfgIn) => {
   return { cfg, gen, built: assemble(path), path };
 };
 
+// The host's level changes, as cycles at which the 68000 pokes Z80 RAM. The
+// exact cycle does not have to be exact: the reference follows the block edges
+// the machine was observed to take, and a separate check says those edges were
+// where they belong. What the schedule must do is land the pokes INSIDE blocks,
+// which "the middle of one, roughly" does at any plausible boot cost.
+function levelPokes(cfg, kind, cycles, sym) {
+  if (!kind) return [];
+  const lutPage = cfg.ram.lut[0] >> 8;
+  const blockCy = cfg.blockSamples * cfg.periodCycles;
+  const out = [];
+  const every = 24;                        // blocks between changes
+  for (let b = 2, n = 0; b * blockCy < cycles; b += every, n++) {
+    const at = Math.round((b + 0.5) * blockCy) + 8000;
+    let vel = LEVELS - 1, master = LEVELS - 1;
+    if (kind === "walk") vel = n % LEVELS;
+    if (kind === "fade") master = LEVELS - 1 - (n % (LEVELS * 2) > LEVELS - 1
+      ? LEVELS * 2 - 1 - (n % (LEVELS * 2)) : n % (LEVELS * 2));
+    if (kind === "opposed") { vel = n % LEVELS; master = LEVELS - 1 - (n % LEVELS); }
+    out.push({ at, addr: sym.get("G_V0PAGE"), value: lutPage + vel });
+    if (sym.has("G_V1PAGE"))
+      out.push({ at, addr: sym.get("G_V1PAGE"), value: lutPage + (kind === "opposed" ? LEVELS - 1 - vel : vel) });
+    out.push({ at, addr: sym.get("G_MPAGE"), value: lutPage + master });
+  }
+  return out;
+}
+
 function runCase(c, seconds) {
   const { cfg, gen, built, path } = build(c.cfg);
-  const wave = waves[c.wave]();
+  const wave = c.wave ? waves[c.wave]() : null;
+  const src = c.src ? sources[c.src]() : null;
   const cycles = Math.round(seconds * cfg.z80Hz);
   // The bus-grab sweep walks the grab's start through ONE sample period, so a
   // grab that lands just before a DAC write and one that lands just after are
@@ -89,20 +184,70 @@ function runCase(c, seconds) {
     for (let k = 0; k * 20000 < cycles; k++)
       grabs.push({ at: Math.round(k * 20000 + (k % 16) * (P / 16)), cycles: 700 });
   }
-  const m = new Machine(cfg, built, { wave, grabs });
+  const watch = cfg.voices
+    ? [built.symbols.get("G_V0PAGE"), built.symbols.get("G_MPAGE"),
+       ...(cfg.voices >= 2 ? [built.symbols.get("G_V1PAGE")] : [])]
+    : [];
+  const pokes = cfg.voices ? levelPokes(cfg, c.levels, cycles, built.symbols) : [];
+  const m = new Machine(cfg, built, { wave, grabs, rom: src, pokes, watch });
   m.trace.meta = traceMeta(cfg, { case: c.name, seconds, source: path });
   m.run(cycles);
 
-  const value = analyzeValue(m.trace, (i) => wave[i % wave.length]);
+  // The block edges, as the machine was seen to take them: one (G_VPAGE,
+  // G_MPAGE) pair per block, in order.
+  const lutPage = cfg.voices ? cfg.ram.lut[0] >> 8 : 0;
+  const per = cfg.voices >= 2 ? 3 : 2;      // reads per edge: v0 [, v1], master
+  const edges = [];
+  for (let i = 0; i + per - 1 < m.trace.globRead.length; i += per) {
+    const r = m.trace.globRead.slice(i, i + per).map((x) => x[2] - lutPage);
+    edges.push(cfg.voices >= 2
+      ? { cycle: m.trace.globRead[i][0], v0: r[0], v1: r[1], master: r[2] }
+      : { cycle: m.trace.globRead[i][0], v0: r[0], master: r[1] });
+  }
+
+  const value = cfg.voices
+    ? analyzeValue(m.trace, referenceMix(cfg, src, edges))
+    : analyzeValue(m.trace, (i) => wave[i % wave.length]);
   const time = analyzeTime(m.trace, cfg);
   const bus = analyzeBus(m.trace, cfg);
   const writes = analyzeWrites(m.trace, cfg);
   const phase = analyzeTimerPhase(m.trace, cfg);
   const dacen = analyzeDacEnable(m.trace, cfg, m.cycles);
-  const spec = c.wave === "sine" ? compareClock(m.trace, cfg) : null;
+  // The clock/value comparison wants ONE tone in the signal; a two-voice mix
+  // has two by construction and the "worst non-tone bin" is then the other
+  // voice, which says nothing about either.
+  const spec = (c.wave === "sine" || c.src === "romsine") && cfg.voices < 2
+    ? compareClock(m.trace, cfg) : null;
 
   const fails = [];
   if (value.problems.length) fails.push(...value.problems.map((p) => `VALUE ${p}`));
+  // A LEVEL CHANGE IS WHOLE-BLOCK OR IT IS NOTHING (§3.4). The k-th edge must
+  // fall inside the last slot of block k — after that slot's own sample went
+  // out, and before the next one's. Without this the reference above would
+  // simply follow the engine wherever it decided to latch.
+  if (cfg.voices) {
+    // A LEVEL CHANGE IS WHOLE-BLOCK OR IT IS NOTHING (§3.4). The k-th edge runs
+    // in the slot that builds the last sample of a block — slot 14 + 16k with
+    // a lead of 17 — so its cycle must sit between that slot's DAC write and
+    // the next one's. Without this the reference above would simply follow the
+    // engine wherever it decided to latch.
+    const B = cfg.blockSamples;
+    const first = (cfg.blockSamples - 1 - cfg.lead % B + B) % B;
+    let misplaced = 0;
+    for (let k = 0; k < edges.length; k++) {
+      const slot = first + k * B;
+      const lo = m.trace.dacCycle[slot];
+      const hi = m.trace.dacCycle[slot + 1];
+      if (lo === undefined || hi === undefined) break;
+      if (!(edges[k].cycle > lo && edges[k].cycle < hi)) misplaced++;
+    }
+    if (misplaced) fails.push(`VALUE ${misplaced} of ${edges.length} block edges`
+      + ` did not land in the slot that builds their block's last sample`);
+    const wantEdges = Math.floor((m.trace.dacCycle.length - first) / B);
+    if (Math.abs(edges.length - wantEdges) > 1)
+      fails.push(`VALUE ${edges.length} block edges for ${m.trace.dacCycle.length} samples,`
+        + ` expected about ${wantEdges}`);
+  }
   if (writes.problems.length) fails.push(...writes.problems.slice(0, 3).map((p) => `WRITE ${p}`));
   if (Math.abs(time.rateErrPct) > LIMITS.rateErrPct)
     fails.push(`TIME mean rate ${time.meanRateHz} Hz is ${time.rateErrPct}% off ${cfg.rateHz.toFixed(2)}`);
@@ -115,7 +260,7 @@ function runCase(c, seconds) {
     + ` — longest ${Math.max(...time.holes.map((h) => h.periods))} periods`);
   if (dacen.length !== 1) fails.push(`the DAC was enabled ${dacen.length} times, expected once`);
 
-  return { c, cfg, gen, value, time, bus, writes, phase, dacen, spec, fails,
+  return { c, cfg, gen, value, time, bus, writes, phase, dacen, spec, fails, edges,
     imageBytes: built.bytes.length, codeBytes: built.symbols.get("code_end"),
     ramTop: built.symbols.get("stream") };
 }
@@ -126,7 +271,9 @@ const results = [];
 let failed = 0;
 for (const c of CASES) {
   if (ONLY && !c.name.includes(ONLY)) continue;
-  const seconds = LONG && c.name === "CSM + dense FM writes" ? 60 : SECONDS;
+  // The representative case §6.2 wants a minute of is the heaviest one that is
+  // meant to pass: two voices, a master, and CSM writing alongside.
+  const seconds = LONG && c.name === "P2 two voices + CSM" ? 60 : SECONDS;
   const r = runCase(c, seconds);
   results.push(r);
   const bad = r.fails.length > 0;
@@ -152,7 +299,10 @@ for (const c of CASES) {
 }
 
 // ── The §4 deliverables, printed with the run that produced them ───────────
-const ref = results.find((r) => r.c.name === "CSM + dense FM writes") ?? results[0];
+// The tables are printed for the HEAVIEST configuration that ran, because the
+// question they answer is where the room is.
+const ref = results.find((r) => r.c.name === "P2 two voices + CSM")
+  ?? results.find((r) => r.c.name === "CSM + dense FM writes") ?? results[0];
 if (ref && !JSON_OUT) {
   console.log(`\n出力配置表 — ${stampLine(ref.cfg)}`);
   console.log(`  ${pad("slot", 5)}${pad("cycles", 8)}${pad("work", 6)}${pad("pad", 6)}${pad("work%", 7)}what`);
@@ -171,22 +321,28 @@ if (ref && !JSON_OUT) {
     console.log(`  ${pad(name, 30)}${"—".padStart(6)}  ${note}`);
 
   console.log(`\nRAMマップ — code ${ref.codeBytes} B (loop entry $${ref.ramTop.toString(16)},`
-    + ` ends $${ref.codeBytes.toString(16)}), image ${ref.imageBytes} B with the waveform page`);
+    + ` ends $${ref.codeBytes.toString(16)}), image ${ref.imageBytes} B with the tables`);
   for (const [k, v] of Object.entries(ref.cfg.ram)) {
     if (k === "size") continue;
     console.log(`  ${pad(k, 10)} $${v[0].toString(16).padStart(4, "0")}..$${v[1].toString(16).padStart(4, "0")}`
       + `  ${String(v[1] - v[0]).padStart(5)} B`);
   }
 
-  console.log(`\nレジスター契約`);
+  const v = ref.cfg.voices;
+  console.log(`\nレジスター契約 — ${v ? `${v} voice${v > 1 ? "s" : ""}` : "output only"}`);
   for (const [r, note] of [
     ["a", "the sample in flight; scratch inside a slot's work, dead across the pad"],
-    ["hl", "the waveform cursor (H = page, L = index) — LIVE for the whole run"],
+    ["hl", v ? "the PLAY cursor into the ring (H = page, L = index) — LIVE for the whole run"
+      : "the waveform cursor (H = page, L = index) — LIVE for the whole run"],
     ["de", "$4001, the YM data port — LIVE for the whole run"],
     ["bc", "the pad's own; b is the djnz counter and nothing outlives a slot"],
-    ["ix/iy", "unused"],
-    ["af'/bc'/de'/hl'", "unused in P1 (P2 takes them for the mixer's plane)"],
-    ["sp", "the boot stack only; the loop never pushes"],
+    ["hl'", v ? "the mixer's table scratch — H = a level page, L = the index" : "unused"],
+    ["de'", v ? "voice 0's source pointer in the 68k window; E advances, D never does" : "unused"],
+    ["bc'", v ? "the BUILD cursor, LEAD ahead of the play cursor (B = ring page)" : "unused"],
+    ["ix", v >= 2 ? "voice 1's source pointer — IXL advances" : "unused"],
+    ["iy", "unused"],
+    ["af'", "unused — `ex af,af'` never runs, so an interrupt could not use it either"],
+    ["sp", "the boot stack and the mix routine's return address; nothing else pushes"],
     ["i/r", "untouched"],
     ["IFF1/IFF2", "clear from boot to power-off — the loop takes no interrupt"],
   ]) console.log(`  ${pad(r, 18)}${note}`);

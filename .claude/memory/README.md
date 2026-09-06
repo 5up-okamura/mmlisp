@@ -66,13 +66,16 @@ Index:
   which pushed it past its vblank and made the mixer run every other frame.
   Next: a hardware round, and `drv-player.js` on the ring-fill model.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
-  (`docs/dac-engine-implementation.md`), P0 and P1 DONE 2026-09-06.** The
+  (`docs/dac-engine-implementation.md`), P0, P1 and most of P2 DONE
+  2026-09-06.** The
   baseline tool and what it found (`npm run engine` has been red for ~40
   commits and `verify:all`'s `&&` was hiding four gates behind it), the
   output-centred prototype in `drv/experimental/dac-stream/` (9,987.57 Hz at
-  +0.0000%, zero holes, in the JS model only), the three structural decisions —
-  the slot boundary is the `$2A` write, there is no interrupt, the pad is
-  solved — and **three bugs it found in the shared toolchain, one of which
+  +0.0000%, zero holes, two voices with independent levels and a master, in the
+  JS model only), the structural decisions — the slot boundary is the `$2A`
+  write, there is no interrupt, the pad is solved, production is locked to
+  consumption so the ring needs no regulator, and every slot's work must be
+  constant time — and **three bugs it found in the shared toolchain, one of which
   under-charged every cycle budget in the repository by 3 cycles per `(HL)`
   access.** Read before continuing to P2.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
