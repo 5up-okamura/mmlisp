@@ -25,7 +25,7 @@ export const COOP = { notify: 0xff0000, queue: 0x1d00, commit: 0x1eff,
   windowCycles: 64, defaultCompensation: 32 };
 
 export function generateCooperative(cfg, { slots = 80, compensation = COOP.defaultCompensation,
-  windowNops = true } = {}) {
+  windowNops = true, windowSync = false } = {}) {
   if (cfg.voices || cfg.csm || cfg.observeTimerB) throw new Error("cooperative prototype is output-only P1");
   if (!Number.isInteger(slots) || slots < 5 || slots % cfg.groupSlots)
     throw new Error("cooperative schedule must close the fractional period");
@@ -45,7 +45,16 @@ export function generateCooperative(cfg, { slots = 80, compensation = COOP.defau
       // The window itself is nops when asked (the default): a grant on a
       // `djnz` iteration can land 13 cycles late, and that is the whole of
       // the phase-dependent stop length the fixed compensation cannot follow.
-      pad(COOP.windowCycles, { nopsOnly: windowNops });
+      // `windowSync`: four YM status reads inside the window (13 cycles each,
+      // harmless, A is dead here). ONLY for the emulator: BlastEm grants a
+      // pending BUSREQ at the Z80's next I/O access, so without these a
+      // request that arrives mid-window is granted at the next DAC write, a
+      // slot later. Hardware grants at the next M-cycle boundary regardless.
+      if (windowSync) {
+        if (COOP.windowCycles !== 64) throw new Error("windowSync assumes a 64-cycle window");
+        for (let k = 0; k < 4; k++) emit("ld a,($4000)");                // 4 x 13 = 52
+        for (let k = 0; k < 3; k++) emit("nop");                          // + 12 = 64
+      } else pad(COOP.windowCycles, { nopsOnly: windowNops });
       emit("xor a"); emit("ld ($8000),a"); // 4 + 13 + 3 bank wait
       emit(`ld a,($${COOP.commit.toString(16)})`); emit("or a"); // 13 + 4
       emit("jr z,coop_absent"); // 7 served, 12 absent
@@ -65,5 +74,5 @@ export function generateCooperative(cfg, { slots = 80, compensation = COOP.defau
   }
   lines.push("code_end:", `assert code_end <= $${cfg.ram.code[1].toString(16)}, "cooperative code overflow"`,
     `ds $${cfg.ram.wave[0].toString(16)}-$,0`);
-  return { text: lines.join("\n"), cooperative: { slots, compensation, windowNops, ...COOP } };
+  return { text: lines.join("\n"), cooperative: { slots, compensation, windowNops, windowSync, ...COOP } };
 }

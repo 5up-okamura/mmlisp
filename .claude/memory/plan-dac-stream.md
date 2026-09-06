@@ -228,6 +228,43 @@ with one phase failing (+0.2387%). Finished here.
 * `mml_rate.h` drifted once more during that session (a tool without
   `PCM_SPG=1 TIMER_B_K=1`); reverted.
 
+## R2 §11.4 STEP 4 — THE WINDOW CANNOT ENTER THE 2ch SCHEDULE AS IS; COMPUTED TIMING TRACKS TO ±5
+
+* **Budget**: a plain 2ch slot has 151 pad; the cooperative slot's fixed
+  traffic is 89 (notify 23+20, commit check 46). Window left: 52/45/21/−3 for
+  1/2/4/8 B; reserved slots none. And the notify write needs the bank at
+  $FF0000 while the mixer needs it on the samples (126 cycles a switch). So
+  the prototyped window does not enter the 2ch schedule; only a window with
+  NO steady-state notification can — the 68000 computing when it is.
+* **Computed timing** (`rom.mjs`, `grab.computed`): boot capture of the first
+  opening, `rem` kept from the VDP V counter (elapsed lines, immune to lost
+  ticks), skip-and-count a passed window, busy-wait the sub-line remainder,
+  grab. Measured by the 68000's REQUEST (not the emulator's grant): steady
+  state ±5 Z80 cycles over 85 consecutive windows a frame, `rem` 374..3374
+  cancelled exactly. Once a frame at vblank the belief is knocked ~228 (one
+  line) and recovers over ~10 windows — the V-counter time base across the
+  reload; the 38-line hypothesis was tested and falsified. §3.7's per-transfer
+  re-anchor from the published output index makes this moot in the real
+  protocol.
+* **The landing is an attractor.** The boot offset cannot move the steady-state
+  landing: the Z80's clock is pulled by (stall − compensation) per grab until
+  the phase settles where they are equal. Real for any fixed compensation;
+  weak on hardware (±4), strong in the model because —
+* **BlastEm grants a pending BUSREQ at the Z80's next I/O** (the next DAC write
+  here), so the modelled grant phase inside a slot is scheduling, not an
+  M-cycle. `windowSync` (four YM status reads in the window) makes the grant
+  follow the request in the emulator only.
+* **Not produced**: a computed-timing run passing §6. Next 68000 work: anchor
+  the window right after a Z80 I/O access (so hardware and model agree on the
+  grant), re-anchor `rem` per transfer from the published index, and decide
+  the compensation's phase dependence. Z80 side unchanged.
+* Bugs I made and fixed on the way, for the record: a 3.3x unit error in the
+  busy-wait (68000 cycles are master/7, Z80's are /15), the post-grab `rem`
+  reloaded from the pre-tick store, a diagnostic payload buffer overlapping
+  the previous-V store (which forced the vblank branch every tick), and the
+  68000 halting on its first VInt because reg 1 enabled it and its vector is
+  the halt trap.
+
 ## THREE BUGS, ALL OUTSIDE THE PROTOTYPE, ALL INVISIBLE TO EVERY GATE
 
 **1. `tools/z80asm.mjs`: `$` was the address of the NEXT instruction.** So
@@ -256,10 +293,11 @@ one clock would have passed clean.
 
 ## What is next, in order
 
-1. **Integrate the cooperative window into the 2ch schedule** (R2 §11.4 step
-   4): re-plan the reservations so window + notify + compensation fit a slot
-   with the mixer in it, then carry the 190 B/frame the driver needs. Decide
-   the ROM bank question (§11.5) alongside — both change the slot map.
+1. **68000 side of computed timing**: anchor the window after a Z80 I/O
+   access, re-anchor `rem` from the published output index each transfer, and
+   get a §6 pass; then size the window for the 2ch slot (52 cycles at 1 B,
+   45 at 2 B — 8 B does not fit a plain slot at all). ROM bank (§11.5)
+   alongside.
 2. Once that is settled: P2's loop points, the ROM bank window, and note
    start/stop — the boundary work §5 orders after the master, and the first
    place the constant-time rule will actually hurt.

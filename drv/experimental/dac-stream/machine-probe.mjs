@@ -11,7 +11,8 @@
 //
 // It is still a model. A green run here is a reason to spend a hardware round,
 // not a substitute for one.
-import { generateCooperative } from "./cooperative.mjs";
+import { generateCooperative, COOP } from "./cooperative.mjs";
+const COOP_WINDOW = COOP.windowCycles;
 import { createHash } from "node:crypto";
 import { readProbe, analyzeProbe, analyzeTransfers, summarizeResults } from "./probe-analysis.mjs";
 import { execFileSync } from "node:child_process";
@@ -38,6 +39,9 @@ const ONLY = arg("case", null);
 // transfer code — set it from the measured stop→resume of the SAME routine,
 // then prove across host phases that the residual is bounded.
 const COMP = arg("compensation", null) === null ? null : Number(arg("compensation"));
+// --capture-offset N: computed timing's boot calibration, in master clocks
+// (positive = grab earlier), overriding the case's own.
+const CAPOFF = arg("capture-offset", null) === null ? null : Number(arg("capture-offset"));
 if (!Number.isFinite(SECONDS) || SECONDS < 0.5 || SECONDS >= 70)
   throw new Error("--seconds must be >= 0.5 and < 70 (32-bit instrument clocks)");
 
@@ -74,6 +78,39 @@ const CASES = [
     cooperative: { slots: 80, compensation: 41 },
     grab: { every, bytes: 4, optimized: true, cooperative: true },
   })),
+  // COMPUTED TIMING: the 68000 grabs from the HBlank interrupt every `line`
+  // lines, with no notification and no polling — the only shape a game's
+  // 68000 could use. The Z80 side is the cooperative engine unchanged, so the
+  // instrument still sees every window; what is measured is where the grabs
+  // LAND relative to the windows, under a 68000 running `divu` in its loop.
+  // Informational: a grab outside a window is repaid by a slot that was not
+  // stalled, and the DAC gate says what that costs.
+  ...[8, 26, 105].map((line) => ({
+    name: `hblank grab 8B every ${line} lines`, cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, line, bytes: 8 }, informational: true,
+  })),
+  { name: "hblank grab 8B every 8 lines, unloaded 68k", cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, line: 8, bytes: 8, load: false }, informational: true },
+  // Computed timing: every line ticks; the handler waits out the remainder to
+  // the next window and grabs there. `path` is the handler's fixed cost in
+  // master clocks from tick to request, set from where the grabs land.
+  { name: "computed timing 8B, path 0", cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, computed: true, line: 1, bytes: 8, path: 0, captureOffset: -2130 }, informational: true },
+  // The 68000's interrupt latency is the one thing `rem` cannot know: the
+  // handler measures from the tick, not from when it actually started. An
+  // idle loop of one `bra` bounds that at 10 cycles; four `divu`s are ~570.
+  { name: "computed timing 8B, unloaded 68k", cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, computed: true, line: 1, bytes: 8, path: 0, load: false, captureOffset: -2130 }, informational: true },
+  { name: "computed timing 8B, unloaded, window sync", cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65, windowSync: true },
+    grab: { hint: true, computed: true, line: 1, bytes: 8, path: 0, load: false, captureOffset: -2130 }, informational: true },
+  { name: "computed timing 8B, debug payload", cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, computed: true, line: 1, bytes: 8, path: 0, debugPayload: true }, informational: true },
   { name: "cooperative absent host", cfg: {}, wave: sine(256,120,1),
     cooperative: { slots: 80, compensation: 41 }, bankOnly: true },
   ...[1, 2, 4].flatMap((bytes) => [
@@ -112,9 +149,11 @@ const CASES = [
 const MCLK = 53693175;
 const Z80_DIV = 15;
 
-function runCase(c) {
+function runCase(c0) {
+  let c = c0;
   const cfg = buildConfig(c.cfg);
   const coop = c.cooperative && COMP !== null ? { ...c.cooperative, compensation: COMP } : c.cooperative;
+  if (CAPOFF !== null && c.grab?.computed) c = { ...c, grab: { ...c.grab, captureOffset: CAPOFF } };
   const gen = coop ? generateCooperative(cfg, coop) : generate(cfg);
   const caseId = createHash("sha256").update(JSON.stringify({ ...c, cooperative: coop })).digest("hex").slice(0,12);
   mkdirSync(OUT, { recursive: true });
@@ -211,7 +250,37 @@ for (const c of selected) {
     const lens = times(pairs);
     if (lens.length) console.log(`  ${name}: ${lens[0].toFixed(2)}..${lens.at(-1).toFixed(2)} Z80 cyc, p50 ${q(lens,.5).toFixed(2)}; sum ${lens.reduce((x,y)=>x+y,0).toFixed(1)}`);
   }
-  if (c.grab) {
+  if (c.grab?.hint) {
+    // Where did each grab land? Offset from the most recent window opening
+    // (NOTIFY value 1), in Z80 cycles, and whether the modelled stop sat
+    // inside [open, close]. The window is COOP.windowCycles long.
+    // THE REQUEST is what the 68000 controls, so the landing is measured from
+    // it. The modelled grant is NOT: BlastEm grants a pending BUSREQ at the
+    // Z80's next sync point, which in this engine is its next I/O access, so
+    // the grant's phase inside a slot is the emulator's scheduling, not the
+    // hardware's M-cycle boundary. Both are reported, apart.
+    const opens = log.notifications.filter((e) => e.value === 1).map((e) => e.time);
+    const closes = log.notifications.filter((e) => e.value === 0).map((e) => e.time);
+    const req = [], stp = []; let inside = 0, j = 0, k = 0;
+    for (const [rq] of log.grabs) {
+      if (rq < a.samples[0]?.time || rq > a.samples.at(-1)?.time) continue;
+      while (j + 1 < opens.length && opens[j + 1] <= rq) j++;
+      req.push((rq - opens[j]) / Z80_DIV);
+      const close = closes.find((t) => t > opens[j]);
+      if (close !== undefined && rq >= opens[j] && rq <= close) inside++;
+    }
+    for (const [st] of log.stops) {
+      if (st < a.samples[0]?.time || st > a.samples.at(-1)?.time) continue;
+      while (k + 1 < opens.length && opens[k + 1] <= st) k++;
+      stp.push((st - opens[k]) / Z80_DIV);
+    }
+    req.sort((x, y) => x - y); stp.sort((x, y) => x - y);
+    console.log(`  hblank: ${req.length} requests, ${inside} (${(100 * inside / Math.max(1, req.length)).toFixed(1)}%)`
+      + ` inside the ${COOP_WINDOW}-cycle window; REQUEST offset from the opening`
+      + ` p10 ${q(req, .1)?.toFixed(0)} p50 ${q(req, .5)?.toFixed(0)} p90 ${q(req, .9)?.toFixed(0)} Z80 cyc;`
+      + ` modelled grant p50 ${q(stp, .5)?.toFixed(0)}`);
+    result.hblank = { requests: req.length, inside };
+  } else if (c.grab) {
     const bins = new Set();
     let j=0;
     for (const [at] of steady) {

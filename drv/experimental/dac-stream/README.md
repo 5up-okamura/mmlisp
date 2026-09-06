@@ -328,6 +328,69 @@ compensation (41–65) does not fit either without re-planning the reservations
 — R2 §11.4 step 4 and §11.5 (ROM bank) are still open, and Z80 reads of 68k
 work RAM are withdrawn by R2 as a mechanism. Nothing has run on hardware.
 
+## Can the window enter the 2ch schedule, and can a game's 68000 reach it?
+
+Two questions R2 §11.4 step 4 leaves, with numbers.
+
+**The window budget in a mixer slot.** A plain 2ch slot has 151 cycles of pad
+and a reserved one 76–87. The cooperative slot's fixed traffic — notify up
+(23), notify down (20), commit check (46) — is 89. What is left for the window
+itself, after the compensation:
+
+| bytes a grab | 1 | 2 | 4 | 8 |
+| --- | --- | --- | --- | --- |
+| compensation | ~10 | ~17 | 41 | 65 |
+| window in a plain slot | 52 | 45 | 21 | **−3** |
+| window in a reserved slot | none | none | none | none |
+
+…and that is before the bank: the notification is a write into 68k work RAM
+through the bank window, the mixer needs the window on the sample ROM, and a
+bank switch is nine serial writes (~126 cycles) each way. **The window as
+prototyped does not enter the 2ch schedule.** What could is a window with no
+steady-state notification — the 68000 computing when the window is — which
+also removes the bank conflict, since the one notification it needs is at boot.
+
+**Computed timing, measured.** `rom.mjs` gained a 68000 program that reads the
+first window opening once at boot, then keeps `rem` — master clocks from the
+current HBlank tick to the next opening — from the VDP's V counter (elapsed
+lines, so a tick lost while the handler is busy costs nothing), skips and
+counts a window already passed, and when one is due before the next tick
+busy-waits the remainder and grabs. No polling, no notification. The
+instrument measures where the 68000's *request* lands (that it controls
+exactly) apart from where the emulator *grants* it.
+
+- **In steady state it tracks to ±5 Z80 cycles**: 85 consecutive windows a
+  frame land within 1,665–1,675 of the opening with `rem` varying 374–3,374
+  across them — the busy-wait cancels the tick phase exactly. A 64-cycle
+  window holds that.
+- **Once a frame, at the vblank crossing, the belief is knocked ~228 cycles
+  (one line) and recovers over ~10 windows.** Using the VDP's line counter as
+  the time base across the vblank reload is where the emulator and the
+  arithmetic disagree; the 38-line hypothesis was tested and falsified. The
+  real protocol does not depend on it: R2 §3.7 has the 68000 read the Z80's
+  published output index at every transfer, so error never accumulates past
+  one window.
+- **The landing phase is an attractor, and that is a property of fixed
+  compensation.** The boot calibration cannot move the steady-state landing
+  (1,331 → 1,676 → 1,670 for three very different offsets) because the Z80's
+  clock is pulled by (stall − compensation) at every grab until the grab
+  phase settles where the two are equal. On hardware the stall varies ±4
+  cycles with the M-cycle the request lands on, so the pull is weak; in the
+  model it is strong, because —
+- **BlastEm grants a pending BUSREQ at the Z80's next I/O access**, which in
+  this engine is the next DAC write: the modelled grant phase inside a slot is
+  the emulator's scheduling, not an M-cycle boundary. Requests landed 1,670
+  after the opening while grants clustered at 256 + k·358. With four YM
+  status reads inside the window (`windowSync`, harmless, emulator-only) the
+  grant follows the request (14.2% of grants inside vs 1.0% for identical
+  requests).
+
+So: a 68000 can reach a 64-cycle window from HBlank without polling, in the
+model, to ±5 cycles; a computed-timing run that *passes §6* has not been
+produced, because the attractor sits outside the window and the vblank
+crossing needs the §3.7 re-anchor. Those are the next two pieces of 68000
+work, and they are 68000 work — the Z80 side is unchanged.
+
 **BlastEm is still a model.** It is the reference implementation we are arguing
 with while a hardware round is expensive, and it has already found what the
 instruction model could not. Nothing here has run on a Mega Drive.

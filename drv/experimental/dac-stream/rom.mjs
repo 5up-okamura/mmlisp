@@ -41,6 +41,27 @@ class M68k {
   tstBA(a) { this.w(0x4a10 | a); }                    // tst.b (An)
   moveBimmA(imm,a) { this.w(0x10bc | (a << 9)); this.w(imm & 255); }
   moveBpost() { this.w(0x12d8); }                                       // move.b (a0)+,(a1)+
+  moveLimm(imm, addr) { this.w(0x23fc); this.l(imm); this.l(addr); }   // move.l #i,(abs).l
+  moveLimmD(imm, d) { this.w(0x203c | (d << 9)); this.l(imm); }        // move.l #i,Dn
+  moveq(imm, d) { this.w(0x7000 | (d << 9) | (imm & 0xff)); }          // moveq #i,Dn
+  divuD(s, d) { this.w(0x80c0 | (d << 9) | s); }                       // divu.w Ds,Dd — ~140 cycles
+  rte() { this.w(0x4e73); }
+  // 32-bit register arithmetic and the few ops computed timing needs. Every
+  // encoding: op-word bit layout in the comment.
+  subLimmD(imm, d) { this.w(0x0480 | d); this.l(imm); }               // subi.l #i,Dn
+  addLimmD(imm, d) { this.w(0x0680 | d); this.l(imm); }               // addi.l #i,Dn
+  cmpLimmD(imm, d) { this.w(0x0c80 | d); this.l(imm); }               // cmpi.l #i,Dn
+  tstL(d) { this.w(0x4a80 | d); }                                      // tst.l Dn
+  bpl(name) { this.w(0x6a00); this.fix.push([this.pc, name]); this.w(0); }
+  bcs(name) { this.w(0x6500); this.fix.push([this.pc, name]); this.w(0); }   // unsigned lower
+  moveLD(s, d) { this.w(0x2000 | (d << 9) | s); }                      // move.l Ds,Dd
+  muluImm(imm, d) { this.w(0xc0fc | (d << 9)); this.w(imm); }          // mulu.w #i,Dn
+  divuImm(imm, d) { this.w(0x80fc | (d << 9)); this.w(imm); }          // divu.w #i,Dn
+  addqL(n, d) { this.w(0x5080 | ((n & 7) << 9) | d); }                 // addq.l #n,Dn
+  tstBabs(addr) { this.w(0x4a39); this.l(addr); }                      // tst.b (abs).l
+  clrBabs(addr) { this.w(0x4239); this.l(addr); }                      // clr.b (abs).l
+  moveLDabs(d, addr) { this.w(0x23c0 | d); this.l(addr); }             // move.l Dn,(abs).l
+  moveLabsD(addr, d) { this.w(0x2039 | (d << 9)); this.l(addr); }      // move.l (abs).l,Dn
   leaAbs(addr, a) { this.w(0x41f9 | (a << 9)); this.l(addr); }          // lea (abs).l,An
   andiW(imm, d) { this.w(0x0240 | d); this.w(imm); }                    // andi.w #i,Dn
   moveSR(imm) { this.w(0x46fc); this.w(imm); }                          // move.w #i,SR
@@ -80,6 +101,14 @@ export function buildRom(image, samples = null, grab = null) {
 
   const m = new M68k(CODE);
   m.moveSR(0x2700);                       // interrupts off; nothing here uses one
+  // TMSS: models from the Mega Drive 2 on keep the VDP locked until 'SEGA' is
+  // written to $A14000. Guarded by the version register's low nibble, as the
+  // official boot code does, so a model without TMSS is left alone.
+  m.w(0x1039); m.l(0xa10001);             // move.b ($A10001).l,d0
+  m.w(0x0200); m.w(0x000f);               // andi.b #$0F,d0
+  m.beq("notmss");
+  m.moveLimm(0x53454741, 0xa14000);       // move.l #'SEGA',($A14000).l
+  m.label("notmss");
   m.moveWimm(0x0100, Z80_BUSREQ);         // take the Z80 bus
   m.moveWimm(0x0100, Z80_RESET);          // and lift its reset
   m.label("wait");
@@ -96,12 +125,12 @@ export function buildRom(image, samples = null, grab = null) {
   // It is written from here rather than from the Z80 because the Z80 has not
   // started yet — and because ~120 cycles of it does not belong in a sample
   // period (see the README's open ROM-window question).
-  const bank = (grab?.cooperative ? COOP.notify : SAMPLES) >>> 15;
+  const bank = ((grab?.cooperative || grab?.hint) ? COOP.notify : SAMPLES) >>> 15;
   for (let i = 0; i < 9; i++) m.moveBimm((bank >> i) & 1, Z80_BANK);
   m.moveWimm(0x0000, Z80_RESET);          // pulse reset
   for (let i = 0; i < 8; i++) m.nop();    // …held for a few microseconds
   m.moveWimm(0x0100, Z80_RESET);
-  if (grab?.cooperative) {
+  if (grab?.cooperative || grab?.hint) {
     m.moveBimm(0, COOP.notify);
     m.moveBimm(0, Z80_BASE + COOP.commit);
   }
@@ -116,8 +145,143 @@ export function buildRom(image, samples = null, grab = null) {
       m.leaAbs(Z80_BASE + COOP.commit, 4);
     }
   }
-  m.label("idle");
-  if (grab?.optimized) {
+  // HBLANK-DRIVEN GRAB: no notification, no polling. The 68000 takes the bus
+  // from the horizontal-interrupt handler every `line` lines, which is the
+  // only way a game's 68000 could reach a window at all — it cannot spend its
+  // time polling for an edge. Whether it LANDS in the window is the question,
+  // so the idle loop runs `divu` (the longest common instruction, ~140 cycles)
+  // to give the interrupt the latency jitter a real program has.
+  if (grab?.hint) {
+    // COMPUTED TIMING (grab.computed): the 68000 never sees a notification in
+    // the steady state. At boot it waits for the FIRST window opening — the
+    // one notification it ever reads — counts loop iterations to the next
+    // HBlank tick, and from then on keeps `rem` = master clocks from the
+    // current tick to the next window opening: each tick subtracts one line
+    // (39 across the vblank reload, where no ticks come), a window already
+    // behind is SKIPPED and counted, and a window due before the next tick is
+    // reached by a busy-wait of `rem` in 68000 cycles less the handler's own
+    // fixed path. The constants are the line (3,420), the window period
+    // (26,880 = 5 slots), the loop, and a measured handler path — none is the
+    // DAC's rate.
+    const LINE = 3420, WINDOW = 26880, VBLANK_LINES = 39;
+    const RAM = 0xff0100;
+    const REM = RAM, TICKS = RAM + 4, FLAG = RAM + 8, MISSES = RAM + 12, PATH = grab.path ?? 0;
+    // Reg 1 = $44: display on, mode 5, and NO vertical interrupt — every
+    // unused vector is the halt trap, and a halt taken at level 6 would mask
+    // the level-4 HBlank for the rest of the run. (It did.)
+    for (const [reg, val] of [[0, 0x14], [1, 0x44], [2, 0x30], [3, 0x3c], [4, 0x07],
+      [5, 0x6c], [6, 0x00], [7, 0x00], [8, 0x00], [9, 0x00], [10, grab.line - 1], [11, 0x00],
+      [12, 0x81], [13, 0x3f], [14, 0x00], [15, 0x02], [16, 0x01], [17, 0x00], [18, 0x00]])
+      m.moveWimm(0x8000 | (reg << 8) | val, 0xc00004);
+    m.leaAbs(Z80_BUSREQ, 2);
+    m.moveWimmD(0x0100, 3);
+    m.moveWimmD(0x0000, 4);
+    m.leaAbs(Z80_BASE + COOP.commit, 4);
+    m.moveLimmD(0x12345678, 5);
+    m.moveq(7, 6);
+    if (grab.computed) {
+      m.clrBabs(FLAG); m.moveLimm(0, TICKS); m.moveLimm(0, MISSES);
+      m.moveLimm(WINDOW, REM); m.moveLimm(0, TICKS + 16);   // sane before the first tick
+      // Capture: wait for the first opening (masked polling, ONCE), then count
+      // 40-cycle iterations until the first tick marks FLAG.
+      m.leaAbs(COOP.notify, 3);
+      m.label("cap0"); m.tstBA(3); m.bne("cap0");
+      m.label("cap1"); m.tstBA(3); m.beq("cap1");
+      // prevV must be the line we are on NOW, or the first tick subtracts the
+      // whole line number and wraps `rem` into an arbitrary boot constant.
+      m.moveWabsD(0xc00008, 1); m.w(0xe049); m.moveLDabs(1, TICKS + 16);
+      m.moveSR(0x2300);                   // ticks may come now
+      m.moveq(0, 7);
+      m.label("cap2"); m.addqL(1, 7); m.tstBabs(FLAG); m.beq("cap2");
+      // addq.l 8 + tst.b (abs).l 16 + beq 10 = 34 68000 cycles = 238 master an iteration.
+      m.muluImm(238, 7);
+      m.moveLimmD(WINDOW, 6); m.w(0x9c87); // sub.l d7,d6
+      // The capture's own fixed cost — the polling loop's exit, the loop above,
+      // the first handler entry — as ONE constant in master clocks, measured
+      // from where the grabs landed (a tight cluster 1,331 Z80 cycles after
+      // the opening, spread 11). It is a property of this boot code.
+      // Positive = grab earlier, negative = later; the landing is modulo the
+      // window period, so the SHORT way round is the one to take.
+      if (grab.captureOffset > 0) m.subLimmD(grab.captureOffset, 6);
+      if (grab.captureOffset < 0) m.addLimmD(-grab.captureOffset, 6);
+      m.moveLDabs(6, REM);
+      m.clrBabs(FLAG);
+      m.moveLimmD(0x12345678, 5); m.moveq(7, 6);
+      m.label("idle");
+      if (grab.load !== false) for (let i = 0; i < 4; i++) m.divuD(6, 5);
+      m.bra("idle");
+      // ── the tick handler ────────────────────────────────────────────────
+      m.label("hint");
+      m.w(0x13fc); m.w(1); m.l(FLAG);      // move.b #1,(FLAG)
+      m.moveLabsD(TICKS, 0); m.addqL(1, 0); m.moveLDabs(0, TICKS);
+      m.moveLabsD(REM, 0);
+      // ELAPSED TIME COMES FROM THE V COUNTER, NOT FROM COUNTING TICKS. A tick
+      // that arrives while this handler is busy-waiting is lost (level 4 is
+      // masked), and counting ticks then leaves `rem` a whole line too large —
+      // a one-line drift per window, which scatters the grabs uniformly. The
+      // V counter is the VDP's own line number: HInts fire only on lines
+      // 0..223, so V is unambiguous there, and the wrap from 223 back to 0 is
+      // the 39-line vblank gap with no special case at all.
+      m.moveWabsD(0xc00008, 1); m.w(0xe049);          // move.w ($C00008).l,d1 ; lsr.w #8,d1 → V
+      m.moveLabsD(TICKS + 16, 2);                     // previous V
+      m.moveLDabs(1, TICKS + 16);
+      m.w(0x9242);                                    // sub.w d2,d1  → lines elapsed
+      // On the wrap the elapsed lines are the frame length less the last
+      // active line's number; `wrapLines` is that frame length as the HInt
+      // sees it (262 by the line count; the emulator measured 261 — see below).
+      m.bpl("dpos"); m.w(0x0641); m.w(grab.wrapLines ?? 262); m.label("dpos");
+      m.muluImm(LINE, 1);                             // master clocks elapsed
+      m.w(0x9081);                                    // sub.l d1,d0
+      m.label("catch");                    // a window already behind us is a MISS
+      m.tstL(0); m.bpl("ahead");
+      m.addLimmD(WINDOW, 0);
+      m.moveLabsD(MISSES, 1); m.addqL(1, 1); m.moveLDabs(1, MISSES);
+      m.bra("catch");
+      m.label("ahead");
+      m.cmpLimmD(LINE, 0);
+      m.bcs("due");
+      m.moveLDabs(0, REM);
+      m.rte();
+      m.label("due");
+      m.moveLD(0, 1);                      // d0 keeps rem for the update below
+      m.subLimmD(PATH, 1);
+      m.bpl("waitok"); m.moveq(0, 1); m.label("waitok");
+      m.divuImm(70, 1);                    // a 10-cycle dbra iteration is 70 master clocks
+      m.w(0x0241); m.w(0xffff);            // andi.w #$ffff,d1
+      if (grab.debugPayload) m.moveLDabs(1, RAM + 36);   // (diagnostic payload: the wait iterations)
+      m.label("wait"); m.dbra(1, "wait");
+      // Diagnostic: carry the handler's own state as the payload, so every
+      // grab logs what it BELIEVED next to where it LANDED.
+      if (grab.debugPayload) { m.moveLDabs(0, RAM + 32); m.leaAbs(RAM + 32, 0); }
+      else m.leaAbs(SAMPLES, 0);
+      m.leaAbs(Z80_BASE + 0x1d00, 1);
+      m.moveWDtoA(3, 2);                   // request
+      m.label("hgrant2"); m.btstZeroA(2); m.bne("hgrant2");
+      for (let i = 0; i < grab.bytes; i++) m.moveBpost();
+      m.moveBimmA(1, 4);                   // commit, written last
+      m.moveWDtoA(4, 2);                   // release
+      // The next window is one period past THIS one: d0 still holds the
+      // remainder to the window just served, post-tick.
+      m.addLimmD(WINDOW, 0);
+      m.moveLDabs(0, REM);
+      m.rte();
+    } else {
+      m.moveSR(0x2300);                   // level 4 (HBlank) may interrupt now
+      m.label("idle");
+      if (grab.load !== false) for (let i = 0; i < 4; i++) m.divuD(6, 5);
+      m.bra("idle");
+      m.label("hint");
+      m.leaAbs(SAMPLES, 0);
+      m.leaAbs(Z80_BASE + 0x1d00, 1);
+      m.moveWDtoA(3, 2);                  // request
+      m.label("hgrant"); m.btstZeroA(2); m.bne("hgrant");
+      for (let i = 0; i < grab.bytes; i++) m.moveBpost();
+      m.moveBimmA(1, 4);                  // commit, written last
+      m.moveWDtoA(4, 2);                  // release
+      m.rte();
+    }
+  } else m.label("idle");
+  if (grab?.hint) { /* handled above */ } else if (grab?.optimized) {
     // All setup precedes BUSREQ; short fixed packets have no DBRA inside it.
     if (!grab.cooperative || grab.every) {
       m.moveWimmD(grab.every, 1);
@@ -143,7 +307,7 @@ export function buildRom(image, samples = null, grab = null) {
     for (let i = 0; i < grab.bytes; i++) m.moveBpost();
     if (grab.cooperative) m.moveBimmA(1, 4);
     m.moveWDtoA(4, 2);
-  } else if (grab && !grab.disabled) {
+  } else if (grab && !grab.disabled && !grab.hint) {
     // R1 step 3 stage 3, and §3.6's decisive question: the 68000 takes the Z80
     // bus, copies `bytes` into Z80 RAM, and releases it. This is a REAL
     // transfer. Request-to-release and modeled stop-to-resume are distinct
@@ -169,7 +333,8 @@ export function buildRom(image, samples = null, grab = null) {
     m.dbra(2, "xfer");
     m.moveWimm(0x0000, Z80_BUSREQ);       // release
   }
-  m.bra("idle");
+  if (!grab?.hint) m.bra("idle");
+  else { m.label("halt"); m.bra("halt"); }
   const code = m.done();
   if (CODE + code.length > Z80IMG) throw new Error("68k code overlaps Z80 image");
   rom.set(code, CODE);
@@ -181,6 +346,7 @@ export function buildRom(image, samples = null, grab = null) {
   dv.setUint32(4, CODE);
   const trap = CODE + code.length - 4;    // the `bra idle` at the end
   for (let v = 2; v < 64; v++) dv.setUint32(v * 4, trap);
+  if (grab?.hint) dv.setUint32(28 * 4, m.lab.get("hint"));   // level 4 = HBlank
 
   // A plausible header. BlastEm does not check it; a human reading a hex dump
   // does.
