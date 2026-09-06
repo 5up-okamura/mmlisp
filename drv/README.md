@@ -63,8 +63,10 @@ tools/gen-mixer.mjs   generates src/mixer.z80 (8 shift-specialised loops, unroll
 tools/mixer-bench.mjs the P0 cost+correctness gate for the mixer (`npm run mixer`)
 tools/baseline.mjs    P0 of the DAC redesign: one command, one directory of
                       evidence (`npm run baseline`)
-experimental/dac-stream/  the output-centred DAC engine prototype — P1 passes in
-                      emulation; see its README and docs/dac-engine-implementation.md
+experimental/dac-stream/  the output-centred DAC engine prototype — P1/P2 pass on
+                      BlastEm, and a cooperative BUSREQ transfer holds §6.2 at
+                      16 KB/s across the host's phase; see its README and
+                      docs/dac-engine-implementation.md (R2, §11)
 tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
 tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (`npm run slots`)
 tools/gen-c-tables.mjs generates 68k/tables.c from live/src/ir-utils.js

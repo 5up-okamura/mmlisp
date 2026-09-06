@@ -12,6 +12,7 @@ npm run dac-stream:long     # …and 60 s on the representative case, + JSON
 
 sh blastem/setup.sh         # once — builds the emulator, ~2 min
 npm run dac-stream:machine  # the same schedules on BlastEm
+npm run dac-stream:probe-test  # the instrument's own negatives, incl. on the core
 ```
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
@@ -257,6 +258,75 @@ What that leaves, with the numbers this prototype can already put on them:
   index does not currently give it.
 - **Widening the interval bound for one interval a frame**, which is a change
   to §6.2 and therefore the designer's call, not this prototype's.
+
+## R2 — the transfer measured properly, and a cooperative window that holds
+
+R2 (`docs/dac-engine-implementation.md` §11) sent the transfer question back
+with three corrections: the 44-cycle "fixed cost" was this ROM's `LEA`s and
+loop setup executed *inside* the grab; the log measured request→release, not
+the Z80's stop→resume; and "a frame" was a `DBRA` count. All three are fixed.
+The instrument now records the Z80-side DAC access (before the YM's 42-master
+quantisation), the modelled stop and resume, the notification, every copied
+byte with its offset, the commit byte, and the first unrequested BUSACK poll —
+and a value mismatch is a fatal error whatever the case's label says
+(`probe-analysis.mjs`, pinned by `probe-selftest.mjs` including a CLI negative
+that corrupts one sample and expects exit 1).
+
+**The minimal uncompensated transfer**, setup moved before BUSREQ, copy
+unrolled, addresses held in registers — measured as the Z80's stop→resume:
+
+| bytes a grab, ~63 grabs/s | 1 | 2 | 4 |
+| --- | --- | --- | --- |
+| Z80 stopped (Z80 cycles) | 4.3–17.3, p50 7.3 | 10.4–23.4, p50 13.3 | 23.5–35.5, p50 25.5 |
+| mean rate | −0.0143% | −0.0251% | −0.0468% |
+| §6.2 | **pass** | **pass** | fails the 99.9% band |
+
+So one or two bytes a frame fit uncompensated, and the earlier "no BUSREQ
+transfer of any size fits" is withdrawn as a statement about the hardware —
+it was a statement about a routine.
+
+**The cooperative window** (`cooperative.mjs`): the Z80 raises a notification
+(one write into 68k work RAM through the bank window), keeps a window of
+`nop`s, lowers it, then looks at a local commit byte the 68000 wrote last
+before releasing. Commit present → that slot's pad is generated
+`compensation` cycles short, so the planned stop is repaid where it happened.
+Commit absent → the full pad runs; the Z80 never waits for the host. The
+68000 polls for the low→high edge with interrupts masked and skips a window
+it arrives late for.
+
+| | 4 B, ≤125 grabs/s | 8 B every 5 slots (**16 KB/s**) |
+| --- | --- | --- |
+| compensation | 41 | 65 |
+| host phases walked | 21 (`every` 11,000–13,000) | 31 (`every` 0–600) |
+| mean-rate error | −0.0000%…+0.0013% | −0.0004%…+0.0001% |
+| worst interval | 1.004 T | 1.008 T |
+| Z80 stopped, all phases | 38.3–42.5 | 62.8–68.3 |
+| 60 s at the phase that used to fail | — | 597,275 samples, −0.0000%, gaps 0.993–1.004 T |
+
+**What the phase-dependent failure was.** The window was a `djnz` loop.
+BUSACK is granted at an M-cycle boundary, so on a 13-cycle `djnz` iteration
+the stop begins up to 13 cycles after the request, and *where* depends on the
+68000's phase: measured 53–65 cycles, averaging the compensation in seven
+phases and missing it by 4.3 in the eighth — the +0.2387% that stopped the
+work. A window of `nop`s bounds that to 4 cycles, and the stop is 62.8–68.3 in
+every phase. The compensation is then a property of the transfer routine (its
+fixed hold plus grant and resume latency), set from the same routine's
+measured stop and *proved* across the host's phase, not fitted to a rate.
+
+**The hardware-facing rule this leaves.** In the model the residual averages
+to zero because grants land on the emulator's sync points; on silicon the
+residual is the M-cycle grant jitter, ≤ 4 cycles on `nop`s, of unknown mean.
+At 2,000 grabs/s a mean residual of 1 cycle is 0.056% of the rate, so the
+±0.1% budget allows a mean residual of about 1.8 cycles at that density, or
+proportionally more at lower density. That is the number a hardware round has
+to return.
+
+**What this does not settle.** All of it is the P1 output-only engine with a
+340-cycle pad. The 2ch mixer leaves 151 cycles in a plain slot and ~76 in a
+reserved one; the window (64) plus the notification traffic (~40) plus the
+compensation (41–65) does not fit either without re-planning the reservations
+— R2 §11.4 step 4 and §11.5 (ROM bank) are still open, and Z80 reads of 68k
+work RAM are withdrawn by R2 as a mechanism. Nothing has run on hardware.
 
 **BlastEm is still a model.** It is the reference implementation we are arguing
 with while a hardware round is expensive, and it has already found what the

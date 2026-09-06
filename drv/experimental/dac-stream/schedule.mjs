@@ -61,10 +61,19 @@ const straightPlan = (n, allow) => {
  * long once blocks are in it. `dead` names the registers the caller says are
  * free; b is required for the djnz form.
  */
-export function padTo(n, { dead = ["a", "b", "bc"] } = {}) {
+export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false } = {}) {
   if (n < 0) throw new Error(`slot overrun by ${-n} cycles`);
   const allow = new Set(dead);
   if (n === 0) return [];
+  // A stretch the 68000 is EXPECTED to take the bus inside wants the shortest
+  // instructions there are: BUSACK is granted at an M-cycle boundary, so the
+  // grant lands within 4 cycles of the request on a run of `nop`s, where a
+  // `djnz` iteration lets it slide by up to 13. Bytes are the price — one a
+  // cycle-quartet — and it is paid only where a stall is planned.
+  if (nopsOnly) {
+    if (n % 4) throw new Error(`a nop-only pad must be a multiple of 4 cycles, not ${n}`);
+    return Array.from({ length: n / 4 }, () => op("nop", 4));
+  }
   const straight = n <= 24 || !allow.has("b") ? straightPlan(n, allow) : null;
   if (straight) return straight.map((f) => op(f.asm, f.cycles, { clobbers: f.clobbers }));
   if (!allow.has("b")) throw new Error(`cannot pad ${n} cycles without b`);

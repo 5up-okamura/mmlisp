@@ -187,6 +187,47 @@ or a cooperative grab at an instant the schedule expects, which needs the 68000
 to know the Z80's phase to ~±10 cycles; or §6.2's interval bound relaxes for
 one interval a frame, which is the designer's call.
 
+## R2 — THE TRANSFER, MEASURED RIGHT, AND A COOPERATIVE WINDOW THAT HOLDS
+
+The designer's R2 (`docs/dac-engine-implementation.md` §11) corrected the
+transfer measurement: the 44-cycle "fixed cost" was this ROM's `LEA`s inside
+the grab, the log measured request→release not stop→resume, and "a frame" was
+a `DBRA` count. The designer's own session (Codex) rebuilt the instrument and
+the transfer routine and prototyped the cooperative window; it ran out mid-way
+with one phase failing (+0.2387%). Finished here.
+
+* **Instrument** (`probe-analysis.mjs`, `probe-selftest.mjs`, probe.patch):
+  Z80-side DAC access, modelled stop/resume, notification, per-byte copies,
+  commit, first BUSACK poll. A value mismatch is fatal in every case; a CLI
+  negative corrupts a sample and expects exit 1. `--every-sweep lo,hi,step`
+  walks the host's phase; `--compensation N` overrides a case.
+* **Minimal uncompensated transfer** (setup before BUSREQ, unrolled copy):
+  stop→resume 1 B p50 7.3, 2 B 13.3, 4 B 25.5 cycles. **1 B and 2 B a frame
+  pass §6.2 uncompensated.** "No BUSREQ transfer fits" is withdrawn as a
+  hardware claim — it was a routine.
+* **Cooperative window** (`cooperative.mjs`): Z80 notifies (write to 68k work
+  RAM via the bank window), holds a window, lowers it, checks a local commit
+  byte the 68000 wrote last; commit → pad short by `compensation`. **THE
+  WINDOW MUST BE NOPS.** On a `djnz` window the stop began 0..13 cycles after
+  the request depending on the host's phase (53..65 measured) — right on
+  average in seven phases, off by 4.3 in the eighth. On nops it is 62.8..68.3
+  in every phase and one compensation holds.
+* **Results with the nop window**: 8 B every 5 slots = 16 KB/s, compensation
+  65: 31 host phases, −0.0004%..+0.0001%, worst gap 1.008 T; 60 s at the
+  phase that used to fail: 597,275 samples, −0.0000%. 4 B, compensation 41:
+  21 phases, ≤ +0.0013%. Absent host passes. Suite: required 12/12.
+* **Hardware-facing rule**: in the model the residual averages to zero; on
+  silicon it is M-cycle grant jitter (≤4 on nops) of unknown mean. At 2,000
+  grabs/s, ±0.1% allows a MEAN residual of ~1.8 cycles. A hardware round has
+  to return that number.
+* **Still open**: this is the P1 output-only engine (340-cycle pad). A 2ch
+  mixer slot has 151 (plain) / ~76 (reserved) — window 64 + notify ~40 +
+  compensation 41..65 does not fit without re-planning the reservations (R2
+  §11.4 step 4). ROM bank (§11.5) untouched. Z80 reads of 68k work RAM are
+  withdrawn by R2 as a mechanism.
+* `mml_rate.h` drifted once more during that session (a tool without
+  `PCM_SPG=1 TIMER_B_K=1`); reverted.
+
 ## THREE BUGS, ALL OUTSIDE THE PROTOTYPE, ALL INVISIBLE TO EVERY GATE
 
 **1. `tools/z80asm.mjs`: `$` was the address of the NEXT instruction.** So
@@ -215,10 +256,10 @@ one clock would have passed clean.
 
 ## What is next, in order
 
-1. **NOT P2's remaining features.** R1 step 3 says to go back to the transfer
-   and clock design if the stall budget is not met, and it is not met by
-   anything. The decision above is the next thing that has to happen, and it is
-   the designer's.
+1. **Integrate the cooperative window into the 2ch schedule** (R2 §11.4 step
+   4): re-plan the reservations so window + notify + compensation fit a slot
+   with the mixer in it, then carry the 190 B/frame the driver needs. Decide
+   the ROM bank question (§11.5) alongside — both change the slot map.
 2. Once that is settled: P2's loop points, the ROM bank window, and note
    start/stop — the boundary work §5 orders after the master, and the first
    place the constant-time rule will actually hurt.

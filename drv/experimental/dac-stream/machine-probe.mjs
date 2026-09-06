@@ -11,6 +11,9 @@
 //
 // It is still a model. A green run here is a reason to spend a hardware round,
 // not a substitute for one.
+import { generateCooperative } from "./cooperative.mjs";
+import { createHash } from "node:crypto";
+import { readProbe, analyzeProbe, analyzeTransfers, summarizeResults } from "./probe-analysis.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -29,6 +32,14 @@ const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", 5));
 const ONLY = arg("case", null);
+// --compensation N: the planned-stop repayment the cooperative slot subtracts
+// from its pad, overriding the case's own. It is the 68000 routine's fixed
+// hold plus the grant and resume latencies, so it is a property of the
+// transfer code — set it from the measured stop→resume of the SAME routine,
+// then prove across host phases that the residual is bounded.
+const COMP = arg("compensation", null) === null ? null : Number(arg("compensation"));
+if (!Number.isFinite(SECONDS) || SECONDS < 0.5 || SECONDS >= 70)
+  throw new Error("--seconds must be >= 0.5 and < 70 (32-bit instrument clocks)");
 
 const core = ["blastem_libretro.dylib", "blastem_libretro.so"]
   .map((f) => join(BLAST, f)).find(existsSync);
@@ -38,10 +49,39 @@ if (!core || !existsSync(host)) {
   process.exit(2);
 }
 
-// The §10.3 order: output only, then the mixer, then the 68000 on the bus.
+const coreHash = createHash("sha256").update(readFileSync(core)).digest("hex");
+
+// Isolated regressions, measured transfer candidates, and known failing loads.
 const sine = (n, amp, cycles) => Uint8Array.from({ length: n },
   (_, i) => Math.round(128 + amp * Math.sin((2 * Math.PI * i * cycles) / n)) & 0xff);
 const CASES = [
+  // THE COMPENSATION IS THE PLANNED STOP, and the planned stop is a property
+  // of the transfer routine — the 68000's fixed hold plus the grant and resume
+  // latencies. It is set from the measured stop→resume of the SAME routine
+  // under a nop-only window (2026-09-06, BlastEm): 8 B 62.8..68.3, p50 ~65;
+  // 4 B 38.3..42.5, p50 ~41. Then it is PROVED, not assumed, by walking the
+  // host's phase (--every-sweep): the mean-rate error stays inside
+  // -0.0004%..+0.0001% over 31 phases at 8 B, where the earlier `djnz` window
+  // put one phase at +0.2387%. On hardware the residual is the M-cycle grant
+  // jitter, which this model only approximates — see the README.
+  ...[0,1,5,50,100,200,300,1000].map((every) => ({
+    name: `cooperative density 8B/5 slots delay ${every}`, cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { every, bytes: 8, optimized: true, cooperative: true }, informational: true,
+  })),
+  ...[0, 1, 12000, 30000].map((every) => ({
+    name: `cooperative 4B host delay ${every}`, cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 80, compensation: 41 },
+    grab: { every, bytes: 4, optimized: true, cooperative: true },
+  })),
+  { name: "cooperative absent host", cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 80, compensation: 41 }, bankOnly: true },
+  ...[1, 2, 4].flatMap((bytes) => [
+    { name: `uncompensated legacy ${bytes}B`, cfg: {}, wave: sine(256,120,1),
+      grab: { every: 12000, bytes }, informational: true },
+    { name: `uncompensated optimized ${bytes}B`, cfg: {}, wave: sine(256,120,1),
+      grab: { every: 12000, bytes, optimized: true }, informational: true },
+  ]),
   { name: "output only", cfg: {}, wave: sine(256, 120, 1) },
   { name: "output only + CSM", cfg: { csm: true }, wave: sine(256, 120, 1) },
   { name: "one voice", cfg: { voices: 1 } },
@@ -49,26 +89,23 @@ const CASES = [
   { name: "two voices + CSM", cfg: { voices: 2, csm: true } },
   { name: "2ch complete budget", cfg: { voices: 2, complete: true } },
   { name: "2ch complete budget + CSM", cfg: { voices: 2, complete: true, csm: true } },
-  // §3.6, priced. The 68000 copies N bytes into Z80 RAM about once a frame:
-  // request, wait for the grant, copy, release, all inside the stall. These
-  // are informational because the isolated column of §6.2 is measured without
-  // the 68000 — but the numbers are the ones that decide whether a BUSREQ
-  // transfer can exist at this sample rate at all.
-  { name: "68k transfer, 1 byte a frame", cfg: { voices: 2, complete: true },
+  // Historical transfers use a DBRA delay, not VBlank synchronization.
+  // Their timing failures remain informational; data/probe failures are fatal.
+  { name: "68k transfer, 1 byte DBRA12000", cfg: { voices: 2, complete: true },
     grab: { every: 12000, bytes: 1 }, informational: true },
-  { name: "…the same, twice a frame", cfg: { voices: 2, complete: true },
+  { name: "68k transfer, 1 byte DBRA6000", cfg: { voices: 2, complete: true },
     grab: { every: 6000, bytes: 1 }, informational: true },
-  { name: "68k transfer, 16 bytes a frame", cfg: { voices: 2, complete: true },
+  { name: "68k transfer, 16 bytes DBRA6000", cfg: { voices: 2, complete: true },
     grab: { every: 6000, bytes: 16 }, informational: true },
-  { name: "68k transfer, 64 bytes a frame", cfg: { voices: 2, complete: true },
+  { name: "68k transfer, 64 bytes DBRA6000", cfg: { voices: 2, complete: true },
     grab: { every: 6000, bytes: 64 }, informational: true },
-  { name: "68k transfer, 256 bytes a frame", cfg: { voices: 2, complete: true },
+  { name: "68k transfer, 256 bytes DBRA6000", cfg: { voices: 2, complete: true },
     grab: { every: 6000, bytes: 256 }, informational: true },
   // The allowance scales with the period, so the same transfer is a different
   // proposition at the clock the driver ships at today.
-  { name: "3.3 kHz, 4 bytes a frame", cfg: { voices: 2, profile: "p3k3" },
+  { name: "3.3 kHz, 4 bytes DBRA12000", cfg: { voices: 2, profile: "p3k3" },
     grab: { every: 12000, bytes: 4 }, informational: true },
-  { name: "3.3 kHz, 16 bytes a frame", cfg: { voices: 2, profile: "p3k3" },
+  { name: "3.3 kHz, 16 bytes DBRA12000", cfg: { voices: 2, profile: "p3k3" },
     grab: { every: 12000, bytes: 16 }, informational: true },
 ];
 
@@ -77,9 +114,11 @@ const Z80_DIV = 15;
 
 function runCase(c) {
   const cfg = buildConfig(c.cfg);
-  const gen = generate(cfg);
+  const coop = c.cooperative && COMP !== null ? { ...c.cooperative, compensation: COMP } : c.cooperative;
+  const gen = coop ? generateCooperative(cfg, coop) : generate(cfg);
+  const caseId = createHash("sha256").update(JSON.stringify({ ...c, cooperative: coop })).digest("hex").slice(0,12);
   mkdirSync(OUT, { recursive: true });
-  const zpath = join(OUT, `probe-${cfg.stamp}.z80`);
+  const zpath = join(OUT, `probe-${cfg.stamp}-${caseId}.z80`);
   writeFileSync(zpath, gen.text);
   const built = assemble(zpath);
 
@@ -101,125 +140,130 @@ function runCase(c) {
     image = grown;
   }
 
-  const { rom, sha } = buildRom(image, samples, c.grab ?? null);
-  const rpath = join(OUT, `probe-${cfg.stamp}.bin`);
+  if (!samples && c.grab) samples = Uint8Array.from({length:512}, (_,i)=>(i*73+19)&255);
+  const { rom, sha } = buildRom(image, samples, c.grab ?? (c.bankOnly ? { cooperative: true, disabled: true } : null));
+  const rpath = join(OUT, `probe-${cfg.stamp}-${caseId}-${sha}.bin`);
   writeFileSync(rpath, rom);
 
-  const log = join(OUT, `probe-${cfg.stamp}.log`);
+  const log = join(OUT, `probe-${cfg.stamp}-${caseId}-${sha}-${coreHash.slice(0,8)}-${SECONDS}s${argv.includes("--inject-value-error") ? "-mutant" : ""}.log`);
   rmSync(log, { force: true });
   const frames = Math.round(SECONDS * 60);
   execFileSync(host, ["--core", core, "--rom", rpath, "--frames", String(frames),
-    "--wav", join(OUT, `probe-${cfg.stamp}.wav`)],
+    "--wav", log.replace(/\.log$/, ".wav")],
     { env: { ...process.env, MMLISP_PROBE_LOG: log }, stdio: ["ignore", "pipe", "pipe"] });
 
-  return { cfg, gen, sha, log, rpath, image };
+  return { cfg, gen, sha, log, rpath, image, samples };
 }
 
-// ── Read the probe log ─────────────────────────────────────────────────────
-const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5 };
-function readLog(path) {
-  const buf = readFileSync(path);
-  const n = Math.floor(buf.length / 8);
-  const dac = [], val = [], grabs = [];
-  let open = null;
-  for (let i = 0; i < n; i++) {
-    const kind = buf[i * 8];
-    const v = buf.readUInt16LE(i * 8 + 2);
-    const cyc = buf.readUInt32LE(i * 8 + 4);
-    if (kind === KIND.DAC) { dac.push(cyc); val.push(v & 0xff); }
-    else if (kind === KIND.GRAB) open = cyc;
-    else if (kind === KIND.RELEASE && open !== null) { grabs.push([open, cyc]); open = null; }
-  }
-  return { dac, val, grabs };
-}
-
-const q = (s, p) => s[Math.min(s.length - 1, Math.floor((s.length - 1) * p))];
-
-console.log(`machine-probe — BlastEm, ${SECONDS}s a case`);
-console.log(`  core ${core.split("/").pop()}`);
-let failed = 0;
-for (const c of CASES) {
-  if (ONLY && !c.name.includes(ONLY)) continue;
+const q = (s, p) => s[Math.floor((s.length - 1)*p)];
+const results = [];
+// --every-sweep lo,hi,step: re-run each selected transfer case with the host's
+// DBRA delay walked across a range. `every` sets where in the Z80's group the
+// 68000 enters its polling section, and R2 §11.4 asks for the transfer to be
+// measured across the host's phase — the eight hand-picked delays found one
+// failing phase; a walk finds the bias envelope.
+const EVERY = (() => { const v = arg("every-sweep", null); if (!v) return null;
+  const [lo, hi, step] = v.split(",").map(Number);
+  if (![lo, hi, step].every(Number.isInteger) || step < 1 || hi < lo) throw new Error("--every-sweep lo,hi,step");
+  return Array.from({ length: Math.floor((hi - lo) / step) + 1 }, (_, i) => lo + i * step); })();
+const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
+  && (!argv.includes("--phase-sweep") || c.name.startsWith("uncompensated"))
+  && (!EVERY || c.grab))
+  .flatMap((c) => argv.includes("--phase-sweep") ? Array.from({length:32}, (_,phase)=>({
+    ...c, name: `${c.name} phase ${phase}`, phaseFamily: c.name,
+    // Six NOPs = 168 master clocks; 32 entry offsets span one 5376-master period.
+    grab: {...c.grab,startNops:6*phase},
+  })) : EVERY ? EVERY.map((every) => ({
+    ...c, name: `${c.name.replace(/ delay \d+$/, "")} every ${every}`,
+    everyFamily: c.name.replace(/ delay \d+$/, ""), grab: { ...c.grab, every },
+  })) : [c]);
+// One line per family under --every-sweep, so the envelope is one number.
+const everyRows = [];
+console.log(`machine-probe — BlastEm, ${SECONDS}s a case; timing = Z80 DAC bus writes`);
+for (const c of selected) {
   const r = runCase(c);
-  const { dac, val, grabs } = readLog(r.log);
-  if (dac.length < 100) {
-    console.log(`FAIL  ${c.name.padEnd(30)} only ${dac.length} $2A writes — the ROM did not run`);
-    failed++;
-    continue;
+  const log = readProbe(readFileSync(r.log));
+  const expected = (i) => {
+    if (!r.cfg.voices) return c.wave[i % 256];
+    if (i < r.cfg.lead) return 128;
+    const j = (i - r.cfg.lead) % 256;
+    return r.cfg.voices >= 2
+      ? mixTwo(r.samples[j], LEVELS-1, r.samples[256+j], LEVELS-1, LEVELS-1)
+      : mixOne(r.samples[j], LEVELS-1, LEVELS-1);
+  };
+  // An explicit negative test exercises the CLI exit status, not just a helper.
+  if (argv.includes("--inject-value-error") && log.dac.length) log.dac.at(-1).value ^= 1;
+  const a = analyzeProbe(log, r.cfg, expected);
+  const result = { name: c.name, informational: !!c.informational && !argv.includes("--strict"), errors: a.errors };
+  results.push(result);
+  const measuredSeconds = a.span / MCLK;
+  console.log(`${a.errors.length ? (c.informational ? "info FAIL" : "FAIL") : "ok"} ${c.name}`
+    + `: ${a.samples.length} samples, ${a.rate.toFixed(2)} Hz (${a.errorPct.toFixed(4)}%),`
+    + ` gap ${a.sorted[0]}..${a.sorted.at(-1)} master`);
+  console.log(`  inside ±5% ${(100*a.inside5).toFixed(4)}%, ±10% ${(100*a.inside10).toFixed(4)}%;`
+    + ` holes ${a.holes.length} (${a.overlapping.length} overlap BUSREQ); values ${a.firstBad < 0 ? "all match" : "FAIL"}`);
+  const steady = log.grabs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time);
+  const beforeOutput = log.grabs.filter(([t]) => t < log.dac[0]?.time).length;
+  console.log(`  requests: ${beforeOutput} before first DAC, ${log.grabs.length-beforeOutput-steady.length} outside measurement, ${steady.length} measured`);
+  const times = (pairs) => pairs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time)
+    .map(([x,y]) => (y-x)/Z80_DIV).sort((x,y) => x-y);
+  for (const [name, pairs] of [["request→release",log.grabs],["modeled stop→resume",log.stops]]) {
+    const lens = times(pairs);
+    if (lens.length) console.log(`  ${name}: ${lens[0].toFixed(2)}..${lens.at(-1).toFixed(2)} Z80 cyc, p50 ${q(lens,.5).toFixed(2)}; sum ${lens.reduce((x,y)=>x+y,0).toFixed(1)}`);
   }
-  // The 32-bit master clock wraps every ~80 s; a run this long cannot wrap,
-  // and the check says so rather than assuming it (§6.2).
-  let wrapped = false;
-  for (let i = 1; i < dac.length; i++) if (dac[i] < dac[i - 1]) wrapped = true;
-
-  // Skip the upload and the Z80's own boot.
-  const t0 = dac[0] + 0.25 * MCLK;
-  const t = dac.filter((x) => x >= t0);
-  const T = r.cfg.periodCycles * Z80_DIV;      // the period in MASTER clocks
-  const gaps = [];
-  for (let i = 1; i < t.length; i++) gaps.push(t[i] - t[i - 1]);
-  const sorted = [...gaps].sort((a, b) => a - b);
-  const span = t[t.length - 1] - t[0];
-  const rate = ((t.length - 1) / span) * MCLK;
-  const errPct = ((rate - r.cfg.rateHz) / r.cfg.rateHz) * 100;
-  const within = (lo, hi) => gaps.filter((g) => g >= T * lo && g <= T * hi).length / gaps.length;
-  const holes = gaps.filter((g) => g > T * 1.5);
-  const inGrab = holes.filter((g, i) => {
-    const at = t[gaps.indexOf(g) + 1] ?? 0;
-    return grabs.some(([a, b]) => b > at - g && a < at);
-  });
-
-  const bad = Math.abs(errPct) > 0.1 || within(0.95, 1.05) < 0.999
-    || sorted[0] < T * 0.9 || sorted[sorted.length - 1] > T * 1.1 || holes.length || wrapped;
-  if (bad && !c.informational) failed++;
-  console.log(`${bad ? (c.informational ? "info" : "FAIL") : "ok  "}  ${c.name.padEnd(30)}`
-    + ` ${t.length} samples · ${rate.toFixed(2)} Hz (${errPct >= 0 ? "+" : ""}${errPct.toFixed(4)}%)`
-    + ` · gap ${sorted[0]}..${sorted[sorted.length - 1]} master (T = ${T.toFixed(1)})`);
-  console.log(`      ${(100 * within(0.95, 1.05)).toFixed(4)}% inside 0.95T..1.05T`
-    + ` · ${(100 * within(0.9, 1.1)).toFixed(4)}% inside 0.90T..1.10T`
-    + ` · p50 ${q(sorted, 0.5)} p99 ${q(sorted, 0.99)}`
-    + ` · holes past 1.5T ${holes.length}${holes.length ? ` (${inGrab.length} overlap a bus grab)` : ""}`);
-  if (grabs.length) {
-    // The upload at boot is one enormous grab; the periodic ones are what §3.6
-    // is about, so they are reported apart from it.
-    const steady = grabs.filter(([a]) => a >= t0);
-    const lens = steady.map(([a, b]) => b - a).sort((x, y) => x - y);
-    console.log(`      the 68000 held the bus ${grabs.length} times`
-      + ` (${grabs.length - steady.length} of them the boot upload)`);
-    if (lens.length) {
-      const z = (mc) => (mc / Z80_DIV).toFixed(1);
-      const perFrame = lens.reduce((s, x) => s + x, 0) / (span / (MCLK / 60)) / Z80_DIV;
-      // §3.6's allowance is 0.10 x the period, and the period is the case's.
-      const allow = 0.1 * r.cfg.periodCycles;
-      console.log(`      3.6: a grab stops the Z80 for ${z(lens[0])}..${z(lens[lens.length - 1])}`
-        + ` Z80 cycles (p50 ${z(q(lens, 0.5))}), ${perFrame.toFixed(1)} a frame`
-        + ` — the allowance is ${allow.toFixed(1)} in one interval, ~60 a frame`);
-      const over = lens.filter((x) => x > allow * Z80_DIV).length;
-      console.log(`      ${over} of ${lens.length} grabs exceed one interval's whole allowance`
-        + `${over ? " — a BUSREQ transfer of this size does not fit" : ""}`);
+  if (c.grab) {
+    const bins = new Set();
+    let j=0;
+    for (const [at] of steady) {
+      while (j+1 < log.dac.length && log.dac[j+1].time <= at) j++;
+      bins.add(Math.min(31,Math.floor(32*(at-log.dac[j].time)/r.cfg.periodNum)));
+    }
+    result.phaseBins = [...bins].sort((a,b)=>a-b);
+    console.log(`  ${ (steady.length/measuredSeconds).toFixed(2)} requests/s, ${(steady.length*c.grab.bytes/measuredSeconds).toFixed(2)} B/s; request phase ${bins.size}/32 bins`);
+    const transfer = analyzeTransfers(log, steady, c.grab, r.samples);
+    result.errors.push(...transfer.errors);
+    if (c.grab.cooperative) {
+      const ds = transfer.delays;
+      console.log(`  notification→request ${Math.min(...ds).toFixed(2)}..${Math.max(...ds).toFixed(2)} Z80 cyc;`
+        + ` masked polling ${(100*transfer.polling.reduce((a,b)=>a+b,0)/a.span).toFixed(2)}% of wall time`);
+      result.transfer = { delayMin: Math.min(...ds), delayMax: Math.max(...ds),
+        maskedPollingPct: 100*transfer.polling.reduce((a,b)=>a+b,0)/a.span };
     }
   }
-
-  // VALUE — the same reference the JS gate uses, against the machine's bytes.
-  if (r.cfg.voices) {
-    const src = new Uint8Array(512);
-    src.set(sine256(), 0); src.set(sine256b(), 256);
-    let firstBad = -1;
-    const lead = r.cfg.lead;
-    const start = dac.length - t.length;
-    for (let i = 1; i < t.length - 1 && firstBad < 0; i++) {
-      const j = start + i;
-      const want = r.cfg.voices >= 2
-        ? mixTwo(src[(j - lead) % 256], LEVELS - 1, src[256 + ((j - lead) % 256)], LEVELS - 1, LEVELS - 1)
-        : mixOne(src[(j - lead) % 256], LEVELS - 1, LEVELS - 1);
-      if (val[j] !== want) firstBad = j;
-    }
-    console.log(`      value: ${firstBad < 0 ? "every sample matches the reference"
-      : `sample ${firstBad} is ${val[firstBad]}, the reference says otherwise`}`);
+  console.log(`  ${result.errors.length ? result.errors.join("; ") : "criteria pass"}`);
+  if (c.everyFamily) {
+    const st = times(log.stops);
+    everyRows.push({ family: c.everyFamily, every: c.grab.every, errorPct: a.errorPct,
+      stopP50: st.length ? q(st, .5) : NaN, stopMin: st[0], stopMax: st.at(-1),
+      max: a.sorted.at(-1), pass: !result.errors.length });
   }
-  console.log(`      rom ${r.sha} · ${stampLine(r.cfg).slice(0, 96)}`);
+  console.log(`  rom ${r.sha} · ${stampLine(r.cfg)} `);
+  writeFileSync(r.log.replace(/\.log$/, ".json"), JSON.stringify({
+    ...result, case: c, cfg: r.cfg, rom: r.sha, coreHash, seconds: SECONDS,
+    rate: a.rate, errorPct: a.errorPct, intervalMin: a.sorted[0], intervalMax: a.sorted.at(-1),
+    inside5: a.inside5, inside10: a.inside10, holes: a.holes.length,
+    requests: steady.length, requestsPerSecond: steady.length/measuredSeconds,
+    requestCycles: times(log.grabs), stopCycles: times(log.stops),
+  }, null, 2));
 }
-function sine256() { return sine(256, 120, 1); }
-function sine256b() { return sine(256, 90, 3); }
-console.log(failed ? `\nFAIL: ${failed} case(s)` : `\nall cases pass on BlastEm`);
-process.exit(failed ? 1 : 0);
+if (argv.includes("--phase-sweep")) {
+  for (const family of new Set(selected.map(c=>c.phaseFamily))) {
+    const bins=new Set(results.filter(r=>r.name.startsWith(family+" phase ")).flatMap(r=>r.phaseBins));
+    console.log(`${family}: aggregate request phase ${bins.size}/32 bins`);
+    if (bins.size !== 32) results.push({name:family,errors:["incomplete request phase sweep"]});
+  }
+}
+if (everyRows.length) {
+  for (const family of new Set(everyRows.map((r) => r.family))) {
+    const rows = everyRows.filter((r) => r.family === family);
+    const errs = rows.map((r) => r.errorPct);
+    console.log(`\n${family}: ${rows.length} host phases, mean-rate error`
+      + ` ${Math.min(...errs).toFixed(4)}%..${Math.max(...errs).toFixed(4)}%,`
+      + ` ${rows.filter((r) => !r.pass).length} fail criteria`);
+    for (const r of rows) console.log(`  every ${String(r.every).padStart(5)}  ${r.errorPct.toFixed(4).padStart(8)}%`
+      + `  stop ${r.stopMin?.toFixed(1)}..${r.stopMax?.toFixed(1)} p50 ${r.stopP50?.toFixed(1)}  max gap ${r.max}  ${r.pass ? "ok" : "FAIL"}`);
+  }
+}
+const summary = summarizeResults(results);
+console.log(`\n${summary.text}`);
+process.exit(summary.exitCode);

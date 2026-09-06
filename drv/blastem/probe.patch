@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..d063957 100644
+index 4f41271..fc7157e 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -16,29 +16,69 @@ index 4f41271..d063957 100644
  	z_context->int_pulse_end = z_context->int_pulse_start + Z80_INT_PULSE_MCLKS;
  	z_context->im2_vector = 0xFF;
  #endif
-@@ -1387,6 +1389,8 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+@@ -1299,6 +1301,7 @@ static uint8_t z80_vdp_port_read(uint32_t vdp_port, void * vcontext)
+ 
+ //TODO: Move this inside the system context
+ static uint32_t zram_counter = 0;
++static uint8_t mml_probe_poll_pending;
+ 
+ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_t value)
+ {
+@@ -1314,6 +1317,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+ 			location &= 0x7FFF;
+ 			if (location < 0x4000) {
+ 				gen->zram[location & 0x1FFF] = value;
++				if ((location & 0x1FFF) == 0x1EFF) mml_probe_log(MML_PROBE_COMMIT, value, context->cycles);
++				if ((location & 0x1F00) == 0x1D00)
++					mml_probe_log(MML_PROBE_COPY, ((location & 0xFF) << 8) | value, context->cycles);
+ #ifndef NO_Z80
+ 				z80_handle_code_write(location & 0x1FFF, gen->z80);
+ #endif
+@@ -1387,6 +1393,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
  		} else {
  			uint32_t masked = location & 0xFFF00;
  			if (masked == 0x11100) {
++				if (!(value & 1)) mml_probe_poll_pending = 1;
 +				mml_probe_log(value & 1 ? MML_PROBE_GRAB : MML_PROBE_RELEASE,
 +				              0, context->cycles);
  				if (value & 1) {
  					dputs("bus requesting Z80");
  					if (z80_enabled) {
-@@ -1766,6 +1770,11 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
+@@ -1571,6 +1580,10 @@ static uint8_t io_read(uint32_t location, m68k_context * context)
+ 			uint32_t masked = location & 0xFFF01;
+ 			if (masked == 0x11100) {
+ 				value = z80_enabled ? !z80_get_busack(gen->z80, context->cycles) : !gen->z80->busack;
++				if (mml_probe_poll_pending && !gen->z80->busreq) {
++					mml_probe_log(MML_PROBE_POLL, 0, context->cycles);
++					mml_probe_poll_pending = 0;
++				}
+ 				value |= (get_open_bus_value(&gen->header) >> 8) & 0xFE;
+ 				dprintf("Byte read of BUSREQ returned %d @ %d (reset: %d)\n", value, context->cycles, gen->z80->reset);
+ 			} else if (masked == 0x11200) {
+@@ -1766,6 +1779,13 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
  	genesis_context * gen = context->system;
  	sync_sound(gen, context->Z80_CYCLE);
  	if (location & 1) {
 +		// The Z80's PC at the moment it fed the DAC. A hole in the sample clock
 +		// is a stretch of engine code that ran without asking; this is what
 +		// turns "the ISR starves it" into the name of a routine.
-+		if (gen->ym->selected_reg == 0x2A && !gen->ym->selected_part)
++		if (gen->ym->selected_reg == 0x2A && !gen->ym->selected_part) {
 +			mml_probe_log(MML_PROBE_DACPC, context->pc, gen->ym->current_cycle);
++			mml_probe_log(MML_PROBE_DACBUS, value, context->Z80_CYCLE);
++		}
  		ym_data_write(gen->ym, value);
  	} else if (location & 2) {
  		ym_address_write_part2(gen->ym, value);
+@@ -1837,6 +1857,7 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
+ 
+ 	location &= 0x7FFF;
+ 	uint32_t address = gen->z80_bank_reg << 15 | location;
++	if (address == 0xFF0000) mml_probe_log(MML_PROBE_NOTIFY, value, context->Z80_CYCLE);
+ 	if (address >= 0xE00000) {
+ 		address &= 0xFFFF;
+ 		((uint8_t *)gen->work_ram)[address ^ 1] = value;
 diff --git a/util.c b/util.c
-index 2cba3fa..9afdf26 100644
+index d8ba757..79664fd 100644
 --- a/util.c
 +++ b/util.c
 @@ -1109,3 +1109,25 @@ FILE* fopen_wrapper(const char *path, const char *mode)
@@ -68,7 +108,7 @@ index 2cba3fa..9afdf26 100644
 +	fwrite(rec, 1, sizeof(rec), mml_probe_file);
 +}
 diff --git a/util.h b/util.h
-index 8b7d75d..fbfd6a3 100644
+index 8b7d75d..5dfee58 100644
 --- a/util.h
 +++ b/util.h
 @@ -2,6 +2,7 @@
@@ -79,7 +119,7 @@ index 8b7d75d..fbfd6a3 100644
  #include <time.h>
  #include <wchar.h>
  #include <stdarg.h>
-@@ -112,4 +113,21 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+@@ -112,4 +113,28 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
  FILE* fopen_wrapper(const char *path, const char *mode);
  #endif
  
@@ -98,6 +138,13 @@ index 8b7d75d..fbfd6a3 100644
 +#define MML_PROBE_VINT    4   /* the instant the Z80's /INT is due          */
 +#define MML_PROBE_DACEN   5   /* value = the byte written to $2B            */
 +#define MML_PROBE_DACPC   6   /* value = the Z80 PC that wrote $2A          */
++#define MML_PROBE_DACBUS  7   /* Z80-side DAC access, before YM quantization */
++#define MML_PROBE_STOP    8   /* modeled Z80 execution boundary at BUSACK */
++#define MML_PROBE_RESUME  9   /* modeled boundary after release delay */
++#define MML_PROBE_NOTIFY 10   /* Z80 write to main RAM $FF0000 */
++#define MML_PROBE_POLL   12   /* first unrequested BUSACK read after release */
++#define MML_PROBE_COMMIT 13   /* 68k writes local cooperative commit byte */
++#define MML_PROBE_COPY   11   /* value = queue offset << 8 | transferred byte */
 +void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
 +
  #endif //UTIL_H_
@@ -129,3 +176,39 @@ index c2973d1..de647c7 100644
  			context->dac_enable = value & 0x80;
  			break;
  		}
+diff --git a/z80_to_x86.c b/z80_to_x86.c
+index d539837..88701f1 100644
+--- a/z80_to_x86.c
++++ b/z80_to_x86.c
+@@ -3484,6 +3484,7 @@ void z80_run(z80_context * context, uint32_t target_cycle)
+ 				dprintf("Z80 ran to cycle %d\n", context->current_cycle);
+ 			}
+ 			if (context->busreq) {
++				mml_probe_log(MML_PROBE_STOP, 0, context->current_cycle);
+ 				context->busack = 1;
+ 				context->current_cycle = target_cycle;
+ 			}
+@@ -3530,6 +3531,7 @@ void z80_clear_reset(z80_context * context, uint32_t cycle)
+ 		context->sp = 0xFFFF;
+ 		if (context->busreq) {
+ 			//TODO: Figure out appropriate delay
++			mml_probe_log(MML_PROBE_STOP, 0, context->current_cycle);
+ 			context->busack = 1;
+ 		}
+ 	}
+@@ -3542,6 +3544,7 @@ void z80_assert_busreq(z80_context * context, uint32_t cycle)
+ 	//this is an imperfect aproximation since most M-cycles take less tstates than the max
+ 	//and a short 3-tstate m-cycle can take an unbounded number due to wait states
+ 	if (context->current_cycle - cycle > MAX_MCYCLE_LENGTH * context->options->gen.clock_divider) {
++		mml_probe_log(MML_PROBE_STOP, 0, context->current_cycle);
+ 		context->busack = 1;
+ 	}
+ }
+@@ -3554,6 +3557,7 @@ void z80_clear_busreq(z80_context * context, uint32_t cycle)
+ 	//there appears to be at least a 1 Z80 cycle delay between busreq
+ 	//being released and resumption of execution
+ 	context->current_cycle += context->options->gen.clock_divider;
++	mml_probe_log(MML_PROBE_RESUME, 0, context->current_cycle);
+ }
+ 
+ uint8_t z80_get_busack(z80_context * context, uint32_t cycle)
