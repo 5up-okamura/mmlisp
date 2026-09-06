@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine } from "./config.mjs";
+import { buildConfig, stampLine, CODE_ESTIMATE_2CH } from "./config.mjs";
 import { generate, cyclePaths } from "./gen-stream.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
 import {
@@ -141,6 +141,14 @@ const CASES = [
   { name: "P2 two voices, master fade", src: "romsine", cfg: { voices: 2 }, levels: "fade" },
   // The §6.3 "声部別の逆向きフェード": voice 0 up while voice 1 goes down.
   { name: "P2 two voices, opposed fades", src: "romsine", cfg: { voices: 2 }, levels: "opposed" },
+
+  // ── The COMPLETE 2ch engine's BUDGET (§10.3 step 2, R1) ──────────────────
+  // Every feature that is not written yet has its cycles EXECUTED as padding
+  // and its RAM reserved. What passes here is not the finished engine — it is
+  // the finished engine's schedule, measured rather than tabulated.
+  { name: "2ch complete budget", src: "romsine", cfg: { voices: 2, complete: true } },
+  { name: "2ch complete budget + CSM", src: "romsine", cfg: { voices: 2, complete: true, csm: true } },
+  { name: "2ch complete budget, fades", src: "romsine", cfg: { voices: 2, complete: true }, levels: "opposed" },
 ];
 
 const build = (cfgIn) => {
@@ -289,7 +297,7 @@ for (const c of CASES) {
   if (ONLY && !c.name.includes(ONLY)) continue;
   // The representative case §6.2 wants a minute of is the heaviest one that is
   // meant to pass: two voices, a master, and CSM writing alongside.
-  const seconds = LONG && c.name === "P2 two voices + CSM" ? 60 : SECONDS;
+  const seconds = LONG && c.name === "2ch complete budget + CSM" ? 60 : SECONDS;
   const r = runCase(c, seconds);
   results.push(r);
   const bad = r.fails.length > 0;
@@ -320,7 +328,8 @@ for (const c of CASES) {
 // ── The §4 deliverables, printed with the run that produced them ───────────
 // The tables are printed for the HEAVIEST configuration that ran, because the
 // question they answer is where the room is.
-const ref = results.find((r) => r.c.name === "P2 two voices + CSM")
+const ref = results.find((r) => r.c.name === "2ch complete budget + CSM")
+  ?? results.find((r) => r.c.name === "P2 two voices + CSM")
   ?? results.find((r) => r.c.name === "CSM + dense FM writes") ?? results[0];
 if (ref && !JSON_OUT) {
   console.log(`\n出力配置表 — ${stampLine(ref.cfg)}`);
@@ -339,12 +348,53 @@ if (ref && !JSON_OUT) {
   for (const [name, note] of paths.pending)
     console.log(`  ${pad(name, 30)}${"—".padStart(6)}  ${note}`);
 
-  console.log(`\nRAMマップ — code ${ref.codeBytes} B (loop entry $${ref.ramTop.toString(16)},`
-    + ` ends $${ref.codeBytes.toString(16)}), image ${ref.imageBytes} B with the tables`);
+  console.log(`\nRAMマップ — code ${ref.codeBytes} B built (loop entry $${ref.ramTop.toString(16)},`
+    + ` ends $${ref.codeBytes.toString(16)})`);
+  let claimed = 0;
   for (const [k, v] of Object.entries(ref.cfg.ram)) {
     if (k === "size") continue;
+    claimed += v[1] - v[0];
+    const note = k === "code"
+      ? `${ref.codeBytes} B built, ${v[1] - v[0] - ref.codeBytes} B left for the rest`
+      : "";
     console.log(`  ${pad(k, 10)} $${v[0].toString(16).padStart(4, "0")}..$${v[1].toString(16).padStart(4, "0")}`
-      + `  ${String(v[1] - v[0]).padStart(5)} B`);
+      + `  ${String(v[1] - v[0]).padStart(5)} B  ${note}`);
+  }
+  console.log(`  ${pad("", 10)} ${pad("", 13)}  ${String(0x2000 - claimed).padStart(5)} B  UNCLAIMED`
+    + (0x2000 - claimed < 256 ? "  ← this is not a margin" : ""));
+
+  if (ref.cfg.reserve) {
+    // The code region is the half of the budget the cycle reservations cannot
+    // express, and it is the binding one.
+    const owed = CODE_ESTIMATE_2CH.reduce((t, [, b]) => t + b, 0);
+    const region = ref.cfg.ram.code[1] - ref.cfg.ram.code[0];
+    // The test image bakes a CH3 patch into boot so CSM has something to key.
+    // That is scaffolding — a real engine receives a patch as commands — so it
+    // is measured and separated rather than quietly inflating the budget.
+    const bare = build({ ...ref.c.cfg, csm: false }).built.symbols.get("code_end");
+    const scaffold = ref.codeBytes - bare;
+    console.log(`\nコード予算 — region ${region} B`);
+    console.log(`  ${pad("built (engine)", 26)}${String(bare).padStart(5)} B`);
+    if (scaffold > 0)
+      console.log(`  ${pad("(test CSM patch dump)", 26)}${String(scaffold).padStart(5)} B`
+        + `  scaffolding — a real engine gets a patch as commands, not as boot code`);
+    for (const [what, bytes, why] of CODE_ESTIMATE_2CH)
+      console.log(`  ${pad(what, 26)}${String(bytes).padStart(5)} B  ${why}`);
+    const left = region - bare - owed;
+    console.log(`  ${pad("TOTAL", 26)}${String(bare + owed).padStart(5)} B`
+      + `  ${left >= 0 ? `${left} B spare` : `${-left} B OVER — the region does not hold it`}`);
+  }
+
+  if (ref.cfg.reserve) {
+    console.log(`\n予約表 — the complete 2ch engine, per 16-sample block.`
+      + ` These cycles EXECUTE in this build.`);
+    let total = 0;
+    for (const [b, cyc, why] of ref.cfg.reserve) {
+      total += cyc;
+      console.log(`  b${pad(b, 4)}${String(cyc).padStart(4)}  ${why.slice(0, 86)}`);
+    }
+    console.log(`  ${pad("", 4)} ${String(total).padStart(4)}  = ${(total / 16).toFixed(1)} cycles a slot`
+      + ` on top of the ${ref.gen.placement.rows[1].work - (ref.cfg.reserve[2][1])} the mixer already costs`);
   }
 
   const v = ref.cfg.voices;

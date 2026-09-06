@@ -89,6 +89,60 @@ Timer B reset is 396 cycles of a 358-cycle interval. The fix is the one §3.5
 asks for — the FM transaction is split across two slots, each re-latching
 `$2A` behind it — not a smaller estimate.
 
+## What the COMPLETE 2ch engine's budget looks like
+
+§10.3 step 2 (R1) asks for the finished 2ch version's whole placement before
+any more of it is written, with nothing left at zero because it does not exist
+yet. So the reservations are **executed**: a `complete` build runs every
+unwritten feature's cycles as padding and claims its RAM, and the same §6 gate
+runs against it. A table of intentions cannot fail; this can.
+
+| | |
+| --- | --- |
+| cycles | **1,033 reserved per 16-sample block** (64.6 a slot) on top of the mixer's 207. Worst slot **79.6%**, mean 77.2% — the worst slot is unchanged from the prototype, which is what R1 asks for |
+| RAM | **8,096 B of 8,192 claimed, 96 B unclaimed** — and 96 B is not a margin |
+| code | **2,384 B of the 2,560 B region**: 1,776 built plus 608 estimated from instruction sketches. 176 B spare |
+
+What the reservations buy, and the rate each one is sized for:
+
+| per block | cycles | what it buys |
+| --- | --- | --- |
+| output index + snapshot | 300 | the §3.7 publication: a 32-bit add, the four index bytes into the inactive bank, a generation, and the 1-byte publish bank written last |
+| voice run state | 260 | two voices' blocks-left countdown and loop-or-advance, selected branch-free and **staged**, not applied |
+| command dispatch | 145 | one command a block = **624 commands/s**, against roughly 10 PCM events a frame |
+| YM / PSG writes | 280 | four a block = **2,497 writes/s = 41.6 a frame**, which is the shipped driver's typical |
+| block edge B | 48 | the two staged source pointers into `DE'`/`IX` |
+
+Two things this settles, and one it does not:
+
+**The block edge splits into two slots, and it has to.** All five activations —
+three level pages and two source pointers — must land between the last mix of
+one block and the first mix of the next. That window is not one slot: it spans
+the tail of the slot that builds a block's last sample and the head of the next
+one, because each slot's mix sits in the middle of it. Part A (the levels) is
+implemented at the tail; part B (the pointers) is reserved at the head. Putting
+all of it in one slot is 333 cycles = 93% of the interval, which passes the
+deadline and blows the design margin.
+
+**The 4 KB level family is what makes the schedule affordable, not what
+threatens it.** §3.4 asks for a second candidate only if the integrated
+reservation does not hold — it holds, with 96 B. And the obvious alternative
+is worse where it matters: halving the tables by symmetry (16 levels × 128
+entries) saves 2,048 B and costs sign handling on all three lookups, ~+45
+cycles a sample. That takes the mixer to 252 and leaves 555 cycles a block
+under the 80% line against the 1,033 reserved — it fits the 100% *deadline* and
+not the design margin. The trade is bytes for exactly the headroom the
+remaining work needs.
+
+**It does not settle the ROM window.** The mixer reads both voices every
+sample, so both sources must be inside the same 32 KB bank at once — the Z80's
+bank register is nine serial writes to `$6000`, ~120 cycles, which cannot
+happen twice a sample. Either all PCM in play lives in one bank (cost 0, and
+the exporter's problem), or the mixer goes voice-outer over half a block and
+switches twice a block (~240 cycles, and the fixed-lead invariant changes
+shape). This is a design decision, not an implementation detail, and it is
+listed with the other open items below.
+
 **This is an emulator result and the emulator is a model.** It charges
 documented Z80 cycles with no bus arbitration, no YM /WAIT and no DRAM refresh
 contention. Nothing here has run on a Mega Drive, or even on BlastEm — the
@@ -190,6 +244,8 @@ profile was in the case list — one clock would have passed.
   nothing here needs a `left` counter or a bank register yet. Those are the
   next three cases, and each of them is boundary work that has to be split
   into constant-time pieces before it can go in a slot.
+- **The ROM bank question above is unanswered**, and it decides whether the
+  interleaved per-sample mixer survives contact with real sample data.
 - **A third voice has not been tried.** §5/P5 says one dimension at a time,
   and the two-voice normal slot is at 57.8% — a third adds ~90 cycles, which
   is 25 more points, and the block edge slot is already at 79.6%.

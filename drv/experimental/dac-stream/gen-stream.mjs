@@ -33,7 +33,7 @@
 // old engine's structure was built around and it is what this one drops.
 import { stampLine, YM } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, LEVELS, SILENCE } from "./lut.mjs";
-import { op, cost, laySlot, placementTable } from "./schedule.mjs";
+import { op, cost, laySlot, placementTable, padTo } from "./schedule.mjs";
 
 const hex = (n) => `$${n.toString(16)}`;
 
@@ -75,6 +75,19 @@ const readStatus = () => [
 ];
 
 // ── The jobs a slot can carry ──────────────────────────────────────────────
+// Reserved time, EXECUTED. §10.3 step 2 (R1) asks for the complete 2ch
+// engine's placement, with nothing left at zero because it is not written yet.
+// A table of intentions cannot fail; this runs the cycles, so the schedule has
+// to survive them and the timing gate measures it doing so. The instructions
+// are the pad solver's own — they do nothing, which is the point: what is
+// being tested is the BUDGET, not a guess at the code.
+const reserveOps = (cycles, why) => {
+  if (!cycles) return [];
+  const ops = padTo(cycles, { dead: ["a", "b", "bc"] });
+  ops[0] = { ...ops[0], what: `RESERVED ${cycles} — ${why}` };
+  return ops;
+};
+
 function slotWork(cfg, slotIndex) {
   const work = [];
   const g = slotIndex % cfg.groupSlots;
@@ -124,12 +137,20 @@ function slotWork(cfg, slotIndex) {
       work.push(...ymWrite(0x30 + i, `${hex(0x71 + i)}`, `FM burst ${i}`));
   }
   if (work.some((o) => o.writes?.some((w) => w.kind === "addr"))) work.push(...relatchDac());
+  // Whatever chip traffic this slot already carries DRAWS ON its reservation
+  // rather than adding to it — a CSM write is one of the four YM writes a
+  // block is budgeted for, not a fifth one for free.
+  const chargeable = cost(work);
   if (cfg.voices) {
     // The mix runs in EVERY slot — one sample built for every sample played.
     work.push(...callMix(cfg));
     // The block edge rides the LAST slot of a block, so what it writes takes
     // effect on the next one and no block is ever built at two volumes.
     if (b === cfg.blockSamples - 1) work.push(...blockEdge(cfg));
+    if (cfg.reserve) {
+      const [, cycles, why] = cfg.reserve[b];
+      work.push(...reserveOps(Math.max(0, cycles - chargeable), why));
+    }
   }
   return work;
 }

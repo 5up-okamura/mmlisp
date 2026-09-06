@@ -100,7 +100,79 @@ export const RAM_P2 = {
   stack: [0x1f80, 0x2000],
 };
 
+// The COMPLETE 2ch version's map (§10.3 step 2, R1: "2ch完成版のRAM、時刻公開、
+// 次状態、ノート/ループ/バンク、FM/PSG、コマンド密度を全て予約した配置表を作る。
+// 処理がまだ未実装なら上限の根拠を示し、0サイクル・0バイトとして置かない").
+//
+// Nothing here is speculative space: each region carries the reason for its
+// size, and the total is what decides whether the 4 KB level family survives
+// integration at all.
+export const RAM_P2_FULL = {
+  size: 0x2000,
+  code: [0x0000, 0x0a00],   // 2560 B — 1,784 built, ~610 estimated for the rest
+  clamp: [0x0a00, 0x0c00],  // 512 B — the saturating add
+  lut: [0x0c00, 0x1c00],    // 4096 B — 16 levels x 256, voices and master both
+  ring: [0x1c00, 0x1d00],   // 256 B — the finished samples
+  queue: [0x1d00, 0x1e00],  // 256 B — the command queue, a page so its cursors
+                            //   are `inc c` and no wrap is ever tested (§3.7)
+  state: [0x1e00, 0x1e40],  // 64 B — 2 voices x (run cursor, blocks left, loop
+                            //   target, bank, level) plus the STAGED next state
+                            //   §3.5 requires to be separate from the live one
+  pub: [0x1e40, 0x1e60],    // 32 B — the output-index snapshot, double buffered,
+                            //   with a generation and the 1-byte publish bank
+  chip: [0x1e60, 0x1ea0],   // 64 B — FM/PSG shadow and the slot writer's cursor
+  glob: [0x1f00, 0x1f80],   // 128 B
+  stack: [0x1f80, 0x2000],  // 128 B
+};
+
 export const RAM = RAM_P1;
+
+// ── The code the complete 2ch engine still owes ───────────────────────────
+// Bytes, estimated the same way the cycles were: from a sketch of the
+// instructions, not from a feeling. §10.3 step 2 (R1) forbids leaving an
+// unwritten feature at zero, and bytes are the half of that which the cycle
+// reservations cannot express — the code region is 2,560 B and the level
+// tables have already taken 4 KB of the machine.
+export const CODE_ESTIMATE_2CH = [
+  ["time publication", 70, "a 32-bit add, five stores into the inactive bank, the bank flip"],
+  ["voice run state", 120, "one routine called twice: countdown, branch-free select, stage"],
+  ["command dispatch", 220, "record read, a jump table, and the handlers that stage state"],
+  ["YM/PSG slot writer", 120, "a queue cursor in a self-modified operand, plus the $2A re-latch"],
+  ["block edge part B", 30, "two staged pointers into DE'/IX, inside the mixer's register set"],
+  ["call sites", 48, "16 reserved positions x 3 B, replacing pad bytes that are already there"],
+];
+
+// ── The per-block cycle reservations ───────────────────────────────────────
+// One entry per position in a 16-sample block. These are EXECUTED as padding
+// in a `complete` build, so the placement table and the timing gate describe
+// the finished 2ch engine rather than the part of it that exists.
+//
+// Every figure is an instruction-level sketch, not a guess. The sketches are
+// in the `why` strings; where one is a rate rather than a cost (the YM writes,
+// the command density) the rate it buys is stated, because that is the number
+// a score has to live inside.
+export const RESERVE_2CH = [
+  // b = (slotIndex + lead) mod 16 — the position in the BUILT block, so b = 15
+  // is the slot that builds a block's last sample and carries the edge.
+  [0, 48, "block edge part B: the two staged source pointers into DE'/IX"],
+  [1, 75, "output index: a 32-bit add of 16 with the carry taken unconditionally"],
+  [2, 75, "…the snapshot's four index bytes, into the INACTIVE bank"],
+  [3, 75, "…a generation byte, then the 1-byte publish bank LAST (3.7)"],
+  [4, 75, "…the bank pointer flip, and the slack the sketch is not sure of"],
+  [5, 65, "voice 0 run state: blocks-left countdown, loop-or-advance selected"],
+  [6, 65, "…branch-free, and the result STAGED rather than applied (3.5)"],
+  [7, 65, "voice 1 run state"],
+  [8, 65, "…likewise"],
+  [9, 73, "one command: read the record, dispatch it, stage what it changes"],
+  [10, 72, "…145 cyc a block = 624 commands/s, against ~10 PCM events a frame"],
+  [11, 70, "one YM or PSG write: address, data, and the $2A re-latch behind it"],
+  [12, 70, "…"],
+  [13, 70, "…"],
+  [14, 70, "…4 a block = 2,497 writes/s = 41.6 a frame, the shipped driver's typical"],
+  [15, 0, "the block edge part A — IMPLEMENTED: the three level pages, 78 cyc"],
+];
+
+
 
 /**
  * Build the full configuration. Everything derived lives here so the
@@ -121,6 +193,11 @@ export function buildConfig({
   blocks = 3,          // §3.3 — playing / finished / under construction
   timerB = 255,        // $26: period = 16 x (256 - TB) FM samples. 255 = shortest
   timerAfm = 64,       // CSM key-on period, in FM samples (Timer A = 1024 - NA)
+  // Build the COMPLETE 2ch engine's BUDGET: every unimplemented feature's
+  // cycles are executed as padding and its RAM is reserved. The code is the
+  // same code; what changes is that the schedule now has to survive the
+  // finished engine's costs, and the gate measures it doing so.
+  complete = false,
   csm = false,         // program CH3 for CSM and issue its writes
   fmBurst = 0,         // FM register writes crowded into ONE slot (§6.3)
   // TIMER B IS OFF BY DEFAULT (§3.2, R1). Reading its overflow flag was the
@@ -168,7 +245,7 @@ export function buildConfig({
   const timerBsamples = (timerBfm * machine.fmSampleMaster) / p.sampleMaster;
   const timerAcycles = (timerAfm * machine.fmSampleMaster) / machine.z80Div;
 
-  const ram = voices ? RAM_P2 : RAM_P1;
+  const ram = complete ? RAM_P2_FULL : voices ? RAM_P2 : RAM_P1;
   const regions = Object.entries(ram).filter(([k]) => k !== "size")
     .map(([k, v]) => ({ k, lo: v[0], hi: v[1] })).sort((a, b) => a.lo - b.lo);
   for (const r of regions)
@@ -179,7 +256,8 @@ export function buildConfig({
 
   const cfg = {
     machine, profile: p, ym: YM, ram,
-    voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB,
+    voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete,
+    reserve: complete ? RESERVE_2CH : null,
     z80Hz, fmSampleHz, rateHz,
     periodNum, periodDen, periodCycles,
     groupSlots, groupCycles, slotCycles, cycleSlots,
