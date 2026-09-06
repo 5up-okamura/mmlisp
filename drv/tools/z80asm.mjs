@@ -357,11 +357,19 @@ export function assemble(entryPath, { preload = null, defines = null, sources = 
   // Two passes: pass 1 sizes instructions and assigns labels; pass 2 encodes.
   for (const pass of [1, 2]) {
     let pc = 0;
+    // `$` IS THE ADDRESS OF THE CURRENT INSTRUCTION, not of the next one. The
+    // running `pc` has already been advanced by emit() by the time an operand
+    // is evaluated, so `djnz $` assembled to a jump PAST itself and the loop
+    // silently fell through — a pad loop that runs once instead of 26 times,
+    // which is a sample clock 4.5x too fast and nothing that reports an error.
+    // sjasmplus and every classic assembler define it this way; the header of
+    // this file promises that syntax.
+    let herePc = 0;
     const out = pass === 2 ? [] : null;
     const resolve = (name) => symbols.get(name);
     const evalE = (expr, line) => {
       try {
-        return evalExpr(expr, pass === 1 ? (n) => symbols.get(n) ?? 0 : resolve, pc);
+        return evalExpr(expr, pass === 1 ? (n) => symbols.get(n) ?? 0 : resolve, herePc);
       } catch (e) {
         throw new AsmError(e.message, line);
       }
@@ -377,6 +385,7 @@ export function assemble(entryPath, { preload = null, defines = null, sources = 
         }
       }
       if (!mnem) continue;
+      herePc = pc;
       if (mnem === "equ") {
         if (pass === 1)
           symbols.set(label, overrides.has(label) ? overrides.get(label) : evalE(ops[0], line));
@@ -418,6 +427,11 @@ export function assemble(entryPath, { preload = null, defines = null, sources = 
           line,
           pass,
           pcRef: () => pc,
+          // Data directives keep the older meaning of `$` — it advances item by
+          // item across a `db`/`dw` list, which is what a table of self-relative
+          // offsets wants and what selftest pins. Instructions do not: there,
+          // `$` is the address the instruction starts at.
+          syncHere: () => { herePc = pc; },
           emit,
           emitW,
           patchLast,
@@ -437,6 +451,7 @@ export function assemble(entryPath, { preload = null, defines = null, sources = 
 // Encode one instruction/directive. All sizes are pass-invariant.
 function encodeLine(mnem, ops, ctx) {
   const { emit, emitW, evalE, pass, pcRef, line } = ctx;
+  const syncHere = ctx.syncHere ?? (() => {});
   const err = (m) => {
     throw new AsmError(m, line);
   };
@@ -463,6 +478,7 @@ function encodeLine(mnem, ops, ctx) {
         if (t.startsWith('"') && t.endsWith('"')) {
           for (const ch of t.slice(1, -1)) emit(ch.charCodeAt(0));
         } else {
+          syncHere();
           emit(pass === 2 ? evalE(t) & 0xff : 0);
         }
       }
@@ -470,7 +486,7 @@ function encodeLine(mnem, ops, ctx) {
     }
     case "dw":
     case "defw": {
-      for (const o of ops) emitW(pass === 2 ? evalE(o) : 0);
+      for (const o of ops) { syncHere(); emitW(pass === 2 ? evalE(o) : 0); }
       return;
     }
     // A build-time check that emits nothing. The engine's hot code has to end

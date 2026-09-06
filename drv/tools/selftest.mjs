@@ -113,6 +113,27 @@ LATER: db $99
   0xee, 0xee, 0xee, 0x99,
 ]);
 
+// `$` IS THE CURRENT INSTRUCTION'S ADDRESS, and this is here because getting
+// it wrong is invisible: `djnz $` that assembles as "jump past myself" is a
+// pad loop that runs once, i.e. a sample clock 4.5x too fast and no error
+// anywhere. The three forms a generated pad uses are pinned by their bytes.
+check("$ is the current instruction", [...asm(`
+    org 0
+    nop
+    djnz $              ; 10 FE — back to itself
+    jr $                ; 18 FE
+    jr $+2              ; 18 00 — the next instruction
+    jp $+3              ; C3 0A 00 — likewise
+    jp $                ; C3 0A 00 → its own address
+`)], [
+  0x00,
+  0x10, 0xfe,
+  0x18, 0xfe,
+  0x18, 0x00,
+  0xc3, 0x0a, 0x00,   // at $0007, so $+3 is the next instruction
+  0xc3, 0x0a, 0x00,   // at $000A, its own address
+]);
+
 // ── 2. behavioral runs ─────────────────────────────────────────────────────
 function run(src, { maxSteps = 200000, ram = 0x10000 } = {}) {
   const bytes = asm(src);
