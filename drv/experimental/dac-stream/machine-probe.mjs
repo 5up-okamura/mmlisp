@@ -49,11 +49,27 @@ const CASES = [
   { name: "two voices + CSM", cfg: { voices: 2, csm: true } },
   { name: "2ch complete budget", cfg: { voices: 2, complete: true } },
   { name: "2ch complete budget + CSM", cfg: { voices: 2, complete: true, csm: true } },
-  // The 68000 takes the bus on a schedule. `every`/`cycles` are dbra counts —
-  // roughly 10 68000 cycles an iteration — so these are orders of magnitude,
-  // named as such, not calibrated stall lengths.
-  { name: "…with the 68000 taking the bus", cfg: { voices: 2, complete: true },
-    grab: { every: 2000, cycles: 40 } },
+  // §3.6, priced. The 68000 copies N bytes into Z80 RAM about once a frame:
+  // request, wait for the grant, copy, release, all inside the stall. These
+  // are informational because the isolated column of §6.2 is measured without
+  // the 68000 — but the numbers are the ones that decide whether a BUSREQ
+  // transfer can exist at this sample rate at all.
+  { name: "68k transfer, 1 byte a frame", cfg: { voices: 2, complete: true },
+    grab: { every: 12000, bytes: 1 }, informational: true },
+  { name: "…the same, twice a frame", cfg: { voices: 2, complete: true },
+    grab: { every: 6000, bytes: 1 }, informational: true },
+  { name: "68k transfer, 16 bytes a frame", cfg: { voices: 2, complete: true },
+    grab: { every: 6000, bytes: 16 }, informational: true },
+  { name: "68k transfer, 64 bytes a frame", cfg: { voices: 2, complete: true },
+    grab: { every: 6000, bytes: 64 }, informational: true },
+  { name: "68k transfer, 256 bytes a frame", cfg: { voices: 2, complete: true },
+    grab: { every: 6000, bytes: 256 }, informational: true },
+  // The allowance scales with the period, so the same transfer is a different
+  // proposition at the clock the driver ships at today.
+  { name: "3.3 kHz, 4 bytes a frame", cfg: { voices: 2, profile: "p3k3" },
+    grab: { every: 12000, bytes: 4 }, informational: true },
+  { name: "3.3 kHz, 16 bytes a frame", cfg: { voices: 2, profile: "p3k3" },
+    grab: { every: 12000, bytes: 16 }, informational: true },
 ];
 
 const MCLK = 53693175;
@@ -155,17 +171,34 @@ for (const c of CASES) {
 
   const bad = Math.abs(errPct) > 0.1 || within(0.95, 1.05) < 0.999
     || sorted[0] < T * 0.9 || sorted[sorted.length - 1] > T * 1.1 || holes.length || wrapped;
-  if (bad && !c.grab) failed++;
-  console.log(`${bad ? (c.grab ? "info" : "FAIL") : "ok  "}  ${c.name.padEnd(30)}`
+  if (bad && !c.informational) failed++;
+  console.log(`${bad ? (c.informational ? "info" : "FAIL") : "ok  "}  ${c.name.padEnd(30)}`
     + ` ${t.length} samples · ${rate.toFixed(2)} Hz (${errPct >= 0 ? "+" : ""}${errPct.toFixed(4)}%)`
     + ` · gap ${sorted[0]}..${sorted[sorted.length - 1]} master (T = ${T.toFixed(1)})`);
   console.log(`      ${(100 * within(0.95, 1.05)).toFixed(4)}% inside 0.95T..1.05T`
     + ` · ${(100 * within(0.9, 1.1)).toFixed(4)}% inside 0.90T..1.10T`
     + ` · p50 ${q(sorted, 0.5)} p99 ${q(sorted, 0.99)}`
     + ` · holes past 1.5T ${holes.length}${holes.length ? ` (${inGrab.length} overlap a bus grab)` : ""}`);
-  if (grabs.length) console.log(`      the 68000 held the bus ${grabs.length} times,`
-    + ` ${(grabs.reduce((s, [a, b]) => s + (b - a), 0) / MCLK * 1000).toFixed(1)} ms in total,`
-    + ` longest ${Math.max(...grabs.map(([a, b]) => b - a))} master`);
+  if (grabs.length) {
+    // The upload at boot is one enormous grab; the periodic ones are what §3.6
+    // is about, so they are reported apart from it.
+    const steady = grabs.filter(([a]) => a >= t0);
+    const lens = steady.map(([a, b]) => b - a).sort((x, y) => x - y);
+    console.log(`      the 68000 held the bus ${grabs.length} times`
+      + ` (${grabs.length - steady.length} of them the boot upload)`);
+    if (lens.length) {
+      const z = (mc) => (mc / Z80_DIV).toFixed(1);
+      const perFrame = lens.reduce((s, x) => s + x, 0) / (span / (MCLK / 60)) / Z80_DIV;
+      // §3.6's allowance is 0.10 x the period, and the period is the case's.
+      const allow = 0.1 * r.cfg.periodCycles;
+      console.log(`      3.6: a grab stops the Z80 for ${z(lens[0])}..${z(lens[lens.length - 1])}`
+        + ` Z80 cycles (p50 ${z(q(lens, 0.5))}), ${perFrame.toFixed(1)} a frame`
+        + ` — the allowance is ${allow.toFixed(1)} in one interval, ~60 a frame`);
+      const over = lens.filter((x) => x > allow * Z80_DIV).length;
+      console.log(`      ${over} of ${lens.length} grabs exceed one interval's whole allowance`
+        + `${over ? " — a BUSREQ transfer of this size does not fit" : ""}`);
+    }
+  }
 
   // VALUE — the same reference the JS gate uses, against the machine's bytes.
   if (r.cfg.voices) {

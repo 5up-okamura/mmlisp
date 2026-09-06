@@ -201,6 +201,63 @@ back, and it makes the ownership argument trivial as a side effect: a partial
 sum never enters the ring at all, so the "nothing reads a sample under
 construction" check has nothing left to catch.
 
+## §3.6, priced — and a BUSREQ transfer does not fit
+
+R1 makes this the thing to settle before any more of P2 is written, so the ROM
+does a real transfer: request the bus, wait for the grant, copy N bytes into
+Z80 RAM, release. Measured on BlastEm, as the time the Z80 is stopped:
+
+| bytes a grab | 1 | 16 | 64 | 256 |
+| --- | --- | --- | --- | --- |
+| the Z80 stops for (Z80 cycles) | **54.6** | 218.4 | 741.1 | 2,826 |
+| rate at 10 kHz, one grab a frame | −0.083% | −0.724% | −2.461% | −8.839% |
+| intervals past 1.10T | all the grabs | all | all | all |
+| holes past 1.5T (3 s) | 0 | 333 | 327 | 306 |
+
+The fit is **44 + 10.9N Z80 cycles**, and both halves of it matter:
+
+- **The fixed cost alone is 44 cycles**, against §3.6's allowance of 0.10 T =
+  **35.8 cycles** inside one output interval at 10 kHz. *No* BUSREQ transfer
+  fits, not even a single byte — the smallest possible one already pushes its
+  interval to 1.16 T.
+- **Splitting a transfer makes it strictly worse.** N one-byte grabs cost 55 N
+  where one N-byte grab costs 44 + 10.9 N. §3.6's second option — "短い分割転送"
+  — is the wrong direction, and this is the measurement that says so.
+- **The per-frame budget binds even harder than the per-interval one.** §3.6
+  allows ~60 Z80 cycles a frame; that is 1.5 bytes. The shipped driver moves a
+  write list of up to ~190 bytes a frame, which is 2,115 cycles — **35× the
+  allowance**.
+
+The allowance scales with the period, so the same experiment at the clock the
+driver ships at today:
+
+| 3,329 Hz, allowance 107.5 | 4 bytes | 16 bytes |
+| --- | --- | --- |
+| the Z80 stops for | 87.7 | 218.4 |
+| every interval inside 0.90–1.10 T | **yes** | no |
+| mean rate error | −0.138% | −0.366% |
+
+So a four-byte grab at 3.3 kHz is the first thing measured that fits the
+*interval* bound — and it still fails the ±0.1% mean, because 91.5 cycles a
+frame is over the frame budget. **There is no clock in this family at which a
+BUSREQ transfer carries a driver's command traffic inside §6.2.**
+
+What that leaves, with the numbers this prototype can already put on them:
+
+- **The Z80 reads 68k RAM through the window instead.** A window read measures
+  3 Z80 cycles and stops nothing at all. The obstacle is that the window is one
+  32 KB bank and the samples are in it: a mailbox in 68k work RAM needs the
+  bank moved and put back, which is nine serial writes to `$6000` each way,
+  ~126–180 cycles a switch from the instruction costs measured here. Once a
+  block that is ~250–360 cycles against the 145 the command reservation holds —
+  affordable, but it is a re-plan, not a tweak.
+- **A cooperative window**: the 68000 grabs at an instant the Z80's schedule
+  expects, and that slot's pad is generated short by the stall. It needs the
+  68000 to know the Z80's phase to about ±10 cycles, which the published output
+  index does not currently give it.
+- **Widening the interval bound for one interval a frame**, which is a change
+  to §6.2 and therefore the designer's call, not this prototype's.
+
 **BlastEm is still a model.** It is the reference implementation we are arguing
 with while a hardware round is expensive, and it has already found what the
 instruction model could not. Nothing here has run on a Mega Drive.

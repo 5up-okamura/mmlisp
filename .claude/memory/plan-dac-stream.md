@@ -1,4 +1,4 @@
-# DAC engine redesign — P0, P1 and most of P2 (2026-09-06)
+# DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
 The instruction is `docs/dac-engine-implementation.md`. The prototype is
 `drv/experimental/dac-stream/` and its README carries the numbers. This file is
@@ -117,6 +117,76 @@ register yet. Those three are boundary work and each has to be split into
 constant-time pieces before it can go in a slot. A third voice has not been
 tried (+~90 cycles = 25 more points on a normal slot at 57.8%).
 
+## R1 (design revision) — steps 1-3 DONE. STEP 3 SAYS STOP AND GO BACK
+
+The designer's R1 revision accepted the eight reported findings and set an
+order: correct the record, produce the complete 2ch allocation, check it on the
+machine, and only then finish P2. Steps 1-3 are done and **step 3's answer is
+that the transfer design has to change before P2 continues** — which is what
+R1 itself says to do in that case.
+
+**Step 1 — corrections.** Timer B is off in the normal profile and is no
+longer called a phase reference: the gate now MEASURES the reset→read window
+(1,739 cycles against a 1,075.2 cycle period) and prints "CANNOT carry
+information", which is why the flag always read 1. The JS reference no longer
+indexes the generated tables (it computes from the arithmetic; `tablesAgree()`
+checks the tables separately). §3.3's fixed lead is checked per slot rather
+than asserted — one fetch, one finished store, a distance that never moves,
+over 194 page wraps; NOP out one `call mix_one` and it fails. The YM frequency
+latch is checked apart from the `$2A` address latch.
+
+**Step 2 — the complete 2ch allocation, EXECUTED.** 1,033 reserved cycles a
+block run as padding in a `complete` build and the §6 gate runs against it:
+worst slot 79.6%, mean 77.2%. RAM 8,096 B of 8,192 (96 B unclaimed, which is
+not a margin). Code 2,384 B of a 2,560 B region (1,776 built + 608 estimated).
+The block edge MUST split across two slots — all five activations have to land
+between one block's last mix and the next block's first, and that window spans
+two slots; one slot is 93% of an interval.
+
+**Step 3 — IT RUNS ON BLASTEM, and the machine corrected the model.** There is
+no m68k toolchain here, so `rom.mjs` emits the 68000 bootstrap directly (twenty
+instructions: hold the Z80, copy, set the bank, let go). All seven schedules
+pass at 9,987.57 Hz, −0.0000%, zero holes, every sample matching the reference.
+
+* **A read through the $8000 window costs 3 Z80 cycles** (45 master), measured
+  by sweeping 0/1/2 window reads a sample: 9,987.57 / 9,904.66 / 9,823.12 Hz,
+  perfectly linear. Two voices first came back **1.65% slow** with every sample
+  still correct. This REPLACES A GUESS — `PACE_WINDOW` is 14 in the shipped
+  engine and gen-mixer.mjs admits it was never measured. It is a floor: the
+  68000 was in a two-instruction loop.
+* It is now charged in the config, the generator and the JS machine, and the
+  rate is back to −0.0000% on the emulator at every voice count.
+* Paying it cost 6 cycles a sample, and they came back by parking voice 0's
+  contribution in **IYL** instead of the ring slot (`ld iyl,a` / `add a,iyl`,
+  16 cycles against the 22 of park-and-reread). Side effect: a partial sum
+  never enters the ring, so the ownership check has nothing left to catch.
+
+**AND THE ONE THAT STOPS P2.** A real BUSREQ transfer — request, grant, copy,
+release — stops the Z80 for **44 + 10.9N Z80 cycles** for N bytes (measured at
+N = 1, 16, 64, 256; 54.6 / 218.4 / 741.1 / 2,826).
+
+* §3.6's allowance is 0.10 T = **35.8 cycles** in one interval at 10 kHz. The
+  FIXED COST ALONE is 44. **No BUSREQ transfer of any size fits**; one byte
+  puts its interval at 1.16 T.
+* **Splitting makes it worse**, because the fixed cost dominates: N one-byte
+  grabs are 55N against one grab's 44 + 10.9N. §3.6's option 2 ("短い分割転送")
+  is the wrong direction and this is the measurement that says so.
+* The per-frame budget (~60 cycles) binds harder still: that is 1.5 bytes. The
+  shipped driver moves up to ~190 bytes a frame = 2,115 cycles = **35x**.
+* At 3,329 Hz the allowance is 107.5 and a FOUR-byte grab is the first thing
+  measured that keeps every interval inside 0.90-1.10 T — and it still misses
+  the ±0.1% mean, because 91.5 cycles a frame is over the frame budget.
+
+So there is no clock in this family at which a BUSREQ transfer carries a
+driver's command traffic inside §6.2. The alternatives, with the numbers this
+prototype can already attach: the Z80 reading 68k RAM through the window costs
+3 cycles and stops nothing, but the window is one 32 KB bank and the samples
+are in it, so a mailbox needs the bank moved and restored — nine serial writes
+each way, ~126-180 cycles a switch, ~250-360 a block against the 145 reserved;
+or a cooperative grab at an instant the schedule expects, which needs the 68000
+to know the Z80's phase to ~±10 cycles; or §6.2's interval bound relaxes for
+one interval a frame, which is the designer's call.
+
 ## THREE BUGS, ALL OUTSIDE THE PROTOTYPE, ALL INVISIBLE TO EVERY GATE
 
 **1. `tools/z80asm.mjs`: `$` was the address of the NEXT instruction.** So
@@ -145,9 +215,13 @@ one clock would have passed clean.
 
 ## What is next, in order
 
-1. **Finish P2**: loop points, the ROM bank window, and note start/stop — the
-   three pieces of boundary work §5 orders after the master, and the first
-   place the "constant time" rule will actually hurt. Then a third voice.
+1. **NOT P2's remaining features.** R1 step 3 says to go back to the transfer
+   and clock design if the stall budget is not met, and it is not met by
+   anything. The decision above is the next thing that has to happen, and it is
+   the designer's.
+2. Once that is settled: P2's loop points, the ROM bank window, and note
+   start/stop — the boundary work §5 orders after the master, and the first
+   place the constant-time rule will actually hurt.
 2. Get BlastEm built somewhere and run the P1 image there. Until then every P1
    number is "the placement arithmetic is right", not "the hardware does this".
 3. Decide what to do about the four red gates P0 recorded. They are not this

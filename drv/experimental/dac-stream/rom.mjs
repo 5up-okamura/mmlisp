@@ -65,7 +65,7 @@ class M68k {
 /**
  * @param image     the assembled Z80 image (uploaded verbatim to $A00000)
  * @param samples   bytes placed at the sample bank; the Z80 sees them at $8000
- * @param grab      {every, cycles} — the 68000 takes the Z80 bus periodically
+ * @param grab      {every, bytes} — the 68000 copies into Z80 RAM periodically
  */
 export function buildRom(image, samples = null, grab = null) {
   const rom = new Uint8Array(ROM_SIZE);
@@ -97,17 +97,31 @@ export function buildRom(image, samples = null, grab = null) {
   m.moveWimm(0x0000, Z80_BUSREQ);         // let go: the Z80 starts at $0000
   m.label("idle");
   if (grab) {
-    // R1 step 3 stage 3: the 68000 takes the bus on a schedule, holds it, and
-    // releases it. This is the ONLY thing on this cartridge that can stop the
-    // Z80, so whatever the DAC log shows around it is attributable.
+    // R1 step 3 stage 3, and §3.6's decisive question: the 68000 takes the Z80
+    // bus, copies `bytes` into Z80 RAM, and releases it. This is a REAL
+    // transfer, not a synthetic stall — the request, the wait for the grant,
+    // the copy loop and the release are all inside the window the Z80 is
+    // stopped for, which is the only honest way to price it.
+    //
+    // §3.6 (R1) gives the budget it has to fit: about 35.84 Z80 cycles inside
+    // any one output interval, and about 60 Z80 cycles a frame in total.
     m.moveWimmD(grab.every, 1);
     m.label("wait1");
-    m.dbra(1, "wait1");                   // ~10 cycles an iteration
-    m.moveWimm(0x0100, Z80_BUSREQ);
-    m.moveWimmD(grab.cycles, 1);
-    m.label("hold");
-    m.dbra(1, "hold");
-    m.moveWimm(0x0000, Z80_BUSREQ);
+    m.dbra(1, "wait1");                   // ~10 68000 cycles an iteration
+    m.moveWimm(0x0100, Z80_BUSREQ);       // request
+    m.label("grant");
+    m.moveWabsD(Z80_BUSREQ, 0);
+    m.andiW(0x0100, 0);
+    m.bne("grant");                       // …until it is ours
+    m.leaAbs(SAMPLES, 0);                 // any ROM bytes will do
+    // Into the command queue's page, which is exactly what a real transfer
+    // would target and is the only region big enough that nothing reads.
+    m.leaAbs(Z80_BASE + 0x1d00, 1);
+    m.moveWimmD(grab.bytes - 1, 2);
+    m.label("xfer");
+    m.moveBpost();
+    m.dbra(2, "xfer");
+    m.moveWimm(0x0000, Z80_BUSREQ);       // release
   }
   m.bra("idle");
   const code = m.done();
