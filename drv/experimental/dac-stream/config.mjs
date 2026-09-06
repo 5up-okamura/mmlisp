@@ -207,6 +207,26 @@ export function buildConfig({
   // available as a YM-traffic load case, and nothing in the normal profile
   // reads it.
   observeTimerB = false,
+  // WHAT A READ THROUGH THE 68k WINDOW COSTS, in Z80 cycles on top of the
+  // instruction's own time. MEASURED on BlastEm, 2026-09-06, by running the
+  // same schedule with 0, 1 and 2 window reads a sample and reading the rate:
+  //
+  //   window reads a sample   0          1          2
+  //   measured rate           9,987.57   9,904.66   9,823.12 Hz
+  //   error from nominal      -0.0000%   -0.8301%   -1.6465%
+  //   cost a read                        45 master  45 master  = 3 Z80 cycles
+  //
+  // Perfectly linear, and constant to within the probe's own 42-master-clock
+  // timestamp resolution. It replaces a GUESS: the shipped engine's
+  // `PACE_WINDOW` is 14 and has never been measured (gen-mixer.mjs says so).
+  //
+  // A constant, predictable wait is not the unpredictable external stall §3.1
+  // (R1) says static padding cannot absorb — it can be charged like any other
+  // cycle, and it is, so the pad shrinks by it and the period stays exact. The
+  // 68000 was spinning in a two-instruction ROM loop while this was measured,
+  // so it is the FLOOR: a 68000 doing VDP DMA contends harder, and that is
+  // R1 step 3 stage 4.
+  windowWait = 3,
 } = {}) {
   const p = PROFILES[profile];
   if (!p) throw new Error(`unknown profile ${profile}`);
@@ -256,7 +276,7 @@ export function buildConfig({
 
   const cfg = {
     machine, profile: p, ym: YM, ram,
-    voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete,
+    voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
     reserve: complete ? RESERVE_2CH : null,
     z80Hz, fmSampleHz, rateHz,
     periodNum, periodDen, periodCycles,

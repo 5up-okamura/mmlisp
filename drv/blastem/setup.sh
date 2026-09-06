@@ -39,10 +39,18 @@ if [ -f "$here/probe.patch" ]; then
 fi
 
 echo "blastem: building the libretro core"
-( cd "$src" && make -f Makefile.libretro core -j"$(nproc)" >/dev/null )
-cp "$src/blastem_libretro.so" "$out/blastem_libretro.so"
+# `nproc` is coreutils and macOS does not have it.
+jobs=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+( cd "$src" && make -f Makefile.libretro core -j"$jobs" >/dev/null )
+# The core is a .so on Linux and a .dylib on macOS; take whichever appeared and
+# keep its own name, because the frontend is told the path anyway.
+for so in blastem_libretro.so blastem_libretro.dylib; do
+    [ -f "$src/$so" ] && cp "$src/$so" "$out/$so" && core="$out/$so"
+done
+[ -n "${core:-}" ] || { echo "blastem: the core did not build"; exit 1; }
 
 echo "blastem: building the frontend"
-cc -O2 -Wall -o "$out/host" "$here/host.c" -ldl
+# -ldl is Linux; on macOS dlopen is in libSystem and the flag is an error.
+cc -O2 -Wall -o "$out/host" "$here/host.c" $(uname | grep -q Linux && echo -ldl)
 
-echo "blastem: ready — $out/host, $out/blastem_libretro.so"
+echo "blastem: ready — $out/host, $core"

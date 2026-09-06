@@ -7,8 +7,11 @@ what is not true yet.
 ```
 cd drv
 npm run baseline            # P0 — freeze the comparison baseline
-npm run dac-stream          # P1 — the isolated gate, 10 s a case
+npm run dac-stream          # the isolated gate in the JS model, 10 s a case
 npm run dac-stream:long     # …and 60 s on the representative case, + JSON
+
+sh blastem/setup.sh         # once — builds the emulator, ~2 min
+npm run dac-stream:machine  # the same schedules on BlastEm
 ```
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
@@ -143,12 +146,64 @@ switches twice a block (~240 cycles, and the fixed-lead invariant changes
 shape). This is a design decision, not an implementation detail, and it is
 listed with the other open items below.
 
-**This is an emulator result and the emulator is a model.** It charges
-documented Z80 cycles with no bus arbitration, no YM /WAIT and no DRAM refresh
-contention. Nothing here has run on a Mega Drive, or even on BlastEm — the
-toolchain for either was not available in this environment (`m68k-linux-gnu-gcc`
-is absent and `drv/blastem/setup.sh` has not been run). Read every number above
-as "the placement arithmetic is right", not "the hardware does this".
+## It runs on BlastEm, and the machine corrected the model
+
+`npm run dac-stream:machine` builds a minimal cartridge — vectors, a header, a
+twenty-instruction 68000 bootstrap that holds the Z80, copies the image, sets
+the bank register and lets go — and runs it on BlastEm as a libretro core with
+the probe patch's `$2A` log. There is no m68k toolchain here, so the bootstrap
+is emitted directly by `rom.mjs`; that is the whole 68000 side of this test.
+
+Every schedule the JS model passes also passes there:
+
+| case | rate | intervals (master) | holes past 1.5T |
+| --- | --- | --- | --- |
+| output only | 9,987.57 Hz, **−0.0000%** | 5,334–5,418 (T = 5,376) | 0 |
+| one voice | 9,987.57 Hz, **−0.0000%** | 5,376–5,376 | 0 |
+| two voices (+ CSM) | 9,987.57 Hz, **−0.0000%** | 5,376–5,376 | 0 |
+| 2ch complete budget (+ CSM) | 9,987.57 Hz, **−0.0000%** | 5,376–5,376 | 0 |
+
+…and every sample matches the same reference the JS gate uses. The interval
+spread in the first row is the **probe's own resolution**, not jitter: BlastEm
+stamps a `$2A` write with the YM's cycle counter, which advances in 42-master
+steps, so a 358-cycle slot (5,370 master) reads as 5,334 or 5,376. The five
+values sum to 26,880 = exactly five nominal periods, which is the group closing
+on itself.
+
+**What the machine found that the model could not.** The first two-voice run
+came back at 9,823.12 Hz — **−1.65%** — with every sample still correct. The
+cause is the 68k bank window: a Z80 read at `$8000+` is not a RAM read.
+Measured by running the same schedule with zero, one and two window reads a
+sample:
+
+| window reads a sample | 0 | 1 | 2 |
+| --- | --- | --- | --- |
+| measured rate | 9,987.57 | 9,904.66 | 9,823.12 Hz |
+| error | −0.0000% | −0.8301% | −1.6465% |
+
+Perfectly linear: **45 master clocks = 3 Z80 cycles per window read**, constant
+to within the probe's resolution. That number replaces a guess — the shipped
+engine's `PACE_WINDOW` is 14 and `gen-mixer.mjs` says in its own comment that
+it has never been measured. It is a *floor*: the 68000 was spinning in a
+two-instruction ROM loop while this was taken, and a 68000 doing VDP DMA
+contends harder (R1 step 3 stage 4).
+
+A constant, predictable wait is not the unpredictable external stall §3.1 says
+padding cannot absorb — it is charged like any other cycle. So `config.mjs`
+carries it, the generator bills it, the JS machine models it, and the rate came
+back to −0.0000% on BlastEm at every voice count.
+
+**Paying it cost six cycles a sample, and the machine's own measurement said
+where to find them.** Voice 0's contribution used to be parked in the ring slot
+and read back with `ld h,b`/`ld l,c`/`add a,(hl)` — 15 cycles. It now waits in
+`IYL` (`ld iyl,a`, `add a,iyl`, 16 total against 22), which is exactly the six
+back, and it makes the ownership argument trivial as a side effect: a partial
+sum never enters the ring at all, so the "nothing reads a sample under
+construction" check has nothing left to catch.
+
+**BlastEm is still a model.** It is the reference implementation we are arguing
+with while a hardware round is expensive, and it has already found what the
+instruction model could not. Nothing here has run on a Mega Drive.
 
 ## The three structural decisions
 
@@ -256,7 +311,11 @@ profile was in the case list — one clock would have passed.
   reported as informational and is excluded from the pass: a 700-cycle grab
   makes a hole of up to 2.95 sample periods, which is exactly the problem §3.6
   says to measure rather than assume away.
-- **Nothing has run on BlastEm or on hardware.** §6.4's second column is empty.
+- **Nothing has run on hardware.** §6.4's third column is empty; the BlastEm
+  column is now filled for the schedules above, at a light 68000 load only.
+- **The 68000's bus grab is measured but not solved.** The informational case
+  takes the bus on a schedule and the DAC loses 2.06% of its rate with holes to
+  1.61T. That is §3.6's question and it has not been answered.
 - The 60-second representative case runs; the 10-minute one in §6.2 does not
   (the trace is held in memory, and that is the thing to change first if it is
   wanted — the cycle stamps themselves are already 64-bit-safe doubles).

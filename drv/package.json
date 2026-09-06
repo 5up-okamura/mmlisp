@@ -12,6 +12,7 @@
     "baseline": "node tools/baseline.mjs",
     "dac-stream": "node experimental/dac-stream/gate.mjs",
     "dac-stream:long": "node experimental/dac-stream/gate.mjs --long --json",
+    "dac-stream:machine": "node experimental/dac-stream/machine-probe.mjs",
     "size": "node tools/size-audit.mjs",
     "budget": "node tools/budget.mjs",
     "mixer": "node tools/mixer-bench.mjs",

@@ -179,20 +179,24 @@ const mixRoutine = (cfg) => (cfg.voices >= 2 ? [
   // ever read it half-built, which is §3.3's ownership rule made structural
   // rather than counted.
   op("        exx", 4, { what: "to the mixer's register set" }),
-  op("        ld   a,(de)", 7, { what: "voice 0's byte, through the 68k window" }),
+  op("        ld   a,(de)", 7 + cfg.windowWait, { what: `voice 0's byte through the 68k window (7 + ${cfg.windowWait} measured wait)` }),
   op("        inc  e", 4, { what: "…E alone: the source page wraps free" }),
   op("        ld   l,a", 4),
   op("mix_v0: ld   h,0", 7, { what: "voice 0's level page — SELF-MODIFIED at the block edge" }),
   op("        ld   a,(hl)", 7, { what: "x vel0" }),
-  op("        ld   (bc),a", 7, { what: "parked in the slot being built" }),
-  op("        ld   a,(ix+0)", 19, { what: "voice 1's byte — IX is the price of a second pointer" }),
+  // Voice 0's contribution waits in IY, not in the ring slot. Parking it in
+  // memory cost `ld h,b`/`ld l,c` to point HL back at it before the add — 15
+  // cycles against `add a,iyl`'s 8 — and it is what the measured window wait
+  // was found by needing to pay for. It also makes the ownership argument
+  // trivial: a partial sum is never in the ring at all, so nothing can read
+  // one. IY survives `exx`, and nothing else in the engine uses it.
+  op("        ld   iyl,a", 8, { what: "voice 0's contribution parked in a register" }),
+  op("        ld   a,(ix+0)", 19 + cfg.windowWait, { what: `voice 1's byte — IX is the price of a second pointer (19 + ${cfg.windowWait})` }),
   op("        inc  ixl", 8),
   op("        ld   l,a", 4),
   op("mix_v1: ld   h,0", 7, { what: "voice 1's level page — likewise" }),
   op("        ld   a,(hl)", 7, { what: "x vel1" }),
-  op("        ld   h,b", 4, { what: "HL = the slot being built" }),
-  op("        ld   l,c", 4),
-  op("        add  a,(hl)", 7, { what: "9-bit sum in (carry, A) — both operands biased" }),
+  op("        add  a,iyl", 8, { what: "9-bit sum in (carry, A) — both operands biased" }),
   op("        ld   l,a", 4),
   op("        ld   a,0", 7, { what: "…`ld` leaves the carry alone, which is the whole trick" }),
   op("        adc  a,CLAMP>>8", 7, { what: "the carry picks the table's second page" }),
@@ -207,7 +211,7 @@ const mixRoutine = (cfg) => (cfg.voices >= 2 ? [
   op("        ret", 10),
 ] : [
   op("        exx", 4, { what: "to the mixer's register set" }),
-  op("        ld   a,(de)", 7, { what: "source byte, through the 68k window" }),
+  op("        ld   a,(de)", 7 + cfg.windowWait, { what: `source byte through the 68k window (7 + ${cfg.windowWait} measured wait)` }),
   op("        inc  e", 4, { what: "…one byte a sample; E alone, so the page wraps free" }),
   op("        ld   l,a", 4),
   op("mix_v0: ld   h,0", 7, { what: "the voice's level page — SELF-MODIFIED at the block edge" }),

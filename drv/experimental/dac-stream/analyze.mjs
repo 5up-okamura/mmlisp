@@ -253,15 +253,16 @@ export function analyzeLead(trace, cfg, mixRange) {
   // The last slot is cut off mid-flight by the end of the run.
   for (let i = 0; i < perSlot.length - 1; i++) {
     const s = perSlot[i];
-    if (s.fetch.length !== 1 || s.store.length !== cfg.voices) {
+    // ONE fetch and ONE store, whatever the voice count: partial sums live in
+    // a register, so the only thing that ever reaches the ring is a finished
+    // sample.
+    if (s.fetch.length !== 1 || s.store.length !== 1) {
       if (badCount++ < 3)
         problems.push(`slot ${i}: ${s.fetch.length} fetches and ${s.store.length} stores,`
-          + ` expected 1 and ${cfg.voices}`);
+          + ` expected 1 and 1`);
       continue;
     }
-    // The finished sample is the LAST store of the slot; the earlier one is
-    // voice 0 parked in the slot it is being built in.
-    const built = s.store[s.store.length - 1];
+    const built = s.store[0];
     dists.add(((built - s.fetch[0]) % size + size) % size);
     // Nothing may read the slot under construction except the mixer itself.
     if (s.readback.some((a) => a !== built) && badRead++ < 3)
@@ -269,8 +270,7 @@ export function analyzeLead(trace, cfg, mixRange) {
     if (s.fetch[0] === built && badRead++ < 3)
       problems.push(`slot ${i}: the play cursor read ${built}, the sample being built`);
   }
-  if (badCount) problems.push(`${badCount} slot(s) did not do exactly one output and`
-    + ` ${cfg.voices} store(s)`);
+  if (badCount) problems.push(`${badCount} slot(s) did not do exactly one output and one store`);
   const want = cfg.lead - 1;
   if (dists.size !== 1)
     problems.push(`the build-to-play distance took ${dists.size} values (${[...dists].join(", ")})`

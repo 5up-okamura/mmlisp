@@ -49,6 +49,7 @@ export class Machine {
     this.cycles = 0;          // Z80 cycles since reset — a double, exact to 2^53
     this.instrStart = 0;      // stamp used for everything one instruction does
     this.instrPc = 0;
+    this.windowReads = 0;
 
     // ── The chip ───────────────────────────────────────────────────────────
     this.reg = new Uint8Array(0x200);   // $000-$0FF port 0, $100-$1FF port 1
@@ -106,7 +107,15 @@ export class Machine {
       this.trace.statusRead.push([this.instrStart, v]);
       return v;
     }
-    if (a >= 0x8000) return this.rom ? this.rom[(a - 0x8000) % this.rom.length] : 0xff;
+    if (a >= 0x8000) {
+      // The 68k window is not Z80 RAM: the read pays a wait, MEASURED on
+      // BlastEm rather than assumed (config.mjs, `windowWait`). Charging it
+      // here is what keeps this model and the machine agreeing — without it
+      // the model reports a rate 1.65% faster than the emulator does at two
+      // voices, and the schedule that looks exact here arrives slow there.
+      this.windowReads++;
+      return this.rom ? this.rom[(a - 0x8000) % this.rom.length] : 0xff;
+    }
     return 0xff;
   }
 
@@ -228,8 +237,9 @@ export class Machine {
       }
       this.instrStart = this.cycles;
       this.instrPc = cpu.pc;
+      this.windowReads = 0;
       const c = cpu.step();
-      this.cycles += c;
+      this.cycles += c + this.windowReads * this.cfg.windowWait;
       this.advanceTimers();
     }
     return this.cycles;

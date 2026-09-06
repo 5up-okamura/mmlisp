@@ -313,7 +313,7 @@ for (const c of CASES) {
     + ` (the clock added ${r.spec.clockAddedDb} dB, at ${r.spec.realWorstHz} Hz)`);
   if (r.lead) console.log(`      fixed lead: ${r.lead.slots} slots, ${r.lead.wraps} page wraps,`
     + ` build-to-play distance ${r.lead.distance} (expected ${r.lead.expected}),`
-    + ` one output and ${r.cfg.voices} store(s) in every slot`);
+    + ` one output and one finished store in every slot`);
   if (r.timerB) console.log(`      Timer B traffic (NOT a phase reference, §3.2 R1):`
     + ` ${r.timerB.reads} reads, flag seen ${r.timerB.flagSeenPct}%`
     + ` · reset→read window ${r.timerB.resetToReadMax} cyc vs a ${r.timerB.periodCycles} cyc period`
@@ -409,7 +409,7 @@ if (ref && !JSON_OUT) {
     ["de'", v ? "voice 0's source pointer in the 68k window; E advances, D never does" : "unused"],
     ["bc'", v ? "the BUILD cursor, LEAD ahead of the play cursor (B = ring page)" : "unused"],
     ["ix", v >= 2 ? "voice 1's source pointer — IXL advances" : "unused"],
-    ["iy", "unused"],
+    ["iy", v >= 2 ? "IYL holds voice 0's contribution between the two lookups" : "unused"],
     ["af'", "unused — `ex af,af'` never runs, so an interrupt could not use it either"],
     ["sp", "the boot stack and the mix routine's return address; nothing else pushes"],
     ["i/r", "untouched"],
