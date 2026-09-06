@@ -47,6 +47,9 @@ src/ovl_*.z80       on-demand overlays (setup/cmd/pcm/boot/rare/mmb) loaded into
 src/tables.z80      generated constant tables — do not edit (gen-tables.mjs)
 tools/z80asm.mjs    first-party two-pass Z80 assembler (subset, no deps)
 tools/z80cpu.mjs    first-party Z80 CPU emulator (same subset, no deps)
+                    — documented T-states, INCLUDING the memory cycle every
+                      (HL) operand pays; it charged 4 for `ld a,(hl)` until
+                      2026-09-06 and under-reported every loop built on it
 tools/selftest.mjs  assembler + emulator self-tests
 tools/gen-tables.mjs  emits the asm LUT byte offsets (the LUT data ships in the
                       MMB LUT_TABLE section via live/src/lut-blob.js, not the image)
@@ -58,6 +61,10 @@ tools/size-audit.mjs  static resident/overlay size report (`npm run size`)
 tools/budget.mjs      size audit + stack watermark over the gate corpus (`npm run budget`)
 tools/gen-mixer.mjs   generates src/mixer.z80 (8 shift-specialised loops, unrolled)
 tools/mixer-bench.mjs the P0 cost+correctness gate for the mixer (`npm run mixer`)
+tools/baseline.mjs    P0 of the DAC redesign: one command, one directory of
+                      evidence (`npm run baseline`)
+experimental/dac-stream/  the output-centred DAC engine prototype — P1 passes in
+                      emulation; see its README and docs/dac-engine-implementation.md
 tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
 tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (`npm run slots`)
 tools/gen-c-tables.mjs generates 68k/tables.c from live/src/ir-utils.js
@@ -90,7 +97,21 @@ Everything runs on plain node — no external assembler or emulator binaries:
 ```
 cd drv
 npm run verify:all   # selftest + the post-split gates + the ir↔drv A/B
+npm run baseline     # the same gates run INDEPENDENTLY, plus hashes and the
+                     # DAC instruments — writes out/baseline/<commit>.{json,md}
 ```
+
+> **`verify:all` chains with `&&`, so the first red gate hides every gate behind
+> it** — and `npm run engine` has been red since `a48bacc`, which meant `dac`,
+> `ring`, `c-gate`, `sgdk:lint` and `ab` went unrun for ~40 commits. `npm run
+> baseline` runs each on its own, re-runs a failure once to separate a flake
+> from a fault, and records the verdicts verbatim. Use it before and after
+> anything that touches the engine.
+
+> Every tool here defaults to `TIMER_B_K=16` while the committed artifacts are
+> generated at 1. Prefix `PCM_SPG=1 TIMER_B_K=1` or you are measuring a
+> different engine than the tree ships (`npm run mirrors` checks the artifacts
+> agree with each other, not with your environment).
 
 > **The all-Z80 trace gate is retired** (it survives as `npm run legacy:verify`
 > and friends, and no longer passes). `drv-player.js` is the port spec, and it
