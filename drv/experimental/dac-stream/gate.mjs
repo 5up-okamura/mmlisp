@@ -14,10 +14,11 @@ import { buildConfig, stampLine } from "./config.mjs";
 import { generate, cyclePaths } from "./gen-stream.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
 import {
-  analyzeValue, analyzeTime, analyzeBus, analyzeWrites, analyzeTimerPhase, analyzeDacEnable,
+  analyzeValue, analyzeTime, analyzeBus, analyzeWrites, analyzeTimerTraffic, analyzeDacEnable,
+  analyzeLead,
 } from "./analyze.mjs";
 import { compareClock } from "./spectrum.mjs";
-import { mixOne, mixTwo, LEVELS, SILENCE } from "./lut.mjs";
+import { mixOne, mixTwo, LEVELS, SILENCE, tablesAgree } from "./lut.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -100,9 +101,13 @@ const CASES = [
   { name: "ramp", wave: "ramp", cfg: {} },
   { name: "sine", wave: "sine", cfg: {} },
   { name: "two tones", wave: "twotone", cfg: {} },
-  { name: "no timer observation", wave: "sine", cfg: { observeTimerB: false } },
+  // Timer B's traffic, on purpose: a status read and a $27 write in the
+  // schedule with the $2A re-latch behind them. It is a YM LOAD case; §3.2
+  // (R1) withdraws its use as a phase reference, and the gate prints the
+  // measured reason — the reset -> read window is longer than the period.
+  { name: "Timer B traffic (load case)", wave: "sine", cfg: { observeTimerB: true } },
   { name: "CSM alongside", wave: "sine", cfg: { csm: true } },
-  { name: "CSM + dense FM writes", wave: "sine", cfg: { csm: true, fmBurst: 5 } },
+  { name: "CSM + dense FM writes", wave: "sine", cfg: { csm: true, fmBurst: 5, observeTimerB: true } },
   // §6.3 asks for the bus-grab phase sweep. It is NOT part of P1's pass — the
   // isolated column of §6.2 is measured without the 68000 — but the instrument
   // has to be able to see it before P3 asks the question, so it runs and
@@ -129,6 +134,9 @@ const CASES = [
   // so this is what exercises the clamp table.
   { name: "P2 two voices, clipping", src: "romfull", cfg: { voices: 2 } },
   { name: "P2 two voices + CSM", src: "romsine", cfg: { voices: 2, csm: true } },
+  // The same, with Timer B's traffic added on top — the heaviest YM load the
+  // prototype can produce.
+  { name: "P2 two voices + CSM + Timer B", src: "romsine", cfg: { voices: 2, csm: true, observeTimerB: true } },
   { name: "P2 two voices, all levels", src: "romramp", cfg: { voices: 2 }, levels: "walk" },
   { name: "P2 two voices, master fade", src: "romsine", cfg: { voices: 2 }, levels: "fade" },
   // The §6.3 "声部別の逆向きフェード": voice 0 up while voice 1 goes down.
@@ -211,7 +219,10 @@ function runCase(c, seconds) {
   const time = analyzeTime(m.trace, cfg);
   const bus = analyzeBus(m.trace, cfg);
   const writes = analyzeWrites(m.trace, cfg);
-  const phase = analyzeTimerPhase(m.trace, cfg);
+  const timerB = analyzeTimerTraffic(m.trace, cfg);
+  const lead = cfg.voices
+    ? analyzeLead(m.trace, cfg, [built.symbols.get("mix_one"), built.symbols.get("code_end")])
+    : null;
   const dacen = analyzeDacEnable(m.trace, cfg, m.cycles);
   // The clock/value comparison wants ONE tone in the signal; a two-voice mix
   // has two by construction and the "worst non-tone bin" is then the other
@@ -221,6 +232,11 @@ function runCase(c, seconds) {
 
   const fails = [];
   if (value.problems.length) fails.push(...value.problems.map((p) => `VALUE ${p}`));
+  // §3.3 (R1): the fixed lead is an invariant, so it is checked, not assumed.
+  if (lead?.problems.length) fails.push(...lead.problems.slice(0, 3).map((p) => `LEAD ${p}`));
+  // …and the generated tables against the same arithmetic the reference uses,
+  // reported separately from the value comparison (§3.4 R1).
+  if (cfg.voices) for (const p of tablesAgree().slice(0, 2)) fails.push(`TABLE ${p}`);
   // A LEVEL CHANGE IS WHOLE-BLOCK OR IT IS NOTHING (§3.4). The k-th edge must
   // fall inside the last slot of block k — after that slot's own sample went
   // out, and before the next one's. Without this the reference above would
@@ -260,7 +276,7 @@ function runCase(c, seconds) {
     + ` — longest ${Math.max(...time.holes.map((h) => h.periods))} periods`);
   if (dacen.length !== 1) fails.push(`the DAC was enabled ${dacen.length} times, expected once`);
 
-  return { c, cfg, gen, value, time, bus, writes, phase, dacen, spec, fails, edges,
+  return { c, cfg, gen, value, time, bus, writes, timerB, dacen, spec, fails, edges, lead,
     imageBytes: built.bytes.length, codeBytes: built.symbols.get("code_end"),
     ramTop: built.symbols.get("stream") };
 }
@@ -287,10 +303,13 @@ for (const c of CASES) {
     + ` worst non-tone bin ${r.spec.uniformWorstDbc} dBc on the uniform grid,`
     + ` ${r.spec.realWorstDbc} dBc at the real write times`
     + ` (the clock added ${r.spec.clockAddedDb} dB, at ${r.spec.realWorstHz} Hz)`);
-  if (r.phase) console.log(`      Timer B: ${r.phase.overflows} overflows,`
-    + ` ${r.phase.reads} reads, flag seen ${r.phase.flagSeenPct}%,`
-    + ` read delay p50 ${r.phase.delayP50} max ${r.phase.delayMax} cyc`
-    + ` (period ${r.phase.periodCycles})`);
+  if (r.lead) console.log(`      fixed lead: ${r.lead.slots} slots, ${r.lead.wraps} page wraps,`
+    + ` build-to-play distance ${r.lead.distance} (expected ${r.lead.expected}),`
+    + ` one output and ${r.cfg.voices} store(s) in every slot`);
+  if (r.timerB) console.log(`      Timer B traffic (NOT a phase reference, §3.2 R1):`
+    + ` ${r.timerB.reads} reads, flag seen ${r.timerB.flagSeenPct}%`
+    + ` · reset→read window ${r.timerB.resetToReadMax} cyc vs a ${r.timerB.periodCycles} cyc period`
+    + ` — ${r.timerB.informative ? "could carry information" : "CANNOT carry information"}`);
   if (r.bus.grabs) console.log(`      bus: ${r.bus.grabs} grabs, ${r.bus.heldCycles} cycles held`
     + ` (${r.bus.heldPeriods} sample periods), longest ${r.bus.longest}`
     + ` — ${r.time.holes.filter((h) => h.inBusGrab).length} of ${r.time.holes.length}`
@@ -355,7 +374,7 @@ if (JSON_OUT) {
     rateHz: r.cfg.rateHz, period: r.cfg.periodCycles,
     value: r.value, time: { ...r.time, holes: r.time.holes.slice(0, 20) },
     bus: r.bus, writes: { writes: r.writes.writes, problems: r.writes.problems.slice(0, 10) },
-    phase: r.phase, placement: r.gen.placement.rows, fails: r.fails,
+    timerB: r.timerB, lead: r.lead, placement: r.gen.placement.rows, fails: r.fails,
   })), null, 2));
   console.log(`\njson → ${out}`);
 }

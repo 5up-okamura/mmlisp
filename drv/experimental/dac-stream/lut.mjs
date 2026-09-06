@@ -60,16 +60,50 @@ export function buildClamp() {
 }
 
 // ── The reference, in JS ───────────────────────────────────────────────────
-const LUT = buildLut();
-const CLAMP = buildClamp();
-const lut = (level, b) => LUT[level * 256 + (b & 0xff)];
+//
+// IT DOES NOT READ THE TABLES. §3.4 (R1): "参照計算は生成済みLUT・飽和表を
+// 読まず、定義した算術から期待値を求める". A reference that indexes the same
+// arrays the image was built from cannot fail on a table that is wrong — the
+// two share the error and agree. So the expectation is computed from `scale`
+// and `satAdd` directly, and the tables are checked against the SAME
+// arithmetic separately (`tablesAgree`), which is a different assertion with a
+// different failure mode.
+const satAdd = (a, b) => Math.max(-128, Math.min(127, a + b));
 
-/** One voice: source byte -> voice level -> master. */
-export const mixOne = (src, vel, master) => lut(master, lut(vel, src));
+/** One voice: source byte -> voice level -> master. Biased in, biased out. */
+export const mixOne = (src, vel, master) =>
+  bias(scale(scale(unbias(src), vel), master));
 
-/** Two voices, mixed exactly as the Z80 does: add, clamp, then master. */
+/** Two voices: scale each, saturate the sum, then master — in that order. */
 export const mixTwo = (src0, vel0, src1, vel1, master) =>
-  lut(master, CLAMP[lut(vel0, src0) + lut(vel1, src1)]);
+  bias(scale(satAdd(scale(unbias(src0), vel0), scale(unbias(src1), vel1)), master));
 
 /** What a silent ring holds, and what the DAC gets when nothing is playing. */
 export const SILENCE = bias(0);
+
+/**
+ * Do the GENERATED tables implement the same arithmetic? Reported separately
+ * from the value gate, because "the image's tables are wrong" and "the mixer
+ * used them wrongly" are different faults and a single comparison cannot tell
+ * them apart.
+ */
+export function tablesAgree() {
+  const lut = buildLut();
+  const clamp = buildClamp();
+  const problems = [];
+  for (let level = 0; level < LEVELS && problems.length < 4; level++)
+    for (let b = 0; b < 256; b++) {
+      const want = bias(scale(unbias(b), level));
+      if (lut[level * 256 + b] !== want) {
+        problems.push(`LUT[${level}][${b}] = ${lut[level * 256 + b]}, the arithmetic says ${want}`);
+        break;
+      }
+    }
+  for (let i = 0; i < CLAMP_SIZE && problems.length < 6; i++) {
+    // The index is the sum of two biased bytes, so its signed value is i - 256
+    // and both halves of that are already clamped to [-128, 127].
+    const want = bias(Math.max(-128, Math.min(127, i - 256)));
+    if (clamp[i] !== want) problems.push(`CLAMP[${i}] = ${clamp[i]}, the arithmetic says ${want}`);
+  }
+  return problems;
+}

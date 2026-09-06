@@ -15,10 +15,13 @@
 //   * The DAC's clock is the Z80's own instruction stream — a group of 5 slots
 //     is 1,792 cycles EXACTLY at 9,987.6 Hz, so the average carries no drift
 //     and no correction is needed for it to stay put.
-//   * The phase reference is Timer B, read (and its flag reset) once per group.
-//     The engine does not gate on it; the harness records the cycle of every
-//     status read and the value it returned, which is what makes a phase error
-//     measurable instead of assumed.
+//   * THERE IS NO PHASE REFERENCE, and the earlier claim that Timer B was one
+//     is withdrawn (§3.2, R1). Reading the overflow flag answers "did ANY
+//     overflow happen since the reset", so the reset -> read window has to be
+//     shorter than one timer period to constrain anything; it never was, and
+//     the flag reads 1 every time. The traffic stays available as a YM load
+//     case and is off in the normal profile. The engine has no wall-clock
+//     phase information at all — only the instrument does.
 //   * The logical clock for commands is the OUTPUT SAMPLE INDEX (§3.2), which
 //     P2 maintains at block boundaries. P1 has no commands, so it has no
 //     counter — the harness counts $2A writes.
@@ -82,12 +85,12 @@ function slotWork(cfg, slotIndex) {
   // branch on the result — a conditional would make the slot's length depend
   // on the chip, which is exactly the coupling §3.2 says not to build.
   //
-  // With a mixer in the slot the two halves are SPLIT ACROSS TWO SLOTS and run
-  // once a block instead of once a group: reset in one, read in another, a
-  // fixed distance apart. That is a better phase measurement than reading a
-  // flag that was reset an instruction earlier — what it now reports is
-  // whether an overflow fell inside a known window — and it keeps the worst
-  // slot inside the §4 ceiling instead of 8 points past it.
+  // IT IS A LOAD CASE, NOT A CLOCK. §3.2 (R1) withdraws the phase-reference
+  // reading of it: the flag answers "any overflow since the reset", the
+  // reset -> read window is longer than the timer period at every cadence
+  // tried, and so the answer is 1 every time. What the traffic still tests is
+  // real: a status READ and a $27 write inside the schedule, with the $2A
+  // re-latch behind them. Off unless a case asks for it.
   if (cfg.observeTimerB && !cfg.voices && g === 0) {
     work.push(...readStatus());
     work.push(...ymWrite(YM.R_TIMER_CTL, "R27_RESET", "timer flag reset"));
@@ -99,8 +102,7 @@ function slotWork(cfg, slotIndex) {
   // CSM: CH3 keys itself off Timer A; what a driver actually spends cycles on
   // is the register traffic around it, so that is what is placed here.
   //
-  // ONE WRITE PER SLOT once there is a mixer, on two separate slots a block
-  // apart. Two writes in one slot is 112 cycles on top of a 207-cycle mix and
+  // ONE WRITE PER SLOT once there is a mixer, on two separate slots. Two writes in one slot is 112 cycles on top of a 207-cycle mix and
   // the slot overruns — which the generator refuses to emit rather than
   // quietly deliver late. §3.5 asks for exactly this: an FM transaction split
   // across intervals, each piece re-latching `$2A` behind it. The chip sees

@@ -43,9 +43,12 @@ export class Machine {
     this.pokes = [...pokes].sort((a, b) => a.at - b.at);
     this.pokeIdx = 0;
     this.watch = new Set(watch);
+    this.ringLo = cfg.ram.ring ? cfg.ram.ring[0] : -1;
+    this.ringHi = cfg.ram.ring ? cfg.ram.ring[1] : -1;
     this.masterPerZ80 = cfg.machine.z80Div;
     this.cycles = 0;          // Z80 cycles since reset — a double, exact to 2^53
     this.instrStart = 0;      // stamp used for everything one instruction does
+    this.instrPc = 0;
 
     // ── The chip ───────────────────────────────────────────────────────────
     this.reg = new Uint8Array(0x200);   // $000-$0FF port 0, $100-$1FF port 1
@@ -69,6 +72,11 @@ export class Machine {
       overflow: [],                     // when the timers REALLY overflowed
       globRead: [],                     // reads of watched RAM: cycle, addr, value
       pokes: [],                        // the host's writes, as applied
+      // Every access to the finished-sample ring, with the PC that made it —
+      // §3.3 (R1) asks for the fixed lead to be CHECKED, and the check needs to
+      // tell the play cursor's fetch from the mixer's park and read-back. The
+      // PC is what separates them, so it is recorded rather than inferred.
+      ring: [],                         // cycle, pc, addr, isWrite
       grabs: [],                        // 68000 bus held: [start, end]
       stray: [],                        // writes to no device — a value fault
     };
@@ -88,6 +96,8 @@ export class Machine {
   read(a) {
     if (a < RAM_SIZE) {
       if (this.watch.has(a)) this.trace.globRead.push([this.instrStart, a, this.ram[a]]);
+      if (a >= this.ringLo && a < this.ringHi)
+        this.trace.ring.push([this.instrStart, this.instrPc, a, 0]);
       return this.ram[a];
     }
     if (a >= YM.addr0 && a <= YM.data1) {
@@ -101,7 +111,12 @@ export class Machine {
   }
 
   write(a, d) {
-    if (a < RAM_SIZE) { this.ram[a] = d; return; }
+    if (a < RAM_SIZE) {
+      if (a >= this.ringLo && a < this.ringHi)
+        this.trace.ring.push([this.instrStart, this.instrPc, a, 1]);
+      this.ram[a] = d;
+      return;
+    }
     if (a === YM.addr0 || a === YM.addr1) {
       const port = a === YM.addr0 ? 0 : 1;
       this.addr[port] = d;
@@ -212,6 +227,7 @@ export class Machine {
         continue;
       }
       this.instrStart = this.cycles;
+      this.instrPc = cpu.pc;
       const c = cpu.step();
       this.cycles += c;
       this.advanceTimers();

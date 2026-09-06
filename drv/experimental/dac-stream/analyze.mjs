@@ -115,6 +115,17 @@ export function analyzeWrites(trace, cfg) {
   const problems = [];
   const lastData = new Map();   // range -> cycle
   const lastAddr = [null, null];
+  // THE FREQUENCY LATCH IS A SECOND, SEPARATE THING TO PROTECT (§3.5, R1).
+  // Restoring the $2A address latch says nothing about it: $A4-$A6 and
+  // $AC-$AE park an upper byte in a per-part holding register that the
+  // matching lower write ($A0-$A2, $A8-$AA) commits. Splitting an FM
+  // transaction across output intervals — which this engine does — leaves that
+  // holding register live across other traffic, so a second upper write before
+  // the commit silently loses the first. Checked on its own, and separately
+  // from the address latch above.
+  const COMMIT = { 0xa0: 0xa4, 0xa1: 0xa5, 0xa2: 0xa6, 0xa8: 0xac, 0xa9: 0xad, 0xaa: 0xae };
+  const isUpper = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);
+  const held = [null, null];    // port -> the upper register waiting to commit
   for (const w of writes) {
     if (w.kind === "addr") { lastAddr[w.port] = w; continue; }
     const a = lastAddr[w.port];
@@ -124,6 +135,17 @@ export function analyzeWrites(trace, cfg) {
     } else if (w.cycle - a.cycle < YM.wait.addrToOwnData) {
       problems.push(`cycle ${w.cycle}: only ${w.cycle - a.cycle} cycles after its own`
         + ` address write (needs ${YM.wait.addrToOwnData})`);
+    }
+    if (isUpper(w.reg)) {
+      if (held[w.port] !== null && held[w.port] !== w.reg)
+        problems.push(`cycle ${w.cycle}: $${w.reg.toString(16)} overwrote the frequency`
+          + ` latch $${held[w.port].toString(16)} was holding, before its lower write`);
+      held[w.port] = w.reg;
+    } else if (COMMIT[w.reg] !== undefined) {
+      if (held[w.port] !== COMMIT[w.reg])
+        problems.push(`cycle ${w.cycle}: $${w.reg.toString(16)} committed a frequency latch`
+          + ` holding ${held[w.port] === null ? "nothing" : `$${held[w.port].toString(16)}`}`);
+      held[w.port] = null;
     }
     const r = rangeOf(w.reg);
     const need = YM.wait[r] ?? 0;
@@ -137,12 +159,21 @@ export function analyzeWrites(trace, cfg) {
 }
 
 /**
- * Timer B as a PHASE REFERENCE (§3.2). For each status read: how long after
- * the chip's real overflow did the engine look, and did it see the flag? The
- * delay is the phase error a synchroniser would have to live with, and it is
- * measured rather than assumed to be zero.
+ * What the Timer B traffic actually did — NOT a phase measurement.
+ *
+ * §3.2 (R1) withdraws the claim that this is a phase reference. The engine
+ * reads one bit; it is set if ANY overflow happened since the last reset, so
+ * the reset -> read window has to be SHORTER than one timer period for the
+ * answer to constrain anything. It is not, at any cadence the prototype used
+ * (P1: ~1,792 cycles between reset and read, P2: ~2,867, against a 1,075.2
+ * cycle period), and the measured consequence is `flagSeenPct` = 100.
+ *
+ * `sinceOverflowP50` / `sinceOverflowMax` are the time from the chip's real
+ * overflow to the engine's read. ONLY THE INSTRUMENT KNOWS THEM — the engine
+ * has no access to the overflow instant — so they are not the DAC's phase
+ * error `e[i]`, not an estimator's error, and not a bound on either.
  */
-export function analyzeTimerPhase(trace, cfg) {
+export function analyzeTimerTraffic(trace, cfg) {
   const overB = trace.overflow.filter(([, n]) => n === "B").map(([c]) => c);
   if (!overB.length || !trace.statusRead.length) return null;
   const delays = [];
@@ -152,14 +183,107 @@ export function analyzeTimerPhase(trace, cfg) {
     if (overB[j] <= cycle) delays.push(cycle - overB[j]);
     if (val & YM.ST_FLAG_B) seen++;
   }
+  // The window the engine actually left between clearing the flag and looking
+  // at it, measured from the trace rather than assumed from the slot numbers
+  // (§3.2 R1: the window is set by where the instructions are, not by which
+  // slots carry them).
+  const resets = trace.ym.filter(([, port, reg, v]) =>
+    port === 0 && reg === YM.R_TIMER_CTL && (v & YM.CTL_RESET_B)).map(([c]) => c);
+  const windows = [];
+  let r = 0;
+  for (const [cycle] of trace.statusRead) {
+    while (r + 1 < resets.length && resets[r + 1] <= cycle) r++;
+    if (resets.length && resets[r] <= cycle) windows.push(cycle - resets[r]);
+  }
   const sorted = [...delays].sort((a, b) => a - b);
+  const w = [...windows].sort((a, b) => a - b);
   return {
     reads: trace.statusRead.length,
     overflows: overB.length,
     flagSeen: seen,
     flagSeenPct: +((100 * seen) / trace.statusRead.length).toFixed(1),
-    delayP50: q(sorted, 0.5), delayMax: sorted[sorted.length - 1],
+    sinceOverflowP50: q(sorted, 0.5), sinceOverflowMax: sorted[sorted.length - 1],
+    resetToReadP50: w.length ? q(w, 0.5) : null,
+    resetToReadMax: w.length ? w[w.length - 1] : null,
     periodCycles: +cfg.timerBcycles.toFixed(1),
+    // The one thing this analysis can conclude: whether the window could have
+    // carried information at all.
+    informative: w.length ? w[w.length - 1] < cfg.timerBcycles : false,
+  };
+}
+
+/**
+ * §3.3 (R1) — the fixed-lead delay line's invariants, checked rather than
+ * asserted in prose:
+ *
+ *   1. EVERY slot outputs exactly one sample and finishes exactly one. Not
+ *      "on average": a slot that skipped a mix because a voice was silent, or
+ *      produced two because a command arrived, breaks the whole structure.
+ *   2. The distance between what is being finished and what is being played is
+ *      CONSTANT, and survives the cursor wrapping the 256-byte page.
+ *   3. Nothing reads a sample that is still being built.
+ *
+ * The check has to name its measurement points, because the cursors are not
+ * level with each other at any instant: the play cursor's FETCH runs one
+ * sample ahead of the DAC write it feeds (that is what makes `a` free across
+ * the pad), so the distance seen between the mixer's store and the fetch in
+ * the same slot is `lead - 1`, not `lead`. The invariant is that it never
+ * moves, and the expected value is stated.
+ */
+export function analyzeLead(trace, cfg, mixRange) {
+  if (!cfg.voices || !trace.ring.length) return null;
+  const inMix = (pc) => pc >= mixRange[0] && pc < mixRange[1];
+  const size = cfg.ram.ring[1] - cfg.ram.ring[0];
+  const problems = [];
+  // Partition the ring accesses by the slot they fall in — a slot being one
+  // DAC-write interval.
+  let k = 0;
+  const dac = trace.dacCycle;
+  const perSlot = dac.map(() => ({ fetch: [], store: [], readback: [] }));
+  for (const [cycle, pc, addr, isWrite] of trace.ring) {
+    while (k + 1 < dac.length && dac[k + 1] <= cycle) k++;
+    if (cycle < dac[0]) continue;                 // boot's silence fill and prime
+    const slot = perSlot[k];
+    if (!inMix(pc)) { if (!isWrite) slot.fetch.push(addr); }
+    else if (isWrite) slot.store.push(addr);
+    else slot.readback.push(addr);
+  }
+  const dists = new Set();
+  let badCount = 0, badRead = 0;
+  // The last slot is cut off mid-flight by the end of the run.
+  for (let i = 0; i < perSlot.length - 1; i++) {
+    const s = perSlot[i];
+    if (s.fetch.length !== 1 || s.store.length !== cfg.voices) {
+      if (badCount++ < 3)
+        problems.push(`slot ${i}: ${s.fetch.length} fetches and ${s.store.length} stores,`
+          + ` expected 1 and ${cfg.voices}`);
+      continue;
+    }
+    // The finished sample is the LAST store of the slot; the earlier one is
+    // voice 0 parked in the slot it is being built in.
+    const built = s.store[s.store.length - 1];
+    dists.add(((built - s.fetch[0]) % size + size) % size);
+    // Nothing may read the slot under construction except the mixer itself.
+    if (s.readback.some((a) => a !== built) && badRead++ < 3)
+      problems.push(`slot ${i}: the mixer read ${s.readback} while building ${built}`);
+    if (s.fetch[0] === built && badRead++ < 3)
+      problems.push(`slot ${i}: the play cursor read ${built}, the sample being built`);
+  }
+  if (badCount) problems.push(`${badCount} slot(s) did not do exactly one output and`
+    + ` ${cfg.voices} store(s)`);
+  const want = cfg.lead - 1;
+  if (dists.size !== 1)
+    problems.push(`the build-to-play distance took ${dists.size} values (${[...dists].join(", ")})`
+      + ` — the fixed lead is not fixed`);
+  else if (![...dists][0] !== undefined && [...dists][0] !== want)
+    problems.push(`the build-to-play distance is ${[...dists][0]}, expected ${want}`
+      + ` (lead ${cfg.lead} less the one-sample fetch-ahead)`);
+  return {
+    slots: perSlot.length - 1,
+    distance: [...dists][0],
+    expected: want,
+    wraps: Math.floor(perSlot.length / size),
+    problems,
   };
 }
 

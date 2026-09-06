@@ -123,7 +123,13 @@ export function buildConfig({
   timerAfm = 64,       // CSM key-on period, in FM samples (Timer A = 1024 - NA)
   csm = false,         // program CH3 for CSM and issue its writes
   fmBurst = 0,         // FM register writes crowded into ONE slot (§6.3)
-  observeTimerB = true,
+  // TIMER B IS OFF BY DEFAULT (§3.2, R1). Reading its overflow flag was the
+  // prototype's declared phase reference and it never was one: the reset ->
+  // read window is longer than the timer's own period at every cadence tried,
+  // so the flag is set every single time and carries no information. It stays
+  // available as a YM-traffic load case, and nothing in the normal profile
+  // reads it.
+  observeTimerB = false,
 } = {}) {
   const p = PROFILES[profile];
   if (!p) throw new Error(`unknown profile ${profile}`);

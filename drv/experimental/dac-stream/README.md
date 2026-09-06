@@ -56,8 +56,14 @@ Two voices, each with its own 16-step level, composed with a master, mixed into
 
 Three things carry it:
 
-**Production is locked to consumption.** Slot *i* plays sample *i* and builds
-sample *i + 17*, one of each, for ever. The ring cannot drain and cannot
+**Production is locked to consumption, and the gate checks it rather than
+asserting it.** Slot *i* plays sample *i* and builds sample *i + 17*, one of
+each, for ever — verified per slot over the whole run: exactly one play fetch
+and exactly one finished store, a build-to-play distance that never moves
+(16 = the 17-sample lead less the one-sample fetch-ahead, which is where the
+measurement points are), across 77 page wraps, with nothing reading a sample
+still under construction. Removing one `call mix_one` from the image makes it
+fail, which is how the check is known to bite. The ring cannot drain and cannot
 overrun; there is no fill counter, no low-water mark and no regulator. The
 property the shipped engine spent four measurement rounds trying to obtain is
 here a consequence of the schedule, and the 17-sample lead is what buys the
@@ -98,12 +104,25 @@ construction. Work placed after it delays only the pad, never the next sample.
 That is what makes "does CSM change the PCM period?" answerable by reading the
 generated code rather than by measuring and hoping.
 
-**2. There is no interrupt.** The Z80 runs with interrupts disabled from boot
-and never takes a vblank (§3.1 permits this and asks for the time-sync
-mechanism to be named). The DAC's clock is the instruction stream: five slots
-are 1,792 cycles *exactly*, so the average carries no error to accumulate.
-Timer B is the phase reference — read once per group, its flag reset through
-the `$27` shadow, with the harness recording the cycle of every read.
+**2. There is no interrupt, and there is no phase reference either.** The Z80
+runs with interrupts disabled from boot and never takes a vblank (§3.1 adopts
+this in R1). The DAC's clock is the instruction stream: five slots are 1,792
+cycles *exactly*, so the average carries no error to accumulate.
+
+An earlier version of this file called Timer B the phase reference. **That is
+withdrawn** (§3.2, R1). Reading the overflow flag answers "did *any* overflow
+happen since the reset", so the reset→read window has to be shorter than one
+timer period for the answer to constrain anything — and it never was, at any
+cadence tried. The gate now measures the window and says so:
+
+    Timer B traffic (NOT a phase reference, §3.2 R1): 9988 reads, flag seen 100%
+      · reset→read window 1739 cyc vs a 1075.2 cyc period — CANNOT carry information
+
+Timer B's traffic remains available as a **YM load case** and is off in the
+normal profile. The engine has no wall-clock phase information at all; only the
+instrument does, and the numbers it reports (time from a real overflow to the
+engine's read) are not the DAC's phase error and not any estimator's error.
+The 68000 gets the time from the published output index instead (§3.7).
 
 The alternative was measured on paper and rejected: a vblank ISR is ~90 cycles
 landing anywhere inside a 358-cycle slot, a quarter of the period against a 5%
@@ -120,7 +139,7 @@ generation time.
 
 | file | what it is |
 | --- | --- |
-| `lut.mjs` | the level family, the clamp table, and the same arithmetic in JS — the reference and the Z80 read one definition |
+| `lut.mjs` | the level family, the clamp table, and the arithmetic that DEFINES both. The gate's reference computes from that arithmetic and **never indexes the generated tables** (§3.4, R1) — a reference that read them could not fail on a table that is wrong. `tablesAgree()` checks the tables against the same arithmetic as a separate assertion |
 | `config.mjs` | **the one configuration object.** Clocks, profile, RAM map, YM registers, the settling table. Nothing reads an environment variable; a config is passed in, hashed, and its stamp goes into every artifact it produced. |
 | `schedule.mjs` | the placement engine: exact-cost ops, the pad solver, the placement table |
 | `gen-stream.mjs` | generates the Z80 source and the per-path cycle table |
