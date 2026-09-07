@@ -290,6 +290,10 @@ for (const fault of [null, ...Object.keys(FAULTS)]) {
 assert.throws(() => buildRom(new Uint8Array(0x100), new Uint8Array(512),
   resolveCase({ ...base, grab: { every: 100, bytes: 4, optimized: true } }, { fault: "late-request" }).grab),
   /does not apply/);
+// A load whose divisor was never set is refused at build time. The observer's
+// entry did exactly that and produced a rom that trapped every iteration.
+assert.throws(() => buildRom(new Uint8Array(0x100), null,
+  { vdp: true, disabled: true, load: "divu", skipInitForTest: true }), /initLoad|divisor/);
 
 // Execute both branch paths, alternating serviced and skipped notifications.
 // This tests padding arithmetic only: injected holds are explicitly synthetic,
@@ -352,6 +356,17 @@ if (process.argv.includes("--machine")) {
     const f = run(["--case","computed timing 8B, unloaded 68k","--seconds","1","--fault",fault]);
     assert.equal(f.status,1,`hblank fault ${fault} was not fatal:\n${f.stdout}`);
   }
+  // A 68000 exception is a failed run even when the PCM is perfect. The
+  // divisor init is removed on purpose; before the fix this rom passed a
+  // 2-second run and died at 10.
+  const zero = run(["--case","hv observer, load timed in place","--seconds","2",
+    "--fault","zero-divisor"]);
+  assert.equal(zero.status, 1, zero.stdout + zero.stderr);
+  assert.match(zero.stdout, /took an exception/);
+  // …and the same rom without the fault runs the load it was meant to.
+  const loaded = run(["--case","hv observer, load timed in place","--seconds","2"]);
+  assert.equal(loaded.status, 0, loaded.stdout + loaded.stderr);
+  assert.match(loaded.stdout, /foreground load: \d+ ticks, 5\d\d\.\d 68000 cycles/);
   // The load has to be the long path: an overflowing divide is caught by the
   // calibration case itself.
   const cal2 = run(["--case","load calibration","--seconds","1"]);

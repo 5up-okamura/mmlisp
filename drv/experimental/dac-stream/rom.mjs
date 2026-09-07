@@ -29,7 +29,14 @@ const Z80_BANK = 0xa06000;
 // marks is a DIFFERENT ROM and is reported as one.
 const MARK = 0xa130f1, MARKW = 0xa130f2;
 export const MARKS = { entry: 1, request: 2, released: 3, skipped: 4, missed: 5,
-  calBegin: 0x10, calEnd: 0x11 };
+  loadTick: 6, calBegin: 0x10, calEnd: 0x11,
+  // An exception. Every unused vector goes here, the mark makes it visible to
+  // the gate, and the halt stops the machine from stacking frames until it
+  // walks off the end of RAM. The previous vector target was the trailing
+  // `bra idle`, which sent a divide-by-zero straight back into the loop that
+  // caused it — a 2-second run passed and a 10-second one died writing to
+  // $DFFFFE.
+  fault: 0x7f };
 
 /** A two-pass emitter: labels are patched after the layout is known. */
 class M68k {
@@ -144,11 +151,27 @@ function vdpSetup(m, hintLine = 0xff) {
     m.moveWimm(0x8000 | (reg << 8) | val, 0xc00004);
 }
 
+// THE LOAD'S REGISTERS ARE NOT OPTIONAL. `emitLoad` reloads the dividend every
+// iteration but the DIVISOR lives in d6 for the life of the run, and the
+// observer's entry never set it: the load divided by whatever d6 held, which in
+// this core is zero, so every iteration trapped instead of dividing. A build
+// that reaches emitLoad("divu") without this having run is refused rather than
+// producing a ROM that looks busy and is not.
+let LOAD_READY = false;
+function initLoad(m, kind, { fault = null } = {}) {
+  if (kind === "divu") {
+    if (fault === "zero-divisor") { m.moveq(0, 6); FAULT_APPLIED.add("zero-divisor"); }
+    else m.moveq(7, 6);
+  }
+  LOAD_READY = true;
+}
+
 const loadKind = (load) => load === false || load === "none" ? "none"
   : load === true || load === undefined ? "divu" : load;
 
 /** One iteration of the idle load. `n` disambiguates the labels it emits. */
 function emitLoad(m, kind, n = 0) {
+  if (!LOAD_READY) throw new Error(`emitLoad(${kind}) before initLoad — the divisor would be whatever d6 held`);
   if (kind === "none") return;
   if (kind === "short") { for (let i = 0; i < 4; i++) m.nop(); return; }
   if (kind === "divu") {
@@ -189,6 +212,7 @@ export function buildRom(image, samples = null, grab = null) {
   const load = loadKind(grab?.load);
   const marks = !!grab?.marks;
   FAULT_APPLIED.clear();
+  LOAD_READY = false;
   const rom = new Uint8Array(ROM_SIZE);
   rom.fill(0xff, 0x200);
 
@@ -293,7 +317,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveWimmD(0x0000, 4);
     m.leaAbs(Z80_BASE + COOP.commit, 4);
     m.moveLimmD(LOAD_DIVIDEND, 5);
-    m.moveq(7, 6);
+    initLoad(m, load, { fault: grab.fault });
     if (grab.computed) {
       m.clrBabs(FLAG); m.moveLimm(0, TICKS); m.moveLimm(0, MISSES); m.moveLimm(0, SKIPS);
       m.moveLimm(WINDOW, REM); m.moveLimm(0, TICKS + 16);   // sane before the first tick
@@ -321,7 +345,7 @@ export function buildRom(image, samples = null, grab = null) {
       if (grab.captureOffset < 0) m.addLimmD(-grab.captureOffset, 6);
       m.moveLDabs(6, REM);
       m.clrBabs(FLAG);
-      m.moveLimmD(LOAD_DIVIDEND, 5); m.moveq(7, 6);
+      m.moveLimmD(LOAD_DIVIDEND, 5); initLoad(m, load, { fault: grab.fault });
       m.label("idle");
       emitLoad(m, load, 1);
       m.bra("idle");
@@ -424,8 +448,23 @@ export function buildRom(image, samples = null, grab = null) {
     // nothing that touches the Z80 bus. Whatever the Z80 reads, it reads while
     // this is going on.
     vdpSetup(m);
+    m.moveLimmD(LOAD_DIVIDEND, 5);
+    // `skipInitForTest` exists so the guard below can be shown to fire; nothing
+    // else sets it.
+    if (!grab.skipInitForTest) initLoad(m, load, { fault: grab.fault });
+    // `loadProbe` stamps the loop every 256 iterations, so that the observer's
+    // OWN rom can be shown to have run the load it was meant to — the
+    // calibration rom's instruction times are not a substitute for that. It is
+    // a diagnostic build, and a different rom from the one under test.
+    if (grab.loadProbe) m.moveWimmD(256, 0);
     m.label("idle");
     emitLoad(m, load, 3);
+    if (grab.loadProbe) {
+      m.w(0x5340);                         // subq.w #1,d0
+      m.bne("idle");
+      m.mark(MARKS.loadTick);
+      m.moveWimmD(256, 0);
+    }
     m.bra("idle");
   } else m.label("idle");
   if (grab?.hint) { /* handled above */ } else if (grab?.optimized) {
@@ -493,6 +532,11 @@ export function buildRom(image, samples = null, grab = null) {
   if (grab?.vdp && grab.disabled) { /* the idle loop closed itself above */ }
   else if (!grab?.hint) m.bra("idle");
   else { m.label("halt"); m.bra("halt"); }
+  // The exception landing. Emitted last, reached only by a vector, and it
+  // stops: a fault must not be able to look like a slow run.
+  m.label("fault");
+  m.mark(MARKS.fault);
+  m.bra("fault");
   // A fault the emitted path never reached is a test that cannot fail, which is
   // exactly what it was written to prevent.
   if (grab?.fault && !FAULT_APPLIED.has(grab.fault))
@@ -506,7 +550,7 @@ export function buildRom(image, samples = null, grab = null) {
   const dv = new DataView(rom.buffer);
   dv.setUint32(0, 0x00fffff0);
   dv.setUint32(4, CODE);
-  const trap = CODE + code.length - 4;    // the `bra idle` at the end
+  const trap = m.lab.get("fault");
   for (let v = 2; v < 64; v++) dv.setUint32(v * 4, trap);
   if (grab?.hint) dv.setUint32(28 * 4, m.lab.get("hint"));   // level 4 = HBlank
 

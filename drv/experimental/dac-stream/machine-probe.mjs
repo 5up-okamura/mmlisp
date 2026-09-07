@@ -14,7 +14,8 @@
 import { COOP } from "./cooperative.mjs";
 import { createHash } from "node:crypto";
 import { readProbe, analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
-  analyzeAdoption, analyzeResidual, analyzeZ80Hv, summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
+  analyzeAdoption, analyzeResidual, analyzeZ80Hv, faultMarks,
+  summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -121,6 +122,10 @@ const CASES = [
   // REQUIRED, not exploratory.
   { name: "load calibration", cfg: {}, wave: sine(256,120,1), calibrate: true },
   // ── the phase observer, step one (R4 §13.3.2) ───────────────────────────
+  // The load, timed inside the observer's OWN rom (R5 §15.2 A): the
+  // calibration rom's instruction times do not show what this one ran.
+  { name: "hv observer, load timed in place", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "divu", loadProbe: true } },
   // Output only, no correction, no transfer: can the Z80 read the VDP's HV
   // counter at all, what does it get, and does the schedule survive it?
   // Required, not exploratory — the whole point is that the DAC must not move.
@@ -308,6 +313,12 @@ for (const c0 of selected) {
   // An explicit negative test exercises the CLI exit status, not just a helper.
   if (argv.includes("--inject-value-error") && log.dac.length) log.dac.at(-1).value ^= 1;
   const a = analyzeProbe(log, r.cfg, expected);
+  // AN EXCEPTION IS A FAILED RUN, whatever the PCM looks like. Every unused
+  // vector lands on a routine that stamps this and halts, so a fault cannot
+  // hide behind a clean two-second waveform any more.
+  const faults = faultMarks(log);
+  if (faults.length) a.errors.push("the 68000 took an exception"
+    + ` (first at ${(faults[0].time / MCLK).toFixed(3)}s)`);
   const result = { name: c.name, informational: !!c.informational && !STRICT, errors: a.errors };
   results.push(result);
   const measuredSeconds = a.span / MCLK;
@@ -333,8 +344,11 @@ for (const c0 of selected) {
   }
   // THE HOST'S OWN TIMELINE. Only present when the ROM was built with marks,
   // and it is a different ROM when it was.
-  if (c.grab?.marks || c.calibrate || c.grab?.hv) {
+  if (c.grab?.marks || c.calibrate || c.grab?.hv || c.grab?.loadProbe) {
     const host = analyzeHost(log, { marks: !!c.grab?.marks, calibrate: !!c.calibrate });
+    if (host.load) console.log(`  foreground load: ${host.load.ticks} ticks,`
+      + ` ${host.load.iterationCycles.toFixed(1)} 68000 cycles an iteration`
+      + ` (${host.load.min.toFixed(1)}..${host.load.max.toFixed(1)})`);
     result.host = host;
     if (host.entryDelay) console.log(`  hint→handler entry: ${host.entryDelay.min.toFixed(0)}`
       + `..${host.entryDelay.max.toFixed(0)} 68000 cyc, p50 ${host.entryDelay.p50.toFixed(0)};`

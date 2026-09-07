@@ -17,6 +17,7 @@ export const FAULTS = {
   "no-commit": "the 68000 never writes the local commit byte",
   "early-commit": "the commit is written BEFORE the payload, not after it",
   "late-request": "the request is delayed past the window it was computed for",
+  "zero-divisor": "the 68000's foreground load divides by zero, which traps",
 };
 
 /**
@@ -39,7 +40,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
         ? { vdp: true, optimized: true, load: c0.observer.load,
             bootNops: c0.observer.bootNops, ...c0.observer.stall }
         : { vdp: true, disabled: true, load: c0.observer.load,
-            bootNops: c0.observer.bootNops })
+            loadProbe: c0.observer.loadProbe, bootNops: c0.observer.bootNops })
     : null;
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;

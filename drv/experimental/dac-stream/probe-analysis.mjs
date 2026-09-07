@@ -260,8 +260,26 @@ export function analyzeAdoption(log, windows, cfg, compensation, { tolerance = 8
  * Marks are bus writes with a real price, so this only ever describes a ROM
  * that was BUILT with them.
  */
+export const FAULT_MARK = 0x7f, LOAD_TICK_MARK = 6;
+
+/** Did the 68000 take an exception? Checked on EVERY case, marks or not. */
+export function faultMarks(log) {
+  return (log.marks ?? []).filter((e) => e.value === FAULT_MARK);
+}
+
 export function analyzeHost(log, { marks = false, calibrate = false } = {}) {
   const out = { entryDelay: null, missedHints: 0, hints: log.hints.length, cal: null };
+  // The foreground load, timed in the observer's OWN rom: one mark every 256
+  // iterations, so the loop that is supposed to be running long divides can be
+  // shown to be doing it.
+  const ticks = (log.marks ?? []).filter((e) => e.value === LOAD_TICK_MARK);
+  if (ticks.length > 2) {
+    const gaps = [];
+    for (let i = 1; i < ticks.length; i++) gaps.push((ticks[i].time - ticks[i - 1].time) / 7 / 256);
+    gaps.sort((a, b) => a - b);
+    out.load = { ticks: ticks.length, iterationCycles: gaps[Math.floor(gaps.length / 2)],
+      min: gaps[0], max: gaps.at(-1) };
+  }
   if (marks) {
     // Ticks are CONSUMED in order: each entry services the oldest tick still
     // outstanding, and every tick raised before that one and never serviced is
