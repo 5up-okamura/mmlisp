@@ -10,7 +10,8 @@ import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "./coo
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
 import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
-  analyzeAdoption, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
+  analyzeAdoption, analyzeZ80Hv, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
+import { generateObserver, VDP } from "./observer.mjs";
 
 const cfg = buildConfig();
 const expected = (i) => (i*73+19)&255;
@@ -167,6 +168,32 @@ const cal = { ...fixture(), marks: [
   {time:5000,value:0x12},{time:5000+(20+32*140)*7,value:0x13}] };
 const c = analyzeHost(cal,{calibrate:true}).cal;
 assert.equal(c.markCycles, 20); assert.equal(c.nop, 4); assert.equal(c.divu, 140);
+
+// ── what the Z80 read from the VDP ────────────────────────────────────────
+// The statistic is the spread of times within one observed value, and it has
+// to be able to report a value that carries NO information as such.
+const LINE = 3420;
+const hvLog = { z80vdp: [], machine: { z80Div: 15 } };
+for (let i = 0; i < 800; i++) {
+  const t = i * 26880 + 1000;
+  hvLog.z80vdp.push({ value: (9 << 8) | Math.floor((t % LINE) / 16), time: t });
+}
+const hvOut = analyzeZ80Hv(hvLog, { machine: { z80Div: 15 } });
+assert.ok(hvOut.ports[9].widestObservedSpreadMaster <= 16);   // the value determines the phase
+// A reading that carries no phase information spreads over nearly a whole
+// line — the statistic has to be able to say so, or it says nothing.
+const noisy = { z80vdp: hvLog.z80vdp.map((e, i) => ({ ...e, value: (9 << 8) | (i % 7) })) };
+assert.ok(analyzeZ80Hv(noisy, { machine: { z80Div: 15 } }).ports[9].widestObservedSpreadMaster > LINE / 2);
+// The observer is generated INSIDE the real schedule, so a read that does not
+// fit is a slot overrun rather than a second loop that happens to have room.
+const obs = generateObserver(buildConfig({ voices: 2, complete: true, csm: true }),
+  { reads: ["v", "h"], store: true });
+assert.equal(obs.observer.workPerSlot, 2 * VDP.readCycles + 13);
+assert.ok(obs.observer.worstSlotPct > generate2chWorst());
+function generate2chWorst() { return 79.5; }
+assert.ok(obs.observer.worstSlotPct < 100);
+assert.throws(() => generateObserver(buildConfig({ voices: 2, complete: true }),
+  { reads: Array(20).fill("h"), store: true }), /slot|overrun|fill/);
 
 // ── one resolved configuration (§12.3) ────────────────────────────────────
 // The compensation the CLI asks for has to reach BOTH the generated code and

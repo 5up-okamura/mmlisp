@@ -393,11 +393,42 @@ claims made from it back, and both were wrong.**
 ## What R4 orders next (§13.3)
 
 Independent P1 prototype of §3.2's bounded phase correction, **observer first,
-no correction**. First candidate: a REAL Z80 read of the VDP HV counter — not
-assumed free, non-stalling or coherent. Then judge on observation alone, then
-add bounded correction, then a shared time origin, then P1 transfer, then 2ch.
+no correction**. Step 2 (can the Z80 read HV) is DONE — see above. Next is
+step 3: judge on observation alone, with a decoder the engine actually runs,
+across the whole initial phase range, short stalls, losses of a line and of a
+frame, counter wrap and restart. Then bounded correction, a shared time
+origin, P1 transfer, and only then 2ch.
 Second candidate if HV fails: Timer-B short-window observation. Timer-A stays
 with CSM. Starting this range needs no further confirmation from the designer.
+
+## R4 §13.3 step 2 — the Z80 CAN read the VDP (2026-09-08)
+
+`observer.mjs` places the read as extra work inside `gen-stream.mjs`'s own
+slots (new optional `extraWork` argument; default output byte-identical), so it
+rides the real mixer, CSM and pad arithmetic.
+
+* **Affordable.** `ld a,($7F09)` = 13 + 3 cycles (the bank-window penalty).
+  Complete 2ch + CSM worst slot: 79.6% → **87.7%** with H+store (29 cyc) →
+  **92.2%** with V+H+store (45 cyc), and every observer case passes §6 at
+  9,987.57 Hz, −0.0000%, 5,370..5,385 master, 68k idle or loaded. Contrast the
+  notified transfer window: 218 cycles into 151 of pad.
+* **H carries line position, V the line.** 2ch schedule: 210 distinct H values,
+  **widest observed spread of times within one value 15 master (1 Z80 cycle)**.
+  V: 232 values, spread ≈ one line. Neither is a decoder error bound.
+* **The read positions are a LATTICE.** Both clocks are exact rational
+  multiples of master, so a fixed schedule samples a finite phase set forever —
+  57 phases in the 5-slot P1 loop, hence spread 0 there. Property of the
+  sampling, not a resolution. Good for a decoder: it only decodes its own
+  schedule's phases.
+* **V+H is not a snapshot**: two bus reads exactly 16 Z80 cycles apart; H moves
+  a median of 15 units between them, extremes +61 / −242 = the counter's jump
+  and its wrap.
+* **Caveats to carry.** The core charges the 68000 8 cycles per read and its own
+  comment calls the 68000-side delay an estimate needing a fresh capture.
+  Hardware unverified; Z80→VDP access is a documented hazard area. No decoder
+  exists — that is step 3.
+
+Required machine cases now 20/20.
 
 ## What is next, in order — R3 supersedes the earlier sequence
 

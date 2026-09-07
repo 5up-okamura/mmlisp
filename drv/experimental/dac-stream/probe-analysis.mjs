@@ -3,7 +3,7 @@ import { COOP, windowBand } from "./cooperative.mjs";
 
 export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   DACBUS: 7, STOP: 8, RESUME: 9, NOTIFY: 10, COPY: 11, POLL: 12, COMMIT: 13,
-  HINT: 14, MARK: 15, MARKW: 16 };
+  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17 };
 export const Z80_DIV = 15;
 
 export function readProbe(buf) {
@@ -28,7 +28,7 @@ export function readProbe(buf) {
     grabs: pair(KIND.GRAB, KIND.RELEASE), stops: pair(KIND.STOP, KIND.RESUME),
     notifications: of(KIND.NOTIFY), copies: of(KIND.COPY), polls: of(KIND.POLL),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
-    hv: of(KIND.MARKW) };
+    hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };
 }
 
 /**
@@ -375,6 +375,63 @@ export function analyzeResidual(landing, compensation) {
     return { length: L, blocks: sums.length, sd: s, randomWalkSd: sd * Math.sqrt(L) };
   });
   return { n, mean, sd, cumulative: { min: lo, max: hi, final: acc }, auto, blocks };
+}
+
+/**
+ * WHAT THE Z80 GOT WHEN IT READ THE VDP (§13.3 step 2, R4).
+ *
+ * Three separate questions, kept separate:
+ *
+ *   1. Did the read cost what the schedule assumed? That is answered by the
+ *      DAC gate, not here — if it cost more, the intervals stretch.
+ *   2. Is a multi-byte reading COHERENT? V and H are two bus reads of a
+ *      counter that is moving, so the gap between them is reported and so is
+ *      how far the counter went in it.
+ *   3. Does the value carry position information? Reported the same way as on
+ *      the 68000 side, and with the same restriction: it is the spread of
+ *      times observed within one value, not a decoder's error bound.
+ */
+export function analyzeZ80Hv(log, cfg, { lineMaster = 3420 } = {}) {
+  const rs = log.z80vdp ?? [];
+  if (!rs.length) return null;
+  const port = (e) => e.value >>> 8, byte = (e) => e.value & 0xff;
+  const out = { readings: rs.length, ports: {} };
+  for (const p of new Set(rs.map(port))) {
+    const es = rs.filter((e) => port(e) === p);
+    const byValue = new Map();
+    for (const e of es) {
+      const v = byte(e);
+      (byValue.get(v) ?? byValue.set(v, []).get(v)).push(e.time % lineMaster);
+    }
+    let worst = 0, groups = 0;
+    for (const [, phases] of byValue) {
+      if (phases.length < 2) continue;
+      phases.sort((a, b) => a - b);
+      let best = phases.at(-1) - phases[0];
+      for (let i = 1; i < phases.length; i++)
+        best = Math.min(best, lineMaster - (phases[i] - phases[i - 1]));
+      worst = Math.max(worst, best); groups++;
+    }
+    out.ports[p] = { readings: es.length, distinct: byValue.size, groups,
+      widestObservedSpreadMaster: groups ? worst : null };
+  }
+  // Consecutive readings inside one slot: the gap between them, and whether
+  // the byte moved across it.
+  const gaps = [], deltas = [];
+  for (let i = 1; i < rs.length; i++) {
+    const gap = rs[i].time - rs[i - 1].time;
+    if (gap > lineMaster) continue;            // a new slot, not a pair
+    gaps.push(gap / cfg.machine.z80Div);
+    if (port(rs[i]) === port(rs[i - 1])) deltas.push(byte(rs[i]) - byte(rs[i - 1]));
+  }
+  gaps.sort((a, b) => a - b); deltas.sort((a, b) => a - b);
+  // The extremes of a same-port delta are the counter's own discontinuities —
+  // the jump inside the line and the wrap at its end — so the median is what
+  // says how far it moved between two reads.
+  if (gaps.length) out.pair = { n: gaps.length, gapMin: gaps[0], gapMax: gaps.at(-1),
+    sameportDeltaMin: deltas[0] ?? null, sameportDeltaMax: deltas.at(-1) ?? null,
+    sameportDeltaMedian: deltas.length ? deltas[Math.floor(deltas.length / 2)] : null };
+  return out;
 }
 
 export function analyzeProbe(log, cfg, expected) {

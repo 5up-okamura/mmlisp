@@ -543,6 +543,56 @@ all, judged on what it can see. The first candidate to observe is a real Z80
 read of the VDP HV counter — which is not assumed to be free, non-stalling, or
 even coherent until it has been read.
 
+## The phase observer, step one: the Z80 can read the VDP
+
+R4 §13.3 orders §3.2's bounded phase correction as its own P1 prototype, and
+its first deliverable is an OBSERVER with no correction, judged on what it can
+see. `observer.mjs` generates one, as extra work inside `gen-stream.mjs`'s own
+slots — so it rides the real mixer, the real CSM traffic and the real pad
+arithmetic, and a reading that does not fit is a slot overrun at generation
+time rather than a second loop that happens to have room.
+
+**It is affordable.** `ld a,($7F09)` costs 13 cycles plus the 3 this core
+charges for reaching the 68k bus — the same penalty the bank window pays. Every
+observer case passes §6 at 9,987.57 Hz, −0.0000%, intervals 5,370..5,385
+master, with the 68000 idle and with it running the corrected divide load:
+
+| schedule | worst slot without | with H + store (29 cyc) | with V+H + store (45 cyc) |
+| --- | --- | --- | --- |
+| complete 2ch budget, CSM on | 79.6% | **87.7%** | **92.2%** |
+
+That is the comparison that matters: the notified transfer window needs 218
+cycles into 151 of pad and does not fit, and an observer that reads the VDP
+does.
+
+**H carries the line position; V identifies the line.** In the 2ch schedule,
+which reads sixteen times a loop and so samples many phases, **210 distinct H
+values were observed and the widest observed spread of times within one value
+was 15 master clocks** — one Z80 cycle. V gave 232 distinct values with a
+spread of a whole line, which is what a line number is. Both are observations
+about these runs and neither is a decoder's error bound; there is no decoder
+yet.
+
+**The read positions are a lattice, not a sample of the line.** Both clocks are
+exact rational multiples of the master clock, so a fixed schedule reads HV at a
+finite set of phases forever — 57 of them in the 5-slot P1 loop, where the
+spread within a value is therefore 0. That is a property of the sampling, not a
+resolution. It is also good news for a decoder, which only ever has to decode
+the phases its own schedule produces.
+
+**A V+H pair is not a snapshot.** The two reads are two bus accesses exactly 16
+Z80 cycles apart. Reading H twice moves it by a median of 15 units, with
+extremes of +61 and −242 — the counter's jump inside the line and its wrap at
+the end of it.
+
+**What this is not.** In the core in use, each read also charges the 68000 8 of
+its own cycles, and that core's comment says the 68000-side delay is an
+estimate wanting a fresh logic-analyzer capture. Nothing here has run on
+hardware, where Z80 access to the VDP is a documented hazard area rather than a
+free clock. The decoder itself — value to time, line and frame identification,
+the counter's discontinuities, missing readings, restart — is step 3 and does
+not exist.
+
 ## The three structural decisions
 
 **1. The slot boundary IS the DAC write.** Each output interval begins with

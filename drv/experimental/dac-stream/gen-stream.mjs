@@ -285,7 +285,15 @@ export function cyclePaths(cfg) {
 }
 
 // ── The generator ──────────────────────────────────────────────────────────
-export function generate(cfg) {
+/**
+ * @param cfg
+ * @param extraWork  optional (slotIndex) => ops, appended to that slot's work.
+ *   It exists so an experiment can be placed in the REAL schedule — with the
+ *   real mixer, the real CSM traffic and the real pad arithmetic — instead of
+ *   re-emitting a copy of the slot loop beside it. An experiment that does not
+ *   fit is then a slot overrun at generation time, which is the point.
+ */
+export function generate(cfg, extraWork = null) {
   const L = [];
   const slots = [];
   const P = (s = "") => L.push(s);
@@ -422,7 +430,7 @@ export function generate(cfg) {
     // that happens on every single sample.
     const dacWrite = op("ld   (de),a", 7,
       { writes: [{ port: 0, kind: "data", reg: YM.R_DAC }], what: "DAC sample" });
-    const work = slotWork(cfg, i);
+    const work = [...slotWork(cfg, i), ...(extraWork ? extraWork(i) : [])];
     // THE FETCH GOES AFTER THE PAD. `a` carries the next sample across the slot
     // boundary, so anything that runs after the fetch may not touch it — and
     // the pad's only odd-cost filler is `ld a,0`. Fetching last makes `a` dead

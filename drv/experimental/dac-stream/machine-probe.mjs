@@ -14,7 +14,7 @@
 import { COOP } from "./cooperative.mjs";
 import { createHash } from "node:crypto";
 import { readProbe, analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
-  analyzeAdoption, analyzeResidual, summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
+  analyzeAdoption, analyzeResidual, analyzeZ80Hv, summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -120,6 +120,21 @@ const CASES = [
   // untouched — so the DAC gate runs unchanged beside it and this case is
   // REQUIRED, not exploratory.
   { name: "load calibration", cfg: {}, wave: sine(256,120,1), calibrate: true },
+  // ── the phase observer, step one (R4 §13.3.2) ───────────────────────────
+  // Output only, no correction, no transfer: can the Z80 read the VDP's HV
+  // counter at all, what does it get, and does the schedule survive it?
+  // Required, not exploratory — the whole point is that the DAC must not move.
+  ...[["h"], ["v", "h"], ["h", "h"], ["h", "v"]].map((reads) => ({
+    name: `hv observer, Z80 reads ${reads.join("+")}`, cfg: {}, wave: sine(256,120,1),
+    observer: { reads, store: true, load: "divu" } })),
+  { name: "hv observer, idle 68k", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "none" } },
+  // …and the same read inside the schedule it would have to live in: the
+  // complete 2ch budget with the reservations executed, and with CSM.
+  { name: "hv observer in the 2ch budget", cfg: { voices: 2, complete: true },
+    observer: { reads: ["v", "h"], store: true, load: "divu" } },
+  { name: "hv observer in the 2ch budget + CSM", cfg: { voices: 2, complete: true, csm: true },
+    observer: { reads: ["v", "h"], store: true, load: "divu" } },
   // Computed timing: every line ticks; the handler waits out the remainder to
   // the next window and grabs there. `path` is the handler's fixed cost in
   // master clocks from tick to request, set from where the grabs land.
@@ -315,6 +330,25 @@ for (const c0 of selected) {
         + ` divu overflow ${f(host.cal.divuOverflow)}, divu/$7FFF ${f(host.cal.divuBig)}`);
       // The load has to be a LONG instruction. An overflowing divide is not.
       if (host.cal.divu !== null && host.cal.divu < 100) result.errors.push("divide load is not the long path");
+    }
+  }
+  // THE PHASE OBSERVER: what the Z80 got when it read the VDP, and whether the
+  // reading is coherent. Whether it could AFFORD the read is the DAC gate's
+  // verdict above, not this one's.
+  if (c.observer) {
+    const hv = analyzeZ80Hv(log, r.cfg);
+    result.z80hv = hv;
+    if (!hv) result.errors.push("the Z80 read nothing from the VDP");
+    else {
+      for (const [p, s] of Object.entries(hv.ports))
+        console.log(`  Z80 read $7f${Number(p).toString(16).padStart(2,"0")}:`
+          + ` ${s.readings} readings, ${s.distinct} distinct values,`
+          + ` widest observed spread of times within one value`
+          + ` ${s.widestObservedSpreadMaster ?? "—"} master`);
+      if (hv.pair) console.log(`  consecutive readings in a slot: ${hv.pair.n},`
+        + ` ${hv.pair.gapMin}..${hv.pair.gapMax} Z80 cyc apart;`
+        + ` same-port change ${hv.pair.sameportDeltaMin ?? "—"}..${hv.pair.sameportDeltaMax ?? "—"}`
+        + ` (median ${hv.pair.sameportDeltaMedian ?? "—"})`);
     }
   }
   // TRANSFERS: the same payload, order, count, commit and carry-over checks in

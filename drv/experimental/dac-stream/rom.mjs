@@ -130,6 +130,20 @@ function emitTransfer(m, { bytes, fault }, { marks = false } = {}) {
   if (marks) m.mark(MARKS.released);
 }
 
+// Reg 1 = $44: display on, mode 5, and NO vertical interrupt — every unused
+// vector is the halt trap, and a halt taken at level 6 would mask the level-4
+// HBlank for the rest of the run. (It did.) Reg 10 is the HInt line counter,
+// which only matters when a handler is installed.
+// The VDP is brought up for the observer cases too: the counter a phase
+// observer reads belongs to a VDP that is drawing, and one that is idle is not
+// the machine the engine will live in.
+function vdpSetup(m, hintLine = 0xff) {
+  for (const [reg, val] of [[0, 0x14], [1, 0x44], [2, 0x30], [3, 0x3c], [4, 0x07],
+    [5, 0x6c], [6, 0x00], [7, 0x00], [8, 0x00], [9, 0x00], [10, hintLine], [11, 0x00],
+    [12, 0x81], [13, 0x3f], [14, 0x00], [15, 0x02], [16, 0x01], [17, 0x00], [18, 0x00]])
+    m.moveWimm(0x8000 | (reg << 8) | val, 0xc00004);
+}
+
 const loadKind = (load) => load === false || load === "none" ? "none"
   : load === true || load === undefined ? "divu" : load;
 
@@ -267,13 +281,7 @@ export function buildRom(image, samples = null, grab = null) {
     // RAM+16 is the previous V counter; RAM+32/36 the diagnostic payload.
     const REM = RAM, TICKS = RAM + 4, FLAG = RAM + 8, MISSES = RAM + 12,
       SKIPS = RAM + 20, PATH = grab.path ?? 0;
-    // Reg 1 = $44: display on, mode 5, and NO vertical interrupt — every
-    // unused vector is the halt trap, and a halt taken at level 6 would mask
-    // the level-4 HBlank for the rest of the run. (It did.)
-    for (const [reg, val] of [[0, 0x14], [1, 0x44], [2, 0x30], [3, 0x3c], [4, 0x07],
-      [5, 0x6c], [6, 0x00], [7, 0x00], [8, 0x00], [9, 0x00], [10, grab.line - 1], [11, 0x00],
-      [12, 0x81], [13, 0x3f], [14, 0x00], [15, 0x02], [16, 0x01], [17, 0x00], [18, 0x00]])
-      m.moveWimm(0x8000 | (reg << 8) | val, 0xc00004);
+    vdpSetup(m, grab.line - 1);
     m.leaAbs(Z80_BUSREQ, 2);
     m.moveWimmD(0x0100, 3);
     m.moveWimmD(0x0000, 4);
@@ -405,6 +413,14 @@ export function buildRom(image, samples = null, grab = null) {
       emitTransfer(m, grab, { marks });
       m.rte();
     }
+  } else if (grab?.vdp) {
+    // The observer's host: a VDP that is drawing and a 68000 that is busy, and
+    // nothing that touches the Z80 bus. Whatever the Z80 reads, it reads while
+    // this is going on.
+    vdpSetup(m);
+    m.label("idle");
+    emitLoad(m, load, 3);
+    m.bra("idle");
   } else m.label("idle");
   if (grab?.hint) { /* handled above */ } else if (grab?.optimized) {
     // All setup precedes BUSREQ; short fixed packets have no DBRA inside it.
@@ -468,7 +484,8 @@ export function buildRom(image, samples = null, grab = null) {
     m.dbra(2, "xfer");
     m.moveWimm(0x0000, Z80_BUSREQ);       // release
   }
-  if (!grab?.hint) m.bra("idle");
+  if (grab?.vdp && !grab.hint) { /* the idle loop closed itself above */ }
+  else if (!grab?.hint) m.bra("idle");
   else { m.label("halt"); m.bra("halt"); }
   // A fault the emitted path never reached is a test that cannot fail, which is
   // exactly what it was written to prevent.

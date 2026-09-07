@@ -10,6 +10,7 @@
 import { buildConfig } from "./config.mjs";
 import { COOP, windowPeriodMaster, generateCooperative } from "./cooperative.mjs";
 import { generate } from "./gen-stream.mjs";
+import { generateObserver } from "./observer.mjs";
 
 export const FAULTS = {
   "drop-copy": "the 68000 transfers one byte fewer than it announced",
@@ -31,6 +32,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   let grab = c0.grab ? { ...c0.grab }
     : c0.bankOnly ? { cooperative: true, disabled: true }
     : c0.calibrate ? { calibrate: true, disabled: true }
+    // An observer case has a display and a busy 68000, and no transfer at all.
+    : c0.observer ? { vdp: true, disabled: true, load: c0.observer.load }
     : null;
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
@@ -44,7 +47,9 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
       grab.windowCycles = COOP.windowCycles;
     }
   }
+  if (c0.observer && coop) throw new Error("an observer case has no cooperative window");
   const c = { ...c0, cooperative: coop, grab: grab ?? undefined };
-  const gen = coop ? generateCooperative(cfg, coop) : generate(cfg);
+  const gen = c0.observer ? generateObserver(cfg, c0.observer)
+    : coop ? generateCooperative(cfg, coop) : generate(cfg);
   return { case: c, cfg, gen, coop, grab };
 }

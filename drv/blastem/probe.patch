@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..ad9eeb9 100644
+index 4f41271..66d4a47 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -16,7 +16,19 @@ index 4f41271..ad9eeb9 100644
  	z_context->int_pulse_end = z_context->int_pulse_start + Z80_INT_PULSE_MCLKS;
  	z_context->im2_vector = 0xFF;
  #endif
-@@ -1299,6 +1301,7 @@ static uint8_t z80_vdp_port_read(uint32_t vdp_port, void * vcontext)
+@@ -1294,11 +1296,18 @@ static uint8_t z80_vdp_port_read(uint32_t vdp_port, void * vcontext)
+ 		//TODO: Figure out the correct value today
+ 		ret = 0xFFFF;
+ 	}
+-	return vdp_port & 1 ? ret : ret >> 8;
++	uint8_t mml_byte = vdp_port & 1 ? ret : ret >> 8;
++	// What the Z80 actually got, and when. The cost model above is this core's
++	// estimate — its own comment says the 68000-side delay wants a fresh logic
++	// analyzer capture — so a reading here is evidence about THIS core, not
++	// about a Mega Drive.
++	mml_probe_log(MML_PROBE_Z80VDP, (vdp_port << 8) | mml_byte, context->Z80_CYCLE);
++	return mml_byte;
+ }
  
  //TODO: Move this inside the system context
  static uint32_t zram_counter = 0;
@@ -24,7 +36,7 @@ index 4f41271..ad9eeb9 100644
  
  static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_t value)
  {
-@@ -1314,6 +1317,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+@@ -1314,6 +1323,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
  			location &= 0x7FFF;
  			if (location < 0x4000) {
  				gen->zram[location & 0x1FFF] = value;
@@ -34,7 +46,7 @@ index 4f41271..ad9eeb9 100644
  #ifndef NO_Z80
  				z80_handle_code_write(location & 0x1FFF, gen->z80);
  #endif
-@@ -1387,6 +1393,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+@@ -1387,6 +1399,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
  		} else {
  			uint32_t masked = location & 0xFFF00;
  			if (masked == 0x11100) {
@@ -44,7 +56,7 @@ index 4f41271..ad9eeb9 100644
  				if (value & 1) {
  					dputs("bus requesting Z80");
  					if (z80_enabled) {
-@@ -1571,6 +1580,10 @@ static uint8_t io_read(uint32_t location, m68k_context * context)
+@@ -1571,6 +1586,10 @@ static uint8_t io_read(uint32_t location, m68k_context * context)
  			uint32_t masked = location & 0xFFF01;
  			if (masked == 0x11100) {
  				value = z80_enabled ? !z80_get_busack(gen->z80, context->cycles) : !gen->z80->busack;
@@ -55,7 +67,7 @@ index 4f41271..ad9eeb9 100644
  				value |= (get_open_bus_value(&gen->header) >> 8) & 0xFE;
  				dprintf("Byte read of BUSREQ returned %d @ %d (reset: %d)\n", value, context->cycles, gen->z80->reset);
  			} else if (masked == 0x11200) {
-@@ -1766,6 +1779,13 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
+@@ -1766,6 +1785,13 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
  	genesis_context * gen = context->system;
  	sync_sound(gen, context->Z80_CYCLE);
  	if (location & 1) {
@@ -69,7 +81,7 @@ index 4f41271..ad9eeb9 100644
  		ym_data_write(gen->ym, value);
  	} else if (location & 2) {
  		ym_address_write_part2(gen->ym, value);
-@@ -1837,6 +1857,7 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
+@@ -1837,6 +1863,7 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
  
  	location &= 0x7FFF;
  	uint32_t address = gen->z80_bank_reg << 15 | location;
@@ -77,7 +89,7 @@ index 4f41271..ad9eeb9 100644
  	if (address >= 0xE00000) {
  		address &= 0xFFFF;
  		((uint8_t *)gen->work_ram)[address ^ 1] = value;
-@@ -1932,6 +1953,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
+@@ -1932,6 +1959,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -89,7 +101,7 @@ index 4f41271..ad9eeb9 100644
  	if (location >= 0x800000) {
  		//do refresh check here so we can avoid adding a penalty for a refresh that happens during an IO area access
  		gen->refresh_counter += context->cycles - 4*MCLKS_PER_68K - gen->last_sync_cycle;
-@@ -1963,6 +1989,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
+@@ -1963,6 +1995,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -135,7 +147,7 @@ index d8ba757..79664fd 100644
 +	fwrite(rec, 1, sizeof(rec), mml_probe_file);
 +}
 diff --git a/util.h b/util.h
-index 8b7d75d..179562a 100644
+index 8b7d75d..b0beb1b 100644
 --- a/util.h
 +++ b/util.h
 @@ -2,6 +2,7 @@
@@ -146,7 +158,7 @@ index 8b7d75d..179562a 100644
  #include <time.h>
  #include <wchar.h>
  #include <stdarg.h>
-@@ -112,4 +113,31 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+@@ -112,4 +113,32 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
  FILE* fopen_wrapper(const char *path, const char *mode);
  #endif
  
@@ -175,6 +187,7 @@ index 8b7d75d..179562a 100644
 +#define MML_PROBE_HINT   14   /* the VDP raised the horizontal interrupt; value = line */
 +#define MML_PROBE_MARK   15   /* 68k byte write to $A130F1; value = the mark written */
 +#define MML_PROBE_MARKW  16   /* 68k word write to $A130F2; value = the word written */
++#define MML_PROBE_Z80VDP 17   /* Z80 read of the VDP through $7F00; value = port<<8 | byte */
 +void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
 +
  #endif //UTIL_H_
