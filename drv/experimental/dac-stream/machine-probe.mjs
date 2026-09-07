@@ -14,7 +14,7 @@
 import { COOP } from "./cooperative.mjs";
 import { createHash } from "node:crypto";
 import { readProbe, analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
-  summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
+  analyzeAdoption, analyzeResidual, summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -305,8 +305,9 @@ for (const c0 of selected) {
       + ` ${host.hints} raised, ${host.serviced} timed, ${host.missedHints} lost,`
       + ` ${host.ambiguousEntries} ambiguous`);
     if (host.hv) console.log(`  HV at entry: ${host.hv.readings} readings, ${host.hv.distinctH}`
-      + ` distinct H; worst spread within one H value ${host.hv.worstSpreadMaster} master`
-      + ` (${(host.hv.worstSpreadMaster/15).toFixed(1)} Z80 cyc)`);
+      + ` distinct H; widest observed spread of times within one H value`
+      + ` ${host.hv.widestObservedSpreadMaster} master — an observation about these`
+      + ` conditions, not a decoder's error bound`);
     if (host.cal) {
       const f = (v) => v === null ? "?" : v.toFixed(1);
       console.log(`  instruction time (68000 cycles): mark ${f(host.cal.markCycles)},`
@@ -326,9 +327,41 @@ for (const c0 of selected) {
     const transfer = analyzeTransfers(log, steady, c.grab, source, { windows });
     result.errors.push(...transfer.errors);
     landing = transfer.landing;
+    // What the Z80 DID, from the slot's own length — the estimate above is
+    // checked against it rather than believed.
+    const adopted = windows?.band && c.cooperative
+      ? analyzeAdoption(log, windows, r.cfg, c.cooperative.compensation) : null;
+    if (adopted) {
+      console.log(`  adoption, measured from the window slot's length:`
+        + ` ${adopted.served} served, ${adopted.absent} absent, ${adopted.unclear} neither;`
+        + ` repaid without a stall ${adopted.repaidUnstalled},`
+        + ` stalled without repayment ${adopted.stalledUnrepaid}`);
+      // Both halves of the same contract, and both are OBSERVED: a slot that
+      // repaid a stall it did not have ran short by the compensation, and a
+      // slot that was stalled without repaying ran long by the hold. Each is a
+      // DAC interval violation as well, which is where they show up in §6.
+      if (adopted.repaidUnstalled) result.errors.push("a window repaid a stall it did not have");
+      if (adopted.stalledUnrepaid) result.errors.push("a window was stalled without repaying it");
+      if (adopted.unclear) result.errors.push("window slot length matches neither branch");
+    }
+    // Does the residual accumulate? Reported as a series, not as a model.
+    const resid = c.cooperative && transfer.landing.length > 1
+      ? analyzeResidual(transfer.landing, c.cooperative.compensation) : null;
+    if (resid) {
+      console.log(`  residual hold-compensation over ${resid.n}: mean ${resid.mean.toFixed(4)},`
+        + ` sd ${resid.sd.toFixed(3)}; cumulative ${resid.cumulative.min.toFixed(2)}`
+        + `..${resid.cumulative.max.toFixed(2)}, ending ${resid.cumulative.final.toFixed(2)} Z80 cyc`);
+      console.log(`  autocorrelation ${resid.auto.map((a)=>`lag${a.lag} ${a.rho.toFixed(3)}`).join(", ")}`
+        + (resid.blocks.length ? `; block sum sd ${resid.blocks.map((b)=>
+          `L=${b.length} ${b.sd.toFixed(2)} (walk would be ${b.randomWalkSd.toFixed(2)})`).join(", ")}` : ""));
+    }
+    result.residual = resid;
     result.transfer = { requests: steady.length, inside: transfer.inside,
       insideLoose: transfer.insideLoose, outside: transfer.outside,
-      carried: transfer.carried, ambiguous: transfer.ambiguous };
+      carried: transfer.carried, own: transfer.own, undecided: transfer.undecided,
+      unread: transfer.unread, adoption: adopted && { served: adopted.served,
+        absent: adopted.absent, unclear: adopted.unclear,
+        repaidUnstalled: adopted.repaidUnstalled, stalledUnrepaid: adopted.stalledUnrepaid } };
     if (windows && !windows.band) {
       console.log(`  windows: ${windows.quiet} unstalled of ${log.notifications.length/2 | 0};`
         + ` no usable geometry${windows.impossible ? " (span does not match the emitted code)"
@@ -344,7 +377,8 @@ for (const c0 of selected) {
       console.log(`  landing: ${transfer.inside} stops strictly inside, ${transfer.insideLoose} within the`
         + ` unknown-offset band, ${transfer.outside} outside`
         + ` (${(100*(transfer.inside+transfer.insideLoose)/Math.max(1,total)).toFixed(1)}% of ${total});`
-        + ` commits carried over ${transfer.carried}, ambiguous ${transfer.ambiguous}`);
+        + ` commits: ${transfer.own} read by their own window, ${transfer.carried} carried over,`
+        + ` ${transfer.undecided} undecidable from the timestamps, ${transfer.unread} unread`);
       if (transfer.landing.length) {
         const req = transfer.landing.map((l) => l.request).sort((a,b)=>a-b);
         console.log(`  request offset from the earliest opening: p10 ${q(req,.1)?.toFixed(0)}`

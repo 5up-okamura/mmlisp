@@ -9,8 +9,8 @@ import { buildConfig } from "./config.mjs";
 import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "./cooperative.mjs";
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
-import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
-  readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
+import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
+  analyzeAdoption, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
 
 const cfg = buildConfig();
 const expected = (i) => (i*73+19)&255;
@@ -79,15 +79,68 @@ let g = windowGenerations(genLog);
 assert.equal(g.gens.length, 6);
 assert.equal(g.span, 84);
 assert.equal(g.quiet, 5);                              // the stalled one is excluded
-// A commit written in generation 0 and read by generation 0: clean.
+// ── which window reads a commit: an INTERVAL judgment (§13.2.1) ──────────
+// The read is known only to a band, so a commit inside that band cannot be
+// attributed from the timestamps at all. The earlier code selected the first
+// window whose readLo was past the commit and THEN asked whether the commit
+// was at or after that readLo — a test that can never be true — so every
+// undecidable commit was reported as a carry-over.
+const G = g.gens;
+const at = (t) => commitReaders(G, [{ time: t, value: 1 }]).rows[0];
+assert.equal(at(G[0].notify1 + 40*Z).verdict, "own");            // inside its window
+assert.equal(at(G[0].notify0 - 1).verdict, "own");                // still inside the window
+// Written after the window closed but before the read: decidably read by this
+// window, and decidably not written in it — which is the fault, not a pass.
+assert.equal(at(G[0].readLo - 1).verdict, "carried");
+assert.equal(at(G[0].readLo).verdict, "undecided");              // exactly at the near edge
+assert.equal(at((G[0].readLo + G[0].readHi)/2).verdict, "undecided");
+assert.equal(at(G[0].readHi).verdict, "undecided");              // exactly at the far edge
+assert.equal(at(G[0].readHi + 1).verdict, "carried");            // past the read, not its own
+assert.equal(at(G[1].notify1 + 40*Z).verdict, "own");            // written inside the next one
+assert.equal(at(G.at(-1).readHi + 1).verdict, "unread");         // no window left to read it
+// The exact counterexample R4 gives: read bands [110,136] and [1110,1136],
+// a commit at 120. It is undecidable, not carried.
+const tiny = [{ index:0, notify1:0, notify0:100, readLo:110, readHi:136 },
+              { index:1, notify1:1000, notify0:1100, readLo:1110, readHi:1136 }];
+const r120 = commitReaders(tiny, [{time:120,value:1}]);
+assert.equal(r120.undecided, 1); assert.equal(r120.carried, 0);
+// Several commits are attributed in one linear pass, in order.
+const many = commitReaders(G, [G[0].notify1+40*Z, G[0].readHi+1, G[1].notify1+40*Z]
+  .map((t)=>({time:t,value:1})));
+assert.deepEqual(many.rows.map((x)=>x.verdict), ["own","carried","own"]);
+assert.equal(many.own, 2); assert.equal(many.carried, 1);
 genLog.commits = [{time:100000+40*Z,value:1}];
 assert.equal(analyzeTransfers(genLog,[[100000+20*Z,100000+80*Z]],{bytes:0,hint:true},null,
   {windows:g}).carried, 0);
-// The same commit written one window late: adopted by a window it was not
-// written in, which is the fault a fixed compensation cannot survive.
 genLog.commits = [{time:100000+W+2000*Z,value:1}];
 assert.equal(analyzeTransfers(genLog,[[100000+20*Z,100000+80*Z]],{bytes:0,hint:true},null,
   {windows:g}).carried, 1);
+
+// ── which branch the Z80 took, MEASURED from the slot's own length ────────
+// The served path shortens the pad, so the slot bounded by two DAC writes is
+// exactly `compensation` shorter. Nothing here is inferred from commit times.
+const adoptCfg = { slotCycles: [358], machine: { z80Div: 15 } };
+const mkAdopt = (shorten, stallCyc) => {
+  const l = { dac: [], stops: [] };
+  let t = 0;
+  const notifies = [];
+  for (let i = 0; i < 4; i++) {
+    l.dac.push({ time: t, value: 0 });
+    notifies.push(t + 20*Z);
+    if (stallCyc) l.stops.push([t + 30*Z, t + (30 + stallCyc)*Z]);
+    t += (358 + (stallCyc ?? 0) - (shorten ?? 0)) * Z;
+  }
+  l.dac.push({ time: t, value: 0 });
+  return { log: l, gens: notifies.map((n, index) => ({ index, notify1: n, notify0: n + 84*Z })) };
+};
+const served = mkAdopt(65, 65), quiet = mkAdopt(0, 0), stolen = mkAdopt(65, 0), owed = mkAdopt(0, 65);
+assert.equal(analyzeAdoption(served.log,{gens:served.gens},adoptCfg,65).served, 4);
+assert.equal(analyzeAdoption(quiet.log,{gens:quiet.gens},adoptCfg,65).absent, 4);
+// A slot that repaid a stall it never had took some other window's commit —
+// the fault, observed rather than argued.
+assert.equal(analyzeAdoption(stolen.log,{gens:stolen.gens},adoptCfg,65).repaidUnstalled, 4);
+// …and a slot stalled without repaying is the other half.
+assert.equal(analyzeAdoption(owed.log,{gens:owed.gens},adoptCfg,65).stalledUnrepaid, 4);
 // A span that cannot be produced by the emitted code yields no geometry at all
 // rather than a plausible-looking band.
 const bad = structuredClone(genLog);

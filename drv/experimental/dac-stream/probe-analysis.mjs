@@ -170,23 +170,88 @@ export function analyzeTransfers(log, grabs, { bytes, cooperative, hint, fault }
       else polling.push(a-poll.time);
     }
   }
-  // COMMIT CARRY-OVER (§12.2 B). Every commit is read by exactly one window —
-  // the first whose read point follows it. If that is not the window the
-  // commit was written inside, a slot repays a stall that never happened in
-  // it. This is the failure a fixed compensation cannot survive, and until now
-  // nothing looked for it.
-  let carried = 0, ambiguous = 0;
-  if (gens.length) for (const c of log.commits) {
-    if (c.value !== 1) continue;
-    const writtenIn = find(gens, c.time);
-    const readBy = gens.find((g) => g.readLo > c.time);
-    if (!readBy) continue;
-    if (c.time >= readBy.readLo && c.time <= readBy.readHi) { ambiguous++; continue; }
-    if (!writtenIn || writtenIn.index !== readBy.index) carried++;
-  }
-  if (carried) errors.push("commit adopted by a window it was not written in");
+  const adoption = commitReaders(gens, log.commits);
+  if (adoption.carried) errors.push("commit adopted by a window it was not written in");
   return { errors: [...new Set(errors)], delays, polling, landing,
-    inside, insideLoose, outside, carried, ambiguous };
+    inside, insideLoose, outside, ...adoption };
+}
+
+/**
+ * Which window reads each commit — decided by INTERVALS, not by a point.
+ *
+ * A commit is read by the first window whose read has not already happened.
+ * The read itself is only known to a band [readLo, readHi], so for a commit
+ * inside that band the time stamps alone cannot say whether this window reads
+ * it or the next one does. The earlier version asked `t >= readBy.readLo`
+ * AFTER selecting readBy as the first window with `readLo > t`, so that test
+ * could never be true and every undecidable case was reported as a carry-over.
+ * A commit at 120 against read bands [110,136] and [1110,1136] was called
+ * carried; it is not decidable at all (§13.2.1).
+ *
+ * Boundaries are inclusive on both ends: a commit exactly at readLo or readHi
+ * is undecidable, because the read may be at that instant.
+ */
+export function commitReaders(gens, commits) {
+  const rows = [];
+  let carried = 0, own = 0, undecided = 0, unread = 0;
+  if (!gens.length) return { rows, carried, own, undecided, unread };
+  // Commits come from one CPU, so they are in time order; sorting defensively
+  // costs one pass and lets the scan below stay linear over a long run.
+  const cs = commits.filter((c) => c.value === 1).sort((a, b) => a.time - b.time);
+  let g = 0;
+  for (const c of cs) {
+    while (g < gens.length && c.time > gens[g].readHi) g++;
+    const writtenIn = find(gens, c.time);
+    if (g >= gens.length) { unread++; rows.push({ time: c.time, verdict: "unread" }); continue; }
+    if (c.time < gens[g].readLo) {
+      const verdict = writtenIn && writtenIn.index === gens[g].index ? "own" : "carried";
+      if (verdict === "own") own++; else carried++;
+      rows.push({ time: c.time, readBy: gens[g].index, writtenIn: writtenIn?.index ?? null, verdict });
+    } else {
+      undecided++;
+      rows.push({ time: c.time, readBy: [gens[g].index, gens[g + 1]?.index ?? null],
+        writtenIn: writtenIn?.index ?? null, verdict: "undecided" });
+    }
+  }
+  return { rows, carried, own, undecided, unread };
+}
+
+/**
+ * WHICH BRANCH THE Z80 ACTUALLY TOOK, measured rather than inferred.
+ *
+ * The served path generates its pad `compensation` cycles short and the absent
+ * path does not, so the slot carrying the window is exactly that much shorter
+ * when the commit was adopted. The DAC writes bound that slot and are already
+ * logged to the master clock, so
+ *   repaid = nominal + stall - measured
+ * is 0 on the absent path and `compensation` on the served one, with nothing
+ * estimated. That makes the fault directly observable instead of argued:
+ * a window that repaid a stall WITHOUT having been stalled took a commit that
+ * belongs to some other window.
+ */
+export function analyzeAdoption(log, windows, cfg, compensation, { tolerance = 8 } = {}) {
+  const gens = windows?.gens ?? [];
+  const nominal = cfg.slotCycles[0] * cfg.machine.z80Div;
+  const rows = [];
+  let served = 0, absent = 0, unclear = 0, repaidUnstalled = 0, stalledUnrepaid = 0;
+  let d = 0;
+  for (const g of gens) {
+    while (d + 1 < log.dac.length && log.dac[d + 1].time <= g.notify1) d++;
+    const a = log.dac[d], b = log.dac[d + 1];
+    if (!a || !b || a.time > g.notify1) continue;
+    let stall = 0;
+    for (const [x, y] of log.stops)
+      if (y > a.time && x < b.time) stall += Math.min(y, b.time) - Math.max(x, a.time);
+    const repaid = (nominal + stall - (b.time - a.time)) / cfg.machine.z80Div;
+    const isServed = Math.abs(repaid - compensation) <= tolerance;
+    const isAbsent = Math.abs(repaid) <= tolerance;
+    if (isServed) served++; else if (isAbsent) absent++; else unclear++;
+    if (isServed && !stall) repaidUnstalled++;
+    if (!isServed && stall) stalledUnrepaid++;
+    rows.push({ index: g.index, repaid, stall: stall / cfg.machine.z80Div,
+      verdict: isServed ? "served" : isAbsent ? "absent" : "unclear" });
+  }
+  return { rows, served, absent, unclear, repaidUnstalled, stalledUnrepaid };
 }
 
 /**
@@ -242,12 +307,14 @@ export function analyzeHost(log, { marks = false, calibrate = false } = {}) {
     out.cal = { markCycles: markCost === null ? null : markCost / 7,
       nop: per(0x10, 256), divu: per(0x12, 32), divuOverflow: per(0x14, 32), divuBig: per(0x16, 32) };
   }
-  // WHAT THE HV COUNTER IS WORTH TO THE HANDLER. Each reading is stamped with
-  // the master time at which the write happened, a fixed instruction distance
-  // after the read. If HV determines the phase, then every entry that read the
-  // same H value happened at the same offset inside its line — so the spread of
-  // (time mod line) within one H value IS the resolution, in master clocks, of
-  // the only clock the 68000 can read for free.
+  // THE SPREAD OF TIMES WITHIN ONE OBSERVED H VALUE — and that is all it is
+  // (§13.2.2). It says that in the conditions measured, the H value carried
+  // information about the position inside the line. It is NOT a decoder's
+  // worst-case error: there is no decoder here, and this number contains
+  // nothing about each group's centre, the fixed delay from the read to the
+  // mark, H values that were never observed, or how a line or a frame would be
+  // identified. Do not quote it as "+/- 69" or as a self-location accuracy,
+  // and do not carry a figure measured on the 68000 over to a Z80 read.
   if (log.hv?.length > 1) {
     const LINE = 3420;
     const byH = new Map();
@@ -268,9 +335,46 @@ export function analyzeHost(log, { marks = false, calibrate = false } = {}) {
       counted += phases.length; values++;
     }
     out.hv = { readings: log.hv.length, distinctH: byH.size, values,
-      counted, worstSpreadMaster: worst };
+      counted, widestObservedSpreadMaster: worst };
   }
   return out;
+}
+
+/**
+ * The compensation residual as a SERIES (§13.2.3).
+ *
+ * `r = hold - compensation` is what a served slot runs long by, and the
+ * question is whether it accumulates. A standard deviation alone does not
+ * answer that: it is the random-walk model that turns sd into a drift, and
+ * that model needs the residuals to be independent, which is exactly what has
+ * not been shown. So this keeps the series in order and reports the things
+ * that would distinguish the models — the cumulative excursion, the
+ * autocorrelation, and how the spread of a block sum grows with the block
+ * length against the sqrt(L) a random walk predicts. It reports them; it does
+ * not conclude from them.
+ */
+export function analyzeResidual(landing, compensation) {
+  const r = landing.map((l) => l.held - compensation);
+  const n = r.length;
+  if (n < 2) return null;
+  const mean = r.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(r.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  let acc = 0, lo = 0, hi = 0;
+  for (const v of r) { acc += v; lo = Math.min(lo, acc); hi = Math.max(hi, acc); }
+  const auto = [1, 2, 3, 5, 10].map((lag) => {
+    if (n <= lag + 1 || sd === 0) return { lag, rho: NaN };
+    let c = 0;
+    for (let i = 0; i + lag < n; i++) c += (r[i] - mean) * (r[i + lag] - mean);
+    return { lag, rho: c / ((n - lag) * sd * sd) };
+  });
+  const blocks = [10, 100, 1000].filter((L) => n >= 4 * L).map((L) => {
+    const sums = [];
+    for (let i = 0; i + L <= n; i += L) sums.push(r.slice(i, i + L).reduce((a, b) => a + b, 0));
+    const m = sums.reduce((a, b) => a + b, 0) / sums.length;
+    const s = Math.sqrt(sums.reduce((a, b) => a + (b - m) ** 2, 0) / sums.length);
+    return { length: L, blocks: sums.length, sd: s, randomWalkSd: sd * Math.sqrt(L) };
+  });
+  return { n, mean, sd, cumulative: { min: lo, max: hi, final: acc }, auto, blocks };
 }
 
 export function analyzeProbe(log, cfg, expected) {

@@ -347,43 +347,64 @@ explanations — is complete. What it changed:
   --machine` green, `tools/selftest` green, baseline 7/11 (the same four
   pre-existing reds).
 
-## R3 step 2 — the phase contract, and the verdict (2026-09-07)
+## R3 step 2 / R4 — the phase contract, corrected (2026-09-08)
 
-The table §12.2 C asks for is in the prototype README. The two measurements
-that decide it:
+The table §12.2 C asks for is in the prototype README. **R4 sent two of the
+claims made from it back, and both were wrong.**
 
-* **The 68000 can locate itself.** The VDP HV counter (`$C00008`), read at
-  handler entry, determines its phase to **69–74 master clocks (4.6–4.9 Z80
-  cycles)** — across 3,304 entries whose raw latency spans 1,050 master under
-  a divide load, and across 2,059 entries spanning **43,000 master** under a
-  masked load with 210 distinct H values. It needs no bus grab. The 68000's
-  own jitter is not the blocker.
-* **It cannot locate the Z80, and the aim actively diverges.** A served slot
-  runs long by `r = hold − compensation`, so the request offset φ obeys
-  `φ_{n+1} = φ_n − r(φ_n)`, and r is DECREASING in φ: +2.40, +0.33, +0.19,
-  −0.83, −2.37 at offsets 0/25/50/75/100 (874 grabs). Gain **1.044 per grab**;
-  the fixed point near 54 REPELS; a 64-cycle window is left in 20–60 grabs.
-  This reverses the earlier reading — the "attractor" was where the system
-  settles after being pushed OUT of the window, which is why no captureOffset
-  could move it. Separately, r has mean 0.000 and **sd 1.136** over 3,449
-  notified grabs, so even a perfect systematic term random-walks out of ±32
-  cycles in ~790 grabs.
+* **WITHDRAWN: "sd 1.136 → out of the window in 790 grabs".** That needs the
+  residuals to be independent and they are not. Measured over 5,449 notified
+  transfers: mean +0.0002, sd 1.137, **cumulative excursion only −3.53..+2.80,
+  ending +1.13**, block-sum sd 0.24 / 0.22 / 0.00 at L = 10 / 100 / 1000 where
+  a random walk predicts 3.60 / 11.37 / 35.96, autocorrelation lag 10 **+0.867**.
+  The residual is bounded and periodic. `analyzeResidual()` reports all of it.
+* **WITHDRAWN: the recurrence with gain 1.044 and a repelling fixed point at
+  54.** Its table was indexed by the STOP position while φ was the REQUEST
+  position, and it did not separate the request-to-grant delay, skips, or a
+  compensation adopted in another window. The raw observation (r falls +2.40
+  → −2.37 across stop offsets 0..100, 874 grabs) is kept without a model.
+* **KEPT, and it is what the suspension rests on**: the notification-free cases
+  fail on measurement, not theory. `computed timing 8B, unloaded`: 2,881 of
+  2,961 stops outside their window, 2,798 commits read by a window they were
+  not written in, and — measured independently from the slot's own length —
+  **2,257 windows shortened their pad without having been stalled**. The
+  minimum DAC interval, 4,395 master, is 5,376 less one compensation: the
+  protocol failure and the §6 failure are the same event.
+* **HV wording corrected.** 69–74 master is "the widest observed spread of
+  times within one H value", evidence that H carried line-position information
+  in those conditions. It is NOT a decoder error bound and must not be quoted
+  as "±69" or carried over to a Z80 read.
+* **Commit attribution is now an interval judgment** (§13.2.1). The old code
+  picked the first window with `readLo > t` and then tested `t >= readLo`,
+  which can never be true, so every undecidable commit was called a carry-over.
+  Verdicts are own / carried / undecided / unread, boundaries inclusive, one
+  linear pass. R4's counterexample (bands [110,136] and [1110,1136], commit at
+  120) is pinned as undecided.
+* **Adoption is now OBSERVED, not inferred**: `analyzeAdoption()` reads which
+  branch the Z80 took from the window slot's own length (served → shorter by
+  exactly the compensation). It agrees with the commit estimate on every case
+  and turns "a window repaid a stall it did not have" into a direct
+  measurement. Clean case: 5,948 served, 0 repaid-unstalled.
+* **Cost row corrected**: the transfer window costs 23 + 20 + 46 + 64 +
+  compensation = **218** Z80 cycles at compensation 65, against 151 of plain
+  2ch pad — consistent with the older `151 − 89 − compensation` table. The
+  "133" in the first draft had dropped the closing notification and the stop.
 
-**Verdict: the notification-free window is suspended**, per §12.2 C's own
-provision. Next design unit is §3.2's bounded phase correction as its own
-prototype (only what the engine reads; injected phase errors; a stated error
-bound and loss-of-sync criterion). If the Z80's slot phase is held to a
-master-clock-derived reference, the 68000's HV reading and the Z80's schedule
-become two views of one clock and no publication is needed. The alternative
-branch is to fit the NOTIFIED window into the 2ch budget (133 of 151 cycles
-before the bank switch). Do not start either without the designer.
+## What R4 orders next (§13.3)
+
+Independent P1 prototype of §3.2's bounded phase correction, **observer first,
+no correction**. First candidate: a REAL Z80 read of the VDP HV counter — not
+assumed free, non-stalling or coherent. Then judge on observation alone, then
+add bounded correction, then a shared time origin, then P1 transfer, then 2ch.
+Second candidate if HV fails: Timer-B short-window observation. Timer-A stays
+with CSM. Starting this range needs no further confirmation from the designer.
 
 ## What is next, in order — R3 supersedes the earlier sequence
 
 1. ~~Correct the checks and the explanations~~ — done, above.
-2. ~~Specify the runtime phase contract~~ — submitted, above. It cannot be met
-   by the notification-free scheme; the decision on which branch to take next
-   is the designer's.
+2. ~~Specify the runtime phase contract~~ — submitted; R4 accepted the
+   suspension and corrected two claims made from it (above). The branch is
+   decided: §3.2's bounded phase correction, observer first.
 3. Prove the contract on P1, including real time publication and its transfer
    cost, correct long-instruction load, IRQ masking, frame crossing and recovery.
    Gate actual target-window error and every DAC interval with `--strict`.
