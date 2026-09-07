@@ -539,6 +539,8 @@ export function buildRom(image, samples = null, grab = null) {
   m.bra("fault");
   // A fault the emitted path never reached is a test that cannot fail, which is
   // exactly what it was written to prevent.
+  if (grab?.fault === "short-load" || grab?.fault === "no-load-marks")
+    FAULT_APPLIED.add(grab.fault);          // applied by the resolved case, not here
   if (grab?.fault && !FAULT_APPLIED.has(grab.fault))
     throw new Error(`fault ${grab.fault} does not apply to this transfer path`);
   const code = m.done();

@@ -166,11 +166,27 @@ for (const c0 of selected) {
   }
   // THE HOST'S OWN TIMELINE. Only present when the ROM was built with marks,
   // and it is a different ROM when it was.
-  if (c.grab?.marks || c.calibrate || c.grab?.hv || c.grab?.loadProbe) {
+  if (c.grab?.marks || c.calibrate || c.grab?.hv || c.observer?.loadProbe) {
     const host = analyzeHost(log, { marks: !!c.grab?.marks, calibrate: !!c.calibrate });
     if (host.load) console.log(`  foreground load: ${host.load.ticks} ticks,`
       + ` ${host.load.iterationCycles.toFixed(1)} 68000 cycles an iteration`
       + ` (${host.load.min.toFixed(1)}..${host.load.max.toFixed(1)})`);
+    // The load's TIME is a criterion, not a printout (R6 §17.2 C). A run that
+    // stops stamping, or whose divide has become a short instruction, fails
+    // here rather than passing on its PCM.
+    // Driven by what the CASE declared, not by the resolved rom: a mutation
+    // that switches the stamping off must fail the check, not disable it.
+    if (c.observer?.loadProbe) {
+      const expect = SECONDS * 7670453 / (256 * 576.4);   // marks a second at the measured cost
+      if (!host.load) result.errors.push("the load loop reported no timing marks");
+      else {
+        if (host.load.ticks < 0.8 * expect)
+          result.errors.push(`the load stamped ${host.load.ticks} times, expected about ${expect.toFixed(0)}`);
+        if (host.load.iterationCycles < 500 || host.load.iterationCycles > 700)
+          result.errors.push(`the load ran ${host.load.iterationCycles.toFixed(1)} cycles an iteration,`
+            + ` outside the 500..700 a real divide takes`);
+      }
+    }
     result.host = host;
     if (host.entryDelay) console.log(`  hint→handler entry: ${host.entryDelay.min.toFixed(0)}`
       + `..${host.entryDelay.max.toFixed(0)} 68000 cyc, p50 ${host.entryDelay.p50.toFixed(0)};`

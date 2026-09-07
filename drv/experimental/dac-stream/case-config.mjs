@@ -24,6 +24,8 @@ export const FAULTS = {
   "early-commit": "the commit is written BEFORE the payload, not after it",
   "late-request": "the request is delayed past the window it was computed for",
   "zero-divisor": "the 68000's foreground load divides by zero, which traps",
+  "short-load": "the foreground load becomes nops, so it is no longer a long instruction",
+  "no-load-marks": "the load loop stops stamping, so its time cannot be checked",
 };
 
 /**
@@ -51,6 +53,14 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     if (fault) grab.fault = fault;
+    // Two ways to break the load CHECK rather than the load: make it short, or
+    // stop it reporting. The gate has to fail on both (R6 §17.2 C).
+    if (fault === "short-load" || fault === "no-load-marks") {
+      if (!c0.observer?.loadProbe)
+        throw new Error(`fault ${fault} only applies to a case that times its own load`);
+      if (fault === "short-load") grab.load = "short";
+      else grab.loadProbe = false;
+    }
     // BOTH CPUs read the window period from the schedule that produces it.
     // The 68000's arithmetic used to carry its own copy of 26,880 while the
     // Z80's came from the slot table; they agreed only because slots was 5.

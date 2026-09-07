@@ -90,6 +90,32 @@ export const CASES = [
   ...[1, 2, 3, 4, 5, 6, 7].map((k) => ({
     name: `hv observer, boot phase ${k}`, cfg: {}, wave: sine(256,120,1),
     observer: { reads: ["h"], store: true, load: "divu", bootNops: 40 * k } })),
+  // IN-CONTRACT DISTURBANCES (R6 §17.2 B). The verification runs had no
+  // unplanned displacement at all, so nothing showed that a small stall is
+  // measured correctly — only that a quiet run stays quiet. These inject
+  // displacements that stay inside half a line, at boot phases and transfer
+  // intervals the calibration never saw.
+  ...[[1, 1500, 20], [2, 900, 60], [4, 3000, 100], [8, 1200, 140]].map(([bytes, every, bootNops]) => ({
+    name: `hv observer, in-contract ${bytes}B stall every ${every}`, cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "divu", bootNops,
+      stall: { every, bytes } }, informational: true })),
+  // Consecutive stalls: the host takes the bus again before the next read.
+  // Consecutive read intervals each carrying a stall — one grab per interval,
+  // not the hundreds that `every: 0` produced, which put the run far outside
+  // the contract it was meant to exercise.
+  { name: "hv observer, back-to-back 2B stalls", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "divu", bootNops: 180,
+      stall: { every: 600, bytes: 2 } }, informational: true },
+  // Either side of the half-line boundary, which is where H stops being able
+  // to say which way the schedule moved.
+  ...[16, 24].map((bytes) => ({
+    name: `hv observer, boundary ${bytes}B stall`, cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "divu", bootNops: 220,
+      stall: { every: 700, bytes } }, informational: true })),
+  // The non-uniform spacing pattern, end to end, with a small stall in it.
+  { name: "hv observer, 2ch pattern with a 4B stall", cfg: { voices: 2, complete: true, csm: true },
+    observer: { reads: ["h"], store: true, load: "divu",
+      stall: { every: 2500, bytes: 4 } }, informational: true },
   // H alone repeats every line, so a shift of more than half a line is
   // reported the short way round. These read V as well, which is what a
   // decoder needs to tell one line from another.

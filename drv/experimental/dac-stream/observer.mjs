@@ -45,6 +45,12 @@ const PORTS = { v: VDP.hvV, h: VDP.hvH };
 export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, every = 1 } = {}) {
   if (!reads.every((r) => r in PORTS)) throw new Error(`reads must be from ${Object.keys(PORTS)}`);
   if (!Number.isInteger(every) || every < 1) throw new Error("every must be a positive group count");
+  // Thinning only works if the generated loop actually covers `every` groups.
+  // It does not on P1, whose loop IS one group, so `every: 2` there produced a
+  // rom that still read every group while the budget was computed for half.
+  const groups = cfg.cycleSlots / cfg.groupSlots;
+  if (every > 1 && groups % every)
+    throw new Error(`every=${every} does not divide this schedule's ${groups} groups`);
   if (!Number.isInteger(at) || at < 0 || at >= cfg.groupSlots) throw new Error("at must be a slot of the group");
   const store_at = cfg.ram.glob[0];
   let observed = 0;
@@ -76,8 +82,14 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
     elapsed += slot.cycles;
   }
   const loopCycles = elapsed;
+  // ARRIVAL-INDEXED, and that convention is now the only one in the code
+  // (R5/R6 §17.2 A): spacing[i] is the time from read i-1 to read i, so a
+  // decoder holding observation number n looks up steps[n % steps.length].
+  // The departure-indexed version read correctly on P1, where every interval
+  // is the same, and was wrong on 13,714 of 19,947 intervals in the 2ch
+  // schedule, by up to 585 master.
   const spacingCycles = at_cycles.map((t, i) =>
-    i + 1 < at_cycles.length ? at_cycles[i + 1] - t : at_cycles[0] + loopCycles - t);
+    i === 0 ? t + loopCycles - at_cycles.at(-1) : t - at_cycles[i - 1]);
   return { ...gen,
     observer: { reads, store, at, every, observedSlots: observed,
       readCycles: VDP.readCycles, workPerSlot: reads.length * VDP.readCycles + (store ? 13 : 0),

@@ -13,7 +13,7 @@ import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitR
   analyzeAdoption, analyzeZ80Hv, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
 import { generateObserver, VDP } from "./observer.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
-  learnSpacing, scoreDecode } from "./decoder.mjs";
+  learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
 
 const cfg = buildConfig();
 const expected = (i) => (i*73+19)&255;
@@ -289,6 +289,70 @@ const firstAmb = decodeVH([{ v: 7, h: hOf(500) }, { v: 8, h: hOf(LN + 500) }],
 assert.equal(firstAmb[0].state, "ambiguous");
 assert.equal(firstAmb[0].phase, null);
 
+// A NON-UNIFORM spacing pattern, indexed by the observation number. The whole
+// cycle, a start part-way through it, a gap, and indices that go backwards.
+// (R6 §17.2 A: the departure-indexed version read correctly only because P1's
+// intervals are all equal.)
+const PAT = [26880, 27000, 26760, 26940];
+const patTimes = [], patH = [];
+{ let t = 500;
+  for (let n = 0; n < 400; n++) { patTimes.push(t); patH.push(hOf(t)); t += PAT[(n + 1) % PAT.length]; } }
+const patSteps = PAT.map((v) => v % LN);
+const patRows = decode(patH, { table: fullTable, steps: patSteps, indices: patH.map((_, i) => i) });
+assert.equal(patRows.filter((r) => r.event === "moved").length, 0);
+assert.equal(scoreDecode(patRows, patTimes, PAT).inLine.worstMaster <= UNIT, true);
+// Starting part-way through the pattern: the observation numbers say where.
+const from = 7;
+const midRows = decode(patH.slice(from), { table: fullTable, steps: patSteps,
+  indices: patH.map((_, i) => i).slice(from) });
+assert.equal(midRows.filter((r) => r.event === "moved").length, 0);
+// A dropped reading must not shift the pattern for everything after it.
+const keep = patH.map((_, i) => i).filter((i) => i !== 100);
+const gapRows2 = decode(keep.map((i) => patH[i]), { table: fullTable, steps: patSteps, indices: keep });
+assert.equal(gapRows2[100].event, "gap");
+assert.equal(gapRows2.slice(101).filter((r) => r.event === "moved").length, 0);
+// …which is exactly what the array position gets wrong.
+const wrongIdx = decode(keep.map((i) => patH[i]), { table: fullTable, steps: patSteps });
+assert.ok(wrongIdx.filter((r) => r.event === "moved").length > 100,
+  `array-position indexing should misread the pattern, got ${wrongIdx.filter((r) => r.event === "moved").length}`);
+// Repeated or reversed observation numbers are refused, not absorbed.
+const backwards = decode([patH[0], patH[1], patH[1]], { table: fullTable, steps: patSteps,
+  indices: [0, 1, 1] });
+assert.equal(backwards[2].event, "bad-index");
+assert.equal(backwards[2].sync, "lost");
+
+// A GATE THAT CANNOT FAIL IS NOT A GATE (R6 §17.2 B). A decoder that always
+// says the same thing has to be rejected by the criteria the harness applies.
+{
+  const N = 800, SP = 26880;
+  const t = [], hh = [];
+  let now = 500;
+  for (let n = 0; n < N; n++) { t.push(now); hh.push(hOf(now)); now += SP + (n % 4 === 0 ? 600 : 0); }
+  const steps = [SP % LN];
+  const honest = decode(hh, { table: fullTable, steps, indices: hh.map((_, i) => i) });
+  const truth = scoreDecode(honest, t, [SP]);
+  assert.deepEqual(contractProblems(truth, { kind: "contract" }), [],
+    `an honest decode should pass: ${contractProblems(truth, { kind: "contract" })}`);
+  assert.ok(truth.visible.realShifts > 100);
+  // …and each degenerate decoder fails, for the reason it should.
+  const always = (patch) => honest.map((r) => ({ ...r, ...patch(r) }));
+  const steady = scoreDecode(always(() => ({ delta: 0, deltaMin: -24, deltaMax: 24, event: "steady" })), t, [SP]);
+  assert.ok(contractProblems(steady, { kind: "contract" }).some((p) => /invisible/.test(p)), JSON.stringify(contractProblems(steady)));
+  const moved = scoreDecode(always((r) => ({ event: "moved" })), t, [SP]);
+  assert.ok(contractProblems(moved, { kind: "contract" }).some((p) => /did not happen/.test(p)));
+  const unknown = scoreDecode(always(() => ({ delta: null, offset: null, sync: "lost", event: "unknown" })), t, [SP]);
+  const problems = contractProblems(unknown, { kind: "contract" });
+  assert.ok(problems.some((p) => /reads scored/.test(p)) && problems.some((p) => /no calibration/.test(p)),
+    JSON.stringify(problems));
+  // A quiet run that reports movement is rejected too.
+  const quiet = [], qt = [];
+  { let u = 500; for (let n = 0; n < N; n++) { qt.push(u); quiet.push(hOf(u)); u += SP; } }
+  const qrows = decode(quiet, { table: fullTable, steps, indices: quiet.map((_, i) => i) });
+  assert.deepEqual(contractProblems(scoreDecode(qrows, qt, [SP]), { kind: "quiet" }), []);
+  const noisy = scoreDecode(qrows.map((r) => ({ ...r, event: "moved" })), qt, [SP]);
+  assert.ok(contractProblems(noisy, { kind: "quiet" }).some((p) => /did not happen/.test(p)));
+}
+
 // ── one resolved configuration (§12.3) ────────────────────────────────────
 // The compensation the CLI asks for has to reach BOTH the generated code and
 // the recorded case. A JSON that names a configuration the run did not use is
@@ -317,12 +381,28 @@ const padCycles = (text) => {
 assert.equal(padCycles(a65.gen.text) + 24, padCycles(a41.gen.text));
 // Every fault changes the ROM, and a fault the emitted path never reaches is
 // refused rather than silently passing.
+const TRANSFER_FAULTS = ["drop-copy", "no-commit", "early-commit", "late-request", "zero-divisor"];
+const LOAD_FAULTS = ["short-load", "no-load-marks"];
+assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS].sort(), Object.keys(FAULTS).sort(),
+  "a new fault needs a home in one of these lists");
 const roms = new Map();
-for (const fault of [null, ...Object.keys(FAULTS)]) {
+for (const fault of [null, ...TRANSFER_FAULTS]) {
   const r = resolveCase(base, { fault });
   const rom = buildRom(new Uint8Array(0x100), new Uint8Array(512), r.grab);
   assert.ok(!roms.has(rom.sha), `fault ${fault} did not change the rom`);
   roms.set(rom.sha, fault);
+}
+// The load faults belong to a case that times its own load, and are refused
+// anywhere else rather than quietly doing nothing.
+const loadCase = { name: "obs", cfg: {}, wave: new Uint8Array(256),
+  observer: { reads: ["h"], store: true, load: "divu", loadProbe: true } };
+const loadRoms = new Map();
+for (const fault of [null, ...LOAD_FAULTS]) {
+  const r = resolveCase(loadCase, { fault });
+  const rom = buildRom(new Uint8Array(0x100), null, r.grab);
+  assert.ok(!loadRoms.has(rom.sha), `fault ${fault} did not change the rom`);
+  loadRoms.set(rom.sha, fault);
+  assert.throws(() => resolveCase(base, { fault: fault ?? "short-load" }), /only applies/);
 }
 assert.throws(() => buildRom(new Uint8Array(0x100), new Uint8Array(512),
   resolveCase({ ...base, grab: { every: 100, bytes: 4, optimized: true } }, { fault: "late-request" }).grab),
@@ -413,6 +493,14 @@ if (process.argv.includes("--machine")) {
     assert.equal(r2.status, 1, r2.stdout + r2.stderr);
     assert.match(r2.stdout + r2.stderr, /no 2s log/);
   } finally { rmSync(emptyDir, { recursive: true, force: true }); }
+  // The load's TIME is a criterion. Both ways of breaking the check must fail:
+  // shortening the instruction, and switching the stamping off.
+  for (const [fault, pattern] of [["short-load", /cycles an iteration, outside/],
+    ["no-load-marks", /reported no timing marks/]]) {
+    const f2 = run(["--case","hv observer, load timed in place","--seconds","2","--fault",fault]);
+    assert.equal(f2.status, 1, `${fault} was not fatal:\n${f2.stdout}`);
+    assert.match(f2.stdout, pattern);
+  }
   // The load has to be the long path: an overflowing divide is caught by the
   // calibration case itself.
   const cal2 = run(["--case","load calibration","--seconds","1"]);

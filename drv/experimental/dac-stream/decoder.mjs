@@ -188,14 +188,23 @@ export function decodeVH(pairs, { hTable, vTable, candidates = null, steps, gapM
  * clocks, indexed by n modulo its length. It comes from the generated code.
  */
 export function decode(readings, { table, steps, lineMaster = LINE_MASTER,
-  threshold = 24, guard = 240, indices = null } = {}) {
+  threshold = 24, guard = 240, indices = null, uncertainty = 24 } = {}) {
   const out = [];
   let prev = null, prevIndex = null, offset = 0, sync = "acquiring";
   const half = lineMaster / 2;
   for (let n = 0; n < readings.length; n++) {
     const h = readings[n];
     const phase = table[h];
+    // THE OBSERVATION NUMBER, not the array position. The pattern of spacings
+    // repeats with the loop, so the step to use is chosen by where the read
+    // sits in the schedule — and after a dropped reading the array position and
+    // the schedule position are no longer the same thing (R6 §17.2 A).
     const index = indices ? indices[n] : n;
+    if (prevIndex !== null && index <= prevIndex) {
+      out.push({ n, index, h, phase: null, delta: null, offset: null,
+        sync: "lost", event: "bad-index" });
+      prev = null; prevIndex = null; sync = "acquiring"; continue;
+    }
     if (phase < 0) {                       // never calibrated: say nothing
       out.push({ n, index, h, phase: null, delta: null, offset: null,
         sync: "lost", event: "unknown" });
@@ -211,7 +220,7 @@ export function decode(readings, { table, steps, lineMaster = LINE_MASTER,
       prev = phase; prevIndex = index; offset = 0; sync = "acquiring";
       continue;
     }
-    const expected = (prev + steps[n % steps.length]) % lineMaster;
+    const expected = (prev + steps[index % steps.length]) % lineMaster;
     const delta = wrap(phase - expected, lineMaster);
     offset = wrap(offset + delta, lineMaster);
     // Near half a line the sign of the displacement is not decidable, so the
@@ -219,7 +228,14 @@ export function decode(readings, { table, steps, lineMaster = LINE_MASTER,
     const undecidable = Math.abs(Math.abs(delta) - half) <= guard;
     if (undecidable) sync = "suspect";
     else if (sync === "acquiring") sync = "valid";
+    // A POINT ESTIMATE IS NOT THE ANSWER (R6 §17.2 B). The table's own group
+    // span and, in a quantised table, the rounding at BOTH ends of the
+    // difference, put a width on every delta. It is carried, not implied.
     out.push({ n, index, h, phase, delta, offset, sync,
+      deltaMin: delta - uncertainty, deltaMax: delta + uncertainty,
+      // Near half a line the sign is not decidable from the reading, so the
+      // two candidates are both named instead of one being chosen.
+      candidates: undecidable ? [delta, delta - Math.sign(delta) * lineMaster] : null,
       event: Math.abs(delta) <= threshold ? "steady" : "moved" });
     prev = phase; prevIndex = index;
   }
@@ -264,10 +280,13 @@ export function learnSpacing(times, period) {
  */
 export function scoreDecode(rows, times, spacing, { lineMaster = LINE_MASTER,
   tolerance = 24, disturbed = 24, guard = 240 } = {}) {
+  // `spacing` is arrival-indexed by the OBSERVATION number, the same as the
+  // decoder's steps.
   const half = lineMaster / 2;
   const events = {}, sync = {};
   let scored = 0, worstInLine = 0, withinTolerance = 0;
   let realShifts = 0, seen = 0, invisible = 0, nearHalf = 0, beyondHalf = 0;
+  let falseMoved = 0, signWrong = 0, covered = 0;
   let offsetChecked = 0, offsetAgreed = 0, worstOffset = 0, trueOffset = 0;
   // The real offset WITHOUT the modulus, so the reader can see whether the
   // decoder's mod-line claim means anything on this run.
@@ -277,24 +296,30 @@ export function scoreDecode(rows, times, spacing, { lineMaster = LINE_MASTER,
     events[r.event] = (events[r.event] ?? 0) + 1;
     sync[r.sync] = (sync[r.sync] ?? 0) + 1;
     if (r.delta === null) { trueOffset = 0; trueUnwrapped = 0; continue; }
-    const raw = (times[r.n] - times[r.n - 1]) - spacing[r.n % spacing.length];
+    const raw = (times[r.n] - times[r.n - 1]) - spacing[(r.index ?? r.n) % spacing.length];
     const wrapped = wrap(raw, lineMaster);
     trueOffset = wrap(trueOffset + raw, lineMaster);
     trueUnwrapped += raw;
     worstUnwrapped = Math.max(worstUnwrapped, Math.abs(trueUnwrapped));
     scored++;
-    const err = Math.abs(r.delta - wrapped);
+    // Both values live on a circle: two readings near opposite ends of the
+    // line differ by a little, not by a line (R6 §17.2 B).
+    const err = Math.abs(wrap(r.delta - wrapped, lineMaster));
     worstInLine = Math.max(worstInLine, err);
     if (err <= tolerance) withinTolerance++;
     else if (examples.inLine.length < 3) examples.inLine.push({ n: r.n, delta: r.delta, wrapped });
     if (Math.abs(raw) > disturbed) {
       realShifts++;
-      if (r.event === "moved") seen++;
-      else {
+      if (r.event === "moved") {
+        seen++;
+        if (Math.sign(r.delta) !== Math.sign(wrapped)) signWrong++;
+      } else {
         invisible++;
         if (examples.invisible.length < 3) examples.invisible.push({ n: r.n, raw, delta: r.delta });
       }
-    }
+    } else if (r.event === "moved") falseMoved++;   // said it moved; it did not
+    // Does the interval the decoder offered actually contain the truth?
+    if (r.deltaMin !== undefined && wrapped >= r.deltaMin && wrapped <= r.deltaMax) covered++;
     // Past half a line the magnitude is not recoverable: the decoder reports
     // the short way round. Counted apart from the ones it cannot see at all.
     if (Math.abs(raw) > half) beyondHalf++;
@@ -308,9 +333,75 @@ export function scoreDecode(rows, times, spacing, { lineMaster = LINE_MASTER,
     }
   }
   return { rows: rows.length, scored, events, sync,
-    inLine: { worstMaster: worstInLine, withinTolerance, of: scored },
-    visible: { realShifts, seen, invisible, beyondHalfLine: beyondHalf, nearHalfLine: nearHalf },
+    inLine: { worstMaster: worstInLine, withinTolerance, of: scored, covered },
+    visible: { realShifts, seen, invisible, falseMoved, signWrong,
+      beyondHalfLine: beyondHalf, nearHalfLine: nearHalf },
     offset: { checked: offsetChecked, agreed: offsetAgreed, worstMaster: worstOffset,
       trueUnwrappedMaxMaster: worstUnwrapped },
     examples };
+}
+
+/**
+ * The criteria a run has to meet, by role (R6 §17.2 B). They live here rather
+ * than inside the harness so that a decoder that always says "steady", always
+ * says "moved", or always says "unknown" can be shown to fail them.
+ *
+ *   quiet    — nothing disturbed it; the decoder must not invent displacement
+ *   contract — displacements inside half a line; the decoder must MEASURE them
+ */
+export function contractProblems(s, { kind = "contract", minShifts = 100,
+  minOffsetChecks = 100, tolerance = 24 } = {}) {
+  const bad = [];
+  if (s.scored < 500) bad.push(`only ${s.scored} reads scored`);
+  if (s.events.unknown) bad.push(`${s.events.unknown} readings had no calibration`);
+  if (s.inLine.worstMaster > 40) bad.push(`in-line error ${s.inLine.worstMaster} master`);
+  if (s.inLine.withinTolerance !== s.inLine.of)
+    bad.push(`${s.inLine.of - s.inLine.withinTolerance} in-line estimates outside tolerance`);
+  if (s.inLine.covered !== s.inLine.of)
+    bad.push(`the reported interval missed the truth on ${s.inLine.of - s.inLine.covered} reads`);
+  if (s.visible.invisible) bad.push(`${s.visible.invisible} displacements were invisible`);
+  if (s.visible.beyondHalfLine) bad.push(`${s.visible.beyondHalfLine} displacements passed half a line`);
+  if (s.visible.falseMoved) bad.push(`${s.visible.falseMoved} reads reported a displacement that did not happen`);
+  if (s.visible.signWrong) bad.push(`${s.visible.signWrong} displacements came back with the wrong sign`);
+  if (s.offset.checked < minOffsetChecks)
+    bad.push(`the offset claim was checked on only ${s.offset.checked} reads`);
+  if (s.offset.agreed !== s.offset.checked)
+    bad.push(`the offset claim was wrong on ${s.offset.checked - s.offset.agreed} reads`);
+  if (kind === "contract" && s.visible.realShifts < minShifts)
+    bad.push(`only ${s.visible.realShifts} displacements to measure`);
+  if (kind === "quiet" && s.visible.realShifts)
+    bad.push(`${s.visible.realShifts} displacements in a run that should be quiet`);
+  return bad;
+}
+
+/**
+ * The byte table the Z80 would carry, and the integer steps that go with it.
+ *
+ * The unit has to divide the line so that the wrap is exact: 20 master gives
+ * 171 units a line. THE STEPS ARE NOT ROUNDED INDEPENDENTLY (R6 §17.3). A 2ch
+ * read spacing of 26,745 master is not a multiple of 20, and rounding each
+ * step on its own would accumulate. Instead the CUMULATIVE phase is rounded at
+ * every position and the steps are its differences, so the error never exceeds
+ * half a unit anywhere and is zero again at the loop boundary — the loop's own
+ * length is a whole number of units by construction.
+ */
+export function quantise(table, spacingMaster, { unit = 20, lineMaster = LINE_MASTER,
+  unknown = 0xff } = {}) {
+  if (lineMaster % unit) throw new Error(`unit ${unit} does not divide the line`);
+  const units = lineMaster / unit;
+  if (units > unknown) throw new Error(`unit ${unit} needs ${units} values, which collides with ${unknown}`);
+  const bytes = new Uint8Array(256).fill(unknown);
+  for (let h = 0; h < 256; h++)
+    if (table[h] >= 0) bytes[h] = Math.round(table[h] / unit) % units;
+  const total = spacingMaster.reduce((a, b) => a + b, 0);
+  if (total % lineMaster % unit) throw new Error(`the loop advances ${total % lineMaster} master, not a whole number of units`);
+  let cum = 0, prevRounded = 0;
+  const steps = spacingMaster.map((sp) => {
+    cum += sp;
+    const rounded = Math.round((cum % lineMaster) / unit);
+    const step = ((rounded - prevRounded) % units + units) % units;
+    prevRounded = rounded % units;
+    return step;
+  });
+  return { bytes, steps, unit, units, unknown, spacingMaster };
 }
