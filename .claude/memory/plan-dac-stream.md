@@ -1,5 +1,12 @@
 # DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
+**Current review (2026-09-07): resume from instruction §12, R3.** The polling
+NOP window is the accepted P1 regression. Computed timing has not passed; fix
+the overflowing DIVU load and the HBlank transfer-gate bypass, then specify
+observable phase/expiry/recovery before further implementation. A published
+sample index alone does not resolve sub-sample phase. Historical claims below
+about DJNZ/BUSACK and an I/O-only emulator grant are superseded by §12.2 E.
+
 The instruction is `docs/dac-engine-implementation.md`. The prototype is
 `drv/experimental/dac-stream/` and its README carries the numbers. This file is
 the decision record and the running state.
@@ -208,10 +215,14 @@ with one phase failing (+0.2387%). Finished here.
 * **Cooperative window** (`cooperative.mjs`): Z80 notifies (write to 68k work
   RAM via the bank window), holds a window, lowers it, checks a local commit
   byte the 68000 wrote last; commit → pad short by `compensation`. **THE
-  WINDOW MUST BE NOPS.** On a `djnz` window the stop began 0..13 cycles after
-  the request depending on the host's phase (53..65 measured) — right on
-  average in seven phases, off by 4.3 in the eighth. On nops it is 62.8..68.3
-  in every phase and one compensation holds.
+  WINDOW MUST BE NOPS**, as a measurement: on a `djnz` window the stop began
+  0..13 cycles after the request depending on the host's phase (53..65
+  measured) — right on average in seven phases, off by 4.3 in the eighth; on
+  nops it is 62.8..68.3 in every phase and one compensation holds. The
+  EXPLANATION that went with it was wrong and R3 §12.2 E corrects it: BUSREQ is
+  sampled at the end of the machine cycle in flight, not the instruction, and a
+  taken `djnz` is 5/4/4 — what nops buy is a uniform 4-cycle boundary lattice,
+  not the removal of 13 cycles of blindness. Hardware stop width: unmeasured.
 * **Results with the nop window**: 8 B every 5 slots = 16 KB/s, compensation
   65: 31 host phases, −0.0004%..+0.0001%, worst gap 1.008 T; 60 s at the
   phase that used to fail: 597,275 samples, −0.0000%. 4 B, compensation 41:
@@ -226,7 +237,12 @@ with one phase failing (+0.2387%). Finished here.
   §11.4 step 4). ROM bank (§11.5) untouched. Z80 reads of 68k work RAM are
   withdrawn by R2 as a mechanism.
 * `mml_rate.h` drifted once more during that session (a tool without
-  `PCM_SPG=1 TIMER_B_K=1`); reverted.
+  `PCM_SPG=1 TIMER_B_K=1`); reverted. **It is `npm run baseline` that does it**
+  — the `c-gate` it runs calls `gen-c-tables.mjs`, which rewrites the header at
+  whatever clock the environment implies (10,000 Hz instead of the shipped
+  3,333). Check `git status` after every baseline run and revert; the real fix
+  is to make that generator write somewhere other than the source tree, and it
+  belongs to whoever owns the 68k build, not to this prototype.
 
 ## R2 §11.4 STEP 4 — THE WINDOW CANNOT ENTER THE 2ch SCHEDULE AS IS; COMPUTED TIMING TRACKS TO ±5
 
@@ -291,19 +307,62 @@ an `ld a,0` and every other sample went out as zero. The fetch now runs after
 the pad. **It was caught only because a second profile was in the case list** —
 one clock would have passed clean.
 
-## What is next, in order
+## R3 step 1, done (2026-09-07)
 
-1. **68000 side of computed timing**: anchor the window after a Z80 I/O
-   access, re-anchor `rem` from the published output index each transfer, and
-   get a §6 pass; then size the window for the 2ch slot (52 cycles at 1 B,
-   45 at 2 B — 8 B does not fit a plain slot at all). ROM bank (§11.5)
-   alongside.
-2. Once that is settled: P2's loop points, the ROM bank window, and note
-   start/stop — the boundary work §5 orders after the master, and the first
-   place the constant-time rule will actually hurt.
-2. Get BlastEm built somewhere and run the P1 image there. Until then every P1
-   number is "the placement arithmetic is right", not "the hardware does this".
-3. Decide what to do about the four red gates P0 recorded. They are not this
-   work's doing and they are not this work's to fix, but P4 replaces the paths
-   three of them cover, and §5/P4 forbids finishing with unresolved failures in
-   the range being replaced.
+`docs/dac-engine-implementation.md` §12.4 step 1 — the checks and the
+explanations — is complete. What it changed:
+
+* **The foreground load never ran.** `$12345678 / 7` overflows a 16-bit
+  quotient, so DIVU took its early exit every time. Measured with a new
+  `load calibration` case (marks with interrupts masked, Z80 untouched, so the
+  DAC gate runs beside it): mark 20.0, `nop` 4.0, **`divu` 140.4, the
+  overflowing `divu` 22.3**, `divu` by $7FFF 148.3 68000 cycles. Interrupt
+  raise → handler entry, from a new probe event at the VDP's own raise: short
+  load 65..86 (p50 70), real `divu` 65..**215** (p50 136), level 4 masked ~12
+  lines 60..**6,027** (p50 1,582) with **1,218 of 3,304 ticks lost**. The old
+  "±5 under load" was measured under 22-cycle instructions.
+* **The HBlank cases were never checked as transfers.** All modes now run the
+  same payload / order / count / commit checks. Four faults are injectable
+  (`--fault drop-copy | no-commit | early-commit | late-request`) and each is
+  proven fatal against a case that passes without it. `early-commit` keeps the
+  clock at 9,987.56 Hz and every sample right — which is why PCM correctness
+  was never evidence about the protocol.
+* **Window geometry is derived, not assumed.** The notification span is
+  81 + bankWait whatever the timestamp offset λ inside `ld (nn),a` is;
+  measured 84 → **bankWait = 3**, independently confirming `windowWait`. λ
+  stays unknown and bounded by 13, so boundaries are bands and a stop is
+  reported strictly or only loosely inside. The stall inside a served window is
+  subtracted before the geometry is taken.
+* **Result: the notification-free cases fail on protocol.** `computed timing
+  8B, unloaded 68k`: mean rate −0.0010%, 8 stops strictly inside, 2,881
+  outside, **2,798 commits adopted by a window they were not written in**. All
+  11 HBlank/computed cases are fatal now. The notified regression is
+  unaffected: 3,449/3,449 inside, 0 carried, 15,977 B/s, −0.0000%.
+* **One resolved configuration** (`case-config.mjs`): CLI overrides are applied
+  once and the JSON records the case that ran; the window period comes from the
+  Z80 schedule for both CPUs; a regression test ties a compensation change to
+  the emitted pad. A fault the emitted path cannot reach is refused at build
+  time.
+* Verified: required 13/13 on the machine, JS gate 24/24, `probe-selftest
+  --machine` green, `tools/selftest` green, baseline 7/11 (the same four
+  pre-existing reds).
+
+## What is next, in order — R3 supersedes the earlier sequence
+
+1. ~~Correct the checks and the explanations~~ — done, above.
+2. Specify the runtime phase contract: target window generation, published
+   fields and age, observable host timestamps, error bounds, expiry/skip and
+   initial/recovery synchronization. Reading the output index does not by itself
+   repair VBlank timing or provide slot phase. Z80 changes may be necessary.
+3. Prove the contract on P1, including real time publication and its transfer
+   cost, correct long-instruction load, IRQ masking, frame crossing and recovery.
+   Gate actual target-window error and every DAC interval with `--strict`.
+4. Only after that: generate a complete 2ch placement with the accepted transfer,
+   publication, actual mixer and the reserved work. Resolve the ROM bank conflict
+   as a fit condition; do not add note/loop behavior before this passes.
+
+R3 review reproduced the repaired 8 B / 5 slots delay-300 case for 10 seconds
+(9,987.57 Hz, 5,351..5,397 master, payload/PCM match) and the computed unloaded
+case for 3 seconds (exit 1, 4,395..6,476 master, only 73.9882% inside ±5%).
+The probe selftest passes but does not yet inject faults through the HBlank
+branch. No new hardware validation or full-suite run is claimed by this review.

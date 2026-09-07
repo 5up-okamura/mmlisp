@@ -5,14 +5,21 @@
 // there, the slot's pad is generated `compensation` cycles short — the planned
 // stop is repaid inside the slot it happened in. If not, the full pad runs.
 //
-// THE WINDOW MUST BE NOPS. BUSACK is granted at an M-cycle boundary, so where
-// the request lands relative to the instruction in flight decides when the
-// stop begins: on a run of nops that is within 4 cycles, on a `djnz` iteration
-// up to 13. With a `djnz` window the measured stop was 53..65 cycles DEPENDING
-// ON THE HOST'S PHASE — it averaged the compensation in seven phases and missed
-// it by 4.3 in the eighth, which was the +0.2387% that stopped this work. With
-// nops it is 62.8..68.3 in every phase and a single compensation holds
-// (-0.0004%..+0.0001% over 31 host phases).
+// THE WINDOW IS NOPS, and what that buys is narrower than the earlier note
+// here claimed. BUSREQ is sampled at the end of the MACHINE CYCLE in flight,
+// not at the end of the instruction (Zilog Z80 CPU User Manual, "Bus Request/
+// Acknowledge Cycle"), and a branch-taken `djnz` is 13 T split into machine
+// cycles of 5/4/4 — so the worst wait for a boundary is one machine cycle
+// either way, not the 13 T of the whole instruction. What a nop run actually
+// gives is a UNIFORM boundary lattice: every 4 T, with no operand fetch or
+// internal-work cycle of a different length to land in. The measurement is
+// what stands on its own: under a `djnz` window the modelled stop was 53..65
+// Z80 cycles depending on the host's phase and one phase of 32 missed the
+// fixed compensation by 4.3 (+0.2387% mean rate); under a nop window it is
+// 62.8..68.3 in every phase and a single compensation holds (-0.0004%..
+// +0.0001% over 31 host phases). That is BlastEm's arbitration, which is a
+// model of the M-cycle rule and not a substitute for measuring silicon: the
+// hardware stop width and its mean residual are UNMEASURED.
 //
 // The bank stays at $FF0000 for one-way notifications.
 // 68k must enter the low→high polling section with interrupts masked, payload
@@ -23,6 +30,33 @@ import { padTo } from "./schedule.mjs";
 
 export const COOP = { notify: 0xff0000, queue: 0x1d00, commit: 0x1eff,
   windowCycles: 64, defaultCompensation: 32 };
+
+// The instructions that bracket the window, by exact cost. `ld ($8000),a` is
+// 13 T plus whatever the bank window charges; the probe logs the write itself,
+// so the span between the two notifications is
+//   (13 - lambda) + bankWait + windowCycles + 4 + lambda = 81 + bankWait
+// where lambda is where inside `ld (nn),a` the emulator timestamps the write.
+// The span does not depend on lambda, so a measured span YIELDS the bank cost;
+// lambda stays unknown and bounded by 13, and that is the whole uncertainty in
+// where the window sits relative to the notification. Nothing here pretends to
+// resolve it — the analyzer carries it as a band.
+export const NOTIFY_WRITE = 13, CLOSE_PROLOGUE = 4;
+export const windowSpanBase = COOP.windowCycles + NOTIFY_WRITE + CLOSE_PROLOGUE;
+
+/** Where the window sits, given the span the log actually shows. */
+export function windowBand(spanZ80, windowCycles = COOP.windowCycles) {
+  const bankWait = spanZ80 - (windowCycles + NOTIFY_WRITE + CLOSE_PROLOGUE);
+  return { bankWait, windowCycles,
+    openMin: bankWait, openMax: bankWait + NOTIFY_WRITE,
+    closeMin: bankWait + windowCycles, closeMax: bankWait + NOTIFY_WRITE + windowCycles };
+}
+
+/** One period of the cooperative schedule, in master clocks. */
+export function windowPeriodMaster(cfg, slots) {
+  let total = 0;
+  for (let i = 0; i < slots; i++) total += cfg.slotCycles[i % cfg.groupSlots];
+  return total * cfg.machine.z80Div;
+}
 
 export function generateCooperative(cfg, { slots = 80, compensation = COOP.defaultCompensation,
   windowNops = true, windowSync = false } = {}) {
@@ -41,21 +75,24 @@ export function generateCooperative(cfg, { slots = 80, compensation = COOP.defau
     const tail = 11 + (i === slots-1 ? 10 : 0);
     const period = cfg.slotCycles[i % cfg.groupSlots];
     if (!i) {
-      emit("ld a,1"); emit("ld ($8000),a"); // 7 + 13 + 3 bank wait
-      // The window itself is nops when asked (the default): a grant on a
-      // `djnz` iteration can land 13 cycles late, and that is the whole of
-      // the phase-dependent stop length the fixed compensation cannot follow.
+      emit("ld a,1"); emit("ld ($8000),a"); // 7 + 13 + bank wait
+      // The window itself is nops when asked (the default): a uniform 4-cycle
+      // boundary lattice for the grant to land on, and the measured narrowing
+      // above is the reason it is kept.
       // `windowSync`: four YM status reads inside the window (13 cycles each,
-      // harmless, A is dead here). ONLY for the emulator: BlastEm grants a
+      // harmless, A is dead here). ONLY for the emulator, and a DIFFERENT ROM
+      // from the one under test: in the runs made here BlastEm granted a
       // pending BUSREQ at the Z80's next I/O access, so without these a
-      // request that arrives mid-window is granted at the next DAC write, a
-      // slot later. Hardware grants at the next M-cycle boundary regardless.
+      // request arriving mid-window was granted at the next DAC write, a slot
+      // later. That is an observation about these runs, not a rule of the core
+      // — the core also checks for a pending request per translated
+      // instruction — and it is not how hardware arbitrates.
       if (windowSync) {
         if (COOP.windowCycles !== 64) throw new Error("windowSync assumes a 64-cycle window");
         for (let k = 0; k < 4; k++) emit("ld a,($4000)");                // 4 x 13 = 52
         for (let k = 0; k < 3; k++) emit("nop");                          // + 12 = 64
       } else pad(COOP.windowCycles, { nopsOnly: windowNops });
-      emit("xor a"); emit("ld ($8000),a"); // 4 + 13 + 3 bank wait
+      emit("xor a"); emit("ld ($8000),a"); // 4 + 13 + bank wait
       emit(`ld a,($${COOP.commit.toString(16)})`); emit("or a"); // 13 + 4
       emit("jr z,coop_absent"); // 7 served, 12 absent
       // The local commit is written last by the 68k, before releasing BUSREQ.
@@ -74,5 +111,7 @@ export function generateCooperative(cfg, { slots = 80, compensation = COOP.defau
   }
   lines.push("code_end:", `assert code_end <= $${cfg.ram.code[1].toString(16)}, "cooperative code overflow"`,
     `ds $${cfg.ram.wave[0].toString(16)}-$,0`);
-  return { text: lines.join("\n"), cooperative: { slots, compensation, windowNops, windowSync, ...COOP } };
+  return { text: lines.join("\n"),
+    cooperative: { slots, compensation, windowNops, windowSync, ...COOP,
+      periodMaster: windowPeriodMaster(cfg, slots), spanBase: windowSpanBase } };
 }

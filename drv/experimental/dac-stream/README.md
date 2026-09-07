@@ -13,6 +13,11 @@ npm run dac-stream:long     # …and 60 s on the representative case, + JSON
 sh blastem/setup.sh         # once — builds the emulator, ~2 min
 npm run dac-stream:machine  # the same schedules on BlastEm
 npm run dac-stream:probe-test  # the instrument's own negatives, incl. on the core
+
+node experimental/dac-stream/machine-probe.mjs --case NAME --seconds N \
+  [--strict]          # every case is required, nothing is informational
+  [--fault NAME]      # drop-copy | no-commit | early-commit | late-request
+  [--marks]           # build the 68000 side with its own timestamp writes
 ```
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
@@ -332,6 +337,12 @@ work RAM are withdrawn by R2 as a mechanism. Nothing has run on hardware.
 
 Two questions R2 §11.4 step 4 leaves, with numbers.
 
+> **R3 supersedes the second half of this section.** The computed-timing
+> conclusions below — "±5 Z80 cycles", "the Z80 side is unchanged", the reading
+> of `djnz` as 13 cycles of blindness, and the I/O-only grant as a rule of the
+> core — did not survive review or re-measurement. What replaced them is the
+> next section; the budget table here still stands.
+
 **The window budget in a mixer slot.** A plain 2ch slot has 151 cycles of pad
 and a reserved one 76–87. The cooperative slot's fixed traffic — notify up
 (23), notify down (20), commit check (46) — is 89. What is left for the window
@@ -395,6 +406,88 @@ work, and they are 68000 work — the Z80 side is unchanged.
 with while a hardware round is expensive, and it has already found what the
 instruction model could not. Nothing here has run on a Mega Drive.
 
+## R3 — the instrument was scoring the wrong thing
+
+R3 §12.2 named four defects and each one turned out to change a result.
+
+**The foreground load never ran.** The 68000's idle load divided `$12345678`
+by 7, whose quotient does not fit in 16 bits: DIVU detects the overflow, leaves
+the operands alone and exits early, so every iteration took the short path and
+the operands never changed. The `load calibration` case now measures it, with
+interrupts masked and the Z80 untouched, against a mark pair whose empty body
+gives the mark instruction's own cost:
+
+| | mark | `nop` | `divu` /7 | `divu` /7, overflowing | `divu` /$7FFF |
+| --- | --- | --- | --- | --- | --- |
+| 68000 cycles | 20.0 | 4.0 | **140.4** | **22.3** | 148.3 |
+
+The load was 22 cycles, not 140. With a dividend that divides, the
+interrupt-to-entry delay measured from the VDP's own raise (a new probe event)
+to the handler's first bus write is:
+
+| load | entry delay, 68000 cycles | ticks lost |
+| --- | --- | --- |
+| short (`nop`) | 65..86, p50 70 | 0 of 3,304 |
+| `divu` that divides | 65..**215**, p50 136 | 0 of 3,304 |
+| level 4 masked ~12 lines | 60..**6,027**, p50 1,582 | **1,218 of 3,304** |
+
+So the earlier "±5 cycles under load" was measured under a load of 22-cycle
+instructions. (The masked row's minimum is the instrument's pairing floor, not
+a latency the machine reached — a tick raised while the previous handler is
+still being entered cannot be attributed.)
+
+**The HBlank cases were never checked as transfers.** `analyzeTransfers()` ran
+for the notified cases only, so for every HBlank and computed-timing case the
+payload, its order, its byte count and the commit went unexamined; the PCM
+matched because the PCM does not depend on them. All modes now run the same
+checks, and the four ways to break the protocol are injected deliberately
+(`--fault`) against a case that passes without them:
+
+| injected fault | what the gate says | exit |
+| --- | --- | --- |
+| none | 45/45 stops strictly inside the window, 0 carried | 0 |
+| `drop-copy` | transferred byte count | 1 |
+| `no-commit` | missing or premature transfer commit | 1 |
+| `early-commit` | missing or premature transfer commit (PCM still 9,987.56 Hz) | 1 |
+| `late-request` | commit adopted by a window it was not written in, 0/45 inside | 1 |
+
+`early-commit` is the one to read twice: the clock is perfect and every sample
+is right, and the protocol is broken. A fault that the emitted path would not
+reach is refused at build time rather than passing quietly.
+
+**The window is not the notification's lifetime.** The notification brackets
+the window by
+`(13 − λ) + bankWait + 64 + 4 + λ`, where λ is where inside `ld (nn),a` the
+write is timestamped — so the span is 81 + bankWait whatever λ is. Measured, it
+is 84, which yields **bankWait = 3** independently of the earlier
+`windowWait` measurement, and leaves λ unknown and bounded by 13 cycles. Every
+boundary is therefore a band, and the analyzer reports a stop as strictly
+inside (inside for every λ) or only loosely inside. A window with a grab in it
+is longer by exactly the stall, which is subtracted before the geometry is
+taken — taking the median of all of them would have priced the stall into the
+window and put every stop outside its own window.
+
+**With those in place, the notification-free cases fail on protocol, not on
+timing.** `computed timing 8B, unloaded 68k` at 2 s: mean rate −0.0010%, and
+8 stops strictly inside their window, 72 loosely, **2,881 outside**, with
+**2,798 commits adopted by a window they were not written in**. That last
+number is the failure a fixed compensation cannot survive: a slot repays a
+stall that happened somewhere else. Every HBlank and computed case is now a
+fatal failure rather than an informational timing miss — 11 of them.
+
+The cooperative regression is unaffected: `cooperative density 8B/5 slots
+delay 300` holds 3,449 of 3,449 stops strictly inside, 0 carried, 15,977 B/s,
+−0.0000%.
+
+**And the M-cycle explanation was wrong.** BUSREQ is sampled at the end of the
+machine cycle in flight, not at the end of the instruction (Zilog Z80 CPU User
+Manual, bus request/acknowledge), and a branch-taken `djnz` is 5/4/4, not 13
+cycles of blindness. What a nop run buys is a uniform 4-cycle boundary lattice.
+The measurement stands on its own — 53..65 cycles of stop under a `djnz`
+window against 62.8..68.3 under nops — and the hardware's stop width and mean
+residual remain **unmeasured**. `windowSync` is a different ROM with different
+bus activity, and its results are not evidence about the plain one.
+
 ## The three structural decisions
 
 **1. The slot boundary IS the DAC write.** Each output interval begins with
@@ -446,6 +539,12 @@ generation time.
 | `analyze.mjs` | VALUE, TIME and BUS, kept apart; plus the chip's settling table, checked |
 | `spectrum.mjs` | the §6.3 comparison: the same bytes on a uniform grid vs at their real write times |
 | `gate.mjs` | the §6 acceptance thresholds, fixed before the first measurement |
+| `cooperative.mjs` | the P1 notified-window engine, and the window geometry every analysis reads |
+| `case-config.mjs` | **one resolved case.** The CLI's overrides are applied once, and the object that is generated, run, analyzed and written to JSON is the same object (§12.3) |
+| `rom.mjs` | the 68000 side: bootstrap, the transfer paths, the foreground loads, the instruction-time calibration, and the deliberate protocol faults |
+| `machine-probe.mjs` | runs a case on BlastEm and reports it. `--strict` makes every case required; `--fault`, `--marks`, `--compensation`, `--capture-offset` |
+| `probe-analysis.mjs` | the probe log: DAC timing, window generations, transfers in every mode, and the 68000's own timeline |
+| `probe-selftest.mjs` | proves each of those can fail — including, with `--machine`, that every injected fault leaves the CLI non-zero |
 
 Generated sources and the JSON report land in `drv/out/dac-stream/`.
 
@@ -482,6 +581,19 @@ profile was in the case list — one clock would have passed.
 
 ## What is NOT done
 
+- **No notification-free transfer works.** Every HBlank and computed-timing
+  case fails, and after R3 they fail on protocol: the request lands outside
+  the window it was computed for and the commit is adopted by a window it was
+  not written in. The notified P1 window is the only transfer that holds, and
+  it does not fit a 2ch slot (the budget table above). The phase contract
+  R3 §12.2 C asks for — which window is being aimed at, what the Z80 publishes,
+  what the 68000 can observe, the uncertainty, what happens when the deadline
+  cannot be met, and the cost on both CPUs — is **not written**, and no further
+  68000 work should start before it is.
+- **The hardware stop width is unmeasured.** Every stop figure here is
+  BlastEm's arbitration model. The nop window narrowed it in that model; what
+  silicon does, and what the mean residual is at 2,000 grabs a second, is the
+  number a hardware round has to return.
 - **P2 is not finished.** §5's order is 1ch → 2ch → independent volume →
   master → loop → ROM bank boundary, and it stops after the master. There is
   **no loop, no ROM bank crossing, and no note start or stop**: the source is

@@ -11,17 +11,17 @@
 //
 // It is still a model. A green run here is a reason to spend a hardware round,
 // not a substitute for one.
-import { generateCooperative, COOP } from "./cooperative.mjs";
-const COOP_WINDOW = COOP.windowCycles;
+import { COOP } from "./cooperative.mjs";
 import { createHash } from "node:crypto";
-import { readProbe, analyzeProbe, analyzeTransfers, summarizeResults } from "./probe-analysis.mjs";
+import { readProbe, analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
+  summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
+import { resolveCase, FAULTS } from "./case-config.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine } from "./config.mjs";
-import { generate } from "./gen-stream.mjs";
+import { stampLine } from "./config.mjs";
 import { buildRom } from "./rom.mjs";
 import { mixOne, mixTwo, LEVELS } from "./lut.mjs";
 
@@ -42,6 +42,15 @@ const COMP = arg("compensation", null) === null ? null : Number(arg("compensatio
 // --capture-offset N: computed timing's boot calibration, in master clocks
 // (positive = grab earlier), overriding the case's own.
 const CAPOFF = arg("capture-offset", null) === null ? null : Number(arg("capture-offset"));
+// --fault NAME: break the transfer protocol on purpose. A gate that cannot be
+// made to fail is not a gate, and until R3 the HBlank cases were scored on
+// their PCM alone — which the payload cannot reach.
+const FAULT = arg("fault", null);
+if (FAULT && !FAULTS[FAULT]) { console.error(`machine-probe: unknown --fault ${FAULT}; one of ${Object.keys(FAULTS).join(", ")}`); process.exit(2); }
+// --marks: build the ROM with the 68000-side timestamp writes. A DIFFERENT
+// ROM from the one under test, and reported as one.
+const MARKS = argv.includes("--marks");
+const STRICT = argv.includes("--strict");
 if (!Number.isFinite(SECONDS) || SECONDS < 0.5 || SECONDS >= 70)
   throw new Error("--seconds must be >= 0.5 and < 70 (32-bit instrument clocks)");
 
@@ -92,7 +101,19 @@ const CASES = [
   })),
   { name: "hblank grab 8B every 8 lines, unloaded 68k", cfg: {}, wave: sine(256,120,1),
     cooperative: { slots: 5, compensation: 65 },
-    grab: { hint: true, line: 8, bytes: 8, load: false }, informational: true },
+    grab: { hint: true, line: 8, bytes: 8, load: "none" }, informational: true },
+  // The load, separated (§12.2 A): a short instruction, a divide that really
+  // divides, and a stretch with level 4 masked so the tick is LOST. The first
+  // version of this ran an overflowing divide, which took the early exit and
+  // measured nothing at all.
+  ...["short", "divu", "masked"].map((load) => ({
+    name: `hblank grab 8B every 8 lines, ${load} load`, cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, line: 8, bytes: 8, load }, informational: true })),
+  // What the load actually costs, measured with interrupts masked and the Z80
+  // untouched — so the DAC gate runs unchanged beside it and this case is
+  // REQUIRED, not exploratory.
+  { name: "load calibration", cfg: {}, wave: sine(256,120,1), calibrate: true },
   // Computed timing: every line ticks; the handler waits out the remainder to
   // the next window and grabs there. `path` is the handler's fixed cost in
   // master clocks from tick to request, set from where the grabs land.
@@ -147,15 +168,17 @@ const CASES = [
 ];
 
 const MCLK = 53693175;
-const Z80_DIV = 15;
 
 function runCase(c0) {
-  let c = c0;
-  const cfg = buildConfig(c.cfg);
-  const coop = c.cooperative && COMP !== null ? { ...c.cooperative, compensation: COMP } : c.cooperative;
-  if (CAPOFF !== null && c.grab?.computed) c = { ...c, grab: { ...c.grab, captureOffset: CAPOFF } };
-  const gen = coop ? generateCooperative(cfg, coop) : generate(cfg);
-  const caseId = createHash("sha256").update(JSON.stringify({ ...c, cooperative: coop })).digest("hex").slice(0,12);
+  // ONE resolved configuration, from here to the JSON (§12.3): the overrides
+  // are applied once, and the case object that is generated, run, analyzed and
+  // recorded is the same object.
+  const resolved = resolveCase(c0, { compensation: COMP, captureOffset: CAPOFF, fault: FAULT });
+  const cfg = resolved.cfg;
+  let c = resolved.case;
+  if (MARKS && c.grab) c = { ...c, grab: { ...c.grab, marks: true } };
+  const gen = resolved.gen;
+  const caseId = createHash("sha256").update(JSON.stringify(c)).digest("hex").slice(0,12);
   mkdirSync(OUT, { recursive: true });
   const zpath = join(OUT, `probe-${cfg.stamp}-${caseId}.z80`);
   writeFileSync(zpath, gen.text);
@@ -180,7 +203,7 @@ function runCase(c0) {
   }
 
   if (!samples && c.grab) samples = Uint8Array.from({length:512}, (_,i)=>(i*73+19)&255);
-  const { rom, sha } = buildRom(image, samples, c.grab ?? (c.bankOnly ? { cooperative: true, disabled: true } : null));
+  const { rom, sha } = buildRom(image, samples, c.grab ?? null);
   const rpath = join(OUT, `probe-${cfg.stamp}-${caseId}-${sha}.bin`);
   writeFileSync(rpath, rom);
 
@@ -191,7 +214,7 @@ function runCase(c0) {
     "--wav", log.replace(/\.log$/, ".wav")],
     { env: { ...process.env, MMLISP_PROBE_LOG: log }, stdio: ["ignore", "pipe", "pipe"] });
 
-  return { cfg, gen, sha, log, rpath, image, samples };
+  return { cfg, gen, sha, log, rpath, image, samples, resolved: c };
 }
 
 const q = (s, p) => s[Math.floor((s.length - 1)*p)];
@@ -219,8 +242,18 @@ const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
 // One line per family under --every-sweep, so the envelope is one number.
 const everyRows = [];
 console.log(`machine-probe — BlastEm, ${SECONDS}s a case; timing = Z80 DAC bus writes`);
-for (const c of selected) {
-  const r = runCase(c);
+for (const c0 of selected) {
+  let r;
+  try { r = runCase(c0); }
+  catch (e) {
+    // A configuration that cannot be built is a failure of the run, not a
+    // stack trace: say which case and why, and keep the exit status.
+    globalThis.console.log(`FAIL ${c0.name}: ${e.message}`);
+    results.push({ name: c0.name, errors: [e.message] });
+    continue;
+  }
+  // Everything below reads the RESOLVED case, which is what was built and run.
+  const c = r.resolved;
   const log = readProbe(readFileSync(r.log));
   const expected = (i) => {
     if (!r.cfg.voices) return c.wave[i % 256];
@@ -233,12 +266,17 @@ for (const c of selected) {
   // An explicit negative test exercises the CLI exit status, not just a helper.
   if (argv.includes("--inject-value-error") && log.dac.length) log.dac.at(-1).value ^= 1;
   const a = analyzeProbe(log, r.cfg, expected);
-  const result = { name: c.name, informational: !!c.informational && !argv.includes("--strict"), errors: a.errors };
+  const result = { name: c.name, informational: !!c.informational && !STRICT, errors: a.errors };
   results.push(result);
   const measuredSeconds = a.span / MCLK;
-  console.log(`${a.errors.length ? (c.informational ? "info FAIL" : "FAIL") : "ok"} ${c.name}`
-    + `: ${a.samples.length} samples, ${a.rate.toFixed(2)} Hz (${a.errorPct.toFixed(4)}%),`
-    + ` gap ${a.sorted[0]}..${a.sorted.at(-1)} master`);
+  // The verdict is printed once EVERY check has run. It used to be printed
+  // from the DAC analysis alone, so a case with a broken payload and a clean
+  // clock announced itself as "ok" and only the summary disagreed.
+  const out = [];
+  // Every console.log BELOW this line is buffered and flushed at the end of the
+  // case, so that the verdict can be printed first. Anything above it — the
+  // build-failure path — has to say `globalThis.console`.
+  const console = { log: (...s) => out.push(s.join("")) };
   console.log(`  inside ±5% ${(100*a.inside5).toFixed(4)}%, ±10% ${(100*a.inside10).toFixed(4)}%;`
     + ` holes ${a.holes.length} (${a.overlapping.length} overlap BUSREQ); values ${a.firstBad < 0 ? "all match" : "FAIL"}`);
   const steady = log.grabs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time);
@@ -250,56 +288,88 @@ for (const c of selected) {
     const lens = times(pairs);
     if (lens.length) console.log(`  ${name}: ${lens[0].toFixed(2)}..${lens.at(-1).toFixed(2)} Z80 cyc, p50 ${q(lens,.5).toFixed(2)}; sum ${lens.reduce((x,y)=>x+y,0).toFixed(1)}`);
   }
-  if (c.grab?.hint) {
-    // Where did each grab land? Offset from the most recent window opening
-    // (NOTIFY value 1), in Z80 cycles, and whether the modelled stop sat
-    // inside [open, close]. The window is COOP.windowCycles long.
-    // THE REQUEST is what the 68000 controls, so the landing is measured from
-    // it. The modelled grant is NOT: BlastEm grants a pending BUSREQ at the
-    // Z80's next sync point, which in this engine is its next I/O access, so
-    // the grant's phase inside a slot is the emulator's scheduling, not the
-    // hardware's M-cycle boundary. Both are reported, apart.
-    const opens = log.notifications.filter((e) => e.value === 1).map((e) => e.time);
-    const closes = log.notifications.filter((e) => e.value === 0).map((e) => e.time);
-    const req = [], stp = []; let inside = 0, j = 0, k = 0;
-    for (const [rq] of log.grabs) {
-      if (rq < a.samples[0]?.time || rq > a.samples.at(-1)?.time) continue;
-      while (j + 1 < opens.length && opens[j + 1] <= rq) j++;
-      req.push((rq - opens[j]) / Z80_DIV);
-      const close = closes.find((t) => t > opens[j]);
-      if (close !== undefined && rq >= opens[j] && rq <= close) inside++;
+  // THE HOST'S OWN TIMELINE. Only present when the ROM was built with marks,
+  // and it is a different ROM when it was.
+  if (c.grab?.marks || c.calibrate) {
+    const host = analyzeHost(log, { marks: !!c.grab?.marks, calibrate: !!c.calibrate });
+    result.host = host;
+    if (host.entryDelay) console.log(`  hint→handler entry: ${host.entryDelay.min.toFixed(0)}`
+      + `..${host.entryDelay.max.toFixed(0)} 68000 cyc, p50 ${host.entryDelay.p50.toFixed(0)};`
+      + ` ${host.hints} raised, ${host.serviced} timed, ${host.missedHints} lost,`
+      + ` ${host.ambiguousEntries} ambiguous`);
+    if (host.cal) {
+      const f = (v) => v === null ? "?" : v.toFixed(1);
+      console.log(`  instruction time (68000 cycles): mark ${f(host.cal.markCycles)},`
+        + ` nop ${f(host.cal.nop)}, divu/7 ${f(host.cal.divu)},`
+        + ` divu overflow ${f(host.cal.divuOverflow)}, divu/$7FFF ${f(host.cal.divuBig)}`);
+      // The load has to be a LONG instruction. An overflowing divide is not.
+      if (host.cal.divu !== null && host.cal.divu < 100) result.errors.push("divide load is not the long path");
     }
-    for (const [st] of log.stops) {
-      if (st < a.samples[0]?.time || st > a.samples.at(-1)?.time) continue;
-      while (k + 1 < opens.length && opens[k + 1] <= st) k++;
-      stp.push((st - opens[k]) / Z80_DIV);
-    }
-    req.sort((x, y) => x - y); stp.sort((x, y) => x - y);
-    console.log(`  hblank: ${req.length} requests, ${inside} (${(100 * inside / Math.max(1, req.length)).toFixed(1)}%)`
-      + ` inside the ${COOP_WINDOW}-cycle window; REQUEST offset from the opening`
-      + ` p10 ${q(req, .1)?.toFixed(0)} p50 ${q(req, .5)?.toFixed(0)} p90 ${q(req, .9)?.toFixed(0)} Z80 cyc;`
-      + ` modelled grant p50 ${q(stp, .5)?.toFixed(0)}`);
-    result.hblank = { requests: req.length, inside };
-  } else if (c.grab) {
-    const bins = new Set();
-    let j=0;
-    for (const [at] of steady) {
-      while (j+1 < log.dac.length && log.dac[j+1].time <= at) j++;
-      bins.add(Math.min(31,Math.floor(32*(at-log.dac[j].time)/r.cfg.periodNum)));
-    }
-    result.phaseBins = [...bins].sort((a,b)=>a-b);
-    console.log(`  ${ (steady.length/measuredSeconds).toFixed(2)} requests/s, ${(steady.length*c.grab.bytes/measuredSeconds).toFixed(2)} B/s; request phase ${bins.size}/32 bins`);
-    const transfer = analyzeTransfers(log, steady, c.grab, r.samples);
+  }
+  // TRANSFERS: the same payload, order, count, commit and carry-over checks in
+  // every mode (§12.2 B). Only the acceptance criterion differs.
+  if (c.grab && !c.grab.disabled) {
+    const windows = (c.grab.cooperative || c.grab.hint) ? windowGenerations(log) : null;
+    // The diagnostic payload is the handler's own state: order and count are
+    // still predictable, the content is not.
+    const source = c.grab.debugPayload ? null : r.samples;
+    const transfer = analyzeTransfers(log, steady, c.grab, source, { windows });
     result.errors.push(...transfer.errors);
-    if (c.grab.cooperative) {
+    result.transfer = { requests: steady.length, inside: transfer.inside,
+      insideLoose: transfer.insideLoose, outside: transfer.outside,
+      carried: transfer.carried, ambiguous: transfer.ambiguous };
+    if (windows && !windows.band) {
+      console.log(`  windows: ${windows.quiet} unstalled of ${log.notifications.length/2 | 0};`
+        + ` no usable geometry${windows.impossible ? " (span does not match the emitted code)"
+          : windows.disagree ? " (stall-corrected and unstalled spans disagree)" : ""}`);
+      result.errors.push("window geometry");
+    }
+    if (windows?.band) {
+      console.log(`  windows: ${windows.gens.length} generations, notify span ${windows.span} Z80 cyc`
+        + ` (${windows.quiet} needed no stall correction) → bank write ${windows.band.bankWait},`
+        + ` open +${windows.band.openMin}..+${windows.band.openMax},`
+        + ` grant window ${windows.band.windowCycles} cyc, quiet-span spread ${windows.spanSpread}`);
+      const total = transfer.inside + transfer.insideLoose + transfer.outside;
+      console.log(`  landing: ${transfer.inside} stops strictly inside, ${transfer.insideLoose} within the`
+        + ` unknown-offset band, ${transfer.outside} outside`
+        + ` (${(100*(transfer.inside+transfer.insideLoose)/Math.max(1,total)).toFixed(1)}% of ${total});`
+        + ` commits carried over ${transfer.carried}, ambiguous ${transfer.ambiguous}`);
+      if (transfer.landing.length) {
+        const req = transfer.landing.map((l) => l.request).sort((a,b)=>a-b);
+        console.log(`  request offset from the earliest opening: p10 ${q(req,.1)?.toFixed(0)}`
+          + ` p50 ${q(req,.5)?.toFixed(0)} p90 ${q(req,.9)?.toFixed(0)} Z80 cyc`);
+      }
+      // A candidate transfer has to land in the window it aimed at. This is a
+      // TIMING verdict, so an exploratory case reports it and a --strict run
+      // fails on it; a payload or commit fault is fatal either way.
+      if (total && transfer.outside) result.errors.push("window landing");
+    }
+    if (!c.grab.hint) {
+      const bins = new Set();
+      let j=0;
+      for (const [at] of steady) {
+        while (j+1 < log.dac.length && log.dac[j+1].time <= at) j++;
+        bins.add(Math.min(31,Math.floor(32*(at-log.dac[j].time)/r.cfg.periodNum)));
+      }
+      result.phaseBins = [...bins].sort((a,b)=>a-b);
+      console.log(`  ${(steady.length/measuredSeconds).toFixed(2)} requests/s,`
+        + ` ${(steady.length*c.grab.bytes/measuredSeconds).toFixed(2)} B/s; request phase ${bins.size}/32 bins`);
+    } else {
+      console.log(`  ${(steady.length/measuredSeconds).toFixed(2)} requests/s,`
+        + ` ${(steady.length*c.grab.bytes/measuredSeconds).toFixed(2)} B/s`);
+    }
+    if (c.grab.cooperative && transfer.delays.length) {
       const ds = transfer.delays;
       console.log(`  notification→request ${Math.min(...ds).toFixed(2)}..${Math.max(...ds).toFixed(2)} Z80 cyc;`
         + ` masked polling ${(100*transfer.polling.reduce((a,b)=>a+b,0)/a.span).toFixed(2)}% of wall time`);
-      result.transfer = { delayMin: Math.min(...ds), delayMax: Math.max(...ds),
-        maskedPollingPct: 100*transfer.polling.reduce((a,b)=>a+b,0)/a.span };
+      Object.assign(result.transfer, { delayMin: Math.min(...ds), delayMax: Math.max(...ds),
+        maskedPollingPct: 100*transfer.polling.reduce((a,b)=>a+b,0)/a.span });
     }
   }
   console.log(`  ${result.errors.length ? result.errors.join("; ") : "criteria pass"}`);
+  globalThis.console.log(`${result.errors.length ? (c.informational ? "info FAIL" : "FAIL") : "ok"} ${c.name}`
+    + `: ${a.samples.length} samples, ${a.rate.toFixed(2)} Hz (${a.errorPct.toFixed(4)}%),`
+    + ` gap ${a.sorted[0]}..${a.sorted.at(-1)} master`);
   if (c.everyFamily) {
     const st = times(log.stops);
     everyRows.push({ family: c.everyFamily, every: c.grab.every, errorPct: a.errorPct,
@@ -307,8 +377,10 @@ for (const c of selected) {
       max: a.sorted.at(-1), pass: !result.errors.length });
   }
   console.log(`  rom ${r.sha} · ${stampLine(r.cfg)} `);
+  for (const line of out) globalThis.console.log(line);
   writeFileSync(r.log.replace(/\.log$/, ".json"), JSON.stringify({
-    ...result, case: c, cfg: r.cfg, rom: r.sha, coreHash, seconds: SECONDS,
+    ...result, case: r.resolved, cli: { compensation: COMP, captureOffset: CAPOFF, fault: FAULT,
+      marks: MARKS, strict: STRICT }, cfg: r.cfg, rom: r.sha, coreHash, seconds: SECONDS,
     rate: a.rate, errorPct: a.errorPct, intervalMin: a.sorted[0], intervalMax: a.sorted.at(-1),
     inside5: a.inside5, inside10: a.inside10, holes: a.holes.length,
     requests: steady.length, requestsPerSecond: steady.length/measuredSeconds,

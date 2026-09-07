@@ -65,10 +65,15 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false } = {}) {
   if (n < 0) throw new Error(`slot overrun by ${-n} cycles`);
   const allow = new Set(dead);
   if (n === 0) return [];
-  // A stretch the 68000 is EXPECTED to take the bus inside wants the shortest
-  // instructions there are: BUSACK is granted at an M-cycle boundary, so the
-  // grant lands within 4 cycles of the request on a run of `nop`s, where a
-  // `djnz` iteration lets it slide by up to 13. Bytes are the price — one a
+  // A stretch the 68000 is EXPECTED to take the bus inside is filled with the
+  // shortest instruction there is, so that the boundaries the grant can land
+  // on form a UNIFORM 4-cycle lattice. BUSREQ is sampled at the end of the
+  // machine cycle in flight (Zilog Z80 CPU User Manual, bus request/acknowledge)
+  // — not at the end of the instruction, so a branch-taken `djnz` is not 13
+  // cycles of blindness; it is 5/4/4, and the spread comes from the boundaries
+  // being unevenly spaced rather than from the instruction's length. What the
+  // measurement shows is the narrowing: 53..65 cycles of modelled stop under a
+  // `djnz` window against 62.8..68.3 under nops. Bytes are the price — one a
   // cycle-quartet — and it is paid only where a stall is planned.
   if (nopsOnly) {
     if (n % 4) throw new Error(`a nop-only pad must be a multiple of 4 cycles, not ${n}`);

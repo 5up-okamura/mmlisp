@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..fc7157e 100644
+index 4f41271..ed826b1 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -77,6 +77,21 @@ index 4f41271..fc7157e 100644
  	if (address >= 0xE00000) {
  		address &= 0xFFFF;
  		((uint8_t *)gen->work_ram)[address ^ 1] = value;
+@@ -1963,6 +1984,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
+ {
+ 	m68k_context *context = vcontext;
+ 	genesis_context *gen = context->system;
++	// A 68000-side timestamp channel. $A130F1 is inside the region a cartridge
++	// mapper would decode and that this machine ignores, so an instrumented ROM
++	// can stamp its own progress without touching the Z80 or the VDP. It is a
++	// real bus write with a real cost: a ROM built with marks is a DIFFERENT
++	// ROM from the one under test, and is reported as such.
++	if (location == 0xA130F1) {
++		mml_probe_log(MML_PROBE_MARK, value, context->cycles);
++	}
+ 	uint8_t has_tmss = gen->version_reg & 0xF;
+ 	if (has_tmss && location >= 0xA14000 && location <= 0xA14003) {
+ 		uint32_t offset = location >> 1 & 1;
 diff --git a/util.c b/util.c
 index d8ba757..79664fd 100644
 --- a/util.c
@@ -108,7 +123,7 @@ index d8ba757..79664fd 100644
 +	fwrite(rec, 1, sizeof(rec), mml_probe_file);
 +}
 diff --git a/util.h b/util.h
-index 8b7d75d..5dfee58 100644
+index 8b7d75d..1390717 100644
 --- a/util.h
 +++ b/util.h
 @@ -2,6 +2,7 @@
@@ -119,7 +134,7 @@ index 8b7d75d..5dfee58 100644
  #include <time.h>
  #include <wchar.h>
  #include <stdarg.h>
-@@ -112,4 +113,28 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+@@ -112,4 +113,30 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
  FILE* fopen_wrapper(const char *path, const char *mode);
  #endif
  
@@ -145,9 +160,28 @@ index 8b7d75d..5dfee58 100644
 +#define MML_PROBE_POLL   12   /* first unrequested BUSACK read after release */
 +#define MML_PROBE_COMMIT 13   /* 68k writes local cooperative commit byte */
 +#define MML_PROBE_COPY   11   /* value = queue offset << 8 | transferred byte */
++#define MML_PROBE_HINT   14   /* the VDP raised the horizontal interrupt; value = line */
++#define MML_PROBE_MARK   15   /* 68k byte write to $A130F1; value = the mark written */
 +void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
 +
  #endif //UTIL_H_
+diff --git a/vdp.c b/vdp.c
+index 91edce3..25fe500 100644
+--- a/vdp.c
++++ b/vdp.c
+@@ -2277,6 +2277,12 @@ static void vdp_advance_line(vdp_context *context)
+ 		context->flags2 |= FLAG2_HINT_PENDING;
+ 		context->pending_hint_start = context->cycles;
+ 		context->hint_counter = context->regs[REG_HINT];
++		// The instant the VDP RAISES the horizontal interrupt, which is not the
++		// instant the 68000 takes it: the mask, the instruction in flight and
++		// the handler's own prologue all sit in between. Logged here rather
++		// than at adjust_int_cycle() so that a tick raised while level 4 is
++		// masked — the one a busy-waiting handler loses — is still recorded.
++		mml_probe_log(MML_PROBE_HINT, context->vcounter, context->cycles);
+ 	}
+ }
+ 
 diff --git a/ym2612.c b/ym2612.c
 index c2973d1..de647c7 100644
 --- a/ym2612.c
