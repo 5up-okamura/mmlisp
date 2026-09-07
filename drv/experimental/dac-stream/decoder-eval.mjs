@@ -1,126 +1,242 @@
-// Does observation ALONE settle the phase? (§13.3 step 3, R4.)
+// Does observation ALONE settle the phase, and how far? (§13.3 step 3, R4;
+// rebuilt for R5 §15.2 B/C.)
 //
-//   node drv/experimental/dac-stream/decoder-eval.mjs [--seconds N]
+//   npm --prefix drv run dac-stream:decoder [-- --seconds N] [--reuse]
 //
-// Runs the observer cases on BlastEm, calibrates the decoder's tables, decodes
-// every run using nothing but the bytes the Z80 read and the read's index in
-// the schedule, and scores the result against the instrument's own clock —
-// which is used HERE and nowhere else.
+// Three rules this harness exists to keep:
 //
-// It reports what the decoder cannot distinguish instead of filling it in.
+//   1. CALIBRATION LOGS ARE NOT VERIFICATION LOGS. The two sets are declared
+//      below and their disjointness is asserted, not assumed.
+//   2. THE READ SPACING COMES FROM THE GENERATED SCHEDULE, not from the
+//      instrument's timestamps. A spacing learned from the run it is scoring
+//      can normalise away a wrong nominal value.
+//   3. A LOG IS ONLY USED IF IT IS THIS ROM, THIS CORE AND THESE SECONDS. The
+//      rom hash is recomputed from the case, so a stale file in the output
+//      directory cannot be read as a fresh result.
+//
+// It ends in a verdict and a non-zero exit, not in a printout.
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CASES } from "./cases.mjs";
+import { buildCase } from "./case-config.mjs";
 import { readProbe } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
-  learnSpacing, scoreDecode, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
+  scoreDecode, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const OUT = join(here, "..", "..", "out", "dac-stream");
+// `--out DIR` exists so the harness's own refusals — no log, stale log, empty
+// log — can be exercised against a directory that does not have what it needs.
+const OUT = process.argv.includes("--out")
+  ? process.argv[process.argv.indexOf("--out") + 1]
+  : join(here, "..", "..", "out", "dac-stream");
+const BLAST = join(here, "..", "..", "out", "blastem");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
-const SECONDS = arg("seconds", "2");
+const SECONDS = Number(arg("seconds", "2"));
 
-const H_ONLY = ["hv observer, Z80 reads h", "hv observer, unrepaid 1B stall",
-  "hv observer, unrepaid 16B stall", "hv observer, unrepaid 64B stall",
-  // The same decoder, the same tables, from seven other starting phases.
-  ...[1, 2, 3, 4, 5, 6, 7].map((k) => `hv observer, boot phase ${k}`)];
-const V_AND_H = ["hv observer, Z80 reads v+h", "hv observer, V+H, unrepaid 16B stall",
+// ── the roles, declared and enforced ──────────────────────────────────────
+const CALIBRATE = ["hv observer, unrepaid 1B stall", "hv observer, unrepaid 16B stall",
+  "hv observer, unrepaid 64B stall"];
+const CALIBRATE_VH = ["hv observer, V+H, unrepaid 16B stall",
   "hv observer, V+H, unrepaid 64B stall", "hv observer, V+H, unrepaid 256B stall"];
+// Verified against the contract: displacements here stay well inside half a
+// line, which is the condition H can actually promise anything under.
+const VERIFY = ["hv observer, Z80 reads h", "hv observer, load timed in place",
+  ...[1, 2, 3, 4, 5, 6, 7].map((k) => `hv observer, boot phase ${k}`)];
+// Kept to demonstrate the limit, not to pass it: these carry displacements
+// past half a line, which H cannot see.
+const LIMIT = ["hv observer, unrepaid 64B stall"];
+const overlap = VERIFY.filter((n) => CALIBRATE.includes(n));
+if (overlap.length) { console.error(`decoder-eval: ${overlap} is both calibration and verification`); process.exit(2); }
+
+const core = ["blastem_libretro.dylib", "blastem_libretro.so"]
+  .map((f) => join(BLAST, f)).find(existsSync);
+if (!core) { console.error("decoder-eval: BlastEm is not built — run `sh drv/blastem/setup.sh`"); process.exit(2); }
+const coreHash = createHash("sha256").update(readFileSync(core)).digest("hex");
 
 if (!argv.includes("--reuse")) {
   console.log(`running the observer cases for ${SECONDS}s each…`);
   for (const name of ["hv observer, Z80 reads h", "hv observer, Z80 reads v+h",
-    "unrepaid", "V+H, unrepaid", "boot phase"])
+    "load timed in place", "unrepaid", "V+H, unrepaid", "boot phase"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
-      "--seconds", SECONDS], { stdio: ["ignore", "ignore", "inherit"] });
+      "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
 }
 
-const byName = new Map();
+// ── log selection, verified against the rom the case produces ─────────────
+const failures = [];
+const caseOf = (name) => {
+  const c = CASES.find((x) => x.name === name);
+  if (!c) throw new Error(`no case named "${name}"`);
+  return c;
+};
+// The rom each case produces, recomputed here from the case itself, so that a
+// log can be checked against what it claims to be.
+const expectedRom = new Map();
+for (const name of [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, "hv observer, Z80 reads v+h"])
+  expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT }));
+
+// A name is not an identity. The output directory accumulates logs from every
+// run ever made, so a case is looked up by (name, rom, core, seconds) and the
+// newest match wins; anything else is a stale file that happens to share a
+// name, which is exactly how a previous configuration got read as a result.
+const logs = new Map();
 for (const n of readdirSync(OUT).filter((n) => n.endsWith(".log"))) {
-  try {
-    const j = JSON.parse(readFileSync(join(OUT, n.replace(/\.log$/, ".json")), "utf8"));
-    if (j.seconds === Number(SECONDS)) byName.set(j.name, join(OUT, n));
-  } catch {}
+  let j; try { j = JSON.parse(readFileSync(join(OUT, n.replace(/\.log$/, ".json")), "utf8")); } catch { continue; }
+  if (j.seconds !== SECONDS || j.coreHash !== coreHash) continue;
+  const file = join(OUT, n);
+  const key = `${j.name}\u0000${j.rom}`;
+  const at = statSync(file).mtimeMs;
+  const prev = logs.get(key);
+  if (!prev || at > prev.at) logs.set(key, { file, rom: j.rom, at });
 }
 const need = (name) => {
-  const f = byName.get(name);
-  if (!f) { console.error(`decoder-eval: no ${SECONDS}s log for "${name}" — run without --reuse`); process.exit(2); }
-  return f;
+  const want = expectedRom.get(name)?.sha;
+  const got = want ? logs.get(`${name}\u0000${want}`) : null;
+  if (!got) {
+    const others = [...logs.keys()].filter((k) => k.startsWith(`${name}\u0000`))
+      .map((k) => k.split("\u0000")[1]);
+    failures.push(`no ${SECONDS}s log for "${name}" at rom ${want} from this core`
+      + (others.length ? ` (found ${others.join(", ")} — stale)` : ""));
+    return null;
+  }
+  if (!readFileSync(got.file).length) { failures.push(`the log for "${name}" is empty`); return null; }
+  return got.file;
 };
-const hs = (name) => readProbe(readFileSync(need(name))).z80vdp
-  .filter((e) => (e.value >>> 8) === 9).map((e) => ({ h: e.value & 255, time: e.time }));
-const vh = (name) => {
-  const es = readProbe(readFileSync(need(name))).z80vdp, out = [];
+
+const hs = (name) => { const f = need(name); if (!f) return null;
+  return readProbe(readFileSync(f)).z80vdp
+    .filter((e) => (e.value >>> 8) === 9).map((e) => ({ h: e.value & 255, time: e.time })); };
+const vh = (name) => { const f = need(name); if (!f) return null;
+  const es = readProbe(readFileSync(f)).z80vdp, out = [];
   for (let i = 1; i < es.length; i++)
     if ((es[i - 1].value >>> 8) === 8 && (es[i].value >>> 8) === 9)
       out.push({ v: es[i - 1].value & 255, h: es[i].value & 255,
         time: es[i].time, vtime: es[i - 1].time });
-  return out;
+  return out; };
+
+// The spacing pattern comes from the GENERATED SCHEDULE, and the measurement
+// is then required to agree with it rather than to define it.
+const spacingOf = (name) => {
+  const sp = expectedRom.get(name)?.gen.observer?.spacingMaster;
+  if (!sp) throw new Error(`case "${name}" is not an observer case`);
+  return sp;
+};
+const checkSpacing = (name, times) => {
+  const sp = spacingOf(name);
+  const seen = new Map();
+  for (let n = 1; n < times.length; n++) {
+    const k = n % sp.length;
+    (seen.get(k) ?? seen.set(k, []).get(k)).push(times[n] - times[n - 1]);
+  }
+  let worst = 0;
+  for (const [k, xs] of seen) {
+    xs.sort((a, b) => a - b);
+    worst = Math.max(worst, Math.abs(xs[Math.floor(xs.length / 2)] - sp[k]));
+  }
+  if (worst > 16) failures.push(`"${name}": the schedule says the reads are`
+    + ` ${sp.join("/")} master apart and the run's medians differ by ${worst}`);
+  return worst;
 };
 
 // ── calibration ───────────────────────────────────────────────────────────
-// These are properties of the VDP's counters, not of a run: a shipped decoder
-// carries them as constants. They are derived from measurement here because
-// that is the description of the counter available, and deriving them again is
-// a step that has to happen on hardware before any of this is a hardware claim.
-// The dense phase coverage they need only exists in a DISTURBED run — a clean
-// schedule samples the same 57 phases forever.
-// CALIBRATION DATA IS NOT EVALUATION DATA (§13.2.2). The tables are built from
-// the three disturbed runs, which are the only ones with dense phase coverage;
-// every boot phase, every load and every frame scored below is data the tables
-// have never seen.
-const CALIBRATE_ON = ["hv observer, unrepaid 1B stall", "hv observer, unrepaid 16B stall",
-  "hv observer, unrepaid 64B stall"];
-const dense = CALIBRATE_ON.flatMap(hs);
-const origin = findLineOrigin(V_AND_H.slice(1).flatMap(vh).map((x) => ({ v: x.v, time: x.vtime })));
+const denseSets = CALIBRATE.map(hs);
+const vhSets = CALIBRATE_VH.map(vh);
+if (denseSets.includes(null) || vhSets.includes(null)) {
+  for (const f of failures) console.error(`decoder-eval: ${f}`);
+  process.exit(1);
+}
+const dense = denseSets.flat(), vhAll = vhSets.flat();
+const origin = findLineOrigin(vhAll.map((x) => ({ v: x.v, time: x.vtime })));
 const cal = buildPhaseTable(dense, { origin: origin.origin });
-const vcal = buildLineTable(V_AND_H.slice(1).flatMap(vh).map((x) => ({ v: x.v, time: x.vtime })),
-  { origin: origin.origin });
-console.log(`\ncalibration (chip constants, derived from measurement)`);
-console.log(`  line origin ${origin.origin} master — chosen because it leaves`
-  + ` ${origin.multi} of ${origin.values} V values straddling two lines`);
-console.log(`  H → phase: ${cal.covered} of 256 values covered, widest group span`
-  + ` ${cal.widestGroupSpanMaster} master`);
-console.log(`  V → line: ${vcal.covered} of 256 values, ${vcal.ambiguous} answering to more than one`);
+const vcal = buildLineTable(vhAll.map((x) => ({ v: x.v, time: x.vtime })), { origin: origin.origin });
+console.log(`\ncalibration — from ${CALIBRATE.length} runs used for NOTHING else`);
+console.log(`  line origin ${origin.origin} master (${origin.multi} of ${origin.values} V values still straddle)`);
+console.log(`  H → phase: ${cal.covered} of 256 values, widest group span ${cal.widestGroupSpanMaster} master`);
+console.log(`  V → line: ${vcal.covered} of 256, ${vcal.ambiguous} answering to more than one`);
 
-const pct = (a, b) => `${(100 * a / Math.max(1, b)).toFixed(2)}%`;
+// ── verification ──────────────────────────────────────────────────────────
+const report = (name, s, spacingErr) => {
+  console.log(`${name}`);
+  console.log(`  in-line displacement: worst error ${s.inLine.worstMaster} master`
+    + ` (${(s.inLine.worstMaster / 15).toFixed(1)} Z80 cyc), ${s.inLine.withinTolerance}`
+    + ` of ${s.inLine.of} within tolerance · schedule spacing agrees to ${spacingErr} master`);
+  console.log(`  visible at all: ${s.visible.realShifts} real displacements,`
+    + ` ${s.visible.seen} reported, ${s.visible.invisible} INVISIBLE to H (a whole`
+    + ` number of lines) · ${s.visible.beyondHalfLine} past half a line, where H`
+    + ` reports the short way round · ${s.visible.nearHalfLine} inside the guard band`);
+  console.log(`  offset claim (MODULO ONE LINE): checked on ${s.offset.checked} reads where`
+    + ` sync was called valid, ${s.offset.agreed} agreed, worst ${s.offset.worstMaster} master`
+    + ` · the real un-wrapped offset reached ${s.offset.trueUnwrappedMaxMaster} master`);
+  if (s.visible.beyondHalfLine && s.sync.valid)
+    console.log(`  NOTE: ${s.sync.valid} reads still claimed valid sync while`
+      + ` ${s.visible.beyondHalfLine} displacements passed half a line. H CANNOT INVALIDATE`
+      + ` ITS OWN CLAIM — the claim is only as good as an external guarantee that`
+      + ` displacements stay small.`);
+  console.log(`  sync states: ${Object.entries(s.sync).map(([k, v]) => `${k} ${v}`).join(", ")}`
+    + ` · events: ${Object.entries(s.events).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  for (const [k, xs] of Object.entries(s.examples))
+    if (xs.length) console.log(`  first ${k}:`, JSON.stringify(xs));
+};
 
-console.log(`\n── H ALONE ──────────────────────────────────────────────────`);
-const spacingH = learnSpacing(hs(H_ONLY[0]).map((x) => x.time), 1);
-for (const name of H_ONLY) {
-  const r = hs(name), times = r.map((x) => x.time);
+console.log(`\n── H alone, verification set (never used for calibration) ──`);
+for (const name of VERIFY) {
+  const r = hs(name); if (!r) continue;
+  const times = r.map((x) => x.time);
+  const spacing = spacingOf(name);
+  const spacingErr = checkSpacing(name, times);
   const rows = decode(r.map((x) => x.h), { table: cal.table,
-    steps: spacingH.map((v) => v % LINE_MASTER) });
-  const s = scoreDecode(rows, times, spacingH);
-  console.log(`${name}`);
-  console.log(`  ${s.scored} decoded · worst error vs the instrument ${s.worstErrorMaster} master`
-    + ` (${(s.worstErrorMaster / 15).toFixed(1)} Z80 cyc) · within tolerance ${pct(s.withinToleranceFraction*s.scored, s.scored)}`);
-  console.log(`  detection TP ${s.truePositive} FP ${s.falsePositive} FN ${s.falseNegative}`
-    + ` · unknown reading ${s.unknown}`);
-  console.log(`  beyond H's reach: ${s.wrapped} shifts (${pct(s.wrapped, s.scored)}) exceeded half a`
-    + ` line; worst real shift ${s.worstTrueShiftMaster} master`
-    + ` (${(s.worstTrueShiftMaster / 15).toFixed(0)} Z80 cyc)`);
+    steps: spacing.map((v) => v % LINE_MASTER) });
+  const s = scoreDecode(rows, times, spacing);
+  report(name, s, spacingErr);
+  // The contract these have to meet.
+  if (s.scored < 500) failures.push(`"${name}": only ${s.scored} reads scored`);
+  if (s.inLine.worstMaster > 40) failures.push(`"${name}": in-line error ${s.inLine.worstMaster} master`);
+  if (s.inLine.withinTolerance !== s.inLine.of) failures.push(`"${name}": ${s.inLine.of - s.inLine.withinTolerance} in-line estimates outside tolerance`);
+  if (s.visible.invisible) failures.push(`"${name}": ${s.visible.invisible} displacements were invisible`);
+  if (s.visible.beyondHalfLine) failures.push(`"${name}": ${s.visible.beyondHalfLine} displacements passed half a line, so the contract H needs does not hold here`);
+  if (s.offset.agreed !== s.offset.checked) failures.push(`"${name}": the offset claim was wrong on ${s.offset.checked - s.offset.agreed} reads`);
+  if (s.events.unknown) failures.push(`"${name}": ${s.events.unknown} readings had no calibration`);
 }
 
-console.log(`\n── V AND H ──────────────────────────────────────────────────`);
-const spacingVH = learnSpacing(vh(V_AND_H[0]).map((x) => x.time), 1);
-for (const name of V_AND_H) {
-  const r = vh(name), times = r.map((x) => x.time);
-  const rows = decodeVH(r, { hTable: cal.table, vTable: vcal.table,
-    candidates: vcal.candidates, steps: spacingVH.map((v) => v % FRAME_MASTER) });
-  const s = scoreDecode(rows, times, spacingVH, { modulus: FRAME_MASTER, tolerance: 40 });
-  console.log(`${name}`);
-  console.log(`  ${s.scored} decoded · worst error ${s.worstErrorMaster} master`
-    + ` · within tolerance ${pct(s.withinToleranceFraction*s.scored, s.scored)}`);
-  console.log(`  undecidable from the reading: ${s.ambiguous} (${pct(s.ambiguous, rows.length)})`
-    + ` — a V value that occurs twice a frame`);
-  // The residual misses left in a disturbed run are a whole line each: V is
-  // read 16 cycles before H, and a stall landing between the two reads breaks
-  // the rule that decides whether the line advanced in between.
-  if (s.misses.length) console.log(`  first misses (residual vs truth, master):`,
-    s.misses.slice(0, 3).map((m) => `${m.residual}/${m.truth}`).join(" "));
+console.log(`\n── H alone, the limit it cannot pass ──`);
+for (const name of LIMIT) {
+  const r = hs(name); if (!r) continue;
+  const times = r.map((x) => x.time);
+  const spacing = spacingOf(name);
+  const rows = decode(r.map((x) => x.h), { table: cal.table,
+    steps: spacing.map((v) => v % LINE_MASTER) });
+  const s = scoreDecode(rows, times, spacing);
+  report(name, s, checkSpacing(name, times));
+  // This case exists to SHOW the blind spot. If it stops showing it, the
+  // demonstration is broken and the limit is no longer being measured.
+  if (!s.visible.beyondHalfLine) failures.push(`"${name}" no longer demonstrates H's limit`);
 }
-console.log(`\nThe instrument's absolute clock appears only in scoreDecode(); the`
-  + `\ndecoders above ran on the read bytes and the schedule index alone.`);
+
+console.log(`\n── V and H, for comparison only ──`);
+{
+  const name = "hv observer, Z80 reads v+h";
+  const r = vh(name);
+  if (r) {
+    const times = r.map((x) => x.time);
+    const spacing = spacingOf(name);
+    const rows = decodeVH(r, { hTable: cal.table, vTable: vcal.table,
+      candidates: vcal.candidates, steps: spacing.map((v) => v % FRAME_MASTER) });
+    const amb = rows.filter((x) => x.state === "ambiguous").length;
+    console.log(`${name}`);
+    console.log(`  ${rows.length} reads, ${amb} undecidable because the V value answers to two`
+      + ` lines — reported as a candidate pair, never chosen`);
+    console.log(`  NOT scored against the instrument here: while a reading is ambiguous the`);
+    console.log(`  decode carries the PREDICTION forward, so its residual and the instrument's`);
+    console.log(`  difference are measured from different points. That comparison is R5 §15.2 C`);
+    console.log(`  work and is not claimed.`);
+  }
+}
+
+const bad = [...new Set(failures)];
+console.log(`\n${bad.length ? "FAIL" : "ok"} — ${VERIFY.length} verification runs,`
+  + ` ${CALIBRATE.length} calibration runs, ${bad.length} problems`);
+for (const f of bad) console.log(`  ${f}`);
+process.exit(bad.length ? 1 : 0);

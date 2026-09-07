@@ -57,8 +57,31 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
       ...(store ? [op(`ld   ($${store_at.toString(16)}),a`, 13, { what: "keep the reading" })] : []),
     ];
   });
+  // WHERE THE READS ACTUALLY FALL, from the laid-out slots rather than from a
+  // measurement (R5 §15.2 C). A read sits after whatever work its slot already
+  // carried, and that work is not the same in every slot — a block-edge slot
+  // pushes it later — so the spacing between reads is a pattern, not a
+  // constant. The decoder needs this pattern, and taking it from the
+  // instrument's own timestamps would let a wrong nominal spacing normalise
+  // itself away.
+  const first = reads[0] ? `HV ${reads[0].toUpperCase()} read` : null;
+  const at_cycles = [];
+  let elapsed = 0;
+  for (const slot of gen.slots) {
+    let inSlot = 0;
+    for (const o of slot.ops) {
+      if (o.what === first) { at_cycles.push(elapsed + inSlot); break; }
+      inSlot += o.cycles;
+    }
+    elapsed += slot.cycles;
+  }
+  const loopCycles = elapsed;
+  const spacingCycles = at_cycles.map((t, i) =>
+    i + 1 < at_cycles.length ? at_cycles[i + 1] - t : at_cycles[0] + loopCycles - t);
   return { ...gen,
     observer: { reads, store, at, every, observedSlots: observed,
       readCycles: VDP.readCycles, workPerSlot: reads.length * VDP.readCycles + (store ? 13 : 0),
-      worstSlotPct: gen.placement.worst.workPct } };
+      worstSlotPct: gen.placement.worst.workPct,
+      loopCycles, readOffsetCycles: at_cycles, spacingCycles,
+      spacingMaster: spacingCycles.map((c) => c * cfg.machine.z80Div) } };
 }

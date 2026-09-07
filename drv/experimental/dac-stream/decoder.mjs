@@ -134,9 +134,14 @@ export function decodeVH(pairs, { hTable, vTable, candidates = null, steps, gapM
     const options = ords.map((o) => ((o + crossed) % FRAME_LINES) * lineMaster + phase);
     const full = options[0];
     if (prev === null) {
-      out.push({ n, phase: full, phaseMin: Math.min(...options), phaseMax: Math.max(...options),
-        residual: null, state: "acquiring" });
-      prev = full; continue;
+      // A first reading with more than one candidate fixes nothing: adopting
+      // options[0] as the origin would make every later residual depend on a
+      // coin flip (R5 §15.2 C).
+      out.push({ n, phase: options.length > 1 ? null : full,
+        phaseMin: Math.min(...options), phaseMax: Math.max(...options),
+        residual: null, state: options.length > 1 ? "ambiguous" : "acquiring" });
+      if (options.length === 1) prev = full;
+      continue;
     }
     const expected = (prev + steps[n % steps.length]) % frameMaster;
     if (options.length > 1) {
@@ -158,45 +163,77 @@ export function decodeVH(pairs, { hTable, vTable, candidates = null, steps, gapM
 }
 
 /**
- * Decode a run. `steps` is how far the schedule moves the phase between read
- * n-1 and read n, in master clocks, indexed by n modulo its own length — the
- * code knows this because it is the code.
+ * Decode a run.
  *
- * Output per read: the phase the decoder believes it is at, the residual
- * against what the schedule predicted, and whether it can speak at all.
+ * THREE THINGS ARE KEPT APART (R5 §15.2 B), because conflating them is how a
+ * one-line stall disappeared from the scoring:
+ *
+ *   delta   — the displacement between two adjacent reads, MODULO ONE LINE.
+ *             This is what H measures, and all it measures.
+ *   offset  — the running sum of those deltas, which is the phase error
+ *             against the output schedule and is therefore ALSO only known
+ *             modulo one line. It is exact only while the sync claim below
+ *             holds.
+ *   sync    — whether the claim "no displacement since acquisition has been
+ *             within a guard band of half a line" still stands. When it does
+ *             not, the period number may have been lost and the offset is one
+ *             of several values, not one.
+ *
+ * A displacement of exactly one line produces delta 0 and is INVISIBLE here.
+ * That is a property of H, not a bug, and the sync state is what carries it:
+ * the decoder can only promise the offset while displacements stay small, and
+ * it cannot verify that promise from H alone.
+ *
+ * `spacing` is how far the schedule moves between read n-1 and n, in master
+ * clocks, indexed by n modulo its length. It comes from the generated code.
  */
 export function decode(readings, { table, steps, lineMaster = LINE_MASTER,
-  threshold = 24 } = {}) {
+  threshold = 24, guard = 240, indices = null } = {}) {
   const out = [];
-  let prev = null, cumulative = 0, synced = false;
+  let prev = null, prevIndex = null, offset = 0, sync = "acquiring";
+  const half = lineMaster / 2;
   for (let n = 0; n < readings.length; n++) {
     const h = readings[n];
     const phase = table[h];
+    const index = indices ? indices[n] : n;
     if (phase < 0) {                       // never calibrated: say nothing
-      out.push({ n, h, phase: null, residual: null, state: "unknown" });
-      prev = null; synced = false; continue;
+      out.push({ n, index, h, phase: null, delta: null, offset: null,
+        sync: "lost", event: "unknown" });
+      prev = null; prevIndex = null; sync = "acquiring"; continue;
     }
-    if (prev === null) {                   // the first reading fixes nothing
-      out.push({ n, h, phase, residual: null, state: "acquiring" });
-      prev = phase; synced = true; continue;
+    // A read that did not happen breaks the chain: the schedule moved by an
+    // amount this has no observation of.
+    const gap = prevIndex === null ? 0 : index - prevIndex - 1;
+    if (prev === null || gap > 0) {
+      out.push({ n, index, h, phase, delta: null, offset: null,
+        sync: prev === null ? "acquiring" : "lost",
+        event: gap > 0 ? "gap" : "acquiring" });
+      prev = phase; prevIndex = index; offset = 0; sync = "acquiring";
+      continue;
     }
     const expected = (prev + steps[n % steps.length]) % lineMaster;
-    const residual = wrap(phase - expected, lineMaster);
-    cumulative += residual;
-    const state = Math.abs(residual) <= threshold ? "locked" : "moved";
-    out.push({ n, h, phase, residual, cumulative, state });
-    prev = phase;
-    synced = state === "locked" && synced;
+    const delta = wrap(phase - expected, lineMaster);
+    offset = wrap(offset + delta, lineMaster);
+    // Near half a line the sign of the displacement is not decidable, so the
+    // period number may have been lost from here on.
+    const undecidable = Math.abs(Math.abs(delta) - half) <= guard;
+    if (undecidable) sync = "suspect";
+    else if (sync === "acquiring") sync = "valid";
+    out.push({ n, index, h, phase, delta, offset, sync,
+      event: Math.abs(delta) <= threshold ? "steady" : "moved" });
+    prev = phase; prevIndex = index;
   }
   return out;
 }
 
 /**
- * The spacing the schedule itself produces between consecutive reads, in
- * master clocks, indexed by the read's position in the pattern. These are
- * constants of the generated code; taking the median of a clean run is how
- * they are recovered here, and the check that they are right is that the same
- * run then decodes with a zero residual.
+ * The read spacing recovered from a run's timestamps.
+ *
+ * NOT FOR SCORING A RUN (R5 §15.2 C). A spacing learned from the same log it
+ * then decodes can normalise a wrong nominal value away — the evaluation takes
+ * the pattern from `generateObserver()`'s laid-out slots instead, and requires
+ * the measurement to agree with it. This stays for synthetic fixtures, where
+ * there is no generated schedule to ask.
  */
 export function learnSpacing(times, period) {
   const acc = Array.from({ length: period }, () => []);
@@ -210,42 +247,70 @@ export function learnSpacing(times, period) {
 
 /**
  * Score a decoding against what really happened. The absolute times are used
- * HERE and only here: this is the evaluation, not the decoder.
+ * HERE and only here.
  *
- * `truth` is the shift the schedule really took between two reads — the
- * measured gap less the gap the schedule was built to have — and the decoder's
- * residual is supposed to be that, wrapped into one line.
+ * Three scores, because there are three claims (R5 §15.2 B):
+ *
+ *   inLine   — how well the decoder measured the displacement WITHIN a line.
+ *              This is the small number; it says nothing about displacements
+ *              bigger than a line.
+ *   visible  — how many real displacements the decoder could see AT ALL,
+ *              counted from the truth BEFORE the modulus. A displacement of a
+ *              whole line leaves H unchanged, so it is invisible, and it is
+ *              counted here rather than quietly scoring as a true negative.
+ *   offset   — whether the running phase error the decoder claims matches the
+ *              real one, counted only over reads where it claimed valid sync,
+ *              and reported next to how many reads that was.
  */
 export function scoreDecode(rows, times, spacing, { lineMaster = LINE_MASTER,
-  tolerance = 24, disturbed = 24, modulus = null } = {}) {
-  lineMaster = modulus ?? lineMaster;
-  const counts = { locked: 0, moved: 0, unknown: 0, acquiring: 0, ambiguous: 0 };
-  let worst = 0, within = 0, scored = 0, wrapped = 0, worstTruth = 0;
-  let truePositive = 0, falsePositive = 0, falseNegative = 0, trueNegative = 0;
-  const misses = [];
+  tolerance = 24, disturbed = 24, guard = 240 } = {}) {
+  const half = lineMaster / 2;
+  const events = {}, sync = {};
+  let scored = 0, worstInLine = 0, withinTolerance = 0;
+  let realShifts = 0, seen = 0, invisible = 0, nearHalf = 0, beyondHalf = 0;
+  let offsetChecked = 0, offsetAgreed = 0, worstOffset = 0, trueOffset = 0;
+  // The real offset WITHOUT the modulus, so the reader can see whether the
+  // decoder's mod-line claim means anything on this run.
+  let trueUnwrapped = 0, worstUnwrapped = 0;
+  const examples = { invisible: [], inLine: [], offset: [] };
   for (const r of rows) {
-    counts[r.state]++;
-    if (r.residual === null) continue;
-    // The shift that really happened, and the same shift as the decoder can
-    // possibly see it. H repeats every line, so anything at or past half a line
-    // is reported as the short way round and the difference is UNKNOWABLE from
-    // H alone — counted, never quietly corrected.
+    events[r.event] = (events[r.event] ?? 0) + 1;
+    sync[r.sync] = (sync[r.sync] ?? 0) + 1;
+    if (r.delta === null) { trueOffset = 0; trueUnwrapped = 0; continue; }
     const raw = (times[r.n] - times[r.n - 1]) - spacing[r.n % spacing.length];
-    const truth = wrap(raw, lineMaster);
-    if (raw !== truth) wrapped++;
-    worstTruth = Math.max(worstTruth, Math.abs(raw));
-    const err = Math.abs(r.residual - truth);
-    scored++; worst = Math.max(worst, err);
-    if (err <= tolerance) within++; else misses.push({ n: r.n, residual: r.residual, truth });
-    const real = Math.abs(truth) > disturbed, said = r.state === "moved";
-    if (real && said) truePositive++;
-    else if (real && !said) falseNegative++;
-    else if (!real && said) falsePositive++;
-    else trueNegative++;
+    const wrapped = wrap(raw, lineMaster);
+    trueOffset = wrap(trueOffset + raw, lineMaster);
+    trueUnwrapped += raw;
+    worstUnwrapped = Math.max(worstUnwrapped, Math.abs(trueUnwrapped));
+    scored++;
+    const err = Math.abs(r.delta - wrapped);
+    worstInLine = Math.max(worstInLine, err);
+    if (err <= tolerance) withinTolerance++;
+    else if (examples.inLine.length < 3) examples.inLine.push({ n: r.n, delta: r.delta, wrapped });
+    if (Math.abs(raw) > disturbed) {
+      realShifts++;
+      if (r.event === "moved") seen++;
+      else {
+        invisible++;
+        if (examples.invisible.length < 3) examples.invisible.push({ n: r.n, raw, delta: r.delta });
+      }
+    }
+    // Past half a line the magnitude is not recoverable: the decoder reports
+    // the short way round. Counted apart from the ones it cannot see at all.
+    if (Math.abs(raw) > half) beyondHalf++;
+    if (Math.abs(Math.abs(wrapped) - half) <= guard) nearHalf++;
+    if (r.sync === "valid") {
+      offsetChecked++;
+      const d = Math.abs(wrap(r.offset - trueOffset, lineMaster));
+      worstOffset = Math.max(worstOffset, d);
+      if (d <= tolerance) offsetAgreed++;
+      else if (examples.offset.length < 3) examples.offset.push({ n: r.n, claimed: r.offset, real: trueOffset });
+    }
   }
-  return { ...counts, scored, worstErrorMaster: worst,
-    withinToleranceFraction: scored ? within / scored : 0,
-    truePositive, falsePositive, falseNegative, trueNegative,
-    wrapped, worstTrueShiftMaster: worstTruth,
-    misses: misses.slice(0, 5) };
+  return { rows: rows.length, scored, events, sync,
+    inLine: { worstMaster: worstInLine, withinTolerance, of: scored },
+    visible: { realShifts, seen, invisible, beyondHalfLine: beyondHalf, nearHalfLine: nearHalf },
+    offset: { checked: offsetChecked, agreed: offsetAgreed, worstMaster: worstOffset,
+      trueUnwrappedMaxMaster: worstUnwrapped },
+    examples };
 }

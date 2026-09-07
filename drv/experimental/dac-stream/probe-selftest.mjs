@@ -13,7 +13,7 @@ import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitR
   analyzeAdoption, analyzeZ80Hv, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
 import { generateObserver, VDP } from "./observer.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
-  learnSpacing } from "./decoder.mjs";
+  learnSpacing, scoreDecode } from "./decoder.mjs";
 
 const cfg = buildConfig();
 const expected = (i) => (i*73+19)&255;
@@ -208,20 +208,25 @@ const { table, covered } = buildPhaseTable(clean);
 assert.ok(covered > 0 && covered <= 256);
 const stepsH = learnSpacing(clean.map((r) => r.time), 1).map((v) => v % LN);
 const rowsClean = decode(clean.map((r) => r.h), { table, steps: stepsH });
-assert.equal(rowsClean.filter((r) => r.state === "moved").length, 0);   // no false alarm
-assert.equal(rowsClean.filter((r) => r.state === "unknown").length, 0);
-// A shift the schedule did not plan is seen, and measured.
+assert.equal(rowsClean.filter((r) => r.event === "moved").length, 0);   // no false alarm
+assert.equal(rowsClean.filter((r) => r.event === "unknown").length, 0);
+assert.equal(rowsClean.filter((r) => r.sync === "valid").length, rowsClean.length - 1);
+// A shift the schedule did not plan is seen, and measured — as a DISPLACEMENT
+// between two reads, which is a different claim from being back in sync.
 const shifted = clean.map((r, n) => ({ time: r.time + (n >= 300 ? 900 : 0) }));
 for (const r of shifted) r.h = hOf(r.time);
 const rowsShift = decode(shifted.map((r) => r.h), { table, steps: stepsH });
-assert.equal(rowsShift[300].state, "moved");
-assert.ok(Math.abs(rowsShift[300].residual - 900) <= UNIT);
-assert.equal(rowsShift[301].state, "locked");                          // one event, not a run
+assert.equal(rowsShift[300].event, "moved");
+assert.ok(Math.abs(rowsShift[300].delta - 900) <= UNIT);
+assert.equal(rowsShift[301].event, "steady");        // one event, not a run…
+assert.ok(Math.abs(rowsShift[301].offset - 900) <= UNIT);   // …and the offset stays
 // A reading the table has never seen is refused, not interpolated.
 const unseen = table.findIndex((v, i) => v < 0 && i < 256);
 if (unseen >= 0) {
   const hs2 = clean.map((r) => r.h); hs2[10] = unseen;
-  assert.equal(decode(hs2, { table, steps: stepsH })[10].state, "unknown");
+  const row = decode(hs2, { table, steps: stepsH })[10];
+  assert.equal(row.event, "unknown");
+  assert.equal(row.sync, "lost");
 }
 // findLineOrigin picks the origin that stops a V value from straddling lines.
 const vpairs = Array.from({ length: 400 }, (_, n) => {
@@ -251,6 +256,38 @@ const vhRows = decodeVH([{ v: 8, h: hOf(LN + 500) }, { v: 7, h: hOf(2 * LN + 500
 assert.equal(vhRows[1].state, "ambiguous");
 assert.ok(vhRows[1].phaseMax - vhRows[1].phaseMin === 6 * LN);
 assert.equal(vhRows[1].phase, null);          // no guess is recorded as a value
+
+// The decoder's three claims are scored apart (R5 §15.2 B). A displacement of
+// exactly one line leaves H unchanged: it must be counted as INVISIBLE, not as
+// a quiet true negative.
+const spacing1 = [26880];
+const aliasTimes = clean.map((r, n) => ({ time: r.time + (n >= 300 ? LN : 0) }));
+for (const r of aliasTimes) r.h = hOf(r.time);
+const aliasRows = decode(aliasTimes.map((r) => r.h), { table, steps: [26880 % LN] });
+const aliasScore = scoreDecode(aliasRows, aliasTimes.map((r) => r.time), spacing1);
+assert.equal(aliasRows[300].event, "steady");          // H saw nothing…
+assert.equal(aliasScore.visible.realShifts, 1);        // …and the score says so
+assert.equal(aliasScore.visible.invisible, 1);
+assert.equal(aliasScore.visible.seen, 0);
+// A wrong nominal spacing must show up as error, not be normalised away.
+const wrongSpacing = scoreDecode(rowsClean, clean.map((r) => r.time), [26880 + 500]);
+assert.ok(wrongSpacing.inLine.worstMaster > 400, `worst ${wrongSpacing.inLine.worstMaster}`);
+// A table with nothing in it makes every reading unknown rather than a guess.
+const blind = decode(clean.map((r) => r.h), { table: new Int16Array(256).fill(-1), steps: stepsH });
+assert.equal(blind.filter((r) => r.sync === "lost").length, blind.length);
+assert.equal(scoreDecode(blind, clean.map((r) => r.time), spacing1).scored, 0);
+// A missing reading breaks the chain instead of being absorbed into the next
+// displacement.
+const gapped = clean.filter((_, n) => n !== 100);
+const gapRows = decode(gapped.map((r) => r.h),
+  { table, steps: stepsH, indices: clean.map((_, n) => n).filter((n) => n !== 100) });
+assert.equal(gapRows[100].event, "gap");
+assert.equal(gapRows[100].sync, "lost");
+// A first V+H reading with two candidates fixes no origin.
+const firstAmb = decodeVH([{ v: 7, h: hOf(500) }, { v: 8, h: hOf(LN + 500) }],
+  { hTable: fullTable, vTable: lt.table, candidates: lt.candidates, steps: [0, LN] });
+assert.equal(firstAmb[0].state, "ambiguous");
+assert.equal(firstAmb[0].phase, null);
 
 // ── one resolved configuration (§12.3) ────────────────────────────────────
 // The compensation the CLI asks for has to reach BOTH the generated code and
@@ -367,6 +404,15 @@ if (process.argv.includes("--machine")) {
   const loaded = run(["--case","hv observer, load timed in place","--seconds","2"]);
   assert.equal(loaded.status, 0, loaded.stdout + loaded.stderr);
   assert.match(loaded.stdout, /foreground load: \d+ ticks, 5\d\d\.\d 68000 cycles/);
+  // The evaluation harness refuses to work from logs it cannot verify.
+  const evalTool = new URL("./decoder-eval.mjs", import.meta.url).pathname;
+  const emptyDir = mkdtempSync(join(tmpdir(), "dac-eval-empty-"));
+  try {
+    const r2 = spawnSync(process.execPath, [evalTool, "--reuse", "--out", emptyDir],
+      { encoding: "utf8" });
+    assert.equal(r2.status, 1, r2.stdout + r2.stderr);
+    assert.match(r2.stdout + r2.stderr, /no 2s log/);
+  } finally { rmSync(emptyDir, { recursive: true, force: true }); }
   // The load has to be the long path: an overflowing divide is caught by the
   // calibration case itself.
   const cal2 = run(["--case","load calibration","--seconds","1"]);
