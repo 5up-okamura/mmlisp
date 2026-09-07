@@ -27,7 +27,7 @@ const Z80_BANK = 0xa06000;
 // each request have to be observable from the 68000's side, not inferred from
 // the Z80's). It is a real bus write costing real cycles, so a ROM built with
 // marks is a DIFFERENT ROM and is reported as one.
-const MARK = 0xa130f1;
+const MARK = 0xa130f1, MARKW = 0xa130f2;
 export const MARKS = { entry: 1, request: 2, released: 3, skipped: 4, missed: 5,
   calBegin: 0x10, calEnd: 0x11 };
 
@@ -75,6 +75,7 @@ class M68k {
   moveSR(imm) { this.w(0x46fc); this.w(imm); }                          // move.w #i,SR
   nop() { this.w(0x4e71); }
   mark(n) { this.moveBimm(n, MARK); }                                   // 20 cycles
+  markHV() { this.moveWabsD(0xc00008, 1); this.w(0x33c1); this.l(MARKW); } // 16 + 20
   // Branches and dbra take a 16-bit displacement from the extension word.
   dbra(d, name) { this.w(0x51c8 | d); this.fix.push([this.pc, name]); this.w(0); }
   bne(name) { this.w(0x6600); this.fix.push([this.pc, name]); this.w(0); }
@@ -312,6 +313,14 @@ export function buildRom(image, samples = null, grab = null) {
       m.bra("idle");
       // ── the tick handler ────────────────────────────────────────────────
       m.label("hint");
+      // HOW WELL CAN THE 68000 SEE ITS OWN PHASE? The interrupt entry delay is
+      // 65..215 cycles under a real load, which is wider than the window it is
+      // aiming at — unless the handler can read a clock. The VDP's HV counter
+      // is the only one it can read without taking the Z80 bus, and this
+      // stamps it at entry so the mapping from what it READ to when it read it
+      // can be measured. Diagnostic: two bus writes the real handler would not
+      // make. d1 is scratch here and is reloaded below.
+      if (grab.hv) m.markHV();
       if (marks) m.mark(MARKS.entry);      // FIRST, so entry-to-mark is one write
       m.w(0x13fc); m.w(1); m.l(FLAG);      // move.b #1,(FLAG)
       m.moveLabsD(TICKS, 0); m.addqL(1, 0); m.moveLDabs(0, TICKS);
@@ -386,6 +395,7 @@ export function buildRom(image, samples = null, grab = null) {
       emitLoad(m, load, 2);
       m.bra("idle");
       m.label("hint");
+      if (grab.hv) m.markHV();             // see the computed handler's note
       if (marks) m.mark(MARKS.entry);
       m.leaAbs(SAMPLES, 0);
       m.leaAbs(Z80_BASE + 0x1d00, 1);

@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..ed826b1 100644
+index 4f41271..ad9eeb9 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -77,7 +77,19 @@ index 4f41271..ed826b1 100644
  	if (address >= 0xE00000) {
  		address &= 0xFFFF;
  		((uint8_t *)gen->work_ram)[address ^ 1] = value;
-@@ -1963,6 +1984,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
+@@ -1932,6 +1953,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
+ {
+ 	m68k_context *context = vcontext;
+ 	genesis_context *gen = context->system;
++	// The word-wide twin of the $A130F1 mark: one bus write carries a whole
++	// 16-bit reading, which is what the VDP's HV counter is.
++	if (location == 0xA130F2) {
++		mml_probe_log(MML_PROBE_MARKW, value, context->cycles);
++	}
+ 	if (location >= 0x800000) {
+ 		//do refresh check here so we can avoid adding a penalty for a refresh that happens during an IO area access
+ 		gen->refresh_counter += context->cycles - 4*MCLKS_PER_68K - gen->last_sync_cycle;
+@@ -1963,6 +1989,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -123,7 +135,7 @@ index d8ba757..79664fd 100644
 +	fwrite(rec, 1, sizeof(rec), mml_probe_file);
 +}
 diff --git a/util.h b/util.h
-index 8b7d75d..1390717 100644
+index 8b7d75d..179562a 100644
 --- a/util.h
 +++ b/util.h
 @@ -2,6 +2,7 @@
@@ -134,7 +146,7 @@ index 8b7d75d..1390717 100644
  #include <time.h>
  #include <wchar.h>
  #include <stdarg.h>
-@@ -112,4 +113,30 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+@@ -112,4 +113,31 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
  FILE* fopen_wrapper(const char *path, const char *mode);
  #endif
  
@@ -162,6 +174,7 @@ index 8b7d75d..1390717 100644
 +#define MML_PROBE_COPY   11   /* value = queue offset << 8 | transferred byte */
 +#define MML_PROBE_HINT   14   /* the VDP raised the horizontal interrupt; value = line */
 +#define MML_PROBE_MARK   15   /* 68k byte write to $A130F1; value = the mark written */
++#define MML_PROBE_MARKW  16   /* 68k word write to $A130F2; value = the word written */
 +void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
 +
  #endif //UTIL_H_

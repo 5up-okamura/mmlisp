@@ -110,6 +110,12 @@ const CASES = [
     name: `hblank grab 8B every 8 lines, ${load} load`, cfg: {}, wave: sine(256,120,1),
     cooperative: { slots: 5, compensation: 65 },
     grab: { hint: true, line: 8, bytes: 8, load }, informational: true })),
+  // Can the 68000 see its own phase? The handler stamps the VDP's HV counter
+  // at entry, which is the only clock it can read without taking the Z80 bus.
+  ...["divu", "masked"].map((load) => ({
+    name: `hblank HV at entry, ${load} load`, cfg: {}, wave: sine(256,120,1),
+    cooperative: { slots: 5, compensation: 65 },
+    grab: { hint: true, line: 8, bytes: 8, load, hv: true, marks: true }, informational: true })),
   // What the load actually costs, measured with interrupts masked and the Z80
   // untouched — so the DAC gate runs unchanged beside it and this case is
   // REQUIRED, not exploratory.
@@ -269,6 +275,7 @@ for (const c0 of selected) {
   const result = { name: c.name, informational: !!c.informational && !STRICT, errors: a.errors };
   results.push(result);
   const measuredSeconds = a.span / MCLK;
+  let landing = null;
   // The verdict is printed once EVERY check has run. It used to be printed
   // from the DAC analysis alone, so a case with a broken payload and a clean
   // clock announced itself as "ok" and only the summary disagreed.
@@ -290,13 +297,16 @@ for (const c0 of selected) {
   }
   // THE HOST'S OWN TIMELINE. Only present when the ROM was built with marks,
   // and it is a different ROM when it was.
-  if (c.grab?.marks || c.calibrate) {
+  if (c.grab?.marks || c.calibrate || c.grab?.hv) {
     const host = analyzeHost(log, { marks: !!c.grab?.marks, calibrate: !!c.calibrate });
     result.host = host;
     if (host.entryDelay) console.log(`  hint→handler entry: ${host.entryDelay.min.toFixed(0)}`
       + `..${host.entryDelay.max.toFixed(0)} 68000 cyc, p50 ${host.entryDelay.p50.toFixed(0)};`
       + ` ${host.hints} raised, ${host.serviced} timed, ${host.missedHints} lost,`
       + ` ${host.ambiguousEntries} ambiguous`);
+    if (host.hv) console.log(`  HV at entry: ${host.hv.readings} readings, ${host.hv.distinctH}`
+      + ` distinct H; worst spread within one H value ${host.hv.worstSpreadMaster} master`
+      + ` (${(host.hv.worstSpreadMaster/15).toFixed(1)} Z80 cyc)`);
     if (host.cal) {
       const f = (v) => v === null ? "?" : v.toFixed(1);
       console.log(`  instruction time (68000 cycles): mark ${f(host.cal.markCycles)},`
@@ -315,6 +325,7 @@ for (const c0 of selected) {
     const source = c.grab.debugPayload ? null : r.samples;
     const transfer = analyzeTransfers(log, steady, c.grab, source, { windows });
     result.errors.push(...transfer.errors);
+    landing = transfer.landing;
     result.transfer = { requests: steady.length, inside: transfer.inside,
       insideLoose: transfer.insideLoose, outside: transfer.outside,
       carried: transfer.carried, ambiguous: transfer.ambiguous };
@@ -384,7 +395,7 @@ for (const c0 of selected) {
     rate: a.rate, errorPct: a.errorPct, intervalMin: a.sorted[0], intervalMax: a.sorted.at(-1),
     inside5: a.inside5, inside10: a.inside10, holes: a.holes.length,
     requests: steady.length, requestsPerSecond: steady.length/measuredSeconds,
-    requestCycles: times(log.grabs), stopCycles: times(log.stops),
+    requestCycles: times(log.grabs), stopCycles: times(log.stops), landing,
   }, null, 2));
 }
 if (argv.includes("--phase-sweep")) {

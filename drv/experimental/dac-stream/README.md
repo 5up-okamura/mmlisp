@@ -488,6 +488,63 @@ window against 62.8..68.3 under nops — and the hardware's stop width and mean
 residual remain **unmeasured**. `windowSync` is a different ROM with different
 bus activity, and its results are not evidence about the plain one.
 
+## The phase contract, and why the notification-free window fails it
+
+R3 §12.2 C asks for this table before any more 68000 code. It is filled in with
+what was measured, and the last row is the verdict.
+
+| the contract asks | what there is |
+| --- | --- |
+| **identifying the target window** | Nothing identifies it. The Z80 publishes no output-boundary number, and R3 already withdrew the idea that one would resolve sub-slot phase anyway. The 68000 can only count windows forward from a single boot notification, which is exactly the open-loop prediction the rest of this table prices. |
+| **what the Z80 publishes** | Nothing, in the steady state. The one mechanism that costs no bus grab is a write into 68k work RAM through the bank window: 23 Z80 cycles, and in P2 it needs the bank pointed away from the sample ROM — nine serial writes each way, which have to be split across slots. |
+| **what the 68000 observes** | The VDP's HV counter, `$C00008`, is the only clock it can read without taking the Z80 bus. **Measured: it determines the 68000's phase to 69–74 master clocks (4.6–4.9 Z80 cycles) worst case**, across 3,304 handler entries whose raw latency spans 1,050 master under a divide load, and across 2,059 entries spanning **43,000 master** under a masked load with 210 distinct H values. The 68000's own jitter is therefore not the problem. |
+| **the phase uncertainty** | 68000 entry, uncorrected: 65..215 cycles (divide load), 60..6,027 (masked). Corrected by HV: **±69 master**. Busy-wait granularity: 70 master an iteration. Request→grant in the model: 3..6 Z80 cycles; on hardware, unmeasured. And then the Z80's own phase — the row below. |
+| **what happens when the deadline cannot be met** | Implemented: the handler counts the window and skips rather than requesting late (it used to round the wait to zero and request into a window that had gone). The criterion it skips on is only as good as the bound above it. |
+| **the cost on both CPUs** | Notification 23, commit check 46, window 64 = 133 Z80 cycles in a slot whose 2ch pad is 151 — before the bank switch. On the 68000: the HV read and the wait, plus the transfer itself. |
+
+**The row that fails is the Z80's phase, and it fails actively.** A served slot
+lasts its nominal length plus `r = hold − compensation`, so every grab shifts
+the Z80's whole timeline by `r`, and the 68000's request offset `φ` into the
+next window becomes `φ − r`. Measured over 874 grabs, `r` is a *decreasing*
+function of `φ`:
+
+| stop offset into the window, Z80 cycles | 0 | 25 | 50 | 75 | 100 |
+| --- | --- | --- | --- | --- | --- |
+| mean `r` | +2.40 | +0.33 | +0.19 | −0.83 | −2.37 |
+
+so `φ_{n+1} = φ_n − r(φ_n)` has gain **1.044 per grab**. The fixed point near
+φ = 54 **repels**: a deviation grows 4.4% a grab, and a 64-cycle window is left
+in twenty to sixty grabs — tens of milliseconds at 2,000 grabs a second. This
+reverses the earlier reading of the same behaviour. The landing phase that was
+observed "converging" was not a stability the design could use; it was where
+the system settles *after* being pushed out of the window, and no boot
+calibration can move it, which is what the three captureOffsets showed.
+
+On top of that the spread is irreducible: `r` measured over 3,449 grabs of the
+notified engine has mean 0.000 and **sd 1.136 Z80 cycles**, because the grant
+lands on different points of the nop lattice. Even with the systematic term
+removed, an open-loop 68000 random-walks out of a ±32-cycle window in about
+790 grabs.
+
+**Verdict: the notification-free scheme cannot meet the contract, and the
+reason is not the 68000.** The 68000 can locate itself to five Z80 cycles from
+a register it already has. What it cannot do is locate the *Z80*, whose phase
+moves at every transfer by an amount that neither CPU can observe and that
+pushes the aim away rather than back. Prediction would have to be re-anchored
+every twenty grabs, and re-anchoring means observing the Z80's phase — which is
+the thing being asked for.
+
+So this suspends the notification-free window, as R3 §12.2 C provides for, and
+the next thing to design is §3.2's **bounded phase correction**, as its own
+small prototype and under the conditions §3.2 already sets for one: only what
+the engine actually reads, injected phase errors across the whole range, a
+stated error bound, and a stated loss-of-sync criterion. What makes it the
+right fallback is the shape of the failure above — if the Z80's slot phase is
+held to a reference derived from the master clock, then the 68000's HV reading
+and the Z80's schedule are two views of the same clock, and the 68000 needs no
+publication at all. The notified window remains the only transfer that works
+today, and fitting *it* into the 2ch budget is the alternative branch.
+
 ## The three structural decisions
 
 **1. The slot boundary IS the DAC write.** Each output interval begins with

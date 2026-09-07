@@ -3,7 +3,7 @@ import { COOP, windowBand } from "./cooperative.mjs";
 
 export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   DACBUS: 7, STOP: 8, RESUME: 9, NOTIFY: 10, COPY: 11, POLL: 12, COMMIT: 13,
-  HINT: 14, MARK: 15 };
+  HINT: 14, MARK: 15, MARKW: 16 };
 export const Z80_DIV = 15;
 
 export function readProbe(buf) {
@@ -27,7 +27,8 @@ export function readProbe(buf) {
   return { events, dac: of(KIND.DACBUS), ym: of(KIND.DAC),
     grabs: pair(KIND.GRAB, KIND.RELEASE), stops: pair(KIND.STOP, KIND.RESUME),
     notifications: of(KIND.NOTIFY), copies: of(KIND.COPY), polls: of(KIND.POLL),
-    commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK) };
+    commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
+    hv: of(KIND.MARKW) };
 }
 
 /**
@@ -240,6 +241,34 @@ export function analyzeHost(log, { marks = false, calibrate = false } = {}) {
     const per = (v, n) => { const s = span(v); return s === null || markCost === null ? null : (s - markCost) / n / 7; };
     out.cal = { markCycles: markCost === null ? null : markCost / 7,
       nop: per(0x10, 256), divu: per(0x12, 32), divuOverflow: per(0x14, 32), divuBig: per(0x16, 32) };
+  }
+  // WHAT THE HV COUNTER IS WORTH TO THE HANDLER. Each reading is stamped with
+  // the master time at which the write happened, a fixed instruction distance
+  // after the read. If HV determines the phase, then every entry that read the
+  // same H value happened at the same offset inside its line — so the spread of
+  // (time mod line) within one H value IS the resolution, in master clocks, of
+  // the only clock the 68000 can read for free.
+  if (log.hv?.length > 1) {
+    const LINE = 3420;
+    const byH = new Map();
+    for (const e of log.hv) {
+      const h = e.value & 0xff;
+      (byH.get(h) ?? byH.set(h, []).get(h)).push(e.time % LINE);
+    }
+    let worst = 0, counted = 0, values = 0;
+    for (const [, phases] of byH) {
+      if (phases.length < 2) continue;
+      phases.sort((a, b) => a - b);
+      // A group straddling the modulus is not a spread; rotate it if so.
+      const direct = phases.at(-1) - phases[0];
+      let best = direct;
+      for (let i = 1; i < phases.length; i++)
+        best = Math.min(best, LINE - (phases[i] - phases[i-1]));
+      worst = Math.max(worst, best);
+      counted += phases.length; values++;
+    }
+    out.hv = { readings: log.hv.length, distinctH: byH.size, values,
+      counted, worstSpreadMaster: worst };
   }
   return out;
 }

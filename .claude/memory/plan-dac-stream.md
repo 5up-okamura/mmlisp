@@ -347,13 +347,43 @@ explanations — is complete. What it changed:
   --machine` green, `tools/selftest` green, baseline 7/11 (the same four
   pre-existing reds).
 
+## R3 step 2 — the phase contract, and the verdict (2026-09-07)
+
+The table §12.2 C asks for is in the prototype README. The two measurements
+that decide it:
+
+* **The 68000 can locate itself.** The VDP HV counter (`$C00008`), read at
+  handler entry, determines its phase to **69–74 master clocks (4.6–4.9 Z80
+  cycles)** — across 3,304 entries whose raw latency spans 1,050 master under
+  a divide load, and across 2,059 entries spanning **43,000 master** under a
+  masked load with 210 distinct H values. It needs no bus grab. The 68000's
+  own jitter is not the blocker.
+* **It cannot locate the Z80, and the aim actively diverges.** A served slot
+  runs long by `r = hold − compensation`, so the request offset φ obeys
+  `φ_{n+1} = φ_n − r(φ_n)`, and r is DECREASING in φ: +2.40, +0.33, +0.19,
+  −0.83, −2.37 at offsets 0/25/50/75/100 (874 grabs). Gain **1.044 per grab**;
+  the fixed point near 54 REPELS; a 64-cycle window is left in 20–60 grabs.
+  This reverses the earlier reading — the "attractor" was where the system
+  settles after being pushed OUT of the window, which is why no captureOffset
+  could move it. Separately, r has mean 0.000 and **sd 1.136** over 3,449
+  notified grabs, so even a perfect systematic term random-walks out of ±32
+  cycles in ~790 grabs.
+
+**Verdict: the notification-free window is suspended**, per §12.2 C's own
+provision. Next design unit is §3.2's bounded phase correction as its own
+prototype (only what the engine reads; injected phase errors; a stated error
+bound and loss-of-sync criterion). If the Z80's slot phase is held to a
+master-clock-derived reference, the 68000's HV reading and the Z80's schedule
+become two views of one clock and no publication is needed. The alternative
+branch is to fit the NOTIFIED window into the 2ch budget (133 of 151 cycles
+before the bank switch). Do not start either without the designer.
+
 ## What is next, in order — R3 supersedes the earlier sequence
 
 1. ~~Correct the checks and the explanations~~ — done, above.
-2. Specify the runtime phase contract: target window generation, published
-   fields and age, observable host timestamps, error bounds, expiry/skip and
-   initial/recovery synchronization. Reading the output index does not by itself
-   repair VBlank timing or provide slot phase. Z80 changes may be necessary.
+2. ~~Specify the runtime phase contract~~ — submitted, above. It cannot be met
+   by the notification-free scheme; the decision on which branch to take next
+   is the designer's.
 3. Prove the contract on P1, including real time publication and its transfer
    cost, correct long-instruction load, IRQ masking, frame crossing and recovery.
    Gate actual target-window error and every DAC interval with `--strict`.
