@@ -135,6 +135,27 @@ const CASES = [
     observer: { reads: ["v", "h"], store: true, load: "divu" } },
   { name: "hv observer in the 2ch budget + CSM", cfg: { voices: 2, complete: true, csm: true },
     observer: { reads: ["v", "h"], store: true, load: "divu" } },
+  // …and with the disturbance the observer exists to notice: a plain,
+  // UNREPAID bus grab. The DAC gate fails by construction here — that is the
+  // injected fault — so these are exploratory; what is being judged is whether
+  // the readings show it.
+  ...[1, 16, 64].map((bytes) => ({
+    name: `hv observer, unrepaid ${bytes}B stall`, cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "divu",
+      stall: { every: 2000, bytes } }, informational: true })),
+  // The same question from a different starting phase. Nops before the bus is
+  // released move the Z80's whole schedule against the VDP's counters; 40 of
+  // them is 280 master, and eight steps walk most of a line.
+  ...[1, 2, 3, 4, 5, 6, 7].map((k) => ({
+    name: `hv observer, boot phase ${k}`, cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], store: true, load: "divu", bootNops: 40 * k } })),
+  // H alone repeats every line, so a shift of more than half a line is
+  // reported the short way round. These read V as well, which is what a
+  // decoder needs to tell one line from another.
+  ...[16, 64, 256].map((bytes) => ({
+    name: `hv observer, V+H, unrepaid ${bytes}B stall`, cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["v", "h"], store: true, load: "divu",
+      stall: { every: 2000, bytes } }, informational: true })),
   // Computed timing: every line ticks; the handler waits out the remainder to
   // the next window and grabs there. `path` is the handler's fixed cost in
   // master clocks from tick to request, set from where the grabs land.

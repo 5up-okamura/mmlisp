@@ -2,7 +2,7 @@
   "name": "mmlispdrv",
   "private": true,
   "type": "module",
-  "description": "MMLispDRV — Z80 sound driver (Phase 3) with a first-party assemble/emulate/trace toolchain",
+  "description": "MMLispDRV \u2014 Z80 sound driver (Phase 3) with a first-party assemble/emulate/trace toolchain",
   "scripts": {
     "tables": "node tools/gen-tables.mjs",
     "emit-bin": "node tools/emit-bin.mjs",
@@ -37,6 +37,7 @@
     "verify:ab": "node tools/ab-gate.mjs",
     "mirrors": "node tools/rate-mirrors.mjs",
     "verify:all": "npm run mirrors && npm run selftest && npm run verify:engine && npm run dac && npm run c-gate && npm run ring && npm run sgdk:lint && npm run verify:ab",
-    "verify:engine": "npm run engine && node tools/slot-gate.mjs ../examples/source/ab-core.mmlisp --frames 400 && node tools/slot-gate.mjs tests/stress-m1.mmlisp --frames 400 && node tools/slot-gate.mjs ../examples/source/demo1.mmlisp --frames 400 && node tools/slot-gate.mjs tests/m3-voice.mmlisp --frames 250 && node tools/slot-gate.mjs tests/m3-macro-multi.mmlisp --frames 300 && node tools/slot-gate.mjs tests/m2-pcmloop.mmlisp --frames 250 && node tools/slot-gate.mjs tests/m3-pcm-softmix.mmlisp --frames 300 && node tools/slot-gate.mjs tests/m3-pcm-vol.mmlisp --frames 260 && node tools/slot-gate.mjs tests/m3-pcm-volmix.mmlisp --frames 260 && node tools/slot-gate.mjs tests/m3-pcm-master.mmlisp --frames 150 && node tools/slot-gate.mjs tests/m3-pcm-slice.mmlisp --frames 300 && node tools/slot-gate.mjs tests/m3-fm6-pcm.mmlisp --frames 200 && node tools/slot-gate.mjs tests/m3-se.mmlisp --frames 220 && npm run mixer"
+    "verify:engine": "npm run engine && node tools/slot-gate.mjs ../examples/source/ab-core.mmlisp --frames 400 && node tools/slot-gate.mjs tests/stress-m1.mmlisp --frames 400 && node tools/slot-gate.mjs ../examples/source/demo1.mmlisp --frames 400 && node tools/slot-gate.mjs tests/m3-voice.mmlisp --frames 250 && node tools/slot-gate.mjs tests/m3-macro-multi.mmlisp --frames 300 && node tools/slot-gate.mjs tests/m2-pcmloop.mmlisp --frames 250 && node tools/slot-gate.mjs tests/m3-pcm-softmix.mmlisp --frames 300 && node tools/slot-gate.mjs tests/m3-pcm-vol.mmlisp --frames 260 && node tools/slot-gate.mjs tests/m3-pcm-volmix.mmlisp --frames 260 && node tools/slot-gate.mjs tests/m3-pcm-master.mmlisp --frames 150 && node tools/slot-gate.mjs tests/m3-pcm-slice.mmlisp --frames 300 && node tools/slot-gate.mjs tests/m3-fm6-pcm.mmlisp --frames 200 && node tools/slot-gate.mjs tests/m3-se.mmlisp --frames 220 && npm run mixer",
+    "dac-stream:decoder": "node experimental/dac-stream/decoder-eval.mjs"
   }
 }

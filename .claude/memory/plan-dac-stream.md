@@ -390,6 +390,36 @@ claims made from it back, and both were wrong.**
   2ch pad — consistent with the older `151 − 89 − compensation` table. The
   "133" in the first draft had dropped the closing notification and the stop.
 
+## R4 §13.3 step 3 — observation alone settles the phase (2026-09-08)
+
+`decoder.mjs` + `npm run dac-stream:decoder`. Runtime inputs: the byte read, the
+read's index, own state. The instrument's clock is used ONLY in `scoreDecode()`
+and to calibrate three chip constants (line origin 2,700 master; H → phase, 210
+of 256 values, widest group span 19 master; V → line, 33 of 256 answering to
+more than one line).
+
+* **Calibration data is kept out of the evaluation data.** Tables come from the
+  three disturbed runs; the seven boot phases scored are unseen by them. This
+  matters: an earlier pass that merged them turned a 17-master worst error into
+  257 and produced 764 false alarms.
+* **H alone: 11 runs, ~43,000 readings, worst error 9–18 master (0.6–1.2 Z80
+  cycles), 100% within tolerance, 0 false positives, 0 false negatives** —
+  including three unrepaid-stall runs and seven boot phases.
+* **H's limit is half a line (±114 Z80 cycles).** Shifts beyond it are reported
+  the short way round: 0% / 0% / 0.10% / 18.77% of shifts in the clean / 1 B /
+  16 B / 64 B runs.
+* **V extends the range but is worse in two ways**: 33 V values answer to two
+  lines six apart (14.6% of a clean run's reads are undecidable and are reported
+  as candidates, never guessed), and the V+H pair is not atomic — 16 cycles
+  apart nominally, measured 126 apart when a stall lands between them.
+* **Decision: use H, not V+H.** A compensation is 65 cycles and a window 64;
+  both are well inside ±114, where H is exact, unambiguous, atomic and half the
+  cost.
+* Not done: the Z80 code for the decoder (a 256-byte lookup, a subtract, a
+  compare — about 30 cycles), missing readings, restart, hardware.
+
+Required machine cases now 27/27.
+
 ## What R4 orders next (§13.3)
 
 Independent P1 prototype of §3.2's bounded phase correction, **observer first,

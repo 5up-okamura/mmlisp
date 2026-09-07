@@ -227,6 +227,11 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveBimm(0, COOP.notify);
     m.moveBimm(0, Z80_BASE + COOP.commit);
   }
+  // The Z80 begins when the bus is released, so nops placed BEFORE the release
+  // move the engine's phase against the VDP's counters — which is how the
+  // observer is asked the same question from every starting phase. `startNops`
+  // moves the 68000 instead, and the two are not the same knob.
+  for (let i = 0; i < (grab?.bootNops ?? 0); i++) m.nop();
   m.moveWimm(0x0000, Z80_BUSREQ);         // let go: the Z80 starts at $0000
   for (let i=0; i<(grab?.startNops ?? 0); i++) m.nop();
   // ── instruction-time calibration (§12.2 A) ──────────────────────────────
@@ -246,6 +251,7 @@ export function buildRom(image, samples = null, grab = null) {
     pair(CAL.divuBig, () => { for (let i = 0; i < CAL.n; i++) {
       m.moveLimmD(LOAD_DIVIDEND, 5); m.divuD(7, 5); } });
   }
+  if (grab?.vdp && !grab.disabled) vdpSetup(m);
   if (grab?.optimized) {
     m.leaAbs(Z80_BUSREQ, 2);
     m.moveWimmD(0x0100, 3);
@@ -413,7 +419,7 @@ export function buildRom(image, samples = null, grab = null) {
       emitTransfer(m, grab, { marks });
       m.rte();
     }
-  } else if (grab?.vdp) {
+  } else if (grab?.vdp && grab.disabled) {
     // The observer's host: a VDP that is drawing and a 68000 that is busy, and
     // nothing that touches the Z80 bus. Whatever the Z80 reads, it reads while
     // this is going on.
@@ -484,7 +490,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.dbra(2, "xfer");
     m.moveWimm(0x0000, Z80_BUSREQ);       // release
   }
-  if (grab?.vdp && !grab.hint) { /* the idle loop closed itself above */ }
+  if (grab?.vdp && grab.disabled) { /* the idle loop closed itself above */ }
   else if (!grab?.hint) m.bra("idle");
   else { m.label("halt"); m.bra("halt"); }
   // A fault the emitted path never reached is a test that cannot fail, which is

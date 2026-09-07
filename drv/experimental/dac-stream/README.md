@@ -593,6 +593,59 @@ free clock. The decoder itself — value to time, line and frame identification,
 the counter's discontinuities, missing readings, restart — is step 3 and does
 not exist.
 
+## The phase decoder: observation alone settles it, to about one Z80 cycle
+
+R4 §13.3 step 3 asks whether the observer can decide the phase from what it can
+see, with the states it cannot distinguish reported rather than filled in.
+`decoder.mjs` is that decoder and `npm run dac-stream:decoder` is the answer.
+
+**What it is allowed to use.** The byte the Z80 read, the read's index in the
+schedule, and state it kept itself. That is all. The instrument's absolute clock
+appears in `scoreDecode()` and nowhere else. Three chip constants are
+calibrated — the VDP's line origin, H → phase within the line, and V → which
+line — and **the calibration runs are not the evaluation runs**: the tables come
+from the three disturbed runs, which are the only ones with dense phase
+coverage, and every boot phase scored below is data they have never seen. That
+separation is not a formality: an earlier pass that let the evaluation runs into
+the table turned a 17-master worst error into 257 and invented 764 false alarms.
+
+**H alone, eleven runs, 43,000 readings:**
+
+| | worst error vs the instrument | within tolerance | false alarms | missed shifts |
+| --- | --- | --- | --- | --- |
+| clean | 17 master (1.1 Z80 cyc) | 100% | 0 | 0 |
+| 1 B unrepaid stall | 18 master | 100% | 0 | 0 |
+| 16 B | 18 master | 100% | 0 | 0 |
+| 64 B | 18 master | 100% | 0 | 0 |
+| seven other boot phases | 9–16 master | 100% | 0 | 0 |
+
+So the Z80 can measure a shift in its own schedule to about **one Z80 cycle**,
+from one byte read per group, and it never cried wolf in 43,000 reads.
+
+**Where H stops.** H repeats every line, so a shift of more than half a line
+(±114 Z80 cycles) is reported the short way round and the difference is not
+recoverable from H. Measured: 0% of shifts in the clean and 1 B runs, 0.10% at
+16 B, **18.77% at 64 B**, whose stalls reach 405 Z80 cycles.
+
+**V extends the range to a frame, and brings two problems H does not have.**
+33 of the 256 V values answer to more than one line of the frame, six lines
+apart, and from the reading alone those are undecidable: the decode reports both
+candidates and refuses to pick, which is 14.6% of a clean run's reads. And the
+pair is not atomic — V is read 16 Z80 cycles before H, and a stall landing
+between them was measured pushing them 126 cycles apart, which breaks the rule
+that decides whether the line advanced in between. Those show up as the
+whole-line residual errors in the disturbed V+H runs.
+
+**So: use H, not V+H.** The shifts this has to measure are the size of a
+compensation — 65 Z80 cycles — and a transfer window is 64. Both sit well inside
+H's ±114, where H is exact, unambiguous, atomic and costs 16 cycles instead of
+32.
+
+**Not done.** The decoder is a JS model of one; the Z80 code for it (a
+256-byte table lookup, a subtract and a compare, about 30 cycles) is not
+written. Missing readings and a restart are untested, and so is hardware — where
+the H → phase table would have to be calibrated again.
+
 ## The three structural decisions
 
 **1. The slot boundary IS the DAC write.** Each output interval begins with

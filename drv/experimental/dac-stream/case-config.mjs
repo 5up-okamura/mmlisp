@@ -32,8 +32,14 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   let grab = c0.grab ? { ...c0.grab }
     : c0.bankOnly ? { cooperative: true, disabled: true }
     : c0.calibrate ? { calibrate: true, disabled: true }
-    // An observer case has a display and a busy 68000, and no transfer at all.
-    : c0.observer ? { vdp: true, disabled: true, load: c0.observer.load }
+    // An observer case has a display and a busy 68000. It has no transfer
+    // protocol of its own; `stall` injects a plain, UNREPAID bus grab, which is
+    // the disturbance the observer is supposed to notice.
+    : c0.observer ? (c0.observer.stall
+        ? { vdp: true, optimized: true, load: c0.observer.load,
+            bootNops: c0.observer.bootNops, ...c0.observer.stall }
+        : { vdp: true, disabled: true, load: c0.observer.load,
+            bootNops: c0.observer.bootNops })
     : null;
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;

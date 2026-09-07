@@ -12,6 +12,8 @@ import { buildRom } from "./rom.mjs";
 import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
   analyzeAdoption, analyzeZ80Hv, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
 import { generateObserver, VDP } from "./observer.mjs";
+import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
+  learnSpacing } from "./decoder.mjs";
 
 const cfg = buildConfig();
 const expected = (i) => (i*73+19)&255;
@@ -195,6 +197,61 @@ assert.ok(obs.observer.worstSlotPct < 100);
 assert.throws(() => generateObserver(buildConfig({ voices: 2, complete: true }),
   { reads: Array(20).fill("h"), store: true }), /slot|overrun|fill/);
 
+// ── the phase decoder (§13.3 step 3) ──────────────────────────────────────
+// Its inputs are the byte read and the read's index. The instrument's clock is
+// used to BUILD the chip tables and to score, and nowhere else.
+const LN = 3420, UNIT = 16;
+const hOf = (t) => Math.floor((t % LN) / UNIT);
+const clean = Array.from({ length: 600 }, (_, n) => ({ time: n * 26880 + 500 }));
+for (const r of clean) r.h = hOf(r.time);
+const { table, covered } = buildPhaseTable(clean);
+assert.ok(covered > 0 && covered <= 256);
+const stepsH = learnSpacing(clean.map((r) => r.time), 1).map((v) => v % LN);
+const rowsClean = decode(clean.map((r) => r.h), { table, steps: stepsH });
+assert.equal(rowsClean.filter((r) => r.state === "moved").length, 0);   // no false alarm
+assert.equal(rowsClean.filter((r) => r.state === "unknown").length, 0);
+// A shift the schedule did not plan is seen, and measured.
+const shifted = clean.map((r, n) => ({ time: r.time + (n >= 300 ? 900 : 0) }));
+for (const r of shifted) r.h = hOf(r.time);
+const rowsShift = decode(shifted.map((r) => r.h), { table, steps: stepsH });
+assert.equal(rowsShift[300].state, "moved");
+assert.ok(Math.abs(rowsShift[300].residual - 900) <= UNIT);
+assert.equal(rowsShift[301].state, "locked");                          // one event, not a run
+// A reading the table has never seen is refused, not interpolated.
+const unseen = table.findIndex((v, i) => v < 0 && i < 256);
+if (unseen >= 0) {
+  const hs2 = clean.map((r) => r.h); hs2[10] = unseen;
+  assert.equal(decode(hs2, { table, steps: stepsH })[10].state, "unknown");
+}
+// findLineOrigin picks the origin that stops a V value from straddling lines.
+const vpairs = Array.from({ length: 400 }, (_, n) => {
+  const time = n * 26880 + 500 + 900;
+  return { v: Math.floor((((time - 900) % 896040) + 896040) % 896040 / LN) & 255, time };
+});
+// Any origin that leaves no V straddling two lines is as good as any other
+// within the sampling's own quantum; what is pinned is that one is found.
+// The fixture's own V wraps at 256 while a frame is 262 lines, so six values
+// answer to two lines however the origin is chosen — the same duplication the
+// real counter has. What is pinned is that the search finds an origin with far
+// fewer straddling values than a wrong one.
+const foundOrigin = findLineOrigin(vpairs);
+const wrongOrigin = findLineOrigin(vpairs, { step: LN }).multi;   // origin 0 only
+assert.ok(foundOrigin.multi <= 6, `multi ${foundOrigin.multi}`);
+assert.ok(foundOrigin.multi < wrongOrigin, `${foundOrigin.multi} vs ${wrongOrigin}`);
+// A V value that answers to two lines is reported as two candidates and the
+// decode says "ambiguous" instead of choosing one.
+const dup = [{ v: 7, time: 0 }, { v: 7, time: 6 * LN }, { v: 8, time: LN }];
+const lt = buildLineTable(dup);
+assert.equal(lt.ambiguous, 1);
+assert.deepEqual(lt.candidates.get(7), [0, 6]);
+// A table covering every H, so this exercises the ambiguity and not a gap.
+const fullTable = Int16Array.from({ length: 256 }, (_, i) => (i * UNIT) % LN);
+const vhRows = decodeVH([{ v: 8, h: hOf(LN + 500) }, { v: 7, h: hOf(2 * LN + 500) }],
+  { hTable: fullTable, vTable: lt.table, candidates: lt.candidates, steps: [0, LN] });
+assert.equal(vhRows[1].state, "ambiguous");
+assert.ok(vhRows[1].phaseMax - vhRows[1].phaseMin === 6 * LN);
+assert.equal(vhRows[1].phase, null);          // no guess is recorded as a value
+
 // ── one resolved configuration (§12.3) ────────────────────────────────────
 // The compensation the CLI asks for has to reach BOTH the generated code and
 // the recorded case. A JSON that names a configuration the run did not use is
@@ -302,4 +359,5 @@ if (process.argv.includes("--machine")) {
   assert.match(cal2.stdout,/divu\/7 1[0-9][0-9]\./);
 }
 console.log("probe selftest: values, interval attribution, transfer protocol, window geometry,"
-  + " commit carry-over, host timeline, resolved configuration and padding paths pass");
+  + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
+  + " resolved configuration and padding paths pass");
