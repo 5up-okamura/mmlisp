@@ -84,7 +84,8 @@ const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stal
 // correction is reconstructed from the DAC write times, the read times and the
 // STOP/RESUME pairs, against the ladder slots the generator placed.
 const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
-  "2ch corrector, occasional 4B stall"];
+  "2ch corrector, occasional 4B stall", "2ch corrector, counter wrap",
+  ...[[1, 20], [2, 60], [8, 140]].map(([b, n]) => `2ch corrector, single ${b}B stall, phase ${n}`)];
 // Either side of half a line, reported rather than graded.
 const BOUNDARY = ["hv observer, boundary 16B stall", "hv observer, boundary 24B stall"];
 // Kept to demonstrate the limit, not to pass it: these carry displacements
@@ -475,9 +476,22 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
   const boot = all.filter((w) => w.time <= first);
   const recs = all.filter((w) => w.time > first);
   const names = fields.map((x) => x.name);
-  if (boot.length !== names.length || boot.some((w) => w.value !== 0))
-    failures.push(`"${name}": boot wrote ${boot.length} of ${names.length} record fields`
-      + ` before the first reading${boot.some((w) => w.value !== 0) ? ", and not all of them zero" : ""}`);
+  // Each field is INITIALISED, and it ends boot holding the value the reference
+  // starts from. Not "written exactly once, all zero": the counter-wrap image
+  // boots the observation number to $FFFC, so those two fields are written twice
+  // — zeroed by the init loop and then set — and both writes are the
+  // initialisation R7 §20.2 B asked for, seen from the outside.
+  {
+    const cf = built.gen.observer.countFrom ?? 0;
+    const want0 = { countLo: cf & 0xff, countHi: (cf >> 8) & 0xff };
+    const last = new Map();
+    for (const w of boot) last.set(names[w.field], w.value);
+    for (const k of names) {
+      if (!last.has(k)) failures.push(`"${name}": boot never wrote the record's ${k}`);
+      else if (last.get(k) !== (want0[k] ?? 0))
+        failures.push(`"${name}": boot left ${k} at ${last.get(k)}, not ${want0[k] ?? 0}`);
+    }
+  }
   stopsOf.set(name, log.stops);
   const { rows, problems, incompleteTail, kinds } = recordsBetweenReads(reads, recs, names);
 
@@ -491,8 +505,12 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
   // interval AFTER a read is the one that carries that read's correction.
   const corrected = !!built.gen.split.correct;
   const applied = new Array(rows.length).fill(0);
+  const split = new Array(rows.length).fill(null);
   let debt = 0, expired = 0, worstDebt = 0, over = 0, worstOver = 0;
-  let state = { ...INITIAL_STATE }, mismatch = 0, compared = 0, firstBad = null;
+  // The observation number does not always start at zero: the wrap case boots it
+  // four short of $FFFF so the carry is reached rather than waited for.
+  let state = { ...INITIAL_STATE, count: built.gen.observer.countFrom ?? 0 };
+  let mismatch = 0, compared = 0, firstBad = null;
   for (let n = 0; n < rows.length; n++) {
     const step = ((sp[(n + 1) % sp.length] % LINE_MASTER) / U) % units;
     if (!corrected) state = refDecode(state, reads[n].h, step, opts);
@@ -505,7 +523,7 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
       if (d >= (units + 1) >> 1) d -= units;
       const delta = valid ? d : 0;
       const c = refCorrect({ debt: valid ? debt : 0 }, delta);
-      debt = c.debt; applied[n] = c.applied;
+      debt = c.debt; applied[n] = c.applied; split[n] = { a: c.a, b: c.b, c: c.c };
       if (c.expired) expired++;
       worstDebt = Math.max(worstDebt, Math.abs(debt));
       // HOW LONG IT TAKES TO COME BACK. The gain leaves at most two units, so
@@ -532,7 +550,8 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
     + ` ${problems.outOfOrder} out of order, ${problems.late} written before their own read`
     + `${incompleteTail ? "; 1 unfinished record at the end of the run, excluded" : ""}`);
   if (firstBad) console.log(`  first disagreement:`, JSON.stringify(firstBad));
-  console.log(`  boot wrote ${boot.length} record fields before the first reading, all zero`);
+  console.log(`  boot wrote ${boot.length} record-field bytes before the first reading,`
+    + ` leaving each field at its initial value`);
   const owed = reads.length - incompleteTail;
   if (compared !== owed)
     failures.push(`"${name}": ${owed} readings owe a record and ${compared} arrived complete`);
@@ -622,48 +641,70 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
     if (bad) failures.push(`"${name}": ${bad} of ${adj.length} records settle somewhere`
       + ` other than the ${want} master the layout predicts`);
   }
-  // THE CORRECTION, MEASURED OFF THE DAC (R10 §29.7 step 6).
+  // THE CORRECTION, MEASURED OFF THE DAC (R10 §29.7 step 6, R11 §31.4 step 2).
   //
-  // Nothing here reads the engine's q, its debt or its ladder bytes. A ladder
-  // slot is `base - 4a` cycles long, so the seven intervals the generator placed
-  // ARE the correction; the read times say which lap they belong to and the
-  // STOP/RESUME pairs are subtracted so a held bus is not read as a correction.
-  // The sum has to be what the reference decided from the same H readings.
+  // Nothing here reads the engine's q, its debt or its ladder bytes. EVERY DAC
+  // interval of the observation is scored, not just the seven that carry a
+  // ladder: a ladder slot has to be `base - 4a` for ITS OWN group's value — so
+  // the 4+2+1 grouping is checked rather than only the total — and every other
+  // slot has to be exactly the length the generator laid out. The read times say
+  // which lap an interval belongs to and the STOP/RESUME pairs are subtracted,
+  // so a held bus is not read as a correction.
   if (corrected) {
     const readSlot = built.gen.split.walk.placed[0].absolute;
-    const ladders = built.gen.split.ladders;
+    const nSlots = built.cfg.cycleSlots;
+    const group = new Map(built.gen.split.ladders.map((l) => [l.slot, l.tag[0]]));
     const dacT = log.dac.map((e) => e.time);
-    let checked = 0, wrong = 0, worstQ = 0, moved = 0;
+    let checked = 0, wrong = 0, worstQ = 0, moved = 0, badSlots = 0, gaps = 0;
+    let intervals = 0, worstErr = 0;
+    const landed = new Set();
     let j = 0;
     for (let n = 0; n < reads.length - 1; n++) {
       while (j + 1 < dacT.length && dacT[j + 1] <= reads[n].time) j++;
-      if (!dacT.length || dacT[j] > reads[n].time) continue;
+      if (!dacT.length || dacT[j] > reads[n].time || j + nSlots >= dacT.length) continue;
+      // One DAC write a slot, so the next read is exactly `nSlots` writes on.
+      // Anything else is a hole and this observation cannot be scored.
+      let k2 = j;
+      while (k2 + 1 < dacT.length && dacT[k2 + 1] <= reads[n + 1].time) k2++;
+      if (k2 - j !== nSlots) { gaps++; continue; }
+      const sp3 = split[n] ?? { a: 0, b: 0, c: 0 };
       let sum = 0, ok = true;
-      for (const l of ladders) {
-        const i = j + (l.absolute - readSlot);
-        if (i + 1 >= dacT.length) { ok = false; break; }
-        const span = dacT[i + 1] - dacT[i]
-          - stoppedWithin(dacT[i], dacT[i + 1], log.stops).stopped;
-        const base = built.cfg.slotCycles[l.slot % built.cfg.groupSlots] * Z80_DIV;
-        const q = (base - span) / (CORR.quantumCycles * Z80_DIV);
-        if (!Number.isInteger(q) || Math.abs(q) > CORR.maxQuantaPerSlot) { ok = false; break; }
-        sum += q;
+      for (let k = 0; k < nSlots; k++) {
+        const i = j + k, slot = (readSlot + k) % nSlots;
+        const stop = stoppedWithin(dacT[i], dacT[i + 1], log.stops);
+        if (stop.stopped) landed.add(slot);
+        const span = dacT[i + 1] - dacT[i] - stop.stopped;
+        const base = built.cfg.slotCycles[slot % built.cfg.groupSlots] * Z80_DIV;
+        const q = group.has(slot) ? sp3[group.get(slot)] : 0;
+        const want = base - q * CORR.quantumCycles * Z80_DIV;
+        intervals++;
+        if (span !== want) {
+          badSlots++; ok = false;
+          worstErr = Math.max(worstErr, Math.abs(span - want));
+        }
+        if (group.has(slot)) sum += (base - span) / (CORR.quantumCycles * Z80_DIV);
       }
-      if (!ok) continue;
       checked++;
       if (applied[n] !== 0) moved++;
       worstQ = Math.max(worstQ, Math.abs(sum));
-      if (sum !== applied[n]) wrong++;
+      if (!ok || sum !== applied[n]) wrong++;
     }
-    console.log(`  correction off the DAC: ${checked} observations rebuilt from the`
-      + ` ${ladders.length} ladder intervals, ${wrong} disagreed with the reference`
+    console.log(`  correction off the DAC: ${checked} observations, ${intervals} DAC intervals`
+      + ` scored against the layout, ${badSlots} wrong (worst ${worstErr} master),`
+      + ` ${wrong} observations disagreed with the reference`
       + ` — ${moved} corrected something, the largest ${worstQ} quanta`
-      + ` = ${worstQ * CORR.quantumCycles * Z80_DIV} master`);
+      + ` = ${worstQ * CORR.quantumCycles * Z80_DIV} master`
+      + `${gaps ? `; ${gaps} observations skipped for a hole in the DAC trace` : ""}`);
     if (!checked) failures.push(`"${name}": not one observation's correction could be rebuilt`);
+    if (badSlots) failures.push(`"${name}": ${badSlots} of ${intervals} DAC intervals are not the`
+      + ` length the layout lays out for them (worst ${worstErr} master)`);
     if (wrong) failures.push(`"${name}": ${wrong} of ${checked} observations moved the DAC by`
       + ` something other than what the corrector decided`);
     if (name.includes("stall") && !moved)
       failures.push(`"${name}": a disturbed run corrected nothing — the ladders never left neutral`);
+    if (log.stops.length)
+      console.log(`  the stop landed in ${landed.size} of the loop's ${nSlots} slots`
+        + ` over ${log.stops.length} stops`);
     // WHERE THE PHASE ENDED UP. A quiet run has to SETTLE — R9 §26.5 asks for
     // under 60 master — and a run disturbed at every observation cannot, because
     // a new displacement arrives before the last one is repaid. So the quiet
@@ -677,8 +718,8 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
       + ` = ${(worstOver * sp[0] / MCLK * 1000).toFixed(2)} ms`);
     if (!name.includes("stall") && held > 60)
       failures.push(`"${name}": a quiet run settled at ${held} master, over the 60 asked for`);
-    if (name.includes("stall") && expired)
-      failures.push(`"${name}": ${expired} observations expired — a 4 B stall is inside the contract`);
+    if (expired)
+      failures.push(`"${name}": ${expired} observations expired — this disturbance is inside the contract`);
   }
   const bases = rows.filter((r) => r && r.known === 0xff && r.valid === 0).length;
   if (!bases) failures.push(`"${name}": not one record was a base`);

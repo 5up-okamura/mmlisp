@@ -906,7 +906,10 @@ assert.equal(backwards[2].sync, "lost");
 {
   const cfg = buildConfig({ voices: 2, complete: true, csm: true, levels: 15,
     workTarget: 0.839, correctorBudget: true });
-  const r = generateSplit(cfg, { stackFill: true, correct: true });
+  // THE COUNTER STARTS FOUR SHORT OF THE WRAP (R11 §31.2): 65,536 observations
+  // is 8.7 minutes and the wrap has to be reached, not waited for.
+  const COUNT_FROM = 0xfffc;
+  const r = generateSplit(cfg, { stackFill: true, correct: true, countFrom: COUNT_FROM });
   assert.ok(r.ok, `the corrector image did not generate: ${r.stage} ${r.error ?? ""}`);
   // THE CAUSAL ORDER, from the placement rather than from the intention: every
   // ladder is after the last write that decides it and before the next read.
@@ -937,7 +940,12 @@ assert.equal(backwards[2].sync, "lost");
   const seq = [];
   for (let i = 0; i < 24; i++) {
     seq.push(known[(i * 37 + i * i) % known.length]);
+    // A reading the table does not cover BREAKS THE CHAIN: the difference is not
+    // valid, the debt is dropped rather than repaid, and the next known reading
+    // is a base. Two singles and one run of three, so a re-acquisition after a
+    // longer gap is covered too (R11 §31.2).
     if (i === 7 || i === 16) seq.push(unknown[(i * 13) % unknown.length]);
+    if (i === 11) for (let k = 0; k < 3; k++) seq.push(unknown[(i * 7 + k) % unknown.length]);
   }
   let reads = 0;
   const machine = new Machine(cfg, built, {
@@ -964,16 +972,22 @@ assert.equal(backwards[2].sync, "lost");
       expect: k2 ? (ph + step) % units : 0 }, corr: c };
   };
 
-  let st = { ...INITIAL_STATE }, corr = { ...INITIAL_CORR }, at = 0, moved = 0, expired = 0;
+  let st = { ...INITIAL_STATE, count: COUNT_FROM }, corr = { ...INITIAL_CORR };
+  let at = 0, moved = 0, expired = 0, unknowns = 0, reacquired = 0, wrapped = 0;
+  let prevKnown = 0;
   for (let lap = 0; lap < seq.length; lap++) {
     const until = cfg.cycleSlots * (lap + 1) + 1;
     let guard = 0;
     while (machine.trace.dacCycle.length < until && guard++ < 6000) { at += 200; machine.run(at); }
     assert.ok(machine.trace.dacCycle.length >= until, `the engine stalled on lap ${lap}`);
     const want = refBoth(st, corr, seq[lap], r.advance);
+    const before = st;
     st = want.st; corr = want.corr;
     if (corr.expired) expired++;
     if (corr.applied !== 0) moved++;
+    if (!st.known) unknowns++;
+    if (st.known && !st.valid && lap) reacquired++;
+    if (st.count < before.count) wrapped++;
     const got = { known: machine.ram[ST + SPLIT_STATE.known],
       valid: machine.ram[ST + SPLIT_STATE.valid],
       delta: machine.ram[ST + SPLIT_STATE.delta],
@@ -1004,6 +1018,25 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(moved >= 8, `only ${moved} of ${seq.length} observations corrected anything`);
   assert.ok(expired === 0, "this sequence should stay inside the debt limit");
   assert.equal(machine.trace.stray.length, 0);
+  // …and the paths R11 §31.2 asks to see taken, counted rather than assumed. An
+  // unknown reading, a re-acquisition after one and after three, and the 16-bit
+  // observation number carrying past $FFFF — all of them THROUGH the corrector,
+  // which is the part that had never been exercised.
+  assert.ok(unknowns >= 5, `only ${unknowns} unknown readings`);
+  assert.ok(reacquired >= 3, `only ${reacquired} re-acquisitions`);
+  assert.equal(wrapped, 1, `the observation counter wrapped ${wrapped} times`);
+  // The debt is DROPPED across a break, not carried: an invalid difference has
+  // nothing to repay and the engine is openly at a new relative phase.
+  {
+    let sim = { ...INITIAL_STATE, count: COUNT_FROM }, c = { ...INITIAL_CORR }, drops = 0;
+    for (const h of seq) {
+      const w = refBoth(sim, c, h, r.advance);
+      if (!w.st.valid && c.debt !== 0) drops++;
+      sim = w.st; c = w.corr;
+      if (!w.st.valid) assert.equal(c.debt, 0, "an invalid difference must leave no debt");
+    }
+    assert.ok(drops >= 1, "no break in the chain actually dropped a debt");
+  }
 
   // `corr-one-late`: the ladders placed before their own writes, which is what
   // the code did until R10 §29.3. The generator has to refuse it, and if it ever

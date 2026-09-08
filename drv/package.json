@@ -14,6 +14,7 @@
     "dac-stream:long": "node experimental/dac-stream/gate.mjs --long --json",
     "dac-stream:probe-test": "node experimental/dac-stream/probe-selftest.mjs --machine",
     "dac-stream:machine": "node experimental/dac-stream/machine-probe.mjs",
+    "dac-stream:machine:required": "node experimental/dac-stream/machine-probe.mjs --required-only",
     "dac-stream:split": "node experimental/dac-stream/split-report.mjs",
     "size": "node tools/size-audit.mjs",
     "budget": "node tools/budget.mjs",

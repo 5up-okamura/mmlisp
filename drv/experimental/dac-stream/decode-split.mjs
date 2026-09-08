@@ -267,7 +267,12 @@ export function placeSplit(blocks, slots, { target = 0.796, from = 0,
  * estimated.
  */
 export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = null,
-  stackFill = false, correct = false, maxQuanta = null, ladderLate = false } = {}) {
+  stackFill = false, correct = false, maxQuanta = null, ladderLate = false,
+  // WHERE THE OBSERVATION COUNTER STARTS. Zero everywhere except in the test
+  // that has to see it wrap: 65,536 observations is 8.7 minutes of run time and
+  // R11 §31.2 asks for the wrap to be REACHED, not waited for. It is a boot
+  // constant, so the image is the image under test with one immediate changed.
+  countFrom = 0 } = {}) {
   const map = decodeMap(cfg);
   const state = map.state;
   const stateSize = correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
@@ -400,6 +405,12 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     // been made — corrects nothing.
     ...(correct ? [`ld   a,${CORR.neutral}`,
       ...tags.flat().map((t) => `ld   (corr_${t}+1),a`)] : []),
+    ...(countFrom ? [
+      `ld   a,${countFrom & 0xff}`,
+      `ld   ($${(state + SPLIT_STATE.countLo).toString(16)}),a`,
+      `ld   a,${(countFrom >> 8) & 0xff}`,
+      `ld   ($${(state + SPLIT_STATE.countHi).toString(16)}),a`,
+    ] : []),
   ];
   let gen;
   try {
@@ -460,6 +471,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     spacingCycles: [loopCycles],
     spacingMaster: [loopCycles * cfg.machine.z80Div],
     record: RECORD.map((n) => ({ name: n, offset: SPLIT_STATE[n] })),
+    countFrom,
     settleCycles: settle === null ? null : settle - at,
     settleMaster: settle === null ? null : (settle - at) * cfg.machine.z80Div,
     decodeCycles: blocks.reduce((t, b) => t + b.cycles, 0),

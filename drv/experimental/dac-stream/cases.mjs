@@ -143,6 +143,28 @@ export const CASES = [
     // for this image. What grades it is `dac-stream:decoder`, where the movement
     // is compared with the correction that was decided.
     informational: true },
+  // ONE SIZE OF DISTURBANCE IS NOT A SWEEP (R11 §31.2). 1, 2, 4 and 8 bytes,
+  // each isolated (about seven observations apart, so the debt has quiet
+  // observations to walk back in) and each at a different boot phase, so the
+  // stop does not always land in the same part of the loop. The landing slot is
+  // reported: 41,000 iterations is not commensurate with the 430,080-master
+  // loop, so the stop walks across all 80 slots by itself.
+  // THE OBSERVATION NUMBER CARRYING PAST $FFFF, reached rather than waited for
+  // (R11 §31.2): 65,536 observations is 8.7 minutes of run time, and the counter
+  // is a boot constant, so the image under test is the image with one immediate
+  // changed. Four observations in, the low byte wraps and the high byte has to
+  // follow — through the corrector's gating of KNOWN, which is the part that had
+  // never seen it.
+  { name: "2ch corrector, counter wrap", cfg: { voices: 2, complete: true, csm: true,
+      levels: 15, workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", place: { correct: true, countFrom: 0xfffc } } },
+  ...[[1, 20], [2, 60], [8, 140]].map(([bytes, bootNops]) => ({
+    name: `2ch corrector, single ${bytes}B stall, phase ${bootNops}`,
+    cfg: { voices: 2, complete: true, csm: true, levels: 15, workTarget: 0.839,
+      correctorBudget: true },
+    split: { load: "divu", bootNops, stall: { every: 41000, bytes },
+      place: { correct: true } },
+    informational: true })),
 
   // IN-CONTRACT DISTURBANCES (R6 §17.2 B). The verification runs had no
   // unplanned displacement at all, so nothing showed that a small stall is

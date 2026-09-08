@@ -104,7 +104,13 @@ const EVERY = (() => { const v = arg("every-sweep", null); if (!v) return null;
   const [lo, hi, step] = v.split(",").map(Number);
   if (![lo, hi, step].every(Number.isInteger) || step < 1 || hi < lo) throw new Error("--every-sweep lo,hi,step");
   return Array.from({ length: Math.floor((hi - lo) / step) + 1 }, (_, i) => lo + i * step); })();
+// `--required-only` runs the cases that are meant to pass and nothing else, so
+// there is a machine gate that exits 0 (R11 §31.3, §31.4 step 4). It ADDS a
+// mode; the full run still reports every case and still exits 1 on the known
+// informational failures, which are not to be quietly reclassified.
+const REQUIRED_ONLY = argv.includes("--required-only");
 const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
+  && (!REQUIRED_ONLY || !c.informational)
   && (!argv.includes("--phase-sweep") || c.name.startsWith("uncompensated"))
   && (!EVERY || c.grab))
   .flatMap((c) => argv.includes("--phase-sweep") ? Array.from({length:32}, (_,phase)=>({
@@ -117,7 +123,8 @@ const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
   })) : [c]);
 // One line per family under --every-sweep, so the envelope is one number.
 const everyRows = [];
-console.log(`machine-probe — BlastEm, ${SECONDS}s a case; timing = Z80 DAC bus writes`);
+console.log(`machine-probe — BlastEm, ${SECONDS}s a case; timing = Z80 DAC bus writes`
+  + (REQUIRED_ONLY ? " · REQUIRED CASES ONLY — the full run reports the informational ones too" : ""));
 for (const c0 of selected) {
   let r;
   try { r = runCase(c0); }
