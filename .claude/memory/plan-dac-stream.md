@@ -1,7 +1,8 @@
 # DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
-**Current review (2026-09-08): R8 §23.5 steps 1-3 are DONE and verified on
-BlastEm. Step 4 is the corrector's DESIGN and is waiting on the designer.** The polling
+**Current review (2026-09-08): R9 §26.2 and §26.3 are DONE. §26.6 step 3 is
+answered and the answer is NEGATIVE — the corrector does not fit the budget it
+was specified for, and the next move is the designer's.** The polling
 NOP window is the accepted P1 regression. Computed timing has not passed; fix
 the overflowing DIVU load and the HBlank transfer-gate bypass, then specify
 observable phase/expiry/recovery before further implementation. A published
@@ -630,3 +631,45 @@ table-driven it is 185 B, which is what let the split+CSM image fit at 2,390 of
 the stop bound. Nothing about the 83.9% headroom that is left (~1,420 cycles a
 loop, largest single slot 28.4) is claimed to absorb an unmeasured external
 wait.
+
+## R9 — the patch was not the patch, and the corrector does not fit
+
+Committed as `961d528` and `9252267`; reported as instruction §27.
+
+**The RAM watch existed only in an untracked working copy.** `probe.patch`
+carried the `MML_PROBE_Z80RAM` constant and nothing else — the handlers, the
+`$1F00..$1F7F` memmap chunk, the buffer index and the chunk count 5→6 were in
+`drv/out/blastem/src` only. Step 3 passed because it ran against that local
+core. `setup.sh` could not have caught it: it folded every `git apply --check`
+failure into "already applied (or does not apply) — continuing", which is
+exactly the branch a tree with an OLDER patch falls into. Now it distinguishes
+three answers and FAILS on the third, verifies the patch fully reverses after
+applying, takes `BLASTEM_OUT`, clones the branch then checks out `BLASTEM_REV`
+(a commit is not a branch — `--branch <sha>` never worked), pins `b4d7524` by
+default, and writes `build.json` with the revision, patch hash and core hash.
+Rebuilt from a clean clone into an empty directory: everything reproduces.
+
+**Stops are now subtracted per interval** (`stoppedWithin`, boundaries defined
+as [start,end) against [a,b)). The 4B stall case went from "not checked at all"
+— every interval contained a stop, so every interval was skipped — to 245/245
+intervals matching the generated 430,080 master with residual 0, and every
+record settling at exactly 317,145 master once its own stop is taken off.
+
+**The corrector: reference good, placement negative.** The mechanism is a
+self-modified `jp` into eight nops, neutral at the fourth: one byte moves a
+slot's DAC interval ±16 cycles in steps of 4 (= 60 master = exactly 3 phase
+units). Seven slots grouped 4+2+1 driven by three values, because a single
+shared value makes the total a multiple of 7 quanta and leaves 420 master of
+residual where the acceptance test wants under 60. The reference converges from
+±112 units to ≤2 units (40 master) in ≤5 observations.
+
+It does not place. At the specified 112 cycles an observation: 60 of 67 pieces
+down, then no slot with 28 free cycles for `advance carry`. A halved 64-cycle
+variant places but is over everything — 7 slots above 83.9% (worst 85.5%), mean
+81.5% vs 79.6%, 2,578 code bytes vs 2,560. **RAM is not the constraint**: 10 B
+of state in the globals, the table in its own page. Nothing was relaxed.
+
+One accounting question is left for the designer: the numbers above count the
+ladder's NEUTRAL PATH (jp + 4 nops = 26) as work, per §26.4's wording. Counting
+only the `jp` and calling the nops pad puts those seven slots back inside 83.9%
+with 52-56 cycles of pad left over.
