@@ -676,26 +676,56 @@ ladder's NEUTRAL PATH (jp + 4 nops = 26) as work, per §26.4's wording. Counting
 only the `jp` and calling the nops pad puts those seven slots back inside 83.9%
 with 52-56 cycles of pad left over.
 
-### The corrector, finished as far as it can go without a decision (§28)
+### The corrector PLACES and passes on BlastEm (R10 §29, §30)
 
-Two spec gaps found by building it properly: the split's clamps SATURATED a
-debt past the capability and carried it for ever where R9 says it must expire;
-and the fold that takes the applied correction off the next expectation's phase
-tested bit 7 for the sign — `phase - 3q` is -84..254, so 130 is a good positive
-phase that also has bit 7 set and was being reduced to 45. The sign of 3q is
-what disambiguates (|3q| <= 84), and above 170 means +171 when 3q >= 0 and -171
-when it is negative.
+R10 found three defects and building the integration test it asked for found
+two more. All five are fixed and the corrected image now runs.
 
-Verified: 103 observations, 0 disagreements, one cost a piece, in both shapes;
-the reference settles under 40 master in <= 5 observations. Four faults refused
-(sign inverted, quantum twice, fold dropped, saturate instead of expire).
+**The placer folded three laps into eighty slots.** `placeSplit` advanced after
+every piece and then kept walking `at % 80`, so "64 of 75 placed" was three laps
+whose pieces got emitted out of chain order by `bySlot`. §28's 84.5% / 86.6% /
+2,680 B are withdrawn. It now has an absolute one-observation deadline, lets
+dependent pieces share a slot, checks `laps === 1`, and reads the emitted order
+back out of the placement to compare with the chain.
 
-**The 64-cycle variant is not a fallback**: the declared contract reaches 1,500
-master = 19 quanta and it expires at 16, i.e. INSIDE the contract.
+**The ladders ran one observation late** — they were placed before the first
+write, so an observation executed the previous decision while EXPECT carried
+this one's. The window is now after the last write and before the next read.
 
-**Why the placement fails, precisely**: the chain is 75 pieces, the loop is 80
-slots, and every granularity has more slots than pieces (16 pieces need >= 24
-cycles, 33 slots offer it) — but the chain is a dependency ORDER and the walk
-cannot go back, so using a big slot early strands a 24-cycle piece later. It
-first places at a per-slot ceiling of 84.5%, and then the code region overflows
-by 120 B. All three limits have to move, not one. RAM is not the constraint.
+**`jp nn` CARRIES AN ADDRESS, NOT AN INDEX.** Writing entry 4 into its second
+byte made the target $xx04 and the engine left its loop at the first ladder. The
+piece-level test only ever looked at the byte. It is `jr corr_x_e0` now: the
+displacement byte IS the entry number, 12 cycles, one byte less.
+
+**The debt is a nine-bit sum.** `(raw+1)>>2` then `|q|>28` accepted +113, +114
+and -113, and 100+75 arrived as a valid -81. P/V dies at a slot boundary and has
+no `sbc a,a`, so the overflow is rebuilt from three sign masks:
+`(sd^ss) & (se^ss)`, and `live = ~overflow & (s+112 <= 224)` gates q, the debt
+and KNOWN together. `MAX_DEBT_UNITS = 112` is its own constant.
+
+**KNOWN was written twice** once the corrector gated it, which reads as "a field
+too many" from outside. The raw mask goes to a scratch byte; the gate is the
+only writer; and RECORD's ORDER is now read out of the placement rather than
+declared (KNOWN moved from sixth to last).
+
+**The 16-quantum shape is deleted**, not kept behind a flag: it expires at 1,340
+master, inside the 1,500-master contract.
+
+**The image** (`correctorBudget`, R10 §29.5 spends the time publication on the
+corrector — b1..b4's 75 cycles and 70 B): 82 pieces in ONE lap ending at slot
+49, ladders at 49-51 and 64-67, worst 83.8%, mean 77.9%, DAC interval 342..375,
+86 cycles of pad left on the shortened path, settle 103,035 master. RAM is fine
+(12 B). **Code is not**: 2,291 + 538 owed = 2,829 of 2,560, 269 B over — and
+137 B over even without the corrector. Nothing was silently adjusted; it is
+§30.6's first question for the designer.
+
+**BlastEm, 60 s, three cases** (quiet / 4 B stall every 3,000 / every 41,000):
+7,497 of 7,497 records, 0 disagreements, 0 broken; the correction rebuilt from
+the SEVEN LADDER SLOTS' OWN DAC INTERVALS (never from the engine's q) agreed on
+all 7,496 observations of every case; 0 expiries. The occasional stall returns
+to under 40 master in **2 observations = 16.02 ms**. `dac-stream:split` prints
+the numbers from the image, so no figure here comes from a throwaway script.
+
+Also: `setup.sh` resolves the wanted revision against the remote and refuses a
+reused tree whose HEAD is not it; `*.patch` is exempted from git's whitespace
+check, because a unified diff's context lines are supposed to start with a space.
