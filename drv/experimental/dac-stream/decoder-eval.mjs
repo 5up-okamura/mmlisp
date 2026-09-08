@@ -848,15 +848,21 @@ for (const name of FAULT ? [] : PROTO_CASES) {
   // H observation and the next, measured rather than inferred from byte counts.
   {
     let worst = 0, over = 0, longest = 0;
+    // The upload/reset hold precedes the first H observation and is not a
+    // runtime protocol transfer. Including it made the printed "longest" value
+    // about 1.2 million master clocks while the live-contract calculation
+    // correctly started at the first observation.
+    const runtimeStops = log.stops.filter(([a]) => a >= reads[0].time);
     for (let n = 1; n < reads.length; n++) {
       const { stopped } = stoppedWithin(reads[n - 1].time, reads[n].time, log.stops);
       worst = Math.max(worst, stopped);
       if (stopped > LIVE_STOP_MAX) over++;
     }
-    for (const [a, b] of log.stops) longest = Math.max(longest, b - a);
-    console.log(`  bus: ${log.stops.length} stops, longest ${longest} master`
+    for (const [a, b] of runtimeStops) longest = Math.max(longest, b - a);
+    console.log(`  bus: ${runtimeStops.length} runtime stops, longest ${longest} master`
       + ` (${(longest / Z80_DIV).toFixed(1)} Z80 cyc); worst total between two H observations`
-      + ` ${worst} master, ${over} over the ${LIVE_STOP_MAX} master live limit`);
+      + ` ${worst} master, ${over} over the ${LIVE_STOP_MAX} master live limit`
+      + `; ${log.stops.length - runtimeStops.length} boot hold excluded`);
     // THE SUM IS THE RULE, NOT THE PIECE (§33.1). Each piece is inside the
     // limit on its own; the dense case exists to show that a host taking the
     // bus TWICE inside one observation interval breaks it anyway — 1,452 plus

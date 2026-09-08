@@ -32,15 +32,16 @@ export function protoMap(cfg) {
   const g = cfg.ram.glob[0];
   const stage = Object.fromEntries(Object.entries(STAGE).map(([k, v]) => [k, g + v]));
   return { L, glob: g, stage, stageBase: g + PROTO_GLOB.stage,
-    lastCommit: g + PROTO_GLOB.lastCommit, queueTail: g + PROTO_GLOB.queueTail,
+    lastPhaseCommit: g + PROTO_GLOB.lastPhaseCommit, queueTail: g + PROTO_GLOB.queueTail,
     decode: g + GLOB.decode, observe: g + GLOB.observe };
 }
 
 /**
  * The host's control block, checked and acted on (§33.3).
  *
- * `hostCommit` is the only byte read for the decision: the 68000 writes it last,
- * so a Z80 that sees a new value sees everything behind it. When it changes,
+ * `phaseCommit` is the only byte read for the decision: the 68000 writes it
+ * after phaseGeneration. `queueHead` is a separate commit domain and changing
+ * it for an ordinary command must not invalidate phase. When phaseCommit changes,
  * KNOWN, VALID, DELTA and EXPECT are all cleared — the next reading becomes a
  * BASE rather than a difference, which is the whole point of the invalidation:
  * a displacement H cannot be trusted across must not be accepted as a small
@@ -69,15 +70,15 @@ export function protoCheckOps(m, state) {
     // stale phase for one more lap, which is late but never wrong.
     op(`ld   a,(${hx(m.L.control.phaseGeneration.offset)})`, 13),
     op(`ld   (${hx(m.stage.phaseGeneration)}),a`, 13, { what: "the phase stretch this observation is in" }),
-    op(`ld   a,(${hx(m.L.control.hostCommit.offset)})`, 13, { what: "the host's commit byte" }),
+    op(`ld   a,(${hx(m.L.control.phaseCommit.offset)})`, 13, { what: "the host's phase commit byte" }),
     op("ld   b,a", 4),
-    op(`ld   a,(${hx(m.lastCommit)})`, 13),
+    op(`ld   a,(${hx(m.lastPhaseCommit)})`, 13),
     op("sub  b", 4, { what: "0 exactly when nothing was committed since" }),
     op("cp   1", 7),
     op("sbc  a,a", 4, { what: "$ff = unchanged, $00 = invalidate" }),
     op("ld   c,a", 4),
     op("ld   a,b", 4),
-    op(`ld   (${hx(m.lastCommit)}),a`, 13, { what: "latch it, changed or not" }),
+    op(`ld   (${hx(m.lastPhaseCommit)}),a`, 13, { what: "latch the phase commit, changed or not" }),
     ...["known", "valid", "delta", "expect"].flatMap((k) => [
       op(`ld   a,(${S(k)})`, 13),
       op("and  c", 4),
@@ -181,8 +182,8 @@ export function protoBootLines(m) {
     `ld   a,(${hx(c.phaseGeneration.offset)})`,
     `ld   (${hx(m.stage.phaseGeneration)}),a`,
     // The commit already in place is not an invalidation: it is where we start.
-    `ld   a,(${hx(c.hostCommit.offset)})`,
-    `ld   (${hx(m.lastCommit)}),a`,
+    `ld   a,(${hx(c.phaseCommit.offset)})`,
+    `ld   (${hx(m.lastPhaseCommit)}),a`,
     // The queue is empty and the first face to be written is face 1, so the
     // first publication flips the selector from 0 to 1.
     "xor  a",

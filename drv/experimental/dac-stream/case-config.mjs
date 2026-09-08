@@ -59,7 +59,7 @@ function protoRomFields(cfg, p) {
     bootGen: L.control.bootGeneration.offset,
     phaseGen: L.control.phaseGeneration.offset,
     queueHead: L.control.queueHead.offset,
-    commit: L.control.hostCommit.offset };
+    phaseCommit: L.control.phaseCommit.offset };
 }
 
 export function resolveCase(c0, { compensation = null, captureOffset = null, fault = null } = {}) {

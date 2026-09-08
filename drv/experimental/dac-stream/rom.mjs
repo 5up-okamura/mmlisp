@@ -276,9 +276,9 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveBimm((P.bootGeneration >> 8) & 0xff, Z80_BASE + P.bootGen + 1);
     m.moveBimm(0, Z80_BASE + P.phaseGen);
     m.moveBimm(0, Z80_BASE + P.queueHead);
-    m.moveBimm(0, Z80_BASE + P.commit);        // …the commit LAST, as always
+    m.moveBimm(0, Z80_BASE + P.phaseCommit);   // …the phase commit LAST
     m.moveq(0, 2);                             // the phase generation, counted here
-    m.moveq(0, 3);                             // …and the commit
+    m.moveq(0, 3);                             // …and the phase commit
     m.moveWimmD(P.between, 5);                 // live reads between invalidations
   }
   // The Z80 begins when the bus is released, so nops placed BEFORE the release
@@ -582,7 +582,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.bne("grant2");
     m.leaAbs(Z80_BASE + P.phaseGen, 1);
     m.moveBDtoA(2, 1);                         // the new phase generation
-    m.leaAbs(Z80_BASE + P.commit, 1);
+    m.leaAbs(Z80_BASE + P.phaseCommit, 1);
     m.moveBDtoA(3, 1);                         // …and the commit, LAST
     m.moveWimm(0x0000, Z80_BUSREQ);
     }

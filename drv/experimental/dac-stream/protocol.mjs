@@ -42,7 +42,7 @@ export const CONTROL = [
   ["bootGeneration", 2, "the run the host believes is running"],
   ["phaseGeneration", 1, "bumped for every stop H cannot be trusted across"],
   ["queueHead", 1, "the producer's cursor; written LAST, after the payload"],
-  ["hostCommit", 1, "bumped after a complete update; written LAST of all"],
+  ["phaseCommit", 1, "commits phaseGeneration only; queueHead is the queue's separate commit"],
 ];
 
 const sizeOf = (fields) => fields.reduce((t, [, n]) => t + n, 0);
@@ -91,7 +91,7 @@ export function protocolLayout(base = 0) {
 
 export const PUB_REGION_BYTES = 32;
 export const PROTOCOL_BYTES = FACES * SNAPSHOT_STRIDE + 2 + CONTROL_BYTES;  // 27
-export const PROTOCOL_SPARE = PUB_REGION_BYTES - PROTOCOL_BYTES;            // 8
+export const PROTOCOL_SPARE = PUB_REGION_BYTES - PROTOCOL_BYTES;            // 5
 
 // ── reading and writing, as ordered byte operations ───────────────────────
 // The ORDER is the protocol. Both sides publish a block by writing every byte
@@ -138,16 +138,17 @@ export function readSnapshot(mem, layout) {
 }
 
 /**
- * The 68000's update, IN ORDER: the payload it is about is already in the queue,
- * then the control fields, then `queueHead`, then `hostCommit` — strictly last,
- * so a Z80 that sees a new commit sees everything behind it (§33.3, §33.4).
+ * A full control initialisation. Runtime queue publication does NOT use this
+ * commit: `queueHead` commits queue bytes, while `phaseCommit` commits only a
+ * new phase generation. Keeping those domains separate prevents an ordinary
+ * live command from invalidating the H corrector.
  */
 export function controlSteps(layout, ctl) {
   const c = layout.control, out = [];
   putLE(out, c.bootGeneration, ctl.bootGeneration);
   putLE(out, c.phaseGeneration, ctl.phaseGeneration);
   putLE(out, c.queueHead, ctl.queueHead);
-  putLE(out, c.hostCommit, ctl.hostCommit);                   // LAST
+  putLE(out, c.phaseCommit, ctl.phaseCommit);                 // LAST for phase control
   return out;
 }
 
@@ -156,7 +157,7 @@ export function readControl(mem, layout) {
   return { bootGeneration: getLE(mem, c.bootGeneration),
     phaseGeneration: getLE(mem, c.phaseGeneration),
     queueHead: getLE(mem, c.queueHead),
-    hostCommit: getLE(mem, c.hostCommit) };
+    phaseCommit: getLE(mem, c.phaseCommit) };
 }
 
 // ── the wrap rules, written once ──────────────────────────────────────────
@@ -206,7 +207,7 @@ export const PROTOCOL_FAULTS = {
   "select-first": "the selector is flipped before the face behind it is written",
   "half-face": "the publisher writes the face the reader is looking at",
   "head-first": "queueHead is advanced before the payload it points past",
-  "commit-first": "hostCommit is written before the control fields it commits",
+  "commit-first": "phaseCommit is written before phaseGeneration",
 };
 
 /** The same publication, done wrong on purpose. */
@@ -254,9 +255,11 @@ export function tornSnapshotPossible(layout, mem0, snap, steps) {
   return null;
 }
 
-/** The same walk for the host's control block, gated on the commit byte. */
+/** The same walk for the phase-control block, gated on its own commit byte. */
 export function tornControlPossible(layout, mem0, ctl, steps) {
-  const key = (c) => [c.bootGeneration, c.phaseGeneration, c.queueHead].join(",");
+  // queueHead is deliberately absent: it commits queue bytes independently
+  // and must be allowed to move without changing the phase generation.
+  const key = (c) => [c.bootGeneration, c.phaseGeneration].join(",");
   const mem = new Uint8Array(mem0);
   const before = readControl(mem, layout);
   const wanted = key(ctl);
@@ -265,7 +268,7 @@ export function tornControlPossible(layout, mem0, ctl, steps) {
     const got = readControl(mem, layout);
     // A reader ACTS only when the commit byte changes. Once it has, everything
     // the commit stands for must already be there.
-    if (got.hostCommit !== before.hostCommit) {
+    if (got.phaseCommit !== before.phaseCommit) {
       seenCommit ??= k;
       if (key(got) !== wanted) return { after: k, got, before, ctl };
     }
@@ -325,7 +328,7 @@ export const PROTO_GLOB = {
   // rest follows in SNAPSHOT order. `protoMap()` checks the coincidence rather
   // than trusting this comment.
   stage: 0x14,         // 9 B, laid out as SNAPSHOT
-  lastCommit: 0x1d,    // u8  the host commit the Z80 has already acted on
+  lastPhaseCommit: 0x1d, // u8  the phase commit the Z80 has already acted on
   queueTail: 0x1e,     // u8  the consumer's cursor — the Z80 owns it
 };
 export const PROTO_GLOB_END = 0x1f;
@@ -334,7 +337,7 @@ export const PROTO_GLOB_END = 0x1f;
 export const STAGE = (() => {
   const out = {}; let o = PROTO_GLOB.stage;
   for (const [name, n] of SNAPSHOT) { out[name] = o; o += n; }
-  if (o !== PROTO_GLOB.lastCommit) throw new Error("the stage is not the snapshot");
+  if (o !== PROTO_GLOB.lastPhaseCommit) throw new Error("the stage is not the snapshot");
   return out;
 })();
 

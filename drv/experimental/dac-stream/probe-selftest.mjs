@@ -937,7 +937,7 @@ assert.equal(backwards[2].sync, "lost");
   {
     const base = new Uint8Array(mem);
     const ctl = { bootGeneration: 0x1234, phaseGeneration: 3, queueHead: 12,
-      hostCommit: (readControl(base, L).hostCommit + 1) & 0xff };
+      phaseCommit: (readControl(base, L).phaseCommit + 1) & 0xff };
     assert.equal(tornControlPossible(L, base, ctl, controlSteps(L, ctl)), null,
       "a new commit must mean every field behind it is already there");
     assert.ok(tornControlPossible(L, base, ctl, faultyControlSteps(L, ctl, "commit-first")),
@@ -981,6 +981,20 @@ assert.equal(backwards[2].sync, "lost");
       if (fault === null) assert.ok(!sawPartial, "a correctly ordered append was read half-written");
       else assert.ok(sawPartial, "advancing the head first must be visible as a half-written record");
     }
+    // Queue publication and phase invalidation are two commit domains. A
+    // perfectly ordinary live command advances queueHead without touching the
+    // phase commit; otherwise every command would throw away H synchronisation.
+    const q = new Uint8Array(mem);
+    q[L.control.queueHead.offset] = 0;
+    q[L.control.phaseCommit.offset] = 7;
+    const before = readControl(q, L);
+    for (const [a, v] of enqueueSteps(L, QBASE, QSIZE, 0, rec)) q[a] = v;
+    const after = readControl(q, L);
+    assert.notEqual(after.queueHead, before.queueHead, "the command was not published");
+    assert.equal(after.phaseCommit, before.phaseCommit,
+      "publishing a queue record must not commit a phase invalidation");
+    assert.equal(after.phaseGeneration, before.phaseGeneration,
+      "publishing a queue record must not change the phase generation");
   }
 
   // ── the wraps, one question each ───────────────────────────────────────
