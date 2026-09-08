@@ -29,7 +29,10 @@ import { mixOne, mixTwo } from "./lut.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
 const OUT = join(drv, "out", "dac-stream");
-const BLAST = join(drv, "out", "blastem");
+// MMLISP_BLASTEM points at another built core. It exists so a result can be
+// produced from a CLEAN rebuild rather than from the working copy that has
+// been patched by hand over several sessions (R9 §26.2).
+const BLAST = process.env.MMLISP_BLASTEM || join(drv, "out", "blastem");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", 5));
@@ -64,6 +67,10 @@ if (!core || !existsSync(host)) {
 }
 
 const coreHash = createHash("sha256").update(readFileSync(core)).digest("hex");
+// What the core WAS BUILT FROM, written by setup.sh. A result that names only
+// a hash cannot be traced back to a revision and a patch (R9 §26.2).
+let build = null;
+try { build = JSON.parse(readFileSync(join(BLAST, "build.json"), "utf8")); } catch { /* older tree */ }
 
 import { CASES, sine } from "./cases.mjs";
 
@@ -332,7 +339,7 @@ for (const c0 of selected) {
   console.log(`  rom ${r.sha} · ${stampLine(r.cfg)} `);
   for (const line of out) globalThis.console.log(line);
   writeFileSync(r.log.replace(/\.log$/, ".json"), JSON.stringify({
-    ...result, case: r.resolved, cli: { compensation: COMP, captureOffset: CAPOFF, fault: FAULT,
+    ...result, build, case: r.resolved, cli: { compensation: COMP, captureOffset: CAPOFF, fault: FAULT,
       marks: MARKS, strict: STRICT }, cfg: r.cfg, rom: r.sha, coreHash, seconds: SECONDS,
     rate: a.rate, errorPct: a.errorPct, intervalMin: a.sorted[0], intervalMax: a.sorted.at(-1),
     inside5: a.inside5, inside10: a.inside10, holes: a.holes.length,

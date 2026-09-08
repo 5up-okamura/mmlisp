@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..66d4a47 100644
+index 4f41271..b94c5c9 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -81,7 +81,7 @@ index 4f41271..66d4a47 100644
  		ym_data_write(gen->ym, value);
  	} else if (location & 2) {
  		ym_address_write_part2(gen->ym, value);
-@@ -1837,6 +1863,7 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
+@@ -1837,6 +1863,12 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
  
  	location &= 0x7FFF;
  	uint32_t address = gen->z80_bank_reg << 15 | location;
@@ -94,7 +94,7 @@ index 4f41271..66d4a47 100644
  	if (address >= 0xE00000) {
  		address &= 0xFFFF;
  		((uint8_t *)gen->work_ram)[address ^ 1] = value;
-@@ -1932,6 +1959,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
+@@ -1932,6 +1964,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -106,7 +106,7 @@ index 4f41271..66d4a47 100644
  	if (location >= 0x800000) {
  		//do refresh check here so we can avoid adding a penalty for a refresh that happens during an IO area access
  		gen->refresh_counter += context->cycles - 4*MCLKS_PER_68K - gen->last_sync_cycle;
-@@ -1963,6 +1995,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
+@@ -1963,6 +2000,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -121,6 +121,59 @@ index 4f41271..66d4a47 100644
  	uint8_t has_tmss = gen->version_reg & 0xF;
  	if (has_tmss && location >= 0xA14000 && location <= 0xA14003) {
  		uint32_t offset = location >> 1 & 1;
+@@ -2833,9 +2878,39 @@ static void *tmss_even_write_8(uint32_t address, void *context, uint8_t value)
+ 	return context;
+ }
+ 
++// ── MMLispDRV: the watched globals ────────────────────────────────────────
++// Plain RAM with a log on the write side. It adds no emulated cycles — the
++// chunk declares no read_cycles or write_cycles — so a build measured with the
++// watch on is the same build, running the same schedule, as one measured
++// without it. That is the point: the record being compared comes from the image
++// under test rather than from a heavier twin that publishes it over the bus.
++static uint8_t z80_read_watched(uint32_t location, void *vcontext)
++{
++	z80_context *context = vcontext;
++	genesis_context *gen = context->system;
++	return gen->zram[location & 0x1FFF];
++}
++
++static void *z80_write_watched(uint32_t location, void *vcontext, uint8_t value)
++{
++	z80_context *context = vcontext;
++	genesis_context *gen = context->system;
++	gen->zram[location & 0x1FFF] = value;
++	mml_probe_log(MML_PROBE_Z80RAM, ((location & 0x7F) << 8) | value, context->Z80_CYCLE);
++	return context;
++}
++
+ static genesis_context *shared_init(uint32_t system_opts, rom_info *rom, uint8_t force_region)
+ {
+ 	static memmap_chunk z80_map[] = {
++		// MMLispDRV: the engine's globals, read and written through functions
++		// instead of straight into the buffer, so the instrument can WATCH the
++		// phase decoder's state without the engine spending a cycle publishing
++		// it. find_map_chunk returns the first chunk containing the address, so
++		// this has to come before the RAM it is carved out of. No MMAP_CODE:
++		// nothing executes there, and nothing may invalidate translated code by
++		// writing a variable.
++		{ 0x1F00, 0x1F80,  0xFFFF, .read_8 = z80_read_watched, .write_8 = z80_write_watched},
+ 		{ 0x0000, 0x4000,  0x1FFF, .flags = MMAP_READ | MMAP_WRITE | MMAP_CODE},
+ 		{ 0x8000, 0x10000, 0x7FFF, .read_8 = z80_read_bank, .write_8 = z80_write_bank},
+ 		{ 0x4000, 0x6000,  0x0003, .read_8 = z80_read_ym, .write_8 = z80_write_ym},
+@@ -2912,10 +2987,10 @@ static genesis_context *shared_init(uint32_t system_opts, rom_info *rom, uint8_t
+ 	gen->psg = malloc(sizeof(psg_context));
+ 	psg_init(gen->psg, gen->master_clock, MCLKS_PER_PSG);
+ 
+-	z80_map[0].buffer = gen->zram = calloc(1, Z80_RAM_BYTES);
++	z80_map[1].buffer = gen->zram = calloc(1, Z80_RAM_BYTES);
+ #ifndef NO_Z80
+ 	z80_options *z_opts = malloc(sizeof(z80_options));
+-	init_z80_opts(z_opts, z80_map, 5, NULL, 0, MCLKS_PER_Z80, 0xFFFF);
++	init_z80_opts(z_opts, z80_map, 6, NULL, 0, MCLKS_PER_Z80, 0xFFFF);
+ 	gen->z80 = init_z80_context(z_opts);
+ #ifndef NEW_Z80
+ 	gen->z80->next_int_pulse = z80_next_int_pulse;
 diff --git a/util.c b/util.c
 index d8ba757..79664fd 100644
 --- a/util.c
@@ -152,7 +205,7 @@ index d8ba757..79664fd 100644
 +	fwrite(rec, 1, sizeof(rec), mml_probe_file);
 +}
 diff --git a/util.h b/util.h
-index 8b7d75d..b0beb1b 100644
+index 8b7d75d..11a017f 100644
 --- a/util.h
 +++ b/util.h
 @@ -2,6 +2,7 @@
@@ -163,7 +216,7 @@ index 8b7d75d..b0beb1b 100644
  #include <time.h>
  #include <wchar.h>
  #include <stdarg.h>
-@@ -112,4 +113,32 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+@@ -112,4 +113,33 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
  FILE* fopen_wrapper(const char *path, const char *mode);
  #endif
  

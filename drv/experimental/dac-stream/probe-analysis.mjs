@@ -42,6 +42,34 @@ export function readProbe(buf) {
 }
 
 /**
+ * How much of [a, b) the 68000 held the bus for (R9 §26.3).
+ *
+ * The engine is a static schedule: a stop does not slow it down, it MOVES it.
+ * So an interval that contains a stop is not a wrong interval, it is the right
+ * interval plus the stop — and subtracting the overlap is what turns a
+ * disturbed run back into something the generated schedule can be checked
+ * against. The alternative, which this replaces, was to skip every interval
+ * containing a stop; with one read a loop and a stall every 3,000 master that
+ * skipped all of them and checked nothing at all.
+ *
+ * BOUNDARIES: a stop is [start, end) and the window is [a, b). A stop that ends
+ * exactly at `a`, or starts exactly at `b`, contributes nothing. Overlap is
+ * min(end, b) - max(start, a) when positive. Stops are summed, so several in
+ * one window are counted once each; they are assumed not to overlap each other,
+ * which is what STOP/RESUME pairs from one CPU are.
+ */
+export function stoppedWithin(a, b, stops, from = 0) {
+  let total = 0, i = from;
+  while (i < stops.length && stops[i][1] <= a) i++;
+  const first = i;
+  for (; i < stops.length && stops[i][0] < b; i++) {
+    const lo = Math.max(stops[i][0], a), hi = Math.min(stops[i][1], b);
+    if (hi > lo) total += hi - lo;
+  }
+  return { stopped: total, next: first };
+}
+
+/**
  * The published records, cut at the reads they belong between (R7 §20.2 B).
  *
  * A record is complete only if all of its fields arrived, in order, AFTER the

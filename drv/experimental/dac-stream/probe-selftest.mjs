@@ -12,7 +12,8 @@ import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "./coo
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
 import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
-  analyzeAdoption, analyzeZ80Hv, readProbe, recordsBetweenReads, summarizeResults,
+  analyzeAdoption, analyzeZ80Hv, readProbe, recordsBetweenReads, stoppedWithin,
+  summarizeResults,
   KIND } from "./probe-analysis.mjs";
 import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITIAL_STATE,
   STATE, PHASE_TABLE, VDP } from "./observer.mjs";
@@ -672,6 +673,38 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(r.preserve.liveIn.size > 0 && r.preserve.liveOut.size > 0);
 }
 
+// ── the stop a window contains (R9 §26.3) ─────────────────────────────────
+// The engine is a static schedule, so a bus stop MOVES it rather than slowing
+// it: an interval that contains one is the laid-out interval plus the stop, and
+// subtracting the overlap is what lets a disturbed run be scored at all. The
+// rule it replaces skipped any interval containing a stop, which with one read
+// a loop and a stall every 3,000 master skipped every interval there was.
+{
+  const S = [[10, 20], [30, 40], [50, 60]];
+  const at = (a, b) => stoppedWithin(a, b, S).stopped;
+  assert.equal(at(0, 100), 30, "three stops, all inside");
+  assert.equal(at(12, 18), 6, "a window inside one stop");
+  assert.equal(at(15, 35), 10, "two partial overlaps");
+  assert.equal(at(0, 45), 20, "TWO stops in one window are both counted");
+  // The boundaries, defined rather than discovered: a stop is [start, end) and
+  // a window is [a, b), so touching at either end contributes nothing.
+  assert.equal(at(20, 30), 0, "a stop ending exactly where the window starts");
+  assert.equal(at(0, 10), 0, "a stop starting exactly where the window ends");
+  assert.equal(at(20, 21), 0);
+  assert.equal(at(59, 60), 1, "…and one master of overlap is one master");
+  assert.equal(at(0, 0), 0);
+  assert.equal(at(100, 200), 0, "past every stop");
+  // `next` lets a caller walk intervals in order without rescanning.
+  assert.equal(stoppedWithin(45, 55, S).next, 2);
+  // A subtracted interval reproduces the schedule exactly: this is the shape
+  // the 4 B stall case is scored in.
+  const NOM = 1000;
+  for (const stop of [[100, 140], [990, 1010]]) {
+    const b = NOM + (stop[1] - stop[0]);
+    assert.equal((b - 0) - stoppedWithin(0, b, [stop]).stopped, NOM);
+  }
+}
+
 // ── the record check, driven by records that are wrong ───────────────────
 // (R7 §20.2 B, and the terminal rule rebuilt for R8 §23.4.)
 //
@@ -942,6 +975,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
+  + " the stop a window contains and how its boundaries are defined,"
   + " the split decode's agreement with it, where that fails to place, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");

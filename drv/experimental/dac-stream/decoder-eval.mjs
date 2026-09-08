@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
 import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
 import { buildCase, FAULTS } from "./case-config.mjs";
-import { readProbe, recordsBetweenReads, Z80_DIV } from "./probe-analysis.mjs";
+import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
 
@@ -33,7 +33,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const OUT = process.argv.includes("--out")
   ? process.argv[process.argv.indexOf("--out") + 1]
   : join(here, "..", "..", "out", "dac-stream");
-const BLAST = join(here, "..", "..", "out", "blastem");
+const BLAST = process.env.MMLISP_BLASTEM || join(here, "..", "..", "out", "blastem");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", "2"));
@@ -89,6 +89,10 @@ const core = ["blastem_libretro.dylib", "blastem_libretro.so"]
   .map((f) => join(BLAST, f)).find(existsSync);
 if (!core) { console.error("decoder-eval: BlastEm is not built — run `sh drv/blastem/setup.sh`"); process.exit(2); }
 const coreHash = createHash("sha256").update(readFileSync(core)).digest("hex");
+let build = null;
+try { build = JSON.parse(readFileSync(join(BLAST, "build.json"), "utf8")); } catch { /* older tree */ }
+console.log(`core ${coreHash.slice(0, 16)}`
+  + (build ? ` — blastem ${build.revision.slice(0, 12)}, probe.patch ${build.patch}` : " — built before setup.sh recorded what it built"));
 
 if (!argv.includes("--reuse")) {
   console.log(`running the observer cases for ${SECONDS}s each…`);
@@ -166,17 +170,6 @@ const spacingOf = (name) => {
   if (!sp) throw new Error(`case "${name}" is not an observer case`);
   return sp;
 };
-/** How many of these intervals the 68000 stalled inside. */
-const countStalled = (times, stops) => {
-  let n = 0, si = 0;
-  for (let k = 1; k < times.length; k++) {
-    const a = times[k - 1], b = times[k];
-    while (si < stops.length && stops[si][1] < a) si++;
-    if (si < stops.length && stops[si][0] < b) n++;
-  }
-  return n;
-};
-
 const checkSpacing = (name, times) => {
   const sp = spacingOf(name);
   // EVERY undisturbed interval against the pattern position it belongs to, not
@@ -452,6 +445,14 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
   const log = readProbe(readFileSync(f));
   const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
     .map((e) => ({ h: e.value & 255, time: e.time }));
+  // NO RAM WRITES AT ALL means the core does not carry the watch, and the
+  // comparison below would then report "every record missing" — true, but not
+  // the truth. Say which it is (R9 §26.2).
+  if (!log.ramWrites.length) {
+    failures.push(`"${name}": this core logged no Z80 RAM writes at all — it was`
+      + ` built without the watch in probe.patch, so the record cannot be read`);
+    continue;
+  }
   // The probe reports the offset within the globals page, so a record field is
   // a write to one of five known addresses in it.
   const stateLo = (built.cfg.ram.glob[0] & 0xff) + 0x10;
@@ -499,19 +500,27 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
     failures.push(`"${name}": ${owed} readings owe a record and ${compared} arrived complete`);
   for (const k of kinds) failures.push(`"${name}": ${problems[k]} records ${k}`);
   if (mismatch) failures.push(`"${name}": the 2ch engine and the reference disagreed on ${mismatch} of ${compared}`);
-  // The schedule's own read spacing, checked against the machine — but only
-  // where there is something undisturbed to check. One read a LOOP is 430,080
-  // master and a stall every 3,000 lands inside every one of them, so the
-  // disturbed case has no clean interval by construction; that is the case
-  // working, not the check failing.
-  const stalled = countStalled(reads.map((x) => x.time), log.stops);
-  if (stalled < reads.length - 1) {
-    const worst = checkSpacing(name, reads.map((x) => x.time));
-    console.log(`  read spacing ${sp[0]} master, agrees to ${worst} master on the`
-      + ` ${reads.length - 1 - stalled} undisturbed intervals`);
-  } else {
-    console.log(`  read spacing not checked: the 68000 stalled inside all`
-      + ` ${reads.length - 1} intervals — one read a loop is ${sp[0]} master`);
+  // THE READ SPACING, WITH THE STOP SUBTRACTED PER INTERVAL (R9 §26.3). The
+  // engine is a static schedule, so a stop moves it rather than slowing it:
+  // interval - stopped inside that interval = the interval the generator laid
+  // out. Skipping disturbed intervals instead checked NOTHING here, because one
+  // read a loop is 430,080 master and a stall every 3,000 lands in every one.
+  {
+    let worst = 0, off = 0, checked = 0, stalledN = 0;
+    for (let n = 1; n < reads.length; n++) {
+      const a = reads[n - 1].time, b = reads[n].time;
+      const { stopped } = stoppedWithin(a, b, log.stops);
+      if (stopped) stalledN++;
+      const d = Math.abs((b - a) - stopped - sp[n % sp.length]);
+      checked++;
+      if (d > 16) off++;
+      worst = Math.max(worst, d);
+    }
+    console.log(`  read spacing ${sp[0]} master: ${checked} intervals checked`
+      + ` (${stalledN} with a stop subtracted), worst residual ${worst} master`);
+    if (off) failures.push(`"${name}": ${off} of ${checked} intervals do not match the`
+      + ` generated spacing once their own stop is subtracted (worst ${worst} master)`);
+    if (checked < 100) failures.push(`"${name}": only ${checked} intervals to check`);
   }
   console.log(`  worst slot ${built.gen.placement.worst.workPct}%,`
     + ` mean ${built.gen.placement.meanWorkPct}%, ${built.gen.split.slotsPreserving} slots carry BC`);
@@ -542,22 +551,32 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
   }
   // WHEN THE RESULT IS FINISHED: the reading, then the last field of its
   // record. The layout predicts it; the machine is asked to agree.
-  const settle = [];
-  { let ri = 0;
+  // …and the same subtraction per RECORD (R9 §26.3): the reading, the last
+  // field of its record, minus whatever the 68000 held the bus for in between.
+  // Every complete record owes a settle, and in a static schedule every one of
+  // them must equal the layout's prediction — not just the smallest.
+  {
+    const want = built.gen.observer.settleMaster;
+    const raw = [], adj = [];
+    let ri = 0;
     for (const rec of recs) {
       while (ri + 1 < reads.length && reads[ri + 1].time <= rec.time) ri++;
-      if (rec.field === names.length - 1 && rec.time > reads[ri].time)
-        settle.push(rec.time - reads[ri].time);
-    } }
-  if (settle.length) {
-    settle.sort((a, b) => a - b);
-    const want = built.gen.observer.settleMaster;
-    const mid = settle[settle.length >> 1];
-    console.log(`  reading -> finished record: ${settle[0]}..${settle.at(-1)} master`
-      + ` (p50 ${mid} = ${(mid / MCLK * 1000).toFixed(3)} ms), the layout says ${want}`);
-    if (settle[0] !== want && !stalled)
-      failures.push(`"${name}": the record settles in ${settle[0]}..${settle.at(-1)} master`
-        + ` where the layout says ${want}`);
+      if (rec.field !== names.length - 1 || rec.time <= reads[ri].time) continue;
+      const span = rec.time - reads[ri].time;
+      raw.push(span);
+      adj.push(span - stoppedWithin(reads[ri].time, rec.time, log.stops).stopped);
+    }
+    const bad = adj.filter((x) => x !== want).length;
+    raw.sort((a, b) => a - b); const sorted = [...adj].sort((a, b) => a - b);
+    console.log(`  reading -> finished record: ${raw[0]}..${raw.at(-1)} master raw,`
+      + ` ${sorted[0]}..${sorted.at(-1)} with each record's own stop subtracted`
+      + ` (the layout says ${want} = ${(want / MCLK * 1000).toFixed(3)} ms)`);
+    // ONE SETTLE PER COMPLETE RECORD, so a single well-behaved one cannot stand
+    // in for the rest.
+    if (adj.length !== compared)
+      failures.push(`"${name}": ${compared} complete records but ${adj.length} settle times`);
+    if (bad) failures.push(`"${name}": ${bad} of ${adj.length} records settle somewhere`
+      + ` other than the ${want} master the layout predicts`);
   }
   const bases = rows.filter((r) => r && r.known === 0xff && r.valid === 0).length;
   if (!bases) failures.push(`"${name}": not one record was a base`);
