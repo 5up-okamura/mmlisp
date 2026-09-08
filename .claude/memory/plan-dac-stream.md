@@ -1,7 +1,7 @@
 # DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
-**Current review (2026-09-08): resume from instruction §23, R8 — steps 1 and 2
-are done; step 3 (the 15-level 2ch on BlastEm, 10 s + 60 s) is next.** The polling
+**Current review (2026-09-08): R8 §23.5 steps 1-3 are DONE and verified on
+BlastEm. Step 4 is the corrector's DESIGN and is waiting on the designer.** The polling
 NOP window is the accepted P1 regression. Computed timing has not passed; fix
 the overflowing DIVU load and the HBlank transfer-gate bypass, then specify
 observable phase/expiry/recovery before further implementation. A published
@@ -585,3 +585,48 @@ VDP read the same window wait the schedule does); worst slot 83.8%, mean 78.9%;
 
 **Not done**: BlastEm cases for the 15-level 2ch, the 10 s / 60 s 2ch
 comparison (§23.5 step 3), corrector, transfer, hardware.
+
+## R8 §23.5 step 3 — the observer holds inside the complete 2ch engine
+
+Done and committed (`0b683e0`, `49ac3f6`). Reported as instruction §25.
+
+**The diagnostic does not exist any more.** Publishing the record over the bus
+costs 16 cycles a field even in its cheapest form, which grows five pieces to
+46/33/46/33/46 and fails to place at 83.9% (it closes only at 85.0%) — and it
+would mean measuring an image heavier than the one under test. Instead
+`probe.patch` carves the globals page `$1F00..$1F7F` out of the Z80 RAM chunk
+into read/write functions and LOGS THE WRITES (`MML_PROBE_Z80RAM`). It declares
+no read_cycles/write_cycles, so nothing about the emulated timing changes —
+verified by reproducing a case byte-for-byte across the rebuild. The engine
+spends nothing and is told nothing.
+
+**A real error this caught.** The split decode's advance came from
+`cfg.slotCycles`, which is ONE GROUP (26,880 master, 147 units); the unrolled
+2ch loop is 80 slots (430,080 master, 129 units). §24's "69 observations, 0
+disagreed" used that constant on BOTH sides, so the reference and the
+implementation agreed with each other while both disagreed with the schedule.
+The read interval now comes from the laid-out loop. (Same shape of error, one
+level down: the settle prediction was measured from the START of the read
+instruction, 16 cycles before where the instrument stamps it.)
+
+**Results, complete 2ch+CSM, 15 levels, the decode distributed into it:**
+10 s required case passes (`values all match`, gap 5,370..5,385). Over 60 s:
+7,497 readings, 7,497 complete records, **0 disagreed** on observation number,
+KNOWN, VALID and DELTA. Read spacing agrees with the generated 430,080 master
+to **0** on all 7,496 undisturbed intervals. The record settles **317,145
+master (5.907 ms)** after the reading on every one — exactly what the layout
+predicts. Worst slot 83.8%, mean 79.0%, 66 slots carry BC. machine-probe 30/30.
+
+**The residual, which is step 4's input**: quiet, 0..0 master really happened
+and the record's own error is ≤ **20 master (1.3 Z80 cycles)** over 7,496 valid
+differences; under 4B stalls, **364..1,328 master** really happened and the
+error is ≤ **33 master (2.2 Z80 cycles)** over 7,478.
+
+Also: the CSM test voice's boot init was 438 B of unrolled register writes;
+table-driven it is 185 B, which is what let the split+CSM image fit at 2,390 of
+2,560.
+
+**Waiting on the designer**: step 4 — max correction rate, origin/generation,
+the stop bound. Nothing about the 83.9% headroom that is left (~1,420 cycles a
+loop, largest single slot 28.4) is claimed to absorb an unmeasured external
+wait.
