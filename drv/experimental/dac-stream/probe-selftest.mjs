@@ -18,7 +18,7 @@ import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitR
 import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITIAL_STATE,
   STATE, PHASE_TABLE, VDP } from "./observer.mjs";
 import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
-import { generate } from "./gen-stream.mjs";
+import { generate, codeLedger, reservedPadBytes } from "./gen-stream.mjs";
 import { generateSplit } from "./decode-split.mjs";
 import { CORR, MAX_QUANTA, MAX_DEBT_UNITS, debtLimitFor, CORR_FAULTS, correctorBlocks,
   correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "./corrector.mjs";
@@ -859,6 +859,41 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(r.preserve.liveIn.size > 0 && r.preserve.liveOut.size > 0);
 }
 
+// ── the code ledger (R11 §31.1) ───────────────────────────────────────────
+// `code_end + estimate` double-counts, and it has now drifted back to the plain
+// sum twice. A `complete` build EXECUTES the unwritten features' cycles as
+// tagged padding, so those bytes are already in the image and the real feature
+// REPLACES them. The padding is measured from the same generated object rather
+// than tabulated — only ops the generator tagged `reserved`, so a slot's own pad
+// and a correction ladder's nops, which no feature replaces, stay in.
+{
+  const build = (opt) => {
+    const cfg = buildConfig({ voices: 2, complete: true, csm: false, levels: 15,
+      workTarget: 0.839, ...opt.cfg });
+    const r = generateSplit(cfg, { stackFill: true, ...opt.opt });
+    assert.ok(r.ok, `the ledger's image did not generate: ${r.stage}`);
+    const d = mkdtempSync(join(tmpdir(), "dac-ledger-"));
+    let end;
+    try { const f = join(d, "e.z80"); writeFileSync(f, r.gen.text); end = assemble(f).symbols.get("code_end"); }
+    finally { rmSync(d, { recursive: true, force: true }); }
+    return codeLedger(cfg, r.gen, end);
+  };
+  const plain = build({ cfg: {}, opt: {} });
+  const corr = build({ cfg: { correctorBudget: true }, opt: { correct: true } });
+  assert.deepEqual(
+    { plain: [plain.engine, plain.reserved, plain.owed, plain.finished],
+      corr: [corr.engine, corr.reserved, corr.owed, corr.finished] },
+    { plain: [2089, 570, 608, 2127], corr: [2291, 437, 538, 2392] },
+    "the code ledger moved — say so rather than letting it drift");
+  assert.ok(plain.spare > 0 && corr.spare > 0, "the finished estimate must fit the region");
+  assert.equal(plain.region, 2560, "the code region is not to be widened (R11 §31.1)");
+  // The padding it subtracts is the RESERVED padding and nothing else: a build
+  // with no reservations has none to subtract, and the ladder's own nops — which
+  // no feature replaces — must not be counted.
+  const p1 = buildConfig({ voices: 2 });
+  assert.equal(reservedPadBytes(generate(p1)), 0, "a build with no reservations reserves no bytes");
+}
+
 // ── the corrector IN THE LOOP, and the correction read back off the DAC ───
 // (R10 §29.3.)
 //
@@ -1286,7 +1321,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
   + " the stop a window contains and how its boundaries are defined,"
-  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC,"
+  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC, the code ledger and what it does not subtract,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");

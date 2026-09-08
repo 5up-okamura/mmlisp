@@ -33,7 +33,7 @@
 // old engine's structure was built around and it is what this one drops.
 import { stampLine, GLOB, YM } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE } from "./lut.mjs";
-import { op, cost, laySlot, placementTable, padTo } from "./schedule.mjs";
+import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.mjs";
 
 const hex = (n) => `$${n.toString(16)}`;
 
@@ -555,4 +555,33 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   P("");
 
   return { text: L.join("\n"), slots, placement: placementTable(slots, cfg.periodCycles) };
+}
+
+// ── THE CODE LEDGER (R11 §31.1, restoring the rule R8 §24.3 already fixed) ──
+//
+// `code_end + what the unwritten features are estimated to cost` DOUBLE-COUNTS.
+// A `complete` build EXECUTES those features' cycles as tagged padding, and that
+// padding is bytes in the image — bytes the real feature will REPLACE, not add
+// to. §24.3 said so and wrote `image - reserved padding + estimate`; both
+// split-report.mjs and gate.mjs had drifted back to the plain sum, which is how
+// a 2,392 B image came to be reported as 269 B over a 2,560 B region.
+//
+// The padding is MEASURED from the same generated object, never tabulated: only
+// ops the generator tagged `reserved`, so a slot's own pad and a correction
+// ladder's nops — which no feature replaces — stay in.
+export function reservedPadBytes(gen) {
+  let total = 0;
+  for (const slot of gen.slots) total += fillBytes(slot.ops.filter((o) => o.reserved));
+  return total;
+}
+
+/**
+ * @param engineBytes  code_end WITHOUT the test scaffolding (the CSM patch dump)
+ */
+export function codeLedger(cfg, gen, engineBytes) {
+  const reserved = reservedPadBytes(gen);
+  const owed = (cfg.codeEstimate ?? []).reduce((t, [, b]) => t + b, 0);
+  const region = cfg.ram.code[1] - cfg.ram.code[0];
+  const finished = engineBytes - reserved + owed;
+  return { engine: engineBytes, reserved, owed, finished, region, spare: region - finished };
 }

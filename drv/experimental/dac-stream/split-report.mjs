@@ -10,6 +10,7 @@
 //   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
 import { buildConfig, stampLine } from "./config.mjs";
 import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "./decode-split.mjs";
+import { codeLedger } from "./gen-stream.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, LADDER_BYTES, MAX_QUANTA,
   MAX_DEBT_UNITS } from "./corrector.mjs";
 import { assemble } from "../../tools/z80asm.mjs";
@@ -87,21 +88,35 @@ for (const p of PROFILES) {
   // The CSM test voice is scaffolding — a real engine receives a patch as
   // commands, not as boot code — so it is measured and separated rather than
   // quietly inflating the budget, exactly as the gate does it.
+  // …and the ledger is taken from THAT image, not from this one. A CSM write
+  // draws on its block's reservation, so the two images do not carry the same
+  // amount of reserved padding: mixing `code_end` from one with the padding
+  // from the other reports 357 B where the image has 437.
   const bare = (() => {
     const c2 = buildConfig({ voices: 2, complete: true, csm: false, levels: 15,
       workTarget: 0.839, ...p.cfg });
     const r2 = generateSplit(c2, { stackFill: true, ...p.opt });
     if (!r2.ok) return null;
     const d2 = mkdtempSync(join(tmpdir(), "dac-split-bare-"));
-    try { const f = join(d2, "e.z80"); writeFileSync(f, r2.gen.text); return assemble(f).symbols.get("code_end"); }
-    finally { rmSync(d2, { recursive: true, force: true }); }
+    try {
+      const f = join(d2, "e.z80"); writeFileSync(f, r2.gen.text);
+      return { end: assemble(f).symbols.get("code_end"), cfg: c2, gen: r2.gen };
+    } finally { rmSync(d2, { recursive: true, force: true }); }
   })();
-  const engine = bare ?? bytes;
-  console.log(`   code        ${engine} B engine of ${region} B`
-    + (bare === null ? "" : ` (${bytes} B with the ${bytes - bare} B CSM test patch)`)
-    + `, + ${owed} B still owed = ${engine + owed} B`
-    + `  (${region - engine - owed >= 0 ? `${region - engine - owed} B spare` : `${engine + owed - region} B OVER`})`);
-  for (const [what, b] of cfg.codeEstimate) console.log(`     ${pad(what, 22)}${String(b).padStart(5)} B`);
+  // THE FOUR TERMS, PRINTED SEPARATELY (R11 §31.1). The estimate is not added
+  // to the image: the image already EXECUTES the unwritten features' cycles as
+  // tagged padding, and the real feature replaces those bytes rather than
+  // arriving on top of them.
+  const led = bare ? codeLedger(bare.cfg, bare.gen, bare.end) : codeLedger(cfg, r.gen, bytes);
+  console.log(`   code        ${led.engine} B engine of ${led.region} B`
+    + (bare === null ? "" : ` (${bytes} B with the ${bytes - bare.end} B CSM test patch)`));
+  console.log(`     ${pad("- reserved padding", 22)}${String(led.reserved).padStart(5)} B`
+    + `  provisional: the real feature REPLACES these bytes`);
+  console.log(`     ${pad("+ still owed", 22)}${String(led.owed).padStart(5)} B`);
+  for (const [what, b] of cfg.codeEstimate)
+    console.log(`     ${pad(`    ${what}`, 22)}${String(b).padStart(5)} B`);
+  console.log(`     ${pad("= finished estimate", 22)}${String(led.finished).padStart(5)} B`
+    + `  (${led.spare >= 0 ? `${led.spare} B spare` : `${-led.spare} B OVER`})`);
   const state = r.correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
   console.log(`   RAM         ${state} B of state in the ${cfg.ram.glob[1] - cfg.ram.glob[0]} B globals,`
     + ` phase table $${cfg.ram.phase[0].toString(16)}`

@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
 import { buildConfig, stampLine } from "./config.mjs";
-import { generate, cyclePaths } from "./gen-stream.mjs";
+import { generate, cyclePaths, codeLedger } from "./gen-stream.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
 import {
   analyzeValue, analyzeTime, analyzeBus, analyzeWrites, analyzeTimerTraffic, analyzeDacEnable,
@@ -397,24 +397,33 @@ if (ref && !JSON_OUT) {
   if (ref.cfg.reserve) {
     // The code region is the half of the budget the cycle reservations cannot
     // express, and it is the binding one.
-    const estimate = ref.cfg.codeEstimate;
-    const owed = estimate.reduce((t, [, b]) => t + b, 0);
+    //
+    // THE ESTIMATE IS NOT ADDED TO THE IMAGE (R11 §31.1, and R8 §24.3 before
+    // it). A `complete` build EXECUTES every unwritten feature's cycles as
+    // tagged padding, and those bytes are in `code_end` already — the real
+    // feature REPLACES them. Adding the estimate on top counts them twice,
+    // which is how a 2,392 B image was reported as 269 B over 2,560.
     const region = ref.cfg.ram.code[1] - ref.cfg.ram.code[0];
     // The test image bakes a CH3 patch into boot so CSM has something to key.
     // That is scaffolding — a real engine receives a patch as commands — so it
-    // is measured and separated rather than quietly inflating the budget.
-    const bare = build({ ...ref.c.cfg, csm: false }).built.symbols.get("code_end");
+    // is measured and separated rather than quietly inflating the budget. The
+    // ledger is taken from THAT image, because a CSM write draws on its block's
+    // reservation and the two images do not carry the same reserved padding.
+    const plain = build({ ...ref.c.cfg, csm: false });
+    const bare = plain.built.symbols.get("code_end");
     const scaffold = ref.codeBytes - bare;
+    const led = codeLedger(plain.cfg, plain.gen, bare);
     console.log(`\nコード予算 — region ${region} B`);
-    console.log(`  ${pad("built (engine)", 26)}${String(bare).padStart(5)} B`);
+    console.log(`  ${pad("built (engine)", 26)}${String(led.engine).padStart(5)} B`);
     if (scaffold > 0)
       console.log(`  ${pad("(test CSM patch dump)", 26)}${String(scaffold).padStart(5)} B`
         + `  scaffolding — a real engine gets a patch as commands, not as boot code`);
-    for (const [what, bytes, why] of estimate)
-      console.log(`  ${pad(what, 26)}${String(bytes).padStart(5)} B  ${why}`);
-    const left = region - bare - owed;
-    console.log(`  ${pad("TOTAL", 26)}${String(bare + owed).padStart(5)} B`
-      + `  ${left >= 0 ? `${left} B spare` : `${-left} B OVER — the region does not hold it`}`);
+    console.log(`  ${pad("- reserved padding", 26)}${String(led.reserved).padStart(5)} B`
+      + `  provisional: the real feature replaces these bytes, it does not add to them`);
+    for (const [what, bytes, why] of ref.cfg.codeEstimate)
+      console.log(`  ${pad(`+ ${what}`, 26)}${String(bytes).padStart(5)} B  ${why}`);
+    console.log(`  ${pad("= finished estimate", 26)}${String(led.finished).padStart(5)} B`
+      + `  ${led.spare >= 0 ? `${led.spare} B spare` : `${-led.spare} B OVER — the region does not hold it`}`);
   }
 
   if (ref.cfg.reserve) {
