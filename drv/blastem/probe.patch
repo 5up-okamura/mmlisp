@@ -85,7 +85,12 @@ index 4f41271..66d4a47 100644
  
  	location &= 0x7FFF;
  	uint32_t address = gen->z80_bank_reg << 15 | location;
-+	if (address == 0xFF0000) mml_probe_log(MML_PROBE_NOTIFY, value, context->Z80_CYCLE);
++	// The notification channel is EIGHT bytes, not one: a diagnostic build
++	// publishes a whole record and the reader has to be able to tell which
++	// field arrived, not count writes and hope. Offset 0 is the plain
++	// notification the cooperative window uses, and its value is unchanged.
++	if (address >= 0xFF0000 && address < 0xFF0008)
++		mml_probe_log(MML_PROBE_NOTIFY, ((address & 7) << 8) | value, context->Z80_CYCLE);
  	if (address >= 0xE00000) {
  		address &= 0xFFFF;
  		((uint8_t *)gen->work_ram)[address ^ 1] = value;
@@ -180,7 +185,7 @@ index 8b7d75d..b0beb1b 100644
 +#define MML_PROBE_DACBUS  7   /* Z80-side DAC access, before YM quantization */
 +#define MML_PROBE_STOP    8   /* modeled Z80 execution boundary at BUSACK */
 +#define MML_PROBE_RESUME  9   /* modeled boundary after release delay */
-+#define MML_PROBE_NOTIFY 10   /* Z80 write to main RAM $FF0000 */
++#define MML_PROBE_NOTIFY 10   /* Z80 write to $FF0000..7; value = offset<<8 | byte */
 +#define MML_PROBE_POLL   12   /* first unrequested BUSACK read after release */
 +#define MML_PROBE_COMMIT 13   /* 68k writes local cooperative commit byte */
 +#define MML_PROBE_COPY   11   /* value = queue offset << 8 | transferred byte */

@@ -639,17 +639,62 @@ reading is ambiguous the decode carries its prediction forward, so its residual
 and the instrument's difference are measured from different points. Fixing that
 comparison is open work.
 
-**The decoder is still a JS model.** The Z80 code for it does not exist. Its
-table is `Int16Array(256)` — **512 bytes**, not the 256 an earlier note claimed —
-and holds 0..3,419 with −1 for the 46 values never observed, so a one-byte
-version needs its unit, rounding and unknown marker chosen again. The "about 30
-cycles" for the decode is an estimate, not code: it does not yet include the
-16-bit difference, the wrap, the interval, the state transitions, or register
-save and branch balancing. Missing readings and restart are covered by the state
-model but untested on the machine, and nothing has run on hardware, where the
-H → phase table would have to be calibrated again.
+The reference decoder's own table is `Int16Array(256)` — **512 bytes**, not the
+256 an earlier note claimed — and holds 0..3,419 with −1 for the 46 values never
+observed. The Z80 carries a quantised one-byte copy instead (20 master a unit,
+171 units a line, `$ff` for a value the calibration never saw), and its worst
+in-line error against the reference is **40 master (2.7 Z80 cycles)** — the
+earlier "precision unchanged" is withdrawn. Nothing has run on hardware, where
+the H → phase table would have to be calibrated again.
 
-## The three structural decisions## The three structural decisions
+## The decoder on the Z80: what it costs and where it does not fit
+
+`observer.mjs` emits the decode as costed ops and `decode-split.mjs` emits the
+same decode cut into pieces. Both are checked by assembling them and running
+every input through the emulator, not by counting cycles by hand.
+
+**The state is three positions, not two.** `KNOWN` and `VALID` are published as
+masks: `$00/$00` means the reading was not in the table and the chain is broken;
+`$ff/$00` means a base to measure the *next* reading from; `$ff/$ff` means the
+displacement is a real difference between two consecutive known readings.
+`VALID` is one AND of two masks, `DELTA` is masked by it, and `EXPECT` is masked
+by `KNOWN`, so an invalid number is never left where a valid one is read. An
+earlier version had no acquisition state at all: it published a difference from
+the very first reading, and ran an unknown reading through the same arithmetic,
+so the next good reading differed from a number made out of `$ff`.
+
+**One slot: 283 cycles, 69 B.** With the VDP read (16) and P1's own output (18)
+that is 317 of a 358-cycle slot — **88.5%**, not the 79.1% the 249-cycle version
+without the acquisition gate reported. Every path costs the same; the three
+reductions are branch-free masks (`add a,256-n` then `sbc a,a`), which is also
+what makes them divisible.
+
+**The diagnostic build is a different rom.** It publishes the five-field record
+— `KNOWN, VALID, DELTA, COUNTLO, COUNTHI` — to five *separate* addresses in the
+bank window, spread across the group's later slots so the record closes before
+the next read. The instrument requires exactly that: fields in order, after
+their own read and before the next one, with one unfinished record allowed at
+the end of a run and nowhere else. Three generated faults (`drop-field`,
+`double-field`, `carry-publish`) exist to show the check refusing, and the
+classification itself is driven by synthetic logs in the selftest.
+
+**In the complete 2ch engine it does not fit, and the reason is granularity.**
+A slot boundary destroys `A` and the flags — `mix_one` runs in every slot and it
+is the sample path — so the split version keeps everything in memory and in
+`BC`, and costs **501 cycles in 21 pieces**. The complete 2ch+CSM loop has
+687.9 cycles of headroom to the 79.6% target, which is more than 501; but 19 of
+the 21 pieces need a slot with ≥17 cycles free and only **5 slots** have that.
+The placement fails at the fourth piece. Thinning the observation rate does not
+help: the loop is statically unrolled, so a piece placed in a slot runs every
+lap whatever uses its result. The whole sequence first places at a **83.9%**
+per-slot ceiling, in one lap, 7.51 ms from the reading to the finished record.
+
+The phase table has no home either: the complete map's free space is 176 B
+inside the code reservation, 96 B unreserved and 122 B inside the globals — no
+page-aligned 256 B block anywhere, and the largest contiguous run obtainable is
+217 B.
+
+## The three structural decisions
 
 **1. The slot boundary IS the DAC write.** Each output interval begins with
 `ld (de),a`, so the interval between two writes is the slot's length by
@@ -696,6 +741,8 @@ generation time.
 | `config.mjs` | **the one configuration object.** Clocks, profile, RAM map, YM registers, the settling table. Nothing reads an environment variable; a config is passed in, hashed, and its stamp goes into every artifact it produced. |
 | `schedule.mjs` | the placement engine: exact-cost ops, the pad solver, the placement table |
 | `gen-stream.mjs` | generates the Z80 source and the per-path cycle table |
+| `observer.mjs` | the phase observer: the VDP read, the Z80 decode as costed ops, its RAM ownership, its boot initialisation, the published record and the faults that break it |
+| `decode-split.mjs` | the same decode cut into pieces a complete 2ch slot could hold, and the walk that tries to place them |
 | `machine.mjs` | the emulated machine and the instrument: RAM, the YM's four ports with a real timer model, the 68000's bus grab as injectable stopped time, and a 64-bit-safe trace |
 | `analyze.mjs` | VALUE, TIME and BUS, kept apart; plus the chip's settling table, checked |
 | `spectrum.mjs` | the §6.3 comparison: the same bytes on a uniform grid vs at their real write times |

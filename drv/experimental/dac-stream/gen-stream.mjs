@@ -31,7 +31,7 @@
 // tolerance. Reserving it in EVERY slot to make it safe is 25% of the budget
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
-import { stampLine, YM } from "./config.mjs";
+import { stampLine, GLOB, YM } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, LEVELS, SILENCE } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo } from "./schedule.mjs";
 
@@ -292,8 +292,13 @@ export function cyclePaths(cfg) {
  *   real mixer, the real CSM traffic and the real pad arithmetic — instead of
  *   re-emitting a copy of the slot loop beside it. An experiment that does not
  *   fit is then a slot overrun at generation time, which is the point.
+ * @param bootExtra  optional array of asm lines emitted at the END of boot,
+ *   before the loop is entered. State an experiment keeps in RAM is
+ *   initialised HERE and not left to whatever the core's RAM happens to hold
+ *   (R7 §20.2 B) — a run whose first observation depended on a zeroed core was
+ *   not testing initialisation at all.
  */
-export function generate(cfg, extraWork = null) {
+export function generate(cfg, extraWork = null, bootExtra = null) {
   const L = [];
   const slots = [];
   const P = (s = "") => L.push(s);
@@ -319,14 +324,17 @@ export function generate(cfg, extraWork = null) {
   } else {
     P(`WAVE        equ ${hex(cfg.ram.wave[0])}       ; 256 B, page aligned`);
   }
+  // Every global's offset comes from config's GLOB table, which is the only
+  // place a live byte of this region is named (R7 §20.2 B).
+  const gh = (n) => `$${n.toString(16).padStart(2, "0")}`;
   P(`G_BASE      equ ${hex(cfg.ram.glob[0])}`);
-  P("G_STATUS    equ G_BASE+$00      ; u8  last YM status byte read");
-  P("G_CSMHI     equ G_BASE+$01      ; u8  CSM ch3 frequency, block/hi");
-  P("G_CSMLO     equ G_BASE+$02      ; u8  CSM ch3 frequency, lo");
+  P(`G_STATUS    equ G_BASE+${gh(GLOB.status)}      ; u8  last YM status byte read`);
+  P(`G_CSMHI     equ G_BASE+${gh(GLOB.csmHi)}      ; u8  CSM ch3 frequency, block/hi`);
+  P(`G_CSMLO     equ G_BASE+${gh(GLOB.csmLo)}      ; u8  CSM ch3 frequency, lo`);
   if (cfg.voices) {
-    P("G_V0PAGE    equ G_BASE+$03      ; u8  LUT page for voice 0's level (the host writes it)");
-    P("G_V1PAGE    equ G_BASE+$04      ; u8  …voice 1's");
-    P("G_MPAGE     equ G_BASE+$05      ; u8  …and the master's");
+    P(`G_V0PAGE    equ G_BASE+${gh(GLOB.v0page)}      ; u8  LUT page for voice 0's level (the host writes it)`);
+    P(`G_V1PAGE    equ G_BASE+${gh(GLOB.v1page)}      ; u8  …voice 1's`);
+    P(`G_MPAGE     equ G_BASE+${gh(GLOB.mpage)}      ; u8  …and the master's`);
   }
   P(`STACK_TOP   equ ${hex(cfg.ram.stack[1])}`);
   P("");
@@ -406,6 +414,11 @@ export function generate(cfg, extraWork = null) {
     P("        ld   hl,0");
     P("        exx");
     if (cfg.voices >= 2) P("        ld   ix,WINDOW+$100     ; voice 1's own page");
+    P("");
+  }
+  if (bootExtra && bootExtra.length) {
+    P("; State this build keeps in RAM, initialised explicitly.");
+    for (const l of bootExtra) P(l.endsWith(":") ? l : `        ${l}`);
     P("");
   }
   P("; The DAC's address latch is written ONCE. Every slot writes data only,");

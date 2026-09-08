@@ -16,7 +16,7 @@ import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
-import { generateObserver } from "./observer.mjs";
+import { generateObserver, PUBLISH_FAULTS } from "./observer.mjs";
 
 export const FAULTS = {
   "drop-copy": "the 68000 transfers one byte fewer than it announced",
@@ -26,6 +26,9 @@ export const FAULTS = {
   "zero-divisor": "the 68000's foreground load divides by zero, which traps",
   "short-load": "the foreground load becomes nops, so it is no longer a long instruction",
   "no-load-marks": "the load loop stops stamping, so its time cannot be checked",
+  // Z80-side, and they break the diagnostic RECORD rather than the decode:
+  // the instrument's own check has to fail on each of them.
+  ...PUBLISH_FAULTS,
 };
 
 /**
@@ -54,7 +57,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     : null;
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
-    if (fault) grab.fault = fault;
+    // A publish fault is the Z80's; it must not also reach the 68000's rom.
+    if (fault && !(fault in PUBLISH_FAULTS)) grab.fault = fault;
     // Two ways to break the load CHECK rather than the load: make it short, or
     // stop it reporting. The gate has to fail on both (R6 §17.2 C).
     if (fault === "short-load" || fault === "no-load-marks") {
@@ -74,7 +78,11 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   }
   if (c0.observer && coop) throw new Error("an observer case has no cooperative window");
   const c = { ...c0, cooperative: coop, grab: grab ?? undefined };
-  const gen = c0.observer ? generateObserver(cfg, c0.observer)
+  if (fault && fault in PUBLISH_FAULTS && !c0.observer?.publish)
+    throw new Error(`fault ${fault} only applies to a case that publishes its records`);
+  const observer = c0.observer && fault && fault in PUBLISH_FAULTS
+    ? { ...c0.observer, publishFault: fault } : c0.observer;
+  const gen = observer ? generateObserver(cfg, observer)
     : coop ? generateCooperative(cfg, coop) : generate(cfg);
   return { case: c, cfg, gen, coop, grab };
 }

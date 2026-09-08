@@ -1594,40 +1594,40 @@
  "calibratedFrom": [
   {
    "name": "hv observer, unrepaid 1B stall",
-   "rom": "1f6cb0dd4c5079a4",
-   "coreHash": "ba2b267e963725af",
+   "rom": "c3e5f81dd61e608a",
+   "coreHash": "c8857835d680a6bb",
    "seconds": 2
   },
   {
    "name": "hv observer, unrepaid 16B stall",
-   "rom": "c121bdaa03790591",
-   "coreHash": "ba2b267e963725af",
+   "rom": "42534c4ba2b2f16b",
+   "coreHash": "c8857835d680a6bb",
    "seconds": 2
   },
   {
    "name": "hv observer, unrepaid 64B stall",
-   "rom": "3a6e607c7f9ff669",
-   "coreHash": "ba2b267e963725af",
+   "rom": "5e706bcf42f62eb1",
+   "coreHash": "c8857835d680a6bb",
    "seconds": 2
   },
   {
    "name": "hv observer, V+H, unrepaid 16B stall",
-   "rom": "ec0fef1b023c91cd",
-   "coreHash": "ba2b267e963725af",
+   "rom": "2c4cc3482cbb08b6",
+   "coreHash": "c8857835d680a6bb",
    "seconds": 2
   },
   {
    "name": "hv observer, V+H, unrepaid 64B stall",
-   "rom": "5d22cba09760e92f",
-   "coreHash": "ba2b267e963725af",
+   "rom": "27967fae0cd625b5",
+   "coreHash": "c8857835d680a6bb",
    "seconds": 2
   },
   {
    "name": "hv observer, V+H, unrepaid 256B stall",
-   "rom": "24c8ab807a52826b",
-   "coreHash": "ba2b267e963725af",
+   "rom": "b5dab3c1185dca58",
+   "coreHash": "c8857835d680a6bb",
    "seconds": 2
   }
  ],
- "hash": "0b1bfd38d72490b6a2d51d6a28a1a0b9"
+ "hash": "b0e00a7f34bb0758fc55c80acc785279"
 }

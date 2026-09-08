@@ -10,8 +10,12 @@ import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "./coo
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
 import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
-  analyzeAdoption, analyzeZ80Hv, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
-import { generateObserver, decodeOps, DECODE, STATE, PHASE_TABLE, VDP } from "./observer.mjs";
+  analyzeAdoption, analyzeZ80Hv, readProbe, recordsBetweenReads, summarizeResults,
+  KIND } from "./probe-analysis.mjs";
+import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITIAL_STATE,
+  STATE, PHASE_TABLE, VDP } from "./observer.mjs";
+import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
+import { generate } from "./gen-stream.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
 
@@ -353,57 +357,228 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(contractProblems(noisy, { kind: "quiet" }).some((p) => /did not happen/.test(p)));
 }
 
-// ── the decode as the Z80 runs it (R6 §17.4 step 2) ───────────────────────
-// Assembled, then executed for EVERY possible reading against several starting
-// expectations. Two things are pinned: it computes what the reference does,
-// and every path costs the same — which is a claim about the emitted code, not
-// about a hand count.
+// ── the decode as the Z80 runs it (R6 §17.4 step 2, R7 §20.2 A) ──────────
+// Assembled once, then run AS A SEQUENCE on one RAM — which is the only way
+// the acquisition contract can be checked at all. The first version of this
+// test rebuilt the CPU and the RAM for every reading, so the state machine it
+// was checking never had a previous observation to be wrong about, and an
+// unknown reading polluting the next real difference went straight past it.
+//
+// Four things are pinned: the initialisation does not depend on what the RAM
+// held, the state machine matches the reference, the arithmetic matches the
+// reference, and every path costs the same.
 {
+  const cfg = buildConfig({});
+  const map = decodeMap(cfg);
   const UNITS = PHASE_TABLE.quantised.units, UNKNOWN = PHASE_TABLE.quantised.unknown;
-  const STEP = 147;
-  const ops = decodeOps(STEP);
-  const src = ["        org $0000", "start:"];
-  for (const o of ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
-  src.push("        halt", `        ds $${DECODE.table.toString(16)}-$,0`);
   const tb = PHASE_TABLE.quantised.bytes;
+  const STEP = 147;
+  const ops = decodeOps(STEP, map);
+  const src = ["        org $0000", "init:"];
+  for (const l of decodeInitOps(map)) src.push(l.endsWith(":") ? l : `        ${l}`);
+  src.push("        halt", "        ds $100-$,0", "body:");
+  for (const o of ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
+  src.push("        halt", `        ds $${map.table.toString(16)}-$,0`);
   for (let i = 0; i < 256; i += 16) src.push(`        db ${tb.slice(i, i + 16).join(",")}`);
   const d2 = mkdtempSync(join(tmpdir(), "dac-decode-"));
   let bytes;
   try { const f = join(d2, "d.z80"); writeFileSync(f, src.join("\n") + "\n"); bytes = assemble(f).bytes; }
   finally { rmSync(d2, { recursive: true, force: true }); }
+  const BODY = 0x100;
 
-  const costs = new Set();
+  // One machine, reused: the state lives in its RAM exactly as it does on the
+  // hardware. `run` is the read-and-decode the schedule performs.
+  const ram = new Uint8Array(0x2000).fill(0xa5);     // NOT zero: see below
+  ram.set(bytes.subarray(0, Math.min(bytes.length, ram.length)));
+  const cpu = new Z80Cpu({ read: (a) => ram[a] ?? 0xff,
+    write: (a, v) => { if (a < ram.length) ram[a] = v; } });
+  const at = (entry) => { cpu.pc = entry; cpu.halted = false;
+    let c = 0; while (!cpu.halted && c < 4000) c += cpu.step(); return c; };
+  const read = () => ({
+    known: ram[map.state + STATE.known], valid: ram[map.state + STATE.valid],
+    delta: ram[map.state + STATE.delta], expect: ram[map.state + STATE.expect],
+    count: ram[map.state + STATE.countLo] | (ram[map.state + STATE.countHi] << 8) });
+  const decodeCost = new Set();
+  const run = (h) => { cpu.a = h; decodeCost.add(at(BODY)); return read(); };
+
+  // 1. INITIALISATION, from a RAM that is not zero anywhere.
+  at(0x0000);
+  assert.deepEqual(read(), { known: 0, valid: 0, delta: 0, expect: 0, count: 0 },
+    "the boot init must not depend on what the RAM held");
+
+  // 2. THE STATE MACHINE, as a sequence on that one machine. Both a known and
+  // an unknown reading are needed, and the table has to actually contain them.
+  const known = [...tb].findIndex((b) => b !== UNKNOWN);
+  const known2 = [...tb].findIndex((b, i) => b !== UNKNOWN && i > known && b !== tb[known]);
+  const unknown = [...tb].findIndex((b) => b === UNKNOWN);
+  assert.ok(known >= 0 && known2 >= 0 && unknown >= 0, "the table must have both kinds of reading");
+  const model = (prev, h) => refDecode(prev, h, STEP, { units: UNITS, unknown: UNKNOWN, table: tb });
+  const story = [
+    [known, "the first known reading is a base, not a difference"],
+    [known2, "two consecutive known readings make a real difference"],
+    [unknown, "an unknown reading breaks the chain"],
+    [known, "the reading after an unknown one is a re-acquisition"],
+    [known2, "and the one after THAT is a difference again"],
+  ];
+  let want = { ...INITIAL_STATE };
+  for (const [h, why] of story) {
+    want = model(want, h);
+    assert.deepEqual(run(h), want, why);
+  }
+  assert.equal(want.valid, 0xff);
+  // The bug this replaces: the reading after an unknown one used to publish a
+  // difference from a number made out of $ff.
+  assert.equal(model(model({ ...INITIAL_STATE, known: 0xff, expect: 0 }, unknown), known).valid, 0);
+
+  // 3. RESTART, mid-sequence: the state goes back to the boot state and the
+  // next known reading is a base again, not a difference across the restart.
+  at(0x0000);
+  assert.deepEqual(read(), { known: 0, valid: 0, delta: 0, expect: 0, count: 0 });
+  assert.equal(run(known).valid, 0, "the reading after a restart cannot be a difference");
+
+  // 4. THE COUNTER, over its carry and its wrap.
+  for (const start of [0x00fe, 0x12fe, 0xfffe]) {
+    ram[map.state + STATE.countLo] = start & 0xff;
+    ram[map.state + STATE.countHi] = start >> 8;
+    let n = start;
+    for (let k = 0; k < 3; k++) { n = (n + 1) & 0xffff; assert.equal(run(known).count, n); }
+  }
+
+  // 5. THE ARITHMETIC, over every reading and every state it can be in.
   let compared = 0;
-  for (let h = 0; h < 256; h++) for (const expect of [0, 1, 85, 86, 170]) {
-    const ram = new Uint8Array(0x2000);
-    ram.set(bytes.subarray(0, Math.min(bytes.length, ram.length)));
-    ram[DECODE.state + STATE.expect] = expect;
-    ram[DECODE.state + STATE.countLo] = 0xff;     // exercise the 16-bit carry
-    ram[DECODE.state + STATE.countHi] = 0x12;
-    let cycles = 0;
-    const cpu = new Z80Cpu({ read: (a) => ram[a] ?? 0xff,
-      write: (a, v) => { if (a < ram.length) ram[a] = v; } });
-    cpu.a = h;
-    while (!cpu.halted && cycles < 4000) cycles += cpu.step();
-    costs.add(cycles);
-    const phase = tb[h];
-    const delta = (ram[DECODE.state + STATE.delta] << 24) >> 24;
-    const status = ram[DECODE.state + STATE.status];
-    const next = ram[DECODE.state + STATE.expect];
-    const count = ram[DECODE.state + STATE.countLo] | (ram[DECODE.state + STATE.countHi] << 8);
-    assert.equal(count, 0x1300, "the observation counter must carry");
-    if (phase === UNKNOWN) { assert.equal(status, 0x00, `h=${h} should read as unknown`); continue; }
-    assert.equal(status, 0xff, `h=${h} is in the table`);
-    let want = (phase - expect) % UNITS; if (want < 0) want += UNITS;
-    if (want >= 86) want -= UNITS;
-    assert.equal(delta, want, `h=${h} expect=${expect}`);
-    assert.equal(next, (phase + STEP) % UNITS, `next expectation, h=${h}`);
+  for (let h = 0; h < 256; h++) for (const prevKnown of [0, 0xff]) for (const expect of [0, 1, 85, 86, 170]) {
+    const prev = { known: prevKnown, valid: 0, delta: 0, expect, count: 0x1234 };
+    ram[map.state + STATE.known] = prev.known;
+    ram[map.state + STATE.valid] = prev.valid;
+    ram[map.state + STATE.delta] = prev.delta;
+    ram[map.state + STATE.expect] = prev.expect;
+    ram[map.state + STATE.countLo] = prev.count & 0xff;
+    ram[map.state + STATE.countHi] = prev.count >> 8;
+    assert.deepEqual(run(h), model(prev, h), `h=${h} known=${prevKnown} expect=${expect}`);
     compared++;
   }
-  assert.ok(compared > 800, `only ${compared} readings compared`);
-  // ONE cost, for every input and both outcomes of both branches.
-  assert.equal(costs.size, 1, `paths cost ${[...costs].join("/")} cycles`);
-  assert.equal([...costs][0] - 4, ops.reduce((t, o) => t + o.cycles, 0));   // less the halt
+  assert.equal(compared, 256 * 2 * 5);
+  // ONE cost, for every input, every state and both outcomes of all three
+  // balanced branches.
+  assert.equal(decodeCost.size, 1, `paths cost ${[...decodeCost].join("/")} cycles`);
+  assert.equal([...decodeCost][0] - 4, ops.reduce((t, o) => t + o.cycles, 0));   // less the halt
+}
+
+// ── the same decode, cut into pieces a 2ch slot could hold (R7 §20.3) ─────
+// The pieces are run SEPARATELY, with A and the flags clobbered between every
+// pair, because that is what a slot boundary does in the complete engine:
+// mix_one runs in every slot and it is the sample path. Only B, C and memory
+// cross. If a piece secretly depended on a flag or on A, this fails.
+{
+  const cfg = buildConfig({});
+  const map = decodeMap(cfg);
+  const STEP = 147, TABLE = map.table, ST = map.state;
+  const blocks = splitBlocks({ table: TABLE, state: ST, step: STEP });
+  const src = ["        org $0000"];
+  blocks.forEach((b, i) => {
+    src.push(`blk${i}:`);
+    for (const o of b.ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
+    src.push("        halt");
+  });
+  src.push(`        ds $${TABLE.toString(16)}-$,0`);
+  const tb = PHASE_TABLE.quantised.bytes;
+  for (let i = 0; i < 256; i += 16) src.push(`        db ${tb.slice(i, i + 16).join(",")}`);
+  const d3 = mkdtempSync(join(tmpdir(), "dac-split-"));
+  let asm;
+  try { const f = join(d3, "s.z80"); writeFileSync(f, src.join("\n") + "\n"); asm = assemble(f); }
+  finally { rmSync(d3, { recursive: true, force: true }); }
+
+  const ram = new Uint8Array(0x2000);
+  ram.set(asm.bytes.subarray(0, Math.min(asm.bytes.length, ram.length)));
+  let hv = 0;
+  const cpu = new Z80Cpu({ read: (a) => a === 0x7f09 ? hv : (ram[a] ?? 0xff),
+    write: (a, v) => { if (a < ram.length) ram[a] = v; } });
+  const costs = blocks.map(() => new Set());
+  const step1 = (h) => {
+    hv = h;
+    blocks.forEach((b, i) => {
+      cpu.a = (i * 37 + h) & 0xff; cpu.f = (i * 91 + h) & 0xff;   // nothing survives
+      cpu.pc = asm.symbols.get(`blk${i}`); cpu.halted = false;
+      let c = 0; while (!cpu.halted && c < 4000) c += cpu.step();
+      costs[i].add(c - 4);
+    });
+    return { known: ram[ST + SPLIT_STATE.known], valid: ram[ST + SPLIT_STATE.valid],
+      delta: ram[ST + SPLIT_STATE.delta], expect: ram[ST + SPLIT_STATE.expect],
+      count: ram[ST + SPLIT_STATE.countLo] | (ram[ST + SPLIT_STATE.countHi] << 8) };
+  };
+  for (let k = 0; k < SPLIT_STATE_SIZE; k++) ram[ST + k] = 0;
+  let want = { ...INITIAL_STATE }, n = 0;
+  const key = (o) => ["known", "valid", "delta", "expect", "count"].map((k) => o[k]).join(",");
+  for (let pass = 0; pass < 2; pass++) for (let h = 0; h < 256; h++) {
+    want = refDecode(want, h, STEP);
+    assert.equal(key(step1(h)), key(want), `split decode disagreed at h=${h}`);
+    n++;
+  }
+  assert.equal(n, 512);
+  // One cost a piece. The VDP read is 13 on this CPU and 16 in the schedule —
+  // the 3-cycle difference is the emulated machine's bank penalty, not the
+  // instruction's, and the schedule is the one that has to be right.
+  blocks.forEach((b, i) => {
+    assert.equal(costs[i].size, 1, `piece "${b.name}" costs ${[...costs[i]].join("/")}`);
+    assert.equal([...costs[i]][0], b.cycles - (i === 0 ? 3 : 0), `piece "${b.name}" cost`);
+  });
+  // …and the placement it is for: at the 79.6% target it does not close, and
+  // the reason is granularity, not the total (R7 §20.3).
+  const full = buildConfig({ voices: 2, complete: true, csm: true });
+  const gen2 = generate(full);
+  const head = gen2.slots.map((s) => 0.796 * s.cycles - s.row.work);
+  assert.ok(head.reduce((a, b) => a + b, 0) > blocks.reduce((t, b) => t + b.cycles, 0),
+    "the loop's TOTAL headroom is larger than the decode — the total is not the binding test");
+  assert.ok(placeSplit(blocks, gen2.slots, { target: 0.796 }).failed,
+    "the split must still fail to place at the 79.6% target");
+  assert.ok(!placeSplit(blocks, gen2.slots, { target: 0.839 }).failed,
+    "…and close at the 83.9% one, which is the number the ceiling question is about");
+}
+
+// ── the record check, driven by records that are wrong (R7 §20.2 B) ───────
+// The end-to-end faults break every record at once, so they cannot show that
+// each kind of breakage is NAMED. These do: one record short, one with a field
+// too many, one whose fields arrived in the wrong order, and one published
+// before its own read.
+{
+  const NAMES = ["a", "b", "c"];
+  const READS = [0, 100, 200, 300].map((time) => ({ time }));
+  const good = (n, base) => NAMES.map((_, k) => ({ time: base + k + 1, field: k, value: n * 10 + k }));
+  const whole = READS.flatMap((r, n) => good(n, r.time));
+  const clean = recordsBetweenReads(READS, whole, NAMES);
+  assert.deepEqual(clean.problems, { late: 0, short: 0, extra: 0, outOfOrder: 0 });
+  assert.deepEqual(clean.rows.map((r) => r && r.a), [0, 10, 20, 30]);
+  assert.equal(clean.incompleteTail, 0);
+
+  const drop = whole.filter((x) => !(x.field === 1 && x.value === 11));
+  assert.equal(recordsBetweenReads(READS, drop, NAMES).problems.short, 1);
+  assert.equal(recordsBetweenReads(READS, drop, NAMES).rows[1], null);
+
+  const twice = [...whole.slice(0, 4), whole[3], ...whole.slice(4)]
+    .sort((x, y) => x.time - y.time || x.field - y.field);
+  assert.equal(recordsBetweenReads(READS, twice, NAMES).problems.extra, 1);
+
+  const swapped = whole.map((x, i) => i === 3 ? { ...whole[4], time: x.time }
+    : i === 4 ? { ...whole[3], time: x.time } : x);
+  assert.equal(recordsBetweenReads(READS, swapped, NAMES).problems.outOfOrder, 1);
+
+  // Published before the first read at all: not attributable to any record.
+  const early = [{ time: -5, field: 0, value: 99 }, ...whole];
+  assert.equal(recordsBetweenReads(READS, early, NAMES).problems.late, 1);
+
+  // A record carried past the next read is BOTH a short record and one with a
+  // field too many — which is the shape the `carry-publish` rom produces.
+  const carried = whole.map((x) => x.field === 2 && x.time < 200 ? { ...x, time: x.time + 100 } : x)
+    .sort((x, y) => x.time - y.time);
+  const c = recordsBetweenReads(READS, carried, NAMES);
+  assert.ok(c.problems.short >= 1 && c.problems.extra >= 1, JSON.stringify(c.problems));
+
+  // The one allowance: the run was cut before the last record finished.
+  const cut = whole.slice(0, whole.length - 1);
+  const t = recordsBetweenReads(READS, cut, NAMES);
+  assert.equal(t.incompleteTail, 1);
+  assert.deepEqual(t.problems, { late: 0, short: 0, extra: 0, outOfOrder: 0 });
+  assert.equal(t.rows.length, READS.length - 1);
 }
 
 // ── one resolved configuration (§12.3) ────────────────────────────────────
@@ -434,10 +609,29 @@ const padCycles = (text) => {
 assert.equal(padCycles(a65.gen.text) + 24, padCycles(a41.gen.text));
 // Every fault changes the ROM, and a fault the emitted path never reaches is
 // refused rather than silently passing.
+const loadCaseNoPublish = { name: "obs", cfg: {}, wave: new Uint8Array(256),
+  observer: { reads: ["h"], store: true, load: "divu", loadProbe: true } };
 const TRANSFER_FAULTS = ["drop-copy", "no-commit", "early-commit", "late-request", "zero-divisor"];
 const LOAD_FAULTS = ["short-load", "no-load-marks"];
-assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS].sort(), Object.keys(FAULTS).sort(),
-  "a new fault needs a home in one of these lists");
+const RECORD_FAULTS = ["drop-field", "double-field", "carry-publish"];
+assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS].sort(),
+  Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
+// The record faults are the Z80's, so what has to change is the generated
+// source — and they are refused on a case that publishes nothing.
+{
+  const pub = { name: "dec", cfg: {}, wave: new Uint8Array(256),
+    observer: { reads: ["h"], decode: true, publish: true, load: "divu" } };
+  const texts = new Map();
+  for (const fault of [null, ...RECORD_FAULTS]) {
+    const t = resolveCase(pub, { fault }).gen.text;
+    assert.ok(!texts.has(t), `fault ${fault} did not change the generated source`);
+    texts.set(t, fault);
+    // …and it must not have leaked into the 68000's side of the rom.
+    assert.equal(resolveCase(pub, { fault }).grab.fault, undefined);
+  }
+  for (const fault of RECORD_FAULTS)
+    assert.throws(() => resolveCase(loadCaseNoPublish, { fault }), /only applies/);
+}
 const roms = new Map();
 for (const fault of [null, ...TRANSFER_FAULTS]) {
   const r = resolveCase(base, { fault });
@@ -447,8 +641,7 @@ for (const fault of [null, ...TRANSFER_FAULTS]) {
 }
 // The load faults belong to a case that times its own load, and are refused
 // anywhere else rather than quietly doing nothing.
-const loadCase = { name: "obs", cfg: {}, wave: new Uint8Array(256),
-  observer: { reads: ["h"], store: true, load: "divu", loadProbe: true } };
+const loadCase = loadCaseNoPublish;
 const loadRoms = new Map();
 for (const fault of [null, ...LOAD_FAULTS]) {
   const r = resolveCase(loadCase, { fault });
@@ -562,5 +755,7 @@ if (process.argv.includes("--machine")) {
 }
 console.log("probe selftest: values, interval attribution, transfer protocol, window geometry,"
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
-  + " the Z80 decode's arithmetic and its single cost,"
+  + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
+  + " the published record's completeness check and what it refuses,"
+  + " the split decode's agreement with it and where that fails to place,"
   + " resolved configuration and padding paths pass");

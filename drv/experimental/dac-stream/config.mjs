@@ -73,8 +73,29 @@ export const RAM_P1 = {
   size: 0x2000,
   code: [0x0000, 0x1a00],   // boot + the generated output loop
   wave: [0x1c00, 0x1d00],   // 256 B, page aligned — P1's known waveform
+  phase: [0x1e00, 0x1f00],  // 256 B, page aligned — the calibrated phase table
+                            //   the observer's decoder indexes with the raw H
+                            //   reading (observer.mjs). DECLARED HERE so the
+                            //   overlap check below can see it: it used to be a
+                            //   constant in observer.mjs, and nothing noticed
+                            //   that its state bytes sat on top of G_STATUS
+                            //   (R7 §20.2 B).
   glob: [0x1f00, 0x1f80],   // engine globals
   stack: [0x1f80, 0x2000],  // 128 B, grows down from $2000
+};
+
+// The engine globals, by offset from glob[0]. Every live byte in the region is
+// named here and nowhere else, so two features cannot quietly pick the same
+// address — which is exactly what the observer did.
+export const GLOB = {
+  status: 0x00,   // u8  last YM status byte read
+  csmHi: 0x01,    // u8  CSM ch3 frequency, block/hi
+  csmLo: 0x02,    // u8  CSM ch3 frequency, lo
+  v0page: 0x03,   // u8  LUT page for voice 0's level
+  v1page: 0x04,   // u8  …voice 1's
+  mpage: 0x05,    // u8  …and the master's
+  observe: 0x08,  // u8  the raw reading, when the observer only keeps it
+  decode: 0x10,   // 6 B the phase decoder's state (observer.mjs STATE)
 };
 
 // With a mixer the map changes shape: the volume tables want 16 whole pages and

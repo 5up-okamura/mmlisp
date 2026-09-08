@@ -26,9 +26,56 @@ export function readProbe(buf) {
   };
   return { events, dac: of(KIND.DACBUS), ym: of(KIND.DAC),
     grabs: pair(KIND.GRAB, KIND.RELEASE), stops: pair(KIND.STOP, KIND.RESUME),
-    notifications: of(KIND.NOTIFY), copies: of(KIND.COPY), polls: of(KIND.POLL),
+    // Offset 0 is the cooperative window's one-way notification; offsets 1..7
+    // are the diagnostic record a decoding build publishes, one field an
+    // address, so a missing or repeated field is visible as itself.
+    notifications: of(KIND.NOTIFY).filter((e) => (e.value >>> 8) === 0),
+    records: of(KIND.NOTIFY).filter((e) => (e.value >>> 8) !== 0)
+      .map((e) => ({ time: e.time, field: (e.value >>> 8) - 1, value: e.value & 0xff })),
+    copies: of(KIND.COPY), polls: of(KIND.POLL),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
     hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };
+}
+
+/**
+ * The published records, cut at the reads they belong between (R7 §20.2 B).
+ *
+ * A record is complete only if all of its fields arrived, in order, AFTER the
+ * read that produced them and BEFORE the next read. Everything else is named:
+ * a field published before its own read, a record with a field missing, one
+ * with a field too many, one whose fields arrived out of order. The earlier
+ * check took the first publication after each read and asked nothing else, so
+ * a record that never finished, or one that finished a whole observation late,
+ * read as a pass.
+ *
+ * @param reads    [{time}], in order
+ * @param records  [{time, field, value}], in order
+ * @param names    the field names, index = field number
+ */
+export function recordsBetweenReads(reads, records, names) {
+  const rows = [], problems = { late: 0, short: 0, extra: 0, outOfOrder: 0 };
+  let ri = 0;
+  for (let n = 0; n < reads.length; n++) {
+    const from = reads[n].time, to = n + 1 < reads.length ? reads[n + 1].time : Infinity;
+    while (ri < records.length && records[ri].time <= from) { problems.late++; ri++; }
+    const fields = [];
+    while (ri < records.length && records[ri].time < to) fields.push(records[ri++]);
+    if (fields.length !== names.length) {
+      if (fields.length < names.length) problems.short++; else problems.extra++;
+      rows.push(null); continue;
+    }
+    if (fields.some((x, k) => x.field !== k)) { problems.outOfOrder++; rows.push(null); continue; }
+    rows.push(Object.fromEntries(names.map((k, i) => [k, fields[i].value])));
+  }
+  // A run is cut where it is cut: the LAST read may not have got its record out
+  // before the emulator stopped. That is the only incompleteness allowed, and
+  // it is allowed once.
+  let incompleteTail = 0;
+  if (rows.length && rows.at(-1) === null && records.length
+      && records.at(-1).time > reads.at(-1).time) {
+    incompleteTail = 1; rows.pop(); problems.short--;
+  }
+  return { rows, problems, incompleteTail };
 }
 
 /**

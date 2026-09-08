@@ -1,6 +1,7 @@
 # DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
-**Current review (2026-09-07): resume from instruction §12, R3.** The polling
+**Current review (2026-09-08): resume from instruction §20, R7 — §20.4 step 3
+is answered and the next move is a design judgment, not code.** The polling
 NOP window is the accepted P1 regression. Computed timing has not passed; fix
 the overflowing DIVU load and the HBlank transfer-gate bypass, then specify
 observable phase/expiry/recovery before further implementation. A published
@@ -478,3 +479,60 @@ R3 review reproduced the repaired 8 B / 5 slots delay-300 case for 10 seconds
 case for 3 seconds (exit 1, 4,395..6,476 master, only 73.9882% inside ±5%).
 The probe selftest passes but does not yet inject faults through the HBlank
 branch. No new hardware validation or full-suite run is claimed by this review.
+
+## R7 §20.2 A/B and §20.4 step 3 — the decoder holds, the placement does not
+
+Done and committed. Reported to the designer as instruction §21.
+
+**The acquisition contract (A).** The Z80 decode had no notion of whether the
+last reading was usable: it published a difference from the very first reading
+and ran an unknown reading through the same arithmetic, so the next good reading
+differed from a number made out of `$ff`. Now `KNOWN`/`VALID` are two published
+masks and `VALID = KNOWN(now) AND KNOWN(before)` — one AND, no branch. `DELTA`
+is masked by `VALID`, `EXPECT` by `KNOWN`. **283 cycles, 69 B** (was 249/62);
+P1's read slot is **88.5%**, not 79.1%. All three reductions became branch-free
+masks, which is also what makes them divisible.
+
+**RAM ownership (A).** `DECODE.state` was `$1F00` = `G_STATUS`/`G_CSMHI`/
+`G_CSMLO`: with CSM on, the decoder wrote on the frequency bytes the loop
+reloads every group. The phase table's `$1E00` was not a region at all. Fixed by
+declaring `phase:` in `RAM_P1`, moving every global's offset into one `GLOB`
+table in `config.mjs`, and making `decodeMap(cfg)` check alignment, size, page
+straddling and overlap with whichever globals that build actually keeps. State
+init moved into boot through a new `bootExtra` hook — it was relying on the
+core's zeroed RAM. **Recalibration was forced by the stamp change and produced a
+byte-identical table**; only `calibratedFrom` moved.
+
+**The record (B).** Five fields to five separate window addresses, spread over
+the group's later slots so the record closes before the next read; the probe's
+NOTIFY now carries the offset (`$FF0000..7`). The check names each breakage
+(short / extra / out of order / before its own read) and allows exactly one
+unfinished record at the end of a run. 3,947 + 3,937 records compared field by
+field on BlastEm, 0 disagreed. Three generated faults and six synthetic ones
+show it refusing.
+
+**The placement (step 3) — this is the finding.** In the complete 2ch engine a
+slot boundary destroys `A` and the flags (`mix_one` runs in every slot and is
+the sample path), so the split decode keeps everything in memory and `BC` and
+costs **501 cycles in 21 pieces**, verified by running each piece separately
+with `A` and the flags clobbered between them. The loop has 687.9 cycles of
+headroom to 79.6% — more than 501 — but **19 of the 21 pieces need a slot with
+≥17 cycles free and only 5 slots have that**; the walk fails at the fourth
+piece. Granularity, not total. Thinning the observation rate changes nothing:
+the loop is statically unrolled, so a piece runs every lap whatever uses it, and
+doubling the unrolled loop needs 1,617 B against 176 B free. The sequence first
+places at a **83.9%** per-slot ceiling, one lap, 7.51 ms reading→record.
+
+**And the table still has no home.** Free space in the complete map: 176 B
+inside the code reservation, 96 B unreserved, 122 B inside the globals. No
+page-aligned 256 B block; largest contiguous run obtainable 217 B. The 210 B
+compacted table (the 46 uncovered H values are exactly two contiguous runs) does
+fit that, but loses page alignment, so the index needs a 16-bit self-modified
+operand and grows from 2 pieces to ~6 — and pieces are the scarce resource.
+Replacing the table with arithmetic fails on precision: the best straight line
+through the compacted index is 60 master off, against the table's own 40.
+
+**Waiting on the designer**: whether to change the 79.6% ceiling (the submission
+for that is §21.6), and whether to free a page from the 4 KB LUT (15 levels
+instead of 16 costs one volume step and zero cycles — the index page is a
+self-modified operand either way). R7 §20.3 declined both this round.

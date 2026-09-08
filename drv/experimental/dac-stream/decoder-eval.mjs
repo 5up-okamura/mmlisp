@@ -21,8 +21,9 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
-import { buildCase } from "./case-config.mjs";
-import { readProbe } from "./probe-analysis.mjs";
+import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
+import { buildCase, FAULTS } from "./case-config.mjs";
+import { readProbe, recordsBetweenReads } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
 
@@ -36,6 +37,11 @@ const BLAST = join(here, "..", "..", "out", "blastem");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", "2"));
+// `--fault NAME` breaks the published record on purpose and INVERTS the verdict
+// for the decoder cases: the run passes only if the record check refuses it
+// (R7 §20.2 B). Everything else in the harness is skipped, because a broken
+// record says nothing about the calibration or the contract runs.
+const FAULT = arg("fault", null);
 
 // ── the roles, declared and enforced ──────────────────────────────────────
 const CALIBRATE = ["hv observer, unrepaid 1B stall", "hv observer, unrepaid 16B stall",
@@ -75,11 +81,12 @@ const coreHash = createHash("sha256").update(readFileSync(core)).digest("hex");
 
 if (!argv.includes("--reuse")) {
   console.log(`running the observer cases for ${SECONDS}s each…`);
-  for (const name of ["hv observer, Z80 reads h", "hv observer, Z80 reads v+h",
+  for (const name of FAULT ? ["z80 decoder"] : ["hv observer, Z80 reads h", "hv observer, Z80 reads v+h",
     "load timed in place", "unrepaid", "V+H, unrepaid", "boot phase",
     "in-contract", "back-to-back", "boundary", "2ch pattern with", "z80 decoder"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
-      "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
+      "--seconds", String(SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
+      { stdio: ["ignore", "ignore", "inherit"] });
 }
 
 // ── log selection, verified against the rom the case produces ─────────────
@@ -92,9 +99,9 @@ const caseOf = (name) => {
 // The rom each case produces, recomputed here from the case itself, so that a
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
-for (const name of [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT, ...BOUNDARY,
-  ...Z80_DECODER, "hv observer, Z80 reads v+h"])
-  expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT }));
+for (const name of FAULT ? Z80_DECODER : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
+  ...BOUNDARY, ...Z80_DECODER, "hv observer, Z80 reads v+h"])
+  expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT, fault: FAULT }));
 
 // A name is not an identity. The output directory accumulates logs from every
 // run ever made, so a case is looked up by (name, rom, core, seconds) and the
@@ -268,8 +275,8 @@ const report = (name, s, spacingErr) => {
     if (xs.length) console.log(`  first ${k}:`, JSON.stringify(xs));
 };
 
-console.log(`\n── H alone, verification set (never used for calibration) ──`);
-for (const name of VERIFY) {
+console.log(FAULT ? "" : `\n── H alone, verification set (never used for calibration) ──`);
+for (const name of FAULT ? [] : VERIFY) {
   const r = hs(name); if (!r) continue;
   const times = r.map((x) => x.time);
   const spacing = spacingOf(name);
@@ -282,8 +289,8 @@ for (const name of VERIFY) {
     failures.push(`"${name}": ${p}`);
 }
 
-console.log(`\n── H alone, disturbed but inside the contract ──`);
-for (const name of CONTRACT) {
+console.log(FAULT ? "" : `\n── H alone, disturbed but inside the contract ──`);
+for (const name of FAULT ? [] : CONTRACT) {
   const r = hs(name); if (!r) continue;
   const times = r.map((x) => x.time);
   const spacing = spacingOf(name);
@@ -301,8 +308,8 @@ for (const name of CONTRACT) {
 // wrong — the rounding lands at both ends of every difference. This decodes
 // the same independent runs through the byte table and its distributed steps,
 // and grades it on its own tolerance.
-console.log(`\n── the same runs through the ${art.quantised.unit}-master byte table ──`);
-{
+console.log(FAULT ? "" : `\n── the same runs through the ${art.quantised.unit}-master byte table ──`);
+if (!FAULT) {
   const U = art.quantised.unit;
   const byteTable = Int16Array.from(qbytes, (b) => b === art.quantised.unknown ? -1 : b * U);
   let worstAll = 0;
@@ -336,48 +343,71 @@ console.log(`\n── the same runs through the ${art.quantised.unit}-master byt
 }
 
 // ── the decoder as the Z80 runs it ────────────────────────────────────────
-// R6 §17.4 step 2. The Z80 reads, decodes with the fixed byte table, and
-// publishes what it decided; this compares that against the reference run over
-// the SAME readings. The instrument supplies both sequences and judges; it
-// supplies nothing to the Z80.
+// R6 §17.4 step 2, rebuilt for R7 §20.2 B. The earlier version compared ONE
+// byte — the displacement — took the first publication after each read without
+// asking whether it had finished before the next one, and let any number of
+// missing publications past as long as 500 remained. So it could not have seen
+// a state contract at all.
+//
+// What is compared now is a WHOLE RECORD: the acquisition state, the validity
+// of the difference, the displacement and the 16-bit observation number, each
+// published to its own address in the window so a field that never arrived is
+// visible as itself. A record must open after its read and close before the
+// next one. The reference is the same refDecode() the emulator check scores
+// against, driven by the same readings and by the advance the GENERATOR laid
+// out — not by a second copy of a constant.
 console.log(`\n── the decoder running on the Z80 ──`);
 for (const name of Z80_DECODER) {
   const f = need(name); if (!f) continue;
   const log = readProbe(readFileSync(f));
-  const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9);
-  // Each read is followed by the publish of the displacement it produced.
-  const pairs = [];
-  let k = 0;
-  for (const r of reads) {
-    while (k < log.notifications.length && log.notifications[k].time < r.time) k++;
-    if (k < log.notifications.length) pairs.push({ h: r.value & 255, said: log.notifications[k++].value & 255 });
-  }
+  const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
+    .map((e) => ({ h: e.value & 255, time: e.time }));
+  const recs = log.records;
+  const sp = spacingOf(name);
   const U = art.quantised.unit, units = art.quantised.units;
-  const step = ((26880 % LINE_MASTER) / U) % units;
-  let expect = null, mismatch = 0, first = null, compared = 0;
-  for (const { h, said } of pairs) {
-    const phase = qbytes[h];
-    if (expect === null) { expect = phase === art.quantised.unknown ? null : (phase + step) % units; continue; }
-    let d = (phase - expect) % units; if (d < 0) d += units;
-    if (d >= (units + 1) / 2) d -= units;
-    const want = d & 0xff;
+  const opts = { units, unknown: art.quantised.unknown, table: [...qbytes] };
+
+  // Records, cut at the reads they belong between. The same function the
+  // selftest drives with dropped, doubled and carried-over fields.
+  const { rows, problems, incompleteTail } = recordsBetweenReads(reads, recs, PUBLISH);
+
+  let state = { ...INITIAL_STATE }, mismatch = 0, compared = 0, first = null;
+  for (let n = 0; n < rows.length; n++) {
+    const step = ((sp[(n + 1) % sp.length] % LINE_MASTER) / U) % units;
+    state = refDecode(state, reads[n].h, step, opts);
+    const said = rows[n];
+    if (!said) continue;             // already counted as a broken record
     compared++;
-    if (phase !== art.quantised.unknown && said !== want) {
+    const want = { known: state.known, valid: state.valid, delta: state.delta,
+      countLo: state.count & 0xff, countHi: state.count >> 8 };
+    if (PUBLISH.some((k) => said[k] !== want[k])) {
       mismatch++;
-      first ??= { h, phase, expect, want, said };
+      first ??= { n, h: reads[n].h, want, said };
     }
-    expect = (phase + step) % units;
   }
   console.log(`${name}`);
-  console.log(`  ${reads.length} readings, ${pairs.length} publications,`
-    + ` ${compared} compared against the reference, ${mismatch} disagreed`);
+  console.log(`  ${reads.length} readings, ${recs.length} published fields,`
+    + ` ${compared} complete records compared field by field, ${mismatch} disagreed`);
+  console.log(`  broken records: ${problems.short} short, ${problems.extra} with a field too many,`
+    + ` ${problems.outOfOrder} out of order, ${problems.late} published before their own read`
+    + `${incompleteTail ? `; 1 unfinished record at the end of the run, excluded` : ""}`);
   if (first) console.log(`  first disagreement:`, JSON.stringify(first));
-  if (compared < 500) failures.push(`"${name}": only ${compared} of the Z80's decisions could be compared`);
-  if (mismatch) failures.push(`"${name}": the Z80 and the reference disagreed on ${mismatch} readings`);
+  const broken = problems.short + problems.extra + problems.outOfOrder + problems.late;
+  if (compared < reads.length - 1)
+    failures.push(`"${name}": ${reads.length} readings but only ${compared} complete records`);
+  if (broken) failures.push(`"${name}": ${broken} records did not open after their read and close before the next`);
+  if (mismatch) failures.push(`"${name}": the Z80 and the reference disagreed on ${mismatch} of ${compared} records`);
+  // The validity gate has to have been exercised, or the run says nothing about
+  // it: a run in which every reading was in the table never re-acquires.
+  const bases = rows.filter((r) => r && r.known === 0xff && r.valid === 0).length;
+  const unknowns = rows.filter((r) => r && r.known === 0).length;
+  console.log(`  ${unknowns} readings the table does not cover, ${bases} records that are a base`
+    + ` rather than a difference`);
+  if (!bases) failures.push(`"${name}": not one record was a base — the acquisition gate was never exercised`);
 }
 
-console.log(`\n── H alone, either side of half a line ──`);
-for (const name of BOUNDARY) {
+console.log(FAULT ? "" : `\n── H alone, either side of half a line ──`);
+for (const name of FAULT ? [] : BOUNDARY) {
   const r = hs(name); if (!r) continue;
   const times = r.map((x) => x.time);
   const spacing = spacingOf(name);
@@ -391,8 +421,8 @@ for (const name of BOUNDARY) {
     failures.push(`"${name}": ${s.visible.signWrong} wrong signs but only ${s.visible.beyondHalfLine} past half a line`);
 }
 
-console.log(`\n── H alone, the limit it cannot pass ──`);
-for (const name of LIMIT) {
+console.log(FAULT ? "" : `\n── H alone, the limit it cannot pass ──`);
+for (const name of FAULT ? [] : LIMIT) {
   const r = hs(name); if (!r) continue;
   const times = r.map((x) => x.time);
   const spacing = spacingOf(name);
@@ -405,8 +435,8 @@ for (const name of LIMIT) {
   if (!s.visible.beyondHalfLine) failures.push(`"${name}" no longer demonstrates H's limit`);
 }
 
-console.log(`\n── V and H, for comparison only ──`);
-{
+console.log(FAULT ? "" : `\n── V and H, for comparison only ──`);
+if (!FAULT) {
   const name = "hv observer, Z80 reads v+h";
   const r = vh(name);
   if (r) {
@@ -426,6 +456,13 @@ console.log(`\n── V and H, for comparison only ──`);
 }
 
 const bad = [...new Set(failures)];
+if (FAULT) {
+  // INVERTED: the run is a pass only if the record check refused it.
+  console.log(`\n${bad.length ? "ok" : "FAIL"} — fault "${FAULT}": ${FAULTS[FAULT]}`);
+  for (const f of bad) console.log(`  refused: ${f}`);
+  if (!bad.length) console.log(`  the record check accepted a deliberately broken record`);
+  process.exit(bad.length ? 0 : 1);
+}
 console.log(`\n${bad.length ? "FAIL" : "ok"} — ${VERIFY.length} quiet + ${CONTRACT.length}`
   + ` in-contract verification runs, ${BOUNDARY.length} boundary, ${LIMIT.length} limit,`
   + ` ${CALIBRATE.length} calibration runs, ${bad.length} problems`);
