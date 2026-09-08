@@ -158,6 +158,21 @@ export const CASES = [
   { name: "2ch corrector, counter wrap", cfg: { voices: 2, complete: true, csm: true,
       levels: 15, workTarget: 0.839, correctorBudget: true },
     split: { load: "divu", place: { correct: true, countFrom: 0xfffc } } },
+  // EITHER SIDE OF WHAT H CAN SEE (R11 §31.2). 12 B lands about at the 1,500
+  // master contract, 16 B past it but inside half a line, 24 B past half a line
+  // and 64 B past a whole one. INFORMATIONAL, and deliberately so: past half a
+  // line H reports the short way round, so the record's difference is a small
+  // ordinary number and the corrector acts on it. The debt limit cannot refuse
+  // that — only an external invalidation from the 68000 could, and there is no
+  // input path for one yet. These runs exist to MEASURE the boundary, not to
+  // claim it is defended.
+  ...[[12, 20], [16, 60], [24, 100], [64, 140]].map(([bytes, bootNops]) => ({
+    name: `2ch corrector, beyond ${bytes}B stall, phase ${bootNops}`,
+    cfg: { voices: 2, complete: true, csm: true, levels: 15, workTarget: 0.839,
+      correctorBudget: true },
+    split: { load: "divu", bootNops, stall: { every: 41000, bytes },
+      place: { correct: true } },
+    informational: true })),
   ...[[1, 20], [2, 60], [8, 140]].map(([bytes, bootNops]) => ({
     name: `2ch corrector, single ${bytes}B stall, phase ${bootNops}`,
     cfg: { voices: 2, complete: true, csm: true, levels: 15, workTarget: 0.839,

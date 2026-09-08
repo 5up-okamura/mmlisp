@@ -85,7 +85,8 @@ const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stal
 // STOP/RESUME pairs, against the ladder slots the generator placed.
 const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
   "2ch corrector, occasional 4B stall", "2ch corrector, counter wrap",
-  ...[[1, 20], [2, 60], [8, 140]].map(([b, n]) => `2ch corrector, single ${b}B stall, phase ${n}`)];
+  ...[[1, 20], [2, 60], [8, 140]].map(([b, n]) => `2ch corrector, single ${b}B stall, phase ${n}`),
+  ...[[12, 20], [16, 60], [24, 100], [64, 140]].map(([b, n]) => `2ch corrector, beyond ${b}B stall, phase ${n}`)];
 // Either side of half a line, reported rather than graded.
 const BOUNDARY = ["hv observer, boundary 16B stall", "hv observer, boundary 24B stall"];
 // Kept to demonstrate the limit, not to pass it: these carry displacements
@@ -605,11 +606,36 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
     }
     if (errs.length) {
       const a = (x) => Math.abs(x);
-      errs.sort((x, y) => a(x) - a(y));
-      seen.sort((x, y) => x - y);
-      console.log(`  displacement: ${seen[0]}..${seen.at(-1)} master really happened;`
-        + ` the record's own error is at most ${a(errs.at(-1))} master`
-        + ` (${(a(errs.at(-1)) / Z80_DIV).toFixed(1)} Z80 cyc) over ${errs.length} valid differences`);
+      const worst = Math.max(...errs.map(a));
+      const sorted = [...seen].sort((x, y) => x - y);
+      console.log(`  displacement: ${sorted[0]}..${sorted.at(-1)} master really happened;`
+        + ` the record's own error is at most ${worst} master`
+        + ` (${(worst / Z80_DIV).toFixed(1)} Z80 cyc) over ${errs.length} valid differences`);
+      // WHAT IS OBSERVABLE AND WHAT IS NOT (R11 §31.2). H is a position in a
+      // line, so a displacement past HALF A LINE comes back as the short way
+      // round: the record's difference is a perfectly ordinary small number and
+      // the corrector will act on it. That is a limit of H alone, not a defect
+      // in the corrector, and it cannot be refused by a debt limit — so the two
+      // populations are counted separately rather than averaged together.
+      const HALF = LINE_MASTER / 2, CONTRACT = 1500;
+      const band = { contract: 0, past: 0, alias: 0, lines: 0 };
+      let aliasWrong = 0, seenWrong = 0;
+      for (let k = 0; k < seen.length; k++) {
+        const t = a(seen[k]);
+        if (t <= CONTRACT) band.contract++;
+        else if (t <= HALF) band.past++;
+        else if (t <= LINE_MASTER) band.alias++;
+        else band.lines++;
+        if (a(errs[k]) > 2 * art.quantised.unit) { seenWrong++; if (t > HALF) aliasWrong++; }
+      }
+      console.log(`  observable: ${band.contract} inside the 1,500 master contract,`
+        + ` ${band.past} past it but inside half a line, ${band.alias} past half a line,`
+        + ` ${band.lines} past a whole line`
+        + ` — ${seenWrong} differences the record got wrong by more than 40 master,`
+        + ` ${aliasWrong} of them where H cannot tell (its own alias)`);
+      if (seenWrong - aliasWrong > 0 && !name.includes("boundary") && !name.includes("beyond"))
+        failures.push(`"${name}": ${seenWrong - aliasWrong} differences are wrong by more than`
+          + ` 40 master INSIDE half a line, where H can see them`);
     }
   }
   // WHEN THE RESULT IS FINISHED: the reading, then the last field of its
