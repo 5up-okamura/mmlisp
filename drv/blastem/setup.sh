@@ -34,17 +34,46 @@ repo="${BLASTEM_REPO:-https://github.com/libretro/blastem.git}"
 
 mkdir -p "$out"
 
+# WHICH COMMIT, decided before anything is cloned or reused (R10 §29.6).
+#
+# The earlier form compared nothing: an existing $src was reused whatever it was
+# at, and `BLASTEM_REV=libretro` never fetched, so a tree cloned weeks ago kept
+# being rebuilt while the script printed that it was following the branch. If
+# the patch happened to apply to that older tree, the run reported a core it was
+# not built from. So a name is resolved to a commit against the REMOTE, and the
+# tree's HEAD has to be that commit — for a fresh clone and a reuse alike.
+case "$rev_wanted" in
+    *[!0-9a-f]* | "") rev_commit="" ;;
+    *) [ ${#rev_wanted} -eq 40 ] && rev_commit="$rev_wanted" || rev_commit="" ;;
+esac
+if [ -z "$rev_commit" ]; then
+    rev_commit=$(git ls-remote "$repo" "$rev_wanted" | head -n 1 | cut -f1)
+    [ -n "$rev_commit" ] || {
+        echo "blastem: '$rev_wanted' is not a ref in $repo" >&2; exit 1; }
+    echo "blastem: $rev_wanted resolves to $rev_commit"
+fi
+
 if [ ! -d "$src/.git" ]; then
     echo "blastem: cloning $repo ($branch)"
     git clone --depth 1 --branch "$branch" "$repo" "$src"
-    if [ "$rev_wanted" != "$branch" ]; then
-        echo "blastem: checking out $rev_wanted"
-        ( cd "$src" && git fetch --depth 1 origin "$rev_wanted" \
-            && git checkout --detach FETCH_HEAD ) || {
-            echo "blastem: $rev_wanted is not reachable in $repo" >&2; exit 1; }
-    fi
+    # `git clone --branch` refuses a commit, so the commit is fetched and
+    # checked out on top — which is also what pins a branch name to the commit
+    # it resolved to a moment ago.
+    ( cd "$src" && git fetch --depth 1 origin "$rev_commit" \
+        && git checkout --detach FETCH_HEAD ) || {
+        echo "blastem: $rev_commit is not reachable in $repo" >&2; exit 1; }
 else
     echo "blastem: reusing $src"
+fi
+
+head_now=$( cd "$src" && git rev-parse HEAD )
+if [ "$head_now" != "$rev_commit" ]; then
+    echo "blastem: $src is at $head_now, not the requested $rev_commit." >&2
+    echo "         ($rev_wanted). It is NOT reset automatically: a tree with" >&2
+    echo "         local state in it is evidence about something, and silently" >&2
+    echo "         moving it destroys that. Remove $src and re-run, or point" >&2
+    echo "         BLASTEM_OUT at an empty directory." >&2
+    exit 1
 fi
 
 # The probe patch, if there is one. Kept as a patch rather than a fork so that
@@ -107,7 +136,7 @@ core_hash=$( shasum -a 256 "$core" 2>/dev/null | cut -c1-16 \
              || sha256sum "$core" | cut -c1-16 )
 cat > "$out/build.json" <<JSON
 { "revision": "$rev", "patch": "$patch_hash", "core": "$core_hash",
-  "repo": "$repo", "rev_name": "$rev_wanted" }
+  "repo": "$repo", "rev_name": "$rev_wanted", "rev_requested": "$rev_commit" }
 JSON
 
 echo "blastem: ready — $out/host, $core"

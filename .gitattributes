@@ -1,0 +1,5 @@
+# A unified diff is not source: its context lines begin with a space, so every
+# line whose content is indented with a tab reads as "space before tab" and every
+# blank context line reads as trailing whitespace. Both are the format, not a
+# defect, and "fixing" them would stop the patch applying (R10 §29.6).
+*.patch -whitespace
