@@ -24,7 +24,7 @@ import { CASES } from "./cases.mjs";
 import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
 import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
 import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES } from "./protocol.mjs";
-import { buildCase, FAULTS } from "./case-config.mjs";
+import { buildCase, FAULTS, QUEUE_FAULTS } from "./case-config.mjs";
 import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
@@ -85,8 +85,12 @@ const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stal
 // correction is reconstructed from the DAC write times, the read times and the
 // STOP/RESUME pairs, against the ladder slots the generator placed.
 // The runtime protocol's own cases: the host takes the bus for real.
+const PROTO_PIECES = ["payload", "head", "credit", "snapshot", "invalidate"];
 const PROTO_CASES = ["proto P1, live reads only", "proto P1, invalidations only",
+  "proto P1, queue only", ...PROTO_PIECES.map((p) => `proto P1, piece ${p}`),
   "proto P1, live and bulk"];
+// The one that publishes commands and must NOT invalidate anything (R13 §35.3).
+const PROTO_QUEUE = ["proto P1, queue only"];
 const PROTO_BOOT = 0x1234;          // the boot generation cases.mjs' host writes
 const LIVE_STOP_MAX = 1500;         // master clocks, R12 §33.1
 // The case whose two grabs deliberately share an observation interval.
@@ -119,7 +123,11 @@ if (!argv.includes("--reuse")) {
     "in-contract", "back-to-back", "boundary", "2ch pattern with"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
       "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
-  for (const sel of FAULT ? ["z80 decoder"] : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "proto P1"])
+  // A QUEUE fault is the 68000's, so the run it breaks is the queue case; a
+  // publish fault is the Z80's and breaks the diagnostic record.
+  for (const sel of FAULT
+    ? (FAULT in QUEUE_FAULTS ? ["proto P1, queue only"] : ["z80 decoder"])
+    : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "proto P1"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
       "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
       { stdio: ["ignore", "ignore", "inherit"] });
@@ -135,7 +143,8 @@ const caseOf = (name) => {
 // The rom each case produces, recomputed here from the case itself, so that a
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
-for (const name of FAULT ? Z80_DECODER : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
+for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : Z80_DECODER)
+  : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
   ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, ...PROTO_CASES,
   "hv observer, Z80 reads v+h"])
   expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT, fault: FAULT }));
@@ -394,7 +403,7 @@ if (!FAULT) {
 // against, driven by the same readings and by the advance the GENERATOR laid
 // out — not by a second copy of a constant.
 console.log(`\n── the decoder running on the Z80 ──`);
-for (const name of Z80_DECODER) {
+for (const name of FAULT in QUEUE_FAULTS ? [] : Z80_DECODER) {
   const f = need(name, Z80_SECONDS); if (!f) continue;
   const log = readProbe(readFileSync(f));
   const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
@@ -767,8 +776,9 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
 // a publication is whole before it is selected, that the three counters move the
 // way each is supposed to, and that an invalidation makes the engine drop its
 // difference and re-acquire from the next known reading.
-console.log(FAULT ? "" : `\n── the runtime protocol, on both CPUs ──`);
-for (const name of FAULT ? [] : PROTO_CASES) {
+const pieceSweep = [];
+console.log(FAULT && !(FAULT in QUEUE_FAULTS) ? "" : `\n── the runtime protocol, on both CPUs ──`);
+for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CASES) {
   const f = need(name, Z80_SECONDS); if (!f) continue;
   const built = expectedRom.get(name);
   const L = built.gen.observer.protoLayout;
@@ -844,6 +854,88 @@ for (const name of FAULT ? [] : PROTO_CASES) {
     failures.push(`"${name}": ${notReacquired} invalidations were followed by a valid difference`);
   if (name.includes("invalidation") && !phaseBumps)
     failures.push(`"${name}": no invalidation happened at all`);
+  // ── THE QUEUE'S OWN COMMIT DOMAIN (R13 §35.3 step 1) ──────────────────
+  // The host publishes a command by writing the payload and then `queueHead`,
+  // and by touching nothing else. What is checked here is the separation
+  // itself: that the phase generation and its commit never move, that the
+  // engine's VALID is unbroken across every append, and that each head write
+  // is backed by a whole record that was already in the queue.
+  if (PROTO_QUEUE.includes(name)) {
+    const P = built.grab.proto;
+    const ctl = built.gen.observer.protoLayout.control;
+    const off = (fld) => ctl[fld].offset - base;
+    const runtimeFrom = reads.length ? reads[0].time : 0;
+    const hw = log.hostWrites.filter((w) => w.time >= runtimeFrom);
+    const heads = hw.filter((w) => w.addr === off("queueHead"));
+    const touchedPhase = hw.filter((w) => w.addr === off("phaseGeneration")
+      || w.addr === off("phaseCommit"));
+    // The payload, as the instrument saw it arrive in the queue's page.
+    const body = log.copies.filter((e) => e.time >= runtimeFrom)
+      .map((e) => ({ time: e.time, at: e.value >>> 8, value: e.value & 0xff }));
+    let short = 0, wrong = 0, headFirst = 0, wraps = 0, prevHead = 0, bi = 0;
+    for (const h of heads) {
+      const rec = [];
+      while (bi < body.length && body[bi].time < h.time) rec.push(body[bi++]);
+      if (rec.length !== P.recordBytes) { if (rec.length < P.recordBytes) short++; else wrong++; }
+      else if (rec.some((b, i) => b.value !== P.record[i]
+        || b.at !== (prevHead + i) % 256)) wrong++;
+      if (!rec.length) headFirst++;
+      const want = (prevHead + P.recordBytes) % 256;
+      if (h.value !== want) wrong++;
+      if (want < prevHead) wraps++;
+      prevHead = h.value;
+    }
+    console.log(`  queue: ${heads.length} records published, ${short} with the head advanced`
+      + ` over bytes that had not arrived, ${headFirst} with no payload at all,`
+      + ` ${wrong} whose bytes or cursor did not match, ${wraps} page wraps`);
+    console.log(`  domains: ${touchedPhase.length} runtime writes to the phase generation or`
+      + ` its commit (must be 0), ${phaseBumps} phase generations bumped`);
+    if (!heads.length) failures.push(`"${name}": no command was published at all`);
+    if (short || wrong || headFirst)
+      failures.push(`"${name}": ${short + wrong + headFirst} of ${heads.length} appends were`
+        + ` not a whole record published before its cursor`);
+    if (!wraps) failures.push(`"${name}": the queue page never wrapped`);
+    if (touchedPhase.length)
+      failures.push(`"${name}": publishing a command wrote the phase control block`
+        + ` ${touchedPhase.length} times — the commit domains are not separate`);
+    if (phaseBumps)
+      failures.push(`"${name}": ${phaseBumps} phase generations moved while only commands were sent`);
+    // …and the engine's own side of it: VALID stays $ff for the whole run once
+    // it has acquired. An append that invalidated would show as a base.
+    const afterFirst = valid.filter((w) => w.time >= runtimeFrom);
+    const bases = afterFirst.filter((w) => w.value === 0).length;
+    console.log(`  engine: ${afterFirst.length} VALID writes after the first reading,`
+      + ` ${bases} of them a base`);
+    // Two per lap (the check and the decode) and only the acquisition ones may
+    // be zero: the first observation has no predecessor, and an unknown reading
+    // is the decoder's own business, not the protocol's.
+    if (bases > 4)
+      failures.push(`"${name}": ${bases} observations lost their difference while`
+        + ` only commands were being published`);
+  }
+
+  // THE ABSOLUTE CORRESPONDENCE (R13 §35.2). "+5 every time" says the counter
+  // steps; it does not say WHICH DAC write index 0 is. Every snapshot names a
+  // sample number, and the instrument counted the DAC writes itself, so the two
+  // are matched here: the write that number names must be the lap-opening write
+  // whose lap contains the publication.
+  {
+    const dacT = log.dac.map((e) => e.time);
+    let placed = 0, misplaced = 0, firstIdx = null;
+    for (const s2 of snaps.slice(1)) {
+      const i = s2.boundarySampleIndex;
+      if (i + perLap >= dacT.length) continue;
+      firstIdx ??= i;
+      // The snapshot went out inside the lap that opened with that DAC write.
+      if (s2.time > dacT[i] && s2.time < dacT[i + perLap]) placed++; else misplaced++;
+    }
+    console.log(`  boundary: ${placed} snapshots name the DAC write that opened their own lap,`
+      + ` ${misplaced} do not (first index seen ${firstIdx})`);
+    if (misplaced) failures.push(`"${name}": ${misplaced} snapshots name a DAC write outside`
+      + ` the lap they were published in`);
+    if (!placed) failures.push(`"${name}": not one snapshot could be matched to a DAC write`);
+  }
+
   // THE LIVE CONTRACT (§33.1): what the bus was actually held for, between one
   // H observation and the next, measured rather than inferred from byte counts.
   {
@@ -874,7 +966,25 @@ for (const name of FAULT ? [] : PROTO_CASES) {
     if (over && PROTO_DENSE.includes(name))
       console.log(`  …reported, not graded: this case grabs twice inside one observation`
         + ` interval on purpose, which is what makes the SUM the binding rule`);
+    let lo = Infinity, hi = 0;
+    for (const [a, b] of runtimeStops) { lo = Math.min(lo, b - a); hi = Math.max(hi, b - a); }
+    pieceSweep.push({ name, n: runtimeStops.length, lo: lo === Infinity ? 0 : lo, hi, worst });
   }
+}
+
+// THE SWEEP (R13 §35.3 step 3). One line per piece, with what it really cost
+// the Z80 and how much of the live budget an observation interval carrying it
+// has left. The pieces are not additive by wish: two of them in one interval is
+// their sum, and the rightmost column is what a host scheduler has to fit.
+if (!FAULT && pieceSweep.length) {
+  console.log(`\n── what each transfer piece costs, measured ──`);
+  console.log(`  ${"piece".padEnd(34)}${"grabs".padStart(6)}${"min".padStart(8)}`
+    + `${"max".padStart(8)}  ${"worst/obs".padStart(9)}  left of ${LIVE_STOP_MAX}`);
+  for (const r of pieceSweep)
+    console.log(`  ${r.name.replace(/^proto P1, /, "").padEnd(34)}${String(r.n).padStart(6)}`
+      + `${String(r.lo).padStart(8)}${String(r.hi).padStart(8)}  ${String(r.worst).padStart(9)}`
+      + `  ${String(LIVE_STOP_MAX - r.worst).padStart(9)}`);
+  console.log(`  (master clocks; a second grab in the same observation interval adds to it)`);
 }
 
 console.log(FAULT ? "" : `\n── H alone, either side of half a line ──`);

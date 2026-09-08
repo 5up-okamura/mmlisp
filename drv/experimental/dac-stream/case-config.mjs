@@ -18,7 +18,12 @@ import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
 import { generateObserver, PUBLISH_FAULTS } from "./observer.mjs";
 import { generateSplit } from "./decode-split.mjs";
-import { protocolLayout, SNAPSHOT_BYTES } from "./protocol.mjs";
+import { protocolLayout, SNAPSHOT_BYTES, PROTO_GLOB } from "./protocol.mjs";
+
+export const QUEUE_FAULTS = {
+  "q-head-first": "queueHead is advanced before the record's bytes are written",
+  "q-short-record": "the head claims a whole record and one byte of it never arrived",
+};
 
 export const FAULTS = {
   "drop-copy": "the 68000 transfers one byte fewer than it announced",
@@ -31,6 +36,10 @@ export const FAULTS = {
   // Z80-side, and they break the diagnostic RECORD rather than the decode:
   // the instrument's own check has to fail on each of them.
   ...PUBLISH_FAULTS,
+  // 68000-side, and they break the QUEUE's publication order rather than the
+  // transfer: the head moved before the bytes, or the record stopped short of
+  // what the head then claimed (R13 §35.3 step 2).
+  ...QUEUE_FAULTS,
 };
 
 /**
@@ -38,6 +47,12 @@ export const FAULTS = {
  * @param opts  {compensation, captureOffset, fault} — the CLI's overrides
  * @returns {case, cfg, gen, coop} with the case fully resolved
  */
+// ONE COMMAND RECORD, in the wire format §33.4 fixes: size, type, the low 16
+// bits of the sample it applies at, then payload. Eight bytes, so a 256-byte
+// page holds exactly 32 of them and the head's own byte wraps with the page.
+export const QREC_BYTES = 8;
+export const QREC_RECORD = [QREC_BYTES, 0x01, 0x40, 0x00, 0xde, 0xad, 0xbe, 0xef];
+
 /**
  * The addresses the 68000's ROM needs, taken from the ONE layout (R12 §33.2).
  * They are OFFSETS from the Z80's base, because that is how the host addresses
@@ -59,7 +74,16 @@ function protoRomFields(cfg, p) {
     bootGen: L.control.bootGeneration.offset,
     phaseGen: L.control.phaseGeneration.offset,
     queueHead: L.control.queueHead.offset,
-    phaseCommit: L.control.phaseCommit.offset };
+    phaseCommit: L.control.phaseCommit.offset,
+    // The queue: where it lives, one well-formed record, and how many of them
+    // fill the page — which is what makes the wrap a thing that happens rather
+    // than a thing that is described.
+    queue: !!p.queue, qfault: p.qfault ?? null, piece: p.piece ?? null,
+    queueTail: cfg.ram.glob[0] + PROTO_GLOB.queueTail,
+    queueBase: cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00,
+    recordBytes: QREC_BYTES,
+    perPage: 256 / QREC_BYTES,
+    record: QREC_RECORD };
 }
 
 export function resolveCase(c0, { compensation = null, captureOffset = null, fault = null } = {}) {
@@ -87,7 +111,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // shape whose host writes into Z80 RAM at all (R12 §33.3).
     : c0.observer?.proto ? { vdp: true, load: c0.observer.load,
         bootNops: c0.observer.bootNops, every: c0.observer.proto.every,
-        proto: protoRomFields(cfg, c0.observer.proto) }
+        proto: protoRomFields(cfg, { ...c0.observer.proto,
+          ...(fault in QUEUE_FAULTS ? { qfault: fault.slice(2) } : {}) }) }
     : c0.observer ? (c0.observer.stall
         ? { vdp: true, optimized: true, load: c0.observer.load,
             bootNops: c0.observer.bootNops, publish: c0.observer.publish,
@@ -99,7 +124,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     // A publish fault is the Z80's; it must not also reach the 68000's rom.
-    if (fault && !(fault in PUBLISH_FAULTS)) grab.fault = fault;
+    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)) grab.fault = fault;
     // Two ways to break the load CHECK rather than the load: make it short, or
     // stop it reporting. The gate has to fail on both (R6 §17.2 C).
     if (fault === "short-load" || fault === "no-load-marks") {

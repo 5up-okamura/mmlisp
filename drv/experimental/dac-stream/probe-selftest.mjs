@@ -21,7 +21,7 @@ import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode
 import { generate, codeLedger, reservedPadBytes } from "./gen-stream.mjs";
 import { protocolLayout, protocolAsm, protocolHeader, publishSteps, readSnapshot,
   controlSteps, readControl, faultySteps, faultyControlSteps, tornSnapshotPossible,
-  tornControlPossible, enqueueSteps, dequeue, extendTime, lateTarget, genAdvance,
+  tornControlPossible, enqueueSteps, dequeue, queueFree, extendTime, lateTarget, genAdvance,
   phaseInvalidated, outputAdvance, SNAPSHOT, CONTROL, PROTOCOL_BYTES, PROTOCOL_SPARE,
   PUB_REGION_BYTES } from "./protocol.mjs";
 import { generateSplit } from "./decode-split.mjs";
@@ -997,6 +997,45 @@ assert.equal(backwards[2].sync, "lost");
       "publishing a queue record must not change the phase generation");
   }
 
+  // …and the two ways a queue goes wrong that are about the RING rather than
+  // about the order: a record that straddles the page end, and a producer that
+  // writes into bytes the consumer has not read (R13 §35.3 step 2).
+  {
+    const QBASE = 0x1d00, QSIZE = 16;
+    const rec = { size: 8, type: 5, applyAtLow: 0x0102, payload: [1, 2, 3, 4] };
+    // WRAP: the record starts four bytes from the end of the page and finishes
+    // at its start. The consumer has to read it as one record and leave the
+    // tail wrapped with it.
+    const m = new Uint8Array(mem);
+    m[L.control.queueHead.offset] = 12;
+    for (const [a, v] of enqueueSteps(L, QBASE, QSIZE, 12, rec)) m[a] = v;
+    const got = dequeue(m, L, QBASE, QSIZE, 12);
+    assert.ok(got && !got.incomplete, "a record across the page end must still be one record");
+    assert.equal(got.type, rec.type);
+    assert.equal(got.applyAtLow, rec.applyAtLow);
+    assert.deepEqual(got.payload, rec.payload);
+    assert.equal(got.tail, 4, "the tail wraps with the record");
+    // FULL: one byte is never used, so head == tail is empty and the producer
+    // has to stop one short. A producer that ignores it overwrites a record the
+    // consumer still owns — and the consumer reads the NEW bytes as the OLD
+    // record, which is the failure this is here to make visible.
+    assert.equal(queueFree(0, 0, QSIZE), QSIZE - 1, "an empty ring is all but one byte free");
+    assert.equal(queueFree(12, 4, QSIZE), 7, "…and a ring with 8 bytes in it holds 7 more");
+    assert.equal(queueFree(4, 4, QSIZE), QSIZE - 1);
+    assert.ok(queueFree(12, 4, QSIZE) < rec.size, "this ring is full for a record of 8");
+    const m2 = new Uint8Array(m);
+    for (const [a, v] of enqueueSteps(L, QBASE, QSIZE, 4, { ...rec, type: 9 })) m2[a] = v;
+    const stale = dequeue(m2, L, QBASE, QSIZE, 12);
+    // The consumer had a whole record at tail 12 and now has NOTHING: the
+    // producer's head caught its tail, so the ring reads as empty and the
+    // record is gone. Either shape — vanished, or its bytes replaced — is the
+    // same failure, and the check accepts neither.
+    const same = stale && !stale.incomplete && stale.type === rec.type
+      && stale.payload.join() === rec.payload.join();
+    assert.ok(!same, "enqueuing into a full ring must change what the consumer still owns");
+    assert.equal(stale, null, "…and here it takes the form of the record disappearing");
+  }
+
   // ── the wraps, one question each ───────────────────────────────────────
   // 16-bit command time against a 32-bit output index.
   for (const at of [0xfff0, 0xfffe, 0xffff, 0x00000000, 0x0001, 0x7fff0000, 0xfffffff0, 0xffffffff]) {
@@ -1383,8 +1422,26 @@ const loadCaseNoPublish = { name: "obs", cfg: {}, wave: new Uint8Array(256),
 const TRANSFER_FAULTS = ["drop-copy", "no-commit", "early-commit", "late-request", "zero-divisor"];
 const LOAD_FAULTS = ["short-load", "no-load-marks"];
 const RECORD_FAULTS = ["drop-field", "double-field", "carry-publish"];
-assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS].sort(),
+// The queue faults are the 68000's and they break the QUEUE's publication
+// order: the head moved before the bytes, or a byte of the record never came.
+const QFAULTS = ["q-head-first", "q-short-record"];
+assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS].sort(),
   Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
+// Each one changes the 68000's rom, and none of them reaches the Z80's source.
+{
+  const q = { name: "q", cfg: {}, wave: new Uint8Array(256),
+    observer: { reads: ["h"], decode: true, load: "divu",
+      proto: { every: 3000, skipLive: true, skipBulk: true, queue: true } } };
+  const seen = new Map(), src = resolveCase(q, {}).gen.text;
+  for (const fault of [null, ...QFAULTS]) {
+    const r = resolveCase(q, { fault });
+    const rom = buildRom(new Uint8Array(0x100), new Uint8Array(512), r.grab);
+    assert.ok(!seen.has(rom.sha), `fault ${fault} did not change the rom`);
+    seen.set(rom.sha, fault);
+    assert.equal(r.gen.text, src, `fault ${fault} leaked into the Z80's source`);
+    assert.equal(r.grab.fault, undefined, `fault ${fault} leaked into the generic transfer path`);
+  }
+}
 // The record faults are the Z80's, so what has to change is the generated
 // source — and they are refused on a case that publishes nothing.
 {
@@ -1527,7 +1584,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
   + " the stop a window contains and how its boundaries are defined,"
-  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC, the code ledger and what it does not subtract, the 68k/Z80 protocol's one layout, its two commit orders and every wrap,"
+  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC, the code ledger and what it does not subtract, the 68k/Z80 protocol's one layout, its two commit domains, the ring's wrap and its full state, and every counter's wrap,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");

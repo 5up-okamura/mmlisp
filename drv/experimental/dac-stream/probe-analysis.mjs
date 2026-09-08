@@ -3,7 +3,7 @@ import { COOP, windowBand } from "./cooperative.mjs";
 
 export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   DACBUS: 7, STOP: 8, RESUME: 9, NOTIFY: 10, COPY: 11, POLL: 12, COMMIT: 13,
-  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17, Z80RAM: 18 };
+  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17, Z80RAM: 18, HOSTW: 19 };
 export const Z80_DIV = 15;
 
 export function readProbe(buf) {
@@ -43,6 +43,11 @@ export function readProbe(buf) {
       return { time: e.time, region: a & 0x80 ? "pub" : "glob",
         addr: a & 0x80 ? a & 0x1f : a & 0x7f, value: e.value & 0xff };
     }),
+    // The 68000's own writes into the publication region — the host half of the
+    // runtime protocol. It reaches Z80 RAM by a different path from the Z80, so
+    // the memory-map watch above cannot see these at all.
+    hostWrites: of(KIND.HOSTW).map((e) => ({ time: e.time,
+      addr: (e.value >>> 8) & 0x1f, value: e.value & 0xff })),
     copies: of(KIND.COPY), polls: of(KIND.POLL),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
     hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };
@@ -231,6 +236,11 @@ export function analyzeTransfers(log, grabs, { bytes, cooperative, hint, fault, 
     let count=0;
     while (copyIndex < log.copies.length && log.copies[copyIndex].time <= b) {
       const e = log.copies[copyIndex++];
+      // A PROTOCOL grab writes a command record at the queue's head, not a
+      // block copy from offset zero: its order and content are checked against
+      // the record and the cursor in `dac-stream:decoder`, where the head is
+      // known. Here it would only ever say "this is not a block copy".
+      if (proto) { count++; continue; }
       if (e.value >>> 8 !== count) errors.push("transferred payload order");
       else if (source && (e.value & 255) !== source[count]) errors.push("transferred payload");
       count++;

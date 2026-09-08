@@ -354,6 +354,18 @@ if (PROTO_GLOB.stage !== GLOB.decode + 4)
 export const CMD_HEADER = 4;
 
 /**
+ * How many bytes the producer may still write.
+ *
+ * ONE BYTE IS NEVER USED, because `head === tail` has to mean empty rather than
+ * full: with the whole page usable the two states are the same value and the
+ * consumer cannot tell "nothing to do" from "everything to do". So a full queue
+ * is `free === 0`, and a producer that enqueues anyway does not fail — it
+ * overwrites a record the consumer has not read yet, which is the quiet kind of
+ * wrong this check exists for (R13 §35.3 step 2).
+ */
+export const queueFree = (head, tail, qsize) => (tail - head - 1 + qsize) % qsize;
+
+/**
  * The writes that append one record, IN ORDER: the payload first and the head
  * strictly last, which is what makes a consumer that stops anywhere see either
  * no record or a whole one.

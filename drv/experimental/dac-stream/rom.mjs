@@ -57,6 +57,7 @@ class M68k {
   moveBimmA(imm,a) { this.w(0x10bc | (a << 9)); this.w(imm & 255); }
   moveBDtoA(d, a) { this.w(0x1080 | (a << 9) | d); }                    // move.b Dn,(An)
   moveBpost() { this.w(0x12d8); }                                       // move.b (a0)+,(a1)+
+  moveBpostA(sa, da) { this.w(0x10d8 | (da << 9) | sa); }               // move.b (As)+,(Ad)+
   moveWpost() { this.w(0x32d8); }                                       // move.w (a0)+,(a1)+
   moveLpost() { this.w(0x22d8); }                                       // move.l (a0)+,(a1)+
   moveLimm(imm, addr) { this.w(0x23fc); this.l(imm); this.l(addr); }   // move.l #i,(abs).l
@@ -122,6 +123,11 @@ const LOAD_DIVIDEND = 0x00010000;         // / 7 = $2492, a quotient that fits
 const OVERFLOW_DIVIDEND = 0x12345678;     // / 7 overflows: the early exit
 export const LOADS = ["divu", "short", "masked", "none"];
 export const PROTO_WORK = 0xff0100;   // where the host parks what it read
+// One well-formed command record, in ROM, for the host to publish. It is a
+// record and not eight arbitrary bytes because the consumer that will read it
+// steps by `size`, and a test that never wrote a size would not have exercised
+// that at all.
+const QREC = 0x000f00;   // between the 68000 code and the Z80 image
 const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
   divuBig: 0x16, masked: 0x18, n: 32, nops: 256 };
 
@@ -280,6 +286,11 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveq(0, 2);                             // the phase generation, counted here
     m.moveq(0, 3);                             // …and the phase commit
     m.moveWimmD(P.between, 5);                 // live reads between invalidations
+    if (P.queue || P.piece) {
+      m.moveq(0, 4);                           // the queue head, counted here
+      m.leaAbs(Z80_BASE + P.queueBase, 4);     // …and the write pointer, in a4
+      m.moveWimmD(P.perPage - 1, 7);
+    }
   }
   // The Z80 begins when the bus is released, so nops placed BEFORE the release
   // move the engine's phase against the VDP's counters — which is how the
@@ -549,6 +560,52 @@ export function buildRom(image, samples = null, grab = null) {
     m.dbra(1, "wait1");
     // LIVE: take the bus, read the selector and the face it names, let go. It
     // writes nothing, so the phase it interrupts is still the phase it was.
+    // ── ONE PIECE PER GRAB (R13 §35.3 step 3) ────────────────────────────
+    // The five things a host actually does are different lengths, and a run
+    // that does several reports one range covering them all. `piece` makes each
+    // one a run of its own, so the sweep below is five measurements and not one
+    // interval with five causes.
+    const grabOnce = (label, body) => {
+      m.moveWimm(0x0100, Z80_BUSREQ);
+      m.label(label);
+      m.moveWabsD(Z80_BUSREQ, 0);
+      m.andiW(0x0100, 0);
+      m.bne(label);
+      body();
+      m.moveWimm(0x0000, Z80_BUSREQ);
+    };
+    if (P.piece) {
+      const one = {
+        // A continuation: payload bytes only, and the cursor left alone, so
+        // nothing the consumer can see has changed yet.
+        payload: () => { m.leaAbs(QREC, 0); for (let i = 0; i < P.recordBytes; i++) m.moveBpostA(0, 4); },
+        // …and the piece that ends it: the cursor alone, publishing everything
+        // the continuations wrote.
+        head: () => { m.addqL(P.recordBytes, 4); m.leaAbs(Z80_BASE + P.queueHead, 1); m.moveBDtoA(4, 1); },
+        // The credit: how much room the consumer has left, which is one byte
+        // the Z80 owns and the host only reads.
+        credit: () => { m.leaAbs(Z80_BASE + P.queueTail, 0); m.leaAbs(PROTO_WORK + 24, 1); m.moveBpost(); },
+        // The time update: the selector, its pad and both faces, in one run.
+        snapshot: () => { m.leaAbs(Z80_BASE + P.readRun, 0); m.leaAbs(PROTO_WORK, 1);
+          for (let i = 0; i < P.readLongs; i++) m.moveLpost();
+          for (let i = 0; i < P.readWords; i++) m.moveWpost(); },
+        // And the invalidation: the generation, then its own commit, last.
+        invalidate: () => { m.addqL(1, 2); m.addqL(1, 3);
+          m.leaAbs(Z80_BASE + P.phaseGen, 1); m.moveBDtoA(2, 1);
+          m.leaAbs(Z80_BASE + P.phaseCommit, 1); m.moveBDtoA(3, 1); },
+      }[P.piece];
+      if (!one) throw new Error(`unknown protocol piece ${P.piece}`);
+      grabOnce("pgrant", one);
+      // The write pointer goes back to the page's start once it has filled it,
+      // which is the ring's wrap done rather than described.
+      if (P.piece === "payload" || P.piece === "head") {
+        m.dbra(7, "pdone");
+        m.leaAbs(Z80_BASE + P.queueBase, 4);
+        m.moveWimmD(P.perPage - 1, 7);
+        m.label("pdone");
+      }
+      m.bra("idle");
+    } else {
     // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
     // STOP -> RESUME of the live read and of the invalidation are different
     // numbers, and a run that does both reports one range covering the two.
@@ -568,6 +625,33 @@ export function buildRom(image, samples = null, grab = null) {
     for (let i = 0; i < P.readWords; i++) m.moveWpost();
     m.moveWimm(0x0000, Z80_BUSREQ);            // release
     }
+    // ── A REAL COMMAND, PUBLISHED THE WAY §35.1 SEPARATES THEM ───────────
+    // The payload goes in first and `queueHead` LAST, and nothing else in the
+    // control block is touched: an ordinary command must not cost the engine
+    // its H synchronisation. The destination pointer lives in a4 across grabs
+    // and is reset every time the 256-byte page has been filled, which is the
+    // queue's wrap exercised rather than described.
+    if (P.queue) {
+      m.moveWimm(0x0100, Z80_BUSREQ);
+      m.label("qgrant");
+      m.moveWabsD(Z80_BUSREQ, 0);
+      m.andiW(0x0100, 0);
+      m.bne("qgrant");
+      m.leaAbs(QREC, 0);
+      const n = P.qfault === "short-record" ? P.recordBytes - 1 : P.recordBytes;
+      const head = () => { m.leaAbs(Z80_BASE + P.queueHead, 1); m.moveBDtoA(4, 1); };
+      // `head-first` is the fault: the cursor says the record is there before
+      // any of it has been written.
+      if (P.qfault === "head-first") { m.addqL(P.recordBytes, 4); head(); }
+      for (let i = 0; i < n; i++) m.moveBpostA(0, 4);
+      if (P.qfault !== "head-first") { m.addqL(P.recordBytes, 4); head(); }
+      m.moveWimm(0x0000, Z80_BUSREQ);
+      // …and back to the page's start once it is full.
+      m.dbra(7, "qdone");
+      m.leaAbs(Z80_BASE + P.queueBase, 4);
+      m.moveWimmD(P.perPage - 1, 7);
+      m.label("qdone");
+    }
     if (!P.skipBulk) m.dbra(5, "idle"); else m.bra("idle");
     // BULK / INVALIDATE: the fields first, the commit strictly LAST, and the
     // whole thing inside one grab so the Z80 cannot see it half done.
@@ -585,6 +669,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.leaAbs(Z80_BASE + P.phaseCommit, 1);
     m.moveBDtoA(3, 1);                         // …and the commit, LAST
     m.moveWimm(0x0000, Z80_BUSREQ);
+    }
     }
   } else if (grab && !grab.disabled && !grab.hint) {
     // R1 step 3 stage 3, and §3.6's decisive question: the 68000 takes the Z80
@@ -645,6 +730,9 @@ export function buildRom(image, samples = null, grab = null) {
     const s = str.padEnd(len, " ");
     for (let i = 0; i < len; i++) rom[at + i] = s.charCodeAt(i) & 0x7f;
   };
+  // The one command record the host publishes, at a fixed ROM address so the
+  // 68000's `lea` is a constant and the instrument can compare what arrived.
+  if (grab?.proto?.queue) rom.set(Uint8Array.from(grab.proto.record), QREC);
   put(0x100, "SEGA MEGA DRIVE ", 16);
   put(0x110, "(C)MMLISP 2026  ", 16);
   put(0x120, "MMLISP DAC-STREAM PROBE", 48);
