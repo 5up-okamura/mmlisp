@@ -209,6 +209,28 @@ export const RESERVE_2CH = [
 ];
 
 
+// ── The corrector's budget image (R10 §29.5) ───────────────────────────────
+//
+// The time-publication reservation and the H observer are two mechanisms for
+// the same clock problem, and at this stage the engine does not need both. R10
+// §29.5 authorises spending one on the other: blocks b1..b4's 75 cycles each go
+// to the corrector, and the 70 B of code the publication owed leaves the
+// estimate with them. Nothing else moves — voice state, commands, YM/PSG and
+// the block edge keep every cycle and every byte.
+//
+// This is a PROFILE and it is named in the stamp. It is not the finished
+// engine's budget: if the shared-origin design turns out to need both the
+// observer and a published output index, the whole estimate is redone rather
+// than this one quietly promoted.
+export const RESERVE_2CH_CORR = RESERVE_2CH.map(([b, cyc, why]) =>
+  (b >= 1 && b <= 4
+    ? [b, 0, "REPLACED by the bounded corrector (R10 §29.5) — the time publication is not reserved here"]
+    : [b, cyc, why]));
+
+export const CODE_ESTIMATE_2CH_CORR =
+  CODE_ESTIMATE_2CH.filter(([what]) => what !== "time publication");
+
+
 
 /**
  * Build the full configuration. Everything derived lives here so the
@@ -234,6 +256,11 @@ export function buildConfig({
   // same code; what changes is that the schedule now has to survive the
   // finished engine's costs, and the gate measures it doing so.
   complete = false,
+  // THE CORRECTOR'S BUDGET PROFILE (R10 §29.5): the time-publication reservation
+  // is spent on the bounded corrector instead of being held alongside it. Only
+  // legal on a `complete` build, because it is a statement about the complete
+  // engine's budget.
+  correctorBudget = false,
   // HOW MANY VOLUME LEVELS, and therefore how big the level family is. 16 is
   // the shipped one (4 KB). 15 is the experimental profile R8 §23.2 authorises
   // so that a page-aligned phase table exists at all; it is a different build
@@ -326,12 +353,16 @@ export function buildConfig({
     if (regions[i].lo < regions[i - 1].hi)
       throw new Error(`RAM regions ${regions[i - 1].k} and ${regions[i].k} overlap`);
 
+  if (correctorBudget && !complete)
+    throw new Error("the corrector budget is a statement about the complete 2ch engine");
   if (!(workTarget > 0 && workTarget <= 1) || !(meanTarget > 0 && meanTarget <= 1))
     throw new Error("the work targets are fractions of a slot");
   const cfg = {
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
-    reserve: complete ? RESERVE_2CH : null,
+    reserve: complete ? (correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
+    codeEstimate: correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
+    correctorBudget,
     z80Hz, fmSampleHz, rateHz,
     periodNum, periodDen, periodCycles,
     groupSlots, groupCycles, slotCycles, cycleSlots,
@@ -356,6 +387,10 @@ export const stampLine = (c) =>
   // much work a slot was allowed to carry are not the same artifact.
   + ` levels ${c.levels} lut ${hexAddr(c.ram.lut?.[0])}..${hexAddr(c.ram.lut?.[1])}`
   + `${c.ram.phase ? ` phase ${hexAddr(c.ram.phase[0])}` : ""}`
-  + ` work ${(c.workTarget * 100).toFixed(1)}%/${(c.meanTarget * 100).toFixed(1)}%`;
+  + ` work ${(c.workTarget * 100).toFixed(1)}%/${(c.meanTarget * 100).toFixed(1)}%`
+  // R10 §29.5: which reservation this image spent on the corrector is part of
+  // what it is. An image with b1..b4 free is not the same artifact as one that
+  // still owes the time publication, and neither is the finished budget.
+  + (c.correctorBudget ? " budget corr-for-timepub" : "");
 
 const hexAddr = (v) => (v === undefined ? "-" : `$${v.toString(16).padStart(4, "0")}`);

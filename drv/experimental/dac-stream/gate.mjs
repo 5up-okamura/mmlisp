@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine, CODE_ESTIMATE_2CH } from "./config.mjs";
+import { buildConfig, stampLine } from "./config.mjs";
 import { generate, cyclePaths } from "./gen-stream.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
 import {
@@ -397,7 +397,8 @@ if (ref && !JSON_OUT) {
   if (ref.cfg.reserve) {
     // The code region is the half of the budget the cycle reservations cannot
     // express, and it is the binding one.
-    const owed = CODE_ESTIMATE_2CH.reduce((t, [, b]) => t + b, 0);
+    const estimate = ref.cfg.codeEstimate;
+    const owed = estimate.reduce((t, [, b]) => t + b, 0);
     const region = ref.cfg.ram.code[1] - ref.cfg.ram.code[0];
     // The test image bakes a CH3 patch into boot so CSM has something to key.
     // That is scaffolding — a real engine receives a patch as commands — so it
@@ -409,7 +410,7 @@ if (ref && !JSON_OUT) {
     if (scaffold > 0)
       console.log(`  ${pad("(test CSM patch dump)", 26)}${String(scaffold).padStart(5)} B`
         + `  scaffolding — a real engine gets a patch as commands, not as boot code`);
-    for (const [what, bytes, why] of CODE_ESTIMATE_2CH)
+    for (const [what, bytes, why] of estimate)
       console.log(`  ${pad(what, 26)}${String(bytes).padStart(5)} B  ${why}`);
     const left = region - bare - owed;
     console.log(`  ${pad("TOTAL", 26)}${String(bare + owed).padStart(5)} B`
