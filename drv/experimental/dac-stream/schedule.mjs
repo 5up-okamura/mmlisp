@@ -147,11 +147,21 @@ export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead, f
       + [dacWrite, ...work, ...tail]
         .map((o) => `    ${String(o.cycles).padStart(4)}  ${o.what ?? o.asm[0]}`).join("\n"));
   }
+  // A CORRECTION LADDER IS PART WORK, PART PAD (R10 §29.5). Its `jp` is a fixed
+  // cost the ceiling has to hold; the `nop`s it lands in are the timing itself
+  // — the same cycles the pad solver would otherwise have emitted — so charging
+  // the whole neutral run as work would put 16 cycles of pure padding into
+  // every ladder slot's work column. The slot's LENGTH is unaffected either
+  // way: only the accounting moves.
+  const asPad = [...work, ...tail]
+    .reduce((t, o) => t + (o.ladderWork === undefined ? 0 : o.cycles - o.ladderWork), 0);
+  const charged = used - asPad;
   return {
     index, cycles, ops: [dacWrite, ...work, ...pad, ...tail], pad,
     row: {
-      slot: index, cycles, work: used, pad: cycles - used,
-      workPct: +((100 * used) / cycles).toFixed(1),
+      slot: index, cycles, work: charged, pad: cycles - charged,
+      workPct: +((100 * charged) / cycles).toFixed(1),
+      ladderPad: asPad || undefined,
       what: [...work, ...tail].length
         ? [...work, ...tail].map((o) => o.what ?? o.asm[0]).join(" + ") : "—",
     },

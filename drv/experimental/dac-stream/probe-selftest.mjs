@@ -20,8 +20,8 @@ import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITI
 import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
 import { generate } from "./gen-stream.mjs";
 import { generateSplit } from "./decode-split.mjs";
-import { CORR, MAX_QUANTA, CORR_FAULTS, correctorBlocks, ladderOps, refCorrect,
-  splitQuanta, INITIAL_CORR } from "./corrector.mjs";
+import { CORR, MAX_QUANTA, MAX_DEBT_UNITS, debtLimitFor, CORR_FAULTS, correctorBlocks,
+  correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "./corrector.mjs";
 import { Machine } from "./machine.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
@@ -540,6 +540,38 @@ assert.equal(backwards[2].sync, "lost");
     "the split must still fail to place at the 79.6% target");
   assert.ok(!placeSplit(blocks, gen2.slots, { target: 0.839 }).failed,
     "…and close at the 83.9% one, which is the number the ceiling question is about");
+
+  // THE WALKER'S OWN CONTRACT (R10 §29.2). It used to keep walking `at % 80`
+  // into a second and third lap and fold those pieces back onto the same
+  // physical slots, which reorders the chain and still reports a placement. So
+  // the deadline is checked against a synthetic loop where the arithmetic is
+  // trivially known: 80 slots that hold exactly one piece each.
+  const flat = (n, work) => [...Array(n).keys()].map((i) =>
+    ({ cycles: 100, row: { slot: i, work } }));
+  const one = (n) => [...Array(n).keys()].map((i) => ({ name: `p${i}`, cycles: 40, ops: [] }));
+  {
+    const slots = flat(80, 50);                       // headroom 50 at target 1.0
+    const ok80 = placeSplit(one(80), slots, { target: 1 });
+    assert.ok(!ok80.failed && ok80.laps === 1, "80 pieces must fit 80 one-piece slots");
+    assert.equal(new Set(ok80.placed.map((p) => p.slot)).size, 80);
+    const over = placeSplit(one(81), slots, { target: 1 });
+    assert.ok(over.failed, "the 81st piece has no slot before the next read — it must NOT fold");
+    assert.equal(over.placed.length, 80);
+    // Two pieces DO share a slot when both fit, and the order is preserved.
+    const roomy = flat(80, 10);                       // headroom 90 = two pieces
+    const pair = placeSplit(one(4), roomy, { target: 1 });
+    assert.deepEqual(pair.placed.map((p) => p.slot), [0, 0, 1, 1],
+      "two dependent pieces belong in one slot when the slot holds them");
+    assert.equal(pair.laps, 1);
+    // …and a chain that needs more than the loop still fails rather than wraps.
+    assert.ok(placeSplit(one(200), roomy, { target: 1 }).failed);
+    // The deadline is ABSOLUTE, not modular: starting at slot 40 the chain has
+    // 80 slots from there, not 40.
+    const from40 = placeSplit(one(80), slots, { target: 1, from: 40 });
+    assert.ok(!from40.failed && from40.laps === 1);
+    assert.equal(from40.placed.at(-1).absolute, 119);
+    assert.ok(placeSplit(one(81), slots, { target: 1, from: 40 }).failed);
+  }
 }
 
 // ── the 15-level profile (R8 §23.2) ───────────────────────────────────────
@@ -611,8 +643,8 @@ assert.equal(backwards[2].sync, "lost");
   const S = (n) => `$${(ST + SPLIT_STATE[n]).toString(16)}`;
   const TAGS = [["a0", "a1", "a2", "a3"], ["b0", "b1"], ["c0"]];
 
-  const build = (maxQuanta, fault) => {
-    const blocks = correctorBlocks(S, TAGS, { maxQuanta, fault });
+  const build = (fault) => {
+    const blocks = correctorBlocks(S, TAGS, { fault });
     const src = ["        org $0000"];
     blocks.forEach((blk, i) => {
       src.push(`blk${i}:`);
@@ -626,8 +658,8 @@ assert.equal(backwards[2].sync, "lost");
     finally { rmSync(d, { recursive: true, force: true }); }
   };
 
-  const score = (maxQuanta, fault) => {
-    const { blocks, asm } = build(maxQuanta, fault);
+  const score = (fault, extra = []) => {
+    const { blocks, asm } = build(fault);
     const ram = new Uint8Array(0x2000);
     ram.set(asm.bytes.subarray(0, Math.min(asm.bytes.length, ram.length)));
     const cpu = new Z80Cpu({ read: (a) => ram[a] ?? 0xff,
@@ -643,21 +675,29 @@ assert.equal(backwards[2].sync, "lost");
     const groupValue = (g) => ram[opAddr[TAGS[g][0]]] - CORR.neutral;
     const sameGroup = (g) => TAGS[g].every((t) => ram[opAddr[t]] === ram[opAddr[TAGS[g][0]]]);
 
-    for (let k = 0; k <= SPLIT_STATE.rem; k++) ram[ST + k] = 0;
+    for (let k = 0; k <= SPLIT_STATE.kraw; k++) ram[ST + k] = 0;
     for (const t of TAGS.flat()) ram[opAddr[t]] = CORR.neutral;
     const cases = [];
     for (let d = -40; d <= 40; d++) cases.push({ valid: 0xff, delta: d });
     cases.push({ valid: 0, delta: 0 });                         // unknown: the debt is dropped
     for (const d of [75, 0, 0, 0, 0, -75, 0, 0, 0, 0]) cases.push({ valid: 0xff, delta: d });
     for (const d of [113, 0, 114, 0, 120, 0, -120, 0, 60, 0, 0]) cases.push({ valid: 0xff, delta: d });
+    cases.push(...extra);
 
     let ref = { ...INITIAL_CORR }, bad = 0, n = 0, expired = 0;
     for (const c of cases) {
+      // A case may PIN the debt: the ±112 boundary and the eight-bit wrap are
+      // states the running sequence cannot be driven into by deltas alone, and
+      // they are exactly the two the old code got wrong (R10 §29.4).
+      if (c.debt !== undefined) { ram[ST + SPLIT_STATE.debt] = c.debt & 0xff; ref = { debt: c.debt }; }
       ram[ST + SPLIT_STATE.valid] = c.valid;
       ram[ST + SPLIT_STATE.delta] = c.delta & 0xff;
       ram[ST + SPLIT_STATE.phase] = 100;
-      ram[ST + SPLIT_STATE.known] = 0xff;
-      ref = refCorrect(c.valid ? { debt: ref.debt } : { debt: 0 }, c.valid ? c.delta : 0, { maxQuanta });
+      // The raw mask goes to the scratch byte and the corrector's gate makes
+      // the single write into the record's own KNOWN (R10 §29.3).
+      ram[ST + SPLIT_STATE.kraw] = 0xff;
+      ram[ST + SPLIT_STATE.known] = 0;
+      ref = refCorrect(c.valid ? { debt: ref.debt } : { debt: 0 }, c.valid ? c.delta : 0);
       run();
       if (ref.expired) expired++;
       n++;
@@ -692,21 +732,50 @@ assert.equal(backwards[2].sync, "lost");
       assert.equal(splitQuanta(q).applied, q, `${q} quanta is not reachable`);
   }
 
-  for (const maxQuanta of [MAX_QUANTA, 16]) {
-    const r = score(maxQuanta, null);
-    assert.equal(r.bad, 0, `the corrector at ${maxQuanta} quanta disagreed on ${r.bad} of ${r.n}`);
-    assert.ok(r.oneCost, `a corrector piece at ${maxQuanta} quanta has more than one cost`);
+  // THE DEBT BOUNDARY, in the reference and then on the Z80 (R10 §29.4). §27
+  // and §28 claimed ±112 and the code did not do it: it narrowed the sum to a
+  // byte and asked |q| > 28 afterwards, which takes +113, +114 and -113 and
+  // first refuses at +115. Each of these is one observation, so they are pinned
+  // rather than walked into.
+  {
+    assert.equal(MAX_DEBT_UNITS, debtLimitFor(MAX_QUANTA));
+    for (const d of [112, -112]) {
+      assert.ok(!refCorrect({ debt: 0 }, d).expired, `${d} units is inside the limit`);
+      assert.ok(refCorrect({ debt: 0 }, d + Math.sign(d)).expired,
+        `${d + Math.sign(d)} units is past it`);
+    }
+    // The one that the eight-bit sum accepted as a valid debt of the opposite
+    // sign: 100 + 75 is 175, not -81.
+    assert.ok(refCorrect({ debt: 100 }, 75).expired, "175 units must expire");
+    assert.ok(refCorrect({ debt: -100 }, -75).expired, "-175 units must expire");
+    assert.ok(refCorrect({ debt: 56 }, 56).expired === false, "112 units is still inside");
+  }
+
+  const BOUNDARY = [
+    { valid: 0xff, debt: 0, delta: 112 }, { valid: 0xff, debt: 0, delta: 113 },
+    { valid: 0xff, debt: 0, delta: -112 }, { valid: 0xff, debt: 0, delta: -113 },
+    { valid: 0xff, debt: 100, delta: 75 }, { valid: 0xff, debt: -100, delta: -75 },
+    { valid: 0xff, debt: 56, delta: 56 }, { valid: 0xff, debt: 57, delta: 56 },
+    { valid: 0xff, debt: 112, delta: 0 }, { valid: 0xff, debt: 112, delta: 1 },
+    { valid: 0xff, debt: -90, delta: -60 }, { valid: 0xff, debt: 90, delta: 60 },
+  ];
+  {
+    const r = score(null, BOUNDARY);
+    assert.equal(r.bad, 0, `the corrector disagreed on ${r.bad} of ${r.n}`);
+    assert.ok(r.oneCost, "a corrector piece has more than one cost");
     assert.ok(r.expired > 0, "the expiry path was never taken");
   }
-  // …and it refuses each way of getting it wrong.
+  // …and it refuses each way of getting it wrong, including the eight-bit sum.
   for (const fault of Object.keys(CORR_FAULTS)) {
-    const r = score(MAX_QUANTA, fault);
+    const r = score(fault, BOUNDARY);
     assert.ok(r.bad > 0, `the fault "${fault}" was accepted`);
   }
-  // The 16-quantum shape is not a fallback: the declared contract reaches 1,500
-  // master = 75 units, which asks for 19 quanta, and it expires at 16.
-  assert.ok(refCorrect({ debt: 0 }, 67, { maxQuanta: 16 }).expired,
-    "the narrow shape must expire inside the declared contract — that is why it is not a fallback");
+  // There is ONE shape. The 16-quantum variant §28 measured is gone rather than
+  // kept behind a flag: the declared contract reaches 1,500 master = 75 units,
+  // which asks for 19 quanta, so a 16-quantum corrector expires INSIDE the
+  // contract it exists to hold. Asking for it is an error, not a fallback.
+  assert.throws(() => correctorBlocks(S, TAGS, { maxQuanta: 16 }), /one corrector shape/);
+  assert.throws(() => correctorLive(TAGS, { maxQuanta: 16 }), /one corrector shape/);
 }
 
 // ── the split decode in the REAL loop (R8 §23.3) ──────────────────────────
@@ -788,6 +857,130 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(mean <= cfg.meanTarget * 100 + 0.05, `the mean is ${mean}%`);
   // And BC really is what carries: the liveness is not a comment.
   assert.ok(r.preserve.liveIn.size > 0 && r.preserve.liveOut.size > 0);
+}
+
+// ── the corrector IN THE LOOP, and the correction read back off the DAC ───
+// (R10 §29.3.)
+//
+// The piece-level test above runs the arithmetic and nothing else: it does not
+// include the ladders and it does not include the next read, so it cannot see
+// the one-observation skew that put the ladders before their own writes. This
+// does. The image is generated with the corrector in it, assembled, run, and
+// the correction is recovered TWICE — from the seven ladder operands, and
+// independently from the DAC intervals those seven slots actually produced.
+{
+  const cfg = buildConfig({ voices: 2, complete: true, csm: true, levels: 15,
+    workTarget: 0.839, correctorBudget: true });
+  const r = generateSplit(cfg, { stackFill: true, correct: true });
+  assert.ok(r.ok, `the corrector image did not generate: ${r.stage} ${r.error ?? ""}`);
+  // THE CAUSAL ORDER, from the placement rather than from the intention: every
+  // ladder is after the last write that decides it and before the next read.
+  const writes = r.walk.placed.filter((p) => p.block.name.startsWith("corr write"));
+  const lastWrite = Math.max(...writes.map((p) => p.absolute));
+  for (const l of r.ladders) {
+    assert.ok(l.absolute >= lastWrite, `ladder ${l.tag} runs before its own operand is written`);
+    assert.ok(l.absolute < r.walk.deadline, `ladder ${l.tag} runs after the next read`);
+  }
+  const expectAt = r.walk.placed.find((p) => p.block.name === "publish expect store").absolute;
+  assert.ok(expectAt >= lastWrite, "EXPECT is stored before the decision is complete");
+  assert.equal(r.walk.laps, 1);
+
+  const d5 = mkdtempSync(join(tmpdir(), "dac-corr2ch-"));
+  let built;
+  try { const f = join(d5, "e.z80"); writeFileSync(f, r.gen.text); built = assemble(f); }
+  finally { rmSync(d5, { recursive: true, force: true }); }
+  assert.ok(built.symbols.get("code_end") <= cfg.ram.code[1], "the corrector image overran the code region");
+
+  const tb = PHASE_TABLE.quantised.bytes, UNK = PHASE_TABLE.quantised.unknown;
+  const units = PHASE_TABLE.quantised.units;
+  const known = [...tb.keys()].filter((h) => tb[h] !== UNK);
+  const unknown = [...tb.keys()].filter((h) => tb[h] === UNK);
+  // A sequence that MOVES: a quiet run corrects nothing and would pass with the
+  // ladders switched off entirely. These readings put a different displacement
+  // in front of the corrector at nearly every observation, with two unknown
+  // readings to break the chain and re-acquire.
+  const seq = [];
+  for (let i = 0; i < 24; i++) {
+    seq.push(known[(i * 37 + i * i) % known.length]);
+    if (i === 7 || i === 16) seq.push(unknown[(i * 13) % unknown.length]);
+  }
+  let reads = 0;
+  const machine = new Machine(cfg, built, {
+    rom: Uint8Array.from({ length: 512 }, (_, i) => (i * 73 + 19) & 255),
+    vdp: () => seq[Math.min(reads++, seq.length - 1)],
+  });
+  const ST = r.map.state;
+  const opAddr = Object.fromEntries(r.ladders.map((l) => [l.tag, built.symbols.get(`corr_${l.tag}`) + 1]));
+
+  // The decode and the corrector as ONE reference: the fold changes the phase
+  // the next expectation is built from, so they cannot be checked apart.
+  const refBoth = (st, corr, reading, step) => {
+    const phase = tb[reading];
+    const k = phase === UNK ? 0 : 0xff;
+    const valid = k & st.known;
+    let d = (phase - st.expect) % units;
+    if (d < 0) d += units;
+    if (d >= (units + 1) >> 1) d -= units;
+    const delta = valid ? d : 0;
+    const c = refCorrect({ debt: valid ? corr.debt : 0 }, delta);
+    const k2 = c.expired ? 0 : k;
+    const ph = ((phase - CORR.unitsPerQuantum * c.applied) % units + units) % units;
+    return { st: { known: k2, valid, delta: delta & 0xff, count: (st.count + 1) & 0xffff,
+      expect: k2 ? (ph + step) % units : 0 }, corr: c };
+  };
+
+  let st = { ...INITIAL_STATE }, corr = { ...INITIAL_CORR }, at = 0, moved = 0, expired = 0;
+  for (let lap = 0; lap < seq.length; lap++) {
+    const until = cfg.cycleSlots * (lap + 1) + 1;
+    let guard = 0;
+    while (machine.trace.dacCycle.length < until && guard++ < 6000) { at += 200; machine.run(at); }
+    assert.ok(machine.trace.dacCycle.length >= until, `the engine stalled on lap ${lap}`);
+    const want = refBoth(st, corr, seq[lap], r.advance);
+    st = want.st; corr = want.corr;
+    if (corr.expired) expired++;
+    if (corr.applied !== 0) moved++;
+    const got = { known: machine.ram[ST + SPLIT_STATE.known],
+      valid: machine.ram[ST + SPLIT_STATE.valid],
+      delta: machine.ram[ST + SPLIT_STATE.delta],
+      expect: machine.ram[ST + SPLIT_STATE.expect],
+      count: machine.ram[ST + SPLIT_STATE.countLo] | (machine.ram[ST + SPLIT_STATE.countHi] << 8),
+      debt: (machine.ram[ST + SPLIT_STATE.debt] << 24) >> 24 };
+    assert.deepEqual(got, { ...st, debt: corr.debt },
+      `lap ${lap}, reading $${seq[lap].toString(16)}`);
+    // What the seven ladders were told to do. One slot is one quantum, so the
+    // sum of the seven entries IS 4a + 2b + c — the grouping is in which slots
+    // share a value, not in an arithmetic done here.
+    const byOperand = r.ladders.reduce((t, l) =>
+      t + machine.ram[opAddr[l.tag]] - CORR.neutral, 0);
+    assert.equal(byOperand, corr.applied, `lap ${lap}: the operands say ${byOperand} quanta`);
+    // …and what they ACTUALLY did to the DAC, measured off the intervals rather
+    // than read back out of RAM. A ladder slot is `base - 4a` cycles long.
+    let byInterval = 0;
+    for (const l of r.ladders) {
+      const i = lap * cfg.cycleSlots + l.slot;
+      const gap = machine.trace.dacCycle[i + 1] - machine.trace.dacCycle[i];
+      const base = cfg.slotCycles[l.slot % cfg.groupSlots];
+      byInterval += (base - gap) / CORR.quantumCycles;
+      assert.ok(gap >= 342 && gap <= 375, `lap ${lap}: a DAC interval of ${gap} cycles`);
+    }
+    assert.equal(byInterval, corr.applied,
+      `lap ${lap}: the DAC moved by ${byInterval} quanta where ${corr.applied} was decided`);
+  }
+  assert.ok(moved >= 8, `only ${moved} of ${seq.length} observations corrected anything`);
+  assert.ok(expired === 0, "this sequence should stay inside the debt limit");
+  assert.equal(machine.trace.stray.length, 0);
+
+  // `corr-one-late`: the ladders placed before their own writes, which is what
+  // the code did until R10 §29.3. The generator has to refuse it, and if it ever
+  // places again the causal check above is what catches it.
+  const late = generateSplit(cfg, { stackFill: true, correct: true, ladderLate: true });
+  assert.ok(!late.ok || late.ladders.every((l) => l.absolute < lastWrite),
+    "the one-observation-late placement must not pass as the corrected one");
+  if (late.ok) {
+    const w = late.walk.placed.filter((p) => p.block.name.startsWith("corr write"));
+    assert.ok(late.ladders.some((l) => l.absolute < Math.max(...w.map((p) => p.absolute))),
+      "corr-one-late did not actually run a ladder before its operand was written");
+  }
 }
 
 // ── the stop a window contains (R9 §26.3) ─────────────────────────────────
@@ -1093,7 +1286,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
   + " the stop a window contains and how its boundaries are defined,"
-  + " the corrector's arithmetic, expiry, convergence and four refusals,"
-  + " the split decode's agreement with it, where that fails to place, and the"
+  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC,"
+  + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");
