@@ -19,6 +19,11 @@ import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITI
   STATE, PHASE_TABLE, VDP } from "./observer.mjs";
 import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
 import { generate, codeLedger, reservedPadBytes } from "./gen-stream.mjs";
+import { protocolLayout, protocolAsm, protocolHeader, publishSteps, readSnapshot,
+  controlSteps, readControl, faultySteps, faultyControlSteps, tornSnapshotPossible,
+  tornControlPossible, enqueueSteps, dequeue, extendTime, lateTarget, genAdvance,
+  phaseInvalidated, outputAdvance, SNAPSHOT, CONTROL, PROTOCOL_BYTES, PROTOCOL_SPARE,
+  PUB_REGION_BYTES } from "./protocol.mjs";
 import { generateSplit } from "./decode-split.mjs";
 import { CORR, MAX_QUANTA, MAX_DEBT_UNITS, debtLimitFor, CORR_FAULTS, correctorBlocks,
   correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "./corrector.mjs";
@@ -859,6 +864,160 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(r.preserve.liveIn.size > 0 && r.preserve.liveOut.size > 0);
 }
 
+// ── the 68k/Z80 runtime protocol, as a reference (R12 §33.2-§33.4) ───────
+// ONE LAYOUT, checked to be one: the JS object, the Z80 equates and the 68000
+// header are all read back here and required to name the same addresses. The
+// orders are checked by walking EVERY interleaving rather than by arguing about
+// them — a reader may run between any two of the publisher's byte writes — and
+// each way of getting the order wrong has to produce a torn reading.
+{
+  const cfg = buildConfig({ voices: 2, complete: true, levels: 15, workTarget: 0.839 });
+  const BASE = cfg.ram.pub[0];
+  const L = protocolLayout(BASE);
+
+  // It fits the region the map already reserves, with the spare R12 §33.2 asks
+  // to leave undefined, and it does not run into the next one.
+  assert.equal(PROTOCOL_BYTES, 24);
+  assert.equal(PROTOCOL_SPARE, 8);
+  assert.equal(cfg.ram.pub[1] - cfg.ram.pub[0], PUB_REGION_BYTES);
+  assert.equal(L.size, PROTOCOL_BYTES);
+  assert.ok(BASE + L.size <= cfg.ram.pub[1], "the protocol overruns the publication region");
+
+  // The three emitters, read back. A hand-kept second copy of an offset is the
+  // failure §33.2 names, so the asm and the header are PARSED and compared with
+  // the object rather than eyeballed.
+  const asm = new Map([...protocolAsm(BASE).matchAll(/^(\S+)\s+equ \$([0-9a-f]+)$/gm)]
+    .map((m) => [m[1], parseInt(m[2], 16)]));
+  const hdr = new Map([...protocolHeader(BASE).matchAll(/^#define (MML_PROTO_\S+) 0x([0-9A-F]+)/gm)]
+    .map((m) => [m[1], parseInt(m[2], 16)]));
+  const up = (n) => n.replace(/([A-Z])/g, "_$1").toUpperCase();
+  for (let f = 0; f < 2; f++)
+    for (const [name] of SNAPSHOT) {
+      assert.equal(asm.get(`PROTO_F${f}_${up(name)}`), L.faces[f][name].offset, `asm F${f} ${name}`);
+      assert.equal(hdr.get(`MML_PROTO_F${f}_${up(name)}`), L.faces[f][name].offset, `header F${f} ${name}`);
+    }
+  for (const [name] of CONTROL) {
+    assert.equal(asm.get(`PROTO_H_${up(name)}`), L.control[name].offset, `asm host ${name}`);
+    assert.equal(hdr.get(`MML_PROTO_H_${up(name)}`), L.control[name].offset, `header host ${name}`);
+  }
+  assert.equal(asm.get("PROTO_SELECT"), L.publishSelect.offset);
+  assert.equal(hdr.get("MML_PROTO_SELECT"), L.publishSelect.offset);
+  assert.equal(hdr.get("MML_PROTO_BYTES") ?? PROTOCOL_BYTES, PROTOCOL_BYTES);
+
+  // ── publication, every interleaving ────────────────────────────────────
+  const mem = new Uint8Array(0x2000);
+  const snaps = [
+    { bootGeneration: 0x1234, phaseGeneration: 0x00, boundarySampleIndex: 0x00000050, observationNumber: 1 },
+    { bootGeneration: 0x1234, phaseGeneration: 0x01, boundarySampleIndex: 0xfffffff0, observationNumber: 0xfffe },
+    { bootGeneration: 0x1234, phaseGeneration: 0xff, boundarySampleIndex: 0x00000010, observationNumber: 0x0001 },
+  ];
+  let select = 0;
+  for (const snap of snaps) {
+    const steps = publishSteps(L, select, snap);
+    assert.equal(tornSnapshotPossible(L, mem, snap, steps), null,
+      "a reader must see either the whole old snapshot or the whole new one");
+    for (const [, v] of steps.map((x) => [x[0], x[1]])) void v;
+    for (const [a, v] of steps) mem[a] = v;
+    select ^= 1;
+    const got = readSnapshot(mem, L);
+    assert.equal(got.select, select);
+    for (const k of ["bootGeneration", "phaseGeneration", "boundarySampleIndex", "observationNumber"])
+      assert.equal(got[k], snap[k], `published ${k}`);
+  }
+  // …and each way of getting the order wrong is caught.
+  for (const fault of ["select-first", "half-face"]) {
+    const snap = { bootGeneration: 0x1234, phaseGeneration: 2, boundarySampleIndex: 0x0a0b0c0d,
+      observationNumber: 0x0203 };
+    const bad = faultySteps(L, select, snap, fault);
+    assert.ok(tornSnapshotPossible(L, mem, snap, bad),
+      `the fault "${fault}" produced no torn reading — the check is not checking`);
+  }
+
+  // ── the host's control block, gated on its commit byte ─────────────────
+  {
+    const base = new Uint8Array(mem);
+    const ctl = { bootGeneration: 0x1234, phaseGeneration: 3, queueHead: 12,
+      hostCommit: (readControl(base, L).hostCommit + 1) & 0xff };
+    assert.equal(tornControlPossible(L, base, ctl, controlSteps(L, ctl)), null,
+      "a new commit must mean every field behind it is already there");
+    assert.ok(tornControlPossible(L, base, ctl, faultyControlSteps(L, ctl, "commit-first")),
+      "committing first must be caught");
+    for (const [a, v] of controlSteps(L, ctl)) base[a] = v;
+    assert.deepEqual(readControl(base, L), ctl);
+  }
+
+  // ── a snapshot from another run is not this run's ──────────────────────
+  {
+    const m = new Uint8Array(mem);
+    const old = { bootGeneration: 0x1233, phaseGeneration: 0, boundarySampleIndex: 99,
+      observationNumber: 7 };
+    for (const [a, v] of publishSteps(L, readSnapshot(m, L).select, old)) m[a] = v;
+    const got = readSnapshot(m, L);
+    assert.notEqual(got.bootGeneration, 0x1234,
+      "the host must be able to tell a previous run's snapshot from this run's");
+  }
+
+  // ── the queue: the payload first, the head last ────────────────────────
+  {
+    const QBASE = 0x1d00, QSIZE = 64;
+    const rec = { size: 8, type: 3, applyAtLow: 0x1234, payload: [9, 8, 7, 6] };
+    for (const fault of [null, "head-first"]) {
+      const m = new Uint8Array(mem);
+      m[L.control.queueHead.offset] = 0;
+      const steps = enqueueSteps(L, QBASE, QSIZE, 0, rec, fault);
+      let sawPartial = false, sawWhole = false;
+      const scratch = new Uint8Array(m);
+      for (let k = 0; k <= steps.length; k++) {
+        const got = dequeue(scratch, L, QBASE, QSIZE, 0);
+        if (got && !got.incomplete) {
+          // Whatever a consumer is allowed to take has to BE the record.
+          if (got.type === rec.type && got.applyAtLow === rec.applyAtLow
+            && got.payload.join() === rec.payload.join()) sawWhole = true;
+          else sawPartial = true;
+        }
+        if (k < steps.length) scratch[steps[k][0]] = steps[k][1];
+      }
+      assert.ok(sawWhole, `the ${fault ?? "correct"} order never delivered the record`);
+      if (fault === null) assert.ok(!sawPartial, "a correctly ordered append was read half-written");
+      else assert.ok(sawPartial, "advancing the head first must be visible as a half-written record");
+    }
+  }
+
+  // ── the wraps, one question each ───────────────────────────────────────
+  // 16-bit command time against a 32-bit output index.
+  for (const at of [0xfff0, 0xfffe, 0xffff, 0x00000000, 0x0001, 0x7fff0000, 0xfffffff0, 0xffffffff]) {
+    for (const ahead of [1, 2, 16, 32766, 32767]) {
+      const low = (at + ahead) & 0xffff;
+      const t = extendTime(low, at);
+      assert.ok(!t.late, `${ahead} ahead of ${at} read as late`);
+      assert.equal(t.at, (at + ahead) >>> 0, `${ahead} ahead of ${at}`);
+      assert.equal(outputAdvance(at, t.at), ahead, "the extension must move forward");
+    }
+    assert.ok(extendTime(at & 0xffff, at).late, "the current sample is not the future");
+    for (const behind of [1, 100, 32768]) {
+      const t = extendTime((at - behind) & 0xffff, at);
+      assert.ok(t.late, `${behind} behind ${at} read as future`);
+    }
+  }
+  // A late command lands on the first block boundary NOT already built, and
+  // never inside the 17 samples the build cursor has finished.
+  for (const at of [0, 1, 15, 16, 100, 0xfffffff0]) {
+    const t = lateTarget(at, cfg.lead, cfg.blockSamples);
+    assert.equal(t % cfg.blockSamples, 0, "a late command must land on a block boundary");
+    assert.ok(outputAdvance(at, t) >= cfg.lead, "…at or past the build cursor, never behind it");
+    assert.ok(outputAdvance(at, t) < cfg.lead + cfg.blockSamples, "…and the FIRST such boundary");
+  }
+  // The phase generation's own wrap: $ff -> $00 is one step, not none.
+  assert.equal(genAdvance(0xff, 0x00), 1);
+  assert.equal(genAdvance(0x00, 0xff), 255);
+  assert.equal(genAdvance(7, 7), 0);
+  assert.ok(phaseInvalidated(0xff, 0x00), "$ff -> $00 is an invalidation, not a no-op");
+  assert.ok(!phaseInvalidated(9, 9));
+  // The 32-bit output index wraps too, and it must not read as a rewind.
+  assert.equal(outputAdvance(0xffffffff, 0), 1);
+  assert.equal(outputAdvance(0xfffffff0, 0x0f), 31);
+}
+
 // ── the code ledger (R11 §31.1) ───────────────────────────────────────────
 // `code_end + estimate` double-counts, and it has now drifted back to the plain
 // sum twice. A `complete` build EXECUTES the unwritten features' cycles as
@@ -1354,7 +1513,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
   + " the stop a window contains and how its boundaries are defined,"
-  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC, the code ledger and what it does not subtract,"
+  + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC, the code ledger and what it does not subtract, the 68k/Z80 protocol's one layout, its two commit orders and every wrap,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");
