@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
 import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
 import { buildCase, FAULTS } from "./case-config.mjs";
-import { readProbe, recordsBetweenReads } from "./probe-analysis.mjs";
+import { readProbe, recordsBetweenReads, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
 
@@ -515,6 +515,31 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
   }
   console.log(`  worst slot ${built.gen.placement.worst.workPct}%,`
     + ` mean ${built.gen.placement.meanWorkPct}%, ${built.gen.split.slotsPreserving} slots carry BC`);
+  // WHAT THE RECORD ACTUALLY MEASURED, against the instrument's own clock.
+  // This is the input a corrector needs and it is a measurement, not a design:
+  // the true displacement of a reading is how far its interval departed from
+  // the one the schedule lays out, and the record reports it in units of 20
+  // master. Only records whose difference is VALID say anything.
+  {
+    const U = art.quantised.unit;
+    const errs = [], seen = [];
+    for (let n = 1; n < rows.length; n++) {
+      const said = rows[n];
+      if (!said || said.valid !== 0xff) continue;
+      const truth = (reads[n].time - reads[n - 1].time) - sp[n % sp.length];
+      const signed = said.delta > 127 ? said.delta - 256 : said.delta;
+      seen.push(truth);
+      errs.push(signed * U - truth);
+    }
+    if (errs.length) {
+      const a = (x) => Math.abs(x);
+      errs.sort((x, y) => a(x) - a(y));
+      seen.sort((x, y) => x - y);
+      console.log(`  displacement: ${seen[0]}..${seen.at(-1)} master really happened;`
+        + ` the record's own error is at most ${a(errs.at(-1))} master`
+        + ` (${(a(errs.at(-1)) / Z80_DIV).toFixed(1)} Z80 cyc) over ${errs.length} valid differences`);
+    }
+  }
   // WHEN THE RESULT IS FINISHED: the reading, then the last field of its
   // record. The layout predicts it; the machine is asked to agree.
   const settle = [];
