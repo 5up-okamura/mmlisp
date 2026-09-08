@@ -729,3 +729,49 @@ the numbers from the image, so no figure here comes from a throwaway script.
 Also: `setup.sh` resolves the wanted revision against the remote and refuses a
 reused tree whose HEAD is not it; `*.patch` is exempted from git's whitespace
 check, because a unified diff's context lines are supposed to start with a space.
+
+### The code ledger, and what R11 settled (§31)
+
+**The 269 B overrun was the ledger, not the image.** `code_end + estimate`
+double-counts: a `complete` build EXECUTES the unwritten features' cycles as
+tagged padding, so those bytes are in the image already and the real feature
+REPLACES them. R8 §24.3 fixed this once and both reports had drifted back to the
+plain sum. `finished = code_end(no scaffold) - reservedPadBytes + estimate`, with
+the padding measured from the same generated object (ops tagged `reserved`
+only — a slot's own pad and a ladder's nops stay in) and the ledger taken from
+the SAME image as code_end, since a CSM write draws on its block's reservation.
+
+  decode only    2089 - 570 + 608 = 2127   (433 B spare)
+  with corrector 2291 - 437 + 538 = 2392   (168 B spare)
+
+**The code region stays 2,560 B**, and so do the LUT, the quanta, the correction
+limit and the level count. 168 B is not a proof — replacing a reservation with
+real code changes instruction density, the pad encoding and BC liveness — so the
+estimate line for a feature is dropped only when that feature is written.
+
+**What the corrector is accepted for**: a 4 B disturbance inside the 1,500-master
+contract. What the sweep then measured, all on BlastEm with every DAC interval
+of every observation scored against the layout (99,680 an observation-run, 0
+wrong in every case):
+
+  1 B  0..407 master   5 quanta   2 obs to return
+  2 B  0..498          6          2
+  4 B  0..680          9          2
+  8 B  0..1035        13          2
+ 12 B  0..1399        18          2   <- the contract's edge, still all correct
+ 16 B  0..1778        22              148 past the contract, 22 past half a line
+ 24 B  0..2528        16              179 past half a line, all 179 wrong
+ 64 B  0..6182        13              179 past a whole line, all wrong
+
+**NOT ONE case expired**, and that is the finding rather than a pass: past half a
+line H reports the short way round, so a physically large disturbance arrives as
+a small ordinary DELTA and the corrector acts on it. The debt limit cannot refuse
+that — only an external invalidation from the 68000 could, and there is no input
+path for one yet. It is designed with the shared origin, not before.
+
+Also covered through the corrected image: unknown readings (singles and a run of
+three), re-acquisition, the debt dropped rather than carried across a break, and
+the 16-bit observation number carrying past $FFFF — reached with a `countFrom`
+boot constant, not waited for. `dac-stream:machine:required` runs the required
+cases and exits 0; the full run still reports every case and still exits 1 on the
+13 known informational failures.
