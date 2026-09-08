@@ -491,7 +491,7 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
   // interval AFTER a read is the one that carries that read's correction.
   const corrected = !!built.gen.split.correct;
   const applied = new Array(rows.length).fill(0);
-  let debt = 0, expired = 0, worstDebt = 0;
+  let debt = 0, expired = 0, worstDebt = 0, over = 0, worstOver = 0;
   let state = { ...INITIAL_STATE }, mismatch = 0, compared = 0, firstBad = null;
   for (let n = 0; n < rows.length; n++) {
     const step = ((sp[(n + 1) % sp.length] % LINE_MASTER) / U) % units;
@@ -508,6 +508,11 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
       debt = c.debt; applied[n] = c.applied;
       if (c.expired) expired++;
       worstDebt = Math.max(worstDebt, Math.abs(debt));
+      // HOW LONG IT TAKES TO COME BACK. The gain leaves at most two units, so
+      // "settled" is |debt| <= 2 and the longest stretch above it is the return
+      // time a disturbance actually cost (R9 §26.5).
+      over = Math.abs(debt) > 2 ? over + 1 : 0;
+      worstOver = Math.max(worstOver, over);
       const k2 = c.expired ? 0 : known;
       const ph = ((phase - CORR.unitsPerQuantum * c.applied) % units + units) % units;
       state = { known: k2, valid, delta: delta & 0xff, count: (state.count + 1) & 0xffff,
@@ -668,6 +673,8 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
     console.log(`  debt held: ${debt} units = ${held} master at the last observation,`
       + ` worst ${worstDebt} units over the run, ${expired} expiries`
       + ` (the limit is ${MAX_DEBT_UNITS} units)`);
+    console.log(`  return: longest stretch above 2 units (40 master) is ${worstOver} observations`
+      + ` = ${(worstOver * sp[0] / MCLK * 1000).toFixed(2)} ms`);
     if (!name.includes("stall") && held > 60)
       failures.push(`"${name}": a quiet run settled at ${held} master, over the 60 asked for`);
     if (name.includes("stall") && expired)
