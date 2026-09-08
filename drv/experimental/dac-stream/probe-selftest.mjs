@@ -643,8 +643,12 @@ assert.equal(backwards[2].sync, "lost");
   let want = { ...INITIAL_STATE }, at = 0, checked = 0;
   for (let lap = 0; lap < seq.length; lap++) {
     const until = cfg.cycleSlots * (lap + 1) + 1;    // one write into the next lap
+    // IN SMALL STEPS near the boundary. `run()` stops where it is asked to,
+    // not where the DAC count reaches the target, so a coarse step overshoots
+    // — and once the record's pieces moved earlier in the loop, an overshoot of
+    // a few slots was enough to read the NEXT observation's VALID.
     let guard = 0;
-    while (machine.trace.dacCycle.length < until && guard++ < 400) { at += LOOP / 8; machine.run(at); }
+    while (machine.trace.dacCycle.length < until && guard++ < 4000) { at += 200; machine.run(at); }
     assert.ok(machine.trace.dacCycle.length >= until, `the engine stalled on lap ${lap}`);
     want = refDecode(want, seq[lap], r.advance);
     assert.equal(key(state()), key(want), `lap ${lap}, reading $${seq[lap].toString(16)}`);
