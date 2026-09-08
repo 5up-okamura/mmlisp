@@ -37,6 +37,7 @@ const BLAST = join(here, "..", "..", "out", "blastem");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", "2"));
+const MCLK = 53693175;
 // `--fault NAME` breaks the published record on purpose and INVERTS the verdict
 // for the decoder cases: the run passes only if the record check refuses it
 // (R7 §20.2 B). Everything else in the harness is skipped, because a broken
@@ -71,6 +72,11 @@ const CONTRACT = [
 ];
 // The decoder as the Z80 actually runs it.
 const Z80_DECODER = ["z80 decoder, quiet", "z80 decoder, 4B stall"];
+// The same decoder, distributed through the complete 2ch engine. Nothing is
+// published over the bus: the record is read from the Z80's own writes to the
+// globals page, which the emulator watches at no cost to the engine — so the
+// image compared is the image under test (R8 §23.5 step 3).
+const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stall"];
 // Either side of half a line, reported rather than graded.
 const BOUNDARY = ["hv observer, boundary 16B stall", "hv observer, boundary 24B stall"];
 // Kept to demonstrate the limit, not to pass it: these carry displacements
@@ -91,9 +97,10 @@ if (!argv.includes("--reuse")) {
     "in-contract", "back-to-back", "boundary", "2ch pattern with"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
       "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
-  execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", "z80 decoder",
-    "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
-    { stdio: ["ignore", "ignore", "inherit"] });
+  for (const sel of FAULT ? ["z80 decoder"] : ["z80 decoder", "2ch 15-level decoder"])
+    execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
+      "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
+      { stdio: ["ignore", "ignore", "inherit"] });
 }
 
 // ── log selection, verified against the rom the case produces ─────────────
@@ -107,7 +114,7 @@ const caseOf = (name) => {
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
 for (const name of FAULT ? Z80_DECODER : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
-  ...BOUNDARY, ...Z80_DECODER, "hv observer, Z80 reads v+h"])
+  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, "hv observer, Z80 reads v+h"])
   expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT, fault: FAULT }));
 
 // A name is not an identity. The output directory accumulates logs from every
@@ -159,6 +166,17 @@ const spacingOf = (name) => {
   if (!sp) throw new Error(`case "${name}" is not an observer case`);
   return sp;
 };
+/** How many of these intervals the 68000 stalled inside. */
+const countStalled = (times, stops) => {
+  let n = 0, si = 0;
+  for (let k = 1; k < times.length; k++) {
+    const a = times[k - 1], b = times[k];
+    while (si < stops.length && stops[si][1] < a) si++;
+    if (si < stops.length && stops[si][0] < b) n++;
+  }
+  return n;
+};
+
 const checkSpacing = (name, times) => {
   const sp = spacingOf(name);
   // EVERY undisturbed interval against the pattern position it belongs to, not
@@ -420,6 +438,104 @@ for (const name of Z80_DECODER) {
   console.log(`  ${unknowns} readings the table does not cover, ${bases} records that are a base`
     + ` rather than a difference`);
   if (!bases) failures.push(`"${name}": not one record was a base — the acquisition gate was never exercised`);
+}
+
+// ── the decoder inside the complete 2ch engine (R8 §23.5 step 3) ──────────
+// Same comparison, no publish: the record is the Z80's own writes to its
+// globals page, in the order the placement stores them. The engine is not told
+// anything and pays nothing for being watched.
+console.log(FAULT ? "" : `\n── the decoder inside the complete 2ch engine ──`);
+for (const name of FAULT ? [] : SPLIT_2CH) {
+  const f = need(name, Z80_SECONDS); if (!f) continue;
+  const built = expectedRom.get(name);
+  const fields = built.gen.observer.record;
+  const log = readProbe(readFileSync(f));
+  const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
+    .map((e) => ({ h: e.value & 255, time: e.time }));
+  // The probe reports the offset within the globals page, so a record field is
+  // a write to one of five known addresses in it.
+  const stateLo = (built.cfg.ram.glob[0] & 0xff) + 0x10;
+  const index = new Map(fields.map((x, k) => [stateLo + x.offset, k]));
+  const all = log.ramWrites.filter((w) => index.has(w.addr))
+    .map((w) => ({ time: w.time, field: index.get(w.addr), value: w.value }));
+  // BOOT WRITES EACH FIELD ONCE, before the first reading, and that is not a
+  // record arriving early — it is the initialisation R7 §20.2 B asked for, seen
+  // from the outside. It is checked rather than skipped: one write per field,
+  // all of them zero, or the state is not being initialised at all.
+  const first = reads.length ? reads[0].time : Infinity;
+  const boot = all.filter((w) => w.time <= first);
+  const recs = all.filter((w) => w.time > first);
+  const names = fields.map((x) => x.name);
+  if (boot.length !== names.length || boot.some((w) => w.value !== 0))
+    failures.push(`"${name}": boot wrote ${boot.length} of ${names.length} record fields`
+      + ` before the first reading${boot.some((w) => w.value !== 0) ? ", and not all of them zero" : ""}`);
+  stopsOf.set(name, log.stops);
+  const { rows, problems, incompleteTail, kinds } = recordsBetweenReads(reads, recs, names);
+
+  const U = art.quantised.unit, units = art.quantised.units;
+  const opts = { units, unknown: art.quantised.unknown, table: [...qbytes] };
+  const sp = spacingOf(name);
+  let state = { ...INITIAL_STATE }, mismatch = 0, compared = 0, firstBad = null;
+  for (let n = 0; n < rows.length; n++) {
+    const step = ((sp[(n + 1) % sp.length] % LINE_MASTER) / U) % units;
+    state = refDecode(state, reads[n].h, step, opts);
+    const said = rows[n];
+    if (!said) continue;
+    compared++;
+    const want = { known: state.known, valid: state.valid, delta: state.delta,
+      countLo: state.count & 0xff, countHi: state.count >> 8 };
+    if (names.some((k) => said[k] !== want[k])) { mismatch++; firstBad ??= { n, h: reads[n].h, want, said }; }
+  }
+  console.log(`${name} — ${Z80_SECONDS}s`);
+  console.log(`  ${reads.length} readings, ${recs.length} state writes watched,`
+    + ` ${compared} complete records compared field by field, ${mismatch} disagreed`);
+  console.log(`  broken records: ${problems.short} short, ${problems.extra} with a field too many,`
+    + ` ${problems.outOfOrder} out of order, ${problems.late} written before their own read`
+    + `${incompleteTail ? "; 1 unfinished record at the end of the run, excluded" : ""}`);
+  if (firstBad) console.log(`  first disagreement:`, JSON.stringify(firstBad));
+  console.log(`  boot wrote ${boot.length} record fields before the first reading, all zero`);
+  const owed = reads.length - incompleteTail;
+  if (compared !== owed)
+    failures.push(`"${name}": ${owed} readings owe a record and ${compared} arrived complete`);
+  for (const k of kinds) failures.push(`"${name}": ${problems[k]} records ${k}`);
+  if (mismatch) failures.push(`"${name}": the 2ch engine and the reference disagreed on ${mismatch} of ${compared}`);
+  // The schedule's own read spacing, checked against the machine — but only
+  // where there is something undisturbed to check. One read a LOOP is 430,080
+  // master and a stall every 3,000 lands inside every one of them, so the
+  // disturbed case has no clean interval by construction; that is the case
+  // working, not the check failing.
+  const stalled = countStalled(reads.map((x) => x.time), log.stops);
+  if (stalled < reads.length - 1) {
+    const worst = checkSpacing(name, reads.map((x) => x.time));
+    console.log(`  read spacing ${sp[0]} master, agrees to ${worst} master on the`
+      + ` ${reads.length - 1 - stalled} undisturbed intervals`);
+  } else {
+    console.log(`  read spacing not checked: the 68000 stalled inside all`
+      + ` ${reads.length - 1} intervals — one read a loop is ${sp[0]} master`);
+  }
+  console.log(`  worst slot ${built.gen.placement.worst.workPct}%,`
+    + ` mean ${built.gen.placement.meanWorkPct}%, ${built.gen.split.slotsPreserving} slots carry BC`);
+  // WHEN THE RESULT IS FINISHED: the reading, then the last field of its
+  // record. The layout predicts it; the machine is asked to agree.
+  const settle = [];
+  { let ri = 0;
+    for (const rec of recs) {
+      while (ri + 1 < reads.length && reads[ri + 1].time <= rec.time) ri++;
+      if (rec.field === names.length - 1 && rec.time > reads[ri].time)
+        settle.push(rec.time - reads[ri].time);
+    } }
+  if (settle.length) {
+    settle.sort((a, b) => a - b);
+    const want = built.gen.observer.settleMaster;
+    const mid = settle[settle.length >> 1];
+    console.log(`  reading -> finished record: ${settle[0]}..${settle.at(-1)} master`
+      + ` (p50 ${mid} = ${(mid / MCLK * 1000).toFixed(3)} ms), the layout says ${want}`);
+    if (settle[0] !== want && !stalled)
+      failures.push(`"${name}": the record settles in ${settle[0]}..${settle.at(-1)} master`
+        + ` where the layout says ${want}`);
+  }
+  const bases = rows.filter((r) => r && r.known === 0xff && r.valid === 0).length;
+  if (!bases) failures.push(`"${name}": not one record was a base`);
 }
 
 console.log(FAULT ? "" : `\n── H alone, either side of half a line ──`);

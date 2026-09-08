@@ -378,23 +378,47 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   bootWrite(YM.R_TIMER_B, cfg.timerB, "Timer B period");
   bootWrite(YM.R_TIMER_A_HI, cfg.timerAna >> 2, "Timer A period, hi");
   bootWrite(YM.R_TIMER_A_LO, cfg.timerAna & 3, "Timer A period, lo");
-  if (cfg.csm) {
-    // A minimal but real CH3 voice, so CSM has something to key. Operator
-    // offsets for channel 3 on port 0 are +2.
-    for (const [reg, val] of [
-      [0x32, 0x01], [0x36, 0x01], [0x3a, 0x02], [0x3e, 0x01],   // DT/MUL
-      [0x42, 0x1b], [0x46, 0x28], [0x4a, 0x28], [0x4e, 0x00],   // TL
-      [0x52, 0x1f], [0x56, 0x1f], [0x5a, 0x1f], [0x5e, 0x1f],   // KS/AR
-      [0x62, 0x0a], [0x66, 0x0a], [0x6a, 0x0a], [0x6e, 0x0a],   // AM/D1R
-      [0x72, 0x00], [0x76, 0x00], [0x7a, 0x00], [0x7e, 0x00],   // D2R
-      [0x82, 0x1f], [0x86, 0x1f], [0x8a, 0x1f], [0x8e, 0x1f],   // D1L/RR
-      [0xb2, 0x3a], [0xb6, 0xc0],                               // ALG/FB, pan
-      [0xac, 0x22], [0xa8, 0x69], [0xad, 0x22], [0xa9, 0x69],   // CH3 op freqs
-      [0xae, 0x22], [0xaa, 0x69], [0xa6, 0x22], [0xa2, 0x69],
-    ]) bootWrite(reg, val, "CSM voice");
-  }
+  // A minimal but real CH3 voice, so CSM has something to key. Operator offsets
+  // for channel 3 on port 0 are +2. Emitted as a TABLE and a loop, not 34
+  // unrolled writes: this is boot code for a test voice, it is not timed, and
+  // unrolled it was 438 BYTES — a fifth of the code region, spent on the test
+  // harness rather than on the engine, and enough to push the 15-level image
+  // with the distributed decode past the region it otherwise fits in.
+  const csmVoice = cfg.csm ? [
+    [0x32, 0x01], [0x36, 0x01], [0x3a, 0x02], [0x3e, 0x01],   // DT/MUL
+    [0x42, 0x1b], [0x46, 0x28], [0x4a, 0x28], [0x4e, 0x00],   // TL
+    [0x52, 0x1f], [0x56, 0x1f], [0x5a, 0x1f], [0x5e, 0x1f],   // KS/AR
+    [0x62, 0x0a], [0x66, 0x0a], [0x6a, 0x0a], [0x6e, 0x0a],   // AM/D1R
+    [0x72, 0x00], [0x76, 0x00], [0x7a, 0x00], [0x7e, 0x00],   // D2R
+    [0x82, 0x1f], [0x86, 0x1f], [0x8a, 0x1f], [0x8e, 0x1f],   // D1L/RR
+    [0xb2, 0x3a], [0xb6, 0xc0],                               // ALG/FB, pan
+    [0xac, 0x22], [0xa8, 0x69], [0xad, 0x22], [0xa9, 0x69],   // CH3 op freqs
+    [0xae, 0x22], [0xaa, 0x69], [0xa6, 0x22], [0xa2, 0x69],
+  ] : [];
   bootWrite(YM.R_TIMER_CTL, "R27_BASE", "timers + CH3 mode");
   for (const o of boot) for (const l of o.asm) P(`        ${l}`);
+  if (csmVoice.length) {
+    P("");
+    P("; The CH3 test voice, table-driven. Not timed — it all runs before the");
+    P("; first sample leaves — and the analyzer sees exactly the same writes in");
+    P("; exactly the same order as the unrolled form it replaces.");
+    P("        ld   hl,csmvoice");
+    P(`        ld   b,${csmVoice.length}`);
+    P("csmload:");
+    P("        ld   a,(hl)");
+    P("        inc  hl");
+    P(`        ld   (${YM_ADDR}),a`);
+    P("        ld   a,(hl)");
+    P("        inc  hl");
+    P(`        ld   (${YM_DATA}),a`);
+    P("        djnz csmload");
+    P("        jr   csmdone");
+    P("csmvoice:");
+    for (let i = 0; i < csmVoice.length; i += 4)
+      P(`        db   ${csmVoice.slice(i, i + 4).map(([r, v]) => `${hex(r)},${hex(v)}`).join(",")}`);
+    P("csmdone:");
+    P("");
+  }
   P("");
   P("        ld   a,$22");
   P("        ld   (G_CSMHI),a");

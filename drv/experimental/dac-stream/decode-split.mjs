@@ -35,6 +35,15 @@ export const SPLIT_STATE = { known: 0, valid: 1, expect: 2, delta: 3,
 export const SPLIT_STATE_SIZE = 7;
 
 /**
+ * The record, IN THE ORDER THE PIECES WRITE IT. Nothing is published over the
+ * bus here — the instrument watches the Z80's writes to the globals page — so
+ * this order is not a choice, it is what the placement produces: `valid` is
+ * stored before `keep known`, and the two internal bytes (`phase`, `expect`)
+ * are not part of a record at all.
+ */
+export const RECORD = ["valid", "known", "delta", "countLo", "countHi"];
+
+/**
  * @param table  page-aligned phase table
  * @param state  base of the 7-byte state
  * @param step   this schedule's quantised advance
@@ -73,7 +82,7 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
     b("count wrap", [op(`ld   a,(${S("countLo")})`, 13), op("sub  1", 7),
                      op("sbc  a,a", 4, { what: "$ff exactly when the low byte wrapped" }), op("ld   b,a", 4)]),
     b("count hi", [op(`ld   a,(${S("countHi")})`, 13), op("sub  b", 4),
-                   op(`ld   (${S("countHi")}),a`, 13)]),
+                   op(`ld   (${S("countHi")}),a`, 13, { what: "COUNT" })]),
     b("advance carry", [op(`ld   a,(${S("phase")})`, 13), op(`add  a,${step}`, 7),
                         op("sbc  a,a", 4), op("ld   c,a", 4)]),
     b("advance sum", [op(`ld   a,(${S("phase")})`, 13), op(`add  a,${step}`, 7), op("ld   b,a", 4)]),
@@ -243,16 +252,74 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   if (!ringFill.test(gen.text))
     throw new Error("the generated image has no fill up to the ring to put the table before");
   gen.text = gen.text.replace(ringFill, (m) => `${table.join("\n")}\n${m}`);
+  // WHERE THE READ ACTUALLY FALLS, from the laid-out slots — the same rule the
+  // single-slot observer follows. One read a loop, so the spacing is one
+  // number, but it is taken from the schedule rather than named.
+  // AT THE END OF THE READ, not at its start: the reading exists once the
+  // instruction has completed, and that is also where the instrument stamps it.
+  // Measuring the settle from the start instead put the prediction 16 cycles —
+  // one VDP read — past what the machine reports, on every record.
+  let at = null, elapsed = 0;
+  for (const slot of gen.slots) {
+    let inSlot = 0;
+    for (const o of slot.ops) {
+      inSlot += o.cycles;
+      if (o.what === "the observation instant") { at = elapsed + inSlot; break; }
+    }
+    if (at !== null) break;
+    elapsed += slot.cycles;
+  }
+  const loopCycles = gen.slots.reduce((t, s) => t + s.cycles, 0);
+  // WHEN THE RECORD IS FINISHED, from the layout: the read, then the last
+  // field's store. Predicted here so the machine can be asked to agree with it
+  // rather than to define it.
+  let settle = null, seen = 0;
+  const lastField = RECORD.at(-1);
+  for (const slot of gen.slots) {
+    let inSlot = 0;
+    for (const o of slot.ops) {
+      inSlot += o.cycles;
+      if (o.what === "COUNT") settle = seen + inSlot;
+    }
+    seen += slot.cycles;
+  }
+  gen.observer = {
+    decode: true, reads: ["h"], every: 1, at: null, split: true,
+    readOffsetCycles: [at], loopCycles,
+    spacingCycles: [loopCycles],
+    spacingMaster: [loopCycles * cfg.machine.z80Div],
+    record: RECORD.map((n) => ({ name: n, offset: SPLIT_STATE[n] })),
+    settleCycles: settle === null ? null : settle - at,
+    settleMaster: settle === null ? null : (settle - at) * cfg.machine.z80Div,
+    decodeCycles: blocks.reduce((t, b) => t + b.cycles, 0),
+  };
+  if (gen.observer.spacingMaster[0] !== loopMaster(cfg))
+    throw new Error("the laid-out loop and the configured one disagree");
   return { ok: true, gen, blocks, walk, preserve, map, base,
     slotsPreserving: preserve.size, advance };
 }
 
-/** This schedule's quantised advance for one read a loop. */
-function quantStepOf(cfg) {
+/**
+ * This schedule's quantised advance for one read a LOOP.
+ *
+ * `cfg.slotCycles` is one GROUP — five slots, 1,792 cycles — and the unrolled
+ * loop is `cycleSlots` of them. Taking the group for the loop put 147 units
+ * here where the 80-slot loop advances 129, and because the reference walk used
+ * the same constant the two agreed with each other while both disagreed with
+ * the machine. The read interval has to come from the schedule that produces
+ * it, which is the rule this file exists under.
+ */
+export function quantStepOf(cfg) {
   const unit = PHASE_TABLE.quantised.unit, units = PHASE_TABLE.quantised.units;
-  const loop = cfg.slotCycles.reduce((a, b) => a + b, 0) * cfg.machine.z80Div;
-  const st = (loop % PHASE_TABLE.mode.lineMaster) / unit;
+  const st = (loopMaster(cfg) % PHASE_TABLE.mode.lineMaster) / unit;
   if (!Number.isInteger(st))
     throw new Error(`this schedule's read advance is ${st} units — it needs the distributed steps`);
   return st % units;
+}
+
+/** The unrolled loop, in master clocks: every slot, not one group of them. */
+export function loopMaster(cfg) {
+  let total = 0;
+  for (let i = 0; i < cfg.cycleSlots; i++) total += cfg.slotCycles[i % cfg.groupSlots];
+  return total * cfg.machine.z80Div;
 }

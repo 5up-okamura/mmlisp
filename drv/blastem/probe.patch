@@ -193,6 +193,7 @@ index 8b7d75d..b0beb1b 100644
 +#define MML_PROBE_MARK   15   /* 68k byte write to $A130F1; value = the mark written */
 +#define MML_PROBE_MARKW  16   /* 68k word write to $A130F2; value = the word written */
 +#define MML_PROBE_Z80VDP 17   /* Z80 read of the VDP through $7F00; value = port<<8 | byte */
++#define MML_PROBE_Z80RAM 18   /* Z80 write to $1F00..$1F7F; value = (addr & $7f)<<8 | byte */
 +void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
 +
  #endif //UTIL_H_

@@ -99,6 +99,20 @@ export const CASES = [
   { name: "z80 decoder, 4B stall", cfg: {}, wave: sine(256,120,1),
     observer: { reads: ["h"], decode: true, publish: true, load: "divu",
       bootNops: 260, stall: { every: 3000, bytes: 4 } }, informational: true },
+  // ── the decoder INSIDE the complete 2ch engine (R8 §23.5 step 3) ────────
+  // The 15-level profile, the mixer, every reserved feature's cycles, CSM's
+  // register traffic, and the phase decode cut into 21 pieces placed among
+  // them. Nothing is published over the bus: the instrument watches the Z80's
+  // own writes to the globals page, so the image measured is the image under
+  // test rather than a heavier twin (R7 §20.2 B).
+  { name: "2ch 15-level decoder, quiet", cfg: { voices: 2, complete: true, csm: true,
+      levels: 15, workTarget: 0.839 },
+    split: { load: "divu" } },
+  { name: "2ch 15-level decoder, 4B stall", cfg: { voices: 2, complete: true, csm: true,
+      levels: 15, workTarget: 0.839 },
+    split: { load: "divu", bootNops: 260, stall: { every: 3000, bytes: 4 } },
+    informational: true },
+
   // IN-CONTRACT DISTURBANCES (R6 §17.2 B). The verification runs had no
   // unplanned displacement at all, so nothing showed that a small stall is
   // measured correctly — only that a quiet run stays quiet. These inject

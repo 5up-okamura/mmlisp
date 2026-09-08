@@ -3,7 +3,7 @@ import { COOP, windowBand } from "./cooperative.mjs";
 
 export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   DACBUS: 7, STOP: 8, RESUME: 9, NOTIFY: 10, COPY: 11, POLL: 12, COMMIT: 13,
-  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17 };
+  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17, Z80RAM: 18 };
 export const Z80_DIV = 15;
 
 export function readProbe(buf) {
@@ -32,6 +32,10 @@ export function readProbe(buf) {
     notifications: of(KIND.NOTIFY).filter((e) => (e.value >>> 8) === 0),
     records: of(KIND.NOTIFY).filter((e) => (e.value >>> 8) !== 0)
       .map((e) => ({ time: e.time, field: (e.value >>> 8) - 1, value: e.value & 0xff })),
+    // Every Z80 write to the watched globals page, with no cycle spent by the
+    // engine to publish it: the instrument watches the RAM (R7 §20.2 B).
+    ramWrites: of(KIND.Z80RAM).map((e) => ({ time: e.time,
+      addr: (e.value >>> 8) & 0x7f, value: e.value & 0xff })),
     copies: of(KIND.COPY), polls: of(KIND.POLL),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
     hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };

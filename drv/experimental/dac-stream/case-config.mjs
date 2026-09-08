@@ -17,6 +17,7 @@ import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
 import { generateObserver, PUBLISH_FAULTS } from "./observer.mjs";
+import { generateSplit } from "./decode-split.mjs";
 
 export const FAULTS = {
   "drop-copy": "the 68000 transfers one byte fewer than it announced",
@@ -47,6 +48,14 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // An observer case has a display and a busy 68000. It has no transfer
     // protocol of its own; `stall` injects a plain, UNREPAID bus grab, which is
     // the disturbance the observer is supposed to notice.
+    // A SPLIT case is an observer case whose observer is distributed through
+    // the complete 2ch engine. Same disturbances, same idle-or-loaded 68000;
+    // what differs is that there is nothing to publish (R8 §23.5 step 3).
+    : c0.split ? (c0.split.stall
+        ? { vdp: true, optimized: true, load: c0.split.load,
+            bootNops: c0.split.bootNops, ...c0.split.stall }
+        : { vdp: true, disabled: true, load: c0.split.load,
+            bootNops: c0.split.bootNops })
     : c0.observer ? (c0.observer.stall
         ? { vdp: true, optimized: true, load: c0.observer.load,
             bootNops: c0.observer.bootNops, publish: c0.observer.publish,
@@ -77,13 +86,22 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     }
   }
   if (c0.observer && coop) throw new Error("an observer case has no cooperative window");
+  if (c0.split && (coop || c0.observer)) throw new Error("a split case is its own observer");
   const c = { ...c0, cooperative: coop, grab: grab ?? undefined };
   if (fault && fault in PUBLISH_FAULTS && !c0.observer?.publish)
     throw new Error(`fault ${fault} only applies to a case that publishes its records`);
   const observer = c0.observer && fault && fault in PUBLISH_FAULTS
     ? { ...c0.observer, publishFault: fault } : c0.observer;
-  const gen = observer ? generateObserver(cfg, observer)
-    : coop ? generateCooperative(cfg, coop) : generate(cfg);
+  let gen;
+  if (c0.split) {
+    const r = generateSplit(cfg, { stackFill: true, ...c0.split.place });
+    if (!r.ok) throw new Error(`case "${c0.name}": the split did not generate (${r.stage}: ${r.error ?? r.walk.failed?.name})`);
+    gen = r.gen;
+    gen.split = r;
+  } else {
+    gen = observer ? generateObserver(cfg, observer)
+      : coop ? generateCooperative(cfg, coop) : generate(cfg);
+  }
   return { case: c, cfg, gen, coop, grab };
 }
 
