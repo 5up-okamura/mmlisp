@@ -42,6 +42,11 @@ const SECONDS = Number(arg("seconds", "2"));
 // (R7 §20.2 B). Everything else in the harness is skipped, because a broken
 // record says nothing about the calibration or the contract runs.
 const FAULT = arg("fault", null);
+// The decoder's own runs can be scored at a different length from the rest.
+// A record contract is about what happens over TIME — the observation number
+// carries, the run ends inside a record — and two seconds of it says little
+// (R8 §23.5 wants a 10 s and a 60 s pass). Default: the same as everything else.
+const Z80_SECONDS = Number(arg("z80-seconds", String(arg("seconds", "2"))));
 
 // ── the roles, declared and enforced ──────────────────────────────────────
 const CALIBRATE = ["hv observer, unrepaid 1B stall", "hv observer, unrepaid 16B stall",
@@ -81,12 +86,14 @@ const coreHash = createHash("sha256").update(readFileSync(core)).digest("hex");
 
 if (!argv.includes("--reuse")) {
   console.log(`running the observer cases for ${SECONDS}s each…`);
-  for (const name of FAULT ? ["z80 decoder"] : ["hv observer, Z80 reads h", "hv observer, Z80 reads v+h",
+  for (const name of FAULT ? [] : ["hv observer, Z80 reads h", "hv observer, Z80 reads v+h",
     "load timed in place", "unrepaid", "V+H, unrepaid", "boot phase",
-    "in-contract", "back-to-back", "boundary", "2ch pattern with", "z80 decoder"])
+    "in-contract", "back-to-back", "boundary", "2ch pattern with"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
-      "--seconds", String(SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
-      { stdio: ["ignore", "ignore", "inherit"] });
+      "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
+  execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", "z80 decoder",
+    "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
+    { stdio: ["ignore", "ignore", "inherit"] });
 }
 
 // ── log selection, verified against the rom the case produces ─────────────
@@ -110,20 +117,20 @@ for (const name of FAULT ? Z80_DECODER : [...CALIBRATE, ...CALIBRATE_VH, ...VERI
 const logs = new Map();
 for (const n of readdirSync(OUT).filter((n) => n.endsWith(".log"))) {
   let j; try { j = JSON.parse(readFileSync(join(OUT, n.replace(/\.log$/, ".json")), "utf8")); } catch { continue; }
-  if (j.seconds !== SECONDS || j.coreHash !== coreHash) continue;
+  if (j.coreHash !== coreHash) continue;
   const file = join(OUT, n);
-  const key = `${j.name}\u0000${j.rom}`;
+  const key = `${j.name}\u0000${j.rom}\u0000${j.seconds}`;
   const at = statSync(file).mtimeMs;
   const prev = logs.get(key);
   if (!prev || at > prev.at) logs.set(key, { file, rom: j.rom, at });
 }
-const need = (name) => {
+const need = (name, secs = SECONDS) => {
   const want = expectedRom.get(name)?.sha;
-  const got = want ? logs.get(`${name}\u0000${want}`) : null;
+  const got = want ? logs.get(`${name}\u0000${want}\u0000${secs}`) : null;
   if (!got) {
     const others = [...logs.keys()].filter((k) => k.startsWith(`${name}\u0000`))
-      .map((k) => k.split("\u0000")[1]);
-    failures.push(`no ${SECONDS}s log for "${name}" at rom ${want} from this core`
+      .map((k) => k.split("\u0000").slice(1).join(" @ ") + "s");
+    failures.push(`no ${secs}s log for "${name}" at rom ${want} from this core`
       + (others.length ? ` (found ${others.join(", ")} — stale)` : ""));
     return null;
   }
@@ -358,7 +365,7 @@ if (!FAULT) {
 // out — not by a second copy of a constant.
 console.log(`\n── the decoder running on the Z80 ──`);
 for (const name of Z80_DECODER) {
-  const f = need(name); if (!f) continue;
+  const f = need(name, Z80_SECONDS); if (!f) continue;
   const log = readProbe(readFileSync(f));
   const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
     .map((e) => ({ h: e.value & 255, time: e.time }));
@@ -369,7 +376,7 @@ for (const name of Z80_DECODER) {
 
   // Records, cut at the reads they belong between. The same function the
   // selftest drives with dropped, doubled and carried-over fields.
-  const { rows, problems, incompleteTail } = recordsBetweenReads(reads, recs, PUBLISH);
+  const { rows, problems, incompleteTail, broken, kinds } = recordsBetweenReads(reads, recs, PUBLISH);
 
   let state = { ...INITIAL_STATE }, mismatch = 0, compared = 0, first = null;
   for (let n = 0; n < rows.length; n++) {
@@ -385,17 +392,26 @@ for (const name of Z80_DECODER) {
       first ??= { n, h: reads[n].h, want, said };
     }
   }
-  console.log(`${name}`);
+  console.log(`${name} — ${Z80_SECONDS}s`);
   console.log(`  ${reads.length} readings, ${recs.length} published fields,`
     + ` ${compared} complete records compared field by field, ${mismatch} disagreed`);
   console.log(`  broken records: ${problems.short} short, ${problems.extra} with a field too many,`
     + ` ${problems.outOfOrder} out of order, ${problems.late} published before their own read`
     + `${incompleteTail ? `; 1 unfinished record at the end of the run, excluded` : ""}`);
   if (first) console.log(`  first disagreement:`, JSON.stringify(first));
-  const broken = problems.short + problems.extra + problems.outOfOrder + problems.late;
-  if (compared < reads.length - 1)
-    failures.push(`"${name}": ${reads.length} readings but only ${compared} complete records`);
-  if (broken) failures.push(`"${name}": ${broken} records did not open after their read and close before the next`);
+  // EVERY reading owes a complete record, except the one the measurement may
+  // have been cut inside. The kinds are reported by name and never summed into
+  // a verdict — two faults cancelling is exactly how the old tail rule hid one
+  // (R8 §23.4).
+  const owed = reads.length - incompleteTail;
+  if (compared !== owed)
+    failures.push(`"${name}": ${owed} readings owe a record and ${compared} arrived complete`);
+  for (const k of kinds)
+    failures.push(`"${name}": ${problems[k]} records ${k === "late" ? "published before their own read"
+      : k === "short" ? "never finished" : k === "extra" ? "carried a field too many"
+      : "arrived out of order"}`);
+  if (broken !== kinds.reduce((t, k) => t + problems[k], 0))
+    failures.push(`"${name}": the record check's own counts do not add up`);
   if (mismatch) failures.push(`"${name}": the Z80 and the reference disagreed on ${mismatch} of ${compared} records`);
   // The validity gate has to have been exercised, or the run says nothing about
   // it: a run in which every reading was in the table never re-acquires.

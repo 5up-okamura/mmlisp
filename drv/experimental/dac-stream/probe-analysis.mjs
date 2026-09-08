@@ -54,12 +54,38 @@ export function readProbe(buf) {
  */
 export function recordsBetweenReads(reads, records, names) {
   const rows = [], problems = { late: 0, short: 0, extra: 0, outOfOrder: 0 };
+  // Cut first, judge afterwards. The two are separate because the LAST read is
+  // judged by a different rule, and the previous version decided that rule with
+  // a subtraction: whatever the final row's fault turned out to be, it did
+  // `problems.short--`. A run whose last record arrived out of order came back
+  // with short = -1 and outOfOrder = 1, and the caller — which added the counts
+  // up — saw zero. A broken record that arrived complete was excused as a
+  // truncation (R8 §23.4).
+  const cut = [];
   let ri = 0;
   for (let n = 0; n < reads.length; n++) {
     const from = reads[n].time, to = n + 1 < reads.length ? reads[n + 1].time : Infinity;
     while (ri < records.length && records[ri].time <= from) { problems.late++; ri++; }
     const fields = [];
     while (ri < records.length && records[ri].time < to) fields.push(records[ri++]);
+    cut.push(fields);
+  }
+  // A correct PREFIX of a record, of any length including none at all: the
+  // fields that did arrive are the right ones in the right order. That, and
+  // only that, is what a measurement stopping mid-record looks like.
+  const isPrefix = (f) => f.length < names.length && f.every((x, k) => x.field === k);
+  // The one allowance: a finite measurement ends somewhere, and the last read
+  // may not have got its record out before it did. NO OTHER incompleteness is
+  // excused — not a gap in the middle, and not a final record that is complete
+  // but wrong. An empty tail is the normal shape of it and used to be counted
+  // as short, because the old rule asked for a publication after the last read
+  // and a run that stops before the first one has none (R8 §23.4: the 60 s run).
+  const tail = cut.length - 1;
+  const excuse = cut.length && isPrefix(cut[tail]) ? tail : -1;
+  let incompleteTail = 0;
+  for (let n = 0; n < cut.length; n++) {
+    const fields = cut[n];
+    if (n === excuse) { incompleteTail = 1; continue; }         // dropped, not counted
     if (fields.length !== names.length) {
       if (fields.length < names.length) problems.short++; else problems.extra++;
       rows.push(null); continue;
@@ -67,15 +93,11 @@ export function recordsBetweenReads(reads, records, names) {
     if (fields.some((x, k) => x.field !== k)) { problems.outOfOrder++; rows.push(null); continue; }
     rows.push(Object.fromEntries(names.map((k, i) => [k, fields[i].value])));
   }
-  // A run is cut where it is cut: the LAST read may not have got its record out
-  // before the emulator stopped. That is the only incompleteness allowed, and
-  // it is allowed once.
-  let incompleteTail = 0;
-  if (rows.length && rows.at(-1) === null && records.length
-      && records.at(-1).time > reads.at(-1).time) {
-    incompleteTail = 1; rows.pop(); problems.short--;
-  }
-  return { rows, problems, incompleteTail };
+  // Never negative, so a caller cannot be told "nothing is wrong" by two faults
+  // cancelling. `broken` is the count of KINDS that fired as well as the total.
+  const broken = Object.values(problems).reduce((a, b) => a + b, 0);
+  const kinds = Object.entries(problems).filter(([, v]) => v > 0).map(([k]) => k);
+  return { rows, problems, incompleteTail, broken, kinds };
 }
 
 /**

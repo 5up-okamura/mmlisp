@@ -535,6 +535,171 @@ assert.equal(backwards[2].sync, "lost");
     "…and close at the 83.9% one, which is the number the ceiling question is about");
 }
 
+// ── the record check, driven by records that are wrong ───────────────────
+// (R7 §20.2 B, and the terminal rule rebuilt for R8 §23.4.)
+//
+// The end-to-end faults break every record at once, so they cannot show that
+// each kind of breakage is NAMED. These do. The terminal rule gets its own set:
+// a measurement stops somewhere, and the only thing that may be excused is the
+// last read's record ARRIVING AS A CORRECT PREFIX of itself — no fields at all
+// included. The rule it replaces decided by subtraction, so a final record that
+// was complete but out of order came back as short = -1 with outOfOrder = 1 and
+// a caller adding the counts up saw nothing wrong.
+{
+  const NAMES = ["a", "b", "c"];
+  const READS = [0, 100, 200, 300].map((time) => ({ time }));
+  const fld = (time, field, value) => ({ time, field, value });
+  const good = (n, base) => NAMES.map((_, k) => fld(base + k + 1, k, n * 10 + k));
+  const whole = READS.flatMap((r, n) => good(n, r.time));
+  const check = (recs, reads = READS) => recordsBetweenReads(reads, recs, NAMES);
+  const clean = check(whole);
+  assert.deepEqual(clean.problems, { late: 0, short: 0, extra: 0, outOfOrder: 0 });
+  assert.deepEqual(clean.rows.map((r) => r && r.a), [0, 10, 20, 30]);
+  assert.equal(clean.incompleteTail, 0);
+  assert.equal(clean.broken, 0);
+  assert.deepEqual(clean.kinds, []);
+
+  // ── faults in the MIDDLE, which are never excused ──
+  const drop = whole.filter((x) => !(x.field === 1 && x.value === 11));
+  assert.equal(check(drop).problems.short, 1);
+  assert.equal(check(drop).rows[1], null);
+  assert.equal(check(drop).incompleteTail, 0, "a gap in the middle is not a truncation");
+
+  const twice = [...whole.slice(0, 4), whole[3], ...whole.slice(4)]
+    .sort((x, y) => x.time - y.time || x.field - y.field);
+  assert.equal(check(twice).problems.extra, 1);
+
+  const swapped = whole.map((x, i) => i === 3 ? { ...whole[4], time: x.time }
+    : i === 4 ? { ...whole[3], time: x.time } : x);
+  assert.equal(check(swapped).problems.outOfOrder, 1);
+
+  const early = [{ time: -5, field: 0, value: 99 }, ...whole];
+  assert.equal(check(early).problems.late, 1);
+
+  const carried = whole.map((x) => x.field === 2 && x.time < 200 ? { ...x, time: x.time + 100 } : x)
+    .sort((x, y) => x.time - y.time);
+  const c = check(carried);
+  assert.ok(c.problems.short >= 1 && c.problems.extra >= 1, JSON.stringify(c.problems));
+
+  // ── the TERMINAL rule, one shape at a time (R8 §23.4) ──
+  // 0..n-1 fields, in order: the measurement stopped inside the record. Excused,
+  // exactly once, and not counted as a fault. Zero fields is the normal shape —
+  // a run that stops before the first publication of the last record — and the
+  // rule it replaces called that one short, because it asked for a publication
+  // AFTER the last read and there was none (the 60 s run, R8 §23.5).
+  for (const keep of [0, 1, 2]) {
+    const cutRun = whole.slice(0, whole.length - NAMES.length + keep);
+    const t = check(cutRun);
+    assert.equal(t.incompleteTail, 1, `a ${keep}-field tail is a truncation`);
+    assert.deepEqual(t.problems, { late: 0, short: 0, extra: 0, outOfOrder: 0 },
+      `a ${keep}-field tail must not be counted as a fault`);
+    assert.equal(t.rows.length, READS.length - 1);
+    assert.equal(t.broken, 0);
+  }
+  // A COMPLETE final record is not a truncation and is compared like any other.
+  assert.equal(clean.incompleteTail, 0);
+  assert.equal(clean.rows.length, READS.length);
+
+  // The same count, in the wrong order, at the end: NOT excused. This is R8's
+  // own reproduction, at its size.
+  {
+    const R2 = [{ time: 0 }, { time: 100 }], N2 = ["a", "b"];
+    const recs = [fld(1, 0, 1), fld(2, 1, 2), fld(101, 1, 3), fld(102, 0, 4)];
+    const r = recordsBetweenReads(R2, recs, N2);
+    assert.deepEqual(r.problems, { late: 0, short: 0, extra: 0, outOfOrder: 1 });
+    assert.equal(r.incompleteTail, 0);
+    assert.equal(r.broken, 1);
+    assert.deepEqual(r.kinds, ["outOfOrder"]);
+    assert.ok(Object.values(r.problems).every((v) => v >= 0), "no count may go negative");
+  }
+  // A field too many at the end: not a prefix, so not excused.
+  {
+    const over = [...whole, fld(305, 0, 99)];
+    const r = check(over);
+    assert.equal(r.incompleteTail, 0);
+    assert.equal(r.problems.extra, 1);
+  }
+  // A tail whose fields are the right number but start at the wrong one is not
+  // a prefix either — the first field of the record is what a prefix begins at.
+  {
+    const badPrefix = [...whole.slice(0, whole.length - NAMES.length), fld(301, 1, 7)];
+    const r = check(badPrefix);
+    assert.equal(r.incompleteTail, 0, "a tail that does not begin at field 0 is not a prefix");
+    assert.equal(r.problems.short, 1);
+  }
+}
+
+// ── the same decode, cut into pieces a 2ch slot could hold (R7 §20.3) ─────
+// The pieces are run SEPARATELY, with A and the flags clobbered between every
+// pair, because that is what a slot boundary does in the complete engine:
+// mix_one runs in every slot and it is the sample path. Only B, C and memory
+// cross. If a piece secretly depended on a flag or on A, this fails.
+{
+  const cfg = buildConfig({});
+  const map = decodeMap(cfg);
+  const STEP = 147, TABLE = map.table, ST = map.state;
+  const blocks = splitBlocks({ table: TABLE, state: ST, step: STEP });
+  const src = ["        org $0000"];
+  blocks.forEach((b, i) => {
+    src.push(`blk${i}:`);
+    for (const o of b.ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
+    src.push("        halt");
+  });
+  src.push(`        ds $${TABLE.toString(16)}-$,0`);
+  const tb = PHASE_TABLE.quantised.bytes;
+  for (let i = 0; i < 256; i += 16) src.push(`        db ${tb.slice(i, i + 16).join(",")}`);
+  const d3 = mkdtempSync(join(tmpdir(), "dac-split-"));
+  let asm;
+  try { const f = join(d3, "s.z80"); writeFileSync(f, src.join("\n") + "\n"); asm = assemble(f); }
+  finally { rmSync(d3, { recursive: true, force: true }); }
+
+  const ram = new Uint8Array(0x2000);
+  ram.set(asm.bytes.subarray(0, Math.min(asm.bytes.length, ram.length)));
+  let hv = 0;
+  const cpu = new Z80Cpu({ read: (a) => a === 0x7f09 ? hv : (ram[a] ?? 0xff),
+    write: (a, v) => { if (a < ram.length) ram[a] = v; } });
+  const costs = blocks.map(() => new Set());
+  const step1 = (h) => {
+    hv = h;
+    blocks.forEach((b, i) => {
+      cpu.a = (i * 37 + h) & 0xff; cpu.f = (i * 91 + h) & 0xff;   // nothing survives
+      cpu.pc = asm.symbols.get(`blk${i}`); cpu.halted = false;
+      let c = 0; while (!cpu.halted && c < 4000) c += cpu.step();
+      costs[i].add(c - 4);
+    });
+    return { known: ram[ST + SPLIT_STATE.known], valid: ram[ST + SPLIT_STATE.valid],
+      delta: ram[ST + SPLIT_STATE.delta], expect: ram[ST + SPLIT_STATE.expect],
+      count: ram[ST + SPLIT_STATE.countLo] | (ram[ST + SPLIT_STATE.countHi] << 8) };
+  };
+  for (let k = 0; k < SPLIT_STATE_SIZE; k++) ram[ST + k] = 0;
+  let want = { ...INITIAL_STATE }, n = 0;
+  const key = (o) => ["known", "valid", "delta", "expect", "count"].map((k) => o[k]).join(",");
+  for (let pass = 0; pass < 2; pass++) for (let h = 0; h < 256; h++) {
+    want = refDecode(want, h, STEP);
+    assert.equal(key(step1(h)), key(want), `split decode disagreed at h=${h}`);
+    n++;
+  }
+  assert.equal(n, 512);
+  // One cost a piece. The VDP read is 13 on this CPU and 16 in the schedule —
+  // the 3-cycle difference is the emulated machine's bank penalty, not the
+  // instruction's, and the schedule is the one that has to be right.
+  blocks.forEach((b, i) => {
+    assert.equal(costs[i].size, 1, `piece "${b.name}" costs ${[...costs[i]].join("/")}`);
+    assert.equal([...costs[i]][0], b.cycles - (i === 0 ? 3 : 0), `piece "${b.name}" cost`);
+  });
+  // …and the placement it is for: at the 79.6% target it does not close, and
+  // the reason is granularity, not the total (R7 §20.3).
+  const full = buildConfig({ voices: 2, complete: true, csm: true });
+  const gen2 = generate(full);
+  const head = gen2.slots.map((s) => 0.796 * s.cycles - s.row.work);
+  assert.ok(head.reduce((a, b) => a + b, 0) > blocks.reduce((t, b) => t + b.cycles, 0),
+    "the loop's TOTAL headroom is larger than the decode — the total is not the binding test");
+  assert.ok(placeSplit(blocks, gen2.slots, { target: 0.796 }).failed,
+    "the split must still fail to place at the 79.6% target");
+  assert.ok(!placeSplit(blocks, gen2.slots, { target: 0.839 }).failed,
+    "…and close at the 83.9% one, which is the number the ceiling question is about");
+}
+
 // ── the record check, driven by records that are wrong (R7 §20.2 B) ───────
 // The end-to-end faults break every record at once, so they cannot show that
 // each kind of breakage is NAMED. These do: one record short, one with a field
