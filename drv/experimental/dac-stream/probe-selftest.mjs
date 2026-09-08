@@ -11,7 +11,7 @@ import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
 import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
   analyzeAdoption, analyzeZ80Hv, readProbe, summarizeResults, KIND } from "./probe-analysis.mjs";
-import { generateObserver, VDP } from "./observer.mjs";
+import { generateObserver, decodeOps, DECODE, STATE, PHASE_TABLE, VDP } from "./observer.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
 
@@ -353,6 +353,59 @@ assert.equal(backwards[2].sync, "lost");
   assert.ok(contractProblems(noisy, { kind: "quiet" }).some((p) => /did not happen/.test(p)));
 }
 
+// ── the decode as the Z80 runs it (R6 §17.4 step 2) ───────────────────────
+// Assembled, then executed for EVERY possible reading against several starting
+// expectations. Two things are pinned: it computes what the reference does,
+// and every path costs the same — which is a claim about the emitted code, not
+// about a hand count.
+{
+  const UNITS = PHASE_TABLE.quantised.units, UNKNOWN = PHASE_TABLE.quantised.unknown;
+  const STEP = 147;
+  const ops = decodeOps(STEP);
+  const src = ["        org $0000", "start:"];
+  for (const o of ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
+  src.push("        halt", `        ds $${DECODE.table.toString(16)}-$,0`);
+  const tb = PHASE_TABLE.quantised.bytes;
+  for (let i = 0; i < 256; i += 16) src.push(`        db ${tb.slice(i, i + 16).join(",")}`);
+  const d2 = mkdtempSync(join(tmpdir(), "dac-decode-"));
+  let bytes;
+  try { const f = join(d2, "d.z80"); writeFileSync(f, src.join("\n") + "\n"); bytes = assemble(f).bytes; }
+  finally { rmSync(d2, { recursive: true, force: true }); }
+
+  const costs = new Set();
+  let compared = 0;
+  for (let h = 0; h < 256; h++) for (const expect of [0, 1, 85, 86, 170]) {
+    const ram = new Uint8Array(0x2000);
+    ram.set(bytes.subarray(0, Math.min(bytes.length, ram.length)));
+    ram[DECODE.state + STATE.expect] = expect;
+    ram[DECODE.state + STATE.countLo] = 0xff;     // exercise the 16-bit carry
+    ram[DECODE.state + STATE.countHi] = 0x12;
+    let cycles = 0;
+    const cpu = new Z80Cpu({ read: (a) => ram[a] ?? 0xff,
+      write: (a, v) => { if (a < ram.length) ram[a] = v; } });
+    cpu.a = h;
+    while (!cpu.halted && cycles < 4000) cycles += cpu.step();
+    costs.add(cycles);
+    const phase = tb[h];
+    const delta = (ram[DECODE.state + STATE.delta] << 24) >> 24;
+    const status = ram[DECODE.state + STATE.status];
+    const next = ram[DECODE.state + STATE.expect];
+    const count = ram[DECODE.state + STATE.countLo] | (ram[DECODE.state + STATE.countHi] << 8);
+    assert.equal(count, 0x1300, "the observation counter must carry");
+    if (phase === UNKNOWN) { assert.equal(status, 0x00, `h=${h} should read as unknown`); continue; }
+    assert.equal(status, 0xff, `h=${h} is in the table`);
+    let want = (phase - expect) % UNITS; if (want < 0) want += UNITS;
+    if (want >= 86) want -= UNITS;
+    assert.equal(delta, want, `h=${h} expect=${expect}`);
+    assert.equal(next, (phase + STEP) % UNITS, `next expectation, h=${h}`);
+    compared++;
+  }
+  assert.ok(compared > 800, `only ${compared} readings compared`);
+  // ONE cost, for every input and both outcomes of both branches.
+  assert.equal(costs.size, 1, `paths cost ${[...costs].join("/")} cycles`);
+  assert.equal([...costs][0] - 4, ops.reduce((t, o) => t + o.cycles, 0));   // less the halt
+}
+
 // ── one resolved configuration (§12.3) ────────────────────────────────────
 // The compensation the CLI asks for has to reach BOTH the generated code and
 // the recorded case. A JSON that names a configuration the run did not use is
@@ -509,4 +562,5 @@ if (process.argv.includes("--machine")) {
 }
 console.log("probe selftest: values, interval attribution, transfer protocol, window geometry,"
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
+  + " the Z80 decode's arithmetic and its single cost,"
   + " resolved configuration and padding paths pass");

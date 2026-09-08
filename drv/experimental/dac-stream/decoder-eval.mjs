@@ -58,6 +58,8 @@ const CONTRACT = [
   "hv observer, back-to-back 2B stalls",
   "hv observer, 2ch pattern with a 4B stall",
 ];
+// The decoder as the Z80 actually runs it.
+const Z80_DECODER = ["z80 decoder, quiet", "z80 decoder, 4B stall"];
 // Either side of half a line, reported rather than graded.
 const BOUNDARY = ["hv observer, boundary 16B stall", "hv observer, boundary 24B stall"];
 // Kept to demonstrate the limit, not to pass it: these carry displacements
@@ -75,7 +77,7 @@ if (!argv.includes("--reuse")) {
   console.log(`running the observer cases for ${SECONDS}s each…`);
   for (const name of ["hv observer, Z80 reads h", "hv observer, Z80 reads v+h",
     "load timed in place", "unrepaid", "V+H, unrepaid", "boot phase",
-    "in-contract", "back-to-back", "boundary", "2ch pattern with"])
+    "in-contract", "back-to-back", "boundary", "2ch pattern with", "z80 decoder"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
       "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
 }
@@ -91,7 +93,7 @@ const caseOf = (name) => {
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
 for (const name of [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT, ...BOUNDARY,
-  "hv observer, Z80 reads v+h"])
+  ...Z80_DECODER, "hv observer, Z80 reads v+h"])
   expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT }));
 
 // A name is not an identity. The output directory accumulates logs from every
@@ -331,6 +333,47 @@ console.log(`\n── the same runs through the ${art.quantised.unit}-master byt
   if (clash) failures.push(`${clash} calibrated H values quantise onto the unknown marker`);
   const outOfRange = [...qbytes].filter((b) => b !== art.quantised.unknown && b >= art.quantised.units).length;
   if (outOfRange) failures.push(`${outOfRange} table entries are outside 0..${art.quantised.units - 1}`);
+}
+
+// ── the decoder as the Z80 runs it ────────────────────────────────────────
+// R6 §17.4 step 2. The Z80 reads, decodes with the fixed byte table, and
+// publishes what it decided; this compares that against the reference run over
+// the SAME readings. The instrument supplies both sequences and judges; it
+// supplies nothing to the Z80.
+console.log(`\n── the decoder running on the Z80 ──`);
+for (const name of Z80_DECODER) {
+  const f = need(name); if (!f) continue;
+  const log = readProbe(readFileSync(f));
+  const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9);
+  // Each read is followed by the publish of the displacement it produced.
+  const pairs = [];
+  let k = 0;
+  for (const r of reads) {
+    while (k < log.notifications.length && log.notifications[k].time < r.time) k++;
+    if (k < log.notifications.length) pairs.push({ h: r.value & 255, said: log.notifications[k++].value & 255 });
+  }
+  const U = art.quantised.unit, units = art.quantised.units;
+  const step = ((26880 % LINE_MASTER) / U) % units;
+  let expect = null, mismatch = 0, first = null, compared = 0;
+  for (const { h, said } of pairs) {
+    const phase = qbytes[h];
+    if (expect === null) { expect = phase === art.quantised.unknown ? null : (phase + step) % units; continue; }
+    let d = (phase - expect) % units; if (d < 0) d += units;
+    if (d >= (units + 1) / 2) d -= units;
+    const want = d & 0xff;
+    compared++;
+    if (phase !== art.quantised.unknown && said !== want) {
+      mismatch++;
+      first ??= { h, phase, expect, want, said };
+    }
+    expect = (phase + step) % units;
+  }
+  console.log(`${name}`);
+  console.log(`  ${reads.length} readings, ${pairs.length} publications,`
+    + ` ${compared} compared against the reference, ${mismatch} disagreed`);
+  if (first) console.log(`  first disagreement:`, JSON.stringify(first));
+  if (compared < 500) failures.push(`"${name}": only ${compared} of the Z80's decisions could be compared`);
+  if (mismatch) failures.push(`"${name}": the Z80 and the reference disagreed on ${mismatch} readings`);
 }
 
 console.log(`\n── H alone, either side of half a line ──`);

@@ -242,7 +242,9 @@ export function buildRom(image, samples = null, grab = null) {
   // It is written from here rather than from the Z80 because the Z80 has not
   // started yet — and because ~120 cycles of it does not belong in a sample
   // period (see the README's open ROM-window question).
-  const bank = ((grab?.cooperative || grab?.hint) ? COOP.notify : SAMPLES) >>> 15;
+  // A publishing observer writes its own state into 68k work RAM through the
+  // window, so the bank points there rather than at the sample pages.
+  const bank = ((grab?.cooperative || grab?.hint || grab?.publish) ? COOP.notify : SAMPLES) >>> 15;
   for (let i = 0; i < 9; i++) m.moveBimm((bank >> i) & 1, Z80_BANK);
   m.moveWimm(0x0000, Z80_RESET);          // pulse reset
   for (let i = 0; i < 8; i++) m.nop();    // …held for a few microseconds

@@ -46,9 +46,11 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // the disturbance the observer is supposed to notice.
     : c0.observer ? (c0.observer.stall
         ? { vdp: true, optimized: true, load: c0.observer.load,
-            bootNops: c0.observer.bootNops, ...c0.observer.stall }
+            bootNops: c0.observer.bootNops, publish: c0.observer.publish,
+            ...c0.observer.stall }
         : { vdp: true, disabled: true, load: c0.observer.load,
-            loadProbe: c0.observer.loadProbe, bootNops: c0.observer.bootNops })
+            loadProbe: c0.observer.loadProbe, bootNops: c0.observer.bootNops,
+            publish: c0.observer.publish })
     : null;
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
@@ -109,7 +111,9 @@ export function buildCase(c0, { outDir, compensation = null, captureOffset = nul
     samples.set(sine(256, 120, 1), 0);
     samples.set(sine(256, 90, 3), 256);
   } else {
-    const end = cfg.ram.wave[1];
+    // The image may reach past the waveform page — the decoder's table sits
+    // above it — so the upload is as long as whichever is further.
+    const end = Math.max(cfg.ram.wave[1], image.length);
     const grown = new Uint8Array(end);
     grown.set(image, 0);
     grown.set(c.wave, cfg.ram.wave[0]);

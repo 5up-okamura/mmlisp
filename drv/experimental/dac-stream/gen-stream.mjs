@@ -450,7 +450,8 @@ export function generate(cfg, extraWork = null) {
     });
     slots.push(laid);
     P(`slot${i}:                         ; ${cycles} cyc — work ${laid.row.work}, pad ${laid.row.pad}`);
-    for (const o of laid.ops) for (const l of o.asm) P(`        ${l}`);
+    // A label has to sit flush left; everything else is indented.
+    for (const o of laid.ops) for (const l of o.asm) P(l.endsWith(":") ? l : `        ${l}`);
   }
   P("");
   if (cfg.voices) {

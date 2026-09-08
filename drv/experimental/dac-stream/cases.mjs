@@ -90,6 +90,15 @@ export const CASES = [
   ...[1, 2, 3, 4, 5, 6, 7].map((k) => ({
     name: `hv observer, boot phase ${k}`, cfg: {}, wave: sine(256,120,1),
     observer: { reads: ["h"], store: true, load: "divu", bootNops: 40 * k } })),
+  // ── the decoder, running on the Z80 (R6 §17.4 step 2) ───────────────────
+  // No correction: it reads, decodes, and publishes what it decided so the
+  // instrument can compare it with the reference. Required — the DAC must not
+  // move while it does that.
+  { name: "z80 decoder, quiet", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], decode: true, publish: true, load: "divu" } },
+  { name: "z80 decoder, 4B stall", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], decode: true, publish: true, load: "divu",
+      bootNops: 260, stall: { every: 3000, bytes: 4 } }, informational: true },
   // IN-CONTRACT DISTURBANCES (R6 §17.2 B). The verification runs had no
   // unplanned displacement at all, so nothing showed that a small stall is
   // measured correctly — only that a quiet run stays quiet. These inject
