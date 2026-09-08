@@ -238,12 +238,14 @@ with one phase failing (+0.2387%). Finished here.
   §11.4 step 4). ROM bank (§11.5) untouched. Z80 reads of 68k work RAM are
   withdrawn by R2 as a mechanism.
 * `mml_rate.h` drifted once more during that session (a tool without
-  `PCM_SPG=1 TIMER_B_K=1`); reverted. **It is `npm run baseline` that does it**
-  — the `c-gate` it runs calls `gen-c-tables.mjs`, which rewrites the header at
+  `PCM_SPG=1 TIMER_B_K=1`); reverted. **It was `npm run baseline` that did it**
+  — the `c-gate` it runs called `gen-c-tables.mjs`, which rewrites the header at
   whatever clock the environment implies (10,000 Hz instead of the shipped
-  3,333). Check `git status` after every baseline run and revert; the real fix
-  is to make that generator write somewhere other than the source tree, and it
-  belongs to whoever owns the 68k build, not to this prototype.
+  3,333). **FIXED 2026-09-08** (R5 §15.2, instruction §22): `tools/c-tables.mjs`
+  generates the pair into a temp directory for every verification tool and
+  refuses a clock that differs from the one the run is measuring; the
+  generator's default output is still `drv/68k` for the product path. Nothing
+  to check in `git status` afterwards, and nothing to revert.
 
 ## R2 §11.4 STEP 4 — THE WINDOW CANNOT ENTER THE 2ch SCHEDULE AS IS; COMPUTED TIMING TRACKS TO ±5
 

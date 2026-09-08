@@ -71,7 +71,10 @@ experimental/dac-stream/  the output-centred DAC engine prototype — P1/P2 pass
                       its README and docs/dac-engine-implementation.md (R3, §12)
 tools/engine-gate.mjs the P1 contract gate for src/engine.z80 (`npm run engine`)
 tools/slot-gate.mjs   P1 end to end: score → drv-player → slots → engine (`npm run slots`)
-tools/gen-c-tables.mjs generates 68k/tables.c from live/src/ir-utils.js
+tools/gen-c-tables.mjs generates 68k/tables.c and 68k/mml_rate.h (`--out DIR` to
+                      put them anywhere else — the default is the product one)
+tools/c-tables.mjs    the same pair for a GATE: a temp directory, plus the check
+                      that the clock it generated is the one this run measures
 tools/c-gate.mjs      P2 hard gate: 68k C ≡ drv-player.js on the slot stream (`npm run c-gate`)
 tools/ring-gate.mjs   P3: the ring transport is a pipeline, not a filter (`npm run ring`)
 tools/dac-model.mjs   the SAMPLE ring on the reference: schedule, underruns, slack
@@ -523,6 +526,18 @@ suspend/restore, priority), whose gate scores are reported SKIP.
 `68k/tables.c` is generated from `live/src/ir-utils.js` by `gen-c-tables.mjs`,
 the same single-source rule the Z80 tables follow: neither side derives a
 constant table, so they cannot disagree.
+
+**The gates do not generate it in place.** `gen-c-tables.mjs` also writes
+`68k/mml_rate.h`, which carries the sample clock, and it resolves that clock
+from the environment — so every tool that regenerated before compiling rewrote
+the committed 3,333 Hz header to the 10,000 Hz default and left it modified;
+`npm run baseline` did it through `c-gate`. The verification tools now call
+`tools/c-tables.mjs`, which generates into a temporary directory, puts it ahead
+of the translation unit (`-include`, because `mmlispseq.h` includes
+`"mml_rate.h"` beside itself and no `-I` can redirect that), and **fails if the
+clock it generated is not the one the run is measuring against**. The default
+output is unchanged: `npm run sgdk:install` and a product build still read
+`drv/68k`.
 
 ## P3 — the SGDK integration (`npm run ring`, `npm run sgdk:lint`)
 

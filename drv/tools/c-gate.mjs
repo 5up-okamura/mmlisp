@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder } from "../../live/src/slot-builder.js";
+import { generatedTables } from "./c-tables.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const c68k = join(here, "..", "68k");
@@ -29,14 +30,18 @@ if (fIdx >= 0) scores = scores.filter((s) => s !== process.argv[fIdx + 1]);
 if (!scores.length) scores = [join(here, "..", "..", "examples", "source", "ab-core.mmlisp")];
 
 // ── Build ──────────────────────────────────────────────────────────────────
-execFileSync("node", [join(here, "gen-c-tables.mjs")], { stdio: "pipe" });
+// The generated tables go to a directory of the gate's own: this used to
+// regenerate them in drv/68k and leave the committed mml_rate.h rewritten to
+// whatever clock the ambient environment resolved (tools/c-tables.mjs).
+const ctab = generatedTables();
 const tmp = mkdtempSync(join(tmpdir(), "cgate-"));
 const exe = join(tmp, "gate_main");
 try {
   execFileSync(
     process.env.CC ?? "cc",
     ["-std=c99", "-O1", "-Wall", "-Wextra", "-Werror", "-o", exe,
-      join(c68k, "gate_main.c"), join(c68k, "mmlispseq.c"), join(c68k, "tables.c")],
+      ...ctab.flags,
+      join(c68k, "gate_main.c"), join(c68k, "mmlispseq.c"), ctab.tables],
     { stdio: "pipe" },
   );
 } catch (e) {
@@ -159,6 +164,7 @@ for (const score of scores) {
   }
 }
 
+ctab.dispose();
 if (!flags.includes("--keep")) rmSync(tmp, { recursive: true, force: true });
 console.log(
   `\n${scores.length - failures - pending - skipped} passed · ${pending} pending · ${skipped} skipped · ${failures} failed`,

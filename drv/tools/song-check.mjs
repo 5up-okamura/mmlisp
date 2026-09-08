@@ -21,6 +21,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "./z80asm.mjs";
 import { Z80Cpu } from "./z80cpu.mjs";
+import { generatedTables } from "./c-tables.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
@@ -50,12 +51,14 @@ try {
   const smp = smpPath && existsSync(smpPath) ? new Uint8Array(readFileSync(smpPath)) : new Uint8Array(0);
 
   // ── The 68k sequencer ────────────────────────────────────────────────────
-  execFileSync("node", [join(here, "gen-c-tables.mjs")], { stdio: "pipe" });
+  const ctab = generatedTables();
   const exe = join(tmp, "seq");
   execFileSync(process.env.CC ?? "cc",
     ["-std=c99", "-O1", "-o", exe,
-      join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
+      ...ctab.flags,
+      join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), ctab.tables],
     { stdio: "pipe" });
+  ctab.dispose();
   const out = execFileSync(exe,
     [mmbPath, String(FRAMES), ...(smpPath ? ["--samples", smpPath] : [])],
     { maxBuffer: 1 << 28 });

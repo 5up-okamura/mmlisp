@@ -5,8 +5,17 @@
 // take them from live/src/ir-utils.js, one at runtime and one through this
 // generator. Divergence stays structurally impossible.
 //
-//   node tools/gen-c-tables.mjs
-import { writeFileSync } from "node:fs";
+//   node tools/gen-c-tables.mjs [--out DIR]
+//
+// `--out` exists because the VERIFICATION tools compile these files too, and
+// every one of them used to regenerate them in place: a bare run resolves the
+// sample clock from the ambient environment, so `npm run c-gate` (and baseline,
+// through it) rewrote the committed 3,333 Hz mml_rate.h to the 10,000 Hz
+// default and left it modified in the working tree. The DEFAULT IS UNCHANGED —
+// it still writes drv/68k, which is what install-sgdk.mjs copies from and what
+// a product build reads. The gates pass a directory of their own instead
+// (tools/c-tables.mjs).
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -28,7 +37,15 @@ import {
   PCM_RING_TARGET,
 } from "../../live/src/mmb.js";
 
-const k68 = join(dirname(fileURLToPath(import.meta.url)), "..", "68k");
+const argv = process.argv.slice(2);
+const outIdx = argv.indexOf("--out");
+if (outIdx >= 0 && !argv[outIdx + 1]) {
+  console.error("gen-c-tables: --out needs a directory");
+  process.exit(2);
+}
+const k68 = outIdx >= 0 ? argv[outIdx + 1]
+  : join(dirname(fileURLToPath(import.meta.url)), "..", "68k");
+mkdirSync(k68, { recursive: true });
 const dst = join(k68, "tables.c");
 
 // The sample clock, for the C mirrors. It is a HEADER and not part of tables.c

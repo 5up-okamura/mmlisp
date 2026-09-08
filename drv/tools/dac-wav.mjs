@@ -188,6 +188,10 @@ async function captureBaseline(ref, score, tmp) {
   execFileSync("git", ["worktree", "add", "--detach", "-f", wt, ref], { cwd: repo, stdio: "pipe" });
   try {
     const wdrv = join(wt, "drv");
+    // In the WORKTREE, not the working tree: this generates inside the throwaway
+    // checkout of `ref`, which is removed with it, so there is nothing here for
+    // tools/c-tables.mjs to protect — and the old ref's generator may not take
+    // --out anyway.
     execFileSync("node", [join(wdrv, "tools", "gen-c-tables.mjs")], { stdio: "pipe" });
     const exe = join(tmp, "seq-base");
     execFileSync(process.env.CC ?? "cc",

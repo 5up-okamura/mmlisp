@@ -39,6 +39,7 @@ import { fileURLToPath } from "node:url";
 import { assemble } from "./z80asm.mjs";
 import { Z80Cpu } from "./z80cpu.mjs";
 import { buildMmb } from "./mmb-build.mjs";
+import { generatedTables } from "./c-tables.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
@@ -160,12 +161,14 @@ const PROFILE = argv.includes("--profile");
 
 const tmp = mkdtempSync(join(tmpdir(), "budget-"));
 try {
-  execFileSync("node", [join(here, "gen-c-tables.mjs")], { stdio: "pipe" });
+  const ctab = generatedTables();
   const exe = join(tmp, "seq");
   execFileSync(process.env.CC ?? "cc",
     ["-std=c99", "-O1", "-o", exe,
-      join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), join(drv, "68k", "tables.c")],
+      ...ctab.flags,
+      join(drv, "68k", "gate_main.c"), join(drv, "68k", "mmlispseq.c"), ctab.tables],
     { stdio: "pipe" });
+  ctab.dispose();
   const { generatedSources, PACE_WINDOW: PACE_GEN, GATE_CY, TIMER_FLAG, TIMER_LOAD, TIMER_RESET }
     = await import("./gen-mixer.mjs");
   // The three $27/status bits this model has to know, taken from the same place

@@ -70,7 +70,13 @@ mkdirSync(out, { recursive: true });
 // ── The engine image and the rate tables ───────────────────────────────────
 // Regenerated before anything is compiled, so a ROM can never be built from a
 // stale image or a stale stamp while the source moved under it.
-run("node", [join(here, "gen-c-tables.mjs")]);
+// The tables go to a directory of this build's own. They used to be written
+// into drv/68k, which is a checked-in location and a product one — the ROM
+// here is a measurement jig (tools/c-tables.mjs). The import is dynamic for
+// the same reason the sequencer's is: c-tables reads mmb.js, and the clock
+// above has to be in the environment before that happens.
+const { generatedTables } = await import("./c-tables.mjs");
+const ctab = generatedTables();
 run("node", [join(here, "gen-mixer.mjs")]);
 run("node", [join(here, "emit-bin.mjs")]);
 
@@ -126,12 +132,13 @@ const CFLAGS = [
   "-DSGDK_GCC=1",
   `-I${romdir}`, `-I${join(drv, "tools", "sgdk-shim")}`,
   `-I${join(drv, "sgdk")}`, `-I${join(drv, "68k")}`,
+  ...ctab.flags,
 ];
 const SOURCES = [
   "boot.s", "sys.c", "main.c", "song.c", "libgcc68000.c",
   join(drv, "sgdk", "mmlispdrv.c"),
   join(drv, "68k", "mmlispseq.c"),
-  join(drv, "68k", "tables.c"),
+  ctab.tables,
 ];
 const elf = join(out, "probe.elf");
 // NOT -lgcc. The 68000 has no 32-bit multiply or divide so the compiler calls
