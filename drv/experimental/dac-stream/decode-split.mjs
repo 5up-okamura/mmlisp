@@ -25,7 +25,8 @@
 // it somewhere that survives. That is the inflation: 283 cycles in one P1 slot
 // becomes 501 in pieces.
 import { op } from "./schedule.mjs";
-import { PHASE_TABLE } from "./observer.mjs";
+import { generate, DEAD_DEFAULT } from "./gen-stream.mjs";
+import { PHASE_TABLE, decodeMap } from "./observer.mjs";
 
 // The split needs one more byte than the single-slot version: the phase itself
 // has to live in RAM, because C cannot hold it across the whole sequence.
@@ -86,6 +87,77 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
 }
 
 /**
+ * WHAT EACH PIECE LEAVES BEHIND, and therefore what the slots after it may not
+ * destroy (R8 §23.3).
+ *
+ * `placeSplit()` used to subtract cycles and stop there, and the split selftest
+ * clobbered only A and the flags. Both were wrong in the same way: BC crosses a
+ * slot boundary only if nothing in between writes it, and the pad solver's
+ * cheapest filler is `ld b,k` / `djnz $` — four bytes for any length — while
+ * the RESERVED padding standing in for the unwritten 2ch features uses the
+ * same. `known` in slot 6 and `valid` in slot 15 is nine slots of `ld b,n`
+ * between a value being made in B and being read.
+ *
+ * The set is per piece and is the LIVE-OUT: what has to still be there when the
+ * next piece runs. It is checked, not declared and trusted — the selftest
+ * clobbers every register NOT named here between each pair.
+ */
+export const SPLIT_LIVE = [
+  [],           // read           -> memory
+  [],           // lookup         -> memory
+  ["b"],        // known          B = the known mask
+  ["b"],        // valid          B still holds it
+  [],           // keep known
+  ["b"],        // expect         B = the expected phase
+  ["b", "c"],   // difference     B = raw difference, C = its borrow mask
+  ["b"],        // reduce         B = reduced into 0..170
+  ["b", "c"],   // sign mask      C = the correction
+  ["b"],        // sign           B = the signed displacement
+  [],           // publish delta
+  ["b"],        // count lo
+  [],           // count store
+  ["b"],        // count wrap
+  [],           // count hi
+  ["c"],        // advance carry  C = the carry mask
+  ["b", "c"],   // advance sum    B = the sum, C still the carry mask
+  ["b"],        // advance fold
+  ["b", "c"],   // advance mask
+  ["b"],        // advance
+  [],           // publish expect
+];
+
+/**
+ * Which slots may not destroy BC, from a placement.
+ *
+ * A value made by the piece in slot p and read by the piece in slot q has to
+ * survive the pad of every slot from p to q-1. Two pieces in the SAME slot have
+ * no pad between them, so they constrain nothing.
+ */
+export function preserveBC(placed, live = SPLIT_LIVE) {
+  // TWO answers a slot, not one. A slot's RESERVED padding — the cycles the
+  // unwritten 2ch features are holding — runs BEFORE whatever piece the slot
+  // carries, and the slot's own pad runs after it. So the question "may this
+  // slot destroy BC" splits in half:
+  //
+  //   in   a value produced earlier is read HERE or later: the reserve may not
+  //   out  a value produced here or earlier is read LATER: the pad may not
+  //
+  // Getting this wrong is not subtle and it is not loud either. `keep known`
+  // landed in slot 16 behind `ld b,5 / djnz $`, so it stored a B that the
+  // reserve had already zeroed, and every published record came out as the
+  // boot state — with the DAC still perfect and every slot still inside its
+  // budget.
+  const liveIn = new Set(), liveOut = new Set();
+  for (let k = 0; k + 1 < placed.length; k++) {
+    if (!live[k]?.length) continue;
+    const p = placed[k].slot, q = placed[k + 1].slot;
+    for (let s = p; s < q; s++) liveOut.add(s);
+    for (let s = p + 1; s <= q; s++) liveIn.add(s);
+  }
+  return { liveIn, liveOut, size: new Set([...liveIn, ...liveOut]).size };
+}
+
+/**
  * Walk the loop's slots from the read and put each piece in the next slot that
  * has room for it, at the target. Order is not negotiable — the pieces are one
  * dependent chain — so this is a walk, not a bin-pack.
@@ -107,4 +179,80 @@ export function placeSplit(blocks, slots, { target = 0.796, from = 0 } = {}) {
   }
   laps = placed.length ? placed.at(-1).lap + 1 : 0;
   return { placed, failed: null, laps };
+}
+
+
+/**
+ * The whole thing as one image: the complete 2ch engine with the phase decode
+ * distributed into its slots, the pads regenerated where BC has to survive, and
+ * the calibrated table in the RAM the profile reserves for it.
+ *
+ * This is what R8 §23.3 asks for instead of an insertion arithmetic: the pads
+ * are GENERATED, so a residual the solver cannot reach without `ld b,k` is a
+ * failure here rather than a footnote, and the bytes are measured rather than
+ * estimated.
+ */
+export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = null,
+  stackFill = false } = {}) {
+  const map = decodeMap(cfg);
+  const state = map.state;
+  if (state + SPLIT_STATE_SIZE > cfg.ram.glob[1])
+    throw new Error("the split decoder's state does not fit in the globals");
+  const advance = step ?? quantStepOf(cfg);
+  const blocks = splitBlocks({ table: map.table, state, step: advance });
+  const base = generate(cfg);
+  const walk = placeSplit(blocks, base.slots, { target, from });
+  if (walk.failed) return { ok: false, stage: "place", blocks, walk, map };
+  const preserve = preserveBC(walk.placed);
+  const bySlot = new Map();
+  for (const p of walk.placed) {
+    if (!bySlot.has(p.slot)) bySlot.set(p.slot, []);
+    bySlot.get(p.slot).push(p.block);
+  }
+  // A slot carrying a value in BC loses `ld b,k`/`djnz $`, which is four bytes
+  // for any wait. `stackFill` gives it `push af`/`pop af` instead — 21 cycles
+  // in two bytes, balanced, touching only A, F and two bytes of stack.
+  const keep = { dead: ["a"], stack: stackFill }, free = { dead: DEAD_DEFAULT };
+  const slotDead = (i) => ({
+    work: preserve.liveIn.has(i) ? keep : free,
+    pad: preserve.liveOut.has(i) ? keep : free,
+  });
+  const boot = [
+    `ld   hl,$${state.toString(16)}`,
+    `ld   b,${SPLIT_STATE_SIZE}`,
+    "splitinit:",
+    "ld   (hl),0",
+    "inc  l",
+    "djnz splitinit",
+  ];
+  let gen;
+  try {
+    gen = generate(cfg, (i) => (bySlot.get(i) ?? []).flatMap((b) => b.ops), boot, slotDead);
+  } catch (e) {
+    // A slot whose residual is 1, 2, 3, 5, 6, 9 or 13 cycles has no exact fill
+    // without `ld b,k`, and that is a real refusal, not a rounding.
+    return { ok: false, stage: "pad", error: e.message, blocks, walk, preserve, map };
+  }
+  // The calibrated table travels in the image, in the page the profile reserved
+  // — which in the 15-level map is the one the sixteenth level used to hold, so
+  // it goes in BEFORE the fill up to the ring rather than after the image ends.
+  const b = PHASE_TABLE.quantised.bytes;
+  const table = [`        ds   $${map.table.toString(16)}-$, 0     ; the calibrated phase table`];
+  for (let i = 0; i < 256; i += 16) table.push(`        db   ${b.slice(i, i + 16).join(",")}`);
+  const ringFill = new RegExp(`^\\s*ds\\s+\\$${cfg.ram.ring[0].toString(16)}-\\$.*$`, "m");
+  if (!ringFill.test(gen.text))
+    throw new Error("the generated image has no fill up to the ring to put the table before");
+  gen.text = gen.text.replace(ringFill, (m) => `${table.join("\n")}\n${m}`);
+  return { ok: true, gen, blocks, walk, preserve, map, base,
+    slotsPreserving: preserve.size, advance };
+}
+
+/** This schedule's quantised advance for one read a loop. */
+function quantStepOf(cfg) {
+  const unit = PHASE_TABLE.quantised.unit, units = PHASE_TABLE.quantised.units;
+  const loop = cfg.slotCycles.reduce((a, b) => a + b, 0) * cfg.machine.z80Div;
+  const st = (loop % PHASE_TABLE.mode.lineMaster) / unit;
+  if (!Number.isInteger(st))
+    throw new Error(`this schedule's read advance is ${st} units — it needs the distributed steps`);
+  return st % units;
 }

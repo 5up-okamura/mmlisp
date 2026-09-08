@@ -146,6 +146,21 @@ export const RAM_P2_FULL = {
   stack: [0x1f80, 0x2000],  // 128 B
 };
 
+// The EXPERIMENTAL 15-level profile (R8 §23.2). It exists for one reason: the
+// phase observer needs a page-aligned 256 B table and the complete map has no
+// free page — 176 B inside the code reservation, 96 B unreserved and 122 B
+// inside the globals, none of it aligned (§21.4). Fifteen levels are 3,840 B
+// and the page that comes free is the table's, so RING AND EVERYTHING AFTER IT
+// DO NOT MOVE. The 512 B clamp is kept.
+//
+// This is a profile, not a change of default: RAM_P2_FULL is still 16 levels
+// and still what a non-observer build gets.
+export const RAM_P2_FULL_15 = {
+  ...RAM_P2_FULL,
+  lut: [0x0c00, 0x1b00],    // 3840 B — 15 levels x 256, k/14 (lut.mjs)
+  phase: [0x1b00, 0x1c00],  // 256 B, page aligned — the observer's phase table
+};
+
 export const RAM = RAM_P1;
 
 // ── The code the complete 2ch engine still owes ───────────────────────────
@@ -219,6 +234,17 @@ export function buildConfig({
   // same code; what changes is that the schedule now has to survive the
   // finished engine's costs, and the gate measures it doing so.
   complete = false,
+  // HOW MANY VOLUME LEVELS, and therefore how big the level family is. 16 is
+  // the shipped one (4 KB). 15 is the experimental profile R8 §23.2 authorises
+  // so that a page-aligned phase table exists at all; it is a different build
+  // with a different RAM map, and it is named in the stamp.
+  levels = 16,
+  // The per-slot ceiling this build is judged against. §4 and R1 set 79.6% and
+  // it is still what a shipped build is measured by; R8 §23.2 raises it FOR THE
+  // EXPERIMENTAL PROFILE ONLY, to 83.9%, so the distributed observer can be
+  // verified as real code. The average is judged separately and stays at 79.6%.
+  workTarget = 0.796,
+  meanTarget = 0.796,
   csm = false,         // program CH3 for CSM and issue its writes
   fmBurst = 0,         // FM register writes crowded into ONE slot (§6.3)
   // TIMER B IS OFF BY DEFAULT (§3.2, R1). Reading its overflow flag was the
@@ -286,7 +312,12 @@ export function buildConfig({
   const timerBsamples = (timerBfm * machine.fmSampleMaster) / p.sampleMaster;
   const timerAcycles = (timerAfm * machine.fmSampleMaster) / machine.z80Div;
 
-  const ram = complete ? RAM_P2_FULL : voices ? RAM_P2 : RAM_P1;
+  if (levels !== 16 && levels !== 15) throw new Error(`levels must be 16 or 15, not ${levels}`);
+  if (levels === 15 && !complete)
+    throw new Error("the 15-level profile is the complete 2ch experiment; there is no P1 form of it");
+  const ram = complete ? (levels === 15 ? RAM_P2_FULL_15 : RAM_P2_FULL) : voices ? RAM_P2 : RAM_P1;
+  if (ram.lut && (ram.lut[1] - ram.lut[0]) >> 8 !== levels)
+    throw new Error(`the RAM map has ${(ram.lut[1] - ram.lut[0]) >> 8} level pages, not ${levels}`);
   const regions = Object.entries(ram).filter(([k]) => k !== "size")
     .map(([k, v]) => ({ k, lo: v[0], hi: v[1] })).sort((a, b) => a.lo - b.lo);
   for (const r of regions)
@@ -295,8 +326,10 @@ export function buildConfig({
     if (regions[i].lo < regions[i - 1].hi)
       throw new Error(`RAM regions ${regions[i - 1].k} and ${regions[i].k} overlap`);
 
+  if (!(workTarget > 0 && workTarget <= 1) || !(meanTarget > 0 && meanTarget <= 1))
+    throw new Error("the work targets are fractions of a slot");
   const cfg = {
-    machine, profile: p, ym: YM, ram,
+    machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
     reserve: complete ? RESERVE_2CH : null,
     z80Hz, fmSampleHz, rateHz,
@@ -317,4 +350,12 @@ export const stampLine = (c) =>
   `DAC-STREAM ${c.stamp} ${c.profile.name} ${c.rateHz.toFixed(2)}Hz`
   + ` period ${c.periodNum}/${c.periodDen} group ${c.groupSlots}x${c.groupCycles}`
   + ` voices ${c.voices} block ${c.blockSamples}`
-  + ` TB ${c.timerB} csm ${c.csm ? 1 : 0}`;
+  + ` TB ${c.timerB} csm ${c.csm ? 1 : 0}`
+  // R8 §23.2: the level count, the RAM shape and the ceiling this build was
+  // judged against belong to its identity. Two images that differ only in how
+  // much work a slot was allowed to carry are not the same artifact.
+  + ` levels ${c.levels} lut ${hexAddr(c.ram.lut?.[0])}..${hexAddr(c.ram.lut?.[1])}`
+  + `${c.ram.phase ? ` phase ${hexAddr(c.ram.phase[0])}` : ""}`
+  + ` work ${(c.workTarget * 100).toFixed(1)}%/${(c.meanTarget * 100).toFixed(1)}%`;
+
+const hexAddr = (v) => (v === undefined ? "-" : `$${v.toString(16).padStart(4, "0")}`);

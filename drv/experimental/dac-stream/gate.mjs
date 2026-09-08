@@ -18,7 +18,7 @@ import {
   analyzeLead,
 } from "./analyze.mjs";
 import { compareClock } from "./spectrum.mjs";
-import { mixOne, mixTwo, LEVELS, SILENCE, tablesAgree } from "./lut.mjs";
+import { mixOne, mixTwo, SILENCE, tablesAgree, lutPages, pageIsALevel } from "./lut.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -80,7 +80,8 @@ const sources = {
  */
 function referenceMix(cfg, src, edges) {
   const B = cfg.blockSamples;
-  const boot = { v0: LEVELS - 1, v1: LEVELS - 1, master: LEVELS - 1 };
+  const L = cfg.levels;
+  const boot = { v0: L - 1, v1: L - 1, master: L - 1 };
   return (i) => {
     if (i < cfg.lead) return SILENCE;   // the declared start-up silence
     const j = i - cfg.lead;             // the slot that built it
@@ -91,8 +92,8 @@ function referenceMix(cfg, src, edges) {
     const b = Math.floor(i / B);
     const e = b < 2 ? boot : edges[b - 2] ?? edges[edges.length - 1] ?? boot;
     return cfg.voices >= 2
-      ? mixTwo(src[j % 256], e.v0, src[256 + (j % 256)], e.v1, e.master)
-      : mixOne(src[j % 256], e.v0, e.master);
+      ? mixTwo(src[j % 256], e.v0, src[256 + (j % 256)], e.v1, e.master, L)
+      : mixOne(src[j % 256], e.v0, e.master, L);
   };
 }
 
@@ -149,6 +150,24 @@ const CASES = [
   { name: "2ch complete budget", src: "romsine", cfg: { voices: 2, complete: true } },
   { name: "2ch complete budget + CSM", src: "romsine", cfg: { voices: 2, complete: true, csm: true } },
   { name: "2ch complete budget, fades", src: "romsine", cfg: { voices: 2, complete: true }, levels: "opposed" },
+
+  // ── The 15-LEVEL PROFILE (R8 §23.2) ──────────────────────────────────────
+  // A different build, not a different default: 15 levels of k/14 in 3,840 B,
+  // the page that comes free reserved for the phase table, ring and everything
+  // after it unmoved. The reference computes from the arithmetic and never
+  // reads the generated family, so a wrong table fails here rather than
+  // agreeing with itself. Silence, unity, every level, and the two roundings
+  // moving in opposite directions are all covered.
+  { name: "2ch 15 levels", src: "romsine",
+    cfg: { voices: 2, complete: true, levels: 15, workTarget: 0.839 } },
+  { name: "2ch 15 levels + CSM", src: "romsine",
+    cfg: { voices: 2, complete: true, csm: true, levels: 15, workTarget: 0.839 } },
+  { name: "2ch 15 levels, all levels", src: "romramp",
+    cfg: { voices: 2, complete: true, levels: 15, workTarget: 0.839 }, levels: "walk" },
+  { name: "2ch 15 levels, opposed fades", src: "romsine",
+    cfg: { voices: 2, complete: true, levels: 15, workTarget: 0.839 }, levels: "opposed" },
+  { name: "2ch 15 levels, clipping", src: "romfull",
+    cfg: { voices: 2, complete: true, levels: 15, workTarget: 0.839 } },
 ];
 
 const build = (cfgIn) => {
@@ -168,21 +187,33 @@ const build = (cfgIn) => {
 function levelPokes(cfg, kind, cycles, sym) {
   if (!kind) return [];
   const lutPage = cfg.ram.lut[0] >> 8;
+  const L = cfg.levels;
   const blockCy = cfg.blockSamples * cfg.periodCycles;
   const out = [];
   const every = 24;                        // blocks between changes
+  // EVERY level, including 0 and L-1 — silence and unity are the two a score
+  // relies on being exact — and `opposed` moves the voice and the master in
+  // opposite directions, which is the case that would catch the two roundings
+  // being folded into one (R8 §23.2).
   for (let b = 2, n = 0; b * blockCy < cycles; b += every, n++) {
     const at = Math.round((b + 0.5) * blockCy) + 8000;
-    let vel = LEVELS - 1, master = LEVELS - 1;
-    if (kind === "walk") vel = n % LEVELS;
-    if (kind === "fade") master = LEVELS - 1 - (n % (LEVELS * 2) > LEVELS - 1
-      ? LEVELS * 2 - 1 - (n % (LEVELS * 2)) : n % (LEVELS * 2));
-    if (kind === "opposed") { vel = n % LEVELS; master = LEVELS - 1 - (n % LEVELS); }
+    let vel = L - 1, master = L - 1;
+    if (kind === "walk") vel = n % L;
+    if (kind === "fade") master = L - 1 - (n % (L * 2) > L - 1
+      ? L * 2 - 1 - (n % (L * 2)) : n % (L * 2));
+    if (kind === "opposed") { vel = n % L; master = L - 1 - (n % L); }
     out.push({ at, addr: sym.get("G_V0PAGE"), value: lutPage + vel });
     if (sym.has("G_V1PAGE"))
-      out.push({ at, addr: sym.get("G_V1PAGE"), value: lutPage + (kind === "opposed" ? LEVELS - 1 - vel : vel) });
+      out.push({ at, addr: sym.get("G_V1PAGE"), value: lutPage + (kind === "opposed" ? L - 1 - vel : vel) });
     out.push({ at, addr: sym.get("G_MPAGE"), value: lutPage + master });
   }
+  // NO PAGE THIS GATE WRITES MAY LEAVE THE FAMILY. The mixer's page is a
+  // self-modified operand, so a page one past the end is not an error, it is
+  // the phase table read as a volume table (R8 §23.2).
+  const stray = out.filter((w) => !pageIsALevel(cfg, w.value));
+  if (stray.length)
+    throw new Error(`level page $${stray[0].value.toString(16)} is outside the family`
+      + ` $${lutPages(cfg).first.toString(16)}..$${lutPages(cfg).last.toString(16)}`);
   return out;
 }
 
@@ -244,7 +275,7 @@ function runCase(c, seconds) {
   if (lead?.problems.length) fails.push(...lead.problems.slice(0, 3).map((p) => `LEAD ${p}`));
   // …and the generated tables against the same arithmetic the reference uses,
   // reported separately from the value comparison (§3.4 R1).
-  if (cfg.voices) for (const p of tablesAgree().slice(0, 2)) fails.push(`TABLE ${p}`);
+  if (cfg.voices) for (const p of tablesAgree(cfg.levels).slice(0, 2)) fails.push(`TABLE ${p}`);
   // A LEVEL CHANGE IS WHOLE-BLOCK OR IT IS NOTHING (§3.4). The k-th edge must
   // fall inside the last slot of block k — after that slot's own sample went
   // out, and before the next one's. Without this the reference above would

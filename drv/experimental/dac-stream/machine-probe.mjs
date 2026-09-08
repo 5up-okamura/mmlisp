@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
 import { stampLine } from "./config.mjs";
 import { buildRom } from "./rom.mjs";
-import { mixOne, mixTwo, LEVELS } from "./lut.mjs";
+import { mixOne, mixTwo } from "./lut.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -124,13 +124,14 @@ for (const c0 of selected) {
   // Everything below reads the RESOLVED case, which is what was built and run.
   const c = r.resolved;
   const log = readProbe(readFileSync(r.log));
+  const L = r.cfg.levels;
   const expected = (i) => {
     if (!r.cfg.voices) return c.wave[i % 256];
     if (i < r.cfg.lead) return 128;
     const j = (i - r.cfg.lead) % 256;
     return r.cfg.voices >= 2
-      ? mixTwo(r.samples[j], LEVELS-1, r.samples[256+j], LEVELS-1, LEVELS-1)
-      : mixOne(r.samples[j], LEVELS-1, LEVELS-1);
+      ? mixTwo(r.samples[j], L-1, r.samples[256+j], L-1, L-1, L)
+      : mixOne(r.samples[j], L-1, L-1, L);
   };
   // An explicit negative test exercises the CLI exit status, not just a helper.
   if (argv.includes("--inject-value-error") && log.dac.length) log.dac.at(-1).value ^= 1;

@@ -27,7 +27,8 @@ import { YM } from "./config.mjs";
 const RAM_SIZE = 0x2000;
 
 export class Machine {
-  constructor(cfg, { bytes, symbols }, { wave = null, grabs = [], rom = null, pokes = [], watch = [] } = {}) {
+  constructor(cfg, { bytes, symbols }, { wave = null, grabs = [], rom = null, pokes = [],
+    watch = [], vdp = null } = {}) {
     this.cfg = cfg;
     this.symbols = symbols;
     this.ram = new Uint8Array(RAM_SIZE);
@@ -43,6 +44,12 @@ export class Machine {
     this.pokes = [...pokes].sort((a, b) => a.at - b.at);
     this.pokeIdx = 0;
     this.watch = new Set(watch);
+    // The VDP's window at $7F00. There is no VDP in this model — what it is
+    // for is the phase observer, which reads the HV counter and nothing else,
+    // so a case hands in the byte a read should see and the reads are recorded.
+    // Without it $7F09 answers $FF, which the decoder correctly calls "not a
+    // value the table knows" and which is therefore a silently useless test.
+    this.vdp = vdp;
     this.ringLo = cfg.ram.ring ? cfg.ram.ring[0] : -1;
     this.ringHi = cfg.ram.ring ? cfg.ram.ring[1] : -1;
     this.masterPerZ80 = cfg.machine.z80Div;
@@ -79,6 +86,7 @@ export class Machine {
       // PC is what separates them, so it is recorded rather than inferred.
       ring: [],                         // cycle, pc, addr, isWrite
       grabs: [],                        // 68000 bus held: [start, end]
+      vdpRead: [],                      // cycle, addr, value — the observer's reads
       stray: [],                        // writes to no device — a value fault
     };
     this.grabs = [...grabs].sort((a, b) => a.at - b.at);
@@ -105,6 +113,17 @@ export class Machine {
       // All four YM addresses read the same status byte on a YM2612.
       const v = this.statusByte();
       this.trace.statusRead.push([this.instrStart, v]);
+      return v;
+    }
+    if (this.vdp && a >= 0x7f00 && a < 0x7f20) {
+      // The VDP window is reached over the 68k bus and pays the same wait the
+      // $8000 window does — `windowWait`, measured on BlastEm. Without charging
+      // it the slot carrying the read comes out three cycles short here and
+      // exactly right there, which is a model disagreeing with the machine over
+      // the one instruction the observer is made of.
+      this.windowReads++;
+      const v = this.vdp(a, this.instrStart) & 0xff;
+      this.trace.vdpRead.push([this.instrStart, a, v]);
       return v;
     }
     if (a >= 0x8000) {

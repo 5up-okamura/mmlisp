@@ -32,7 +32,7 @@
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
 import { stampLine, GLOB, YM } from "./config.mjs";
-import { buildLut, buildClamp, CLAMP_SIZE, LEVELS, SILENCE } from "./lut.mjs";
+import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo } from "./schedule.mjs";
 
 const hex = (n) => `$${n.toString(16)}`;
@@ -81,14 +81,25 @@ const readStatus = () => [
 // to survive them and the timing gate measures it doing so. The instructions
 // are the pad solver's own — they do nothing, which is the point: what is
 // being tested is the BUDGET, not a guess at the code.
-const reserveOps = (cycles, why) => {
+const reserveOps = (cycles, why, fill) => {
   if (!cycles) return [];
-  const ops = padTo(cycles, { dead: ["a", "b", "bc"] });
+  // Tagged, so the byte ledger can tell PROVISIONAL padding — which the real
+  // feature will replace — from the pad, which it will not (R8 §23.3).
+  const ops = padTo(cycles, fill).map((o) => ({ ...o, reserved: true }));
   ops[0] = { ...ops[0], what: `RESERVED ${cycles} — ${why}` };
   return ops;
 };
 
-function slotWork(cfg, slotIndex) {
+// What a slot is allowed to destroy. The default is the pad solver's own, and
+// it uses `ld b,k`/`djnz` — four bytes for any length — which is why the whole
+// schedule fits in the code region. A slot that has to carry a value in BC
+// from one piece of the distributed phase decode to the next cannot use it: it
+// gets `["a"]` and pays in bytes (R8 §23.3). Threaded per slot rather than set
+// globally because the live ranges are what decides it, and the byte cost is
+// the thing being measured.
+export const DEAD_DEFAULT = ["a", "b", "bc"];
+
+function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }) {
   const work = [];
   const g = slotIndex % cfg.groupSlots;
   // Which sample of a BUILT block this slot builds. The edge belongs to the
@@ -149,7 +160,9 @@ function slotWork(cfg, slotIndex) {
     if (b === cfg.blockSamples - 1) work.push(...blockEdge(cfg));
     if (cfg.reserve) {
       const [, cycles, why] = cfg.reserve[b];
-      work.push(...reserveOps(Math.max(0, cycles - chargeable), why));
+      // The RESERVED padding is padding too, and it sits between one piece of a
+      // distributed computation and the next just as the slot's own pad does.
+      work.push(...reserveOps(Math.max(0, cycles - chargeable), why, fill));
     }
   }
   return work;
@@ -297,8 +310,12 @@ export function cyclePaths(cfg) {
  *   initialised HERE and not left to whatever the core's RAM happens to hold
  *   (R7 §20.2 B) — a run whose first observation depended on a zeroed core was
  *   not testing initialisation at all.
+ * @param slotDead  optional (slotIndex) => the registers this slot may destroy.
+ *   Defaults to DEAD_DEFAULT everywhere. It reaches BOTH the reserved padding
+ *   and the slot's own pad, because both use `ld b,k`/`djnz` and both sit
+ *   between one piece of a distributed computation and the next (R8 §23.3).
  */
-export function generate(cfg, extraWork = null, bootExtra = null) {
+export function generate(cfg, extraWork = null, bootExtra = null, slotDead = null) {
   const L = [];
   const slots = [];
   const P = (s = "") => L.push(s);
@@ -316,7 +333,7 @@ export function generate(cfg, extraWork = null, bootExtra = null) {
   P(`YM_ADDR0    equ ${hex(YM.addr0)}`);
   P(`YM_DATA0    equ ${hex(YM.data0)}`);
   if (cfg.voices) {
-    P(`LUT         equ ${hex(cfg.ram.lut[0])}       ; ${LEVELS} pages, one per level (lut.mjs)`);
+    P(`LUT         equ ${hex(cfg.ram.lut[0])}       ; ${cfg.levels} pages, one per level (lut.mjs)`);
     P(`CLAMP       equ ${hex(cfg.ram.clamp[0])}       ; ${CLAMP_SIZE} B — the saturating add, as a table`);
     P(`RING        equ ${hex(cfg.ram.ring[0])}       ; 256 B — the finished samples`);
     P(`WINDOW      equ $8000              ; the 68k bank window the source lives in`);
@@ -388,7 +405,7 @@ export function generate(cfg, extraWork = null, bootExtra = null) {
     P("; Levels start at unity. The host writes G_VPAGE / G_MPAGE whenever it");
     P("; likes; the block edge is what makes the change take effect, and it");
     P("; takes effect whole (§3.4).");
-    P(`        ld   a,(LUT>>8)+${LEVELS - 1}`);
+    P(`        ld   a,(LUT>>8)+${cfg.levels - 1}    ; unity — the TOP page of the family`);
     P("        ld   (G_V0PAGE),a");
     if (cfg.voices >= 2) P("        ld   (G_V1PAGE),a");
     P("        ld   (G_MPAGE),a");
@@ -421,6 +438,17 @@ export function generate(cfg, extraWork = null, bootExtra = null) {
     for (const l of bootExtra) P(l.endsWith(":") ? l : `        ${l}`);
     P("");
   }
+  if (cfg.voices) {
+    // The mixer's page number is a self-modified operand: a page outside the
+    // family does not fault, it reads whatever is there as a volume table. In
+    // the 15-level profile the very next page is the phase table (R8 §23.2).
+    const unity = (cfg.ram.lut[0] >> 8) + cfg.levels - 1;
+    if (!pageIsALevel(cfg, unity))
+      throw new Error(`the unity page $${unity.toString(16)} is not inside the level family`);
+    const { levels: pages } = lutPages(cfg);
+    if (pages !== cfg.levels)
+      throw new Error(`the level family holds ${pages} pages and the profile says ${cfg.levels}`);
+  }
   P("; The DAC's address latch is written ONCE. Every slot writes data only,");
   P("; and any slot that disturbs the address port puts it back itself.");
   P(`        ld   a,${hex(YM.R_DAC)}`);
@@ -443,7 +471,15 @@ export function generate(cfg, extraWork = null, bootExtra = null) {
     // that happens on every single sample.
     const dacWrite = op("ld   (de),a", 7,
       { writes: [{ port: 0, kind: "data", reg: YM.R_DAC }], what: "DAC sample" });
-    const work = [...slotWork(cfg, i), ...(extraWork ? extraWork(i) : [])];
+    // `slotDead` may return a register list, a {dead, stack} filler spec, or
+    // {work, pad} — two of them. The last shape exists because a slot's
+    // RESERVED padding runs BEFORE whatever the slot carries and its own pad
+    // runs after, so the two answer different questions: what has to survive
+    // INTO this slot, and what has to survive OUT of it (R8 §23.3).
+    const d0 = slotDead ? slotDead(i) : DEAD_DEFAULT;
+    const spec = Array.isArray(d0) ? { dead: d0 } : d0;
+    const workFill = spec.work ?? spec, padFill = spec.pad ?? spec;
+    const work = [...slotWork(cfg, i, workFill), ...(extraWork ? extraWork(i) : [])];
     // THE FETCH GOES AFTER THE PAD. `a` carries the next sample across the slot
     // boundary, so anything that runs after the fetch may not touch it — and
     // the pad's only odd-cost filler is `ld a,0`. Fetching last makes `a` dead
@@ -457,10 +493,7 @@ export function generate(cfg, extraWork = null, bootExtra = null) {
       op("inc  l", 4, { what: "cursor (256 B page, wraps free)" }),
       ...(isLast ? [op("jp   stream", 10, { what: "loop" })] : []),
     ];
-    const laid = laySlot({
-      index: i, cycles, dacWrite, work, tail,
-      dead: ["a", "b", "bc"],
-    });
+    const laid = laySlot({ index: i, cycles, dacWrite, work, tail, fill: padFill });
     slots.push(laid);
     P(`slot${i}:                         ; ${cycles} cyc — work ${laid.row.work}, pad ${laid.row.pad}`);
     // A label has to sit flush left; everything else is indented.
@@ -485,9 +518,10 @@ export function generate(cfg, extraWork = null, bootExtra = null) {
     for (let i = 0; i < clamp.length; i += 16)
       P(`        db   ${[...clamp.slice(i, i + 16)].join(",")}`);
     P(`        ds   ${hex(cfg.ram.lut[0])}-$, 0     ; up to the level tables`);
-    P(`; ${LEVELS} pages of ${LEVELS === 16 ? "256" : "?"} bytes: level k maps a signed sample to round(s*k/15),`);
-    P("; clamped. Level 15 is bit-exact unity and level 0 is silence (lut.mjs).");
-    const lut = buildLut();
+    P(`; ${cfg.levels} pages of 256 bytes: level k maps a signed sample to`);
+    P(`; round(s*k/${cfg.levels - 1}), clamped. Level ${cfg.levels - 1} is bit-exact unity`);
+    P("; and level 0 is silence (lut.mjs).");
+    const lut = buildLut(cfg.levels);
     for (let i = 0; i < lut.length; i += 16)
       P(`        db   ${[...lut.slice(i, i + 16)].join(",")}`);
     P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);

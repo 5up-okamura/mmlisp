@@ -25,6 +25,19 @@ export const op = (asm, cycles, { clobbers = [], writes = [], ...rest } = {}) =>
 
 export const cost = (ops) => ops.reduce((t, o) => t + o.cycles, 0);
 
+// How many BYTES a filler costs. Only the pad solver's own forms are here,
+// which is all that is needed: what the byte question is about is padding, and
+// padding is the one thing whose size changes when a slot may not touch BC
+// (R8 §23.3). `ld b,k`/`djnz $` is four bytes for any length; the same wait in
+// `jr $+2` is one byte per six cycles.
+const FILL_BYTES = { "nop": 1, "inc bc": 1, "ld a,0": 2, "jp $+3": 3, "jr $+2": 2,
+  "djnz $": 2, "push af": 1, "pop  af": 1 };
+export const fillBytes = (ops) => ops.reduce((t, o) => t + o.asm.reduce((u, l) => {
+  const n = FILL_BYTES[l] ?? (/^ld b,\d+$/.test(l) ? 2 : null);
+  if (n === null) throw new Error(`fillBytes: ${l} is not a filler`);
+  return u + n;
+}, 0), 0);
+
 // ── Filler ─────────────────────────────────────────────────────────────────
 // Straight-line fillers, by exact documented cost. `a` is the only register a
 // filler may destroy and only where the caller says it is dead; everything
@@ -35,13 +48,21 @@ const FILL = [
   { asm: "ld a,0", cycles: 7, clobbers: ["a"] },
   { asm: "jp $+3", cycles: 10, clobbers: [] },
   { asm: "jr $+2", cycles: 12, clobbers: [] },
+  // 21 cycles in TWO bytes, against `jr $+2`'s 12 — the densest wait there is,
+  // and it destroys NOTHING: `pop af` puts back the A and the flags `push af`
+  // saved, and the pair is balanced, so all it costs is two bytes of stack
+  // while it runs. It exists for the slots that must carry a value in BC and
+  // therefore cannot use `ld b,k`/`djnz $` (R8 §23.3). Off unless a caller asks
+  // for it: a pad is otherwise pure straight-line code that touches no memory
+  // at all, and that property is worth keeping by default.
+  { asm: ["push af", "pop  af"], cycles: 21, clobbers: [], stack: 2 },
 ];
 
 // Exactly which totals a straight-line fill can hit, from {4,6,7,10,12}:
 // 0, 4, 6, 7, 8, and every n >= 10. 5 and 9 are NOT representable, which is
 // why padTo() may spend one djnz iteration to move a residual out of the way.
-const straightPlan = (n, allow) => {
-  const set = FILL.filter((f) => f.clobbers.every((c) => allow.has(c)));
+const straightPlan = (n, allow, stack = false) => {
+  const set = FILL.filter((f) => f.clobbers.every((c) => allow.has(c)) && (stack || !f.stack));
   const best = new Array(n + 1).fill(null);
   best[0] = [];
   for (let i = 1; i <= n; i++)
@@ -61,7 +82,7 @@ const straightPlan = (n, allow) => {
  * long once blocks are in it. `dead` names the registers the caller says are
  * free; b is required for the djnz form.
  */
-export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false } = {}) {
+export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false, stack = false } = {}) {
   if (n < 0) throw new Error(`slot overrun by ${-n} cycles`);
   const allow = new Set(dead);
   if (n === 0) return [];
@@ -79,8 +100,8 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false } = {}) {
     if (n % 4) throw new Error(`a nop-only pad must be a multiple of 4 cycles, not ${n}`);
     return Array.from({ length: n / 4 }, () => op("nop", 4));
   }
-  const straight = n <= 24 || !allow.has("b") ? straightPlan(n, allow) : null;
-  if (straight) return straight.map((f) => op(f.asm, f.cycles, { clobbers: f.clobbers }));
+  const straight = n <= 24 || !allow.has("b") ? straightPlan(n, allow, stack) : null;
+  if (straight) return straight.map((f) => op(f.asm, f.cycles, { clobbers: f.clobbers, stack: f.stack }));
   if (!allow.has("b")) throw new Error(`cannot pad ${n} cycles without b`);
   // 13k + 2 for the loop, the rest straight. Walk k down until the residual is
   // representable — one step is always enough (13 cycles moves a residual of
@@ -88,7 +109,7 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false } = {}) {
   const kMax = Math.min(255, Math.floor((n - 2) / 13));
   for (let k = kMax; k >= 1; k--) {
     const tail = n - (13 * k + 2);
-    const plan = straightPlan(tail, allow);
+    const plan = straightPlan(tail, allow, stack);
     if (plan) {
       return [
         op(`ld b,${k}`, 7, { clobbers: ["b", "bc"] }),
@@ -109,14 +130,14 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false } = {}) {
  * Lay one slot out: the DAC write, then work, then an exact pad.
  * Returns the ops and the placement-table row.
  */
-export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead }) {
+export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead, fill }) {
   // `tail` runs AFTER the pad — the loop-back jump is the only thing that
   // belongs there, and it belongs there because a jump placed before the pad
   // would jump over it. It is still charged to this slot.
   const used = cost([dacWrite, ...work, ...tail]);
   let pad;
   try {
-    pad = padTo(cycles - used, { dead });
+    pad = padTo(cycles - used, fill ?? { dead });
   } catch (e) {
     // Name the slot and everything in it. "slot overrun by 38 cycles" with no
     // context is a puzzle; "slot 22 wants 396 of 358, carrying the mix, a CSM
@@ -127,7 +148,7 @@ export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead })
         .map((o) => `    ${String(o.cycles).padStart(4)}  ${o.what ?? o.asm[0]}`).join("\n"));
   }
   return {
-    index, cycles, ops: [dacWrite, ...work, ...pad, ...tail],
+    index, cycles, ops: [dacWrite, ...work, ...pad, ...tail], pad,
     row: {
       slot: index, cycles, work: used, pad: cycles - used,
       workPct: +((100 * used) / cycles).toFixed(1),

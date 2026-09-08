@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import { assemble } from "../../tools/z80asm.mjs";
 import { Z80Cpu } from "../../tools/z80cpu.mjs";
 import { buildConfig } from "./config.mjs";
+import { tablesAgree, buildLut, scale, unbias, levelFromCommand, lutPages,
+  pageIsALevel } from "./lut.mjs";
 import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "./cooperative.mjs";
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
@@ -16,6 +18,8 @@ import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITI
   STATE, PHASE_TABLE, VDP } from "./observer.mjs";
 import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
 import { generate } from "./gen-stream.mjs";
+import { generateSplit } from "./decode-split.mjs";
+import { Machine } from "./machine.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
 
@@ -535,6 +539,139 @@ assert.equal(backwards[2].sync, "lost");
     "…and close at the 83.9% one, which is the number the ceiling question is about");
 }
 
+// ── the 15-level profile (R8 §23.2) ───────────────────────────────────────
+// The level family is a PROFILE's choice, and the two profiles have to be
+// different builds rather than one build reinterpreted. What is checked here is
+// the definition, the mapping a command goes through, and the page number —
+// which is a self-modified operand, so a page one past the family is not a
+// fault, it is the phase table read as a volume table.
+{
+  const c16 = buildConfig({ voices: 2, complete: true });
+  const c15 = buildConfig({ voices: 2, complete: true, levels: 15, workTarget: 0.839 });
+  assert.equal(c16.ram.lut[1] - c16.ram.lut[0], 16 * 256);
+  assert.equal(c15.ram.lut[1] - c15.ram.lut[0], 15 * 256);
+  assert.equal(c15.ram.phase[0], c15.ram.lut[1], "the phase table is the page the family gave up");
+  assert.equal(c15.ram.phase[1], c15.ram.ring[0], "…and the ring does not move");
+  assert.deepEqual([c16.ram.ring, c16.ram.queue, c16.ram.glob, c16.ram.stack],
+    [c15.ram.ring, c15.ram.queue, c15.ram.glob, c15.ram.stack]);
+
+  // Level k of n scales by k/(n-1): silence at 0, unity at the top, both exact.
+  for (const n of [16, 15]) {
+    assert.deepEqual(tablesAgree(n), []);
+    assert.equal(buildLut(n).length, n * 256);
+    for (let b = 0; b < 256; b++) {
+      assert.equal(scale(unbias(b), 0, n) + 0, 0, `level 0 of ${n} is not silence`);
+      assert.equal(scale(unbias(b), n - 1, n), unbias(b), `level ${n - 1} of ${n} is not unity`);
+    }
+  }
+  // 15 levels are NOT the 16-level table with a page removed: every level's
+  // meaning is redefined, so the two families disagree in the middle and agree
+  // only at silence and unity.
+  const l16 = buildLut(16), l15 = buildLut(15);
+  assert.notEqual(l16[7 * 256 + 200], l15[7 * 256 + 200]);
+  assert.equal(l16[15 * 256 + 200], l15[14 * 256 + 200]);
+
+  // The command mapping, written down rather than discovered: monotone, keeps
+  // silence and unity, and — the cost — is not injective at 15.
+  const map15 = [...Array(16).keys()].map((v) => levelFromCommand(v, 15));
+  assert.deepEqual(map15, [0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 9, 10, 11, 12, 13, 14]);
+  assert.deepEqual([...Array(16).keys()].map((v) => levelFromCommand(v, 16)), [...Array(16).keys()]);
+  for (let v = 1; v < 16; v++) assert.ok(map15[v] >= map15[v - 1], "the mapping must be monotone");
+
+  // The page number is an operand, not an index: one past the family is the
+  // phase table, and nothing about reading it would fault.
+  for (const cfg of [c16, c15]) {
+    const { first, last } = lutPages(cfg);
+    assert.equal(last - first + 1, cfg.levels);
+    assert.ok(pageIsALevel(cfg, first) && pageIsALevel(cfg, last));
+    assert.ok(!pageIsALevel(cfg, last + 1), "a page past the family must not pass as a level");
+    assert.ok(!pageIsALevel(cfg, first - 1));
+  }
+  assert.equal(lutPages(c15).last + 1, c15.ram.phase[0] >> 8,
+    "the page one past the 15-level family IS the phase table");
+  // The knob is checked, not trusted: a level count with no RAM map behind it
+  // and the P1 form of a profile that has none are both refused.
+  assert.throws(() => buildConfig({ voices: 2, complete: true, levels: 14 }), /levels must be/);
+  assert.throws(() => buildConfig({ levels: 15 }), /no P1 form/);
+}
+
+// ── the split decode in the REAL loop (R8 §23.3) ──────────────────────────
+// Clobbering A and the flags between the pieces was not enough. What runs
+// between them on the machine is the mixer, the RESERVED padding standing in
+// for the unwritten 2ch features, and the slot's own pad — and the pad's
+// cheapest filler is `ld b,k` / `djnz $`, which leaves B at zero. So this
+// generates the whole engine with the pieces in it, assembles it, and runs it.
+//
+// It is not a formality. The first version that got this far placed `keep
+// known` in slot 16 behind that slot's `ld b,5 / djnz $`, so it stored a B the
+// reserve had already zeroed: every published record came out as the boot
+// state, while the DAC stayed perfect and every slot stayed inside its budget.
+{
+  const cfg = buildConfig({ voices: 2, complete: true, levels: 15, workTarget: 0.839 });
+  const r = generateSplit(cfg, { stackFill: true });
+  assert.ok(r.ok, `the split image did not generate: ${r.stage} ${r.error ?? ""}`);
+  const d4 = mkdtempSync(join(tmpdir(), "dac-split2ch-"));
+  let built;
+  try { const f = join(d4, "e.z80"); writeFileSync(f, r.gen.text); built = assemble(f); }
+  finally { rmSync(d4, { recursive: true, force: true }); }
+  // It has to FIT, and the assembler's own assert is what says so.
+  assert.ok(built.symbols.get("code_end") <= cfg.ram.code[1], "the split image overran the code region");
+
+  const tb = PHASE_TABLE.quantised.bytes, UNK = PHASE_TABLE.quantised.unknown;
+  const known = [...tb.keys()].filter((h) => tb[h] !== UNK);
+  const unknown = [...tb.keys()].filter((h) => tb[h] === UNK);
+  assert.ok(known.length && unknown.length);
+  const seq = [];
+  for (let i = 0; i < 18; i++) {
+    seq.push(known[(i * 37) % known.length]);
+    if (i % 5 === 2) seq.push(unknown[(i * 13) % unknown.length]);   // break the chain
+  }
+  let reads = 0;
+  const machine = new Machine(cfg, built, {
+    rom: Uint8Array.from({ length: 512 }, (_, i) => (i * 73 + 19) & 255),
+    vdp: () => seq[Math.min(reads++, seq.length - 1)],
+  });
+  const ST = r.map.state;
+  const state = () => ({
+    known: machine.ram[ST + SPLIT_STATE.known], valid: machine.ram[ST + SPLIT_STATE.valid],
+    delta: machine.ram[ST + SPLIT_STATE.delta], expect: machine.ram[ST + SPLIT_STATE.expect],
+    count: machine.ram[ST + SPLIT_STATE.countLo] | (machine.ram[ST + SPLIT_STATE.countHi] << 8) });
+  const key = (o) => ["known", "valid", "delta", "expect", "count"].map((k) => o[k]).join(",");
+
+  const LOOP = cfg.slotCycles.reduce((a, b) => a + b, 0) * (cfg.cycleSlots / cfg.groupSlots);
+  let want = { ...INITIAL_STATE }, at = 0, checked = 0;
+  for (let lap = 0; lap < seq.length; lap++) {
+    const until = cfg.cycleSlots * (lap + 1) + 1;    // one write into the next lap
+    let guard = 0;
+    while (machine.trace.dacCycle.length < until && guard++ < 400) { at += LOOP / 8; machine.run(at); }
+    assert.ok(machine.trace.dacCycle.length >= until, `the engine stalled on lap ${lap}`);
+    want = refDecode(want, seq[lap], r.advance);
+    assert.equal(key(state()), key(want), `lap ${lap}, reading $${seq[lap].toString(16)}`);
+    checked++;
+  }
+  assert.equal(checked, seq.length);
+  // One reading a lap. The run may overshoot into the next lap's read before it
+  // stops, which is why this is a range and not an equality — the readings are
+  // still consumed in order, and each lap is compared against its own.
+  assert.ok(reads === seq.length || reads === seq.length + 1,
+    `${reads} readings over ${seq.length} laps`);
+  // The DAC did not move while all that happened, and the model charges the
+  // VDP read the same window wait the schedule does.
+  const gaps = [];
+  for (let i = 1; i < machine.trace.dacCycle.length; i++)
+    gaps.push(machine.trace.dacCycle[i] - machine.trace.dacCycle[i - 1]);
+  assert.deepEqual([...new Set(gaps)].sort((a, b) => a - b), [358, 359],
+    `the DAC interval moved: ${[...new Set(gaps)].sort((a, b) => a - b)}`);
+  assert.equal(machine.trace.stray.length, 0);
+  // Per slot at the profile's ceiling, and the average at the shipped one.
+  const worst = r.gen.placement.worst, mean = r.gen.placement.meanWorkPct;
+  assert.ok(worst.workPct <= cfg.workTarget * 100 + 0.05,
+    `slot ${worst.slot} is at ${worst.workPct}%, over the ${cfg.workTarget * 100}% ceiling`);
+  assert.ok(mean <= cfg.meanTarget * 100 + 0.05, `the mean is ${mean}%`);
+  // And BC really is what carries: the liveness is not a comment.
+  assert.ok(r.preserve.liveIn.size > 0 && r.preserve.liveOut.size > 0);
+}
+
 // ── the record check, driven by records that are wrong ───────────────────
 // (R7 §20.2 B, and the terminal rule rebuilt for R8 §23.4.)
 //
@@ -627,123 +764,6 @@ assert.equal(backwards[2].sync, "lost");
     assert.equal(r.incompleteTail, 0, "a tail that does not begin at field 0 is not a prefix");
     assert.equal(r.problems.short, 1);
   }
-}
-
-// ── the same decode, cut into pieces a 2ch slot could hold (R7 §20.3) ─────
-// The pieces are run SEPARATELY, with A and the flags clobbered between every
-// pair, because that is what a slot boundary does in the complete engine:
-// mix_one runs in every slot and it is the sample path. Only B, C and memory
-// cross. If a piece secretly depended on a flag or on A, this fails.
-{
-  const cfg = buildConfig({});
-  const map = decodeMap(cfg);
-  const STEP = 147, TABLE = map.table, ST = map.state;
-  const blocks = splitBlocks({ table: TABLE, state: ST, step: STEP });
-  const src = ["        org $0000"];
-  blocks.forEach((b, i) => {
-    src.push(`blk${i}:`);
-    for (const o of b.ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
-    src.push("        halt");
-  });
-  src.push(`        ds $${TABLE.toString(16)}-$,0`);
-  const tb = PHASE_TABLE.quantised.bytes;
-  for (let i = 0; i < 256; i += 16) src.push(`        db ${tb.slice(i, i + 16).join(",")}`);
-  const d3 = mkdtempSync(join(tmpdir(), "dac-split-"));
-  let asm;
-  try { const f = join(d3, "s.z80"); writeFileSync(f, src.join("\n") + "\n"); asm = assemble(f); }
-  finally { rmSync(d3, { recursive: true, force: true }); }
-
-  const ram = new Uint8Array(0x2000);
-  ram.set(asm.bytes.subarray(0, Math.min(asm.bytes.length, ram.length)));
-  let hv = 0;
-  const cpu = new Z80Cpu({ read: (a) => a === 0x7f09 ? hv : (ram[a] ?? 0xff),
-    write: (a, v) => { if (a < ram.length) ram[a] = v; } });
-  const costs = blocks.map(() => new Set());
-  const step1 = (h) => {
-    hv = h;
-    blocks.forEach((b, i) => {
-      cpu.a = (i * 37 + h) & 0xff; cpu.f = (i * 91 + h) & 0xff;   // nothing survives
-      cpu.pc = asm.symbols.get(`blk${i}`); cpu.halted = false;
-      let c = 0; while (!cpu.halted && c < 4000) c += cpu.step();
-      costs[i].add(c - 4);
-    });
-    return { known: ram[ST + SPLIT_STATE.known], valid: ram[ST + SPLIT_STATE.valid],
-      delta: ram[ST + SPLIT_STATE.delta], expect: ram[ST + SPLIT_STATE.expect],
-      count: ram[ST + SPLIT_STATE.countLo] | (ram[ST + SPLIT_STATE.countHi] << 8) };
-  };
-  for (let k = 0; k < SPLIT_STATE_SIZE; k++) ram[ST + k] = 0;
-  let want = { ...INITIAL_STATE }, n = 0;
-  const key = (o) => ["known", "valid", "delta", "expect", "count"].map((k) => o[k]).join(",");
-  for (let pass = 0; pass < 2; pass++) for (let h = 0; h < 256; h++) {
-    want = refDecode(want, h, STEP);
-    assert.equal(key(step1(h)), key(want), `split decode disagreed at h=${h}`);
-    n++;
-  }
-  assert.equal(n, 512);
-  // One cost a piece. The VDP read is 13 on this CPU and 16 in the schedule —
-  // the 3-cycle difference is the emulated machine's bank penalty, not the
-  // instruction's, and the schedule is the one that has to be right.
-  blocks.forEach((b, i) => {
-    assert.equal(costs[i].size, 1, `piece "${b.name}" costs ${[...costs[i]].join("/")}`);
-    assert.equal([...costs[i]][0], b.cycles - (i === 0 ? 3 : 0), `piece "${b.name}" cost`);
-  });
-  // …and the placement it is for: at the 79.6% target it does not close, and
-  // the reason is granularity, not the total (R7 §20.3).
-  const full = buildConfig({ voices: 2, complete: true, csm: true });
-  const gen2 = generate(full);
-  const head = gen2.slots.map((s) => 0.796 * s.cycles - s.row.work);
-  assert.ok(head.reduce((a, b) => a + b, 0) > blocks.reduce((t, b) => t + b.cycles, 0),
-    "the loop's TOTAL headroom is larger than the decode — the total is not the binding test");
-  assert.ok(placeSplit(blocks, gen2.slots, { target: 0.796 }).failed,
-    "the split must still fail to place at the 79.6% target");
-  assert.ok(!placeSplit(blocks, gen2.slots, { target: 0.839 }).failed,
-    "…and close at the 83.9% one, which is the number the ceiling question is about");
-}
-
-// ── the record check, driven by records that are wrong (R7 §20.2 B) ───────
-// The end-to-end faults break every record at once, so they cannot show that
-// each kind of breakage is NAMED. These do: one record short, one with a field
-// too many, one whose fields arrived in the wrong order, and one published
-// before its own read.
-{
-  const NAMES = ["a", "b", "c"];
-  const READS = [0, 100, 200, 300].map((time) => ({ time }));
-  const good = (n, base) => NAMES.map((_, k) => ({ time: base + k + 1, field: k, value: n * 10 + k }));
-  const whole = READS.flatMap((r, n) => good(n, r.time));
-  const clean = recordsBetweenReads(READS, whole, NAMES);
-  assert.deepEqual(clean.problems, { late: 0, short: 0, extra: 0, outOfOrder: 0 });
-  assert.deepEqual(clean.rows.map((r) => r && r.a), [0, 10, 20, 30]);
-  assert.equal(clean.incompleteTail, 0);
-
-  const drop = whole.filter((x) => !(x.field === 1 && x.value === 11));
-  assert.equal(recordsBetweenReads(READS, drop, NAMES).problems.short, 1);
-  assert.equal(recordsBetweenReads(READS, drop, NAMES).rows[1], null);
-
-  const twice = [...whole.slice(0, 4), whole[3], ...whole.slice(4)]
-    .sort((x, y) => x.time - y.time || x.field - y.field);
-  assert.equal(recordsBetweenReads(READS, twice, NAMES).problems.extra, 1);
-
-  const swapped = whole.map((x, i) => i === 3 ? { ...whole[4], time: x.time }
-    : i === 4 ? { ...whole[3], time: x.time } : x);
-  assert.equal(recordsBetweenReads(READS, swapped, NAMES).problems.outOfOrder, 1);
-
-  // Published before the first read at all: not attributable to any record.
-  const early = [{ time: -5, field: 0, value: 99 }, ...whole];
-  assert.equal(recordsBetweenReads(READS, early, NAMES).problems.late, 1);
-
-  // A record carried past the next read is BOTH a short record and one with a
-  // field too many — which is the shape the `carry-publish` rom produces.
-  const carried = whole.map((x) => x.field === 2 && x.time < 200 ? { ...x, time: x.time + 100 } : x)
-    .sort((x, y) => x.time - y.time);
-  const c = recordsBetweenReads(READS, carried, NAMES);
-  assert.ok(c.problems.short >= 1 && c.problems.extra >= 1, JSON.stringify(c.problems));
-
-  // The one allowance: the run was cut before the last record finished.
-  const cut = whole.slice(0, whole.length - 1);
-  const t = recordsBetweenReads(READS, cut, NAMES);
-  assert.equal(t.incompleteTail, 1);
-  assert.deepEqual(t.problems, { late: 0, short: 0, extra: 0, outOfOrder: 0 });
-  assert.equal(t.rows.length, READS.length - 1);
 }
 
 // ── one resolved configuration (§12.3) ────────────────────────────────────
@@ -922,5 +942,6 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
-  + " the split decode's agreement with it and where that fails to place,"
+  + " the split decode's agreement with it, where that fails to place, and the"
+  + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");
