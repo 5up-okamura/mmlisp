@@ -1,0 +1,115 @@
+// WHAT THE DISTRIBUTED IMAGE COSTS, printed from the image itself.
+//
+// R10 §29.7 step 5 asks for the worst slot, the mean, the neutral path, the
+// shortened path's remaining pad, every DAC interval, the code and the RAM,
+// recomputed for the corrected image. Those numbers were coming out of
+// throwaway scripts, which is how §28 came to report a placement that had
+// folded onto three laps: a number nobody can re-run is a number nobody can
+// check. This is the tool that produces them.
+//
+//   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
+import { buildConfig, stampLine } from "./config.mjs";
+import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "./decode-split.mjs";
+import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, LADDER_BYTES, MAX_QUANTA,
+  MAX_DEBT_UNITS } from "./corrector.mjs";
+import { assemble } from "../../tools/z80asm.mjs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const argv = process.argv.slice(2);
+const SLOTS = argv.includes("--slots");
+const pad = (s, n) => String(s).padEnd(n);
+
+const PROFILES = [
+  { tag: "decode only", cfg: { correctorBudget: false }, opt: {} },
+  { tag: "decode + corrector, as-is", cfg: { correctorBudget: false }, opt: { correct: true } },
+  { tag: "decode + corrector, time-pub replaced", cfg: { correctorBudget: true }, opt: { correct: true } },
+];
+
+for (const p of PROFILES) {
+  const cfg = buildConfig({ voices: 2, complete: true, csm: true, levels: 15,
+    workTarget: 0.839, ...p.cfg });
+  const r = generateSplit(cfg, { stackFill: true, ...p.opt });
+  console.log(`\n── ${p.tag} ──`);
+  console.log(`   ${stampLine(cfg)}`);
+  if (!r.ok) {
+    // A refusal says WHERE, not just that. The stage names are the contract:
+    // `place` ran out of slots before the next read, `laps` folded, `order`
+    // came out in the wrong sequence, `ladders` had nowhere causal to go.
+    console.log(`   NOT PLACED — stage "${r.stage}"`);
+    if (r.stage === "place")
+      console.log(`   ${r.walk.placed.length} of ${r.blocks.length} pieces placed;`
+        + ` "${r.walk.failed.name}" (${r.walk.failed.cycles} cyc) had no slot before the next read`
+        + ` (deadline ${r.walk.deadline})`);
+    if (r.stage === "ladders")
+      console.log(`   ${r.found} of ${r.want} ladder slots with ${r.need} cycles free in [${r.lo}, ${r.hi})`);
+    if (r.stage === "ladder pad") console.log(`   slot ${r.slot} leaves ${r.rest} cycles of pad, ${r.want} needed`);
+    if (r.stage === "pad") console.log(`   ${r.error}`);
+    if (r.stage === "order") console.log(`   the emitted order is not the chain's order`);
+    continue;
+  }
+  const d = mkdtempSync(join(tmpdir(), "dac-split-"));
+  let built;
+  try { const f = join(d, "e.z80"); writeFileSync(f, r.gen.text); built = assemble(f); }
+  finally { rmSync(d, { recursive: true, force: true }); }
+  const bytes = built.symbols.get("code_end");
+  const region = cfg.ram.code[1] - cfg.ram.code[0];
+  const owed = cfg.codeEstimate.reduce((t, [, b]) => t + b, 0);
+  const rows = r.gen.placement.rows;
+  const last = Math.max(...r.walk.placed.map((x) => x.absolute));
+
+  console.log(`   pieces      ${r.blocks.length} in ${r.walk.laps} lap,`
+    + ` last at slot ${last} of ${cfg.cycleSlots}, ${r.blocks.reduce((t, b) => t + b.cycles, 0)} cycles`);
+  console.log(`   fixed work  worst ${r.gen.placement.worst.workPct}% (slot ${r.gen.placement.worst.slot}),`
+    + ` mean ${r.gen.placement.meanWorkPct}%`
+    + `  — ceiling ${(cfg.workTarget * 100).toFixed(1)}% / mean ${(cfg.meanTarget * 100).toFixed(1)}%`);
+  console.log(`   BC carried  ${r.slotsPreserving} slots`);
+  if (r.correct) {
+    // The ladder is the only variable-length thing in the loop, so its three
+    // numbers ARE the schedule's variability: what the neutral path costs, what
+    // the slot has left when the ladder is at its shortest, and the interval.
+    const worstRest = Math.min(...r.ladders.map((l) => l.restPad));
+    const lo = Math.min(...r.ladders.map((l) => l.interval[0]));
+    const hi = Math.max(...r.ladders.map((l) => l.interval[1]));
+    console.log(`   ladders     ${CORR_SLOTS} at slots ${r.ladders.map((l) => l.absolute).join(", ")}`);
+    console.log(`   neutral     ${LADDER_NEUTRAL} cyc each (${LADDER_WORK} charged as work,`
+      + ` ${LADDER_NEUTRAL - LADDER_WORK} as pad), worst slot ${Math.max(...r.ladders.map((l) => l.strictPct))}%`
+      + ` with the whole neutral run counted as work`);
+    console.log(`   short path  ${worstRest} cyc of pad left at the tightest ladder slot (16 required)`);
+    console.log(`   DAC interval ${lo}..${hi} cyc (nominal ${cfg.periodCycles}) — 342..375 is the limit`);
+    console.log(`   capability  ${MAX_QUANTA} quanta = ${MAX_QUANTA * CORR.quantumCycles} cyc`
+      + ` = ${MAX_QUANTA * CORR.quantumCycles * cfg.machine.z80Div} master an observation;`
+      + ` debt limit ${MAX_DEBT_UNITS} units`);
+  }
+  console.log(`   settle      read → complete record ${r.gen.observer.settleMaster} master`
+    + ` (${(r.gen.observer.settleMaster / cfg.machine.masterHz * 1000).toFixed(3)} ms)`);
+  // The CSM test voice is scaffolding — a real engine receives a patch as
+  // commands, not as boot code — so it is measured and separated rather than
+  // quietly inflating the budget, exactly as the gate does it.
+  const bare = (() => {
+    const c2 = buildConfig({ voices: 2, complete: true, csm: false, levels: 15,
+      workTarget: 0.839, ...p.cfg });
+    const r2 = generateSplit(c2, { stackFill: true, ...p.opt });
+    if (!r2.ok) return null;
+    const d2 = mkdtempSync(join(tmpdir(), "dac-split-bare-"));
+    try { const f = join(d2, "e.z80"); writeFileSync(f, r2.gen.text); return assemble(f).symbols.get("code_end"); }
+    finally { rmSync(d2, { recursive: true, force: true }); }
+  })();
+  const engine = bare ?? bytes;
+  console.log(`   code        ${engine} B engine of ${region} B`
+    + (bare === null ? "" : ` (${bytes} B with the ${bytes - bare} B CSM test patch)`)
+    + `, + ${owed} B still owed = ${engine + owed} B`
+    + `  (${region - engine - owed >= 0 ? `${region - engine - owed} B spare` : `${engine + owed - region} B OVER`})`);
+  for (const [what, b] of cfg.codeEstimate) console.log(`     ${pad(what, 22)}${String(b).padStart(5)} B`);
+  const state = r.correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
+  console.log(`   RAM         ${state} B of state in the ${cfg.ram.glob[1] - cfg.ram.glob[0]} B globals,`
+    + ` phase table $${cfg.ram.phase[0].toString(16)}`
+    + (r.correct ? `, ${CORR_SLOTS * LADDER_BYTES} B of ladder inside the code` : ""));
+  if (SLOTS) {
+    console.log(`   ${pad("slot", 5)}${pad("cyc", 5)}${pad("work", 6)}${pad("pad", 5)}${pad("%", 7)}what`);
+    for (const row of rows)
+      console.log(`   ${pad(row.slot, 5)}${pad(row.cycles, 5)}${pad(row.work, 6)}${pad(row.pad, 5)}`
+        + `${pad(row.workPct, 7)}${row.what.slice(0, 100)}`);
+  }
+}

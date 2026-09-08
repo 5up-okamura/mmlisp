@@ -113,6 +113,37 @@ export const CASES = [
     split: { load: "divu", bootNops: 260, stall: { every: 3000, bytes: 4 } },
     informational: true },
 
+  // ── the same engine WITH the bounded corrector (R10 §29.5, §29.7) ───────
+  // The "time-publication-replaced" budget image: b1..b4's 75 cycles a block
+  // are spent on the corrector instead of on the output-index publication, and
+  // the 70 B that publication owed leave the code estimate with them. The
+  // ladders are the only thing in the loop whose length is not fixed, so the
+  // DAC interval is no longer one number — 342..375 cycles — and that is the
+  // point of the image rather than a defect in it.
+  { name: "2ch corrector, quiet", cfg: { voices: 2, complete: true, csm: true,
+      levels: 15, workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", place: { correct: true } } },
+  { name: "2ch corrector, 4B stall", cfg: { voices: 2, complete: true, csm: true,
+      levels: 15, workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", bootNops: 260, stall: { every: 3000, bytes: 4 },
+      place: { correct: true } },
+    informational: true },
+  // A disturbance that STOPS, which is the case the corrector exists for. The
+  // 4 B stall above repeats every 3,000 DBRA iterations — roughly every read —
+  // so the debt never gets a quiet observation to walk back in, and a quiet run
+  // never moves it at all. Neither can show a RETURN. 41,000 iterations is one
+  // displacement about every seven observations, with the same 4 B stall that
+  // measures 452..1,295 master — inside the 1,500 master contract.
+  { name: "2ch corrector, occasional 4B stall", cfg: { voices: 2, complete: true, csm: true,
+      levels: 15, workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", bootNops: 260, stall: { every: 41000, bytes: 4 },
+      place: { correct: true } },
+    // INFORMATIONAL to machine-probe, which grades a fixed interval: a working
+    // corrector moves the DAC by design, so the interval band is not the test
+    // for this image. What grades it is `dac-stream:decoder`, where the movement
+    // is compared with the correction that was decided.
+    informational: true },
+
   // IN-CONTRACT DISTURBANCES (R6 §17.2 B). The verification runs had no
   // unplanned displacement at all, so nothing showed that a small stall is
   // measured correctly — only that a quiet run stays quiet. These inject

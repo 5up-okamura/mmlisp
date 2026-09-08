@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
 import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
+import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
 import { buildCase, FAULTS } from "./case-config.mjs";
 import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
@@ -77,6 +78,13 @@ const Z80_DECODER = ["z80 decoder, quiet", "z80 decoder, 4B stall"];
 // globals page, which the emulator watches at no cost to the engine — so the
 // image compared is the image under test (R8 §23.5 step 3).
 const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stall"];
+// …and the same image with the BOUNDED CORRECTOR in it (R10 §29.7 step 6). The
+// ladders make the loop's length a function of what the last observation
+// decided, so nothing here may take the engine's own RAM as the truth: the
+// correction is reconstructed from the DAC write times, the read times and the
+// STOP/RESUME pairs, against the ladder slots the generator placed.
+const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
+  "2ch corrector, occasional 4B stall"];
 // Either side of half a line, reported rather than graded.
 const BOUNDARY = ["hv observer, boundary 16B stall", "hv observer, boundary 24B stall"];
 // Kept to demonstrate the limit, not to pass it: these carry displacements
@@ -101,7 +109,7 @@ if (!argv.includes("--reuse")) {
     "in-contract", "back-to-back", "boundary", "2ch pattern with"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
       "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
-  for (const sel of FAULT ? ["z80 decoder"] : ["z80 decoder", "2ch 15-level decoder"])
+  for (const sel of FAULT ? ["z80 decoder"] : ["z80 decoder", "2ch 15-level decoder", "2ch corrector"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
       "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
       { stdio: ["ignore", "ignore", "inherit"] });
@@ -118,7 +126,7 @@ const caseOf = (name) => {
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
 for (const name of FAULT ? Z80_DECODER : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
-  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, "hv observer, Z80 reads v+h"])
+  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, "hv observer, Z80 reads v+h"])
   expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT, fault: FAULT }));
 
 // A name is not an identity. The output directory accumulates logs from every
@@ -438,7 +446,7 @@ for (const name of Z80_DECODER) {
 // globals page, in the order the placement stores them. The engine is not told
 // anything and pays nothing for being watched.
 console.log(FAULT ? "" : `\n── the decoder inside the complete 2ch engine ──`);
-for (const name of FAULT ? [] : SPLIT_2CH) {
+for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
   const f = need(name, Z80_SECONDS); if (!f) continue;
   const built = expectedRom.get(name);
   const fields = built.gen.observer.record;
@@ -476,10 +484,35 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
   const U = art.quantised.unit, units = art.quantised.units;
   const opts = { units, unknown: art.quantised.unknown, table: [...qbytes] };
   const sp = spacingOf(name);
+  // WITH THE CORRECTOR, the decode and the correction are ONE reference: the
+  // fold takes the applied quanta off the phase the next expectation is built
+  // from, so a decode-only reference disagrees with a correct engine from the
+  // second observation onward. `applied` is kept per observation because the
+  // interval AFTER a read is the one that carries that read's correction.
+  const corrected = !!built.gen.split.correct;
+  const applied = new Array(rows.length).fill(0);
+  let debt = 0, expired = 0, worstDebt = 0;
   let state = { ...INITIAL_STATE }, mismatch = 0, compared = 0, firstBad = null;
   for (let n = 0; n < rows.length; n++) {
     const step = ((sp[(n + 1) % sp.length] % LINE_MASTER) / U) % units;
-    state = refDecode(state, reads[n].h, step, opts);
+    if (!corrected) state = refDecode(state, reads[n].h, step, opts);
+    else {
+      const phase = opts.table[reads[n].h];
+      const known = phase === opts.unknown ? 0 : 0xff;
+      const valid = known & state.known;
+      let d = (phase - state.expect) % units;
+      if (d < 0) d += units;
+      if (d >= (units + 1) >> 1) d -= units;
+      const delta = valid ? d : 0;
+      const c = refCorrect({ debt: valid ? debt : 0 }, delta);
+      debt = c.debt; applied[n] = c.applied;
+      if (c.expired) expired++;
+      worstDebt = Math.max(worstDebt, Math.abs(debt));
+      const k2 = c.expired ? 0 : known;
+      const ph = ((phase - CORR.unitsPerQuantum * c.applied) % units + units) % units;
+      state = { known: k2, valid, delta: delta & 0xff, count: (state.count + 1) & 0xffff,
+        expect: k2 ? (ph + step) % units : 0 };
+    }
     const said = rows[n];
     if (!said) continue;
     compared++;
@@ -511,7 +544,12 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
       const a = reads[n - 1].time, b = reads[n].time;
       const { stopped } = stoppedWithin(a, b, log.stops);
       if (stopped) stalledN++;
-      const d = Math.abs((b - a) - stopped - sp[n % sp.length]);
+      // The ladders shorten the loop by exactly what the previous observation
+      // decided, so the interval the generator lays out for read n is `sp` minus
+      // that correction. Without this term a working corrector reads as a broken
+      // schedule.
+      const laid = sp[n % sp.length] - applied[n - 1] * CORR.quantumCycles * Z80_DIV;
+      const d = Math.abs((b - a) - stopped - laid);
       checked++;
       if (d > 16) off++;
       worst = Math.max(worst, d);
@@ -535,7 +573,8 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
     for (let n = 1; n < rows.length; n++) {
       const said = rows[n];
       if (!said || said.valid !== 0xff) continue;
-      const truth = (reads[n].time - reads[n - 1].time) - sp[n % sp.length];
+      const truth = (reads[n].time - reads[n - 1].time)
+        - (sp[n % sp.length] - applied[n - 1] * CORR.quantumCycles * Z80_DIV);
       const signed = said.delta > 127 ? said.delta - 256 : said.delta;
       seen.push(truth);
       errs.push(signed * U - truth);
@@ -577,6 +616,62 @@ for (const name of FAULT ? [] : SPLIT_2CH) {
       failures.push(`"${name}": ${compared} complete records but ${adj.length} settle times`);
     if (bad) failures.push(`"${name}": ${bad} of ${adj.length} records settle somewhere`
       + ` other than the ${want} master the layout predicts`);
+  }
+  // THE CORRECTION, MEASURED OFF THE DAC (R10 §29.7 step 6).
+  //
+  // Nothing here reads the engine's q, its debt or its ladder bytes. A ladder
+  // slot is `base - 4a` cycles long, so the seven intervals the generator placed
+  // ARE the correction; the read times say which lap they belong to and the
+  // STOP/RESUME pairs are subtracted so a held bus is not read as a correction.
+  // The sum has to be what the reference decided from the same H readings.
+  if (corrected) {
+    const readSlot = built.gen.split.walk.placed[0].absolute;
+    const ladders = built.gen.split.ladders;
+    const dacT = log.dac.map((e) => e.time);
+    let checked = 0, wrong = 0, worstQ = 0, moved = 0;
+    let j = 0;
+    for (let n = 0; n < reads.length - 1; n++) {
+      while (j + 1 < dacT.length && dacT[j + 1] <= reads[n].time) j++;
+      if (!dacT.length || dacT[j] > reads[n].time) continue;
+      let sum = 0, ok = true;
+      for (const l of ladders) {
+        const i = j + (l.absolute - readSlot);
+        if (i + 1 >= dacT.length) { ok = false; break; }
+        const span = dacT[i + 1] - dacT[i]
+          - stoppedWithin(dacT[i], dacT[i + 1], log.stops).stopped;
+        const base = built.cfg.slotCycles[l.slot % built.cfg.groupSlots] * Z80_DIV;
+        const q = (base - span) / (CORR.quantumCycles * Z80_DIV);
+        if (!Number.isInteger(q) || Math.abs(q) > CORR.maxQuantaPerSlot) { ok = false; break; }
+        sum += q;
+      }
+      if (!ok) continue;
+      checked++;
+      if (applied[n] !== 0) moved++;
+      worstQ = Math.max(worstQ, Math.abs(sum));
+      if (sum !== applied[n]) wrong++;
+    }
+    console.log(`  correction off the DAC: ${checked} observations rebuilt from the`
+      + ` ${ladders.length} ladder intervals, ${wrong} disagreed with the reference`
+      + ` — ${moved} corrected something, the largest ${worstQ} quanta`
+      + ` = ${worstQ * CORR.quantumCycles * Z80_DIV} master`);
+    if (!checked) failures.push(`"${name}": not one observation's correction could be rebuilt`);
+    if (wrong) failures.push(`"${name}": ${wrong} of ${checked} observations moved the DAC by`
+      + ` something other than what the corrector decided`);
+    if (name.includes("stall") && !moved)
+      failures.push(`"${name}": a disturbed run corrected nothing — the ladders never left neutral`);
+    // WHERE THE PHASE ENDED UP. A quiet run has to SETTLE — R9 §26.5 asks for
+    // under 60 master — and a run disturbed at every observation cannot, because
+    // a new displacement arrives before the last one is repaid. So the quiet
+    // case is graded on the residual and the disturbed one on staying inside the
+    // limit without expiring, which is what "bounded" means.
+    const held = Math.abs(debt) * U;
+    console.log(`  debt held: ${debt} units = ${held} master at the last observation,`
+      + ` worst ${worstDebt} units over the run, ${expired} expiries`
+      + ` (the limit is ${MAX_DEBT_UNITS} units)`);
+    if (!name.includes("stall") && held > 60)
+      failures.push(`"${name}": a quiet run settled at ${held} master, over the 60 asked for`);
+    if (name.includes("stall") && expired)
+      failures.push(`"${name}": ${expired} observations expired — a 4 B stall is inside the contract`);
   }
   const bases = rows.filter((r) => r && r.known === 0xff && r.valid === 0).length;
   if (!bases) failures.push(`"${name}": not one record was a base`);
