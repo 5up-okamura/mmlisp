@@ -1,7 +1,7 @@
 # DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
-**Current review (2026-09-08): resume from instruction §20, R7 — §20.4 step 3
-is answered and the next move is a design judgment, not code.** The polling
+**Current review (2026-09-08): resume from instruction §23, R8 — steps 1 and 2
+are done; step 3 (the 15-level 2ch on BlastEm, 10 s + 60 s) is next.** The polling
 NOP window is the accepted P1 regression. Computed timing has not passed; fix
 the overflowing DIVU load and the HBlank transfer-gate bypass, then specify
 observable phase/expiry/recovery before further implementation. A published
@@ -538,3 +538,50 @@ through the compacted index is 60 master off, against the table's own 40.
 for that is §21.6), and whether to free a page from the 4 KB LUT (15 levels
 instead of 16 costs one volume step and zero cycles — the index page is a
 self-modified operand either way). R7 §20.3 declined both this round.
+
+## R8 §23.4 and §23.5 steps 1-2 — the profile exists and the placement runs
+
+Done and committed (`1cd30df`, `a79f5e5`). Reported as instruction §24.
+
+**The tail rule (§23.4).** recordsBetweenReads() excused the last row whenever
+it was null, by `problems.short--`, so a final record that arrived complete but
+out of order came back short = -1 / outOfOrder = 1 and a caller summing the
+counts saw zero. It also demanded a publication AFTER the last read before it
+would excuse anything, which made the normal shape of a cut measurement — a
+last read with nothing published yet — count as short; that was the 60 s run's
+`short = 1`. Now: cut first, judge after; the only allowance is the last read's
+fields arriving as a correct PREFIX (0 fields included), never counted then
+subtracted; `broken`/`kinds` reported by name.
+
+**The 15-level profile (§23.2).** A different build, not a changed default.
+`RAM_P2_FULL_15`: lut $0C00..$1B00 (3,840 B), phase $1B00..$1C00, ring and
+everything after it unmoved. Level k scales by k/14 — NOT the 16-level table
+with a page pulled — and `levelFromCommand` is written down: monotone, silence
+and unity exact, **not injective (commands 7 and 8 share level 7)**. `levels`,
+`workTarget` and `meanTarget` are in the stamp. `pageIsALevel()` exists because
+the mixer's page is a self-modified operand and the page one past the family is
+the phase table.
+
+**BC liveness (§23.3) — this is the one worth remembering.** The first
+generated version had every published record stuck at the boot state while the
+DAC was perfect and every slot was inside its budget. `keep known` was placed in
+slot 16 behind that slot's RESERVED padding (`ld b,5 / djnz $`, which leaves B
+at zero), so it stored a B the reserve had already destroyed. **A slot needs two
+answers, not one**: its reserved padding runs BEFORE its piece (liveIn) and its
+own pad AFTER (liveOut). 61 slots each way.
+
+`push af`/`pop af` was added as an opt-in pad filler: 21 cycles in two bytes and
+it destroys nothing (pop restores A and F), which is what a BC-carrying slot
+needs once `ld b,k`/`djnz $` is gone. With it the complete 15-level engine plus
+the distributed decode assembles at **2,221 B of 2,560**; without it, 2,772 —
+over by 212. Finished estimate (reserve padding replaced by the 608 B, not
+double-counted): 2,207 B. **§21.4's ledger was wrong**: it double-counted the
+reserve padding, so the plain build's free code space is 666 B, not 176.
+
+Ran for real in the JS machine: 69 observations through the real mixer, reserve
+and pads, 0 disagreed; DAC 358..359 only (which needed the model to charge the
+VDP read the same window wait the schedule does); worst slot 83.8%, mean 78.9%;
+7.509 ms reading -> record.
+
+**Not done**: BlastEm cases for the 15-level 2ch, the 10 s / 60 s 2ch
+comparison (§23.5 step 3), corrector, transfer, hardware.
