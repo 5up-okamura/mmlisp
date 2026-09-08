@@ -34,8 +34,15 @@ export function readProbe(buf) {
       .map((e) => ({ time: e.time, field: (e.value >>> 8) - 1, value: e.value & 0xff })),
     // Every Z80 write to the watched globals page, with no cycle spent by the
     // engine to publish it: the instrument watches the RAM (R7 §20.2 B).
-    ramWrites: of(KIND.Z80RAM).map((e) => ({ time: e.time,
-      addr: (e.value >>> 8) & 0x7f, value: e.value & 0xff })),
+    // TWO watched ranges, told apart by bit 7 of the offset byte: the globals
+    // page (0..$7f of $1F00) and the 32-byte publication region ($1E40). One
+    // event kind, two offset spaces, and a consumer that forgets to say which
+    // one it means gets nothing rather than the other one's bytes.
+    ramWrites: of(KIND.Z80RAM).map((e) => {
+      const a = (e.value >>> 8) & 0xff;
+      return { time: e.time, region: a & 0x80 ? "pub" : "glob",
+        addr: a & 0x80 ? a & 0x1f : a & 0x7f, value: e.value & 0xff };
+    }),
     copies: of(KIND.COPY), polls: of(KIND.POLL),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
     hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };
@@ -213,7 +220,7 @@ const find = (gens, t) => {
  * `source` null means the payload's content is not predictable from here (the
  * diagnostic payload is the handler's own state); order and count still are.
  */
-export function analyzeTransfers(log, grabs, { bytes, cooperative, hint, fault }, source,
+export function analyzeTransfers(log, grabs, { bytes, cooperative, hint, fault, proto }, source,
   { windows = null } = {}) {
   const errors = [], delays = [], polling = [], landing = [];
   const gens = windows?.gens ?? [];
@@ -228,7 +235,11 @@ export function analyzeTransfers(log, grabs, { bytes, cooperative, hint, fault }
       else if (source && (e.value & 255) !== source[count]) errors.push("transferred payload");
       count++;
     }
-    if (count !== bytes) errors.push("transferred byte count");
+    // A PROTOCOL grab is not a block copy. It reads the published snapshot or
+    // writes the control block, so there is no payload to count and no byte
+    // count to be wrong; what it costs is measured as STOP -> RESUME instead
+    // (R12 §33.4).
+    if (!proto && count !== bytes) errors.push("transferred byte count");
     if (!cooperative && !hint) continue;
     // The commit: present, inside the grab, and written AFTER the last byte.
     while (commitIndex < log.commits.length && log.commits[commitIndex].time < a) commitIndex++;

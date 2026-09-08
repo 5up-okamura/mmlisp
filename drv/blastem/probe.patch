@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..b94c5c9 100644
+index 4f41271..405e92b 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -121,7 +121,7 @@ index 4f41271..b94c5c9 100644
  	uint8_t has_tmss = gen->version_reg & 0xF;
  	if (has_tmss && location >= 0xA14000 && location <= 0xA14003) {
  		uint32_t offset = location >> 1 & 1;
-@@ -2833,9 +2878,39 @@ static void *tmss_even_write_8(uint32_t address, void *context, uint8_t value)
+@@ -2833,9 +2878,53 @@ static void *tmss_even_write_8(uint32_t address, void *context, uint8_t value)
  	return context;
  }
  
@@ -143,7 +143,17 @@ index 4f41271..b94c5c9 100644
 +	z80_context *context = vcontext;
 +	genesis_context *gen = context->system;
 +	gen->zram[location & 0x1FFF] = value;
-+	mml_probe_log(MML_PROBE_Z80RAM, ((location & 0x7F) << 8) | value, context->Z80_CYCLE);
++	// TWO watched ranges, one event kind. The globals page is reported as its
++	// own 0..7F offset; the 32-byte publication region is reported with bit 7
++	// set, so a reader can tell "the engine's state changed" from "the engine
++	// published a snapshot" without a second event kind and without the two
++	// offset spaces colliding.
++	// `location` arrives with high bits set — the original code only ever
++	// masked it to seven, which is why it worked and why a second range that
++	// tests the address needs the mask made explicit.
++	uint16_t z80addr = location & 0x1FFF;
++	uint8_t off = (z80addr >= 0x1F00) ? (z80addr & 0x7F) : (0x80 | (z80addr & 0x1F));
++	mml_probe_log(MML_PROBE_Z80RAM, (off << 8) | value, context->Z80_CYCLE);
 +	return context;
 +}
 +
@@ -158,19 +168,23 @@ index 4f41271..b94c5c9 100644
 +		// nothing executes there, and nothing may invalidate translated code by
 +		// writing a variable.
 +		{ 0x1F00, 0x1F80,  0xFFFF, .read_8 = z80_read_watched, .write_8 = z80_write_watched},
++		// …and the publication region, where the Z80 puts the snapshot the
++		// 68000 reads. Watched for the same reason and at the same price: the
++		// image under test is the image measured.
++		{ 0x1E40, 0x1E60,  0xFFFF, .read_8 = z80_read_watched, .write_8 = z80_write_watched},
  		{ 0x0000, 0x4000,  0x1FFF, .flags = MMAP_READ | MMAP_WRITE | MMAP_CODE},
  		{ 0x8000, 0x10000, 0x7FFF, .read_8 = z80_read_bank, .write_8 = z80_write_bank},
  		{ 0x4000, 0x6000,  0x0003, .read_8 = z80_read_ym, .write_8 = z80_write_ym},
-@@ -2912,10 +2987,10 @@ static genesis_context *shared_init(uint32_t system_opts, rom_info *rom, uint8_t
+@@ -2912,10 +3001,10 @@ static genesis_context *shared_init(uint32_t system_opts, rom_info *rom, uint8_t
  	gen->psg = malloc(sizeof(psg_context));
  	psg_init(gen->psg, gen->master_clock, MCLKS_PER_PSG);
  
 -	z80_map[0].buffer = gen->zram = calloc(1, Z80_RAM_BYTES);
-+	z80_map[1].buffer = gen->zram = calloc(1, Z80_RAM_BYTES);
++	z80_map[2].buffer = gen->zram = calloc(1, Z80_RAM_BYTES);
  #ifndef NO_Z80
  	z80_options *z_opts = malloc(sizeof(z80_options));
 -	init_z80_opts(z_opts, z80_map, 5, NULL, 0, MCLKS_PER_Z80, 0xFFFF);
-+	init_z80_opts(z_opts, z80_map, 6, NULL, 0, MCLKS_PER_Z80, 0xFFFF);
++	init_z80_opts(z_opts, z80_map, 7, NULL, 0, MCLKS_PER_Z80, 0xFFFF);
  	gen->z80 = init_z80_context(z_opts);
  #ifndef NEW_Z80
  	gen->z80->next_int_pulse = z80_next_int_pulse;

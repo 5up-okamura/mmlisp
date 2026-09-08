@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
 import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
 import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
+import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES } from "./protocol.mjs";
 import { buildCase, FAULTS } from "./case-config.mjs";
 import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
@@ -83,6 +84,13 @@ const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stal
 // decided, so nothing here may take the engine's own RAM as the truth: the
 // correction is reconstructed from the DAC write times, the read times and the
 // STOP/RESUME pairs, against the ladder slots the generator placed.
+// The runtime protocol's own cases: the host takes the bus for real.
+const PROTO_CASES = ["proto P1, live reads only", "proto P1, invalidations only",
+  "proto P1, live and bulk"];
+const PROTO_BOOT = 0x1234;          // the boot generation cases.mjs' host writes
+const LIVE_STOP_MAX = 1500;         // master clocks, R12 §33.1
+// The case whose two grabs deliberately share an observation interval.
+const PROTO_DENSE = ["proto P1, live and bulk"];
 const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
   "2ch corrector, occasional 4B stall", "2ch corrector, counter wrap",
   ...[[1, 20], [2, 60], [8, 140]].map(([b, n]) => `2ch corrector, single ${b}B stall, phase ${n}`),
@@ -111,7 +119,7 @@ if (!argv.includes("--reuse")) {
     "in-contract", "back-to-back", "boundary", "2ch pattern with"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", name,
       "--seconds", String(SECONDS)], { stdio: ["ignore", "ignore", "inherit"] });
-  for (const sel of FAULT ? ["z80 decoder"] : ["z80 decoder", "2ch 15-level decoder", "2ch corrector"])
+  for (const sel of FAULT ? ["z80 decoder"] : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "proto P1"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
       "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
       { stdio: ["ignore", "ignore", "inherit"] });
@@ -128,7 +136,8 @@ const caseOf = (name) => {
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
 for (const name of FAULT ? Z80_DECODER : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
-  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, "hv observer, Z80 reads v+h"])
+  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, ...PROTO_CASES,
+  "hv observer, Z80 reads v+h"])
   expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT, fault: FAULT }));
 
 // A name is not an identity. The output directory accumulates logs from every
@@ -467,7 +476,7 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
   // a write to one of five known addresses in it.
   const stateLo = (built.cfg.ram.glob[0] & 0xff) + 0x10;
   const index = new Map(fields.map((x, k) => [stateLo + x.offset, k]));
-  const all = log.ramWrites.filter((w) => index.has(w.addr))
+  const all = log.ramWrites.filter((w) => w.region === "glob" && index.has(w.addr))
     .map((w) => ({ time: w.time, field: index.get(w.addr), value: w.value }));
   // BOOT WRITES EACH FIELD ONCE, before the first reading, and that is not a
   // record arriving early — it is the initialisation R7 §20.2 B asked for, seen
@@ -749,6 +758,117 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
   }
   const bases = rows.filter((r) => r && r.known === 0xff && r.valid === 0).length;
   if (!bases) failures.push(`"${name}": not one record was a base`);
+}
+
+// ── the runtime protocol, on both CPUs (R12 §33.6 step 2) ────────────────
+// The 68000 really takes the bus here: eight LIVE reads of the published
+// snapshot, which change nothing, then one BULK grab that bumps the phase
+// generation and commits it. What is scored is the protocol's own rules — that
+// a publication is whole before it is selected, that the three counters move the
+// way each is supposed to, and that an invalidation makes the engine drop its
+// difference and re-acquire from the next known reading.
+console.log(FAULT ? "" : `\n── the runtime protocol, on both CPUs ──`);
+for (const name of FAULT ? [] : PROTO_CASES) {
+  const f = need(name, Z80_SECONDS); if (!f) continue;
+  const built = expectedRom.get(name);
+  const L = built.gen.observer.protoLayout;
+  const base = built.cfg.ram.pub[0];
+  const log = readProbe(readFileSync(f));
+  const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
+    .map((e) => ({ h: e.value & 255, time: e.time }));
+  const pub = log.ramWrites.filter((w) => w.region === "pub");
+  if (!pub.length) { failures.push(`"${name}": the core logged no writes to the publication region`); continue; }
+  // REPLAY the writes and take a snapshot at every selector flip, which is what
+  // a reader sees and the only moment a snapshot exists.
+  const mem = new Uint8Array(0x2000);
+  const selOff = L.publishSelect.offset - base;
+  const snaps = [];
+  let sinceFlip = 0, badRuns = 0;
+  for (const w of pub) {
+    mem[base + w.addr] = w.value;
+    if (w.addr !== selOff) { sinceFlip++; continue; }
+    // Nine bytes of one face, then the selector. Anything else is a publication
+    // that did not write what it then pointed at.
+    if (snaps.length && sinceFlip !== SNAPSHOT_BYTES) badRuns++;
+    sinceFlip = 0;
+    snaps.push({ time: w.time, ...readSnapshot(mem, L) });
+  }
+  // The three counters, each with its own rule (§33.2).
+  let obsSteps = 0, idxSteps = 0, bootWrong = 0, phaseBumps = 0, faceRepeats = 0;
+  const perLap = built.cfg.cycleSlots;
+  // The first transition is from the boot state, where the index has not been
+  // advanced yet and the counter has not been decoded yet; everything after it
+  // is the steady state and is what the rules are about.
+  for (let n = 2; n < snaps.length; n++) {
+    const a = snaps[n - 1], b = snaps[n];
+    if (b.bootGeneration !== PROTO_BOOT) bootWrong++;
+    if (((b.observationNumber - a.observationNumber) & 0xffff) !== 1) obsSteps++;
+    if (outputAdvance(a.boundarySampleIndex, b.boundarySampleIndex) !== perLap) idxSteps++;
+    if (genAdvance(a.phaseGeneration, b.phaseGeneration)) phaseBumps++;
+    if (b.select === a.select) faceRepeats++;
+  }
+  console.log(`${name} — ${Z80_SECONDS}s`);
+  console.log(`  ${snaps.length} snapshots published, ${badRuns} written with other than`
+    + ` ${SNAPSHOT_BYTES} bytes behind the selector, ${faceRepeats} that did not change face`);
+  console.log(`  counters: ${obsSteps} observation numbers that did not step by one,`
+    + ` ${idxSteps} output indexes that did not step by ${perLap},`
+    + ` ${bootWrong} snapshots from another run, ${phaseBumps} phase generations bumped`);
+  if (badRuns) failures.push(`"${name}": ${badRuns} publications selected a face they had not filled`);
+  if (faceRepeats) failures.push(`"${name}": ${faceRepeats} publications wrote the face being read`);
+  if (obsSteps) failures.push(`"${name}": ${obsSteps} observation numbers did not step by one`);
+  if (idxSteps) failures.push(`"${name}": ${idxSteps} output indexes did not step by ${perLap}`);
+  if (bootWrong) failures.push(`"${name}": ${bootWrong} snapshots carried a boot generation that is not the host's`);
+  // THE INVALIDATION, seen from the engine's side. A bumped phase generation
+  // has to be followed by a BASE — known set, valid clear — and by no valid
+  // difference in between: that is "drop it and re-acquire", measured.
+  const stateLo = (built.cfg.ram.glob[0] & 0xff) + 0x10;
+  const known = log.ramWrites.filter((w) => w.region === "glob" && w.addr === stateLo);
+  const valid = log.ramWrites.filter((w) => w.region === "glob" && w.addr === stateLo + 1);
+  let reacquired = 0, notReacquired = 0;
+  for (let n = 1; n < snaps.length; n++) {
+    if (!genAdvance(snaps[n - 1].phaseGeneration, snaps[n].phaseGeneration)) continue;
+    // THE INVALIDATION IS AT OR BEFORE THE PUBLICATION THAT CARRIES IT. The
+    // check reads the phase generation before the commit, so a grab landing
+    // between the two gives the engine the old phase and the new commit: it
+    // invalidates on the lap it sees the commit and publishes the new phase on
+    // the lap after. So the window is the two laps ending at this publication —
+    // four VALID writes, since the check and the decode each make one — and at
+    // least one of them has to be a base.
+    const window = valid.filter((w) => w.time < snaps[n].time).slice(-4);
+    if (window.some((w) => w.value === 0)) reacquired++;
+    else if (window.length) notReacquired++;
+  }
+  console.log(`  invalidation: ${phaseBumps} declared, ${reacquired} re-acquired from the next`
+    + ` known reading, ${notReacquired} that carried a difference across one`);
+  if (notReacquired)
+    failures.push(`"${name}": ${notReacquired} invalidations were followed by a valid difference`);
+  if (name.includes("invalidation") && !phaseBumps)
+    failures.push(`"${name}": no invalidation happened at all`);
+  // THE LIVE CONTRACT (§33.1): what the bus was actually held for, between one
+  // H observation and the next, measured rather than inferred from byte counts.
+  {
+    let worst = 0, over = 0, longest = 0;
+    for (let n = 1; n < reads.length; n++) {
+      const { stopped } = stoppedWithin(reads[n - 1].time, reads[n].time, log.stops);
+      worst = Math.max(worst, stopped);
+      if (stopped > LIVE_STOP_MAX) over++;
+    }
+    for (const [a, b] of log.stops) longest = Math.max(longest, b - a);
+    console.log(`  bus: ${log.stops.length} stops, longest ${longest} master`
+      + ` (${(longest / Z80_DIV).toFixed(1)} Z80 cyc); worst total between two H observations`
+      + ` ${worst} master, ${over} over the ${LIVE_STOP_MAX} master live limit`);
+    // THE SUM IS THE RULE, NOT THE PIECE (§33.1). Each piece is inside the
+    // limit on its own; the dense case exists to show that a host taking the
+    // bus TWICE inside one observation interval breaks it anyway — 1,452 plus
+    // 669 is 2,121 — so it is reported rather than graded. Spacing the grabs is
+    // the host's job and the number above is what it has to be spaced against.
+    if (over && !PROTO_DENSE.includes(name))
+      failures.push(`"${name}": ${over} observation intervals held the bus for more`
+        + ` than ${LIVE_STOP_MAX} master`);
+    if (over && PROTO_DENSE.includes(name))
+      console.log(`  …reported, not graded: this case grabs twice inside one observation`
+        + ` interval on purpose, which is what makes the SUM the binding rule`);
+  }
 }
 
 console.log(FAULT ? "" : `\n── H alone, either side of half a line ──`);

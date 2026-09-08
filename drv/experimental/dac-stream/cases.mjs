@@ -99,6 +99,25 @@ export const CASES = [
   { name: "z80 decoder, 4B stall", cfg: {}, wave: sine(256,120,1),
     observer: { reads: ["h"], decode: true, publish: true, load: "divu",
       bootNops: 260, stall: { every: 3000, bytes: 4 } }, informational: true },
+  // ── THE RUNTIME PROTOCOL, as real code on both CPUs (R12 §33.6 step 2) ──
+  // P1, five slots a lap and one job to a slot: read, check the host's control
+  // block, decode, publish the snapshot, advance the output index. The 68000
+  // takes the bus for real — eight LIVE reads of the published snapshot, which
+  // change nothing, then one BULK invalidation that bumps the phase generation
+  // and commits it. The engine has to drop its difference on the invalidation
+  // and re-acquire from the next known reading, and nothing else.
+  // Three runs, because the two pieces cost different amounts and a run that
+  // does both reports one range covering the pair (§33.4).
+  { name: "proto P1, live reads only", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], decode: true, load: "divu",
+      proto: { every: 3000, skipBulk: true } }, informational: true },
+  { name: "proto P1, invalidations only", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], decode: true, load: "divu",
+      proto: { every: 3000, between: 0, skipLive: true } }, informational: true },
+  { name: "proto P1, live and bulk", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], decode: true, load: "divu",
+      proto: { every: 3000, between: 8 } }, informational: true },
+
   // ── the decoder INSIDE the complete 2ch engine (R8 §23.5 step 3) ────────
   // The 15-level profile, the mixer, every reserved feature's cycles, CSM's
   // register traffic, and the phase decode cut into 21 pieces placed among

@@ -55,7 +55,10 @@ class M68k {
   btstZeroA(a) { this.w(0x0810 | a); this.w(0); }     // btst #0,(An), byte
   tstBA(a) { this.w(0x4a10 | a); }                    // tst.b (An)
   moveBimmA(imm,a) { this.w(0x10bc | (a << 9)); this.w(imm & 255); }
+  moveBDtoA(d, a) { this.w(0x1080 | (a << 9) | d); }                    // move.b Dn,(An)
   moveBpost() { this.w(0x12d8); }                                       // move.b (a0)+,(a1)+
+  moveWpost() { this.w(0x32d8); }                                       // move.w (a0)+,(a1)+
+  moveLpost() { this.w(0x22d8); }                                       // move.l (a0)+,(a1)+
   moveLimm(imm, addr) { this.w(0x23fc); this.l(imm); this.l(addr); }   // move.l #i,(abs).l
   moveLimmD(imm, d) { this.w(0x203c | (d << 9)); this.l(imm); }        // move.l #i,Dn
   moveq(imm, d) { this.w(0x7000 | (d << 9) | (imm & 0xff)); }          // moveq #i,Dn
@@ -118,7 +121,8 @@ class M68k {
 const LOAD_DIVIDEND = 0x00010000;         // / 7 = $2492, a quotient that fits
 const OVERFLOW_DIVIDEND = 0x12345678;     // / 7 overflows: the early exit
 export const LOADS = ["divu", "short", "masked", "none"];
-export const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
+export const PROTO_WORK = 0xff0100;   // where the host parks what it read
+const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
   divuBig: 0x16, masked: 0x18, n: 32, nops: 256 };
 
 // The payload copy, the commit, and the four ways it is deliberately broken.
@@ -205,11 +209,17 @@ function emitLoad(m, kind, n = 0) {
  */
 export function buildRom(image, samples = null, grab = null) {
   if (image.length > 0x2000) throw new Error("Z80 upload exceeds RAM");
-  if (grab && !grab.disabled && (!Number.isInteger(grab.bytes) || grab.bytes < 1 || grab.bytes > 256))
+  // A protocol case carries no `bytes`: what it moves is the layout, not a
+  // block copy, and its sizes come from protocol.mjs.
+  if (grab && !grab.disabled && !grab.proto
+    && (!Number.isInteger(grab.bytes) || grab.bytes < 1 || grab.bytes > 256))
     throw new Error("transfer size must be 1..256 bytes");
   if (grab?.every !== undefined && (!Number.isInteger(grab.every) || grab.every < 0 || grab.every > 65535))
     throw new Error("DBRA delay must be 0..65535");
   const load = loadKind(grab?.load);
+  // WHERE A TRANSFER LANDS: the command queue's page in the 2ch map, and the
+  // same address in P1, where nothing else claims it.
+  const target = grab?.target ?? 0x1d00;
   const marks = !!grab?.marks;
   FAULT_APPLIED.clear();
   LOAD_READY = false;
@@ -252,6 +262,24 @@ export function buildRom(image, samples = null, grab = null) {
   if (grab?.cooperative || grab?.hint) {
     m.moveBimm(0, COOP.notify);
     m.moveBimm(0, Z80_BASE + COOP.commit);
+  }
+  // THE BOOT ORIGIN (R12 §33.2). The control block is written while the bus is
+  // still held and the Z80 has not started, so the very first thing the engine
+  // does is take its identity from it: which run this is, which phase stretch it
+  // starts in, an empty queue, and the commit it has already seen. The host
+  // sends no timed command until it reads a snapshot carrying this same boot
+  // generation back.
+  if (grab?.proto) {
+    const P = grab.proto;
+    // Little endian, like every multi-byte field in the layout.
+    m.moveBimm(P.bootGeneration & 0xff, Z80_BASE + P.bootGen);
+    m.moveBimm((P.bootGeneration >> 8) & 0xff, Z80_BASE + P.bootGen + 1);
+    m.moveBimm(0, Z80_BASE + P.phaseGen);
+    m.moveBimm(0, Z80_BASE + P.queueHead);
+    m.moveBimm(0, Z80_BASE + P.commit);        // …the commit LAST, as always
+    m.moveq(0, 2);                             // the phase generation, counted here
+    m.moveq(0, 3);                             // …and the commit
+    m.moveWimmD(P.between, 5);                 // live reads between invalidations
   }
   // The Z80 begins when the bus is released, so nops placed BEFORE the release
   // move the engine's phase against the VDP's counters — which is how the
@@ -419,7 +447,7 @@ export function buildRom(image, samples = null, grab = null) {
       // grab logs what it BELIEVED next to where it LANDED.
       if (grab.debugPayload) { m.moveLDabs(0, RAM + 32); m.leaAbs(RAM + 32, 0); }
       else m.leaAbs(SAMPLES, 0);
-      m.leaAbs(Z80_BASE + 0x1d00, 1);
+      m.leaAbs(Z80_BASE + target, 1);
       if (marks) m.mark(MARKS.request);
       m.moveWDtoA(3, 2);                   // request
       m.label("hgrant2"); m.btstZeroA(2); m.bne("hgrant2");
@@ -438,7 +466,7 @@ export function buildRom(image, samples = null, grab = null) {
       if (grab.hv) m.markHV();             // see the computed handler's note
       if (marks) m.mark(MARKS.entry);
       m.leaAbs(SAMPLES, 0);
-      m.leaAbs(Z80_BASE + 0x1d00, 1);
+      m.leaAbs(Z80_BASE + target, 1);
       if (marks) m.mark(MARKS.request);
       m.moveWDtoA(3, 2);                  // request
       m.label("hgrant"); m.btstZeroA(2); m.bne("hgrant");
@@ -477,7 +505,7 @@ export function buildRom(image, samples = null, grab = null) {
       m.dbra(1, "wait1");
     }
     m.leaAbs(SAMPLES, 0);
-    m.leaAbs(Z80_BASE + 0x1d00, 1);
+    m.leaAbs(Z80_BASE + target, 1);
     if (grab.cooperative) {
       // Never grab merely because an old ready flag is high. Both loops run
       // in a bounded, IRQ-masked polling section; lateness before it skips a window.
@@ -505,6 +533,59 @@ export function buildRom(image, samples = null, grab = null) {
       for (let i = 0; i < (grab.fault === "drop-copy" ? grab.bytes - 1 : grab.bytes); i++) m.moveBpost();
       m.moveWDtoA(4, 2);
     }
+  } else if (grab?.proto && !grab.disabled) {
+    // ── THE HOST SIDE OF THE RUNTIME PROTOCOL (R12 §33.3) ────────────────
+    // Two pieces, and they are deliberately different: a LIVE transfer that
+    // reads the published snapshot and changes nothing, and a BULK one that
+    // declares the phase it just disturbed to be over. The Z80 tells them apart
+    // by one byte — the commit — and by nothing else.
+    //
+    // d2 is the phase generation, d3 the commit, both counted in their own low
+    // byte so `$ff -> $00` happens the way §33.3 asks it to be exercised rather
+    // than being avoided.
+    const P = grab.proto;
+    m.moveWimmD(grab.every, 1);
+    m.label("wait1");
+    m.dbra(1, "wait1");
+    // LIVE: take the bus, read the selector and the face it names, let go. It
+    // writes nothing, so the phase it interrupts is still the phase it was.
+    // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
+    // STOP -> RESUME of the live read and of the invalidation are different
+    // numbers, and a run that does both reports one range covering the two.
+    if (!P.skipLive) {
+    m.moveWimm(0x0100, Z80_BUSREQ);
+    m.label("grant");
+    m.moveWabsD(Z80_BUSREQ, 0);
+    m.andiW(0x0100, 0);
+    m.bne("grant");
+    // ONE STRAIGHT RUN: the selector, its pad and both faces, as long moves.
+    // Which face is live is decided afterwards, in the host's own RAM, with the
+    // bus already released — the reader's rule is unchanged, the reading is just
+    // not what costs the Z80 anything.
+    m.leaAbs(Z80_BASE + P.readRun, 0);
+    m.leaAbs(PROTO_WORK, 1);
+    for (let i = 0; i < P.readLongs; i++) m.moveLpost();
+    for (let i = 0; i < P.readWords; i++) m.moveWpost();
+    m.moveWimm(0x0000, Z80_BUSREQ);            // release
+    }
+    if (!P.skipBulk) m.dbra(5, "idle"); else m.bra("idle");
+    // BULK / INVALIDATE: the fields first, the commit strictly LAST, and the
+    // whole thing inside one grab so the Z80 cannot see it half done.
+    if (!P.skipBulk) {
+    m.moveWimmD(P.between, 5);
+    m.addqL(1, 2);
+    m.addqL(1, 3);
+    m.moveWimm(0x0100, Z80_BUSREQ);
+    m.label("grant2");
+    m.moveWabsD(Z80_BUSREQ, 0);
+    m.andiW(0x0100, 0);
+    m.bne("grant2");
+    m.leaAbs(Z80_BASE + P.phaseGen, 1);
+    m.moveBDtoA(2, 1);                         // the new phase generation
+    m.leaAbs(Z80_BASE + P.commit, 1);
+    m.moveBDtoA(3, 1);                         // …and the commit, LAST
+    m.moveWimm(0x0000, Z80_BUSREQ);
+    }
   } else if (grab && !grab.disabled && !grab.hint) {
     // R1 step 3 stage 3, and §3.6's decisive question: the 68000 takes the Z80
     // bus, copies `bytes` into Z80 RAM, and releases it. This is a REAL
@@ -524,7 +605,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.leaAbs(SAMPLES, 0);                 // any ROM bytes will do
     // Into the command queue's page, which is exactly what a real transfer
     // would target and is the only region big enough that nothing reads.
-    m.leaAbs(Z80_BASE + 0x1d00, 1);
+    m.leaAbs(Z80_BASE + target, 1);
     m.moveWimmD(grab.bytes - 1, 2);
     m.label("xfer");
     m.moveBpost();

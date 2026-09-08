@@ -73,7 +73,14 @@ export const RAM_P1 = {
   size: 0x2000,
   code: [0x0000, 0x1a00],   // boot + the generated output loop
   wave: [0x1c00, 0x1d00],   // 256 B, page aligned — P1's known waveform
-  phase: [0x1e00, 0x1f00],  // 256 B, page aligned — the calibrated phase table
+  // THE PUBLICATION REGION IS AT THE SAME ADDRESS IN BOTH PROFILES (R12 §33.2).
+  // Not because the layout needs it — `protocolLayout(base)` takes the base
+  // from the map — but because the instrument watches one range, and a P1
+  // prototype whose snapshot lands somewhere the watch does not cover cannot be
+  // scored against the P2 one. The phase table moved to $1B00 to make room; it
+  // only ever needed to be page aligned.
+  pub: [0x1e40, 0x1e60],    // 32 B — the runtime protocol (protocol.mjs)
+  phase: [0x1b00, 0x1c00],  // 256 B, page aligned — the calibrated phase table
                             //   the observer's decoder indexes with the raw H
                             //   reading (observer.mjs). DECLARED HERE so the
                             //   overlap check below can see it: it used to be a

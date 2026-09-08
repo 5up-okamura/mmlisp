@@ -877,8 +877,8 @@ assert.equal(backwards[2].sync, "lost");
 
   // It fits the region the map already reserves, with the spare R12 §33.2 asks
   // to leave undefined, and it does not run into the next one.
-  assert.equal(PROTOCOL_BYTES, 24);
-  assert.equal(PROTOCOL_SPARE, 8);
+  assert.equal(PROTOCOL_BYTES, 27);
+  assert.equal(PROTOCOL_SPARE, 5);
   assert.equal(cfg.ram.pub[1] - cfg.ram.pub[0], PUB_REGION_BYTES);
   assert.equal(L.size, PROTOCOL_BYTES);
   assert.ok(BASE + L.size <= cfg.ram.pub[1], "the protocol overruns the publication region");

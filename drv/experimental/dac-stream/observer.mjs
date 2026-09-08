@@ -22,6 +22,8 @@ import { fileURLToPath } from "node:url";
 import { GLOB } from "./config.mjs";
 import { generate } from "./gen-stream.mjs";
 import { op } from "./schedule.mjs";
+import { protoMap, protoCheckOps, protoPublishOps, protoAdvanceOps,
+  protoBootLines, protoCost } from "./proto-blocks.mjs";
 
 // The calibrated tables, as a fixed artifact. The Z80 carries the quantised
 // byte table; nothing here re-derives it (R6 §17.2 C).
@@ -226,7 +228,14 @@ export const PUBLISH_FAULTS = {
 };
 
 export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, every = 1,
-  decode = false, publish = false, publishFault = null } = {}) {
+  decode = false, publish = false, publishFault = null,
+  // THE RUNTIME PROTOCOL (R12 §33.6 step 2), as real code rather than as a
+  // reference: the boot handshake, the output sample index, the published
+  // snapshot and the host's invalidation, spread one job to a slot across the
+  // five-slot P1 lap. It is a different SHAPE from the diagnostic publish
+  // above — that one exists so the instrument can read the decoder's state, and
+  // this one is the engine talking to the 68000.
+  proto = false } = {}) {
   if (!reads.every((r) => r in PORTS)) throw new Error(`reads must be from ${Object.keys(PORTS)}`);
   if (!Number.isInteger(every) || every < 1) throw new Error("every must be a positive group count");
   // Thinning only works if the generated loop actually covers `every` groups.
@@ -246,7 +255,15 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
   if (decode && every !== 1)
     throw new Error("the decoder has one advance per read: a thinned schedule needs the missed-observation contract first");
   if (publish && !decode) throw new Error("there is nothing to publish without the decoder");
+  if (proto && !decode) throw new Error("the protocol publishes an observation number: it needs the decoder");
+  if (proto && cfg.groupSlots < 5)
+    throw new Error("the protocol wants five slots a lap: read, check, decode, publish, advance");
   const map = decode ? decodeMap(cfg) : null;
+  const pm = proto ? protoMap(cfg) : null;
+  // THE PUBLISHED OBSERVATION NUMBER IS THE DECODER'S COUNTER, at the same two
+  // addresses, so publishing it costs nothing and the two cannot drift apart.
+  if (proto && pm.stage.observationNumber !== pm.decode + STATE.countLo)
+    throw new Error("the stage's observation number is not the decoder's own counter");
   // WHERE THE RECORD IS PUBLISHED. Not in the slot that decoded it: five bytes
   // out through the bank window is 145 cycles, and the read slot is the fullest
   // one in the group. Each field goes to its OWN address in the window, so the
@@ -278,6 +295,25 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
       ];
       return publishFault === "double-field" && f === "known" ? [...one, ...one] : one;
     });
+    // ONE JOB TO A SLOT (R12 §33.3). The reading is taken in the read slot and
+    // stashed; the host's control block is checked in the next one, BEFORE the
+    // decode is finalised in the one after; the snapshot is published after
+    // that; and the output index moves on in the last. The order is the
+    // protocol, so it is laid out rather than argued for.
+    if (proto) {
+      const rel = (inGroup - at + cfg.groupSlots) % cfg.groupSlots;
+      const read = reads.map((r) => op(`ld   a,($${PORTS[r].toString(16)})`, VDP.readCycles,
+        { clobbers: ["a"], what: `HV ${r.toUpperCase()} read` }));
+      if (rel === 0) { observed++; return [...read,
+        op(`ld   ($${store_at.toString(16)}),a`, 13, { what: "keep the reading" })]; }
+      if (rel === 1) return [...protoCheckOps(pm, STATE), ...publishHere];
+      if (rel === 2) return [
+        op(`ld   a,($${store_at.toString(16)})`, 13, { what: "the reading, from the stash" }),
+        ...decodeOps(quantStep(cfg, i), { ...map, tag: `_${i}` }),
+        ...publishHere];
+      if (rel === 3) return [...protoPublishOps(pm, `_${i}`, { useShadow: !cfg.voices }), ...publishHere];
+      return [...protoAdvanceOps(pm, cfg.cycleSlots), ...publishHere];
+    }
     if (inGroup !== at) return publishHere;
     observed++;
     return [
@@ -287,7 +323,7 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
       ...(decode ? decodeOps(quantStep(cfg, i), { ...map, tag: `_${i}` }) : []),
       ...publishHere,
     ];
-  }, decode ? decodeInitOps(map) : null);
+  }, [...(decode ? decodeInitOps(map) : []), ...(proto ? protoBootLines(pm) : [])]);
   // WHERE THE READS ACTUALLY FALL, from the laid-out slots rather than from a
   // measurement (R5 §15.2 C). A read sits after whatever work its slot already
   // carried, and that work is not the same in every slot — a block-edge slot
@@ -316,17 +352,31 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
   const spacingCycles = at_cycles.map((t, i) =>
     i === 0 ? t + loopCycles - at_cycles.at(-1) : t - at_cycles[i - 1]);
   // The table travels in the image, page-aligned past the waveform.
+  // BEFORE THE WAVEFORM, not after the image. The table's page sits below the
+  // waveform's now that the publication region has taken $1E40 in both profiles,
+  // and a `ds` fill only ever runs forwards: appending it at the end asked the
+  // assembler to fill backwards and produced an image larger than the RAM.
   if (decode) {
-    const lines = [gen.text.trimEnd(), "",
+    const lines = [
       `        ds   $${map.table.toString(16)}-$, 0     ; the calibrated phase table`];
     const b = PHASE_TABLE.quantised.bytes;
     for (let i = 0; i < 256; i += 16) lines.push(`        db   ${b.slice(i, i + 16).join(",")}`);
-    gen.text = lines.join("\n") + "\n";
+    const waveFill = new RegExp(`^\\s*ds\\s+\\$${cfg.ram.wave[0].toString(16)}-\\$.*$`, "m");
+    if (map.table > cfg.ram.wave[0]) {
+      gen.text = [gen.text.trimEnd(), "", ...lines].join("\n") + "\n";
+    } else {
+      if (!waveFill.test(gen.text))
+        throw new Error("the generated image has no fill up to the waveform to put the table before");
+      gen.text = gen.text.replace(waveFill, (m2) => `${lines.join("\n")}\n${m2}`);
+    }
   }
   const decodeCycles = decode
     ? decodeOps(0, map).reduce((t, o) => t + o.cycles, 0) : 0;
   return { ...gen,
-    observer: { reads, store, at, every, decode, publish, observedSlots: observed,
+    observer: { reads, store, at, every, decode, publish, proto, observedSlots: observed,
+      protoBase: pm ? pm.L.base : null,
+      protoLayout: pm ? pm.L : null,
+      protoCost: pm ? protoCost(pm, STATE, cfg.cycleSlots) : null,
       decodeCycles, decodeState: map?.state, decodeTable: map?.table,
       publishSlots: publish ? pubSlot : null, publishFault,
       publishCycles: publish ? PUBLISH.length * 29 : 0,

@@ -26,11 +26,15 @@
 import { GLOB } from "./config.mjs";
 
 /** One published snapshot: what the Z80 tells the 68000 about where it is. */
+// THE OBSERVATION NUMBER COMES FIRST, and that is a placement decision rather
+// than a taste: the stage the Z80 publishes from is laid over the decoder's own
+// state so that these two bytes ARE the decoder's 16-bit counter. Copying them
+// into the stage cost 52 cycles a lap and overran the decode's slot by seven.
 export const SNAPSHOT = [
+  ["observationNumber", 2, "the H observation count — the decoder's own counter, not a copy"],
   ["bootGeneration", 2, "the run this snapshot belongs to — the 68000's number, echoed"],
   ["phaseGeneration", 1, "the phase stretch it belongs to"],
   ["boundarySampleIndex", 4, "the output index AT the defined boundary DAC write"],
-  ["observationNumber", 2, "the H observation count, so a reader can tell two apart"],
 ];
 
 /** The 68000's control block, which the Z80 reads and never writes. */
@@ -47,6 +51,17 @@ export const CONTROL_BYTES = sizeOf(CONTROL);        // 5
 export const FACES = 2;
 
 /**
+ * THE STRIDE IS TEN, NOT NINE, and the extra byte is not padding for its own
+ * sake (R12 §33.4). The 68000 reads a face with the bus held, and every byte it
+ * reads is Z80 time it is holding: nine `move.b (a0)+,(a1)+` measured
+ * 105..123 Z80 cycles of STOP -> RESUME, which is 1,583..1,851 master and OVER
+ * the 1,500 the live-transfer contract allows. With both faces on an even
+ * boundary the same nine bytes are two `move.l` and one `move.w`, and the
+ * selector's own toggle stays one `xor`.
+ */
+export const SNAPSHOT_STRIDE = 10;
+
+/**
  * The layout, built once from the field lists.
  *
  * Offsets are RELATIVE to the publication region's base, so the same object
@@ -58,16 +73,24 @@ export function protocolLayout(base = 0) {
     for (const [name, n] of fields) { out[name] = { offset: base + o, bytes: n }; o += n; }
     return { fields: out, end: o };
   };
+  // THE SELECTOR COMES FIRST and the faces follow it, so that the selector and
+  // both faces are ONE contiguous run the 68000 can take in a straight line of
+  // long moves — no read of the selector, no branch on it, no second `lea`.
+  // Choosing the face is done afterwards, in the host's own RAM, with the bus
+  // already released. That is what brought the live read's STOP -> RESUME from
+  // 1,851 master to inside the 1,500 the contract allows (R12 §33.4).
+  const publishSelect = { offset: base, bytes: 1 };
+  let o = 2;                                   // …one byte behind it, for alignment
   const faces = [];
-  let o = 0;
-  for (let f = 0; f < FACES; f++) { const r = at(SNAPSHOT, o); faces.push(r.fields); o = r.end; }
-  const publishSelect = { offset: base + o, bytes: 1 }; o += 1;
+  for (let f = 0; f < FACES; f++) { faces.push(at(SNAPSHOT, o).fields); o += SNAPSHOT_STRIDE; }
   const host = at(CONTROL, o); o = host.end;
-  return { base, faces, publishSelect, control: host.fields, size: o };
+  return { base, faces, publishSelect, control: host.fields, size: o,
+    // What the host reads in one go: the selector, its pad, and both faces.
+    readRun: { offset: base, bytes: 2 + FACES * SNAPSHOT_STRIDE } };
 }
 
 export const PUB_REGION_BYTES = 32;
-export const PROTOCOL_BYTES = FACES * SNAPSHOT_BYTES + 1 + CONTROL_BYTES;   // 24
+export const PROTOCOL_BYTES = FACES * SNAPSHOT_STRIDE + 2 + CONTROL_BYTES;  // 27
 export const PROTOCOL_SPARE = PUB_REGION_BYTES - PROTOCOL_BYTES;            // 8
 
 // ── reading and writing, as ordered byte operations ───────────────────────
@@ -288,23 +311,42 @@ export function protocolHeader(base) {
   return lines.join("\n");
 }
 
-/** The globals the Z80 keeps for the protocol, alongside the decoder's state. */
+/**
+ * The globals the Z80 keeps for the protocol, alongside the decoder's state.
+ *
+ * THE STAGE IS THE SNAPSHOT, byte for byte and in the same order. Publishing is
+ * then a nine-byte copy through one pointer rather than nine self-modified
+ * store operands, and the field order exists once — in SNAPSHOT — instead of
+ * twice.
+ */
 export const PROTO_GLOB = {
-  outputIndex: 0x20,   // u32 the output sample index, little endian
-  bootGen: 0x24,       // u16 the run the Z80 was told it is
-  phaseGen: 0x26,      // u8  the phase stretch it is in
-  lastCommit: 0x27,    // u8  the host commit it has already acted on
-  queueTail: 0x28,     // u8  the consumer's cursor — the Z80 owns it
+  // $14 is GLOB.decode + 4, which is the decoder's countLo. The stage starts
+  // THERE so that its first two bytes are the observation counter itself; the
+  // rest follows in SNAPSHOT order. `protoMap()` checks the coincidence rather
+  // than trusting this comment.
+  stage: 0x14,         // 9 B, laid out as SNAPSHOT
+  lastCommit: 0x1d,    // u8  the host commit the Z80 has already acted on
+  queueTail: 0x1e,     // u8  the consumer's cursor — the Z80 owns it
 };
-export const PROTO_GLOB_END = 0x29;
-if (PROTO_GLOB.outputIndex < GLOB.decode + 12)
-  throw new Error("the protocol's globals overlap the phase decoder's state");
+export const PROTO_GLOB_END = 0x1f;
+
+/** Where each snapshot field sits inside the stage. */
+export const STAGE = (() => {
+  const out = {}; let o = PROTO_GLOB.stage;
+  for (const [name, n] of SNAPSHOT) { out[name] = o; o += n; }
+  if (o !== PROTO_GLOB.lastCommit) throw new Error("the stage is not the snapshot");
+  return out;
+})();
+
+// It DOES overlap the decoder's state, deliberately and by exactly two bytes.
+if (PROTO_GLOB.stage !== GLOB.decode + 4)
+  throw new Error("the stage must start on the decoder's countLo");
 
 // ── the command queue (§33.4) ─────────────────────────────────────────────
 // Single producer, single consumer. The 68000 owns `queueHead` and the payload;
 // the Z80 owns `queueTail` and never reads past the head. The wire record is
 // `{size:u8, type:u8, applyAtLow:u16, payload...}` and `size` counts the whole
-// record, so a consumer can step without understanding a type it does not know.
+// record, so a consumer can step past a type it does not know.
 
 export const CMD_HEADER = 4;
 

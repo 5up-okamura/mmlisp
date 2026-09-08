@@ -18,6 +18,7 @@ import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
 import { generateObserver, PUBLISH_FAULTS } from "./observer.mjs";
 import { generateSplit } from "./decode-split.mjs";
+import { protocolLayout, SNAPSHOT_BYTES } from "./protocol.mjs";
 
 export const FAULTS = {
   "drop-copy": "the 68000 transfers one byte fewer than it announced",
@@ -37,6 +38,30 @@ export const FAULTS = {
  * @param opts  {compensation, captureOffset, fault} — the CLI's overrides
  * @returns {case, cfg, gen, coop} with the case fully resolved
  */
+/**
+ * The addresses the 68000's ROM needs, taken from the ONE layout (R12 §33.2).
+ * They are OFFSETS from the Z80's base, because that is how the host addresses
+ * Z80 RAM, and nothing here re-derives one.
+ */
+function protoRomFields(cfg, p) {
+  const L = protocolLayout(cfg.ram.pub[0]);
+  return { bootGeneration: p.bootGeneration ?? 0x1234,
+    between: p.between ?? 8,
+    skipLive: !!p.skipLive, skipBulk: !!p.skipBulk,
+    snapshotBytes: SNAPSHOT_BYTES,
+    select: L.publishSelect.offset,
+    readRun: L.readRun.offset,
+    readLongs: L.readRun.bytes >> 2,
+    readWords: (L.readRun.bytes & 3) >> 1,
+    face0: L.faces[0].observationNumber.offset,
+    face1: L.faces[1].observationNumber.offset,
+    stride: 10,
+    bootGen: L.control.bootGeneration.offset,
+    phaseGen: L.control.phaseGeneration.offset,
+    queueHead: L.control.queueHead.offset,
+    commit: L.control.hostCommit.offset };
+}
+
 export function resolveCase(c0, { compensation = null, captureOffset = null, fault = null } = {}) {
   if (fault && !FAULTS[fault]) throw new Error(`unknown fault ${fault}; one of ${Object.keys(FAULTS)}`);
   const cfg = buildConfig(c0.cfg);
@@ -56,6 +81,13 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
             bootNops: c0.split.bootNops, ...c0.split.stall }
         : { vdp: true, disabled: true, load: c0.split.load,
             bootNops: c0.split.bootNops })
+    // A PROTOCOL case has a display, a busy 68000 AND a 68000 that takes the
+    // bus on purpose: half its grabs read the published snapshot and change
+    // nothing, the other half declare the phase over. It is the only observer
+    // shape whose host writes into Z80 RAM at all (R12 §33.3).
+    : c0.observer?.proto ? { vdp: true, load: c0.observer.load,
+        bootNops: c0.observer.bootNops, every: c0.observer.proto.every,
+        proto: protoRomFields(cfg, c0.observer.proto) }
     : c0.observer ? (c0.observer.stall
         ? { vdp: true, optimized: true, load: c0.observer.load,
             bootNops: c0.observer.bootNops, publish: c0.observer.publish,
@@ -99,7 +131,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     gen = r.gen;
     gen.split = r;
   } else {
-    gen = observer ? generateObserver(cfg, observer)
+    gen = observer ? generateObserver(cfg, { ...observer, proto: !!observer.proto })
       : coop ? generateCooperative(cfg, coop) : generate(cfg);
   }
   return { case: c, cfg, gen, coop, grab };
