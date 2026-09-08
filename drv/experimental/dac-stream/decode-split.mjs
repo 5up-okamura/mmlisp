@@ -27,12 +27,16 @@
 import { op } from "./schedule.mjs";
 import { generate, DEAD_DEFAULT } from "./gen-stream.mjs";
 import { PHASE_TABLE, decodeMap } from "./observer.mjs";
+import { CORR, CORR_SLOTS, correctorBlocks, correctorLive, ladderOps } from "./corrector.mjs";
 
 // The split needs one more byte than the single-slot version: the phase itself
 // has to live in RAM, because C cannot hold it across the whole sequence.
 export const SPLIT_STATE = { known: 0, valid: 1, expect: 2, delta: 3,
-  countLo: 4, countHi: 5, phase: 6 };
+  countLo: 4, countHi: 5, phase: 6,
+  // …and the corrector's own, when there is one (corrector.mjs).
+  debt: 7, q: 8, rem: 9 };
 export const SPLIT_STATE_SIZE = 7;
+export const SPLIT_STATE_SIZE_CORR = 10;
 
 /**
  * The record, IN THE ORDER THE PIECES WRITE IT. Nothing is published over the
@@ -65,7 +69,8 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
     b("known", [op(`ld   a,(${S("phase")})`, 13), op(`cp   ${unknown}`, 7),
                 op("sbc  a,a", 4), op("ld   b,a", 4, { what: "B = known" })]),
     b("valid", [op(`ld   a,(${S("known")})`, 13, { what: "…and the last reading" }),
-                op("and  b", 4), op(`ld   (${S("valid")}),a`, 13)]),
+                op("and  b", 4), op("ld   c,a", 4)]),
+    b("valid store", [op("ld   a,c", 4), op(`ld   (${S("valid")}),a`, 13)]),
     b("keep known", [op("ld   a,b", 4), op(`ld   (${S("known")}),a`, 13)]),
     b("expect", [op(`ld   a,(${S("expect")})`, 13), op("ld   b,a", 4)]),
     b("difference", [op(`ld   a,(${S("phase")})`, 13), op("sub  b", 4),
@@ -75,14 +80,15 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
     b("sign mask", [op("ld   a,b", 4), op(`add  a,${256 - half}`, 7), op("sbc  a,a", 4),
                     op(`and  ${units}`, 7), op("ld   c,a", 4)]),
     b("sign", [op("ld   a,b", 4), op("sub  c", 4), op("ld   b,a", 4)]),
-    b("publish delta", [op(`ld   a,(${S("valid")})`, 13), op("and  b", 4),
-                        op(`ld   (${S("delta")}),a`, 13)]),
+    b("publish delta", [op(`ld   a,(${S("valid")})`, 13), op("and  b", 4), op("ld   c,a", 4)]),
+    b("publish delta store", [op("ld   a,c", 4), op(`ld   (${S("delta")}),a`, 13)]),
     b("count lo", [op(`ld   a,(${S("countLo")})`, 13), op("add  a,1", 7), op("ld   b,a", 4)]),
     b("count store", [op("ld   a,b", 4), op(`ld   (${S("countLo")}),a`, 13)]),
     b("count wrap", [op(`ld   a,(${S("countLo")})`, 13), op("sub  1", 7),
                      op("sbc  a,a", 4, { what: "$ff exactly when the low byte wrapped" }), op("ld   b,a", 4)]),
-    b("count hi", [op(`ld   a,(${S("countHi")})`, 13), op("sub  b", 4),
-                   op(`ld   (${S("countHi")}),a`, 13, { what: "COUNT" })]),
+    b("count hi", [op(`ld   a,(${S("countHi")})`, 13), op("sub  b", 4), op("ld   c,a", 4)]),
+    b("count hi store", [op("ld   a,c", 4),
+                         op(`ld   (${S("countHi")}),a`, 13, { what: "COUNT" })]),
     b("advance carry", [op(`ld   a,(${S("phase")})`, 13), op(`add  a,${step}`, 7),
                         op("sbc  a,a", 4), op("ld   c,a", 4)]),
     b("advance sum", [op(`ld   a,(${S("phase")})`, 13), op(`add  a,${step}`, 7), op("ld   b,a", 4)]),
@@ -90,8 +96,8 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
     b("advance mask", [op("ld   a,b", 4), op(`add  a,${256 - units}`, 7), op("sbc  a,a", 4),
                        op(`and  ${units}`, 7), op("ld   c,a", 4)]),
     b("advance", [op("ld   a,b", 4), op("sub  c", 4), op("ld   b,a", 4)]),
-    b("publish expect", [op(`ld   a,(${S("known")})`, 13), op("and  b", 4),
-                         op(`ld   (${S("expect")}),a`, 13)]),
+    b("publish expect", [op(`ld   a,(${S("known")})`, 13), op("and  b", 4), op("ld   c,a", 4)]),
+    b("publish expect store", [op("ld   a,c", 4), op(`ld   (${S("expect")}),a`, 13)]),
   ];
 }
 
@@ -115,24 +121,28 @@ export const SPLIT_LIVE = [
   [],           // read           -> memory
   [],           // lookup         -> memory
   ["b"],        // known          B = the known mask
-  ["b"],        // valid          B still holds it
+  ["b", "c"],   // valid          B still holds it, C the value to store
+  ["b"],        // valid store
   [],           // keep known
   ["b"],        // expect         B = the expected phase
   ["b", "c"],   // difference     B = raw difference, C = its borrow mask
   ["b"],        // reduce         B = reduced into 0..170
   ["b", "c"],   // sign mask      C = the correction
   ["b"],        // sign           B = the signed displacement
-  [],           // publish delta
+  ["c"],        // publish delta
+  [],           // publish delta store
   ["b"],        // count lo
   [],           // count store
   ["b"],        // count wrap
-  [],           // count hi
+  ["c"],        // count hi
+  [],           // count hi store
   ["c"],        // advance carry  C = the carry mask
   ["b", "c"],   // advance sum    B = the sum, C still the carry mask
   ["b"],        // advance fold
   ["b", "c"],   // advance mask
   ["b"],        // advance
-  [],           // publish expect
+  ["c"],        // publish expect
+  [],           // publish expect store
 ];
 
 /**
@@ -202,22 +212,81 @@ export function placeSplit(blocks, slots, { target = 0.796, from = 0 } = {}) {
  * estimated.
  */
 export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = null,
-  stackFill = false } = {}) {
+  stackFill = false, correct = false, maxQuanta = null } = {}) {
   const map = decodeMap(cfg);
   const state = map.state;
-  if (state + SPLIT_STATE_SIZE > cfg.ram.glob[1])
+  const stateSize = correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
+  if (state + stateSize > cfg.ram.glob[1])
     throw new Error("the split decoder's state does not fit in the globals");
   const advance = step ?? quantStepOf(cfg);
-  const blocks = splitBlocks({ table: map.table, state, step: advance });
+  const decode = splitBlocks({ table: map.table, state, step: advance });
+  // THE CORRECTOR GOES IN THE CHAIN, after DELTA and VALID have settled and
+  // before the phase the next expectation is built from is read (R9 §26.4).
+  // AFTER the counter, not straight after the displacement: both positions
+  // satisfy "DELTA and VALID have settled, the next EXPECT's basis has not",
+  // and the earlier one puts 42 pieces in front of the counter's 28-cycle ones,
+  // which then have no slot left to go in.
+  const AFTER = decode.findIndex((b) => b.name === "count hi store") + 1;
+  const S = (n) => `$${(state + SPLIT_STATE[n]).toString(16)}`;
+  const tags = correct
+    ? [["a0", "a1", "a2", "a3"], ["b0", "b1"], ["c0"]] : null;
+  const qopt = maxQuanta === null ? {} : { maxQuanta };
+  const corr = correct ? correctorBlocks(S, tags, qopt) : [];
+  const blocks = correct
+    ? [...decode.slice(0, AFTER), ...corr, ...decode.slice(AFTER)] : decode;
+  const live = correct
+    ? [...SPLIT_LIVE.slice(0, AFTER), ...correctorLive(tags, qopt), ...SPLIT_LIVE.slice(AFTER)]
+    : SPLIT_LIVE;
   const base = generate(cfg);
   const walk = placeSplit(blocks, base.slots, { target, from });
-  if (walk.failed) return { ok: false, stage: "place", blocks, walk, map };
-  const preserve = preserveBC(walk.placed);
-  const bySlot = new Map();
+  if (walk.failed) return { ok: false, stage: "place", blocks, walk, map, correct };
+  const preserve = preserveBC(walk.placed, live);
+  // THE LADDERS. They are the only thing that is not part of the chain: each is
+  // a `jp` (work) into a run of nops (pad), and the byte that says where to
+  // enter is written by the corrector during the PREVIOUS loop. So they are
+  // placed BEFORE the first write, and one loop's seven ladders all carry one
+  // observation's decision.
+  const bySlotPre = new Map();
   for (const p of walk.placed) {
-    if (!bySlot.has(p.slot)) bySlot.set(p.slot, []);
-    bySlot.get(p.slot).push(p.block);
+    if (!bySlotPre.has(p.slot)) bySlotPre.set(p.slot, []);
+    bySlotPre.get(p.slot).push(p.block);
   }
+  const bySlot = bySlotPre;
+  let ladders = [];
+  if (correct) {
+    const firstWrite = walk.placed.find((p) => p.block.name.startsWith("corr write"))?.slot ?? 0;
+    const head = base.slots.map((s, i) => ({ i, head: target * s.cycles - s.row.work }));
+    for (const p of walk.placed) head[p.slot].head -= p.block.cycles;
+    // THE LADDER'S NOPS ARE PAD, and its `jp` is the only work it adds. The
+    // slot's length is unchanged on the neutral path — the ladder replaces pad
+    // that was already there — so what the 83.9% ceiling has to hold is the
+    // `jp`. What R9 §26.4 asks for on top is checked separately below: after
+    // the ladder there must still be 16 cycles of pad, so the shortened path is
+    // real slack and not an overrun waiting to happen.
+    const need = 10;
+    const room = head.filter((h) => h.i < firstWrite && h.head >= need)
+      .sort((x, y) => y.head - x.head).slice(0, CORR_SLOTS);
+    if (room.length < CORR_SLOTS)
+      return { ok: false, stage: "ladders", blocks, walk, map, correct,
+        need, found: room.length, want: CORR_SLOTS, firstWrite,
+        headroom: head.map((h) => +h.head.toFixed(1)) };
+    ladders = tags.flat().map((tag, k) => ({ tag, slot: room[k].i }));
+    ladders.sort((x, y) => x.slot - y.slot);
+    // …and the pad each one leaves behind, on the shortened path.
+    const LADDER = 10 + CORR.ladderNops * 4;              // jp + the whole run
+    const NEUTRAL = 10 + CORR.neutral * 4;
+    for (const l of ladders) {
+      const slot = base.slots[l.slot];
+      const used = slot.row.work + [...(bySlotPre.get(l.slot) ?? [])].reduce((t, b) => t + b.cycles, 0);
+      const rest = slot.cycles - used - NEUTRAL;
+      l.restPad = rest;
+      l.strictPct = +(100 * (used + NEUTRAL) / slot.cycles).toFixed(1);
+      if (rest < 16)
+        return { ok: false, stage: "ladder pad", blocks, walk, map, correct, ladders,
+          slot: l.slot, rest, want: 16 };
+    }
+  }
+  const ladderAt = new Map(ladders.map((l) => [l.slot, l.tag]));
   // A slot carrying a value in BC loses `ld b,k`/`djnz $`, which is four bytes
   // for any wait. `stackFill` gives it `push af`/`pop af` instead — 21 cycles
   // in two bytes, balanced, touching only A, F and two bytes of stack.
@@ -228,15 +297,22 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   });
   const boot = [
     `ld   hl,$${state.toString(16)}`,
-    `ld   b,${SPLIT_STATE_SIZE}`,
+    `ld   b,${stateSize}`,
     "splitinit:",
     "ld   (hl),0",
     "inc  l",
     "djnz splitinit",
+    // The ladders start NEUTRAL, so the first loop — before any observation has
+    // been made — corrects nothing.
+    ...(correct ? [`ld   a,${CORR.neutral}`,
+      ...tags.flat().map((t) => `ld   (corr_${t}+1),a`)] : []),
   ];
   let gen;
   try {
-    gen = generate(cfg, (i) => (bySlot.get(i) ?? []).flatMap((b) => b.ops), boot, slotDead);
+    gen = generate(cfg, (i) => [
+      ...(bySlot.get(i) ?? []).flatMap((b) => b.ops),
+      ...(ladderAt.has(i) ? ladderOps(ladderAt.get(i)) : []),
+    ], boot, slotDead);
   } catch (e) {
     // A slot whose residual is 1, 2, 3, 5, 6, 9 or 13 cycles has no exact fill
     // without `ld b,k`, and that is a real refusal, not a rounding.
@@ -295,7 +371,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   };
   if (gen.observer.spacingMaster[0] !== loopMaster(cfg))
     throw new Error("the laid-out loop and the configured one disagree");
-  return { ok: true, gen, blocks, walk, preserve, map, base,
+  return { ok: true, gen, blocks, walk, preserve, map, base, correct, ladders,
     slotsPreserving: preserve.size, advance };
 }
 
