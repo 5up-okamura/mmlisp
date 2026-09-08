@@ -1,8 +1,10 @@
 # DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
 
-**Current review (2026-09-08): R9 §26.2 and §26.3 are DONE. §26.6 step 3 is
-answered and the answer is NEGATIVE — the corrector does not fit the budget it
-was specified for, and the next move is the designer's.** The polling
+**Current review (2026-09-08): R9 §26.2/§26.3 DONE; §26.6 step 3 answered and
+NEGATIVE. The corrector's arithmetic is verified against the reference and its
+four faults refused; only the PLACEMENT fails, and closing it needs the per-slot
+ceiling, the mean ceiling AND the code region all moved. Waiting on the
+designer (§27.3, §28.3, §28.5).** The polling
 NOP window is the accepted P1 regression. Computed timing has not passed; fix
 the overflowing DIVU load and the HBlank transfer-gate bypass, then specify
 observable phase/expiry/recovery before further implementation. A published
@@ -673,3 +675,27 @@ One accounting question is left for the designer: the numbers above count the
 ladder's NEUTRAL PATH (jp + 4 nops = 26) as work, per §26.4's wording. Counting
 only the `jp` and calling the nops pad puts those seven slots back inside 83.9%
 with 52-56 cycles of pad left over.
+
+### The corrector, finished as far as it can go without a decision (§28)
+
+Two spec gaps found by building it properly: the split's clamps SATURATED a
+debt past the capability and carried it for ever where R9 says it must expire;
+and the fold that takes the applied correction off the next expectation's phase
+tested bit 7 for the sign — `phase - 3q` is -84..254, so 130 is a good positive
+phase that also has bit 7 set and was being reduced to 45. The sign of 3q is
+what disambiguates (|3q| <= 84), and above 170 means +171 when 3q >= 0 and -171
+when it is negative.
+
+Verified: 103 observations, 0 disagreements, one cost a piece, in both shapes;
+the reference settles under 40 master in <= 5 observations. Four faults refused
+(sign inverted, quantum twice, fold dropped, saturate instead of expire).
+
+**The 64-cycle variant is not a fallback**: the declared contract reaches 1,500
+master = 19 quanta and it expires at 16, i.e. INSIDE the contract.
+
+**Why the placement fails, precisely**: the chain is 75 pieces, the loop is 80
+slots, and every granularity has more slots than pieces (16 pieces need >= 24
+cycles, 33 slots offer it) — but the chain is a dependency ORDER and the walk
+cannot go back, so using a big slot early strands a 24-cycle piece later. It
+first places at a per-slot ceiling of 84.5%, and then the code region overflows
+by 120 B. All three limits have to move, not one. RAM is not the constraint.
