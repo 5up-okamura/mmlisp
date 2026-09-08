@@ -20,6 +20,8 @@ import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITI
 import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
 import { generate } from "./gen-stream.mjs";
 import { generateSplit } from "./decode-split.mjs";
+import { CORR, MAX_QUANTA, CORR_FAULTS, correctorBlocks, ladderOps, refCorrect,
+  splitQuanta, INITIAL_CORR } from "./corrector.mjs";
 import { Machine } from "./machine.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
@@ -596,6 +598,117 @@ assert.equal(backwards[2].sync, "lost");
   assert.throws(() => buildConfig({ levels: 15 }), /no P1 form/);
 }
 
+// ── the bounded corrector's arithmetic (R9 §26.4, §26.5) ──────────────────
+// The placement does not close (see the report), but the arithmetic is a
+// separate question and it is settled here: the pieces are assembled and run
+// SEPARATELY, with A and the flags clobbered between them, against the same
+// reference the design is written in. Four deliberate faults have to be
+// refused, including the one R9 §26.4 names — forgetting to take the applied
+// correction off the phase the next expectation is built from, which makes the
+// engine see its own correction as a displacement of the opposite sign.
+{
+  const ST = 0x1f10;
+  const S = (n) => `$${(ST + SPLIT_STATE[n]).toString(16)}`;
+  const TAGS = [["a0", "a1", "a2", "a3"], ["b0", "b1"], ["c0"]];
+
+  const build = (maxQuanta, fault) => {
+    const blocks = correctorBlocks(S, TAGS, { maxQuanta, fault });
+    const src = ["        org $0000"];
+    blocks.forEach((blk, i) => {
+      src.push(`blk${i}:`);
+      for (const o of blk.ops) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
+      src.push("        halt");
+    });
+    for (const t of TAGS.flat())
+      for (const o of ladderOps(t)) for (const l of o.asm) src.push(l.endsWith(":") ? l : `        ${l}`);
+    const d = mkdtempSync(join(tmpdir(), "dac-corr-"));
+    try { const f = join(d, "c.z80"); writeFileSync(f, src.join("\n") + "\n"); return { blocks, asm: assemble(f) }; }
+    finally { rmSync(d, { recursive: true, force: true }); }
+  };
+
+  const score = (maxQuanta, fault) => {
+    const { blocks, asm } = build(maxQuanta, fault);
+    const ram = new Uint8Array(0x2000);
+    ram.set(asm.bytes.subarray(0, Math.min(asm.bytes.length, ram.length)));
+    const cpu = new Z80Cpu({ read: (a) => ram[a] ?? 0xff,
+      write: (a, v) => { if (a < ram.length) ram[a] = v; } });
+    const costs = blocks.map(() => new Set());
+    const opAddr = Object.fromEntries(TAGS.flat().map((t) => [t, asm.symbols.get(`corr_${t}`) + 1]));
+    const run = () => blocks.forEach((blk, i) => {
+      cpu.a = (i * 53 + 7) & 0xff; cpu.f = (i * 31) & 0xff;      // nothing survives
+      cpu.pc = asm.symbols.get(`blk${i}`); cpu.halted = false;
+      let c = 0; while (!cpu.halted && c < 4000) c += cpu.step();
+      costs[i].add(c - 4);
+    });
+    const groupValue = (g) => ram[opAddr[TAGS[g][0]]] - CORR.neutral;
+    const sameGroup = (g) => TAGS[g].every((t) => ram[opAddr[t]] === ram[opAddr[TAGS[g][0]]]);
+
+    for (let k = 0; k <= SPLIT_STATE.rem; k++) ram[ST + k] = 0;
+    for (const t of TAGS.flat()) ram[opAddr[t]] = CORR.neutral;
+    const cases = [];
+    for (let d = -40; d <= 40; d++) cases.push({ valid: 0xff, delta: d });
+    cases.push({ valid: 0, delta: 0 });                         // unknown: the debt is dropped
+    for (const d of [75, 0, 0, 0, 0, -75, 0, 0, 0, 0]) cases.push({ valid: 0xff, delta: d });
+    for (const d of [113, 0, 114, 0, 120, 0, -120, 0, 60, 0, 0]) cases.push({ valid: 0xff, delta: d });
+
+    let ref = { ...INITIAL_CORR }, bad = 0, n = 0, expired = 0;
+    for (const c of cases) {
+      ram[ST + SPLIT_STATE.valid] = c.valid;
+      ram[ST + SPLIT_STATE.delta] = c.delta & 0xff;
+      ram[ST + SPLIT_STATE.phase] = 100;
+      ram[ST + SPLIT_STATE.known] = 0xff;
+      ref = refCorrect(c.valid ? { debt: ref.debt } : { debt: 0 }, c.valid ? c.delta : 0, { maxQuanta });
+      run();
+      if (ref.expired) expired++;
+      n++;
+      const got = { debt: (ram[ST + SPLIT_STATE.debt] << 24) >> 24,
+        a: groupValue(0), b: groupValue(1), c: groupValue(2),
+        known: ram[ST + SPLIT_STATE.known], phase: ram[ST + SPLIT_STATE.phase] };
+      const want = { debt: ref.debt, a: ref.a, b: ref.b, c: ref.c,
+        known: ref.expired ? 0 : 0xff,
+        phase: ((100 - 3 * ref.applied) % 171 + 171) % 171 };
+      if (JSON.stringify(got) !== JSON.stringify(want) || !sameGroup(0) || !sameGroup(1)) bad++;
+    }
+    const oneCost = blocks.every((blk, i) => costs[i].size === 1 && [...costs[i]][0] === blk.cycles);
+    return { n, bad, expired, oneCost, blocks };
+  };
+
+  // The reference first: it has to converge, and it has to expire rather than
+  // saturate past its capability.
+  {
+    let worst = 0, slowest = 0;
+    for (let d0 = -112; d0 <= 112; d0++) {
+      let st = refCorrect({ debt: 0 }, d0), k = 0;
+      if (st.expired) continue;
+      while (st.applied !== 0 && k < 40) { st = refCorrect(st, 0); k++; if (st.expired) break; }
+      if (!st.expired) { worst = Math.max(worst, Math.abs(st.debt)); slowest = Math.max(slowest, k + 1); }
+    }
+    assert.ok(worst * 20 < 60, `the corrector settles at ${worst} units = ${worst * 20} master`);
+    assert.ok(slowest <= 6, `it takes ${slowest} observations`);
+    assert.ok(refCorrect({ debt: 0 }, 120).expired, "past the capability it must expire");
+    assert.ok(!refCorrect({ debt: 0 }, 75).expired, "…and inside the contract it must not");
+    // Every quantum in range is reachable — one shared value could not do that.
+    for (let q = -MAX_QUANTA; q <= MAX_QUANTA; q++)
+      assert.equal(splitQuanta(q).applied, q, `${q} quanta is not reachable`);
+  }
+
+  for (const maxQuanta of [MAX_QUANTA, 16]) {
+    const r = score(maxQuanta, null);
+    assert.equal(r.bad, 0, `the corrector at ${maxQuanta} quanta disagreed on ${r.bad} of ${r.n}`);
+    assert.ok(r.oneCost, `a corrector piece at ${maxQuanta} quanta has more than one cost`);
+    assert.ok(r.expired > 0, "the expiry path was never taken");
+  }
+  // …and it refuses each way of getting it wrong.
+  for (const fault of Object.keys(CORR_FAULTS)) {
+    const r = score(MAX_QUANTA, fault);
+    assert.ok(r.bad > 0, `the fault "${fault}" was accepted`);
+  }
+  // The 16-quantum shape is not a fallback: the declared contract reaches 1,500
+  // master = 75 units, which asks for 19 quanta, and it expires at 16.
+  assert.ok(refCorrect({ debt: 0 }, 67, { maxQuanta: 16 }).expired,
+    "the narrow shape must expire inside the declared contract — that is why it is not a fallback");
+}
+
 // ── the split decode in the REAL loop (R8 §23.3) ──────────────────────────
 // Clobbering A and the flags between the pieces was not enough. What runs
 // between them on the machine is the mixer, the RESERVED padding standing in
@@ -980,6 +1093,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
   + " the stop a window contains and how its boundaries are defined,"
+  + " the corrector's arithmetic, expiry, convergence and four refusals,"
   + " the split decode's agreement with it, where that fails to place, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");

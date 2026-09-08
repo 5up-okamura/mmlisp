@@ -43,6 +43,18 @@ export const CORR = {
 export const CORR_SLOTS = CORR.groups.reduce((a, b) => a + b, 0);
 export const MAX_QUANTA = CORR.groups.reduce((t, g) => t + g * CORR.maxQuantaPerSlot, 0);
 
+/**
+ * Ways to break the corrector on purpose (R9 §26.5-5). Each one is a plausible
+ * implementation, not a scribble: they are the mistakes the arithmetic invites,
+ * and the checks have to fail on every one of them or they are not checks.
+ */
+export const CORR_FAULTS = {
+  "corr-sign": "the ladders are driven the wrong way round, so a correction adds to the debt",
+  "corr-double": "each quantum is applied twice — the debt is repaid once and the schedule moved twice",
+  "corr-no-fold": "the correction is not taken off the phase the next expectation is built from",
+  "corr-saturate": "a debt past the capability is clamped and carried instead of expiring",
+};
+
 /** The reference: what the corrector decides, in JavaScript. */
 export const splitQuanta = (q) => {
   const clamp = (x) => Math.max(-CORR.maxQuantaPerSlot, Math.min(CORR.maxQuantaPerSlot, x));
@@ -69,11 +81,14 @@ export const splitQuanta = (q) => {
  * three units off the debt, so the 1-2 unit remainder is KEPT rather than
  * rounded into a correction pulse every time.
  */
-export function refCorrect(prev, delta, { expire = false } = {}) {
+export function refCorrect(prev, delta, { expire = false, maxQuanta = MAX_QUANTA } = {}) {
   if (expire) return { debt: 0, q: 0, a: 0, b: 0, c: 0, applied: 0, expired: true };
   const raw = (prev.debt + delta) << 24 >> 24;          // signed byte
   const q = (raw + 1) >> 2;
-  if (Math.abs(q) > MAX_QUANTA)
+  // Beyond the capability the debt is DISCARDED and the acquisition is dropped
+  // — not saturated and carried, which would cap the correction quietly and
+  // leave the engine claiming a phase it is not holding (R9 §26.4).
+  if (Math.abs(q) > maxQuanta)
     return { debt: 0, q: 0, a: 0, b: 0, c: 0, applied: 0, expired: true };
   const { a, b, c, applied } = splitQuanta(q);
   return { debt: (raw - CORR.unitsPerQuantum * applied) << 24 >> 24,
@@ -111,7 +126,41 @@ export function ladderOps(tag) {
  * @param S      (name) => the asm address of that state byte
  * @param tags   the ladder tags, grouped [[4],[2],[1]]
  */
-export function correctorBlocks(S, tags, { maxQuanta = MAX_QUANTA } = {}) {
+export function correctorBlocks(S, tags, { maxQuanta = MAX_QUANTA, fault = null } = {}) {
+  if (fault && !CORR_FAULTS[fault]) throw new Error(`unknown corrector fault ${fault}`);
+  const blocks = correctorShape(S, tags, maxQuanta);
+  if (!fault) return blocks;
+  // `corr-no-fold` DELETES the phase fold, which is the one R9 §26.4 names: an
+  // implementation that forgets it sees its own correction come back as a
+  // displacement of the opposite sign at the next observation.
+  if (fault === "corr-no-fold")
+    return blocks.filter((b) => !b.name.startsWith("corr phase"));
+  return blocks.map((b) => {
+    if (fault === "corr-sign" && b.name === "corr a bias")
+      return patch(b, "add  a,4", ["neg", "add  a,4"], 4);
+    if (fault === "corr-double" && b.name === "corr 3q")
+      return patch(b, "add  a,c", ["add  a,c"], 0, true);
+    if (fault === "corr-saturate" && b.name === "corr live mask")
+      return patch(b, "sbc  a,a", ["ld   a,255"], 3);
+    return b;
+  });
+}
+
+/** Replace one instruction inside a block, keeping the block's shape honest. */
+function patch(b, find, repl, extra, append = false) {
+  const ops = [];
+  for (const o of b.ops) {
+    if (o.asm[0].trim().startsWith(find)) {
+      if (append) { ops.push(o); ops.push(op(repl[0], 4)); continue; }
+      for (const r of repl) ops.push(op(r, r.startsWith("neg") ? 8 : o.cycles));
+      continue;
+    }
+    ops.push(o);
+  }
+  return { ...b, ops, cycles: ops.reduce((t, o) => t + o.cycles, 0) };
+}
+
+function correctorShape(S, tags, maxQuanta) {
   // WHY THERE ARE TWO SHAPES. With |q| <= 16 the split needs no clamp at all:
   // q >> 2 is already inside -4..4, and the remainder q & 3 is 0..3, so b and c
   // fall out of two masks. Above that, a and b both have to be saturated, which
@@ -122,6 +171,38 @@ export function correctorBlocks(S, tags, { maxQuanta = MAX_QUANTA } = {}) {
   return correctorBlocksWide(S, tags);
 }
 
+/**
+ * The expiry, which is NOT a saturation (R9 §26.4: "補正能力を超えた債務は飽和して
+ * 継続せず失効にする").
+ *
+ * Clamping the split would quietly cap the correction and carry the rest of the
+ * debt forward for ever, which is a slow silent lie about the phase. Instead a
+ * debt the corrector cannot repay throws the debt away, leaves the ladders
+ * neutral, and clears KNOWN — so the next reading is a base, not a difference,
+ * and the engine is openly at a NEW relative phase rather than pretending to
+ * return to the old one.
+ *
+ * The test is one unsigned range check: q + max is 0..2max exactly when q is
+ * -max..max.
+ */
+function expiryBlocks(S, b, max) {
+  return [
+    b("corr live", [op("ld   a,b", 4), op(`add  a,${max}`, 7), op("ld   c,a", 4)]),
+    b("corr live mask", [op("ld   a,c", 4), op(`cp   ${2 * max + 1}`, 7),
+      op("sbc  a,a", 4), op("ld   c,a", 4)]),
+    b("corr gate q", [op("ld   a,b", 4), op("and  c", 4), op("ld   b,a", 4)]),
+    b("corr q keep", [op("ld   a,b", 4), op(`ld   (${S("q")}),a`, 13)]),
+    b("corr gate debt", [op(`ld   a,(${S("debt")})`, 13), op("and  c", 4), op("ld   b,a", 4)]),
+    b("corr gate debt keep", [op("ld   a,b", 4), op(`ld   (${S("debt")}),a`, 13)]),
+    b("corr gate known", [op(`ld   a,(${S("known")})`, 13), op("and  c", 4), op("ld   b,a", 4)]),
+    b("corr gate known keep", [op("ld   a,b", 4), op(`ld   (${S("known")}),a`, 13)]),
+    b("corr reload q", [op(`ld   a,(${S("q")})`, 13), op("ld   b,a", 4)]),
+  ];
+}
+
+const EXPIRY_LIVE = [["b", "c"], ["b", "c"], ["b", "c"], ["c"], ["b", "c"], ["c"],
+  ["b", "c"], [], ["b"]];
+
 function correctorBlocksNarrow(S, tags) {
   const b = (name, ops) => ({ name, ops, cycles: ops.reduce((t, o) => t + o.cycles, 0) });
   return [
@@ -131,7 +212,7 @@ function correctorBlocksNarrow(S, tags) {
     b("corr keep", [op("ld   a,b", 4), op(`ld   (${S("debt")}),a`, 13)]),
     b("corr q hi", [op("ld   a,b", 4), op("inc  a", 4), op("sra  a", 8), op("ld   b,a", 4)]),
     b("corr q", [op("ld   a,b", 4), op("sra  a", 8), op("ld   b,a", 4)]),
-    b("corr q keep", [op("ld   a,b", 4), op(`ld   (${S("q")}),a`, 13)]),
+    ...expiryBlocks(S, b, 16),
     b("corr a shift", [op("ld   a,b", 4), op("sra  a", 8), op("sra  a", 8), op("ld   c,a", 4)]),
     b("corr a bias", [op("ld   a,c", 4), op("add  a,4", 7), op("ld   b,a", 4)]),
     ...tags[0].map((t, i) => b(`corr write a${i}`,
@@ -148,11 +229,34 @@ function correctorBlocksNarrow(S, tags) {
     b("corr 3q", [op("ld   a,c", 4), op("add  a,c", 4), op("add  a,c", 4), op("ld   c,a", 4)]),
     b("corr repay", [op(`ld   a,(${S("debt")})`, 13), op("sub  c", 4), op("ld   b,a", 4)]),
     b("corr repay keep", [op("ld   a,b", 4), op(`ld   (${S("debt")}),a`, 13)]),
+    ...phaseFold(S, b),
+  ];
+}
+
+/**
+ * Take the correction off the phase the next expectation is built from.
+ *
+ * The subtlety, which cost a round: `phase - 3q` is -84..254 and a BYTE cannot
+ * tell those apart. 130 is a perfectly good positive phase and also has bit 7
+ * set, so testing the sign bit reduced it as if it were negative and turned it
+ * into 45. What disambiguates it is the sign of 3q, which is unambiguous
+ * because |3q| <= 84:
+ *
+ *   3q >= 0  ->  the result is -84..170, so a byte above 170 is negative: +171
+ *   3q <  0  ->  the result is 0..254,  so a byte above 170 is over the line: -171
+ *
+ * Both cases are "byte > 170"; only the direction differs, and -171 is +85 in
+ * eight bits. So the correction is a mask AND a selector, and no branch.
+ */
+function phaseFold(S, b) {
+  return [
     b("corr phase", [op(`ld   a,(${S("phase")})`, 13), op("sub  c", 4), op("ld   b,a", 4)]),
-    // |3q| <= 48 and the phase is 0..170, so phase - 3q is -48..170: ONE
-    // correction, not two.
-    b("corr phase neg", [op("ld   a,b", 4), op("add  a,a", 4), op("sbc  a,a", 4),
-      op("and  171", 7), op("ld   c,a", 4)]),
+    b("corr fold sign", [op("ld   a,c", 4), op("add  a,a", 4), op("sbc  a,a", 4),
+      op("and  254", 7), op("ld   c,a", 4)]),
+    b("corr fold pick", [op("ld   a,c", 4), op("xor  171", 7), op(`ld   (${S("rem")}),a`, 13)]),
+    b("corr fold need", [op("ld   a,b", 4), op("sub  171", 7), op("sbc  a,a", 4),
+      op("cpl", 4), op("ld   c,a", 4)]),
+    b("corr fold mask", [op(`ld   a,(${S("rem")})`, 13), op("and  c", 4), op("ld   c,a", 4)]),
     b("corr phase keep", [op("ld   a,b", 4), op("add  a,c", 4), op(`ld   (${S("phase")}),a`, 13)]),
   ];
 }
@@ -179,7 +283,7 @@ function correctorBlocksWide(S, tags) {
     // units — 40 master — where dividing costs far more than that is worth.
     b("corr q hi", [op("ld   a,b", 4), op("inc  a", 4), op("sra  a", 8), op("ld   b,a", 4)]),
     b("corr q", [op("ld   a,b", 4), op("sra  a", 8), op("ld   b,a", 4)]),
-    b("corr q keep", [op("ld   a,b", 4), op(`ld   (${S("q")}),a`, 13)]),
+    ...expiryBlocks(S, b, MAX_QUANTA),
     // a = clamp(q >> 2, -4, 4), carried as the ladder operand a+4 in 0..8.
     b("corr a shift", [op("ld   a,b", 4), op("sra  a", 8), op("sra  a", 8), op("ld   c,a", 4)]),
     b("corr a bias", [op("ld   a,c", 4), op("add  a,4", 7), op("ld   c,a", 4)]),
@@ -218,13 +322,7 @@ function correctorBlocksWide(S, tags) {
     // from. Without this the correction the engine itself applied comes back as
     // a displacement of the opposite sign at the next observation and the loop
     // chases its own tail (R9 §26.4).
-    b("corr phase", [op(`ld   a,(${S("phase")})`, 13), op("sub  c", 4), op("ld   b,a", 4)]),
-    b("corr phase neg", [op("ld   a,b", 4), op("add  a,a", 4), op("sbc  a,a", 4),
-      op("and  171", 7), op("ld   c,a", 4)]),
-    b("corr phase add", [op("ld   a,b", 4), op("add  a,c", 4), op("ld   b,a", 4)]),
-    b("corr phase over", [op("ld   a,b", 4), op("sub  171", 7), op("ld   c,a", 4)]),
-    b("corr phase excess", maxZero("c")),
-    b("corr phase keep", [op("ld   a,b", 4), op("sub  c", 4), op(`ld   (${S("phase")}),a`, 13)]),
+    ...phaseFold(S, b),
   ];
 }
 
@@ -232,7 +330,8 @@ function correctorBlocksWide(S, tags) {
 export function correctorLive(tags, { maxQuanta = MAX_QUANTA } = {}) {
   if (maxQuanta <= 16) {
     const L = [["c"], ["b", "c"], ["b"], []];                    // valid..keep
-    L.push(["b"], ["b"], ["b"]);                                  // q
+    L.push(["b"], ["b"]);                                         // q hi, q
+    L.push(...EXPIRY_LIVE);
     L.push(["b", "c"], ["b"]);                                    // a shift, a bias
     for (const _ of tags[0]) L.push(["b"]);
     L.push(["c"], ["b", "c"], ["b", "c"]);                        // rem, b bit, b bias
@@ -240,7 +339,7 @@ export function correctorLive(tags, { maxQuanta = MAX_QUANTA } = {}) {
     L.push(["b"]);                                                // c bias (c is dead now)
     for (const _ of tags[2]) L.push([]);
     L.push(["c"], ["c"], ["b", "c"], ["c"]);                      // 3q lo..repay keep
-    L.push(["b", "c"], ["b", "c"], []);                           // phase
+    L.push(["b", "c"], ["b", "c"], ["b"], ["b", "c"], ["b", "c"], []);   // the phase fold
     return L;
   }
   return correctorLiveWide(tags);
@@ -250,7 +349,8 @@ function correctorLiveWide(tags) {
   const L = [];
   const push = (n, v) => { for (let i = 0; i < n; i++) L.push(v); };
   L.push(["c"], ["b", "c"], ["b"], []);              // valid, debt, add, keep
-  L.push(["b"], ["b"], ["b"]);                        // q hi, q, q keep
+  L.push(["b"], ["b"]);                               // q hi, q
+  L.push(...EXPIRY_LIVE);
   L.push(["b", "c"], ["b", "c"], ["b"], ["b", "c"], ["b", "c"], ["b"]);   // a
   push(tags[0].length, ["b"]);                        // writes a
   L.push(["c"], ["c"], ["c"], []);                    // 4a, r part, r, r keep
@@ -259,6 +359,6 @@ function correctorLiveWide(tags) {
   L.push(["b"], ["b"], ["b"]);                        // 2b, c part, c
   push(tags[2].length, ["b"]);                        // writes c
   L.push(["c"], ["c"], ["b", "c"], ["c"]);            // 3q lo, 3q, repay, repay keep
-  L.push(["b", "c"], ["b", "c"], ["b"], ["b", "c"], ["b", "c"], []);      // phase
+  L.push(["b", "c"], ["b", "c"], ["b"], ["b", "c"], ["b", "c"], []);      // the phase fold
   return L;
 }
