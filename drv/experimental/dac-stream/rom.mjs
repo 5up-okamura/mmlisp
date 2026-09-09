@@ -33,6 +33,10 @@ const YM_ADDR0 = 0xa04000, YM_DATA0 = 0xa04001;
 const MARK = 0xa130f1, MARKW = 0xa130f2;
 export const MARKS = { entry: 1, request: 2, released: 3, skipped: 4, missed: 5,
   loadTick: 6, calBegin: 0x10, calEnd: 0x11,
+  // The access-width witness (R20 §48.3): one stamp per snapshot the host read
+  // back, saying whether the three constants behind the observation number came
+  // back as themselves or as a duplicate of the byte before them.
+  widthOk: 0x21, widthBad: 0x22,
   // An exception. Every unused vector goes here, the mark makes it visible to
   // the gate, and the halt stops the machine from stacking frames until it
   // walks off the end of RAM. The previous vector target was the trailing
@@ -41,69 +45,135 @@ export const MARKS = { entry: 1, request: 2, released: 3, skipped: 4, missed: 5,
   // $DFFFFE.
   fault: 0x7f };
 
+// ── THE 8-BIT Z80 BUS, AS A RULE AND NOT A MEMORY (R20 §48.3) ─────────────
+// $A00000..$A0FFFF is reached through an 8-bit bus: a word or long access
+// returns the byte at the EVEN address duplicated into both halves. R12 §33.4
+// replaced nine `move.b` with one run of long moves and R15 §39.2 kept it, and
+// nothing failed for four rounds because the transfer was TIMED and never read
+// back — its 890..1,144 master is withdrawn, it is not a value any executable
+// transfer can have.
+//
+// So the rule lives in the emitter, where it cannot be forgotten: an absolute
+// access inside the window must be byte-sized, and inside a `z80Xfer` scope no
+// wider access through an address register may be emitted at all. $A11100 is
+// the bus-request port and not RAM, so word access to it stays legal.
+const Z80_RAM_LO = 0xa00000, Z80_RAM_HI = 0xa0ffff;
+
 /** A two-pass emitter: labels are patched after the layout is known. */
 class M68k {
-  constructor(org) { this.org = org; this.b = []; this.fix = []; this.lab = new Map(); }
+  constructor(org) { this.org = org; this.b = []; this.fix = []; this.lab = new Map();
+    // Every memory access this emitter encodes, so the width rule can be
+    // CHECKED over a finished rom and not only enforced while writing one
+    // (R20 §48.3 step 1). `port` is $A11100, which is not RAM.
+    this.touch = [];
+    // Cycle accounting, off unless a caller asks for it (R20 §48.5): the host's
+    // transfer period is GENERATED from what its own code costs, so the cost
+    // has to come from the instructions actually emitted rather than from a
+    // constant that drifts the first time one of them changes.
+    this.cost = null;
+    // Inside a Z80 transfer, only byte access to Z80 RAM may be emitted.
+    this.byteOnly = false; }
   get pc() { return this.org + this.b.length; }
   w(v) { this.b.push((v >> 8) & 0xff, v & 0xff); }
   l(v) { this.w((v >>> 16) & 0xffff); this.w(v & 0xffff); }
   label(n) { this.lab.set(n, this.pc); }
-  // ── the instructions this needs, with their encodings ────────────
+  /** Charge `c` cycles to the path being measured. */
+  n(c) { if (this.cost !== null) this.cost += c; return this; }
+  /** Refund an arm of a branch that the measured path does not execute. */
+  costDrop(c) { if (this.cost !== null) this.cost -= c; return this; }
+  /** Emit `fn` and return what it costs, in 68000 cycles. */
+  measure(fn) {
+    const outer = this.cost; this.cost = 0;
+    fn();
+    const got = this.cost;
+    this.cost = outer === null ? null : outer + got;
+    return got;
+  }
+  /** An absolute operand, refused if it is Z80 RAM reached wider than a byte. */
+  a(addr, size) {
+    this.touch.push({ at: this.pc, addr, size });
+    if (addr >= Z80_RAM_LO && addr <= Z80_RAM_HI && size !== 1)
+      throw new Error(`Z80 RAM $${addr.toString(16)} reached ${size} bytes wide: `
+        + "the 68000 has only byte access to $A00000..$A0FFFF (R20 §48.3)");
+    this.l(addr);
+  }
+  /** Refuse a wider-than-byte access through a register inside a transfer. */
+  /** An access through an address register: the address is not known here. */
+  reg(size) { this.touch.push({ at: this.pc, addr: null, size, xfer: this.byteOnly }); }
+  wide(what) {
+    if (this.byteOnly)
+      throw new Error(`${what} inside a Z80 transfer: only byte access reaches `
+        + "Z80 RAM, and an address register hides which address it is (R20 §48.3)");
+  }
+  /** Everything emitted by `fn` is a Z80 RAM transfer: byte access only. */
+  z80Xfer(fn) {
+    const outer = this.byteOnly; this.byteOnly = true;
+    try { return fn(); } finally { this.byteOnly = outer; }
+  }
+  // ── the instructions this needs, with their encodings and their cycles ────
   // MOVE: 00 SS ddd mmm MMM rrr — SS 01 byte, 11 word, 10 long
-  moveWimm(imm, addr) { this.w(0x33fc); this.w(imm); this.l(addr); }   // move.w #i,(abs).l
-  moveBimm(imm, addr) { this.w(0x13fc); this.w(imm & 0xff); this.l(addr); } // move.b #i,(abs).l
-  moveWabsD(addr, d) { this.w(0x3039 | (d << 9)); this.l(addr); }      // move.w (abs).l,Dn
-  moveWimmD(imm, d) { this.w(0x303c | (d << 9)); this.w(imm); }        // move.w #i,Dn
-  moveWDtoA(d, a) { this.w(0x3080 | (a << 9) | d); } // move.w Dn,(An)
-  btstZeroA(a) { this.w(0x0810 | a); this.w(0); }     // btst #0,(An), byte
-  tstBA(a) { this.w(0x4a10 | a); }                    // tst.b (An)
-  moveBimmA(imm,a) { this.w(0x10bc | (a << 9)); this.w(imm & 255); }
-  moveBDtoA(d, a) { this.w(0x1080 | (a << 9) | d); }                    // move.b Dn,(An)
-  moveBpost() { this.w(0x12d8); }                                       // move.b (a0)+,(a1)+
-  moveBabsD(addr, d) { this.w(0x1039 | (d << 9)); this.l(addr); }       // move.b (abs).l,Dn
-  moveBDabs(d, addr) { this.w(0x13c0 | d); this.l(addr); }              // move.b Dn,(abs).l
-  cmpBDD(s, d) { this.w(0xb000 | (d << 9) | s); }                       // cmp.b Ds,Dd
-  lslWimm(n, d) { this.w(0xe148 | ((n & 7) << 9) | d); }                // lsl.w #n,Dn
-  lsrWimm(n, d) { this.w(0xe048 | ((n & 7) << 9) | d); }                // lsr.w #n,Dn
-  orWDD(s, d) { this.w(0x8040 | (d << 9) | s); }                        // or.w Ds,Dd
-  subWDD(s, d) { this.w(0x9040 | (d << 9) | s); }                       // sub.w Ds,Dd
-  addWimmD(imm, d) { this.w(0x0640 | d); this.w(imm); }                 // addi.w #i,Dn
-  moveBpostA(sa, da) { this.w(0x10d8 | (da << 9) | sa); }               // move.b (As)+,(Ad)+
-  moveWpost() { this.w(0x32d8); }                                       // move.w (a0)+,(a1)+
-  moveLpost() { this.w(0x22d8); }                                       // move.l (a0)+,(a1)+
-  moveLimm(imm, addr) { this.w(0x23fc); this.l(imm); this.l(addr); }   // move.l #i,(abs).l
-  moveLimmD(imm, d) { this.w(0x203c | (d << 9)); this.l(imm); }        // move.l #i,Dn
-  moveq(imm, d) { this.w(0x7000 | (d << 9) | (imm & 0xff)); }          // moveq #i,Dn
-  divuD(s, d) { this.w(0x80c0 | (d << 9) | s); }                       // divu.w Ds,Dd
-  rte() { this.w(0x4e73); }
+  moveWimm(imm, addr) { this.n(20); this.w(0x33fc); this.w(imm); this.a(addr, 2); }   // move.w #i,(abs).l
+  moveBimm(imm, addr) { this.n(20); this.w(0x13fc); this.w(imm & 0xff); this.a(addr, 1); } // move.b #i,(abs).l
+  moveWabsD(addr, d) { this.n(16); this.w(0x3039 | (d << 9)); this.a(addr, 2); }      // move.w (abs).l,Dn
+  moveWimmD(imm, d) { this.n(8); this.w(0x303c | (d << 9)); this.w(imm); }        // move.w #i,Dn
+  // THE BUS-REQUEST PORT, which is $A11100 and not RAM: a word write is what
+  // it takes, and the width rule does not reach it (R20 §48.3).
+  busreqW(d, a) { this.touch.push({ at: this.pc, addr: Z80_BUSREQ, size: 2, port: true });
+    this.n(8); this.w(0x3080 | (a << 9) | d); }                         // move.w Dn,(An)
+  btstZeroA(a) { this.reg(1); this.n(12); this.w(0x0810 | a); this.w(0); }     // btst #0,(An), byte
+  tstBA(a) { this.reg(1); this.n(8); this.w(0x4a10 | a); }                    // tst.b (An)
+  moveBimmA(imm,a) { this.reg(1); this.n(12); this.w(0x10bc | (a << 9)); this.w(imm & 255); }
+  moveBDtoA(d, a) { this.reg(1); this.n(8); this.w(0x1080 | (a << 9) | d); }       // move.b Dn,(An)
+  moveBAtoD(a, d) { this.reg(1); this.n(8); this.w(0x1010 | (d << 9) | a); }       // move.b (An),Dn
+  moveBpost() { this.reg(1); this.reg(1); this.n(12); this.w(0x12d8); }             // move.b (a0)+,(a1)+
+  moveBabsD(addr, d) { this.n(16); this.w(0x1039 | (d << 9)); this.a(addr, 1); }       // move.b (abs).l,Dn
+  moveBDabs(d, addr) { this.n(16); this.w(0x13c0 | d); this.a(addr, 1); }              // move.b Dn,(abs).l
+  cmpBDD(s, d) { this.n(4); this.w(0xb000 | (d << 9) | s); }                       // cmp.b Ds,Dd
+  cmpBimmD(imm, d) { this.n(8); this.w(0x0c00 | d); this.w(imm & 0xff); }          // cmpi.b #i,Dn
+  lslWimm(n, d) { this.n(6 + 2 * n); this.w(0xe148 | ((n & 7) << 9) | d); }                // lsl.w #n,Dn
+  lsrWimm(n, d) { this.n(6 + 2 * n); this.w(0xe048 | ((n & 7) << 9) | d); }                // lsr.w #n,Dn
+  orWDD(s, d) { this.n(4); this.w(0x8040 | (d << 9) | s); }                        // or.w Ds,Dd
+  subWDD(s, d) { this.n(4); this.w(0x9040 | (d << 9) | s); }                        // sub.w Ds,Dd
+  addWimmD(imm, d) { this.n(8); this.w(0x0640 | d); this.w(imm); }                 // addi.w #i,Dn
+  moveAA(s, d) { this.n(4); this.w(0x2048 | (d << 9) | s); }                       // movea.l As,Ad
+  moveBpostA(sa, da) { this.reg(1); this.reg(1); this.n(12); this.w(0x10d8 | (da << 9) | sa); } // move.b (As)+,(Ad)+
+  moveWpost() { this.wide("move.w (An)+,(An)+"); this.reg(2); this.n(12); this.w(0x32d8); } // move.w (a0)+,(a1)+
+  moveLpost() { this.wide("move.l (An)+,(An)+"); this.reg(4); this.n(20); this.w(0x22d8); } // move.l (a0)+,(a1)+
+  moveLimm(imm, addr) { this.n(28); this.w(0x23fc); this.l(imm); this.a(addr, 4); }   // move.l #i,(abs).l
+  moveLimmD(imm, d) { this.n(12); this.w(0x203c | (d << 9)); this.l(imm); }        // move.l #i,Dn
+  moveq(imm, d) { this.n(4); this.w(0x7000 | (d << 9) | (imm & 0xff)); }          // moveq #i,Dn
+  divuD(s, d) { this.n(140); this.w(0x80c0 | (d << 9) | s); }                       // divu.w Ds,Dd
+  rte() { this.n(20); this.w(0x4e73); }
   // 32-bit register arithmetic and the few ops computed timing needs. Every
   // encoding: op-word bit layout in the comment.
-  subLimmD(imm, d) { this.w(0x0480 | d); this.l(imm); }               // subi.l #i,Dn
-  addLimmD(imm, d) { this.w(0x0680 | d); this.l(imm); }               // addi.l #i,Dn
-  cmpLimmD(imm, d) { this.w(0x0c80 | d); this.l(imm); }               // cmpi.l #i,Dn
-  tstL(d) { this.w(0x4a80 | d); }                                      // tst.l Dn
-  bpl(name) { this.w(0x6a00); this.fix.push([this.pc, name]); this.w(0); }
-  bcs(name) { this.w(0x6500); this.fix.push([this.pc, name]); this.w(0); }   // unsigned lower
-  moveLD(s, d) { this.w(0x2000 | (d << 9) | s); }                      // move.l Ds,Dd
-  muluImm(imm, d) { this.w(0xc0fc | (d << 9)); this.w(imm); }          // mulu.w #i,Dn
-  divuImm(imm, d) { this.w(0x80fc | (d << 9)); this.w(imm); }          // divu.w #i,Dn
-  addqL(n, d) { this.w(0x5080 | ((n & 7) << 9) | d); }                 // addq.l #n,Dn
-  subqL(n, d) { this.w(0x5180 | ((n & 7) << 9) | d); }                 // subq.l #n,Dn
-  tstBabs(addr) { this.w(0x4a39); this.l(addr); }                      // tst.b (abs).l
-  clrBabs(addr) { this.w(0x4239); this.l(addr); }                      // clr.b (abs).l
-  moveLDabs(d, addr) { this.w(0x23c0 | d); this.l(addr); }             // move.l Dn,(abs).l
-  moveLabsD(addr, d) { this.w(0x2039 | (d << 9)); this.l(addr); }      // move.l (abs).l,Dn
-  leaAbs(addr, a) { this.w(0x41f9 | (a << 9)); this.l(addr); }          // lea (abs).l,An
-  andiW(imm, d) { this.w(0x0240 | d); this.w(imm); }                    // andi.w #i,Dn
-  moveSR(imm) { this.w(0x46fc); this.w(imm); }                          // move.w #i,SR
-  nop() { this.w(0x4e71); }
+  subLimmD(imm, d) { this.n(16); this.w(0x0480 | d); this.l(imm); }               // subi.l #i,Dn
+  addLimmD(imm, d) { this.n(16); this.w(0x0680 | d); this.l(imm); }               // addi.l #i,Dn
+  cmpLimmD(imm, d) { this.n(14); this.w(0x0c80 | d); this.l(imm); }               // cmpi.l #i,Dn
+  tstL(d) { this.n(4); this.w(0x4a80 | d); }                                      // tst.l Dn
+  bpl(name) { this.n(10); this.w(0x6a00); this.fix.push([this.pc, name]); this.w(0); }
+  bcs(name) { this.n(10); this.w(0x6500); this.fix.push([this.pc, name]); this.w(0); }   // unsigned lower
+  moveLD(s, d) { this.n(4); this.w(0x2000 | (d << 9) | s); }                      // move.l Ds,Dd
+  muluImm(imm, d) { this.n(70); this.w(0xc0fc | (d << 9)); this.w(imm); }          // mulu.w #i,Dn
+  divuImm(imm, d) { this.n(140); this.w(0x80fc | (d << 9)); this.w(imm); }          // divu.w #i,Dn
+  addqL(n, d) { this.n(8); this.w(0x5080 | ((n & 7) << 9) | d); }                 // addq.l #n,Dn
+  subqL(n, d) { this.n(8); this.w(0x5180 | ((n & 7) << 9) | d); }                 // subq.l #n,Dn
+  tstBabs(addr) { this.n(16); this.w(0x4a39); this.a(addr, 1); }                      // tst.b (abs).l
+  clrBabs(addr) { this.n(20); this.w(0x4239); this.a(addr, 1); }                      // clr.b (abs).l
+  moveLDabs(d, addr) { this.n(24); this.w(0x23c0 | d); this.a(addr, 4); }             // move.l Dn,(abs).l
+  moveLabsD(addr, d) { this.n(24); this.w(0x2039 | (d << 9)); this.a(addr, 4); }      // move.l (abs).l,Dn
+  leaAbs(addr, a) { this.n(12); this.w(0x41f9 | (a << 9)); this.l(addr); }          // lea (abs).l,An
+  andiW(imm, d) { this.n(8); this.w(0x0240 | d); this.w(imm); }                    // andi.w #i,Dn
+  moveSR(imm) { this.n(12); this.w(0x46fc); this.w(imm); }                          // move.w #i,SR
+  nop() { this.n(4); this.w(0x4e71); }
   mark(n) { this.moveBimm(n, MARK); }                                   // 20 cycles
-  markHV() { this.moveWabsD(0xc00008, 1); this.w(0x33c1); this.l(MARKW); } // 16 + 20
-  // Branches and dbra take a 16-bit displacement from the extension word.
-  dbra(d, name) { this.w(0x51c8 | d); this.fix.push([this.pc, name]); this.w(0); }
-  bne(name) { this.w(0x6600); this.fix.push([this.pc, name]); this.w(0); }
-  beq(name) { this.w(0x6700); this.fix.push([this.pc, name]); this.w(0); }
-  bra(name) { this.w(0x6000); this.fix.push([this.pc, name]); this.w(0); }
+  markHV() { this.moveWabsD(0xc00008, 1); this.n(16); this.w(0x33c1); this.l(MARKW); } // 16 + 20
+  // Branches and dbra take a 16-bit displacement from the extension word. The
+  // cycle charged is the TAKEN one — the loops here go round far more often
+  // than they fall out, and `costDrop` corrects a path that does not branch.
+  dbra(d, name) { this.n(10); this.w(0x51c8 | d); this.fix.push([this.pc, name]); this.w(0); }
+  bne(name) { this.n(10); this.w(0x6600); this.fix.push([this.pc, name]); this.w(0); }
+  beq(name) { this.n(10); this.w(0x6700); this.fix.push([this.pc, name]); this.w(0); }
+  bra(name) { this.n(10); this.w(0x6000); this.fix.push([this.pc, name]); this.w(0); }
   done() {
     for (const [at, name] of this.fix) {
       const target = this.lab.get(name);
@@ -160,7 +230,7 @@ function readFace(m, P, tag, bytes = P.faceBytes) {
   m.leaAbs(Z80_BASE + P.face0, 0);
   m.label(`${tag}fgo`);
   m.leaAbs(PROTO_WORK, 1);
-  for (let i = 0; i < bytes; i++) m.moveBpost();
+  m.z80Xfer(() => { for (let i = 0; i < bytes; i++) m.moveBpost(); });
 }
 // One well-formed command record, in ROM, for the host to publish. It is a
 // record and not eight arbitrary bytes because the consumer that will read it
@@ -168,7 +238,7 @@ function readFace(m, P, tag, bytes = P.faceBytes) {
 // that at all.
 const QREC = 0x000f00;   // between the 68000 code and the Z80 image
 const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
-  divuBig: 0x16, masked: 0x18, n: 32, nops: 256 };
+  divuBig: 0x16, masked: 0x18, dbra: 0x1c, n: 32, nops: 256, dbras: 2048 };
 
 // The payload copy, the commit, and the four ways it is deliberately broken.
 // The gate has to FAIL on each of these; a check that cannot fail is not a
@@ -182,7 +252,7 @@ function emitTransfer(m, { bytes, fault }, { marks = false } = {}) {
   const n = fault === "drop-copy" ? bytes - 1 : bytes;
   for (let i = 0; i < n; i++) m.moveBpost();
   if (fault !== "no-commit" && fault !== "early-commit") commit();
-  m.moveWDtoA(4, 2);                                 // release
+  m.busreqW(4, 2);                                 // release
   if (marks) m.mark(MARKS.released);
 }
 
@@ -319,10 +389,10 @@ export function buildRom(image, samples = null, grab = null) {
     // Little endian, like every multi-byte field in the layout.
     m.moveBimm(P.bootGeneration & 0xff, Z80_BASE + P.bootGen);
     m.moveBimm((P.bootGeneration >> 8) & 0xff, Z80_BASE + P.bootGen + 1);
-    m.moveBimm(0, Z80_BASE + P.phaseGen);
+    m.moveBimm(P.phaseGeneration & 0xff, Z80_BASE + P.phaseGen);
     m.moveBimm(0, Z80_BASE + P.commandCommit);
     m.moveBimm(0, Z80_BASE + P.phaseCommit);   // …the phase commit LAST
-    m.moveq(0, 2);                             // the phase generation, counted here
+    m.moveWimmD(P.phaseGeneration & 0xff, 2);  // the phase generation, counted here
     m.moveq(0, 3);                             // …and the phase commit
     m.moveWimmD(P.between, 5);                 // live reads between invalidations
     // The mailbox's commit, counted on the host's side. `live` needs it too —
@@ -374,8 +444,18 @@ export function buildRom(image, samples = null, grab = null) {
       m.moveLimmD(OVERFLOW_DIVIDEND, 5); m.divuD(6, 5); } });
     pair(CAL.divuBig, () => { for (let i = 0; i < CAL.n; i++) {
       m.moveLimmD(LOAD_DIVIDEND, 5); m.divuD(7, 5); } });
+    // THE WAIT ITSELF (R20 §48.5). The transfer period is a DBRA count, so what
+    // it is worth in master clocks is the one number the generator cannot
+    // guess: with the display on the VDP takes bus cycles from the 68000, and a
+    // ten-cycle iteration stops being seventy master. Measured here, in the
+    // same rom shape as the case that uses it, and checked every run.
+    m.moveWimmD(CAL.dbras - 1, 7);
+    pair(CAL.dbra, () => { m.label("caldbra"); m.dbra(7, "caldbra"); });
   }
-  if (grab?.vdp && !grab.disabled) vdpSetup(m);
+  // `disabled` means there is no transfer, not that there is no display: the
+  // calibration case asks for the VDP on purpose, because what a DBRA iteration
+  // costs depends on who else is on the bus (R20 §48.5).
+  if (grab?.vdp && (!grab.disabled || grab.calibrate)) vdpSetup(m);
   if (grab?.optimized) {
     m.leaAbs(Z80_BUSREQ, 2);
     m.moveWimmD(0x0100, 3);
@@ -519,7 +599,7 @@ export function buildRom(image, samples = null, grab = null) {
       else m.leaAbs(SAMPLES, 0);
       m.leaAbs(Z80_BASE + target, 1);
       if (marks) m.mark(MARKS.request);
-      m.moveWDtoA(3, 2);                   // request
+      m.busreqW(3, 2);                   // request
       m.label("hgrant2"); m.btstZeroA(2); m.bne("hgrant2");
       emitTransfer(m, grab, { marks });
       // The next window is one period past THIS one: d0 still holds the
@@ -538,7 +618,7 @@ export function buildRom(image, samples = null, grab = null) {
       m.leaAbs(SAMPLES, 0);
       m.leaAbs(Z80_BASE + target, 1);
       if (marks) m.mark(MARKS.request);
-      m.moveWDtoA(3, 2);                  // request
+      m.busreqW(3, 2);                  // request
       m.label("hgrant"); m.btstZeroA(2); m.bne("hgrant");
       emitTransfer(m, grab, { marks });
       m.rte();
@@ -594,14 +674,14 @@ export function buildRom(image, samples = null, grab = null) {
         for (let i = 0; i < 40; i++) m.nop();
       }
     }
-    m.moveWDtoA(3, 2);
+    m.busreqW(3, 2);
     m.label("grant");
     m.btstZeroA(2);
     m.bne("grant");
     if (grab.cooperative) emitTransfer(m, grab, { marks });
     else {
       for (let i = 0; i < (grab.fault === "drop-copy" ? grab.bytes - 1 : grab.bytes); i++) m.moveBpost();
-      m.moveWDtoA(4, 2);
+      m.busreqW(4, 2);
     }
   } else if (grab?.proto && !grab.disabled) {
     // ── THE HOST SIDE OF THE RUNTIME PROTOCOL (R12 §33.3) ────────────────
@@ -630,7 +710,7 @@ export function buildRom(image, samples = null, grab = null) {
       m.moveWabsD(Z80_BUSREQ, 0);
       m.andiW(0x0100, 0);
       m.bne(label);
-      body();
+      m.z80Xfer(body);
       m.moveWimm(0x0000, Z80_BUSREQ);
     };
     if (P.piece) {
@@ -656,8 +736,10 @@ export function buildRom(image, samples = null, grab = null) {
         // THE WHOLE HANDSHAKE IN ONE GRAB (R17 §43.6 step 6): read the ack,
         // and if the box is free, put the next bundle in it and commit. Two
         // paths, deliberately — the STOP -> RESUME range this reports IS the
-        // difference between "the box was busy" and "a bundle went out", and a
-        // host scheduler has to fit the longer one.
+        // difference between "the box was busy" and "a bundle went out". It is
+        // kept as the MEASUREMENT of the one-grab strategy; the live host below
+        // no longer uses it, because inside the complete 2ch engine it is 1,541
+        // master and the contract is 1,500 (R20 §48.1).
         mailbox: () => {
           m.moveBabsD(Z80_BASE + P.commandAck, 0);
           m.cmpBDD(4, 0);                        // …against the commit we last wrote
@@ -674,95 +756,229 @@ export function buildRom(image, samples = null, grab = null) {
       if (!one) throw new Error(`unknown protocol piece ${P.piece}`);
       grabOnce("pgrant", one);
       m.bra("idle");
+    } else if (P.width) {
+      // ── THE ACCESS WIDTH, PROVED ON THE MACHINE (R20 §48.3 step 1) ─────
+      // The emitter refuses to ENCODE a wide access to Z80 RAM. This is the
+      // other half of the rule: the engine publishes five bytes whose last
+      // three are three DIFFERENT constants, the host reads the face back and
+      // compares all three, and every reading stamps ok or bad. A host that
+      // read Z80 RAM a word at a time gets [b0, b0, b2, b2, b4] — byte 3 comes
+      // back as byte 2 — so this fails on the exact shape of the bug rather
+      // than on a timing that never noticed it. `--fault wide-read` builds
+      // that host, and it has to fail.
+      m.leaAbs(Z80_BASE + P.face0, 5);
+      m.leaAbs(Z80_BASE + P.face1, 6);
+      m.label("wdloop");
+      m.moveWimmD(grab.every, 1);
+      m.label("wdwait");
+      m.dbra(1, "wdwait");
+      m.leaAbs(PROTO_WORK, 1);
+      m.moveAA(5, 0);
+      m.moveWimm(0x0100, Z80_BUSREQ);
+      m.label("wdg");
+      m.moveWabsD(Z80_BUSREQ, 0);
+      m.andiW(0x0100, 0);
+      m.bne("wdg");
+      m.moveBabsD(Z80_BASE + P.select, 0);
+      m.andiW(1, 0);
+      m.beq("wdf0");
+      m.moveAA(6, 0);
+      m.label("wdf0");
+      if (P.wideRead) {
+        // THE WITHDRAWN TRANSFER, kept only as the thing that has to fail. It
+        // is emitted OUTSIDE the byte-only scope, because inside one the
+        // emitter refuses it — which is what the scope is for.
+        FAULT_APPLIED.add("wide-read");
+        m.moveWpost(); m.moveWpost(); m.moveBpost();
+      } else {
+        m.z80Xfer(() => { for (let i = 0; i < P.snapshotBytes; i++) m.moveBpost(); });
+      }
+      m.moveWimm(0x0000, Z80_BUSREQ);
+      // The three constants, in the order the layout puts them: the boot
+      // generation low, its high, and the phase generation.
+      const want = [P.bootGeneration & 0xff, (P.bootGeneration >> 8) & 0xff,
+        P.phaseGeneration & 0xff];
+      want.forEach((v, i) => {
+        m.moveBabsD(PROTO_WORK + 2 + i, 0);
+        m.cmpBimmD(v, 0);
+        m.bne("wdbad");
+      });
+      m.mark(MARKS.widthOk);
+      m.bra("wdloop");
+      m.label("wdbad");
+      m.mark(MARKS.widthBad);
+      m.bra("wdloop");
     } else if (P.live) {
-    // ── A REAL HOST, DRIVING THE MAILBOX (R19 §46.3) ─────────────────────
-    // ONE TRANSFER AN OBSERVATION INTERVAL, and the two halves of an update in
-    // two different intervals:
+    // ── A REAL HOST, DRIVING THE MAILBOX (R19 §46.3, R20 §48.2) ──────────
+    // Two operations, strictly alternating, one an observation interval:
     //
-    //   read lap     the selector and the observation number, and the ack —
-    //                four byte reads, everything the host needs to decide
-    //   publish lap  the five payload bytes and then the commit, if the ack
-    //                said the box was free
+    //   snapshot read     the selector and the observation number. It reads no
+    //                     ack and writes nothing.
+    //   publish attempt   ONE grab that reads the ack and — only if it says the
+    //                     box is free — writes the five payload bytes and then
+    //                     the commit. Busy means the grab ends having written
+    //                     nothing, and it is counted rather than hidden.
     //
-    // The whole handshake in ONE grab measured 1,354 master on the P1 rig and
-    // 1,541 inside the complete 2ch engine, where the mixer's instructions are
-    // longer and the bus grant therefore lands later — past the 1,500 the live
-    // contract allows. So it is two grabs, one an observation, and an update is
-    // two observations: 62.4 desired-state updates a second.
+    // This is NOT ack prediction: every attempt checks the ack it has just read
+    // against the commit it owns, inside the same grab, before it writes a
+    // byte. What the alternation buys is that the check no longer costs a lap
+    // of its own — a bundle goes out every second transfer instead of every
+    // 2.7 (R19 §47.4).
+    //
+    // R20 §48.4: everything that can happen before the bus is taken DOES. The
+    // payload is built in 68k RAM, the four fixed addresses are loaded once
+    // outside the loop, and the commit value this attempt would write is
+    // computed into d5 in advance — so the critical section is the request, the
+    // grant poll, the ack read and its compare, the writes, and the release.
     //
     // Nothing here writes a YM register: the CSM test voice went in at boot
     // while the bus was still held, and §33.6 step 5 has not been answered.
-    const W = PROTO_WORK, PAY = PROTO_WORK + 32;   // …the payload the host builds
-    m.moveq(1, 7);                                 // …so the first lap reads
+    const W = PROTO_WORK, PAY = PROTO_WORK + 32, STEP = PROTO_WORK + 40;
+    // The fixed addresses, loaded ONCE. a0/a1 are the moving pair.
+    m.leaAbs(Z80_BASE + P.commandCommit, 2);
+    m.leaAbs(Z80_BASE + P.commandAck, 3);
+    m.leaAbs(Z80_BASE + P.mailbox, 4);
+    m.leaAbs(Z80_BASE + P.face0, 5);
+    m.leaAbs(Z80_BASE + P.face1, 6);
     m.moveq(0, 6);                                 // the host's observation number
-    m.moveq(0, 3);                                 // …and the ack it last saw
+    m.moveBimm(0, STEP);                           // the level walk starts at page 0
+    // ── the fragments, as functions, so each one can be PRICED ───────────
+    // Every fragment is emitted twice: once into a throwaway emitter that adds
+    // up its cycles, and once for real. The transfer period below is generated
+    // from those prices (R20 §48.5) — there is no fixed `every` left.
+    const readPre = (x) => { x.leaAbs(W, 1); x.moveAA(5, 0); };
+    const readGrab = (x) => {
+      x.moveWimm(0x0100, Z80_BUSREQ);
+      x.label("mbg1");
+      x.moveWabsD(Z80_BUSREQ, 0);
+      x.andiW(0x0100, 0);
+      x.bne("mbg1");
+      x.n(2);                       // …the last pass FALLS THROUGH: 12, not 10
+      x.moveBabsD(Z80_BASE + P.select, 0);
+      x.andiW(1, 0);
+      x.beq("mbf0");
+      x.moveAA(6, 0);               // face 1; face 0 takes the branch instead
+      x.label("mbf0");
+      x.z80Xfer(() => { x.moveBpost(); x.moveBpost(); });
+      x.moveWimm(0x0000, Z80_BUSREQ);
+    };
+    // The observation number out of the copy the grab left behind: little
+    // endian in Z80 RAM and big endian in the 68000, so the two bytes are taken
+    // apart and put together here, with the bus already released.
+    const readPost = (x) => {
+      x.moveq(0, 1); x.moveBabsD(W + 1, 1); x.lslWimm(8, 1);
+      x.moveq(0, 0); x.moveBabsD(W, 0);
+      x.orWDD(0, 1);
+      x.moveLD(1, 6);
+    };
+    // THE PAYLOAD, BUILT BEFORE THE BUS IS TAKEN. The boundary it aims at, and
+    // three level pages that all move: a 15-level build has pages 0..14, so one
+    // rolling number wrapping at 15 gives every bundle a different triple.
+    const pubPre = (x) => {
+      x.moveLD(6, 1);
+      x.addWimmD(P.lead, 1);
+      x.moveBDabs(1, PAY);                         // little endian, low byte first
+      x.moveLD(1, 0); x.lsrWimm(8, 0);
+      x.moveBDabs(0, PAY + 1);
+      x.moveq(0, 0);
+      x.moveBabsD(STEP, 0);
+      x.addqL(1, 0);
+      x.cmpLimmD(15, 0);
+      x.bcs("mbvok");
+      x.moveq(0, 0);
+      x.costDrop(4);                               // …the wrap, taken once in fifteen
+      x.label("mbvok");
+      x.moveBDabs(0, STEP);
+      x.moveBDabs(0, PAY + 2);                     // v0page = v
+      x.moveLimmD(14, 1); x.subWDD(0, 1);
+      x.moveBDabs(1, PAY + 3);                     // v1page = 14 - v
+      x.moveLD(0, 2); x.lsrWimm(1, 2); x.addWimmD(7, 2);
+      x.moveBDabs(2, PAY + 4);                     // mpage = 7 + v/2
+      x.leaAbs(PAY, 0);
+      x.moveAA(4, 1);
+      x.moveLD(4, 5); x.addqL(1, 5);               // the commit this attempt writes
+    };
+    // THE CRITICAL SECTION, with nothing in it that could have happened sooner.
+    const pubCrit = (x) => {
+      x.moveWimm(0x0100, Z80_BUSREQ);
+      x.label("mbg2");
+      x.moveWabsD(Z80_BUSREQ, 0);
+      x.andiW(0x0100, 0);
+      x.bne("mbg2");
+      x.n(2);                       // …the last pass falls through
+      x.z80Xfer(() => {
+        x.moveBAtoD(3, 0);                         // the ack, from its fixed address
+        x.cmpBDD(4, 0);                            // …against the commit we own
+        x.bne("mbbusy");
+        for (let i = 0; i < P.recordBytes; i++) x.moveBpost();
+        x.moveBDtoA(5, 2);                         // …the commit, LAST
+      });
+      x.moveWimm(0x0000, Z80_BUSREQ);              // release — a bundle went out
+    };
+    // …and the two ways out of it. The busy arm writes nothing and does not
+    // take the commit, which is what makes an attempt safe to make blind.
+    const pubTail = (x) => {
+      x.moveLD(5, 4);                              // the commit is now ours
+      x.bra("mbdone");
+      x.label("mbbusy");
+      x.moveWimm(0x0000, Z80_BUSREQ);              // release — nothing was written
+      x.costDrop(20);                              // …not on the priced path
+      x.label("mbdone");
+    };
+    // A wait is `move.w #N,d1` and N+1 dbra — N taken, one falling out.
+    const waitCost = (n) => 8 + 10 * n + 14;
+    const emitWait = (n, label) => { m.moveWimmD(n, 1); m.label(label); m.dbra(1, label); };
+    const price = (fn) => { const s = new M68k(0); s.cost = 0; fn(s); return s.cost; };
+    const cReadPre = price(readPre), cReadGrab = price(readGrab), cReadPost = price(readPost);
+    const cPubPre = price(pubPre), cPubCrit = price(pubCrit), cPubTail = price(pubTail);
+    const cLoopBra = 10;                           // the `bra` that closes the lap
+    // ── THE PERIOD, GENERATED FROM THOSE PRICES (R20 §48.5) ─────────────
+    // Two bounds. Below one observation interval, two transfers land in the
+    // same interval and their stops ADD against the 1,500 master contract;
+    // above masterHz/120 the pair of them stops making 60 updates a second.
+    // The target is the middle, so the same margin absorbs either drift.
+    const per = grab.period;
+    // What a 68000 cycle is worth here — MEASURED with the display on, not the
+    // nominal seven (R20 §48.5, case-config's DBRA_MASTER).
+    const MASTER = per.masterPerCycle;
+    const target = Math.round((per.targetMaster ?? (per.lapMaster + per.ceilMaster) / 2)
+      / (per.density ?? 1));
+    // The stop is part of the interval and the 68000 spends it inside the grant
+    // poll, so the period carries each path's MEASURED stop rather than the
+    // price of its instructions — which cannot know how long the Z80 takes to
+    // let go of the bus.
+    const between = {
+      // request -> release is the stop; then the tail of the grab, the wait,
+      // and whatever the next path does before ITS request.
+      read: per.stopRead + (cReadPost + cPubPre) * MASTER,
+      publish: per.stopPublish + (cPubTail + cLoopBra + cReadPre) * MASTER,
+    };
+    // The residue left by rounding a wait to whole dbra iterations is carried
+    // into the other wait, so the PAIR stays on target even though neither
+    // half can be expressed exactly.
+    let carry = 0;
+    const countFor = (betweenMaster) => {
+      const want = (target - betweenMaster) / MASTER - 22 + carry;
+      const n = Math.max(0, Math.round(want / 10));
+      carry = want - 10 * n;
+      return n;
+    };
+    const nRead = countFor(between.read);
+    const nPub = countFor(between.publish);
+    per.generated = { target, readWait: nRead, publishWait: nPub,
+      readCycles: cReadPre + cReadGrab + cReadPost + waitCost(nRead),
+      publishCycles: cPubPre + cPubCrit + cPubTail + cLoopBra + waitCost(nPub),
+      readInterval: between.read + waitCost(nRead) * MASTER,
+      publishInterval: between.publish + waitCost(nPub) * MASTER };
     m.label("mbloop");
-    m.moveWimmD(grab.every, 1);
-    m.label("mbw1");
-    m.dbra(1, "mbw1");
-    m.addWimmD(1, 6);                              // one lap has gone by
-    m.subqL(1, 7);
-    m.bne("mbpub");
-    // ── the read lap ─────────────────────────────────────────────────────
-    m.moveWimm(0x0100, Z80_BUSREQ);
-    m.label("mbg1");
-    m.moveWabsD(Z80_BUSREQ, 0);
-    m.andiW(0x0100, 0);
-    m.bne("mbg1");
-    readFace(m, P, "mb", 2);                       // the selector and the time
-    m.moveBabsD(Z80_BASE + P.commandAck, 3);       // …and the engine's answer
-    m.moveWimm(0x0000, Z80_BUSREQ);
-    // The observation number, out of the copy the grab left behind. It is little
-    // endian and the 68000 is not, so the two bytes are taken separately.
-    m.moveq(0, 1); m.moveBabsD(W + 1, 1); m.lslWimm(8, 1);
-    m.moveq(0, 0); m.moveBabsD(W, 0);
-    m.orWDD(0, 1);
-    m.moveLD(1, 6);                                // d6 = the engine's own count
-    // PUBLISH NEXT LAP ONLY IF THE BOX IS FREE. Alternating blindly wastes a
-    // lap every time the engine has not acknowledged yet — read, publish
-    // nothing, read again — and that is what took an update from two laps to
-    // three and a half.
-    m.moveq(1, 7);
-    m.cmpBDD(4, 3);
-    m.bne("mbloop");
-    m.moveq(2, 7);                                 // …the box is free: publish
-    m.bra("mbloop");
-    // ── the publish lap ──────────────────────────────────────────────────
-    m.label("mbpub");
-    m.moveq(1, 7);                                 // …and the next one reads
-    m.moveLD(6, 1);
-    m.addWimmD(P.lead, 1);                         // the boundary we aim at
-    m.moveBDabs(1, PAY);                           // little endian, low byte first
-    m.moveLD(1, 0); m.lsrWimm(8, 0);
-    m.moveBDabs(0, PAY + 1);
-    // THREE LEVELS THAT ALL MOVE, from one rolling number: a 15-level build has
-    // pages 0..14, so the step wraps at 15 and every bundle carries a different
-    // triple.
-    m.moveq(0, 0);
-    m.moveBabsD(PAY + 5, 0);                       // the step, kept past the payload
-    m.addqL(1, 0);
-    m.cmpLimmD(15, 0);
-    m.bcs("mbvok");
-    m.moveq(0, 0);
-    m.label("mbvok");
-    m.moveBDabs(0, PAY + 5);
-    m.moveBDabs(0, PAY + 2);                       // v0page = v
-    m.moveLimmD(14, 1); m.subWDD(0, 1);
-    m.moveBDabs(1, PAY + 3);                       // v1page = 14 - v
-    m.moveLD(0, 2); m.lsrWimm(1, 2); m.addWimmD(7, 2);
-    m.moveBDabs(2, PAY + 4);                       // mpage = 7 + v/2
-    m.moveWimm(0x0100, Z80_BUSREQ);
-    m.label("mbg2");
-    m.moveWabsD(Z80_BUSREQ, 0);
-    m.andiW(0x0100, 0);
-    m.bne("mbg2");
-    m.leaAbs(PAY, 0);
-    m.leaAbs(Z80_BASE + P.mailbox, 1);
-    for (let i = 0; i < P.recordBytes; i++) m.moveBpost();
-    m.addqL(1, 4);
-    m.leaAbs(Z80_BASE + P.commandCommit, 1);
-    m.moveBDtoA(4, 1);                             // …the commit, LAST
-    m.moveWimm(0x0000, Z80_BUSREQ);
+    readPre(m);
+    readGrab(m);
+    readPost(m);
+    emitWait(nRead, "mbw1");
+    pubPre(m);
+    pubCrit(m);
+    pubTail(m);
+    emitWait(nPub, "mbw2");
     m.bra("mbloop");
     } else {
     // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
@@ -898,5 +1114,13 @@ export function buildRom(image, samples = null, grab = null) {
 
   rom.set(image, Z80IMG);
   if (samples) rom.set(samples, SAMPLES);
-  return { rom, sha: createHash("sha256").update(rom).digest("hex").slice(0, 16), codeBytes: code.length };
+  return { rom, sha: createHash("sha256").update(rom).digest("hex").slice(0, 16),
+    codeBytes: code.length,
+    // What the 68000 code touches and how wide, for the width rule to be
+    // checked over a finished rom (R20 §48.3 step 1).
+    access: m.touch };
 }
+
+// The emitter itself, for the selftest that proves its two refusals (R20
+// §48.3). Nothing else imports it: a rom is built through buildRom().
+export { M68k as __M68kForTest };

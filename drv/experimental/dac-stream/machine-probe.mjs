@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { readProbe, analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
   analyzeAdoption, analyzeResidual, analyzeZ80Hv, faultMarks,
   summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
-import { resolveCase, buildCase, FAULTS } from "./case-config.mjs";
+import { resolveCase, buildCase, FAULTS, DBRA_MASTER } from "./case-config.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -110,7 +110,9 @@ const EVERY = (() => { const v = arg("every-sweep", null); if (!v) return null;
 // informational failures, which are not to be quietly reclassified.
 const REQUIRED_ONLY = argv.includes("--required-only");
 const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
-  && (!REQUIRED_ONLY || !c.informational)
+  // The access-width witness runs in the required gate too: its DAC numbers
+  // are informational, its verdict is not (R20 §48.3 step 1).
+  && (!REQUIRED_ONLY || !c.informational || c.widthWitness)
   && (!argv.includes("--phase-sweep") || c.name.startsWith("uncompensated"))
   && (!EVERY || c.grab))
   .flatMap((c) => argv.includes("--phase-sweep") ? Array.from({length:32}, (_,phase)=>({
@@ -172,6 +174,22 @@ for (const c0 of selected) {
     + ` holes ${a.holes.length} (${a.overlapping.length} overlap BUSREQ);`
     + ` values ${c.levelsMove ? "not fixed — the mailbox moves them, graded by dac-stream:decoder"
       : a.firstBad < 0 ? "all match" : "FAIL"}`);
+  // ── THE ACCESS WIDTH, READ BACK (R20 §48.3 step 1) ───────────────────
+  // The only proto case whose verdict is not the DAC's. The host compares the
+  // three constants behind the observation number against what boot put there
+  // and stamps every reading; a word-wide read gives byte 3 the value of byte
+  // 2, so `--fault wide-read` must land here with a non-zero bad count.
+  if (c.widthWitness) {
+    const stamps = (log.marks ?? []).filter((e) => e.value === 0x21 || e.value === 0x22);
+    const ok = stamps.filter((e) => e.value === 0x21).length;
+    const bad = stamps.length - ok;
+    console.log(`  access width: ${ok} snapshots read back byte for byte, ${bad} that came`
+      + ` back with a duplicated byte`);
+    if (bad) result.errors.push(`${bad} of ${stamps.length} snapshot readings came back with`
+      + " a duplicated byte — Z80 RAM was not read one byte at a time");
+    if (ok < 100 * SECONDS) result.errors.push(`only ${ok} snapshot readings were checked for`
+      + ` access width in ${SECONDS}s — the witness is not running`);
+  }
   const steady = log.grabs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time);
   const beforeOutput = log.grabs.filter(([t]) => t < log.dac[0]?.time).length;
   console.log(`  requests: ${beforeOutput} before first DAC, ${log.grabs.length-beforeOutput-steady.length} outside measurement, ${steady.length} measured`);
@@ -218,6 +236,21 @@ for (const c0 of selected) {
       console.log(`  instruction time (68000 cycles): mark ${f(host.cal.markCycles)},`
         + ` nop ${f(host.cal.nop)}, divu/7 ${f(host.cal.divu)},`
         + ` divu overflow ${f(host.cal.divuOverflow)}, divu/$7FFF ${f(host.cal.divuBig)}`);
+      // THE NUMBER THE TRANSFER PERIOD IS BUILT FROM (R20 §48.5). A DBRA
+      // iteration is ten 68000 cycles, but what it is WORTH depends on what
+      // else is on the bus, so the generator uses this measurement and this
+      // check is what stops it drifting.
+      if (host.cal.dbraMaster !== null) {
+        const got = host.cal.dbraMaster;
+        console.log(`  a DBRA iteration: ${got.toFixed(3)} master`
+          + ` (${(got / 7).toFixed(2)} 68000 cycles); the period generator uses`
+          + ` ${DBRA_MASTER.toFixed(3)}`);
+        // Reported, not graded. This is a tight two-word loop with nothing else
+        // running; the host's wait loop sits in a longer program and measures
+        // 72.667 there, and the number the generator uses comes from THAT
+        // environment (case-config's DBRA_MASTER). What grades the period is
+        // the interval it actually produced, in dac-stream:decoder.
+      }
       // The load has to be a LONG instruction. An overflowing divide is not.
       if (host.cal.divu !== null && host.cal.divu < 100) result.errors.push("divide load is not the long path");
     }

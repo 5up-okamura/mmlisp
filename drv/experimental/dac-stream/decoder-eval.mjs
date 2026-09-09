@@ -101,9 +101,13 @@ const LIVE_STOP_MAX = 1500;         // master clocks, R12 §33.1
 const PROTO_DENSE = ["proto P1, live and bulk"];
 // THE WHOLE THING AT ONCE (R19 §46.3): the complete 2ch engine and a real
 // 68000 host driving the mailbox, in one image.
-const MAILBOX_2CH = ["2ch mailbox, on time", "2ch mailbox, a lap late",
-  "2ch mailbox, ahead", "2ch mailbox, at double density"];
+const MAILBOX_LEADS = ["2ch mailbox, lead 1", "2ch mailbox, lead 2", "2ch mailbox, lead 3"];
+const MAILBOX_2CH = [...MAILBOX_LEADS, "2ch mailbox, a lap late",
+  "2ch mailbox, at double density"];
 const MAILBOX_DENSE = ["2ch mailbox, at double density"];
+// What each combined case measured, so the lead can be CHOSEN from the sweep
+// and the rate graded on the one a driver would use (R20 §48.5 step 4).
+const mailboxRuns = new Map();
 const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
   "2ch corrector, occasional 4B stall", "2ch corrector, counter wrap",
   ...[[1, 20], [2, 60], [8, 140]].map(([b, n]) => `2ch corrector, single ${b}B stall, phase ${n}`),
@@ -802,6 +806,9 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
   const log = readProbe(readFileSync(f));
   const P = built.grab.proto;
   const glob = cfg.ram.glob[0];
+  // One lap IS one H observation, and it is the floor the transfer period is
+  // generated against (R20 §48.5).
+  const perObs = cfg.cycleSlots * cfg.periodNum;
   const off = (a) => a - glob;                       // the watch is region-relative
   const stage = [GLOB.v0page, GLOB.v1page, GLOB.mpage];
   const G = protoGlobals(GLOB.decode, SPLIT_STATE.countLo);
@@ -906,23 +913,138 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
       if (stopped > LIVE_STOP_MAX) over++;
     }
     const secs = (log.dac.at(-1).time - from) / MCLK;
-    const rate = commits.length / secs;
+    // COUNTED ON WHAT WAS ACKNOWLEDGED, not on what was asked for (R20 §48.5
+    // step 3): a bundle the engine never took is not an update.
+    const rate = acks.length / secs;
     console.log(`  bus: ${runtimeStops.length} runtime stops, worst total between two H`
       + ` observations ${worst} master, ${over} over ${LIVE_STOP_MAX};`
-      + ` ${rate.toFixed(1)} desired-state updates a second`);
+      + ` ${rate.toFixed(1)} desired-state updates a second, acknowledged`);
     if (over && !MAILBOX_DENSE.includes(name))
       failures.push(`"${name}": ${over} observation intervals held the bus for more than`
         + ` ${LIVE_STOP_MAX} master`);
     if (over && MAILBOX_DENSE.includes(name))
       console.log(`  …reported, not graded: this case halves the spacing on purpose so a`
         + ` second grab lands in the same interval, which is what makes the SUM the rule`);
-    // THE RATE CONDITION (R17 §43.6 step 6). Graded on the case that aims at
-    // the next boundary, which is the arrangement a driver would use; the
-    // others are latency and density experiments and report it.
-    if (name === "2ch mailbox, on time" && rate < 60)
-      failures.push(`"${name}": ${rate.toFixed(1)} desired-state updates a second with a host`
-        + ` that reads the ack before it publishes and takes the bus once an observation`
+
+    // ── WHAT THE HOST'S OWN LOOP DID (R20 §48.5 step 5) ────────────────
+    // The period is generated, so the interval it PRODUCED is a measurement
+    // and not a setting. A transfer is a request/release pair; the ones that
+    // wrote something are the publishes that went out, the ones that wrote
+    // nothing are a snapshot read or a busy attempt, and the two are told
+    // apart by which side of an alternating loop they fall on.
+    const gen = built.grab.period?.generated ?? null;
+    const grabs = log.grabs.filter(([a]) => a >= from);
+    const gaps = [];
+    for (let i = 1; i < grabs.length; i++) gaps.push(grabs[i][0] - grabs[i - 1][0]);
+    const wrote = new Set(commits.map((c) => grabs.findIndex(([a, b]) =>
+      c.time >= a && c.time <= b)).filter((i) => i >= 0));
+    // The publish attempts are every other grab, on the side the successful
+    // ones landed on; the rest are the snapshot reads.
+    const parity = [...wrote][0] === undefined ? 1 : [...wrote][0] % 2;
+    const len = ([a, b]) => b - a;
+    const attempts = grabs.filter((_, i) => i % 2 === parity);
+    const busy = attempts.filter((_, i) => !wrote.has(i * 2 + parity));
+    const free = attempts.filter((_, i) => wrote.has(i * 2 + parity));
+    const reads2 = grabs.filter((_, i) => i % 2 !== parity);
+    const band = (xs) => xs.length ? `${Math.min(...xs.map(len))}..${Math.max(...xs.map(len))}`
+      : "—";
+    const mean = (xs) => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0;
+    const inWindow = gaps.filter((g) => g >= perObs && g <= MCLK / 120).length;
+    console.log(`  period: ${gaps.length} intervals, ${Math.min(...gaps)}..${Math.max(...gaps)}`
+      + ` master, mean ${mean(gaps)}${gen ? `, generated for ${gen.target}` : ""};`
+      + ` ${gaps.length - inWindow} outside [${perObs}, ${Math.round(MCLK / 120)}]`);
+    console.log(`  attempts: ${attempts.length} publish attempts, ${busy.length} found the box`
+      + ` busy; stop ${band(free)} master when a bundle went out, ${band(busy)} when it did`
+      + ` not, ${band(reads2)} for a snapshot read`);
+    // ── WHERE IN THE LAP THE HOST READ, AND WHETHER IT WAS LATE ────────
+    // The snapshot is published at a fixed point INSIDE the lap, not at its
+    // start, so a host reading before that point gets the previous lap's number
+    // and everything it aims at is one observation early. The host has no way
+    // to know which side of that point it is on, and its period is deliberately
+    // a little longer than a lap, so it walks through every phase. This is the
+    // table that says what the lead is really up against.
+    {
+      const lapAt = (t) => { const i = reads.findIndex((o) => o > t);
+        return i <= 0 ? null : (t - reads[i - 1]) / (reads[i] - reads[i - 1]); };
+      const pubs = log.ramWrites.filter((x) => x.region === "pub" && x.time >= from)
+        .map((x) => lapAt(x.time)).filter((v) => v !== null);
+      const bins = Array.from({ length: 10 }, () => ({ n: 0, late: 0 }));
+      for (const c of commits) {
+        const gi = grabs.findIndex(([a, bb]) => c.time >= a && c.time <= bb);
+        if (gi < 1) continue;
+        const ph = lapAt(grabs[gi - 1][0]);
+        if (ph === null) continue;
+        const k = Math.min(9, Math.floor(ph * 10));
+        bins[k].n++;
+        if (lates.some((x) => x.time > c.time && x.time < c.time + 3 * perObs)) bins[k].late++;
+      }
+      if (pubs.length) {
+        const avg = pubs.reduce((a, bb) => a + bb, 0) / pubs.length;
+        console.log(`  phase: the engine publishes its snapshot ${(avg * 100).toFixed(1)}% into`
+          + " the lap; by tenth of the lap the host read in, the bundles that came out"
+          + " were late");
+        console.log(`    ${bins.map((b2, i) => `${(i / 10).toFixed(1)} ${b2.late}/${b2.n}`).join("  ")}`);
+      }
+    }
+    // …and how long a desired state took to reach the engine: from the commit
+    // the host wrote to the ack that says the values are staged.
+    const lat = [];
+    for (const c of commits) {
+      const a = acks.find((x) => x.time > c.time && x.value === c.value);
+      if (a) lat.push(a.time - c.time);
+    }
+    lat.sort((a, b) => a - b);
+    const pc = (p) => lat.length ? lat[Math.floor((lat.length - 1) * p)] : 0;
+    console.log(`  latency: commit to acknowledgement ${pc(0)}..${pc(1)} master`
+      + ` (p50 ${pc(0.5)}, ${(pc(0.5) / perObs).toFixed(2)} observations), ${lat.length} matched`);
+    mailboxRuns.set(name, { rate, worst, over, lates: lates.length, busy: busy.length,
+      commits: commits.length, acks: acks.length, gaps, inWindow, gen,
+      lead: built.grab.proto.lead, secs });
+    // THE PERIOD IS A GENERATED NUMBER AND HAS TO LAND WHERE IT WAS AIMED.
+    // Below one observation interval two transfers share one and their stops
+    // add; above masterHz/120 the pair of them stops making 60 updates a
+    // second. The dense case is deliberately below it and is reported.
+    if (!MAILBOX_DENSE.includes(name) && gaps.length - inWindow)
+      failures.push(`"${name}": ${gaps.length - inWindow} of ${gaps.length} transfer intervals`
+        + ` fell outside [${perObs}, ${Math.round(MCLK / 120)}] master — the generated period`
+        + ` did not land where it was solved for`);
+  }
+}
+
+// ── THE LEAD, CHOSEN FROM THE SWEEP (R20 §48.5 step 4) ───────────────────
+// A bundle names the observation it takes effect at and the mailbox holds it
+// until that observation arrives. Too small a lead is applied late; too large
+// a one keeps the one slot occupied and costs updates. The rate condition is
+// graded on the SMALLEST lead that is never late outside startup.
+if (!FAULT && MAILBOX_LEADS.every((n) => mailboxRuns.has(n))) {
+  console.log(`\n── the lead the host aims with ──`);
+  console.log(`  ${"case".padEnd(24)}${"lead".padStart(5)}${"late".padStart(6)}`
+    + `${"busy".padStart(6)}${"acked".padStart(7)}${"updates/s".padStart(11)}`);
+  const rows = MAILBOX_LEADS.map((n) => ({ name: n, ...mailboxRuns.get(n) }));
+  const late0 = mailboxRuns.get("2ch mailbox, a lap late");
+  for (const r of rows)
+    console.log(`  ${r.name.replace(/^2ch mailbox, /, "").padEnd(24)}${String(r.lead).padStart(5)}`
+      + `${String(r.lates).padStart(6)}${String(r.busy).padStart(6)}`
+      + `${String(r.acks).padStart(7)}${r.rate.toFixed(1).padStart(11)}`);
+  // "late" counts the writes that CHANGED the count, so one at startup is the
+  // engine acquiring; anything beyond that is a bundle that missed its
+  // boundary. The negative is the case that names a boundary already gone.
+  const clean = rows.filter((r) => r.lates <= 1);
+  const chosen = clean.length ? clean.reduce((a, b) => a.lead <= b.lead ? a : b) : null;
+  if (!late0 || late0.lates < 8)
+    failures.push(`the deliberately late case reported ${late0?.lates ?? 0} late bundles —`
+      + " a lead of 0 names a boundary that has already gone by and must be late every time");
+  if (!chosen) failures.push("no lead in 1..3 delivered a bundle before its boundary");
+  else {
+    console.log(`  chosen: lead ${chosen.lead}, the smallest that is never late outside`
+      + ` startup — ${chosen.rate.toFixed(1)} desired-state updates a second`);
+    if (chosen.rate < 60)
+      failures.push(`at lead ${chosen.lead}, the smallest that is not late, the mailbox`
+        + ` sustains ${chosen.rate.toFixed(1)} acknowledged desired-state updates a second`
         + ` — under the 60 R17 §43.6 step 6 requires`);
+    if (chosen.worst > LIVE_STOP_MAX)
+      failures.push(`at lead ${chosen.lead} an observation interval held the bus for`
+        + ` ${chosen.worst} master`);
   }
 }
 

@@ -170,14 +170,36 @@ first time broke two accepted results:
   that replaced nine `move.b` had only ever been TIMED — the first test to read
   the host's copy back saw an observation number of `$0202` where the engine's
   counter said 2, which is exactly `[b0, b0, b2, b2]`. The read is now the
-  selector plus the one face it names, byte by byte, in one grab.
+  selector plus the one face it names, byte by byte, in one grab. **The
+  890..1,144 master that run was quoted at is withdrawn** — it is not the cost of
+  a transfer that can be executed. The byte read is 819..987 master.
+
+  Since R20 §48.3 this is a rule in three places rather than a fixed bug: the
+  68000 emitter refuses to encode an absolute access to that window wider than a
+  byte, a `z80Xfer` scope refuses one through an address register, and the
+  selftest checks the access ledger of every rom the suite builds. The negative
+  is `--fault wide-read`, which rebuilds the withdrawn word-move read; the
+  required machine case `proto P1, snapshot byte width` publishes three different
+  constants behind the observation number and stamps every reading, and that
+  fault turns 489 good readings into 490 bad ones.
 * **Piece costs measured on the P1 rig are a lower bound, not a value.** P1's
   instructions are short; the 2ch mixer's `ld a,(ix+0)` and its `call`/`ret` make
   the bus grant land later. The whole handshake in one grab is 1,354 master on
   P1 and **1,541 inside the complete engine** — past the 1,500 the live contract
-  allows. So the host splits it into a read lap and a publish lap, one grab an
-  observation interval each, and the worst total between two H observations is
-  1,325 master with none over.
+  allows. So the host splits it into a snapshot read and an atomic publish
+  attempt, one grab an observation interval each. R20 §48.4 then moved every
+  fixed address, the payload and the next commit value out of the critical
+  section, which left the request, the grant poll, the ack read and its compare,
+  the five payload bytes, the commit and the release: **1,085..1,225 master when
+  a bundle goes out**, 553..679 when the box is busy, 819..987 for a read, and
+  the worst total between two H observations 1,160 with none over.
+
+  The period between transfers is GENERATED from what those paths cost (R20
+  §48.5) rather than being a fixed DBRA count: at least one observation interval,
+  so two transfers never share one and their stops never add; at most
+  masterHz/120, so a pair of them still makes 60 desired-state updates a second.
+  The measured interval is 438,543..438,935 master against the 438,762 it was
+  solved for.
 
 **How fast desired state can move**, measured with the 68000 really holding the
 bus: the whole handshake in ONE grab — read the ack, publish if the box is free

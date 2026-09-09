@@ -444,8 +444,12 @@ export function analyzeHost(log, { marks = false, calibrate = false } = {}) {
     const span = (v) => { const a = at(v), b = at(v + 1); return a === undefined || b === undefined ? null : b - a; };
     const markCost = span(0x1a);
     const per = (v, n) => { const s = span(v); return s === null || markCost === null ? null : (s - markCost) / n / 7; };
+    // …and the DBRA iteration in MASTER clocks, not 68000 cycles: it is what a
+    // generated transfer period is counted in (R20 §48.5).
+    const dbraSpan = span(0x1c);
     out.cal = { markCycles: markCost === null ? null : markCost / 7,
-      nop: per(0x10, 256), divu: per(0x12, 32), divuOverflow: per(0x14, 32), divuBig: per(0x16, 32) };
+      nop: per(0x10, 256), divu: per(0x12, 32), divuOverflow: per(0x14, 32), divuBig: per(0x16, 32),
+      dbraMaster: dbraSpan === null || markCost === null ? null : (dbraSpan - markCost) / 2048 };
   }
   // THE SPREAD OF TIMES WITHIN ONE OBSERVED H VALUE — and that is all it is
   // (§13.2.2). It says that in the conditions measured, the H value carried

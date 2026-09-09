@@ -33,6 +33,8 @@ import { Machine } from "./machine.mjs";
 import { commandBlocks, commandCost, commandBootLines, packCommand, refConsume,
   makeEncoder, cmdBundle, CMD_VALUES } from "./command.mjs";
 import { protoMap, protoBootLines } from "./proto-blocks.mjs";
+import { CASES as ROM_CASES } from "./cases.mjs";
+import { buildCase } from "./case-config.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
 
@@ -1617,7 +1619,12 @@ const RECORD_FAULTS = ["drop-field", "double-field", "carry-publish"];
 // The queue faults are the 68000's and they break the QUEUE's publication
 // order: the head moved before the bytes, or a byte of the record never came.
 const QFAULTS = ["q-commit-first", "q-short-payload"];
-assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS].sort(),
+// The access width is the 68000's too, and it breaks the READ rather than the
+// publication: the withdrawn word-move face read, which the 8-bit Z80 bus
+// answers with a duplicated byte (R20 §48.3).
+const WIDTH_FAULTS = ["wide-read"];
+assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS,
+  ...WIDTH_FAULTS].sort(),
   Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
 // Each one changes the 68000's rom, and none of them reaches the Z80's source.
 {
@@ -2049,6 +2056,71 @@ if (process.argv.includes("--machine")) {
   }
 }
 
+// ── THE 8-BIT Z80 BUS, AS A RULE (R20 §48.3 step 1) ──────────────────────
+// $A00000..$A0FFFF answers a word or long access with the byte at the EVEN
+// address duplicated into both halves. That was true for four rounds while the
+// host read the published snapshot with long moves, and nothing failed, because
+// the transfer was TIMED and never read back.
+//
+// So it is a rule in three places, and this is the third: the emitter refuses to
+// encode one, a `z80Xfer` scope refuses one through an address register, and
+// here every rom the suite builds is checked over the ledger of what its 68000
+// code actually touches. The negative is `--fault wide-read`, which is the only
+// way left to build one.
+{
+  const tmp = mkdtempSync(join(tmpdir(), "dac-width-"));
+  try {
+    let bytesToZ80 = 0, romsWithProtocol = 0;
+    for (const c of ROM_CASES) {
+      const b = buildCase(c, { outDir: tmp });
+      for (const t of b.access) {
+        if (t.addr === null)
+          assert.equal(t.size, 1, `${c.name}: a ${t.size}-byte access through an address`
+            + " register — an address register hides whether it points at Z80 RAM");
+        else if (t.addr >= 0xa00000 && t.addr <= 0xa0ffff) {
+          assert.equal(t.size, 1, `${c.name}: $${t.addr.toString(16)} reached ${t.size} bytes`
+            + " wide; the 68000 has only byte access to Z80 RAM");
+          bytesToZ80++;
+        }
+      }
+      if (b.grab?.proto) romsWithProtocol++;
+    }
+    assert.ok(bytesToZ80 > 500, "no byte access to Z80 RAM was recorded at all —"
+      + " the ledger is not being filled");
+    assert.ok(romsWithProtocol >= 8, "the protocol cases are not in the sweep");
+    // …and the rule can fail. The withdrawn word-move read is the only build
+    // that still contains one, and the ledger has to show it.
+    const width = ROM_CASES.find((c) => c.widthWitness);
+    assert.ok(width, "the access-width case is gone");
+    const bad = buildCase(width, { outDir: tmp, fault: "wide-read" });
+    const wide = bad.access.filter((t) => t.addr === null && t.size !== 1);
+    assert.equal(wide.length, 2, "--fault wide-read did not emit the word-move read");
+    // The emitter itself, asked directly, in both of the ways it can be asked.
+    const { buildRom: br } = await import("./rom.mjs");
+    void br;
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// The two refusals on their own, so the rule is tested and not just relied on.
+{
+  const { __M68kForTest } = await import("./rom.mjs");
+  const m = new __M68kForTest(0x200);
+  assert.throws(() => m.moveWabsD(0xa00000, 0), /only byte access/,
+    "a word read of Z80 RAM was encoded");
+  assert.throws(() => m.moveLabsD(0xa01e40, 0), /only byte access/,
+    "a long read of Z80 RAM was encoded");
+  assert.throws(() => m.moveLimm(0, 0xa01e40), /only byte access/,
+    "a long write to Z80 RAM was encoded");
+  m.moveBabsD(0xa01e40, 0);                       // …and a byte one is fine
+  m.moveWabsD(0xa11100, 0);                       // …as is the bus-request port
+  assert.throws(() => m.z80Xfer(() => m.moveLpost()), /inside a Z80 transfer/,
+    "a long move through an address register was encoded inside a transfer");
+  assert.throws(() => m.z80Xfer(() => m.moveWpost()), /inside a Z80 transfer/,
+    "a word move through an address register was encoded inside a transfer");
+  m.z80Xfer(() => m.moveBpost());                 // …the only transfer there is
+  assert.equal(m.byteOnly, false, "the transfer scope did not close");
+}
+
 console.log("probe selftest: values, interval attribution, transfer protocol, window geometry,"
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
@@ -2060,4 +2132,5 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " main BC in it at all,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
+  + " the 8-bit Z80 bus as a rule the emitter enforces and every rom is checked against,"
   + " resolved configuration and padding paths pass");

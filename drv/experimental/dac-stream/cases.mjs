@@ -57,6 +57,14 @@ export const CASES = [
   // untouched — so the DAC gate runs unchanged beside it and this case is
   // REQUIRED, not exploratory.
   { name: "load calibration", cfg: {}, wave: sine(256,120,1), calibrate: true },
+  // THE SAME CALIBRATION WITH THE DISPLAY ON (R20 §48.5). The transfer period
+  // is a DBRA count and the generator has to know what one is worth. With the
+  // VDP drawing it is not the seventy master its ten cycles would be, and the
+  // difference over a lap of waiting is 16,500 master — the whole reason the
+  // first generated period overshot. This case measures it and fails if it has
+  // moved away from the number the generator uses.
+  { name: "load calibration, display on", cfg: {}, wave: sine(256,120,1),
+    calibrate: true, vdp: true, calibrationOf: "display" },
   // ── the phase observer, step one (R4 §13.3.2) ───────────────────────────
   // The load, timed inside the observer's OWN rom (R5 §15.2 A): the
   // calibration rom's instruction times do not show what this one ran.
@@ -140,6 +148,23 @@ export const CASES = [
         proto: { every: 3000, piece } },
       informational: true })),
 
+  // THE ACCESS WIDTH, ON THE MACHINE (R20 §48.3 step 1). The one proto case
+  // whose verdict does not depend on the DAC: the bus really is taken, so the
+  // mean rate and the interval band are informational the way they are for
+  // every other transfer case — but a duplicated byte is NOT a timing error,
+  // so it is fatal, and `--required-only` runs this case for that reason.
+  // It is the standing answer to "the transfer was timed and never read back".
+  // The engine publishes a face whose three bytes behind the observation
+  // number are $A5, $3C and $5A: three DIFFERENT values, in three neighbouring
+  // bytes, so a read that duplicates the even byte comes back visibly wrong.
+  // `--fault wide-read` is the same case with the withdrawn word-move read,
+  // and it has to fail.
+  { name: "proto P1, snapshot byte width", cfg: {}, wave: sine(256,120,1),
+    observer: { reads: ["h"], decode: true, load: "divu",
+      proto: { every: 3000, width: true, bootGeneration: 0x3ca5,
+        phaseGeneration: 0x5a } },
+    widthWitness: true, informational: true },
+
   { name: "proto P1, live and bulk", cfg: {}, wave: sine(256,120,1),
     observer: { reads: ["h"], decode: true, load: "divu",
       proto: { every: 3000, between: 8 } }, informational: true },
@@ -214,24 +239,35 @@ export const CASES = [
   // `csmHost` is what makes it assemble: the CSM test voice is harness, and the
   // 68000 writes it while it still holds the bus, so the engine's code region
   // does not carry 162 bytes of scaffolding (R19 §46.3).
-  // `every` is a `dbra` count at about 70 master an iteration, so 6,144 is one
-  // lap — which is one H observation, which is the conservative rule: ONE
-  // transfer an observation interval. Two grabs an update (the snapshot, then
-  // the handshake) is therefore 62.4 desired-state updates a second, over the
-  // 60 R19 §46.3 asks for. The dense run halves the spacing on purpose so a
-  // second grab lands in the same interval and the SUM is what has to be read.
+  // THE PERIOD IS GENERATED, NOT WRITTEN DOWN (R20 §48.5). The old fixed
+  // `every: 6144` was one lap of DBRA and nothing else, so the 68000's own
+  // execution time landed on top of it and the interval was always longer than
+  // the lap it was named after. `transferPeriod` takes the two bounds — at
+  // least one observation interval, at most masterHz/120 so that two transfers
+  // still make 60 updates a second — and the emitter prices its own
+  // instructions and solves for the two DBRA counts. `density: 2` halves the
+  // spacing on purpose, so a second grab lands in the same interval and the SUM
+  // is what has to be read.
   //
   // INFORMATIONAL to machine-probe, for the same reason every other case that
   // takes the bus on purpose is: the DAC interval is not fixed while the 68000
   // holds the bus, and the level pages really do change, so the fixed-waveform
   // value model does not apply. What grades these is `dac-stream:decoder`.
-  ...[["on time", 1, 6144, false], ["a lap late", 0, 6144, false],
-    ["ahead", 3, 6144, false], ["at double density", 1, 3072, true]]
-    .map(([what, lead, every, dense]) => ({
+  // THE LEAD IS CHOSEN BY THE SWEEP, NOT BY HAND (R20 §48.5 step 4). A bundle
+  // names the observation it is to take effect at, and the mailbox holds it
+  // until that observation arrives — so too small a lead is applied late and
+  // too large a one keeps the box occupied and costs updates. 1, 2 and 3 are
+  // run and the smallest with no late bundle outside startup is the one the
+  // rate condition is graded on. `a lap late` names a boundary that has already
+  // gone by, and has to be late every time: the negative that proves the count
+  // is a count.
+  ...[["lead 1", 1, 1, false], ["lead 2", 2, 1, false], ["lead 3", 3, 1, false],
+    ["a lap late", 0, 1, false], ["at double density", 2, 2, true]]
+    .map(([what, lead, density, dense]) => ({
       name: `2ch mailbox, ${what}`,
       cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
         workTarget: 0.839, correctorBudget: true, command: true },
-      split: { load: "divu", proto: { every, live: true, lead },
+      split: { load: "divu", proto: { live: true, lead, density },
         place: { correct: true, proto: true, command: true } },
       dense, informational: true,
       // The mixer's level pages really change here — that is the whole point —

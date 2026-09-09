@@ -28,6 +28,11 @@ export const QUEUE_FAULTS = {
 };
 
 export const FAULTS = {
+  // R20 §48.3: the withdrawn transfer, kept only as a thing that must fail.
+  // The emitter refuses to encode a wide access to Z80 RAM, so this fault is
+  // the only place one can still be built — and the machine has to see the
+  // duplicate byte it produces.
+  "wide-read": "the host reads the published face with word moves, which the 8-bit Z80 bus duplicates",
   "drop-copy": "the 68000 transfers one byte fewer than it announced",
   "no-commit": "the 68000 never writes the local commit byte",
   "early-commit": "the commit is written BEFORE the payload, not after it",
@@ -63,6 +68,12 @@ export const QREC_RECORD = [0x40, 0x00, 0xde, 0xad, 0xbe];
 function protoRomFields(cfg, p, countLo = STATE.countLo) {
   const L = protocolLayout(cfg.ram.pub[0]);
   return { bootGeneration: p.bootGeneration ?? 0x1234,
+    // Boot writes this into the control block and the engine echoes it into
+    // every face. The width witness sets it to a constant that is not the boot
+    // generation's own bytes, so three neighbouring bytes are three different
+    // values and a duplicating read cannot come back looking right.
+    phaseGeneration: p.phaseGeneration ?? 0,
+    width: !!p.width, wideRead: !!p.wideRead,
     between: p.between ?? 8,
     skipLive: !!p.skipLive, skipBulk: !!p.skipBulk,
     snapshotBytes: SNAPSHOT_BYTES,
@@ -94,6 +105,48 @@ function protoRomFields(cfg, p, countLo = STATE.countLo) {
     record: QREC_RECORD };
 }
 
+/**
+ * THE TRANSFER PERIOD, AS TWO BOUNDS AND A TARGET (R20 §48.5).
+ *
+ * The fixed `every: 6144` was one lap of DBRA and nothing else, so the 68000's
+ * own execution time was added on top of it and the interval was always longer
+ * than the lap it was named after. What the host actually has to satisfy is a
+ * pair of bounds:
+ *
+ *   at least  one H observation interval, or two transfers land inside one and
+ *             their bus stops ADD against the 1,500 master live contract
+ *   at most   masterHz / 120, because an update is two transfers and R17 §43.6
+ *             step 6 asks for 60 desired-state updates a second
+ *
+ * The stops are what each path measured inside the complete 2ch image (R20
+ * §48.4); they are part of the interval, and the 68000 spends them in the grant
+ * poll, so the wait cannot be sized without them. The emitter prices its own
+ * instructions and solves for the two DBRA counts.
+ */
+export const MASTER_HZ = 53693175;
+export const UPDATES_PER_SECOND = 60;             // R17 §43.6 step 6
+// WHAT A DBRA ITERATION IS WORTH, MEASURED (R20 §48.5). Ten 68000 cycles would
+// be seventy master, and with the display off that is exactly what the
+// calibration reports. With the display ON the VDP takes bus cycles from the
+// 68000 and the same loop runs slower — 3.8% slower, which over one lap of
+// waiting is 16,500 master and is why the first generated period produced a
+// 455,307 master interval where it had solved for 438,762.
+//
+// So it is measured rather than assumed: the "load calibration, display on"
+// case reports it and FAILS if it has moved from this number, and
+// dac-stream:decoder fails if the interval a period produces lands outside the
+// window it was generated for. Both ends are checked, every run.
+export const DBRA_MASTER = 72.653;
+export const MASTER_PER_CYCLE = DBRA_MASTER / 10;
+export function transferPeriod(cfg, p) {
+  const lapMaster = cfg.cycleSlots * cfg.periodNum;
+  return { lapMaster, ceilMaster: MASTER_HZ / (2 * UPDATES_PER_SECOND),
+    density: p.density ?? 1, masterPerCycle: MASTER_PER_CYCLE,
+    ...(p.targetMaster ? { targetMaster: p.targetMaster } : {}),
+    // Measured STOP -> RESUME of each path in the complete 2ch+CSM image.
+    stopRead: p.stopRead ?? 1150, stopPublish: p.stopPublish ?? 1250 };
+}
+
 export function resolveCase(c0, { compensation = null, captureOffset = null, fault = null } = {}) {
   if (fault && !FAULTS[fault]) throw new Error(`unknown fault ${fault}; one of ${Object.keys(FAULTS)}`);
   const cfg = buildConfig(c0.cfg);
@@ -101,7 +154,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     ? { ...c0.cooperative, ...(compensation === null ? {} : { compensation }) } : null;
   let grab = c0.grab ? { ...c0.grab }
     : c0.bankOnly ? { cooperative: true, disabled: true }
-    : c0.calibrate ? { calibrate: true, disabled: true }
+    : c0.calibrate ? { calibrate: true, disabled: true, vdp: !!c0.vdp }
     // An observer case has a display and a busy 68000. It has no transfer
     // protocol of its own; `stall` injects a plain, UNREPAID bus grab, which is
     // the disturbance the observer is supposed to notice.
@@ -114,6 +167,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // image, and nothing ran both at once.
     : c0.split?.proto ? { vdp: true, load: c0.split.load,
         bootNops: c0.split.bootNops, every: c0.split.proto.every,
+        ...(c0.split.proto.live ? { period: transferPeriod(cfg, c0.split.proto) } : {}),
         ...(c0.cfg?.csmHost ? { csmVoice: CSM_TEST_VOICE,
           csmFreq: { ...CSM_TEST_FREQ, hiAt: cfg.ram.glob[0] + GLOB.csmHi,
             loAt: cfg.ram.glob[0] + GLOB.csmLo } } : {}),
@@ -131,6 +185,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // shape whose host writes into Z80 RAM at all (R12 §33.3).
     : c0.observer?.proto ? { vdp: true, load: c0.observer.load,
         bootNops: c0.observer.bootNops, every: c0.observer.proto.every,
+        ...(c0.observer.proto.live ? { period: transferPeriod(cfg, c0.observer.proto) } : {}),
         proto: protoRomFields(cfg, { ...c0.observer.proto,
           ...(fault in QUEUE_FAULTS ? { qfault: fault.slice(2) } : {}) }) }
     : c0.observer ? (c0.observer.stall
@@ -145,6 +200,14 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     // A publish fault is the Z80's; it must not also reach the 68000's rom.
     if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)) grab.fault = fault;
+    // The withdrawn word-move read is a property of the HOST'S protocol code,
+    // not of the transfer's payload, so it reaches the proto fields rather than
+    // `grab.fault` (R20 §48.3).
+    if (fault === "wide-read") {
+      if (!grab.proto?.width)
+        throw new Error("fault wide-read only applies to the access-width case");
+      grab.proto.wideRead = true;
+    }
     // Two ways to break the load CHECK rather than the load: make it short, or
     // stop it reporting. The gate has to fail on both (R6 §17.2 C).
     if (fault === "short-load" || fault === "no-load-marks") {
@@ -223,8 +286,9 @@ export function buildCase(c0, { outDir, compensation = null, captureOffset = nul
     image = grown;
   }
   if (!samples && c.grab) samples = Uint8Array.from({ length: 512 }, (_, i) => (i * 73 + 19) & 255);
-  const { rom, sha } = buildRom(image, samples, c.grab ?? null);
+  const { rom, sha, access } = buildRom(image, samples, c.grab ?? null);
   const rpath = join(outDir, `probe-${cfg.stamp}-${caseId}-${sha}.bin`);
   writeFileSync(rpath, rom);
-  return { cfg, gen, grab: resolved.grab, resolved: c, caseId, image, samples, sha, rpath, zpath };
+  return { cfg, gen, grab: resolved.grab, resolved: c, caseId, image, samples, sha,
+    rpath, zpath, access };
 }
