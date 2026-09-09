@@ -149,7 +149,7 @@ for (const c0 of selected) {
   };
   // An explicit negative test exercises the CLI exit status, not just a helper.
   if (argv.includes("--inject-value-error") && log.dac.length) log.dac.at(-1).value ^= 1;
-  const a = analyzeProbe(log, r.cfg, expected);
+  const a = analyzeProbe(log, r.cfg, c.levelsMove ? null : expected);
   // AN EXCEPTION IS A FAILED RUN, whatever the PCM looks like. Every unused
   // vector lands on a routine that stamps this and halts, so a fault cannot
   // hide behind a clean two-second waveform any more.
@@ -169,7 +169,9 @@ for (const c0 of selected) {
   // build-failure path — has to say `globalThis.console`.
   const console = { log: (...s) => out.push(s.join("")) };
   console.log(`  inside ±5% ${(100*a.inside5).toFixed(4)}%, ±10% ${(100*a.inside10).toFixed(4)}%;`
-    + ` holes ${a.holes.length} (${a.overlapping.length} overlap BUSREQ); values ${a.firstBad < 0 ? "all match" : "FAIL"}`);
+    + ` holes ${a.holes.length} (${a.overlapping.length} overlap BUSREQ);`
+    + ` values ${c.levelsMove ? "not fixed — the mailbox moves them, graded by dac-stream:decoder"
+      : a.firstBad < 0 ? "all match" : "FAIL"}`);
   const steady = log.grabs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time);
   const beforeOutput = log.grabs.filter(([t]) => t < log.dac[0]?.time).length;
   console.log(`  requests: ${beforeOutput} before first DAC, ${log.grabs.length-beforeOutput-steady.length} outside measurement, ${steady.length} measured`);

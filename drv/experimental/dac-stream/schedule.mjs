@@ -31,9 +31,10 @@ export const cost = (ops) => ops.reduce((t, o) => t + o.cycles, 0);
 // (R8 §23.3). `ld b,k`/`djnz $` is four bytes for any length; the same wait in
 // `jr $+2` is one byte per six cycles.
 const FILL_BYTES = { "nop": 1, "inc bc": 1, "ld a,0": 2, "jp $+3": 3, "jr $+2": 2,
-  "djnz $": 2, "push af": 1, "pop  af": 1 };
+  "djnz $": 2, "push af": 1, "pop  af": 1, "dec  iyl": 2, "jr   nz,$-2": 2 };
 export const fillBytes = (ops) => ops.reduce((t, o) => t + o.asm.reduce((u, l) => {
-  const n = FILL_BYTES[l] ?? (/^ld b,\d+$/.test(l) ? 2 : null);
+  const n = FILL_BYTES[l] ?? (/^ld b,\d+$/.test(l) ? 2
+    : /^ld   iyl,\d+$/.test(l) ? 3 : null);
   if (n === null) throw new Error(`fillBytes: ${l} is not a filler`);
   return u + n;
 }, 0), 0);
@@ -100,23 +101,49 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false, stack = fa
     if (n % 4) throw new Error(`a nop-only pad must be a multiple of 4 cycles, not ${n}`);
     return Array.from({ length: n / 4 }, () => op("nop", 4));
   }
-  const straight = n <= 24 || !allow.has("b") ? straightPlan(n, allow, stack) : null;
-  if (straight) return straight.map((f) => op(f.asm, f.cycles, { clobbers: f.clobbers, stack: f.stack }));
-  if (!allow.has("b")) throw new Error(`cannot pad ${n} cycles without b`);
-  // 13k + 2 for the loop, the rest straight. Walk k down until the residual is
-  // representable — one step is always enough (13 cycles moves a residual of
-  // 5 or 9 to 18 or 22, and everything from 10 up is reachable).
-  const kMax = Math.min(255, Math.floor((n - 2) / 13));
-  for (let k = kMax; k >= 1; k--) {
-    const tail = n - (13 * k + 2);
-    const plan = straightPlan(tail, allow, stack);
-    if (plan) {
-      return [
-        op(`ld b,${k}`, 7, { clobbers: ["b", "bc"] }),
-        op("djnz $", 13 * k - 5, { clobbers: ["b", "bc"] }),
-        ...plan.map((f) => op(f.asm, f.cycles, { clobbers: f.clobbers })),
-      ];
+  const mk = (f) => op(f.asm, f.cycles, { clobbers: f.clobbers, stack: f.stack });
+  const plans = [];
+  const straight = straightPlan(n, allow, stack);
+  if (straight) plans.push(straight.map(mk));
+  // TWO LOOPS, and the shorter plan wins on BYTES.
+  //
+  // `ld b,k` / `djnz $` is four bytes for any wait, and it is what most slots
+  // use. A slot that has to carry a value in BC cannot have it, and used to
+  // fall back on `push af`/`pop af` — two bytes for 21 cycles, the densest
+  // straight line there is, but still two bytes every 21 cycles.
+  //
+  // IYL is the third counter (R19 §46.3): `ld iyl,k` / `dec iyl` / `jr nz` is
+  // 20k + 6 cycles in FIVE bytes whatever k is. It is the mixer's register and
+  // it is live strictly INSIDE `mix_one` — set from A and read back two
+  // instructions later — so it is dead in every pad in the image. The caller
+  // has to say so, which is why it is in `dead` and not assumed here.
+  //
+  // What this buys is BYTES, not cycles. The reserved padding a `complete`
+  // build executes is provisional — the real feature replaces it — and paying
+  // for it in image is what pushed the 15-level engine with CSM, the corrector,
+  // the protocol and the consumer past its region.
+  const loop = (setup, per, base, name) => {
+    const kMax = Math.min(255, Math.floor((n - base) / per));
+    for (let k = kMax; k >= 1; k--) {
+      const tail = straightPlan(n - (per * k + base), allow, stack);
+      if (!tail) continue;
+      return [...setup(k), ...tail.map(mk)];
     }
+    return null;
+  };
+  if (allow.has("iy")) {
+    const p = loop((k) => [op(`ld   iyl,${k}`, 11, { clobbers: ["iy"] }),
+      op(["dec  iyl", "jr   nz,$-2"], 20 * k - 5, { clobbers: ["iy"] })], 20, 6);
+    if (p) plans.push(p);
+  }
+  if (allow.has("b")) {
+    const p = loop((k) => [op(`ld b,${k}`, 7, { clobbers: ["b", "bc"] }),
+      op("djnz $", 13 * k - 5, { clobbers: ["b", "bc"] })], 13, 2);
+    if (p) plans.push(p);
+  }
+  if (plans.length) {
+    plans.sort((x, y) => fillBytes(x) - fillBytes(y) || x.length - y.length);
+    return plans[0];
   }
   // 1, 2, 3, 5 and 9 are the only residuals no combination reaches — the Z80
   // has no 5- or 9-cycle instruction that destroys nothing. A slot that lands

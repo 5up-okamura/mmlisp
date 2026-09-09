@@ -871,7 +871,54 @@ staged byte the reference could not name at all while claiming to check a `size`
 byte it never read. The host's timeline is extended u32 now and narrows to
 sixteen bits only at encode.
 
-**Still open**: §33.6 step 5, the host-YM safe window — the only thing that can
-release b11..b14. And the mailbox represents voice state as three level pages
-only; voice start/stop, cursor, loop and bank are not in it, and §43.3 forbids
-folding those into one boundary without a new wire shape and a new cost.
+### R19 §46 — the integration test found two things nothing else could
+
+Running the complete 2ch image and a REAL 68000 mailbox host together, for the
+first time, broke two accepted results:
+
+**1. The 68000 cannot read Z80 RAM with word or long moves.** The Z80 bus is 8
+bits: a word/long access to $A00000..$A0FFFF returns the byte at the EVEN
+address duplicated into both halves. R12 §33.4 replaced nine `move.b` (1,583..
+1,851 master, over the contract) with long moves over a 14-byte run and R15
+§39.2 kept it — and the host's copy had only ever been TIMED, never read back.
+The first test that read it saw observation `$0202` where the counter said 2,
+which is exactly [b0, b0, b2, b2]. The read is now the selector plus the one
+face it names, byte by byte, in one grab: **1,038..1,375 master** on the P1 rig.
+
+**2. The transfer costs are bigger inside the complete engine than on the P1
+rig.** P1's instructions are short; the 2ch mixer's `ld a,(ix+0)` and its
+`call`/`ret` make the bus grant land later. The whole handshake in one grab
+measured 1,354 master on P1 and **1,541 inside the 2ch engine** — past the
+1,500 the live contract allows. Every piece measurement taken on P1 is a lower
+bound for the finished engine, not a value for it.
+
+So the host splits the handshake: a READ lap (selector, observation number, ack
+— four byte reads) and a PUBLISH lap (five payload bytes, then the commit), one
+grab an observation interval each. Worst total between two H observations
+**1,325 master, 0 over 1,500** ✓.
+
+**The rate condition fails.** Publish → the engine sees the commit at the next
+lap's first consumer position → applies and acks at slot 72 → the host reads the
+ack → publishes. That round trip is 2.7 laps on average, so a safe host sustains
+**43.5 desired-state updates a second** against the 60 §43.6 step 6 requires.
+124.8/s needs the single-grab handshake, which does not fit the contract inside
+the complete engine. Per §46.3 the listening ROM and host-YM both wait.
+
+Everything else in the combined case holds: 128 bundles committed and 128
+acknowledged with 0 partial payloads, 0 writes to the phase control block, 15
+distinct level pages staged, 0 staged bytes written without the other two, DAC
+intervals 342..359 Z80 cycles with the bus holds removed, and the CSM+consumer
+image assembling at exactly 2,560 B once the 162 B CSM test voice is written by
+the 68000 at boot instead of by the Z80 (§46.3's own remedy).
+
+Also this round: the host's waiting list holds DIFFERENCES per boundary and
+assembles the whole state at emit time, so a boundary asked for after a later
+one no longer inherits that later one's values (§46.2); and `padTo` gained a
+third counter — `ld iyl,k`/`dec iyl`/`jr nz`, five bytes for any wait — for the
+slots that carry a value in BC and had no `djnz`, chosen only where it is
+shorter. Finished estimate 2,466 B of 2,560 (94 B spare).
+
+**Still open**: the 60 updates/s condition, then §33.6 step 5's host-YM safe
+window — the only thing that can release b11..b14. And the mailbox represents
+voice state as three level pages only; voice start/stop, cursor, loop and bank
+are not in it.

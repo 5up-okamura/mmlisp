@@ -309,6 +309,11 @@ export function buildConfig({
   // is replaced by the real fixed-length PCM state consumer, which needs more
   // block positions than were reserved for it. Built on the corrector's image.
   command = false,
+  // WHO LOADS THE CSM TEST VOICE (R19 §46.3). The Z80 does, out of a table in
+  // its own image, unless this says the 68000 will write it before releasing the
+  // bus — which takes 161 bytes of test scaffolding out of the engine's code
+  // region, where it never belonged.
+  csmHost = false,
   // HOW MANY VOLUME LEVELS, and therefore how big the level family is. 16 is
   // the shipped one (4 KB). 15 is the experimental profile R8 §23.2 authorises
   // so that a page-aligned phase table exists at all; it is a different build
@@ -414,7 +419,7 @@ export function buildConfig({
       ? (command ? RESERVE_2CH_CMD : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
     codeEstimate: command ? CODE_ESTIMATE_2CH_CMD
       : correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
-    correctorBudget, command,
+    correctorBudget, command, csmHost,
     z80Hz, fmSampleHz, rateHz,
     periodNum, periodDen, periodCycles,
     groupSlots, groupCycles, slotCycles, cycleSlots,

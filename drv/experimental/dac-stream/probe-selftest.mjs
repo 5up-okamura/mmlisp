@@ -888,8 +888,13 @@ assert.equal(backwards[2].sync, "lost");
   // read inside the 1,500 master the contract allows.
   assert.equal(SNAPSHOT_BYTES, 5);
   assert.equal(SNAPSHOT_STRIDE, 6);
-  assert.equal(L.readRun.bytes, 14);
-  assert.equal(L.readRun.bytes & 1, 0, "the host's run must be whole words");
+  // WHAT THE HOST ACTUALLY READS (R19 §46.3): the selector and the one face it
+  // names, byte by byte. The 68000 has no wider access to Z80 RAM than that —
+  // a word or long read of $A00000..$A0FFFF returns the even byte twice — so
+  // the "one straight run of long moves" R12 §33.4 introduced was reading
+  // [b0, b0, b2, b2] and only its TIMING had ever been checked.
+  assert.equal(L.readBytes, 6);
+  assert.equal(L.readRun, undefined, "the long-move run is withdrawn, not renamed");
   assert.equal(PROTOCOL_BYTES, 19);
   assert.equal(PROTOCOL_SPARE, 13);
   assert.equal(cfg.ram.pub[1] - cfg.ram.pub[0], PUB_REGION_BYTES);
@@ -1164,6 +1169,41 @@ assert.equal(backwards[2].sync, "lost");
     assert.equal(a2.bundle.v0page, 7, "a later bundle carries the state, not the difference");
     assert.equal(a2.bundle.mpage, 9);
     assert.equal(e2.coalesced.records, 2);
+    // ORDER OF ARRIVAL IS NOT ORDER OF TIME (R19 §46.2). A boundary asked for
+    // after a later one already exists must not be born carrying that later
+    // one's values: the waiting list holds what each boundary was TOLD, and the
+    // whole state is assembled at emit time, in time order.
+    {
+      const e4 = makeEncoder();
+      e4.want(10, { v0page: 1 });
+      e4.want(20, { v1page: 2 });
+      e4.want(15, { mpage: 3 });          // …out of time order
+      const out = [];
+      for (let g = 0; g < 4; g++) {
+        const r = e4.emit(); if (!r) break;
+        e4.acknowledge(r.commit);
+        out.push([r.at, r.bundle.v0page, r.bundle.v1page, r.bundle.mpage]);
+      }
+      assert.deepEqual(out, [[10, 1, 0, 0], [15, 1, 0, 3], [20, 1, 2, 3]],
+        "observation 20's change leaked back into 15");
+      // …and the same field, asked for at an earlier boundary after a later
+      // one: the later request does not win because it was registered first.
+      const e5 = makeEncoder();
+      e5.want(30, { v0page: 7 });
+      e5.want(20, { v0page: 5 });
+      const first = e5.emit(); e5.acknowledge(first.commit);
+      const second = e5.emit(); e5.acknowledge(second.commit);
+      assert.equal(first.at, 20);
+      assert.equal(first.bundle.v0page, 5, "the earlier boundary took the later value");
+      assert.equal(second.at, 30);
+      assert.equal(second.bundle.v0page, 7);
+      // A field nobody mentions at a boundary carries forward from what was
+      // actually published, not from what has merely been asked for.
+      assert.deepEqual(e5.live, { v0page: 7, v1page: 0, mpage: 0 });
+      assert.deepEqual(e5.desired, { v0page: 5, v1page: 0, mpage: 0 },
+        "`desired` is the last thing asked for, whatever order it went out in");
+    }
+
     // THE u16 WRAP IS NOT A COMPARISON THE HOST MAKES. Its timeline is extended
     // and never wraps; sixteen bits happen at encode. R16 compared `at` against
     // `published` in u16 and read a boundary past the wrap as one already gone.
@@ -1241,7 +1281,13 @@ assert.equal(backwards[2].sync, "lost");
     // carry the next observation ANDs with: one more state byte and one more
     // piece to write it, which is +13 B in the corrector build and -3 B in the
     // plain one (its own carry piece replaces a boot byte).
-    { plain: [2086, 570, 608, 2124], corr: [2304, 435, 538, 2407] },
+    //
+    // R19 §46.3 gave the pad a third counter — `ld iyl,k` / `dec iyl` /
+    // `jr nz`, five bytes for any wait — for the slots that carry a value in BC
+    // and therefore had no `djnz`. It is chosen only where it is SHORTER than
+    // the straight-line form, so it takes 11 B out of the plain image and 4 B
+    // out of the corrector's, and not one cycle out of either.
+    { plain: [2075, 570, 608, 2113], corr: [2300, 435, 538, 2403] },
     "the code ledger moved — say so rather than letting it drift");
   assert.ok(plain.spare > 0 && corr.spare > 0, "the finished estimate must fit the region");
   assert.equal(plain.region, 2560, "the code region is not to be widened (R11 §31.1)");

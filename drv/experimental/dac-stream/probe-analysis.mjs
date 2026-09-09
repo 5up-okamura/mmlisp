@@ -598,7 +598,13 @@ export function analyzeProbe(log, cfg, expected) {
   if (holes.length) errors.push("holes");
   if (all.some((e, i) => i && e.time <= all[i-1].time)) errors.push("non-monotonic DAC clock / wrap");
   // Check startup as well as the measurement window, including both endpoints.
-  const firstBad = all.findIndex((e, i) => e.value !== expected(i));
+  //
+  // A CASE WHOSE LEVELS MOVE HAS NO FIXED REFERENCE (R19 §46.3): the mailbox
+  // exists to change the mixer's level pages while the stream runs, so a fixed
+  // model of what the DAC should carry is not what it should carry. Those cases
+  // pass `null` and are graded on what the STAGED pages did, from the same log,
+  // by `dac-stream:decoder`. Everything else here still applies.
+  const firstBad = expected ? all.findIndex((e, i) => e.value !== expected(i)) : -1;
   if (firstBad >= 0) errors.push(`value at sample ${firstBad}: ${all[firstBad].value}, expected ${expected(firstBad)}`);
   if (log.ym.length !== all.length || log.ym.some((e, i) => e.value !== all[i]?.value))
     errors.push("YM/bus value stream mismatch");

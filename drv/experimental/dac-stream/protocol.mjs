@@ -99,16 +99,33 @@ export const CONTROL_BYTES = sizeOf(CONTROL);        // 5
 export const FACES = 2;
 
 /**
- * THE STRIDE IS EVEN, and the padding byte is not there for its own sake (R12
- * §33.4). The 68000 reads a face with the bus held, and every byte it reads is
- * Z80 time it is holding: nine `move.b (a0)+,(a1)+` measured 105..123 Z80
- * cycles of STOP -> RESUME, which is 1,583..1,851 master and OVER the 1,500 the
- * live-transfer contract allows. With both faces on an even boundary the whole
- * run is long moves, and the selector's own toggle stays one `xor`.
+ * THE STRIDE IS EVEN, and the padding byte is the last of a rationale that has
+ * now been half withdrawn (R19 §46.3).
  *
- * Five bytes a face and a stride of six (R15 §39.2): the run the host takes is
- * fourteen bytes — three `move.l` and one `move.w` — where it used to be
- * twenty-two.
+ * R12 §33.4 measured nine `move.b (a0)+,(a1)+` at 105..123 Z80 cycles of
+ * STOP -> RESUME — 1,583..1,851 master, over the 1,500 the live contract allows
+ * — and replaced them with two `move.l` and one `move.w` over a run that
+ * covered the selector and both faces. R15 §39.2 kept the shape at five bytes a
+ * face and fourteen in the run.
+ *
+ * THE 68000 CANNOT DO THAT. Z80 RAM sits on an 8-bit bus: a word or long access
+ * to $A00000..$A0FFFF returns the byte at the EVEN address duplicated into both
+ * halves, so a long read of the run comes back as [b0, b0, b2, b2]. The first
+ * test to read the host's copy back instead of only timing it saw exactly that
+ * — an observation number of $0202 where the engine's counter said 2 — and the
+ * numbers R12 and R15 accepted were measurements of an access the machine does
+ * not have.
+ *
+ * What survives is the ORDER, which was never the problem: the selector is read
+ * first and the face it names second, both inside one grab, so the Z80 is
+ * stopped for the whole of it and cannot flip the selector in between. What
+ * goes is the claim that the run is cheap because it is long moves. The read is
+ * SIX BYTES — the selector and the one face — and it is byte by byte, and its
+ * cost is measured rather than argued for.
+ *
+ * The even stride is kept: it costs one byte a face, it keeps both faces on
+ * word boundaries for anything that later reads them from the Z80's side, and
+ * removing it would change every offset for no measured gain.
  */
 export const SNAPSHOT_STRIDE = SNAPSHOT_BYTES + (SNAPSHOT_BYTES & 1);   // 6
 
@@ -136,8 +153,9 @@ export function protocolLayout(base = 0) {
   for (let f = 0; f < FACES; f++) { faces.push(at(SNAPSHOT, o).fields); o += SNAPSHOT_STRIDE; }
   const host = at(CONTROL, o); o = host.end;
   return { base, faces, publishSelect, control: host.fields, size: o,
-    // What the host reads in one go: the selector, its pad, and both faces.
-    readRun: { offset: base, bytes: 2 + FACES * SNAPSHOT_STRIDE } };
+    // What the host reads in one grab: the selector, and then the one face it
+    // names. Byte by byte — see the note on SNAPSHOT_STRIDE.
+    readBytes: 1 + SNAPSHOT_BYTES };
 }
 
 export const PUB_REGION_BYTES = 32;

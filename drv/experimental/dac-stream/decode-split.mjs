@@ -488,7 +488,9 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // A slot carrying a value in BC loses `ld b,k`/`djnz $`, which is four bytes
   // for any wait. `stackFill` gives it `push af`/`pop af` instead — 21 cycles
   // in two bytes, balanced, touching only A, F and two bytes of stack.
-  const keep = { dead: ["a"], stack: stackFill }, free = { dead: DEAD_DEFAULT };
+  // A slot carrying a value in BC may still use IYL as a counter: it is the
+  // mixer's, live strictly inside `mix_one`, and dead in every pad (R19 §46.3).
+  const keep = { dead: ["a", "iy"], stack: stackFill }, free = { dead: DEAD_DEFAULT };
   const slotDead = (i) => ({
     work: preserve.liveIn.has(i) ? keep : free,
     pad: preserve.liveOut.has(i) ? keep : free,

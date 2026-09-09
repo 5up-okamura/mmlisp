@@ -60,8 +60,17 @@ export const cmdBundle = ({ at, v0page, v1page, mpage }) =>
  * which is not one).
  */
 export function makeEncoder({ v0page = 0, v1page = 0, mpage = 0 } = {}) {
-  const shadow = { v0page, v1page, mpage };
-  const waiting = new Map();          // extended observation -> desired state
+  // THE WAITING LIST HOLDS DIFFERENCES, NOT STATES (R19 §46.2). It used to hold
+  // a whole state per boundary, seeded from "the latest state anyone has asked
+  // for" — and that is wrong the moment `want()` is called out of time order:
+  // a boundary created after a LATER one already exists was born carrying that
+  // later one's values, so a change meant for observation 20 came out at 15.
+  // What each entry owns is only the fields that boundary was actually told
+  // about; the whole state is built at emit time, in time order, from the last
+  // one that really went out.
+  const waiting = new Map();          // extended observation -> the fields it sets
+  const live = { v0page, v1page, mpage };   // the last state actually published
+  const desired = { v0page, v1page, mpage };  // …and what everything asked for
   // The HIGH-WATER MARK, not what is in the box: once a boundary has been
   // published the Z80 may already have applied it, so a change for it can never
   // be folded in afterwards however the handshake then goes.
@@ -71,7 +80,10 @@ export function makeEncoder({ v0page = 0, v1page = 0, mpage = 0 } = {}) {
   let changes = 0, records = 0;
   const soonest = () => (waiting.size ? Math.min(...waiting.keys()) : null);
   return {
-    get shadow() { return { ...shadow }; },
+    /** What the host means the levels to end up as, once everything is out. */
+    get desired() { return { ...desired }; },
+    /** What the engine has actually been told, as of the last bundle sent. */
+    get live() { return { ...live }; },
     get coalesced() { return { changes, records, waiting: waiting.size }; },
     get commit() { return commit; },
     /** The Z80 has taken the bundle that was in the box. */
@@ -83,16 +95,17 @@ export function makeEncoder({ v0page = 0, v1page = 0, mpage = 0 } = {}) {
      */
     want(at, set) {
       changes += Object.keys(set).length;
-      // A boundary already in the box is closed. The comparison is on extended
+      // A boundary already published is closed. The comparison is on extended
       // numbers, so it is a comparison and not a guess about which side of a
       // wrap something is on.
       let target = at;
       if (published !== null && target <= published) target = published + 1;
-      if (!waiting.has(target)) waiting.set(target, { ...shadow });
-      // …and every boundary at or after it inherits the change too, because a
-      // bundle is a whole state and not a difference.
-      for (const [k, v] of waiting) if (k >= target) Object.assign(v, set);
-      Object.assign(shadow, set);
+      if (!waiting.has(target)) waiting.set(target, {});
+      // ONLY THIS BOUNDARY. A later boundary that does not mention the field
+      // inherits it at emit time, from whatever was live by then — which is the
+      // same answer, arrived at in time order instead of in call order.
+      Object.assign(waiting.get(target), set);
+      Object.assign(desired, set);
       return target;
     },
     /** Put the soonest waiting bundle in the box, if the box is free. */
@@ -100,13 +113,13 @@ export function makeEncoder({ v0page = 0, v1page = 0, mpage = 0 } = {}) {
       if (!this.free) return null;
       const at = soonest();
       if (at === null) return null;
-      const state = waiting.get(at);
+      Object.assign(live, waiting.get(at));
       waiting.delete(at);
       published = at;
       inBox = true;
       commit = (commit + 1) & 0xff;
       records++;
-      return { bundle: cmdBundle({ at, ...state }), commit, at };
+      return { bundle: cmdBundle({ at, ...live }), commit, at };
     },
   };
 }
@@ -250,13 +263,14 @@ export function commandBlocks(m, cfg, tag = "", { fault = null } = {}) {
     // the last one.
     b("mb store 01", [
       op(`ld   a,(${hx(VAL)})`, 13),
-      op([`${P[0]}:`, `ld   (${hx(V0)}),a`], 13, { what: "voice 0's level page" }),
+      op([`${P[0]}:`, `ld   (${hx(DUMP)}),a`], 13,
+        { what: "voice 0's level page — the operand starts on the bit bucket" }),
       op(`ld   a,(${hx(VAL + 1)})`, 13),
-      op([`${P[1]}:`, `ld   (${hx(V0 + 1)}),a`], 13, { what: "voice 1's" }),
+      op([`${P[1]}:`, `ld   (${hx(DUMP + 1)}),a`], 13, { what: "voice 1's" }),
     ], { edge: true }),
     b("mb store 2", [
       op(`ld   a,(${hx(VAL + 2)})`, 13),
-      op([`${P[2]}:`, `ld   (${hx(V0 + 2)}),a`], 13, { what: "…and the master's" }),
+      op([`${P[2]}:`, `ld   (${hx(DUMP + 2)}),a`], 13, { what: "…and the master's" }),
     ], { edge: true }),
     // ── and only then, the acknowledgement ────────────────────────────
     // AFTER the three stores, never before: the ack is what lets the 68000
@@ -302,17 +316,23 @@ export const commandCost = (blocks) => blocks.reduce((t, x) => t + x.cycles, 0);
  */
 export function commandBootLines(m, tag = "") {
   const lbl = (n) => `mb_${n}${tag}`;
-  const out = ["xor  a"];
-  for (const a of [m.commandAck, m.lateCount, m.cmd.dhi, m.cmd.nx])
-    out.push(`ld   (${hx(a)}),a`);
-  for (const n of ["k1", "k2", "k3", "pend", "go1", "go2", "go3", "late", "olo",
-    "slo", "shi"]) out.push(`ld   (${lbl(n)}+1),a`);
-  out.push(`ld   a,${hx(m.dumpBytes & 0xff)}`);
-  CMD_VALUES.forEach((_, i) => {
-    if (i) out.push("inc  a");
-    out.push(`ld   (${lbl(`st${i}`)}+1),a`);
-  });
-  return out;
+  // ONLY WHAT THE FIRST LAP WOULD READ BEFORE WRITING. The three store
+  // operands are emitted pointing at the BIT BUCKET, so even the assembled
+  // image before anything has run stages nothing.
+  //
+  // ONLY WHAT THE FIRST LAP WOULD READ BEFORE WRITING. Every other operand and
+  // work byte in this chain is written by an earlier piece of the SAME lap
+  // before any later piece looks at it — the placement proves the order — so
+  // zeroing them at boot is dead code, and dead code in this image costs bytes
+  // the region does not have. What is left is the ack, in the three
+  // instructions that hold it and in the byte the 68000 reads, and the late
+  // count, which accumulates into itself.
+  return ["xor  a",
+    `ld   (${hx(m.commandAck)}),a`,
+    `ld   (${hx(m.lateCount)}),a`,
+    `ld   (${lbl("k1")}+1),a`,
+    `ld   (${lbl("k2")}+1),a`,
+    `ld   (${lbl("k3")}+1),a`];
 }
 
 /**

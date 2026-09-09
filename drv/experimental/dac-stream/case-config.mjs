@@ -15,9 +15,9 @@ import { join } from "node:path";
 import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
-import { generate } from "./gen-stream.mjs";
+import { generate, CSM_TEST_VOICE, CSM_TEST_FREQ } from "./gen-stream.mjs";
 import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
-import { generateSplit } from "./decode-split.mjs";
+import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
 import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
   SNAPSHOT_STRIDE, MAILBOX, MAILBOX_BYTES } from "./protocol.mjs";
 import { GLOB } from "./config.mjs";
@@ -60,16 +60,16 @@ export const QREC_RECORD = [0x40, 0x00, 0xde, 0xad, 0xbe];
  * They are OFFSETS from the Z80's base, because that is how the host addresses
  * Z80 RAM, and nothing here re-derives one.
  */
-function protoRomFields(cfg, p) {
+function protoRomFields(cfg, p, countLo = STATE.countLo) {
   const L = protocolLayout(cfg.ram.pub[0]);
   return { bootGeneration: p.bootGeneration ?? 0x1234,
     between: p.between ?? 8,
     skipLive: !!p.skipLive, skipBulk: !!p.skipBulk,
     snapshotBytes: SNAPSHOT_BYTES,
     select: L.publishSelect.offset,
-    readRun: L.readRun.offset,
-    readLongs: L.readRun.bytes >> 2,
-    readWords: (L.readRun.bytes & 3) >> 1,
+    // The selector, then the one face it names — byte by byte, because the
+    // 68000 has no wider access to Z80 RAM than that (R19 §46.3).
+    faceBytes: SNAPSHOT_BYTES,
     face0: L.faces[0].observationNumber.offset,
     face1: L.faces[1].observationNumber.offset,
     stride: SNAPSHOT_STRIDE,
@@ -80,7 +80,15 @@ function protoRomFields(cfg, p) {
     // The mailbox: where its payload lives, one well-formed bundle, and the
     // byte the Z80 answers with.
     queue: !!p.queue, qfault: p.qfault ?? null, piece: p.piece ?? null,
-    commandAck: protoGlobals(cfg.ram.glob[0] + GLOB.decode, STATE.countLo).commandAck,
+    // A real host driving the mailbox: read the snapshot, aim `lead`
+    // observations ahead, then read the ack and publish if the box is free.
+    live: !!p.live, lead: p.lead ?? 1, refresh: p.refresh ?? 8,
+    // WHICH DECODE STATE THIS BUILD HAS. The protocol's globals are laid out
+    // FROM the decoder's own counter, and P1's state is six bytes where the
+    // split 2ch one is thirteen — so a host that assumed P1's offset read a
+    // byte that was not the ack at all, found the box busy for ever, and
+    // published nothing while every other number in the run looked healthy.
+    commandAck: protoGlobals(cfg.ram.glob[0] + GLOB.decode, countLo).commandAck,
     mailbox: mailboxLayout(cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00).base,
     recordBytes: QREC_BYTES,
     record: QREC_RECORD };
@@ -100,6 +108,18 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // A SPLIT case is an observer case whose observer is distributed through
     // the complete 2ch engine. Same disturbances, same idle-or-loaded 68000;
     // what differs is that there is nothing to publish (R8 §23.5 step 3).
+    // A SPLIT CASE THAT ALSO CARRIES THE REAL HANDSHAKE (R19 §46.3). The
+    // complete 2ch engine and the 68000's mailbox transfer in one image: until
+    // now the first was verified in JS slots and the second on a P1 output
+    // image, and nothing ran both at once.
+    : c0.split?.proto ? { vdp: true, load: c0.split.load,
+        bootNops: c0.split.bootNops, every: c0.split.proto.every,
+        ...(c0.cfg?.csmHost ? { csmVoice: CSM_TEST_VOICE,
+          csmFreq: { ...CSM_TEST_FREQ, hiAt: cfg.ram.glob[0] + GLOB.csmHi,
+            loAt: cfg.ram.glob[0] + GLOB.csmLo } } : {}),
+        proto: protoRomFields(cfg, { ...c0.split.proto,
+          ...(fault in QUEUE_FAULTS ? { qfault: fault.slice(2) } : {}) },
+        SPLIT_STATE.countLo) }
     : c0.split ? (c0.split.stall
         ? { vdp: true, optimized: true, load: c0.split.load,
             bootNops: c0.split.bootNops, ...c0.split.stall }

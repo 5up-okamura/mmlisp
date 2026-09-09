@@ -15,7 +15,14 @@ export function analyzeValue(trace, reference, { warmup = 0 } = {}) {
   const got = trace.dacValue.slice(warmup);
   const problems = [];
   let firstBad = -1;
-  for (let i = 0; i < got.length; i++) {
+  // A CASE WHOSE LEVELS MOVE HAS NO FIXED REFERENCE (R19 §46.3). The mailbox
+  // exists to change the mixer's level pages while the stream runs, so the
+  // fixed-level model below is not what the DAC should be carrying — and
+  // pretending it is would make the feature working look like a failure. Those
+  // cases pass `null` and are graded on the values the STAGED pages take, from
+  // the same log, by `dac-stream:decoder`. Stray writes are still checked: they
+  // are about ownership, not about levels.
+  if (reference) for (let i = 0; i < got.length; i++) {
     const want = reference(i + warmup);
     if (got[i] !== want) { firstBad = i + warmup; break; }
   }

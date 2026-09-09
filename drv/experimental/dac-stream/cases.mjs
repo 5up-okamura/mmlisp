@@ -203,6 +203,43 @@ export const CASES = [
   { name: "2ch corrector, counter wrap", cfg: { voices: 2, complete: true, csm: true,
       levels: 15, workTarget: 0.839, correctorBudget: true },
     split: { load: "divu", place: { correct: true, countFrom: 0xfffc } } },
+  // ── THE WHOLE THING AT ONCE (R19 §46.3) ─────────────────────────────────
+  // Until now the complete 2ch engine was verified in JS slots and the 68000's
+  // mailbox transfer on a P1 output image, and nothing ran both. This is the
+  // finished shape: two voices, fifteen levels, CSM, the corrector, the compact
+  // snapshot, the one-slot mailbox — and a REAL 68000 host driving it, reading
+  // the published snapshot, aiming a bundle `lead` observations ahead, then
+  // reading the ack and publishing if the box is free.
+  //
+  // `csmHost` is what makes it assemble: the CSM test voice is harness, and the
+  // 68000 writes it while it still holds the bus, so the engine's code region
+  // does not carry 162 bytes of scaffolding (R19 §46.3).
+  // `every` is a `dbra` count at about 70 master an iteration, so 6,144 is one
+  // lap — which is one H observation, which is the conservative rule: ONE
+  // transfer an observation interval. Two grabs an update (the snapshot, then
+  // the handshake) is therefore 62.4 desired-state updates a second, over the
+  // 60 R19 §46.3 asks for. The dense run halves the spacing on purpose so a
+  // second grab lands in the same interval and the SUM is what has to be read.
+  //
+  // INFORMATIONAL to machine-probe, for the same reason every other case that
+  // takes the bus on purpose is: the DAC interval is not fixed while the 68000
+  // holds the bus, and the level pages really do change, so the fixed-waveform
+  // value model does not apply. What grades these is `dac-stream:decoder`.
+  ...[["on time", 1, 6144, false], ["a lap late", 0, 6144, false],
+    ["ahead", 3, 6144, false], ["at double density", 1, 3072, true]]
+    .map(([what, lead, every, dense]) => ({
+      name: `2ch mailbox, ${what}`,
+      cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+        workTarget: 0.839, correctorBudget: true, command: true },
+      split: { load: "divu", proto: { every, live: true, lead },
+        place: { correct: true, proto: true, command: true } },
+      dense, informational: true,
+      // The mixer's level pages really change here — that is the whole point —
+      // so the fixed-level reference does not apply and the DAC is graded on
+      // what the staged pages did, by `dac-stream:decoder`.
+      levelsMove: true,
+    })),
+
   // EITHER SIDE OF WHAT H CAN SEE (R11 §31.2). 12 B lands about at the 1,500
   // master contract, 16 B past it but inside half a line, 24 B past half a line
   // and 64 B past a whole one. INFORMATIONAL, and deliberately so: past half a

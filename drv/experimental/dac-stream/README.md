@@ -154,11 +154,30 @@ same wrap, 1..32767 laps of look-ahead instead of samples — and the engine's
 | decode + corrector, publication replaced | 83.8% | 78.0% | — | 2,407 B | ok |
 | + the runtime protocol | 83.8% | 79.5% | — | 2,551 B | ok |
 | + the R16 bundle over a FIFO | 96.6% | 79.7% | 867 | 2,540 B | ok |
-| **+ the R17 mailbox** | **83.8%** | **78.7%** | **578** | **2,511 B** | **ok** |
+| **+ the R17 mailbox** | **83.8%** | **78.7%** | **578** | **2,466 B** | **ok** |
 | limits | 83.9% | 79.6% | 725 | 2,560 B | 8,192 B |
 
 The YM/PSG slot writer's b11..b14 reservation is untouched throughout: R17 §43.1
 holds it until the host-YM safe window of §33.6 step 5 answers.
+
+**Two things the integration test found (R19 §46.3), and nothing else could.**
+Running the complete 2ch image and a real 68000 mailbox host together for the
+first time broke two accepted results:
+
+* **The 68000 cannot read Z80 RAM with word or long moves.** The Z80 bus is
+  eight bits: a word or long access to `$A00000..$A0FFFF` returns the byte at the
+  EVEN address duplicated into both halves. The "one straight run of long moves"
+  that replaced nine `move.b` had only ever been TIMED — the first test to read
+  the host's copy back saw an observation number of `$0202` where the engine's
+  counter said 2, which is exactly `[b0, b0, b2, b2]`. The read is now the
+  selector plus the one face it names, byte by byte, in one grab.
+* **Piece costs measured on the P1 rig are a lower bound, not a value.** P1's
+  instructions are short; the 2ch mixer's `ld a,(ix+0)` and its `call`/`ret` make
+  the bus grant land later. The whole handshake in one grab is 1,354 master on
+  P1 and **1,541 inside the complete engine** — past the 1,500 the live contract
+  allows. So the host splits it into a read lap and a publish lap, one grab an
+  observation interval each, and the worst total between two H observations is
+  1,325 master with none over.
 
 **How fast desired state can move**, measured with the 68000 really holding the
 bus: the whole handshake in ONE grab — read the ack, publish if the box is free

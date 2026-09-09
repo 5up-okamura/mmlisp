@@ -22,6 +22,9 @@ const Z80_BASE = 0xa00000;
 const Z80_BUSREQ = 0xa11100;
 const Z80_RESET = 0xa11200;
 const Z80_BANK = 0xa06000;
+// The YM2612's ports, seen from the 68000. Only the boot's CSM test voice uses
+// these: no runtime host-YM write happens anywhere in this file (R19 §46.3).
+const YM_ADDR0 = 0xa04000, YM_DATA0 = 0xa04001;
 // A write here is logged by the probe with its 68000 timestamp and nothing
 // else happens (§12.2 A/D: the interrupt-to-entry delay and the landing of
 // each request have to be observable from the 68000's side, not inferred from
@@ -58,7 +61,13 @@ class M68k {
   moveBDtoA(d, a) { this.w(0x1080 | (a << 9) | d); }                    // move.b Dn,(An)
   moveBpost() { this.w(0x12d8); }                                       // move.b (a0)+,(a1)+
   moveBabsD(addr, d) { this.w(0x1039 | (d << 9)); this.l(addr); }       // move.b (abs).l,Dn
+  moveBDabs(d, addr) { this.w(0x13c0 | d); this.l(addr); }              // move.b Dn,(abs).l
   cmpBDD(s, d) { this.w(0xb000 | (d << 9) | s); }                       // cmp.b Ds,Dd
+  lslWimm(n, d) { this.w(0xe148 | ((n & 7) << 9) | d); }                // lsl.w #n,Dn
+  lsrWimm(n, d) { this.w(0xe048 | ((n & 7) << 9) | d); }                // lsr.w #n,Dn
+  orWDD(s, d) { this.w(0x8040 | (d << 9) | s); }                        // or.w Ds,Dd
+  subWDD(s, d) { this.w(0x9040 | (d << 9) | s); }                       // sub.w Ds,Dd
+  addWimmD(imm, d) { this.w(0x0640 | d); this.w(imm); }                 // addi.w #i,Dn
   moveBpostA(sa, da) { this.w(0x10d8 | (da << 9) | sa); }               // move.b (As)+,(Ad)+
   moveWpost() { this.w(0x32d8); }                                       // move.w (a0)+,(a1)+
   moveLpost() { this.w(0x22d8); }                                       // move.l (a0)+,(a1)+
@@ -79,6 +88,7 @@ class M68k {
   muluImm(imm, d) { this.w(0xc0fc | (d << 9)); this.w(imm); }          // mulu.w #i,Dn
   divuImm(imm, d) { this.w(0x80fc | (d << 9)); this.w(imm); }          // divu.w #i,Dn
   addqL(n, d) { this.w(0x5080 | ((n & 7) << 9) | d); }                 // addq.l #n,Dn
+  subqL(n, d) { this.w(0x5180 | ((n & 7) << 9) | d); }                 // subq.l #n,Dn
   tstBabs(addr) { this.w(0x4a39); this.l(addr); }                      // tst.b (abs).l
   clrBabs(addr) { this.w(0x4239); this.l(addr); }                      // clr.b (abs).l
   moveLDabs(d, addr) { this.w(0x23c0 | d); this.l(addr); }             // move.l Dn,(abs).l
@@ -125,6 +135,33 @@ const LOAD_DIVIDEND = 0x00010000;         // / 7 = $2492, a quotient that fits
 const OVERFLOW_DIVIDEND = 0x12345678;     // / 7 overflows: the early exit
 export const LOADS = ["divu", "short", "masked", "none"];
 export const PROTO_WORK = 0xff0100;   // where the host parks what it read
+
+/**
+ * THE PUBLISHED SNAPSHOT, READ THE ONLY WAY THE 68000 CAN (R19 §46.3).
+ *
+ * Z80 RAM is on an 8-bit bus. A word or long access to $A00000..$A0FFFF returns
+ * the byte at the EVEN address duplicated into both halves, so the "one
+ * straight run of long moves" R12 §33.4 introduced and R15 §39.2 kept was
+ * reading [b0, b0, b2, b2] and had never been read back — only timed. This is
+ * six BYTE reads: the selector, and then the face it names.
+ *
+ * The order is what it always was, and it is still what makes it safe: the
+ * selector first, the face second, both inside ONE grab. The Z80 is stopped for
+ * the whole of it, so it cannot flip the selector in between — and the face it
+ * would write next is the other one anyway.
+ */
+function readFace(m, P, tag, bytes = P.faceBytes) {
+  m.moveBabsD(Z80_BASE + P.select, 0);
+  m.andiW(1, 0);
+  m.beq(`${tag}f0`);
+  m.leaAbs(Z80_BASE + P.face1, 0);
+  m.bra(`${tag}fgo`);
+  m.label(`${tag}f0`);
+  m.leaAbs(Z80_BASE + P.face0, 0);
+  m.label(`${tag}fgo`);
+  m.leaAbs(PROTO_WORK, 1);
+  for (let i = 0; i < bytes; i++) m.moveBpost();
+}
 // One well-formed command record, in ROM, for the host to publish. It is a
 // record and not eight arbitrary bytes because the consumer that will read it
 // steps by `size`, and a test that never wrote a size would not have exercised
@@ -288,7 +325,31 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveq(0, 2);                             // the phase generation, counted here
     m.moveq(0, 3);                             // …and the phase commit
     m.moveWimmD(P.between, 5);                 // live reads between invalidations
-    if (P.queue || P.piece) m.moveq(0, 4);     // the mailbox's commit, counted here
+    // The mailbox's commit, counted on the host's side. `live` needs it too —
+    // without it the host compares the engine's ack against a register that was
+    // never set and finds the box busy for ever.
+    if (P.queue || P.piece || P.live) m.moveq(0, 4);
+  }
+  // THE CSM TEST VOICE, WRITTEN BY THE 68000 (R19 §46.3). It is harness, not
+  // engine, and 161 bytes of it in the Z80's code region is what pushed the
+  // 15-level image with the decode, the corrector, the protocol and the consumer
+  // past 2,560 B. Here it goes in while the bus is still held and the Z80 has
+  // not started, so it is not a runtime host-YM write and nothing about §33.6
+  // step 5 is being assumed. Four nops between writes keep the pairs further
+  // apart than the chip's longest settling time; boot is not timed.
+  if (grab?.csmFreq) {
+    // …and the frequency the Z80's per-slot writes will send, straight into the
+    // globals it reads them from.
+    m.moveBimm(grab.csmFreq.hi, Z80_BASE + grab.csmFreq.hiAt);
+    m.moveBimm(grab.csmFreq.lo, Z80_BASE + grab.csmFreq.loAt);
+  }
+  if (grab?.csmVoice) {
+    for (const [reg, val] of grab.csmVoice) {
+      m.moveBimm(reg, YM_ADDR0);
+      for (let i = 0; i < 4; i++) m.nop();
+      m.moveBimm(val, YM_DATA0);
+      for (let i = 0; i < 4; i++) m.nop();
+    }
   }
   // The Z80 begins when the bus is released, so nops placed BEFORE the release
   // move the engine's phase against the VDP's counters — which is how the
@@ -587,9 +648,7 @@ export function buildRom(image, samples = null, grab = null) {
         ack: () => { m.leaAbs(Z80_BASE + P.commandAck, 0); m.leaAbs(PROTO_WORK + 24, 1);
           m.moveBpost(); },
         // The time update: the selector, its pad and both faces, in one run.
-        snapshot: () => { m.leaAbs(Z80_BASE + P.readRun, 0); m.leaAbs(PROTO_WORK, 1);
-          for (let i = 0; i < P.readLongs; i++) m.moveLpost();
-          for (let i = 0; i < P.readWords; i++) m.moveWpost(); },
+        snapshot: () => readFace(m, P, "pc"),
         // And the invalidation: the generation, then its own commit, last.
         invalidate: () => { m.addqL(1, 2); m.addqL(1, 3);
           m.leaAbs(Z80_BASE + P.phaseGen, 1); m.moveBDtoA(2, 1);
@@ -615,6 +674,96 @@ export function buildRom(image, samples = null, grab = null) {
       if (!one) throw new Error(`unknown protocol piece ${P.piece}`);
       grabOnce("pgrant", one);
       m.bra("idle");
+    } else if (P.live) {
+    // ── A REAL HOST, DRIVING THE MAILBOX (R19 §46.3) ─────────────────────
+    // ONE TRANSFER AN OBSERVATION INTERVAL, and the two halves of an update in
+    // two different intervals:
+    //
+    //   read lap     the selector and the observation number, and the ack —
+    //                four byte reads, everything the host needs to decide
+    //   publish lap  the five payload bytes and then the commit, if the ack
+    //                said the box was free
+    //
+    // The whole handshake in ONE grab measured 1,354 master on the P1 rig and
+    // 1,541 inside the complete 2ch engine, where the mixer's instructions are
+    // longer and the bus grant therefore lands later — past the 1,500 the live
+    // contract allows. So it is two grabs, one an observation, and an update is
+    // two observations: 62.4 desired-state updates a second.
+    //
+    // Nothing here writes a YM register: the CSM test voice went in at boot
+    // while the bus was still held, and §33.6 step 5 has not been answered.
+    const W = PROTO_WORK, PAY = PROTO_WORK + 32;   // …the payload the host builds
+    m.moveq(1, 7);                                 // …so the first lap reads
+    m.moveq(0, 6);                                 // the host's observation number
+    m.moveq(0, 3);                                 // …and the ack it last saw
+    m.label("mbloop");
+    m.moveWimmD(grab.every, 1);
+    m.label("mbw1");
+    m.dbra(1, "mbw1");
+    m.addWimmD(1, 6);                              // one lap has gone by
+    m.subqL(1, 7);
+    m.bne("mbpub");
+    // ── the read lap ─────────────────────────────────────────────────────
+    m.moveWimm(0x0100, Z80_BUSREQ);
+    m.label("mbg1");
+    m.moveWabsD(Z80_BUSREQ, 0);
+    m.andiW(0x0100, 0);
+    m.bne("mbg1");
+    readFace(m, P, "mb", 2);                       // the selector and the time
+    m.moveBabsD(Z80_BASE + P.commandAck, 3);       // …and the engine's answer
+    m.moveWimm(0x0000, Z80_BUSREQ);
+    // The observation number, out of the copy the grab left behind. It is little
+    // endian and the 68000 is not, so the two bytes are taken separately.
+    m.moveq(0, 1); m.moveBabsD(W + 1, 1); m.lslWimm(8, 1);
+    m.moveq(0, 0); m.moveBabsD(W, 0);
+    m.orWDD(0, 1);
+    m.moveLD(1, 6);                                // d6 = the engine's own count
+    // PUBLISH NEXT LAP ONLY IF THE BOX IS FREE. Alternating blindly wastes a
+    // lap every time the engine has not acknowledged yet — read, publish
+    // nothing, read again — and that is what took an update from two laps to
+    // three and a half.
+    m.moveq(1, 7);
+    m.cmpBDD(4, 3);
+    m.bne("mbloop");
+    m.moveq(2, 7);                                 // …the box is free: publish
+    m.bra("mbloop");
+    // ── the publish lap ──────────────────────────────────────────────────
+    m.label("mbpub");
+    m.moveq(1, 7);                                 // …and the next one reads
+    m.moveLD(6, 1);
+    m.addWimmD(P.lead, 1);                         // the boundary we aim at
+    m.moveBDabs(1, PAY);                           // little endian, low byte first
+    m.moveLD(1, 0); m.lsrWimm(8, 0);
+    m.moveBDabs(0, PAY + 1);
+    // THREE LEVELS THAT ALL MOVE, from one rolling number: a 15-level build has
+    // pages 0..14, so the step wraps at 15 and every bundle carries a different
+    // triple.
+    m.moveq(0, 0);
+    m.moveBabsD(PAY + 5, 0);                       // the step, kept past the payload
+    m.addqL(1, 0);
+    m.cmpLimmD(15, 0);
+    m.bcs("mbvok");
+    m.moveq(0, 0);
+    m.label("mbvok");
+    m.moveBDabs(0, PAY + 5);
+    m.moveBDabs(0, PAY + 2);                       // v0page = v
+    m.moveLimmD(14, 1); m.subWDD(0, 1);
+    m.moveBDabs(1, PAY + 3);                       // v1page = 14 - v
+    m.moveLD(0, 2); m.lsrWimm(1, 2); m.addWimmD(7, 2);
+    m.moveBDabs(2, PAY + 4);                       // mpage = 7 + v/2
+    m.moveWimm(0x0100, Z80_BUSREQ);
+    m.label("mbg2");
+    m.moveWabsD(Z80_BUSREQ, 0);
+    m.andiW(0x0100, 0);
+    m.bne("mbg2");
+    m.leaAbs(PAY, 0);
+    m.leaAbs(Z80_BASE + P.mailbox, 1);
+    for (let i = 0; i < P.recordBytes; i++) m.moveBpost();
+    m.addqL(1, 4);
+    m.leaAbs(Z80_BASE + P.commandCommit, 1);
+    m.moveBDtoA(4, 1);                             // …the commit, LAST
+    m.moveWimm(0x0000, Z80_BUSREQ);
+    m.bra("mbloop");
     } else {
     // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
     // STOP -> RESUME of the live read and of the invalidation are different
@@ -629,10 +778,7 @@ export function buildRom(image, samples = null, grab = null) {
     // Which face is live is decided afterwards, in the host's own RAM, with the
     // bus already released — the reader's rule is unchanged, the reading is just
     // not what costs the Z80 anything.
-    m.leaAbs(Z80_BASE + P.readRun, 0);
-    m.leaAbs(PROTO_WORK, 1);
-    for (let i = 0; i < P.readLongs; i++) m.moveLpost();
-    for (let i = 0; i < P.readWords; i++) m.moveWpost();
+    readFace(m, P, "lv");
     m.moveWimm(0x0000, Z80_BUSREQ);            // release
     }
     // ── A REAL COMMAND, PUBLISHED THE WAY §35.1 SEPARATES THEM ───────────

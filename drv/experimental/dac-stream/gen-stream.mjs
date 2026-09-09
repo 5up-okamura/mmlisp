@@ -37,6 +37,31 @@ import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.
 
 const hex = (n) => `$${n.toString(16)}`;
 
+/**
+ * A minimal but real CH3 voice, so CSM has something to key. Operator offsets
+ * for channel 3 on port 0 are +2.
+ *
+ * IT IS TEST SCAFFOLDING, NOT THE ENGINE. A shipped driver receives a patch as
+ * commands; this exists so the CSM traffic in the schedule has a voice under it.
+ * Either the Z80 loads it from a table at boot (`csm: true`) or the 68000 writes
+ * it while it still holds the bus (`csmHost: true`) — and in the second form the
+ * engine's code region does not pay for it at all.
+ */
+/** The CH3 frequency the per-slot CSM writes send, as the globals hold it. */
+export const CSM_TEST_FREQ = { hi: 0x22, lo: 0x69 };
+
+export const CSM_TEST_VOICE = [
+  [0x32, 0x01], [0x36, 0x01], [0x3a, 0x02], [0x3e, 0x01],   // DT/MUL
+  [0x42, 0x1b], [0x46, 0x28], [0x4a, 0x28], [0x4e, 0x00],   // TL
+  [0x52, 0x1f], [0x56, 0x1f], [0x5a, 0x1f], [0x5e, 0x1f],   // KS/AR
+  [0x62, 0x0a], [0x66, 0x0a], [0x6a, 0x0a], [0x6e, 0x0a],   // AM/D1R
+  [0x72, 0x00], [0x76, 0x00], [0x7a, 0x00], [0x7e, 0x00],   // D2R
+  [0x82, 0x1f], [0x86, 0x1f], [0x8a, 0x1f], [0x8e, 0x1f],   // D1L/RR
+  [0xb2, 0x3a], [0xb6, 0xc0],                               // ALG/FB, pan
+  [0xac, 0x22], [0xa8, 0x69], [0xad, 0x22], [0xa9, 0x69],   // CH3 op freqs
+  [0xae, 0x22], [0xaa, 0x69], [0xa6, 0x22], [0xa2, 0x69],
+];
+
 // ── Op builders ────────────────────────────────────────────────────────────
 // Costs are documented Z80 T-states. `writes` is what the analyzer checks
 // against the chip's settling table — the engine polls nothing.
@@ -390,17 +415,12 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   // unrolled it was 438 BYTES — a fifth of the code region, spent on the test
   // harness rather than on the engine, and enough to push the 15-level image
   // with the distributed decode past the region it otherwise fits in.
-  const csmVoice = cfg.csm ? [
-    [0x32, 0x01], [0x36, 0x01], [0x3a, 0x02], [0x3e, 0x01],   // DT/MUL
-    [0x42, 0x1b], [0x46, 0x28], [0x4a, 0x28], [0x4e, 0x00],   // TL
-    [0x52, 0x1f], [0x56, 0x1f], [0x5a, 0x1f], [0x5e, 0x1f],   // KS/AR
-    [0x62, 0x0a], [0x66, 0x0a], [0x6a, 0x0a], [0x6e, 0x0a],   // AM/D1R
-    [0x72, 0x00], [0x76, 0x00], [0x7a, 0x00], [0x7e, 0x00],   // D2R
-    [0x82, 0x1f], [0x86, 0x1f], [0x8a, 0x1f], [0x8e, 0x1f],   // D1L/RR
-    [0xb2, 0x3a], [0xb6, 0xc0],                               // ALG/FB, pan
-    [0xac, 0x22], [0xa8, 0x69], [0xad, 0x22], [0xa9, 0x69],   // CH3 op freqs
-    [0xae, 0x22], [0xaa, 0x69], [0xa6, 0x22], [0xa2, 0x69],
-  ] : [];
+  // …and when the 68000 is going to write it instead (R19 §46.3), the Z80 emits
+  // none of it: the test harness's 161 bytes are not charged to the engine's
+  // code region, which is what lets the 15-level image with the distributed
+  // decode, the corrector, the protocol and the consumer assemble inside 2,560 B
+  // WITH CSM on.
+  const csmVoice = cfg.csm && !cfg.csmHost ? CSM_TEST_VOICE : [];
   bootWrite(YM.R_TIMER_CTL, "R27_BASE", "timers + CH3 mode");
   for (const o of boot) for (const l of o.asm) P(`        ${l}`);
   if (csmVoice.length) {
@@ -425,11 +445,16 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("csmdone:");
     P("");
   }
-  P("");
-  P("        ld   a,$22");
-  P("        ld   (G_CSMHI),a");
-  P("        ld   a,$69");
-  P("        ld   (G_CSMLO),a");
+  // The CH3 frequency the per-slot CSM writes send. It is the TEST VOICE's
+  // frequency, so when the 68000 loads the voice it writes these two bytes too
+  // and the Z80's image does not carry them (R19 §46.3).
+  if (!cfg.csmHost) {
+    P("");
+    P("        ld   a,$22");
+    P("        ld   (G_CSMHI),a");
+    P("        ld   a,$69");
+    P("        ld   (G_CSMLO),a");
+  }
   P("");
   if (cfg.voices) {
     P("; Levels start at unity. The host writes G_VPAGE / G_MPAGE whenever it");

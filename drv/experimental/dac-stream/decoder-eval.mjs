@@ -26,7 +26,9 @@ import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
 import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES,
   extendObservation, boundarySample } from "./protocol.mjs";
 import { buildCase, FAULTS, QUEUE_FAULTS } from "./case-config.mjs";
-import { buildConfig } from "./config.mjs";
+import { buildConfig, GLOB } from "./config.mjs";
+import { protoGlobals } from "./protocol.mjs";
+import { SPLIT_STATE } from "./decode-split.mjs";
 import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
@@ -97,6 +99,11 @@ const PROTO_BOOT = 0x1234;          // the boot generation cases.mjs' host write
 const LIVE_STOP_MAX = 1500;         // master clocks, R12 §33.1
 // The case whose two grabs deliberately share an observation interval.
 const PROTO_DENSE = ["proto P1, live and bulk"];
+// THE WHOLE THING AT ONCE (R19 §46.3): the complete 2ch engine and a real
+// 68000 host driving the mailbox, in one image.
+const MAILBOX_2CH = ["2ch mailbox, on time", "2ch mailbox, a lap late",
+  "2ch mailbox, ahead", "2ch mailbox, at double density"];
+const MAILBOX_DENSE = ["2ch mailbox, at double density"];
 const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
   "2ch corrector, occasional 4B stall", "2ch corrector, counter wrap",
   ...[[1, 20], [2, 60], [8, 140]].map(([b, n]) => `2ch corrector, single ${b}B stall, phase ${n}`),
@@ -129,7 +136,7 @@ if (!argv.includes("--reuse")) {
   // publish fault is the Z80's and breaks the diagnostic record.
   for (const sel of FAULT
     ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : ["z80 decoder"])
-    : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "proto P1"])
+    : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "2ch mailbox", "proto P1"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
       "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
       { stdio: ["ignore", "ignore", "inherit"] });
@@ -147,7 +154,7 @@ const caseOf = (name) => {
 const expectedRom = new Map();
 for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : Z80_DECODER)
   : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
-  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, ...PROTO_CASES,
+  ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, ...MAILBOX_2CH, ...PROTO_CASES,
   "hv observer, Z80 reads v+h"])
   expectedRom.set(name, buildCase(caseOf(name), { outDir: OUT, fault: FAULT }));
 
@@ -778,6 +785,147 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
 // a publication is whole before it is selected, that the three counters move the
 // way each is supposed to, and that an invalidation makes the engine drop its
 // difference and re-acquire from the next known reading.
+// ── THE COMPLETE ENGINE AND A REAL HOST, TOGETHER (R19 §46.3) ────────────
+// Everything the two halves were verified apart now has to hold at once: the
+// 68000 really takes the bus, really publishes bundles, and the engine really
+// stages three level pages at a lap boundary while the corrector is running and
+// CSM traffic is in the schedule.
+console.log(FAULT ? "" : `\n── the complete 2ch engine with a real mailbox host ──`);
+for (const name of FAULT ? [] : MAILBOX_2CH) {
+  const f = need(name, Z80_SECONDS); if (!f) continue;
+  const built = expectedRom.get(name);
+  const cfg = built.cfg;
+  const L = built.gen.observer?.protoLayout ?? null;
+  const pm = built.gen.split?.map ? null : null;
+  void pm;
+  const base = cfg.ram.pub[0];
+  const log = readProbe(readFileSync(f));
+  const P = built.grab.proto;
+  const glob = cfg.ram.glob[0];
+  const off = (a) => a - glob;                       // the watch is region-relative
+  const stage = [GLOB.v0page, GLOB.v1page, GLOB.mpage];
+  const G = protoGlobals(GLOB.decode, SPLIT_STATE.countLo);
+  const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9).map((e) => e.time);
+  const from = reads.length ? reads[0] : 0;
+  const w = (a) => log.ramWrites.filter((x) => x.region === "glob" && x.addr === a
+    && x.time >= from);
+  // THE ACK AND THE COUNT ARE WRITTEN EVERY LAP, whatever happened — that is
+  // what constant time means here — so what counts is the writes that CHANGED
+  // them. The staged bytes are different: a bundle that is not applied goes to
+  // the bit bucket instead, so those writes only happen when one really was.
+  const changes = (xs) => xs.filter((x, i) => i === 0 || x.value !== xs[i - 1].value);
+  const acks = changes(w(G.commandAck)), lates = changes(w(G.lateCount));
+  const staged = stage.map((a) => w(a));
+  // The host's side: every commit backed by a whole payload, and nothing else
+  // in the control block touched.
+  const hw = log.hostWrites.filter((x) => x.time >= from);
+  const commits = hw.filter((x) => x.addr === P.commandCommit - base);
+  const phase = hw.filter((x) => x.addr === P.phaseGen - base
+    || x.addr === P.phaseCommit - base);
+  const body = log.copies.filter((e) => e.time >= from)
+    .map((e) => ({ time: e.time, value: e.value & 0xff }));
+  let short = 0, prev = null, bi = 0;
+  for (const c of commits) {
+    const rec = [];
+    while (bi < body.length && body[bi].time < c.time) rec.push(body[bi++]);
+    if (rec.length !== P.recordBytes) short++;
+    if (prev !== null && c.value !== ((prev + 1) & 0xff)) short++;
+    prev = c.value;
+  }
+  console.log(`${name} — ${Z80_SECONDS}s`);
+  console.log(`  host: ${commits.length} bundles committed, ${short} not a whole payload`
+    + ` written before its commit, ${phase.length} writes to the phase control`
+    + ` block (must be 0)`);
+  // The engine's side: one ack a bundle, one staged triple an ack, and the
+  // three staged bytes always written together.
+  const triples = Math.min(...staged.map((x) => x.length));
+  const spread = Math.max(...staged.map((x) => x.length)) - triples;
+  console.log(`  engine: ${acks.length} acknowledgements, ${triples} complete staged`
+    + ` triples, ${spread} bytes of a triple written without the other two,`
+    + ` ${lates.length} writes to the late count`);
+  if (!commits.length) failures.push(`"${name}": the host published nothing`);
+  if (short) failures.push(`"${name}": ${short} of ${commits.length} publications were not`
+    + ` a whole payload written before its commit`);
+  if (phase.length) failures.push(`"${name}": the host wrote the phase control block`
+    + ` ${phase.length} times while only publishing bundles`);
+  if (spread) failures.push(`"${name}": ${spread} staged bytes were written without the`
+    + ` other two — a block edge could run on half a bundle`);
+  if (!acks.length) failures.push(`"${name}": nothing was ever acknowledged`);
+  // NO BUNDLE APPLIED TWICE, and none lost: an ack is given exactly once per
+  // commit, so the two counts track each other within one in flight.
+  if (Math.abs(acks.length - commits.length) > 2)
+    failures.push(`"${name}": ${commits.length} bundles committed and ${acks.length}`
+      + ` acknowledged — one of them is applying or dropping bundles`);
+  if (triples > acks.length)
+    failures.push(`"${name}": ${triples} staged triples for ${acks.length} acknowledgements`);
+  // THE ACK IS THE COMMIT, and it never runs ahead of it.
+  {
+    let ahead = 0, ci = 0;
+    for (const a of acks) {
+      while (ci < commits.length && commits[ci].time < a.time) ci++;
+      const seen = ci ? commits[ci - 1].value : 0;
+      if (a.value !== seen) ahead++;
+    }
+    console.log(`  handshake: ${ahead} acknowledgements that did not name the commit`
+      + ` that was standing when they were given`);
+    if (ahead > 1)
+      failures.push(`"${name}": ${ahead} acknowledgements did not match the commit`);
+  }
+  // THE LEVELS REALLY MOVED, and the DAC really carried them.
+  const values = new Set(staged[0].map((x) => x.value));
+  console.log(`  levels: ${values.size} distinct pages staged for voice 0`
+    + ` (the host walks 0..14)`);
+  if (values.size < 3)
+    failures.push(`"${name}": only ${values.size} distinct level pages were ever staged`);
+  // Every DAC interval, with the bus really being taken and the corrector really
+  // correcting: the band is the ladder's, and a hole is a sample that never went.
+  {
+    const t = log.dac.map((e) => e.time);
+    let lo = Infinity, hi = 0, holes = 0;
+    const { stops } = { stops: log.stops };
+    for (let i = 1; i < t.length; i++) {
+      const gap = t[i] - t[i - 1];
+      const held = stoppedWithin(t[i - 1], t[i], stops).stopped;
+      const net = gap - held;
+      lo = Math.min(lo, net); hi = Math.max(hi, net);
+      if (net > 375 * Z80_DIV) holes++;
+    }
+    console.log(`  dac: ${t.length} writes, interval less the bus holds`
+      + ` ${lo}..${hi} master (${(lo / Z80_DIV).toFixed(1)}..${(hi / Z80_DIV).toFixed(1)}`
+      + ` Z80 cyc), ${holes} past the corrector's band`);
+    if (holes) failures.push(`"${name}": ${holes} DAC intervals past 375 Z80 cycles`
+      + ` with the bus holds taken out`);
+  }
+  // THE LIVE CONTRACT, with the real host: one transfer an observation interval.
+  {
+    let worst = 0, over = 0;
+    const runtimeStops = log.stops.filter(([a]) => a >= from);
+    for (let n = 1; n < reads.length; n++) {
+      const { stopped } = stoppedWithin(reads[n - 1], reads[n], log.stops);
+      worst = Math.max(worst, stopped);
+      if (stopped > LIVE_STOP_MAX) over++;
+    }
+    const secs = (log.dac.at(-1).time - from) / MCLK;
+    const rate = commits.length / secs;
+    console.log(`  bus: ${runtimeStops.length} runtime stops, worst total between two H`
+      + ` observations ${worst} master, ${over} over ${LIVE_STOP_MAX};`
+      + ` ${rate.toFixed(1)} desired-state updates a second`);
+    if (over && !MAILBOX_DENSE.includes(name))
+      failures.push(`"${name}": ${over} observation intervals held the bus for more than`
+        + ` ${LIVE_STOP_MAX} master`);
+    if (over && MAILBOX_DENSE.includes(name))
+      console.log(`  …reported, not graded: this case halves the spacing on purpose so a`
+        + ` second grab lands in the same interval, which is what makes the SUM the rule`);
+    // THE RATE CONDITION (R17 §43.6 step 6). Graded on the case that aims at
+    // the next boundary, which is the arrangement a driver would use; the
+    // others are latency and density experiments and report it.
+    if (name === "2ch mailbox, on time" && rate < 60)
+      failures.push(`"${name}": ${rate.toFixed(1)} desired-state updates a second with a host`
+        + ` that reads the ack before it publishes and takes the bus once an observation`
+        + ` — under the 60 R17 §43.6 step 6 requires`);
+  }
+}
+
 const pieceSweep = [];
 console.log(FAULT && !(FAULT in QUEUE_FAULTS) ? "" : `\n── the runtime protocol, on both CPUs ──`);
 for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CASES) {
