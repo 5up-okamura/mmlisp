@@ -21,19 +21,26 @@
 // length whatever the host did.
 import { op } from "./schedule.mjs";
 import { GLOB } from "./config.mjs";
-import { protocolLayout, PROTO_GLOB, STAGE, SNAPSHOT, SNAPSHOT_BYTES,
+import { protocolLayout, protoGlobals, SNAPSHOT, SNAPSHOT_BYTES,
   SNAPSHOT_STRIDE } from "./protocol.mjs";
 
 const hx = (n) => `$${n.toString(16)}`;
 
-/** Where everything lives, for one configuration. */
-export function protoMap(cfg) {
+/**
+ * Where everything lives, for one configuration.
+ *
+ * @param state  the decoder's field offsets — STATE for P1, SPLIT_STATE for 2ch
+ */
+export function protoMap(cfg, state) {
   const L = protocolLayout(cfg.ram.pub[0]);
   const g = cfg.ram.glob[0];
-  const stage = Object.fromEntries(Object.entries(STAGE).map(([k, v]) => [k, g + v]));
-  return { L, glob: g, stage, stageBase: g + PROTO_GLOB.stage,
-    lastPhaseCommit: g + PROTO_GLOB.lastPhaseCommit, queueTail: g + PROTO_GLOB.queueTail,
-    decode: g + GLOB.decode, observe: g + GLOB.observe };
+  const decode = g + GLOB.decode;
+  const G = protoGlobals(decode, state.countLo);
+  if (G.end > cfg.ram.glob[1])
+    throw new Error("the protocol's globals do not fit the globals region");
+  return { L, glob: g, stage: G.fields, stageBase: G.stage,
+    lastPhaseCommit: G.lastPhaseCommit, queueTail: G.queueTail, globEnd: G.end,
+    decode, observe: g + GLOB.observe, state };
 }
 
 /**
@@ -55,7 +62,7 @@ export function protoMap(cfg) {
  *
  * @param decodeState  base of the decoder's 6-byte state, and its field offsets
  */
-export function protoCheckOps(m, state) {
+export function protoCheckOps(m, state = m.state) {
   const S = (k) => hx(m.decode + state[k]);
   return [
     // THE PHASE GENERATION IS READ FIRST, and that order is the whole
@@ -169,7 +176,7 @@ export function protoBootLines(m) {
     // The two bytes the decoder owns are NOT zeroed here — its own init does
     // that — so the stage is cleared from the third byte on.
     `ld   hl,${hx(m.stageBase + 2)}`,
-    "ld   b,9",
+    `ld   b,${SNAPSHOT_BYTES - 2 + 2}`,
     "protoinit:",
     "ld   (hl),0",
     "inc  l",
@@ -193,7 +200,7 @@ export function protoBootLines(m) {
 }
 
 /** What the protocol costs, per lap, so a budget can be read off. */
-export function protoCost(m, state, samples) {
+export function protoCost(m, state = m.state, samples = 5) {
   const c = (ops) => ops.reduce((t, o) => t + o.cycles, 0);
   return {
     check: c(protoCheckOps(m, state)),
@@ -201,3 +208,140 @@ export function protoCost(m, state, samples) {
     advance: c(protoAdvanceOps(m, samples)),
   };
 }
+
+// ── THE PROTOCOL AS CHAIN PIECES, for the 2ch schedule (R14 §37.2, §37.3) ──
+//
+// The 2ch engine's registers are all spoken for — HL is the play cursor, DE the
+// YM data port, IX and the shadow set the mixer's — with ONE exception that
+// changes the shape of this entirely: `mix_one` works inside `exx`, so MAIN BC
+// is free, and `preserveBC()` already knows how to keep it alive across the
+// slots between two pieces. So the publication is a pointer walk in BC with a
+// single self-modified operand, not nine absolute stores each with its own.
+//
+// Every piece here is constant time. There is no path that is shorter when a
+// carry is zero, and none that is shorter when nothing was invalidated.
+
+const b = (name, ops) => ({ name, ops, cycles: ops.reduce((t, o) => t + o.cycles, 0) });
+
+/**
+ * The nine-byte snapshot, into the face the 68000 is not reading, then the
+ * selector — strictly last.
+ *
+ * BC is live from the `ld bc,FACE*` to the last `ld (bc),a`: `ld a,(nn)` and
+ * `ld (bc),a` leave it alone and `inc c` is what walks it. The two faces are in
+ * one page, so the pointer's own swap is one `xor` on the low byte and the
+ * high byte never moves — which is why `inc c` is enough and `inc bc` is not
+ * needed.
+ */
+export function protoPublishSplit(m, tag = "") {
+  const first = SNAPSHOT[0][0];
+  const f0 = m.L.faces[0][first].offset, f1 = m.L.faces[1][first].offset;
+  const swap = f0 ^ f1;
+  if ((f0 >> 8) !== (f1 >> 8) || swap > 0xff)
+    throw new Error("the two faces are not one xor apart inside one page");
+  if (((f1 & 0xff) + SNAPSHOT_BYTES - 1) > 0xff)
+    throw new Error("a face straddles a page: `inc c` would not walk it");
+  const lbl = `proto_dst${tag}`;
+  const out = [b("pub ptr",
+    [op([`${lbl}:`, `ld   bc,${hx(f1)}`], 10, { what: "the face the 68000 is not reading" })])];
+  for (let k = 0; k < SNAPSHOT_BYTES; k++) {
+    const last = k === SNAPSHOT_BYTES - 1;
+    out.push(b(`pub ${k}`, [op(`ld   a,(${hx(m.stageBase + k)})`, 13), op("ld   (bc),a", 7),
+      ...(last ? [] : [op("inc  c", 4)])]));
+  }
+  out.push(b("pub flip ptr", [op(`ld   a,(${lbl}+1)`, 13), op(`xor  ${swap}`, 7),
+    op(`ld   (${lbl}+1),a`, 13, { what: "the other face, next time" })]));
+  out.push(b("pub flip sel", [op(`ld   a,(${hx(m.L.publishSelect.offset)})`, 13),
+    op("xor  1", 7),
+    op(`ld   (${hx(m.L.publishSelect.offset)}),a`, 13,
+      { what: "the selector, LAST — this is what publishes it" })]));
+  return out;
+}
+
+/** What each publication piece leaves in BC. */
+export function protoPublishLive() {
+  const L = [["b", "c"]];                       // the pointer
+  for (let k = 0; k < SNAPSHOT_BYTES; k++) L.push(k === SNAPSHOT_BYTES - 1 ? [] : ["b", "c"]);
+  L.push([], []);                               // the two flips carry nothing
+  return L;
+}
+
+/**
+ * The 32-bit output index, advanced once a lap, WITH THE CARRY MADE EXPLICIT.
+ *
+ * The single-block version carried the carry in the flags, which is exactly
+ * what a slot boundary destroys, so splitting it as it stood would have been
+ * silently wrong (R14 §37.3). Here each byte's carry is rebuilt as a 0/$ff mask
+ * in C from what was actually stored:
+ *
+ *   low byte   a carry happened iff the stored byte is now BELOW the addend
+ *   others     iff it is now zero AND the carry into it was set
+ *
+ * Both are `sbc a,a` after a compare, so 0 and 1 take the same cycles, and so
+ * do $00ff -> $0100, $ffff -> $00010000 and the u32 wrap.
+ */
+export function protoAdvanceSplit(m, samples) {
+  const at = m.stage.boundarySampleIndex;
+  const out = [
+    b("idx add", [op(`ld   a,(${hx(at)})`, 13), op(`add  a,${samples}`, 7), op("ld   b,a", 4)]),
+    b("idx store", [op("ld   a,b", 4), op(`ld   (${hx(at)}),a`, 13)]),
+    b("idx carry", [op("ld   a,b", 4), op(`cp   ${samples}`, 7), op("sbc  a,a", 4),
+      op("ld   c,a", 4, { what: "$ff exactly when the low byte wrapped" })]),
+  ];
+  for (let k = 1; k < 4; k++) {
+    out.push(b(`idx ${k}`, [op(`ld   a,(${hx(at + k)})`, 13), op("sub  c", 4), op("ld   b,a", 4)]));
+    out.push(b(`idx ${k} store`, [op("ld   a,b", 4), op(`ld   (${hx(at + k)}),a`, 13)]));
+    if (k < 3)
+      out.push(b(`idx ${k} carry`, [op("ld   a,b", 4), op("sub  1", 7), op("sbc  a,a", 4),
+        op("and  c", 4), op("ld   c,a", 4, { what: "…and only if the one below it did too" })]));
+  }
+  return out;
+}
+
+export function protoAdvanceLive() {
+  const L = [["b"], ["b"], ["c"]];
+  for (let k = 1; k < 4; k++) {
+    L.push(["b", "c"], k < 3 ? ["b", "c"] : ["c"]);
+    if (k < 3) L.push(["c"]);
+  }
+  L[L.length - 1] = [];
+  return L;
+}
+
+/**
+ * The host's phase control, checked after the reading is taken and before the
+ * decode is finalised (R12 §33.3).
+ *
+ * ONLY KNOWN IS CLEARED, and that is not a shortcut. The check runs before the
+ * decode's own pieces, and the decode then writes VALID from `known & (known)`,
+ * DELTA gated by VALID and EXPECT gated by KNOWN — all three in this same
+ * observation. Clearing them here as well would be eight more pieces writing
+ * values that are overwritten a few slots later. What the causal chain has to
+ * show is the consequence, and the gate follows it all the way through: a
+ * changed `phaseCommit` clears KNOWN, the decode publishes VALID = 0, the
+ * corrector drops the debt and every ladder operand goes neutral.
+ */
+export function protoCheckSplit(m, state = m.state) {
+  const S = (k) => hx(m.decode + state[k]);
+  const C = m.L.control;
+  return [
+    // The generation is read BEFORE the commit: a grab is atomic from the Z80's
+    // side, so whichever is read first is the one that comes back stale, and
+    // "old commit, new generation" would publish a new phase stretch without
+    // invalidating anything (R12 §34.4).
+    b("ctl gen", [op(`ld   a,(${hx(C.phaseGeneration.offset)})`, 13), op("ld   b,a", 4)]),
+    b("ctl gen keep", [op("ld   a,b", 4),
+      op(`ld   (${hx(m.stage.phaseGeneration)}),a`, 13, { what: "the phase stretch this observation is in" })]),
+    b("ctl commit", [op(`ld   a,(${hx(C.phaseCommit.offset)})`, 13), op("ld   b,a", 4)]),
+    b("ctl diff", [op(`ld   a,(${hx(m.lastPhaseCommit)})`, 13), op("sub  b", 4), op("ld   c,a", 4)]),
+    b("ctl latch", [op("ld   a,b", 4), op(`ld   (${hx(m.lastPhaseCommit)}),a`, 13)]),
+    b("ctl mask", [op("ld   a,c", 4), op("cp   1", 7), op("sbc  a,a", 4),
+      op("ld   c,a", 4, { what: "$ff = unchanged, $00 = invalidate" })]),
+    b("ctl known", [op(`ld   a,(${S("pknown")})`, 13), op("and  c", 4), op("ld   b,a", 4)]),
+    b("ctl known keep", [op("ld   a,b", 4),
+      op(`ld   (${S("pknown")}),a`, 13, { what: "invalidate the acquisition" })]),
+  ];
+}
+
+export const PROTO_CHECK_LIVE = [["b"], [], ["b"], ["b", "c"], ["c"], ["c"],
+  ["b", "c"], []];

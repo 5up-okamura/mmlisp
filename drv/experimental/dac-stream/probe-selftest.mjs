@@ -1095,7 +1095,11 @@ assert.equal(backwards[2].sync, "lost");
   assert.deepEqual(
     { plain: [plain.engine, plain.reserved, plain.owed, plain.finished],
       corr: [corr.engine, corr.reserved, corr.owed, corr.finished] },
-    { plain: [2089, 570, 608, 2127], corr: [2291, 437, 538, 2392] },
+    // R14 §37.3 split the acquisition's KNOWN into the record's field and the
+    // carry the next observation ANDs with: one more state byte and one more
+    // piece to write it, which is +13 B in the corrector build and -3 B in the
+    // plain one (its own carry piece replaces a boot byte).
+    { plain: [2086, 570, 608, 2124], corr: [2304, 435, 538, 2407] },
     "the code ledger moved — say so rather than letting it drift");
   assert.ok(plain.spare > 0 && corr.spare > 0, "the finished estimate must fit the region");
   assert.equal(plain.region, 2560, "the code region is not to be widened (R11 §31.1)");

@@ -16,9 +16,10 @@ import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
-import { generateObserver, PUBLISH_FAULTS } from "./observer.mjs";
+import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit } from "./decode-split.mjs";
-import { protocolLayout, SNAPSHOT_BYTES, PROTO_GLOB } from "./protocol.mjs";
+import { protocolLayout, protoGlobals, SNAPSHOT_BYTES } from "./protocol.mjs";
+import { GLOB } from "./config.mjs";
 
 export const QUEUE_FAULTS = {
   "q-head-first": "queueHead is advanced before the record's bytes are written",
@@ -79,7 +80,7 @@ function protoRomFields(cfg, p) {
     // fill the page — which is what makes the wrap a thing that happens rather
     // than a thing that is described.
     queue: !!p.queue, qfault: p.qfault ?? null, piece: p.piece ?? null,
-    queueTail: cfg.ram.glob[0] + PROTO_GLOB.queueTail,
+    queueTail: protoGlobals(cfg.ram.glob[0] + GLOB.decode, STATE.countLo).queueTail,
     queueBase: cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00,
     recordBytes: QREC_BYTES,
     perPage: 256 / QREC_BYTES,

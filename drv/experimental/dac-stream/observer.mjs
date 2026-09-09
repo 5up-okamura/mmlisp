@@ -259,7 +259,7 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
   if (proto && cfg.groupSlots < 5)
     throw new Error("the protocol wants five slots a lap: read, check, decode, publish, advance");
   const map = decode ? decodeMap(cfg) : null;
-  const pm = proto ? protoMap(cfg) : null;
+  const pm = proto ? protoMap(cfg, STATE) : null;
   // THE PUBLISHED OBSERVATION NUMBER IS THE DECODER'S COUNTER, at the same two
   // addresses, so publishing it costs nothing and the two cannot drift apart.
   if (proto && pm.stage.observationNumber !== pm.decode + STATE.countLo)

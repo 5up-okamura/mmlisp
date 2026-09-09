@@ -29,17 +29,32 @@ import { generate, DEAD_DEFAULT } from "./gen-stream.mjs";
 import { PHASE_TABLE, decodeMap } from "./observer.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, correctorBlocks, correctorLive,
   ladderOps } from "./corrector.mjs";
+import { protoMap, protoPublishSplit, protoPublishLive, protoAdvanceSplit,
+  protoAdvanceLive, protoCheckSplit, PROTO_CHECK_LIVE, protoBootLines } from "./proto-blocks.mjs";
 
 // The split needs one more byte than the single-slot version: the phase itself
 // has to live in RAM, because C cannot hold it across the whole sequence.
-export const SPLIT_STATE = { known: 0, valid: 1, expect: 2, delta: 3,
-  countLo: 4, countHi: 5, phase: 6,
+// THE COUNTER IS LAST, and that is a placement decision (R14 §37.2). The
+// protocol's publication stage is laid over the decoder's own 16-bit counter so
+// that publishing the observation number costs nothing; the stage runs nine
+// bytes from there, so the counter has to be at the END of this state rather
+// than in the middle of it. Every piece addresses these by name and absolutely,
+// so the order is free to be chosen for that.
+export const SPLIT_STATE = { known: 0, valid: 1, expect: 2, delta: 3, phase: 4,
   // …and the corrector's own, when there is one (corrector.mjs). `hi` holds the
   // gated debt while its sign is taken, which is what the nine-bit sum needs
   // and the eight-bit one did not (R10 §29.4).
-  debt: 7, q: 8, rem: 9, hi: 10, kraw: 11 };
-export const SPLIT_STATE_SIZE = 7;
-export const SPLIT_STATE_SIZE_CORR = 12;
+  debt: 5, q: 6, rem: 7, hi: 8, kraw: 9,
+  // THE CARRY IS NOT THE RECORD FIELD (R14 §37.3). `known` is what the
+  // instrument reads as this observation's result and is written exactly once;
+  // `pknown` is the same value kept for the NEXT observation to AND with, and
+  // it is what the host's invalidation clears. They were one byte, and then the
+  // invalidation wrote the record's own field a second time — which is a record
+  // with a field too many, seen from outside.
+  pknown: 10,
+  countLo: 11, countHi: 12 };
+export const SPLIT_STATE_SIZE = 13;
+export const SPLIT_STATE_SIZE_CORR = 13;
 
 /**
  * The record, IN THE ORDER THE PIECES WRITE IT. Nothing is published over the
@@ -108,10 +123,12 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
                  op(`ld   (${S("phase")}),a`, 13)]),
     b("known", [op(`ld   a,(${S("phase")})`, 13), op(`cp   ${unknown}`, 7),
                 op("sbc  a,a", 4), op("ld   b,a", 4, { what: "B = known" })]),
-    b("valid", [op(`ld   a,(${S("known")})`, 13, { what: "…and the last reading" }),
+    b("valid", [op(`ld   a,(${S("pknown")})`, 13, { what: "…and the last reading" }),
                 op("and  b", 4), op("ld   c,a", 4)]),
     b("valid store", [op("ld   a,c", 4), op(`ld   (${S("valid")}),a`, 13)]),
     b("keep known", [op("ld   a,b", 4), op(`ld   (${S(knownTo)}),a`, 13)]),
+    ...(knownTo === "known"
+      ? [b("keep carry", [op("ld   a,b", 4), op(`ld   (${S("pknown")}),a`, 13)])] : []),
     b("expect", [op(`ld   a,(${S("expect")})`, 13), op("ld   b,a", 4)]),
     b("difference", [op(`ld   a,(${S("phase")})`, 13), op("sub  b", 4),
                      op("ld   b,a", 4, { what: "B = the raw difference" }),
@@ -156,34 +173,42 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
  * The set is per piece and is the LIVE-OUT: what has to still be there when the
  * next piece runs. It is checked, not declared and trusted — the selftest
  * clobbers every register NOT named here between each pair.
+ *
+ * BY NAME, not by position. It was a positional array, and adding one piece to
+ * the decode shifted every entry after it by one for the builds that emit it
+ * and not for the builds that do not — so the corrector build was told the
+ * wrong liveness for two thirds of its chain and the record came out as noise.
+ * A map cannot go out of step, and `generateSplit` refuses a piece with no
+ * entry rather than defaulting it to "nothing survives".
  */
-export const SPLIT_LIVE = [
-  [],           // read           -> memory
-  [],           // lookup         -> memory
-  ["b"],        // known          B = the known mask
-  ["b", "c"],   // valid          B still holds it, C the value to store
-  ["b"],        // valid store
-  [],           // keep known
-  ["b"],        // expect         B = the expected phase
-  ["b", "c"],   // difference     B = raw difference, C = its borrow mask
-  ["b"],        // reduce         B = reduced into 0..170
-  ["b", "c"],   // sign mask      C = the correction
-  ["b"],        // sign           B = the signed displacement
-  ["c"],        // publish delta
-  [],           // publish delta store
-  ["b"],        // count lo
-  [],           // count store
-  ["b"],        // count wrap
-  ["c"],        // count hi
-  [],           // count hi store
-  ["c"],        // advance carry  C = the carry mask
-  ["b", "c"],   // advance sum    B = the sum, C still the carry mask
-  ["b"],        // advance fold
-  ["b", "c"],   // advance mask
-  ["b"],        // advance
-  ["c"],        // publish expect
-  [],           // publish expect store
-];
+export const SPLIT_LIVE = {
+  read: [],  // -> memory
+  lookup: [],  // -> memory
+  known: ["b"],  // B = the known mask
+  valid: ["b", "c"],  // B still holds it, C the value to store
+  "valid store": ["b"],
+  "keep known": ["b"],
+  "keep carry": [],  // (only in a build with no corrector)
+  expect: ["b"],  // B = the expected phase
+  difference: ["b", "c"],  // B = raw difference, C = its borrow mask
+  reduce: ["b"],  // B = reduced into 0..170
+  "sign mask": ["b", "c"],  // C = the correction
+  sign: ["b"],  // B = the signed displacement
+  "publish delta": ["c"],
+  "publish delta store": [],
+  "count lo": ["b"],
+  "count store": [],
+  "count wrap": ["b"],
+  "count hi": ["c"],
+  "count hi store": [],
+  "advance carry": ["c"],  // C = the carry mask
+  "advance sum": ["b", "c"],  // B = the sum, C still the carry mask
+  "advance fold": ["b"],
+  "advance mask": ["b", "c"],
+  advance: ["b"],
+  "publish expect": ["c"],
+  "publish expect store": [],
+};
 
 /**
  * Which slots may not destroy BC, from a placement.
@@ -192,7 +217,7 @@ export const SPLIT_LIVE = [
  * survive the pad of every slot from p to q-1. Two pieces in the SAME slot have
  * no pad between them, so they constrain nothing.
  */
-export function preserveBC(placed, live = SPLIT_LIVE) {
+export function preserveBC(placed, live) {
   // TWO answers a slot, not one. A slot's RESERVED padding — the cycles the
   // unwritten 2ch features are holding — runs BEFORE whatever piece the slot
   // carries, and the slot's own pad runs after it. So the question "may this
@@ -272,7 +297,13 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // that has to see it wrap: 65,536 observations is 8.7 minutes of run time and
   // R11 §31.2 asks for the wrap to be REACHED, not waited for. It is a boot
   // constant, so the image is the image under test with one immediate changed.
-  countFrom = 0 } = {}) {
+  countFrom = 0,
+  // THE RUNTIME PROTOCOL IN THE 2ch CHAIN (R14 §37.4): the host's phase control
+  // checked before the decode is finalised, the nine-byte snapshot published
+  // through main BC, and the 32-bit output index advanced with its carry made
+  // explicit. Off by default, because the question it answers is whether the
+  // complete engine still places with it in.
+  proto = false } = {}) {
   const map = decodeMap(cfg);
   const state = map.state;
   const stateSize = correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
@@ -293,11 +324,34 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     ? [["a0", "a1", "a2", "a3"], ["b0", "b1"], ["c0"]] : null;
   const qopt = maxQuanta === null ? {} : { maxQuanta };
   const corr = correct ? correctorBlocks(S, tags, qopt) : [];
-  const blocks = correct
+  // WHERE THE HOST CHECK GOES: after the reading has been taken and looked up,
+  // and BEFORE `valid` reads the previous KNOWN — which is the byte the
+  // invalidation clears. Two slots later and the difference would already have
+  // been computed across a stop nobody was allowed to trust.
+  const CHECK_AT = decode.findIndex((x) => x.name === "known");
+  const pm = proto ? protoMap(cfg, SPLIT_STATE) : null;
+  if (proto && !correct)
+    throw new Error("the protocol's invalidation is judged through the corrector: build both");
+  if (pm && pm.globEnd > cfg.ram.glob[1])
+    throw new Error("the protocol's globals do not fit the globals region");
+  const chk = proto ? protoCheckSplit(pm, SPLIT_STATE) : [];
+  const pub = proto ? [...protoPublishSplit(pm, "_2ch"), ...protoAdvanceSplit(pm, cfg.cycleSlots)] : [];
+  const pubLive = proto ? [...protoPublishLive(), ...protoAdvanceLive()] : [];
+  const chain = correct
     ? [...decode.slice(0, AFTER), ...corr, ...decode.slice(AFTER)] : decode;
-  const live = correct
-    ? [...SPLIT_LIVE.slice(0, AFTER), ...correctorLive(tags, qopt), ...SPLIT_LIVE.slice(AFTER)]
-    : SPLIT_LIVE;
+  const blocks = [...chain.slice(0, CHECK_AT), ...chk, ...chain.slice(CHECK_AT), ...pub];
+  // LIVENESS BY NAME. The corrector's and the protocol's own lists are still
+  // positional — they are generated in lockstep with their blocks — so they are
+  // turned into entries here and the whole chain is then looked up by name.
+  const byName = { ...SPLIT_LIVE };
+  const add = (bs, ls) => bs.forEach((x, i) => { byName[x.name] = ls[i]; });
+  if (correct) add(corr, correctorLive(tags, qopt));
+  if (proto) { add(chk, PROTO_CHECK_LIVE); add(pub, pubLive); }
+  const live = blocks.map((x) => {
+    if (!(x.name in byName)) throw new Error(`no liveness declared for the piece "${x.name}"`);
+    return byName[x.name];
+  });
+  if (live.length !== blocks.length) throw new Error("the liveness list and the chain differ");
   const RECORD = recordOrder(blocks, state);
   const base = generate(cfg);
   const walk = placeSplit(blocks, base.slots, { target, from, cycleSlots: cfg.cycleSlots });
@@ -405,6 +459,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     // been made — corrects nothing.
     ...(correct ? [`ld   a,${CORR.neutral}`,
       ...tags.flat().map((t) => `ld   (corr_${t}+1),a`)] : []),
+    ...(proto ? protoBootLines(pm) : []),
     ...(countFrom ? [
       `ld   a,${countFrom & 0xff}`,
       `ld   ($${(state + SPLIT_STATE.countLo).toString(16)}),a`,

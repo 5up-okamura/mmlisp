@@ -26,7 +26,23 @@ const PROFILES = [
   { tag: "decode only", cfg: { correctorBudget: false }, opt: {} },
   { tag: "decode + corrector, as-is", cfg: { correctorBudget: false }, opt: { correct: true } },
   { tag: "decode + corrector, time-pub replaced", cfg: { correctorBudget: true }, opt: { correct: true } },
+  { tag: "…and the runtime protocol in the chain", cfg: { correctorBudget: true },
+    opt: { correct: true, proto: true } },
 ];
+
+// THE FOUR LIMITS, judged INDEPENDENTLY (R14 §37.4 step 4). One number over is a
+// failure of that number, not an average of the four, and none of them is
+// adjusted to make an image pass.
+const verdict = (cfg, r, led) => {
+  const rows = [
+    ["worst slot", r.gen.placement.worst.workPct, cfg.workTarget * 100, "%"],
+    ["mean", r.gen.placement.meanWorkPct, cfg.meanTarget * 100, "%"],
+    ["code (finished estimate)", led.finished, led.region, " B"],
+    ["RAM", cfg.ram.size, 0x2000, " B"],
+  ];
+  return rows.map(([what, got, limit, unit]) =>
+    ({ what, got, limit, unit, ok: got <= limit + 1e-9 }));
+};
 
 for (const p of PROFILES) {
   const cfg = buildConfig({ voices: 2, complete: true, csm: true, levels: 15,
@@ -50,11 +66,28 @@ for (const p of PROFILES) {
     if (r.stage === "order") console.log(`   the emitted order is not the chain's order`);
     continue;
   }
-  const d = mkdtempSync(join(tmpdir(), "dac-split-"));
-  let built;
-  try { const f = join(d, "e.z80"); writeFileSync(f, r.gen.text); built = assemble(f); }
-  finally { rmSync(d, { recursive: true, force: true }); }
-  const bytes = built.symbols.get("code_end");
+  // AN IMAGE THAT OVERRUNS ITS REGION IS A MEASUREMENT, not a crash. The
+  // generated source asserts `code_end <= $a00` and the assembler refuses it,
+  // which is right — but the failure table has to say by HOW MUCH, so the size
+  // is taken from a copy with that one assertion removed and the refusal is
+  // reported as itself (R14 §37.4 step 5).
+  const sizeOf = (text) => {
+    const d = mkdtempSync(join(tmpdir(), "dac-split-"));
+    try {
+      const f = join(d, "e.z80"); writeFileSync(f, text);
+      try { return { end: assemble(f).symbols.get("code_end"), refused: false }; }
+      catch (e) {
+        const f2 = join(d, "m.z80");
+        writeFileSync(f2, text.replace(/^\s*assert\s+code_end.*$/m, ""));
+        return { end: assemble(f2).symbols.get("code_end"), refused: true, why: e.message };
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  };
+  const measured = sizeOf(r.gen.text);
+  const bytes = measured.end;
+  if (measured.refused)
+    console.log(`   REFUSED     the assembler would not emit this image: it is`
+      + ` ${bytes - cfg.ram.code[1]} B past the ${cfg.ram.code[1] - cfg.ram.code[0]} B region`);
   const region = cfg.ram.code[1] - cfg.ram.code[0];
   const owed = cfg.codeEstimate.reduce((t, [, b]) => t + b, 0);
   const rows = r.gen.placement.rows;
@@ -97,11 +130,7 @@ for (const p of PROFILES) {
       workTarget: 0.839, ...p.cfg });
     const r2 = generateSplit(c2, { stackFill: true, ...p.opt });
     if (!r2.ok) return null;
-    const d2 = mkdtempSync(join(tmpdir(), "dac-split-bare-"));
-    try {
-      const f = join(d2, "e.z80"); writeFileSync(f, r2.gen.text);
-      return { end: assemble(f).symbols.get("code_end"), cfg: c2, gen: r2.gen };
-    } finally { rmSync(d2, { recursive: true, force: true }); }
+    return { end: sizeOf(r2.gen.text).end, cfg: c2, gen: r2.gen };
   })();
   // THE FOUR TERMS, PRINTED SEPARATELY (R11 §31.1). The estimate is not added
   // to the image: the image already EXECUTES the unwritten features' cycles as
@@ -118,6 +147,11 @@ for (const p of PROFILES) {
   console.log(`     ${pad("= finished estimate", 22)}${String(led.finished).padStart(5)} B`
     + `  (${led.spare >= 0 ? `${led.spare} B spare` : `${-led.spare} B OVER`})`);
   const state = r.correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
+  const V = verdict(cfg, r, led);
+  console.log(`   VERDICT     ${V.every((v) => v.ok) ? "inside every limit" : "OVER"}`);
+  for (const v of V)
+    console.log(`     ${pad(v.what, 26)}${String(v.got).padStart(7)}${v.unit}`
+      + ` against ${v.limit}${v.unit}   ${v.ok ? "ok" : "OVER"}`);
   console.log(`   RAM         ${state} B of state in the ${cfg.ram.glob[1] - cfg.ram.glob[0]} B globals,`
     + ` phase table $${cfg.ram.phase[0].toString(16)}`
     + (r.correct ? `, ${CORR_SLOTS * LADDER_BYTES} B of ladder inside the code` : ""));

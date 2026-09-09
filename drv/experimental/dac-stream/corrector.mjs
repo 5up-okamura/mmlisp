@@ -298,11 +298,15 @@ function gateBlocks(S, b) {
     b("corr gate debt keep", [op("ld   a,b", 4), op(`ld   (${S("debt")}),a`, 13)]),
     b("corr gate known", [op(`ld   a,(${S("kraw")})`, 13), op("and  c", 4), op("ld   b,a", 4)]),
     b("corr gate known keep", [op("ld   a,b", 4), op(`ld   (${S("known")}),a`, 13)]),
+    // …and the same value as the CARRY the next observation ANDs with. Two
+    // bytes, because the record's field is written once and the carry is what
+    // the host's invalidation clears (R14 §37.3).
+    b("corr known carry", [op("ld   a,b", 4), op(`ld   (${S("pknown")}),a`, 13)]),
     b("corr reload q", [op(`ld   a,(${S("q")})`, 13), op("ld   b,a", 4)]),
   ];
 }
 
-const GATE_LIVE = [["b", "c"], ["c"], ["b", "c"], ["c"], ["b", "c"], [], ["b"]];
+const GATE_LIVE = [["b", "c"], ["c"], ["b", "c"], ["c"], ["b", "c"], ["b"], [], ["b"]];
 
 /**
  * Take the correction off the phase the next expectation is built from.

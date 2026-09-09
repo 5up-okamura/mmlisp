@@ -315,36 +315,23 @@ export function protocolHeader(base) {
 }
 
 /**
- * The globals the Z80 keeps for the protocol, alongside the decoder's state.
+ * The globals the Z80 keeps for the protocol, laid out FROM the decoder's state.
  *
- * THE STAGE IS THE SNAPSHOT, byte for byte and in the same order. Publishing is
- * then a nine-byte copy through one pointer rather than nine self-modified
- * store operands, and the field order exists once — in SNAPSHOT — instead of
- * twice.
+ * THE STAGE IS THE SNAPSHOT, byte for byte and in the same order, and it starts
+ * on the decoder's own 16-bit counter — so the published observation number is
+ * that counter rather than a copy of it. Where the counter sits differs between
+ * the two profiles (P1's decode state is six bytes, the split 2ch one is twelve),
+ * so the addresses are DERIVED from it instead of being a constant that happens
+ * to be right for one of them.
  */
-export const PROTO_GLOB = {
-  // $14 is GLOB.decode + 4, which is the decoder's countLo. The stage starts
-  // THERE so that its first two bytes are the observation counter itself; the
-  // rest follows in SNAPSHOT order. `protoMap()` checks the coincidence rather
-  // than trusting this comment.
-  stage: 0x14,         // 9 B, laid out as SNAPSHOT
-  lastPhaseCommit: 0x1d, // u8  the phase commit the Z80 has already acted on
-  queueTail: 0x1e,     // u8  the consumer's cursor — the Z80 owns it
-};
-export const PROTO_GLOB_END = 0x1f;
-
-/** Where each snapshot field sits inside the stage. */
-export const STAGE = (() => {
-  const out = {}; let o = PROTO_GLOB.stage;
-  for (const [name, n] of SNAPSHOT) { out[name] = o; o += n; }
-  if (o !== PROTO_GLOB.lastPhaseCommit) throw new Error("the stage is not the snapshot");
-  return out;
-})();
-
-// It DOES overlap the decoder's state, deliberately and by exactly two bytes.
-if (PROTO_GLOB.stage !== GLOB.decode + 4)
-  throw new Error("the stage must start on the decoder's countLo");
-
+export function protoGlobals(decodeBase, countLoOff) {
+  const stage = decodeBase + countLoOff;
+  const fields = {}; let o = stage;
+  for (const [name, n] of SNAPSHOT) { fields[name] = o; o += n; }
+  if (fields.observationNumber !== stage)
+    throw new Error("the stage must start on the observation number");
+  return { stage, fields, lastPhaseCommit: o, queueTail: o + 1, end: o + 2 };
+}
 // ── the command queue (§33.4) ─────────────────────────────────────────────
 // Single producer, single consumer. The 68000 owns `queueHead` and the payload;
 // the Z80 owns `queueTail` and never reads past the head. The wire record is
