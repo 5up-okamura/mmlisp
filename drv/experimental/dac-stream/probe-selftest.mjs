@@ -23,11 +23,15 @@ import { protocolLayout, protocolAsm, protocolHeader, publishSteps, readSnapshot
   controlSteps, readControl, faultySteps, faultyControlSteps, tornSnapshotPossible,
   tornControlPossible, enqueueSteps, dequeue, queueFree, extendTime, lateTarget, genAdvance,
   phaseInvalidated, outputAdvance, SNAPSHOT, CONTROL, PROTOCOL_BYTES, PROTOCOL_SPARE,
-  PUB_REGION_BYTES } from "./protocol.mjs";
+  PUB_REGION_BYTES, SNAPSHOT_BYTES, SNAPSHOT_STRIDE, OBS_MAX_STEP,
+  extendObservation, boundarySample } from "./protocol.mjs";
 import { generateSplit } from "./decode-split.mjs";
 import { CORR, MAX_QUANTA, MAX_DEBT_UNITS, debtLimitFor, CORR_FAULTS, correctorBlocks,
   correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "./corrector.mjs";
 import { Machine } from "./machine.mjs";
+import { commandBlocks, commandCost, refConsume, CMD_BYTES, CMD_PCM_STATE, CMD,
+  CMD_SLOTS, CMD_SLOT_MASK } from "./command.mjs";
+import { protoMap } from "./proto-blocks.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   learnSpacing, scoreDecode, contractProblems } from "./decoder.mjs";
 
@@ -877,8 +881,16 @@ assert.equal(backwards[2].sync, "lost");
 
   // It fits the region the map already reserves, with the spare R12 §33.2 asks
   // to leave undefined, and it does not run into the next one.
-  assert.equal(PROTOCOL_BYTES, 27);
-  assert.equal(PROTOCOL_SPARE, 5);
+  // FIVE BYTES A FACE, on a stride of six (R15 §39.2). The host's straight run
+  // is fourteen bytes — three long moves and one word — and the fact that it is
+  // a whole number of long moves plus at most one word is what keeps the live
+  // read inside the 1,500 master the contract allows.
+  assert.equal(SNAPSHOT_BYTES, 5);
+  assert.equal(SNAPSHOT_STRIDE, 6);
+  assert.equal(L.readRun.bytes, 14);
+  assert.equal(L.readRun.bytes & 1, 0, "the host's run must be whole words");
+  assert.equal(PROTOCOL_BYTES, 19);
+  assert.equal(PROTOCOL_SPARE, 13);
   assert.equal(cfg.ram.pub[1] - cfg.ram.pub[0], PUB_REGION_BYTES);
   assert.equal(L.size, PROTOCOL_BYTES);
   assert.ok(BASE + L.size <= cfg.ram.pub[1], "the protocol overruns the publication region");
@@ -907,9 +919,9 @@ assert.equal(backwards[2].sync, "lost");
   // ── publication, every interleaving ────────────────────────────────────
   const mem = new Uint8Array(0x2000);
   const snaps = [
-    { bootGeneration: 0x1234, phaseGeneration: 0x00, boundarySampleIndex: 0x00000050, observationNumber: 1 },
-    { bootGeneration: 0x1234, phaseGeneration: 0x01, boundarySampleIndex: 0xfffffff0, observationNumber: 0xfffe },
-    { bootGeneration: 0x1234, phaseGeneration: 0xff, boundarySampleIndex: 0x00000010, observationNumber: 0x0001 },
+    { bootGeneration: 0x1234, phaseGeneration: 0x00, observationNumber: 1 },
+    { bootGeneration: 0x1234, phaseGeneration: 0x01, observationNumber: 0xfffe },
+    { bootGeneration: 0x1234, phaseGeneration: 0xff, observationNumber: 0x0001 },
   ];
   let select = 0;
   for (const snap of snaps) {
@@ -921,13 +933,12 @@ assert.equal(backwards[2].sync, "lost");
     select ^= 1;
     const got = readSnapshot(mem, L);
     assert.equal(got.select, select);
-    for (const k of ["bootGeneration", "phaseGeneration", "boundarySampleIndex", "observationNumber"])
+    for (const k of ["bootGeneration", "phaseGeneration", "observationNumber"])
       assert.equal(got[k], snap[k], `published ${k}`);
   }
   // …and each way of getting the order wrong is caught.
   for (const fault of ["select-first", "half-face"]) {
-    const snap = { bootGeneration: 0x1234, phaseGeneration: 2, boundarySampleIndex: 0x0a0b0c0d,
-      observationNumber: 0x0203 };
+    const snap = { bootGeneration: 0x1234, phaseGeneration: 2, observationNumber: 0x0203 };
     const bad = faultySteps(L, select, snap, fault);
     assert.ok(tornSnapshotPossible(L, mem, snap, bad),
       `the fault "${fault}" produced no torn reading — the check is not checking`);
@@ -949,12 +960,54 @@ assert.equal(backwards[2].sync, "lost");
   // ── a snapshot from another run is not this run's ──────────────────────
   {
     const m = new Uint8Array(mem);
-    const old = { bootGeneration: 0x1233, phaseGeneration: 0, boundarySampleIndex: 99,
-      observationNumber: 7 };
+    const old = { bootGeneration: 0x1233, phaseGeneration: 0, observationNumber: 7 };
     for (const [a, v] of publishSteps(L, readSnapshot(m, L).select, old)) m[a] = v;
     const got = readSnapshot(m, L);
     assert.notEqual(got.bootGeneration, 0x1234,
       "the host must be able to tell a previous run's snapshot from this run's");
+  }
+
+  // ── THE DERIVED TIME, AT ITS BOUNDARIES (R15 §39.2, §39.3) ────────────
+  // The output index is not transferred any more, so the host's own extension
+  // and multiplication ARE the protocol. The values that decide it are given
+  // directly rather than waited for: 32,767 observations is 262 seconds of run.
+  {
+    const perObs = cfg.cycleSlots;
+    assert.equal(perObs, 80, "the 2ch lap is what the derivation multiplies by");
+    // The first COMPLETE snapshot is observation 1 and its boundary is sample 0.
+    assert.equal(boundarySample(1, perObs), 0);
+    assert.equal(boundarySample(2, perObs), perObs);
+    // A re-read of the same snapshot is a step of zero, not a fault and not a
+    // step backwards.
+    assert.deepEqual(extendObservation(5, 5), { at: 5, delta: 0, unextendable: false });
+    // Ordinary forward motion, and the u16 wrap of the observation number
+    // itself: $ffff -> $0000 is ONE step.
+    assert.equal(extendObservation(1, 2).at, 2);
+    assert.equal(extendObservation(0xffff, 0x0000).at, 0x10000);
+    assert.equal(extendObservation(0x1fffe, 0x0001).at, 0x20001);
+    // The last extendable step, and the first that is not. 32,768 is where
+    // forward and backward stop being distinguishable, so it is refused rather
+    // than guessed at — the host stops sending timed commands and asks for a
+    // new run instead.
+    assert.equal(OBS_MAX_STEP, 32767);
+    assert.equal(extendObservation(100, (100 + OBS_MAX_STEP) & 0xffff).at, 100 + OBS_MAX_STEP);
+    assert.equal(extendObservation(100, (100 + 32768) & 0xffff).at, null);
+    assert.ok(extendObservation(100, (100 + 32768) & 0xffff).unextendable);
+    // …and the u32 wrap of the derived index, which happens at 53,687,092
+    // observations and is arithmetic rather than an event: it must come out
+    // modulo 2^32 and stay a forward step of one lap.
+    const nearWrap = Math.floor(2 ** 32 / perObs) + 1;
+    const a = boundarySample(nearWrap, perObs), b2 = boundarySample(nearWrap + 1, perObs);
+    assert.ok(a >= 0 && a < 2 ** 32 && b2 >= 0 && b2 < 2 ** 32, "the index must stay u32");
+    assert.equal(outputAdvance(a, b2), perObs, "a lap is a lap across the u32 wrap too");
+    // THE MISTAKE THE HOST COULD MAKE: reading the observation number as the
+    // sample number. It has to be a different number everywhere but the origin.
+    for (const n of [2, 3, 100, 4000])
+      assert.notEqual(boundarySample(n, perObs), n,
+        "the observation number is not the sample number");
+    // A phase generation is not part of the time at all: the same observation
+    // in a new phase stretch names the same sample.
+    assert.equal(boundarySample(7, perObs), boundarySample(7, perObs));
   }
 
   // ── the queue: the payload first, the head last ────────────────────────
@@ -1429,7 +1482,11 @@ const RECORD_FAULTS = ["drop-field", "double-field", "carry-publish"];
 // The queue faults are the 68000's and they break the QUEUE's publication
 // order: the head moved before the bytes, or a byte of the record never came.
 const QFAULTS = ["q-head-first", "q-short-record"];
-assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS].sort(),
+// The Z80's own side of the DERIVED time (R15 §39.3): the engine's private
+// logical position drifting from what the host computes.
+const PROTO_FAULTS_Z80 = ["idx-short"];
+assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS,
+  ...PROTO_FAULTS_Z80].sort(),
   Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
 // Each one changes the 68000's rom, and none of them reaches the Z80's source.
 {
@@ -1461,6 +1518,20 @@ assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAUL
   }
   for (const fault of RECORD_FAULTS)
     assert.throws(() => resolveCase(loadCaseNoPublish, { fault }), /only applies/);
+}
+// The protocol fault is the Z80's too, and it changes the generated source in
+// exactly one place — the lap's advance — while leaving the 68000 alone.
+{
+  const pr = { name: "proto", cfg: {}, wave: new Uint8Array(256),
+    observer: { reads: ["h"], decode: true, load: "divu",
+      proto: { every: 3000, skipLive: true, skipBulk: true } } };
+  const clean = resolveCase(pr, {}).gen.text;
+  for (const fault of PROTO_FAULTS_Z80) {
+    const bad = resolveCase(pr, { fault }).gen.text;
+    assert.notEqual(bad, clean, `fault ${fault} did not change the generated source`);
+    assert.equal(resolveCase(pr, { fault }).grab.fault, undefined);
+    assert.throws(() => resolveCase(loadCaseNoPublish, { fault }), /only applies/);
+  }
 }
 const roms = new Map();
 for (const fault of [null, ...TRANSFER_FAULTS]) {
@@ -1583,12 +1654,156 @@ if (process.argv.includes("--machine")) {
   assert.equal(cal2.status,0,cal2.stdout);
   assert.match(cal2.stdout,/divu\/7 1[0-9][0-9]\./);
 }
+// ── THE PCM STATE CONSUMER, ON A REAL Z80 (R15 §39.4 step 4) ─────────────
+//
+// The six pieces are assembled as they are emitted into the engine and run on
+// the CPU emulator with a real queue page behind them, so what is checked is
+// the code rather than a model of it. Seven cases, each of which is a way for a
+// consumer to be wrong in a way nothing else would notice:
+//
+//   head not reached   nothing behind the host's cursor at all
+//   incomplete         the cursor moved over less than a whole record
+//   future             a whole record whose time has not come
+//   exactly due        its time is this boundary
+//   late               its time has passed — it lands here, the first boundary
+//                      the engine has not built
+//   queue wrap         the record straddles the page's end
+//   applyAtLow wrap    the 16-bit time wraps between the record and the boundary
+//
+// The rule being checked is the one §39.4 states: the tail moves by a record's
+// length exactly when the record was applied or explicitly handled, and never
+// otherwise, and the staged byte changes only at the boundary that decided it.
+{
+  const cfg = buildConfig({ voices: 2, complete: true, levels: 15,
+    correctorBudget: true, command: true, workTarget: 0.839 });
+  const m = protoMap(cfg, SPLIT_STATE);
+  const pieces = commandBlocks(m, cfg.blockSamples, "_t");
+  assert.equal(pieces.length, 6, "the consumer is six pieces");
+  // Assembled as a straight run: the pieces are separated by slot boundaries in
+  // the engine, and nothing in them depends on that — each one re-establishes
+  // its own pointer and hands its result on in memory, which is exactly why
+  // running them back to back is the same computation.
+  const QBASE = cfg.ram.queue[0], QSIZE = 256;
+  const src = ["        org $0000",
+    ...pieces.flatMap((p) => p.ops.flatMap((o) => o.asm))
+      .map((l) => (l.endsWith(":") ? l : `        ${l}`)),
+    "        halt"];
+  const d = mkdtempSync(join(tmpdir(), "dac-cmd-"));
+  let built;
+  try {
+    const f = join(d, "c.z80");
+    writeFileSync(f, src.join("\n") + "\n");
+    built = assemble(f);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+
+  const run = ({ head, tail, rec, at, staged }) => {
+    const ram = new Uint8Array(0x2000);
+    ram.set(built.bytes, 0);
+    // The queue page, and one record written into it at the tail — possibly
+    // straddling the page's end, which is the wrap case.
+    if (rec) for (let i = 0; i < rec.length; i++) ram[QBASE + ((tail + i) % QSIZE)] = rec[i];
+    ram[m.queueTail] = tail;
+    ram[m.queuePage] = QBASE >> 8;
+    ram[m.outputLow] = at & 0xff;
+    ram[m.outputLow + 1] = (at >> 8) & 0xff;
+    ram[m.L.control.queueHead.offset] = head;
+    for (let i = 0; i < CMD_SLOTS.length; i++) ram[m.stageBytes + i] = staged[i];
+    const cpu = new Z80Cpu({ read: (a) => ram[a & 0x1fff],
+      write: (a, v) => { ram[a & 0x1fff] = v & 0xff; } });
+    cpu.reset();
+    cpu.sp = 0x1f80;
+    // HL, DE, IX, IY are the engine's and must come back untouched.
+    cpu.h = 0x1c; cpu.l = 0x42; cpu.d = 0x40; cpu.e = 0x01;
+    let guard = 0;
+    while (!cpu.halted && guard++ < 4000) cpu.step();
+    assert.ok(cpu.halted, "the consumer did not finish");
+    assert.equal((cpu.h << 8) | cpu.l, 0x1c42, "the play cursor did not come back");
+    assert.equal((cpu.d << 8) | cpu.e, 0x4001, "the YM data port did not come back");
+    assert.equal(cpu.sp, 0x1f80, "the stack is not balanced");
+    return { tail: ram[m.queueTail],
+      staged: CMD_SLOTS.map((_, i) => ram[m.stageBytes + i]),
+      out: ram[m.outputLow] | (ram[m.outputLow + 1] << 8) };
+  };
+
+  const record = (type, at, slot, value) =>
+    [CMD_BYTES, type, at & 0xff, (at >> 8) & 0xff, slot, value, 0, 0];
+  const STAGED0 = [0x11, 0x22, 0x33];
+  const CASES = [
+    // name, head, tail, record, the boundary, what should happen
+    ["head not reached", 0, 0, null, 0x0100, false],
+    ["incomplete", 4, 0, record(CMD_PCM_STATE, 0x0100, 0, 0x77), 0x0100, false],
+    ["future", 8, 0, record(CMD_PCM_STATE, 0x0110, 0, 0x77), 0x0100, false],
+    ["exactly due", 8, 0, record(CMD_PCM_STATE, 0x0100, 0, 0x77), 0x0100, true],
+    ["late", 8, 0, record(CMD_PCM_STATE, 0x00f0, 1, 0x88), 0x0100, true],
+    // The record starts four bytes before the page's end and finishes after it.
+    ["queue wrap", (QSIZE - 4 + CMD_BYTES) & 0xff, QSIZE - 4,
+      record(CMD_PCM_STATE, 0x0100, 2, 0x99), 0x0100, true],
+    // The boundary has wrapped past $ffff and the record's time has not: the
+    // command is in the PAST by 16 samples and lands here.
+    ["applyAtLow wrap", 8, 0, record(CMD_PCM_STATE, 0xfff0, 0, 0x55), 0x0000, true],
+    // …and its mirror: the boundary is just below the wrap and the record's
+    // time is just above it, which is the FUTURE and must not be applied.
+    ["applyAtLow wrap, future", 8, 0, record(CMD_PCM_STATE, 0x0010, 0, 0x55), 0xfff0, false],
+    // A type the engine does not know is stepped over, not left to block the
+    // queue for ever — the tail moves and nothing is staged.
+    ["unknown type", 8, 0, record(CMD_PCM_STATE + 1, 0x0100, 0, 0x77), 0x0100, "skip"],
+  ];
+  for (const [name, head, tail, rec, at, expect] of CASES) {
+    const got = run({ head, tail, rec, at, staged: STAGED0 });
+    // The JS reference decides the same thing from the same bytes.
+    const mem = new Uint8Array(0x2000);
+    if (rec) for (let i = 0; i < rec.length; i++) mem[QBASE + ((tail + i) % QSIZE)] = rec[i];
+    const st = { tail, staged: {} };
+    const ref = refConsume({ mem, base: QBASE, size: QSIZE }, st, head, at);
+    assert.equal(ref.go, expect !== false, `${name}: the reference disagrees about consuming`);
+    assert.equal(ref.apply, expect === true, `${name}: the reference disagrees about applying`);
+    // The tail moves by a whole record, or not at all. Never by anything else.
+    const moved = (got.tail - tail + QSIZE) % QSIZE;
+    assert.equal(moved, expect === false ? 0 : CMD_BYTES,
+      `${name}: the tail moved by ${moved}`);
+    assert.equal(got.tail, st.tail, `${name}: the tail disagrees with the reference`);
+    // The staged bytes: exactly one changed, and only when the record applied.
+    const changed = got.staged.filter((v, i) => v !== STAGED0[i]).length;
+    assert.equal(changed, expect === true ? 1 : 0, `${name}: ${changed} staged bytes changed`);
+    if (expect === true) {
+      const k = rec[CMD.slot] & CMD_SLOT_MASK;
+      assert.equal(got.staged[k], rec[CMD.value], `${name}: the wrong value was staged`);
+    }
+    // …and the boundary moved on by exactly one block, whatever happened.
+    assert.equal(got.out, (at + cfg.blockSamples) & 0xffff, `${name}: the boundary`);
+  }
+  // CONSTANT TIME is the property the whole shape exists for, so it is measured
+  // rather than asserted: every case has to take the same number of cycles.
+  const lengths = new Set();
+  for (const [, head, tail, rec, at] of CASES) {
+    const ram = new Uint8Array(0x2000);
+    ram.set(built.bytes, 0);
+    if (rec) for (let i = 0; i < rec.length; i++) ram[QBASE + ((tail + i) % QSIZE)] = rec[i];
+    ram[m.queueTail] = tail; ram[m.queuePage] = QBASE >> 8;
+    ram[m.outputLow] = at & 0xff; ram[m.outputLow + 1] = (at >> 8) & 0xff;
+    ram[m.L.control.queueHead.offset] = head;
+    const cpu = new Z80Cpu({ read: (a) => ram[a & 0x1fff],
+      write: (a, v) => { ram[a & 0x1fff] = v & 0xff; } });
+    cpu.reset(); cpu.sp = 0x1f80;
+    let n = 0, guard = 0;
+    while (!cpu.halted && guard++ < 4000) n += cpu.step();
+    lengths.add(n);
+  }
+  assert.equal(lengths.size, 1,
+    `the consumer took ${[...lengths].join("/")} cycles on different inputs`);
+  // …and what that one length is, against what was reserved for it. This is the
+  // number §39.4 step 3 asks to be measured rather than estimated.
+  assert.equal(commandCost(pieces), [...lengths][0] - 4,
+    "the costed op list and the emulator disagree (the trailing `halt` is the 4)");
+}
+
 console.log("probe selftest: values, interval attribution, transfer protocol, window geometry,"
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
   + " the published record's completeness check and what it refuses,"
   + " the stop a window contains and how its boundaries are defined,"
   + " the corrector's arithmetic, its nine-bit debt and \u00b1112 boundary, convergence and five refusals, the corrector in the loop with the correction read back off the DAC, the code ledger and what it does not subtract, the 68k/Z80 protocol's one layout, its two commit domains, the ring's wrap and its full state, and every counter's wrap,"
+  + " the PCM state consumer on a real Z80 through nine queue cases at one length,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
   + " resolved configuration and padding paths pass");

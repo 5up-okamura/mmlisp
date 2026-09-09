@@ -101,6 +101,9 @@ export const GLOB = {
   v0page: 0x03,   // u8  LUT page for voice 0's level
   v1page: 0x04,   // u8  …voice 1's
   mpage: 0x05,    // u8  …and the master's
+  stagePad: 0x06, // u8  the fourth staged byte, so a command's 2-bit slot
+                  //     number always names one of these four and never
+                  //     anything else (command.mjs CMD_SLOT_MASK)
   observe: 0x08,  // u8  the raw reading, when the observer only keeps it
   decode: 0x10,   // 6 B the phase decoder's state (observer.mjs STATE)
 };
@@ -237,6 +240,35 @@ export const RESERVE_2CH_CORR = RESERVE_2CH.map(([b, cyc, why]) =>
 export const CODE_ESTIMATE_2CH_CORR =
   CODE_ESTIMATE_2CH.filter(([what]) => what !== "time publication");
 
+// ── The command consumer's own profile (R15 §39.4 step 3) ──────────────────
+//
+// The reservation the consumer replaces is b9 and b10 — 145 cycles a block,
+// "read the record, dispatch it, stage what it changes". The consumer that was
+// actually written needs five block positions, so b11, b12 and b13 are cleared
+// as well and THE CYCLES THAT WERE THERE ARE NOT FORGIVEN: 210 a block of the
+// YM/PSG slot writer's reservation is displaced, and the verdict adds it back
+// as still owed rather than quietly banking it. A profile that drops a
+// reservation to make room for a feature and then reports the result as if the
+// reservation had never existed is the one thing this table exists to prevent.
+export const CMD_SLOTS_USED = [9, 10, 11, 12, 13, 14];
+export const CMD_REPLACED = [9, 10];
+export const RESERVE_2CH_CMD = RESERVE_2CH_CORR.map(([b, cyc, why]) =>
+  (CMD_SLOTS_USED.includes(b)
+    ? [b, 0, CMD_REPLACED.includes(b)
+        ? "REPLACED by the real PCM state consumer (R15 §39.4)"
+        : "DISPLACED by the consumer — still owed, and added back in the verdict"]
+    : [b, cyc, why]));
+
+/** What the consumer's extra positions took away, per block. */
+export const cmdDisplacedCycles = () => RESERVE_2CH_CORR
+  .filter(([b]) => CMD_SLOTS_USED.includes(b) && !CMD_REPLACED.includes(b))
+  .reduce((t, [, c]) => t + c, 0);
+
+// The dispatch estimate goes: the consumer is real code now, and it is measured
+// with everything else in the image.
+export const CODE_ESTIMATE_2CH_CMD =
+  CODE_ESTIMATE_2CH_CORR.filter(([what]) => what !== "command dispatch");
+
 
 
 /**
@@ -268,6 +300,10 @@ export function buildConfig({
   // legal on a `complete` build, because it is a statement about the complete
   // engine's budget.
   correctorBudget = false,
+  // THE COMMAND CONSUMER'S PROFILE (R15 §39.4 step 3): the reserved command pad
+  // is replaced by the real fixed-length PCM state consumer, which needs more
+  // block positions than were reserved for it. Built on the corrector's image.
+  command = false,
   // HOW MANY VOLUME LEVELS, and therefore how big the level family is. 16 is
   // the shipped one (4 KB). 15 is the experimental profile R8 §23.2 authorises
   // so that a page-aligned phase table exists at all; it is a different build
@@ -362,14 +398,18 @@ export function buildConfig({
 
   if (correctorBudget && !complete)
     throw new Error("the corrector budget is a statement about the complete 2ch engine");
+  if (command && !correctorBudget)
+    throw new Error("the command consumer is built on the corrector's budget image");
   if (!(workTarget > 0 && workTarget <= 1) || !(meanTarget > 0 && meanTarget <= 1))
     throw new Error("the work targets are fractions of a slot");
   const cfg = {
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
-    reserve: complete ? (correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
-    codeEstimate: correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
-    correctorBudget,
+    reserve: complete
+      ? (command ? RESERVE_2CH_CMD : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
+    codeEstimate: command ? CODE_ESTIMATE_2CH_CMD
+      : correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
+    correctorBudget, command,
     z80Hz, fmSampleHz, rateHz,
     periodNum, periodDen, periodCycles,
     groupSlots, groupCycles, slotCycles, cycleSlots,
@@ -398,6 +438,7 @@ export const stampLine = (c) =>
   // R10 §29.5: which reservation this image spent on the corrector is part of
   // what it is. An image with b1..b4 free is not the same artifact as one that
   // still owes the time publication, and neither is the finished budget.
-  + (c.correctorBudget ? " budget corr-for-timepub" : "");
+  + (c.correctorBudget ? " budget corr-for-timepub" : "")
+  + (c.command ? " +pcm-state-consumer" : "");
 
 const hexAddr = (v) => (v === undefined ? "-" : `$${v.toString(16).padStart(4, "0")}`);

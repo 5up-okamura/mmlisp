@@ -775,3 +775,61 @@ the 16-bit observation number carrying past $FFFF — reached with a `countFrom`
 boot constant, not waited for. `dac-stream:machine:required` runs the required
 cases and exits 0; the full run still reports every case and still exits 1 on the
 13 known informational failures.
+
+## R12–R15 — the runtime protocol, then the wall the consumer hits (2026-09-09)
+
+**The three quantities are separate and so are the three commit domains.**
+`bootGeneration` (u16, the 68k's), the output sample index (the Z80's),
+`phaseGeneration` (u8, the 68k's); committed by `queueHead` (queue bytes),
+`phaseCommit` (phase only) and `publishSelect` (the snapshot). Merging any two
+was the R13 §35.1 bug: an ordinary command invalidated the H corrector.
+
+**The snapshot is 5 B, and the output index is DERIVED (R15 §39.2).**
+`{observationNumber:u16, bootGeneration:u16, phaseGeneration:u8}`, stride 6,
+19 B of the 32 B region, and the host reads selector + pad + both faces as one
+14-byte run — three `move.l` and one `move.w`. The u32 time is
+`(extend16(obs) - 1) * outputsPerObservation`, with the multiplier generated
+(80 for the 2ch lap, 5 for P1) and never hand-written. A u16 step of 1..32767
+is forward, 0 is a re-read, 32768+ is unextendable and stops timed commands.
+The Z80 keeps only `outputSampleLow:u16`, privately, to extend `applyAtLow`.
+
+Measured on BlastEm, both CPUs, after the change: ~3,940 snapshots a 2-second
+case with 0 written with other than 5 bytes behind the selector, 0 derived
+indexes misplaced against the instrument's own DAC-write count, and the
+observation number used raw as a sample number places 1 of 3,940 — so the check
+distinguishes the derivation from that mistake. The live snapshot read fell from
+1,184..1,452 to **891..1,144 master** (356 of the 1,500 budget left).
+
+Transfer pieces, measured: head 341..577, credit 429..668, invalidate 576..815,
+payload 947..1,200, snapshot 891..1,144. The SUM between two H observations is
+the rule; head+credit, head+invalidate and credit+invalidate are the only pairs
+under 1,500 and stay candidates until a real two-piece-per-interval run.
+
+**Two things that were structurally wrong and are fixed:** KNOWN was doing two
+jobs (the record's field and the carry) — `pknown` is separate now; and
+`SPLIT_LIVE` was POSITIONAL, so adding one piece shifted every later entry and
+fed two thirds of the corrector chain the wrong liveness. Liveness is keyed by
+name and an undeclared piece is refused.
+
+### Where it stops: the PCM state consumer costs 4x its reservation
+
+The compact protocol alone is **inside every limit** — worst 83.8%, mean 79.5%,
+finished estimate 2,551 B of 2,560 (9 B spare), RAM ok. The protocol costs 21
+pieces / 436 cycles a lap (publish 192, advance 98, check 146).
+
+The real fixed-length PCM state consumer — one type, 8-byte record, applied at a
+16-sample boundary, branch-free, verified on the JS Z80 through nine queue cases
+at one length — is **619 cycles a block, 3,095 a lap, in six block positions**,
+against 145 a block in two. Nothing cheap is available: A and the flags die at
+every slot boundary, HL is the play cursor (push/pop per piece), DE is the YM
+data port, IX/IY and the shadow set are the mixer's, so every piece
+re-establishes its pointer and hands its result on in memory.
+
+  image with the consumer   worst 92.7%   mean 82.5%   code 2,915 B   RAM ok
+  + the displaced YM reserve              mean 87.4%
+  limits                    83.9%         79.6%        2,560 B
+
+The four extra block positions were the YM/PSG slot writer's 280 cycles a block;
+they are reported as displaced and added back, not banked. **Limits were not
+moved.** The contract choice is the designer's: the record's 16-bit time, the
+per-block cadence, or the block positions the consumer may have.

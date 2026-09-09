@@ -21,9 +21,11 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
-import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
+import { PUBLISH, INITIAL_STATE, refDecode, STATE } from "./observer.mjs";
 import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
-import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES } from "./protocol.mjs";
+import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES,
+  extendObservation, boundarySample, protoGlobals } from "./protocol.mjs";
+import { GLOB } from "./config.mjs";
 import { buildCase, FAULTS, QUEUE_FAULTS } from "./case-config.mjs";
 import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
@@ -806,6 +808,20 @@ for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CA
   // The three counters, each with its own rule (§33.2).
   let obsSteps = 0, idxSteps = 0, bootWrong = 0, phaseBumps = 0, faceRepeats = 0;
   const perLap = built.cfg.cycleSlots;
+  // ── THE OUTPUT INDEX, DERIVED (R15 §39.2) ─────────────────────────────
+  // It is not on the wire any more. The host extends the 16-bit observation
+  // number forward inside one boot generation and multiplies by the lap's own
+  // output count, which came from the generator rather than from a constant
+  // here. `snap.at` is that derivation, done exactly as a host would do it.
+  let ext = 0, unextendable = 0;
+  for (const sn of snaps) {
+    if (sn.bootGeneration !== PROTO_BOOT) { sn.at = null; continue; }
+    const e = extendObservation(ext, sn.observationNumber);
+    if (e.unextendable) { unextendable++; sn.at = null; continue; }
+    ext = e.at;
+    sn.obsExt = ext;
+    sn.at = boundarySample(ext, perLap);
+  }
   // The first transition is from the boot state, where the index has not been
   // advanced yet and the counter has not been decoded yet; everything after it
   // is the steady state and is what the rules are about.
@@ -813,20 +829,22 @@ for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CA
     const a = snaps[n - 1], b = snaps[n];
     if (b.bootGeneration !== PROTO_BOOT) bootWrong++;
     if (((b.observationNumber - a.observationNumber) & 0xffff) !== 1) obsSteps++;
-    if (outputAdvance(a.boundarySampleIndex, b.boundarySampleIndex) !== perLap) idxSteps++;
+    if (a.at === null || b.at === null || outputAdvance(a.at, b.at) !== perLap) idxSteps++;
     if (genAdvance(a.phaseGeneration, b.phaseGeneration)) phaseBumps++;
     if (b.select === a.select) faceRepeats++;
   }
+  if (unextendable)
+    failures.push(`"${name}": ${unextendable} snapshots could not be extended forward`);
   console.log(`${name} — ${Z80_SECONDS}s`);
   console.log(`  ${snaps.length} snapshots published, ${badRuns} written with other than`
     + ` ${SNAPSHOT_BYTES} bytes behind the selector, ${faceRepeats} that did not change face`);
   console.log(`  counters: ${obsSteps} observation numbers that did not step by one,`
-    + ` ${idxSteps} output indexes that did not step by ${perLap},`
+    + ` ${idxSteps} derived output indexes that did not step by ${perLap},`
     + ` ${bootWrong} snapshots from another run, ${phaseBumps} phase generations bumped`);
   if (badRuns) failures.push(`"${name}": ${badRuns} publications selected a face they had not filled`);
   if (faceRepeats) failures.push(`"${name}": ${faceRepeats} publications wrote the face being read`);
   if (obsSteps) failures.push(`"${name}": ${obsSteps} observation numbers did not step by one`);
-  if (idxSteps) failures.push(`"${name}": ${idxSteps} output indexes did not step by ${perLap}`);
+  if (idxSteps) failures.push(`"${name}": ${idxSteps} derived output indexes did not step by ${perLap}`);
   if (bootWrong) failures.push(`"${name}": ${bootWrong} snapshots carried a boot generation that is not the host's`);
   // THE INVALIDATION, seen from the engine's side. A bumped phase generation
   // has to be followed by a BASE — known set, valid clear — and by no valid
@@ -914,26 +932,90 @@ for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CA
         + ` only commands were being published`);
   }
 
-  // THE ABSOLUTE CORRESPONDENCE (R13 §35.2). "+5 every time" says the counter
-  // steps; it does not say WHICH DAC write index 0 is. Every snapshot names a
-  // sample number, and the instrument counted the DAC writes itself, so the two
-  // are matched here: the write that number names must be the lap-opening write
-  // whose lap contains the publication.
+  // THE ABSOLUTE CORRESPONDENCE (R13 §35.2, R15 §39.3). "+80 every time" says
+  // the counter steps; it does not say WHICH DAC write index 0 is. The number is
+  // now DERIVED from the observation number rather than transferred, so this is
+  // also the check that the derivation is the right one: the instrument counted
+  // the DAC writes itself, and the write the derived index names must be the
+  // lap-opening write whose lap contains the publication.
   {
     const dacT = log.dac.map((e) => e.time);
-    let placed = 0, misplaced = 0, firstIdx = null;
+    let placed = 0, misplaced = 0, firstIdx = null, naivePlaced = 0, naiveTried = 0;
     for (const s2 of snaps.slice(1)) {
-      const i = s2.boundarySampleIndex;
-      if (i + perLap >= dacT.length) continue;
+      const i = s2.at;
+      if (i === null || i === undefined || i + perLap >= dacT.length) continue;
       firstIdx ??= i;
       // The snapshot went out inside the lap that opened with that DAC write.
       if (s2.time > dacT[i] && s2.time < dacT[i + perLap]) placed++; else misplaced++;
+      // THE FAULT THE HOST COULD MAKE (§39.3): using the observation number
+      // itself as a sample number. It is a plausible reading of "the two are the
+      // same counter", and it has to be WRONG on this very data — otherwise the
+      // check above proves nothing about the multiplication.
+      const j = s2.observationNumber;
+      if (j + perLap < dacT.length) {
+        naiveTried++;
+        if (s2.time > dacT[j] && s2.time < dacT[j + perLap]) naivePlaced++;
+      }
     }
-    console.log(`  boundary: ${placed} snapshots name the DAC write that opened their own lap,`
-      + ` ${misplaced} do not (first index seen ${firstIdx})`);
-    if (misplaced) failures.push(`"${name}": ${misplaced} snapshots name a DAC write outside`
+    console.log(`  boundary: ${placed} snapshots whose DERIVED index names the DAC write that`
+      + ` opened their own lap, ${misplaced} do not (first index seen ${firstIdx});`
+      + ` the observation number used raw would place ${naivePlaced} of ${naiveTried}`);
+    if (misplaced) failures.push(`"${name}": ${misplaced} derived indexes name a DAC write outside`
       + ` the lap they were published in`);
-    if (!placed) failures.push(`"${name}": not one snapshot could be matched to a DAC write`);
+    if (!placed) failures.push(`"${name}": not one derived index could be matched to a DAC write`);
+    if (naiveTried > 4 && naivePlaced > 1)
+      failures.push(`"${name}": the observation number used directly as a sample number placed`
+        + ` ${naivePlaced} of ${naiveTried} snapshots — this check cannot tell the`
+        + ` derivation from that mistake`);
+  }
+
+  // ── THE ENGINE'S OWN LOW SIXTEEN BITS (R15 §39.3) ─────────────────────
+  // The Z80 keeps `outputSampleLow` for one job — extending a command's
+  // `applyAtLow` — and it is never published, so nothing about it is visible in
+  // a snapshot. The instrument watches the globals region, so the writes ARE
+  // visible, and what is checked is that they agree with the number the host
+  // derives: after the lap that published observation N, the low word must be
+  // the low sixteen bits of that observation's boundary plus one lap.
+  {
+    // Region-relative, the same way the state bytes above are.
+    const lo = protoGlobals((built.cfg.ram.glob[0] & 0xff) + GLOB.decode, STATE.countLo).outputLow;
+    const w = log.ramWrites.filter((x) => x.region === "glob"
+      && (x.addr === lo || x.addr === lo + 1)).sort((a, b) => a.time - b.time);
+    let cur = 0, checked = 0, wrong = 0, blocksWrong = 0;
+    const offs = [];
+    for (let k = 0; k + 1 < w.length; k++) {
+      if (w[k].addr !== lo || w[k + 1].addr !== lo + 1) continue;
+      cur = w[k].value | (w[k + 1].value << 8);
+      const done = w[k + 1].time;
+      // The most recent publication before this advance is the lap it belongs to.
+      let sn = null;
+      for (const s3 of snaps) {
+        if (s3.time >= done) break;
+        if (s3.at !== null && s3.at !== undefined) sn = s3;
+      }
+      if (!sn) continue;
+      checked++;
+      if (cur !== ((sn.at + perLap) & 0xffff)) wrong++;
+      // …and the block boundaries inside the NEXT lap, which is what a command's
+      // time is actually compared against. The offsets are generated from the
+      // schedule, not written down (proto-blocks.mjs outputBlockOffsets).
+      if (!offs.length)
+        for (let o = 0; o < perLap; o += built.cfg.blockSamples) offs.push(o);
+      for (const o of offs)
+        if (((cur + o) & 0xffff) !== ((sn.at + perLap + o) & 0xffff)) blocksWrong++;
+      k++;
+    }
+    console.log(`  logical position: ${checked} lap advances checked against the derived index,`
+      + ` ${wrong} that disagreed, ${blocksWrong} block boundaries off`
+      + ` (${offs.join("/")} inside a lap)`);
+    if (!checked)
+      failures.push(`"${name}": the engine's logical output position was never seen advancing`);
+    if (wrong)
+      failures.push(`"${name}": ${wrong} of ${checked} lap advances left the engine's logical`
+        + ` position disagreeing with the index the host derives`);
+    if (blocksWrong)
+      failures.push(`"${name}": ${blocksWrong} block boundaries did not land where the derived`
+        + ` index puts them`);
   }
 
   // THE LIVE CONTRACT (§33.1): what the bus was actually held for, between one

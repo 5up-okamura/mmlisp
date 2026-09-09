@@ -116,11 +116,32 @@ What the reservations buy, and the rate each one is sized for:
 
 | per block | cycles | what it buys |
 | --- | --- | --- |
-| output index + snapshot | 300 | the §3.7 publication: a 32-bit add, the four index bytes into the inactive bank, a generation, and the 1-byte publish bank written last |
+| output index + snapshot | 300 | ~~the §3.7 publication~~ — **spent on the bounded corrector instead** (R10 §29.5), and the publication that replaced it is real code costing 87 cycles a block: a 5-byte snapshot through main BC and the logical position's own advance |
 | voice run state | 260 | two voices' blocks-left countdown and loop-or-advance, selected branch-free and **staged**, not applied |
-| command dispatch | 145 | one command a block = **624 commands/s**, against roughly 10 PCM events a frame |
+| command dispatch | 145 | one command a block = **624 commands/s**, against roughly 10 PCM events a frame. **The real consumer measures 619** — see below |
 | YM / PSG writes | 280 | four a block = **2,497 writes/s = 41.6 a frame**, which is the shipped driver's typical |
 | block edge B | 48 | the two staged source pointers into `DE'`/`IX` |
+
+**What the command reservation actually costs (R15 §39.4).** The consumer that
+does the job — one fixed-length PCM state record, read, type-checked, applied at
+a 16-sample boundary, the tail stepped by a whole record or not at all, all of it
+branch-free and verified on a real Z80 through nine queue cases at ONE length —
+is **619 cycles a block in six block positions**, not 145 in two. Nothing cheaper
+is available in this register environment: `A` and the flags die at every slot
+boundary, `HL` is the play cursor and has to be pushed and popped, `DE` is the YM
+data port, and `IX`, `IY` and the shadow set are the mixer's, so each piece
+re-establishes its own pointer and hands its result on through memory.
+
+| | worst slot | mean | code (finished) | RAM |
+| --- | ---: | ---: | ---: | ---: |
+| decode + corrector, publication replaced | 83.8% | 78.0% | 2,407 B | ok |
+| + the runtime protocol | 83.8% | 79.5% | 2,551 B | ok |
+| + the real PCM state consumer | **92.7%** | **82.5%** | **2,915 B** | ok |
+| …with the displaced YM reserve added back | | **87.4%** | | |
+| limits | 83.9% | 79.6% | 2,560 B | 8,192 B |
+
+The four block positions beyond the two reserved were the YM/PSG slot writer's
+280 cycles a block; they are reported as displaced and added back, never banked.
 
 Two things this settles, and one it does not:
 
@@ -743,6 +764,12 @@ generation time.
 | `gen-stream.mjs` | generates the Z80 source and the per-path cycle table |
 | `observer.mjs` | the phase observer: the VDP read, the Z80 decode as costed ops, its RAM ownership, its boot initialisation, the published record and the faults that break it |
 | `decode-split.mjs` | the same decode cut into pieces a complete 2ch slot could hold, and the walk that tries to place them |
+| `corrector.mjs` | the bounded phase corrector: its arithmetic, the nine-bit debt and its ±112 limit, the seven `jr` ladders and the five ways to break it |
+| `protocol.mjs` | **the 68k/Z80 runtime protocol's one layout.** The 5-byte snapshot, the host's control block, the ordered writes each side makes, the wrap rule of every counter, the queue's records — and the Z80 equates, C header and JS model all emitted from it, so no offset is written down twice |
+| `proto-blocks.mjs` | the protocol as Z80 code: the host-control check, the snapshot publication and the logical position's advance, in one-slot pieces and in P1's single-block form |
+| `command.mjs` | the fixed-length PCM state command: the record, the JS reference consumer, and the branch-free Z80 pieces that consume one a block |
+| `split-report.mjs` | what the distributed image costs, printed from the image itself: pieces, worst slot, mean, ladders, DAC interval, the code ledger and the four limits judged independently |
+| `decoder-eval.mjs` | the BlastEm harness for the observer, the corrector and the runtime protocol on both CPUs |
 | `machine.mjs` | the emulated machine and the instrument: RAM, the YM's four ports with a real timer model, the 68000's bus grab as injectable stopped time, and a 64-bit-safe trace |
 | `analyze.mjs` | VALUE, TIME and BUS, kept apart; plus the chip's settling table, checked |
 | `spectrum.mjs` | the §6.3 comparison: the same bytes on a uniform grid vs at their real write times |

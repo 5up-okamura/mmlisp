@@ -6,9 +6,11 @@
 //   check    the host's control block is read and, if its commit changed, THIS
 //            observation's decode is invalidated before it is finalised
 //   decode   the reading is decoded from the stash
-//   publish  the nine-byte stage is copied into the face the 68000 is not
+//   publish  the five-byte stage is copied into the face the 68000 is not
 //            reading, and the selector is flipped last
-//   advance  the 32-bit output index moves on by one lap's worth of samples
+//   advance  the Z80's PRIVATE 16-bit output index moves on by one lap's worth
+//            of samples (R15 §39.2 — the host derives its own 32-bit copy from
+//            the observation number and this one is never published)
 //
 // THE ORDER IS THE POINT (§33.3). The check runs AFTER the reading is taken and
 // BEFORE the decode is finalised, so a stop that happened before the read is
@@ -38,9 +40,19 @@ export function protoMap(cfg, state) {
   const G = protoGlobals(decode, state.countLo);
   if (G.end > cfg.ram.glob[1])
     throw new Error("the protocol's globals do not fit the globals region");
+  // The queue's page, when the map has one. A P1 build has no command queue at
+  // all, so the pointer's high byte is the queue's page or zero — and a boot
+  // that wrote a plausible-looking wrong page would be worse than one that
+  // writes an obviously impossible one.
+  const queuePageValue = cfg.ram.queue ? cfg.ram.queue[0] >> 8 : 0;
   return { L, glob: g, stage: G.fields, stageBase: G.stage,
-    lastPhaseCommit: G.lastPhaseCommit, queueTail: G.queueTail, globEnd: G.end,
-    decode, observe: g + GLOB.observe, state };
+    lastPhaseCommit: G.lastPhaseCommit, queueTail: G.queueTail,
+    queuePage: G.queuePage, queuePageValue, queueBase: cfg.ram.queue ?? null,
+    outputLow: G.outputLow, commandMask: G.commandMask,
+    commandDest: G.commandDest, globEnd: G.end,
+    // The staged bytes a command may write: the block edge's own inputs, four
+    // of them so a record's two-bit slot number can never name anything else.
+    stageBytes: g + GLOB.v0page, decode, observe: g + GLOB.observe, state };
 }
 
 /**
@@ -99,9 +111,9 @@ export function protoCheckOps(m, state = m.state) {
  * selector — strictly last, which is what makes a reader see either the whole
  * previous snapshot or the whole new one (protocol.mjs `tornSnapshotPossible`).
  *
- * The destination is one self-modified `ld hl,nn` rather than nine self-modified
- * store operands: the two faces are nine bytes apart and both are inside one
- * page, so `xor 9` on the low byte is the whole face swap.
+ * The destination is one self-modified `ld hl,nn` rather than one self-modified
+ * store operand per byte: both faces are inside one page, so a single `xor` on
+ * the low byte is the whole face swap.
  */
 export function protoPublishOps(m, tag = "", { useShadow = false } = {}) {
   const first = SNAPSHOT[0][0];
@@ -135,7 +147,8 @@ export function protoPublishOps(m, tag = "", { useShadow = false } = {}) {
 }
 
 /**
- * The output sample index, advanced once a lap by the lap's own sample count.
+ * The Z80's own low sixteen bits of the output sample index, advanced once a lap
+ * by the lap's own sample count.
  *
  * ONE PER OUTPUT is the semantics, not the arithmetic: the counter names DAC
  * writes and it is read at one defined instruction position — the lap's first
@@ -145,19 +158,41 @@ export function protoPublishOps(m, tag = "", { useShadow = false } = {}) {
  * running, and it does not move when the phase is corrected, because a
  * correction changes when a sample is written and not how many there were.
  *
- * The carry crosses the four bytes inside ONE block: `ld a,(nn)` and
+ * SIXTEEN BITS, NOT THIRTY-TWO, and it is not published (R15 §39.2). The host
+ * gets its 32-bit time by multiplying the observation number it can already
+ * see; the Z80 needs only enough of the number to extend a command's 16-bit
+ * `applyAtLow` against, and that is exactly sixteen bits.
+ *
+ * The carry crosses the two bytes inside ONE block: `ld a,(nn)` and
  * `ld (nn),a` leave the flags alone, so nothing has to be saved between them.
  */
 export function protoAdvanceOps(m, samples) {
-  const at = m.stage.boundarySampleIndex;
+  const at = m.outputLow;
   const ops = [];
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < 2; k++) {
     ops.push(op(`ld   a,(${hx(at + k)})`, 13));
     ops.push(op(k === 0 ? `add  a,${samples}` : "adc  a,0", 7));
     ops.push(op(`ld   (${hx(at + k)}),a`, 13,
-      k === 3 ? { what: "the output sample index, one lap on" } : {}));
+      k === 1 ? { what: "the logical output position, one lap on" } : {}));
   }
   return ops;
+}
+
+/**
+ * The 16-sample block boundaries inside one lap, as offsets from the lap's own
+ * first output (R15 §39.3).
+ *
+ * GENERATED, not written down. A command applies at a block boundary, so the
+ * consumer compares its extended time against the lap's low value plus one of
+ * these — and 0/16/32/48/64 written out by hand is five places for the number
+ * to be wrong the day the lap or the block changes size.
+ */
+export function outputBlockOffsets(cfg) {
+  const n = cfg.cycleSlots / cfg.blockSamples;
+  if (!Number.isInteger(n))
+    throw new Error(`a lap of ${cfg.cycleSlots} outputs is not a whole number`
+      + ` of ${cfg.blockSamples}-sample blocks`);
+  return Array.from({ length: n }, (_, i) => i * cfg.blockSamples);
 }
 
 /**
@@ -176,7 +211,7 @@ export function protoBootLines(m) {
     // The two bytes the decoder owns are NOT zeroed here — its own init does
     // that — so the stage is cleared from the third byte on.
     `ld   hl,${hx(m.stageBase + 2)}`,
-    `ld   b,${SNAPSHOT_BYTES - 2 + 2}`,
+    `ld   b,${SNAPSHOT_BYTES - 2 + 5}`,
     "protoinit:",
     "ld   (hl),0",
     "inc  l",
@@ -191,11 +226,16 @@ export function protoBootLines(m) {
     // The commit already in place is not an invalidation: it is where we start.
     `ld   a,(${hx(c.phaseCommit.offset)})`,
     `ld   (${hx(m.lastPhaseCommit)}),a`,
-    // The queue is empty and the first face to be written is face 1, so the
-    // first publication flips the selector from 0 to 1.
+    // The queue is empty, the logical output position is zero (the loop above
+    // has already cleared both), and the first face to be written is face 1, so
+    // the first publication flips the selector from 0 to 1.
     "xor  a",
     `ld   (${hx(m.queueTail)}),a`,
     `ld   (${hx(m.L.publishSelect.offset)}),a`,
+    // …and the record pointer's high byte, which is the queue's page and never
+    // changes again: the consumer takes tail and page together (R15 §39.4).
+    `ld   a,${hx(m.queuePageValue)}`,
+    `ld   (${hx(m.queuePage)}),a`,
   ];
 }
 
@@ -216,7 +256,8 @@ export function protoCost(m, state = m.state, samples = 5) {
 // changes the shape of this entirely: `mix_one` works inside `exx`, so MAIN BC
 // is free, and `preserveBC()` already knows how to keep it alive across the
 // slots between two pieces. So the publication is a pointer walk in BC with a
-// single self-modified operand, not nine absolute stores each with its own.
+// single self-modified operand, not one absolute store per byte each with its
+// own.
 //
 // Every piece here is constant time. There is no path that is shorter when a
 // carry is zero, and none that is shorter when nothing was invalidated.
@@ -224,7 +265,7 @@ export function protoCost(m, state = m.state, samples = 5) {
 const b = (name, ops) => ({ name, ops, cycles: ops.reduce((t, o) => t + o.cycles, 0) });
 
 /**
- * The nine-byte snapshot, into the face the 68000 is not reading, then the
+ * The five-byte snapshot, into the face the 68000 is not reading, then the
  * selector — strictly last.
  *
  * BC is live from the `ld bc,FACE*` to the last `ld (bc),a`: `ld a,(nn)` and
@@ -267,45 +308,35 @@ export function protoPublishLive() {
 }
 
 /**
- * The 32-bit output index, advanced once a lap, WITH THE CARRY MADE EXPLICIT.
+ * The Z80's private 16-bit output position, advanced once a lap, WITH THE CARRY
+ * MADE EXPLICIT.
  *
  * The single-block version carried the carry in the flags, which is exactly
  * what a slot boundary destroys, so splitting it as it stood would have been
- * silently wrong (R14 §37.3). Here each byte's carry is rebuilt as a 0/$ff mask
- * in C from what was actually stored:
+ * silently wrong (R14 §37.3). Here the carry out of the low byte is rebuilt as
+ * a 0/$ff mask in C from what was actually stored — a carry happened iff the
+ * stored byte is now BELOW the addend — and `sub c` with that mask is the +1.
+ * It is `sbc a,a` after a compare, so 0 and 1 take the same cycles, and so do
+ * $00ff -> $0100 and the u16 wrap.
  *
- *   low byte   a carry happened iff the stored byte is now BELOW the addend
- *   others     iff it is now zero AND the carry into it was set
- *
- * Both are `sbc a,a` after a compare, so 0 and 1 take the same cycles, and so
- * do $00ff -> $0100, $ffff -> $00010000 and the u32 wrap.
+ * TWO BYTES, NOT FOUR (R15 §39.2): the upper half was only ever carried so the
+ * host could be told the whole number, and the host now derives it.
  */
 export function protoAdvanceSplit(m, samples) {
-  const at = m.stage.boundarySampleIndex;
-  const out = [
+  const at = m.outputLow;
+  return [
     b("idx add", [op(`ld   a,(${hx(at)})`, 13), op(`add  a,${samples}`, 7), op("ld   b,a", 4)]),
     b("idx store", [op("ld   a,b", 4), op(`ld   (${hx(at)}),a`, 13)]),
     b("idx carry", [op("ld   a,b", 4), op(`cp   ${samples}`, 7), op("sbc  a,a", 4),
       op("ld   c,a", 4, { what: "$ff exactly when the low byte wrapped" })]),
+    b("idx 1", [op(`ld   a,(${hx(at + 1)})`, 13), op("sub  c", 4), op("ld   b,a", 4)]),
+    b("idx 1 store", [op("ld   a,b", 4),
+      op(`ld   (${hx(at + 1)}),a`, 13, { what: "the logical output position, one lap on" })]),
   ];
-  for (let k = 1; k < 4; k++) {
-    out.push(b(`idx ${k}`, [op(`ld   a,(${hx(at + k)})`, 13), op("sub  c", 4), op("ld   b,a", 4)]));
-    out.push(b(`idx ${k} store`, [op("ld   a,b", 4), op(`ld   (${hx(at + k)}),a`, 13)]));
-    if (k < 3)
-      out.push(b(`idx ${k} carry`, [op("ld   a,b", 4), op("sub  1", 7), op("sbc  a,a", 4),
-        op("and  c", 4), op("ld   c,a", 4, { what: "…and only if the one below it did too" })]));
-  }
-  return out;
 }
 
 export function protoAdvanceLive() {
-  const L = [["b"], ["b"], ["c"]];
-  for (let k = 1; k < 4; k++) {
-    L.push(["b", "c"], k < 3 ? ["b", "c"] : ["c"]);
-    if (k < 3) L.push(["c"]);
-  }
-  L[L.length - 1] = [];
-  return L;
+  return [["b"], ["b"], ["c"], ["b", "c"], []];
 }
 
 /**

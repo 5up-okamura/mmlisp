@@ -31,6 +31,8 @@ import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, correctorBlocks, correct
   ladderOps } from "./corrector.mjs";
 import { protoMap, protoPublishSplit, protoPublishLive, protoAdvanceSplit,
   protoAdvanceLive, protoCheckSplit, PROTO_CHECK_LIVE, protoBootLines } from "./proto-blocks.mjs";
+import { commandBlocks } from "./command.mjs";
+import { CMD_SLOTS_USED } from "./config.mjs";
 
 // The split needs one more byte than the single-slot version: the phase itself
 // has to live in RAM, because C cannot hold it across the whole sequence.
@@ -303,7 +305,13 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // through main BC, and the 32-bit output index advanced with its carry made
   // explicit. Off by default, because the question it answers is whether the
   // complete engine still places with it in.
-  proto = false } = {}) {
+  proto = false,
+  // THE REAL PCM STATE CONSUMER (R15 §39.4 step 3), at the block positions it
+  // was packed into. It takes over the LOGICAL POSITION's advance as well: the
+  // counter now steps by one block at each consumer site instead of by a lap in
+  // the chain, which is what removes the per-site constant the comparison would
+  // otherwise need (§39.3).
+  command = false } = {}) {
   const map = decodeMap(cfg);
   const state = map.state;
   const stateSize = correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
@@ -335,8 +343,34 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   if (pm && pm.globEnd > cfg.ram.glob[1])
     throw new Error("the protocol's globals do not fit the globals region");
   const chk = proto ? protoCheckSplit(pm, SPLIT_STATE) : [];
-  const pub = proto ? [...protoPublishSplit(pm, "_2ch"), ...protoAdvanceSplit(pm, cfg.cycleSlots)] : [];
-  const pubLive = proto ? [...protoPublishLive(), ...protoAdvanceLive()] : [];
+  const pub = proto
+    ? [...protoPublishSplit(pm, "_2ch"),
+      ...(command ? [] : protoAdvanceSplit(pm, cfg.cycleSlots))] : [];
+  const pubLive = proto
+    ? [...protoPublishLive(), ...(command ? [] : protoAdvanceLive())] : [];
+  if (command && !proto)
+    throw new Error("the consumer's clock is the runtime protocol's: build both");
+  // ONE COPY PER BLOCK, and the tag is the block it belongs to. The consumer
+  // has self-modified operands — the blend's mask and value, the tail's step —
+  // and the loop is unrolled, so the five copies must not share them: a block
+  // that wrote another block's operand would apply a command a block after it
+  // decided to. The tag comes from the BUILT block ordinal, which is what makes
+  // all six pieces of one block agree without being told.
+  const cmd = command ? commandBlocks(pm, cfg.blockSamples, "_2ch") : [];
+  if (command && cmd.length !== CMD_SLOTS_USED.length)
+    throw new Error(`the consumer is ${cmd.length} pieces and ${CMD_SLOTS_USED.length}`
+      + " block positions were cleared for it");
+  let commandPlan = null;
+  if (command) {
+    commandPlan = new Map();
+    for (let i = 0; i < cfg.cycleSlots; i++) {
+      const b = (i + cfg.lead) % cfg.blockSamples;
+      const k = CMD_SLOTS_USED.indexOf(b);
+      if (k < 0) continue;
+      const ord = Math.floor((i + cfg.lead) / cfg.blockSamples);
+      commandPlan.set(i, commandBlocks(pm, cfg.blockSamples, `_b${ord}`)[k].ops);
+    }
+  }
   const chain = correct
     ? [...decode.slice(0, AFTER), ...corr, ...decode.slice(AFTER)] : decode;
   const blocks = [...chain.slice(0, CHECK_AT), ...chk, ...chain.slice(CHECK_AT), ...pub];
@@ -353,7 +387,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   });
   if (live.length !== blocks.length) throw new Error("the liveness list and the chain differ");
   const RECORD = recordOrder(blocks, state);
-  const base = generate(cfg);
+  const base = generate(cfg, null, null, null, commandPlan);
   const walk = placeSplit(blocks, base.slots, { target, from, cycleSlots: cfg.cycleSlots });
   if (walk.failed) return { ok: false, stage: "place", blocks, walk, map, correct };
   if (walk.laps !== 1)
@@ -472,7 +506,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     gen = generate(cfg, (i) => [
       ...(bySlot.get(i) ?? []).flatMap((b) => b.ops),
       ...(ladderAt.has(i) ? ladderOps(ladderAt.get(i)) : []),
-    ], boot, slotDead);
+    ], boot, slotDead, commandPlan);
   } catch (e) {
     // A slot whose residual is 1, 2, 3, 5, 6, 9 or 13 cycles has no exact fill
     // without `ld b,k`, and that is a real refusal, not a rounding.
@@ -534,7 +568,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   if (gen.observer.spacingMaster[0] !== loopMaster(cfg))
     throw new Error("the laid-out loop and the configured one disagree");
   return { ok: true, gen, blocks, walk, preserve, map, base, correct, ladders,
-    slotsPreserving: preserve.size, advance };
+    slotsPreserving: preserve.size, advance, command: cmd };
 }
 
 /**

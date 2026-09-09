@@ -10,11 +10,15 @@
 //   bootGeneration      u16, the 68000's.  Which RUN this is. Changes when the
 //                       Z80 is started or reloaded; everything published or
 //                       queued by an older run is thrown away.
-//   outputSampleIndex   u32, the Z80's.    Which SAMPLE this is — the logical
-//                       time a command is scheduled against. One per DAC write,
-//                       never skipped, never rewound, and NOT a wall clock: it
-//                       does not advance while the bus is held and it does not
-//                       jump when the phase is corrected.
+//   outputSampleIndex   u32, DERIVED (R15 §39.2). Which SAMPLE this is — the
+//                       logical time a command is scheduled against. One per DAC
+//                       write, never skipped, never rewound, and NOT a wall
+//                       clock: it does not advance while the bus is held and it
+//                       does not jump when the phase is corrected. It is not on
+//                       the wire: the host multiplies the observation number by
+//                       the generated `outputsPerObservation`, and the Z80 keeps
+//                       only its low sixteen bits, privately, to extend a
+//                       command's `applyAtLow`.
 //   phaseGeneration     u8,  the 68000's.  Which stretch of CONTINUOUS PHASE
 //                       this is. Bumped whenever a stop happened that H cannot
 //                       be trusted across, which is what makes the Z80 drop its
@@ -34,8 +38,52 @@ export const SNAPSHOT = [
   ["observationNumber", 2, "the H observation count — the decoder's own counter, not a copy"],
   ["bootGeneration", 2, "the run this snapshot belongs to — the 68000's number, echoed"],
   ["phaseGeneration", 1, "the phase stretch it belongs to"],
-  ["boundarySampleIndex", 4, "the output index AT the defined boundary DAC write"],
 ];
+
+/**
+ * THE OUTPUT INDEX IS NOT ON THE WIRE (R15 §39.2).
+ *
+ * It used to be: four more bytes in every snapshot, published a lap at a time,
+ * costing 96 cycles of copying and 99 cycles of 32-bit carry that the schedule
+ * did not have. It is not transferred now because it does not have to be — the
+ * schedule writes EXACTLY `outputsPerObservation` DAC samples between one H
+ * observation and the next, that count is generated rather than assumed, and the
+ * observation number is already in the snapshot. So the host multiplies.
+ *
+ * What is NOT being said here is that the observation number and the logical
+ * time are the same thing. They are two counters with different rules, and the
+ * mapping between them holds because this profile's schedule is fixed; it is
+ * checked against the instrument's own DAC-write count on every snapshot
+ * (§39.3) rather than assumed to follow from the arithmetic.
+ */
+export const OBS_MAX_STEP = 32767;
+
+/**
+ * The host's forward extension of the 16-bit observation number, INSIDE ONE
+ * boot generation.
+ *
+ * 0 is a re-read of the same snapshot and is allowed. 1..32767 is forward.
+ * 32768 and up is a host that has not looked for so long that it cannot tell
+ * forward from backward any more — that is not resolved by guessing, it stops
+ * timed commands and asks for a new run.
+ */
+export function extendObservation(prevExt, nowLow) {
+  const delta = (nowLow - (prevExt & 0xffff)) & 0xffff;
+  if (delta > OBS_MAX_STEP) return { at: null, delta, unextendable: true };
+  return { at: (prevExt + delta) >>> 0, delta, unextendable: false };
+}
+
+/**
+ * The output index at the boundary DAC write of an observation (§39.2).
+ *
+ * The first COMPLETE snapshot carries observation 1 and its boundary is sample
+ * 0, so the ordinal is one less than the number. `outputsPerObservation` comes
+ * from the generated schedule — 80 for the 2ch lap, 5 for P1 — and is never a
+ * second hand-written constant on the host's side.
+ */
+export function boundarySample(obsExt, outputsPerObservation) {
+  return (((obsExt - 1) * outputsPerObservation) % 2 ** 32 + 2 ** 32) % 2 ** 32;
+}
 
 /** The 68000's control block, which the Z80 reads and never writes. */
 export const CONTROL = [
@@ -46,20 +94,23 @@ export const CONTROL = [
 ];
 
 const sizeOf = (fields) => fields.reduce((t, [, n]) => t + n, 0);
-export const SNAPSHOT_BYTES = sizeOf(SNAPSHOT);      // 9
+export const SNAPSHOT_BYTES = sizeOf(SNAPSHOT);      // 5
 export const CONTROL_BYTES = sizeOf(CONTROL);        // 5
 export const FACES = 2;
 
 /**
- * THE STRIDE IS TEN, NOT NINE, and the extra byte is not padding for its own
- * sake (R12 §33.4). The 68000 reads a face with the bus held, and every byte it
- * reads is Z80 time it is holding: nine `move.b (a0)+,(a1)+` measured
- * 105..123 Z80 cycles of STOP -> RESUME, which is 1,583..1,851 master and OVER
- * the 1,500 the live-transfer contract allows. With both faces on an even
- * boundary the same nine bytes are two `move.l` and one `move.w`, and the
- * selector's own toggle stays one `xor`.
+ * THE STRIDE IS EVEN, and the padding byte is not there for its own sake (R12
+ * §33.4). The 68000 reads a face with the bus held, and every byte it reads is
+ * Z80 time it is holding: nine `move.b (a0)+,(a1)+` measured 105..123 Z80
+ * cycles of STOP -> RESUME, which is 1,583..1,851 master and OVER the 1,500 the
+ * live-transfer contract allows. With both faces on an even boundary the whole
+ * run is long moves, and the selector's own toggle stays one `xor`.
+ *
+ * Five bytes a face and a stride of six (R15 §39.2): the run the host takes is
+ * fourteen bytes — three `move.l` and one `move.w` — where it used to be
+ * twenty-two.
  */
-export const SNAPSHOT_STRIDE = 10;
+export const SNAPSHOT_STRIDE = SNAPSHOT_BYTES + (SNAPSHOT_BYTES & 1);   // 6
 
 /**
  * The layout, built once from the field lists.
@@ -90,8 +141,8 @@ export function protocolLayout(base = 0) {
 }
 
 export const PUB_REGION_BYTES = 32;
-export const PROTOCOL_BYTES = FACES * SNAPSHOT_STRIDE + 2 + CONTROL_BYTES;  // 27
-export const PROTOCOL_SPARE = PUB_REGION_BYTES - PROTOCOL_BYTES;            // 5
+export const PROTOCOL_BYTES = FACES * SNAPSHOT_STRIDE + 2 + CONTROL_BYTES;  // 19
+export const PROTOCOL_SPARE = PUB_REGION_BYTES - PROTOCOL_BYTES;            // 13
 
 // ── reading and writing, as ordered byte operations ───────────────────────
 // The ORDER is the protocol. Both sides publish a block by writing every byte
@@ -118,10 +169,11 @@ const getLE = (mem, { offset, bytes }) => {
 export function publishSteps(layout, select, snap) {
   const face = layout.faces[select ^ 1];
   const out = [];
+  // IN STAGE ORDER, which is the order the Z80's pointer walk writes them in:
+  // this is a model of that code, not a second design for the same job.
+  putLE(out, face.observationNumber, snap.observationNumber);
   putLE(out, face.bootGeneration, snap.bootGeneration);
   putLE(out, face.phaseGeneration, snap.phaseGeneration);
-  putLE(out, face.boundarySampleIndex, snap.boundarySampleIndex);
-  putLE(out, face.observationNumber, snap.observationNumber);
   out.push([layout.publishSelect.offset, select ^ 1]);        // LAST
   return out;
 }
@@ -133,7 +185,6 @@ export function readSnapshot(mem, layout) {
   return { select,
     bootGeneration: getLE(mem, f.bootGeneration),
     phaseGeneration: getLE(mem, f.phaseGeneration),
-    boundarySampleIndex: getLE(mem, f.boundarySampleIndex),
     observationNumber: getLE(mem, f.observationNumber) };
 }
 
@@ -219,10 +270,9 @@ export function faultySteps(layout, select, snap, fault) {
     // is visible; there is no flip at the end to save it.
     const face = layout.faces[select];
     const out = [];
+    putLE(out, face.observationNumber, snap.observationNumber);
     putLE(out, face.bootGeneration, snap.bootGeneration);
     putLE(out, face.phaseGeneration, snap.phaseGeneration);
-    putLE(out, face.boundarySampleIndex, snap.boundarySampleIndex);
-    putLE(out, face.observationNumber, snap.observationNumber);
     return out;
   }
   return good;
@@ -241,7 +291,7 @@ export function faultyControlSteps(layout, ctl, fault) {
  *
  * @returns the first torn reading, or null
  */
-const WHOLE = ["bootGeneration", "phaseGeneration", "boundarySampleIndex", "observationNumber"];
+const WHOLE = ["observationNumber", "bootGeneration", "phaseGeneration"];
 export function tornSnapshotPossible(layout, mem0, snap, steps) {
   const key = (s) => WHOLE.map((k) => s[k]).join(",");
   const before = readSnapshot(new Uint8Array(mem0), layout);
@@ -330,7 +380,20 @@ export function protoGlobals(decodeBase, countLoOff) {
   for (const [name, n] of SNAPSHOT) { fields[name] = o; o += n; }
   if (fields.observationNumber !== stage)
     throw new Error("the stage must start on the observation number");
-  return { stage, fields, lastPhaseCommit: o, queueTail: o + 1, end: o + 2 };
+  // `outputLow` IS NOT PART OF THE STAGE and is never published (R15 §39.2).
+  // The Z80 keeps it for one job: extending a command's 16-bit `applyAtLow`
+  // against where the output actually is. It is zeroed by a boot and by
+  // nothing else — a phase invalidation changes when a sample is written, not
+  // how many have been.
+  // THE TAIL AND THE QUEUE'S PAGE ARE ADJACENT, low byte first, so the consumer
+  // takes the whole record pointer in one `ld hl,(nn)` (R15 §39.4). The page
+  // byte is a constant the boot writes once and nothing ever changes.
+  // `commandMask` is the consumer's one byte of working state: a piece writes
+  // it, the next piece reads it, because A and the flags do not cross a slot
+  // boundary (R15 §39.4).
+  return { stage, fields, lastPhaseCommit: o, outputLow: o + 1,
+    queueTail: o + 3, queuePage: o + 4, commandMask: o + 5, commandDest: o + 6,
+    end: o + 7 };
 }
 // ── the command queue (§33.4) ─────────────────────────────────────────────
 // Single producer, single consumer. The 68000 owns `queueHead` and the payload;

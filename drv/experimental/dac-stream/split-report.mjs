@@ -8,7 +8,8 @@
 // check. This is the tool that produces them.
 //
 //   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
-import { buildConfig, stampLine } from "./config.mjs";
+import { buildConfig, stampLine, cmdDisplacedCycles, CMD_SLOTS_USED,
+  CMD_REPLACED } from "./config.mjs";
 import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "./decode-split.mjs";
 import { codeLedger } from "./gen-stream.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, LADDER_BYTES, MAX_QUANTA,
@@ -28,6 +29,12 @@ const PROFILES = [
   { tag: "decode + corrector, time-pub replaced", cfg: { correctorBudget: true }, opt: { correct: true } },
   { tag: "…and the runtime protocol in the chain", cfg: { correctorBudget: true },
     opt: { correct: true, proto: true } },
+  // The reserved command pad replaced by the code that actually does the job
+  // (R15 §39.4 step 3). It needs more block positions than were reserved for
+  // it, so the displaced reservation is reported and added back below.
+  { tag: "…and the real PCM state consumer",
+    cfg: { correctorBudget: true, command: true },
+    opt: { correct: true, proto: true, command: true } },
 ];
 
 // THE FOUR LIMITS, judged INDEPENDENTLY (R14 §37.4 step 4). One number over is a
@@ -99,6 +106,24 @@ for (const p of PROFILES) {
     + ` mean ${r.gen.placement.meanWorkPct}%`
     + `  — ceiling ${(cfg.workTarget * 100).toFixed(1)}% / mean ${(cfg.meanTarget * 100).toFixed(1)}%`);
   console.log(`   BC carried  ${r.slotsPreserving} slots`);
+  if (r.command?.length) {
+    // WHAT THE CONSUMER REALLY COST, piece by piece, and what had to move out
+    // of its way. The reservation it replaces is two block positions; the code
+    // that does the job needs six, and the four extra ones were the YM/PSG
+    // slot writer's. Those cycles are NOT forgiven — they are added back into
+    // the verdict below, because an image that drops a reservation to make room
+    // and then reports the result as a pass has measured the wrong engine.
+    const perBlock = r.command.reduce((t, x) => t + x.cycles, 0);
+    const blocks = cfg.cycleSlots / cfg.blockSamples;
+    console.log(`   consumer    ${r.command.length} pieces at block positions`
+      + ` ${CMD_SLOTS_USED.join(", ")}, ${perBlock} cyc a block = ${perBlock * blocks} a lap`);
+    for (const x of r.command)
+      console.log(`     ${pad(x.name, 22)}${String(x.cycles).padStart(5)} cyc`);
+    console.log(`     ${pad("reserved for it", 22)}${String(145).padStart(5)} cyc a block`
+      + ` (positions ${CMD_REPLACED.join(", ")})`);
+    console.log(`     ${pad("displaced", 22)}${String(cmdDisplacedCycles()).padStart(5)} cyc a block`
+      + ` = ${cmdDisplacedCycles() * blocks} a lap of the YM/PSG slot writer — STILL OWED`);
+  }
   if (r.correct) {
     // The ladder is the only variable-length thing in the loop, so its three
     // numbers ARE the schedule's variability: what the neutral path costs, what
@@ -148,6 +173,17 @@ for (const p of PROFILES) {
     + `  (${led.spare >= 0 ? `${led.spare} B spare` : `${-led.spare} B OVER`})`);
   const state = r.correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
   const V = verdict(cfg, r, led);
+  // The displaced reservation, put back where the verdict can see it: the mean
+  // the finished engine would run at is this image's plus the cycles that were
+  // moved out of the way to make it emittable.
+  if (r.command?.length) {
+    const blocks = cfg.cycleSlots / cfg.blockSamples;
+    const lapCycles = cfg.slotCycles.reduce((t, c) => t + c, 0) * (cfg.cycleSlots / cfg.groupSlots);
+    const back = +(100 * cmdDisplacedCycles() * blocks / lapCycles).toFixed(1);
+    V.splice(2, 0, { what: "mean + displaced reserve", got: +(V[1].got + back).toFixed(1),
+      limit: cfg.meanTarget * 100, unit: "%",
+      ok: V[1].got + back <= cfg.meanTarget * 100 + 1e-9 });
+  }
   console.log(`   VERDICT     ${V.every((v) => v.ok) ? "inside every limit" : "OVER"}`);
   for (const v of V)
     console.log(`     ${pad(v.what, 26)}${String(v.got).padStart(7)}${v.unit}`

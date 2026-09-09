@@ -16,9 +16,10 @@ import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
-import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
+import { generateObserver, PUBLISH_FAULTS, PROTO_Z80_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit } from "./decode-split.mjs";
-import { protocolLayout, protoGlobals, SNAPSHOT_BYTES } from "./protocol.mjs";
+import { protocolLayout, protoGlobals, SNAPSHOT_BYTES,
+  SNAPSHOT_STRIDE } from "./protocol.mjs";
 import { GLOB } from "./config.mjs";
 
 export const QUEUE_FAULTS = {
@@ -37,6 +38,10 @@ export const FAULTS = {
   // Z80-side, and they break the diagnostic RECORD rather than the decode:
   // the instrument's own check has to fail on each of them.
   ...PUBLISH_FAULTS,
+  // Z80-side, and it breaks the DERIVED time rather than the transfer: the
+  // engine's own logical position drifts from what the host computes from the
+  // observation number (R15 §39.3).
+  ...PROTO_Z80_FAULTS,
   // 68000-side, and they break the QUEUE's publication order rather than the
   // transfer: the head moved before the bytes, or the record stopped short of
   // what the head then claimed (R13 §35.3 step 2).
@@ -71,7 +76,7 @@ function protoRomFields(cfg, p) {
     readWords: (L.readRun.bytes & 3) >> 1,
     face0: L.faces[0].observationNumber.offset,
     face1: L.faces[1].observationNumber.offset,
-    stride: 10,
+    stride: SNAPSHOT_STRIDE,
     bootGen: L.control.bootGeneration.offset,
     phaseGen: L.control.phaseGeneration.offset,
     queueHead: L.control.queueHead.offset,
@@ -125,7 +130,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     // A publish fault is the Z80's; it must not also reach the 68000's rom.
-    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)) grab.fault = fault;
+    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)
+      && !(fault in PROTO_Z80_FAULTS)) grab.fault = fault;
     // Two ways to break the load CHECK rather than the load: make it short, or
     // stop it reporting. The gate has to fail on both (R6 §17.2 C).
     if (fault === "short-load" || fault === "no-load-marks") {
@@ -148,8 +154,12 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   const c = { ...c0, cooperative: coop, grab: grab ?? undefined };
   if (fault && fault in PUBLISH_FAULTS && !c0.observer?.publish)
     throw new Error(`fault ${fault} only applies to a case that publishes its records`);
+  if (fault && fault in PROTO_Z80_FAULTS && !c0.observer?.proto)
+    throw new Error(`fault ${fault} only applies to a case that runs the runtime protocol`);
   const observer = c0.observer && fault && fault in PUBLISH_FAULTS
-    ? { ...c0.observer, publishFault: fault } : c0.observer;
+    ? { ...c0.observer, publishFault: fault }
+    : c0.observer && fault && fault in PROTO_Z80_FAULTS
+    ? { ...c0.observer, protoFault: fault } : c0.observer;
   let gen;
   if (c0.split) {
     const r = generateSplit(cfg, { stackFill: true, ...c0.split.place });
