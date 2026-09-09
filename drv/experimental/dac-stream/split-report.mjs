@@ -8,8 +8,7 @@
 // check. This is the tool that produces them.
 //
 //   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
-import { buildConfig, stampLine, cmdDisplacedCycles, CMD_SLOTS_USED,
-  CMD_REPLACED } from "./config.mjs";
+import { buildConfig, stampLine, cmdBudgetCycles, CMD_SLOTS_USED } from "./config.mjs";
 import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "./decode-split.mjs";
 import { codeLedger } from "./gen-stream.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, LADDER_BYTES, MAX_QUANTA,
@@ -30,11 +29,16 @@ const PROFILES = [
   { tag: "…and the runtime protocol in the chain", cfg: { correctorBudget: true },
     opt: { correct: true, proto: true } },
   // The reserved command pad replaced by the code that actually does the job
-  // (R15 §39.4 step 3). It needs more block positions than were reserved for
-  // it, so the displaced reservation is reported and added back below.
-  { tag: "…and the real PCM state consumer",
+  // (R16 §41.3): the PCM state BUNDLE, one decision a lap, in the ten b9/b10
+  // positions the reservation owns and nowhere else. First as it has to be
+  // written — paying for the BC it clobbers — and then without that payment, so
+  // the intrinsic cost of the chain is a measurement rather than a subtraction.
+  { tag: "…and the PCM state bundle consumer",
     cfg: { correctorBudget: true, command: true },
     opt: { correct: true, proto: true, command: true } },
+  { tag: "…the same chain with the BC conflict left unpaid",
+    cfg: { correctorBudget: true, command: true },
+    opt: { correct: true, proto: true, command: true, keepBC: false } },
 ];
 
 // THE FOUR LIMITS, judged INDEPENDENTLY (R14 §37.4 step 4). One number over is a
@@ -71,6 +75,22 @@ for (const p of PROFILES) {
     if (r.stage === "ladder pad") console.log(`   slot ${r.slot} leaves ${r.rest} cycles of pad, ${r.want} needed`);
     if (r.stage === "pad") console.log(`   ${r.error}`);
     if (r.stage === "order") console.log(`   the emitted order is not the chain's order`);
+    // The consumer's own two refusals: no position left for a piece, or a BC
+    // live range it would have destroyed (R16 §41.3).
+    if (r.stage === "command") {
+      console.log(`   the consumer needs ${r.pack.total} cycles a lap against the`
+        + ` ${r.pack.budget} its ten b9/b10 positions reserve;`
+        + ` "${r.pack.failed.name}" (${r.pack.failed.cycles} cyc) had no position left`);
+      for (const [i, ps] of r.pack.at)
+        if (ps.length) console.log(`     slot ${String(i).padStart(2)}`
+          + `  ${String(r.pack.load.get(i)).padStart(3)} cyc   ${ps.map((x) => x.name).join(" + ")}`);
+      for (const x of r.blocks)
+        console.log(`     ${pad(x.name, 22)}${String(x.cycles).padStart(5)} cyc`
+          + (x.edge ? "   pinned to the edge block" : ""));
+    }
+    if (r.stage === "command bc")
+      console.log(`   the consumer clobbers BC in slots ${r.clash.join(", ")}, which the`
+        + ` decode and the protocol carry it through`);
     continue;
   }
   // AN IMAGE THAT OVERRUNS ITS REGION IS A MEASUREMENT, not a crash. The
@@ -107,39 +127,29 @@ for (const p of PROFILES) {
     + `  — ceiling ${(cfg.workTarget * 100).toFixed(1)}% / mean ${(cfg.meanTarget * 100).toFixed(1)}%`);
   console.log(`   BC carried  ${r.slotsPreserving} slots`);
   if (r.command?.length) {
-    // WHAT THE CONSUMER REALLY COST, piece by piece, and what had to move out
-    // of its way. The reservation it replaces is two block positions; the code
-    // that does the job needs six, and the four extra ones were the YM/PSG
-    // slot writer's. Those cycles are NOT forgiven — they are added back into
-    // the verdict below, because an image that drops a reservation to make room
-    // and then reports the result as a pass has measured the wrong engine.
-    const perBlock = r.command.reduce((t, x) => t + x.cycles, 0);
-    const blocks = cfg.cycleSlots / cfg.blockSamples;
+    // WHAT THE CONSUMER REALLY COST, piece by piece, against the reservation it
+    // is allowed to spend — b9 and b10 of every block and nothing else. R16
+    // §41.1 holds b11..b14's YM/PSG cycles until the host-YM safe window of
+    // §33.6 step 5 answers, so a shortfall here is a shortfall, not a loan.
     console.log(`   consumer    ${r.command.length} pieces at block positions`
-      + ` ${CMD_SLOTS_USED.join(", ")}, ${perBlock} cyc a block = ${perBlock * blocks} a lap`);
-    for (const x of r.command)
-      console.log(`     ${pad(x.name, 22)}${String(x.cycles).padStart(5)} cyc`);
-    console.log(`     ${pad("reserved for it", 22)}${String(145).padStart(5)} cyc a block`
-      + ` (positions ${CMD_REPLACED.join(", ")})`);
-    console.log(`     ${pad("displaced", 22)}${String(cmdDisplacedCycles()).padStart(5)} cyc a block`
-      + ` = ${cmdDisplacedCycles() * blocks} a lap of the YM/PSG slot writer — STILL OWED`);
-  }
-  if (r.correct) {
-    // The ladder is the only variable-length thing in the loop, so its three
-    // numbers ARE the schedule's variability: what the neutral path costs, what
-    // the slot has left when the ladder is at its shortest, and the interval.
-    const worstRest = Math.min(...r.ladders.map((l) => l.restPad));
-    const lo = Math.min(...r.ladders.map((l) => l.interval[0]));
-    const hi = Math.max(...r.ladders.map((l) => l.interval[1]));
-    console.log(`   ladders     ${CORR_SLOTS} at slots ${r.ladders.map((l) => l.absolute).join(", ")}`);
-    console.log(`   neutral     ${LADDER_NEUTRAL} cyc each (${LADDER_WORK} charged as work,`
-      + ` ${LADDER_NEUTRAL - LADDER_WORK} as pad), worst slot ${Math.max(...r.ladders.map((l) => l.strictPct))}%`
-      + ` with the whole neutral run counted as work`);
-    console.log(`   short path  ${worstRest} cyc of pad left at the tightest ladder slot (16 required)`);
-    console.log(`   DAC interval ${lo}..${hi} cyc (nominal ${cfg.periodCycles}) — 342..375 is the limit`);
-    console.log(`   capability  ${MAX_QUANTA} quanta = ${MAX_QUANTA * CORR.quantumCycles} cyc`
-      + ` = ${MAX_QUANTA * CORR.quantumCycles * cfg.machine.z80Div} master an observation;`
-      + ` debt limit ${MAX_DEBT_UNITS} units`);
+      + ` ${CMD_SLOTS_USED.join(", ")} — ten positions a lap,`
+      + ` ${r.pack.total} cyc against the ${r.pack.budget} reserved`
+      + ` (${r.pack.total <= r.pack.budget ? `${r.pack.budget - r.pack.total} spare`
+        : `${r.pack.total - r.pack.budget} OVER`})`);
+    for (const [i, ps] of r.pack.at) {
+      if (!ps.length) continue;
+      console.log(`     slot ${String(i).padStart(2)}  ${String(r.pack.load.get(i)).padStart(3)} cyc`
+        + `   ${ps.map((x) => `${x.name} (${x.cycles})`).join(" + ")}`);
+    }
+    if (r.pack.over.length)
+      console.log(`     ${pad("past the ceiling", 22)}${r.pack.over.length} positions:`
+        + ` ${r.pack.over.map((o) => `slot ${o.slot} ${o.cycles} of ${o.ceiling}`).join(", ")}`);
+    if (r.bcClash.length)
+      console.log(`     ${pad("BC CONFLICT", 22)}the decode and the protocol carry BC through`
+        + ` slots ${r.bcClash.join(", ")}, which this image clobbers — NOT a working engine,`
+        + ` a lower bound on the cost`);
+    console.log(`     ${pad("stores pinned to", 22)}slots ${r.pack.pinned.join(", ")},`
+      + ` inside the block whose edge (slot ${r.pack.edgeSlot}) is the last before the lap boundary`);
   }
   console.log(`   settle      read → complete record ${r.gen.observer.settleMaster} master`
     + ` (${(r.gen.observer.settleMaster / cfg.machine.masterHz * 1000).toFixed(3)} ms)`);
@@ -173,16 +183,13 @@ for (const p of PROFILES) {
     + `  (${led.spare >= 0 ? `${led.spare} B spare` : `${-led.spare} B OVER`})`);
   const state = r.correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
   const V = verdict(cfg, r, led);
-  // The displaced reservation, put back where the verdict can see it: the mean
-  // the finished engine would run at is this image's plus the cycles that were
-  // moved out of the way to make it emittable.
-  if (r.command?.length) {
-    const blocks = cfg.cycleSlots / cfg.blockSamples;
+  // The consumer's own overspend, where the verdict can see it: the cycles it
+  // takes beyond its reservation are cycles the lap did not have.
+  if (r.command?.length && r.pack.total > r.pack.budget) {
     const lapCycles = cfg.slotCycles.reduce((t, c) => t + c, 0) * (cfg.cycleSlots / cfg.groupSlots);
-    const back = +(100 * cmdDisplacedCycles() * blocks / lapCycles).toFixed(1);
-    V.splice(2, 0, { what: "mean + displaced reserve", got: +(V[1].got + back).toFixed(1),
-      limit: cfg.meanTarget * 100, unit: "%",
-      ok: V[1].got + back <= cfg.meanTarget * 100 + 1e-9 });
+    V.splice(2, 0, { what: "consumer against its reservation", got: r.pack.total,
+      limit: r.pack.budget, unit: " cyc/lap", ok: false });
+    void lapCycles;
   }
   console.log(`   VERDICT     ${V.every((v) => v.ok) ? "inside every limit" : "OVER"}`);
   for (const v of V)

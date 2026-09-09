@@ -388,12 +388,18 @@ export function protoGlobals(decodeBase, countLoOff) {
   // THE TAIL AND THE QUEUE'S PAGE ARE ADJACENT, low byte first, so the consumer
   // takes the whole record pointer in one `ld hl,(nn)` (R15 §39.4). The page
   // byte is a constant the boot writes once and nothing ever changes.
-  // `commandMask` is the consumer's one byte of working state: a piece writes
-  // it, the next piece reads it, because A and the flags do not cross a slot
-  // boundary (R15 §39.4).
+  // THE CONSUMER'S WORKING BYTES (R16 §41.3). A and the flags do not cross a
+  // slot boundary and the chain is spread over ten of them, so each piece hands
+  // its result to the next through memory — `AF'` carries at most one value and
+  // its flags, and only between two pieces that are named in the liveness table.
+  //
+  // `queueTail` and `queuePage` are adjacent, low byte first, so one
+  // `ld bc,(nn)` is the whole record pointer.
+  const cmd = {};
+  let c = o + 5;
+  for (const n of ["mask", "dlo", "dhi", "known", "notExact", "late"]) cmd[n] = c++;
   return { stage, fields, lastPhaseCommit: o, outputLow: o + 1,
-    queueTail: o + 3, queuePage: o + 4, commandMask: o + 5, commandDest: o + 6,
-    end: o + 7 };
+    queueTail: o + 3, queuePage: o + 4, cmd, lateCount: cmd.late, end: c };
 }
 // ── the command queue (§33.4) ─────────────────────────────────────────────
 // Single producer, single consumer. The 68000 owns `queueHead` and the payload;

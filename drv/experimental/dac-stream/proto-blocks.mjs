@@ -48,11 +48,11 @@ export function protoMap(cfg, state) {
   return { L, glob: g, stage: G.fields, stageBase: G.stage,
     lastPhaseCommit: G.lastPhaseCommit, queueTail: G.queueTail,
     queuePage: G.queuePage, queuePageValue, queueBase: cfg.ram.queue ?? null,
-    outputLow: G.outputLow, commandMask: G.commandMask,
-    commandDest: G.commandDest, globEnd: G.end,
-    // The staged bytes a command may write: the block edge's own inputs, four
-    // of them so a record's two-bit slot number can never name anything else.
-    stageBytes: g + GLOB.v0page, decode, observe: g + GLOB.observe, state };
+    outputLow: G.outputLow, cmd: G.cmd, lateCount: G.lateCount, globEnd: G.end,
+    // The staged bytes a command writes: the block edge's own inputs, and the
+    // bit bucket a suppressed command is written into instead.
+    stageBytes: g + GLOB.v0page, dumpBytes: g + GLOB.cmdDump,
+    stagePad: g + GLOB.stagePad, decode, observe: g + GLOB.observe, state };
 }
 
 /**

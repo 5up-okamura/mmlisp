@@ -811,25 +811,51 @@ jobs (the record's field and the carry) — `pknown` is separate now; and
 fed two thirds of the corrector chain the wrong liveness. Liveness is keyed by
 name and an undeclared piece is refused.
 
-### Where it stops: the PCM state consumer costs 4x its reservation
+### Where it stops: the command consumer, twice measured (R15, R16)
 
 The compact protocol alone is **inside every limit** — worst 83.8%, mean 79.5%,
 finished estimate 2,551 B of 2,560 (9 B spare), RAM ok. The protocol costs 21
 pieces / 436 cycles a lap (publish 192, advance 98, check 146).
 
-The real fixed-length PCM state consumer — one type, 8-byte record, applied at a
-16-sample boundary, branch-free, verified on the JS Z80 through nine queue cases
-at one length — is **619 cycles a block, 3,095 a lap, in six block positions**,
-against 145 a block in two. Nothing cheap is available: A and the flags die at
-every slot boundary, HL is the play cursor (push/pop per piece), DE is the YM
-data port, IX/IY and the shadow set are the mixer's, so every piece
-re-establishes its pointer and hands its result on in memory.
+The reservation for commands is **145 cycles a block = 725 a lap**, at b9 and b10
+of every block — ten positions. Two consumers have been written against it:
 
-  image with the consumer   worst 92.7%   mean 82.5%   code 2,915 B   RAM ok
-  + the displaced YM reserve              mean 87.4%
-  limits                    83.9%         79.6%        2,560 B
+| | shape | cycles a lap | positions |
+| --- | --- | ---: | ---: |
+| R15 | one SCALAR record a block, `{slot, value}` | 3,095 | 30 |
+| R16 | one desired-state BUNDLE a lap, all three levels | **867** | **10** |
+| reserved | | 725 | 10 |
 
-The four extra block positions were the YM/PSG slot writer's 280 cycles a block;
-they are reported as displaced and added back, not banked. **Limits were not
-moved.** The contract choice is the designer's: the record's 16-bit time, the
-per-block cadence, or the block positions the consumer may have.
+R16 §41 rejected R15's proposed way out (8-bit times + halving the YM/PSG
+writer) and changed the COMMAND instead: the record is
+`{size, type, applyAtLow:u16, v0page, v1page, mpage, 0}` — the complete desired
+state at one LAP boundary, not a difference and not an event. The host fills
+what it is not changing from its own shadow, so two voices and a master moving
+together are one record; 124.84 bundles/s is not the same number as 600 scalar
+commands/s and the report says so separately.
+
+**It still does not fit, and there is nowhere left to look.** A and the flags die
+at every slot boundary, HL is the play cursor, DE the YM data port, IX/IY and the
+shadow set the mixer's — so each of the thirteen pieces re-establishes its own
+pointer and hands its result on through memory. `AF'` carries the one thing
+memory cannot (the borrow out of the low half of the 16-bit time comparison, and
+a test turns one `ex af,af'` into a `nop` to prove it is load-bearing). Main BC
+is the only scratch register, and the decode and the protocol carry BC through
+five of the consumer's ten positions: saving it around them costs 231 more and
+the chain then does not place at all.
+
+  bundle consumer, BC paid for      does not place ("cmd apply" has no position)
+  bundle consumer, BC unpaid        worst 96.6%   mean 79.7%   code 2,505 B
+  limits                            83.9%         79.6%        2,560 B
+
+Code is no longer the problem (55 B spare): one copy a lap is far smaller than
+R15's five a block, and the 220 B dispatch estimate is gone. **Cycles are.**
+
+**b11..b14's YM/PSG reservation is untouched** — R16 §41.1 holds it until the
+host-YM safe window of §33.6 step 5 answers, so the shortfall is a shortfall and
+not a loan against a result nobody has yet. No limit has ever been moved.
+
+Also fixed on the way (R16 §41.4, each reproduced as a failing negative against
+`ff185d6` first): the old record's 2-bit slot number could name a fourth staged
+byte the JS reference could not name at all; `command.mjs` said it checked the
+`size` byte and never read byte 0; `lateCommandCount` (§33.4) did not exist.

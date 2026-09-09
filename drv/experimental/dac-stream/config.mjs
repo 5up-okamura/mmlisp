@@ -101,9 +101,16 @@ export const GLOB = {
   v0page: 0x03,   // u8  LUT page for voice 0's level
   v1page: 0x04,   // u8  …voice 1's
   mpage: 0x05,    // u8  …and the master's
-  stagePad: 0x06, // u8  the fourth staged byte, so a command's 2-bit slot
-                  //     number always names one of these four and never
-                  //     anything else (command.mjs CMD_SLOT_MASK)
+  stagePad: 0x06, // u8  the byte after the three staged ones. R15's record
+                  //     named its target with a 2-bit slot number and could
+                  //     reach this; the R16 bundle carries all three values and
+                  //     names nothing, so what this byte is for now is the
+                  //     check that it NEVER changes (R16 §41.4)
+  cmdDump: 0x0b,  // 3 B the consumer's bit bucket. A command that must not be
+                  //     applied is stored ANYWAY, into these instead of into
+                  //     the staged bytes — one `xor` on the destination's low
+                  //     operand is the whole suppression, so the slot has one
+                  //     length whatever the queue held (R16 §41.3)
   observe: 0x08,  // u8  the raw reading, when the observer only keeps it
   decode: 0x10,   // 6 B the phase decoder's state (observer.mjs STATE)
 };
@@ -240,29 +247,27 @@ export const RESERVE_2CH_CORR = RESERVE_2CH.map(([b, cyc, why]) =>
 export const CODE_ESTIMATE_2CH_CORR =
   CODE_ESTIMATE_2CH.filter(([what]) => what !== "time publication");
 
-// ── The command consumer's own profile (R15 §39.4 step 3) ──────────────────
+// ── The command consumer's own profile (R16 §41.3) ─────────────────────────
 //
-// The reservation the consumer replaces is b9 and b10 — 145 cycles a block,
-// "read the record, dispatch it, stage what it changes". The consumer that was
-// actually written needs five block positions, so b11, b12 and b13 are cleared
-// as well and THE CYCLES THAT WERE THERE ARE NOT FORGIVEN: 210 a block of the
-// YM/PSG slot writer's reservation is displaced, and the verdict adds it back
-// as still owed rather than quietly banking it. A profile that drops a
-// reservation to make room for a feature and then reports the result as if the
-// reservation had never existed is the one thing this table exists to prevent.
-export const CMD_SLOTS_USED = [9, 10, 11, 12, 13, 14];
+// The consumer gets the reservation that was made for it and NOTHING ELSE:
+// b9 and b10 of every block, `(73 + 72) * 5 = 725` cycles a lap, ten positions.
+// b11..b14 keep the YM/PSG slot writer's 280 cycles a block and 120 B — R16
+// §41.1 holds them until the host-YM safe-window P1 of §33.6 step 5 answers,
+// and a shortfall in step 4 is not allowed to spend step 5's result in advance.
+//
+// R15's first attempt took six positions and displaced 280 cycles a block. That
+// is what this profile refuses to do again: the limit is the reservation, and an
+// image that needs more says so as a failure rather than by moving the line.
+export const CMD_SLOTS_USED = [9, 10];
 export const CMD_REPLACED = [9, 10];
 export const RESERVE_2CH_CMD = RESERVE_2CH_CORR.map(([b, cyc, why]) =>
   (CMD_SLOTS_USED.includes(b)
-    ? [b, 0, CMD_REPLACED.includes(b)
-        ? "REPLACED by the real PCM state consumer (R15 §39.4)"
-        : "DISPLACED by the consumer — still owed, and added back in the verdict"]
-    : [b, cyc, why]));
+    ? [b, 0, "REPLACED by the real PCM state consumer (R16 §41.3)"] : [b, cyc, why]));
 
-/** What the consumer's extra positions took away, per block. */
-export const cmdDisplacedCycles = () => RESERVE_2CH_CORR
-  .filter(([b]) => CMD_SLOTS_USED.includes(b) && !CMD_REPLACED.includes(b))
-  .reduce((t, [, c]) => t + c, 0);
+/** What the consumer is allowed to spend, per lap, from its own reservation. */
+export const cmdBudgetCycles = (cfg) => RESERVE_2CH_CORR
+  .filter(([b]) => CMD_SLOTS_USED.includes(b))
+  .reduce((t, [, c]) => t + c, 0) * (cfg.cycleSlots / cfg.blockSamples);
 
 // The dispatch estimate goes: the consumer is real code now, and it is measured
 // with everything else in the image.
