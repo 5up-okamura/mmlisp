@@ -922,3 +922,60 @@ shorter. Finished estimate 2,466 B of 2,560 (94 B spare).
 window — the only thing that can release b11..b14. And the mailbox represents
 voice state as three level pages only; voice start/stop, cursor, loop and bank
 are not in it.
+
+## R20 §48 (2026-09-09) — the width rule, the trimmed publish, the generated period
+
+Commit `36276b5`. Steps 1–3 pass; **Checkpoint A is still not reached** and no
+listening ROM was built (§48.6's failure clause).
+
+**The 8-bit Z80 bus is now a rule in three places, not a fixed bug.** The 68000
+emitter refuses to encode an absolute access to `$A00000..$A0FFFF` wider than a
+byte; a `z80Xfer` scope refuses one through an address register; and every
+access the emitter encodes goes into a ledger that probe-selftest checks over
+all 106 case ROMs (1,344 byte accesses to Z80 RAM, 0 wide register accesses).
+`$A11100` is a separate `busreqW` instruction — named as a port, not RAM, so it
+is not an exception hiding in the rule. Required machine case `proto P1,
+snapshot byte width` publishes `$A5, $3C, $5A` behind the observation number and
+stamps every reading: 489 good / 0 bad; `--fault wide-read` gives 0 / 490 and is
+fatal. README withdraws the old 890..1,144 master figure.
+
+**The atomic publish attempt fits the contract.** Everything that can happen
+before the bus is taken does: five fixed addresses `lea`'d once outside the loop,
+the payload built in 68k RAM, the next commit value in d5 (taken into d4 only on
+the free path, so a busy attempt cannot desynchronise). Free path 1,085..1,225
+master (was 1,541 for the one-grab handshake), busy 553..679, snapshot read
+819..987, worst total between two H observations 1,160 with none over 1,500.
+
+**The transfer period is generated, not written down.** Bounds: at least one
+observation interval (430,080), at most masterHz/120 (447,443); target the
+midpoint 438,762. The emitter prices its own instructions and solves for two
+DBRA counts, carrying the rounding residue between them. `DBRA_MASTER = 72.653`
+is measured by differencing the normal and dense builds — the tight calibration
+loop reads 71.128, which is NOT what the host loop costs. Achieved
+438,543..438,935, mean 438,739, 0 of 241 intervals outside the window.
+
+**Why the rate still fails, measured.** The engine publishes its snapshot
+**62.8% into the lap** — it is the last link of H read → decode → corrector →
+publish and cannot move earlier. So a host reading before that point gets the
+PREVIOUS lap's number, and it cannot know which side it is on; its period is a
+little longer than a lap, so one run walks every phase (bootNops 0/60/140/220 are
+identical). Lead 1: late 121/121, 61.2/s. Lead 2: late 68, 61.2/s — and the
+late/not-late boundary in the by-phase table is exactly 0.628, with 36/36 clean
+in the 0.7..1.0 band. Lead 3: late 1 (startup), but the bundle occupies the one
+slot until its named observation and the ack lands at slot 72 of the applying
+lap, so 14 of 121 attempts find the box busy → **54.2 acknowledged updates a
+second**. Lead and rate are coupled through the single slot and the ack being
+given at APPLY time.
+
+Three ways out, all designer's calls, none taken: (1) lock the host's phase — it
+can detect the crossing for free, because the observation number it already reads
+repeats or skips there, and the 0.7..1.0 band gives lead 2 at 62.4/s, but open
+loop the phase walks 0.57 lap a minute; (2) read one observation byte inside the
+publish attempt and pick between two pre-built targets — 189 master, so about
+1,414 of 1,500, but it changes what §48.2 defines that operation to be; (3)
+acknowledge at take time rather than apply time — needs a second Z80 buffer,
+which R20 excludes.
+
+Gates: dac-stream 29/29, probe-test green, machine:required 33/33 exit 0, split
+inside every limit (83.8% / 78.7% / 2,466 B / 8,192 B), c-gate 41/41,
+decoder 1 problem (the 54.2/s).
