@@ -508,11 +508,13 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
       ...tags.flat().map((t) => `ld   (corr_${t}+1),a`)] : []),
     ...(proto ? protoBootLines(pm) : []),
     ...(command ? commandBootLines(pm, "_2ch") : []),
+    // The counter starts where the case asks, so a run can reach a wrap it
+    // would otherwise take 525 seconds to meet. `countHi` follows `countLo`, so
+    // one `ld (nn),hl` sets both — six bytes rather than ten, which matters
+    // because the ceiling image has none to spare (R21 §50.4 step 3).
     ...(countFrom ? [
-      `ld   a,${countFrom & 0xff}`,
-      `ld   ($${(state + SPLIT_STATE.countLo).toString(16)}),a`,
-      `ld   a,${(countFrom >> 8) & 0xff}`,
-      `ld   ($${(state + SPLIT_STATE.countHi).toString(16)}),a`,
+      `ld   hl,$${countFrom.toString(16)}`,
+      `ld   ($${(state + SPLIT_STATE.countLo).toString(16)}),hl`,
     ] : []),
   ];
   let gen;

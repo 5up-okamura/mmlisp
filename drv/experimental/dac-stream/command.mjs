@@ -131,6 +131,37 @@ export function makeEncoder({ v0page = 0, v1page = 0, mpage = 0 } = {}) {
  * @param st   {ack, staged:{}, late} updated in place
  * @param n    THIS observation's number, after the decoder has finalised it
  */
+/**
+ * THE BOUNDARY A PUBLISH ATTEMPT NAMES (R21 §50.2).
+ *
+ * The host knows `rExt`, the extended observation number the snapshot read gave
+ * it, and reads the decoder's own live counter — one byte — inside the same
+ * stopped Z80 as the ack. The engine publishes its snapshot 62.8% of the way
+ * through a lap, so the snapshot the host holds is either the lap now running
+ * or the one before it, and the host cannot tell which from the number alone.
+ * The live counter settles it:
+ *
+ *   live == (rExt + 1) & $ff   the snapshot was the newer face   -> rExt + 2
+ *   live == (rExt + 2) & $ff   it was the older one              -> rExt + 3
+ *
+ * Both name the boundary AFTER the counter that is running as the bytes are
+ * written, which is the earliest one a bundle can still be applied at without
+ * being late. Anything else means the observation series is outside the range
+ * the read predicted: publish nothing, count it, let the bus go.
+ *
+ * The comparison is a byte and the answer is a u16 built from `rExt`, so the
+ * two wraps are independent: $ff -> $00 in the comparison, $ffff -> $0000 in
+ * the target. The two candidate bytes are consecutive and therefore always
+ * different, so a live counter can never match both.
+ */
+export function adaptiveTarget(rExt, liveLo) {
+  const near = (rExt + 1) & 0xff, far = (rExt + 2) & 0xff;
+  const live = liveLo & 0xff;
+  if (live === near) return (rExt + 2) & 0xffff;
+  if (live === far) return (rExt + 3) & 0xffff;
+  return null;
+}
+
 export function refConsume(box, st, n) {
   const pending = box.commit !== st.ack;
   const d = (n - box.decisionObservation) & 0xffff;

@@ -194,6 +194,27 @@ first time broke two accepted results:
   a bundle goes out**, 553..679 when the box is busy, 819..987 for a read, and
   the worst total between two H observations 1,160 with none over.
 
+  R21 §50.2 then took the LEAD out of it. The engine publishes its snapshot 62.8%
+  into the lap — publication is the last link of H read → decode → corrector →
+  publish — so a host reading before that point holds the previous lap's number
+  and one reading after it holds the current one, and it cannot tell which. No
+  fixed lead survives that: lead 2 was late in every phase below 0.628 and lead 3
+  was never late but held the one mailbox slot long enough to lose 14 attempts in
+  121. The host now builds BOTH candidate payloads before taking the bus, reads
+  the decoder's own live counter in the same stopped Z80 as the ack, and
+  publishes the one whose boundary is that counter's next — refusing, counting
+  and letting go if the counter is neither. That is 1,085..1,418 master on the
+  publish, 61.2 acknowledged updates a second, and every one of 3,675
+  publications in a 60-second run named the live counter's next boundary.
+
+  What it does NOT fix is a window under one slot wide: `mb pending` reads the
+  commit at slot 8 and the decode stores the counter's low byte at slot 8.99, so
+  a commit landing between them is seen a lap after the counter the host read
+  says, and is applied one observation late. 44 of 3,675 in 60 seconds, all
+  published between slot 8.2 and slot 9.1. Moving `mb pending` after the counter
+  store — the R18 §48.2 option — was measured and does not fit: it lands on
+  `mb diff lo` and puts the image 101 B past 2,560 with a worst slot of 96.6%.
+
   The period between transfers is GENERATED from what those paths cost (R20
   §48.5) rather than being a fixed DBRA count: at least one observation interval,
   so two transfers never share one and their stops never add; at most

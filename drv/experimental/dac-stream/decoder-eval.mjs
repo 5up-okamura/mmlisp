@@ -25,7 +25,7 @@ import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
 import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
 import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES,
   extendObservation, boundarySample } from "./protocol.mjs";
-import { buildCase, FAULTS, QUEUE_FAULTS } from "./case-config.mjs";
+import { buildCase, FAULTS, QUEUE_FAULTS, PICK_FAULTS } from "./case-config.mjs";
 import { buildConfig, GLOB } from "./config.mjs";
 import { protoGlobals } from "./protocol.mjs";
 import { SPLIT_STATE } from "./decode-split.mjs";
@@ -54,6 +54,15 @@ const FAULT = arg("fault", null);
 // carries, the run ends inside a record — and two seconds of it says little
 // (R8 §23.5 wants a 10 s and a 60 s pass). Default: the same as everything else.
 const Z80_SECONDS = Number(arg("z80-seconds", String(arg("seconds", "2"))));
+// The mailbox family on its own clock: R21 §50.5 asks for a 60-second run of
+// the complete image, and 60 seconds of every other Z80 case is an hour of
+// emulation for nothing.
+// …with a floor of ten seconds. The window that produces a late bundle is
+// under one slot of eighty, so a two-second run makes about one and cannot
+// tell it from the single late write the engine makes while acquiring. A run
+// too short to see the defect must not be allowed to report its absence
+// (R21 §50.5).
+const MB_SECONDS = Math.max(Number(arg("mailbox-seconds", String(Z80_SECONDS))), 10);
 
 // ── the roles, declared and enforced ──────────────────────────────────────
 const CALIBRATE = ["hv observer, unrepaid 1B stall", "hv observer, unrepaid 16B stall",
@@ -101,12 +110,15 @@ const LIVE_STOP_MAX = 1500;         // master clocks, R12 §33.1
 const PROTO_DENSE = ["proto P1, live and bulk"];
 // THE WHOLE THING AT ONCE (R19 §46.3): the complete 2ch engine and a real
 // 68000 host driving the mailbox, in one image.
-const MAILBOX_LEADS = ["2ch mailbox, lead 1", "2ch mailbox, lead 2", "2ch mailbox, lead 3"];
-const MAILBOX_2CH = [...MAILBOX_LEADS, "2ch mailbox, a lap late",
-  "2ch mailbox, at double density"];
+// THE ONE ARRANGEMENT, and the three that stress it (R21 §50.2). There is no
+// lead sweep any more: the boundary is chosen inside the grab from the
+// decoder's own live counter, so what is left to vary is the spacing and where
+// the counter starts.
+const MAILBOX_MAIN = "2ch mailbox, adaptive";
+const MAILBOX_WRAPS = ["2ch mailbox, counter low wrap", "2ch mailbox, counter wrap"];
+const MAILBOX_2CH = [MAILBOX_MAIN, ...MAILBOX_WRAPS, "2ch mailbox, at double density"];
 const MAILBOX_DENSE = ["2ch mailbox, at double density"];
-// What each combined case measured, so the lead can be CHOSEN from the sweep
-// and the rate graded on the one a driver would use (R20 §48.5 step 4).
+// What each combined case measured, for the summary that grades the rate.
 const mailboxRuns = new Map();
 const SPLIT_CORR = ["2ch corrector, quiet", "2ch corrector, 4B stall",
   "2ch corrector, occasional 4B stall", "2ch corrector, counter wrap",
@@ -139,10 +151,12 @@ if (!argv.includes("--reuse")) {
   // A QUEUE fault is the 68000's, so the run it breaks is the queue case; a
   // publish fault is the Z80's and breaks the diagnostic record.
   for (const sel of FAULT
-    ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : ["z80 decoder"])
+    ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE
+      : FAULT in PICK_FAULTS ? [MAILBOX_MAIN] : ["z80 decoder"])
     : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "2ch mailbox", "proto P1"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
-      "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
+      "--seconds", String(sel.includes("mailbox") ? MB_SECONDS : Z80_SECONDS),
+      ...(FAULT ? ["--fault", FAULT] : [])],
       { stdio: ["ignore", "ignore", "inherit"] });
 }
 
@@ -156,7 +170,8 @@ const caseOf = (name) => {
 // The rom each case produces, recomputed here from the case itself, so that a
 // log can be checked against what it claims to be.
 const expectedRom = new Map();
-for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : Z80_DECODER)
+for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE
+    : FAULT in PICK_FAULTS ? [MAILBOX_MAIN] : Z80_DECODER)
   : [...CALIBRATE, ...CALIBRATE_VH, ...VERIFY, ...CONTRACT,
   ...BOUNDARY, ...Z80_DECODER, ...SPLIT_2CH, ...SPLIT_CORR, ...MAILBOX_2CH, ...PROTO_CASES,
   "hv observer, Z80 reads v+h"])
@@ -416,7 +431,7 @@ if (!FAULT) {
 // against, driven by the same readings and by the advance the GENERATOR laid
 // out — not by a second copy of a constant.
 console.log(`\n── the decoder running on the Z80 ──`);
-for (const name of FAULT in QUEUE_FAULTS ? [] : Z80_DECODER) {
+for (const name of FAULT in QUEUE_FAULTS || FAULT in PICK_FAULTS ? [] : Z80_DECODER) {
   const f = need(name, Z80_SECONDS); if (!f) continue;
   const log = readProbe(readFileSync(f));
   const reads = log.z80vdp.filter((e) => (e.value >>> 8) === 9)
@@ -794,9 +809,10 @@ for (const name of FAULT ? [] : [...SPLIT_2CH, ...SPLIT_CORR]) {
 // 68000 really takes the bus, really publishes bundles, and the engine really
 // stages three level pages at a lap boundary while the corrector is running and
 // CSM traffic is in the schedule.
-console.log(FAULT ? "" : `\n── the complete 2ch engine with a real mailbox host ──`);
-for (const name of FAULT ? [] : MAILBOX_2CH) {
-  const f = need(name, Z80_SECONDS); if (!f) continue;
+console.log(FAULT && !(FAULT in PICK_FAULTS) ? ""
+  : `\n── the complete 2ch engine with a real mailbox host ──`);
+for (const name of FAULT ? (FAULT in PICK_FAULTS ? [MAILBOX_MAIN] : []) : MAILBOX_2CH) {
+  const f = need(name, MB_SECONDS); if (!f) continue;
   const built = expectedRom.get(name);
   const cfg = built.cfg;
   const L = built.gen.observer?.protoLayout ?? null;
@@ -839,7 +855,7 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
     if (prev !== null && c.value !== ((prev + 1) & 0xff)) short++;
     prev = c.value;
   }
-  console.log(`${name} — ${Z80_SECONDS}s`);
+  console.log(`${name} — ${MB_SECONDS}s`);
   console.log(`  host: ${commits.length} bundles committed, ${short} not a whole payload`
     + ` written before its commit, ${phase.length} writes to the phase control`
     + ` block (must be 0)`);
@@ -941,34 +957,124 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
     // The publish attempts are every other grab, on the side the successful
     // ones landed on; the rest are the snapshot reads.
     const parity = [...wrote][0] === undefined ? 1 : [...wrote][0] % 2;
-    const len = ([a, b]) => b - a;
+    // THE CONTRACT IS ON THE Z80'S STOP, not on the 68000's request -> release
+    // window: the Z80 keeps running until it grants, so the two differ by a
+    // hundred master or so and only one of them is what 1,500 limits. Each
+    // grab is paired with the stop that opened inside it.
+    const stopIn = ([a, b]) => {
+      const st = log.stops.find(([x]) => x >= a && x <= b + 200);
+      return st ? st[1] - st[0] : null;
+    };
+    const len = (g) => stopIn(g);
     const attempts = grabs.filter((_, i) => i % 2 === parity);
     const busy = attempts.filter((_, i) => !wrote.has(i * 2 + parity));
     const free = attempts.filter((_, i) => wrote.has(i * 2 + parity));
     const reads2 = grabs.filter((_, i) => i % 2 !== parity);
-    const band = (xs) => xs.length ? `${Math.min(...xs.map(len))}..${Math.max(...xs.map(len))}`
-      : "—";
+    const band = (xs) => { const v = xs.map(len).filter((x) => x !== null);
+      return v.length ? `${Math.min(...v)}..${Math.max(...v)}` : "—"; };
     const mean = (xs) => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0;
     const inWindow = gaps.filter((g) => g >= perObs && g <= MCLK / 120).length;
     console.log(`  period: ${gaps.length} intervals, ${Math.min(...gaps)}..${Math.max(...gaps)}`
       + ` master, mean ${mean(gaps)}${gen ? `, generated for ${gen.target}` : ""};`
       + ` ${gaps.length - inWindow} outside [${perObs}, ${Math.round(MCLK / 120)}]`);
-    console.log(`  attempts: ${attempts.length} publish attempts, ${busy.length} found the box`
-      + ` busy; stop ${band(free)} master when a bundle went out, ${band(busy)} when it did`
-      + ` not, ${band(reads2)} for a snapshot read`);
-    // ── WHERE IN THE LAP THE HOST READ, AND WHETHER IT WAS LATE ────────
+    // ── THE TWO REFUSALS, TOLD APART (R21 §50.3 step 3) ────────────────
+    // A grab that wrote nothing is either "the box was busy" or "the live
+    // counter was neither of the two the read predicted", and from the bus they
+    // look identical. The host stamps them, so they are counted separately and
+    // neither can hide inside the other.
+    // STARTUP IS ITS OWN BOX (R21 §50.5). Before the first bundle goes out the
+    // host has no snapshot to name a boundary from, so a refusal there is the
+    // acquisition and not a failure of the arrangement; everything from the
+    // first successful publication on is steady state and has to be clean.
+    const steadyFrom = commits.length ? commits[0].time : from;
+    const marksAfter = (v) => (log.marks ?? []).filter((x) => x.value === v && x.time >= from);
+    const steady = (xs) => xs.filter((x) => x.time >= steadyFrom);
+    const busyAll = marksAfter(0x24), missAll = marksAfter(0x23);
+    const busyStamp = steady(busyAll), missStamp = steady(missAll);
+    console.log(`  attempts: ${attempts.length} publish attempts, ${busyStamp.length} found the`
+      + ` box busy, ${missStamp.length} refused because the live counter was outside both`
+      + ` candidates (${busyAll.length - busyStamp.length} and`
+      + ` ${missAll.length - missStamp.length} more while acquiring); STOP -> RESUME ${band(free)} master when a bundle went out,`
+      + ` ${band(busy)} when it did not, ${band(reads2)} for a snapshot read`);
+    // ── EVERY TARGET IS THE LIVE COUNTER'S NEXT BOUNDARY (R21 §50.4 step 1)
+    // Checked from OUTSIDE, against the engine's own counter as the instrument
+    // watched it being written — not against a reference that could choose the
+    // same wrong candidate the host did. The target is read back out of the
+    // payload bytes that arrived in the mailbox.
+    const countLoW = w(G.stage), countHiW = w(G.stage + 1);
+    const liveAt = (t) => {
+      const lo = countLoW.filter((x) => x.time < t).at(-1);
+      const hi = countHiW.filter((x) => x.time < t).at(-1);
+      return lo === undefined || hi === undefined ? null : (hi.value << 8) | lo.value;
+    };
+    {
+      let checked = 0, wrong = 0, first = null, prevLive = null;
+      let bi2 = 0, target = null, prevTarget = null, targetSteps = 0;
+      void prevLive;
+      for (const c of commits) {
+        const rec = [];
+        while (bi2 < body.length && body[bi2].time < c.time) rec.push(body[bi2++]);
+        if (rec.length !== P.recordBytes) continue;
+        target = rec[0].value | (rec[1].value << 8);
+        const live = liveAt(c.time);
+        if (live === null) continue;
+        checked++;
+        if (target !== ((live + 1) & 0xffff)) { wrong++; first ??= { target, live }; }
+        // The target moves forward with the counter, never sideways or back.
+        if (prevTarget !== null && ((target - prevTarget) & 0xffff) >= 1
+          && ((target - prevTarget) & 0xffff) < 0x8000) targetSteps++;
+        prevLive = live; prevTarget = target;
+      }
+      // THE WRAPS ARE FOUND IN THE COUNTER THE ENGINE WROTE, not in the values
+      // sampled at commit time: a publication happens every second lap, so the
+      // sampled series steps by two and can step straight over $ff.
+      const crossings = (xs) => { const at = [];
+        for (let i = 1; i < xs.length; i++)
+          if (xs[i - 1].value === 0xff && xs[i].value === 0x00) at.push(xs[i].time);
+        return at; };
+      const loAt = crossings(countLoW), hiAt = crossings(countHiW);
+      const spans = (at) => at.some((t) => commits.some((c) => c.time < t)
+        && commits.some((c) => c.time > t));
+      const wrapLo = loAt.length, wrapHi = hiAt.length;
+      console.log(`  target: ${checked} publications checked against the engine's own counter,`
+        + ` ${wrong} that did not name its next boundary`
+        + (first ? ` (first: named $${first.target.toString(16)} with $${first.live.toString(16)}`
+          + " running)" : "")
+        + `; ${targetSteps} advanced, ${wrapLo} counter crossings of $ff->$00`
+        + ` (${spans(loAt) ? "published either side" : "not published across"}),`
+        + ` ${wrapHi} of $ffff->$0000`
+        + ` (${spans(hiAt) ? "published either side" : "not published across"})`);
+      if (checked && wrong)
+        failures.push(`"${name}": ${wrong} of ${checked} publications named a boundary that was`
+          + " not the live counter's next one");
+      if (!checked) failures.push(`"${name}": no publication could be checked against the counter`);
+      if (checked && targetSteps < checked - 2)
+        failures.push(`"${name}": only ${targetSteps} of ${checked} targets moved forward`);
+      // The wrap cases exist to REACH a wrap; one that never got there proves
+      // nothing, so it fails rather than passing quietly.
+      // A wrap case that never reached its wrap proves nothing, and one that
+      // reached it with no publication on both sides proves nothing either.
+      if (name === "2ch mailbox, counter low wrap" && !(wrapLo && spans(loAt)))
+        failures.push(`"${name}": ${wrapLo} crossings of $ff -> $00, and bundles were not`
+          + " published on both sides of one");
+      if (name === "2ch mailbox, counter wrap" && !(wrapHi && spans(hiAt)))
+        failures.push(`"${name}": ${wrapHi} crossings of $ffff -> $0000, and bundles were not`
+          + " published on both sides of one");
+    }
+    // ── WHERE IN THE LAP THE HOST READ, AND WHAT CAME OF IT ────────────
     // The snapshot is published at a fixed point INSIDE the lap, not at its
-    // start, so a host reading before that point gets the previous lap's number
-    // and everything it aims at is one observation early. The host has no way
-    // to know which side of that point it is on, and its period is deliberately
-    // a little longer than a lap, so it walks through every phase. This is the
-    // table that says what the lead is really up against.
+    // start, so a host reading before that point holds the previous lap's
+    // number and one reading after it holds the current one. Its period is a
+    // little longer than a lap, so one run walks every phase — which is what
+    // makes this table a sweep and not a sample. Choosing the boundary from the
+    // live counter is supposed to make every column clean; a fixed lead could
+    // not (R20 §49.5), and `--fault pick-near` / `pick-far` put those back.
     {
       const lapAt = (t) => { const i = reads.findIndex((o) => o > t);
         return i <= 0 ? null : (t - reads[i - 1]) / (reads[i] - reads[i - 1]); };
       const pubs = log.ramWrites.filter((x) => x.region === "pub" && x.time >= from)
         .map((x) => lapAt(x.time)).filter((v) => v !== null);
-      const bins = Array.from({ length: 10 }, () => ({ n: 0, late: 0 }));
+      const bins = Array.from({ length: 10 }, () => ({ n: 0, late: 0, bad: 0 }));
       for (const c of commits) {
         const gi = grabs.findIndex(([a, bb]) => c.time >= a && c.time <= bb);
         if (gi < 1) continue;
@@ -978,12 +1084,49 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
         bins[k].n++;
         if (lates.some((x) => x.time > c.time && x.time < c.time + 3 * perObs)) bins[k].late++;
       }
+      // …and the refusals, by the phase of the read that preceded them.
+      for (const st of [...busyStamp, ...missStamp]) {
+        const gi = grabs.findIndex(([, bb]) => bb > st.time - 4 * perObs && bb < st.time);
+        const ph = gi < 1 ? null : lapAt(grabs[gi - 1][0]);
+        if (ph === null) continue;
+        bins[Math.min(9, Math.floor(ph * 10))].bad++;
+      }
+      // WHERE THE LATE ONES WERE PUBLISHED, in slots. `mb pending` reads the
+      // commit at one slot and the decode stores the counter at another, and a
+      // commit that lands between the two is seen a lap later than the counter
+      // the host read says — which is the only way `live + 1` can be wrong.
+      // Reporting the band in slots is what makes that cause visible rather
+      // than inferred.
+      const lateAt = [];
+      for (const c of commits) {
+        if (!lates.some((x) => x.time > c.time && x.time < c.time + 3 * perObs)) continue;
+        const ph = lapAt(c.time);
+        if (ph !== null) lateAt.push(ph);
+      }
+      if (lateAt.length)
+        console.log(`  late: ${lateAt.length} bundles, published between slot`
+          + ` ${(Math.min(...lateAt) * cfg.cycleSlots).toFixed(1)} and slot`
+          + ` ${(Math.max(...lateAt) * cfg.cycleSlots).toFixed(1)} of ${cfg.cycleSlots}`);
+      const covered = bins.filter((b2) => b2.n).length;
       if (pubs.length) {
         const avg = pubs.reduce((a, bb) => a + bb, 0) / pubs.length;
         console.log(`  phase: the engine publishes its snapshot ${(avg * 100).toFixed(1)}% into`
-          + " the lap; by tenth of the lap the host read in, the bundles that came out"
-          + " were late");
-        console.log(`    ${bins.map((b2, i) => `${(i / 10).toFixed(1)} ${b2.late}/${b2.n}`).join("  ")}`);
+          + ` the lap; the host's read walked ${covered} of 10 tenths, and by tenth the`
+          + " bundles were late / refused / published");
+        console.log(`    ${bins.map((b2, i) => `${(i / 10).toFixed(1)} ${b2.late}/${b2.bad}/${b2.n}`)
+          .join("  ")}`);
+      }
+      mailboxRuns.set(name, { covered, bins });
+      // EVERY TENTH, NOT THE AVERAGE (R21 §50.4 step 2). A run that happened to
+      // sit on one side of the publication point proves nothing about the other.
+      if (!MAILBOX_DENSE.includes(name)) {
+        if (covered < 10)
+          failures.push(`"${name}": the host's read only reached ${covered} of the lap's ten`
+            + " tenths — the phase sweep is incomplete and a clean result is not a result");
+        const dirty = bins.filter((b2) => b2.late > 1 || b2.bad).length;
+        if (dirty)
+          failures.push(`"${name}": ${dirty} of the lap's tenths produced a late or refused`
+            + " bundle — the boundary is still being chosen wrongly in some phase");
       }
     }
     // …and how long a desired state took to reach the engine: from the commit
@@ -997,9 +1140,10 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
     const pc = (p) => lat.length ? lat[Math.floor((lat.length - 1) * p)] : 0;
     console.log(`  latency: commit to acknowledgement ${pc(0)}..${pc(1)} master`
       + ` (p50 ${pc(0.5)}, ${(pc(0.5) / perObs).toFixed(2)} observations), ${lat.length} matched`);
-    mailboxRuns.set(name, { rate, worst, over, lates: lates.length, busy: busy.length,
-      commits: commits.length, acks: acks.length, gaps, inWindow, gen,
-      lead: built.grab.proto.lead, secs });
+    Object.assign(mailboxRuns.get(name) ?? {}, {});
+    mailboxRuns.set(name, { ...mailboxRuns.get(name), rate, worst, over,
+      lates: lates.length, busy: busyStamp.length, mismatch: missStamp.length,
+      commits: commits.length, acks: acks.length, gaps, inWindow, gen, secs });
     // THE PERIOD IS A GENERATED NUMBER AND HAS TO LAND WHERE IT WAS AIMED.
     // Below one observation interval two transfers share one and their stops
     // add; above masterHz/120 the pair of them stops making 60 updates a
@@ -1011,43 +1155,38 @@ for (const name of FAULT ? [] : MAILBOX_2CH) {
   }
 }
 
-// ── THE LEAD, CHOSEN FROM THE SWEEP (R20 §48.5 step 4) ───────────────────
-// A bundle names the observation it takes effect at and the mailbox holds it
-// until that observation arrives. Too small a lead is applied late; too large
-// a one keeps the one slot occupied and costs updates. The rate condition is
-// graded on the SMALLEST lead that is never late outside startup.
-if (!FAULT && MAILBOX_LEADS.every((n) => mailboxRuns.has(n))) {
-  console.log(`\n── the lead the host aims with ──`);
-  console.log(`  ${"case".padEnd(24)}${"lead".padStart(5)}${"late".padStart(6)}`
-    + `${"busy".padStart(6)}${"acked".padStart(7)}${"updates/s".padStart(11)}`);
-  const rows = MAILBOX_LEADS.map((n) => ({ name: n, ...mailboxRuns.get(n) }));
-  const late0 = mailboxRuns.get("2ch mailbox, a lap late");
-  for (const r of rows)
-    console.log(`  ${r.name.replace(/^2ch mailbox, /, "").padEnd(24)}${String(r.lead).padStart(5)}`
-      + `${String(r.lates).padStart(6)}${String(r.busy).padStart(6)}`
-      + `${String(r.acks).padStart(7)}${r.rate.toFixed(1).padStart(11)}`);
-  // "late" counts the writes that CHANGED the count, so one at startup is the
-  // engine acquiring; anything beyond that is a bundle that missed its
-  // boundary. The negative is the case that names a boundary already gone.
-  const clean = rows.filter((r) => r.lates <= 1);
-  const chosen = clean.length ? clean.reduce((a, b) => a.lead <= b.lead ? a : b) : null;
-  if (!late0 || late0.lates < 8)
-    failures.push(`the deliberately late case reported ${late0?.lates ?? 0} late bundles —`
-      + " a lead of 0 names a boundary that has already gone by and must be late every time");
-  if (!chosen) failures.push("no lead in 1..3 delivered a bundle before its boundary");
-  else {
-    console.log(`  chosen: lead ${chosen.lead}, the smallest that is never late outside`
-      + ` startup — ${chosen.rate.toFixed(1)} desired-state updates a second`);
-    if (chosen.rate < 60)
-      failures.push(`at lead ${chosen.lead}, the smallest that is not late, the mailbox`
-        + ` sustains ${chosen.rate.toFixed(1)} acknowledged desired-state updates a second`
-        + ` — under the 60 R17 §43.6 step 6 requires`);
-    if (chosen.worst > LIVE_STOP_MAX)
-      failures.push(`at lead ${chosen.lead} an observation interval held the bus for`
-        + ` ${chosen.worst} master`);
+// ── WHAT THE ADAPTIVE CHOICE BOUGHT (R21 §50.5) ──────────────────────────
+// One arrangement, no lead to pick. The rate is graded on the main case; the
+// wrap cases have to reach their wrap and stay as clean, and the dense one is
+// the reminder that the SUM is the binding rule.
+if (!FAULT && mailboxRuns.has(MAILBOX_MAIN)) {
+  console.log(`\n── the mailbox, with the boundary chosen inside the grab ──`);
+  console.log(`  ${"case".padEnd(22)}${"late".padStart(6)}${"busy".padStart(6)}`
+    + `${"mismat".padStart(8)}${"acked".padStart(7)}${"updates/s".padStart(11)}`
+    + `${"worst stop".padStart(12)}`);
+  for (const n of MAILBOX_2CH) {
+    const r = mailboxRuns.get(n); if (!r) continue;
+    console.log(`  ${n.replace(/^2ch mailbox, /, "").padEnd(22)}${String(r.lates).padStart(6)}`
+      + `${String(r.busy).padStart(6)}${String(r.mismatch).padStart(8)}`
+      + `${String(r.acks).padStart(7)}${r.rate.toFixed(1).padStart(11)}`
+      + `${String(r.worst).padStart(12)}`);
   }
+  const m = mailboxRuns.get(MAILBOX_MAIN);
+  // ONE LATE WRITE IS THE ENGINE ACQUIRING, before any bundle has been sent;
+  // anything past that is a bundle that missed the boundary it named.
+  if (m.lates > 1)
+    failures.push(`"${MAILBOX_MAIN}": ${m.lates} late bundles — the boundary named inside the`
+      + " grab was still behind the counter that applied it");
+  if (m.busy) failures.push(`"${MAILBOX_MAIN}": ${m.busy} attempts found the box busy`);
+  if (m.mismatch)
+    failures.push(`"${MAILBOX_MAIN}": ${m.mismatch} attempts found a live counter outside both`
+      + " candidates");
+  if (m.rate < 60)
+    failures.push(`"${MAILBOX_MAIN}": ${m.rate.toFixed(1)} acknowledged desired-state updates a`
+      + ` second — under the 60 R17 §43.6 step 6 requires`);
+  if (m.worst > LIVE_STOP_MAX)
+    failures.push(`"${MAILBOX_MAIN}": an observation interval held the bus for ${m.worst} master`);
 }
-
 const pieceSweep = [];
 console.log(FAULT && !(FAULT in QUEUE_FAULTS) ? "" : `\n── the runtime protocol, on both CPUs ──`);
 for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CASES) {

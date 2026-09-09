@@ -37,6 +37,11 @@ export const MARKS = { entry: 1, request: 2, released: 3, skipped: 4, missed: 5,
   // back, saying whether the three constants behind the observation number came
   // back as themselves or as a duplicate of the byte before them.
   widthOk: 0x21, widthBad: 0x22,
+  // The mailbox host's two refusals (R21 §50.3 step 3). Both write nothing and
+  // both look identical from the bus — one grab with no payload behind it — so
+  // they are stamped apart: the box was busy, or the decoder's live counter was
+  // neither of the two values the snapshot read predicted.
+  countMismatch: 0x23, mailboxBusy: 0x24,
   // An exception. Every unused vector goes here, the mark makes it visible to
   // the gate, and the halt stops the machine from stacking frames until it
   // walks off the end of RAM. The previous vector target was the trailing
@@ -125,6 +130,15 @@ class M68k {
   moveBimmA(imm,a) { this.reg(1); this.n(12); this.w(0x10bc | (a << 9)); this.w(imm & 255); }
   moveBDtoA(d, a) { this.reg(1); this.n(8); this.w(0x1080 | (a << 9) | d); }       // move.b Dn,(An)
   moveBAtoD(a, d) { this.reg(1); this.n(8); this.w(0x1010 | (d << 9) | a); }       // move.b (An),Dn
+  cmpBAD(a, d) { this.reg(1); this.n(8); this.w(0xb010 | (d << 9) | a); }          // cmp.b (An),Dn
+  // The bus-request port through a register: $A11100 is not RAM, so the width
+  // rule does not reach it, and reaching it this way is what took twenty-four
+  // cycles out of the critical section (R21 §50.3).
+  moveWimmA(imm, a) { this.touch.push({ at: this.pc, addr: Z80_BUSREQ, size: 2, port: true });
+    this.n(12); this.w(0x30bc | (a << 9)); this.w(imm); }                          // move.w #i,(An)
+  moveWAtoD(a, d) { this.touch.push({ at: this.pc, addr: Z80_BUSREQ, size: 2, port: true });
+    this.n(8); this.w(0x3010 | (d << 9) | a); }                                    // move.w (An),Dn
+  subqLA(n, a) { this.n(8); this.w(0x5188 | ((n & 7) << 9) | a); }                 // subq.l #n,An
   moveBpost() { this.reg(1); this.reg(1); this.n(12); this.w(0x12d8); }             // move.b (a0)+,(a1)+
   moveBabsD(addr, d) { this.n(16); this.w(0x1039 | (d << 9)); this.a(addr, 1); }       // move.b (abs).l,Dn
   moveBDabs(d, addr) { this.n(16); this.w(0x13c0 | d); this.a(addr, 1); }              // move.b Dn,(abs).l
@@ -809,58 +823,81 @@ export function buildRom(image, samples = null, grab = null) {
       m.mark(MARKS.widthBad);
       m.bra("wdloop");
     } else if (P.live) {
-    // ── A REAL HOST, DRIVING THE MAILBOX (R19 §46.3, R20 §48.2) ──────────
+    // ── A REAL HOST, DRIVING THE MAILBOX (R19 §46.3, R20 §48.2, R21 §50.2) ─
     // Two operations, strictly alternating, one an observation interval:
     //
     //   snapshot read     the selector and the observation number. It reads no
-    //                     ack and writes nothing.
+    //                     ack, no count, and writes nothing.
     //   publish attempt   ONE grab that reads the ack and — only if it says the
-    //                     box is free — writes the five payload bytes and then
-    //                     the commit. Busy means the grab ends having written
-    //                     nothing, and it is counted rather than hidden.
+    //                     box is free — reads the decoder's OWN live counter and
+    //                     publishes the bundle whose boundary is that counter's
+    //                     next one. Busy writes nothing. A counter that is
+    //                     neither of the two values the read predicted writes
+    //                     nothing either, and is counted separately.
     //
-    // This is NOT ack prediction: every attempt checks the ack it has just read
-    // against the commit it owns, inside the same grab, before it writes a
-    // byte. What the alternation buys is that the check no longer costs a lap
-    // of its own — a bundle goes out every second transfer instead of every
-    // 2.7 (R19 §47.4).
+    // WHY THE TARGET IS CHOSEN INSIDE THE GRAB (R21 §50.2). The engine publishes
+    // its snapshot 62.8% of the way through a lap, because publication is the
+    // last link of H read -> decode -> corrector -> publish. So a host reading
+    // before that point gets the PREVIOUS lap's number and one reading after it
+    // gets the current one, and the host cannot tell which — R20 measured a
+    // fixed lead of 2 as late in every phase below 0.628 and a fixed lead of 3
+    // as never late but holding the one mailbox slot long enough to lose 14
+    // attempts in 121. Reading the live counter in the same stopped Z80 as the
+    // ack removes the ambiguity instead of guessing at it:
     //
-    // R20 §48.4: everything that can happen before the bus is taken DOES. The
-    // payload is built in 68k RAM, the four fixed addresses are loaded once
-    // outside the loop, and the commit value this attempt would write is
-    // computed into d5 in advance — so the critical section is the request, the
-    // grant poll, the ack read and its compare, the writes, and the release.
+    //   live count == (R+1)&$ff   the snapshot was the newer face  -> R+2
+    //   live count == (R+2)&$ff   it was the older one, or the period crossed
+    //                             one extra boundary                -> R+3
+    //   anything else             publish nothing, count it, let go
+    //
+    // Both live rows name the SAME absolute boundary — the one after the
+    // counter that is running as the bytes are written. The full u16 of each
+    // candidate is built from the extended R BEFORE the bus is taken, so
+    // $ff->$00 and $ffff->$0000 are not ambiguous; only the comparison is a
+    // byte, and the two candidate bytes are always different.
+    //
+    // This is not phase prediction and not ack prediction: the ack and the
+    // counter are read from the same stopped Z80, in the same grab, before a
+    // single byte is written. Nothing on the Z80 side changes — not the
+    // counter, the snapshot, the mailbox payload, the commit/ack, the apply-time
+    // ack, or the consumer's placement.
+    //
+    // R20 §48.4 still holds: everything that can happen before the bus is taken
+    // does. Both payloads are built in 68k RAM, the five fixed addresses are
+    // loaded once outside the loop, and the commit value this attempt would
+    // write is computed into d5 in advance.
     //
     // Nothing here writes a YM register: the CSM test voice went in at boot
     // while the bus was still held, and §33.6 step 5 has not been answered.
-    const W = PROTO_WORK, PAY = PROTO_WORK + 32, STEP = PROTO_WORK + 40;
-    // The fixed addresses, loaded ONCE. a0/a1 are the moving pair.
+    const W = PROTO_WORK, PAY = PROTO_WORK + 32, PAY_B = PAY + 8;
+    // The fixed addresses, loaded ONCE. a0/a1 are the moving pair; the face the
+    // read follows is chosen inside its own grab, which has the room for it.
     m.leaAbs(Z80_BASE + P.commandCommit, 2);
     m.leaAbs(Z80_BASE + P.commandAck, 3);
     m.leaAbs(Z80_BASE + P.mailbox, 4);
-    m.leaAbs(Z80_BASE + P.face0, 5);
-    m.leaAbs(Z80_BASE + P.face1, 6);
+    m.leaAbs(Z80_BUSREQ, 5);                       // …the port, not RAM
+    m.leaAbs(Z80_BASE + P.liveCount, 6);           // the decoder's own counter
     m.moveq(0, 6);                                 // the host's observation number
-    m.moveBimm(0, STEP);                           // the level walk starts at page 0
+    m.moveq(0, 7);                                 // the level walk, advanced on success only
     // ── the fragments, as functions, so each one can be PRICED ───────────
     // Every fragment is emitted twice: once into a throwaway emitter that adds
     // up its cycles, and once for real. The transfer period below is generated
     // from those prices (R20 §48.5) — there is no fixed `every` left.
-    const readPre = (x) => { x.leaAbs(W, 1); x.moveAA(5, 0); };
+    const readPre = (x) => { x.leaAbs(W, 1); x.leaAbs(Z80_BASE + P.face0, 0); };
     const readGrab = (x) => {
-      x.moveWimm(0x0100, Z80_BUSREQ);
+      x.moveWimmA(0x0100, 5);
       x.label("mbg1");
-      x.moveWabsD(Z80_BUSREQ, 0);
+      x.moveWAtoD(5, 0);
       x.andiW(0x0100, 0);
       x.bne("mbg1");
       x.n(2);                       // …the last pass FALLS THROUGH: 12, not 10
       x.moveBabsD(Z80_BASE + P.select, 0);
       x.andiW(1, 0);
       x.beq("mbf0");
-      x.moveAA(6, 0);               // face 1; face 0 takes the branch instead
+      x.leaAbs(Z80_BASE + P.face1, 0);
       x.label("mbf0");
       x.z80Xfer(() => { x.moveBpost(); x.moveBpost(); });
-      x.moveWimm(0x0000, Z80_BUSREQ);
+      x.moveWimmA(0x0000, 5);
     };
     // The observation number out of the copy the grab left behind: little
     // endian in Z80 RAM and big endian in the 68000, so the two bytes are taken
@@ -871,58 +908,95 @@ export function buildRom(image, samples = null, grab = null) {
       x.orWDD(0, 1);
       x.moveLD(1, 6);
     };
-    // THE PAYLOAD, BUILT BEFORE THE BUS IS TAKEN. The boundary it aims at, and
-    // three level pages that all move: a 15-level build has pages 0..14, so one
-    // rolling number wrapping at 15 gives every bundle a different triple.
+    // BOTH PAYLOADS, BUILT BEFORE THE BUS IS TAKEN. They differ only in the two
+    // boundary bytes; the three level pages are the same desired state, and the
+    // walk that produces them only moves when a bundle really went out.
     const pubPre = (x) => {
-      x.moveLD(6, 1);
-      x.addWimmD(P.lead, 1);
-      x.moveBDabs(1, PAY);                         // little endian, low byte first
-      x.moveLD(1, 0); x.lsrWimm(8, 0);
-      x.moveBDabs(0, PAY + 1);
-      x.moveq(0, 0);
-      x.moveBabsD(STEP, 0);
+      x.moveLD(6, 0);
       x.addqL(1, 0);
-      x.cmpLimmD(15, 0);
-      x.bcs("mbvok");
-      x.moveq(0, 0);
-      x.costDrop(4);                               // …the wrap, taken once in fifteen
-      x.label("mbvok");
-      x.moveBDabs(0, STEP);
-      x.moveBDabs(0, PAY + 2);                     // v0page = v
-      x.moveLimmD(14, 1); x.subWDD(0, 1);
-      x.moveBDabs(1, PAY + 3);                     // v1page = 14 - v
-      x.moveLD(0, 2); x.lsrWimm(1, 2); x.addWimmD(7, 2);
-      x.moveBDabs(2, PAY + 4);                     // mpage = 7 + v/2
-      x.leaAbs(PAY, 0);
+      x.moveLD(0, 1);                              // d1 = R+1, the near candidate
+      x.addqL(1, 0);
+      x.moveLD(0, 2);                              // d2 = R+2, the far candidate
+      x.moveBDabs(0, PAY);                         // payload A: boundary R+2, LE
+      x.moveLD(0, 3); x.lsrWimm(8, 3);
+      x.moveBDabs(3, PAY + 1);
+      x.addqL(1, 0);
+      x.moveBDabs(0, PAY_B);                       // payload B: boundary R+3
+      x.moveLD(0, 3); x.lsrWimm(8, 3);
+      x.moveBDabs(3, PAY_B + 1);
+      // THE COMPARISON BYTES, and the one way this is deliberately broken: with
+      // both of them moved out of reach the counter can never match, so every
+      // attempt has to refuse, write nothing and count it (R21 §50.4 step 5).
+      if (P.pfault === "count-astray") {
+        FAULT_APPLIED.add("count-astray");
+        x.addWimmD(0x40, 1); x.addWimmD(0x40, 2);
+      }
+      // Three levels that all move, from one rolling number: a 15-level build
+      // has pages 0..14, so the walk wraps at 15 and every bundle is different.
+      x.moveBDabs(7, PAY + 2); x.moveBDabs(7, PAY_B + 2);        // v0page = v
+      x.moveLimmD(14, 3); x.subWDD(7, 3);
+      x.moveBDabs(3, PAY + 3); x.moveBDabs(3, PAY_B + 3);        // v1page = 14 - v
+      x.moveLD(7, 3); x.lsrWimm(1, 3); x.addWimmD(7, 3);
+      x.moveBDabs(3, PAY + 4); x.moveBDabs(3, PAY_B + 4);        // mpage = 7 + v/2
+      x.leaAbs(PAY_B, 0);                          // …B is the arm the compare falls into
       x.moveAA(4, 1);
       x.moveLD(4, 5); x.addqL(1, 5);               // the commit this attempt writes
     };
-    // THE CRITICAL SECTION, with nothing in it that could have happened sooner.
+    // THE CRITICAL SECTION, with nothing in it that could have happened sooner:
+    // the request, the grant poll, the ack, the live counter, the choice
+    // between two payloads that already exist, the five bytes, the commit and
+    // the release.
     const pubCrit = (x) => {
-      x.moveWimm(0x0100, Z80_BUSREQ);
+      x.moveWimmA(0x0100, 5);
       x.label("mbg2");
-      x.moveWabsD(Z80_BUSREQ, 0);
+      x.moveWAtoD(5, 0);
       x.andiW(0x0100, 0);
       x.bne("mbg2");
       x.n(2);                       // …the last pass falls through
       x.z80Xfer(() => {
-        x.moveBAtoD(3, 0);                         // the ack, from its fixed address
-        x.cmpBDD(4, 0);                            // …against the commit we own
+        x.cmpBAD(3, 4);                            // the ack against the commit we own
         x.bne("mbbusy");
+        x.n(2);                                    // …free: the branch falls through
+        if (P.pfault === "pick-near") {            // always R+2, whatever is running
+          FAULT_APPLIED.add("pick-near");
+          x.subqLA(8, 0);
+        } else if (P.pfault === "pick-far") {      // always R+3
+          FAULT_APPLIED.add("pick-far");
+        } else {
+          x.cmpBAD(6, 2);                          // live == (R+2)&$ff -> payload B
+          x.beq("mbgo");
+          x.cmpBAD(6, 1);                          // live == (R+1)&$ff -> payload A
+          x.bne("mbmiss");
+          x.subqLA(8, 0);
+          x.costDrop(8 + 10 + 8);                  // …priced as the arm that falls into B
+          x.label("mbgo");
+        }
         for (let i = 0; i < P.recordBytes; i++) x.moveBpost();
         x.moveBDtoA(5, 2);                         // …the commit, LAST
       });
-      x.moveWimm(0x0000, Z80_BUSREQ);              // release — a bundle went out
+      x.moveWimmA(0x0000, 5);                      // release — a bundle went out
     };
-    // …and the two ways out of it. The busy arm writes nothing and does not
-    // take the commit, which is what makes an attempt safe to make blind.
+    // …and the three ways out of it. Neither refusal takes the commit or moves
+    // the level walk, which is what makes an attempt safe to make blind; and
+    // they are stamped apart, because "the box was busy" and "the counter was
+    // not what the read predicted" are different failures (R21 §50.3 step 3).
     const pubTail = (x) => {
       x.moveLD(5, 4);                              // the commit is now ours
+      x.addqL(1, 7);                               // …and the desired state moves on
+      x.cmpLimmD(15, 7);
+      x.bcs("mbwok");
+      x.moveq(0, 7);
+      x.costDrop(4);                               // …the wrap, once in fifteen
+      x.label("mbwok");
       x.bra("mbdone");
       x.label("mbbusy");
-      x.moveWimm(0x0000, Z80_BUSREQ);              // release — nothing was written
-      x.costDrop(20);                              // …not on the priced path
+      x.moveWimmA(0x0000, 5);                      // release — nothing was written
+      x.mark(MARKS.mailboxBusy);
+      x.bra("mbdone");
+      x.label("mbmiss");
+      x.moveWimmA(0x0000, 5);                      // release — nothing was written
+      x.mark(MARKS.countMismatch);
+      x.costDrop(12 + 20 + 10 + 12 + 20);          // …neither refusal is on the priced path
       x.label("mbdone");
     };
     // A wait is `move.w #N,d1` and N+1 dbra — N taken, one falling out.

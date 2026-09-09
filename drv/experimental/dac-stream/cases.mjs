@@ -253,22 +253,37 @@ export const CASES = [
   // takes the bus on purpose is: the DAC interval is not fixed while the 68000
   // holds the bus, and the level pages really do change, so the fixed-waveform
   // value model does not apply. What grades these is `dac-stream:decoder`.
-  // THE LEAD IS CHOSEN BY THE SWEEP, NOT BY HAND (R20 §48.5 step 4). A bundle
-  // names the observation it is to take effect at, and the mailbox holds it
-  // until that observation arrives — so too small a lead is applied late and
-  // too large a one keeps the box occupied and costs updates. 1, 2 and 3 are
-  // run and the smallest with no late bundle outside startup is the one the
-  // rate condition is graded on. `a lap late` names a boundary that has already
-  // gone by, and has to be late every time: the negative that proves the count
-  // is a count.
-  ...[["lead 1", 1, 1, false], ["lead 2", 2, 1, false], ["lead 3", 3, 1, false],
-    ["a lap late", 0, 1, false], ["at double density", 2, 2, true]]
-    .map(([what, lead, density, dense]) => ({
+  // NO LEAD AT ALL — THE TARGET IS CHOSEN INSIDE THE GRAB (R21 §50.2). A fixed
+  // lead cannot be right: the engine publishes its snapshot 62.8% into the lap,
+  // so a host reading before that point holds the previous lap's number and one
+  // reading after it holds the current one, and it cannot tell which. R20
+  // measured lead 2 as late in every phase below 0.628 and lead 3 as never late
+  // but holding the one mailbox slot long enough to lose 14 attempts in 121.
+  // The host now reads the decoder's own live counter in the SAME stopped Z80
+  // as the ack and publishes the bundle whose boundary is that counter's next
+  // one — of two payloads it built before taking the bus. The two fixed leads
+  // survive as the faults `pick-near` and `pick-far`, so the choice cannot
+  // quietly become one of them again.
+  //
+  // `at double density` halves the spacing on purpose, so a second grab lands
+  // in the same observation interval and the SUM is what has to be read. The
+  // two wrap cases start the decoder's counter four short of a byte and of a
+  // word boundary, so $ff->$00 and $ffff->$0000 both run inside the window the
+  // comparison is a byte in (R21 §50.4 step 3). They are the only two that drop
+  // the CSM test tone: the ceiling image assembles at exactly $A00 with NOTHING
+  // to spare, and starting the counter costs six bytes. The tone is a harness
+  // note played on FM channel 3 and touches neither the counter, the comparison
+  // nor the mailbox, so what those two cases prove is not weakened by its
+  // absence — everything else about them is the complete engine.
+  ...[["adaptive", 1, false, null, true], ["at double density", 2, true, null, true],
+    ["counter low wrap", 1, false, 0x00fc, false], ["counter wrap", 1, false, 0xfffc, false]]
+    .map(([what, density, dense, countFrom, csm]) => ({
       name: `2ch mailbox, ${what}`,
-      cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+      cfg: { voices: 2, complete: true, csm, csmHost: csm, levels: 15,
         workTarget: 0.839, correctorBudget: true, command: true },
-      split: { load: "divu", proto: { live: true, lead, density },
-        place: { correct: true, proto: true, command: true } },
+      split: { load: "divu", proto: { live: true, density },
+        place: { correct: true, proto: true, command: true,
+          ...(countFrom === null ? {} : { countFrom }) } },
       dense, informational: true,
       // The mixer's level pages really change here — that is the whole point —
       // so the fixed-level reference does not apply and the DAC is graded on

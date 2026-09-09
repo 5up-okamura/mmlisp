@@ -22,6 +22,16 @@ import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
   SNAPSHOT_STRIDE, MAILBOX, MAILBOX_BYTES } from "./protocol.mjs";
 import { GLOB } from "./config.mjs";
 
+// R21 §50.4: the three ways the adaptive choice can be broken. The first two
+// are the fixed leads R20 measured, put back as faults so the sweep cannot
+// quietly become one of them again; the third puts both comparison bytes out of
+// reach so every attempt has to refuse.
+export const PICK_FAULTS = {
+  "pick-near": "the host always names R+2, whatever the live counter says",
+  "pick-far": "the host always names R+3, whatever the live counter says",
+  "count-astray": "the two candidate bytes are moved out of reach, so no counter can match",
+};
+
 export const QUEUE_FAULTS = {
   "q-commit-first": "commandCommit is bumped before the payload it stands for is written",
   "q-short-payload": "the commit claims a whole bundle and one byte of it never arrived",
@@ -47,6 +57,7 @@ export const FAULTS = {
   // transfer: the head moved before the bytes, or the record stopped short of
   // what the head then claimed (R13 §35.3 step 2).
   ...QUEUE_FAULTS,
+  ...PICK_FAULTS,
 };
 
 /**
@@ -93,13 +104,20 @@ function protoRomFields(cfg, p, countLo = STATE.countLo) {
     queue: !!p.queue, qfault: p.qfault ?? null, piece: p.piece ?? null,
     // A real host driving the mailbox: read the snapshot, aim `lead`
     // observations ahead, then read the ack and publish if the box is free.
-    live: !!p.live, lead: p.lead ?? 1, refresh: p.refresh ?? 8,
+    // There is no lead any more: the boundary is chosen from the decoder's own
+    // live counter inside the publish attempt (R21 §50.2).
+    live: !!p.live, refresh: p.refresh ?? 8,
     // WHICH DECODE STATE THIS BUILD HAS. The protocol's globals are laid out
     // FROM the decoder's own counter, and P1's state is six bytes where the
     // split 2ch one is thirteen — so a host that assumed P1's offset read a
     // byte that was not the ack at all, found the box busy for ever, and
     // published nothing while every other number in the run looked healthy.
     commandAck: protoGlobals(cfg.ram.glob[0] + GLOB.decode, countLo).commandAck,
+    // THE DECODER'S OWN COUNTER, which the publication stage starts on: the
+    // host reads its low byte inside the same grab as the ack and picks the
+    // bundle whose boundary is that counter's next one (R21 §50.2).
+    liveCount: protoGlobals(cfg.ram.glob[0] + GLOB.decode, countLo).stage,
+    pfault: p.pfault ?? null,
     mailbox: mailboxLayout(cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00).base,
     recordBytes: QREC_BYTES,
     record: QREC_RECORD };
@@ -203,6 +221,13 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // The withdrawn word-move read is a property of the HOST'S protocol code,
     // not of the transfer's payload, so it reaches the proto fields rather than
     // `grab.fault` (R20 §48.3).
+    // The adaptive choice is the HOST'S protocol code too, so these reach the
+    // proto fields rather than `grab.fault` (R21 §50.4).
+    if (fault in PICK_FAULTS) {
+      if (!grab.proto?.live)
+        throw new Error(`fault ${fault} only applies to a live mailbox host`);
+      grab.proto.pfault = fault;
+    }
     if (fault === "wide-read") {
       if (!grab.proto?.width)
         throw new Error("fault wide-read only applies to the access-width case");

@@ -31,7 +31,7 @@ import { CORR, MAX_QUANTA, MAX_DEBT_UNITS, debtLimitFor, CORR_FAULTS, correctorB
   correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "./corrector.mjs";
 import { Machine } from "./machine.mjs";
 import { commandBlocks, commandCost, commandBootLines, packCommand, refConsume,
-  makeEncoder, cmdBundle, CMD_VALUES } from "./command.mjs";
+  makeEncoder, cmdBundle, CMD_VALUES, adaptiveTarget } from "./command.mjs";
 import { protoMap, protoBootLines } from "./proto-blocks.mjs";
 import { CASES as ROM_CASES } from "./cases.mjs";
 import { buildCase } from "./case-config.mjs";
@@ -1623,8 +1623,13 @@ const QFAULTS = ["q-commit-first", "q-short-payload"];
 // publication: the withdrawn word-move face read, which the 8-bit Z80 bus
 // answers with a duplicated byte (R20 §48.3).
 const WIDTH_FAULTS = ["wide-read"];
+// The adaptive choice is the 68000's too, and it breaks WHICH boundary a bundle
+// names: the two fixed leads R20 measured, put back as faults so the choice
+// cannot quietly become one of them again, and a comparison moved out of reach
+// so that every attempt has to refuse (R21 §50.4).
+const PICKFAULTS = ["pick-near", "pick-far", "count-astray"];
 assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS,
-  ...WIDTH_FAULTS].sort(),
+  ...WIDTH_FAULTS, ...PICKFAULTS].sort(),
   Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
 // Each one changes the 68000's rom, and none of them reaches the Z80's source.
 {
@@ -2056,6 +2061,45 @@ if (process.argv.includes("--machine")) {
   }
 }
 
+// ── THE BOUNDARY A PUBLISH ATTEMPT NAMES (R21 §50.2) ─────────────────────
+// The host holds `R` from its snapshot read and learns the decoder's own live
+// counter inside the grab. What it must name is the boundary after that
+// counter, whichever of the two the snapshot turned out to be — and it must
+// refuse anything else rather than guess.
+{
+  // The two live values a correct read can produce, over a whole byte cycle and
+  // across both wraps.
+  for (const rExt of [0, 1, 0xfd, 0xfe, 0xff, 0x100, 0x1234, 0xfffc, 0xfffd, 0xfffe, 0xffff]) {
+    const near = adaptiveTarget(rExt, (rExt + 1) & 0xff);
+    const far = adaptiveTarget(rExt, (rExt + 2) & 0xff);
+    assert.equal(near, (rExt + 2) & 0xffff, `R=${rExt}: the newer face names the wrong boundary`);
+    assert.equal(far, (rExt + 3) & 0xffff, `R=${rExt}: the older face names the wrong boundary`);
+    // BOTH ROWS NAME THE COUNTER'S NEXT BOUNDARY. That is the whole point: the
+    // target is one past whatever is running, not a fixed distance from what
+    // was read.
+    assert.equal(near, (((rExt + 1) & 0xffff) + 1) & 0xffff,
+      `R=${rExt}: the newer row is not the live counter's next boundary`);
+    assert.equal(far, (((rExt + 2) & 0xffff) + 1) & 0xffff,
+      `R=${rExt}: the older row is not the live counter's next boundary`);
+    // …and every other byte is refused, not rounded to the nearer of the two.
+    for (let live = 0; live < 256; live++) {
+      if (live === ((rExt + 1) & 0xff) || live === ((rExt + 2) & 0xff)) continue;
+      assert.equal(adaptiveTarget(rExt, live), null,
+        `R=${rExt}: a live counter of ${live} was accepted`);
+    }
+  }
+  // The two candidates are consecutive, so no counter can satisfy both and the
+  // order the host compares them in cannot change the answer.
+  for (let rExt = 0; rExt < 0x10000; rExt += 97)
+    assert.notEqual((rExt + 1) & 0xff, (rExt + 2) & 0xff);
+  // The u16 wrap is independent of the byte wrap: $ffff -> $0000 in the target
+  // while the comparison is still an ordinary byte.
+  assert.equal(adaptiveTarget(0xfffe, 0xff), 0x0000);
+  assert.equal(adaptiveTarget(0xfffe, 0x00), 0x0001);
+  assert.equal(adaptiveTarget(0xffff, 0x00), 0x0001);
+  assert.equal(adaptiveTarget(0xffff, 0x01), 0x0002);
+}
+
 // ── THE 8-BIT Z80 BUS, AS A RULE (R20 §48.3 step 1) ──────────────────────
 // $A00000..$A0FFFF answers a word or long access with the byte at the EVEN
 // address duplicated into both halves. That was true for four rounds while the
@@ -2132,5 +2176,6 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " main BC in it at all,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
+  + " the boundary a publish attempt names and every live counter it refuses,"
   + " the 8-bit Z80 bus as a rule the emitter enforces and every rom is checked against,"
   + " resolved configuration and padding paths pass");
