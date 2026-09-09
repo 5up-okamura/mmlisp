@@ -979,3 +979,54 @@ which R20 excludes.
 Gates: dac-stream 29/29, probe-test green, machine:required 33/33 exit 0, split
 inside every limit (83.8% / 78.7% / 2,466 B / 8,192 B), c-gate 41/41,
 decoder 1 problem (the 54.2/s).
+
+## R21 §50 (2026-09-10) — the boundary chosen inside the grab
+
+Commit `878a7a3`. The fixed lead is gone. The host builds BOTH candidate
+payloads (`R+2` and `R+3`) and both comparison bytes before taking the bus, then
+inside one grab reads the ack and — only if the box is free — the decoder's own
+live counter, publishing the payload whose boundary is that counter's next one:
+`live == (R+1)&$ff -> R+2`, `live == (R+2)&$ff -> R+3`, anything else publishes
+nothing and is counted. `adaptiveTarget` in command.mjs is the rule on its own.
+
+Room for the two comparisons came from putting `$A11100` in an address
+register: `move.w #$0100,(a5)` and `move.w (a5),d0` are 12 and 8 cycles where
+the absolute forms are 20 and 16, which took 24 cycles (174 master) out of the
+critical section. The port is recorded in the access ledger with a `port` flag,
+so it is not an exception hiding inside the byte-width rule.
+
+**60 seconds, complete 2ch+CSM**: 3,675 bundles committed and acknowledged,
+**61.2 updates/s**; every one of 3,675 targets was the live counter's next
+boundary, checked from the log against the engine's own counter writes; publish
+stop 801..1,418 master, read 450..925, worst per-observation total 1,418 with
+none over 1,500; interval 438,389..439,271 with 0 of 7,348 outside the window;
+0 busy, 0 mismatch; both counter wraps crossed with publications either side.
+
+**The one thing left**: 44 of 3,675 (1.2%) applied one observation late, all
+published between slot 8.2 and 9.1 of 80. Measured cause — `mb pending` reads
+the commit at **slot 8** and the decode stores the counter's LOW byte at **slot
+8.99..9.24**. A commit landing in that ~0.8-slot gap has already missed that
+lap's pending check while the counter the host reads is still the previous lap's,
+so `live + 1` is one short. The host cannot see the window: the counter reads
+the same on both sides of `mb pending`, and its period sweeps every phase by
+design. The R18 §48.2 remedy was MEASURED and does not fit — marking `mb
+pending` as counter-dependent lands it on `mb diff lo` at slot 24, 101 B past
+2,560 with a worst slot of 96.6%.
+
+Negatives that must fail, all confirmed: `pick-near` (always R+2) 330 wrong
+targets and 339 late; `pick-far` (always R+3) 205 wrong, 73 busy, 53.8/s — R20's
+lead 3 reproduced; `count-astray` 612 refusals, 0 publications, 0 level pages.
+
+`dac-stream:decoder` now runs the mailbox family with a **10-second floor**: the
+late window is under one slot in eighty, so a 2-second run makes about one and
+cannot tell it from the single late write the engine makes while acquiring —
+which is why R20's 2-second run looked clean.
+
+The two counter-wrap cases (`$00fc`, `$fffc`) are the only ones without the CSM
+test tone: the ceiling image assembles at exactly $A00 with zero spare and the
+counter start costs six bytes.
+
+**Open, and it is a design call**: allow ~1.0% of bundles to apply 8.01 ms late
+and go to the listening ROM as it stands, or authorise swapping the order of
+`mb pending` and the counter's low-byte store (which touches the consumer's or
+the decode's placement, both excluded by R21).
