@@ -29,16 +29,12 @@ const PROFILES = [
   { tag: "…and the runtime protocol in the chain", cfg: { correctorBudget: true },
     opt: { correct: true, proto: true } },
   // The reserved command pad replaced by the code that actually does the job
-  // (R16 §41.3): the PCM state BUNDLE, one decision a lap, in the ten b9/b10
-  // positions the reservation owns and nowhere else. First as it has to be
-  // written — paying for the BC it clobbers — and then without that payment, so
-  // the intrinsic cost of the chain is a measurement rather than a subtraction.
-  { tag: "…and the PCM state bundle consumer",
+  // (R17 §43.3): the one-slot MAILBOX, one decision a lap, in the ten b9/b10
+  // positions the reservation owns and nowhere else. No queue, no cursor, no
+  // record pointer — and therefore no main BC anywhere in the chain.
+  { tag: "…and the PCM state mailbox consumer",
     cfg: { correctorBudget: true, command: true },
     opt: { correct: true, proto: true, command: true } },
-  { tag: "…the same chain with the BC conflict left unpaid",
-    cfg: { correctorBudget: true, command: true },
-    opt: { correct: true, proto: true, command: true, keepBC: false } },
 ];
 
 // THE FOUR LIMITS, judged INDEPENDENTLY (R14 §37.4 step 4). One number over is a
@@ -88,9 +84,10 @@ for (const p of PROFILES) {
         console.log(`     ${pad(x.name, 22)}${String(x.cycles).padStart(5)} cyc`
           + (x.edge ? "   pinned to the edge block" : ""));
     }
-    if (r.stage === "command bc")
-      console.log(`   the consumer clobbers BC in slots ${r.clash.join(", ")}, which the`
-        + ` decode and the protocol carry it through`);
+    if (r.stage === "command order")
+      console.log(`   the comparison landed at slot ${r.firstCount} and the decode's`
+        + ` \`count hi store\` at ${r.countAt}: the consumer would be comparing against`
+        + ` last lap's observation number`);
     continue;
   }
   // AN IMAGE THAT OVERRUNS ITS REGION IS A MEASUREMENT, not a crash. The
@@ -144,10 +141,11 @@ for (const p of PROFILES) {
     if (r.pack.over.length)
       console.log(`     ${pad("past the ceiling", 22)}${r.pack.over.length} positions:`
         + ` ${r.pack.over.map((o) => `slot ${o.slot} ${o.cycles} of ${o.ceiling}`).join(", ")}`);
-    if (r.bcClash.length)
-      console.log(`     ${pad("BC CONFLICT", 22)}the decode and the protocol carry BC through`
-        + ` slots ${r.bcClash.join(", ")}, which this image clobbers — NOT a working engine,`
-        + ` a lower bound on the cost`);
+    console.log(`     ${pad("main BC", 22)}not used by any piece — nothing is dereferenced,`
+      + ` so the decode's and the protocol's live ranges are untouched`);
+    console.log(`     ${pad("compare after", 22)}slot ${r.walk.placed
+      .find((x) => x.block.name === "count hi store").absolute} (\`count hi store\`),`
+      + ` first at slot ${r.pack.firstCount}`);
     console.log(`     ${pad("stores pinned to", 22)}slots ${r.pack.pinned.join(", ")},`
       + ` inside the block whose edge (slot ${r.pack.edgeSlot}) is the last before the lap boundary`);
   }

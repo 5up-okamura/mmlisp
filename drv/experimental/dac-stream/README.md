@@ -118,42 +118,54 @@ What the reservations buy, and the rate each one is sized for:
 | --- | --- | --- |
 | output index + snapshot | 300 | ~~the §3.7 publication~~ — **spent on the bounded corrector instead** (R10 §29.5), and the publication that replaced it is real code costing 87 cycles a block: a 5-byte snapshot through main BC and the logical position's own advance |
 | voice run state | 260 | two voices' blocks-left countdown and loop-or-advance, selected branch-free and **staged**, not applied |
-| command dispatch | 145 | one command a block = **624 commands/s**, against roughly 10 PCM events a frame. **The bundle consumer measures 867 a lap against 725** — see below, and note that 124.84 bundles/s is not the same number as 600 scalar commands/s |
+| command dispatch | 145 | one command a block = **624 commands/s**, against roughly 10 PCM events a frame. **The mailbox consumer measures 578 a lap against the 725 reserved** — see below, and note that 124.84 bundles/s is not the same number as 600 scalar commands/s |
 | YM / PSG writes | 280 | four a block = **2,497 writes/s = 41.6 a frame**, which is the shipped driver's typical |
 | block edge B | 48 | the two staged source pointers into `DE'`/`IX` |
 
-**What the command reservation actually costs (R16 §41).** The reservation is
-145 cycles a block — b9 and b10, ten positions, 725 cycles a lap. Two consumers
-have now been written against it and measured:
+**What the command reservation actually costs (R15, R16, R17).** The reservation
+is 145 cycles a block — b9 and b10, ten positions, 725 cycles a lap. Three
+consumers have been written against it and measured:
 
 | | shape | cycles a lap | positions |
 | --- | --- | ---: | ---: |
-| R15 | one SCALAR record a block: `{slot, value}` | 3,095 | 30 (six a block) |
-| R16 | one desired-state BUNDLE a lap: all three levels | 867 | 10 |
+| R15 | one SCALAR record a block: `{slot, value}` | 3,095 | 30 |
+| R16 | one desired-state BUNDLE a lap, over a FIFO | 867 | 10 |
+| **R17** | **the same bundle, through a one-slot MAILBOX** | **578** | **10** |
 | reserved | | **725** | **10** |
 
-The bundle is the right shape — three simultaneous level changes are one record
-and one decision, not three — and it brought the cost down by a factor of 3.6.
-It still does not fit, and the last 142 cycles are not available anywhere:
-`A` and the flags die at every slot boundary, `HL` is the play cursor, `DE` is
-the YM data port, and `IX`, `IY` and the shadow set are the mixer's, so each of
-the thirteen pieces re-establishes its own pointer and hands its result on
-through memory. `AF'` carries the one thing memory cannot — the borrow out of
-the low half of the time comparison — and main BC is the only scratch register
-there is, which is its own problem: the decode and the protocol carry BC through
-five of the consumer's ten positions, and saving it around them costs 231 more.
+The bundle was the right shape — three simultaneous level changes are one record
+and one decision — and the mailbox is what finally made it affordable. R16's
+consumer still ran a general FIFO on the Z80 (head against tail, a size byte, a
+type byte, a record pointer rebuilt every lap), and that machinery, not the
+arithmetic, was where its 867 cycles went. A waiting list belongs to the CPU that
+can afford one, so the Z80 now holds ONE outstanding desired state at a fixed
+address with a two-byte handshake — and because nothing is dereferenced, **main
+BC is not used anywhere in the chain**, which is checked by decoding the emitted
+bytes rather than by reading the source.
 
-| | worst slot | mean | code (finished) | RAM |
-| --- | ---: | ---: | ---: | ---: |
-| decode + corrector, publication replaced | 83.8% | 78.0% | 2,407 B | ok |
-| + the runtime protocol | 83.8% | 79.5% | 2,551 B | ok |
-| + the bundle consumer, BC paid for | — does not place — | | | |
-| + the bundle consumer, BC unpaid | **96.6%** | **79.7%** | 2,505 B | ok |
-| limits | 83.9% | 79.6% | 2,560 B | 8,192 B |
+Time is counted in observations rather than samples: a bundle can only land on a
+lap boundary, so `applyAtLow` was carrying a multiple of eighty in sixteen bits.
+`decisionObservation:u16` runs against the decoder's own counter — same width,
+same wrap, 1..32767 laps of look-ahead instead of samples — and the engine's
+`outputSampleLow` is gone with the arithmetic that needed it.
 
-The YM/PSG slot writer's b11..b14 reservation is NOT touched: R16 §41.1 holds it
-until the host-YM safe window of §33.6 step 5 answers, so a shortfall in the
-consumer is a shortfall rather than a loan against a result nobody has yet.
+| | worst slot | mean | consumer | code (finished) | RAM |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| decode + corrector, publication replaced | 83.8% | 78.0% | — | 2,407 B | ok |
+| + the runtime protocol | 83.8% | 79.5% | — | 2,551 B | ok |
+| + the R16 bundle over a FIFO | 96.6% | 79.7% | 867 | 2,540 B | ok |
+| **+ the R17 mailbox** | **83.8%** | **78.7%** | **578** | **2,511 B** | **ok** |
+| limits | 83.9% | 79.6% | 725 | 2,560 B | 8,192 B |
+
+The YM/PSG slot writer's b11..b14 reservation is untouched throughout: R17 §43.1
+holds it until the host-YM safe window of §33.6 step 5 answers.
+
+**How fast desired state can move**, measured with the 68000 really holding the
+bus: the whole handshake in ONE grab — read the ack, publish if the box is free
+— is 373..1,354 master, inside the 1,500 the live contract allows with 146 to
+spare. One transfer an observation and one observation a lap is **124.8
+desired-state updates a second**; publishing and acknowledging in separate grabs
+gives 62.4, and payload/commit/ack separately gives 41.6.
 
 Two things this settles, and one it does not:
 
@@ -779,7 +791,7 @@ generation time.
 | `corrector.mjs` | the bounded phase corrector: its arithmetic, the nine-bit debt and its ±112 limit, the seven `jr` ladders and the five ways to break it |
 | `protocol.mjs` | **the 68k/Z80 runtime protocol's one layout.** The 5-byte snapshot, the host's control block, the ordered writes each side makes, the wrap rule of every counter, the queue's records — and the Z80 equates, C header and JS model all emitted from it, so no offset is written down twice |
 | `proto-blocks.mjs` | the protocol as Z80 code: the host-control check, the snapshot publication and the logical position's advance, in one-slot pieces and in P1's single-block form |
-| `command.mjs` | the PCM state BUNDLE: the 8-byte cell, the host-side encoder that coalesces three level changes at one boundary into one record, the JS reference consumer, the branch-free Z80 pieces that make one decision a lap, and the packer that lays them into the b9/b10 positions the reservation owns |
+| `command.mjs` | the PCM state MAILBOX: the host-side encoder that holds the waiting list on extended observation numbers and coalesces three level changes at one boundary into one bundle, the JS reference consumer, the branch-free Z80 pieces that make one decision a lap without touching main BC, and the packer that lays them into the b9/b10 positions the reservation owns |
 | `split-report.mjs` | what the distributed image costs, printed from the image itself: pieces, worst slot, mean, ladders, DAC interval, the code ledger and the four limits judged independently |
 | `decoder-eval.mjs` | the BlastEm harness for the observer, the corrector and the runtime protocol on both CPUs |
 | `machine.mjs` | the emulated machine and the instrument: RAM, the YM's four ports with a real timer model, the 68000's bus grab as injectable stopped time, and a 64-bit-safe trace |

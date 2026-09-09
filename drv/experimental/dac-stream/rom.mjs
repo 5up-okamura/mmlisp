@@ -57,6 +57,8 @@ class M68k {
   moveBimmA(imm,a) { this.w(0x10bc | (a << 9)); this.w(imm & 255); }
   moveBDtoA(d, a) { this.w(0x1080 | (a << 9) | d); }                    // move.b Dn,(An)
   moveBpost() { this.w(0x12d8); }                                       // move.b (a0)+,(a1)+
+  moveBabsD(addr, d) { this.w(0x1039 | (d << 9)); this.l(addr); }       // move.b (abs).l,Dn
+  cmpBDD(s, d) { this.w(0xb000 | (d << 9) | s); }                       // cmp.b Ds,Dd
   moveBpostA(sa, da) { this.w(0x10d8 | (da << 9) | sa); }               // move.b (As)+,(Ad)+
   moveWpost() { this.w(0x32d8); }                                       // move.w (a0)+,(a1)+
   moveLpost() { this.w(0x22d8); }                                       // move.l (a0)+,(a1)+
@@ -281,16 +283,12 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveBimm(P.bootGeneration & 0xff, Z80_BASE + P.bootGen);
     m.moveBimm((P.bootGeneration >> 8) & 0xff, Z80_BASE + P.bootGen + 1);
     m.moveBimm(0, Z80_BASE + P.phaseGen);
-    m.moveBimm(0, Z80_BASE + P.queueHead);
+    m.moveBimm(0, Z80_BASE + P.commandCommit);
     m.moveBimm(0, Z80_BASE + P.phaseCommit);   // …the phase commit LAST
     m.moveq(0, 2);                             // the phase generation, counted here
     m.moveq(0, 3);                             // …and the phase commit
     m.moveWimmD(P.between, 5);                 // live reads between invalidations
-    if (P.queue || P.piece) {
-      m.moveq(0, 4);                           // the queue head, counted here
-      m.leaAbs(Z80_BASE + P.queueBase, 4);     // …and the write pointer, in a4
-      m.moveWimmD(P.perPage - 1, 7);
-    }
+    if (P.queue || P.piece) m.moveq(0, 4);     // the mailbox's commit, counted here
   }
   // The Z80 begins when the bus is released, so nops placed BEFORE the release
   // move the engine's phase against the VDP's counters — which is how the
@@ -576,15 +574,18 @@ export function buildRom(image, samples = null, grab = null) {
     };
     if (P.piece) {
       const one = {
-        // A continuation: payload bytes only, and the cursor left alone, so
-        // nothing the consumer can see has changed yet.
-        payload: () => { m.leaAbs(QREC, 0); for (let i = 0; i < P.recordBytes; i++) m.moveBpostA(0, 4); },
-        // …and the piece that ends it: the cursor alone, publishing everything
-        // the continuations wrote.
-        head: () => { m.addqL(P.recordBytes, 4); m.leaAbs(Z80_BASE + P.queueHead, 1); m.moveBDtoA(4, 1); },
-        // The credit: how much room the consumer has left, which is one byte
-        // the Z80 owns and the host only reads.
-        credit: () => { m.leaAbs(Z80_BASE + P.queueTail, 0); m.leaAbs(PROTO_WORK + 24, 1); m.moveBpost(); },
+        // The payload alone, with the commit left where it was, so nothing the
+        // consumer can see has changed yet.
+        payload: () => { m.leaAbs(QREC, 0); m.leaAbs(Z80_BASE + P.mailbox, 1);
+          for (let i = 0; i < P.recordBytes; i++) m.moveBpost(); },
+        // …and the piece that ends it: the commit alone, publishing everything
+        // the payload wrote.
+        commit: () => { m.addqL(1, 4); m.leaAbs(Z80_BASE + P.commandCommit, 1);
+          m.moveBDtoA(4, 1); },
+        // The answer: one byte the Z80 owns and the host only reads, which is
+        // how the 68000 knows the box is free again.
+        ack: () => { m.leaAbs(Z80_BASE + P.commandAck, 0); m.leaAbs(PROTO_WORK + 24, 1);
+          m.moveBpost(); },
         // The time update: the selector, its pad and both faces, in one run.
         snapshot: () => { m.leaAbs(Z80_BASE + P.readRun, 0); m.leaAbs(PROTO_WORK, 1);
           for (let i = 0; i < P.readLongs; i++) m.moveLpost();
@@ -593,17 +594,26 @@ export function buildRom(image, samples = null, grab = null) {
         invalidate: () => { m.addqL(1, 2); m.addqL(1, 3);
           m.leaAbs(Z80_BASE + P.phaseGen, 1); m.moveBDtoA(2, 1);
           m.leaAbs(Z80_BASE + P.phaseCommit, 1); m.moveBDtoA(3, 1); },
+        // THE WHOLE HANDSHAKE IN ONE GRAB (R17 §43.6 step 6): read the ack,
+        // and if the box is free, put the next bundle in it and commit. Two
+        // paths, deliberately — the STOP -> RESUME range this reports IS the
+        // difference between "the box was busy" and "a bundle went out", and a
+        // host scheduler has to fit the longer one.
+        mailbox: () => {
+          m.moveBabsD(Z80_BASE + P.commandAck, 0);
+          m.cmpBDD(4, 0);                        // …against the commit we last wrote
+          m.bne("mbbusy");
+          m.leaAbs(QREC, 0);
+          m.leaAbs(Z80_BASE + P.mailbox, 1);
+          for (let i = 0; i < P.recordBytes; i++) m.moveBpost();
+          m.addqL(1, 4);
+          m.leaAbs(Z80_BASE + P.commandCommit, 1);
+          m.moveBDtoA(4, 1);                     // …the commit, LAST
+          m.label("mbbusy");
+        },
       }[P.piece];
       if (!one) throw new Error(`unknown protocol piece ${P.piece}`);
       grabOnce("pgrant", one);
-      // The write pointer goes back to the page's start once it has filled it,
-      // which is the ring's wrap done rather than described.
-      if (P.piece === "payload" || P.piece === "head") {
-        m.dbra(7, "pdone");
-        m.leaAbs(Z80_BASE + P.queueBase, 4);
-        m.moveWimmD(P.perPage - 1, 7);
-        m.label("pdone");
-      }
       m.bra("idle");
     } else {
     // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
@@ -626,31 +636,26 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveWimm(0x0000, Z80_BUSREQ);            // release
     }
     // ── A REAL COMMAND, PUBLISHED THE WAY §35.1 SEPARATES THEM ───────────
-    // The payload goes in first and `queueHead` LAST, and nothing else in the
-    // control block is touched: an ordinary command must not cost the engine
-    // its H synchronisation. The destination pointer lives in a4 across grabs
-    // and is reset every time the 256-byte page has been filled, which is the
-    // queue's wrap exercised rather than described.
+    // The payload goes in first and `commandCommit` LAST, and nothing else in
+    // the control block is touched: an ordinary command must not cost the
+    // engine its H synchronisation. There is no cursor to keep — one mailbox,
+    // one commit byte, and the Z80's ack is what says the box is free.
     if (P.queue) {
       m.moveWimm(0x0100, Z80_BUSREQ);
       m.label("qgrant");
       m.moveWabsD(Z80_BUSREQ, 0);
       m.andiW(0x0100, 0);
       m.bne("qgrant");
-      m.leaAbs(QREC, 0);
-      const n = P.qfault === "short-record" ? P.recordBytes - 1 : P.recordBytes;
-      const head = () => { m.leaAbs(Z80_BASE + P.queueHead, 1); m.moveBDtoA(4, 1); };
-      // `head-first` is the fault: the cursor says the record is there before
+      const n = P.qfault === "short-payload" ? P.recordBytes - 1 : P.recordBytes;
+      const commit = () => { m.leaAbs(Z80_BASE + P.commandCommit, 1); m.moveBDtoA(4, 1); };
+      // `commit-first` is the fault: the commit says the bundle is there before
       // any of it has been written.
-      if (P.qfault === "head-first") { m.addqL(P.recordBytes, 4); head(); }
-      for (let i = 0; i < n; i++) m.moveBpostA(0, 4);
-      if (P.qfault !== "head-first") { m.addqL(P.recordBytes, 4); head(); }
+      if (P.qfault === "commit-first") { m.addqL(1, 4); commit(); }
+      m.leaAbs(QREC, 0);
+      m.leaAbs(Z80_BASE + P.mailbox, 1);
+      for (let i = 0; i < n; i++) m.moveBpost();
+      if (P.qfault !== "commit-first") { m.addqL(1, 4); commit(); }
       m.moveWimm(0x0000, Z80_BUSREQ);
-      // …and back to the page's start once it is full.
-      m.dbra(7, "qdone");
-      m.leaAbs(Z80_BASE + P.queueBase, 4);
-      m.moveWimmD(P.perPage - 1, 7);
-      m.label("qdone");
     }
     if (!P.skipBulk) m.dbra(5, "idle"); else m.bra("idle");
     // BULK / INVALIDATE: the fields first, the commit strictly LAST, and the

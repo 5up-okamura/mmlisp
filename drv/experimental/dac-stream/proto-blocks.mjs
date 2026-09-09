@@ -8,9 +8,6 @@
 //   decode   the reading is decoded from the stash
 //   publish  the five-byte stage is copied into the face the 68000 is not
 //            reading, and the selector is flipped last
-//   advance  the Z80's PRIVATE 16-bit output index moves on by one lap's worth
-//            of samples (R15 §39.2 — the host derives its own 32-bit copy from
-//            the observation number and this one is never published)
 //
 // THE ORDER IS THE POINT (§33.3). The check runs AFTER the reading is taken and
 // BEFORE the decode is finalised, so a stop that happened before the read is
@@ -23,7 +20,7 @@
 // length whatever the host did.
 import { op } from "./schedule.mjs";
 import { GLOB } from "./config.mjs";
-import { protocolLayout, protoGlobals, SNAPSHOT, SNAPSHOT_BYTES,
+import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT, SNAPSHOT_BYTES,
   SNAPSHOT_STRIDE } from "./protocol.mjs";
 
 const hx = (n) => `$${n.toString(16)}`;
@@ -40,15 +37,13 @@ export function protoMap(cfg, state) {
   const G = protoGlobals(decode, state.countLo);
   if (G.end > cfg.ram.glob[1])
     throw new Error("the protocol's globals do not fit the globals region");
-  // The queue's page, when the map has one. A P1 build has no command queue at
-  // all, so the pointer's high byte is the queue's page or zero — and a boot
-  // that wrote a plausible-looking wrong page would be worse than one that
-  // writes an obviously impossible one.
-  const queuePageValue = cfg.ram.queue ? cfg.ram.queue[0] >> 8 : 0;
-  return { L, glob: g, stage: G.fields, stageBase: G.stage,
-    lastPhaseCommit: G.lastPhaseCommit, queueTail: G.queueTail,
-    queuePage: G.queuePage, queuePageValue, queueBase: cfg.ram.queue ?? null,
-    outputLow: G.outputLow, cmd: G.cmd, lateCount: G.lateCount, globEnd: G.end,
+  // The mailbox's payload sits at the head of the region the old queue had. The
+  // rest of that page is NOT released (R17 §43.1) — it stays reserved for the
+  // voice state a later profile will need, and the ledger keeps it.
+  const mailbox = mailboxLayout(cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00);
+  return { L, glob: g, stage: G.fields, stageBase: G.stage, mailbox,
+    lastPhaseCommit: G.lastPhaseCommit, commandAck: G.commandAck,
+    lateCount: G.lateCount, cmd: G.cmd, globEnd: G.end,
     // The staged bytes a command writes: the block edge's own inputs, and the
     // bit bucket a suppressed command is written into instead.
     stageBytes: g + GLOB.v0page, dumpBytes: g + GLOB.cmdDump,
@@ -147,38 +142,6 @@ export function protoPublishOps(m, tag = "", { useShadow = false } = {}) {
 }
 
 /**
- * The Z80's own low sixteen bits of the output sample index, advanced once a lap
- * by the lap's own sample count.
- *
- * ONE PER OUTPUT is the semantics, not the arithmetic: the counter names DAC
- * writes and it is read at one defined instruction position — the lap's first
- * `$2A` write — so adding the lap's worth once produces exactly the same
- * sequence at that position as adding one eighty times, for a fifth of the
- * cycles. It does not advance while the bus is held, because the Z80 is not
- * running, and it does not move when the phase is corrected, because a
- * correction changes when a sample is written and not how many there were.
- *
- * SIXTEEN BITS, NOT THIRTY-TWO, and it is not published (R15 §39.2). The host
- * gets its 32-bit time by multiplying the observation number it can already
- * see; the Z80 needs only enough of the number to extend a command's 16-bit
- * `applyAtLow` against, and that is exactly sixteen bits.
- *
- * The carry crosses the two bytes inside ONE block: `ld a,(nn)` and
- * `ld (nn),a` leave the flags alone, so nothing has to be saved between them.
- */
-export function protoAdvanceOps(m, samples) {
-  const at = m.outputLow;
-  const ops = [];
-  for (let k = 0; k < 2; k++) {
-    ops.push(op(`ld   a,(${hx(at + k)})`, 13));
-    ops.push(op(k === 0 ? `add  a,${samples}` : "adc  a,0", 7));
-    ops.push(op(`ld   (${hx(at + k)}),a`, 13,
-      k === 1 ? { what: "the logical output position, one lap on" } : {}));
-  }
-  return ops;
-}
-
-/**
  * The 16-sample block boundaries inside one lap, as offsets from the lap's own
  * first output (R15 §39.3).
  *
@@ -211,7 +174,7 @@ export function protoBootLines(m) {
     // The two bytes the decoder owns are NOT zeroed here — its own init does
     // that — so the stage is cleared from the third byte on.
     `ld   hl,${hx(m.stageBase + 2)}`,
-    `ld   b,${SNAPSHOT_BYTES - 2 + 5}`,
+    `ld   b,${SNAPSHOT_BYTES - 2 + 3}`,
     "protoinit:",
     "ld   (hl),0",
     "inc  l",
@@ -226,26 +189,20 @@ export function protoBootLines(m) {
     // The commit already in place is not an invalidation: it is where we start.
     `ld   a,(${hx(c.phaseCommit.offset)})`,
     `ld   (${hx(m.lastPhaseCommit)}),a`,
-    // The queue is empty, the logical output position is zero (the loop above
-    // has already cleared both), and the first face to be written is face 1, so
-    // the first publication flips the selector from 0 to 1.
+    // The mailbox is empty — the loop above cleared the ack and the late count —
+    // and the first face to be written is face 1, so the first publication
+    // flips the selector from 0 to 1.
     "xor  a",
-    `ld   (${hx(m.queueTail)}),a`,
     `ld   (${hx(m.L.publishSelect.offset)}),a`,
-    // …and the record pointer's high byte, which is the queue's page and never
-    // changes again: the consumer takes tail and page together (R15 §39.4).
-    `ld   a,${hx(m.queuePageValue)}`,
-    `ld   (${hx(m.queuePage)}),a`,
   ];
 }
 
 /** What the protocol costs, per lap, so a budget can be read off. */
-export function protoCost(m, state = m.state, samples = 5) {
+export function protoCost(m, state = m.state) {
   const c = (ops) => ops.reduce((t, o) => t + o.cycles, 0);
   return {
     check: c(protoCheckOps(m, state)),
     publish: c(protoPublishOps(m, "", { useShadow: true })),
-    advance: c(protoAdvanceOps(m, samples)),
   };
 }
 
@@ -305,38 +262,6 @@ export function protoPublishLive() {
   for (let k = 0; k < SNAPSHOT_BYTES; k++) L.push(k === SNAPSHOT_BYTES - 1 ? [] : ["b", "c"]);
   L.push([], []);                               // the two flips carry nothing
   return L;
-}
-
-/**
- * The Z80's private 16-bit output position, advanced once a lap, WITH THE CARRY
- * MADE EXPLICIT.
- *
- * The single-block version carried the carry in the flags, which is exactly
- * what a slot boundary destroys, so splitting it as it stood would have been
- * silently wrong (R14 §37.3). Here the carry out of the low byte is rebuilt as
- * a 0/$ff mask in C from what was actually stored — a carry happened iff the
- * stored byte is now BELOW the addend — and `sub c` with that mask is the +1.
- * It is `sbc a,a` after a compare, so 0 and 1 take the same cycles, and so do
- * $00ff -> $0100 and the u16 wrap.
- *
- * TWO BYTES, NOT FOUR (R15 §39.2): the upper half was only ever carried so the
- * host could be told the whole number, and the host now derives it.
- */
-export function protoAdvanceSplit(m, samples) {
-  const at = m.outputLow;
-  return [
-    b("idx add", [op(`ld   a,(${hx(at)})`, 13), op(`add  a,${samples}`, 7), op("ld   b,a", 4)]),
-    b("idx store", [op("ld   a,b", 4), op(`ld   (${hx(at)}),a`, 13)]),
-    b("idx carry", [op("ld   a,b", 4), op(`cp   ${samples}`, 7), op("sbc  a,a", 4),
-      op("ld   c,a", 4, { what: "$ff exactly when the low byte wrapped" })]),
-    b("idx 1", [op(`ld   a,(${hx(at + 1)})`, 13), op("sub  c", 4), op("ld   b,a", 4)]),
-    b("idx 1 store", [op("ld   a,b", 4),
-      op(`ld   (${hx(at + 1)}),a`, 13, { what: "the logical output position, one lap on" })]),
-  ];
-}
-
-export function protoAdvanceLive() {
-  return [["b"], ["b"], ["c"], ["b", "c"], []];
 }
 
 /**

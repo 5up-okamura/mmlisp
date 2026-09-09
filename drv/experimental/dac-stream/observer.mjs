@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { GLOB } from "./config.mjs";
 import { generate } from "./gen-stream.mjs";
 import { op } from "./schedule.mjs";
-import { protoMap, protoCheckOps, protoPublishOps, protoAdvanceOps,
+import { protoMap, protoCheckOps, protoPublishOps,
   protoBootLines, protoCost } from "./proto-blocks.mjs";
 
 // The calibrated tables, as a fixed artifact. The Z80 carries the quantised
@@ -227,21 +227,8 @@ export const PUBLISH_FAULTS = {
   "carry-publish": "the last field is published after the NEXT read, one observation late",
 };
 
-/**
- * Ways to get the ENGINE side of the derived time wrong (R15 §39.3).
- *
- * The host no longer reads the output index — it multiplies the observation
- * number by the lap's own output count — so the thing that can now go wrong is
- * the Z80's private copy drifting from that derivation. `idx-short` makes every
- * lap advance one sample less than it wrote, which is the smallest version of
- * exactly that, and the check has to notice it.
- */
-export const PROTO_Z80_FAULTS = {
-  "idx-short": "the lap's advance is one sample short of what the lap actually wrote",
-};
-
 export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, every = 1,
-  decode = false, publish = false, publishFault = null, protoFault = null,
+  decode = false, publish = false, publishFault = null,
   // THE RUNTIME PROTOCOL (R12 §33.6 step 2), as real code rather than as a
   // reference: the boot handshake, the output sample index, the published
   // snapshot and the host's invalidation, spread one job to a slot across the
@@ -292,9 +279,6 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
   if (publishFault && !PUBLISH_FAULTS[publishFault])
     throw new Error(`unknown publish fault ${publishFault}`);
   if (publishFault && !publish) throw new Error("a publish fault needs a publishing build");
-  if (protoFault && !PROTO_Z80_FAULTS[protoFault])
-    throw new Error(`unknown protocol fault ${protoFault}`);
-  if (protoFault && !proto) throw new Error("a protocol fault needs a protocol build");
   // `carry-publish` moves the last field into the READ slot, where it lands
   // after the next observation's read rather than before it.
   if (publishFault === "carry-publish") pubSlot[PUBLISH.length - 1] = at;
@@ -328,8 +312,7 @@ export function generateObserver(cfg, { reads = ["h"], store = false, at = 0, ev
         ...decodeOps(quantStep(cfg, i), { ...map, tag: `_${i}` }),
         ...publishHere];
       if (rel === 3) return [...protoPublishOps(pm, `_${i}`, { useShadow: !cfg.voices }), ...publishHere];
-      return [...protoAdvanceOps(pm, cfg.cycleSlots - (protoFault === "idx-short" ? 1 : 0)),
-        ...publishHere];
+      return publishHere;
     }
     if (inGroup !== at) return publishHere;
     observed++;

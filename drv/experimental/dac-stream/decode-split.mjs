@@ -29,8 +29,8 @@ import { generate, DEAD_DEFAULT } from "./gen-stream.mjs";
 import { PHASE_TABLE, decodeMap } from "./observer.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, correctorBlocks, correctorLive,
   ladderOps } from "./corrector.mjs";
-import { protoMap, protoPublishSplit, protoPublishLive, protoAdvanceSplit,
-  protoAdvanceLive, protoCheckSplit, PROTO_CHECK_LIVE, protoBootLines } from "./proto-blocks.mjs";
+import { protoMap, protoPublishSplit, protoPublishLive,
+  protoCheckSplit, PROTO_CHECK_LIVE, protoBootLines } from "./proto-blocks.mjs";
 import { commandBlocks, packCommand, commandBootLines } from "./command.mjs";
 import { cmdBudgetCycles } from "./config.mjs";
 
@@ -311,11 +311,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // counter now steps by one block at each consumer site instead of by a lap in
   // the chain, which is what removes the per-site constant the comparison would
   // otherwise need (§39.3).
-  command = false,
-  // Whether the consumer pays for the BC it clobbers. It has to, unless a
-  // report is deliberately measuring what the chain would cost if the placer
-  // could keep the two apart (R16 §41.3).
-  keepBC = true } = {}) {
+  command = false, commandFault = null } = {}) {
   const map = decodeMap(cfg);
   const state = map.state;
   const stateSize = correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
@@ -347,35 +343,14 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   if (pm && pm.globEnd > cfg.ram.glob[1])
     throw new Error("the protocol's globals do not fit the globals region");
   const chk = proto ? protoCheckSplit(pm, SPLIT_STATE) : [];
-  const pub = proto
-    ? [...protoPublishSplit(pm, "_2ch"),
-      ...(command ? [] : protoAdvanceSplit(pm, cfg.cycleSlots))] : [];
-  const pubLive = proto
-    ? [...protoPublishLive(), ...(command ? [] : protoAdvanceLive())] : [];
+  const pub = proto ? protoPublishSplit(pm, "_2ch") : [];
+  const pubLive = proto ? protoPublishLive() : [];
   if (command && !proto)
     throw new Error("the consumer's clock is the runtime protocol's: build both");
-  // ONE COPY A LAP, not one a block (R16 §41.3). The chain is spread over the
-  // ten b9/b10 positions the reservation actually owns, so there is a single set
-  // of self-modified operands and the two pieces that store the three values are
-  // pinned to the block whose edge is the last one before the lap boundary.
-  const cmd = command ? commandBlocks(pm, cfg, "_2ch", { preserveBC: keepBC }) : [];
-  let pack = null;
-  if (command) {
-    // The room each position really has, taken from an image with everything
-    // else in it and the consumer left out — not from the reservation, which is
-    // what the consumer is being judged against rather than laid out by.
-    const probe = generate(cfg);
-    const rooms = new Map(), ceilings = new Map();
-    for (let i = 0; i < cfg.cycleSlots; i++) {
-      const row = probe.slots[i].row;
-      rooms.set(i, row.pad);
-      ceilings.set(i, Math.floor(target * row.cycles) - row.work);
-    }
-    pack = packCommand(cmd, cfg, { rooms, ceilings, budget: cmdBudgetCycles(cfg) });
-    if (pack.failed)
-      return { ok: false, stage: "command", blocks: cmd, pack, map, correct, command: cmd };
-  }
-  const commandPlan = pack ? pack.plan : null;
+  // ONE COPY A LAP, in the ten b9/b10 positions the reservation owns (R17
+  // §43.4). Nothing is dereferenced, so there is no `keepBC` any more: the
+  // consumer does not touch main BC at all.
+  const cmd = command ? commandBlocks(pm, cfg, "_2ch", { fault: commandFault }) : [];
 
   const chain = correct
     ? [...decode.slice(0, AFTER), ...corr, ...decode.slice(AFTER)] : decode;
@@ -393,27 +368,42 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   });
   if (live.length !== blocks.length) throw new Error("the liveness list and the chain differ");
   const RECORD = recordOrder(blocks, state);
-  const base = generate(cfg, null, null, null, commandPlan);
-  // A slot the consumer clobbers BC in may not also be carrying the decode's or
-  // the protocol's value THROUGH it (R16 §41.3). Checked after the walk, below,
-  // where `preserve` says which slots those are.
-  const walk = placeSplit(blocks, base.slots, { target, from, cycleSlots: cfg.cycleSlots });
-  if (walk.failed) return { ok: false, stage: "place", blocks, walk, map, correct };
+  // THE CONSUMER'S PLACEMENT AND THE CHAIN'S ARE MUTUALLY DEPENDENT (R17
+  // §43.2): the comparison must land after the slot the decode's
+  // `count hi store` ends up in, and where that is depends on how much room the
+  // consumer left. So it is a fixed point, found rather than assumed — and if
+  // it does not settle, that is reported instead of being averaged away.
+  let pack = null, base = null, walk = null, countAt = -1;
+  for (let round = 0; ; round++) {
+    if (command) {
+      // The room each position really has, from an image with everything else
+      // in it and the consumer left out.
+      const probe = generate(cfg);
+      const rooms = new Map(), ceilings = new Map();
+      for (let i = 0; i < cfg.cycleSlots; i++) {
+        const row = probe.slots[i].row;
+        rooms.set(i, row.pad);
+        ceilings.set(i, Math.floor(target * row.cycles) - row.work);
+      }
+      pack = packCommand(cmd, cfg, { rooms, ceilings, budget: cmdBudgetCycles(cfg), countAt });
+      if (pack.failed)
+        return { ok: false, stage: "command", blocks: cmd, pack, map, correct, command: cmd };
+    }
+    base = generate(cfg, null, null, null, pack ? pack.plan : null);
+    walk = placeSplit(blocks, base.slots, { target, from, cycleSlots: cfg.cycleSlots });
+    if (walk.failed) return { ok: false, stage: "place", blocks, walk, map, correct, pack };
+    if (!command) break;
+    const counted = walk.placed.find((x) => x.block.name === "count hi store");
+    if (!counted) throw new Error("the decode has no `count hi store` to be after");
+    if (counted.absolute < pack.firstCount) { countAt = counted.absolute; break; }
+    if (round >= 4)
+      return { ok: false, stage: "command order", blocks: cmd, pack, map, correct,
+        command: cmd, countAt: counted.absolute, firstCount: pack.firstCount };
+    countAt = counted.absolute;
+  }
   if (walk.laps !== 1)
     return { ok: false, stage: "laps", blocks, walk, map, correct, laps: walk.laps };
   const preserve = preserveBC(walk.placed, live);
-  // A slot the consumer clobbers BC in may not also be carrying the decode's or
-  // the protocol's value through it (R16 §41.3). With `keepBC` the pieces save
-  // and restore it, so this is the assertion that they really do; without it,
-  // the clash is what the build is measuring and is reported rather than
-  // refused — an image with it is a cost, not a working engine.
-  let bcClash = [];
-  if (pack) {
-    bcClash = pack.bcSlots.filter((i) => preserve.liveIn.has(i) || preserve.liveOut.has(i));
-    if (bcClash.length && keepBC)
-      return { ok: false, stage: "command bc", blocks: cmd, pack, map, correct,
-        command: cmd, clash: bcClash };
-  }
   const bySlot = new Map();
   for (const p of walk.placed) {
     if (!bySlot.has(p.slot)) bySlot.set(p.slot, []);
@@ -528,7 +518,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     gen = generate(cfg, (i) => [
       ...(bySlot.get(i) ?? []).flatMap((b) => b.ops),
       ...(ladderAt.has(i) ? ladderOps(ladderAt.get(i)) : []),
-    ], boot, slotDead, commandPlan);
+    ], boot, slotDead, pack ? pack.plan : null);
   } catch (e) {
     // A slot whose residual is 1, 2, 3, 5, 6, 9 or 13 cycles has no exact fill
     // without `ld b,k`, and that is a real refusal, not a rounding.
@@ -590,7 +580,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   if (gen.observer.spacingMaster[0] !== loopMaster(cfg))
     throw new Error("the laid-out loop and the configured one disagree");
   return { ok: true, gen, blocks, walk, preserve, map, base, correct, ladders,
-    slotsPreserving: preserve.size, advance, command: cmd, pack, bcClash, keepBC };
+    slotsPreserving: preserve.size, advance, command: cmd, pack };
 }
 
 /**

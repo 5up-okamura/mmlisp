@@ -811,51 +811,67 @@ jobs (the record's field and the carry) — `pknown` is separate now; and
 fed two thirds of the corrector chain the wrong liveness. Liveness is keyed by
 name and an undeclared piece is refused.
 
-### Where it stops: the command consumer, twice measured (R15, R16)
-
-The compact protocol alone is **inside every limit** — worst 83.8%, mean 79.5%,
-finished estimate 2,551 B of 2,560 (9 B spare), RAM ok. The protocol costs 21
-pieces / 436 cycles a lap (publish 192, advance 98, check 146).
+### The command path, three shapes, and the one that fits (R15, R16, R17)
 
 The reservation for commands is **145 cycles a block = 725 a lap**, at b9 and b10
-of every block — ten positions. Two consumers have been written against it:
+of every block — ten positions. Three consumers have been written against it:
 
-| | shape | cycles a lap | positions |
+| | shape | cycles/lap | positions |
 | --- | --- | ---: | ---: |
 | R15 | one SCALAR record a block, `{slot, value}` | 3,095 | 30 |
-| R16 | one desired-state BUNDLE a lap, all three levels | **867** | **10** |
+| R16 | one desired-state BUNDLE a lap, over a FIFO | 867 | 10 (BC clashed) |
+| **R17** | **the same bundle, through a one-slot MAILBOX** | **578** | **10** |
 | reserved | | 725 | 10 |
 
-R16 §41 rejected R15's proposed way out (8-bit times + halving the YM/PSG
-writer) and changed the COMMAND instead: the record is
-`{size, type, applyAtLow:u16, v0page, v1page, mpage, 0}` — the complete desired
-state at one LAP boundary, not a difference and not an event. The host fills
-what it is not changing from its own shadow, so two voices and a master moving
-together are one record; 124.84 bundles/s is not the same number as 600 scalar
-commands/s and the report says so separately.
+**R17 §43.1 found the real cost centre**: R16's consumer still ran a general
+FIFO — head against tail, a size byte, a type byte, a record pointer rebuilt
+every lap — and that machinery, not the arithmetic, was the 867. A waiting list
+belongs to the CPU that can afford one. So the Z80 side is now ONE outstanding
+desired state at a fixed address with a two-byte handshake: the 68000 writes a
+payload only while `commit == ack` and bumps `commit` last; the Z80 acts only
+while `commit != ack` and sets `ack = commit` after it has stored the three
+values. Nothing is dereferenced, so **main BC is not used anywhere in the chain**
+— checked by decoding the emitted bytes against a fourteen-opcode whitelist.
 
-**It still does not fit, and there is nowhere left to look.** A and the flags die
-at every slot boundary, HL is the play cursor, DE the YM data port, IX/IY and the
-shadow set the mixer's — so each of the thirteen pieces re-establishes its own
-pointer and hands its result on through memory. `AF'` carries the one thing
-memory cannot (the borrow out of the low half of the 16-bit time comparison, and
-a test turns one `ex af,af'` into a `nop` to prove it is load-bearing). Main BC
-is the only scratch register, and the decode and the protocol carry BC through
-five of the consumer's ten positions: saving it around them costs 231 more and
-the chain then does not place at all.
+**Time is counted in observations, not samples (§43.2).** A bundle can only land
+on a lap boundary, so the low sixteen bits of a sample number carried a multiple
+of eighty and used a fifth of their range. The wire field is
+`decisionObservation:u16` against the decoder's own `observationNumber`; same
+width, same wrap, same 1..32767 look-ahead — 32,767 laps instead of samples.
+`outputSampleLow` and its advance are gone from the engine entirely.
 
-  bundle consumer, BC paid for      does not place ("cmd apply" has no position)
-  bundle consumer, BC unpaid        worst 96.6%   mean 79.7%   code 2,505 B
-  limits                            83.9%         79.6%        2,560 B
+  snapshot observation n names the lap starting at (n-1) * outputsPerObservation
+  decisionObservation n applies at the boundary   n * outputsPerObservation
 
-Code is no longer the problem (55 B spare): one copy a lap is far smaller than
-R15's five a block, and the 220 B dispatch estimate is gone. **Cycles are.**
+**ALL FOUR LIMITS PASS**, for the first time since the corrector went in:
 
-**b11..b14's YM/PSG reservation is untouched** — R16 §41.1 holds it until the
-host-YM safe window of §33.6 step 5 answers, so the shortfall is a shortfall and
-not a loan against a result nobody has yet. No limit has ever been moved.
+  worst slot 83.8% of 83.9% · mean 78.7% of 79.6%
+  consumer 578 of 725 cycles a lap · code 2,511 B of 2,560 · RAM ok
+  YM/PSG's b11..b14 reservation untouched, as §43.1 requires
 
-Also fixed on the way (R16 §41.4, each reproduced as a failing negative against
-`ff185d6` first): the old record's 2-bit slot number could name a fourth staged
-byte the JS reference could not name at all; `command.mjs` said it checked the
-`size` byte and never read byte 0; `lateCommandCount` (§33.4) did not exist.
+The chain is ten pieces in the ten positions, with three ordering constraints
+that come from the schedule and are checked from the placement: the comparison
+after the decode's `count hi store` (it landed at slot 9, the compare at 24);
+the three stores inside the block whose edge (slot 62) is the last before the
+lap boundary, so the change lands exactly there; the ack strictly after them.
+`AF'` carries the one thing memory cannot — the borrow out of the low half of
+the comparison — and turning one `ex af,af'` into a `nop` is a refused fault.
+
+**Transfer, measured on BlastEm** (68000 really holding the bus): the whole
+handshake in ONE grab — read the ack, publish if free — is 373..1,354 master,
+inside the 1,500 contract with 146 to spare. One transfer an observation and one
+observation a lap gives **124.8 desired-state updates a second**, against the 60
+§43.6 step 6 asks for. Split strategies give 62.4 and 41.6.
+
+Fixed on the way, each reproduced as a failing negative first: R16's encoder sent
+a change for a published boundary to output 161 (not on the 80-output grid);
+counted "5 changes → 2 records" with one change still unemitted; compared
+`at <= published` in u16 across the wrap; and R15's record could name a fourth
+staged byte the reference could not name at all while claiming to check a `size`
+byte it never read. The host's timeline is extended u32 now and narrows to
+sixteen bits only at encode.
+
+**Still open**: §33.6 step 5, the host-YM safe window — the only thing that can
+release b11..b14. And the mailbox represents voice state as three level pages
+only; voice start/stop, cursor, loop and bank are not in it, and §43.3 forbids
+folding those into one boundary without a new wire shape and a new cost.

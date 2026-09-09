@@ -21,12 +21,12 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
-import { PUBLISH, INITIAL_STATE, refDecode, STATE } from "./observer.mjs";
+import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
 import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
 import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES,
-  extendObservation, boundarySample, protoGlobals } from "./protocol.mjs";
-import { GLOB } from "./config.mjs";
+  extendObservation, boundarySample } from "./protocol.mjs";
 import { buildCase, FAULTS, QUEUE_FAULTS } from "./case-config.mjs";
+import { buildConfig } from "./config.mjs";
 import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
@@ -87,12 +87,12 @@ const SPLIT_2CH = ["2ch 15-level decoder, quiet", "2ch 15-level decoder, 4B stal
 // correction is reconstructed from the DAC write times, the read times and the
 // STOP/RESUME pairs, against the ladder slots the generator placed.
 // The runtime protocol's own cases: the host takes the bus for real.
-const PROTO_PIECES = ["payload", "head", "credit", "snapshot", "invalidate"];
+const PROTO_PIECES = ["payload", "commit", "ack", "mailbox", "snapshot", "invalidate"];
 const PROTO_CASES = ["proto P1, live reads only", "proto P1, invalidations only",
-  "proto P1, queue only", ...PROTO_PIECES.map((p) => `proto P1, piece ${p}`),
+  "proto P1, mailbox only", ...PROTO_PIECES.map((p) => `proto P1, piece ${p}`),
   "proto P1, live and bulk"];
 // The one that publishes commands and must NOT invalidate anything (R13 §35.3).
-const PROTO_QUEUE = ["proto P1, queue only"];
+const PROTO_QUEUE = ["proto P1, mailbox only"];
 const PROTO_BOOT = 0x1234;          // the boot generation cases.mjs' host writes
 const LIVE_STOP_MAX = 1500;         // master clocks, R12 §33.1
 // The case whose two grabs deliberately share an observation interval.
@@ -128,7 +128,7 @@ if (!argv.includes("--reuse")) {
   // A QUEUE fault is the 68000's, so the run it breaks is the queue case; a
   // publish fault is the Z80's and breaks the diagnostic record.
   for (const sel of FAULT
-    ? (FAULT in QUEUE_FAULTS ? ["proto P1, queue only"] : ["z80 decoder"])
+    ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : ["z80 decoder"])
     : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "proto P1"])
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
       "--seconds", String(Z80_SECONDS), ...(FAULT ? ["--fault", FAULT] : [])],
@@ -872,64 +872,59 @@ for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CA
     failures.push(`"${name}": ${notReacquired} invalidations were followed by a valid difference`);
   if (name.includes("invalidation") && !phaseBumps)
     failures.push(`"${name}": no invalidation happened at all`);
-  // ── THE QUEUE'S OWN COMMIT DOMAIN (R13 §35.3 step 1) ──────────────────
-  // The host publishes a command by writing the payload and then `queueHead`,
-  // and by touching nothing else. What is checked here is the separation
-  // itself: that the phase generation and its commit never move, that the
-  // engine's VALID is unbroken across every append, and that each head write
-  // is backed by a whole record that was already in the queue.
+  // ── THE MAILBOX'S OWN COMMIT DOMAIN (R13 §35.3 step 1, R17 §43.3) ─────
+  // The host publishes a bundle by writing the five payload bytes and then
+  // `commandCommit`, and by touching nothing else. What is checked is the
+  // separation itself: that the phase generation and its commit never move,
+  // that the engine's VALID is unbroken across every publication, and that each
+  // commit is backed by a whole payload that was already there.
   if (PROTO_QUEUE.includes(name)) {
     const P = built.grab.proto;
     const ctl = built.gen.observer.protoLayout.control;
     const off = (fld) => ctl[fld].offset - base;
     const runtimeFrom = reads.length ? reads[0].time : 0;
     const hw = log.hostWrites.filter((w) => w.time >= runtimeFrom);
-    const heads = hw.filter((w) => w.addr === off("queueHead"));
+    const commits = hw.filter((w) => w.addr === off("commandCommit"));
     const touchedPhase = hw.filter((w) => w.addr === off("phaseGeneration")
       || w.addr === off("phaseCommit"));
-    // The payload, as the instrument saw it arrive in the queue's page.
+    // The payload, as the instrument saw it arrive in the mailbox.
     const body = log.copies.filter((e) => e.time >= runtimeFrom)
       .map((e) => ({ time: e.time, at: e.value >>> 8, value: e.value & 0xff }));
-    let short = 0, wrong = 0, headFirst = 0, wraps = 0, prevHead = 0, bi = 0;
-    for (const h of heads) {
+    let short = 0, wrong = 0, commitFirst = 0, prev = 0, bi = 0;
+    for (const h of commits) {
       const rec = [];
       while (bi < body.length && body[bi].time < h.time) rec.push(body[bi++]);
       if (rec.length !== P.recordBytes) { if (rec.length < P.recordBytes) short++; else wrong++; }
-      else if (rec.some((b, i) => b.value !== P.record[i]
-        || b.at !== (prevHead + i) % 256)) wrong++;
-      if (!rec.length) headFirst++;
-      const want = (prevHead + P.recordBytes) % 256;
+      else if (rec.some((b, i) => b.value !== P.record[i])) wrong++;
+      if (!rec.length) commitFirst++;
+      const want = (prev + 1) & 0xff;
       if (h.value !== want) wrong++;
-      if (want < prevHead) wraps++;
-      prevHead = h.value;
+      prev = h.value;
     }
-    console.log(`  queue: ${heads.length} records published, ${short} with the head advanced`
-      + ` over bytes that had not arrived, ${headFirst} with no payload at all,`
-      + ` ${wrong} whose bytes or cursor did not match, ${wraps} page wraps`);
+    console.log(`  mailbox: ${commits.length} bundles published, ${short} committed over`
+      + ` bytes that had not arrived, ${commitFirst} with no payload at all,`
+      + ` ${wrong} whose bytes or commit did not match`);
     console.log(`  domains: ${touchedPhase.length} runtime writes to the phase generation or`
       + ` its commit (must be 0), ${phaseBumps} phase generations bumped`);
-    if (!heads.length) failures.push(`"${name}": no command was published at all`);
-    if (short || wrong || headFirst)
-      failures.push(`"${name}": ${short + wrong + headFirst} of ${heads.length} appends were`
-        + ` not a whole record published before its cursor`);
-    if (!wraps) failures.push(`"${name}": the queue page never wrapped`);
+    if (!commits.length) failures.push(`"${name}": no bundle was published at all`);
+    if (short || wrong || commitFirst)
+      failures.push(`"${name}": ${short + wrong + commitFirst} of ${commits.length} publications`
+        + ` were not a whole payload written before its commit`);
     if (touchedPhase.length)
-      failures.push(`"${name}": publishing a command wrote the phase control block`
+      failures.push(`"${name}": publishing a bundle wrote the phase control block`
         + ` ${touchedPhase.length} times — the commit domains are not separate`);
     if (phaseBumps)
-      failures.push(`"${name}": ${phaseBumps} phase generations moved while only commands were sent`);
+      failures.push(`"${name}": ${phaseBumps} phase generations moved while only bundles`
+        + ` were being sent`);
     // …and the engine's own side of it: VALID stays $ff for the whole run once
-    // it has acquired. An append that invalidated would show as a base.
+    // it has acquired. A publication that invalidated would show as a base.
     const afterFirst = valid.filter((w) => w.time >= runtimeFrom);
     const bases = afterFirst.filter((w) => w.value === 0).length;
     console.log(`  engine: ${afterFirst.length} VALID writes after the first reading,`
       + ` ${bases} of them a base`);
-    // Two per lap (the check and the decode) and only the acquisition ones may
-    // be zero: the first observation has no predecessor, and an unknown reading
-    // is the decoder's own business, not the protocol's.
     if (bases > 4)
       failures.push(`"${name}": ${bases} observations lost their difference while`
-        + ` only commands were being published`);
+        + ` only bundles were being published`);
   }
 
   // THE ABSOLUTE CORRESPONDENCE (R13 §35.2, R15 §39.3). "+80 every time" says
@@ -967,55 +962,6 @@ for (const name of FAULT ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE : []) : PROTO_CA
       failures.push(`"${name}": the observation number used directly as a sample number placed`
         + ` ${naivePlaced} of ${naiveTried} snapshots — this check cannot tell the`
         + ` derivation from that mistake`);
-  }
-
-  // ── THE ENGINE'S OWN LOW SIXTEEN BITS (R15 §39.3) ─────────────────────
-  // The Z80 keeps `outputSampleLow` for one job — extending a command's
-  // `applyAtLow` — and it is never published, so nothing about it is visible in
-  // a snapshot. The instrument watches the globals region, so the writes ARE
-  // visible, and what is checked is that they agree with the number the host
-  // derives: after the lap that published observation N, the low word must be
-  // the low sixteen bits of that observation's boundary plus one lap.
-  {
-    // Region-relative, the same way the state bytes above are.
-    const lo = protoGlobals((built.cfg.ram.glob[0] & 0xff) + GLOB.decode, STATE.countLo).outputLow;
-    const w = log.ramWrites.filter((x) => x.region === "glob"
-      && (x.addr === lo || x.addr === lo + 1)).sort((a, b) => a.time - b.time);
-    let cur = 0, checked = 0, wrong = 0, blocksWrong = 0;
-    const offs = [];
-    for (let k = 0; k + 1 < w.length; k++) {
-      if (w[k].addr !== lo || w[k + 1].addr !== lo + 1) continue;
-      cur = w[k].value | (w[k + 1].value << 8);
-      const done = w[k + 1].time;
-      // The most recent publication before this advance is the lap it belongs to.
-      let sn = null;
-      for (const s3 of snaps) {
-        if (s3.time >= done) break;
-        if (s3.at !== null && s3.at !== undefined) sn = s3;
-      }
-      if (!sn) continue;
-      checked++;
-      if (cur !== ((sn.at + perLap) & 0xffff)) wrong++;
-      // …and the block boundaries inside the NEXT lap, which is what a command's
-      // time is actually compared against. The offsets are generated from the
-      // schedule, not written down (proto-blocks.mjs outputBlockOffsets).
-      if (!offs.length)
-        for (let o = 0; o < perLap; o += built.cfg.blockSamples) offs.push(o);
-      for (const o of offs)
-        if (((cur + o) & 0xffff) !== ((sn.at + perLap + o) & 0xffff)) blocksWrong++;
-      k++;
-    }
-    console.log(`  logical position: ${checked} lap advances checked against the derived index,`
-      + ` ${wrong} that disagreed, ${blocksWrong} block boundaries off`
-      + ` (${offs.join("/")} inside a lap)`);
-    if (!checked)
-      failures.push(`"${name}": the engine's logical output position was never seen advancing`);
-    if (wrong)
-      failures.push(`"${name}": ${wrong} of ${checked} lap advances left the engine's logical`
-        + ` position disagreeing with the index the host derives`);
-    if (blocksWrong)
-      failures.push(`"${name}": ${blocksWrong} block boundaries did not land where the derived`
-        + ` index puts them`);
   }
 
   // THE LIVE CONTRACT (§33.1): what the bus was actually held for, between one
@@ -1067,6 +1013,39 @@ if (!FAULT && pieceSweep.length) {
       + `${String(r.lo).padStart(8)}${String(r.hi).padStart(8)}  ${String(r.worst).padStart(9)}`
       + `  ${String(LIVE_STOP_MAX - r.worst).padStart(9)}`);
   console.log(`  (master clocks; a second grab in the same observation interval adds to it)`);
+  // ── HOW FAST DESIRED STATE CAN ACTUALLY MOVE (R17 §43.6 step 6) ───────
+  // The ranges above are what the 1,500 master contract limits. The RATE is a
+  // different question: one transfer per H observation is the conservative
+  // rule, and one lap of the 2ch engine is one observation, so what a strategy
+  // buys is (observations a second) / (transfers a desired-state update).
+  const two = buildConfig({ voices: 2, complete: true, levels: 15,
+    correctorBudget: true, command: true, workTarget: 0.839 });
+  const obsHz = two.rateHz / two.cycleSlots;
+  const piece = (n) => pieceSweep.find((x) => x.name.endsWith(n));
+  const fits = (p) => p && p.hi <= LIVE_STOP_MAX;
+  const strategies = [
+    ["the whole handshake in one grab", ["piece mailbox"], 1],
+    ["publish in one grab, read the ack in another", ["mailbox only", "piece ack"], 2],
+    ["payload, commit and ack separately", ["piece payload", "piece commit", "piece ack"], 3],
+  ];
+  console.log(`\n── how fast desired state can move, at one transfer an observation ──`);
+  console.log(`  a 2ch lap IS one observation: ${obsHz.toFixed(2)} a second`);
+  let best = 0;
+  for (const [what, names, n] of strategies) {
+    const ps = names.map((x) => piece(x));
+    const ok = ps.every((p) => fits(p));
+    const worst = ps.every(Boolean) ? Math.max(...ps.map((p) => p.hi)) : null;
+    const rate = obsHz / n;
+    if (ok) best = Math.max(best, rate);
+    console.log(`  ${what.padEnd(46)}${n} transfer${n > 1 ? "s" : " "}`
+      + `${rate.toFixed(1).padStart(7)}/s  worst piece ${String(worst ?? "—").padStart(5)}`
+      + ` master  ${ok ? "inside the contract" : "OVER the 1,500 master contract"}`);
+  }
+  console.log(`  best sustainable: ${best.toFixed(1)} desired-state updates a second`
+    + ` (60 is what R17 §43.6 step 6 asks for before host-YM)`);
+  if (best < 60)
+    failures.push(`the mailbox sustains ${best.toFixed(1)} desired-state updates a second,`
+      + ` under the 60 §43.6 step 6 requires before host-YM`);
 }
 
 console.log(FAULT ? "" : `\n── H alone, either side of half a line ──`);

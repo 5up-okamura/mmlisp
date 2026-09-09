@@ -89,8 +89,8 @@ export function boundarySample(obsExt, outputsPerObservation) {
 export const CONTROL = [
   ["bootGeneration", 2, "the run the host believes is running"],
   ["phaseGeneration", 1, "bumped for every stop H cannot be trusted across"],
-  ["queueHead", 1, "the producer's cursor; written LAST, after the payload"],
-  ["phaseCommit", 1, "commits phaseGeneration only; queueHead is the queue's separate commit"],
+  ["commandCommit", 1, "the mailbox's own commit; written LAST, after the payload"],
+  ["phaseCommit", 1, "commits phaseGeneration only; commandCommit is the mailbox's separate commit"],
 ];
 
 const sizeOf = (fields) => fields.reduce((t, [, n]) => t + n, 0);
@@ -189,16 +189,16 @@ export function readSnapshot(mem, layout) {
 }
 
 /**
- * A full control initialisation. Runtime queue publication does NOT use this
- * commit: `queueHead` commits queue bytes, while `phaseCommit` commits only a
- * new phase generation. Keeping those domains separate prevents an ordinary
+ * A full control initialisation. Runtime command publication does NOT use this
+ * commit: `commandCommit` commits the mailbox, while `phaseCommit` commits only
+ * a new phase generation. Keeping those domains separate prevents an ordinary
  * live command from invalidating the H corrector.
  */
 export function controlSteps(layout, ctl) {
   const c = layout.control, out = [];
   putLE(out, c.bootGeneration, ctl.bootGeneration);
   putLE(out, c.phaseGeneration, ctl.phaseGeneration);
-  putLE(out, c.queueHead, ctl.queueHead);
+  putLE(out, c.commandCommit, ctl.commandCommit);
   putLE(out, c.phaseCommit, ctl.phaseCommit);                 // LAST for phase control
   return out;
 }
@@ -207,7 +207,7 @@ export function readControl(mem, layout) {
   const c = layout.control;
   return { bootGeneration: getLE(mem, c.bootGeneration),
     phaseGeneration: getLE(mem, c.phaseGeneration),
-    queueHead: getLE(mem, c.queueHead),
+    commandCommit: getLE(mem, c.commandCommit),
     phaseCommit: getLE(mem, c.phaseCommit) };
 }
 
@@ -257,7 +257,7 @@ export function lateTarget(outputIndex, lead, block) {
 export const PROTOCOL_FAULTS = {
   "select-first": "the selector is flipped before the face behind it is written",
   "half-face": "the publisher writes the face the reader is looking at",
-  "head-first": "queueHead is advanced before the payload it points past",
+  "head-first": "commandCommit is advanced before the payload it stands for",
   "commit-first": "phaseCommit is written before phaseGeneration",
 };
 
@@ -307,7 +307,7 @@ export function tornSnapshotPossible(layout, mem0, snap, steps) {
 
 /** The same walk for the phase-control block, gated on its own commit byte. */
 export function tornControlPossible(layout, mem0, ctl, steps) {
-  // queueHead is deliberately absent: it commits queue bytes independently
+  // commandCommit is deliberately absent: it commits the mailbox independently
   // and must be allowed to move without changing the phase generation.
   const key = (c) => [c.bootGeneration, c.phaseGeneration].join(",");
   const mem = new Uint8Array(mem0);
@@ -380,84 +380,91 @@ export function protoGlobals(decodeBase, countLoOff) {
   for (const [name, n] of SNAPSHOT) { fields[name] = o; o += n; }
   if (fields.observationNumber !== stage)
     throw new Error("the stage must start on the observation number");
-  // `outputLow` IS NOT PART OF THE STAGE and is never published (R15 §39.2).
-  // The Z80 keeps it for one job: extending a command's 16-bit `applyAtLow`
-  // against where the output actually is. It is zeroed by a boot and by
-  // nothing else — a phase invalidation changes when a sample is written, not
-  // how many have been.
-  // THE TAIL AND THE QUEUE'S PAGE ARE ADJACENT, low byte first, so the consumer
-  // takes the whole record pointer in one `ld hl,(nn)` (R15 §39.4). The page
-  // byte is a constant the boot writes once and nothing ever changes.
-  // THE CONSUMER'S WORKING BYTES (R16 §41.3). A and the flags do not cross a
-  // slot boundary and the chain is spread over ten of them, so each piece hands
-  // its result to the next through memory — `AF'` carries at most one value and
-  // its flags, and only between two pieces that are named in the liveness table.
-  //
-  // `queueTail` and `queuePage` are adjacent, low byte first, so one
-  // `ld bc,(nn)` is the whole record pointer.
+  // NOTHING ELSE IS THE STAGE'S (R17 §43.2). `outputSampleLow` is gone with the
+  // arithmetic that needed it: a command's time is an observation number now,
+  // and the engine already holds this observation's number as the decoder's own
+  // counter — the two bytes the stage starts on. What is left here is the
+  // mailbox's own state, all of it owned by the Z80 and read by nobody else
+  // except `commandAck`, which the 68000 reads to know the box is free.
   const cmd = {};
-  let c = o + 5;
-  for (const n of ["mask", "dlo", "dhi", "known", "notExact", "late"]) cmd[n] = c++;
-  return { stage, fields, lastPhaseCommit: o, outputLow: o + 1,
-    queueTail: o + 3, queuePage: o + 4, cmd, lateCount: cmd.late, end: c };
+  let c = o + 3;
+  for (const n of ["dhi", "nx"]) cmd[n] = c++;
+  return { stage, fields, lastPhaseCommit: o, commandAck: o + 1, lateCount: o + 2,
+    cmd, end: c };
 }
-// ── the command queue (§33.4) ─────────────────────────────────────────────
-// Single producer, single consumer. The 68000 owns `queueHead` and the payload;
-// the Z80 owns `queueTail` and never reads past the head. The wire record is
-// `{size:u8, type:u8, applyAtLow:u16, payload...}` and `size` counts the whole
-// record, so a consumer can step past a type it does not know.
 
-export const CMD_HEADER = 4;
+// ── THE COMMAND MAILBOX (R17 §43.3) ──────────────────────────────────────
+//
+// There is no queue on the Z80 side any more, and that is the whole change.
+// R16's consumer still ran a general FIFO — head against tail, a size byte, a
+// type byte, a record pointer — once every lap, and that machinery, not the
+// arithmetic, is where its 867 cycles went. A waiting list belongs to the CPU
+// that can afford one. So: ONE outstanding desired state, at a fixed address,
+// with a two-byte handshake.
+//
+//   commandCommit   u8, the 68000's, in the control block. Written LAST.
+//   payload         the bundle itself, at a fixed address in the old queue page
+//   commandAck      u8, the Z80's, in the globals
+//
+// The rule is symmetrical and has no cursor arithmetic in it at all:
+//
+//   the 68000 writes a payload only while `commit == ack`, then bumps commit
+//   the Z80 acts only while `commit != ack`, and sets `ack = commit` when it has
+//
+// `$ff -> $00` on either byte is an ordinary step, because with one outstanding
+// bundle the two values are either equal or one apart and there is nothing for
+// a wrap to be confused with.
+
+/** The payload, at a fixed address. No size, no type, no cursor. */
+export const MAILBOX = [
+  ["decisionObservation", 2, "the observation whose lap boundary this applies at"],
+  ["v0page", 1, "voice 0's level page, whether or not it changed"],
+  ["v1page", 1, "voice 1's"],
+  ["mpage", 1, "the master's"],
+];
+export const MAILBOX_BYTES = sizeOf(MAILBOX);        // 5
+
+/** Where the payload's fields sit, from the region's base. */
+export function mailboxLayout(base = 0) {
+  const fields = {}; let o = base;
+  for (const [name, n] of MAILBOX) { fields[name] = { offset: o, bytes: n }; o += n; }
+  return { base, fields, end: o, bytes: MAILBOX_BYTES };
+}
 
 /**
- * How many bytes the producer may still write.
+ * The writes the 68000 makes to publish one bundle, IN ORDER: the whole payload
+ * and then, strictly last, the commit byte that says it is there.
+ */
+export function mailboxSteps(layout, mb, bundle, commit, fault = null) {
+  const out = [];
+  for (const [name] of MAILBOX) putLE(out, mb.fields[name], bundle[name]);
+  const commitStep = [layout.control.commandCommit.offset, commit & 0xff];
+  // `head-first` is the fault: the commit says the bundle is there before it is.
+  return fault === "head-first" ? [commitStep, ...out] : [...out, commitStep];
+}
+
+/** What the Z80 may read: the payload, gated on the commit byte alone. */
+export function readMailbox(mem, layout, mb) {
+  const out = { commit: mem[layout.control.commandCommit.offset] };
+  for (const [name] of MAILBOX) out[name] = getLE(mem, mb.fields[name]);
+  return out;
+}
+
+/**
+ * WALK EVERY INTERLEAVING, the same way the snapshot's publication is walked.
+ * A consumer acts only when the commit byte differs from its ack, so once it
+ * does, everything that commit stands for must already be there.
  *
- * ONE BYTE IS NEVER USED, because `head === tail` has to mean empty rather than
- * full: with the whole page usable the two states are the same value and the
- * consumer cannot tell "nothing to do" from "everything to do". So a full queue
- * is `free === 0`, and a producer that enqueues anyway does not fail — it
- * overwrites a record the consumer has not read yet, which is the quiet kind of
- * wrong this check exists for (R13 §35.3 step 2).
+ * @returns the first reading a consumer could act on that is not the bundle
  */
-export const queueFree = (head, tail, qsize) => (tail - head - 1 + qsize) % qsize;
-
-/**
- * The writes that append one record, IN ORDER: the payload first and the head
- * strictly last, which is what makes a consumer that stops anywhere see either
- * no record or a whole one.
- */
-export function enqueueSteps(layout, qbase, qsize, head, rec, fault = null) {
-  const bytes = [rec.size, rec.type, rec.applyAtLow & 0xff, (rec.applyAtLow >> 8) & 0xff,
-    ...rec.payload];
-  if (bytes.length !== rec.size) throw new Error(`record says ${rec.size} bytes and carries ${bytes.length}`);
-  const body = bytes.map((b, i) => [qbase + ((head + i) % qsize), b]);
-  const advance = [[layout.control.queueHead.offset, (head + rec.size) % qsize]];
-  // `head-first` is the fault: the cursor says the record is there before it is.
-  return fault === "head-first" ? [...advance, ...body] : [...body, ...advance];
-}
-
-/** What the consumer may read: only the bytes strictly behind the head. */
-export function dequeue(mem, layout, qbase, qsize, tail) {
-  const head = mem[layout.control.queueHead.offset];
-  const avail = (head - tail + qsize) % qsize;
-  if (avail === 0) return null;
-  const size = mem[qbase + (tail % qsize)];
-  // A record is not readable until ALL of it is behind the head. Without this
-  // the consumer reads the producer's next bytes as this record's payload.
-  if (size < CMD_HEADER || size > avail) return { incomplete: true, avail, size };
-  const at = (i) => mem[qbase + ((tail + i) % qsize)];
-  return { incomplete: false, size, type: at(1), applyAtLow: at(2) | (at(3) << 8),
-    payload: Array.from({ length: size - CMD_HEADER }, (_, i) => at(CMD_HEADER + i)),
-    tail: (tail + size) % qsize };
-}
-
-/**
- * When a command takes effect, and what a late one does (§33.4). A late command
- * is NOT dropped and NOT applied to something already built: it goes to the
- * first block boundary the build cursor has not reached.
- */
-export function scheduleCommand(applyAtLow, outputIndex, lead, block) {
-  const t = extendTime(applyAtLow, outputIndex);
-  if (!t.late) return { at: t.at, late: false, behind: 0 };
-  return { at: lateTarget(outputIndex, lead, block), late: true, behind: t.behind };
+export function tornMailboxPossible(layout, mb, mem0, bundle, steps, ack) {
+  const key = (r) => MAILBOX.map(([k]) => r[k]).join(",");
+  const mem = new Uint8Array(mem0);
+  const wanted = key(bundle);
+  for (let k = 0; k <= steps.length; k++) {
+    const got = readMailbox(mem, layout, mb);
+    if (got.commit !== ack && key(got) !== wanted) return { after: k, got, bundle };
+    if (k < steps.length) mem[steps[k][0]] = steps[k][1];
+  }
+  return null;
 }

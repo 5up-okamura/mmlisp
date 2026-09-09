@@ -115,22 +115,23 @@ export const CASES = [
     observer: { reads: ["h"], decode: true, load: "divu",
       proto: { every: 3000, between: 0, skipLive: true } }, informational: true },
   // A REAL COMMAND, and nothing else (R13 §35.3 step 1). The host writes the
-  // payload and then `queueHead`, touching neither the phase generation nor its
+  // payload and then `commandCommit`, touching neither the phase generation nor its
   // commit — so the engine's H synchronisation has to survive every one of
   // them, unbroken, which is what this case exists to show from the outside.
-  { name: "proto P1, queue only", cfg: {}, wave: sine(256,120,1),
+  { name: "proto P1, mailbox only", cfg: {}, wave: sine(256,120,1),
     observer: { reads: ["h"], decode: true, load: "divu",
       proto: { every: 3000, skipLive: true, skipBulk: true, queue: true } },
     // Informational to machine-probe for the same reason as the others: a run
     // that takes the bus on purpose does not hold a fixed DAC interval, and
     // what grades it is `dac-stream:decoder`.
     informational: true },
-  // THE FIVE PIECES, ONE PER RUN (R13 §35.3 step 3). Each is what the 68000
-  // actually executes for that job, measured as STOP -> RESUME with the bus
-  // really held — not a byte count and not a model.
-  ...[["payload", "a continuation: record bytes, cursor untouched"],
-      ["head", "the piece that ends it: the cursor alone"],
-      ["credit", "how much room is left: one byte the Z80 owns"],
+  // THE FIVE PIECES, ONE PER RUN (R13 §35.3 step 3, R17 §43.6 step 6). Each is
+  // what the 68000 actually executes for that job, measured as STOP -> RESUME
+  // with the bus really held — not a byte count and not a model.
+  ...[["payload", "the bundle's five bytes, with the commit left alone"],
+      ["commit", "the piece that ends it: the commit byte alone"],
+      ["ack", "the answer alone: one byte the Z80 owns and the host only reads"],
+      ["mailbox", "the whole handshake in one grab: read the ack, publish if free"],
       ["snapshot", "the time update: the selector and both faces"],
       ["invalidate", "the phase declared over: generation then its commit"]]
     .map(([piece]) => ({

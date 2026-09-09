@@ -16,15 +16,15 @@ import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate } from "./gen-stream.mjs";
-import { generateObserver, PUBLISH_FAULTS, PROTO_Z80_FAULTS, STATE } from "./observer.mjs";
+import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit } from "./decode-split.mjs";
-import { protocolLayout, protoGlobals, SNAPSHOT_BYTES,
-  SNAPSHOT_STRIDE } from "./protocol.mjs";
+import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
+  SNAPSHOT_STRIDE, MAILBOX, MAILBOX_BYTES } from "./protocol.mjs";
 import { GLOB } from "./config.mjs";
 
 export const QUEUE_FAULTS = {
-  "q-head-first": "queueHead is advanced before the record's bytes are written",
-  "q-short-record": "the head claims a whole record and one byte of it never arrived",
+  "q-commit-first": "commandCommit is bumped before the payload it stands for is written",
+  "q-short-payload": "the commit claims a whole bundle and one byte of it never arrived",
 };
 
 export const FAULTS = {
@@ -38,10 +38,6 @@ export const FAULTS = {
   // Z80-side, and they break the diagnostic RECORD rather than the decode:
   // the instrument's own check has to fail on each of them.
   ...PUBLISH_FAULTS,
-  // Z80-side, and it breaks the DERIVED time rather than the transfer: the
-  // engine's own logical position drifts from what the host computes from the
-  // observation number (R15 §39.3).
-  ...PROTO_Z80_FAULTS,
   // 68000-side, and they break the QUEUE's publication order rather than the
   // transfer: the head moved before the bytes, or the record stopped short of
   // what the head then claimed (R13 §35.3 step 2).
@@ -53,11 +49,11 @@ export const FAULTS = {
  * @param opts  {compensation, captureOffset, fault} — the CLI's overrides
  * @returns {case, cfg, gen, coop} with the case fully resolved
  */
-// ONE COMMAND RECORD, in the wire format §33.4 fixes: size, type, the low 16
-// bits of the sample it applies at, then payload. Eight bytes, so a 256-byte
-// page holds exactly 32 of them and the head's own byte wraps with the page.
-export const QREC_BYTES = 8;
-export const QREC_RECORD = [QREC_BYTES, 0x01, 0x40, 0x00, 0xde, 0xad, 0xbe, 0xef];
+// ONE MAILBOX PAYLOAD, in the wire format R17 §43.3 fixes: the observation its
+// lap boundary is, then the three level pages. Five bytes at a fixed address —
+// there is no cursor, no size and no type, because there is only ever one.
+export const QREC_BYTES = MAILBOX_BYTES;
+export const QREC_RECORD = [0x40, 0x00, 0xde, 0xad, 0xbe];
 
 /**
  * The addresses the 68000's ROM needs, taken from the ONE layout (R12 §33.2).
@@ -79,16 +75,14 @@ function protoRomFields(cfg, p) {
     stride: SNAPSHOT_STRIDE,
     bootGen: L.control.bootGeneration.offset,
     phaseGen: L.control.phaseGeneration.offset,
-    queueHead: L.control.queueHead.offset,
+    commandCommit: L.control.commandCommit.offset,
     phaseCommit: L.control.phaseCommit.offset,
-    // The queue: where it lives, one well-formed record, and how many of them
-    // fill the page — which is what makes the wrap a thing that happens rather
-    // than a thing that is described.
+    // The mailbox: where its payload lives, one well-formed bundle, and the
+    // byte the Z80 answers with.
     queue: !!p.queue, qfault: p.qfault ?? null, piece: p.piece ?? null,
-    queueTail: protoGlobals(cfg.ram.glob[0] + GLOB.decode, STATE.countLo).queueTail,
-    queueBase: cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00,
+    commandAck: protoGlobals(cfg.ram.glob[0] + GLOB.decode, STATE.countLo).commandAck,
+    mailbox: mailboxLayout(cfg.ram.queue ? cfg.ram.queue[0] : 0x1d00).base,
     recordBytes: QREC_BYTES,
-    perPage: 256 / QREC_BYTES,
     record: QREC_RECORD };
 }
 
@@ -130,8 +124,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     // A publish fault is the Z80's; it must not also reach the 68000's rom.
-    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)
-      && !(fault in PROTO_Z80_FAULTS)) grab.fault = fault;
+    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)) grab.fault = fault;
     // Two ways to break the load CHECK rather than the load: make it short, or
     // stop it reporting. The gate has to fail on both (R6 §17.2 C).
     if (fault === "short-load" || fault === "no-load-marks") {
@@ -154,12 +147,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   const c = { ...c0, cooperative: coop, grab: grab ?? undefined };
   if (fault && fault in PUBLISH_FAULTS && !c0.observer?.publish)
     throw new Error(`fault ${fault} only applies to a case that publishes its records`);
-  if (fault && fault in PROTO_Z80_FAULTS && !c0.observer?.proto)
-    throw new Error(`fault ${fault} only applies to a case that runs the runtime protocol`);
   const observer = c0.observer && fault && fault in PUBLISH_FAULTS
-    ? { ...c0.observer, publishFault: fault }
-    : c0.observer && fault && fault in PROTO_Z80_FAULTS
-    ? { ...c0.observer, protoFault: fault } : c0.observer;
+    ? { ...c0.observer, publishFault: fault } : c0.observer;
   let gen;
   if (c0.split) {
     const r = generateSplit(cfg, { stackFill: true, ...c0.split.place });

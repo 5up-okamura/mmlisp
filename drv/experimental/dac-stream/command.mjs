@@ -1,282 +1,240 @@
-// THE PCM STATE BUNDLE, CONSUMED BY THE Z80
-// (docs/dac-engine-implementation.md R16 §41.2-§41.4).
+// THE PCM STATE MAILBOX (docs/dac-engine-implementation.md R17 §43.2-§43.4).
 //
-// ── what a command IS, and what changed ──────────────────────────────────
+// ── what changed, and why ────────────────────────────────────────────────
 //
-// R15's record named ONE staged byte and set it. Three simultaneous changes —
-// two voices and the master — were three records at three block boundaries, and
-// the consumer that had to keep up with that cost 619 cycles a block where 145
-// were reserved. This record is not an event. It is the COMPLETE desired state
-// of all three levels at one lap boundary:
+// R16 made a command a BUNDLE — the complete desired state of all three levels
+// at one lap boundary, so two voices and a master moving together are one
+// record — and that was right, but the consumer still ran a general FIFO to get
+// at it: head against tail, a size byte, a type byte, a record pointer rebuilt
+// every lap. 867 cycles against 725 reserved, and the arithmetic was not where
+// they went. A waiting list belongs to the CPU that can afford one (R17 §43.1).
 //
-//   { size:u8 = 8, type:u8 = PCM_LEVEL_STATE, applyAtLow:u16,
-//     v0page:u8, v1page:u8, mpage:u8, reserved:u8 = 0 }
+// So there is no queue on this side at all. ONE outstanding desired state, at a
+// FIXED address, with a two-byte handshake:
 //
-// The host fills the values it is not changing from its own shadow, so two
-// voices and a master moving together are ONE record. That is what makes one
-// decision a lap enough: a lap is 80 outputs, 8.01 ms, 124.84 Hz, finer than
-// the 1/60 the design started from — and 124.84 bundles a second is NOT the
-// same number as 600 scalar commands a second, so the report says how many
-// changes each bundle carried rather than quoting the rate as if it were.
+//   the 68000 writes a payload only while `commit == ack`, then bumps commit
+//   the Z80 acts only while `commit != ack`, and sets `ack = commit` when it has
 //
-// ── the cell, and why `size` is read ─────────────────────────────────────
+// Nothing is dereferenced, so main BC is not used ANYWHERE in this chain — it
+// is not even saved and restored — and the decode's, the corrector's and the
+// protocol's BC live ranges stop being this file's problem.
 //
-// The queue is a page of FIXED 8-byte cells. `size` is not a variable stride
-// here — it is the cell's own check value, and R15's consumer said it checked
-// it and never read byte 0 at all (R16 §41.4-2). A cell that is due is stepped
-// over whatever it says; it is APPLIED only if it is a type we know AND says 8.
+// ── time is counted in observations, not samples (R17 §43.2) ─────────────
 //
-// ── everything is constant time ──────────────────────────────────────────
+// A bundle can only land on a lap boundary, so the low sixteen bits of a sample
+// number were carrying a multiple of eighty and using a fifth of their range.
+// The engine already holds the same clock as the decoder's `observationNumber`,
+// so that is what the wire names:
 //
-// There is no path that is shorter when the queue is empty, when the cell is in
-// the future, or when its type is one the engine does not know. The suppression
-// is one `xor` on a destination's low operand: a command that must not apply is
-// STORED ANYWAY, into a bit bucket next door. The slot boundary is the DAC
-// write, so a branch here would move it.
+//   snapshot observation n names the lap starting at (n - 1) * outputsPerObservation
+//   decisionObservation n applies at the boundary   n * outputsPerObservation
+//
+// Same sixteen bits, same wrap rule, same 1..32767 look-ahead — measured in
+// observations now, which is 32,767 laps instead of 32,767 samples. The Z80's
+// `outputSampleLow` is gone with the arithmetic that needed it; the host still
+// derives its u32 sample number from the compact snapshot.
 import { op, cost } from "./schedule.mjs";
 
 const hx = (n) => `$${n.toString(16)}`;
 
-/** The one type the engine knows, and the one length every cell has. */
-export const CMD_PCM_LEVEL_STATE = 1;
-export const CMD_BYTES = 8;
-/** Where the fields sit inside a cell. */
-export const CMD = { size: 0, type: 1, applyLo: 2, applyHi: 3,
-  v0page: 4, v1page: 5, mpage: 6, reserved: 7 };
 /** The three staged bytes a bundle carries, in the order it carries them. */
 export const CMD_VALUES = ["v0page", "v1page", "mpage"];
 
-/** One well-formed bundle, as wire bytes. */
-export const cmdRecord = ({ at, v0page, v1page, mpage,
-  type = CMD_PCM_LEVEL_STATE, size = CMD_BYTES }) =>
-  [size, type, at & 0xff, (at >> 8) & 0xff, v0page, v1page, mpage, 0];
+/** One bundle, as the host means it. */
+export const cmdBundle = ({ at, v0page, v1page, mpage }) =>
+  ({ decisionObservation: at & 0xffff, v0page, v1page, mpage });
 
 /**
- * THE HOST SIDE: one desired state, coalesced (R16 §41.2).
+ * THE HOST SIDE (R17 §43.3, §43.5).
  *
- * The 68000 keeps a shadow of what the three levels are supposed to be. A
- * change names a boundary and one or more of them; changes for the SAME
- * boundary are merged into the shadow and leave as one record. A change that
- * arrives for a boundary whose record is already published is not rewritten —
- * it goes to the next boundary that has not been committed yet, which is the
- * rule that keeps a published cell immutable.
+ * The waiting list lives here. Changes are held against EXTENDED observation
+ * numbers — a u32 that never wraps — and are narrowed to sixteen bits only when
+ * a bundle is encoded, which is what makes `$ffff -> $0000` an ordinary step
+ * forward instead of a comparison nobody can get right (§43.5).
+ *
+ * Several future boundaries may be waiting at once. Changes for the same
+ * boundary merge into one desired state; a change for a boundary that has
+ * already been published does not rewrite it — it goes to the next boundary,
+ * which in observation units is simply +1 and is therefore always a boundary
+ * the schedule really has (R15's sample-number form sent it to output 161,
+ * which is not one).
  */
 export function makeEncoder({ v0page = 0, v1page = 0, mpage = 0 } = {}) {
   const shadow = { v0page, v1page, mpage };
-  let pending = null;              // {at, state} not yet published
-  let published = null;            // the last boundary handed to the queue
+  const waiting = new Map();          // extended observation -> desired state
+  // The HIGH-WATER MARK, not what is in the box: once a boundary has been
+  // published the Z80 may already have applied it, so a change for it can never
+  // be folded in afterwards however the handshake then goes.
+  let published = null;
+  let inBox = false;
+  let commit = 0, ack = 0;
   let changes = 0, records = 0;
+  const soonest = () => (waiting.size ? Math.min(...waiting.keys()) : null);
   return {
     get shadow() { return { ...shadow }; },
-    get coalesced() { return { changes, records }; },
-    /** Ask for `set` (any subset of the three) to hold from boundary `at`. */
+    get coalesced() { return { changes, records, waiting: waiting.size }; },
+    get commit() { return commit; },
+    /** The Z80 has taken the bundle that was in the box. */
+    acknowledge(a) { ack = a & 0xff; if (ack === (commit & 0xff)) inBox = false; },
+    get free() { return !inBox; },
+    /**
+     * Ask for `set` (any subset of the three) to hold from observation `at`.
+     * @returns the extended observation it was actually scheduled for
+     */
     want(at, set) {
       changes += Object.keys(set).length;
-      // A boundary already published is closed: the next one takes it.
-      const target = published !== null && at <= published ? published + 1 : at;
-      if (!pending || pending.at !== target)
-        pending = { at: target, state: { ...shadow } };
-      Object.assign(pending.state, set);
+      // A boundary already in the box is closed. The comparison is on extended
+      // numbers, so it is a comparison and not a guess about which side of a
+      // wrap something is on.
+      let target = at;
+      if (published !== null && target <= published) target = published + 1;
+      if (!waiting.has(target)) waiting.set(target, { ...shadow });
+      // …and every boundary at or after it inherits the change too, because a
+      // bundle is a whole state and not a difference.
+      for (const [k, v] of waiting) if (k >= target) Object.assign(v, set);
       Object.assign(shadow, set);
       return target;
     },
-    /** Hand the pending bundle to the queue, if there is one. */
+    /** Put the soonest waiting bundle in the box, if the box is free. */
     emit() {
-      if (!pending) return null;
-      const r = cmdRecord({ at: pending.at, ...pending.state });
-      published = pending.at; pending = null; records++;
-      return r;
+      if (!this.free) return null;
+      const at = soonest();
+      if (at === null) return null;
+      const state = waiting.get(at);
+      waiting.delete(at);
+      published = at;
+      inBox = true;
+      commit = (commit + 1) & 0xff;
+      records++;
+      return { bundle: cmdBundle({ at, ...state }), commit, at };
     },
   };
 }
 
 /**
- * THE Z80 SIDE, as a reference: ONE decision a lap.
+ * THE Z80 SIDE, as a reference: one decision a lap, on this lap's observation.
  *
- * @param q     {mem, base, size} the queue's page
- * @param st    {tail, staged:{}, late} updated in place
- * @param head  the host's cursor
- * @param at    the output index of the LAP BOUNDARY this lap decides for
+ * @param box  what the mailbox holds — `readMailbox()`
+ * @param st   {ack, staged:{}, late} updated in place
+ * @param n    THIS observation's number, after the decoder has finalised it
  */
-export function refConsume(q, st, head, at) {
-  const byte = (k) => q.mem[q.base + ((st.tail + k) % q.size)];
-  const have = ((head - st.tail + q.size) % q.size) >= CMD_BYTES;
-  const applyAt = byte(CMD.applyLo) | (byte(CMD.applyHi) << 8);
-  // DUE means "not in the future". Exactly on time and late are both consumed
-  // here: the boundary a late command lands on is the first one the engine has
-  // not built, and this is it.
-  const d = (at - applyAt) & 0xffff;
-  const due = have && d < 0x8000;
-  const known = have && byte(CMD.type) === CMD_PCM_LEVEL_STATE
-    && byte(CMD.size) === CMD_BYTES;
-  const go = have && due;                 // the cell is consumed
-  const apply = go && known;              // …and its values are staged
-  const late = apply && d !== 0;
-  if (apply) CMD_VALUES.forEach((k, i) => { st.staged[k] = byte(CMD.v0page + i); });
-  if (late) st.late = ((st.late ?? 0) + 1) & 0xff;
-  if (go) st.tail = (st.tail + CMD_BYTES) % q.size;
-  return { have, due, known, go, apply, late, d };
+export function refConsume(box, st, n) {
+  const pending = box.commit !== st.ack;
+  const d = (n - box.decisionObservation) & 0xffff;
+  const due = pending && d < 0x8000;
+  const late = due && d !== 0;
+  if (due) {
+    CMD_VALUES.forEach((k) => { st.staged[k] = box[k]; });
+    st.ack = box.commit;
+    if (late) st.late = ((st.late ?? 0) + 1) & 0xff;
+  }
+  return { pending, due, late, d };
 }
 
 // ── THE CONSUMER AS Z80 PIECES ───────────────────────────────────────────
 //
-// Ten positions, b9 and b10 of every block, and one copy of the chain a lap —
-// not five copies of one block's worth. So there is ONE set of self-modified
-// operands, and a piece hands its result to the next through memory or, where
-// the flags have to survive with it, through `AF'`.
-//
-// `AF'` IS FREE AND IT IS NOW USED. `ex af,af'` never runs anywhere else in the
-// image and there are no interrupts, so the shadow accumulator is a register
-// the consumer owns. It carries the borrow out of the low half of the time
-// comparison, which nothing else can hold across a slot boundary: the pad may
-// clobber the flags and the slot's tail reloads main A with the next sample.
-// The chain always SAVES into it before it reads it, so the uninitialised
-// shadow is never the value anything depends on.
-//
-// Main BC is used INSIDE a piece and never across one. `ld bc,(queueTail)` is
-// the whole record pointer in 20 cycles where `push hl`/`ld hl,(nn)`/`pop hl`
-// is 37, and the placer is told which slots the consumer clobbers BC in so it
-// cannot also be carrying the decode's or the protocol's value through them.
+// Ten positions, b9 and b10 of every block, one copy of the chain a lap. Every
+// operand is a FIXED address or a self-modified immediate, so there is no
+// pointer to build and no register to borrow: `A` and the flags are the only
+// live things, `AF'` carries the one value that has to cross a slot boundary
+// with its flags (the borrow out of the low half of the comparison), and BC is
+// never touched — which the test asserts by disassembling the emitted bytes.
 
 const b = (name, ops, extra = {}) => ({ name, ops, cycles: cost(ops), ...extra });
 
 /**
- * BC IS DECLARED, AND THEN PAID FOR (R16 §41.3).
+ * Ways to get the consumer's ORDER wrong (R17 §43.6 step 3).
  *
- * A consumer piece may use main BC inside itself, but the decode's and the
- * protocol's own pieces carry BC BETWEEN slots, and the placer showed those
- * live ranges covering every one of the consumer's early positions. So a piece
- * that clobbers BC saves and restores it — 21 cycles, two bytes of stack, the
- * same pair the pad already uses — rather than the placer being asked to keep
- * the two apart, which it cannot do while the chain's deadline is one
- * observation. What this buys is that the clobber is declared and neutralised;
- * what it costs is printed on its own line.
+ * `ack-early` is the one the mailbox's whole shape depends on: the ack is what
+ * lets the 68000 write the next payload, so giving it before the three values
+ * have been stored hands the box back while this lap is still reading it.
  */
-const keepBC = (piece) => (piece.bc
-  ? { ...piece, ops: [op("push bc", 11), ...piece.ops, op("pop  bc", 10)],
-    cycles: piece.cycles + 21 }
-  : piece);
+export const COMMAND_FAULTS = {
+  "ack-early": "the ack is given before the three values have been stored",
+};
 
-/**
- * The chain, in order.
- *
- * @param m     the protocol's map (proto-blocks.mjs `protoMap`)
- * @param cfg   for the lap's own output count and the queue's page
- */
-export function commandBlocks(m, cfg, tag = "", { preserveBC = true } = {}) {
-  const C = m.cmd;
-  const T = hx(m.queueTail);                        // …and the page byte behind it
-  const OUT = m.outputLow;
-  const HEAD = hx(m.L.control.queueHead.offset);
-  const LAP = cfg.cycleSlots;
+export function commandBlocks(m, cfg, tag = "", { fault = null } = {}) {
+  if (fault && !COMMAND_FAULTS[fault]) throw new Error(`unknown command fault ${fault}`);
+  const lbl = (n) => `mb_${n}${tag}`;
+  const OBS = m.mailbox.fields.decisionObservation.offset;
+  const VAL = m.mailbox.fields.v0page.offset;
+  const COMMIT = m.L.control.commandCommit.offset;
+  const ACK = m.commandAck, LATE = m.lateCount;
+  const CNT = m.stageBase;                       // the decoder's own counter
   const V0 = m.stageBytes, DUMP = m.dumpBytes;
-  const SUPPRESS = (V0 ^ DUMP) & 0xff;              // one xor is the whole of it
+  const SUPPRESS = (V0 ^ DUMP) & 0xff;
   if ((V0 & 0xff00) !== (DUMP & 0xff00))
     throw new Error("the staged bytes and the bit bucket must share a page");
   for (let k = 1; k < CMD_VALUES.length; k++)
     if ((((V0 + k) ^ (DUMP + k)) & 0xff) !== SUPPRESS)
       throw new Error("the suppression xor does not survive the walk along the values");
-  const lbl = (n) => `cmd_${n}${tag}`;
+  // The sites the chain writes into itself. `ack` lives in three of them and in
+  // the globals byte the host reads; the rest are one-lap masks.
+  const S = Object.fromEntries(["k1", "k2", "k3", "pend", "go1", "go2", "go3",
+    "late", "olo", "slo", "shi"].map((n) => [n, lbl(n)]));
   const P = CMD_VALUES.map((_, i) => lbl(`st${i}`));
-  const done = (list) => (preserveBC ? list.map(keepBC) : list);
-  return done([
-    // ── the boundary this lap decides for ─────────────────────────────
-    // The logical position steps ONCE a lap, by the lap's own generated output
-    // count, at the head of the chain. So from here to the same point next lap
-    // it names the boundary the decision applies at AND the next lap's first
-    // output — one number, no per-site constant anywhere (R16 §41.2).
-    b("cmd tick", [
-      op(`ld   a,(${hx(OUT)})`, 13),
-      op(`add  a,${LAP}`, 7, { what: "one lap of outputs, from the schedule" }),
-      op(`ld   (${hx(OUT)}),a`, 13),
-      op(`ld   a,(${hx(OUT + 1)})`, 13),
-      op("adc  a,0", 7),
-      op(`ld   (${hx(OUT + 1)}),a`, 13, { what: "the boundary this lap decides for" }),
-    ]),
-    // ── is there a whole cell behind the host's cursor? ────────────────
-    b("cmd have", [
-      op(`ld   a,(${T})`, 13),
-      op("ld   c,a", 4),
-      op(`ld   a,(${HEAD})`, 13, { what: "the host's cursor" }),
-      op("sub  c", 4),
-      op(`cp   ${CMD_BYTES}`, 7),
-      op("ccf", 4),
-      op("sbc  a,a", 4, { what: "$ff exactly when a whole cell is there" }),
-      op(`ld   (${hx(C.mask)}),a`, 13),
-    ], { bc: true }),
-    // ── the time, low half ────────────────────────────────────────────
-    b("cmd due lo", [
-      op(`ld   bc,(${T})`, 20, { what: "C = the tail, B = the queue's page" }),
-      op("inc  c", 4),
-      op("inc  c", 4, { what: "→ the cell's applyAtLow" }),
-      op("ld   a,(bc)", 7),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(OUT)})`, 13),
-      op("sub  c", 4, { what: "the difference's low byte, and the borrow" }),
-      op(`ld   (${hx(C.dlo)}),a`, 13),
-      op("ex   af,af'", 4, { what: "the borrow, to the piece that needs it" }),
-    ], { bc: true, afOut: true }),
-    // ── the time, high half ───────────────────────────────────────────
-    // `ld`, `push`/`pop` and `inc c` all leave the carry alone, which is what
-    // lets the borrow cross a slot boundary in the shadow flags at all.
-    b("cmd due hi", [
-      op("ex   af,af'", 4, { what: "the borrow, back" }),
-      op(`ld   bc,(${T})`, 20),
-      op("inc  c", 4),
-      op("inc  c", 4),
-      op("inc  c", 4, { what: "→ its high byte" }),
-      op("ld   a,(bc)", 7),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(OUT + 1)})`, 13),
-      op("sbc  a,c", 4, { what: "the difference, with the borrow" }),
-      op(`ld   (${hx(C.dhi)}),a`, 13),
-    ], { bc: true, afIn: true }),
-    // ── due, and therefore consumed ───────────────────────────────────
-    b("cmd go", [
-      op(`ld   a,(${hx(C.dhi)})`, 13),
-      op("add  a,a", 4, { what: "the sign into the carry" }),
-      op("sbc  a,a", 4, { what: "$ff when the cell is still in the FUTURE" }),
-      op("cpl", 4, { what: "…so this is $ff when it is due" }),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(C.mask)})`, 13),
-      op("and  c", 4, { what: "go = a whole cell AND due" }),
-      op(`ld   (${hx(C.mask)}),a`, 13),
-      op(`and  ${CMD_BYTES}`, 7, { what: "the cell's length, or nothing" }),
-      op([`${lbl("step")}:`, `ld   (${lbl("adv")}+1),a`], 13,
-        { what: "…into the tail's own step" }),
-    ], { bc: true }),
-    // ── is it a cell we know how to apply? ────────────────────────────
-    // The size byte IS read (R16 §41.4-2). A cell that says anything but 8 is
-    // stepped over and stages nothing, which is the fixed-cell rule.
-    b("cmd cell", [
-      op(`ld   bc,(${T})`, 20),
-      op("ld   a,(bc)", 7, { what: "the cell's size" }),
-      op(`sub  ${CMD_BYTES}`, 7),
-      op("ex   af,af'", 4, { what: "park it — C still points at the cell" }),
-      op("inc  c", 4),
-      op("ld   a,(bc)", 7, { what: "…and its type" }),
-      op(`sub  ${CMD_PCM_LEVEL_STATE}`, 7),
-      op("ld   c,a", 4),
-      op("ex   af,af'", 4),
-      op("or   c", 4, { what: "zero only if both are what we know" }),
+  const order = (list) => {
+    if (fault !== "ack-early") return list;
+    // …moved in front of the stores, and no longer held behind the edge.
+    const ack = list.find((x) => x.name === "mb ack");
+    const rest = list.filter((x) => x !== ack);
+    const at = rest.findIndex((x) => x.edge);
+    return [...rest.slice(0, at), { ...ack, afterEdge: false }, ...rest.slice(at)];
+  };
+  return order([
+    // ── is there anything in the box? ─────────────────────────────────
+    // `commit - ack`, with the engine's own ack held in the instruction that
+    // uses it. Nothing is dereferenced and nothing is saved.
+    b("mb pending", [
+      op(`ld   a,(${hx(COMMIT)})`, 13, { what: "the 68000's commit byte" }),
+      op([`${S.k1}:`, "sub  $00"], 7, { what: "…less the ack this engine last gave" }),
       op("sub  1", 7),
-      op("sbc  a,a", 4, { what: "$ff iff a cell we know how to apply" }),
-      op(`ld   (${hx(C.known)}),a`, 13),
-    ], { bc: true }),
-    // ── apply = consumed AND known ────────────────────────────────────
-    b("cmd apply", [
-      op(`ld   a,(${hx(C.known)})`, 13),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(C.mask)})`, 13),
-      op("and  c", 4, { what: "apply" }),
-      op(`ld   (${hx(C.known)}),a`, 13, { what: "…kept for the late count" }),
-    ], { bc: true }),
+      op("sbc  a,a", 4),
+      op("cpl", 4, { what: "$ff exactly when a bundle is waiting" }),
+      op(`ld   (${S.pend}+1),a`, 13),
+    ]),
+    // ── the time, low half ────────────────────────────────────────────
+    // AFTER the decoder has finalised this observation's number: the comparison
+    // is against `count`, and using it before `count hi store` would be
+    // comparing against last lap's (R17 §43.2). The placer checks the order.
+    b("mb diff lo", [
+      op(`ld   a,(${hx(OBS)})`, 13, { what: "the observation the bundle names" }),
+      op(`ld   (${S.slo}+1),a`, 13),
+      op(`ld   a,(${hx(CNT)})`, 13, { what: "…and the one this lap is" }),
+      op([`${S.slo}:`, "sub  $00"], 7, { what: "the difference's low byte, and the borrow" }),
+      op(`ld   (${S.olo}+1),a`, 13, { what: "kept for the exactly-on-time test" }),
+      op("ex   af,af'", 4, { what: "the borrow, to the piece that needs it" }),
+    ], { needsCount: true }),
+    // ── the time, high half, and whether it is zero ───────────────────
+    // ONE subtraction, shared: the sign of the high byte decides due, and the
+    // OR of the two halves decides exact-or-late. Neither is recomputed.
+    b("mb diff hi", [
+      op("ex   af,af'", 4, { what: "the borrow, back" }),
+      op(`ld   a,(${hx(OBS + 1)})`, 13),
+      op(`ld   (${S.shi}+1),a`, 13, { what: "…`ld` leaves the borrow alone" }),
+      op(`ld   a,(${hx(CNT + 1)})`, 13),
+      op([`${S.shi}:`, "sbc  a,$00"], 7, { what: "the difference, with the borrow" }),
+      op(`ld   (${hx(m.cmd.dhi)}),a`, 13),
+      op([`${S.olo}:`, "or   $00"], 7, { what: "…or its low half: zero only if exact" }),
+      op(`ld   (${hx(m.cmd.nx)}),a`, 13),
+    ], { needsCount: true }),
+    // ── due, and therefore going to happen ────────────────────────────
+    b("mb go", [
+      op(`ld   a,(${hx(m.cmd.dhi)})`, 13),
+      op("add  a,a", 4, { what: "the sign into the carry" }),
+      op("sbc  a,a", 4, { what: "$ff when the bundle is still in the FUTURE" }),
+      op("cpl", 4, { what: "…so this is $ff when its boundary has come" }),
+      op([`${S.pend}:`, "and  $00"], 7, { what: "…and there is a bundle in the box" }),
+      op(`ld   (${S.go1}+1),a`, 13, { what: "into the destination blend" }),
+      op(`ld   (${S.go2}+1),a`, 13, { what: "…the late test" }),
+      op(`ld   (${S.go3}+1),a`, 13, { what: "…and the ack" }),
+    ]),
     // ── where the three values are going ──────────────────────────────
-    // The staged bytes and the bit bucket differ by ONE bit of their low byte,
-    // and they differ by the same bit all the way along the three, so the whole
-    // suppression is `and mask` / `xor bucket` on one address.
-    b("cmd dest", [
-      op(`ld   a,(${hx(C.known)})`, 13),
+    // The staged bytes and the bit bucket differ by one bit of their low byte,
+    // and by the same bit all the way along the three, so the whole suppression
+    // is `and` / `xor` on one address.
+    b("mb dest", [
+      op([`${S.go1}:`, "ld   a,$00"], 7),
       op(`and  ${SUPPRESS}`, 7),
       op(`xor  ${hx(DUMP & 0xff)}`, 7, { what: "the staged bytes, or the bit bucket" }),
       op(`ld   (${P[0]}+1),a`, 13),
@@ -286,148 +244,141 @@ export function commandBlocks(m, cfg, tag = "", { preserveBC = true } = {}) {
       op(`ld   (${P[2]}+1),a`, 13),
     ]),
     // ── the three values, stored ──────────────────────────────────────
-    // BOTH OF THESE MUST SIT BETWEEN THE SAME TWO BLOCK EDGES (R16 §41.3): the
+    // BOTH OF THESE MUST SIT BETWEEN THE SAME TWO BLOCK EDGES (R17 §43.4): the
     // edge picks the three staged bytes up together, so an edge landing between
     // two of these stores would run a block on half of one bundle and half of
-    // the previous one.
-    b("cmd store 01", [
-      op(`ld   bc,(${T})`, 20),
-      op("ld   a,c", 4),
-      op(`add  a,${CMD.v0page}`, 7),
-      op("ld   c,a", 4, { what: "→ the bundle's values" }),
-      op("ld   a,(bc)", 7),
+    // the last one.
+    b("mb store 01", [
+      op(`ld   a,(${hx(VAL)})`, 13),
       op([`${P[0]}:`, `ld   (${hx(V0)}),a`], 13, { what: "voice 0's level page" }),
-      op("inc  c", 4),
-      op("ld   a,(bc)", 7),
+      op(`ld   a,(${hx(VAL + 1)})`, 13),
       op([`${P[1]}:`, `ld   (${hx(V0 + 1)}),a`], 13, { what: "voice 1's" }),
-    ], { bc: true, edge: true }),
-    b("cmd store 2", [
-      op(`ld   bc,(${T})`, 20),
-      op("ld   a,c", 4),
-      op(`add  a,${CMD.mpage}`, 7),
-      op("ld   c,a", 4),
-      op("ld   a,(bc)", 7),
+    ], { edge: true }),
+    b("mb store 2", [
+      op(`ld   a,(${hx(VAL + 2)})`, 13),
       op([`${P[2]}:`, `ld   (${hx(V0 + 2)}),a`], 13, { what: "…and the master's" }),
-    ], { bc: true, edge: true }),
-    // ── consume it ────────────────────────────────────────────────────
-    b("cmd adv", [
-      op(`ld   a,(${T})`, 13),
-      op([`${lbl("adv")}:`, "add  a,$00"], 7, { what: "one cell, or nothing" }),
-      op(`ld   (${T}),a`, 13, { what: "the tail: a whole cell, or where it was" }),
-    ]),
+    ], { edge: true }),
+    // ── and only then, the acknowledgement ────────────────────────────
+    // AFTER the three stores, never before: the ack is what lets the 68000
+    // write the next payload, and it must not do that over a bundle this lap
+    // has read but not yet applied.
+    b("mb ack", [
+      op(`ld   a,(${hx(COMMIT)})`, 13),
+      op([`${S.k2}:`, "xor  $00"], 7),
+      op([`${S.go3}:`, "and  $00"], 7, { what: "…only if the bundle was taken" }),
+      op([`${S.k3}:`, "xor  $00"], 7),
+      op(`ld   (${hx(ACK)}),a`, 13, { what: "the byte the 68000 reads" }),
+      op(`ld   (${S.k1}+1),a`, 13, { what: "…and the three the engine uses" }),
+      op(`ld   (${S.k2}+1),a`, 13),
+      op(`ld   (${S.k3}+1),a`, 13),
+    ], { afterEdge: true }),
     // ── exactly on time, or late? ─────────────────────────────────────
-    // §33.4 asked for this count and R15 did not have it. A command applied at
-    // a boundary later than the one it named is late; a phase correction or a
-    // BUSREQ stop is not, because neither changes the output index at all.
-    b("cmd late test", [
-      op(`ld   a,(${hx(C.dhi)})`, 13),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(C.dlo)})`, 13),
-      op("or   c", 4, { what: "zero only if this is the boundary it named" }),
+    // §33.4 asked for this count. A bundle applied at a boundary later than the
+    // one it named is late; a phase correction or a bus grab is not, because
+    // neither moves the observation number.
+    b("mb late", [
+      op(`ld   a,(${hx(m.cmd.nx)})`, 13),
       op("sub  1", 7),
       op("sbc  a,a", 4),
-      op("inc  a", 4, { what: "1 when it is late, 0 when it is exact" }),
-      op(`ld   (${hx(C.notExact)}),a`, 13),
-    ], { bc: true }),
-    b("cmd late count", [
-      op(`ld   a,(${hx(C.notExact)})`, 13),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(C.known)})`, 13, { what: "apply" }),
-      op("and  c", 4),
-      op("ld   c,a", 4),
-      op(`ld   a,(${hx(C.late)})`, 13),
-      op("add  a,c", 4),
-      op(`ld   (${hx(C.late)}),a`, 13, { what: "lateCommandCount" }),
-    ], { bc: true }),
+      op("inc  a", 4, { what: "1 when the boundary had already gone, 0 when it is this one" }),
+      op([`${S.go2}:`, "and  $00"], 7, { what: "…and only when it was actually staged" }),
+      op(`ld   (${S.late}+1),a`, 13),
+    ], { afterEdge: true }),
+    b("mb count", [
+      op(`ld   a,(${hx(LATE)})`, 13),
+      op([`${S.late}:`, "add  a,$00"], 7),
+      op(`ld   (${hx(LATE)}),a`, 13, { what: "lateCommandCount" }),
+    ], { afterEdge: true }),
   ]);
-}
-
-/**
- * Boot. The counters start at zero, the tail steps by nothing until a decision
- * says otherwise, and the three destinations point at the BIT BUCKET — so the
- * very first lap, before anything has been decided, stages nothing rather than
- * whatever the operands happened to contain.
- */
-export function commandBootLines(m, tag = "") {
-  const C = m.cmd, lbl = (n) => `cmd_${n}${tag}`;
-  const P = CMD_VALUES.map((_, i) => lbl(`st${i}`));
-  const out = ["xor  a"];
-  for (const k of ["mask", "dlo", "dhi", "known", "notExact", "late"])
-    out.push(`ld   (${hx(C[k])}),a`);
-  out.push(`ld   (${lbl("adv")}+1),a`);
-  out.push(`ld   a,${hx(m.dumpBytes & 0xff)}`);
-  P.forEach((p, i) => {
-    if (i) out.push("inc  a");
-    out.push(`ld   (${p}+1),a`);
-  });
-  return out;
 }
 
 /** What one lap of it costs. */
 export const commandCost = (blocks) => blocks.reduce((t, x) => t + x.cycles, 0);
 
 /**
- * WHERE THE CHAIN GOES (R16 §41.3).
- *
- * The consumer gets b9 and b10 of every block and nothing else — ten positions,
- * `(73 + 72) * 5` cycles. Pieces are laid into them in chain order; the two
- * marked `edge` are PINNED to the pair of positions inside the block whose
- * edge is the last one before the lap boundary, because that edge is what makes
- * the three values take effect exactly at the boundary the bundle named.
- *
- * @returns {plan, positions, over} — the plan maps a slot index to its ops, and
- *          `over` names every position that ended up past the ceiling.
+ * Boot. The ack and the count start at zero, nothing is pending, and the three
+ * destinations point at the BIT BUCKET — so the first lap, before anything has
+ * been decided, stages nothing rather than whatever the operands held.
  */
-export function packCommand(blocks, cfg, { rooms, ceilings, budget }) {
+export function commandBootLines(m, tag = "") {
+  const lbl = (n) => `mb_${n}${tag}`;
+  const out = ["xor  a"];
+  for (const a of [m.commandAck, m.lateCount, m.cmd.dhi, m.cmd.nx])
+    out.push(`ld   (${hx(a)}),a`);
+  for (const n of ["k1", "k2", "k3", "pend", "go1", "go2", "go3", "late", "olo",
+    "slo", "shi"]) out.push(`ld   (${lbl(n)}+1),a`);
+  out.push(`ld   a,${hx(m.dumpBytes & 0xff)}`);
+  CMD_VALUES.forEach((_, i) => {
+    if (i) out.push("inc  a");
+    out.push(`ld   (${lbl(`st${i}`)}+1),a`);
+  });
+  return out;
+}
+
+/**
+ * WHERE THE CHAIN GOES (R17 §43.4).
+ *
+ * b9 and b10 of every block — ten positions, `(73 + 72) * 5` cycles — and three
+ * ordering constraints that come from the schedule rather than from taste:
+ *
+ *   needsCount   the comparison reads the decoder's counter, so it must be
+ *                placed after the slot the decode's `count hi store` landed in
+ *   edge         the three stores go in the block whose edge is the last one
+ *                before the lap boundary, so the change lands exactly there
+ *   afterEdge    the ack and the late count follow the stores
+ */
+export function packCommand(blocks, cfg, { rooms, ceilings, budget, countAt = -1 }) {
   const bs = cfg.blockSamples, lead = cfg.lead, n = cfg.cycleSlots;
   const positions = [];
   for (let i = 0; i < n; i++) {
     const p = (i + lead) % bs;
     if (p === 9 || p === 10) positions.push(i);
   }
-  // The edge that activates state for the lap's first output: the slot that
-  // builds the sample before it. Derived, not written down.
+  // The edge that activates state for the lap's first output is the slot that
+  // builds the sample before it. Derived from the schedule, not written down.
   const edgeSlot = (n - lead - 1 + n) % n;
   if ((edgeSlot + lead) % bs !== bs - 1)
     throw new Error("the lap boundary's block edge is not a block edge");
   const edgeBlock = Math.floor((edgeSlot + lead) / bs);
   const pinned = positions.filter((i) => Math.floor((i + lead) / bs) === edgeBlock);
   if (pinned.length !== 2) throw new Error("the edge block does not hold both consumer positions");
-
-  // 1, 2, 3, 5 and 9 are the residuals a straight-line pad cannot hit, so a
-  // piece that would leave one has not fitted — it has jammed the slot. This is
-  // the same rule `padTo` enforces, applied before the fact instead of as an
-  // assembly-time refusal (schedule.mjs).
-  const paddable = (r) => r === 0 || r === 4 || r === 6 || r === 7 || r === 8 || r >= 10;
-
-  // The chain is ordered, so a piece may only go at or after the position the
-  // previous one took — and the two pinned pieces split the run in three: what
-  // must have happened before the values are stored, the stores themselves, and
-  // what may happen after.
+  // WHICH RESIDUALS A PAD CAN ACTUALLY HIT. `padTo` builds from {4, 6, 7, 10,
+  // 12} plus `ld b,k`/`djnz`, but a slot that has to carry a value in BC gets
+  // neither `inc bc` nor the djnz form (schedule.mjs), and whether a given slot
+  // is one of those depends on a placement that has not happened yet. So the
+  // test is the CONSERVATIVE set — what {4, 7, 10, 12, 21} can reach — and
+  // 1, 2, 3, 5, 6, 9 and 13 are refused wherever they fall.
+  const UNREACHABLE = new Set([1, 2, 3, 5, 6, 9, 13]);
+  const paddable = (r) => r >= 0 && !UNREACHABLE.has(r);
   const first = blocks.findIndex((x) => x.edge);
   const last = blocks.length - 1 - [...blocks].reverse().findIndex((x) => x.edge);
+
   const attempt = (room) => {
     const at = new Map(positions.map((i) => [i, []]));
     const load = new Map(positions.map((i) => [i, 0]));
     const edges = blocks.filter((x) => x.edge);
     let k = 0, failed = null;
-    for (let n = 0; n < blocks.length; n++) {
-      const piece = blocks[n];
+    for (let idx = 0; idx < blocks.length; idx++) {
+      const piece = blocks[idx];
       let placed = null;
       if (piece.edge) {
         placed = pinned[edges.indexOf(piece)];
         if (positions.indexOf(placed) < k) { failed = piece; break; }
       } else {
-        // Before the stores: only the positions in front of them. After: only
-        // the ones behind. The pinned pair itself is the stores' and nothing
-        // else may take its room.
-        const lo = n > last ? positions.indexOf(pinned[1]) + 1 : k;
-        const hi = n < first ? positions.indexOf(pinned[0]) : positions.length;
+        const lo = piece.afterEdge || idx > last
+          ? positions.indexOf(pinned[1]) + 1 : k;
+        const hi = idx < first ? positions.indexOf(pinned[0]) : positions.length;
         for (let j = Math.max(k, lo); j < hi; j++) {
           const i = positions[j];
           if (pinned.includes(i)) continue;
-          const rest = room(i) - load.get(i) - piece.cycles;
-          if (rest >= 0 && paddable(rest)) { placed = i; break; }
+          if (piece.needsCount && i <= countAt) continue;
+          // Fits inside whatever budget this pass is using, AND leaves a
+          // residual the pad solver can actually hit — which is a property of
+          // the SLOT, not of the budget, so it is always checked against the
+          // physical room (schedule.mjs `padTo`).
+          if (room(i) - load.get(i) - piece.cycles < 0) continue;
+          if (!paddable(rooms.get(i) - load.get(i) - piece.cycles)) continue;
+          placed = i; break;
         }
       }
       if (placed === null) { failed = piece; break; }
@@ -439,17 +390,17 @@ export function packCommand(blocks, cfg, { rooms, ceilings, budget }) {
   };
 
   // FIRST INSIDE THE CEILING, and only then inside what the slot physically
-  // holds. A consumer that needs the second pass has not fitted — the report
-  // says which positions it pushed past 83.9% and by how much, which is the
-  // failure table R16 §41.5 step 5 asks for rather than a refusal with no
-  // numbers behind it.
+  // holds. A consumer that needs the second pass has not fitted, and the report
+  // says which positions it pushed past 83.9% and by how much.
   let r = attempt((i) => ceilings.get(i)), spilled = false;
   if (r.failed) { r = attempt((i) => rooms.get(i)); spilled = true; }
   const plan = new Map();
   for (const [i, ps] of r.at) if (ps.length) plan.set(i, ps.flatMap((p) => p.ops));
   const over = [...r.load].filter(([i, c]) => c > ceilings.get(i))
     .map(([i, c]) => ({ slot: i, cycles: c, ceiling: ceilings.get(i) }));
+  const slotOf = (name) => [...r.at].find(([, ps]) => ps.some((p) => p.name === name))?.[0];
   return { plan, positions, pinned, edgeSlot, load: r.load, at: r.at,
-    failed: r.failed, spilled, over, total: commandCost(blocks), budget,
-    bcSlots: [...r.at].filter(([, ps]) => ps.some((p) => p.bc)).map(([i]) => i) };
+    failed: r.failed, spilled, over, total: commandCost(blocks), budget, countAt,
+    firstCount: Math.min(...blocks.filter((x) => x.needsCount)
+      .map((x) => slotOf(x.name) ?? Infinity)) };
 }
