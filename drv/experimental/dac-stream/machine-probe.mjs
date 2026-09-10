@@ -109,7 +109,14 @@ const EVERY = (() => { const v = arg("every-sweep", null); if (!v) return null;
 // mode; the full run still reports every case and still exits 1 on the known
 // informational failures, which are not to be quietly reclassified.
 const REQUIRED_ONLY = argv.includes("--required-only");
+// The conflict-position repetitions are the same image from another starting
+// phase, and there are twelve of them (R22 §52.4). They are off unless asked
+// for, so the routine gate does not pay for them.
+const CONFLICT = argv.includes("--conflict");
+// …and the listening tour, which is 44 seconds of music and not a gate.
+const LISTEN = argv.includes("--listen");
 const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
+  && (CONFLICT || !c.conflictOnly) && (LISTEN || !c.listenOnly)
   // The access-width witness runs in the required gate too: its DAC numbers
   // are informational, its verdict is not (R20 §48.3 step 1).
   && (!REQUIRED_ONLY || !c.informational || c.widthWitness)

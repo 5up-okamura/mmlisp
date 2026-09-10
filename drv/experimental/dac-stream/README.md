@@ -207,13 +207,33 @@ first time broke two accepted results:
   publish, 61.2 acknowledged updates a second, and every one of 3,675
   publications in a 60-second run named the live counter's next boundary.
 
-  What it does NOT fix is a window under one slot wide: `mb pending` reads the
-  commit at slot 8 and the decode stores the counter's low byte at slot 8.99, so
-  a commit landing between them is seen a lap after the counter the host read
-  says, and is applied one observation late. 44 of 3,675 in 60 seconds, all
-  published between slot 8.2 and slot 9.1. Moving `mb pending` after the counter
-  store — the R18 §48.2 option — was measured and does not fit: it lands on
-  `mb diff lo` and puts the image 101 B past 2,560 with a worst slot of 96.6%.
+  R21 left one window under a slot wide: `mb pending` read the commit at slot 8
+  and the decode stored the counter's low byte at slot 8.99, so a commit landing
+  between them was seen a lap after the counter the host had read, and applied
+  one observation late — 44 of 3,675 in 60 seconds, all published between slot
+  8.2 and slot 9.1.
+
+  **R22 §52.2 closed it by moving the counter, not the box.** Its five pieces go
+  immediately after the H read: they advance once per read and take nothing from
+  the phase decode, and `read` has already left the lookup index in the operand
+  it self-modified, so nothing is lost by putting them there. `count hi store`
+  lands at slot 1 against `mb pending` at slot 8, and the generator now REFUSES
+  an image where the counter finishes after the box is read — checked in cycles
+  from the finished image, not in slot numbers, because those two were one slot
+  apart on paper and the wrong way round in fact. `--fault counter-late` rebuilds
+  the old arrangement and must be refused.
+
+  Moving `mb pending` after the counter instead — the R18 §48.2 option — was
+  measured and does not fit: it lands on `mb diff lo` and puts the image 101 B
+  past 2,560 with a worst slot of 96.6%.
+
+  The re-placement cost 13 bytes, which came back with interest from a fourth
+  pad counter: `ld a,k` / `dec a` / `jr nz` is FIVE bytes for any wait where the
+  IYL form is seven, because `dec a` is one byte and `dec iyl` is two with its IY
+  prefix. Both destroy the flags and both are offered only where the caller has
+  said the register is dead. The engine went from 2,495 B to 2,384 B and the
+  finished estimate from 2,466 B to 2,382 B — 178 B spare — without one cycle
+  moving.
 
   The period between transfers is GENERATED from what those paths cost (R20
   §48.5) rather than being a fixed DBRA count: at least one observation interval,
@@ -221,6 +241,19 @@ first time broke two accepted results:
   masterHz/120, so a pair of them still makes 60 desired-state updates a second.
   The measured interval is 438,543..438,935 master against the 438,762 it was
   solved for.
+
+**The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
+ROMs — one with the CSM test tone and one without — that play the SAME image the
+gates measure on a fixed 44-second timeline: each voice alone, an ordinary sum,
+the clamp on purpose, the fifteen levels up and down, the same fade on the
+master, a new desired state every publication, and then one piece of material
+three times over with no transfer at all, at the representative density, and at
+twice it. It writes a DAC-ONLY reference WAV from the instrument's own record of
+every `$2A` write, and a manifest with each section's start second, intent,
+expected levels, what was actually staged, and the RMS of the reference over
+that window. The staged byte is a Z80 PAGE, not a level: the family starts at
+page 12, and a host staging 0..14 is staging the code region as a volume table —
+which showed up as a −4,000 DC offset in the reference WAV before it was fixed.
 
 **How fast desired state can move**, measured with the 68000 really holding the
 bus: the whole handshake in ONE grab — read the ack, publish if the box is free

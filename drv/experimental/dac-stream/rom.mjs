@@ -130,6 +130,10 @@ class M68k {
   moveBimmA(imm,a) { this.reg(1); this.n(12); this.w(0x10bc | (a << 9)); this.w(imm & 255); }
   moveBDtoA(d, a) { this.reg(1); this.n(8); this.w(0x1080 | (a << 9) | d); }       // move.b Dn,(An)
   moveBAtoD(a, d) { this.reg(1); this.n(8); this.w(0x1010 | (d << 9) | a); }       // move.b (An),Dn
+  moveBApost(a, d) { this.reg(1); this.n(8); this.w(0x1018 | (d << 9) | a); }      // move.b (An)+,Dn
+  moveWDabs(d, addr) { this.n(16); this.w(0x33c0 | d); this.a(addr, 2); }          // move.w Dn,(abs).l
+  cmpiWD(imm, d) { this.n(8); this.w(0x0c40 | d); this.w(imm); }                   // cmpi.w #i,Dn
+  addaW(d, a) { this.n(8); this.w(0xd0c0 | (a << 9) | d); }                        // adda.w Dn,An
   cmpBAD(a, d) { this.reg(1); this.n(8); this.w(0xb010 | (d << 9) | a); }          // cmp.b (An),Dn
   // The bus-request port through a register: $A11100 is not RAM, so the width
   // rule does not reach it, and reaching it this way is what took twenty-four
@@ -251,6 +255,9 @@ function readFace(m, P, tag, bytes = P.faceBytes) {
 // steps by `size`, and a test that never wrote a size would not have exercised
 // that at all.
 const QREC = 0x000f00;   // between the 68000 code and the Z80 image
+// The listening tour's section table (R19 §46.4): four bytes a section —
+// v0page, v1page, mpage, and how the host is to behave for it.
+const TOUR = 0x000f40;
 const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
   divuBig: 0x16, masked: 0x18, dbra: 0x1c, n: 32, nops: 256, dbras: 2048 };
 
@@ -870,6 +877,15 @@ export function buildRom(image, samples = null, grab = null) {
     // Nothing here writes a YM register: the CSM test voice went in at boot
     // while the bus was still held, and §33.6 step 5 has not been answered.
     const W = PROTO_WORK, PAY = PROTO_WORK + 32, PAY_B = PAY + 8;
+    // ── THE LISTENING TOUR (R19 §46.4) ───────────────────────────────────
+    // A fixed timeline instead of a rolling walk, so the same image can be put
+    // in front of an ear: each section is 128 iterations of the host's loop —
+    // 2.09 s at 61.2 a second — and the table names the level triple and how
+    // the host is to behave for it. The section index is the iteration counter
+    // shifted, so there is no pointer to walk and no end to compare.
+    const T = { v0: PROTO_WORK + 64, v1: PROTO_WORK + 65, m: PROTO_WORK + 66,
+      mode: PROTO_WORK + 67, iter: PROTO_WORK + 68 };
+    const TOUR_LOG2 = 7;                           // 128 iterations a section
     // The fixed addresses, loaded ONCE. a0/a1 are the moving pair; the face the
     // read follows is chosen inside its own grab, which has the room for it.
     m.leaAbs(Z80_BASE + P.commandCommit, 2);
@@ -879,6 +895,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.leaAbs(Z80_BASE + P.liveCount, 6);           // the decoder's own counter
     m.moveq(0, 6);                                 // the host's observation number
     m.moveq(0, 7);                                 // the level walk, advanced on success only
+    if (P.tour) { m.moveq(0, 0); m.moveWDabs(0, T.iter); m.moveBDabs(0, T.mode); }
     // ── the fragments, as functions, so each one can be PRICED ───────────
     // Every fragment is emitted twice: once into a throwaway emitter that adds
     // up its cycles, and once for real. The transfer period below is generated
@@ -931,13 +948,25 @@ export function buildRom(image, samples = null, grab = null) {
         FAULT_APPLIED.add("count-astray");
         x.addWimmD(0x40, 1); x.addWimmD(0x40, 2);
       }
+      if (P.tour) {
+        // THE TOUR'S TRIPLE comes from the section the timeline is in, worked
+        // out at the top of this iteration and parked in 68k RAM.
+        x.moveBabsD(T.v0, 3); x.moveBDabs(3, PAY + 2); x.moveBDabs(3, PAY_B + 2);
+        x.moveBabsD(T.v1, 3); x.moveBDabs(3, PAY + 3); x.moveBDabs(3, PAY_B + 3);
+        x.moveBabsD(T.m, 3); x.moveBDabs(3, PAY + 4); x.moveBDabs(3, PAY_B + 4);
+      } else {
       // Three levels that all move, from one rolling number: a 15-level build
-      // has pages 0..14, so the walk wraps at 15 and every bundle is different.
-      x.moveBDabs(7, PAY + 2); x.moveBDabs(7, PAY_B + 2);        // v0page = v
-      x.moveLimmD(14, 3); x.subWDD(7, 3);
-      x.moveBDabs(3, PAY + 3); x.moveBDabs(3, PAY_B + 3);        // v1page = 14 - v
-      x.moveLD(7, 3); x.lsrWimm(1, 3); x.addWimmD(7, 3);
-      x.moveBDabs(3, PAY + 4); x.moveBDabs(3, PAY_B + 4);        // mpage = 7 + v/2
+      // has fifteen level pages and the walk wraps at 15, so every bundle is
+      // different. They are counted from the family's FIRST page, not from
+      // zero — page 0 is the code region, not silence (R22 §52.6).
+      const LB = P.levelBase;
+      x.moveLD(7, 3); x.addWimmD(LB, 3);
+      x.moveBDabs(3, PAY + 2); x.moveBDabs(3, PAY_B + 2);        // v0page = base + v
+      x.moveLimmD(14 + LB, 3); x.subWDD(7, 3);
+      x.moveBDabs(3, PAY + 3); x.moveBDabs(3, PAY_B + 3);        // v1page = base + 14 - v
+      x.moveLD(7, 3); x.lsrWimm(1, 3); x.addWimmD(7 + LB, 3);
+      x.moveBDabs(3, PAY + 4); x.moveBDabs(3, PAY_B + 4);        // mpage = base + 7 + v/2
+      }
       x.leaAbs(PAY_B, 0);                          // …B is the arm the compare falls into
       x.moveAA(4, 1);
       x.moveLD(4, 5); x.addqL(1, 5);               // the commit this attempt writes
@@ -982,12 +1011,14 @@ export function buildRom(image, samples = null, grab = null) {
     // not what the read predicted" are different failures (R21 §50.3 step 3).
     const pubTail = (x) => {
       x.moveLD(5, 4);                              // the commit is now ours
-      x.addqL(1, 7);                               // …and the desired state moves on
-      x.cmpLimmD(15, 7);
-      x.bcs("mbwok");
-      x.moveq(0, 7);
-      x.costDrop(4);                               // …the wrap, once in fifteen
-      x.label("mbwok");
+      if (!P.tour) {
+        x.addqL(1, 7);                             // …and the desired state moves on
+        x.cmpLimmD(15, 7);
+        x.bcs("mbwok");
+        x.moveq(0, 7);
+        x.costDrop(4);                             // …the wrap, once in fifteen
+        x.label("mbwok");
+      }
       x.bra("mbdone");
       x.label("mbbusy");
       x.moveWimmA(0x0000, 5);                      // release — nothing was written
@@ -999,12 +1030,92 @@ export function buildRom(image, samples = null, grab = null) {
       x.costDrop(12 + 20 + 10 + 12 + 20);          // …neither refusal is on the priced path
       x.label("mbdone");
     };
+    // ── WHICH SECTION THE TIMELINE IS IN (R19 §46.4) ────────────────────
+    // One read of the iteration counter decides everything: the section, and
+    // with it the level triple, whether the bus is touched at all, and whether
+    // the waits are halved. The last section holds to the end of the run.
+    //
+    // The mode byte is a set of bits rather than a number, so a section can be
+    // "dense AND the master fades" without a case for every pair:
+    //   1 idle — no transfer at all      8  the master follows the triangle
+    //   2 dense — the waits are halved  16  the triangle steps every iteration
+    //   4 voice 0 follows the triangle  32  voice 1 follows it too
+    const tourStep = (x) => {
+      x.moveWabsD(T.iter, 0);
+      x.addWimmD(1, 0);
+      x.moveWDabs(0, T.iter);
+      x.moveLD(0, 1);
+      x.lsrWimm(TOUR_LOG2, 1);
+      x.cmpiWD(P.tour.length, 1);
+      x.bcs("twithin");
+      x.moveWimmD(P.tour.length - 1, 1);
+      x.costDrop(8);                               // …only past the end of the tour
+      x.label("twithin");
+      x.lslWimm(2, 1);
+      x.leaAbs(TOUR, 0);
+      x.addaW(1, 0);
+      x.moveBApost(0, 1); x.moveBDabs(1, T.v0);
+      x.moveBApost(0, 1); x.moveBDabs(1, T.v1);
+      x.moveBApost(0, 1); x.moveBDabs(1, T.m);
+      x.moveBAtoD(0, 2); x.moveBDabs(2, T.mode);
+      // THE TRIANGLE: 0..15..0 over 32 steps, one step every 32 iterations, or
+      // every iteration when bit 16 says so. 15 is clamped to 14 because a
+      // 15-level build's pages are 0..14.
+      x.moveWabsD(T.iter, 3);
+      x.moveLD(2, 0); x.andiW(16, 0);
+      x.bne("tfast");
+      x.lsrWimm(5, 3);
+      x.label("tfast");
+      x.andiW(31, 3);
+      x.cmpiWD(16, 3);
+      x.bcs("tup");
+      x.moveWimmD(31, 0); x.subWDD(3, 0); x.moveLD(0, 3);
+      x.costDrop(8 + 4 + 4);                       // …the falling half
+      x.label("tup");
+      x.cmpiWD(15, 3);
+      x.bcs("tok");
+      x.moveWimmD(14, 3);
+      x.costDrop(8);
+      x.label("tok");
+      x.addWimmD(P.levelBase, 3);                  // …as a PAGE, not as a level
+      // …and which of the three it drives.
+      x.moveLD(2, 0); x.andiW(4, 0); x.beq("tnv0");
+      x.moveBDabs(3, T.v0);
+      x.costDrop(16);
+      x.label("tnv0");
+      x.moveLD(2, 0); x.andiW(32, 0); x.beq("tnv1");
+      x.moveBDabs(3, T.v1);
+      x.costDrop(16);
+      x.label("tnv1");
+      x.moveLD(2, 0); x.andiW(8, 0); x.beq("tnm");
+      x.moveBDabs(3, T.m);
+      x.costDrop(16);
+      x.label("tnm");
+    };
+    // Is this section allowed to take the bus at all? A section that is not is
+    // the one that says what the DAC sounds like with the 68000 leaving it
+    // alone, against the very same material a lap later.
+    const idleSkip = (x, to) => {
+      if (!P.tour) return;
+      x.moveBabsD(T.mode, 0); x.andiW(1, 0); x.bne(to); x.n(2);
+    };
     // A wait is `move.w #N,d1` and N+1 dbra — N taken, one falling out.
     const waitCost = (n) => 8 + 10 * n + 14;
-    const emitWait = (n, label) => { m.moveWimmD(n, 1); m.label(label); m.dbra(1, label); };
+    const emitWait = (n, label) => {
+      m.moveWimmD(n, 1);
+      if (P.tour) {                                // …halved where the tour says dense
+        m.moveBabsD(T.mode, 0); m.andiW(2, 0); m.beq(`${label}f`);
+        m.lsrWimm(1, 1);
+        m.label(`${label}f`);
+      }
+      m.label(label); m.dbra(1, label);
+    };
     const price = (fn) => { const s = new M68k(0); s.cost = 0; fn(s); return s.cost; };
     const cReadPre = price(readPre), cReadGrab = price(readGrab), cReadPost = price(readPost);
     const cPubPre = price(pubPre), cPubCrit = price(pubCrit), cPubTail = price(pubTail);
+    // The tour's own bookkeeping runs before the read takes the bus, so it is
+    // part of the interval like everything else (R19 §46.4).
+    const cTour = P.tour ? price(tourStep) + 2 * price((x) => idleSkip(x, "x")) : 0;
     const cLoopBra = 10;                           // the `bra` that closes the lap
     // ── THE PERIOD, GENERATED FROM THOSE PRICES (R20 §48.5) ─────────────
     // Two bounds. Below one observation interval, two transfers land in the
@@ -1024,7 +1135,7 @@ export function buildRom(image, samples = null, grab = null) {
     const between = {
       // request -> release is the stop; then the tail of the grab, the wait,
       // and whatever the next path does before ITS request.
-      read: per.stopRead + (cReadPost + cPubPre) * MASTER,
+      read: per.stopRead + (cReadPost + cPubPre + cTour) * MASTER,
       publish: per.stopPublish + (cPubTail + cLoopBra + cReadPre) * MASTER,
     };
     // The residue left by rounding a wait to whole dbra iterations is carried
@@ -1045,13 +1156,17 @@ export function buildRom(image, samples = null, grab = null) {
       readInterval: between.read + waitCost(nRead) * MASTER,
       publishInterval: between.publish + waitCost(nPub) * MASTER };
     m.label("mbloop");
+    if (P.tour) { tourStep(m); idleSkip(m, "tskipr"); }
     readPre(m);
     readGrab(m);
     readPost(m);
+    if (P.tour) m.label("tskipr");
     emitWait(nRead, "mbw1");
+    if (P.tour) idleSkip(m, "tskipp");
     pubPre(m);
     pubCrit(m);
     pubTail(m);
+    if (P.tour) m.label("tskipp");
     emitWait(nPub, "mbw2");
     m.bra("mbloop");
     } else {
@@ -1174,6 +1289,7 @@ export function buildRom(image, samples = null, grab = null) {
   // The one command record the host publishes, at a fixed ROM address so the
   // 68000's `lea` is a constant and the instrument can compare what arrived.
   if (grab?.proto?.queue) rom.set(Uint8Array.from(grab.proto.record), QREC);
+  if (grab?.proto?.tour) rom.set(Uint8Array.from(grab.proto.tour.flat()), TOUR);
   put(0x100, "SEGA MEGA DRIVE ", 16);
   put(0x110, "(C)MMLISP 2026  ", 16);
   put(0x120, "MMLISP DAC-STREAM PROBE", 48);

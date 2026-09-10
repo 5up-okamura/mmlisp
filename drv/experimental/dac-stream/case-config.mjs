@@ -16,6 +16,8 @@ import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate, CSM_TEST_VOICE, CSM_TEST_FREQ } from "./gen-stream.mjs";
+import { tourBytes } from "./tour.mjs";
+import { lutPages } from "./lut.mjs";
 import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
 import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
@@ -30,6 +32,14 @@ export const PICK_FAULTS = {
   "pick-near": "the host always names R+2, whatever the live counter says",
   "pick-far": "the host always names R+3, whatever the live counter says",
   "count-astray": "the two candidate bytes are moved out of reach, so no counter can match",
+};
+
+// R22 §52.4's negative. The counter goes back behind `mb pending`, which is
+// where R21 measured 44 late bundles in 3,675 — and the instruction-order check
+// that now refuses that image is told to report rather than refuse, so the
+// machine can be shown being late on it.
+export const ORDER_FAULTS = {
+  "counter-late": "the decode's counter is stored after the consumer has read the box",
 };
 
 export const QUEUE_FAULTS = {
@@ -58,6 +68,7 @@ export const FAULTS = {
   // what the head then claimed (R13 §35.3 step 2).
   ...QUEUE_FAULTS,
   ...PICK_FAULTS,
+  ...ORDER_FAULTS,
 };
 
 /**
@@ -76,6 +87,14 @@ export const QREC_RECORD = [0x40, 0x00, 0xde, 0xad, 0xbe];
  * They are OFFSETS from the Z80's base, because that is how the host addresses
  * Z80 RAM, and nothing here re-derives one.
  */
+// WHICH PAGE IS LEVEL ZERO. The mixer's page number is an absolute Z80 page and
+// the level family does not start at 0 — in the 15-level profile it is
+// $0C00..$1B00, so page 12 is silence and page 26 is unity. A host staging
+// 0..14 is staging the code region as a volume table, which is exactly the
+// accident `pageIsALevel` exists to name (R8 §23.2). A P1 image has no mixer
+// and therefore no family, and there the number is only ever a byte in transit.
+const levelBase = (cfg) => (cfg.ram.lut ? lutPages(cfg).first : 0);
+
 function protoRomFields(cfg, p, countLo = STATE.countLo) {
   const L = protocolLayout(cfg.ram.pub[0]);
   return { bootGeneration: p.bootGeneration ?? 0x1234,
@@ -107,6 +126,15 @@ function protoRomFields(cfg, p, countLo = STATE.countLo) {
     // There is no lead any more: the boundary is chosen from the decoder's own
     // live counter inside the publish attempt (R21 §50.2).
     live: !!p.live, refresh: p.refresh ?? 8,
+    // THE LISTENING TOUR (§46.4): a section table instead of a rolling walk,
+    // so the same image can be played to an ear on a fixed timeline.
+    tour: p.tour ? tourBytes(levelBase(cfg)) : null,
+    // WHICH PAGE IS LEVEL ZERO. The mixer's page number is an absolute Z80 page
+    // and the level family does not start at 0 — in the 15-level profile it is
+    // $0C00..$1B00, so page 12 is silence and page 26 is unity. A host staging
+    // 0..14 is staging the code region as a volume table, which is exactly the
+    // accident `pageIsALevel` exists to name (R8 §23.2).
+    levelBase: levelBase(cfg),
     // WHICH DECODE STATE THIS BUILD HAS. The protocol's globals are laid out
     // FROM the decoder's own counter, and P1's state is six bytes where the
     // split 2ch one is thirteen — so a host that assumed P1's offset read a
@@ -184,7 +212,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     // now the first was verified in JS slots and the second on a P1 output
     // image, and nothing ran both at once.
     : c0.split?.proto ? { vdp: true, load: c0.split.load,
-        bootNops: c0.split.bootNops, every: c0.split.proto.every,
+        bootNops: c0.split.bootNops, startNops: c0.split.startNops,
+        every: c0.split.proto.every,
         ...(c0.split.proto.live ? { period: transferPeriod(cfg, c0.split.proto) } : {}),
         ...(c0.cfg?.csmHost ? { csmVoice: CSM_TEST_VOICE,
           csmFreq: { ...CSM_TEST_FREQ, hiAt: cfg.ram.glob[0] + GLOB.csmHi,
@@ -217,7 +246,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   if (grab) {
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     // A publish fault is the Z80's; it must not also reach the 68000's rom.
-    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)) grab.fault = fault;
+    if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)
+      && !(fault in ORDER_FAULTS)) grab.fault = fault;
     // The withdrawn word-move read is a property of the HOST'S protocol code,
     // not of the transfer's payload, so it reaches the proto fields rather than
     // `grab.fault` (R20 §48.3).
@@ -259,7 +289,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     ? { ...c0.observer, publishFault: fault } : c0.observer;
   let gen;
   if (c0.split) {
-    const r = generateSplit(cfg, { stackFill: true, ...c0.split.place });
+    const r = generateSplit(cfg, { stackFill: true, ...c0.split.place,
+      ...(fault in ORDER_FAULTS ? { counterLate: true } : {}) });
     if (!r.ok) throw new Error(`case "${c0.name}": the split did not generate (${r.stage}: ${r.error ?? r.walk.failed?.name})`);
     gen = r.gen;
     gen.split = r;

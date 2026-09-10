@@ -269,19 +269,23 @@ export const CASES = [
   // in the same observation interval and the SUM is what has to be read. The
   // two wrap cases start the decoder's counter four short of a byte and of a
   // word boundary, so $ff->$00 and $ffff->$0000 both run inside the window the
-  // comparison is a byte in (R21 §50.4 step 3). They are the only two that drop
-  // the CSM test tone: the ceiling image assembles at exactly $A00 with NOTHING
-  // to spare, and starting the counter costs six bytes. The tone is a harness
-  // note played on FM channel 3 and touches neither the counter, the comparison
-  // nor the mailbox, so what those two cases prove is not weakened by its
-  // absence — everything else about them is the complete engine.
-  ...[["adaptive", 1, false, null, true], ["at double density", 2, true, null, true],
-    ["counter low wrap", 1, false, 0x00fc, false], ["counter wrap", 1, false, 0xfffc, false]]
-    .map(([what, density, dense, countFrom, csm]) => ({
+  // comparison is a byte in (R21 §50.4 step 3). All four are the CEILING image
+  // now: R22's A-register pad counter gave the loop region 178 B of spare, so
+  // the six bytes a counter start costs no longer mean dropping the CSM tone.
+  //
+  // `boot phase 140` is the same arrangement started at a different point
+  // against the VDP's counters. It is not there to find a phase that fails —
+  // one run already sweeps every phase — but to put enough publications behind
+  // the three conflict positions of R22 §52.4, the narrowest of which is under
+  // one percent of a lap.
+  ...[["adaptive", 1, false, null, 0], ["at double density", 2, true, null, 0],
+    ["counter low wrap", 1, false, 0x00fc, 0], ["counter wrap", 1, false, 0xfffc, 0],
+    ["adaptive, boot phase 140", 1, false, null, 140]]
+    .map(([what, density, dense, countFrom, bootNops]) => ({
       name: `2ch mailbox, ${what}`,
-      cfg: { voices: 2, complete: true, csm, csmHost: csm, levels: 15,
+      cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
         workTarget: 0.839, correctorBudget: true, command: true },
-      split: { load: "divu", proto: { live: true, density },
+      split: { load: "divu", bootNops, proto: { live: true, density },
         place: { correct: true, proto: true, command: true,
           ...(countFrom === null ? {} : { countFrom }) } },
       dense, informational: true,
@@ -290,6 +294,44 @@ export const CASES = [
       // what the staged pages did, by `dac-stream:decoder`.
       levelsMove: true,
     })),
+
+  // THE LISTENING TOUR (§46.4, R22 §52.6). The same complete image the gates
+  // measure, with the host's desired state coming from a fixed timeline instead
+  // of a rolling walk, so what all of this adds up to can be heard. Two builds
+  // with the SAME PCM material and the same timeline: one without the CSM test
+  // tone and one with it, because ordinary runtime YM/PSG writes are still
+  // unverified and §33.6 step 5 has not been answered.
+  //
+  // Opt-in — `--listen` is what runs them — because they are 44 seconds each
+  // and nothing about them is a gate.
+  ...[["no CSM tone", false], ["with the CSM tone", true]].map(([what, csm]) => ({
+    name: `listening tour, ${what}`,
+    cfg: { voices: 2, complete: true, csm, csmHost: csm, levels: 15,
+      workTarget: 0.839, correctorBudget: true, command: true },
+    split: { load: "divu", proto: { live: true, density: 1, tour: true },
+      place: { correct: true, proto: true, command: true } },
+    informational: true, levelsMove: true, listenOnly: true,
+  })),
+
+  // THE NARROWEST CONFLICT POSITION, REACHED BY REPETITION (R22 §52.4 step 2).
+  // Of the three places a publication can land, "before the counter store" is
+  // 810 master of a 430,080 master lap — 0.19% — precisely BECAUSE the fix put
+  // the counter 54 cycles after the H read. The host's period sweeps every
+  // phase uniformly, so a hundred publications there needs about 51,000 of
+  // them, and the instrument's 32-bit clock caps one run at seventy seconds.
+  //
+  // So the same image is run again from twelve more starting phases and the
+  // three positions are added up across all of them. They are opt-in:
+  // `--conflict` is what turns them on, and the routine gate does not pay for
+  // them.
+  ...Array.from({ length: 12 }, (_, i) => ({
+    name: `2ch mailbox, adaptive, start ${i + 1}`,
+    cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+      workTarget: 0.839, correctorBudget: true, command: true },
+    split: { load: "divu", startNops: 7 * (i + 1), proto: { live: true, density: 1 },
+      place: { correct: true, proto: true, command: true } },
+    informational: true, levelsMove: true, conflictOnly: true,
+  })),
 
   // EITHER SIDE OF WHAT H CAN SEE (R11 §31.2). 12 B lands about at the 1,500
   // master contract, 16 B past it but inside half a line, 24 B past half a line

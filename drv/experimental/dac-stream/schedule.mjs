@@ -31,10 +31,14 @@ export const cost = (ops) => ops.reduce((t, o) => t + o.cycles, 0);
 // (R8 §23.3). `ld b,k`/`djnz $` is four bytes for any length; the same wait in
 // `jr $+2` is one byte per six cycles.
 const FILL_BYTES = { "nop": 1, "inc bc": 1, "ld a,0": 2, "jp $+3": 3, "jr $+2": 2,
-  "djnz $": 2, "push af": 1, "pop  af": 1, "dec  iyl": 2, "jr   nz,$-2": 2 };
+  "djnz $": 2, "push af": 1, "pop  af": 1, "dec  iyl": 2, "jr   nz,$-2": 2,
+  // The A counter (R22 §52.3): `dec a` is ONE byte where `dec iyl` is two, and
+  // its `jr` reaches one byte further back.
+  "dec  a": 1, "jr   nz,$-1": 2 };
 export const fillBytes = (ops) => ops.reduce((t, o) => t + o.asm.reduce((u, l) => {
   const n = FILL_BYTES[l] ?? (/^ld b,\d+$/.test(l) ? 2
-    : /^ld   iyl,\d+$/.test(l) ? 3 : null);
+    : /^ld   iyl,\d+$/.test(l) ? 3
+    : /^ld   a,\d+$/.test(l) ? 2 : null);
   if (n === null) throw new Error(`fillBytes: ${l} is not a filler`);
   return u + n;
 }, 0), 0);
@@ -131,6 +135,21 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false, stack = fa
     }
     return null;
   };
+  // A IS THE CHEAPEST COUNTER OF THE THREE (R22 §52.3). `ld a,k` / `dec a` /
+  // `jr nz` is FIVE bytes for any wait against IYL's seven, because `dec a` is
+  // one byte and `dec iyl` is two with its IY prefix. Both destroy the flags,
+  // and both are only offered where the caller has said the register is dead —
+  // which for A is everywhere a pad runs, since the one value that crosses a
+  // slot boundary in flags does so in AF' (R17 §43.4).
+  //
+  // It matters because moving the counter to the head of the decode (R22
+  // §52.2) left nine more slots carrying a value in BC through their pad, and
+  // at seven bytes each that was thirteen bytes past the 2,560 B region.
+  if (allow.has("a")) {
+    const p = loop((k) => [op(`ld   a,${k}`, 7, { clobbers: ["a"] }),
+      op(["dec  a", "jr   nz,$-1"], 16 * k - 5, { clobbers: ["a"] })], 16, 2);
+    if (p) plans.push(p);
+  }
   if (allow.has("iy")) {
     const p = loop((k) => [op(`ld   iyl,${k}`, 11, { clobbers: ["iy"] }),
       op(["dec  iyl", "jr   nz,$-2"], 20 * k - 5, { clobbers: ["iy"] })], 20, 6);

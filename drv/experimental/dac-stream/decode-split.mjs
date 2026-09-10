@@ -103,6 +103,12 @@ export function recordOrder(blocks, state) {
  */
 export function splitBlocks({ table, state, step, hv = 0x7f09,
   units = PHASE_TABLE.quantised.units, unknown = PHASE_TABLE.quantised.unknown,
+  // WHERE THE COUNTER GOES (R22 §52.2). `true` puts its five pieces
+  // immediately after the read, ahead of everything the consumer looks at.
+  // `false` is where R21 had them, after the displacement — the only way to
+  // build the image whose low-byte store lands behind `mb pending`, and it
+  // exists so that the order check has something to refuse.
+  counterFirst = true,
   // WHERE THIS OBSERVATION'S KNOWN IS PARKED. Without a corrector it goes
   // straight into the record's own byte. With one it does not: the corrector
   // may still clear KNOWN when the debt expires, and if the decode had already
@@ -118,9 +124,32 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
   // as a branch: a balanced `jr` pair costs 19 or 26 in one piece, and no slot
   // has that much. `add a,256-n` sets carry exactly where `cp n` clears it,
   // which is the polarity a mask needs.
+  // ── THE COUNTER, AND WHY IT IS FIRST (R22 §52.2) ──────────────────────
+  // It used to sit after the displacement had been published, which put its
+  // low-byte store at slot 8.99 — AFTER the consumer's `mb pending` at slot 8
+  // had read the commit. A host publication landing in that gap was seen a lap
+  // after the counter it had read, so the boundary it named was one short and
+  // the bundle applied one observation late: 44 of 3,675 in sixty seconds
+  // (R21 §51.5).
+  //
+  // Nothing in this group reads a decoded value — it advances once per H read
+  // and takes nothing from the phase — and `read` has already left the lookup
+  // index in the operand it self-modified, so putting the five here loses no H
+  // value. Low and high move TOGETHER, so the window in which the raw
+  // counter's two bytes disagree is not widened.
+  const counter = [
+    b("count lo", [op(`ld   a,(${S("countLo")})`, 13), op("add  a,1", 7), op("ld   b,a", 4)]),
+    b("count store", [op("ld   a,b", 4), op(`ld   (${S("countLo")}),a`, 13)]),
+    b("count wrap", [op(`ld   a,(${S("countLo")})`, 13), op("sub  1", 7),
+                     op("sbc  a,a", 4, { what: "$ff exactly when the low byte wrapped" }), op("ld   b,a", 4)]),
+    b("count hi", [op(`ld   a,(${S("countHi")})`, 13), op("sub  b", 4), op("ld   c,a", 4)]),
+    b("count hi store", [op("ld   a,c", 4),
+                         op(`ld   (${S("countHi")}),a`, 13, { what: "COUNT" })]),
+  ];
   return [
     b("read", [op(`ld   a,($${hv.toString(16)})`, 16, { what: "the observation instant" }),
                op("ld   (dec_lk+1),a", 13, { what: "index the table by modifying the operand" })]),
+    ...(counterFirst ? counter : []),
     b("lookup", [op(["dec_lk:", `ld   a,($${table.toString(16)})`], 13, { what: "the quantised phase" }),
                  op(`ld   (${S("phase")}),a`, 13)]),
     b("known", [op(`ld   a,(${S("phase")})`, 13), op(`cp   ${unknown}`, 7),
@@ -141,13 +170,7 @@ export function splitBlocks({ table, state, step, hv = 0x7f09,
     b("sign", [op("ld   a,b", 4), op("sub  c", 4), op("ld   b,a", 4)]),
     b("publish delta", [op(`ld   a,(${S("valid")})`, 13), op("and  b", 4), op("ld   c,a", 4)]),
     b("publish delta store", [op("ld   a,c", 4), op(`ld   (${S("delta")}),a`, 13)]),
-    b("count lo", [op(`ld   a,(${S("countLo")})`, 13), op("add  a,1", 7), op("ld   b,a", 4)]),
-    b("count store", [op("ld   a,b", 4), op(`ld   (${S("countLo")}),a`, 13)]),
-    b("count wrap", [op(`ld   a,(${S("countLo")})`, 13), op("sub  1", 7),
-                     op("sbc  a,a", 4, { what: "$ff exactly when the low byte wrapped" }), op("ld   b,a", 4)]),
-    b("count hi", [op(`ld   a,(${S("countHi")})`, 13), op("sub  b", 4), op("ld   c,a", 4)]),
-    b("count hi store", [op("ld   a,c", 4),
-                         op(`ld   (${S("countHi")}),a`, 13, { what: "COUNT" })]),
+    ...(counterFirst ? [] : counter),
     b("advance carry", [op(`ld   a,(${S("phase")})`, 13), op(`add  a,${step}`, 7),
                         op("sbc  a,a", 4), op("ld   c,a", 4)]),
     b("advance sum", [op(`ld   a,(${S("phase")})`, 13), op(`add  a,${step}`, 7), op("ld   b,a", 4)]),
@@ -311,7 +334,11 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // counter now steps by one block at each consumer site instead of by a lap in
   // the chain, which is what removes the per-site constant the comparison would
   // otherwise need (§39.3).
-  command = false, commandFault = null } = {}) {
+  command = false, commandFault = null,
+  // R22 §52.4's negative: put the counter back behind `mb pending` and let the
+  // image be built anyway, so the order check has something to refuse and the
+  // machine has something to be late on.
+  counterLate = false } = {}) {
   const map = decodeMap(cfg);
   const state = map.state;
   const stateSize = correct ? SPLIT_STATE_SIZE_CORR : SPLIT_STATE_SIZE;
@@ -319,14 +346,17 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     throw new Error("the split decoder's state does not fit in the globals");
   const advance = step ?? quantStepOf(cfg);
   const decode = splitBlocks({ table: map.table, state, step: advance,
-    knownTo: correct ? "kraw" : "known" });
+    knownTo: correct ? "kraw" : "known", counterFirst: !counterLate });
   // THE CORRECTOR GOES IN THE CHAIN, after DELTA and VALID have settled and
   // before the phase the next expectation is built from is read (R9 §26.4).
-  // AFTER the counter, not straight after the displacement: both positions
-  // satisfy "DELTA and VALID have settled, the next EXPECT's basis has not",
-  // and the earlier one puts 42 pieces in front of the counter's 28-cycle ones,
-  // which then have no slot left to go in.
-  const AFTER = decode.findIndex((b) => b.name === "count hi store") + 1;
+  // Straight after the displacement, which IS the condition. It used to be
+  // anchored to `count hi store` instead — the same condition, reached later —
+  // because the counter's five small pieces had no slot left with forty-two
+  // pieces in front of them. The counter is now in front of everything (R22
+  // §52.2), so the anchor goes back to what it is about, and moving the counter
+  // does NOT drag the corrector forward with it.
+  const AFTER = decode.findIndex((b) =>
+    b.name === (counterLate ? "count hi store" : "publish delta store")) + 1;
   const S = (n) => `$${(state + SPLIT_STATE[n]).toString(16)}`;
   const tags = correct
     ? [["a0", "a1", "a2", "a3"], ["b0", "b1"], ["c0"]] : null;
@@ -351,6 +381,19 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // §43.4). Nothing is dereferenced, so there is no `keepBC` any more: the
   // consumer does not touch main BC at all.
   const cmd = command ? commandBlocks(pm, cfg, "_2ch", { fault: commandFault }) : [];
+
+  // EVERY PIECE'S FIRST AND LAST INSTRUCTION CARRIES ITS NAME (R22 §52.3 step
+  // 3). What has to be checked is an order of INSTRUCTIONS, not of slots: two
+  // pieces can share a slot, and there the command plan is emitted before the
+  // decode piece whatever the slot numbers say. Stamping both ends lets the
+  // finished image be asked "did this finish before that started?" in cycles.
+  const stamp = (bs) => bs.forEach((x) => {
+    if (!x.ops.length) return;
+    const last = x.ops.length - 1;
+    x.ops[0] = { ...x.ops[0], pieceStart: x.name };
+    x.ops[last] = { ...x.ops[last], pieceEnd: x.name };
+  });
+  [decode, corr, chk, pub, cmd].forEach(stamp);
 
   const chain = correct
     ? [...decode.slice(0, AFTER), ...corr, ...decode.slice(AFTER)] : decode;
@@ -555,6 +598,62 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     if (at !== null) break;
     elapsed += slot.cycles;
   }
+  // ── THE ORDER THE MACHINE WILL RUN THEM IN (R22 §52.2) ──────────────
+  // Slot numbers were not enough. `countLo store` at slot 8.99 and `mb pending`
+  // at slot 8 read the right way round on paper and the wrong way round in
+  // cycles, and a host publication landing in that gap named a boundary one
+  // short (R21 §51.5). So the finished image is asked directly: where does each
+  // piece begin and end, in cycles from the top of the loop?
+  const span = new Map();
+  {
+    let base = 0;
+    for (let i = 0; i < gen.slots.length; i++) {
+      let inSlot = 0;
+      for (const o of gen.slots[i].ops) {
+        const from = base + inSlot; inSlot += o.cycles; const to = base + inSlot;
+        if (o.pieceStart && !span.has(o.pieceStart))
+          span.set(o.pieceStart, { slot: i, start: from, end: null });
+        const e = o.pieceEnd ? span.get(o.pieceEnd) : null;
+        if (e && e.end === null) e.end = to;
+      }
+      base += gen.slots[i].cycles;
+    }
+  }
+  {
+    const need = [["read", "count store"]];
+    if (correct) need.push(["publish delta store", corr[0].name],
+      [corr.at(-1).name, "publish expect store"]);
+    if (command) need.push(
+      // BOTH bytes of the counter are finished before the consumer looks at the
+      // box, so a commit landing anywhere in the lap is judged against a
+      // counter the host has already been able to read.
+      ["count store", "mb pending"], ["count hi store", "mb pending"],
+      ["mb pending", "mb diff lo"], ["mb diff lo", "mb diff hi"],
+      // …and the consumer's own order, EXCEPT when a command fault is being
+      // built: reordering those two is what `ack-early` is (R17 §43.6), and a
+      // fault that the generator refused could not be run.
+      ...(commandFault ? [] : [["mb diff hi", "mb store 01"], ["mb store 01", "mb ack"]]));
+    const order = [];
+    for (const [a, z] of need) {
+      const x = span.get(a), y = span.get(z);
+      if (!x || !y || x.end === null)
+        return { ok: false, stage: "order names", blocks, map, correct,
+          missing: !x || x.end === null ? a : z };
+      if (x.end > y.start)
+        order.push({ a, z, aEnd: x.end, zStart: y.start, aSlot: x.slot, zSlot: y.slot });
+      // SAME SLOT IS ALSO WRONG for the counter and the box: a slot emits its
+      // command plan before its decode piece, so sharing one means the consumer
+      // read the box first however the cycles happen to fall (R22 §52.2).
+      else if (a.startsWith("count") && z === "mb pending" && x.slot === y.slot)
+        order.push({ a, z, aEnd: x.end, zStart: y.start, aSlot: x.slot, zSlot: y.slot,
+          why: "the same slot" });
+    }
+    if (order.length && !counterLate)
+      return { ok: false, stage: "instruction order", blocks, map, correct, order,
+        spans: [...span].map(([n, v]) => ({ name: n, ...v })) };
+    gen.orderBroken = order;
+  }
+  gen.spans = [...span].map(([n, v]) => ({ name: n, ...v }));
   const loopCycles = gen.slots.reduce((t, s) => t + s.cycles, 0);
   // WHEN THE RECORD IS FINISHED, from the layout: the read, then the last
   // field's store. Predicted here so the machine can be asked to agree with it

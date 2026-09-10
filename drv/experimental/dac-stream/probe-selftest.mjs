@@ -1289,7 +1289,15 @@ assert.equal(backwards[2].sync, "lost");
     // and therefore had no `djnz`. It is chosen only where it is SHORTER than
     // the straight-line form, so it takes 11 B out of the plain image and 4 B
     // out of the corrector's, and not one cycle out of either.
-    { plain: [2075, 570, 608, 2113], corr: [2300, 435, 538, 2403] },
+    //
+    // R22 §52.3 added a fourth counter, A: `ld a,k` / `dec a` / `jr nz` is FIVE
+    // bytes where the IYL form is seven, because `dec a` is one byte and
+    // `dec iyl` is two with its IY prefix. Both destroy the flags and both are
+    // only offered where the caller has said the register is dead. It takes
+    // 115 B out of the plain image and 107 B out of the corrector's, and again
+    // not one cycle out of either — which is what paid for moving the counter
+    // to the head of the decode.
+    { plain: [1960, 522, 608, 2046], corr: [2193, 389, 538, 2342] },
     "the code ledger moved — say so rather than letting it drift");
   assert.ok(plain.spare > 0 && corr.spare > 0, "the finished estimate must fit the region");
   assert.equal(plain.region, 2560, "the code region is not to be widened (R11 §31.1)");
@@ -1605,7 +1613,10 @@ const padCycles = (text) => {
   const body = text.slice(text.indexOf("coop_slot0:"), text.indexOf("coop_join:"));
   const n = (re, w) => (body.match(re) ?? []).length * w;
   const djnz = [...body.matchAll(/ld b,(\d+)/g)].reduce((t,m)=>t+13*Number(m[1])-5+7, 0);
-  return djnz + n(/^\s+nop$/gm,4) + n(/^\s+inc bc$/gm,6) + n(/^\s+ld a,0$/gm,7)
+  // …and the A counter (R22 §52.3): `ld   a,k` with three spaces is the loop's
+  // setup, where `ld a,0` with one is the straight-line filler.
+  const aloop = [...body.matchAll(/ld   a,(\d+)/g)].reduce((t,m)=>t+7+16*Number(m[1])-5, 0);
+  return djnz + aloop + n(/^\s+nop$/gm,4) + n(/^\s+inc bc$/gm,6) + n(/^\s+ld a,0$/gm,7)
     + n(/^\s+jp \$\+3$/gm,10) + n(/^\s+jr \$\+2$/gm,12);
 };
 assert.equal(padCycles(a65.gen.text) + 24, padCycles(a41.gen.text));
@@ -1628,8 +1639,11 @@ const WIDTH_FAULTS = ["wide-read"];
 // cannot quietly become one of them again, and a comparison moved out of reach
 // so that every attempt has to refuse (R21 §50.4).
 const PICKFAULTS = ["pick-near", "pick-far", "count-astray"];
+// …and the one that breaks the ORDER rather than the choice: the counter put
+// back behind the box (R22 §52.4).
+const ORDERFAULTS = ["counter-late"];
 assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS,
-  ...WIDTH_FAULTS, ...PICKFAULTS].sort(),
+  ...WIDTH_FAULTS, ...PICKFAULTS, ...ORDERFAULTS].sort(),
   Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
 // Each one changes the 68000's rom, and none of them reaches the Z80's source.
 {
@@ -2061,6 +2075,45 @@ if (process.argv.includes("--machine")) {
   }
 }
 
+// ── THE ORDER THE COUNTER AND THE BOX ARE TOUCHED IN (R22 §52.2) ─────────
+// The consumer reads the commit at one instruction and the decode stores the
+// observation counter at another. R21 had them the wrong way round by 375
+// cycles — `mb pending` at slot 8, `countLo store` at slot 8.99 — and a host
+// publication landing in the gap named a boundary one short, so 44 of 3,675
+// bundles were applied one observation late. The counter now goes first, and
+// the generated image is checked in CYCLES rather than in slot numbers.
+{
+  const cfg2 = buildConfig({ voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+    workTarget: 0.839, correctorBudget: true, command: true });
+  const opts = { stackFill: true, correct: true, proto: true, command: true };
+  const good = generateSplit(cfg2, opts);
+  assert.ok(good.ok, `the counter-first image did not generate (${good.stage})`);
+  const at = (g, n) => g.gen.spans.find((x) => x.name === n);
+  const store = at(good, "count store"), hi = at(good, "count hi store");
+  const pend = at(good, "mb pending"), diff = at(good, "mb diff lo");
+  assert.ok(store.end < pend.start, "the counter's low byte is stored after the box is read");
+  assert.ok(hi.end < pend.start, "the counter's high byte is stored after the box is read");
+  assert.ok(pend.end <= diff.start, "the box is read after the difference is taken");
+  assert.notEqual(store.slot, pend.slot, "the counter store shares a slot with `mb pending`,"
+    + " and a slot emits its command plan first");
+  // …and the arrangement that produced the late bundles is REFUSED, with both
+  // violations named. It is only buildable through the fault that turns the
+  // refusal into a report.
+  const bad = generateSplit(cfg2, { ...opts, counterLate: true });
+  assert.ok(bad.ok, "the counter-late image must still BUILD, or it cannot be run");
+  assert.deepEqual(bad.gen.orderBroken.map((x) => `${x.a} > ${x.z}`),
+    ["count store > mb pending", "count hi store > mb pending"],
+    "the counter-late image did not report the order it breaks");
+  assert.ok(at(bad, "count store").end > at(bad, "mb pending").start,
+    "the counter-late image is not actually late");
+  // The corrector is NOT dragged forward with the counter: it still sits after
+  // the displacement has been published and before the next expectation.
+  const delta = at(good, "publish delta store"), expect = at(good, "publish expect store");
+  assert.ok(delta.end < expect.start, "the record's fields are written out of order");
+  assert.ok(delta.end < at(good, "advance carry").start,
+    "the next expectation is built before the displacement is published");
+}
+
 // ── THE BOUNDARY A PUBLISH ATTEMPT NAMES (R21 §50.2) ─────────────────────
 // The host holds `R` from its snapshot read and learns the decoder's own live
 // counter inside the grab. What it must name is the boundary after that
@@ -2176,6 +2229,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " main BC in it at all,"
   + " the split decode's agreement with it, the walker's one-observation deadline, and the"
   + " whole 15-level engine running it through real slots, pads and reserves,"
+  + " the counter finished before the box is read and the arrangement that was not,"
   + " the boundary a publish attempt names and every live counter it refuses,"
   + " the 8-bit Z80 bus as a rule the emitter enforces and every rom is checked against,"
   + " resolved configuration and padding paths pass");
