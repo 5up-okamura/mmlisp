@@ -7,7 +7,11 @@ export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   // Every YM2612 access, by the CPU that made it (R24 §55.3). The window a
   // 68000 FM transaction has to fit in is the gap between the Z80's OWN
   // accesses, and until R24 the instrument saw only the $2A data write.
-  YMZ80: 20, YM68K: 21 };
+  YMZ80: 20, YM68K: 21,
+  // Every PSG write, by the CPU that made it (R25 §57.3). The PSG is in the
+  // VDP's address space, so the 68000 reaches it with no BUSREQ at all — kept
+  // apart from the YM records so the two judgments never share a row.
+  PSGZ80: 22, PSG68K: 23 };
 /** One YM access as the instrument saw it: which port, read or write, byte. */
 export const ymAccess = (e) => ({ time: e.time, port: (e.value >>> 14) & 3,
   read: !!(e.value & 0x2000), byte: e.value & 0xff,
@@ -60,6 +64,7 @@ export function readProbe(buf) {
       addr: (e.value >>> 8) & 0x1f, value: e.value & 0xff })),
     copies: of(KIND.COPY), polls: of(KIND.POLL),
     ymZ80: of(KIND.YMZ80).map(ymAccess), ym68k: of(KIND.YM68K).map(ymAccess),
+    psgZ80: of(KIND.PSGZ80), psg68k: of(KIND.PSG68K),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
     hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };
 }

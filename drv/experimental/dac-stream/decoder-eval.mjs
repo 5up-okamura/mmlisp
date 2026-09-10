@@ -128,8 +128,12 @@ const MAILBOX_PHASE = "2ch mailbox, adaptive, boot phase 140";
 const CONFLICT = argv.includes("--conflict");
 const MAILBOX_REPEAT = CONFLICT
   ? Array.from({ length: 12 }, (_, i) => `2ch mailbox, adaptive, start ${i + 1}`) : [];
+// …and the PSG P1 image when it is asked for: R25 §57.3 step 5 wants the
+// mailbox judged with the 68000 writing $C00011 on top of it, and that is the
+// same set of checks.
+const PSG_CASE = argv.includes("--psg") ? ["PSG P1, corpus"] : [];
 const MAILBOX_2CH = [MAILBOX_MAIN, MAILBOX_PHASE, ...MAILBOX_WRAPS,
-  "2ch mailbox, at double density", ...MAILBOX_REPEAT];
+  "2ch mailbox, at double density", ...MAILBOX_REPEAT, ...PSG_CASE];
 const MAILBOX_DENSE = ["2ch mailbox, at double density"];
 // What each combined case measured, for the summary that grades the rate.
 const mailboxRuns = new Map();
@@ -170,10 +174,14 @@ if (!argv.includes("--reuse")) {
   for (const sel of FAULT
     ? (FAULT in QUEUE_FAULTS ? PROTO_QUEUE
       : FAULT in PICK_FAULTS || FAULT in ORDER_FAULTS ? [MAILBOX_MAIN] : ["z80 decoder"])
-    : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "2ch mailbox", "proto P1"])
+    : ["z80 decoder", "2ch 15-level decoder", "2ch corrector", "2ch mailbox",
+      ...(argv.includes("--psg") ? ["PSG P1, corpus"] : []), "proto P1"])
+    // The mailbox family is on its own clock, and the PSG image is part of it
+    // when R25 §57.3 step 5 asks for it.
     execFileSync(process.execPath, [join(here, "machine-probe.mjs"), "--case", sel,
-      "--seconds", String(sel.includes("mailbox") ? MB_SECONDS : Z80_SECONDS),
+      "--seconds", String(/mailbox|PSG P1/.test(sel) ? MB_SECONDS : Z80_SECONDS),
       ...(CONFLICT && sel.includes("mailbox") ? ["--conflict"] : []),
+      ...(argv.includes("--psg") ? ["--psg"] : []),
       ...(FAULT ? ["--fault", FAULT] : [])],
       { stdio: ["ignore", "ignore", "inherit"] });
 }

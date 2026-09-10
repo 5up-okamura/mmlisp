@@ -117,8 +117,10 @@ const CONFLICT = argv.includes("--conflict");
 const LISTEN = argv.includes("--listen");
 // …and the host-YM P1 experiments, which write the chip from the 68000.
 const YM = argv.includes("--ym");
+// …and the PSG P1 experiments, which write $C00011 from the 68000.
+const PSG = argv.includes("--psg");
 const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
-  && (CONFLICT || !c.conflictOnly) && (LISTEN || !c.listenOnly) && (YM || !c.ymOnly)
+  && (CONFLICT || !c.conflictOnly) && (LISTEN || !c.listenOnly) && (YM || !c.ymOnly) && (PSG || !c.psgOnly)
   // The access-width witness runs in the required gate too: its DAC numbers
   // are informational, its verdict is not (R20 §48.3 step 1).
   && (!REQUIRED_ONLY || !c.informational || c.widthWitness)

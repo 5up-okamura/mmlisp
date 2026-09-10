@@ -17,6 +17,7 @@ import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
 import { generate, CSM_TEST_VOICE, CSM_TEST_FREQ } from "./gen-stream.mjs";
 import { tourBytes } from "./tour.mjs";
+import { psgStream } from "./psg-stream.mjs";
 import { lutPages } from "./lut.mjs";
 import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
@@ -137,6 +138,9 @@ function protoRomFields(cfg, p, countLo = STATE.countLo) {
     levelBase: levelBase(cfg),
     // ONE FM TRANSACTION FROM THE 68000 (§33.6 step 5, R24 §55.3 step 2).
     ym: p.ym ? { reg: 0x40, value: 0x7f, every: 64, mode: "grab", ...p.ym } : null,
+    // ONE FRAME OF PSG A LOOP (R25 §57.3). The stream is the reference
+    // driver's own, in its own order, or a small controlled one.
+    psg: p.psg ? { split: 0, ...p.psg, bytes: psgStream(p.psg.stream) } : null,
     // WHICH DECODE STATE THIS BUILD HAS. The protocol's globals are laid out
     // FROM the decoder's own counter, and P1's state is six bytes where the
     // split 2ch one is thirteen — so a host that assumed P1's offset read a

@@ -242,15 +242,24 @@ first time broke two accepted results:
   The measured interval is 438,543..438,935 master against the 438,762 it was
   solved for.
 
-**Host-YM P1 (§33.6 step 5).** `node drv/experimental/dac-stream/ym-window.mjs`
-derives the window a 68000 FM transaction could live in, twice — from the
-image's own instruction times and from BlastEm's record of every YM access,
-which R24 added to the probe. The answer is not the one the search was set up to
-find: **the YM2612 is on the Z80's bus**, so a 68000 access to
-`$A04000..$A04003` is answered with open bus unless the 68000 holds the bus
-(`host-YM P1, no bus` lands 0 of 28 attempts). There is nothing to time between
-the Z80's accesses, because with the bus held the transaction is atomic by
-construction.
+**Host-YM: withdrawn (R25 §57.1-2).** `ym-window.mjs` enumerates every YM access
+the Z80 makes in a lap, twice — from the image's own instruction times and from
+BlastEm's record, which R24 added to the probe — and refuses to answer if they
+disagree. It began as a search for a "safe window" a 68000 FM transaction could
+be slipped into; that premise is withdrawn. **The YM2612 is on the Z80's bus**,
+so a 68000 access to `$A04000..$A04003` is answered with open bus unless the
+68000 holds the bus (`host-YM P1, no bus` lands 0 of 28 attempts). There is
+nothing to time between the Z80's accesses, because with the bus held the
+transaction is atomic by construction.
+
+And it is not enough anyway. The transaction works — 51.3 writes a second — but
+`m3-macro-multi` asks the FM for **340 writes a second** (227 steady, and one
+frame carrying a 186-write patch), which is 6.7× more. So **the Z80 owns the
+YM2612**: the DAC, CSM and normal FM address/data and the `$2A` latch stay with
+one owner, the 68000's BUSREQ windows touch Z80 RAM only, and the CSM guard that
+would close the last rare race is not built, because it would not add a single
+write a second. The tool and the negatives stay as the measurement and the
+refusals a future proposal has to answer.
 
 What there IS to get right: the address write steals the DAC's `$2A` latch, so
 the Z80's next samples go to the FM register the 68000 selected. Left to the
@@ -265,6 +274,38 @@ seconds). Riding the snapshot READ's grab costs nothing extra — worst 1,430,
 none over — and sustains **51.3 transactions a second** with the mailbox
 untouched at 61.2 updates a second. 16.1% of attempts are deferred because the
 chip answered BUSY, and none of the 4,620 writes went out while it was.
+
+**What a real score asks the chips for.** `corpus.mjs` reads it off the reference
+driver itself — the same `DrvPlayer` and `SlotBuilder` the c-gate compares the C
+port against — so the figures are the port's own behaviour, not an estimate.
+Over the 41 c-gate scores: 14,627 FM writes, of which 7,095 are a voice patch,
+3,019 TL, 3,808 pitch (half low byte, half high) and 542 key. `m3-macro-multi`
+is 337 FM writes a second with patches and 226 steady, `m3-macro-pitchadd` 293
+and 246. A patch frame carries up to 194 writes on its own. The PSG side is far
+smaller — 170 a second at its heaviest.
+
+**PSG: free (R25 §57.3).** The SN76489 is in the VDP's address space, not the
+Z80's, so `$C00011` is reachable from the 68000 with **no BUSREQ at all** — none
+of host-YM's BUSY, address latch or CSM race applies. Replaying what
+`m3-macro-multi` really emits (276 bytes over 97 frames, from `corpus.mjs`) the
+68000 delivered **5,232 of 5,232 bytes in the reference's own order** over 30
+seconds, at 174.3 a second against the score's 169, with the stop count (3,674
+against 3,673), the worst per-observation hold (1,429 against 1,418) and the DAC
+interval (5,130..5,385 master) all as they are with no PSG at all.
+
+One thing the replay had to be taught: its work is **data-dependent** — a frame
+carries between none and six bytes — and the transfer period is generated from
+what the host's loop costs. Left unpriced it made the interval 668 master long,
+and the phase sweep reached only 63 of the lap's 80 slots, which R22's coverage
+rule refused. Priced at the average, the interval is 436,723..441,637 against
+the 438,762 it was solved for and the sweep reaches all 80.
+
+The two bytes of a tone period are **not** atomic — the chip applies the low
+four bits on the first byte and the high six on the second — so anything between
+them is audible. Written back to back they are 294..364 master apart (~6 µs);
+`PSG P1, split pairs` pulls them to 15,000 and is the negative that shows it
+matters. These ROMs take no interrupt, so nothing can get between them here; a
+driver with a VBlank handler would mask across the pair, which is 24 cycles.
 
 **The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
 ROMs — one with the CSM test tone and one without — that play the SAME image the

@@ -1,24 +1,26 @@
-// THE SAFE WINDOW A 68000 FM TRANSACTION CAN LIVE IN (§33.5, R24 §55.3 step 1).
+// WHAT THE Z80 WRITES TO THE YM2612, AND WHEN (§33.5, R24 §55.3, R25 §57.1).
 //
 //   node drv/experimental/dac-stream/ym-window.mjs [--seconds N] [--case NAME]
 //
-// The Z80 owns the YM2612's address port. Every write it makes there destroys
-// whatever the 68000 had selected, and every write the 68000 makes there
-// destroys the DAC's latch — so the two cannot interleave inside one
-// address/data pair, and the question "may the 68000 write FM registers at all"
-// is the question "how long is the gap between the Z80's own YM accesses, and
-// where in the lap is it".
+// WITHDRAWN, AND KEPT FOR WHAT IT MEASURES. This began as the search for a
+// "safe window" — a gap between the Z80's own YM accesses that a 68000 FM
+// transaction could be slipped into without stopping it. That premise is wrong
+// and R25 §57.1 withdraws it: the YM2612 is on the Z80's bus, so a 68000
+// access to $A04000..$A04003 is answered with OPEN BUS unless the 68000 holds
+// the bus (measured — the `host-YM P1, no bus` image lands 0 of 28 attempts).
+// There is no gap to aim at, because with the bus held the Z80 makes no YM
+// access at all and the transaction is atomic by construction.
 //
-// This derives that gap TWICE and refuses to answer if the two disagree:
+// What this tool still does, and why it is kept: it enumerates every YM access
+// the Z80 makes in a lap, from the placement AND from the machine, and refuses
+// to answer if the two disagree. That is the measurement any future YM
+// transport has to start from — how much traffic the engine itself puts on the
+// chip, where it is, and how far it moves under the corrector and the bus
+// stops. The window arithmetic below is reported as what it is: the shape of
+// the Z80's traffic, not a place for the 68000 to write.
 //
-//   from the placement  the generated image's own instruction times, which say
-//                       where every YM access is meant to be
-//   from the machine    BlastEm's record of every access the Z80 actually made,
-//                       which includes what the corrector, the pads, the
-//                       mailbox and the bus stops did to those times
-//
-// Nothing here writes anything from the 68000: R24 §55.3 step 1 is measurement,
-// and the transaction itself is step 2.
+// "the machine" throughout means BlastEm with drv/blastem/probe.patch. There
+// has been no hardware run.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -116,7 +118,7 @@ const z = L.ymZ80.filter((x) => x.time >= from);
 const h = L.ym68k.filter((x) => x.time >= from);
 console.log(`\n── …and as the machine saw them, over ${SECONDS}s ──`);
 console.log(`  ${z.length} Z80 accesses, ${h.length} from the 68000`
-  + ` (${h.length ? "NOT expected in step 1" : "none, as step 1 asks"})`);
+  + ` (a 68000 access reaches the chip ONLY while it holds the bus — R25 §57.1)`);
 const kinds = new Map();
 for (const a of z) {
   const k = `${a.read ? "read " : "write"} ${a.kind} port ${a.port}`;
@@ -164,7 +166,9 @@ const wide = [...win].sort((x, y) => y.len - x.len);
 const jitter = site.map((sN) => sN.hi - sN.lo).sort((a2, b2) => a2 - b2);
 console.log(`  each site's spread across the run: ${jitter[0]}..${jitter.at(-1)} master`
   + ` (median ${jitter[Math.floor(jitter.length / 2)]})`);
-console.log(`\n── the windows that are there EVERY lap ──`);
+console.log(`\n── the gaps that are there EVERY lap ──`);
+console.log("  (the shape of the Z80's own traffic. NOT a place for the 68000 to write:");
+console.log("   it cannot reach the chip without stopping the Z80 — R25 §57.1)");
 console.log(`  ${"after".padEnd(30)}${"slot".padStart(5)}${"opens".padStart(9)}`
   + `${"closes".padStart(9)}${"length".padStart(9)}`);
 for (const w of wide.slice(0, 6))
@@ -200,7 +204,7 @@ const dataSites = win.filter((w) => placed[w.k]?.kind === "data" && w.len > 0);
 const lead = dataSites.map((w) => w.len - BUSY).sort((a2, b2) => a2 - b2);
 const both = dataSites.map((w) => w.len - 2 * BUSY).sort((a2, b2) => a2 - b2);
 const count = (xs, n) => xs.filter((x) => x >= n).length;
-console.log(`\n── the window after the chip's BUSY, ${BUSY} master a data write ──`);
+console.log(`\n── the gaps after the chip's BUSY, ${BUSY} master a data write ──`);
 console.log(`  ${"guard".padEnd(34)}${"narrowest".padStart(10)}${"median".padStart(9)}`
   + `${"widest".padStart(9)}${"usable/lap".padStart(12)}`);
 const row = (name, xs) => console.log(`  ${name.padEnd(34)}`
@@ -213,8 +217,9 @@ console.log("  (master clocks; \"usable\" counts the windows that are still posi
 console.log(`  the median window is ${c68(lead[Math.floor(lead.length / 2)])} 68000 cycles with`
   + ` the leading guard and ${c68(both[Math.floor(both.length / 2)])} with both;`
   + " an address/data pair through a preloaded pointer is about 40");
-// ── CAN THE 68000 FIND THE WINDOW AT ALL? (R24 §55.3 step 2) ─────────────
-// Two candidate origins, measured rather than assumed.
+// ── COULD THE 68000 HAVE FOUND A WINDOW? (R24 §55.3 step 2, withdrawn) ───
+// Kept because the two answers are worth having on record. Neither is usable:
+// R25 §57.1 withdrew the premise they were candidate origins FOR.
 //
 // HV first, because §55.3 names it. A line is 3,420 master and the DAC period
 // is 5,376; their gcd is 12, so the pattern of DAC writes against the line
@@ -253,7 +258,7 @@ console.log(`  the median window is ${c68(lead[Math.floor(lead.length / 2)])} 68
   }
   after.sort((a2, b2) => a2 - b2);
   const p = (f) => after[Math.floor((after.length - 1) * f)];
-  console.log(`\n── the window a BUSY falling edge opens, instance by instance ──`);
+  console.log(`\n── the gap a BUSY falling edge opens, instance by instance ──`);
   console.log(`  ${after.length} data writes; window ${after[0]}..${after.at(-1)} master`);
   console.log(`    p0.1 ${p(0.001)}  p1 ${p(0.01)}  p10 ${p(0.1)}  p50 ${p(0.5)}`
     + `  p90 ${p(0.9)}`);
@@ -268,7 +273,7 @@ console.log(`  the median window is ${c68(lead[Math.floor(lead.length / 2)])} 68
   // the DAC write's BUSY expired. R24 §55.4 asks for ZERO window escapes, so
   // what matters is not the median but how long the host must stand off after
   // the edge before the worst instance is safe.
-  console.log(`\n── standing off after the edge, so the worst instance is safe too ──`);
+  console.log(`\n── standing off after the edge, had that been the mechanism ──`);
   console.log(`  ${"wait".padStart(6)}${"worst window".padStart(14)}${"p1".padStart(8)}`
     + `${"median".padStart(8)}${"under 280".padStart(11)}`);
   for (const D of [0, 150, 300, 450, 600, 750, 900, 1200]) {
@@ -289,6 +294,7 @@ console.log(`  the median window is ${c68(lead[Math.floor(lead.length / 2)])} 68
   console.log("   and writing the address, and it costs the window it buys)");
 }
 const stops = L.stops.filter(([a]) => a >= from);
-console.log(`\n  ${stops.length} bus stops in the run. They do not close a YM window — the`);
-console.log("  68000 reaches the chip without taking the Z80's bus — but they DELAY the");
-console.log("  Z80's own accesses, which is why every site is a range and not an instant.");
+console.log(`\n  ${stops.length} bus stops in the run. Each one is a stretch in which the Z80`);
+console.log("  makes no YM access at all — and is the ONLY way the 68000 reaches the chip,");
+console.log("  since it must hold the bus to do so. They also DELAY the Z80's own accesses,");
+console.log("  which is why every site above is a range and not an instant.");

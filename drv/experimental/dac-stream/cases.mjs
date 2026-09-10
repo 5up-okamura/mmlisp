@@ -295,6 +295,27 @@ export const CASES = [
       levelsMove: true,
     })),
 
+  // PSG P1 (R25 §57.3). The SN76489 is in the VDP's address space, so the
+  // 68000 reaches $C00011 with no BUSREQ at all — none of host-YM's BUSY,
+  // address latch or CSM guard applies. The complete image is unchanged
+  // underneath: the engine writes the DAC and CSM, the mailbox runs at its
+  // usual rate, and the 68000 plays one frame of PSG a loop on top.
+  //
+  // `corpus` replays what `m3-macro-multi` really emits; `split` pulls the two
+  // bytes of every tone period apart, because the chip applies the first one on
+  // its own and anything between them is audible.
+  //
+  // Opt-in with `--psg`.
+  ...[["controlled", { stream: "controlled" }], ["corpus", { stream: "corpus" }],
+    ["split pairs", { stream: "controlled", split: 200 }]].map(([what, psg]) => ({
+    name: `PSG P1, ${what}`,
+    cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+      workTarget: 0.839, correctorBudget: true, command: true },
+    split: { load: "divu", proto: { live: true, density: 1, psg },
+      place: { correct: true, proto: true, command: true } },
+    informational: true, levelsMove: true, psgOnly: true,
+  })),
+
   // HOST-YM P1 (§33.6 step 5, R24 §55.3). The complete image with the 68000
   // making ONE FM transaction every 64 iterations of its loop — a register
   // write to a muted, unused voice — on top of the mailbox it is already

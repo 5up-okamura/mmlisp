@@ -157,6 +157,9 @@ class M68k {
   subWDD(s, d) { this.n(4); this.w(0x9040 | (d << 9) | s); }                        // sub.w Ds,Dd
   addWimmD(imm, d) { this.n(8); this.w(0x0640 | d); this.w(imm); }                 // addi.w #i,Dn
   moveAA(s, d) { this.n(4); this.w(0x2048 | (d << 9) | s); }                       // movea.l As,Ad
+  moveLabsA(addr, a) { this.n(24); this.w(0x2079 | (a << 9)); this.l(addr); }      // movea.l (abs).l,An
+  moveLAabs(a, addr) { this.n(24); this.w(0x23c8 | a); this.l(addr); }             // move.l An,(abs).l
+  cmpaLimm(imm, a) { this.n(14); this.w(0xb1fc | (a << 9)); this.l(imm); }         // cmpa.l #i,An
   moveBpostA(sa, da) { this.reg(1); this.reg(1); this.n(12); this.w(0x10d8 | (da << 9) | sa); } // move.b (As)+,(Ad)+
   moveWpost() { this.wide("move.w (An)+,(An)+"); this.reg(2); this.n(12); this.w(0x32d8); } // move.w (a0)+,(a1)+
   moveLpost() { this.wide("move.l (An)+,(An)+"); this.reg(4); this.n(20); this.w(0x22d8); } // move.l (a0)+,(a1)+
@@ -263,6 +266,15 @@ const QREC = 0x000f00;   // between the 68000 code and the Z80 image
 // The listening tour's section table (R19 §46.4): four bytes a section —
 // v0page, v1page, mpage, and how the host is to behave for it.
 const TOUR = 0x000f40;
+// The PSG stream a P1 image replays (R25 §57.3): one length byte a frame and
+// then that frame's bytes, in the order the reference driver emitted them. It
+// lives well clear of the 68000's code and the Z80 image.
+const PSGTAB = 0x008000;
+const PSG_PORT = 0xc00011;
+/** How many frames a packed PSG table holds — one length byte each. */
+const psgFrames = (bytes) => { let n = 0;
+  for (let i = 0; i < bytes.length;) { i += 1 + bytes[i]; n++; }
+  return n; };
 const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
   divuBig: 0x16, masked: 0x18, dbra: 0x1c, n: 32, nops: 256, dbras: 2048 };
 
@@ -910,6 +922,7 @@ export function buildRom(image, samples = null, grab = null) {
     // contract. Busy means the transaction is not attempted at all — R24 §55.3
     // step 2's "write neither half and carry it to the next window".
     const Y = { iter: PROTO_WORK + 72, tried: PROTO_WORK + 74, done: PROTO_WORK + 76 };
+    const PSGP = { ptr: PROTO_WORK + 80 };
     // The fixed addresses, loaded ONCE. a0/a1 are the moving pair; the face the
     // read follows is chosen inside its own grab, which has the room for it.
     m.leaAbs(Z80_BASE + P.commandCommit, 2);
@@ -920,6 +933,7 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveq(0, 6);                                 // the host's observation number
     m.moveq(0, 7);                                 // the level walk, advanced on success only
     if (P.tour) { m.moveq(0, 0); m.moveWDabs(0, T.iter); m.moveBDabs(0, T.mode); }
+    if (P.psg) { m.leaAbs(PSGTAB, 0); m.moveLAabs(0, PSGP.ptr); }
     // ── the fragments, as functions, so each one can be PRICED ───────────
     // Every fragment is emitted twice: once into a throwaway emitter that adds
     // up its cycles, and once for real. The transfer period below is generated
@@ -1220,6 +1234,43 @@ export function buildRom(image, samples = null, grab = null) {
       }
       x.label("ymskip");
     };
+    // ── ONE FRAME OF PSG, WRITTEN STRAIGHT (R25 §57.3) ──────────────────
+    // The SN76489 is in the VDP's address space, not the Z80's, so $C00011 is
+    // reachable from the 68000 without asking for the bus. There is no BUSREQ
+    // here, no BUSY, no address latch to restore and nothing to re-latch — none
+    // of what host-YM needed applies, which is why R25 gives it its own P1.
+    //
+    // One loop iteration plays one frame of the stream. The loop is 16.02 ms
+    // against a frame's 16.67, so the replay runs 4% fast; the ORDER is the
+    // reference driver's own, which is what step 4 asks for.
+    const psgFrame = (x) => {
+      x.moveLabsA(PSGP.ptr, 0);
+      x.moveq(0, 0);
+      x.moveBApost(0, 0);
+      x.beq("psgnone");
+      x.label("psgloop");
+      x.moveBApost(0, 1);
+      x.moveBDabs(1, PSG_PORT);
+      if (P.psg.split) {
+        // THE PAIR, PULLED APART. A tone period is two bytes and the FIRST one
+        // takes effect on its own — the chip applies the low four bits at once
+        // and the high six only on the second — so anything that gets between
+        // them is audible. This is that gap, made long enough to see.
+        FAULT_APPLIED.add("psg-split");
+        x.moveWimmD(P.psg.split, 2);
+        x.label("psgsplit");
+        x.dbra(2, "psgsplit");
+      }
+      x.subqL(1, 0);
+      x.bne("psgloop");
+      x.label("psgnone");
+      x.cmpaLimm(PSGTAB + P.psg.bytes.length, 0);
+      x.bcs("psgok");
+      x.leaAbs(PSGTAB, 0);
+      x.costDrop(12);
+      x.label("psgok");
+      x.moveLAabs(0, PSGP.ptr);
+    };
     // A wait is `move.w #N,d1` and N+1 dbra — N taken, one falling out.
     const waitCost = (n) => 8 + 10 * n + 14;
     const emitWait = (n, label) => {
@@ -1237,6 +1288,15 @@ export function buildRom(image, samples = null, grab = null) {
     // The tour's own bookkeeping runs before the read takes the bus, so it is
     // part of the interval like everything else (R19 §46.4).
     const cTour = P.tour ? price(tourStep) + 2 * price((x) => idleSkip(x, "x")) : 0;
+    // …and the PSG replay's, which is DATA-DEPENDENT: a frame carries between
+    // none and six bytes, so the loop's length varies by up to 276 cycles. The
+    // period is solved for the AVERAGE, because that is what the interval has
+    // to average to; the variation is real and shows up as a wider spread in
+    // the measured interval, not as drift (R25 §57.3).
+    const psgPerByte = 12 + 16 + 8 + 10 + (P.psg?.split ? 22 + 10 * P.psg.split : 0);
+    const psgAvg = P.psg
+      ? (P.psg.bytes.length - psgFrames(P.psg.bytes)) / psgFrames(P.psg.bytes) : 0;
+    const cPsg = P.psg ? price(psgFrame) + Math.round((psgAvg - 1) * psgPerByte) : 0;
     const cLoopBra = 10;                           // the `bra` that closes the lap
     // ── THE PERIOD, GENERATED FROM THOSE PRICES (R20 §48.5) ─────────────
     // Two bounds. Below one observation interval, two transfers land in the
@@ -1256,7 +1316,7 @@ export function buildRom(image, samples = null, grab = null) {
     const between = {
       // request -> release is the stop; then the tail of the grab, the wait,
       // and whatever the next path does before ITS request.
-      read: per.stopRead + (cReadPost + cPubPre + cTour) * MASTER,
+      read: per.stopRead + (cReadPost + cPubPre + cTour + cPsg) * MASTER,
       publish: per.stopPublish + (cPubTail + cLoopBra + cReadPre) * MASTER,
     };
     // The residue left by rounding a wait to whole dbra iterations is carried
@@ -1290,6 +1350,7 @@ export function buildRom(image, samples = null, grab = null) {
     if (P.tour) m.label("tskipp");
     emitWait(nPub, "mbw2");
     if (P.ym && P.ym.mode !== "inread") ymOnce(m);
+    if (P.psg) psgFrame(m);
     m.bra("mbloop");
     } else {
     // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
@@ -1412,6 +1473,7 @@ export function buildRom(image, samples = null, grab = null) {
   // 68000's `lea` is a constant and the instrument can compare what arrived.
   if (grab?.proto?.queue) rom.set(Uint8Array.from(grab.proto.record), QREC);
   if (grab?.proto?.tour) rom.set(Uint8Array.from(grab.proto.tour.flat()), TOUR);
+  if (grab?.proto?.psg) rom.set(Uint8Array.from(grab.proto.psg.bytes), PSGTAB);
   put(0x100, "SEGA MEGA DRIVE ", 16);
   put(0x110, "(C)MMLISP 2026  ", 16);
   put(0x120, "MMLISP DAC-STREAM PROBE", 48);
