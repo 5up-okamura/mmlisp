@@ -1030,3 +1030,66 @@ counter start costs six bytes.
 and go to the listening ROM as it stands, or authorise swapping the order of
 `mb pending` and the counter's low-byte store (which touches the consumer's or
 the decode's placement, both excluded by R21).
+
+## R22 §52 (2026-09-10) — CHECKPOINT A, audible
+
+Commit `a643f4c`. The 8.01 ms phase-dependent delay is gone and the two
+diagnostic listening ROMs exist.
+
+**The fix was an ORDER of two instructions.** R21's late bundles came from
+`mb pending` reading the commit at slot 8 while the decode stored the counter's
+low byte at slot 8.99. Moving `mb pending` after the counter does not fit (101 B
+over, 96.6% worst slot); moving the COUNTER before it does. Its five pieces now
+run immediately after the H read — they advance once per read and take nothing
+from the phase decode — so `count hi store` is at slot 1 against `mb pending` at
+slot 8. The corrector's anchor went back to `publish delta store`, which was
+always the real condition; it was tied to `count hi store` only because the
+counter's small pieces had no slot left behind forty-two others.
+
+`generateSplit` now REFUSES an image whose counter is not complete before the
+box is read, checked in CYCLES from the finished image (every piece's first and
+last instruction carries its name), and refuses a shared slot too, because a
+slot emits its command plan before its decode piece. `--fault counter-late`
+rebuilds R21's arrangement and must fail.
+
+**A fourth pad counter paid for it.** The re-placement put nine more slots on
+the BC-carrying path, where only the 7-byte IYL wait fits — 13 B over 2,560.
+`ld a,k`/`dec a`/`jr nz` is FIVE bytes for any wait (`dec a` is one byte,
+`dec iyl` is two with its IY prefix). Engine 2,495 → **2,384 B**, finished
+estimate 2,466 → **2,382 B (178 B spare)**, not one cycle moved.
+
+**60 s, complete 2ch+CSM**: 3,675 bundles, all naming the live counter's next
+boundary; **61.2 acked updates/s**; 1 late (the acquisition), 0 busy, 0 refused;
+publish stop 829..1,456 master, read 455..914, worst per-observation 1,456 with
+none over 1,500; interval 438,403..439,215, 0 of 7,349 outside; four limits
+83.8% / 78.7% / 2,382 B / 8,192 B. Conflict positions over sixteen 60 s images:
+163 / 5,978 / 56,806 publications, **0 late in each**.
+
+**Two things worth not re-learning:**
+
+1. *The phase sweep is a comb, not a sweep.* The transfer period is a whole
+   number of DBRA iterations, so the publish phase lands on ~25 teeth that creep
+   ~27 master a publication; closing the gaps takes ~640 publications ≈ 10 s. A
+   10-second run reached every TENTH of the lap and still returned "0 late" from
+   the deliberately broken `counter-late` image. Bins are now one per SLOT (80),
+   an empty bin means the run may not be graded, and the mailbox floor is 30 s.
+2. *The staged byte is a PAGE, not a level.* The level family is $0C00..$1B00,
+   so page 12 is silence and page 26 is unity. Both hosts had been staging
+   0..14 — the code region read as a volume table, exactly `pageIsALevel`'s
+   accident. The gates never look at the payload's value, so nothing failed; it
+   showed up as a −4,000 DC offset in the reference WAV.
+
+**The listening tour**: `node drv/experimental/dac-stream/listen.mjs` builds two
+ROMs (with and without the CSM test tone) playing a fixed 44 s timeline —
+each voice alone, an ordinary sum, the clamp, the fifteen levels up and down,
+the same fade on the master, a new state every publication, then one piece of
+material three times over with no transfer / representative density / double
+density. It writes a DAC-only reference WAV from the instrument's record of
+every $2A write, plus a manifest with each section's start second, intent,
+expected levels, what was staged, and the reference's RMS there. Output is under
+`drv/out/dac-stream/listen/` (gitignored).
+
+**Next, and NOT started**: §33.6 step 5's host-YM safe window — still the only
+thing that can release b11..b14's 280 cycles/block and 120 B. The mailbox
+carries three level pages and nothing else: voice start/stop, cursor, loop and
+bank are not in it.
