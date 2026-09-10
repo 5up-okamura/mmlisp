@@ -30,7 +30,7 @@
 //
 // ── the shape that came out of it ────────────────────────────────────────
 //
-// One opportunity, ten bytes, 79 cycles, and the same instructions whatever
+// One opportunity, ELEVEN bytes, 89 cycles, and the same instructions whatever
 // the entry says:
 //
 //     pop  de        DE = the port to address ($4000, $4002 — or the bucket)
@@ -46,11 +46,15 @@
 //                    expects it
 //     pop  af        …and past the word the mixer's `call` is about to use
 //
-// `pop` is one byte and carries its address in SP, which is why this is ten
-// bytes and an absolutely-addressed form is thirteen. The price is paid in
-// QUEUE bytes: five words an entry, of which the producer only ever writes
-// three (the port word, the register and the value) — the other two are
-// constants the fixture lays down once.
+// `pop` is one byte and carries its address in SP, which is why this is eleven
+// bytes and an absolutely-addressed form is fourteen. The price is paid in
+// QUEUE bytes: SIX words an entry (see the next paragraph for the sixth), of
+// which the producer owns FOUR BYTES — the two of the target pointer, the
+// register and the value. R26 §60.8 said three, counting the three FIELDS as
+// three bytes; R27 §61.2 withdraws that. The pointer's two bytes differ in the
+// high byte as well (`$1E60` idle against `$4000`/`$4002` live), so no amount
+// of pre-initialisation shrinks it to one, and four bytes a write is the
+// floor of this form.
 //
 // THE STACK AND THE QUEUE ARE THE SAME PAGE, and one word an entry is the
 // engine's. `call mix_one` runs in every slot and pushes its return address at
@@ -62,14 +66,21 @@
 // word nobody reads: the site pops six and uses five, and the sixth is where
 // the mixer's return address lives between one opportunity and the next.
 //
-// THE PORT WORD IS THE COMMIT. An entry whose port word points at the two-byte
-// bucket in the chip region makes no FM write at all: the register and the
-// value go to RAM, and the only chip access left is the `$2A` re-latch, which
-// is idempotent. So an empty queue is not a path — it is the same path with a
-// different pointer, and the four cases §59.4 asks to be the same length are
-// the same INSTRUCTIONS. The producer's rule follows from it: write the
-// register and the value first and the port word last, because the port word
-// is what makes the entry live.
+// THE TARGET POINTER IS WHAT MAKES AN ENTRY LIVE OR IDLE — and that is a
+// property of this static fixture, NOT an atomic commit (R27 §61.2). An entry
+// whose pointer names the two-byte bucket in the chip region makes no FM write
+// at all: the register and the value go to RAM, and the only chip access left
+// is the `$2A` re-latch, which is idempotent. So an empty queue is not a path,
+// it is the same path with a different pointer, and the four cases §59.4 asks
+// to be the same length are the same INSTRUCTIONS.
+//
+// What it is NOT is a commit a producer could rely on. The 68000 reaches Z80
+// RAM one byte at a time, so a 16-bit pointer's two halves never change
+// together: a reader can see `$1E00` or `$4060` between them. A real transport
+// publishes a window by releasing the bus, or by a separate one-byte
+// generation written last — and `--fault port-first` shows only that a live
+// entry read before its payload is wrong, not that any of that has been
+// tested.
 import { op } from "./schedule.mjs";
 import { YM } from "./config.mjs";
 import { checkWriteStream } from "./analyze.mjs";
@@ -91,6 +102,29 @@ export function asmBytes(lines) {
 
 export const ENTRY_WORDS = 6;
 export const ENTRY_BYTES = ENTRY_WORDS * 2;
+
+/**
+ * WHO OWNS EACH BYTE OF AN ENTRY (R27 §61.2).
+ *
+ * `producer` is what changes per write and is therefore what a transport has to
+ * carry: FOUR bytes, not three. `const` is laid down once by the fixture and
+ * `engine` is the word `call mix_one` writes its return address into.
+ */
+export const ENTRY_LAYOUT = [
+  { at: 0, owner: "producer", what: "target pointer, low — $60 idle / $00 port 0 / $02 port 1" },
+  { at: 1, owner: "producer", what: "target pointer, high — $1e idle / $40 live" },
+  { at: 2, owner: "const", what: "the byte `pop af` puts in F" },
+  { at: 3, owner: "producer", what: "register number" },
+  { at: 4, owner: "const", what: "the byte `pop af` puts in F" },
+  { at: 5, owner: "producer", what: "value" },
+  { at: 6, owner: "const", what: "$4000, low — the DAC's address port" },
+  { at: 7, owner: "const", what: "$4000, high" },
+  { at: 8, owner: "const", what: "the byte `pop af` puts in F" },
+  { at: 9, owner: "const", what: "$2a" },
+  { at: 10, owner: "engine", what: "`call mix_one`'s return address" },
+  { at: 11, owner: "engine", what: "…its other half" },
+];
+export const PRODUCER_BYTES = ENTRY_LAYOUT.filter((b) => b.owner === "producer").map((b) => b.at);
 
 /** One entry, as the fixture lays it down. `port` is null for an idle one. */
 export function entryBytes({ port = null, reg = 0, val = 0 }, bucket) {
@@ -158,34 +192,36 @@ export const resetOps = (base) => [
 //
 // Every row is real instructions, assembled for its byte count and summed from
 // the documented cycle counts for its cost. `queue` is what the entry costs in
-// the fixture; `producer` is how many of those bytes a producer would have to
-// write for each FM write, which is the number the transport question needs.
+// the fixture; `producerBytes` is how many of those BYTES a producer would have
+// to write for each FM write, which is the number the transport question needs.
+// It is bytes and not fields: R27 §61.2 corrects the single stream's figure
+// from 3 to 4, because a 16-bit target pointer is two bytes on an 8-bit bus.
 export const FORMS = [
   { name: "single stream, port in the entry", key: "stream",
     asm: ["pop de", "pop af", "ld (de),a", "inc e", "pop af", "ld (de),a",
       "pop de", "pop af", "ld (de),a", "inc e", "pop af"],
-    cycles: 89, queue: 12, producer: 3,
+    cycles: 89, queue: 12, producerBytes: 4,
     note: "the built form: run switching is free, an idle entry is the same instructions" },
   { name: "port runs, the port in a RAM byte", key: "run",
     asm: ["ld a,($1e62)", "ld e,a", "pop af", "ld (de),a", "inc e", "pop af",
       "ld (de),a", "pop af", "ld e,0", "ld (de),a", "inc e", "pop af"],
-    cycles: 13 + 4 + 10 + 7 + 4 + 10 + 7 + 10 + 7 + 7 + 4 + 10, queue: 8, producer: 2,
+    cycles: 13 + 4 + 10 + 7 + 4 + 10 + 7 + 10 + 7 + 7 + 4 + 10, queue: 8, producerBytes: 2,
     note: "\"the current port\" has no register to live in, so every site re-reads it"
       + " — and the run-length countdown is not in this row at all" },
   { name: "port fixed by placement, port 0", key: "fixed0",
     asm: ["dec e", "pop af", "ld (de),a", "inc e", "pop af", "ld (de),a",
       "dec e", "pop af", "ld (de),a", "inc e", "pop af"],
-    cycles: 4 + 10 + 7 + 4 + 10 + 7 + 4 + 10 + 7 + 4 + 10, queue: 8, producer: 2,
+    cycles: 4 + 10 + 7 + 4 + 10 + 7 + 4 + 10 + 7 + 4 + 10, queue: 8, producerBytes: 2,
     note: "cheaper, but the producer may only put a port-0 write in a port-0 site" },
   { name: "port fixed by placement, port 1", key: "fixed1",
     asm: ["inc e", "pop af", "ld (de),a", "inc e", "pop af", "ld (de),a",
       "dec e", "dec e", "pop af"],
-    cycles: 4 + 10 + 7 + 4 + 10 + 7 + 4 + 4 + 10, queue: 6, producer: 2,
+    cycles: 4 + 10 + 7 + 4 + 10 + 7 + 4 + 4 + 10, queue: 6, producerBytes: 2,
     note: "port 1 never touches port 0's address latch, so it needs no re-latch" },
   { name: "absolute stores, port self-modified", key: "absolute",
     asm: ["pop af", "ld ($4000),a", "pop af", "ld ($4001),a", "ld a,$2a",
       "ld ($4000),a", "pop af"],
-    cycles: 10 + 13 + 10 + 13 + 7 + 13 + 10, queue: 6, producer: 2,
+    cycles: 10 + 13 + 10 + 13 + 7 + 13 + 10, queue: 6, producerBytes: 2,
     note: "the cheapest in CYCLES and the dearest in bytes — and twenty sites"
       + " cannot share one self-modified operand" },
 ];
@@ -253,8 +289,15 @@ export function writerPlan(cfg, { sites, base, fault = null }) {
   }
   const siteBytes = asmBytes(ops.flatMap((o) => o.asm));
   const resetBytes = asmBytes(resetOps(base).flatMap((o) => o.asm));
+  // …AND THE BOOT SET-UP, which is the writer's code too (R27 §61.3 step 4).
+  // The first lap runs before the once-a-lap reload has happened, so boot has
+  // to put the cursor somewhere; leaving it out is what made §60 report 113 B
+  // where the image carries 116, and a three-byte difference nobody can
+  // account for is exactly what the ledger exists to prevent.
+  const bootBytes = resetBytes;
   return { plan, at, resetAt, perBlock, sites, base,
-    bytes: sites * siteBytes + resetBytes, siteBytes, resetBytes,
+    bytes: sites * siteBytes + resetBytes + bootBytes,
+    siteBytes, resetBytes, bootBytes,
     worstBlock: Math.max(...perBlock.values()),
     writesPerLap: sites,
     writesPerSecond: sites * cfg.rateHz / cfg.cycleSlots };
@@ -526,18 +569,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`the Z80 YM writer, priced (R26 §59.3)`);
   console.log(`  ${positions} opportunities a lap (b11..b14 of ${blocks} blocks),`
     + ` ${perBlock} cyc a block reserved, ${YM_CODE_BUDGET} B of code,`
-    + ` ~${slotRoom} cyc of room in one slot at the 83.9% ceiling`);
+    + ` ~${slotRoom} cyc of room in one slot at the 83.9% ceiling.`
+    + `\n  "prod" is the bytes a PRODUCER writes for each FM write (R27 §61.2).`);
   console.log("");
   console.log(`  ${pad("candidate", 38)}${pad("B", 4)}${pad("cyc", 5)}`
-    + `${pad("entry", 7)}${pad("4/block", 18)}${pad("sites", 7)}rate`);
+    + `${pad("entry", 7)}${pad("prod", 6)}${pad("4/block", 18)}${pad("sites", 7)}rate`);
   for (const f of FORMS) {
     const b = asmBytes(f.asm);
-    const cyc = YM_POSITIONS.length * f.cycles, by = positions * b + 3;
+    const cyc = YM_POSITIONS.length * f.cycles, by = positions * b + 6;
     const four = `${cyc}${cyc > perBlock ? "!" : " "} cyc ${by}${by > YM_CODE_BUDGET ? "!" : " "} B`;
-    const sites = Math.min(Math.floor((YM_CODE_BUDGET - 3) / b),
+    const sites = Math.min(Math.floor((YM_CODE_BUDGET - 6) / b),
       Math.floor(perBlock / f.cycles) * blocks, f.cycles <= slotRoom ? Infinity : 0);
     console.log(`  ${pad(f.name, 38)}${pad(b, 4)}${pad(f.cycles, 5)}${pad(`${f.queue} B`, 7)}`
-      + `${pad(four, 18)}${pad(sites, 7)}`
+      + `${pad(`${f.producerBytes} B`, 6)}${pad(four, 18)}${pad(sites, 7)}`
       + `${(sites * cfg.rateHz / cfg.cycleSlots).toFixed(0)}/s`);
   }
   console.log("  (\"!\" is a number the reservation does not hold)");
@@ -545,7 +589,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const f of FORMS) console.log(`  ${pad(f.key, 10)}${f.note}`);
   console.log("");
   console.log(`  four writes a block is ${(positions * cfg.rateHz / cfg.cycleSlots).toFixed(1)}/s`
-    + ` and needs ${positions * asmBytes(FORMS[0].asm) + 3} B — 1.9x the reservation.`);
+    + ` and needs ${positions * asmBytes(FORMS[0].asm) + 6} B — 1.9x the reservation.`);
   console.log("  A shared routine is not available: `rst` + `ret` is 21 cycles, and the queue"
     + "\n  cursor has nowhere to live but SP, which a call frame destroys.");
 }

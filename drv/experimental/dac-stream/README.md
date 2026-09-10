@@ -329,18 +329,21 @@ it twenty times a lap. A subroutine would fix that and is not available:
 
 So the site is inline, and eleven bytes each is what decides everything:
 
-| candidate | B | cyc | entry | four a block | sites in 120 B | rate |
-| --- | ---: | ---: | ---: | --- | ---: | ---: |
-| **single stream, port in the entry** | **11** | **89** | 12 B | 356 cyc, 223 B | **10** | **1,248/s** |
-| port runs, the port in a RAM byte | 15 | 93 | 8 B | 372 cyc, 303 B | 7 | 874/s |
-| port fixed by placement, port 0 | 11 | 77 | 8 B | 308 cyc, 223 B | 10 | 1,248/s |
-| port fixed by placement, port 1 | 9 | 60 | 6 B | 240 cyc, **183 B** | 13 | 1,623/s |
-| absolute stores, port self-modified | 14 | 76 | 6 B | 304 cyc, 283 B | 8 | 999/s |
+| candidate | B | cyc | entry | producer | four a block | sites in 120 B | rate |
+| --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
+| **single stream, port in the entry** | **11** | **89** | 12 B | **4 B** | 356 cyc, 226 B | **10** | **1,248/s** |
+| port runs, the port in a RAM byte | 15 | 93 | 8 B | 2 B | 372 cyc, 306 B | 7 | 874/s |
+| port fixed by placement, port 0 | 11 | 77 | 8 B | 2 B | 308 cyc, 226 B | 10 | 1,248/s |
+| port fixed by placement, port 1 | 9 | 60 | 6 B | 2 B | 240 cyc, **186 B** | 12 | 1,498/s |
+| absolute stores, port self-modified | 14 | 76 | 6 B | 2 B | 304 cyc, 286 B | 8 | 999/s |
+
+"producer" is the bytes a producer writes for each FM write — the number the
+transport question needs, and four for the built form.
 
 `node drv/experimental/dac-stream/ym-writer.mjs` prints it, assembled for the
 bytes and summed from the documented cycle counts. **No candidate reaches four
 writes a block inside both reservations** — twenty sites of the built form are
-223 B against 120 and 356 cycles a block against 280 — and the port-1-only row,
+226 B against 120 and 356 cycles a block against 280 — and the port-1-only row,
 which is the only one whose cycles fit, can reach channels 4-6 and nothing else:
 `$28`, `$22`, `$27`, `$2A` and channels 1-3 are all port 0.
 
@@ -354,14 +357,14 @@ gets run switching for nothing, which is why it is the one that was built.
 
 | | |
 | --- | --- |
-| sites | **10 of the 20 opportunities**, 11 B each + 3 B of cursor reload = **113 B of the 120 reserved** |
+| sites | **10 of the 20 opportunities**, 11 B each + 3 B of cursor reload + 3 B of boot set-up = **116 B of the 120 reserved** |
 | cycles | **188 of the 280** a block, and 89 in a slot that has 93 at the ceiling |
 | rate | **10 writes a lap = 1,248.4/s**, against 2,496.9 for four a block |
-| four limits | worst slot 83.8%, mean 76.9%, finished estimate **2,363 B** of 2,560 (197 B spare), RAM 8,192 |
+| four limits | worst slot 83.8%, mean 76.9%, finished estimate **2,366 B** of 2,560 (194 B spare), RAM 8,192 |
 | chip | 37,156 register writes in 30 s, **37,156 in the window's order**, settling and both frequency latches clean, 0 YM accesses from the 68000, 0 PSG writes from the Z80 |
 | mailbox, in the same image | 61.2 updates/s, worst stop 1,432 master of 1,500, 80 of 80 slots swept |
 
-The site is ten instructions and one idea: `pop` is one byte and carries its
+The site is eleven instructions and one idea: `pop` is one byte and carries its
 address in SP, where an absolutely-addressed form is three.
 
 ```
@@ -378,14 +381,29 @@ inc  e         DE = $4001 again, where every slot's DAC write expects it
 pop  af        …and past the word the mixer's `call` is about to use
 ```
 
-**The port word is the commit.** An entry whose port word points at a two-byte
-bucket in the chip region makes no FM write at all — the register and the value
-go to RAM, and the only chip access left is the idempotent `$2A` re-latch. So an
-empty queue is not a path, it is the same path with a different pointer: the
-four cases §59.4 asks to be the same length are the same **instructions**, and
-`empty` and `dense` produce DAC streams that agree sample for sample. The
-producer's rule follows from it — write the register and the value first, the
-port word last — and `--fault port-first` is that rule broken.
+**The target pointer is what makes an entry live or idle** — and that is a
+property of this static fixture, not a commit (R27 §61.2). An entry whose
+pointer names a two-byte bucket in the chip region makes no FM write at all: the
+register and the value go to RAM, and the only chip access left is the
+idempotent `$2A` re-latch. So an empty queue is not a path, it is the same path
+with a different pointer: the four cases §59.4 asks to be the same length are
+the same **instructions**, and `empty` and `dense` produce DAC streams that
+agree sample for sample.
+
+What it is **not** is something a producer could commit with. The 68000 reaches
+Z80 RAM one byte at a time, so a 16-bit pointer's two halves never change
+together — a reader can see `$1E00` or `$4060` between them. A real transport
+publishes a window by releasing the bus, or by a separate one-byte generation
+written last. `--fault port-first` shows only that a live entry read before its
+payload is wrong; the 16-bit tear, window ownership and once-only consumption
+are **not** tested by it.
+
+**An entry is 12 bytes and the producer owns four of them** — the two of the
+target pointer, the register and the value. R26 §60.8 said three, counting the
+three *fields* as three bytes; that is withdrawn. The pointer's halves differ in
+the high byte as well (`$1E60` idle against `$4000`/`$4002` live), so no
+pre-initialisation shrinks it to one, and **four bytes a write is this form's
+floor**.
 
 **Two things the instructions do not say, both found by running it.**
 
@@ -426,8 +444,8 @@ one lap's worth of entries laid down by the 68000 before the Z80 starts, never
 refilled, so the same lap of writes repeats. Nothing here says how a producer
 would fill it, and the numbers that a transport design has to start from are
 these — **1,248.4 writes/s**, 12 queue bytes an entry of which a producer writes
-three, and a 194-write patch frame taking 19.4 laps (~155 ms) to drain against the
-corpus's 246 steady writes a second and 337 with patches.
+**four**, and a 194-write patch frame taking 19.4 laps (~155 ms) to drain against
+the corpus's 246 steady writes a second and 337 with patches.
 
 **The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
 ROMs — one with the CSM test tone and one without — that play the SAME image the

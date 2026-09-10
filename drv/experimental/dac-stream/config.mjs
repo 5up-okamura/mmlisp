@@ -281,9 +281,9 @@ export const CODE_ESTIMATE_2CH_CMD =
 // self-modified operand" and a call site at each position; the engine's loop is
 // eighty slots of straight-line code, so a call is 27 cycles the 70-cycle
 // position does not have and the cursor has no register to live in but SP,
-// which a call frame destroys. What replaces the pad is therefore INLINE, ten
-// bytes a site — and 120 bytes buy eleven of the twenty positions, not twenty
-// (ym-writer.mjs).
+// which a call frame destroys. What replaces the pad is therefore INLINE,
+// ELEVEN bytes a site — and 120 bytes buy TEN of the twenty positions, not
+// twenty (ym-writer.mjs).
 export const YM_SLOTS_USED = [11, 12, 13, 14];
 export const YM_CODE_BUDGET = 120;                 // bytes, R16 §41.1
 export const RESERVE_2CH_YM = RESERVE_2CH_CMD.map(([b, cyc, why]) =>

@@ -2232,7 +2232,7 @@ if (process.argv.includes("--machine")) {
 {
   const { siteOps, entryBytes, ENTRY_BYTES, asmBytes, writerPlan, writerSlots,
     SEQUENCES, pairsWithinBlocks, breakEntries, IDLE, FORMS, entryWrites,
-    checkWriterTrace } = await import("./ym-writer.mjs");
+    checkWriterTrace, PRODUCER_BYTES, ENTRY_LAYOUT } = await import("./ym-writer.mjs");
   const { buildConfig, ymBudgetCycles, YM_CODE_BUDGET, YM_BUCKET } = await import("./config.mjs");
   const cfg = buildConfig({ voices: 2, complete: true, csm: true, csmHost: true,
     levels: 15, workTarget: 0.839, correctorBudget: true, command: true, ymWriter: true });
@@ -2240,6 +2240,7 @@ if (process.argv.includes("--machine")) {
   // The site is eleven bytes and eighty-nine cycles, and both are measured: the
   // bytes from the assembler and the cycles from the ops the generator places.
   const ops = siteOps();
+  assert.equal(ENTRY_LAYOUT.length, ENTRY_BYTES, "the layout and the entry differ in length");
   assert.equal(asmBytes(ops.flatMap((o) => o.asm)), 11, "the site is not eleven bytes");
   assert.equal(ops.reduce((t, o) => t + o.cycles, 0), 89, "the site is not 89 cycles");
   // SIX pops for five words of payload. The sixth is where `call mix_one`
@@ -2256,13 +2257,32 @@ if (process.argv.includes("--machine")) {
   // making no FM write at all.
   const idle = entryBytes(IDLE, YM_BUCKET);
   assert.equal(idle[0] | (idle[1] << 8), YM_BUCKET, "an idle entry does not point at the bucket");
+  // WHICH BYTES A PRODUCER OWNS (R27 §61.2). Four, not three: the target
+  // pointer is sixteen bits and the 68000 reaches Z80 RAM one byte at a time,
+  // so both halves change per write. Pinned by position, and checked against
+  // the bytes that actually differ between two live entries and an idle one.
+  assert.deepEqual(PRODUCER_BYTES, [0, 1, 3, 5], "the producer-owned bytes moved");
+  assert.equal(FORMS.find((f) => f.key === "stream").producerBytes, PRODUCER_BYTES.length,
+    "the single stream's producer cost is not its producer-owned byte count");
+  {
+    const a = entryBytes({ port: 0, reg: 0x30, val: 0x71 }, YM_BUCKET);
+    const b = entryBytes({ port: 1, reg: 0x44, val: 0x20 }, YM_BUCKET);
+    const differ = a.map((_, i) => i).filter((i) => a[i] !== b[i] || a[i] !== idle[i]);
+    assert.deepEqual(differ, PRODUCER_BYTES,
+      "the bytes that change between entries are not the producer-owned ones");
+    assert.notEqual(idle[1], a[1], "the pointer's HIGH byte does not change — one byte would do");
+  }
   assert.deepEqual(entryWrites(IDLE).map((w) => w.kind), ["addr"],
     "an idle entry makes more than the $2A re-latch");
 
   // The plan: ten sites of the twenty opportunities, inside BOTH reservations,
   // with the cursor reload in an opportunity the sites left empty.
   const plan = writerPlan(cfg, { sites: 10, base: 0x1e00 - 10 * ENTRY_BYTES });
-  assert.equal(plan.bytes, 113, "the writer is not 113 bytes");
+  // Ten sites, the once-a-lap reload AND the boot set-up. R27 §61.3 step 4:
+  // the boot line is the writer's code, and leaving it out is what made the
+  // report and the image differ by three bytes.
+  assert.equal(plan.bytes, 10 * 11 + 3 + 3, "the writer is not 116 bytes");
+  assert.equal(plan.bootBytes, 3, "the boot set-up is not counted");
   assert.ok(plan.bytes <= YM_CODE_BUDGET, "the writer is over its byte reservation");
   assert.ok(plan.worstBlock <= ymBudgetCycles(), "the writer is over its cycle reservation");
   assert.ok(!plan.at.includes(plan.resetAt), "the cursor reload shares a slot with a site");

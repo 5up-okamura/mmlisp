@@ -1229,10 +1229,12 @@ register to live in, so every site re-reads it from RAM (4 B, 17 cycles) —
 before any run-length countdown. The single stream carries the port in each
 entry and gets run switching for free. That is what was built.
 
-**Built and measured**: 10 sites of the 20 opportunities, 113 B of the 120
-reserved, 188 cycles of the 280 a block, **1,248.4 writes/s**. Four limits:
-worst slot 83.8%, mean 76.9%, finished estimate 2,363 B of 2,560 (197 B spare),
-RAM 8,192. 30 s at max density: 37,156 register writes, 37,156 in the window's
+**Built and measured**: 10 sites of the 20 opportunities, **116 B** of the 120
+reserved (10x11 + 3 cursor reload + 3 boot set-up), 188 cycles of the 280 a
+block, **1,248.4 writes/s**. Four limits: worst slot 83.8%, mean 76.9%, finished
+estimate **2,366 B** of 2,560 (194 B spare), RAM 8,192. (R26 §60 reported 113 B
+and 2,363 B: the boot cursor line was added after that split run and was not in
+the writer's ledger. R27 §61.3 step 4.) 30 s at max density: 37,156 register writes, 37,156 in the window's
 order, settling and both frequency latches clean, 0 YM accesses from the 68000
 and 0 PSG writes from the Z80. The mailbox in the same image: 61.2 updates/s,
 worst stop 1,432 master, 80 of 80 slots.
@@ -1257,16 +1259,20 @@ that slot is already the fullest and ten more cycles took it to 85.5%, past the
 last pop; and boot must set SP too, or the first lap pops from the $2000 RAM
 mirror and writes through the bank window.
 
-**The input contract, stated as failures.** The port word is the COMMIT: an
-entry pointing at the two-byte bucket in the chip region makes no FM write at
-all, so "the queue is empty" is the same instructions, not a branch. The
-producer writes the register and the value first and the port word last —
-`--fault port-first` is that reversed. The other four negatives are
+**The input contract, stated as failures.** The target pointer makes an entry
+live or idle — an entry pointing at the two-byte bucket in the chip region makes
+no FM write at all, so "the queue is empty" is the same instructions, not a
+branch. It is NOT a commit (R27 §61.2): a 16-bit pointer's halves never change
+together on an 8-bit bus, so a real transport publishes by bus release or by a
+separate one-byte generation written last. `--fault port-first` shows only that
+a live entry read before its payload is wrong. The other four negatives are
 `no-relatch`, `slow-empty` (the idle path one byte the same and three cycles
 short), `port-bit` and `pitch-split`.
 
 **Numbers a transport design has to start from**: 1,248.4 writes/s; 12 queue
-bytes an entry of which a producer writes three; a 194-write patch frame drains
+bytes an entry of which a producer writes **four** (the target pointer is
+SIXTEEN bits and the 68000 reaches Z80 RAM one byte at a time — R26 §60.8's
+"three" counted fields, and R27 §61.2 withdraws it); a 194-write patch frame drains
 in 19.4 laps (~155 ms) against the corpus's 246 steady writes a second and 337
 with patches. The window is a FIXTURE — one lap's entries laid down by the 68000
 before the Z80 starts, never refilled.

@@ -170,6 +170,7 @@ for (const p of PROFILES) {
     const all = YM_POSITIONS.length * (cfg.cycleSlots / cfg.blockSamples);
     console.log(`   YM writer   ${r.ym.sites} sites of ${all} opportunities,`
       + ` ${r.ym.siteBytes} B each + ${r.ym.resetBytes} B of cursor reload`
+      + ` + ${r.ym.bootBytes} B of boot set-up`
       + ` = ${r.ym.bytes} B of the ${YM_CODE_BUDGET} reserved`
       + ` (${YM_CODE_BUDGET - r.ym.bytes} spare)`);
     console.log(`     ${pad("worst block", 22)}${r.ym.worstBlock} cyc of the`
@@ -177,7 +178,8 @@ for (const p of PROFILES) {
     console.log(`     ${pad("rate", 22)}${r.ym.writesPerLap} writes a lap`
       + ` = ${r.ym.writesPerSecond.toFixed(1)}/s`
       + ` — four a block would be ${(all * cfg.rateHz / cfg.cycleSlots).toFixed(1)}/s`);
-    console.log(`     ${pad("four a block needs", 22)}${all * r.ym.siteBytes + r.ym.resetBytes} B`
+    console.log(`     ${pad("four a block needs", 22)}${all * r.ym.siteBytes
+      + r.ym.resetBytes + r.ym.bootBytes} B`
       + ` and ${YM_POSITIONS.length * FORMS[0].cycles} cyc a block — over BOTH reservations`);
     console.log(`     ${pad("sites at", 22)}${r.ym.at.join(", ")}`);
   }
