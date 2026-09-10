@@ -1281,3 +1281,61 @@ before the Z80 starts, never refilled.
 vs compact desired state vs resident voice table), integration with the existing
 driver, and any hardware run. Stop is "Z80 YM writer P1 complete — awaiting the
 transport decision".
+
+## R27 §61 (2026-09-10) — transport P0: the wire is not what is short
+
+**The 10-site writer was ADOPTED** as the normal-YM execution path (1,248.4
+writes/s). Four writes a block is off the required list. Corrections made first
+(§61.3): the writer's code is **116 B** of the 120 reserved (the boot cursor
+line is the writer's too) and the finished estimate **2,366 B**; a producer
+writes **4 bytes** a write, not three — the target pointer is 16 bits and the
+68000 reaches Z80 RAM one byte at a time; and "the port word is the commit" is
+withdrawn — a 16-bit pointer's halves never change together, so a real transport
+publishes by bus release or by a separate one-byte generation written last.
+
+**`semantic.mjs`** reads the 41 scores out of `c-gate`'s own argument list in
+package.json (one place, so the two cannot drift) and folds the raw stream into
+VOICE_SET / PITCH / TL / KEY / RAW_GLOBAL. `classify()` and `expand()` are two
+functions, neither calling the other: **14,627 raw writes fold to 4,450 commands
+and expand back byte for byte on every score**. 32 voice identities, 291 loads,
+at most 4 live at once, 201 never keyed, 20 written onto a sounding channel,
+lead median 1 frame and **12 of 90 key-ons have no lead at all**.
+
+**`transport.mjs`** prices the bus: one byte into Z80 RAM is 87.2 master
+(`move.b (a0)+,(a1)+`, 12 cycles at the measured 7.265 master a cycle) and a
+grab of its own costs 403 master before any of them. The mailbox already takes
+one grab a lap, so the leftovers are **375 B/s worst-case**. MERGING the
+mailbox's read and publication into one grab an observation — R25 already
+measured that shape at 373..1,354 master and it still makes 124.8 updates/s —
+frees the alternate lap and gives **811 B/s**, 2.2x more, for nothing.
+
+| candidate | steady wire | steady lat p95 | worst key-on | expander |
+| --- | ---: | ---: | ---: | ---: |
+| raw, as-is | 976 B/s | 8,447 ms | 8,571 ms | 0 |
+| raw, merged | 976 B/s | 1,776 ms | 1,795 ms | 0 |
+| hybrid | 976 B/s | 930 ms | 955 ms | 54 cyc/lap |
+| semantic, merged | **369 B/s** | 239 ms | 106 ms | 242 cyc/lap |
+
+**THE WIRE IS NOT WHAT IS SHORT.** Raising it to 256 bytes a lap — forty times
+what exists — still leaves commands late. The searched answer is the other
+pipeline: **the writer needs 22 sites a lap for every key-on on time and 24 for
+every command, against the 10 it has** (270 B of code against 120 B reserved,
+2,136 cycles a lap against 1,400). Four writes a block, which R26 could not
+afford either, would still be short of 22. The same eleven-bytes-a-site wall
+from the other side.
+
+**What the Z80 owes for a semantic wire**: every producer-owned byte the 68000
+does not write, the Z80 must — a fetch and a store, 26 cycles, because no
+register file has anything spare. 242 cycles a lap over the corpus, which fits
+in the ten b11..b14 opportunities the writer left empty (930 at the ceiling) and
+SPENDS them, so those can never also become write sites. Reserved and executed
+as padding the four limits hold: 83.8% / 78% / 2,507 B of 2,560 (with the
+expander's 150 B) / 8,192 B. The CSM-harness image is 45 B past the region.
+
+**Prefetch changed nothing in this corpus** — every patch is either in the cold
+start, where there is nothing to move it past, or one of the 20 on a sounding
+channel, where §61.4 forbids moving it. And the cold start is a floor: six
+voices is 180 chip writes = 18 laps = **144 ms** whatever the transport does.
+
+**Stopped at "transport P0 · candidate selection" with NO candidate adopted.**
+Not started: the Z80 consumer, the 68k producer, integration, hardware.

@@ -447,6 +447,99 @@ these — **1,248.4 writes/s**, 12 queue bytes an entry of which a producer writ
 **four**, and a 194-write patch frame taking 19.4 laps (~155 ms) to drain against
 the corpus's 246 steady writes a second and 337 with patches.
 
+## What the 41 scores MEAN, and what a transport would have to carry (R27 §61)
+
+R25 counted the reference driver's FM traffic and R26 priced the writer that has
+to emit it. Neither says what a transport carries, because a transport does not
+carry writes — it carries intentions, and a voice patch is one intention worth
+thirty of them. `semantic.mjs` folds the raw stream into five commands and
+checks the fold by **unfolding it again**:
+
+```
+VOICE_SET(port, channel, voice)   a patch, folded to an IDENTITY — the
+                                  register/value list with the channel taken out
+                                  of the register numbers
+PITCH(port, channel, hi, lo)      the $A4/$A0 pair, in that order
+TL(port, channel, operator, v)    a level that moves at runtime
+KEY(value)                        $28, the only write that starts a note
+RAW_GLOBAL(port, reg, value)      everything else, kept rather than dropped
+```
+
+`classify()` and `expand()` are two functions and neither calls the other; the
+reference the comparison uses is the driver's own output. Over the 41 scores
+`c-gate` names — read out of `package.json`, so a score added to the gate is a
+score this measures — **14,627 raw FM writes fold to 4,450 commands and expand
+back to 14,627, byte for byte on every score**.
+
+| | |
+| --- | --- |
+| voice identities | **32** in the whole corpus, 291 loads; at most **4** live on the six channels at once |
+| patches never keyed | **201 of 291** — every score loads all six channels in its first frame and keys one |
+| patches onto a sounding channel | **20**, which is the number a prefetch may not move |
+| lead, patch to its key-on | median **1 frame**, max 241, and **12 of 90 have none at all** |
+| the heaviest frame | 252 raw writes (`m2-motion`, frame 0): **230 inside 8 patches, 22 of delta** |
+
+**The bus is what a transport has to fit in, and it is 0.28% of the machine.**
+One byte into Z80 RAM is `move.b (a0)+,(a1)+` — 12 cycles, **87.2 master** at the
+measured 7.265 master a cycle — and the contract is 1,500 master between two H
+observations. The mailbox already takes one grab a lap, alternating a snapshot
+read (440..926 master) and a publication (830..1,432), so what is left is:
+
+| arrangement | a read lap | a publish lap | a lap | |
+| --- | ---: | ---: | ---: | ---: |
+| as-is, worst-case grabs | 6 B | 0 B | 3 B | **375 B/s** |
+| as-is, best-case grabs | 12 B | 7 B | 9.5 B | 1,186 B/s |
+| **merged handshake** (R25 §57, already measured at 373..1,354 master) | 1 B riding it | **12 B in a grab of its own** | 6.5 B | **811 B/s** |
+
+Merging the mailbox's read and publication into one grab an observation is worth
+**2.2×** on the wire and costs the mailbox nothing: it still makes 124.8 updates
+a second where 60 are asked for.
+
+**Two candidates, and a hybrid, against that** (`transport.mjs`, over all 41
+scores, worst score in each column):
+
+| | steady wire | over 375 B/s | steady lat p95 | worst key-on | late commands | expander |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| raw, as-is | 976 B/s | 5/41 | 8,447 ms | 8,571 ms | 1,445 | 0 |
+| raw, merged | 976 B/s | 5/41 | 1,776 ms | 1,795 ms | 2,130 | 0 |
+| hybrid (raw entries, cached patches) | 976 B/s | 5/41 | 930 ms | 955 ms | 2,258 | 54 cyc/lap |
+| semantic, as-is | 369 B/s | 0/41 | 885 ms | 784 ms | 2,067 | 242 cyc/lap |
+| **semantic, merged** | **369 B/s** | **0/41** | **239 ms** | **106 ms** | **621** | 242 cyc/lap |
+
+**The wire is not what is short.** Raw needs four bytes a write and 976 B/s
+steady, which is over the worst-case budget on five scores; semantic needs 369
+of the 811 the merged handshake leaves, on every score. But raising the wire
+to 256 bytes a lap — forty times what exists — still leaves commands late, so
+the search was pointed at the other pipeline:
+
+> **The writer needs 22 sites a lap for every key-on on time and 24 for every
+> command, against the 10 it has.** At 24 sites the code is 270 B against the
+> 120 B reserved and 2,136 cycles a lap against 1,400.
+
+That is the same wall R26 §60 hit from the other side: eleven bytes a site is
+what caps the writer at ten, and ten is what caps on-time delivery. Four writes
+a block — twenty sites — would still be short of twenty-two.
+
+**What the Z80 owes for a semantic wire.** Somebody has to turn a command into
+the writer's entries, and every producer-owned byte the 68000 does not write the
+Z80 must: a fetch and a store, 26 cycles, and neither register file has anything
+spare. Measured against the corpus that is **242 cycles a lap**, which fits in
+the ten b11..b14 opportunities the writer left empty (930 cycles at the ceiling)
+— and spends them, so those opportunities can never also become write sites.
+Reserved and EXECUTED as padding, the four limits still hold: worst slot 83.8%,
+mean 78%, finished estimate **2,507 B** of 2,560 with the expander's 150 B in
+it. The image with the CSM test patch is 45 B past the region and will not
+assemble, which is the same refusal the mailbox profile already carries.
+
+**Prefetch changed nothing in this corpus.** Moving a patch earlier is only
+allowed over a stretch where its channel is silent (§61.4), and every patch in
+these 41 scores is either in the cold start — where there is nothing to move it
+past — or one of the 20 written onto a sounding channel, where it may not move.
+
+**The cold start is a floor no transport can beat**: six voices is 180 chip
+writes, and 180 at ten a lap is 18 laps = **144 ms**. A product loads them
+before it starts, or waits.
+
 **The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
 ROMs — one with the CSM test tone and one without — that play the SAME image the
 gates measure on a fixed 44-second timeline: each voice alone, an ordinary sum,
@@ -1091,6 +1184,8 @@ generation time.
 | `corrector.mjs` | the bounded phase corrector: its arithmetic, the nine-bit debt and its ±112 limit, the seven `jr` ladders and the five ways to break it |
 | `protocol.mjs` | **the 68k/Z80 runtime protocol's one layout.** The 5-byte snapshot, the host's control block, the ordered writes each side makes, the wrap rule of every counter, the queue's records — and the Z80 equates, C header and JS model all emitted from it, so no offset is written down twice |
 | `proto-blocks.mjs` | the protocol as Z80 code: the host-control check, the snapshot publication and the logical position's advance, in one-slot pieces and in P1's single-block form |
+| `semantic.mjs` | **what the 41 scores mean**: the corpus read out of `c-gate`'s own argument list, the fold into five commands, the unfold that checks it byte for byte, and the per-score voice, density and lead figures |
+| `transport.mjs` | **two transports priced against the writer and the bus**: what a byte of Z80 RAM costs inside a grab, what the mailbox leaves, the wire each candidate needs, and the search that says which pipeline is short and by how much |
 | `ym-writer.mjs` | **the Z80 YM writer**: the inline site and why it cannot be a subroutine, the six-word entry, the sequences §59.5 runs, the fixture negatives, the rule that a frequency pair may not straddle a block, and the priced comparison of every candidate against the 280-cycle / 120-byte reservation |
 | `command.mjs` | the PCM state MAILBOX: the host-side encoder that holds the waiting list on extended observation numbers and coalesces three level changes at one boundary into one bundle, the JS reference consumer, the branch-free Z80 pieces that make one decision a lap without touching main BC, and the packer that lays them into the b9/b10 positions the reservation owns |
 | `split-report.mjs` | what the distributed image costs, printed from the image itself: pieces, worst slot, mean, ladders, DAC interval, the code ledger and the four limits judged independently |

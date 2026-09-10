@@ -10,7 +10,8 @@
 //   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
 import { buildConfig, stampLine, cmdBudgetCycles, CMD_SLOTS_USED,
   ymBudgetCycles, YM_CODE_BUDGET } from "./config.mjs";
-import { ENTRY_BYTES, FORMS, asmBytes, YM_POSITIONS } from "./ym-writer.mjs";
+import { ENTRY_BYTES, FORMS, asmBytes, YM_POSITIONS,
+  EXPANDER_CODE_ESTIMATE } from "./ym-writer.mjs";
 
 // How many of the twenty opportunities the 120-byte reservation buys.
 const YM_SITES = 10;
@@ -48,6 +49,15 @@ const PROFILES = [
     cfg: { correctorBudget: true, command: true, ymWriter: true },
     opt: { correct: true, proto: true, command: true,
       ym: { sites: YM_SITES, base: 0x1e00 - YM_SITES * ENTRY_BYTES } } },
+  // …and the semantic transport's expander, EXECUTED as padding in the ten
+  // opportunities the writer left empty (R27 §61.7). Nothing of it is written
+  // yet; what is measured is whether the schedule survives its cost.
+  { tag: "…and the semantic expander's reservation",
+    cfg: { correctorBudget: true, command: true, ymWriter: true },
+    opt: { correct: true, proto: true, command: true,
+      ym: { sites: YM_SITES, base: 0x1e00 - YM_SITES * ENTRY_BYTES, expander: true } },
+    owed: [["semantic expander", EXPANDER_CODE_ESTIMATE,
+      "the header decode and four byte moves an entry (transport.mjs)"]] },
 ];
 
 // THE FOUR LIMITS, judged INDEPENDENTLY (R14 §37.4 step 4). One number over is a
@@ -67,6 +77,10 @@ const verdict = (cfg, r, led) => {
 for (const p of PROFILES) {
   const cfg = buildConfig({ voices: 2, complete: true, csm: true, levels: 15,
     workTarget: 0.839, ...p.cfg });
+  // A profile may OWE something the config's own estimate does not carry — the
+  // semantic expander is code nobody has written and its bytes belong in the
+  // ledger rather than in a sentence (R27 §61.7).
+  if (p.owed) cfg.codeEstimate = [...cfg.codeEstimate, ...p.owed];
   const r = generateSplit(cfg, { stackFill: true, ...p.opt });
   console.log(`\n── ${p.tag} ──`);
   console.log(`   ${stampLine(cfg)}`);
@@ -195,6 +209,7 @@ for (const p of PROFILES) {
   const bare = (() => {
     const c2 = buildConfig({ voices: 2, complete: true, csm: false, levels: 15,
       workTarget: 0.839, ...p.cfg });
+    if (p.owed) c2.codeEstimate = [...c2.codeEstimate, ...p.owed];
     const r2 = generateSplit(c2, { stackFill: true, ...p.opt });
     if (!r2.ok) return null;
     return { end: sizeOf(r2.gen.text).end, cfg: c2, gen: r2.gen };

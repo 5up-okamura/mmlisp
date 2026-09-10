@@ -81,7 +81,7 @@
 // generation written last — and `--fault port-first` shows only that a live
 // entry read before its payload is wrong, not that any of that has been
 // tested.
-import { op } from "./schedule.mjs";
+import { op, padTo } from "./schedule.mjs";
 import { YM } from "./config.mjs";
 import { checkWriteStream } from "./analyze.mjs";
 import { generate } from "./gen-stream.mjs";
@@ -264,7 +264,23 @@ export function writerSlots(cfg) {
  * @param sites how many of the twenty positions carry code
  * @param base  the window's first byte — the cursor is reloaded to it once a lap
  */
-export function writerPlan(cfg, { sites, base, fault = null }) {
+/**
+ * THE EXPANDER'S RESERVATION (R27 §61.7).
+ *
+ * A semantic transport does not put entries in RAM — it puts COMMANDS there,
+ * and something on the Z80 has to turn one into the other. Measured against the
+ * corpus that is 242 cycles a lap (transport.mjs); reserved here at 30 cycles
+ * in each opportunity the writer left empty, which is 300 and rounds the right
+ * way. It is EXECUTED like every other reservation, so the schedule has to
+ * survive it rather than intend to.
+ *
+ * Putting it there is also what says the ten empty opportunities are spoken
+ * for: they cannot become write sites as well.
+ */
+export const EXPANDER_PER_SITE = 30;
+export const EXPANDER_CODE_ESTIMATE = 150;      // bytes — the decode and the four moves
+
+export function writerPlan(cfg, { sites, base, fault = null, expander = false }) {
   const all = writerSlots(cfg);
   if (sites > all.length) throw new Error(`${sites} sites into ${all.length} positions`);
   const at = [];
@@ -280,6 +296,14 @@ export function writerPlan(cfg, { sites, base, fault = null }) {
   const resetAt = all.find((i) => i > at[at.length - 1] && !at.includes(i)) ?? at[0];
   for (const slot of at) plan.set(slot, [...ops]);
   plan.set(resetAt, [...resetOps(base), ...(plan.get(resetAt) ?? [])]);
+  // …and the expander's bounded padding, in the opportunities the sites left.
+  const spare = all.filter((i) => !at.includes(i));
+  if (expander) for (const slot of spare) {
+    const pad = padTo(EXPANDER_PER_SITE, { dead: ["a", "iy"] })
+      .map((o) => ({ ...o, reserved: true }));
+    pad[0] = { ...pad[0], what: `RESERVED ${EXPANDER_PER_SITE} — the semantic expander (R27 §61.7)` };
+    plan.set(slot, [...(plan.get(slot) ?? []), ...pad]);
+  }
   // Cycles a BLOCK, which is the number §59.6 grades — the reservation is
   // 280 there, not 79 per position.
   const perBlock = new Map();
@@ -295,7 +319,7 @@ export function writerPlan(cfg, { sites, base, fault = null }) {
   // where the image carries 116, and a three-byte difference nobody can
   // account for is exactly what the ledger exists to prevent.
   const bootBytes = resetBytes;
-  return { plan, at, resetAt, perBlock, sites, base,
+  return { plan, at, resetAt, spare, expander, perBlock, sites, base,
     bytes: sites * siteBytes + resetBytes + bootBytes,
     siteBytes, resetBytes, bootBytes,
     worstBlock: Math.max(...perBlock.values()),

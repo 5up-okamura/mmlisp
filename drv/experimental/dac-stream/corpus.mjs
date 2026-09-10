@@ -15,7 +15,9 @@ import { dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "../../tools/mmb-build.mjs";
 import { DrvPlayer } from "../../../live/src/drv-player.js";
-import { SlotBuilder } from "../../../live/src/slot-builder.js";
+// The recorder lives with the semantic corpus (R27 §61.5): one subclass, read
+// by both tools, so "what the reference driver wrote" is one definition.
+import { Recording } from "./semantic.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -25,18 +27,11 @@ const FRAMES = Number(arg("frames", 400));
 const scores = argv.filter((a) => !a.startsWith("--") && a.endsWith(".mmlisp"));
 const list = scores.length ? scores : [join(drv, "tests", "m3-macro-multi.mmlisp")];
 
-/** A builder that remembers who wrote what, and in which frame and sub-tick. */
-class Recording extends SlotBuilder {
-  constructor(opts) { super(opts); this.log = []; this.frame = 0; this.sub = 0; }
-  write(port, addr, data) {
-    this.log.push({ frame: this.frame, sub: this.sub, port, addr: addr & 0xff, data: data & 0xff });
-    super.write(port, addr, data);
-  }
-  endSub() { this.sub++; super.endSub(); }
-  endFrame() { const b = super.endFrame(); this.frame++; this.sub = 0; return b; }
-}
-
-const rows = [];
+import { buildMmb } from "../../tools/mmb-build.mjs";
+import { DrvPlayer } from "../../../live/src/drv-player.js";
+// The recorder lives with the semantic corpus (R27 §61.5): one subclass, read
+// by both tools, so "what the reference driver wrote" is one definition.
+import { Recording } from "./semantic.mjs";const rows = [];
 for (const score of list) {
   const { bytes, sampleBank } = buildMmb(score);
   const player = new DrvPlayer();
