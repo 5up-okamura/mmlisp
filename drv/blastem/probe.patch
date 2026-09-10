@@ -1,5 +1,5 @@
 diff --git a/genesis.c b/genesis.c
-index 4f41271..b2de5a4 100644
+index 4f41271..5fbb072 100644
 --- a/genesis.c
 +++ b/genesis.c
 @@ -455,11 +455,13 @@ static void z80_next_int_pulse(z80_context * z_context)
@@ -36,7 +36,7 @@ index 4f41271..b2de5a4 100644
  
  static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_t value)
  {
-@@ -1314,6 +1323,17 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+@@ -1314,11 +1323,24 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
  			location &= 0x7FFF;
  			if (location < 0x4000) {
  				gen->zram[location & 0x1FFF] = value;
@@ -54,7 +54,14 @@ index 4f41271..b2de5a4 100644
  #ifndef NO_Z80
  				z80_handle_code_write(location & 0x1FFF, gen->z80);
  #endif
-@@ -1387,6 +1407,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
+ 			} else if (location < 0x6000) {
+ 				sync_sound(gen, context->cycles);
++				mml_probe_log(MML_PROBE_YM68K,
++				              ((location & 3) << 14) | value, context->cycles);
+ 				if (location & 1) {
+ 					ym_data_write(gen->ym, value);
+ 				} else if(location & 2) {
+@@ -1387,6 +1409,9 @@ static m68k_context * io_write(uint32_t location, m68k_context * context, uint8_
  		} else {
  			uint32_t masked = location & 0xFFF00;
  			if (masked == 0x11100) {
@@ -64,7 +71,16 @@ index 4f41271..b2de5a4 100644
  				if (value & 1) {
  					dputs("bus requesting Z80");
  					if (z80_enabled) {
-@@ -1571,6 +1594,10 @@ static uint8_t io_read(uint32_t location, m68k_context * context)
+@@ -1501,6 +1526,8 @@ static uint8_t io_read(uint32_t location, m68k_context * context)
+ 			} else if (location < 0x6000) {
+ 				sync_sound(gen, context->cycles);
+ 				value = ym_read_status(gen->ym, context->cycles, location);
++				mml_probe_log(MML_PROBE_YM68K,
++				              ((location & 3) << 14) | 0x2000 | value, context->cycles);
+ 			} else if (location < 0x7F00) {
+ 				value = 0xFF;
+ 			} else {
+@@ -1571,6 +1598,10 @@ static uint8_t io_read(uint32_t location, m68k_context * context)
  			uint32_t masked = location & 0xFFF01;
  			if (masked == 0x11100) {
  				value = z80_enabled ? !z80_get_busack(gen->z80, context->cycles) : !gen->z80->busack;
@@ -75,9 +91,12 @@ index 4f41271..b2de5a4 100644
  				value |= (get_open_bus_value(&gen->header) >> 8) & 0xFE;
  				dprintf("Byte read of BUSREQ returned %d @ %d (reset: %d)\n", value, context->cycles, gen->z80->reset);
  			} else if (masked == 0x11200) {
-@@ -1766,6 +1793,13 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
+@@ -1765,7 +1796,16 @@ static void * z80_write_ym(uint32_t location, void * vcontext, uint8_t value)
+ 	z80_context * context = vcontext;
  	genesis_context * gen = context->system;
  	sync_sound(gen, context->Z80_CYCLE);
++	mml_probe_log(MML_PROBE_YMZ80,
++	              ((location & 3) << 14) | value, context->Z80_CYCLE);
  	if (location & 1) {
 +		// The Z80's PC at the moment it fed the DAC. A hole in the sample clock
 +		// is a stretch of engine code that ran without asking; this is what
@@ -89,7 +108,19 @@ index 4f41271..b2de5a4 100644
  		ym_data_write(gen->ym, value);
  	} else if (location & 2) {
  		ym_address_write_part2(gen->ym, value);
-@@ -1837,6 +1871,12 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
+@@ -1780,7 +1820,10 @@ static uint8_t z80_read_ym(uint32_t location, void * vcontext)
+ 	z80_context * context = vcontext;
+ 	genesis_context * gen = context->system;
+ 	sync_sound(gen, context->Z80_CYCLE);
+-	return ym_read_status(gen->ym, context->Z80_CYCLE, location);
++	uint8_t mml_st = ym_read_status(gen->ym, context->Z80_CYCLE, location);
++	mml_probe_log(MML_PROBE_YMZ80,
++	              ((location & 3) << 14) | 0x2000 | mml_st, context->Z80_CYCLE);
++	return mml_st;
+ }
+ 
+ static uint8_t z80_read_bank(uint32_t location, void * vcontext)
+@@ -1837,6 +1880,12 @@ static void *z80_write_bank(uint32_t location, void * vcontext, uint8_t value)
  
  	location &= 0x7FFF;
  	uint32_t address = gen->z80_bank_reg << 15 | location;
@@ -102,7 +133,7 @@ index 4f41271..b2de5a4 100644
  	if (address >= 0xE00000) {
  		address &= 0xFFFF;
  		((uint8_t *)gen->work_ram)[address ^ 1] = value;
-@@ -1932,6 +1972,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
+@@ -1932,6 +1981,11 @@ static void *unused_write(uint32_t location, void *vcontext, uint16_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -114,7 +145,7 @@ index 4f41271..b2de5a4 100644
  	if (location >= 0x800000) {
  		//do refresh check here so we can avoid adding a penalty for a refresh that happens during an IO area access
  		gen->refresh_counter += context->cycles - 4*MCLKS_PER_68K - gen->last_sync_cycle;
-@@ -1963,6 +2008,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
+@@ -1963,6 +2017,14 @@ static void *unused_write_b(uint32_t location, void *vcontext, uint8_t value)
  {
  	m68k_context *context = vcontext;
  	genesis_context *gen = context->system;
@@ -129,7 +160,7 @@ index 4f41271..b2de5a4 100644
  	uint8_t has_tmss = gen->version_reg & 0xF;
  	if (has_tmss && location >= 0xA14000 && location <= 0xA14003) {
  		uint32_t offset = location >> 1 & 1;
-@@ -2833,9 +2886,53 @@ static void *tmss_even_write_8(uint32_t address, void *context, uint8_t value)
+@@ -2833,9 +2895,53 @@ static void *tmss_even_write_8(uint32_t address, void *context, uint8_t value)
  	return context;
  }
  
@@ -183,7 +214,7 @@ index 4f41271..b2de5a4 100644
  		{ 0x0000, 0x4000,  0x1FFF, .flags = MMAP_READ | MMAP_WRITE | MMAP_CODE},
  		{ 0x8000, 0x10000, 0x7FFF, .read_8 = z80_read_bank, .write_8 = z80_write_bank},
  		{ 0x4000, 0x6000,  0x0003, .read_8 = z80_read_ym, .write_8 = z80_write_ym},
-@@ -2912,10 +3009,10 @@ static genesis_context *shared_init(uint32_t system_opts, rom_info *rom, uint8_t
+@@ -2912,10 +3018,10 @@ static genesis_context *shared_init(uint32_t system_opts, rom_info *rom, uint8_t
  	gen->psg = malloc(sizeof(psg_context));
  	psg_init(gen->psg, gen->master_clock, MCLKS_PER_PSG);
  
@@ -227,7 +258,7 @@ index d8ba757..79664fd 100644
 +	fwrite(rec, 1, sizeof(rec), mml_probe_file);
 +}
 diff --git a/util.h b/util.h
-index 8b7d75d..8fdc10c 100644
+index 8b7d75d..9811eee 100644
 --- a/util.h
 +++ b/util.h
 @@ -2,6 +2,7 @@
@@ -238,7 +269,7 @@ index 8b7d75d..8fdc10c 100644
  #include <time.h>
  #include <wchar.h>
  #include <stdarg.h>
-@@ -112,4 +113,34 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
+@@ -112,4 +113,41 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
  FILE* fopen_wrapper(const char *path, const char *mode);
  #endif
  
@@ -270,6 +301,13 @@ index 8b7d75d..8fdc10c 100644
 +#define MML_PROBE_Z80VDP 17   /* Z80 read of the VDP through $7F00; value = port<<8 | byte */
 +#define MML_PROBE_Z80RAM 18   /* Z80 write to a watched range; value = off<<8 | byte, bit 15 = pub */
 +#define MML_PROBE_HOSTW  19   /* 68k write to $1E40..$1E5F; value = (addr & $1f)<<8 | byte */
++/* Every YM2612 access, by the CPU that made it (R24 §55.3). The window a 68000
++   FM transaction has to fit in is the gap between the Z80's OWN accesses, and
++   until now the instrument saw only the $2A data write — not the address port,
++   not the CSM pair, not the re-latch behind them, and not which side wrote.
++   value = (location & 3) << 14 | read << 13 | byte. */
++#define MML_PROBE_YMZ80  20   /* Z80 access to $4000..$4003 */
++#define MML_PROBE_YM68K  21   /* 68000 access to $A04000..$A04003 */
 +void mml_probe_log(uint8_t kind, uint16_t value, uint32_t cycle);
 +
  #endif //UTIL_H_

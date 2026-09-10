@@ -3,7 +3,17 @@ import { COOP, windowBand } from "./cooperative.mjs";
 
 export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   DACBUS: 7, STOP: 8, RESUME: 9, NOTIFY: 10, COPY: 11, POLL: 12, COMMIT: 13,
-  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17, Z80RAM: 18, HOSTW: 19 };
+  HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17, Z80RAM: 18, HOSTW: 19,
+  // Every YM2612 access, by the CPU that made it (R24 §55.3). The window a
+  // 68000 FM transaction has to fit in is the gap between the Z80's OWN
+  // accesses, and until R24 the instrument saw only the $2A data write.
+  YMZ80: 20, YM68K: 21 };
+/** One YM access as the instrument saw it: which port, read or write, byte. */
+export const ymAccess = (e) => ({ time: e.time, port: (e.value >>> 14) & 3,
+  read: !!(e.value & 0x2000), byte: e.value & 0xff,
+  // Port 0/2 are the ADDRESS halves and 1/3 the DATA halves; part 0 is
+  // channels 1-3 and part 1 channels 4-6.
+  kind: (e.value >>> 14) & 1 ? "data" : "addr", part: ((e.value >>> 15) & 1) });
 export const Z80_DIV = 15;
 
 export function readProbe(buf) {
@@ -49,6 +59,7 @@ export function readProbe(buf) {
     hostWrites: of(KIND.HOSTW).map((e) => ({ time: e.time,
       addr: (e.value >>> 8) & 0x1f, value: e.value & 0xff })),
     copies: of(KIND.COPY), polls: of(KIND.POLL),
+    ymZ80: of(KIND.YMZ80).map(ymAccess), ym68k: of(KIND.YM68K).map(ymAccess),
     commits: of(KIND.COMMIT), hints: of(KIND.HINT), marks: of(KIND.MARK),
     hv: of(KIND.MARKW), z80vdp: of(KIND.Z80VDP) };
 }

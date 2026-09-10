@@ -295,6 +295,25 @@ export const CASES = [
       levelsMove: true,
     })),
 
+  // HOST-YM P1 (§33.6 step 5, R24 §55.3). The complete image with the 68000
+  // making ONE FM transaction every 64 iterations of its loop — a register
+  // write to a muted, unused voice — on top of the mailbox it is already
+  // running. `no bus` is the same two writes with no BUSREQ around them: the
+  // YM2612 is on the Z80's bus, so those must land nowhere, and that is the
+  // claim the whole safe-window search rests on.
+  //
+  // Opt-in with `--ym`: they are P1 experiments, not gates.
+  ...[["in the read grab", "inread"], ["grab", "grab"], ["no bus", "nobus"],
+    ["no re-latch", "no-relatch"]]
+    .map(([what, mode]) => ({
+    name: `host-YM P1, ${what}`,
+    cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+      workTarget: 0.839, correctorBudget: true, command: true },
+    split: { load: "divu", proto: { live: true, density: 1, ym: { mode } },
+      place: { correct: true, proto: true, command: true } },
+    informational: true, levelsMove: true, ymOnly: true,
+  })),
+
   // THE LISTENING TOUR (§46.4, R22 §52.6). The same complete image the gates
   // measure, with the host's desired state coming from a fixed timeline instead
   // of a rolling walk, so what all of this adds up to can be heard. Two builds

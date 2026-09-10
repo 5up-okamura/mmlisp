@@ -242,6 +242,30 @@ first time broke two accepted results:
   The measured interval is 438,543..438,935 master against the 438,762 it was
   solved for.
 
+**Host-YM P1 (§33.6 step 5).** `node drv/experimental/dac-stream/ym-window.mjs`
+derives the window a 68000 FM transaction could live in, twice — from the
+image's own instruction times and from BlastEm's record of every YM access,
+which R24 added to the probe. The answer is not the one the search was set up to
+find: **the YM2612 is on the Z80's bus**, so a 68000 access to
+`$A04000..$A04003` is answered with open bus unless the 68000 holds the bus
+(`host-YM P1, no bus` lands 0 of 28 attempts). There is nothing to time between
+the Z80's accesses, because with the bus held the transaction is atomic by
+construction.
+
+What there IS to get right: the address write steals the DAC's `$2A` latch, so
+the Z80's next samples go to the FM register the 68000 selected. Left to the
+engine's own CSM re-latch to fix, that is a 75,270 master hole in the DAC —
+fourteen samples (`host-YM P1, no re-latch`). Putting `$2A` back inside the same
+grab removes it exactly: the DAC interval is 5,130..5,385 master, the same as
+with no transaction at all.
+
+A transaction in its own grab costs 263..1,417 master and cannot share an
+observation interval with a mailbox transfer (worst 1,589, four over 1,500 in 30
+seconds). Riding the snapshot READ's grab costs nothing extra — worst 1,430,
+none over — and sustains **51.3 transactions a second** with the mailbox
+untouched at 61.2 updates a second. 16.1% of attempts are deferred because the
+chip answered BUSY, and none of the 4,620 writes went out while it was.
+
 **The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
 ROMs — one with the CSM test tone and one without — that play the SAME image the
 gates measure on a fixed 44-second timeline: each voice alone, an ordinary sum,

@@ -135,6 +135,8 @@ function protoRomFields(cfg, p, countLo = STATE.countLo) {
     // 0..14 is staging the code region as a volume table, which is exactly the
     // accident `pageIsALevel` exists to name (R8 §23.2).
     levelBase: levelBase(cfg),
+    // ONE FM TRANSACTION FROM THE 68000 (§33.6 step 5, R24 §55.3 step 2).
+    ym: p.ym ? { reg: 0x40, value: 0x7f, every: 64, mode: "grab", ...p.ym } : null,
     // WHICH DECODE STATE THIS BUILD HAS. The protocol's globals are laid out
     // FROM the decoder's own counter, and P1's state is six bytes where the
     // split 2ch one is thirteen — so a host that assumed P1's offset read a

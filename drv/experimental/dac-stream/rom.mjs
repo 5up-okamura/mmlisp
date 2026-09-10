@@ -42,6 +42,9 @@ export const MARKS = { entry: 1, request: 2, released: 3, skipped: 4, missed: 5,
   // they are stamped apart: the box was busy, or the decoder's live counter was
   // neither of the two values the snapshot read predicted.
   countMismatch: 0x23, mailboxBusy: 0x24,
+  // The host-YM transaction's two outcomes (R24 §55.3 step 2): a whole
+  // address/data pair went out, or the chip was busy and neither half did.
+  ymWrote: 0x25, ymBusy: 0x26,
   // An exception. Every unused vector goes here, the mark makes it visible to
   // the gate, and the halt stops the machine from stacking frames until it
   // walks off the end of RAM. The previous vector target was the trailing
@@ -169,6 +172,8 @@ class M68k {
   cmpLimmD(imm, d) { this.n(14); this.w(0x0c80 | d); this.l(imm); }               // cmpi.l #i,Dn
   tstL(d) { this.n(4); this.w(0x4a80 | d); }                                      // tst.l Dn
   bpl(name) { this.n(10); this.w(0x6a00); this.fix.push([this.pc, name]); this.w(0); }
+  bmi(name) { this.n(10); this.w(0x6b00); this.fix.push([this.pc, name]); this.w(0); }
+  cmpWDD(sd, d) { this.n(4); this.w(0xb040 | (d << 9) | sd); }                     // cmp.w Ds,Dd
   bcs(name) { this.n(10); this.w(0x6500); this.fix.push([this.pc, name]); this.w(0); }   // unsigned lower
   moveLD(s, d) { this.n(4); this.w(0x2000 | (d << 9) | s); }                      // move.l Ds,Dd
   muluImm(imm, d) { this.n(70); this.w(0xc0fc | (d << 9)); this.w(imm); }          // mulu.w #i,Dn
@@ -886,6 +891,25 @@ export function buildRom(image, samples = null, grab = null) {
     const T = { v0: PROTO_WORK + 64, v1: PROTO_WORK + 65, m: PROTO_WORK + 66,
       mode: PROTO_WORK + 67, iter: PROTO_WORK + 68 };
     const TOUR_LOG2 = 7;                           // 128 iterations a section
+    // ── THE HOST-YM TRANSACTION (§33.6 step 5, R24 §55.3 step 2) ─────────
+    // The YM2612 sits on the Z80's bus. A 68000 access to $A04000..$A04003 is
+    // an access to the Z80 area, and the machine answers it with open bus
+    // unless the 68000 holds the bus — so there is no "write the chip while the
+    // Z80 runs" to be timed. `nobus` is that claim as an experiment: the same
+    // two writes with no BUSREQ around them, which must land nowhere.
+    //
+    // With the bus held the transaction is atomic by construction: the Z80
+    // cannot touch the address port while it is stopped, so the interleave the
+    // safe-window search was for cannot happen. What is left to measure is what
+    // it COSTS — the stop it adds to an observation interval that already
+    // carries a mailbox transfer.
+    //
+    // BUSY is checked ONCE, not polled: an address write does not raise it, so
+    // there is nothing to wait for between the two halves, and a bounded poll
+    // long enough to outlast a set BUSY would itself break the 1,500 master
+    // contract. Busy means the transaction is not attempted at all — R24 §55.3
+    // step 2's "write neither half and carry it to the next window".
+    const Y = { iter: PROTO_WORK + 72, tried: PROTO_WORK + 74, done: PROTO_WORK + 76 };
     // The fixed addresses, loaded ONCE. a0/a1 are the moving pair; the face the
     // read follows is chosen inside its own grab, which has the room for it.
     m.leaAbs(Z80_BASE + P.commandCommit, 2);
@@ -900,7 +924,14 @@ export function buildRom(image, samples = null, grab = null) {
     // Every fragment is emitted twice: once into a throwaway emitter that adds
     // up its cycles, and once for real. The transfer period below is generated
     // from those prices (R20 §48.5) — there is no fixed `every` left.
-    const readPre = (x) => { x.leaAbs(W, 1); x.leaAbs(Z80_BASE + P.face0, 0); };
+    const readPre = (x) => { x.leaAbs(W, 1); x.leaAbs(Z80_BASE + P.face0, 0);
+      // THE CHIP'S PORTS, IN THE GRAB WE ARE ALREADY HOLDING (R24 §55.3).
+      // A 68000 YM transaction needs the Z80's bus, and the snapshot read is
+      // already stopping the Z80 for less than the publish does — so the
+      // transaction rides that stop instead of buying one of its own. a2 and
+      // a3 belong to the publish path and are dead here; the publish reloads
+      // them, outside its own critical section.
+      if (P.ym?.mode === "inread") { x.leaAbs(0xa04000, 2); x.leaAbs(0xa04001, 3); } };
     const readGrab = (x) => {
       x.moveWimmA(0x0100, 5);
       x.label("mbg1");
@@ -914,6 +945,19 @@ export function buildRom(image, samples = null, grab = null) {
       x.leaAbs(Z80_BASE + P.face1, 0);
       x.label("mbf0");
       x.z80Xfer(() => { x.moveBpost(); x.moveBpost(); });
+      if (P.ym?.mode === "inread") {
+        // Read BUSY once and write all three or none: an address write does not
+        // raise BUSY, so there is nothing to poll between the halves, and a
+        // poll long enough to outlast a set BUSY would break the 1,500 master
+        // contract on its own. $2A goes back before the bus does.
+        x.moveBAtoD(2, 0);
+        x.bmi("ymbusy");
+        x.n(2);
+        x.moveBimmA(P.ym.reg, 2);
+        x.moveBimmA(P.ym.value, 3);
+        x.moveBimmA(0x2a, 2);
+        x.label("ymbusy");
+      }
       x.moveWimmA(0x0000, 5);
     };
     // The observation number out of the copy the grab left behind: little
@@ -969,6 +1013,10 @@ export function buildRom(image, samples = null, grab = null) {
       }
       x.leaAbs(PAY_B, 0);                          // …B is the arm the compare falls into
       x.moveAA(4, 1);
+      if (P.ym?.mode === "inread") {               // …what the read borrowed
+        x.leaAbs(Z80_BASE + P.commandCommit, 2);
+        x.leaAbs(Z80_BASE + P.commandAck, 3);
+      }
       x.moveLD(4, 5); x.addqL(1, 5);               // the commit this attempt writes
     };
     // THE CRITICAL SECTION, with nothing in it that could have happened sooner:
@@ -1099,6 +1147,79 @@ export function buildRom(image, samples = null, grab = null) {
       if (!P.tour) return;
       x.moveBabsD(T.mode, 0); x.andiW(1, 0); x.bne(to); x.n(2);
     };
+    // ONE FM TRANSACTION, every `every` iterations of the host's loop. It is a
+    // whole address/data pair or nothing at all: there is no path that writes
+    // the address and then defers (R24 §55.3 step 2).
+    const ymOnce = (x) => {
+      const A = 0xa04000, D = 0xa04001;
+      x.moveWabsD(Y.iter, 0);
+      x.addWimmD(1, 0);
+      x.moveWDabs(0, Y.iter);
+      x.moveWimmD(P.ym.every - 1, 1);
+      x.andiW(P.ym.every - 1, 0);
+      void x.n(0);
+      x.cmpWDD(0, 1);                              // …only on the boundary
+      x.bne("ymskip");
+      x.leaAbs(A, 0);
+      x.leaAbs(D, 1);
+      x.moveWabsD(Y.tried, 2); x.addWimmD(1, 2); x.moveWDabs(2, Y.tried);
+      if (P.ym.mode === "nobus") {
+        // THE CLAIM, AS AN EXPERIMENT. No BUSREQ at all: on this machine the
+        // Z80 area answers the 68000 with open bus unless it holds the bus, so
+        // neither of these two writes may reach the chip.
+        FAULT_APPLIED.add("ym-nobus");
+        x.moveBimmA(P.ym.reg, 0);
+        x.moveBimmA(P.ym.value, 1);
+        x.moveWabsD(Y.done, 2); x.addWimmD(1, 2); x.moveWDabs(2, Y.done);
+        x.mark(MARKS.ymWrote);
+      } else if (P.ym.mode === "no-relatch") {
+        // …and the other claim, as an experiment. The transaction without the
+        // re-latch: the address port is left naming an FM register, and every
+        // DAC sample the Z80 writes after it goes THERE until the engine's own
+        // CSM slot puts $2A back. R24 §55.3 step 2 asks for the re-latch to be
+        // checked; this is what checking it is worth.
+        FAULT_APPLIED.add("ym-no-relatch");
+        x.moveWimmA(0x0100, 5);
+        x.label("ymg");
+        x.moveWAtoD(5, 2);
+        x.andiW(0x0100, 2);
+        x.bne("ymg");
+        x.moveBimmA(P.ym.reg, 0);
+        x.moveBimmA(P.ym.value, 1);
+        x.moveWimmA(0x0000, 5);
+        x.mark(MARKS.ymWrote);
+      } else {
+        x.moveWimmA(0x0100, 5);                    // request
+        x.label("ymg");
+        x.moveWAtoD(5, 2);
+        x.andiW(0x0100, 2);
+        x.bne("ymg");
+        x.n(2);
+        // The chip's own answer, read once. Busy means this window is not ours.
+        x.moveBAtoD(0, 2);
+        x.bmi("ymbusy");
+        x.n(2);
+        x.moveBimmA(P.ym.reg, 0);                  // the register…
+        x.moveBimmA(P.ym.value, 1);                // …and its value
+        // …AND $2A BACK, before the bus goes. The Z80 keeps the DAC latched and
+        // writes only the data port; an address write from either side steals
+        // that latch, so the sample the Z80 writes next would go to the FM
+        // register this transaction just selected. Leaving it for the engine's
+        // own CSM re-latch to fix costs up to fourteen samples — measured, not
+        // reasoned (R24 §55.3 step 2).
+        x.moveBimmA(0x2a, 0);
+        x.moveWimmA(0x0000, 5);                    // release
+        x.moveWabsD(Y.done, 2); x.addWimmD(1, 2); x.moveWDabs(2, Y.done);
+        x.mark(MARKS.ymWrote);
+        x.bra("ymout");
+        x.label("ymbusy");
+        x.moveWimmA(0x0000, 5);                    // release, having written nothing
+        x.mark(MARKS.ymBusy);
+        x.costDrop(12 + 20);
+        x.label("ymout");
+      }
+      x.label("ymskip");
+    };
     // A wait is `move.w #N,d1` and N+1 dbra — N taken, one falling out.
     const waitCost = (n) => 8 + 10 * n + 14;
     const emitWait = (n, label) => {
@@ -1168,6 +1289,7 @@ export function buildRom(image, samples = null, grab = null) {
     pubTail(m);
     if (P.tour) m.label("tskipp");
     emitWait(nPub, "mbw2");
+    if (P.ym && P.ym.mode !== "inread") ymOnce(m);
     m.bra("mbloop");
     } else {
     // EACH PIECE IS ITS OWN CASE as well as its own grab (R12 §33.4): the max
