@@ -1196,3 +1196,82 @@ vs resident voice table — to be chosen by comparing the volume above against t
 1,500 master contract in one table), the Z80 YM writer, integration with the
 existing driver, and any hardware run. b11..b14's reservation stays with the Z80
 YM writer even though the PSG moved to the 68000.
+
+## R26 §59 (2026-09-10) — the Z80 YM writer, and the reservation it does not fit
+
+**Checkpoint B was accepted.** The chip owners are fixed: 68k = sequencer,
+desired state and PSG; Z80 = DAC, CSM and normal FM. The 68000 does not touch
+the YM2612 in normal operation. §59 asked for b11..b14's reserved pad — 280
+cycles a block and 120 bytes — to become real instructions, for four FM writes a
+block (2,496.9/s).
+
+**It does not reach four a block, and the binding constraint is BYTES.** The
+loop is eighty slots of straight-line code, so an opportunity that carries code
+carries it twenty times a lap, and the writer cannot be shared:
+
+* `call`/`ret` is 27 cycles and `rst`/`ret` 21, against a 70-cycle position that
+  also has to fetch an entry and make three chip writes;
+* the queue cursor has nowhere to live but **SP** — BC carries a decode value
+  across 47 of the 80 slots, HL is the ring's play cursor, DE is the DAC's data
+  port, IX is voice 1's source and IYL is the mixer's parking slot;
+* SP and a call frame are mutually exclusive: `rst` pushes at SP-2, so the first
+  `pop` inside a routine reads the return address instead of the queue.
+
+So the site is inline at **11 bytes and 89 cycles**. Twenty of them are 223 B
+against 120 and 356 cycles a block against 280 — over BOTH. `ym-writer.mjs`
+prices five candidates (assembled for bytes, summed from documented cycles) and
+none of them fits four a block; the only row whose CYCLES fit is port-1-only,
+which cannot reach `$28`, `$22`, `$27`, `$2A` or channels 1-3 at all.
+
+**What §59.3's first candidate got wrong.** The port-RUN format is the WORST of
+the five here: with twenty independent inline sites "the current port" has no
+register to live in, so every site re-reads it from RAM (4 B, 17 cycles) —
+before any run-length countdown. The single stream carries the port in each
+entry and gets run switching for free. That is what was built.
+
+**Built and measured**: 10 sites of the 20 opportunities, 113 B of the 120
+reserved, 188 cycles of the 280 a block, **1,248.4 writes/s**. Four limits:
+worst slot 83.8%, mean 76.9%, finished estimate 2,363 B of 2,560 (197 B spare),
+RAM 8,192. 30 s at max density: 37,156 register writes, 37,156 in the window's
+order, settling and both frequency latches clean, 0 YM accesses from the 68000
+and 0 PSG writes from the Z80. The mailbox in the same image: 61.2 updates/s,
+worst stop 1,432 master, 80 of 80 slots.
+
+**Two traps, both found by running it and both worth remembering.**
+
+1. **The stack and the queue are the same page.** `call mix_one` runs in every
+   slot and pushes at SP-2 — the last word the writer popped. For a queue
+   consumed once that is free space; a STATIC window re-read every lap had its
+   entry rewritten, and the second lap re-latched `$02` instead of `$2a`, so
+   every DAC sample after it went into an FM register (3,373 Hz, 1,076 holes).
+   The entry is six words and the site pops six, using five.
+2. **A port-0 frequency pair may not straddle a block.** The engine's own CSM
+   traffic writes `$AC` at b6 and commits it at b8, and the chip has ONE holding
+   register per part. A pair split across two blocks loses its upper half to
+   CSM. `pairsWithinBlocks()` refuses a window that does it; it is a constraint
+   on the PRODUCER, not on the writer.
+
+Also: the cursor reload (`ld sp,base`) must NOT sit in front of the first site —
+that slot is already the fullest and ten more cycles took it to 85.5%, past the
+83.9% ceiling. It goes in an opportunity the sites left empty, after the lap's
+last pop; and boot must set SP too, or the first lap pops from the $2000 RAM
+mirror and writes through the bank window.
+
+**The input contract, stated as failures.** The port word is the COMMIT: an
+entry pointing at the two-byte bucket in the chip region makes no FM write at
+all, so "the queue is empty" is the same instructions, not a branch. The
+producer writes the register and the value first and the port word last —
+`--fault port-first` is that reversed. The other four negatives are
+`no-relatch`, `slow-empty` (the idle path one byte the same and three cycles
+short), `port-bit` and `pitch-split`.
+
+**Numbers a transport design has to start from**: 1,248.4 writes/s; 12 queue
+bytes an entry of which a producer writes three; a 194-write patch frame drains
+in 19 laps (156 ms) against the corpus's 246 steady writes a second and 337 with
+patches. The window is a FIXTURE — one lap's entries laid down by the 68000
+before the Z80 starts, never refilled.
+
+**Not started**: the 68k producer, the YM transport format (raw register stream
+vs compact desired state vs resident voice table), integration with the existing
+driver, and any hardware run. Stop is "Z80 YM writer P1 complete — awaiting the
+transport decision".
