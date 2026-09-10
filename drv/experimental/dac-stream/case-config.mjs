@@ -19,6 +19,7 @@ import { generate, CSM_TEST_VOICE, CSM_TEST_FREQ } from "./gen-stream.mjs";
 import { tourBytes } from "./tour.mjs";
 import { psgStream } from "./psg-stream.mjs";
 import { lutPages } from "./lut.mjs";
+import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, startBytes as pcm1StartBytes } from "./pcm1-ref.mjs";
 import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
 import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
@@ -276,7 +277,16 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
         ? { vdp: true, optimized: true, load: c0.split.load,
             bootNops: c0.split.bootNops, ...c0.split.stall }
         : { vdp: true, disabled: true, load: c0.split.load,
-            bootNops: c0.split.bootNops })
+            bootNops: c0.split.bootNops,
+            // The one-voice image's CSM test voice is the 68000's to write,
+            // exactly as in the proto cases (R19 §46.3).
+            ...(c0.cfg?.csmHost ? { csmVoice: CSM_TEST_VOICE,
+              csmFreq: { ...CSM_TEST_FREQ, hiAt: cfg.ram.glob[0] + GLOB.csmHi,
+                loAt: cfg.ram.glob[0] + GLOB.csmLo } } : {}),
+            // ONE START, STAGED AT BOOT (R28 §63.6 step 1): the staged fields
+            // and the generation bump, written while the bus is still held.
+            ...(c0.pcm1?.boot ? { pcm1Boot: pcm1StartBytes(cfg,
+              PCM1_SAMPLES[c0.pcm1.boot.sample], c0.pcm1.boot.step, 1) } : {}) })
     // A PROTOCOL case has a display, a busy 68000 AND a 68000 that takes the
     // bus on purpose: half its grabs read the published snapshot and change
     // nothing, the other half declare the phase over. It is the only observer
@@ -381,7 +391,11 @@ export function buildCase(c0, { outDir, compensation = null, captureOffset = nul
   // reads its voices through the 68k window, so they travel in the cartridge.
   let samples = null;
   let image = Uint8Array.from(built.bytes);
-  if (cfg.voices) {
+  if (cfg.oneVoice) {
+    // The one-voice profile's bank: 32 KB with the silence page at the top,
+    // shared with the JS gate so both grade the same bytes (pcm1-ref.mjs).
+    samples = PCM1_BANK;
+  } else if (cfg.voices) {
     samples = new Uint8Array(512);
     samples.set(sine(256, 120, 1), 0);
     samples.set(sine(256, 90, 3), 256);

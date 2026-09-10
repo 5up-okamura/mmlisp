@@ -31,6 +31,54 @@ this file, and it is a real list: no loops, no ROM bank crossing, no note
 starts and stops, no command protocol, no host transfer, and nothing has run
 anywhere but the JS instruction model.
 
+## The one-voice integration profile (R28 §63) — step 1 DONE, on BlastEm
+
+§62 stopped with no transport candidate: the pop-based writer had 10 sites a
+lap against the 22–24 the corpus needs, and with the two-voice mixer in the
+image neither the bytes (11 B a site) nor the cycles (~25 spare a slot) exist
+to add more. R28 changes the plan rather than the limits (§63): the FIRST
+integration profile is **one PCM voice** — the target song is FM5 + DAC1 +
+PSG3 — and the mailbox, the pop-based writer and the entry window are replaced
+by one ring of 2-byte `{op,val}` pairs consumed by expander sites (§63.3 D3/D4,
+not built yet).
+
+```
+cd drv
+npm run dac-stream:1v            # the profile's JS gate, plain image
+npm run dac-stream:1v:split      # …with the decode, corrector and protocol placed
+npm run dac-stream:split         # …its four limits are the last profile printed
+npm run dac-stream:machine -- --case "one voice"   # BlastEm, five required cases
+```
+
+What step 1 built (`voices: 1, complete: true`, config.mjs `RAM_1V`):
+
+| | |
+| --- | --- |
+| mixer | one source, a **16-bit pointer** in the window advanced by a **2^k step** in a self-modified `add` (the bank bakes one blob a note and reaches the octaves above with 2, 4, 8 — mmb.md §10.1); voice level then master, no clamp. 122 cycles a sample with the call |
+| the edge | four constant-time pieces around a block boundary: STOP (b13, `END := 0`), COMPARE (b14, `park := DE' >= END`), PARK (b15, `DE' := $FF00` — the bank's silence page), START (b0, before the mix: `DE'`, END and the step from the staged bytes). 104 / 65 / 61 / 156 cycles |
+| how a piece stays constant-time | a `jr` with **arms of one length**: the working arm is followed by a `jr` over a pad that costs exactly arm + 7, so both paths leave at the same cycle. The byte-mask form of the same pieces cost 92/129/170/179 and put three slots past the ceiling |
+| start / stop | **generations, not flags**: the 68000 bumps `startGen` after the three staged bytes (or `stopGen`), the Z80 acts when it differs from the value it last acted on and latches what it READ — a bump between the read and the latch is still different at the next edge. A set-and-clear flag has a window a bus grab can land in |
+| the END the host sends | `sampleEnd − 16·step`: the compare runs after the block's fifteenth sample, so the voice parks at the last edge before it would read past the end, never reads beyond it, and loses at most sixteen samples of tail. No padding after a blob is needed |
+| lead | **18**, not 17: with 17 the START piece landed on the lap's last slot with the loop-back `jp`, at 85.2% |
+| RAM | code `$0000..$0C00` (the clamp's 512 B absorbed), lut 15 pages, phase, ring, **fifo `$1D00`**, **state `$1E00`** (PCM1 in config.mjs), pub `$1E60`, glob, stack |
+| four limits | worst 83.8%, mean **72.1%**, finished estimate **2,719 B of 3,072** (353 B spare, the expander's 260 B owed), RAM 8,192 |
+| JS gate | 10 cases × 2 images: idle, a shot, steps 1/2/4/8, stop and restart, restart over a running voice, forty-byte samples, a drum roll every third block (622 starts), levels and master opposed, and two with CSM — every DAC byte against `pcm1-ref.mjs`, a block-level state machine written from §63.3 D2 that reads the host's events and the DAC's timestamps and nothing of the engine |
+| BlastEm | 5 required cases (idle, shot, step 4, a 40-byte sample at step 2, no-CSM): 9,987.57 Hz, 5,370..5,385 master, every value matching; the start is staged by the 68000 before it releases the bus |
+
+Three things the gate found before the machine did, and one the machine found:
+the stop arm latched its generation after `ld hl,0` had taken L (so the stop
+fired at every edge and re-zeroed END one edge after every restart); the
+reference compared generations with `>` and the byte wraps at 256 (the Z80's
+`cp` was right); the JS machine's constant H made the corrector chase a
+phantom, so the machine now answers with a synthetic H that follows the line
+clock (`syntheticH`); and the Z80's boot zeroed the whole state block, erasing
+the start the 68000 had staged — it now touches only its own bytes.
+
+**Not built**: the pair FIFO, the expander sites, the 68000 host (§63.6 step 2);
+`VSET` from ROM voice bodies and the exporter's Z80 directory (step 3); the
+production integration (step 4). The eight expander positions a block are
+reserved and executed as padding (130 cycles each).
+
 ## What P1 achieves
 
 At **9,987.57 Hz**, in the JS instruction model, over 10 s a case:

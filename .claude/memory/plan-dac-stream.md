@@ -1,4 +1,17 @@
-# DAC engine redesign — P0, P1, most of P2, and R1's three steps (2026-09-06)
+# DAC engine redesign — R28: the one-voice profile, step 1 DONE on BlastEm (2026-09-11)
+
+**Current (2026-09-11): R28 §63 is the implementer's own plan revision** — the
+designer's R27 stopped with no transport candidate (10 writer sites against
+22–24 needed; bytes AND cycles short with the 2ch mixer in the image). §63
+decides: first integration profile = **one PCM voice** (target song is FM5 +
+DAC1 + PSG3), one transport = a ring of 2-byte `{op,val}` pairs consumed by
+padded expander sites, voice bodies in the sample-bank ROM read through the
+window, two grabs a frame, PSG on the 68000. **Step 1 (the one-voice image with
+the decode, corrector and protocol) is DONE and green on BlastEm**: 5 required
+cases, 9,987.57 Hz, 5,370..5,385 master, every value matching; JS gate 10 cases
+× 2 images; four limits 83.8% / 72.1% / 2,719 of 3,072 B / 8,192. Read the R28
+section at the bottom before continuing to step 2 (FIFO + expander + host).
+
 
 **Current review (2026-09-08): R9 §26.2/§26.3 DONE; §26.6 step 3 answered and
 NEGATIVE. The corrector's arithmetic is verified against the reference and its
@@ -1339,3 +1352,48 @@ voices is 180 chip writes = 18 laps = **144 ms** whatever the transport does.
 
 **Stopped at "transport P0 · candidate selection" with NO candidate adopted.**
 Not started: the Z80 consumer, the 68k producer, integration, hardware.
+
+## R28 §63 (2026-09-11) — the plan revised, and the one-voice image (step 1)
+
+The user's instruction: execute the plan and revise it where hardware or
+software limits block it, then get a mucom song (FM5, DAC1, PSG3) through
+install-sgdk → SGDK → BlastEm. §62 had no candidate. §63 (written by the
+implementer in the designer's seat) keeps every §1–§4 principle and changes two
+things: the profile's voice count and the transport's shape.
+
+**Why one voice unblocks it.** Voice 2 costs ~70 cycles a slot (5,600 a lap),
+the 512 B clamp table, and IX/IY/AF'/HL'. Without it a plain slot is 39% and the
+code region grows to 3,072 B. The whole chain (decode + corrector + protocol)
+places with worst 83.8% / mean 72.1% and 353 B spare with the expander's 260 B
+already owed.
+
+**The transport (D3–D6, not yet built):** `{op,val}` pairs — `$22..$B6` RAW to
+the current port, `$01` PORT, `$02` PCM_LEVEL, `$03` PCM_MASTER, `$04`
+PCM_START(id) via a Z80 directory in the bank, `$05` PCM_STOP, `$10..$15`
+VSET(ch, id) expanded from a ROM body, `$06` RET, `$00` IDLE. The Z80 self-idles
+consumed pairs and publishes its FIFO position; the 68000 writes ahead of it,
+two grabs a frame (VInt + mid-frame), each ≤ 1,500 master (k ≤ 5 pairs). PSG
+stays on the 68000, delayed one frame to match. `mmlispseq.c`/`drv-player.js`
+unchanged — the HOST translates the slot stream (D7).
+
+**Step 1, built and measured** (`gen-stream.mjs` oneVoice, `config.mjs`
+RAM_1V/PCM1/RESERVE_1V, `pcm1-ref.mjs`, `gate-1v.mjs`, five machine cases):
+
+* mixer 122 cyc (16-bit `DE'` + self-modified 2^k `add`); edge = STOP b13 /
+  COMPARE b14 / PARK b15 / START b0 at 104/65/61/156 cycles.
+* **Balanced-arm branches, not masks**: `jr cc` + arm + `jr` over a pad of
+  exactly arm+7. Masks cost 92/129/170/179 and blew three slots.
+* **Generations, not flags** for start/stop: a set-and-clear flag has a
+  read→clear window a BUSREQ can land in; the Z80 latches the value it read.
+* END sent = `sampleEnd − 16·step` → zero overrun, ≤16 samples of tail lost, no
+  blob padding. Silence page `$FF00` (a page, because the parked step is kept).
+* Lead 18 (17 put START on the loop-back slot: 85.2%).
+* Four bugs found on the way: stop latched after `ld hl,0` took L; the
+  reference's `>` on a wrapping byte; a constant fake H made the corrector
+  chase a phantom (now `syntheticH`); boot zeroed the 68000-staged start.
+
+**Next**: §63.6 step 2 — the FIFO ring page, the expander routine (jump table,
+padded handlers, self-idle, published index), a 68000 host in rom.mjs streaming
+a recorded score's pairs at two grabs a frame; gate = chip write order per port
++ DAC vs reference + 1,500 master. Then step 3 (VSET/ROM bodies, exporter
+directory), step 4 (P4 integration), step 5 (the mucom song).

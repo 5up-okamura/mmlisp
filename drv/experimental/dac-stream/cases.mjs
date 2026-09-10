@@ -357,6 +357,25 @@ export const CASES = [
     informational: true, levelsMove: true, ymOnly: true,
   })),
 
+  // THE ONE-VOICE PROFILE (R28 §63.6 step 1): one PCM voice with a 16-bit
+  // pointer and a 2^k step, the corrector, the protocol, CSM alongside, and no
+  // mailbox. The 68000 stages ONE start while it still holds the bus at boot —
+  // like the CSM test voice, and for the same reason: nothing here takes the
+  // bus at runtime, so the DAC interval is fixed and the case is REQUIRED.
+  // The reference is pcm1-ref.mjs's, shared with the JS gate.
+  ...[["idle", null], ["shot", { sample: "long", step: 1 }], ["step 4", { sample: "long", step: 4 }],
+    ["short at step 2", { sample: "short", step: 2 }]].map(([what, boot]) => ({
+    name: `one voice, ${what}`,
+    cfg: { voices: 1, complete: true, csm: true, csmHost: true, levels: 15,
+      workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", place: { correct: true, proto: true } },
+    pcm1: { boot },
+  })),
+  { name: "one voice, shot, no CSM",
+    cfg: { voices: 1, complete: true, levels: 15, workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", place: { correct: true, proto: true } },
+    pcm1: { boot: { sample: "sine", step: 1 } } },
+
   // THE LISTENING TOUR (§46.4, R22 §52.6). The same complete image the gates
   // measure, with the host's desired state coming from a fixed timeline instead
   // of a rolling walk, so what all of this adds up to can be heard. Two builds

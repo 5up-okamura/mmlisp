@@ -31,7 +31,7 @@
 // tolerance. Reserving it in EVERY slot to make it safe is 25% of the budget
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
-import { stampLine, GLOB, YM } from "./config.mjs";
+import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.mjs";
 
@@ -179,11 +179,20 @@ function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = n
   // block is budgeted for, not a fifth one for free.
   const chargeable = cost(work);
   if (cfg.voices) {
+    // THE START IS APPLIED BEFORE THE FIRST MIX OF A BLOCK (R28 §63.3 D2, §4:
+    // "前区間最後のミックスの後と、次区間最初のミックスの前の2スロットへ分ける").
+    // The source pointer and the step have to be in place before sample 0 of
+    // the new block is read, and the park of the previous edge has to have
+    // finished before that — so this is the one piece of work that goes in
+    // front of the mix.
+    if (cfg.oneVoice && b === 0) work.push(...pcmEdgeStart(cfg));
     // The mix runs in EVERY slot — one sample built for every sample played.
     work.push(...callMix(cfg));
     // The block edge rides the LAST slot of a block, so what it writes takes
     // effect on the next one and no block is ever built at two volumes.
     if (b === cfg.blockSamples - 1) work.push(...blockEdge(cfg));
+    if (cfg.oneVoice && b === cfg.blockSamples - 3) work.push(...pcmEdgeStop(cfg));
+    if (cfg.oneVoice && b === cfg.blockSamples - 2) work.push(...pcmEdgeCompare(cfg));
     // THE COMMAND CONSUMER, at the block positions it was packed into (R15
     // §39.4). It goes in BEFORE the reservation, because it is what replaced
     // part of that reservation and the rest of the block's budget still has to
@@ -224,7 +233,36 @@ function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = n
 // a consequence of the schedule. What the 16-sample lead buys is the block:
 // a volume change lands on a block boundary and is whole (§3.4), and a note
 // onset can be quantised to one (§3.7).
-const mixRoutine = (cfg) => (cfg.voices >= 2 ? [
+// ── THE ONE-VOICE MIX (R28 §63.3 D1) ──────────────────────────────────────
+//
+// One source, a 16-bit pointer in the 68k window, advanced by a 2^k STEP held
+// in a self-modified operand: the sample bank bakes one blob per note and
+// reaches the octaves above it by stepping 2, 4 or 8 bytes a sample (mmb.md
+// §10.1). Voice level then master, in that order — the same two lookups and the
+// same rounding as the two-voice mix, minus the clamp, because a single
+// voice's "sum" is itself and cannot leave the range.
+const mixRoutine1v = (cfg) => [
+  op("        exx", 4, { what: "to the mixer's register set" }),
+  op("        ld   a,(de)", 7 + cfg.windowWait, { what: `the source byte through the 68k window (7 + ${cfg.windowWait} measured wait)` }),
+  op("        ld   l,a", 4),
+  op("mix_v0: ld   h,0", 7, { what: "the voice's level page — SELF-MODIFIED at the block edge" }),
+  op("        ld   a,(hl)", 7, { what: "x vel" }),
+  op("        ld   l,a", 4),
+  op("mix_mp: ld   h,0", 7, { what: "the master's page — likewise" }),
+  op("        ld   a,(hl)", 7, { what: "x master, in that order, so the rounding is the reference's" }),
+  op("        ld   (bc),a", 7, { what: "into the ring, LEAD samples ahead of the play cursor" }),
+  op("        inc  c", 4),
+  op("        ld   a,e", 4),
+  op("mix_st: add  a,1", 7, { what: "the 2^k step — SELF-MODIFIED at the block edge" }),
+  op("        ld   e,a", 4),
+  op("        ld   a,d", 4),
+  op("        adc  a,0", 7, { what: "…and its carry into the high byte" }),
+  op("        ld   d,a", 4),
+  op("        exx", 4),
+  op("        ret", 10),
+];
+
+const mixRoutine = (cfg) => (cfg.oneVoice ? mixRoutine1v(cfg) : cfg.voices >= 2 ? [
   // Two voices. Voice 0's contribution is parked in the ring slot the sample
   // is being built in — the play cursor is LEAD samples behind, so nothing can
   // ever read it half-built, which is §3.3's ownership rule made structural
@@ -294,7 +332,148 @@ const blockEdge = (cfg) => [
   ] : []),
   op("ld a,(G_MPAGE)", 13),
   op("ld (mix_mp+1),a", 13, { what: "…so a change is whole-block, never half of one" }),
+  ...(cfg.oneVoice ? pcmEdgePark(cfg) : []),
 ];
+
+// ── THE ONE-VOICE PCM EDGE (R28 §63.3 D2) ─────────────────────────────────
+//
+// Four constant-time pieces around one block boundary, in this order:
+//
+//   b13 after the mix   STOP     END := 0 where a stop is pending
+//   b14 after the mix   COMPARE  park := (DE' >= END), kept for the next slot
+//   b15 after the mix   PARK     the level pages, then DE' := SILENCE if park
+//   b0  before the mix  START    DE', END and the step := the staged ones,
+//                                where a start is pending
+//
+// BRANCHES WITH ARMS OF ONE LENGTH, not byte masks. §3.1 forbids a slot whose
+// length depends on the data, not a branch: `jr` is 12 taken and 7 not, so the
+// arm that does the work is followed by a `jr` over a pad that costs exactly
+// (arm + 7), and both paths leave the piece at the same cycle. The masked form
+// of the same pieces measured 92 / 129 / 170 / 179 cycles and put three edge
+// slots past the ceiling.
+//
+// THE PAD DESTROYS NOTHING. These run inside `exx`, where B is the mixer's
+// build cursor, so the pad may not use the `ld b,k`/`djnz` filler — `dead: []`
+// gives it nops, `jp $+3` and `jr $+2` only, and a length those cannot reach
+// is a generation-time error rather than a rounded slot.
+//
+// A START OR A STOP IS A GENERATION (config.mjs PCM1): the 68000 bumps a byte,
+// the Z80 acts when it differs from the one it last acted on and latches the
+// value it READ — so a bump that lands between the read and the latch is still
+// different at the next edge, and nothing is ever cleared unseen.
+//
+// THE END THE HOST SENDS IS `sampleEnd - 16 * step`. The compare sees DE' after
+// the mix of the block's fifteenth sample; if it does not park, the next block
+// reads DE' + step .. DE' + 16 * step, which is below the sample's end exactly
+// when DE' < sampleEnd - 16 * step. So the voice parks at the last edge before
+// it would read past the end, never reads beyond it, and loses at most sixteen
+// output samples of the tail.
+const st = (cfg, k) => `$${(cfg.ram.state[0] + PCM1[k]).toString(16)}`;
+let edgeSeq = 0;
+
+/**
+ * `jr cc,skip` around `arm`, then a pad on the skip path of exactly arm + 7.
+ *
+ *   not taken:  7 + arm + 12
+ *   taken:     12 + pad          with pad = arm + 7
+ *
+ * The ops are costed as the NOT-TAKEN path (the `jr` at 7, the arm, the `jr`
+ * over the pad at 12, the pad at 0), and the taken path costs the same by the
+ * arithmetic above. Both are checked by running them, not by trusting this.
+ */
+function balanced(cc, arm0, what) {
+  const n = edgeSeq++;
+  const skip = `pcmsk${n}`, done = `pcmdn${n}`;
+  // The no-clobber fillers cost 4, 10 and 12, so the pad can only reach an
+  // even length: an arm whose cost is even gets a 7-cycle `ld a,0` appended
+  // (A is dead at the end of every arm here) so that arm + 7 is reachable.
+  let arm = arm0, pad = null;
+  for (const extra of [[], [op("ld   a,0", 7, { clobbers: ["a"] })],
+    [op("nop", 4)], [op("ld   a,0", 7, { clobbers: ["a"] }), op("nop", 4)]]) {
+    arm = [...arm0, ...extra];
+    try { pad = padTo(cost(arm) + 7, { dead: [] }); break; } catch { pad = null; }
+  }
+  if (!pad) throw new Error(`balanced: no mirror pad for an arm of ${cost(arm0)} cycles`);
+  const armCycles = cost(arm);
+  return [
+    op(`jr   ${cc},${skip}`, 7, { what: `${what}: 12 taken / 7 not`, balanced: { arm: armCycles, pad: cost(pad) } }),
+    ...arm,
+    op(`jr   ${done}`, 12),
+    op([`${skip}:`, ...pad.flatMap((o) => o.asm)], 0,
+      { what: "the other arm, padded to the same length" }),
+    op([`${done}:`], 0),
+  ];
+}
+
+/** STOP (b13): `END := 0` when `stopGen != lastStop`; latch what was read. */
+const pcmEdgeStop = (cfg) => [
+  op("exx", 4, { what: "PCM edge: stop" }),
+  op(`ld   a,(${st(cfg, "stopGen")})`, 13),
+  op("ld   l,a", 4),
+  op(`ld   a,(${st(cfg, "lastStop")})`, 13),
+  op("cp   l", 4),
+  ...balanced("z", [
+    // The generation is latched BEFORE `ld hl,0` takes L away: latching after
+    // it stored 0, so the stop fired at every edge from then on and re-zeroed
+    // END one edge after every restart (found by the gate's stop case).
+    op("ld   a,l", 4),
+    op(`ld   (${st(cfg, "lastStop")}),a`, 13, { what: "this stop is consumed" }),
+    op("ld   hl,0", 10),
+    op(`ld   (${st(cfg, "liveEnd")}),hl`, 16, { what: "END := 0 — the next compare parks" }),
+  ], "no stop pending"),
+  op("exx", 4),
+];
+
+/** COMPARE (b14): `park := DE' >= END`, kept in RAM for the next slot. */
+const pcmEdgeCompare = (cfg) => [
+  op("exx", 4, { what: "PCM edge: compare the play pointer with END" }),
+  op(`ld   hl,${st(cfg, "liveEnd")}`, 10),
+  op("ld   a,e", 4),
+  op("sub  (hl)", 7),
+  op("inc  l", 4),
+  op("ld   a,d", 4),
+  op("sbc  a,(hl)", 7, { what: "carry = DE' < END" }),
+  op("sbc  a,a", 4),
+  op("cpl", 4, { what: "$ff when the pointer has reached END" }),
+  op(`ld   (${st(cfg, "parkMask")}),a`, 13, { what: "PARK" }),
+  op("exx", 4),
+];
+
+/** PARK (b15, after the level pages): `DE' := SILENCE` where park says so. */
+const pcmEdgePark = (cfg) => [
+  op("exx", 4, { what: "PCM edge: park" }),
+  op(`ld   a,(${st(cfg, "parkMask")})`, 13),
+  op("or   a", 4),
+  ...balanced("z", [
+    op("ld   de,PCM_SILENCE", 10, { what: "the voice parks in the silence page" }),
+  ], "not parking"),
+  op("exx", 4),
+];
+
+/** START (b0, before the mix): the staged pointer, end and step, if pending. */
+const pcmEdgeStart = (cfg) => [
+  op("exx", 4, { what: "PCM edge: start" }),
+  op(`ld   a,(${st(cfg, "startGen")})`, 13),
+  op("ld   l,a", 4),
+  op(`ld   a,(${st(cfg, "lastStart")})`, 13),
+  op("cp   l", 4),
+  ...balanced("z", [
+    op(`ld   de,(${st(cfg, "stSrc")})`, 20, { what: "DE' := the staged start" }),
+    op(`ld   a,(${st(cfg, "stStep")})`, 13),
+    op("ld   (mix_st+1),a", 13, { what: "the step, into the mix's own operand" }),
+    op("ld   a,l", 4),
+    op(`ld   (${st(cfg, "lastStart")}),a`, 13, { what: "this start is consumed" }),
+    op(`ld   hl,(${st(cfg, "stEnd")})`, 16),
+    op(`ld   (${st(cfg, "liveEnd")}),hl`, 16, { what: "END := the staged end" }),
+  ], "no start pending"),
+  op("exx", 4),
+];
+
+/** The pieces' costs, for the ledger and the report. */
+export const pcmEdgeCost = (cfg) => ({
+  stop: cost(pcmEdgeStop(cfg)), compare: cost(pcmEdgeCompare(cfg)),
+  park: cost(pcmEdgePark(cfg)), start: cost(pcmEdgeStart(cfg)),
+});
 
 // ── §4's 経路別サイクル表 ───────────────────────────────────────────────────
 // Costed from the encodings, not measured and not fitted. Every path P1 can
@@ -373,8 +552,13 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   P(`YM_DATA0    equ ${hex(YM.data0)}`);
   if (cfg.voices) {
     P(`LUT         equ ${hex(cfg.ram.lut[0])}       ; ${cfg.levels} pages, one per level (lut.mjs)`);
-    P(`CLAMP       equ ${hex(cfg.ram.clamp[0])}       ; ${CLAMP_SIZE} B — the saturating add, as a table`);
+    if (cfg.ram.clamp)
+      P(`CLAMP       equ ${hex(cfg.ram.clamp[0])}       ; ${CLAMP_SIZE} B — the saturating add, as a table`);
     P(`RING        equ ${hex(cfg.ram.ring[0])}       ; 256 B — the finished samples`);
+    if (cfg.oneVoice) {
+      P(`PCM_STATE   equ ${hex(cfg.ram.state[0])}       ; the one voice's state (config.mjs PCM1)`);
+      P(`PCM_SILENCE equ ${hex(PCM1_SILENCE)}       ; where a parked voice reads (R28 §63.3 D2)`);
+    }
     P(`WINDOW      equ $8000              ; the 68k bank window the source lives in`);
     P(`LEAD        equ ${cfg.lead}                  ; the build cursor runs this far ahead`);
   } else {
@@ -489,11 +673,26 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("; BC' = the build cursor exactly LEAD ahead of the play cursor, HL' = the");
     P("; table scratch. Nothing in the loop reloads any of them.");
     P("        exx");
-    P("        ld   de,WINDOW");
+    P(`        ld   de,${cfg.oneVoice ? "PCM_SILENCE" : "WINDOW"}`);
     P("        ld   bc,RING+LEAD");
     P("        ld   hl,0");
     P("        exx");
     if (cfg.voices >= 2) P("        ld   ix,WINDOW+$100     ; voice 1's own page");
+    if (cfg.oneVoice) {
+      // The voice starts PARKED: END is zero, so the first compare parks it,
+      // and the pointer already sits in the silence zone. Every staged byte is
+      // zero, so nothing starts until the host stages a start. The step operand
+      // in `mix_st` assembles as 1 and stays 1 until a start changes it.
+      P("; The one voice's state: parked, and ONLY THE Z80'S OWN BYTES touched.");
+      P("; The staged fields and both generation counters are the 68000's, and it");
+      P("; may have written a start before releasing the bus — a boot that zeroed");
+      P("; the whole block erased it (found on BlastEm, R28 §63.6 step 1).");
+      P("        xor  a");
+      for (const k of ["lastStart", "lastStop", "parkMask"])
+        P(`        ld   (PCM_STATE+${PCM1[k]}),a       ; ${k}`);
+      P("        ld   hl,0");
+      P(`        ld   (PCM_STATE+${PCM1.liveEnd}),hl      ; END = 0: the first compare parks`);
+    }
     P("");
   }
   if (bootExtra && bootExtra.length) {
@@ -576,11 +775,13 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   P(`        assert code_end <= ${hex(cfg.ram.code[1])}, "the loop overran its code region"`);
   P("");
   if (cfg.voices) {
-    P(`        ds   ${hex(cfg.ram.clamp[0])}-$, 0     ; up to the clamp table`);
-    P(`; ${CLAMP_SIZE} B: the 9-bit sum of two biased contributions, saturated and re-biased.`);
-    const clamp = buildClamp();
-    for (let i = 0; i < clamp.length; i += 16)
-      P(`        db   ${[...clamp.slice(i, i + 16)].join(",")}`);
+    if (cfg.ram.clamp) {
+      P(`        ds   ${hex(cfg.ram.clamp[0])}-$, 0     ; up to the clamp table`);
+      P(`; ${CLAMP_SIZE} B: the 9-bit sum of two biased contributions, saturated and re-biased.`);
+      const clamp = buildClamp();
+      for (let i = 0; i < clamp.length; i += 16)
+        P(`        db   ${[...clamp.slice(i, i + 16)].join(",")}`);
+    }
     P(`        ds   ${hex(cfg.ram.lut[0])}-$, 0     ; up to the level tables`);
     P(`; ${cfg.levels} pages of 256 bytes: level k maps a signed sample to`);
     P(`; round(s*k/${cfg.levels - 1}), clamped. Level ${cfg.levels - 1} is bit-exact unity`);

@@ -74,9 +74,16 @@ const verdict = (cfg, r, led) => {
     ({ what, got, limit, unit, ok: got <= limit + 1e-9 }));
 };
 
+// THE ONE-VOICE INTEGRATION PROFILE (R28 §63): one PCM voice with a 16-bit
+// pointer and a 2^k step, the decode, the corrector and the protocol, no
+// mailbox, the expander sites executed as padding until §63.6 step 2 writes
+// them. Its code region is 3,072 B (the clamp's 512 B absorbed).
+PROFILES.push({ tag: "ONE VOICE (R28): decode + corrector + protocol, expander reserved",
+  base: { voices: 1 }, cfg: { correctorBudget: true }, opt: { correct: true, proto: true } });
+
 for (const p of PROFILES) {
   const cfg = buildConfig({ voices: 2, complete: true, csm: true, levels: 15,
-    workTarget: 0.839, ...p.cfg });
+    workTarget: 0.839, ...(p.base ?? {}), ...p.cfg });
   // A profile may OWE something the config's own estimate does not carry — the
   // semantic expander is code nobody has written and its bytes belong in the
   // ledger rather than in a sentence (R27 §61.7).
@@ -208,7 +215,7 @@ for (const p of PROFILES) {
   // from the other reports 357 B where the image has 437.
   const bare = (() => {
     const c2 = buildConfig({ voices: 2, complete: true, csm: false, levels: 15,
-      workTarget: 0.839, ...p.cfg });
+      workTarget: 0.839, ...(p.base ?? {}), ...p.cfg });
     if (p.owed) c2.codeEstimate = [...c2.codeEstimate, ...p.owed];
     const r2 = generateSplit(c2, { stackFill: true, ...p.opt });
     if (!r2.ok) return null;

@@ -178,6 +178,85 @@ export const RAM_P2_FULL_15 = {
   phase: [0x1b00, 0x1c00],  // 256 B, page aligned — the observer's phase table
 };
 
+// ── THE ONE-VOICE INTEGRATION PROFILE (R28 §63.3 D1, §63.5) ────────────────
+//
+// One PCM voice at a fixed pitch class with a 2^k step, so the clamp table goes
+// (a single voice's sum is itself) and the code region absorbs its 512 B. What
+// takes the place of the mailbox and the pop-based writer is ONE ring of 2-byte
+// {op,val} pairs the 68000 writes and the expander sites consume (§63.3 D3/D4).
+//
+//   state  the PCM voice's live and staged state, the expander's variables and
+//          its 32-entry dispatch table (64 B) — everything the block edge and
+//          the sites touch by absolute address
+//   fifo   128 pairs, a whole page so the consumer's index is `inc l`
+export const RAM_1V = {
+  size: 0x2000,
+  code: [0x0000, 0x0c00],   // 3,072 B — the old clamp region is code now
+  lut: [0x0c00, 0x1b00],    // 3,840 B — 15 levels x 256, k/14 (lut.mjs)
+  phase: [0x1b00, 0x1c00],  // 256 B, page aligned — the observer's phase table
+  ring: [0x1c00, 0x1d00],   // 256 B — the finished samples
+  fifo: [0x1d00, 0x1e00],   // 256 B — the {op,val} pair ring (R28 §63.3 D3)
+  state: [0x1e00, 0x1e60],  // 96 B — PCM live/staged state, expander state, dispatch
+  pub: [0x1e60, 0x1e80],    // 32 B — the runtime protocol (protocol.mjs)
+  glob: [0x1f00, 0x1f80],   // 128 B
+  stack: [0x1f80, 0x2000],  // 128 B
+};
+
+// The one-voice state block, by offset from state[0]. Every byte the block edge,
+// the expander and the 68000 touch by absolute address is named here.
+//
+// A START OR A STOP IS A GENERATION, NOT A FLAG. A byte the 68000 sets and the
+// Z80 clears has a window between the Z80's read and its clear, and a bus grab
+// lands at any machine-cycle boundary — a start written in that window would be
+// cleared unseen. So the 68000 INCREMENTS `startGen` (after the three staged
+// bytes) and the Z80 keeps `lastStart`, acts when they differ, and latches the
+// value it read: a bump that lands between the read and the latch stays
+// different and is acted on at the next edge. `stopGen` / `lastStop` likewise.
+export const PCM1 = {
+  liveEnd: 0x00,    // u16 the address the play pointer parks at (D2); Z80-owned
+  step: 0x02,       // u8  (unused: the live step is the operand of `mix_st`)
+  stSrc: 0x03,      // u16 68k: the staged start address, in the window
+  stEnd: 0x05,      // u16 68k: the staged end, `sampleEnd - 16 * step`
+  stStep: 0x07,     // u8  68k: the staged 2^k step
+  startGen: 0x08,   // u8  68k: bumped after the three staged bytes are written
+  stopGen: 0x09,    // u8  68k: bumped to stop the voice at the next edge
+  lastStart: 0x0a,  // u8  Z80: the startGen it last acted on
+  lastStop: 0x0b,   // u8  Z80: the stopGen it last acted on
+  parkMask: 0x0c,   // u8  Z80: the compare's answer, $ff when the voice parks
+  fifoLo: 0x10,     // u8  the expander's FIFO position — what the 68000 reads (D5)
+  srcLo: 0x11,      // u16 the expander's current source pointer (FIFO or ROM body)
+  mode: 0x13,       // u8  $ff while the source is the FIFO, $00 inside a body
+  port: 0x14,       // u8  the current port's data-port low byte ($01 / $03)
+  chOff: 0x15,      // u8  the channel offset a body's registers are shifted by
+  fifoSave: 0x16,   // u16 the FIFO pointer, saved while a body is being expanded
+  dispatch: 0x20,   // 32 x u16 the expander's jump table
+};
+
+// Where the parked voice reads from: the top PAGE of the sample bank, which the
+// exporter fills with silence (R28 §63.3 D2). It is above every sample's end,
+// so once parked the voice re-parks at every edge for ever; and a page rather
+// than 32 bytes because a parked voice keeps its step — up to 8 — and reads at
+// most 15 x 8 bytes past the park point before the next edge re-parks it.
+export const PCM1_SILENCE = 0xff00;
+
+// The per-block reservations of the one-voice engine. b1..b4 belong to the
+// corrector (as in RESERVE_2CH_CORR); b5..b12 hold the expander sites, which
+// are EXECUTED as padding until §63.6 step 2 writes them; b13 is the head-room
+// slot the decode's pieces need most; b14/b15/b0 carry the real PCM edge.
+export const EXPANDER_SITE_CYCLES = 130;
+export const EXPANDER_POSITIONS = [5, 6, 7, 8, 9, 10, 11, 12];
+export const RESERVE_1V = Array.from({ length: 16 }, (_, b) => {
+  if (b >= 1 && b <= 4) return [b, 0, "the bounded corrector's (R10 §29.5)"];
+  if (EXPANDER_POSITIONS.includes(b))
+    return [b, EXPANDER_SITE_CYCLES, "one expander site: fetch a pair, dispatch, one padded handler (R28 §63.3 D4)"];
+  if (b === 0) return [b, 0, "the block edge part B — IMPLEMENTED: the staged start applied before the first mix"];
+  if (b === 15) return [b, 0, "the block edge part A — IMPLEMENTED: the level pages and the park"];
+  return [b, 0, "free for the decode's pieces"];
+});
+export const CODE_ESTIMATE_1V = [
+  ["expander routine", 260, "the dispatch, six handlers padded to one length, the self-idle and the index"],
+];
+
 export const RAM = RAM_P1;
 
 // ── The code the complete 2ch engine still owes ───────────────────────────
@@ -427,7 +506,22 @@ export function buildConfig({
   if (levels !== 16 && levels !== 15) throw new Error(`levels must be 16 or 15, not ${levels}`);
   if (levels === 15 && !complete)
     throw new Error("the 15-level profile is the complete 2ch experiment; there is no P1 form of it");
-  const ram = complete ? (levels === 15 ? RAM_P2_FULL_15 : RAM_P2_FULL) : voices ? RAM_P2 : RAM_P1;
+  // THE ONE-VOICE INTEGRATION PROFILE (R28 §63): `voices: 1, complete: true`.
+  // Fifteen levels, no clamp, the pair FIFO, and the reservations of RESERVE_1V.
+  const oneVoice = voices === 1 && complete;
+  // THE LEAD IS 18 HERE, one more than the two-voice profile's 17, for the same
+  // reason 17 was chosen over 16: the block phase decides which slot carries
+  // the edge, and with 17 the START piece (156 cycles, before the mix) lands on
+  // the last slot of the lap — the one that also pays the loop-back `jp` — at
+  // 85.2% of its interval. With 18 that slot is a plain one. One more sample
+  // of latency, 0.1 ms.
+  if (oneVoice && lead === blockSamples + 1) lead = blockSamples + 2;
+  if (oneVoice && levels !== 15)
+    throw new Error("the one-voice profile is a 15-level build: its phase table needs the page");
+  if (oneVoice && (command || ymWriter))
+    throw new Error("the one-voice profile has neither the mailbox nor the pop-based writer (R28 §63.4)");
+  const ram = oneVoice ? RAM_1V
+    : complete ? (levels === 15 ? RAM_P2_FULL_15 : RAM_P2_FULL) : voices ? RAM_P2 : RAM_P1;
   if (ram.lut && (ram.lut[1] - ram.lut[0]) >> 8 !== levels)
     throw new Error(`the RAM map has ${(ram.lut[1] - ram.lut[0]) >> 8} level pages, not ${levels}`);
   const regions = Object.entries(ram).filter(([k]) => k !== "size")
@@ -449,10 +543,11 @@ export function buildConfig({
   const cfg = {
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
-    reserve: complete
+    oneVoice,
+    reserve: oneVoice ? RESERVE_1V : complete
       ? (ymWriter ? RESERVE_2CH_YM : command ? RESERVE_2CH_CMD
         : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
-    codeEstimate: ymWriter ? CODE_ESTIMATE_2CH_YM
+    codeEstimate: oneVoice ? CODE_ESTIMATE_1V : ymWriter ? CODE_ESTIMATE_2CH_YM
       : command ? CODE_ESTIMATE_2CH_CMD
       : correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
     correctorBudget, command, ymWriter, csmHost,
@@ -484,6 +579,7 @@ export const stampLine = (c) =>
   // R10 §29.5: which reservation this image spent on the corrector is part of
   // what it is. An image with b1..b4 free is not the same artifact as one that
   // still owes the time publication, and neither is the finished budget.
+  + (c.oneVoice ? " one-voice" : "")
   + (c.correctorBudget ? " budget corr-for-timepub" : "")
   + (c.command ? " +pcm-state-consumer" : "")
   + (c.ymWriter ? " +z80-ym-writer" : "");

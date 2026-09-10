@@ -460,6 +460,11 @@ export function buildRom(image, samples = null, grab = null) {
     const { base, bytes } = grab.ymFixture;
     bytes.forEach((b, i) => m.moveBimm(b, Z80_BASE + base + i));
   }
+  // THE ONE-VOICE PROFILE'S BOOT START (R28 §63.6 step 1): the staged source,
+  // end and step, then the generation bump — in that order, which is the order
+  // a runtime host writes them too. The Z80 has not started, so the first edge
+  // it reaches applies the start.
+  if (grab?.pcm1Boot) for (const [addr, value] of grab.pcm1Boot) m.moveBimm(value, Z80_BASE + addr);
   if (grab?.csmVoice) {
     for (const [reg, val] of grab.csmVoice) {
       m.moveBimm(reg, YM_ADDR0);

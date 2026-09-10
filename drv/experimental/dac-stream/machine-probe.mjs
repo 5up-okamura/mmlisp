@@ -26,6 +26,7 @@ import { stampLine } from "./config.mjs";
 import { buildRom } from "./rom.mjs";
 import { mixOne, mixTwo } from "./lut.mjs";
 import { checkWriterTrace, YM_BUSY_MASTER } from "./ym-writer.mjs";
+import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, endFor as pcm1EndFor, reference as pcm1Reference } from "./pcm1-ref.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -157,7 +158,17 @@ for (const c0 of selected) {
   const c = r.resolved;
   const log = readProbe(readFileSync(r.log));
   const L = r.cfg.levels;
+  // THE ONE-VOICE REFERENCE (R28 §63.6 step 1): the boot-staged start is one
+  // event before time zero, and the block-level state machine of pcm1-ref.mjs
+  // predicts every byte from it and the DAC's own timestamps.
+  const pcm1Expected = c.pcm1 ? (() => {
+    const b = c.pcm1.boot;
+    const events = b ? [{ kind: "start", at: -1, seq: 0, src: PCM1_SAMPLES[b.sample].at,
+      end: pcm1EndFor(PCM1_SAMPLES[b.sample], b.step), step: b.step }] : [];
+    return pcm1Reference(r.cfg, PCM1_BANK, events, log.dac.map((d) => d.time), null);
+  })() : null;
   const expected = (i) => {
+    if (pcm1Expected) return pcm1Expected(i);
     if (!r.cfg.voices) return c.wave[i % 256];
     if (i < r.cfg.lead) return 128;
     const j = (i - r.cfg.lead) % 256;
