@@ -1267,8 +1267,8 @@ short), `port-bit` and `pitch-split`.
 
 **Numbers a transport design has to start from**: 1,248.4 writes/s; 12 queue
 bytes an entry of which a producer writes three; a 194-write patch frame drains
-in 19 laps (156 ms) against the corpus's 246 steady writes a second and 337 with
-patches. The window is a FIXTURE — one lap's entries laid down by the 68000
+in 19.4 laps (~155 ms) against the corpus's 246 steady writes a second and 337
+with patches. The window is a FIXTURE — one lap's entries laid down by the 68000
 before the Z80 starts, never refilled.
 
 **Not started**: the 68k producer, the YM transport format (raw register stream

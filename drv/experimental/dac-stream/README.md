@@ -426,7 +426,7 @@ one lap's worth of entries laid down by the 68000 before the Z80 starts, never
 refilled, so the same lap of writes repeats. Nothing here says how a producer
 would fill it, and the numbers that a transport design has to start from are
 these — **1,248.4 writes/s**, 12 queue bytes an entry of which a producer writes
-three, and a 194-write patch frame taking 19 laps (156 ms) to drain against the
+three, and a 194-write patch frame taking 19.4 laps (~155 ms) to drain against the
 corpus's 246 steady writes a second and 337 with patches.
 
 **The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
