@@ -1093,3 +1093,57 @@ expected levels, what was staged, and the reference's RMS there. Output is under
 thing that can release b11..b14's 280 cycles/block and 120 B. The mailbox
 carries three level pages and nothing else: voice start/stop, cursor, loop and
 bank are not in it.
+
+## R24 §55 (2026-09-10) — host-YM P1 steps 1 and 2, and the premise they corrected
+
+Commit `fd95e68`. Baseline frozen and byte-identical (rom `be1675e77edddbb3`).
+**P1 is NOT established** — steps 3, 4 and 5 are not done — but it is not
+refuted either.
+
+**The premise was wrong, and this is the thing not to re-derive.** The YM2612 is
+on the Z80's bus. A 68000 access to `$A04000..$A04003` is answered with OPEN BUS
+unless the 68000 holds the bus — BlastEm gates it on `z80_get_busack`, and the
+`host-YM P1, no bus` build lands **0 of 28** attempts. So there is no window
+between the Z80's YM accesses to aim at: with the bus held the transaction is
+atomic by construction and the interleave the search was for cannot happen.
+
+**The probe now sees every YM access from either CPU** (`MML_PROBE_YMZ80`,
+`MML_PROBE_YM68K`: port, read/write, byte). Before R24 it saw only the `$2A`
+data write — not the address port, not the CSM pair, not the re-latch, and not
+which side wrote. `ym-window.mjs` derives the picture from the placement and
+from the machine and refuses to answer if they disagree.
+
+Per lap: **110 accesses** — 80 DAC samples, 10 CSM selects, 10 CSM values, 10
+`$2A` re-latches; 496 of 496 laps carried exactly 110. Each site's position
+spreads 1,401..2,481 master. BUSY is `32 × 42 + 42 = 1,386` master and only a
+DATA write raises it.
+
+**`$2A` must be restored inside the same grab.** The 68000's address write
+steals the DAC latch; leaving it to the engine's own CSM re-latch costs a
+**75,270 master hole — fourteen samples**. Restoring it makes the DAC interval
+5,130..5,385, identical to no transaction at all.
+
+**Ride the snapshot READ's grab, not a grab of its own.** A stand-alone
+transaction is 263..1,417 master and pushes an observation interval to 1,589
+(four over 1,500 in 30 s). Inside the read's grab: worst 1,430, **none over**,
+**51.3 transactions/s**, mailbox untouched at 61.2 updates/s. BUSY is read ONCE,
+never polled — 83.9% executed, 16.1% deferred, 0 of 4,620 writes made while
+busy, worst request-to-execute latency one loop = 16.02 ms.
+
+**The one open hazard**: a grant landing between a Z80 CSM select and its value
+(~300 master) means the 68000's `$2A` restore sends that CSM value to the DAC.
+Measured 0 in 30 s, and not by luck — the CSM pair closes 690..1,939 master
+after the DAC write before it, and **37,416 of 37,468 (99.86%) close inside that
+write's 1,386 master BUSY**, where the 68000 refuses to write. The other 52
+(0.14%) are delayed by stops or the corrector and expose up to 553 master:
+about **one collision per 35 minutes** at 51.3/s. The 68000 cannot detect the
+state — HV cannot locate a slot (the Z80's data writes are uniform across the
+3,420 master line) and BUSY cannot be sampled without taking the bus, which
+freezes it. Closing it needs one flag byte the CSM write sets and clears: two
+stores per CSM write, ~260 cycles a lap, and R24 froze the engine.
+
+**Not done**: step 3 (window position, VBlank/IRQ, corrector extremes, mailbox
+density), step 4 (more than one transaction a window; PSG on its own row),
+step 5 (phase bins at 30 s, the 60 s combined run). Step 4's question has changed
+shape: with one transaction the read grab is at 1,430 of 1,500, so **one per grab
+is the ceiling at the current placement**.
