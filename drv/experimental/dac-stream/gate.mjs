@@ -452,7 +452,12 @@ if (ref && !JSON_OUT) {
     ["ix", v >= 2 ? "voice 1's source pointer — IXL advances" : "unused"],
     ["iy", v >= 2 ? "IYL holds voice 0's contribution between the two lookups" : "unused"],
     ["af'", "unused — `ex af,af'` never runs, so an interrupt could not use it either"],
-    ["sp", "the boot stack and the mix routine's return address; nothing else pushes"],
+    // R26 §59.3: with the Z80 YM writer in the image SP is also the queue's
+    // cursor, and the mixer's return address lives in a word of each entry that
+    // nothing reads. This gate builds images without the writer, so what it
+    // reports is what THEY do.
+    ["sp", "the boot stack and the mix routine's return address; nothing else pushes"
+      + " (with the YM writer in, SP is also the queue cursor — ym-writer.mjs)"],
     ["i/r", "untouched"],
     ["IFF1/IFF2", "clear from boot to power-off — the loop takes no interrupt"],
   ]) console.log(`  ${pad(r, 18)}${note}`);

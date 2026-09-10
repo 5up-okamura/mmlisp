@@ -451,6 +451,15 @@ export function buildRom(image, samples = null, grab = null) {
     m.moveBimm(grab.csmFreq.hi, Z80_BASE + grab.csmFreq.hiAt);
     m.moveBimm(grab.csmFreq.lo, Z80_BASE + grab.csmFreq.loAt);
   }
+  // THE Z80 YM WRITER'S FIXTURE (R26 §59.3). One lap's window of entries, laid
+  // down here while the bus is still held and the Z80 has not started. It is a
+  // TEST FIXTURE and not a transport: nothing refills it, so the same lap of
+  // writes repeats for the length of the run, which is what makes the count a
+  // number nobody has to trust.
+  if (grab?.ymFixture) {
+    const { base, bytes } = grab.ymFixture;
+    bytes.forEach((b, i) => m.moveBimm(b, Z80_BASE + base + i));
+  }
   if (grab?.csmVoice) {
     for (const [reg, val] of grab.csmVoice) {
       m.moveBimm(reg, YM_ADDR0);

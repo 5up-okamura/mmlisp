@@ -32,7 +32,8 @@ import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, correctorBlocks, correct
 import { protoMap, protoPublishSplit, protoPublishLive,
   protoCheckSplit, PROTO_CHECK_LIVE, protoBootLines } from "./proto-blocks.mjs";
 import { commandBlocks, packCommand, commandBootLines } from "./command.mjs";
-import { cmdBudgetCycles } from "./config.mjs";
+import { cmdBudgetCycles, ymBudgetCycles, YM_CODE_BUDGET } from "./config.mjs";
+import { writerPlan } from "./ym-writer.mjs";
 
 // The split needs one more byte than the single-slot version: the phase itself
 // has to live in RAM, because C cannot hold it across the whole sequence.
@@ -335,6 +336,11 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // the chain, which is what removes the per-site constant the comparison would
   // otherwise need (§39.3).
   command = false, commandFault = null,
+  // THE Z80 YM WRITER (R26 §59.3), at the b11..b14 positions its reservation
+  // owns. `{ sites, base, entries, fault }` — the plan is built here so that
+  // the room the decode's pieces are placed into is the room the writer really
+  // leaves, and not the room the reserved pad used to occupy.
+  ym = null,
   // R22 §52.4's negative: put the counter back behind `mb pending` and let the
   // image be built anyway, so the order check has something to refuse and the
   // machine has something to be late on.
@@ -416,12 +422,21 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   // `count hi store` ends up in, and where that is depends on how much room the
   // consumer left. So it is a fixed point, found rather than assumed — and if
   // it does not settle, that is reported instead of being averaged away.
+  // The writer's plan is fixed before anything is placed: its positions are the
+  // reservation's, not the placer's, and every other piece has to fit around it.
+  const ymPlan = cfg.ymWriter && ym ? writerPlan(cfg, ym) : null;
+  if (cfg.ymWriter && ymPlan) {
+    if (ymPlan.worstBlock > ymBudgetCycles())
+      return { ok: false, stage: "ym cycles", ym: ymPlan, budget: ymBudgetCycles() };
+    if (ymPlan.bytes > YM_CODE_BUDGET)
+      return { ok: false, stage: "ym bytes", ym: ymPlan, budget: YM_CODE_BUDGET };
+  }
   let pack = null, base = null, walk = null, countAt = -1;
   for (let round = 0; ; round++) {
     if (command) {
       // The room each position really has, from an image with everything else
       // in it and the consumer left out.
-      const probe = generate(cfg);
+      const probe = generate(cfg, null, null, null, null, ymPlan?.plan ?? null);
       const rooms = new Map(), ceilings = new Map();
       for (let i = 0; i < cfg.cycleSlots; i++) {
         const row = probe.slots[i].row;
@@ -432,7 +447,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
       if (pack.failed)
         return { ok: false, stage: "command", blocks: cmd, pack, map, correct, command: cmd };
     }
-    base = generate(cfg, null, null, null, pack ? pack.plan : null);
+    base = generate(cfg, null, null, null, pack ? pack.plan : null, ymPlan?.plan ?? null);
     walk = placeSplit(blocks, base.slots, { target, from, cycleSlots: cfg.cycleSlots });
     if (walk.failed) return { ok: false, stage: "place", blocks, walk, map, correct, pack };
     if (!command) break;
@@ -555,6 +570,12 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     // would otherwise take 525 seconds to meet. `countHi` follows `countLo`, so
     // one `ld (nn),hl` sets both — six bytes rather than ten, which matters
     // because the ceiling image has none to spare (R21 §50.4 step 3).
+    // THE WRITER'S CURSOR, BEFORE THE FIRST LAP. It is reloaded at a fixed
+    // opportunity near the end of every lap, which leaves the FIRST lap to be
+    // set up here — without it the first lap pops from the boot stack at $2000,
+    // which is a RAM mirror, and the garbage it reads is written wherever the
+    // bytes point (BlastEm: "write by Z80 through banked memory area").
+    ...(ymPlan ? [`ld   sp,$${ymPlan.base.toString(16)}`] : []),
     ...(countFrom ? [
       `ld   hl,$${countFrom.toString(16)}`,
       `ld   ($${(state + SPLIT_STATE.countLo).toString(16)}),hl`,
@@ -565,7 +586,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
     gen = generate(cfg, (i) => [
       ...(bySlot.get(i) ?? []).flatMap((b) => b.ops),
       ...(ladderAt.has(i) ? ladderOps(ladderAt.get(i)) : []),
-    ], boot, slotDead, pack ? pack.plan : null);
+    ], boot, slotDead, pack ? pack.plan : null, ymPlan?.plan ?? null);
   } catch (e) {
     // A slot whose residual is 1, 2, 3, 5, 6, 9 or 13 cycles has no exact fill
     // without `ld b,k`, and that is a real refusal, not a rounding.
@@ -683,7 +704,7 @@ export function generateSplit(cfg, { target = cfg.workTarget, from = 0, step = n
   if (gen.observer.spacingMaster[0] !== loopMaster(cfg))
     throw new Error("the laid-out loop and the configured one disagree");
   return { ok: true, gen, blocks, walk, preserve, map, base, correct, ladders,
-    slotsPreserving: preserve.size, advance, command: cmd, pack };
+    slotsPreserving: preserve.size, advance, command: cmd, pack, ym: ymPlan };
 }
 
 /**

@@ -1642,8 +1642,13 @@ const PICKFAULTS = ["pick-near", "pick-far", "count-astray"];
 // …and the one that breaks the ORDER rather than the choice: the counter put
 // back behind the box (R22 §52.4).
 const ORDERFAULTS = ["counter-late"];
+// The Z80 YM writer's own (R26 §59.5). Two are its instructions — the re-latch
+// removed, and an idle path the same bytes and three cycles short — and three
+// are the FIXTURE's: the producer's mistakes, which the writer cannot catch and
+// which are therefore its input contract written down as failures.
+const WRITERFAULTS = ["no-relatch", "slow-empty", "port-bit", "pitch-split", "port-first"];
 assert.deepEqual([...TRANSFER_FAULTS, ...LOAD_FAULTS, ...RECORD_FAULTS, ...QFAULTS,
-  ...WIDTH_FAULTS, ...PICKFAULTS, ...ORDERFAULTS].sort(),
+  ...WIDTH_FAULTS, ...PICKFAULTS, ...ORDERFAULTS, ...WRITERFAULTS].sort(),
   Object.keys(FAULTS).sort(), "a new fault needs a home in one of these lists");
 // Each one changes the 68000's rom, and none of them reaches the Z80's source.
 {
@@ -2218,6 +2223,100 @@ if (process.argv.includes("--machine")) {
   assert.equal(m.byteOnly, false, "the transfer scope did not close");
 }
 
+// ── THE Z80 YM WRITER (R26 §59.3-§59.5) ──────────────────────────────────
+//
+// The site's shape, the entry it reads, the two reservations it is judged by,
+// and the two rules that are NOT in the instructions: one word an entry belongs
+// to the mixer's return address, and a port-0 frequency pair may not straddle a
+// block.
+{
+  const { siteOps, entryBytes, ENTRY_BYTES, asmBytes, writerPlan, writerSlots,
+    SEQUENCES, pairsWithinBlocks, breakEntries, IDLE, FORMS, entryWrites,
+    checkWriterTrace } = await import("./ym-writer.mjs");
+  const { buildConfig, ymBudgetCycles, YM_CODE_BUDGET, YM_BUCKET } = await import("./config.mjs");
+  const cfg = buildConfig({ voices: 2, complete: true, csm: true, csmHost: true,
+    levels: 15, workTarget: 0.839, correctorBudget: true, command: true, ymWriter: true });
+
+  // The site is eleven bytes and eighty-nine cycles, and both are measured: the
+  // bytes from the assembler and the cycles from the ops the generator places.
+  const ops = siteOps();
+  assert.equal(asmBytes(ops.flatMap((o) => o.asm)), 11, "the site is not eleven bytes");
+  assert.equal(ops.reduce((t, o) => t + o.cycles, 0), 89, "the site is not 89 cycles");
+  // SIX pops for five words of payload. The sixth is where `call mix_one`
+  // writes its return address between one opportunity and the next, and
+  // dropping it is what made the second lap re-latch $02 instead of $2a.
+  const pops = ops.filter((o) => o.asm[0].startsWith("pop")).length;
+  assert.equal(pops, 6, "the site does not step past the mixer's return address");
+  assert.equal(ENTRY_BYTES, pops * 2, "the entry and the pops disagree");
+  const e = entryBytes({ port: 1, reg: 0x44, val: 0x20 }, YM_BUCKET);
+  assert.deepEqual(e.slice(0, 2), [0x02, 0x40], "port 1's address port is not in the entry");
+  assert.deepEqual([e[3], e[5], e[9]], [0x44, 0x20, 0x2a],
+    "the register, the value and the re-latch are not where `pop af` reads them");
+  // …and an idle entry points at the bucket, so it is the same instructions
+  // making no FM write at all.
+  const idle = entryBytes(IDLE, YM_BUCKET);
+  assert.equal(idle[0] | (idle[1] << 8), YM_BUCKET, "an idle entry does not point at the bucket");
+  assert.deepEqual(entryWrites(IDLE).map((w) => w.kind), ["addr"],
+    "an idle entry makes more than the $2A re-latch");
+
+  // The plan: ten sites of the twenty opportunities, inside BOTH reservations,
+  // with the cursor reload in an opportunity the sites left empty.
+  const plan = writerPlan(cfg, { sites: 10, base: 0x1e00 - 10 * ENTRY_BYTES });
+  assert.equal(plan.bytes, 113, "the writer is not 113 bytes");
+  assert.ok(plan.bytes <= YM_CODE_BUDGET, "the writer is over its byte reservation");
+  assert.ok(plan.worstBlock <= ymBudgetCycles(), "the writer is over its cycle reservation");
+  assert.ok(!plan.at.includes(plan.resetAt), "the cursor reload shares a slot with a site");
+  assert.ok(plan.resetAt > plan.at.at(-1), "the cursor is reloaded before the lap's last pop");
+  assert.equal(plan.writesPerLap, 10, "the rate is not ten writes a lap");
+  // FOUR A BLOCK DOES NOT FIT, and it is the arithmetic that says so rather
+  // than a sentence: twenty sites are 223 B against 120 and 356 cycles a block
+  // against 280.
+  const all = writerSlots(cfg).length;
+  assert.equal(all, 20, "b11..b14 are not twenty positions a lap");
+  const four = writerPlan(cfg, { sites: all, base: 0x1e00 - all * ENTRY_BYTES });
+  assert.ok(four.bytes > YM_CODE_BUDGET, "twenty sites came out inside 120 bytes");
+  assert.ok(four.worstBlock > ymBudgetCycles(), "twenty sites came out inside 280 cycles");
+  // Every candidate §59.3 asks to be priced is over one reservation or the
+  // other at four a block. The table is the evidence; this is the claim.
+  for (const f of FORMS) {
+    const over = all * asmBytes(f.asm) + 3 > YM_CODE_BUDGET
+      || 4 * f.cycles > ymBudgetCycles();
+    assert.ok(over, `candidate "${f.key}" reaches four writes a block inside the reservation`);
+  }
+
+  // A PORT-0 FREQUENCY PAIR MAY NOT STRADDLE A BLOCK. The engine's own CSM
+  // writes $AC at b6 and commit it at b8, so the chip's one holding register
+  // per part is shared — and the first `control` sequence really did lose it.
+  for (const [name, seq] of Object.entries(SEQUENCES))
+    assert.deepEqual(pairsWithinBlocks(seq(10), plan.at, cfg), [],
+      `the "${name}" sequence straddles a block with a frequency pair`);
+  const split = breakEntries(SEQUENCES.control(10), "pitch-split");
+  assert.ok(pairsWithinBlocks(split, plan.at, cfg).length,
+    "the pitch-split negative is not refused by the pair rule");
+
+  // The trace check itself, on a stream built by hand: the window's order, the
+  // re-latch, and a run that drops one write.
+  const entries = SEQUENCES.control(10);
+  const mk = (list) => {
+    const out = []; let t = 0;
+    for (const w of list) {
+      out.push({ time: t, part: w.port, kind: "addr", byte: w.reg, read: false });
+      out.push({ time: t + 300, part: w.port, kind: "data", byte: w.val, read: false });
+      out.push({ time: t + 600, part: 0, kind: "addr", byte: 0x2a, read: false });
+      out.push({ time: t + 2000, part: 0, kind: "data", byte: 0x80, read: false });
+      t += 5376;
+    }
+    return { ymZ80: out };
+  };
+  const live = entries.filter((x) => x.port !== null);
+  const good = checkWriterTrace(mk([...live, ...live]), { entries });
+  assert.deepEqual(good.problems, [], "a correct stream was reported as broken");
+  assert.equal(good.matched, good.writes, "a correct stream did not follow the window");
+  const dropped = [...live]; dropped.splice(3, 1);
+  const bad = checkWriterTrace(mk([...dropped, ...live]), { entries });
+  assert.ok(bad.problems.length, "a dropped write was not noticed");
+}
+
 console.log("probe selftest: values, interval attribution, transfer protocol, window geometry,"
   + " commit carry-over, host timeline, the phase decoder's detection and its refusals,"
   + " the Z80 decode's initialisation, acquisition contract, arithmetic and single cost,"
@@ -2232,4 +2331,7 @@ console.log("probe selftest: values, interval attribution, transfer protocol, wi
   + " the counter finished before the box is read and the arrangement that was not,"
   + " the boundary a publish attempt names and every live counter it refuses,"
   + " the 8-bit Z80 bus as a rule the emitter enforces and every rom is checked against,"
+  + " the Z80 YM writer's eleven bytes, the word the mixer's return address owns,"
+  + " the four-a-block arithmetic that no candidate fits, and the frequency pair"
+  + " that may not straddle a block,"
   + " resolved configuration and padding paths pass");

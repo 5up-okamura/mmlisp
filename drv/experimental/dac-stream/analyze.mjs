@@ -118,7 +118,20 @@ export function analyzeWrites(trace, cfg) {
   for (const [cycle, port, reg] of trace.ym) writes.push({ cycle, port, reg, kind: "data" });
   for (const [cycle, port, reg] of trace.ymAddr) writes.push({ cycle, port, reg, kind: "addr" });
   writes.sort((a, b) => a.cycle - b.cycle || (a.kind === "addr" ? -1 : 1));
+  return checkWriteStream(writes);
+}
 
+/**
+ * THE RULES, applied to a write stream from wherever it came (R26 §59.4).
+ *
+ * The JS emulator produces one from its own trace and the machine produces one
+ * from the instrument's record of every YM access the Z80 made — and the two
+ * have to be judged by the same arithmetic, which is why the table walk lives
+ * here on its own and not inside either reader.
+ *
+ * @param writes {cycle, port, reg, kind} in Z80 cycles, already in order
+ */
+export function checkWriteStream(writes) {
   const problems = [];
   const lastData = new Map();   // range -> cycle
   const lastAddr = [null, null];

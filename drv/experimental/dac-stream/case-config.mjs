@@ -23,7 +23,9 @@ import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
 import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
   SNAPSHOT_STRIDE, MAILBOX, MAILBOX_BYTES } from "./protocol.mjs";
-import { GLOB } from "./config.mjs";
+import { GLOB, YM_BUCKET } from "./config.mjs";
+import { writerPlan, fixtureBytes, breakEntries, SEQUENCES, ENTRY_BYTES,
+  YM_FAULTS, pairsWithinBlocks } from "./ym-writer.mjs";
 
 // R21 §50.4: the three ways the adaptive choice can be broken. The first two
 // are the fixed leads R20 measured, put back as faults so the sweep cannot
@@ -70,7 +72,42 @@ export const FAULTS = {
   ...QUEUE_FAULTS,
   ...PICK_FAULTS,
   ...ORDER_FAULTS,
+  // Z80 YM writer, R26 §59.5. Two of them are the writer's own instructions
+  // and three are the fixture's — the producer's mistakes, which the writer has
+  // no way to catch and which are therefore the input contract stated as
+  // failures (ym-writer.mjs).
+  ...YM_FAULTS,
 };
+
+/** The writer's window and the entries in it, for one case. */
+function ymFixtureFor(cfg, spec, fault) {
+  const sites = spec.sites;
+  const page = cfg.ram.queue ? cfg.ram.queue[1] : 0x1e00;
+  // The window ENDS at the page's last byte, so the once-a-lap reload of the
+  // cursor is a wrap from the end of the page and not an arrangement that
+  // avoids one (§59.5).
+  const base = page - sites * ENTRY_BYTES;
+  const seq = SEQUENCES[spec.sequence];
+  if (!seq) throw new Error(`no writer sequence "${spec.sequence}"`);
+  const entries = seq(sites);
+  // THE REFERENCE IS THE UNBROKEN SEQUENCE. A negative that also moves the
+  // expectation cannot fail, which is how `port-bit` and `pitch-split` first
+  // came out green: the fixture is broken, and what the chip is compared
+  // against is still what the case asked for.
+  const written = fault === "port-bit" || fault === "pitch-split"
+    ? breakEntries(entries, fault) : entries;
+  const fixture = fixtureBytes(written, { base, sites, bucket: YM_BUCKET,
+    fault: fault === "port-first" ? "port-first" : null });
+  // The one rule the WINDOW has to obey, checked before it is built: a port-0
+  // frequency pair may not straddle a block, because the engine's own CSM
+  // writes take that latch at b6 and b8 of every one (ym-writer.mjs).
+  if (fault !== "pitch-split") {
+    const bad = pairsWithinBlocks(written, writerPlan(cfg, { sites, base }).at, cfg);
+    if (bad.length) throw new Error(`writer sequence "${spec.sequence}": ${bad[0]}`);
+  }
+  return { sites, base, entries, written, fixture,
+    code: fault === "no-relatch" || fault === "slow-empty" ? fault : null };
+}
 
 /**
  * @param c0    a case from the table
@@ -204,6 +241,13 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   const cfg = buildConfig(c0.cfg);
   const coop = c0.cooperative
     ? { ...c0.cooperative, ...(compensation === null ? {} : { compensation }) } : null;
+  // THE WRITER'S FIXTURE (R26 §59.3). One lap's window, written by the 68000
+  // while it still holds the bus — like the CSM test voice, and for the same
+  // reason: it is harness, and 110 bytes of it in the Z80's code region would
+  // be charged to an engine that does not contain it.
+  const ymw = c0.split?.ym ? ymFixtureFor(cfg, c0.split.ym, fault) : null;
+  if (fault in YM_FAULTS && !ymw)
+    throw new Error(`fault ${fault} only applies to a case with the Z80 YM writer in it`);
   let grab = c0.grab ? { ...c0.grab }
     : c0.bankOnly ? { cooperative: true, disabled: true }
     : c0.calibrate ? { calibrate: true, disabled: true, vdp: !!c0.vdp }
@@ -224,6 +268,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
         ...(c0.cfg?.csmHost ? { csmVoice: CSM_TEST_VOICE,
           csmFreq: { ...CSM_TEST_FREQ, hiAt: cfg.ram.glob[0] + GLOB.csmHi,
             loAt: cfg.ram.glob[0] + GLOB.csmLo } } : {}),
+        ...(ymw ? { ymFixture: { base: ymw.base, bytes: ymw.fixture.bytes } } : {}),
         proto: protoRomFields(cfg, { ...c0.split.proto,
           ...(fault in QUEUE_FAULTS ? { qfault: fault.slice(2) } : {}) },
         SPLIT_STATE.countLo) }
@@ -253,7 +298,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
     if (captureOffset !== null && grab.computed) grab.captureOffset = captureOffset;
     // A publish fault is the Z80's; it must not also reach the 68000's rom.
     if (fault && !(fault in PUBLISH_FAULTS) && !(fault in QUEUE_FAULTS)
-      && !(fault in ORDER_FAULTS)) grab.fault = fault;
+      && !(fault in ORDER_FAULTS) && !(fault in YM_FAULTS)) grab.fault = fault;
     // The withdrawn word-move read is a property of the HOST'S protocol code,
     // not of the transfer's payload, so it reaches the proto fields rather than
     // `grab.fault` (R20 §48.3).
@@ -288,7 +333,8 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   }
   if (c0.observer && coop) throw new Error("an observer case has no cooperative window");
   if (c0.split && (coop || c0.observer)) throw new Error("a split case is its own observer");
-  const c = { ...c0, cooperative: coop, grab: grab ?? undefined };
+  const c = { ...c0, cooperative: coop, grab: grab ?? undefined,
+    ...(ymw ? { ymWriter: ymw } : {}) };
   if (fault && fault in PUBLISH_FAULTS && !c0.observer?.publish)
     throw new Error(`fault ${fault} only applies to a case that publishes its records`);
   const observer = c0.observer && fault && fault in PUBLISH_FAULTS
@@ -296,6 +342,7 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   let gen;
   if (c0.split) {
     const r = generateSplit(cfg, { stackFill: true, ...c0.split.place,
+      ...(ymw ? { ym: { sites: ymw.sites, base: ymw.base, fault: ymw.code } } : {}),
       ...(fault in ORDER_FAULTS ? { counterLate: true } : {}) });
     if (!r.ok) throw new Error(`case "${c0.name}": the split did not generate (${r.stage}: ${r.error ?? r.walk.failed?.name})`);
     gen = r.gen;

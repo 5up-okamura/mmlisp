@@ -274,6 +274,34 @@ export const cmdBudgetCycles = (cfg) => RESERVE_2CH_CORR
 export const CODE_ESTIMATE_2CH_CMD =
   CODE_ESTIMATE_2CH_CORR.filter(([what]) => what !== "command dispatch");
 
+// ── The Z80 YM writer's own profile (R26 §59.3) ────────────────────────────
+//
+// b11..b14 — 280 cycles a block, 120 bytes of code — go to real instructions.
+// The reservation was written for a shared routine with "a queue cursor in a
+// self-modified operand" and a call site at each position; the engine's loop is
+// eighty slots of straight-line code, so a call is 27 cycles the 70-cycle
+// position does not have and the cursor has no register to live in but SP,
+// which a call frame destroys. What replaces the pad is therefore INLINE, ten
+// bytes a site — and 120 bytes buy eleven of the twenty positions, not twenty
+// (ym-writer.mjs).
+export const YM_SLOTS_USED = [11, 12, 13, 14];
+export const YM_CODE_BUDGET = 120;                 // bytes, R16 §41.1
+export const RESERVE_2CH_YM = RESERVE_2CH_CMD.map(([b, cyc, why]) =>
+  (YM_SLOTS_USED.includes(b)
+    ? [b, 0, "REPLACED by the real Z80 YM writer (R26 §59.3)"] : [b, cyc, why]));
+export const CODE_ESTIMATE_2CH_YM =
+  CODE_ESTIMATE_2CH_CMD.filter(([what]) => what !== "YM/PSG slot writer");
+
+/** What the writer may spend, per BLOCK, from its own reservation. */
+export const ymBudgetCycles = () => RESERVE_2CH_CORR
+  .filter(([b]) => YM_SLOTS_USED.includes(b)).reduce((t, [, c]) => t + c, 0);
+
+// The two bytes an idle entry writes into instead of the chip. They live in the
+// chip region, which is where the slot writer's own state was always going to
+// be, and they are what makes "the queue is empty" the same instructions as
+// "write this register" rather than a branch (ym-writer.mjs).
+export const YM_BUCKET = 0x1e60;
+
 
 
 /**
@@ -309,6 +337,10 @@ export function buildConfig({
   // is replaced by the real fixed-length PCM state consumer, which needs more
   // block positions than were reserved for it. Built on the corrector's image.
   command = false,
+  // THE Z80 YM WRITER'S PROFILE (R26 §59.3): b11..b14's reserved pad is
+  // replaced by the real writer. Built on the consumer's image, because the
+  // question is what the writer costs on top of everything else that is real.
+  ymWriter = false,
   // WHO LOADS THE CSM TEST VOICE (R19 §46.3). The Z80 does, out of a table in
   // its own image, unless this says the 68000 will write it before releasing the
   // bus — which takes 161 bytes of test scaffolding out of the engine's code
@@ -410,16 +442,20 @@ export function buildConfig({
     throw new Error("the corrector budget is a statement about the complete 2ch engine");
   if (command && !correctorBudget)
     throw new Error("the command consumer is built on the corrector's budget image");
+  if (ymWriter && !command)
+    throw new Error("the YM writer is measured on the image the consumer is real in");
   if (!(workTarget > 0 && workTarget <= 1) || !(meanTarget > 0 && meanTarget <= 1))
     throw new Error("the work targets are fractions of a slot");
   const cfg = {
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
     reserve: complete
-      ? (command ? RESERVE_2CH_CMD : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
-    codeEstimate: command ? CODE_ESTIMATE_2CH_CMD
+      ? (ymWriter ? RESERVE_2CH_YM : command ? RESERVE_2CH_CMD
+        : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
+    codeEstimate: ymWriter ? CODE_ESTIMATE_2CH_YM
+      : command ? CODE_ESTIMATE_2CH_CMD
       : correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
-    correctorBudget, command, csmHost,
+    correctorBudget, command, ymWriter, csmHost,
     z80Hz, fmSampleHz, rateHz,
     periodNum, periodDen, periodCycles,
     groupSlots, groupCycles, slotCycles, cycleSlots,
@@ -449,6 +485,7 @@ export const stampLine = (c) =>
   // what it is. An image with b1..b4 free is not the same artifact as one that
   // still owes the time publication, and neither is the finished budget.
   + (c.correctorBudget ? " budget corr-for-timepub" : "")
-  + (c.command ? " +pcm-state-consumer" : "");
+  + (c.command ? " +pcm-state-consumer" : "")
+  + (c.ymWriter ? " +z80-ym-writer" : "");
 
 const hexAddr = (v) => (v === undefined ? "-" : `$${v.toString(16).padStart(4, "0")}`);

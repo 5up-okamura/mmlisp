@@ -25,6 +25,7 @@ import { assemble } from "../../tools/z80asm.mjs";
 import { stampLine } from "./config.mjs";
 import { buildRom } from "./rom.mjs";
 import { mixOne, mixTwo } from "./lut.mjs";
+import { checkWriterTrace, YM_BUSY_MASTER } from "./ym-writer.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -119,8 +120,12 @@ const LISTEN = argv.includes("--listen");
 const YM = argv.includes("--ym");
 // …and the PSG P1 experiments, which write $C00011 from the 68000.
 const PSG = argv.includes("--psg");
+// …and the Z80 YM writer P1 images, which replace b11..b14's reserved pad with
+// real instructions (R26 §59.3).
+const WRITER = argv.includes("--writer");
 const selected = CASES.filter((c) => (!ONLY || c.name.includes(ONLY))
   && (CONFLICT || !c.conflictOnly) && (LISTEN || !c.listenOnly) && (YM || !c.ymOnly) && (PSG || !c.psgOnly)
+  && (WRITER || !c.writerOnly)
   // The access-width witness runs in the required gate too: its DAC numbers
   // are informational, its verdict is not (R20 §48.3 step 1).
   && (!REQUIRED_ONLY || !c.informational || c.widthWitness)
@@ -204,6 +209,40 @@ for (const c0 of selected) {
   const steady = log.grabs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time);
   const beforeOutput = log.grabs.filter(([t]) => t < log.dac[0]?.time).length;
   console.log(`  requests: ${beforeOutput} before first DAC, ${log.grabs.length-beforeOutput-steady.length} outside measurement, ${steady.length} measured`);
+  // ── THE Z80 YM WRITER (R26 §59.4, §59.5) ─────────────────────────────
+  // Reconstructed from the chip's side: every access the Z80 made, the address
+  // latch tracked per part, and each data write attributed to the register that
+  // was latched when it arrived. The DAC's own stream and the engine's CSM pair
+  // come out of the same walk, so nothing has to be assumed about which write
+  // was whose.
+  if (c.ymWriter) {
+    const from = a.samples[0]?.time ?? 0, to = a.samples.at(-1)?.time ?? Infinity;
+    const w = checkWriterTrace(log, { entries: c.ymWriter.entries, from, to });
+    const live = c.ymWriter.entries.filter((e) => e.port !== null).length;
+    const laps = w.dac / r.cfg.cycleSlots;
+    const want = Math.floor(laps * live);
+    const secs = (to - from) / MCLK;
+    console.log(`  YM writer: ${w.writes} register writes in ${secs.toFixed(2)}s`
+      + ` (${(w.writes / secs).toFixed(1)}/s), ${w.matched} in the window's order`
+      + ` from entry ${w.phase};`
+      + ` DAC ${w.dac}, CSM ${w.csm}`);
+    if (w.writes) console.log(`  …busy: ${w.busyBefore} master after the slot's DAC write,`
+      + ` ${w.busyAfter} before the next (needs ${YM_BUSY_MASTER} either side);`
+      + ` settling and both frequency latches: ${w.settle ? `${w.settle} PROBLEMS` : "clean"}`);
+    // A count that is short by more than the lap in flight is a lost write.
+    if (live && w.matched !== w.writes)
+      result.errors.push(`${w.writes - w.matched} of ${w.writes} register writes did not`
+        + " follow the window");
+    if (Math.abs(w.writes - want) > live)
+      result.errors.push(`the window says ${want} writes in ${laps.toFixed(1)} laps`
+        + ` and the chip saw ${w.writes}`);
+    for (const p of w.problems) result.errors.push(`YM writer: ${p}`);
+    // §59.6: the YM is the Z80's and the PSG is the 68000's, checked by CPU.
+    const host = log.ym68k.filter((e) => e.time >= from && e.time <= to).length;
+    const z80psg = log.psgZ80.filter((e) => e.time >= from && e.time <= to).length;
+    if (host) result.errors.push(`${host} YM accesses came from the 68000 while the engine ran`);
+    if (z80psg) result.errors.push(`${z80psg} PSG writes came from the Z80`);
+  }
   const times = (pairs) => pairs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time)
     .map(([x,y]) => (y-x)/Z80_DIV).sort((x,y) => x-y);
   for (const [name, pairs] of [["request→release",log.grabs],["modeled stop→resume",log.stops]]) {

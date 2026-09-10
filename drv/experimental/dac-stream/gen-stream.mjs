@@ -124,7 +124,8 @@ const reserveOps = (cycles, why, fill) => {
 // the thing being measured.
 export const DEAD_DEFAULT = ["a", "b", "bc"];
 
-function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = null) {
+function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = null,
+  ymPlan = null) {
   const work = [];
   const g = slotIndex % cfg.groupSlots;
   // Which sample of a BUILT block this slot builds. The edge belongs to the
@@ -188,6 +189,13 @@ function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = n
     // part of that reservation and the rest of the block's budget still has to
     // fit around it — exactly as a CSM write draws on the block's YM budget.
     if (cfg.command && commandPlan) work.push(...(commandPlan.get(slotIndex) ?? []));
+    // THE Z80 YM WRITER, at the b11..b14 positions its reservation owns (R26
+    // §59.3) — after the mix, which is where the reserved pad it replaces was.
+    // That placement is not cosmetic: the slot's own DAC write raises the
+    // chip's BUSY for 1,386 master, and the writer's data write has to fall
+    // after that and far enough before the next slot's DAC write for its own
+    // BUSY to have cleared (§59.4).
+    if (cfg.ymWriter && ymPlan) work.push(...(ymPlan.get(slotIndex) ?? []));
     if (cfg.reserve) {
       const [, cycles, why] = cfg.reserve[b];
       // The RESERVED padding is padding too, and it sits between one piece of a
@@ -346,7 +354,7 @@ export function cyclePaths(cfg) {
  *   between one piece of a distributed computation and the next (R8 §23.3).
  */
 export function generate(cfg, extraWork = null, bootExtra = null, slotDead = null,
-  commandPlan = null) {
+  commandPlan = null, ymPlan = null) {
   const L = [];
   const slots = [];
   const P = (s = "") => L.push(s);
@@ -534,7 +542,8 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     const d0 = slotDead ? slotDead(i) : DEAD_DEFAULT;
     const spec = Array.isArray(d0) ? { dead: d0 } : d0;
     const workFill = spec.work ?? spec, padFill = spec.pad ?? spec;
-    const work = [...slotWork(cfg, i, workFill, commandPlan), ...(extraWork ? extraWork(i) : [])];
+    const work = [...slotWork(cfg, i, workFill, commandPlan, ymPlan),
+      ...(extraWork ? extraWork(i) : [])];
     // THE FETCH GOES AFTER THE PAD. `a` carries the next sample across the slot
     // boundary, so anything that runs after the fetch may not touch it — and
     // the pad's only odd-cost filler is `ld a,0`. Fetching last makes `a` dead

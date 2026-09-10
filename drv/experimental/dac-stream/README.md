@@ -307,6 +307,128 @@ them is audible. Written back to back they are 294..364 master apart (~6 µs);
 matters. These ROMs take no interrupt, so nothing can get between them here; a
 driver with a VBlank handler would mask across the pair, which is 24 cycles.
 
+## The Z80 YM writer, and what its reservation really buys (R26 §59)
+
+b11..b14 of every block have been reserved for the slot writer since R16 §41.1:
+**280 cycles a block and 120 bytes of code**, for four FM writes a block —
+2,496.9 a second. R26 replaced the pad with real instructions. The rate is not
+there, and the reason is bytes.
+
+**One write is 11 bytes and 89 cycles, and it cannot be shared.** The loop is
+eighty slots of straight-line code, so an opportunity that carries code carries
+it twenty times a lap. A subroutine would fix that and is not available:
+
+* `call`/`ret` is 27 cycles and `rst`/`ret` 21, against a 70-cycle position that
+  also has to fetch an entry and make three chip writes.
+* The queue cursor has nowhere to live but **SP**. Main BC carries a value
+  across 47 of the 80 slots for the decode, HL is the ring's play cursor and DE
+  is the DAC's data port — both read in every slot — IX is voice 1's source and
+  IYL is where the mixer parks voice 0's contribution.
+* SP and a call frame are mutually exclusive: `rst` pushes the return address at
+  SP-2, so the first `pop` inside the routine reads it instead of the queue.
+
+So the site is inline, and eleven bytes each is what decides everything:
+
+| candidate | B | cyc | entry | four a block | sites in 120 B | rate |
+| --- | ---: | ---: | ---: | --- | ---: | ---: |
+| **single stream, port in the entry** | **11** | **89** | 12 B | 356 cyc, 223 B | **10** | **1,248/s** |
+| port runs, the port in a RAM byte | 15 | 93 | 8 B | 372 cyc, 303 B | 7 | 874/s |
+| port fixed by placement, port 0 | 11 | 77 | 8 B | 308 cyc, 223 B | 10 | 1,248/s |
+| port fixed by placement, port 1 | 9 | 60 | 6 B | 240 cyc, **183 B** | 13 | 1,623/s |
+| absolute stores, port self-modified | 14 | 76 | 6 B | 304 cyc, 283 B | 8 | 999/s |
+
+`node drv/experimental/dac-stream/ym-writer.mjs` prints it, assembled for the
+bytes and summed from the documented cycle counts. **No candidate reaches four
+writes a block inside both reservations** — twenty sites of the built form are
+223 B against 120 and 356 cycles a block against 280 — and the port-1-only row,
+which is the only one whose cycles fit, can reach channels 4-6 and nothing else:
+`$28`, `$22`, `$27`, `$2A` and channels 1-3 are all port 0.
+
+§59.3's first candidate is the **port run**, and it comes out worst: with twenty
+independent inline sites "the current port" has no register to live in, so every
+site re-reads it from RAM (4 bytes, 17 cycles) — and the run-length countdown is
+not even in that figure. The single stream carries the port in each entry and
+gets run switching for nothing, which is why it is the one that was built.
+
+**What was built**, and what it measures:
+
+| | |
+| --- | --- |
+| sites | **10 of the 20 opportunities**, 11 B each + 3 B of cursor reload = **113 B of the 120 reserved** |
+| cycles | **188 of the 280** a block, and 89 in a slot that has 93 at the ceiling |
+| rate | **10 writes a lap = 1,248.4/s**, against 2,496.9 for four a block |
+| four limits | worst slot 83.8%, mean 76.9%, finished estimate **2,363 B** of 2,560 (197 B spare), RAM 8,192 |
+| chip | 37,156 register writes in 30 s, **37,156 in the window's order**, settling and both frequency latches clean, 0 YM accesses from the 68000, 0 PSG writes from the Z80 |
+| mailbox, in the same image | 61.2 updates/s, worst stop 1,432 master of 1,500, 80 of 80 slots swept |
+
+The site is ten instructions and one idea: `pop` is one byte and carries its
+address in SP, where an absolutely-addressed form is three.
+
+```
+pop  de        DE = the port to address ($4000, $4002 — or the bucket)
+pop  af        A = the register number        (F takes the odd byte)
+ld   (de),a
+inc  e         → the matching data port
+pop  af        A = the value
+ld   (de),a
+pop  de        DE = $4000, from the queue
+pop  af        A = $2a
+ld   (de),a    the DAC's address latch, put back inside the opportunity
+inc  e         DE = $4001 again, where every slot's DAC write expects it
+pop  af        …and past the word the mixer's `call` is about to use
+```
+
+**The port word is the commit.** An entry whose port word points at a two-byte
+bucket in the chip region makes no FM write at all — the register and the value
+go to RAM, and the only chip access left is the idempotent `$2A` re-latch. So an
+empty queue is not a path, it is the same path with a different pointer: the
+four cases §59.4 asks to be the same length are the same **instructions**, and
+`empty` and `dense` produce DAC streams that agree sample for sample. The
+producer's rule follows from it — write the register and the value first, the
+port word last — and `--fault port-first` is that rule broken.
+
+**Two things the instructions do not say, both found by running it.**
+
+*The stack and the queue are the same page, and one word an entry is the
+engine's.* `call mix_one` runs in every slot and pushes at SP-2, which — once
+the cursor has moved — is the last word the writer popped. For a queue consumed
+once that is free space; this window is static and re-read every lap, so the
+push was quietly rewriting the entry it had just read. The second lap re-latched
+`$02` instead of `$2a` and every DAC sample after it went into an FM register:
+3,373 Hz, 1,076 holes. The entry is now six words and the site pops six, using
+five.
+
+*A port-0 frequency pair may not straddle a block.* The engine's own CSM traffic
+writes `$AC` at b6 of every block and commits it with `$A8` at b8, and the chip
+has **one** holding register per part. The first `control` fixture put `$A4` at
+the last opportunity of one block and `$A0` at the first of the next; the
+analyzer said `$ac overwrote the frequency latch $a4 was holding`. It is a
+constraint on the producer, not on the writer, and `pairsWithinBlocks()` now
+refuses a window that breaks it.
+
+**BUSY, on both clocks.** The slot's own DAC write raises BUSY for 1,386 master;
+the writer's address write lands 3,555 master after it and its data write clears
+1,815 master before the next slot's DAC write. Both are checked from the
+instrument's own times, and the register-range settling, `$28`, `$30..$9E`,
+`$A0..$B6`, the address latch and **both** frequency latches are checked by the
+same `analyze.mjs` walk the JS gate uses.
+
+**The negatives** (`--fault`, on `Z80 YM writer P1, control`): `no-relatch`
+takes the DAC to 3,122 Hz and 11,192 of 11,193 writes out of the window;
+`slow-empty` — the idle path one byte the same and three cycles short — breaks
+the interval to 152,154 master; `port-bit` moves one entry to port 1 and is
+caught at the eighth write; `pitch-split` puts another upper write between a
+pair's halves and raises 432 frequency-latch problems; `port-first` commits an
+entry before its register and value are there.
+
+**What this does NOT settle.** The window is a **test fixture, not a transport**:
+one lap's worth of entries laid down by the 68000 before the Z80 starts, never
+refilled, so the same lap of writes repeats. Nothing here says how a producer
+would fill it, and the numbers that a transport design has to start from are
+these — **1,248.4 writes/s**, 12 queue bytes an entry of which a producer writes
+three, and a 194-write patch frame taking 19 laps (156 ms) to drain against the
+corpus's 246 steady writes a second and 337 with patches.
+
 **The listening tour.** `node drv/experimental/dac-stream/listen.mjs` builds two
 ROMs — one with the CSM test tone and one without — that play the SAME image the
 gates measure on a fixed 44-second timeline: each voice alone, an ordinary sum,
@@ -951,6 +1073,7 @@ generation time.
 | `corrector.mjs` | the bounded phase corrector: its arithmetic, the nine-bit debt and its ±112 limit, the seven `jr` ladders and the five ways to break it |
 | `protocol.mjs` | **the 68k/Z80 runtime protocol's one layout.** The 5-byte snapshot, the host's control block, the ordered writes each side makes, the wrap rule of every counter, the queue's records — and the Z80 equates, C header and JS model all emitted from it, so no offset is written down twice |
 | `proto-blocks.mjs` | the protocol as Z80 code: the host-control check, the snapshot publication and the logical position's advance, in one-slot pieces and in P1's single-block form |
+| `ym-writer.mjs` | **the Z80 YM writer**: the inline site and why it cannot be a subroutine, the six-word entry, the sequences §59.5 runs, the fixture negatives, the rule that a frequency pair may not straddle a block, and the priced comparison of every candidate against the 280-cycle / 120-byte reservation |
 | `command.mjs` | the PCM state MAILBOX: the host-side encoder that holds the waiting list on extended observation numbers and coalesces three level changes at one boundary into one bundle, the JS reference consumer, the branch-free Z80 pieces that make one decision a lap without touching main BC, and the packer that lays them into the b9/b10 positions the reservation owns |
 | `split-report.mjs` | what the distributed image costs, printed from the image itself: pieces, worst slot, mean, ladders, DAC interval, the code ledger and the four limits judged independently |
 | `decoder-eval.mjs` | the BlastEm harness for the observer, the corrector and the runtime protocol on both CPUs |

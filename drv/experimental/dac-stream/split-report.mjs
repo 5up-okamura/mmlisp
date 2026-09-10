@@ -8,7 +8,12 @@
 // check. This is the tool that produces them.
 //
 //   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
-import { buildConfig, stampLine, cmdBudgetCycles, CMD_SLOTS_USED } from "./config.mjs";
+import { buildConfig, stampLine, cmdBudgetCycles, CMD_SLOTS_USED,
+  ymBudgetCycles, YM_CODE_BUDGET } from "./config.mjs";
+import { ENTRY_BYTES, FORMS, asmBytes, YM_POSITIONS } from "./ym-writer.mjs";
+
+// How many of the twenty opportunities the 120-byte reservation buys.
+const YM_SITES = 10;
 import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "./decode-split.mjs";
 import { codeLedger } from "./gen-stream.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, LADDER_BYTES, MAX_QUANTA,
@@ -35,6 +40,14 @@ const PROFILES = [
   { tag: "…and the PCM state mailbox consumer",
     cfg: { correctorBudget: true, command: true },
     opt: { correct: true, proto: true, command: true } },
+  // …and b11..b14's reserved pad replaced by the Z80 YM writer's own
+  // instructions (R26 §59.3). Ten sites of eleven bytes and a cursor reload:
+  // 113 of the 120 bytes the reservation owns, and 247 of the 280 cycles a
+  // block. What it does NOT reach is four writes a block — see ym-writer.mjs.
+  { tag: "…and the Z80 YM writer",
+    cfg: { correctorBudget: true, command: true, ymWriter: true },
+    opt: { correct: true, proto: true, command: true,
+      ym: { sites: YM_SITES, base: 0x1e00 - YM_SITES * ENTRY_BYTES } } },
 ];
 
 // THE FOUR LIMITS, judged INDEPENDENTLY (R14 §37.4 step 4). One number over is a
@@ -148,6 +161,25 @@ for (const p of PROFILES) {
       + ` first at slot ${r.pack.firstCount}`);
     console.log(`     ${pad("stores pinned to", 22)}slots ${r.pack.pinned.join(", ")},`
       + ` inside the block whose edge (slot ${r.pack.edgeSlot}) is the last before the lap boundary`);
+  }
+  if (r.ym) {
+    // WHAT THE WRITER REALLY COST, against the two numbers §59.6 grades it by.
+    // The site is inline because it has to be, and its bytes are what decides
+    // how many of the twenty opportunities the reservation can carry — the
+    // shortfall is stated here rather than in prose.
+    const all = YM_POSITIONS.length * (cfg.cycleSlots / cfg.blockSamples);
+    console.log(`   YM writer   ${r.ym.sites} sites of ${all} opportunities,`
+      + ` ${r.ym.siteBytes} B each + ${r.ym.resetBytes} B of cursor reload`
+      + ` = ${r.ym.bytes} B of the ${YM_CODE_BUDGET} reserved`
+      + ` (${YM_CODE_BUDGET - r.ym.bytes} spare)`);
+    console.log(`     ${pad("worst block", 22)}${r.ym.worstBlock} cyc of the`
+      + ` ${ymBudgetCycles()} b11..b14 reserve`);
+    console.log(`     ${pad("rate", 22)}${r.ym.writesPerLap} writes a lap`
+      + ` = ${r.ym.writesPerSecond.toFixed(1)}/s`
+      + ` — four a block would be ${(all * cfg.rateHz / cfg.cycleSlots).toFixed(1)}/s`);
+    console.log(`     ${pad("four a block needs", 22)}${all * r.ym.siteBytes + r.ym.resetBytes} B`
+      + ` and ${YM_POSITIONS.length * FORMS[0].cycles} cyc a block — over BOTH reservations`);
+    console.log(`     ${pad("sites at", 22)}${r.ym.at.join(", ")}`);
   }
   console.log(`   settle      read → complete record ${r.gen.observer.settleMaster} master`
     + ` (${(r.gen.observer.settleMaster / cfg.machine.masterHz * 1000).toFixed(3)} ms)`);

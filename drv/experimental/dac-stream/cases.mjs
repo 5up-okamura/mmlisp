@@ -316,6 +316,28 @@ export const CASES = [
     informational: true, levelsMove: true, psgOnly: true,
   })),
 
+  // THE Z80 YM WRITER P1 (R26 §59.3-§59.5). The complete image — two voices,
+  // fifteen levels, CSM, the corrector, the mailbox and a real 68000 host — with
+  // b11..b14's reserved pad replaced by the writer's own instructions, and one
+  // lap's window of entries laid down by the 68000 before the Z80 starts.
+  //
+  // Every sequence is the SAME image with a different fixture: the code is
+  // eleven identical sites and a cursor reload, and what changes is only what
+  // the queue says. `empty` writes nothing to the chip at all — its entries
+  // point at the two-byte bucket — and it is the same instructions taking the
+  // same cycles as `dense`, which is what §59.4 asks the four paths to be.
+  //
+  // Opt-in with `--writer`: they are P1 experiments, not gates.
+  ...["control", "dense", "empty", "one", "ports", "steady", "burst"].map((seq) => ({
+    name: `Z80 YM writer P1, ${seq}`,
+    cfg: { voices: 2, complete: true, csm: true, csmHost: true, levels: 15,
+      workTarget: 0.839, correctorBudget: true, command: true, ymWriter: true },
+    split: { load: "divu", proto: { live: true, density: 1 },
+      ym: { sites: 10, sequence: seq },
+      place: { correct: true, proto: true, command: true } },
+    informational: true, levelsMove: true, writerOnly: true,
+  })),
+
   // HOST-YM P1 (§33.6 step 5, R24 §55.3). The complete image with the 68000
   // making ONE FM transaction every 64 iterations of its loop — a register
   // write to a muted, unused voice — on top of the mailbox it is already
