@@ -20,6 +20,8 @@ import { tourBytes } from "./tour.mjs";
 import { psgStream } from "./psg-stream.mjs";
 import { lutPages } from "./lut.mjs";
 import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, startBytes as pcm1StartBytes } from "./pcm1-ref.mjs";
+import { pairStream, encodePairTable, PAIRS_PER_GRAB } from "./pair-host.mjs";
+import { PCM1, pcm1Base } from "./config.mjs";
 import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
 import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
 import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
@@ -249,7 +251,28 @@ export function resolveCase(c0, { compensation = null, captureOffset = null, fau
   const ymw = c0.split?.ym ? ymFixtureFor(cfg, c0.split.ym, fault) : null;
   if (fault in YM_FAULTS && !ymw)
     throw new Error(`fault ${fault} only applies to a case with the Z80 YM writer in it`);
+  // THE PAIR TRANSPORT'S HOST (R28 §63.6 step 2): twice a frame, the 68000
+  // reads the expander's index and writes the groups whose time has come. The
+  // stream is pair-host.mjs's, encoded as a table in ROM; the wait is sized
+  // from the half-frame less an estimate of the loop's own cost, and the run
+  // reports the interval it produced.
+  const pairsHost = c0.pairs ? (() => {
+    const items = pairStream(c0.pairs.stream, cfg, 70 * cfg.z80Hz);
+    const t = encodePairTable(items, cfg);
+    const halfFrame = cfg.machine.frameMaster / 2;
+    const bodyCycles = 420;                       // the grab and its bookkeeping, roughly
+    const wait = Math.max(1, Math.round((halfFrame / MASTER_PER_CYCLE - bodyCycles - 22) / 10));
+    return { table: t.bytes, groups: t.groups, fifoBase: cfg.ram.fifo[0],
+      fifoLo: pcm1Base(cfg) + PCM1.fifoLo, wait,
+      iterCycles: bodyCycles + 10 * wait + 22, pairsPerGrab: PAIRS_PER_GRAB,
+      psg: c0.pairs.psg ? { bytes: psgStream(c0.pairs.psg) } : null };
+  })() : null;
   let grab = c0.grab ? { ...c0.grab }
+    : pairsHost ? { vdp: true, load: c0.split.load, bootNops: c0.split.bootNops,
+        pairs: pairsHost,
+        ...(c0.cfg?.csmHost ? { csmVoice: CSM_TEST_VOICE,
+          csmFreq: { ...CSM_TEST_FREQ, hiAt: cfg.ram.glob[0] + GLOB.csmHi,
+            loAt: cfg.ram.glob[0] + GLOB.csmLo } } : {}) }
     : c0.bankOnly ? { cooperative: true, disabled: true }
     : c0.calibrate ? { calibrate: true, disabled: true, vdp: !!c0.vdp }
     // An observer case has a display and a busy 68000. It has no transfer

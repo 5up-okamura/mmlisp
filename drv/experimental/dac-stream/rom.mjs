@@ -12,6 +12,7 @@
 // VDP's bus load in a later stage — so the first measurement is the Z80 alone
 // on the bus, which is the cleanest thing the machine can be asked.
 import { COOP } from "./cooperative.mjs";
+import { PAIRS_PER_GRAB } from "./pair-host.mjs";
 import { createHash } from "node:crypto";
 
 const ROM_SIZE = 0x80000;         // 512 KB, padded
@@ -137,6 +138,11 @@ class M68k {
   moveWDabs(d, addr) { this.n(16); this.w(0x33c0 | d); this.a(addr, 2); }          // move.w Dn,(abs).l
   cmpiWD(imm, d) { this.n(8); this.w(0x0c40 | d); this.w(imm); }                   // cmpi.w #i,Dn
   addaW(d, a) { this.n(8); this.w(0xd0c0 | (a << 9) | d); }                        // adda.w Dn,An
+  addWDD(s, d) { this.n(4); this.w(0xd040 | (d << 9) | s); }                       // add.w Ds,Dd
+  addqLA(n, a) { this.n(8); this.w(0x5088 | ((n & 7) << 9) | a); }                 // addq.l #n,An
+  bhi(name) { this.n(10); this.w(0x6200); this.fix.push([this.pc, name]); this.w(0); }   // unsigned higher
+  // lea (0,An,Dn.w),Am — brief extension word: D/A=0 (data), reg, W/L=0, scale 0, disp 0
+  leaIdx(an, dn, am) { this.n(12); this.w(0x41f0 | (am << 9) | an); this.w((dn << 12) | 0x0000); }
   cmpBAD(a, d) { this.reg(1); this.n(8); this.w(0xb010 | (d << 9) | a); }          // cmp.b (An),Dn
   // The bus-request port through a register: $A11100 is not RAM, so the width
   // rule does not reach it, and reaching it this way is what took twenty-four
@@ -270,6 +276,9 @@ const TOUR = 0x000f40;
 // then that frame's bytes, in the order the reference driver emitted them. It
 // lives well clear of the 68000's code and the Z80 image.
 const PSGTAB = 0x008000;
+// The pair transport's group table (pair-host.mjs encodePairTable): time,
+// count|flags, pairs. Beyond the PSG table, which it may share a rom with.
+const PAIRTAB = 0x020000;
 const PSG_PORT = 0xc00011;
 /** How many frames a packed PSG table holds — one length byte each. */
 const psgFrames = (bytes) => { let n = 0;
@@ -277,6 +286,30 @@ const psgFrames = (bytes) => { let n = 0;
   return n; };
 const CAL = { markPair: 0x1a, nop: 0x10, divu: 0x12, overflow: 0x14,
   divuBig: 0x16, masked: 0x18, dbra: 0x1c, n: 32, nops: 256, dbras: 2048 };
+
+// One frame of PSG from the packed table every OTHER iteration of a host that
+// runs twice a frame (R25 §57.3's replay, for the pair host). a0 walks the
+// table; the pointer lives in 68k RAM between iterations.
+function psgFrame68k(m, PR) {
+  const PTR = PROTO_WORK + 104;
+  m.moveLD(6, 0); m.andiW(1, 0); m.bne("psgodd");
+  m.moveLabsA(PTR, 0);
+  m.moveq(0, 0);
+  m.moveBApost(0, 0);
+  m.beq("psgnone2");
+  m.label("psgloop2");
+  m.moveBApost(0, 1);
+  m.moveBDabs(1, PSG_PORT);
+  m.subqL(1, 0);
+  m.bne("psgloop2");
+  m.label("psgnone2");
+  m.cmpaLimm(PSGTAB + PR.psg.bytes.length, 0);
+  m.bcs("psgok2");
+  m.leaAbs(PSGTAB, 0);
+  m.label("psgok2");
+  m.moveLAabs(0, PTR);
+  m.label("psgodd");
+}
 
 // The payload copy, the commit, and the four ways it is deliberately broken.
 // The gate has to FAIL on each of these; a check that cannot fail is not a
@@ -364,7 +397,7 @@ export function buildRom(image, samples = null, grab = null) {
   if (image.length > 0x2000) throw new Error("Z80 upload exceeds RAM");
   // A protocol case carries no `bytes`: what it moves is the layout, not a
   // block copy, and its sizes come from protocol.mjs.
-  if (grab && !grab.disabled && !grab.proto
+  if (grab && !grab.disabled && !grab.proto && !grab.pairs
     && (!Number.isInteger(grab.bytes) || grab.bytes < 1 || grab.bytes > 256))
     throw new Error("transfer size must be 1..256 bytes");
   if (grab?.every !== undefined && (!Number.isInteger(grab.every) || grab.every < 0 || grab.every > 65535))
@@ -675,6 +708,113 @@ export function buildRom(image, samples = null, grab = null) {
       emitTransfer(m, grab, { marks });
       m.rte();
     }
+  } else if (grab?.pairs) {
+    // ── THE PAIR TRANSPORT'S HOST (R28 §63.3 D3/D6, step 2) ──────────────
+    // Twice a frame. EVERYTHING THAT CAN HAPPEN BEFORE THE BUS IS TAKEN DOES
+    // (R20 §48.4, again): the groups whose time has come are gathered into a
+    // buffer in 68k RAM, the destination and the unrolled copy's entry point
+    // are computed, and the grab itself is the request, the grant poll, ONE
+    // read of the expander's index and a straight run of `move.b (a0)+,(a1)+`.
+    // The first version parsed the table with the bus held and stopped the Z80
+    // for 5,800 master a grab.
+    //
+    // WHERE THE PAIRS GO is decided from the index read in the PREVIOUS grab:
+    // H = Cprev + AHEAD, with AHEAD past what the consumer can take between two
+    // grabs (sixteen a lap, a grab every ~1.04 laps, so at most ~20) — the
+    // pairs always land ahead of it, and the head needs no in-grab arithmetic.
+    // The cost is latency: a pair waits AHEAD - ~17 steps, about 3.5 ms, on top
+    // of the half-frame grab period. A grab never straddles the page end: the
+    // planner stops filling where the ring would wrap.
+    //
+    // Registers: a2 = the table pointer (ROM), a3 = fifoLo in Z80 RAM, a4 = the
+    // FIFO page in Z80 RAM, a5 = the bus port, a6 = the copy's entry point,
+    // a0/a1 = the copy's source and destination, d6 = the iteration counter,
+    // d7 = Cprev (the index read last time).
+    const PR = grab.pairs;
+    const AHEAD = 24;
+    const BUF = PROTO_WORK + 96;                   // up to 2 * PAIRS_PER_GRAB bytes
+    const NBYTES = PROTO_WORK + 112;               // how many of them, this grab
+    m.moveLimmD(LOAD_DIVIDEND, 5);
+    initLoad(m, load, { fault: grab.fault });
+    m.leaAbs(Z80_BUSREQ, 5);
+    m.leaAbs(Z80_BASE + PR.fifoBase, 4);
+    m.leaAbs(Z80_BASE + PR.fifoLo, 3);
+    m.leaAbs(PAIRTAB, 2);
+    if (PR.psg) { m.leaAbs(PSGTAB, 0); m.moveLAabs(0, PROTO_WORK + 104); }
+    m.moveq(0, 7);                                 // Cprev
+    m.moveq(0, 6);                                 // the iteration counter
+    m.label("idle");                               // …the common tail's `bra idle`
+    m.label("prloop");
+    // THE WAIT COMES FIRST. The Z80 is booting when the bus is released — its
+    // boot zeroes the whole pair page — so a grab taken at once wrote five pairs
+    // that boot then erased (the dense case lost its first five writes).
+    m.moveWimmD(PR.wait, 1);
+    m.label("prw"); m.dbra(1, "prw");
+    // ── plan, with the bus free ───────────────────────────────────────
+    m.moveLD(7, 5); m.addWimmD(AHEAD, 5); m.andiW(127, 5);      // d5 = H
+    m.leaAbs(BUF, 1);
+    m.moveq(0, 4);                                 // d4 = pairs planned
+    m.label("prgroup");
+    m.moveq(0, 0); m.moveq(0, 1);
+    m.moveBApost(2, 0);                            // time lo
+    m.moveBApost(2, 1);                            // time hi
+    m.lslWimm(8, 1); m.orWDD(0, 1);                // d1 = the group's time
+    m.moveBApost(2, 0);                            // count
+    m.tstL(0);
+    m.beq("prend");                                // count 0: the table's end
+    m.cmpWDD(6, 1);                                // time > now → not yet
+    m.bhi("prwait");
+    m.moveLD(0, 2);                                // d2 = count
+    m.w(0xd044);                                   // add.w d4,d0 → planned + count
+    m.cmpiWD(PAIRS_PER_GRAB, 0);
+    m.bhi("prwait");                               // it does not fit: next grab
+    m.moveLD(0, 1); m.w(0xd245);                   // add.w d5,d1 → H + total
+    m.cmpiWD(128, 1);
+    m.bhi("prwait");                               // it would straddle the page end
+    m.label("prpair");
+    m.moveBpostA(2, 1); m.moveBpostA(2, 1);        // op, val → the buffer
+    m.addqL(1, 4);
+    m.subqL(1, 2);
+    m.bne("prpair");
+    m.cmpiWD(PAIRS_PER_GRAB, 4);
+    m.bcs("prgroup");                              // room for another group?
+    m.bra("prplanned");
+    m.label("prwait");
+    m.subqLA(3, 2);                                // back to this group's header
+    m.bra("prplanned");
+    m.label("prend");
+    m.subqLA(3, 2);                                // stay on the terminator
+    m.label("prplanned");
+    // The destination, and the copy's entry point: 2 * PAIRS_PER_GRAB moves of
+    // one word each, entered (PAIRS_PER_GRAB - planned) * 2 moves in — so
+    // 4 * (PAIRS_PER_GRAB - planned) bytes past the table's start.
+    m.moveLD(5, 0); m.w(0xd040); m.leaIdx(4, 0, 1);      // a1 = fifo + 2H
+    m.moveWimmD(PAIRS_PER_GRAB, 0); m.w(0x9044);         // d0 = PPG - planned
+    m.w(0xd040); m.w(0xd040);                            // …x4
+    const fixLea = m.pc + 2;                             // the table's address, patched below
+    m.leaAbs(0, 6);
+    m.w(0xd0c0 | (6 << 9) | 0);                          // adda.w d0,a6
+    m.leaAbs(BUF, 0);
+    m.moveq(0, 7);                                       // Cprev's upper bytes
+    // ── the grab ──────────────────────────────────────────────────────
+    m.moveWimmA(0x0100, 5);
+    m.label("prg");
+    m.moveWAtoD(5, 0);
+    m.andiW(0x0100, 0);
+    m.bne("prg");
+    m.moveBAtoD(3, 7);                             // Cprev = fifoLo …
+    m.lsrWimm(1, 7);                               // … as a pair index
+    m.w(0x4ed6);                                   // jmp (a6)
+    const tab = m.pc;
+    m.z80Xfer(() => { for (let i = 0; i < 2 * PAIRS_PER_GRAB; i++) m.moveBpost(); });
+    m.moveWimmA(0x0000, 5);                        // release
+    // …the entry point's base, now that the table's address is known.
+    m.b[fixLea - m.org] = (tab >>> 24) & 0xff; m.b[fixLea - m.org + 1] = (tab >>> 16) & 0xff;
+    m.b[fixLea - m.org + 2] = (tab >>> 8) & 0xff; m.b[fixLea - m.org + 3] = tab & 0xff;
+    // ── the next iteration ────────────────────────────────────────────
+    m.addqL(1, 6);
+    if (PR.psg) psgFrame68k(m, PR);
+    m.bra("prloop");
   } else if (grab?.vdp && grab.disabled) {
     // The observer's host: a VDP that is drawing and a 68000 that is busy, and
     // nothing that touches the Z80 bus. Whatever the Z80 reads, it reads while
@@ -1488,6 +1628,8 @@ export function buildRom(image, samples = null, grab = null) {
   if (grab?.proto?.queue) rom.set(Uint8Array.from(grab.proto.record), QREC);
   if (grab?.proto?.tour) rom.set(Uint8Array.from(grab.proto.tour.flat()), TOUR);
   if (grab?.proto?.psg) rom.set(Uint8Array.from(grab.proto.psg.bytes), PSGTAB);
+  if (grab?.pairs) rom.set(Uint8Array.from(grab.pairs.table), PAIRTAB);
+  if (grab?.pairs?.psg) rom.set(Uint8Array.from(grab.pairs.psg.bytes), PSGTAB);
   put(0x100, "SEGA MEGA DRIVE ", 16);
   put(0x110, "(C)MMLISP 2026  ", 16);
   put(0x120, "MMLISP DAC-STREAM PROBE", 48);

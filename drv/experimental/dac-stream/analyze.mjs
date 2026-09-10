@@ -143,9 +143,21 @@ export function checkWriteStream(writes) {
   // holding register live across other traffic, so a second upper write before
   // the commit silently loses the first. Checked on its own, and separately
   // from the address latch above.
+  //
+  // WHICH LATCH, FROM THE CHIP AND NOT FROM A GUESS (R28, step 2). Nuked-OPN2
+  // (third_party/Nuked-OPN2/ym3438.c, from the die) keeps TWO holding
+  // registers: `reg_a4` for $A4-$A6, committed by $A0-$A2, and `reg_ac` for
+  // $AC-$AE, committed by $A8-$AA — and each is ONE register for both parts.
+  // So a ch3 special-mode pair (the engine's CSM traffic) and a normal pitch
+  // pair never share a latch, while an upper write on port 1 does clobber an
+  // uncommitted upper on port 0. The earlier model here — one latch per port
+  // covering both groups — was wrong both ways; it is what made R26 §60.7 read
+  // CSM's $AC as a threat to a $A4 pair. BlastEm's ym2612.c latches per
+  // channel, which is more lenient than the chip; this checks the chip.
   const COMMIT = { 0xa0: 0xa4, 0xa1: 0xa5, 0xa2: 0xa6, 0xa8: 0xac, 0xa9: 0xad, 0xaa: 0xae };
   const isUpper = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);
-  const held = [null, null];    // port -> the upper register waiting to commit
+  const groupOf = (r) => (r >= 0xa8 && r <= 0xae ? 1 : 0);   // reg_ac : reg_a4
+  const held = [null, null];    // latch group -> the upper register waiting to commit
   for (const w of writes) {
     if (w.kind === "addr") { lastAddr[w.port] = w; continue; }
     const a = lastAddr[w.port];
@@ -157,15 +169,17 @@ export function checkWriteStream(writes) {
         + ` address write (needs ${YM.wait.addrToOwnData})`);
     }
     if (isUpper(w.reg)) {
-      if (held[w.port] !== null && held[w.port] !== w.reg)
-        problems.push(`cycle ${w.cycle}: $${w.reg.toString(16)} overwrote the frequency`
-          + ` latch $${held[w.port].toString(16)} was holding, before its lower write`);
-      held[w.port] = w.reg;
+      const g = groupOf(w.reg);
+      if (held[g] !== null && (held[g].reg !== w.reg || held[g].port !== w.port))
+        problems.push(`cycle ${w.cycle}: port ${w.port} $${w.reg.toString(16)} overwrote the frequency`
+          + ` latch port ${held[g].port} $${held[g].reg.toString(16)} was holding, before its lower write`);
+      held[g] = { reg: w.reg, port: w.port };
     } else if (COMMIT[w.reg] !== undefined) {
-      if (held[w.port] !== COMMIT[w.reg])
-        problems.push(`cycle ${w.cycle}: $${w.reg.toString(16)} committed a frequency latch`
-          + ` holding ${held[w.port] === null ? "nothing" : `$${held[w.port].toString(16)}`}`);
-      held[w.port] = null;
+      const g = groupOf(w.reg);
+      if (held[g] === null || held[g].reg !== COMMIT[w.reg] || held[g].port !== w.port)
+        problems.push(`cycle ${w.cycle}: port ${w.port} $${w.reg.toString(16)} committed a frequency latch`
+          + ` holding ${held[g] === null ? "nothing" : `port ${held[g].port} $${held[g].reg.toString(16)}`}`);
+      held[g] = null;
     }
     const r = rangeOf(w.reg);
     const need = YM.wait[r] ?? 0;

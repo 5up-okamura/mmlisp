@@ -27,6 +27,8 @@ import { buildRom } from "./rom.mjs";
 import { mixOne, mixTwo } from "./lut.mjs";
 import { checkWriterTrace, YM_BUSY_MASTER } from "./ym-writer.mjs";
 import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, endFor as pcm1EndFor, reference as pcm1Reference } from "./pcm1-ref.mjs";
+import { expectedWrites } from "./pair-host.mjs";
+import { PCM1, PCM1_BASE_OFF } from "./config.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");
@@ -254,6 +256,87 @@ for (const c0 of selected) {
     if (host) result.errors.push(`${host} YM accesses came from the 68000 while the engine ran`);
     if (z80psg) result.errors.push(`${z80psg} PSG writes came from the Z80`);
   }
+  // ── THE PAIR TRANSPORT (R28 §63.6 step 2) ────────────────────────────
+  // Two judgements from the instrument's own records: every FM data write the
+  // Z80 made — attributed to the register its part had latched — is the
+  // stream's, per port and in order, with the DAC and the CSM pair taken out;
+  // and every DAC byte matches the one-voice reference driven by the engine's
+  // own writes to its state block (the probe logs them), not by what the host
+  // meant to send.
+  if (c.pairsGate) {
+    const groups = c.grab.pairs.groups;
+    const want = expectedWrites(groups);
+    const latch = [null, null];
+    const seen = [[], []];
+    const CSM = new Set([0xac, 0xa8]);
+    const dac0 = log.dac[0]?.time ?? 0;
+    for (const e of log.ymZ80) {
+      if (e.read) continue;
+      if (e.kind === "addr") { latch[e.part] = e.byte; continue; }
+      const reg = latch[e.part];
+      if (e.time < dac0 || reg === null) continue;
+      if (e.part === 0 && (reg === 0x2a || CSM.has(reg))) continue;
+      seen[e.part].push({ reg, val: e.byte, time: e.time });
+    }
+    for (const p of [0, 1]) {
+      const n = seen[p].length;
+      if (n > want[p].length) result.errors.push(`pairs: port ${p} saw ${n} writes, the stream has ${want[p].length}`);
+      for (let i = 0; i < Math.min(n, want[p].length); i++) {
+        const x = seen[p][i], y = want[p][i];
+        if (x.reg !== y.reg || x.val !== y.val) {
+          result.errors.push(`pairs: port ${p} write ${i} was $${x.reg.toString(16)}=$${x.val.toString(16)},`
+            + ` the stream says $${y.reg.toString(16)}=$${y.val.toString(16)}`);
+          break;
+        }
+      }
+    }
+    // The engine's state writes, as events for the reference.
+    const events = [];
+    const st = { src: 0, end: 0, step: 1, sgen: 0, pgen: 0 };
+    const levelWrites = [], masterWrites = [];
+    for (const w of log.ramWrites) {
+      if (w.region !== "glob") continue;
+      const off = w.addr - PCM1_BASE_OFF;
+      if (off === PCM1.stSrc) st.src = (st.src & 0xff00) | w.value;
+      else if (off === PCM1.stSrc + 1) st.src = (st.src & 0xff) | (w.value << 8);
+      else if (off === PCM1.stEnd) st.end = (st.end & 0xff00) | w.value;
+      else if (off === PCM1.stEnd + 1) st.end = (st.end & 0xff) | (w.value << 8);
+      else if (off === PCM1.stStep) st.step = w.value;
+      else if (off === PCM1.startGen && w.value !== st.sgen) {
+        st.sgen = w.value; events.push({ kind: "start", at: w.time, src: st.src, end: st.end, step: st.step, seq: events.length });
+      } else if (off === PCM1.stopGen && w.value !== st.pgen) {
+        st.pgen = w.value; events.push({ kind: "stop", at: w.time, seq: events.length });
+      } else if (off === PCM1.level) levelWrites.push(w);
+      else if (off === PCM1.master) masterWrites.push(w);
+    }
+    // The level pages at each block edge: the last value written before the
+    // edge's own slot (the STORE arm never runs in that slot).
+    const B = r.cfg.blockSamples, lead = r.cfg.lead, lutPage = r.cfg.ram.lut[0] >> 8;
+    const dacT = log.dac.map((d) => d.time);
+    const edges = [];
+    let li = 0, mi = 0, lv = lutPage + r.cfg.levels - 1, mv = lutPage + r.cfg.levels - 1;
+    for (let K = 2; (B * K - lead - 1) < dacT.length; K++) {
+      const t = dacT[B * K - lead - 1];
+      while (li < levelWrites.length && levelWrites[li].time < t) lv = levelWrites[li++].value;
+      while (mi < masterWrites.length && masterWrites[mi].time < t) mv = masterWrites[mi++].value;
+      edges.push({ cycle: t, v0: lv - lutPage, master: mv - lutPage });
+    }
+    const ref = pcm1Reference(r.cfg, PCM1_BANK, events, dacT, edges);
+    let bad = -1;
+    for (let i = 0; i < log.dac.length; i++) if (log.dac[i].value !== ref(i)) { bad = i; break; }
+    if (bad >= 0) result.errors.push(`pairs: DAC sample ${bad} was ${log.dac[bad].value}, the reference says ${ref(bad)}`);
+    // Stops from the first DAC sample on: the boot upload holds the bus for
+    // the whole image and is not a runtime grab.
+    const stops = log.stops.filter(([x]) => x >= dac0).map(([x, y]) => y - x);
+    const over = stops.filter((x) => x > 1500).length;
+    console.log(`  pairs: chip saw ${seen[0].length}+${seen[1].length} FM writes of ${want[0].length}+${want[1].length}`
+      + ` in the table; ${events.length} PCM events; ${log.grabs.length} grabs,`
+      + ` stop ${stops.length ? Math.min(...stops) : 0}..${stops.length ? Math.max(...stops) : 0} master,`
+      + ` ${over} over 1,500; DAC ${bad < 0 ? "all match the reference" : "MISMATCH"}`);
+    if (over) result.errors.push(`pairs: ${over} bus stops longer than 1,500 master`);
+    if (seen[0].length + seen[1].length === 0 && want[0].length + want[1].length > 0)
+      result.errors.push("pairs: the chip saw no FM writes at all");
+  }
   const times = (pairs) => pairs.filter(([t]) => t >= a.samples[0]?.time && t <= a.samples.at(-1)?.time)
     .map(([x,y]) => (y-x)/Z80_DIV).sort((x,y) => x-y);
   for (const [name, pairs] of [["request→release",log.grabs],["modeled stop→resume",log.stops]]) {
@@ -337,7 +420,7 @@ for (const c0 of selected) {
   }
   // TRANSFERS: the same payload, order, count, commit and carry-over checks in
   // every mode (§12.2 B). Only the acceptance criterion differs.
-  if (c.grab && !c.grab.disabled) {
+  if (c.grab && !c.grab.disabled && !c.grab.pairs) {
     const windows = (c.grab.cooperative || c.grab.hint) ? windowGenerations(log) : null;
     // The diagnostic payload is the handler's own state: order and count are
     // still predictable, the content is not.

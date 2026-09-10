@@ -196,8 +196,9 @@ export const RAM_1V = {
   phase: [0x1b00, 0x1c00],  // 256 B, page aligned — the observer's phase table
   ring: [0x1c00, 0x1d00],   // 256 B — the finished samples
   fifo: [0x1d00, 0x1e00],   // 256 B — the {op,val} pair ring (R28 §63.3 D3)
-  state: [0x1e00, 0x1e60],  // 96 B — PCM live/staged state, expander state, dispatch
+  state: [0x1e00, 0x1e60],  // 96 B — reserved for the expander's later needs
   pub: [0x1e60, 0x1e80],    // 32 B — the runtime protocol (protocol.mjs)
+                            //   (the PCM state block is in the globals: PCM1)
   glob: [0x1f00, 0x1f80],   // 128 B
   stack: [0x1f80, 0x2000],  // 128 B
 };
@@ -205,32 +206,46 @@ export const RAM_1V = {
 // The one-voice state block, by offset from state[0]. Every byte the block edge,
 // the expander and the 68000 touch by absolute address is named here.
 //
+// THE STATE LIVES IN THE GLOBALS PAGE, at glob + $30, for two reasons. The
+// expander's store handler maps a pair `{op, val}` with op < $22 onto
+// `(PCM1_BASE + op) := val` — one handler for the levels, the staged start and
+// both generation bumps — so the 68000-writable bytes are the first $22 of the
+// block and the Z80's own bytes sit above them, out of any op's reach. And the
+// BlastEm probe already logs every Z80 write to $1F00..$1F7F, so the instant the
+// engine consumed a command is on the instrument's log for free.
+//
 // A START OR A STOP IS A GENERATION, NOT A FLAG. A byte the 68000 sets and the
 // Z80 clears has a window between the Z80's read and its clear, and a bus grab
 // lands at any machine-cycle boundary — a start written in that window would be
-// cleared unseen. So the 68000 INCREMENTS `startGen` (after the three staged
-// bytes) and the Z80 keeps `lastStart`, acts when they differ, and latches the
-// value it read: a bump that lands between the read and the latch stays
-// different and is acted on at the next edge. `stopGen` / `lastStop` likewise.
+// cleared unseen. So the host WRITES A NEW GENERATION into `startGen` (after
+// the three staged bytes) and the Z80 keeps `lastStart`, acts when they differ,
+// and latches the value it read: a bump that lands between the read and the
+// latch stays different and is acted on at the next edge. `stopGen` /
+// `lastStop` likewise.
+export const PCM1_BASE_OFF = 0x30;                 // from glob[0]
+export const pcm1Base = (cfg) => cfg.ram.glob[0] + PCM1_BASE_OFF;
+export const PCM1_OP_LIMIT = 0x22;                 // ops below this are commands
 export const PCM1 = {
-  liveEnd: 0x00,    // u16 the address the play pointer parks at (D2); Z80-owned
-  step: 0x02,       // u8  (unused: the live step is the operand of `mix_st`)
-  stSrc: 0x03,      // u16 68k: the staged start address, in the window
-  stEnd: 0x05,      // u16 68k: the staged end, `sampleEnd - 16 * step`
-  stStep: 0x07,     // u8  68k: the staged 2^k step
-  startGen: 0x08,   // u8  68k: bumped after the three staged bytes are written
-  stopGen: 0x09,    // u8  68k: bumped to stop the voice at the next edge
-  lastStart: 0x0a,  // u8  Z80: the startGen it last acted on
-  lastStop: 0x0b,   // u8  Z80: the stopGen it last acted on
-  parkMask: 0x0c,   // u8  Z80: the compare's answer, $ff when the voice parks
-  fifoLo: 0x10,     // u8  the expander's FIFO position — what the 68000 reads (D5)
-  srcLo: 0x11,      // u16 the expander's current source pointer (FIFO or ROM body)
-  mode: 0x13,       // u8  $ff while the source is the FIFO, $00 inside a body
-  port: 0x14,       // u8  the current port's data-port low byte ($01 / $03)
-  chOff: 0x15,      // u8  the channel offset a body's registers are shifted by
-  fifoSave: 0x16,   // u16 the FIFO pointer, saved while a body is being expanded
-  dispatch: 0x20,   // 32 x u16 the expander's jump table
+  // ── 68000-writable, one byte per op ($00..$21) ──────────────────────
+  bucket: 0x00,     // u8  where op $00 (IDLE) lands: nothing reads it
+  level: 0x01,      // u8  the voice's absolute LUT page (host-computed)
+  master: 0x02,     // u8  the master's absolute LUT page
+  stSrc: 0x03,      // u16 the staged start address, in the window
+  stEnd: 0x05,      // u16 the staged end, `sampleEnd - 16 * step`
+  stStep: 0x07,     // u8  the staged 2^k step
+  startGen: 0x08,   // u8  a NEW value here, after the staged bytes, is a start
+  stopGen: 0x09,    // u8  a new value here is a stop at the next edge
+  port: 0x20,       // op $20 is PORT — dispatched before the store, never stored
+  // ── Z80-owned, above any op's reach ─────────────────────────────────
+  liveEnd: 0x22,    // u16 the address the play pointer parks at (D2)
+  lastStart: 0x24,  // u8  the startGen it last acted on
+  lastStop: 0x25,   // u8  the stopGen it last acted on
+  parkMask: 0x26,   // u8  the compare's answer, $ff when the voice parks
+  fifoLo: 0x27,     // u8  the expander's consumer index — what the 68000 reads
+  size: 0x28,
 };
+export const PCM1_OPS = { IDLE: 0x00, LEVEL: 0x01, MASTER: 0x02, SRC_LO: 0x03, SRC_HI: 0x04,
+  END_LO: 0x05, END_HI: 0x06, STEP: 0x07, START: 0x08, STOP: 0x09, PORT: 0x20 };
 
 // Where the parked voice reads from: the top PAGE of the sample bank, which the
 // exporter fills with silence (R28 §63.3 D2). It is above every sample's end,
@@ -239,23 +254,42 @@ export const PCM1 = {
 // most 15 x 8 bytes past the park point before the next edge re-parks it.
 export const PCM1_SILENCE = 0xff00;
 
-// The per-block reservations of the one-voice engine. b1..b4 belong to the
-// corrector (as in RESERVE_2CH_CORR); b5..b12 hold the expander sites, which
-// are EXECUTED as padding until §63.6 step 2 writes them; b13 is the head-room
-// slot the decode's pieces need most; b14/b15/b0 carry the real PCM edge.
-export const EXPANDER_SITE_CYCLES = 130;
-export const EXPANDER_POSITIONS = [5, 6, 7, 8, 9, 10, 11, 12];
-export const RESERVE_1V = Array.from({ length: 16 }, (_, b) => {
-  if (b >= 1 && b <= 4) return [b, 0, "the bounded corrector's (R10 §29.5)"];
-  if (EXPANDER_POSITIONS.includes(b))
-    return [b, EXPANDER_SITE_CYCLES, "one expander site: fetch a pair, dispatch, one padded handler (R28 §63.3 D4)"];
-  if (b === 0) return [b, 0, "the block edge part B — IMPLEMENTED: the staged start applied before the first mix"];
-  if (b === 15) return [b, 0, "the block edge part A — IMPLEMENTED: the level pages and the park"];
-  return [b, 0, "free for the decode's pieces"];
-});
-export const CODE_ESTIMATE_1V = [
-  ["expander routine", 260, "the dispatch, six handlers padded to one length, the self-idle and the index"],
-];
+// THE EXPANDER'S SITES (R28 §63.3 D4, step 2). Sixteen steps a lap, each two
+// pieces in two slots — A fetches the pair and runs one of three balanced arms
+// (RAW / PORT / STORE), B idles the consumed pair, advances the pointer and
+// publishes the index — so position p of the 128-pair page is always consumed
+// by step p mod 16, at a fixed slot. Three steps a block at (b5,b7) (b9,b10)
+// (b11,b12), and one more at (b3,b4) of the block that starts the lap. Nothing
+// lands on b6 or b8, where the engine's own CSM pair writes the frequency latch;
+// the one A-site pair that straddles them (b5 → b9) is where a producer must
+// not place a pitch pair's two halves (see EXPANDER_UNSAFE_PAIR_STARTS).
+export const EXPANDER_STEPS = 16;
+export const EXPANDER_SITES_PER_BLOCK = [[5, 7], [9, 10], [11, 12]];
+export const EXPANDER_EXTRA_SITE = [3, 4];
+/** The (A slot, B slot) pairs for one lap, in consumption order. */
+export function expanderSites(cfg) {
+  const B = cfg.blockSamples, n = cfg.cycleSlots;
+  const slotOf = (block, b) => ((block * B + b - cfg.lead) % n + n) % n;
+  const list = [];
+  for (let block = 0; block < n / B; block++) {
+    const at = block === 0 ? [EXPANDER_EXTRA_SITE, ...EXPANDER_SITES_PER_BLOCK] : EXPANDER_SITES_PER_BLOCK;
+    for (const [a, b] of at) list.push({ block, ba: a, bb: b, a: slotOf(block, a), b: slotOf(block, b) });
+  }
+  list.sort((x, y) => x.a - y.a);
+  if (list.length !== EXPANDER_STEPS) throw new Error(`${list.length} expander steps, not ${EXPANDER_STEPS}`);
+  return list;
+}
+/** Step indices whose A-site is followed by the CSM pair before the next A-site. */
+export const expanderUnsafePairStarts = (cfg) =>
+  expanderSites(cfg).map((s, k) => (s.ba === 5 ? k : -1)).filter((k) => k >= 0);
+
+// The per-block reservations of the one-voice engine: nothing is reserved any
+// more — the corrector, the edge and the expander are all real code.
+export const RESERVE_1V = Array.from({ length: 16 }, (_, b) => [b, 0,
+  b === 0 ? "the block edge part B — IMPLEMENTED: the staged start applied before the first mix"
+  : b === 15 ? "the block edge part A — IMPLEMENTED: the level pages and the park"
+  : "free for the decode's pieces and the expander's sites"]);
+export const CODE_ESTIMATE_1V = [];
 
 export const RAM = RAM_P1;
 

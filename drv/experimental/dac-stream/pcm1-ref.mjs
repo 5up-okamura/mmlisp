@@ -8,7 +8,7 @@
 // pointer at a block's first sample, its step, the END it parks at, and the
 // host's starts and stops as events in time. It reads nothing of the engine's
 // state — only the host's own events and the DAC's timestamps.
-import { PCM1, PCM1_SILENCE } from "./config.mjs";
+import { PCM1, PCM1_SILENCE, pcm1Base } from "./config.mjs";
 import { mixOne, SILENCE } from "./lut.mjs";
 import { PHASE_TABLE } from "./observer.mjs";
 
@@ -36,7 +36,7 @@ export const endFor = (s, step) => (s.at + s.bytes - 16 * step) & 0xffff;
 
 /** The bytes a host writes to stage a start, in the order it writes them. */
 export function startBytes(cfg, s, step, gen) {
-  const S = (k) => cfg.ram.state[0] + PCM1[k];
+  const S = (k) => pcm1Base(cfg) + PCM1[k];
   const end = endFor(s, step);
   return [[S("stSrc"), s.at & 0xff], [S("stSrc") + 1, s.at >> 8],
     [S("stEnd"), end & 0xff], [S("stEnd") + 1, end >> 8],
@@ -49,7 +49,7 @@ export function startBytes(cfg, s, step, gen) {
 // side — so which edge sees it is never in doubt.
 export function hostScript(kind, cfg, cycles) {
   const blockCy = cfg.blockSamples * cfg.periodCycles;
-  const S = (k) => cfg.ram.state[0] + PCM1[k];
+  const S = (k) => pcm1Base(cfg) + PCM1[k];
   const ev = [];
   let sgen = 0, pgen = 0;
   const mid = (b) => Math.round((b + 0.4) * blockCy);
@@ -80,8 +80,8 @@ export function hostScript(kind, cfg, cycles) {
       if (b % 30 === 3) pokes.push(...start(b, "saw", 1));
       const at = mid(b) + 300;
       const L = cfg.levels, page = cfg.ram.lut[0] >> 8;
-      pokes.push({ at, addr: cfg.ram.glob[0] + 3, value: page + (n % L) });                 // G_V0PAGE
-      pokes.push({ at, addr: cfg.ram.glob[0] + 5, value: page + (L - 1 - (n % L)) });       // G_MPAGE
+      pokes.push({ at, addr: S("level"), value: page + (n % L) });
+      pokes.push({ at, addr: S("master"), value: page + (L - 1 - (n % L)) });
     }
   }
   return { pokes: pokes.sort((a, b) => a.at - b.at), events: ev };

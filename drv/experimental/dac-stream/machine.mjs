@@ -28,7 +28,7 @@ const RAM_SIZE = 0x2000;
 
 export class Machine {
   constructor(cfg, { bytes, symbols }, { wave = null, grabs = [], rom = null, pokes = [],
-    watch = [], vdp = null } = {}) {
+    watch = [], vdp = null, host = null } = {}) {
     this.cfg = cfg;
     this.symbols = symbols;
     this.ram = new Uint8Array(RAM_SIZE);
@@ -44,6 +44,13 @@ export class Machine {
     this.pokes = [...pokes].sort((a, b) => a.at - b.at);
     this.pokeIdx = 0;
     this.watch = new Set(watch);
+    // A HOST THAT DECIDES AS IT GOES (R28 §63.6 step 2): `{every, fn}` — every
+    // `every` cycles `fn(ram, cycle)` is called with the Z80 stopped and returns
+    // the bytes to write, `[[addr, value], ...]`. This is the 68000 reading the
+    // expander's index and writing pairs ahead of it; the model charges no bus
+    // stop for it — that is BlastEm's measurement, not this one's.
+    this.host = host;
+    this.hostNext = host ? host.every : Infinity;
     // The VDP's window at $7F00. There is no VDP in this model — what it is
     // for is the phase observer, which reads the HV counter and nothing else,
     // so a case hands in the byte a read should see and the reads are recorded.
@@ -79,6 +86,7 @@ export class Machine {
       dacEnable: [],                    // $2B edges: the DAC-enable intervals
       overflow: [],                     // when the timers REALLY overflowed
       globRead: [],                     // reads of watched RAM: cycle, addr, value
+      globWrite: [],                    // …and the Z80's writes to it
       pokes: [],                        // the host's writes, as applied
       // Every access to the finished-sample ring, with the PC that made it —
       // §3.3 (R1) asks for the fixed lead to be CHECKED, and the check needs to
@@ -142,6 +150,7 @@ export class Machine {
     if (a < RAM_SIZE) {
       if (a >= this.ringLo && a < this.ringHi)
         this.trace.ring.push([this.instrStart, this.instrPc, a, 1]);
+      if (this.watch.has(a)) this.trace.globWrite.push([this.instrStart, a, d]);
       this.ram[a] = d;
       return;
     }
@@ -246,6 +255,13 @@ export class Machine {
         const p = this.pokes[this.pokeIdx++];
         this.ram[p.addr] = p.value & 0xff;
         this.trace.pokes.push([this.cycles, p.addr, p.value & 0xff]);
+      }
+      if (this.cycles >= this.hostNext) {
+        for (const [addr, value] of this.host.fn(this.ram, this.cycles) ?? []) {
+          this.ram[addr] = value & 0xff;
+          this.trace.pokes.push([this.cycles, addr, value & 0xff]);
+        }
+        this.hostNext += this.host.every;
       }
       const g = this.grabs[this.grabIdx];
       if (g && this.cycles >= g.at) {

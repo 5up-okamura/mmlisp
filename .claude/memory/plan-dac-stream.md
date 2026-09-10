@@ -6,8 +6,8 @@ designer's R27 stopped with no transport candidate (10 writer sites against
 decides: first integration profile = **one PCM voice** (target song is FM5 +
 DAC1 + PSG3), one transport = a ring of 2-byte `{op,val}` pairs consumed by
 padded expander sites, voice bodies in the sample-bank ROM read through the
-window, two grabs a frame, PSG on the 68000. **Step 1 (the one-voice image with
-the decode, corrector and protocol) is DONE and green on BlastEm**: 5 required
+window, two grabs a frame, PSG on the 68000. **Steps 1 AND 2 (the one-voice image, then the pair
+FIFO + expander + a real 68000 host) are DONE and green on BlastEm**: 5 required
 cases, 9,987.57 Hz, 5,370..5,385 master, every value matching; JS gate 10 cases
 × 2 images; four limits 83.8% / 72.1% / 2,719 of 3,072 B / 8,192. Read the R28
 section at the bottom before continuing to step 2 (FIFO + expander + host).
@@ -1397,3 +1397,31 @@ padded handlers, self-idle, published index), a 68000 host in rom.mjs streaming
 a recorded score's pairs at two grabs a frame; gate = chip write order per port
 + DAC vs reference + 1,500 master. Then step 3 (VSET/ROM bodies, exporter
 directory), step 4 (P4 integration), step 5 (the mucom song).
+
+### Step 2 (2026-09-11) — the pair transport on BlastEm
+
+Built: `expanderSites`/`RESERVE_1V` (config), `xp_a`/`xp_b` + `balanceArms`
+(gen-stream), `pair-host.mjs` (producer algorithm, streams, ROM table encoder),
+`gate-fifo.mjs`, the `pairs` host in rom.mjs, six `pairs, *` machine cases with
+`pairsGate` checks in machine-probe. Numbers: A 151 / B 82 cycles, 16 steps a
+lap; image 2,880 B (275 of it the CSM test patch); worst 83.8% / mean 69.2%;
+BlastEm 9,987.55..62 Hz, FM order exact on both ports, DAC exact, stops
+280..1,500 master, p50 request→release 42..92 Z80 cycles.
+
+Three things not to re-learn:
+* **Plan outside the grab.** Parsing the table with BUSREQ held cost 5,800
+  master a grab; only the index read and a straight `move.b (a0)+,(a1)+` run
+  belong inside. Head = last grab's index + 24 (the consumer takes ≤ ~20 between
+  grabs), so no in-grab arithmetic and no wrap: the planner stops at the page end.
+* **Wait before the first grab.** The Z80's boot clears the pair page; a grab
+  at release time is erased.
+* **The frequency latch is TWO chip-wide registers (Nuked reg_a4 / reg_ac)**,
+  not one per port: CSM's $AC/$A8 never touches a $A4/$A0 pair, but a port-1
+  upper CAN clobber a port-0 upper. analyze.mjs models this now; §60.7's
+  "unsafe" conclusion was the old model's artefact. Producer rule: a pitch pair
+  is written whole in one grab.
+
+VSET (step 3) deferred: a patch is 30 raw pairs = 6 grabs ≈ 50 ms; measure on
+the real song before paying for ROM bodies. Next: step 4, the production
+integration (build-engine → the generated image; mmlispdrv.c → the pair host,
+two grabs a frame, PSG direct; slot stream → pairs in the host).

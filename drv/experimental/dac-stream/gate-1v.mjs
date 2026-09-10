@@ -12,7 +12,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine } from "./config.mjs";
+import { buildConfig, stampLine, PCM1, pcm1Base } from "./config.mjs";
 import { generate, codeLedger, pcmEdgeCost } from "./gen-stream.mjs";
 import { generateSplit } from "./decode-split.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
@@ -63,7 +63,7 @@ function runCase(c, seconds) {
   const { cfg, gen, built, path } = build(c);
   const cycles = Math.round(seconds * cfg.z80Hz);
   const script = hostScript(c.host, cfg, cycles);
-  const watch = [built.symbols.get("G_V0PAGE"), built.symbols.get("G_MPAGE")];
+  const watch = [pcm1Base(cfg) + PCM1.level, pcm1Base(cfg) + PCM1.master];
   // The split image reads the VDP's H counter: the machine answers with a
   // synthetic one that follows the line clock, so the corrector stays quiet.
   const m = new Machine(cfg, built, { rom: BANK, pokes: [], watch, vdp: SPLIT ? syntheticH() : null });

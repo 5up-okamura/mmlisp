@@ -376,6 +376,28 @@ export const CASES = [
     split: { load: "divu", place: { correct: true, proto: true } },
     pcm1: { boot: { sample: "sine", step: 1 } } },
 
+  // THE PAIR TRANSPORT ON THE MACHINE (R28 §63.6 step 2): the one-voice image
+  // with the expander, and a 68000 that runs pair-host.mjs's producer twice a
+  // frame. The DAC interval is not fixed while the bus is held, so machine-probe
+  // grades these on the FM writes the chip saw against the stream, per port and
+  // in order, and on the DAC bytes against the one-voice reference driven by
+  // the engine's own state writes (`pairsGate`); the timing rows are reported.
+  ...[["raw", "raw"], ["pitch", "pitch"], ["dense", "dense"], ["pcm", "pcm"], ["roll", "roll"]]
+    .map(([what, stream]) => ({
+      name: `pairs, ${what}`,
+      cfg: { voices: 1, complete: true, csm: true, csmHost: true, levels: 15,
+        workTarget: 0.839, correctorBudget: true },
+      split: { load: "divu", place: { correct: true, proto: true } },
+      pairs: { stream },
+      informational: true, levelsMove: true, pairsGate: true,
+    })),
+  { name: "pairs, pcm + PSG corpus",
+    cfg: { voices: 1, complete: true, csm: true, csmHost: true, levels: 15,
+      workTarget: 0.839, correctorBudget: true },
+    split: { load: "divu", place: { correct: true, proto: true } },
+    pairs: { stream: "pcm", psg: "corpus" },
+    informational: true, levelsMove: true, pairsGate: true },
+
   // THE LISTENING TOUR (§46.4, R22 §52.6). The same complete image the gates
   // measure, with the host's desired state coming from a fixed timeline instead
   // of a rolling walk, so what all of this adds up to can be heard. Two builds

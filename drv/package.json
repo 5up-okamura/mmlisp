@@ -18,6 +18,8 @@
     "dac-stream:split": "node experimental/dac-stream/split-report.mjs",
     "dac-stream:1v": "node experimental/dac-stream/gate-1v.mjs",
     "dac-stream:1v:split": "node experimental/dac-stream/gate-1v.mjs --split",
+    "dac-stream:fifo": "node experimental/dac-stream/gate-fifo.mjs",
+    "dac-stream:fifo:split": "node experimental/dac-stream/gate-fifo.mjs --split",
     "size": "node tools/size-audit.mjs",
     "budget": "node tools/budget.mjs",
     "mixer": "node tools/mixer-bench.mjs",

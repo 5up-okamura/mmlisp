@@ -31,7 +31,7 @@
 // tolerance. Reserving it in EVERY slot to make it safe is 25% of the budget
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
-import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE } from "./config.mjs";
+import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE, pcm1Base, expanderSites } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.mjs";
 
@@ -125,7 +125,7 @@ const reserveOps = (cycles, why, fill) => {
 export const DEAD_DEFAULT = ["a", "b", "bc"];
 
 function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = null,
-  ymPlan = null) {
+  ymPlan = null, xpPlan = null) {
   const work = [];
   const g = slotIndex % cfg.groupSlots;
   // Which sample of a BUILT block this slot builds. The edge belongs to the
@@ -205,6 +205,9 @@ function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = n
     // after that and far enough before the next slot's DAC write for its own
     // BUSY to have cleared (§59.4).
     if (cfg.ymWriter && ymPlan) work.push(...(ymPlan.get(slotIndex) ?? []));
+    // THE EXPANDER'S SITES (R28 §63.3 D4): a `call` into piece A or piece B,
+    // costed with the routine inside it, at the slots the site plan fixes.
+    if (cfg.oneVoice && xpPlan) work.push(...(xpPlan.get(slotIndex) ?? []));
     if (cfg.reserve) {
       const [, cycles, why] = cfg.reserve[b];
       // The RESERVED padding is padding too, and it sits between one piece of a
@@ -324,13 +327,13 @@ const callMix = (cfg) => [
 ];
 
 const blockEdge = (cfg) => [
-  op("ld a,(G_V0PAGE)", 13, { what: "the levels the next block runs at" }),
+  op(cfg.oneVoice ? `ld a,(${st(cfg, "level")})` : "ld a,(G_V0PAGE)", 13, { what: "the levels the next block runs at" }),
   op("ld (mix_v0+1),a", 13),
   ...(cfg.voices >= 2 ? [
     op("ld a,(G_V1PAGE)", 13),
     op("ld (mix_v1+1),a", 13),
   ] : []),
-  op("ld a,(G_MPAGE)", 13),
+  op(cfg.oneVoice ? `ld a,(${st(cfg, "master")})` : "ld a,(G_MPAGE)", 13),
   op("ld (mix_mp+1),a", 13, { what: "…so a change is whole-block, never half of one" }),
   ...(cfg.oneVoice ? pcmEdgePark(cfg) : []),
 ];
@@ -368,7 +371,7 @@ const blockEdge = (cfg) => [
 // when DE' < sampleEnd - 16 * step. So the voice parks at the last edge before
 // it would read past the end, never reads beyond it, and loses at most sixteen
 // output samples of the tail.
-const st = (cfg, k) => `$${(cfg.ram.state[0] + PCM1[k]).toString(16)}`;
+const st = (cfg, k) => `$${(pcm1Base(cfg) + PCM1[k]).toString(16)}`;
 let edgeSeq = 0;
 
 /**
@@ -475,6 +478,138 @@ export const pcmEdgeCost = (cfg) => ({
   park: cost(pcmEdgePark(cfg)), start: cost(pcmEdgeStart(cfg)),
 });
 
+// ── THE EXPANDER (R28 §63.3 D3/D4, step 2) ─────────────────────────────────
+//
+// The 68000 writes 2-byte {op, val} pairs into a 128-pair page; sixteen steps
+// a lap consume them, one pair a step, at fixed slots. A step is two pieces:
+//
+//   xp_a   fetch the op and run ONE of three arms, all of one length:
+//            RAW    op >= $22: the op is a YM register; write it and the value
+//                   to the current port, then put the DAC's latch back
+//            PORT   op == $20: the value picks the port for the RAW arms
+//            STORE  op <  $20: `(PCM_STATE + op) := val` — the levels, the
+//                   staged start, the two generation bumps, and op $00 (IDLE)
+//                   into a bucket byte, so an empty pair is the same path
+//   xp_b   idle the consumed pair, advance the pointer, publish the index
+//
+// IX is the FIFO pointer for the life of the run — its high byte is the page
+// and the low byte wraps by an 8-bit add, so the ring needs no test. IY's high
+// byte is the globals page for the same reason: the STORE arm's target is one
+// `ld iyl,a` away. Neither register is used anywhere else in this profile. A
+// and F are dead at every site; DE, HL and BC are not touched.
+//
+// The three arms are balanced the same way the edge pieces are: two `jr`s pick
+// the arm, and each arm's tail is padded so every path through xp_a costs the
+// same — checked by the selftest running all three, not by adding them up.
+const XP = { RAW_MIN: 0x22, PORT: 0x20 };
+
+/**
+ * Pad several arms to ONE length. Each arm is `{ops, fixed}` — its own ops
+ * plus the branch cycles on its path — and the answer is one pad per arm and
+ * the common total. Where a difference is unreachable by the no-clobber
+ * fillers the arm itself is lengthened by `ld a,0` (A is dead at the end of
+ * every arm this is used on) and the search starts again; the smallest common
+ * total that works is the one returned. The arms' op lists are extended IN
+ * PLACE so the caller emits what was priced.
+ */
+function balanceArms(arms) {
+  const reach = (n) => { try { return padTo(n, { dead: [] }); } catch { return null; } };
+  const EXTRA = [[], [op("ld   a,0", 7, { clobbers: ["a"] })], [op("nop", 4)],
+    [op("ld   a,0", 7, { clobbers: ["a"] }), op("nop", 4)]];
+  const idx = (n, k) => Math.floor(n / EXTRA.length ** k) % EXTRA.length;
+  let best = null;
+  for (let combo = 0; combo < EXTRA.length ** arms.length; combo++) {
+    const costs = arms.map((a, k) => cost(a.ops) + a.fixed + cost(EXTRA[idx(combo, k)]));
+    const target = Math.max(...costs);
+    const pads = costs.map((c) => reach(target - c));
+    if (pads.every((p) => p) && (!best || target < best.target)) best = { target, pads, combo };
+  }
+  if (!best) throw new Error("balanceArms: no common length is reachable");
+  arms.forEach((a, k) => a.ops.push(...EXTRA[idx(best.combo, k)]));
+  return [...best.pads, best.target];
+}
+
+function expanderRoutines(cfg) {
+  const base = pcm1Base(cfg);
+  const fifoLo = `$${(base + PCM1.fifoLo).toString(16)}`;
+  // The three arms, priced.
+  const store = [
+    op(`add  a,${base & 0xff}`, 7, { what: "STORE: the op is an offset into the state block" }),
+    op("ld   iyl,a", 8),
+    op("ld   a,(ix+1)", 19, { what: "the value" }),
+    op("ld   (iy+0),a", 19, { what: "(PCM_STATE + op) := val" }),
+  ];
+  const port = [
+    op("ld   a,(ix+1)", 19, { what: "PORT: 0 or 1" }),
+    op("add  a,a", 4),
+    op("ld   (xp_p0+1),a", 13, { what: "the address port's low byte: $00 / $02" }),
+    op("inc  a", 4),
+    op("ld   (xp_p1+1),a", 13, { what: "…and the data port's: $01 / $03" }),
+  ];
+  const raw = [
+    op(["xp_p0:", `ld   (${hex(YM.addr0)}),a`], 13, { what: "RAW: the register, to the current port" }),
+    op("ld   a,(ix+1)", 19, { what: "the value" }),
+    op(["xp_p1:", `ld   (${hex(YM.data0)}),a`], 13),
+    op(`ld   a,${hex(YM.R_DAC)}`, 7),
+    op(`ld   (${hex(YM.addr0)}),a`, 13, { what: "the DAC's latch, put back in the same step" }),
+  ];
+  // Path costs from the fetch to the common exit:
+  //   store:  cp 7 + jr 7 + cp 7 + jr 7 + store + jr 12
+  //   port:   cp 7 + jr 7 + cp 7 + jr 12 + port + jr 12
+  //   raw:    cp 7 + jr 12 + raw            (it is placed last: no jr needed)
+  // A is dead at the end of every arm, so an arm may take a 7-cycle `ld a,0`
+  // to make its mirror pad reachable — the no-clobber fillers reach only 0, 4
+  // and the even numbers from 8 up.
+  const [padS, padP, padR, target] = balanceArms([
+    { ops: store, fixed: 7 + 7 + 7 + 7 + 12 },
+    { ops: port, fixed: 7 + 7 + 7 + 12 + 12 },
+    { ops: raw, fixed: 7 + 12 }]);
+  const cS = cost(store) + 7 + 7 + 7 + 7 + 12, cP = cost(port) + 7 + 7 + 7 + 12 + 12, cR = cost(raw) + 7 + 12;
+  const L = [];
+  const emit = (ops) => { for (const o of ops) for (const l of o.asm) L.push(l.endsWith(":") ? l : `        ${l}`); };
+  L.push("; ── The expander, piece A: fetch a pair and run one padded arm ──────────");
+  L.push(`; every path from xp_a to its ret costs ${17 + 19 + target + 10} cycles (call included)`);
+  L.push("xp_a:");
+  L.push("        ld   a,(ix+0)           ; the op");
+  L.push(`        cp   ${hex(XP.RAW_MIN)}`);
+  L.push("        jr   nc,xp_raw");
+  L.push(`        cp   ${hex(XP.PORT)}`);
+  L.push("        jr   z,xp_port");
+  emit(store); emit(padS);
+  L.push("        jr   xp_done");
+  L.push("xp_port:");
+  emit(port); emit(padP);
+  L.push("        jr   xp_done");
+  L.push("xp_raw:");
+  emit(raw); emit(padR);
+  L.push("xp_done:");
+  L.push("        ret");
+  L.push("");
+  L.push("; ── piece B: the pair is consumed, the pointer moves, the index is public ─");
+  L.push("xp_b:");
+  L.push("        ld   (ix+0),0           ; IDLE — a pair is executed once");
+  L.push("        ld   a,ixl");
+  L.push("        add  a,2                ; the page wraps by itself");
+  L.push("        ld   ixl,a");
+  L.push(`        ld   (${fifoLo}),a        ; what the 68000 reads: the next pair to be consumed`);
+  L.push("        ret");
+  L.push("");
+  return { text: L.join("\n"), aCycles: 17 + 19 + target + 10, bCycles: 17 + 19 + 8 + 7 + 8 + 13 + 10,
+    arms: { store: cS, port: cP, raw: cR, target } };
+}
+
+/** The ops a site slot carries: a `call`, costed with the routine inside it. */
+function expanderPlan(cfg) {
+  const r = expanderRoutines(cfg);
+  const plan = new Map();
+  for (const s of expanderSites(cfg)) {
+    plan.set(s.a, [op("call xp_a", r.aCycles, { what: `expander A (step ${plan.size >> 1})` })]);
+    plan.set(s.b, [op("call xp_b", r.bCycles, { what: "expander B: idle, advance, publish" })]);
+  }
+  return { plan, routines: r };
+}
+export const expanderCost = (cfg) => expanderRoutines(cfg);
+
 // ── §4's 経路別サイクル表 ───────────────────────────────────────────────────
 // Costed from the encodings, not measured and not fitted. Every path P1 can
 // take is here; the paths it cannot take yet are listed with what they wait on,
@@ -537,6 +672,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   const L = [];
   const slots = [];
   const P = (s = "") => L.push(s);
+  const xp = cfg.oneVoice ? expanderPlan(cfg) : null;
 
   P(`; ${stampLine(cfg)}`);
   P(";");
@@ -556,8 +692,9 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
       P(`CLAMP       equ ${hex(cfg.ram.clamp[0])}       ; ${CLAMP_SIZE} B — the saturating add, as a table`);
     P(`RING        equ ${hex(cfg.ram.ring[0])}       ; 256 B — the finished samples`);
     if (cfg.oneVoice) {
-      P(`PCM_STATE   equ ${hex(cfg.ram.state[0])}       ; the one voice's state (config.mjs PCM1)`);
+      P(`PCM_STATE   equ ${hex(pcm1Base(cfg))}       ; the one voice's state, in the globals (config.mjs PCM1)`);
       P(`PCM_SILENCE equ ${hex(PCM1_SILENCE)}       ; where a parked voice reads (R28 §63.3 D2)`);
+      P(`FIFO        equ ${hex(cfg.ram.fifo[0])}       ; 128 {op,val} pairs the 68000 writes (R28 §63.3 D3)`);
     }
     P(`WINDOW      equ $8000              ; the 68k bank window the source lives in`);
     P(`LEAD        equ ${cfg.lead}                  ; the build cursor runs this far ahead`);
@@ -653,9 +790,14 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("; likes; the block edge is what makes the change take effect, and it");
     P("; takes effect whole (§3.4).");
     P(`        ld   a,(LUT>>8)+${cfg.levels - 1}    ; unity — the TOP page of the family`);
-    P("        ld   (G_V0PAGE),a");
-    if (cfg.voices >= 2) P("        ld   (G_V1PAGE),a");
-    P("        ld   (G_MPAGE),a");
+    if (cfg.oneVoice) {
+      P(`        ld   (PCM_STATE+${PCM1.level}),a`);
+      P(`        ld   (PCM_STATE+${PCM1.master}),a`);
+    } else {
+      P("        ld   (G_V0PAGE),a");
+      if (cfg.voices >= 2) P("        ld   (G_V1PAGE),a");
+      P("        ld   (G_MPAGE),a");
+    }
     P("        ld   (mix_v0+1),a");
     if (cfg.voices >= 2) P("        ld   (mix_v1+1),a");
     P("        ld   (mix_mp+1),a");
@@ -692,6 +834,18 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
         P(`        ld   (PCM_STATE+${PCM1[k]}),a       ; ${k}`);
       P("        ld   hl,0");
       P(`        ld   (PCM_STATE+${PCM1.liveEnd}),hl      ; END = 0: the first compare parks`);
+      P("; The expander: the pair page all IDLE, the pointer at its start, the");
+      P("; published index 0, IY's high byte the globals page for the STORE arm.");
+      P("        ld   hl,FIFO");
+      P("        ld   b,0                ; 256 bytes");
+      P("fifoinit:");
+      P("        ld   (hl),0");
+      P("        inc  l");
+      P("        djnz fifoinit");
+      P("        ld   ix,FIFO");
+      P(`        ld   iy,${hex(pcm1Base(cfg) & 0xff00)}`);
+      P("        xor  a");
+      P(`        ld   (PCM_STATE+${PCM1.fifoLo}),a`);
     }
     P("");
   }
@@ -741,7 +895,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     const d0 = slotDead ? slotDead(i) : DEAD_DEFAULT;
     const spec = Array.isArray(d0) ? { dead: d0 } : d0;
     const workFill = spec.work ?? spec, padFill = spec.pad ?? spec;
-    const work = [...slotWork(cfg, i, workFill, commandPlan, ymPlan),
+    const work = [...slotWork(cfg, i, workFill, commandPlan, ymPlan, xp?.plan ?? null),
       ...(extraWork ? extraWork(i) : [])];
     // THE FETCH GOES AFTER THE PAD. `a` carries the next sample across the slot
     // boundary, so anything that runs after the fetch may not touch it — and
@@ -770,6 +924,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     for (const o of mixRoutine(cfg)) for (const l of o.asm) P(l);
     P("");
   }
+  if (xp) P(xp.routines.text);
   P("code_end:");
   P(`; total ${cfg.cycleSlots} slots = ${slots.reduce((t, s) => t + s.cycles, 0)} cycles`);
   P(`        assert code_end <= ${hex(cfg.ram.code[1])}, "the loop overran its code region"`);
@@ -795,7 +950,8 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   }
   P("");
 
-  return { text: L.join("\n"), slots, placement: placementTable(slots, cfg.periodCycles) };
+  return { text: L.join("\n"), slots, placement: placementTable(slots, cfg.periodCycles),
+    expander: xp ? { sites: expanderSites(cfg), ...xp.routines, text: undefined } : null };
 }
 
 // ── THE CODE LEDGER (R11 §31.1, restoring the rule R8 §24.3 already fixed) ──

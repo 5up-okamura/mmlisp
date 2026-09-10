@@ -31,7 +31,7 @@ this file, and it is a real list: no loops, no ROM bank crossing, no note
 starts and stops, no command protocol, no host transfer, and nothing has run
 anywhere but the JS instruction model.
 
-## The one-voice integration profile (R28 §63) — step 1 DONE, on BlastEm
+## The one-voice integration profile (R28 §63) — steps 1 and 2 DONE, on BlastEm
 
 §62 stopped with no transport candidate: the pop-based writer had 10 sites a
 lap against the 22–24 the corpus needs, and with the two-voice mixer in the
@@ -74,10 +74,37 @@ phantom, so the machine now answers with a synthetic H that follows the line
 clock (`syntheticH`); and the Z80's boot zeroed the whole state block, erasing
 the start the 68000 had staged — it now touches only its own bytes.
 
-**Not built**: the pair FIFO, the expander sites, the 68000 host (§63.6 step 2);
-`VSET` from ROM voice bodies and the exporter's Z80 directory (step 3); the
-production integration (step 4). The eight expander positions a block are
-reserved and executed as padding (130 cycles each).
+### Step 2 — the pair transport, DONE on BlastEm
+
+```
+npm run dac-stream:fifo           # the transport's JS gate (8 streams)
+npm run dac-stream:fifo:split     # …on the image with the decode/corrector/protocol
+node experimental/dac-stream/machine-probe.mjs --case pairs --seconds 4   # BlastEm, 6 streams
+```
+
+| | |
+| --- | --- |
+| the wire | a 128-pair page at `$1D00`; a pair is `{op, val}`: `$22..$B6` a YM register for the current port (RAW), `$20` PORT, `$00..$09` a byte into the PCM state block (`(PCM_STATE + op) := val` — IDLE lands in a bucket, the levels are absolute pages, a start is five staged bytes then a new `startGen`, a stop a new `stopGen`) |
+| the expander | sixteen steps a lap at fixed slots, each a `call xp_a` (151 cycles: fetch the op, then RAW / PORT / STORE as three arms padded to one length) and a `call xp_b` (82: idle the consumed pair, advance IX by an 8-bit add so the page wraps free, publish the index). IX is the FIFO pointer for the life of the run and IY's high byte the globals page; neither is used anywhere else |
+| the host | twice a frame: **everything before the bus** — the groups whose time has come into a 68k RAM buffer, the destination, the copy's entry point — and inside the grab only the request, the grant poll, ONE read of the published index and a straight run of `move.b (a0)+,(a1)+`. Head = the index read LAST grab + 24, past what the consumer takes between grabs; ≤ 5 pairs a grab; a pitch pair whole or not at all (pair-host.mjs `makeProducer`, mirrored instruction for instruction in rom.mjs) |
+| four limits | worst 83.8%, mean **69.2%**, **2,880 B** of 3,072 with the 275 B CSM test patch still inside, RAM 8,192; chain done by slot 26 |
+| JS gate | 8 streams × 2 images: raw both ports, pitch pairs + key, dense (every grab full, 1,795 pairs), PCM start/level/master/stop/restart/steps, a drum roll with pitch + key (143 starts), two with CSM — every FM write the chip saw is the stream's per port and in order, every DAC byte matches the reference driven by the ENGINE's own state writes, clock unmoved |
+| BlastEm | 6 streams, 4 s: **9,987.55..9,987.62 Hz**, every FM write in order on both ports (up to 1,072+1,072), DAC all matching, every runtime stop ≤ 1,500 master (280..1,500), request→release p50 42..92 Z80 cycles, ~480 grabs a case. The interval rows are informational while the bus is taken, as for every transfer case |
+
+What the first BlastEm run taught, in order: parsing the table with the bus held
+stopped the Z80 for 5,800 master a grab (now ~1,200 — plan first, copy inside);
+a grab taken before the Z80 had finished booting had its five pairs erased by
+the boot's own page clear (the wait comes first now); and **the frequency-latch
+model was wrong**. Nuked-OPN2 keeps `reg_a4` (for `$A4-$A6`, committed by
+`$A0-$A2`) and `reg_ac` (`$AC-$AE` / `$A8-$AA`) as two registers, each shared
+by both parts; BlastEm latches per channel. The analyzer had one latch per
+port covering both groups, which is what made R26 §60.7 read the CSM pair as a
+threat to a `$A4` pair and what the first version of this producer inserted
+IDLEs to dodge. `checkWriteStream` now models the chip; the producer's one
+rule is that a pitch pair is written in one grab.
+
+**Not built**: `VSET` from ROM voice bodies (step 3 — a patch is 30 raw pairs =
+six grabs ≈ 50 ms until then); the production integration (step 4).
 
 ## What P1 achieves
 
