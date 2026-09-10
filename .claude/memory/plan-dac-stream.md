@@ -1147,3 +1147,52 @@ density), step 4 (more than one transaction a window; PSG on its own row),
 step 5 (phase bins at 30 s, the 60 s combined run). Step 4's question has changed
 shape: with one transaction the read grab is at 1,430 of 1,500, so **one per grab
 is the ceiling at the current placement**.
+
+## R25 §57 (2026-09-10) — CHECKPOINT B, awaiting decision
+
+Commit `e3fa98a`. Baseline still frozen and byte-identical (`be1675e77edddbb3`).
+
+**Roles settled for the decision point**: 68000 = sequencer + PSG, Z80 = DAC +
+CSM + normal YM. The host-YM safe-window premise is WITHDRAWN (R25 §57.1) — the
+YM2612 is on the Z80's bus and 68000 access needs BUSREQ — and 68000-direct YM
+is not adopted: it sustains 51.3 writes/s against a representative score's 337,
+a 6.7× shortfall. The CSM guard was NOT built: it would close the rare
+address/data race but adds not one write a second. `ym-window.mjs` is kept as
+the measurement of the Z80's OWN YM traffic, with all "window for the 68000"
+language removed.
+
+**PSG direct is free and it works.** The SN76489 is in the VDP's address space,
+so `$C00011` needs no BUSREQ: over 30 s the 68000 delivered **5,232 of 5,232
+bytes in the reference driver's own order** at 174.3/s, with bus stops 3,674
+against the no-PSG baseline's 3,673, worst per-observation hold 1,429 against
+1,418, and the DAC interval identical at 5,130..5,385 master. 60-second combined
+run green: 3,676 bundles, 61.2 updates/s, late/busy/mismatch 0/0/0, 80 of 80
+slots swept, four limits unchanged.
+
+**The two-byte tone period is NOT atomic** — the chip applies the low four bits
+on the first byte and the high six on the second (BlastEm `psg.c`). Written back
+to back they are 294..364 master apart (~5.5 µs, about one cycle of the highest
+tone), which is harmless; `PSG P1, split pairs` stretches them to ~15,000 and is
+refused twice over (the gap, and 63 observation intervals past 1,500). These
+images take no interrupt so the longest IRQ mask is 0; a driver with a VBlank
+handler must mask across the pair — 24 cycles, 168 master.
+
+**A trap worth remembering**: the PSG replay's work is data-dependent (0..6
+bytes a frame) and the transfer period is generated from what the host loop
+costs. Unpriced, it made the interval 668 master long and the phase sweep
+reached only 63 of 80 slots — R22's slot-coverage rule caught it. Price
+data-dependent host work at its AVERAGE.
+
+**`corpus.mjs` reads the real traffic off the reference driver** (`DrvPlayer` +
+`SlotBuilder`, the same pair the c-gate compares the C port against). Over 41
+scores: 14,627 FM writes — 7,095 voice patch, 3,019 TL, 1,904 pitch-low and
+1,904 pitch-high (always paired), 542 key. `m3-macro-multi` is 337 FM/s with
+patches and 226 steady; a patch frame carries up to 194 writes alone. PSG peaks
+at 169/s. `psg-corpus.json` is TRACKED — the P1 rom is built from it, and a
+build input in a gitignored directory is a rom nobody can reproduce.
+
+**Not started**: the YM transport (raw register stream vs compact desired state
+vs resident voice table — to be chosen by comparing the volume above against the
+1,500 master contract in one table), the Z80 YM writer, integration with the
+existing driver, and any hardware run. b11..b14's reservation stays with the Z80
+YM writer even though the PSG moved to the 68000.
