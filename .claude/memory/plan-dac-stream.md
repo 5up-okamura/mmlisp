@@ -1466,19 +1466,37 @@ user's own `main.c` still uses the ring API (`st.audible`/`st.starved`) —
 they update it themselves.
 
 
-### 68000 render cost (2026-09-11, measured in the SGDK build on BlastEm with $A130F1 marks)
+### 68000 render cost and the tempo (2026-09-11/12) — DONE
 
 User report after listening: tempo drags now and then, notes bunch, first
-seconds silent (the last NOT reproduced headless — sound from 0.5 s). The drag
-was the SEQUENCER: `mml_render_frame` p50 44% / max 146% of a frame, and the
-main loop loses a frame whenever it overruns (FM arrival steps of exactly
-16.7 ms). `pcm_frame`'s per-tick walk was 27 points — replaced by a closed form
-(cca4383, byte-identical): now p50 18%, 5 lost frames / 20 s instead of 13.
-Still over a frame on voice-change frames: per call `voice_set` 88k master,
-`recompose_carriers` 18k, `fnum_block_for` 11k (int = 32-bit → __divsi3 /
-__mulsi3; the values fit divs.w/muls.w), `param_set_ex` 10k, `encode_slot`
-~3.3k per write. Pumps: plan 12.6k p50 each. Open decisions put to the user:
-render from VBlank (overrun delays instead of dropping a frame) and/or optimize
-those hot spots; MML_SLOT_SUBS 2→1 would halve dispatch and the pair engine
-does not realise sub-frame onsets anyway; VBlank-only pump mode (480 pairs/s)
-for games that need HBlank.
+seconds silent (NOT reproduced headless — sound from 0.5 s; asked which ROM).
+Cause: the sequencer overran frames and each overrun lost a frame for good.
+Fixed in three commits, all output byte-identical where the sequencer is
+concerned (c-gate 41/41):
+* cca4383 pcm_frame closed form (27% of a frame -> 1%).
+* bc5b8ef tools/sgdk-profile.mjs (marks, or --pc PC sampling via the probe's
+  MMLISP_PROBE_PC hook + addr2line -i, --peak N for the worst renders) and the
+  68000 fixes: `ch % 3` table (int % is __modsi3), 16-bit muls/divs in the
+  pitch math (mml_divs is inline asm divs.w — only BlastEm verifies it),
+  encode_slot writing runs in place, planner filling the grab block in place.
+  Worst render 146% -> 116%. LTO had already inlined ym()/q_push: forcing
+  inline changed nothing — measure before assuming call overhead.
+* 8d871e6 render ahead (MMLISP_LEAD 1) + release by vtimer (mmlp_plan /
+  mmlp_psg_take take a `release` frame count; pairs-gate checks lead 0/1/2 give
+  the same wire). The HBlank pump releases the due frames, the VBlank pump one
+  fewer: a full grab next to SGDK's DMA-flush halt overran the corrector window
+  (295 windows / 20 s, DAC -0.08%); now 41, -0.015%. sgdk-gate grades the FM
+  lag floor (drift) and has --burn. Drift 2.6 ms / 20 s; 10.8 ms with the main
+  loop overrunning. Render-in-VBlank was rejected: SGDK DMA runs in main right
+  after VInt.
+
+Average cost on sin008: driver ~28% of the 68000 (render ~18%, pumps ~6%).
+Remaining peaks: voice_set ~76k master per call, the slot round trip
+(encode_slot + mmlp_slot per write). Idea not built: feed pairs from the
+sequencer's queue directly (skip slot bytes) with a view-based gate.
+
+User direction (2026-09-12): games (racing, raster 3D) may need HBlank for
+themselves — a VBlank-only pump mode (480 pairs/s) is wanted as an option;
+eventually trade some quality for balance. After DAC playback settles, the user
+wants a TINY Z80-only version too (sequencer back on the Z80, this engine's
+instruction-clock DAC reused).
