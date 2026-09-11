@@ -2,6 +2,14 @@
 #include "mmlpairs.h"
 #include "mmlispseq.h"
 
+/* Small hot helpers inline: m68k-gcc passes arguments on the stack and saves
+ * registers per call, which for push() was most of its cost. */
+#if defined(__GNUC__)
+#define MMLP_HOT static inline __attribute__((always_inline))
+#else
+#define MMLP_HOT static inline
+#endif
+
 /* The slot's PCM opcodes (driver.md §6.3), as mmlispseq.c emits them. */
 #define PCM_START 1
 #define PCM_STOP 2
@@ -33,6 +41,8 @@ void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg) {
   uint8_t *b = (uint8_t *)p;
   for (uint32_t i = 0; i < sizeof(*p); i++) b[i] = 0;
   p->cfg = c;
+  p->cfg.staged_run = c.op_src_hi == c.op_src_lo + 1 && c.op_end_lo == c.op_src_lo + 2 &&
+                      c.op_end_hi == c.op_src_lo + 3 && c.op_step == c.op_src_lo + 4;
   p->head_valid = 0;
   p->since_start = 0xff;
   p->level_page = mmlp_level_page(&c, 0);
@@ -42,18 +52,18 @@ void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg) {
 /* The producer fills from its own cursor (q_work) and publishes q_head once,
  * at the end of a slot: an interrupt-side grab sees all of a frame's pairs or
  * none of them, never a pitch pair's upper half without its lower. */
-static void push(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
-  uint16_t next = (uint16_t)((p->q_work + 1) % MMLP_QUEUE);
+MMLP_HOT void push(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
+  uint16_t next = (uint16_t)((p->q_work + 1) & (MMLP_QUEUE - 1));
   if (next == p->q_tail) { p->overflow++; return; }
   p->q_port[p->q_work] = port;
   p->q_op[p->q_work] = op;
   p->q_val[p->q_work] = val;
   p->q_work = next;
 }
-static void store(MMLPairs *p, uint8_t op, uint8_t val) { push(p, 0xff, op, val); }
+MMLP_HOT void store(MMLPairs *p, uint8_t op, uint8_t val) { push(p, 0xff, op, val); }
 
 uint16_t mmlp_pending(const MMLPairs *p) {
-  return (uint16_t)((p->q_head + MMLP_QUEUE - p->q_tail) % MMLP_QUEUE);
+  return (uint16_t)((p->q_head + MMLP_QUEUE - p->q_tail) & (MMLP_QUEUE - 1));
 }
 
 /* The power of two nearest an increment's integer part, for the fixed-pitch
@@ -173,7 +183,7 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
     if (i >= len) return;
     uint8_t npsg = s[i++];
     for (; npsg > 0 && i < len; npsg--) {
-      uint16_t next = (uint16_t)((p->psg_work + 1) % MMLP_PSG);
+      uint16_t next = (uint16_t)((p->psg_work + 1) & (MMLP_PSG - 1));
       if (next != p->psg_tail) { p->psg[p->psg_work] = s[i]; p->psg_work = next; }
       i++;
     }
@@ -185,12 +195,18 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
   }
 }
 
-static int is_pitch_hi(uint8_t reg) { return (reg >= 0xa4 && reg <= 0xa6) || (reg >= 0xac && reg <= 0xae); }
-static int is_staged(const MMLPairsCfg *cfg, uint8_t op) {
+/* The queues wrap with a mask (an int `%` is a libgcc call on the 68000). */
+typedef char mmlp_queue_is_pow2[(MMLP_QUEUE & (MMLP_QUEUE - 1)) == 0 && (MMLP_PSG & (MMLP_PSG - 1)) == 0 ? 1 : -1];
+
+MMLP_HOT int is_pitch_hi(uint8_t reg) { return (uint8_t)((reg & 0xf7) - 0xa4) <= 2; } /* $A4-$A6, $AC-$AE */
+MMLP_HOT int is_staged(const MMLPairsCfg *cfg, uint8_t op) {
+  /* The staged bytes are one run of the state block in the image's ABI
+   * (source, end, step); mmlp_init checks that and falls back if not. */
+  if (cfg->staged_run) return (uint8_t)(op - cfg->op_src_lo) <= (uint8_t)(cfg->op_step - cfg->op_src_lo);
   return op == cfg->op_src_lo || op == cfg->op_src_hi || op == cfg->op_end_lo || op == cfg->op_end_hi || op == cfg->op_step;
 }
 
-uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *out, uint16_t *dst) {
+uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *ops, uint8_t *vals, uint16_t *dst) {
   const MMLPairsCfg *cfg = &p->cfg;
   const uint8_t N = cfg->fifo_pairs, MASK = (uint8_t)(N - 1);
   p->grabs++;
@@ -227,7 +243,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *out, uint16_t *dst) {
      * any staged store past the edge. Rare: it takes two starts with no FM
      * writes between them in the page. */
     if (port == 0xff && is_staged(cfg, op) && p->since_start < 3) {
-      out[2 * n] = cfg->op_idle; out[2 * n + 1] = 0; n++;
+      ops[n] = cfg->op_idle; vals[n] = 0; n++;
       p->since_start++;
       continue;
     }
@@ -242,25 +258,28 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *out, uint16_t *dst) {
     if ((uint16_t)(((p->head - c) & MASK) + n + need) > (uint16_t)N - 8) break; /* the page is full */
     if (((uint16_t)p->head + n + need) > N) break;         /* never straddle the page end */
     if (port_change) {
-      out[2 * n] = cfg->op_port; out[2 * n + 1] = port; n++;
+      ops[n] = cfg->op_port; vals[n] = port; n++;
       p->chip_port = port;
     }
-    out[2 * n] = op; out[2 * n + 1] = val; n++;
-    p->q_tail = (uint16_t)((t + 1) % MMLP_QUEUE);
+    ops[n] = op; vals[n] = val; n++;
+    p->q_tail = (uint16_t)((t + 1) & (MMLP_QUEUE - 1));
     if (port != 0xff && is_pitch_hi(op) && p->q_tail != p->q_head) {
       uint16_t u = p->q_tail;
-      out[2 * n] = p->q_op[u]; out[2 * n + 1] = p->q_val[u]; n++;
-      p->q_tail = (uint16_t)((u + 1) % MMLP_QUEUE);
+      ops[n] = p->q_op[u]; vals[n] = p->q_val[u]; n++;
+      p->q_tail = (uint16_t)((u + 1) & (MMLP_QUEUE - 1));
     }
     if (port == 0xff && op == cfg->op_start) p->since_start = 0;
     else p->since_start = (uint8_t)(p->since_start + need > 255 ? 255 : p->since_start + need);
   }
-  for (uint16_t k = n; k < cfg->pairs_per_grab; k++) { out[2 * k] = cfg->op_idle; out[2 * k + 1] = 0; }
+  /* The rest of the grab is IDLE — only when there is a grab to write: with
+   * nothing planned the host reads the index and writes nothing. */
+  if (n)
+    for (uint16_t k = n; k < cfg->pairs_per_grab; k++) { ops[k] = cfg->op_idle; vals[k] = 0; }
   *dst = (uint16_t)(cfg->fifo + 2 * p->head);
   p->head = (uint8_t)((p->head + n) & MASK);
   p->pairs_written = (uint16_t)(p->pairs_written + n);
   p->undo_n = (uint8_t)n;
-  return (uint16_t)(2 * n);
+  return n;
 }
 
 void mmlp_abort(MMLPairs *p) {
@@ -277,7 +296,7 @@ uint16_t mmlp_psg_take(MMLPairs *p, uint8_t *out, uint16_t max) {
   uint16_t n = 0;
   while (p->psg_tail != p->psg_mark && n < max) {
     out[n++] = p->psg[p->psg_tail];
-    p->psg_tail = (uint16_t)((p->psg_tail + 1) % MMLP_PSG);
+    p->psg_tail = (uint16_t)((p->psg_tail + 1) & (MMLP_PSG - 1));
   }
   p->psg_mark = p->psg_head;
   return n;

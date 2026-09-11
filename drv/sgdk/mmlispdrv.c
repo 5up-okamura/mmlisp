@@ -52,6 +52,7 @@ static const MMLPairsCfg PAIRS_CFG = {
     MMLISPDRV_OP_IDLE, MMLISPDRV_OP_LEVEL, MMLISPDRV_OP_MASTER,
     MMLISPDRV_OP_SRC_LO, MMLISPDRV_OP_SRC_HI, MMLISPDRV_OP_END_LO, MMLISPDRV_OP_END_HI,
     MMLISPDRV_OP_STEP, MMLISPDRV_OP_START, MMLISPDRV_OP_STOP, MMLISPDRV_OP_PORT,
+    0,   // staged_run: mmlp_init works it out
 };
 
 // ── Bring-up ───────────────────────────────────────────────────────────────
@@ -165,9 +166,11 @@ bool MMLisp_loadScore(const u8* mmb)
 #define GRAB_LATE 0x100
 
 // What one grab writes, loaded into four data registers before the bus is
-// taken: the ops of pairs 0-3 and 4-7, the values of pairs 0-3 and 4-7, most
-// significant byte first — the order movep.l stores them in.
-typedef struct { u32 ops03, ops47, vals03, vals47; u8 prev, dist; } GrabBlock;
+// taken: the ops of pairs 0-7, then their values. The 68000 is big-endian, so
+// ops[0..3] loaded as a long is ops[0] in the top byte — the order movep.l
+// stores them in — and the planner writes the arrays in place: nothing is
+// repacked (it was: sixteen byte shifts into four longs, ~700 cycles a pump).
+typedef struct { u8 ops[8]; u8 vals[8]; u8 prev, dist; } __attribute__((aligned(2))) GrabBlock;
 
 // THE GRAB, in assembly. Written in C over SGDK's Z80_getAndRequestBus() and
 // Z80_releaseBus() with a byte loop, it held the bus ~2,800 master on BlastEm
@@ -196,12 +199,10 @@ static u16 grab(const GrabBlock* blk, u16 dst)
     Z80_requestBus(TRUE);
     lo = *Z80_RAM_AT(MMLISPDRV_FIFO_LO);
     if ((u8)(lo - blk->prev) < blk->dist)
-        for (u16 i = 0; i < 4; i++)
+        for (u16 i = 0; i < 8; i++)
         {
-            d[2 * i]     = (u8)(blk->ops03 >> (24 - 8 * i));
-            d[2 * i + 8] = (u8)(blk->ops47 >> (24 - 8 * i));
-            d[2 * i + 1] = (u8)(blk->vals03 >> (24 - 8 * i));
-            d[2 * i + 9] = (u8)(blk->vals47 >> (24 - 8 * i));
+            d[2 * i]     = blk->ops[i];
+            d[2 * i + 1] = blk->vals[i];
         }
     else lo |= GRAB_LATE;
     Z80_releaseBus();
@@ -248,15 +249,10 @@ void MMLisp_pump(void)
     busy = TRUE;
     // Everything that can be decided before the bus is taken is (R20 §48.4):
     // which pairs, where they go, and the registers they are stored from.
-    u8  out[2 * MMLISPDRV_PAIRS_PER_GRAB];
     u16 dst = 0;
-    GrabBlock blk;
+    static GrabBlock blk;        // static: the planner's arrays, the grab's registers
     blk.prev = fifoLo;
-    const u16 n = mmlp_plan(&pairs, fifoLo, out, &dst);
-    blk.ops03  = ((u32)out[0]  << 24) | ((u32)out[2]  << 16) | ((u16)out[4]  << 8) | out[6];
-    blk.ops47  = ((u32)out[8]  << 24) | ((u32)out[10] << 16) | ((u16)out[12] << 8) | out[14];
-    blk.vals03 = ((u32)out[1]  << 24) | ((u32)out[3]  << 16) | ((u16)out[5]  << 8) | out[7];
-    blk.vals47 = ((u32)out[9]  << 24) | ((u32)out[11] << 16) | ((u16)out[13] << 8) | out[15];
+    const u16 n = mmlp_plan(&pairs, fifoLo, blk.ops, blk.vals, &dst);
     // Nothing planned: the grab only reads the index (dist 0 is always late).
     blk.dist = n ? (u8)((u8)dst - fifoLo) : 0;
     const u16 got = grab(&blk, dst);

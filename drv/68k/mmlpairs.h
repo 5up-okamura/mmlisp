@@ -40,6 +40,7 @@ typedef struct {
   uint8_t op_limit;      /* ops below this store into the state block */
   uint8_t op_idle, op_level, op_master, op_src_lo, op_src_hi, op_end_lo, op_end_hi;
   uint8_t op_step, op_start, op_stop, op_port;
+  uint8_t staged_run;    /* set by mmlp_init: src lo..step are consecutive ops */
 } MMLPairsCfg;
 
 #define MMLP_QUEUE 1024   /* pairs the host holds while the wire catches up */
@@ -91,13 +92,13 @@ void mmlp_slot(MMLPairs *p, const uint8_t *slot, uint16_t len);
 
 /* Plan one grab. `fifo_lo` is the byte the engine publishes (its next pair's
  * byte offset into the page) as read in the PREVIOUS grab, or 0xff for none
- * yet. Fills all 2 * pairs_per_grab bytes of `out` — the planned pairs, then
- * IDLE pairs — and returns how many bytes are real pairs; `*dst` is the Z80
- * address the first byte goes to, never less than a whole grab from the page
- * end. A host may write just the real bytes or all of them: the padding lands
- * where the next grab writes, and the engine reads IDLE there meanwhile. Zero
- * means nothing to write this time (the host still reads fifo_lo). */
-uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *out, uint16_t *dst);
+ * yet. Fills `ops[k]` and `vals[k]` for the grab's pairs_per_grab positions —
+ * the real pairs, then IDLE — and returns how many are real; `*dst` is the Z80
+ * address of the first. Zero means nothing to write this time (the host still
+ * reads fifo_lo), and then the arrays are left as they were. Two arrays, not
+ * one interleaved run, because that is how the SGDK host stores them: MOVEP
+ * writes every other byte of the page (mmlispdrv.c). */
+uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *ops, uint8_t *vals, uint16_t *dst);
 
 /* THE IN-GRAB TEST. The destination was chosen from the index read in the
  * PREVIOUS grab, ahead of it by more than the engine consumes between two

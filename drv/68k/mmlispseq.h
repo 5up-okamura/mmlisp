@@ -173,6 +173,11 @@ typedef struct {
   int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
 } MMLMacroSlot;
 
+/* One register write in the cap/spill queue: port 0/1 = YM part, 2 = PSG. */
+typedef struct {
+  uint8_t port, addr, data;
+} MMLWrite;
+
 /* One descriptor, decoded from MACRO_TABLE on demand (mmb.md §15). Held by
  * pointer rather than copied: the table is ROM on the target. */
 typedef struct {
@@ -296,9 +301,7 @@ typedef struct {
 
   /* The cap/spill queue. Excess writes keep their order and lead the next
    * slot: the transport may delay a write, never reorder or drop one. */
-  struct {
-    uint8_t port, addr, data;
-  } q[MML_WRITE_QUEUE];
+  MMLWrite q[MML_WRITE_QUEUE];
   uint16_t q_head, q_tail;
   /* Queue depth at each sub-tick boundary — where one sub-slot's run ends and
    * the next begins. Recorded as a COUNT, not an index, so the ring's wrap

@@ -16,12 +16,11 @@
 //   * every DAC byte matches the one-voice reference driven by the engine's
 //     own state writes, against the score's own 32 KB bank
 //   * the DAC clock: nominal rate, and every runtime bus stop inside 1,500 master
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
+import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
 import { buildEngine } from "./build-engine.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
@@ -37,49 +36,25 @@ const SECONDS = Number(arg("seconds", 4));
 const KEEP = argv.includes("--keep");
 const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "m2-pcm.mmlisp");
 
-const GDK = process.env.GDK ?? join(homedir(), "Developer", "gendev", "SGDK");
-const TOOLCHAIN = process.env.M68K_BIN ?? join(homedir(), "Developer", "gendev", "m68k-gcc-toolchain", "bin");
-const BLAST = process.env.MMLISP_BLASTEM || join(drv, "out", "blastem");
-const core = ["blastem_libretro.dylib", "blastem_libretro.so"].map((f) => join(BLAST, f)).find(existsSync);
-const host = join(BLAST, "host");
-if (!existsSync(join(GDK, "makefile.gen"))) { console.error(`sgdk-gate: no SGDK at ${GDK} (set GDK)`); process.exit(2); }
-if (!existsSync(join(TOOLCHAIN, "m68k-elf-gcc"))) { console.error(`sgdk-gate: no m68k-elf-gcc at ${TOOLCHAIN} (set M68K_BIN)`); process.exit(2); }
-if (!core || !existsSync(host)) { console.error("sgdk-gate: BlastEm is not built — sh drv/blastem/setup.sh"); process.exit(2); }
+const E = sgdkEnv("sgdk-gate");
 
 // ── the project ────────────────────────────────────────────────────────────
-const proj = mkdtempSync(join(tmpdir(), "mmlisp-sgdk-"));
-for (const d of ["src", "inc", "res"]) mkdirSync(join(proj, d));
-writeFileSync(join(proj, "Makefile"), `GDK ?= ${GDK}\nrelease:\n\t$(MAKE) -f $(GDK)/makefile.gen\n`);
-// A rom header SGDK is happy with: the user's project has one, and so does the
-// scratch build if a template is beside this tool.
-const romHead = join(here, "sgdk-shim", "rom_header.c");
-if (existsSync(romHead)) copyFileSync(romHead, join(proj, "src", "rom_header.c"));
-execFileSync("node", [join(here, "install-sgdk.mjs"), proj, "--song", score, "--example"], { stdio: "pipe" });
-const env = { ...process.env, GDK, PATH: `${TOOLCHAIN}:${join(GDK, "bin")}:${process.env.PATH}` };
-const { sampleBank } = buildMmb(score);
-const flags = `-DMMLISP_AUTOPLAY=1 -DMMLISP_PCM_SAMPLES=${sampleBank ? 1 : 0}`;
-try {
-  execFileSync("make", ["-f", join(GDK, "makefile.gen"), `EXTRA_FLAGS=${flags}`], { cwd: proj, env, stdio: "pipe" });
-} catch (e) {
-  console.error(e.stdout?.toString().slice(-3000)); console.error(e.stderr?.toString().slice(-3000));
+let built;
+try { built = makeProject(E, score); }
+catch (e) {
+  console.error(e.output ?? e.message);
   console.error("FAIL: the SGDK build failed");
-  if (!KEEP) rmSync(proj, { recursive: true, force: true });
+  if (!KEEP && e.proj) dropProject(e.proj);
   process.exit(1);
 }
-const rom = join(proj, "out", "rom.bin");
+const { proj, rom, sampleBank } = built;
 
 // ── the run ────────────────────────────────────────────────────────────────
 const outDir = join(drv, "out", "sgdk-gate");
 mkdirSync(outDir, { recursive: true });
 const tag = basename(score, ".mmlisp");
 const log = join(outDir, `${tag}-${SECONDS}s.log`);
-rmSync(log, { force: true });
-try { execFileSync(host, ["--core", core, "--rom", rom, "--frames", String(Math.round(SECONDS * 60)),
-  "--wav", log.replace(/\.log$/, ".wav")], { env: { ...process.env, MMLISP_PROBE_LOG: log }, stdio: ["ignore", "pipe", "pipe"],
-  // A few seconds of emulation take a few seconds; minutes mean the core is
-  // wedged, and the log up to there is still worth grading.
-  timeout: 60000 + SECONDS * 15000, killSignal: "SIGKILL" }); }
-catch (e) { console.error(`sgdk-gate: BlastEm did not finish (${e.signal ?? e.status}) — grading the log it left`); }
+runRom(E, rom, { seconds: SECONDS, log, wav: log.replace(/\.log$/, ".wav") });
 const L = readProbe(readFileSync(log));
 
 // ── the reference driver's own stream ──────────────────────────────────────
@@ -193,5 +168,5 @@ console.log(`  FM ${seen[0].length}+${seen[1].length} writes seen of ${want[0].l
 if (tag === "m3-pcm-sync") console.log(`  SYNC pcm vs fm1 key-on: ${sync.map((x) => x.toFixed(1)).join(" ")} ms`);
 for (const e of errors) console.log(`  ! ${e}`);
 console.log(errors.length ? "FAIL" : "ok — the SGDK build plays the score on BlastEm as the reference says it should");
-if (!KEEP) rmSync(proj, { recursive: true, force: true }); else console.log(`  project kept at ${proj}`);
+if (!KEEP) dropProject(proj); else console.log(`  project kept at ${proj}`);
 process.exit(errors.length ? 1 : 0);

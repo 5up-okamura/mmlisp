@@ -6,6 +6,16 @@
  */
 #include "mmlispseq.h"
 
+/* THE WRITE PATH IS INLINED. m68k-gcc passes every argument on the stack and
+ * saves registers per call; for a function as small as ym() that was most of
+ * the cost of a register write (~150 of ~350 cycles, measured). The 68000 has
+ * no cache to overflow, so the small hot helpers are forced inline. */
+#if defined(__GNUC__)
+#define MML_HOT static inline __attribute__((always_inline))
+#else
+#define MML_HOT static inline
+#endif
+
 /* No libc. `memset`/`memcpy` would be the only calls, and reaching for them
  * costs more than they are worth here: SGDK's <string.h> is not standalone-
  * includable (it types its prototypes with SGDK's own u16/s8 and assumes
@@ -112,14 +122,37 @@ enum {
   T_NOISE_MODE = 0x42
 };
 
-static uint16_t rd16(const uint8_t *b, uint32_t o) {
+MML_HOT uint16_t rd16(const uint8_t *b, uint32_t o) {
   return (uint16_t)(b[o] | (b[o + 1] << 8));
 }
 static uint32_t rd32(const uint8_t *b, uint32_t o) {
   return (uint32_t)b[o] | ((uint32_t)b[o + 1] << 8) | ((uint32_t)b[o + 2] << 16) |
          ((uint32_t)b[o + 3] << 24);
 }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+MML_HOT int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* ── 68000 arithmetic ──────────────────────────────────────────────────────
+ * `int` is 32 bits under m68k-gcc and the 68000 has no 32-bit multiply or
+ * divide, so `a * b`, `a / b` and `a % b` on ints are calls into libgcc
+ * (__mulsi3, __divsi3, __modsi3: hundreds of cycles each). Measured in the
+ * SGDK build, a key edge cost ~1,400 cycles for its `ch % 3`. The values here
+ * fit the 68000's own 16-bit forms, which truncate toward zero exactly as C
+ * does, so these change nothing but the time. */
+static const uint8_t MML_MOD3[32] = {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0,
+                                     1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1};
+MML_HOT uint8_t mod3(int ch) { return (unsigned)ch < 32 ? MML_MOD3[ch] : mod3(ch); }
+/* a * b for operands that fit 16 bits (muls.w). */
+MML_HOT int32_t mml_muls(int16_t a, int16_t b) { return (int32_t)a * (int32_t)b; }
+/* n / d for a quotient that fits 16 bits (divs.w). */
+MML_HOT int16_t mml_divs(int32_t n, int16_t d) {
+#if defined(__m68k__)
+  __asm__("divs.w %1,%0" : "+d"(n) : "dmi"(d) : "cc");
+  return (int16_t)n;
+#else
+  return (int16_t)(n / d);
+#endif
+}
 
 /* ── Write paths ───────────────────────────────────────────────────────────
  * Everything the sequencer emits lands in the slot queue. $2A and $2B are the
@@ -128,9 +161,11 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
  * — an unwritten shadow entry would let a later write of 0 be suppressed — but
  * they never cross the bus.
  */
-static void q_push(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+/* The queue indices wrap with a mask, so its size is a power of two. */
+typedef char mml_write_queue_is_pow2[(MML_WRITE_QUEUE & (MML_WRITE_QUEUE - 1)) == 0 ? 1 : -1];
+MML_HOT void q_push(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
   if (port == 0 && (addr == 0x2a || addr == 0x2b)) return;
-  uint16_t next = (uint16_t)((s->q_head + 1) % MML_WRITE_QUEUE);
+  uint16_t next = (uint16_t)((s->q_head + 1) & (MML_WRITE_QUEUE - 1));
   if (next == s->q_tail) return; /* queue full: cannot happen on real scores */
   s->q[s->q_head].port = port;
   s->q[s->q_head].addr = addr;
@@ -139,7 +174,7 @@ static void q_push(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
 }
 
 /* YM parameter write, change-only through the shadow. */
-static void ym(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+MML_HOT void ym(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
   if (s->shadow_set[port][addr] && s->shadow[port][addr] == data) return;
   s->shadow_set[port][addr] = 1;
   s->shadow[port][addr] = data;
@@ -151,17 +186,17 @@ static void ym(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
  * across a port's three channels and the low byte commits {latch, low} to one
  * of them, so suppressing the high byte would let another channel's
  * intervening write pick the wrong octave (driver.md §8). */
-static void ym_always(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+MML_HOT void ym_always(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
   s->shadow_set[port][addr] = 1;
   s->shadow[port][addr] = data;
   q_push(s, port, addr, data);
 }
 
 /* $28 is a key EDGE, not state. */
-static void ym_key(MMLSeq *s, uint8_t data) { q_push(s, 0, 0x28, data); }
+MML_HOT void ym_key(MMLSeq *s, uint8_t data) { q_push(s, 0, 0x28, data); }
 
 /* The SN76489 has no readable state; its bytes always go out. */
-static void psg_byte(MMLSeq *s, uint8_t byte) { q_push(s, 2, 0, byte); }
+MML_HOT void psg_byte(MMLSeq *s, uint8_t byte) { q_push(s, 2, 0, byte); }
 
 /* ── PCM command emission (driver.md §6.3) ─────────────────────────────────
  * Every field is resolved HERE: the engine receives register-ready values and
@@ -259,20 +294,20 @@ static void pcm_compose_master(MMLSeq *s) {
 }
 
 /* ── Register encoders (ir-utils.js) ───────────────────────────────────────── */
-static uint8_t enc_b0(const MMLFmCh *c) {
+MML_HOT uint8_t enc_b0(const MMLFmCh *c) {
   return (uint8_t)(((c->feedback & 7) << 3) | (c->algorithm & 7));
 }
-static uint8_t enc_b4(const MMLFmCh *c) {
+MML_HOT uint8_t enc_b4(const MMLFmCh *c) {
   uint8_t pan = c->pan < 0 ? 2 : c->pan > 0 ? 1 : 3;
   return (uint8_t)((pan << 6) | ((c->ams & 3) << 4) | (c->fms & 7));
 }
-static uint8_t enc_30(const MMLOp *o) {
+MML_HOT uint8_t enc_30(const MMLOp *o) {
   return (uint8_t)(((o->dt & 7) << 4) | (o->mul & 0x0f));
 }
-static uint8_t enc_60(const MMLOp *o) {
+MML_HOT uint8_t enc_60(const MMLOp *o) {
   return (uint8_t)(((o->amen & 1) << 7) | (o->dr & 0x1f));
 }
-static uint8_t enc_80(const MMLOp *o) {
+MML_HOT uint8_t enc_80(const MMLOp *o) {
   return (uint8_t)(((o->sl & 0x0f) << 4) | (o->rr & 0x0f));
 }
 
@@ -311,12 +346,12 @@ static uint16_t sweep_step(int len, int loop) {
 /* ── Level model (driver.md §7) ────────────────────────────────────────────
  * Offsets are stored in quarter steps and summed before a single rounding, so
  * the runtime stays integer-only while landing inside the documented band. */
-static uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint8_t vol) {
+MML_HOT uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint8_t vol) {
   int off4 = MML_VEL_TL4[vel] + MML_VOL_TL4[vol] + MML_VOL_TL4[s->master];
   int tl = voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
   return (uint8_t)clampi(tl, 0, 127);
 }
-static uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
+MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   if (vol == 0 || s->master == 0) return 15; /* hard mute (language.md §6) */
   int off4 = MML_VEL_PSG4[vel] + MML_VOL_PSG4[vol] + MML_VOL_PSG4[s->master];
   int att = (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
@@ -350,13 +385,20 @@ static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
 
 /* ── Pitch (driver.md §8) ─────────────────────────────────────────────────── */
 static void fold_cents(int *note, int *cents) {
-  int whole = *cents / 100; /* C truncates toward zero, like Math.trunc */
-  *note += whole;
-  *cents -= whole * 100;
-  if (*cents < 0) {
-    *note -= 1;
-    *cents += 100;
+  int c = *cents;
+  /* Below a whole semitone either way the quotient is 0: no division at all,
+   * which is every note without a detune and most of a vibrato. */
+  if (c >= 100 || c <= -100) {
+    /* C truncates toward zero, like Math.trunc — and so does divs.w */
+    int whole = (c > -3276800 && c < 3276800) ? mml_divs(c, 100) : c / 100;
+    *note += whole;
+    c -= (whole > -32768 && whole < 32768) ? mml_muls((int16_t)whole, 100) : whole * 100;
   }
+  if (c < 0) {
+    *note -= 1;
+    c += 100;
+  }
+  *cents = c;
   *note = clampi(*note, 0, 126);
 }
 static uint16_t fnum_block_for(int note, int cents) {
@@ -367,7 +409,8 @@ static uint16_t fnum_block_for(int note, int cents) {
   int shift = (e1 >> 11) - block;
   if (shift < 0) shift = 0; /* 0 or 1 for adjacent notes */
   int v1 = (e1 & 0x7ff) << shift; /* e1's F-number in block0 units */
-  int fnum = fnum0 + ((v1 - fnum0) * cents + 50) / 100; /* round half up */
+  /* round half up; |v1 - fnum0| < 4096 and 0 < cents < 100 after the fold */
+  int fnum = fnum0 + mml_divs(mml_muls((int16_t)(v1 - fnum0), (int16_t)cents) + 50, 100);
   while (fnum > 1023 && block < 7) {
     block++;
     fnum >>= 1;
@@ -381,12 +424,12 @@ static uint16_t psg_period_for(int note, int cents) {
    * same form the asm uses, which is what keeps all three players bit-equal. */
   int p0 = MML_PSG_PERIOD[note];
   int diff = p0 - MML_PSG_PERIOD[note + 1];
-  int p = p0 - (diff * cents + 50) / 100;
+  int p = p0 - mml_divs(mml_muls((int16_t)diff, (int16_t)cents) + 50, 100); /* |diff| < 1024 */
   return (uint16_t)clampi(p, 1, 1023);
 }
 
 static void write_fm_pitch(MMLSeq *s, int ch, int note, int cents) {
-  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint16_t fb = fnum_block_for(note, cents);
   ym_always(s, port, (uint8_t)(0xa4 + off),
             (uint8_t)((((fb >> 11) & 7) << 3) | ((fb >> 8) & 7)));
@@ -439,7 +482,7 @@ static void write_fm3_op_pitch(MMLSeq *s, int op, int note) {
 static void key_on(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0;
-  uint8_t chkey = (uint8_t)((port << 2) | (ch % 3));
+  uint8_t chkey = (uint8_t)((port << 2) | mod3(ch));
   if (c->vol == 0 || s->master == 0) return; /* hard mute skips key-on */
   c->keyed = 1;
   ym_key(s, (uint8_t)(0xf0 | chkey));
@@ -447,7 +490,7 @@ static void key_on(MMLSeq *s, int ch) {
 static void key_off(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0;
-  uint8_t chkey = (uint8_t)((port << 2) | (ch % 3));
+  uint8_t chkey = (uint8_t)((port << 2) | mod3(ch));
   if (!c->keyed) return;
   c->keyed = 0;
   ym_key(s, chkey);
@@ -468,7 +511,7 @@ static void channel_off(MMLSeq *s, int ch) {
 
 static void recompose_carriers(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
-  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
   for (int op = 0; op < 4; op++) {
     if (!(mask & (1 << op))) continue;
@@ -549,7 +592,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   if (ch >= 6) return; /* fm3-op ids have no register param path */
 
   MMLFmCh *c = &s->fm[ch];
-  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   if (target == T_NOTE_PITCH) {
     c->pitch_cents = (int16_t)value;
     write_fm_pitch(s, ch, c->current_note, value);
@@ -947,7 +990,10 @@ static void step_channel_macros(MMLSeq *s, int ch) {
 }
 
 static void process_macros(MMLSeq *s) {
-  for (int ch = 0; ch < 10; ch++) step_channel_macros(s, ch);
+  /* The count is tested here, not only inside: the call's own entry and exit
+   * cost the 68000 more than an empty channel's whole step. */
+  for (int ch = 0; ch < 10; ch++)
+    if (s->macro_slot_count[ch]) step_channel_macros(s, ch);
 }
 
 /* ── PCM voices (driver.md §14) ────────────────────────────────────────────
@@ -1238,7 +1284,7 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
   if (ch >= 6 || voice_id >= s->voice_count) return;
   const uint8_t *e = s->voices + (uint32_t)voice_id * 29;
   MMLFmCh *c = &s->fm[ch];
-  uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+  uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   /* Carrier TL goes out COMPOSED, not raw (§7): the voice's :tl is a voiced
    * level and the chip gets that plus vel/vol/master. Raw would step the level
    * by up to +10 dB on whatever note is still sounding — inaudible at track
@@ -1761,8 +1807,6 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * 0, as it always did. */
   uint16_t queued = mml_pending(s);
   uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
-  uint8_t psg[MML_SLOT_MAX_WRITES];
-  uint8_t fm0[MML_SLOT_MAX_WRITES * 2], fm1[MML_SLOT_MAX_WRITES * 2];
   uint16_t cur = s->q_tail;
   /* The BYTE budget can bind before the write budget when PCM commands are
    * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
@@ -1773,12 +1817,15 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
     uint32_t size = 3 + 3 * MML_SLOT_SUBS + s->pcm_len +
                     (s->plan_len ? s->plan_len : MML_PCM_VOICES);
     uint16_t fit = 0, scan = cur;
-    for (uint16_t i = 0; i < take; i++) {
+    /* If every write could be FM (two bytes each) and still fit, they all do:
+     * the walk below is only for a slot that might not. */
+    if (size + 2u * take <= MML_SLOT_SIZE) fit = take;
+    else for (uint16_t i = 0; i < take; i++) {
       uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
       if (size + cost > MML_SLOT_SIZE) break;
       size += cost;
       fit++;
-      scan = (uint16_t)((scan + 1) % MML_WRITE_QUEUE);
+      scan = (uint16_t)((scan + 1) & (MML_WRITE_QUEUE - 1));
     }
     take = fit;
   }
@@ -1815,21 +1862,32 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
     uint16_t end = j == MML_SLOT_SUBS - 1 ? take : s->sub_mark[j];
     if (end > take) end = take;
     if (end < done) end = done;
-    uint16_t np = 0, n0 = 0, n1 = 0;
+    /* Counted first, then written straight to where each run lands — the
+     * runs used to be built in three local arrays and copied out a byte at a
+     * time, which on the 68000 cost more than the bucketing itself. */
+    uint16_t np = 0, n0 = 0, n1 = 0, scan = cur;
     for (uint16_t i = done; i < end; i++) {
-      uint8_t port = s->q[cur].port, addr = s->q[cur].addr, data = s->q[cur].data;
-      if (port == 2) psg[np++] = data;
-      else if (port == 1) { fm1[n1++] = addr; fm1[n1++] = data; }
-      else { fm0[n0++] = addr; fm0[n0++] = data; }
-      cur = (uint16_t)((cur + 1) % MML_WRITE_QUEUE);
+      uint8_t port = s->q[scan].port;
+      if (port == 2) np++;
+      else if (port == 1) n1++;
+      else n0++;
+      scan = (uint16_t)((scan + 1) & (MML_WRITE_QUEUE - 1));
+    }
+    uint8_t *wp = out + o + 1;                  /* the PSG run */
+    uint8_t *w0 = wp + np + 1;                  /* the port 0 run */
+    uint8_t *w1 = w0 + 2 * n0 + 1;              /* the port 1 run */
+    out[o] = (uint8_t)np;
+    w0[-1] = (uint8_t)n0;
+    w1[-1] = (uint8_t)n1;
+    for (uint16_t i = done; i < end; i++) {
+      const MMLWrite *q = &s->q[cur];
+      if (q->port == 2) *wp++ = q->data;
+      else if (q->port == 1) { *w1++ = q->addr; *w1++ = q->data; }
+      else { *w0++ = q->addr; *w0++ = q->data; }
+      cur = (uint16_t)((cur + 1) & (MML_WRITE_QUEUE - 1));
     }
     done = end;
-    out[o++] = (uint8_t)np;
-    mml_copy(out + o, psg, np); o += np;
-    out[o++] = (uint8_t)(n0 / 2);
-    mml_copy(out + o, fm0, n0); o += n0;
-    out[o++] = (uint8_t)(n1 / 2);
-    mml_copy(out + o, fm1, n1); o += n1;
+    o = (uint32_t)(w1 - out);
   }
   s->q_tail = cur;
 
@@ -1842,7 +1900,7 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
 }
 
 uint16_t mml_pending(const MMLSeq *s) {
-  return (uint16_t)((s->q_head + MML_WRITE_QUEUE - s->q_tail) % MML_WRITE_QUEUE);
+  return (uint16_t)((s->q_head + MML_WRITE_QUEUE - s->q_tail) & (MML_WRITE_QUEUE - 1));
 }
 
 /* Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
@@ -1850,8 +1908,9 @@ uint16_t mml_pending(const MMLSeq *s) {
  * §3.2's zero-drift-over-loops property is untouched — the frame advances the
  * same number of ticks it always did, only in K instalments. */
 static uint16_t sub_increment(uint16_t inc, int sub) {
-  uint32_t hi = ((uint32_t)(sub + 1) * inc) / MML_SLOT_SUBS;
-  uint32_t lo = ((uint32_t)sub * inc) / MML_SLOT_SUBS;
+  /* 16 x 16 -> 32 (mulu.w), not a __mulsi3 call */
+  uint32_t hi = ((uint32_t)(uint16_t)(sub + 1) * (uint32_t)inc) / MML_SLOT_SUBS;
+  uint32_t lo = ((uint32_t)(uint16_t)sub * (uint32_t)inc) / MML_SLOT_SUBS;
   return (uint16_t)(hi - lo);
 }
 
@@ -1898,6 +1957,20 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
       if (pcm && sub != 0) continue;
       t->acc = (uint16_t)(t->acc + (pcm ? s->increment : step));
       while (t->acc >= 0x100) {
+        /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. A tick before the
+         * gate or the wait reaches zero only counts both down, so k-1 of them
+         * are taken at once: k is the first tick where the gate expires or
+         * the wait runs out (a zero wait dispatches on the first). Exactly the
+         * one-at-a-time walk, in one step. */
+        int32_t k = t->acc >> 8;
+        if (t->gate_left > 0 && t->gate_left < k) k = t->gate_left;
+        if (t->wait > 0) { if (t->wait < k) k = t->wait; }
+        else k = 1;
+        if (k > 1) {
+          t->acc = (uint16_t)(t->acc - ((uint16_t)(k - 1) << 8));
+          if (t->gate_left > 0) t->gate_left -= k - 1;
+          t->wait -= k - 1;
+        }
         t->acc -= 0x100;
         /* One tick: gate countdown first, then the wait countdown / dispatch. */
         if (t->gate_left > 0) {
@@ -1978,7 +2051,7 @@ static void emit_init_writes(MMLSeq *s) {
    * write of 0 be suppressed, and on hardware a power-on SSG-EG bit would never
    * be cleared. */
   for (int ch = 0; ch < 6; ch++) {
-    uint8_t port = ch >= 3 ? 1 : 0, off = (uint8_t)(ch % 3);
+    uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
     MMLFmCh *c = &s->fm[ch];
     ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
     ym(s, port, (uint8_t)(0xb4 + off), 0xc0);

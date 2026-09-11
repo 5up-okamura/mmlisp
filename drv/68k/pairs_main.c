@@ -37,10 +37,11 @@ static unsigned char *slurp(const char *path, long *out_len) {
  * (every seventh one here, as if a pump had been skipped) copies nothing and
  * gives its pairs back. The JS twin (tools/pairs-gate.mjs) does the same. */
 static void grab(MMLPairs *p, unsigned *consumer, uint8_t *fifo_lo, const MMLPairsCfg *cfg, unsigned *ngrab) {
-  uint8_t out[2 * 8];
+  uint8_t ops[8], vals[8], out[2 * 8];
   uint16_t dst = 0;
   uint8_t prev = *fifo_lo;
-  uint16_t nb = mmlp_plan(p, prev, out, &dst);
+  uint16_t nb = (uint16_t)(2 * mmlp_plan(p, prev, ops, vals, &dst));
+  for (uint16_t k = 0; 2 * k < nb; k++) { out[2 * k] = ops[k]; out[2 * k + 1] = vals[k]; }
   *consumer = (*consumer + ((*ngrab)++ % 7 == 6 ? 41 : 17)) % cfg->fifo_pairs;
   *fifo_lo = (uint8_t)(2 * *consumer);
   if (nb && !mmlp_in_time(prev, dst, *fifo_lo)) { mmlp_abort(p); nb = 0; fputc('L', stdout); }
