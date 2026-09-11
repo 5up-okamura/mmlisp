@@ -32,7 +32,10 @@ The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 The driver port (Phase 3) lives in `drv/`: `src/*.z80` plus a first-party node
 toolchain in `drv/tools/` (Z80 assembler, Z80 CPU emulator, trace harness — no
 external binaries). Its gate: `cd drv && npm run verify:all` must show zero
-trace mismatches against `drv-player.js`.
+trace mismatches against `drv-player.js`. The shipped Z80 engine (since
+2026-09-11) is the pair-transport engine generated from
+`drv/experimental/dac-stream/` by `drv/tools/build-engine.mjs`
+(`docs/driver.md` §15); `drv/sgdk/` is its SGDK host.
 
 **The architecture pivoted on 2026-08-02** (68k sequencer + Z80 PCM/write
 engine, `docs/driver.md` §1.1) — `drv/src/*.z80` is the superseded all-Z80

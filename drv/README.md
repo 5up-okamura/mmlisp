@@ -103,22 +103,30 @@ Everything runs on plain node — no external assembler or emulator binaries:
 
 ```
 cd drv
-npm run verify:all   # selftest + the post-split gates + the ir↔drv A/B
-npm run baseline     # the same gates run INDEPENDENTLY, plus hashes and the
-                     # DAC instruments — writes out/baseline/<commit>.{json,md}
+npm run verify:all   # the shipped engine's gates + the ir↔drv A/B (below)
+npm run sgdk:gate -- tests/sin008.mmlisp --seconds 20
+                     # a real SGDK build, run and graded in headless BlastEm
+npm run legacy:ring-engine
+                     # the superseded ring engine's gates (engine, slots, dac, ring)
 ```
 
-> **`verify:all` chains with `&&`, so the first red gate hides every gate behind
-> it** — and `npm run engine` has been red since `a48bacc`, which meant `dac`,
-> `ring`, `c-gate`, `sgdk:lint` and `ab` went unrun for ~40 commits. `npm run
-> baseline` runs each on its own, re-runs a failure once to separate a flake
-> from a fault, and records the verdicts verbatim. Use it before and after
-> anything that touches the engine.
+**The shipped engine is the pair-transport engine** (`docs/driver.md` §15,
+built by `tools/build-engine.mjs` from `experimental/dac-stream/`). `verify:all`
+runs, in order: `mirrors` (the sequencer's clock and the image's agree),
+`selftest`, `c-gate` (sequencer C ≡ `drv-player.js`, 41 scores), `pairs-gate`
+(`68k/mmlpairs.c` ≡ `tools/pairs-model.mjs`, 41 scores, late grabs injected),
+`sgdk:lint`, `dac-stream:1v` and `dac-stream:fifo` (the engine and its pair
+FIFO in the instruction model), `dac-stream:score` (the shipped image driven by
+the host model on real scores, sin008 among them: chip writes, PSG, DAC, clock,
+PCM-vs-FM sync) and `verify:ab`.
 
-> Every tool here defaults to `TIMER_B_K=16` while the committed artifacts are
-> generated at 1. Prefix `PCM_SPG=1 TIMER_B_K=1` or you are measuring a
-> different engine than the tree ships (`npm run mirrors` checks the artifacts
-> agree with each other, not with your environment).
+> **`verify:all` chains with `&&`, so the first red gate hides every gate behind
+> it.** The ring engine's `npm run engine` has been red since `a48bacc`, which
+> is why its gates moved to `legacy:ring-engine`. `npm run baseline` runs each
+> gate on its own and records the verdicts.
+
+> The ring engine's tools default to `TIMER_B_K=16` while its committed
+> artifacts are generated at 1: prefix `PCM_SPG=1 TIMER_B_K=1` for those.
 
 > **The all-Z80 trace gate is retired** (it survives as `npm run legacy:verify`
 > and friends, and no longer passes). `drv-player.js` is the port spec, and it

@@ -66,9 +66,10 @@ Index:
   which pushed it past its vblank and made the mixer run every other frame.
   Next: a hardware round, and `drv-player.js` on the ring-fill model.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
-  (`docs/dac-engine-implementation.md`). R28 (2026-09-11): the plan revised to a
-  ONE-VOICE first profile + a 2-byte pair transport; step 1 (the one-voice image)
-  DONE on BlastEm — read its last section first.** Earlier: P0, P1 and most of
+  (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
+  one-voice pair-transport engine is the production image; a mucom88 song plays
+  in a real SGDK build on BlastEm with every write and DAC byte graded. Read its
+  head and its last section ("Step 4/5") first.** Earlier: P0, P1 and most of
   P2 DONE 2026-09-06. The
   baseline tool and what it found (`npm run engine` has been red for ~40
   commits and `verify:all`'s `&&` was hiding four gates behind it), the

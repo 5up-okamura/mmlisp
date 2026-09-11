@@ -1,17 +1,15 @@
-# DAC engine redesign — R28: the one-voice profile, step 1 DONE on BlastEm (2026-09-11)
+# DAC engine redesign — R28: SHIPPED — the pair-transport engine plays a mucom song in an SGDK build on BlastEm (2026-09-11)
 
-**Current (2026-09-11): R28 §63 is the implementer's own plan revision** — the
-designer's R27 stopped with no transport candidate (10 writer sites against
-22–24 needed; bytes AND cycles short with the 2ch mixer in the image). §63
-decides: first integration profile = **one PCM voice** (target song is FM5 +
-DAC1 + PSG3), one transport = a ring of 2-byte `{op,val}` pairs consumed by
-padded expander sites, voice bodies in the sample-bank ROM read through the
-window, two grabs a frame, PSG on the 68000. **Steps 1 AND 2 (the one-voice image, then the pair
-FIFO + expander + a real 68000 host) are DONE and green on BlastEm**: 5 required
-cases, 9,987.57 Hz, 5,370..5,385 master, every value matching; JS gate 10 cases
-× 2 images; four limits 83.8% / 72.1% / 2,719 of 3,072 B / 8,192. Read the R28
-section at the bottom before continuing to step 2 (FIFO + expander + host).
-
+**Current (2026-09-11): R28 steps 1, 2, 4 and 5 are DONE; step 3 (VSET/ROM
+bodies) is deferred.** The shipped Z80 engine is now the one-voice
+pair-transport image (`tools/build-engine.mjs`, contract in `docs/driver.md`
+§15, report in `docs/dac-engine-implementation.md` §64). `sin008.muc` ("CHINA
+TOWN", FM5 + DAC1 + PSG3) → `import-mucom` → `tests/sin008.mmlisp` →
+install-sgdk → SGDK 2.x build → headless BlastEm 20 s: every FM/PSG write in
+order, every DAC byte = reference, stops ≤ 1,320 master, 9,981 Hz.
+`npm run verify:all` is the new-engine suite (green); the ring engine's gates
+are `legacy:ring-engine` (its `engine` gate has been red since a48bacc).
+Read "Step 4/5" at the bottom before changing the host or the transport.
 
 **Current review (2026-09-08): R9 §26.2/§26.3 DONE; §26.6 step 3 answered and
 NEGATIVE. The corrector's arithmetic is verified against the reference and its
@@ -1425,3 +1423,45 @@ VSET (step 3) deferred: a patch is 30 raw pairs = 6 grabs ≈ 50 ms; measure on
 the real song before paying for ROM bodies. Next: step 4, the production
 integration (build-engine → the generated image; mmlispdrv.c → the pair host,
 two grabs a frame, PSG direct; slot stream → pairs in the host).
+
+### Step 4/5 (2026-09-11) — the SGDK host, and what the real build taught
+
+Built: `tools/build-engine.mjs` (production image, proto 11; old builder is
+`build-engine-ring.mjs`), `68k/mmlpairs.{c,h}` + JS twin `tools/pairs-model.mjs`
++ `pairs-gate`, `sgdk/mmlispdrv.c` rewritten, `experimental/dac-stream/gate-score.mjs`
+(shipped image + host model on real scores), `tools/sgdk-gate.mjs` (scratch
+SGDK project → make → probe BlastEm → grade). Not to re-learn:
+
+* **SGDK's HInt vector JUMPS to the callback** — it must be
+  `HINTERRUPT_CALLBACK` (`MMLisp_hint`); a plain function crashed on `rts`.
+* **The grab is asm**: C over `Z80_getAndRequestBus` was 2,835 master. Eight
+  pairs as four `movep.l` (ops even, vals odd = the page layout), always 8
+  (IDLE-padded), head sent to 0 if 8 do not fit before the page end.
+  1,100–1,320 master. 960 pairs/s.
+* **Both pumps from interrupts** (VBlank + HBlank line 93, armed once a frame);
+  main-loop `MMLisp_frame()` only renders. A skipped pump made two grabs 19 ms
+  apart, `H = Cprev + AHEAD` landed behind the index, and later pairs overtook
+  a START's staged bytes. Now the grab reads the index and writes only if
+  `(lo − loPrev) mod 256 < dist` (`mmlp_in_time`), else `mmlp_abort()`;
+  AHEAD 32; `mmlp_slot` publishes a whole slot with one store. Line 112 put the
+  two pumps in one 80-sample window (7.1 ms) — 93 gives 131 lines both ways.
+* **PCM one slot late.** The sequencer starts PCM tracks a frame early for the
+  ring mixer; with pairs that put drums 12–15 ms AHEAD of FM and no gate saw it.
+  `mmlpairs.c` holds a slot's PCM commands for one slot, sends only changed
+  staged bytes (a repeat hit = 1 pair), and keeps 3 pairs between a START and
+  the next staged store. `tests/m3-pcm-sync.mmlisp` + SYNC rows: +0.6..+1.4 ms.
+* **The image boots at level 0** — until the bank is set the window shows ROM
+  bank 0 and the parked voice played it. `ld a,(LUT>>8)` assembles as a MEMORY
+  load (put the level page at $80, inside the window: wrong byte AND a slow
+  clock) — write `ld a,LUT>>8`.
+* **SGDK halts the Z80 itself**: JOY_update (HALT_Z80_ON_IO, ~2,490 master per
+  6-button port) and the DMA auto-flush EVERY VBlank even when empty (~600).
+  With pads read the window exceeds the corrector; the autoplay build turns
+  pads off. Documented in sgdk/README.md "Bus stops that are not the driver's".
+  Idea not built: V-counter resync so the pitch does not depend on game load.
+
+Open: step 3 (song-start voice burst takes several frames of the 16-pair wire —
+first notes late), 2 voices / loops, hardware check of `movep` to Z80 RAM, the
+user's own `main.c` still uses the ring API (`st.audible`/`st.starved`) —
+they update it themselves.
+

@@ -254,10 +254,10 @@ PCM data for `def :sample` (docs/language.md §9, §16). **As of the sample-bank
 separation (plan-se.md), this is NOT an MMB section — it is its own ROM bank**,
 so PCM blobs (the 32K-wall term) never crowd the 32KB control window. The
 exporter (`encodeMmb`) returns it separately (`{ bytes, sampleBank }`); the host
-loads it into a bank and publishes the bank number in `G_SMP_BANK` (SGDK:
-`MMLisp_setSampleBank(song_smp)` after `MMLisp_init`); the driver's
-PCM mixer latches that bank per frame (driver.md §14) and `pcm_note_on` latches
-it to read an entry. The image is unchanged in layout — the same
+loads it into a bank and points the Z80's window at it (SGDK:
+`MMLisp_setSampleBank(song_smp)` after `MMLisp_init`, which also hands the
+sequencer the directory); the engine then reads sample bytes through the
+window (driver.md §15). The image is unchanged in layout — the same
 `entry_count + entries + blobs` below — only its location moved out of the file.
 Section id 0x0004 is retired from the directory. Both exporters write the bank
 as a `.smp` sidecar next to the `.mmb` (`drv/tools/mmb-build.mjs` by name, the
@@ -270,7 +270,16 @@ entry_count : u16
 bake_stamp  : u16   the sample clock the baked blobs were resampled for
 entries     : entry_count × 20 bytes
 blobs       : raw sample data (8-bit signed PCM), byte-packed
+padding     : zeros to 0x8000 — the file is always exactly 32 KB
 ```
+
+**The file is a whole 32 KB and its top page is silence.** The shipped engine's
+PCM voice (driver.md §15) parks at window `$FF00` — bank offset `$7F00..$7FFF` —
+whenever its sample has ended and reads from there until the next start, so
+that page must be zero (signed silence) and must be the bank's own, not
+whatever rescomp places after a shorter blob. The exporter therefore refuses a
+payload that reaches `$7F00` and pads the file to `$8000`; the BIN resource is
+`BIN song_smp "song.smp" 32768` (aligned, uncompressed).
 
 `bake_stamp` is `round(60 × PCM_SAMPLES_PER_FRAME)` — 10000 — and a loader
 **refuses a bank whose stamp is not its own** (`mml_load_samples` returns -3).

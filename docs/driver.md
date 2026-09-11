@@ -6,6 +6,12 @@ scores showed that the sequencer and a multi-voice PCM soft-mix cannot share
 one Z80 — see §1.1. The sequencer therefore moves to the 68000 and the Z80
 becomes a dedicated PCM mixer and chip-write engine.
 
+**Engine update, 2026-09-11: the shipped Z80 engine is the pair-transport
+engine (§15).** It keeps its DAC clock from its own instruction stream and
+takes FM writes and PCM state as `{op, val}` pairs; the ring engine of §5 and
+§6.1–§6.4/§6.6 is superseded and kept as the record of why. The sequencer (§3,
+§4) and the slot format (§6.2, §6.3) are unchanged — the host converts slots.
+
 This document defines both halves and the interface between them (§6). It
 consumes MMB v0.2 unchanged (`docs/mmb.md`, `docs/opcodes.md`) and absorbs the
 interactive-playback design vision that previously lived in `docs/spec-v0.5.md`
@@ -488,6 +494,9 @@ with no such pressure.
 | last MARKER id | published to the host for `(trig N)` sync (§6.5) |
 
 ## 5. The Z80 Engine
+
+> **Superseded by §15 (2026-09-11)** — this section is the ring engine, the
+> one the legacy gates (`npm run legacy:ring-engine`) still build.
 
 The Z80 no longer sequences. Its whole job is: take one slot per vblank, put
 its bytes on the chips, and spend the rest of the frame mixing PCM.
@@ -1273,6 +1282,10 @@ attenuation the mixer applies as an arithmetic right shift per sample, so volume
 stays off the critical path (§14).
 
 ## 6. The Interface (68000 → Z80)
+
+> **§6.1, §6.4, §6.6 and §6.7 are the ring engine's and superseded by §15.**
+> §6.2 (slot format), §6.3 (PCM commands) and §6.5 (host API) still describe
+> what the sequencer produces and what the game calls.
 
 The 68000 deposits pre-rendered frames into a ring in Z80 RAM; the Z80 consumes
 one per vblank. This replaces the v0.2 command mailbox entirely — the host no
@@ -2431,3 +2444,72 @@ nop fill (4) inside the tick body, charged to every baked tick against a baked
 tick of 41. It buys sample ROM (hundreds of bytes against a 32KB window) with
 mixer cycles (the binding constraint). Revisit it when a score runs the sample
 window out, not before.
+
+## 15. The pair-transport engine (shipped 2026-09-11)
+
+The design record is `docs/dac-engine-implementation.md` §63–§64 (R28); this
+section is the contract a host and the tools rely on.
+
+### 15.1 The engine
+
+- **Clock.** No interrupt and no timer: an 80-slot unrolled lap of
+  constant-time slots (358/359 Z80 cycles), one DAC byte a slot, **9,987.57 Hz**
+  (`master / 5376`, 166.674 samples an NTSC frame — the same clock
+  `live/src/mmb.js` and `68k/mml_rate.h` bake for). A phase corrector reads the
+  VDP H counter once a lap and repays up to **1,500 master clocks of bus stop
+  per 80 samples**; that is the budget every 68000 bus grab spends.
+- **PCM: one voice** (`pcm1`), 16-sample blocks, 18 samples of lead through a
+  256-byte ring. The source advances by a power-of-two step (the bank is baked
+  per note, mmb.md §10.1). The voice's level and the master level are each one
+  of 15 linear LUT pages (6 dB grid of the slot's shifts: 14, 7, 4, 2, 1, 0 …).
+  A voice past its END parks on the bank's top page (`$FF00` in the window),
+  which the exporter keeps silent; the image boots at level 0.
+- **Image**: 7,168 bytes uploaded at `$0000` — code, the level family at
+  `$0C00`, the phase table; the pair page at `$1D00`, the PCM state block at
+  `$1F30`. `sgdk/mmlispdrv_bin.h` carries every address as an ABI constant.
+
+### 15.2 Pairs
+
+A 128-pair page; the engine reads 16 a lap at fixed expander sites, writes
+IDLE over each pair it consumed and publishes its next position (`FIFO_LO`,
+a byte offset).
+
+| op | effect |
+| --- | --- |
+| `$00`..`$21` | store: `(PCM_STATE + op) := val` — `$00` is a bucket (IDLE), `$01` level page, `$02` master page, `$03..$07` the staged start (source, `END = sampleEnd − 16·step`, step), `$08` start generation, `$09` stop generation |
+| `$20` | PORT: the YM port the RAW pairs after it go to |
+| `$22`..`$B6` | RAW: a YM register write on the current port |
+
+A start is copied from the staged bytes at the next block edge when the start
+generation differs from the one last acted on; a stop likewise. Generations,
+not flags, so no grab can land between a set and a clear.
+
+### 15.3 The host (68000)
+
+- `mmlispseq.c` renders one slot a frame, unchanged (§4; c-gate).
+- `mmlpairs.c` turns a slot into pairs: FM writes with a PORT pair where the
+  port changes and each pitch pair kept whole; PCM commands into state stores,
+  **one slot late** (the sequencer starts PCM tracks a frame early for the ring
+  engine; here that would put drums ~13 ms ahead of the FM), sending only the
+  staged bytes that changed, with three pairs between a START and the next
+  staged store. PSG bytes go to `$C00011` directly, one grab period late.
+- **Two grabs a frame, from interrupts** (VBlank and HBlank line 93, 131 lines
+  apart both ways). A grab writes **eight pairs** (IDLE-padded) at
+  `H = index read last grab + 32`, never behind pairs not yet read, never across
+  the page end, with four `movep.l` — ~1,100–1,320 master. Inside the grab the
+  fresh index is read first; if the engine is already at or past `H`, nothing
+  is written and the pairs go back to the queue (a late grab). 960 pairs a
+  second.
+
+### 15.4 Gates
+
+`npm run verify:all` (drv/): the rate mirrors, c-gate (sequencer ≡ JS),
+pairs-gate (`mmlpairs.c` ≡ `tools/pairs-model.mjs`, 41 scores with late grabs
+injected), sgdk:lint, the one-voice engine (`dac-stream:1v`), the pair FIFO
+(`dac-stream:fifo`), the shipped image driven by the host model on real scores
+(`dac-stream:score`: every FM write per port in order, every PSG byte, every
+DAC byte against the reference, the clock, PCM-vs-FM sync), and the A/B
+characterization. `npm run sgdk:gate -- <score>` builds the SGDK example and
+grades a headless BlastEm run the same way (needs SGDK, the m68k toolchain and
+the probe BlastEm).
+
