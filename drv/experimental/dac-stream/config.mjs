@@ -242,8 +242,10 @@ export const PCM1 = {
   lastStop: 0x25,   // u8  the stopGen it last acted on
   parkMask: 0x26,   // u8  the compare's answer, $ff when the voice parks
   fifoLo: 0x27,     // u8  the expander's consumer index — what the 68000 reads
-  size: 0x28,
+  ready: 0x28,      // u8  PCM1_READY_MARK once boot is done — the host's go signal
+  size: 0x29,
 };
+export const PCM1_READY_MARK = 0xd2;
 export const PCM1_OPS = { IDLE: 0x00, LEVEL: 0x01, MASTER: 0x02, SRC_LO: 0x03, SRC_HI: 0x04,
   END_LO: 0x05, END_HI: 0x06, STEP: 0x07, START: 0x08, STOP: 0x09, PORT: 0x20 };
 
@@ -499,6 +501,13 @@ export function buildConfig({
   // so it is the FLOOR: a 68000 doing VDP DMA contends harder, and that is
   // R1 step 3 stage 4.
   windowWait = 3,
+  // THE SHIPPED IMAGE (R28 §63.6 step 4). No Timer A/B set-up at boot — the
+  // engine keeps no timer and the sequencer owns $24..$27 through the pair
+  // stream — and the level family takes SIGNED source bytes, because that is
+  // what the sample bank holds (mmb.md §10). Test images keep the biased
+  // family the gates were written against.
+  production = false,
+  signedSource = false,
 } = {}) {
   const p = PROFILES[profile];
   if (!p) throw new Error(`unknown profile ${profile}`);
@@ -577,7 +586,7 @@ export function buildConfig({
   const cfg = {
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
-    oneVoice,
+    oneVoice, production, signedSource,
     reserve: oneVoice ? RESERVE_1V : complete
       ? (ymWriter ? RESERVE_2CH_YM : command ? RESERVE_2CH_CMD
         : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
@@ -613,7 +622,8 @@ export const stampLine = (c) =>
   // R10 §29.5: which reservation this image spent on the corrector is part of
   // what it is. An image with b1..b4 free is not the same artifact as one that
   // still owes the time publication, and neither is the finished budget.
-  + (c.oneVoice ? " one-voice" : "")
+  + (c.oneVoice ? " one-voice" : "") + (c.production ? " production" : "")
+  + (c.signedSource ? " signed-src" : "")
   + (c.correctorBudget ? " budget corr-for-timepub" : "")
   + (c.command ? " +pcm-state-consumer" : "")
   + (c.ymWriter ? " +z80-ym-writer" : "");

@@ -16,6 +16,7 @@
 #define Z80_RAM_START     0xA00000
 
 void Z80_requestBus(bool wait);
+bool Z80_getAndRequestBus(bool wait);
 void Z80_releaseBus(void);
 void Z80_startReset(void);
 void Z80_endReset(void);
@@ -23,7 +24,13 @@ void Z80_clear(void);
 void Z80_upload(const u16 dest, const u8 *data, const u16 size);
 void SYS_disableInts(void);
 void SYS_enableInts(void);
+u16  SYS_getAndSetInterruptMaskLevel(u16 value);
+void SYS_setInterruptMaskLevel(u16 value);
 void waitSubTick(u32 subtick);
+/* SGDK 2.x: the HInt vector JUMPS to the callback, so it must be an interrupt
+ * function (all registers saved, RTE). The host compiler has no m68k interrupt
+ * attribute; the lint only needs the declaration to parse. */
+#define HINTERRUPT_CALLBACK void
 
 /* Used by example/main.c only. */
 /* SGDK increments this from its own vertical interrupt handler, so it counts
@@ -43,4 +50,16 @@ u16  JOY_readJoypad(u16 joy);
 void VDP_drawText(const char *str, u16 x, u16 y);
 void intToHex(u32 value, char *str, u16 minsize);
 void SYS_doVBlankProcess(void);
+/* The two hooks the pair transport needs (mmlispdrv.h): a callback a frame and
+ * one mid-frame from the horizontal interrupt. */
+typedef void VoidCallback(void);
+void SYS_setVIntCallback(VoidCallback *CB);
+void SYS_setHIntCallback(VoidCallback *CB);
+void VDP_setHIntCounter(u8 value);
+void VDP_setHInterrupt(u8 value);
+/* The autoplay build turns the pads off (SGDK halts the Z80 to read them). */
+#define PORT_1           0x0000
+#define PORT_2           0x0001
+#define JOY_SUPPORT_OFF  0x00
+void JOY_setSupport(u16 port, u16 support);
 #endif

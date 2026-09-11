@@ -95,7 +95,7 @@ export function hostScript(kind, cfg, cycles) {
  * @param edges   the level pages the engine was seen to read at each edge, or
  *                null for a run whose levels never move
  */
-export function reference(cfg, src, events, dac, edges = null) {
+export function reference(cfg, src, events, dac, edges = null, { signed = !!cfg.signedSource } = {}) {
   const B = cfg.blockSamples, L = cfg.levels, lead = cfg.lead;
   const blockCount = Math.ceil(dac.length / B) + 2;
   const state = [];
@@ -122,7 +122,8 @@ export function reference(cfg, src, events, dac, edges = null) {
     ptr = next;
     state.push({ ptr, step, end });
   }
-  const boot = { v0: L - 1, master: L - 1 };
+  // The shipped image boots at level 0 (silence until a start); test images at unity.
+  const boot = { v0: cfg.production ? 0 : L - 1, master: L - 1 };
   return (i) => {
     if (i < lead) return SILENCE;
     const K = Math.floor(i / B);
@@ -130,7 +131,7 @@ export function reference(cfg, src, events, dac, edges = null) {
     const a = (s.ptr + (i % B) * s.step) & 0xffff;
     if (a < 0x8000) throw new Error(`reference: sample ${i} reads RAM at $${a.toString(16)}`);
     const e = !edges || K < 2 ? boot : edges[K - 2] ?? edges[edges.length - 1] ?? boot;
-    return mixOne(src[a - 0x8000], e.v0, e.master, L);
+    return mixOne(src[a - 0x8000], e.v0, e.master, L, signed);
   };
 }
 

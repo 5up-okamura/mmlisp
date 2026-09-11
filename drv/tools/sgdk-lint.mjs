@@ -46,7 +46,8 @@ try {
   // -DSGDK_GCC selects the same type source the real build uses.
   cc(join(drv, "68k", "mmlispseq.c"), ["-DSGDK_GCC"]);
   cc(join(drv, "68k", "tables.c"), ["-DSGDK_GCC"]);
-  console.log("ok    68k/mmlispseq.c + tables.c build under SGDK's type conventions");
+  cc(join(drv, "68k", "mmlpairs.c"), ["-DSGDK_GCC"]);
+  console.log("ok    68k/mmlispseq.c + tables.c + mmlpairs.c build under SGDK's type conventions");
   cc(join(drv, "sgdk", "mmlispdrv.c"), ["-DSGDK_GCC"]);
   console.log("ok    sgdk/mmlispdrv.c agrees with 68k/mmlispseq.h");
   // SGDK's entry point is `int main(bool hardReset)`, which a hosted compiler

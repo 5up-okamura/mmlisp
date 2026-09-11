@@ -19,15 +19,25 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const drv = join(dirname(fileURLToPath(import.meta.url)), "..");
-const files = [
-  ["src/mixer.z80", "the generated mixer core"],
-  ["src/rate.z80", "the Z80 engine's include"],
-  ["src/ask-dense.z80", "the ask the engine includes only at short periods"],
-  ["68k/mml_rate.h", "the 68k sequencer's header"],
-  ["sgdk/mmlispdrv_bin.h", "the engine image an SGDK project links"],
+// TWO GROUPS since the pair-transport engine shipped (R28 §63): what an SGDK
+// project links — the sequencer's header and the image — and the superseded
+// ring engine's generated sources, which only have to agree among themselves
+// for the legacy gates that still build them.
+const groups = [
+  ["shipped", [
+    ["68k/mml_rate.h", "the 68k sequencer's header"],
+    ["sgdk/mmlispdrv_bin.h", "the engine image an SGDK project links"],
+  ]],
+  ["legacy ring engine", [
+    ["src/mixer.z80", "the generated mixer core"],
+    ["src/rate.z80", "the Z80 engine's include"],
+    ["src/ask-dense.z80", "the ask the engine includes only at short periods"],
+  ]],
 ];
 
 let bad = 0;
+for (const [group, files] of groups) {
+console.log(`── ${group}`);
 const seen = [];
 for (const [rel, what] of files) {
   const text = readFileSync(join(drv, rel), "utf8");
@@ -46,12 +56,13 @@ for (const s of seen) {
   console.log(`${ok ? "ok  " : "FAIL"}  ${s.rel.padEnd(24)} ${String(s.hz).padStart(6)} Hz`
     + ` · lead ${String(s.lead).padStart(3)} samples — ${s.what}`);
 }
+}
 if (bad) {
-  console.log(`\nFAIL: the committed artifacts describe different sample clocks.`);
+  console.log(`\nFAIL: committed artifacts in one group describe different sample clocks.`);
   console.log(`  Regenerate all three at ONE configuration, e.g.`);
   console.log(`    PCM_SPG=1 TIMER_B_K=1 node tools/gen-c-tables.mjs`);
   console.log(`    PCM_SPG=1 TIMER_B_K=1 node -e "import('./tools/gen-mixer.mjs').then(m=>m.writeRate())"`);
   console.log(`    PCM_SPG=1 TIMER_B_K=1 node tools/emit-bin.mjs`);
   process.exit(1);
 }
-console.log(`\nall ${seen.length} mirrors agree: ${first.hz} Hz, lead ${first.lead} samples`);
+console.log(`\neach group's mirrors agree`);

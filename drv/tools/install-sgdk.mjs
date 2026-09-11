@@ -43,6 +43,10 @@ const FILES = [
   // at mmlispseq.h:89 in a project that was building a moment earlier.
   { src: "../68k/mml_rate.h", dest: "inc/mml_rate.h", own: "driver" },
   { src: "../68k/tables.c", dest: "src/mmlispseq_tables.c", own: "driver" },
+  // The slot -> pair converter (R28 §63.3 D7): portable C, gated on the host
+  // against its JS twin (tools/pairs-gate.mjs), compiled into the game.
+  { src: "../68k/mmlpairs.c", dest: "src/mmlpairs.c", own: "driver" },
+  { src: "../68k/mmlpairs.h", dest: "inc/mmlpairs.h", own: "driver" },
   { src: "example/song.res", dest: "res/song.res", own: "seed" },
 ];
 

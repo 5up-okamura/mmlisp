@@ -1,13 +1,14 @@
 // Minimal SGDK program that plays an MMLisp score through MMLispDRV.
 //
 // Build layout (see drv/sgdk/README.md):
-//   src/main.c          this file
-//   src/mmlispdrv.c     the host glue      \  copied by
-//   src/mmlispseq.c     the sequencer       ) drv/tools/install-sgdk.mjs
-//   src/tables.c        its constant tables/
-//   inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlispdrv_bin.h (generated)
-//   inc/mml_rate.h      the sample clock — mmlispseq.h includes it
-//   res/song.res        the BIN resource for the MMB (no alignment needed)
+//   src/main.c            this file
+//   src/mmlispdrv.c       the host glue      \
+//   src/mmlispseq.c       the sequencer       ) copied by
+//   src/mmlispseq_tables.c its constant tables ) drv/tools/install-sgdk.mjs
+//   src/mmlpairs.c        the slot -> pair converter
+//   inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h (generated)
+//   inc/mml_rate.h        the sample clock — mmlispseq.h includes it
+//   res/song.res          the BIN resources: song.mmb, and song.smp for a PCM score
 //
 // Controls: A / START = play, B = stop, C = show state.
 #include <genesis.h>
@@ -26,18 +27,16 @@
 // commented-out #define: a `// #define …` on the last line of a comment block is
 // exactly what a formatter reflows into the prose above it, which is how this
 // switch got lost once already. A real preprocessor line survives that.
-//
-// Get it wrong and the program below refuses to start and says so — the failure
-// is otherwise completely silent (the song plays, the drums do not).
 #ifndef MMLISP_PCM_SAMPLES          // (or pass -DMMLISP_PCM_SAMPLES=1)
 #define MMLISP_PCM_SAMPLES 0
 #endif
 
-// There is deliberately no TRACK_COUNT here. The MMB knows how many tracks it
-// has, so asking it (MMLisp_trackCount) removes a constant that has to be kept
-// in step with the score by hand — and getting that constant wrong is silent:
-// the tail of the track list simply never starts, and PCM tracks tend to sit at
-// the end, so it presents as "the drums are missing".
+// Start every track on boot, without waiting for a button — what the machine
+// gate builds (drv/tools/sgdk-gate.mjs) so a headless run has music to grade.
+#ifndef MMLISP_AUTOPLAY
+#define MMLISP_AUTOPLAY 0
+#endif
+
 #define MAX_SHOWN_TRACKS 10
 
 static void drawHex(u32 value, u16 digits, u16 x, u16 y)
@@ -47,10 +46,19 @@ static void drawHex(u32 value, u16 digits, u16 x, u16 y)
     VDP_drawText(hex, x, y);
 }
 
+static void playAll(void)
+{
+    // Every track in one frame. Each track's clock starts on the frame it was
+    // set up in, so spreading the starts would leave them permanently out of
+    // phase — and the setup frame is silent anyway (driver.md §4.2).
+    for (u8 i = 0; i < MMLisp_trackCount(); i++)
+        MMLisp_startTrack(MMLisp_trackId(i));
+}
+
 int main(bool hardReset)
 {
-    // Upload and boot the Z80 engine. No overlay blob and no banks: post-split
-    // the engine is one ~2.6 KB resident image (docs/driver.md §5.2).
+    // Upload and boot the Z80 engine: the one-voice pair-transport engine,
+    // ~7 KB with its level tables (docs/dac-engine-implementation.md R28 §63).
     MMLisp_init();
 
     // NOT READY means the engine never reached its main loop, so the fault is in
@@ -71,73 +79,63 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
+    // THE TWO PUMPS (mmlispdrv.h): the VBlank callback and an HBlank one at
+    // line 93 carry the pairs to the Z80; MMLisp_frame() below only renders.
+    // A game with its own VBlank/HBlank callbacks calls MMLisp_pump() from
+    // them instead.
+    MMLisp_attachInterrupts();
+
+#if MMLISP_AUTOPLAY
+    // The headless gate (drv/tools/sgdk-gate.mjs) grades the driver's own bus
+    // stops; SGDK's joypad reads halt the Z80 too (HALT_Z80_ON_IO), so the
+    // autoplay build reads no pads.
+    JOY_setSupport(PORT_1, JOY_SUPPORT_OFF);
+    JOY_setSupport(PORT_2, JOY_SUPPORT_OFF);
+#endif
+
     // The score plays PCM and no sample bank was published: every PCM note is
-    // dropped and the DAC never enabled. Warn, but play — running the score
-    // without its PCM is a useful thing to be able to do on purpose.
+    // dropped. Warn, but play — running a score without its PCM is a useful
+    // thing to be able to do on purpose.
     const bool noSamples = MMLisp_needsSampleBank();
 
     VDP_drawText(noSamples ? "READY (NO SAMPLE BANK: PCM MUTE)" : "MMLispDRV ready", 2, 2);
     VDP_drawText("A/START play  B stop  C stat", 2, 3);
     VDP_drawText("pad:", 2, 5);
-    // ── The tempo readout ───────────────────────────────────────────────────
-    // `music` is the music's real speed: frames the engine consumed against
-    // frames that actually elapsed, x256, so 0x100 is dead on and 0x080 is half
-    // speed. The reference is SGDK's `vtimer`, which is incremented from the
-    // vertical interrupt and therefore keeps counting when THIS LOOP misses a
-    // frame. Measuring against a loop counter instead makes a slow main loop
-    // read as fast music, which is exactly the wrong answer.
+    // ── The readout ─────────────────────────────────────────────────────────
+    // `host x256` is this loop's own health: iterations per real frame against
+    // SGDK's `vtimer`, which is incremented from the vertical interrupt and so
+    // keeps counting when THIS loop misses a frame. 0x100 is one iteration a
+    // frame; below it the 68000 side is late and nothing the driver reports
+    // means anything yet.
     //
-    // `host` is this loop's own health on the same scale — 0x100 means one
-    // iteration per frame. If it is low, the 68k side is the problem before any
-    // of the driver's numbers mean anything.
-    //
-    // `starv` then says WHOSE FAULT a low `music` is, and it is the whole
-    // diagnosis because the two answers have opposite fixes:
-    //
-    //   music < 0x100 and starv/s > 0   the ring ran DRY — the 68k side is late.
-    //                                   Check `host` first; if that is low the
-    //                                   fix is in this loop, not in the driver.
-    //                                   Otherwise: deeper RING_DEPTH, or less
-    //                                   work per frame on the 68k.
-    //   music < 0x100 and starv/s == 0  the Z80 is not taking every interrupt —
-    //                                   its frame is over budget (§5.1.3).
-    //                                   Fewer PCM voices, or a lower mix rate.
-    //
-    // `starv` alone is cumulative, and cumulative can only say THAT the ring ran
-    // dry, never whether it still is — a number that climbed once and stopped
-    // looks identical to one climbing now. `starv/s` is the one that answers it.
-    // `audible` is the raw consumed-frame count behind `music`.
-    VDP_drawText("music x256:", 2, 7);
-    VDP_drawText("host x256:", 19, 7);
-    // Cumulative tells you THAT frames are being lost; it cannot tell you WHEN,
-    // and "when" is the whole diagnosis. A steady 0x0F8 every second means a
-    // per-frame cost sitting just over the line; 0x100 most seconds with
-    // occasional dips means specific events (a loop point, a note-on) and the
-    // fix is somewhere else entirely. `lost/s` is the same thing as a raw count.
-    VDP_drawText("1s:", 2, 8);
-    VDP_drawText("worst 1s:", 12, 8);
-    VDP_drawText("lost/s:", 26, 8);
-    VDP_drawText("starv:", 2, 9);
-    VDP_drawText("audible:", 14, 9);
-    VDP_drawText("starv/s:", 28, 9);
-    // The decision table on screen, because this is read while looking at the
-    // machine and not at the source.
-    VDP_drawText("music<100: starv/s>0=68k  =0=z80", 2, 10);
+    // `pend` is the pairs waiting for the wire. A handful is steady state; a
+    // number that keeps climbing means the score asks for more register writes
+    // a second than two grabs a frame carry (~600), or the interrupt pumps are
+    // not running. `ovf` is pairs LOST to a full queue — it must stay 0.
+    // `late` is grabs that came too late to write and left it to the next.
+    // `drop` is PCM commands this one-voice profile cannot play (pcm2/pcm3,
+    // loops); `grabs` should advance by ~120 a second.
+    VDP_drawText("host x256:", 2, 7);
+    VDP_drawText("frames:", 19, 7);
+    VDP_drawText("pend:", 2, 8);
+    VDP_drawText("ovf:", 12, 8);
+    VDP_drawText("drop:", 22, 8);
+    VDP_drawText("grabs:", 2, 9);
+    VDP_drawText("pairs:", 14, 9);
+    VDP_drawText("fifo:", 28, 9);
+    VDP_drawText("late:", 2, 10);
     VDP_drawText("track active:", 2, 12);
 
     u16 prev = 0;
-    // Sampled rarely and on purpose. Reading the counters stops the Z80 for the
-    // length of a bus grab, so a per-frame readout costs the engine frames and
-    // then reports them as overruns — the instrument becoming the fault it
-    // measures. Once every 32 frames is two orders below that.
-    u16  loops       = 0;
-    u32  baseTimer   = vtimer;
-    u16  baseAudible = 0;
-    u32  markTimer   = vtimer;   // start of the current one-second window
-    u16  markAudible = 0;
-    u16  markStarved = 0;
-    u16  worst1s     = 0x100;
-    MMLispStats st = { 0, 0 };
+    u16 loops = 0;
+    u32 baseTimer = vtimer;
+    u32 markTimer = vtimer;
+    MMLispStats st;
+
+#if MMLISP_AUTOPLAY
+    playAll();
+    VDP_drawText("PLAY", 2, 17);
+#endif
 
     while (TRUE)
     {
@@ -151,23 +149,9 @@ int main(bool hardReset)
 
         if (pressed & (BUTTON_A | BUTTON_START))
         {
-            // Both clocks start together, or the ratio is measuring the silence
-            // before the music as well as the music.
-            MMLisp_readStats(&st);
-            baseTimer   = vtimer;
-            baseAudible = st.audible;
-            markTimer   = vtimer;
-            markAudible = st.audible;
-            markStarved = st.starved;
-            worst1s     = 0x100;
-            loops       = 0;
-            // Every track in one frame. Each track's clock starts on the frame
-            // it was set up in, so spreading the starts would leave them
-            // permanently out of phase — and the setup frame is silent anyway
-            // (§4.2), so they all begin together on the next one. There is no
-            // mailbox ring to overflow now, so track count does not matter.
-            for (u8 i = 0; i < MMLisp_trackCount(); i++)
-                MMLisp_startTrack(MMLisp_trackId(i));
+            baseTimer = vtimer;
+            loops = 0;
+            playAll();
             VDP_drawText("PLAY", 2, 17);
         }
 
@@ -178,29 +162,22 @@ int main(bool hardReset)
             VDP_drawText("STOP", 2, 17);
         }
 
-        // One bus grab per WINDOW, not per frame: the Z80 stops while the
-        // 68000 holds its bus, so a per-frame readout costs the engine the very
-        // frames it then reports. One second is two orders below that.
+        // The readout costs no bus grab — every number is the host's own — so
+        // once a second is a choice of legibility, not of interference.
         if ((u16)(vtimer - markTimer) >= 60)
         {
             MMLisp_readStats(&st);
-            const u32 win  = vtimer - markTimer;             // real frames
-            const u16 got  = (u16)(st.audible - markAudible); // consumed in them
-            const u16 now  = (u16)(((u32)got << 8) / win);
-            if (now < worst1s) worst1s = now;
             const u32 elapsed = vtimer - baseTimer;
-            const u16 music   = (u16)(st.audible - baseAudible);
-            drawHex(elapsed ? ((u32)music << 8) / elapsed : 0, 4, 14, 7);
-            drawHex(elapsed ? ((u32)loops << 8) / elapsed : 0, 4, 30, 7);
-            drawHex(now, 4, 6, 8);
-            drawHex(worst1s, 4, 22, 8);
-            drawHex(win > got ? win - got : 0, 4, 34, 8);
-            drawHex(st.starved, 4, 9, 9);
-            drawHex(st.audible, 4, 23, 9);
-            drawHex((u16)(st.starved - markStarved), 4, 36, 9);
-            markTimer   = vtimer;
-            markAudible = st.audible;
-            markStarved = st.starved;
+            drawHex(elapsed ? ((u32)loops << 8) / elapsed : 0, 4, 13, 7);
+            drawHex(st.rendered, 4, 27, 7);
+            drawHex(st.pending, 4, 7, 8);
+            drawHex(st.overflow, 4, 16, 8);
+            drawHex(st.dropped, 4, 27, 8);
+            drawHex(st.grabs, 4, 8, 9);
+            drawHex(st.pairsWritten, 4, 20, 9);
+            drawHex(st.fifoLo, 2, 33, 9);
+            drawHex(st.late, 4, 8, 10);
+            markTimer = vtimer;
         }
 
         if (pressed & BUTTON_C)
@@ -211,11 +188,10 @@ int main(bool hardReset)
                 drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 12);
         }
 
-        // ── The one hard rule: once per frame, and last ──────────────────────
-        // Control calls above take effect on the next frame RENDERED, so putting
-        // this after them costs no extra latency (driver.md §6.6). It tops the
-        // ring up rather than rendering exactly one slot, so a frame you overran
-        // is absorbed and then refilled with no special handling here.
+        // ── Once a frame, and last ───────────────────────────────────────────
+        // Control calls above take effect on the frame this renders, so putting
+        // it after them costs no extra latency. It renders exactly one frame
+        // into the queue; the interrupts carry it.
         MMLisp_frame();
 
         SYS_doVBlankProcess();

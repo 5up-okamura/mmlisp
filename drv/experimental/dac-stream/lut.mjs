@@ -32,6 +32,8 @@ export const LEVELS = 16;
 
 export const unbias = (b) => (b & 0xff) - 128;
 export const bias = (s) => (s + 128) & 0xff;
+/** The signed value of a SOURCE byte, in either convention (R28 step 4). */
+export const sourceValue = (b, signed = false) => (signed ? ((b & 0xff) << 24) >> 24 : unbias(b));
 
 /**
  * The signed value a level maps a signed sample to. The ONE definition, for
@@ -62,10 +64,21 @@ export const levelFromCommand = (v, levels = LEVELS) =>
   Math.round((v * (levels - 1)) / 15);
 
 /** `levels` pages of 256 bytes, biased in and biased out. Page = level. */
-export function buildLut(levels = LEVELS) {
+export function buildLut(levels = LEVELS, { signed = false } = {}) {
+  // THE INPUT CONVENTION IS THE TABLE'S TO ABSORB — and for the shipped image
+  // that means SIGNED IN, SIGNED OUT. The sample bank holds signed bytes
+  // (mmb.md §10), and the two lookups are in series: the master's input is the
+  // voice level's output, so one family cannot take signed and give biased. A
+  // signed-to-signed family serves both stages, and the mixer biases once, with
+  // an `xor $80` before the byte enters the ring (4 cycles a sample). The
+  // silence page a parked voice reads is then 0x00, which is signed silence.
+  // The test images keep the biased family the gates were written against.
   const out = new Uint8Array(levels * 256);
   for (let level = 0; level < levels; level++)
-    for (let b = 0; b < 256; b++) out[level * 256 + b] = bias(scale(unbias(b), level, levels));
+    for (let b = 0; b < 256; b++) {
+      const v = scale(sourceValue(b, signed), level, levels);
+      out[level * 256 + b] = signed ? v & 0xff : bias(v);
+    }
   return out;
 }
 
@@ -118,8 +131,8 @@ export function buildClamp() {
 const satAdd = (a, b) => Math.max(-128, Math.min(127, a + b));
 
 /** One voice: source byte -> voice level -> master. Biased in, biased out. */
-export const mixOne = (src, vel, master, levels = LEVELS) =>
-  bias(scale(scale(unbias(src), vel, levels), master, levels));
+export const mixOne = (src, vel, master, levels = LEVELS, signed = false) =>
+  bias(scale(scale(sourceValue(src, signed), vel, levels), master, levels));
 
 /**
  * Two voices: scale each, saturate the sum, then master — in that order.
@@ -139,14 +152,15 @@ export const SILENCE = bias(0);
  * used them wrongly" are different faults and a single comparison cannot tell
  * them apart.
  */
-export function tablesAgree(levels = LEVELS) {
-  const lut = buildLut(levels);
+export function tablesAgree(levels = LEVELS, { signed = false } = {}) {
+  const lut = buildLut(levels, { signed });
   const clamp = buildClamp();
   const problems = [];
   if (lut.length !== levels * 256) problems.push(`the level family is ${lut.length} B, not ${levels * 256}`);
   for (let level = 0; level < levels && problems.length < 4; level++)
     for (let b = 0; b < 256; b++) {
-      const want = bias(scale(unbias(b), level, levels));
+      const v = scale(sourceValue(b, signed), level, levels);
+      const want = signed ? v & 0xff : bias(v);
       if (lut[level * 256 + b] !== want) {
         problems.push(`LUT[${level}][${b}] = ${lut[level * 256 + b]}, the arithmetic says ${want}`);
         break;
@@ -154,7 +168,7 @@ export function tablesAgree(levels = LEVELS) {
     }
   // Silence and unity are the two levels a score relies on being exact.
   for (let b = 0; b < 256; b++) {
-    if (lut[b] !== SILENCE) { problems.push(`level 0 is not silence at ${b}`); break; }
+    if (lut[b] !== (signed ? 0 : SILENCE)) { problems.push(`level 0 is not silence at ${b}`); break; }
     if (lut[(levels - 1) * 256 + b] !== b) { problems.push(`level ${levels - 1} is not unity at ${b}`); break; }
   }
   for (let i = 0; i < CLAMP_SIZE && problems.length < 6; i++) {

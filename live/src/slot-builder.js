@@ -222,7 +222,7 @@ export function decodeSlot(bytes, subs = SLOT_SUBS) {
   const chunk = bytes[i++];
   const pcm = [];
   const npcm = bytes[i++];
-  const LEN = { [PCM_START]: 18, [PCM_STOP]: 2, [PCM_VOL]: 3, [PCM_LOOP]: 6 };
+  const LEN = { [PCM_START]: 18, [PCM_STOP]: 2, [PCM_VOL]: 3, [PCM_LOOP]: 6, [PCM_MASTER]: 2 };
   for (let n = npcm; n > 0; n--) {
     const len = LEN[bytes[i]];
     if (!len) throw new Error(`unknown PCM opcode ${bytes[i]}`);

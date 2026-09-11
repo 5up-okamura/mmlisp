@@ -2,11 +2,11 @@
 #ifndef MML_RATE_H
 #define MML_RATE_H
 
-#define MML_SPG_NUM 12445
+#define MML_SPG_NUM 37335
 #define MML_SPG_DEN 224
-#define MML_SPG_STAMP 3333
+#define MML_SPG_STAMP 10000
 
-/* RATE-STAMP 3333 70 — see tools/rate-mirrors.mjs. */
+/* RATE-STAMP 10000 209 — see tools/rate-mirrors.mjs. */
 
 /* Finished samples the ring runs ahead of the feed: one frame — which is what
  * mml_render_frame() cancels by dispatching a PCM track a frame early — PLUS A
@@ -17,6 +17,6 @@
  * live/src/mmb.js, PCM_RING_LEAD. It moves with the sample clock, which is why
  * it is generated — it was hand-kept at 255 once, 4.6 frames at 55.6 samples a
  * frame, and the drums played 37 ms late. */
-#define MML_PCM_RING_TARGET 70
+#define MML_PCM_RING_TARGET 209
 
 #endif

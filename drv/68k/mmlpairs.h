@@ -1,0 +1,131 @@
+/* MMLispDRV — the slot stream turned into the pair transport (R28 §63.3 D7).
+ *
+ * The sequencer (mmlispseq.c) still renders one SLOT a frame — the write lists
+ * per port and the PCM commands docs/driver.md §6.2 describes, gated against the
+ * JS reference byte for byte. This module is what the host does with a slot
+ * now that the Z80 consumes {op, val} PAIRS instead of slots:
+ *
+ *   FM writes    -> pairs, with a PORT pair where the port changes and a
+ *                   pitch pair ($A4-$A6 then $A0-$A2, either port) kept whole
+ *   PCM commands -> pairs into the engine's state block: a start is the window
+ *                   address, `end - 16 * step`, the step, a level page and a
+ *                   new generation; a stop a new stop generation. One slot
+ *                   late, to undo the sequencer's one-frame PCM lead
+ *   PSG bytes    -> a queue the host writes straight to $C00011, one grab
+ *                   period late so they land with the FM they were cued with
+ *
+ * Portable C99 with no SGDK dependency, like the sequencer, so it is gated on
+ * the host against its JS twin (tools/pairs-model.mjs, `npm run pairs-gate`).
+ */
+#ifndef MMLPAIRS_H
+#define MMLPAIRS_H
+
+/* The same type source as mmlispseq.h: SGDK's own under SGDK_GCC, the
+ * standard header on the host. Pulling <stdint.h> into an SGDK build collides
+ * with types.h's s8. */
+#ifdef SGDK_GCC
+#include <types.h>
+#else
+#include <stdint.h>
+#endif
+
+/* What the engine image's header says (sgdk/mmlispdrv_bin.h); passed in so
+ * this file compiles on the host without SGDK's types. */
+typedef struct {
+  uint16_t fifo;         /* the pair page in Z80 RAM */
+  uint8_t fifo_pairs;    /* 128 */
+  uint8_t pairs_per_grab;/* 5 */
+  uint8_t lut_page;      /* the level family's first page */
+  uint8_t levels;        /* 15 */
+  uint8_t op_limit;      /* ops below this store into the state block */
+  uint8_t op_idle, op_level, op_master, op_src_lo, op_src_hi, op_end_lo, op_end_hi;
+  uint8_t op_step, op_start, op_stop, op_port;
+} MMLPairsCfg;
+
+#define MMLP_QUEUE 1024   /* pairs the host holds while the wire catches up */
+#define MMLP_PSG   256    /* PSG bytes held for one grab period */
+#define MMLP_HELD  128    /* one slot's PCM commands, held for the next slot */
+
+typedef struct {
+  MMLPairsCfg cfg;
+  /* The pair queue: {port, reg, val} entries, port 0xff for a state store. */
+  uint8_t q_port[MMLP_QUEUE], q_op[MMLP_QUEUE], q_val[MMLP_QUEUE];
+  uint16_t q_head, q_tail;
+  uint16_t q_work;       /* the producer's cursor while a slot is taken apart */
+  /* The PSG queue, released one grab late. */
+  uint8_t psg[MMLP_PSG];
+  uint16_t psg_head, psg_tail, psg_mark, psg_work;
+  /* The previous slot's PCM commands, sent with this one (mmlpairs.c). */
+  uint8_t held[MMLP_HELD];
+  uint16_t held_len;
+  /* The producer's state. */
+  uint8_t chip_port;     /* the port the engine's RAW arm currently writes */
+  uint8_t start_gen, stop_gen;
+  uint8_t head;          /* H: the next pair position in the page (0..127) */
+  uint8_t head_valid;    /* H has been placed relative to a read index */
+  uint8_t level_page, master_page;
+  uint8_t staged[5];     /* src lo/hi, end lo/hi, step as last sent */
+  uint8_t staged_valid;  /* ...once a start has sent them all */
+  uint8_t since_start;   /* pairs planned since the last START pair (saturating) */
+  /* Counters a host can show. */
+  uint16_t dropped_voice;  /* PCM commands for voices this profile has not */
+  uint16_t dropped_loop;   /* PCM_LOOP commands (no loops in profile 1) */
+  uint16_t step_rounded;   /* starts whose increment was not a power of two */
+  uint16_t overflow;       /* pairs that did not fit the queue */
+  uint16_t grabs, pairs_written;
+  uint16_t late;           /* grabs that found the engine already past `dst` */
+  /* What the last plan took, so a grab that turns out late can give it back. */
+  uint16_t undo_tail;
+  uint8_t undo_port, undo_n, undo_since;
+} MMLPairs;
+
+void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg);
+
+/* Take one rendered slot apart into the queues. ONE PRODUCER, ONE CONSUMER:
+ * mmlp_slot may run in the main loop while mmlp_plan / mmlp_psg_take run from
+ * an interrupt. The producer publishes a whole slot with one store per queue,
+ * and each side writes only its own cursor, so no lock is needed on a single
+ * CPU whose interrupts run to completion. Two consumers must not overlap (the
+ * SGDK host keeps a flag for that). */
+void mmlp_slot(MMLPairs *p, const uint8_t *slot, uint16_t len);
+
+/* Plan one grab. `fifo_lo` is the byte the engine publishes (its next pair's
+ * byte offset into the page) as read in the PREVIOUS grab, or 0xff for none
+ * yet. Fills all 2 * pairs_per_grab bytes of `out` — the planned pairs, then
+ * IDLE pairs — and returns how many bytes are real pairs; `*dst` is the Z80
+ * address the first byte goes to, never less than a whole grab from the page
+ * end. A host may write just the real bytes or all of them: the padding lands
+ * where the next grab writes, and the engine reads IDLE there meanwhile. Zero
+ * means nothing to write this time (the host still reads fifo_lo). */
+uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *out, uint16_t *dst);
+
+/* THE IN-GRAB TEST. The destination was chosen from the index read in the
+ * PREVIOUS grab, ahead of it by more than the engine consumes between two
+ * grabs at the normal spacing. A grab that comes late (an interrupt pump
+ * skipped, a main loop that overran a frame) can find the engine already at or
+ * past `dst`; pairs written there would wait a whole page cycle (~64 ms) and
+ * the next grab's pairs, placed from a fresh index, would be read BEFORE them.
+ * So the grab reads the index first and copies only when the engine has not
+ * reached `dst`: the index moved by less than `dst` was ahead of it. One byte
+ * subtraction and compare, with the bus held; everything else is planned. */
+static inline int mmlp_in_time(uint8_t lo_prev, uint16_t dst, uint8_t lo_now) {
+  return (uint8_t)(lo_now - lo_prev) < (uint8_t)((uint8_t)dst - lo_prev);
+}
+
+/* The grab was late and copied nothing: put the planned pairs back at the
+ * front of the queue. Everything written before `dst` has been consumed (the
+ * engine passed it), so the next plan places the head from the fresh index. */
+void mmlp_abort(MMLPairs *p);
+
+/* PSG bytes released for this grab period: those queued before the previous
+ * call. Returns how many were copied into `out` (at most `max`). */
+uint16_t mmlp_psg_take(MMLPairs *p, uint8_t *out, uint16_t max);
+
+/* Pairs still waiting. */
+uint16_t mmlp_pending(const MMLPairs *p);
+
+/* The level page a PCM shift maps to (6 dB grid onto the linear family). */
+uint8_t mmlp_level_page(const MMLPairsCfg *cfg, uint8_t shift);
+uint8_t mmlp_master_page(const MMLPairsCfg *cfg, uint8_t shift);
+
+#endif

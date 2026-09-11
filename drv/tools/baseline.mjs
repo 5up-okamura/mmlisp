@@ -111,7 +111,7 @@ const hashes = Object.fromEntries(HASHED.map((rel) => [rel, shaFile(rel)]));
 // artifact that is neither a source file nor committed in the form it runs in.
 let engineImage = null;
 try {
-  const { buildEngine } = await import("./build-engine.mjs");
+  const { buildEngine } = await import("./build-engine-ring.mjs");
   const built = buildEngine();
   engineImage = { bytes: built.bytes.length, sha: sha(built.bytes) };
 } catch (e) {

@@ -31,7 +31,7 @@
 // tolerance. Reserving it in EVERY slot to make it safe is 25% of the budget
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
-import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE, pcm1Base, expanderSites } from "./config.mjs";
+import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE, PCM1_READY_MARK, pcm1Base, expanderSites } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.mjs";
 
@@ -253,6 +253,9 @@ const mixRoutine1v = (cfg) => [
   op("        ld   l,a", 4),
   op("mix_mp: ld   h,0", 7, { what: "the master's page — likewise" }),
   op("        ld   a,(hl)", 7, { what: "x master, in that order, so the rounding is the reference's" }),
+  // A signed family gives a signed byte: biased once here, for the ring and
+  // the DAC (lut.mjs). The test images' biased family needs nothing.
+  ...(cfg.signedSource ? [op("        xor  $80", 7, { what: "signed -> biased, once" })] : []),
   op("        ld   (bc),a", 7, { what: "into the ring, LEAD samples ahead of the play cursor" }),
   op("        inc  c", 4),
   op("        ld   a,e", 4),
@@ -735,9 +738,13 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   const boot = [];
   const bootWrite = (reg, val, what) => boot.push(...ymWrite(reg, val, what));
   bootWrite(YM.R_DACEN, 0x80, "DAC enable");
-  bootWrite(YM.R_TIMER_B, cfg.timerB, "Timer B period");
-  bootWrite(YM.R_TIMER_A_HI, cfg.timerAna >> 2, "Timer A period, hi");
-  bootWrite(YM.R_TIMER_A_LO, cfg.timerAna & 3, "Timer A period, lo");
+  // The shipped image sets no timer: it keeps none, and $24..$27 are the
+  // sequencer's to write through the pair stream (R28 step 4).
+  if (!cfg.production) {
+    bootWrite(YM.R_TIMER_B, cfg.timerB, "Timer B period");
+    bootWrite(YM.R_TIMER_A_HI, cfg.timerAna >> 2, "Timer A period, hi");
+    bootWrite(YM.R_TIMER_A_LO, cfg.timerAna & 3, "Timer A period, lo");
+  }
   // A minimal but real CH3 voice, so CSM has something to key. Operator offsets
   // for channel 3 on port 0 are +2. Emitted as a TABLE and a loop, not 34
   // unrolled writes: this is boot code for a test voice, it is not timed, and
@@ -750,7 +757,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   // decode, the corrector, the protocol and the consumer assemble inside 2,560 B
   // WITH CSM on.
   const csmVoice = cfg.csm && !cfg.csmHost ? CSM_TEST_VOICE : [];
-  bootWrite(YM.R_TIMER_CTL, "R27_BASE", "timers + CH3 mode");
+  if (!cfg.production) bootWrite(YM.R_TIMER_CTL, "R27_BASE", "timers + CH3 mode");
   for (const o of boot) for (const l of o.asm) P(`        ${l}`);
   if (csmVoice.length) {
     P("");
@@ -791,14 +798,22 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("; takes effect whole (§3.4).");
     P(`        ld   a,(LUT>>8)+${cfg.levels - 1}    ; unity — the TOP page of the family`);
     if (cfg.oneVoice) {
+      // THE SHIPPED IMAGE BOOTS SILENT (R28 step 4): until the host sets the
+      // sample bank the window shows whatever ROM bank 0 holds, and the parked
+      // voice would play it. Level 0 keeps the DAC at silence whatever the
+      // window shows; every PCM start carries its own level page.
+      if (cfg.production) P(`        ld   a,LUT>>8               ; level 0 — silence until a start`);
       P(`        ld   (PCM_STATE+${PCM1.level}),a`);
+      if (cfg.production) P(`        ld   a,(LUT>>8)+${cfg.levels - 1}`);
       P(`        ld   (PCM_STATE+${PCM1.master}),a`);
     } else {
       P("        ld   (G_V0PAGE),a");
       if (cfg.voices >= 2) P("        ld   (G_V1PAGE),a");
       P("        ld   (G_MPAGE),a");
     }
+    if (cfg.production) P("        ld   a,LUT>>8");
     P("        ld   (mix_v0+1),a");
+    if (cfg.production) P(`        ld   a,(LUT>>8)+${cfg.levels - 1}`);
     if (cfg.voices >= 2) P("        ld   (mix_v1+1),a");
     P("        ld   (mix_mp+1),a");
     P("");
@@ -864,6 +879,12 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     const { levels: pages } = lutPages(cfg);
     if (pages !== cfg.levels)
       throw new Error(`the level family holds ${pages} pages and the profile says ${cfg.levels}`);
+  }
+  if (cfg.oneVoice) {
+    P("; Boot is done: the host may take the bus from here on (it reads this byte).");
+    P(`        ld   a,${hex(PCM1_READY_MARK)}`);
+    P(`        ld   (PCM_STATE+${PCM1.ready}),a`);
+    P("");
   }
   P("; The DAC's address latch is written ONCE. Every slot writes data only,");
   P("; and any slot that disturbs the address port puts it back itself.");
@@ -940,8 +961,8 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P(`        ds   ${hex(cfg.ram.lut[0])}-$, 0     ; up to the level tables`);
     P(`; ${cfg.levels} pages of 256 bytes: level k maps a signed sample to`);
     P(`; round(s*k/${cfg.levels - 1}), clamped. Level ${cfg.levels - 1} is bit-exact unity`);
-    P("; and level 0 is silence (lut.mjs).");
-    const lut = buildLut(cfg.levels);
+    P(`; and level 0 is silence (lut.mjs). Source bytes are ${cfg.signedSource ? "SIGNED" : "biased"}.`);
+    const lut = buildLut(cfg.levels, { signed: !!cfg.signedSource });
     for (let i = 0; i < lut.length; i += 16)
       P(`        db   ${[...lut.slice(i, i + 16)].join(",")}`);
     P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);
