@@ -1465,3 +1465,20 @@ first notes late), 2 voices / loops, hardware check of `movep` to Z80 RAM, the
 user's own `main.c` still uses the ring API (`st.audible`/`st.starved`) —
 they update it themselves.
 
+
+### 68000 render cost (2026-09-11, measured in the SGDK build on BlastEm with $A130F1 marks)
+
+User report after listening: tempo drags now and then, notes bunch, first
+seconds silent (the last NOT reproduced headless — sound from 0.5 s). The drag
+was the SEQUENCER: `mml_render_frame` p50 44% / max 146% of a frame, and the
+main loop loses a frame whenever it overruns (FM arrival steps of exactly
+16.7 ms). `pcm_frame`'s per-tick walk was 27 points — replaced by a closed form
+(cca4383, byte-identical): now p50 18%, 5 lost frames / 20 s instead of 13.
+Still over a frame on voice-change frames: per call `voice_set` 88k master,
+`recompose_carriers` 18k, `fnum_block_for` 11k (int = 32-bit → __divsi3 /
+__mulsi3; the values fit divs.w/muls.w), `param_set_ex` 10k, `encode_slot`
+~3.3k per write. Pumps: plan 12.6k p50 each. Open decisions put to the user:
+render from VBlank (overrun delays instead of dropping a frame) and/or optimize
+those hot spots; MML_SLOT_SUBS 2→1 would halve dispatch and the pair engine
+does not realise sub-frame onsets anyway; VBlank-only pump mode (480 pairs/s)
+for games that need HBlank.
