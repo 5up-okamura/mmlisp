@@ -2500,6 +2500,16 @@ not flags, so no grab can land between a set and a clear.
   fresh index is read first; if the engine is already at or past `H`, nothing
   is written and the pairs go back to the queue (a late grab). 960 pairs a
   second.
+- **Rendered ahead, released on time.** The main loop renders each frame
+  `MMLISP_LEAD` (1) frames before its time; the converter remembers where each
+  queued frame ends (`mmlp_slot`), and a grab sends only frames before its
+  `release` count (`mmlp_plan`, `mmlp_psg_take`). The HBlank pump releases the
+  frames whose time has come by SGDK's `vtimer`, the VBlank pump one fewer — so
+  a frame leaves from the HBlank pump, clear of SGDK's DMA-flush halt right
+  after the VBlank interrupt. The tempo follows the video clock: a late main
+  loop renders the missed frames on its next call, and one more than three
+  frames behind moves the time base (the music pauses). Gated: pairs-gate runs
+  every score with lead 0, 1 and 2 and requires the same wire for all three.
 
 ### 15.4 Gates
 

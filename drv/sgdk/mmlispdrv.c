@@ -7,13 +7,18 @@
 // frame — and mmlpairs.c turns each slot into pairs and PSG bytes; everything
 // SGDK-specific is here: the bring-up, the bus grab, the copy, the PSG port.
 //
-// TWO GRABS A FRAME, BOTH FROM INTERRUPTS. A grab carries at most five pairs
-// and may stop the Z80 for at most 1,500 master clocks (what the engine's phase
-// corrector repays), so the wire is ~600 pairs a second only if the bus is
+// TWO GRABS A FRAME, BOTH FROM INTERRUPTS. A grab carries eight pairs and may
+// stop the Z80 for at most 1,500 master clocks (what the engine's phase
+// corrector repays), so the wire is 960 pairs a second only if the bus is
 // taken twice a frame — and the pairs land ahead of the engine only if the
 // grabs are evenly spaced. So they come from the vertical interrupt and a
-// horizontal one at line 93, whose spacing the video timing fixes; the main
-// loop's MMLisp_frame() only renders into the queue (mmlispdrv.h).
+// horizontal one at line 93, whose spacing the video timing fixes.
+//
+// RENDERED AHEAD, SENT ON TIME. The main loop's MMLisp_frame() renders each
+// frame MMLISP_LEAD frames before its time; the pumps send only the frames
+// whose time has come, counted from SGDK's vtimer. A render that runs long
+// delays nothing that was ready, and the next call catches up — the tempo
+// follows the video clock, not the main loop (mmlispdrv.h).
 #include "mmlispdrv.h"
 #include "mmlispseq.h"
 #include "mmlpairs.h"
@@ -33,6 +38,18 @@ static bool       loaded = FALSE;
 static const u8*  smpBank = NULL;
 static u8         fifoLo = 0xff;      // the engine's index as read in the last grab
 static u16        rendered = 0;
+// HOW FAR AHEAD THE MAIN LOOP RENDERS, in frames. One absorbs a main loop that
+// runs up to a frame late with no audible trace; each frame of lead is a frame
+// of latency on the control calls. At most MMLP_FRAMES - 2.
+#ifndef MMLISP_LEAD
+#define MMLISP_LEAD 1
+#endif
+// A main loop further behind than this is stopped, not slow (a load, a pause
+// screen, a debugger): the music pauses with it instead of playing the missed
+// frames in one burst.
+#define MMLISP_CATCHUP 3
+static u32        frameBase;           // vtimer - frameBase = frames whose time has come
+static u16        pauses = 0;
 static u8         slotBuf[MML_SLOT_SIZE];
 // THE PUMPS SHARE ONE PLANNER. MMLisp_frame() (main loop) only fills the
 // queue, which mmlpairs.c makes safe against an interrupt-side reader; two
@@ -155,6 +172,8 @@ bool MMLisp_loadScore(const u8* mmb)
     if (loaded && smpBank) mml_load_samples(&seq, smpBank, 0, (u32)smpBank);
     mmlp_init(&pairs, &PAIRS_CFG);
     fifoLo = 0xff;
+    rendered = 0;
+    frameBase = vtimer;          // frame 0's time comes at the next VBlank
     busy = FALSE;
     return loaded;
 }
@@ -243,7 +262,8 @@ static u16 grab(const GrabBlock* blk, u16 dst)
     return lo;
 }
 
-void MMLisp_pump(void)
+// One grab, sending the frames before `release` (mmlpairs.h mmlp_plan).
+static void pump(u16 release)
 {
     if (!ready || busy) return;
     busy = TRUE;
@@ -252,7 +272,7 @@ void MMLisp_pump(void)
     u16 dst = 0;
     static GrabBlock blk;        // static: the planner's arrays, the grab's registers
     blk.prev = fifoLo;
-    const u16 n = mmlp_plan(&pairs, fifoLo, blk.ops, blk.vals, &dst);
+    const u16 n = mmlp_plan(&pairs, fifoLo, release, blk.ops, blk.vals, &dst);
     // Nothing planned: the grab only reads the index (dist 0 is always late).
     blk.dist = n ? (u8)((u8)dst - fifoLo) : 0;
     const u16 got = grab(&blk, dst);
@@ -268,7 +288,7 @@ void MMLisp_pump(void)
     // written with interrupts masked — by level, not SYS_disableInts(), which
     // keeps a nesting count an interrupt-side caller must not touch.
     u8  psg[MMLP_PSG];
-    u16 np = mmlp_psg_take(&pairs, psg, sizeof psg);
+    u16 np = mmlp_psg_take(&pairs, release, psg, sizeof psg);
     if (np)
     {
         u16 level = SYS_getAndSetInterruptMaskLevel(7);
@@ -276,6 +296,14 @@ void MMLisp_pump(void)
         SYS_setInterruptMaskLevel(level);
     }
     busy = FALSE;
+}
+
+// The frames whose time has come; anything rendered ahead of them waits.
+static u16 due(void) { return (u16)(vtimer - frameBase); }
+
+void MMLisp_pump(void)
+{
+    pump(due());
 }
 
 // SGDK's horizontal interrupt vector JUMPS to the callback — no wrapper saves
@@ -288,13 +316,21 @@ HINTERRUPT_CALLBACK MMLisp_hint(void)
     // VBlank pump re-arms this one, so only the first of them grabs.
     if (!hintArmed) return;
     hintArmed = FALSE;
-    MMLisp_pump();
+    pump(due());
 }
 
+// A FRAME LEAVES FROM THE HBLANK PUMP. The VBlank pump sends only what the
+// previous frame's HBlank pump could not fit, so in the usual frame its grab
+// just reads the index. The reason is SGDK's own VBlank work: its DMA flush
+// halts the Z80 right after this interrupt (HALT_Z80_ON_DMA, ~600 master with
+// an empty queue, more with a game's DMA), and a full eight-pair grab beside it
+// put ~1,800 master in one corrector window — 295 windows in 20 s of sin008,
+// the DAC 0.08% slow. The music is a constant half-frame later for it.
 static void vblankPump(void)
 {
     hintArmed = TRUE;
-    MMLisp_pump();
+    const u16 d = due();
+    pump(d ? (u16)(d - 1) : 0);
 }
 
 void MMLisp_attachInterrupts(void)
@@ -314,11 +350,26 @@ void MMLisp_attachInterrupts(void)
 void MMLisp_frame(void)
 {
     if (!ready || !loaded) return;
-    // One frame, rendered now: the sequencer runs exactly once a frame and its
-    // output waits in the pair queue for the two interrupt-side grabs.
-    u32 len = mml_render_frame(&seq, slotBuf);
-    mmlp_slot(&pairs, slotBuf, (u16)len);
-    rendered++;
+    // Render until the queue holds MMLISP_LEAD frames past the ones whose time
+    // has come. Normally that is one frame a call; after a call that came late
+    // it is two or three, and the pumps still send each on its own frame.
+    s16 behind = (s16)(u16)(due() + MMLISP_LEAD - rendered);
+    if (behind > MMLISP_LEAD + MMLISP_CATCHUP)
+    {
+        // Stopped, not slow: move the time base so the next frame is due one
+        // lead from now, and pause the music for as long as the game stopped.
+        const u16 level = SYS_getAndSetInterruptMaskLevel(7);
+        frameBase += (u32)(behind - MMLISP_LEAD);
+        SYS_setInterruptMaskLevel(level);
+        pauses++;
+        behind = MMLISP_LEAD;
+    }
+    while (behind-- > 0)
+    {
+        u32 len = mml_render_frame(&seq, slotBuf);
+        mmlp_slot(&pairs, slotBuf, (u16)len);
+        rendered++;
+    }
 }
 
 // ── Track control ──────────────────────────────────────────────────────────
@@ -382,4 +433,6 @@ void MMLisp_readStats(MMLispStats* out)
     out->stepRounded  = pairs.step_rounded;
     out->fifoLo       = fifoLo;
     out->late         = lateGrabs;
+    out->due          = loaded ? due() : 0;
+    out->pauses       = pauses;
 }

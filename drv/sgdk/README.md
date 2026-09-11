@@ -150,10 +150,18 @@ while (TRUE) {
   page the engine reads sixteen a lap (`docs/driver.md`,
   `docs/dac-engine-implementation.md` R28).
 
-- **`MMLisp_frame()` — once per frame, in the main loop.** It runs the
-  sequencer for one frame and turns the slot into pairs (`mmlpairs.c`); it
-  takes no bus. Tempo therefore follows your main loop: a frame it misses is a
-  frame the music waits.
+- **`MMLisp_frame()` — once per frame, in the main loop — renders ahead.** It
+  runs the sequencer and turns each slot into pairs (`mmlpairs.c`), up to
+  `MMLISP_LEAD` (default 1) frames past the ones whose time has come; it takes
+  no bus. The pumps send only frames whose time has come, counted from SGDK's
+  `vtimer`, so **the tempo follows the video clock, not your main loop**: a
+  main loop that runs late delays nothing that was ready, and the next call
+  renders the missed frames (on BlastEm, sin008 with the example's main loop
+  loaded to overrun every 64th frame: the FM timing moved 10.8 ms in 20 s,
+  under one frame). A main loop more than three frames behind is a stop — a
+  load, a pause screen — and the music pauses with it (`MMLispStats.pauses`)
+  instead of bursting through the missed frames. Each frame of lead is a frame
+  of latency on the control calls.
 
 - **The two pumps — from interrupts.** `MMLisp_attachInterrupts()` installs a
   VBlank callback and an HBlank one at line 93. Each takes the bus once, reads
@@ -161,7 +169,12 @@ while (TRUE) {
   IDLE) with four `movep.l`, and releases — about 1,100–1,320 master clocks on
   BlastEm. Two a frame is 960 pairs a second. Line 93 puts them 131 lines apart
   both ways on NTSC, more than one 80-sample observation window, so they never
-  add up in one. If your game has its own VBlank/HBlank callbacks, call
+  add up in one. **A frame leaves from the HBlank pump;** the VBlank one sends
+  only what the previous frame's could not fit, so in the usual frame it just
+  reads the index — because SGDK's DMA flush halts the Z80 right after the
+  VBlank interrupt, and a full grab beside it overran the corrector's window
+  (the DAC ran 0.08% slow; now 0.015%). The music is a constant half-frame
+  later for it. If your game has its own VBlank/HBlank callbacks, call
   `MMLisp_pump()` from them instead (at line 88–98 for the HBlank one); the
   HBlank vector needs an interrupt function, which is what `MMLisp_hint` is.
 
@@ -295,6 +308,10 @@ missing PCM means the count.
   sample loops).
 - `stepRounded` — PCM starts whose pitch was not an octave step of the baked
   sample, played at the nearest one.
+- `rendered` / `due` — frames rendered, and frames whose time has come;
+  `rendered - due` is the lead, normally `MMLISP_LEAD`.
+- `pauses` — times the main loop fell more than three frames behind and the
+  music paused with it.
 
 ### If `make` fails with no output at all
 
@@ -332,7 +349,18 @@ the include phase and prints the real error.)
 4. **The machine gate** does all of the above and more on a real SGDK build:
    `cd drv && npm run sgdk:gate -- path/to/score.mmlisp --seconds 20 --keep`
    (needs SGDK at `$GDK` or `~/Developer/gendev/SGDK`, the m68k toolchain, and
-   the probe BlastEm from `drv/blastem/setup.sh`).
+   the probe BlastEm from `drv/blastem/setup.sh`). Besides the chip writes and
+   the DAC it grades the timing: the FM's lag behind the reference's frames may
+   not climb over the run (a climb is a lost frame). `--burn N` loads the
+   example's main loop like a game's, overrunning every 64th frame.
+
+5. **Where the 68000's time goes:** `npm run sgdk:profile -- score.mmlisp`
+   times the driver's functions in the same build (probe marks on entry and
+   exit); `--pc` samples the 68000's PC instead and names the inlined source
+   lines, `--peak N` only inside the N heaviest renders. On sin008 the driver
+   takes ~28% of the 68000 on average — the render ~18%, the two pumps ~6% —
+   and the worst render ~116% of a frame (a voice change on several channels),
+   which the render lead absorbs.
 
 ### Two tools that settle almost any "it sounds wrong" report
 

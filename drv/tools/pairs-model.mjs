@@ -6,6 +6,7 @@
 import { decodeSlot } from "../../live/src/slot-builder.js";
 
 export const MMLP_QUEUE = 1024, MMLP_PSG = 256, MMLP_AHEAD = 32, MMLP_HELD = 128;
+export const MMLP_FRAMES = 8;
 const PCM_LEN = [0, 18, 2, 3, 6, 2];
 const LEVEL_OF_SHIFT = [14, 7, 4, 2, 1, 0, 0, 0, 0];
 const isPitchHi = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);
@@ -23,7 +24,11 @@ export class PairsModel {
   constructor(cfg) {
     this.cfg = cfg;
     this.q = [];                         // {port, op, val}; port -1 = a state store
-    this.psg = []; this.psgMark = 0;
+    this.psg = [];
+    // Running totals in and out of each queue, and where each frame ends in
+    // them (the C keeps ring indices; these are the same cuts).
+    this.qIn = 0; this.qOut = 0; this.psgIn = 0; this.psgOut = 0; this.psgMark = 0;
+    this.framesIn = 0; this.endQ = new Array(MMLP_FRAMES).fill(0); this.endPsg = new Array(MMLP_FRAMES).fill(0);
     this.chipPort = 0;
     this.startGen = 0; this.stopGen = 0;
     this.head = 0; this.headValid = false;
@@ -37,6 +42,7 @@ export class PairsModel {
   push(port, op, val) {
     if (this.q.length >= MMLP_QUEUE - 1) { this.overflow++; return; }
     this.q.push({ port, op, val: val & 0xff });
+    this.qIn++;
   }
   store(op, val) { this.push(-1, op, val); }
   stepOf(incI, incFrac) {
@@ -99,17 +105,28 @@ export class PairsModel {
       if (heldLen + n <= MMLP_HELD) { this.held.push(Array.from(c)); heldLen += n; } else this.overflow++;
     }
     for (const sub of d.subs) {
-      for (const b of sub.psg) if (this.psg.length < MMLP_PSG - 1) this.psg.push(b);
+      for (const b of sub.psg) if (this.psg.length < MMLP_PSG - 1) { this.psg.push(b); this.psgIn++; }
       for (const [reg, val] of sub.fm0) this.push(0, reg, val);
       for (const [reg, val] of sub.fm1) this.push(1, reg, val);
     }
+    this.endQ[this.framesIn % MMLP_FRAMES] = this.qIn;
+    this.endPsg[this.framesIn % MMLP_FRAMES] = this.psgIn;
+    this.framesIn++;
+  }
+  /** How many released frames are queued (mmlpairs.c released()). */
+  released(release) {
+    const inn = this.framesIn;
+    if (release >= inn) return inn;              // everything queued is due
+    return inn - release >= MMLP_FRAMES ? inn - (MMLP_FRAMES - 1) : release;
   }
   /** One grab: returns {dst, bytes} or bytes.length 0. `fifoLo` is the byte the engine published last grab, or null. */
-  plan(fifoLo) {
+  plan(fifoLo, release = this.framesIn) {
     const { fifoPairs: N, pairsPerGrab: K, ops: O, fifo } = this.cfg;
     const MASK = N - 1;
     this.grabs++;
-    this.undo = { q: this.q.slice(), port: this.chipPort, since: this.sinceStart, n: 0 };
+    this.undo = { q: this.q.slice(), qOut: this.qOut, port: this.chipPort, since: this.sinceStart, n: 0 };
+    const avail = this.released(release);
+    const lim = avail ? this.endQ[(avail - 1) % MMLP_FRAMES] : this.qOut;
     if (fifoLo === null || fifoLo === 0xff) return { dst: 0, bytes: [] };
     const c = (fifoLo >> 1) & MASK;
     let h = (c + MMLP_AHEAD) & MASK;
@@ -122,7 +139,7 @@ export class PairsModel {
     const out = [];
     let n = 0;
     const staged = new Set([O.SRC_LO, O.SRC_HI, O.END_LO, O.END_HI, O.STEP]);
-    while (n < K && this.q.length) {
+    while (n < K && this.qOut < lim) {
       const e = this.q[0];
       // Three pairs after a START before any staged store (the C has the note).
       if (e.port === -1 && staged.has(e.op) && this.sinceStart < 3) {
@@ -139,9 +156,9 @@ export class PairsModel {
       if (this.head + n + need > N) break;
       if (portChange) { out.push(O.PORT, e.port); n++; this.chipPort = e.port; }
       out.push(e.op, e.val); n++;
-      this.q.shift();
-      if (e.port !== -1 && isPitchHi(e.op) && this.q.length) {
-        const u = this.q.shift();
+      this.q.shift(); this.qOut++;
+      if (e.port !== -1 && isPitchHi(e.op) && this.qOut < lim) {
+        const u = this.q.shift(); this.qOut++;
         out.push(u.op, u.val); n++;
       }
       this.sinceStart = e.port === -1 && e.op === O.START ? 0 : Math.min(255, this.sinceStart + need);
@@ -156,13 +173,15 @@ export class PairsModel {
   }
   /** The grab was late (mmlpairs.h, the in-grab test): give the pairs back. */
   abort() {
-    this.q = this.undo.q; this.chipPort = this.undo.port; this.sinceStart = this.undo.since;
+    this.q = this.undo.q; this.qOut = this.undo.qOut; this.chipPort = this.undo.port; this.sinceStart = this.undo.since;
     this.pairsWritten -= this.undo.n; this.undo.n = 0;
     this.headValid = false; this.late++;
   }
-  psgTake(max = 256) {
-    const out = this.psg.splice(0, Math.min(max, this.psgMark));
-    this.psgMark = this.psg.length;
+  psgTake(max = 256, release = this.framesIn) {
+    const out = this.psg.splice(0, Math.min(max, this.psgMark - this.psgOut));
+    this.psgOut += out.length;
+    const avail = this.released(release);
+    if (avail) this.psgMark = this.endPsg[(avail - 1) % MMLP_FRAMES];
     return out;
   }
   get pending() { return this.q.length; }

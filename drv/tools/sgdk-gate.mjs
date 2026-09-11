@@ -34,13 +34,15 @@ const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", 4));
 const KEEP = argv.includes("--keep");
+// --burn N: the example's stand-in for a game's own frame (example/main.c)
+const BURN = Number(arg("burn", 0));
 const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "m2-pcm.mmlisp");
 
 const E = sgdkEnv("sgdk-gate");
 
 // ── the project ────────────────────────────────────────────────────────────
 let built;
-try { built = makeProject(E, score); }
+try { built = makeProject(E, score, { flags: BURN ? `-DMMLISP_BURN=${BURN}` : "" }); }
 catch (e) {
   console.error(e.output ?? e.message);
   console.error("FAIL: the SGDK build failed");
@@ -63,7 +65,7 @@ const player = new DrvPlayer();
 player.loadMMB(mmb, sampleBank);
 const slots = player.captureSlotLog({ maxFrames: Math.round(SECONDS * 60) + 60, commands: [], builder: new SlotBuilder() }).slots;
 const want = [[], []], psgWant = [];
-for (const s of slots) { const d = decodeSlot(s); for (const [r, v] of d.fm0) want[0].push({ r, v }); for (const [r, v] of d.fm1) want[1].push({ r, v }); psgWant.push(...d.psg); }
+slots.forEach((s, f) => { const d = decodeSlot(s); for (const [r, v] of d.fm0) want[0].push({ r, v, f }); for (const [r, v] of d.fm1) want[1].push({ r, v, f }); psgWant.push(...d.psg); });
 
 // ── grading ────────────────────────────────────────────────────────────────
 const { cfg } = buildEngine();
@@ -144,6 +146,22 @@ const over = stops.filter((x) => x > 1500).length;
 if (Math.abs(rate / cfg.rateHz - 1) > 0.002) errors.push(`DAC rate ${rate.toFixed(2)} Hz is ${(100 * (rate / cfg.rateHz - 1)).toFixed(3)}% off`);
 if (over) errors.push(`${over} runtime bus stops longer than 1,500 master`);
 const nonSilent = L.dac.filter((d) => d.value !== 0x80).length;
+// TIMING: when each FM write reached the chip, against the frame the reference
+// rendered it in. Wire bursts make single writes late; a LOST frame moves every
+// later write a frame later for good. So the floor of the lag, second by
+// second, must not climb: a climb of more than a frame is a frame the host lost.
+const FRAME = 896040;
+const lagRows = [];
+for (const p of [0, 1]) for (let i = 0; i < Math.min(seen[p].length, want[p].length); i++) lagRows.push({ t: seen[p][i].t, f: want[p][i].f });
+const floorBySecond = new Map();
+for (const r of lagRows) {
+  const sec = Math.floor(r.f / 60);
+  const lag = r.t - r.f * FRAME;
+  floorBySecond.set(sec, Math.min(floorBySecond.get(sec) ?? Infinity, lag));
+}
+const floors = [...floorBySecond.entries()].sort((a, b) => a[0] - b[0]).filter(([sec]) => sec >= 1).map(([, v]) => v);
+const drift = floors.length > 1 ? (Math.max(...floors) - floors[0]) / cfg.machine.masterHz * 1000 : 0;
+if (drift > 20) errors.push(`the FM arrives ${drift.toFixed(1)} ms later at the end than at the start: frames were lost`);
 // SYNC (tests/m3-pcm-sync.mmlisp): each PCM start's first sound against the
 // nearest fm1 key-on the chip saw. + means the drum is late.
 const keyOns = seen[0].filter((w) => w.r === 0x28 && (w.v & 7) === 0 && (w.v & 0xf0)).map((w) => w.t);
@@ -166,6 +184,7 @@ console.log(`  DAC ${L.dac.length} samples, ${rate.toFixed(2)} Hz, gap ${gaps.re
 console.log(`  FM ${seen[0].length}+${seen[1].length} writes seen of ${want[0].length}+${want[1].length} in the score's stream;`
   + ` PSG ${psgSeen.length} of ${psgWant.length}; ${L.grabs.length} grabs, runtime stops ${stops.reduce((a, b) => Math.min(a, b), stops.length ? Infinity : 0)}..${stops.reduce((a, b) => Math.max(a, b), 0)} master, ${over} over 1,500`);
 if (tag === "m3-pcm-sync") console.log(`  SYNC pcm vs fm1 key-on: ${sync.map((x) => x.toFixed(1)).join(" ")} ms`);
+console.log(`  timing: the lag floor moved ${drift.toFixed(1)} ms over the run (${floors.length} seconds)`);
 for (const e of errors) console.log(`  ! ${e}`);
 console.log(errors.length ? "FAIL" : "ok — the SGDK build plays the score on BlastEm as the reference says it should");
 if (!KEEP) dropProject(proj); else console.log(`  project kept at ${proj}`);

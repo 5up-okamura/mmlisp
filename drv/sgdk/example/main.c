@@ -37,6 +37,13 @@
 #define MMLISP_AUTOPLAY 0
 #endif
 
+// A stand-in for a game's own work, for the machine gate (sgdk-gate --burn N):
+// N iterations of a busy loop every frame, and twice that every 64th frame —
+// long enough to push the main loop past a frame. 0 in a real program.
+#ifndef MMLISP_BURN
+#define MMLISP_BURN 0
+#endif
+
 #define MAX_SHOWN_TRACKS 10
 
 static void drawHex(u32 value, u16 digits, u16 x, u16 y)
@@ -187,6 +194,15 @@ int main(bool hardReset)
             for (u8 i = 0; i < n; i++)
                 drawHex(MMLisp_trackActive(MMLisp_trackId(i)) ? 1 : 0, 1, 17 + i, 12);
         }
+
+#if MMLISP_BURN
+        {
+            static u16 frameNo;
+            volatile u16 sink = 0;
+            u16 n = ((++frameNo & 63) == 0) ? 2 * MMLISP_BURN : MMLISP_BURN;
+            while (n--) sink++;
+        }
+#endif
 
         // ── Once a frame, and last ───────────────────────────────────────────
         // Control calls above take effect on the frame this renders, so putting

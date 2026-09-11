@@ -153,8 +153,26 @@ void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
   }
   p->held_len = 0;
   slot_body(p, s, len);
-  p->psg_head = p->psg_work;     /* one 16-bit store each: the publication */
+  /* The publication: this frame's ends first, then the heads, then the frame
+   * count — one 16-bit store each. A grab bounds itself by the ends of the
+   * frames it may send, never by the heads, so it cannot see this frame until
+   * frames_in says it exists. */
+  p->end_q[p->frames_in & (MMLP_FRAMES - 1)] = p->q_work;
+  p->end_psg[p->frames_in & (MMLP_FRAMES - 1)] = p->psg_work;
+  p->psg_head = p->psg_work;
   p->q_head = p->q_work;
+  p->frames_in = (uint16_t)(p->frames_in + 1);
+}
+
+/* The number of released frames that are queued, and so the last one's index;
+ * frames beyond MMLP_FRAMES back are sent regardless (the host never renders
+ * that far ahead). */
+static uint16_t released(const MMLPairs *p, uint16_t release) {
+  const uint16_t in = p->frames_in;
+  if ((int16_t)(release - in) >= 0) return in;   /* everything queued is due */
+  uint16_t avail = release;
+  if ((uint16_t)(in - avail) >= MMLP_FRAMES) avail = (uint16_t)(in - (MMLP_FRAMES - 1));
+  return avail;
 }
 
 static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
@@ -206,8 +224,12 @@ MMLP_HOT int is_staged(const MMLPairsCfg *cfg, uint8_t op) {
   return op == cfg->op_src_lo || op == cfg->op_src_hi || op == cfg->op_end_lo || op == cfg->op_end_hi || op == cfg->op_step;
 }
 
-uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *ops, uint8_t *vals, uint16_t *dst) {
+uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops, uint8_t *vals, uint16_t *dst) {
   const MMLPairsCfg *cfg = &p->cfg;
+  /* The queue index this grab may not pass: the end of the last frame whose
+   * time has come. */
+  const uint16_t avail = released(p, release);
+  const uint16_t lim = avail ? p->end_q[(avail - 1) & (MMLP_FRAMES - 1)] : p->q_tail;
   const uint8_t N = cfg->fifo_pairs, MASK = (uint8_t)(N - 1);
   p->grabs++;
   p->undo_tail = p->q_tail;
@@ -233,7 +255,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *ops, uint8_t *vals, ui
   p->head = h;
   p->head_valid = 1;
   uint16_t n = 0;
-  while (n < cfg->pairs_per_grab && p->q_tail != p->q_head) {
+  while (n < cfg->pairs_per_grab && p->q_tail != lim) {
     uint16_t t = p->q_tail;
     uint8_t port = p->q_port[t], op = p->q_op[t], val = p->q_val[t];
     /* A START IS COPIED AT THE NEXT BLOCK EDGE, not when its pair is read. The
@@ -263,7 +285,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *ops, uint8_t *vals, ui
     }
     ops[n] = op; vals[n] = val; n++;
     p->q_tail = (uint16_t)((t + 1) & (MMLP_QUEUE - 1));
-    if (port != 0xff && is_pitch_hi(op) && p->q_tail != p->q_head) {
+    if (port != 0xff && is_pitch_hi(op) && p->q_tail != lim) {
       uint16_t u = p->q_tail;
       ops[n] = p->q_op[u]; vals[n] = p->q_val[u]; n++;
       p->q_tail = (uint16_t)((u + 1) & (MMLP_QUEUE - 1));
@@ -292,12 +314,13 @@ void mmlp_abort(MMLPairs *p) {
   p->late++;
 }
 
-uint16_t mmlp_psg_take(MMLPairs *p, uint8_t *out, uint16_t max) {
+uint16_t mmlp_psg_take(MMLPairs *p, uint16_t release, uint8_t *out, uint16_t max) {
   uint16_t n = 0;
   while (p->psg_tail != p->psg_mark && n < max) {
     out[n++] = p->psg[p->psg_tail];
     p->psg_tail = (uint16_t)((p->psg_tail + 1) & (MMLP_PSG - 1));
   }
-  p->psg_mark = p->psg_head;
+  const uint16_t avail = released(p, release);
+  if (avail) p->psg_mark = p->end_psg[(avail - 1) & (MMLP_FRAMES - 1)];
   return n;
 }

@@ -36,11 +36,11 @@ static unsigned char *slurp(const char *path, long *out_len) {
  * modelled engine moves on and the grab reads the fresh index; a late grab
  * (every seventh one here, as if a pump had been skipped) copies nothing and
  * gives its pairs back. The JS twin (tools/pairs-gate.mjs) does the same. */
-static void grab(MMLPairs *p, unsigned *consumer, uint8_t *fifo_lo, const MMLPairsCfg *cfg, unsigned *ngrab) {
+static void grab(MMLPairs *p, uint16_t release, unsigned *consumer, uint8_t *fifo_lo, const MMLPairsCfg *cfg, unsigned *ngrab) {
   uint8_t ops[8], vals[8], out[2 * 8];
   uint16_t dst = 0;
   uint8_t prev = *fifo_lo;
-  uint16_t nb = (uint16_t)(2 * mmlp_plan(p, prev, ops, vals, &dst));
+  uint16_t nb = (uint16_t)(2 * mmlp_plan(p, prev, release, ops, vals, &dst));
   for (uint16_t k = 0; 2 * k < nb; k++) { out[2 * k] = ops[k]; out[2 * k + 1] = vals[k]; }
   *consumer = (*consumer + ((*ngrab)++ % 7 == 6 ? 41 : 17)) % cfg->fifo_pairs;
   *fifo_lo = (uint8_t)(2 * *consumer);
@@ -50,14 +50,14 @@ static void grab(MMLPairs *p, unsigned *consumer, uint8_t *fifo_lo, const MMLPai
   fputc(nb, stdout);
   fwrite(out, 1, nb, stdout);
   uint8_t psg[256];
-  uint16_t np = mmlp_psg_take(p, psg, sizeof psg);
+  uint16_t np = mmlp_psg_take(p, release, psg, sizeof psg);
   fputc('P', stdout);
   fputc(np & 0xff, stdout);
   fwrite(psg, 1, np, stdout);
 }
 
 int main(int argc, char **argv) {
-  if (argc < 19) { fprintf(stderr, "usage: see the header comment\n"); return 2; }
+  if (argc < 19) { fprintf(stderr, "usage: see the header comment\n"); return 2; }  /* argv[19]: lead, optional */
   long len = 0;
   unsigned char *slots = slurp(argv[1], &len);
   if (!slots) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
@@ -85,16 +85,40 @@ int main(int argc, char **argv) {
   unsigned consumer = 0, ngrab = 0;
   uint8_t fifo_lo = 0xff;
   long i = 0;
-  while (i + 2 <= len) {
+  /* argv[19], optional: the render lead. Absent, every slot is sent as soon as
+   * it is queued (release = frames queued). Given, slots are queued `lead` frames ahead of
+   * their release, and each frame's two grabs pass the frame count — the SGDK
+   * host's schedule (mmlispdrv.c MMLisp_frame). */
+  const int lead = argc > 19 ? atoi(argv[19]) : -1;
+  uint16_t release = 0;
+  for (;;) {
+    int more = i + 2 <= len;
+    if (lead < 0) {
+      if (!more) break;
+    } else {
+      /* queue up to `lead` frames past the ones whose time has come */
+      while (more && (int16_t)(p.frames_in - (uint16_t)(release + lead)) < 0) {
+        unsigned n = slots[i] | (slots[i + 1] << 8);
+        i += 2;
+        if (i + (long)n > len) { more = 0; break; }
+        mmlp_slot(&p, slots + i, (uint16_t)n);
+        i += n;
+        more = i + 2 <= len;
+      }
+      release++;
+      for (int g = 0; g < 2; g++) grab(&p, release, &consumer, &fifo_lo, &cfg, &ngrab);
+      if (!more && (int16_t)(release - p.frames_in) >= 0) break;
+      continue;
+    }
     unsigned n = slots[i] | (slots[i + 1] << 8);
     i += 2;
     if (i + (long)n > len) break;
     mmlp_slot(&p, slots + i, (uint16_t)n);
     i += n;
-    for (int g = 0; g < 2; g++) grab(&p, &consumer, &fifo_lo, &cfg, &ngrab);
+    for (int g = 0; g < 2; g++) grab(&p, p.frames_in, &consumer, &fifo_lo, &cfg, &ngrab);
   }
   /* Drain: more grabs with no new slots, until the queue is empty. */
-  for (int g = 0; g < 4096 && mmlp_pending(&p); g++) grab(&p, &consumer, &fifo_lo, &cfg, &ngrab);
+  for (int g = 0; g < 4096 && mmlp_pending(&p); g++) grab(&p, p.frames_in, &consumer, &fifo_lo, &cfg, &ngrab);
   fprintf(stderr, "pairs: %u late, ", p.late);
   fprintf(stderr, "pairs: %u grabs, %u pairs, dropped voice %u loop %u, step rounded %u, overflow %u\n",
           p.grabs, p.pairs_written, p.dropped_voice, p.dropped_loop, p.step_rounded, p.overflow);

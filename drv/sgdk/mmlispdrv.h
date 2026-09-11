@@ -11,15 +11,23 @@
 // engine's phase corrector can repay.
 //
 // TWO GRABS A FRAME, FROM INTERRUPTS — the one thing a game has to arrange. A
-// grab carries at most five pairs, so the wire is ~600 register writes a second
-// only when the bus is taken twice a frame, and the pairs land ahead of the
-// engine only when the grabs are evenly spaced. So:
+// grab carries eight pairs, so the wire is 960 register writes a second only
+// when the bus is taken twice a frame, and the pairs land ahead of the engine
+// only when the grabs are evenly spaced. So:
 //
 //     MMLisp_attachInterrupts()  once, after MMLisp_init: a pump becomes the
 //                                VBlank callback and MMLisp_hint the HBlank one
 //                                at line 93
-//     MMLisp_frame()             once a frame in your main loop: renders the
-//                                frame into the queue; takes no bus
+//     MMLisp_frame()             once a frame in your main loop: renders ahead
+//                                into the queue; takes no bus
+//
+// THE TEMPO FOLLOWS THE VIDEO CLOCK, NOT THE MAIN LOOP. MMLisp_frame() renders
+// each frame MMLISP_LEAD (default 1) frames before its time, and the pumps send
+// only the frames whose time has come, counted from SGDK's vtimer. So a main
+// loop that runs late — a heavy frame of the game, or of the music — delays
+// nothing that was ready, and the next call catches up. A main loop more than
+// three frames behind is taken as a stop (a load, a pause screen) and the music
+// pauses with it rather than bursting through the missed frames.
 //
 // If your game has its own VBlank or HBlank callback, skip the attach and call
 // MMLisp_pump() from yours — once in VBlank and once at line 88..98, so that the
@@ -73,13 +81,15 @@ bool MMLisp_loadScore(const u8* mmb);
 // HBlank callbacks and enables the horizontal interrupt.
 void MMLisp_attachInterrupts(void);
 
-// Render one frame of the score into the pair queue. Exactly once a frame, in
-// the main loop; takes no bus. Place it after the control calls below: they
-// take effect on the frame it renders.
+// Render the score ahead into the pair queue: up to MMLISP_LEAD frames past
+// the ones whose time has come (normally one frame a call; more after a late
+// call). Once a frame, in the main loop; takes no bus. Place it after the
+// control calls below: they take effect on the next frame it renders.
 void MMLisp_frame(void);
 
-// One grab: read the engine's index, write up to five pairs ahead of it, then
-// write the PSG bytes released for this half-frame. Twice a frame, from
+// One grab: read the engine's index, write up to eight pairs of the frames
+// whose time has come ahead of it, then write the PSG bytes released for this
+// half-frame. Twice a frame, from
 // interrupts (MMLisp_attachInterrupts does it). Each call stops the Z80 for
 // under 1,500 master clocks, which the engine repays. A pump that overlaps
 // another returns at once, and a bus the interrupted code holds is left held.
@@ -92,8 +102,9 @@ void MMLisp_pump(void);
 HINTERRUPT_CALLBACK MMLisp_hint(void);
 
 // ── Track control (driver.md §6.5) ─────────────────────────────────────────
-// Every call takes effect on the next frame MMLisp_frame renders; its FM
-// writes reach the chip within about a half-frame after that.
+// Every call takes effect on the next frame MMLisp_frame renders, which is
+// played MMLISP_LEAD frames later; its FM writes reach the chip within about a
+// half-frame of that frame's time.
 
 // Start a track by its MMB track id. Claiming a channel evicts its current
 // owner and resets the channel's level state. Start each track of a score with
@@ -136,9 +147,10 @@ bool MMLisp_needsSampleBank(void);
 // True while the track is running (dispatching or holding).
 bool MMLisp_trackActive(u8 track_id);
 
-// Frames rendered since the score was loaded. The audible clock runs a fixed
-// ~16 ms behind it (a half-frame grab period plus the pair page), so anything
-// that has to line up with what the player hears compares against this.
+// Frames rendered since the score was loaded. They are rendered MMLISP_LEAD
+// frames ahead of their time, and what the player hears runs a further ~16 ms
+// behind that (a half-frame grab period plus the pair page); anything that has
+// to line up with the music compares against MMLispStats.due instead.
 u16 MMLisp_renderedFrames(void);
 
 typedef struct {
@@ -159,6 +171,10 @@ typedef struct {
                        // (pcm2/pcm3) or for sample loops
     u16 stepRounded;   // PCM starts whose increment was not a power of two —
                        // played at the nearest octave (the bake makes it exact)
+    u16 due;           // frames whose time has come (vtimer since the load, less
+                       // pauses); rendered - due is the lead, normally MMLISP_LEAD
+    u16 pauses;        // times the main loop fell more than three frames behind
+                       // and the music paused with it
     u8  fifoLo;        // the engine's own index, as last read: 0..254, even, moving
 } MMLispStats;
 

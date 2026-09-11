@@ -53,22 +53,33 @@ const cArgs = [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.level
   .map(String);
 
 /** The JS side: the same slots, the same modelled engine, the same records. */
-function jsStream(slots) {
+function jsStream(slots, lead = -1) {
   const m = new PairsModel(cfg);
   const out = [];
   let consumer = 0, fifoLo = null, ngrab = 0;
-  const grab = () => {
+  const grab = (release = m.framesIn) => {
     const prev = fifoLo;
-    const g = m.plan(prev);
+    const g = m.plan(prev, release);
     consumer = (consumer + (ngrab++ % 7 === 6 ? 41 : 17)) % cfg.fifoPairs;
     fifoLo = 2 * consumer;
     let bytes = g.bytes;
     if (bytes.length && !inTime(prev, g.dst, fifoLo)) { m.abort(); bytes = []; out.push(0x4c); }
     out.push(0x47, g.dst & 0xff, g.dst >> 8, bytes.length, ...bytes);
-    const psg = m.psgTake(256);
+    const psg = m.psgTake(256, release);
     out.push(0x50, psg.length, ...psg);
   };
-  for (const s of slots) { m.slot(s); grab(); grab(); }
+  if (lead < 0) for (const s of slots) { m.slot(s); grab(); grab(); }
+  else {
+    // The SGDK host's schedule (pairs_main.c has the note): queue `lead`
+    // frames ahead, then two grabs passing the frame count.
+    let i = 0, release = 0;
+    for (;;) {
+      while (i < slots.length && m.framesIn < release + lead) m.slot(slots[i++]);
+      release++;
+      grab(release); grab(release);
+      if (i >= slots.length && release >= m.framesIn) break;
+    }
+  }
   for (let g = 0; g < 4096 && m.pending; g++) grab();
   return { bytes: Uint8Array.from(out), model: m };
 }
@@ -98,25 +109,40 @@ for (const score of scores) {
   catch (e) { console.log(`FAIL  ${pad(name, 24)} gate_main: ${e.stderr?.toString().trim()}`); failed++; continue; }
   const slotsFile = join(tmp, `${name}.slots`);
   writeFileSync(slotsFile, slotsBuf);
-  let cOut, cErr = "";
-  try { cOut = execFileSync(pairsExe, [slotsFile, ...cArgs], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
-  catch (e) { console.log(`FAIL  ${pad(name, 24)} pairs_main: ${e.stderr?.toString().trim()}`); failed++; continue; }
-  const js = jsStream(parseSlots(slotsBuf));
-  let bad = -1;
-  for (let i = 0; i < Math.max(cOut.length, js.bytes.length); i++)
-    if (cOut[i] !== js.bytes[i]) { bad = i; break; }
-  const m = js.model;
-  const note = `${m.grabs} grabs (${m.late} late), ${m.pairsWritten} pairs, ${m.psg.length} psg left`
-    + (m.droppedVoice ? `, ${m.droppedVoice} voice>0 dropped` : "")
-    + (m.droppedLoop ? `, ${m.droppedLoop} loops ignored` : "")
-    + (m.stepRounded ? `, ${m.stepRounded} steps rounded` : "")
-    + (m.overflow ? `, ${m.overflow} OVERFLOW` : "");
-  if (bad >= 0) {
-    failed++;
-    console.log(`FAIL  ${pad(name, 24)} C and JS differ at byte ${bad}: C ${cOut[bad]} JS ${js.bytes[bad]}`
-      + ` (C ${cOut.length} B, JS ${js.bytes.length} B) — ${note}`);
-  } else console.log(`ok    ${pad(name, 24)} ${cOut.length} B identical — ${note}`);
-  void cErr;
+  // Three schedules: every slot sent as soon as it is queued, and the SGDK
+  // host's render-ahead of one and two frames with release by frame count.
+  const parsed = parseSlots(slotsBuf);
+  const rows = [];
+  let scoreBad = false;
+  let asap = null;
+  for (const lead of [-1, 1, 2]) {
+    let cOut;
+    try { cOut = execFileSync(pairsExe, [slotsFile, ...cArgs, ...(lead >= 0 ? [String(lead)] : [])], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (e) { rows.push(`pairs_main (lead ${lead}): ${e.stderr?.toString().trim()}`); scoreBad = true; continue; }
+    const js = jsStream(parsed, lead);
+    let bad = -1;
+    for (let i = 0; i < Math.max(cOut.length, js.bytes.length); i++)
+      if (cOut[i] !== js.bytes[i]) { bad = i; break; }
+    const m = js.model;
+    const tag = lead < 0 ? "asap" : `lead ${lead}`;
+    // Rendering ahead must change nothing on the wire: with the same grabs, a
+    // frame queued early still leaves on its own frame's grabs.
+    if (lead < 0) asap = js.bytes;
+    else if (Buffer.compare(Buffer.from(asap), Buffer.from(js.bytes)) !== 0) {
+      scoreBad = true;
+      rows.push(`${tag}: the wire differs from sending as soon as queued — a frame left before its time`);
+    }
+    if (bad >= 0) {
+      scoreBad = true;
+      rows.push(`${tag}: C and JS differ at byte ${bad}: C ${cOut[bad]} JS ${js.bytes[bad]} (C ${cOut.length} B, JS ${js.bytes.length} B)`);
+    } else rows.push(`${tag} ${cOut.length} B` + (lead < 0 ? ` — ${m.grabs} grabs (${m.late} late), ${m.pairsWritten} pairs, ${m.psg.length} psg left`
+      + (m.droppedVoice ? `, ${m.droppedVoice} voice>0 dropped` : "")
+      + (m.droppedLoop ? `, ${m.droppedLoop} loops ignored` : "")
+      + (m.stepRounded ? `, ${m.stepRounded} steps rounded` : "")
+      + (m.overflow ? `, ${m.overflow} OVERFLOW` : "") : ""));
+  }
+  if (scoreBad) failed++;
+  console.log(`${scoreBad ? "FAIL" : "ok  "}  ${pad(name, 24)} ${rows.join(" · ")}`);
 }
 rmSync(tmp, { recursive: true, force: true });
 console.log(failed ? `FAIL: ${failed} of ${scores.length} scores` : `${scores.length} scores: C ≡ JS`);

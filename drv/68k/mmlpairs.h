@@ -46,6 +46,7 @@ typedef struct {
 #define MMLP_QUEUE 1024   /* pairs the host holds while the wire catches up */
 #define MMLP_PSG   256    /* PSG bytes held for one grab period */
 #define MMLP_HELD  128    /* one slot's PCM commands, held for the next slot */
+#define MMLP_FRAMES 8     /* frames queued ahead whose ends are remembered (a power of two) */
 
 typedef struct {
   MMLPairsCfg cfg;
@@ -56,6 +57,10 @@ typedef struct {
   /* The PSG queue, released one grab late. */
   uint8_t psg[MMLP_PSG];
   uint16_t psg_head, psg_tail, psg_mark, psg_work;
+  /* FRAMES. Slot k is frame k; where each queued frame ends in both queues,
+   * so a grab sends only the frames whose time has come (mmlp_plan). */
+  uint16_t frames_in;               /* slots taken in: the next slot's frame number */
+  uint16_t end_q[MMLP_FRAMES], end_psg[MMLP_FRAMES];
   /* The previous slot's PCM commands, sent with this one (mmlpairs.c). */
   uint8_t held[MMLP_HELD];
   uint16_t held_len;
@@ -90,6 +95,14 @@ void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg);
  * SGDK host keeps a flag for that). */
 void mmlp_slot(MMLPairs *p, const uint8_t *slot, uint16_t len);
 
+/* WHICH FRAMES MAY GO. `release` is how many frames' time has come: frames
+ * 0 .. release-1 may be written, later ones wait even if they are queued. So
+ * the host can render ahead (the SGDK host renders one frame early) and the
+ * pairs still leave on their own frame — a render that runs late delays
+ * nothing that was ready, and nothing goes out early. Frames more than
+ * MMLP_FRAMES ahead of `release` must not be queued; `release` = frames_in
+ * sends whatever is queued. Counts wrap at 16 bits and compare as such. */
+
 /* Plan one grab. `fifo_lo` is the byte the engine publishes (its next pair's
  * byte offset into the page) as read in the PREVIOUS grab, or 0xff for none
  * yet. Fills `ops[k]` and `vals[k]` for the grab's pairs_per_grab positions —
@@ -98,7 +111,7 @@ void mmlp_slot(MMLPairs *p, const uint8_t *slot, uint16_t len);
  * reads fifo_lo), and then the arrays are left as they were. Two arrays, not
  * one interleaved run, because that is how the SGDK host stores them: MOVEP
  * writes every other byte of the page (mmlispdrv.c). */
-uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint8_t *ops, uint8_t *vals, uint16_t *dst);
+uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops, uint8_t *vals, uint16_t *dst);
 
 /* THE IN-GRAB TEST. The destination was chosen from the index read in the
  * PREVIOUS grab, ahead of it by more than the engine consumes between two
@@ -118,9 +131,11 @@ static inline int mmlp_in_time(uint8_t lo_prev, uint16_t dst, uint8_t lo_now) {
  * engine passed it), so the next plan places the head from the fresh index. */
 void mmlp_abort(MMLPairs *p);
 
-/* PSG bytes released for this grab period: those queued before the previous
- * call. Returns how many were copied into `out` (at most `max`). */
-uint16_t mmlp_psg_take(MMLPairs *p, uint8_t *out, uint16_t max);
+/* PSG bytes released for this grab period: those of released frames (as
+ * mmlp_plan) that were already released at the previous call — one grab late,
+ * so they land about when the FM they were cued with leaves the pair page.
+ * Returns how many were copied into `out` (at most `max`). */
+uint16_t mmlp_psg_take(MMLPairs *p, uint16_t release, uint8_t *out, uint16_t max);
 
 /* Pairs still waiting. */
 uint16_t mmlp_pending(const MMLPairs *p);
