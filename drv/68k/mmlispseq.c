@@ -1172,13 +1172,46 @@ static void pcm_frame(MMLSeq *s) {
     uint16_t at = s->plan_len++;
     int last = 0;
     s->plan_buf[at] = 0;
-    for (int t = 0; t < (int)chunk && v->active; t++) {
+    /* WHERE THE VOICE CROSSES ITS BOUNDARY, COMPUTED — not walked. The walk
+     * (one 16.16 step a tick, `chunk` ticks) is what drv-player.js does and
+     * what this must equal byte for byte; on the 68000 it cost 27% of a frame
+     * at 167 ticks a frame (measured in an SGDK build on BlastEm). The bytes
+     * consumed over k ticks telescope to ((pos + k·inc) >> 16) − (pos >> 16),
+     * so a frame with no crossing is one multiply, and a crossing is found
+     * with one divide: the first k with pos + k·inc >= (target << 16). */
+    int t = 0;
+    while (t < (int)chunk && v->active) {
+      uint32_t rem = (uint32_t)((int)chunk - t);
       uint32_t before = v->pos >> 16;
-      v->pos += v->inc;
-      v->left -= (int32_t)((v->pos >> 16) - before);
-      if (v->left > 0) continue;
-      plan_push(s, at, t + 1 - last);
-      last = t + 1;
+      uint32_t end = v->pos + rem * v->inc;
+      uint32_t k;
+      if (end < v->pos) {
+        k = 0; /* the 16.16 position wrapped: only the walk says what happens */
+      } else if (v->left > (int32_t)((end >> 16) - before)) {
+        v->left -= (int32_t)((end >> 16) - before);
+        v->pos = end;
+        break;
+      } else if (v->left <= 0) {
+        k = 1; /* the walk checks after its first step */
+      } else {
+        uint32_t target = before + (uint32_t)v->left; /* <= end >> 16, so < 2^16 */
+        k = (((target << 16) - v->pos) + v->inc - 1) / v->inc;
+        if (k < 1) k = 1;
+      }
+      if (k == 0) {
+        before = v->pos >> 16;
+        v->pos += v->inc;
+        v->left -= (int32_t)((v->pos >> 16) - before);
+        t++;
+        if (v->left > 0) continue;
+      } else {
+        uint32_t p1 = v->pos + k * v->inc;
+        v->left -= (int32_t)((p1 >> 16) - before);
+        v->pos = p1;
+        t += (int)k;
+      }
+      plan_push(s, at, t - last);
+      last = t;
       if (v->has_loop && !v->releasing) {
         v->pos -= v->loop_len << 16;
         v->left = (int32_t)v->loop_len;
