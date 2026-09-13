@@ -1500,3 +1500,23 @@ themselves — a VBlank-only pump mode (480 pairs/s) is wanted as an option;
 eventually trade some quality for balance. After DAC playback settles, the user
 wants a TINY Z80-only version too (sequencer back on the Z80, this engine's
 instruction-clock DAC reused).
+
+### The song-start voice burst — user's idea and the numbers (2026-09-14)
+
+User (after listening: quality OK, the silence was their player's spec):
+spread the voice setup at COMPILE time so it does not land in one frame.
+Measured facts to weigh it against: the 68000 side of the burst (frame 0 at
+~93% of a frame) is already absorbed by the render lead; what delays the first
+notes is the WIRE — ~250 register writes at 16 pairs/frame ≈ 16 frames
+(~260 ms), and a mid-song voice change on several channels (frame 901 of
+sin008: 67 writes) costs ~4 frames the same way. Spreading setup per channel
+staggers the channels unless every note start is delayed by the same amount,
+which gives the same total delay. Two fixes that do address the wire:
+(a) PRIME AT LOAD — the tracks' leading setup rendered at MMLisp_loadScore and
+sent over the idle frames before startTrack (sequencer API + JS reference
+mirror, c-gate); (b) R28 step 3, VSET bodies in the sample-bank ROM (one pair
+per voice; also fixes mid-song changes; engine + exporter). Not decided yet.
+User's stated order: correct playback first, then optimization; the realistic
+spec is now visible (FM6 + PSG3 + 1 PCM voice at 9,987 Hz, 960 writes/s,
+driver ~28% of the 68000 on sin008 — candidates to cut: SLOT_SUBS 2→1, the
+slot encode/decode round trip, a VBlank-only pump mode).
