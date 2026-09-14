@@ -1795,6 +1795,50 @@ static void process_fades(MMLSeq *s) {
 }
 
 /* ── Frame ────────────────────────────────────────────────────────────────── */
+/* How many queued writes this frame's slot takes: up to the cap, and then the
+ * longest PREFIX that fits the slot's bytes — the byte budget can bind before
+ * the write budget when PCM commands are dense (three PCM_STARTs are 54 B).
+ * What is not taken stays queued, in order, and leads the next frame. */
+static uint16_t slot_take(const MMLSeq *s) {
+  uint16_t queued = mml_pending(s);
+  uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
+  /* n_writes + chunk + n_pcm + the commands + the segment plan + one
+   * run-length triple per sub-slot */
+  uint32_t size = 3 + 3 * MML_SLOT_SUBS + s->pcm_len +
+                  (s->plan_len ? s->plan_len : MML_PCM_VOICES);
+  /* If every write could be FM (two bytes each) and still fit, they all do:
+   * the walk below is only for a slot that might not. */
+  if (size + 2u * take <= MML_SLOT_SIZE) return take;
+  uint16_t fit = 0, scan = s->q_tail;
+  for (uint16_t i = 0; i < take; i++) {
+    uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
+    if (size + cost > MML_SLOT_SIZE) break;
+    size += cost;
+    fit++;
+    scan = (uint16_t)((scan + 1) & (MML_WRITE_QUEUE - 1));
+  }
+  return fit;
+}
+
+/* Where sub-slot j's run ends, in writes from the frame's first: the last
+ * sub-slot closes the frame whatever was marked (a drain frame has no marks),
+ * and no run ends before the one ahead of it. */
+static uint16_t sub_end(const MMLSeq *s, int j, uint16_t take, uint16_t done) {
+  uint16_t end = j == MML_SLOT_SUBS - 1 ? take : s->sub_mark[j];
+  if (end > take) end = take;
+  if (end < done) end = done;
+  return end;
+}
+
+/* What a frame's slot has spilled, for the host's readout. */
+static void note_spill(MMLSeq *s) {
+  uint16_t left = mml_pending(s);
+  if (left) {
+    s->spill_frames++;
+    if (left > s->spill_peak) s->spill_peak = left;
+  }
+}
+
 static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
   /* Take up to the cap, in order, then bucket into the three runs of whichever
    * sub-slot the write was generated in. Bucketing loses cross-port order
@@ -1805,32 +1849,11 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * sub-slot — so the queue is walked exactly once and the sub-slots fill in
    * order. What does not fit stays queued and leads the next frame's sub-slot
    * 0, as it always did. */
-  uint16_t queued = mml_pending(s);
-  uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
+  uint16_t take = slot_take(s);
   uint16_t cur = s->q_tail;
-  /* The BYTE budget can bind before the write budget when PCM commands are
-   * dense (three PCM_STARTs are 54 B), so keep the longest PREFIX that fits
-   * rather than overflow the slot. What is dropped stays queued, in order. */
-  {
-    /* n_writes + chunk + n_pcm + the commands + the segment plan + one
-     * run-length triple per sub-slot */
-    uint32_t size = 3 + 3 * MML_SLOT_SUBS + s->pcm_len +
-                    (s->plan_len ? s->plan_len : MML_PCM_VOICES);
-    uint16_t fit = 0, scan = cur;
-    /* If every write could be FM (two bytes each) and still fit, they all do:
-     * the walk below is only for a slot that might not. */
-    if (size + 2u * take <= MML_SLOT_SIZE) fit = take;
-    else for (uint16_t i = 0; i < take; i++) {
-      uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
-      if (size + cost > MML_SLOT_SIZE) break;
-      size += cost;
-      fit++;
-      scan = (uint16_t)((scan + 1) & (MML_WRITE_QUEUE - 1));
-    }
-    take = fit;
-  }
 
   uint32_t o = 0;
+
   /* The frame-level fields lead. The engine wants both at the frame head — the
    * PCM commands before it mixes, the write count before it sizes the frame's
    * pad — while sub-slots 1..K-1 are not consumed until a third and two thirds
@@ -1859,9 +1882,7 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
   for (int j = 0; j < MML_SLOT_SUBS; j++) {
     /* The last sub-slot always closes the frame, whatever was marked: nothing
      * may be left behind the marks (a drain frame has none at all). */
-    uint16_t end = j == MML_SLOT_SUBS - 1 ? take : s->sub_mark[j];
-    if (end > take) end = take;
-    if (end < done) end = done;
+    uint16_t end = sub_end(s, j, take, done);
     /* Counted first, then written straight to where each run lands — the
      * runs used to be built in three local arrays and copied out a byte at a
      * time, which on the 68000 cost more than the bucketing itself. */
@@ -1890,13 +1911,37 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
     o = (uint32_t)(w1 - out);
   }
   s->q_tail = cur;
-
-  uint16_t left = mml_pending(s);
-  if (left) {
-    s->spill_frames++;
-    if (left > s->spill_peak) s->spill_peak = left;
-  }
+  note_spill(s);
   return o;
+}
+
+/* ── The frame as a VIEW (for the pair host) ──────────────────────────────
+ * encode_slot packs a frame into slot bytes for a consumer on the other side
+ * of a bus; the SGDK host's consumer (mmlpairs.c) is on this side and only
+ * unpacks them again. A view describes the same slot without writing it: the
+ * PCM commands, and for each sub-slot the run of the write queue it takes —
+ * the same take, the same runs, so a consumer that walks the view sees
+ * exactly what it would have read from the bytes (pairs-gate checks the two
+ * paths agree on every score). The queue is left as it is until the consumer
+ * calls mml_view_done. */
+static void fill_view(MMLSeq *s, MMLFrameView *v) {
+  const uint16_t take = slot_take(s);
+  v->q = s->q;
+  v->first = s->q_tail;
+  uint16_t done = 0;
+  for (int j = 0; j < MML_SLOT_SUBS; j++) done = v->end[j] = sub_end(s, j, take, done);
+  v->pcm = s->pcm_buf;
+  v->pcm_len = s->pcm_len;
+  v->pcm_count = s->pcm_count;
+}
+
+void mml_view_done(MMLSeq *s, const MMLFrameView *v) {
+  s->pcm_chunk = 0;
+  s->pcm_count = 0;
+  s->pcm_len = 0;
+  s->plan_len = 0;
+  s->q_tail = (uint16_t)((v->first + v->end[MML_SLOT_SUBS - 1]) & (MML_WRITE_QUEUE - 1));
+  note_spill(s);
 }
 
 uint16_t mml_pending(const MMLSeq *s) {
@@ -1924,7 +1969,7 @@ void mml_pcm_ring_fill(MMLSeq *s, uint16_t fill) {
 
 uint16_t mml_pcm_fill(const MMLSeq *s) { return s->pcm_fill; }
 
-uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
+static void run_frame(MMLSeq *s) {
   for (int sub = 0; sub < MML_SLOT_SUBS; sub++) {
     s->sub = (uint8_t)sub;
     uint16_t step = sub_increment(s->increment, sub);
@@ -2019,7 +2064,16 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
     s->sub_mark[sub] = mml_pending(s);
   }
   s->frame++;
+}
+
+uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out) {
+  run_frame(s);
   return encode_slot(s, slot_out);
+}
+
+void mml_render_frame_view(MMLSeq *s, MMLFrameView *v) {
+  run_frame(s);
+  fill_view(s, v);
 }
 
 uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out) {
@@ -2027,6 +2081,11 @@ uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out) {
    * back leads sub-slot 0, which is exactly where a spill belongs. */
   for (int j = 0; j < MML_SLOT_SUBS; j++) s->sub_mark[j] = mml_pending(s);
   return encode_slot(s, slot_out);
+}
+
+void mml_drain_frame_view(MMLSeq *s, MMLFrameView *v) {
+  for (int j = 0; j < MML_SLOT_SUBS; j++) s->sub_mark[j] = mml_pending(s);
+  fill_view(s, v);
 }
 
 uint8_t mml_track_count(const MMLSeq *s) { return s->track_count; }

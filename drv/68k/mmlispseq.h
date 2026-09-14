@@ -407,6 +407,25 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
  * the song is over. Returns the slot length in bytes. */
 uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out);
 
+/* THE FRAME AS A VIEW — what mml_render_frame / mml_drain_frame would encode,
+ * described instead of written: the slot's PCM commands, and for each
+ * sub-slot the run of the write queue it takes (entries first .. first+end[j],
+ * wrapping at MML_WRITE_QUEUE; sub-slot j starts where j-1 ended). For a host
+ * whose consumer is on the 68000 side (the SGDK pair host) the bytes were
+ * only ever unpacked again. The queue and the PCM run stay as they are until
+ * mml_view_done; call it before the next frame. */
+typedef struct {
+  const MMLWrite *q;
+  uint16_t first;
+  uint16_t end[MML_SLOT_SUBS];
+  const uint8_t *pcm;
+  uint16_t pcm_len;
+  uint8_t pcm_count;
+} MMLFrameView;
+void mml_render_frame_view(MMLSeq *s, MMLFrameView *v);
+void mml_drain_frame_view(MMLSeq *s, MMLFrameView *v);
+void mml_view_done(MMLSeq *s, const MMLFrameView *v);
+
 /* ── Ring transport (driver.md §6.1, §6.6) ─────────────────────────────────
  * The bus grab and the byte copy belong to the host layer; the arithmetic that
  * decides HOW MANY slots to render belongs here, where the host gate can reach

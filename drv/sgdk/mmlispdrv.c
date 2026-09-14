@@ -3,9 +3,10 @@
 // The Z80 image is the one-voice pair-transport engine (docs/driver.md §5,
 // R28 §63): it keeps a fixed 9,987.57 Hz DAC clock and consumes {op, val}
 // PAIRS from a page in its RAM, sixteen a lap. This file is what puts them
-// there. The sequencer (mmlispseq.c) is unchanged — it still renders a SLOT a
-// frame — and mmlpairs.c turns each slot into pairs and PSG bytes; everything
-// SGDK-specific is here: the bring-up, the bus grab, the copy, the PSG port.
+// there. The sequencer (mmlispseq.c) renders a frame and mmlpairs.c takes it
+// from the sequencer's write queue into pairs and PSG bytes (the slot the
+// other gates see is never packed here); everything SGDK-specific is here: the
+// bring-up, the bus grab, the copy, the PSG port.
 //
 // TWO GRABS A FRAME, BOTH FROM INTERRUPTS. A grab carries eight pairs and may
 // stop the Z80 for at most 1,500 master clocks (what the engine's phase
@@ -50,7 +51,6 @@ static u16        rendered = 0;
 #define MMLISP_CATCHUP 3
 static u32        frameBase;           // vtimer - frameBase = frames whose time has come
 static u16        pauses = 0;
-static u8         slotBuf[MML_SLOT_SIZE];
 // THE PUMPS SHARE ONE PLANNER. MMLisp_frame() (main loop) only fills the
 // queue, which mmlpairs.c makes safe against an interrupt-side reader; two
 // pumps must never overlap, though — the VBlank interrupt can preempt the
@@ -373,8 +373,9 @@ void MMLisp_frame(void)
     }
     while (behind-- > 0)
     {
-        u32 len = mml_render_frame(&seq, slotBuf);
-        mmlp_slot(&pairs, slotBuf, (u16)len);
+        // Straight from the sequencer's queue into the pair queue: no slot is
+        // packed and parsed again (mmlpairs.h mmlp_render).
+        mmlp_render(&pairs, &seq);
         rendered++;
     }
 }

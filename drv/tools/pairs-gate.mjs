@@ -35,12 +35,14 @@ const { header: H } = buildEngine();
 const cfg = pairsCfgFromHeader(H);
 const ctab = generatedTables();
 const tmp = mkdtempSync(join(tmpdir(), "pairsgate-"));
-const gateExe = join(tmp, "gate_main"), pairsExe = join(tmp, "pairs_main");
+const gateExe = join(tmp, "gate_main"), pairsExe = join(tmp, "pairs_main"), viewExe = join(tmp, "view_main");
 try {
   execFileSync(process.env.CC ?? "cc", ["-std=c99", "-O1", "-Wall", "-Wextra", "-Werror", "-o", gateExe,
     ...ctab.flags, join(c68k, "gate_main.c"), join(c68k, "mmlispseq.c"), ctab.tables], { stdio: "pipe" });
   execFileSync(process.env.CC ?? "cc", ["-std=c99", "-O1", "-Wall", "-Wextra", "-Werror", "-o", pairsExe,
-    ...ctab.flags, join(c68k, "pairs_main.c"), join(c68k, "mmlpairs.c")], { stdio: "pipe" });
+    ...ctab.flags, join(c68k, "pairs_main.c"), join(c68k, "mmlpairs.c"), join(c68k, "mmlispseq.c"), ctab.tables], { stdio: "pipe" });
+  execFileSync(process.env.CC ?? "cc", ["-std=c99", "-O1", "-Wall", "-Wextra", "-Werror", "-o", viewExe,
+    ...ctab.flags, join(c68k, "view_main.c"), join(c68k, "mmlpairs.c"), join(c68k, "mmlispseq.c"), ctab.tables], { stdio: "pipe" });
 } catch (e) {
   console.error(e.stderr?.toString() ?? e.message);
   console.error("FAIL: the C did not compile");
@@ -140,6 +142,15 @@ for (const score of scores) {
       + (m.droppedLoop ? `, ${m.droppedLoop} loops ignored` : "")
       + (m.stepRounded ? `, ${m.stepRounded} steps rounded` : "")
       + (m.overflow ? `, ${m.overflow} OVERFLOW` : "") : ""));
+  }
+  // THE SGDK HOST'S PATH (mmlp_render, no slot bytes) against the slot path,
+  // state for state, plain and primed at load.
+  for (const prime of [-1, 12]) {
+    const smpArgs = sampleBank ? ["--samples", join(tmp, `${name}.smp`)] : [];
+    try {
+      execFileSync(viewExe, [mmb, String(FRAMES), ...smpArgs, ...(prime >= 0 ? ["--prime", String(prime)] : []), ...cArgs], { stdio: "pipe" });
+      rows.push(prime < 0 ? "view ≡ slot" : "primed");
+    } catch (e) { scoreBad = true; rows.push(`view path: ${(e.stdout ?? "").toString().trim() || e.message}`); }
   }
   if (scoreBad) failed++;
   console.log(`${scoreBad ? "FAIL" : "ok  "}  ${pad(name, 24)} ${rows.join(" · ")}`);

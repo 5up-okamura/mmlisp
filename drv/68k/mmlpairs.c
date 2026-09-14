@@ -144,7 +144,7 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len);
  * travels in the pair page beside the FM writes of its slot and sounds within
  * 34 samples — so a slot's PCM commands are held and sent with the NEXT slot,
  * ahead of its FM: back on the beat (gate-score's SYNC row, m3-pcm-sync). */
-void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
+static void frame_begin(MMLPairs *p) {
   p->q_work = p->q_head;
   p->psg_work = p->psg_head;
   for (uint16_t i = 0; i < p->held_len;) {
@@ -152,16 +152,94 @@ void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
     i = (uint16_t)(i + PCM_LEN[p->held[i]]);
   }
   p->held_len = 0;
-  slot_body(p, s, len);
-  /* The publication: this frame's ends first, then the heads, then the frame
-   * count — one 16-bit store each. A grab bounds itself by the ends of the
-   * frames it may send, never by the heads, so it cannot see this frame until
-   * frames_in says it exists. */
+}
+
+/* The publication: this frame's ends first, then the heads, then the frame
+ * count — one 16-bit store each. A grab bounds itself by the ends of the
+ * frames it may send, never by the heads, so it cannot see this frame until
+ * frames_in says it exists. */
+static void frame_publish(MMLPairs *p) {
   p->end_q[p->frames_in & (MMLP_FRAMES - 1)] = p->q_work;
   p->end_psg[p->frames_in & (MMLP_FRAMES - 1)] = p->psg_work;
   p->psg_head = p->psg_work;
   p->q_head = p->q_work;
   p->frames_in = (uint16_t)(p->frames_in + 1);
+}
+
+/* This slot's PCM commands, held for the next one; `len` bounds the run. */
+static uint16_t hold_pcm(MMLPairs *p, const uint8_t *c, uint16_t len, uint8_t npcm) {
+  uint16_t i = 0;
+  for (; npcm > 0 && i < len; npcm--) {
+    uint8_t op = c[i];
+    if (op < 1 || op > 5) return 0xffff;   /* malformed: stop here */
+    if ((uint16_t)(i + PCM_LEN[op]) > len) return 0xffff;
+    if ((uint16_t)(p->held_len + PCM_LEN[op]) <= MMLP_HELD) {
+      for (uint8_t k = 0; k < PCM_LEN[op]; k++) p->held[p->held_len + k] = c[i + k];
+      p->held_len = (uint16_t)(p->held_len + PCM_LEN[op]);
+    } else {
+      p->overflow++;
+    }
+    i = (uint16_t)(i + PCM_LEN[op]);
+  }
+  return i;
+}
+
+MMLP_HOT void psg_push(MMLPairs *p, uint8_t b) {
+  uint16_t next = (uint16_t)((p->psg_work + 1) & (MMLP_PSG - 1));
+  if (next != p->psg_tail) { p->psg[p->psg_work] = b; p->psg_work = next; }
+}
+
+void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
+  frame_begin(p);
+  slot_body(p, s, len);
+  frame_publish(p);
+}
+
+/* THE SAME FRAME, FROM THE SEQUENCER'S QUEUE. What mmlp_slot does with the
+ * bytes of an encoded slot, done with the view the sequencer describes it by
+ * (mmlispseq.h MMLFrameView): the PCM commands held, then per sub-slot the PSG
+ * bytes and the port-0 writes in one pass and the port-1 writes in a second —
+ * the order the slot's runs put them in. No slot is packed or parsed; the pair
+ * gate runs both paths side by side on every score and requires the same
+ * converter state after every frame. */
+static void view_body(MMLPairs *p, const MMLFrameView *v) {
+  if (hold_pcm(p, v->pcm, v->pcm_len, v->pcm_count) == 0xffff) return;
+  uint16_t done = 0;
+  for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
+    const uint16_t end = v->end[sub];
+    uint16_t at = (uint16_t)((v->first + done) & (MML_WRITE_QUEUE - 1));
+    for (uint16_t i = done; i < end; i++) {
+      const MMLWrite *w = &v->q[at];
+      if (w->port == 2) psg_push(p, w->data);
+      else if (w->port == 0) push(p, 0, w->addr, w->data);
+      at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
+    }
+    at = (uint16_t)((v->first + done) & (MML_WRITE_QUEUE - 1));
+    for (uint16_t i = done; i < end; i++) {
+      const MMLWrite *w = &v->q[at];
+      if (w->port == 1) push(p, 1, w->addr, w->data);
+      at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
+    }
+    done = end;
+  }
+}
+
+void mmlp_render(MMLPairs *p, MMLSeq *s) {
+  MMLFrameView v;
+  mml_render_frame_view(s, &v);
+  frame_begin(p);
+  view_body(p, &v);
+  frame_publish(p);
+  mml_view_done(s, &v);
+}
+
+void mmlp_drain(MMLPairs *p, MMLSeq *s) {
+  MMLFrameView v;
+  mml_drain_frame_view(s, &v);
+  frame_begin(p);
+  view_body(p, &v);
+  frame_publish(p);
+  mml_view_done(s, &v);
 }
 
 /* The number of released frames that are queued, and so the last one's index;
@@ -180,18 +258,9 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
   if (len < 3) return;
   i += 2;                                   /* n_writes, chunk: the ring engine's */
   uint8_t npcm = s[i++];
-  for (; npcm > 0 && i < len; npcm--) {
-    uint8_t op = s[i];
-    if (op < 1 || op > 5) return;           /* malformed: stop here */
-    if ((uint16_t)(i + PCM_LEN[op]) > len) return;
-    if ((uint16_t)(p->held_len + PCM_LEN[op]) <= MMLP_HELD) {
-      for (uint8_t k = 0; k < PCM_LEN[op]; k++) p->held[p->held_len + k] = s[i + k];
-      p->held_len = (uint16_t)(p->held_len + PCM_LEN[op]);
-    } else {
-      p->overflow++;
-    }
-    i = (uint16_t)(i + PCM_LEN[op]);
-  }
+  uint16_t used = hold_pcm(p, s + i, (uint16_t)(len - i), npcm);
+  if (used == 0xffff) return;
+  i = (uint16_t)(i + used);
   for (uint8_t v = 0; v < MML_PCM_VOICES; v++) {   /* the segment plan: not ours */
     if (i >= len) return;
     uint8_t n = s[i++];
@@ -200,11 +269,7 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
   for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
     if (i >= len) return;
     uint8_t npsg = s[i++];
-    for (; npsg > 0 && i < len; npsg--) {
-      uint16_t next = (uint16_t)((p->psg_work + 1) & (MMLP_PSG - 1));
-      if (next != p->psg_tail) { p->psg[p->psg_work] = s[i]; p->psg_work = next; }
-      i++;
-    }
+    for (; npsg > 0 && i < len; npsg--) psg_push(p, s[i++]);
     for (uint8_t port = 0; port < 2; port++) {
       if (i >= len) return;
       uint8_t n = s[i++];

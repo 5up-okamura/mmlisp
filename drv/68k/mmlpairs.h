@@ -28,6 +28,7 @@
 #else
 #include <stdint.h>
 #endif
+#include "mmlispseq.h"   /* MMLSeq, MMLFrameView: mmlp_render reads the sequencer */
 
 /* What the engine image's header says (sgdk/mmlispdrv_bin.h); passed in so
  * this file compiles on the host without SGDK's types. */
@@ -94,6 +95,12 @@ void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg);
  * CPU whose interrupts run to completion. Two consumers must not overlap (the
  * SGDK host keeps a flag for that). */
 void mmlp_slot(MMLPairs *p, const uint8_t *slot, uint16_t len);
+
+/* The same, straight from the sequencer: run one frame (or drain one) and take
+ * it into the queues without encoding a slot — what the SGDK host does, and
+ * equal to mml_render_frame + mmlp_slot state for state (pairs-gate). */
+void mmlp_render(MMLPairs *p, MMLSeq *s);
+void mmlp_drain(MMLPairs *p, MMLSeq *s);
 
 /* WHICH FRAMES MAY GO. `release` is how many frames' time has come: frames
  * 0 .. release-1 may be written, later ones wait even if they are queued. So
