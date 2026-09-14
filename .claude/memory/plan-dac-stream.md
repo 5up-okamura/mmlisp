@@ -1520,3 +1520,24 @@ User's stated order: correct playback first, then optimization; the realistic
 spec is now visible (FM6 + PSG3 + 1 PCM voice at 9,987 Hz, 960 writes/s,
 driver ~28% of the 68000 on sin008 — candidates to cut: SLOT_SUBS 2→1, the
 slot encode/decode round trip, a VBlank-only pump mode).
+
+### 2026-09-14 — prime, view path, VBlank-only (all DONE) and the SUBS question
+
+* fb4fd78 PRIME at load (mml_prime_tracks, host cmd 0x08, C + drv-player.js):
+  first key-ons on sin008 252 ms late -> on time. Chip state identical after
+  the start by change-only. c-gate runs every schedule-free score primed too.
+* 2a96db6 MMLFrameView + mmlp_render: the SGDK host no longer packs/parses
+  slots (view_main runs both paths side by side, state for state). Idle
+  71.9% -> 74.0%.
+* e47a976 MMLisp_attachVBlankOnly / MMLisp_setPumpsPerFrame; cfg.ahead 48 for
+  one grab a frame. Costs: 480 writes/s, DAC -0.10% (grab + SGDK DMA flush in
+  one corrector window).
+* OPEN, put to the user: MML_SLOT_SUBS 2 -> 1 measured at idle 71.9% -> 78.6%
+  (render p50 17.7% -> 11.5%), c-gate/pairs-gate green, 4 A/B scores moved
+  (2 better, 2 worse). REVERTED, not committed: sub-ticks were added on the
+  user's own report (fast passages/triplets audibly quantised, plan-subtick-
+  timing.md), and the pair host does not realise them today (both sub-slots
+  leave together) — but it COULD: sub 0 at the HBlank pump, sub 1 at the next
+  VBlank is exactly half a frame. Options: (1) SUBS=1 for CPU, (2) keep 2 and
+  release sub-slots per pump (two-pump mode only; sub-1 grabs meet SGDK's DMA
+  halt), (3) a build option.
