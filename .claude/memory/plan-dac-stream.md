@@ -1532,13 +1532,16 @@ slot encode/decode round trip, a VBlank-only pump mode).
 * e47a976 MMLisp_attachVBlankOnly / MMLisp_setPumpsPerFrame; cfg.ahead 48 for
   one grab a frame. Costs: 480 writes/s, DAC -0.10% (grab + SGDK DMA flush in
   one corrector window).
-* DECIDED by the user: SLOT_SUBS = 1, no build option ("most game drivers are
-  1/60"; an option would complicate the sources). Was: MML_SLOT_SUBS 2 -> 1 measured at idle 71.9% -> 78.6%
-  (render p50 17.7% -> 11.5%), c-gate/pairs-gate green, 4 A/B scores moved
-  (2 better, 2 worse). REVERTED, not committed: sub-ticks were added on the
-  user's own report (fast passages/triplets audibly quantised, plan-subtick-
-  timing.md), and the pair host does not realise them today (both sub-slots
-  leave together) — but it COULD: sub 0 at the HBlank pump, sub 1 at the next
-  VBlank is exactly half a frame. Options: (1) SUBS=1 for CPU, (2) keep 2 and
-  release sub-slots per pump (two-pump mode only; sub-1 grabs meet SGDK's DMA
-  halt), (3) a build option.
+* 1ea5ccd SLOT_SUBS = 1, no build option — the user's call ("most game
+  drivers are 1/60"; an option would complicate the sources). Idle 71.9% ->
+  78.6% (render p50 17.7% -> 11.5%), c-gate/pairs-gate green, ab-baseline
+  re-frozen. The sub-tick machinery is LEFT in the sources on purpose: at
+  SUBS=1 LTO folds the one-iteration loops and dead `sub != 0` branches, the
+  SGDK host never encodes slots (view path), so deleting it buys nothing
+  measurable (checked in the built ROM: all of it inlined into main, ~3 B RAM
+  left) and would touch C, JS reference, slot format and the legacy gates.
+
+Still open (none requested yet): R28 step 3 (VSET ROM bodies — mid-song voice
+changes, e.g. sin008 frame 901, 67 writes ~ 4 frames), 2 voices / sample loops,
+SE on the 68k sequencer (not ported), `(trig N)` to the host, a hardware run
+(`movep.l` to Z80 RAM), the tiny Z80-only build.

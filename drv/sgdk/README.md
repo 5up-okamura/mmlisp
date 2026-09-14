@@ -443,10 +443,11 @@ Everything the language compiles to, except SE:
 ## Limits
 
 - **One PCM voice**, no sample loops, no runtime pitch (see above).
-- **Wire: 960 pairs a second.** The voice setup at the top of a song (six FM
-  channels × ~30 writes) takes a few frames through it, so the very first notes
-  can come late; scores that change many registers every frame (per-frame
-  vibrato on every channel) can outrun it — watch `pending`.
+- **Wire: 960 pairs a second** (480 in VBlank-only mode). The song's opening
+  voice setup is primed at load, but a mid-song voice change on several
+  channels at once (~30 writes each) still takes a few frames through it, and
+  scores that change many registers every frame (per-frame vibrato on every
+  channel) can outrun it — watch `pending`.
 - **One score loaded at a time.** `MMLisp_loadScore` resets the sequencer.
 - **SE is not ported** to the 68k sequencer.
 - **`(trig N)` markers are not surfaced** to the host.
