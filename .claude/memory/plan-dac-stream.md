@@ -1532,7 +1532,8 @@ slot encode/decode round trip, a VBlank-only pump mode).
 * e47a976 MMLisp_attachVBlankOnly / MMLisp_setPumpsPerFrame; cfg.ahead 48 for
   one grab a frame. Costs: 480 writes/s, DAC -0.10% (grab + SGDK DMA flush in
   one corrector window).
-* OPEN, put to the user: MML_SLOT_SUBS 2 -> 1 measured at idle 71.9% -> 78.6%
+* DECIDED by the user: SLOT_SUBS = 1, no build option ("most game drivers are
+  1/60"; an option would complicate the sources). Was: MML_SLOT_SUBS 2 -> 1 measured at idle 71.9% -> 78.6%
   (render p50 17.7% -> 11.5%), c-gate/pairs-gate green, 4 A/B scores moved
   (2 better, 2 worse). REVERTED, not committed: sub-ticks were added on the
   user's own report (fast passages/triplets audibly quantised, plan-subtick-

@@ -8,7 +8,7 @@
 // attributed through the ELF to the innermost source function and line
 // (addr2line -i, so code LTO inlined into main is still named), including the
 // time SGDK spends waiting for the next frame: the 68000's idle share.
-// --peak N: only mml_render_frame is marked, and only the samples inside the N
+// --peak N: only mmlp_render (the host's frame) is marked, and only the samples inside the N
 // most expensive renders are counted — where a frame that does not fit goes.
 //
 // Builds the example project for the score (as tools/sgdk-gate.mjs does), but
@@ -40,7 +40,7 @@ const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "sin
 const FRAME = 896040;   // master clocks in an NTSC frame
 const IRQ = new Set(["pump"]);
 const DEFAULT_FNS = [
-  "mml_render_frame", "dispatch", "note_on", "voice_set", "param_set_ex", "recompose_carriers",
+  "mmlp_render", "run_frame", "dispatch", "note_on", "voice_set", "param_set_ex", "recompose_carriers",
   "fnum_block_for", "psg_period_for", "process_macros", "pcm_frame", "encode_slot",
   "mmlp_slot", "mmlp_plan", "pump",
 ];
@@ -148,7 +148,10 @@ for (const s of spans) {
   }
   for (const s of spans) if (s.self === undefined) s.self = s.cost;
 }
-const renders = spans.filter((s) => s.name === "mml_render_frame").sort((a, b) => a.t0 - b.t0);
+// A frame is one mmlp_render (the SGDK host's path) or, profiling an older
+// host, one mml_render_frame.
+const FRAME_FN = spans.some((s) => s.name === "mmlp_render") ? "mmlp_render" : "mml_render_frame";
+const renders = spans.filter((s) => s.name === FRAME_FN).sort((a, b) => a.t0 - b.t0);
 const t0 = renders[0]?.t0 ?? 0, t1 = renders.at(-1)?.t1 ?? 1;
 const frames = Math.max(1, renders.length);
 const q = (a, p) => a[Math.min(a.length - 1, Math.floor(a.length * p))];
@@ -176,7 +179,7 @@ console.log(`  render: p50 ${(100 * q(sorted, 0.5) / FRAME).toFixed(1)}% · p99 
 const worst = renders.map((s, i) => ({ s, i })).sort((a, b) => b.s.cost - a.s.cost).slice(0, 5);
 for (const { s, i } of worst) {
   const parts = {};
-  for (const x of spans) if (x !== s && !IRQ.has(x.name) && x.t0 >= s.t0 && x.t1 <= s.t1 && x.name !== "mml_render_frame")
+  for (const x of spans) if (x !== s && !IRQ.has(x.name) && x.t0 >= s.t0 && x.t1 <= s.t1 && x.name !== FRAME_FN)
     parts[x.name] = (parts[x.name] ?? 0) + x.cost;
   console.log(`  frame ${i}: ${(100 * s.cost / FRAME).toFixed(0)}% — ` + Object.entries(parts).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${v}`).join(", "));
 }
@@ -188,12 +191,12 @@ function pcProfile() {
   // -g for the line table (it does not change the code gcc generates).
   const PEAK = Number(arg("peak", 0));
   const markRender = (proj) => {
-    const f = join(proj, "src", "mmlispseq.c");
-    const w = wrapIn(readFileSync(f, "utf8"), "mml_render_frame");
-    if (!w) { console.error("sgdk-profile: mml_render_frame not found"); process.exit(2); }
+    const f = join(proj, "src", "mmlpairs.c");
+    const w = wrapIn(readFileSync(f, "utf8"), "mmlp_render");
+    if (!w) { console.error("sgdk-profile: mmlp_render not found"); process.exit(2); }
     writeFileSync(f, w);
   };
-  if (PEAK) ID.set("mml_render_frame", 0x40);
+  if (PEAK) ID.set("mmlp_render", 0x40);
   try { built = makeProject(E, score, { flags: "-g", patch: PEAK ? markRender : undefined }); }
   catch (e) { console.error(e.output ?? e.message); if (e.proj && !KEEP) dropProject(e.proj); process.exit(1); }
   const outDir = join(drv, "out", "sgdk-profile");

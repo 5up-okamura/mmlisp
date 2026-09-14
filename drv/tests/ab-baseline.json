@@ -31,9 +31,9 @@
   },
   "m2-motion.mmlisp": {
     "ok": false,
-    "mismatches": 809,
+    "mismatches": 817,
     "compileErrors": 0,
-    "digest": "dfdfea17"
+    "digest": "69072d21"
   },
   "m2-pcm.mmlisp": {
     "ok": true,
@@ -271,9 +271,9 @@
   },
   "sin008.mmlisp": {
     "ok": false,
-    "mismatches": 680,
+    "mismatches": 629,
     "compileErrors": 0,
-    "digest": "5f511f7e"
+    "digest": "7c9b8f1a"
   },
   "stress-9ch.mmlisp": {
     "ok": false,
@@ -289,9 +289,9 @@
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
-    "mismatches": 293,
+    "mismatches": 315,
     "compileErrors": 0,
-    "digest": "4eef30ba"
+    "digest": "7e19c24d"
   },
   "ab-core.mmlisp": {
     "ok": false,
@@ -301,8 +301,8 @@
   },
   "demo1.mmlisp": {
     "ok": false,
-    "mismatches": 33,
+    "mismatches": 26,
     "compileErrors": 0,
-    "digest": "3020bb16"
+    "digest": "1aa330f2"
   }
 }

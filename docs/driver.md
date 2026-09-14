@@ -266,6 +266,14 @@ not part of the interface.
 
 ### 3.5 Sub-ticks — note onsets below the frame
 
+> **Retired 2026-09-14: `SLOT_SUBS = 1`, note onsets on the 60 Hz frame** —
+> as in most game drivers. Sub-ticks were adopted because they cost almost
+> nothing on the ring engine. On the pair engine (§15) a frame's writes leave
+> the 68000 together, so they were never heard, and they cost the 68000 ~6
+> points of its time (sin008 on BlastEm: idle 71.9% at 2, 78.6% at 1; render
+> p50 17.7% -> 11.5% of a frame). The constant stays a format parameter; the
+> rest of this section is the record of the ring engine's design.
+
 `SLOT_SUBS = 3`, a build constant, and it must equal the mixer's `PACE_PASSES`.
 
 A frame is divided into **K = `SLOT_SUBS` sub-ticks**. Note dispatch runs on

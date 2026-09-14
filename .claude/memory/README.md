@@ -26,7 +26,7 @@ Index:
   and not the frame budget. Three hardware bugs there were invisible to every
   gate, and one fitted model constant was falsified by the machine. **The model
   cannot predict this machine — fix that before changing the engine again.**
-- [plan-subtick-timing.md](plan-subtick-timing.md) — **sub-frame note timing:
+- [plan-subtick-timing.md](plan-subtick-timing.md) — **RETIRED 2026-09-14 (SLOT_SUBS = 1, onsets on the frame; user's call). Was: sub-frame note timing:
   step 1 LANDED 2026-08-05** (`SLOT_SUBS = 3`, all three ports, gates green;
   the design is now `docs/driver.md` §3.5). Note onsets ride the mixer's three
   voice-pass boundaries, which already sit at 1/3 and 2/3 of a paced frame — no

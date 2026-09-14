@@ -54,11 +54,11 @@
 
 export const SLOT_SIZE = 256;
 
-// Sub-ticks per frame. A build constant, and it must equal the engine's
-// PACE_PASSES: the boundaries the Z80 consumes on are the mixer's voice-pass
-// boundaries, and there are exactly PCM_VOICES of those. SLOT_SUBS = 1 collapses
-// the format back to the single-block one and is byte-identical to it.
-export const SLOT_SUBS = 2;
+// Sub-ticks per frame: ONE — note onsets on the 60 Hz frame (driver.md §3.5,
+// retired 2026-09-14: the pair engine sent a frame's writes together, so the
+// sub-ticks were never heard, and they cost the 68000 ~6 points). Must equal
+// MML_SLOT_SUBS in drv/68k/mmlispseq.h. At 1 the format is the single-block one.
+export const SLOT_SUBS = 1;
 
 // Bounded by CYCLES, not bytes: the Z80's frame is shared with the PCM mixer,
 // and 95 is what the settled mixer configuration leaves (driver.md §5.3.1,

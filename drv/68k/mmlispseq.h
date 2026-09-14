@@ -46,11 +46,12 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
  * the engine falls back to one-tick segments for the rest of its pass: correct,
  * slower, and never reached by real material. */
 #define MML_PCM_PLAN_MAX 16
-/* Sub-ticks per frame (driver.md §3.5). Note dispatch runs on every one of
- * them; the engines still run once a frame. Must match the engine's SLOT_SUBS
- * and PACE_PASSES — the Z80 consumes the extra sub-slots on the mixer's voice
- * pass boundaries, and there are exactly three of those. */
-#define MML_SLOT_SUBS 2
+/* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the 60 Hz
+ * frame, as in most game drivers. Sub-ticks were adopted as nearly free; with
+ * the pair engine they were not heard (a frame's writes leave together) and
+ * cost the 68000 ~6 points of its time (sin008: idle 71.9% -> 78.6% at 1), so
+ * they were retired (2026-09-14). Must equal live/src/slot-builder.js. */
+#define MML_SLOT_SUBS 1
 #define MML_MAX_TRACKS 16
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */

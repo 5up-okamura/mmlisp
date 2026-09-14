@@ -1,5 +1,12 @@
 # Sub-frame note timing (K sub-ticks per frame) — design settled 2026-08-05
 
+**RETIRED 2026-09-14 (user's decision): `SLOT_SUBS = 1`.** Sub-ticks were
+adopted as nearly free; on the pair engine they were not heard (a frame's
+writes leave together) and cost the 68000 ~6 points (idle 71.9% -> 78.6%).
+The user: "most game drivers are 1/60", and no build option (source
+complexity). Steps 2-3 below are dead. Kept only as the record of why the ring
+engine had them.
+
 Reported symptom: note onsets are quantised to the 60 Hz frame, which is
 audible in fast passages and much worse on triplets (128 BPM, PPQN 96: a 1/8
 triplet is 9.373 frames, so every onset is up to half a frame out). See
