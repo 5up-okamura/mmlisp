@@ -140,6 +140,13 @@ int main(bool hardReset)
     MMLispStats st;
 
 #if MMLISP_AUTOPLAY
+    // The load primed the score (mmlispdrv.h): let its writes reach the chip
+    // before the music starts, so the first notes do not wait behind them.
+    for (u16 i = 0; i < 60 && !MMLisp_isSettled(); i++)
+    {
+        MMLisp_frame();
+        SYS_doVBlankProcess();
+    }
     playAll();
     VDP_drawText("PLAY", 2, 17);
 #endif

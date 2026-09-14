@@ -63,7 +63,10 @@ const L = readProbe(readFileSync(log));
 const { bytes: mmb } = buildMmb(score);
 const player = new DrvPlayer();
 player.loadMMB(mmb, sampleBank);
-const slots = player.captureSlotLog({ maxFrames: Math.round(SECONDS * 60) + 60, commands: [], builder: new SlotBuilder() }).slots;
+// The SGDK host primes at load and the example starts every track once the
+// load has gone out — the reference's prime mode. The idle frames between
+// change no write's order, only when it happens, so 0 of them will do here.
+const slots = player.captureSlotLog({ maxFrames: Math.round(SECONDS * 60) + 60, prime: 0, builder: new SlotBuilder() }).slots;
 const want = [[], []], psgWant = [];
 slots.forEach((s, f) => { const d = decodeSlot(s); for (const [r, v] of d.fm0) want[0].push({ r, v, f }); for (const [r, v] of d.fm1) want[1].push({ r, v, f }); psgWant.push(...d.psg); });
 

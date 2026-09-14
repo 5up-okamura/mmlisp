@@ -150,6 +150,31 @@ for (const score of scores) {
     bad = `${got.length} slots from the C, ${ref.slots.length} from the reference`;
   }
 
+  // THE SGDK HOST'S LOAD, too (mmlispseq.c mml_prime_tracks): nothing started,
+  // PRIME, twelve idle frames, then START_TRACK for every track in order. Only
+  // for scores without a host schedule — theirs is written against frame 0.
+  let primed = "";
+  if (!commands.length && !bad && !incomplete) {
+    const PRIME = 12;
+    const d2 = new DrvPlayer();
+    d2.loadMMB(mmb, sampleBank);
+    const ref2 = d2.captureSlotLog({ maxFrames: MAX_FRAMES, prime: PRIME, builder: new SlotBuilder() });
+    let out2 = null;
+    try {
+      out2 = execFileSync(exe, [mmbPath, String(MAX_FRAMES), "--prime", String(PRIME),
+        ...(smpPath ? ["--samples", smpPath] : [])], { maxBuffer: 1 << 28 });
+    } catch (e) { bad = `primed: ${e.message}`; }
+    if (out2) {
+      const got2 = parseStream(out2);
+      if (got2.length !== ref2.slots.length) bad = `primed: ${got2.length} slots from the C, ${ref2.slots.length} from the reference`;
+      for (let f = 0; f < Math.min(got2.length, ref2.slots.length) && !bad; f++) {
+        const a = ref2.slots[f], b = got2[f];
+        if (a.length !== b.length || a.some((x, i) => x !== b[i])) bad = `primed f${f}: C ${b.length} B, reference ${a.length} B`;
+      }
+      if (!bad) primed = ", primed too";
+    }
+  }
+
   const bytes = ref.slots.reduce((t, s) => t + s.length, 0);
   if (incomplete) {
     // Not a failure: the port simply has not reached this opcode yet, and it
@@ -160,7 +185,7 @@ for (const score of scores) {
     console.log(`FAIL  ${name} — ${bad}`);
     failures++;
   } else {
-    console.log(`ok    ${name} — ${ref.slots.length} slots, ${bytes} B${commands.length ? `, ${commands.length} host cmds` : ""}, byte-identical`);
+    console.log(`ok    ${name} — ${ref.slots.length} slots, ${bytes} B${commands.length ? `, ${commands.length} host cmds` : ""}, byte-identical${primed}`);
   }
 }
 

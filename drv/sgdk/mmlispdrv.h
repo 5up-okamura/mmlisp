@@ -73,7 +73,19 @@ void MMLisp_setSampleBank(const u8* smp);
 // Load a score. `mmb` points at the MMB blob in ROM (no alignment needed).
 // Loading resets all sequencer state and stops everything; one score is loaded
 // at a time. Returns FALSE on a malformed blob.
+//
+// It also PRIMES the score: the chip's neutral patch and every track's leading
+// setup (its voices and levels) are queued at once and leave for the chip over
+// the next frames — keep calling MMLisp_frame() — so that starting the tracks
+// later sends only what differs, and the first notes are not stuck behind a
+// few hundred register writes. Load during a screen transition and start when
+// MMLisp_isSettled() says the load has gone out (~16 frames for a six-channel
+// song); starting sooner is correct, only the first notes come later.
 bool MMLisp_loadScore(const u8* mmb);
+
+// TRUE when nothing the load (or anything since) queued is still waiting for
+// the wire.
+bool MMLisp_isSettled(void);
 
 // ── The hooks ─────────────────────────────────────────────────────────────
 

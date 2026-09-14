@@ -2239,6 +2239,7 @@ void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2) {
     case 0x04: mml_set_param(s, a0, a1, (int8_t)a2); break;
     case 0x05: mml_fade_track(s, a0, a1); break;
     case 0x06: mml_set_val(s, a0, (int16_t)(a1 | (a2 << 8))); break;
+    case 0x08: mml_prime_tracks(s); break;
     default: break; /* START_SE is plan-se.md's, still unported */
   }
 }
@@ -2300,6 +2301,37 @@ void mml_start_track(MMLSeq *s, uint8_t track_id) {
   t->running = 1;
   t->armed = 1; /* silent setup frame; the first dispatch is the next one */
   t->armed_frame = 0xffffffffu;
+}
+
+/* PRIME (host command 0x08): every idle track's leading setup, now.
+ *
+ * A track's first frame is its setup — VOICE_SET, PARAM_SETs — and every write
+ * of it has to cross the wire before the first note can sound behind it
+ * (driver.md §15.3: ~30 writes a channel, 960 a second). Run at load, while
+ * nothing plays, the setup reaches the chip early: each track is started, its
+ * leading setup dispatched as the armed frame would, and stopped again before
+ * it sounds. The real start later does everything it always did; the change-
+ * only write path finds the registers already holding those values and sends
+ * only what differs. So the chip is in the same state at every point after the
+ * start as without priming — the writes simply left earlier.
+ *
+ * Skipped: a channel a running track owns (priming would rewrite a sounding
+ * voice), channels without a block (FM3 ops, PCM), and CSM tracks, whose setup
+ * switches CH3 into CSM mode. */
+void mml_prime_tracks(MMLSeq *s) {
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *t = &s->trk[i];
+    const int ch = t->channel_id;
+    if (ch >= 10 || (t->flags & TRACK_FLAG_IS_CSM) || t->running) continue;
+    int owned = 0;
+    for (uint8_t j = 0; j < s->track_count; j++)
+      if (s->trk[j].running && s->trk[j].channel_id == ch) owned = 1;
+    if (owned) continue;
+    mml_start_track(s, t->track_id);
+    dispatch(s, t); /* armed: the leading setup, up to the first note */
+    t->running = 0; /* never keyed, so stopping writes nothing */
+    t->armed = 0;
+  }
 }
 
 void mml_stop_track(MMLSeq *s, uint8_t track_id) {

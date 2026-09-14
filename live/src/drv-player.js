@@ -1886,6 +1886,9 @@ export class DrvPlayer {
       case 0x06: // SET_VAL (slot, value low, value high)
         if (a0 < 16) this._valSlots[a0] = i16(a1 | (a2 << 8));
         break;
+      case 0x08: // PRIME — every idle track's leading setup, now
+        this._prime();
+        break;
       default:
         break; // 0x01/0x02 START/STOP auto-driven; others reserved
     }
@@ -1903,6 +1906,22 @@ export class DrvPlayer {
     // Release a len=0 hold: the track's dispatcher resumes (driver.md §6.2).
     for (const t of this._trk) {
       if (t.channelId === channelId && t.held) t.held = false;
+    }
+  }
+
+  // PRIME (host command 0x08, mmlispseq.c mml_prime_tracks has the reasoning):
+  // start each idle track, run its leading setup as the armed frame would, and
+  // stop it again before it sounds — so the setup's writes leave early and the
+  // real start finds its registers already set.
+  _prime() {
+    for (const trk of this._trk) {
+      const ch = trk.channelId;
+      if (ch >= 10 || (trk.flags & TRACK_FLAG.isCsm) || trk.running) continue;
+      if (this._trk.some((t) => t.running && t.channelId === ch)) continue;
+      this._startTrack(trk.trackId, false);
+      this._dispatch(trk); // armed: the leading setup, up to the first note
+      trk.running = false; // never keyed, so stopping writes nothing
+      trk.armed = false;
     }
   }
 
@@ -2642,7 +2661,7 @@ export class DrvPlayer {
    * saturating-add (§5.3.1), so re-basing it belongs with that change rather
    * than with the transport.
    */
-  captureSlotLog({ maxFrames = 36000, commands = [], autoStart = true, builder } = {}) {
+  captureSlotLog({ maxFrames = 36000, commands = [], autoStart = true, prime = -1, builder } = {}) {
     if (!this._song) throw new Error("No MMB loaded");
     const b = builder ?? new SlotBuilder();
     const slots = [];
@@ -2666,7 +2685,15 @@ export class DrvPlayer {
     }
     try {
       this._audioContext = null;
-      this._reset(autoStart);
+      // prime >= 0: the SGDK host's load — nothing started, PRIME, `prime`
+      // idle frames, then START_TRACK for every track in order (gate_main
+      // --prime does the same).
+      this._reset(prime >= 0 ? false : autoStart);
+      if (prime >= 0) {
+        this._prime();
+        for (let k = 0; k < prime; k++) { this.stepFrame(); slots.push(b.endFrame()); }
+        for (const t of this._trk) this._startTrack(t.trackId, false);
+      }
       let frames = 0;
       while (frames < maxFrames) {
         for (const c of cmdByFrame.get(this._frame) ?? []) {

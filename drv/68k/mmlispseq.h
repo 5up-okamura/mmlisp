@@ -362,6 +362,11 @@ void mml_start_track(MMLSeq *s, uint8_t track_id);
 
 /* Stop one track: key-off (the release tail runs out), free its channel, idle
  * the TCB. On an fm3-csm track this clears the CSM bit (§9). */
+/* Run every idle track's leading setup now, so its writes reach the chip
+ * before the track is started (host command 0x08; see mmlispseq.c). Starting
+ * a primed track later is an ordinary start whose setup finds the registers
+ * already set. */
+void mml_prime_tracks(MMLSeq *s);
 void mml_stop_track(MMLSeq *s, uint8_t track_id);
 
 /* Render one frame and close its slot. Returns the slot length in bytes. */

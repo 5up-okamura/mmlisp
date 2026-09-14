@@ -170,6 +170,13 @@ bool MMLisp_loadScore(const u8* mmb)
     busy = TRUE;                 // no pump while the planner is reset
     loaded = (mml_load(&seq, mmb, len) == 0);
     if (loaded && smpBank) mml_load_samples(&seq, smpBank, 0, (u32)smpBank);
+    // PRIMED AT LOAD: the neutral patch the load queues, and every track's
+    // leading setup (mml_prime_tracks), leave for the chip over the frames
+    // before the game starts the music — ~250 writes for sin008, sixteen
+    // frames of the wire that the first notes no longer wait behind. The
+    // starts later send only what differs (MMLisp_isSettled says when all of
+    // it has gone).
+    if (loaded) mml_prime_tracks(&seq);
     mmlp_init(&pairs, &PAIRS_CFG);
     fifoLo = 0xff;
     rendered = 0;
@@ -414,6 +421,13 @@ bool MMLisp_trackActive(u8 track_id)
     for (u8 i = 0; i < seq.track_count; i++)
         if (seq.trk[i].track_id == track_id) return seq.trk[i].running != 0;
     return FALSE;
+}
+
+bool MMLisp_isSettled(void)
+{
+    // Nothing waiting in the sequencer or for the wire. The last grab's pairs
+    // may still be in the engine's page for a few milliseconds.
+    return !loaded || (mml_pending(&seq) == 0 && mmlp_pending(&pairs) == 0);
 }
 
 u16 MMLisp_renderedFrames(void)

@@ -6,7 +6,7 @@
  * emulator and no assembler, and both are debuggable.
  *
  *   gate_main <song.mmb> [max_frames] [--cmds commands.txt] [--samples bank.smp]
- *                                    [--pump depth]
+ *                                    [--pump depth] [--prime K]
  *
  * commands.txt is one host command per line — "frame cmd a0 a1 a2" — applied at
  * the top of the matching frame, which is where the reference applies them too.
@@ -100,9 +100,12 @@ int main(int argc, char **argv) {
   long max_frames = argc > 2 && argv[2][0] != '-' ? strtol(argv[2], NULL, 10) : 36000;
   const char *cmd_path = 0, *smp_path = 0;
   int pump_depth = 0;
+  long prime = -1; /* --prime K: the SGDK host's load (see below) */
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "--cmds") && i + 1 < argc) cmd_path = argv[++i];
     else if (!strcmp(argv[i], "--samples") && i + 1 < argc) smp_path = argv[++i];
+    else if (!strcmp(argv[i], "--prime") && i + 1 < argc)
+      prime = strtol(argv[++i], NULL, 10);
     else if (!strcmp(argv[i], "--pump") && i + 1 < argc)
       pump_depth = (int)strtol(argv[++i], NULL, 10);
   }
@@ -158,9 +161,21 @@ int main(int argc, char **argv) {
       return 2;
     }
   }
-  mml_start_all(&seq);
-
   unsigned char slot[MML_SLOT_SIZE];
+  if (prime >= 0) {
+    /* The SGDK host's load: nothing started, PRIME, K idle frames, then
+     * START_TRACK for every track in order — the reference's
+     * captureSlotLog({ prime: K }) does the same. */
+    mml_prime_tracks(&seq);
+    for (long k = 0; k < prime; k++) {
+      uint32_t n = mml_render_frame(&seq, slot);
+      emit_slot(slot, n);
+    }
+    for (uint8_t i = 0; i < mml_track_count(&seq); i++) mml_start_track(&seq, mml_track_id(&seq, i));
+  } else {
+    mml_start_all(&seq);
+  }
+
   if (pump_depth) return run_pumped(&seq, pump_depth, max_frames);
   for (long i = 0; i < max_frames; i++) {
     for (int c = 0; c < ncmds; c++)

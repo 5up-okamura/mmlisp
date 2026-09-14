@@ -2500,6 +2500,16 @@ not flags, so no grab can land between a set and a clear.
   fresh index is read first; if the engine is already at or past `H`, nothing
   is written and the pairs go back to the queue (a late grab). 960 pairs a
   second.
+- **Primed at load.** `mml_prime_tracks` (host command 0x08; the SGDK host
+  calls it in `MMLisp_loadScore`) starts each idle track, runs its leading
+  setup as the armed frame would, and stops it before it sounds; the real start
+  later is an ordinary start whose change-only writes find the registers set.
+  The neutral patch and the setups (~250 writes for sin008, sixteen frames of
+  the wire) leave while the game prepares, and the first notes no longer wait
+  behind them: on BlastEm the first key-ons went from 252 ms late to on time.
+  Skipped: channels a running track owns, FM3-op/PCM tracks, CSM tracks.
+  `MMLisp_isSettled()` says when the load has gone out. c-gate runs every
+  score without a host schedule a second time primed (C ≡ JS).
 - **Rendered ahead, released on time.** The main loop renders each frame
   `MMLISP_LEAD` (1) frames before its time; the converter remembers where each
   queued frame ends (`mmlp_slot`), and a grab sends only frames before its

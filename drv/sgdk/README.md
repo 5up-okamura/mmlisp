@@ -186,6 +186,14 @@ while (TRUE) {
 - **PSG** bytes go straight from the 68000 to `$C00011`, one grab period after
   they were queued so they land with the FM they were cued with.
 
+- **Load first, start when settled.** `MMLisp_loadScore()` primes the score:
+  the chip's neutral patch and every track's leading setup (voices, levels)
+  leave over the next frames, so the starts later send only what differs. A
+  six-channel song's load is ~250 register writes — sixteen frames of the wire
+  — and the first notes used to queue behind it (252 ms late on sin008). Load
+  during a transition and start once `MMLisp_isSettled()` is TRUE; starting
+  sooner is still correct, the first notes just come later.
+
 - **Control.** `MMLisp_startTrack` / `stopTrack` / `keyOff` / `setParam` /
   `fadeTrack` / `setVal` are plain calls into the sequencer. They take effect on
   the next frame rendered and reach the chip within about a frame after that.
