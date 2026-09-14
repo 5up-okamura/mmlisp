@@ -39,6 +39,16 @@ evidence was in that session; re-derive from the code, it is quick).
   ~1/3 the RAM; composing master into each voice's shift on the 68k removes
   the master stage), chosen together with D1 because RAM and cycles trade.
   The freed RAM goes to the second voice.
+  DIRECTION AGREED (2026-09-14): keep TABLES, not runtime shifts — a table
+  read is ~11 cyc whatever the level (`ld l,a / ld a,(hl)`) and also carries
+  the biased-unsigned conversion; a constant-time `sra a` chain pays its
+  maximum every sample (8 cyc a step: 32/voice to −24 dB, +48 for master to
+  −36 dB) out of a 358-cycle slot, and cycles are what limit the voice count.
+  Few pages: 6 dB rungs to −36 dB + silence = 7 pages (1,792 B) with master
+  FOLDED into each voice's rung on the 68k (total rung past the limit = mute,
+  driver.md §14 rule) — one table read per voice, the post-mix master stage
+  removed, ~2 KB freed for the 2nd/3rd voice's clamp. Final form confirmed
+  by the cycle measurements in the D1 study.
 * D5 pitch: per-note bake is the spec; no C2–C6 clamp (the bank is the only
   limit); glide/vibrato/`:pitch`/macros on PCM → errors instead of silence.
   User asked about octave-by-shift: the engine ALREADY has a 2^k step
