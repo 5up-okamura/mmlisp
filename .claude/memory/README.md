@@ -65,6 +65,11 @@ Index:
   DAC's 32% sample deficit is FIXED — the pacing pad was 41% of the interrupt,
   which pushed it past its vblank and made the mixer run every other frame.
   Next: a hardware round, and `drv-player.js` on the ring-fill model.
+- [plan-pcm-spec.md](plan-pcm-spec.md) — **settling the PCM/DAC language spec
+  against the shipped engine (2026-09-14)**: three bugs found (fm6 silent on
+  hardware, a C out-of-bounds on pcm3, PCM 2.2 cents flat), the user's
+  decisions D2–D7, the open voice-count question (D1) and the cleanup plan.
+  Read before touching PCM in any layer.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
   one-voice pair-transport engine is the production image; a mucom88 song plays
