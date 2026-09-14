@@ -66,6 +66,13 @@ evidence was in that session; re-derive from the code, it is quick).
   VERDICT reported (rate, voices, levels, RAM, cost) before the spec is
   implemented. Why 1 today (R28 §63.2): 2-voice mixer 207 cyc/slot vs ~135,
   512 B clamp table, IX/IY/AF'/HL' now used by the expander.
+  KEEP THREE VOICES POSSIBLE (user, 2026-09-14): the study also measures a
+  3-voice point (rough guess ~6.5-7 kHz at ~+70 cyc a voice; a 3-voice sum
+  needs a wider clamp than the 512 B table; the generator has never tried a
+  third voice), and nothing chosen for 2 voices may close the door on 3 —
+  register allocation, RAM map, level scheme, the host's voice handling, and
+  `pcm1`–`pcm3` stay in the language. The verdict reports 1/2/3 voices side
+  by side (rate, cycles, RAM).
 
 Order: (1) cleanup, no behaviour change; (2) D1+D4 study → verdict to the
 user; (3) implement the spec in every layer + bugs 1-3 (bug 3's bake rate
