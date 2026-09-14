@@ -38,11 +38,11 @@ const SECONDS = Number(arg("seconds", 20));
 const KEEP = argv.includes("--keep");
 const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "sin008.mmlisp");
 const FRAME = 896040;   // master clocks in an NTSC frame
-const IRQ = new Set(["MMLisp_pump"]);
+const IRQ = new Set(["pump"]);
 const DEFAULT_FNS = [
   "mml_render_frame", "dispatch", "note_on", "voice_set", "param_set_ex", "recompose_carriers",
   "fnum_block_for", "psg_period_for", "process_macros", "pcm_frame", "encode_slot",
-  "mmlp_slot", "mmlp_plan", "MMLisp_pump",
+  "mmlp_slot", "mmlp_plan", "pump",
 ];
 const pcAt = argv.indexOf("--pc");
 const PC_PERIOD = pcAt >= 0 ? (Number(argv[pcAt + 1]) || 1000) : 0;
