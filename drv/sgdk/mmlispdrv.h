@@ -93,6 +93,18 @@ bool MMLisp_isSettled(void);
 // HBlank callbacks and enables the horizontal interrupt.
 void MMLisp_attachInterrupts(void);
 
+// THE HBLANK-FREE MODE, for a game whose horizontal interrupt is its own
+// (raster effects). One pump a frame, from the VBlank callback; nothing about
+// HBlank is touched. The DAC rate is the same — it never depends on the
+// 68000 — but the wire halves to 480 register writes a second: a mid-song
+// voice change on several channels takes twice as long to reach the chip.
+void MMLisp_attachVBlankOnly(void);
+
+// If your own interrupt handlers call MMLisp_pump(): how many times a frame
+// (1 or 2, the default). A grab writes further ahead of the engine when the
+// next one is a whole frame away.
+void MMLisp_setPumpsPerFrame(u8 n);
+
 // Render the score ahead into the pair queue: up to MMLISP_LEAD frames past
 // the ones whose time has come (normally one frame a call; more after a late
 // call). Once a frame, in the main loop; takes no bus. Place it after the

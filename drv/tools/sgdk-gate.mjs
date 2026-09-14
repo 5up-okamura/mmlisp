@@ -36,13 +36,15 @@ const SECONDS = Number(arg("seconds", 4));
 const KEEP = argv.includes("--keep");
 // --burn N: the example's stand-in for a game's own frame (example/main.c)
 const BURN = Number(arg("burn", 0));
+// --vblank-only: the example built with one pump a frame (MMLisp_attachVBlankOnly)
+const VBLANK_ONLY = argv.includes("--vblank-only");
 const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "m2-pcm.mmlisp");
 
 const E = sgdkEnv("sgdk-gate");
 
 // ── the project ────────────────────────────────────────────────────────────
 let built;
-try { built = makeProject(E, score, { flags: BURN ? `-DMMLISP_BURN=${BURN}` : "" }); }
+try { built = makeProject(E, score, { flags: [BURN ? `-DMMLISP_BURN=${BURN}` : "", VBLANK_ONLY ? "-DMMLISP_VBLANK_ONLY=1" : ""].join(" ").trim() }); }
 catch (e) {
   console.error(e.output ?? e.message);
   console.error("FAIL: the SGDK build failed");
@@ -103,7 +105,7 @@ for (let i = 0; i < Math.min(psgSeen.length, psgWant.length); i++)
 // the probe logs, and the number of grabs says whether frames ran at all.
 const readyAt = L.ramWrites.find((w) => w.region === "glob" && w.addr === PCM1_BASE_OFF + PCM1.ready && w.value === 0xd2);
 if (!readyAt) errors.push("the engine never wrote its ready mark");
-if (L.grabs.length < SECONDS * 100) errors.push(`only ${L.grabs.length} bus grabs in ${SECONDS}s — the host is not calling MMLisp_frame/pump at 120/s`);
+if (L.grabs.length < SECONDS * (VBLANK_ONLY ? 50 : 100)) errors.push(`only ${L.grabs.length} bus grabs in ${SECONDS}s — the host is not calling MMLisp_frame/pump at 120/s`);
 if (L.psgZ80.length) errors.push(`${L.psgZ80.length} PSG writes came from the Z80`);
 if (L.ym68k.filter((e) => e.time >= dac0).length) errors.push(`${L.ym68k.length} YM accesses came from the 68000 while the engine ran`);
 // DAC: the reference from the engine's own state writes.

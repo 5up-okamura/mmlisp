@@ -183,6 +183,18 @@ while (TRUE) {
   catches up (`MMLispStats.late`). Pairs are never handed to the engine behind
   its read index.
 
+- **A game that needs HBlank for itself** (raster effects): call
+  `MMLisp_attachVBlankOnly()` instead. One pump a frame from the VBlank
+  callback, HBlank untouched. The DAC rate does not change — it never depends
+  on the 68000 — but the wire halves to 480 register writes a second (a voice
+  change on several channels mid-song takes ~8 frames instead of ~4 to reach
+  the chip; the song's start is primed at load either way), and the one grab
+  shares a corrector window with SGDK's DMA-flush halt: on BlastEm sin008 ran
+  0.10% slow (1.7 cents) against 0.015% with two pumps. If your own handlers
+  call `MMLisp_pump()`, tell the host how often with
+  `MMLisp_setPumpsPerFrame(1 or 2)` — a grab writes further ahead of the engine
+  when the next one is a frame away.
+
 - **PSG** bytes go straight from the 68000 to `$C00011`, one grab period after
   they were queued so they land with the FM they were cued with.
 

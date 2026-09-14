@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { generatedTables } from "./c-tables.mjs";
 import { buildEngine } from "./build-engine.mjs";
-import { PairsModel, inTime, pairsCfgFromHeader } from "./pairs-model.mjs";
+import { MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgFromHeader } from "./pairs-model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const c68k = join(here, "..", "68k");
@@ -55,14 +55,15 @@ const cArgs = [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.level
   .map(String);
 
 /** The JS side: the same slots, the same modelled engine, the same records. */
-function jsStream(slots, lead = -1) {
-  const m = new PairsModel(cfg);
+function jsStream(slots, lead = -1, pumps = 2) {
+  const m = new PairsModel(pumps === 1 ? { ...cfg, ahead: MMLP_AHEAD_ONE } : cfg);
+  const advance = pumps === 1 ? 34 : 17;
   const out = [];
   let consumer = 0, fifoLo = null, ngrab = 0;
   const grab = (release = m.framesIn) => {
     const prev = fifoLo;
     const g = m.plan(prev, release);
-    consumer = (consumer + (ngrab++ % 7 === 6 ? 41 : 17)) % cfg.fifoPairs;
+    consumer = (consumer + (ngrab++ % 7 === 6 ? advance + 24 : advance)) % cfg.fifoPairs;
     fifoLo = 2 * consumer;
     let bytes = g.bytes;
     if (bytes.length && !inTime(prev, g.dst, fifoLo)) { m.abort(); bytes = []; out.push(0x4c); }
@@ -70,7 +71,7 @@ function jsStream(slots, lead = -1) {
     const psg = m.psgTake(256, release);
     out.push(0x50, psg.length, ...psg);
   };
-  if (lead < 0) for (const s of slots) { m.slot(s); grab(); grab(); }
+  if (lead < 0) for (const s of slots) { m.slot(s); for (let g = 0; g < pumps; g++) grab(); }
   else {
     // The SGDK host's schedule (pairs_main.c has the note): queue `lead`
     // frames ahead, then two grabs passing the frame count.
@@ -78,7 +79,7 @@ function jsStream(slots, lead = -1) {
     for (;;) {
       while (i < slots.length && m.framesIn < release + lead) m.slot(slots[i++]);
       release++;
-      grab(release); grab(release);
+      for (let g = 0; g < pumps; g++) grab(release);
       if (i >= slots.length && release >= m.framesIn) break;
     }
   }
@@ -117,20 +118,20 @@ for (const score of scores) {
   const rows = [];
   let scoreBad = false;
   let asap = null;
-  for (const lead of [-1, 1, 2]) {
+  for (const [lead, pumps] of [[-1, 2], [1, 2], [2, 2], [1, 1]]) {
     let cOut;
-    try { cOut = execFileSync(pairsExe, [slotsFile, ...cArgs, ...(lead >= 0 ? [String(lead)] : [])], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
+    try { cOut = execFileSync(pairsExe, [slotsFile, ...cArgs, String(lead), String(pumps)], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
     catch (e) { rows.push(`pairs_main (lead ${lead}): ${e.stderr?.toString().trim()}`); scoreBad = true; continue; }
-    const js = jsStream(parsed, lead);
+    const js = jsStream(parsed, lead, pumps);
     let bad = -1;
     for (let i = 0; i < Math.max(cOut.length, js.bytes.length); i++)
       if (cOut[i] !== js.bytes[i]) { bad = i; break; }
     const m = js.model;
-    const tag = lead < 0 ? "asap" : `lead ${lead}`;
+    const tag = lead < 0 ? "asap" : pumps === 1 ? `one grab/frame` : `lead ${lead}`;
     // Rendering ahead must change nothing on the wire: with the same grabs, a
     // frame queued early still leaves on its own frame's grabs.
     if (lead < 0) asap = js.bytes;
-    else if (Buffer.compare(Buffer.from(asap), Buffer.from(js.bytes)) !== 0) {
+    else if (pumps === 2 && Buffer.compare(Buffer.from(asap), Buffer.from(js.bytes)) !== 0) {
       scoreBad = true;
       rows.push(`${tag}: the wire differs from sending as soon as queued — a frame left before its time`);
     }

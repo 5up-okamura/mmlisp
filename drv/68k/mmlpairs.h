@@ -42,12 +42,16 @@ typedef struct {
   uint8_t op_idle, op_level, op_master, op_src_lo, op_src_hi, op_end_lo, op_end_hi;
   uint8_t op_step, op_start, op_stop, op_port;
   uint8_t staged_run;    /* set by mmlp_init: src lo..step are consecutive ops */
+  uint8_t ahead;         /* pairs ahead of the last-read index a grab writes at;
+                            0 = MMLP_AHEAD (two grabs a frame). One grab a frame
+                            needs MMLP_AHEAD_ONE (mmlpairs.c has the arithmetic) */
 } MMLPairsCfg;
 
 #define MMLP_QUEUE 1024   /* pairs the host holds while the wire catches up */
 #define MMLP_PSG   256    /* PSG bytes held for one grab period */
 #define MMLP_HELD  128    /* one slot's PCM commands, held for the next slot */
 #define MMLP_FRAMES 8     /* frames queued ahead whose ends are remembered (a power of two) */
+#define MMLP_AHEAD_ONE 48 /* MMLPairsCfg.ahead for one grab a frame */
 
 typedef struct {
   MMLPairsCfg cfg;

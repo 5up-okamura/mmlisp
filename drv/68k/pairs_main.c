@@ -36,13 +36,17 @@ static unsigned char *slurp(const char *path, long *out_len) {
  * modelled engine moves on and the grab reads the fresh index; a late grab
  * (every seventh one here, as if a pump had been skipped) copies nothing and
  * gives its pairs back. The JS twin (tools/pairs-gate.mjs) does the same. */
+/* The engine's advance between two grabs: 17 pairs at two grabs a frame, 34 at
+ * one; every seventh grab is late by 24 more — past the head it planned for. */
+static unsigned advance = 17;
+
 static void grab(MMLPairs *p, uint16_t release, unsigned *consumer, uint8_t *fifo_lo, const MMLPairsCfg *cfg, unsigned *ngrab) {
   uint8_t ops[8], vals[8], out[2 * 8];
   uint16_t dst = 0;
   uint8_t prev = *fifo_lo;
   uint16_t nb = (uint16_t)(2 * mmlp_plan(p, prev, release, ops, vals, &dst));
   for (uint16_t k = 0; 2 * k < nb; k++) { out[2 * k] = ops[k]; out[2 * k + 1] = vals[k]; }
-  *consumer = (*consumer + ((*ngrab)++ % 7 == 6 ? 41 : 17)) % cfg->fifo_pairs;
+  *consumer = (*consumer + ((*ngrab)++ % 7 == 6 ? advance + 24 : advance)) % cfg->fifo_pairs;
   *fifo_lo = (uint8_t)(2 * *consumer);
   if (nb && !mmlp_in_time(prev, dst, *fifo_lo)) { mmlp_abort(p); nb = 0; fputc('L', stdout); }
   fputc('G', stdout);
@@ -62,6 +66,7 @@ int main(int argc, char **argv) {
   unsigned char *slots = slurp(argv[1], &len);
   if (!slots) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
   MMLPairsCfg cfg;
+  memset(&cfg, 0, sizeof cfg);
   cfg.fifo = (uint16_t)strtol(argv[2], 0, 0);
   cfg.fifo_pairs = (uint8_t)strtol(argv[3], 0, 0);
   cfg.pairs_per_grab = (uint8_t)strtol(argv[4], 0, 0);
@@ -79,6 +84,9 @@ int main(int argc, char **argv) {
   cfg.op_start = (uint8_t)strtol(argv[16], 0, 0);
   cfg.op_stop = (uint8_t)strtol(argv[17], 0, 0);
   cfg.op_port = (uint8_t)strtol(argv[18], 0, 0);
+  /* argv[20], optional: grabs a frame, 2 (the default) or 1 (VBlank-only). */
+  const int pumps = argc > 20 ? atoi(argv[20]) : 2;
+  if (pumps == 1) { advance = 34; cfg.ahead = MMLP_AHEAD_ONE; }
   static MMLPairs p;
   mmlp_init(&p, &cfg);
   /* The modelled engine: its next-pair index, as the byte it would publish. */
@@ -106,7 +114,7 @@ int main(int argc, char **argv) {
         more = i + 2 <= len;
       }
       release++;
-      for (int g = 0; g < 2; g++) grab(&p, release, &consumer, &fifo_lo, &cfg, &ngrab);
+      for (int g = 0; g < pumps; g++) grab(&p, release, &consumer, &fifo_lo, &cfg, &ngrab);
       if (!more && (int16_t)(release - p.frames_in) >= 0) break;
       continue;
     }
@@ -115,7 +123,7 @@ int main(int argc, char **argv) {
     if (i + (long)n > len) break;
     mmlp_slot(&p, slots + i, (uint16_t)n);
     i += n;
-    for (int g = 0; g < 2; g++) grab(&p, p.frames_in, &consumer, &fifo_lo, &cfg, &ngrab);
+    for (int g = 0; g < pumps; g++) grab(&p, p.frames_in, &consumer, &fifo_lo, &cfg, &ngrab);
   }
   /* Drain: more grabs with no new slots, until the queue is empty. */
   for (int g = 0; g < 4096 && mmlp_pending(&p); g++) grab(&p, p.frames_in, &consumer, &fifo_lo, &cfg, &ngrab);

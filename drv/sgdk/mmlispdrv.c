@@ -63,14 +63,16 @@ static u16        lateGrabs = 0;
 // Where a grab's release store goes when the bus was already held by the code
 // it interrupted: that code releases it, not us.
 static vu16       releaseSink;
-static const MMLPairsCfg PAIRS_CFG = {
+static MMLPairsCfg PAIRS_CFG = {
     MMLISPDRV_FIFO, MMLISPDRV_FIFO_PAIRS, MMLISPDRV_PAIRS_PER_GRAB,
     MMLISPDRV_LUT_PAGE, MMLISPDRV_LEVELS, MMLISPDRV_OP_LIMIT,
     MMLISPDRV_OP_IDLE, MMLISPDRV_OP_LEVEL, MMLISPDRV_OP_MASTER,
     MMLISPDRV_OP_SRC_LO, MMLISPDRV_OP_SRC_HI, MMLISPDRV_OP_END_LO, MMLISPDRV_OP_END_HI,
     MMLISPDRV_OP_STEP, MMLISPDRV_OP_START, MMLISPDRV_OP_STOP, MMLISPDRV_OP_PORT,
     0,   // staged_run: mmlp_init works it out
+    0,   // ahead: MMLisp_setPumpsPerFrame
 };
+static bool       onePump = FALSE;     // VBlank-only: one grab a frame
 
 // ── Bring-up ───────────────────────────────────────────────────────────────
 
@@ -337,7 +339,29 @@ static void vblankPump(void)
 {
     hintArmed = TRUE;
     const u16 d = due();
-    pump(d ? (u16)(d - 1) : 0);
+    // With one grab a frame it carries the frame itself.
+    pump(onePump ? d : (d ? (u16)(d - 1) : 0));
+}
+
+void MMLisp_setPumpsPerFrame(u8 n)
+{
+    // Where a grab writes depends on how long until the next one: the engine
+    // reads ~2 pairs a millisecond, and a whole frame between grabs is ~34
+    // (NTSC) to ~40 (PAL) of them (mmlpairs.c MMLP_AHEAD_ONE).
+    onePump = (n == 1);
+    PAIRS_CFG.ahead = onePump ? MMLP_AHEAD_ONE : 0;
+    pairs.cfg.ahead = PAIRS_CFG.ahead;
+}
+
+void MMLisp_attachVBlankOnly(void)
+{
+    // ONE GRAB A FRAME, FROM THE VBLANK INTERRUPT — the horizontal interrupt
+    // stays the game's. The wire halves (480 pairs a second): a song's start
+    // is primed at load either way, but a voice change on several channels
+    // mid-song takes twice as long to reach the chip, and the one grab sits
+    // beside SGDK's DMA-flush halt in the same corrector window.
+    MMLisp_setPumpsPerFrame(1);
+    SYS_setVIntCallback(vblankPump);
 }
 
 void MMLisp_attachInterrupts(void)

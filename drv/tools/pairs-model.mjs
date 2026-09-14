@@ -6,7 +6,7 @@
 import { decodeSlot } from "../../live/src/slot-builder.js";
 
 export const MMLP_QUEUE = 1024, MMLP_PSG = 256, MMLP_AHEAD = 32, MMLP_HELD = 128;
-export const MMLP_FRAMES = 8;
+export const MMLP_FRAMES = 8, MMLP_AHEAD_ONE = 48;
 const PCM_LEN = [0, 18, 2, 3, 6, 2];
 const LEVEL_OF_SHIFT = [14, 7, 4, 2, 1, 0, 0, 0, 0];
 const isPitchHi = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);
@@ -129,7 +129,7 @@ export class PairsModel {
     const lim = avail ? this.endQ[(avail - 1) % MMLP_FRAMES] : this.qOut;
     if (fifoLo === null || fifoLo === 0xff) return { dst: 0, bytes: [] };
     const c = (fifoLo >> 1) & MASK;
-    let h = (c + MMLP_AHEAD) & MASK;
+    let h = (c + (this.cfg.ahead || MMLP_AHEAD)) & MASK;
     if (this.headValid) {
       const dOld = (this.head - c) & MASK, dNew = (h - c) & MASK;
       if (dOld > dNew && dOld < 64) h = this.head;

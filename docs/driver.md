@@ -2500,6 +2500,13 @@ not flags, so no grab can land between a set and a clear.
   fresh index is read first; if the engine is already at or past `H`, nothing
   is written and the pairs go back to the queue (a late grab). 960 pairs a
   second.
+- **VBlank-only mode** (`MMLisp_attachVBlankOnly`, or
+  `MMLisp_setPumpsPerFrame(1)` for a game's own handlers): one grab a frame at
+  VBlank releasing the frames due, the head `MMLP_AHEAD_ONE` = 48 pairs ahead
+  (a frame is ~34 pairs of the engine's reading on NTSC, ~40 on PAL). 480
+  pairs a second; the DAC rate is unchanged but the grab shares a corrector
+  window with SGDK's DMA-flush halt (sin008: 0.10% slow). pairs-gate models it
+  (one grab a frame, C ≡ JS).
 - **Primed at load.** `mml_prime_tracks` (host command 0x08; the SGDK host
   calls it in `MMLisp_loadScore`) starts each idle track, runs its leading
   setup as the armed frame would, and stops it before it sounds; the real start

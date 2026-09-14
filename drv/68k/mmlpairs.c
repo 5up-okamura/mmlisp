@@ -25,6 +25,10 @@
  * a grab later than that finds out itself (mmlp_in_time) and copies nothing. */
 #define MMLP_AHEAD 32
 
+/* …and with ONE grab a frame (the host's VBlank-only mode), the gap is the
+ * whole frame: 16.7 ms on NTSC (~34 pairs) and 20 ms on PAL (~40), so the
+ * head goes 48 ahead. The page holds 128; 48 + a grab's 8 stays well clear. */
+
 /* The 6 dB shift grid onto the 15-level linear family: round(14 * 2^-s).
  * shift 8 is the sequencer's mute. */
 static const uint8_t LEVEL_OF_SHIFT[9] = {14, 7, 4, 2, 1, 0, 0, 0, 0};
@@ -306,7 +310,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
    * written last time that it may not have reached yet. */
   if (fifo_lo == 0xff) { *dst = 0; return 0; }            /* no index yet */
   uint8_t c = (uint8_t)((fifo_lo >> 1) & MASK);
-  uint8_t h = (uint8_t)((c + MMLP_AHEAD) & MASK);
+  uint8_t h = (uint8_t)((c + (cfg->ahead ? cfg->ahead : MMLP_AHEAD)) & MASK);
   if (p->head_valid) {
     uint8_t d_old = (uint8_t)((p->head - c) & MASK);
     uint8_t d_new = (uint8_t)((h - c) & MASK);
