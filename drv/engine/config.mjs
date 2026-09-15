@@ -293,6 +293,61 @@ export const RESERVE_1V = Array.from({ length: 16 }, (_, b) => [b, 0,
   : "free for the decode's pieces and the expander's sites"]);
 export const CODE_ESTIMATE_1V = [];
 
+// ── THE N-VOICE PAIR PROFILE (plan-pcm-spec.md D1 + D4 study) ──────────────
+//
+// The one-voice pair engine with one to three voices, and the level model D4
+// asks for: 6 dB RUNGS with the master folded into each voice's rung by the
+// 68000, so a voice costs ONE table read and there is no master stage. Eight
+// pages: page 0 is silence, page 7 - r is the rung `s * 2^-r` for r = 0..6
+// (unity .. -36 dB) — the reference's PCM_TOTAL_MAX_SHIFT = 7 made into
+// tables. Every page takes a SIGNED source byte and returns it BIASED, so a
+// sum of voices is a sum of biased terms and the saturating add is the old
+// 512 B clamp table, cascaded once per extra voice (sat(sat(a+b)+c) — the
+// reference's 8-bit saturating add, order and all).
+//
+// Voice 0's pointer lives in DE' as in the one-voice engine; voices 1 and 2
+// keep theirs in a self-modified `ld hl,nn` inside the mix, so no register
+// the expander or the decode owns is taken, and a third voice needs nothing
+// the second did not.
+export const RAM_NV = (voices) => ({
+  size: 0x2000,
+  ...(voices >= 2
+    ? { code: [0x0000, 0x1100], clamp: [0x1100, 0x1300] }
+    : { code: [0x0000, 0x1300] }),
+  lut: [0x1300, 0x1b00],    // 8 rung pages (lut.mjs buildRungs)
+  phase: [0x1b00, 0x1c00],
+  ring: [0x1c00, 0x1d00],
+  fifo: [0x1d00, 0x1e00],
+  state: [0x1e00, 0x1e60],
+  pub: [0x1e60, 0x1e80],
+  glob: [0x1f00, 0x1f80],
+  stack: [0x1f80, 0x2000],
+});
+export const NV_LEVELS = 8;
+export const NV_MAX_VOICES = 3;
+
+// The N-voice state block, from the same base as PCM1 (glob + $30). Eight
+// 68000-writable bytes a voice from op $01 — the rung page, the staged start
+// (source, end, step) and the two generations — so three voices end at $18,
+// below PORT ($20). The Z80's own bytes start at $22, out of every op's reach.
+export const PCMN = {
+  bucket: 0x00,
+  level: (v) => 0x01 + 8 * v, stSrc: (v) => 0x02 + 8 * v, stEnd: (v) => 0x04 + 8 * v,
+  stStep: (v) => 0x06 + 8 * v, startGen: (v) => 0x07 + 8 * v, stopGen: (v) => 0x08 + 8 * v,
+  port: 0x20,
+  liveEnd: (v) => 0x22 + 5 * v, lastStart: (v) => 0x24 + 5 * v, lastStop: (v) => 0x25 + 5 * v,
+  parkMask: (v) => 0x26 + 5 * v,
+  fifoLo: 0x31, ready: 0x32, size: 0x33,
+};
+
+/**
+ * Where each voice's block boundary falls inside the 16-sample block. Voice v's
+ * edge pieces (STOP, COMPARE, PARK, START) sit at its own four positions, so
+ * two voices never share an edge slot: 0/8 for two, 0/5/11 for three.
+ */
+export const voiceOffsets = (voices, B = 16) =>
+  Array.from({ length: voices }, (_, v) => Math.round((v * B) / voices) % B);
+
 export const RAM = RAM_P1;
 
 // ── The code the complete 2ch engine still owes ───────────────────────────
@@ -508,8 +563,25 @@ export function buildConfig({
   // family the gates were written against.
   production = false,
   signedSource = false,
+  // THE N-VOICE PAIR PROFILE (D1/D4 study): `pairs: true` with `complete: true`
+  // and 1..3 voices. Its own RAM map (RAM_NV), eight rung pages, no reserve.
+  pairs = false,
+  // A DAC period of the caller's own, in master clocks — the study's rate knob.
+  // Overrides `profile`.
+  sampleMaster = null,
+  // The lap in 16-sample blocks. Default: the shortest lap the group and the
+  // block close on (80 samples at 9,987.6 Hz). A lower rate needs a SHORTER lap
+  // in blocks to keep the lap under the pumps' spacing (one grab a lap).
+  lapBlocks = null,
+  // Expander steps a lap in the N-voice profile (each consumes one pair).
+  xpSteps = 16,
+  // How many voices, from voice 0, carry the 2^k octave step. The rest read
+  // one byte a sample, which is what makes an extra voice cheap.
+  stepVoices = null,
 } = {}) {
-  const p = PROFILES[profile];
+  const p = sampleMaster
+    ? { name: `m${sampleMaster}`, sampleMaster }
+    : PROFILES[profile];
   if (!p) throw new Error(`unknown profile ${profile}`);
 
   const z80Hz = machine.masterHz / machine.z80Div;
@@ -538,7 +610,13 @@ export function buildConfig({
   // The static schedule's full repeat: the group pattern and the block pattern
   // have to close together, or the unrolled code is not periodic.
   const lcm = (a, b) => (a / gcd(a, b)) * b;
-  const cycleSlots = voices ? lcm(groupSlots, blockSamples) : groupSlots;
+  let cycleSlots = voices ? lcm(groupSlots, blockSamples) : groupSlots;
+  if (lapBlocks) {
+    const want = lapBlocks * blockSamples;
+    if (want % cycleSlots)
+      throw new Error(`a lap of ${lapBlocks} blocks does not close on the ${cycleSlots}-sample repeat`);
+    cycleSlots = want;
+  }
 
   // Timer B, as a phase reference. Its period in Z80 cycles and in samples.
   const timerBfm = 16 * (256 - timerB);
@@ -546,12 +624,20 @@ export function buildConfig({
   const timerBsamples = (timerBfm * machine.fmSampleMaster) / p.sampleMaster;
   const timerAcycles = (timerAfm * machine.fmSampleMaster) / machine.z80Div;
 
-  if (levels !== 16 && levels !== 15) throw new Error(`levels must be 16 or 15, not ${levels}`);
+  const multi = !!pairs;
+  if (multi) {
+    if (!complete) throw new Error("the N-voice pair profile is a complete build");
+    if (!(voices >= 1 && voices <= NV_MAX_VOICES)) throw new Error(`the N-voice profile takes 1..${NV_MAX_VOICES} voices`);
+    if (command || ymWriter) throw new Error("the N-voice profile has neither the mailbox nor the pop-based writer");
+    levels = NV_LEVELS;
+    if (!signedSource) throw new Error("the N-voice rung pages take signed source bytes");
+  } else if (levels !== 16 && levels !== 15) throw new Error(`levels must be 16 or 15, not ${levels}`);
   if (levels === 15 && !complete)
     throw new Error("the 15-level profile is the complete 2ch experiment; there is no P1 form of it");
   // THE ONE-VOICE INTEGRATION PROFILE (R28 §63): `voices: 1, complete: true`.
   // Fifteen levels, no clamp, the pair FIFO, and the reservations of RESERVE_1V.
-  const oneVoice = voices === 1 && complete;
+  const oneVoice = voices === 1 && complete && !multi;
+  if (multi && lead === blockSamples + 1) lead = blockSamples + 2;
   // THE LEAD IS 18 HERE, one more than the two-voice profile's 17, for the same
   // reason 17 was chosen over 16: the block phase decides which slot carries
   // the edge, and with 17 the START piece (156 cycles, before the mix) lands on
@@ -563,7 +649,7 @@ export function buildConfig({
     throw new Error("the one-voice profile is a 15-level build: its phase table needs the page");
   if (oneVoice && (command || ymWriter))
     throw new Error("the one-voice profile has neither the mailbox nor the pop-based writer (R28 §63.4)");
-  const ram = oneVoice ? RAM_1V
+  const ram = multi ? RAM_NV(voices) : oneVoice ? RAM_1V
     : complete ? (levels === 15 ? RAM_P2_FULL_15 : RAM_P2_FULL) : voices ? RAM_P2 : RAM_P1;
   if (ram.lut && (ram.lut[1] - ram.lut[0]) >> 8 !== levels)
     throw new Error(`the RAM map has ${(ram.lut[1] - ram.lut[0]) >> 8} level pages, not ${levels}`);
@@ -587,10 +673,12 @@ export function buildConfig({
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
     oneVoice, production, signedSource,
-    reserve: oneVoice ? RESERVE_1V : complete
+    ...(multi ? { multi, xpSteps, voiceOffsets: voiceOffsets(voices, blockSamples),
+      stepVoices: stepVoices ?? voices } : {}),
+    reserve: oneVoice || multi ? RESERVE_1V : complete
       ? (ymWriter ? RESERVE_2CH_YM : command ? RESERVE_2CH_CMD
         : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
-    codeEstimate: oneVoice ? CODE_ESTIMATE_1V : ymWriter ? CODE_ESTIMATE_2CH_YM
+    codeEstimate: oneVoice || multi ? CODE_ESTIMATE_1V : ymWriter ? CODE_ESTIMATE_2CH_YM
       : command ? CODE_ESTIMATE_2CH_CMD
       : correctorBudget ? CODE_ESTIMATE_2CH_CORR : CODE_ESTIMATE_2CH,
     correctorBudget, command, ymWriter, csmHost,

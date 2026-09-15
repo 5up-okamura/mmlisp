@@ -31,8 +31,9 @@
 // tolerance. Reserving it in EVERY slot to make it safe is 25% of the budget
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
-import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE, PCM1_READY_MARK, pcm1Base, expanderSites } from "./config.mjs";
-import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE } from "./lut.mjs";
+import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE, PCM1_READY_MARK, pcm1Base, expanderSites,
+  PCMN } from "./config.mjs";
+import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE, buildRungs } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.mjs";
 
 const hex = (n) => `$${n.toString(16)}`;
@@ -178,6 +179,22 @@ function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = n
   // rather than adding to it — a CSM write is one of the four YM writes a
   // block is budgeted for, not a fifth one for free.
   const chargeable = cost(work);
+  if (cfg.multi) {
+    // THE N-VOICE PROFILE: each voice's four edge pieces at ITS block phase
+    // (cfg.voiceOffsets), START before the mix and the other three after it,
+    // exactly as the one-voice edge — so no two voices share an edge slot.
+    const B = cfg.blockSamples;
+    const at = cfg.voiceOffsets.map((o) => (b - o + B) % B);
+    at.forEach((bv, v) => { if (bv === 0) work.push(...nvEdgeStart(cfg, v)); });
+    work.push(...callMix(cfg));
+    at.forEach((bv, v) => {
+      if (bv === B - 3) work.push(...nvEdgeStop(cfg, v));
+      if (bv === B - 2) work.push(...nvEdgeCompare(cfg, v));
+      if (bv === B - 1) work.push(...nvEdgePark(cfg, v));
+    });
+    if (xpPlan) work.push(...(xpPlan.get(slotIndex) ?? []));
+    return work;
+  }
   if (cfg.voices) {
     // THE START IS APPLIED BEFORE THE FIRST MIX OF A BLOCK (R28 §63.3 D2, §4:
     // "前区間最後のミックスの後と、次区間最初のミックスの前の2スロットへ分ける").
@@ -268,7 +285,164 @@ const mixRoutine1v = (cfg) => [
   op("        ret", 10),
 ];
 
-const mixRoutine = (cfg) => (cfg.oneVoice ? mixRoutine1v(cfg) : cfg.voices >= 2 ? [
+// ── THE N-VOICE MIX (plan-pcm-spec.md D1/D4) ──────────────────────────────
+//
+// One table read a voice: the rung page already carries the master (the 68000
+// folds it in), so there is no master stage. Voice 0 reads through DE' as in
+// the one-voice mix. Voices 1 and 2 keep their pointer in the operand of a
+// self-modified `ld hl,nn` — ADVANCED FIRST, so HL still holds the old pointer
+// for the fetch, and no register the expander (IX, IYH) or the decode (main BC)
+// owns is taken. Each extra voice is summed through the 512 B clamp: two biased
+// terms make a 9-bit sum whose carry picks the page, so the add saturates in
+// constant time, and a third voice cascades through the same table.
+const nvS = (cfg, key, v) => {
+  const off = typeof PCMN[key] === "function" ? PCMN[key](v) : PCMN[key];
+  return `$${(pcm1Base(cfg) + off).toString(16)}`;
+};
+const mixRoutineN = (cfg) => {
+  const N = cfg.voices, ww = cfg.windowWait;
+  const ops = [
+    op("        exx", 4, { what: "to the mixer's register set" }),
+    op("        ld   a,(de)", 7 + ww, { what: `voice 0's byte through the 68k window (7 + ${ww})` }),
+    op("        ld   l,a", 4),
+    op("mix_v0: ld   h,0", 7, { what: "voice 0's rung page (master folded in) — SELF-MODIFIED at its edge" }),
+    op("        ld   a,(hl)", 7, { what: "signed in, biased out" }),
+  ];
+  const advance0 = [
+    op("        ld   a,e", 4),
+    op("mix_st0: add  a,1", 7, { what: "voice 0's 2^k step — SELF-MODIFIED at its edge" }),
+    op("        ld   e,a", 4),
+    op("        ld   a,d", 4),
+    op("        adc  a,0", 7),
+    op("        ld   d,a", 4),
+  ];
+  if (N === 1) {
+    ops.push(op("        ld   (bc),a", 7, { what: "into the ring, LEAD ahead of the play cursor" }),
+      op("        inc  c", 4), ...advance0);
+  } else {
+    ops.push(op("        ld   iyl,a", 8, { what: "voice 0's term, parked in IYL" }), ...advance0);
+    for (let v = 1; v < N; v++) {
+      ops.push(
+        op(`mv${v}:    ld   hl,${hexW(0xff00)}`, 10, { what: `voice ${v}'s pointer — the operand IS the pointer` }),
+        ...(cfg.stepVoices > v ? [
+          op("        ld   a,l", 4),
+          op(`mix_st${v}: add  a,1`, 7, { what: `voice ${v}'s step — SELF-MODIFIED at its edge` }),
+          op(`        ld   (mv${v}+1),a`, 13),
+          op("        ld   a,h", 4),
+          op("        adc  a,0", 7),
+          op(`        ld   (mv${v}+2),a`, 13, { what: "advanced first: HL still holds the old pointer" }),
+          op("        ld   a,(hl)", 7 + ww, { what: `voice ${v}'s byte (7 + ${ww})` }),
+        ] : [
+          // No octave step on this voice: one byte a sample, so the pointer is
+          // fetched through, incremented and put back whole.
+          op("        ld   a,(hl)", 7 + ww, { what: `voice ${v}'s byte (7 + ${ww})` }),
+          op("        inc  hl", 6),
+          op(`        ld   (mv${v}+1),hl`, 16, { what: "step 1: the pointer moves on by one" }),
+        ]),
+        op("        ld   l,a", 4),
+        op(`mix_v${v}: ld   h,0`, 7, { what: `voice ${v}'s rung page` }),
+        op("        ld   a,(hl)", 7),
+        op("        add  a,iyl", 8, { what: "9-bit sum of two biased terms in (carry, A)" }),
+        op("        ld   l,a", 4),
+        op("        ld   a,0", 7, { what: "`ld` keeps the carry" }),
+        op("        adc  a,CLAMP>>8", 7, { what: "the carry picks the clamp page" }),
+        op("        ld   h,a", 4),
+        op("        ld   a,(hl)", 7, { what: "saturated, biased" }),
+        ...(v < N - 1 ? [op("        ld   iyl,a", 8, { what: "…and parked for the next voice" })] : []),
+      );
+    }
+    ops.push(op("        ld   (bc),a", 7, { what: "the finished sample" }), op("        inc  c", 4));
+  }
+  ops.push(op("        exx", 4), op("        ret", 10));
+  return ops;
+};
+const hexW = (n) => `$${n.toString(16).padStart(4, "0")}`;
+
+/** STOP for voice v: `END_v := 0` when its stop generation moved. */
+const nvEdgeStop = (cfg, v) => [
+  op("exx", 4, { what: `voice ${v} edge: stop` }),
+  op(`ld   a,(${nvS(cfg, "stopGen", v)})`, 13),
+  op("ld   l,a", 4),
+  op(`ld   a,(${nvS(cfg, "lastStop", v)})`, 13),
+  op("cp   l", 4),
+  ...balanced("z", [
+    op("ld   a,l", 4),
+    op(`ld   (${nvS(cfg, "lastStop", v)}),a`, 13),
+    op("ld   hl,0", 10),
+    op(`ld   (${nvS(cfg, "liveEnd", v)}),hl`, 16),
+  ], `voice ${v}: no stop pending`),
+  op("exx", 4),
+];
+
+/** COMPARE for voice v: `park_v := pointer >= END_v`. */
+const nvEdgeCompare = (cfg, v) => (v === 0 ? [
+  op("exx", 4, { what: "voice 0 edge: compare" }),
+  op(`ld   hl,${nvS(cfg, "liveEnd", 0)}`, 10),
+  op("ld   a,e", 4),
+  op("sub  (hl)", 7),
+  op("inc  l", 4),
+  op("ld   a,d", 4),
+  op("sbc  a,(hl)", 7),
+  op("sbc  a,a", 4),
+  op("cpl", 4),
+  op(`ld   (${nvS(cfg, "parkMask", 0)}),a`, 13),
+  op("exx", 4),
+] : [
+  op("exx", 4, { what: `voice ${v} edge: compare` }),
+  op(`ld   hl,(${nvS(cfg, "liveEnd", v)})`, 16),
+  op(`ld   a,(mv${v}+1)`, 13),
+  op("sub  l", 4),
+  op(`ld   a,(mv${v}+2)`, 13),
+  op("sbc  a,h", 4),
+  op("sbc  a,a", 4),
+  op("cpl", 4),
+  op(`ld   (${nvS(cfg, "parkMask", v)}),a`, 13),
+  op("exx", 4),
+]);
+
+/** PARK for voice v: its rung page for the next block, then the park. */
+const nvEdgePark = (cfg, v) => [
+  op(`ld   a,(${nvS(cfg, "level", v)})`, 13, { what: `voice ${v} edge: the rung its next block runs at` }),
+  op(`ld   (mix_v${v}+1),a`, 13),
+  op("exx", 4),
+  op(`ld   a,(${nvS(cfg, "parkMask", v)})`, 13),
+  op("or   a", 4),
+  ...balanced("z", v === 0
+    ? [op("ld   de,PCM_SILENCE", 10)]
+    : [op("ld   hl,PCM_SILENCE", 10), op(`ld   (mv${v}+1),hl`, 16)], `voice ${v}: not parking`),
+  op("exx", 4),
+];
+
+/** START for voice v, before the mix: the staged pointer, end and step. */
+const nvEdgeStart = (cfg, v) => [
+  op("exx", 4, { what: `voice ${v} edge: start` }),
+  op(`ld   a,(${nvS(cfg, "startGen", v)})`, 13),
+  op("ld   l,a", 4),
+  op(`ld   a,(${nvS(cfg, "lastStart", v)})`, 13),
+  op("cp   l", 4),
+  ...balanced("z", [
+    op("ld   a,l", 4),
+    op(`ld   (${nvS(cfg, "lastStart", v)}),a`, 13, { what: "latched before HL is reused" }),
+    ...(v === 0
+      ? [op(`ld   de,(${nvS(cfg, "stSrc", 0)})`, 20)]
+      : [op(`ld   hl,(${nvS(cfg, "stSrc", v)})`, 16), op(`ld   (mv${v}+1),hl`, 16)]),
+    ...(cfg.stepVoices > v ? [
+      op(`ld   a,(${nvS(cfg, "stStep", v)})`, 13),
+      op(`ld   (mix_st${v}+1),a`, 13),
+    ] : []),
+    op(`ld   hl,(${nvS(cfg, "stEnd", v)})`, 16),
+    op(`ld   (${nvS(cfg, "liveEnd", v)}),hl`, 16),
+  ], `voice ${v}: no start pending`),
+  op("exx", 4),
+];
+
+/** The N-voice pieces' costs, for the study's report. */
+export const nvEdgeCost = (cfg) => Array.from({ length: cfg.voices }, (_, v) => ({
+  stop: cost(nvEdgeStop(cfg, v)), compare: cost(nvEdgeCompare(cfg, v)),
+  park: cost(nvEdgePark(cfg, v)), start: cost(nvEdgeStart(cfg, v)),
+}));
+
+const mixRoutine = (cfg) => (cfg.multi ? mixRoutineN(cfg) : cfg.oneVoice ? mixRoutine1v(cfg) : cfg.voices >= 2 ? [
   // Two voices. Voice 0's contribution is parked in the ring slot the sample
   // is being built in — the play cursor is LEAD samples behind, so nothing can
   // ever read it half-built, which is §3.3's ownership rule made structural
@@ -534,7 +708,7 @@ function balanceArms(arms) {
 
 function expanderRoutines(cfg) {
   const base = pcm1Base(cfg);
-  const fifoLo = `$${(base + PCM1.fifoLo).toString(16)}`;
+  const fifoLo = `$${(base + (cfg.multi ? PCMN.fifoLo : PCM1.fifoLo)).toString(16)}`;
   // The three arms, priced.
   const store = [
     op(`add  a,${base & 0xff}`, 7, { what: "STORE: the op is an offset into the state block" }),
@@ -613,6 +787,52 @@ function expanderPlan(cfg) {
 }
 export const expanderCost = (cfg) => expanderRoutines(cfg);
 
+/**
+ * THE N-VOICE SITE PLAN: `cfg.xpSteps` steps spread evenly over the lap, each
+ * A piece in the first slot at or after its even position that still has room
+ * under the ceiling for it, and its B piece in the next such slot. Placed
+ * against the slot's own work (the mix and the edges), before the decode is,
+ * because the expander's positions are fixed for the host and the decode's are
+ * not. Steps stay in order: step j+1's A comes after step j's B.
+ */
+function nvExpanderPlan(cfg) {
+  const r = expanderRoutines(cfg);
+  const n = cfg.cycleSlots, S = cfg.xpSteps;
+  const room = [];
+  for (let i = 0; i < n; i++) {
+    const used = 7 + 11 + (i === n - 1 ? 10 : 0) + cost(slotWork(cfg, i, { dead: DEAD_DEFAULT }));
+    room.push(Math.floor(cfg.workTarget * cfg.slotCycles[i % cfg.groupSlots]) - used);
+  }
+  // Even spacing first; where the heavy slots push the last steps off the end
+  // of the lap, the spacing is compressed until every step lands.
+  const tryPlace = (squeeze) => {
+    const left = [...room], sites = [];
+    let at = 0;
+    for (let j = 0; j < S; j++) {
+      let a = Math.max(at, Math.floor((j * n * squeeze) / S));
+      while (a < n && left[a] < r.aCycles) a++;
+      let b = a + 1;
+      while (b < n && left[b] < r.bCycles) b++;
+      if (b >= n) return { failedAt: j };
+      left[a] -= r.aCycles; left[b] -= r.bCycles;
+      sites.push({ a, b });
+      at = b + 1;
+    }
+    return { sites };
+  };
+  let got = null;
+  for (let q = 100; q >= 0 && !got?.sites; q -= 5) got = tryPlace(q / 100);
+  if (!got.sites)
+    throw new Error(`the expander's step ${got.failedAt} of ${S} finds no room in a ${n}-slot lap`
+      + ` (A ${r.aCycles}, B ${r.bCycles} cycles; the most room any slot has is ${Math.max(...room)})`);
+  const plan = new Map();
+  got.sites.forEach(({ a, b }, j) => {
+    plan.set(a, [op("call xp_a", r.aCycles, { what: `expander A (step ${j})` })]);
+    plan.set(b, [op("call xp_b", r.bCycles, { what: "expander B: idle, advance, publish" })]);
+  });
+  return { plan, routines: r, sites: got.sites };
+}
+
 // ── §4's 経路別サイクル表 ───────────────────────────────────────────────────
 // Costed from the encodings, not measured and not fitted. Every path P1 can
 // take is here; the paths it cannot take yet are listed with what they wait on,
@@ -675,7 +895,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   const L = [];
   const slots = [];
   const P = (s = "") => L.push(s);
-  const xp = cfg.oneVoice ? expanderPlan(cfg) : null;
+  const xp = cfg.oneVoice ? expanderPlan(cfg) : cfg.multi ? nvExpanderPlan(cfg) : null;
 
   P(`; ${stampLine(cfg)}`);
   P(";");
@@ -694,7 +914,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     if (cfg.ram.clamp)
       P(`CLAMP       equ ${hex(cfg.ram.clamp[0])}       ; ${CLAMP_SIZE} B — the saturating add, as a table`);
     P(`RING        equ ${hex(cfg.ram.ring[0])}       ; 256 B — the finished samples`);
-    if (cfg.oneVoice) {
+    if (cfg.oneVoice || cfg.multi) {
       P(`PCM_STATE   equ ${hex(pcm1Base(cfg))}       ; the one voice's state, in the globals (config.mjs PCM1)`);
       P(`PCM_SILENCE equ ${hex(PCM1_SILENCE)}       ; where a parked voice reads (R28 §63.3 D2)`);
       P(`FIFO        equ ${hex(cfg.ram.fifo[0])}       ; 128 {op,val} pairs the 68000 writes (R28 §63.3 D3)`);
@@ -792,7 +1012,44 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("        ld   (G_CSMLO),a");
   }
   P("");
-  if (cfg.voices) {
+  if (cfg.multi) {
+    // THE N-VOICE BOOT: every voice parked on the silence page at rung 0
+    // (silence), END 0, and — as in the one-voice boot — only the Z80's own
+    // bytes of the state block touched: the staged fields are the 68000's.
+    P("; Every voice silent and parked; only the Z80's own state bytes written.");
+    P("        ld   a,LUT>>8               ; page 0 — silence");
+    for (let v = 0; v < cfg.voices; v++) {
+      P(`        ld   (PCM_STATE+${PCMN.level(v)}),a`);
+      P(`        ld   (mix_v${v}+1),a`);
+    }
+    P("        ld   hl,RING");
+    P("        ld   b,0");
+    P("bootsil:");
+    P(`        ld   (hl),${hex(SILENCE)}`);
+    P("        inc  l");
+    P("        djnz bootsil");
+    P("        exx");
+    P("        ld   de,PCM_SILENCE");
+    P("        ld   bc,RING+LEAD");
+    P("        ld   hl,0");
+    P("        exx");
+    P("        xor  a");
+    for (let v = 0; v < cfg.voices; v++)
+      for (const k of ["lastStart", "lastStop", "parkMask"]) P(`        ld   (PCM_STATE+${PCMN[k](v)}),a`);
+    P("        ld   hl,0");
+    for (let v = 0; v < cfg.voices; v++) P(`        ld   (PCM_STATE+${PCMN.liveEnd(v)}),hl`);
+    P("        ld   hl,FIFO");
+    P("        ld   b,0");
+    P("fifoinit:");
+    P("        ld   (hl),0");
+    P("        inc  l");
+    P("        djnz fifoinit");
+    P("        ld   ix,FIFO");
+    P(`        ld   iy,${hex(pcm1Base(cfg) & 0xff00)}`);
+    P("        xor  a");
+    P(`        ld   (PCM_STATE+${PCMN.fifoLo}),a`);
+    P("");
+  } else if (cfg.voices) {
     P("; Levels start at unity. The host writes G_VPAGE / G_MPAGE whenever it");
     P("; likes; the block edge is what makes the change take effect, and it");
     P("; takes effect whole (§3.4).");
@@ -880,10 +1137,10 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     if (pages !== cfg.levels)
       throw new Error(`the level family holds ${pages} pages and the profile says ${cfg.levels}`);
   }
-  if (cfg.oneVoice) {
+  if (cfg.oneVoice || cfg.multi) {
     P("; Boot is done: the host may take the bus from here on (it reads this byte).");
     P(`        ld   a,${hex(PCM1_READY_MARK)}`);
-    P(`        ld   (PCM_STATE+${PCM1.ready}),a`);
+    P(`        ld   (PCM_STATE+${cfg.multi ? PCMN.ready : PCM1.ready}),a`);
     P("");
   }
   P("; The DAC's address latch is written ONCE. Every slot writes data only,");
@@ -962,7 +1219,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P(`; ${cfg.levels} pages of 256 bytes: level k maps a signed sample to`);
     P(`; round(s*k/${cfg.levels - 1}), clamped. Level ${cfg.levels - 1} is bit-exact unity`);
     P(`; and level 0 is silence (lut.mjs). Source bytes are ${cfg.signedSource ? "SIGNED" : "biased"}.`);
-    const lut = buildLut(cfg.levels, { signed: !!cfg.signedSource });
+    const lut = cfg.multi ? buildRungs() : buildLut(cfg.levels, { signed: !!cfg.signedSource });
     for (let i = 0; i < lut.length; i += 16)
       P(`        db   ${[...lut.slice(i, i + 16)].join(",")}`);
     P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);
@@ -972,7 +1229,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   P("");
 
   return { text: L.join("\n"), slots, placement: placementTable(slots, cfg.periodCycles),
-    expander: xp ? { sites: expanderSites(cfg), ...xp.routines, text: undefined } : null };
+    expander: xp ? { sites: cfg.multi ? xp.sites : expanderSites(cfg), ...xp.routines, text: undefined } : null };
 }
 
 // ── THE CODE LEDGER (R11 §31.1, restoring the rule R8 §24.3 already fixed) ──

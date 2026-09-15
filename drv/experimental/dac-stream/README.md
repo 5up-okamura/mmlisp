@@ -32,6 +32,37 @@ node experimental/dac-stream/machine-probe.mjs --case NAME --seconds N \
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
 
+## The voice-count study (plan-pcm-spec.md D1 + D4, 2026-09-15)
+
+```
+npm run dac-stream:voices                       # highest placing rate for 1/2/3 voices
+npm run dac-stream:voices -- --step-voices 1    # …with the octave step on voice 0 only
+npm run dac-stream:nv -- --voices 2 --period 461 --step-voices 1   # run a point: TIME + VALUE
+npm run dac-stream:nv -- ... --fault mis-cost | wrap               # the gate's own negatives
+```
+
+The generator's N-voice pair profile (`buildConfig({ pairs: true, voices: 1..3 })`):
+D4's levels — eight rung pages (silence, then `s >> r` for r = 6..0), signed in
+and biased out, the master folded into each voice's rung by the host, so ONE
+table read a voice and no master stage — voice 0 through DE', voices 1 and 2
+through a self-modified `ld hl,nn`, extra voices summed through the 512 B clamp
+(cascaded: sat(sat(a+b)+c)), each voice's edge pieces at its own block phase
+(0/8, 0/5/11). Any integer-cycle DAC period, the lap held under today's 8.01 ms
+(one grab a lap), the expander at 1.5x the host's wire. The shipped image is
+unchanged by any of it.
+
+| voices | octave step | highest rate | mix cyc/sample | limit | code / region |
+| --- | --- | --- | --- | --- | --- |
+| 1 | — | 10,782 Hz | 104 (shipped: 129) | worst slot (START edge) | 2,474 / 4,864 |
+| 2 | both voices | 7,131 Hz | 235 | mean 79.5% | 2,373 / 4,352 |
+| 2 | voice 0 only | 7,765 Hz | 209 | mean 79.5%, expander A beside the mix | 2,328 / 4,352 |
+| 3 | all voices | 4,716 Hz | 366 | mean 79.6% | 2,226 / 4,352 |
+| 3 | voice 0 only | 5,264 Hz | 314 | mean 79.6% | 2,156 / 4,352 |
+
+Every point above runs clean in the JS machine (`gate-nv`, six cases: idle,
+shots, full-scale clipping, level walks, stops, a roll): every interval is the
+slot's length and every DAC byte is the reference's.
+
 ## What it achieves
 
 P1 (output only) and P2 up to **two voices with independent levels, a master,

@@ -146,6 +146,46 @@ export const mixTwo = (src0, vel0, src1, vel1, master, levels = LEVELS) =>
 /** What a silent ring holds, and what the DAC gets when nothing is playing. */
 export const SILENCE = bias(0);
 
+// ── THE RUNG PAGES (plan-pcm-spec.md D4, the N-voice profile) ──────────────
+//
+// Eight pages, SIGNED IN and BIASED OUT: page 0 is silence, page 7 - r is the
+// 6 dB rung r = 0..6 (unity .. -36 dB). A rung is the reference's arithmetic
+// shift — `s >> r`, toward minus infinity, exactly what an `sra` chain does —
+// so the tables are the shift model made constant-time, not a new curve. The
+// output is biased because what follows is either the ring (one voice) or the
+// saturating add of biased terms (two or three).
+export const RUNG_PAGES = 8;
+export const RUNG_MAX_SHIFT = RUNG_PAGES - 2;          // 6: -36 dB
+/** The signed value page `p` makes of signed sample `s`. */
+export const rung = (s, page) => (page <= 0 ? 0 : s >> (RUNG_PAGES - 1 - page));
+/** The page a total shift names; past the last rung is silence. */
+export const pageOfShift = (shift) => (shift > RUNG_MAX_SHIFT ? 0 : RUNG_PAGES - 1 - shift);
+export function buildRungs() {
+  const out = new Uint8Array(RUNG_PAGES * 256);
+  for (let p = 0; p < RUNG_PAGES; p++)
+    for (let b = 0; b < 256; b++) out[p * 256 + b] = bias(rung(sourceValue(b, true), p));
+  return out;
+}
+/**
+ * N voices through their rung pages, saturated in voice order —
+ * sat(sat(v0 + v1) + v2) — and biased for the DAC. Computed from `rung` and
+ * `satAdd`, never from the tables (see above).
+ */
+export const mixRungs = (srcs, pages) => {
+  let acc = rung(sourceValue(srcs[0], true), pages[0]);
+  for (let v = 1; v < srcs.length; v++) acc = satAdd(acc, rung(sourceValue(srcs[v], true), pages[v]));
+  return bias(acc);
+};
+export function rungsAgree() {
+  const t = buildRungs(), problems = [];
+  for (let p = 0; p < RUNG_PAGES && problems.length < 4; p++)
+    for (let b = 0; b < 256; b++) {
+      const want = bias(rung(sourceValue(b, true), p));
+      if (t[p * 256 + b] !== want) { problems.push(`RUNG[${p}][${b}] = ${t[p * 256 + b]}, want ${want}`); break; }
+    }
+  return problems;
+}
+
 /**
  * Do the GENERATED tables implement the same arithmetic? Reported separately
  * from the value gate, because "the image's tables are wrong" and "the mixer
