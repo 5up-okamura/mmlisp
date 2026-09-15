@@ -88,6 +88,36 @@ Order: (1) cleanup, no behaviour change; (2) D1+D4 study → verdict to the
 user; (3) implement the spec in every layer + bugs 1-3 (bug 3's bake rate
 waits for D1's rate); (4) premix; loops (D3) and D7 keys later.
 
+## D1 + D4 study — DONE 2026-09-15 (89631ad), VERDICT AWAITING THE USER
+
+Method: the real generator (new N-voice pair profile, shipped image untouched)
+placed with the decode, corrector and protocol; rules = worst slot <= 83.9%,
+mean <= 79.6% (the designer's 20% margin, not relaxed), code inside its
+region; lap held <= 430,080 master (one grab a lap), expander steps for 1.5x
+the 960 pairs/s wire; each best point then RUN in the JS machine (gate-nv:
+every interval = slot length, every DAC byte = an independent reference;
+negatives mis-cost / wrap fail as they must).
+
+D4 as built: 8 rung pages (silence + shift 0..6 = to -36 dB; the note above
+said 7 pages — 7 rungs need an 8th page for silence), signed in / biased out,
+master folded into the rung by the host, one table read a voice. 1v mix 104
+cyc/sample vs shipped 129; levels 2,048 B vs 3,840 B.
+
+| voices | octave step | max rate | mix cyc | code/region | limit |
+| 1 | - | 10,782 Hz | 104 | 2,474/4,864 | worst slot (START) |
+| 2 | both | 7,131 Hz | 235 | 2,373/4,352 | mean |
+| 2 | v0 only | 7,765 Hz | 209 | 2,328/4,352 | mean + xp A beside the mix |
+| 3 | all | 4,716 Hz | 366 | 2,226/4,352 | mean |
+| 3 | v0 only | 5,264 Hz | 314 | 2,156/4,352 | mean |
+
+8 kHz with 2 voices misses by ~2 cycles a slot (xp A 151 + mix 209 + 18 vs
+375.9). Caveats: loops (D3) would add ~150 cyc/voice/block of edge work —
+~4% mean at 2v, i.e. ~7.3 kHz; "octave v0 only" costs nothing today (the
+exporter bakes every note at step 1) but limits D5's octave key to pcm1;
+2v/3v need the host's lap constants (32/48-slot laps, 9-10 steps) redone.
+Recommendation given to the user: 2 voices at ~7.7 kHz (octave on pcm1),
+premix (C) for a third layer; 3v at 5.3 kHz is too dull (Nyquist 2.6 kHz).
+
 ## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 
 Health found before it: verify:all green; the dac-stream research bench green
