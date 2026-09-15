@@ -16,7 +16,8 @@
  * --pump drives the stream through the REAL ring transport (mml_pump) with a
  * model of the Z80 consuming one slot per its own vblank, instead of calling
  * mml_render_frame directly. The bytes must come out identical — the ring is a
- * pipeline, not a filter — which is what tools/ring-gate.mjs checks.
+ * pipeline, not a filter. No gate runs it since the ring engine was removed
+ * (tag archive/ring-engine); it goes with the C ring model.
  */
 #include <stdio.h>
 #include <stdlib.h>

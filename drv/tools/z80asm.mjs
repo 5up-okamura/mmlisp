@@ -289,16 +289,13 @@ function stripComment(s) {
 // overlays: an overlay is assembled with the resident image's symbols preloaded
 // so it can reference resident routines and equates directly (no import file).
 // `defines` overrides `equ` values by name — a build switch the caller sets
-// rather than editing the source. The engine gate uses it to assemble the same
-// engine both with and without the write pump, so the path that is NOT the
-// default build still gets exercised.
+// rather than editing the source.
 //
 // `sources` maps an absolute path to text, consulted before the disk. It exists
-// so that assembling a GENERATED source does not require writing it: mixer.z80
-// is produced by tools/gen-mixer.mjs, and every tool that merely wanted to
-// measure the engine was regenerating it into the working tree first — so a
-// measurement, and even `install-sgdk --dry-run`, left a tracked file modified.
-// A read does not get to write.
+// so that assembling a GENERATED source does not require writing it: tools
+// that wrote a generated include into the working tree before assembling it
+// left a tracked file modified after a mere measurement, `install-sgdk
+// --dry-run` included. A read does not get to write.
 export function assemble(entryPath, { preload = null, defines = null, sources = null } = {}) {
   const symbols = new Map(preload ?? []);
   const overrides = new Map(Object.entries(defines ?? {}));

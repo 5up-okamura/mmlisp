@@ -4,9 +4,8 @@
 // experimental/dac-stream/ and assembled here into the image an SGDK project
 // uploads (drv/sgdk/mmlispdrv_bin.h).
 //
-// `build-engine-ring.mjs` still builds the superseded ring-consuming engine
-// (src/engine.z80); its gates and its baseline tool keep it, and nothing ships
-// from it any more.
+// The superseded ring-consuming engine (src/engine.z80) and its builder are
+// kept at tag archive/ring-engine.
 //
 // ONE configuration, and the header the 68000 compiles against is read out of
 // that configuration and the assembled symbols — never typed twice.
