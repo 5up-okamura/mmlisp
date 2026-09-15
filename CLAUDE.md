@@ -29,13 +29,16 @@ The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.2), `drv-player.js` (JS reference driver), and
 `ab-compare.js` (register-log A/B) in the same directory.
 
-The driver port (Phase 3) lives in `drv/`: `src/*.z80` plus a first-party node
-toolchain in `drv/tools/` (Z80 assembler, Z80 CPU emulator, trace harness — no
-external binaries). Its gate: `cd drv && npm run verify:all` must show zero
-trace mismatches against `drv-player.js`. The shipped Z80 engine (since
-2026-09-11) is the pair-transport engine generated from
-`drv/experimental/dac-stream/` by `drv/tools/build-engine.mjs`
-(`docs/driver.md` §15); `drv/sgdk/` is its SGDK host.
+The driver lives in `drv/`, with a first-party node toolchain in `drv/tools/`
+(Z80 assembler, Z80 CPU emulator, machine model, gates — no external binaries).
+The shipped Z80 engine (since 2026-09-11) is the pair-transport engine
+generated from `drv/engine/` by `drv/tools/build-engine.mjs` (`docs/driver.md`
+§15); `drv/68k/` is the C sequencer and the slot → pair converter, `drv/sgdk/`
+the SGDK host. Its gate: `cd drv && npm run verify:all` must be green (C ≡
+`drv-player.js`, converter ≡ its JS twin, the image on real scores).
+`drv/experimental/dac-stream/` is the engine's research bench (the two-voice
+profile, the BlastEm machine probe); it never ships. The superseded ring engine
+is at tag `archive/ring-engine`.
 
 **The architecture pivoted on 2026-08-02** (68k sequencer + Z80 PCM/write
 engine, `docs/driver.md` §1.1) — `drv/src/*.z80` is the superseded all-Z80
