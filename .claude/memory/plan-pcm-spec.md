@@ -88,45 +88,39 @@ Order: (1) cleanup, no behaviour change; (2) D1+D4 study → verdict to the
 user; (3) implement the spec in every layer + bugs 1-3 (bug 3's bake rate
 waits for D1's rate); (4) premix; loops (D3) and D7 keys later.
 
-## Cleanup — code part DONE 2026-09-15 (d1835b4, 5c93a47, cbb811c)
+## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 
-Health before it (each run alone): verify:all 9/9 green; the dac-stream
-research bench all green (machine-probe 38/38 on BlastEm, decoder-eval);
-ring engine red (engine 8/12, dac-model); all-Z80 build red (every
-legacy:verify score one frame off — `ref f0` vs `asm f1`, since prime-at-load
-moved the reference); the verify-rom jig broken (forces PCM_SPG=1, looks for
-a .so on macOS).
+Health found before it: verify:all green; the dac-stream research bench green
+(machine-probe 38/38, decoder-eval); ring engine red (engine 8/12,
+dac-model); all-Z80 build red (every score one frame off since prime-at-load);
+the verify-rom jig broken. Every step kept verify:all green and the image
+byte-identical (d1048f17dd92); sgdk:gate green on m3-pcm-sync.
 
-Done, every step with verify:all green and the image byte-identical
-(d1048f17dd92); sgdk:gate green on m3-pcm-sync after the move:
-* Tag `archive/ring-engine` = de839b2 (the pre-cleanup tree; local only
-  until pushed).
-* Orphans + verify-rom jig + build-verify-rom + blastem-probe removed.
-* Ring engine removed: src/{engine,mixer,rate,ask-dense}.z80, gen-mixer,
-  build-engine-ring, and the 16 tools that only built/measured it (engine/
-  slot/ring/dac gates, dac-clock/-wav/-model/-log/-replay, frame-budget,
-  seg-bench, song-check, mixer-bench, baseline). rate-mirrors checks only
-  68k/mml_rate.h vs sgdk/mmlispdrv_bin.h; bare `gen-c-tables` / `emit-bin`
-  reproduce both (no env needed).
-* Shipped generator → `drv/engine/` (14 modules + phase-table.json); gates →
-  `tools/engine-{1v,fifo,score}-gate.mjs`, `tools/{machine,probe-analysis,
-  cooperative}.mjs`; npm `engine:{1v,fifo,score}`. Research bench stays in
-  experimental/dac-stream/ (needed by the D1 study: two-voice gate,
-  machine-probe); decoder-eval --calibrate writes engine/phase-table.json.
+* Tags (local until pushed): `archive/ring-engine` = de839b2 (pre-cleanup),
+  `archive/all-z80` = 90b810e.
+* Removed: orphans, the verify-rom jig, the ring engine and its 16 tools, the
+  all-Z80 build (drv/src/ entirely) and its 9 tools. rate-mirrors checks only
+  68k/mml_rate.h vs sgdk/mmlispdrv_bin.h (bare gen-c-tables / emit-bin
+  reproduce both).
+* Generator → `drv/engine/`; gates → `tools/engine-{1v,fifo,score}-gate.mjs`,
+  `tools/{machine,probe-analysis,cooperative}.mjs` (npm `engine:*`). The
+  research bench stays in experimental/dac-stream/ for the D1 study.
+* drv/out emptied except the BlastEm build (which was deleted by mistake and
+  rebuilt from setup.sh: same revision and patch hash; the core binary hash
+  differs — not bit-reproducible — and machine-probe, decoder-eval and
+  sgdk:gate give the same results).
+* Docs rewritten to the present only (user: "driver.mdに過去の履歴は必要ない、
+  常に今だけ"): driver.md 2,550 → ~1,020 lines, top-level numbering kept so
+  code references stay valid (§15 folded into §5/§6, §11 = current limits,
+  §14.3 = where the PCM layers disagree); drv/README.md, sgdk/README.md,
+  roadmap Phase 3, root README, mmb.md (LUT_TABLE has no reader; the exporter
+  still emits it), opcodes/language mailbox and MB_TSTAT wording.
 
-Left for the user / later:
-* ALL-Z80 BUILD (src/mmlispdrv.z80, ovl_*, tables.z80 + build-driver,
-  build-overlays, gen-tables, verify, ref-trace, run-trace, dump-trace,
-  size-audit, budget, live/src/lut-blob.js): red, asked whether to tag+delete.
-  It is the only consumer of MMB LUT_TABLE, so LUT_TABLE's fate follows.
-* drv/out: 6.3 GB is out/dac-stream (gitignored gate/probe output); only
-  out/blastem (90 MB) is needed. Asked before deleting (not in git).
-* Docs: driver.md §3.4/§5/§6.1–6.4/§6.6–6.7/§12.3–12.4/§12.7 describe the ring
-  engine, §15 the shipped one; drv/README.md is the all-Z80 build's README.
-  Not rewritten yet (waits on the all-Z80 answer).
-* Step-3 carry-overs (touch shipped/installed sources, so NOT in the cleanup):
-  the C/JS ring model — mml_pump + gate_main --pump (no gate runs it now),
-  mml_pcm_ring_fill, drv-player's sample ring, mmb.js PCM_RING_* and the
-  PCM_SPG/PCM_FM env knobs with their comments naming deleted tools; the
-  mirrors' "RATE-STAMP 10000" is bug 3's bake rate; 68k/mmlpairs.c:150 still
-  says "gate-score's SYNC row" (now engine-score-gate).
+Step-3 carry-overs (they touch shipped or installed sources, so NOT done here):
+the C/JS ring model — mml_pump + gate_main --pump (no gate runs it),
+mml_pcm_ring_fill, the sample ring in drv-player.js, the PCM_RING_* constants
+and the PCM_SPG / PCM_FM env knobs in mmb.js; dropping LUT_TABLE from the
+exporter (a format change); stale driver.md section numbers in C comments
+(mmlispseq.c, mmlpairs.c, mmlispdrv.c/h cite ring-era §5.1.x / §6.x) and
+mmlpairs.c:150 "gate-score" (now engine-score-gate) — fix when those files are
+next touched, with the SGDK copy list.

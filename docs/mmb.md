@@ -11,10 +11,9 @@ fixtures move to v0.2 in one step.
 
 ## 1. Goals
 
-1. **Z80-decodable in place.** The driver reads the file directly from a
-   banked 68k-ROM window (0x8000–0xFFFF). Locating any structure is pointer
-   walking only — fixed-size headers and offset fields, no parsing, no
-   allocation, no relocation.
+1. **Decodable in place.** The sequencer (68000) reads the file directly from
+   ROM. Locating any structure is pointer walking only — fixed-size headers
+   and offset fields, no parsing, no allocation, no relocation.
 2. **Compact.** Events are byte-packed with no per-event tick or length
    prefixes (the headline change from v0.1; see §7).
 3. **Deterministic.** Identical IR input produces byte-identical MMB output.
@@ -24,11 +23,11 @@ fixtures move to v0.2 in one step.
 
 1. Endianness: **little-endian** for all multi-byte fields.
 2. Section starts are 2-byte aligned (zero padding between sections).
-   Structures *inside* a section are byte-packed — the Z80 has no alignment
-   constraints.
+   Structures *inside* a section are byte-packed; readers access multi-byte
+   fields a byte at a time.
 3. "Reserved" fields must be written as zero and ignored on read.
 4. Offsets are relative to the structure named in the field description,
-   never absolute file positions, so the file works at any window address.
+   never absolute file positions, so the file works at any address.
 
 ## 3. High-Level Layout
 
@@ -54,14 +53,14 @@ fixtures move to v0.2 in one step.
 | 0x0A   | 2    | header_size   | u16, = 12 for v0.2                   |
 
 The v0.1 `crc32` field is **dropped**. Integrity checking is a 68k-side
-loader concern (checksum the ROM region however the game likes); the Z80
+loader concern (checksum the ROM region however the game likes); the
 driver never verifies checksums.
 
 Header flags:
 
 | Bit  | Name         | Meaning                                              |
 | ---- | ------------ | ---------------------------------------------------- |
-| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed one 32KB bank window. Must be 0 in v0.2 output; loaders reject it (see §12). |
+| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0 in v0.2 output; loaders reject it (see §12). |
 | 1    | PAL_TIMEBASE | **Reserved.** Tempo increments precomputed for 50 Hz (see driver.md §3). Must be 0 in v0.2. |
 | 2–15 | —            | Reserved, must be 0.                                 |
 
@@ -83,7 +82,7 @@ Section ids:
 | 0x0001 | TRACK_TABLE | required (§6)                       |
 | 0x0002 | EVENT_STREAM| required (§7)                       |
 | 0x0003 | METADATA    | required (§9); driver ignores it    |
-| 0x0004 | SAMPLE_BANK | optional (§10); M2 content, layout frozen now |
+| 0x0004 | —           | unused (the sample bank is its own ROM bank, §10) |
 | 0x0005 | VAL_TABLE   | optional (§8); M3 content, layout frozen now |
 | 0x0006 | VOICE_TABLE | optional (§11); M3 content, layout frozen now |
 | 0x0007 | MACRO_TABLE | optional (§15); M3 content, layout frozen now |
@@ -116,10 +115,9 @@ Track flags:
 | 2   | isFm3Op | fm3 independent-operator sub-track (channel 16–18) |
 | 3–7 | —       | Reserved, must be 0                                |
 
-`event_offset` is u16, which bounds the whole event stream — and in practice
-the whole MMB — to **one 32KB bank window** in M1. Larger songs are deferred
-behind the reserved WIDE_OFFSETS header flag (§4); v0.2 tooling must reject
-output that would overflow u16 offsets.
+`event_offset` is u16, and the encoder limits the whole MMB to 32 KB (§12).
+Larger songs are deferred behind the reserved WIDE_OFFSETS header flag (§4);
+v0.2 tooling must reject output that would overflow u16 offsets.
 
 ### 6.1 Channel id map
 
@@ -134,7 +132,7 @@ Carried verbatim from the live player (`live/src/ir-player.js`,
 | 10–15 | —              | reserved                              |
 | 16–18 | fm3 op2–op4    | YM2612 ch3 special mode, operators 2–4 (op1 is channel 2 = fm3) |
 | 19    | —              | reserved                              |
-| 20–22 | pcm1–pcm3      | software-mixed DAC voices (fm6 DAC)   |
+| 20–22 | pcm1–pcm3      | PCM voices on the fm6 DAC (driver.md §14) |
 | 23–255| —              | reserved                              |
 
 ## 7. EVENT_STREAM Section (0x0002)
@@ -186,9 +184,9 @@ registers with ROM tables:
 - PSG: a u16 period LUT over the playable note range.
 
 Both tables **must match the `ir-utils.js` math** (`midiToFnumBlock`,
-`PSG_MASTER_CLOCK`). The JS reference implementation generates both tables
-from that same code and prints them for verbatim inclusion in the Z80
-source (driver.md §8, §12). Fractional/cent pitch never appears in the
+`PSG_MASTER_CLOCK`). The JS reference builds both tables from that same code,
+and `drv/tools/gen-c-tables.mjs` emits them as C for the 68k sequencer
+(driver.md §8, §12.6). Fractional/cent pitch never appears in the
 stream; pitch bends are `PARAM_SWEEP NOTE_PITCH` events executed by the
 driver's sweep engine (M2).
 
@@ -202,7 +200,7 @@ except `NOTE_PITCH` (cents, ±32767) is i8.
 
 ### 7.5 TEMPO_SET payload
 
-BPM never reaches the Z80. `TEMPO_SET` carries the precomputed per-frame
+BPM never reaches the driver. `TEMPO_SET` carries the precomputed per-frame
 tick increment in **8.8 fixed point**:
 
 ```
@@ -248,22 +246,18 @@ Required keys: `title`, `author`, `compiler_version`. Optional keys include
 `bpm` (display-only, see §7.5) and val-slot names. **The driver ignores this
 section entirely**; it exists for hosts and tools.
 
-## 10. SAMPLE_BANK (separate ROM bank, was section 0x0004)
+## 10. SAMPLE_BANK (separate ROM bank)
 
-PCM data for `def :sample` (docs/language.md §9, §16). **As of the sample-bank
-separation (plan-se.md), this is NOT an MMB section — it is its own ROM bank**,
-so PCM blobs (the 32K-wall term) never crowd the 32KB control window. The
+PCM data for `def :sample` (docs/language.md §9, §16). **This is not an MMB
+section — it is its own 32 KB ROM bank**, so PCM blobs never crowd the MMB. The
 exporter (`encodeMmb`) returns it separately (`{ bytes, sampleBank }`); the host
-loads it into a bank and points the Z80's window at it (SGDK:
-`MMLisp_setSampleBank(song_smp)` after `MMLisp_init`, which also hands the
-sequencer the directory); the engine then reads sample bytes through the
-window (driver.md §15). The image is unchanged in layout — the same
-`entry_count + entries + blobs` below — only its location moved out of the file.
-Section id 0x0004 is retired from the directory. Both exporters write the bank
-as a `.smp` sidecar next to the `.mmb` (`drv/tools/mmb-build.mjs` by name, the
-live app's File > Export > MMB… by a second save dialog opened in the `.mmb`'s
-folder) — a PCM song is the pair, and the driver plays noise if the bank is
-missing. Structure:
+points the Z80's window at it (SGDK: `MMLisp_setSampleBank(song_smp)` after
+`MMLisp_init`, which also hands the sequencer the directory); the engine then
+reads sample bytes through the window (driver.md §5.4). Section id 0x0004 is
+unused. Both exporters write the bank as a `.smp` sidecar next to the `.mmb`
+(`drv/tools/mmb-build.mjs` by name, the live app's File > Export > MMB… by a
+second save dialog opened in the `.mmb`'s folder) — a PCM song is the pair.
+Structure:
 
 ```
 entry_count : u16
@@ -273,8 +267,8 @@ blobs       : raw sample data (8-bit signed PCM), byte-packed
 padding     : zeros to 0x8000 — the file is always exactly 32 KB
 ```
 
-**The file is a whole 32 KB and its top page is silence.** The shipped engine's
-PCM voice (driver.md §15) parks at window `$FF00` — bank offset `$7F00..$7FFF` —
+**The file is a whole 32 KB and its top page is silence.** The engine's PCM
+voice (driver.md §5.3) parks at window `$FF00` — bank offset `$7F00..$7FFF` —
 whenever its sample has ended and reads from there until the next start, so
 that page must be zero (signed silence) and must be the bank's own, not
 whatever rescomp places after a shorter blob. The exporter therefore refuses a
@@ -302,42 +296,29 @@ Sample entry (20 bytes):
 ### 10.1 Pitch baking
 
 An entry with **flags bit1** was resampled at build time to the rate that makes
-it advance *exactly one byte a DAC tick* at the note it is played at, so
+it advance *exactly one byte a DAC sample* at the note it is played at, so
 `base_rate` is that rate and the sequencer does **not** compute the increment
 for it — it takes `0x10000 << (flags >> 4)` directly. Exactness is the point:
-the mixer keeps a loop copy with `inc de` where the 16.16 resampler sits, worth
-37 Z80 cycles a tick, and a value one fraction off cannot use it (driver.md
-§14.2). Deriving the rate through `pcmTickIncrement` instead cannot reach it at
-all — `base_rate` is a u16, too coarse a knob above the low octaves, and only
-22 of the 49 notes have an integer rate that lands on a power of two.
+the engine does not resample, it advances a power-of-two number of bytes a
+sample (driver.md §5.3, §14.2). Deriving the rate through `pcmTickIncrement`
+cannot reach it — `base_rate` is a u16, too coarse a knob above the low
+octaves, and only 22 of the 49 notes have an integer rate that lands on a power
+of two.
 
 What is baked: every **unlooped** sample, at every note the score plays it,
-one blob per note, deduplicated by content hash. Looped samples are never
-baked — resampling moves the loop points off integer samples, and rounding them
-back detunes the sustained part by the rounding error over the loop length.
-
-One blob per NOTE rather than per pitch class is deliberate. Grouping by pitch
-class needs only one blob per class, because the octaves above it are reachable
-by advancing 2^k bytes a tick — but a runtime-variable advance costs a branch
-(12 cycles) or a nop fill (4) inside the tick body, charged to *every* baked
-tick against a baked tick of 41. That trades mixer cycles, which are the binding
-constraint, for sample ROM, which measures in hundreds of bytes against a 32KB
-window. If a score ever runs the window out, the octave shift is the thing to
-reach for. Measured cost of baking on the gate scores: +24% (m3-fm6-pcm), +68%
-(m3-pcm-softmix), +35% (m3-pcm-slice), **−11%** (m3-se — a high note bakes to a
-lower rate and the blob shrinks).
+one blob per note (flags bits4–7 = 0), deduplicated by content hash. Looped
+samples are never baked — resampling moves the loop points off integer samples,
+and rounding them back detunes the sustained part by the rounding error over
+the loop length. The engine can reach the octaves above a blob by a 2^k step
+(flags bits4–7 = k); the exporter does not use it.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
 Sample ids are entry indices, so a sample played at several notes occupies
 several ids. `offset` is relative to this
-bank's payload (past `entry_count`). Because the bank is separate, PCM-heavy
-songs no longer push the control MMB past the 32KB window; a bank that itself
-exceeds 32KB (many/large samples) is the next relaxation — multiple sample banks
-or WIDE_OFFSETS-style wide offsets — deferred to the shared-bank bundler
-(plan-se.md), not needed for the single-bank case. Until then the **bank image
-(entry table + blobs) must fit one 32KB window**: `pcm_note_on` reads the low
-u16 of `offset` and addresses the blob from the window base, so a larger bank
-wraps and plays the wrong bytes. `encodeMmb` refuses to produce one.
+bank's payload (past `entry_count`). The **bank image (entry table + blobs)
+must fit one 32 KB window, below its silent top page**: the engine addresses a
+sample by its 16-bit window address. `encodeMmb` refuses a larger bank; more
+than one sample bank is not supported.
 
 ## 11. VOICE_TABLE Section (0x0006)
 
@@ -381,23 +362,14 @@ compiler accident.
 
 ## 12. Size Budget and Banking
 
-> **The reason for these limits is gone (2026-08-02).** They exist because the
-> Z80 read song data through a single 32 KB bank window. After the 68k/Z80 split
-> (driver.md §1) the sequencer runs on the 68000, where the MMB is a directly
-> addressable ROM pointer, and the Z80's window is used for PCM samples only —
-> which a voice-outer mixer pass reads contiguously, so that wall falls too
-> (driver.md §5.4). The constraints below are still **enforced by today's
-> encoder** and remain accurate for the current tooling; relaxing them
-> (`WIDE_OFFSETS`, multi-bank sample data) is P2/P3 work, no longer blocked on
-> anything.
+The sequencer reads the MMB as a plain 68k ROM pointer, so these are encoder
+limits, not hardware ones; relaxing them needs no driver change beyond
+`WIDE_OFFSETS`.
 
-- M1 constraint: **one MMB file ≤ one 32KB bank window** (0x8000–0xFFFF).
-  The bank is latched at track start; all tracks of a playing MMB live in
-  the same window.
+- **One MMB file ≤ 32 KB**, enforced by the encoder.
 - The u16 `event_offset` in the track table encodes this limit structurally.
 - Escape hatch (reserved, not implemented in v0.2): header flag
-  WIDE_OFFSETS widens `event_offset` to u32 and permits multi-bank
-  streaming. Any loader seeing this flag set must reject the file until a
+  WIDE_OFFSETS widens `event_offset` to u32 and permits a larger file. Any loader seeing this flag set must reject the file until a
   future version defines the mechanism.
 
 ## 13. Compatibility Policy
@@ -483,18 +455,17 @@ array:
 
 ## 16. LUT_TABLE Section (0x0008)
 
-The driver's constant lookup tables (F-number, PSG period, level-offset
-ladders, carrier masks, operator address offsets, the sin curve unit, PCM
-rate multipliers — driver.md §7, §8, §11). They are the same bytes for every
-song and read-only, so they live **in ROM here** and the driver reads them
-through the bank window rather than carrying them in its 8 KB Z80 work RAM.
+The constant lookup tables (F-number, PSG period, level-offset ladders,
+carrier masks, operator address offsets, the sin curve unit, PCM rate
+multipliers — driver.md §7, §8), the same bytes for every song. **No driver
+component reads this section**: the 68k sequencer links its own generated
+tables (driver.md §4.3). `export-mmb` still emits it.
 
 ```
 lut_bytes : the LUT blob, byte-packed in a fixed layout
 ```
 
-Layout (fixed; the driver holds each table's byte offset as a constant and
-derives a window pointer at START_TRACK = LUT_TABLE window address + offset):
+Layout (fixed):
 
 | Offset | Bytes | Table          | Type                                   |
 | ------ | ----- | -------------- | -------------------------------------- |
@@ -509,7 +480,4 @@ derives a window pointer at START_TRACK = LUT_TABLE window address + offset):
 | 372    | 256   | SIN_LUT        | 256 × u8                               |
 | 628    | 98    | PCM_MULT_FRAME | 49 × u16                               |
 
-Total 726 bytes. Generated by `live/src/lut-blob.js` (shared with the asm's
-`drv/tools/gen-tables.mjs`, which emits the matching offsets). The JS reference
-driver computes its own copy (`buildLuts`); the bytes are identical, so the
-trace gate is unaffected. `export-mmb` always emits this section.
+Total 726 bytes. Generated by `live/src/lut-blob.js`.

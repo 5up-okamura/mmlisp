@@ -34,7 +34,8 @@ Index:
   dispatch/engines split, the four implementation deviations (PCM not
   subdivided, `pcm_frame` last, the `$2A` re-latch, the RAM map move), and
   steps 2-3, which macro/sweep subdivision waits on in [[plan-68k-split]].
-- [z80-driver-status.md](z80-driver-status.md) — MMLispDRV living status: the
+- [z80-driver-status.md](z80-driver-status.md) — **the all-Z80 build's record; that build was
+  removed 2026-09-15 (tag `archive/all-z80`).** Was: MMLispDRV living status: the
   Done list (M1–M3, v0.6 value machine, VOICE_SET, CALL/RET, SE, PCM volume,
   trig), the remaining-work list (hardware bring-up, PAL, open ir↔drv
   divergences), the byte/stack budget, and how to verify. **Now largely the
@@ -68,10 +69,9 @@ Index:
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **settling the PCM/DAC language spec
   against the shipped engine (2026-09-14)**: three bugs found (fm6 silent on
   hardware, a C out-of-bounds on pcm3, PCM 2.2 cents flat), the user's
-  decisions D2–D7, the open voice-count question (D1) and the cleanup (code
-  part DONE 2026-09-15: ring engine removed, generator in `drv/engine/`; the
-  all-Z80 build, drv/out and the docs still open). Read before touching PCM
-  in any layer.
+  decisions D2–D7, the open voice-count question (D1 — next) and the cleanup
+  (DONE 2026-09-15: ring engine and all-Z80 build removed, generator in
+  `drv/engine/`, docs present-only). Read before touching PCM in any layer.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
   one-voice pair-transport engine is the production image; a mucom88 song plays

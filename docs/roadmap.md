@@ -69,109 +69,36 @@ Status: **complete** — deterministic IR and MMB outputs verified for both demo
 
 ## Phase 3: Driver Implementation (MMLispDRV)
 
-Docs-first: the driver design is specified before any code. The doc set —
-docs/mmb.md (MMB v0.2 container), docs/opcodes.md (opcode/target freeze),
-docs/driver.md (MMLispDRV v0.2 architecture) — is written; **review of that
-set is the Phase 3 entry condition.**
+The driver plays MMLisp scores in an SGDK build: a C sequencer on the 68000 and
+a DAC/chip-write engine on the Z80 (`docs/driver.md`; `drv/`). Verified on the
+host and in a patched headless BlastEm; not yet run on hardware.
 
-Order of work:
+Done:
 
-1. **Design docs** (done) — MMB v0.2 delta/duration stream format, frozen
-   opcode + target tables, Z80 RAM map, mailbox protocol, timing model,
-   level/pitch tables. Open decisions resolved: NOTE_ON vel/gate = track
-   state + NOTE_ON_EX (opcodes.md §4); voice representation = export-time
-   VOICE_TABLE coalescing (driver.md §10).
-2. **JS reference implementation** (done, M1 coverage) — `mmb.js` +
-   `export-mmb.js` + `drv-player.js` + `ab-compare.js` in live/src/.
-   Integer-only 60 Hz decoder, normative main-loop order, LUTs exported
-   for verbatim asm inclusion. A/B gate: `examples/source/ab-core.mmlisp`
-   diffs clean against ir-player.js (0 mismatches; bands in driver.md
-   §12). Live app: MMLispDRV backend toggle, File > Export > MMB…,
-   `window.__abCompare()`. M2/M3 opcodes are length-decoded and skipped.
-3. **Z80 assembly** (in progress — **M1 + all of M2 done in emulation**) —
-   `drv/`: the driver (~6.3KB image) plus a first-party node toolchain
-   (assembler, Z80 emulator, trace harness). Gate: raw register-trace
-   equality vs the JS reference — nine scores diff clean at zero tolerance.
-   **M2a** = sweep engine (PARAM_SWEEP/STOP), PARAM_ADD, TEMPO_SWEEP with a
-   single-sourced integer curve model (`mmb.js` `curveUnit8`). **M2b** =
-   cent-interpolated NOTE_PITCH (glide/vibrato/detune). **M2 CSM** = FM3 CSM
-   mode. **M2 PCM** = single-channel DAC (shot/loop), frame-quantized (sub-frame
-   feed timing: driver.md §5.1, fixed 2026-08-03). **M2 mailbox** = KEY_OFF /
-   SET_PARAM / FADE_TRACK (host-driven; a sidecar cmd schedule is injected
-   into both players). The shadow's valid plane is now a bitmap (fit 8 KB).
-   Deviations in `drv/README.md`. **M3 binary formats frozen** (2026-07-07): the
-   macro engine (MACRO_TABLE §0x0007 + MACRO_SET/CLEAR 0xE0/0xE3, uniform
-   pre-sampled step-stream) and VOICE_TABLE/VOICE_SET — mmb.md §11/§15,
-   opcodes.md §5/§6, driver.md §13. **Code-size rework done** (2026-07-07): the
-   constant LUTs moved out of Z80 RAM into ROM (a LUT_TABLE MMB section §0x0008
-   read through the bank window), freeing ~726 B — the image was ~5.7 KB with
-   ~600 B of code headroom (was ~30). **M3 started** (2026-07-07): FM3
-   independent-OP, the **macro engine** (MACRO_SET/CLEAR + MACRO_TABLE §0x0007:
-   step/curve/stage forms + `:semi` arpeggios), and **dynamic value slots**
-   (SET_VAL + PARAM_FROM_VAL/_ADD_VAL/_MUL_VAL/PARAM_MUL + `$time`, driver.md
-   §6.4) are implemented and gated (`verify:m3`, fourteen trace scores, zero
-   tolerance). A **table-drive refactor** then collapsed the ten near-identical FM op-param
-   handlers into a descriptor table + one routine (~169 B recovered, behaviour
-   identical, 14 gates still 0-diff), which paid back the interim TCB trims and
-   **restored full 16-track capacity** (~14 B headroom). Rather than freeze the monolith, a
-   **Z80 code-overlay pass** then broke the ceiling without touching the 68k: the
-   cold control-plane code (start_track, mailbox handlers, MMB parsing — ~660 B)
-   moved out of Z80 RAM into a 32 KB-aligned overlay ROM blob the driver loads on
-   demand into a shared RAM slot, keeping the per-frame loop resident and the Z80
-   autonomous. On that freed headroom M3 grew: **i16 NOTE_PITCH macros** (pitch
-   envelopes/vibrato), **up to 3 concurrent macros per channel** (keyed by
-   target), and **3-channel PCM soft-mix** (`pcm1`–`pcm3` summed to the fm6 DAC
-   at a fixed ~10.5 kHz mix rate, hard-clipped; fm6-as-PCM retired) — the PCM
-   per-note setup rides a third overlay so only the hot mixer stays resident
-   (driver.md §14). Then **`:keyon` retrigger** (drum rolls: a nonzero step
-   re-attacks the note — FM hardware EG re-key + soft-envelope macro restart;
-   FM+PSG) landed too, and to fit it the **boot code itself moved into a fourth
-   overlay** (`ovl_boot`): a tiny resident reset stub loads it, the host now
-   publishes `G_OVL_BANK` before releasing the Z80 from reset, and `ovl_boot`'s
-   RAM clear preserves the overlay-bank globals. `verify:all` is eighteen trace
-   scores, all zero-diff. VOICE_SET, CALL/RET + dedup, SE, PCM per-channel
-   volume and `(trig N)` landed after that; M1–M3 are feature-complete in the
-   all-Z80 build. First on-target playback (BlastEm via SGDK) 2026-07-26.
-4. **Architecture pivot — 68k sequencer + Z80 PCM/write engine** (2026-08-02,
-   docs rewritten, implementation started). Hardware bring-up produced the
-   measurement that ended the all-Z80 design: with PCM active the Z80 ran at
-   **355% of its frame budget**, and the soft-mixer alone cost ~193k cycles with
-   *one* voice. Rewritten to the theoretical floor for the same semantics, two
-   voices at 10.5 kHz still consume **99.7% of the frame with the sequencer
-   executing zero instructions** — so the two workloads do not fit in one Z80,
-   and the sequencer's own cost (median 33%) is not the reason.
+- **Format and reference** — MMB v0.2 and the opcode/target tables frozen
+  (`docs/mmb.md`, `docs/opcodes.md`); `drv-player.js` is the executable spec
+  (every M1–M3 feature, SE included) and the live app's MMLispDRV backend.
+- **Sequencer** — `drv/68k/mmlispseq.c`, byte-identical to `drv-player.js` on
+  41 scores (`npm run c-gate`): notes, loops, CALL/RET, tempo, sweeps, macros,
+  CSM, FM3 independent-OP, val slots, PCM commands, priming at load.
+- **Engine** — the one-voice pair-transport Z80 engine, 9,987.57 Hz DAC from
+  its own instruction stream, generated by `drv/engine/`.
+- **Host** — `drv/sgdk/` (two pumps a frame or VBlank-only, render-ahead
+  released on the video clock) and `tools/install-sgdk.mjs`; a mucom88 import
+  (`drv/tests/sin008.mmlisp`) plays on BlastEm with every write and DAC byte
+  graded (`npm run sgdk:gate`).
 
-   The sequencer therefore moves to the 68000 as portable C, with
-   `drv-player.js` as its port spec; the Z80 keeps the clock and becomes a PCM
-   mixer + chip-write engine, consuming one pre-rendered register-write list per
-   vblank from a lookahead ring. This makes the write-list interface part of the
-   spec (driver.md §6) and re-bases the gate on 68k C ≡ `drv-player.js`, which
-   runs entirely on the host. It also retires the constraints that shaped Phase
-   3: the 8 KB ceiling, code overlays, the byte-funding menu, the 32 KB MMB and
-   sample-bank walls, `WIDE_OFFSETS`, and the cross-MMB and PAL deferrals.
-   Everything else survives — MMB format, opcodes, level model, macro
-   semantics, SE, the language, the exporter, and the Z80 toolchain.
+Open (driver.md §11):
 
-   Port milestones (driver.md §11): **P0** mixer prototype (validates the cost
-   estimate the architecture rests on) → **P1** ring/slot interface → **P2** the
-   C sequencer → **P3** SGDK integration and hardware bring-up.
-
-Milestone staging (full definitions in driver.md §11):
-
-- **M1 — core playback**: core opcodes, FM + PSG, level tables,
-  start/stop track, channel ownership, len=0 holds.
-- **M2 — motion**: PARAM_SWEEP/STOP + glide, PARAM_ADD, TEMPO_SWEEP,
-  LOOP_BREAK, CSM, single-channel PCM DAC, key-off/set-param/fade-track.
-- **M3 — expression**: NOTE_ON_EX + macro engine, FM3 independent-OP,
-  dynamic value slots, multi-channel PCM soft mix, CALL/RET + dedup pass.
-
-M1–M3 define *what the driver does* and are unchanged by the pivot; P0–P3
-define *where the code runs*.
-
-Phase 3 entry condition:
-
-1. Phase 3 doc set (mmb.md, opcodes.md, driver.md) reviewed and open
-   decisions resolved
+1. **PCM** — one spec across the browser, exporter, sequencer and engine:
+   voice count, loops, fm6 as FM, the bake rate, levels (driver.md §14.3).
+2. **SE** on the C sequencer and the SGDK host.
+3. **`(trig N)`** delivered to the host.
+4. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
+   voice change is one pair instead of ~30.
+5. **Several scores loaded at once** (DJ transitions, driver.md §2.3).
+6. **PAL**, and a **hardware run**.
+7. **A small Z80-only build** (sequencer on the Z80, this engine's DAC clock).
 
 ## Phase 4: Integration and Demo
 

@@ -37,14 +37,15 @@ generated from `drv/engine/` by `drv/tools/build-engine.mjs` (`docs/driver.md`
 the SGDK host. Its gate: `cd drv && npm run verify:all` must be green (C ≡
 `drv-player.js`, converter ≡ its JS twin, the image on real scores).
 `drv/experimental/dac-stream/` is the engine's research bench (the two-voice
-profile, the BlastEm machine probe); it never ships. The superseded ring engine
-is at tag `archive/ring-engine`.
+profile, the BlastEm machine probe); it never ships. The superseded engines are
+at tags `archive/ring-engine` (the ring-consuming Z80 mixer) and
+`archive/all-z80` (sequencer and mixer both on the Z80); their measurements
+live in `docs/dac-engine-implementation.md` and `.claude/memory/`. Read
+`.claude/memory/plan-pcm-spec.md` before touching PCM in any layer, and
+`.claude/memory/plan-68k-split.md` for the driver's decision record.
 
-**The architecture pivoted on 2026-08-02** (68k sequencer + Z80 PCM/write
-engine, `docs/driver.md` §1.1) — `drv/src/*.z80` is the superseded all-Z80
-build, kept because its measurements and deviations are the reason the new
-design looks the way it does. Read `.claude/memory/plan-68k-split.md` before
-touching the driver.
+`docs/driver.md` describes only the current design — when it changes, rewrite
+the affected section; history belongs in git, the designer log and the memory.
 
 Docs: `docs/language.md` is the canonical language reference;
 `docs/guide.md` is the tutorial. Driver/format design: `docs/driver.md`,

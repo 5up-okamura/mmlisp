@@ -25,17 +25,16 @@ game state at runtime.
   cent-accurate glide and vibrato, **FM3 independent-operator mode** and CSM,
   chiptune arpeggios (`:semi`) and drum rolls (`:keyon`) — advanced YM2612
   techniques you write, not hand-poke.
-- **3-channel PCM, software-mixed.** `pcm1`–`pcm3` mix in software to the single
-  DAC, so a kick, a bass hit, and a sample can sound together.
+- **PCM on the DAC.** `pcm1`–`pcm3` play samples through the fm6 DAC (the
+  browser mixes all three; the hardware driver plays one voice today).
 - **Interactive by design.** Tracks start / stop / layer / fade at runtime, and
   `def-val` slots let game code drive parameters live via `$name` — built for
   game music, not just linear playback.
-- **The music keeps its own clock.** **MMLispDRV** splits across both CPUs: the
-  68000 sequences the score into per-frame register-write lists, and the Z80
-  consumes exactly one per vblank while software-mixing the PCM. So a heavy game
-  frame is absorbed by a lookahead ring instead of stuttering the music, and the
-  sequencer costs the 68000 a few percent of a frame. SGDK integration included.
-  (Verified in emulation; real-hardware bring-up is the next milestone.)
+- **Built for a game's frame.** **MMLispDRV** splits across both CPUs: the
+  68000 sequences the score a frame ahead and releases it on the video clock,
+  and the Z80 keeps a fixed-rate DAC clock of its own. A heavy game frame delays
+  nothing that was ready. SGDK integration included. (Verified in emulation;
+  real hardware is next.)
 - **Provably faithful.** Every register write the driver makes is checked
   **byte-for-byte** against a JS reference at zero tolerance — so what you hear
   in the browser is what the driver emits.
@@ -103,37 +102,31 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 
 MMLispDRV plays a compiled score (`.mmb`) using both Mega Drive CPUs. The
 **68000** runs the sequencer — it walks the score, runs the tick accumulators,
-sweeps and macros, composes levels and pitch, and pre-renders each frame into a
-list of register writes. The **Z80** is a dedicated engine: it consumes one
-frame's list per vblank, paces the writes onto the YM2612 and PSG itself, and
-spends the rest of its frame software-mixing PCM into the DAC.
+sweeps and macros, composes levels and pitch, and renders each frame into
+register writes, which it hands to the Z80 in short bus grabs from the VBlank
+and HBlank interrupts. The **Z80** keeps a fixed 9,987.57 Hz DAC clock from its
+own instruction stream, plays a PCM voice on it, and puts the FM writes on the
+YM2612 between samples ([docs/driver.md](docs/driver.md)).
 
-Because the Z80 holds the clock, the music runs at its own 60 Hz however the
-game's frame behaves — a slow frame eats into the lookahead ring rather than
-stuttering the score. The split exists because measurement showed the two
-workloads cannot share one Z80: at the theoretical floor, two PCM voices alone
-consume 99.7% of a Z80 frame with the sequencer executing zero instructions
-([docs/driver.md](docs/driver.md) §1.1).
-
-It plays everything the language expresses — FM + PSG voices and the full level
-model, motion (sweeps / glide / vibrato / tempo ramps), FM3 independent-operator
-mode and CSM, the macro engine, dynamic value slots, and 3-channel PCM
-soft-mixing.
+It plays FM + PSG voices and the full level model, motion (sweeps / glide /
+vibrato / tempo ramps), FM3 independent-operator mode and CSM, the macro
+engine, dynamic value slots, and one PCM voice. Sound effects and more PCM
+voices are not on the hardware driver yet (driver.md §11).
 
 It's built reference-first: a JS implementation (`drv-player.js`) validated in
-MMLisp Live, then ports whose **every register write is checked byte-for-byte
-against it at zero tolerance** (31 trace scores, `drv/`). Verified in emulation
-today; real-hardware bring-up is the next milestone. See
+MMLisp Live, then a C sequencer whose **every register write is checked
+byte-for-byte against it at zero tolerance** (41 scores), and an SGDK build
+graded write by write and DAC byte by DAC byte in an emulator. See
 [docs/driver.md](docs/driver.md) for the architecture,
-[drv/README.md](drv/README.md) for the port and verification, and
-[docs/roadmap.md](docs/roadmap.md) for detailed status.
+[drv/README.md](drv/README.md) for building and verification, and
+[docs/roadmap.md](docs/roadmap.md) for status.
 
 ## Repository Structure
 
 - `docs/` — language reference, driver design, formats
 - `live/` — MMLisp Live web authoring environment (editor, compiler, player)
-- `drv/` — MMLispDRV: Z80 engine source, first-party toolchain (assembler,
-  Z80 emulator, trace harness), and SGDK integration
+- `drv/` — MMLispDRV: the 68k sequencer, the Z80 engine generator, SGDK
+  integration, and a first-party toolchain (assembler, Z80 emulator, gates)
 - `examples/` — demo songs and test assets
 - `tools/` — command-line compiler and validation scripts
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`

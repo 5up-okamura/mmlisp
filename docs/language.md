@@ -86,7 +86,7 @@ unaffected by layering.
 | `fm3-csm-rate`  | FM3 CSM Timer A         | Buzz frequency as notes / raw Hz                  |
 | `sqr1`–`sqr3`   | SN76489 square channels |                                                   |
 | `noise`         | SN76489 noise channel   | Modes `white0`–`white3`, `periodic0`–`periodic3`  |
-| `pcm1`–`pcm3`   | Z80 soft-mixed PCM      | Sample symbol is the first positional argument    |
+| `pcm1`–`pcm3`   | PCM on the fm6 DAC      | Sample symbol is the first positional argument    |
 
 Mode exclusivity (compile errors, score-wide):
 
@@ -569,7 +569,7 @@ Dynamic Parameters slider per slot. Names must not start with `$`
 - A slot value is always clamped to its declared `[min, max]` finite range —
   at `init` and on every host `setVal` — so a bad (out-of-range or non-finite)
   value can never reach the pitch/length/gate/param math. This mirrors the
-  bounded integer slots the Z80 driver will hold.
+  bounded integer slots the driver holds.
 
 **Dynamic curve parameters.** A `$name` may feed a curve's `:from`, `:to`,
 `:rate`, or `:len`. The slot is read **once at note-on** (the note-on sampling
@@ -578,7 +578,7 @@ tier), so the value is constant for that note. `:len` uses the slot's
 static. The curve spec records these in a `dyn` map the player resolves at
 schedule time.
 
-On the MMB/Z80 driver, an **inline sweep's `:from`/`:to`** are fully slot-fed:
+On the MMB driver, an **inline sweep's `:from`/`:to`** are fully slot-fed:
 the driver reads the slot when the sweep dispatches (PARAM_SWEEP flags, so a
 game-controlled `def-val` moves the swell target in real time). Slot-fed
 **macro-curve** params and sweep `:rate`/`:len` are not yet lowered — those bake
@@ -1007,8 +1007,8 @@ the phrase.
   it.
 - **`(trig N)`** marks a position for the game to read. It emits the `MARKER`
   opcode (like `#label`) but with an explicit id `N` (0..63 — the status byte is
-  6 bits); the driver mirrors `N` into the track's 68k-readable status byte
-  (`MB_TSTAT`, driver.md §6.1), where the game polls it. Unlike `#label` it is
+  6 bits); the sequencer records `N` as the track's last marker for the game
+  to read (the SGDK host does not surface it yet, driver.md §11). Unlike `#label` it is
   never a jump target, so its id is not sequenced and it is exempt from label
   uniqueness. The byte is last-wins per track: if two triggers fire on the same
   track between two game polls, only the later is seen (cross-track never drops).
@@ -1190,9 +1190,9 @@ than left to break at export time.
 
 Full drop routing for every accepted format: `guide.md` §23.
 
-`pcm1`–`pcm3` are three voices **soft-mixed** by the Z80 to the single fm6 DAC
-at a fixed mix rate (~10 kHz, paced by the YM's own timer): each voice is
-resampled to that grid, the
+`pcm1`–`pcm3` are three voices mixed to the single fm6 DAC (the shipped
+driver plays `pcm1` only — driver.md §14): each voice is resampled to the
+mix rate, the
 voices are summed and **hard-clipped**, so loud simultaneous hits distort by
 design (headroom is the composer's to manage via `:vel`/`:vol`). A `shot` plays
 to its end; a `loop` sustains until `KEY_OFF` then plays its tail. See

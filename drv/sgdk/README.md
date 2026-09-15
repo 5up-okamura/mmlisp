@@ -3,7 +3,7 @@
 How to play an MMLisp score on a real Mega Drive (or an accurate emulator) from
 an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
-> **Verification status (2026-09-11).** The glue is built with SGDK 2.x +
+> **Verification status.** The glue is built with SGDK 2.x +
 > m68k-elf-gcc 13.2.0 and **run**, headless, in a patched BlastEm that logs
 > every DAC byte, every YM/PSG access by CPU and every bus grab:
 > `cd drv && npm run sgdk:gate -- <score.mmlisp> [--seconds N]` makes a scratch
@@ -18,26 +18,6 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > (`npm run pairs-gate`); the engine image with the converter in the JS
 > instruction model (`npm run engine:score`). `npm run sgdk:lint` type-checks
 > the glue against a shim when no m68k toolchain is around.
-
-## What changed with the split
-
-The architecture pivoted on 2026-08-02 (`docs/driver.md` §1.1): **the 68000 runs
-the sequencer and the Z80 is a PCM mixer + chip-write engine.** If you integrated
-the older all-Z80 driver, the differences that touch your code are:
-
-| | before | now |
-| --- | --- | --- |
-| Track control | mailbox commands posted across the bus | ordinary C calls into `mmlispseq.c` |
-| Start burst | ≤ 7 per frame, overflow dropped silently | no limit — a whole score starts in one frame |
-| Per-frame work | none; the Z80 was autonomous | `MMLisp_frame()` once per vblank |
-| Z80 image | ~6.5 KB resident + a 2.3 KB overlay blob | one 2,668 B image, no overlay |
-| `MMLisp_init` | took the overlay ROM pointer | takes nothing |
-| Score in ROM | 32 KB aligned, read through the Z80 window | plain 68k memory, no alignment |
-| Sample bank | 32 KB aligned | unchanged — still the Z80's window |
-| Val slots | read back out of Z80 RAM | plain 68k variables |
-
-`MMLisp_loadScore` is new: the sequencer parses the MMB itself now, so loading
-is a separate step from starting a track.
 
 ## Files
 
@@ -147,8 +127,7 @@ while (TRUE) {
   slot at 9,987.57 Hz, with a phase corrector that repays a bus stop of up to
   1,500 master clocks per 80 samples. Everything else — FM register writes and
   the PCM voice's state — arrives as 2-byte `{op, val}` **pairs** in a 128-pair
-  page the engine reads sixteen a lap (`docs/driver.md`,
-  `docs/dac-engine-implementation.md` R28).
+  page the engine reads sixteen a lap (`docs/driver.md` §5, §6).
 
 - **`MMLisp_frame()` — once per frame, in the main loop — renders ahead.** It
   runs the sequencer and turns each slot into pairs (`mmlpairs.c`), up to
@@ -172,9 +151,10 @@ while (TRUE) {
   add up in one. **A frame leaves from the HBlank pump;** the VBlank one sends
   only what the previous frame's could not fit, so in the usual frame it just
   reads the index — because SGDK's DMA flush halts the Z80 right after the
-  VBlank interrupt, and a full grab beside it overran the corrector's window
-  (the DAC ran 0.08% slow; now 0.015%). The music is a constant half-frame
-  later for it. If your game has its own VBlank/HBlank callbacks, call
+  VBlank interrupt, and a full grab beside it would overrun the corrector's
+  window (on BlastEm the DAC runs 0.015% slow this way, 0.08% with the frame
+  sent from VBlank). The music is a
+  constant half-frame later for it. If your game has its own VBlank/HBlank callbacks, call
   `MMLisp_pump()` from them instead (at line 88–98 for the HBlank one); the
   HBlank vector needs an interrupt function, which is what `MMLisp_hint` is.
 
@@ -217,8 +197,8 @@ while (TRUE) {
 - **PCM against FM.** A PCM start sounds within about 1 ms of the FM key-on on
   the same beat (`tests/m3-pcm-sync.mmlisp`, graded by both the model gate and
   the BlastEm gate). The converter sends a slot's PCM commands with the next
-  slot, because the sequencer starts PCM tracks a frame early for the old ring
-  mixer; and it sends only the staged bytes that changed, so a repeated drum hit
+  slot, which cancels the sequencer's one-frame PCM lead (`docs/driver.md`
+  §4.2); and it sends only the staged bytes that changed, so a repeated drum hit
   costs one pair.
 
 ### Bus stops that are not the driver's
@@ -342,15 +322,13 @@ it as a prerequisite and errors in that phase are suppressed. You get
 `make: *** [release] Error 2` and not one line more.
 
 It bites exactly once, when an existing `out/` predates a change to
-`res/song.res` — which is every project migrating from the pre-split driver. The
-fix is a clean build:
+`res/song.res`. The fix is a clean build:
 
 ```
 rm -rf out res/song.h && make -f $GDK/makefile.gen
 ```
 
-A clean tree builds fine, so this is a migration hazard rather than a standing
-one. (If you want to see what make is hiding: `make CLEAN=TRUE <target>` skips
+A clean tree builds fine. (If you want to see what make is hiding: `make CLEAN=TRUE <target>` skips
 the include phase and prints the real error.)
 
 ## Confirming it works
@@ -384,19 +362,18 @@ the include phase and prints the real error.)
 
 ### Two tools that settle almost any "it sounds wrong" report
 
-Found the hard way during the first on-target bring-up (2026-07-26), and worth
-reaching for before theorising:
+Worth reaching for before theorising:
 
 - **VGM log = what the chips actually got.** In BlastEm, `m` starts/stops a VGM
   recording (`ui.vgm_log`). Every YM2612/PSG write lands in it with timing, so
   parsing it tells you whether the driver stopped writing, wrote something wrong,
   or wrote correct music that you nonetheless could not hear. A silence that
   shows a *uniform* write stream is not a driver bug.
-- **Driver state = what the driver thinks.** Post-split this is nearly free:
-  almost all of it is 68k memory, so `MMLisp_trackActive` and the `MMLSeq` struct
-  are readable in your own debugger with no bus grab at all.
+- **Driver state = what the driver thinks.** Almost all of it is 68k memory,
+  so `MMLisp_trackActive` and the `MMLSeq` struct are readable in your own
+  debugger with no bus grab at all.
 
-  The one lesson that still applies: **read Z80 RAM on demand only.** Every
+  **Read Z80 RAM on demand only.** Every
   read halts the Z80 and spends the engine's 1,500-master stop budget; the two
   pumps are the driver's whole allowance.
 
@@ -456,4 +433,4 @@ Everything the language compiles to, except SE:
 - **Not yet run on hardware.** In particular the pumps write Z80 RAM with
   `movep.l` (single byte cycles, as the 68000 defines it; correct in BlastEm).
 
-See `drv/README.md` for the driver-side design and the deviation list.
+The design is `docs/driver.md`; building and the gates are `drv/README.md`.

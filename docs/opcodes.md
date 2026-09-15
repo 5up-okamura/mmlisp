@@ -57,7 +57,7 @@ Freeze classes used below:
 ### 3.1 Semantics
 
 **0x00 END_OF_TRACK** — terminates a non-looping track: key-off if still
-keyed, release the channel, mark the track idle in the mailbox status byte.
+keyed, release the channel, mark the track idle.
 On an `isCsm` track this also clears the CSM bit in reg $27 (driver.md §9).
 Every track block must end with this opcode (looping tracks never reach it —
 their tail is a backward JUMP — but the terminator is still required as the
@@ -80,14 +80,15 @@ counted from the original note-on and spans the tie (§5.1).
 **0x40 LOOP_BEGIN** — `count` = total iterations (2–255; 0 and 1 are
 reserved and must not be emitted — infinite repetition is a backward JUMP).
 Pushes `{resume_ptr, count − 1}` on the track's control stack (4 entries,
-driver.md §5.2).
+driver.md §4.3).
 
 **0x41 LOOP_END** — if the top counter is nonzero, decrement and jump to
 `resume_ptr`; else pop and continue. Note the v0.1 layout change: loop ids
 are gone and the count moved from LOOP_END to LOOP_BEGIN (§8).
 
-**0x42 MARKER** — write `id` into the track's mailbox status byte (position
-feedback for the 68k) and continue. The driver never searches markers; JUMP
+**0x42 MARKER** — record `id` as the track's last marker (position feedback
+for the host; the SGDK host does not surface it yet, driver.md §11) and
+continue. The driver never searches markers; JUMP
 targets are resolved offsets. Zero-cost sync point.
 
 **0x43 JUMP** — unconditional jump to `dest`, a byte offset relative to the
@@ -251,12 +252,12 @@ Notes:
   to the current value; MUL_VAL multiplies by it as an 8.8 factor (like
   PARAM_MUL). Slot 0xFF = the built-in `$time` source (elapsed 60 Hz frames,
   low 16 bits); slots 0x00–0x0F are VAL_TABLE slots, seeded at START_TRACK and
-  written by the `SET_VAL` mailbox command (driver.md §6).
+  written by the host (`MMLisp_setVal`, driver.md §6.4).
 - **TEMPO_SWEEP** interpolates the tick increment over `len` frames.
   Because the increment is proportional to BPM, linear interpolation in
-  increment domain is linear in BPM — no conversion needed on the Z80.
+  increment domain is linear in BPM — no conversion needed in the driver.
 - **CSM_RATE**: `flags` bit0 = 0 → const form: `period u16` (10-bit Timer A
-  period, precomputed from Hz at compile time — Hz never reaches the Z80);
+  period, precomputed from Hz at compile time — Hz never reaches the driver);
   bit0 = 1 → swept form: `from u16, to u16, len u16 (frames), curve u8`.
   Bits1–7 reserved 0.
 - **FM3_MODE / FM3_OP_PITCH** (implemented, driver.md §13.4). Each `fm3-1`…
@@ -331,7 +332,7 @@ parameter family (e.g. FM_TL1 = 0x11 … FM_TL4 = 0x14).
 
 ## 8. Curve ID Table (PARAM_SWEEP / TEMPO_SWEEP / CSM_RATE)
 
-The Z80 evaluates a small curve set; the exporter lowers the language's full
+The driver evaluates a small curve set; the exporter lowers the language's full
 easing vocabulary onto it (output-side minimalism — the driver carries four
 easing shapes, not thirty).
 
