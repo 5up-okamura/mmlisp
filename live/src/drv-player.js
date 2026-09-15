@@ -397,7 +397,7 @@ export class DrvPlayer {
   }
 
   // ── Playback state reset (driver "power-on + START_TRACK all") ──────────
-  // `autoStart` mirrors the harness auto-start-all (run-trace.mjs): true starts
+  // `autoStart`: true starts
   // every track from frame 0 (the M1 default); false leaves them idle so the
   // host mailbox schedule drives START_TRACK / START_SE explicitly (plan-se.md
   // SE gate — the SE track must not auto-start).

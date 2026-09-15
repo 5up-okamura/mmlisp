@@ -63,9 +63,9 @@ export class Z80Cpu {
     this.halted = false;
     this.eiDelay = false;
     this.intPending = false;
-    // Lowest SP ever reached (stack watermark, tools/budget.mjs). Pushes before
-    // the driver's `ld sp,STACK_TOP` sit near 0xFFFF, so the real stack minimum
-    // (near 0x1Fxx) naturally wins the min and pre-setup pushes don't pollute it.
+    // Lowest SP ever reached (stack watermark). Pushes before an image's
+    // `ld sp,STACK_TOP` sit near 0xFFFF, so the real stack minimum naturally
+    // wins the min and pre-setup pushes don't pollute it.
     this.spMin = this.sp;
   }
 

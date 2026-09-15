@@ -4243,8 +4243,8 @@
           if (_lastGoodIR && _drvBackend) {
             // PCM blobs ride a separate sample bank now (plan-se.md); pass it to
             // the player alongside the control MMB. (In the JS player this is a
-            // plain array read — the on-hardware per-frame bank latch is the
-            // Z80's; see drv/tools/run-trace.mjs.)
+            // plain array read — on hardware the Z80 engine reads the bank
+            // through its window.)
             const samples = await pcmSampleBlobsForMmb(_lastGoodIR);
             const { bytes, sampleBank, diagnostics } = encodeMmb(
               _lastGoodIR,

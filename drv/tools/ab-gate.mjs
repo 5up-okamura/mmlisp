@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // A/B characterization gate: ir-player vs drv-player, headless.
 //
-// The trace gate (verify.mjs) only proves Z80 ≡ drv-player. It cannot see an
+// The C gates (c-gate, pairs-gate) only prove driver ≡ drv-player. They cannot see an
 // ir-player ↔ drv-player divergence — when both references are wrong the same
-// way, it passes (this is how the 2026-07 PSG soft-envelope release bug hid).
+// way, they pass (this is how the 2026-07 PSG soft-envelope release bug hid).
 // `ab-compare.js` is the ONLY thing that sees that axis, and until now it ran
 // only in the browser (`window.__abCompare()`), so nothing gated it.
 //

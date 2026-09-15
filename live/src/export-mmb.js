@@ -1235,9 +1235,9 @@ export function encodeMmb(ir, opts = {}) {
     });
   }
 
-  // LUT_TABLE (mmb.md §16): the driver's constant LUTs, in ROM, read through the
-  // bank window — always emitted so the Z80 image needn't carry them. Identical
-  // bytes for every song; the JS reference computes its own copy (buildLuts).
+  // LUT_TABLE (mmb.md §16): the driver's constant LUTs. No shipped driver
+  // component reads it (the C sequencer carries its own generated tables);
+  // identical bytes for every song.
   sections.push({
     id: SECTION_ID.LUT_TABLE,
     flags: 0,

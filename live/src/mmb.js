@@ -236,9 +236,9 @@ export function curveId(name) {
 // ── Integer curve evaluation (driver.md §8, M2 sweep engine) ──────────────
 // The driver evaluates curves integer-only from an 8-bit phase (0..255) to an
 // 8-bit unit (0..255). Seven of the eight shapes are computed (a multiply or a
-// fold); only `sin` needs a table. Both drv-player.js and the Z80 asm use
-// THIS definition — gen-tables.mjs emits SIN_LUT verbatim, and curveUnit8 is
-// hand-ported to asm — so JS and asm cannot disagree.
+// fold); only `sin` needs a table. Both drv-player.js and the C sequencer use
+// THIS definition — gen-c-tables.mjs emits SIN_LUT verbatim, and curveUnit8 is
+// hand-ported to C — so the two cannot disagree.
 
 // sin loop waveform: (1 - cos(2π·t/256)) / 2, i.e. the ir-utils `sin` curve
 // with default params, quantized to 0..255. Starts at 0, peaks 255 at t=128.

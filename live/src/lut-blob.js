@@ -1,11 +1,7 @@
 // The driver's constant LUTs, packed as the LUT_TABLE MMB section payload
-// (mmb.md §16). These used to be baked into the Z80 image; they now live in ROM
-// and the driver reads them through the bank window, freeing 8 KB Z80 work RAM.
-//
-// Single source of truth for the LUT bytes, shared by export-mmb.js (which
-// emits the section) and drv/tools/gen-tables.mjs (which emits the matching
-// byte offsets for the asm). The values come from the same ir-utils.js math the
-// JS reference player uses, so asm/reference divergence is impossible.
+// (mmb.md §16). The values come from the same ir-utils.js math the JS
+// reference player uses. No shipped driver component reads the section; it is
+// emitted until the exporter drops it.
 import {
   midiToFnumBlock,
   velToTlAtten,
