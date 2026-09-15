@@ -11,8 +11,8 @@
 // handlers, no TMSS dance. Nothing in this engine needs a VDP, and R1 puts the
 // VDP's bus load in a later stage — so the first measurement is the Z80 alone
 // on the bus, which is the cleanest thing the machine can be asked.
-import { COOP } from "./cooperative.mjs";
-import { PAIRS_PER_GRAB } from "./pair-host.mjs";
+import { COOP } from "../../tools/cooperative.mjs";
+import { PAIRS_PER_GRAB } from "../../engine/pair-host.mjs";
 import { createHash } from "node:crypto";
 
 const ROM_SIZE = 0x80000;         // 512 KB, padded

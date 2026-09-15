@@ -21,8 +21,8 @@
 // so the analyzer can check them against the chip's settling table. A driver
 // that polls BUSY has already lost the cycles; a driver whose schedule spaces
 // its writes does not need to.
-import { Z80Cpu } from "../../tools/z80cpu.mjs";
-import { YM } from "./config.mjs";
+import { Z80Cpu } from "./z80cpu.mjs";
+import { YM } from "../engine/config.mjs";
 
 const RAM_SIZE = 0x2000;
 

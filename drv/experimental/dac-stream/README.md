@@ -1,12 +1,22 @@
 # dac-stream — the output-centred DAC engine, P0 / P1 / P2
 
-A prototype, not the driver. `docs/dac-engine-implementation.md` is the
-instruction it implements; this file is what was built, what was measured, and
-what is not true yet.
+The research bench of the engine that shipped. `docs/dac-engine-implementation.md`
+is the instruction it implemented; this file is what was built, what was
+measured, and what is not true yet.
+
+**Since 2026-09-15 the shipped generator is not in this directory.** The
+modules the production image is built from live in `drv/engine/` (config,
+gen-stream, decode-split, corrector, observer, protocol, pair-host, pcm1-ref …,
+and `phase-table.json`), and the engine's gates and instruments in `drv/tools/`
+(`engine-1v-gate`, `engine-fifo-gate`, `engine-score-gate`, `machine`,
+`probe-analysis`, `cooperative`). What stays here are the experiments that
+import them — the two-voice gate, the BlastEm machine probe, the decoder
+calibration, the listening tour. File paths quoted below are as they were when
+each section was written. The P0 baseline tool went with the ring engine (tag
+`archive/ring-engine`).
 
 ```
 cd drv
-npm run baseline            # P0 — freeze the comparison baseline
 npm run dac-stream          # the isolated gate in the JS model, 10 s a case
 npm run dac-stream:long     # …and 60 s on the representative case, + JSON
 
@@ -21,7 +31,6 @@ node experimental/dac-stream/machine-probe.mjs --case NAME --seconds N \
 ```
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
-`drv/src/engine.z80` is untouched.
 
 ## What it achieves
 
@@ -44,8 +53,8 @@ not built yet).
 
 ```
 cd drv
-npm run dac-stream:1v            # the profile's JS gate, plain image
-npm run dac-stream:1v:split      # …with the decode, corrector and protocol placed
+npm run engine:1v                # the profile's JS gate, plain image
+npm run engine:1v:split          # …with the decode, corrector and protocol placed
 npm run dac-stream:split         # …its four limits are the last profile printed
 npm run dac-stream:machine -- --case "one voice"   # BlastEm, five required cases
 ```
@@ -77,8 +86,8 @@ the start the 68000 had staged — it now touches only its own bytes.
 ### Step 2 — the pair transport, DONE on BlastEm
 
 ```
-npm run dac-stream:fifo           # the transport's JS gate (8 streams)
-npm run dac-stream:fifo:split     # …on the image with the decode/corrector/protocol
+npm run engine:fifo               # the transport's JS gate (8 streams)
+npm run engine:fifo:split         # …on the image with the decode/corrector/protocol
 node experimental/dac-stream/machine-probe.mjs --case pairs --seconds 4   # BlastEm, 6 streams
 ```
 

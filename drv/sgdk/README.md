@@ -16,7 +16,7 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > The sequencer is proven byte-for-byte against the JS reference on the host
 > (`npm run c-gate`, 41 scores); the slot → pair converter against its JS twin
 > (`npm run pairs-gate`); the engine image with the converter in the JS
-> instruction model (`npm run dac-stream:score`). `npm run sgdk:lint` type-checks
+> instruction model (`npm run engine:score`). `npm run sgdk:lint` type-checks
 > the glue against a shim when no m68k toolchain is around.
 
 ## What changed with the split

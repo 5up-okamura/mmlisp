@@ -15,11 +15,11 @@
     "dac-stream:machine": "node experimental/dac-stream/machine-probe.mjs",
     "dac-stream:machine:required": "node experimental/dac-stream/machine-probe.mjs --required-only",
     "dac-stream:split": "node experimental/dac-stream/split-report.mjs",
-    "dac-stream:1v": "node experimental/dac-stream/gate-1v.mjs",
-    "dac-stream:1v:split": "node experimental/dac-stream/gate-1v.mjs --split",
-    "dac-stream:fifo": "node experimental/dac-stream/gate-fifo.mjs",
-    "dac-stream:fifo:split": "node experimental/dac-stream/gate-fifo.mjs --split",
-    "dac-stream:score": "node experimental/dac-stream/gate-score.mjs",
+    "engine:1v": "node tools/engine-1v-gate.mjs",
+    "engine:1v:split": "node tools/engine-1v-gate.mjs --split",
+    "engine:fifo": "node tools/engine-fifo-gate.mjs",
+    "engine:fifo:split": "node tools/engine-fifo-gate.mjs --split",
+    "engine:score": "node tools/engine-score-gate.mjs",
     "size": "node tools/size-audit.mjs",
     "budget": "node tools/budget.mjs",
     "level-diff": "node tools/level-diff.mjs",
@@ -35,6 +35,6 @@
     "verify:ab": "node tools/ab-gate.mjs",
     "mirrors": "node tools/rate-mirrors.mjs",
     "dac-stream:decoder": "node experimental/dac-stream/decoder-eval.mjs",
-    "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run pairs-gate && npm run sgdk:lint && npm run dac-stream:1v && npm run dac-stream:fifo && npm run dac-stream:score && npm run verify:ab"
+    "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run pairs-gate && npm run sgdk:lint && npm run engine:1v && npm run engine:fifo && npm run engine:score && npm run verify:ab"
   }
 }

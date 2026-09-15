@@ -1,6 +1,6 @@
 // THE ONE-VOICE PROFILE'S GATE, in the JS instruction model (R28 §63.6 step 1).
 //
-//   node experimental/dac-stream/gate-1v.mjs [--seconds N] [--case NAME] [--split]
+//   node tools/engine-1v-gate.mjs [--seconds N] [--case NAME] [--split]
 //
 // The two-voice gate's reference is a fixed 256-byte page read for ever; this
 // profile plays SAMPLES — a 16-bit pointer through the window, a 2^k step, an
@@ -11,17 +11,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine, PCM1, pcm1Base } from "./config.mjs";
-import { generate, codeLedger, pcmEdgeCost } from "./gen-stream.mjs";
-import { generateSplit } from "./decode-split.mjs";
+import { assemble } from "./z80asm.mjs";
+import { buildConfig, stampLine, PCM1, pcm1Base } from "../engine/config.mjs";
+import { generate, codeLedger, pcmEdgeCost } from "../engine/gen-stream.mjs";
+import { generateSplit } from "../engine/decode-split.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
-import { analyzeValue, analyzeTime, analyzeWrites, analyzeLead, analyzeDacEnable } from "./analyze.mjs";
-import { tablesAgree } from "./lut.mjs";
-import { BANK, hostScript, reference, syntheticH } from "./pcm1-ref.mjs";
+import { analyzeValue, analyzeTime, analyzeWrites, analyzeLead, analyzeDacEnable } from "../engine/analyze.mjs";
+import { tablesAgree } from "../engine/lut.mjs";
+import { BANK, hostScript, reference, syntheticH } from "../engine/pcm1-ref.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const OUT = join(here, "..", "..", "out", "dac-stream");
+const OUT = join(here, "..", "out", "dac-stream");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", 4));

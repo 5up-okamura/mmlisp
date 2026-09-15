@@ -13,8 +13,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
 import { buildCase } from "./case-config.mjs";
-import { readProbe, Z80_DIV } from "./probe-analysis.mjs";
-import { GLOB } from "./config.mjs";
+import { readProbe, Z80_DIV } from "../../tools/probe-analysis.mjs";
+import { GLOB } from "../../engine/config.mjs";
 import { TOUR, MODE, triangle } from "./tour.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));

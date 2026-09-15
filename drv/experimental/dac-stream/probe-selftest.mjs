@@ -5,34 +5,34 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { assemble } from "../../tools/z80asm.mjs";
 import { Z80Cpu } from "../../tools/z80cpu.mjs";
-import { buildConfig } from "./config.mjs";
+import { buildConfig } from "../../engine/config.mjs";
 import { tablesAgree, buildLut, scale, unbias, levelFromCommand, lutPages,
-  pageIsALevel } from "./lut.mjs";
-import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "./cooperative.mjs";
+  pageIsALevel } from "../../engine/lut.mjs";
+import { generateCooperative, COOP, windowBand, windowPeriodMaster } from "../../tools/cooperative.mjs";
 import { resolveCase, FAULTS } from "./case-config.mjs";
 import { buildRom } from "./rom.mjs";
 import { analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations, commitReaders,
   analyzeAdoption, analyzeZ80Hv, readProbe, recordsBetweenReads, stoppedWithin,
   summarizeResults,
-  KIND } from "./probe-analysis.mjs";
+  KIND } from "../../tools/probe-analysis.mjs";
 import { generateObserver, decodeOps, decodeInitOps, decodeMap, refDecode, INITIAL_STATE,
-  STATE, PHASE_TABLE, VDP } from "./observer.mjs";
-import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "./decode-split.mjs";
-import { generate, codeLedger, reservedPadBytes } from "./gen-stream.mjs";
+  STATE, PHASE_TABLE, VDP } from "../../engine/observer.mjs";
+import { splitBlocks, placeSplit, SPLIT_STATE, SPLIT_STATE_SIZE } from "../../engine/decode-split.mjs";
+import { generate, codeLedger, reservedPadBytes } from "../../engine/gen-stream.mjs";
 import { protocolLayout, protocolAsm, protocolHeader, publishSteps, readSnapshot,
   controlSteps, readControl, faultySteps, faultyControlSteps, tornSnapshotPossible,
   tornControlPossible, extendTime, lateTarget, genAdvance,
   phaseInvalidated, outputAdvance, SNAPSHOT, CONTROL, PROTOCOL_BYTES, PROTOCOL_SPARE,
   PUB_REGION_BYTES, SNAPSHOT_BYTES, SNAPSHOT_STRIDE, OBS_MAX_STEP,
   extendObservation, boundarySample, MAILBOX, MAILBOX_BYTES, mailboxLayout,
-  mailboxSteps, readMailbox, tornMailboxPossible } from "./protocol.mjs";
-import { generateSplit } from "./decode-split.mjs";
+  mailboxSteps, readMailbox, tornMailboxPossible } from "../../engine/protocol.mjs";
+import { generateSplit } from "../../engine/decode-split.mjs";
 import { CORR, MAX_QUANTA, MAX_DEBT_UNITS, debtLimitFor, CORR_FAULTS, correctorBlocks,
-  correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "./corrector.mjs";
-import { Machine } from "./machine.mjs";
+  correctorLive, ladderOps, refCorrect, splitQuanta, INITIAL_CORR } from "../../engine/corrector.mjs";
+import { Machine } from "../../tools/machine.mjs";
 import { commandBlocks, commandCost, commandBootLines, packCommand, refConsume,
-  makeEncoder, cmdBundle, CMD_VALUES, adaptiveTarget } from "./command.mjs";
-import { protoMap, protoBootLines } from "./proto-blocks.mjs";
+  makeEncoder, cmdBundle, CMD_VALUES, adaptiveTarget } from "../../engine/command.mjs";
+import { protoMap, protoBootLines } from "../../engine/proto-blocks.mjs";
 import { CASES as ROM_CASES } from "./cases.mjs";
 import { buildCase } from "./case-config.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
@@ -2232,8 +2232,8 @@ if (process.argv.includes("--machine")) {
 {
   const { siteOps, entryBytes, ENTRY_BYTES, asmBytes, writerPlan, writerSlots,
     SEQUENCES, pairsWithinBlocks, breakEntries, IDLE, FORMS, entryWrites,
-    checkWriterTrace, PRODUCER_BYTES, ENTRY_LAYOUT } = await import("./ym-writer.mjs");
-  const { buildConfig, ymBudgetCycles, YM_CODE_BUDGET, YM_BUCKET } = await import("./config.mjs");
+    checkWriterTrace, PRODUCER_BYTES, ENTRY_LAYOUT } = await import("../../engine/ym-writer.mjs");
+  const { buildConfig, ymBudgetCycles, YM_CODE_BUDGET, YM_BUCKET } = await import("../../engine/config.mjs");
   const cfg = buildConfig({ voices: 2, complete: true, csm: true, csmHost: true,
     levels: 15, workTarget: 0.839, correctorBudget: true, command: true, ymWriter: true });
 

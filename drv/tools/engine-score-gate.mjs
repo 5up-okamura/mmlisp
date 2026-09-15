@@ -10,23 +10,23 @@
 //     state writes, against the score's own 32 KB sample bank
 //   * the clock did not move
 //
-//   node experimental/dac-stream/gate-score.mjs [score.mmlisp …] [--frames N]
+//   node tools/engine-score-gate.mjs [score.mmlisp …] [--frames N]
 import { readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMmb } from "../../tools/mmb-build.mjs";
-import { buildEngine } from "../../tools/build-engine.mjs";
-import { PairsModel, inTime, pairsCfgFromHeader } from "../../tools/pairs-model.mjs";
-import { DrvPlayer } from "../../../live/src/drv-player.js";
-import { SlotBuilder, decodeSlot } from "../../../live/src/slot-builder.js";
-import { PCM1, pcm1Base } from "./config.mjs";
+import { buildMmb } from "./mmb-build.mjs";
+import { buildEngine } from "./build-engine.mjs";
+import { PairsModel, inTime, pairsCfgFromHeader } from "./pairs-model.mjs";
+import { DrvPlayer } from "../../live/src/drv-player.js";
+import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
+import { PCM1, pcm1Base } from "../engine/config.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
-import { analyzeValue, analyzeTime, analyzeWrites, analyzeLead } from "./analyze.mjs";
-import { reference, syntheticH } from "./pcm1-ref.mjs";
-import { tablesAgree } from "./lut.mjs";
+import { analyzeValue, analyzeTime, analyzeWrites, analyzeLead } from "../engine/analyze.mjs";
+import { reference, syntheticH } from "../engine/pcm1-ref.mjs";
+import { tablesAgree } from "../engine/lut.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const drv = join(here, "..", "..");
+const drv = join(here, "..");
 const argv = process.argv.slice(2);
 const fIdx = argv.indexOf("--frames");
 const FRAMES = fIdx >= 0 ? Number(argv[fIdx + 1]) : 240;

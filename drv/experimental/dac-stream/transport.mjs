@@ -16,12 +16,12 @@
 // wire instead of a hundred and twenty, and it does not make it one chip write
 // instead of thirty. So the comparison has to carry both numbers or it will
 // choose a transport that cannot deliver a note.
-import { NTSC, buildConfig } from "./config.mjs";
+import { NTSC, buildConfig } from "../../engine/config.mjs";
 import { MASTER_PER_CYCLE } from "./case-config.mjs";
 import { SLOT_SUBS } from "../../../live/src/slot-builder.js";
 import { scoreList, recordScore, classify, expand, globalChannel,
   keyChannel, keyIsOn } from "./semantic.mjs";
-import { writerPlan, ENTRY_BYTES, PRODUCER_BYTES } from "./ym-writer.mjs";
+import { writerPlan, ENTRY_BYTES, PRODUCER_BYTES } from "../../engine/ym-writer.mjs";
 import { basename } from "node:path";
 
 // ── What the machine already told us ──────────────────────────────────────

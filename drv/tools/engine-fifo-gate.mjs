@@ -1,6 +1,6 @@
 // THE PAIR TRANSPORT'S GATE, in the JS instruction model (R28 §63.6 step 2).
 //
-//   node experimental/dac-stream/gate-fifo.mjs [--seconds N] [--case NAME] [--split]
+//   node tools/engine-fifo-gate.mjs [--seconds N] [--case NAME] [--split]
 //
 // A host that runs the producer algorithm of pair-host.mjs twice a frame, an
 // engine that consumes sixteen pairs a lap through the expander, and three
@@ -11,17 +11,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine, PCM1, PCM1_OPS, pcm1Base } from "./config.mjs";
-import { generate } from "./gen-stream.mjs";
-import { generateSplit } from "./decode-split.mjs";
+import { assemble } from "./z80asm.mjs";
+import { buildConfig, stampLine, PCM1, PCM1_OPS, pcm1Base } from "../engine/config.mjs";
+import { generate } from "../engine/gen-stream.mjs";
+import { generateSplit } from "../engine/decode-split.mjs";
 import { Machine, traceMeta } from "./machine.mjs";
-import { analyzeValue, analyzeTime, analyzeWrites, analyzeLead, analyzeDacEnable } from "./analyze.mjs";
-import { BANK, SAMPLES, reference, syntheticH } from "./pcm1-ref.mjs";
-import { makeProducer, pairStream } from "./pair-host.mjs";
+import { analyzeValue, analyzeTime, analyzeWrites, analyzeLead, analyzeDacEnable } from "../engine/analyze.mjs";
+import { BANK, SAMPLES, reference, syntheticH } from "../engine/pcm1-ref.mjs";
+import { makeProducer, pairStream } from "../engine/pair-host.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const OUT = join(here, "..", "..", "out", "dac-stream");
+const OUT = join(here, "..", "out", "dac-stream");
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", 3));

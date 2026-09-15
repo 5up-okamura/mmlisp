@@ -11,24 +11,24 @@
 //
 // It is still a model. A green run here is a reason to spend a hardware round,
 // not a substitute for one.
-import { COOP } from "./cooperative.mjs";
+import { COOP } from "../../tools/cooperative.mjs";
 import { createHash } from "node:crypto";
 import { readProbe, analyzeProbe, analyzeTransfers, analyzeHost, windowGenerations,
   analyzeAdoption, analyzeResidual, analyzeZ80Hv, faultMarks,
-  summarizeResults, Z80_DIV } from "./probe-analysis.mjs";
+  summarizeResults, Z80_DIV } from "../../tools/probe-analysis.mjs";
 import { resolveCase, buildCase, FAULTS, DBRA_MASTER } from "./case-config.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
-import { stampLine } from "./config.mjs";
+import { stampLine } from "../../engine/config.mjs";
 import { buildRom } from "./rom.mjs";
-import { mixOne, mixTwo } from "./lut.mjs";
-import { checkWriterTrace, YM_BUSY_MASTER } from "./ym-writer.mjs";
-import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, endFor as pcm1EndFor, reference as pcm1Reference } from "./pcm1-ref.mjs";
-import { expectedWrites } from "./pair-host.mjs";
-import { PCM1, PCM1_BASE_OFF } from "./config.mjs";
+import { mixOne, mixTwo } from "../../engine/lut.mjs";
+import { checkWriterTrace, YM_BUSY_MASTER } from "../../engine/ym-writer.mjs";
+import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, endFor as pcm1EndFor, reference as pcm1Reference } from "../../engine/pcm1-ref.mjs";
+import { expectedWrites } from "../../engine/pair-host.mjs";
+import { PCM1, PCM1_BASE_OFF } from "../../engine/config.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");

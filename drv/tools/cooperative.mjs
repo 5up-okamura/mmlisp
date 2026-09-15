@@ -25,8 +25,8 @@
 // 68k must enter the low→high polling section with interrupts masked, payload
 // prepared, and no DMA. Late entry waits for a new low→high edge. Z80 never
 // waits for the host: a missing commit selects the full-length padding path.
-import { generate } from "./gen-stream.mjs";
-import { padTo } from "./schedule.mjs";
+import { generate } from "../engine/gen-stream.mjs";
+import { padTo } from "../engine/schedule.mjs";
 
 export const COOP = { notify: 0xff0000, queue: 0x1d00, commit: 0x1eff,
   windowCycles: 64, defaultCompensation: 32 };

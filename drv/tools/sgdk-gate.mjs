@@ -24,9 +24,9 @@ import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
 import { buildEngine } from "./build-engine.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
-import { readProbe } from "../experimental/dac-stream/probe-analysis.mjs";
-import { PCM1, PCM1_BASE_OFF, pcm1Base } from "../experimental/dac-stream/config.mjs";
-import { reference } from "../experimental/dac-stream/pcm1-ref.mjs";
+import { readProbe } from "./probe-analysis.mjs";
+import { PCM1, PCM1_BASE_OFF, pcm1Base } from "../engine/config.mjs";
+import { reference } from "../engine/pcm1-ref.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");

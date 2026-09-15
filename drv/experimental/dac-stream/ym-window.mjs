@@ -27,7 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
 import { buildCase } from "./case-config.mjs";
-import { readProbe, Z80_DIV } from "./probe-analysis.mjs";
+import { readProbe, Z80_DIV } from "../../tools/probe-analysis.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");

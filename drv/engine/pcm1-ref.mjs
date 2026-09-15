@@ -1,6 +1,6 @@
 // THE ONE-VOICE PROFILE'S TEST BANK, HOST SCRIPTS AND REFERENCE (R28 §63.6).
 //
-// Shared by the JS gate (gate-1v.mjs) and the machine run (machine-probe.mjs),
+// Shared by the JS gate (tools/engine-1v-gate.mjs) and the machine run (machine-probe.mjs),
 // so the bank the emulator's cartridge carries is the bank the model's window
 // answers from, and the reference that grades one grades the other.
 //

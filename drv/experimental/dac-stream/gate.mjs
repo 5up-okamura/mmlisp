@@ -10,15 +10,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assemble } from "../../tools/z80asm.mjs";
-import { buildConfig, stampLine } from "./config.mjs";
-import { generate, cyclePaths, codeLedger } from "./gen-stream.mjs";
-import { Machine, traceMeta } from "./machine.mjs";
+import { buildConfig, stampLine } from "../../engine/config.mjs";
+import { generate, cyclePaths, codeLedger } from "../../engine/gen-stream.mjs";
+import { Machine, traceMeta } from "../../tools/machine.mjs";
 import {
   analyzeValue, analyzeTime, analyzeBus, analyzeWrites, analyzeTimerTraffic, analyzeDacEnable,
   analyzeLead,
-} from "./analyze.mjs";
+} from "../../engine/analyze.mjs";
 import { compareClock } from "./spectrum.mjs";
-import { mixOne, mixTwo, SILENCE, tablesAgree, lutPages, pageIsALevel } from "./lut.mjs";
+import { mixOne, mixTwo, SILENCE, tablesAgree, lutPages, pageIsALevel } from "../../engine/lut.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..", "..");

@@ -85,7 +85,7 @@ import { op, padTo } from "./schedule.mjs";
 import { YM } from "./config.mjs";
 import { checkWriteStream } from "./analyze.mjs";
 import { generate } from "./gen-stream.mjs";
-import { assemble } from "../../tools/z80asm.mjs";
+import { assemble } from "../tools/z80asm.mjs";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -569,7 +569,7 @@ export function checkWriterTrace(log, { entries, from = 0, to = Infinity }) {
 
 // ── The table §59.3 asks for, before anything is built ────────────────────
 //
-//   node drv/experimental/dac-stream/ym-writer.mjs
+//   node drv/engine/ym-writer.mjs
 //
 // Real instructions, assembled for their byte counts and summed from the
 // documented cycle counts, against the two numbers the reservation is: 280

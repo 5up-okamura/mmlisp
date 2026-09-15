@@ -21,16 +21,16 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES } from "./cases.mjs";
-import { PUBLISH, INITIAL_STATE, refDecode } from "./observer.mjs";
-import { CORR, MAX_DEBT_UNITS, refCorrect } from "./corrector.mjs";
+import { PUBLISH, INITIAL_STATE, refDecode } from "../../engine/observer.mjs";
+import { CORR, MAX_DEBT_UNITS, refCorrect } from "../../engine/corrector.mjs";
 import { readSnapshot, genAdvance, outputAdvance, SNAPSHOT_BYTES,
-  extendObservation, boundarySample } from "./protocol.mjs";
+  extendObservation, boundarySample } from "../../engine/protocol.mjs";
 import { buildCase, FAULTS, QUEUE_FAULTS, PICK_FAULTS,
   ORDER_FAULTS } from "./case-config.mjs";
-import { buildConfig, GLOB } from "./config.mjs";
-import { protoGlobals } from "./protocol.mjs";
-import { SPLIT_STATE } from "./decode-split.mjs";
-import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "./probe-analysis.mjs";
+import { buildConfig, GLOB } from "../../engine/config.mjs";
+import { protoGlobals } from "../../engine/protocol.mjs";
+import { SPLIT_STATE } from "../../engine/decode-split.mjs";
+import { readProbe, recordsBetweenReads, stoppedWithin, Z80_DIV } from "../../tools/probe-analysis.mjs";
 import { buildPhaseTable, buildLineTable, findLineOrigin, decode, decodeVH,
   scoreDecode, contractProblems, quantise, LINE_MASTER, FRAME_MASTER } from "./decoder.mjs";
 
@@ -287,7 +287,7 @@ const checkSpacing = (name, times) => {
 // what it was made from, and a verification run READS it. Nothing
 // re-calibrates mid-run, and a table made from a rom the cases no longer build
 // is refused.
-const TABLE_FILE = join(here, "phase-table.json");
+const TABLE_FILE = join(here, "..", "..", "engine", "phase-table.json");
 const canon = (o) => JSON.stringify(Object.fromEntries(Object.entries(o)
   .filter(([k]) => k !== "hash").sort(([a], [b]) => a < b ? -1 : 1)));
 const hashOf = (o) => createHash("sha256").update(canon(o)).digest("hex").slice(0, 32);

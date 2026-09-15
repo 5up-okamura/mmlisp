@@ -9,16 +9,16 @@
 //
 //   node experimental/dac-stream/split-report.mjs [--plain] [--slots]
 import { buildConfig, stampLine, cmdBudgetCycles, CMD_SLOTS_USED,
-  ymBudgetCycles, YM_CODE_BUDGET } from "./config.mjs";
+  ymBudgetCycles, YM_CODE_BUDGET } from "../../engine/config.mjs";
 import { ENTRY_BYTES, FORMS, asmBytes, YM_POSITIONS,
-  EXPANDER_CODE_ESTIMATE } from "./ym-writer.mjs";
+  EXPANDER_CODE_ESTIMATE } from "../../engine/ym-writer.mjs";
 
 // How many of the twenty opportunities the 120-byte reservation buys.
 const YM_SITES = 10;
-import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "./decode-split.mjs";
-import { codeLedger } from "./gen-stream.mjs";
+import { generateSplit, SPLIT_STATE_SIZE, SPLIT_STATE_SIZE_CORR } from "../../engine/decode-split.mjs";
+import { codeLedger } from "../../engine/gen-stream.mjs";
 import { CORR, CORR_SLOTS, LADDER_NEUTRAL, LADDER_WORK, LADDER_BYTES, MAX_QUANTA,
-  MAX_DEBT_UNITS } from "./corrector.mjs";
+  MAX_DEBT_UNITS } from "../../engine/corrector.mjs";
 import { assemble } from "../../tools/z80asm.mjs";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

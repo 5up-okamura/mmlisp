@@ -38,7 +38,7 @@ snapshot with no `Makefile.libretro`.
 
 `MMLISP_PROBE_LOG=<file>` makes the patched core write an 8-byte record per
 event: every `$2A` write, every 68000 bus grab and release, and the instant of
-each Z80 vblank. Cycles are master clocks. `tools/dac-log.mjs` reads it.
+each Z80 vblank. Cycles are master clocks. `tools/probe-analysis.mjs` reads it.
 
 Nothing is written when the variable is unset — the emulated machine's timing
 must not depend on whether it is being watched.

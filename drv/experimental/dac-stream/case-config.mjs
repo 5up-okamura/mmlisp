@@ -7,28 +7,28 @@
 // honest field in it. resolveCase() applies the overrides once, derives what
 // both CPUs have to agree on (the window period, the window length) from the
 // same place, and returns the object everything downstream reads.
-import { buildConfig } from "./config.mjs";
-import { COOP, windowPeriodMaster, generateCooperative } from "./cooperative.mjs";
+import { buildConfig } from "../../engine/config.mjs";
+import { COOP, windowPeriodMaster, generateCooperative } from "../../tools/cooperative.mjs";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assemble } from "../../tools/z80asm.mjs";
 import { buildRom } from "./rom.mjs";
 import { sine } from "./cases.mjs";
-import { generate, CSM_TEST_VOICE, CSM_TEST_FREQ } from "./gen-stream.mjs";
+import { generate, CSM_TEST_VOICE, CSM_TEST_FREQ } from "../../engine/gen-stream.mjs";
 import { tourBytes } from "./tour.mjs";
 import { psgStream } from "./psg-stream.mjs";
-import { lutPages } from "./lut.mjs";
-import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, startBytes as pcm1StartBytes } from "./pcm1-ref.mjs";
-import { pairStream, encodePairTable, PAIRS_PER_GRAB } from "./pair-host.mjs";
-import { PCM1, pcm1Base } from "./config.mjs";
-import { generateObserver, PUBLISH_FAULTS, STATE } from "./observer.mjs";
-import { generateSplit, SPLIT_STATE } from "./decode-split.mjs";
+import { lutPages } from "../../engine/lut.mjs";
+import { BANK as PCM1_BANK, SAMPLES as PCM1_SAMPLES, startBytes as pcm1StartBytes } from "../../engine/pcm1-ref.mjs";
+import { pairStream, encodePairTable, PAIRS_PER_GRAB } from "../../engine/pair-host.mjs";
+import { PCM1, pcm1Base } from "../../engine/config.mjs";
+import { generateObserver, PUBLISH_FAULTS, STATE } from "../../engine/observer.mjs";
+import { generateSplit, SPLIT_STATE } from "../../engine/decode-split.mjs";
 import { protocolLayout, protoGlobals, mailboxLayout, SNAPSHOT_BYTES,
-  SNAPSHOT_STRIDE, MAILBOX, MAILBOX_BYTES } from "./protocol.mjs";
-import { GLOB, YM_BUCKET } from "./config.mjs";
+  SNAPSHOT_STRIDE, MAILBOX, MAILBOX_BYTES } from "../../engine/protocol.mjs";
+import { GLOB, YM_BUCKET } from "../../engine/config.mjs";
 import { writerPlan, fixtureBytes, breakEntries, SEQUENCES, ENTRY_BYTES,
-  YM_FAULTS, pairsWithinBlocks } from "./ym-writer.mjs";
+  YM_FAULTS, pairsWithinBlocks } from "../../engine/ym-writer.mjs";
 
 // R21 §50.4: the three ways the adaptive choice can be broken. The first two
 // are the fixed leads R20 measured, put back as faults so the sweep cannot

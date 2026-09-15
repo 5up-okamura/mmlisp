@@ -353,7 +353,7 @@ const upper = (s) => s.replace(/([A-Z])/g, "_$1").toUpperCase();
 export function protocolAsm(base) {
   const L = protocolLayout(base);
   const eq = (n, v) => `${n.padEnd(26)} equ $${v.toString(16)}`;
-  const out = ["; GENERATED from experimental/dac-stream/protocol.mjs — do not edit.",
+  const out = ["; GENERATED from drv/engine/protocol.mjs — do not edit.",
     eq("PROTO_BASE", base)];
   L.faces.forEach((f, i) => {
     for (const [name] of SNAPSHOT) out.push(eq(`PROTO_F${i}${upper(name)}`.replace(/(\d)([A-Z])/, "$1_$2"), f[name].offset));
@@ -366,7 +366,7 @@ export function protocolAsm(base) {
 export function protocolHeader(base) {
   const L = protocolLayout(base);
   const hex = (v) => `0x${v.toString(16).toUpperCase()}`;
-  const lines = ["/* GENERATED from drv/experimental/dac-stream/protocol.mjs — do not edit. */",
+  const lines = ["/* GENERATED from drv/engine/protocol.mjs — do not edit. */",
     "#ifndef MML_PROTO_H", "#define MML_PROTO_H", "",
     `#define MML_PROTO_BASE ${hex(base)}`,
     `#define MML_PROTO_BYTES ${PROTOCOL_BYTES}`,

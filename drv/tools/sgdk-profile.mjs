@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
-import { readProbe } from "../experimental/dac-stream/probe-analysis.mjs";
+import { readProbe } from "./probe-analysis.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
