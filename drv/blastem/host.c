@@ -180,8 +180,8 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wavpath = argv[++i];
 		else if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
 		// Where the ROM published its counters, as a byte offset into 68000 work
-		// RAM. tools/build-verify-rom.mjs reports it from the image's own symbol
-		// table, so neither side carries a magic address.
+		// RAM. The caller reads it from the image's own symbol table, so neither
+		// side carries a magic address.
 		else if (!strcmp(argv[i], "--mailbox") && i + 1 < argc) mbox_off = strtol(argv[++i], NULL, 0);
 		else if (!strcmp(argv[i], "--mailbox-words") && i + 1 < argc) mbox_words = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--mailbox-out") && i + 1 < argc) mboxpath = argv[++i];
@@ -247,7 +247,7 @@ int main(int argc, char **argv)
 	// Read out of the core's work RAM, which costs the emulated machine nothing:
 	// no debug port, no bus grab, no patched emulator. BlastEm stores work RAM as
 	// host-order 16-bit words, so a u16 field reads back as one word and the
-	// mailbox is deliberately all u16 (verify-rom/probe.h).
+	// mailbox is deliberately all u16.
 	if (mbox_off >= 0) {
 		uint16_t *ram = core.get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
 		size_t ramsz = core.get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
