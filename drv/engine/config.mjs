@@ -578,6 +578,8 @@ export function buildConfig({
   // How many voices, from voice 0, carry the 2^k octave step. The rest read
   // one byte a sample, which is what makes an extra voice cheap.
   stepVoices = null,
+  // The study's level-free variant: no rung page, no master (see gen-stream).
+  flatLevel = false,
 } = {}) {
   const p = sampleMaster
     ? { name: `m${sampleMaster}`, sampleMaster }
@@ -674,7 +676,7 @@ export function buildConfig({
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
     oneVoice, production, signedSource,
     ...(multi ? { multi, xpSteps, voiceOffsets: voiceOffsets(voices, blockSamples),
-      stepVoices: stepVoices ?? voices } : {}),
+      stepVoices: stepVoices ?? voices, ...(flatLevel ? { flatLevel } : {}) } : {}),
     reserve: oneVoice || multi ? RESERVE_1V : complete
       ? (ymWriter ? RESERVE_2CH_YM : command ? RESERVE_2CH_CMD
         : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,

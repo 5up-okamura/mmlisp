@@ -301,12 +301,18 @@ const nvS = (cfg, key, v) => {
 };
 const mixRoutineN = (cfg) => {
   const N = cfg.voices, ww = cfg.windowWait;
+  // flatLevel: the STUDY's "what does a level cost" variant — no per-voice rung
+  // page and no master, so the source byte IS the term (the bank would hold it
+  // biased, which costs nothing at run time). Never a shipping shape on its own.
+  const flat = !!cfg.flatLevel;
   const ops = [
     op("        exx", 4, { what: "to the mixer's register set" }),
     op("        ld   a,(de)", 7 + ww, { what: `voice 0's byte through the 68k window (7 + ${ww})` }),
-    op("        ld   l,a", 4),
-    op("mix_v0: ld   h,0", 7, { what: "voice 0's rung page (master folded in) — SELF-MODIFIED at its edge" }),
-    op("        ld   a,(hl)", 7, { what: "signed in, biased out" }),
+    ...(flat ? [] : [
+      op("        ld   l,a", 4),
+      op("mix_v0: ld   h,0", 7, { what: "voice 0's rung page (master folded in) — SELF-MODIFIED at its edge" }),
+      op("        ld   a,(hl)", 7, { what: "signed in, biased out" }),
+    ]),
   ];
   const advance0 = [
     op("        ld   a,e", 4),
@@ -316,11 +322,15 @@ const mixRoutineN = (cfg) => {
     op("        adc  a,0", 7),
     op("        ld   d,a", 4),
   ];
+  // Without a step voice 0 walks whole addresses, as the stepping form does:
+  // `inc e` alone would wrap the source at a page and the gate catches it.
+  const adv0 = cfg.stepVoices > 0 ? advance0
+    : [op("        inc  de", 6, { what: "step 1: the source pointer moves on by one" })];
   if (N === 1) {
     ops.push(op("        ld   (bc),a", 7, { what: "into the ring, LEAD ahead of the play cursor" }),
-      op("        inc  c", 4), ...advance0);
+      op("        inc  c", 4), ...adv0);
   } else {
-    ops.push(op("        ld   iyl,a", 8, { what: "voice 0's term, parked in IYL" }), ...advance0);
+    ops.push(op("        ld   iyl,a", 8, { what: "voice 0's term, parked in IYL" }), ...adv0);
     for (let v = 1; v < N; v++) {
       ops.push(
         op(`mv${v}:    ld   hl,${hexW(0xff00)}`, 10, { what: `voice ${v}'s pointer — the operand IS the pointer` }),
@@ -339,9 +349,11 @@ const mixRoutineN = (cfg) => {
           op("        inc  hl", 6),
           op(`        ld   (mv${v}+1),hl`, 16, { what: "step 1: the pointer moves on by one" }),
         ]),
-        op("        ld   l,a", 4),
-        op(`mix_v${v}: ld   h,0`, 7, { what: `voice ${v}'s rung page` }),
-        op("        ld   a,(hl)", 7),
+        ...(flat ? [] : [
+          op("        ld   l,a", 4),
+          op(`mix_v${v}: ld   h,0`, 7, { what: `voice ${v}'s rung page` }),
+          op("        ld   a,(hl)", 7),
+        ]),
         op("        add  a,iyl", 8, { what: "9-bit sum of two biased terms in (carry, A)" }),
         op("        ld   l,a", 4),
         op("        ld   a,0", 7, { what: "`ld` keeps the carry" }),
@@ -402,8 +414,10 @@ const nvEdgeCompare = (cfg, v) => (v === 0 ? [
 
 /** PARK for voice v: its rung page for the next block, then the park. */
 const nvEdgePark = (cfg, v) => [
-  op(`ld   a,(${nvS(cfg, "level", v)})`, 13, { what: `voice ${v} edge: the rung its next block runs at` }),
-  op(`ld   (mix_v${v}+1),a`, 13),
+  ...(cfg.flatLevel ? [] : [
+    op(`ld   a,(${nvS(cfg, "level", v)})`, 13, { what: `voice ${v} edge: the rung its next block runs at` }),
+    op(`ld   (mix_v${v}+1),a`, 13),
+  ]),
   op("exx", 4),
   op(`ld   a,(${nvS(cfg, "parkMask", v)})`, 13),
   op("or   a", 4),
@@ -1020,7 +1034,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("        ld   a,LUT>>8               ; page 0 — silence");
     for (let v = 0; v < cfg.voices; v++) {
       P(`        ld   (PCM_STATE+${PCMN.level(v)}),a`);
-      P(`        ld   (mix_v${v}+1),a`);
+      if (!cfg.flatLevel) P(`        ld   (mix_v${v}+1),a`);
     }
     P("        ld   hl,RING");
     P("        ld   b,0");

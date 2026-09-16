@@ -36,6 +36,10 @@ const JSON_OUT = argv.includes("--json");
 // expander's capacity as a multiple of the host's 960 pairs a second.
 const STEP_VOICES = arg("step-voices", null) === null ? null : Number(arg("step-voices", null));
 const WIRE_MARGIN = Number(arg("wire-margin", 1.5));
+// --flat-level drops the level model entirely (no rung page, no master): what a
+// driver that gives up volume to buy rate would run. It is a COST measurement,
+// not a proposal — gate-nv's reference mixes rungs, so it does not check this.
+const FLAT_LEVEL = argv.includes("--flat-level");
 
 const MASTER = 53693175, Z80DIV = 15;
 // Today's lap. The hard limit is the pumps' spacing, 131 lines = 448,020
@@ -43,7 +47,8 @@ const MASTER = 53693175, Z80DIV = 15;
 const LAP_MAX_MASTER = Number(arg("lap-max", 430080));
 const WORST = 83.9, MEAN = 79.6;
 
-export function pointConfig(voices, period, { stepVoices = STEP_VOICES, wireMargin = WIRE_MARGIN } = {}) {
+export function pointConfig(voices, period, { stepVoices = STEP_VOICES, wireMargin = WIRE_MARGIN,
+  flatLevel = FLAT_LEVEL } = {}) {
   const sampleMaster = period * Z80DIV;
   const lapBlocks = Math.floor(LAP_MAX_MASTER / (16 * sampleMaster));
   if (lapBlocks < 2) return null;
@@ -51,6 +56,7 @@ export function pointConfig(voices, period, { stepVoices = STEP_VOICES, wireMarg
   const xpSteps = Math.max(8, Math.ceil(960 * wireMargin * lapS));
   return { voices, complete: true, pairs: true, signedSource: true, production: true,
     correctorBudget: true, workTarget: WORST / 100, sampleMaster, lapBlocks, xpSteps,
+    ...(flatLevel ? { flatLevel } : {}),
     ...(stepVoices === null ? {} : { stepVoices }) };
 }
 

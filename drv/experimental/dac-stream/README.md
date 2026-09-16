@@ -37,7 +37,10 @@ Nothing here is linked by, included in, or reachable from the shipped driver.
 ```
 npm run dac-stream:voices                       # highest placing rate for 1/2/3 voices
 npm run dac-stream:voices -- --step-voices 1    # …with the octave step on voice 0 only
-npm run dac-stream:nv -- --voices 2 --period 461 --step-voices 1   # run a point: TIME + VALUE
+npm run dac-stream:voices -- --step-voices 0    # …with no octave step at all
+npm run dac-stream:voices -- --flat-level       # …and with no level model at all
+npm run dac-stream:nv                           # run the 2-voice point: TIME + VALUE
+npm run dac-stream:nv -- --voices 3 --period 648 --step-voices 0   # another point
 npm run dac-stream:nv -- ... --fault mis-cost | wrap               # the gate's own negatives
 ```
 
@@ -54,14 +57,38 @@ unchanged by any of it.
 | voices | octave step | highest rate | mix cyc/sample | limit | code / region |
 | --- | --- | --- | --- | --- | --- |
 | 1 | — | 10,782 Hz | 104 (shipped: 129) | worst slot (START edge) | 2,474 / 4,864 |
+| 1 | none | 12,052 Hz | 78 | worst slot (START edge) | 2,829 / 4,864 |
 | 2 | both voices | 7,131 Hz | 235 | mean 79.5% | 2,373 / 4,352 |
 | 2 | voice 0 only | 7,765 Hz | 209 | mean 79.5%, expander A beside the mix | 2,328 / 4,352 |
+| 2 | none | 8,482 Hz | 183 | worst slot (START edge) | 2,763 / 4,352 |
 | 3 | all voices | 4,716 Hz | 366 | mean 79.6% | 2,226 / 4,352 |
 | 3 | voice 0 only | 5,264 Hz | 314 | mean 79.6% | 2,156 / 4,352 |
+| 3 | none | 5,524 Hz | 288 | mean 79.6% | 2,124 / 4,352 |
 
 Every point above runs clean in the JS machine (`gate-nv`, six cases: idle,
 shots, full-scale clipping, level walks, stops, a roll): every interval is the
 slot's length and every DAC byte is the reference's.
+
+### What expression costs, per voice per sample
+
+The rung read — the level, and the signed → biased conversion with it — is 18
+cycles; the 2^k octave step is 26 (24 on voice 0, whose step-free advance is
+`inc de`); the saturating add and clamp of each EXTRA voice is 37. Changing a
+level is nearly free: a self-modified page at that voice's block edge, 26
+cycles per 16 samples. `--flat-level` drops the level model entirely, which is
+what a driver that trades volume for rate runs:
+
+| max rate | with levels | level-free |
+| --- | --- | --- |
+| 2 voices, no step | 8,482 Hz | 9,420 Hz |
+| 2 voices, step on voice 0 | 7,765 Hz | 8,646 Hz |
+| 3 voices, step on voice 0 | 5,264 Hz | 5,926 Hz |
+
+Give up both and two voices reach the shipped one-voice rate. Past that the
+binding rule is no longer the mean (74.6%) but the worst slot, and that slot is
+a voice's START edge — the note machinery, not the mixing. `--flat-level` is a
+placement and TIME result only: `gate-nv`'s reference mixes rungs, so it does
+not check a level-free image's values.
 
 ## What it achieves
 

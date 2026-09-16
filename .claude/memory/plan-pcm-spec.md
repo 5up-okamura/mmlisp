@@ -103,20 +103,62 @@ said 7 pages — 7 rungs need an 8th page for silence), signed in / biased out,
 master folded into the rung by the host, one table read a voice. 1v mix 104
 cyc/sample vs shipped 129; levels 2,048 B vs 3,840 B.
 
+WHAT EACH PIECE OF EXPRESSION COSTS (2026-09-16, the same method; every cell
+placed and assembled, and the rung/step points also RUN in gate-nv):
+
+    max rate (Hz)        per-voice level        no level at all
+    1 voice  no step        12,052                 12,969
+    1 voice  step           10,782                 11,547
+    2 voices no step         8,482                  9,420
+    2 voices step on v0      7,765                  8,646
+    2 voices step on both    7,131                  7,799
+    3 voices no step         5,524                  6,438
+    3 voices step on v0      5,264                  5,926
+    3 voices step on all     4,716                  5,295
+
+Per voice per sample: the rung read (= the level, and the signed->biased
+conversion with it) is 18 cyc; the 2^k octave step is 26 (24 on voice 0, whose
+step-free advance is `inc de`); the saturating add + clamp of each EXTRA voice
+is 37. Mix totals: 1v 104/78, 2v 235/209/183, 3v 366/314/288 (step on all/v0/
+none). CHANGING a level is nearly free — it is a self-modified page at the
+voice's block edge, 26 cyc per 16 samples.
+
+Two things the matrix settles. (a) The engine image is ONE build, so the step's
+26 cycles are paid by every song whether or not any sample uses D5's octave
+key; dropping the key outright buys +717 Hz at 2 voices, and a baked octave-up
+copy costs only +50% of that sample's ROM (it is half the length) — ROM for
+cycles, which is the trade this driver should always take. (b) Dropping the
+level model buys +881 Hz at 2 voices (11%) and costs all PCM dynamics; it is
+the smallest of the three costs and the one worth keeping. Give up BOTH and 2
+voices reach 9,420 Hz — i.e. the shipped one-voice rate, which is exactly the
+shape of the drivers that carry two fixed-volume, fixed-pitch voices.
+Past that point the binding rule is no longer the mean (74.6%) but the worst
+slot, and the worst slot is a voice's START edge — the note machinery, not the
+mixing. Further rate would have to come out of start/stop/park/compare
+(~53 cyc/sample at 2 voices), not out of expression.
+
+The level-free column is a placement + TIME result only: gate-nv's reference
+mixes rungs, so it does not check a level-free image's VALUES.
+
 | voices | octave step | max rate | mix cyc | code/region | limit |
 | 1 | - | 10,782 Hz | 104 | 2,474/4,864 | worst slot (START) |
 | 2 | both | 7,131 Hz | 235 | 2,373/4,352 | mean |
 | 2 | v0 only | 7,765 Hz | 209 | 2,328/4,352 | mean + xp A beside the mix |
+| 2 | none | 8,482 Hz | 183 | 2,763/4,352 | worst slot (START) |
 | 3 | all | 4,716 Hz | 366 | 2,226/4,352 | mean |
 | 3 | v0 only | 5,264 Hz | 314 | 2,156/4,352 | mean |
+| 3 | none | 5,524 Hz | 288 | 2,124/4,352 | mean |
 
-8 kHz with 2 voices misses by ~2 cycles a slot (xp A 151 + mix 209 + 18 vs
-375.9). Caveats: loops (D3) would add ~150 cyc/voice/block of edge work —
-~4% mean at 2v, i.e. ~7.3 kHz; "octave v0 only" costs nothing today (the
-exporter bakes every note at step 1) but limits D5's octave key to pcm1;
-2v/3v need the host's lap constants (32/48-slot laps, 9-10 steps) redone.
-Recommendation given to the user: 2 voices at ~7.7 kHz (octave on pcm1),
-premix (C) for a third layer; 3v at 5.3 kHz is too dull (Nyquist 2.6 kHz).
+8 kHz with 2 voices misses by ~2 cycles a slot IF the octave step is kept
+(xp A 151 + mix 209 + 18 vs 375.9); without the step it is clear.
+Caveats: loops (D3) would add ~150 cyc/voice/block of edge work — ~4% mean at
+2v; 2v/3v need the host's lap constants (32/48/64-slot laps, 9-11 steps)
+redone.
+RECOMMENDATION (revised 2026-09-16): 2 voices at 8,482 Hz, the level model
+KEPT, D5's octave key DROPPED (every note baked at its own pitch, octaves too)
+— the step is the expensive knob and the only one whose cost can be paid in
+ROM instead. Premix (C) for a third layer; 3v at 5.3-6.4 kHz is too dull
+(Nyquist < 3.2 kHz).
 
 ## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 

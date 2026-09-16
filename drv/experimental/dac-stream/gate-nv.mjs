@@ -215,7 +215,10 @@ export function runPoint({ voices, period, stepVoices = null, seconds = SECONDS,
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const voices = Number(arg("voices", 2)), period = Number(arg("period", 461));
-  const sv = arg("step-voices", null);
+  // The bare defaults ARE a placed point: 2 voices at 461 cycles is the study's
+  // best two-voice rate, and that point carries the octave step on voice 0 only
+  // (with it on both, 235 cycles of mix do not fit a 461-cycle slot).
+  const sv = arg("step-voices", "1");
   const r = runPoint({ voices, period, stepVoices: sv === null ? null : Number(sv), only: ONLY });
   console.log(`\n${r.failed ? `FAIL: ${r.failed} case(s)` : "all cases pass"} · ${voices} voices at`
     + ` ${r.cfg.rateHz.toFixed(1)} Hz, lap ${r.cfg.cycleSlots}, code ${r.code} B`);
