@@ -201,17 +201,38 @@ every gate (engine:1v/fifo/score, sgdk:gate, gate-nv, ab) runs once an image.
 Levels in 6 dB steps; pitch baked; LOOPS; THREE voices (two at the very
 least); catch up with MDSDRV and XGM on rate; and decide it TOGETHER with the
 FM/PSG path (the pair wire, the 68k's per-frame cost), not DAC-first.
-Arithmetic that frames it: XGM's 14 kHz and XGM2's 13.3 kHz are Timer A
-divisions (144 master a tick: 372,869 / 26 = 14,341, / 28 = 13,317 Hz), i.e.
-timer-paced variable work with jitter bounded by the chunk length — the
-opposite of our cycle-counted zero-jitter slots, where every branch is paid at
-its worst case. A bare 3-voice 6 dB mixer with pointers in registers is
-~250-280 cyc/sample = the whole Z80 at 13.3 kHz: at that point the Z80 carries
-nothing else and no margin. Open (asked of the user): is BOUNDED jitter
-acceptable, and is the Z80 to stay the song's output stage? Proposed before any
-spec: probe XGM2/MDSDRV ROMs on the BlastEm machine (real rate, interval
-histogram, behaviour during YM writes, 68k load), price a timer-paced variant
-of our engine in the JS machine, measure our own 68k cost a frame.
+The timers, correctly (an FM sample is 144 YM clocks = 1,008 master; the
+earlier note here used 144 master and was wrong): Timer A ticks once a sample,
+53,267 Hz / n — 13,317 (n=4), 10,653, 8,878, 7,610 Hz...; XGM2's 13.3 kHz is
+n=4, XGM v1's 14 kHz is more likely 256 Z80 cycles a sample (13,982 Hz).
+Timer B ticks every 16 samples, 3,329 Hz / m — it CANNOT pace samples (the
+old engine's 3.33 kHz ceiling, dac-engine-implementation.md §2), only be
+observed for phase. CSM owns Timer A whenever it is on. So a timer-PACED
+engine (the XGM way) is incompatible with CSM, and MMLisp keeps CSM: the DAC
+must stay cycle-counted, which is why every branch is paid at its worst case.
+The user's "either timer" is satisfied by cycle-counted pacing + a timer
+OBSERVED once a lap for phase, and the timer that is always free is B.
+
+THE USER'S STANDING DOUBT (2026-09-17): the phase reference is the VDP H
+counter and the pumps hang off VBlank/HInt — "we said going back to VSync
+would be a regression, yet here we are". What is true: the sample clock is
+the Z80's cycle count, not the frame (the rejected design was mixing a frame
+inside a VBlank ISR); what the doubt is right about: the reference ties the
+engine to video timing (PAL unsupported, §11), the Z80's VDP read path is
+unverified on hardware (§13.3 said so), and the log's second candidate —
+Timer B short-window observation — was never tried. Re-opening it is
+legitimate, and Timer B works with CSM on or off.
+
+Jitter: the user will decide by EAR, not by number. With cycle-counted pacing
+jitter enters only through bus stops (today one 28 µs grab a lap); the lever
+worth hearing is the 68k writing the YM directly (drops the expander + YM
+traffic, 72 cyc/sample ≈ +25% rate) at the price of longer stops. Proposed
+study round before any spec: (1) render the same score through the JS
+machine with stops of 28/60/100/200 µs at 60-125 Hz and listen; (2) build
+Timer B observation as the phase reference and measure its resolution against
+the corrector's need; (3) probe XGM2/MDSDRV ROMs on BlastEm (real rate,
+interval histogram, stop behaviour, 68k load); (4) measure our 68k cost a
+frame.
 
 ## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 
