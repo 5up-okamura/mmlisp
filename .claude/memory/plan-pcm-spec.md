@@ -196,6 +196,23 @@ names the image, the browser emulates that rate and voice count (D0), and
 declaring 2 voices makes pcm3 a score error. THE COST IS VERIFICATION, not ROM:
 every gate (engine:1v/fifo/score, sgdk:gate, gate-nv, ab) runs once an image.
 
+## D9 — the TARGET, restated by the user (2026-09-17)
+
+Levels in 6 dB steps; pitch baked; LOOPS; THREE voices (two at the very
+least); catch up with MDSDRV and XGM on rate; and decide it TOGETHER with the
+FM/PSG path (the pair wire, the 68k's per-frame cost), not DAC-first.
+Arithmetic that frames it: XGM's 14 kHz and XGM2's 13.3 kHz are Timer A
+divisions (144 master a tick: 372,869 / 26 = 14,341, / 28 = 13,317 Hz), i.e.
+timer-paced variable work with jitter bounded by the chunk length — the
+opposite of our cycle-counted zero-jitter slots, where every branch is paid at
+its worst case. A bare 3-voice 6 dB mixer with pointers in registers is
+~250-280 cyc/sample = the whole Z80 at 13.3 kHz: at that point the Z80 carries
+nothing else and no margin. Open (asked of the user): is BOUNDED jitter
+acceptable, and is the Z80 to stay the song's output stage? Proposed before any
+spec: probe XGM2/MDSDRV ROMs on the BlastEm machine (real rate, interval
+histogram, behaviour during YM writes, 68k load), price a timer-paced variant
+of our engine in the JS machine, measure our own 68k cost a frame.
+
 ## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 
 Health found before it: verify:all green; the dac-stream research bench green
