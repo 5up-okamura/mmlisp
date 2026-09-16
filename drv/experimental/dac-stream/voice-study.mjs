@@ -45,7 +45,9 @@ const MASTER = 53693175, Z80DIV = 15;
 // Today's lap. The hard limit is the pumps' spacing, 131 lines = 448,020
 // master, less one grab; --lap-max measures what the margin costs.
 const LAP_MAX_MASTER = Number(arg("lap-max", 430080));
-const WORST = 83.9, MEAN = 79.6;
+// The designer's ceilings. --worst/--mean only exist to price the margin: what
+// a slot budget without it would buy. They are not an invitation to spend it.
+const WORST = Number(arg("worst", 83.9)), MEAN = Number(arg("mean", 79.6));
 
 export function pointConfig(voices, period, { stepVoices = STEP_VOICES, wireMargin = WIRE_MARGIN,
   flatLevel = FLAT_LEVEL } = {}) {

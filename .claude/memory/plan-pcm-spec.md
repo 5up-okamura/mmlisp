@@ -160,6 +160,42 @@ KEPT, D5's octave key DROPPED (every note baked at its own pitch, octaves too)
 ROM instead. Premix (C) for a third layer; 3v at 5.3-6.4 kHz is too dull
 (Nyquist < 3.2 kHz).
 
+## Where the slot actually goes, and what the margin costs (2026-09-16)
+
+At the 2-voice / 8,482 Hz point, per sample (422 Z80 cycles): mix 185, the four
+note edges 51, the pair expander 40, the DAC write + fetch 18, CSM/YM/corrector
+32 — and 96 cycles (23%) of deliberate margin. Only 44% of the slot is mixing;
+about 17% is the Z80 being the whole song's output stage (the expander and the
+YM traffic), which a driver whose 68000 writes the YM itself does not pay.
+
+Priced with --worst/--mean (they exist to price the margin, not to spend it):
+2 voices go 8,482 -> 9,085 Hz at 90/86 and 9,597 Hz at 95/92. The expander's
+wire margin is NOT a lever (1.5x -> 1.0x changes no rate; it is not binding).
+
+THE ONE-VOICE CEILING IS ONE LUMPY SLOT, not the total work: at 12,052 Hz the
+mean is 58.2% and the wall is the slot that must hold the mix AND the 130-cycle
+START edge. Relaxing only the worst-slot rule: 12,648 Hz at 88%, 13,715 at 96%,
+with the mean still ~65%. So splitting START across two slots (the edge is
+already four pieces; this would make it five) is worth up to ~16.5 kHz at one
+voice, where the mean rule would finally bind. UNBUILT, arithmetic only. At 2
+voices the same split buys 8,482 -> 8,731 Hz and at 3 voices nothing: there the
+total work is the wall.
+
+## D8 — the voice count as the COMPOSER's choice (asked 2026-09-16, open)
+
+One image cannot change its voice count at run time (the slots are unrolled and
+constant-time), so the choice is per song at compile time: SEPARATE ENGINE
+IMAGES, one named by the score. Levels kept, no octave step: 1 voice 12,052 Hz,
+2 voices 8,482 Hz, 3 voices 5,524 Hz. ~7 KB of ROM an image. Feasible if the
+RAM map, the op codes and the protocol are IDENTICAL across images — the C
+host's addresses are #defines and one of them is baked into inline asm
+(mmlispdrv.c:253) — leaving only rate, lap slots, samples a lap, expander
+steps, ring lead and voice count as a small per-image descriptor. The exporter
+bakes the bank at that image's rate (it is already per-rate), the MMB header
+names the image, the browser emulates that rate and voice count (D0), and
+declaring 2 voices makes pcm3 a score error. THE COST IS VERIFICATION, not ROM:
+every gate (engine:1v/fifo/score, sgdk:gate, gate-nv, ab) runs once an image.
+
 ## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 
 Health found before it: verify:all green; the dac-stream research bench green

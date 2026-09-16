@@ -69,6 +69,19 @@ Every point above runs clean in the JS machine (`gate-nv`, six cases: idle,
 shots, full-scale clipping, level walks, stops, a roll): every interval is the
 slot's length and every DAC byte is the reference's.
 
+### Where the slot goes (2 voices, 8,482 Hz, 422 cycles a sample)
+
+    mix 185 · the four note edges 51 · the pair expander 40 ·
+    DAC write + fetch 18 · CSM/YM/corrector 32 · margin 96 (23%)
+
+`--worst`/`--mean` price that margin and nothing else: 2 voices reach 9,085 Hz
+at 90/86 and 9,597 Hz at 95/92. `--wire-margin` is not a lever (1.5x to 1.0x
+moves no rate). The ONE-voice ceiling is not the total work — its mean is
+58.2% — but the single slot that must hold the mix and the 130-cycle START
+edge: relax only the worst-slot rule and it goes 12,648 Hz at 88%, 13,715 at
+96%. Splitting START across two slots would be worth ~16.5 kHz at one voice
+(where the mean would bind), 8,731 Hz at two, and nothing at three. Unbuilt.
+
 ### What expression costs, per voice per sample
 
 The rung read — the level, and the signed → biased conversion with it — is 18
