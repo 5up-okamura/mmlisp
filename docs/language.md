@@ -33,6 +33,7 @@ source file is a sequence of top-level forms, in source order:
 ```lisp
 (def title "Song")
 (def author "Me")
+(def pcm-voices 2)
 
 (fm1 :tempo 140 :lfo-rate 5 c e g e)
 ```
@@ -40,6 +41,15 @@ source file is a sequence of top-level forms, in source order:
 - **`(def title "…")` / `(def author "…")`** — reserved defs carrying the file
   metadata (only the string form is special; the names stay usable as ordinary
   defs otherwise).
+- **`(def pcm-voices N)`** — how many PCM voices the driver plays, 0–3. This is
+  a whole-song choice: it picks the engine image, and with it the DAC rate
+  (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz) and how much sample
+  data fits in the song's 32 KB bank (2.3 / 3.2 / 4.9 seconds). Fewer voices
+  buy a higher rate, so state the number you actually need. Omitted, it is the
+  highest `pcmN` track the score uses; a `pcmM` track above the stated number
+  is `E_PCM_VOICES`, and a value outside 0–3 is the same error. Unlike
+  `title`/`author` the name is reserved outright — there is no ordinary-def
+  fallback for it. See §16 and driver.md §5.
 - **`:tempo` / `:lfo-rate`** — score-global effects, written on any track
   (leading position or mid-body); they apply to the whole song regardless of
   which track carries them. `:tempo` takes a BPM number or a curve
@@ -592,7 +602,7 @@ matching the live player only when the slot stays at its init.
 `def` names any inline-writable notation; a bare reference in a channel body
 expands or applies it. Definitions are top-level forms and interleave freely
 with track forms (§1). `title` and `author` are reserved for file metadata
-when given a string (§1). A def (or parametric def) named after an eval builtin
+when given a string, and `pcm-voices` for the PCM voice count (§1). A def (or parametric def) named after an eval builtin
 (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `let`, `note`,
 `ticks`, `frames`) is rejected with `E_DEF_RESERVED`.
 
@@ -1111,9 +1121,10 @@ with neither source produces no Timer A retrigger (fm3-csm plays silently).
 
 Samples are declared with `def :sample` and bound to a track as the first
 positional argument (or re-bound mid-track with `:sample name` / a bare
-sample symbol).
+sample symbol). How many voices play at once is a whole-song choice (§1):
 
 ```lisp
+(def pcm-voices 3)
 (def kick  :sample :file "sounds/kick.wav")
 (def snare :sample :file "sounds/snare.wav" :rate 11025)
 (def pad   :sample :file "sounds/pad.wav" :loop-start 0 :loop-end 4096)
@@ -1122,6 +1133,28 @@ sample symbol).
 (pcm2 snare :len 4  _ c _ c)
 (pcm3 pad :len 0 :vol 8 :mode loop  c)
 ```
+
+### Voices and the rate
+
+`pcm1`–`pcm3` are soft-mixed on the Z80 to the single fm6 DAC. The driver
+carries one engine image per voice count, and the image is what sets the rate:
+
+| `pcm-voices` | DAC rate | bank holds |
+| --- | --- | --- |
+| 1 | 14,375.7 Hz | 2.26 s |
+| 2 | 10,111.7 Hz | 3.22 s |
+| 3 | 6,653.4 Hz | 4.89 s |
+
+The bank is one 32 KB window a song, and every note a sample is played at is
+baked into it separately, so the seconds above are the total of all of them.
+The voices are summed and **hard-clipped**: loud simultaneous hits distort by
+design, and headroom is the composer's to manage with `:vel` / `:vol`.
+
+A score that uses PCM owns fm6 as the DAC for the whole song — the driver
+enables it once and never gives the channel back. An `fm6` track in such a
+score is `E_FM6_DAC`; move the part to `fm1`–`fm5`, or drop the PCM. With
+`pcm-voices 0` (or no PCM at all) `fm6` is an ordinary FM channel and the DAC
+is never touched.
 
 ### Sample def keys
 
@@ -1138,7 +1171,9 @@ sample symbol).
 | `:reverb`     | Reverb preset                                                  |
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, data becomes
-raw 8-bit signed PCM.
+raw 8-bit signed PCM. `:bit-depth`, `:volume`, `:compress` and `:reverb` are
+parsed and carried through, but nothing acts on them yet — using one warns
+`W_SAMPLE_KEY_UNIMPLEMENTED`.
 
 ### Sample banks (many samples in one file)
 
@@ -1190,43 +1225,34 @@ than left to break at export time.
 
 Full drop routing for every accepted format: `guide.md` §23.
 
-`pcm1`–`pcm3` are three voices mixed to the single fm6 DAC (the shipped
-driver plays `pcm1` only — driver.md §14): each voice is resampled to the
-mix rate, the
-voices are summed and **hard-clipped**, so loud simultaneous hits distort by
-design (headroom is the composer's to manage via `:vel`/`:vol`). A `shot` plays
-to its end; a `loop` sustains until `KEY_OFF` then plays its tail. See
-driver.md §14.
-
 ### Playback
 
-- **Pitch → rate**: `rate = 2^(semitones_from_C4 / 12)`; C4 = 1.0×. Practical
-  range C2–C6 (0.25×–4.0×); outside notes clamp with `W_PCM_PITCH_CLAMP`.
+- **Pitch is baked, not played.** A note picks a blob resampled for that note;
+  the voice then plays it back one byte a sample and cannot bend. So there is
+  no practical-range clamp — any note works, it just costs bank space. What is
+  rejected is every RUNTIME pitch move on a pcm track: `:pitch`, `:semi`,
+  `(glide …)` and a `(macro :pitch …)` vibrato are `E_PCM_NO_PITCH` rather
+  than silently dropped.
 - **`:mode`** is per-note (not sticky): `shot` (default) plays start→end
-  once; `loop` plays attack, cycles `:loop-start`–`:loop-end` until KEY-OFF
-  (a `PCM_NOTE_OFF` at the gate), then plays the release.
-  > M1 limitation: a `shot` sample plays to its end regardless of the note's
-  > `length`/`gate` (they are not forwarded to the mixer worklet); only `loop`
-  > mode honors KEY-OFF. Gated / length-limited one-shots are a later milestone.
+  once; `loop` plays the attack, cycles `:loop-start`–`:loop-end` until
+  KEY-OFF (a `PCM_NOTE_OFF` at the gate), then plays the release tail.
+  The loop points are rounded to the driver's 16-byte block, so a very short
+  loop is detuned slightly by the rounding.
+  > A `shot` plays to its end regardless of the note's `length` / `gate`;
+  > only `loop` mode honors KEY-OFF.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6), but a
   PCM voice's resolution is COARSER than FM's or PSG's: the mixer attenuates by
   an arithmetic shift, so the ladder is 6 dB per step, not 2. `:vel` + `:vol`
-  reach −24 dB and clamp there (deeper is quantisation noise at 8 bit, and it
-  costs the mixer a cycle a sample per step); `:master` rides the summed mix
-  instead and reaches −36 dB before the voice mutes. So a PCM fade is stepped
-  where an FM one is smooth, and it lands on silence from −36 dB rather than
-  gliding there. That is the model, not a limitation to work around: a PCM
-  fade is stepped on purpose (driver.md §14.1). Automate `:vol` on FM or PSG
-  when a fade has to be smooth.
-- PCM plays on `pcm1`–`pcm3`, three voices **soft-mixed** to the single fm6 DAC
-  (driver.md §14). `fm6` is FM only (`fm6 :mode shot`/`loop` is an error).
-  `fm6` and `pcmN` may be used in the same score: the DAC is claimed while any
-  PCM voice is sounding and released once the last one ends, so fm6 sounds as FM
-  in the gaps. Only notes that actually overlap a sounding PCM voice are lost —
-  the chip mutes fm6 for exactly as long as the DAC is on.
+  reach −24 dB and clamp there (deeper is quantisation noise at 8 bit);
+  `:master` folds into the same ladder and reaches −36 dB before the voice
+  mutes. So a PCM fade is stepped where an FM one is smooth, and it lands on
+  silence from −36 dB rather than gliding there. That is the model, not a
+  limitation to work around (driver.md §5). Automate `:vol` on FM or PSG when a
+  fade has to be smooth.
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; an unknown
-  sample name is `E_PCM_SAMPLE_UNDEFINED`.
+  sample name is `E_PCM_SAMPLE_UNDEFINED`. `fm6 :mode shot`/`loop` is
+  `E_PCM_MODE_INVALID` — fm6 is FM only.
 
 ---
 

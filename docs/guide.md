@@ -33,7 +33,7 @@ Default state:
 
 | Name                      | Hardware                                              |
 | ------------------------- | ----------------------------------------------------- |
-| `fm1`-`fm6`               | YM2612 FM channels (PCM is `pcm1`-`pcm3`; it mutes `fm6` while sounding) |
+| `fm1`-`fm6`               | YM2612 FM channels (a score that uses PCM gives up `fm6` — it is the DAC) |
 | `fm3-1`-`fm3-4`           | FM3 independent-operator mode (one track per OP)      |
 | `fm3-csm`, `fm3-csm-rate` | FM3 CSM mode (§17)                                    |
 | `sqr1`-`sqr3`             | SN76489 square tone channels                          |
@@ -823,6 +823,7 @@ the IR mapping).
 Samples are defined with `def :sample`, then used as the first positional argument of `pcm1` / `pcm2` / `pcm3`.
 
 ```lisp
+(def pcm-voices 2)
 (def kick  :sample :file "sounds/kick.wav")
 (def snare :sample :file "sounds/snare.wav" :rate 11025)
 
@@ -834,6 +835,19 @@ Samples are defined with `def :sample`, then used as the first positional argume
 - `:rate` overrides the C4 playback rate.
 - Stereo WAV files are downmixed to mono at compile time.
 - WAV data is converted to 8-bit signed PCM at compile time.
+
+**Decide how many voices you need first.** `(def pcm-voices N)` is a whole-song
+choice, and it buys quality: one voice plays at 14.4 kHz, two at 10.1 kHz,
+three at 6.7 kHz. Leave it out and it is the highest `pcmN` track you wrote,
+so an idle third track costs the other two their bandwidth. The samples all
+share one 32 KB bank — 2.3 seconds at one voice, 4.9 at three — and every note
+you play a sample at is baked separately, so a drum at four pitches costs four
+times its length.
+
+Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
+`:pitch`, `:semi`, `(glide …)` and a pitch vibrato are errors on a pcm track)
+and **fade smoothly** (the level ladder is 6 dB a step). Put a fade on FM or
+PSG when it has to be smooth.
 
 **Drag a `.wav` onto the live editor** and its `def` is written for you at the
 cursor. Drag it out of the folder you opened with `File > Open Folder…` and the

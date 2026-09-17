@@ -77,12 +77,6 @@
     "compileErrors": 0,
     "digest": "c54e03cf"
   },
-  "m3-fm6-pcm.mmlisp": {
-    "ok": true,
-    "mismatches": 0,
-    "compileErrors": 0,
-    "digest": "811c9dc5"
-  },
   "m3-gate-tie.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -262,6 +256,30 @@
     "mismatches": 12,
     "compileErrors": 0,
     "digest": "a85f9be0"
+  },
+  "m4-fm6-only.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-pcm-2v-master.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-pcm-3v.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-pcm-loop.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
   },
   "p3-lifecycle.mmlisp": {
     "ok": true,

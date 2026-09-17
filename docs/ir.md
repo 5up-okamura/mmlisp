@@ -28,7 +28,7 @@ asymmetries matter for the Z80 driver.
   "version": 1,
   "ppqn": 96,
   "metadata": {
-    "title": "...", "author": "...", "source": "song.mmlisp",
+    "title": "...", "author": "...", "source": "song.mmlisp", "pcmVoices": 2,
     "vals": [ ... ], "samples": [ ... ]
   },
   "tracks": [ ... ]
@@ -49,6 +49,11 @@ to 120 BPM); `:lfo-rate` likewise emits a `PARAM_SET LFO_RATE` on its own
 track. The presence of any `fm3-1..fm3-4` track prepends a tick-0
 `FM3_MODE { mode: "op" }` into `tracks[0]` — the only compiler-injected init
 event.
+
+`metadata.pcmVoices` is how many PCM voices the driver plays, 0–3, from
+`(def pcm-voices N)` or the highest `pcmN` track the score uses. It picks the
+engine image and with it the DAC rate, so the MMB exporter reads it before it
+bakes a single sample (driver.md §5, mmb.md §10).
 
 ### 2.1 `metadata.vals[]` — dynamic value slots (`def-val`)
 
@@ -76,9 +81,9 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `resolvedFile` | string      | `file` resolved against the source file's directory.|
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
-| `loopStart`, `loopEnd` | int\|null | Loop points in frames, **relative to the slice**. |
+| `loopStart`, `loopEnd` | int\|null | Loop points in frames, **relative to the slice**. The driver rounds them to its 16-byte block. |
 | `bitDepth`     | int\|null   | Declared bit depth.                                 |
-| `volume`, `compress`, `reverb` | string\|null | Raw option strings (host-side processing). |
+| `volume`, `compress`, `reverb` | string\|null | Raw option strings. Carried, not yet acted on (`W_SAMPLE_KEY_UNIMPLEMENTED`). |
 
 ## 3. Track object
 
@@ -422,7 +427,7 @@ Emitted immediately before each `NOTE_ON` on an `fm3-N` track (same tick).
 | Arg        | Type   | Unit    | Req | Semantics                                                       |
 | ---------- | ------ | ------- | --- | ----------------------------------------------------------------|
 | `sample`   | string | —       | yes | Name of a `metadata.samples` entry.                              |
-| `pitch`    | string | —       | yes | Note + octave (informational; clamped C2–C6 at compile).         |
+| `pitch`    | string | —       | yes | Note + octave. The note is BAKED: it picks a blob resampled for it, and there is no range clamp. |
 | `rate`     | number | ratio   | yes | Playback rate = `2^((midi−60)/12)` (1.0 at C4).                  |
 | `length`   | int    | ticks   | yes | Timeline advance.                                                |
 | `mode`     | string | —       | yes | `"shot"` or `"loop"`.                                            |

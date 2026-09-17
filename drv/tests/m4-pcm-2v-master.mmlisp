@@ -1,0 +1,10 @@
+; M4 gate: two voices through the pcm2 image (10.1 kHz) with the master walked
+; under them. The master is no longer a stage in the mixer — the host folds it
+; into each voice's rung page (D10 §1.6) — so a master change re-sends a LEVEL
+; pair per voice and every rung has to land on both at the same block edge.
+(def blip :sample :file "blip.wav")
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(def pcm-voices 2)
+(pcm1 blip :tempo 140 :oct 4 :len 8 :vel 15 :vol 31
+  c :master 25 e :master 19 g :master 13 c :master 7 e :master 31 g)
+(pcm2 pad :mode loop :oct 4 :len 2 :vel 12   c  e)

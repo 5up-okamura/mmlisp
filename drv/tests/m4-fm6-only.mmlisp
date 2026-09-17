@@ -1,0 +1,7 @@
+; M4 gate: fm6 as an FM channel, in a score with no PCM (driver.md §14, D6).
+; A score that uses PCM owns fm6 as the DAC for the whole song ($2B once, never
+; given back) — mixing the two is E_FM6_DAC. So the gate for fm6-as-FM is a
+; score WITHOUT PCM, and what it locks is the negative: $2B is never written,
+; and fm6 keys on and off like any other channel.
+(fm1 :tempo 120 :oct 4 :len 4 :vel 15   c   _   c   _)
+(fm6 :oct 4 :len 4 :vel 15               _   e   _   e)

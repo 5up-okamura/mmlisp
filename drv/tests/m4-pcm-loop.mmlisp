@@ -1,0 +1,10 @@
+; M4 gate: the block edge's three jobs on one voice (driver.md §5, D10 §1.5).
+; The sample loops from a point that is NOT its start, so WRAP differs from the
+; note's own source address and the rounding contract has to hold both ends:
+; the first pass plays [0, loop-end) and every later one [loop-start, loop-end).
+; The gated note keys off mid-loop, which is a RETARGET to the sample's real end
+; with WRAP = silence — the tail plays out once and the voice parks.
+(def pad :sample :file "pad.wav" :loop-start 180 :loop-end 620)
+(def pcm-voices 1)
+(pcm1 pad :mode loop :tempo 120 :oct 4 :len 2 :vel 15
+  c :gate* 0.5 e c _)

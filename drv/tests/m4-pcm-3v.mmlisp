@@ -1,0 +1,10 @@
+; M4 gate: all three voices of the pcm3 image (6.65 kHz). At three voices every
+; block position already carries an edge piece, so this is the image with the
+; least slack — and the only one where a shot, a loop and a release can collide
+; in one block. The clamp is exercised too: three voices at full scale saturate.
+(def blip :sample :file "blip.wav")
+(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(def pcm-voices 3)
+(pcm1 blip :tempo 120 :oct 4 :len 8 :vel 15   c e g c e g c e)
+(pcm2 pad  :mode loop :oct 4 :len 2 :vel 15   c :gate* 0.5 e)
+(pcm3 pad  :mode loop :oct 3 :len 4 :vel 15   c _ e _)

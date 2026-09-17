@@ -74,6 +74,43 @@ estimate unless it says so.
      moved its master changes a frame early); re-frozen.
   10. SYNC on m3-pcm-sync: PCM onsets −0.3..−1.3 ms against the fm1 key-on.
 
+- **S3 — PART DONE 2026-09-18.** Everything of §4.1 EXCEPT the
+  `:loop-start`/`:loop-end` TARGETS: `(def pcm-voices N)` (reserved metadata,
+  `metadata.pcmVoices`, no ordinary-def fallback), `E_PCM_VOICES` (a value
+  outside 0-3, and a `pcmM` track above the stated count), `E_PCM_NO_PITCH`
+  (`:pitch`, `:semi`, `(glide …)`, `(macro :pitch/:semi …)` on a pcm track —
+  three chokepoints: the inline-param default branch, `applyMacroEntryToState`,
+  the glide directive), `E_FM6_DAC`, `W_SAMPLE_KEY_UNIMPLEMENTED`, and the
+  C2-C6 clamp + `W_PCM_PITCH_CLAMP` removed. Docs: language.md §1/§9/§16
+  (rewritten: a Voices-and-the-rate table, the fm6 rule, the baked-pitch rule),
+  ir.md §2/§2.2/§5.17, guide.md §19, roadmap. New scores `m4-pcm-loop`,
+  `m4-pcm-2v-master`, `m4-pcm-3v`, `m4-fm6-only`; `m3-fm6-pcm` DELETED (its
+  premise — fm6 FM alongside PCM — is what D6 forbids). c-gate, pairs-gate,
+  engine:score lists updated; ab baseline re-frozen (54 scores; only the five
+  score entries moved, no existing signature changed). verify:all green.
+
+  **STILL OPEN — the loop-point targets, and why.** §4.1 says the value is "in
+  source frames of the sample" and §3.1 has the driver convert
+  `value × len_baked / src_frames`. But the value machine's WIDEST value
+  anywhere is i16: `PARAM_SWEEP` is a fixed 9-byte payload with `from i16,
+  to i16`, and a macro blob is i8 (i16 with flags bit0). A sample that fills
+  the 32 KB bank at pcm1 is 2.26 s — 99,750 source frames at 44.1 kHz, 49,875
+  at 22.05 kHz. Source frames do not fit, so the unit is a real decision and
+  not something to infer. Three candidates, costed:
+  1. **Q15 fraction of the slice** (0..32767 = 0..1). Fits every existing wire
+     unchanged; the driver's conversion becomes `(v × len_baked) >> 15`, which
+     is CHEAPER than the design's divide and needs no `src_frames`. Cost: the
+     track target's unit differs from the def's `:loop-start` frames.
+  2. **Source frames, converted to Q15 by the EXPORTER**, which knows
+     `srcFrames`. Keeps one unit everywhere. Cost: the exporter must know which
+     sample a track has bound at the moment of the curve — fine for one
+     binding, a new diagnostic for a track that re-binds (drum kits).
+  3. **An i32 width class.** Exact, no compile-time sample knowledge. Cost: a
+     third width in `targetWidth`, a 6-byte PARAM_SET, and PARAM_SWEEP needs a
+     wide variant (a new opcode) — the most expensive of the three for the
+     least musical gain.
+  Recommendation: 1, with the def keeping frames. Ask the user.
+
 ## 1. The engine
 
 ### 1.1 What the image is, and what it no longer carries

@@ -57,6 +57,27 @@ const SUPPORTED_TARGETS = new Set([
   ]),
 ]);
 
+// D5: a PCM voice has no pitch step. The engine advances its pointer one byte
+// a sample and nothing else, so a note picks a BAKED blob and that is the whole
+// pitch mechanism. Every runtime pitch move — cents, semitones, glide, a
+// (macro :pitch …) vibrato — has no hardware to land on; reject it rather than
+// drop it silently (plan-pcm-spec.md D5).
+const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
+const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
+
+function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
+  if (!trackState?.isPcmTrack) return false;
+  pushDiag(
+    diagnostics ?? [],
+    "error",
+    "E_PCM_NO_PITCH",
+    `${what} has no effect on a pcm track: a PCM voice plays its baked blob and cannot bend`,
+    src ?? { line: 1, column: 1 },
+    trackName,
+  );
+  return true;
+}
+
 // PARAM-legal targets — what an inline `:target v` / `(param-set …)` may write.
 // A strict subset of the macro-legal set: NOTE_SEMI, KEYON and VEL have no
 // meaningful absolute-write semantics (NOTE_SEMI duplicates NOTE_PITCH, KEYON is
@@ -634,19 +655,9 @@ function emitNoteForTrack(
     }
 
     const fullPitch = noteName + trackState.defaultOct;
-    const pcmMidiRaw = pitchToMidi(fullPitch);
-    const pcmMidiClamped = Math.max(36, Math.min(84, pcmMidiRaw));
-    if (pcmMidiClamped !== pcmMidiRaw) {
-      pushDiag(
-        diagnostics,
-        "warning",
-        "W_PCM_PITCH_CLAMP",
-        `pcm pitch out of practical range (C2-C6), clamped: ${fullPitch}`,
-        src,
-        trackName,
-      );
-    }
-    const pcmRate = Math.pow(2, (pcmMidiClamped - 60) / 12);
+    // Every note gets its own blob, baked at its own rate (driver.md §14.2);
+    // the 32 KB bank is the only limit, so there is no practical-range clamp.
+    const pcmRate = Math.pow(2, (pitchToMidi(fullPitch) - 60) / 12);
     const gateTicks = resolveGateTicks(trackState.defaultGate, lengthTicks);
     const mode = trackState.pcmPendingMode ?? "shot";
     const sampleDef = trackState.sampleDefs?.get(trackState.pcmSampleName);
@@ -891,8 +902,19 @@ function emitEchoReplay(trackState, events, { domain, count, by, back }, src) {
   }
 }
 
-function applyMacroEntryToState(trackState, irTarget, spec) {
+function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
   if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
+  if (
+    PCM_PITCH_TARGETS.has(irTarget) &&
+    pcmRejectsPitch(
+      trackState,
+      `(macro ${PCM_PITCH_KEYWORD[irTarget]} …)`,
+      ctx?.diagnostics,
+      ctx?.src,
+      ctx?.trackName,
+    )
+  )
+    return;
   trackState.activeMacros[irTarget] = spec;
 }
 
@@ -1377,18 +1399,18 @@ function flattenPriorityLayers(head, layers, diagnostics) {
   return base;
 }
 
-function applyTypedMacroDef(trackState, td) {
+function applyTypedMacroDef(trackState, td, ctx) {
   if (!td) return false;
   if (td.tag === "macro") {
     if (td.clear) clearMacroTarget(trackState, td.target);
-    else applyMacroEntryToState(trackState, td.target, td.spec);
+    else applyMacroEntryToState(trackState, td.target, td.spec, ctx);
     return true;
   }
   if (td.tag === "macro-list") {
     for (const entry of td.entries || []) {
       if (!entry) continue;
       if (entry.clear) clearMacroTarget(trackState, entry.target);
-      else applyMacroEntryToState(trackState, entry.target, entry.spec);
+      else applyMacroEntryToState(trackState, entry.target, entry.spec, ctx);
     }
     return true;
   }
@@ -1451,6 +1473,23 @@ function parseSampleDef(root, diagnostics) {
       nodeSrc(root),
       null,
     );
+  }
+
+  // D7: parsed and carried in the IR, but nothing downstream acts on them yet.
+  // Say so rather than let a composer think the sample was processed.
+  for (const key of [":bit-depth", ":volume", ":compress", ":reverb"]) {
+    const field = { ":bit-depth": "bitDepth", ":volume": "volume",
+      ":compress": "compress", ":reverb": "reverb" }[key];
+    if (sample[field] !== null) {
+      pushDiag(
+        diagnostics,
+        "warning",
+        "W_SAMPLE_KEY_UNIMPLEMENTED",
+        `def :sample ${key} is not implemented yet and has no effect`,
+        nodeSrc(root),
+        null,
+      );
+    }
   }
 
   // :offset / :frames slice one file into many samples (a bank). Frames, not
@@ -3074,6 +3113,17 @@ function compileChannelBody(
                 );
                 break;
               }
+              if (
+                PCM_PITCH_TARGETS.has(target) &&
+                pcmRejectsPitch(
+                  trackState,
+                  val,
+                  diagnostics,
+                  nodeSrc(node),
+                  trackName,
+                )
+              )
+                break;
               if (!PARAM_SET_TARGETS.has(target)) {
                 // A known macro keyword (:semi/:keyon) with no absolute-write
                 // meaning — valid in a (macro …) but not as an inline write.
@@ -3316,7 +3366,13 @@ function compileChannelBody(
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
         const td = typedDefs.get(val);
-        if (!applyTypedMacroDef(trackState, td)) {
+        if (
+          !applyTypedMacroDef(trackState, td, {
+            diagnostics,
+            src: nodeSrc(node),
+            trackName,
+          })
+        ) {
           emitVoice(
             td,
             trackState.tick,
@@ -3763,6 +3819,18 @@ function compileChannelBody(
       // Glide: (glide <time>) portamento from the previous note;
       // (glide <from-pitch> <time>) sets an explicit start pitch; (glide none) off.
       if (head === "glide") {
+        if (
+          pcmRejectsPitch(
+            trackState,
+            "(glide …)",
+            diagnostics,
+            nodeSrc(node),
+            trackName,
+          )
+        ) {
+          i++;
+          continue;
+        }
         const items = node.items;
         const has2 = items.length >= 3;
         if (has2) trackState.glideFrom = atomValue(items[1]);
@@ -3824,13 +3892,21 @@ function compileChannelBody(
                   // +/* misused — diagnostic pushed; drop this entry.
                 } else {
                   if (spec && op) spec.op = op;
-                  applyMacroEntryToState(trackState, target, spec);
+                  applyMacroEntryToState(trackState, target, spec, {
+                    diagnostics,
+                    src: nodeSrc(node),
+                    trackName,
+                  });
                 }
               }
               j += 2;
             } else j++;
           } else if (sym && typedDefs?.has(sym)) {
-            applyTypedMacroDef(trackState, typedDefs.get(sym));
+            applyTypedMacroDef(trackState, typedDefs.get(sym), {
+              diagnostics,
+              src: nodeSrc(node),
+              trackName,
+            });
             j++;
           } else j++;
         }
@@ -4058,7 +4134,8 @@ function collectDefs(roots, diagnostics) {
   const typedDefs = new Map();
   const sampleDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
-  const fileMeta = { title: null, author: null }; // v0.6: (def title/author "…")
+  // v0.6: (def title/author "…"); D10: (def pcm-voices N) picks the engine image.
+  const fileMeta = { title: null, author: null, pcmVoices: null };
   const imports = []; // v0.6 Phase 2: (import "path") — [{path, src}]
   const remaining = [];
 
@@ -4236,6 +4313,25 @@ function collectDefs(roots, diagnostics) {
         root.items[2]?.kind === "string"
       ) {
         fileMeta[name] = root.items[2].value;
+        continue;
+      }
+      // (def pcm-voices N) — how many PCM voices the driver plays, which picks
+      // the engine image and with it the DAC rate (driver.md §5). Reserved:
+      // unlike title/author there is no ordinary-def fallback for the name.
+      if (name === "pcm-voices") {
+        const n = parseIntLike(atomValue(root.items[2]));
+        if (n === null || n < 0 || n > 3) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_PCM_VOICES",
+            `(def pcm-voices N) takes 0-3 (got ${atomValue(root.items[2]) ?? "nothing"})`,
+            nodeSrc(root),
+            "global",
+          );
+        } else {
+          fileMeta.pcmVoices = n;
+        }
         continue;
       }
       const maybeTag = atomValue(root.items[2]);
@@ -4678,6 +4774,38 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
     );
   }
 
+  // D10: the PCM voice count is the engine image, and the image is a whole-song
+  // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
+  // score states it, or it is the highest pcmN track used.
+  let pcmUsed = 0;
+  for (const head of channelHeads) {
+    const m = /^pcm([1-3])$/.exec(head);
+    if (m) pcmUsed = Math.max(pcmUsed, Number(m[1]));
+  }
+  const pcmVoices = fileMeta.pcmVoices ?? pcmUsed;
+  if (pcmUsed > pcmVoices) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_PCM_VOICES",
+      `pcm${pcmUsed} needs (def pcm-voices ${pcmUsed}); this score declares ${pcmVoices}`,
+      fileSrc,
+      "global",
+    );
+  }
+  // D6: a score with PCM owns fm6 as the DAC for the whole song — the engine
+  // writes $2B once and never gives the channel back.
+  if (pcmVoices > 0 && channelHeads.has("fm6")) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_FM6_DAC",
+      "fm6 is the DAC while the score uses PCM; move the part to fm1-fm5",
+      fileSrc,
+      "global",
+    );
+  }
+
   const hasCompanionCsmRateTrack = channelHeads.has("fm3-csm-rate");
   let hasInlineCsmRate = false;
   const trackByKey = new Map();
@@ -5049,6 +5177,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
       title: fileMeta.title || filename,
       author: fileMeta.author || "unknown",
       source: filename,
+      pcmVoices,
       vals: [...vals.values()].map((v) => ({
         name: v.name,
         slot: v.slot,
