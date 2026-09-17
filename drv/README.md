@@ -50,13 +50,14 @@ npm run verify:all
 
 | gate | what it proves |
 | --- | --- |
-| `mirrors` | `68k/mml_rate.h` and the engine image describe the same sample clock |
+| `mirrors` | `68k/mml_rate.h` and the engine image describe the same sample clock; `live/src/engine-images.js` is what the light images build to |
 | `selftest` | the assembler and the emulator against their own cases |
 | `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 41 scores |
 | `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
 | `engine:1v` | the one-voice engine image in the JS machine: DAC bytes and intervals |
 | `engine:fifo` | the pair transport: FM writes per port, DAC bytes, the clock |
+| `engine:gate` | the three light images (one per PCM voice count, not shipped yet): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
 | `engine:score` | the shipped image driven by the host model on real scores |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
 
@@ -67,7 +68,9 @@ npm run sgdk:gate -- <score.mmlisp> [--seconds N] [--burn N]   # build, run, gra
 npm run sgdk:profile -- <score.mmlisp> [--pc] [--peak N]       # where the 68000's time goes
 ```
 
-Other tools: `npm run level-diff -- <score>` (where the driver is louder than
+Other tools: `npm run engine:gate:negatives` (the light gate's own faults
+must fail), `npm run emit-images` (regenerate `live/src/engine-images.js`),
+`npm run level-diff -- <score>` (where the driver is louder than
 ir-player), `engine:1v:split` / `engine:fifo:split` (the gates on the image
 with the decode, corrector and protocol placed), and the research bench's
 `dac-stream:*` scripts (`experimental/dac-stream/README.md`).
@@ -80,6 +83,7 @@ with the decode, corrector and protocol placed), and the research bench's
 | `machine.mjs` | the Mega Drive slice the engine runs in: YM2612 ports with a timer model from the chip, the bank register, PSG, the 68000's bus grab as injected stopped time |
 | `probe-analysis.mjs`, `cooperative.mjs` | reading the probe BlastEm's event log |
 | `build-engine.mjs`, `emit-bin.mjs` | assemble the generated engine; emit the image and its header |
+| `emit-images.mjs` | the light images' descriptors into `live/src/engine-images.js` |
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
 | `mmb-build.mjs`, `wav.mjs` | `.mmlisp` → MMB (+ sample bank) through the live toolchain |
 | `pairs-model.mjs` | the JS twin of `mmlpairs.c` |

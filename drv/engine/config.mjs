@@ -680,7 +680,9 @@ export function buildConfig({
     throw new Error("the one-voice profile is a 15-level build: its phase table needs the page");
   if (oneVoice && (command || ymWriter))
     throw new Error("the one-voice profile has neither the mailbox nor the pop-based writer (R28 §63.4)");
-  const ram = multi ? RAM_NV(voices) : oneVoice ? RAM_1V
+  // The light images share ONE map whatever their voice count, so nothing the
+  // host or the exporter addresses moves between them (D10 design §1.3).
+  const ram = multi ? RAM_NV(loops ? NV_MAX_VOICES : voices) : oneVoice ? RAM_1V
     : complete ? (levels === 15 ? RAM_P2_FULL_15 : RAM_P2_FULL) : voices ? RAM_P2 : RAM_P1;
   if (ram.lut && (ram.lut[1] - ram.lut[0]) >> 8 !== levels)
     throw new Error(`the RAM map has ${(ram.lut[1] - ram.lut[0]) >> 8} level pages, not ${levels}`);

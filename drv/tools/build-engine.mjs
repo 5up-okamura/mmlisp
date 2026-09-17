@@ -14,8 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assemble } from "./z80asm.mjs";
 import { buildConfig, PCM1, PCM1_OPS, PCM1_READY_MARK, PCM1_SILENCE, PCM1_OP_LIMIT, pcm1Base,
-  EXPANDER_STEPS } from "../engine/config.mjs";
+  EXPANDER_STEPS, PCMN_L, NV_MAX_VOICES } from "../engine/config.mjs";
 import { generateSplit } from "../engine/decode-split.mjs";
+import { generate, LP_LIGHT_AT } from "../engine/gen-stream.mjs";
 import { protocolLayout } from "../engine/protocol.mjs";
 import { FIFO_PAIRS } from "../engine/pair-host.mjs";
 
@@ -67,4 +68,144 @@ export function buildEngine() {
     stamp: cfg.stamp,
   };
   return { bytes, header, cfg, gen: r.gen, placement: r.gen.placement, symbols: built.symbols };
+}
+
+// ── THE LIGHT IMAGES (.claude/memory/plan-pcm-d10-design.md §1) ────────────
+//
+// One image per PCM voice count, chosen by the score's `(def pcm-voices N)`.
+// No phase decode, no corrector, no protocol — `generate()` alone — the rung
+// levels, no octave step, the loop-capable six-piece edge. The periods are the
+// highest the generator places at the 100% work ceiling (the user's choice),
+// MEASURED with `npm run dac-stream:light`; re-run it after any change to the
+// pieces and write what it finds here. The build refuses a period that no
+// longer places rather than quietly shipping a slot that overruns.
+//
+// Until S2 of the design the SHIPPED image is still `buildEngine()` above;
+// nothing a score or an SGDK project runs uses these yet.
+
+export const LIGHT_IMAGES = {
+  1: { period: 249, lapBlocks: 7 },
+  2: { period: 354, lapBlocks: 5 },
+  3: { period: 538, lapBlocks: 3 },
+};
+/** Pairs a second the expander is sized for: the host's wire (design §1.7). */
+export const LIGHT_WIRE = 960;
+export const LIGHT_WORK_TARGET = 1.0;
+
+export function lightImageConfig(voices) {
+  const img = LIGHT_IMAGES[voices];
+  if (!img) throw new Error(`no light image for ${voices} voices (1..${NV_MAX_VOICES})`);
+  const sampleMaster = img.period * 15;
+  const lapSeconds = (img.lapBlocks * 16 * sampleMaster) / 53693175;
+  return buildConfig({ voices, complete: true, pairs: true, signedSource: true, production: true,
+    loops: true, stepVoices: 0, workTarget: LIGHT_WORK_TARGET, meanTarget: LIGHT_WORK_TARGET,
+    sampleMaster, lapBlocks: img.lapBlocks,
+    xpSteps: Math.max(8, Math.ceil(LIGHT_WIRE * lapSeconds)) });
+}
+
+/**
+ * HOW MANY IDLE PAIRS MUST FOLLOW A GENERATION PAIR before the next staged
+ * store for the same voice (design §2.3), computed from THIS image's slots.
+ *
+ * A generation consumed by the expander in slot `a` is seen by the voice's
+ * first detection piece in a later slot; the staged bytes it names are read by
+ * APPLY (END, WRAP) and, for a start, by START (the source) in later slots
+ * still. A store for the same voice consumed strictly between `a` and that
+ * last read would be applied by the wrong generation. Inside one slot the
+ * pieces run before the expander, so a store consumed IN the reading slot is
+ * safe. The answer is the most expander steps that can fall in that window,
+ * over every step of the lap and every voice.
+ */
+function idleAfterGeneration(cfg, sites) {
+  const n = cfg.cycleSlots, B = cfg.blockSamples;
+  const [pSG, pEG, pAP] = LP_LIGHT_AT[cfg.voices];
+  const aSlots = sites.map((x) => x.a);
+  const slotsAt = (v, bv) => {
+    const out = [];
+    for (let s = 0; s < n; s++) if ((((s + cfg.lead - cfg.voiceOffsets[v]) % B) + B) % B === bv) out.push(s);
+    return out;
+  };
+  // The first slot of `list` strictly after absolute slot `after` (unrolled laps).
+  const nextAfter = (list, after) => {
+    for (let lap = Math.floor(after / n); ; lap++)
+      for (const s of list) if (lap * n + s > after) return lap * n + s;
+  };
+  const stepsBetween = (a, z) => {
+    let k = 0;
+    for (let lap = Math.floor(a / n); lap * n <= z; lap++)
+      for (const s of aSlots) { const t = lap * n + s; if (t > a && t < z) k++; }
+    return k;
+  };
+  let worst = 0;
+  for (let v = 0; v < cfg.voices; v++) {
+    const sg = slotsAt(v, pSG), eg = slotsAt(v, pEG), ap = slotsAt(v, pAP), st = slotsAt(v, 0);
+    for (const a of aSlots) {
+      const startApply = nextAfter(ap, nextAfter(sg, a));
+      worst = Math.max(worst, stepsBetween(a, nextAfter(st, startApply)));
+      worst = Math.max(worst, stepsBetween(a, nextAfter(ap, nextAfter(eg, a))));
+    }
+  }
+  return worst;
+}
+
+/** Everything a host, the exporter or a model needs to know about one image. */
+export function lightDescriptor(cfg, gen, symbols, bytes) {
+  const sites = gen.expander.sites;
+  const state = cfg.ram.glob[0] + 0x30;
+  return {
+    voices: cfg.voices,
+    periodCycles: cfg.periodCycles,
+    periodMaster: cfg.profile.sampleMaster,
+    rateHz: +cfg.rateHz.toFixed(3),
+    lapSamples: cfg.cycleSlots,
+    stepsPerLap: cfg.xpSteps,
+    lead: cfg.lead,
+    blockSamples: cfg.blockSamples,
+    voiceOffsets: cfg.voiceOffsets,
+    lightAt: LP_LIGHT_AT[cfg.voices],
+    xpSlots: sites.map((x) => x.a),
+    idleAfterGen: idleAfterGeneration(cfg, sites),
+    lutPage: cfg.ram.lut[0] >> 8,
+    silence: PCM1_SILENCE,
+    fifo: cfg.ram.fifo[0],
+    fifoPairs: FIFO_PAIRS,
+    state,
+    opStride: 9,
+    opLimit: PCM1_OP_LIMIT,
+    fifoLo: state + PCMN_L.fifoLo,
+    ready: state + PCMN_L.ready,
+    readyMark: PCM1_READY_MARK,
+    binSize: bytes.length,
+    codeEnd: symbols.get("code_end"),
+    stamp: cfg.stamp,
+  };
+}
+
+/**
+ * One light image: `{ bytes, cfg, gen, symbols, descriptor }`.
+ * `fault: "mis-cost"` puts one uncosted `nop` in the mix — the gate's TIME
+ * negative, nothing else.
+ */
+export function buildLightImage(voices, { fault = null } = {}) {
+  const cfg = lightImageConfig(voices);
+  const gen = generate(cfg);
+  if (gen.slots.some((s) => s.row.pad < 0) || gen.placement.worst.workPct > 100 * LIGHT_WORK_TARGET)
+    throw new Error(`the ${voices}-voice light image no longer places at period ${LIGHT_IMAGES[voices].period}`
+      + ` (worst ${gen.placement.worst.workPct}%) — re-run npm run dac-stream:light`);
+  let text = gen.text;
+  if (fault === "mis-cost") {
+    text = text.replace(/^mix_one:$/m, "mix_one:\n        nop");
+    if (text === gen.text) throw new Error("the mis-cost fault found no mix_one");
+  } else if (fault) throw new Error(`unknown image fault ${fault}`);
+  const dir = mkdtempSync(join(tmpdir(), "mmlisp-light-"));
+  let built;
+  try {
+    const path = join(dir, "engine.z80");
+    writeFileSync(path, text);
+    built = assemble(path);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  const bytes = Uint8Array.from(built.bytes);
+  if (bytes.length > cfg.ram.lut[1])
+    throw new Error(`the ${voices}-voice light image is ${bytes.length} B, past the level pages`);
+  return { bytes, cfg, gen, symbols: built.symbols, descriptor: lightDescriptor(cfg, gen, built.symbols, bytes) };
 }

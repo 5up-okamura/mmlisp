@@ -505,21 +505,23 @@ export const nvEdgeCost = (cfg) => Array.from({ length: cfg.voices }, (_, v) => 
 export const LP_LIGHT_AT = { 1: [11, 12, 13], 2: [11, 12, 13], 3: [1, 12, 13] };
 const lpS = (cfg, key, v) => `$${(pcm1Base(cfg) + PCMN_L[key](v)).toString(16)}`;
 
-// THE TWO GENERATION PIECES ARE BRANCH-FREE. Latching the generation is
-// correct whether or not it moved (an unchanged value latched again is the
-// same value), so the piece needs no arm: the difference is turned into a
-// mask by `add a,$ff / sbc a,a` and the mask is what the later pieces test.
+// THE TWO GENERATION PIECES ARE BRANCH-FREE, AND READ THE GENERATION ONCE.
+// Latching is correct whether or not it moved (an unchanged value latched
+// again is the same value), so the piece needs no arm: the difference becomes
+// a mask by `add a,$ff / sbc a,a`, and the value latched is the one compared
+// — main B carries it, which is dead at every piece boundary of this profile
+// (the pad's `ld b,k / djnz` owns it otherwise). No `exx`: nothing here touches
+// the mixer's register set.
 const lpGenPiece = (cfg, v, gen, last, mask, what) => [
-  op("exx", 4, { what }),
-  op(`ld   a,(${lpS(cfg, gen, v)})`, 13),
-  op(`ld   hl,${lpS(cfg, last, v)}`, 10),
-  op("sub  (hl)", 7, { what: "zero exactly when the generation did not move" }),
+  op(`ld   a,(${lpS(cfg, gen, v)})`, 13, { what }),
+  op("ld   b,a", 4, { clobbers: ["b"] }),
+  op(`ld   a,(${lpS(cfg, last, v)})`, 13),
+  op("sub  b", 4, { what: "zero exactly when the generation did not move" }),
   op("add  a,$ff", 7, { what: "carry = moved" }),
   op("sbc  a,a", 4, { what: "$ff = moved, $00 = not" }),
   op(`ld   (${lpS(cfg, mask, v)}),a`, 13),
-  op(`ld   a,(${lpS(cfg, gen, v)})`, 13),
-  op("ld   (hl),a", 7, { what: "latched, unconditionally" }),
-  op("exx", 4),
+  op("ld   a,b", 4),
+  op(`ld   (${lpS(cfg, last, v)}),a`, 13, { what: "latched: the value just compared" }),
 ];
 const lpEdgeStartGen = (cfg, v) => lpGenPiece(cfg, v, "startGen", "lastStart", "startMask",
   `voice ${v} edge: start generation`);
@@ -1120,7 +1122,9 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   P("        ld   sp,STACK_TOP");
   const boot = [];
   const bootWrite = (reg, val, what) => boot.push(...ymWrite(reg, val, what));
-  bootWrite(YM.R_DACEN, 0x80, "DAC enable");
+  // The light image leaves $2B to the sequencer (plan-pcm-d10-design.md §3.6):
+  // a score without PCM keeps fm6 as FM.
+  if (!cfg.loops) bootWrite(YM.R_DACEN, 0x80, "DAC enable");
   // The shipped image sets no timer: it keeps none, and $24..$27 are the
   // sequencer's to write through the pair stream (R28 step 4).
   if (!cfg.production) {
@@ -1391,7 +1395,9 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     const lut = cfg.multi ? buildRungs() : buildLut(cfg.levels, { signed: !!cfg.signedSource });
     for (let i = 0; i < lut.length; i += 16)
       P(`        db   ${[...lut.slice(i, i + 16)].join(",")}`);
-    P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);
+    // The light image ends at the last level page: the ring and everything
+    // above it are the Z80's to initialise (plan-pcm-d10-design.md §1.3).
+    if (!cfg.loops) P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);
   } else {
     P(`        ds   ${hex(cfg.ram.wave[0])}-$, 0     ; the waveform page the harness fills`);
   }

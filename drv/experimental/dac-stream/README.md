@@ -52,8 +52,10 @@ block). Placed and assembled, not run.
 | 2 | 10,111.7 Hz | 9,597 | 80 | mix + expander A |
 | 3 | 6,653.4 Hz | 6,313 | 48 | mix + an edge piece + expander A (18 pieces over 16 positions) |
 
-Edge pieces (voice 0): start-gen 82, end-gen 82, apply 138, compare 65, wrap
-97, start 81 cycles. The design that uses these numbers is
+Edge pieces (voice 0): start-gen 75, end-gen 75, apply 138, compare 65, wrap
+97, start 81 cycles. The images themselves are built by
+`tools/build-engine.mjs` `buildLightImage(voices)` from the periods this study
+finds, and graded by `npm run engine:gate`. The design that uses these numbers is
 `.claude/memory/plan-pcm-d10-design.md`.
 
 ## The stop-length listening set (plan-pcm-spec.md D9, study item 1, 2026-09-17)
