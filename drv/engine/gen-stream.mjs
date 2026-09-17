@@ -32,7 +32,7 @@
 // for an event that happens once every 167 samples. The interrupt is what the
 // old engine's structure was built around and it is what this one drops.
 import { stampLine, GLOB, YM, PCM1, PCM1_SILENCE, PCM1_READY_MARK, pcm1Base, expanderSites,
-  PCMN } from "./config.mjs";
+  PCMN, PCMN_L } from "./config.mjs";
 import { buildLut, buildClamp, CLAMP_SIZE, lutPages, pageIsALevel, SILENCE, buildRungs } from "./lut.mjs";
 import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.mjs";
 
@@ -185,6 +185,25 @@ function slotWork(cfg, slotIndex, fill = { dead: DEAD_DEFAULT }, commandPlan = n
     // exactly as the one-voice edge — so no two voices share an edge slot.
     const B = cfg.blockSamples;
     const at = cfg.voiceOffsets.map((o) => (b - o + B) % B);
+    if (cfg.loops) {
+      // THE LOOP-CAPABLE EDGE (D10): six pieces a voice a block, each constant
+      // time and none heavier than the expander's A piece.
+      // The three light pieces sit where the voices' edges collide least
+      // (LP_LIGHT_AT, searched over the piece costs); COMPARE, WRAP and START
+      // are fixed at b14, b15 and b0 by the END contract.
+      const [pSG, pEG, pAP] = LP_LIGHT_AT[cfg.voices];
+      at.forEach((bv, v) => { if (bv === 0) work.push(...lpEdgeStart(cfg, v)); });
+      work.push(...callMix(cfg));
+      at.forEach((bv, v) => {
+        if (bv === pSG) work.push(...lpEdgeStartGen(cfg, v));
+        if (bv === pEG) work.push(...lpEdgeEndGen(cfg, v));
+        if (bv === pAP) work.push(...lpEdgeApply(cfg, v));
+        if (bv === B - 2) work.push(...lpEdgeCompare(cfg, v));
+        if (bv === B - 1) work.push(...lpEdgeWrap(cfg, v));
+      });
+      if (xpPlan) work.push(...(xpPlan.get(slotIndex) ?? []));
+      return work;
+    }
     at.forEach((bv, v) => { if (bv === 0) work.push(...nvEdgeStart(cfg, v)); });
     work.push(...callMix(cfg));
     at.forEach((bv, v) => {
@@ -451,10 +470,129 @@ const nvEdgeStart = (cfg, v) => [
 ];
 
 /** The N-voice pieces' costs, for the study's report. */
-export const nvEdgeCost = (cfg) => Array.from({ length: cfg.voices }, (_, v) => ({
+export const nvEdgeCost = (cfg) => Array.from({ length: cfg.voices }, (_, v) => (cfg.loops ? {
+  startGen: cost(lpEdgeStartGen(cfg, v)), endGen: cost(lpEdgeEndGen(cfg, v)),
+  apply: cost(lpEdgeApply(cfg, v)), compare: cost(lpEdgeCompare(cfg, v)),
+  wrap: cost(lpEdgeWrap(cfg, v)), start: cost(lpEdgeStart(cfg, v)),
+} : {
   stop: cost(nvEdgeStop(cfg, v)), compare: cost(nvEdgeCompare(cfg, v)),
   park: cost(nvEdgePark(cfg, v)), start: cost(nvEdgeStart(cfg, v)),
 }));
+
+// ── THE LOOP-CAPABLE EDGE (plan-pcm-spec.md D10) ──────────────────────────
+//
+// A voice is a pointer, an END and a WRAP. At every block edge: if the
+// pointer has reached END it is sent to WRAP. A shot's WRAP is the silence
+// page (it parks and re-parks for ever, as today); a loop's WRAP is its loop
+// start and its END the loop end; a note-off RETARGETS END to the sample's
+// end and WRAP to silence, so the release tail plays out and parks. A loop
+// point moved by a curve is the same RETARGET. Six pieces a voice a block,
+// at the voice's own phase:
+//
+//   b11 START-GEN  startGen moved: latch it, startMask and applyMask := $ff
+//   b12 END-GEN    endGen moved:   latch it, applyMask := $ff
+//   b13 APPLY      applyMask:      live END, WRAP := the staged ones; clear
+//   b14 COMPARE    parkMask := pointer >= live END
+//   b15 WRAP       the rung page; parkMask: pointer := live WRAP
+//   b0  START      startMask:      pointer := staged source; clear (before the mix)
+//
+// Why END/WRAP may be applied before the pointer: COMPARE then judges the OLD
+// pointer against the NEW END, and a spurious park sends it to the new WRAP —
+// which b0 overwrites with the staged source before the first mix of the
+// block. Nothing is read that the host might still be writing: the staged
+// bytes are read at b13 and b0, and the host's three-IDLE rule after a
+// generation bump keeps the next staged store behind the edge.
+export const LP_LIGHT_AT = { 1: [11, 12, 13], 2: [11, 12, 13], 3: [1, 12, 13] };
+const lpS = (cfg, key, v) => `$${(pcm1Base(cfg) + PCMN_L[key](v)).toString(16)}`;
+
+// THE TWO GENERATION PIECES ARE BRANCH-FREE. Latching the generation is
+// correct whether or not it moved (an unchanged value latched again is the
+// same value), so the piece needs no arm: the difference is turned into a
+// mask by `add a,$ff / sbc a,a` and the mask is what the later pieces test.
+const lpGenPiece = (cfg, v, gen, last, mask, what) => [
+  op("exx", 4, { what }),
+  op(`ld   a,(${lpS(cfg, gen, v)})`, 13),
+  op(`ld   hl,${lpS(cfg, last, v)}`, 10),
+  op("sub  (hl)", 7, { what: "zero exactly when the generation did not move" }),
+  op("add  a,$ff", 7, { what: "carry = moved" }),
+  op("sbc  a,a", 4, { what: "$ff = moved, $00 = not" }),
+  op(`ld   (${lpS(cfg, mask, v)}),a`, 13),
+  op(`ld   a,(${lpS(cfg, gen, v)})`, 13),
+  op("ld   (hl),a", 7, { what: "latched, unconditionally" }),
+  op("exx", 4),
+];
+const lpEdgeStartGen = (cfg, v) => lpGenPiece(cfg, v, "startGen", "lastStart", "startMask",
+  `voice ${v} edge: start generation`);
+const lpEdgeEndGen = (cfg, v) => lpGenPiece(cfg, v, "endGen", "lastEnd", "applyMask",
+  `voice ${v} edge: end generation (retarget)`);
+
+const lpEdgeApply = (cfg, v) => [
+  op("exx", 4, { what: `voice ${v} edge: apply END and WRAP` }),
+  op(`ld   a,(${lpS(cfg, "applyMask", v)})`, 13),
+  op(`ld   hl,${lpS(cfg, "startMask", v)}`, 10),
+  op("or   (hl)", 7, { what: "a start applies END and WRAP too" }),
+  ...balanced("z", [
+    op(`ld   hl,(${lpS(cfg, "stEnd", v)})`, 16),
+    op(`ld   (${lpS(cfg, "liveEnd", v)}),hl`, 16, { what: "END := the staged end" }),
+    op(`ld   hl,(${lpS(cfg, "stWrap", v)})`, 16),
+    op(`ld   (${lpS(cfg, "liveWrap", v)}),hl`, 16, { what: "WRAP := the staged wrap" }),
+    op("xor  a", 4),
+    op(`ld   (${lpS(cfg, "applyMask", v)}),a`, 13, { what: "consumed" }),
+  ], `voice ${v}: nothing to apply`),
+  op("exx", 4),
+];
+
+const lpEdgeCompare = (cfg, v) => (v === 0 ? [
+  op("exx", 4, { what: "voice 0 edge: compare" }),
+  op(`ld   hl,${lpS(cfg, "liveEnd", 0)}`, 10),
+  op("ld   a,e", 4),
+  op("sub  (hl)", 7),
+  op("inc  l", 4),
+  op("ld   a,d", 4),
+  op("sbc  a,(hl)", 7),
+  op("sbc  a,a", 4),
+  op("cpl", 4),
+  op(`ld   (${lpS(cfg, "parkMask", 0)}),a`, 13),
+  op("exx", 4),
+] : [
+  op("exx", 4, { what: `voice ${v} edge: compare` }),
+  op(`ld   hl,(${lpS(cfg, "liveEnd", v)})`, 16),
+  op(`ld   a,(mv${v}+1)`, 13),
+  op("sub  l", 4),
+  op(`ld   a,(mv${v}+2)`, 13),
+  op("sbc  a,h", 4),
+  op("sbc  a,a", 4),
+  op("cpl", 4),
+  op(`ld   (${lpS(cfg, "parkMask", v)}),a`, 13),
+  op("exx", 4),
+]);
+
+const lpEdgeWrap = (cfg, v) => [
+  op(`ld   a,(${lpS(cfg, "level", v)})`, 13, { what: `voice ${v} edge: the rung its next block runs at` }),
+  op(`ld   (mix_v${v}+1),a`, 13),
+  op("exx", 4),
+  op(`ld   a,(${lpS(cfg, "parkMask", v)})`, 13),
+  op("or   a", 4),
+  ...balanced("z", v === 0
+    ? [op(`ld   de,(${lpS(cfg, "liveWrap", 0)})`, 20, { what: "the pointer goes to WRAP" })]
+    : [op(`ld   hl,(${lpS(cfg, "liveWrap", v)})`, 16), op(`ld   (mv${v}+1),hl`, 16)],
+  `voice ${v}: not wrapping`),
+  op("exx", 4),
+];
+
+const lpEdgeStart = (cfg, v) => [
+  op("exx", 4, { what: `voice ${v} edge: start (the pointer)` }),
+  op(`ld   a,(${lpS(cfg, "startMask", v)})`, 13),
+  op("or   a", 4),
+  ...balanced("z", [
+    ...(v === 0
+      ? [op(`ld   de,(${lpS(cfg, "stSrc", 0)})`, 20, { what: "DE' := the staged source" })]
+      : [op(`ld   hl,(${lpS(cfg, "stSrc", v)})`, 16), op(`ld   (mv${v}+1),hl`, 16)]),
+    op("xor  a", 4),
+    op(`ld   (${lpS(cfg, "startMask", v)}),a`, 13, { what: "consumed" }),
+  ], `voice ${v}: no start pending`),
+  op("exx", 4),
+];
 
 const mixRoutine = (cfg) => (cfg.multi ? mixRoutineN(cfg) : cfg.oneVoice ? mixRoutine1v(cfg) : cfg.voices >= 2 ? [
   // Two voices. Voice 0's contribution is parked in the ring slot the sample
@@ -722,7 +860,7 @@ function balanceArms(arms) {
 
 function expanderRoutines(cfg) {
   const base = pcm1Base(cfg);
-  const fifoLo = `$${(base + (cfg.multi ? PCMN.fifoLo : PCM1.fifoLo)).toString(16)}`;
+  const fifoLo = `$${(base + (cfg.loops ? PCMN_L.fifoLo : cfg.multi ? PCMN.fifoLo : PCM1.fifoLo)).toString(16)}`;
   // The three arms, priced.
   const store = [
     op(`add  a,${base & 0xff}`, 7, { what: "STORE: the op is an offset into the state block" }),
@@ -825,8 +963,19 @@ function nvExpanderPlan(cfg) {
     for (let j = 0; j < S; j++) {
       let a = Math.max(at, Math.floor((j * n * squeeze) / S));
       while (a < n && left[a] < r.aCycles) a++;
+      // THE ROOMIEST SLOT IN REACH, not the first that fits (D10): a site that
+      // lands on an edge slot makes that slot the lap's worst and sets the
+      // rate. Within the step's own spacing, take the slot with the most room.
+      if (cfg.loops) {
+        const lim = Math.min(n, Math.floor(((j + 1) * n * squeeze) / S));
+        for (let k = a + 1; k < lim; k++) if (left[k] > left[a] && left[k] >= r.aCycles) a = k;
+      }
       let b = a + 1;
       while (b < n && left[b] < r.bCycles) b++;
+      if (cfg.loops) {
+        const lim = Math.min(n, b + 3);
+        for (let k = b + 1; k < lim; k++) if (left[k] > left[b] && left[k] >= r.bCycles) b = k;
+      }
       if (b >= n) return { failedAt: j };
       left[a] -= r.aCycles; left[b] -= r.bCycles;
       sites.push({ a, b });
@@ -1030,10 +1179,11 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     // THE N-VOICE BOOT: every voice parked on the silence page at rung 0
     // (silence), END 0, and — as in the one-voice boot — only the Z80's own
     // bytes of the state block touched: the staged fields are the 68000's.
+    const ST = cfg.loops ? PCMN_L : PCMN;
     P("; Every voice silent and parked; only the Z80's own state bytes written.");
     P("        ld   a,LUT>>8               ; page 0 — silence");
     for (let v = 0; v < cfg.voices; v++) {
-      P(`        ld   (PCM_STATE+${PCMN.level(v)}),a`);
+      P(`        ld   (PCM_STATE+${ST.level(v)}),a`);
       if (!cfg.flatLevel) P(`        ld   (mix_v${v}+1),a`);
     }
     P("        ld   hl,RING");
@@ -1049,9 +1199,14 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("        exx");
     P("        xor  a");
     for (let v = 0; v < cfg.voices; v++)
-      for (const k of ["lastStart", "lastStop", "parkMask"]) P(`        ld   (PCM_STATE+${PCMN[k](v)}),a`);
+      for (const k of cfg.loops ? ["lastStart", "lastEnd", "parkMask", "startMask", "applyMask"]
+        : ["lastStart", "lastStop", "parkMask"]) P(`        ld   (PCM_STATE+${ST[k](v)}),a`);
     P("        ld   hl,0");
-    for (let v = 0; v < cfg.voices; v++) P(`        ld   (PCM_STATE+${PCMN.liveEnd(v)}),hl`);
+    for (let v = 0; v < cfg.voices; v++) P(`        ld   (PCM_STATE+${ST.liveEnd(v)}),hl`);
+    if (cfg.loops) {
+      P("        ld   hl,PCM_SILENCE");
+      for (let v = 0; v < cfg.voices; v++) P(`        ld   (PCM_STATE+${ST.liveWrap(v)}),hl`);
+    }
     P("        ld   hl,FIFO");
     P("        ld   b,0");
     P("fifoinit:");
@@ -1061,7 +1216,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     P("        ld   ix,FIFO");
     P(`        ld   iy,${hex(pcm1Base(cfg) & 0xff00)}`);
     P("        xor  a");
-    P(`        ld   (PCM_STATE+${PCMN.fifoLo}),a`);
+    P(`        ld   (PCM_STATE+${ST.fifoLo}),a`);
     P("");
   } else if (cfg.voices) {
     P("; Levels start at unity. The host writes G_VPAGE / G_MPAGE whenever it");
@@ -1154,7 +1309,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   if (cfg.oneVoice || cfg.multi) {
     P("; Boot is done: the host may take the bus from here on (it reads this byte).");
     P(`        ld   a,${hex(PCM1_READY_MARK)}`);
-    P(`        ld   (PCM_STATE+${cfg.multi ? PCMN.ready : PCM1.ready}),a`);
+    P(`        ld   (PCM_STATE+${cfg.loops ? PCMN_L.ready : cfg.multi ? PCMN.ready : PCM1.ready}),a`);
     P("");
   }
   P("; The DAC's address latch is written ONCE. Every slot writes data only,");

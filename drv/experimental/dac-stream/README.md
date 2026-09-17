@@ -32,6 +32,30 @@ node experimental/dac-stream/machine-probe.mjs --case NAME --seconds N \
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
 
+## The light engine study (plan-pcm-d10-design.md, 2026-09-17)
+
+```
+npm run dac-stream:light                      # 1/2/3 voices, loops in, 100% ceiling, wire 960
+npm run dac-stream:light -- --target 0.95     # …with a 5% margin
+npm run dac-stream:light -- --no-loops        # the four-piece edge, for comparison
+```
+
+The highest rate the generator PLACES with nothing but the engine — no phase
+decode, no corrector, no protocol (`generate()` alone), rung levels, no octave
+step, and the loop-capable six-piece edge (`loops: true` in gen-stream.mjs:
+START-GEN / END-GEN branch-free, APPLY, COMPARE, WRAP, START; `PCMN_L` state
+block). Placed and assembled, not run.
+
+| voices | rate at 100% | at 95% | lap | binding slot |
+| --- | --- | --- | --- | --- |
+| 1 | 14,375.7 Hz | 13,610 | 112 | mix + expander A (151) |
+| 2 | 10,111.7 Hz | 9,597 | 80 | mix + expander A |
+| 3 | 6,653.4 Hz | 6,313 | 48 | mix + an edge piece + expander A (18 pieces over 16 positions) |
+
+Edge pieces (voice 0): start-gen 82, end-gen 82, apply 138, compare 65, wrap
+97, start 81 cycles. The design that uses these numbers is
+`.claude/memory/plan-pcm-d10-design.md`.
+
 ## The stop-length listening set (plan-pcm-spec.md D9, study item 1, 2026-09-17)
 
 ```

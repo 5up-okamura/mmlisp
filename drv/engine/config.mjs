@@ -340,6 +340,30 @@ export const PCMN = {
   fifoLo: 0x31, ready: 0x32, size: 0x33,
 };
 
+// THE LOOP-CAPABLE STATE BLOCK (plan-pcm-spec.md D10, design study 2026-09-17).
+// Nine 68000-writable bytes a voice from op $01: the rung page, the staged
+// start (source, END), the staged WRAP — where the pointer goes when it
+// reaches END: the loop start for a looping note, PCM_SILENCE for a shot or a
+// release — and TWO generations: `startGen` (pointer, END and WRAP := the
+// staged ones, at the next edge) and `endGen` (END and WRAP only — a RETARGET:
+// a loop point moved by a curve, or a note-off that sends the release to the
+// sample's end). Three voices end at $1B, below PORT ($20). The Z80's own
+// bytes start at $22: the live END and WRAP, the two latched generations, and
+// the three masks the edge pieces hand each other.
+export const PCMN_L = {
+  bucket: 0x00,
+  level: (v) => 0x01 + 9 * v, stSrc: (v) => 0x02 + 9 * v, stEnd: (v) => 0x04 + 9 * v,
+  stWrap: (v) => 0x06 + 9 * v, startGen: (v) => 0x08 + 9 * v, endGen: (v) => 0x09 + 9 * v,
+  port: 0x20,
+  liveEnd: (v) => 0x22 + 9 * v, liveWrap: (v) => 0x24 + 9 * v, lastStart: (v) => 0x26 + 9 * v,
+  lastEnd: (v) => 0x27 + 9 * v, parkMask: (v) => 0x28 + 9 * v, startMask: (v) => 0x29 + 9 * v,
+  applyMask: (v) => 0x2a + 9 * v,
+  fifoLo: 0x3d, ready: 0x3e, size: 0x3f,
+};
+export const PCMN_L_OPS = (v) => ({ LEVEL: 0x01 + 9 * v, SRC_LO: 0x02 + 9 * v, SRC_HI: 0x03 + 9 * v,
+  END_LO: 0x04 + 9 * v, END_HI: 0x05 + 9 * v, WRAP_LO: 0x06 + 9 * v, WRAP_HI: 0x07 + 9 * v,
+  START: 0x08 + 9 * v, RETARGET: 0x09 + 9 * v });
+
 /**
  * Where each voice's block boundary falls inside the 16-sample block. Voice v's
  * edge pieces (STOP, COMPARE, PARK, START) sit at its own four positions, so
@@ -580,6 +604,10 @@ export function buildConfig({
   stepVoices = null,
   // The study's level-free variant: no rung page, no master (see gen-stream).
   flatLevel = false,
+  // THE LOOP-CAPABLE EDGE (D10): PCMN_L's state block and the six-piece edge
+  // (START-GEN, END-GEN, APPLY, COMPARE, WRAP, START) in place of the
+  // four-piece one. Multi profile only.
+  loops = false,
 } = {}) {
   const p = sampleMaster
     ? { name: `m${sampleMaster}`, sampleMaster }
@@ -627,6 +655,7 @@ export function buildConfig({
   const timerAcycles = (timerAfm * machine.fmSampleMaster) / machine.z80Div;
 
   const multi = !!pairs;
+  if (loops && !pairs) throw new Error("the loop-capable edge is an N-voice profile variant");
   if (multi) {
     if (!complete) throw new Error("the N-voice pair profile is a complete build");
     if (!(voices >= 1 && voices <= NV_MAX_VOICES)) throw new Error(`the N-voice profile takes 1..${NV_MAX_VOICES} voices`);
@@ -676,7 +705,8 @@ export function buildConfig({
     voices, blockSamples, blocks, lead, csm, fmBurst, observeTimerB, complete, windowWait,
     oneVoice, production, signedSource,
     ...(multi ? { multi, xpSteps, voiceOffsets: voiceOffsets(voices, blockSamples),
-      stepVoices: stepVoices ?? voices, ...(flatLevel ? { flatLevel } : {}) } : {}),
+      stepVoices: stepVoices ?? voices, ...(flatLevel ? { flatLevel } : {}),
+      ...(loops ? { loops: true } : {}) } : {}),
     reserve: oneVoice || multi ? RESERVE_1V : complete
       ? (ymWriter ? RESERVE_2CH_YM : command ? RESERVE_2CH_CMD
         : correctorBudget ? RESERVE_2CH_CORR : RESERVE_2CH) : null,
