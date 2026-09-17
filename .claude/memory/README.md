@@ -81,6 +81,14 @@ Index:
   remain. D10 (2026-09-17): the BIG GOAL — no pitch, 1–3 voices per score, 6 dB
   levels, highest rate, approach XGM/MDSDRV; four questions put to the user. Read before
   touching PCM in any layer.
+- [plan-pcm-d10-design.md](plan-pcm-d10-design.md) — **THE DESIGN FOR D10,
+  written 2026-09-17, to be implemented in order (S1 engine → S2 sequencer /
+  converter / bank → S3 language → S4 SGDK host → S5 browser → S6 cleanup),
+  one step a session, `verify:all` green after each.** Three light engine
+  images (measured: 1v 14,376 / 2v 10,112 / 3v 6,653 Hz at the edge), the
+  loop-capable six-piece edge, the state block and ops, the wire, slot format
+  v2, bank v0.3, `(def pcm-voices N)`, the shared JS PCM model, the gates.
+  Delete when S6 lands.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
   one-voice pair-transport engine is the production image; a mucom88 song plays

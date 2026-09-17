@@ -307,7 +307,14 @@ count, bank baked at that image's rate; browser emulates the image (D0);
 bugs 1–3 fixed on the way; verification cut to value + time per image;
 XGM2/MDSDRV measured (item 3) as the yardstick, not as a gate.
 
-## NEXT — the design session for D10 (proposed 2026-09-17)
+## NEXT — the design is WRITTEN: plan-pcm-d10-design.md (2026-09-17)
+
+The design session ran the same day; its output is
+[plan-pcm-d10-design.md](plan-pcm-d10-design.md) — read THAT to implement.
+The generator prototype it measured is in the tree (`loops: true` profile,
+`npm run dac-stream:light`); the shipped image is untouched, verify:all green.
+
+## (superseded) the brief the design session was given
 
 The spec is decided (D10 + both answer rounds above). Proposed split: a design
 session (Fable) turns it into a concrete design, then implementation sessions
