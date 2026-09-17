@@ -14,6 +14,33 @@ generator (`npm run dac-stream:light`, experimental/dac-stream/light-study.mjs,
 the `loops: true` profile in drv/engine/gen-stream.mjs). Nothing here is an
 estimate unless it says so.
 
+## Progress
+
+- **S1 — DONE 2026-09-17.**
+  `tools/build-engine.mjs` `LIGHT_IMAGES` / `buildLightImage(voices)` /
+  `lightDescriptor`; `live/src/pcm-model.js` (`PcmEngineModel`,
+  `pcmLoopPoints`, `pcmShotPoints`, `pcmOp`, `pcmPageOfShift`);
+  `tools/engine-gate.mjs` (`npm run engine:gate`, in `verify:all`;
+  `engine:gate:negatives` proves mis-cost/wrap/idle are caught);
+  `tools/emit-images.mjs` → `live/src/engine-images.js`, checked by `mirrors`.
+  Measured rates unchanged: 14,375.7 / 10,111.7 / 6,653.4 Hz.
+  DEVIATIONS from the text below, decided while building S1:
+  1. **The IDLE count is per image, computed, not "three"** (§2.3):
+     `descriptor.idleAfterGen` = the most expander steps that can fall between
+     a generation pair's consumption and the last read of its staged bytes —
+     **pcm1 1, pcm2 1, pcm3 5**. Three would corrupt starts at pcm3. Measured:
+     one fewer than computed breaks INTENT at pcm1/pcm2.
+  2. **The generation pieces read the generation ONCE, through main B, no
+     `exx`** — 75 cycles, not 82.
+  3. **The C header is NOT emitted in S1** (§1.9 said emit-bin writes it):
+     `mmlispdrv_bin.h` is still the shipped image's, because the SGDK host
+     links it until S4. S2 adds the three images and the new op macros to the
+     C side together with the converter that uses them.
+  4. `engine:1v` / `engine:fifo` stay in `verify:all` until S2 removes the
+     shipped image; `engine:gate` runs beside them.
+  5. The model's `log` (start-apply / start / retarget) is how INTENT is
+     graded; S2's drv-player can use the same log for its own checks.
+
 ## 1. The engine
 
 ### 1.1 What the image is, and what it no longer carries
@@ -246,8 +273,9 @@ note-off is a RETARGET), `PCM_LOOP`'s old payload, `dropped_voice`,
 
 ### 2.3 The three-IDLE rule, per voice
 
-After a `START(v)` or `RETARGET(v)` pair the converter emits three IDLE pairs
-before any staged store FOR THAT VOICE (`since_gen[v] < 3`, as today's
+After a `START(v)` or `RETARGET(v)` pair the converter emits
+`idleAfterGen` IDLE pairs (per image: 1 / 1 / 5 — see Progress) before any
+staged store FOR THAT VOICE (`since_gen[v] < idleAfterGen`, as today's
 `since_start`): the expander reads up to three more pairs in the same block,
 and a staged byte overwritten before the edge would be applied by the wrong
 generation. Other voices' stores and RAW pairs are not delayed.
