@@ -234,6 +234,183 @@ the corrector's need; (3) probe XGM2/MDSDRV ROMs on BlastEm (real rate,
 interval histogram, stop behaviour, 68k load); (4) measure our 68k cost a
 frame.
 
+## D10 — THE BIG GOAL, chosen by the user (2026-09-17)
+
+The user: implementing "correctly and strictly" had become a shackle; the
+balance between the big goal and the small ones was off. Go for the big goal:
+
+* NO PITCH: no octave step (D5's key dropped; every note baked at its pitch).
+* VOICE COUNT CHOSEN PER SCORE, 1–3 (D8: one engine image per count).
+* LEVELS in 6 dB steps (D4's rung pages, master folded in).
+* AS HIGH A RATE AS POSSIBLE — approach XGM / MDSDRV.
+* LIGHT over exact (D9 direction): no phase observer, no corrector, stops not
+  repaid; VSync-only host.
+
+Open when asked "anything else before we go?" (2026-09-17), put to the user:
+(1) who writes the YM — keep the Z80 pair expander, or the 68k writes FM/PSG
+directly (the biggest rate lever; the ear accepted 200 µs stops); (2) loops
+(D3; D9 listed them) this round or later; (3) the 20% work margin — keep, or
+shrink (2v priced: 8,482 -> 9,085 Hz at 90/86%, 9,597 at 95/92%); (4) how a
+score names its voice count (a language form — needs the user's design).
+ANSWERS (user, 2026-09-17):
+(1) YM writes stay on the Z80 — the user wants a Z80-ONLY driver in the
+future, so the Z80's YM machinery should not be thrown away. Asked for more
+discussion. Measured for it (voice-study, levels, no step): the expander's
+capacity is NOT what limits 1–2 voices — wire margin 1.5x / 0.75x / minimum
+8 steps all give 1v 11,972 Hz and 2v 8,482 Hz; the wall is one slot holding
+the mix + the START edge (130–142 cyc). At 3 voices (mean-bound) the minimum
+expander lifts 5,524 -> 6,088 Hz (+10%). Lifting the 8 ms lap to a frame
+buys nothing (2v worse, 7,665). So keeping the YM on the Z80 costs ~0 at
+1–2v and ~10%+ at 3v; splitting START over two slots is the 1–2v lever.
+Z80-only caveat on record (plan-68k-split "Why"): the sequencer's median is
+19.7k cyc/frame = 33% of the Z80 — that, not the YM, is what a Z80-only
+driver pays out of the PCM.
+(2) LOOPS: IN this round (the user: other drivers do not have them). Open
+design point for later: the wrap lands on a 16-sample block edge, so the
+loop body length vs the block (exporter pads/resamples the body to a
+multiple of 16?) — to be proposed.
+(3) MARGIN: not fixed at 80%; "to the edge is fine if it plays". The margin
+only guards cost-model error (a mis-costed slot runs long -> slightly flat,
+not a crash) and real-hardware waits measured only on BlastEm.
+(4) a language setting for the voice count is fine; the form is still to be
+proposed (precedent: `(def title "Song")` metadata defs).
+ROUND 2 (user, 2026-09-17):
+(1) DECIDED: the Z80 keeps writing the YM ("let's try hard on the Z80"). The
+future Z80-only driver is designed once the whole picture is visible, not now.
+(2) LOOPS, the user's aim: loop START and END (not "a length" — corrected by
+the user) changeable per note ("to fit the performance") and DYNAMICALLY
+through curve functions; rounding to block-friendly numbers is fine. The
+language already has `:loop-start` / `:loop-end` (sample frames, relative to
+the slice) on `def :sample`, and `:mode loop` per note. So start/end are
+runtime PCM state the 68k sends (like a level), taking effect at a block
+edge, curves evaluated on the 68k. The wrap happens at the first block edge
+at/after END, so what gets rounded is END to START + a multiple of 16 (after
+the per-note bake). DECIDED, no further language design (user): on a track
+they are written like any other parameter — `:loop-start N` directly, or a
+curve (e.g. `(sin …)`, and `(macro :loop-start …)` as other params do).
+Watch: on a short single-cycle loop the rounding is a detune.
+(3) OK. The YM wait table (engine/config.mjs `wait`) already IS XGM2's
+measured one (SGDK src/snd/xgm2/drv_xgm2.s80 header: addr->data 6, $28 53,
+$30-$9E 39, $A0-$B6 22, $21-$2F 0) — the user said no need to re-check.
+(4) DECIDED: `(def pcm-voices N)`, like `(def title …)`; absent = the highest
+pcmN the score uses; a pcmN above N is a score error.
+XGM2 FACTS read from its source (2026-09-17), for the "approach XGM" target:
+100% Z80 (parses the stream and writes FM/PSG itself), 3 PCM channels 8-bit
+signed at up to 13.3 kHz (Timer A = 4 FM samples; ~269 cyc a sample), PCM
+paced by Timer A with a write/read ring buffer, loops from a 64-byte-aligned
+loop point (on/off per play), half-speed playback, NO PCM volume (volume
+commands are FM/PSG only). So its rate comes from average-cost work (timer +
+ring) and no PCM levels; ours pays the worst case every slot because CSM
+owns Timer A. Our dynamic loop length and PCM levels are what it lacks.
+Defaults stated, not asked: the Timer B study (item 2) dropped; one image per
+count, bank baked at that image's rate; browser emulates the image (D0);
+bugs 1–3 fixed on the way; verification cut to value + time per image;
+XGM2/MDSDRV measured (item 3) as the yardstick, not as a gate.
+
+## NEXT — the design session for D10 (proposed 2026-09-17)
+
+The spec is decided (D10 + both answer rounds above). Proposed split: a design
+session (Fable) turns it into a concrete design, then implementation sessions
+(Opus) build it layer by layer. The design must pin down, with the generator
+RUN (the rates are measurements, not estimates):
+* the engine per voice count 1/2/3: no observer/corrector/ladders/phase page,
+  loops at the block edge, START split over two slots, levels as rung pages,
+  no octave step, work margin to the edge — placed, with the resulting rate
+  of each image;
+* what stays IDENTICAL across the three images: RAM map, op codes, protocol,
+  and the small per-image descriptor (rate, lap, steps, voices);
+* the wire: state stores for voices 1–2, loop start/end, and the host
+  converter (mmlpairs.c + its JS twin) for pcm2/pcm3, loops and curves;
+* the sequencer/reference (C + drv-player.js) and the exporter: bake at the
+  image's rate (bug 3), loop END rounded to START + 16k after the bake, the
+  MMB header naming the image, `(def pcm-voices N)`, errors for
+  pitch/glide/vibrato on PCM (D5), fm6 per song (D6, bug 1), pcm3 OOB (bug 2);
+* the browser worklet emulating the image (D0);
+* gates proportionate to the light direction (value + time per image) and the
+  order of work, each step leaving verify:all green.
+Guard for the implementers: the user's decisions override any older designer
+document (the 15-level LUT precedent in D4) — flag a contradiction, never
+carry it silently.
+
+## D9 study item 1 — the stop-length listening set, DONE 2026-09-17, VERDICT: ALL ACCEPTABLE
+
+`npm run dac-stream:stops` (experimental/dac-stream/stop-listen.mjs; README
+section "The stop-length listening set"). sin008 through the shipped image in
+the JS machine with a bus stop of 28/60/100/200 µs at the VBlank pump (60 Hz)
+or both pumps (120 Hz); per variant a full FM+PSG+DAC mix through the
+browser's nuked cores and a DAC-only track, in drv/out/dac-stream/stop-listen/
+(gitignored — rebuild, ~45 s). `shipped` = the machine's own timing; `repaid`
+= an ideal repaying engine: plays the stop0 bytes (its sample index stays on
+the wall clock), each stop delays the next slots until a ladder sized to the
+stop (1.25 × L × stops a lap) pays it back.
+
+    stop            shipped pitch 60/120 Hz  shipped onsets >5 ms  repaid ladder/slot  repaid onsets
+    28 µs (100 cy)  0 / 0 ct                 none                  0.8 / 1.5 cyc       ≤0.1 ms
+    60 µs (215)     −6.6 / −13.3 ct          2 / 1 of 46, ~15 ms   1.6 / 3.2           ≤0.1 ms
+    100 µs (358)    −13.3 / −26.6 ct         1 / 1, ~15 ms         2.7 / 5.4           ≤0.2 ms
+    200 µs (716)    −19.9 / −40.1 ct         1 / 2, 12–16 ms       5.4 / 10.8          ≤0.3 ms
+
+THE USER'S EAR, round 1 (2026-09-17): shipped 100/200 µs at 60 and 120 Hz —
+"timing not off"; the first `carried` twin — "off". That twin was MY MODEL
+BUG: it re-timed the shipped run's bytes (onsets already at wall-clock places)
+onto a repaying clock, moving every later onset EARLY (−47 ms by the end at
+200 µs). Replaced by `repaid` above; onsets are now measured in the manifest.
+The user asked whether the set is about how much onset offset is tolerable:
+it is not mainly — shipped keeps onsets because the host's pairs place them on
+the 68k clock; what a stop costs the shipped image is PITCH (PCM flat, by an
+amount that moves with the stop length), which sin008's all-drum PCM cannot
+reveal. VERDICT, round 2 (user, 2026-09-17, after the `repaid` rebuild): "with the
+current output, none of them is a problem" — every variant, shipped and
+repaid, 28–200 µs, 60 and 120 Hz. So by ear on sin008 a bus stop of up to
+200 µs twice a frame is acceptable: the holes are inaudible, and shipped's
+unrepaid stops (−20/−40 ct) do not show on drum PCM. What the verdict does
+NOT cover: pitch on a sustained pitched PCM note against FM — the set has
+none (the test samples are 30–46 ms). If that ever matters, it is the one
+listening case left; the user did not ask for it.
+Implication for items 2–4: a 68k that writes the YM itself (longer stops) is
+not ruled out by the ear. The Timer B study (item 2) is now about PITCH and
+the VSync doubt, not about audible jitter: whether stops of this length need
+repaying at all depends on pitched PCM, and repaying them needs a reference
+that does not wrap inside the stop plus ~5–11 cyc/slot of ladder.
+
+DIRECTION (user, 2026-09-17, after the verdict): "pitch is hard to judge on
+drums, but for now I want LIGHT processing that buys features, not strict,
+exact, heavy processing" and "it would be good if VSync alone does it". Read
+as: no phase observer, no corrector — stops are simply not repaid (PCM runs
+flat by stop time / frame time, e.g. 200 µs a frame = 1.2% = −20 ct, the
+sin008 file the user accepted) — and the host pumps once a frame at VBlank
+only. The Z80's sample clock stays cycle-counted (that part is not the
+rejected mix-in-a-VBlank-ISR design). A direction, not yet a spec.
+What it frees, counted from the generator's chain (2026-09-17, levels kept,
+no octave step; per-lap cycles spread over the lap's slots):
+    decode 603 + protocol 268 (ctl/pub) + corrector 1,109 + 7 ladder jr 84
+    ≈ 2,060 cyc a lap  ->  1v 21 cyc/slot of 297 (7%), 2v 32 of 422 (8%),
+    3v 64 of 648 (10%)
+plus the 256 B phase page, the VDP read (unverified on hardware, §13.3) and
+its NTSC calibration, and the "lap <= 8.01 ms" rule (it exists for the
+corrector's one-grab-a-lap budget). ARITHMETIC ONLY, NOT PLACED: at 3 voices
+(mean-bound) −64 cyc/slot suggests ~6,200–6,300 Hz vs 5,524; at 1–2 voices the
+worst slot (a START edge) binds, so the gain is smaller. The protocol's boot/
+commit generations are judged through the corrector today ("build both"), so
+how much of the 268 really goes needs the generator. VSync-only also halves
+the wire (480 pairs/s, MMLP_AHEAD_ONE 48) — fewer expander steps, a longer
+grab; whether 480 pairs/s carries dense scores (`late` count) is unmeasured.
+Consequence for the study round: item 2 (Timer B as phase reference) loses its
+purpose under this direction; items 3 (what XGM2/MDSDRV do — do they repay at
+all?) and 4 (our 68k cost a frame) still inform it.
+
+FINDING (measured, then predicted exactly from one number): THE H-COUNTER
+REFERENCE WRAPS EVERY SCANLINE (3,420 master = 228 Z80 cycles), so the
+corrector reads a stop MODULO a line, folded into ±114 cycles — 215 reads as
+−13 (the engine is slowed 13 MORE), 358 as −98, 716 as +32; the 1,500-master
+contract IS half a line. Past it the shipped corrector repays the wrong
+number, not nothing. Consequences for the 68k-direct-write question: (a) any
+stop over ~32 µs needs a reference with a longer wrap — Timer B's period is
+16 FM samples × m = 16,128·m master = 1,075·m Z80 cycles (300 µs at m=1),
+which is the direct link to study item 2; (b) the ladder must carry L·f of
+every second (200 µs × 120 Hz ≈ 9–11 cyc/slot vs today's 1.4); today's
+ladder carrying the debt would end sin008 50–305 ms behind.
+
 ## Cleanup — DONE 2026-09-15 (step 1 of the order above)
 
 Health found before it: verify:all green; the dac-stream research bench green
