@@ -41,6 +41,39 @@ estimate unless it says so.
   5. The model's `log` (start-apply / start / retarget) is how INTENT is
      graded; S2's drv-player can use the same log for its own checks.
 
+- **S2 — DONE 2026-09-17.** The shipped driver now IS the light images: the
+  sequencer (C ≡ drv-player, 41 scores), slot format v2, the converter (C ≡
+  JS twin, 41 scores), bank v0.3 + MMB v0.3 header (PCM voices in flags bits
+  2-3), `mmlispdrv_bin.h` with the three images, the SGDK host booting the
+  score's image, `engine:score` on 12 real scores through their own images.
+  The one-voice image, `engine:1v`, `engine:fifo`, `mmlispdrv.bin` and
+  `stop-listen.mjs` are gone. verify:all green; `engine:gate:negatives` green.
+  DEVIATIONS / DECISIONS TAKEN WHILE BUILDING S2:
+  1. **$2B is sent on the score's first PCM note** (the design said frame 0 by
+     pcm-voices). Same result for a PCM score, and it did not wait for S3.
+  2. **The armed frame now stops at PCM_NOTE_ON too.** Removing the PCM lead
+     exposed that the armed dispatch only stopped at FM/PSG notes, so PCM notes
+     sounded in the armed frame, a frame early.
+  3. **The MMB header's PCM voice count is written in S2**, from
+     `metadata.pcmVoices` when present (S3) else the highest `pcmN` track
+     (`export-mmb.js scorePcmVoices`). MMB VERSION_MINOR is 3.
+  4. **Kept until S6**: `mmb.js`'s old clock/ring/bake constants
+     (`mucom-pcm.js` and `lut-blob.js` still import them), the LUT_TABLE
+     section, `drv/engine/` decode/corrector/protocol/pair-host/pcm1-ref
+     modules (the research bench imports them).
+  5. **`sgdk:gate` stops with a message** until S4 ports its grading to the
+     images (its DAC reference was the one-voice image's).
+  6. **The SGDK host keeps two pumps × 8 pairs** for now; S4 moves to VSync-only.
+     `MMLispStats.dropped/stepRounded` → `faults` + `image`.
+  7. **drv-player live path**: the DAC bytes come from `PcmEngineModel` fed the
+     player's own commands at once (no pair delay). An SE that steals a looping
+     PCM voice restarts that note at SE end (the engine keeps no position);
+     muting a PCM track parks its voice.
+  8. **`mml_done` / `_done` no longer wait for PCM tails.**
+  9. **A/B baseline**: m3-pcm-master went 528 → 0 mismatches (the PCM lead had
+     moved its master changes a frame early); re-frozen.
+  10. SYNC on m3-pcm-sync: PCM onsets −0.3..−1.3 ms against the fm1 key-on.
+
 ## 1. The engine
 
 ### 1.1 What the image is, and what it no longer carries

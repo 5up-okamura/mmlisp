@@ -1,6 +1,6 @@
 # MMLispDRV Architecture — 68k sequencer + Z80 DAC/write engine
 
-MMLispDRV plays MMB v0.2 (`docs/mmb.md`, `docs/opcodes.md`) on a Mega Drive. The
+MMLispDRV plays MMB v0.3 (`docs/mmb.md`, `docs/opcodes.md`) on a Mega Drive. The
 68000 runs the sequencer; the Z80 keeps the DAC clock and puts the sequencer's
 chip writes on the YM2612. This document defines both halves, the interface
 between them (§6), and the interactive-playback model the language is built
@@ -16,10 +16,11 @@ Two processors:
   host glue turns that frame into `{op, val}` pairs, writes them into Z80 RAM
   in short bus grabs from the VBlank and HBlank interrupts (§6.6), and writes
   the PSG itself. The MMB lives in 68k ROM and is read as a plain byte array.
-- **Z80 — the engine.** Plays one PCM voice through the fm6 DAC on a fixed
-  9,987.57 Hz clock taken from its own instruction stream, and consumes the
-  pairs: YM2612 register writes and the PCM voice's state (§5). It evaluates
-  nothing: every value arrives register-ready.
+- **Z80 — the engine.** Plays one to three PCM voices through the fm6 DAC on a
+  fixed clock taken from its own instruction stream, and consumes the pairs:
+  YM2612 register writes and the PCM voices' state (§5). There is one engine
+  image per PCM voice count, each at its own rate; the score names the one it
+  plays on. It evaluates nothing: every value arrives register-ready.
 
 **Who keeps which clock.** The DAC's sample clock is the Z80's instruction
 stream — no interrupt and no timer. The music's frame clock is the 68000's
@@ -52,17 +53,17 @@ that must not disturb it.
 
 The YM2612 writes go through the Z80 rather than straight from the 68000
 because the 68000 would have to hold the Z80's bus for every write and its
-BUSY wait, which stops the DAC. Pairs are copied in grabs the engine's phase
-corrector repays (§5.1). The PSG is on the VDP's bus, so the 68000 writes it
-directly and stops nothing.
+BUSY wait, which stops the DAC. Pairs are copied in short grabs; a grab is a
+bus stop, and no stop is repaid (§5.1). The PSG is on the VDP's bus, so the
+68000 writes it directly and stops nothing.
 
 ### 1.2 Fixed limits
 
-**8-bit DAC output** (YM2612), **one PCM voice** in the shipped engine (§14),
-**no runtime resampling** (PCM pitch is baked per note by the exporter, §14.2),
-and **bus stops the driver does not own** — SGDK halts the Z80 around joypad
-reads and VBlank DMA; the engine repays up to 1,500 master clocks of stop per
-80 samples, and beyond that the DAC runs slow by the unrepaid time
+**8-bit DAC output** (YM2612), **one to three PCM voices** (one engine image
+per count, §5), **no runtime pitch** (PCM is baked per note at the image's
+rate by the exporter, §14.2), **one 32 KB sample bank a song** (§5.4), and
+**bus stops**: the 68000's grabs and SGDK's own halts around joypad reads and
+VBlank DMA stop the Z80, and the DAC runs slow by the time the bus was held
 (`drv/sgdk/README.md`, "Bus stops that are not the driver's").
 
 ## 2. Interactive Playback Model
@@ -182,7 +183,7 @@ PPQN 96 at 60 fps gives fractional ticks per frame for almost every tempo
 
 Not supported. The tempo increments assume 60 Hz (the correction would be a
 6/5 scale applied at TEMPO_SET), and the sample bank is baked for the NTSC DAC
-rate (§14.2).
+rates (§14.2).
 
 ### 3.4 Latency of host calls
 
@@ -265,17 +266,16 @@ tempo-independent.
 
 **The armed frame also runs the score's head.** Dispatch returns early while
 the track is armed, at the first opcode that sounds or consumes time
-(`$10..$13`): the leading VOICE_SET / PARAM_SET / macro binds run in the armed
+(`$10..$13`, and `PCM_NOTE_ON`): the leading VOICE_SET / PARAM_SET / macro binds run in the armed
 frame, the notes wait for the next one. The head of a score generates far more
 writes than the per-frame cap (§4), so it spills across several frames either
 way; arming keeps the voice applies ahead of the notes, so no note sounds under
 a half-applied patch.
 
-**PCM tracks lead by one frame.** A PCM track is promoted in its own armed frame
-instead of the next one, and from then on runs one frame ahead of every other
-track. The host converter holds each frame's PCM commands for one frame (§6.6),
-which cancels the lead, so a PCM hit and an FM hit written on the same beat
-sound together (within ~1 ms on the machine gate, `tests/m3-pcm-sync.mmlisp`).
+PCM tracks are armed like every other track, and the converter sends a frame's
+PCM commands ahead of its register writes (§6.6), so a PCM hit and an FM hit
+written on the same beat sound together (within ~1.5 ms in the score gate,
+`tests/m3-pcm-sync.mmlisp`).
 
 `drv-player.js` implements this (`armed`), and `ir-player.captureRegisterLog`
 mirrors it (`_drvSetupShift`) so the A/B gate compares like with like: the
@@ -335,69 +335,86 @@ PCM voices have their own state (§14).
 
 ## 5. The Z80 Engine
 
-The engine is generated, not hand-written: `drv/engine/` generates it and
-`drv/tools/build-engine.mjs` assembles the image an SGDK project uploads
-(`drv/sgdk/mmlispdrv_bin.h`, which carries every address below as an ABI
-constant).
+The engine is generated, not hand-written: `drv/engine/gen-stream.mjs`
+generates it and `drv/tools/build-engine.mjs` assembles one image per PCM voice
+count. `drv/sgdk/mmlispdrv_bin.h` carries the three images and every address
+below as an ABI constant; `live/src/engine-images.js` carries the same
+descriptors for the exporter and the browser. The images share the RAM map, the
+state block and the op layout; they differ only in voice count, rate, lap and
+expander steps.
+
+| image | PCM voices | DAC period (Z80 cycles) | rate | lap (samples) | expander steps a lap | IDLE pairs after a generation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pcm1` | 1 | 249 | 14,375.68 Hz | 112 | 8 | 1 |
+| `pcm2` | 2 | 354 | 10,111.71 Hz | 80 | 8 | 1 |
+| `pcm3` | 3 | 538 | 6,653.43 Hz | 48 | 8 | 5 |
+
+A score without PCM plays on `pcm1`, which is also its FM/PSG writer.
 
 ### 5.1 The clock — an unrolled lap of constant-time slots
 
 - **No interrupt, no timer.** Interrupts are disabled from boot. The engine is
-  an **80-slot unrolled lap**; each slot is 358 or 359 Z80 cycles (5 slots =
-  1,792 cycles exactly), and each writes one DAC byte: **9,987.57 Hz**
-  (`master / 5376`, 166.674 samples an NTSC frame).
+  an unrolled lap of slots; each slot is exactly the DAC period and writes one
+  DAC byte.
 - **The slot boundary is the `$2A` write.** Every slot starts with its DAC
   write, so an interval equals the slot length by construction; everything
-  else a slot does — mixing, the block edge, the pair expander — is placed
-  inside the slot by the generator and padded to a constant length on every
-  path (branches with arms of equal length, not masks). A slot's work stays
-  under 84% of its length.
-- **The phase corrector.** Once a lap the engine reads the VDP's H counter,
-  decodes the phase against a calibrated table (`drv/engine/phase-table.json`),
-  and shortens the following slots to repay a 68000 bus stop of up to
-  **1,500 master clocks per 80 samples**. That budget is what every bus grab
-  spends (§6.6). A longer stop is not repaid: the DAC runs slow by the rest.
-- **YM writes.** The pair expander (§6.1) runs at 16 fixed sites a lap. The
+  else a slot does — the mix, the voices' block edges, the pair expander — is
+  placed inside the slot by the generator and padded to a constant length on
+  every path (branches with arms of equal length, not masks). The slot that
+  binds each image's rate is filled to 100% of its length.
+- **Bus stops are not repaid.** While the 68000 holds the bus the Z80 executes
+  nothing and the DAC holds its byte; the lap then carries on at its own rate.
+  The DAC runs slow by the time the bus was held.
+- **YM writes.** The pair expander (§6.1) runs at fixed slots of the lap. The
   generator's analyzer checks the whole schedule against the YM2612's
   per-register settling times — including the BUSY each slot's own DAC write
   raises — so the engine polls nothing.
 
 ### 5.2 RAM map
 
+The same for the three images.
+
 | Region | Address | Contents |
 | ------ | ------- | -------- |
-| code | `$0000–$0BFF` | 2,623 B used |
-| level pages | `$0C00–$1AFF` | 15 pages × 256: level k = k/14 of unity, biased to unsigned (§5.3) |
-| phase table | `$1B00–$1BFF` | the corrector's decode table |
+| code | `$0000–$10FF` | boot, the lap, the mix, the expander |
+| clamp | `$1100–$12FF` | the saturating add of two voices' terms, 512 B |
+| rung pages | `$1300–$1AFF` | 8 pages: page 0 silence, page 7 − r the rung `s >> r` (§5.3) |
+| — | `$1B00–$1BFF` | unused |
 | sample ring | `$1C00–$1CFF` | finished samples, 18 ahead of the DAC |
 | pair page | `$1D00–$1DFF` | 128 `{op, val}` pairs (`MMLISPDRV_FIFO`, §6.1) |
-| protocol | `$1E60–$1E7F` | boot/phase generation and commit bytes the 68000 writes before start |
-| globals | `$1F00–$1F7F` | the PCM state block at `$1F30` (`MMLISPDRV_STATE`), the pair index at `$1F57` (`FIFO_LO`), the ready mark at `$1F58` (`0xD2`) |
+| — | `$1E00–$1EFF` | unused |
+| globals | `$1F00–$1F7F` | the PCM state block at `$1F30` (`MMLISPDRV_STATE`, §6.1), the pair index at `$1F6D` (`FIFO_LO`), the ready mark at `$1F6E` (`0xD2`) |
 | stack | `$1F80–$1FFF` | |
 
-The image is 7,168 bytes uploaded at `$0000`: the code, the level pages and the
-phase table. `MMLISPDRV_PROTO_VER` (11) names the layout.
+An image is 6,912 bytes uploaded at `$0000`: the code, the clamp and the rung
+pages. `MMLISPDRV_PROTO_VER` (12) names the layout.
 
-### 5.3 The PCM voice
+### 5.3 The PCM voices
 
-- **One voice.** The source is a 16-bit pointer into the sample bank's window,
-  advanced each sample by a power-of-two step (1, 2, 4 or 8 bytes) held in a
-  self-modified `add`. No resampling (§14.2).
-- **Levels are table reads.** The sample goes through the voice's level page
-  and then the master level page — two `ld a,(hl)` lookups, constant time at
-  every level — and comes out biased for the DAC. 15 levels, linear:
-  level k = k/14 of unity (§14).
-- **16-sample blocks.** At each block edge, in constant time: START copies the
-  staged source, end and step when the start generation differs from the one
-  last acted on; STOP sets END to 0; COMPARE parks when the pointer has reached
-  END; PARK points the source at `$FF00` in the window — the bank's top page,
-  which the exporter keeps silent. Generations rather than flags, so no bus
-  grab can land between a set and a clear.
-- **The end.** END is `sampleEnd − 16·step`, so the block that reaches it
-  never reads past the sample; up to 16 samples of a sample's tail are not
-  played.
-- **The image boots at level 0**, so the parked voice is silent until the host
-  has set the sample bank.
+- **A voice is a pointer, an END and a WRAP.** The pointer walks the sample
+  bank's window one byte a sample. At every block edge, if the pointer has
+  reached END it goes to WRAP. A shot's WRAP is the silence page (`$FF00`), so
+  it parks and stays parked; a loop's END is its loop end and its WRAP its loop
+  start; a release moves END to the sample's end and WRAP to silence, so the
+  tail plays out and parks. A loop point moved during a note is the same move.
+- **Levels are table reads.** A voice's byte goes through its rung page — the
+  master is already folded in by the host — and comes out biased; a second and
+  a third voice are summed through the clamp table, saturating in voice order.
+  Every path is constant time.
+- **16-sample blocks.** Each voice's block starts at its own phase (0; 0 and 8;
+  0, 5 and 11) and carries six constant-time pieces: two generation checks
+  (branch-free: a moved START generation marks a start, a moved RETARGET
+  generation marks a retarget), APPLY (END and WRAP := the staged ones), COMPARE
+  (pointer ≥ END), WRAP (the rung page for the next block; the pointer to WRAP
+  if COMPARE said so) and, before the block's first mix, START (the pointer :=
+  the staged source). Generations rather than flags, so no pair can land
+  between a set and a clear.
+- **The END contract.** COMPARE sees the pointer after the block's fifteenth
+  mix, so END is the last byte to play, plus one, less 16: the voice wraps at
+  the last edge before it would read past. Blobs are whole blocks (§14.2), so a
+  shot plays every byte and a loop's rounding (§14) is exact.
+- **The image boots with every voice parked at rung 0**, silent until the host
+  starts one.
 
 ### 5.4 Sample banking
 
@@ -416,18 +433,32 @@ PSG bytes (§6.6); the engine executes the pairs (§6.1).
 
 ### 6.1 Pairs
 
-A 128-pair page at `$1D00`. The engine reads 16 pairs a lap at fixed expander
-sites, writes IDLE over each pair it consumed, and publishes its next position
+A 128-pair page at `$1D00`. The engine reads one pair at each of its expander
+slots, writes IDLE over each pair it consumed, and publishes its next position
 (`FIFO_LO`, a byte offset into the page).
 
 | op | effect |
 | --- | --- |
-| `$00`..`$21` | store: `(PCM_STATE + op) := val` — `$00` is a bucket (IDLE), `$01` voice level page, `$02` master level page, `$03..$07` the staged start (source, `END = sampleEnd − 16·step`, step), `$08` start generation, `$09` stop generation |
+| `$00`..`$1F` | STORE: `(PCM_STATE + op) := val` — `$00` is a bucket (IDLE) |
 | `$20` | PORT: the YM port the RAW pairs after it go to |
 | `$22`..`$B6` | RAW: a YM register write on the current port |
 
-A start is copied from the staged bytes at the next block edge when the start
-generation differs from the one last acted on; a stop likewise.
+The state block, nine ops a voice (v = 0..2):
+
+| op | name | meaning |
+| --- | --- | --- |
+| `$01 + 9v` | LEVEL | the voice's rung page (`LUT_PAGE` + 0 silence .. + 7 unity), the master folded in |
+| `$02/$03 + 9v` | SRC | staged start: the blob's window address |
+| `$04/$05 + 9v` | END | staged END (§5.3) |
+| `$06/$07 + 9v` | WRAP | staged WRAP |
+| `$08 + 9v` | START | a new value: source, END and WRAP := the staged ones at the voice's next edges |
+| `$09 + 9v` | RETARGET | a new value: END and WRAP := the staged ones; the pointer keeps playing |
+
+A generation is detected a few expander steps before its staged bytes are
+read, so a staged store for the same voice consumed in between would be
+applied by the wrong generation. The host therefore follows a START or
+RETARGET pair with the image's `idleAfterGen` IDLE pairs (§5) before any
+staged store for that voice; the count is computed from the image's own slots.
 
 **The frequency latch is chip-wide.** The YM2612 holds one `$A4`-group and one
 `$AC`-group upper-byte latch for both ports, so a port-1 upper can clobber a
@@ -444,7 +475,6 @@ consumes.
 
 ```
 [u8 n_writes]                         ; frame total
-[u8 chunk]                            ; the sequencer's PCM sample count for the frame
 [u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
 { [u8 n_psg] [val × n_psg]            ; SN76489
   [u8 n_fm0] [{reg,val} × n_fm0]      ; YM2612 port 0
@@ -457,23 +487,17 @@ the frame's writes are in generation order (§4).
 
 ### 6.3 PCM commands
 
-Variable-length, opcode-first, every field register-ready for the sequencer's
-PCM model (§14). The host converter maps them onto the engine's one voice
-(§6.6).
+Opcode-first, every address resolved by the sequencer (§14).
 
 | Op | Name | Payload |
 | -- | ---- | ------- |
-| 0x01 | `PCM_START` | voice u8, flags u8, shift u8, ksh u8, bank u16, ptr u16, left u16, loop_len u16, tail u16, inc_frac u16, inc_int u8 — 17 B |
-| | | `shift` 0–7 is the attenuation; **8 means mute** — the voice keeps advancing silently (§14) |
-| 0x02 | `PCM_STOP` | voice u8 — a looped voice starts its release tail; a shot is unaffected (it plays to its end) |
+| 0x01 | `PCM_START` | voice u8, shift u8, src u16, end u16, wrap u16 — 8 B |
 | 0x03 | `PCM_VOL` | voice u8, shift u8 |
-| 0x04 | `PCM_LOOP` | voice u8, loop_len u16, left u16 — retarget a running voice's loop region |
-| 0x05 | `PCM_MASTER` | shift u8 — the attenuation applied to the finished sum (§14.1); sent when the shift moves, not when `master` does |
+| 0x04 | `PCM_RETARGET` | voice u8, end u16, wrap u16 — a release, or a loop point moved |
+| 0x05 | `PCM_MASTER` | shift u8 — sent when the master's shift moves, not when `master` does |
 
-`left` is the byte countdown to the current boundary (loop end, or sample end
-for a shot) and `tail` the extra distance from the loop end to the sample end,
-which `PCM_STOP` adds to `left` when the release begins. `ksh` is the
-segment bound `ceil(log2(inc_int + 1))`.
+`shift` is the voice's attenuation 0–4 on the 6 dB grid; **8 means mute**.
+`src`, `end` and `wrap` are window addresses (§5.3).
 
 ### 6.4 Val slots
 
@@ -508,20 +532,23 @@ Every control call takes effect on the next frame rendered (§3.4).
 
 ### 6.6 The host: converter, pumps and timing
 
-- **The converter** (`drv/68k/mmlpairs.c`) turns a frame into pairs: FM writes
-  with a PORT pair where the port changes and each pitch pair kept whole; PCM
-  commands into state stores **one frame late**, cancelling the sequencer's PCM
-  lead (§4.2); only the staged bytes that changed (a repeated hit is one pair);
-  three pairs between a START and the next staged store. PSG bytes go to a
-  queue the pumps write to `$C00011` one grab period late, so they land with
-  the FM they were cued with. `pcm2`/`pcm3` commands and `PCM_LOOP` are dropped
-  and counted (`MMLispStats.dropped`); a start whose increment is not a power of
-  two plays at the nearest octave step (`stepRounded`).
+- **The converter** (`drv/68k/mmlpairs.c`) turns a frame into pairs: the PCM
+  commands first, as state stores — the voice's LEVEL page with the master
+  folded in, only the staged bytes that changed (a repeated hit is one pair),
+  then the generation, and `idleAfterGen` IDLE pairs before the next staged
+  store for that voice (§6.1) — then the FM writes, with a PORT pair where the
+  port changes and each pitch pair kept whole. PSG bytes go to a queue the
+  pumps write to `$C00011` one grab period late, so they land with the FM they
+  were cued with. A command for a voice the booted image does not have is a
+  fault (`MMLispStats.faults`).
+- **The image** is booted by `MMLisp_loadScore` from the MMB header's PCM voice
+  count (`MMLisp_init` boots `pcm1`); booting another resets the Z80 and
+  rewrites the bank register.
 - **Two grabs a frame, from interrupts** — VBlank, and HBlank at line 93, 131
   lines apart both ways on NTSC, so the two never fall in one 80-sample window.
   A grab reads the engine's index, then writes **eight pairs** (IDLE-padded)
   at `H = index read last grab + 32` with four `movep.l` — about
-  1,100–1,320 master clocks. It never writes behind pairs not yet read and
+  1,100–1,320 master clocks of bus stop. It never writes behind pairs not yet read and
   never across the page end. If the fresh index shows the engine already at or
   past `H`, the grab writes nothing and the pairs go back to the queue (a late
   grab; `MMLispStats.late`). 960 pairs a second.
@@ -531,9 +558,7 @@ Every control call takes effect on the next frame rendered (§3.4).
   clear of SGDK's DMA-flush halt right after the VBlank interrupt.
 - **VBlank-only mode** (`MMLisp_attachVBlankOnly`, or
   `MMLisp_setPumpsPerFrame(1)` for a game's own handlers): one grab a frame at
-  VBlank, writing `MMLP_AHEAD_ONE` = 48 pairs ahead. 480 pairs a second; the DAC
-  rate is unchanged, but the grab shares a corrector window with SGDK's
-  DMA-flush halt (sin008: 0.10% slow against 0.015% with two pumps).
+  VBlank, writing `MMLP_AHEAD_ONE` = 48 pairs ahead. 480 pairs a second.
 
 ## 7. Level Composition
 
@@ -677,8 +702,10 @@ three outcomes.
 
 ## 11. Current Limits
 
-- **PCM:** one voice (`pcm1`), no sample loops, no runtime pitch; the four PCM
-  paths do not yet agree (§14.3).
+- **PCM:** one to three voices, one engine image per count; one 32 KB sample
+  bank a song; no runtime pitch. Loop points come from the sample definition —
+  changing them per note or by a curve is not in the language yet — and the
+  browser's PCM does not yet emulate the images (§14.3).
 - **Wire:** 960 pairs a second (480 in VBlank-only mode). The song's opening
   setup is primed at load (§4.1), but a mid-song voice change on several
   channels (~30 writes each) takes a few frames to reach the chip.
@@ -688,10 +715,13 @@ three outcomes.
 - **`(trig N)` markers** are tracked by the sequencer but not surfaced to the
   host.
 - **PAL** is not supported (§3.3).
-- **Not yet run on hardware.** In particular the pumps write Z80 RAM with
-  `movep.l` (byte cycles as the 68000 defines them; correct in BlastEm).
-- **SGDK's own Z80 halts** (joypad reads, VBlank DMA) are outside the engine's
-  1,500-master budget (§1.2).
+- **Not yet run on hardware, and the light images not yet on BlastEm.** The
+  images are graded in the JS machine (§12.4); the slot that binds each rate
+  has no margin, and the one wait the model charges from measurement — a read
+  through the 68k window — was measured on BlastEm. The pumps write Z80 RAM
+  with `movep.l` (byte cycles as the 68000 defines them; correct in BlastEm).
+- **Bus stops** — the pumps' and SGDK's own (joypad reads, VBlank DMA) — are
+  not repaid (§1.2).
 
 ## 12. Verification Strategy
 
@@ -700,7 +730,7 @@ every gate runs on the host. `cd drv && npm run verify:all` runs §12.2–§12.5
 
 ### 12.1 `drv-player.js` — the executable spec
 
-Executes MMB v0.2 with the §4 loop order and **integer-only math** (8.8
+Executes MMB v0.3 with the §4 loop order and **integer-only math** (8.8
 accumulators, the §7/§8 integer tables — no floats), in the live environment as
 an alternate backend, and emits real frames through the real cap/spill queue
 (§4) so it specifies the interface too, not just the music.
@@ -728,28 +758,29 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 41 scores with
-late grabs injected, with render leads 0, 1 and 2 (which must give the same
-wire), with one and two grabs a frame, and through the frame-view path the
-SGDK host uses.
+same slot streams into pairs and PSG bytes, byte for byte, on 41 scores — each
+with its own image's configuration — with late grabs injected, with render
+leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
+frame, and through the frame-view path the SGDK host uses.
 
 ### 12.4 The engine
 
-The engine image runs in `tools/machine.mjs` — a Z80 emulator plus the Mega
-Drive slice it talks to: the YM2612's ports with a timer model written from the
-chip, the bank register, the PSG port, and the 68000's bus grab as injected
-stopped time. The instrument judges VALUE, TIME and BUS separately.
+The images run in `tools/machine.mjs` — a Z80 emulator plus the Mega Drive
+slice it talks to: the YM2612's ports with a timer model written from the chip,
+the bank register, the PSG port, and the 68000's bus grab as injected stopped
+time. The reference for every DAC byte is `live/src/pcm-model.js`, the engine
+as a state machine, driven by the pairs the expander actually consumed.
 
-- `npm run engine:1v` — the one-voice image: every DAC byte against a
-  block-level reference driven by the host's pokes, the interval of every
-  sample, starts and stops at block edges.
-- `npm run engine:fifo` — the pair transport: every FM register write the chip
-  saw is the stream's, per port and in order, every DAC byte matches the
-  reference driven by the state the engine itself stored, and the clock did not
-  move.
-- `npm run engine:score` — the shipped image driven by the host model on real
-  scores (sin008 among them): every FM write per port in order, every PSG byte,
-  every DAC byte, the clock, and PCM-vs-FM sync.
+- `npm run engine:gate` — each image with a host writing pairs once a frame:
+  every interval, every DAC byte, what each START and RETARGET applied against
+  what the host meant, the settling table, and every pair consumed once, in
+  order, at the image's own slots. Cases: shots, loops and releases,
+  retargets, level walks, clipping, a roll, a start and a retarget as close as
+  the IDLE window allows. `npm run engine:gate:negatives` requires an uncosted
+  instruction, a wrapping add and a missing IDLE window to fail it.
+- `npm run engine:score` — real scores through the image each names, driven by
+  the host model: every FM write per port in order, every PSG byte, every DAC
+  byte, the clock, and PCM-vs-FM sync.
 
 ### 12.5 `ir-player` A/B — characterization
 
@@ -800,19 +831,20 @@ note-timing skew does not read as a level difference.
 The reference computes every constant table (F-number, PSG period, level
 offsets, curve units) from `live/src/ir-utils.js`, and
 `tools/gen-c-tables.mjs` emits the same tables as C for the 68k
-(`drv/68k/tables.c`, and the sample clock in `drv/68k/mml_rate.h`). Neither side
-re-derives a table. `npm run mirrors` checks that `mml_rate.h` and the engine
-image header describe the same sample clock.
+(`drv/68k/tables.c`, and the images' rate stamps in `drv/68k/mml_rate.h`).
+Neither side re-derives a table. `npm run mirrors` checks that `mml_rate.h`, the
+engine header and `live/src/engine-images.js` describe the same images, and that
+the two generated files are what the images build to now.
 
 ### 12.7 On the machine
 
-`npm run sgdk:gate -- <score>` builds a scratch SGDK project with
+`npm run sgdk:gate -- <score>` — not yet moved to the light images; it stops
+with a message until it is. It builds a scratch SGDK project with
 `install-sgdk`, runs it in a patched headless BlastEm (`drv/blastem/`) that logs
 every DAC byte, every YM/PSG access by CPU and every bus grab, and grades the
 log: every FM write per port and every PSG byte in the score's order, every DAC
-byte against the reference, every bus stop under 1,500 master clocks, PCM-vs-FM
-sync, and whether the FM's lag behind the reference's frames climbs (a lost
-frame). `npm run sgdk:profile` times the driver's functions in the same build.
+byte against the reference, the bus stops, PCM-vs-FM sync, and whether the FM's
+lag behind the reference's frames climbs (a lost frame). `npm run sgdk:profile` times the driver's functions in the same build.
 Needs SGDK, the m68k toolchain and the probe BlastEm (`drv/blastem/setup.sh`).
 
 The engine's research bench (`drv/experimental/dac-stream/`) carries the
@@ -950,18 +982,34 @@ change-only shadow, key edges bypass it.
 
 `pcm1`–`pcm3` are the language's PCM voices, played through the fm6 DAC.
 Samples are declared with `def :sample` and exported as a sample bank beside
-the MMB (mmb.md §10). A `PCM_NOTE_ON` in the stream becomes a `PCM_START` in
-the frame (§6.3); `PCM_NOTE_OFF` becomes `PCM_STOP`, which starts a looped
-voice's release tail — a shot plays to its end regardless.
+the MMB (mmb.md §10). A score's PCM voice count is the highest `pcmN` it uses;
+it is written in the MMB header and picks the engine image (§5).
 
-**What the shipped engine plays** (§5.3): `pcm1` only, one-shot, at the baked
-pitch or an octave step of it, with a voice level and a master level of 15
-linear steps. The host converter drops `pcm2`/`pcm3` and sample loops and
-counts them (§6.6).
+A `PCM_NOTE_ON` becomes a `PCM_START` in the frame (§6.3): the note's own
+blob, END and WRAP. A shot plays to its end. A looping note loops; its
+`PCM_NOTE_OFF` becomes a `PCM_RETARGET` to the sample's end with WRAP at
+silence, so the tail plays out.
+
+**fm6.** A score's first PCM note sends `$2B = $80`, and nothing turns the DAC
+off again: a score that plays PCM owns fm6 as the DAC from then on. A score
+without PCM never writes it, and fm6 is FM.
+
+**Loop points** are the sample's `:loop-start` / `:loop-end`, mapped to baked
+bytes by the exporter and rounded to whole blocks by the sequencer
+(`pcm_loop_points`, twin of `live/src/pcm-model.js` `pcmLoopPoints`):
+
+```
+le' = 16·round(le/16), within 16..len
+ls' = le' − 16·max(1, round((le − ls)/16)), at least 0
+END = src + le' − 16,  WRAP = src + ls'
+```
+
+so the first pass plays `[0, le')` and every later pass `[ls', le')`. On a
+one-cycle loop the rounding is a detune.
 
 **Per-channel volume (`:vel` + `:vol`).** `:vel` and `:vol` on a `pcmN` channel
 ride the FM/PSG velocity/fader ladder (2 dB/step). The sequencer composes them
-into one per-voice attenuation on the 6 dB shift grid:
+into one per-voice attenuation on the 6 dB grid:
 
 ```
 n = (15 − vel) + (31 − vol)
@@ -972,14 +1020,11 @@ mute  = (vol == 0) || (master == 0)
 
 so the same `:vel`/`:vol` mean the same loudness on a PCM voice as on FM/PSG.
 `vel` never mutes — `vol 0` is a hard mute, and so are the two master
-conditions (§14.1); a muted voice still advances, matching FM where a note
-continues silently under a 0 fader. The compose runs on the 68k once per
-`PARAM_SET VEL`/`VOL` (and for every voice on a `MASTER` change, because master
-decides the mute) and reaches the frame as `PCM_VOL`; `vel`/`vol` persist per
-voice. The converter maps a shift onto the engine's level pages as
-`level = round(14 × 2^−shift)` — 14, 7, 4, 2, 1, then 0 (silent) from shift 5.
+conditions (§14.1). The compose runs on the 68k once per `PARAM_SET VEL`/`VOL`
+(and for every voice on a `MASTER` change, because master decides the mute) and
+reaches the frame as `PCM_VOL`; `vel`/`vol` persist per voice.
 
-### 14.1 `:master` rides the sum
+### 14.1 `:master` is folded into each voice
 
 `:master` is common to every voice, so it is not in the per-voice shift. It
 reaches the frame as the voiceless `PCM_MASTER`:
@@ -988,9 +1033,9 @@ reaches the frame as the voiceless `PCM_MASTER`:
 master_shift = min(PCM_MASTER_MAX_SHIFT, round((31 − master) / 3))    # = 6
 ```
 
-and the engine applies it as a second level page after the voice's (§5.3), to
-the finished sample. Deep is muted, not mixed: `shift + master_shift ≥ 7`
-silences the voice.
+and the host folds it into each voice's rung page:
+`page = LUT_PAGE + (mute ? 0 : 7 − (shift + master_shift))`, silence past −36 dB.
+A master change re-sends the LEVEL of every voice whose page moves.
 
 **A stepped DAC level is by design.** 6 dB rungs are the model; what the level
 has to do is move when the fader moves and reach silence at `master 0`, not
@@ -998,26 +1043,19 @@ subdivide finely on the way.
 
 ### 14.2 Pitch-baked samples
 
-The engine does not resample. The exporter resamples each sample at build time
-to the rate at which the note it is played at advances one byte a DAC sample
-(mmb.md §10.1), and the sample entry says so (flags bit1). The engine can also
-advance 2, 4 or 8 bytes a sample, which plays one baked blob one, two or three
-octaves up; the exporter bakes every note at step 1.
+The engine does not resample and has no octave step. The exporter resamples
+each sample at build time, once for every note it is played at, to the rate at
+which that note advances one byte a sample at the image's DAC rate, and pads
+the blob with silence to whole 16-byte blocks (mmb.md §10.1). The bank carries
+the image's rate as its stamp, and a loader refuses a bank baked for another
+image.
 
 ### 14.3 Where the layers disagree
 
-The PCM model is being unified across the layers; today they differ:
-
-- **Voices and loops.** The language has `pcm1`–`pcm3` with loops; the C
-  sequencer and the reference model two voices with loops and emit commands for
-  them; the engine plays one voice and no loops. A `PARAM_SET VEL/VOL` on
-  `pcm3` indexes past the C sequencer's two voices.
-- **fm6.** The engine enables the DAC at boot and the host drops `$2A`/`$2B`
-  from the stream, so fm6 does not sound as FM in any song.
-- **Rate.** The bank is baked for 10,000.45 Hz (the reference's
-  `PCM_BAKE_RATE_REF`), the engine plays 9,987.57 Hz: PCM is ~2.2 cents flat
-  against FM.
-- **The browser.** The live player's PCM does not emulate the engine's rate,
-  8-bit output, voice count or level steps.
+- **The browser.** The live player's PCM does not emulate the engine images'
+  rate, 8-bit output, voice count or level steps; the MMLispDRV backend does,
+  through `live/src/pcm-model.js`.
+- **Pitch on PCM.** `:pitch`, glide and pitch macros on a `pcmN` track are
+  accepted and ignored; they are not yet errors.
 - **Unimplemented sample keys.** `:bit-depth`, `:volume`, `:compress` and
   `:reverb` are accepted and ignored.

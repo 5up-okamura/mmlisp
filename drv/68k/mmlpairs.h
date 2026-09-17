@@ -7,10 +7,13 @@
  *
  *   FM writes    -> pairs, with a PORT pair where the port changes and a
  *                   pitch pair ($A4-$A6 then $A0-$A2, either port) kept whole
- *   PCM commands -> pairs into the engine's state block: a start is the window
- *                   address, `end - 16 * step`, the step, a level page and a
- *                   new generation; a stop a new stop generation. One slot
- *                   late, to undo the sequencer's one-frame PCM lead
+ *   PCM commands -> pairs into the engine's state block (driver.md §6.1): a
+ *                   start is the voice's level page (the master folded in),
+ *                   the staged source, END and WRAP that changed, and a new
+ *                   start generation; a retarget the END and WRAP and a new
+ *                   end generation. A generation pair is followed by the
+ *                   image's `idle_after_gen` IDLE pairs before any staged
+ *                   store for the same voice
  *   PSG bytes    -> a queue the host writes straight to $C00011, one grab
  *                   period late so they land with the FM they were cued with
  *
@@ -31,25 +34,27 @@
 #include "mmlispseq.h"   /* MMLSeq, MMLFrameView: mmlp_render reads the sequencer */
 
 /* What the engine image's header says (sgdk/mmlispdrv_bin.h); passed in so
- * this file compiles on the host without SGDK's types. */
+ * this file compiles on the host without SGDK's types. The state block's ops
+ * are fixed by the ABI: voice v's LEVEL is 1 + 9v, SRC 2..3, END 4..5, WRAP
+ * 6..7, START 8, RETARGET 9 (+ 9v); 0 is IDLE. */
 typedef struct {
   uint16_t fifo;         /* the pair page in Z80 RAM */
   uint8_t fifo_pairs;    /* 128 */
-  uint8_t pairs_per_grab;/* 5 */
-  uint8_t lut_page;      /* the level family's first page */
-  uint8_t levels;        /* 15 */
-  uint8_t op_limit;      /* ops below this store into the state block */
-  uint8_t op_idle, op_level, op_master, op_src_lo, op_src_hi, op_end_lo, op_end_hi;
-  uint8_t op_step, op_start, op_stop, op_port;
-  uint8_t staged_run;    /* set by mmlp_init: src lo..step are consecutive ops */
+  uint8_t pairs_per_grab;/* what one grab writes, IDLE-padded */
+  uint8_t lut_page;      /* the rung pages' first page: + 0 silence .. + 7 unity */
+  uint8_t op_stride;     /* 9: a voice's run of ops */
+  uint8_t op_port;       /* $20 */
+  uint8_t voices;        /* PCM voices the image plays */
+  uint8_t idle_after_gen;/* IDLE pairs after a generation pair, per image */
   uint8_t ahead;         /* pairs ahead of the last-read index a grab writes at;
                             0 = MMLP_AHEAD (two grabs a frame). One grab a frame
                             needs MMLP_AHEAD_ONE (mmlpairs.c has the arithmetic) */
 } MMLPairsCfg;
 
+#define MMLP_VOICES 3
+
 #define MMLP_QUEUE 1024   /* pairs the host holds while the wire catches up */
 #define MMLP_PSG   256    /* PSG bytes held for one grab period */
-#define MMLP_HELD  128    /* one slot's PCM commands, held for the next slot */
 #define MMLP_FRAMES 8     /* frames queued ahead whose ends are remembered (a power of two) */
 #define MMLP_AHEAD_ONE 48 /* MMLPairsCfg.ahead for one grab a frame */
 
@@ -66,28 +71,27 @@ typedef struct {
    * so a grab sends only the frames whose time has come (mmlp_plan). */
   uint16_t frames_in;               /* slots taken in: the next slot's frame number */
   uint16_t end_q[MMLP_FRAMES], end_psg[MMLP_FRAMES];
-  /* The previous slot's PCM commands, sent with this one (mmlpairs.c). */
-  uint8_t held[MMLP_HELD];
-  uint16_t held_len;
   /* The producer's state. */
   uint8_t chip_port;     /* the port the engine's RAW arm currently writes */
-  uint8_t start_gen, stop_gen;
   uint8_t head;          /* H: the next pair position in the page (0..127) */
   uint8_t head_valid;    /* H has been placed relative to a read index */
-  uint8_t level_page, master_page;
-  uint8_t staged[5];     /* src lo/hi, end lo/hi, step as last sent */
-  uint8_t staged_valid;  /* ...once a start has sent them all */
-  uint8_t since_start;   /* pairs planned since the last START pair (saturating) */
+  uint8_t master_shift;  /* the last PCM_MASTER */
+  /* Per voice: the last shift byte (0xFF = none yet), the level page sent, the
+   * staged bytes as last sent (src, end, wrap; lo/hi) once a start has sent them
+   * all, the two generations, and the pairs planned since the voice's last
+   * generation pair (saturating). */
+  uint8_t shift[MMLP_VOICES], page[MMLP_VOICES];
+  uint8_t staged[MMLP_VOICES][6], staged_valid[MMLP_VOICES];
+  uint8_t start_gen[MMLP_VOICES], end_gen[MMLP_VOICES];
+  uint8_t since_gen[MMLP_VOICES];
   /* Counters a host can show. */
-  uint16_t dropped_voice;  /* PCM commands for voices this profile has not */
-  uint16_t dropped_loop;   /* PCM_LOOP commands (no loops in profile 1) */
-  uint16_t step_rounded;   /* starts whose increment was not a power of two */
+  uint16_t fault;          /* PCM commands for a voice the image does not have */
   uint16_t overflow;       /* pairs that did not fit the queue */
   uint16_t grabs, pairs_written;
   uint16_t late;           /* grabs that found the engine already past `dst` */
   /* What the last plan took, so a grab that turns out late can give it back. */
   uint16_t undo_tail;
-  uint8_t undo_port, undo_n, undo_since;
+  uint8_t undo_port, undo_n, undo_since[MMLP_VOICES];
 } MMLPairs;
 
 void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg);
@@ -151,8 +155,7 @@ uint16_t mmlp_psg_take(MMLPairs *p, uint16_t release, uint8_t *out, uint16_t max
 /* Pairs still waiting. */
 uint16_t mmlp_pending(const MMLPairs *p);
 
-/* The level page a PCM shift maps to (6 dB grid onto the linear family). */
-uint8_t mmlp_level_page(const MMLPairsCfg *cfg, uint8_t shift);
-uint8_t mmlp_master_page(const MMLPairsCfg *cfg, uint8_t shift);
+/* The rung page a voice's shift byte (8 = mute) and the master's shift name. */
+uint8_t mmlp_level_page(const MMLPairsCfg *cfg, uint8_t shift, uint8_t master_shift);
 
 #endif

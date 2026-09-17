@@ -10,8 +10,8 @@
  * The JS twin (tools/pairs-model.mjs) produces the same stream from the same
  * slots, and the gate compares the two byte for byte.
  *
- *   pairs_main <slots.bin> <fifo> <fifo_pairs> <ppg> <lut_page> <levels> <op_limit>
- *              <idle> <level> <master> <src_lo> <src_hi> <end_lo> <end_hi> <step> <start> <stop> <port>
+ *   pairs_main <slots.bin> <fifo> <fifo_pairs> <ppg> <lut_page> <op_stride> <op_port>
+ *              <voices> <idle_after_gen> [lead] [pumps]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,7 +61,7 @@ static void grab(MMLPairs *p, uint16_t release, unsigned *consumer, uint8_t *fif
 }
 
 int main(int argc, char **argv) {
-  if (argc < 19) { fprintf(stderr, "usage: see the header comment\n"); return 2; }  /* argv[19]: lead, optional */
+  if (argc < 10) { fprintf(stderr, "usage: see the header comment\n"); return 2; }  /* argv[10]: lead, optional */
   long len = 0;
   unsigned char *slots = slurp(argv[1], &len);
   if (!slots) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
@@ -71,21 +71,12 @@ int main(int argc, char **argv) {
   cfg.fifo_pairs = (uint8_t)strtol(argv[3], 0, 0);
   cfg.pairs_per_grab = (uint8_t)strtol(argv[4], 0, 0);
   cfg.lut_page = (uint8_t)strtol(argv[5], 0, 0);
-  cfg.levels = (uint8_t)strtol(argv[6], 0, 0);
-  cfg.op_limit = (uint8_t)strtol(argv[7], 0, 0);
-  cfg.op_idle = (uint8_t)strtol(argv[8], 0, 0);
-  cfg.op_level = (uint8_t)strtol(argv[9], 0, 0);
-  cfg.op_master = (uint8_t)strtol(argv[10], 0, 0);
-  cfg.op_src_lo = (uint8_t)strtol(argv[11], 0, 0);
-  cfg.op_src_hi = (uint8_t)strtol(argv[12], 0, 0);
-  cfg.op_end_lo = (uint8_t)strtol(argv[13], 0, 0);
-  cfg.op_end_hi = (uint8_t)strtol(argv[14], 0, 0);
-  cfg.op_step = (uint8_t)strtol(argv[15], 0, 0);
-  cfg.op_start = (uint8_t)strtol(argv[16], 0, 0);
-  cfg.op_stop = (uint8_t)strtol(argv[17], 0, 0);
-  cfg.op_port = (uint8_t)strtol(argv[18], 0, 0);
-  /* argv[20], optional: grabs a frame, 2 (the default) or 1 (VBlank-only). */
-  const int pumps = argc > 20 ? atoi(argv[20]) : 2;
+  cfg.op_stride = (uint8_t)strtol(argv[6], 0, 0);
+  cfg.op_port = (uint8_t)strtol(argv[7], 0, 0);
+  cfg.voices = (uint8_t)strtol(argv[8], 0, 0);
+  cfg.idle_after_gen = (uint8_t)strtol(argv[9], 0, 0);
+  /* argv[11], optional: grabs a frame, 2 (the default) or 1 (VBlank-only). */
+  const int pumps = argc > 11 ? atoi(argv[11]) : 2;
   if (pumps == 1) { advance = 34; cfg.ahead = MMLP_AHEAD_ONE; }
   static MMLPairs p;
   mmlp_init(&p, &cfg);
@@ -93,11 +84,11 @@ int main(int argc, char **argv) {
   unsigned consumer = 0, ngrab = 0;
   uint8_t fifo_lo = 0xff;
   long i = 0;
-  /* argv[19], optional: the render lead. Absent, every slot is sent as soon as
+  /* argv[10], optional: the render lead. Absent, every slot is sent as soon as
    * it is queued (release = frames queued). Given, slots are queued `lead` frames ahead of
    * their release, and each frame's two grabs pass the frame count — the SGDK
    * host's schedule (mmlispdrv.c MMLisp_frame). */
-  const int lead = argc > 19 ? atoi(argv[19]) : -1;
+  const int lead = argc > 10 ? atoi(argv[10]) : -1;
   uint16_t release = 0;
   for (;;) {
     int more = i + 2 <= len;
@@ -128,7 +119,7 @@ int main(int argc, char **argv) {
   /* Drain: more grabs with no new slots, until the queue is empty. */
   for (int g = 0; g < 4096 && mmlp_pending(&p); g++) grab(&p, p.frames_in, &consumer, &fifo_lo, &cfg, &ngrab);
   fprintf(stderr, "pairs: %u late, ", p.late);
-  fprintf(stderr, "pairs: %u grabs, %u pairs, dropped voice %u loop %u, step rounded %u, overflow %u\n",
-          p.grabs, p.pairs_written, p.dropped_voice, p.dropped_loop, p.step_rounded, p.overflow);
+  fprintf(stderr, "pairs: %u grabs, %u pairs, %u faults, overflow %u\n",
+          p.grabs, p.pairs_written, p.fault, p.overflow);
   return 0;
 }

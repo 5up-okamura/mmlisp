@@ -1,19 +1,19 @@
 // MMLispDRV — SGDK host implementation. See mmlispdrv.h for the API.
 //
-// The Z80 image is the one-voice pair-transport engine (docs/driver.md §5,
-// R28 §63): it keeps a fixed 9,987.57 Hz DAC clock and consumes {op, val}
-// PAIRS from a page in its RAM, sixteen a lap. This file is what puts them
+// The Z80 image is one of three light engines, one per PCM voice count
+// (docs/driver.md §5): each keeps its own fixed DAC clock and consumes
+// {op, val} PAIRS from a page in its RAM at fixed slots. A score's MMB header
+// names the image; MMLisp_loadScore boots it. This file is what puts the pairs
 // there. The sequencer (mmlispseq.c) renders a frame and mmlpairs.c takes it
 // from the sequencer's write queue into pairs and PSG bytes (the slot the
 // other gates see is never packed here); everything SGDK-specific is here: the
 // bring-up, the bus grab, the copy, the PSG port.
 //
-// TWO GRABS A FRAME, BOTH FROM INTERRUPTS. A grab carries eight pairs and may
-// stop the Z80 for at most 1,500 master clocks (what the engine's phase
-// corrector repays), so the wire is 960 pairs a second only if the bus is
-// taken twice a frame — and the pairs land ahead of the engine only if the
-// grabs are evenly spaced. So they come from the vertical interrupt and a
-// horizontal one at line 93, whose spacing the video timing fixes.
+// TWO GRABS A FRAME, BOTH FROM INTERRUPTS. A grab carries eight pairs, so the
+// wire is 960 pairs a second with the bus taken twice a frame, and the pairs
+// land ahead of the engine only if the grabs are evenly spaced: the vertical
+// interrupt and a horizontal one at line 93, whose spacing the video timing
+// fixes. A bus stop is not repaid — the DAC runs slow by the time it held.
 //
 // RENDERED AHEAD, SENT ON TIME. The main loop's MMLisp_frame() renders each
 // frame MMLISP_LEAD frames before its time; the pumps send only the frames
@@ -23,7 +23,7 @@
 #include "mmlispdrv.h"
 #include "mmlispseq.h"
 #include "mmlpairs.h"
-#include "mmlispdrv_bin.h"   // generated: mmlispdrv_bin[], the ABI constants
+#include "mmlispdrv_bin.h"   // generated: the images, MMLISPDRV_IMAGES[], the ABI constants
 
 // ── Z80 address space, as seen from the 68000 ───────────────────────────────
 // Byte accesses only: the Z80 bus is 8-bit, so a word access here duplicates
@@ -65,50 +65,48 @@ static u16        lateGrabs = 0;
 static vu16       releaseSink;
 static MMLPairsCfg PAIRS_CFG = {
     MMLISPDRV_FIFO, MMLISPDRV_FIFO_PAIRS, MMLISPDRV_PAIRS_PER_GRAB,
-    MMLISPDRV_LUT_PAGE, MMLISPDRV_LEVELS, MMLISPDRV_OP_LIMIT,
-    MMLISPDRV_OP_IDLE, MMLISPDRV_OP_LEVEL, MMLISPDRV_OP_MASTER,
-    MMLISPDRV_OP_SRC_LO, MMLISPDRV_OP_SRC_HI, MMLISPDRV_OP_END_LO, MMLISPDRV_OP_END_HI,
-    MMLISPDRV_OP_STEP, MMLISPDRV_OP_START, MMLISPDRV_OP_STOP, MMLISPDRV_OP_PORT,
-    0,   // staged_run: mmlp_init works it out
+    MMLISPDRV_LUT_PAGE, MMLISPDRV_OP_STRIDE, MMLISPDRV_OP_PORT,
+    1,   // voices: the booted image's (bootImage)
+    1,   // idle_after_gen: likewise
     0,   // ahead: MMLisp_setPumpsPerFrame
 };
+static u8         image = 0;           // PCM voices of the booted image, 0 = none yet
 static bool       onePump = FALSE;     // VBlank-only: one grab a frame
 
 // ── Bring-up ───────────────────────────────────────────────────────────────
 
-void MMLisp_init(void)
+// Upload and boot the image for `voices` PCM voices (1..3), then wait for its
+// ready mark. The order is the one proven on hardware by SGDK's own driver
+// loader: take the bus (which also ends reset), fill Z80 RAM while the Z80 is
+// stopped but NOT held in reset, then pulse reset with the bus released so it
+// boots at 0.
+static void writeBankRegister(void);
+static void bootImage(u8 voices)
 {
-    ready  = FALSE;
-    loaded = FALSE;
-    fifoLo = 0xff;
-    rendered = 0;
+    const MMLispDrvImage* img = &MMLISPDRV_IMAGES[voices - 1];
+    ready = FALSE;
+    image = voices;
+    PAIRS_CFG.voices = img->voices;
+    PAIRS_CFG.idle_after_gen = img->idleAfterGen;
     mmlp_init(&pairs, &PAIRS_CFG);
+    fifoLo = 0xff;
 
-    // The order proven on hardware by SGDK's own driver loader: take the bus
-    // (which also ends reset), fill Z80 RAM while the Z80 is stopped but NOT
-    // held in reset, then pulse reset with the bus released so it boots at 0.
     SYS_disableInts();
     Z80_requestBus(TRUE);
     Z80_clear();
-    Z80_upload(0, mmlispdrv_bin, MMLISPDRV_BIN_SIZE);
-    // The runtime protocol's control block, read by the engine's boot: this is
-    // run 0 of phase stretch 0 with nothing committed. And the ready mark
-    // cleared, so the poll below cannot be satisfied by a stale byte.
-    *Z80_RAM_AT(MMLISPDRV_CTL_BOOT_GEN)       = 0;
-    *Z80_RAM_AT(MMLISPDRV_CTL_BOOT_GEN + 1)   = 0;
-    *Z80_RAM_AT(MMLISPDRV_CTL_PHASE_GEN)      = 0;
-    *Z80_RAM_AT(MMLISPDRV_CTL_COMMAND_COMMIT) = 0;
-    *Z80_RAM_AT(MMLISPDRV_CTL_PHASE_COMMIT)   = 0;
-    *Z80_RAM_AT(MMLISPDRV_READY)              = 0;
+    Z80_upload(0, img->bin, MMLISPDRV_BIN_SIZE);
+    // The ready mark cleared, so the poll below cannot see a stale byte.
+    *Z80_RAM_AT(MMLISPDRV_READY) = 0;
     Z80_startReset();
     Z80_releaseBus();
     waitSubTick(50);
     Z80_endReset();
     SYS_enableInts();
+    if (smpBank) writeBankRegister();
 
-    // Boot is a few milliseconds (the level family is copied into place, the
-    // pair page cleared). Poll the ready mark for up to ~1 s; a sound driver
-    // that fails to boot must not freeze the game.
+    // Boot is a few milliseconds (the ring and the pair page cleared). Poll the
+    // ready mark for up to ~1 s; a sound driver that fails to boot must not
+    // freeze the game.
     for (u16 i = 0; i < TICKPERSECOND; i++)
     {
         Z80_requestBus(TRUE);
@@ -119,6 +117,15 @@ void MMLisp_init(void)
     }
 }
 
+void MMLisp_init(void)
+{
+    loaded = FALSE;
+    rendered = 0;
+    // The one-voice image until a score names another: it is the FM/PSG writer
+    // for a score without PCM too.
+    bootImage(1);
+}
+
 bool MMLisp_isReady(void)
 {
     return ready;
@@ -126,13 +133,21 @@ bool MMLisp_isReady(void)
 
 void MMLisp_setSampleBank(const u8* smp)
 {
+    smpBank = smp;
+    writeBankRegister();
+    // The sequencer resolves every PCM field itself and needs the bank's
+    // directory and its ROM address (driver.md §6.3).
+    if (smp && loaded) mml_load_samples(&seq, smp, 0, (u32)smp);
+}
+
+static void writeBankRegister(void)
+{
     // The Z80 reads the bank through its $8000 window, whose 32 KB bank is the
     // nine-bit register at $A06000 — written one bit at a time, LSB (A15)
     // first, and only with the bus held, since the register is in the Z80's
-    // address space. The engine never touches it: the bank is set here, once,
-    // and the parked voice reads the bank's silence page from then on.
-    smpBank = smp;
-    u32 bank = smp ? ((u32)smp >> 15) : 0;
+    // address space. The engine never touches it: the bank is set here, and
+    // a parked voice reads the bank's silence page from then on.
+    u32 bank = smpBank ? ((u32)smpBank >> 15) : 0;
     u8 bits[10];
     for (u8 i = 0; i < 9; i++) bits[i] = (u8)((bank >> i) & 1);
     // Nine stores in a grab of their own, written like the pump's: the engine
@@ -160,9 +175,6 @@ void MMLisp_setSampleBank(const u8* smp)
         : "a1", "a3", "cc", "memory");
 #endif
     busy = FALSE;
-    // The sequencer resolves every PCM field itself and needs the bank's
-    // directory and its ROM address (driver.md §6.3).
-    if (smp && loaded) mml_load_samples(&seq, smp, 0, (u32)smp);
 }
 
 bool MMLisp_loadScore(const u8* mmb)
@@ -171,6 +183,11 @@ bool MMLisp_loadScore(const u8* mmb)
     if (!len) return FALSE;
     busy = TRUE;                 // no pump while the planner is reset
     loaded = (mml_load(&seq, mmb, len) == 0);
+    // THE SCORE NAMES ITS ENGINE IMAGE (MMB header flags, the PCM voice count).
+    // Booting another one resets the Z80, which is why it happens here, before
+    // anything is primed onto the wire.
+    u8 want = (loaded && seq.pcm_voices) ? seq.pcm_voices : 1;
+    if (want != image) bootImage(want);
     if (loaded && smpBank) mml_load_samples(&seq, smpBank, 0, (u32)smpBank);
     // PRIMED AT LOAD: the neutral patch the load queues, and every track's
     // leading setup (mml_prime_tracks), leave for the chip over the frames
@@ -330,11 +347,9 @@ HINTERRUPT_CALLBACK MMLisp_hint(void)
 
 // A FRAME LEAVES FROM THE HBLANK PUMP. The VBlank pump sends only what the
 // previous frame's HBlank pump could not fit, so in the usual frame its grab
-// just reads the index. The reason is SGDK's own VBlank work: its DMA flush
-// halts the Z80 right after this interrupt (HALT_Z80_ON_DMA, ~600 master with
-// an empty queue, more with a game's DMA), and a full eight-pair grab beside it
-// put ~1,800 master in one corrector window — 295 windows in 20 s of sin008,
-// the DAC 0.08% slow. The music is a constant half-frame later for it.
+// just reads the index, away from SGDK's own VBlank work (its DMA flush halts
+// the Z80 right after this interrupt). The music is a constant half-frame
+// later for it.
 static void vblankPump(void)
 {
     hintArmed = TRUE;
@@ -358,19 +373,16 @@ void MMLisp_attachVBlankOnly(void)
     // ONE GRAB A FRAME, FROM THE VBLANK INTERRUPT — the horizontal interrupt
     // stays the game's. The wire halves (480 pairs a second): a song's start
     // is primed at load either way, but a voice change on several channels
-    // mid-song takes twice as long to reach the chip, and the one grab sits
-    // beside SGDK's DMA-flush halt in the same corrector window.
+    // mid-song takes twice as long to reach the chip.
     MMLisp_setPumpsPerFrame(1);
     SYS_setVIntCallback(vblankPump);
 }
 
 void MMLisp_attachInterrupts(void)
 {
-    // WHERE THE HBLANK PUMP GOES. The engine's phase corrector repays 1,500
-    // master of bus stop per 80 samples (8.0 ms, ~126 lines); two pumps closer
-    // than that can land in one observation and add up. Line 93 puts the pump
-    // 131 lines from the VBlank one both ways on NTSC (8.34 ms each), and 182
-    // and 131 on PAL. At line 112 the two were 7.1 ms apart and did share one.
+    // WHERE THE HBLANK PUMP GOES. Line 93 puts the pump 131 lines from the
+    // VBlank one both ways on NTSC (8.34 ms each), so the head each writes at
+    // stays ahead of what the engine consumes between them.
     hintArmed = FALSE;
     SYS_setVIntCallback(vblankPump);
     VDP_setHIntCounter(93);
@@ -468,8 +480,8 @@ void MMLisp_readStats(MMLispStats* out)
     out->grabs        = pairs.grabs;
     out->pairsWritten = pairs.pairs_written;
     out->overflow     = pairs.overflow;
-    out->dropped      = (u16)(pairs.dropped_voice + pairs.dropped_loop);
-    out->stepRounded  = pairs.step_rounded;
+    out->faults       = pairs.fault;
+    out->image        = image;
     out->fifoLo       = fifoLo;
     out->late         = lateGrabs;
     out->due          = loaded ? due() : 0;

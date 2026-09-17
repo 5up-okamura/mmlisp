@@ -1,4 +1,4 @@
-// MMB v0.2 shared tables and framing helpers.
+// MMB v0.3 shared tables and framing helpers.
 //
 // Single source of truth for the binary container, imported by BOTH the writer
 // (export-mmb.js) and the reference decoder (drv-player.js) so their opcode,
@@ -14,14 +14,20 @@
 // ── File header (mmb.md §4) ───────────────────────────────────────────────
 export const MAGIC = [0x4d, 0x4d, 0x42, 0x30]; // "MMB0"
 export const VERSION_MAJOR = 0;
-export const VERSION_MINOR = 2;
+export const VERSION_MINOR = 3;
 export const HEADER_SIZE = 12;
 
-// Header flags (mmb.md §4). Both reserved / must be 0 in v0.2 output.
+// Header flags (mmb.md §4). WIDE_OFFSETS and PAL_TIMEBASE are reserved and 0.
+// Bits 2-3 are the score's PCM voice count, 0..3: which engine image plays it
+// (live/src/engine-images.js), and so the rate its sample bank is baked at.
 export const HEADER_FLAG = {
   WIDE_OFFSETS: 1 << 0,
   PAL_TIMEBASE: 1 << 1,
 };
+export const HEADER_PCM_VOICES_SHIFT = 2;
+export const HEADER_PCM_VOICES_MASK = 0x03;
+/** The PCM voice count an MMB header's flags word names. */
+export const headerPcmVoices = (flags) => (flags >> HEADER_PCM_VOICES_SHIFT) & HEADER_PCM_VOICES_MASK;
 
 // ── Section directory (mmb.md §5) ─────────────────────────────────────────
 export const SECTION_ID = {
@@ -613,3 +619,20 @@ export function readDuration(bytes, offset) {
 export function bpmToTickIncrement(bpm) {
   return Math.round((Number(bpm) * 512) / 75);
 }
+
+// ── The light engine's sample bank (plan-pcm-d10-design.md §4.2) ──────────
+// One engine image per PCM voice count, each with its own DAC rate. A bank is
+// baked for the image its score plays on: every (sample, note) resampled to
+// the rate at which that note advances one byte a DAC sample, and padded with
+// silence to whole 16-sample blocks so the engine's block edge never cuts a
+// shot short. Loops are not unrolled — the sequencer sends loop points as they
+// are, rounded to blocks (live/src/pcm-model.js pcmLoopPoints).
+export const PCM_BLOCK = 16;
+/** Bytes of one v0.3 sample-bank entry. */
+export const SAMPLE_ENTRY_SIZE = 24;
+/** The rate to resample to so `note` advances one byte a sample at `rateHz`. */
+export function pcmBakeRateAt(note, rateHz) {
+  return rateHz / Math.pow(2, (note - 60) / 12);
+}
+/** The stamp a bank baked at `rateHz` carries, and what a loader checks. */
+export const pcmBankStamp = (rateHz) => Math.round(rateHz) & 0xffff;

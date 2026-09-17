@@ -43,8 +43,8 @@ static void mml_copy(uint8_t *dst, const uint8_t *src, uint16_t n) {
 
 /* PCM command opcodes (driver.md §6.3; slot-builder.js is the definition). */
 #define PCM_START 1
-#define PCM_STOP 2
 #define PCM_VOL 3
+#define PCM_RETARGET 4
 #define PCM_MASTER 5
 
 /* Channel ids beyond the 10 register channels (mmb.md §6.1). */
@@ -155,16 +155,15 @@ MML_HOT int16_t mml_divs(int32_t n, int16_t d) {
 }
 
 /* ── Write paths ───────────────────────────────────────────────────────────
- * Everything the sequencer emits lands in the slot queue. $2A and $2B are the
- * exception: post-split they belong to the mixer, which is the only thing that
- * knows when a voice is sounding (driver.md §14). They still update the shadow
- * — an unwritten shadow entry would let a later write of 0 be suppressed — but
- * they never cross the bus.
+ * Everything the sequencer emits lands in the slot queue. $2A is the exception:
+ * the engine writes the DAC (driver.md §14). It still updates the shadow — an
+ * unwritten shadow entry would let a later write of 0 be suppressed — but it
+ * never crosses the bus. $2B does: the sequencer claims fm6 for PCM.
  */
 /* The queue indices wrap with a mask, so its size is a power of two. */
 typedef char mml_write_queue_is_pow2[(MML_WRITE_QUEUE & (MML_WRITE_QUEUE - 1)) == 0 ? 1 : -1];
 MML_HOT void q_push(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
-  if (port == 0 && (addr == 0x2a || addr == 0x2b)) return;
+  if (port == 0 && addr == 0x2a) return;
   uint16_t next = (uint16_t)((s->q_head + 1) & (MML_WRITE_QUEUE - 1));
   if (next == s->q_tail) return; /* queue full: cannot happen on real scores */
   s->q[s->q_head].port = port;
@@ -210,55 +209,22 @@ static void pcm_emit(MMLSeq *s, const uint8_t *bytes, uint16_t n) {
   s->pcm_count++;
 }
 
-/* MUTE_SHIFT (8) is a real table entry in the mixer: a muted voice keeps
- * advancing and contributes nothing, matching FM where a note continues
- * silently under a 0 fader (driver.md §14). */
+/* MUTE (8): the host sends the silence page for it (driver.md §14). */
 static uint8_t pcm_shift_byte(const MMLPcmVoice *v) {
   return (uint8_t)(v->muted ? 8 : v->shift);
 }
 
-static void emit_pcm_start(MMLSeq *s, int vi, const MMLPcmVoice *v) {
-  /* The sample bank is bank-relative; the engine wants {ROM bank, window
-   * address} because that is what its $8000-window mapper takes. */
-  uint32_t abs = s->sample_rom_base + v->base;
-  uint8_t inc_i = (uint8_t)((v->inc >> 16) & 0xff);
-  /* 2^ksh >= the largest advance one tick can make, so the engine bounds a
-   * segment with a shift instead of a division. That is the bit length of the
-   * integer part: ceil(log2(inc_i + 1)). */
-  uint8_t ksh = 0;
-  while ((1u << ksh) < (uint32_t)inc_i + 1u) ksh++;
-  uint16_t bank = (uint16_t)(abs >> 15), addr = (uint16_t)(0x8000 + (abs & 0x7fff));
-  uint8_t c[18];
-  c[0] = PCM_START;
-  c[1] = (uint8_t)vi;
-  c[2] = (uint8_t)(1 | (v->has_loop ? 2 : 0));
-  c[3] = pcm_shift_byte(v);
-  c[4] = ksh;
-  c[5] = (uint8_t)(bank & 0xff);
-  c[6] = (uint8_t)(bank >> 8);
-  c[7] = (uint8_t)(addr & 0xff);
-  c[8] = (uint8_t)(addr >> 8);
-  c[9] = (uint8_t)(v->left & 0xff);
-  c[10] = (uint8_t)((v->left >> 8) & 0xff);
-  c[11] = (uint8_t)(v->loop_len & 0xff);
-  c[12] = (uint8_t)((v->loop_len >> 8) & 0xff);
-  c[13] = (uint8_t)(v->tail & 0xff);
-  c[14] = (uint8_t)((v->tail >> 8) & 0xff);
-  c[15] = (uint8_t)(v->inc & 0xff);
-  c[16] = (uint8_t)((v->inc >> 8) & 0xff);
-  c[17] = inc_i;
-  pcm_emit(s, c, 18);
+static void put16(uint8_t *c, uint16_t x) {
+  c[0] = (uint8_t)(x & 0xff);
+  c[1] = (uint8_t)(x >> 8);
 }
 
-/* vel + vol compose to a per-voice bit shift the mixer applies as an arithmetic
- * right shift — one instruction per sample, which is the whole reason the level
- * model is a shift here and a TL offset on FM:
+/* vel + vol compose to a per-voice attenuation on the 6 dB grid:
  *   n = (15-vel) + (31-vol);  shift = min(MML_PCM_MAX_SHIFT, round(n/3)).
- * MASTER IS NOT IN HERE (driver.md §14.1) — it rides the sum, once per DAC
- * sample, see pcm_compose_master. What master still decides here is the mute:
- * `master 0`, `vol 0`, and a total past MML_PCM_TOTAL_MAX_SHIFT are the three
- * hard mutes; vel alone never mutes. Once per PARAM_SET, so the divide is
- * nowhere near the mix path. */
+ * MASTER IS NOT IN HERE (driver.md §14.1) — the host folds it into each voice's
+ * level page. What master still decides here is the mute: `master 0`, `vol 0`,
+ * and a total past MML_PCM_TOTAL_MAX_SHIFT are the three hard mutes; vel alone
+ * never mutes. */
 static void pcm_compose_shift(MMLSeq *s, int vi) {
   MMLPcmVoice *v = &s->pcm[vi];
   int n = (15 - v->vel) + (31 - v->vol);
@@ -268,8 +234,8 @@ static void pcm_compose_shift(MMLSeq *s, int vi) {
                        || v->shift + s->pcm_master_shift
                             >= MML_PCM_TOTAL_MAX_SHIFT);
   uint8_t byte = pcm_shift_byte(v);
-  /* A dead voice has nothing to re-level: the engine dropped its state. */
-  if (v->active && byte != v->sent_shift) {
+  /* A voice that never started has no level to change: its START carries it. */
+  if (v->started && byte != v->sent_shift) {
     v->sent_shift = byte;
     uint8_t c[3] = {PCM_VOL, (uint8_t)vi, byte};
     pcm_emit(s, c, 3);
@@ -277,9 +243,7 @@ static void pcm_compose_shift(MMLSeq *s, int vi) {
 }
 
 /* Master's own shift, on the same 6 dB grid and its own deeper ceiling. Emitted
- * only when the SHIFT moves, not when master does: three `master` steps to a
- * rung, so a fade patches the engine's self-modified emit sites about seven
- * times on the way down instead of once a frame (driver.md §14.1). */
+ * only when the SHIFT moves, not when master does. */
 static void pcm_compose_master(MMLSeq *s) {
   int n = 31 - s->master;
   int shift = (n + 1) / 3; /* round(n/3) */
@@ -997,279 +961,94 @@ static void process_macros(MMLSeq *s) {
 }
 
 /* ── PCM voices (driver.md §14) ────────────────────────────────────────────
- * The 68k resolves the note into a PCM_START the engine can act on with no
- * arithmetic, then shadows the voice's position so it knows when the voice is
- * gone. It never touches a sample byte — that is the Z80's entire job.
+ * The 68k resolves a note into window addresses the engine acts on with no
+ * arithmetic: where the blob is, where the voice wraps (END) and where it goes
+ * then (WRAP). It never touches a sample byte and keeps no position — the
+ * engine owns the pointer. The loop and shot contracts are
+ * live/src/pcm-model.js, whose pcmLoopPoints / pcmShotPoints these twin.
  */
 static const uint8_t *find_sample(const MMLSeq *s, int id) {
   for (uint16_t i = 0; i < s->sample_count; i++) {
-    const uint8_t *e = s->sample_entries + (uint32_t)i * 20;
+    const uint8_t *e = s->sample_entries + (uint32_t)i * MML_SAMPLE_ENTRY;
     if (e[0] == (uint8_t)id) return e;
   }
   return 0;
 }
 
-/* 16.16 position advance per mixed sample. Computed at full precision then
- * floored, so pitch stays accurate — a table pre-divided by the rate rounds far
- * too coarsely (mmb.js pcmTickIncrement is the definition).
- *
- * The divisor is the AVERAGE samples per frame, not this frame's 166 or 167:
- * what the ear hears is the sample clock's rate and the ring absorbs the rest.
- * floor(a x DEN / NUM) with a x DEN overflowing 32 bits is split by the exact
- * identity floor(a x b / c) = (a/c) x b + floor((a%c) x b / c), whose largest
- * intermediate is (NUM-1) x DEN — 8.4M, and no 64-bit divide on the 68000. */
-static uint32_t pcm_tick_increment(int base_rate, int note) {
-  int n = clampi(note, 36, 84);
-  uint32_t per_frame = (uint32_t)base_rate * MML_PCM_MULT_FRAME[n - 36];
-  uint32_t q = per_frame / MML_PCM_SAMPLES_NUM, r = per_frame % MML_PCM_SAMPLES_NUM;
-  return q * MML_PCM_SAMPLES_DEN + (r * MML_PCM_SAMPLES_DEN) / MML_PCM_SAMPLES_NUM;
+/* A shot of `len` bytes: play it once and park on the silence page. */
+static void pcm_shot_points(uint16_t src, uint16_t len, uint16_t *end, uint16_t *wrap) {
+  *end = (uint16_t)(src + len - MML_PCM_BLOCK);
+  *wrap = MML_PCM_SILENCE;
 }
 
-static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int note) {
+/* A loop over [ls, le) baked bytes, rounded to whole blocks so the first pass
+ * plays [0, le') and every later pass [ls', le'):
+ *   le' = 16·round(le/16) within 16..len;  ls' = le' − 16·max(1, round((le−ls)/16)), ≥ 0
+ * round is half-up, (x + 8) >> 4 — exactly pcmLoopPoints. */
+static void pcm_loop_points(uint16_t src, uint32_t len, uint32_t ls, uint32_t le,
+                            uint16_t *end, uint16_t *wrap) {
+  uint32_t le2 = ((le + 8) >> 4) << 4;
+  if (le2 > len) le2 = len;
+  if (le2 < MML_PCM_BLOCK) le2 = MML_PCM_BLOCK;
+  uint32_t span = le > ls ? ((le - ls + 8) >> 4) << 4 : 0;
+  if (span < MML_PCM_BLOCK) span = MML_PCM_BLOCK;
+  uint32_t ls2 = le2 > span ? le2 - span : 0;
+  *end = (uint16_t)(src + le2 - MML_PCM_BLOCK);
+  *wrap = (uint16_t)(src + ls2);
+}
+
+static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id) {
   int vi = channel_id - CH_PCM1;
   if (vi < 0 || vi >= MML_PCM_VOICES) return;
   const uint8_t *e = find_sample(s, sample_id);
   if (!e) return;
-  uint32_t len = rd32(e, 6);
+  uint32_t len = rd32(e, 8);
   if (len == 0) return;
   MMLPcmVoice *v = &s->pcm[vi];
-  /* Same per-note velocity restore as the FM/PSG note_on (driver.md §7.1);
-   * ir-player's "vel arrives on each PCM_NOTE_ON" is the model. */
+  /* Same per-note velocity restore as the FM/PSG note_on (driver.md §7.1). */
   restore_vel_base(s, channel_id, -1);
   pcm_compose_shift(s, vi);
-  v->active = 1;
-  v->base = s->sample_blob_base + rd32(e, 2);
-  v->len = len;
-  v->has_loop = (uint8_t)(e[1] & 1);
-  v->loop_start = rd32(e, 12);
-  v->loop_end = v->has_loop ? rd32(e, 16) : len;
-  v->loop_len = v->loop_end - v->loop_start;
-  v->left = (int32_t)v->loop_end;        /* to the loop end, or the sample end */
-  v->tail = (int32_t)(len - v->loop_end); /* what a release still has to play */
-  /* A BAKED entry does not go through the pitch table: it was resampled so its
-   * anchor note advances exactly one byte a tick, and flags bits 4-7 say how
-   * many octaves above that anchor this entry sits — so the increment is a
-   * shift (driver.md §14.2). Computing it would land a fraction off and cost
-   * the mixer its no-resampler loop for a value already known exactly. */
-  v->inc = (e[1] & 2) ? ((uint32_t)0x10000u << ((e[1] >> 4) & 0x0f))
-                      : pcm_tick_increment(rd16(e, 10), note);
-  v->pos = 0;
-  v->releasing = 0;
-  /* $2B (DAC enable) is the ENGINE's: it is a consequence of voice activity,
-   * the one piece of state the Z80 already owns (driver.md §14). */
-  emit_pcm_start(s, vi, v);
-  v->sent_shift = pcm_shift_byte(v);
-}
-
-static void pcm_note_off(MMLSeq *s, int channel_id) {
-  /* A shot plays to its end regardless (opcodes.md §6); a loop leaves its loop
-   * region and plays out the tail to the sample end. */
-  int vi = channel_id - CH_PCM1;
-  if (vi < 0 || vi >= MML_PCM_VOICES) return;
-  MMLPcmVoice *v = &s->pcm[vi];
-  if (!v->active || !v->has_loop) return;
-  v->releasing = 1;
-  v->left += v->tail; /* the boundary moves from the loop end to the sample end */
-  uint8_t c[2] = {PCM_STOP, (uint8_t)vi};
-  pcm_emit(s, c, 2);
-}
-
-/* Advance every active voice over the frame's mix ticks. No samples are read —
- * this is position bookkeeping only, mirroring the engine's loop so both sides
- * retire a voice on the same tick. (A closed form exists for the non-looping
- * case; it is not worth the divergence risk until a cycle count asks for it.) */
-static void plan_push(MMLSeq *s, uint16_t at, int ticks) {
-  if (s->plan_buf[at] >= MML_PCM_PLAN_MAX) return; /* the engine falls back */
-  s->plan_buf[at]++;
-  s->plan_buf[s->plan_len++] = (uint8_t)ticks;
-}
-
-static void pcm_frame(MMLSeq *s) {
-  int any = 0;
-  s->plan_len = 0;
-  for (int i = 0; i < MML_PCM_VOICES; i++) any |= s->pcm[i].active;
-  /* The feed's clock runs whether or not anything sounds, so its remainder is
-   * carried before any early exit — otherwise the schedule slips a frame every
-   * time the DAC is idle and the sequencer stops agreeing with the engine. */
-  uint16_t want = MML_PCM_SAMPLES_NUM / MML_PCM_SAMPLES_DEN;
-  s->pcm_sched += MML_PCM_SAMPLES_NUM % MML_PCM_SAMPLES_DEN;
-  if (s->pcm_sched >= MML_PCM_SAMPLES_DEN) {
-    s->pcm_sched -= MML_PCM_SAMPLES_DEN;
-    want++;
-  }
-  /* fm6 IS CLAIMED FOR THE REST OF THE SCORE. Once PCM has sounded once the
-   * ring is kept topped up with silence and the DAC is never released, because
-   * releasing it makes the NEXT hit a PRIME frame — and a prime frame feeds
-   * nothing while it builds the lead, measured at 135 to 355 sample periods of
-   * silence, one to two whole frames, once per burst. On percussion that is a
-   * click per hit. The cost is fm6 (§14 — claimed, not owned, becomes claimed
-   * and kept); a score with no PCM never claims and is unaffected. */
-  if (!any && !s->pcm_dac_on) return;
+  /* A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on: $2B is an
+   * ordinary register write, sent once and never turned off again. */
   if (!s->pcm_dac_on) {
     s->pcm_dac_on = 1;
     ym(s, 0, 0x2b, 0x80);
   }
-  /* An empty ring is a PRIME frame: it builds the whole lead and feeds nothing
-   * (§5.1.2). Otherwise the DAC took `want` — the engine feeds before it mixes,
-   * a sample being final only after the last voice pass, so the ring drains
-   * first here too or the two disagree about the chunk length. */
-  int prime = s->pcm_fill == 0;
-  uint16_t chunk;
-  if (s->pcm_fill_known) {
-    /* THE ENGINE SAID WHAT THE FILL IS, so aim the chunk at the target instead
-     * of assuming the feed kept up.
-     *
-     *   chunk = want + (TARGET - fill)
-     *
-     * …with the error divided by MML_PCM_FILL_GAIN, because THIS LOOP HAS
-     * DEAD TIME. mml_pump renders as many slots as the ring has room for, so
-     * the chunk decided here is played up to RING_DEPTH frames later, and the
-     * fill read here is that many frames old. Correcting the whole error every
-     * frame against five frames of delay is a textbook oscillator, and it
-     * measures like one: 78% of samples delivered at 3,329 Hz, where the
-     * uncorrected model gives 99.1%, with holes of 322 sample periods.
-     *
-     * Why it is needed: the branch below assumes the feed took exactly `want`,
-     * which holds only while the engine can send everything the clock owes. At
-     * 6,658 Hz it sends 93.7%, the surplus accumulates, and the lead grows from
-     * the one frame this function cancels (a PCM track starts on its armed
-     * frame, everything else on the next) to two or four — the DAC then plays
-     * 17-50 ms behind the FM and a drum layered across FM and PCM hits twice.
-     * Measured on BlastEm: fill 39 at 3,329 Hz against a target of 56, and 226
-     * (peak 445) at 6,658 against 112.
-     *
-     * FLOORED AT ONE, not zero: `pcm_chunk == 0` is the slot's sentinel for a
-     * prime frame, so a chunk of zero would tell the engine to build the whole
-     * lead again. One tick a frame against a hundred fed is the same
-     * correction. */
-    prime = s->pcm_fill == 0;
-    int32_t err = (int32_t)MML_PCM_RING_TARGET - (int32_t)s->pcm_fill;
-    /* PROPORTIONAL ONLY, and that is a measured choice rather than a first cut.
-     *
-     * An integral term drives the error to zero — measured at +0.3, 0.0 and
-     * -3.0 ms across 3,329 / 4,439 / 6,658 Hz, against +2.7, -0.9 and +9.8 with
-     * this — and it costs EIGHT POINTS of delivered samples to do it, because
-     * THE CHUNK IS ALSO THE EMIT SCHEDULE. A pass runs `chunk` ticks and the
-     * loops carry one emit per PCM_PASSES of them, so shrinking the chunk to
-     * what the feed manages also shrinks the number of times the frame asks the
-     * timer, and the idle loop cannot make all of it up. The integral converges
-     * to exactly that shrunken chunk and stays there.
-     *
-     * So the lead is pulled back but not pinned: 50 ms of drift becomes 10, and
-     * the delivered rate gives up half a point instead of eight. Pinning it
-     * needs the emit schedule separated from the mix length, which is a change
-     * to the loop generator and not to this arithmetic.
-     */
-    /* …around what the DAC REALLY TAKES, and not around what the clock owes.
-     *
-     * The proportional term alone leaves a steady-state error, and at a short
-     * sample period that error is the whole problem. The engine cannot send
-     * everything the clock owes — at 8,878 Hz it sends ~93% — so equilibrium
-     * is production = consumption, which this loop reaches by holding the
-     * error at err = GAIN x (take - want): 8 x (138 - 148) = -80 samples of
-     * lead that never comes in. Measured on BlastEm, m3-pcm-softmix at
-     * 8,878 Hz: fill 245 against a target of 149, the DAC 10.8 ms behind
-     * the FM.
-     *
-     * Centring on the measured rate moves the equilibrium to err = 0 and
-     * NOT the chunk: at balance `aim` is the same number either way, which
-     * is why this is not the integral term that was tried and rejected here.
-     * That one kept pushing past balance and shrank the chunk — and THE CHUNK
-     * IS ALSO THE EMIT SCHEDULE, so it cost eight points of delivered samples
-     * to pin the lead. This changes what the correction is measured FROM. */
-    int32_t take = s->pcm_take_q ? (s->pcm_take_q + 128) / 256 : (int32_t)want;
-    int32_t aim = take + err / MML_PCM_FILL_GAIN;
-    if (aim < 1) aim = 1;
-    if (aim > 255) aim = 255;
-    chunk = prime ? MML_PCM_RING_TARGET : (uint16_t)aim;
-    /* The window. A prime frame is a discontinuity — it builds the whole lead
-     * and feeds nothing — so it opens a fresh one rather than polluting the
-     * average with a frame that is not steady state. */
-    if (prime) { s->pcm_win = 0; s->pcm_prod = 0; s->pcm_mark = s->pcm_fill; }
-    else {
-      s->pcm_prod += chunk;
-      if (++s->pcm_win >= MML_PCM_RATE_WIN) {
-        int32_t took = (int32_t)s->pcm_prod
-                     + (int32_t)s->pcm_mark - (int32_t)s->pcm_fill;
-        int32_t q = (took * 256) / MML_PCM_RATE_WIN;
-        /* The DAC can never take MORE than the clock owes, and a reading that
-         * says it did is the pump's lookahead moving, not the chip. Half the
-         * nominal rate is the floor: below that the engine is not running the
-         * DAC at all and the fill error is the honest signal. */
-        if (q > (int32_t)want * 256) q = (int32_t)want * 256;
-        if (q < (int32_t)want * 128) q = (int32_t)want * 128;
-        s->pcm_take_q = q;
-        s->pcm_win = 0; s->pcm_prod = 0; s->pcm_mark = s->pcm_fill;
-      }
-    }
-  } else {
-    if (!prime) s->pcm_fill = s->pcm_fill > want ? (uint16_t)(s->pcm_fill - want) : 0;
-    /* The lead on a prime frame, otherwise exactly what was fed. This chunk is
-     * what the engine must mix: the plan below is tick distances measured
-     * against it, and the engine's emit count follows it one sample per three
-     * ticks. */
-    chunk = prime ? MML_PCM_RING_TARGET : want;
-    s->pcm_fill += chunk;
-  }
-  s->pcm_chunk = prime ? 0 : (uint8_t)chunk;
-  for (int i = 0; i < MML_PCM_VOICES; i++) {
-    MMLPcmVoice *v = &s->pcm[i];
-    /* The run's count byte, filled in by plan_push as breaks are found. */
-    uint16_t at = s->plan_len++;
-    int last = 0;
-    s->plan_buf[at] = 0;
-    /* WHERE THE VOICE CROSSES ITS BOUNDARY, COMPUTED — not walked. The walk
-     * (one 16.16 step a tick, `chunk` ticks) is what drv-player.js does and
-     * what this must equal byte for byte; on the 68000 it cost 27% of a frame
-     * at 167 ticks a frame (measured in an SGDK build on BlastEm). The bytes
-     * consumed over k ticks telescope to ((pos + k·inc) >> 16) − (pos >> 16),
-     * so a frame with no crossing is one multiply, and a crossing is found
-     * with one divide: the first k with pos + k·inc >= (target << 16). */
-    int t = 0;
-    while (t < (int)chunk && v->active) {
-      uint32_t rem = (uint32_t)((int)chunk - t);
-      uint32_t before = v->pos >> 16;
-      uint32_t end = v->pos + rem * v->inc;
-      uint32_t k;
-      if (end < v->pos) {
-        k = 0; /* the 16.16 position wrapped: only the walk says what happens */
-      } else if (v->left > (int32_t)((end >> 16) - before)) {
-        v->left -= (int32_t)((end >> 16) - before);
-        v->pos = end;
-        break;
-      } else if (v->left <= 0) {
-        k = 1; /* the walk checks after its first step */
-      } else {
-        uint32_t target = before + (uint32_t)v->left; /* <= end >> 16, so < 2^16 */
-        k = (((target << 16) - v->pos) + v->inc - 1) / v->inc;
-        if (k < 1) k = 1;
-      }
-      if (k == 0) {
-        before = v->pos >> 16;
-        v->pos += v->inc;
-        v->left -= (int32_t)((v->pos >> 16) - before);
-        t++;
-        if (v->left > 0) continue;
-      } else {
-        uint32_t p1 = v->pos + k * v->inc;
-        v->left -= (int32_t)((p1 >> 16) - before);
-        v->pos = p1;
-        t += (int)k;
-      }
-      plan_push(s, at, t - last);
-      last = t;
-      if (v->has_loop && !v->releasing) {
-        v->pos -= v->loop_len << 16;
-        v->left = (int32_t)v->loop_len;
-      } else {
-        v->active = 0;
-      }
-    }
-    /* Still sounding: a final run meaning "no further break in this chunk",
-     * which the engine clamps to the ticks its pass has left. A voice that
-     * ended needs none — its pass falls through to the silent loop. */
-    if (v->active) plan_push(s, at, chunk);
-  }
+  uint32_t abs = s->sample_rom_base + s->sample_blob_base + rd32(e, 4);
+  uint16_t end, wrap;
+  v->started = 1;
+  v->looping = (uint8_t)(e[1] & 1);
+  v->src = (uint16_t)(MML_PCM_WINDOW + (abs & 0x7fff));
+  v->len = (uint16_t)len;
+  if (v->looping) pcm_loop_points(v->src, len, rd32(e, 16), rd32(e, 20), &end, &wrap);
+  else pcm_shot_points(v->src, v->len, &end, &wrap);
+  uint8_t c[9];
+  c[0] = PCM_START;
+  c[1] = (uint8_t)vi;
+  c[2] = pcm_shift_byte(v);
+  put16(c + 3, v->src);
+  put16(c + 5, end);
+  put16(c + 7, wrap);
+  pcm_emit(s, c, 9);
+  v->sent_shift = c[2];
+}
+
+static void pcm_note_off(MMLSeq *s, int channel_id) {
+  /* A shot plays to its end regardless (opcodes.md §6); a loop's release moves
+   * END to the sample's end and WRAP to silence, and the tail plays out. */
+  int vi = channel_id - CH_PCM1;
+  if (vi < 0 || vi >= MML_PCM_VOICES) return;
+  MMLPcmVoice *v = &s->pcm[vi];
+  if (!v->started || !v->looping) return;
+  v->looping = 0;
+  uint16_t end, wrap;
+  pcm_shot_points(v->src, v->len, &end, &wrap);
+  uint8_t c[6];
+  c[0] = PCM_RETARGET;
+  c[1] = (uint8_t)vi;
+  put16(c + 2, end);
+  put16(c + 4, wrap);
+  pcm_emit(s, c, 6);
 }
 
 /* ── VOICE_SET (driver.md §10) ──────────────────────────────────────────────
@@ -1434,7 +1213,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
     /* An armed track runs the score's leading setup and stops at the first
      * opcode that sounds or consumes time, so the frame it was started in
      * makes no sound however long its voice applies take (driver.md §4.2). */
-    if (t->armed && op >= OP_NOTE_ON && op <= OP_NOTE_ON_EX) return;
+    if (t->armed && ((op >= OP_NOTE_ON && op <= OP_NOTE_ON_EX) || op == OP_PCM_NOTE_ON)) return;
     switch (op) {
       case OP_END_OF_TRACK:
         t->pending_off = 0;
@@ -1694,7 +1473,8 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         int sample_id = st[t->pc + 1], note = st[t->pc + 2];
         MMLDur d = read_dur(st, t->pc + 3);
         t->pc = (uint16_t)d.next;
-        pcm_note_on(s, t->channel_id, sample_id, note);
+        (void)note; /* the bank baked this note into its own entry */
+        pcm_note_on(s, t->channel_id, sample_id);
         /* A held (dur 0) PCM note suspends the dispatcher like any hold; the
          * sample keeps feeding from step 3 either way. */
         if (d.ticks == 0) {
@@ -1802,10 +1582,8 @@ static void process_fades(MMLSeq *s) {
 static uint16_t slot_take(const MMLSeq *s) {
   uint16_t queued = mml_pending(s);
   uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
-  /* n_writes + chunk + n_pcm + the commands + the segment plan + one
-   * run-length triple per sub-slot */
-  uint32_t size = 3 + 3 * MML_SLOT_SUBS + s->pcm_len +
-                  (s->plan_len ? s->plan_len : MML_PCM_VOICES);
+  /* n_writes + n_pcm + the commands + one run-length triple per sub-slot */
+  uint32_t size = 2 + 3 * MML_SLOT_SUBS + s->pcm_len;
   /* If every write could be FM (two bytes each) and still fit, they all do:
    * the walk below is only for a slot that might not. */
   if (size + 2u * take <= MML_SLOT_SIZE) return take;
@@ -1860,23 +1638,10 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
    * of the way in. Trailing them would cost the engine a walk past every
    * sub-slot plus a tally of every run: ~1,700 cycles a frame, measured. */
   out[o++] = (uint8_t)take;
-  /* How many samples the engine mixes this frame (§5.1.2). It cannot derive it
-   * — the plan's tick distances are measured against it and a starved frame
-   * would desync the two — and 0 encodes a PRIME frame, since the lead does not
-   * fit in a byte. */
-  out[o++] = s->pcm_chunk;
-  s->pcm_chunk = 0;
   out[o++] = s->pcm_count;
   mml_copy(out + o, s->pcm_buf, s->pcm_len); o += s->pcm_len;
-  /* The segment plan follows the commands, still at the frame head: the engine
-   * reads a voice's run the moment that voice's pass starts (§6.3.1). A frame
-   * the mixer never ran carries empty runs, which is what "nothing sounding"
-   * says anyway. */
-  if (s->plan_len) { mml_copy(out + o, s->plan_buf, s->plan_len); o += s->plan_len; }
-  else { for (int i = 0; i < MML_PCM_VOICES; i++) out[o++] = 0; }
   s->pcm_count = 0;
   s->pcm_len = 0;
-  s->plan_len = 0;
 
   uint16_t done = 0; /* writes already placed in an earlier sub-slot */
   for (int j = 0; j < MML_SLOT_SUBS; j++) {
@@ -1936,10 +1701,8 @@ static void fill_view(MMLSeq *s, MMLFrameView *v) {
 }
 
 void mml_view_done(MMLSeq *s, const MMLFrameView *v) {
-  s->pcm_chunk = 0;
   s->pcm_count = 0;
   s->pcm_len = 0;
-  s->plan_len = 0;
   s->q_tail = (uint16_t)((v->first + v->end[MML_SLOT_SUBS - 1]) & (MML_WRITE_QUEUE - 1));
   note_spill(s);
 }
@@ -1959,16 +1722,6 @@ static uint16_t sub_increment(uint16_t inc, int sub) {
   return (uint16_t)(hi - lo);
 }
 
-/* The engine's own fill, out of H_FILL. Latched rather than acted on here: the
- * host reads it inside the bus grab it already takes, and the sequencer uses it
- * on its next frame. See the header. */
-void mml_pcm_ring_fill(MMLSeq *s, uint16_t fill) {
-  s->pcm_fill = fill;
-  s->pcm_fill_known = 1;
-}
-
-uint16_t mml_pcm_fill(const MMLSeq *s) { return s->pcm_fill; }
-
 static void run_frame(MMLSeq *s) {
   for (int sub = 0; sub < MML_SLOT_SUBS; sub++) {
     s->sub = (uint8_t)sub;
@@ -1976,31 +1729,16 @@ static void run_frame(MMLSeq *s) {
     for (uint8_t i = 0; i < s->track_count; i++) {
       MMLTrack *t = &s->trk[i];
       if (!t->running || t->held) continue;
-      /* PCM onsets stay on the frame grid: a soft-mix voice's pass covers the
-       * whole frame, so starting one mid-frame would need a leading idle
-       * segment the engine cannot afford yet (plan-subtick-timing, step 2).
-       * Subdividing them here would only move the note EARLIER than the frame
-       * that owns it, since the engine applies the frame's whole PCM command
-       * list before it mixes. */
-      int pcm = t->channel_id >= CH_PCM1 && t->channel_id <= CH_PCM3;
       if (t->armed) {
         if (sub != 0) continue; /* the setup runs once, at the frame head */
         dispatch(s, t);         /* leading setup only — see the armed test there */
         t->armed = 0;           /* notes start next frame */
         t->armed_frame = s->frame; /* ...and this frame advances no ticks */
-        /* ...except a PCM track, which starts THIS frame and so runs one frame
-         * ahead of every other track for the rest of the score. That is the
-         * compensation for the mixer's feed: it runs one frame behind the mix
-         * by construction (driver.md §5.1), so a PCM command issued a frame
-         * early is heard on the beat. The lead is exactly one frame and stays
-         * that way — every track advances by the same increment per frame. */
-        if (!pcm) continue;
-        if (!t->running || t->held) continue;
-      } else if (t->armed_frame == s->frame && !pcm) {
+        continue;
+      } else if (t->armed_frame == s->frame) {
         continue; /* the armed frame is silent setup, at any sub-tick */
       }
-      if (pcm && sub != 0) continue;
-      t->acc = (uint16_t)(t->acc + (pcm ? s->increment : step));
+      t->acc = (uint16_t)(t->acc + step);
       while (t->acc >= 0x100) {
         /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. A tick before the
          * gate or the wait reaches zero only counts both down, so k-1 of them
@@ -2056,11 +1794,6 @@ static void run_frame(MMLSeq *s) {
       }
       process_fades(s);
     }
-    /* The voices advance after the LAST sub-tick, because the engine applies
-     * the frame's whole PCM command list at the frame head and then mixes: a
-     * PCM_VOL a late sub-tick generated (a MASTER move, say) has to be in force
-     * for this frame's samples on both sides or the two mixers diverge. */
-    if (sub == MML_SLOT_SUBS - 1) pcm_frame(s);
     s->sub_mark[sub] = mml_pending(s);
   }
   s->frame++;
@@ -2094,10 +1827,8 @@ uint8_t mml_track_id(const MMLSeq *s, uint8_t index) {
 }
 
 int mml_done(const MMLSeq *s) {
-  /* Still busy while the DAC is feeding: a shot or a loop tail plays past the
-   * note that started it, and past the end of its track. */
-  for (int i = 0; i < MML_PCM_VOICES; i++)
-    if (s->pcm[i].active) return 0;
+  /* Every track idle or held. The engine owns PCM playback, so a shot's tail is
+   * not the sequencer's to wait for (drv-player _done reads the same). */
   for (uint8_t i = 0; i < s->track_count; i++)
     if (s->trk[i].running && !s->trk[i].held) return 0;
   return 1;
@@ -2156,6 +1887,8 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
       mmb[3] != MAGIC3)
     return -1;
   uint16_t section_count = rd16(mmb, 8), header_size = rd16(mmb, 10);
+  /* Header flags bits 2-3: the score's PCM voice count (mmb.md §4). */
+  s->pcm_voices = (uint8_t)((rd16(mmb, 6) >> 2) & 3);
   const uint8_t *track_table = 0;
   uint32_t track_table_len = 0;
   for (uint16_t i = 0; i < section_count; i++) {
@@ -2236,17 +1969,16 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
 int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_base) {
   if (!bank || (len && len < 4)) return -1;
   uint16_t n = rd16(bank, 0);
-  /* The bank stamps the sample clock its BAKED blobs were resampled for
-   * (mmb.md §10, driver.md §14.2). Baked data is bound to that clock; under a
-   * different one the pitch is quietly wrong, so a mismatch is refused here
-   * rather than heard later. An unbaked bank stamps the same value, so this
-   * costs nothing to keep true. */
-  if (rd16(bank, 2) != MML_PCM_BAKE_STAMP) return -3;
-  if (len && 4 + (uint32_t)n * 20 > len) return -2;
+  /* The bank stamps the image rate its blobs were baked at (mmb.md §10). Baked
+   * data is bound to that rate; under another the pitch is quietly wrong, so a
+   * bank baked for a different engine image is refused here, not heard later. */
+  static const uint16_t STAMP[4] = {MML_PCM_STAMP_1, MML_PCM_STAMP_1, MML_PCM_STAMP_2, MML_PCM_STAMP_3};
+  if (rd16(bank, 2) != STAMP[s->pcm_voices & 3]) return -3;
+  if (len && 4 + (uint32_t)n * MML_SAMPLE_ENTRY > len) return -2;
   s->sample_count = n;
   s->sample_entries = bank + 4;
   /* Entry offsets are relative to the blob region, which follows the table. */
-  s->sample_blob_base = 4 + (uint32_t)n * 20;
+  s->sample_blob_base = 4 + (uint32_t)n * MML_SAMPLE_ENTRY;
   s->sample_rom_base = rom_base;
   return 0;
 }

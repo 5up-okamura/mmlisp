@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// MMB v0.2 export
+// MMB v0.3 export
 //
 // Lowers compiled IR (docs/ir.md) into the MMB binary container (docs/mmb.md,
 // docs/opcodes.md) the Z80 driver decodes in place. Follows the export-vgm.js
@@ -36,13 +36,16 @@ import {
   resolveChannelId,
   encodeDuration,
   bpmToTickIncrement,
-  pcmBakeRate,
-  PCM_BAKE_STAMP,
+  pcmBakeRateAt,
+  pcmBankStamp,
+  PCM_BLOCK,
+  HEADER_PCM_VOICES_SHIFT,
 } from "./mmb.js";
 import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 import { buildLutBlob } from "./lut-blob.js";
 import { dedupEventStream } from "./mmb-dedup.js";
 import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
+import { engineImage } from "./engine-images.js";
 
 const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
@@ -262,7 +265,7 @@ function midiNote(pitch) {
 }
 
 /**
- * Encode compiled IR into an MMB v0.2 byte stream.
+ * Encode compiled IR into an MMB v0.3 byte stream.
  *
  * @param {object} ir - compiled IR (compileMMLisp().ir)
  * @param {{ compilerVersion?: string,
@@ -288,8 +291,13 @@ export function encodeMmb(ir, opts = {}) {
   // splits one sample into several entries and PCM_NOTE_ON has to name the one
   // its note belongs to (driver.md §14.2). `sampleIds` survives for diagnostics
   // — it is what tells a bad `:sample` name from a note the plan skipped.
+  // THE ENGINE IMAGE (plan-pcm-d10-design.md §1.2): one per PCM voice count,
+  // each with its own DAC rate. The score's count is `metadata.pcmVoices` when
+  // the compiler states it, otherwise the highest pcmN channel it uses — and
+  // the bank is baked at that image's rate.
+  const pcmVoices = scorePcmVoices(ir);
   const bankPlan = opts.samples
-    ? buildSampleBank(ir, opts.samples, diag, collectPcmUsage(ir))
+    ? buildSampleBank(ir, opts.samples, diag, collectPcmUsage(ir), engineImage(pcmVoices).rateHz)
     : null;
   const sampleIds = new Map(
     (ir.metadata?.samples ?? []).map((s, i) => [s.name, i]),
@@ -1250,7 +1258,8 @@ export function encodeMmb(ir, opts = {}) {
   file.raw(MAGIC);
   file.u8(VERSION_MAJOR);
   file.u8(VERSION_MINOR);
-  file.u16(0); // flags: no WIDE_OFFSETS, no PAL_TIMEBASE
+  // flags: no WIDE_OFFSETS, no PAL_TIMEBASE; bits 2-3 the PCM voice count
+  file.u16((pcmVoices & 3) << HEADER_PCM_VOICES_SHIFT);
   file.u16(sections.length);
   file.u16(HEADER_SIZE);
 
@@ -1320,12 +1329,21 @@ function buildMacroTable(registry) {
   return [...desc.bytes, ...blob.bytes];
 }
 
+/** The PCM voice count a score plays with: stated, or its highest pcmN. */
+export function scorePcmVoices(ir) {
+  const stated = ir.metadata?.pcmVoices;
+  if (Number.isInteger(stated) && stated >= 0 && stated <= 3) return stated;
+  let n = 0;
+  for (const t of ir.tracks ?? []) {
+    const m = /^pcm([1-3])$/.exec(t.channel ?? "");
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  return n;
+}
+
 // ── Pitch baking (driver.md §14.2) ─────────────────────────────────────────
-// Which notes each PCM sample is actually played at. The exporter bakes per
-// PITCH CLASS, not per note: an octave is exactly a doubling of the increment,
-// so one blob serves every octave of its pitch class and the mixer reaches the
-// others by advancing 2^k bytes a tick. Per note it would be up to 49 blobs a
-// sample; this is at most 12.
+// Which notes each PCM sample is actually played at: every one gets its own
+// blob, baked at the engine image's rate.
 function collectPcmUsage(ir) {
   const use = new Map(); // sample name -> Set<midi note>
   for (const track of ir.tracks ?? []) {
@@ -1361,59 +1379,16 @@ function resample8(data, from, to) {
   return out;
 }
 
-// The shortest a BAKED loop may be, in output samples. Resampling maps the loop
-// points off integer samples and they have to round back, which moves where the
-// loop repeats by up to half a sample — and when the loop is one waveform cycle,
-// that period IS the perceived pitch. The error is 0.5/L, so:
-//
-//     20 samples   42.8 cents      200 samples   4.3 cents
-//     50           17.2            430           2.0
-//    100            8.6           4000           0.2
-//
-// A chorus or pad loop is already thousands of samples and never notices. A
-// glitch loop is tens and would be 40 cents out — so the loop REGION is repeated
-// until it clears this bar, which is bit-exact (repeating is literally what
-// playback does) and costs at most this many bytes once. 430 puts every loop
-// inside 2 cents, which is under what an ear catches against FM.
-const MIN_BAKED_LOOP = 430;
-
-// Bake a LOOPED sample for one note. Resample the whole blob, map the loop
-// points through the same ratio, and repeat the loop region so its baked length
-// clears MIN_BAKED_LOOP. The layout the engine wants is
-//
-//     [0 .. loopEnd)  the attack, played once
-//     [loopStart .. loopEnd) repeated  the sustain
-//     [loopEnd .. len)  the tail a release plays out
-//
-// so the repeats are spliced in ahead of the tail and loopEnd moves with them.
-function bakeLooped(data, from, to, loopStart, loopEnd, name, diag) {
-  const all = resample8(data, from, to);
-  const ratio = from / to;
-  const map = (p) => Math.min(all.length, Math.max(0, Math.round(p / ratio)));
-  const ls = map(loopStart);
-  let le = map(loopEnd);
-  if (le <= ls) {
-    // A loop that resampled to nothing cannot be repeated into existence. It is
-    // a bad loop in the source, not a rounding problem, so say so and play the
-    // blob straight through rather than emitting a zero-length loop the engine
-    // would spin in.
-    diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
-      `sample "${name}" has a loop of ${loopEnd - loopStart} frames that resampled `
-        + `to ${le - ls}; baked without a loop`);
-    return { bytes: all, loopStart: 0, loopEnd: 0 };
-  }
-  const reps = Math.max(1, Math.ceil(MIN_BAKED_LOOP / (le - ls)));
-  if (reps === 1) return { bytes: all, loopStart: ls, loopEnd: le };
-  const region = all.subarray(ls, le);
-  const out = new Int8Array(all.length + (reps - 1) * region.length);
-  out.set(all.subarray(0, le), 0);
-  for (let r = 1; r < reps; r++) out.set(region, le + (r - 1) * region.length);
-  const grown = le + (reps - 1) * region.length;
-  out.set(all.subarray(le), grown);
-  return { bytes: out, loopStart: ls, loopEnd: grown };
+/** Silence to whole engine blocks: a shot's last block is played, never cut. */
+function padBlock(bytes) {
+  const n = Math.max(PCM_BLOCK, Math.ceil(bytes.length / PCM_BLOCK) * PCM_BLOCK);
+  if (n === bytes.length) return bytes;
+  const out = new Int8Array(n);
+  out.set(bytes, 0);
+  return out;
 }
 
-function buildSampleBank(ir, blobs, diag, usage = new Map()) {
+function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
   const samples = ir.metadata?.samples ?? [];
   const entries = new Writer();
   const blobBytes = [];
@@ -1462,60 +1437,50 @@ function buildSampleBank(ir, blobs, diag, usage = new Map()) {
     const rate = blob?.baseRate ?? s.rate ?? 13000;
     const notes = [...(usage.get(s.name) ?? [])].sort((x, y) => x - y);
 
-    // LOOPED MATERIAL IS BAKED TOO, and the rounding it used to be refused for
-    // is bought off with a few hundred bytes — see bakeLooped below.
     const bakeable = data.length > 0 && notes.length > 0;
     if (!bakeable) {
       fallbackFor.set(s.name, push({
-        flags: hasLoop ? 1 : 0,
-        off: intern(data), len: data.length, rate,
-        loopStart: hasLoop ? loopStart : 0, loopEnd: hasLoop ? loopEnd : 0,
+        flags: 0, off: intern(padBlock(data)), len: padBlock(data).length, srcFrames: data.length,
+        loopStart: 0, loopEnd: 0,
       }));
       continue;
     }
 
-    // ONE BLOB PER NOTE, not per pitch class — and that is a measured choice
-    // rather than the obvious one. Grouping by pitch class needs one blob for
-    // every octave of it, because the mixer would reach the other octaves by
-    // advancing 2^k bytes a tick; but a runtime-variable advance needs either a
-    // branch (12 cycles) or a nop fill (4) inside the tick body, and that is
-    // charged to EVERY baked tick including the k = 0 ones, against a baked
-    // tick of 41. It buys sample ROM, which measures in hundreds of bytes
-    // against a 32 KB window, with mixer cycles, which are the constraint this
-    // whole exercise exists to relieve. So: every note gets its own blob, k is
-    // always 0, and the mixer's advance stays a bare `inc de`.
+    // ONE BLOB PER NOTE. The engine has no resampler and no octave step
+    // (plan-pcm-d10-design.md): every note it plays is a blob of its own,
+    // resampled so that note advances one byte a sample at the image's rate.
+    // The hash pool collapses whatever is genuinely identical.
     //
-    // The hash pool below still collapses whatever is genuinely identical. If a
-    // score ever does run the sample window out, the octave shift is the thing
-    // to reach for — see driver.md §14.2.
+    // A LOOP IS NOT UNROLLED. Its points are mapped through the same ratio and
+    // carried unrounded; the sequencer rounds them to whole blocks when it
+    // sends them, because the block is the engine's and the rounding has to
+    // be one function in one place (pcm-model.js pcmLoopPoints).
     bakedSources++;
     bakedSourceBytes += data.length;
-    const byNote = new Map();
-    for (const n of notes) byNote.set(n, [n]);
-    for (const [, ns] of byNote) {
-      const anchor = ns[0];
-      const to = pcmBakeRate(anchor);
-      const b = hasLoop
-        ? bakeLooped(data, rate, to, loopStart, loopEnd, s.name, diag)
-        : { bytes: resample8(data, rate, to), loopStart: 0, loopEnd: 0 };
+    for (const n of notes) {
+      const to = pcmBakeRateAt(n, rateHz);
+      const raw = resample8(data, rate, to);
+      const ratio = rate / to;
+      let ls = 0, le = 0, looped = hasLoop;
+      if (hasLoop) {
+        ls = Math.min(raw.length, Math.max(0, Math.round(loopStart / ratio)));
+        le = Math.min(raw.length, Math.max(0, Math.round(loopEnd / ratio)));
+        if (le <= ls) {
+          diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
+            `sample "${s.name}" has a loop of ${loopEnd - loopStart} frames that resampled `
+              + `to ${le - ls} at note ${n}; baked without a loop`);
+          looped = false; ls = 0; le = 0;
+        }
+      }
+      const bytes = padBlock(raw);
       const before = blobBytes.length;
-      const off = intern(b.bytes);
+      const off = intern(bytes);
       bakedBlobBytes += blobBytes.length - before;   // dedup hits cost nothing
       bakedEntries++;
-      for (const n of ns) {
-        const k = (n - anchor) / 12;
-        // A pitch class is 12 apart by construction, so k is a whole number;
-        // the guard is against a future change to the grouping, not the data.
-        if (!Number.isInteger(k) || k < 0 || k > 15) {
-          diag("warning", "W_MMB_BAKE_RANGE",
-            `sample "${s.name}" note ${n} is ${k} octaves from its anchor; left unbaked`);
-          continue;
-        }
-        entryIdFor.set(`${s.name}|${n}`, push({
-          flags: (hasLoop ? 1 : 0) | 2 | (k << 4), off, len: b.bytes.length,
-          rate: Math.round(to), loopStart: b.loopStart, loopEnd: b.loopEnd,
-        }));
-      }
+      entryIdFor.set(`${s.name}|${n}`, push({
+        flags: looped ? 1 : 0, off, len: bytes.length, srcFrames: data.length,
+        loopStart: ls, loopEnd: le,
+      }));
     }
     // NO unbaked fallback entry. Every note this sample is played at came from
     // the same walk that built the plan, so a miss is impossible without a
@@ -1541,13 +1506,14 @@ function buildSampleBank(ir, blobs, diag, usage = new Map()) {
       `${rows.length} sample entries; the id byte holds 256`);
   }
   entries.u16(rows.length);
-  entries.u16(PCM_BAKE_STAMP);   // the sample clock the baked blobs assume
+  entries.u16(pcmBankStamp(rateHz));   // the image rate the blobs are baked for
   rows.forEach((r, id) => {
     entries.u8(id);
     entries.u8(r.flags);
+    entries.u16(0);                     // reserved
     entries.u32(r.off);
     entries.u32(r.len);
-    entries.u16(r.rate);
+    entries.u32(r.srcFrames);
     entries.u32(r.loopStart);
     entries.u32(r.loopEnd);
   });

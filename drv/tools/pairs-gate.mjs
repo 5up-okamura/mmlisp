@@ -16,8 +16,9 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { generatedTables } from "./c-tables.mjs";
-import { buildEngine } from "./build-engine.mjs";
-import { MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgFromHeader } from "./pairs-model.mjs";
+import { MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
+import { engineImage } from "../../live/src/engine-images.js";
+import { headerPcmVoices } from "../../live/src/mmb.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const c68k = join(here, "..", "68k");
@@ -31,8 +32,6 @@ if (!scores.length) {
   scores = pkg.scripts["c-gate"].split(/\s+/).filter((a) => a.endsWith(".mmlisp")).map((s) => join(here, "..", s));
 }
 
-const { header: H } = buildEngine();
-const cfg = pairsCfgFromHeader(H);
 const ctab = generatedTables();
 const tmp = mkdtempSync(join(tmpdir(), "pairsgate-"));
 const gateExe = join(tmp, "gate_main"), pairsExe = join(tmp, "pairs_main"), viewExe = join(tmp, "view_main");
@@ -49,13 +48,13 @@ try {
   process.exit(1);
 }
 
-const O = H.OPS;
-const cArgs = [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.levels, cfg.opLimit,
-  O.IDLE, O.LEVEL, O.MASTER, O.SRC_LO, O.SRC_HI, O.END_LO, O.END_HI, O.STEP, O.START, O.STOP, O.PORT]
-  .map(String);
+/** The converter's configuration for a score: its engine image's (MMB header flags). */
+const cfgOf = (mmb) => pairsCfgForImage(engineImage(headerPcmVoices(mmb[6] | (mmb[7] << 8))));
+const cArgsOf = (cfg) => [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.opStride, cfg.opPort,
+  cfg.voices, cfg.idleAfterGen].map(String);
 
 /** The JS side: the same slots, the same modelled engine, the same records. */
-function jsStream(slots, lead = -1, pumps = 2) {
+function jsStream(cfg, slots, lead = -1, pumps = 2) {
   const m = new PairsModel(pumps === 1 ? { ...cfg, ahead: MMLP_AHEAD_ONE } : cfg);
   const advance = pumps === 1 ? 34 : 17;
   const out = [];
@@ -103,6 +102,7 @@ const pad = (s, n) => String(s).padEnd(n);
 for (const score of scores) {
   const name = basename(score, ".mmlisp");
   const { bytes, sampleBank } = buildMmb(score);
+  const cfg = cfgOf(bytes), cArgs = cArgsOf(cfg);
   const mmb = join(tmp, `${name}.mmb`);
   writeFileSync(mmb, bytes);
   const gateArgs = [mmb, String(FRAMES)];
@@ -122,7 +122,7 @@ for (const score of scores) {
     let cOut;
     try { cOut = execFileSync(pairsExe, [slotsFile, ...cArgs, String(lead), String(pumps)], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
     catch (e) { rows.push(`pairs_main (lead ${lead}): ${e.stderr?.toString().trim()}`); scoreBad = true; continue; }
-    const js = jsStream(parsed, lead, pumps);
+    const js = jsStream(cfg, parsed, lead, pumps);
     let bad = -1;
     for (let i = 0; i < Math.max(cOut.length, js.bytes.length); i++)
       if (cOut[i] !== js.bytes[i]) { bad = i; break; }
@@ -139,9 +139,7 @@ for (const score of scores) {
       scoreBad = true;
       rows.push(`${tag}: C and JS differ at byte ${bad}: C ${cOut[bad]} JS ${js.bytes[bad]} (C ${cOut.length} B, JS ${js.bytes.length} B)`);
     } else rows.push(`${tag} ${cOut.length} B` + (lead < 0 ? ` — ${m.grabs} grabs (${m.late} late), ${m.pairsWritten} pairs, ${m.psg.length} psg left`
-      + (m.droppedVoice ? `, ${m.droppedVoice} voice>0 dropped` : "")
-      + (m.droppedLoop ? `, ${m.droppedLoop} loops ignored` : "")
-      + (m.stepRounded ? `, ${m.stepRounded} steps rounded` : "")
+      + (m.fault ? `, ${m.fault} FAULTS` : "")
       + (m.overflow ? `, ${m.overflow} OVERFLOW` : "") : ""));
   }
   // THE SGDK HOST'S PATH (mmlp_render, no slot bytes) against the slot path,

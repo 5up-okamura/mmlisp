@@ -12,14 +12,15 @@ plays is `docs/mmb.md` / `docs/opcodes.md`; integrating it into a game is
                       for the host by the gates
 68k/mmlpairs.{c,h}    the frame → {op, val} pair converter (driver.md §6.6)
 68k/tables.c          GENERATED constant tables (tools/gen-c-tables.mjs)
-68k/mml_rate.h        GENERATED sample clock (tools/gen-c-tables.mjs)
+68k/mml_rate.h        GENERATED engine images' rate stamps (tools/gen-c-tables.mjs)
 68k/*_main.c          host harnesses for c-gate and pairs-gate
 sgdk/mmlispdrv.{c,h}  the SGDK host: engine bring-up, the pumps, the API
-sgdk/mmlispdrv_bin.h  GENERATED engine image + ABI constants (tools/emit-bin.mjs)
+sgdk/mmlispdrv_bin.h  GENERATED engine images + ABI constants (tools/emit-bin.mjs)
 sgdk/example/         a minimal player program
-engine/               the Z80 engine generator: config, the slot schedule
-                      (gen-stream), phase decode and corrector, the runtime
-                      protocol, the pair expander, the PCM reference
+engine/               the Z80 engine generator: config, the slot schedule and the
+                      pair expander (gen-stream), the tables (lut); the phase
+                      decode, corrector and protocol modules remain for the
+                      research bench until the cleanup step
 tools/                build, install and gate tools (below)
 tests/                gate scores (.mmlisp, host-command .cmds.json, samples)
 blastem/              the headless probe BlastEm: setup.sh, host.c, probe.patch
@@ -50,29 +51,26 @@ npm run verify:all
 
 | gate | what it proves |
 | --- | --- |
-| `mirrors` | `68k/mml_rate.h` and the engine image describe the same sample clock; `live/src/engine-images.js` is what the light images build to |
+| `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same engine images, and the two generated files are what the images build to now |
 | `selftest` | the assembler and the emulator against their own cases |
 | `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 41 scores |
 | `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
-| `engine:1v` | the one-voice engine image in the JS machine: DAC bytes and intervals |
-| `engine:fifo` | the pair transport: FM writes per port, DAC bytes, the clock |
-| `engine:gate` | the three light images (one per PCM voice count, not shipped yet): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
-| `engine:score` | the shipped image driven by the host model on real scores |
+| `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
+| `engine:score` | real scores through the image each names, driven by the host model: FM writes per port, PSG bytes, DAC bytes, the clock, PCM-vs-FM sync |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
 
 On the machine (needs SGDK, the m68k toolchain, and `sh blastem/setup.sh`):
 
 ```
-npm run sgdk:gate -- <score.mmlisp> [--seconds N] [--burn N]   # build, run, grade
+npm run sgdk:gate -- <score.mmlisp> [--seconds N] [--burn N]   # build, run, grade (being moved to the three images)
 npm run sgdk:profile -- <score.mmlisp> [--pc] [--peak N]       # where the 68000's time goes
 ```
 
 Other tools: `npm run engine:gate:negatives` (the light gate's own faults
 must fail), `npm run emit-images` (regenerate `live/src/engine-images.js`),
 `npm run level-diff -- <score>` (where the driver is louder than
-ir-player), `engine:1v:split` / `engine:fifo:split` (the gates on the image
-with the decode, corrector and protocol placed), and the research bench's
+ir-player), and the research bench's
 `dac-stream:*` scripts (`experimental/dac-stream/README.md`).
 
 ## Tools

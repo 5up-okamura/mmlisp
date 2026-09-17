@@ -7,8 +7,7 @@
  * must be byte for byte the same, and so must the two sequencers.
  *
  *   view_main <song.mmb> <frames> [--samples bank.smp] [--prime K]
- *             <fifo> <fifo_pairs> <ppg> <lut_page> <levels> <op_limit>
- *             <idle> <level> <master> <src_lo> <src_hi> <end_lo> <end_hi> <step> <start> <stop> <port>
+ *             <fifo> <fifo_pairs> <ppg> <lut_page> <op_stride> <op_port> <voices> <idle_after_gen>
  *
  * Prints "ok <frames>" or the first frame the two differ at, and exits 1. */
 #include <stdio.h>
@@ -48,14 +47,13 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[a], "--samples")) smp_path = argv[a + 1];
     else if (!strcmp(argv[a], "--prime")) prime = strtol(argv[a + 1], 0, 10);
   }
-  if (argc - a < 17) { fprintf(stderr, "usage: see the header comment\n"); return 2; }
+  if (argc - a < 8) { fprintf(stderr, "usage: see the header comment\n"); return 2; }
   MMLPairsCfg cfg;
   memset(&cfg, 0, sizeof cfg);
-  uint8_t *f8[] = {&cfg.fifo_pairs, &cfg.pairs_per_grab, &cfg.lut_page, &cfg.levels, &cfg.op_limit,
-                   &cfg.op_idle, &cfg.op_level, &cfg.op_master, &cfg.op_src_lo, &cfg.op_src_hi,
-                   &cfg.op_end_lo, &cfg.op_end_hi, &cfg.op_step, &cfg.op_start, &cfg.op_stop, &cfg.op_port};
   cfg.fifo = (uint16_t)strtol(argv[a], 0, 0);
-  for (int k = 0; k < 16; k++) *f8[k] = (uint8_t)strtol(argv[a + 1 + k], 0, 0);
+  uint8_t *f8[] = {&cfg.fifo_pairs, &cfg.pairs_per_grab, &cfg.lut_page, &cfg.op_stride, &cfg.op_port,
+                   &cfg.voices, &cfg.idle_after_gen};
+  for (int k = 0; k < 7; k++) *f8[k] = (uint8_t)strtol(argv[a + 1 + k], 0, 0);
 
   long len = 0, slen = 0;
   unsigned char *mmb = slurp(argv[1], &len), *smp = smp_path ? slurp(smp_path, &slen) : 0;

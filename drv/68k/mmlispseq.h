@@ -41,11 +41,6 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* ── Build constants (driver.md §6.2) ─────────────────────────────────────── */
 #define MML_SLOT_SIZE 256
 #define MML_SLOT_MAX_WRITES 95 /* what the settled mixer leaves, §5.3.1 */
-/* Longest segment run a slot carries per voice. A voice that breaks more often
- * than this — a loop under ~11 mix ticks long — simply runs out of plan, and
- * the engine falls back to one-tick segments for the rest of its pass: correct,
- * slower, and never reached by real material. */
-#define MML_PCM_PLAN_MAX 16
 /* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the 60 Hz
  * frame, as in most game drivers. Sub-ticks were adopted as nearly free; with
  * the pair engine they were not heard (a frame's writes leave together) and
@@ -58,40 +53,28 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* Macros bound per channel (driver.md §13.1 budgets 3 — one per target family;
  * the extra room costs 2 bytes a slot and removes a silent-drop failure mode). */
 #define MML_MACRO_BINDS 8
-#define MML_PCM_VOICES 2
-/* How far a PCM voice may be attenuated, in 6 dB shift steps. A BUDGET
- * constant: the mixer attenuates with a chain of `sra a`, 8 Z80 cycles a step,
- * on every tick of every sounding voice — 1,460 cycles a frame per step per
- * voice, measured, against ~700 spare with two voices sounding. And the range
- * it removes was never audible: the samples are 8-bit, so shift 5 leaves 3
- * bits and 7 leaves 1. Above this the level CLAMPS; `vol 0`, `master 0` and
- * MML_PCM_TOTAL_MAX_SHIFT are the hard mutes. Mirrors PCM_MAX_SHIFT in
- * live/src/mmb.js. */
+/* PCM voices (pcm1-pcm3). The score's own count picks the engine image
+ * (driver.md §5); the sequencer keeps state for all three. */
+#define MML_PCM_VOICES 3
+/* How far a PCM voice is attenuated by vel + vol, in 6 dB steps. Above this
+ * the level CLAMPS; `vol 0`, `master 0` and MML_PCM_TOTAL_MAX_SHIFT are the
+ * hard mutes. Mirrors PCM_MAX_SHIFT in live/src/mmb.js. */
 #define MML_PCM_MAX_SHIFT 4
-/* Master is NOT in the per-voice shift (driver.md §14.1): it is common to every
- * voice, so the mixer's emit applies it once per DAC sample to the finished sum
- * instead of once per tick per voice. Its ceiling is therefore deeper than the
- * per-voice one — the cost does not multiply by the voice count — which is what
- * lets a master fade take PCM past -24 dB instead of holding there and then
- * falling off a cliff at `master 0`. Mirrors PCM_MASTER_MAX_SHIFT /
- * PCM_TOTAL_MAX_SHIFT in live/src/mmb.js. */
+/* Master's own ceiling (driver.md §14.1): the host folds it into each voice's
+ * level page, so it may reach deeper than a voice's own. Mirrors
+ * PCM_MASTER_MAX_SHIFT / PCM_TOTAL_MAX_SHIFT in live/src/mmb.js. */
 #define MML_PCM_MASTER_MAX_SHIFT 6
-/* Voice shift + master shift at which the voice is muted instead of mixed. */
+/* Voice shift + master shift at which the voice is muted. */
 #define MML_PCM_TOTAL_MAX_SHIFT 7
-/* The sample clock a baked sample bank is resampled for, stamped in the bank
- * and checked by mml_load_samples. Mirrors PCM_BAKE_STAMP in live/src/mmb.js. */
-#define MML_PCM_BAKE_STAMP MML_SPG_STAMP
-/* The Timer-B sample clock (driver.md §5.1.2), mirroring live/src/mmb.js. The
- * DAC's rate is the YM's, not the frame's: 37335/224 = 166.674 samples a frame,
- * so a frame owes it 166 or 167 and never a constant. The mixer produces into a
- * ring instead of a frame-long buffer, and the sequencer models the ring's fill
- * because the segment plan's tick distances are only valid for the chunk length
- * it planned them against. */
+/* The engine images' rate stamps (MML_PCM_STAMP_1..3), which a sample bank
+ * baked for the image must carry. Generated from live/src/engine-images.js. */
 #include "mml_rate.h"
-#define MML_PCM_SAMPLES_NUM MML_SPG_NUM
-#define MML_PCM_SAMPLES_DEN MML_SPG_DEN
-/* MML_PCM_RING_TARGET comes from mml_rate.h with the rest of the sample clock:
- * it is ONE FRAME of samples and moves with the rate. */
+/* One v0.3 sample-bank entry (mmb.md §10). */
+#define MML_SAMPLE_ENTRY 24
+/* A block of the engine, and the window a voice reads through. */
+#define MML_PCM_BLOCK 16
+#define MML_PCM_WINDOW 0x8000u
+#define MML_PCM_SILENCE 0xFF00u
 
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];
@@ -103,7 +86,6 @@ extern const int16_t MML_VOL_PSG4[32];
 extern const uint8_t MML_CARRIER_MASK[8];
 extern const uint8_t MML_OP_ADDR_OFFSET[4];
 extern const uint8_t MML_SIN_LUT[256];
-extern const uint16_t MML_PCM_MULT_FRAME[49];
 
 typedef struct {
   uint8_t voiced_tl, tl;
@@ -187,22 +169,19 @@ typedef struct {
   uint8_t scale_slot, has_scale;
 } MMLMacro;
 
-/* ── PCM soft-mix voice (driver.md §14) ────────────────────────────────────
- * The 68k does not mix — it only decides. But it does shadow each voice's
- * POSITION, because two of its own decisions depend on when a voice ends: a
- * PCM_VOL for a dead voice is not worth the slot bytes, and PCM_NOTE_OFF on a
- * finished shot must emit nothing. The Z80 runs the same countdown over the
- * same 16.16 increment, so the two agree tick for tick. */
+/* ── PCM voice (driver.md §14) ─────────────────────────────────────────────
+ * The engine owns playback — every pointer is the Z80's — so the sequencer
+ * keeps only what its commands need: the note's blob, whether it loops (a
+ * note-off sends its release), and the level. */
 typedef struct {
-  uint8_t active, has_loop, releasing, muted;
-  uint32_t base, len, loop_start, loop_end, loop_len;
-  int32_t left; /* bytes to the current boundary, counted down (§6.3) */
-  int32_t tail; /* loop end -> sample end, added to `left` on release */
-  uint32_t inc; /* 16.16 samples per mix tick */
-  uint32_t pos;
+  uint8_t started;    /* a START has been sent since load: PCM_VOL is worth sending */
+  uint8_t looping;    /* the running note loops */
+  uint8_t muted;
+  uint16_t src;       /* the note's blob, as a window address */
+  uint16_t len;       /* …and its length in bytes (whole blocks) */
   uint8_t vel_base, vel, vol;
-  uint8_t shift;      /* composed attenuation; the mixer sra's by it */
-  uint8_t sent_shift; /* last PCM_VOL byte sent, 0xFF = none */
+  uint8_t shift;      /* composed attenuation 0..4; master is folded in by the host */
+  uint8_t sent_shift; /* last shift byte sent, 0xFF = none */
 } MMLPcmVoice;
 
 typedef struct {
@@ -238,6 +217,9 @@ typedef struct {
   const uint8_t *sample_entries;
   uint16_t sample_count;
   uint32_t sample_blob_base;
+  /* The score's PCM voice count (MMB header flags bits 2-3): which engine image
+   * plays it, and so the rate stamp its bank must carry. */
+  uint8_t pcm_voices;
   /* Where the bank sits in the 68k ADDRESS SPACE. The Z80 reaches samples
    * through its 32 KB window, so PCM_START must carry an absolute {bank,
    * offset} — and only the host knows where rescomp put the blob. The gate
@@ -251,8 +233,8 @@ typedef struct {
   MMLFmCh fm[6];
   MMLPsgCh psg[4];
   uint8_t master;
-  /* Master's own shift, applied to the SUM once per DAC sample, and the last
-   * value sent as PCM_MASTER (0xFF = none). See pcm_compose_master. */
+  /* Master's own shift, and the last value sent as PCM_MASTER. See
+   * pcm_compose_master. */
   uint8_t pcm_master_shift;
   uint8_t pcm_sent_master;
   uint8_t noise_mode;
@@ -266,23 +248,7 @@ typedef struct {
   MMLMacroSlot macro_slots[10][MML_MACRO_BINDS];
   uint8_t macro_slot_count[10];
   MMLPcmVoice pcm[MML_PCM_VOICES];
-  uint8_t pcm_dac_on;
-  uint16_t pcm_fill;  /* samples mixed into the ring and not yet fed (§5.1.2) */
-  /* …and whether that number came from the ENGINE or from this model's own
-   * arithmetic. Set by mml_pcm_ring_fill(); zero means nobody has told us and
-   * pcm_fill is the assumption it always was. */
-  uint8_t pcm_fill_known;
-  uint8_t pcm_chunk;  /* samples this frame's slot tells the engine to mix; 0 = prime */
-  uint16_t pcm_sched; /* remainder of the sample clock's 166.674 a frame */
-  /* WHAT THE DAC ACTUALLY TAKES, measured, in samples x 256; 0 = not yet.
-   * Production minus consumption is the change in fill, so over a window of
-   * MML_PCM_RATE_WIN frames the consumption is (what was mixed) + (the fill
-   * then) - (the fill now) — exact in the average however deep the pump's
-   * lookahead is, because the delay is the same at both ends of the window. */
-  int32_t pcm_take_q;
-  uint32_t pcm_prod;   /* samples mixed since the window opened */
-  uint16_t pcm_mark;   /* the fill when it opened */
-  uint8_t pcm_win;     /* frames since it opened */
+  uint8_t pcm_dac_on;  /* $2B sent: the score's first PCM note claims fm6 for good */
   MMLGlobalSweep tempo_sweep;
   MMLGlobalSweep csm_sweep;
   int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */
@@ -310,16 +276,11 @@ typedef struct {
   uint16_t sub_mark[MML_SLOT_SUBS];
   uint16_t spill_peak, spill_frames;
 
-  /* PCM commands for the frame being built. They ride the slot's fourth run
-   * (§6.2) and are NOT capped — they are the frame's decisions, not its
-   * register traffic — but they do count against the slot's byte budget. */
+  /* PCM commands for the frame being built (§6.3). NOT capped — they are the
+   * frame's decisions, not its register traffic — but they count against the
+   * slot's byte budget. */
   uint8_t pcm_buf[MML_SLOT_SIZE];
   uint16_t pcm_len;
-  /* The frame's segment plan (driver.md §6.3.1): one count-prefixed run per
-   * PCM voice, giving the ticks from one logical break to the next. Built by
-   * the position advance the sequencer runs anyway. */
-  uint8_t plan_buf[MML_PCM_VOICES * (MML_PCM_PLAN_MAX + 1)];
-  uint16_t plan_len;
   uint8_t pcm_count;
 
   uint32_t frame;
@@ -336,9 +297,9 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len);
  * separate call. Must follow mml_load, which clears the whole state. Scores
  * without PCM never make it. `len` bounds the table; pass 0 when the caller has
  * only a ROM pointer and no size. `rom_base` is the bank's address in the 68k
- * address space — PCM_START carries an absolute {bank, window offset} and only
- * the host knows where the blob was linked. Returns 0 on success, negative on a
- * bad table. */
+ * address space — a voice's window address depends on where the blob was
+ * linked. Returns 0 on success, -3 for a bank baked for another engine image,
+ * other negatives for a bad table. */
 int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_base);
 
 /* True when the loaded score plays PCM but no sample bank is attached — the
@@ -371,37 +332,6 @@ void mml_prime_tracks(MMLSeq *s);
 void mml_stop_track(MMLSeq *s, uint8_t track_id);
 
 /* Render one frame and close its slot. Returns the slot length in bytes. */
-/* THE RING'S REAL FILL, from the engine's published header (H_FILL).
- *
- * Call it once a frame, before mml_render_frame(), inside the bus grab the host
- * already takes. Without it the sequencer ASSUMES the feed took exactly what
- * the sample clock owed — true only while the engine keeps up, and above about
- * 4.4 kHz it does not: the surplus accumulates, the lead grows from the one
- * frame mml_render_frame() cancels to two or four, and the DAC plays 17-50 ms
- * behind the FM. With it, the chunk is corrected each frame and the lead is
- * regulated instead of assumed. */
-void mml_pcm_ring_fill(MMLSeq *s, uint16_t fill);
-
-/* How much of the fill's error one frame's chunk corrects — the reciprocal, so
- * 8 means an eighth. It has to be larger than the loop's DEAD TIME, and the
- * dead time is the slot ring's depth: mml_pump renders as far ahead as the ring
- * has room, so a chunk decided now plays up to that many frames later against a
- * fill reading that is that many frames old. At a gain of one the loop
- * oscillates — measured, 78% of samples delivered at 3,329 Hz against 99.1%
- * with no correction at all. */
-#define MML_PCM_FILL_GAIN 8
-
-/* Frames the DAC's real rate is averaged over. Long enough that the pump's
- * lookahead and the ±1 in the sample clock's own remainder wash out, short
- * enough that the lead comes in within half a second. */
-#define MML_PCM_RATE_WIN 24
-
-/* What the engine last said the ring holds, for a host that wants to SEE the
- * lead rather than infer it. It is the one number that says whether the DAC is
- * in time with the FM: the sequencer cancels exactly MML_PCM_RING_TARGET of it
- * by starting a PCM track a frame early, so anything else is an offset. */
-uint16_t mml_pcm_fill(const MMLSeq *s);
-
 uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
 
 /* Close a slot WITHOUT running a frame — how the spill queue is drained once

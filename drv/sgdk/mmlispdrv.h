@@ -37,15 +37,14 @@
 //
 // SGDK'S OWN BUS STOPS. SGDK halts the Z80 around every joypad read
 // (HALT_Z80_ON_IO, ~350 68k cycles per 6-button port) and every VBlank DMA
-// flush (HALT_Z80_ON_DMA, as long as the DMA). The engine's clock repays up to
-// 1,500 master clocks of stop per 80 samples; beyond that the DAC runs slow by
-// the unrepaid time (drv/sgdk/README.md "Bus stops").
+// flush (HALT_Z80_ON_DMA, as long as the DMA). No stop is repaid: the DAC runs
+// slow by the time the bus was held (drv/sgdk/README.md "Bus stops").
 //
-// PROFILE: one PCM voice (`pcm1`), fixed pitch classes with 2^k octave steps,
-// no sample loops (a looped sample plays through once); `pcm2`/`pcm3` and
-// PCM_LOOP are dropped and counted (MMLispStats.dropped). The sample bank must
-// be the 32 KB `song.smp` the exporter writes — its top page is the silence
-// the voice parks in.
+// PROFILE: one to three PCM voices, the count the score names — each count is
+// its own Z80 image with its own DAC rate, booted by MMLisp_loadScore. Every
+// note is baked at that rate; loops and releases are played by the engine.
+// The sample bank must be the 32 KB `song.smp` the exporter writes for the
+// score — its top page is the silence a parked voice reads.
 #ifndef MMLISPDRV_H
 #define MMLISPDRV_H
 
@@ -191,10 +190,9 @@ typedef struct {
     u16 pairsWritten;  // pairs put on the wire so far
     u16 overflow;      // pairs that did not fit the 1,024-entry queue: LOST writes.
                        // Zero, or the engine has been starved of pumps
-    u16 dropped;       // PCM commands for voices this profile does not have
-                       // (pcm2/pcm3) or for sample loops
-    u16 stepRounded;   // PCM starts whose increment was not a power of two —
-                       // played at the nearest octave (the bake makes it exact)
+    u16 faults;        // PCM commands for a voice the booted image does not have:
+                       // zero, or the score and its image disagree
+    u8  image;         // PCM voices of the booted engine image
     u16 due;           // frames whose time has come (vtimer since the load, less
                        // pauses); rendered - due is the lead, normally MMLISP_LEAD
     u16 pauses;        // times the main loop fell more than three frames behind

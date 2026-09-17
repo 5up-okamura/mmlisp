@@ -137,7 +137,7 @@ int main(bool hardReset)
     VDP_drawText("frames:", 19, 7);
     VDP_drawText("pend:", 2, 8);
     VDP_drawText("ovf:", 12, 8);
-    VDP_drawText("drop:", 22, 8);
+    VDP_drawText("flt:", 22, 8);
     VDP_drawText("grabs:", 2, 9);
     VDP_drawText("pairs:", 14, 9);
     VDP_drawText("fifo:", 28, 9);
@@ -197,7 +197,7 @@ int main(bool hardReset)
             drawHex(st.rendered, 4, 27, 7);
             drawHex(st.pending, 4, 7, 8);
             drawHex(st.overflow, 4, 16, 8);
-            drawHex(st.dropped, 4, 27, 8);
+            drawHex(st.faults, 4, 27, 8);
             drawHex(st.grabs, 4, 8, 9);
             drawHex(st.pairsWritten, 4, 20, 9);
             drawHex(st.fifoLo, 2, 33, 9);

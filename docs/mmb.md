@@ -1,13 +1,12 @@
-# MMB v0.2 Container Format
+# MMB v0.3 Container Format
 
 Status: **design frozen for review** — this document, together with
 `docs/opcodes.md` (opcode/target freeze) and `docs/driver.md` (driver
 architecture), gates the Phase 3 driver implementation. Event and target
 vocabulary comes from `docs/ir.md`; MMB is the binary lowering of that IR.
 
-MMB v0.2 replaces the v0.1 draft format entirely. There is no v0.1
-compatibility path (no legacy support); `tools/scripts/mmlisp2mmb.js` and all
-fixtures move to v0.2 in one step.
+MMB v0.3 replaces every earlier draft entirely. There is no compatibility path
+(no legacy support): a loader accepts its own version and nothing else.
 
 ## 1. Goals
 
@@ -47,10 +46,10 @@ fixtures move to v0.2 in one step.
 | ------ | ---- | ------------- | ------------------------------------ |
 | 0x00   | 4    | magic         | `"MMB0"` (0x4D 0x4D 0x42 0x30)       |
 | 0x04   | 1    | version_major | 0                                    |
-| 0x05   | 1    | version_minor | 2                                    |
+| 0x05   | 1    | version_minor | 3                                    |
 | 0x06   | 2    | flags         | u16, see below                       |
 | 0x08   | 2    | section_count | u16                                  |
-| 0x0A   | 2    | header_size   | u16, = 12 for v0.2                   |
+| 0x0A   | 2    | header_size   | u16, = 12                              |
 
 The v0.1 `crc32` field is **dropped**. Integrity checking is a 68k-side
 loader concern (checksum the ROM region however the game likes); the
@@ -60,9 +59,10 @@ Header flags:
 
 | Bit  | Name         | Meaning                                              |
 | ---- | ------------ | ---------------------------------------------------- |
-| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0 in v0.2 output; loaders reject it (see §12). |
-| 1    | PAL_TIMEBASE | **Reserved.** Tempo increments precomputed for 50 Hz (see driver.md §3). Must be 0 in v0.2. |
-| 2–15 | —            | Reserved, must be 0.                                 |
+| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0; loaders reject it (see §12). |
+| 1    | PAL_TIMEBASE | **Reserved.** Tempo increments precomputed for 50 Hz (see driver.md §3). Must be 0. |
+| 2–3  | PCM_VOICES   | The score's PCM voice count, 0–3: which engine image plays it (driver.md §5) and so the rate its sample bank is baked at (§10). |
+| 4–15 | —            | Reserved, must be 0.                                 |
 
 ## 5. Section Directory
 
@@ -261,64 +261,57 @@ Structure:
 
 ```
 entry_count : u16
-bake_stamp  : u16   the sample clock the baked blobs were resampled for
-entries     : entry_count × 20 bytes
+bake_stamp  : u16   the DAC rate, rounded, of the engine image the blobs are baked for
+entries     : entry_count × 24 bytes
 blobs       : raw sample data (8-bit signed PCM), byte-packed
 padding     : zeros to 0x8000 — the file is always exactly 32 KB
 ```
 
-**The file is a whole 32 KB and its top page is silence.** The engine's PCM
-voice (driver.md §5.3) parks at window `$FF00` — bank offset `$7F00..$7FFF` —
-whenever its sample has ended and reads from there until the next start, so
-that page must be zero (signed silence) and must be the bank's own, not
-whatever rescomp places after a shorter blob. The exporter therefore refuses a
-payload that reaches `$7F00` and pads the file to `$8000`; the BIN resource is
+**The file is a whole 32 KB and its top page is silence.** A parked PCM voice
+(driver.md §5.3) reads window `$FF00` — bank offset `$7F00..$7FFF` — so that
+page must be zero (signed silence) and must be the bank's own, not whatever
+rescomp places after a shorter blob. The exporter therefore refuses a payload
+that reaches `$7F00` and pads the file to `$8000`; the BIN resource is
 `BIN song_smp "song.smp" 32768` (aligned, uncompressed).
 
-`bake_stamp` is `round(60 × PCM_SAMPLES_PER_FRAME)` — 10000 — and a loader
-**refuses a bank whose stamp is not its own** (`mml_load_samples` returns -3).
-Baked data is bound to the clock it was baked for; played under another the
-pitch is quietly wrong, which is the least debuggable failure there is. An
-unbaked bank carries the same stamp, so the check costs nothing to keep true.
+`bake_stamp` is the rounded DAC rate of the image named by the header's
+PCM_VOICES (§4; `pcm1` for a score without PCM), and a loader **refuses a bank
+whose stamp is not its image's** (`mml_load_samples` returns -3). Baked data is
+bound to the rate it was baked for; played under another the pitch is quietly
+wrong, which is the least debuggable failure there is.
 
-Sample entry (20 bytes):
+Sample entry (24 bytes):
 
 | Offset | Size | Field      | Notes                                        |
 | ------ | ---- | ---------- | -------------------------------------------- |
 | 0x00   | 1    | sample_id  | u8, referenced by PCM_NOTE_ON                |
-| 0x01   | 1    | flags      | bit0 = has_loop; bit1 = pitch baked; bits4–7 = octaves above the bake anchor; bits2–3 reserved |
-| 0x02   | 4    | offset     | u32, blob start relative to SAMPLE_BANK payload |
-| 0x06   | 4    | length     | u32, bytes                                   |
-| 0x0A   | 2    | base_rate  | u16, playback rate in Hz at C4               |
-| 0x0C   | 4    | loop_start | u32, byte offset into the sample             |
-| 0x10   | 4    | loop_end   | u32, byte offset into the sample             |
+| 0x01   | 1    | flags      | bit0 = has_loop; bits1–7 reserved            |
+| 0x02   | 2    | —          | reserved, 0                                  |
+| 0x04   | 4    | offset     | u32, blob start relative to the blob region (past the entry table) |
+| 0x08   | 4    | length     | u32, bytes — a whole number of 16-byte blocks |
+| 0x0C   | 4    | src_frames | u32, the source slice's frame count          |
+| 0x10   | 4    | loop_start | u32, baked byte offset into the blob, unrounded |
+| 0x14   | 4    | loop_end   | u32, baked byte offset into the blob, unrounded |
 
 ### 10.1 Pitch baking
 
-An entry with **flags bit1** was resampled at build time to the rate that makes
-it advance *exactly one byte a DAC sample* at the note it is played at, so
-`base_rate` is that rate and the sequencer does **not** compute the increment
-for it — it takes `0x10000 << (flags >> 4)` directly. Exactness is the point:
-the engine does not resample, it advances a power-of-two number of bytes a
-sample (driver.md §5.3, §14.2). Deriving the rate through `pcmTickIncrement`
-cannot reach it — `base_rate` is a u16, too coarse a knob above the low
-octaves, and only 22 of the 49 notes have an integer rate that lands on a power
-of two.
+Every entry is baked for one note: the source slice resampled (linear) to the
+rate at which that note advances *exactly one byte a DAC sample* at the image's
+rate — `rate / 2^((note − 60) / 12)` — and padded with silence to whole 16-byte
+blocks. The engine does not resample and has no octave step (driver.md §14.2),
+so a sample played at several notes occupies several ids, deduplicated by
+content hash.
 
-What is baked: every **unlooped** sample, at every note the score plays it,
-one blob per note (flags bits4–7 = 0), deduplicated by content hash. Looped
-samples are never baked — resampling moves the loop points off integer samples,
-and rounding them back detunes the sustained part by the rounding error over
-the loop length. The engine can reach the octaves above a blob by a 2^k step
-(flags bits4–7 = k); the exporter does not use it.
+A looped sample's loop points are mapped through the same ratio and stored
+unrounded; the sequencer rounds them to whole blocks when it sends them
+(driver.md §14). A loop that maps to nothing is baked without a loop
+(`W_MMB_BAKE_LOOP_EMPTY`). `src_frames` is the source slice's length, the scale
+a loop point given in source frames is mapped by.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
-Sample ids are entry indices, so a sample played at several notes occupies
-several ids. `offset` is relative to this
-bank's payload (past `entry_count`). The **bank image (entry table + blobs)
-must fit one 32 KB window, below its silent top page**: the engine addresses a
-sample by its 16-bit window address. `encodeMmb` refuses a larger bank; more
-than one sample bank is not supported.
+The **bank image (entry table + blobs) must fit one 32 KB window, below its
+silent top page**: the engine addresses a sample by its 16-bit window address.
+`encodeMmb` refuses a larger bank; more than one sample bank is not supported.
 
 ## 11. VOICE_TABLE Section (0x0006)
 

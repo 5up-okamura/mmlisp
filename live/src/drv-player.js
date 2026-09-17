@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// MMLispDRV reference player — MMB v0.2 decoder + Z80-constrained scheduler.
+// MMLispDRV reference player — MMB v0.3 decoder + Z80-constrained scheduler.
 //
 // This is the executable form of docs/driver.md: it consumes the MMB binary
 // (docs/mmb.md, docs/opcodes.md) exactly as the Z80 driver will — 60 Hz
@@ -46,12 +46,9 @@ import {
   curveUnit8,
   sweepValue,
   sweepStep,
-  pcmTickIncrement,
-  pcmSampleIndex,
-  PCM_SAMPLES_PER_FRAME,
-  PCM_RING_TARGET,
-  PCM_RING_BYTES,
-  PCM_BAKE_STAMP,
+  headerPcmVoices,
+  pcmBankStamp,
+  SAMPLE_ENTRY_SIZE,
   PCM_MAX_SHIFT,
   PCM_MASTER_MAX_SHIFT,
   PCM_TOTAL_MAX_SHIFT,
@@ -112,11 +109,11 @@ function buildLuts() {
 
 // Little-endian readers over a Uint8Array.
 const u16 = (b, o) => b[o] | (b[o + 1] << 8);
+const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
 const u32 = (b, o) =>
   (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
 const i8 = (v) => (v & 0x80 ? v - 0x100 : v);
 // pcm1-pcm3, the three soft-mix voices (driver.md §14)
-const isPcmChannel = (ch) => ch >= 20 && ch <= 22;
 const i16 = (v) => (v & 0x8000 ? v - 0x10000 : v);
 
 // Scaled-macro sample (§4.4): `(sample × depth) >> 8`, depth = slot low byte
@@ -172,10 +169,24 @@ import {
   SlotBuilder,
   SLOT_SUBS,
   PCM_START,
-  PCM_STOP,
   PCM_VOL,
+  PCM_RETARGET,
   PCM_MASTER,
 } from "./slot-builder.js";
+import {
+  PcmEngineModel,
+  pcmLoopPoints,
+  pcmShotPoints,
+  pcmOp,
+  pcmPageOfShift,
+  PCM_WINDOW,
+  PCM_SILENCE_ADDR,
+} from "./pcm-model.js";
+import { engineImage } from "./engine-images.js";
+
+// NTSC: a frame is 896,040 master clocks. The engine's DAC period is the
+// image's `periodMaster`, so the samples a frame are an exact ratio of the two.
+const FRAME_MASTER = 896040;
 
 // Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
 // step_j = ((j+1)·inc)/K − (j·inc)/K, so the K steps sum to exactly `inc` and
@@ -205,22 +216,17 @@ export class DrvPlayer {
     // any time). Preserved across a hot-swap _reset.
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
-    // The sample ring, as in the engine (§5.1.2): the mixer produces a chunk
-    // into it each frame and the Timer-B feed drains it at its own rate. Twice
-    // PCM_RING_TARGET, because the chunk under construction and the finished
-    // samples waiting to be played are both live in it.
-    this._pcmRing = new Int8Array(PCM_RING_BYTES);
-    this._pcmRead = 0;           // ring index the feed takes next
-    this._pcmFill = 0;           // FINISHED samples not yet fed
-    this._pcmUnderruns = 0;      // samples the feed asked for and the ring lacked
-    this._pcmSounding = 0;       // voices sounding at the last frame's mix
+    // The engine's PCM, for LIVE playback only (plan-pcm-d10-design.md §6.1):
+    // the same state machine the engine gate grades the Z80 against, driven by
+    // this player's own commands, producing the DAC bytes the page hears. The
+    // gates never build it — they compare commands, not samples.
+    this._pcmModel = null;
     this._slotSink = null;       // set by captureSlotLog
-    this._pcmLog = null;         // mixer-produced $2A/$2B, set by captureSlotLog
     this._sampleBankBase = 0;    // ROM bank the sample blob starts at
   }
 
   // ── Container loading ────────────────────────────────────────────────────
-  /** Parse an MMB v0.2 byte buffer. Throws on a malformed container. */
+  /** Parse an MMB v0.3 byte buffer. Throws on a malformed container. */
   loadMMB(bytes, sampleBankBytes = null) {
     // A newly loaded song plays at its written tempo: drop any live override.
     this._tempoOverride = false;
@@ -232,6 +238,9 @@ export class DrvPlayer {
     if (b[4] !== VERSION_MAJOR || b[5] !== VERSION_MINOR) {
       throw new Error(`unsupported MMB version ${b[4]}.${b[5]}`);
     }
+    // Bits 2-3 of the flags: the PCM voice count, i.e. which engine image the
+    // score plays on and the rate its bank is baked at (mmb.md §4).
+    const pcmVoices = headerPcmVoices(u16(b, 6));
     const sectionCount = u16(b, 8);
     const headerSize = u16(b, 10);
     const sections = new Map();
@@ -309,34 +318,28 @@ export class DrvPlayer {
     if (sampleBank) {
       sampleData = sampleBank;
       const n = u16(sampleBank, 0);
-      // The bank stamps the sample clock its BAKED blobs were resampled for
-      // (mmb.md §10). Baked data is bound to that clock: play it under another
-      // and the pitch is quietly wrong, which is the least debuggable failure
-      // there is — so the mismatch is reported here rather than heard later.
+      // The bank stamps the image rate its blobs were baked at (mmb.md §10).
+      // Baked data is bound to that rate: played under another the pitch is
+      // quietly wrong, so the mismatch is reported here rather than heard.
       const stamp = u16(sampleBank, 2);
-      if (stamp !== PCM_BAKE_STAMP) {
+      const want = pcmBankStamp(engineImage(pcmVoices).rateHz);
+      if (stamp !== want) {
         this._diagnostics.push({
           severity: "error",
           code: "E_MMB_BAKE_RATE",
-          message: `sample bank baked for ${stamp} Hz; this build runs at ${PCM_BAKE_STAMP} Hz`,
+          message: `sample bank baked for ${stamp} Hz; the pcm${Math.max(1, pcmVoices)} image runs at ${want} Hz`,
         });
       }
-      const blobBase = 4 + n * 20;
+      const blobBase = 4 + n * SAMPLE_ENTRY_SIZE;
       for (let i = 0; i < n; i++) {
-        const e = 4 + i * 20;
-        const flags = sampleBank[e + 1];
+        const e = 4 + i * SAMPLE_ENTRY_SIZE;
         samples[sampleBank[e]] = {
-          hasLoop: (flags & 1) !== 0,
-          // Bit 1 = pitch baked: the blob already advances one byte a DAC tick
-          // at its anchor note, and bits 4-7 are how many OCTAVES above that
-          // anchor this entry is — so the increment is a shift, not a divide.
-          baked: (flags & 2) !== 0,
-          bakeShift: (flags >> 4) & 0x0f,
-          base: blobBase + u32(sampleBank, e + 2),
-          len: u32(sampleBank, e + 6),
-          baseRate: u16(sampleBank, e + 10),
-          loopStart: u32(sampleBank, e + 12),
-          loopEnd: u32(sampleBank, e + 16),
+          hasLoop: (sampleBank[e + 1] & 1) !== 0,
+          base: blobBase + u32(sampleBank, e + 4),
+          len: u32(sampleBank, e + 8),
+          srcFrames: u32(sampleBank, e + 12),
+          loopStart: u32(sampleBank, e + 16),
+          loopEnd: u32(sampleBank, e + 20),
         };
       }
     }
@@ -392,7 +395,7 @@ export class DrvPlayer {
       }
     }
 
-    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices };
+    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices, pcmVoices };
     return this;
   }
 
@@ -460,43 +463,29 @@ export class DrvPlayer {
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
-    // PCM soft-mix (driver.md §14): pcm1–pcm3 (channels 20–22) are three voice
-    // slots summed in software to the single fm6 DAC. Each frame mixes a chunk
-    // of the sample clock's grid; every active voice is resampled to it, the ≤3
-    // signed samples summed, hard-saturated to int8, and written to $2A as the
-    // Timer-B feed reaches them. `dacOn` is shared.
-    this._pcmVoices = [0, 1].map(() => ({
-      active: false,
-      base: 0,
-      len: 0,
-      hasLoop: false,
-      loopStart: 0,
-      loopEnd: 0,
-      loopLen: 0,
-      // Distance to the current boundary, in bytes, counted down — the same
-      // formulation the Z80 engine uses (driver.md §6.3). An absolute end
-      // index would have to be rebased every time a sample crossed a ROM bank;
-      // a countdown never does, and the two agree tick for tick.
-      left: 0,
-      tail: 0, // loop end → sample end, added to `left` when the release starts
-      inc: 0,
-      pos: 0,
-      releasing: false,
+    // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
+    // does not model playback — the engine owns every pointer — it keeps what
+    // its commands need: the note's blob, whether it loops, and the level.
+    this._pcmVoices = [0, 1, 2].map(() => ({
+      started: false, // a START has been sent since load: PCM_VOL is worth sending
+      looping: false, // the running note loops; a note-off sends its release
+      src: 0, // the note's blob, as a window address
+      len: 0, // …and its length in bytes (whole blocks)
       velBase: 15, // score's sticky velocity; vel is the macro-driven live one
       vel: 15, // per-voice velocity 0-15 (raw); default = unattenuated
       vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
-      shift: 0, // composed attenuation: sample >>= shift (0..4). Recomputed from
-      // vel+vol on either; the mixer sra's each of this voice's samples by it.
-      // MASTER is not in here — it rides the sum, once per DAC sample.
+      shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
       muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
-      // vel/vol/shift/muted persist across notes and ride the SE snapshot; they
-      // mirror the Z80 G_PCM_VEL/G_PCM_VOL globals + PV_SHIFT / PV_ACT mute bit.
+      _sentShift: 0xff,
     }));
     this._pcmDacOn = false;
-    this._pcmRing?.fill(0);
-    this._pcmRead = 0;
-    this._pcmFill = 0;
-    this._pcmUnderruns = 0;
+    // Live playback of a PCM score runs the engine model for the DAC bytes;
+    // an offline capture (no audio context) compares commands and builds none.
+    this._pcmModel = this._audioContext && song?.sampleData && song.pcmVoices
+      ? new PcmEngineModel(engineImage(song.pcmVoices), song.sampleData)
+      : null;
+    this._pcmSampleRem = 0;
+    this._pcmSampleIndex = 0;
 
     // Live mixer mute/solo (track index = position in the MMB/IR track list).
     // Preserved across a hot-swap _reset so the mixer keeps its state.
@@ -628,13 +617,10 @@ export class DrvPlayer {
     this._ym(0, 0x22, 0); // LFO off
     this._ym(0, 0x27, 0); // CH3 normal mode, timers off
     this._ym(0, 0x2a, 0); // DAC data centred
-    this._ym(0, 0x2b, 0); // DAC off
-    // These two stay in the neutral patch for parity with ir-player, but they
-    // do NOT cross the bus: post-split $2A and $2B belong to the mixer, which
-    // is the only thing that knows when a voice is sounding (driver.md §14).
-    // captureSlotLog keeps them out of the slot and records the mixer's own
-    // DAC traffic separately, in _pcmLog — so the engine and the reference can
-    // be compared on what the mixer produced, not on the power-on patch.
+    this._ym(0, 0x2b, 0); // DAC off: fm6 is FM until a PCM note claims it
+    // $2A stays in the neutral patch for parity with ir-player but never
+    // crosses the bus — the engine writes the DAC. $2B does: it is the
+    // sequencer's, and a score's first PCM note turns it on (driver.md §14).
   }
 
   // ── Level composition (driver.md §7; integer end-to-end) ────────────────
@@ -898,7 +884,7 @@ export class DrvPlayer {
       // macro binds — and stops at the first opcode that sounds or consumes
       // time, so the frame it was started in makes no sound however long its
       // voice applies take (driver.md §4.2; the same test sits in d_next).
-      if (trk.armed && op >= OPCODE.NOTE_ON && op <= OPCODE.NOTE_ON_EX) return;
+      if (trk.armed && ((op >= OPCODE.NOTE_ON && op <= OPCODE.NOTE_ON_EX) || op === OPCODE.PCM_NOTE_ON)) return;
       switch (op) {
         case OPCODE.END_OF_TRACK: {
           trk.pendingOff = false;
@@ -1783,80 +1769,63 @@ export class DrvPlayer {
     return false;
   }
 
-  // ── PCM / DAC (driver.md §11 for which samples, §5.1 for when) ────────────
-  _dacByte(storedByte, sampleIndex) {
-    // Sample bytes are stored 8-bit signed (two's complement); the DAC ($2A)
-    // is 8-bit unsigned (128 = zero) — XOR 0x80 converts.
-    //
-    // `sampleIndex` is the byte's place on the sample clock, counted from frame
-    // 0, and _whenSample turns it into its own instant. Stamping them all at the
-    // frame start (as _when does) would let a realtime consumer collapse ~167 of
-    // them to the last value — the waveform would come out as a click. The
-    // register trace is unaffected: captureRegisterLog records the frame.
-    const byte = (storedByte ^ 0x80) & 0xff;
-    if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2a, data: byte });
-    this._writeCb(0, 0x2a, byte, this._whenSample(sampleIndex));
+  // ── PCM (driver.md §14) ──────────────────────────────────────────────────
+  // The sample clock of the score's engine image: `periodMaster` master clocks
+  // a sample against the frame's 896,040, so a frame is an exact ratio of
+  // samples and each $2A byte gets its own instant. Stamping them all at the
+  // frame start would let a realtime consumer collapse ~200 of them to the last
+  // value — the waveform would come out as a click.
+  _whenSample(sampleIndex) {
+    if (!this._audioContext) return undefined;
+    const img = engineImage(this._song?.pcmVoices ?? 1);
+    return this._startAudioTime + (sampleIndex * img.periodMaster) / (FRAMES_PER_SEC * FRAME_MASTER);
   }
 
-  // The sample clock runs at PCM_SAMPLES_PER_FRAME per frame — expressed
-  // against the frame clock, not in absolute Hz, because that ratio is what the
-  // hardware fixes (both come off the same crystal) while the nominal frame
-  // rate here is 60 and the machine's is 59.92.
-  _whenSample(sampleIndex) {
-    return this._audioContext
-      ? this._startAudioTime + sampleIndex / (FRAMES_PER_SEC * PCM_SAMPLES_PER_FRAME)
-      : undefined;
+  /** The window address a sample entry's blob sits at (the host maps the bank). */
+  _pcmSrc(s) {
+    const abs = this._sampleBankBase * 0x8000 + s.base;
+    return PCM_WINDOW + (abs & 0x7fff);
   }
 
   _pcmNoteOn(channelId, sampleId, note) {
+    void note; // the bank baked this note into its own entry
     const vi = channelId - 20; // pcm1–pcm3 → voice 0–2
     if (vi < 0 || vi > 2) return;
     const s = this._song.samples[sampleId];
     if (!s || s.len === 0) return;
     const v = this._pcmVoices[vi];
-    if (!v) return;   // a voice this build does not have (pcm3 at PCM_VOICES=2)
-    // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1);
-    // ir-player's "vel arrives on each PCM_NOTE_ON" is the model.
+    // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1).
     this._restoreVelBase(channelId);
     this._pcmComposeShift(vi);
-    v.active = true;
-    v.base = s.base;
+    // A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on. $2B is
+    // an ordinary register write, sent once; nothing ever turns it off again.
+    if (!this._pcmDacOn) {
+      this._pcmDacOn = true;
+      this._ym(0, 0x2b, 0x80);
+    }
+    v.started = true;
+    v.looping = s.hasLoop;
+    v.sampleId = sampleId;
+    v.src = this._pcmSrc(s);
     v.len = s.len;
-    v.hasLoop = s.hasLoop;
-    v.loopStart = s.loopStart;
-    v.loopEnd = s.hasLoop ? s.loopEnd : s.len;
-    v.loopLen = v.loopEnd - v.loopStart;
-    v.left = v.loopEnd;                 // to the loop end, or the sample end
-    v.tail = s.len - v.loopEnd;         // what a release still has to play
-    // 16.16 sample bytes per mix sample. A BAKED entry does not go through the
-    // pitch table at all: it was resampled so its anchor note advances exactly
-    // one byte a tick, and an octave above that is exactly two (driver.md
-    // §14.2). Computing it instead would land a fraction off and lose the
-    // mixer's no-resampler loop for the sake of a value we already know.
-    v.inc = s.baked
-      ? (0x10000 << s.bakeShift) >>> 0
-      : pcmTickIncrement(s.baseRate, note);
-    v.pos = 0;
-    v.releasing = false;
-    // $2B (DAC enable) is the ENGINE's, not the sequencer's: it is a
-    // consequence of voice activity, which is the one piece of state the Z80
-    // owns. Claiming it here instead would need the two sides to agree on the
-    // exact frame a shot ends, which is a coupling worth not having. Both
-    // sides now do it in the mix step (see _pcmFrame).
-    this._emitPcmStart(vi, v);
+    const pts = s.hasLoop
+      ? pcmLoopPoints(v.src, s.len, s.loopStart, s.loopEnd)
+      : pcmShotPoints(v.src, s.len);
+    const byte = this._pcmShiftByte(v);
+    this._pcmCmd([PCM_START, vi, byte, ...u16le(v.src), ...u16le(pts.end), ...u16le(pts.wrap)]);
+    v._sentShift = byte;
   }
 
   _pcmNoteOff(channelId) {
-    // shot plays to its end regardless (opcodes.md §6). A loop leaves its loop
-    // region and plays out the tail to the sample end.
+    // A shot plays to its end regardless (opcodes.md §6). A loop's release
+    // moves END to the sample's end and WRAP to silence: the tail plays out.
     const vi = channelId - 20;
     if (vi < 0 || vi > 2) return;
     const v = this._pcmVoices[vi];
-    if (!v) return;   // a voice this build does not have (pcm3 at PCM_VOICES=2)
-    if (!v.active || !v.hasLoop) return;
-    v.releasing = true;
-    v.left += v.tail; // the boundary moves from the loop end to the sample end
-    this._pcmCmd([PCM_STOP, vi]);
+    if (!v.started || !v.looping) return;
+    v.looping = false;
+    const pts = pcmShotPoints(v.src, v.len);
+    this._pcmCmd([PCM_RETARGET, vi, ...u16le(pts.end), ...u16le(pts.wrap)]);
   }
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
@@ -1998,11 +1967,11 @@ export class DrvPlayer {
       // while the SE plays) so SE-end can restore it (PV_POS resume = no dropout).
       // Captured at START_SE, before this frame's mixer pass — the same point the
       // Z80 ovl_setup snapshots, so both ports capture identical voice state.
+      // The engine keeps no position the host can read back, so what SE-end
+      // restores is the NOTE: a BGM loop starts again from its sample's head.
       const vi = ch - 20;
       const v = this._pcmVoices[vi];
-      if (!v) return;   // a voice this build does not have (pcm3 at PCM_VOICES=2)
-    if (!v) return;   // a voice this build does not have (pcm3 at PCM_VOICES=2)
-      if (v.active) {
+      if (v.started && v.looping) {
         trk.pcmSnap = { ...v };
         trk.pcmVi = vi;
       }
@@ -2121,12 +2090,12 @@ export class DrvPlayer {
   // track's END_OF_TRACK and STOP_TRACK, mirroring the Z80 d_eot / stop_track.
   _reclaimSe(seTrk) {
     if (!seTrk.isSe) return;
-    // PCM (design C): restore the stolen soft-mix voice struct — the loop resumes
-    // from its frozen position with no dropout. No owner track.
+    // PCM (design C): the BGM loop the SE stole is started again. No owner track.
     if (seTrk.pcmSnap != null) {
-      Object.assign(this._pcmVoices[seTrk.pcmVi], seTrk.pcmSnap);
+      const snap = seTrk.pcmSnap;
       seTrk.pcmSnap = null;
       seTrk.isSe = false;
+      if (snap.sampleId != null) this._pcmNoteOn(20 + seTrk.pcmVi, snap.sampleId, 60);
       return;
     }
     if (seTrk.displaced == null) {
@@ -2175,42 +2144,30 @@ export class DrvPlayer {
     }
   }
 
-  // One frame of DAC feed. Returns nothing; deactivates + DAC-off at end.
   // Compose a pcm voice's attenuation from vel + vol (plan-se.md, driver.md
   // §14.1). Both ride the FM/PSG 2 dB/step ladder; summing their "steps below
-  // unity" gives the attenuation, quantized to the 6 dB bit-shift grid:
+  // unity" gives the attenuation, quantized to the 6 dB grid:
   //   n = (15−vel) + (31−vol);  shift = min(PCM_MAX_SHIFT, round(n/3)).
-  // MASTER IS NOT IN HERE. It is common to every voice, so the mixer applies it
-  // once per DAC sample to the finished sum (_pcmComposeMaster) instead of once
-  // per tick to each voice — which is what lifts a master fade off this
-  // ceiling. What master still decides here is the MUTE: `master 0` is a hard
-  // mute, and so is a total past PCM_TOTAL_MAX_SHIFT, which hands the frame the
-  // voice's whole per-tick cost back at the depth where it stops being audible.
-  // vol==0 is the other hard mute; vel alone never mutes.
-  // Rare (once per PARAM_SET), so the divide/round is off the mix hot path.
+  // MASTER IS NOT IN HERE — the host folds it into each voice's level page.
+  // What master still decides here is the MUTE: `master 0`, `vol 0`, and a
+  // total past PCM_TOTAL_MAX_SHIFT are the hard mutes; vel alone never mutes.
   _pcmComposeShift(vi) {
     const v = this._pcmVoices[vi];
-    if (!v) return;   // a voice this build does not have (pcm3 at PCM_VOICES=2)
     const n = 15 - v.vel + (31 - v.vol);
     const shift = Math.floor((n + 1) / 3); // round(n/3)
     v.shift = shift > PCM_MAX_SHIFT ? PCM_MAX_SHIFT : shift;
     v.muted = v.vol === 0 || this._master === 0
       || v.shift + this._pcmMasterShift >= PCM_TOTAL_MAX_SHIFT;
     const byte = this._pcmShiftByte(v);
-    if (v.active && byte !== v._sentShift) {
+    // A voice that has never started has no level to change: its START carries it.
+    if (v.started && byte !== v._sentShift) {
       v._sentShift = byte;
       this._pcmCmd([PCM_VOL, vi, byte]);
     }
   }
 
-  // Master's own shift, applied to the SUM once per DAC sample. Same 6 dB grid,
-  // its own ceiling: PCM_MASTER_MAX_SHIFT is deeper than the per-voice one
-  // because this cost does not multiply by the voice count.
-  //
-  // Emitted only when the SHIFT moves, not when master does — three `master`
-  // steps to a rung means a fade patches the engine's emit sites about seven
-  // times on the way down rather than once a frame, which is what makes the
-  // engine's self-modifying dispatch affordable (driver.md §14.1).
+  // Master's own shift, on the same 6 dB grid and its own deeper ceiling.
+  // Emitted only when the SHIFT moves, not when master does.
   _pcmComposeMaster() {
     const n = 31 - this._master;
     const shift = Math.floor((n + 1) / 3); // round(n/3)
@@ -2223,187 +2180,52 @@ export class DrvPlayer {
   }
 
   // ── PCM command emission (driver.md §6.3) ────────────────────────────────
-  // Every field is resolved HERE, on the sequencer side: the engine receives
-  // register-ready values and does no per-note arithmetic at all.
+  // Every field is resolved HERE, on the sequencer side: the host turns a
+  // command into state-store pairs and the engine does no per-note arithmetic.
   _pcmCmd(bytes) {
     if (this._slotSink) this._slotSink.pcm(bytes);
+    if (this._pcmModel) this._pcmModelApply(bytes);
   }
-  _emitPcmStart(vi, v) {
-    if (!this._slotSink) return;
-    const u16 = (x) => [x & 0xff, (x >> 8) & 0xff];
-    const abs = this._sampleBankBase * 0x8000 + v.base;
-    const incI = (v.inc >>> 16) & 0xff;
-    this._pcmCmd([
-      PCM_START,
-      vi,
-      1 | (v.hasLoop ? 2 : 0),
-      this._pcmShiftByte(v),
-      // 2^ksh >= the largest advance one tick can make, so the engine bounds a
-      // segment with a shift instead of a division (driver.md §6.3).
-      Math.ceil(Math.log2(incI + 1)),
-      ...u16(abs >> 15),                 // ROM bank
-      ...u16(0x8000 + (abs & 0x7fff)),   // window address
-      ...u16(v.left),
-      ...u16(v.loopLen),
-      ...u16(v.tail),
-      ...u16(v.inc & 0xffff),
-      incI,
-    ]);
-    v._sentShift = this._pcmShiftByte(v);
-  }
-  // MUTE_SHIFT (8) is a real table entry in the mixer: a muted voice keeps
-  // advancing and contributes nothing, matching FM where a note continues
-  // silently under a 0 fader (driver.md §14).
+  // MUTE (8) is the sequencer's: the host sends the silence page for it.
   _pcmShiftByte(v) {
     return v.muted ? 8 : v.shift;
   }
 
-  // ── The mixer (driver.md §5.3) ───────────────────────────────────────────
-  // Voice-outer over a chunk of the sample ring, 8-bit saturating-add: the first
-  // voice STORES (which is what removes the buffer clear) and the rest add with
-  // a clamp at every add. This mirrors the engine's structure exactly rather
-  // than merely agreeing with it — including where the DAC is claimed and
-  // released, and the countdown boundary — so the two cannot drift.
-  //
-  // FEED FIRST, THEN MIX — and that ordering is the one frame of latency
-  // (driver.md §5.1). A sample is final only once the LAST voice has added to
-  // it, so what the feed can be draining during a frame is what the previous
-  // frame's mix finished. A burst therefore opens with a frame of silence and
-  // closes with however many frames the ring's tail needs, and the DAC is
-  // released only after that tail is out. The reference has to model the delay
-  // or the gates stop meaning anything. (§4.2 cancels it for the score by
-  // running PCM tracks a frame ahead, so it costs latency, never alignment.)
-  //
-  // What the ring buys over the two planes it replaces: the feed's count and
-  // the mix's count no longer have to be the same number. The DAC takes 166 or
-  // 167 samples a frame depending on where Timer B's phase falls, and the mixer
-  // just tops the ring back up.
+  // ── The live DAC feed (plan-pcm-d10-design.md §6.1) ──────────────────────
+  // A command reaches the model the way the host converter would put it on
+  // the wire — the level page with the master folded in, the staged bytes,
+  // then the generation — but at once, not through the pair page: for the ear
+  // a block of delay is nothing, and nothing grades these bytes.
+  _pcmModelApply(c) {
+    const m = this._pcmModel, img = m.img;
+    const page = (shiftByte) => img.lutPage + (shiftByte >= 8 ? 0 : pcmPageOfShift(shiftByte + this._pcmMasterShift));
+    const put16 = (name, vi, x) => { m.store(pcmOp(name, vi), x & 0xff); m.store(pcmOp(name, vi) + 1, (x >> 8) & 0xff); };
+    const w = (k) => c[k] | (c[k + 1] << 8);
+    const bump = (name, vi) => { const op = pcmOp(name, vi); m.store(op, (m.state[op] + 1) & 0xff); };
+    if (c[0] === PCM_START && c[1] < img.voices) {
+      m.store(pcmOp("LEVEL", c[1]), page(c[2]));
+      put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
+      bump("START", c[1]);
+    } else if (c[0] === PCM_RETARGET && c[1] < img.voices) {
+      put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));
+      bump("RETARGET", c[1]);
+    } else if (c[0] === PCM_VOL && c[1] < img.voices) {
+      m.store(pcmOp("LEVEL", c[1]), page(c[2]));
+    } else if (c[0] === PCM_MASTER) {
+      for (let vi = 0; vi < img.voices; vi++)
+        if (this._pcmVoices[vi].started) m.store(pcmOp("LEVEL", vi), page(this._pcmShiftByte(this._pcmVoices[vi])));
+    }
+  }
+
+  // One frame of the engine's DAC bytes, each written at its own instant.
   _pcmFrame() {
-    const voices = this._pcmVoices;
-    const active = voices.some((v) => v.active);
-    // Voices sounding at frame start — what the frame's mix COSTS, which the
-    // pacing tools price the Z80's frame from (they cannot see it any other way).
-    this._pcmSounding = voices.reduce((n, v) => n + (v.active ? 1 : 0), 0);
-    // ── fm6 IS CLAIMED FOR THE REST OF THE SCORE ────────────────────────────
-    // Once PCM has sounded once, the ring is kept topped up with silence and
-    // the DAC is never released. The alternative — releasing when the tail runs
-    // out — makes the NEXT hit a PRIME frame, and a prime frame feeds nothing
-    // while it builds the lead: measured at 135 to 355 sample periods of DAC
-    // silence, one to two whole frames, once per burst. On a percussion track
-    // that is a click on every hit.
-    //
-    // The cost is that fm6 stops being available as an FM channel for the rest
-    // of the score (§14 — claimed, not owned, becomes claimed and kept), and
-    // that a silent frame now mixes silence instead of doing nothing. That is
-    // the trade, taken deliberately: a score with no PCM at all never claims,
-    // so it is unaffected.
-    if (!active && !this._pcmDacOn) return;
-    const base = pcmSampleIndex(this._frame);
-    const want = pcmSampleIndex(this._frame + 1) - base;
-    // An empty ring is a PRIME frame: the burst's first (or a recovery after the
-    // ring ran dry). It builds the whole lead and feeds nothing — one $2A byte
-    // parks the DAC at silence so claiming fm6 cannot step it to whatever the
-    // last burst left latched. Everything after it mixes exactly what the feed
-    // took, which is what keeps the engine's two counts equal: it emits one
-    // sample per three mix ticks, so a frame that mixes `want` feeds `want`.
-    const prime = this._pcmFill === 0;
-    if (!this._pcmDacOn) {
-      this._pcmDacOn = true;
-      if (this._pcmLog) this._pcmLog.push({ frame: this._frame, reg: 0x2b, data: 0x80 });
-      this._ym(0, 0x2b, 0x80); // DAC enable (fm6 → DAC)
-    }
-    if (prime) {
-      this._dacByte(0, base);
-      // A prime frame that finds no voice to mix cannot happen: the tail branch
-      // above returns while the ring still holds anything, and an empty ring
-      // with nothing sounding released the DAC.
-    } else {
-      // ── The feed. Every instant the sample clock reaches gets a $2A write;
-      // one the ring cannot supply is written as silence, which is what closes
-      // a burst cleanly instead of holding the last byte as DC. A dry ring
-      // under a RUNNING mixer is the underrun the geometry exists to prevent
-      // and the number the pacing gate reads; a burst's tail running out is
-      // not one.
-      for (let i = 0; i < want; i++) {
-        let s = 0;
-        if (this._pcmFill > 0) {
-          s = this._pcmRing[this._pcmRead];
-          this._pcmRead = (this._pcmRead + 1) & (PCM_RING_BYTES - 1);
-          this._pcmFill--;
-        } else if (active) this._pcmUnderruns++;
-        // MASTER, here and nowhere else (driver.md §14.1). The sum has already
-        // saturated by the time it reaches the ring, so this attenuates a
-        // CLIPPED mix rather than clipping an attenuated one — a fade-out holds
-        // whatever the mix clipped and takes it down, which is what a master
-        // fader does and is a deliberate change from the per-voice fold.
-        // It reads the CURRENT shift against a byte an earlier frame mixed,
-        // exactly as the engine's emit does — master moves at the DAC, not in
-        // the ring.
-        this._dacByte(s >> this._pcmMasterShift, base + i);
-      }
-    }
-    // The engine cannot derive the frame's sample count (a starved frame would
-    // desync it from the plan's tick distances), so the slot carries it — 0
-    // meaning a prime frame, since the lead does not fit in a byte (§5.1.2).
-    // A TAIL frame carries it too: it feeds `want` like any other, and a slot
-    // that said nothing would leave the engine replaying the last chunk, which
-    // is 167 where the schedule says 166 one frame in three.
-    this._slotSink?.chunk(prime ? 0 : want);
-    // ── The mix: the lead on a prime frame, otherwise exactly what was fed.
-    // It runs whether or not anything is SOUNDING. A silent pass stores silence
-    // (the inner loop's `s = 0`), which is what keeps `fill` constant instead of
-    // draining — and a ring that never drains never primes again. This used to
-    // be `if (active)`, which let the ring empty between bursts.
-    {
-      const chunk = prime ? PCM_RING_TARGET : want;
-      const write = (this._pcmRead + this._pcmFill) & (PCM_RING_BYTES - 1);
-      const data = this._song.sampleData;
-      const ring = this._pcmRing;
-      // Every voice runs a FULL pass, silently if it has nothing to play: the
-      // engine needs the pass count fixed for the sub-tick boundaries (§3.5),
-      // and a silent first pass writing the ring's zero subsumes the old
-      // early-end fill. Silent passes add nothing, so the mix is unchanged.
-      // The pass also RECORDS where it broke (§6.3.1). The advance is happening
-      // anyway; the boundary list is free here and expensive on the Z80, which
-      // had to re-derive it with a shift bound and a tick-by-tick tail walk
-      // whose cost swung by an order of magnitude frame to frame.
-      const planBlock = [];
-      voices.forEach((v, i) => {
-        const segs = [];
-        let last = 0;                   // tick index of this voice's last break
-        for (let t = 0; t < chunk; t++) {
-          let s = 0;
-          if (v.active) {
-            s = v.muted ? 0 : i8(data[v.base + (v.pos >>> 16)]) >> v.shift;
-            const before = v.pos >>> 16;
-            v.pos = (v.pos + v.inc) >>> 0;
-            v.left -= (v.pos >>> 16) - before;
-            if (v.left <= 0) {
-              segs.push(t + 1 - last);
-              last = t + 1;
-              if (v.hasLoop && !v.releasing) {
-                v.pos = (v.pos - (v.loopLen << 16)) >>> 0;
-                v.left = v.loopLen;
-              } else {
-                v.active = false;
-              }
-            }
-          }
-          const at = (write + t) & (PCM_RING_BYTES - 1);
-          if (i === 0) ring[at] = s;
-          else {
-            const a = ring[at] + s;
-            ring[at] = a > 127 ? 127 : a < -128 ? -128 : a;
-          }
-        }
-        // Still sounding at the chunk's end: one more run saying "no boundary
-        // from here", which the engine clamps to the ticks it has left. A voice
-        // that ended needs none — its pass falls through to the silent loop.
-        if (v.active) segs.push(chunk);
-        planBlock.push(segs.length, ...segs);
-      });
-      this._pcmFill += chunk;
-      this._slotSink?.plan(planBlock);
+    if (!this._pcmModel) return;
+    const img = this._pcmModel.img;
+    this._pcmSampleRem += FRAME_MASTER;
+    while (this._pcmSampleRem >= img.periodMaster) {
+      this._pcmSampleRem -= img.periodMaster;
+      const byte = this._pcmModel.slot(null);
+      this._writeCb(0, 0x2a, byte, this._whenSample(this._pcmSampleIndex++));
     }
   }
 
@@ -2455,30 +2277,16 @@ export class DrvPlayer {
       // 2. Per track, ascending index: accumulate and dispatch.
       for (const trk of this._trk) {
         if (!trk.running || trk.held) continue;
-        // PCM onsets stay on the frame grid: a soft-mix voice's pass covers the
-        // whole frame, so starting one mid-frame would need a leading idle
-        // segment the engine cannot afford yet. Subdividing them here would only
-        // move the note EARLIER than the frame that owns it, since the engine
-        // applies the frame's whole PCM command list before it mixes.
-        const pcm = isPcmChannel(trk.channelId);
         if (trk.armed) {
           if (sub !== 0) continue; // the setup runs once, at the frame head
           this._dispatch(trk); // leading setup only — see the guard in _dispatch
           trk.armed = false; // notes start next frame (Z80: dec T_STATUS)
           trk.armedFrame = this._frame; // ...and this frame advances no ticks
-          // ...except a PCM track, which starts THIS frame and so runs one frame
-          // ahead of every other track for the rest of the score. That is the
-          // compensation for the mixer's feed: it is one frame behind the mix by
-          // construction (driver.md §5.1), so a PCM command issued a frame early
-          // is heard on the beat. The lead is exactly one frame and stays that
-          // way — every track advances by the same increment per frame.
-          if (!pcm) continue;
-          if (!trk.running || trk.held) continue;
-        } else if (trk.armedFrame === this._frame && !pcm) {
+          continue;
+        } else if (trk.armedFrame === this._frame) {
           continue; // the armed frame is silent setup, at any sub-tick
         }
-        if (pcm && sub !== 0) continue;
-        trk.acc += pcm ? this._increment : step;
+        trk.acc += step;
         while (trk.acc >= 0x100) {
           trk.acc -= 0x100;
           // One tick: gate countdown, then wait countdown / dispatch.
@@ -2510,11 +2318,8 @@ export class DrvPlayer {
         if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
         this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)
       }
-      // The mix runs after the LAST sub-tick, because the engine applies the
-      // frame's whole PCM command list at the frame head and then mixes: a
-      // PCM_VOL a late sub-tick generated (a MASTER move, say) has to be in
-      // force for this frame's samples on both sides or the two mixers diverge.
-      if (sub === SLOT_SUBS - 1) this._pcmFrame(); // DAC sample feed (§11)
+      // The live DAC feed, after the frame's commands (no-op in the gates).
+      if (sub === SLOT_SUBS - 1) this._pcmFrame();
       // 4. Writes go out inline through the shadow (change-only) in dispatch
       //    order; the sub-tick boundary is what buckets them into sub-slots.
       this._slotSink?.endSub();
@@ -2581,18 +2386,8 @@ export class DrvPlayer {
   }
 
   _done() {
-    // The driver is still busy while a shot or loop tail is sounding past the
-    // note that started it, even if every track has ended.
-    //
-    // The ring's FILL is deliberately not consulted. It used to be — "the ring
-    // holds up to a frame and a half of that tail after the last voice" — and
-    // that stopped being a signal when fm6 became claimed for the whole score
-    // (§5.1.2): the ring is now kept topped up with SILENCE so a later hit
-    // never has to prime, so a full ring says nothing about whether the song is
-    // over, and this predicate never fired again. `mml_done` in the C has
-    // always read it this way, and the two have to agree or the C stops the
-    // stream where the reference does not.
-    if (this._pcmVoices.some((v) => v.active)) return false;
+    // Every track idle or held. The engine owns PCM playback, so a shot's tail
+    // is not the sequencer's to wait for; `mml_done` in the C reads the same.
     return this._trk.every((t) => !t.running || t.held);
   }
 
@@ -2669,13 +2464,10 @@ export class DrvPlayer {
     const saved = this._writeCb;
     const savedSink = this._slotSink;
     this._slotSink = b;
-    const pcmLog = [];
-    this._pcmLog = pcmLog;
     this._writeCb = (port, addr, data) => {
       writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
-      // $2A (the DAC feed) and $2B (its enable) never cross the bus: the mixer
-      // produces one and owns the other. Everything else is the slot.
-      if (port === 0 && (addr === 0x2a || addr === 0x2b)) return;
+      // $2A (the DAC data) never crosses the bus: the engine writes it.
+      if (port === 0 && addr === 0x2a) return;
       b.write(port, addr, data);
     };
     const cmdByFrame = new Map();
@@ -2711,11 +2503,6 @@ export class DrvPlayer {
         writes,
         frames,
         ended: this._done(),
-        pcmLog,
-        // Samples the feed asked the ring for and did not get (§5.1.2). Zero is
-        // the bar — the ring's whole purpose is that this stays zero while the
-        // sample clock and the frame clock drift against each other.
-        pcmUnderruns: this._pcmUnderruns,
         spillPeak: b.spillPeak,
         spillFrames: b.spillFrames,
         diagnostics: this._diagnostics.slice(),
@@ -2723,28 +2510,12 @@ export class DrvPlayer {
     } finally {
       this._writeCb = saved;
       this._slotSink = savedSink;
-      this._pcmLog = null;
     }
   }
 
   /** The constant tables the asm port ships verbatim (driver.md §12). */
   getLuts() {
     return this._luts;
-  }
-
-  /**
-   * Sample-ring state (§5.1.2), for the pacing gate. `fill` is what the mixer
-   * has produced and the feed has not taken yet — read at a frame boundary it
-   * is the slack the ring is holding, which is the whole measurement.
-   */
-  getPcmRing() {
-    return {
-      fill: this._pcmFill,
-      underruns: this._pcmUnderruns,
-      target: PCM_RING_TARGET,
-      dacOn: this._pcmDacOn,
-      sounding: this._pcmSounding ?? 0,
-    };
   }
 
   // ── Live-monitor surface (read-only views of driver state for the UI) ────
@@ -2857,10 +2628,13 @@ export class DrvPlayer {
       if (this._isTrackAudible(trk.index)) continue;
       if (trk.channelId < 10) this._channelOff(trk.channelId);
       else if (trk.channelId >= 20 && trk.channelId <= 22) {
-        // PCM is soft-mixed here (not a keyed channel), so muting stops the
-        // voice directly; _pcmFrame releases the DAC once no voice is active.
-        const v = this._pcmVoices[trk.channelId - 20];
-        if (v) v.active = false;
+        // PCM has no key: muting parks the voice on the silence page.
+        const vi = trk.channelId - 20;
+        const v = this._pcmVoices[vi];
+        if (v.started) {
+          v.looping = false;
+          this._pcmCmd([PCM_START, vi, 8, ...u16le(PCM_SILENCE_ADDR), ...u16le(0), ...u16le(PCM_SILENCE_ADDR)]);
+        }
       }
     }
   }

@@ -3,33 +3,17 @@
 //   const t = generatedTables();
 //   try { cc([...t.flags, gate_main.c, mmlispseq.c, t.tables]) } finally { t.dispose() }
 //
-// WHY THIS EXISTS. Seven verification tools compile the 68k sequencer, and each
-// of them regenerated `drv/68k/tables.c` and `drv/68k/mml_rate.h` in place
-// first. The header carries the sample clock, and a bare run resolves that
-// clock from the ambient environment — PCM_SPG=3, TIMER_B_K=16 — while the
-// committed header is the branch's 3,333 Hz configuration. So `npm run c-gate`,
-// and `npm run baseline` through it, rewrote a checked-in file every time and
-// left it modified; the working practice was to notice it in `git status` and
-// put it back. Restoring afterwards is not a fix: between the generate and the
-// restore, the tree is a configuration nobody chose.
-//
-// Two things this does instead:
-//
-//   1. The generated pair goes to a temporary directory. Nothing in the tree
-//      changes, so there is nothing to restore and nothing to forget.
-//   2. THE RATE IS CHECKED, not assumed. The child process re-reads mmb.js and
-//      could resolve a different clock than the parent is measuring against —
-//      that is the same hazard the shared header was hiding. The numbers it
-//      produced are compared with the ones this process is actually using, and
-//      a disagreement is an error rather than a silently mismatched build.
+// WHY THIS EXISTS. Several verification tools compile the 68k sequencer, and
+// regenerating `drv/68k/tables.c` and `drv/68k/mml_rate.h` in place left the
+// tree modified. The generated pair goes to a temporary directory instead, and
+// the stamps it produced are checked against the ones this process reads.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  PCM_SAMPLES_NUM, PCM_SAMPLES_DEN, PCM_BAKE_STAMP, PCM_RING_TARGET,
-} from "../../live/src/mmb.js";
+import { pcmBankStamp } from "../../live/src/mmb.js";
+import { ENGINE_IMAGES } from "../../live/src/engine-images.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -55,18 +39,11 @@ export function generatedTables() {
   }
   const header = join(dir, "mml_rate.h");
   const text = readFileSync(header, "utf8");
-  const rate = {
-    spgNum: defineOf(text, "MML_SPG_NUM"), spgDen: defineOf(text, "MML_SPG_DEN"),
-    stamp: defineOf(text, "MML_SPG_STAMP"), ringTarget: defineOf(text, "MML_PCM_RING_TARGET"),
-  };
-  const want = { spgNum: PCM_SAMPLES_NUM, spgDen: PCM_SAMPLES_DEN,
-    stamp: PCM_BAKE_STAMP, ringTarget: PCM_RING_TARGET };
-  const off = Object.keys(want).filter((k) => rate[k] !== want[k]);
-  if (off.length) {
+  const rate = [1, 2, 3].map((v) => defineOf(text, `MML_PCM_STAMP_${v}`));
+  const want = [1, 2, 3].map((v) => pcmBankStamp(ENGINE_IMAGES[v].rateHz));
+  if (rate.some((x, i) => x !== want[i])) {
     rmSync(dir, { recursive: true, force: true });
-    throw new Error(`c-tables: the generated clock does not match this run's — `
-      + off.map((k) => `${k} ${rate[k]} vs ${want[k]}`).join(", ")
-      + `. Set PCM_SPG / TIMER_B_K / PCM_TIMER once, for the whole command.`);
+    throw new Error(`c-tables: the generated stamps ${rate} do not match this run's ${want}`);
   }
   return {
     dir, header, tables: join(dir, "tables.c"), rate,

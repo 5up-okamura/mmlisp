@@ -103,16 +103,3 @@ const uint8_t MML_SIN_LUT[256] = {
     10, 9, 7, 6, 5, 5, 4, 3, 2, 2, 1, 1,
     1, 0, 0, 0,
 };
-
-/* PCM resampling: note (C2..C6, 36..84) -> 16.16 samples per frame per Hz of
- * base rate. The per-sample increment divides this by the sample clock's
- * average samples a frame (mmb.js pcmTickIncrement, driver.md §5.1.2). */
-const uint16_t MML_PCM_MULT_FRAME[49] = {
-    273, 289, 307, 325, 344, 365, 386, 409,
-    433, 459, 487, 515, 546, 578, 614, 650,
-    688, 730, 772, 818, 866, 918, 974, 1030,
-    1092, 1156, 1228, 1300, 1376, 1460, 1544, 1636,
-    1732, 1836, 1948, 2060, 2184, 2312, 2456, 2600,
-    2752, 2920, 3088, 3272, 3464, 3672, 3896, 4120,
-    4368,
-};

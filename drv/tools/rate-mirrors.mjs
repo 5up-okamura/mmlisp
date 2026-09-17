@@ -1,50 +1,39 @@
-// Do the committed artifacts describe the SAME sample clock?
+// Do the committed artifacts describe the SAME engine images?
 //
 //   node tools/rate-mirrors.mjs
 //
-// 68k/mml_rate.h and sgdk/mmlispdrv_bin.h are each generated for whatever the
-// environment said when somebody last ran a tool that writes them. Once they
-// ended up describing different clocks: the C header at 6,658 Hz and the
-// engine image at 3,329. An SGDK project links both, so that is a driver that
-// plays at one rate, sequences at another and refuses its own sample bank at
-// load.
-//
-// Nothing in the build catches it, because the build never READS the committed
-// copies. So this does, off one line each of them carries.
+// 68k/mml_rate.h, sgdk/mmlispdrv_bin.h and live/src/engine-images.js are each
+// generated, and an SGDK project links the first two while the exporter bakes
+// sample banks from the third. If they drift apart the driver refuses its own
+// sample bank at load, or plays it at the wrong pitch. Nothing in the build
+// reads the committed copies, so this does, off the stamps each carries.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENGINE_IMAGES } from "../../live/src/engine-images.js";
+import { pcmBankStamp } from "../../live/src/mmb.js";
 
 const drv = join(dirname(fileURLToPath(import.meta.url)), "..");
-const files = [
-  ["68k/mml_rate.h", "the 68k sequencer's header"],
-  ["sgdk/mmlispdrv_bin.h", "the engine image an SGDK project links"],
-];
+const rows = [
+  ["68k/mml_rate.h", "the 68k sequencer's bank check"],
+  ["sgdk/mmlispdrv_bin.h", "the engine images an SGDK project links"],
+].map(([rel, what]) => {
+  const m = /RATE-STAMPS\s+(\d+)\s+(\d+)\s+(\d+)/.exec(readFileSync(join(drv, rel), "utf8"));
+  return { rel, what, stamps: m ? m.slice(1).map(Number) : null };
+});
+rows.push({ rel: "live/src/engine-images.js", what: "what the exporter bakes at",
+  stamps: [1, 2, 3].map((v) => pcmBankStamp(ENGINE_IMAGES[v].rateHz)) });
 
 let bad = 0;
-const seen = [];
-for (const [rel, what] of files) {
-  const text = readFileSync(join(drv, rel), "utf8");
-  const m = /RATE-STAMP\s+(\d+)\s+(\d+)/.exec(text);
-  if (!m) {
-    console.log(`FAIL  ${rel} carries no RATE-STAMP — regenerate it`);
-    bad++;
-    continue;
-  }
-  seen.push({ rel, what, hz: Number(m[1]), lead: Number(m[2]) });
-}
-const first = seen[0];
-for (const s of seen) {
-  const ok = first && s.hz === first.hz && s.lead === first.lead;
+const first = rows[2].stamps;
+for (const r of rows) {
+  const ok = r.stamps && r.stamps.every((x, i) => x === first[i]);
   if (!ok) bad++;
-  console.log(`${ok ? "ok  " : "FAIL"}  ${s.rel.padEnd(24)} ${String(s.hz).padStart(6)} Hz`
-    + ` · lead ${String(s.lead).padStart(3)} samples — ${s.what}`);
+  console.log(`${ok ? "ok  " : "FAIL"}  ${r.rel.padEnd(26)} ${r.stamps ? r.stamps.join(" / ") : "no RATE-STAMPS"} Hz — ${r.what}`);
 }
 if (bad) {
-  console.log(`\nFAIL: the committed artifacts describe different sample clocks.`);
-  console.log(`  Regenerate both at ONE configuration:`);
-  console.log(`    node tools/gen-c-tables.mjs`);
-  console.log(`    node tools/emit-bin.mjs`);
+  console.log("\nFAIL: the committed artifacts describe different engine images. Regenerate:");
+  console.log("    node tools/emit-images.mjs && node tools/gen-c-tables.mjs && node tools/emit-bin.mjs");
   process.exit(1);
 }
-console.log(`\nthe mirrors agree`);
+console.log("\nthe mirrors agree");

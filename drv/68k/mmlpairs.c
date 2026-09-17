@@ -12,10 +12,17 @@
 
 /* The slot's PCM opcodes (driver.md §6.3), as mmlispseq.c emits them. */
 #define PCM_START 1
-#define PCM_STOP 2
 #define PCM_VOL 3
-#define PCM_LOOP 4
+#define PCM_RETARGET 4
 #define PCM_MASTER 5
+static const uint8_t PCM_LEN[6] = {0, 9, 0, 3, 6, 2};
+
+/* The state block's ops (driver.md §6.1), for voice v. */
+#define OP_IDLE 0
+#define OP_LEVEL(v) ((uint8_t)(1 + 9 * (v)))
+#define OP_SRC(v) ((uint8_t)(2 + 9 * (v)))
+#define OP_START(v) ((uint8_t)(8 + 9 * (v)))
+#define OP_RETARGET(v) ((uint8_t)(9 + 9 * (v)))
 
 /* How far ahead of the last-read consumer index the head is placed: past what
  * the consumer takes between two grabs. The engine takes 16 pairs a lap
@@ -29,28 +36,25 @@
  * whole frame: 16.7 ms on NTSC (~34 pairs) and 20 ms on PAL (~40), so the
  * head goes 48 ahead. The page holds 128; 48 + a grab's 8 stays well clear. */
 
-/* The 6 dB shift grid onto the 15-level linear family: round(14 * 2^-s).
- * shift 8 is the sequencer's mute. */
-static const uint8_t LEVEL_OF_SHIFT[9] = {14, 7, 4, 2, 1, 0, 0, 0, 0};
-
-uint8_t mmlp_level_page(const MMLPairsCfg *cfg, uint8_t shift) {
-  uint8_t l = shift > 8 ? 0 : LEVEL_OF_SHIFT[shift];
-  if (l > (uint8_t)(cfg->levels - 1)) l = (uint8_t)(cfg->levels - 1);
-  return (uint8_t)(cfg->lut_page + l);
+/* A voice's rung page: silence for the sequencer's mute (8) or a total past
+ * the last rung (-36 dB), else page 7 - total (driver.md §14). */
+uint8_t mmlp_level_page(const MMLPairsCfg *cfg, uint8_t shift, uint8_t master_shift) {
+  uint16_t total = (uint16_t)shift + master_shift;
+  return (uint8_t)(cfg->lut_page + (shift >= 8 || total > 6 ? 0 : 7 - total));
 }
-uint8_t mmlp_master_page(const MMLPairsCfg *cfg, uint8_t shift) { return mmlp_level_page(cfg, shift); }
 
 void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg) {
   const MMLPairsCfg c = *cfg;
   uint8_t *b = (uint8_t *)p;
   for (uint32_t i = 0; i < sizeof(*p); i++) b[i] = 0;
   p->cfg = c;
-  p->cfg.staged_run = c.op_src_hi == c.op_src_lo + 1 && c.op_end_lo == c.op_src_lo + 2 &&
-                      c.op_end_hi == c.op_src_lo + 3 && c.op_step == c.op_src_lo + 4;
+  if (p->cfg.voices > MMLP_VOICES) p->cfg.voices = MMLP_VOICES;
   p->head_valid = 0;
-  p->since_start = 0xff;
-  p->level_page = mmlp_level_page(&c, 0);
-  p->master_page = mmlp_master_page(&c, 0);
+  for (uint8_t v = 0; v < MMLP_VOICES; v++) {
+    p->shift[v] = 0xff;
+    p->page[v] = 0xff;
+    p->since_gen[v] = 0xff;
+  }
 }
 
 /* The producer fills from its own cursor (q_work) and publishes q_head once,
@@ -70,92 +74,76 @@ uint16_t mmlp_pending(const MMLPairs *p) {
   return (uint16_t)((p->q_head + MMLP_QUEUE - p->q_tail) & (MMLP_QUEUE - 1));
 }
 
-/* The power of two nearest an increment's integer part, for the fixed-pitch
- * engine: the bake makes it exact (mmb.md §10.1); anything else is rounded and
- * counted, not silently played at the wrong octave. */
-static uint8_t step_of(MMLPairs *p, uint8_t inc_i, uint16_t inc_frac) {
-  if (inc_frac == 0 && (inc_i == 1 || inc_i == 2 || inc_i == 4 || inc_i == 8)) return inc_i;
-  p->step_rounded++;
-  if (inc_i >= 6) return 8;
-  if (inc_i >= 3) return 4;
-  if (inc_i >= 2 || (inc_i == 1 && inc_frac >= 0x8000)) return 2;
-  return 1;
+static uint16_t rd16le(const uint8_t *c) { return (uint16_t)(c[0] | (c[1] << 8)); }
+
+/* The staged bytes that changed, in op order, then remembered. */
+static void stage(MMLPairs *p, uint8_t v, uint8_t first, const uint8_t *vals, uint8_t n) {
+  for (uint8_t k = 0; k < n; k++) {
+    uint8_t at = (uint8_t)(first + k);
+    if (!p->staged_valid[v] || vals[k] != p->staged[v][at]) {
+      store(p, (uint8_t)(OP_SRC(v) + at), vals[k]);
+      p->staged[v][at] = vals[k];
+    }
+  }
+}
+
+static void level(MMLPairs *p, uint8_t v) {
+  uint8_t pg = mmlp_level_page(&p->cfg, p->shift[v], p->master_shift);
+  if (pg != p->page[v]) { store(p, OP_LEVEL(v), pg); p->page[v] = pg; }
 }
 
 static void pcm_command(MMLPairs *p, const uint8_t *c) {
   const MMLPairsCfg *cfg = &p->cfg;
   switch (c[0]) {
   case PCM_START: {
-    if (c[1] != 0) { p->dropped_voice++; return; }
-    uint16_t addr = (uint16_t)(c[7] | (c[8] << 8));
-    uint16_t left = (uint16_t)(c[9] | (c[10] << 8));
-    uint16_t tail = (uint16_t)(c[13] | (c[14] << 8));
-    uint16_t inc_frac = (uint16_t)(c[15] | (c[16] << 8));
-    uint8_t step = step_of(p, c[17], inc_frac);
-    /* Profile 1 plays the sample ONCE, loop body and tail included. The engine
-     * parks at the last block edge before it would read past the end
-     * (R28 §63.3 D2), so the END it gets is sampleEnd - 16 * step. */
-    uint32_t end = (uint32_t)addr + left + tail;
-    uint32_t sent = end > (uint32_t)16 * step ? end - (uint32_t)16 * step : 0;
-    if (sent < addr) sent = addr;
-    if (sent > 0xffff) sent = 0xffff;
-    /* ONLY WHAT CHANGED. The staged bytes are the host's alone (the engine
-     * copies them at the START edge and never writes them), so the block still
-     * holds the last start's values: a drum hit on the same sample is one pair,
-     * not seven — and each pair is ~0.5 ms of the wire in front of the FM
-     * writes it shares a slot with. */
-    uint8_t lv = mmlp_level_page(cfg, c[3]);
-    const uint8_t v[5] = {(uint8_t)(addr & 0xff), (uint8_t)(addr >> 8), (uint8_t)(sent & 0xff), (uint8_t)(sent >> 8), step};
-    const uint8_t o[5] = {cfg->op_src_lo, cfg->op_src_hi, cfg->op_end_lo, cfg->op_end_hi, cfg->op_step};
-    if (!p->staged_valid || lv != p->level_page) store(p, cfg->op_level, lv);
-    p->level_page = lv;
-    for (uint8_t k = 0; k < 5; k++)
-      if (!p->staged_valid || v[k] != p->staged[k]) { store(p, o[k], v[k]); p->staged[k] = v[k]; }
-    p->staged_valid = 1;
-    p->start_gen = (uint8_t)(p->start_gen + 1);
-    store(p, cfg->op_start, p->start_gen);
+    uint8_t v = c[1];
+    if (v >= cfg->voices) { p->fault++; return; }
+    p->shift[v] = c[2];
+    level(p, v);
+    /* ONLY WHAT CHANGED. The staged bytes are the host's alone (the engine reads
+     * them at the edge and never writes them), so the block still holds the last
+     * values: a drum hit on the same sample is one pair, not eight. */
+    const uint16_t src = rd16le(c + 3), end = rd16le(c + 5), wrap = rd16le(c + 7);
+    const uint8_t vals[6] = {(uint8_t)src, (uint8_t)(src >> 8), (uint8_t)end, (uint8_t)(end >> 8),
+                             (uint8_t)wrap, (uint8_t)(wrap >> 8)};
+    stage(p, v, 0, vals, 6);
+    p->staged_valid[v] = 1;
+    p->start_gen[v] = (uint8_t)(p->start_gen[v] + 1);
+    store(p, OP_START(v), p->start_gen[v]);
     return;
   }
-  case PCM_STOP:
-    if (c[1] != 0) { p->dropped_voice++; return; }
-    p->stop_gen = (uint8_t)(p->stop_gen + 1);
-    store(p, cfg->op_stop, p->stop_gen);
+  case PCM_RETARGET: {
+    uint8_t v = c[1];
+    if (v >= cfg->voices) { p->fault++; return; }
+    const uint16_t end = rd16le(c + 2), wrap = rd16le(c + 4);
+    const uint8_t vals[4] = {(uint8_t)end, (uint8_t)(end >> 8), (uint8_t)wrap, (uint8_t)(wrap >> 8)};
+    stage(p, v, 2, vals, 4);
+    p->end_gen[v] = (uint8_t)(p->end_gen[v] + 1);
+    store(p, OP_RETARGET(v), p->end_gen[v]);
     return;
-  case PCM_VOL:
-    if (c[1] != 0) { p->dropped_voice++; return; }
-    p->level_page = mmlp_level_page(cfg, c[2]);
-    store(p, cfg->op_level, p->level_page);
+  }
+  case PCM_VOL: {
+    uint8_t v = c[1];
+    if (v >= cfg->voices) { p->fault++; return; }
+    p->shift[v] = c[2];
+    level(p, v);
     return;
+  }
   case PCM_MASTER:
-    p->master_page = mmlp_master_page(cfg, c[1]);
-    store(p, cfg->op_master, p->master_page);
-    return;
-  case PCM_LOOP:
-    p->dropped_loop++;
+    p->master_shift = c[1];
+    for (uint8_t v = 0; v < cfg->voices; v++)
+      if (p->shift[v] != 0xff) level(p, v);
     return;
   default:
     return;
   }
 }
 
-static const uint8_t PCM_LEN[6] = {0, 18, 2, 3, 6, 2};
-
 static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len);
 
-/* PCM COMMANDS GO OUT ONE SLOT LATE. The sequencer starts a PCM track a frame
- * ahead of every other track (mmlispseq.c, the armed frame), which cancelled
- * the ring mixer's one-frame feed lag. This engine has no such lag — a start
- * travels in the pair page beside the FM writes of its slot and sounds within
- * 34 samples — so a slot's PCM commands are held and sent with the NEXT slot,
- * ahead of its FM: back on the beat (gate-score's SYNC row, m3-pcm-sync). */
 static void frame_begin(MMLPairs *p) {
   p->q_work = p->q_head;
   p->psg_work = p->psg_head;
-  for (uint16_t i = 0; i < p->held_len;) {
-    pcm_command(p, p->held + i);
-    i = (uint16_t)(i + PCM_LEN[p->held[i]]);
-  }
-  p->held_len = 0;
 }
 
 /* The publication: this frame's ends first, then the heads, then the frame
@@ -170,19 +158,15 @@ static void frame_publish(MMLPairs *p) {
   p->frames_in = (uint16_t)(p->frames_in + 1);
 }
 
-/* This slot's PCM commands, held for the next one; `len` bounds the run. */
-static uint16_t hold_pcm(MMLPairs *p, const uint8_t *c, uint16_t len, uint8_t npcm) {
+/* A slot's PCM commands, into pairs ahead of its register writes; `len`
+ * bounds the run. Returns the bytes used, or 0xffff for a malformed run. */
+static uint16_t pcm_run(MMLPairs *p, const uint8_t *c, uint16_t len, uint8_t npcm) {
   uint16_t i = 0;
   for (; npcm > 0 && i < len; npcm--) {
     uint8_t op = c[i];
-    if (op < 1 || op > 5) return 0xffff;   /* malformed: stop here */
+    if (op > 5 || !PCM_LEN[op]) return 0xffff;   /* malformed: stop here */
     if ((uint16_t)(i + PCM_LEN[op]) > len) return 0xffff;
-    if ((uint16_t)(p->held_len + PCM_LEN[op]) <= MMLP_HELD) {
-      for (uint8_t k = 0; k < PCM_LEN[op]; k++) p->held[p->held_len + k] = c[i + k];
-      p->held_len = (uint16_t)(p->held_len + PCM_LEN[op]);
-    } else {
-      p->overflow++;
-    }
+    pcm_command(p, c + i);
     i = (uint16_t)(i + PCM_LEN[op]);
   }
   return i;
@@ -207,7 +191,7 @@ void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
  * gate runs both paths side by side on every score and requires the same
  * converter state after every frame. */
 static void view_body(MMLPairs *p, const MMLFrameView *v) {
-  if (hold_pcm(p, v->pcm, v->pcm_len, v->pcm_count) == 0xffff) return;
+  if (pcm_run(p, v->pcm, v->pcm_len, v->pcm_count) == 0xffff) return;
   uint16_t done = 0;
   for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
     const uint16_t end = v->end[sub];
@@ -259,17 +243,12 @@ static uint16_t released(const MMLPairs *p, uint16_t release) {
 
 static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
   uint16_t i = 0;
-  if (len < 3) return;
-  i += 2;                                   /* n_writes, chunk: the ring engine's */
+  if (len < 2) return;
+  i += 1;                                   /* n_writes */
   uint8_t npcm = s[i++];
-  uint16_t used = hold_pcm(p, s + i, (uint16_t)(len - i), npcm);
+  uint16_t used = pcm_run(p, s + i, (uint16_t)(len - i), npcm);
   if (used == 0xffff) return;
   i = (uint16_t)(i + used);
-  for (uint8_t v = 0; v < MML_PCM_VOICES; v++) {   /* the segment plan: not ours */
-    if (i >= len) return;
-    uint8_t n = s[i++];
-    i = (uint16_t)(i + n);
-  }
   for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
     if (i >= len) return;
     uint8_t npsg = s[i++];
@@ -286,11 +265,21 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
 typedef char mmlp_queue_is_pow2[(MMLP_QUEUE & (MMLP_QUEUE - 1)) == 0 && (MMLP_PSG & (MMLP_PSG - 1)) == 0 ? 1 : -1];
 
 MMLP_HOT int is_pitch_hi(uint8_t reg) { return (uint8_t)((reg & 0xf7) - 0xa4) <= 2; } /* $A4-$A6, $AC-$AE */
-MMLP_HOT int is_staged(const MMLPairsCfg *cfg, uint8_t op) {
-  /* The staged bytes are one run of the state block in the image's ABI
-   * (source, end, step); mmlp_init checks that and falls back if not. */
-  if (cfg->staged_run) return (uint8_t)(op - cfg->op_src_lo) <= (uint8_t)(cfg->op_step - cfg->op_src_lo);
-  return op == cfg->op_src_lo || op == cfg->op_src_hi || op == cfg->op_end_lo || op == cfg->op_end_hi || op == cfg->op_step;
+/* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
+MMLP_HOT uint8_t staged_voice(const MMLPairsCfg *cfg, uint8_t op) {
+  if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
+  const uint8_t k = (uint8_t)((op - 1) % 9);
+  return k >= 1 && k <= 6 ? (uint8_t)((op - 1) / 9) : 0xff;
+}
+/* The voice a generation pair (START, RETARGET) belongs to, or 0xff. */
+MMLP_HOT uint8_t gen_voice(const MMLPairsCfg *cfg, uint8_t op) {
+  if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
+  const uint8_t k = (uint8_t)((op - 1) % 9);
+  return k >= 7 ? (uint8_t)((op - 1) / 9) : 0xff;
+}
+MMLP_HOT void since_add(MMLPairs *p, uint16_t n) {
+  for (uint8_t v = 0; v < MMLP_VOICES; v++)
+    p->since_gen[v] = (uint8_t)(p->since_gen[v] + n > 255 ? 255 : p->since_gen[v] + n);
 }
 
 uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops, uint8_t *vals, uint16_t *dst) {
@@ -303,7 +292,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   p->grabs++;
   p->undo_tail = p->q_tail;
   p->undo_port = p->chip_port;
-  p->undo_since = p->since_start;
+  for (uint8_t v = 0; v < MMLP_VOICES; v++) p->undo_since[v] = p->since_gen[v];
   p->undo_n = 0;
   /* WHERE THE PAIRS GO (pair-host.mjs): ahead of the index read last time by
    * more than the consumer takes between grabs — and never behind the pairs
@@ -327,16 +316,18 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   while (n < cfg->pairs_per_grab && p->q_tail != lim) {
     uint16_t t = p->q_tail;
     uint8_t port = p->q_port[t], op = p->q_op[t], val = p->q_val[t];
-    /* A START IS COPIED AT THE NEXT BLOCK EDGE, not when its pair is read. The
-     * expander reads up to three more pairs in the same block (sites b5/b9/b11,
-     * and b3 in block 0), so staged bytes for the NEXT start read in that
-     * window would be copied with this one. Three IDLE pairs after a START put
-     * any staged store past the edge. Rare: it takes two starts with no FM
-     * writes between them in the page. */
-    if (port == 0xff && is_staged(cfg, op) && p->since_start < 3) {
-      ops[n] = cfg->op_idle; vals[n] = 0; n++;
-      p->since_start++;
-      continue;
+    /* A GENERATION IS APPLIED AT THE VOICE'S NEXT BLOCK EDGES, not when its
+     * pair is read: the staged bytes it names are read a few expander steps
+     * later. A staged store for the same voice read in that window would be
+     * applied by the wrong generation, so `idle_after_gen` pairs — computed
+     * from the image's slots (tools/build-engine.mjs) — go first. */
+    if (port == 0xff) {
+      const uint8_t sv = staged_voice(cfg, op);
+      if (sv != 0xff && p->since_gen[sv] < cfg->idle_after_gen) {
+        ops[n] = OP_IDLE; vals[n] = 0; n++;
+        since_add(p, 1);
+        continue;
+      }
     }
     uint16_t need = 1;
     int port_change = port != 0xff && port != p->chip_port;
@@ -359,13 +350,13 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
       ops[n] = p->q_op[u]; vals[n] = p->q_val[u]; n++;
       p->q_tail = (uint16_t)((u + 1) & (MMLP_QUEUE - 1));
     }
-    if (port == 0xff && op == cfg->op_start) p->since_start = 0;
-    else p->since_start = (uint8_t)(p->since_start + need > 255 ? 255 : p->since_start + need);
+    since_add(p, need);
+    if (port == 0xff) { const uint8_t gv = gen_voice(cfg, op); if (gv != 0xff) p->since_gen[gv] = 0; }
   }
   /* The rest of the grab is IDLE — only when there is a grab to write: with
    * nothing planned the host reads the index and writes nothing. */
   if (n)
-    for (uint16_t k = n; k < cfg->pairs_per_grab; k++) { ops[k] = cfg->op_idle; vals[k] = 0; }
+    for (uint16_t k = n; k < cfg->pairs_per_grab; k++) { ops[k] = OP_IDLE; vals[k] = 0; }
   *dst = (uint16_t)(cfg->fifo + 2 * p->head);
   p->head = (uint8_t)((p->head + n) & MASK);
   p->pairs_written = (uint16_t)(p->pairs_written + n);
@@ -376,7 +367,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
 void mmlp_abort(MMLPairs *p) {
   p->q_tail = p->undo_tail;
   p->chip_port = p->undo_port;
-  p->since_start = p->undo_since;
+  for (uint8_t v = 0; v < MMLP_VOICES; v++) p->since_gen[v] = p->undo_since[v];
   p->pairs_written = (uint16_t)(p->pairs_written - p->undo_n);
   p->undo_n = 0;
   p->head_valid = 0;

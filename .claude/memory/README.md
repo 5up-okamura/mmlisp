@@ -88,7 +88,9 @@ Index:
   images (measured: 1v 14,376 / 2v 10,112 / 3v 6,653 Hz at the edge), the
   loop-capable six-piece edge, the state block and ops, the wire, slot format
   v2, bank v0.3, `(def pcm-voices N)`, the shared JS PCM model, the gates.
-  **S1 (engine images, pcm-model.js, engine:gate) DONE 2026-09-17; next S2.**
+  **S1 (engine images, pcm-model.js, engine:gate) and S2 (sequencer, slot v2,
+  converter, bank/MMB v0.3, SGDK host boots the score's image) DONE
+  2026-09-17; next S3 (language).**
   Delete when S6 lands.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the

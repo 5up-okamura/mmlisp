@@ -112,25 +112,23 @@ const dry = opts.dryRun ? "[dry-run] " : "";
 console.log(`${dry}project: ${project}`);
 
 // ---- regenerate the generated artifacts ----------------------------------
-// mmlispdrv_bin.h is a build output of tools/build-engine.mjs and 68k/tables.c one of
+// mmlispdrv_bin.h is a build output of tools/emit-bin.mjs and 68k/tables.c one of
 // live/src/ir-utils.js; copying either stale is the classic way to ship a
 // driver that does not match the repo.
 if (opts.build) {
-  const { buildEngine } = await import("./build-engine.mjs");
-  const { bytes } = buildEngine();
-  const current = readFileSync(join(sgdkDir, "mmlispdrv.bin"));
-  const stale = current.length !== bytes.length || !current.equals(Buffer.from(bytes));
+  const { headerSource } = await import("./emit-bin.mjs");
+  const text = headerSource();
+  const headerPath = join(sgdkDir, "mmlispdrv_bin.h");
+  const stale = readFileSync(headerPath, "utf8") !== text;
   if (stale) {
     if (opts.dryRun) {
-      console.log(
-        `${dry}sgdk/ engine image is stale (${current.length} → ${bytes.length} B)` +
-          ` — would run tools/emit-bin.mjs`,
-      );
+      console.log(`${dry}sgdk/mmlispdrv_bin.h is stale — would regenerate the engine images`);
     } else {
-      await import("./emit-bin.mjs");
+      writeFileSync(headerPath, text);
+      console.log("  engine images regenerated (sgdk/mmlispdrv_bin.h)");
     }
   } else {
-    console.log(`  engine image up to date (${bytes.length} B, no overlay)`);
+    console.log("  engine images up to date");
   }
   if (!opts.dryRun) {
     const { execFileSync } = await import("node:child_process");

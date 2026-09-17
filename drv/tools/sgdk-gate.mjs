@@ -16,12 +16,19 @@
 //   * every DAC byte matches the one-voice reference driven by the engine's
 //     own state writes, against the score's own 32 KB bank
 //   * the DAC clock: nominal rate, and every runtime bus stop inside 1,500 master
+//
+// NOT YET ON THE LIGHT IMAGES (.claude/memory/plan-pcm-d10-design.md §8 S4):
+// its DAC grading reads the one-voice image's state block and reference, which
+// left with that image. S4 grades each light image with live/src/pcm-model.js
+// fed the engine's own state writes, and removes this stop.
+console.error("sgdk:gate is being moved to the light engine images (D10 S4); it cannot grade them yet");
+process.exit(2);
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
-import { buildEngine } from "./build-engine.mjs";
+import { buildLightImage } from "./build-engine.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
 import { readProbe } from "./probe-analysis.mjs";
@@ -73,7 +80,7 @@ const want = [[], []], psgWant = [];
 slots.forEach((s, f) => { const d = decodeSlot(s); for (const [r, v] of d.fm0) want[0].push({ r, v, f }); for (const [r, v] of d.fm1) want[1].push({ r, v, f }); psgWant.push(...d.psg); });
 
 // ── grading ────────────────────────────────────────────────────────────────
-const { cfg } = buildEngine();
+const { cfg } = buildLightImage(1);
 const errors = [];
 const dac0 = L.dac[0]?.time ?? 0;
 // FM: every Z80 data write attributed to the latched register, DAC and boot excluded.

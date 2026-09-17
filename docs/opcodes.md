@@ -1,4 +1,4 @@
-# MMB v0.2 Opcode & Target Tables
+# MMB v0.3 Opcode & Target Tables
 
 Status: **freeze document**. Once reviewed, the assignments here are frozen:
 new opcodes/targets may be *added* in later minor versions, but ids, payload
@@ -267,11 +267,10 @@ Notes:
   (op2-4) that keys the operator's `$28` slot bit. `FM3_MODE 1` (from the
   note-less `(fm3 …)` track) sets `$27` bit6 first. (The v0.1 draft reserved
   0xA4 for REG_WRITE; REG_WRITE is dropped — see §8.)
-- **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id) at the rate implied by
-  `note` relative to the sample's C4 `base_rate`
-  (`rate = base_rate × 2^((note−60)/12)`, precomputed table of 49 u16
-  multipliers for C2–C6 in ROM). `dur = 0x00` + a looped sample holds until
-  PCM_NOTE_OFF / host release.
+- **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id). The exporter bakes one
+  entry per (sample, note), so the id already carries the pitch and `note`
+  only names it (mmb.md §10.1). A looped sample loops until PCM_NOTE_OFF, which
+  plays its tail out; `dur = 0x00` holds until the host releases it.
 - **MACRO_SET / MACRO_CLEAR** drive the macro engine (implemented — mmb.md §15,
   driver.md §13). Macros are sticky track state: `MACRO_SET {macro_id}` binds
   MACRO_TABLE[macro_id] as the active macro for its target (replacing any

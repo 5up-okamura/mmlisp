@@ -60,12 +60,10 @@ finds, and graded by `npm run engine:gate`. The design that uses these numbers i
 
 ## The stop-length listening set (plan-pcm-spec.md D9, study item 1, 2026-09-17)
 
-```
-npm run dac-stream:stops                          # sin008, 15 s, stops 28/60/100/200 µs at 60 and 120 Hz
-npm run dac-stream:stops -- --score tests/m3-pcm-sync.mmlisp --frames 600 --stops 28,100 --hz 120
-npm run dac-stream:stops -- --lpf                 # …through the Model-1 3 kHz low-pass
-npm run dac-stream:stops -- --no-mix              # the DAC-only files and the numbers, no FM render
-```
+`stop-listen.mjs` rendered its set against the one-voice phase-corrected image,
+and left the tree with that image (D10 S2); it is in git history
+(commit 6d27048). What it found stays below.
+
 
 What a 68000 bus stop of L µs does to the PCM, for the ear. The shipped image
 runs a real score in the JS machine exactly as `engine-score-gate` does, plus a
