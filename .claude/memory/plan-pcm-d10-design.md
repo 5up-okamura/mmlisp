@@ -522,8 +522,16 @@ changes at S2, not before.
 - **100% work ceiling on real silicon**: the window wait is a BlastEm number.
   First hardware run decides whether the images keep the edge or take a few
   percent of margin (a config constant; the study prints the ladder).
-- **Bank capacity** is the real limit at `pcm1` (2.3 s of samples a song); a
-  banked (>32 KB) sample space is a separate design.
+- **Bank capacity** is the real limit at `pcm1` (2.3 s of samples a song).
+  DECIDED (user, 2026-09-17): stay with one 32 KB bank a song. How others do
+  it, for the record: XGM2's Z80 writes the bank register itself per chunk
+  (97–105 cycles a switch, amortised over 4 samples a channel through its
+  ring) and offers 4-bit ADPCM. The step to take later, if ever: on the
+  one-voice image the START piece writes the bank (constant time, ~100
+  cycles; a blob must not cross a 32 KB boundary) — any ROM address, pcm1
+  only, about 14.4 → ~12 kHz. Two/three voices read different banks a sample
+  and would need a per-block copy into RAM (~25 cyc/sample/voice). Not in
+  this design.
 - **Latency**: a note reaches the DAC at most one frame (pump) + one lap
   (expander) + one block after its frame; the SYNC gate measures it.
 - **PAL**: unsupported, as before.
