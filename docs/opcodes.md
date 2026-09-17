@@ -324,7 +324,18 @@ the driver clamps at the register write with the same bounds.
 | 0x40 | PAN         | 1     | −1..1          | YM $B4 bits 7–6 (−1=L, 0=LR, 1=R)  | M1    |
 | 0x41 | LFO_RATE    | 1     | 0..8           | YM $22 (0=off, 1–8=rate index)     | M1    |
 | 0x42 | NOISE_MODE  | 1     | 0..7           | PSG $E0 noise control (FB bit + NF bits) | M1 |
-| 0x43–0xFF | —      | —     | —              | reserved                           | —     |
+| 0x43 | LOOP_START  | 2     | 0..0x7F00      | PCM loop head → `PCM_RETARGET` WRAP | M1 |
+| 0x44 | LOOP_END    | 2     | 0..0x7F00      | PCM loop end → `PCM_RETARGET` END   | M1 |
+| 0x45 | LOOP_LEN    | 2     | 0..0x7F00      | PCM loop length; END = head + this  | M1    |
+| 0x46–0xFF | —      | —     | —              | reserved                           | —     |
+
+The three loop targets are **byte offsets into the playing blob**, not register
+values: the driver recomputes the voice's END/WRAP through the same rounding
+every note-on uses and sends one `PCM_RETARGET` — and only when the rounded
+16-byte block actually moves, so a swept loop point does not spend six bytes of
+every slot. They are valid on `pcm1`–`pcm3` only. `LOOP_LEN` keeps its length
+when `LOOP_START` moves; `LOOP_END` pins the end instead. A released voice
+ignores them — it is a shot from then on.
 
 Per-op ids follow the v0.1 pattern: consecutive ids op1→op4 within each
 parameter family (e.g. FM_TL1 = 0x11 … FM_TL4 = 0x14).

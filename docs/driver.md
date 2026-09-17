@@ -994,9 +994,10 @@ silence, so the tail plays out.
 off again: a score that plays PCM owns fm6 as the DAC from then on. A score
 without PCM never writes it, and fm6 is FM.
 
-**Loop points** are the sample's `:loop-start` / `:loop-end`, mapped to baked
-bytes by the exporter and rounded to whole blocks by the sequencer
-(`pcm_loop_points`, twin of `live/src/pcm-model.js` `pcmLoopPoints`):
+**Loop points** start as the sample's `:loop-start` / `:loop-end` /
+`:loop-len`, mapped to baked bytes by the exporter and rounded to whole blocks
+by the sequencer (`pcm_loop_points`, twin of `live/src/pcm-model.js`
+`pcmLoopPoints`):
 
 ```
 le' = 16·round(le/16), within 16..len
@@ -1006,6 +1007,26 @@ END = src + le' − 16,  WRAP = src + ls'
 
 so the first pass plays `[0, le')` and every later pass `[ls', le')`. On a
 one-cycle loop the rounding is a detune.
+
+**A loop point may be MOVED while the note sounds** — this is what the block
+edge's RETARGET exists for beyond the release. `PARAM_SET` / `PARAM_SWEEP` on
+`LOOP_START` (0x43), `LOOP_END` (0x44) or `LOOP_LEN` (0x45) carries a byte
+offset into the playing blob (opcodes.md §7); the voice keeps its live `ls` /
+`le` / `llen`, seeded from the note's own points, and a write recomputes END
+and WRAP through the same `pcm_loop_points` and sends one `PCM_RETARGET`.
+`LOOP_LEN` holds the length when `LOOP_START` moves; `LOOP_END` pins the end.
+
+Two things this needs, both of which the sequencer does:
+
+- **The sweep engine reaches the PCM voices.** Its banks are the ten M1
+  channels plus the three voices (`sweep_bank`, `MML_SWEEP_BANKS` = 13, twin
+  `_sweepBank`); before this a sweep on a `pcmN` channel was dropped.
+- **A RETARGET goes out only when the rounded block moves.** A sweep is
+  recomputed every frame and mostly lands inside the same 16 bytes; sending it
+  regardless would spend six bytes of every slot on it, sixty times a second.
+  The voice remembers the last END/WRAP it sent (`sent_end`/`sent_wrap`).
+
+A released voice is a shot, so loop writes after a note-off do nothing.
 
 **Per-channel volume (`:vel` + `:vol`).** `:vel` and `:vol` on a `pcmN` channel
 ride the FM/PSG velocity/fader ladder (2 dB/step). The sequencer composes them

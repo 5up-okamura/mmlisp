@@ -74,8 +74,7 @@ estimate unless it says so.
      moved its master changes a frame early); re-frozen.
   10. SYNC on m3-pcm-sync: PCM onsets −0.3..−1.3 ms against the fm1 key-on.
 
-- **S3 — PART DONE 2026-09-18.** Everything of §4.1 EXCEPT the
-  `:loop-start`/`:loop-end` TARGETS: `(def pcm-voices N)` (reserved metadata,
+- **S3 — DONE 2026-09-18.** §4.1 in full: `(def pcm-voices N)` (reserved metadata,
   `metadata.pcmVoices`, no ordinary-def fallback), `E_PCM_VOICES` (a value
   outside 0-3, and a `pcmM` track above the stated count), `E_PCM_NO_PITCH`
   (`:pitch`, `:semi`, `(glide …)`, `(macro :pitch/:semi …)` on a pcm track —
@@ -89,27 +88,56 @@ estimate unless it says so.
   engine:score lists updated; ab baseline re-frozen (54 scores; only the five
   score entries moved, no existing signature changed). verify:all green.
 
-  **STILL OPEN — the loop-point targets, and why.** §4.1 says the value is "in
-  source frames of the sample" and §3.1 has the driver convert
-  `value × len_baked / src_frames`. But the value machine's WIDEST value
-  anywhere is i16: `PARAM_SWEEP` is a fixed 9-byte payload with `from i16,
-  to i16`, and a macro blob is i8 (i16 with flags bit0). A sample that fills
-  the 32 KB bank at pcm1 is 2.26 s — 99,750 source frames at 44.1 kHz, 49,875
-  at 22.05 kHz. Source frames do not fit, so the unit is a real decision and
-  not something to infer. Three candidates, costed:
-  1. **Q15 fraction of the slice** (0..32767 = 0..1). Fits every existing wire
-     unchanged; the driver's conversion becomes `(v × len_baked) >> 15`, which
-     is CHEAPER than the design's divide and needs no `src_frames`. Cost: the
-     track target's unit differs from the def's `:loop-start` frames.
-  2. **Source frames, converted to Q15 by the EXPORTER**, which knows
-     `srcFrames`. Keeps one unit everywhere. Cost: the exporter must know which
-     sample a track has bound at the moment of the curve — fine for one
-     binding, a new diagnostic for a track that re-binds (drum kits).
-  3. **An i32 width class.** Exact, no compile-time sample knowledge. Cost: a
-     third width in `targetWidth`, a 6-byte PARAM_SET, and PARAM_SWEEP needs a
-     wide variant (a new opcode) — the most expensive of the three for the
-     least musical gain.
-  Recommendation: 1, with the def keeping frames. Ask the user.
+  **The loop targets, and the unit they ended up with** (decided with the user
+  2026-09-18, replacing §4.1's "in source frames" and §3.1's runtime divide):
+
+  The value machine's widest value anywhere is i16 — `PARAM_SWEEP` is a fixed
+  9-byte payload with `from i16, to i16`, a macro blob is i8 — so source frames
+  (99,750 of them in a 2.26 s sample at 44.1 kHz) never fit. A fraction of the
+  slice was costed and rejected by the user: "きっちりここからここまでループして
+  欲しい、という指定をしたい場合に、指定しづらそう". What they asked for instead:
+  absolute time, and "ループの頭だけ固定して、16分音符の長さをループ".
+
+  So: **TIME**, written with MMLisp's own length tokens, plus a new absolute
+  one. Playback time → baked bytes is `× R(N)`, a per-image CONSTANT and
+  note-independent (the engine plays one byte a sample), and a blob is at most
+  32,512 bytes — so the wire value is a byte offset and fits i16 with nothing
+  new. Cheaper than the design's divide, and a linear sweep in time stays
+  linear in bytes.
+
+  1. **`Nms` joins the length grammar** (parseLengthToken, everywhere a length
+     is written). It is the only token finer than a tick — 1 tick is 5.2 ms at
+     120 BPM, `1f` is 16.7 ms, and the engine's own floor is one 16-byte block,
+     1.11 ms at pcm1. `lengthTokenSeconds()` resolves a token to SECONDS
+     directly, without the tick detour that would round `1ms` away.
+  2. **Three keys, on the def AND on the track**: `:loop-start`, `:loop-end`,
+     `:loop-len` (new). The user's classification: `:offset`/`:frames` are the
+     bank cut-out, the loop keys are playback, "defであっても用法は同じです".
+     `:loop-end`/`:loop-len` are one bound, last one wins.
+  3. **Frames-as-a-bare-number is GONE** from the def — a bare `100` is now a
+     1/100 note. Every test score was rewritten (`:loop-start 9ms :loop-end
+     36ms` for pad.wav's old 100/400 frames at 11,025 Hz).
+  4. **Frame of reference differs, on purpose**: the def's value is time in the
+     sample's own recording (mapped per baked blob, so it stays put however the
+     note transposes); the track's is playback time (so `:loop-len 16` is a
+     16th note at every pitch). They coincide at C4.
+  5. Targets 0x43/0x44/0x45, i16, PARAM-legal but NOT macro-legal (a macro is a
+     per-note envelope on a chip register). The IR carries seconds — the one
+     non-integer target family; export-mmb multiplies by the image rate.
+  6. **The sweep engine had to grow.** It banked only channels 0-9; PCM is
+     20-22, so every sweep on a pcm track was silently dropped. Now 13 banks
+     (`sweep_bank`/`MML_SWEEP_BANKS`, twin `_sweepBank`).
+  7. **RETARGET is change-only** (`sent_end`/`sent_wrap`): a swept point is
+     recomputed every frame and mostly lands in the same block, and an
+     unguarded send would cost 6 bytes of every slot at 60 Hz.
+  8. `parseCurveSpec` takes a `scalar` reader so a curve's `:from`/`:to` are
+     lengths too; the `A..B` range sugar is refused for these targets (`8...4`).
+  9. **NOT DONE**: `ir-player.js` ignores the loop targets, so the browser's IR
+     playback does not hear them yet — S5's job, with the rest of the browser
+     PCM path. New gate score `m4-pcm-loop-curve`.
+  10. Fixed in passing: the C's PARAM_SET width test was `target ==
+      T_NOTE_PITCH` while the JS used `targetWidth` (wide for TEMPO_SCALE too).
+      Both now go through `target_wide()` / `WIDE_TARGET_IDS`.
 
 ## 1. The engine
 

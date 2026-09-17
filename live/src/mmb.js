@@ -191,14 +191,21 @@ export const TARGET_ID = {
   PAN: 0x40,
   LFO_RATE: 0x41,
   NOISE_MODE: 0x42,
+  // PCM loop points, as the engine's own byte offsets into the playing blob:
+  // one image plays one byte a sample, so a loop point is at most 32,512 and
+  // fits the same i16 every other wide target uses (docs/driver.md §5).
+  LOOP_START: 0x43,
+  LOOP_END: 0x44,
+  LOOP_LEN: 0x45,
 };
 export const TARGET_NAME = Object.fromEntries(
   Object.entries(TARGET_ID).map(([name, id]) => [id, name]),
 );
 
-// i16 targets (opcodes.md §7.4): only NOTE_PITCH (cents) and the reserved
-// TEMPO_SCALE. Every other target is i8.
-const WIDE_TARGET_IDS = new Set([TARGET_ID.NOTE_PITCH, TARGET_ID.TEMPO_SCALE]);
+// i16 targets (opcodes.md §7.4): NOTE_PITCH (cents), the reserved TEMPO_SCALE,
+// and the three PCM loop points (byte offsets). Every other target is i8.
+const WIDE_TARGET_IDS = new Set([TARGET_ID.NOTE_PITCH, TARGET_ID.TEMPO_SCALE,
+  TARGET_ID.LOOP_START, TARGET_ID.LOOP_END, TARGET_ID.LOOP_LEN]);
 
 // Byte width (1 = i8, 2 = i16) of a target's PARAM value, by target id.
 export function targetWidth(id) {

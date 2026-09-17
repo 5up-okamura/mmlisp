@@ -80,7 +80,7 @@ export function loadSamplesForIr(ir, diagnostics = null) {
     // A def may slice one file into many samples (`:offset` / `:frames`, in
     // frames — mirrors sliceDecodedSample in the browser host). Without this a
     // banked import embeds the whole bank once per def and every sample plays
-    // from the bank's start. `:loop-start`/`:loop-end` stay relative to the slice.
+    // from the bank's start. The loop points are the exporter's, off the IR.
     const total = data.length;
     const offset = Number.isFinite(s.offset) ? Math.max(0, s.offset) : 0;
     const want = Number.isFinite(s.frames) ? Math.max(0, s.frames) : total - offset;
@@ -102,8 +102,6 @@ export function loadSamplesForIr(ir, diagnostics = null) {
     samples[s.name] = {
       data: Uint8Array.from(slice, (v) => v & 0xff),
       baseRate: s.rate ?? sampleRate,
-      loopStart: s.loopStart ?? null,
-      loopEnd: s.loopEnd ?? null,
     };
   }
   return samples;

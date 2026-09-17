@@ -1410,7 +1410,7 @@
       ':pitch',':pitch+',':semi',':semi+',':keyon',':by',':back',':time',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
-      ':extend',':step',':loop',':loop-start',':loop-end',
+      ':extend',':step',':loop',':loop-start',':loop-end',':loop-len',
       ':file',':sample',':rate',
       // def-val (dynamic value slots)
       ':min',':max',':unit',
@@ -2745,8 +2745,8 @@
 
     // Sample blobs for encodeMmb's SAMPLE_BANK (export-mmb.js §10): raw 8-bit
     // signed PCM keyed by sample name. Without this the bank is omitted and the
-    // MMLispDRV backend (and any exported .mmb) has nothing to play. loopStart /
-    // loopEnd are left to the IR metadata — the compiled truth; baseRate must be
+    // MMLispDRV backend (and any exported .mmb) has nothing to play. The loop
+    // points are left to the IR metadata — the compiled truth; baseRate must be
     // supplied, since the exporter would otherwise fall back to 13000 Hz rather
     // than the wav's own rate.
     // encodeMmb reports more than dropped events (missing sample blobs, deferred
@@ -2829,8 +2829,6 @@
             name: String(def.name),
             data: decoded.data,
             sampleRate: decoded.sampleRate,
-            loopStart: Number.isFinite(def.loopStart) ? def.loopStart : null,
-            loopEnd: Number.isFinite(def.loopEnd) ? def.loopEnd : null,
           });
         } catch (e) {
           // The commonest cause is a relative :file with no folder open — the

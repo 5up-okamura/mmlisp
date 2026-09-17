@@ -181,6 +181,7 @@ Length token grammar:
 | `N/M` | Fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) | `1/3` → 128 |
 | `Nt`  | Exact tick count                                       | `6t` → 6      |
 | `Nf`  | N frames (1/60 s); context-dependent (see below)       | —             |
+| `Nms` | N milliseconds, absolute and tempo-independent         | `125ms` → 48 at 120 BPM |
 | `0`   | Hold: KEY-ON without advancing / without KEY-OFF (§17) | 0             |
 
 Accepted wherever a length appears: `:len`, note/rest suffix, `:gate`,
@@ -193,7 +194,11 @@ argument (§7.4): a bare expression is a denominator like a literal number
 
 `Nf` is a true 60 Hz frame count — scheduled per frame, tempo-independent — in
 curve `:len`, macro `:step`, a `(wait Nf)` stage, and `def-val :unit frame`
-slots (the player runs these off its own frame clock).
+slots (the player runs these off its own frame clock). `Nms` has no such
+special context: it is a duration, converted to ticks at the tempo in force,
+and it is the only token finer than a tick (5.2 ms at 120 BPM). The PCM loop
+points (§16) are the one place it is not rounded to ticks at all — they take
+their value in seconds, so `1ms` reaches the engine's own floor.
 
 In **structural** contexts that advance the musical timeline — note length,
 `:gate`, `~` (tie), rests, `(glide T)`, and `(delay … :time T)` — `Nf` is
@@ -1164,7 +1169,7 @@ is never touched.
 | `:rate`       | C4 playback rate in Hz (default: the WAV's native rate)        |
 | `:offset`     | Start frame within the file (default 0). See *Sample banks*   |
 | `:frames`     | Frame count (default: to the end of the file)                 |
-| `:loop-start` / `:loop-end` | Sustain-loop points (sample frames)              |
+| `:loop-start` / `:loop-end` / `:loop-len` | Sustain loop, as LENGTHS (see below) |
 | `:bit-depth`  | Quantize to N bits (expanded to 8-bit for playback)            |
 | `:volume`     | Gain / normalization                                           |
 | `:compress`   | Compressor preset                                              |
@@ -1225,6 +1230,50 @@ than left to break at export time.
 
 Full drop routing for every accepted format: `guide.md` §23.
 
+### The loop
+
+`:loop-start`, `:loop-end` and `:loop-len` say where a `loop` note repeats.
+They take **lengths** — the same grammar as `:len` and `:gate` (§4), including
+`Nms`, which is what you want when the point is a place in the wave rather than
+a place in the bar. `:loop-end` and `:loop-len` are two spellings of the same
+bound and the last one written wins.
+
+They belong on a `def` and on a track, and they mean the same thing in both —
+unlike `:offset` / `:frames`, which cut a sample out of a file and have nothing
+to do with playback. On a def they set the sample's own sustain loop:
+
+```lisp
+(def pad :sample :file "pad.wav" :loop-start 300ms :loop-len 100ms)
+```
+
+On a track they MOVE it while the note sounds, as a literal or as a curve — a
+thing no other Mega Drive driver offers:
+
+```lisp
+(pcm1 pad :mode loop :len 1
+  :loop-start 300ms :loop-len 16                 c   ; a 16th-note loop, head fixed
+  :loop-len (linear :from 100ms :to 2ms :len 2)  c   ; tighten it to a buzz
+  :loop-start (linear :from 100ms :to 900ms :len 2) c) ; slide it through the sample
+```
+
+`:loop-len` holds the length when `:loop-start` moves — which is what the third
+line above relies on. `:loop-end` pins the end instead, and then moving the
+start changes the length. A curve's ends are lengths too, so write `:from` and
+`:to` rather than the `A..B` range sugar (`8...4` would be unreadable).
+
+Three limits worth knowing:
+
+- **The engine rounds the loop to 16 bytes** — 1.11 ms at `pcm-voices 1`,
+  1.58 at 2, 2.40 at 3. That is also the shortest loop there is, so the
+  highest buzz `pcm1` reaches is about 900 Hz and the pitches below it are
+  `14375.7 / 16n` Hz. **This is a rhythmic device, not a pitch one.**
+- A note-off ends the loop: the voice plays its tail and parks, and loop
+  writes after that do nothing.
+- **Frame of reference.** On a def the value is time in the sample's own
+  recording, so a loop stays where you set it however the note transposes. On a
+  track it is time as you HEAR it, so `:loop-len 16` is a 16th note at every
+  pitch. At C4 the two coincide.
+
 ### Playback
 
 - **Pitch is baked, not played.** A note picks a blob resampled for that note;
@@ -1234,10 +1283,8 @@ Full drop routing for every accepted format: `guide.md` §23.
   `(glide …)` and a `(macro :pitch …)` vibrato are `E_PCM_NO_PITCH` rather
   than silently dropped.
 - **`:mode`** is per-note (not sticky): `shot` (default) plays start→end
-  once; `loop` plays the attack, cycles `:loop-start`–`:loop-end` until
-  KEY-OFF (a `PCM_NOTE_OFF` at the gate), then plays the release tail.
-  The loop points are rounded to the driver's 16-byte block, so a very short
-  loop is detuned slightly by the rounding.
+  once; `loop` plays the attack, cycles the loop until KEY-OFF (a
+  `PCM_NOTE_OFF` at the gate), then plays the release tail.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
   > only `loop` mode honors KEY-OFF.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).

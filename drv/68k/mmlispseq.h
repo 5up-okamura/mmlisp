@@ -114,6 +114,8 @@ typedef struct {
   uint8_t sounding; /* attenuation < 15 */
 } MMLPsgCh;
 
+#define MML_SWEEP_BANKS 13
+
 /* One sweep slot (driver.md §4 step 3). Two per channel, so a pitch glide and
  * a volume fade can run at once. */
 typedef struct {
@@ -182,6 +184,17 @@ typedef struct {
   uint8_t vel_base, vel, vol;
   uint8_t shift;      /* composed attenuation 0..4; master is folded in by the host */
   uint8_t sent_shift; /* last shift byte sent, 0xFF = none */
+  /* THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the note's
+   * own points until a LOOP_START/LOOP_END/LOOP_LEN param moves them. The
+   * length is kept beside the end so that moving only the start slides a loop
+   * of the same length through the sample, which is the gesture that spelling
+   * exists for; :loop-end pins the end instead and sets end_fixed. */
+  uint32_t ls, le, llen;
+  uint8_t end_fixed;
+  /* The last END/WRAP sent. A sweep runs every frame and mostly lands on the
+   * same 16-byte block, so a RETARGET goes out only when the block changes. */
+  uint16_t sent_end, sent_wrap;
+  uint8_t sent_pts;
 } MMLPcmVoice;
 
 typedef struct {
@@ -242,7 +255,10 @@ typedef struct {
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
   uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
 
-  MMLSweep sweeps[10][2];
+  /* Sweep banks: the ten M1 channels, then the three PCM voices — their loop
+   * points are swept like any other param (opcodes.md §7). sweep_bank() maps a
+   * channel id to its bank. */
+  MMLSweep sweeps[MML_SWEEP_BANKS][2];
   MMLMacroBind binds[10][MML_MACRO_BINDS];
   uint8_t bind_count[10];
   MMLMacroSlot macro_slots[10][MML_MACRO_BINDS];

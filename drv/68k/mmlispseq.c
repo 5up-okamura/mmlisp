@@ -119,8 +119,19 @@ enum {
   T_FM_FMS = 0x3f,
   T_PAN = 0x40,
   T_LFO_RATE = 0x41,
-  T_NOISE_MODE = 0x42
+  T_NOISE_MODE = 0x42,
+  T_LOOP_START = 0x43,
+  T_LOOP_END = 0x44,
+  T_LOOP_LEN = 0x45
 };
+
+/* The i16 targets (opcodes.md §7.4), mirroring WIDE_TARGET_IDS in
+ * live/src/mmb.js: cents, the reserved tempo scale, and the PCM loop points
+ * (byte offsets into a blob, up to the bank's 32 KB window). */
+static int target_wide(int target) {
+  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE ||
+         (target >= T_LOOP_START && target <= T_LOOP_LEN);
+}
 
 MML_HOT uint16_t rd16(const uint8_t *b, uint32_t o) {
   return (uint16_t)(b[o] | (b[o + 1] << 8));
@@ -492,6 +503,8 @@ static void recompose_carriers(MMLSeq *s, int ch) {
  * tail. Everything else (sweeps, the host API) keeps the keyed guard, so it can
  * never un-mute a silenced channel.
  */
+static void pcm_apply_loop(MMLSeq *s, int vi);
+
 static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   if (target == T_MASTER) {
     s->master = (uint8_t)clampi(value, 0, 31);
@@ -549,7 +562,25 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
       v->vel = (uint8_t)clampi(value, 0, 15);
       if (!force) v->vel_base = v->vel; /* score's vel; a macro moves only the live one */
     } else if (target == T_VOL) v->vol = (uint8_t)clampi(value, 0, 31);
-    else return;
+    else if (target >= T_LOOP_START && target <= T_LOOP_LEN) {
+      /* THE LOOP POINTS, as byte offsets into the playing blob. :loop-len keeps
+       * the length when the start moves; :loop-end pins the end instead. */
+      uint32_t x = (uint32_t)clampi(value, 0, MML_PCM_WINDOW);
+      if (target == T_LOOP_START) {
+        v->ls = x;
+        if (!v->end_fixed) v->le = v->ls + v->llen;
+      } else if (target == T_LOOP_END) {
+        v->le = x;
+        v->end_fixed = 1;
+        v->llen = v->le > v->ls ? v->le - v->ls : 0;
+      } else {
+        v->llen = x;
+        v->end_fixed = 0;
+        v->le = v->ls + v->llen;
+      }
+      pcm_apply_loop(s, ch - CH_PCM1);
+      return;
+    } else return;
     pcm_compose_shift(s, ch - CH_PCM1);
     return;
   }
@@ -697,10 +728,23 @@ static void write_timer_a(MMLSeq *s, int period) {
 }
 
 /* ── Sweep slots ──────────────────────────────────────────────────────────── */
+/* A channel's sweep bank: the ten M1 channels are their own, the three PCM
+ * voices follow them (their loop points sweep like any other param). fm3-op
+ * ids have none. -1 = no bank. */
+static int sweep_bank(int ch) {
+  if (ch < 10) return ch;
+  if (ch >= CH_PCM1 && ch <= CH_PCM3) return 10 + (ch - CH_PCM1);
+  return -1;
+}
+/* The inverse, for the frame loop. */
+static int sweep_bank_ch(int bank) {
+  return bank < 10 ? bank : CH_PCM1 + (bank - 10);
+}
 static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int loop,
                         int from, int to, int len) {
-  if (ch >= 10) return; /* fm3-op / pcm ids have no sweep engine */
-  MMLSweep *sl = s->sweeps[ch];
+  int bank = sweep_bank(ch);
+  if (bank < 0) return;
+  MMLSweep *sl = s->sweeps[bank];
   int idx = -1;
   for (int i = 0; i < 2; i++)
     if (sl[i].active && sl[i].target == target) { idx = i; break; }
@@ -720,18 +764,20 @@ static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int lo
   sl[idx].step16 = sweep_step(len, loop);
 }
 static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
-  if (ch >= 10) return;
+  int bank = sweep_bank(ch);
+  if (bank < 0) return;
   for (int i = 0; i < 2; i++)
-    if (s->sweeps[ch][i].active && s->sweeps[ch][i].target == target)
-      s->sweeps[ch][i].active = 0;
+    if (s->sweeps[bank][i].active && s->sweeps[bank][i].target == target)
+      s->sweeps[bank][i].active = 0;
 }
 /* A new note cancels LOOP sweeps on its channel (opcodes.md §6: loop sweeps
  * run "until PARAM_SWEEP_STOP / next note"). One-shots — fades, glides —
  * survive it. */
 static void cancel_loop_sweeps(MMLSeq *s, int ch) {
-  if (ch >= 10) return;
+  int bank = sweep_bank(ch);
+  if (bank < 0) return;
   for (int i = 0; i < 2; i++)
-    if (s->sweeps[ch][i].active && s->sweeps[ch][i].loop) s->sweeps[ch][i].active = 0;
+    if (s->sweeps[bank][i].active && s->sweeps[bank][i].loop) s->sweeps[bank][i].active = 0;
 }
 
 /* ── Macro engine (driver.md §13) ──────────────────────────────────────────
@@ -997,6 +1043,36 @@ static void pcm_loop_points(uint16_t src, uint32_t len, uint32_t ls, uint32_t le
   *wrap = (uint16_t)(src + ls2);
 }
 
+/* Send END/WRAP, but only when they actually moved. A swept loop point is
+ * recomputed every frame and mostly lands inside the same 16-byte block, and an
+ * unguarded RETARGET would spend six bytes of the slot on it sixty times a
+ * second — starving the register writes it shares the slot with. */
+static void pcm_retarget(MMLSeq *s, int vi, uint16_t end, uint16_t wrap) {
+  MMLPcmVoice *v = &s->pcm[vi];
+  if (v->sent_pts && end == v->sent_end && wrap == v->sent_wrap) return;
+  uint8_t c[6];
+  c[0] = PCM_RETARGET;
+  c[1] = (uint8_t)vi;
+  put16(c + 2, end);
+  put16(c + 4, wrap);
+  pcm_emit(s, c, 6);
+  v->sent_end = end;
+  v->sent_wrap = wrap;
+  v->sent_pts = 1;
+}
+
+/* The live loop points → the engine's END/WRAP. A released voice is a shot from
+ * here on, so its loop params stop having an effect, which is what a release
+ * means. */
+static void pcm_apply_loop(MMLSeq *s, int vi) {
+  MMLPcmVoice *v = &s->pcm[vi];
+  if (!v->started) return;
+  uint16_t end, wrap;
+  if (v->looping) pcm_loop_points(v->src, v->len, v->ls, v->le, &end, &wrap);
+  else pcm_shot_points(v->src, v->len, &end, &wrap);
+  pcm_retarget(s, vi, end, wrap);
+}
+
 static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id) {
   int vi = channel_id - CH_PCM1;
   if (vi < 0 || vi >= MML_PCM_VOICES) return;
@@ -1020,7 +1096,12 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id) {
   v->looping = (uint8_t)(e[1] & 1);
   v->src = (uint16_t)(MML_PCM_WINDOW + (abs & 0x7fff));
   v->len = (uint16_t)len;
-  if (v->looping) pcm_loop_points(v->src, len, rd32(e, 16), rd32(e, 20), &end, &wrap);
+  /* The note's own loop is where a LOOP_* param starts from. */
+  v->ls = v->looping ? rd32(e, 16) : 0;
+  v->le = v->looping ? rd32(e, 20) : len;
+  v->llen = v->le > v->ls ? v->le - v->ls : 0;
+  v->end_fixed = 0;
+  if (v->looping) pcm_loop_points(v->src, len, v->ls, v->le, &end, &wrap);
   else pcm_shot_points(v->src, v->len, &end, &wrap);
   uint8_t c[9];
   c[0] = PCM_START;
@@ -1031,6 +1112,9 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id) {
   put16(c + 7, wrap);
   pcm_emit(s, c, 9);
   v->sent_shift = c[2];
+  v->sent_end = end;
+  v->sent_wrap = wrap;
+  v->sent_pts = 1;
 }
 
 static void pcm_note_off(MMLSeq *s, int channel_id) {
@@ -1041,14 +1125,7 @@ static void pcm_note_off(MMLSeq *s, int channel_id) {
   MMLPcmVoice *v = &s->pcm[vi];
   if (!v->started || !v->looping) return;
   v->looping = 0;
-  uint16_t end, wrap;
-  pcm_shot_points(v->src, v->len, &end, &wrap);
-  uint8_t c[6];
-  c[0] = PCM_RETARGET;
-  c[1] = (uint8_t)vi;
-  put16(c + 2, end);
-  put16(c + 4, wrap);
-  pcm_emit(s, c, 6);
+  pcm_apply_loop(s, vi);
 }
 
 /* ── VOICE_SET (driver.md §10) ──────────────────────────────────────────────
@@ -1334,8 +1411,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       }
       case OP_PARAM_SET: {
         uint8_t target = st[t->pc + 1];
-        /* NOTE_PITCH is the one i16 target (opcodes.md §7). */
-        if (target == T_NOTE_PITCH) {
+        if (target_wide(target)) {
           param_set(s, t->channel_id, target, (int16_t)rd16(st, t->pc + 2));
           t->pc += 4;
         } else {
@@ -1367,7 +1443,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         break;
       case OP_PARAM_ADD: {
         uint8_t target = st[t->pc + 1];
-        int wide = (target == T_NOTE_PITCH || target == T_TEMPO_SCALE);
+        int wide = target_wide(target);
         int delta = wide ? (int16_t)rd16(st, t->pc + 2) : (int8_t)st[t->pc + 2];
         t->pc += (uint16_t)(2 + (wide ? 2 : 1));
         param_set(s, t->channel_id, target,
@@ -1775,9 +1851,10 @@ static void run_frame(MMLSeq *s) {
        * then the macros (same write path, §13.3), the global tempo and CSM-rate
        * sweeps, and the fades. Once a frame — subdividing them would multiply
        * 99% of the frame's write traffic by K (plan-subtick-timing). */
-      for (int ch = 0; ch < 10; ch++) {
+      for (int bank = 0; bank < MML_SWEEP_BANKS; bank++) {
+        int ch = sweep_bank_ch(bank);
         for (int i = 0; i < 2; i++) {
-          MMLSweep *sl = &s->sweeps[ch][i];
+          MMLSweep *sl = &s->sweeps[bank][i];
           if (sl->active && process_sweep(s, ch, sl)) sl->active = 0;
         }
       }

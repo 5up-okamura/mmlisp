@@ -849,6 +849,21 @@ Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
 and **fade smoothly** (the level ladder is 6 dB a step). Put a fade on FM or
 PSG when it has to be smooth.
 
+One thing it can do that nothing else on this machine does: **move its loop
+while the note sounds.** `:loop-start`, `:loop-end` and `:loop-len` take
+lengths — `300ms`, `16`, `6t` — on the sample def and on the track, and on the
+track they also take curves:
+
+```lisp
+(pcm1 pad :mode loop :len 1
+  :loop-len 16                                   c   ; a 16th-note loop
+  :loop-len (linear :from 100ms :to 2ms :len 2)  c)  ; tightened to a buzz
+```
+
+The loop rounds to 16 bytes (1.11 ms at one voice), which is also the shortest
+loop there is — so this is a rhythmic device, not a way to play pitches.
+language.md §16 has the rest.
+
 **Drag a `.wav` onto the live editor** and its `def` is written for you at the
 cursor. Drag it out of the folder you opened with `File > Open Folder…` and the
 `:file` path is the right relative one; drag it from anywhere else and the def

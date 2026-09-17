@@ -90,10 +90,9 @@ Index:
   v2, bank v0.3, `(def pcm-voices N)`, the shared JS PCM model, the gates.
   **S1 (engine images, pcm-model.js, engine:gate) and S2 (sequencer, slot v2,
   converter, bank/MMB v0.3, SGDK host boots the score's image) DONE
-  2026-09-17. S3 (language) PART DONE 2026-09-18 — pcm-voices and the four
-  diagnostics landed; the `:loop-start`/`:loop-end` TARGETS are open on one
-  question (what unit fits the i16 wire — the design file costs the options).
-  Next S4 (SGDK host).**
+  2026-09-17, S3 (language: pcm-voices, the four diagnostics, and the loop
+  points as LENGTHS on both the def and the track — `Nms` is new grammar)
+  DONE 2026-09-18; next S4 (SGDK host).**
   Delete when S6 lands.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the

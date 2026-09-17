@@ -447,7 +447,9 @@ export class DrvPlayer {
     // M2 sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
     // channel (e.g. a pitch glide and a volume fade at once) + one global tempo
     // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
-    this._sweeps = Array.from({ length: 10 }, () => [null, null]);
+    // Banks: the ten M1 channels, then the three PCM voices — their loop
+    // points sweep like any other param (_sweepBank).
+    this._sweeps = Array.from({ length: 13 }, () => [null, null]);
     // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
     // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
     this._macros = song?.macros ?? [];
@@ -477,6 +479,15 @@ export class DrvPlayer {
       shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
       muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
       _sentShift: 0xff,
+      // THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the
+      // note's own points until a LOOP_START/LOOP_END/LOOP_LEN param moves
+      // them. The length sits beside the end so that moving only the start
+      // slides a loop of the same length through the sample; :loop-end pins
+      // the end instead and sets endFixed.
+      ls: 0, le: 0, llen: 0, endFixed: false,
+      // The last END/WRAP sent, so a swept loop point only costs a RETARGET
+      // when it actually leaves its 16-byte block.
+      sentEnd: 0, sentWrap: 0, sentPts: false,
     }));
     this._pcmDacOn = false;
     // Live playback of a PCM score runs the engine model for the DAC bytes;
@@ -1410,7 +1421,25 @@ export class DrvPlayer {
         v.vel = value < 0 ? 0 : value > 15 ? 15 : value;
         if (!force) v.velBase = v.vel; // score's vel; a macro moves only the live one
       } else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
-      else return;
+      else if (target >= TARGET_ID.LOOP_START && target <= TARGET_ID.LOOP_LEN) {
+        // THE LOOP POINTS, as byte offsets into the playing blob. :loop-len
+        // keeps the length when the start moves; :loop-end pins the end.
+        const x = value < 0 ? 0 : value > PCM_WINDOW ? PCM_WINDOW : value;
+        if (target === TARGET_ID.LOOP_START) {
+          v.ls = x;
+          if (!v.endFixed) v.le = v.ls + v.llen;
+        } else if (target === TARGET_ID.LOOP_END) {
+          v.le = x;
+          v.endFixed = true;
+          v.llen = v.le > v.ls ? v.le - v.ls : 0;
+        } else {
+          v.llen = x;
+          v.endFixed = false;
+          v.le = v.ls + v.llen;
+        }
+        this._pcmApplyLoop(channelId - 20);
+        return;
+      } else return;
       this._pcmComposeShift(channelId - 20);
       return;
     }
@@ -1539,9 +1568,18 @@ export class DrvPlayer {
   }
 
   // ── M2 sweep engine (driver.md §4 step 3) ────────────────────────────────
+  // A channel's sweep bank: the ten M1 channels are their own, the three PCM
+  // voices follow them. fm3-op ids have none. -1 = no bank.
+  _sweepBank(ch) {
+    if (ch < 10) return ch;
+    if (ch >= 20 && ch <= 22) return 10 + (ch - 20);
+    return -1;
+  }
+
   _startSweep(ch, target, curveId, loop, from, to, len) {
-    if (ch >= 10) return; // fm3-op / pcm: no sweep engine in M2 core
-    const slots = this._sweeps[ch];
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
     const slot = {
       target,
       curveId,
@@ -1563,16 +1601,18 @@ export class DrvPlayer {
   }
 
   _stopSweep(ch, target) {
-    if (ch >= 10) return;
-    const slots = this._sweeps[ch];
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
     for (let i = 0; i < slots.length; i++) {
       if (slots[i] && slots[i].target === target) slots[i] = null;
     }
   }
 
   _cancelLoopSweeps(ch) {
-    const slots = this._sweeps[ch];
-    if (!slots) return;
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
     for (let i = 0; i < slots.length; i++) {
       if (slots[i] && slots[i].loop) slots[i] = null;
     }
@@ -1787,6 +1827,31 @@ export class DrvPlayer {
     return PCM_WINDOW + (abs & 0x7fff);
   }
 
+  // Send END/WRAP, but only when they actually moved. A swept loop point is
+  // recomputed every frame and mostly lands inside the same 16-byte block; an
+  // unguarded RETARGET would spend six bytes of the slot on it sixty times a
+  // second, starving the register writes it shares the slot with.
+  _pcmRetarget(vi, end, wrap) {
+    const v = this._pcmVoices[vi];
+    if (v.sentPts && end === v.sentEnd && wrap === v.sentWrap) return;
+    this._pcmCmd([PCM_RETARGET, vi, ...u16le(end), ...u16le(wrap)]);
+    v.sentEnd = end;
+    v.sentWrap = wrap;
+    v.sentPts = true;
+  }
+
+  // The live loop points → the engine's END/WRAP. A released voice is a shot
+  // from here on, so its loop params stop having an effect — which is what a
+  // release means.
+  _pcmApplyLoop(vi) {
+    const v = this._pcmVoices[vi];
+    if (!v.started) return;
+    const pts = v.looping
+      ? pcmLoopPoints(v.src, v.len, v.ls, v.le)
+      : pcmShotPoints(v.src, v.len);
+    this._pcmRetarget(vi, pts.end, pts.wrap);
+  }
+
   _pcmNoteOn(channelId, sampleId, note) {
     void note; // the bank baked this note into its own entry
     const vi = channelId - 20; // pcm1–pcm3 → voice 0–2
@@ -1808,12 +1873,20 @@ export class DrvPlayer {
     v.sampleId = sampleId;
     v.src = this._pcmSrc(s);
     v.len = s.len;
+    // The note's own loop is where a LOOP_* param starts from.
+    v.ls = s.hasLoop ? s.loopStart : 0;
+    v.le = s.hasLoop ? s.loopEnd : s.len;
+    v.llen = v.le > v.ls ? v.le - v.ls : 0;
+    v.endFixed = false;
     const pts = s.hasLoop
-      ? pcmLoopPoints(v.src, s.len, s.loopStart, s.loopEnd)
+      ? pcmLoopPoints(v.src, s.len, v.ls, v.le)
       : pcmShotPoints(v.src, s.len);
     const byte = this._pcmShiftByte(v);
     this._pcmCmd([PCM_START, vi, byte, ...u16le(v.src), ...u16le(pts.end), ...u16le(pts.wrap)]);
     v._sentShift = byte;
+    v.sentEnd = pts.end;
+    v.sentWrap = pts.wrap;
+    v.sentPts = true;
   }
 
   _pcmNoteOff(channelId) {
@@ -1824,8 +1897,7 @@ export class DrvPlayer {
     const v = this._pcmVoices[vi];
     if (!v.started || !v.looping) return;
     v.looping = false;
-    const pts = pcmShotPoints(v.src, v.len);
-    this._pcmCmd([PCM_RETARGET, vi, ...u16le(pts.end), ...u16le(pts.wrap)]);
+    this._pcmApplyLoop(vi);
   }
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
@@ -2307,8 +2379,9 @@ export class DrvPlayer {
       if (sub === 0) {
         // 3. Sweep engines (driver.md §4 step 3): ascending channel, ascending
         //    slot, then the global tempo sweep. Each writes into the shadow.
-        for (let ch = 0; ch < 10; ch++) {
-          const slots = this._sweeps[ch];
+        for (let bank = 0; bank < this._sweeps.length; bank++) {
+          const ch = bank < 10 ? bank : 20 + (bank - 10);
+          const slots = this._sweeps[bank];
           for (let si = 0; si < slots.length; si++) {
             if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
           }

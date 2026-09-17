@@ -3,7 +3,7 @@
 ; into each voice's rung page (D10 §1.6) — so a master change re-sends a LEVEL
 ; pair per voice and every rung has to land on both at the same block edge.
 (def blip :sample :file "blip.wav")
-(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(def pad  :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def pcm-voices 2)
 (pcm1 blip :tempo 140 :oct 4 :len 8 :vel 15 :vol 31
   c :master 25 e :master 19 g :master 13 c :master 7 e :master 31 g)

@@ -50,6 +50,11 @@ track. The presence of any `fm3-1..fm3-4` track prepends a tick-0
 `FM3_MODE { mode: "op" }` into `tracks[0]` — the only compiler-injected init
 event.
 
+The PARAM targets `LOOP_START` / `LOOP_END` / `LOOP_LEN` (§5) carry a PCM
+loop point in **seconds**, and are the one target family whose IR value is not
+an integer: the MMB exporter multiplies by the engine image's rate to get the
+byte offset the driver wants. They are valid on `pcm1`–`pcm3` only.
+
 `metadata.pcmVoices` is how many PCM voices the driver plays, 0–3, from
 `(def pcm-voices N)` or the highest `pcmN` track the score uses. It picks the
 engine image and with it the DAC rate, so the MMB exporter reads it before it
@@ -81,7 +86,7 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `resolvedFile` | string      | `file` resolved against the source file's directory.|
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
-| `loopStart`, `loopEnd` | int\|null | Loop points in frames, **relative to the slice**. The driver rounds them to its 16-byte block. |
+| `loopStartSec`, `loopEndSec` | number\|null | Sustain loop, in SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. A null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
 | `bitDepth`     | int\|null   | Declared bit depth.                                 |
 | `volume`, `compress`, `reverb` | string\|null | Raw option strings. Carried, not yet acted on (`W_SAMPLE_KEY_UNIMPLEMENTED`). |
 

@@ -38,7 +38,7 @@
 ; SE_SNAP slot suffices; restore re-writes the BGM's period + attenuation.
 (sqr2 :oct 6 :len 8 :vel 15  b b)
 
-(def pad  :sample :file "pad.wav" :loop-start 100 :loop-end 400)
+(def pad  :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def blip :sample :file "blip.wav")
 
 ; track 4 (bgm-pcm): pcm1 (soft-mix voice 0) plays a sustain-looping sample (a

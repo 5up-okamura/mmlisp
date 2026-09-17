@@ -1,0 +1,21 @@
+; M4 gate: the loop points as PARAMS — the thing no other Mega Drive driver
+; does (plan-pcm-spec.md D10). The def sets a sustain loop in the sample's own
+; time; the track then moves it while the note sounds, as a literal and as a
+; curve, and each change is one PCM_RETARGET to the engine's block edge.
+;
+; What this locks:
+;   - a literal length (:loop-len 30ms) against the def's own loop
+;   - a sweep that tightens the loop to the engine's floor (one 16-byte block,
+;     1.11 ms at pcm1) — the sweep engine has to reach a PCM channel at all
+;   - a sweep that slides the loop's head through the sample with its length
+;     held, which is what :loop-len rather than :loop-end buys
+;   - the change-only guard: a sweep is recomputed every frame but only pays a
+;     RETARGET when the rounded block actually moves
+;   - the release at each note's end, which turns the loop back into a shot
+(def pcm-voices 1)
+(def voice :sample :file "shinobipcm.wav" :loop-start 200ms :loop-len 100ms)
+(pcm1 voice :mode loop :tempo 120 :oct 4 :len 2 :vel 15
+  c
+  :loop-len 30ms c
+  :loop-len (linear :from 100ms :to 2ms :len 2) c
+  :loop-start (linear :from 100ms :to 900ms :len 2) c)

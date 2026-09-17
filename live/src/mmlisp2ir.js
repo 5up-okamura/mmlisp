@@ -63,6 +63,12 @@ const SUPPORTED_TARGETS = new Set([
 // (macro :pitch …) vibrato — has no hardware to land on; reject it rather than
 // drop it silently (plan-pcm-spec.md D5).
 const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
+
+// The PCM loop points (docs/language.md §16). Their values are LENGTH TOKENS,
+// not plain numbers, and they drive the engine's block edge rather than a chip
+// register — so they are PARAM-legal (a literal or a curve) but not macro-legal.
+// LOOP_END and LOOP_LEN are two spellings of one bound; the last one wins.
+const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
 
 function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
@@ -83,11 +89,12 @@ function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
 // meaningful absolute-write semantics (NOTE_SEMI duplicates NOTE_PITCH, KEYON is
 // a note event, VEL is key-on-sticky), so they are macro-only. Writing them as a
 // PARAM is rejected.
-const PARAM_SET_TARGETS = new Set(
-  [...SUPPORTED_TARGETS].filter(
+const PARAM_SET_TARGETS = new Set([
+  ...[...SUPPORTED_TARGETS].filter(
     (t) => t !== "NOTE_SEMI" && t !== "KEYON" && t !== "VEL",
   ),
-);
+  ...PCM_LOOP_TARGETS,
+]);
 
 const TRACK_OPTION_KEYS = new Set([
   ":ch",
@@ -278,6 +285,24 @@ function framesToTicks(frames, bpm) {
   return Math.max(1, Math.round((frames * bpm * PPQN) / 3600));
 }
 
+function msToTicks(ms, bpm) {
+  if (ms === 0) return 0; // 0ms = hold, mirroring plain 0
+  return Math.max(1, Math.round((ms * bpm * PPQN) / 60000));
+}
+
+// A length token as an absolute duration in SECONDS, without the detour through
+// ticks. The PCM loop points need this: a tick is 5.2 ms at 120 BPM, so
+// resolving `1ms` to ticks would round it away, while the engine can place a
+// loop 1.11 ms long (one 16-byte block at pcm1 — driver.md §5).
+export function lengthTokenSeconds(token, bpm = 120) {
+  if (typeof token !== "string") return null;
+  if (/^\d+ms$/.test(token)) return parseInt(token, 10) / 1000;
+  if (/^\d+f$/.test(token)) return parseInt(token, 10) / 60;
+  const ticks = parseLengthToken(token, null, bpm);
+  if (ticks === null || !Number.isFinite(ticks)) return null;
+  return (ticks * 60) / ((bpm || 120) * PPQN);
+}
+
 // Inverse of framesToTicks: a tick duration → 60 Hz frame count at `bpm`.
 function ticksToFrames(ticks, bpm) {
   if (!ticks) return ticks;
@@ -336,6 +361,12 @@ function parseLengthToken(value, inheritedTicks, bpm = null) {
   if (/^\d+f$/.test(value)) {
     const frames = parseInt(value, 10);
     return bpm != null ? framesToTicks(frames, bpm) : frames;
+  }
+  // Milliseconds: "300ms" — an absolute duration, tempo-independent, and the
+  // only length token finer than a tick (one tick is 5.2 ms at 120 BPM). Like
+  // Nf in a structural context it converts to ticks at the tempo in force.
+  if (/^\d+ms$/.test(value)) {
+    return msToTicks(parseInt(value, 10), bpm ?? 120);
   }
   // Fraction: "1/2", "3/4"
   if (/^\d+\/\d+$/.test(value)) {
@@ -1424,8 +1455,11 @@ function parseSampleDef(root, diagnostics) {
     rate: null,
     offset: null,
     frames: null,
-    loopStart: null,
-    loopEnd: null,
+    loopStartTok: null,
+    loopEndTok: null,
+    loopLenTok: null,
+    loopStartSec: null,
+    loopEndSec: null,
     bitDepth: null,
     volume: null,
     compress: null,
@@ -1447,11 +1481,13 @@ function parseSampleDef(root, diagnostics) {
       const frames = parseIntLike(rawVal);
       if (frames !== null) sample.frames = frames;
     } else if (key === ":loop-start") {
-      const loopStart = parseIntLike(rawVal);
-      if (loopStart !== null) sample.loopStart = loopStart;
+      sample.loopStartTok = rawVal;
     } else if (key === ":loop-end") {
-      const loopEnd = parseIntLike(rawVal);
-      if (loopEnd !== null) sample.loopEnd = loopEnd;
+      sample.loopEndTok = rawVal;
+      sample.loopLenTok = null; // the two spell one bound; the last one wins
+    } else if (key === ":loop-len") {
+      sample.loopLenTok = rawVal;
+      sample.loopEndTok = null;
     } else if (key === ":bit-depth") {
       const bitDepth = parseIntLike(rawVal);
       if (bitDepth !== null) sample.bitDepth = bitDepth;
@@ -1870,7 +1906,12 @@ function parseCurveSpec(
   src = null,
   trackName = null,
   requireCurve = false,
+  // How a value in `:from` / `:to` (and `const`'s positional) is read. The PCM
+  // loop points pass a length-token reader here, so `(line :from 16 :to 64)`
+  // sweeps a 16th note down to a 64th instead of the bare numbers 16 and 64.
+  scalar = null,
 ) {
+  const readScalar = scalar ?? parseNumberLike;
   if (!node || node.kind !== "list" || !node.items || node.items.length === 0)
     return null;
   const head = atomValue(node.items[0]);
@@ -1913,7 +1954,7 @@ function parseCurveSpec(
   // from = to, emitted as a (non-loop) linear curve (needs no new sampler).
   const isConst = head === "const";
   if (isConst) {
-    const cval = parseNumberLike(atomValue(node.items[1]));
+    const cval = readScalar(atomValue(node.items[1]));
     if (cval !== null) {
       from = cval;
       to = cval;
@@ -1985,6 +2026,19 @@ function parseCurveSpec(
     const k = atomValue(node.items[j]);
     // Positional range sugar: `(sin -1..1 :rate 6 :len 4)` sets from/to.
     const range = !isConst && parseRangeToken(k);
+    if (range && scalar) {
+      if (diagnostics) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_CURVE_RANGE_MALFORMED",
+          `${k}: this curve's ends are lengths — write :from and :to`,
+          src ?? nodeSrc(node),
+          trackName,
+        );
+      }
+      continue;
+    }
     if (range) {
       if (rangeUsed || from !== undefined || to !== undefined) {
         if (diagnostics) {
@@ -2065,7 +2119,7 @@ function parseCurveSpec(
             from = 0;
             dyn.from = s;
             hasDyn = true;
-          } else from = parseNumberLike(v);
+          } else from = readScalar(v);
           break;
         }
         case ":to": {
@@ -2074,7 +2128,7 @@ function parseCurveSpec(
             to = 0;
             dyn.to = s;
             hasDyn = true;
-          } else to = parseNumberLike(v);
+          } else to = readScalar(v);
           break;
         }
         case ":len": {
@@ -2452,6 +2506,10 @@ export function canonicalTarget(symbol) {
     ":keyon": "KEYON",
     // LFO
     ":lfo-rate": "LFO_RATE",
+    // PCM loop points
+    ":loop-start": "LOOP_START",
+    ":loop-end": "LOOP_END",
+    ":loop-len": "LOOP_LEN",
     // FM channel-level
     ":alg": "FM_ALG",
     ":fb": "FM_FB",
@@ -3100,7 +3158,7 @@ function compileChannelBody(
               // or $value → runtime PARAM_ADD/PARAM_MUL/PARAM_FROM_VAL.
               const { stem, op } = opSuffix(val);
               const target = canonicalTarget(stem);
-              if (!SUPPORTED_TARGETS.has(target)) {
+              if (!SUPPORTED_TARGETS.has(target) && !PCM_LOOP_TARGETS.has(target)) {
                 // Unrecognized `:keyword` — a typo or a stray track-header option
                 // used mid-body. Fail loudly instead of dropping it silently.
                 pushDiag(
@@ -3147,6 +3205,61 @@ function compileChannelBody(
               if (!op && rawVal === "none") {
                 // Stop a running inline PARAM_SWEEP, freezing the value.
                 push("PARAM_SWEEP_STOP", { target });
+                break;
+              }
+              if (PCM_LOOP_TARGETS.has(target)) {
+                // A length everywhere: the literal, and both ends of a curve.
+                // The IR carries SECONDS; the exporter turns them into the
+                // engine's byte offsets at the image's rate (driver.md §5).
+                if (!trackState.isPcmTrack) {
+                  pushDiag(
+                    diagnostics,
+                    "error",
+                    "E_UNSUPPORTED_TARGET",
+                    `${val} is a PCM loop point; only pcm1-pcm3 have one`,
+                    nodeSrc(node),
+                    trackName,
+                  );
+                  break;
+                }
+                if (op) {
+                  pushDiag(
+                    diagnostics,
+                    "error",
+                    "E_UNSUPPORTED_TARGET",
+                    `${val} takes a length, so '${op}' has no meaning on it`,
+                    nodeSrc(node),
+                    trackName,
+                  );
+                  break;
+                }
+                const secOf = (tok) =>
+                  lengthTokenSeconds(tok, trackState.currentTempo);
+                const loopCurve = parseCurveSpec(
+                  items[i],
+                  diagnostics,
+                  nodeSrc(node),
+                  trackName,
+                  true,
+                  secOf,
+                );
+                if (loopCurve) {
+                  push("PARAM_SWEEP", { target, ...loopCurve });
+                  break;
+                }
+                const sec = secOf(rawVal);
+                if (sec === null) {
+                  pushDiag(
+                    diagnostics,
+                    "error",
+                    "E_PCM_LOOP_LENGTH",
+                    `${val} needs a length (300ms, 16, 8., 6t, 3f): got ${rawVal}`,
+                    nodeSrc(node),
+                    trackName,
+                  );
+                  break;
+                }
+                push("PARAM_SET", { target, value: sec });
                 break;
               }
               // Dynamic value ($slot / $time) — runtime resolved.
@@ -4725,6 +4838,51 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
     }
   }
 
+  // A def is parsed before any track, so a musical length inside one has no
+  // tempo yet. Resolve the loop tokens here, at the tempo the score opens with.
+  // The unit is SECONDS in the sample's own time — what a wave editor shows —
+  // and the exporter maps them per baked blob, so a loop stays where it was set
+  // however the note transposes (docs/language.md §16).
+  for (const sample of sampleDefs.values()) {
+    const bpm = scoreInitialBpm ?? 120;
+    const sec = (tok, key) => {
+      if (tok == null) return null;
+      const v = lengthTokenSeconds(tok, bpm);
+      if (v === null || !(v >= 0)) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_SAMPLE_LOOP",
+          `def :sample ${key} is not a length: ${tok}`,
+          sample.src ?? fileSrc,
+          "global",
+        );
+        return null;
+      }
+      return v;
+    };
+    const start = sec(sample.loopStartTok, ":loop-start");
+    const end = sec(sample.loopEndTok, ":loop-end");
+    const len = sec(sample.loopLenTok, ":loop-len");
+    if (start === null && end === null && len === null) continue;
+    sample.loopStartSec = start ?? 0;
+    // :loop-end and :loop-len are two spellings of the same bound; neither
+    // given means "to the end of the sample", which the exporter fills in.
+    sample.loopEndSec = end ?? (len === null ? null : sample.loopStartSec + len);
+    if (sample.loopEndSec !== null && sample.loopEndSec <= sample.loopStartSec) {
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_SAMPLE_LOOP",
+        `def :sample loop ends at or before it starts (${sample.loopStartSec}s -> ${sample.loopEndSec}s)`,
+        sample.src ?? fileSrc,
+        "global",
+      );
+      sample.loopStartSec = null;
+      sample.loopEndSec = null;
+    }
+  }
+
   // v0.4: Lists with a channel name as the form head are treated as tracks
   const CHANNEL_NAMES = [
     "fm1",
@@ -5195,8 +5353,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
         rate: sample.rate,
         offset: sample.offset,
         frames: sample.frames,
-        loopStart: sample.loopStart,
-        loopEnd: sample.loopEnd,
+        loopStartSec: sample.loopStartSec,
+        loopEndSec: sample.loopEndSec,
         bitDepth: sample.bitDepth,
         volume: sample.volume,
         compress: sample.compress,

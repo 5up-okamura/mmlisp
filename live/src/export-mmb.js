@@ -42,6 +42,11 @@ import {
   HEADER_PCM_VOICES_SHIFT,
 } from "./mmb.js";
 import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
+
+// The loop-point targets, and the largest byte offset one can name: the bank's
+// usable window (the top page is the silence a parked voice reads).
+const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
+const PCM_LOOP_MAX = 0x7f00;
 import { buildLutBlob } from "./lut-blob.js";
 import { dedupEventStream } from "./mmb-dedup.js";
 import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
@@ -302,6 +307,16 @@ export function encodeMmb(ir, opts = {}) {
   const sampleIds = new Map(
     (ir.metadata?.samples ?? []).map((s, i) => [s.name, i]),
   );
+
+  // THE PCM LOOP POINTS travel as seconds in the IR and as byte offsets into
+  // the playing blob on the wire. The engine plays one byte a sample, so the
+  // conversion is one multiply by the image's rate — no per-sample knowledge,
+  // and the result is at most the usable window, so it fits i16.
+  const rateHz = engineImage(pcmVoices).rateHz;
+  const targetValue = (target, v) =>
+    PCM_LOOP_TARGETS.has(target)
+      ? Math.max(0, Math.min(PCM_LOOP_MAX, Math.round(Number(v ?? 0) * rateHz)))
+      : Math.round(clampForTarget(target, Number(v ?? 0)));
 
   // Resolve a dynamic-value source name to a slot id (0xFF = $time).
   const slotId = (src, trackLabel) => {
@@ -850,7 +865,7 @@ export function encodeMmb(ir, opts = {}) {
             );
             break;
           }
-          const value = Math.round(clampForTarget(a.target, a.value ?? 0));
+          const value = targetValue(a.target, a.value);
           stream.u8(OPCODE.PARAM_SET);
           stream.u8(id);
           if (targetWidth(id) === 2) stream.i16(value);
@@ -933,7 +948,8 @@ export function encodeMmb(ir, opts = {}) {
           // its low byte, and the driver reads the slot at sweep-dispatch time
           // (drv-player _startSweep / Z80 d_param_sweep). `:rate`/`:len` slots
           // are not lowered yet — they stay baked to the slot init (warned).
-          let { from, to } = a;
+          let from = targetValue(a.target, a.from);
+          let to = targetValue(a.target, a.to);
           let flags = a.loop ? 1 : 0;
           if (a.dyn?.from != null) {
             const sid = slotId(a.dyn.from, label);
@@ -1431,9 +1447,12 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
         `no blob supplied for sample "${s.name}"; empty entry`,
       );
     }
-    const loopStart = blob?.loopStart ?? s.loopStart;
-    const loopEnd = blob?.loopEnd ?? s.loopEnd;
-    const hasLoop = loopStart != null && loopEnd != null;
+    // The def's loop points are SECONDS in the sample's own time (§16). Either
+    // bound alone is a loop: a missing start is the sample's start, a missing
+    // end its end.
+    const loopStartSec = s.loopStartSec;
+    const loopEndSec = s.loopEndSec;
+    const hasLoop = loopStartSec != null || loopEndSec != null;
     const rate = blob?.baseRate ?? s.rate ?? 13000;
     const notes = [...(usage.get(s.name) ?? [])].sort((x, y) => x - y);
 
@@ -1460,15 +1479,19 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
     for (const n of notes) {
       const to = pcmBakeRateAt(n, rateHz);
       const raw = resample8(data, rate, to);
-      const ratio = rate / to;
       let ls = 0, le = 0, looped = hasLoop;
       if (hasLoop) {
-        ls = Math.min(raw.length, Math.max(0, Math.round(loopStart / ratio)));
-        le = Math.min(raw.length, Math.max(0, Math.round(loopEnd / ratio)));
+        // A blob baked for note n plays `to` bytes a second, so a time in the
+        // sample maps to a byte offset with one multiply — the same one the
+        // track's loop targets use, which is why the def and the track agree
+        // at C4 and part company exactly as much as the note transposes.
+        const at = (sec) => Math.min(raw.length, Math.max(0, Math.round(sec * to)));
+        ls = at(loopStartSec ?? 0);
+        le = loopEndSec == null ? raw.length : at(loopEndSec);
         if (le <= ls) {
           diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
-            `sample "${s.name}" has a loop of ${loopEnd - loopStart} frames that resampled `
-              + `to ${le - ls} at note ${n}; baked without a loop`);
+            `sample "${s.name}" has a loop that resampled to ${le - ls} bytes `
+              + `at note ${n}; baked without a loop`);
           looped = false; ls = 0; le = 0;
         }
       }

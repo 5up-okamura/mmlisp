@@ -302,11 +302,12 @@ blocks. The engine does not resample and has no octave step (driver.md §14.2),
 so a sample played at several notes occupies several ids, deduplicated by
 content hash.
 
-A looped sample's loop points are mapped through the same ratio and stored
-unrounded; the sequencer rounds them to whole blocks when it sends them
-(driver.md §14). A loop that maps to nothing is baked without a loop
-(`W_MMB_BAKE_LOOP_EMPTY`). `src_frames` is the source slice's length, the scale
-a loop point given in source frames is mapped by.
+A looped sample's loop points are the def's `:loop-start` / `:loop-end` /
+`:loop-len` — times in the sample's own recording — turned into byte offsets by
+the note's own bake rate, and stored unrounded; the sequencer rounds them to
+whole blocks when it sends them (driver.md §14). A loop that maps to nothing is
+baked without a loop (`W_MMB_BAKE_LOOP_EMPTY`). `src_frames` is the source
+slice's length, carried for tooling; nothing in the driver reads it.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
 The **bank image (entry table + blobs) must fit one 32 KB window, below its
