@@ -32,6 +32,64 @@ node experimental/dac-stream/machine-probe.mjs --case NAME --seconds N \
 
 Nothing here is linked by, included in, or reachable from the shipped driver.
 
+## The stop-length listening set (plan-pcm-spec.md D9, study item 1, 2026-09-17)
+
+```
+npm run dac-stream:stops                          # sin008, 15 s, stops 28/60/100/200 µs at 60 and 120 Hz
+npm run dac-stream:stops -- --score tests/m3-pcm-sync.mmlisp --frames 600 --stops 28,100 --hz 120
+npm run dac-stream:stops -- --lpf                 # …through the Model-1 3 kHz low-pass
+npm run dac-stream:stops -- --no-mix              # the DAC-only files and the numbers, no FM render
+```
+
+What a 68000 bus stop of L µs does to the PCM, for the ear. The shipped image
+runs a real score in the JS machine exactly as `engine-score-gate` does, plus a
+grab of L µs injected at the VBlank pump (60 Hz) or at both pumps (120 Hz);
+the model charges the pumps themselves nothing, so `stop0` is the ideal and
+28 µs at 120 Hz is about what the real pumps cost. Output in
+`drv/out/dac-stream/stop-listen/`: per variant a `-mix.wav` (FM + PSG from the
+register writes the chip saw, at their cycle times, through the browser's nuked
+cores, the DAC byte held between writes), a `-dac.wav` (the DAC alone), and a
+`repaid` twin — an engine whose corrector does repay the stops: its sample
+index stays on the wall clock, so it plays the no-stop run's bytes, and each
+stop only delays the following slots until a ladder sized to the stop pays it
+back. `MANIFEST.md` has the numbers, including every onset measured against
+the no-stop run.
+
+A first version of that twin (`carried`) re-timed the SHIPPED run's bytes onto
+the repaying clock. Those bytes already carry the onsets at their wall-clock
+places, so every repaid cycle moved every later onset early — 47 ms by the end
+at 200 µs. The user heard it; the onset column now measures it.
+
+What the numbers say (sin008, 900 frames, 46 onsets that follow ≥64 silent samples):
+
+| stop | cadence | shipped pitch | shipped onsets past 5 ms | repaid: ladder a slot | repaid onsets |
+| --- | --- | --- | --- | --- | --- |
+| 28 µs (100 cyc) | 60 / 120 Hz | 0 ct | none | 0.8 / 1.5 cyc | ≤ 0.1 ms |
+| 60 µs (215 cyc) | 60 / 120 Hz | −6.6 / −13.3 ct | 2 / 1, ~15 ms | 1.6 / 3.2 cyc | ≤ 0.1 ms |
+| 100 µs (358 cyc) | 60 / 120 Hz | −13.3 / −26.6 ct | 1 / 1, ~15 ms | 2.7 / 5.4 cyc | ≤ 0.2 ms |
+| 200 µs (716 cyc) | 60 / 120 Hz | −19.9 / −40.1 ct | 1 / 2, 12–16 ms | 5.4 / 10.8 cyc | ≤ 0.3 ms |
+
+The user's verdict (2026-09-17): every variant in the set is acceptable by ear.
+
+The shipped image keeps its onsets because the host's pairs place them, on the
+68000's clock; what it cannot keep is the pitch — the sample data runs slow by
+every stop it does not repay, and by a different amount when the stop length
+changes. Today's ladder (112 cycles a lap), if it carried the debt instead of
+expiring it, would end sin008 50–305 ms behind at 60–200 µs: it is sized for
+28 µs and nothing more.
+
+THE REFERENCE WRAPS EVERY SCANLINE. The corrector reads the VDP's H counter,
+which repeats every line (228 Z80 cycles), so a stop is read modulo a line and
+folded into ±114 cycles: 215 reads as −13 (the engine is slowed by 13 more),
+358 as −98, 716 as +32. The 1,500-master contract is half a line. Beyond it
+the shipped corrector does not fail to repay — it repays the wrong number, and
+the prediction from the line length alone (100 / −6 / −27 / +4%) is what was
+measured. Any stop longer than ~32 µs needs a phase reference with a longer
+wrap (Timer B's period is 16 FM samples × m = 1,075·m Z80 cycles), and a
+ladder with more capability than 112 cycles a lap (a stop of L at cadence f
+needs L·f of every second: 200 µs at 120 Hz is 2.4%, 8.6 cycles a slot — 10.8
+with the quarter of headroom the `repaid` twin uses — against today's 1.4).
+
 ## The voice-count study (plan-pcm-spec.md D1 + D4, 2026-09-15)
 
 ```

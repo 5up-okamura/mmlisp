@@ -15,6 +15,7 @@
     "dac-stream:split": "node experimental/dac-stream/split-report.mjs",
     "dac-stream:voices": "node experimental/dac-stream/voice-study.mjs",
     "dac-stream:nv": "node experimental/dac-stream/gate-nv.mjs",
+    "dac-stream:stops": "node experimental/dac-stream/stop-listen.mjs",
     "engine:1v": "node tools/engine-1v-gate.mjs",
     "engine:1v:split": "node tools/engine-1v-gate.mjs --split",
     "engine:fifo": "node tools/engine-fifo-gate.mjs",
