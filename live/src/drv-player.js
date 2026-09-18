@@ -823,13 +823,18 @@ export class DrvPlayer {
     // Gate scheduling (opcodes.md §3.1). exGate: absolute ticks (NOTE_ON_EX);
     // 0 = hold until the host keys off.
     const gate = fm3op ? 8 : ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
-    if (dur === 0 || exGate === 0) {
-      trk.held = true;
+    if (dur === 0) {
+      trk.held = true; // len 0: an indefinite hold, the dispatcher waits for KEY_OFF
       trk.gateLeft = -1;
       return;
     }
     trk.wait = dur;
-    if (exGate != null) {
+    if (exGate === 0) {
+      // gate 0: the note holds until a runtime KEY_OFF or the next note, and
+      // the track keeps time by its length (language.md §17).
+      trk.gateLeft = -1;
+      trk.pendingOff = false;
+    } else if (exGate != null) {
       // Absolute gate ticks from note-on. Counts down across TIE segments (a tie
       // extends `wait`, never touches `gateLeft`), so a gate that outlasts this
       // note's own `dur` — e.g. `:gate- Nt` resolved over a tied whole — keys off
@@ -896,7 +901,7 @@ export class DrvPlayer {
           trk.pendingOff = false; // slur
           this._noteOn(trk, note, dur.ticks, exGate, (flags & 0b1000) !== 0, exVel);
           trk.pc = pc;
-          if (dur.ticks === 0 || exGate === 0) return; // held
+          if (dur.ticks === 0) return; // len 0: held
           trk.wait = dur.ticks;
           return;
         }

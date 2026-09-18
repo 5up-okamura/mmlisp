@@ -579,7 +579,7 @@ apart. Equivalent explicit form: `(delay :vel+ [-4 -8 -12] :time 1/8)`.
 
 ```lisp
 (fm1 (delay :vel+ 3 :by -1 :time 4t)  c e g e)   ; 3 echoes, −1 vel each, spaced 4t
-(fm1 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)  c)  ; non-linear ratio fade
+(fm1 :len 16 (delay :vel* (linear :from 0.8 :to 0 :len 4) :time 16)  c _ _ _ _)  ; ratio fade
 ```
 
 The channel is monophonic: written notes take priority, so an echo overlapping a

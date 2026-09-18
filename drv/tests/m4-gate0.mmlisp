@@ -1,0 +1,4 @@
+; M4 gate: `:gate 0` holds each note until the next one (or a runtime KEY_OFF)
+; and the track keeps time by :len — it is not `:len 0` (language.md §17).
+(fm1 :tempo 120 :oct 4 :len 4 :vel 12 :gate 0  c d e)
+(sqr1 :oct 5 :len 4 :vel 10 :gate 0  g a b)

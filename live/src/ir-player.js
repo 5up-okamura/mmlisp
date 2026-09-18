@@ -2712,6 +2712,7 @@ export class IRPlayer {
         loop,
         curve = "linear",
         waitTicks = null,
+        waitFrames = null,
         waitKeyOff = false,
       } = spec;
       const { from, to, params } = this._curveFields(spec, when);
@@ -2720,10 +2721,12 @@ export class IRPlayer {
       const baseFrames = this._resolveLenFrames(spec, rawFrames, when);
       const waitFrameOffset = waitKeyOff
         ? Math.max(0, Math.round((gateSecs - when) * 60))
-        : Math.max(
-            0,
-            Math.round(Number(waitTicks ?? 0) * this._secsPerTick * 60),
-          );
+        : waitFrames != null
+          ? Math.max(0, Math.round(Number(waitFrames)))
+          : Math.max(
+              0,
+              Math.round(Number(waitTicks ?? 0) * this._secsPerTick * 60),
+            );
       const startWhen = waitKeyOff
         ? Math.max(when, gateSecs)
         : when + waitFrameOffset / 60;

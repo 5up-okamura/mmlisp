@@ -1254,13 +1254,18 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
   }
 
   int gate = fm3op ? 8 : ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
-  if (dur == 0 || (has_ex_gate && ex_gate == 0)) {
-    t->held = 1;
+  if (dur == 0) {
+    t->held = 1; /* len 0: an indefinite hold, the dispatcher waits for KEY_OFF */
     t->gate_left = -1;
     return;
   }
   t->wait = dur;
-  if (has_ex_gate) {
+  if (has_ex_gate && ex_gate == 0) {
+    /* gate 0: the note holds until a runtime KEY_OFF or the next note, and the
+     * track keeps time by its length (language.md §17). */
+    t->gate_left = -1;
+    t->pending_off = 0;
+  } else if (has_ex_gate) {
     /* Absolute ticks from note-on. Counts across TIE segments (a tie extends
      * `wait` and never touches this), so a gate outlasting its own note keys
      * off mid-tie rather than being clamped to the first segment. */
@@ -1343,7 +1348,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         note_on(s, t, note, d.ticks, ex_gate, has_gate, (flags & 8) != 0,
                 has_vel ? ex_vel : -1);
         t->pc = (uint16_t)pc;
-        if (d.ticks == 0 || (has_gate && ex_gate == 0)) return;
+        if (d.ticks == 0) return; /* len 0: held */
         t->wait = d.ticks;
         return;
       }

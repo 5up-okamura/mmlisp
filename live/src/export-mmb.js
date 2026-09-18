@@ -380,7 +380,8 @@ export function encodeMmb(ir, opts = {}) {
       const values = (spec.steps ?? []).map((v) =>
         v == null ? null : clampForTarget(target, Math.round(v)),
       );
-      if (values.length === 0 || values.length > 255) return null;
+      if (values.length === 0) return null;
+      if (values.length > 255) return skip(`has ${values.length} steps, over the 255 a macro holds`);
       return {
         step,
         loopStart: spec.loopIndex == null ? 0xff : spec.loopIndex,
@@ -408,6 +409,11 @@ export function encodeMmb(ir, opts = {}) {
       // fills the sustain region (one period, cycled); a one-shot fills the
       // attack region and holds its last value. A wait prefix shifts loopStart
       // past the hold steps so the loop replays only the curve.
+      // Past 255 steps a macro cannot hold the curve: it is cut, and said so.
+      const want = Math.round(baseFrames / step) + (spec.loop ? 0 : 1);
+      if (want > room)
+        diag("warning", "W_MMB_MACRO_TRUNCATED",
+          `${target} macro curve needs ${want} steps; cut to ${room} (raise :step)`, trackLabel);
       if (spec.loop) {
         const period = Math.max(1, Math.min(room, Math.round(baseFrames / step)));
         const values = sampleCurveValues(spec, target, period, (i) => (i * step) / baseFrames);
@@ -425,31 +431,35 @@ export function encodeMmb(ir, opts = {}) {
     return skip(`(${spec?.type ?? "?"}) has no lowering`);
   };
 
-  // Multi-stage: concatenate each stage's samples. `(wait N)` → hold-sentinel
-  // steps; `(wait key-off)` marks the release boundary; a looping stage marks
-  // the sustain loop start.
+  // Multi-stage: concatenate each stage's samples, as ir-player sequences them.
+  // `(wait N)` → hold-sentinel steps; `(wait key-off)` marks the release
+  // boundary; a looping stage marks the sustain loop start and runs until
+  // key-off, so the stage after it is the release even without a
+  // `(wait key-off)`. A wait on a curve stage is its pre-delay: the holds, then
+  // the curve.
   const lowerStages = (spec, target, trackLabel, step, skip) => {
     const values = [];
     let loopStart = 0xff;
     let release = 0xff;
+    let afterLoop = false;
     for (const stage of spec.stages ?? []) {
       if (stage.waitKeyOff) {
-        release = values.length;
-        continue;
-      }
-      if (stage.waitFrames != null || stage.waitTicks != null) {
+        if (release === 0xff) release = values.length;
+        afterLoop = false;
+      } else if (stage.waitFrames != null || stage.waitTicks != null) {
         if (stage.waitTicks != null && stage.waitFrames == null)
           return skip("stage (wait N) in ticks not lowered yet (M3 slice)");
         const frames = Math.max(0, Number(stage.waitFrames ?? 0));
         for (let f = 0; f < frames; f += step) values.push(null); // hold sentinel
-        continue;
       }
       if (!stage.curve) continue;
+      if (afterLoop && release === 0xff) release = values.length;
       if (stage.dyn) return skip("stage has dynamic (val-slot) params (later M3 slice)");
       if (!stage.lenFrames) return skip("stage :len in ticks not lowered yet (M3 slice)");
       const baseFrames = Math.max(1, Math.round(Number(stage.frames ?? 1)));
       if (stage.loop) {
         loopStart = values.length;
+        afterLoop = true;
         const period = Math.max(1, Math.round(baseFrames / step));
         values.push(...sampleCurveValues(stage, target, period, (i) => (i * step) / baseFrames));
       } else {
@@ -461,7 +471,8 @@ export function encodeMmb(ir, opts = {}) {
         );
       }
     }
-    if (values.length === 0 || values.length > 255) return null;
+    if (values.length === 0) return null;
+    if (values.length > 255) return skip(`has ${values.length} steps, over the 255 a macro holds (raise :step)`);
     return { step, loopStart, release, values };
   };
 

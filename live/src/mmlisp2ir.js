@@ -1937,6 +1937,7 @@ function parseCurveSpec(
   let frames;
   let lenFrames = false; // :len given as Nf (frames) vs ticks (note-length / Nt)
   let waitTicks = null;
+  let waitFrames = null;
   let waitKeyOff = false;
   let forceLoop = false;
   const params = {};
@@ -2147,6 +2148,9 @@ function parseCurveSpec(
         case ":wait":
           if (v === "key-off") {
             waitKeyOff = true;
+          } else if (/^\d+f$/.test(String(v))) {
+            // Nf is a wall-clock frame count, as a stage `(wait Nf)` is.
+            waitFrames = parseInt(v, 10);
           } else {
             const t = parseLengthToken(v, null);
             if (t !== null) waitTicks = t;
@@ -2263,6 +2267,7 @@ function parseCurveSpec(
   if (frames !== null && frames !== undefined) spec.frames = frames;
   if (lenFrames) spec.lenFrames = true;
   if (waitTicks !== null) spec.waitTicks = waitTicks;
+  if (waitFrames !== null) spec.waitFrames = waitFrames;
   if (waitKeyOff) spec.waitKeyOff = true;
   if (hasParams) spec.params = params;
   if (hasDyn) spec.dyn = dyn;

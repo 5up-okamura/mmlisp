@@ -89,7 +89,7 @@ unaffected by layering.
 | Name            | Hardware                | Notes                                             |
 | --------------- | ----------------------- | ------------------------------------------------- |
 | `fm1`–`fm5`     | YM2612 FM channels      |                                                   |
-| `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. fm6 is muted only while a PCM voice is sounding (they share one DAC), and sounds as FM in the gaps |
+| `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. A score that plays PCM owns fm6 as the DAC, so an `fm6` track in it is `E_FM6_DAC` (§16) |
 | `fm3`           | YM2612 FM3, normal mode | Note-less `(fm3 voice)` declares the shared patch for independent-OP mode |
 | `fm3-1`–`fm3-4` | FM3 independent-OP mode | One track per operator F-number; presence enables the mode (`FM3_MODE op`) |
 | `fm3-csm`       | FM3 CSM mode            | Tonal center; standard note syntax                |
@@ -181,11 +181,11 @@ Length token grammar:
 | `N/M` | Fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) | `1/3` → 128 |
 | `Nt`  | Exact tick count                                       | `6t` → 6      |
 | `Nf`  | N frames (1/60 s); context-dependent (see below)       | —             |
-| `Nms` | N milliseconds, absolute and tempo-independent         | `125ms` → 48 at 120 BPM |
+| `Nms` | N milliseconds, absolute and tempo-independent         | `125ms` → 24 at 120 BPM |
 | `0`   | Hold: KEY-ON without advancing / without KEY-OFF (§17) | 0             |
 
 Accepted wherever a length appears: `:len`, note/rest suffix, `:gate`,
-`:gate-`, curve `:len`, macro `:step`, `~ N`, `(wait N)`, `(glide T)`,
+`:gate-`, curve `:len`, macro `:step`, `(wait N)`, `(glide T)`,
 `(delay … :time T)`, `:shuffle-base`.
 
 A **computed** length is also allowed at `:len`, `:gate`, and a note's second
@@ -229,8 +229,8 @@ of the same channel. Defaults:
 ### Head-only options
 
 These are consumed as key/value pairs immediately after the channel name and
-must appear there (they are ignored in the body): `:prio`, `:shuffle`,
-`:shuffle-base`. (`:oct` `:len` `:gate` `:gate*` `:gate-` `:vel` also parse in
+must appear there (in the body they are `E_UNKNOWN_KEYWORD`): `:prio`,
+`:shuffle`, `:shuffle-base`. (`:oct` `:len` `:gate` `:gate*` `:gate-` `:vel` also parse in
 head position, and equally as body directives.)
 
 ### Body keywords
@@ -386,7 +386,7 @@ divide with a fraction (`:vel* 0.5`).
 
   ```lisp
   (def-val depth 128 0..255)
-  (fm1 (macro :pitch (* (sin :rate 6) $depth)) c e g)   ; live vibrato depth
+  (fm1 (macro :pitch (* (sin -40..40 :rate 6 :len 4f) $depth)) c e g) ; live vibrato depth
   (fm2 (macro :tl1 (* (triangle 0..40 :len 8f) $depth)) c e g) ; live tremolo
   ```
 
@@ -663,7 +663,7 @@ inside the body. A call whose argument count differs from the parameter count is
 `E_DEF_ARITY`.
 
 ```lisp
-(def (beat n) (x 8 > n > n <))      ; one bar of n, octave-bounced ×8
+(def (beat n) (x 8 > n < n))        ; one bar of n, octave-bounced ×8
 
 (fm1 :oct 1
   (beat c) (beat b-) (beat a) (beat f))
@@ -827,8 +827,8 @@ steps after `:off` fire after note-off (a one-channel echo tail). While a
 | `:keyon 0`                     | Never fire (= omitting `:keyon`)          |
 | `:keyon [1]`                   | One-shot at step 0, then stop             |
 | `:keyon [:hold 1 0]`           | Alternate steps                           |
-| `:keyon (square :duty 128)`    | Duty-gated regular retrigger              |
-| `:keyon (noise :from 0 :to 1)` | Probabilistic retrigger (~50 % per step)  |
+| `:keyon (square 0..1 :duty 128 :len 8)` | Duty-gated regular retrigger (period: one 8th) |
+| `:keyon (noise :from 0 :to 1 :len 1)` | Probabilistic retrigger (~50 % per step) |
 
 ```lisp
 (fm1 (macro :step 32 :keyon 1) c)                            ; drum roll
@@ -992,8 +992,8 @@ the phrase.
 ```lisp
 (fm1 (delay :vel+ 3 :by -4 :time 1/8)
   c e g e)                                     ; phrase + 3 decaying repeats
-(fm2 (delay :vel* (linear :from 0.8 :to 0 :len 10t) :time 2t)
-  c)
+(fm2 :len 16 (delay :vel* (linear :from 0.8 :to 0 :len 4) :time 16)
+  c _ _ _ _)                                   ; four fading repeats in the rests
 ```
 
 ---

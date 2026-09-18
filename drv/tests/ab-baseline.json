@@ -263,6 +263,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-gate0.mmlisp": {
+    "ok": false,
+    "mismatches": 8,
+    "compileErrors": 0,
+    "digest": "7572eb09"
+  },
   "m4-pcm-2v-master.mmlisp": {
     "ok": true,
     "mismatches": 0,
