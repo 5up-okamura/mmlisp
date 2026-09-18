@@ -240,7 +240,7 @@ head position, and equally as body directives.)
 | `:oct`     | integer ≥ 0               | Octave (also `:oct+` / `:oct*`, §7)                      |
 | `:len`     | length token              | Default note length; `0` = hold, no timeline advance     |
 | `:gate`    | length token              | Absolute sounding time per slot; `0` = hold until runtime KEY-OFF |
-| `:gate*`   | ratio `0.0`–`<1.0`        | Gate as a fraction of the note length                    |
+| `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |
 | `:gate-`   | length token              | Gate = note length minus this time (floor 1 tick)        |
 | `:vel`     | 0–15                      | Note-on velocity (also `:vel+` / `:vel*`)                |
 | `:vol`     | 0–31 or curve             | Channel fader → `PARAM_SET` / `PARAM_SWEEP`              |
@@ -574,7 +574,8 @@ lowers to a param-opcode chain on the driver (§7.1.2).
 Slots are indexed in declaration order and emitted in `metadata.vals` as
 `{name, slot, init, min, max, step, reversed, unit}`. The live app renders one
 Dynamic Parameters slider per slot. Names must not start with `$`
-(`E_DEFVAL_NAME`).
+(`E_DEFVAL_NAME`); a non-integer `init` is `E_DEFVAL_INIT`, and an unknown or
+malformed option (`:step 0`, `:unit beat`) is `E_DEFVAL_OPTION`.
 
 - `$name` references a slot in a value or operator-operand position of a
   runtime parameter write (§5.1). `vel`/`oct` resolve at compile time and do
@@ -619,7 +620,7 @@ constant (`(def depth 40)`, usable inside expressions). A `let` is a **local**,
 
 | Form                                  | Kind                                    |
 | ------------------------------------- | --------------------------------------- |
-| `(def name item…)`                    | Snippet — inline expansion at the reference (recursion depth ≤ 16) |
+| `(def name item…)`                    | Snippet — inline expansion at the reference (snippets within snippets ≤ 16 deep, else `E_DEF_RECURSION`) |
 | `(def (name param…) item…)`           | Parametric snippet — call as `(name arg…)`; each `arg` node is substituted for its `param` in the body (§9.1) |
 | `(def name :alg … :tl1 … …)`          | FM voice, keyword map                   |
 | `(def name :extend base :tl1 … …)`    | FM voice inheriting `base` (child keys override; unknown/non-voice base is `E_EXTENDS_BASE_UNKNOWN`, cycles `E_EXTENDS_CYCLE`) |

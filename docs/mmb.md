@@ -448,3 +448,10 @@ array:
 [loop_start .. release)  sustain — cycled until key-off (empty if equal)
 [release .. count)       release — played once after key-off
 ```
+
+A macro holds at most 255 steps. The exporter samples a curve at the `:step`
+clock; one that needs more is cut to 255 (`W_MMB_MACRO_TRUNCATED`), and a
+step vector or a multi-stage macro past 255 is dropped
+(`W_MMB_MACRO_SKIPPED`) — raise `:step` to fit. A multi-stage macro lowers as
+the editor plays it: a looping stage is the sustain, and the stage after it is
+the release even without a `(wait key-off)`.

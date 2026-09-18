@@ -108,6 +108,8 @@ const TRACK_OPTION_KEYS = new Set([
   ":shuffle",
   ":shuffle-base",
 ]);
+// Options only the head reads (language.md §5 "Head-only options").
+const HEAD_ONLY_KEYS = new Set([":ch", ":prio", ":shuffle", ":shuffle-base"]);
 
 // Curve function names recognized in inline curve specs (PARAM_SWEEP authoring)
 const CURVE_NAMES = new Set([
@@ -225,6 +227,7 @@ function isAtom(node, value) {
 function parseIntLike(value) {
   if (typeof value !== "string") return null;
   if (/^[+-]?\d+$/.test(value)) return parseInt(value, 10);
+  if (/^0x[0-9a-f]+$/i.test(value)) return parseInt(value, 16); // e.g. :seed 0xDEAD
   return null;
 }
 
@@ -429,7 +432,7 @@ function parseGateFamily(keyword, val, bpm = null) {
   if (typeof val !== "string") return null;
   if (keyword === ":gate*") {
     const f = parseFloat(val);
-    return !isNaN(f) && f >= 0 && f < 1 ? { type: "ratio", value: f } : null;
+    return !isNaN(f) && f >= 0 && f <= 1 ? { type: "ratio", value: f } : null;
   }
   const ticks = val === "0" ? 0 : parseLengthToken(val, null, bpm);
   if (ticks === null || ticks < 0) return null;
@@ -438,10 +441,22 @@ function parseGateFamily(keyword, val, bpm = null) {
     : { type: "ticks", value: ticks };
 }
 
+function gateInvalid(diagnostics, keyword, raw, src, trackName) {
+  pushDiag(diagnostics, "error", "E_GATE_INVALID",
+    keyword === ":gate*"
+      ? `:gate* takes a ratio 0.0 to 1.0, not ${raw}`
+      : `${keyword} takes a length, not ${raw}`,
+    src, trackName);
+}
+
 function resolveGateTicks(gateSpec, lengthTicks) {
   if (!gateSpec) return lengthTicks;
+  // A ratio above 0 keeps at least one tick: 0 is the hold (§17), and a
+  // short gate must not round into it.
   if (gateSpec.type === "ratio")
-    return Math.round(lengthTicks * gateSpec.value);
+    return gateSpec.value > 0
+      ? Math.max(1, Math.round(lengthTicks * gateSpec.value))
+      : 0;
   // `cut`: shorten the gate by a fixed amount (key off early) — note length minus
   // the cut, floored at 1 tick. Set by `:gate-cut`.
   if (gateSpec.type === "cut")
@@ -660,27 +675,22 @@ function emitNoteForTrack(
     legato = true;
   }
   if (isTrackPcmActive(trackState)) {
+    const reported = (trackState.pcmReported ??= new Set());
     if (!trackState.pcmSampleName) {
-      pushDiag(
-        diagnostics,
-        "warning",
-        "E_PCM_SAMPLE_REQUIRED",
-        "pcm mode requires a sample symbol before note data",
-        src,
-        trackName,
-      );
+      if (!reported.has("")) {
+        reported.add("");
+        pushDiag(diagnostics, "error", "E_PCM_SAMPLE_REQUIRED",
+          "a pcm note needs a sample: name one before the notes", src, trackName);
+      }
       trackState.tick += lengthTicks;
       return;
     }
     if (!trackState.sampleDefs?.has(trackState.pcmSampleName)) {
-      pushDiag(
-        diagnostics,
-        "error",
-        "E_PCM_SAMPLE_UNDEFINED",
-        `undefined sample def: ${trackState.pcmSampleName}`,
-        src,
-        trackName,
-      );
+      if (!reported.has(trackState.pcmSampleName)) {
+        reported.add(trackState.pcmSampleName);
+        pushDiag(diagnostics, "error", "E_PCM_SAMPLE_UNDEFINED",
+          `undefined sample def: ${trackState.pcmSampleName}`, src, trackName);
+      }
       trackState.tick += lengthTicks;
       return;
     }
@@ -2915,6 +2925,7 @@ function compileChannelBody(
               }
               const g = parseGateFamily(val, rawVal, trackState.currentTempo);
               if (g !== null) trackState.defaultGate = g;
+              else gateInvalid(diagnostics, val, rawVal, nodeSrc(node), trackName);
               break;
             }
             case ":vol": {
@@ -3081,7 +3092,11 @@ function compileChannelBody(
               const valueNode = items[i];
               const bpm = parseNumberLike(rawVal);
               if (bpm !== null && bpm > 0) {
-                trackState.currentTempo = bpm;
+                // At tick 0 the song's tempo is the last track's leading one
+                // (last writer wins, §5): convert this track's lengths at the
+                // tempo that plays, not at the one it wrote.
+                trackState.currentTempo =
+                  trackState.tick === 0 && trackState.initialBpm != null ? trackState.initialBpm : bpm;
                 events.push({
                   tick: trackState.tick,
                   cmd: "TEMPO_SET",
@@ -3112,7 +3127,7 @@ function compileChannelBody(
               } else {
                 pushDiag(
                   diagnostics,
-                  "warning",
+                  "error",
                   "E_PCM_SAMPLE_REQUIRED",
                   "pcm mode requires :sample <name>",
                   nodeSrc(node),
@@ -4067,13 +4082,14 @@ function compileChannelBody(
               nodeSrc(targetNode),
               trackName,
             );
+          } else {
+            events.push({
+              tick: trackState.tick,
+              cmd: "PARAM_SET",
+              args: { target, value },
+              src: nodeSrc(targetNode),
+            });
           }
-          events.push({
-            tick: trackState.tick,
-            cmd: "PARAM_SET",
-            args: { target, value },
-            src: nodeSrc(targetNode),
-          });
           j += 2;
         }
         i++;
@@ -4303,10 +4319,15 @@ function collectDefs(roots, diagnostics) {
       // Optional positional init (item[2]); absent when options start there
       // (e.g. `(def-val x :from 0 :to -127)`), then init defaults to `from`.
       const initPos = parseIntLike(atomValue(root.items[2]));
+      const initRaw = atomValue(root.items[2]);
+      if (initPos === null && initRaw != null && !initRaw.startsWith(":")
+        && !parseRangeToken(initRaw)) {
+        pushDiag(diagnostics, "error", "E_DEFVAL_INIT",
+          `def-val ${name}: init must be an integer, not ${initRaw}`, nodeSrc(root), null);
+        continue;
+      }
       let from;
       let to;
-      let minOpt;
-      let maxOpt;
       let step = 1; // slider granularity (control resolution)
       let unit = "frame"; // time unit when this slot feeds :len/:step
       let k = initPos === null ? 2 : 3;
@@ -4320,17 +4341,20 @@ function collectDefs(roots, diagnostics) {
       for (; k + 1 < root.items.length; k += 2) {
         const key = atomValue(root.items[k]);
         const raw = atomValue(root.items[k + 1]);
+        const bad = (why) => pushDiag(diagnostics, "error", "E_DEFVAL_OPTION",
+          `def-val ${name}: ${key} ${raw ?? ""} — ${why}`, nodeSrc(root), null);
         if (key === ":unit") {
           if (raw === "frame" || raw === "tick") unit = raw;
+          else bad("must be frame or tick");
           continue;
         }
         const v = parseIntLike(raw);
-        if (v === null) continue;
-        if (key === ":from") from = v;
-        else if (key === ":to") to = v;
-        else if (key === ":min") minOpt = v;
-        else if (key === ":max") maxOpt = v;
-        else if (key === ":step" && v > 0) step = v;
+        if (!new Set([":from", ":to", ":min", ":max", ":step"]).has(key)) { bad("unknown option"); continue; }
+        if (v === null) { bad("must be an integer"); continue; }
+        // :min / :max are synonyms of :from / :to (the doc's table).
+        if (key === ":from" || key === ":min") from = v;
+        else if (key === ":to" || key === ":max") to = v;
+        else if (key === ":step") { if (v > 0) step = v; else bad("must be > 0"); }
       }
       // `:from`/`:to` are order-free directional endpoints (from = the start,
       // so a slider runs from → to); `:min`/`:max` are accepted synonyms.
@@ -4344,10 +4368,11 @@ function collectDefs(roots, diagnostics) {
         max = Math.max(a, b);
         reversed = a > b;
       } else {
-        min = minOpt ?? 0;
-        max = maxOpt ?? 127;
+        min = 0;
+        max = 127;
       }
-      const init = initPos ?? from ?? min;
+      // The slot is clamped to its range at init as on every write (§8).
+      const init = Math.min(max, Math.max(min, initPos ?? from ?? min));
       if (!vals.has(name))
         vals.set(name, {
           name,
@@ -4713,9 +4738,15 @@ function substituteParams(node, paramMap) {
   return { ...node };
 }
 
+// `depth` counts snippet expansions only — a def expanding into a def — so a
+// deep expression is not mistaken for recursion (its own limit is E_EVAL_DEPTH).
 function expandNode(node, defs, paramDefs, depth, diagnostics) {
-  if (depth > 16)
-    throw new Error("Macro expansion depth exceeded (possible recursion)");
+  if (depth > 16) {
+    pushDiag(diagnostics, "error", "E_DEF_RECURSION",
+      "snippet expansion nested more than 16 deep (a def that refers to itself?)",
+      nodeSrc(node), null);
+    return [];
+  }
   if (node.kind === "atom" && defs.has(node.value))
     return defs
       .get(node.value)
@@ -4751,7 +4782,7 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
 
   const newItems = [];
   for (const item of node.items)
-    newItems.push(...expandNode(item, defs, paramDefs, depth + 1, diagnostics));
+    newItems.push(...expandNode(item, defs, paramDefs, depth, diagnostics));
   return [{ ...node, items: newItems }];
 }
 
@@ -4815,10 +4846,11 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
 
   // The tempo active at tick 0 seeds every track's currentTempo (tempo is
   // score-global) and the Nf frame conversion. Prescan the leading `:key value`
-  // run of each track form, in source order, for the first `:tempo` — a bare
-  // BPM number or a curve (its :from, default 120).
+  // run of each track form for its `:tempo` — a bare BPM number or a curve
+  // (its :from, default 120). Tempo is last-writer-wins at a tick, in track
+  // order (§5), so the LAST track's leading tempo is the one that plays.
   let scoreInitialBpm = null;
-  outer: for (const node of roots) {
+  for (const node of roots) {
     if (node?.kind !== "list" || node.items.length === 0) continue;
     // PCM tracks carry the sample symbol as the first positional argument;
     // the keyword run starts after it.
@@ -4838,7 +4870,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
         const swept = buildTempoSweepFromCurve(valueNode, 0, 120, [], null, null);
         if (swept) scoreInitialBpm = swept.event.args.from;
       }
-      break outer;
+      break;
     }
   }
 
@@ -5020,6 +5052,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
     while (i + 1 < node.items.length) {
       const key = atomValue(node.items[i]);
       if (!TRACK_OPTION_KEYS.has(key)) break;
+      // A computed value (a list) is the body's to evaluate: the body parses
+      // every key that is also a body directive (:len, :gate, :oct, :vel …),
+      // so leave it there instead of reading an atom that is not one.
+      if (node.items[i + 1]?.kind === "list" && !HEAD_ONLY_KEYS.has(key)) break;
       inlineOpts[key] = atomValue(node.items[i + 1]);
       i += 2;
     }
@@ -5062,6 +5098,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
         if (inlineOpts[gk] !== undefined) {
           const g = parseGateFamily(gk, inlineOpts[gk], scoreInitialBpm ?? 120);
           if (g !== null) defaultGate = g;
+          else gateInvalid(diagnostics, gk, inlineOpts[gk], nodeSrc(node), head);
         }
       }
       if (inlineOpts[":vol"] !== undefined) {
@@ -5099,6 +5136,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
         defaultOct,
         defaultGate,
         currentTempo: scoreInitialBpm ?? 120,
+        initialBpm: scoreInitialBpm,
         isFm3OpTrack: /^fm3-[1-4]$/.test(head),
         fm3OpIndex: /^fm3-[1-4]$/.test(head)
           ? parseInt(head.slice(4), 10)
@@ -5189,15 +5227,26 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
         if (inlineOpts[gk] !== undefined) {
           const g = parseGateFamily(gk, inlineOpts[gk], trackState.currentTempo);
           if (g !== null) trackState.defaultGate = g;
+          else gateInvalid(diagnostics, gk, inlineOpts[gk], nodeSrc(node), head);
         }
       }
+      // A later form of the channel reads :shuffle / :shuffle-base exactly as
+      // the first one does (§5.2): `none` or under 51 is straight.
       if (inlineOpts[":shuffle"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":shuffle"]);
+        const raw = inlineOpts[":shuffle"];
+        const v = raw === "none" ? 0 : parseIntLike(raw);
         if (v !== null) {
-          trackState.shuffleRatio =
-            v === 50 ? 0 : Math.max(51, Math.min(90, v));
+          trackState.shuffleRatio = v < 51 ? 0 : Math.min(90, v);
           trackState.subBeatParity = 0;
         }
+      }
+      if (inlineOpts[":shuffle-base"] !== undefined) {
+        trackState.shuffleBase = parseLengthToken(
+          inlineOpts[":shuffle-base"],
+          trackState.shuffleBase,
+          trackState.currentTempo,
+        );
+        trackState.subBeatParity = 0;
       }
       if (inlineOpts[":vol"] !== undefined) {
         const v = parseIntLike(inlineOpts[":vol"]);
@@ -5218,27 +5267,8 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
     }
 
     const { trackData, trackState } = trackByKey.get(trackKey);
-    if (trackState.isPcmTrack) {
-      if (!trackState.pcmSampleName) {
-        pushDiag(
-          diagnostics,
-          "warning",
-          "E_PCM_SAMPLE_REQUIRED",
-          "pcm track requires a sample symbol before note data",
-          nodeSrc(node),
-          trackKey,
-        );
-      } else if (!sampleDefs.has(trackState.pcmSampleName)) {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_PCM_SAMPLE_UNDEFINED",
-          `undefined sample def: ${trackState.pcmSampleName}`,
-          nodeSrc(node),
-          trackKey,
-        );
-      }
-    }
+    // A pcm track's sample is checked where a note needs it (the note path),
+    // once per track and sample — a body can still bind one before its notes.
     compileChannelBody(
       bodyItems,
       trackState,

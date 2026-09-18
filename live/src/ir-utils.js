@@ -494,8 +494,9 @@ export function sampleCurveUnit(curve, phase, params = null) {
   const rate = Number(params?.rate);
   // rate is a phase-speed multiplier: rate 0 freezes the curve at its start
   // phase (no time flow), so allow >= 0; only non-finite/negative falls back.
+  // It scales the time only — `:phase` is where the curve starts, at any rate.
   const rateMul = Number.isFinite(rate) && rate >= 0 ? rate : 1;
-  const phaseScaled = (phase + phaseOffset) * rateMul;
+  const phaseScaled = phase * rateMul + phaseOffset;
   const t = LOOP_CURVE_NAMES.has(curve)
     ? fract(phaseScaled)
     : clamp01(phaseScaled);
