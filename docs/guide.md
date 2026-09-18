@@ -864,6 +864,13 @@ The loop rounds to 16 bytes (1.11 ms at one voice), which is also the shortest
 loop there is — so this is a rhythmic device, not a way to play pitches.
 language.md §16 has the rest.
 
+**What you hear in the editor is the driver.** The preview bakes the samples
+exactly as an export does and plays them through the driver's own engine: 8-bit,
+at the rate your `pcm-voices` picks, with the same 6 dB level steps and the
+same loop rounding. A sample that sounds dull or stepped in the editor will
+sound that way on the Mega Drive, and the other way round. The mixer's PCM
+faders are the one exception — a preview convenience the driver does not have.
+
 **Drag a `.wav` onto the live editor** and its `def` is written for you at the
 cursor. Drag it out of the folder you opened with `File > Open Folder…` and the
 `:file` path is the right relative one; drag it from anywhere else and the def

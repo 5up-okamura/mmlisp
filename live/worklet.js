@@ -7,10 +7,13 @@
  * Message protocol (from main thread via port.postMessage):
  *   { type: 'write', port: 0|1, addr: number, data: number }
  *   { type: 'writes', ops: [{port, addr, data}, ...] }
- *   { type: 'pcm-set-samples', samples: [{name, data: Float32Array, sampleRate, loopStart?, loopEnd?}] }
- *   { type: 'pcm-note-on', when: number, sample: string, rate: number, baseRate?: number, ch: number, track: number, shift: number, muted: boolean, mode: 'shot'|'loop' }
- *   { type: 'pcm-note-off', when: number, sample: string, ch?: number }
- *   { type: 'pcm-set-shift', when: number, ch: number, shift: number, muted: boolean }  — recompose a live pcm slot (score :vol / :master)
+ *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id} }
+ *       — the score's baked sample bank (the one an export ships), which the
+ *         IR preview plays through the driver's own engine model
+ *   { type: 'pcm-ev', when, kind: 'on', voice, sample, midi, vel, track }
+ *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'loop' | 'master', … }
+ *       — the IR's PCM events, applied in time order to the sequencer's voice
+ *         model (src/pcm-voices.js) — see _applyPcmEvent
  *   { type: 'pcm-set-vol', track: number, gain: number }  — live UI mixer fader (separate from the score)
  *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
  *   { type: 'scope-enable', on: boolean }
@@ -37,18 +40,14 @@ import {
   SCOPE_CHANNELS,
 } from "./src/synth-md.js";
 
-/**
- * PCM soft-mix gain from the driver's composed bit-shift attenuation. ir-player
- * composes :vel + :vol + :master into `shift` (0-7) + `muted` on the driver's
- * 6 dB grid (see _pcmComposeShift), matching the Z80 soft-mixer / drv-player;
- * the mixer applies gain 2^-shift per sample (a float multiply here in place of
- * the driver's per-sample `sra`, so the loudness grid matches). `muted` is true
- * silence (vol/master 0); the voice still advances, as on the driver.
- */
-function shiftToGain(shift) {
-  const s = shift < 0 ? 0 : shift > 7 ? 7 : shift;
-  return Math.pow(2, -s);
-}
+// PCM in the IR preview is THE DRIVER'S ENGINE (plan-pcm-d10-design.md §6.2,
+// D0: the preview must sound like the driver): the same voice model the 68000
+// runs, the same engine model the gates grade the Z80 against, the same baked
+// bank an export ships — 8-bit, at the image's rate, with its 6 dB rungs, its
+// 16-byte loop rounding and its loop-point moves.
+import { PcmLiveEngine, parsePcmBank } from "./src/pcm-model.js";
+import { PcmIrVoices } from "./src/pcm-voices.js";
+import { engineImage } from "./src/engine-images.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 const SCOPE_FLUSH = 1024; // scope samples per batch posted to the main thread
@@ -69,15 +68,21 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._psgWriteQueue = []; // untimed PSG writes
     this._psgTimedQueue = []; // timed PSG writes: [{frame, data}]
 
-    // PCM voices feeding the YM2612 DAC (register 0x2a). The mix is summed and
-    // quantized to one 8-bit stream per FM native sample, then written through
-    // the real chip — exactly like the Z80 driver streaming the DAC.
-    this._pcmTimedQueue = []; // timed PCM commands: [{frame, type, ...}]
-    this._pcmVoices = [];
-    this._pcmSamples = new Map();
+    // PCM: the score's bank, the engine that plays it, and the sequencer's voice
+    // model feeding the engine commands. Each engine byte is held for
+    // nativeRate / engineRate FM native samples, the way the DAC holds a $2A
+    // write until the next.
+    this._pcmTimedQueue = []; // timed PCM events: [{frame, type: 'pcm-ev', ...}]
+    this._pcmBank = null;     // {entries, entryIds, img}
+    this._pcmLive = null;     // PcmLiveEngine
+    this._pcmSeq = null;      // PcmIrVoices: the IR's events → engine commands
+    this._pcmAcc = 0;
+    this._pcmByte = 0x80;
+    this._pcmClaimsDac = false; // the first note claims fm6, as on the driver
     this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
-    // Whether our own voices claimed the DAC, so we only release what we took —
-    // a backend streaming 0x2a/0x2b (MMLispDRV) owns it on its own terms.
+    // Whether our own engine claimed the DAC, so we only release what we took —
+    // a backend streaming 0x2a/0x2b (MMLispDRV) owns it on its own terms. As on
+    // the driver, the first note claims fm6 for the rest of the song.
     this._dacFromVoices = false;
 
     // Desired analog-LPF config, applied to the synth when it becomes ready and
@@ -105,11 +110,16 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._writeQueue = []; // untimed: [{port, addr, data}]
     this._timedQueue = []; // timed: [{frame, port, addr, data}]
 
-    // DAC byte provider handed to the synth: mix the active PCM voices to a
-    // signed float, quantize to the 8-bit DAC, once per FM native sample.
+    // DAC byte provider handed to the synth, once per FM native sample: the
+    // engine's current byte, stepped at the image's own rate.
     this._getDacByte = () => {
-      const f = this._mixDacSampleNative();
-      return Math.max(0, Math.min(255, Math.round(f * 127) + 128));
+      const img = this._pcmBank.img;
+      this._pcmAcc += img.rateHz;
+      while (this._pcmAcc >= this._nativeSR) {
+        this._pcmAcc -= this._nativeSR;
+        this._pcmByte = this._pcmLive.next();
+      }
+      return this._pcmByte;
     };
 
     MegaDriveSynth.create(sampleRate)
@@ -155,44 +165,24 @@ class YM2612Processor extends AudioWorkletProcessor {
         } else {
           this._writeQueue.push(msg);
         }
-      } else if (msg.type === "pcm-set-samples") {
-        this._pcmSamples = new Map();
-        for (const s of msg.samples || []) {
-          const name = String(s?.name ?? "").trim();
-          if (!name) continue;
-          const data = s?.data instanceof Float32Array ? s.data : null;
-          const sr = Number(s?.sampleRate);
-          if (!data || data.length === 0) continue;
-          this._pcmSamples.set(name, {
-            data,
-            sampleRate: Number.isFinite(sr) && sr > 0 ? sr : sampleRate,
-            loopStart: Number(s?.loopStart),
-            loopEnd: Number(s?.loopEnd),
-          });
-        }
-      } else if (
-        msg.type === "pcm-note-on" ||
-        msg.type === "pcm-note-off" ||
-        msg.type === "pcm-set-shift"
-      ) {
-        // Timed so a mid-loop :vol / :master recompose lands with the score,
-        // like the note-ons themselves.
+      } else if (msg.type === "pcm-set-bank") {
+        this._setPcmBank(msg);
+      } else if (msg.type === "pcm-ev") {
+        // Timed, and applied in time order: a note, a level and every step of
+        // a loop-point sweep interleave exactly as the score orders them.
         const targetFrame =
           msg.when != null
             ? Math.round(msg.when * sampleRate)
             : currentFrame + WORKLET_BLOCK;
         this._insertTimed(this._pcmTimedQueue, targetFrame, msg);
       } else if (msg.type === "pcm-set-vol") {
-        // Live per-PCM-channel mixer fader, keyed by track index (matches the
-        // track sent on pcm-note-on). A separate axis from the score's
-        // vel/vol/master (which ride the composed shift), applied on top.
+        // Live per-PCM-track mixer fader: a gain on the voice's samples BEFORE
+        // its rung, which the driver does not have (a UI-only control).
         const track = Number(msg.track);
         const g = Math.max(0, Math.min(1, Number(msg.gain)));
         if (Number.isFinite(track) && Number.isFinite(g)) {
           this._pcmTrackGain.set(track, g);
-          for (const v of this._pcmVoices) {
-            if (v.track === track) v.gain = (v.shiftGain ?? v.gain) * g;
-          }
+          this._pcmApplyUiGain();
         }
       } else if (msg.type === "writes") {
         for (const op of msg.ops) {
@@ -221,9 +211,8 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._psgWriteQueue = [];
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
-        this._pcmVoices = [];
-        this._pcmSamples = new Map();
         this._pcmTrackGain = new Map();
+        this._setPcmBank(null);
         this._dacFromVoices = false;
         this._scopeFreq.fill(0);
         this._fmFnumHi.fill(0);
@@ -234,7 +223,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._timedQueue = [];
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
-        this._pcmVoices = [];
+        this._pcmRestart();
         this._synth?.setDacEnabled(false);
         this._dacFromVoices = false;
       }
@@ -347,146 +336,60 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._scopeFreq[6 + ch] = PSG_CLOCK / (32 * n);
   }
 
-  _startPcmVoice(msg) {
-    const rate = Number(msg.rate);
-    const sample = String(msg.sample ?? "");
-    if (!sample) return;
-    // ir-player already composed :vel + :vol + :master into the driver's
-    // bit-shift attenuation (shift 0-7) + mute; apply gain 2^-shift so the
-    // preview matches the Z80 soft-mixer / drv-player.
-    const shift = Number.isFinite(Number(msg.shift)) ? Number(msg.shift) : 0;
-    const muted = !!msg.muted;
-    const shiftGain = shiftToGain(shift);
-    const sampleEntry = this._pcmSamples.get(sample);
-    const data = sampleEntry?.data;
-    if (!data || data.length === 0) return; // missing sample: nothing to play
-    const baseRateMsg = Number(msg.baseRate);
-    const baseRate =
-      Number.isFinite(baseRateMsg) && baseRateMsg > 0
-        ? baseRateMsg
-        : (sampleEntry?.sampleRate ?? this._nativeSR);
-    // Voices advance at the FM native rate, since the DAC stream is written
-    // once per native chip sample.
-    const rawStep =
-      (Number.isFinite(rate) ? rate : 1) * (baseRate / this._nativeSR);
-    const step = Math.max(0.01, rawStep);
-    const mode = msg.mode === "loop" ? "loop" : "shot";
-    const ch = Number(msg.ch);
-    const track = Number(msg.track);
-    const trackGain = this._pcmTrackGain.get(track) ?? 1;
-    const loopStartRaw = Number(sampleEntry?.loopStart);
-    const loopEndRaw = Number(sampleEntry?.loopEnd);
-    const len = data.length;
-    const loopStart =
-      Number.isFinite(loopStartRaw) && loopStartRaw >= 0
-        ? Math.min(len - 1, Math.floor(loopStartRaw))
-        : 0;
-    const loopEnd =
-      Number.isFinite(loopEndRaw) && loopEndRaw > loopStart
-        ? Math.min(len, Math.floor(loopEndRaw))
-        : len;
-    const voice = {
-      ch: Number.isFinite(ch) ? ch : null,
-      track: Number.isFinite(track) ? track : null,
-      sample,
-      pos: 0,
-      step,
-      shift,
-      muted,
-      shiftGain,
-      gain: shiftGain * trackGain,
-      mode,
-      released: false,
-      loopStart,
-      loopEnd,
-      data,
-    };
-    if (mode === "loop") {
-      this._pcmVoices = this._pcmVoices.filter((v) => {
-        if (v.mode !== "loop") return true;
-        if (v.sample !== sample) return true;
-        if (!Number.isFinite(ch)) return false;
-        return v.ch !== ch;
-      });
+  // The score's bank (null = none). The engine and the voice model restart
+  // with it; the fader gains survive.
+  _setPcmBank(msg) {
+    const bank = msg?.bank instanceof Uint8Array ? msg.bank : null;
+    const voices = Number(msg?.pcmVoices) || 0;
+    if (!bank || bank.length === 0 || voices < 1) {
+      this._pcmBank = null;
+      this._pcmLive = null;
+      this._pcmSeq = null;
+      return;
     }
-    this._pcmVoices.push(voice);
+    const window = new Uint8Array(0x8000);
+    window.set(bank.subarray(0, 0x8000));
+    const { entries } = parsePcmBank(bank);
+    this._pcmBank = { window, entries, entryIds: msg.entryIds ?? {}, img: engineImage(voices) };
+    this._pcmRestart();
   }
 
-  _stopPcmVoice(msg) {
-    if (msg.mode === "shot") return;
-    const sample = String(msg.sample ?? "");
-    if (!sample) return;
-    const ch = Number(msg.ch);
-    const hasCh = Number.isFinite(ch);
-    for (const v of this._pcmVoices) {
-      if (v.mode !== "loop") continue;
-      if (v.sample !== sample) continue;
-      if (hasCh && v.ch !== ch) continue;
-      v.released = true;
+  // A fresh engine and voice model on the current bank: what a reset, a flush
+  // (hot-swap) or a new bank starts from.
+  _pcmRestart() {
+    this._pcmAcc = 0;
+    this._pcmByte = 0x80;
+    this._pcmClaimsDac = false;
+    if (!this._pcmBank) {
+      this._pcmLive = null;
+      this._pcmSeq = null;
+      return;
     }
+    const live = new PcmLiveEngine(this._pcmBank.img, this._pcmBank.window);
+    this._pcmLive = live;
+    this._pcmSeq = new PcmIrVoices((c) => live.apply(c), this._pcmBank);
   }
 
-  // Recompose a live voice's volume mid-sound: a score :vol / :master change on
-  // this pcm slot. Keyed by ch (the voice slot), it updates every voice on that
-  // slot (a loop, or an overlapping shot). No-op when the slot has no voice.
-  _setPcmShift(msg) {
-    const ch = Number(msg.ch);
-    if (!Number.isFinite(ch)) return;
-    const shift = Number.isFinite(Number(msg.shift)) ? Number(msg.shift) : 0;
-    const muted = !!msg.muted;
-    const shiftGain = shiftToGain(shift);
-    for (const v of this._pcmVoices) {
-      if (v.ch !== ch) continue;
-      v.shift = shift;
-      v.muted = muted;
-      v.shiftGain = shiftGain;
-      const trackGain = this._pcmTrackGain.get(v.track) ?? 1;
-      v.gain = shiftGain * trackGain;
-    }
+  _pcmApplyUiGain() {
+    if (!this._pcmLive) return;
+    let any = false;
+    const g = this._pcmSeq.voiceTrack.map((t) => {
+      const x = t == null ? 1 : (this._pcmTrackGain.get(t) ?? 1);
+      if (x !== 1) any = true;
+      return x;
+    });
+    this._pcmLive.model.uiGain = any ? g : null;
   }
 
-  // Sum the active PCM voices into one signed float (~[-1, 1]) at the FM native
-  // rate. Quantized to the 8-bit DAC by _getDacByte, which the synth calls once
-  // per FM native sample while the DAC is enabled.
-  _mixDacSampleNative() {
-    let mixed = 0;
-    const alive = [];
-    for (const voice of this._pcmVoices) {
-      const data = voice.data;
-      if (!data || data.length === 0) continue;
-      if (voice.mode === "loop" && !voice.released) {
-        const ls = Math.max(0, Math.min(data.length - 1, voice.loopStart ?? 0));
-        const le = Math.max(
-          ls + 1,
-          Math.min(data.length, voice.loopEnd ?? data.length),
-        );
-        const loopLen = le - ls;
-        if (voice.pos >= le) {
-          voice.pos = ls + ((voice.pos - ls) % loopLen);
-        }
-      }
-      let idx = Math.floor(voice.pos);
-      if (idx >= data.length) {
-        if (voice.mode === "loop" && !voice.released) {
-          voice.pos = voice.pos % data.length;
-          idx = Math.floor(voice.pos);
-        } else {
-          continue;
-        }
-      }
-      // A muted voice (vol/master 0) contributes silence but still advances, so
-      // it resumes in phase when unmuted — matching the driver.
-      if (!voice.muted) mixed += data[idx] * voice.gain;
-      voice.pos += voice.step;
-      if (
-        (voice.mode === "loop" && !voice.released) ||
-        voice.pos < data.length
-      ) {
-        alive.push(voice);
-      }
+  // One IR PCM event, in time order (src/pcm-voices.js PcmIrVoices).
+  _applyPcmEvent(ev) {
+    if (!this._pcmSeq) return;
+    if (this._pcmSeq.apply(ev)) {
+      // A note started: it claims the DAC for good, and its voice now answers
+      // to that track's fader.
+      this._pcmClaimsDac = true;
+      this._pcmApplyUiGain();
     }
-    this._pcmVoices = alive;
-    return mixed;
   }
 
   // Render `blockSize` output-rate PSG samples: box-filter decimate the Nuked
@@ -523,22 +426,16 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._applyPsgWrite(op.data);
     });
 
-    // Drain timed PCM commands
+    // Drain timed PCM events (block-quantized, like the register writes).
     this._drainTimedQueue(this._pcmTimedQueue, blockEnd, (op) => {
-      if (op.type === "pcm-note-on") {
-        this._startPcmVoice(op);
-      } else if (op.type === "pcm-note-off") {
-        this._stopPcmVoice(op);
-      } else if (op.type === "pcm-set-shift") {
-        this._setPcmShift(op);
-      }
+      this._applyPcmEvent(op);
     });
 
-    // The DAC belongs to whoever drives it. Our own PCM voices claim it while
-    // they sound (sacrificing FM6); a backend streaming 0x2a/0x2b owns it
-    // instead, so only release what we actually claimed — forcing it off every
-    // block would fight that backend's own enable.
-    if (this._pcmVoices.length > 0) {
+    // The DAC belongs to whoever drives it. Our engine claims it from the
+    // score's first PCM note on, as the driver does, and keeps it; a backend
+    // streaming 0x2a/0x2b owns it instead, so only release what we claimed.
+    const pcmActive = !!(this._pcmLive && this._pcmClaimsDac);
+    if (pcmActive) {
       synth.setDacEnabled(true);
       this._dacFromVoices = true;
     } else if (this._dacFromVoices) {
@@ -557,7 +454,7 @@ class YM2612Processor extends AudioWorkletProcessor {
             this._applyYmWrite(op.port, op.addr, op.data);
           })
       : null;
-    const getDacByte = this._pcmVoices.length > 0 ? this._getDacByte : null;
+    const getDacByte = pcmActive ? this._getDacByte : null;
     const scope = this._scopeOn ? this._scopeScratchFor(blockSize) : null;
     synth.renderInto(outL, outR, blockSize, onFrame, getDacByte, scope);
     if (scope) this._scopeAccumulate(scope, blockSize);
@@ -609,7 +506,7 @@ class YM2612Processor extends AudioWorkletProcessor {
             type: "scope",
             sampleRate,
             freq: Array.from(this._scopeFreq),
-            fm6IsDac: this._pcmVoices.length > 0,
+            fm6IsDac: this._dacFromVoices,
             ch: buffers,
           },
           buffers,

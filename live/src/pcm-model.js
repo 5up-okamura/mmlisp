@@ -21,6 +21,8 @@
 // (`lutPage + k`, k = 0 silence .. 7 unity).
 // ---------------------------------------------------------------------------
 
+import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER } from "./slot-builder.js";
+
 export const PCM_WINDOW = 0x8000;
 /** Where a parked voice reads: the bank's top page, which the exporter keeps silent. */
 export const PCM_SILENCE_ADDR = 0xff00;
@@ -105,6 +107,10 @@ export class PcmEngineModel {
     }
     /** What the edge applied, for a caller that checks intent: {slot, v, kind, ...}. */
     this.log = [];
+    /** The editor's per-track PCM faders (0..1 a voice), applied to the sample
+     * BEFORE its rung — a UI gain the driver does not have. null = none, which
+     * is what every gate and the reference driver use. */
+    this.uiGain = null;
   }
 
   get16(at) { return this.state[at] | (this.state[at + 1] << 8); }
@@ -148,7 +154,9 @@ export class PcmEngineModel {
     for (let v = 0; v < this.img.voices; v++) {
       const a = this.ptr[v];
       if (a < PCM_WINDOW) throw new Error(`voice ${v} reads Z80 RAM at $${a.toString(16)}`);
-      const t = pcmRung(signed(this.bank[a - PCM_WINDOW]), this.page[v] - this.img.lutPage);
+      let x = signed(this.bank[a - PCM_WINDOW]);
+      if (this.uiGain) x = Math.round(x * this.uiGain[v]);
+      const t = pcmRung(x, this.page[v] - this.img.lutPage);
       acc = v === 0 ? t : this.saturate ? sat(acc + t) : signed(acc + t);
       this.ptr[v] = (a + 1) & 0xffff;
     }
@@ -185,4 +193,82 @@ export class PcmEngineModel {
     this.state[live("START_MASK", v)] = 0;
     this.log.push({ slot: s, v, kind: "start", src: this.ptr[v] });
   }
+}
+
+// ── The engine driven by COMMANDS ─────────────────────────────────────────
+// What a live player needs: the slot-format PCM commands (driver.md §6.2)
+// applied the way the host converter would put them on the wire — the level
+// page with the master folded in, the staged bytes, then the generation — but
+// at once, not through the pair page (a block of delay is nothing to the ear),
+// and one DAC byte out per engine sample. drv-player's live feed and the
+// browser worklet both run this, so an IR preview and a driver preview are the
+// same engine with the same bank.
+
+export class PcmLiveEngine {
+  constructor(image, bank) {
+    this.model = new PcmEngineModel(image, bank);
+    this.img = image;
+    this.masterShift = 0;
+    this.shiftByte = new Array(image.voices).fill(0);
+    this.started = new Array(image.voices).fill(false);
+  }
+
+  page(shiftByte) {
+    return this.img.lutPage + (shiftByte >= 8 ? 0 : pcmPageOfShift(shiftByte + this.masterShift));
+  }
+
+  /** One command, as an array of bytes (START / VOL / RETARGET / MASTER). */
+  apply(c) {
+    const m = this.model, V = this.img.voices;
+    const put16 = (name, vi, x) => { m.store(pcmOp(name, vi), x & 0xff); m.store(pcmOp(name, vi) + 1, (x >> 8) & 0xff); };
+    const w = (k) => c[k] | (c[k + 1] << 8);
+    const bump = (name, vi) => { const op = pcmOp(name, vi); m.store(op, (m.state[op] + 1) & 0xff); };
+    if (c[0] === PCM_START && c[1] < V) {
+      this.started[c[1]] = true;
+      this.shiftByte[c[1]] = c[2];
+      m.store(pcmOp("LEVEL", c[1]), this.page(c[2]));
+      put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
+      bump("START", c[1]);
+    } else if (c[0] === PCM_RETARGET && c[1] < V) {
+      put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));
+      bump("RETARGET", c[1]);
+    } else if (c[0] === PCM_VOL && c[1] < V) {
+      this.shiftByte[c[1]] = c[2];
+      m.store(pcmOp("LEVEL", c[1]), this.page(c[2]));
+    } else if (c[0] === PCM_MASTER) {
+      this.masterShift = c[1];
+      for (let vi = 0; vi < V; vi++)
+        if (this.started[vi]) m.store(pcmOp("LEVEL", vi), this.page(this.shiftByte[vi]));
+    }
+  }
+
+  /** The next DAC byte (biased, 0x80 = silence). */
+  next() {
+    return this.model.slot(null);
+  }
+}
+
+// ── The sample bank's directory (mmb.md §10) ──────────────────────────────
+// {stamp, entries[id] = {hasLoop, base, len, srcFrames, loopStart, loopEnd}}:
+// `base` is the blob's offset in the bank, so its window address is
+// PCM_WINDOW + ((bankBase * 0x8000 + base) & 0x7fff).
+export const PCM_BANK_ENTRY_SIZE = 24;
+export function parsePcmBank(bank) {
+  const u16 = (o) => bank[o] | (bank[o + 1] << 8);
+  const u32 = (o) => (bank[o] | (bank[o + 1] << 8) | (bank[o + 2] << 16) | (bank[o + 3] << 24)) >>> 0;
+  const n = u16(0);
+  const blobBase = 4 + n * PCM_BANK_ENTRY_SIZE;
+  const entries = [];
+  for (let i = 0; i < n; i++) {
+    const e = 4 + i * PCM_BANK_ENTRY_SIZE;
+    entries[bank[e]] = {
+      hasLoop: (bank[e + 1] & 1) !== 0,
+      base: blobBase + u32(e + 4),
+      len: u32(e + 8),
+      srcFrames: u32(e + 12),
+      loopStart: u32(e + 16),
+      loopEnd: u32(e + 20),
+    };
+  }
+  return { stamp: u16(2), entries };
 }

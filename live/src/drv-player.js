@@ -49,9 +49,6 @@ import {
   headerPcmVoices,
   pcmBankStamp,
   SAMPLE_ENTRY_SIZE,
-  PCM_MAX_SHIFT,
-  PCM_MASTER_MAX_SHIFT,
-  PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
 import {
   midiToFnumBlock,
@@ -169,19 +166,9 @@ import {
   SlotBuilder,
   SLOT_SUBS,
   PCM_START,
-  PCM_VOL,
-  PCM_RETARGET,
-  PCM_MASTER,
 } from "./slot-builder.js";
-import {
-  PcmEngineModel,
-  pcmLoopPoints,
-  pcmShotPoints,
-  pcmOp,
-  pcmPageOfShift,
-  PCM_WINDOW,
-  PCM_SILENCE_ADDR,
-} from "./pcm-model.js";
+import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR } from "./pcm-model.js";
+import { PcmVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
 
 // NTSC: a frame is 896,040 master clocks. The engine's DAC period is the
@@ -417,13 +404,6 @@ export class DrvPlayer {
     this._diagnostics = [];
     this._skippedOpcodes = new Map();
     this._master = VOL_UNITY;
-    // The shift the DAC feed applies to the finished sum, and the last value
-    // sent as PCM_MASTER (0xFF = none sent). Master rides the SUM, not the
-    // voices — see _pcmComposeMaster.
-    this._pcmMasterShift = 0;
-    // The engine resets its emit sites to unity, so 0 is what it already has:
-    // a score that merely restates `master 31` must emit nothing.
-    this._pcmSentMaster = 0;
     this._lfoRate = null;
     this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
     this._fm = Array.from({ length: 6 }, freshFmChannel);
@@ -468,32 +448,13 @@ export class DrvPlayer {
     // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
     // does not model playback — the engine owns every pointer — it keeps what
     // its commands need: the note's blob, whether it loops, and the level.
-    this._pcmVoices = [0, 1, 2].map(() => ({
-      started: false, // a START has been sent since load: PCM_VOL is worth sending
-      looping: false, // the running note loops; a note-off sends its release
-      src: 0, // the note's blob, as a window address
-      len: 0, // …and its length in bytes (whole blocks)
-      velBase: 15, // score's sticky velocity; vel is the macro-driven live one
-      vel: 15, // per-voice velocity 0-15 (raw); default = unattenuated
-      vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
-      shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
-      muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
-      _sentShift: 0xff,
-      // THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the
-      // note's own points until a LOOP_START/LOOP_END/LOOP_LEN param moves
-      // them. The length sits beside the end so that moving only the start
-      // slides a loop of the same length through the sample; :loop-end pins
-      // the end instead and sets endFixed.
-      ls: 0, le: 0, llen: 0, endFixed: false,
-      // The last END/WRAP sent, so a swept loop point only costs a RETARGET
-      // when it actually leaves its 16-byte block.
-      sentEnd: 0, sentWrap: 0, sentPts: false,
-    }));
+    // The three voices' note model, shared with ir-player (pcm-voices.js).
+    this._pcm = new PcmVoices((c) => this._pcmCmd(c));
     this._pcmDacOn = false;
     // Live playback of a PCM score runs the engine model for the DAC bytes;
     // an offline capture (no audio context) compares commands and builds none.
     this._pcmModel = this._audioContext && song?.sampleData && song.pcmVoices
-      ? new PcmEngineModel(engineImage(song.pcmVoices), song.sampleData)
+      ? new PcmLiveEngine(engineImage(song.pcmVoices), song.sampleData)
       : null;
     this._pcmSampleRem = 0;
     this._pcmSampleIndex = 0;
@@ -1367,11 +1328,8 @@ export class DrvPlayer {
         if (!this._psg[p].sounding) continue;
         this._writePsgAtt(p, this._psgAtt(this._psg[p].vel, this._psg[p].vol));
       }
-      // PCM: master rides the SUM, so the voices' shifts do not move — but the
-      // master shift does, and it decides their mute, so both are recomposed
-      // and in that order (the mute reads the new master shift).
-      this._pcmComposeMaster();
-      for (let vi = 0; vi < 3; vi++) this._pcmComposeShift(vi);
+      // PCM: master rides the SUM (pcm-voices.js setMaster).
+      this._pcm.setMaster(this._master);
       return;
     }
     if (target === TARGET_ID.LFO_RATE) {
@@ -1413,7 +1371,7 @@ export class DrvPlayer {
     // bit-shift the mixer applies as an arithmetic right shift (cheap per sample).
     // VEL and VOL are per-voice state; MASTER is global (handled above, which
     // recomposes every voice). Composition + mute are recomputed here, off the
-    // mix hot path. See _pcmComposeShift.
+    // mix hot path. See pcm-voices.js composeShift.
     if (channelId >= 20 && channelId <= 22) {
       const v = this._pcmVoices[channelId - 20];
       if (!v) return;   // ditto
@@ -1422,25 +1380,11 @@ export class DrvPlayer {
         if (!force) v.velBase = v.vel; // score's vel; a macro moves only the live one
       } else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
       else if (target >= TARGET_ID.LOOP_START && target <= TARGET_ID.LOOP_LEN) {
-        // THE LOOP POINTS, as byte offsets into the playing blob. :loop-len
-        // keeps the length when the start moves; :loop-end pins the end.
-        const x = value < 0 ? 0 : value > PCM_WINDOW ? PCM_WINDOW : value;
-        if (target === TARGET_ID.LOOP_START) {
-          v.ls = x;
-          if (!v.endFixed) v.le = v.ls + v.llen;
-        } else if (target === TARGET_ID.LOOP_END) {
-          v.le = x;
-          v.endFixed = true;
-          v.llen = v.le > v.ls ? v.le - v.ls : 0;
-        } else {
-          v.llen = x;
-          v.endFixed = false;
-          v.le = v.ls + v.llen;
-        }
-        this._pcmApplyLoop(channelId - 20);
+        this._pcm.loopParam(channelId - 20,
+          ["START", "END", "LEN"][target - TARGET_ID.LOOP_START], value);
         return;
       } else return;
-      this._pcmComposeShift(channelId - 20);
+      this._pcm.composeShift(channelId - 20, this._master);
       return;
     }
     if (channelId >= 6) return; // fm3-op ids: no M1 param path
@@ -1827,31 +1771,6 @@ export class DrvPlayer {
     return PCM_WINDOW + (abs & 0x7fff);
   }
 
-  // Send END/WRAP, but only when they actually moved. A swept loop point is
-  // recomputed every frame and mostly lands inside the same 16-byte block; an
-  // unguarded RETARGET would spend six bytes of the slot on it sixty times a
-  // second, starving the register writes it shares the slot with.
-  _pcmRetarget(vi, end, wrap) {
-    const v = this._pcmVoices[vi];
-    if (v.sentPts && end === v.sentEnd && wrap === v.sentWrap) return;
-    this._pcmCmd([PCM_RETARGET, vi, ...u16le(end), ...u16le(wrap)]);
-    v.sentEnd = end;
-    v.sentWrap = wrap;
-    v.sentPts = true;
-  }
-
-  // The live loop points → the engine's END/WRAP. A released voice is a shot
-  // from here on, so its loop params stop having an effect — which is what a
-  // release means.
-  _pcmApplyLoop(vi) {
-    const v = this._pcmVoices[vi];
-    if (!v.started) return;
-    const pts = v.looping
-      ? pcmLoopPoints(v.src, v.len, v.ls, v.le)
-      : pcmShotPoints(v.src, v.len);
-    this._pcmRetarget(vi, pts.end, pts.wrap);
-  }
-
   _pcmNoteOn(channelId, sampleId, note) {
     void note; // the bank baked this note into its own entry
     const vi = channelId - 20; // pcm1–pcm3 → voice 0–2
@@ -1861,32 +1780,15 @@ export class DrvPlayer {
     const v = this._pcmVoices[vi];
     // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1).
     this._restoreVelBase(channelId);
-    this._pcmComposeShift(vi);
+    this._pcm.composeShift(vi, this._master);
     // A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on. $2B is
     // an ordinary register write, sent once; nothing ever turns it off again.
     if (!this._pcmDacOn) {
       this._pcmDacOn = true;
       this._ym(0, 0x2b, 0x80);
     }
-    v.started = true;
-    v.looping = s.hasLoop;
     v.sampleId = sampleId;
-    v.src = this._pcmSrc(s);
-    v.len = s.len;
-    // The note's own loop is where a LOOP_* param starts from.
-    v.ls = s.hasLoop ? s.loopStart : 0;
-    v.le = s.hasLoop ? s.loopEnd : s.len;
-    v.llen = v.le > v.ls ? v.le - v.ls : 0;
-    v.endFixed = false;
-    const pts = s.hasLoop
-      ? pcmLoopPoints(v.src, s.len, v.ls, v.le)
-      : pcmShotPoints(v.src, s.len);
-    const byte = this._pcmShiftByte(v);
-    this._pcmCmd([PCM_START, vi, byte, ...u16le(v.src), ...u16le(pts.end), ...u16le(pts.wrap)]);
-    v._sentShift = byte;
-    v.sentEnd = pts.end;
-    v.sentWrap = pts.wrap;
-    v.sentPts = true;
+    this._pcm.start(vi, s, this._pcmSrc(s));
   }
 
   _pcmNoteOff(channelId) {
@@ -1894,10 +1796,7 @@ export class DrvPlayer {
     // moves END to the sample's end and WRAP to silence: the tail plays out.
     const vi = channelId - 20;
     if (vi < 0 || vi > 2) return;
-    const v = this._pcmVoices[vi];
-    if (!v.started || !v.looping) return;
-    v.looping = false;
-    this._pcmApplyLoop(vi);
+    this._pcm.release(vi);
   }
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
@@ -2216,77 +2115,17 @@ export class DrvPlayer {
     }
   }
 
-  // Compose a pcm voice's attenuation from vel + vol (plan-se.md, driver.md
-  // §14.1). Both ride the FM/PSG 2 dB/step ladder; summing their "steps below
-  // unity" gives the attenuation, quantized to the 6 dB grid:
-  //   n = (15−vel) + (31−vol);  shift = min(PCM_MAX_SHIFT, round(n/3)).
-  // MASTER IS NOT IN HERE — the host folds it into each voice's level page.
-  // What master still decides here is the MUTE: `master 0`, `vol 0`, and a
-  // total past PCM_TOTAL_MAX_SHIFT are the hard mutes; vel alone never mutes.
-  _pcmComposeShift(vi) {
-    const v = this._pcmVoices[vi];
-    const n = 15 - v.vel + (31 - v.vol);
-    const shift = Math.floor((n + 1) / 3); // round(n/3)
-    v.shift = shift > PCM_MAX_SHIFT ? PCM_MAX_SHIFT : shift;
-    v.muted = v.vol === 0 || this._master === 0
-      || v.shift + this._pcmMasterShift >= PCM_TOTAL_MAX_SHIFT;
-    const byte = this._pcmShiftByte(v);
-    // A voice that has never started has no level to change: its START carries it.
-    if (v.started && byte !== v._sentShift) {
-      v._sentShift = byte;
-      this._pcmCmd([PCM_VOL, vi, byte]);
-    }
-  }
-
-  // Master's own shift, on the same 6 dB grid and its own deeper ceiling.
-  // Emitted only when the SHIFT moves, not when master does.
-  _pcmComposeMaster() {
-    const n = 31 - this._master;
-    const shift = Math.floor((n + 1) / 3); // round(n/3)
-    this._pcmMasterShift =
-      shift > PCM_MASTER_MAX_SHIFT ? PCM_MASTER_MAX_SHIFT : shift;
-    if (this._pcmMasterShift !== this._pcmSentMaster) {
-      this._pcmSentMaster = this._pcmMasterShift;
-      this._pcmCmd([PCM_MASTER, this._pcmMasterShift]);
-    }
-  }
-
   // ── PCM command emission (driver.md §6.3) ────────────────────────────────
   // Every field is resolved HERE, on the sequencer side: the host turns a
   // command into state-store pairs and the engine does no per-note arithmetic.
   _pcmCmd(bytes) {
     if (this._slotSink) this._slotSink.pcm(bytes);
-    if (this._pcmModel) this._pcmModelApply(bytes);
-  }
-  // MUTE (8) is the sequencer's: the host sends the silence page for it.
-  _pcmShiftByte(v) {
-    return v.muted ? 8 : v.shift;
+    if (this._pcmModel) this._pcmModel.apply(bytes);
   }
 
-  // ── The live DAC feed (plan-pcm-d10-design.md §6.1) ──────────────────────
-  // A command reaches the model the way the host converter would put it on
-  // the wire — the level page with the master folded in, the staged bytes,
-  // then the generation — but at once, not through the pair page: for the ear
-  // a block of delay is nothing, and nothing grades these bytes.
-  _pcmModelApply(c) {
-    const m = this._pcmModel, img = m.img;
-    const page = (shiftByte) => img.lutPage + (shiftByte >= 8 ? 0 : pcmPageOfShift(shiftByte + this._pcmMasterShift));
-    const put16 = (name, vi, x) => { m.store(pcmOp(name, vi), x & 0xff); m.store(pcmOp(name, vi) + 1, (x >> 8) & 0xff); };
-    const w = (k) => c[k] | (c[k + 1] << 8);
-    const bump = (name, vi) => { const op = pcmOp(name, vi); m.store(op, (m.state[op] + 1) & 0xff); };
-    if (c[0] === PCM_START && c[1] < img.voices) {
-      m.store(pcmOp("LEVEL", c[1]), page(c[2]));
-      put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
-      bump("START", c[1]);
-    } else if (c[0] === PCM_RETARGET && c[1] < img.voices) {
-      put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));
-      bump("RETARGET", c[1]);
-    } else if (c[0] === PCM_VOL && c[1] < img.voices) {
-      m.store(pcmOp("LEVEL", c[1]), page(c[2]));
-    } else if (c[0] === PCM_MASTER) {
-      for (let vi = 0; vi < img.voices; vi++)
-        if (this._pcmVoices[vi].started) m.store(pcmOp("LEVEL", vi), page(this._pcmShiftByte(this._pcmVoices[vi])));
-    }
+  // The three voices' state (pcm-voices.js): the SE snapshot and the mute read it.
+  get _pcmVoices() {
+    return this._pcm.voices;
   }
 
   // One frame of the engine's DAC bytes, each written at its own instant.
@@ -2296,7 +2135,7 @@ export class DrvPlayer {
     this._pcmSampleRem += FRAME_MASTER;
     while (this._pcmSampleRem >= img.periodMaster) {
       this._pcmSampleRem -= img.periodMaster;
-      const byte = this._pcmModel.slot(null);
+      const byte = this._pcmModel.next();
       this._writeCb(0, 0x2a, byte, this._whenSample(this._pcmSampleIndex++));
     }
   }

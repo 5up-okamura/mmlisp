@@ -1305,7 +1305,12 @@ export function encodeMmb(ir, opts = {}) {
     );
   }
 
-  return { bytes: new Uint8Array(file.bytes), sampleBank, diagnostics };
+  return {
+    bytes: new Uint8Array(file.bytes),
+    sampleBank,
+    pcmEntryIds: bankPlan ? bankPlan.entryIds : null,
+    diagnostics,
+  };
 }
 
 // SAMPLE_BANK (mmb.md §10): entry table + raw 8-bit signed PCM blobs.
@@ -1542,6 +1547,9 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
   });
   return {
     bytes: [...entries.bytes, ...blobBytes],
+    // `${name}|${midi}` -> entry id: what a live player (ir-player via the
+    // worklet) looks a note up by, the same map idFor reads.
+    entryIds: Object.fromEntries(entryIdFor),
     idFor: (name, note) => {
       const id = entryIdFor.get(`${name}|${note}`);
       if (id !== undefined) return id;

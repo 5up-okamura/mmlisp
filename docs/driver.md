@@ -817,6 +817,22 @@ After an intended change, review the printed mismatches and re-freeze with
 the macro release value hold, so they connect. The gate key-off also lands on a
 slightly different frame in each. Frozen in the A/B baseline, so it is watched.
 
+**PCM is not in that gate — it has its own, and it is exact.** The browser's
+IR preview does not approximate the driver's PCM: the worklet runs the
+sequencer's voice model (`live/src/pcm-voices.js`, the same class
+`drv-player.js` uses) and the engine model (`live/src/pcm-model.js`
+`PcmLiveEngine`) on the bank an export ships, stepped at the image's rate —
+8-bit, with the driver's 6 dB rungs, its 16-byte loop rounding and its loop-point
+moves. `ir-player.js` only forwards the score's PCM events (note, release,
+level, master, loop point; a loop-point sweep stepped with the driver's own
+integer arithmetic, after the frame's events as the driver's step 3 does).
+`npm run pcm-ab` (`drv/tools/pcm-ab-gate.mjs`, in `verify:all`) runs those
+events through `PcmIrVoices` — the class the worklet runs — and requires the
+**same PCM command bytes, in the same order, each within a frame** of
+`drv-player`'s own slot stream: 12 scores, all identical. The editor's
+per-track PCM faders are a UI gain on a voice's samples before its rung, which
+the driver does not have.
+
 **`npm run level-diff <song.mmlisp>`** (`drv/tools/level-diff.mjs`) answers the
 question the gate cannot: *where is the driver louder than the reference, and
 by how much*. It replays both logs into a register file, samples the level

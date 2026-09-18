@@ -22,10 +22,11 @@ export function buildMmb(sourcePath) {
   if ((ir.metadata?.samples ?? []).length) {
     opts.samples = loadSamplesForIr(ir, sampleDiags);
   }
-  const { bytes, sampleBank, diagnostics: exportDiags } = encodeMmb(ir, opts);
+  const { bytes, sampleBank, pcmEntryIds, diagnostics: exportDiags } = encodeMmb(ir, opts);
   return {
     bytes,
     sampleBank,
+    pcmEntryIds,
     ir,
     diagnostics: [...diagnostics, ...sampleDiags, ...exportDiags],
   };

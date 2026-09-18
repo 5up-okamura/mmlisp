@@ -42,8 +42,17 @@ import {
   KEY_OFF_LEAD_SECS,
   HOLD_FRAMES,
 } from "./ir-utils.js";
+import { curveId, curveUnit8, sweepValue, sweepStep } from "./mmb.js";
+import { engineImage } from "./engine-images.js";
 
 const YM2612_MASTER_CLOCK = 7670454;
+// The largest loop point a PCM loop target can name: the bank's usable window
+// (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
+const PCM_LOOP_MAX = 0x7f00;
+// Half a millisecond: late enough to sort after every event of its frame,
+// far too early to hear.
+const PCM_SWEEP_AFTER = 0.0005;
+const PCM_LOOP_WHICH = { LOOP_START: "START", LOOP_END: "END", LOOP_LEN: "LEN" };
 
 // Control-flow and timing events do not represent a sounding position, so they
 // must not move the editor playhead highlight. Without this, a zero-duration
@@ -141,12 +150,9 @@ export class IRPlayer {
     // channel, so they must not appear on the FM key-off path.
     this._pcmTrackChannel = new Map(); // trackIndex → pcm voice slot (0-2)
 
-    // Per-PCM-slot volume state (soft-mix). vel arrives on each PCM_NOTE_ON;
-    // vol is sticky via PARAM_SET VOL. Composed with the global master into the
-    // driver's 6 dB bit-shift attenuation (see _pcmComposeShift), so the browser
-    // preview matches the Z80 soft-mixer. Indexed by pcm slot 0-2.
-    this._pcmChanVel = [15, 15, 15];
-    this._pcmChanVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY];
+    // PCM levels are composed where the driver composes them — in the voice
+    // model the worklet runs (src/pcm-voices.js) — so this side only forwards
+    // the score's events, in time order.
 
     // PSG channel routing
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
@@ -258,8 +264,6 @@ export class IRPlayer {
     this._trackChannel.clear();
     this._psgTrackChannel.clear();
     this._pcmTrackChannel.clear();
-    this._pcmChanVel = [15, 15, 15];
-    this._pcmChanVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY];
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
       this._assignChannel(i, irObj.tracks[i]);
     }
@@ -510,8 +514,9 @@ export class IRPlayer {
   }
 
   /**
-   * Live mixer fader for a software-mixed PCM channel, keyed by track index.
-   * vol 0-31 → linear gain applied in the worklet to current and future voices.
+   * Live mixer fader for a PCM track, keyed by track index. vol 0-31 → a linear
+   * gain the worklet applies to the voice's samples before its rung — a
+   * preview convenience the driver does not have.
    * @param {number} trackIndex
    * @param {number} vol 0-31
    */
@@ -885,6 +890,8 @@ export class IRPlayer {
 
     const writes = [];
     let pcmCount = 0;
+    // The PCM events the worklet would get (pcm-ev), for drv/tools/pcm-ab-gate.mjs.
+    const pcmEvents = [];
 
     const saved = {
       write: this._write,
@@ -904,6 +911,8 @@ export class IRPlayer {
     this._write = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg)) {
         pcmCount++; // DAC/PCM event — not encoded into VGM yet
+        if (portOrMsg.type === "pcm-ev")
+          pcmEvents.push({ ...portOrMsg, sec: (portOrMsg.when == null ? BASE : portOrMsg.when) - BASE });
         return;
       }
       const sec = (when == null ? BASE : when) - BASE;
@@ -1024,10 +1033,10 @@ export class IRPlayer {
       // end to fully populate the window; those overflow writes belong to the
       // next iteration and are dropped (the VGM player replays them via loop).
       const kept = writes.filter((w) => w.sec < endSec);
-      return { writes: kept, pcmCount, loopStartSec, endSec };
+      return { writes: kept, pcmCount, pcmEvents, loopStartSec, endSec };
     }
 
-    return { writes, pcmCount, loopStartSec, endSec };
+    return { writes, pcmCount, pcmEvents, loopStartSec, endSec };
   }
 
   _flattenTracks() {
@@ -1819,80 +1828,88 @@ export class IRPlayer {
     }
   }
 
-  // PCM (soft-mix) track dispatch. PCM owns no FM/PSG channel and has no sweep
-  // engine (mirrors the driver: _startSweep bails for ch>=10), so only note
-  // on/off and discrete vol/vel/master params act — everything else is ignored
-  // rather than misrouted to the FM path. Global events (tempo/markers/loops)
-  // are already handled by _dispatchGlobalEvent before we get here.
+  // PCM track dispatch. The worklet runs the driver's own voice model and
+  // engine on the score's baked bank (worklet.js _applyPcmEvent), so what goes
+  // across is the score's events — note, release, level, master, loop point —
+  // timed, in the order the driver's sequencer would act on them. Global
+  // events (tempo/markers/loops) are handled by _dispatchGlobalEvent first.
   _dispatchPcmEvent(ev, when) {
-    const slot = ev._chIndex ?? 0;
+    const voice = ev._chIndex ?? 0;
     switch (ev.cmd) {
       case "PCM_NOTE_ON":
         this._dispatchPcmNoteOn(ev, when);
         break;
       case "PCM_NOTE_OFF":
-        this._dispatchPcmNoteOff(ev, when);
+        this._pcmEv(when, { kind: "off", voice });
         break;
       case "PARAM_SET":
-        this._applyPcmParam(slot, ev.args, when);
+        this._applyPcmParam(voice, ev.args, when);
         break;
       case "PARAM_FROM_VAL": {
         const value = this._resolveSrc(ev.args?.src, when);
-        this._applyPcmParam(slot, { target: ev.args?.target, value }, when);
+        this._applyPcmParam(voice, { target: ev.args?.target, value }, when);
         break;
       }
+      case "PARAM_SWEEP":
+        if (PCM_LOOP_WHICH[(ev.args?.target ?? "").toUpperCase()])
+          this._schedulePcmLoopSweep(voice, ev, when);
+        break;
       default:
         break;
     }
   }
 
-  // Compose a pcm slot's vel + vol + master into the driver's per-voice
-  // attenuation, quantized to the 6 dB bit-shift grid (matches drv-player's
-  // _pcmComposeShift and the Z80 soft-mixer):
-  //   n = (15−vel) + (31−vol) + (31−master);  shift = min(7, round(n/3)).
-  // vol==0 or master==0 is a hard mute (true silence); vel never mutes (floors
-  // at shift 5 ≈ −30 dB when vol/master are unity). The worklet applies gain
-  // 2^−shift per sample (float mix), so the same :vel/:vol/:master mean the same
-  // loudness on PCM as on FM/PSG.
-  _pcmComposeShift(vel, vol, master) {
-    const muted = vol === 0 || master === 0;
-    const n = 15 - vel + (31 - vol) + (31 - master);
-    const shift = Math.floor((n + 1) / 3); // round(n/3)
-    return { shift: shift > 7 ? 7 : shift, muted };
+  _pcmEv(when, fields) {
+    this._write({ type: "pcm-ev", when, ...fields });
   }
 
-  // Recompose a pcm slot from its current vel/vol/master and push the shift+mute
-  // to any live voice on that slot (loop or shot). Timed to `when` so a mid-loop
-  // :vol / :master change lands at the right moment, like the note-ons.
-  _emitPcmShift(slot, when) {
-    const { shift, muted } = this._pcmComposeShift(
-      this._pcmChanVel[slot] ?? 15,
-      this._pcmChanVol[slot] ?? VOL_UNITY,
-      this._masterVol ?? VOL_UNITY,
-    );
-    this._write({ type: "pcm-set-shift", when, ch: slot, shift, muted });
+  // A loop point, from the IR's seconds to the engine's byte offset — the
+  // same multiply and clamp the MMB exporter applies (export-mmb.js
+  // targetValue), at the rate of the image the score names.
+  _pcmLoopBytes(sec) {
+    const rate = engineImage(Math.max(1, this._ir?.metadata?.pcmVoices ?? 1)).rateHz;
+    return Math.max(0, Math.min(PCM_LOOP_MAX, Math.round(Number(sec ?? 0) * rate)));
   }
 
-  // PARAM_SET on a pcm slot: VOL is sticky per-slot state; VEL updates the slot
-  // (normally vel rides the note, but a standalone PARAM_SET VEL is honored);
-  // MASTER is global (recomposes FM + PSG + all PCM voices).
-  _applyPcmParam(slot, args, when) {
+  _applyPcmParam(voice, args, when) {
     const target = (args?.target ?? "").toUpperCase();
     const value = args?.value ?? 0;
-    switch (target) {
-      case "VOL":
-        this._pcmChanVol[slot] = Math.max(0, Math.min(31, Math.round(value)));
-        this._emitPcmShift(slot, when);
-        break;
-      case "VEL":
-        this._pcmChanVel[slot] = Math.max(0, Math.min(15, Math.round(value)));
-        this._emitPcmShift(slot, when);
-        break;
-      case "MASTER":
-        this._applyMasterChange(value, when);
-        break;
-      default:
-        break; // PCM ignores FM/PSG-only params
+    if (target === "VOL" || target === "VEL") {
+      this._pcmEv(when, { kind: target === "VOL" ? "vol" : "vel", voice, value });
+    } else if (target === "MASTER") {
+      this._applyMasterChange(value, when);
+    } else if (PCM_LOOP_WHICH[target]) {
+      this._pcmEv(when, { kind: "loop", voice, which: PCM_LOOP_WHICH[target], value: this._pcmLoopBytes(value) });
+    }
+    // everything else is FM/PSG-only
+  }
+
+  // A swept loop point, stepped the way the driver steps it: integer from/to
+  // in bytes, the curve lowered to the driver's eight shapes, one value a
+  // frame (mmlispseq.c process_sweep, drv-player _processSweep). The worklet's
+  // voice model sends a RETARGET only when the rounded block moves.
+  _schedulePcmLoopSweep(voice, ev, when) {
+    const a = ev.args ?? {};
+    const which = PCM_LOOP_WHICH[(a.target ?? "").toUpperCase()];
+    const df = this._curveFields(a, when);
+    const from = this._pcmLoopBytes(df.from), to = this._pcmLoopBytes(df.to);
+    const len = a.lenFrames
+      ? Math.max(1, Math.round(Number(a.frames ?? 1)))
+      : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
+    const loop = !!a.loop;
+    const budget = this._resolveSweepBudgetFrames(ev);
+    const id = curveId(a.curve);
+    const step16 = sweepStep(len, loop);
+    let phase16 = 0;
+    for (let f = 0; f < budget; f++) {
+      const last = !loop && f >= len - 1;
+      const value = last ? to : sweepValue(from, to, curveUnit8(id, phase16 >> 8));
+      phase16 = (phase16 + step16) & 0xffff;
+      // + PCM_SWEEP_AFTER: the driver steps its sweeps AFTER the frame's
+      // dispatch (driver.md §4 step 3), so a sweep that starts with a note
+      // moves that note's loop, not the one before it.
+      this._pcmEv(when + f / 60 + PCM_SWEEP_AFTER, { kind: "loop", voice, which, value });
+      if (last) break;
     }
   }
 
@@ -1903,45 +1920,17 @@ export class IRPlayer {
     if (!this._isTrackAudible(ev._trackIndex)) return;
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
-    const slot = ev._chIndex ?? 0;
-    const rate = Number(ev.args?.rate);
-    const baseRate = Number(ev.args?.baseRate);
     const velRaw = Number(ev.args?.vel ?? 15);
-    const vel = Number.isFinite(velRaw) ? Math.max(0, Math.min(15, velRaw)) : 15;
-    const mode = ev.args?.mode === "loop" ? "loop" : "shot";
-    // vel rides the note; vol is the slot's sticky PARAM_SET state. Compose both
-    // with master into the driver's bit-shift attenuation + mute (see
-    // _pcmComposeShift) so the preview matches the Z80 soft-mixer.
-    this._pcmChanVel[slot] = vel;
-    const { shift, muted } = this._pcmComposeShift(
-      vel,
-      this._pcmChanVol[slot] ?? VOL_UNITY,
-      this._masterVol ?? VOL_UNITY,
-    );
-    this._write({
-      type: "pcm-note-on",
-      when,
-      ch: ev._chIndex ?? null,
+    // The bank baked one blob per (sample, note); the worklet finds it by the
+    // same MIDI number the exporter keyed it with (export-mmb.js midiNote).
+    const midi = Math.max(0, Math.min(127, Math.round(pitchToMidi(ev.args?.pitch ?? "c4"))));
+    this._pcmEv(when, {
+      kind: "on",
+      voice: ev._chIndex ?? 0,
       track: ev._trackIndex ?? null,
       sample,
-      rate: Number.isFinite(rate) && rate > 0 ? rate : 1,
-      baseRate: Number.isFinite(baseRate) && baseRate > 0 ? baseRate : null,
-      shift,
-      muted,
-      mode,
-    });
-  }
-
-  _dispatchPcmNoteOff(ev, when) {
-    const sample = String(ev.args?.sample ?? "").trim();
-    if (!sample) return;
-    const mode = ev.args?.mode === "loop" ? "loop" : "shot";
-    this._write({
-      type: "pcm-note-off",
-      when,
-      ch: ev._chIndex ?? null,
-      sample,
-      mode,
+      midi,
+      vel: Number.isFinite(velRaw) ? velRaw : 15,
     });
   }
 
@@ -2421,9 +2410,8 @@ export class IRPlayer {
       const vol = this._psgVolAtTime(psgCh, when); // 0-31
       this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
     }
-    // PCM soft-mix voices ride master too — recompose each slot's shift/mute and
-    // push it to any live voice (the worklet no-ops a slot with no voice).
-    for (let slot = 0; slot < 3; slot++) this._emitPcmShift(slot, when);
+    // PCM voices ride master too: the voice model recomposes every voice.
+    this._pcmEv(when, { kind: "master", value: master });
   }
 
   // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.

@@ -176,6 +176,40 @@ estimate unless it says so.
   6. NOT DONE: hardware. The images still sit at a 100% work ceiling and the
      68k-window read wait is a BlastEm number (§9).
 
+- **S5 — DONE 2026-09-18.** The browser's IR preview plays PCM through the
+  driver's own models. DEVIATIONS from §6.2 (better, not just different):
+  1. **The voice model runs in the WORKLET, not in ir-player.** ir-player
+     pre-schedules its sweeps at dispatch, so a voice model there would mutate
+     in dispatch order and a sweep's later steps would be applied before later
+     notes. Instead ir-player sends timed `pcm-ev` events (on / off / vol / vel
+     / master / loop) and the worklet applies them in TIME order.
+  2. **One voice model for everyone**: `live/src/pcm-voices.js` —
+     `PcmVoices` (the sequencer's note model, extracted from drv-player, which
+     now delegates to it; c-gate still byte-identical) and `PcmIrVoices` (IR
+     events → PcmVoices, what the worklet runs). `pcm-model.js` gains
+     `PcmLiveEngine` (commands → engine → one DAC byte a sample; drv-player's
+     `_pcmModelApply` moved here) and `parsePcmBank`.
+  3. **The bank**: index.html `syncPcmBankToWorklet` bakes with `encodeMmb`
+     (which now also returns `pcmEntryIds`, `"name|midi" → id`) and posts
+     `pcm-set-bank`; the float samples, `shiftToGain`, the 53 kHz float voices,
+     `pcm-set-samples`, `decodeCompiledPcmSample` are gone.
+  4. **Sweep ordering**: the driver steps sweeps AFTER the frame's dispatch, so
+     IR loop-sweep steps are sent at `when + f/60 + 0.5 ms` — found by the
+     gate below (a LOOP_START sweep starting with a note moved the PREVIOUS
+     note's loop).
+  5. **New gate `npm run pcm-ab`** (tools/pcm-ab-gate.mjs, in verify:all):
+     IRPlayer's captured PCM events through PcmIrVoices vs drv-player's slot
+     commands — same bytes, same order, ±1 frame. 12 scores identical.
+  6. **Headless Chrome** (playwright-core, the scope tap): a PCM score claims
+     the DAC from its first note and FM6 carries signal; m4-fm6-only never
+     claims it; three voices sound.
+  7. **FOUND AND FIXED — the live editor did not start at all.** `mmb.js` had
+     an unguarded `process.env.PCM_RING_LEAD` (since 2026-09-04, the ring
+     era), so the page died with "process is not defined" before exposing
+     anything. The whole PCM_RING_* block was dead (no users) and is deleted.
+  8. Faders: `PcmEngineModel.uiGain` (null = none) scales a voice's sample
+     before its rung — UI-only, documented.
+
 ## 1. The engine
 
 ### 1.1 What the image is, and what it no longer carries

@@ -26,8 +26,11 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `player/wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
-`export-mmb.js` (IR → MMB v0.2), `drv-player.js` (JS reference driver), and
-`ab-compare.js` (register-log A/B) in the same directory.
+`export-mmb.js` (IR → MMB v0.3 + the sample bank), `drv-player.js` (JS reference
+driver), and `ab-compare.js` (register-log A/B) in the same directory. PCM has
+one model for every consumer: `pcm-voices.js` (the sequencer's voice model)
+and `pcm-model.js` (the Z80 engine) — drv-player, the browser worklet's IR
+preview and the engine gates all run them.
 
 The driver lives in `drv/`, with a first-party node toolchain in `drv/tools/`
 (Z80 assembler, Z80 CPU emulator, machine model, gates — no external binaries).
