@@ -1771,8 +1771,9 @@ export class DrvPlayer {
     return PCM_WINDOW + (abs & 0x7fff);
   }
 
+  // `note` names the note the bank baked into this entry; its bit 7 says the
+  // NOTE loops (`:mode loop`, opcodes.md §6).
   _pcmNoteOn(channelId, sampleId, note) {
-    void note; // the bank baked this note into its own entry
     const vi = channelId - 20; // pcm1–pcm3 → voice 0–2
     if (vi < 0 || vi > 2) return;
     const s = this._song.samples[sampleId];
@@ -1788,7 +1789,7 @@ export class DrvPlayer {
       this._ym(0, 0x2b, 0x80);
     }
     v.sampleId = sampleId;
-    this._pcm.start(vi, s, this._pcmSrc(s));
+    this._pcm.start(vi, s, this._pcmSrc(s), (note & 0x80) !== 0);
   }
 
   _pcmNoteOff(channelId) {
@@ -2066,7 +2067,8 @@ export class DrvPlayer {
       const snap = seTrk.pcmSnap;
       seTrk.pcmSnap = null;
       seTrk.isSe = false;
-      if (snap.sampleId != null) this._pcmNoteOn(20 + seTrk.pcmVi, snap.sampleId, 60);
+      if (snap.sampleId != null)
+        this._pcmNoteOn(20 + seTrk.pcmVi, snap.sampleId, snap.looping ? 0x80 | 60 : 60);
       return;
     }
     if (seTrk.displaced == null) {

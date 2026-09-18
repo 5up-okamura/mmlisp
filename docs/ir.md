@@ -435,7 +435,7 @@ Emitted immediately before each `NOTE_ON` on an `fm3-N` track (same tick).
 | `pitch`    | string | —       | yes | Note + octave. The note is BAKED: it picks a blob resampled for it, and there is no range clamp. |
 | `rate`     | number | ratio   | yes | Playback rate = `2^((midi−60)/12)` (1.0 at C4).                  |
 | `length`   | int    | ticks   | yes | Timeline advance.                                                |
-| `mode`     | string | —       | yes | `"shot"` or `"loop"`.                                            |
+| `mode`     | string | —       | yes | `"shot"` or `"loop"` — the NOTE's; it decides whether it loops, whatever the sample def says. |
 | `baseRate` | int    | Hz      | no  | Sample's source rate (from the sample def), when known.          |
 | `vel`      | int    | 0–15    | no  | Omitted when 15.                                                 |
 | `gate`     | int    | ticks   | no  | Present only when `< length`.                                    |
@@ -445,9 +445,10 @@ Emitted immediately before each `NOTE_ON` on an `fm3-N` track (same tick).
   "length": 48, "mode": "shot", "baseRate": 13000 } }
 ```
 
-Notes: the player forwards only `sample`/`rate`/`baseRate`/`vel`/`mode` to the
-PCM worklet — `pitch`, `length`, and `gate` are not sent. Shot samples play to
-completion regardless of gate; loop samples stop only at `PCM_NOTE_OFF`.
+Notes: the player sends the worklet `sample`, the MIDI note, `vel` and `mode`
+(ir-player.js `_dispatchPcmNoteOn`); the worklet plays the exported bank's entry
+for that note. A shot plays to completion regardless of gate; a loop note loops
+until `PCM_NOTE_OFF`.
 
 ### 5.18 PCM_NOTE_OFF
 

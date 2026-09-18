@@ -33,7 +33,7 @@ const HORIZON = 240;
 let scores = process.argv.slice(2).filter((a) => a.endsWith(".mmlisp"));
 if (!scores.length) scores = ["m2-pcm", "m2-pcmloop", "m3-pcm-vol", "m3-pcm-volmix", "m3-pcm-master",
   "m3-pcm-softmix", "m3-pcm-slice", "m3-pcm-sync", "m4-pcm-loop", "m4-pcm-2v-master", "m4-pcm-3v",
-  "m4-pcm-loop-curve"].map((n) => join(drv, "tests", `${n}.mmlisp`));
+  "m4-pcm-loop-curve", "m4-pcm-loop-mode"].map((n) => join(drv, "tests", `${n}.mmlisp`));
 
 const hex = (c) => c.map((b) => b.toString(16).padStart(2, "0")).join(" ");
 let failed = 0;

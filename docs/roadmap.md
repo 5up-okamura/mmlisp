@@ -79,7 +79,7 @@ Done:
   (`docs/mmb.md`, `docs/opcodes.md`); `drv-player.js` is the executable spec
   (every M1–M3 feature, SE included) and the live app's MMLispDRV backend.
 - **Sequencer** — `drv/68k/mmlispseq.c`, byte-identical to `drv-player.js` on
-  45 scores (`npm run c-gate`): notes, loops, CALL/RET, tempo, sweeps, macros,
+  46 scores (`npm run c-gate`): notes, loops, CALL/RET, tempo, sweeps, macros,
   CSM, FM3 independent-OP, val slots, PCM commands, priming at load.
 - **Engine** — three pair-transport Z80 engine images, one per PCM voice count
   (1–3 voices at 14,376 / 10,112 / 6,653 Hz, loops, 6 dB levels), each DAC clock

@@ -8,4 +8,4 @@
 (def blip :sample :file "blip.wav")
 (def pad  :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 blip :tempo 120 :oct 4 :len 4   :vel 15 c   :vel 9 c   :vel 6 c   :vel 0 c)
-(pcm2 pad  :mode loop :oct 4 :len 8    :vel 7 c)
+(pcm2 pad  :oct 4 :len 8    :vel 7 :mode loop c)

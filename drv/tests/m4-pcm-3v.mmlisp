@@ -6,5 +6,5 @@
 (def pad  :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def pcm-voices 3)
 (pcm1 blip :tempo 120 :oct 4 :len 8 :vel 15   c e g c e g c e)
-(pcm2 pad  :mode loop :oct 4 :len 2 :vel 15   c :gate* 0.5 e)
-(pcm3 pad  :mode loop :oct 3 :len 4 :vel 15   c _ e _)
+(pcm2 pad  :oct 4 :len 2 :vel 15   :mode loop c :gate* 0.5 :mode loop e)
+(pcm3 pad  :oct 3 :len 4 :vel 15   :mode loop c _ :mode loop e _)

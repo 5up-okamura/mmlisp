@@ -285,7 +285,7 @@ Sample entry (24 bytes):
 | Offset | Size | Field      | Notes                                        |
 | ------ | ---- | ---------- | -------------------------------------------- |
 | 0x00   | 1    | sample_id  | u8, referenced by PCM_NOTE_ON                |
-| 0x01   | 1    | flags      | bit0 = has_loop; bits1–7 reserved            |
+| 0x01   | 1    | flags      | bit0 = the def set loop points; bits1–7 reserved |
 | 0x02   | 2    | —          | reserved, 0                                  |
 | 0x04   | 4    | offset     | u32, blob start relative to the blob region (past the entry table) |
 | 0x08   | 4    | length     | u32, bytes — a whole number of 16-byte blocks |
@@ -302,11 +302,13 @@ blocks. The engine does not resample and has no octave step (driver.md §14.2),
 so a sample played at several notes occupies several ids, deduplicated by
 content hash.
 
-A looped sample's loop points are the def's `:loop-start` / `:loop-end` /
-`:loop-len` — times in the sample's own recording — turned into byte offsets by
-the note's own bake rate, and stored unrounded; the sequencer rounds them to
-whole blocks when it sends them (driver.md §14). A loop that maps to nothing is
-baked without a loop (`W_MMB_BAKE_LOOP_EMPTY`). `src_frames` is the source
+Every entry carries a loop, because the NOTE decides whether it loops
+(opcodes.md §6, PCM_NOTE_ON). The loop points are the def's `:loop-start` /
+`:loop-end` / `:loop-len` — times in the sample's own recording — turned into
+byte offsets by the note's own bake rate, and stored unrounded; the sequencer
+rounds them to whole blocks when it sends them (driver.md §14). A def with no
+loop points, or a loop that maps to nothing (`W_MMB_BAKE_LOOP_EMPTY`), stores
+the whole sample: `loop_start` 0, `loop_end` its baked length. `src_frames` is the source
 slice's length, carried for tooling; nothing in the driver reads it.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).

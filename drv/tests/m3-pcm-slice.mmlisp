@@ -7,4 +7,4 @@
 (def body :sample :file "pad.wav" :offset 128 :frames 256 :loop-start 2ms :loop-end 18ms)
 (def tail :sample :file "pad.wav" :offset 384)
 (pcm1 hit  :tempo 120 :oct 4 :len 8 :vel 15  c e g c)
-(pcm2 body :mode loop :oct 4 :len 4 :vel 12  c _ e _)
+(pcm2 body :oct 4 :len 4 :vel 12  :mode loop c _ :mode loop e _)

@@ -852,12 +852,13 @@ PSG when it has to be smooth.
 One thing it can do that nothing else on this machine does: **move its loop
 while the note sounds.** `:loop-start`, `:loop-end` and `:loop-len` take
 lengths — `300ms`, `16`, `6t` — on the sample def and on the track, and on the
-track they also take curves:
+track they also take curves. On a track they hold for the notes that follow,
+like any track parameter. `:mode loop` is per note:
 
 ```lisp
-(pcm1 pad :mode loop :len 1
-  :loop-len 16                                   c   ; a 16th-note loop
-  :loop-len (linear :from 100ms :to 2ms :len 2)  c)  ; tightened to a buzz
+(pcm1 pad :len 1
+  :loop-len 16                                   :mode loop c   ; a 16th-note loop
+  :loop-len (linear :from 100ms :to 2ms :len 2)  :mode loop c)  ; tightened to a buzz
 ```
 
 The loop rounds to 16 bytes (1.11 ms at one voice), which is also the shortest

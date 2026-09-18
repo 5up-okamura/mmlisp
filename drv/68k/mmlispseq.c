@@ -566,6 +566,9 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
       /* THE LOOP POINTS, as byte offsets into the playing blob. :loop-len keeps
        * the length when the start moves; :loop-end pins the end instead. */
       uint32_t x = (uint32_t)clampi(value, 0, MML_PCM_WINDOW);
+      /* Kept for the track's next notes (pcm_note_on lays it over the def's). */
+      if (target == T_LOOP_START) { v->o_has_ls = 1; v->o_ls = x; }
+      else { v->o_kind = (uint8_t)target; v->o_bound = x; }
       if (target == T_LOOP_START) {
         v->ls = x;
         if (!v->end_fixed) v->le = v->ls + v->llen;
@@ -1073,7 +1076,10 @@ static void pcm_apply_loop(MMLSeq *s, int vi) {
   pcm_retarget(s, vi, end, wrap);
 }
 
-static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id) {
+/* `loop`: the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7); a shot plays
+ * once whatever the def says. Every entry carries a loop — the def's, or the
+ * whole sample — so a loop note always has one. */
+static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   int vi = channel_id - CH_PCM1;
   if (vi < 0 || vi >= MML_PCM_VOICES) return;
   const uint8_t *e = find_sample(s, sample_id);
@@ -1093,14 +1099,22 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id) {
   uint32_t abs = s->sample_rom_base + s->sample_blob_base + rd32(e, 4);
   uint16_t end, wrap;
   v->started = 1;
-  v->looping = (uint8_t)(e[1] & 1);
+  v->looping = (uint8_t)(loop != 0);
   v->src = (uint16_t)(MML_PCM_WINDOW + (abs & 0x7fff));
   v->len = (uint16_t)len;
-  /* The note's own loop is where a LOOP_* param starts from. */
-  v->ls = v->looping ? rd32(e, 16) : 0;
-  v->le = v->looping ? rd32(e, 20) : len;
-  v->llen = v->le > v->ls ? v->le - v->ls : 0;
-  v->end_fixed = 0;
+  /* The def's loop, with the track's own writes laid over it in the same terms
+   * a write during the note uses (the T_LOOP_* param path). */
+  uint32_t dls = rd32(e, 16), dle = rd32(e, 20);
+  v->ls = v->o_has_ls ? v->o_ls : dls;
+  if (v->o_kind == T_LOOP_END) {
+    v->le = v->o_bound;
+    v->end_fixed = 1;
+    v->llen = v->le > v->ls ? v->le - v->ls : 0;
+  } else {
+    v->llen = v->o_kind == T_LOOP_LEN ? v->o_bound : (dle > dls ? dle - dls : 0);
+    v->le = v->ls + v->llen;
+    v->end_fixed = 0;
+  }
   if (v->looping) pcm_loop_points(v->src, len, v->ls, v->le, &end, &wrap);
   else pcm_shot_points(v->src, v->len, &end, &wrap);
   uint8_t c[9];
@@ -1549,8 +1563,8 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         int sample_id = st[t->pc + 1], note = st[t->pc + 2];
         MMLDur d = read_dur(st, t->pc + 3);
         t->pc = (uint16_t)d.next;
-        (void)note; /* the bank baked this note into its own entry */
-        pcm_note_on(s, t->channel_id, sample_id);
+        /* The entry carries the pitch; bit 7 of `note` says the note loops. */
+        pcm_note_on(s, t->channel_id, sample_id, note & 0x80);
         /* A held (dur 0) PCM note suspends the dispatcher like any hold; the
          * sample keeps feeding from step 3 either way. */
         if (d.ticks == 0) {

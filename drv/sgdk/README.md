@@ -4,7 +4,7 @@ How to play an MMLisp score on a real Mega Drive (or an accurate emulator) from
 an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
 > **Verification status.** The sequencer is proven byte-for-byte against the
-> JS reference on the host (`npm run c-gate`, 45 scores); the slot → pair
+> JS reference on the host (`npm run c-gate`, 46 scores); the slot → pair
 > converter against its JS twin (`npm run pairs-gate`); the three engine images
 > with the converter in the JS instruction model (`npm run engine:gate`,
 > `npm run engine:score`). `npm run sgdk:lint` type-checks the glue against a

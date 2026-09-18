@@ -740,7 +740,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (45 scores; every score
+same ports, same frames, same order. `npm run c-gate` (46 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +758,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 45 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 46 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -1016,17 +1016,20 @@ the MMB (mmb.md §10). A score's PCM voice count is the highest `pcmN` it uses;
 it is written in the MMB header and picks the engine image (§5).
 
 A `PCM_NOTE_ON` becomes a `PCM_START` in the frame (§6.3): the note's own
-blob, END and WRAP. A shot plays to its end. A looping note loops; its
-`PCM_NOTE_OFF` becomes a `PCM_RETARGET` to the sample's end with WRAP at
-silence, so the tail plays out.
+blob, END and WRAP. Whether it loops is the NOTE's (`:mode loop`, bit 7 of
+the opcode's note byte), not the sample's: a shot plays to its end even on a
+sample whose def loops. A looping note loops; its `PCM_NOTE_OFF` becomes a
+`PCM_RETARGET` to the sample's end with WRAP at silence, so the tail plays
+out.
 
 **fm6.** A score's first PCM note sends `$2B = $80`, and nothing turns the DAC
 off again: a score that plays PCM owns fm6 as the DAC from then on. A score
 without PCM never writes it, and fm6 is FM.
 
 **Loop points** start as the sample's `:loop-start` / `:loop-end` /
-`:loop-len`, mapped to baked bytes by the exporter and rounded to whole blocks
-by the sequencer (`pcm_loop_points`, twin of `live/src/pcm-model.js`
+`:loop-len` (the whole sample when the def sets none), mapped to baked bytes by
+the exporter, with the track's own loop writes laid over them, and rounded to
+whole blocks by the sequencer (`pcm_loop_points`, twin of `live/src/pcm-model.js`
 `pcmLoopPoints`):
 
 ```
@@ -1042,9 +1045,15 @@ one-cycle loop the rounding is a detune.
 edge's RETARGET exists for beyond the release. `PARAM_SET` / `PARAM_SWEEP` on
 `LOOP_START` (0x43), `LOOP_END` (0x44) or `LOOP_LEN` (0x45) carries a byte
 offset into the playing blob (opcodes.md §7); the voice keeps its live `ls` /
-`le` / `llen`, seeded from the note's own points, and a write recomputes END
-and WRAP through the same `pcm_loop_points` and sends one `PCM_RETARGET`.
-`LOOP_LEN` holds the length when `LOOP_START` moves; `LOOP_END` pins the end.
+`le` / `llen`, and a write recomputes END and WRAP through the same
+`pcm_loop_points` and sends one `PCM_RETARGET`. `LOOP_LEN` holds the length
+when `LOOP_START` moves; `LOOP_END` pins the end.
+
+A write is also KEPT, like any track parameter: the voice remembers the last
+start and the last bound (`o_ls`, `o_bound` and which of END/LEN it was), and
+each loop note starts from the def's loop with them laid over it in the same
+terms. So `:loop-start 100ms :loop-len 16 c` loops the note it precedes, and
+the notes after it.
 
 Two things this needs, both of which the sequencer does:
 
@@ -1056,7 +1065,8 @@ Two things this needs, both of which the sequencer does:
   regardless would spend six bytes of every slot on it, sixty times a second.
   The voice remembers the last END/WRAP it sent (`sent_end`/`sent_wrap`).
 
-A released voice is a shot, so loop writes after a note-off do nothing.
+A released voice is a shot, so loop writes after a note-off do not move its
+sound — they are kept for the next loop note.
 
 **Per-channel volume (`:vel` + `:vol`).** `:vel` and `:vol` on a `pcmN` channel
 ride the FM/PSG velocity/fader ladder (2 dB/step). The sequencer composes them

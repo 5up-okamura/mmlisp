@@ -4,8 +4,8 @@
 // Lowers compiled IR (docs/ir.md) into the MMB binary container (docs/mmb.md,
 // docs/opcodes.md) the Z80 driver decodes in place. Follows the export-vgm.js
 // pattern: pure function, IR in → Uint8Array out, plus a diagnostics list for
-// everything the M1 stream cannot carry (macro specs, dynamic sweep endpoints,
-// per-note PCM modes) so the caller can warn instead of silently degrading.
+// everything the M1 stream cannot carry (macro specs, dynamic sweep endpoints)
+// so the caller can warn instead of silently degrading.
 //
 // Key lowerings (see docs/opcodes.md):
 // - Time: tick-stamped IR events → delta/duration stream. NOTE_ON/REST/TIE/
@@ -1081,9 +1081,17 @@ export function encodeMmb(ir, opts = {}) {
           }
           stream.u8(OPCODE.PCM_NOTE_ON);
           stream.u8(sampleId);
-          stream.u8(midiNote(a.pitch));
-          stream.raw(encodeDuration(a.length ?? 0));
-          clock += a.length ?? 0;
+          // Bit 7: the note loops (`:mode loop`). The entry already carries
+          // the pitch; the low bits only name it.
+          stream.u8((midiNote(a.pitch) & 0x7f) | (a.mode === "loop" ? 0x80 : 0));
+          // A loop note's release is a PCM_NOTE_OFF at its gate. A gate
+          // shorter than the note has to END the note's dur there, or the
+          // off waits for the note's end; the rest of the length becomes the
+          // REST the next event's syncClock writes.
+          const gated = a.mode === "loop" && a.gate > 0 && a.gate < (a.length ?? 0);
+          const dur = gated ? a.gate : a.length ?? 0;
+          stream.raw(encodeDuration(dur));
+          clock += dur;
           break;
         }
         case "PCM_NOTE_OFF": {
@@ -1455,7 +1463,7 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
     if (!bakeable) {
       fallbackFor.set(s.name, push({
         flags: 0, off: intern(padBlock(data)), len: padBlock(data).length, srcFrames: data.length,
-        loopStart: 0, loopEnd: 0,
+        loopStart: 0, loopEnd: data.length,
       }));
       continue;
     }
@@ -1474,7 +1482,10 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
     for (const n of notes) {
       const to = pcmBakeRateAt(n, rateHz);
       const raw = resample8(data, rate, to);
-      let ls = 0, le = 0, looped = hasLoop;
+      // Every entry carries a loop, because the NOTE decides whether it loops
+      // (`:mode loop`, PCM_NOTE_ON's note bit 7): a def with no loop points
+      // loops the whole sample. The flag records only that the def set some.
+      let ls = 0, le = raw.length, looped = hasLoop;
       if (hasLoop) {
         // A blob baked for note n plays `to` bytes a second, so a time in the
         // sample maps to a byte offset with one multiply — the same one the
@@ -1486,8 +1497,8 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
         if (le <= ls) {
           diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
             `sample "${s.name}" has a loop that resampled to ${le - ls} bytes `
-              + `at note ${n}; baked without a loop`);
-          looped = false; ls = 0; le = 0;
+              + `at note ${n}; a loop note loops the whole sample`);
+          looped = false; ls = 0; le = raw.length;
         }
       }
       const bytes = padBlock(raw);

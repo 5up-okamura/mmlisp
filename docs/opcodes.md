@@ -226,7 +226,7 @@ the deduped MMB and requires an unchanged mismatch baseline.
 | 0xA2 | CSM_RATE         | flags u8, then const or swept form (below)           | M2    |
 | 0xA3 | FM3_MODE         | mode u8 (0 normal, 1 special/independent-OP, 2 CSM)  | M3    |
 | 0xA4 | FM3_OP_PITCH     | op u8 (1–4), note u8                                 | M3    |
-| 0xC0 | PCM_NOTE_ON      | sample u8, note u8, dur                              | M2    |
+| 0xC0 | PCM_NOTE_ON      | sample u8, note u8 (bit7 = loop), dur                | M2    |
 | 0xC1 | PCM_NOTE_OFF     | —                                                    | M2    |
 | 0xE0 | MACRO_SET        | macro_id u8                                          | M3    |
 | 0xE1 | PARAM_ADD_VAL    | target u8, slot u8                                   | M3    |
@@ -268,9 +268,14 @@ Notes:
   note-less `(fm3 …)` track) sets `$27` bit6 first. (The v0.1 draft reserved
   0xA4 for REG_WRITE; REG_WRITE is dropped — see §8.)
 - **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id). The exporter bakes one
-  entry per (sample, note), so the id already carries the pitch and `note`
-  only names it (mmb.md §10.1). A looped sample loops until PCM_NOTE_OFF, which
-  plays its tail out; `dur = 0x00` holds until the host releases it.
+  entry per (sample, note), so the id already carries the pitch and `note`'s
+  low seven bits only name it (mmb.md §10.1). **Bit 7 of `note` says the note
+  loops** (`:mode loop`): it loops on the entry's loop, with the track's
+  LOOP_* writes laid over it, until PCM_NOTE_OFF, which plays its tail out.
+  Clear, the note is a shot and plays once, whatever the entry's loop.
+  `dur = 0x00` holds until the host releases it. A loop note whose gate is
+  shorter than its length ends `dur` at the gate, where its PCM_NOTE_OFF
+  stands, and the rest of the length is a REST.
 - **MACRO_SET / MACRO_CLEAR** drive the macro engine (implemented — mmb.md §15,
   driver.md §13). Macros are sticky track state: `MACRO_SET {macro_id}` binds
   MACRO_TABLE[macro_id] as the active macro for its target (replacing any

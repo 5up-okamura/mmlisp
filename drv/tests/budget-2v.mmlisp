@@ -6,5 +6,5 @@
 ; nothing else happening.
 (def blip :sample :file "blip.wav")
 (def pad  :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
-(pcm1 pad  :mode loop :tempo 120 :oct 4 :len 1 :vel 15   c c c c c c c c)
-(pcm2 pad  :mode loop :tempo 120 :oct 5 :len 1 :vel 15   c c c c c c c c)
+(pcm1 pad  :tempo 120 :oct 4 :len 1 :vel 15   :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c)
+(pcm2 pad  :tempo 120 :oct 5 :len 1 :vel 15   :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c :mode loop c)

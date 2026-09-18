@@ -1246,18 +1246,22 @@ to do with playback. On a def they set the sample's own sustain loop:
 (def pad :sample :file "pad.wav" :loop-start 300ms :loop-len 100ms)
 ```
 
-On a track they MOVE it while the note sounds, as a literal or as a curve — a
-thing no other Mega Drive driver offers:
+On a track they set the loop of the notes that follow, like any track
+parameter — laid over the def's, and kept until the next write — and they MOVE
+it while a note sounds, as a literal or as a curve, a thing no other Mega
+Drive driver offers:
 
 ```lisp
-(pcm1 pad :mode loop :len 1
-  :loop-start 300ms :loop-len 16                 c   ; a 16th-note loop, head fixed
-  :loop-len (linear :from 100ms :to 2ms :len 2)  c   ; tighten it to a buzz
-  :loop-start (linear :from 100ms :to 900ms :len 2) c) ; slide it through the sample
+(pcm1 pad :len 1
+  :loop-start 300ms :loop-len 16                    :mode loop c ; a 16th-note loop, head fixed
+  :loop-len (linear :from 100ms :to 2ms :len 2)     :mode loop c ; tighten it to a buzz
+  :loop-len 100ms
+  :loop-start (linear :from 100ms :to 900ms :len 2) :mode loop c) ; slide it through the sample
 ```
 
-`:loop-len` holds the length when `:loop-start` moves — which is what the third
-line above relies on. `:loop-end` pins the end instead, and then moving the
+A curve keeps its last value too: the second line ends at 2 ms, which is why
+the third sets `:loop-len` again. `:loop-len` holds the length when
+`:loop-start` moves — which is what the third line relies on. `:loop-end` pins the end instead, and then moving the
 start changes the length. A curve's ends are lengths too, so write `:from` and
 `:to` rather than the `A..B` range sugar (`8...4` would be unreadable).
 
@@ -1267,8 +1271,8 @@ Three limits worth knowing:
   1.58 at 2, 2.40 at 3. That is also the shortest loop there is, so the
   highest buzz `pcm1` reaches is about 900 Hz and the pitches below it are
   `14375.7 / 16n` Hz. **This is a rhythmic device, not a pitch one.**
-- A note-off ends the loop: the voice plays its tail and parks, and loop
-  writes after that do nothing.
+- A note-off ends the loop: the voice plays its tail and parks. Loop writes
+  after that do not move the tail; they are kept for the next loop note.
 - **Frame of reference.** On a def the value is time in the sample's own
   recording, so a loop stays where you set it however the note transposes. On a
   track it is time as you HEAR it, so `:loop-len 16` is a 16th note at every
@@ -1282,9 +1286,11 @@ Three limits worth knowing:
   rejected is every RUNTIME pitch move on a pcm track: `:pitch`, `:semi`,
   `(glide …)` and a `(macro :pitch …)` vibrato are `E_PCM_NO_PITCH` rather
   than silently dropped.
-- **`:mode`** is per-note (not sticky): `shot` (default) plays start→end
-  once; `loop` plays the attack, cycles the loop until KEY-OFF (a
-  `PCM_NOTE_OFF` at the gate), then plays the release tail.
+- **`:mode`** is per-note (not sticky), and it is the NOTE that decides:
+  `shot` (default) plays start→end once, even on a sample whose def has loop
+  points; `loop` plays the attack, cycles the loop until KEY-OFF (a
+  `PCM_NOTE_OFF` at the gate), then plays the release tail. A `loop` note on a
+  def with no loop points loops the whole sample.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
   > only `loop` mode honors KEY-OFF.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).

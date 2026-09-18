@@ -174,7 +174,7 @@ typedef struct {
 /* ── PCM voice (driver.md §14) ─────────────────────────────────────────────
  * The engine owns playback — every pointer is the Z80's — so the sequencer
  * keeps only what its commands need: the note's blob, whether it loops (a
- * note-off sends its release), and the level. */
+ * note-off sends its release), the loop, and the level. */
 typedef struct {
   uint8_t started;    /* a START has been sent since load: PCM_VOL is worth sending */
   uint8_t looping;    /* the running note loops */
@@ -195,6 +195,12 @@ typedef struct {
    * same 16-byte block, so a RETARGET goes out only when the block changes. */
   uint16_t sent_end, sent_wrap;
   uint8_t sent_pts;
+  /* THE TRACK'S OWN LOOP WRITES, sticky like any other track parameter: a loop
+   * note starts from the def's loop with these laid over it, so a :loop-start
+   * written before the note is the note's. o_kind: 0 none, else the last of
+   * T_LOOP_END / T_LOOP_LEN written, with its value in o_bound. */
+  uint8_t o_has_ls, o_kind;
+  uint32_t o_ls, o_bound;
 } MMLPcmVoice;
 
 typedef struct {

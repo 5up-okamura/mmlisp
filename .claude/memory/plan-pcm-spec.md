@@ -37,7 +37,11 @@ PCM in any layer.
   source frames ("I want to say exactly from here to here"), with the same
   notation on the def and the track. `:offset`/`:frames` cut the sample out of
   the bank; `:loop-*` are playback. The shortest loop is one 16-byte block, and
-  the user accepted that.
+  the user accepted that. DECIDED 2026-09-18 (user, after the listening set):
+  the NOTE's `:mode` decides whether it loops (PCM_NOTE_ON note bit 7; a loop
+  note on a def with no points loops the whole sample, a shot always plays
+  once), and a track's loop writes are sticky, laid over the def's at each
+  note-on. `npm run pcm-loop` checks it against the score, not the twin.
 - **fm6 per song (D6).** A score with PCM owns fm6 as the DAC all song; fm6 FM
   and PCM in one score is an error. "fm6 in the gaps" is gone.
 - **The browser sounds like the driver (D0).** "Otherwise this is not a
@@ -59,16 +63,6 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   BlastEm number; the host writes with `movep.l`. First hardware run decides
   whether the images keep the edge (`npm run light-study -- --target 0.95`
   prints the ladder with a margin).
-- **Two loop semantics to decide (found 2026-09-18 making the listening set,
-  `drv/out/loop-listen/`, `npm run pcm-render`).** (1) A track loop write
-  before a note is lost: note-on resets to the def's loop (C `pcm_note_on`,
-  JS `PcmVoices.start`), so language.md §16's example does not work; proposed:
-  track loop values sticky, laid over the def's at each note-on. (2) Looping
-  is decided by the def having loop points, not by the note's `:mode` (the
-  MMB does not carry it); proposed: a flag bit on PCM_NOTE_ON — `loop` on a
-  def with no points loops the whole sample, `shot` always plays once.
-  pcm-ab cannot see either (both sides share pcm-voices.js); the fix needs a
-  gate that checks the intended sound.
 - **PCM SE** runs only in `drv-player.js`; the C sequencer and the SGDK host
   have no SE yet ([[plan-se]]).
 - **D7 sample keys** — `:bit-depth`, `:volume`, `:compress`, `:reverb`: the

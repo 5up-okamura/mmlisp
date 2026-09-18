@@ -1930,6 +1930,7 @@ export class IRPlayer {
       track: ev._trackIndex ?? null,
       sample,
       midi,
+      mode: ev.args?.mode === "loop" ? "loop" : "shot",
       vel: Number.isFinite(velRaw) ? velRaw : 15,
     });
   }

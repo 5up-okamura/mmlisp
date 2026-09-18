@@ -1,0 +1,15 @@
+; M4 gate: WHICH loop a note plays (pcm-loop-gate.mjs checks each START).
+;   1  a shot on a def that loops plays once — the NOTE decides, not the def
+;   2  a loop note on a def with no loop points loops the whole sample
+;   3  loop points written on the track BEFORE the note are the note's
+;   4  …and stay for the next note (track parameters are sticky)
+;   5  :loop-end pins the end; the start written earlier still holds
+(def pcm-voices 1)
+(def pad :sample :file "pad.wav" :loop-start 16ms :loop-end 45ms)
+(def voice :sample :file "shinobipcm.wav")
+(pcm1 pad :tempo 120 :oct 4 :len 4 :vel 15
+  c
+  voice :mode loop c
+  :loop-start 100ms :loop-len 16 :mode loop c
+  :mode loop c
+  :loop-end 300ms :mode loop c)

@@ -6,4 +6,4 @@
 (def blip :sample :file "blip.wav")
 (def pad  :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 blip :tempo 120 :oct 4 :len 4 :vel 15   c   e   g   c)
-(pcm2 pad  :mode loop :oct 4 :len 2 :vel 12   c :gate* 0.5 e _ _)
+(pcm2 pad  :oct 4 :len 2 :vel 12   :mode loop c :gate* 0.5 :mode loop e _ _)
