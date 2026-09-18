@@ -600,9 +600,29 @@ export function encodeMmb(ir, opts = {}) {
     };
 
     const events = track.events ?? [];
+    // A TRACK IS ONE VOICE. Where the IR overlaps timed events on it — a
+    // `(delay …)` tap longer than the gap to the next one, a `:prio` layer's
+    // note over a lower layer's rest — the editor plays the later event and
+    // cuts the earlier one short. The stream does the same: a duration is
+    // clipped at the next timed event, and one that starts on the same tick as
+    // the next is dropped (the later one sounds). Unclipped, the stream clock
+    // would run past the next event and push everything after it late.
+    const TIMED = new Set(["NOTE_ON", "REST", "TIE", "PCM_NOTE_ON"]);
+    const nextTimed = new Array(events.length).fill(Infinity);
+    for (let i = events.length - 1, next = Infinity; i >= 0; i--) {
+      nextTimed[i] = next;
+      if (TIMED.has(events[i].cmd)) next = events[i].tick;
+    }
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
-      const a = ev.args ?? {};
+      let a = ev.args ?? {};
+      if (TIMED.has(ev.cmd) && (a.length ?? 0) > 0 && nextTimed[i] < ev.tick + a.length
+        && nextTimed[i] >= ev.tick) {
+        const room = nextTimed[i] - ev.tick;
+        if (room === 0) continue;
+        a = { ...a, length: room };
+        if (a.gate != null && a.gate >= room) delete a.gate;
+      }
       // Voice coalescing: a full-voice PARAM_SET burst folds into one VOICE_SET
       // emitted at its first voice param; the rest of the burst is dropped.
       if (vplan && vplan.drop.has(i)) {

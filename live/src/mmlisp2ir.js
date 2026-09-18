@@ -1458,10 +1458,14 @@ function flattenPriorityLayers(head, layers, diagnostics) {
     occupied.push(...committed);
   }
 
+  // A layer's rests say nothing once the layers share one voice — a lower
+  // layer's note may sound through a higher layer's rest and the other way
+  // round — so the merged stream keeps none: its gaps are rests already (the
+  // MMB exporter writes one wherever time passes without a note).
   const base = layers[0].trackData;
   base.events = layers
     .flatMap((l) => l.trackData.events)
-    .filter((ev) => !drop.has(ev))
+    .filter((ev) => !drop.has(ev) && ev.cmd !== "REST")
     .sort((a, b) => a.tick - b.tick);
   return base;
 }

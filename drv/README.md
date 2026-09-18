@@ -49,7 +49,7 @@ npm run verify:all
 | --- | --- |
 | `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same engine images, and the two generated files are what the images build to now |
 | `selftest` | the assembler and the emulator against their own cases |
-| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 47 scores |
+| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 48 scores |
 | `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
 | `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
