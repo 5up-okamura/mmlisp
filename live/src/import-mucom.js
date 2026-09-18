@@ -46,16 +46,10 @@ const SSG_LFO_CENTS_PER_UNIT = 30 / (30 * 4); // 0.25
 // rhythm ROM, not in the `#pcm` bank, so there is nothing to import them from.
 const DROP_PARTS = { G: "rhythm" };
 
-// mucom's K parts only ever use o1/o2, while MMLisp clamps sample pitch to MIDI
-// 36-84 — an FM-style -1 shift would clamp every drum. Shift up instead so o1
-// lands on :oct 4, and let the emitted :rate carry the real pitch (see
-// MUCOM_PCM_BASE_RATE in mucom-pcm.js).
-const MUCOM_PCM_OCT_SHIFT = 3;
-// Default octave for a K part that never states an absolute one. mucom's o6
-// default + the +3 shift would be `:oct 9`, whose bare note is MIDI 120 → clamped
-// to 84 (4× — a degenerate over-transpose). Until the note→rate mapping is
-// reworked to match mucom's per-octave ADPCM behaviour, fall back to the native
-// reference (`:oct 4` = C4 = 1× rate) so a bare drum plays unshifted.
+// Where mucom's native ADPCM octave lands: o1 plays the sample at its own rate,
+// and so does MMLisp's C4 (`:oct 4`) at the def's `:rate`. K octaves mirror
+// around it (see octSet). It is also the default for a K part that never states
+// an octave — mucom's own o6 would play a drum at 1/32 of its rate.
 const MUCOM_PCM_DEFAULT_OCT = 4;
 // mucom velocity is 0-255 on K but 0-15 on FM/SSG. On K it IS the ADPCM-B level
 // register — the driver writes `TOTALV*4 + v` to 0x0B, TOTALV being 0 outside a
@@ -74,10 +68,10 @@ const MUCOM_PCM_VEL_MAX = 255; // register range, for clamping relative v+/v-
 // mucom K parts set `v` explicitly, so this only backs a bare v+/v- with none.
 const MUCOM_PCM_VEL_DEFAULT = 64;
 
-// mucom octave -> MMLisp :oct, per part kind. FM reads one higher than MMLisp;
-// SSG/PSG uses a different frequency table and needs no shift.
-const octShiftFor = (letter) =>
-  letter in PCM_PARTS ? MUCOM_PCM_OCT_SHIFT : letter in SSG_PARTS ? 0 : -1;
+// mucom octave -> MMLisp :oct for FM and SSG. FM reads one higher than MMLisp;
+// SSG/PSG uses a different frequency table and needs no shift. K parts do not
+// shift: they mirror around MUCOM_PCM_DEFAULT_OCT (octSet).
+const octShiftFor = (letter) => (letter in SSG_PARTS ? 0 : -1);
 const MUCOM_DEFAULT_OCT = 6; // mucom's default octave when a part sets none
 // The smallest cut that re-attacks, for parts that never set mucom's `q` — one
 // frame is inaudible as a gap but restores the note-per-note attack mucom gives
@@ -1287,7 +1281,7 @@ export function mucomToMmlisp(parsed) {
     // must resolve its @n against the bank, and a sample def IS referencable
     // from a macro body by name.
     const isPcm = pcmMacros.has(mn);
-    renderOps(mac.ops, { vel: null, isPcm, octShift: isPcm ? MUCOM_PCM_OCT_SHIFT : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    renderOps(mac.ops, { vel: null, isPcm, octShift: -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = toks.join(" ").trim();
     if (!content) continue;
     usableMacros.add(mn);

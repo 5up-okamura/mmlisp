@@ -443,9 +443,9 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
   ticks (`× 384/C`); `%<clocks>` direct lengths; dots (incl. dots on the running
   default length, `f.`); tie `^` and slur/tie `&` → the `~` connector.
 - **Bar lines** `|` → MMLisp `|` (carried through verbatim as editorial markers).
-- **Octave** (FM reads one higher → `:oct N-1`; SSG no shift; PCM `+3`, so the
-  o1/o2 mucom drums land inside MMLisp's MIDI 36–84 sample range and the real
-  pitch rides `:rate`), relative `<`/`>`.
+- **Octave** (FM reads one higher → `:oct N-1`; SSG no shift; K is inverted —
+  a higher mucom octave plays the sample slower — so it mirrors around
+  o1 = `:oct 4`, the sample's own rate), relative `<`/`>`.
 - **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`
   (dropped on K — PCM is a soft-mix voice on the fm6 DAC and owns no pan lane).
 - **Gate** `q<n>` → `:gate-` (key off n clocks early); parts that never set `q`
