@@ -349,20 +349,34 @@ function buildStochasticLuts(size, seed) {
     perlinRaw.push(a + (b - a) * u);
   }
 
-  // Brown noise: leaky integrator, then min-max normalize.
-  const brownRaw = [];
-  let y = 0;
-  for (let i = 0; i < size; i++) {
-    y = 0.99 * y + 0.01 * white[i];
-    brownRaw.push(y);
-  }
-
   return {
+    white,
     noise: normalizeToUnit(white),
     pink: normalizeToUnit(pinkRaw),
     perlin: normalizeToUnit(perlinRaw),
-    brown: normalizeToUnit(brownRaw),
+    brown: brownTable(white, BROWN_DEFAULT_LEAK),
   };
+}
+
+// Brown noise: a leaky integrator over the seed's white noise, then min-max
+// normalized. `leak` is the curve's `:leak` (0 = white, towards 1 = slower
+// drift); each (seed, leak) is built once.
+const BROWN_DEFAULT_LEAK = 0.99;
+function brownTable(white, leak) {
+  const raw = [];
+  let y = 0;
+  for (let i = 0; i < white.length; i++) {
+    y = leak * y + (1 - leak) * white[i];
+    raw.push(y);
+  }
+  return normalizeToUnit(raw);
+}
+function brownLutFor(luts, leak) {
+  if (leak === BROWN_DEFAULT_LEAK) return luts.brown;
+  const cache = (luts.brownByLeak ??= new Map());
+  let lut = cache.get(leak);
+  if (!lut) cache.set(leak, (lut = brownTable(luts.white, leak)));
+  return lut;
 }
 
 const STOCHASTIC_LUTS = buildStochasticLuts(
@@ -477,11 +491,9 @@ function sampleStochasticCurve(curve, phase, params) {
     }
     base = norm > 0 ? total / norm : sampleLut(perlinLut, phase, hold);
   } else if (curve === "brown") {
-    const leak = Math.max(0, Math.min(0.9999, Number(params?.leak) || 0.99));
-    const brown = sampleLut(brownLut, phase, hold);
-    const noise = sampleLut(noiseLut, phase, hold);
-    const whiten = clamp01((0.99 - leak) / 0.99);
-    base = brown * (1 - whiten) + noise * whiten;
+    const raw = Number(params?.leak ?? BROWN_DEFAULT_LEAK);
+    const leak = Number.isFinite(raw) ? Math.max(0, Math.min(0.9999, raw)) : BROWN_DEFAULT_LEAK;
+    base = sampleLut(brownLutFor(luts, leak), phase, hold);
   }
 
   if (jitter <= 0) return base;

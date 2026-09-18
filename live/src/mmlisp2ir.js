@@ -441,6 +441,33 @@ function parseGateFamily(keyword, val, bpm = null) {
     : { type: "ticks", value: ticks };
 }
 
+// `:oct` / `:vel` resolve at compile time (§8): a number, a let-bound name or
+// an expression. A `$slot` or a curve cannot be one — both are errors rather
+// than the silent no-op they used to be.
+function compileTimeScalar(node, raw, op, evalEnv, keyword, diagnostics, trackName, src, typedDefs) {
+  if (node?.kind === "list") {
+    const head = atomValue(node.items?.[0]);
+    if (isEvalHead(head)) {
+      const v = evalScalarValue(node, evalEnv, makeEvalCtx(diagnostics, trackName, src, typedDefs));
+      return v === null ? null : v;
+    }
+    pushDiag(diagnostics, "error", "E_VALUE_COMPILE_TIME",
+      `${keyword} takes a number or an expression, not (${head ?? ""} …) — use a (macro …) for motion`,
+      src, trackName);
+    return null;
+  }
+  const bound = lookupBound(evalEnv, raw);
+  if (typeof bound === "number") return bound;
+  const v = op === "*" ? parseFloat(raw) : parseIntLike(raw);
+  if (v !== null && !Number.isNaN(v)) return v;
+  pushDiag(diagnostics, "error", "E_VALUE_COMPILE_TIME",
+    typeof raw === "string" && raw.startsWith("$")
+      ? `${keyword} resolves at compile time and cannot read ${raw}`
+      : `${keyword} takes a number, not ${raw}`,
+    src, trackName);
+  return null;
+}
+
 function gateInvalid(diagnostics, keyword, raw, src, trackName) {
   pushDiag(diagnostics, "error", "E_GATE_INVALID",
     keyword === ":gate*"
@@ -1679,6 +1706,15 @@ function parseMacroSpec(
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
   // here and clamp only after combining with the base (add/scaleMacroValues).
   const clampVal = (v) => (clamp ? clampForTarget(target, v) : v);
+  // One macro value: a number (rounded where it binds, like every value) or
+  // the target's own symbol (`white2`, `left`), in a vector and as a scalar.
+  const tokenValue = (val) => {
+    if (typeof val !== "string") return null;
+    if (target === "NOISE_MODE" && val in NOISE_MODE_MAP) return NOISE_MODE_MAP[val];
+    if (target === "PAN" && val in PAN_MAP) return PAN_MAP[val];
+    const n = parseNumberLike(val);
+    return n === null ? null : Math.round(n);
+  };
   // Step-vector or multi-stage form: [...]
   if (node.kind === "list" && node.bracket === "[]") {
     const items = node.items.filter((n) => n.kind !== "comment");
@@ -1736,17 +1772,15 @@ function parseMacroSpec(
         releaseIndex = steps.length;
         continue;
       }
-      let n = parseIntLike(val);
-      if (n === null && target === "NOISE_MODE" && val in NOISE_MODE_MAP) {
-        n = NOISE_MODE_MAP[val];
-      }
-      if (n === null && target === "PAN" && val in PAN_MAP) {
-        n = PAN_MAP[val];
-      }
+      const n = tokenValue(val);
       if (n !== null) {
         steps.push(clampVal(n));
       } else if (val === "_") {
         steps.push(null); // hold: advance 1 frame, no write
+      } else if (diagnostics) {
+        // Skipping it would shift every later step: say so instead.
+        pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
+          `${val ?? "(…)"} is not a value for this macro`, nodeSrc(item), trackName);
       }
     }
     // src spans the whole `[...]` literal so the player can highlight the
@@ -1846,7 +1880,7 @@ function parseMacroSpec(
   // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
   // `[:hold N]` (single value, looped). Mainly for :keyon (1 = fire every
   // :step, 0 = never).
-  const scalar = parseIntLike(atomValue(node));
+  const scalar = tokenValue(atomValue(node));
   if (scalar !== null) {
     return {
       type: "steps",
@@ -2883,13 +2917,9 @@ function compileChannelBody(
             case ":oct*": {
               // absolute / +add / *multiply against the running octave base
               const { op } = opSuffix(val);
-              const bound = lookupBound(evalEnv, rawVal); // let-bound scalar
-              const raw =
-                typeof bound === "number"
-                  ? bound
-                  : op === "*"
-                    ? parseFloat(rawVal)
-                    : parseIntLike(rawVal);
+              const raw = compileTimeScalar(
+                items[i], rawVal, op, evalEnv, val, diagnostics, trackName, nodeSrc(node), typedDefs,
+              );
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultOct;
                 const next =
@@ -2965,13 +2995,9 @@ function compileChannelBody(
               // per-note velocity (KEY-ON scoped, sticky): absolute / +add /
               // *multiply against the running vel base (default 15).
               const { op } = opSuffix(val);
-              const bound = lookupBound(evalEnv, rawVal); // let-bound scalar
-              const raw =
-                typeof bound === "number"
-                  ? bound
-                  : op === "*"
-                    ? parseFloat(rawVal)
-                    : parseIntLike(rawVal);
+              const raw = compileTimeScalar(
+                items[i], rawVal, op, evalEnv, val, diagnostics, trackName, nodeSrc(node), typedDefs,
+              );
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultVel ?? 15;
                 const next =
@@ -3090,7 +3116,17 @@ function compileChannelBody(
             }
             case ":tempo": {
               const valueNode = items[i];
-              const bpm = parseNumberLike(rawVal);
+              // A number, or an expression that evaluates to one (§7); a curve
+              // is a TEMPO_SWEEP below.
+              const bpm = valueNode?.kind === "list" && isEvalHead(atomValue(valueNode.items?.[0]))
+                ? evalScalarValue(valueNode, evalEnv,
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs))
+                : parseNumberLike(rawVal);
+              if (bpm !== null && !(bpm > 0)) {
+                pushDiag(diagnostics, "error", "E_TEMPO_INVALID",
+                  `:tempo must be above 0 BPM, not ${bpm}`, nodeSrc(node), trackName);
+                break;
+              }
               if (bpm !== null && bpm > 0) {
                 // At tick 0 the song's tempo is the last track's leading one
                 // (last writer wins, §5): convert this track's lengths at the
@@ -5056,6 +5092,9 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
       // every key that is also a body directive (:len, :gate, :oct, :vel …),
       // so leave it there instead of reading an atom that is not one.
       if (node.items[i + 1]?.kind === "list" && !HEAD_ONLY_KEYS.has(key)) break;
+      // …and so is an :oct / :vel that is not a plain integer (a let name, a
+      // `$slot`): the body resolves or reports it.
+      if ((key === ":oct" || key === ":vel") && parseIntLike(atomValue(node.items[i + 1])) === null) break;
       inlineOpts[key] = atomValue(node.items[i + 1]);
       i += 2;
     }

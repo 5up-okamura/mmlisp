@@ -245,7 +245,7 @@ head position, and equally as body directives.)
 | `:vel`     | 0–15                      | Note-on velocity (also `:vel+` / `:vel*`)                |
 | `:vol`     | 0–31 or curve             | Channel fader → `PARAM_SET` / `PARAM_SWEEP`              |
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
-| `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick         |
+| `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
@@ -578,8 +578,9 @@ Dynamic Parameters slider per slot. Names must not start with `$`
 malformed option (`:step 0`, `:unit beat`) is `E_DEFVAL_OPTION`.
 
 - `$name` references a slot in a value or operator-operand position of a
-  runtime parameter write (§5.1). `vel`/`oct` resolve at compile time and do
-  not accept `$`.
+  runtime parameter write (§5.1). `vel`/`oct` resolve at compile time — a
+  number, a `let` name or an expression — so a `$` there, or a curve, is
+  `E_VALUE_COMPILE_TIME`.
 - `$time` is built in: elapsed 60 Hz frames since track start, read-only.
 - An undefined `$name` raises `E_VAL_UNDEFINED`.
 - A slot value is always clamped to its declared `[min, max]` finite range —
@@ -762,13 +763,13 @@ macros stay unclamped until combined with the base).
 
 | Form                        | Meaning                                              |
 | --------------------------- | ---------------------------------------------------- |
-| `[v v v …]`                 | Step vector — one value per `:step`                  |
+| `[v v v …]`                 | Step vector — one value per `:step`. A value is a number (rounded where it binds) or the target's symbol (`left`, `white2`); anything else is `E_MACRO_VALUE_INVALID` |
 | `[… :hold …]`               | `:hold` marks the loop point: steps from it cycle until key-off |
 | `[… :off …]`                | `:off` marks the release section: steps after it run after key-off |
 | `_` (inside a vector)       | Hold: advance one step, no write                     |
 | `(curve …)` (§11)           | Sampled every `:step`                                |
 | `[(stage) (stage) …]`       | Multi-stage: curve / `(wait N)` / `(wait key-off)` stages run sequentially |
-| scalar (e.g. `1`)           | Constant signal, equivalent to `[:hold v]`           |
+| scalar (e.g. `1`, `left`)   | Constant signal, equivalent to `[:hold v]`           |
 | `none`                      | Clear the target's macro                             |
 
 Multi-stage rules: a stage that loops (loop-wave curve, or any curve with the
