@@ -21,6 +21,7 @@
     "mirrors": "node tools/rate-mirrors.mjs && node tools/emit-images.mjs --check && node tools/emit-bin.mjs --check",
     "emit-images": "node tools/emit-images.mjs",
     "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run pairs-gate && npm run sgdk:lint && npm run engine:gate && npm run engine:score && npm run verify:ab && npm run pcm-ab",
-    "light-study": "node tools/light-study.mjs"
+    "light-study": "node tools/light-study.mjs",
+    "pcm-render": "node tools/pcm-render.mjs"
   }
 }

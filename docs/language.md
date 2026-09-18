@@ -1132,7 +1132,7 @@ sample symbol). How many voices play at once is a whole-song choice (§1):
 (def pcm-voices 3)
 (def kick  :sample :file "sounds/kick.wav")
 (def snare :sample :file "sounds/snare.wav" :rate 11025)
-(def pad   :sample :file "sounds/pad.wav" :loop-start 0 :loop-end 4096)
+(def pad   :sample :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms)
 
 (pcm1 kick :tempo 120  :len 4  c _ c _)
 (pcm2 snare :len 4  _ c _ c)
