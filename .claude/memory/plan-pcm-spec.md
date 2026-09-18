@@ -30,7 +30,8 @@ PCM in any layer.
 - **Work margin: to the edge (D10 (3)).** "To the edge is fine if it plays."
   The margin only guards cost-model error and waits measured on BlastEm; a
   mis-costed slot runs slightly flat, never crashes.
-- **Loops (D10 round 2 + S3).** The user's aim: start and end changeable per
+- **Loops (D10 round 2 + S3).** Listened to 2026-09-18, the user: glad it was
+  added — "music the Mega Drive has never played". The user's aim: start and end changeable per
   note and by curves, "to fit the performance" — other drivers do not have
   this. Loop points are TIMES (`Nms`, note lengths, frames), never fractions or
   source frames ("I want to say exactly from here to here"), with the same
@@ -58,15 +59,20 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   BlastEm number; the host writes with `movep.l`. First hardware run decides
   whether the images keep the edge (`npm run light-study -- --target 0.95`
   prints the ladder with a margin).
-- **A listening round on loops** (moving `:loop-start` by a curve, short loops
-  where the block rounding detunes).
+- **Two loop semantics to decide (found 2026-09-18 making the listening set,
+  `drv/out/loop-listen/`, `npm run pcm-render`).** (1) A track loop write
+  before a note is lost: note-on resets to the def's loop (C `pcm_note_on`,
+  JS `PcmVoices.start`), so language.md §16's example does not work; proposed:
+  track loop values sticky, laid over the def's at each note-on. (2) Looping
+  is decided by the def having loop points, not by the note's `:mode` (the
+  MMB does not carry it); proposed: a flag bit on PCM_NOTE_ON — `loop` on a
+  def with no points loops the whole sample, `shot` always plays once.
+  pcm-ab cannot see either (both sides share pcm-voices.js); the fix needs a
+  gate that checks the intended sound.
 - **PCM SE** runs only in `drv-player.js`; the C sequencer and the SGDK host
   have no SE yet ([[plan-se]]).
 - **D7 sample keys** — `:bit-depth`, `:volume`, `:compress`, `:reverb`: the
   user wants all of them eventually; today they warn
   (`W_SAMPLE_KEY_UNIMPLEMENTED`).
-- **The mucom importer's `+3` octave shift on K parts** was justified by the
-  C2–C6 clamp, which no longer exists (`live/src/import-mucom.js`
-  `MUCOM_PCM_OCT_SHIFT`). Whether to keep it is the user's call.
 - **Not scheduled:** compile-time premix of overlapping pcm voices (D1 (C));
   measuring XGM2/MDSDRV ROMs on BlastEm as a yardstick.

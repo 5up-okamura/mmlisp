@@ -52,8 +52,8 @@ Index:
   engine they describe was replaced by D10 ([[plan-pcm-spec]]).
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind
   the shipped light engine (D10, landed 2026-09-18) with their reasons, and
-  what is still open** (hardware run, a loop listening round, PCM SE in the C,
-  the D7 sample keys, the mucom importer's octave shift). Read before touching
+  what is still open** (hardware run, two loop semantics to decide, PCM SE in
+  the C, the D7 sample keys). Read before touching
   PCM in any layer.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
