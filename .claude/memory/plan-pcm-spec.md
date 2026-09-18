@@ -40,7 +40,8 @@ PCM in any layer.
   the user accepted that. DECIDED 2026-09-18 (user, after the listening set):
   the NOTE's `:mode` decides whether it loops (PCM_NOTE_ON note bit 7; a loop
   note on a def with no points loops the whole sample, a shot always plays
-  once), and a track's loop writes are sticky, laid over the def's at each
+  once), and `:mode` is STICKY like every parameter — "go back with an
+  explicit `:mode shot`" (user, same day), and a track's loop writes are sticky, laid over the def's at each
   note-on. `npm run pcm-loop` checks it against the score, not the twin.
 - **fm6 per song (D6).** A score with PCM owns fm6 as the DAC all song; fm6 FM
   and PCM in one score is an error. "fm6 in the gaps" is gone.

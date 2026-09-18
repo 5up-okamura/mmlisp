@@ -33,6 +33,7 @@ const want = [
   ["track loop written before the note", voice, loop(voice, at(0.1), at(0.1) + at(sixteenth))],
   ["…sticky for the next note", voice, loop(voice, at(0.1), at(0.1) + at(sixteenth))],
   [":loop-end pins the end, the start holds", voice, loop(voice, at(0.1), at(0.3))],
+  [":mode shot turns the loop off", pad, pcmShotPoints(pad.src, pad.len)],
 ];
 
 const player = new DrvPlayer();

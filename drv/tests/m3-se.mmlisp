@@ -43,7 +43,7 @@
 
 ; track 4 (bgm-pcm): pcm1 (soft-mix voice 0) plays a sustain-looping sample (a
 ; never-ending loop, like m2-pcmloop — the gate frame count caps the horizon).
-(pcm1 pad :oct 4 :len 1 :vel 12  :mode loop c :mode loop c :mode loop c)
+(pcm1 pad :mode loop :oct 4 :len 1 :vel 12  c c c)
 
 ; track 5 (se-pcm): a blip authored on pcm2, remapped to pcm1's channel so it
 ; overwrites voice 0 — the PCM steal (design C). START_SE snapshots the live loop

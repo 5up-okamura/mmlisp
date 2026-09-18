@@ -690,7 +690,7 @@ function emitNoteForTrack(
     // the 32 KB bank is the only limit, so there is no practical-range clamp.
     const pcmRate = Math.pow(2, (pitchToMidi(fullPitch) - 60) / 12);
     const gateTicks = resolveGateTicks(trackState.defaultGate, lengthTicks);
-    const mode = trackState.pcmPendingMode ?? "shot";
+    const mode = trackState.pcmMode; // sticky, like every track parameter
     const sampleDef = trackState.sampleDefs?.get(trackState.pcmSampleName);
     const args = {
       sample: trackState.pcmSampleName,
@@ -724,7 +724,6 @@ function emitNoteForTrack(
       });
     }
     trackState.tick += lengthTicks;
-    trackState.pcmPendingMode = null;
     return;
   }
 
@@ -3137,7 +3136,7 @@ function compileChannelBody(
                   );
                 }
               } else if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
-                trackState.pcmPendingMode = rawVal;
+                trackState.pcmMode = rawVal;
               } else {
                 pushDiag(
                   diagnostics,
@@ -5105,7 +5104,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
         isFm6Track: head === "fm6",
         isNoiseTrack: head === "noise",
         pcmSampleName,
-        pcmPendingMode: null,
+        pcmMode: "shot",
         sampleDefs,
         hasInlineCsmRate: false,
         hasCsmOn: false,

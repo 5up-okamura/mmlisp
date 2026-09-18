@@ -247,7 +247,7 @@ head position, and equally as body directives.)
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick         |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (per-note); `noise`: `white0`–`white3`/`periodic0`–`periodic3` |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:break`   | (no value)                | Early exit of the enclosing counted loop (§13)           |
@@ -1252,11 +1252,11 @@ it while a note sounds, as a literal or as a curve, a thing no other Mega
 Drive driver offers:
 
 ```lisp
-(pcm1 pad :len 1
-  :loop-start 300ms :loop-len 16                    :mode loop c ; a 16th-note loop, head fixed
-  :loop-len (linear :from 100ms :to 2ms :len 2)     :mode loop c ; tighten it to a buzz
+(pcm1 pad :mode loop :len 1
+  :loop-start 300ms :loop-len 16                    c ; a 16th-note loop, head fixed
+  :loop-len (linear :from 100ms :to 2ms :len 2)     c ; tighten it to a buzz
   :loop-len 100ms
-  :loop-start (linear :from 100ms :to 900ms :len 2) :mode loop c) ; slide it through the sample
+  :loop-start (linear :from 100ms :to 900ms :len 2) c) ; slide it through the sample
 ```
 
 A curve keeps its last value too: the second line ends at 2 ms, which is why
@@ -1286,11 +1286,13 @@ Three limits worth knowing:
   rejected is every RUNTIME pitch move on a pcm track: `:pitch`, `:semi`,
   `(glide …)` and a `(macro :pitch …)` vibrato are `E_PCM_NO_PITCH` rather
   than silently dropped.
-- **`:mode`** is per-note (not sticky), and it is the NOTE that decides:
-  `shot` (default) plays start→end once, even on a sample whose def has loop
-  points; `loop` plays the attack, cycles the loop until KEY-OFF (a
+- **`:mode`** is sticky track state like every other parameter — it holds
+  until the next `:mode` — and it is the note, not the sample, that decides:
+  `shot` (the default) plays start→end once, even on a sample whose def has
+  loop points; `loop` plays the attack, cycles the loop until KEY-OFF (a
   `PCM_NOTE_OFF` at the gate), then plays the release tail. A `loop` note on a
-  def with no loop points loops the whole sample.
+  def with no loop points loops the whole sample. Write `:mode shot` to go
+  back.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
   > only `loop` mode honors KEY-OFF.
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).

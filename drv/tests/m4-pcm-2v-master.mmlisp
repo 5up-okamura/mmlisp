@@ -7,4 +7,4 @@
 (def pcm-voices 2)
 (pcm1 blip :tempo 140 :oct 4 :len 8 :vel 15 :vol 31
   c :master 25 e :master 19 g :master 13 c :master 7 e :master 31 g)
-(pcm2 pad :oct 4 :len 2 :vel 12   :mode loop c  :mode loop e)
+(pcm2 pad :mode loop :oct 4 :len 2 :vel 12   c  e)
