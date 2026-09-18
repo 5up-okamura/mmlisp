@@ -17,7 +17,6 @@ const OP_START = (v) => 8 + 9 * v, OP_RETARGET = (v) => 9 + 9 * v;
 export const levelPage = (cfg, shift, masterShift) =>
   cfg.lutPage + (shift >= 8 || shift + masterShift > 6 ? 0 : 7 - (shift + masterShift));
 
-/** What SGDK's host grabs with: 8 pairs a grab, two grabs a frame. */
 // ONE GRAB A FRAME, from the VBlank callback (driver.md §5.3): sixteen pairs
 // a grab is the same 960 pairs a second the two-grab host carried, in half as
 // many bus stops.

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // The MMLispDRV light PCM engine, as a state machine
-// (.claude/memory/plan-pcm-d10-design.md §1.5, §6.1).
+// (docs/driver.md §5.3, §14.3).
 //
 // ONE model of what the Z80 image does with its PCM voices, slot by slot:
 // the block edge's six pieces at each voice's own phase, the mix through the

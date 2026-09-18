@@ -38,19 +38,6 @@ import { op, cost, laySlot, placementTable, padTo, fillBytes } from "./schedule.
 
 const hex = (n) => `$${n.toString(16)}`;
 
-/**
- * A minimal but real CH3 voice, so CSM has something to key. Operator offsets
- * for channel 3 on port 0 are +2.
- *
- * IT IS TEST SCAFFOLDING, NOT THE ENGINE. A shipped driver receives a patch as
- * commands; this exists so the CSM traffic in the schedule has a voice under it.
- * Either the Z80 loads it from a table at boot (`csm: true`) or the 68000 writes
- * it while it still holds the bus (`csmHost: true`) — and in the second form the
- * engine's code region does not pay for it at all.
- */
-/** The CH3 frequency the per-slot CSM writes send, as the globals hold it. */
-export const CSM_TEST_FREQ = { hi: 0x22, lo: 0x69 };
-
 export const CSM_TEST_VOICE = [
   [0x32, 0x01], [0x36, 0x01], [0x3a, 0x02], [0x3e, 0x01],   // DT/MUL
   [0x42, 0x1b], [0x46, 0x28], [0x4a, 0x28], [0x4e, 0x00],   // TL
@@ -803,12 +790,6 @@ const pcmEdgeStart = (cfg) => [
   op("exx", 4),
 ];
 
-/** The pieces' costs, for the ledger and the report. */
-export const pcmEdgeCost = (cfg) => ({
-  stop: cost(pcmEdgeStop(cfg)), compare: cost(pcmEdgeCompare(cfg)),
-  park: cost(pcmEdgePark(cfg)), start: cost(pcmEdgeStart(cfg)),
-});
-
 // ── THE EXPANDER (R28 §63.3 D3/D4, step 2) ─────────────────────────────────
 //
 // The 68000 writes 2-byte {op, val} pairs into a 128-pair page; sixteen steps
@@ -998,45 +979,6 @@ function nvExpanderPlan(cfg) {
   return { plan, routines: r, sites: got.sites };
 }
 
-// ── §4's 経路別サイクル表 ───────────────────────────────────────────────────
-// Costed from the encodings, not measured and not fitted. Every path P1 can
-// take is here; the paths it cannot take yet are listed with what they wait on,
-// because a table that silently omits them reads as if they were free.
-export function cyclePaths(cfg) {
-  const c = (ops) => cost(ops);
-  const rows = [
-    ["DAC sample write", 7, "`ld (de),a` — DE holds $4001 for the life of the run"],
-    ["next-sample fetch", 11, "`ld a,(hl)` + `inc l`; the ring page wraps for free"],
-    ["one YM register write", c(ymWrite(0x30, 0x00)), "address + data, both through A"],
-    ["one YM write, value from RAM", c(ymWrite(0x30, "(G_CSMHI)")), "`ld a,(nn)` is 13, not 7"],
-    ["$2A re-latch", c(relatchDac()), "charged to the slot that disturbed the address port"],
-    ["Timer B observation", c(readStatus()), "status read + stash; no branch on the result"],
-    ["Timer B flag reset", c(ymWrite(YM.R_TIMER_CTL, "R27_RESET")), "through the $27 shadow"],
-  ];
-  if (cfg.voices) {
-    rows.push(["mix, one sample", c(callMix(cfg)),
-      `call + routine, ${cfg.voices} voice${cfg.voices > 1 ? "s" : ""} incl. master`]);
-    rows.push(["…of which the 2nd voice", cfg.voices >= 2 ? 19 + 8 + 4 + 7 + 7 : 0,
-      "`ld a,(ix+0)` + `inc ixl` is 27 where DE's is 11 — the price of a 2nd pointer"]);
-    rows.push(["…of which the clamp", cfg.voices >= 2 ? 7 + 4 + 7 + 7 + 4 + 7 : 0,
-      "add, then a 512 B table indexed by the carry — branch-free, constant time"]);
-    rows.push(["block edge (level change)", c(blockEdge(cfg)),
-      `${cfg.voices >= 2 ? 3 : 2} pages into the mix routine's own immediates, once per ${cfg.blockSamples}`]);
-  }
-  rows.push(["slot with nothing else", 7 + 11, `the floor: ${(100 * 18 / cfg.periodCycles).toFixed(1)}% of an interval`]);
-  rows.push(["group", cfg.groupCycles, `${cfg.groupSlots} slots, EXACT — no residue survives a group`]);
-  const pending = [
-    ...(cfg.voices >= 2 ? [] : [["a second voice", "P2 — measured at 2 voices, see the two-voice cases"]]),
-    ["a third voice", "P5 — not attempted; §5 says one dimension at a time"],
-    ["loop wrap, ROM bank step", "NOT BUILT. The source is one 256 B page and `inc e` wraps it"],
-    ["voice start / stop / end", "NOT BUILT — needs the command protocol"],
-    ["command dispatch", "P3 — sample-timed commands"],
-    ["interrupt entry", "NOT TAKEN. This engine runs with interrupts disabled"],
-    ["bus-grab recovery", "P3 — measured, not modelled: see the grab case"],
-  ];
-  return { rows, pending };
-}
-
 // ── The generator ──────────────────────────────────────────────────────────
 /**
  * @param cfg
@@ -1122,7 +1064,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
   P("        ld   sp,STACK_TOP");
   const boot = [];
   const bootWrite = (reg, val, what) => boot.push(...ymWrite(reg, val, what));
-  // The light image leaves $2B to the sequencer (plan-pcm-d10-design.md §3.6):
+  // The light image leaves $2B to the sequencer (docs/driver.md §5.3):
   // a score without PCM keeps fm6 as FM.
   if (!cfg.loops) bootWrite(YM.R_DACEN, 0x80, "DAC enable");
   // The shipped image sets no timer: it keeps none, and $24..$27 are the
@@ -1396,7 +1338,7 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     for (let i = 0; i < lut.length; i += 16)
       P(`        db   ${[...lut.slice(i, i + 16)].join(",")}`);
     // The light image ends at the last level page: the ring and everything
-    // above it are the Z80's to initialise (plan-pcm-d10-design.md §1.3).
+    // above it are the Z80's to initialise (docs/driver.md §5.2).
     if (!cfg.loops) P(`        ds   ${hex(cfg.ram.ring[0])}-$, 0     ; the ring, zeroed at boot anyway`);
   } else {
     P(`        ds   ${hex(cfg.ram.wave[0])}-$, 0     ; the waveform page the harness fills`);
@@ -1407,31 +1349,3 @@ export function generate(cfg, extraWork = null, bootExtra = null, slotDead = nul
     expander: xp ? { sites: cfg.multi ? xp.sites : expanderSites(cfg), ...xp.routines, text: undefined } : null };
 }
 
-// ── THE CODE LEDGER (R11 §31.1, restoring the rule R8 §24.3 already fixed) ──
-//
-// `code_end + what the unwritten features are estimated to cost` DOUBLE-COUNTS.
-// A `complete` build EXECUTES those features' cycles as tagged padding, and that
-// padding is bytes in the image — bytes the real feature will REPLACE, not add
-// to. §24.3 said so and wrote `image - reserved padding + estimate`; both
-// split-report.mjs and gate.mjs had drifted back to the plain sum, which is how
-// a 2,392 B image came to be reported as 269 B over a 2,560 B region.
-//
-// The padding is MEASURED from the same generated object, never tabulated: only
-// ops the generator tagged `reserved`, so a slot's own pad and a correction
-// ladder's nops — which no feature replaces — stay in.
-export function reservedPadBytes(gen) {
-  let total = 0;
-  for (const slot of gen.slots) total += fillBytes(slot.ops.filter((o) => o.reserved));
-  return total;
-}
-
-/**
- * @param engineBytes  code_end WITHOUT the test scaffolding (the CSM patch dump)
- */
-export function codeLedger(cfg, gen, engineBytes) {
-  const reserved = reservedPadBytes(gen);
-  const owed = (cfg.codeEstimate ?? []).reduce((t, [, b]) => t + b, 0);
-  const region = cfg.ram.code[1] - cfg.ram.code[0];
-  const finished = engineBytes - reserved + owed;
-  return { engine: engineBytes, reserved, owed, finished, region, spare: region - finished };
-}

@@ -47,7 +47,6 @@ import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
 // usable window (the top page is the silence a parked voice reads).
 const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_LOOP_MAX = 0x7f00;
-import { buildLutBlob } from "./lut-blob.js";
 import { dedupEventStream } from "./mmb-dedup.js";
 import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
 import { engineImage } from "./engine-images.js";
@@ -296,7 +295,7 @@ export function encodeMmb(ir, opts = {}) {
   // splits one sample into several entries and PCM_NOTE_ON has to name the one
   // its note belongs to (driver.md §14.2). `sampleIds` survives for diagnostics
   // — it is what tells a bad `:sample` name from a note the plan skipped.
-  // THE ENGINE IMAGE (plan-pcm-d10-design.md §1.2): one per PCM voice count,
+  // THE ENGINE IMAGE (docs/driver.md §5): one per PCM voice count,
   // each with its own DAC rate. The score's count is `metadata.pcmVoices` when
   // the compiler states it, otherwise the highest pcmN channel it uses — and
   // the bank is baked at that image's rate.
@@ -1259,15 +1258,6 @@ export function encodeMmb(ir, opts = {}) {
     });
   }
 
-  // LUT_TABLE (mmb.md §16): the driver's constant LUTs. No shipped driver
-  // component reads it (the C sequencer carries its own generated tables);
-  // identical bytes for every song.
-  sections.push({
-    id: SECTION_ID.LUT_TABLE,
-    flags: 0,
-    payload: buildLutBlob().blob,
-  });
-
   // ── Assemble file: header + directory (ascending id) + sections ─────────
   sections.sort((a, b) => a.id - b.id);
   const file = new Writer();
@@ -1471,7 +1461,7 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
     }
 
     // ONE BLOB PER NOTE. The engine has no resampler and no octave step
-    // (plan-pcm-d10-design.md): every note it plays is a blob of its own,
+    // (docs/driver.md §14.2): every note it plays is a blob of its own,
     // resampled so that note advances one byte a sample at the image's rate.
     // The hash pool collapses whatever is genuinely identical.
     //

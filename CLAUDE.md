@@ -39,10 +39,10 @@ generated from `drv/engine/` by `drv/tools/build-engine.mjs` (`docs/driver.md`
 §15); `drv/68k/` is the C sequencer and the slot → pair converter, `drv/sgdk/`
 the SGDK host. Its gate: `cd drv && npm run verify:all` must be green (C ≡
 `drv-player.js`, converter ≡ its JS twin, the image on real scores).
-`drv/experimental/dac-stream/` is the engine's research bench (the two-voice
-profile, the BlastEm machine probe); it never ships. The superseded engines are
+The superseded engines are
 at tags `archive/ring-engine` (the ring-consuming Z80 mixer) and
-`archive/all-z80` (sequencer and mixer both on the Z80); their measurements
+`archive/all-z80` (sequencer and mixer both on the Z80), and the engine's
+research bench at `archive/dac-stream-bench`; their measurements
 live in `docs/dac-engine-implementation.md` and `.claude/memory/`. Read
 `.claude/memory/plan-pcm-spec.md` before touching PCM in any layer, and
 `.claude/memory/plan-68k-split.md` for the driver's decision record.

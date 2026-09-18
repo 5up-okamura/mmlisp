@@ -3,7 +3,7 @@
 // The MMLispDRV light engine images, one per PCM voice count, as built:
 // the DAC rate, the lap, the expander's step slots, the edge's piece positions,
 // the IDLE pairs a host must put after a generation pair, and the addresses
-// the host writes (.claude/memory/plan-pcm-d10-design.md §1).
+// the host writes (docs/driver.md §5).
 
 export const ENGINE_IMAGES = Object.freeze({
   1: Object.freeze({"voices":1,"periodCycles":249,"periodMaster":3735,"rateHz":14375.683,"lapSamples":112,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0],"lightAt":[11,12,13],"xpSlots":[0,15,31,47,56,70,84,98],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2554,"stamp":"8bd849f2e098"}),

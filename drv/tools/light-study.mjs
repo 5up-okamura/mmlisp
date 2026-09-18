@@ -1,23 +1,22 @@
 // THE LIGHT ENGINE STUDY (plan-pcm-spec.md D10, design session 2026-09-17).
 //
-//   node experimental/dac-stream/light-study.mjs [--voices 1,2,3] [--target 1.0]
+//   npm run light-study -- [--voices 1,2,3] [--target 1.0]
 //        [--wire 960] [--no-loops] [--lap-max 430080]
 //
-// The highest DAC rate the generator PLACES for one, two and three voices with
-// NOTHING but the engine: no phase decode, no corrector, no runtime protocol
-// (`generate()` alone, never `generateSplit()`), D4's rung levels, no octave
-// step, and — unless --no-loops — the loop-capable six-piece edge
+// The highest DAC rate the generator PLACES for one, two and three voices:
+// `generate()`, the rung levels, no octave step, and — unless --no-loops — the
+// loop-capable six-piece edge
 // (gen-stream.mjs, `loops: true`). `--target` is the work ceiling a slot may be
 // filled to; 1.0 is the edge (a slot with no pad at all). `--wire` is the
 // pairs a second the expander is sized for (steps a lap = ceil(wire × lap)).
-// A point is placed AND assembled; it is not run — gate-nv is where the pieces'
-// costs are proved, once it knows the loop edge.
+// A point is placed AND assembled, not run: `npm run engine:gate` runs the
+// images build-engine.mjs makes from these periods.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildConfig } from "../../engine/config.mjs";
-import { generate, nvEdgeCost, expanderCost } from "../../engine/gen-stream.mjs";
-import { assemble } from "../../tools/z80asm.mjs";
+import { buildConfig } from "../engine/config.mjs";
+import { generate, nvEdgeCost, expanderCost } from "../engine/gen-stream.mjs";
+import { assemble } from "./z80asm.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };

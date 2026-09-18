@@ -703,10 +703,10 @@ three outcomes.
 ## 11. Current Limits
 
 - **PCM:** one to three voices, one engine image per count; one 32 KB sample
-  bank a song; no runtime pitch. Loop points come from the sample definition —
-  changing them per note or by a curve is not in the language yet — and the
-  browser's PCM does not yet emulate the images (§14.3).
-- **Wire:** 960 pairs a second (480 in VBlank-only mode). The song's opening
+  bank a song; no runtime pitch. A loop point lands on the engine's 16-byte
+  block, so the shortest loop is one block (1.1 ms at `pcm1`, 2.4 ms at
+  `pcm3`).
+- **Wire:** 960 pairs a second. The song's opening
   setup is primed at load (§4.1), but a mid-song voice change on several
   channels (~30 writes each) takes a few frames to reach the chip.
 - **One score loaded at a time** (§2.3).
@@ -715,11 +715,11 @@ three outcomes.
 - **`(trig N)` markers** are tracked by the sequencer but not surfaced to the
   host.
 - **PAL** is not supported (§3.3).
-- **Not yet run on hardware, and the light images not yet on BlastEm.** The
-  images are graded in the JS machine (§12.4); the slot that binds each rate
-  has no margin, and the one wait the model charges from measurement — a read
-  through the 68k window — was measured on BlastEm. The pumps write Z80 RAM
-  with `movep.l` (byte cycles as the 68000 defines them; correct in BlastEm).
+- **Not yet run on hardware.** The images are graded in the JS machine
+  (§12.4) and on BlastEm (§12.7); the slot that binds each rate has no margin,
+  and the one wait the model charges from measurement — a read through the 68k
+  window — was measured on BlastEm. The host writes Z80 RAM with `movep.l`
+  (byte cycles as the 68000 defines them; correct in BlastEm).
 - **Bus stops** — the pumps' and SGDK's own (joypad reads, VBlank DMA) — are
   not repaid (§1.2).
 
@@ -740,7 +740,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (41 scores; every score
+same ports, same frames, same order. `npm run c-gate` (45 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +758,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 41 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 45 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -878,10 +878,9 @@ grab a frame. `npm run sgdk:profile` times the driver's functions in the same
 build. Needs SGDK, the m68k toolchain and the probe BlastEm
 (`drv/blastem/setup.sh`).
 
-The engine's research bench (`drv/experimental/dac-stream/`) carries the
-generator's other profiles (two voices) and the BlastEm machine probe
-(`npm run dac-stream:machine`), which runs generated images on the emulator
-against the same instrument.
+`npm run light-study` places the generator at each voice count and prints the
+highest rate a slot's work ceiling allows (`--target 0.95` for a margin) —
+where the images' periods come from.
 
 ## 13. Macro Engine
 
@@ -1104,10 +1103,10 @@ image.
 
 ### 14.3 Where the layers disagree
 
-- **The browser.** The live player's PCM does not emulate the engine images'
-  rate, 8-bit output, voice count or level steps; the MMLispDRV backend does,
-  through `live/src/pcm-model.js`.
-- **Pitch on PCM.** `:pitch`, glide and pitch macros on a `pcmN` track are
-  accepted and ignored; they are not yet errors.
+- **The browser.** The live player's IR preview plays PCM through the driver's
+  own voice model and engine (`live/src/pcm-voices.js`, `pcm-model.js`) on the
+  bank an export ships, so rate, 8-bit output, levels and loop rounding match;
+  `npm run pcm-ab` checks it sends the driver's commands. What differs is the
+  timing: its events land on the audio clock, not on 60 Hz frames.
 - **Unimplemented sample keys.** `:bit-depth`, `:volume`, `:compress` and
-  `:reverb` are accepted and ignored.
+  `:reverb` are accepted with a warning (`W_SAMPLE_KEY_UNIMPLEMENTED`).

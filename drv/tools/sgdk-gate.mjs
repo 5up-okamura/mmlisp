@@ -5,7 +5,7 @@
 // An SGDK project is made in a scratch directory with `install-sgdk`, the
 // example program on autoplay, and the score compiled in; it is built with the
 // m68k toolchain SGDK's own makefile expects (GDK, or ~/Developer/gendev), and
-// the ROM runs for N seconds in the headless BlastEm the dac-stream probe uses
+// the ROM runs for N seconds in the headless BlastEm under drv/blastem/
 // — the same patched core, so the log carries every DAC write, every YM and
 // PSG access by CPU, every bus grab and every Z80 write to the state block.
 //

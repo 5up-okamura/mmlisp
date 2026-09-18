@@ -17,13 +17,13 @@ import { generate, LP_LIGHT_AT } from "../engine/gen-stream.mjs";
 /** Pairs in the engine's pair page. */
 export const FIFO_PAIRS = 128;
 
-// ── THE LIGHT IMAGES (.claude/memory/plan-pcm-d10-design.md §1) ────────────
+// ── THE LIGHT IMAGES (docs/driver.md §5) ────────────
 //
 // One image per PCM voice count, chosen by the score's `(def pcm-voices N)`.
 // No phase decode, no corrector, no protocol — `generate()` alone — the rung
 // levels, no octave step, the loop-capable six-piece edge. The periods are the
 // highest the generator places at the 100% work ceiling (the user's choice),
-// MEASURED with `npm run dac-stream:light`; re-run it after any change to the
+// MEASURED with `npm run light-study`; re-run it after any change to the
 // pieces and write what it finds here. The build refuses a period that no
 // longer places rather than quietly shipping a slot that overruns.
 
@@ -135,7 +135,7 @@ export function buildLightImage(voices, { fault = null } = {}) {
   const gen = generate(cfg);
   if (gen.slots.some((s) => s.row.pad < 0) || gen.placement.worst.workPct > 100 * LIGHT_WORK_TARGET)
     throw new Error(`the ${voices}-voice light image no longer places at period ${LIGHT_IMAGES[voices].period}`
-      + ` (worst ${gen.placement.worst.workPct}%) — re-run npm run dac-stream:light`);
+      + ` (worst ${gen.placement.worst.workPct}%) — re-run npm run light-study`);
   let text = gen.text;
   if (fault === "mis-cost") {
     text = text.replace(/^mix_one:$/m, "mix_one:\n        nop");

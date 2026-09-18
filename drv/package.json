@@ -7,15 +7,6 @@
     "emit-bin": "node tools/emit-bin.mjs",
     "sgdk:install": "node tools/install-sgdk.mjs",
     "selftest": "node tools/selftest.mjs",
-    "dac-stream": "node experimental/dac-stream/gate.mjs",
-    "dac-stream:long": "node experimental/dac-stream/gate.mjs --long --json",
-    "dac-stream:probe-test": "node experimental/dac-stream/probe-selftest.mjs --machine",
-    "dac-stream:machine": "node experimental/dac-stream/machine-probe.mjs",
-    "dac-stream:machine:required": "node experimental/dac-stream/machine-probe.mjs --required-only",
-    "dac-stream:split": "node experimental/dac-stream/split-report.mjs",
-    "dac-stream:voices": "node experimental/dac-stream/voice-study.mjs",
-    "dac-stream:nv": "node experimental/dac-stream/gate-nv.mjs",
-    "dac-stream:light": "node experimental/dac-stream/light-study.mjs",
     "engine:score": "node tools/engine-score-gate.mjs",
     "engine:gate": "node tools/engine-gate.mjs",
     "engine:gate:negatives": "node tools/engine-gate.mjs --negatives",
@@ -29,7 +20,7 @@
     "pcm-ab": "node tools/pcm-ab-gate.mjs",
     "mirrors": "node tools/rate-mirrors.mjs && node tools/emit-images.mjs --check && node tools/emit-bin.mjs --check",
     "emit-images": "node tools/emit-images.mjs",
-    "dac-stream:decoder": "node experimental/dac-stream/decoder-eval.mjs",
-    "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run pairs-gate && npm run sgdk:lint && npm run engine:gate && npm run engine:score && npm run verify:ab && npm run pcm-ab"
+    "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run pairs-gate && npm run sgdk:lint && npm run engine:gate && npm run engine:score && npm run verify:ab && npm run pcm-ab",
+    "light-study": "node tools/light-study.mjs"
   }
 }

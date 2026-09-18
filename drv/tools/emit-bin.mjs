@@ -2,7 +2,7 @@
 //   drv/sgdk/mmlispdrv_bin.h   the images as C arrays, the image table, and the
 //                              ABI constants read out of the builds themselves
 //
-// One image per PCM voice count (.claude/memory/plan-pcm-d10-design.md §1.2);
+// One image per PCM voice count (docs/driver.md §5);
 // the host uploads the one a score's MMB header names. Everything the three
 // share — the pair page, the state block, the op layout, the rung pages — is
 // identical by construction, and checked here rather than assumed.

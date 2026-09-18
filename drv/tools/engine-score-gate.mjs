@@ -1,5 +1,5 @@
 // REAL SCORES THROUGH THE LIGHT ENGINE IMAGES, in the JS instruction model
-// (.claude/memory/plan-pcm-d10-design.md §7): the reference driver renders the
+// (docs/driver.md §12.4): the reference driver renders the
 // slots, the host model (tools/pairs-model.mjs — the twin of the 68000's
 // mmlpairs.c) turns them into pairs and PSG bytes twice a frame, the score's
 // engine image (pcm1/pcm2/pcm3, from the MMB header) consumes them, and five

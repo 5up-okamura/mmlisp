@@ -1,6 +1,6 @@
 // Write live/src/engine-images.js — the light engine images' descriptors, the
 // one copy the browser, the exporter and the reference driver read
-// (.claude/memory/plan-pcm-d10-design.md §1.9).
+// (docs/driver.md §5).
 //
 //   node tools/emit-images.mjs [--check]
 //
@@ -23,7 +23,7 @@ export function imagesSource() {
   L.push("// The MMLispDRV light engine images, one per PCM voice count, as built:");
   L.push("// the DAC rate, the lap, the expander's step slots, the edge's piece positions,");
   L.push("// the IDLE pairs a host must put after a generation pair, and the addresses");
-  L.push("// the host writes (.claude/memory/plan-pcm-d10-design.md §1).");
+  L.push("// the host writes (docs/driver.md §5).");
   L.push("");
   L.push("export const ENGINE_IMAGES = Object.freeze({");
   for (const d of rows) L.push(`  ${d.voices}: Object.freeze(${JSON.stringify(d)}),`);

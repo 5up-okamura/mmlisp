@@ -294,7 +294,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   p->undo_port = p->chip_port;
   for (uint8_t v = 0; v < MMLP_VOICES; v++) p->undo_since[v] = p->since_gen[v];
   p->undo_n = 0;
-  /* WHERE THE PAIRS GO (pair-host.mjs): ahead of the index read last time by
+  /* WHERE THE PAIRS GO (pairs-model.mjs twins this): ahead of the index read last time by
    * more than the consumer takes between grabs — and never behind the pairs
    * written last time that it may not have reached yet. */
   if (fifo_lo == 0xff) { *dst = 0; return 0; }            /* no index yet */

@@ -4,7 +4,7 @@ How to play an MMLisp score on a real Mega Drive (or an accurate emulator) from
 an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
 > **Verification status.** The sequencer is proven byte-for-byte against the
-> JS reference on the host (`npm run c-gate`, 41 scores); the slot → pair
+> JS reference on the host (`npm run c-gate`, 45 scores); the slot → pair
 > converter against its JS twin (`npm run pairs-gate`); the three engine images
 > with the converter in the JS instruction model (`npm run engine:gate`,
 > `npm run engine:score`). `npm run sgdk:lint` type-checks the glue against a
@@ -393,10 +393,11 @@ Everything the language compiles to, except SE:
   parameters via `PARAM_FROM_VAL` / `_ADD_VAL` / `_MUL_VAL` / `PARAM_MUL`, plus
   the built-in `$time`. E.g. a live filter/LFO-depth slider, or game-state
   timbre.
-- **PCM:** `pcm1` — one sample voice on the `fm6` DAC at 9,987.57 Hz, with
-  per-note level and a master level (15 linear steps on the 6 dB grid), pitch in
-  octave steps of the baked sample. `pcm2`/`pcm3` and sample loops are dropped
-  and counted in this profile (a looped sample plays through once).
+- **PCM:** up to three sample voices on the `fm6` DAC, one engine image per
+  count — `(def pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three
+  at 6,653 Hz. Per-note level and a master level on the 6 dB grid, every note
+  baked at its own pitch, and loops whose points (`:loop-start`, `:loop-end`,
+  `:loop-len`) can move while the note plays — by a value, a sweep or a curve.
 
 ## Limits
 

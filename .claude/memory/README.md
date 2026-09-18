@@ -13,19 +13,6 @@ Rules:
 
 Index:
 
-- [plan-68k-split.md](plan-68k-split.md) — **architecture pivot (2026-08-02):
-  68k runs the sequencer, the Z80 becomes a PCM + chip-write engine.** The
-  measurement that forced it, the 11 decisions taken, and the port state
-  (P0 mixer prototype → P1 interface → P2 sequencer → P3 bring-up). **Read this
-  first before touching the driver.** The design itself now lives in
-  `docs/driver.md`; this file is the decision record and the running state.
-  **Its LAST section is a HANDOFF (2026-08-29) — read that first.** The DAC work
-  on branch `drv/dac-rate-probe` is unfinished and the user's verdict on it is
-  "it has never once been good": the machine reports 100% music with 0 lost
-  frames and it still sounds unstable, because what wobbles is the SAMPLE CLOCK
-  and not the frame budget. Three hardware bugs there were invisible to every
-  gate, and one fitted model constant was falsified by the machine. **The model
-  cannot predict this machine — fix that before changing the engine again.**
 - [plan-subtick-timing.md](plan-subtick-timing.md) — **RETIRED 2026-09-14 (SLOT_SUBS = 1, onsets on the frame; user's call). Was: sub-frame note timing:
   step 1 LANDED 2026-08-05** (`SLOT_SUBS = 3`, all three ports, gates green;
   the design is now `docs/driver.md` §3.5). Note onsets ride the mixer's three
@@ -58,45 +45,16 @@ Index:
   unmatched-bracket marks + badge) with the implementation deviations worth
   keeping; still open are snippet completions, expand-selection, a touch
   symbol bar. Also holds the standing "never auto-repair brackets" decision.
-- [plan-68k-split.md](plan-68k-split.md) — the 68k-sequencer/Z80-PCM-engine
-  split: the decision record, the port's running state, and every hardware and
-  emulator round since. **Read its HANDOFF section (top of file) before
-  touching the driver.** Currently: the measurement loop is closed (BlastEm as
-  a libretro core + a probe ROM, all in-container, no listening round), and the
-  DAC's 32% sample deficit is FIXED — the pacing pad was 41% of the interrupt,
-  which pushed it past its vblank and made the mixer run every other frame.
-  Next: a hardware round, and `drv-player.js` on the ring-fill model.
-- [plan-pcm-spec.md](plan-pcm-spec.md) — **settling the PCM/DAC language spec
-  against the shipped engine (2026-09-14)**: three bugs found (fm6 silent on
-  hardware, a C out-of-bounds on pcm3, PCM 2.2 cents flat), the user's
-  decisions D2–D7, the voice-count study (D1+D4, verdict awaiting the user),
-  D9 (the restated target: levels, baked pitch, loops, 3 voices, rate, decided
-  with the FM/PSG path) and its study round — item 1, the stop-length
-  listening set, is DONE (`npm run dac-stream:stops`): by ear every stop up to
-  200 µs at 60/120 Hz is acceptable on sin008; it also found the H-counter
-  reference wraps every scanline, so a stop past 28 µs is repaid WRONG (PCM
-  flat, not late). User DIRECTION after it: light over exact — drop the phase
-  observer + corrector, pump at VSync only (~21–64 cyc/slot freed, unplaced);
-  item 2 (Timer B) loses its purpose, items 3–4 (XGM2/MDSDRV probe, 68k cost)
-  remain. D10 (2026-09-17): the BIG GOAL — no pitch, 1–3 voices per score, 6 dB
-  levels, highest rate, approach XGM/MDSDRV; four questions put to the user. Read before
-  touching PCM in any layer.
-- [plan-pcm-d10-design.md](plan-pcm-d10-design.md) — **THE DESIGN FOR D10,
-  written 2026-09-17, to be implemented in order (S1 engine → S2 sequencer /
-  converter / bank → S3 language → S4 SGDK host → S5 browser → S6 cleanup),
-  one step a session, `verify:all` green after each.** Three light engine
-  images (measured: 1v 14,376 / 2v 10,112 / 3v 6,653 Hz at the edge), the
-  loop-capable six-piece edge, the state block and ops, the wire, slot format
-  v2, bank v0.3, `(def pcm-voices N)`, the shared JS PCM model, the gates.
-  **S1 (engine images, pcm-model.js, engine:gate) and S2 (sequencer, slot v2,
-  converter, bank/MMB v0.3, SGDK host boots the score's image) DONE
-  2026-09-17, S3 (language: pcm-voices, the four diagnostics, and the loop
-  points as LENGTHS on both the def and the track — `Nms` is new grammar)
-  DONE 2026-09-18, S4 (SGDK host: VSync-only, 16 pairs a grab, sgdk:gate back on
-  the three images and green on BlastEm) and S5 (browser: the IR preview runs
-  the driver's voice model and engine; npm run pcm-ab) DONE 2026-09-18; next S6
-  (cleanup).**
-  Delete when S6 lands.
+- [plan-68k-split.md](plan-68k-split.md) — the 68k-sequencer / Z80-engine
+  split (2026-08-02): the measurement that forced it, the decisions, and every
+  port, hardware and emulator round since. The design itself is
+  `docs/driver.md`; this is the decision record. Its handoffs are history — the
+  engine they describe was replaced by D10 ([[plan-pcm-spec]]).
+- [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind
+  the shipped light engine (D10, landed 2026-09-18) with their reasons, and
+  what is still open** (hardware run, a loop listening round, PCM SE in the C,
+  the D7 sample keys, the mucom importer's octave shift). Read before touching
+  PCM in any layer.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
   one-voice pair-transport engine is the production image; a mucom88 song plays
@@ -105,14 +63,15 @@ Index:
   P2 DONE 2026-09-06. The
   baseline tool and what it found (`npm run engine` has been red for ~40
   commits and `verify:all`'s `&&` was hiding four gates behind it), the
-  output-centred prototype in `drv/experimental/dac-stream/` (9,987.57 Hz at
+  output-centred prototype (the bench, removed 2026-09-18, is at tag
+  `archive/dac-stream-bench`) (9,987.57 Hz at
   +0.0000%, zero holes, two voices with independent levels and a master, in the
   JS model only), the structural decisions — the slot boundary is the `$2A`
   write, there is no interrupt, the pad is solved, production is locked to
   consumption so the ring needs no regulator, and every slot's work must be
   constant time — and **three bugs it found in the shared toolchain, one of which
   under-charged every cycle budget in the repository by 3 cycles per `(HL)`
-  access.** Read before continuing to P2.
+  access.** The engine it produced was replaced by D10; kept as the record.
 - [design-eval.md](design-eval.md) — v0.6 Phase 3 normative design: the
   compile-time eval spec (dispatch, value model, curves-as-library, `:seed`,
   operator desugaring, `let`), the value machine (sampling tiers, generic

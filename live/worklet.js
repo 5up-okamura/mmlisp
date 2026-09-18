@@ -40,7 +40,7 @@ import {
   SCOPE_CHANNELS,
 } from "./src/synth-md.js";
 
-// PCM in the IR preview is THE DRIVER'S ENGINE (plan-pcm-d10-design.md §6.2,
+// PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3,
 // D0: the preview must sound like the driver): the same voice model the 68000
 // runs, the same engine model the gates grade the Z80 against, the same baked
 // bank an export ships — 8-bit, at the image's rate, with its 6 dB rungs, its

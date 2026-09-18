@@ -203,7 +203,7 @@ export class DrvPlayer {
     // any time). Preserved across a hot-swap _reset.
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
-    // The engine's PCM, for LIVE playback only (plan-pcm-d10-design.md §6.1):
+    // The engine's PCM, for LIVE playback only (docs/driver.md §14.3):
     // the same state machine the engine gate grades the Z80 against, driven by
     // this player's own commands, producing the DAC bytes the page hears. The
     // gates never build it — they compare commands, not samples.

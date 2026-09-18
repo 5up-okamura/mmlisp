@@ -15,39 +15,17 @@
  */
 
 import { encodeWav } from "./export-wav.js";
-import { PCM_SAMPLES_PER_FRAME } from "./mmb.js";
 
 const DIR_ENTRIES = 32;
 const DIR_ENTRY_SIZE = 32;
 const BODY_START = 0x400;
 
-/** mucom resamples every source wav to 16 kHz when it converts to ADPCM. */
+/**
+ * mucom resamples every source wav to 16 kHz when it converts to ADPCM, and
+ * the decoded bank stays at that rate: it is the samples' source, and the MMB
+ * exporter bakes each note from it at the engine image's own rate.
+ */
 export const MUCOM_ADPCM_RATE = 16000;
-
-/**
- * What the bank is resampled to. The driver's soft-mix writes the DAC on the
- * Timer-B sample clock — PCM_SAMPLES_PER_FRAME a frame, ~10 kHz — so keeping
- * mucom's native 16 kHz would store ~1.6x the bytes only to have the driver
- * throw them away again (and resample twice). Other MD drivers store at their
- * playback rate for the same reason (XGM 14 kHz, MDSDRV ~17.5 kHz). Derived,
- * not hardcoded: this follows the sample clock if the pacing moves. Rounded
- * because a sample's declared base rate is a u16 in the bank.
- */
-export const MUCOM_PCM_RATE = Math.round(PCM_SAMPLES_PER_FRAME * 60);
-
-/**
- * Resample mono float by nearest-neighbour — the same thing the driver's mix
- * does, so doing it here just moves the loss earlier and buys the size back.
- */
-function resampleMono(src, fromRate, toRate) {
-  if (fromRate === toRate || src.length === 0) return src;
-  const out = new Float32Array(Math.max(1, Math.round((src.length * toRate) / fromRate)));
-  const step = fromRate / toRate;
-  for (let i = 0; i < out.length; i++) {
-    out[i] = src[Math.min(src.length - 1, Math.round(i * step))];
-  }
-  return out;
-}
 
 /** YM2608 ADPCM-B step-size table, indexed by the nibble magnitude (0-7). */
 const STEP_TABLE = [57, 57, 57, 57, 77, 102, 128, 153];
@@ -134,11 +112,7 @@ export function decodeAdpcmB(bytes, start, length) {
  */
 export function decodeMucomPcmBank(bytes) {
   const { entries } = parseMucomPcmBank(bytes);
-  // Decode at the source rate, then drop to the driver's DAC grid. Each entry is
-  // resampled on its own so `offset` stays an exact frame count in the output.
-  const decoded = entries.map((e) =>
-    resampleMono(decodeAdpcmB(bytes, e.start, e.length), MUCOM_ADPCM_RATE, MUCOM_PCM_RATE),
-  );
+  const decoded = entries.map((e) => decodeAdpcmB(bytes, e.start, e.length));
 
   const total = decoded.reduce((n, d) => n + d.length, 0);
   const pcm = new Float32Array(total);
@@ -155,7 +129,7 @@ export function decodeMucomPcmBank(bytes) {
     });
     offset += decoded[i].length;
   }
-  return { pcm, sampleRate: MUCOM_PCM_RATE, entries: out };
+  return { pcm, sampleRate: MUCOM_ADPCM_RATE, entries: out };
 }
 
 /**

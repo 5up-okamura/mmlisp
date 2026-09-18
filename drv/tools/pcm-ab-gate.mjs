@@ -1,5 +1,5 @@
 // THE BROWSER'S IR PREVIEW AGAINST THE DRIVER, FOR PCM (D0: the preview must
-// sound like the driver — plan-pcm-d10-design.md §6.2).
+// sound like the driver — docs/driver.md §14.3).
 //
 //   node tools/pcm-ab-gate.mjs [score.mmlisp …]
 //

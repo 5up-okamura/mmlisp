@@ -1,4 +1,4 @@
-// THE LIGHT ENGINE GATE (.claude/memory/plan-pcm-d10-design.md §7).
+// THE LIGHT ENGINE GATE (docs/driver.md §12.4).
 //
 //   node tools/engine-gate.mjs [--voices 1,2,3] [--case NAME] [--seconds S]
 //   node tools/engine-gate.mjs --negatives      the gate's own faults must fail

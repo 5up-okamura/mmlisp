@@ -246,8 +246,6 @@ export const PCM1 = {
   size: 0x29,
 };
 export const PCM1_READY_MARK = 0xd2;
-export const PCM1_OPS = { IDLE: 0x00, LEVEL: 0x01, MASTER: 0x02, SRC_LO: 0x03, SRC_HI: 0x04,
-  END_LO: 0x05, END_HI: 0x06, STEP: 0x07, START: 0x08, STOP: 0x09, PORT: 0x20 };
 
 // Where the parked voice reads from: the top PAGE of the sample bank, which the
 // exporter fills with silence (R28 §63.3 D2). It is above every sample's end,
@@ -281,9 +279,6 @@ export function expanderSites(cfg) {
   if (list.length !== EXPANDER_STEPS) throw new Error(`${list.length} expander steps, not ${EXPANDER_STEPS}`);
   return list;
 }
-/** Step indices whose A-site is followed by the CSM pair before the next A-site. */
-export const expanderUnsafePairStarts = (cfg) =>
-  expanderSites(cfg).map((s, k) => (s.ba === 5 ? k : -1)).filter((k) => k >= 0);
 
 // The per-block reservations of the one-voice engine: nothing is reserved any
 // more — the corrector, the edge and the expander are all real code.
@@ -360,9 +355,6 @@ export const PCMN_L = {
   applyMask: (v) => 0x2a + 9 * v,
   fifoLo: 0x3d, ready: 0x3e, size: 0x3f,
 };
-export const PCMN_L_OPS = (v) => ({ LEVEL: 0x01 + 9 * v, SRC_LO: 0x02 + 9 * v, SRC_HI: 0x03 + 9 * v,
-  END_LO: 0x04 + 9 * v, END_HI: 0x05 + 9 * v, WRAP_LO: 0x06 + 9 * v, WRAP_HI: 0x07 + 9 * v,
-  START: 0x08 + 9 * v, RETARGET: 0x09 + 9 * v });
 
 /**
  * Where each voice's block boundary falls inside the 16-sample block. Voice v's
@@ -453,15 +445,9 @@ export const CODE_ESTIMATE_2CH_CORR =
 // is what this profile refuses to do again: the limit is the reservation, and an
 // image that needs more says so as a failure rather than by moving the line.
 export const CMD_SLOTS_USED = [9, 10];
-export const CMD_REPLACED = [9, 10];
 export const RESERVE_2CH_CMD = RESERVE_2CH_CORR.map(([b, cyc, why]) =>
   (CMD_SLOTS_USED.includes(b)
     ? [b, 0, "REPLACED by the real PCM state consumer (R16 §41.3)"] : [b, cyc, why]));
-
-/** What the consumer is allowed to spend, per lap, from its own reservation. */
-export const cmdBudgetCycles = (cfg) => RESERVE_2CH_CORR
-  .filter(([b]) => CMD_SLOTS_USED.includes(b))
-  .reduce((t, [, c]) => t + c, 0) * (cfg.cycleSlots / cfg.blockSamples);
 
 // The dispatch estimate goes: the consumer is real code now, and it is measured
 // with everything else in the image.
@@ -479,22 +465,11 @@ export const CODE_ESTIMATE_2CH_CMD =
 // ELEVEN bytes a site — and 120 bytes buy TEN of the twenty positions, not
 // twenty (ym-writer.mjs).
 export const YM_SLOTS_USED = [11, 12, 13, 14];
-export const YM_CODE_BUDGET = 120;                 // bytes, R16 §41.1
 export const RESERVE_2CH_YM = RESERVE_2CH_CMD.map(([b, cyc, why]) =>
   (YM_SLOTS_USED.includes(b)
     ? [b, 0, "REPLACED by the real Z80 YM writer (R26 §59.3)"] : [b, cyc, why]));
 export const CODE_ESTIMATE_2CH_YM =
   CODE_ESTIMATE_2CH_CMD.filter(([what]) => what !== "YM/PSG slot writer");
-
-/** What the writer may spend, per BLOCK, from its own reservation. */
-export const ymBudgetCycles = () => RESERVE_2CH_CORR
-  .filter(([b]) => YM_SLOTS_USED.includes(b)).reduce((t, [, c]) => t + c, 0);
-
-// The two bytes an idle entry writes into instead of the chip. They live in the
-// chip region, which is where the slot writer's own state was always going to
-// be, and they are what makes "the queue is empty" the same instructions as
-// "write this register" rather than a branch (ym-writer.mjs).
-export const YM_BUCKET = 0x1e60;
 
 
 

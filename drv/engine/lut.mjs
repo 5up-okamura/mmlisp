@@ -48,21 +48,6 @@ export const scale = (s, level, levels = LEVELS) => {
   return Math.max(-128, Math.min(127, r));
 };
 
-/**
- * A level a score or a command carries, on the 0..15 scale the language uses,
- * onto this profile's 0..levels-1 (R8 §23.2: the rule has to be written down).
- *
- * round(v * (n-1) / 15). It is the identity at 16 levels; at 15 it keeps
- * silence at silence and unity at unity, stays monotone, and — this is the
- * cost, stated rather than discovered — is not injective: commands 7 and 8 both
- * land on level 7. Every other command has a level of its own.
- *
- *   command  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
- *   level    0  1  2  3  4  5  6  7  7  8  9 10 11 12 13 14
- */
-export const levelFromCommand = (v, levels = LEVELS) =>
-  Math.round((v * (levels - 1)) / 15);
-
 /** `levels` pages of 256 bytes, biased in and biased out. Page = level. */
 export function buildLut(levels = LEVELS, { signed = false } = {}) {
   // THE INPUT CONVENTION IS THE TABLE'S TO ABSORB — and for the shipped image
@@ -119,30 +104,6 @@ export function buildClamp() {
   return out;
 }
 
-// ── The reference, in JS ───────────────────────────────────────────────────
-//
-// IT DOES NOT READ THE TABLES. §3.4 (R1): "参照計算は生成済みLUT・飽和表を
-// 読まず、定義した算術から期待値を求める". A reference that indexes the same
-// arrays the image was built from cannot fail on a table that is wrong — the
-// two share the error and agree. So the expectation is computed from `scale`
-// and `satAdd` directly, and the tables are checked against the SAME
-// arithmetic separately (`tablesAgree`), which is a different assertion with a
-// different failure mode.
-const satAdd = (a, b) => Math.max(-128, Math.min(127, a + b));
-
-/** One voice: source byte -> voice level -> master. Biased in, biased out. */
-export const mixOne = (src, vel, master, levels = LEVELS, signed = false) =>
-  bias(scale(scale(sourceValue(src, signed), vel, levels), master, levels));
-
-/**
- * Two voices: scale each, saturate the sum, then master — in that order.
- * The order is the definition, not an implementation detail: it is where the
- * rounding happens, and the 15-level profile keeps it exactly (R8 §23.2).
- */
-export const mixTwo = (src0, vel0, src1, vel1, master, levels = LEVELS) =>
-  bias(scale(satAdd(scale(unbias(src0), vel0, levels), scale(unbias(src1), vel1, levels)),
-    master, levels));
-
 /** What a silent ring holds, and what the DAC gets when nothing is playing. */
 export const SILENCE = bias(0);
 
@@ -155,35 +116,13 @@ export const SILENCE = bias(0);
 // output is biased because what follows is either the ring (one voice) or the
 // saturating add of biased terms (two or three).
 export const RUNG_PAGES = 8;
-export const RUNG_MAX_SHIFT = RUNG_PAGES - 2;          // 6: -36 dB
 /** The signed value page `p` makes of signed sample `s`. */
 export const rung = (s, page) => (page <= 0 ? 0 : s >> (RUNG_PAGES - 1 - page));
-/** The page a total shift names; past the last rung is silence. */
-export const pageOfShift = (shift) => (shift > RUNG_MAX_SHIFT ? 0 : RUNG_PAGES - 1 - shift);
 export function buildRungs() {
   const out = new Uint8Array(RUNG_PAGES * 256);
   for (let p = 0; p < RUNG_PAGES; p++)
     for (let b = 0; b < 256; b++) out[p * 256 + b] = bias(rung(sourceValue(b, true), p));
   return out;
-}
-/**
- * N voices through their rung pages, saturated in voice order —
- * sat(sat(v0 + v1) + v2) — and biased for the DAC. Computed from `rung` and
- * `satAdd`, never from the tables (see above).
- */
-export const mixRungs = (srcs, pages) => {
-  let acc = rung(sourceValue(srcs[0], true), pages[0]);
-  for (let v = 1; v < srcs.length; v++) acc = satAdd(acc, rung(sourceValue(srcs[v], true), pages[v]));
-  return bias(acc);
-};
-export function rungsAgree() {
-  const t = buildRungs(), problems = [];
-  for (let p = 0; p < RUNG_PAGES && problems.length < 4; p++)
-    for (let b = 0; b < 256; b++) {
-      const want = bias(rung(sourceValue(b, true), p));
-      if (t[p * 256 + b] !== want) { problems.push(`RUNG[${p}][${b}] = ${t[p * 256 + b]}, want ${want}`); break; }
-    }
-  return problems;
 }
 
 /**

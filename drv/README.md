@@ -18,14 +18,10 @@ sgdk/mmlispdrv.{c,h}  the SGDK host: engine bring-up, the pumps, the API
 sgdk/mmlispdrv_bin.h  GENERATED engine images + ABI constants (tools/emit-bin.mjs)
 sgdk/example/         a minimal player program
 engine/               the Z80 engine generator: config, the slot schedule and the
-                      pair expander (gen-stream), the tables (lut); the phase
-                      decode, corrector and protocol modules remain for the
-                      research bench until the cleanup step
+                      pair expander (gen-stream), the tables (lut)
 tools/                build, install and gate tools (below)
 tests/                gate scores (.mmlisp, host-command .cmds.json, samples)
 blastem/              the headless probe BlastEm: setup.sh, host.c, probe.patch
-experimental/dac-stream/  the engine's research bench (two-voice profile,
-                      BlastEm machine probe, decoder calibration) — never ships
 out/                  gate reports, scratch projects, the built BlastEm (git-ignored)
 ```
 
@@ -53,25 +49,26 @@ npm run verify:all
 | --- | --- |
 | `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same engine images, and the two generated files are what the images build to now |
 | `selftest` | the assembler and the emulator against their own cases |
-| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 41 scores |
+| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 45 scores |
 | `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
 | `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
 | `engine:score` | real scores through the image each names, driven by the host model: FM writes per port, PSG bytes, DAC bytes, the clock, PCM-vs-FM sync |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
+| `pcm-ab` | the browser's IR preview sends the driver's PCM commands, each within a frame |
 
 On the machine (needs SGDK, the m68k toolchain, and `sh blastem/setup.sh`):
 
 ```
-npm run sgdk:gate -- <score.mmlisp> [--seconds N] [--burn N]   # build, run, grade (being moved to the three images)
+npm run sgdk:gate -- <score.mmlisp> [--seconds N] [--burn N]   # build, run, grade
 npm run sgdk:profile -- <score.mmlisp> [--pc] [--peak N]       # where the 68000's time goes
 ```
 
 Other tools: `npm run engine:gate:negatives` (the light gate's own faults
 must fail), `npm run emit-images` (regenerate `live/src/engine-images.js`),
 `npm run level-diff -- <score>` (where the driver is louder than
-ir-player), and the research bench's
-`dac-stream:*` scripts (`experimental/dac-stream/README.md`).
+ir-player), and `npm run light-study` (the highest rate the generator places
+at each voice count — where the images' periods come from).
 
 ## Tools
 
@@ -85,7 +82,8 @@ ir-player), and the research bench's
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
 | `mmb-build.mjs`, `wav.mjs` | `.mmlisp` → MMB (+ sample bank) through the live toolchain |
 | `pairs-model.mjs` | the JS twin of `mmlpairs.c` |
-| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `rate-mirrors.mjs` | the gates above |
+| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `pcm-ab-gate.mjs`, `rate-mirrors.mjs` | the gates above |
+| `light-study.mjs` | the image-rate study |
 | `sgdk-project.mjs`, `sgdk-gate.mjs`, `sgdk-profile.mjs`, `sgdk-lint.mjs`, `sgdk-shim/` | the SGDK build path and its gates |
 | `install-sgdk.mjs` | install the driver into an SGDK project |
 | `level-diff.mjs` | per-frame level comparison against ir-player |

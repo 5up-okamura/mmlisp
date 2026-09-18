@@ -103,19 +103,21 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 MMLispDRV plays a compiled score (`.mmb`) using both Mega Drive CPUs. The
 **68000** runs the sequencer — it walks the score, runs the tick accumulators,
 sweeps and macros, composes levels and pitch, and renders each frame into
-register writes, which it hands to the Z80 in short bus grabs from the VBlank
-and HBlank interrupts. The **Z80** keeps a fixed 9,987.57 Hz DAC clock from its
-own instruction stream, plays a PCM voice on it, and puts the FM writes on the
-YM2612 between samples ([docs/driver.md](docs/driver.md)).
+register writes, which it hands to the Z80 in one short bus grab a frame. The
+**Z80** keeps a fixed DAC clock from its own instruction stream, mixes up to
+three PCM voices on it, and puts the FM writes on the YM2612 between samples
+([docs/driver.md](docs/driver.md)). A score picks its engine image with
+`(def pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three at
+6,653 Hz.
 
 It plays FM + PSG voices and the full level model, motion (sweeps / glide /
 vibrato / tempo ramps), FM3 independent-operator mode and CSM, the macro
-engine, dynamic value slots, and one PCM voice. Sound effects and more PCM
-voices are not on the hardware driver yet (driver.md §11).
+engine, dynamic value slots, and PCM with loop points that move while a note
+plays. Sound effects are not on the hardware driver yet (driver.md §11).
 
 It's built reference-first: a JS implementation (`drv-player.js`) validated in
 MMLisp Live, then a C sequencer whose **every register write is checked
-byte-for-byte against it at zero tolerance** (41 scores), and an SGDK build
+byte-for-byte against it at zero tolerance** (45 scores), and an SGDK build
 graded write by write and DAC byte by DAC byte in an emulator. See
 [docs/driver.md](docs/driver.md) for the architecture,
 [drv/README.md](drv/README.md) for building and verification, and
