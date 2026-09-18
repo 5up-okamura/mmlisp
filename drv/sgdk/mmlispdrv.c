@@ -9,11 +9,11 @@
 // other gates see is never packed here); everything SGDK-specific is here: the
 // bring-up, the bus grab, the copy, the PSG port.
 //
-// TWO GRABS A FRAME, BOTH FROM INTERRUPTS. A grab carries eight pairs, so the
-// wire is 960 pairs a second with the bus taken twice a frame, and the pairs
-// land ahead of the engine only if the grabs are evenly spaced: the vertical
-// interrupt and a horizontal one at line 93, whose spacing the video timing
-// fixes. A bus stop is not repaid — the DAC runs slow by the time it held.
+// ONE GRAB A FRAME, FROM THE VERTICAL INTERRUPT. A grab carries sixteen pairs,
+// so the wire is 960 pairs a second — the same as the two-grab host it
+// replaces, in half the bus stops, and off the one interrupt every game
+// already has. A bus stop is not repaid: the DAC runs slow by the ~45 µs the
+// grab held, once a frame (driver.md §5.3).
 //
 // RENDERED AHEAD, SENT ON TIME. The main loop's MMLisp_frame() renders each
 // frame MMLISP_LEAD frames before its time; the pumps send only the frames
@@ -51,14 +51,13 @@ static u16        rendered = 0;
 #define MMLISP_CATCHUP 3
 static u32        frameBase;           // vtimer - frameBase = frames whose time has come
 static u16        pauses = 0;
-// THE PUMPS SHARE ONE PLANNER. MMLisp_frame() (main loop) only fills the
-// queue, which mmlpairs.c makes safe against an interrupt-side reader; two
-// pumps must never overlap, though — the VBlank interrupt can preempt the
-// HBlank one, and a game may call MMLisp_pump() itself. An interrupt runs to
-// completion before the code it interrupted resumes, so a plain flag is enough:
-// a pump that finds it set returns at once and the next one carries the pairs.
+// THE PUMP AND THE PLANNER. MMLisp_frame() (main loop) only fills the queue,
+// which mmlpairs.c makes safe against an interrupt-side reader; two pumps must
+// never overlap, though — a game may call MMLisp_pump() itself as well as
+// letting the interrupt do it. An interrupt runs to completion before the code it
+// interrupted resumes, so a plain flag is enough: a pump that finds it set
+// returns at once and the next one carries the pairs.
 static vu8        busy = FALSE;
-static vu8        hintArmed = FALSE;   // one HBlank pump a frame (MMLisp_hint)
 static u16        lateGrabs = 0;
 // Where a grab's release store goes when the bus was already held by the code
 // it interrupted: that code releases it, not us.
@@ -68,10 +67,9 @@ static MMLPairsCfg PAIRS_CFG = {
     MMLISPDRV_LUT_PAGE, MMLISPDRV_OP_STRIDE, MMLISPDRV_OP_PORT,
     1,   // voices: the booted image's (bootImage)
     1,   // idle_after_gen: likewise
-    0,   // ahead: MMLisp_setPumpsPerFrame
+    MMLP_AHEAD_ONE,  // ahead: a whole frame of the engine's reading between grabs
 };
 static u8         image = 0;           // PCM voices of the booted image, 0 = none yet
-static bool       onePump = FALSE;     // VBlank-only: one grab a frame
 
 // ── Bring-up ───────────────────────────────────────────────────────────────
 
@@ -210,22 +208,25 @@ bool MMLisp_loadScore(const u8* mmb)
 #define STR(x)  STR_(x)
 #define GRAB_LATE 0x100
 
-// What one grab writes, loaded into four data registers before the bus is
-// taken: the ops of pairs 0-7, then their values. The 68000 is big-endian, so
-// ops[0..3] loaded as a long is ops[0] in the top byte — the order movep.l
-// stores them in — and the planner writes the arrays in place: nothing is
-// repacked (it was: sixteen byte shifts into four longs, ~700 cycles a pump).
-typedef struct { u8 ops[8]; u8 vals[8]; u8 prev, dist; } __attribute__((aligned(2))) GrabBlock;
+// What one grab writes: the ops of its sixteen pairs, then their values. The
+// 68000 is big-endian, so ops[0..3] loaded as a long is ops[0] in the top byte
+// — the order movep.l stores them in — and the planner writes the arrays in
+// place: nothing is repacked (it was: byte shifts into longs, ~700 cycles a
+// pump). Four longs at a time is all the data registers hold, so the ops go
+// out, then the values.
+typedef struct { u8 ops[16]; u8 vals[16]; u8 prev, dist; } __attribute__((aligned(2))) GrabBlock;
 
 // THE GRAB, in assembly. Written in C over SGDK's Z80_getAndRequestBus() and
-// Z80_releaseBus() with a byte loop, it held the bus ~2,800 master on BlastEm
-// against the engine's 1,500. Everything is computed with the bus free — the
-// eight pairs in registers, where the release store goes — and inside it are
-// the request, the grant poll, ONE read of the engine's index, the in-grab
-// test (mmlpairs.h mmlp_in_time: the index moved by less than `dist`), four
-// movep.l, and the release. MOVEP writes a long to every other byte, which is
-// exactly a pair page's layout: ops at even offsets, values at odd ones — so
-// sixteen bytes cost 96 cycles where sixteen move.b would cost 192.
+// Z80_releaseBus() with a byte loop, it held the bus far longer than this does.
+// Everything that can be is computed with the bus free — where the pairs go,
+// where the release store goes — and inside it are the request, the grant
+// poll, ONE read of the engine's index, the in-grab test (mmlpairs.h
+// mmlp_in_time: the index moved by less than `dist`), eight movep.l, and the
+// release. MOVEP writes a long to every other byte, which is exactly a pair
+// page's layout: ops at even offsets, values at odd ones — so thirty-two bytes
+// cost 192 cycles where thirty-two move.b would cost 384. The whole grab is
+// about 2,400 master (~45 µs); nothing repays it, so the DAC runs that much
+// slow once a frame (driver.md §5).
 //
 // The Z80 is on a byte-wide bus; movep's accesses are single bytes (UDS for
 // the even run, LDS for the odd), which is what the Z80 window takes.
@@ -244,7 +245,7 @@ static u16 grab(const GrabBlock* blk, u16 dst)
     Z80_requestBus(TRUE);
     lo = *Z80_RAM_AT(MMLISPDRV_FIFO_LO);
     if ((u8)(lo - blk->prev) < blk->dist)
-        for (u16 i = 0; i < 8; i++)
+        for (u16 i = 0; i < MMLISPDRV_PAIRS_PER_GRAB; i++)
         {
             d[2 * i]     = blk->ops[i];
             d[2 * i + 1] = blk->vals[i];
@@ -253,11 +254,11 @@ static u16 grab(const GrabBlock* blk, u16 dst)
     Z80_releaseBus();
 #else
     __asm__ volatile (
-        "   movem.l (%[blk]), %%d3-%%d6\n"
+        "   movem.l (%[blk]), %%d3-%%d6\n"   // ops[0..15]
         "   moveq   #0, %%d1\n"
-        "   move.b  16(%[blk]), %%d1\n"    // prev
+        "   move.b  32(%[blk]), %%d1\n"    // prev
         "   moveq   #0, %%d7\n"
-        "   move.b  17(%[blk]), %%d7\n"    // dist
+        "   move.b  33(%[blk]), %%d7\n"    // dist
         "   lea     0xA11100, %%a3\n"
         "   move.l  %%a3, %%a4\n"
         "   moveq   #0, %[lo]\n"
@@ -272,10 +273,15 @@ static u16 grab(const GrabBlock* blk, u16 dst)
         "   sub.b   %%d1, %%d2\n"
         "   cmp.b   %%d7, %%d2\n"
         "   bcc.s   8f\n"                  // late: write nothing
-        "   movep.l %%d3, 0(%[d])\n"
-        "   movep.l %%d5, 1(%[d])\n"
-        "   movep.l %%d4, 8(%[d])\n"
-        "   movep.l %%d6, 9(%[d])\n"
+        "   movep.l %%d3, 0(%[d])\n"     // ops 0-3   -> bytes 0,2,4,6
+        "   movep.l %%d4, 8(%[d])\n"     // ops 4-7   -> 8,10,12,14
+        "   movep.l %%d5, 16(%[d])\n"    // ops 8-11  -> 16,18,20,22
+        "   movep.l %%d6, 24(%[d])\n"    // ops 12-15 -> 24,26,28,30
+        "   movem.l 16(%[blk]), %%d3-%%d6\n" // vals[0..15]
+        "   movep.l %%d3, 1(%[d])\n"     // vals 0-3  -> 1,3,5,7
+        "   movep.l %%d4, 9(%[d])\n"
+        "   movep.l %%d5, 17(%[d])\n"
+        "   movep.l %%d6, 25(%[d])\n"
         "9: move.w  #0x0000, (%%a4)\n"     // release (or the sink)
         "   bra.s   7f\n"
         "8: ori.w   #0x100, %[lo]\n"
@@ -332,62 +338,16 @@ void MMLisp_pump(void)
     pump(due());
 }
 
-// SGDK's horizontal interrupt vector JUMPS to the callback — no wrapper saves
-// registers or returns with RTE for it — so the callback has to be an
-// interrupt function itself. A plain C function there returns with RTS into
-// whatever the stack holds.
-HINTERRUPT_CALLBACK MMLisp_hint(void)
-{
-    // The counter fires again 94 lines later, still inside the picture; the
-    // VBlank pump re-arms this one, so only the first of them grabs.
-    if (!hintArmed) return;
-    hintArmed = FALSE;
-    pump(due());
-}
-
-// A FRAME LEAVES FROM THE HBLANK PUMP. The VBlank pump sends only what the
-// previous frame's HBlank pump could not fit, so in the usual frame its grab
-// just reads the index, away from SGDK's own VBlank work (its DMA flush halts
-// the Z80 right after this interrupt). The music is a constant half-frame
-// later for it.
+// The frame's grab, from the vertical interrupt. It carries the frame whose
+// time has just come, so the music's tempo is the video clock's.
 static void vblankPump(void)
 {
-    hintArmed = TRUE;
-    const u16 d = due();
-    // With one grab a frame it carries the frame itself.
-    pump(onePump ? d : (d ? (u16)(d - 1) : 0));
-}
-
-void MMLisp_setPumpsPerFrame(u8 n)
-{
-    // Where a grab writes depends on how long until the next one: the engine
-    // reads ~2 pairs a millisecond, and a whole frame between grabs is ~34
-    // (NTSC) to ~40 (PAL) of them (mmlpairs.c MMLP_AHEAD_ONE).
-    onePump = (n == 1);
-    PAIRS_CFG.ahead = onePump ? MMLP_AHEAD_ONE : 0;
-    pairs.cfg.ahead = PAIRS_CFG.ahead;
-}
-
-void MMLisp_attachVBlankOnly(void)
-{
-    // ONE GRAB A FRAME, FROM THE VBLANK INTERRUPT — the horizontal interrupt
-    // stays the game's. The wire halves (480 pairs a second): a song's start
-    // is primed at load either way, but a voice change on several channels
-    // mid-song takes twice as long to reach the chip.
-    MMLisp_setPumpsPerFrame(1);
-    SYS_setVIntCallback(vblankPump);
+    pump(due());
 }
 
 void MMLisp_attachInterrupts(void)
 {
-    // WHERE THE HBLANK PUMP GOES. Line 93 puts the pump 131 lines from the
-    // VBlank one both ways on NTSC (8.34 ms each), so the head each writes at
-    // stays ahead of what the engine consumes between them.
-    hintArmed = FALSE;
     SYS_setVIntCallback(vblankPump);
-    VDP_setHIntCounter(93);
-    SYS_setHIntCallback(MMLisp_hint);
-    VDP_setHInterrupt(TRUE);
 }
 
 void MMLisp_frame(void)

@@ -36,12 +36,18 @@ static unsigned char *slurp(const char *path, long *out_len) {
  * modelled engine moves on and the grab reads the fresh index; a late grab
  * (every seventh one here, as if a pump had been skipped) copies nothing and
  * gives its pairs back. The JS twin (tools/pairs-gate.mjs) does the same. */
-/* The engine's advance between two grabs: 17 pairs at two grabs a frame, 34 at
- * one; every seventh grab is late by 24 more — past the head it planned for. */
+/* HOW FAST THE MODEL ENGINE READS, in pairs between two grabs. The real one
+ * eats ~17 a frame (8 a lap); these are deliberately about twice that, so the
+ * in-grab test and the abort path are exercised on every score rather than
+ * almost never. Every seventh grab is late by 24 more — past the head it
+ * planned for. The JS twin (tools/pairs-gate.mjs) uses the same numbers: what
+ * this gate proves is that the two agree, not what the engine does. */
 static unsigned advance = 17;
 
 static void grab(MMLPairs *p, uint16_t release, unsigned *consumer, uint8_t *fifo_lo, const MMLPairsCfg *cfg, unsigned *ngrab) {
-  uint8_t ops[8], vals[8], out[2 * 8];
+  /* The shipped host grabs MMLISPDRV_PAIRS_PER_GRAB (16); the harness takes it
+   * from argv, so the buffers are sized for anything the planner will accept. */
+  uint8_t ops[MMLP_MAX_GRAB], vals[MMLP_MAX_GRAB], out[2 * MMLP_MAX_GRAB];
   uint16_t dst = 0;
   uint8_t prev = *fifo_lo;
   uint16_t nb = (uint16_t)(2 * mmlp_plan(p, prev, release, ops, vals, &dst));

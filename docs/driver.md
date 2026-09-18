@@ -14,8 +14,8 @@ Two processors:
   accumulators, dispatch, sweeps and macros, composes levels and pitch, and
   renders each frame into a list of register writes and PCM commands (§4). The
   host glue turns that frame into `{op, val}` pairs, writes them into Z80 RAM
-  in short bus grabs from the VBlank and HBlank interrupts (§6.6), and writes
-  the PSG itself. The MMB lives in 68k ROM and is read as a plain byte array.
+  in one bus grab a frame from the vertical interrupt (§6.6), and writes the
+  PSG itself. The MMB lives in 68k ROM and is read as a plain byte array.
 - **Z80 — the engine.** Plays one to three PCM voices through the fm6 DAC on a
   fixed clock taken from its own instruction stream, and consumes the pairs:
   YM2612 register writes and the PCM voices' state (§5). There is one engine
@@ -517,7 +517,7 @@ does all arithmetic; the sequencer only stores and applies (docs/language.md
 | `MMLisp_init()` | upload the engine image, boot it, wait up to ~1 s for its ready mark; `MMLisp_isReady()` says whether it came up |
 | `MMLisp_setSampleBank(smp)` | publish the 32 KB sample bank (§5.4); PCM scores only |
 | `MMLisp_loadScore(mmb)` | load a score (resets the sequencer; one score at a time) and prime it (§4.1); `MMLisp_isSettled()` says when the load has gone out |
-| `MMLisp_attachInterrupts()` / `MMLisp_attachVBlankOnly()` | install the pumps (§6.6); a game with its own handlers calls `MMLisp_pump()` / `MMLisp_hint` and `MMLisp_setPumpsPerFrame(n)` instead |
+| `MMLisp_attachInterrupts()` | install the pump (§6.6) as the VBlank callback; a game with its own calls `MMLisp_pump()` once a frame instead. The horizontal interrupt is not touched |
 | `MMLisp_frame()` | once per frame in the main loop, after the control calls: render ahead (§3.1); takes no bus |
 | `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track enters **armed** (§4.2) |
 | `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9) |
@@ -544,21 +544,21 @@ Every control call takes effect on the next frame rendered (§3.4).
 - **The image** is booted by `MMLisp_loadScore` from the MMB header's PCM voice
   count (`MMLisp_init` boots `pcm1`); booting another resets the Z80 and
   rewrites the bank register.
-- **Two grabs a frame, from interrupts** — VBlank, and HBlank at line 93, 131
-  lines apart both ways on NTSC, so the two never fall in one 80-sample window.
-  A grab reads the engine's index, then writes **eight pairs** (IDLE-padded)
-  at `H = index read last grab + 32` with four `movep.l` — about
-  1,100–1,320 master clocks of bus stop. It never writes behind pairs not yet read and
-  never across the page end. If the fresh index shows the engine already at or
-  past `H`, the grab writes nothing and the pairs go back to the queue (a late
-  grab; `MMLispStats.late`). 960 pairs a second.
+- **One grab a frame, from the vertical interrupt.** The horizontal interrupt
+  is never touched — it stays the game's. A grab reads the engine's index, then
+  writes **sixteen pairs** (IDLE-padded) at `H = index read last grab +
+  MMLP_AHEAD_ONE` (48) with two `movem.l` and eight `movep.l` — about 2,400
+  master clocks (~45 µs) of bus stop, measured on BlastEm. It never writes
+  behind pairs not yet read and never across the page end. If the fresh index
+  shows the engine already at or past `H`, the grab writes nothing and the
+  pairs go back to the queue (a late grab; `MMLispStats.late`). 960 pairs a
+  second — the same wire two grabs of eight carried, in half the stops.
 - **Release on time.** The converter remembers where each queued frame ends; a
-  grab sends only frames whose time has come. The HBlank pump releases the due
-  frames and the VBlank pump one fewer, so a frame leaves from the HBlank pump,
-  clear of SGDK's DMA-flush halt right after the VBlank interrupt.
-- **VBlank-only mode** (`MMLisp_attachVBlankOnly`, or
-  `MMLisp_setPumpsPerFrame(1)` for a game's own handlers): one grab a frame at
-  VBlank, writing `MMLP_AHEAD_ONE` = 48 pairs ahead. 480 pairs a second.
+  grab sends only frames whose time has come, so the tempo follows the video
+  clock rather than the main loop.
+- **The stop is not repaid.** The DAC runs slow by the time the bus was held.
+  On the gate's scores that is 0.15–0.27% of the rate — 2.4 to 4.7 cents flat,
+  the driver's own grab plus SGDK's DMA-flush halt.
 
 ## 7. Level Composition
 
@@ -838,14 +838,29 @@ the two generated files are what the images build to now.
 
 ### 12.7 On the machine
 
-`npm run sgdk:gate -- <score>` — not yet moved to the light images; it stops
-with a message until it is. It builds a scratch SGDK project with
+`npm run sgdk:gate -- <score>` builds a scratch SGDK project with
 `install-sgdk`, runs it in a patched headless BlastEm (`drv/blastem/`) that logs
 every DAC byte, every YM/PSG access by CPU and every bus grab, and grades the
-log: every FM write per port and every PSG byte in the score's order, every DAC
-byte against the reference, the bus stops, PCM-vs-FM sync, and whether the FM's
-lag behind the reference's frames climbs (a lost frame). `npm run sgdk:profile` times the driver's functions in the same build.
-Needs SGDK, the m68k toolchain and the probe BlastEm (`drv/blastem/setup.sh`).
+log: every FM write per port and every PSG byte in the score's order, **every
+DAC byte against `live/src/pcm-model.js` driven by the engine's own state-block
+writes**, the bus stops, PCM-vs-FM sync, and whether the FM's lag behind the
+reference's frames climbs (a lost frame). Grading starts at the LAST ready mark
+— `MMLisp_init` boots `pcm1` and `MMLisp_loadScore` boots the score's image
+over it, so an earlier engine's samples are not this one's. Measured, six
+scores across the three images:
+
+| | `m2-pcm` | `m4-pcm-2v-master` | `m4-pcm-3v` | `m4-pcm-loop-curve` | `sin008` | `demo1` |
+| --- | --- | --- | --- | --- | --- | --- |
+| image | pcm1 | pcm2 | pcm3 | pcm1 | pcm1 | pcm1 |
+| rate between stops | 14375.68 | 10111.71 | 6653.43 | 14375.68 | 14375.68 | 14375.68 |
+| lost to bus stops | −2.4 ¢ | −2.7 ¢ | −2.7 ¢ | −3.6 ¢ | −3.1 ¢ | −4.7 ¢ |
+| longest runtime stop | 2,402 | 2,378 | 2,390 | 2,402 | 2,449 | 2,453 |
+| DAC vs the model | all match | all match | all match | all match | all match | all match |
+
+The lag floor moved 0.0–0.1 ms over an 8-second run: no frame is lost at one
+grab a frame. `npm run sgdk:profile` times the driver's functions in the same
+build. Needs SGDK, the m68k toolchain and the probe BlastEm
+(`drv/blastem/setup.sh`).
 
 The engine's research bench (`drv/experimental/dac-stream/`) carries the
 generator's other profiles (two voices) and the BlastEm machine probe

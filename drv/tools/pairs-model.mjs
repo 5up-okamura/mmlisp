@@ -18,7 +18,10 @@ export const levelPage = (cfg, shift, masterShift) =>
   cfg.lutPage + (shift >= 8 || shift + masterShift > 6 ? 0 : 7 - (shift + masterShift));
 
 /** What SGDK's host grabs with: 8 pairs a grab, two grabs a frame. */
-export const SGDK_PAIRS_PER_GRAB = 8;
+// ONE GRAB A FRAME, from the VBlank callback (driver.md §5.3): sixteen pairs
+// a grab is the same 960 pairs a second the two-grab host carried, in half as
+// many bus stops.
+export const SGDK_PAIRS_PER_GRAB = 16;
 
 /** The converter's configuration for an engine image descriptor (live/src/engine-images.js). */
 export function pairsCfgForImage(img, { pairsPerGrab = SGDK_PAIRS_PER_GRAB } = {}) {

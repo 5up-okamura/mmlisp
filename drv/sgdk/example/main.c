@@ -44,12 +44,6 @@
 #define MMLISP_BURN 0
 #endif
 
-// One pump a frame from VBlank, leaving HBlank to the game (sgdk-gate
-// --vblank-only builds it).
-#ifndef MMLISP_VBLANK_ONLY
-#define MMLISP_VBLANK_ONLY 0
-#endif
-
 #define MAX_SHOWN_TRACKS 10
 
 static void drawHex(u32 value, u16 digits, u16 x, u16 y)
@@ -92,16 +86,11 @@ int main(bool hardReset)
         while (TRUE) SYS_doVBlankProcess();
     }
 
-    // THE TWO PUMPS (mmlispdrv.h): the VBlank callback and an HBlank one at
-    // line 93 carry the pairs to the Z80; MMLisp_frame() below only renders.
-    // A game with its own VBlank/HBlank callbacks calls MMLisp_pump() from
-    // them instead. A game that needs the horizontal interrupt for itself
-    // builds with MMLISP_VBLANK_ONLY=1: one pump a frame, half the wire.
-#if MMLISP_VBLANK_ONLY
-    MMLisp_attachVBlankOnly();
-#else
+    // THE PUMP (mmlispdrv.h): the VBlank callback carries the pairs to the
+    // Z80; MMLisp_frame() below only renders. A game with its own VBlank
+    // callback calls MMLisp_pump() from it instead. The horizontal interrupt
+    // is untouched — it stays the game's.
     MMLisp_attachInterrupts();
-#endif
 
 #if MMLISP_AUTOPLAY
     // The headless gate (drv/tools/sgdk-gate.mjs) grades the driver's own bus

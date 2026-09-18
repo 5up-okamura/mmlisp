@@ -139,6 +139,43 @@ estimate unless it says so.
       T_NOTE_PITCH` while the JS used `targetWidth` (wide for TEMPO_SCALE too).
       Both now go through `target_wide()` / `WIDE_TARGET_IDS`.
 
+- **S4 — DONE 2026-09-18.** §5 in full, and the BlastEm gate is back.
+  1. **The host is VSync-only.** `MMLisp_attachInterrupts` installs a VBlank
+     callback and nothing else; `MMLisp_hint`, `MMLisp_setPumpsPerFrame`,
+     `MMLisp_attachVBlankOnly`, `onePump`, `hintArmed` and the
+     `MMLISP_VBLANK_ONLY` build flag are gone. The horizontal interrupt is the
+     game's again.
+  2. **A grab is SIXTEEN pairs**: `GrabBlock` is `{u8 ops[16]; u8 vals[16];
+     prev; dist}`, two `movem.l` and eight `movep.l` inside the bus hold —
+     ops first, then values, because four longs is all the data registers hold.
+     `SGDK_PAIRS_PER_GRAB` 8 → 16, `ahead` fixed at `MMLP_AHEAD_ONE`. Same 960
+     pairs a second, half the stops.
+  3. **`sgdk:gate` ported** (tools/sgdk-gate.mjs): the DAC reference is now
+     `PcmEngineModel` fed the engine's OWN state-block stores as BlastEm logged
+     the Z80 writing them, per image. Two things it needed:
+     - **Grade from the LAST ready mark.** `MMLisp_init` boots pcm1 and
+       `MMLisp_loadScore` boots the score's image over it, so a pcm2/pcm3 run
+       starts with another engine's samples. The upload between them holds the
+       bus ~5.07M master (6,912 bytes through the window) — a load, not a
+       runtime stop, and now outside the graded span.
+     - **The clock is graded with the stops taken out**, because nothing repays
+       them. What they cost is reported as cents.
+     The probe reports a glob write as its offset in the `$1F00` page, so the
+     state block is at `desc.state & 0xff`.
+  4. **MEASURED ON BLASTEM**, six scores, all DAC bytes matching the model:
+     pcm1/2/3 hold 14375.68 / 10111.71 / 6653.43 Hz between stops — the nominal
+     rates exactly. Bus stops cost 2.4-4.7 cents. Longest runtime stop
+     2,378-2,453 master, i.e. the grab (~45 µs) — the design predicted ~2,400.
+     The FM lag floor moved 0.0-0.1 ms over 8 s: **no frame is lost at one grab
+     a frame**, which was the open question.
+  5. `engine:score` models the shipped host now (one grab a frame, every
+     eighth skipped). `pairs_main.c`'s grab buffers were `[8]` — fixed at 16
+     pairs they overflowed; sized by `MMLP_MAX_GRAB` (32). Its `advance`
+     comment claimed to be the engine's rate; it is about twice it, on purpose,
+     and now says so.
+  6. NOT DONE: hardware. The images still sit at a 100% work ceiling and the
+     68k-window read wait is a BlastEm number (§9).
+
 ## 1. The engine
 
 ### 1.1 What the image is, and what it no longer carries

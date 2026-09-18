@@ -18,7 +18,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
-import { PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
+import { MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
@@ -56,24 +56,24 @@ function runScore(path) {
   // The bank the window shows: the score's own, or silence.
   const bank = new Uint8Array(0x8000);
   if (sampleBank) bank.set(sampleBank.subarray(0, 0x8000), 0);
-  const model = new PairsModel(pairsCfgForImage(desc));
+  const model = new PairsModel({ ...pairsCfgForImage(desc), ahead: MMLP_AHEAD_ONE });
   const fifoAddrs = Array.from({ length: 256 }, (_, i) => desc.fifo + i);
   const m = new Machine(cfg, { bytes: built.bytes, symbols: built.symbols }, { rom: bank, watch: fifoAddrs });
   m.trace.meta = traceMeta(cfg, { case: basename(path), frames: FRAMES });
   while (!m.trace.dacCycle.length) m.run(m.cycles + 200);
   const dac0 = m.trace.dacCycle[0];
-  const half = Math.round(cfg.frameCycles / 2);
-  // The host: a frame rendered at every other half-frame tick, a grab at each.
-  // Every fifth mid-frame pump is SKIPPED, as an SGDK HInt pump is when it
-  // lands inside MMLisp_frame: the next grab then comes a whole frame after the
-  // last, and the in-grab test (mmlpairs.h mmlp_in_time) must give the pairs
-  // back, not write them.
+  const frameCycles = Math.round(cfg.frameCycles);
+  // The host (driver.md §6.6): one frame rendered and ONE grab of sixteen pairs
+  // a frame, from the vertical interrupt. Every eighth grab is SKIPPED, as the
+  // VBlank pump is when the main loop overruns: the next grab then comes two
+  // frames after the last, and the in-grab test (mmlpairs.h mmlp_in_time) must
+  // give the pairs back, not write them.
   let tick = 0, frame = 0, fifoLo = null;
   const psgOut = [];
-  m.host = { every: half, fn: (ram, cycle) => {
+  m.host = { every: frameCycles, fn: (ram, cycle) => {
     const t = tick++;
-    if (t % 2 === 0 && frame < slots.length) model.slot(slots[frame++]);
-    if (t % 10 === 5) return [];
+    if (frame < slots.length) model.slot(slots[frame++]);
+    if (t % 8 === 7) return [];
     const prev = fifoLo;
     const g = model.plan(prev);
     fifoLo = ram[desc.fifoLo];
@@ -83,7 +83,7 @@ function runScore(path) {
     for (const b of model.psgTake()) psgOut.push({ cycle, byte: b });
     return writes;
   } };
-  m.hostNext = dac0 + half;
+  m.hostNext = dac0 + frameCycles;
   // Run the frames plus a tail so the queue drains, then compare.
   m.run(dac0 + (slots.length + 12) * cfg.frameCycles);
   const fails = [];

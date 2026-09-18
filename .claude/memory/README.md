@@ -92,7 +92,8 @@ Index:
   converter, bank/MMB v0.3, SGDK host boots the score's image) DONE
   2026-09-17, S3 (language: pcm-voices, the four diagnostics, and the loop
   points as LENGTHS on both the def and the track — `Nms` is new grammar)
-  DONE 2026-09-18; next S4 (SGDK host).**
+  DONE 2026-09-18, S4 (SGDK host: VSync-only, 16 pairs a grab, sgdk:gate back on
+  the three images and green on BlastEm) DONE 2026-09-18; next S5 (browser).**
   Delete when S6 lands.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the

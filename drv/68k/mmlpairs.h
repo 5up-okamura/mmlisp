@@ -57,6 +57,7 @@ typedef struct {
 #define MMLP_PSG   256    /* PSG bytes held for one grab period */
 #define MMLP_FRAMES 8     /* frames queued ahead whose ends are remembered (a power of two) */
 #define MMLP_AHEAD_ONE 48 /* MMLPairsCfg.ahead for one grab a frame */
+#define MMLP_MAX_GRAB 32  /* the largest pairs_per_grab mmlp_plan will be asked for */
 
 typedef struct {
   MMLPairsCfg cfg;

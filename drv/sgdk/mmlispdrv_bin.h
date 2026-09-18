@@ -14,7 +14,7 @@
 // engine consumes once each, at its expander's own slots.
 #define MMLISPDRV_FIFO           0x1D00
 #define MMLISPDRV_FIFO_PAIRS     128
-#define MMLISPDRV_PAIRS_PER_GRAB 8   // what one grab writes, always (IDLE-padded)
+#define MMLISPDRV_PAIRS_PER_GRAB 16   // what one grab writes, always (IDLE-padded)
 
 // The PCM state block. A pair {op, val} with op < OP_PORT stores val at
 // STATE + op; OP_PORT picks the YM port; op >= OP_LIMIT is a YM register.

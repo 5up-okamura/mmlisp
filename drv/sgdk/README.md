@@ -17,7 +17,7 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
 ```
 drv/sgdk/mmlispdrv.h        host API
-drv/sgdk/mmlispdrv.c        host implementation (Z80 bring-up, the two pumps, the grab)
+drv/sgdk/mmlispdrv.c        host implementation (Z80 bring-up, the pump, the grab)
 drv/sgdk/mmlispdrv_bin.h    generated: the three Z80 engine images + their ABI constants
 drv/68k/mmlispseq.{c,h}     the sequencer — 68k code, compiled INTO your game
 drv/68k/mmlpairs.{c,h}      the slot -> pair converter, also compiled into your game
@@ -72,7 +72,7 @@ mysong.mmlisp ──mmb-build.mjs──▶ song.mmb [+ song.smp] ──rescomp(B
                                                                           │
  main loop:  MMLisp_frame()  ─ mmlispseq.c renders one slot a frame ─┐    │
                               mmlpairs.c: slot -> {op,val} pairs     │    │
- interrupts: VBlank + HBlank line 93 pumps ─ ≤ 8 pairs a grab ───────┤    │
+ VBlank:     one pump ─ 16 pairs a grab, ~45 µs of held bus ─────────┤    │
                                                                      ▼    ▼
  Z80: the score's engine image (1-3 PCM voices, 14,376 / 10,112 / 6,653 Hz);
       a fixed DAC clock from its own instruction stream; pairs go to the
@@ -98,7 +98,7 @@ MMLisp_init();                       // upload + boot the engine
 if (!MMLisp_isReady()) { /* bring-up failed */ }
 MMLisp_setSampleBank(song_smp);      // PCM scores only
 MMLisp_loadScore(song_mmb);
-MMLisp_attachInterrupts();           // the two pumps: VBlank + HBlank line 93
+MMLisp_attachInterrupts();           // the pump: one grab from the VBlank callback
 for (u8 i = 0; i < MMLisp_trackCount(); i++) MMLisp_startTrack(MMLisp_trackId(i));
 
 while (TRUE) {
@@ -138,32 +138,20 @@ while (TRUE) {
   instead of bursting through the missed frames. Each frame of lead is a frame
   of latency on the control calls.
 
-- **The two pumps — from interrupts.** `MMLisp_attachInterrupts()` installs a
-  VBlank callback and an HBlank one at line 93. Each takes the bus once, reads
-  the engine's pair index, writes eight pairs ahead of it (the real ones, then
-  IDLE) with four `movep.l`, and releases — about 1,100–1,320 master clocks on
-  BlastEm. Two a frame is 960 pairs a second. Line 93 puts them 131 lines apart
-  both ways on NTSC. **A frame leaves from the HBlank pump;** the VBlank one
-  sends only what the previous frame's could not fit, so in the usual frame it
-  just reads the index, away from SGDK's DMA flush right after the VBlank
-  interrupt. The music is a constant half-frame later for it. If your game has its own VBlank/HBlank callbacks, call
-  `MMLisp_pump()` from them instead (at line 88–98 for the HBlank one); the
-  HBlank vector needs an interrupt function, which is what `MMLisp_hint` is.
+- **One pump a frame — from the vertical interrupt.** `MMLisp_attachInterrupts()`
+  installs a VBlank callback and nothing else; **the horizontal interrupt stays
+  yours**, raster effects and all. The pump takes the bus once, reads the
+  engine's pair index, writes sixteen pairs ahead of it (the real ones, then
+  IDLE) with eight `movep.l`, and releases — about 2,400 master clocks (~45 µs),
+  measured on BlastEm. Once a frame is 960 pairs a second, the same wire the
+  earlier two-grab host carried, in half the bus stops. If your game has its own
+  VBlank callback, call `MMLisp_pump()` from it instead.
 
   A pump that comes late — the engine already past where the pairs were
   planned — notices it inside the grab, writes nothing, and the next one
   catches up (`MMLispStats.late`). Pairs are never handed to the engine behind
-  its read index.
-
-- **A game that needs HBlank for itself** (raster effects): call
-  `MMLisp_attachVBlankOnly()` instead. One pump a frame from the VBlank
-  callback, HBlank untouched. The DAC rate does not change — it never depends
-  on the 68000 — but the wire halves to 480 register writes a second (a voice
-  change on several channels mid-song takes ~8 frames instead of ~4 to reach
-  the chip; the song's start is primed at load either way). If your own handlers
-  call `MMLisp_pump()`, tell the host how often with
-  `MMLisp_setPumpsPerFrame(1 or 2)` — a grab writes further ahead of the engine
-  when the next one is a frame away.
+  its read index. Over an 8-second BlastEm run the floor of the FM write lag
+  moved 0.0–0.1 ms, so no frame was lost at this rate.
 
 - **PSG** bytes go straight from the 68000 to `$C00011`, one grab period after
   they were queued so they land with the FM they were cued with.
@@ -198,11 +186,19 @@ SGDK halts the Z80 on its own, and the engine repays no stop:
 | `JOY_update` (`HALT_Z80_ON_IO`, default 1) | every VBlank, per pad port | ~2,490 master per 6-button pad | `JOY_setSupport(port, JOY_SUPPORT_OFF)` for ports you do not read; or rebuild SGDK with `HALT_Z80_ON_IO 0` |
 | `DMA_flushQueue` (`HALT_Z80_ON_DMA`, default 1) | every VBlank with auto-flush on, **even with an empty queue** | ~600 master empty, growing with the DMA | `DMA_setAutoFlush(FALSE)` if you do not use the DMA queue |
 
-With both pads read and the auto-flush on, the VBlank window carries ~5,700
-master of stop a frame (~106 µs): the DAC runs slow by it, about 0.6%, a few
-cents flat. A big DMA every frame stops the DAC for its whole length. Stops up
-to 200 µs twice a frame were judged inaudible on drum PCM
-(`.claude/memory/plan-pcm-spec.md`, D9).
+**The driver's own pump is a stop too** — about 2,400 master (~45 µs) once a
+frame, measured on BlastEm. With no pads read and the auto-flush on, that and
+SGDK's own halts cost the DAC 0.15–0.27% of its rate on the gate's scores:
+**2.4 to 4.7 cents flat**, and nothing else. With both pads read and a DMA
+every frame it is more, and a big DMA stops the DAC for its whole length.
+Stops up to 200 µs twice a frame were judged inaudible on drum PCM
+(`.claude/memory/plan-pcm-spec.md`, D9), so this is well inside the verdict.
+
+**A score load is a long stop, on purpose**: `MMLisp_loadScore` boots the
+score's own engine image, and uploading 6,912 bytes through the Z80 window
+holds the bus for about 5M master (~0.95 s of Z80 time, though the 68000 spends
+far less). The Z80 is stopped and in reset for it, so nothing is playing —
+load during a screen transition, as the header says.
 
 ### Banking
 
@@ -286,7 +282,7 @@ missing PCM means the count.
 - `pending` — pairs waiting for the wire. A handful is steady state; a number
   that keeps climbing means the score asks for more than two grabs a frame carry
   (960 pairs a second), or the pumps are not running.
-- `grabs` — should advance by ~120 a second.
+- `grabs` — should advance by ~60 a second.
 - `late` — grabs that found the engine past their destination and left the
   pairs to the next one. A few is harmless; steadily climbing means the pumps
   are not evenly spaced.
@@ -322,7 +318,7 @@ the include phase and prints the real error.)
 1. **Ready mark.** `MMLisp_isReady()` false means the engine never reached its
    loop: the upload or the reset path is wrong, not the score.
 
-2. **Is the wire moving?** `grabs` climbs by ~120 a second and `pending` stays
+2. **Is the wire moving?** `grabs` climbs by ~60 a second and `pending` stays
    small. `grabs` frozen means the pumps are not installed
    (`MMLisp_attachInterrupts()` or your own callbacks).
 
@@ -342,7 +338,7 @@ the include phase and prints the real error.)
    times the driver's functions in the same build (probe marks on entry and
    exit); `--pc` samples the 68000's PC instead and names the inlined source
    lines, `--peak N` only inside the N heaviest renders. On sin008 the driver
-   takes ~28% of the 68000 on average — the render ~18%, the two pumps ~6% —
+   takes ~28% of the 68000 on average — the render ~18%, the pump the rest —
    and the worst render ~116% of a frame (a voice change on several channels),
    which the render lead absorbs.
 
@@ -404,8 +400,8 @@ Everything the language compiles to, except SE:
 
 ## Limits
 
-- **One PCM voice**, no sample loops, no runtime pitch (see above).
-- **Wire: 960 pairs a second** (480 in VBlank-only mode). The song's opening
+- **No runtime pitch on a PCM voice**: every note is baked (see above).
+- **Wire: 960 pairs a second.** The song's opening
   voice setup is primed at load, but a mid-song voice change on several
   channels at once (~30 writes each) still takes a few frames through it, and
   scores that change many registers every frame (per-frame vibrato on every
@@ -415,7 +411,10 @@ Everything the language compiles to, except SE:
 - **`(trig N)` markers are not surfaced** to the host.
 - **SGDK's own Z80 halts** (pads, DMA) are outside the driver's budget — see
   "Bus stops that are not the driver's".
-- **Not yet run on hardware.** In particular the pumps write Z80 RAM with
-  `movep.l` (single byte cycles, as the 68000 defines it; correct in BlastEm).
+- **Not yet run on hardware.** In particular the pump writes Z80 RAM with
+  `movep.l` (single byte cycles, as the 68000 defines it; correct in BlastEm),
+  and the engine images are placed at a 100% work ceiling — the only unmodelled
+  cycle is the 68k-window read wait, which on real silicon could stretch the
+  binding slot and run the DAC a little slow.
 
 The design is `docs/driver.md`; building and the gates are `drv/README.md`.

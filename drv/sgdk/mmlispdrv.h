@@ -1,23 +1,20 @@
 // MMLispDRV — SGDK (Sega Genesis Dev Kit) host API.
 //
 // THE SPLIT (docs/driver.md §1.1): the 68000 runs the sequencer, the Z80 is a
-// PCM + chip-write engine. THE TRANSPORT (docs/dac-engine-implementation.md
-// R28 §63): the Z80 keeps a fixed 9,987.57 Hz DAC clock from its own
-// instruction stream — no interrupt, no timer — and consumes 2-byte {op, val}
-// PAIRS from a page in its RAM, sixteen a lap of eighty samples. A pair is an
-// FM register write or one byte of the PCM voice's state; PSG bytes go
-// straight from the 68000 to $C00011. The sequencer's calls below are ordinary
-// C calls; what crosses the bus is pairs, in bus grabs sized to what the
-// engine's phase corrector can repay.
+// PCM + chip-write engine. THE TRANSPORT (driver.md §5): the Z80 keeps a fixed
+// DAC clock from its own instruction stream — no interrupt, no timer — and
+// consumes 2-byte {op, val} PAIRS from a page in its RAM. A pair is an FM
+// register write or one byte of a PCM voice's state; PSG bytes go straight
+// from the 68000 to $C00011. The sequencer's calls below are ordinary C calls;
+// what crosses the bus is pairs, in one bus grab a frame.
 //
-// TWO GRABS A FRAME, FROM INTERRUPTS — the one thing a game has to arrange. A
-// grab carries eight pairs, so the wire is 960 register writes a second only
-// when the bus is taken twice a frame, and the pairs land ahead of the engine
-// only when the grabs are evenly spaced. So:
+// ONE GRAB A FRAME, FROM THE VERTICAL INTERRUPT — the one thing a game has to
+// arrange, and it is the interrupt every game already takes. A grab carries
+// sixteen pairs, so the wire is 960 register writes a second. So:
 //
-//     MMLisp_attachInterrupts()  once, after MMLisp_init: a pump becomes the
-//                                VBlank callback and MMLisp_hint the HBlank one
-//                                at line 93
+//     MMLisp_attachInterrupts()  once, after MMLisp_init: the pump becomes the
+//                                VBlank callback. The horizontal interrupt is
+//                                not touched — it stays yours
 //     MMLisp_frame()             once a frame in your main loop: renders ahead
 //                                into the queue; takes no bus
 //
@@ -29,16 +26,16 @@
 // three frames behind is taken as a stop (a load, a pause screen) and the music
 // pauses with it rather than bursting through the missed frames.
 //
-// If your game has its own VBlank or HBlank callback, skip the attach and call
-// MMLisp_pump() from yours — once in VBlank and once at line 88..98, so that the
-// two are more than 80 samples (8.0 ms) apart both ways. A pump that
-// comes late (a frame after the last one) notices, copies nothing, and the next
-// one catches up; the Z80 is never handed pairs behind its read index.
+// If your game has its own VBlank callback, skip the attach and call
+// MMLisp_pump() from yours, once a frame. A pump that comes late (two frames
+// after the last one) notices, copies nothing, and the next one catches up;
+// the Z80 is never handed pairs behind its read index.
 //
-// SGDK'S OWN BUS STOPS. SGDK halts the Z80 around every joypad read
-// (HALT_Z80_ON_IO, ~350 68k cycles per 6-button port) and every VBlank DMA
-// flush (HALT_Z80_ON_DMA, as long as the DMA). No stop is repaid: the DAC runs
-// slow by the time the bus was held (drv/sgdk/README.md "Bus stops").
+// BUS STOPS ARE NOT REPAID. The grab itself holds the bus about 45 µs, and
+// SGDK halts the Z80 around every joypad read (HALT_Z80_ON_IO, ~350 68k cycles
+// per 6-button port) and every VBlank DMA flush (HALT_Z80_ON_DMA, as long as
+// the DMA). The DAC runs slow by the time the bus was held — it costs pitch,
+// not a hole in the sound (drv/sgdk/README.md "Bus stops").
 //
 // PROFILE: one to three PCM voices, the count the score names — each count is
 // its own Z80 image with its own DAC rate, booted by MMLisp_loadScore. Every
@@ -88,21 +85,9 @@ bool MMLisp_isSettled(void);
 
 // ── The hooks ─────────────────────────────────────────────────────────────
 
-// Install the two pumps (see the top of this file). Replaces SGDK's VBlank and
-// HBlank callbacks and enables the horizontal interrupt.
+// Install the pump (see the top of this file). Replaces SGDK's VBlank
+// callback; the horizontal interrupt is not touched.
 void MMLisp_attachInterrupts(void);
-
-// THE HBLANK-FREE MODE, for a game whose horizontal interrupt is its own
-// (raster effects). One pump a frame, from the VBlank callback; nothing about
-// HBlank is touched. The DAC rate is the same — it never depends on the
-// 68000 — but the wire halves to 480 register writes a second: a mid-song
-// voice change on several channels takes twice as long to reach the chip.
-void MMLisp_attachVBlankOnly(void);
-
-// If your own interrupt handlers call MMLisp_pump(): how many times a frame
-// (1 or 2, the default). A grab writes further ahead of the engine when the
-// next one is a whole frame away.
-void MMLisp_setPumpsPerFrame(u8 n);
 
 // Render the score ahead into the pair queue: up to MMLISP_LEAD frames past
 // the ones whose time has come (normally one frame a call; more after a late
@@ -110,19 +95,13 @@ void MMLisp_setPumpsPerFrame(u8 n);
 // control calls below: they take effect on the next frame it renders.
 void MMLisp_frame(void);
 
-// One grab: read the engine's index, write up to eight pairs of the frames
-// whose time has come ahead of it, then write the PSG bytes released for this
-// half-frame. Twice a frame, from
-// interrupts (MMLisp_attachInterrupts does it). Each call stops the Z80 for
-// under 1,500 master clocks, which the engine repays. A pump that overlaps
-// another returns at once, and a bus the interrupted code holds is left held.
+// One grab: read the engine's index, write up to sixteen pairs of the frames
+// whose time has come ahead of it, then write the PSG bytes released for the
+// last frame. Once a frame, from the vertical interrupt
+// (MMLisp_attachInterrupts does it). Each call stops the Z80 for about 2,400
+// master clocks (~45 µs), which nothing repays. A pump that overlaps another
+// returns at once, and a bus the interrupted code holds is left held.
 void MMLisp_pump(void);
-
-// MMLisp_pump as an interrupt function, for SYS_setHIntCallback() directly.
-// SGDK's HInt vector jumps straight to the callback, so a plain function there
-// crashes on its return. If you already have an HInt handler, call
-// MMLisp_pump() from it instead.
-HINTERRUPT_CALLBACK MMLisp_hint(void);
 
 // ── Track control (driver.md §6.5) ─────────────────────────────────────────
 // Every call takes effect on the next frame MMLisp_frame renders, which is
@@ -180,13 +159,13 @@ typedef struct {
     u16 rendered;      // frames rendered (MMLisp_renderedFrames)
     u16 pending;       // pairs waiting on the 68000 for the wire. Steady state is
                        // a handful; a number that climbs means the score asks for
-                       // more register writes a second than two grabs a frame
-                       // carry (~600) — or the pumps are not being called
-    u16 grabs;         // bus grabs so far (should be ~120 a second)
+                       // more register writes a second than the wire carries
+                       // (960) — or the pump is not being called
+    u16 grabs;         // bus grabs so far (should be ~60 a second)
     u16 late;          // grabs that found the engine past their destination and
                        // copied nothing (the next grab carried the pairs). A
-                       // few is harmless; steadily climbing means the pumps are
-                       // not evenly spaced
+                       // few is harmless; steadily climbing means frames are
+                       // being missed
     u16 pairsWritten;  // pairs put on the wire so far
     u16 overflow;      // pairs that did not fit the 1,024-entry queue: LOST writes.
                        // Zero, or the engine has been starved of pumps
