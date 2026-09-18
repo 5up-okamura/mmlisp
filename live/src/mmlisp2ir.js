@@ -1841,6 +1841,36 @@ function parseMacroSpec(
     // expression becomes a constant signal. A bare curve head is disjoint from
     // eval heads, so it falls through to parseCurveSpec unchanged.
     if (isEvalHead(atomValue(node.items?.[0]))) {
+      return evalMacroValue(node);
+    }
+    const curveSpec = parseCurveSpec(
+      node,
+      diagnostics,
+      nodeSrc(node),
+      trackName,
+      true,
+    );
+    if (curveSpec) return { type: "curve", ...curveSpec };
+  }
+  // A `let`-bound name (a number or a curve, §7.2) evaluates like an
+  // expression would.
+  if (node.kind === "atom" && env && lookupBound(env, atomValue(node)) !== undefined)
+    return evalMacroValue(node);
+  // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
+  // `[:hold N]` (single value, looped). Mainly for :keyon (1 = fire every
+  // :step, 0 = never).
+  const scalar = tokenValue(atomValue(node));
+  if (scalar !== null) {
+    return {
+      type: "steps",
+      steps: [clampVal(scalar)],
+      loopIndex: 0,
+      releaseIndex: null,
+    };
+  }
+  return null;
+
+  function evalMacroValue(node) {
       const r = evalValue(
         node,
         env ?? makeEnv(null),
@@ -1871,29 +1901,7 @@ function parseMacroSpec(
         loopIndex: 0,
         releaseIndex: null,
       };
-    }
-    const curveSpec = parseCurveSpec(
-      node,
-      diagnostics,
-      nodeSrc(node),
-      trackName,
-      true,
-    );
-    if (curveSpec) return { type: "curve", ...curveSpec };
   }
-  // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
-  // `[:hold N]` (single value, looped). Mainly for :keyon (1 = fire every
-  // :step, 0 = never).
-  const scalar = tokenValue(atomValue(node));
-  if (scalar !== null) {
-    return {
-      type: "steps",
-      steps: [clampVal(scalar)],
-      loopIndex: 0,
-      releaseIndex: null,
-    };
-  }
-  return null;
 }
 
 function resolveShuffleTicks(nominalTicks, trackState) {
@@ -3398,13 +3406,21 @@ function compileChannelBody(
                 }
                 break;
               }
-              // Bare let-bound scalar: `(let ((x 30)) :tl1 x …)`.
-              if (!op) {
-                const bound = lookupBound(evalEnv, rawVal);
-                if (typeof bound === "number") {
-                  push("PARAM_SET", { target, value: Math.round(bound) });
-                  break;
-                }
+              // Bare let-bound name: `(let ((x 30)) :tl1 x …)` sets, and a bound
+              // curve `(let ((cv (linear …))) :tl1 cv …)` sweeps (§7.2).
+              if (!op && lookupBound(evalEnv, rawVal) !== undefined) {
+                const r = evalValue(
+                  items[i],
+                  evalEnv,
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
+                );
+                if (r?.kind === "signal" && r.spec.steps)
+                  pushDiag(diagnostics, "error", "E_EVAL_SIGNAL_SHAPE",
+                    `signal arithmetic ${val} is only valid in a (macro …), not an inline sweep`,
+                    nodeSrc(node), trackName);
+                else if (r?.kind === "signal") push("PARAM_SWEEP", { target, ...r.spec });
+                else if (r) push("PARAM_SET", { target, value: Math.round(r.value) });
+                break;
               }
               // Absolute: curve sweep or literal set.
               const curveSpec = parseCurveSpec(
@@ -3694,7 +3710,9 @@ function compileChannelBody(
         const bodyStart = maybeCount !== null ? 2 : 1;
         const loopId = `_x${loopCounter.count++}`;
         const savedLoopId = trackState.currentLoopId;
-        trackState.currentLoopId = maybeCount !== null ? loopId : null; // only counted loops support :break
+        // Only counted loops support :break; inside an infinite (x …) it still
+        // binds to the innermost COUNTED loop around it (§13).
+        trackState.currentLoopId = maybeCount !== null ? loopId : savedLoopId;
         if (maybeCount !== null) {
           events.push({
             tick: trackState.tick,
@@ -5377,6 +5395,13 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
   });
 
   for (const track of tracks) convertCountedJumps(track);
+  // A :break that no counted loop claimed would do nothing: say so.
+  for (const track of tracks)
+    for (const ev of track.events ?? [])
+      if (ev.cmd === "LOOP_BREAK" && ev.args?.id == null)
+        pushDiag(diagnostics, "error", "E_BREAK_OUTSIDE_LOOP",
+          ":break must sit inside a counted loop — (x N …) or #label … (go label N)",
+          ev.src ?? { line: 1, column: 1 }, track.name ?? track.channel ?? null);
   for (const track of tracks) validateTrack(track, diagnostics);
 
   // v0.6: tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`

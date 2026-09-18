@@ -394,8 +394,8 @@ divide with a fraction (`:vel* 0.5`).
   operand must be a signal — `(* 2 $depth)` (scalar × slot) is `E_EVAL_TYPE`;
   a bare `$slot` in a plain arithmetic macro value stays
   `E_EVAL_NOT_LOWERABLE`. Scaling is orthogonal to `+` (additive): the MVP
-  covers `(* signal $slot)` only, so it cannot be combined with `:pitch+` in
-  one macro.
+  covers `(* signal $slot)` only, and it combines with `:pitch+` — the scaled
+  signal is added to the note's own pitch offset.
 - Echo/delay taps are always relative, so an operator is **required**: bare
   `:vel` raises `E_ECHO_OP_REQUIRED` / `E_DELAY_OP_REQUIRED` (the clear forms
   `(delay none)` / `(delay :vel none)` excepted).
@@ -1020,8 +1020,8 @@ the phrase.
 - `go` arity: label plus optional positive count (`E_GO_NO_LABEL`,
   `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching marker is
   `E_JUMP_UNRESOLVED`.
-- `:break` binds to the innermost counted loop; infinite loops do not support
-  it.
+- `:break` binds to the innermost counted loop, also from inside an infinite
+  loop nested in it; outside any counted loop it is `E_BREAK_OUTSIDE_LOOP`.
 - **`(trig N)`** marks a position for the game to read. It emits the `MARKER`
   opcode (like `#label`) but with an explicit id `N` (0..63 — the status byte is
   6 bits); the sequencer records `N` as the track's last marker for the game
