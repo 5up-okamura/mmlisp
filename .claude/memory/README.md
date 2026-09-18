@@ -54,11 +54,11 @@ Index:
   the shipped light engine (D10, landed 2026-09-18) with their reasons, and
   what is still open** (hardware run, PCM SE in the C, the D7 sample keys). Read before touching
   PCM in any layer.
-- [audit-language-2026-09-18.md](audit-language-2026-09-18.md) — **language.md
-  vs the implementation, line by line (2026-09-18)**: 12 places the driver plays
-  differently from the editor (gate 0 stalls the track, glide bleeds, delay/prio
-  timing on MMB, :vol* $slot scale, …), wrong doc facts and broken examples,
-  silent drops. Nothing fixed yet — the release checklist.
+- [audit-language-2026-09-18.md](audit-language-2026-09-18.md) — **what is left
+  of the language.md audit**: 9 driver-vs-editor questions that need the
+  user's decision (glide past its note, `:vol* $slot` scale, `:keyon`+`:off`,
+  CSM rest, …) and a few larger judgment-free items (fm3-N macros on the
+  driver, def-val range in VAL_TABLE, imports). The rest was fixed 2026-09-18.
 - [plan-dac-stream.md](plan-dac-stream.md) — **the DAC engine redesign
   (`docs/dac-engine-implementation.md`). R28 (2026-09-11): SHIPPED — the
   one-voice pair-transport engine is the production image; a mucom88 song plays
