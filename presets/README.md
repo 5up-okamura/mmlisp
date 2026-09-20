@@ -15,9 +15,9 @@ WAV は `def :sample` から参照します。
 試聴スコアは `examples/source/` にあります（[一覧](../examples/README.md)）。
 Liveで開くときは File > Open Folder… でリポジトリのルートを選んでください。
 
-比較試聴用のレンダリングWAVはリポジトリに含めません。`tools/scripts/render-*.mjs`
-を実行すると `presets/_renders/` に生成されます。測定値は各セットのレポートJSONに
-コミットしています。
+比較試聴用のレンダリングWAVはリポジトリに置きません。`tools/scripts/render-*.mjs`
+を実行すると一時ディレクトリに生成され、パスが表示されます。測定値は各セットの
+レポートJSONにコミットしているので、記録はリポジトリに残ります。
 
 ## PCMドラム用の無料サンプル
 

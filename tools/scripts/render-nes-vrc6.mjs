@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Offline single-channel YM2612 render + ideal waveform references, not an NES emulator.
 import fs from 'node:fs';
+import os from 'node:os';
+import nodePath from 'node:path';
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
 import makeCore from '../../player/wasm/dist/nuked-opn2.js';
@@ -12,7 +14,7 @@ const root=fileURLToPath(new URL('../../',import.meta.url));
 const source=fs.readFileSync(root+'presets/waveforms/waveforms.mmlisp','utf8');
 const core=await makeCore();const rate=core._nopn_get_native_sample_rate();
 const frames=Math.round(rate*.65),rest=Math.round(rate*.2);
-const out=root+'presets/_renders/nes-vrc6/';fs.mkdirSync(out,{recursive:true});
+const out=nodePath.join(os.tmpdir(),'mmlisp-renders','nes-vrc6')+nodePath.sep;fs.mkdirSync(out,{recursive:true});
 const kinds=[['wave-square',.5],['wave-pulse-25',.25],['wave-pulse-12-approx',.125],['wave-triangle','triangle'],['wave-saw','saw']];
 function render(n){const result=new Float64Array(n);for(let i=0;i<n;i+=4096){const k=Math.min(n-i,4096);core._nopn_render(k);const p=core._nopn_get_buffer_ptr()>>1;for(let j=0;j<k;j++)result[i+j]=(core.HEAP16[p+j*2]+core.HEAP16[p+j*2+1])/2;}return result;}
 function wav(name,x){
@@ -51,4 +53,4 @@ const audition=fs.readFileSync(root+'examples/source/nes-vrc6-audition.mmlisp','
 const compiled=compileMMLisp(audition,'nes-vrc6-audition.mmlisp',{imports:new Map([['../../presets/waveforms/waveforms.mmlisp',source]])});
 assert.deepEqual(compiled.diagnostics,[]);assert.deepEqual(encodeMmb(compiled.ir).diagnostics,[]);
 fs.writeFileSync(root+'presets/waveforms/nes-vrc6-render.json',JSON.stringify({nativeRate:rate,wavRate:Math.round(rate),notes:[48,60,72],noteSeconds:.65,restSeconds:.2,preview:'DC removed and RMS matched to 0.15; peak capped at 0.95. Direct register render at base TL, equivalent to full velocity/volume; no runtime macros.',voices:report},null,2)+'\n');
-console.log('PASS: 5 FM voices compile/export; rendered 10 FM/reference WAVs at C3/C4/C5 using Nuked-OPN2.');
+console.log('PASS: 5 FM voices compile/export; rendered 10 FM/reference WAVs at C3/C4/C5 using Nuked-OPN2.'+` Output: ${out}`);

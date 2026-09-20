@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Render and verify the actual score pipeline, including legato and slides.
 import fs from 'node:fs';
+import os from 'node:os';
+import nodePath from 'node:path';
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
 import makeCore from '../../player/wasm/dist/nuked-opn2.js';
@@ -11,7 +13,7 @@ import {DrvPlayer} from '../../live/src/drv-player.js';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const bank=fs.readFileSync(root+'presets/acid/tb303.mmlisp','utf8');
 const core=await makeCore();const rate=core._nopn_get_native_sample_rate();
-const output=root+'presets/_renders/acid/';fs.mkdirSync(output,{recursive:true});
+const output=nodePath.join(os.tmpdir(),'mmlisp-renders','acid')+nodePath.sep;fs.mkdirSync(output,{recursive:true});
 const reports=[];
 for(const name of ['saw','square']){
  const source=fs.readFileSync(root+`examples/source/acid-${name}.mmlisp`,'utf8');
@@ -69,4 +71,4 @@ for(const name of ['saw','square']){
  reports.push({name,duration,notes:notes.length,slides:sweeps.length,keyOns:ons.length,driverKeyOns:keyons(driver.writes).length,mmbBytes:encoded.bytes.length,previewGain:gain});
 }
 fs.writeFileSync(root+'presets/acid/render-report.json',JSON.stringify({engine:'Nuked-OPN2, register log from IRPlayer',rate:Math.round(rate),normalization:'Whole-file DC removal and fixed peak gain to 0.85; no per-note normalization or effects.',scores:reports},null,2)+'\n');
-console.log('PASS: both scores compile/export; 12 legato slides and 40 attacks each; IR/driver key-on counts match; two WAVs rendered.');
+console.log('PASS: both scores compile/export; 12 legato slides and 40 attacks each; IR/driver key-on counts match; two WAVs rendered.'+` Output: ${output}`);
