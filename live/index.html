@@ -456,6 +456,7 @@
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
+    import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
@@ -5983,10 +5984,27 @@
     let _scopeAbs = 0;              // absolute sample count at the ring write head
     let _scopeFreqs = new Array(SCOPE_CH).fill(0); // latched pitch per channel (Hz)
     let _scopeSR = 48000;           // worklet sample rate (updates per batch)
+    // One correlation trigger per channel (src/scope-trigger.js), rebuilt if
+    // the audio context turns out to run at another rate.
+    let _scopeTriggers = null;
+    let _scopeTrigSR = 0;
+    function scopeTrigger(k) {
+      if (!_scopeTriggers || _scopeTrigSR !== _scopeSR) {
+        _scopeTriggers = Array.from({ length: SCOPE_CH }, () => new CorrelationTrigger(_scopeSR, SCOPE_DISPLAY_GAIN));
+        _scopeTrigSR = _scopeSR;
+      }
+      return _scopeTriggers[k];
+    }
+    function resetScopeTriggers() {
+      _scopeTriggers?.forEach((t) => t.reset());
+    }
 
     function onScopeBatch(msg) {
       _scopeSR = msg.sampleRate || _scopeSR;
       _scopeFreqs = msg.freq || _scopeFreqs;
+      // While PCM plays, FM6 carries the DAC: its fnum/block latch describes a
+      // note that is not sounding, so the trigger must treat it as unpitched.
+      if (msg.fm6IsDac) _scopeFreqs[5] = 0;
       const pos = _scopeAbs % SCOPE_RING;
       let len = 0;
       // Batch length (1024) divides SCOPE_RING, so a copy never wraps.
@@ -6057,52 +6075,33 @@
         ctx.stroke();
         ctx.globalAlpha = 1;
         if (ring) {
-          // Window selection. With a latched pitch, span an integer number of
-          // periods (≥2, targeting ~256 samples) and anchor a rising zero
-          // crossing at the pane center, so the wave's reference point stays
-          // put across notes (the classic scope-video look). The search
-          // origin is quantized to the period grid, so the same crossing is
-          // found frame after frame while a note holds — stationary trace.
-          // Unpitched channels (noise, DAC) free-run a fixed window.
+          // Window selection is the correlation trigger's job: it picks the
+          // sample the pane centers on, so the wave's reference point stays
+          // put while a note holds and re-locks quickly when it changes.
+          const trig = scopeTrigger(k);
           const freq = _scopeFreqs[k] || 0;
-          let win, start;
-          if (freq > 20 && freq < _scopeSR / 4) {
-            const P = _scopeSR / freq;
-            const periods = Math.max(2, Math.round(256 / P));
-            win = Math.min(SCOPE_RING / 2, Math.round(periods * P));
-            const mid = latest - win / 2;
-            const r0 = Math.floor(mid - (mid % P));
-            const at = (i) => ring[((i % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
-            let anchor = r0;
-            let prev = at(r0);
-            const lim = Math.ceil(P * 1.5);
-            for (let d = 1; d <= lim; d++) {
-              const cur = at(r0 - d);
-              if (cur <= 0 && prev > 0) { anchor = r0 - d; break; }
-              prev = cur;
-            }
-            start = anchor - win / 2;
-          } else {
-            win = 1024;
-            start = latest - win;
-          }
-          // waveform polyline
+          const t0 = trig.getTrigger(ring, latest, freq);
+          const win = trig.renderLength(freq);
+          const start = t0 - (win >> 1);
+          // trigger mark (the wave is aligned to the pane's vertical center)
+          ctx.globalAlpha = 0.15;
+          ctx.beginPath();
+          ctx.moveTo(x0 + cellW / 2 + 0.5, y0);
+          ctx.lineTo(x0 + cellW / 2 + 0.5, y0 + cellH);
+          ctx.stroke();
+          // waveform polyline — one point per sample of the window
           ctx.globalAlpha = 0.9;
           ctx.strokeStyle = _vizColors.fg;
-          ctx.lineWidth = 1.2;
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          const px = Math.max(16, Math.floor(cellW));
           const amp = cellH / 2 - 4;
-          for (let x = 0; x <= px; x++) {
-            const s = start + (x / px) * win;
-            const i0 = Math.floor(s);
-            const tf = s - i0;
-            const a = ring[((i0 % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
-            const b = ring[(((i0 + 1) % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
-            const v = Math.max(-1, Math.min(1, (a * (1 - tf) + b * tf) * SCOPE_DISPLAY_GAIN));
+          const sx = cellW / win;
+          for (let i = 0; i < win; i++) {
+            const s = ring[(((start + i) % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
+            const v = Math.max(-1, Math.min(1, s * SCOPE_DISPLAY_GAIN));
             const y = midY - v * amp;
-            if (x === 0) ctx.moveTo(x0 + x * (cellW / px), y);
-            else ctx.lineTo(x0 + x * (cellW / px), y);
+            if (i === 0) ctx.moveTo(x0, y);
+            else ctx.lineTo(x0 + i * sx, y);
           }
           ctx.stroke();
         }
@@ -6130,6 +6129,7 @@
     }
     function stopViz() {
       if (_vizRaf != null) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
+      resetScopeTriggers();
       const c = document.getElementById('vizCanvas');
       if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
     }

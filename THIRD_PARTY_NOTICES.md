@@ -27,3 +27,15 @@ The upstream license text is preserved at `third_party/Nuked-OPN2/LICENSE`.
 When distributing builds that include the generated WASM wrapper, keep that
 license text with the distribution and provide the corresponding source used to
 rebuild the library.
+
+## corrscope
+
+- Upstream: https://github.com/corrscope/corrscope
+- Copyright (c) 2018-2020+, nyanpasu64.
+- License: BSD-2-Clause; the full license text is reproduced in the header of
+  `live/src/scope-trigger.js`.
+- Included: no upstream files. `live/src/scope-trigger.js` is a JavaScript port
+  of corrscope's correlation trigger (`corrscope/triggers.py`,
+  `corrscope/utils/trigger_util.py`, `corrscope/utils/windows.py`), adapted to
+  take the wave period from the chip's pitch registers instead of estimating it
+  by autocorrelation.
