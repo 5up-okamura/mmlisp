@@ -1,0 +1,27 @@
+{
+  "engine": "Nuked-OPN2, register log from IRPlayer",
+  "rate": 53267,
+  "normalization": "Whole-file DC removal and fixed peak gain to 0.85; no per-note normalization or effects.",
+  "scores": [
+    {
+      "name": "saw",
+      "duration": 7.75128205128205,
+      "notes": 52,
+      "slides": 12,
+      "keyOns": 40,
+      "driverKeyOns": 40,
+      "mmbBytes": 1051,
+      "previewGain": 0.12975220422299844
+    },
+    {
+      "name": "square",
+      "duration": 7.75128205128205,
+      "notes": 52,
+      "slides": 12,
+      "keyOns": 40,
+      "driverKeyOns": 40,
+      "mmbBytes": 1053,
+      "previewGain": 0.12868563148048603
+    }
+  ]
+}

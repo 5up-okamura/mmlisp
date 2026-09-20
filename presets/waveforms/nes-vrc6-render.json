@@ -1,0 +1,74 @@
+{
+  "nativeRate": 53267.041666666664,
+  "wavRate": 53267,
+  "notes": [
+    48,
+    60,
+    72
+  ],
+  "noteSeconds": 0.65,
+  "restSeconds": 0.2,
+  "preview": "DC removed and RMS matched to 0.15; peak capped at 0.95. Direct register render at base TL, equivalent to full velocity/volume; no runtime macros.",
+  "voices": [
+    {
+      "name": "wave-square",
+      "reference": 0.5,
+      "fm": {
+        "rawRms": 6.450929454363642,
+        "previewGain": 0.02325246323977928
+      },
+      "ideal": {
+        "rawRms": 0.8726714643548169,
+        "previewGain": 0.1718859916095663
+      }
+    },
+    {
+      "name": "wave-pulse-25",
+      "reference": 0.25,
+      "fm": {
+        "rawRms": 6.127190700145403,
+        "previewGain": 0.024481039899156457
+      },
+      "ideal": {
+        "rawRms": 0.784692299466272,
+        "previewGain": 0.19115773163828195
+      }
+    },
+    {
+      "name": "wave-pulse-12-approx",
+      "reference": 0.125,
+      "fm": {
+        "rawRms": 5.003061573657065,
+        "previewGain": 0.029981641799054493
+      },
+      "ideal": {
+        "rawRms": 0.658836812830328,
+        "previewGain": 0.22767398099023634
+      }
+    },
+    {
+      "name": "wave-triangle",
+      "reference": "triangle",
+      "fm": {
+        "rawRms": 4.9995349750497455,
+        "previewGain": 0.030002790409223507
+      },
+      "ideal": {
+        "rawRms": 0.5362863232459153,
+        "previewGain": 0.2797013339667384
+      }
+    },
+    {
+      "name": "wave-saw",
+      "reference": "saw",
+      "fm": {
+        "rawRms": 4.58711239636434,
+        "previewGain": 0.03270031057422687
+      },
+      "ideal": {
+        "rawRms": 0.58132921013986,
+        "previewGain": 0.2580293530474961
+      }
+    }
+  ]
+}

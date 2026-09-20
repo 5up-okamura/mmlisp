@@ -1,0 +1,1036 @@
+{
+  "repository": "https://github.com/Wohlstand/libOPNMIDI",
+  "commit": "8e0a0a6ac97a21f22c4b4d53d67a8d916d8c487b",
+  "path": "fm_banks/xg.wopn",
+  "sha256": "1e8dfe7d799a3c9a61337971b8ef9dfc36e9ee9cf1bb9242b061d2e481b8d6c9",
+  "license": "MIT",
+  "bankMSB": 0,
+  "bankLSB": 0,
+  "lfoRate": 2,
+  "instruments": [
+    {
+      "program": 0,
+      "gm": 1,
+      "name": "gm-001-acoustic-grand-piano",
+      "sourceName": "* GrandPiano",
+      "noteOffset": 0,
+      "recordHex": "2a204772616e645069616e6f0000000000000000000000000000000000000000000000020001275a07047100642458090967007204df170f910031029b0404a6004f4501be"
+    },
+    {
+      "program": 1,
+      "gm": 2,
+      "name": "gm-002-bright-acoustic-piano",
+      "sourceName": "* BrightPiano",
+      "noteOffset": 0,
+      "recordHex": "2a204272696768745069616e6f000000000000000000000000000000000000000000003d0024215b0905b60054125b0909770021085b8505a60056095b090837003d1101d9"
+    },
+    {
+      "program": 2,
+      "gm": 3,
+      "name": "gm-003-electric-grand-piano",
+      "sourceName": "* ElectricPiano (Animatics)",
+      "noteOffset": 0,
+      "recordHex": "2a20456c6563747269635069616e6f2028416e696d6174696373290000000000000000040071215805066400421a56070664000106990504150031099984046500379903e1"
+    },
+    {
+      "program": 3,
+      "gm": 4,
+      "name": "gm-004-honky-tonk-piano",
+      "sourceName": "* HonkyTonk (SonicModded)",
+      "noteOffset": 0,
+      "recordHex": "2a20486f6e6b79546f6e6b2028536f6e69634d6f6464656429000000000000000000000d0032231f0a05f700020e19060627000407190700d700311019090027009c400071"
+    },
+    {
+      "program": 4,
+      "gm": 5,
+      "name": "gm-005-electric-piano-1",
+      "sourceName": "* RhodesPiano",
+      "noteOffset": 0,
+      "recordHex": "2a2052686f6465735069616e6f0000000000000000000000000000000000000000000034004c395f0700b8004122960500b80001099f8404180001099f84046800532600a6"
+    },
+    {
+      "program": 5,
+      "gm": 6,
+      "name": "gm-006-electric-piano-2",
+      "sourceName": "* ChorusPiano(TiniToon)",
+      "noteOffset": 0,
+      "recordHex": "2a2043686f7275735069616e6f2854696e69546f6f6e2900000000000000000000000037007a1e1f0a07f600510a590502f600320c1f0d00f8001114190a02f6003b4501fa"
+    },
+    {
+      "program": 6,
+      "gm": 7,
+      "name": "gm-007-harpsichord",
+      "sourceName": "* Harpsichord (Adams)",
+      "noteOffset": 12,
+      "recordHex": "2a2048617270736963686f726420284164616d73290000000000000000000000000c00390016269f800105005023df800002003a21df0001060070061f06064700317a0118"
+    },
+    {
+      "program": 7,
+      "gm": 8,
+      "name": "gm-008-clavinet",
+      "sourceName": "* Clavinet",
+      "noteOffset": 0,
+      "recordHex": "2a20436c6176696e6574000000000000000000000000000000000000000000000000003900111c9f80010600511edf8000020031219f0001070071061f060647002ef40111"
+    },
+    {
+      "program": 8,
+      "gm": 9,
+      "name": "gm-009-celesta",
+      "sourceName": "* Celesta",
+      "noteOffset": 0,
+      "recordHex": "2a2043656c6573746100000000000000000000000000000000000000000000000000000030130853011b40003b221d0f1ff80071115b071a0600710b1f0009060010cc0230"
+    },
+    {
+      "program": 9,
+      "gm": 10,
+      "name": "gm-010-glockenspiel",
+      "sourceName": "* Glockenspiel",
+      "noteOffset": 0,
+      "recordHex": "2a20476c6f636b656e737069656c0000000000000000000000000000000000000000000c30171e1f0700f20035331f0b00f60071009f0700f300710f9f0700f3001d8e0e81"
+    },
+    {
+      "program": 10,
+      "gm": 11,
+      "name": "gm-011-music-box",
+      "sourceName": "* MusicBox",
+      "noteOffset": 12,
+      "recordHex": "2a204d75736963426f7800000000000000000000000000000000000000000000000c000c30171e0f0e00f7003a330f0e00f50071001f0c00f600700f1f0c00f600067c021c"
+    },
+    {
+      "program": 11,
+      "gm": 12,
+      "name": "gm-012-vibraphone",
+      "sourceName": "* Vibraphone (Nineko)",
+      "noteOffset": 0,
+      "recordHex": "2a20566962726170686f6e6520284e696e656b6f2900000000000000000000000000003e203828590f06a6007a235f100666000104598605a60034049c0a05650033b80326"
+    },
+    {
+      "program": 12,
+      "gm": 13,
+      "name": "gm-013-marimba",
+      "sourceName": "* Marimba (Aladdin)",
+      "noteOffset": 0,
+      "recordHex": "2a204d6172696d62612028416c616464696e29000000000000000000000000000000000400451b1f93077e0022289f9204820031001e0f07f700010b1f0f02f7000265011e"
+    },
+    {
+      "program": 13,
+      "gm": 14,
+      "name": "gm-014-xylophone",
+      "sourceName": "* Xylaphone (Aladdin)",
+      "noteOffset": 12,
+      "recordHex": "2a2058796c6170686f6e652028416c616464696e290000000000000000000000000c0000007000409d1f9f00631f5d0f1fff0070005f80180f0070001f000c060006750230"
+    },
+    {
+      "program": 14,
+      "gm": 15,
+      "name": "gm-015-tubular-bells",
+      "sourceName": "* TubularBells (Animatics)",
+      "noteOffset": -12,
+      "recordHex": "2a20547562756c617242656c6c732028416e696d617469637329000000000000fff4002c00771e16051ef400371e16061e8400320818031fc400720813021f940081b00474"
+    },
+    {
+      "program": 15,
+      "gm": 16,
+      "name": "gm-016-dulcimer",
+      "sourceName": "* Dulcimer",
+      "noteOffset": 0,
+      "recordHex": "2a2044756c63696d657200000000000000000000000000000000000000000000000000160003174f0b06f5000a2c530e0646000103980800f5000109960800f300146a084e"
+    },
+    {
+      "program": 16,
+      "gm": 17,
+      "name": "gm-017-drawbar-organ",
+      "sourceName": "* Hammond (Nineko)",
+      "noteOffset": 0,
+      "recordHex": "2a2048616d6d6f6e6420284e696e656b6f290000000000000000000000000000000000270014115c0004fa00510f5c0004f80030175c001bf80062175c0004fa009c4000a0"
+    },
+    {
+      "program": 17,
+      "gm": 18,
+      "name": "gm-018-percussive-organ",
+      "sourceName": "* PercusiveOrgain (Action52)",
+      "noteOffset": -12,
+      "recordHex": "2a205065726375736976654f726761696e2028416374696f6e35322900000000fff40004320e151b170bb8001111151c052f0006071409002800010b17011faf009c40007e"
+    },
+    {
+      "program": 18,
+      "gm": 19,
+      "name": "gm-019-rock-organ",
+      "sourceName": "* RockOrgan",
+      "noteOffset": -12,
+      "recordHex": "2a20526f636b4f7267616e000000000000000000000000000000000000000000fff40024141319548c002a0001189480000a0001079400000a00520a9400000a009c400056"
+    },
+    {
+      "program": 19,
+      "gm": 20,
+      "name": "gm-020-church-organ",
+      "sourceName": "* ChurchOrgan",
+      "noteOffset": 12,
+      "recordHex": "2a204368757263684f7267616e00000000000000000000000000000000000000000c001600131b940a0023000406130a00290001090e0a00160000040c0a0016009c4001d9"
+    },
+    {
+      "program": 20,
+      "gm": 21,
+      "name": "gm-021-reed-organ",
+      "sourceName": "* ReedOrgan",
+      "noteOffset": 0,
+      "recordHex": "2a20526565644f7267616e000000000000000000000000000000000000000000000000341011199810001700011519000006000107100000080002078d800008009c4000a6"
+    },
+    {
+      "program": 21,
+      "gm": 22,
+      "name": "gm-022-accordion",
+      "sourceName": "* Accordeon",
+      "noteOffset": 0,
+      "recordHex": "2a204163636f7264656f6e0000000000000000000000000000000000000000000000003202311e150500170072340e090329003715120800280002008d160019009c40006a"
+    },
+    {
+      "program": 22,
+      "gm": 23,
+      "name": "gm-023-harmonica",
+      "sourceName": "* Harmonica (Sonic)",
+      "noteOffset": 0,
+      "recordHex": "2a204861726d6f6e6963612028536f6e6963290000000000000000000000000000000038003a2dd405009900112750020009000a28140800090002001088001a009c400056"
+    },
+    {
+      "program": 23,
+      "gm": 24,
+      "name": "gm-024-tango-accordion",
+      "sourceName": "* Tango Accordion",
+      "noteOffset": 0,
+      "recordHex": "2a2054616e676f204163636f7264696f6e000000000000000000000000000000000000341013190f04001a00031a0e04001a0001078d04002a0052088e04002a009c400056"
+    },
+    {
+      "program": 24,
+      "gm": 25,
+      "name": "gm-025-acoustic-guitar-nylon",
+      "sourceName": "* NylonGuitar(HellRoll)",
+      "noteOffset": 12,
+      "recordHex": "2a204e796c6f6e4775697461722848656c6c526f6c6c29000000000000000000000c00180005301f12002700312d1f0e04270030131f0a04270000005f0a03270077880111"
+    },
+    {
+      "program": 25,
+      "gm": 26,
+      "name": "gm-026-acoustic-guitar-steel",
+      "sourceName": "* SteelGuitar(HellRoll)",
+      "noteOffset": 12,
+      "recordHex": "2a20537465656c4775697461722848656c6c526f6c6c29000000000000000000000c00180005201f12002700312d1f0e04270030131f0a04270000005f0a03270076550111"
+    },
+    {
+      "program": 26,
+      "gm": 27,
+      "name": "gm-027-electric-guitar-jazz",
+      "sourceName": "* JazzGuitar",
+      "noteOffset": 0,
+      "recordHex": "2a204a617a7a47756974617200000000000000000000000000000000000000000000002800021e5f0400f700312a9f0400f700332b5f0400f70001001f0400f70064a60132"
+    },
+    {
+      "program": 27,
+      "gm": 28,
+      "name": "gm-028-electric-guitar-clean",
+      "sourceName": "* CleanGuitar (Columns III)",
+      "noteOffset": 0,
+      "recordHex": "2a20436c65616e4775697461722028436f6c756d6e7320494949290000000000000000380058275f0700f60053225f0400f800331d5f0a00f90031005f1f041700620c0125"
+    },
+    {
+      "program": 28,
+      "gm": 29,
+      "name": "gm-029-electric-guitar-muted",
+      "sourceName": "* MutedGuitar (Aladdin)",
+      "noteOffset": 0,
+      "recordHex": "2a204d757465644775697461722028416c616464696e290000000000000000000000001a04331c5417098a0031055b1b078b00040b581701bb0001001412040c0060680049"
+    },
+    {
+      "program": 29,
+      "gm": 30,
+      "name": "gm-030-overdriven-guitar",
+      "sourceName": "* Overdrive (OPL3)",
+      "noteOffset": 0,
+      "recordHex": "2a204f766572647269766520284f504c33290000000000000000000000000000000000000403249f0c008c002120530100b8000219920100da00020091010047009c40007e"
+    },
+    {
+      "program": 30,
+      "gm": 31,
+      "name": "gm-031-distortion-guitar",
+      "sourceName": "* Distortion (OPL3)",
+      "noteOffset": 0,
+      "recordHex": "2a20446973746f7274696f6e20284f504c332900000000000000000000000000000000000403249f0c008c00211a530200b8000219920100f700020091010046009c4000dc"
+    },
+    {
+      "program": 31,
+      "gm": 32,
+      "name": "gm-032-guitar-harmonics",
+      "sourceName": "* Guitar Harmonics(Hellfire)",
+      "noteOffset": 12,
+      "recordHex": "2a20477569746172204861726d6f6e6963732848656c6c666972652900000000000c0033050a1c900608fc0032149f0300f600780d9506078100110010020ff7009c400000"
+    },
+    {
+      "program": 32,
+      "gm": 33,
+      "name": "gm-033-acoustic-bass",
+      "sourceName": "* AcousticBass (Sonic)",
+      "noteOffset": 12,
+      "recordHex": "2a2041636f7573746963426173732028536f6e69632900000000000000000000000c003a0020211e0a05a40060281f080a960023251f0a07850001001f07077800218a00b4"
+    },
+    {
+      "program": 33,
+      "gm": 34,
+      "name": "gm-034-electric-bass-finger",
+      "sourceName": "* FingerBass (Sonic)",
+      "noteOffset": 12,
+      "recordHex": "2a2046696e676572426173732028536f6e696329000000000000000000000000000c00080009251f12002f0030135f0a042f0070301f0e042f0000005f0a032f0074890050"
+    },
+    {
+      "program": 34,
+      "gm": 35,
+      "name": "gm-035-electric-bass-pick",
+      "sourceName": "* PickBass",
+      "noteOffset": 12,
+      "recordHex": "2a205069636b4261737300000000000000000000000000000000000000000000000c000800091e1f15008f00300e5f0d042f0070311f0e043f0000005f0a032f0072160050"
+    },
+    {
+      "program": 35,
+      "gm": 36,
+      "name": "gm-036-fretless-bass",
+      "sourceName": "* FretlessBass(Aladdin)",
+      "noteOffset": 12,
+      "recordHex": "2a20467265746c6573734261737328416c616464696e29000000000000000000000c000604001d1a09070b005000920b13ea0000054d03006a0060094a0c00fa009c400000"
+    },
+    {
+      "program": 36,
+      "gm": 37,
+      "name": "gm-037-slap-bass-1",
+      "sourceName": "* SlapBass1",
+      "noteOffset": 12,
+      "recordHex": "2a20536c61704261737331000000000000000000000000000000000000000000000c0020003f139f0e08270000185f0d08270003389f0f08270001005f0708170014e20111"
+    },
+    {
+      "program": 37,
+      "gm": 38,
+      "name": "gm-038-slap-bass-2",
+      "sourceName": "* SlapBass2",
+      "noteOffset": 12,
+      "recordHex": "2a20536c61704261737332000000000000000000000000000000000000000000000c0020003f0e9f0e06270000185f0d08270003389f0f08270001005f0708170015320118"
+    },
+    {
+      "program": 38,
+      "gm": 39,
+      "name": "gm-039-synth-bass-1",
+      "sourceName": "* SynBass1 (DynaBros.)",
+      "noteOffset": -12,
+      "recordHex": "2a2053796e4261737331202844796e6142726f732e2900000000000000000000fff4003d004417551e0d0b000205541e0909001400591e0a0a003318541e0589001039006a"
+    },
+    {
+      "program": 39,
+      "gm": 40,
+      "name": "gm-040-synth-bass-2",
+      "sourceName": "* SynBass2 (Nineko)",
+      "noteOffset": 12,
+      "recordHex": "2a2053796e426173733220284e696e656b6f2900000000000000000000000000000c0020003619df0707200030139f090617003537df0606160031009f0608f6001bf1014d"
+    },
+    {
+      "program": 40,
+      "gm": 41,
+      "name": "gm-041-violin",
+      "sourceName": "* Violin",
+      "noteOffset": 0,
+      "recordHex": "2a2056696f6c696e0000000000000000000000000000000000000000000000000000003a23311e0f0400150070310c09030700371f0d1000040002038b0a0015009c400320"
+    },
+    {
+      "program": 41,
+      "gm": 42,
+      "name": "gm-042-viola",
+      "sourceName": "* Viola",
+      "noteOffset": 0,
+      "recordHex": "2a2056696f6c61000000000000000000000000000000000000000000000000000000003a23311e0e04001500703d0b09030700341e0e1000040002038c0a0015009c400320"
+    },
+    {
+      "program": 42,
+      "gm": 43,
+      "name": "gm-043-cello",
+      "sourceName": "* Cello",
+      "noteOffset": 0,
+      "recordHex": "2a2043656c6c6f000000000000000000000000000000000000000000000000000000003a2331281004001500702f0e09030800351e4e1000040002038e0a0016009c40019d"
+    },
+    {
+      "program": 43,
+      "gm": 44,
+      "name": "gm-044-contrabass",
+      "sourceName": "* Controlbass",
+      "noteOffset": 12,
+      "recordHex": "2a20436f6e74726f6c6261737300000000000000000000000000000000000000000c003a23312b1004001500701f0e09030700342c0e1000040002008e0a0015009c400258"
+    },
+    {
+      "program": 44,
+      "gm": 45,
+      "name": "gm-045-tremolo-strings",
+      "sourceName": "* TremoloStrings",
+      "noteOffset": 0,
+      "recordHex": "2a205472656d6f6c6f537472696e6773000000000000000000000000000000000000003c253115d08100130001138d0b00440001060f0a00270001000e0a0018009c400099"
+    },
+    {
+      "program": 45,
+      "gm": 46,
+      "name": "gm-046-pizzicato-strings",
+      "sourceName": "* PizzikatoStrings",
+      "noteOffset": 0,
+      "recordHex": "2a2050697a7a696b61746f537472696e6773000000000000000000000000000000000035001400d3130ba7001205530f18f7001108101317f700110c520e0ec70002e400f6"
+    },
+    {
+      "program": 46,
+      "gm": 47,
+      "name": "gm-047-orchestral-harp",
+      "sourceName": "* OrchestralHarp",
+      "noteOffset": 0,
+      "recordHex": "2a204f72636865737472616c48617270000000000000000000000000000000000000000400021b1f0a001400517f5f0a02740011001f0e056400507f4e0b02f4002ba508da"
+    },
+    {
+      "program": 47,
+      "gm": 48,
+      "name": "gm-048-timpani",
+      "sourceName": "* Timpany",
+      "noteOffset": 0,
+      "recordHex": "2a2054696d70616e7900000000000000000000000000000000000000000000000000000c00000a540f00f70001001f0e00fa0001001f0b00f60002470f0d00fe0008840230"
+    },
+    {
+      "program": 48,
+      "gm": 49,
+      "name": "gm-049-string-ensemble-1",
+      "sourceName": "* StringEssemble1",
+      "noteOffset": 0,
+      "recordHex": "2a20537472696e67457373656d626c65310000000000000000000000000000000000003c13311dce0b000400011c8e8a00150005060e8a00280001000f0a0018009c4000a0"
+    },
+    {
+      "program": 49,
+      "gm": 50,
+      "name": "gm-050-string-ensemble-2",
+      "sourceName": "* StringEssemble2",
+      "noteOffset": 0,
+      "recordHex": "2a20537472696e67457373656d626c65320000000000000000000000000000000000003c11311dcb0b000100011c8b8a00110001060a0800260001030a080016009c4001d9"
+    },
+    {
+      "program": 50,
+      "gm": 51,
+      "name": "gm-051-synthstrings-1",
+      "sourceName": "* SynStrings 1",
+      "noteOffset": 0,
+      "recordHex": "2a2053796e537472696e67732031000000000000000000000000000000000000000000340011151a82006200311c198100b30001180a0000060001020a000005009c4003ee"
+    },
+    {
+      "program": 51,
+      "gm": 52,
+      "name": "gm-052-synthstrings-2",
+      "sourceName": "* SynString2 (Aladdin)",
+      "noteOffset": 12,
+      "recordHex": "2a2053796e537472696e67322028416c616464696e2900000000000000000000000c0032153023080400050000200f010373003434880300a4000000488a0005009c400376"
+    },
+    {
+      "program": 52,
+      "gm": 53,
+      "name": "gm-053-choir-aahs",
+      "sourceName": "* Choir Aahs",
+      "noteOffset": 12,
+      "recordHex": "2a2043686f697220416168730000000000000000000000000000000000000000000c000404302a5180005100701e8d0000510030084d8000050070088b800005009c400305"
+    },
+    {
+      "program": 53,
+      "gm": 54,
+      "name": "gm-054-voice-oohs",
+      "sourceName": "* Voice",
+      "noteOffset": 0,
+      "recordHex": "2a20566f6963650000000000000000000000000000000000000000000000000000000034237500140a031700310e938d0528000325550a02670001004f040018009c400099"
+    },
+    {
+      "program": 54,
+      "gm": 55,
+      "name": "gm-055-synth-voice",
+      "sourceName": "* SynthVoice",
+      "noteOffset": 12,
+      "recordHex": "2a2053796e7468566f6963650000000000000000000000000000000000000000000c0020043a4c4c80005100702e8c0000510037334e8000050070008b800005009c400294"
+    },
+    {
+      "program": 55,
+      "gm": 56,
+      "name": "gm-056-orchestra-hit",
+      "sourceName": "* OrchestraHit",
+      "noteOffset": 0,
+      "recordHex": "2a204f726368657374726148697400000000000000000000000000000000000000000038000013500d00f5000115120500f2000111160900f3000200520a00f5000cdd03e8"
+    },
+    {
+      "program": 56,
+      "gm": 57,
+      "name": "gm-057-trumpet",
+      "sourceName": "* Trumpet (Sonic)",
+      "noteOffset": -12,
+      "recordHex": "2a205472756d7065742028536f6e696329000000000000000000000000000000fff4003d00021b900e0114000215130e001900040a100b00fd000209140d000e009c400050"
+    },
+    {
+      "program": 57,
+      "gm": 58,
+      "name": "gm-058-trombone",
+      "sourceName": "* Trombone (Aladdin)",
+      "noteOffset": 12,
+      "recordHex": "2a2054726f6d626f6e652028416c616464696e29000000000000000000000000000c002d23001a8c0d012a0000128a08002a0000099787021a0051039787001a009c400050"
+    },
+    {
+      "program": 58,
+      "gm": 59,
+      "name": "gm-059-tuba",
+      "sourceName": "* Tuba (Aladdin)",
+      "noteOffset": 12,
+      "recordHex": "2a20547562612028416c616464696e2900000000000000000000000000000000000c003d12001b8e0601660001038d0d0a250000048e87021500510591870016009c4000e9"
+    },
+    {
+      "program": 59,
+      "gm": 60,
+      "name": "gm-060-muted-trumpet",
+      "sourceName": "* MutedTrumpet (Sonic)",
+      "noteOffset": -12,
+      "recordHex": "2a204d757465645472756d7065742028536f6e69632900000000000000000000fff4003d0012158f0e011300024a0f0e001800021f0d0b00fd0002000f0d000e009c400050"
+    },
+    {
+      "program": 60,
+      "gm": 61,
+      "name": "gm-061-french-horn",
+      "sourceName": "* FrenchHorn",
+      "noteOffset": 0,
+      "recordHex": "2a204672656e6368486f726e00000000000000000000000000000000000000000000003c0001228b04003700007f000000000001009400000600007f00000000009c4001e6"
+    },
+    {
+      "program": 61,
+      "gm": 62,
+      "name": "gm-062-brass-section",
+      "sourceName": "* BrassSection (Greendog)",
+      "noteOffset": 12,
+      "recordHex": "2a20427261737353656374696f6e2028477265656e646f672900000000000000000c003512211a8e000147002009950002170031009b05023600140694800208009c4000a0"
+    },
+    {
+      "program": 62,
+      "gm": 63,
+      "name": "gm-063-synthbrass-1",
+      "sourceName": "* SynBrass1",
+      "noteOffset": 0,
+      "recordHex": "2a2053796e42726173733100000000000000000000000000000000000000000000000032020114160600f600712a1f00000c00311c1f00000d00010013000008009c4000a6"
+    },
+    {
+      "program": 63,
+      "gm": 64,
+      "name": "gm-064-synthbrass-2",
+      "sourceName": "* SynBrass2",
+      "noteOffset": 0,
+      "recordHex": "2a2053796e4272617373320000000000000000000000000000000000000000000000003a23311e110400190072371109030900371f11100009000200910a0017009c4000f0"
+    },
+    {
+      "program": 64,
+      "gm": 65,
+      "name": "gm-065-soprano-sax",
+      "sourceName": "* SopranoSax",
+      "noteOffset": 12,
+      "recordHex": "2a20536f7072616e6f5361780000000000000000000000000000000000000000000c00351221205100014800200e4d00021800320d4c0502370012008e800209009c40006a"
+    },
+    {
+      "program": 65,
+      "gm": 66,
+      "name": "gm-066-alto-sax",
+      "sourceName": "* AltoSax",
+      "noteOffset": 12,
+      "recordHex": "2a20416c746f5361780000000000000000000000000000000000000000000000000c003512211a8e00014800200b530002180031058c0502370014048e800208009c400085"
+    },
+    {
+      "program": 66,
+      "gm": 67,
+      "name": "gm-067-tenor-sax",
+      "sourceName": "* TenorSax",
+      "noteOffset": 12,
+      "recordHex": "2a2054656e6f7253617800000000000000000000000000000000000000000000000c003512211e8f00014800200a520002170031058b0502360012048d800208009c4000c1"
+    },
+    {
+      "program": 67,
+      "gm": 68,
+      "name": "gm-068-baritone-sax",
+      "sourceName": "* BaritoneSax",
+      "noteOffset": 12,
+      "recordHex": "2a2042617269746f6e6553617800000000000000000000000000000000000000000c00351221178e00014800200a910002170031058e05023600130491800208009c4000a0"
+    },
+    {
+      "program": 68,
+      "gm": 69,
+      "name": "gm-069-oboe",
+      "sourceName": "* Oboe (Aladdin)",
+      "noteOffset": 0,
+      "recordHex": "2a204f626f652028416c616464696e2900000000000000000000000000000000000000381201271897000a000128161f000a00011e109f000a000400181f000a009c40005d"
+    },
+    {
+      "program": 69,
+      "gm": 70,
+      "name": "gm-070-english-horn",
+      "sourceName": "* EnglishHorn",
+      "noteOffset": 0,
+      "recordHex": "2a20456e676c697368486f726e00000000000000000000000000000000000000000000381201261897000a00012b161f000a000117109f000a000205101f0008009c4000ad"
+    },
+    {
+      "program": 70,
+      "gm": 71,
+      "name": "gm-071-bassoon",
+      "sourceName": "* Bassoon (Aladdin)",
+      "noteOffset": 12,
+      "recordHex": "2a20426173736f6f6e2028416c616464696e2900000000000000000000000000000c00381200270397000c0000241f1f000c0001230f9f000c000200101f000c009c400050"
+    },
+    {
+      "program": 71,
+      "gm": 72,
+      "name": "gm-072-clarinet",
+      "sourceName": "* Clarinet (Aladdin)",
+      "noteOffset": 0,
+      "recordHex": "2a20436c6172696e65742028416c616464696e290000000000000000000000000000000c23121e8d00010a0072124f8b1d8a0071041200000a00110c138f062a009c400056"
+    },
+    {
+      "program": 72,
+      "gm": 73,
+      "name": "gm-073-piccolo",
+      "sourceName": "* Piccolo (Aladdin)",
+      "noteOffset": -12,
+      "recordHex": "2a20506963636f6c6f2028416c616464696e2900000000000000000000000000fff40017323209ca0000080032118c8c0ac80072068a08007800120bca8d0078009c40007e"
+    },
+    {
+      "program": 73,
+      "gm": 74,
+      "name": "gm-074-flute",
+      "sourceName": "* Flute",
+      "noteOffset": 0,
+      "recordHex": "2a20466c7574650000000000000000000000000000000000000000000000000000000034107500140a0315003116938d0045000331560c02680001004e840018009c4000a6"
+    },
+    {
+      "program": 74,
+      "gm": 75,
+      "name": "gm-075-recorder",
+      "sourceName": "* Recorder",
+      "noteOffset": -12,
+      "recordHex": "2a205265636f7264657200000000000000000000000000000000000000000000fff4003b007108540e03650032248d040025000237541002550002004e840008009c4000ad"
+    },
+    {
+      "program": 75,
+      "gm": 76,
+      "name": "gm-076-pan-flute",
+      "sourceName": "* PanFlute",
+      "noteOffset": 0,
+      "recordHex": "2a2050616e466c7574650000000000000000000000000000000000000000000000000034007500130a0015003213920d0045000331560c00150001004e840018009c4000a0"
+    },
+    {
+      "program": 76,
+      "gm": 77,
+      "name": "gm-077-blown-bottle",
+      "sourceName": "* BottleBlow",
+      "noteOffset": 0,
+      "recordHex": "2a20426f74746c65426c6f7700000000000000000000000000000000000000000000003c007500120a00160032188c8d0056000329590d00360001004c840027009c4000d5"
+    },
+    {
+      "program": 77,
+      "gm": 78,
+      "name": "gm-078-shakuhachi",
+      "sourceName": "* Shakuhachi (Alisia Dragoon)",
+      "noteOffset": -12,
+      "recordHex": "2a205368616b7568616368692028416c6973696120447261676f6f6e29000000fff4002c00342012060227005423120602260072060f09007800320b0e8a0029009c400042"
+    },
+    {
+      "program": 78,
+      "gm": 79,
+      "name": "gm-079-whistle",
+      "sourceName": "* Whistle (Aladdin)",
+      "noteOffset": 0,
+      "recordHex": "2a2057686973746c652028416c616464696e2900000000000000000000000000000000171331081280000800317f800000480001088f02007800127fc0000008009c40008c"
+    },
+    {
+      "program": 79,
+      "gm": 80,
+      "name": "gm-080-ocarina",
+      "sourceName": "* Ocarina",
+      "noteOffset": 0,
+      "recordHex": "2a204f636172696e61000000000000000000000000000000000000000000000000000034007500140a0315003229940d0045000331560c02680001004e840017009c4000fd"
+    },
+    {
+      "program": 80,
+      "gm": 81,
+      "name": "gm-081-lead-1-square",
+      "sourceName": "* LeadSquare",
+      "noteOffset": 0,
+      "recordHex": "2a204c65616453717561726500000000000000000000000000000000000000000000003c1032185f80018b00021a1a80002a0071091c00001a00010d5b80000f009c400056"
+    },
+    {
+      "program": 81,
+      "gm": 82,
+      "name": "gm-082-lead-2-sawtooth",
+      "sourceName": "* LeadSaw",
+      "noteOffset": 0,
+      "recordHex": "2a204c65616453617700000000000000000000000000000000000000000000000000003c00711c1f00000f00311c1f00000f0072041f00000f0032041f00000f009c400050"
+    },
+    {
+      "program": 82,
+      "gm": 83,
+      "name": "gm-083-lead-3-calliope",
+      "sourceName": "* LeadCalliope",
+      "noteOffset": 0,
+      "recordHex": "2a204c65616443616c6c696f70650000000000000000000000000000000000000000003c057500138a00150032188d0d0055002329990d00d50061054e84002b009c400049"
+    },
+    {
+      "program": 83,
+      "gm": 84,
+      "name": "gm-084-lead-4-chiff",
+      "sourceName": "* Lead4Chif (Sonic)",
+      "noteOffset": 0,
+      "recordHex": "2a204c65616434436869662028536f6e696329000000000000000000000000000000003a0001148e0e005f0001178e0e00bf00072b8f0e085f000104540308bf006dde0050"
+    },
+    {
+      "program": 84,
+      "gm": 85,
+      "name": "gm-085-lead-5-charang",
+      "sourceName": "* Lead5Char (Nineko)",
+      "noteOffset": 0,
+      "recordHex": "2a204c656164354368617220284e696e656b6f290000000000000000000000000000003800721ed10100ff00711e140100ff00131e520700ff001104140100ff009c40002e"
+    },
+    {
+      "program": 85,
+      "gm": 86,
+      "name": "gm-086-lead-6-voice",
+      "sourceName": "* LeadVoice",
+      "noteOffset": 0,
+      "recordHex": "2a204c656164566f6963650000000000000000000000000000000000000000000000000c23121e8f00010a007212508b1d8a0071041500000a00110c138f062a009c400056"
+    },
+    {
+      "program": 86,
+      "gm": 87,
+      "name": "gm-087-lead-7-fifths",
+      "sourceName": "* Lead7Fifts (Animatics)",
+      "noteOffset": -24,
+      "recordHex": "2a204c6561643746696674732028416e696d6174696373290000000000000000ffe8003c0034185b05030700730e580003060074005b05030700330c5600030600857d0189"
+    },
+    {
+      "program": 87,
+      "gm": 88,
+      "name": "gm-088-lead-8-bass-and-lead",
+      "sourceName": "* Lead8Bass (GEMS: Analog Solo)",
+      "noteOffset": 0,
+      "recordHex": "2a204c6561643842617373202847454d533a20416e616c6f6720536f6c6f290000000004010111538d096900011d819302080072061e8500480061041f070008009c400099"
+    },
+    {
+      "program": 88,
+      "gm": 89,
+      "name": "gm-089-pad-1-new-age",
+      "sourceName": "* Pad1NewAge",
+      "noteOffset": 0,
+      "recordHex": "2a20506164314e657741676500000000000000000000000000000000000000000000000c0007190f0b0676003121890200230008161f0700f50001000e050016009c4001ed"
+    },
+    {
+      "program": 89,
+      "gm": 90,
+      "name": "gm-090-pad-2-warm",
+      "sourceName": "* Pad Warm (Ported from DMX)",
+      "noteOffset": 0,
+      "recordHex": "2a20506164205761726d2028506f727465642066726f6d20444d58290000000000000007000110c70000030031104700000400011005000006003110050000060039bc05dc"
+    },
+    {
+      "program": 90,
+      "gm": 91,
+      "name": "gm-091-pad-3-polysynth",
+      "sourceName": "* PolySynth",
+      "noteOffset": 12,
+      "recordHex": "2a20506f6c7953796e7468000000000000000000000000000000000000000000000c003c00311a52080416005016550804150052035100000600300554000005009c4002fe"
+    },
+    {
+      "program": 91,
+      "gm": 92,
+      "name": "gm-092-pad-4-choir",
+      "sourceName": "* PadChoir",
+      "noteOffset": 12,
+      "recordHex": "2a2050616443686f697200000000000000000000000000000000000000000000000c00050400224e8000520000118a00005300000c4c80000500000e89800004009c400640"
+    },
+    {
+      "program": 92,
+      "gm": 93,
+      "name": "gm-093-pad-5-bowed",
+      "sourceName": "* Bowed",
+      "noteOffset": 0,
+      "recordHex": "2a20426f776564000000000000000000000000000000000000000000000000000000001c00061acb0301610005230a0900f30001068906027300021d0a0600f40077bd0d7d"
+    },
+    {
+      "program": 93,
+      "gm": 94,
+      "name": "gm-094-pad-6-metallic",
+      "sourceName": "* Metallic",
+      "noteOffset": 0,
+      "recordHex": "2a204d6574616c6c6963000000000000000000000000000000000000000000000000003c14311ccb0b00010001168b83001100090e070300a500020b070100e5009c40005d"
+    },
+    {
+      "program": 94,
+      "gm": 95,
+      "name": "gm-095-pad-7-halo",
+      "sourceName": "* PadHalo",
+      "noteOffset": 0,
+      "recordHex": "2a2050616448616c6f00000000000000000000000000000000000000000000000000002c04210c4304005500710043840154000103098700360001160a070036009c400125"
+    },
+    {
+      "program": 95,
+      "gm": 96,
+      "name": "gm-096-pad-8-sweep",
+      "sourceName": "* Sweep",
+      "noteOffset": 0,
+      "recordHex": "2a205377656570000000000000000000000000000000000000000000000000000000002c05221606060054007518048805540001030f87003600021309070036009c40016e"
+    },
+    {
+      "program": 96,
+      "gm": 97,
+      "name": "gm-097-fx-1-rain",
+      "sourceName": "* FX rain",
+      "noteOffset": 0,
+      "recordHex": "2a204658207261696e00000000000000000000000000000000000000000000000000003e2206141f1200370032110c8000050002151f920d250071110c800005009c40041d"
+    },
+    {
+      "program": 97,
+      "gm": 98,
+      "name": "gm-098-fx-2-soundtrack",
+      "sourceName": "* FX-SndTrack (ThunderForce IV)",
+      "noteOffset": -12,
+      "recordHex": "2a2046582d536e64547261636b20285468756e646572466f7263652049562900fff4002c00331e060604f400521e050604f5005309110300240032090a030025009c40041d"
+    },
+    {
+      "program": 98,
+      "gm": 99,
+      "name": "gm-099-fx-3-crystal",
+      "sourceName": "* FXCrystal (Alisia Dragoon)",
+      "noteOffset": -12,
+      "recordHex": "2a2046584372797374616c2028416c6973696120447261676f6f6e2900000000fff4003c0045371f0d047600042b1a13072600720c1f08076800320f18080725000e590294"
+    },
+    {
+      "program": 99,
+      "gm": 100,
+      "name": "gm-100-fx-4-atmosphere",
+      "sourceName": "* AtmoSphere (Alisia Dragoon)",
+      "noteOffset": 0,
+      "recordHex": "2a2041746d6f5370686572652028416c6973696120447261676f6f6e290000000000003413721796810055001131168405060031059f0400450051100d090656009c400168"
+    },
+    {
+      "program": 100,
+      "gm": 101,
+      "name": "gm-101-fx-5-brightness",
+      "sourceName": "* BrightNess",
+      "noteOffset": 0,
+      "recordHex": "2a204272696768744e657373000000000000000000000000000000000000000000000003003228928104510055275408041400532b5f0000060032065f000005009c400416"
+    },
+    {
+      "program": 101,
+      "gm": 102,
+      "name": "gm-102-fx-6-goblins",
+      "sourceName": "* Goblins",
+      "noteOffset": 0,
+      "recordHex": "2a20476f626c696e7300000000000000000000000000000000000000000000000000002c04211204060053007100048101030001134387003300011605070033009c400ce4"
+    },
+    {
+      "program": 102,
+      "gm": 103,
+      "name": "gm-103-fx-7-echoes",
+      "sourceName": "* Echos",
+      "noteOffset": 0,
+      "recordHex": "2a204563686f7300000000000000000000000000000000000000000000000000000000140432295080005500012d8b00005500020c5080000500711094800005009c4003da"
+    },
+    {
+      "program": 103,
+      "gm": 104,
+      "name": "gm-104-fx-8-sci-fi",
+      "sourceName": "* SciFi",
+      "noteOffset": 0,
+      "recordHex": "2a2053636946690000000000000000000000000000000000000000000000000000000018043122940200230023229f0300430068249f02002300010813810025009c4002d6"
+    },
+    {
+      "program": 104,
+      "gm": 105,
+      "name": "gm-105-sitar",
+      "sourceName": "* Sitar",
+      "noteOffset": 0,
+      "recordHex": "2a205369746172000000000000000000000000000000000000000000000000000000000400022f5f070544000208920300f3000719930300f600070e1f0500f60069500244"
+    },
+    {
+      "program": 105,
+      "gm": 106,
+      "name": "gm-106-banjo",
+      "sourceName": "* Banjo",
+      "noteOffset": -12,
+      "recordHex": "2a2042616e6a6f00000000000000000000000000000000000000000000000000fff400320036194f1408190052175c0901100021455f0f1718003200131909170010040125"
+    },
+    {
+      "program": 106,
+      "gm": 107,
+      "name": "gm-107-shamisen",
+      "sourceName": "* Shamisen",
+      "noteOffset": 0,
+      "recordHex": "2a205368616d6973656e000000000000000000000000000000000000000000000000003800051b9f0e00f80001185f0500e40002229f0e00e200060a5f0700f50021120416"
+    },
+    {
+      "program": 107,
+      "gm": 108,
+      "name": "gm-108-koto",
+      "sourceName": "* Koto",
+      "noteOffset": 0,
+      "recordHex": "2a204b6f746f0000000000000000000000000000000000000000000000000000000000240353179b08043300131c9b8808320001075816042300030e18160815005b751090"
+    },
+    {
+      "program": 108,
+      "gm": 109,
+      "name": "gm-109-kalimba",
+      "sourceName": "* Kalimba",
+      "noteOffset": 0,
+      "recordHex": "2a204b616c696d6261000000000000000000000000000000000000000000000000000036007417549615770064155e0d075500710715800a06007413150c0946000de1024a"
+    },
+    {
+      "program": 109,
+      "gm": 110,
+      "name": "gm-110-bag-pipe",
+      "sourceName": "* BagPipe",
+      "noteOffset": 12,
+      "recordHex": "2a20426167506970650000000000000000000000000000000000000000000000000c001810010b9010003600001c110000350004270c00000d0002088c00000d009c400050"
+    },
+    {
+      "program": 110,
+      "gm": 111,
+      "name": "gm-111-fiddle",
+      "sourceName": "* Fiddle",
+      "noteOffset": 0,
+      "recordHex": "2a20466964646c650000000000000000000000000000000000000000000000000000003a23311d0e0400150070370b09030700371f0c1000040002038a0a0015009c400320"
+    },
+    {
+      "program": 111,
+      "gm": 112,
+      "name": "gm-112-shanai",
+      "sourceName": "* Shanai (Aladdin)",
+      "noteOffset": 0,
+      "recordHex": "2a205368616e61692028416c616464696e290000000000000000000000000000000000381201271897000a000128161f000a00011e109f000a000400181f000a009c40005d"
+    },
+    {
+      "program": 112,
+      "gm": 113,
+      "name": "gm-113-tinkle-bell",
+      "sourceName": "* TinkleBell",
+      "noteOffset": 0,
+      "recordHex": "2a2054696e6b6c6542656c6c000000000000000000000000000000000000000000000007003319d404040300321114050603007210d603085300730b960707b30028990baa"
+    },
+    {
+      "program": 113,
+      "gm": 114,
+      "name": "gm-114-agogo",
+      "sourceName": "* Agogo",
+      "noteOffset": -12,
+      "recordHex": "2a2041676f676f00000000000000000000000000000000000000000000000000fff4003c0006001f1f0e68000b001f1f0e48000e0e9f0e0ea7000e0e9f1f0f070003340161"
+    },
+    {
+      "program": 114,
+      "gm": 115,
+      "name": "gm-115-steel-drums",
+      "sourceName": "* SteelDrums",
+      "noteOffset": 0,
+      "recordHex": "2a20537465656c4472756d7300000000000000000000000000000000000000000000000c301c410d1300570035220d10078700710c1a0c00f600710c1a0e00f60005a60222"
+    },
+    {
+      "program": 115,
+      "gm": 116,
+      "name": "gm-116-woodblock",
+      "sourceName": "* WoodBlock",
+      "noteOffset": -12,
+      "recordHex": "2a20576f6f64426c6f636b000000000000000000000000000000000000000000fff4003c0017141f1616c8001e0adf190ce80015001f121cb8001905df140d180003d400a6"
+    },
+    {
+      "program": 116,
+      "gm": 117,
+      "name": "gm-117-taiko-drum",
+      "sourceName": "* Taiko Drum",
+      "noteOffset": 0,
+      "recordHex": "2a205461696b6f204472756d00000000000000000000000000000000000000000000001e0000069f12120800000c1f1010070001049f10100b0000031f080c950012190376"
+    },
+    {
+      "program": 117,
+      "gm": 118,
+      "name": "gm-118-melodic-tom",
+      "sourceName": "* Melodic Tom",
+      "noteOffset": 0,
+      "recordHex": "2a204d656c6f64696320546f6d00000000000000000000000000000000000000000000310002101f000d000000231e0014000000021f0212000000001e000e0600035c0244"
+    },
+    {
+      "program": 118,
+      "gm": 119,
+      "name": "gm-119-synth-drum",
+      "sourceName": "* SynDrum (Alisia Dragoon)",
+      "noteOffset": 0,
+      "recordHex": "2a2053796e4472756d2028416c6973696120447261676f6f6e290000000000000000003b0001061d12005600020d5f1b08560001081f1a16260001001f0e11c600031901fa"
+    },
+    {
+      "program": 119,
+      "gm": 120,
+      "name": "gm-120-reverse-cymbal",
+      "sourceName": "* Reverse Cymbell",
+      "noteOffset": 0,
+      "recordHex": "2a20526576657273652043796d62656c6c0000000000000000000000000000000000003c107f001d010080007f001f000014001309448d160900001d841b06a60010c50078"
+    },
+    {
+      "program": 120,
+      "gm": 121,
+      "name": "gm-121-guitar-fret-noise",
+      "sourceName": "* Guitar Fret Noise",
+      "noteOffset": 0,
+      "recordHex": "2a204775697461722046726574204e6f697365000000000000000000000000000000003c10760e1b0100800073211f0000140013114e870e090004208c0e09a600042a0104"
+    },
+    {
+      "program": 121,
+      "gm": 122,
+      "name": "gm-122-breath-noise",
+      "sourceName": "* Breath Noise",
+      "noteOffset": -12,
+      "recordHex": "2a20427265617468204e6f697365000000000000000000000000000000000000fff4003c0034001f0000220054081f00002200720b0c0c07b70032180c890976000f280168"
+    },
+    {
+      "program": 122,
+      "gm": 123,
+      "name": "gm-123-seashore",
+      "sourceName": "* SeaShore",
+      "noteOffset": 0,
+      "recordHex": "2a2053656153686f7265000000000000000000000000000000000000000000000000003d0033001f0000f0000116060800f400011a060800f400011c070800f400208007fe"
+    },
+    {
+      "program": 123,
+      "gm": 124,
+      "name": "gm-124-bird-tweet",
+      "sourceName": "* BirdTweet",
+      "noteOffset": 0,
+      "recordHex": "2a204269726454776565740000000000000000000000000000000000000000000000001f000719c6100e070815110f0d0e0a000810c80e10560806008b0e10b600052801be"
+    },
+    {
+      "program": 124,
+      "gm": 125,
+      "name": "gm-125-telephone-ring",
+      "sourceName": "* Telephone",
+      "noteOffset": 0,
+      "recordHex": "2a2054656c6570686f6e650000000000000000000000000000000000000000000000003c003b201f0200f80000321f0200f8003d00501100f50e0600161300f60e9c400042"
+    },
+    {
+      "program": 125,
+      "gm": 126,
+      "name": "gm-126-helicopter",
+      "sourceName": "* Helicopter",
+      "noteOffset": -12,
+      "recordHex": "2a2048656c69636f707465720000000000000000000000000000000000000000fff400343030004501000000007f058d00090002140782001500007f078f0004009c40035c"
+    },
+    {
+      "program": 126,
+      "gm": 127,
+      "name": "gm-127-applause",
+      "sourceName": "* Applause",
+      "noteOffset": 0,
+      "recordHex": "2a204170706c61757365000000000000000000000000000000000000000000000000003d0033041f0000f0000116060d000900111706070008000115060f0004009c4004f2"
+    },
+    {
+      "program": 127,
+      "gm": 128,
+      "name": "gm-128-gunshot",
+      "sourceName": "* Gunshot",
+      "noteOffset": 0,
+      "recordHex": "2a2047756e73686f74000000000000000000000000000000000000000000000000001c3d0533041f0311f50001001f1414f80001001f0f1ff80001001f0f10fb00027200ba"
+    }
+  ]
+}
