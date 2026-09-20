@@ -847,6 +847,16 @@ export const PSG_MASTER_CLOCK = 3579545;
 // Gives the FM envelope time to start decaying before the note technically ends.
 export const KEY_OFF_LEAD_SECS = 0.005;
 
+// Ordering margin for a key-off that lands on the note-on it must precede: a
+// microsecond, far below the frame the driver works in and far below anything
+// audible, but far above the float noise in tick→time arithmetic. It only
+// keeps the two $28 writes in order for a time-sorted consumer — the
+// separation the chip needs to re-attack (it latches key state once per
+// 18.77 µs slot round) comes from the write path itself, which spends 48
+// internal cycles per register write.
+export const KEY_ORDER_EPS_SECS = 1e-6;
+
+
 // Sentinel frame count used for hold notes (gateTicks === 0).
 // Macros continue until triggerKeyOff() is called at runtime.
 export const HOLD_FRAMES = 0x7fffffff;

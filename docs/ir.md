@@ -178,9 +178,11 @@ Notes:
   delay expansion is **always stripped** before the IR is returned; echoes
   appear as ordinary extra `NOTE_ON` events.
 - Player key-off: written at the gate boundary. When the gate fills the note
-  and the next note starts immediately, the key-off is suppressed (legato
-  slur). Macro schedules are hard-limited to 5 ms (`KEY_OFF_LEAD_SECS`)
-  before the next `NOTE_ON` on the channel (monophonic priority).
+  and the next note starts immediately, the key-off is written from that note's
+  dispatch, just before its own key-on — unless the note carries `legato`, which
+  suppresses it (slur). Macro schedules are hard-limited to 5 ms
+  (`KEY_OFF_LEAD_SECS`) before the next `NOTE_ON` on the channel (monophonic
+  priority).
 - `keyon` retrigger is honored on plain FM notes only — ignored on FM3
   operator notes and on PSG.
 
@@ -640,11 +642,13 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
 
 - **gate vs length.** `length` is pure timeline spacing (the compiler already
   placed the next event); `gate` is the sounding span. The player clamps
-  `gate` to `length`, keys off at the gate boundary, and suppresses the
-  key-off when the gate fills the note and the next note follows immediately
-  (legato slur). Macro schedules use a gate reference 5 ms early
-  (`KEY_OFF_LEAD_SECS`) and are cut 5 ms before the next note-on on the same
-  channel (monophonic priority).
+  `gate` to `length` and keys off at the gate boundary. When the gate fills the
+  note and the next note follows immediately, that key-off is deferred to the
+  next note's dispatch and written an ordering margin
+  (`KEY_ORDER_EPS_SECS`) before its key-on — on FM the transition is the
+  attack — and suppressed only when the incoming note carries `legato` (slur).
+  Macro schedules use a gate reference 5 ms early (`KEY_OFF_LEAD_SECS`) and are
+  cut 5 ms before the next note-on on the same channel (monophonic priority).
 - **Holds.** `length: 0` or `gate: 0` = hold indefinitely; the channel is
   parked in a hold set until the host calls `triggerKeyOff(ch)` (FM 0–5,
   PSG `psgCh + 6`). Macro budgets use the `HOLD_FRAMES` sentinel.

@@ -449,7 +449,7 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
 - **Detune** `D` → `:pitch` (cents); **velocity** `v`/`(`/`)`; **pan** `p`
   (dropped on K — PCM is a soft-mix voice on the fm6 DAC and owns no pan lane).
 - **Gate** `q<n>` → `:gate-` (key off n clocks early); parts that never set `q`
-  get a named `auto-gate` default (see below).
+  get nothing — MMLisp re-attacks every note like mucom does (see below).
 - **SSG envelope** `E AL,AR,DR,SL,SR,RR` → a sticky `:macro :vel*` ADSR, emitted
   once as a `(def envN …)` and referenced by name.
 - **Loops**: single-line `[…]n` → `(x n …)`; multi-line `[…]n` → `#labelK …
@@ -465,25 +465,13 @@ Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp 
   `BPM = 830400 / ((256 − t) × C)`, deferred so a later `C` (and its first note)
   sets the resolution. First tempo seeds the score; changes emitted inline.
 
-### mucom re-attacks every note — handled via an `auto-gate` def
+### mucom re-attacks every note — so does MMLisp, so nothing is added
 
-mucom re-attacks every note; MMLisp holds a full-gate note into the next one as
-a slur (guide.md §gate). So a part that never sets mucom's `q<n>` would run its
-notes together and lose individual hits. The importer gives every such part a
-baseline cut — the smallest that re-attacks (`:gate- 1f`) — emitted **once** as
-a named def and referenced by each part that needs it:
-
-```lisp
-(def auto-gate :gate- 1f)   ; importer default; parts with `q` keep their own :gate-
-(fm2 auto-gate #loop :oct 5 …)
-```
-
-Naming it keeps the importer's re-attack default visibly distinct from a
-`:gate-` the composer wrote as articulation (which comes from `q<n>` and is
-emitted inline, not via `auto-gate`). The cut size is not a fidelity claim:
-mucom's real key-off gap is unmeasured, and `1f` is simply the smallest gap that
-still re-attacks. Constants live in `import-mucom.js` (`MUCOM_DEFAULT_GATE_CUT`,
-`MUCOM_AUTO_GATE_DEF`).
+mucom re-attacks every note, and so does MMLisp: a full-gate note keys off at
+the end of its slot so the next one attacks (language.md §5, guide.md §15).
+A part that never sets mucom's `q<n>` therefore imports as plain full-gate
+notes and needs no baseline cut. `q<n>` is articulation and is carried through
+inline as `:gate-`.
 
 ### Known divergence — FM volume is absolute in mucom, relative here
 

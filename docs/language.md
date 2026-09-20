@@ -253,6 +253,13 @@ head position, and equally as body directives.)
 | `:break`   | (no value)                | Early exit of the enclosing counted loop (§13)           |
 | hardware params | value / curve / `none` / `$slot` | `:alg :fb :ams :fms :lfo-rate :tl1`–`:tl4` `:ar :dr :sr :rr :sl :ml :dt :ks :ssg :am`(1–4) — §5.1 |
 
+The gate family decides how *short* a note is inside its slot, never whether
+the next note attacks: **a note keys off at its gate even when that gate fills
+the slot**, so the note after it always re-attacks. The one thing that carries a
+note into the next is `~` (§3.1). This is what FM needs — the key-off → key-on
+transition is the envelope's attack — and it costs nothing on PSG or PCM, which
+re-assert attenuation / restart the sample on every note-on anyway.
+
 The relative gates (`:gate*` / `:gate-`) resolve against the **whole tied note**,
 not just its first segment: for `c4 ~ c8` with `:gate- 1f` the key-off lands one
 frame before the tied end, so the tie stays connected. Absolute `:gate N` is
@@ -1324,6 +1331,15 @@ Three limits worth knowing:
 single indefinite hold (subsequent events land at the same tick). Both enable
 game-state-driven sounds: the note holds until the host sends `KEY_OFF` or
 `STOP_TRACK`, firing any `:off` release macros.
+
+A hold is the one place a following note does **not** re-attack on FM: the
+channel is still keyed, so the next note moves the pitch and the envelope
+carries on — `:gate 0 c e g` sounds like `c ~ e ~ g`, and reads as a sticky
+legato passage. That is deliberate. The key-off belongs to the runtime here,
+which is what the form is for, and unlike a full gate (§5) the hold is
+something the score asked for in writing. A rest or `END_OF_TRACK` still ends
+it, and on PSG every note-on re-asserts its attenuation, so PSG re-attacks
+either way.
 
 ```lisp
 (sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])

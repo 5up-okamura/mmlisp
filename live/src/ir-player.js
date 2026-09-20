@@ -40,6 +40,7 @@ import {
   PCM_CH_NAME_TO_INDEX,
   PSG_MASTER_CLOCK,
   KEY_OFF_LEAD_SECS,
+  KEY_ORDER_EPS_SECS,
   HOLD_FRAMES,
 } from "./ir-utils.js";
 import { curveId, curveUnit8, sweepValue, sweepStep } from "./mmb.js";
@@ -193,6 +194,10 @@ export class IRPlayer {
     // Entries: { opBit, on, off } where `off` is null for hold (len=0) notes.
     this._fm3OpIntervals = [];
 
+    // Per FM channel: a full-gate note has run up to the next note and left its
+    // key-off for that note's dispatch to write (driver: `pendingOff`).
+    this._pendingKeyOff = new Array(6).fill(false);
+
     // Key-on operator mask per channel (default 0xf0 = all 4 ops on)
     this._opMasks = new Array(6).fill(0xf0);
 
@@ -289,6 +294,7 @@ export class IRPlayer {
 
     // Reset FM3 operator key-merge state for a fresh run
     this._fm3OpIntervals = [];
+    this._pendingKeyOff.fill(false);
 
     // Build per-track scheduler state
     this._tracks = this._flattenTracks();
@@ -379,6 +385,7 @@ export class IRPlayer {
     const secsPerTick = this._secsPerTick;
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
     this._fm3OpIntervals = [];
+    this._pendingKeyOff.fill(false);
     this._tracks = this._flattenTracks();
     for (const t of this._tracks) {
       t.audioTimeAtTick0 = newTick0;
@@ -936,6 +943,7 @@ export class IRPlayer {
       this._initDefaultVoices(); // preamble register writes (when=undefined → sec 0)
 
       this._fm3OpIntervals = [];
+      this._pendingKeyOff.fill(false);
       this._tracks = this._flattenTracks();
       // Reproduce the driver's track start (driver.md §4.2): the frame
       // START_TRACK is drained in runs the score's LEADING setup — voice, params,
@@ -1541,7 +1549,7 @@ export class IRPlayer {
         // Monophonic priority: macro tails (echo/retrigger/curve) are cut a
         // key-off lead before the next note on this channel, so they cannot
         // bleed onto it and the next note keeps its normal lead-in.
-        const nextNote = this._nextNoteSecs(ev);
+        const { secs: nextNote, legato: nextIsSlur } = this._nextNote(ev);
         const macroLimit = Number.isFinite(nextNote)
           ? nextNote - KEY_OFF_LEAD_SECS
           : Infinity;
@@ -1666,17 +1674,24 @@ export class IRPlayer {
             this._fmVolAtTime(ch, when) === 0) ||
           (this._masterVol ?? VOL_UNITY) === 0;
         const secsPerTick = this._secsPerTick;
-        // No automatic detach: key off at the exact gate boundary. When the gate
-        // fills the note and another note follows immediately, suppress the
-        // key-off so the note slurs (legato) — detachment is the composer's job
-        // via :gate-. A gate-cut note always keys off; so does a note before a
-        // rest or the last note (gateEnd lands before the next note).
+        // Key off at the gate boundary, always — on FM the key transition IS
+        // the attack, so a note that ran into the next one without keying off
+        // would swallow it. The one exception is a slur (`~`, NOTE_ON_EX bit3)
+        // reaching this note at full gate: there the envelope is meant to
+        // carry over.
         const gateEndSecs = when + gateTicks * secsPerTick;
-        const offWhen =
-          gateTicks > 0 &&
-          (ev.args?.gate != null || gateEndSecs < nextNote - 0.001)
-            ? Math.max(when + 0.001, gateEndSecs)
-            : null;
+        // `nextNote` is this tempo's projection of a future tick, so a tempo
+        // sweep between here and there moves the real note-on. It decides which
+        // of the two key-off paths below is taken — never a written time.
+        const abutsNext =
+          Number.isFinite(nextNote) && gateEndSecs >= nextNote - 0.001;
+        const slursIntoNext = nextIsSlur && abutsNext;
+        let offAt = gateEndSecs;
+        if (offAt < when + 0.001) offAt = when + 0.001; // never before its key-on
+        const offWhen = gateTicks > 0 && !slursIntoNext ? offAt : null;
+        // A note the next one lands on keys off from that note's dispatch
+        // instead (below), where its real time is known.
+        const deferOff = gateTicks > 0 && !slursIntoNext && abutsNext;
         let keyonEnd = null;
         if (this._isTrackAudible(ev._trackIndex) && !isFmSilent) {
           const hasEventMask = ev.args?.opMask !== undefined;
@@ -1697,6 +1712,19 @@ export class IRPlayer {
             this._scheduleFm3OpKey(keyMask & 0xf0, when, offWhen);
           } else {
             const keyOnByte = keyMask | chKey;
+            // The previous note ran up to this one at full gate and left its
+            // key-off to us (driver: `pendingOff`). Write it first, an ordering
+            // margin ahead, so the envelope sees the transition this note's
+            // attack needs — the chip re-attacks because every register write
+            // costs 48 internal cycles, twice the 24-cycle round in which it
+            // latches key state (the driver gets the same guarantee from its
+            // pair transport, which spaces writes 139 µs at its closest). A
+            // slur cancels it: there the envelope carries over.
+            if (this._pendingKeyOff[ch]) {
+              this._pendingKeyOff[ch] = false;
+              if (!ev.args?.legato)
+                this._write(0, 0x28, chKey, when - KEY_ORDER_EPS_SECS);
+            }
             // Legato slur (NOTE_ON_EX bit3): the frequency already moved above;
             // do not re-key so the envelope carries over from the previous note.
             if (!ev.args?.legato) this._write(0, 0x28, keyOnByte, when);
@@ -1723,10 +1751,12 @@ export class IRPlayer {
         if (gateTicks > 0) {
           if (!isFm3OpNote) {
             // With a keyon retrigger active, key off after the last retrigger
-            // (keyonEnd) instead of at the gate, so the final tap isn't cut.
-            // offWhen is null when the note slurs into the next — no key-off.
+            // (keyonEnd) instead of at the gate, so the final tap isn't cut —
+            // and never deferred, since that time is the macro's, not the
+            // note's. offWhen is null when the note slurs into the next.
             const keyOffAt = keyonEnd != null ? keyonEnd : offWhen;
-            if (keyOffAt != null) this._write(0, 0x28, chKey, keyOffAt);
+            if (keyonEnd == null && deferOff) this._pendingKeyOff[ch] = true;
+            else if (keyOffAt != null) this._write(0, 0x28, chKey, keyOffAt);
           }
         } else {
           // Hold note: register the channel for runtime key-off
@@ -2437,13 +2467,23 @@ export class IRPlayer {
   // Infinity if none remain. Used as the monophonic-priority cutoff so a note's
   // macro tail (echo/retrigger) cannot bleed past the following note.
   _nextNoteSecs(ev) {
+    return this._nextNote(ev).secs;
+  }
+
+  // The next NOTE_ON on this track: when it lands, and whether it slurs into
+  // this note (NOTE_ON_EX bit3). Both are needed at note-on — the time bounds
+  // macro tails, the flag decides whether this note keys off before it.
+  _nextNote(ev) {
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-    if (!track) return Infinity;
+    if (!track) return { secs: Infinity, legato: false };
     const secsPerTick = this._secsPerTick;
     for (let i = track.flatIndex + 1; i < track.events.length; i++) {
       const ne = track.events[i];
       if (ne.cmd === "NOTE_ON") {
-        return track.audioTimeAtTick0 + ne.tick * secsPerTick;
+        return {
+          secs: track.audioTimeAtTick0 + ne.tick * secsPerTick,
+          legato: !!ne.args?.legato,
+        };
       }
     }
     // No more notes this iteration: if the track loops, the next note is the
@@ -2453,14 +2493,16 @@ export class IRPlayer {
       for (let i = track.loopStartIndex ?? 0; i < track.events.length; i++) {
         const ne = track.events[i];
         if (ne.cmd === "NOTE_ON") {
-          return (
-            track.audioTimeAtTick0 +
-            (track.loopDuration + ne.tick) * secsPerTick
-          );
+          return {
+            secs:
+              track.audioTimeAtTick0 +
+              (track.loopDuration + ne.tick) * secsPerTick,
+            legato: !!ne.args?.legato,
+          };
         }
       }
     }
-    return Infinity;
+    return { secs: Infinity, legato: false };
   }
 
   // Effective carrier TL = voiced (timbre) TL + velocity ladder + vol/master
@@ -3401,8 +3443,11 @@ export class IRPlayer {
         }
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
-        // No auto-detach: silence at the gate boundary; suppress (slur/legato)
-        // when the gate fills the note and another note follows immediately.
+        // Silence at the gate boundary; suppressed when the gate fills the note
+        // and another note follows immediately. Unlike FM (whose key-off is what
+        // the next note attacks from), a PSG note-on re-asserts its attenuation
+        // and restarts its vel macro, so the attack is there either way and the
+        // suppression only spares a needless gap; `~` holds the tone over.
         const psgGateEnd = when + psgGateTicks * this._secsPerTick;
         const psgOffWhen =
           psgGateTicks > 0 &&

@@ -73,14 +73,6 @@ const MUCOM_PCM_VEL_DEFAULT = 64;
 // shift: they mirror around MUCOM_PCM_DEFAULT_OCT (octSet).
 const octShiftFor = (letter) => (letter in SSG_PARTS ? 0 : -1);
 const MUCOM_DEFAULT_OCT = 6; // mucom's default octave when a part sets none
-// The smallest cut that re-attacks, for parts that never set mucom's `q` — one
-// frame is inaudible as a gap but restores the note-per-note attack mucom gives
-// for free. Not a fidelity claim: mucom's real key-off gap is unmeasured.
-const MUCOM_DEFAULT_GATE_CUT = "1f";
-// Named def for that default cut, emitted once and referenced by every part
-// that never sets `q`. Naming it keeps the importer's re-attack default visibly
-// distinct in the output from a `:gate-` the composer wrote as articulation.
-const MUCOM_AUTO_GATE_DEF = "auto-gate";
 
 /** Decode .muc bytes (usually Shift-JIS) to a string, UTF-8 fallback. */
 export function decodeMucText(bytes) {
@@ -803,17 +795,6 @@ export function parseMucom(text) {
   return { meta, tempo, voices, macros, scoreItems, scoreComments, warnings };
 }
 
-// True if the part ever sets mucom's `q` — then it states its own articulation
-// and we leave it alone. Otherwise it played on mucom's re-attack, which MMLisp
-// does not do for free (see MUCOM_DEFAULT_GATE_CUT).
-function hasGateCut(ops) {
-  for (const op of ops) {
-    if (op.t === "gateCut") return true;
-    if (op.t === "loop" && hasGateCut(op.body)) return true;
-  }
-  return false;
-}
-
 // True if the first sounding/octave op is an absolute `o` set — then the source
 // establishes the octave itself and we don't prepend a base.
 function startsWithAbsoluteOctave(ops) {
@@ -1340,7 +1321,6 @@ export function mucomToMmlisp(parsed) {
     if (!firstForm.has(f.letter)) firstForm.set(f.letter, f);
     lastForm.set(f.letter, f);
   }
-  let usesAutoGate = false;
   for (const [letter, f] of firstForm) {
     const prefix = [];
     // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it; PCM
@@ -1350,23 +1330,14 @@ export function mucomToMmlisp(parsed) {
       const defOct = letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter);
       prefix.push(`:oct ${defOct}`);
     }
-    // mucom re-attacks every note; MMLisp holds a full-gate FM note into the next
-    // one as a slur, so an FM part that never sets `q` would run its notes together
-    // and lose them (guide.md, gate). Reference the auto-gate def (emitted below)
-    // for the smallest cut that re-attacks — named so it reads apart from a `q`.
-    // FM only: SSG re-attacks via its `E` volume envelope, and PCM re-triggers the
-    // sample on every note, so neither needs (nor benefits from) the default cut.
-    if (letter in FM_PARTS && !hasGateCut(allOpsByLetter.get(letter) || [])) { prefix.push(MUCOM_AUTO_GATE_DEF); usesAutoGate = true; }
     if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
     if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
   }
   for (const [, f] of lastForm) f.text = `${f.text} (go loop)`.trim();
 
   // Emit the discovered LFO / envelope / echo / PCM defs above the score (by name).
-  if (usesAutoGate || lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
+  if (lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
     const defLines = [];
-    if (usesAutoGate)
-      defLines.push("", `(def ${MUCOM_AUTO_GATE_DEF} :gate- ${MUCOM_DEFAULT_GATE_CUT})`);
     for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro :pitch+ ${spec}))`);
     for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} (macro :vel* ${spec}))`);
     for (const [form, name] of echoRegistry) defLines.push("", `(def ${name} (echo ${form}))`);

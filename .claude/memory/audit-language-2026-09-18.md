@@ -21,14 +21,24 @@ curves, doc facts and examples). What remains, with the question each needs:
    PSG `:keyon` works on the driver only. The exporter comment says restarting
    the soft envelopes is intended — which wins?
 4. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
-5. **Consecutive `:gate 0` notes** re-key with no key-off between them (both
-   players), so FM does not re-attack — intended?
-6. **`:len 0` then more events** (§17): the IR/preview play them at the same
+5. **`:len 0` then more events** (§17): the IR/preview play them at the same
    tick; the driver waits for the host KEY_OFF.
-7. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
-8. **Note names vs defs** (§3): the doc says a def named like a note cannot be
+6. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
+7. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
-9. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+
+## Decided, no change
+
+- **Consecutive `:gate 0` notes do not re-attack** (2026-09-20, user). Every
+  other FM note now does — a full-gate note keys off right before the next
+  note-on, and only `~` suppresses it — but `:gate 0` is an explicit request to
+  hold, and the hold's key-off belongs to the runtime (`triggerKeyOff` / host
+  `KEY_OFF`), which is the whole point of the form. Measured: `:gate 0 c e g`
+  writes `f0 f0 f0` and sounds one attack with the pitch moving — the same
+  object as `c ~ e ~ g`, so it reads as a sticky legato passage. FM only: PSG
+  re-asserts its attenuation on every note-on and re-attacks either way.
+  Written into language.md §17.
 
 ## Judgment-free but larger
 

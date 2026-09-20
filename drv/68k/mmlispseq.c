@@ -484,6 +484,21 @@ static void channel_off(MMLSeq *s, int ch) {
   }
 }
 
+/* A full-gate note meets the next note-on: the key-off it was holding fires
+ * here, before that note's writes, so the FM envelope sees the transition it
+ * needs to attack. A slur (NOTE_ON_EX bit3) cancels it instead. PSG re-asserts
+ * its attenuation and PCM restarts its sample on every note-on, so for those
+ * the pending key-off is simply dropped. Mirrors drv-player _resolvePendingOff. */
+static void resolve_pending_off(MMLSeq *s, MMLTrack *t, int legato) {
+  int ch;
+  if (!t->pending_off) return;
+  t->pending_off = 0;
+  if (legato) return;
+  ch = t->channel_id;
+  if (!fm3_op_for(s, ch) && ch >= 6) return; /* PSG/PCM re-attack on their own */
+  channel_off(s, ch);
+}
+
 static void recompose_carriers(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
@@ -1277,7 +1292,7 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
     t->pending_off = 0;
   } else {
     t->gate_left = -1;
-    t->pending_off = 1; /* full gate: key-off waits on the slur test */
+    t->pending_off = 1; /* full gate: key-off waits on the next event */
   }
 }
 
@@ -1322,7 +1337,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       case OP_NOTE_ON: {
         int note = st[t->pc + 1];
         MMLDur d = read_dur(st, t->pc + 2);
-        t->pending_off = 0; /* slur: an incoming note cancels the key-off */
+        resolve_pending_off(s, t, 0);
         note_on(s, t, note, d.ticks, 0, 0, 0, -1);
         t->pc = (uint16_t)d.next;
         if (d.ticks == 0) return;
@@ -1344,7 +1359,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
           ex_gate = g.ticks;
           pc = g.next;
         }
-        t->pending_off = 0;
+        resolve_pending_off(s, t, (flags & 8) != 0);
         note_on(s, t, note, d.ticks, ex_gate, has_gate, (flags & 8) != 0,
                 has_vel ? ex_vel : -1);
         t->pc = (uint16_t)pc;
@@ -1362,7 +1377,8 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         return;
       }
       case OP_TIE: {
-        t->pending_off = 0; /* an extension, not a retrigger */
+        /* An extension, not a retrigger: the note keeps sounding and keeps
+         * its pending key-off, which the event after the tie resolves. */
         MMLDur d = read_dur(st, t->pc + 1);
         t->pc = (uint16_t)d.next;
         t->wait = d.ticks == 0 ? 1 : d.ticks;

@@ -22,12 +22,16 @@
 //   diagnostic (PCM_NOTE_ON still advances the clock so timelines stay
 //   aligned).
 //
-// Gate rule (opcodes.md §3.1 + language.md §5 legato): key-off fires at
-// dur×gate/8 ticks. With gate = 8 the key-off at dur expiry is *pending*: it
-// is cancelled if the next timed event on the track is a NOTE_ON (slur) or a
-// TIE (extension), and fires before a REST or END_OF_TRACK. A NOTE_ON_EX
-// absolute gate (`:gate-`, irregular gates) counts from note-on across TIE
-// segments — it may outlast this segment's dur and key off mid-tie.
+// Gate rule (opcodes.md §3.1 + language.md §3.1 legato): key-off fires at
+// dur×gate/8 ticks. With gate = 8 the key-off at dur expiry is *pending*: a TIE
+// (extension) cancels it, a REST or END_OF_TRACK fires it, and a NOTE_ON fires
+// it too — right before the incoming note's own writes — unless that note
+// carries the legato flag (a slur), which cancels it. On FM the key transition
+// IS the attack, so a note that ran into the next without one would swallow it;
+// PSG re-asserts its attenuation and PCM restarts its sample on every note-on,
+// so for those the pending key-off is simply dropped. A NOTE_ON_EX absolute
+// gate (`:gate-`, irregular gates) counts from note-on across TIE segments — it
+// may outlast this segment's dur and key off mid-tie.
 // ---------------------------------------------------------------------------
 
 import {
@@ -474,7 +478,7 @@ export class DrvPlayer {
       markerId: 0, // last MARKER id → mailbox status byte (MB_TSTAT bits5-0)
       wait: 0, // ticks until the next timed event resumes
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
-      pendingOff: false, // full-gate key-off awaiting the slur test
+      pendingOff: false, // full-gate key-off awaiting the next event
       running: autoStart,
       // ARMED (Z80 T_STATUS 2): the frame START_TRACK set this track up in. It
       // does not accumulate, so the setup frame — several tracks' worth of
@@ -704,6 +708,21 @@ export class DrvPlayer {
     regs.keyed = false;
     this._ymKey(chKey);
   }
+  // A full-gate note meets the next note-on: the key-off it was holding fires
+  // here, before that note's writes, so the FM envelope sees the transition it
+  // needs to attack. A slur (NOTE_ON_EX bit3) cancels it instead — that is the
+  // one place the envelope is meant to carry over. Off and on land in the same
+  // frame; the pair expander spaces consecutive writes 139 µs at the closest,
+  // well past the chip's 18.8 µs key latch round.
+  _resolvePendingOff(trk, legato) {
+    if (!trk.pendingOff) return;
+    trk.pendingOff = false;
+    if (legato) return;
+    const ch = trk.channelId;
+    if (!this._fm3OpFor(ch) && ch >= 6) return; // PSG/PCM re-attack on their own
+    this._channelOff(ch);
+  }
+
   _channelOff(channelId) {
     const op = this._fm3OpFor(channelId);
     if (op) {
@@ -845,7 +864,7 @@ export class DrvPlayer {
       trk.gateLeft = Math.max(1, (dur * gate) >> 3);
       trk.pendingOff = false;
     } else {
-      // Full gate: key-off at expiry is pending on the slur test.
+      // Full gate: key-off at expiry is pending on the next event.
       trk.gateLeft = -1;
       trk.pendingOff = true;
     }
@@ -877,7 +896,7 @@ export class DrvPlayer {
         case OPCODE.NOTE_ON: {
           const note = s[trk.pc + 1];
           const dur = readDuration(s, trk.pc + 2);
-          trk.pendingOff = false; // slur: incoming note cancels the key-off
+          this._resolvePendingOff(trk, false);
           this._noteOn(trk, note, dur.ticks, null);
           trk.pc = dur.next;
           if (dur.ticks === 0) return; // held
@@ -898,7 +917,7 @@ export class DrvPlayer {
             exGate = g.ticks;
             pc = g.next;
           }
-          trk.pendingOff = false; // slur
+          this._resolvePendingOff(trk, (flags & 0b1000) !== 0);
           this._noteOn(trk, note, dur.ticks, exGate, (flags & 0b1000) !== 0, exVel);
           trk.pc = pc;
           if (dur.ticks === 0) return; // len 0: held
@@ -915,7 +934,8 @@ export class DrvPlayer {
           return;
         }
         case OPCODE.TIE: {
-          trk.pendingOff = false; // extension, no retrigger
+          // An extension, not a retrigger: the note keeps sounding and keeps
+          // its pending key-off, which the event after the tie resolves.
           const dur = readDuration(s, trk.pc + 1);
           trk.pc = dur.next;
           trk.wait = dur.ticks === 0 ? 1 : dur.ticks;

@@ -66,9 +66,15 @@ structural end for validation).
 **0x10 NOTE_ON** — key-on `note` (u8 MIDI number → F-number/block or PSG
 period via ROM LUTs, mmb.md §7.3) using the track's current **vel** and
 **gate** state (see §4). Advance the clock by `dur`. Key-off fires at
-`dur × gate / 8` ticks; with gate = 8 it fires at `dur` expiry unless the
-next opcode byte is TIE (one-byte peek — a tied note must compile with full
-gate; the compiler guarantees this). `dur = 0x00` holds the key until the
+`dur × gate / 8` ticks; with gate = 8 the key-off at `dur` expiry is held for
+the next opcode to resolve: TIE extends the note and keeps it pending, a
+**legato** NOTE_ON_EX (bit3, §5.1) cancels it, and everything else — a plain
+NOTE_ON, REST, END_OF_TRACK — fires it. Before a NOTE_ON it is written ahead of
+that note's own writes: on FM the key transition *is* the attack, and the two
+`$28` writes land one expander slot apart (≥139 µs, driver.md §6.1), far past
+the 18.77 µs round in which the chip latches key state. On PSG and PCM the
+pending key-off is dropped instead — the note-on re-asserts attenuation or
+restarts the sample, so nothing is lost. `dur = 0x00` holds the key until the
 host releases it (docs/language.md §17); the track suspends dispatch until then.
 
 **0x11 REST** — key-off if still keyed, advance the clock by `dur`.

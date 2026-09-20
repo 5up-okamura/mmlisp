@@ -67,15 +67,15 @@
   },
   "m3-dynval.mmlisp": {
     "ok": false,
-    "mismatches": 8,
+    "mismatches": 12,
     "compileErrors": 0,
-    "digest": "c92bc635"
+    "digest": "d830bfc6"
   },
   "m3-fm3op.mmlisp": {
     "ok": false,
-    "mismatches": 12,
+    "mismatches": 26,
     "compileErrors": 0,
-    "digest": "c54e03cf"
+    "digest": "d54c7c85"
   },
   "m3-gate-tie.mmlisp": {
     "ok": true,
@@ -103,9 +103,9 @@
   },
   "m3-macro-keyon.mmlisp": {
     "ok": false,
-    "mismatches": 32,
+    "mismatches": 30,
     "compileErrors": 0,
-    "digest": "1c20585c"
+    "digest": "89942a1a"
   },
   "m3-macro-multi.mmlisp": {
     "ok": false,
@@ -313,15 +313,15 @@
   },
   "sin008.mmlisp": {
     "ok": false,
-    "mismatches": 629,
+    "mismatches": 632,
     "compileErrors": 0,
-    "digest": "7c9b8f1a"
+    "digest": "6c55f718"
   },
   "stress-9ch.mmlisp": {
     "ok": false,
-    "mismatches": 34,
+    "mismatches": 39,
     "compileErrors": 0,
-    "digest": "dbb9f362"
+    "digest": "081565e4"
   },
   "stress-m1.mmlisp": {
     "ok": false,

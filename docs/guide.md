@@ -71,6 +71,25 @@ Append a length token to one note:
 
 This affects only that note.
 
+### Tie and slur — `X ~ Y`
+
+Every note attacks. `~` between two notes is what joins them:
+
+```lisp
+(fm1 :oct 4 :len 8
+  c ~ c      ; same pitch  → tie: one attack, held for both slots
+  e ~ g      ; other pitch → slur: the pitch moves, the envelope carries over
+  c ~ d ~ e) ; chains: one attack gliding through all three
+```
+
+`~` attaches to the next real note, skipping state tokens (`c ~ > d` slurs to
+the octave-up `d`), and the right note keeps its own length.
+
+The slur carries the envelope over only if the left note has a **full gate**
+(the default). A `:gate`-cut note keys off first, so the slur starts from a
+decaying tone. Slur is an FM/PSG thing; on PCM a different-pitch `~` is just a
+new note.
+
 ---
 
 ## 4. Length Syntax
@@ -654,20 +673,23 @@ operation is chosen by the keyword so the argument is never ambiguous:
 (fm1 :len 8 :gate- 2t   c d e f)  ; minus:    KEY-OFF 2 ticks before each slot ends
 ```
 
-> **Notes at full gate run together.** With no gate cut a note fills its whole
-> slot, so the next KEY-ON lands with no gap and the two sound as one — the
-> attack of the second note is simply not heard. That is deliberate: it is what
-> makes legato possible, and MMLisp never inserts a key-off you did not ask for.
-> If a phrase sounds like it is losing notes, it usually wants a small cut:
+> **Every note attacks; `~` is how you join them.** A note at full gate sounds
+> for its whole slot and still keys off at the very end, so the note after it
+> attacks. You never need a cut just to hear the repeats:
 >
 > ```lisp
-> (fm1 :len 16 c c c c)           ; one long tone — the repeats vanish
-> (fm1 :len 16 :gate- 1f c c c c) ; four distinct attacks
+> (fm1 :len 16 c c c c)     ; four distinct attacks
+> (fm1 :len 16 c ~ c ~ c c) ; one attack held over three slots, then a new one
 > ```
 >
-> `1f` (one frame) is enough to re-attack while staying audibly legato. Trackers
-> that key off between notes by default (mucom88 among them) rely on this, so
-> music imported from them may need a cut its source never spelled out.
+> The gate family is for articulation — how *short* a note is inside its slot —
+> not for separating notes. Joining them is `~` (§3): a tie at the same pitch,
+> a slur at a different one.
+>
+> This matters on FM, where the key-off → key-on transition *is* the attack: a
+> note that ran into the next without one would swallow it. PSG re-asserts its
+> attenuation and PCM restarts its sample on every note, so those attack either
+> way; `~` is what holds them over.
 
 ### `:gate 0` — hold, timeline advances
 

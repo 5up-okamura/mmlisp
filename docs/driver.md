@@ -1003,8 +1003,9 @@ each drive one operator. `fm3-1` rides channel 2 (with the voice, §2.2);
 `idx = op mod 3`) — followed by a `NOTE_ON` that keys the operator.
 
 Keying is a shared 4-bit mask: each operator's key sets/clears its bit
-(OP1 = `$10` … OP4 = `$80`) and re-emits `$28 = mask | 0x02`. A full gate is
-used (the operator keys off at the next rest / end-of-track). The driver derives
+(OP1 = `$10` … OP4 = `$80`) and re-emits `$28 = mask | 0x02`. An operator keys
+off at its gate like any other note, so consecutive operator notes attack
+(opcodes.md §3.1); operator notes never carry the legato flag. The driver derives
 the operator from the channel id (2→1, 16-18→2-4); F-numbers go through the
 change-only shadow, key edges bypass it.
 
