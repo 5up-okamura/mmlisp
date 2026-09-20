@@ -698,7 +698,9 @@ inline.
   from the server root. A path that cannot be read is `E_IMPORT_NOT_FOUND`.
 - **What is imported**: the four def namespaces — plain and parametric snippets
   (`def`), FM voices, macro presets, and PCM sample defs. Imports are
-  transitive (an imported file may itself `import`).
+  transitive (an imported file may itself `import`). An imported sample def
+  keeps its own base directory, so its `:file` reads from the imported file's
+  folder, not the score's (§16).
 - **What is not imported**: `def-val` slots and track/other forms. A slot's
   index is the importing file's host-visible layout, and tracks are songs, not
   a library, so both are ignored with a `W_IMPORT_IGNORED` warning. Import
@@ -1207,6 +1209,13 @@ The file is decoded once and shared by every def that slices it, so a bank costs
 no more than a single sample would. `:loop-start` / `:loop-end` are **relative to
 the slice**, not to the file — a def is one sample, so its loop points don't move
 when `:offset` changes.
+
+**A relative `:file` resolves against the file that defined it** — the score for
+a def written there, and the imported file for one folded in by `import` (§9.2).
+So a preset set keeps its samples next to itself: `:file "wav/kick.wav"` inside
+`presets/tr808/set.mmlisp` reads `presets/tr808/wav/kick.wav`, however deep the
+score that imports it sits. Copying such a def into a score makes it the score's
+own, so its path has to be rewritten to match.
 
 **Sample paths in the live editor.** A relative `:file` resolves against the
 score's folder, but a browser only hands the editor a *file* when you use

@@ -271,12 +271,23 @@ function normalizePosixPath(path) {
   return (isAbs ? "/" : "") + out.join("/");
 }
 
-function resolveSamplePath(sampleFile, sourceFile) {
+// A sample path is relative to the FILE THAT DEFINED IT (docs/language.md §16):
+// a def written in the score resolves against the score, and one folded in by
+// `import` against the imported file, so a preset set can ship its own wav/.
+function resolveSamplePath(sampleFile, baseDir) {
   const file = normalizePathSeparators(sampleFile);
   if (!file || isAbsolutePath(file)) return file;
-  const baseDir = dirnamePosix(sourceFile || "");
-  if (!baseDir) return file;
-  return normalizePosixPath(`${baseDir}/${file}`);
+  const base = normalizePathSeparators(baseDir || "");
+  if (!base) return file;
+  return normalizePosixPath(`${base}/${file}`);
+}
+
+// Where a file sits relative to the compiling score: its importer's directory
+// joined with the path as written in that importer.
+function importedFilePath(path, baseDir) {
+  const p = normalizePathSeparators(path);
+  if (isAbsolutePath(p) || !baseDir) return normalizePosixPath(p);
+  return normalizePosixPath(`${baseDir}/${p}`);
 }
 
 // Convert an Nf frame count (wall-clock, 1/60 s) to musical ticks at `bpm`.
@@ -4712,21 +4723,25 @@ function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
 
 // Resolve one imported file to its merged def bundle (its own defs winning over
 // what it in turn imports). `stack` detects cycles; `cache` dedups diamonds.
-function resolveImportFile(path, importSrc, importSources, diagnostics, cache, stack) {
-  if (stack.includes(path)) {
+function resolveImportFile(path, importSrc, importSources, diagnostics, cache, stack, baseDir = "") {
+  const selfPath = importedFilePath(path, baseDir);
+  const selfDir = dirnamePosix(selfPath);
+  if (stack.includes(selfPath)) {
     pushDiag(
       diagnostics,
       "error",
       "E_IMPORT_CYCLE",
-      `import cycle: ${[...stack, path].join(" -> ")}`,
+      `import cycle: ${[...stack, selfPath].join(" -> ")}`,
       importSrc,
       null,
     );
     return emptyImportBundle();
   }
-  if (cache.has(path)) return cache.get(path);
+  if (cache.has(selfPath)) return cache.get(selfPath);
 
-  const text = importSources ? importSources.get(path) : undefined;
+  const text = importSources
+    ? importSources.get(selfPath) ?? importSources.get(path)
+    : undefined;
   if (typeof text !== "string") {
     pushDiag(
       diagnostics,
@@ -4737,17 +4752,19 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
       null,
     );
     const empty = emptyImportBundle();
-    cache.set(path, empty);
+    cache.set(selfPath, empty);
     return empty;
   }
 
   const bundle = collectDefs(parse(text), diagnostics);
   warnImportIgnored(bundle, path, diagnostics, importSrc);
+  // The set's own wav/ lives next to it, not next to the score that imports it.
+  for (const sample of bundle.sampleDefs.values()) sample.baseDir = selfDir;
 
   // Resolve this file's own imports first (siblings merged strictly), then let
   // this file's defs overlay them.
   const merged = emptyImportBundle();
-  const nextStack = [...stack, path];
+  const nextStack = [...stack, selfPath];
   for (const imp of bundle.imports) {
     const sub = resolveImportFile(
       imp.path,
@@ -4756,17 +4773,18 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
       diagnostics,
       cache,
       nextStack,
+      selfDir,
     );
     mergeImportsStrict(merged, sub, diagnostics, imp.src);
   }
-  overlayDefs(merged, bundle, path);
+  overlayDefs(merged, bundle, selfPath);
 
-  cache.set(path, merged);
+  cache.set(selfPath, merged);
   return merged;
 }
 
 // Fold all of the root file's imports into one bundle (siblings merged strictly).
-function resolveImports(importForms, importSources, diagnostics) {
+function resolveImports(importForms, importSources, diagnostics, scoreDir) {
   const merged = emptyImportBundle();
   const cache = new Map();
   for (const imp of importForms) {
@@ -4777,6 +4795,7 @@ function resolveImports(importForms, importSources, diagnostics) {
       diagnostics,
       cache,
       [],
+      scoreDir,
     );
     mergeImportsStrict(merged, sub, diagnostics, imp.src);
   }
@@ -4879,7 +4898,12 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
   // overridable defaults (local wins); two imports defining the same name is
   // E_IMPORT_CONFLICT. def-val slots and tracks are not imported (defs only).
   if (imports.length > 0) {
-    const imported = resolveImports(imports, options.imports, diagnostics);
+    const imported = resolveImports(
+      imports,
+      options.imports,
+      diagnostics,
+      dirnamePosix(normalizePathSeparators(filename)),
+    );
     const local = { defs, paramDefs, typedDefs, sampleDefs };
     overlayDefs(imported, local, filename); // local wins; `imported` = the union
     for (const kind of IMPORT_DEF_KINDS) {
@@ -5421,11 +5445,14 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
     });
   }
 
-  const sampleSourceBaseKnown = normalizePathSeparators(filename).includes("/");
+  // An imported def knows its own directory; a def written here depends on the
+  // score's path being known.
+  const sampleBaseDir = (sample) =>
+    sample?.baseDir ?? dirnamePosix(normalizePathSeparators(filename));
   for (const [name, sample] of sampleDefs.entries()) {
     if (!sample?.file) continue;
     if (isAbsolutePath(sample.file)) continue;
-    if (sampleSourceBaseKnown) continue;
+    if (sampleBaseDir(sample)) continue;
     pushDiag(
       diagnostics,
       "warning",
@@ -5457,7 +5484,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
         file: sample.file,
-        resolvedFile: resolveSamplePath(sample.file, filename),
+        resolvedFile: resolveSamplePath(sample.file, sampleBaseDir(sample)),
         rate: sample.rate,
         offset: sample.offset,
         frames: sample.frames,

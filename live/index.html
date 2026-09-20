@@ -2669,19 +2669,38 @@
       return _droppedImportSources.get(path) ?? null;
     }
 
+    // Join an import path with the folder of the file that wrote it, so a set
+    // that imports a sibling set is found next to itself, not next to the
+    // score. The map is keyed by these score-relative paths; the compiler
+    // resolves each import the same way (docs/language.md §9.2).
+    function joinImportPath(fromPath, spec) {
+      if (/^([a-zA-Z]:)?[\\/]/.test(spec) || /^[a-zA-Z][\w+.-]*:\/\//.test(spec)) return spec;
+      const dir = fromPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
+      const segs = (dir && dir !== fromPath ? dir + '/' + spec : spec).split('/');
+      const out = [];
+      for (const seg of segs) {
+        if (!seg || seg === '.') continue;
+        if (seg === '..' && out.length && out[out.length - 1] !== '..') out.pop();
+        else out.push(seg);
+      }
+      return out.join('/');
+    }
+
     async function refreshImportSources(src) {
       const map = new Map();
       const seen = new Set();
-      const queue = collectImports(src);
+      const queue = collectImports(src).map((spec) => [spec, spec]);
       while (queue.length) {
-        const path = queue.shift();
+        const [path, spec] = queue.shift();
         if (seen.has(path)) continue;
         seen.add(path);
-        const text = await importTextForPath(path);
+        const text = (await importTextForPath(path)) ?? (await importTextForPath(spec));
         if (text == null) continue; // absent → E_IMPORT_NOT_FOUND at compile
         map.set(path, text);
-        for (const nested of collectImports(text))
-          if (!seen.has(nested)) queue.push(nested);
+        for (const nested of collectImports(text)) {
+          const nestedPath = joinImportPath(path, nested);
+          if (!seen.has(nestedPath)) queue.push([nestedPath, nested]);
+        }
       }
       _importSources = map;
       return map;
