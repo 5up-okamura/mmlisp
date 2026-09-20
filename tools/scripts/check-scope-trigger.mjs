@@ -35,13 +35,13 @@ function fill(ring, from, count, freq, shape, t0) {
 // snapshot of the wave around it, taken there and then: the ring wraps every
 // 341ms, so an early trigger's samples are long gone by the last frame.
 const CTX = 4 * TRIGGER_STRIDE;
-function runNote({ freq, shape, frames = 60, trig, ring, start = 0, reportFreq = null }) {
+function runNote({ freq, shape, frames = 60, trig, ring, start = 0 }) {
   const out = [];
   let latest = start;
   for (let f = 0; f < frames; f++) {
     fill(ring, latest, FRAME, freq, shape, start / SR);
     latest += FRAME;
-    const t = trig.getTrigger(ring, latest, reportFreq ?? freq);
+    const t = trig.getTrigger(ring, latest, freq);
     const ctx = new Float32Array(2 * CTX + 1);
     for (let d = -CTX; d <= CTX; d++) ctx[d + CTX] = ring[(((t + d) % RING) + RING) % RING];
     out.push({ t, ctx });
@@ -120,10 +120,9 @@ steady('2-op FM with a sweeping index, 330Hz', 330, fm(), 2);
 check('note change C4 -> G4 re-locks within 3 frames', () => {
   const ring = new Float32Array(RING);
   const trig = new CorrelationTrigger(SR, GAIN);
-  const a = runNote({ freq: 261.63, shape: fm(), frames: 30, trig, ring });
+  runNote({ freq: 261.63, shape: fm(), frames: 30, trig, ring });
   const b = runNote({ freq: 392.0, shape: fm(), frames: 20, trig, ring, start: 30 * FRAME });
   for (let i = 1; i < b.length; i++) assert.ok(b[i].t >= b[i - 1].t, `frame ${i}: trigger moved backwards`);
-  assert.ok(a.length === 30);
   const P = SR / 392.0;
   const n = hops(b, P, 3);
   assert.ok(n <= 1, `${n} phase hops in the 17 frames after the change (allowed 1)`);

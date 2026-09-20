@@ -44,12 +44,12 @@
 //   exact frequency ratio.
 // - Input is a ring buffer of the last ~340ms of one channel's output, read
 //   at absolute sample positions, instead of a seekable wave file.
-// - Only rising-edge triggering, and no DC removal by default: the taps are
-//   AC-centered already.
+// - Only rising-edge triggering, and no DC removal: the taps are AC-centered
+//   already.
 
 // ---- tuning (corrscope's template defaults unless noted) ----
-export const TRIGGER_MS = 40;   // history/search window
-export const RENDER_MS = 40;    // longest drawn window, centered on the trigger
+const TRIGGER_MS = 40;   // history/search window
+const RENDER_MS = 40;    // longest drawn window, centered on the trigger
 // corrscope draws a fixed 40ms in a 1920px frame. The live scope's panes are a
 // few hundred pixels wide, where 40ms of a treble note is an unreadable comb,
 // so the drawn window shrinks to this many cycles of the current pitch (the
@@ -61,7 +61,6 @@ const EDGE_STRENGTH = 1.0;
 const BUFFER_STRENGTH = 1.0;
 const RESPONSIVENESS = 0.5;     // how fast the buffer learns the new wave
 const RESET_BELOW = 0.3;        // discard the buffer below this match quality
-const MEAN_RESPONSIVENESS = 0;  // 0 = never subtract DC
 const SLOPE_WIDTH = 0.25;       // periods
 const BUFFER_FALLOFF = 0.5;     // periods (std of the buffer's window)
 const TRIGGER_DIAMETER = 0.5;   // of the trigger window
@@ -74,7 +73,7 @@ const MIN_AMPLITUDE = 0.01;     // below this the channel counts as silent
 // without it a high note shimmers by a couple of pixels every frame.
 const POST_RADIUS = TRIGGER_STRIDE;
 
-// ---- stateless helpers (exported for tools/scripts/check-scope-trigger.mjs) ----
+// ---- stateless helpers ----
 
 // out[x] = sum_k data[x + k] * kernel[k], for x in [lo, hi).
 //
@@ -85,7 +84,7 @@ const POST_RADIUS = TRIGGER_STRIDE;
 //     history buffer are Gaussian-windowed around the kernel center with a
 //     width proportional to the wave period, so for anything but deep bass most
 //     of the kernel is zero. An unpitched channel shrinks to a handful of taps.
-export function correlateValid(data, kernel, out, lo = 0, hi = out.length, kLo = 0, kHi = kernel.length) {
+function correlateValid(data, kernel, out, lo = 0, hi = out.length, kLo = 0, kHi = kernel.length) {
   const end = kLo + (((kHi - kLo) / 4) | 0) * 4;
   for (let x = lo; x < hi; x++) {
     let a = 0, b = 0, c = 0, d = 0;
@@ -110,7 +109,7 @@ function support(std) {
 
 // scipy.signal.windows.gaussian(M, std, sym=True), or all zeros when std is 0
 // (corrscope's gaussian_or_zero: an unknown period disables the buffer).
-export function gaussianWindow(M, std, out) {
+function gaussianWindow(M, std, out) {
   const w = out ?? new Float32Array(M);
   if (!(std > 0)) {
     w.fill(0);
@@ -126,7 +125,7 @@ export function gaussianWindow(M, std, out) {
 
 // A step from -edge to +edge at the window center, tapered by a Gaussian whose
 // width follows the period: correlating it with the wave scores rising edges.
-export function slopeFinder(K, A, period, out) {
+function slopeFinder(K, A, period, out) {
   const f = out ?? new Float32Array(K);
   const width = Math.min(Math.max(SLOPE_WIDTH * period, 1), A / 3);
   const half = EDGE_STRENGTH; // corrscope: (edge_strength * 2) / 2
@@ -138,7 +137,7 @@ export function slopeFinder(K, A, period, out) {
 // Resample buf to newLen (linear) and mid-pad/crop back to its own length,
 // so the buffer keeps its shape when the pitch moves (corrscope rescales via
 // the log-frequency spectrum; the chip tells us the exact ratio).
-export function rescaleBuffer(buf, newLen, scratch) {
+function rescaleBuffer(buf, newLen, scratch) {
   const N = buf.length;
   if (newLen === N || newLen < 2 || !Number.isFinite(newLen)) return buf;
   const M = Math.min(newLen, N * 4);
@@ -220,7 +219,6 @@ export class CorrelationTrigger {
     this._kHi = this.K;
     this._slopeSupport = this.A;
     this._prevPeriod = null;
-    this._prevMean = 0;
     this._prevTrigger = -Infinity;
   }
 
@@ -264,13 +262,11 @@ export class CorrelationTrigger {
       return t;
     }
 
+    // Only used by the buffer-quality check below; the taps are AC-centered,
+    // so unlike corrscope we never subtract it from the data.
     let mean = 0;
     for (let i = 0; i < data.length; i++) mean += data[i];
     mean /= data.length;
-    if (MEAN_RESPONSIVENESS) {
-      this._prevMean += MEAN_RESPONSIVENESS * (mean - this._prevMean);
-      for (let i = 0; i < data.length; i++) data[i] -= this._prevMean;
-    }
 
     // Period in subsamples, straight from the chip's pitch registers.
     const subsmpPerS = this.sampleRate / stride;
@@ -364,7 +360,7 @@ export class CorrelationTrigger {
   // (corrscope's ZeroCrossingTrigger, used as a post trigger).
   _postTrigger(ring, index) {
     const R = ring.length;
-    const at = (n) => ring[((n % R) + R) % R] * this.gain - this._prevMean;
+    const at = (n) => ring[((n % R) + R) % R] * this.gain;
     const v = at(index);
     if (v === 0) return index + 1;
     const dir = v < 0 ? 1 : -1;
@@ -391,8 +387,8 @@ export class CorrelationTrigger {
     return bestV === min ? mid : best;
   }
 
-  // Number of semitones the pitch moved, or false when the slope finder and
-  // buffer can be reused as they are.
+  // True when the pitch moved far enough that the slope finder and the buffer
+  // have to be rebuilt for it.
   _isWindowInvalid(period) {
     const prev = this._prevPeriod;
     if (prev === null) return true;
