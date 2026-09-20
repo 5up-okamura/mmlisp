@@ -55,7 +55,7 @@ export const MACRO_TARGET_RANGE = {
   FM_RR: { min: 0, max: 15 },
   FM_SL: { min: 0, max: 15 },
   FM_ML: { min: 0, max: 15 },
-  FM_DT: { min: 0, max: 7 },
+  FM_DT: { min: -3, max: 3 }, // signed detune; encode30 maps it to the register
   FM_KS: { min: 0, max: 3 },
   FM_AMEN: { min: 0, max: 1 },
   FM_SSG: { min: 0, max: 15 },
@@ -689,7 +689,7 @@ export function sampleCurveUnit(curve, phase, params = null) {
 //   FM_RR1..4  → 0x80 per op (release rate bits 3-0)
 //   FM_SL1..4  → 0x80 per op (sustain level bits 7-4)
 //   FM_ML1..4  → 0x30 per op (multiplier bits 3-0)
-//   FM_DT1..4  → 0x30 per op (detune bits 6-4)
+//   FM_DT1..4  → 0x30 per op (detune bits 6-4, sign-magnitude)
 
 export const OP_ADDR_OFFSET = [0, 8, 4, 12]; // op1,op2,op3,op4 in OPN2 register space
 
@@ -780,9 +780,22 @@ export function encode60(op) {
   return ((op.amen & 0x01) << 7) | (op.dr & 0x1f);
 }
 
-// Encode 0x30 (DT1/MUL) for an operator
+// Encode 0x30 (DT1/MUL) for an operator.
+// DT is signed (-3..+3) everywhere above the register; the chip field is
+// sign-magnitude (0-3 = 0,+1,+2,+3 / 4-7 = -0,-1,-2,-3), so map it here.
 export function encode30(op) {
-  return ((op.dt & 0x07) << 4) | (op.mul & 0x0f);
+  return (detuneToReg(op.dt) << 4) | (op.mul & 0x0f);
+}
+
+// DT: signed value → 3-bit sign-magnitude register field, and back.
+export function detuneToReg(dt) {
+  const d = dt | 0;
+  return d < 0 ? 4 | (-d & 0x03) : d & 0x03;
+}
+
+export function detuneFromReg(reg) {
+  const r = reg & 0x07;
+  return r & 4 ? -(r & 3) : r;
 }
 
 // Encode 0x80 (SL/RR) for an operator

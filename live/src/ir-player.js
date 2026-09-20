@@ -2319,8 +2319,8 @@ export class IRPlayer {
           (v) => {
             regs.ops[opIdx].dt = v;
           },
-          0,
-          7,
+          -3,
+          3,
         );
         const opAddr = 0x30 + OP_ADDR_OFFSET[opIdx] + chOffset;
         this._write(port, opAddr, encode30(regs.ops[opIdx]), when);

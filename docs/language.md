@@ -758,7 +758,7 @@ If the same target is set twice, the last one wins.
 | `:tl1`–`:tl4` | `FM_TL1–4` | 0–127       |                                        |
 | `:ar` `:dr` `:sr` (1–4) | `FM_AR/DR/SR` | 0–31 |                             |
 | `:rr` `:sl` `:ml` (1–4) | `FM_RR/SL/ML` | 0–15 |                             |
-| `:dt` (1–4) | `FM_DT`     | 0–7          |                                        |
+| `:dt` (1–4) | `FM_DT`     | −3–+3        | Signed detune. The chip field is sign-magnitude (0–3 = 0,+1,+2,+3 / 4–7 = −0,−1,−2,−3); the encoder maps it, so 4–7 are not input values |
 | `:ks` (1–4) | `FM_KS`     | 0–3          |                                        |
 | `:ssg` (1–4) | `FM_SSG`   | 0–15         |                                        |
 | `:am` (1–4) | `FM_AMEN`   | 0–1          |                                        |

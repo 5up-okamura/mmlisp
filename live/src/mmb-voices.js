@@ -59,8 +59,8 @@ function makeShadow() {
 
 // Store a PARAM_SET value into the shadow. Clamp exactly as the exporter's
 // PARAM_SET path does (Math.round(clampForTarget(…))) so the entry matches the
-// bytes the burst would have written — e.g. FM_DT's range is 0..7 (the raw
-// register field), so a signed `:dt -2` clamps to 0, not the 3-bit 6.
+// bytes the burst would have written — e.g. FM_DT's range is -3..+3 (signed
+// detune), and encode30 maps it to the 3-bit sign-magnitude register field.
 function applyToShadow(sh, target, value) {
   const f = targetToField(target);
   if (!f) return;

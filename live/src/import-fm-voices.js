@@ -61,6 +61,13 @@ function clampDmpValue(v, min, max) {
   return n;
 }
 
+// Every supported format stores DT as the raw 3-bit register field
+// (0-3 = 0,+1,+2,+3 / 4-7 = -0,-1,-2,-3); the language spells it signed.
+function detuneFromReg(v) {
+  const r = (Number(v) | 0) & 0x07;
+  return r & 4 ? -(r & 3) : r & 3;
+}
+
 function normalizeFmOp(raw) {
   return {
     mul: clampDmpValue(raw.mul, 0, 15),
@@ -71,7 +78,7 @@ function normalizeFmOp(raw) {
     rr: clampDmpValue(raw.rr, 0, 15),
     am: clampDmpValue(raw.am ? 1 : 0, 0, 1),
     rs: clampDmpValue(raw.rs, 0, 3),
-    dt: clampDmpValue(raw.dt, 0, 7),
+    dt: detuneFromReg(clampDmpValue(raw.dt, 0, 7)),
     sr: clampDmpValue(raw.sr, 0, 31),
     ssg: clampDmpValue(raw.ssg, 0, 15),
   };

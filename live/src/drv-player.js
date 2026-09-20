@@ -66,6 +66,7 @@ import {
   encodeB4,
   encode60,
   encode30,
+  detuneFromReg,
   encode80,
   fmCarrierOpsForAlg,
   PSG_MASTER_CLOCK,
@@ -1297,7 +1298,7 @@ export class DrvPlayer {
       const opOff = OP_ADDR_OFFSET[op];
       const b30 = entry[0 + op];
       put(0x30 + opOff + off, encode30(o), b30);
-      o.dt = (b30 >> 4) & 0x07;
+      o.dt = detuneFromReg(b30 >> 4);
       o.mul = b30 & 0x0f;
       const voicedTl = entry[4 + op];
       const tl = carriers.has(op) ? this._carrierTl(voicedTl, regs.vel, regs.vol) : voicedTl;

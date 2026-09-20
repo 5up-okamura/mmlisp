@@ -276,8 +276,17 @@ MML_HOT uint8_t enc_b4(const MMLFmCh *c) {
   uint8_t pan = c->pan < 0 ? 2 : c->pan > 0 ? 1 : 3;
   return (uint8_t)((pan << 6) | ((c->ams & 3) << 4) | (c->fms & 7));
 }
+/* DT is signed (-3..+3) everywhere above the register; the chip field is
+ * sign-magnitude (0-3 = 0,+1,+2,+3 / 4-7 = -0,-1,-2,-3). */
+MML_HOT uint8_t dt_to_reg(int8_t dt) {
+  return (uint8_t)(dt < 0 ? (4 | ((-dt) & 3)) : (dt & 3));
+}
+MML_HOT int8_t dt_from_reg(uint8_t reg) {
+  uint8_t r = (uint8_t)(reg & 7);
+  return (int8_t)((r & 4) ? -(int8_t)(r & 3) : (int8_t)r);
+}
 MML_HOT uint8_t enc_30(const MMLOp *o) {
-  return (uint8_t)(((o->dt & 7) << 4) | (o->mul & 0x0f));
+  return (uint8_t)((dt_to_reg(o->dt) << 4) | (o->mul & 0x0f));
 }
 MML_HOT uint8_t enc_60(const MMLOp *o) {
   return (uint8_t)(((o->amen & 1) << 7) | (o->dr & 0x1f));
@@ -674,7 +683,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     ym(s, port, (uint8_t)(0x80 + oo), enc_80(o));
   } else if (OPRANGE(T_FM_ML1) || OPRANGE(T_FM_DT1)) {
     if (OPRANGE(T_FM_ML1)) o->mul = (uint8_t)(value & 0x0f);
-    else o->dt = (int8_t)value; /* enc_30 maps the sign into the register */
+    else o->dt = (int8_t)value; /* signed -3..+3; enc_30 maps it to the register */
     ym(s, port, (uint8_t)(0x30 + oo), enc_30(o));
   } else if (OPRANGE(T_FM_SSG1)) {
     o->ssg = (uint8_t)(value & 0x0f);
@@ -1183,7 +1192,7 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
     uint8_t b;
     b = e[0 + op];
     if (b != enc_30(o)) ym(s, port, (uint8_t)(0x30 + oo), b);
-    o->dt = (int8_t)((b >> 4) & 7);
+    o->dt = dt_from_reg((uint8_t)(b >> 4));
     o->mul = (uint8_t)(b & 0x0f);
     b = e[4 + op];
     o->voiced_tl = b;

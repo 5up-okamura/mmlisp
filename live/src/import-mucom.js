@@ -1125,6 +1125,12 @@ function sanitizeSampleName(name, index) {
   return /^[0-9]/.test(base) ? `pcm-${base}` : base;
 }
 
+// The .dat bank stores DT as the raw 3-bit register field; the language
+// spells it signed (-3..+3).
+function dtFromReg(r) {
+  return r & 4 ? -(r & 3) : r & 3;
+}
+
 function voiceToDef(label, v) {
   const parts = [`:alg ${clamp(v.alg, 0, 7)} :fb ${clamp(v.fb, 0, 7)}`];
   for (let op = 0; op < 4; op++) {
@@ -1133,7 +1139,7 @@ function voiceToDef(label, v) {
     parts.push(
       `:ar${n} ${clamp(o.ar, 0, 31)} :dr${n} ${clamp(o.dr, 0, 31)} :sr${n} ${clamp(o.sr, 0, 31)} ` +
       `:rr${n} ${clamp(o.rr, 0, 15)} :sl${n} ${clamp(o.sl, 0, 15)} :tl${n} ${clamp(o.tl, 0, 127)} ` +
-      `:ks${n} ${clamp(o.ks, 0, 3)} :ml${n} ${clamp(o.ml, 0, 15)} :dt${n} ${clamp(o.dt, 0, 7)}`,
+      `:ks${n} ${clamp(o.ks, 0, 3)} :ml${n} ${clamp(o.ml, 0, 15)} :dt${n} ${clamp(o.dt, -3, 3)}`,
     );
   }
   const def = `(def @${label}\n  ${parts.join("\n  ")})`;
@@ -1398,7 +1404,7 @@ export function parseVoiceDat(bytes) {
       ops.push({
         ar: ksar[p] & 0x1f, dr: amdr[p] & 0x1f, sr: sr[p] & 0x1f, rr: slrr[p] & 0x0f,
         sl: (slrr[p] >> 4) & 0x0f, tl: tl[p] & 0x7f, ks: (ksar[p] >> 6) & 0x03,
-        ml: dtml[p] & 0x0f, dt: (dtml[p] >> 4) & 0x07,
+        ml: dtml[p] & 0x0f, dt: dtFromReg((dtml[p] >> 4) & 0x07),
       });
     }
     let name = "";
