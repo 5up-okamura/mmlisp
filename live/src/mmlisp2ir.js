@@ -5395,13 +5395,19 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
   });
 
   for (const track of tracks) convertCountedJumps(track);
-  // A :break that no counted loop claimed would do nothing: say so.
-  for (const track of tracks)
-    for (const ev of track.events ?? [])
-      if (ev.cmd === "LOOP_BREAK" && ev.args?.id == null)
-        pushDiag(diagnostics, "error", "E_BREAK_OUTSIDE_LOOP",
-          ":break must sit inside a counted loop — (x N …) or #label … (go label N)",
-          ev.src ?? { line: 1, column: 1 }, track.name ?? track.channel ?? null);
+  // A :break that no counted loop claimed does nothing — an infinite loop has
+  // no final pass to exit. Drop it and say so; a score that carries one (a
+  // mucom import whose `[` never closed) still plays.
+  for (const track of tracks) {
+    const stray = (track.events ?? []).filter(
+      (ev) => ev.cmd === "LOOP_BREAK" && ev.args?.id == null,
+    );
+    for (const ev of stray)
+      pushDiag(diagnostics, "warning", "W_BREAK_OUTSIDE_LOOP",
+        ":break is outside a counted loop — (x N …) or #label … (go label N) — and does nothing; dropped",
+        ev.src ?? { line: 1, column: 1 }, track.name ?? track.channel ?? null);
+    if (stray.length) track.events = track.events.filter((ev) => !stray.includes(ev));
+  }
   for (const track of tracks) validateTrack(track, diagnostics);
 
   // v0.6: tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`

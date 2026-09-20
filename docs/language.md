@@ -1028,7 +1028,8 @@ the phrase.
   `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching marker is
   `E_JUMP_UNRESOLVED`.
 - `:break` binds to the innermost counted loop, also from inside an infinite
-  loop nested in it; outside any counted loop it is `E_BREAK_OUTSIDE_LOOP`.
+  loop nested in it. With no counted loop around it there is no final pass to
+  exit, so it does nothing and is dropped with `W_BREAK_OUTSIDE_LOOP`.
 - **`(trig N)`** marks a position for the game to read. It emits the `MARKER`
   opcode (like `#label`) but with an explicit id `N` (0..63 — the status byte is
   6 bits); the sequencer records `N` as the track's last marker for the game
