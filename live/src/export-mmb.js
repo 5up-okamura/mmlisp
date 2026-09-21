@@ -564,7 +564,6 @@ export function encodeMmb(ir, opts = {}) {
     let velState = 15; // sticky VEL (opcodes.md §4)
     let gateState = 8; // sticky GATE in eighths of dur
     const activeMacros = new Map(); // sticky active macro per target id (driver.md §13.1)
-    const markerIds = new Map(); // marker string id → u8
     const markerOffsets = new Map(); // marker string id → stream offset
     const markerState = new Map(); // marker id → sticky {gate,macros} snapshot
     const jumpFixups = []; // { at, to } forward-marker patches
@@ -783,28 +782,18 @@ export function encodeMmb(ir, opts = {}) {
         }
         case "MARKER": {
           syncClock(ev.tick);
-          // Trigger marker `(trig N)`: an explicit id, never a JUMP target, so
-          // it is emitted verbatim and skips the label id/offset bookkeeping.
+          // `(trig N)`: the one marker with a runtime effect — it writes the
+          // track's trig status byte for the game to read (opcodes.md §0x42).
+          // Never a JUMP target, so it skips the label offset bookkeeping.
           if (a.code != null) {
-            stream.u8(OPCODE.MARKER);
+            stream.u8(OPCODE.TRIG);
             stream.u8(a.code & 0x3f);
             break;
           }
-          if (!markerIds.has(a.id)) {
-            if (markerIds.size >= 256) {
-              diag(
-                "warning",
-                "W_MMB_MARKER_OVERFLOW",
-                `more than 256 markers; "${a.id}" dropped`,
-                label,
-              );
-              break;
-            }
-            markerIds.set(a.id, markerIds.size);
-          }
+          // A LABEL emits nothing. JUMP carries a resolved offset and the
+          // driver never searches markers, so the label's only job is to BE
+          // that offset — recorded here, costing no stream bytes.
           markerOffsets.set(a.id, stream.length);
-          stream.u8(OPCODE.MARKER);
-          stream.u8(markerIds.get(a.id));
           // Snapshot the sticky state entering this marker. A backward JUMP here
           // restores it (below) so iterations 2+ start from the same state as
           // iteration 1 — the linear encoder omits opcodes whose value already

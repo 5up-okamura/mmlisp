@@ -132,6 +132,7 @@ int main(bool hardReset)
     VDP_drawText("fifo:", 28, 9);
     VDP_drawText("late:", 2, 10);
     VDP_drawText("track active:", 2, 12);
+    VDP_drawText("trig:", 2, 13);
 
     u16 prev = 0;
     u16 loops = 0;
@@ -210,6 +211,22 @@ int main(bool hardReset)
             while (n--) sink++;
         }
 #endif
+
+        // The trig bytes, every frame — this is what a game watches to fire a
+        // visual on a cue. A trigger is "the byte differs from the one I last
+        // saw", so the same id firing again (a cue inside a loop) still counts.
+        {
+            static u8 seen[MAX_SHOWN_TRACKS];
+            u8 n = MMLisp_trackCount();
+            if (n > MAX_SHOWN_TRACKS) n = MAX_SHOWN_TRACKS;
+            for (u8 i = 0; i < n; i++)
+            {
+                u8 b = MMLisp_trig(MMLisp_trackId(i));
+                if (b == seen[i]) continue;
+                seen[i] = b;
+                drawHex(b & 0x3f, 2, 8 + 3 * i, 13); // the id that just fired
+            }
+        }
 
         // ── Once a frame, and last ───────────────────────────────────────────
         // Control calls above take effect on the frame this renders, so putting

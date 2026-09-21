@@ -132,15 +132,51 @@ banking) for control streams that alone exceed 32KB. ~50-100 B, confidence low,
 LAST — after the dedup pass (1) and cross-MMB banking (3), when the need is
 measured.
 
-## Music→game triggers — `(trig N)` — DONE (2026-07-18, explicit form)
+## Music→game triggers — `(trig N)` — DONE, delivered to the host 2026-09-21
 
-**Shipped.** `(trig N)` (N = 0..63) emits MARKER 0x42 with an explicit id (IR
+**Shipped.** `(trig N)` (N = 0..63) emits opcode 0x42, now named TRIG (IR
 `{cmd:MARKER, args:{code}}`; export-mmb emits it verbatim, skips the label
-id/offset bookkeeping; exempt from `E_MARKER_DUP`). **0 Z80 bytes** (reuses the
-existing `d_marker` → MB_TSTAT path; free stayed 68 B). Errors `E_TRIG_ARITY`,
+id/offset bookkeeping; exempt from `E_MARKER_DUP`). Errors `E_TRIG_ARITY`,
 `E_TRIG_RANGE`. **Auto-numbered `(trig)` deferred** — the useful form is
 explicit (the game knows N); auto needs a collision policy not worth designing
 until a real use appears.
+
+**The status byte and why it has a counter** (user decision 2026-09-21, made
+against the "a Z80-only driver exists some day" lens — so the shape had to be
+something BOTH drivers can offer, which ruled out a 68k-struct sentinel and a
+read-clears call: in a Z80-only build the game reads one byte through the
+window and must not have to write back):
+
+```
+bits 5-0  the id                      bits 7-6  firing counter 1,2,3,1,… from 0
+```
+
+A game polls and compares with the byte it last saw; any difference is a
+trigger. `0x00` = never fired, so it never collides with `(trig 0)`. Host call
+`MMLisp_trig(track_id)`; `example/main.c` polls it every frame.
+
+**The defect this uncovered.** `#label` emitted the SAME opcode with its own
+sequence number, and the driver's one action for that opcode was writing this
+byte — so **every looping track wrote a phantom trigger at its loop head**, with
+an id that collided with real trig ids. Nobody had noticed because nothing read
+the byte: no host API, and the opcode writes no register, so no gate could see
+it. **Fixed by making labels emit nothing at all** (user chose this over a
+separate TRIG opcode): a JUMP carries a resolved offset and the driver never
+searches markers, so a label's only job is to BE that offset — it needs no
+runtime bytes. Two bytes off every looping track, and the register traces did
+not move (the whole ab-baseline was unchanged but for the new score, which is
+the evidence that it was a no-op opcode).
+
+**Gate**: the status bytes are sequencer state, not stream bytes, so c-gate
+could not see them. `gate_main --trig` dumps one byte per track per rendered
+frame and c-gate diffs it against `captureSlotLog`'s `trigLog`. New score
+`m4-trig-loop` fires the same id every loop pass — the case the counter exists
+for. Proven to fail: dropping the counter in the C makes both trig scores FAIL.
+
+--- everything below is the ALL-Z80 ERA record (that build is tag
+`archive/all-z80`). `MB_TSTAT`, `d_marker` and `run-trace.mjs` are its
+vocabulary, not today's; the section above is the shipped shape. Kept for the
+reasoning about drop cases and the ring, which still applies. ---
 
 **The real work was the marker gate** (MARKER has no register effect, so the
 trace/ab gates couldn't see it). Added: drv-player tracks per-track `markerId`
@@ -181,9 +217,9 @@ Ticks delivery — two options that **converge**:
 All trigger work is cold — it never threatens the 178 B, and slots anywhere in
 the order above.
 
-**Still open:** (a) sparse (last-wins, ship first) vs dense (ring) — decide when a
-real dense use-case appears; (b) ticks query vs delivered — if (a) goes dense, the
-ring answers both.
+**Still open:** (a) SPARSE SHIPPED (last-wins within a frame, plus the firing
+counter so repeats are visible); dense (ring) only if a real use-case appears;
+(b) ticks query vs delivered — if (a) ever goes dense, the ring answers both.
 
 ## Related: DAC ownership — SUPERSEDED, folded here (plan-dac-ownership deleted)
 

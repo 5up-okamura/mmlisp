@@ -95,16 +95,18 @@ static int run_pumped(MMLSeq *seq, int depth, long frames) {
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr,
-            "usage: gate_main <song.mmb> [max_frames] [--cmds f] [--samples f]\n");
+            "usage: gate_main <song.mmb> [max_frames] [--cmds f] [--samples f]"
+            " [--trig f]\n");
     return 2;
   }
   long max_frames = argc > 2 && argv[2][0] != '-' ? strtol(argv[2], NULL, 10) : 36000;
-  const char *cmd_path = 0, *smp_path = 0;
+  const char *cmd_path = 0, *smp_path = 0, *trig_path = 0;
   int pump_depth = 0;
   long prime = -1; /* --prime K: the SGDK host's load (see below) */
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "--cmds") && i + 1 < argc) cmd_path = argv[++i];
     else if (!strcmp(argv[i], "--samples") && i + 1 < argc) smp_path = argv[++i];
+    else if (!strcmp(argv[i], "--trig") && i + 1 < argc) trig_path = argv[++i];
     else if (!strcmp(argv[i], "--prime") && i + 1 < argc)
       prime = strtol(argv[++i], NULL, 10);
     else if (!strcmp(argv[i], "--pump") && i + 1 < argc)
@@ -162,6 +164,24 @@ int main(int argc, char **argv) {
       return 2;
     }
   }
+  /* --trig: one byte per track per RENDERED frame, in track order — the trig
+   * status bytes (opcodes.md 0x42). The drain frames at the end are not
+   * rendered and carry none, which is where the reference stops logging too. */
+  FILE *trig_f = 0;
+  if (trig_path) {
+    trig_f = fopen(trig_path, "wb");
+    if (!trig_f) {
+      fprintf(stderr, "cannot write %s\n", trig_path);
+      return 2;
+    }
+  }
+#define EMIT_TRIG()                                                            \
+  do {                                                                         \
+    if (trig_f)                                                                \
+      for (uint8_t t_ = 0; t_ < seq.track_count; t_++)                         \
+        fputc(seq.trk[t_].trig_byte, trig_f);                                  \
+  } while (0)
+
   unsigned char slot[MML_SLOT_SIZE];
   if (prime >= 0) {
     /* The SGDK host's load: nothing started, PRIME, K idle frames, then
@@ -171,13 +191,17 @@ int main(int argc, char **argv) {
     for (long k = 0; k < prime; k++) {
       uint32_t n = mml_render_frame(&seq, slot);
       emit_slot(slot, n);
+      EMIT_TRIG();
     }
     for (uint8_t i = 0; i < mml_track_count(&seq); i++) mml_start_track(&seq, mml_track_id(&seq, i));
   } else {
     mml_start_all(&seq);
   }
 
-  if (pump_depth) return run_pumped(&seq, pump_depth, max_frames);
+  if (pump_depth) {
+    if (trig_f) fclose(trig_f); /* the ring path renders on its own schedule */
+    return run_pumped(&seq, pump_depth, max_frames);
+  }
   for (long i = 0; i < max_frames; i++) {
     for (int c = 0; c < ncmds; c++)
       if (cmds[c].frame == i)
@@ -185,6 +209,7 @@ int main(int argc, char **argv) {
                     (uint8_t)cmds[c].a1, (uint8_t)cmds[c].a2);
     uint32_t n = mml_render_frame(&seq, slot);
     emit_slot(slot, n);
+    EMIT_TRIG();
     if (mml_done(&seq)) break;
   }
   /* Drain whatever the write cap held back, so the stream is complete — the
@@ -196,6 +221,7 @@ int main(int argc, char **argv) {
     emit_slot(slot, n);
   }
   fflush(stdout);
+  if (trig_f) fclose(trig_f);
   if (seq.stopped) {
     fprintf(stderr, "undecoded opcode 0x%02x at frame %u\n", seq.stopped_op,
             (unsigned)seq.stopped_frame);

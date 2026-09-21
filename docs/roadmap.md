@@ -95,12 +95,11 @@ Open (driver.md §11):
 
 1. **A hardware run** — the images sit at a 100% work ceiling.
 2. **SE** on the C sequencer and the SGDK host.
-3. **`(trig N)`** delivered to the host.
-4. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
+3. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
    voice change is one pair instead of ~30.
-5. **Several scores loaded at once** (DJ transitions, driver.md §2.3).
-6. **PAL**.
-7. **A small Z80-only build** (sequencer on the Z80, this engine's DAC clock).
+4. **Several scores loaded at once** (DJ transitions, driver.md §2.3).
+5. **PAL**.
+6. **A small Z80-only build** (sequencer on the Z80, this engine's DAC clock).
 
 ## Phase 4: Integration and Demo
 

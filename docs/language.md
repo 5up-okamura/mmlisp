@@ -1013,13 +1013,13 @@ the phrase.
 
 | Form           | IR                     | Meaning                                     |
 | -------------- | ---------------------- | ------------------------------------------- |
-| `#label`       | `MARKER`               | Position label (duplicate id = `E_MARKER_DUP`; empty = `E_LABEL_EMPTY`) |
+| `#label`       | —                      | Position label: a compile-time jump target, no stream bytes (duplicate id = `E_MARKER_DUP`; empty = `E_LABEL_EMPTY`) |
 | `(go label)`   | `JUMP {to}`            | Infinite loop back to `#label`              |
 | `(go label N)` | `LOOP_BEGIN`/`LOOP_END`| The `#label`…`go` section plays N times, then falls through |
 | `(x N body…)`  | `LOOP_BEGIN`/`LOOP_END`| Counted loop sugar                          |
-| `(x body…)`    | `MARKER` + `JUMP`      | Infinite loop sugar                         |
+| `(x body…)`    | `JUMP` (to a label)    | Infinite loop sugar                         |
 | `:break`       | `LOOP_BREAK`           | On the final pass of the enclosing counted loop, exit here |
-| `(trig N)`     | `MARKER {code}`        | Music→game sync point: writes id `N` to the track's status byte (`E_TRIG_ARITY`, `E_TRIG_RANGE`) |
+| `(trig N)`     | `TRIG {code}`          | Music→game sync point: writes id `N` to the track's status byte (`E_TRIG_ARITY`, `E_TRIG_RANGE`) |
 
 - `(go label N)` is rewritten post-merge into the same `LOOP_BEGIN`/`LOOP_END`
   as `(x N …)`, so the label and the `go` may live in different forms of the
@@ -1027,19 +1027,23 @@ the phrase.
   jump); a forward counted `(go label N)` is unsupported (`E_GO_FORWARD_COUNT`).
   Infinite `(go label)` may jump either direction.
 - `go` arity: label plus optional positive count (`E_GO_NO_LABEL`,
-  `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching marker is
-  `E_JUMP_UNRESOLVED`.
+  `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching label is
+  `E_JUMP_UNRESOLVED`. A label is a compile-time name: the jump is a resolved
+  offset, so `#label` itself costs nothing at runtime and emits no bytes.
 - `:break` binds to the innermost counted loop, also from inside an infinite
   loop nested in it. With no counted loop around it there is no final pass to
   exit, so it does nothing and is dropped with `W_BREAK_OUTSIDE_LOOP`.
-- **`(trig N)`** marks a position for the game to read. It emits the `MARKER`
-  opcode (like `#label`) but with an explicit id `N` (0..63 — the status byte is
-  6 bits); the sequencer records `N` as the track's last marker for the game
-  to read (the SGDK host does not surface it yet, driver.md §11). Unlike `#label` it is
-  never a jump target, so its id is not sequenced and it is exempt from label
-  uniqueness. The byte is last-wins per track: if two triggers fire on the same
-  track between two game polls, only the later is seen (cross-track never drops).
-  Auto-numbered `(trig)` is not yet supported — give an explicit id.
+- **`(trig N)`** marks a position for the game to read. It emits the `TRIG`
+  opcode with an explicit id `N` (0..63), and the sequencer writes the track's
+  **status byte**: the id in bits 5-0 under a 2-bit firing counter in bits 7-6
+  that runs 1→2→3→1 from 0 (opcodes.md §0x42). The game reads it with
+  `MMLisp_trig(track_id)` and compares it with the byte it last saw — **any
+  difference is a trigger**, including the same id firing again, which is what a
+  cue inside a loop does. `0x00` means the track has not passed a trigger yet,
+  so it never looks like `(trig 0)`. Within one frame the last trigger wins
+  (cross-track never drops), and reading does not clear it. `(trig N)` is never
+  a jump target, so it is exempt from label uniqueness. Auto-numbered `(trig)`
+  is not yet supported — give an explicit id.
 - **A loop replays baked notes; body state does not accumulate.** The body is
   compiled **once**, so sticky state changed inside it (octave `>`/`<`, `:oct`,
   `:vel`, `:len`, …) is baked into that single pass and does **not** carry from

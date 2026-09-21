@@ -215,7 +215,7 @@ typedef struct {
   int32_t wait;      /* ticks until the next timed dispatch */
   int32_t gate_left; /* -1 = none */
   uint8_t pending_off;
-  uint8_t marker_id;
+  uint8_t trig_byte; /* game-readable trig status (opcodes.md 0x42) */
   /* FADE_TRACK: a division-free Bresenham vol ramp to 0, then stop (§6.5). */
   uint8_t fading;
   uint16_t fade_n, fade_frame;

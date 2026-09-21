@@ -49,7 +49,7 @@ Freeze classes used below:
 | 0x12 | TIE          | dur                      | 2 (4 ext.)           |
 | 0x40 | LOOP_BEGIN   | count u8                 | 2                    |
 | 0x41 | LOOP_END     | —                        | 1                    |
-| 0x42 | MARKER       | id u8                    | 2                    |
+| 0x42 | TRIG         | id u8                    | 2                    |
 | 0x43 | JUMP         | dest u16                 | 3                    |
 | 0x60 | PARAM_SET    | target u8, value i8/i16  | 3–4                  |
 | 0x80 | TEMPO_SET    | increment u16 (8.8)      | 3                    |
@@ -92,10 +92,27 @@ driver.md §4.3).
 `resume_ptr`; else pop and continue. Note the v0.1 layout change: loop ids
 are gone and the count moved from LOOP_END to LOOP_BEGIN (§8).
 
-**0x42 MARKER** — record `id` as the track's last marker (position feedback
-for the host; the SGDK host does not surface it yet, driver.md §11) and
-continue. The driver never searches markers; JUMP
-targets are resolved offsets. Zero-cost sync point.
+**0x42 TRIG** — `(trig N)`, the music→game sync point. Write the track's
+**status byte** and continue; no register effect.
+
+```
+bits 5-0   id, 0..63 — the operand
+bits 7-6   firing counter: 1, 2, 3, 1, … starting from 0
+```
+
+The counter is what makes a repeat visible. An id alone cannot distinguish "the
+same cue fired again" from "nothing happened", and a cue inside a loop fires the
+same id every pass — so the game polls the byte and compares it with the one it
+last saw: **any difference is a trigger**. Starting the counter at 0 also keeps
+`0x00` meaning "this track has never passed a trigger", which `(trig 0)` (=
+`0x40`) does not collide with. Within one frame the last trigger wins; reading
+does not clear it. The host reads it with `MMLisp_trig(track_id)`.
+
+**Labels emit nothing.** `#label` is a compile-time name for a JUMP target, and
+JUMP carries a resolved offset — the driver never searches for a marker — so a
+label costs no stream bytes and cannot touch this byte. (It used to emit this
+same opcode with its own sequence number, which wrote a phantom trigger into
+every looping track.)
 
 **0x43 JUMP** — unconditional jump to `dest`, a byte offset relative to the
 EVENT_STREAM payload start (same base as `event_offset`). Used for infinite
@@ -103,8 +120,8 @@ loops (`#loop … (go loop)`). Finite `(go label n)` never reaches MMB — the
 compiler already rewrites it to LOOP_BEGIN/LOOP_END. The driver keeps its sticky
 state (VEL/GATE eighths, active macros) across the jump — the **encoder** is
 responsible for re-establishing, just before a backward JUMP, whatever sticky
-state the loop body assumes at its target marker, since the loop tail may leave a
-different state than the linear stream had at the marker (export-mmb.js). Without
+state the loop body assumes at its target label, since the loop tail may leave a
+different state than the linear stream had at the label (export-mmb.js). Without
 that, e.g. a full-gate `#loop` head note plays short on iterations 2+.
 
 **0x60 PARAM_SET** — set `target` to `value` (width per §7). Level targets
@@ -148,24 +165,24 @@ The encoder emits sticky params (VEL, GATE, macro binds) change-only against a
 state the *tail* left. Something has to reconcile the two, and which mechanism
 is used is not a free choice:
 
-- **GATE and macro binds are restored at the JUMP**, from a snapshot taken when
-  the target MARKER was emitted. They are silent state — nothing reaches a
+- **GATE and macro binds are restored at the JUMP**, from a snapshot taken at
+  the target label's offset. They are silent state — nothing reaches a
   register until the next note — so re-establishing them at the loop boundary
   cannot disturb anything.
 - **VEL is not.** The driver acts on `PARAM_SET VEL` immediately: it recomposes
   every carrier's TL (driver.md §7.1). Emitting one at the JUMP writes a level
-  into whatever is still sounding. Instead, a MARKER that is a backward-JUMP
+  into whatever is still sounding. Instead, a label that is a backward-JUMP
   target **invalidates the encoder's VEL tracking**, so the body re-asserts its
   own velocity at the note that needs it and depends on nothing established
-  before the marker.
+  before the label.
 
 The old behaviour restored VEL at the JUMP like the others, and it was the
-loop-point blast heard on hardware: a marker at the top of a track snapshots the
+loop-point blast heard on hardware: a label at the top of a track snapshots the
 encoder's *initial* vel 15, so the restore fired `PARAM_SET VEL 15` into a note
 held across the loop — **+21.8 dB on a sustained chord for 13 s**, until the body
 reached its next note. `ir-player` carries vel on every NOTE_ON and was
 unaffected, which is what made it look like a driver bug for three rounds.
-Gate: `m3-loop-vel-hold` (marker at the top, quiet `:vel`, rests at the loop head
+Gate: `m3-loop-vel-hold` (label at the top, quiet `:vel`, rests at the loop head
 so the wrong level lasts — all three are needed to reproduce it).
 
 ## 5. Reserved Opcodes — Control Flow and Notes (layouts frozen)
@@ -388,7 +405,8 @@ the acceptance band for A/B diffs covers it (driver.md §12).
 4. TEMPO_SET: v0.1 `{bpm u16}` → precomputed 8.8 tick increment; BPM is
    display metadata only.
 5. JUMP: v0.1 `{marker_id u8}` → compile-time-resolved `{dest u16}` offset.
-   MARKER remains, repurposed as a zero-cost status/sync point.
+   0x42 remains as TRIG, the `(trig N)` status point; labels stopped emitting
+   it, since a resolved offset needs no runtime marker.
 6. LOOP_BEGIN/LOOP_END: loop ids dropped; the repeat count moves from
    LOOP_END to LOOP_BEGIN.
 7. END_OF_TRACK (0x00) is new; v0.1 relied on byte-length bounds from the

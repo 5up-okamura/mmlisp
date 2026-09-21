@@ -331,7 +331,7 @@ PCM voices have their own state (§14).
 | wait_ticks | until the next timed dispatch |
 | control stack | 4 × {ptr, count}; LOOP entries carry the remaining count, CALL entries are tagged |
 | fade counter | |
-| last MARKER id | for `(trig N)` sync; not yet surfaced to the host (§11) |
+| trig status byte | `(trig N)` sync: id in bits 5-0, a 2-bit firing counter above it; read with `MMLisp_trig()` (opcodes.md §0x42) |
 
 ## 5. The Z80 Engine
 
@@ -526,6 +526,7 @@ does all arithmetic; the sequencer only stores and applies (docs/language.md
 | `MMLisp_setParam(channel, target, value)` | one-shot absolute write of `target` (opcodes.md §7), as if a PARAM_SET arrived in the stream |
 | `MMLisp_fadeTrack(track, frames)` | step `master` down to 0 over `frames`, then stop |
 | `MMLisp_setVal(slot, value)` / `MMLisp_getVal(slot)` | val slots (§6.4) |
+| `MMLisp_trig(track)` | the track's `(trig N)` status byte (opcodes.md §0x42). Poll it and compare with the byte you last saw: any difference is a trigger, including a repeat of the same id. It moves when the frame is **rendered**, which is `MMLISP_LEAD` frames before it is heard |
 | `MMLisp_needsSampleBank()` / `MMLisp_trackActive(track)` / `MMLisp_renderedFrames()` / `MMLisp_readStats(&stats)` | status; `MMLispStats` is the host's own counters and takes no bus grab (`drv/sgdk/README.md`) |
 
 Every control call takes effect on the next frame rendered (§3.4).
@@ -688,10 +689,11 @@ per-frame final value, which makes the A/B baseline coalescing-invariant.
 ### 10.1 Loop-invariant VOICE_SET (encode-time hoist)
 
 `planVoiceHoists` (`live/src/export-mmb.js`) emits a loop head's VOICE_SET
-**before** the loop marker, so pass 1 applies it and the backward JUMP lands
-past it. Moving it across a MARKER cannot reorder any chip write (MARKER writes
-no register), so the register trace is unchanged — asserted by the gate, and by
-an A/B of the same song encoded with `opts.voiceHoist` on and off.
+**before** the loop's jump target, so pass 1 applies it and the backward JUMP
+lands past it. The target is an offset a label resolved to and the label emits
+no bytes (opcodes.md §0x42), so the hoist moves the VOICE_SET across nothing
+that writes a register: the register trace is unchanged — asserted by the gate,
+and by an A/B of the same song encoded with `opts.voiceHoist` on and off.
 
 The hoist is skipped when the loop body can leave the voiced registers different
 from what that VOICE_SET set: another voice change, a PARAM_SET/ADD/MUL/SWEEP on
@@ -712,8 +714,6 @@ three outcomes.
 - **One score loaded at a time** (§2.3).
 - **SE** runs in the reference player only; not in the C sequencer or the SGDK
   host (§2.5).
-- **`(trig N)` markers** are tracked by the sequencer but not surfaced to the
-  host.
 - **PAL** is not supported (§3.3).
 - **Not yet run on hardware.** The images are graded in the JS machine
   (§12.4) and on BlastEm (§12.7); the slot that binds each rate has no margin,

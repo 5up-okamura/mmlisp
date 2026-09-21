@@ -420,6 +420,13 @@ bool MMLisp_trackActive(u8 track_id)
     return FALSE;
 }
 
+u8 MMLisp_trig(u8 track_id)
+{
+    for (u8 i = 0; i < seq.track_count; i++)
+        if (seq.trk[i].track_id == track_id) return seq.trk[i].trig_byte;
+    return 0;
+}
+
 bool MMLisp_isSettled(void)
 {
     // Nothing waiting in the sequencer or for the wire. The last grab's pairs

@@ -65,7 +65,7 @@ enum {
   OP_VOICE_SET = 0x14,
   OP_LOOP_BEGIN = 0x40,
   OP_LOOP_END = 0x41,
-  OP_MARKER = 0x42,
+  OP_TRIG = 0x42,
   OP_JUMP = 0x43,
   OP_CALL = 0x44,
   OP_RET = 0x45,
@@ -1423,10 +1423,17 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         }
         break;
       }
-      case OP_MARKER:
-        t->marker_id = (uint8_t)(st[t->pc + 1] & 0x3f);
+      case OP_TRIG: {
+        /* The track's game-readable status byte (opcodes.md 0x42): a 2-bit
+         * firing counter in bits 7-6, the id in bits 5-0. The counter runs
+         * 1->2->3->1 from 0, so 0x00 means "never fired" and a repeat of the
+         * same id still moves the byte. No register effect. */
+        uint8_t c = (uint8_t)((t->trig_byte >> 6) & 3);
+        t->trig_byte = (uint8_t)((((c >= 3) ? 1 : c + 1) << 6)
+                                 | (st[t->pc + 1] & 0x3f));
         t->pc += 2;
         break;
+      }
       case OP_JUMP:
         t->pc = rd16(st, t->pc + 1); /* EVENT_STREAM-relative */
         break;
@@ -2206,7 +2213,7 @@ void mml_start_track(MMLSeq *s, uint8_t track_id) {
   t->wait = 0;
   t->gate_left = -1;
   t->pending_off = 0;
-  t->marker_id = 0;
+  t->trig_byte = 0;
   t->depth = 0;
   t->held = 0;
   t->fading = 0;

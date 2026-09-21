@@ -98,7 +98,7 @@ export const OPCODE = {
   VOICE_SET: 0x14,
   LOOP_BEGIN: 0x40,
   LOOP_END: 0x41,
-  MARKER: 0x42,
+  TRIG: 0x42,
   JUMP: 0x43,
   CALL: 0x44,
   RET: 0x45,

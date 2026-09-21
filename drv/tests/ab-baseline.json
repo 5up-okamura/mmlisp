@@ -305,6 +305,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-trig-loop.mmlisp": {
+    "ok": false,
+    "mismatches": 5,
+    "compileErrors": 0,
+    "digest": "8813c5a6"
+  },
   "p3-lifecycle.mmlisp": {
     "ok": true,
     "mismatches": 0,

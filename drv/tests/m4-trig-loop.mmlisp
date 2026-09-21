@@ -1,0 +1,19 @@
+; M4 gate: the trig status byte across a loop (opcodes.md 0x42).
+;
+; The byte is a 2-bit firing counter in bits 7-6 over a 6-bit id in bits 5-0.
+; The counter is what makes a cue at a loop point visible: this track fires the
+; SAME id every pass, so an id-only byte would never change after the first
+; pass and the game would see one trigger instead of one per bar.
+;
+; It also pins the other half of the fix: a label emits no stream bytes. `#loop`
+; used to emit MARKER with its own sequence number, which landed in this very
+; byte — so every pass wrote a phantom trigger whose id was the label's index.
+; Here the byte must move ONLY at the (trig N)s.
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4
+  #loop
+  (trig 7) c e (trig 8) g e
+  (go loop))
+; A second track fires its trigger once and then holds the byte — the counter
+; must not drift on a track that is not triggering.
+(sqr1 :len 2
+  c (trig 0) e g)

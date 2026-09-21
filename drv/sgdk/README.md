@@ -168,6 +168,17 @@ while (TRUE) {
   `fadeTrack` / `setVal` are plain calls into the sequencer. They take effect on
   the next frame rendered and reach the chip within about a frame after that.
 
+- **Music → game: `MMLisp_trig(track)`.** The score marks a beat with
+  `(trig N)`; this returns that track's status byte — the id in bits 5-0 under a
+  2-bit firing counter. Poll it every frame and keep the byte you last saw: **any
+  difference is a trigger**, and because of the counter that includes the same id
+  firing again, which is what a cue inside a loop does. `0x00` means the track
+  has not reached a trigger yet, so it is never mistaken for `(trig 0)`. The byte
+  moves when the frame is *rendered* — `MMLISP_LEAD` frames before it is heard —
+  so a visual that has to land exactly on the beat should compare
+  `MMLisp_renderedFrames()` against `MMLispStats.due`. `example/main.c` polls it
+  every frame and prints the id.
+
 - **Starting tracks: all in one frame.** Each track's clock starts on the frame
   it was set up in, so staggering the starts leaves the tracks permanently out of
   phase. The setup frame is silent by construction (`docs/driver.md` §4.2).
@@ -409,7 +420,6 @@ Everything the language compiles to, except SE:
   channel) can outrun it — watch `pending`.
 - **One score loaded at a time.** `MMLisp_loadScore` resets the sequencer.
 - **SE is not ported** to the 68k sequencer.
-- **`(trig N)` markers are not surfaced** to the host.
 - **SGDK's own Z80 halts** (pads, DMA) are outside the driver's budget — see
   "Bus stops that are not the driver's".
 - **Not yet run on hardware.** In particular the pump writes Z80 RAM with

@@ -476,7 +476,7 @@ export class DrvPlayer {
       eventOffset: t.eventOffset, // stream start, for START_TRACK re-init
       pc: t.eventOffset,
       acc: 0, // 8.8 fractional accumulator (low byte only is fractional)
-      markerId: 0, // last MARKER id → mailbox status byte (MB_TSTAT bits5-0)
+      trigByte: 0, // the game-readable trig status byte (opcodes.md §0x42)
       wait: 0, // ticks until the next timed event resumes
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
       pendingOff: false, // full-gate key-off awaiting the next event
@@ -975,10 +975,15 @@ export class DrvPlayer {
           }
           break;
         }
-        case OPCODE.MARKER: {
-          // id → the track's 68k-readable status byte (MB_TSTAT bits5-0). No
-          // register effect; mirrored here so the marker gate can compare it.
-          trk.markerId = s[trk.pc + 1] & 0x3f;
+        case OPCODE.TRIG: {
+          // The track's game-readable status byte (opcodes.md §0x42): a 2-bit
+          // firing counter in bits 7-6, the id in bits 5-0. The counter runs
+          // 1→2→3→1 and starts at 0, so 0x00 means "never fired" — a game can
+          // tell that from `(trig 0)` — and a repeat of the SAME id still moves
+          // the byte, which is what a cue that fires every loop needs. No
+          // register effect; the host reads it (MMLisp_trig).
+          const c = (trk.trigByte >> 6) & 3;
+          trk.trigByte = (((c >= 3 ? 1 : c + 1) << 6) | (s[trk.pc + 1] & 0x3f)) & 0xff;
           trk.pc += 2;
           break;
         }
@@ -1980,7 +1985,7 @@ export class DrvPlayer {
     trk.wait = 0;
     trk.gateLeft = -1;
     trk.pendingOff = false;
-    trk.markerId = 0;
+    trk.trigByte = 0;
     trk.loops = [];
     trk.held = false;
     trk.fading = false;
@@ -2352,9 +2357,6 @@ export class DrvPlayer {
       if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
       cmdByFrame.get(c.frame).push(c);
     }
-    // Per-frame snapshot of every track's status byte (MB_TSTAT bits5-0), so
-    // the marker gate can diff `(trig N)` sync points against the Z80's RAM.
-    const markerLog = [];
     try {
       this._audioContext = null;
       this._reset(autoStart);
@@ -2364,13 +2366,11 @@ export class DrvPlayer {
           this._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
         }
         this.stepFrame();
-        markerLog.push(this._trk.map((t) => t.markerId & 0x3f));
         frames++;
         if (this._done()) break;
       }
       return {
         writes,
-        markerLog,
         frames,
         ended: this._done(),
         diagnostics: this._diagnostics.slice(),
@@ -2401,6 +2401,9 @@ export class DrvPlayer {
     const b = builder ?? new SlotBuilder();
     const slots = [];
     const writes = [];
+    // One byte per track per frame — the trig status bytes (opcodes.md §0x42),
+    // sampled after the frame, which is where c-gate compares them.
+    const trigLog = [];
     const saved = this._writeCb;
     const savedSink = this._slotSink;
     this._slotSink = b;
@@ -2423,7 +2426,11 @@ export class DrvPlayer {
       this._reset(prime >= 0 ? false : autoStart);
       if (prime >= 0) {
         this._prime();
-        for (let k = 0; k < prime; k++) { this.stepFrame(); slots.push(b.endFrame()); }
+        for (let k = 0; k < prime; k++) {
+          this.stepFrame();
+          slots.push(b.endFrame());
+          trigLog.push(this._trk.map((t) => t.trigByte));
+        }
         for (const t of this._trk) this._startTrack(t.trackId, false);
       }
       let frames = 0;
@@ -2433,6 +2440,7 @@ export class DrvPlayer {
         }
         this.stepFrame();
         slots.push(b.endFrame());
+        trigLog.push(this._trk.map((t) => t.trigByte));
         frames++;
         if (this._done()) break;
       }
@@ -2441,6 +2449,7 @@ export class DrvPlayer {
       return {
         slots,
         writes,
+        trigLog,
         frames,
         ended: this._done(),
         spillPeak: b.spillPeak,

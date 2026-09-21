@@ -109,13 +109,17 @@ for (const score of scores) {
   drv.loadMMB(mmb, sampleBank);
   const ref = drv.captureSlotLog({ maxFrames: MAX_FRAMES, commands, builder: new SlotBuilder() });
 
+  // `(trig N)` status bytes are sequencer state, not stream bytes, so the
+  // harness writes them to a sidecar and they are diffed separately.
+  const trigFile = join(tmp, name.replace(/\.mmlisp$/, ".trig"));
   let out, incomplete = null;
   try {
     out = execFileSync(
       exe,
       [mmbPath, String(MAX_FRAMES),
         ...(cmdFile ? ["--cmds", cmdFile] : []),
-        ...(smpPath ? ["--samples", smpPath] : [])],
+        ...(smpPath ? ["--samples", smpPath] : []),
+        "--trig", trigFile],
       { maxBuffer: 1 << 28 },
     );
   } catch (e) {
@@ -148,6 +152,33 @@ for (const score of scores) {
   }
   if (!bad && got.length !== ref.slots.length && !incomplete) {
     bad = `${got.length} slots from the C, ${ref.slots.length} from the reference`;
+  }
+
+  // The trig status bytes (opcodes.md §0x42) — one per track per rendered
+  // frame. Nothing in the slot stream carries them, so without this the two
+  // sequencers could disagree about every `(trig N)` and the gate would pass.
+  let trigs = 0;
+  if (!bad && existsSync(trigFile)) {
+    const tb = readFileSync(trigFile);
+    const width = ref.trigLog[0]?.length ?? 0;
+    const frames = width ? tb.length / width : 0;
+    if (!Number.isInteger(frames)) {
+      bad = `trig dump is ${tb.length} B, not a multiple of ${width} tracks`;
+    } else if (!incomplete && frames !== ref.trigLog.length) {
+      bad = `${frames} trig frames from the C, ${ref.trigLog.length} from the reference`;
+    }
+    for (let f = 0; f < Math.min(frames, ref.trigLog.length) && !bad; f++) {
+      for (let t = 0; t < width; t++) {
+        const a = ref.trigLog[f][t], b = tb[f * width + t];
+        if (a !== b) {
+          bad = `trig f${f} track ${t}: C 0x${b.toString(16)}, reference 0x${a.toString(16)}`;
+          break;
+        }
+      }
+    }
+    trigs = new Set(
+      ref.trigLog.flat().filter((b) => b !== 0),
+    ).size;
   }
 
   // THE SGDK HOST'S LOAD, too (mmlispseq.c mml_prime_tracks): nothing started,
@@ -185,7 +216,7 @@ for (const score of scores) {
     console.log(`FAIL  ${name} — ${bad}`);
     failures++;
   } else {
-    console.log(`ok    ${name} — ${ref.slots.length} slots, ${bytes} B${commands.length ? `, ${commands.length} host cmds` : ""}, byte-identical${primed}`);
+    console.log(`ok    ${name} — ${ref.slots.length} slots, ${bytes} B${commands.length ? `, ${commands.length} host cmds` : ""}, byte-identical${trigs ? `, ${trigs} trig states` : ""}${primed}`);
   }
 }
 

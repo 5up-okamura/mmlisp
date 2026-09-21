@@ -149,6 +149,22 @@ bool MMLisp_needsSampleBank(void);
 // True while the track is running (dispatching or holding).
 bool MMLisp_trackActive(u8 track_id);
 
+// The track's trig status byte — `(trig N)` music->game sync (opcodes.md 0x42).
+//
+//   bits 5-0  the id of the trigger last passed (0..63)
+//   bits 7-6  a firing counter: 1, 2, 3, 1, ... starting from 0
+//
+// so 0x00 means "this track has not passed a trigger yet", which a game can
+// tell apart from `(trig 0)`. Poll it and compare with the byte you last saw:
+// any difference means a trigger fired, INCLUDING the same id firing again,
+// which is what a cue at a loop point does. Within one frame the last trigger
+// wins. Reading does not clear it. Returns 0 for a track id that is not loaded.
+//
+// What it lags: the sequencer renders MMLISP_LEAD frames ahead, so the byte
+// moves before the trigger is heard — compare MMLisp_renderedFrames against
+// MMLispStats.due if a visual has to land ON the beat rather than near it.
+u8 MMLisp_trig(u8 track_id);
+
 // Frames rendered since the score was loaded. They are rendered MMLISP_LEAD
 // frames ahead of their time, and what the player hears runs a further ~16 ms
 // behind that (a half-frame grab period plus the pair page); anything that has
