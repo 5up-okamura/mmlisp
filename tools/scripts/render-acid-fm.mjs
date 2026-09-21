@@ -11,26 +11,28 @@ import {encodeMmb} from '../../live/src/export-mmb.js';
 import {IRPlayer} from '../../live/src/ir-player.js';
 import {DrvPlayer} from '../../live/src/drv-player.js';
 const root=fileURLToPath(new URL('../../',import.meta.url));
-const bank=fs.readFileSync(root+'presets/acid/tb303.mmlisp','utf8');
+const bank=fs.readFileSync(root+'presets/waveforms/set.mmlisp','utf8');
 const core=await makeCore();const rate=core._nopn_get_native_sample_rate();
 const output=nodePath.join(os.tmpdir(),'mmlisp-renders','acid')+nodePath.sep;fs.mkdirSync(output,{recursive:true});
-const reports=[];
-for(const name of ['saw','square']){
- const source=fs.readFileSync(root+`examples/source/acid-${name}.mmlisp`,'utf8');
- const {ir,diagnostics}=compileMMLisp(source,`acid-${name}.mmlisp`,{imports:new Map([['../../presets/acid/tb303.mmlisp',bank]])});
+{
+ const name='acid';
+ const source=fs.readFileSync(root+'presets/waveforms/demo-acid.mmlisp','utf8');
+ const {ir,diagnostics}=compileMMLisp(source,'presets/waveforms/demo-acid.mmlisp',{imports:new Map([['presets/waveforms/set.mmlisp',bank]])});
  assert.deepEqual(diagnostics,[]);
  const events=ir.tracks[0].events;
  const notes=events.filter(e=>e.cmd==='NOTE_ON');
- assert.equal(notes.length,52);assert.equal(notes.filter(e=>e.args.legato).length,12);
+ // `(x 4 …)` is a counted loop, so the IR holds one pass per voice.
+ assert.equal(notes.length,26);assert.equal(notes.filter(e=>e.args.legato).length,6);
+ assert.equal(events.filter(e=>e.cmd==='LOOP_BEGIN').length,2);
  const sweeps=events.filter(e=>e.cmd==='PARAM_SWEEP'&&e.args.target==='NOTE_PITCH');
- assert.equal(sweeps.length,12);assert(sweeps.every(e=>e.args.bounded&&e.args.frames===12));
+ assert.equal(sweeps.length,6);assert(sweeps.every(e=>e.args.bounded&&e.args.frames===12));
  const encoded=encodeMmb(ir);assert.deepEqual(encoded.diagnostics,[]);
  const drv=new DrvPlayer();drv.loadMMB(encoded.bytes);
- const driver=drv.captureRegisterLog({maxFrames:900});assert(driver.ended);assert.deepEqual(driver.diagnostics,[]);
+ const driver=drv.captureRegisterLog({maxFrames:1200});assert(driver.ended);assert.deepEqual(driver.diagnostics,[]);
  assert.deepEqual(driver.skippedOpcodes,{});
- const log=new IRPlayer(()=>{}).loadJSON(ir).captureRegisterLog({maxSec:12});
+ const log=new IRPlayer(()=>{}).loadJSON(ir).captureRegisterLog({maxSec:20});
  const keyons=writes=>writes.filter(w=>w.port===0&&w.addr===0x28&&w.data===0xf0);
- assert.equal(keyons(log.writes).length,40);assert.equal(keyons(driver.writes).length,40);
+ assert.equal(keyons(log.writes).length,80);assert.equal(keyons(driver.writes).length,80);
  // Each slide pair is one held attack. Compare the key state through the
  // destination note in the IR log, allowing its initial scheduler preroll.
  const ons=keyons(log.writes);const origin=ons[0].sec;const secondsPerTick=60/130/ir.ppqn;
@@ -68,7 +70,5 @@ for(const name of ['saw','square']){
  const gain=.85/peak;const b=Buffer.alloc(44+total*2);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(Math.round(rate),24);b.writeUInt32LE(Math.round(rate)*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(total*2,40);
  for(let i=0;i<total;i++)b.writeInt16LE(Math.round(centered[i]*gain*32767),44+i*2);
  fs.writeFileSync(output+`acid-${name}.wav`,b);
- reports.push({name,duration,notes:notes.length,slides:sweeps.length,keyOns:ons.length,driverKeyOns:keyons(driver.writes).length,mmbBytes:encoded.bytes.length,previewGain:gain});
 }
-fs.writeFileSync(root+'presets/acid/render-report.json',JSON.stringify({engine:'Nuked-OPN2, register log from IRPlayer',rate:Math.round(rate),normalization:'Whole-file DC removal and fixed peak gain to 0.85; no per-note normalization or effects.',scores:reports},null,2)+'\n');
-console.log('PASS: both scores compile/export; 12 legato slides and 40 attacks each; IR/driver key-on counts match; two WAVs rendered.'+` Output: ${output}`);
+console.log('PASS: the demo compiles/exports; two counted loops with 6 legato slides each; IR/driver key-on counts match; WAV rendered.'+` Output: ${output}`);

@@ -524,14 +524,18 @@ function formatList(node) {
 
       if (end > g) {
         // Align values column by column across the run (keys are equal width).
+        // Only columns of bare atoms are padded: right-aligning `(+ 22 $color)`
+        // under `(+ 24 (* $color 2))` opens a gap that reads as a mistake, so a
+        // column holding an expression falls back to a single space.
         const numCols = groups[g].parts.length;
-        const valW = Array.from({ length: numCols }, (_, c) =>
-          Math.max(
-            ...Array.from({ length: end - g + 1 }, (_, r) =>
-              groups[g + r].parts[c].valueText.length,
-            ),
-          ),
-        );
+        const valW = Array.from({ length: numCols }, (_, c) => {
+          const vals = Array.from(
+            { length: end - g + 1 },
+            (_, r) => groups[g + r].parts[c].valueText,
+          );
+          if (vals.some((v) => /[\s()]/.test(v))) return 0;
+          return Math.max(...vals.map((v) => v.length));
+        });
         for (let r = g; r <= end; r += 1) {
           pushBlanks(groups[r].sourceLine);
           const line = groups[r].parts

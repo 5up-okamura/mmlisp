@@ -4,7 +4,7 @@
 ; Voice registers only; pitch and shared LFO settings belong to the score.
 
 ; GM 1 / MIDI 0: * GrandPiano
-(def gm-001-acoustic-grand-piano :alg 2 :fb 0 :ams 0 :fms 0
+(def gm-piano :alg 2 :fb 0 :ams 0 :fms 0
   :ar1 26 :dr1  7 :sr1  4 :rr1 1 :sl1  7 :tl1 39 :ks1 1 :ml1 1 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2 23 :sr2 15 :rr2 1 :sl2  9 :tl2  4 :ks2 3 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 24 :dr3  9 :sr3  9 :rr3 7 :sl3  6 :tl3 36 :ks3 1 :ml3 4 :dt3 -2 :ssg3 0 :am3 0
@@ -12,7 +12,7 @@
 )
 
 ; GM 2 / MIDI 1: * BrightPiano
-(def gm-002-bright-acoustic-piano :alg 5 :fb 7 :ams 0 :fms 0
+(def gm-piano-bright :alg 5 :fb 7 :ams 0 :fms 0
   :ar1 27 :dr1 9 :sr1 5 :rr1 6 :sl1 11 :tl1 33 :ks1 1 :ml1 4 :dt1  2 :ssg1 0 :am1 0
   :ar2 27 :dr2 5 :sr2 5 :rr2 6 :sl2 10 :tl2  8 :ks2 1 :ml2 1 :dt2  2 :ssg2 0 :am2 1
   :ar3 27 :dr3 9 :sr3 9 :rr3 7 :sl3  7 :tl3 18 :ks3 1 :ml3 4 :dt3 -1 :ssg3 0 :am3 0
@@ -20,7 +20,7 @@
 )
 
 ; GM 3 / MIDI 2: * ElectricPiano (Animatics)
-(def gm-003-electric-grand-piano :alg 4 :fb 0 :ams 0 :fms 0
+(def gm-piano-e-grand :alg 4 :fb 0 :ams 0 :fms 0
   :ar1 24 :dr1 5 :sr1 6 :rr1 4 :sl1 6 :tl1 33 :ks1 1 :ml1 1 :dt1 -3 :ssg1 0 :am1 0
   :ar2 25 :dr2 5 :sr2 4 :rr2 5 :sl2 1 :tl2  6 :ks2 2 :ml2 1 :dt2  0 :ssg2 0 :am2 0
   :ar3 22 :dr3 7 :sr3 6 :rr3 4 :sl3 6 :tl3 26 :ks3 1 :ml3 2 :dt3  0 :ssg3 0 :am3 0
@@ -28,7 +28,7 @@
 )
 
 ; GM 4 / MIDI 3: * HonkyTonk (SonicModded)
-(def gm-004-honky-tonk-piano :alg 5 :fb 1 :ams 0 :fms 0
+(def gm-honkytonk :alg 5 :fb 1 :ams 0 :fms 0
   :ar1 31 :dr1 10 :sr1 5 :rr1 7 :sl1 15 :tl1 35 :ks1 0 :ml1 2 :dt1 3 :ssg1 0 :am1 0
   :ar2 25 :dr2  7 :sr2 0 :rr2 7 :sl2 13 :tl2  7 :ks2 0 :ml2 4 :dt2 0 :ssg2 0 :am2 0
   :ar3 25 :dr3  6 :sr3 6 :rr3 7 :sl3  2 :tl3 14 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
@@ -36,7 +36,7 @@
 )
 
 ; GM 5 / MIDI 4: * RhodesPiano
-(def gm-005-electric-piano-1 :alg 4 :fb 6 :ams 0 :fms 0
+(def gm-ep1 :alg 4 :fb 6 :ams 0 :fms 0
   :ar1 31 :dr1 7 :sr1 0 :rr1 8 :sl1 11 :tl1 57 :ks1 1 :ml1 12 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 4 :sr2 4 :rr2 8 :sl2  1 :tl2  9 :ks2 2 :ml2  1 :dt2 0 :ssg2 0 :am2 1
   :ar3 22 :dr3 5 :sr3 0 :rr3 8 :sl3 11 :tl3 34 :ks3 2 :ml3  1 :dt3 0 :ssg3 0 :am3 0
@@ -44,7 +44,7 @@
 )
 
 ; GM 6 / MIDI 5: * ChorusPiano(TiniToon)
-(def gm-006-electric-piano-2 :alg 7 :fb 6 :ams 0 :fms 0
+(def gm-ep2 :alg 7 :fb 6 :ams 0 :fms 0
   :ar1 31 :dr1 10 :sr1 7 :rr1 6 :sl1 15 :tl1 30 :ks1 0 :ml1 10 :dt1 -3 :ssg1 0 :am1 0
   :ar2 31 :dr2 13 :sr2 0 :rr2 8 :sl2 15 :tl2 12 :ks2 0 :ml2  2 :dt2  3 :ssg2 0 :am2 0
   :ar3 25 :dr3  5 :sr3 2 :rr3 6 :sl3 15 :tl3 10 :ks3 1 :ml3  1 :dt3 -1 :ssg3 0 :am3 0
@@ -52,7 +52,7 @@
 )
 
 ; GM 7 / MIDI 6: * Harpsichord (Adams)
-(def gm-007-harpsichord :alg 1 :fb 7 :ams 0 :fms 0
+(def gm-harpsi :alg 1 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 0 :sr1 1 :rr1 5 :sl1 0 :tl1 38 :ks1 2 :ml1  6 :dt1  1 :ssg1 0 :am1 1
   :ar2 31 :dr2 0 :sr2 1 :rr2 6 :sl2 0 :tl2 33 :ks2 3 :ml2 10 :dt2  3 :ssg2 0 :am2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 2 :sl3 0 :tl3 35 :ks3 3 :ml3  0 :dt3 -1 :ssg3 0 :am3 1
@@ -60,7 +60,7 @@
 )
 
 ; GM 8 / MIDI 7: * Clavinet
-(def gm-008-clavinet :alg 1 :fb 7 :ams 0 :fms 0
+(def gm-clav :alg 1 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 0 :sr1 1 :rr1 6 :sl1 0 :tl1 28 :ks1 2 :ml1 1 :dt1  1 :ssg1 0 :am1 1
   :ar2 31 :dr2 0 :sr2 1 :rr2 7 :sl2 0 :tl2 33 :ks2 2 :ml2 1 :dt2  3 :ssg2 0 :am2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 2 :sl3 0 :tl3 30 :ks3 3 :ml3 1 :dt3 -1 :ssg3 0 :am3 1
@@ -68,7 +68,7 @@
 )
 
 ; GM 9 / MIDI 8: * Celesta
-(def gm-009-celesta :alg 0 :fb 0 :ams 3 :fms 0
+(def gm-celesta :alg 0 :fb 0 :ams 3 :fms 0
   :ar1 19 :dr1  1 :sr1 27 :rr1 0 :sl1  4 :tl1  8 :ks1 1 :ml1  3 :dt1  1 :ssg1 0 :am1 0
   :ar2 27 :dr2  7 :sr2 26 :rr2 6 :sl2  0 :tl2 17 :ks2 1 :ml2  1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 29 :dr3 15 :sr3 31 :rr3 8 :sl3 15 :tl3 34 :ks3 0 :ml3 11 :dt3  3 :ssg3 0 :am3 0
@@ -76,7 +76,7 @@
 )
 
 ; GM 10 / MIDI 9: * Glockenspiel
-(def gm-010-glockenspiel :alg 4 :fb 1 :ams 3 :fms 0
+(def gm-glock :alg 4 :fb 1 :ams 3 :fms 0
   :ar1 31 :dr1  7 :sr1 0 :rr1 2 :sl1 15 :tl1 30 :ks1 0 :ml1 7 :dt1  1 :ssg1 0 :am1 0
   :ar2 31 :dr2  7 :sr2 0 :rr2 3 :sl2 15 :tl2  0 :ks2 2 :ml2 1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 31 :dr3 11 :sr3 0 :rr3 6 :sl3 15 :tl3 51 :ks3 0 :ml3 5 :dt3  3 :ssg3 0 :am3 0
@@ -84,7 +84,7 @@
 )
 
 ; GM 11 / MIDI 10: * MusicBox
-(def gm-011-music-box :alg 4 :fb 1 :ams 3 :fms 0
+(def gm-musicbox :alg 4 :fb 1 :ams 3 :fms 0
   :ar1 15 :dr1 14 :sr1 0 :rr1 7 :sl1 15 :tl1 30 :ks1 0 :ml1  7 :dt1  1 :ssg1 0 :am1 0
   :ar2 31 :dr2 12 :sr2 0 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2  1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 15 :dr3 14 :sr3 0 :rr3 5 :sl3 15 :tl3 51 :ks3 0 :ml3 10 :dt3  3 :ssg3 0 :am3 0
@@ -92,7 +92,7 @@
 )
 
 ; GM 12 / MIDI 11: * Vibraphone (Nineko)
-(def gm-012-vibraphone :alg 6 :fb 7 :ams 2 :fms 0
+(def gm-vibes :alg 6 :fb 7 :ams 2 :fms 0
   :ar1 25 :dr1 15 :sr1 6 :rr1 6 :sl1 10 :tl1 40 :ks1 1 :ml1  8 :dt1  3 :ssg1 0 :am1 0
   :ar2 25 :dr2  6 :sr2 5 :rr2 6 :sl2 10 :tl2  4 :ks2 1 :ml2  1 :dt2  0 :ssg2 0 :am2 1
   :ar3 31 :dr3 16 :sr3 6 :rr3 6 :sl3  6 :tl3 35 :ks3 1 :ml3 10 :dt3 -3 :ssg3 0 :am3 0
@@ -100,7 +100,7 @@
 )
 
 ; GM 13 / MIDI 12: * Marimba (Aladdin)
-(def gm-013-marimba :alg 4 :fb 0 :ams 0 :fms 0
+(def gm-marimba :alg 4 :fb 0 :ams 0 :fms 0
   :ar1 31 :dr1 19 :sr1 7 :rr1 14 :sl1  7 :tl1 27 :ks1 0 :ml1 5 :dt1 0 :ssg1 0 :am1 1
   :ar2 30 :dr2 15 :sr2 7 :rr2  7 :sl2 15 :tl2  0 :ks2 0 :ml2 1 :dt2 3 :ssg2 0 :am2 0
   :ar3 31 :dr3 18 :sr3 4 :rr3  2 :sl3  8 :tl3 40 :ks3 2 :ml3 2 :dt3 2 :ssg3 0 :am3 1
@@ -108,7 +108,7 @@
 )
 
 ; GM 14 / MIDI 13: * Xylaphone (Aladdin)
-(def gm-014-xylophone :alg 0 :fb 0 :ams 0 :fms 0
+(def gm-xylo :alg 0 :fb 0 :ams 0 :fms 0
   :ar1  0 :dr1 29 :sr1 31 :rr1 15 :sl1  9 :tl1  0 :ks1 1 :ml1 0 :dt1 -3 :ssg1 0 :am1 1
   :ar2 31 :dr2  0 :sr2 24 :rr2 15 :sl2  0 :tl2  0 :ks2 1 :ml2 0 :dt2 -3 :ssg2 0 :am2 1
   :ar3 29 :dr3 15 :sr3 31 :rr3 15 :sl3 15 :tl3 31 :ks3 1 :ml3 3 :dt3 -2 :ssg3 0 :am3 0
@@ -116,7 +116,7 @@
 )
 
 ; GM 15 / MIDI 14: * TubularBells (Animatics)
-(def gm-015-tubular-bells :alg 4 :fb 5 :ams 0 :fms 0
+(def gm-tubular :alg 4 :fb 5 :ams 0 :fms 0
   :ar1 22 :dr1 5 :sr1 30 :rr1 4 :sl1 15 :tl1 30 :ks1 0 :ml1 7 :dt1 -3 :ssg1 0 :am1 0
   :ar2 24 :dr2 3 :sr2 31 :rr2 4 :sl2 12 :tl2  8 :ks2 0 :ml2 2 :dt2  3 :ssg2 0 :am2 0
   :ar3 22 :dr3 6 :sr3 30 :rr3 4 :sl3  8 :tl3 30 :ks3 0 :ml3 7 :dt3  3 :ssg3 0 :am3 0
@@ -124,7 +124,7 @@
 )
 
 ; GM 16 / MIDI 15: * Dulcimer
-(def gm-016-dulcimer :alg 6 :fb 2 :ams 0 :fms 0
+(def gm-dulcimer :alg 6 :fb 2 :ams 0 :fms 0
   :ar1 15 :dr1 11 :sr1 6 :rr1 5 :sl1 15 :tl1 23 :ks1 1 :ml1  3 :dt1 0 :ssg1 0 :am1 0
   :ar2 24 :dr2  8 :sr2 0 :rr2 5 :sl2 15 :tl2  3 :ks2 2 :ml2  1 :dt2 0 :ssg2 0 :am2 0
   :ar3 19 :dr3 14 :sr3 6 :rr3 6 :sl3  4 :tl3 44 :ks3 1 :ml3 10 :dt3 0 :ssg3 0 :am3 0
@@ -132,7 +132,7 @@
 )
 
 ; GM 17 / MIDI 16: * Hammond (Nineko)
-(def gm-017-drawbar-organ :alg 7 :fb 4 :ams 0 :fms 0
+(def gm-organ-drawbar :alg 7 :fb 4 :ams 0 :fms 0
   :ar1 28 :dr1 0 :sr1  4 :rr1 10 :sl1 15 :tl1 17 :ks1 1 :ml1 4 :dt1  1 :ssg1 0 :am1 0
   :ar2 28 :dr2 0 :sr2 27 :rr2  8 :sl2 15 :tl2 23 :ks2 1 :ml2 0 :dt2  3 :ssg2 0 :am2 0
   :ar3 28 :dr3 0 :sr3  4 :rr3  8 :sl3 15 :tl3 15 :ks3 1 :ml3 1 :dt3 -1 :ssg3 0 :am3 0
@@ -140,7 +140,7 @@
 )
 
 ; GM 18 / MIDI 17: * PercusiveOrgain (Action52)
-(def gm-018-percussive-organ :alg 4 :fb 0 :ams 3 :fms 2
+(def gm-organ-perc :alg 4 :fb 0 :ams 3 :fms 2
   :ar1 27 :dr1 23 :sr1 11 :rr1  8 :sl1 11 :tl1 21 :ks1 0 :ml1 14 :dt1 0 :ssg1 0 :am1 0
   :ar2 20 :dr2  9 :sr2  0 :rr2  8 :sl2  2 :tl2  7 :ks2 0 :ml2  6 :dt2 0 :ssg2 0 :am2 0
   :ar3 21 :dr3 28 :sr3  5 :rr3 15 :sl3  2 :tl3 17 :ks3 0 :ml3  1 :dt3 1 :ssg3 0 :am3 0
@@ -148,7 +148,7 @@
 )
 
 ; GM 19 / MIDI 18: * RockOrgan
-(def gm-019-rock-organ :alg 4 :fb 4 :ams 1 :fms 4
+(def gm-organ-rock :alg 4 :fb 4 :ams 1 :fms 4
   :ar1 20 :dr1 12 :sr1 0 :rr1 10 :sl1 2 :tl1 25 :ks1 1 :ml1 3 :dt1  1 :ssg1 0 :am1 1
   :ar2 20 :dr2  0 :sr2 0 :rr2 10 :sl2 0 :tl2  7 :ks2 2 :ml2 1 :dt2  0 :ssg2 0 :am2 0
   :ar3 20 :dr3  0 :sr3 0 :rr3 10 :sl3 0 :tl3 24 :ks3 2 :ml3 1 :dt3  0 :ssg3 0 :am3 1
@@ -156,7 +156,7 @@
 )
 
 ; GM 20 / MIDI 19: * ChurchOrgan
-(def gm-020-church-organ :alg 6 :fb 2 :ams 0 :fms 0
+(def gm-organ-church :alg 6 :fb 2 :ams 0 :fms 0
   :ar1 20 :dr1 10 :sr1 0 :rr1 3 :sl1 2 :tl1 27 :ks1 2 :ml1 3 :dt1 1 :ssg1 0 :am1 0
   :ar2 14 :dr2 10 :sr2 0 :rr2 6 :sl2 1 :tl2  9 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 19 :dr3 10 :sr3 0 :rr3 9 :sl3 2 :tl3  6 :ks3 0 :ml3 4 :dt3 0 :ssg3 0 :am3 0
@@ -164,7 +164,7 @@
 )
 
 ; GM 21 / MIDI 20: * ReedOrgan
-(def gm-021-reed-organ :alg 4 :fb 6 :ams 1 :fms 0
+(def gm-organ-reed :alg 4 :fb 6 :ams 1 :fms 0
   :ar1 24 :dr1 16 :sr1 0 :rr1 7 :sl1 1 :tl1 25 :ks1 2 :ml1 1 :dt1 1 :ssg1 0 :am1 0
   :ar2 16 :dr2  0 :sr2 0 :rr2 8 :sl2 0 :tl2  7 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 25 :dr3  0 :sr3 0 :rr3 6 :sl3 0 :tl3 21 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -172,7 +172,7 @@
 )
 
 ; GM 22 / MIDI 21: * Accordeon
-(def gm-022-accordion :alg 2 :fb 6 :ams 0 :fms 2
+(def gm-accordion :alg 2 :fb 6 :ams 0 :fms 2
   :ar1 21 :dr1  5 :sr1 0 :rr1 7 :sl1 1 :tl1 30 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 18 :dr2  8 :sr2 0 :rr2 8 :sl2 2 :tl2 21 :ks2 0 :ml2 7 :dt2  3 :ssg2 0 :am2 0
   :ar3 14 :dr3  9 :sr3 3 :rr3 9 :sl3 2 :tl3 52 :ks3 0 :ml3 2 :dt3 -3 :ssg3 0 :am3 0
@@ -180,7 +180,7 @@
 )
 
 ; GM 23 / MIDI 22: * Harmonica (Sonic)
-(def gm-023-harmonica :alg 0 :fb 7 :ams 0 :fms 0
+(def gm-harmonica :alg 0 :fb 7 :ams 0 :fms 0
   :ar1 20 :dr1 5 :sr1 0 :rr1  9 :sl1 9 :tl1 45 :ks1 3 :ml1 10 :dt1 3 :ssg1 0 :am1 0
   :ar2 20 :dr2 8 :sr2 0 :rr2  9 :sl2 0 :tl2 40 :ks2 0 :ml2 10 :dt2 0 :ssg2 0 :am2 0
   :ar3 16 :dr3 2 :sr3 0 :rr3  9 :sl3 0 :tl3 39 :ks3 1 :ml3  1 :dt3 1 :ssg3 0 :am3 0
@@ -188,7 +188,7 @@
 )
 
 ; GM 24 / MIDI 23: * Tango Accordion
-(def gm-024-tango-accordion :alg 4 :fb 6 :ams 1 :fms 0
+(def gm-bandoneon :alg 4 :fb 6 :ams 1 :fms 0
   :ar1 15 :dr1 4 :sr1 0 :rr1 10 :sl1 1 :tl1 25 :ks1 0 :ml1 3 :dt1  1 :ssg1 0 :am1 0
   :ar2 13 :dr2 4 :sr2 0 :rr2 10 :sl2 2 :tl2  7 :ks2 2 :ml2 1 :dt2  0 :ssg2 0 :am2 0
   :ar3 14 :dr3 4 :sr3 0 :rr3 10 :sl3 1 :tl3 26 :ks3 0 :ml3 3 :dt3  0 :ssg3 0 :am3 0
@@ -196,7 +196,7 @@
 )
 
 ; GM 25 / MIDI 24: * NylonGuitar(HellRoll)
-(def gm-025-acoustic-guitar-nylon :alg 0 :fb 3 :ams 0 :fms 0
+(def gm-guitar-nylon :alg 0 :fb 3 :ams 0 :fms 0
   :ar1 31 :dr1 18 :sr1 0 :rr1 7 :sl1 2 :tl1 48 :ks1 0 :ml1 5 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 10 :sr2 4 :rr2 7 :sl2 2 :tl2 19 :ks2 0 :ml2 0 :dt2 3 :ssg2 0 :am2 0
   :ar3 31 :dr3 14 :sr3 4 :rr3 7 :sl3 2 :tl3 45 :ks3 0 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -204,7 +204,7 @@
 )
 
 ; GM 26 / MIDI 25: * SteelGuitar(HellRoll)
-(def gm-026-acoustic-guitar-steel :alg 0 :fb 3 :ams 0 :fms 0
+(def gm-guitar-steel :alg 0 :fb 3 :ams 0 :fms 0
   :ar1 31 :dr1 18 :sr1 0 :rr1 7 :sl1 2 :tl1 32 :ks1 0 :ml1 5 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 10 :sr2 4 :rr2 7 :sl2 2 :tl2 19 :ks2 0 :ml2 0 :dt2 3 :ssg2 0 :am2 0
   :ar3 31 :dr3 14 :sr3 4 :rr3 7 :sl3 2 :tl3 45 :ks3 0 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -212,7 +212,7 @@
 )
 
 ; GM 27 / MIDI 26: * JazzGuitar
-(def gm-027-electric-guitar-jazz :alg 0 :fb 5 :ams 0 :fms 0
+(def gm-guitar-jazz :alg 0 :fb 5 :ams 0 :fms 0
   :ar1 31 :dr1 4 :sr1 0 :rr1 7 :sl1 15 :tl1 30 :ks1 1 :ml1 2 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 4 :sr2 0 :rr2 7 :sl2 15 :tl2 43 :ks2 1 :ml2 3 :dt2 3 :ssg2 0 :am2 0
   :ar3 31 :dr3 4 :sr3 0 :rr3 7 :sl3 15 :tl3 42 :ks3 2 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -220,7 +220,7 @@
 )
 
 ; GM 28 / MIDI 27: * CleanGuitar (Columns III)
-(def gm-028-electric-guitar-clean :alg 0 :fb 7 :ams 0 :fms 0
+(def gm-guitar-clean :alg 0 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1  7 :sr1 0 :rr1 6 :sl1 15 :tl1 39 :ks1 1 :ml1 8 :dt1 -1 :ssg1 0 :am1 0
   :ar2 31 :dr2 10 :sr2 0 :rr2 9 :sl2 15 :tl2 29 :ks2 1 :ml2 3 :dt2  3 :ssg2 0 :am2 0
   :ar3 31 :dr3  4 :sr3 0 :rr3 8 :sl3 15 :tl3 34 :ks3 1 :ml3 3 :dt3 -1 :ssg3 0 :am3 0
@@ -228,7 +228,7 @@
 )
 
 ; GM 29 / MIDI 28: * MutedGuitar (Aladdin)
-(def gm-029-electric-guitar-muted :alg 2 :fb 3 :ams 0 :fms 4
+(def gm-guitar-mute :alg 2 :fb 3 :ams 0 :fms 4
   :ar1 20 :dr1 23 :sr1 9 :rr1 10 :sl1  8 :tl1 28 :ks1 1 :ml1 3 :dt1 3 :ssg1 0 :am1 0
   :ar2 24 :dr2 23 :sr2 1 :rr2 11 :sl2 11 :tl2 11 :ks2 1 :ml2 4 :dt2 0 :ssg2 0 :am2 0
   :ar3 27 :dr3 27 :sr3 7 :rr3 11 :sl3  8 :tl3  5 :ks3 1 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -236,7 +236,7 @@
 )
 
 ; GM 30 / MIDI 29: * Overdrive (OPL3)
-(def gm-030-overdriven-guitar :alg 0 :fb 0 :ams 0 :fms 4
+(def gm-guitar-od :alg 0 :fb 0 :ams 0 :fms 4
   :ar1 31 :dr1 12 :sr1 0 :rr1 12 :sl1  8 :tl1 36 :ks1 2 :ml1 3 :dt1 0 :ssg1 0 :am1 0
   :ar2 18 :dr2  1 :sr2 0 :rr2 10 :sl2 13 :tl2 25 :ks2 2 :ml2 2 :dt2 0 :ssg2 0 :am2 0
   :ar3 19 :dr3  1 :sr3 0 :rr3  8 :sl3 11 :tl3 32 :ks3 1 :ml3 1 :dt3 2 :ssg3 0 :am3 0
@@ -244,7 +244,7 @@
 )
 
 ; GM 31 / MIDI 30: * Distortion (OPL3)
-(def gm-031-distortion-guitar :alg 0 :fb 0 :ams 0 :fms 4
+(def gm-guitar-dist :alg 0 :fb 0 :ams 0 :fms 4
   :ar1 31 :dr1 12 :sr1 0 :rr1 12 :sl1  8 :tl1 36 :ks1 2 :ml1 3 :dt1 0 :ssg1 0 :am1 0
   :ar2 18 :dr2  1 :sr2 0 :rr2  7 :sl2 15 :tl2 25 :ks2 2 :ml2 2 :dt2 0 :ssg2 0 :am2 0
   :ar3 19 :dr3  2 :sr3 0 :rr3  8 :sl3 11 :tl3 26 :ks3 1 :ml3 1 :dt3 2 :ssg3 0 :am3 0
@@ -252,7 +252,7 @@
 )
 
 ; GM 32 / MIDI 31: * Guitar Harmonics(Hellfire)
-(def gm-032-guitar-harmonics :alg 3 :fb 6 :ams 0 :fms 5
+(def gm-guitar-harm :alg 3 :fb 6 :ams 0 :fms 5
   :ar1 16 :dr1 6 :sr1  8 :rr1 12 :sl1 15 :tl1 28 :ks1 2 :ml1 10 :dt1  0 :ssg1 0 :am1 0
   :ar2 21 :dr2 6 :sr2  7 :rr2  1 :sl2  8 :tl2 13 :ks2 2 :ml2  8 :dt2 -3 :ssg2 0 :am2 0
   :ar3 31 :dr3 3 :sr3  0 :rr3  6 :sl3 15 :tl3 20 :ks3 2 :ml3  2 :dt3  3 :ssg3 0 :am3 0
@@ -260,7 +260,7 @@
 )
 
 ; GM 33 / MIDI 32: * AcousticBass (Sonic)
-(def gm-033-acoustic-bass :alg 2 :fb 7 :ams 0 :fms 0
+(def gm-bass-acoustic :alg 2 :fb 7 :ams 0 :fms 0
   :ar1 30 :dr1 10 :sr1  5 :rr1 4 :sl1 10 :tl1 33 :ks1 0 :ml1 0 :dt1  2 :ssg1 0 :am1 0
   :ar2 31 :dr2 10 :sr2  7 :rr2 5 :sl2  8 :tl2 37 :ks2 0 :ml2 3 :dt2  2 :ssg2 0 :am2 0
   :ar3 31 :dr3  8 :sr3 10 :rr3 6 :sl3  9 :tl3 40 :ks3 0 :ml3 0 :dt3 -2 :ssg3 0 :am3 0
@@ -268,7 +268,7 @@
 )
 
 ; GM 34 / MIDI 33: * FingerBass (Sonic)
-(def gm-034-electric-bass-finger :alg 0 :fb 1 :ams 0 :fms 0
+(def gm-bass-finger :alg 0 :fb 1 :ams 0 :fms 0
   :ar1 31 :dr1 18 :sr1 0 :rr1 15 :sl1 2 :tl1 37 :ks1 0 :ml1 9 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2 14 :sr2 4 :rr2 15 :sl2 2 :tl2 48 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
   :ar3 31 :dr3 10 :sr3 4 :rr3 15 :sl3 2 :tl3 19 :ks3 1 :ml3 0 :dt3  3 :ssg3 0 :am3 0
@@ -276,7 +276,7 @@
 )
 
 ; GM 35 / MIDI 34: * PickBass
-(def gm-035-electric-bass-pick :alg 0 :fb 1 :ams 0 :fms 0
+(def gm-bass-pick :alg 0 :fb 1 :ams 0 :fms 0
   :ar1 31 :dr1 21 :sr1 0 :rr1 15 :sl1 8 :tl1 30 :ks1 0 :ml1 9 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2 14 :sr2 4 :rr2 15 :sl2 3 :tl2 49 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
   :ar3 31 :dr3 13 :sr3 4 :rr3 15 :sl3 2 :tl3 14 :ks3 1 :ml3 0 :dt3  3 :ssg3 0 :am3 0
@@ -284,7 +284,7 @@
 )
 
 ; GM 36 / MIDI 35: * FretlessBass(Aladdin)
-(def gm-036-fretless-bass :alg 6 :fb 0 :ams 0 :fms 4
+(def gm-bass-fretless :alg 6 :fb 0 :ams 0 :fms 4
   :ar1 26 :dr1  9 :sr1  7 :rr1 11 :sl1  0 :tl1 29 :ks1 0 :ml1 0 :dt1  0 :ssg1 0 :am1 0
   :ar2 13 :dr2  3 :sr2  0 :rr2 10 :sl2  6 :tl2  5 :ks2 1 :ml2 0 :dt2  0 :ssg2 0 :am2 0
   :ar3 18 :dr3 11 :sr3 19 :rr3 10 :sl3 14 :tl3  0 :ks3 2 :ml3 0 :dt3 -1 :ssg3 0 :am3 0
@@ -292,7 +292,7 @@
 )
 
 ; GM 37 / MIDI 36: * SlapBass1
-(def gm-037-slap-bass-1 :alg 0 :fb 4 :ams 0 :fms 0
+(def gm-bass-slap1 :alg 0 :fb 4 :ams 0 :fms 0
   :ar1 31 :dr1 14 :sr1 8 :rr1 7 :sl1 2 :tl1 19 :ks1 2 :ml1 15 :dt1 3 :ssg1 0 :am1 0
   :ar2 31 :dr2 15 :sr2 8 :rr2 7 :sl2 2 :tl2 56 :ks2 2 :ml2  3 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 13 :sr3 8 :rr3 7 :sl3 2 :tl3 24 :ks3 1 :ml3  0 :dt3 0 :ssg3 0 :am3 0
@@ -300,7 +300,7 @@
 )
 
 ; GM 38 / MIDI 37: * SlapBass2
-(def gm-038-slap-bass-2 :alg 0 :fb 4 :ams 0 :fms 0
+(def gm-bass-slap2 :alg 0 :fb 4 :ams 0 :fms 0
   :ar1 31 :dr1 14 :sr1 6 :rr1 7 :sl1 2 :tl1 14 :ks1 2 :ml1 15 :dt1 3 :ssg1 0 :am1 0
   :ar2 31 :dr2 15 :sr2 8 :rr2 7 :sl2 2 :tl2 56 :ks2 2 :ml2  3 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 13 :sr3 8 :rr3 7 :sl3 2 :tl3 24 :ks3 1 :ml3  0 :dt3 0 :ssg3 0 :am3 0
@@ -308,7 +308,7 @@
 )
 
 ; GM 39 / MIDI 38: * SynBass1 (DynaBros.)
-(def gm-039-synth-bass-1 :alg 5 :fb 7 :ams 0 :fms 0
+(def gm-bass-syn1 :alg 5 :fb 7 :ams 0 :fms 0
   :ar1 21 :dr1 30 :sr1 13 :rr1 11 :sl1 0 :tl1 23 :ks1 1 :ml1 4 :dt1 0 :ssg1 0 :am1 0
   :ar2 25 :dr2 30 :sr2 10 :rr2 10 :sl2 0 :tl2  0 :ks2 1 :ml2 4 :dt2 1 :ssg2 0 :am2 0
   :ar3 20 :dr3 30 :sr3  9 :rr3  9 :sl3 0 :tl3  5 :ks3 1 :ml3 2 :dt3 0 :ssg3 0 :am3 0
@@ -316,7 +316,7 @@
 )
 
 ; GM 40 / MIDI 39: * SynBass2 (Nineko)
-(def gm-040-synth-bass-2 :alg 0 :fb 4 :ams 0 :fms 0
+(def gm-bass-syn2 :alg 0 :fb 4 :ams 0 :fms 0
   :ar1 31 :dr1 7 :sr1 7 :rr1 0 :sl1  2 :tl1 25 :ks1 3 :ml1 6 :dt1 3 :ssg1 0 :am1 0
   :ar2 31 :dr2 6 :sr2 6 :rr2 6 :sl2  1 :tl2 55 :ks2 3 :ml2 5 :dt2 3 :ssg2 0 :am2 0
   :ar3 31 :dr3 9 :sr3 6 :rr3 7 :sl3  1 :tl3 19 :ks3 2 :ml3 0 :dt3 3 :ssg3 0 :am3 0
@@ -324,7 +324,7 @@
 )
 
 ; GM 41 / MIDI 40: * Violin
-(def gm-041-violin :alg 2 :fb 7 :ams 2 :fms 3
+(def gm-violin :alg 2 :fb 7 :ams 2 :fms 3
   :ar1 15 :dr1  4 :sr1 0 :rr1 5 :sl1 1 :tl1 30 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 13 :dr2 16 :sr2 0 :rr2 4 :sl2 0 :tl2 31 :ks2 0 :ml2 7 :dt2  3 :ssg2 0 :am2 0
   :ar3 12 :dr3  9 :sr3 3 :rr3 7 :sl3 0 :tl3 49 :ks3 0 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
@@ -332,7 +332,7 @@
 )
 
 ; GM 42 / MIDI 41: * Viola
-(def gm-042-viola :alg 2 :fb 7 :ams 2 :fms 3
+(def gm-viola :alg 2 :fb 7 :ams 2 :fms 3
   :ar1 14 :dr1  4 :sr1 0 :rr1 5 :sl1 1 :tl1 30 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 14 :dr2 16 :sr2 0 :rr2 4 :sl2 0 :tl2 30 :ks2 0 :ml2 4 :dt2  3 :ssg2 0 :am2 0
   :ar3 11 :dr3  9 :sr3 3 :rr3 7 :sl3 0 :tl3 61 :ks3 0 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
@@ -340,7 +340,7 @@
 )
 
 ; GM 43 / MIDI 42: * Cello
-(def gm-043-cello :alg 2 :fb 7 :ams 2 :fms 3
+(def gm-cello :alg 2 :fb 7 :ams 2 :fms 3
   :ar1 16 :dr1  4 :sr1 0 :rr1 5 :sl1 1 :tl1 40 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 14 :dr2 16 :sr2 0 :rr2 4 :sl2 0 :tl2 30 :ks2 1 :ml2 5 :dt2  3 :ssg2 0 :am2 0
   :ar3 14 :dr3  9 :sr3 3 :rr3 8 :sl3 0 :tl3 47 :ks3 0 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
@@ -348,7 +348,7 @@
 )
 
 ; GM 44 / MIDI 43: * Controlbass
-(def gm-044-contrabass :alg 2 :fb 7 :ams 2 :fms 3
+(def gm-contrabass :alg 2 :fb 7 :ams 2 :fms 3
   :ar1 16 :dr1  4 :sr1 0 :rr1 5 :sl1 1 :tl1 43 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 14 :dr2 16 :sr2 0 :rr2 4 :sl2 0 :tl2 44 :ks2 0 :ml2 4 :dt2  3 :ssg2 0 :am2 0
   :ar3 14 :dr3  9 :sr3 3 :rr3 7 :sl3 0 :tl3 31 :ks3 0 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
@@ -356,7 +356,7 @@
 )
 
 ; GM 45 / MIDI 44: * TremoloStrings
-(def gm-045-tremolo-strings :alg 4 :fb 7 :ams 2 :fms 5
+(def gm-str-trem :alg 4 :fb 7 :ams 2 :fms 5
   :ar1 16 :dr1  1 :sr1 0 :rr1 3 :sl1 1 :tl1 21 :ks1 3 :ml1 1 :dt1 3 :ssg1 0 :am1 1
   :ar2 15 :dr2 10 :sr2 0 :rr2 7 :sl2 2 :tl2  6 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 13 :dr3 11 :sr3 0 :rr3 4 :sl3 4 :tl3 19 :ks3 2 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -364,7 +364,7 @@
 )
 
 ; GM 46 / MIDI 45: * PizzikatoStrings
-(def gm-046-pizzicato-strings :alg 5 :fb 6 :ams 0 :fms 0
+(def gm-str-pizz :alg 5 :fb 6 :ams 0 :fms 0
   :ar1 19 :dr1 19 :sr1 11 :rr1 7 :sl1 10 :tl1  0 :ks1 3 :ml1 4 :dt1 1 :ssg1 0 :am1 0
   :ar2 16 :dr2 19 :sr2 23 :rr2 7 :sl2 15 :tl2  8 :ks2 0 :ml2 1 :dt2 1 :ssg2 0 :am2 0
   :ar3 19 :dr3 15 :sr3 24 :rr3 7 :sl3 15 :tl3  5 :ks3 1 :ml3 2 :dt3 1 :ssg3 0 :am3 0
@@ -372,7 +372,7 @@
 )
 
 ; GM 47 / MIDI 46: * OrchestralHarp
-(def gm-047-orchestral-harp :alg 4 :fb 0 :ams 0 :fms 0
+(def gm-harp :alg 4 :fb 0 :ams 0 :fms 0
   :ar1 31 :dr1 10 :sr1 0 :rr1 4 :sl1  1 :tl1  27 :ks1 0 :ml1 2 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2 14 :sr2 5 :rr2 4 :sl2  6 :tl2   0 :ks2 0 :ml2 1 :dt2  1 :ssg2 0 :am2 0
   :ar3 31 :dr3 10 :sr3 2 :rr3 4 :sl3  7 :tl3 127 :ks3 1 :ml3 1 :dt3 -1 :ssg3 0 :am3 0
@@ -380,7 +380,7 @@
 )
 
 ; GM 48 / MIDI 47: * Timpany
-(def gm-048-timpani :alg 4 :fb 1 :ams 0 :fms 0
+(def gm-timpani :alg 4 :fb 1 :ams 0 :fms 0
   :ar1 20 :dr1 15 :sr1 0 :rr1  7 :sl1 15 :tl1 10 :ks1 1 :ml1 0 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 11 :sr2 0 :rr2  6 :sl2 15 :tl2  0 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 14 :sr3 0 :rr3 10 :sl3 15 :tl3  0 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -388,7 +388,7 @@
 )
 
 ; GM 49 / MIDI 48: * StringEssemble1
-(def gm-049-string-ensemble-1 :alg 4 :fb 7 :ams 1 :fms 3
+(def gm-strings1 :alg 4 :fb 7 :ams 1 :fms 3
   :ar1 14 :dr1 11 :sr1 0 :rr1 4 :sl1 0 :tl1 29 :ks1 3 :ml1 1 :dt1 3 :ssg1 0 :am1 0
   :ar2 14 :dr2 10 :sr2 0 :rr2 8 :sl2 2 :tl2  6 :ks2 0 :ml2 5 :dt2 0 :ssg2 0 :am2 1
   :ar3 14 :dr3 10 :sr3 0 :rr3 5 :sl3 1 :tl3 28 :ks3 2 :ml3 1 :dt3 0 :ssg3 0 :am3 1
@@ -396,7 +396,7 @@
 )
 
 ; GM 50 / MIDI 49: * StringEssemble2
-(def gm-050-string-ensemble-2 :alg 4 :fb 7 :ams 1 :fms 1
+(def gm-strings2 :alg 4 :fb 7 :ams 1 :fms 1
   :ar1 11 :dr1 11 :sr1 0 :rr1 1 :sl1 0 :tl1 29 :ks1 3 :ml1 1 :dt1 3 :ssg1 0 :am1 0
   :ar2 10 :dr2  8 :sr2 0 :rr2 6 :sl2 2 :tl2  6 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 11 :dr3 10 :sr3 0 :rr3 1 :sl3 1 :tl3 28 :ks3 2 :ml3 1 :dt3 0 :ssg3 0 :am3 1
@@ -404,7 +404,7 @@
 )
 
 ; GM 51 / MIDI 50: * SynStrings 1
-(def gm-051-synthstrings-1 :alg 4 :fb 6 :ams 0 :fms 0
+(def gm-synstr1 :alg 4 :fb 6 :ams 0 :fms 0
   :ar1 26 :dr1 2 :sr1 0 :rr1 2 :sl1  6 :tl1 21 :ks1 0 :ml1 1 :dt1 1 :ssg1 0 :am1 1
   :ar2 10 :dr2 0 :sr2 0 :rr2 6 :sl2  0 :tl2 24 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 25 :dr3 1 :sr3 0 :rr3 3 :sl3 11 :tl3 28 :ks3 0 :ml3 1 :dt3 3 :ssg3 0 :am3 1
@@ -412,7 +412,7 @@
 )
 
 ; GM 52 / MIDI 51: * SynString2 (Aladdin)
-(def gm-052-synthstrings-2 :alg 2 :fb 6 :ams 1 :fms 5
+(def gm-synstr2 :alg 2 :fb 6 :ams 1 :fms 5
   :ar1  8 :dr1  4 :sr1 0 :rr1 5 :sl1  0 :tl1 35 :ks1 0 :ml1 0 :dt1 3 :ssg1 0 :am1 0
   :ar2  8 :dr2  3 :sr2 0 :rr2 4 :sl2 10 :tl2 52 :ks2 2 :ml2 4 :dt2 3 :ssg2 0 :am2 0
   :ar3 15 :dr3  1 :sr3 3 :rr3 3 :sl3  7 :tl3 32 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -420,7 +420,7 @@
 )
 
 ; GM 53 / MIDI 52: * Choir Aahs
-(def gm-053-choir-aahs :alg 4 :fb 0 :ams 0 :fms 4
+(def gm-choir :alg 4 :fb 0 :ams 0 :fms 4
   :ar1 17 :dr1 0 :sr1 0 :rr1 1 :sl1 5 :tl1 42 :ks1 1 :ml1 0 :dt1  3 :ssg1 0 :am1 1
   :ar2 13 :dr2 0 :sr2 0 :rr2 5 :sl2 0 :tl2  8 :ks2 1 :ml2 0 :dt2  3 :ssg2 0 :am2 1
   :ar3 13 :dr3 0 :sr3 0 :rr3 1 :sl3 5 :tl3 30 :ks3 2 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
@@ -428,7 +428,7 @@
 )
 
 ; GM 54 / MIDI 53: * Voice
-(def gm-054-voice-oohs :alg 4 :fb 6 :ams 2 :fms 3
+(def gm-voice-ooh :alg 4 :fb 6 :ams 2 :fms 3
   :ar1 20 :dr1 10 :sr1 3 :rr1 7 :sl1 1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 0
   :ar2 21 :dr2 10 :sr2 2 :rr2 7 :sl2 6 :tl2 37 :ks2 1 :ml2 3 :dt2  0 :ssg2 0 :am2 0
   :ar3 19 :dr3 13 :sr3 5 :rr3 8 :sl3 2 :tl3 14 :ks3 2 :ml3 1 :dt3  3 :ssg3 0 :am3 1
@@ -436,7 +436,7 @@
 )
 
 ; GM 55 / MIDI 54: * SynthVoice
-(def gm-055-synth-voice :alg 0 :fb 4 :ams 0 :fms 4
+(def gm-synvox :alg 0 :fb 4 :ams 0 :fms 4
   :ar1 12 :dr1 0 :sr1 0 :rr1 1 :sl1 5 :tl1 76 :ks1 1 :ml1 10 :dt1  3 :ssg1 0 :am1 1
   :ar2 14 :dr2 0 :sr2 0 :rr2 5 :sl2 0 :tl2 51 :ks2 1 :ml2  7 :dt2  3 :ssg2 0 :am2 1
   :ar3 12 :dr3 0 :sr3 0 :rr3 1 :sl3 5 :tl3 46 :ks3 2 :ml3  0 :dt3 -3 :ssg3 0 :am3 0
@@ -444,7 +444,7 @@
 )
 
 ; GM 56 / MIDI 55: * OrchestraHit
-(def gm-056-orchestra-hit :alg 0 :fb 7 :ams 0 :fms 0
+(def gm-orch-hit :alg 0 :fb 7 :ams 0 :fms 0
   :ar1 16 :dr1 13 :sr1 0 :rr1 5 :sl1 15 :tl1 19 :ks1 1 :ml1 0 :dt1 0 :ssg1 0 :am1 0
   :ar2 22 :dr2  9 :sr2 0 :rr2 3 :sl2 15 :tl2 17 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 18 :dr3  5 :sr3 0 :rr3 2 :sl3 15 :tl3 21 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -452,7 +452,7 @@
 )
 
 ; GM 57 / MIDI 56: * Trumpet (Sonic)
-(def gm-057-trumpet :alg 5 :fb 7 :ams 0 :fms 0
+(def gm-trumpet :alg 5 :fb 7 :ams 0 :fms 0
   :ar1 16 :dr1 14 :sr1 1 :rr1  4 :sl1  1 :tl1 27 :ks1 2 :ml1 2 :dt1 0 :ssg1 0 :am1 0
   :ar2 16 :dr2 11 :sr2 0 :rr2 13 :sl2 15 :tl2 10 :ks2 0 :ml2 4 :dt2 0 :ssg2 0 :am2 0
   :ar3 19 :dr3 14 :sr3 0 :rr3  9 :sl3  1 :tl3 21 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
@@ -460,7 +460,7 @@
 )
 
 ; GM 58 / MIDI 57: * Trombone (Aladdin)
-(def gm-058-trombone :alg 5 :fb 5 :ams 2 :fms 3
+(def gm-trombone :alg 5 :fb 5 :ams 2 :fms 3
   :ar1 12 :dr1 13 :sr1 1 :rr1 10 :sl1 2 :tl1 26 :ks1 2 :ml1 0 :dt1  0 :ssg1 0 :am1 0
   :ar2 23 :dr2  7 :sr2 2 :rr2 10 :sl2 1 :tl2  9 :ks2 2 :ml2 0 :dt2  0 :ssg2 0 :am2 1
   :ar3 10 :dr3  8 :sr3 0 :rr3 10 :sl3 2 :tl3 18 :ks3 2 :ml3 0 :dt3  0 :ssg3 0 :am3 0
@@ -468,7 +468,7 @@
 )
 
 ; GM 59 / MIDI 58: * Tuba (Aladdin)
-(def gm-059-tuba :alg 5 :fb 7 :ams 1 :fms 2
+(def gm-tuba :alg 5 :fb 7 :ams 1 :fms 2
   :ar1 14 :dr1  6 :sr1  1 :rr1 6 :sl1 6 :tl1 27 :ks1 2 :ml1 0 :dt1  0 :ssg1 0 :am1 0
   :ar2 14 :dr2  7 :sr2  2 :rr2 5 :sl2 1 :tl2  4 :ks2 2 :ml2 0 :dt2  0 :ssg2 0 :am2 1
   :ar3 13 :dr3 13 :sr3 10 :rr3 5 :sl3 2 :tl3  3 :ks3 2 :ml3 1 :dt3  0 :ssg3 0 :am3 0
@@ -476,7 +476,7 @@
 )
 
 ; GM 60 / MIDI 59: * MutedTrumpet (Sonic)
-(def gm-060-muted-trumpet :alg 5 :fb 7 :ams 0 :fms 0
+(def gm-trumpet-mute :alg 5 :fb 7 :ams 0 :fms 0
   :ar1 15 :dr1 14 :sr1 1 :rr1  3 :sl1  1 :tl1 21 :ks1 2 :ml1 2 :dt1 1 :ssg1 0 :am1 0
   :ar2 13 :dr2 11 :sr2 0 :rr2 13 :sl2 15 :tl2 31 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
   :ar3 15 :dr3 14 :sr3 0 :rr3  8 :sl3  1 :tl3 74 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
@@ -484,7 +484,7 @@
 )
 
 ; GM 61 / MIDI 60: * FrenchHorn
-(def gm-061-french-horn :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-horn :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 11 :dr1 4 :sr1 0 :rr1 7 :sl1 3 :tl1  34 :ks1 2 :ml1 1 :dt1 0 :ssg1 0 :am1 0
   :ar2 20 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2   0 :ks2 2 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3  0 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -492,7 +492,7 @@
 )
 
 ; GM 62 / MIDI 61: * BrassSection (Greendog)
-(def gm-062-brass-section :alg 5 :fb 6 :ams 1 :fms 2
+(def gm-brass :alg 5 :fb 6 :ams 1 :fms 2
   :ar1 14 :dr1 0 :sr1 1 :rr1 7 :sl1 4 :tl1 26 :ks1 2 :ml1 1 :dt1 2 :ssg1 0 :am1 0
   :ar2 27 :dr2 5 :sr2 2 :rr2 6 :sl2 3 :tl2  0 :ks2 2 :ml2 1 :dt2 3 :ssg2 0 :am2 0
   :ar3 21 :dr3 0 :sr3 2 :rr3 7 :sl3 1 :tl3  9 :ks3 2 :ml3 0 :dt3 2 :ssg3 0 :am3 0
@@ -500,7 +500,7 @@
 )
 
 ; GM 63 / MIDI 62: * SynBrass1
-(def gm-063-synthbrass-1 :alg 2 :fb 6 :ams 0 :fms 2
+(def gm-synbrass1 :alg 2 :fb 6 :ams 0 :fms 2
   :ar1 22 :dr1 6 :sr1 0 :rr1  6 :sl1 15 :tl1 20 :ks1 0 :ml1 1 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2 0 :sr2 0 :rr2 13 :sl2  0 :tl2 28 :ks2 0 :ml2 1 :dt2  3 :ssg2 0 :am2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 12 :sl3  0 :tl3 42 :ks3 0 :ml3 1 :dt3 -3 :ssg3 0 :am3 0
@@ -508,7 +508,7 @@
 )
 
 ; GM 64 / MIDI 63: * SynBrass2
-(def gm-064-synthbrass-2 :alg 2 :fb 7 :ams 2 :fms 3
+(def gm-synbrass2 :alg 2 :fb 7 :ams 2 :fms 3
   :ar1 17 :dr1  4 :sr1 0 :rr1 9 :sl1 1 :tl1 30 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 17 :dr2 16 :sr2 0 :rr2 9 :sl2 0 :tl2 31 :ks2 0 :ml2 7 :dt2  3 :ssg2 0 :am2 0
   :ar3 17 :dr3  9 :sr3 3 :rr3 9 :sl3 0 :tl3 55 :ks3 0 :ml3 2 :dt3 -3 :ssg3 0 :am3 0
@@ -516,7 +516,7 @@
 )
 
 ; GM 65 / MIDI 64: * SopranoSax
-(def gm-065-soprano-sax :alg 5 :fb 6 :ams 1 :fms 2
+(def gm-sax-soprano :alg 5 :fb 6 :ams 1 :fms 2
   :ar1 17 :dr1 0 :sr1 1 :rr1 8 :sl1 4 :tl1 32 :ks1 1 :ml1 1 :dt1 2 :ssg1 0 :am1 0
   :ar2 12 :dr2 5 :sr2 2 :rr2 7 :sl2 3 :tl2 13 :ks2 1 :ml2 2 :dt2 3 :ssg2 0 :am2 0
   :ar3 13 :dr3 0 :sr3 2 :rr3 8 :sl3 1 :tl3 14 :ks3 1 :ml3 0 :dt3 2 :ssg3 0 :am3 0
@@ -524,7 +524,7 @@
 )
 
 ; GM 66 / MIDI 65: * AltoSax
-(def gm-066-alto-sax :alg 5 :fb 6 :ams 1 :fms 2
+(def gm-sax-alto :alg 5 :fb 6 :ams 1 :fms 2
   :ar1 14 :dr1 0 :sr1 1 :rr1 8 :sl1 4 :tl1 26 :ks1 2 :ml1 1 :dt1 2 :ssg1 0 :am1 0
   :ar2 12 :dr2 5 :sr2 2 :rr2 7 :sl2 3 :tl2  5 :ks2 2 :ml2 1 :dt2 3 :ssg2 0 :am2 0
   :ar3 19 :dr3 0 :sr3 2 :rr3 8 :sl3 1 :tl3 11 :ks3 1 :ml3 0 :dt3 2 :ssg3 0 :am3 0
@@ -532,7 +532,7 @@
 )
 
 ; GM 67 / MIDI 66: * TenorSax
-(def gm-067-tenor-sax :alg 5 :fb 6 :ams 1 :fms 2
+(def gm-sax-tenor :alg 5 :fb 6 :ams 1 :fms 2
   :ar1 15 :dr1 0 :sr1 1 :rr1 8 :sl1 4 :tl1 30 :ks1 2 :ml1 1 :dt1 2 :ssg1 0 :am1 0
   :ar2 11 :dr2 5 :sr2 2 :rr2 6 :sl2 3 :tl2  5 :ks2 2 :ml2 1 :dt2 3 :ssg2 0 :am2 0
   :ar3 18 :dr3 0 :sr3 2 :rr3 7 :sl3 1 :tl3 10 :ks3 1 :ml3 0 :dt3 2 :ssg3 0 :am3 0
@@ -540,7 +540,7 @@
 )
 
 ; GM 68 / MIDI 67: * BaritoneSax
-(def gm-068-baritone-sax :alg 5 :fb 6 :ams 1 :fms 2
+(def gm-sax-bari :alg 5 :fb 6 :ams 1 :fms 2
   :ar1 14 :dr1 0 :sr1 1 :rr1 8 :sl1 4 :tl1 23 :ks1 2 :ml1 1 :dt1 2 :ssg1 0 :am1 0
   :ar2 14 :dr2 5 :sr2 2 :rr2 6 :sl2 3 :tl2  5 :ks2 2 :ml2 1 :dt2 3 :ssg2 0 :am2 0
   :ar3 17 :dr3 0 :sr3 2 :rr3 7 :sl3 1 :tl3 10 :ks3 2 :ml3 0 :dt3 2 :ssg3 0 :am3 0
@@ -548,7 +548,7 @@
 )
 
 ; GM 69 / MIDI 68: * Oboe (Aladdin)
-(def gm-069-oboe :alg 0 :fb 7 :ams 1 :fms 2
+(def gm-oboe :alg 0 :fb 7 :ams 1 :fms 2
   :ar1 24 :dr1 23 :sr1 0 :rr1 10 :sl1 0 :tl1 39 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 1
   :ar2 16 :dr2 31 :sr2 0 :rr2 10 :sl2 0 :tl2 30 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 1
   :ar3 22 :dr3 31 :sr3 0 :rr3 10 :sl3 0 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -556,7 +556,7 @@
 )
 
 ; GM 70 / MIDI 69: * EnglishHorn
-(def gm-070-english-horn :alg 0 :fb 7 :ams 1 :fms 2
+(def gm-english-horn :alg 0 :fb 7 :ams 1 :fms 2
   :ar1 24 :dr1 23 :sr1 0 :rr1 10 :sl1 0 :tl1 38 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 1
   :ar2 16 :dr2 31 :sr2 0 :rr2 10 :sl2 0 :tl2 23 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 1
   :ar3 22 :dr3 31 :sr3 0 :rr3 10 :sl3 0 :tl3 43 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -564,7 +564,7 @@
 )
 
 ; GM 71 / MIDI 70: * Bassoon (Aladdin)
-(def gm-071-bassoon :alg 0 :fb 7 :ams 1 :fms 2
+(def gm-bassoon :alg 0 :fb 7 :ams 1 :fms 2
   :ar1  3 :dr1 23 :sr1 0 :rr1 12 :sl1 0 :tl1 39 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 1
   :ar2 15 :dr2 31 :sr2 0 :rr2 12 :sl2 0 :tl2 35 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 1
   :ar3 31 :dr3 31 :sr3 0 :rr3 12 :sl3 0 :tl3 36 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -572,7 +572,7 @@
 )
 
 ; GM 72 / MIDI 71: * Clarinet (Aladdin)
-(def gm-072-clarinet :alg 4 :fb 1 :ams 2 :fms 3
+(def gm-clarinet :alg 4 :fb 1 :ams 2 :fms 3
   :ar1 13 :dr1  0 :sr1  1 :rr1 10 :sl1 0 :tl1 30 :ks1 2 :ml1 2 :dt1  1 :ssg1 0 :am1 0
   :ar2 18 :dr2  0 :sr2  0 :rr2 10 :sl2 0 :tl2  4 :ks2 0 :ml2 1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 15 :dr3 11 :sr3 29 :rr3 10 :sl3 8 :tl3 18 :ks3 1 :ml3 2 :dt3 -3 :ssg3 0 :am3 1
@@ -580,7 +580,7 @@
 )
 
 ; GM 73 / MIDI 72: * Piccolo (Aladdin)
-(def gm-073-piccolo :alg 7 :fb 2 :ams 3 :fms 2
+(def gm-piccolo :alg 7 :fb 2 :ams 3 :fms 2
   :ar1 10 :dr1  0 :sr1  0 :rr1 8 :sl1  0 :tl1  9 :ks1 3 :ml1 2 :dt1  3 :ssg1 0 :am1 0
   :ar2 10 :dr2  8 :sr2  0 :rr2 8 :sl2  7 :tl2  6 :ks2 2 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 12 :dr3 12 :sr3 10 :rr3 8 :sl3 12 :tl3 17 :ks3 2 :ml3 2 :dt3  3 :ssg3 0 :am3 1
@@ -588,7 +588,7 @@
 )
 
 ; GM 74 / MIDI 73: * Flute
-(def gm-074-flute :alg 4 :fb 6 :ams 1 :fms 0
+(def gm-flute :alg 4 :fb 6 :ams 1 :fms 0
   :ar1 20 :dr1 10 :sr1 3 :rr1 5 :sl1 1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 0
   :ar2 22 :dr2 12 :sr2 2 :rr2 8 :sl2 6 :tl2 49 :ks2 1 :ml2 3 :dt2  0 :ssg2 0 :am2 0
   :ar3 19 :dr3 13 :sr3 0 :rr3 5 :sl3 4 :tl3 22 :ks3 2 :ml3 1 :dt3  3 :ssg3 0 :am3 1
@@ -596,7 +596,7 @@
 )
 
 ; GM 75 / MIDI 74: * Recorder
-(def gm-075-recorder :alg 3 :fb 7 :ams 0 :fms 0
+(def gm-recorder :alg 3 :fb 7 :ams 0 :fms 0
   :ar1 20 :dr1 14 :sr1 3 :rr1 5 :sl1 6 :tl1  8 :ks1 1 :ml1 1 :dt1 -3 :ssg1 0 :am1 0
   :ar2 20 :dr2 16 :sr2 2 :rr2 5 :sl2 5 :tl2 55 :ks2 1 :ml2 2 :dt2  0 :ssg2 0 :am2 0
   :ar3 13 :dr3  4 :sr3 0 :rr3 5 :sl3 2 :tl3 36 :ks3 2 :ml3 2 :dt3  3 :ssg3 0 :am3 0
@@ -604,7 +604,7 @@
 )
 
 ; GM 76 / MIDI 75: * PanFlute
-(def gm-076-pan-flute :alg 4 :fb 6 :ams 0 :fms 0
+(def gm-panflute :alg 4 :fb 6 :ams 0 :fms 0
   :ar1 19 :dr1 10 :sr1 0 :rr1 5 :sl1 1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 0
   :ar2 22 :dr2 12 :sr2 0 :rr2 5 :sl2 1 :tl2 49 :ks2 1 :ml2 3 :dt2  0 :ssg2 0 :am2 0
   :ar3 18 :dr3 13 :sr3 0 :rr3 5 :sl3 4 :tl3 19 :ks3 2 :ml3 2 :dt3  3 :ssg3 0 :am3 0
@@ -612,7 +612,7 @@
 )
 
 ; GM 77 / MIDI 76: * BottleBlow
-(def gm-077-blown-bottle :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-bottle :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 18 :dr1 10 :sr1 0 :rr1 6 :sl1 1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 0
   :ar2 25 :dr2 13 :sr2 0 :rr2 6 :sl2 3 :tl2 41 :ks2 1 :ml2 3 :dt2  0 :ssg2 0 :am2 0
   :ar3 12 :dr3 13 :sr3 0 :rr3 6 :sl3 5 :tl3 24 :ks3 2 :ml3 2 :dt3  3 :ssg3 0 :am3 1
@@ -620,7 +620,7 @@
 )
 
 ; GM 78 / MIDI 77: * Shakuhachi (Alisia Dragoon)
-(def gm-078-shakuhachi :alg 4 :fb 5 :ams 0 :fms 0
+(def gm-shakuhachi :alg 4 :fb 5 :ams 0 :fms 0
   :ar1 18 :dr1  6 :sr1 2 :rr1 7 :sl1 2 :tl1 32 :ks1 0 :ml1 4 :dt1  3 :ssg1 0 :am1 0
   :ar2 15 :dr2  9 :sr2 0 :rr2 8 :sl2 7 :tl2  6 :ks2 0 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 18 :dr3  6 :sr3 2 :rr3 6 :sl3 2 :tl3 35 :ks3 0 :ml3 4 :dt3 -1 :ssg3 0 :am3 0
@@ -628,7 +628,7 @@
 )
 
 ; GM 79 / MIDI 78: * Whistle (Aladdin)
-(def gm-079-whistle :alg 7 :fb 2 :ams 1 :fms 3
+(def gm-whistle :alg 7 :fb 2 :ams 1 :fms 3
   :ar1 18 :dr1 0 :sr1 0 :rr1 8 :sl1 0 :tl1   8 :ks1 0 :ml1 1 :dt1 3 :ssg1 0 :am1 1
   :ar2 15 :dr2 2 :sr2 0 :rr2 8 :sl2 7 :tl2   8 :ks2 2 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3  0 :dr3 0 :sr3 0 :rr3 8 :sl3 4 :tl3 127 :ks3 2 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -636,7 +636,7 @@
 )
 
 ; GM 80 / MIDI 79: * Ocarina
-(def gm-080-ocarina :alg 4 :fb 6 :ams 0 :fms 0
+(def gm-ocarina :alg 4 :fb 6 :ams 0 :fms 0
   :ar1 20 :dr1 10 :sr1 3 :rr1 5 :sl1 1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 0
   :ar2 22 :dr2 12 :sr2 2 :rr2 8 :sl2 6 :tl2 49 :ks2 1 :ml2 3 :dt2  0 :ssg2 0 :am2 0
   :ar3 20 :dr3 13 :sr3 0 :rr3 5 :sl3 4 :tl3 41 :ks3 2 :ml3 2 :dt3  3 :ssg3 0 :am3 0
@@ -644,7 +644,7 @@
 )
 
 ; GM 81 / MIDI 80: * LeadSquare
-(def gm-081-lead-1-square :alg 4 :fb 7 :ams 1 :fms 0
+(def gm-lead-square :alg 4 :fb 7 :ams 1 :fms 0
   :ar1 31 :dr1 0 :sr1 1 :rr1 11 :sl1 8 :tl1 24 :ks1 1 :ml1 2 :dt1  3 :ssg1 0 :am1 1
   :ar2 28 :dr2 0 :sr2 0 :rr2 10 :sl2 1 :tl2  9 :ks2 0 :ml2 1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 26 :dr3 0 :sr3 0 :rr3 10 :sl3 2 :tl3 26 :ks3 0 :ml3 2 :dt3  0 :ssg3 0 :am3 1
@@ -652,7 +652,7 @@
 )
 
 ; GM 82 / MIDI 81: * LeadSaw
-(def gm-082-lead-2-sawtooth :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-lead-saw :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 1 :dt1 -3 :ssg1 0 :am1 0
   :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2  4 :ks2 0 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 28 :ks3 0 :ml3 1 :dt3  3 :ssg3 0 :am3 0
@@ -660,7 +660,7 @@
 )
 
 ; GM 83 / MIDI 82: * LeadCalliope
-(def gm-083-lead-3-calliope :alg 4 :fb 7 :ams 0 :fms 5
+(def gm-lead-calliope :alg 4 :fb 7 :ams 0 :fms 5
   :ar1 19 :dr1 10 :sr1 0 :rr1  5 :sl1  1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 1
   :ar2 25 :dr2 13 :sr2 0 :rr2  5 :sl2 13 :tl2 41 :ks2 2 :ml2 3 :dt2  2 :ssg2 0 :am2 0
   :ar3 13 :dr3 13 :sr3 0 :rr3  5 :sl3  5 :tl3 24 :ks3 2 :ml3 2 :dt3  3 :ssg3 0 :am3 0
@@ -668,7 +668,7 @@
 )
 
 ; GM 84 / MIDI 83: * Lead4Chif (Sonic)
-(def gm-084-lead-4-chiff :alg 2 :fb 7 :ams 0 :fms 0
+(def gm-lead-chiff :alg 2 :fb 7 :ams 0 :fms 0
   :ar1 14 :dr1 14 :sr1 0 :rr1 15 :sl1  5 :tl1 20 :ks1 2 :ml1 1 :dt1 0 :ssg1 0 :am1 0
   :ar2 15 :dr2 14 :sr2 8 :rr2 15 :sl2  5 :tl2 43 :ks2 2 :ml2 7 :dt2 0 :ssg2 0 :am2 0
   :ar3 14 :dr3 14 :sr3 0 :rr3 15 :sl3 11 :tl3 23 :ks3 2 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -676,7 +676,7 @@
 )
 
 ; GM 85 / MIDI 84: * Lead5Char (Nineko)
-(def gm-085-lead-5-charang :alg 0 :fb 7 :ams 0 :fms 0
+(def gm-lead-charang :alg 0 :fb 7 :ams 0 :fms 0
   :ar1 17 :dr1 1 :sr1 0 :rr1 15 :sl1 15 :tl1 30 :ks1 3 :ml1 2 :dt1 -3 :ssg1 0 :am1 0
   :ar2 18 :dr2 7 :sr2 0 :rr2 15 :sl2 15 :tl2 30 :ks2 1 :ml2 3 :dt2  1 :ssg2 0 :am2 0
   :ar3 20 :dr3 1 :sr3 0 :rr3 15 :sl3 15 :tl3 30 :ks3 0 :ml3 1 :dt3 -3 :ssg3 0 :am3 0
@@ -684,7 +684,7 @@
 )
 
 ; GM 86 / MIDI 85: * LeadVoice
-(def gm-086-lead-6-voice :alg 4 :fb 1 :ams 2 :fms 3
+(def gm-lead-voice :alg 4 :fb 1 :ams 2 :fms 3
   :ar1 15 :dr1  0 :sr1  1 :rr1 10 :sl1 0 :tl1 30 :ks1 2 :ml1 2 :dt1  1 :ssg1 0 :am1 0
   :ar2 21 :dr2  0 :sr2  0 :rr2 10 :sl2 0 :tl2  4 :ks2 0 :ml2 1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 16 :dr3 11 :sr3 29 :rr3 10 :sl3 8 :tl3 18 :ks3 1 :ml3 2 :dt3 -3 :ssg3 0 :am3 1
@@ -692,7 +692,7 @@
 )
 
 ; GM 87 / MIDI 86: * Lead7Fifts (Animatics)
-(def gm-087-lead-7-fifths :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-lead-fifths :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 27 :dr1 5 :sr1 3 :rr1 7 :sl1 0 :tl1 24 :ks1 1 :ml1 4 :dt1  3 :ssg1 0 :am1 0
   :ar2 27 :dr2 5 :sr2 3 :rr2 7 :sl2 0 :tl2  0 :ks2 1 :ml2 4 :dt2 -3 :ssg2 0 :am2 0
   :ar3 24 :dr3 0 :sr3 3 :rr3 6 :sl3 0 :tl3 14 :ks3 1 :ml3 3 :dt3 -3 :ssg3 0 :am3 0
@@ -700,7 +700,7 @@
 )
 
 ; GM 88 / MIDI 87: * Lead8Bass (GEMS: Analog Solo)
-(def gm-088-lead-8-bass-and-lead :alg 4 :fb 0 :ams 0 :fms 1
+(def gm-lead-basslead :alg 4 :fb 0 :ams 0 :fms 1
   :ar1 19 :dr1 13 :sr1 9 :rr1 9 :sl1 6 :tl1 17 :ks1 1 :ml1 1 :dt1  0 :ssg1 0 :am1 1
   :ar2 30 :dr2  5 :sr2 0 :rr2 8 :sl2 4 :tl2  6 :ks2 0 :ml2 2 :dt2 -3 :ssg2 0 :am2 1
   :ar3  1 :dr3 19 :sr3 2 :rr3 8 :sl3 0 :tl3 29 :ks3 2 :ml3 1 :dt3  0 :ssg3 0 :am3 1
@@ -708,7 +708,7 @@
 )
 
 ; GM 89 / MIDI 88: * Pad1NewAge
-(def gm-089-pad-1-new-age :alg 4 :fb 1 :ams 0 :fms 0
+(def gm-pad-newage :alg 4 :fb 1 :ams 0 :fms 0
   :ar1 15 :dr1 11 :sr1 6 :rr1 6 :sl1  7 :tl1 25 :ks1 0 :ml1 7 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2  7 :sr2 0 :rr2 5 :sl2 15 :tl2 22 :ks2 0 :ml2 8 :dt2 0 :ssg2 0 :am2 0
   :ar3  9 :dr3  2 :sr3 0 :rr3 3 :sl3  2 :tl3 33 :ks3 2 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -716,7 +716,7 @@
 )
 
 ; GM 90 / MIDI 89: * Pad Warm (Ported from DMX)
-(def gm-090-pad-2-warm :alg 7 :fb 0 :ams 0 :fms 0
+(def gm-pad-warm :alg 7 :fb 0 :ams 0 :fms 0
   :ar1 7 :dr1 0 :sr1 0 :rr1 3 :sl1 0 :tl1 16 :ks1 3 :ml1 1 :dt1 0 :ssg1 0 :am1 0
   :ar2 5 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2 16 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 7 :dr3 0 :sr3 0 :rr3 4 :sl3 0 :tl3 16 :ks3 1 :ml3 1 :dt3 3 :ssg3 0 :am3 0
@@ -724,7 +724,7 @@
 )
 
 ; GM 91 / MIDI 90: * PolySynth
-(def gm-091-pad-3-polysynth :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-pad-poly :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 18 :dr1 8 :sr1 4 :rr1 6 :sl1 1 :tl1 26 :ks1 1 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 17 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2  3 :ks2 1 :ml2 2 :dt2 -1 :ssg2 0 :am2 0
   :ar3 21 :dr3 8 :sr3 4 :rr3 5 :sl3 1 :tl3 22 :ks3 1 :ml3 0 :dt3 -1 :ssg3 0 :am3 0
@@ -732,7 +732,7 @@
 )
 
 ; GM 92 / MIDI 91: * PadChoir
-(def gm-092-pad-4-choir :alg 5 :fb 0 :ams 0 :fms 4
+(def gm-pad-choir :alg 5 :fb 0 :ams 0 :fms 4
   :ar1 14 :dr1 0 :sr1 0 :rr1 2 :sl1 5 :tl1 34 :ks1 1 :ml1 0 :dt1 0 :ssg1 0 :am1 1
   :ar2 12 :dr2 0 :sr2 0 :rr2 5 :sl2 0 :tl2 12 :ks2 1 :ml2 0 :dt2 0 :ssg2 0 :am2 1
   :ar3 10 :dr3 0 :sr3 0 :rr3 3 :sl3 5 :tl3 17 :ks3 2 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -740,7 +740,7 @@
 )
 
 ; GM 93 / MIDI 92: * Bowed
-(def gm-093-pad-5-bowed :alg 4 :fb 3 :ams 0 :fms 0
+(def gm-pad-bowed :alg 4 :fb 3 :ams 0 :fms 0
   :ar1 11 :dr1 3 :sr1 1 :rr1 1 :sl1  6 :tl1 26 :ks1 3 :ml1 6 :dt1 0 :ssg1 0 :am1 0
   :ar2  9 :dr2 6 :sr2 2 :rr2 3 :sl2  7 :tl2  6 :ks2 2 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 10 :dr3 9 :sr3 0 :rr3 3 :sl3 15 :tl3 35 :ks3 0 :ml3 5 :dt3 0 :ssg3 0 :am3 0
@@ -748,7 +748,7 @@
 )
 
 ; GM 94 / MIDI 93: * Metallic
-(def gm-094-pad-6-metallic :alg 4 :fb 7 :ams 1 :fms 4
+(def gm-pad-metal :alg 4 :fb 7 :ams 1 :fms 4
   :ar1 11 :dr1 11 :sr1 0 :rr1 1 :sl1  0 :tl1 28 :ks1 3 :ml1 1 :dt1 3 :ssg1 0 :am1 0
   :ar2  7 :dr2  3 :sr2 0 :rr2 5 :sl2 10 :tl2 14 :ks2 0 :ml2 9 :dt2 0 :ssg2 0 :am2 0
   :ar3 11 :dr3  3 :sr3 0 :rr3 1 :sl3  1 :tl3 22 :ks3 2 :ml3 1 :dt3 0 :ssg3 0 :am3 1
@@ -756,7 +756,7 @@
 )
 
 ; GM 95 / MIDI 94: * PadHalo
-(def gm-095-pad-7-halo :alg 4 :fb 5 :ams 0 :fms 4
+(def gm-pad-halo :alg 4 :fb 5 :ams 0 :fms 4
   :ar1  3 :dr1 4 :sr1 0 :rr1 5 :sl1 5 :tl1 12 :ks1 1 :ml1 1 :dt1  2 :ssg1 0 :am1 0
   :ar2  9 :dr2 7 :sr2 0 :rr2 6 :sl2 3 :tl2  3 :ks2 0 :ml2 1 :dt2  0 :ssg2 0 :am2 1
   :ar3  3 :dr3 4 :sr3 1 :rr3 4 :sl3 5 :tl3  0 :ks3 1 :ml3 1 :dt3 -3 :ssg3 0 :am3 1
@@ -764,7 +764,7 @@
 )
 
 ; GM 96 / MIDI 95: * Sweep
-(def gm-096-pad-8-sweep :alg 4 :fb 5 :ams 0 :fms 5
+(def gm-pad-sweep :alg 4 :fb 5 :ams 0 :fms 5
   :ar1  6 :dr1 6 :sr1 0 :rr1 4 :sl1 5 :tl1 22 :ks1 0 :ml1 2 :dt1  2 :ssg1 0 :am1 0
   :ar2 15 :dr2 7 :sr2 0 :rr2 6 :sl2 3 :tl2  3 :ks2 0 :ml2 1 :dt2  0 :ssg2 0 :am2 1
   :ar3  4 :dr3 8 :sr3 5 :rr3 4 :sl3 5 :tl3 24 :ks3 0 :ml3 5 :dt3 -3 :ssg3 0 :am3 1
@@ -772,7 +772,7 @@
 )
 
 ; GM 97 / MIDI 96: * FX rain
-(def gm-097-fx-1-rain :alg 6 :fb 7 :ams 2 :fms 2
+(def gm-fx-rain :alg 6 :fb 7 :ams 2 :fms 2
   :ar1 31 :dr1 18 :sr1  0 :rr1 7 :sl1 3 :tl1 20 :ks1 0 :ml1 6 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2 18 :sr2 13 :rr2 5 :sl2 2 :tl2 21 :ks2 0 :ml2 2 :dt2  0 :ssg2 0 :am2 1
   :ar3 12 :dr3  0 :sr3  0 :rr3 5 :sl3 0 :tl3 17 :ks3 0 :ml3 2 :dt3  3 :ssg3 0 :am3 1
@@ -780,7 +780,7 @@
 )
 
 ; GM 98 / MIDI 97: * FX-SndTrack (ThunderForce IV)
-(def gm-098-fx-2-soundtrack :alg 4 :fb 5 :ams 0 :fms 0
+(def gm-fx-soundtrack :alg 4 :fb 5 :ams 0 :fms 0
   :ar1  6 :dr1 6 :sr1 4 :rr1 4 :sl1 15 :tl1 30 :ks1 0 :ml1 3 :dt1  3 :ssg1 0 :am1 0
   :ar2 17 :dr2 3 :sr2 0 :rr2 4 :sl2  2 :tl2  9 :ks2 0 :ml2 3 :dt2 -1 :ssg2 0 :am2 0
   :ar3  5 :dr3 6 :sr3 4 :rr3 5 :sl3 15 :tl3 30 :ks3 0 :ml3 2 :dt3 -1 :ssg3 0 :am3 0
@@ -788,7 +788,7 @@
 )
 
 ; GM 99 / MIDI 98: * FXCrystal (Alisia Dragoon)
-(def gm-099-fx-3-crystal :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-fx-crystal :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 13 :sr1 4 :rr1 6 :sl1 7 :tl1 55 :ks1 0 :ml1 5 :dt1  0 :ssg1 0 :am1 0
   :ar2 31 :dr2  8 :sr2 7 :rr2 8 :sl2 6 :tl2 12 :ks2 0 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 26 :dr3 19 :sr3 7 :rr3 6 :sl3 2 :tl3 43 :ks3 0 :ml3 4 :dt3  0 :ssg3 0 :am3 0
@@ -796,7 +796,7 @@
 )
 
 ; GM 100 / MIDI 99: * AtmoSphere (Alisia Dragoon)
-(def gm-100-fx-4-atmosphere :alg 4 :fb 6 :ams 1 :fms 3
+(def gm-fx-atmos :alg 4 :fb 6 :ams 1 :fms 3
   :ar1 22 :dr1 1 :sr1 0 :rr1 5 :sl1 5 :tl1 23 :ks1 2 :ml1 2 :dt1 -3 :ssg1 0 :am1 1
   :ar2 31 :dr2 4 :sr2 0 :rr2 5 :sl2 4 :tl2  5 :ks2 2 :ml2 1 :dt2  3 :ssg2 0 :am2 0
   :ar3 22 :dr3 4 :sr3 5 :rr3 6 :sl3 0 :tl3 49 :ks3 0 :ml3 1 :dt3  1 :ssg3 0 :am3 1
@@ -804,7 +804,7 @@
 )
 
 ; GM 101 / MIDI 100: * BrightNess
-(def gm-101-fx-5-brightness :alg 3 :fb 0 :ams 0 :fms 0
+(def gm-fx-bright :alg 3 :fb 0 :ams 0 :fms 0
   :ar1 18 :dr1 1 :sr1 4 :rr1 1 :sl1 5 :tl1 40 :ks1 2 :ml1 2 :dt1  3 :ssg1 0 :am1 1
   :ar2 31 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2 43 :ks2 1 :ml2 3 :dt2 -1 :ssg2 0 :am2 0
   :ar3 20 :dr3 8 :sr3 4 :rr3 4 :sl3 1 :tl3 39 :ks3 1 :ml3 5 :dt3 -1 :ssg3 0 :am3 0
@@ -812,7 +812,7 @@
 )
 
 ; GM 102 / MIDI 101: * Goblins
-(def gm-102-fx-6-goblins :alg 4 :fb 5 :ams 0 :fms 4
+(def gm-fx-goblins :alg 4 :fb 5 :ams 0 :fms 4
   :ar1 4 :dr1 6 :sr1 0 :rr1 3 :sl1 5 :tl1 18 :ks1 0 :ml1 1 :dt1  2 :ssg1 0 :am1 0
   :ar2 3 :dr2 7 :sr2 0 :rr2 3 :sl2 3 :tl2 19 :ks2 1 :ml2 1 :dt2  0 :ssg2 0 :am2 1
   :ar3 4 :dr3 1 :sr3 1 :rr3 3 :sl3 0 :tl3  0 :ks3 0 :ml3 1 :dt3 -3 :ssg3 0 :am3 1
@@ -820,7 +820,7 @@
 )
 
 ; GM 103 / MIDI 102: * Echos
-(def gm-103-fx-7-echoes :alg 4 :fb 2 :ams 0 :fms 4
+(def gm-fx-echoes :alg 4 :fb 2 :ams 0 :fms 4
   :ar1 16 :dr1 0 :sr1 0 :rr1 5 :sl1 5 :tl1 41 :ks1 1 :ml1 2 :dt1  3 :ssg1 0 :am1 1
   :ar2 16 :dr2 0 :sr2 0 :rr2 5 :sl2 0 :tl2 12 :ks2 1 :ml2 2 :dt2  0 :ssg2 0 :am2 1
   :ar3 11 :dr3 0 :sr3 0 :rr3 5 :sl3 5 :tl3 45 :ks3 2 :ml3 1 :dt3  0 :ssg3 0 :am3 0
@@ -828,7 +828,7 @@
 )
 
 ; GM 104 / MIDI 103: * SciFi
-(def gm-104-fx-8-sci-fi :alg 0 :fb 3 :ams 0 :fms 4
+(def gm-fx-scifi :alg 0 :fb 3 :ams 0 :fms 4
   :ar1 20 :dr1 2 :sr1 0 :rr1 3 :sl1 2 :tl1 34 :ks1 2 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 31 :dr2 2 :sr2 0 :rr2 3 :sl2 2 :tl2 36 :ks2 2 :ml2 8 :dt2 -2 :ssg2 0 :am2 0
   :ar3 31 :dr3 3 :sr3 0 :rr3 3 :sl3 4 :tl3 34 :ks3 2 :ml3 3 :dt3  2 :ssg3 0 :am3 0
@@ -836,7 +836,7 @@
 )
 
 ; GM 105 / MIDI 104: * Sitar
-(def gm-105-sitar :alg 4 :fb 0 :ams 0 :fms 0
+(def gm-sitar :alg 4 :fb 0 :ams 0 :fms 0
   :ar1 31 :dr1 7 :sr1 5 :rr1 4 :sl1  4 :tl1 47 :ks1 1 :ml1 2 :dt1 0 :ssg1 0 :am1 0
   :ar2 19 :dr2 3 :sr2 0 :rr2 6 :sl2 15 :tl2 25 :ks2 2 :ml2 7 :dt2 0 :ssg2 0 :am2 0
   :ar3 18 :dr3 3 :sr3 0 :rr3 3 :sl3 15 :tl3  8 :ks3 2 :ml3 2 :dt3 0 :ssg3 0 :am3 0
@@ -844,7 +844,7 @@
 )
 
 ; GM 106 / MIDI 105: * Banjo
-(def gm-106-banjo :alg 2 :fb 6 :ams 0 :fms 0
+(def gm-banjo :alg 2 :fb 6 :ams 0 :fms 0
   :ar1 15 :dr1 20 :sr1  8 :rr1 9 :sl1 1 :tl1 25 :ks1 1 :ml1 6 :dt1  3 :ssg1 0 :am1 0
   :ar2 31 :dr2 15 :sr2 23 :rr2 8 :sl2 1 :tl2 69 :ks2 1 :ml2 1 :dt2  2 :ssg2 0 :am2 0
   :ar3 28 :dr3  9 :sr3  1 :rr3 0 :sl3 1 :tl3 23 :ks3 1 :ml3 2 :dt3 -1 :ssg3 0 :am3 0
@@ -852,7 +852,7 @@
 )
 
 ; GM 107 / MIDI 106: * Shamisen
-(def gm-107-shamisen :alg 0 :fb 7 :ams 0 :fms 0
+(def gm-shamisen :alg 0 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 14 :sr1 0 :rr1 8 :sl1 15 :tl1 27 :ks1 2 :ml1 5 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 14 :sr2 0 :rr2 2 :sl2 14 :tl2 34 :ks2 2 :ml2 2 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3  5 :sr3 0 :rr3 4 :sl3 14 :tl3 24 :ks3 1 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -860,7 +860,7 @@
 )
 
 ; GM 108 / MIDI 107: * Koto
-(def gm-108-koto :alg 4 :fb 4 :ams 0 :fms 3
+(def gm-koto :alg 4 :fb 4 :ams 0 :fms 3
   :ar1 27 :dr1  8 :sr1 4 :rr1 3 :sl1 3 :tl1 23 :ks1 2 :ml1 3 :dt1 -1 :ssg1 0 :am1 0
   :ar2 24 :dr2 22 :sr2 4 :rr2 3 :sl2 2 :tl2  7 :ks2 1 :ml2 1 :dt2  0 :ssg2 0 :am2 0
   :ar3 27 :dr3  8 :sr3 8 :rr3 2 :sl3 3 :tl3 28 :ks3 2 :ml3 3 :dt3  1 :ssg3 0 :am3 1
@@ -868,7 +868,7 @@
 )
 
 ; GM 109 / MIDI 108: * Kalimba
-(def gm-109-kalimba :alg 6 :fb 6 :ams 0 :fms 0
+(def gm-kalimba :alg 6 :fb 6 :ams 0 :fms 0
   :ar1 20 :dr1 22 :sr1 21 :rr1 7 :sl1 7 :tl1 23 :ks1 1 :ml1 4 :dt1 -3 :ssg1 0 :am1 1
   :ar2 21 :dr2  0 :sr2 10 :rr2 6 :sl2 0 :tl2  7 :ks2 0 :ml2 1 :dt2 -3 :ssg2 0 :am2 1
   :ar3 30 :dr3 13 :sr3  7 :rr3 5 :sl3 5 :tl3 21 :ks3 1 :ml3 4 :dt3 -2 :ssg3 0 :am3 0
@@ -876,7 +876,7 @@
 )
 
 ; GM 110 / MIDI 109: * BagPipe
-(def gm-110-bag-pipe :alg 0 :fb 3 :ams 1 :fms 0
+(def gm-bagpipe :alg 0 :fb 3 :ams 1 :fms 0
   :ar1 16 :dr1 16 :sr1 0 :rr1  6 :sl1 3 :tl1 11 :ks1 2 :ml1 1 :dt1 0 :ssg1 0 :am1 0
   :ar2 12 :dr2  0 :sr2 0 :rr2 13 :sl2 0 :tl2 39 :ks2 0 :ml2 4 :dt2 0 :ssg2 0 :am2 0
   :ar3 17 :dr3  0 :sr3 0 :rr3  5 :sl3 3 :tl3 28 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -884,7 +884,7 @@
 )
 
 ; GM 111 / MIDI 110: * Fiddle
-(def gm-111-fiddle :alg 2 :fb 7 :ams 2 :fms 3
+(def gm-fiddle :alg 2 :fb 7 :ams 2 :fms 3
   :ar1 14 :dr1  4 :sr1 0 :rr1 5 :sl1 1 :tl1 29 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
   :ar2 12 :dr2 16 :sr2 0 :rr2 4 :sl2 0 :tl2 31 :ks2 0 :ml2 7 :dt2  3 :ssg2 0 :am2 0
   :ar3 11 :dr3  9 :sr3 3 :rr3 7 :sl3 0 :tl3 55 :ks3 0 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
@@ -892,7 +892,7 @@
 )
 
 ; GM 112 / MIDI 111: * Shanai (Aladdin)
-(def gm-112-shanai :alg 0 :fb 7 :ams 1 :fms 2
+(def gm-shanai :alg 0 :fb 7 :ams 1 :fms 2
   :ar1 24 :dr1 23 :sr1 0 :rr1 10 :sl1 0 :tl1 39 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 1
   :ar2 16 :dr2 31 :sr2 0 :rr2 10 :sl2 0 :tl2 30 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 1
   :ar3 22 :dr3 31 :sr3 0 :rr3 10 :sl3 0 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -900,7 +900,7 @@
 )
 
 ; GM 113 / MIDI 112: * TinkleBell
-(def gm-113-tinkle-bell :alg 7 :fb 0 :ams 0 :fms 0
+(def gm-tinkle :alg 7 :fb 0 :ams 0 :fms 0
   :ar1 20 :dr1 4 :sr1 4 :rr1 3 :sl1  0 :tl1 25 :ks1 3 :ml1 3 :dt1  3 :ssg1 0 :am1 0
   :ar2 22 :dr2 3 :sr2 8 :rr2 3 :sl2  5 :tl2 16 :ks2 3 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 20 :dr3 5 :sr3 6 :rr3 3 :sl3  0 :tl3 17 :ks3 0 :ml3 2 :dt3  3 :ssg3 0 :am3 0
@@ -908,7 +908,7 @@
 )
 
 ; GM 114 / MIDI 113: * Agogo
-(def gm-114-agogo :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-agogo :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 31 :sr1 14 :rr1 8 :sl1  6 :tl1  0 :ks1 0 :ml1  6 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 14 :sr2 14 :rr2 7 :sl2 10 :tl2 14 :ks2 2 :ml2 14 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 31 :sr3 14 :rr3 8 :sl3  4 :tl3  0 :ks3 0 :ml3 11 :dt3 0 :ssg3 0 :am3 0
@@ -916,7 +916,7 @@
 )
 
 ; GM 115 / MIDI 114: * SteelDrums
-(def gm-115-steel-drums :alg 4 :fb 1 :ams 3 :fms 0
+(def gm-steeldrum :alg 4 :fb 1 :ams 3 :fms 0
   :ar1 13 :dr1 19 :sr1 0 :rr1 7 :sl1  5 :tl1 65 :ks1 0 :ml1 12 :dt1  1 :ssg1 0 :am1 0
   :ar2 26 :dr2 12 :sr2 0 :rr2 6 :sl2 15 :tl2 12 :ks2 0 :ml2  1 :dt2 -3 :ssg2 0 :am2 0
   :ar3 13 :dr3 16 :sr3 7 :rr3 7 :sl3  8 :tl3 34 :ks3 0 :ml3  5 :dt3  3 :ssg3 0 :am3 0
@@ -924,7 +924,7 @@
 )
 
 ; GM 116 / MIDI 115: * WoodBlock
-(def gm-116-woodblock :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-woodblock :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 22 :sr1 22 :rr1 8 :sl1 12 :tl1 20 :ks1 0 :ml1  7 :dt1 1 :ssg1 0 :am1 0
   :ar2 31 :dr2 18 :sr2 28 :rr2 8 :sl2 11 :tl2  0 :ks2 0 :ml2  5 :dt2 1 :ssg2 0 :am2 0
   :ar3 31 :dr3 25 :sr3 12 :rr3 8 :sl3 14 :tl3 10 :ks3 3 :ml3 14 :dt3 1 :ssg3 0 :am3 0
@@ -932,7 +932,7 @@
 )
 
 ; GM 117 / MIDI 116: * Taiko Drum
-(def gm-117-taiko-drum :alg 6 :fb 3 :ams 0 :fms 0
+(def gm-taiko :alg 6 :fb 3 :ams 0 :fms 0
   :ar1 31 :dr1 18 :sr1 18 :rr1  8 :sl1 0 :tl1  6 :ks1 2 :ml1 0 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 16 :sr2 16 :rr2 11 :sl2 0 :tl2  4 :ks2 2 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 16 :sr3 16 :rr3  7 :sl3 0 :tl3 12 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -940,7 +940,7 @@
 )
 
 ; GM 118 / MIDI 117: * Melodic Tom
-(def gm-118-melodic-tom :alg 1 :fb 6 :ams 0 :fms 0
+(def gm-tom-melodic :alg 1 :fb 6 :ams 0 :fms 0
   :ar1 31 :dr1 0 :sr1 13 :rr1 0 :sl1 0 :tl1 16 :ks1 0 :ml1 2 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 2 :sr2 18 :rr2 0 :sl2 0 :tl2  2 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
   :ar3 30 :dr3 0 :sr3 20 :rr3 0 :sl3 0 :tl3 35 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
@@ -948,7 +948,7 @@
 )
 
 ; GM 119 / MIDI 118: * SynDrum (Alisia Dragoon)
-(def gm-119-synth-drum :alg 3 :fb 7 :ams 0 :fms 0
+(def gm-syndrum :alg 3 :fb 7 :ams 0 :fms 0
   :ar1 29 :dr1 18 :sr1  0 :rr1 6 :sl1  5 :tl1  6 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 26 :sr2 22 :rr2 6 :sl2  2 :tl2  8 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 27 :sr3  8 :rr3 6 :sl3  5 :tl3 13 :ks3 1 :ml3 2 :dt3 0 :ssg3 0 :am3 0
@@ -956,7 +956,7 @@
 )
 
 ; GM 120 / MIDI 119: * Reverse Cymbell
-(def gm-120-reverse-cymbal :alg 4 :fb 7 :ams 1 :fms 0
+(def gm-revcymbal :alg 4 :fb 7 :ams 1 :fms 0
   :ar1 29 :dr1  1 :sr1  0 :rr1 0 :sl1  8 :tl1  0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
   :ar2  4 :dr2 13 :sr2 22 :rr2 9 :sl2  0 :tl2  9 :ks2 1 :ml2  3 :dt2  1 :ssg2 0 :am2 1
   :ar3 31 :dr3  0 :sr3  0 :rr3 4 :sl3  1 :tl3  0 :ks3 0 :ml3 15 :dt3 -3 :ssg3 0 :am3 0
@@ -964,7 +964,7 @@
 )
 
 ; GM 121 / MIDI 120: * Guitar Fret Noise
-(def gm-121-guitar-fret-noise :alg 4 :fb 7 :ams 1 :fms 0
+(def gm-fretnoise :alg 4 :fb 7 :ams 1 :fms 0
   :ar1 27 :dr1  1 :sr1  0 :rr1 0 :sl1  8 :tl1 14 :ks1 0 :ml1 6 :dt1 -3 :ssg1 0 :am1 0
   :ar2 14 :dr2  7 :sr2 14 :rr2 9 :sl2  0 :tl2 17 :ks2 1 :ml2 3 :dt2  1 :ssg2 0 :am2 1
   :ar3 31 :dr3  0 :sr3  0 :rr3 4 :sl3  1 :tl3 33 :ks3 0 :ml3 3 :dt3 -3 :ssg3 0 :am3 0
@@ -972,7 +972,7 @@
 )
 
 ; GM 122 / MIDI 121: * Breath Noise
-(def gm-122-breath-noise :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-breath :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1  0 :sr1 0 :rr1 2 :sl1  2 :tl1  0 :ks1 0 :ml1 4 :dt1  3 :ssg1 0 :am1 0
   :ar2 12 :dr2 12 :sr2 7 :rr2 7 :sl2 11 :tl2 11 :ks2 0 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
   :ar3 31 :dr3  0 :sr3 0 :rr3 2 :sl3  2 :tl3  8 :ks3 0 :ml3 4 :dt3 -1 :ssg3 0 :am3 0
@@ -980,7 +980,7 @@
 )
 
 ; GM 123 / MIDI 122: * SeaShore
-(def gm-123-seashore :alg 5 :fb 7 :ams 0 :fms 0
+(def gm-seashore :alg 5 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 0 :sl1 15 :tl1  0 :ks1 0 :ml1 3 :dt1 3 :ssg1 0 :am1 0
   :ar2  6 :dr2 8 :sr2 0 :rr2 4 :sl2 15 :tl2 26 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3  6 :dr3 8 :sr3 0 :rr3 4 :sl3 15 :tl3 22 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -988,7 +988,7 @@
 )
 
 ; GM 124 / MIDI 123: * BirdTweet
-(def gm-124-bird-tweet :alg 7 :fb 3 :ams 0 :fms 0
+(def gm-bird :alg 7 :fb 3 :ams 0 :fms 0
   :ar1  6 :dr1 16 :sr1 14 :rr1  7 :sl1  0 :tl1 25 :ks1 3 :ml1 7 :dt1 0 :ssg1 8 :am1 0
   :ar2  8 :dr2 14 :sr2 16 :rr2  6 :sl2  5 :tl2 16 :ks2 3 :ml2 8 :dt2 0 :ssg2 8 :am2 0
   :ar3 15 :dr3 13 :sr3 14 :rr3 10 :sl3  0 :tl3 17 :ks3 0 :ml3 5 :dt3 1 :ssg3 0 :am3 0
@@ -996,7 +996,7 @@
 )
 
 ; GM 125 / MIDI 124: * Telephone
-(def gm-125-telephone-ring :alg 4 :fb 7 :ams 0 :fms 0
+(def gm-phone :alg 4 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1  2 :sr1 0 :rr1 8 :sl1 15 :tl1 32 :ks1 0 :ml1 11 :dt1 3 :ssg1  0 :am1 0
   :ar2 16 :dr2 17 :sr2 0 :rr2 5 :sl2 15 :tl2  0 :ks2 1 :ml2 13 :dt2 3 :ssg2 14 :am2 0
   :ar3 31 :dr3  2 :sr3 0 :rr3 8 :sl3 15 :tl3 50 :ks3 0 :ml3  0 :dt3 0 :ssg3  0 :am3 0
@@ -1004,7 +1004,7 @@
 )
 
 ; GM 126 / MIDI 125: * Helicopter
-(def gm-126-helicopter :alg 4 :fb 6 :ams 3 :fms 0
+(def gm-heli :alg 4 :fb 6 :ams 3 :fms 0
   :ar1 5 :dr1  1 :sr1 0 :rr1 0 :sl1 0 :tl1   0 :ks1 1 :ml1 0 :dt1 3 :ssg1 0 :am1 0
   :ar2 7 :dr2  2 :sr2 0 :rr2 5 :sl2 1 :tl2  20 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 1
   :ar3 5 :dr3 13 :sr3 0 :rr3 9 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 1
@@ -1012,7 +1012,7 @@
 )
 
 ; GM 127 / MIDI 126: * Applause
-(def gm-127-applause :alg 5 :fb 7 :ams 0 :fms 0
+(def gm-applause :alg 5 :fb 7 :ams 0 :fms 0
   :ar1 31 :dr1  0 :sr1 0 :rr1 0 :sl1 15 :tl1  4 :ks1 0 :ml1 3 :dt1 3 :ssg1 0 :am1 0
   :ar2  6 :dr2  7 :sr2 0 :rr2 8 :sl2  0 :tl2 23 :ks2 0 :ml2 1 :dt2 1 :ssg2 0 :am2 0
   :ar3  6 :dr3 13 :sr3 0 :rr3 9 :sl3  0 :tl3 22 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
@@ -1020,7 +1020,7 @@
 )
 
 ; GM 128 / MIDI 127: * Gunshot
-(def gm-128-gunshot :alg 5 :fb 7 :ams 0 :fms 5
+(def gm-gunshot :alg 5 :fb 7 :ams 0 :fms 5
   :ar1 31 :dr1  3 :sr1 17 :rr1  5 :sl1 15 :tl1 4 :ks1 0 :ml1 3 :dt1 3 :ssg1 0 :am1 0
   :ar2 31 :dr2 15 :sr2 31 :rr2  8 :sl2 15 :tl2 0 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 20 :sr3 20 :rr3  8 :sl3 15 :tl3 0 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0

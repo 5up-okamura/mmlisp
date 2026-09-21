@@ -45,12 +45,12 @@ rebuild the library.
 - Upstream: https://github.com/sfzinstruments/virtuosity_drums
 - Revision: `9f04cf9a734527edfbb0a4eee1f674e45bbf71bc`
 - Creators: Versilian Studios and Karoryfer Samples; drummer Austin McMahon.
-- License: CC0-1.0, preserved in `presets/drums/gm-muted/LICENSE-CC0.txt`.
-- Included: GM-selected, shortened derivatives in `presets/drums/gm-muted/`
+- License: CC0-1.0, preserved in `presets/gm-drums/LICENSE-CC0.txt`.
+- Included: GM-selected, shortened derivatives in `presets/gm-drums/`
   (22,050 Hz, 16-bit mono; pitch-shifted muted toms and faded tails). The
   unprocessed upstream WAVs are not vendored.
-- Provenance and conversion details, including each source file name and its
-  SHA-256: `presets/drums/gm-muted/manifest.json`.
+- Conversion: trimmed to the attack, shortened with a half-cosine fade, and
+  resampled to 22,050 Hz; muted toms are pitch-shifted from one source hit.
 
 ## libOPNMIDI XG GM melodic bank
 
@@ -59,15 +59,15 @@ rebuild the library.
 - Copyright (c) 2018-2026 Vitaliy Novichkov.
 - License: MIT; upstream notice and full license in `presets/gm/licenses/libopnmidi-xg.txt`.
 - Included: only 128 melodic programs from bank MSB 0 / LSB 0, converted to
-  `presets/gm/gm.mmlisp`; source records in `presets/gm/source.json`.
-- Voice definitions preserve register parameters. Original note offsets and the
-  shared LFO rate are retained as provenance metadata, not applied by the voices.
+  `presets/gm/set.mmlisp`.
+- Voice definitions preserve the bank's register parameters. The original note
+  offsets and shared LFO rate are not applied.
 
 ## TR-808 Fischer samples
 
 - Source: https://github.com/tidalcycles/sounds-tr808-fischer
 - Revision: `85fbecf1bec32553395625ea659e2a56dfd7c0e1`.
 - Original recording: Michael Fischer / Technopolis, 1994.
-- Repository license: CC0-1.0, preserved in `presets/drums/tr808-gm/LICENSE-CC0.txt`.
+- Repository license: CC0-1.0, preserved in `presets/808/LICENSE-CC0.txt`.
 - Included: 22 GM-numbered WAVs, converted to 22,050 Hz / 16-bit mono with shortened, faded tails.
-- Source URLs, hashes and processing details: `presets/drums/tr808-gm/manifest.json`.
+- Conversion: channel mean, polyphase resampling, and faded tails.

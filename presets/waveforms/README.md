@@ -1,62 +1,41 @@
-# アナログシンセ用の基本波形 — YM2612
+# Basic waveforms (YM2612)
 
-[音色定義](waveforms.mmlisp) /
-[試聴スコア](../../examples/source/analog-audition.mmlisp)
+Sustained FM approximations of the classic oscillator shapes, plus two
+303-inspired bass voices built on the same saw and square. One channel of
+ordinary FM per voice; no CSM, PCM or effects. Original definitions, CC0.
 
-持続する基本波形6種を共通バンクにまとめています。この比較ページはそのうち5種です。1音につき通常FMを1チャンネル使います。
-音色定義だけを収録し、音高・LFOレート・フレーズは設定しません。
-
-| 名前 | 構成と用途 |
-| --- | --- |
-| `wave-sine` | 1オペレータのサイン波。サブベースや柔らかい音の土台 |
-| `wave-triangle` | 基音と3・5・7倍音を弱く加算。三角波の倍音振幅に近づけた柔らかい音 |
-| `wave-saw` | フィードバックとFM変調を使ったノコギリ波風。ベース／リードの土台 |
-| `wave-square` | 2倍周波数の変調器を使う矩形波風。中空な響き |
-| `wave-pulse-25` | 25%パルス風の倍音構成。細く鼻にかかった響き |
-
-サイン波以外は近似です。三角波は有限の倍音加算で、理想波形の位相までは再現しません。
-矩形・ノコギリ・パルスも理想波形と同じ形状や倍音振幅にはなりません。
-`25`は狙う音色の目安であり、正確なデューティ比の指定ではありません。
-
-NES/VRC6用とアナログ用を共通の基本波形バンクに統合しました。
-同じ音色の別名は定義していません。既存のFMパラメータは維持しています。
-追加の`wave-pulse-12-approx`は12.5%パルスの低次倍音近似です。
-[NES / VRC6風プリセット](nes-vrc6.md)に測定値があります。
-
-## 使い方
-
-```lisp
-(import "../../presets/waveforms/waveforms.mmlisp")
-(fm1 :tempo 120 :oct 3 :len 16 :vel 12 :vol 31
-  wave-saw e32 e32 e e g g a b)
+```
+wave-sine             one operator, a plain sine — sub bass and soft pads
+wave-triangle         1st, 3rd, 5th and 7th harmonics added at roughly 1/n²
+wave-saw              feedback saw, a modulator at 1x in series — bass and leads
+wave-square           modulator at 2x — hollow, odd harmonics
+wave-pulse-25         ALG 5, a 4x modulator over 1x/2x/3x carriers — thin, nasal
+wave-pulse-12-approx  the first four harmonics of a 12.5% pulse
+acid-saw              the saw with a decaying modulator: bright attack, fast decay
+acid-square           the same articulation on the square
 ```
 
-初期設定は即時アタック、持続、短いリリースです。ゲート操作なしで音長を指定できます。
-演奏側でエンベロープを上書きして使えます。
-ALG 0のノコギリ／矩形ではキャリアはOP4なので、例えば次の指定で音量の減衰を付けられます。
+These match harmonic amplitudes, not waveforms. There is no duty-cycle control
+and no PWM; the sharp top end of a 12.5% pulse is out of reach with four
+operators; the triangle cannot match the NES's 32-step shape because operator
+phase is not free; and the saw is not VRC6's stepped accumulator. NES noise
+(LFSR) and DPCM are not here — use the PSG's `noise` channel and PCM.
 
-```lisp
-(fm1 :tempo 120 :oct 3 :len 8 :vel 12
-  wave-saw :dr4 10 :sl4 5 :sr4 2 :rr4 10
-  c e g > c <)
-```
+The envelopes are instant-attack, sustain, short-release, so note length alone
+shapes a phrase. Carriers are OP4 on the saw and square, OP1-4 on the triangle
+and OP2-4 on the pulses; set the decay there to shape a voice
+(`wave-saw :dr4 10 :sl4 5 :sr4 2 :rr4 10`). Changing a modulator's TL moves the
+harmonic balance, which is not an analogue low-pass sweep.
 
-三角波は4オペレータ、パルスはOP2–4が発音するため、音量エンベロープもそれぞれ設定します。
-ノコギリ／矩形の変調器TLを変えると倍音量を調整できますが、アナログのローパスフィルターとは別の変化です。
-連続PWMやフィルター、ノイズは今回の5音色には含めていません。
+For the acid voices a slide is a legato `~` plus `(glide 32)` — the pitch moves
+without a key-on, so the FM envelope does not retrigger — and an accent is a
+higher `:vel` with a shorter modulator decay. At 130 BPM a 16th step is about
+115 ms and the slide about 58 ms, and slides scale with tempo, unlike a real
+303. [demo-acid.mmlisp](demo-acid.mmlisp) plays a 16-step pattern twice on
+each voice, with a slider for the modulator attenuation.
 
-## 試聴と検証
-
-各WAVはC3・C4・C5の順です。FM版と数式で生成した理想波形版を並べています。
-比較WAVはDC除去・RMS音量合わせ・ピーク制限のみで、外部フィルターや歪みは使いません。
-理想波形版は単純な数式による参照で、高域の折り返し対策をしたシンセ実装ではありません。
-16-bit mono、53,267 Hz。聴感での最終評価は未実施です。
-
-全5音色と試聴スコアのIR／MMBコンパイル、非無音の出力を検証します。
-FMのWAVはコンパイルされた音色レジスタをNuked-OPN2で鳴らして生成します。
-
-```sh
-node tools/scripts/render-analog.mjs
-```
-
-既存バンクの構成・出典は[NES / VRC6風プリセット](nes-vrc6.md)を参照してください。
+The square, saw and 25% pulse structures follow
+[Plutiedev's chiptune sounds](https://www.plutiedev.com/chiptune-sounds);
+the targets are NESdev's [pulse](https://www.nesdev.org/wiki/APU_Pulse),
+[triangle](https://www.nesdev.org/wiki/APU_Triangle) and
+[VRC6](https://www.nesdev.org/wiki/VRC6_audio) descriptions.
