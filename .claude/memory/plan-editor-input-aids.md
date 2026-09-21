@@ -1,7 +1,8 @@
 # Plan: editor input aids (live CodeMirror)
 
-Batches 1 and 2 **landed** 2026-07-31 (`live/index.html`, `live/style.css`,
-`docs/guide.md` §24, README). This file now only tracks what is left.
+Batches 1 and 2 **landed** 2026-07-31, batch 3 (find/replace + multiple
+cursors) 2026-09-21 — all in `live/index.html`, `live/style.css`,
+`docs/guide.md` §24, README. This file now only tracks what is left.
 
 ## Landed
 
@@ -37,10 +38,44 @@ Batch 2 (same day): `AC_SNIPPETS` template completions (`snippetCompletion`,
 body-only templates since the parens already exist; curve heads generated from
 one `A..B :len L` shape), `expandSelection` / `shrinkSelection` on
 `Alt-ArrowUp` / `Alt-ArrowDown` (contents → form → next level out, with a
-retrace stack), and `closeOpenBrackets` on `Mod-Alt-]` plus **Tools ▸ Close
-Open Brackets**. Both selection commands return `true` even when there is
+retrace stack), and `closeOpenBrackets` on `Mod-Alt-]` plus the menu item (now **Edit ▸ Close
+Open Brackets**). Both selection commands return `true` even when there is
 nothing to do — falling through to the browser's Alt-Up would move the cursor
 and drop the selection. `Mod-Shift-]` was avoided: Chrome reserves it.
+
+Batch 3 (2026-09-21): find / replace and multiple cursors — `@codemirror/search`
+(`search({ literal: true })`, `searchKeymap`, `highlightSelectionMatches`),
+`EditorState.allowMultipleSelections` + `drawSelection()`, an
+`addCursorVertically` command on `Mod-Alt-Arrow`, `simplifySelection` on
+`Escape` (after the panel's own Escape), and a new **Edit** menu. Decisions worth keeping:
+
+- **Alt-click places a cursor even though Alt is the value scrub.** The
+  `pointerdown` handler claims the Alt press over a value token but stays
+  undecided: `pointerup` with no movement past `MOVE_CANCEL` calls
+  `addCursorAt` instead of leaving a no-op scrub, so there is no spot in the
+  document where a cursor cannot be placed. `clickAddsSelectionRange` is given
+  `altKey || metaKey/ctrlKey` (both gestures), and `addCursorAt` copies
+  CodeMirror's own rule — a click on an existing range removes it unless it is
+  the last one. Still no `rectangularSelection()` / `crosshairCursor()`:
+  Alt-*drag* over a value is the scrub.
+- **Touch has no add-cursor gesture yet.** No modifier exists there, and
+  long-press is already the value popup; a tap-to-add mode was left undesigned.
+- **`languageData.wordChars`** now carries the punctuation an MMLisp atom can
+  hold (`-+*/%^~!?<>=:@#$&|'.`), so a "word" is the whole token: double-click,
+  `Mod-d` and the selection-match tint all take `:vel*`, not `vel`. Side effect
+  accepted: `"` typed directly before such a character no longer auto-closes
+  (closeBrackets skips quote-closing before a word char), and in a `;` comment
+  a double-click grabs trailing punctuation.
+- **Search matches are mark decorations** (CodeMirror's own), the one exception
+  to the layer-only rule above — they exist only while the panel is open.
+- The panel docks at the **bottom**: the top-right corner is the
+  unmatched-bracket badge.
+- **The Edit menu exists because of undo on touch.** The top bar measured
+  217px of 390 before it, so a fourth menu was never a width problem (55px of
+  slack even at 360px); what was missing was any UI at all for undo/redo
+  without a keyboard. Edit = what changes the text (undo/redo, find/replace,
+  the occurrence commands, toggle comment, close brackets, format); Tools =
+  what is done with the score (build, snippets).
 
 ## Still open
 

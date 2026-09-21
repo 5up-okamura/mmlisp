@@ -77,8 +77,9 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 `live/` hosts the full authoring workflow in the browser — no install:
 
 - CodeMirror editor with MMLisp syntax highlighting, template completions,
-  format-on-demand, and structure help (bracket auto-close, enclosing-form
-  highlight, unmatched-bracket marks, select-by-form)
+  format-on-demand, structure help (bracket auto-close, enclosing-form
+  highlight, unmatched-bracket marks, select-by-form), and find / replace with
+  multi-cursor editing
 - Hot-swap compile on edit: the score rebuilds while playing and resumes at
   the next bar boundary
 - Accurate FM sound via a Nuked-OPN2 (YM2612) WebAssembly core in an
@@ -153,6 +154,9 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 | `Cmd+Return`  | `Ctrl+Enter`    | Play / Pause         |
 | `Cmd+.`       | `Ctrl+.`        | Stop                 |
 | `Cmd+Shift+F` | `Ctrl+Shift+F`  | Format current score |
+| `Cmd+F`       | `Ctrl+F`        | Find / Replace       |
+| `Cmd+D`       | `Ctrl+D`        | Add next occurrence  |
+| `Cmd+Shift+L` | `Ctrl+Shift+L`  | Add all occurrences  |
 
 ## Acknowledgements
 

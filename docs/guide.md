@@ -1028,9 +1028,9 @@ An unclosed `(` / `[`, or a closer with nothing to close, is underlined in the
 error color and counted in the badge at the top-right of the editor; click the
 badge to jump to the first one. Nothing is repaired behind your back — where a
 missing bracket belongs is a guess, and in a score a wrong guess silently
-changes what plays. **Tools ▸ Close Open Brackets** (`Cmd/Ctrl+Alt+]`) closes
+changes what plays. **Edit ▸ Close Open Brackets** (`Cmd/Ctrl+Alt+]`) closes
 them on request: it appends, at the cursor, the closers for every form still
-open there, innermost first. Reformatting (**Tools ▸ Format Source**,
+open there, innermost first. Reformatting (**Edit ▸ Format Source**,
 `Cmd/Ctrl+Shift+F`) is the fastest way to see whether the structure is really
 what you meant.
 
@@ -1041,6 +1041,39 @@ cursor is in, then that form including its brackets, then the next level out.
 `Alt+↓` retraces the same steps inward. Combined with bracket-wrapping, this is
 the quick way to restructure: `Alt+↑` until the phrase you want is selected,
 then `(` to wrap it and type the head.
+
+### Finding, replacing, and editing every occurrence at once
+
+`Cmd/Ctrl+F` (**Edit ▸ Find / Replace…**) opens the find/replace panel at the
+bottom of the editor. `Enter`
+(`Shift+Enter`) steps through the matches, **all** puts a cursor on every one of
+them, and the second row replaces the current match or all of them. `Esc` closes
+the panel. The query is plain text unless **regexp** is ticked — a typed `\n` is
+a backslash and an `n`, never a newline — and **match case** / **by word**
+narrow it further.
+
+`Cmd/Ctrl+D` is the one to reach for while composing: with nothing selected it
+takes the token at the cursor, and every further press adds the next occurrence
+as another cursor. Type once and all of them change together — renaming a `def`,
+turning `:vel 10` into `:vel 12` down a track, fixing an octave you spelled four
+times. `Cmd/Ctrl+Shift+L` takes every occurrence at once instead. Both are in the
+**Edit** menu, which is also where undo and redo live when there is no keyboard
+to press `Cmd/Ctrl+Z` on. Whatever is
+selected has its other occurrences tinted, so the next press is never a guess.
+
+Cursors can also be placed by hand: `Alt+click` — or `Cmd/Ctrl+click` — puts one
+wherever you click, and clicking an existing cursor the same way takes it back
+out, so overshooting costs nothing. `Cmd/Ctrl+Alt+↑` / `↓` adds one on the line
+above / below, which turns a column of note lengths into a single edit. `Esc`
+collapses them all back to one cursor.
+
+Over a value token, `Alt` is shared with the scrub (§22), and the press decides
+which one you meant: click and it places a cursor, drag and it scrubs the
+value.
+
+A "word" in the editor is a whole MMLisp atom — `:vel*`, `def-val`, `1/4`,
+`c4~` — so a double-click, and `Cmd/Ctrl+D` on its own, take the token you see
+rather than a fragment of it.
 
 ### Completions
 

@@ -172,18 +172,36 @@
       </div>
     </div>
 
-    <!-- Tools menu -->
-    <div class="menu-wrap" id="menuTools">
-      <button class="menu-btn" onclick="toggleMenu('menuTools')">Tools</button>
+    <!-- Edit menu — everything that changes the text under the cursor. On a
+         tablet with no keyboard this is the only way to reach undo/redo. -->
+    <div class="menu-wrap" id="menuEdit">
+      <button class="menu-btn" onclick="toggleMenu('menuEdit')">Edit</button>
       <div class="menu-dropdown">
-        <button class="menu-item" onclick="buildAction();closeMenus()">
-          <span>Build</span>
-          <span class="menu-item-shortcut" id="buildShortcut"></span>
+        <button class="menu-item" onclick="undoAction();closeMenus()">
+          <span>Undo</span>
+          <span class="menu-item-shortcut" id="undoShortcut"></span>
         </button>
-        <button class="menu-item" onclick="formatSource();closeMenus()">
-          <span>Format Source</span>
-          <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
+        <button class="menu-item" onclick="redoAction();closeMenus()">
+          <span>Redo</span>
+          <span class="menu-item-shortcut" id="redoShortcut"></span>
         </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="findReplaceAction();closeMenus()"
+                title="Find and replace in the score. Enter / Shift+Enter step through the matches; “all” puts a cursor on every one.">
+          <span>Find / Replace…</span>
+          <span class="menu-item-shortcut" id="findShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="selectNextOccurrenceAction();closeMenus()"
+                title="Add the next occurrence of the selection (or of the token at the cursor) to the selection, as a second cursor.">
+          <span>Select Next Occurrence</span>
+          <span class="menu-item-shortcut" id="selectNextOccurrenceShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="selectAllOccurrencesAction();closeMenus()"
+                title="Put a cursor on every occurrence of the selection, so one edit applies to all of them.">
+          <span>Select All Occurrences</span>
+          <span class="menu-item-shortcut" id="selectAllOccurrencesShortcut"></span>
+        </button>
+        <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleCommentAction();closeMenus()">
           <span>Toggle Comment</span>
           <span class="menu-item-shortcut" id="toggleCommentShortcut"></span>
@@ -191,6 +209,21 @@
         <button class="menu-item" onclick="closeBracketsAction();closeMenus()">
           <span>Close Open Brackets</span>
           <span class="menu-item-shortcut" id="closeBracketsShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="formatSource();closeMenus()">
+          <span>Format Source</span>
+          <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tools menu — what is done WITH the score, not to its text. -->
+    <div class="menu-wrap" id="menuTools">
+      <button class="menu-btn" onclick="toggleMenu('menuTools')">Tools</button>
+      <div class="menu-dropdown">
+        <button class="menu-item" onclick="buildAction();closeMenus()">
+          <span>Build</span>
+          <span class="menu-item-shortcut" id="buildShortcut"></span>
         </button>
         <div class="menu-wrap submenu-wrap" id="menuToolsSnippets">
           <button class="menu-item" onclick="toggleSubmenu('menuToolsSnippets')">
@@ -474,12 +507,13 @@
     // -----------------------------------------------------------------------
     // CodeMirror 6 — loaded from CDN
     // -----------------------------------------------------------------------
-    const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker } = await import('https://esm.sh/@codemirror/view@6');
+    const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker, drawSelection } = await import('https://esm.sh/@codemirror/view@6');
     const { EditorState, EditorSelection, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { tags } = await import('https://esm.sh/@lezer/highlight@1');
-    const { history, historyKeymap, indentWithTab, insertNewlineAndIndent } = await import('https://esm.sh/@codemirror/commands@6');
+    const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = await import('https://esm.sh/@codemirror/commands@6');
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
+    const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = await import('https://esm.sh/@codemirror/search@6');
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
     // [from, to) document offset range, clamped to the document.
@@ -1191,7 +1225,7 @@
     }
 
     // --- Pointer interactions: long-press → popup, Alt+drag → scrub ---
-    let _drag = null;       // { field, orig, curFrom, curLen, startY }
+    let _drag = null;       // { field, orig, curFrom, curLen, startX, startY, downPos, moved }
     let _press = null;      // { offset, x, y, timer } — value-token long-press
     let _tap = null;        // { offset, x, y } — bar-marker tap (opens on pointerup)
     const LONG_PRESS_MS = 450, MOVE_CANCEL = 8, DRAG_PX_PER_STEP = 6;
@@ -1263,7 +1297,15 @@
           if (info) {
             const field = fieldAtOffset(info, pos);
             if (field.kind !== 'pitch') {
-              _drag = { field, orig: field.value, curFrom: field.range[0], curLen: field.range[1] - field.range[0], startY: e.clientY };
+              // Claim the gesture, but stay undecided until the pointer moves:
+              // an Alt-drag scrubs, an Alt-click that never moves adds a cursor
+              // here (pointerup). Without this, Alt over a value would be the
+              // one place in the document where a cursor cannot be placed.
+              _drag = {
+                field, orig: field.value,
+                curFrom: field.range[0], curLen: field.range[1] - field.range[0],
+                startX: e.clientX, startY: e.clientY, downPos: pos, moved: false,
+              };
               e.preventDefault();
               return true;
             }
@@ -1290,6 +1332,8 @@
       },
       pointermove(e, view) {
         if (_drag) {
+          if (Math.abs(e.clientX - _drag.startX) > MOVE_CANCEL ||
+              Math.abs(e.clientY - _drag.startY) > MOVE_CANCEL) _drag.moved = true;
           // Drag up = increase, down = decrease (matches a slider / knob).
           const steps = Math.round((_drag.startY - e.clientY) / DRAG_PX_PER_STEP) * (_drag.field.step || 1) * (e.shiftKey ? 10 : 1);
           const v = clampField(_drag.field, _drag.orig + steps);
@@ -1305,6 +1349,8 @@
         return false;
       },
       pointerup(e, view) {
+        // An Alt press that never became a drag is an Alt-click: place a cursor.
+        if (_drag && !_drag.moved) addCursorAt(view, _drag.downPos);
         endDrag();
         cancelPress();
         if (_tap) { const bar = barAtOffset(view.state, _tap.offset); if (bar) openBarPopup(bar); _tap = null; }
@@ -1331,8 +1377,14 @@
     const mmlispMode = StreamLanguage.define({
       // Auto-close only the brackets MMLisp actually has. The defaults would
       // also close `{` (unused) and `'` (an ordinary atom character here).
+      // A "word" here is a whole MMLisp atom: the parser ends one only at
+      // whitespace, a bracket, `;` or `"`, so the punctuation an atom can carry
+      // (`:vel*`, `def-val`, `1/4`, `c4~`, `$slot`) counts as word characters.
+      // Double-click, Cmd/Ctrl+D and the selection-match highlight then all take
+      // the token you see rather than a fragment of it.
       languageData: {
         closeBrackets: { brackets: ['(', '[', '"'] },
+        wordChars: "-+*/%^~!?<>=:@#$&|'.",
       },
       startState: () => ({ head: false }), // head: next identifier is in call position
       token(stream, state) {
@@ -1789,6 +1841,37 @@
       if (!prev) return true;
       _expandLast = prev;
       view.dispatch({ selection: EditorSelection.single(prev.from, prev.to), scrollIntoView: true });
+      return true;
+    }
+
+    // Put a cursor at an arbitrary offset, following CodeMirror's own rule for
+    // a modifier-click: landing on an existing cursor or selection removes it
+    // (unless it is the last one), so overshooting is undone by clicking again.
+    function addCursorAt(view, pos) {
+      const ranges = view.state.selection.ranges;
+      const hit = ranges.findIndex(r => r.from <= pos && r.to >= pos);
+      if (hit >= 0 && ranges.length === 1) return;
+      const next = hit >= 0
+        ? EditorSelection.create(ranges.filter((_, i) => i !== hit), 0)
+        : EditorSelection.create([...ranges, EditorSelection.cursor(pos)], ranges.length);
+      view.dispatch({ selection: next, userEvent: 'select' });
+    }
+
+    // Add a cursor one line above / below the outermost existing one, the way
+    // VS Code's Cmd/Ctrl+Alt+Arrow does. moveVertically works in visual lines,
+    // so on this wrapped editor the new cursor lands where ArrowUp/Down would
+    // put the caret, and its goal column survives a short line in between.
+    function addCursorVertically(view, forward) {
+      const ranges = view.state.selection.ranges;
+      const edge = ranges.reduce((a, b) => ((b.head > a.head) === forward ? b : a));
+      const moved = view.moveVertically(edge, forward);
+      if (moved.head === edge.head) return true;  // already at the first/last line
+      const added = moved.empty ? moved : EditorSelection.cursor(moved.head);
+      view.dispatch({
+        selection: EditorSelection.create([...ranges, added], ranges.length),
+        scrollIntoView: true,
+        userEvent: 'select',
+      });
       return true;
     }
 
@@ -2368,6 +2451,12 @@
     window.formatSource = formatDocument;
     window.toggleCommentAction = toggleLineComment;
     window.closeBracketsAction = () => { closeOpenBrackets(editorView); editorView.focus(); };
+    window.undoAction = () => { undo(editorView); editorView.focus(); };
+    window.redoAction = () => { redo(editorView); editorView.focus(); };
+    // The panel takes the focus itself, so these do not steal it back.
+    window.findReplaceAction = () => { openSearchPanel(editorView); };
+    window.selectNextOccurrenceAction = () => { selectNextOccurrence(editorView); editorView.focus(); };
+    window.selectAllOccurrencesAction = () => { selectSelectionMatches(editorView); editorView.focus(); };
     window.insertSnippetFmVoice = insertSnippetFmVoice;
     window.importDefleMaskDmp = importDefleMaskDmp;
     window.importFui = importFui;
@@ -2389,17 +2478,27 @@
       if (key === 'Mod-/') return isMac ? '⌘/' : 'Ctrl+/';
       if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
       if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
+      if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
+      if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
+      if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
+      if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
+      if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
       return key;
     }
 
     function initShortcutLabels() {
       const shortcutLabels = [
+        ['undoShortcut', 'Mod-z'],
+        ['redoShortcut', 'Mod-Shift-z'],
         ['openFileShortcut', 'Mod-o'],
         ['saveFileShortcut', 'Mod-s'],
         ['saveFileAsShortcut', 'Mod-Shift-s'],
         ['formatSourceShortcut', 'Mod-Shift-f'],
         ['toggleCommentShortcut', 'Mod-/'],
         ['closeBracketsShortcut', 'Mod-Alt-]'],
+        ['findShortcut', 'Mod-f'],
+        ['selectNextOccurrenceShortcut', 'Mod-d'],
+        ['selectAllOccurrencesShortcut', 'Mod-Shift-l'],
         ['buildShortcut', 'Mod-b'],
       ];
       for (const [id, key] of shortcutLabels) {
@@ -2447,6 +2546,29 @@
       foldGutter(),
       EditorView.lineWrapping,
       history(),
+      // Multiple cursors: Cmd/Ctrl+D grows a selection match by match, the
+      // panel's "all" button puts a cursor on every match, and
+      // Cmd/Ctrl+Alt+Arrow stacks them by line — one edit, typed once, in every
+      // place. A native browser selection can only paint one range, so
+      // drawSelection() takes the selection and caret over (it hides the native
+      // caret itself, at the highest precedence).
+      EditorState.allowMultipleSelections.of(true),
+      drawSelection(),
+      // Alt-click (VS Code's gesture) and Cmd/Ctrl-click (CodeMirror's own)
+      // both add a cursor. Alt is shared with the value scrub: over a value
+      // token the pointer handler claims the press and decides on pointerup —
+      // moved = scrub, not moved = cursor (see valueEditHandlers). No
+      // rectangularSelection()/crosshairCursor() for the same reason: Alt-drag
+      // is that scrub, worth more here than a column select.
+      EditorView.clickAddsSelectionRange.of((e) => e.altKey ||
+        (navigator.platform.toUpperCase().includes('MAC') ? e.metaKey : e.ctrlKey)),
+      // Find / replace. The panel sits at the bottom: the editor's top-right
+      // corner is the unmatched-bracket badge. `literal` keeps a typed `\n` two
+      // characters — in a score, a backslash is text, not an escape.
+      search({ literal: true }),
+      // Tint the other occurrences of whatever is selected, so what Cmd/Ctrl+D
+      // would take next is visible before pressing it.
+      highlightSelectionMatches(),
       indentUnit.of('  '),
       mmlispIndent,
       mmlispParenFold,
@@ -2466,12 +2588,22 @@
         { key: 'Enter', run: insertNewlineAndIndent },
         ...foldKeymap,
         ...historyKeymap,
+        // Find (Mod-f), next/previous (F3, Mod-g), select next occurrence
+        // (Mod-d), select all occurrences (Mod-Shift-l), go to line (Mod-Alt-g),
+        // and Escape closing the panel.
+        ...searchKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
         // Structure: grow/shrink the selection by form, and close what is open.
         { key: 'Alt-ArrowUp', run: expandSelection },
         { key: 'Alt-ArrowDown', run: shrinkSelection },
         { key: 'Mod-Alt-]', run: closeOpenBrackets },
+        // Multi-cursor by line, and Escape back to one. searchKeymap's Escape
+        // runs first and closes the panel if it is open; this only fires once
+        // there is nothing left to close.
+        { key: 'Mod-Alt-ArrowUp', run: (view) => addCursorVertically(view, false) },
+        { key: 'Mod-Alt-ArrowDown', run: (view) => addCursorVertically(view, true) },
+        { key: 'Escape', run: simplifySelection },
         // Nudge the value under the cursor. `.`/`,` are the > / < keys, so the
         // direction matches MML's > (up) / < (down); Alt makes a coarse step.
         // Never binds an arrow, so caret movement / selection stay untouched.

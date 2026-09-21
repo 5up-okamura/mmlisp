@@ -214,7 +214,8 @@
       #editorWrap .cm-content,
       #editorWrap .cm-line,
       #editorWrap .cm-gutter,
-      #editorWrap .cm-gutterElement {
+      #editorWrap .cm-gutterElement,
+      #editorWrap .cm-textfield {
         font-size: 16px !important;
       }
     }
@@ -273,6 +274,76 @@
       opacity: 0.85;
     }
     #bracketStatus:hover { opacity: 1; }
+    /* ---- Find / replace panel + match highlights ---- */
+    /* The panel is CodeMirror's own (search()); only its colors are ours. It
+       docks at the bottom, clear of the unmatched-bracket badge above. */
+    #editorWrap .cm-panels {
+      background: var(--background);
+      color: var(--foreground);
+      font-size: 0.72rem;
+    }
+    #editorWrap .cm-panels-bottom { border-top: 1px solid var(--mid); }
+    #editorWrap .cm-panel.cm-search {
+      padding: 0.35rem 0.5rem;
+      line-height: 2;
+    }
+    #editorWrap .cm-panel.cm-search label { margin-right: 0.5rem; color: var(--mid); }
+    #editorWrap .cm-panel.cm-search input[type="checkbox"] {
+      accent-color: var(--accent);
+      vertical-align: -0.1em;
+      margin-right: 0.2rem;
+    }
+    #editorWrap .cm-textfield {
+      font-family: inherit;
+      font-size: 0.72rem;
+      color: var(--foreground);
+      background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+      border: 1px solid var(--mid);
+      border-radius: 2px;
+      padding: 0.15rem 0.3rem;
+      margin-right: 0.35rem;
+    }
+    #editorWrap .cm-textfield:focus { outline: none; border-color: var(--foreground); }
+    #editorWrap .cm-button {
+      font-family: inherit;
+      font-size: 0.72rem;
+      color: var(--foreground);
+      background: none;
+      background-image: none;
+      border: 1px solid var(--mid);
+      border-radius: 2px;
+      padding: 0.1rem 0.4rem;
+      margin-right: 0.35rem;
+      cursor: pointer;
+    }
+    #editorWrap .cm-button:hover,
+    #editorWrap .cm-button:active {
+      background: color-mix(in srgb, var(--foreground) 15%, var(--background));
+      background-image: none;
+    }
+    #editorWrap .cm-panel.cm-search [name="close"] {
+      color: var(--foreground);
+      background: none;
+      border: none;
+      font-size: 1rem;
+      padding: 0 0.3rem;
+      cursor: pointer;
+    }
+    /* Every match of the query, with the current one accented. These are text
+       spans (CodeMirror's own decorations), unlike the playhead/bracket layers,
+       so they exist only while the panel is open. */
+    #editorWrap .cm-searchMatch {
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+    #editorWrap .cm-searchMatch-selected {
+      background: color-mix(in srgb, var(--accent) 45%, transparent);
+    }
+    /* Other occurrences of whatever is selected — what Cmd/Ctrl+D takes next. */
+    #editorWrap .cm-selectionMatch {
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--foreground) 14%, transparent);
+    }
     /* Build-confirmation flash: fill the background of the text (fitted to each
        line's text width, not the full line) then fade out. Uses --foreground
        (which always contrasts the background) so it shows on any theme. */
