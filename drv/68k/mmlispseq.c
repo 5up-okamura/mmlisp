@@ -342,6 +342,9 @@ MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   return (uint8_t)clampi(att, 0, 15);
 }
 
+static int fm3_op_for(const MMLSeq *s, int ch);
+static int macro_ch(int ch);
+
 /* Note-on velocity: the score's sticky base, or this note's own override
  * (NOTE_ON_EX bit0, which rides one note without becoming the base). Only the
  * shadow moves — the caller recomposes carriers / att / shift right after.
@@ -353,11 +356,15 @@ MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
  * has nothing to overwrite it and this is what puts the score's velocity back. */
 static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
   uint8_t *vel = 0, base = 15;
-  if (ex_vel < 0 && ch < 10) {
-    for (int i = 0; i < s->bind_count[ch]; i++)
-      if (s->binds[ch][i].target == T_VEL) return;
+  int op = fm3_op_for(s, ch);
+  if (ex_vel < 0) {
+    int mc = macro_ch(ch);
+    if (mc >= 0)
+      for (int i = 0; i < s->bind_count[mc]; i++)
+        if (s->binds[mc][i].target == T_VEL) return;
   }
-  if (ch < 6) { vel = &s->fm[ch].vel; base = s->fm[ch].vel_base; }
+  if (op) { vel = &s->fm3_op_vel[op - 1]; base = s->fm3_op_vel_base[op - 1]; }
+  else if (ch < 6) { vel = &s->fm[ch].vel; base = s->fm[ch].vel_base; }
   else if (ch < 10) { vel = &s->psg[ch - 6].vel; base = s->psg[ch - 6].vel_base; }
   else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
     vel = &s->pcm[ch - CH_PCM1].vel;
@@ -493,6 +500,28 @@ static void channel_off(MMLSeq *s, int ch) {
   }
 }
 
+/* An FM3 operator's TL in special mode: its OWN vel and vol, the shared CH3's
+ * vol (the group fader the note-less `(fm3 …)` track writes) and the global
+ * master, on the same dB ladder every other level uses. Whether the operator
+ * is a carrier under the current algorithm is not consulted: on alg 7 — four
+ * independent voices, the reason the mode exists — this is its volume, and on
+ * a modulator it is its modulation depth, which is a level too (§13.4). */
+static uint8_t fm3_op_tl(const MMLSeq *s, int op) {
+  int i = op - 1;
+  int off4 = MML_VEL_TL4[s->fm3_op_vel[i]] + MML_VOL_TL4[s->fm3_op_vol[i]]
+             + MML_VOL_TL4[s->fm[2].vol] + MML_VOL_TL4[s->master];
+  int tl = s->fm[2].ops[i].voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+  return (uint8_t)clampi(tl, 0, 127);
+}
+static void write_fm3_op_tl(MMLSeq *s, int op) {
+  MMLOp *o = &s->fm[2].ops[op - 1];
+  o->tl = fm3_op_tl(s, op);
+  ym(s, 0, (uint8_t)(0x40 + MML_OP_ADDR_OFFSET[op - 1] + 2), o->tl);
+}
+static void recompose_fm3_ops(MMLSeq *s) {
+  for (int op = 1; op <= 4; op++) write_fm3_op_tl(s, op);
+}
+
 /* A full-gate note meets the next note-on: the key-off it was holding fires
  * here, before that note's writes, so the FM envelope sees the transition it
  * needs to attack. A slur (NOTE_ON_EX bit3) cancels it instead. PSG re-asserts
@@ -508,7 +537,12 @@ static void resolve_pending_off(MMLSeq *s, MMLTrack *t, int legato) {
   channel_off(s, ch);
 }
 
+static void recompose_fm3_ops(MMLSeq *s);
+
 static void recompose_carriers(MMLSeq *s, int ch) {
+  /* In special mode CH3's four operators are independent voices with their own
+   * levels, so the channel's carrier set is not what decides its TLs (§13.4). */
+  if (ch == 2 && (s->reg27 & 0x40)) { recompose_fm3_ops(s); return; }
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
@@ -569,6 +603,17 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     if (op && target == T_NOTE_PITCH) {
       s->fm3_op_cents[op - 1] = (int16_t)value;
       write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], value);
+      return;
+    }
+    if (op && (target == T_VEL || target == T_VOL)) {
+      if (target == T_VEL) {
+        s->fm3_op_vel[op - 1] = (uint8_t)clampi(value, 0, 15);
+        /* score's vel; a macro moves only the live one */
+        if (!force) s->fm3_op_vel_base[op - 1] = s->fm3_op_vel[op - 1];
+      } else {
+        s->fm3_op_vol[op - 1] = (uint8_t)clampi(value, 0, 31);
+      }
+      write_fm3_op_tl(s, op);
       return;
     }
   }
@@ -722,7 +767,11 @@ static int read_param(const MMLSeq *s, int ch, int target) {
   if (target == T_MASTER) return s->master;
   {
     int op = fm3_op_for(s, ch);
-    if (op && target == T_NOTE_PITCH) return s->fm3_op_cents[op - 1];
+    if (op) {
+      if (target == T_NOTE_PITCH) return s->fm3_op_cents[op - 1];
+      if (target == T_VEL) return s->fm3_op_vel[op - 1];
+      if (target == T_VOL) return s->fm3_op_vol[op - 1];
+    }
   }
   if (target == T_VOL)
     return ch < 6 ? s->fm[ch].vol : ch < 10 ? s->psg[ch - 6].vol : 31;
@@ -1287,11 +1336,14 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
    * last sample would be the channel's velocity for the rest of the song,
    * which is how a level macro anywhere in a loop left every following note at
    * full volume. ir-player does the same with `regs.vel = noteVel`. */
-  if (!fm3op) restore_vel_base(s, ch, ex_vel);
+  restore_vel_base(s, ch, ex_vel);
   cancel_loop_sweeps(s, ch);
   if (fm3op) {
-    /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH,
-     * so this only keys the operator. Level and patch stay the shared CH3's. */
+    /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH.
+     * The patch is the shared CH3's, but the LEVEL is this operator's own and
+     * is recomposed on every note, so a level change between notes always
+     * lands — exactly as a channel's carriers are (§13.4). */
+    write_fm3_op_tl(s, fm3op);
     fm3_key_op(s, fm3op, 1);
   } else if (ch < 6) {
     MMLFmCh *c = &s->fm[ch];
@@ -2128,6 +2180,12 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
       c->ops[o].rr = 15;
       c->ops[o].mul = 1;
     }
+  }
+  for (int i = 0; i < 4; i++) {
+    s->fm3_op_vel_base[i] = 15;
+    s->fm3_op_vel[i] = 15;
+    s->fm3_op_vol[i] = VOL_UNITY;
+    s->fm3_op_note[i] = 60;
   }
   for (int p = 0; p < 4; p++) {
     s->psg[p].vel_base = 15;

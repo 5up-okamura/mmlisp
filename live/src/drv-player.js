@@ -459,8 +459,13 @@ export class DrvPlayer {
     // FM3 independent-OP: each operator's own note and sticky :pitch offset
     // (index = op − 1); in special mode the operator's F-number is written from
     // these, not from _fm[2] (driver.md §13.4).
-    this._fm3OpNote = [0, 0, 0, 0];
+    this._fm3OpNote = [60, 60, 60, 60];
     this._fm3OpCents = [0, 0, 0, 0];
+    // ...and its own level, composed with the shared CH3's vol — the group
+    // fader the note-less `(fm3 …)` track writes — and the global master.
+    this._fm3OpVel = [15, 15, 15, 15];
+    this._fm3OpVelBase = [15, 15, 15, 15];
+    this._fm3OpVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY, VOL_UNITY];
     // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
     // does not model playback — the engine owns every pointer — it keeps what
     // its commands need: the note's blob, whether it loops, and the level.
@@ -776,6 +781,43 @@ export class DrvPlayer {
     this._ymKey(this._fm3OpMask | 0x02); // ch2 key = 0x02
   }
 
+  // An FM3 operator's TL in special mode: its OWN vel and vol, the shared
+  // CH3's vol (the group fader) and the global master, on the same dB ladder
+  // every other level uses. Whether the operator is a carrier under the
+  // current algorithm is not consulted: on alg 7 — four independent voices,
+  // the reason the mode exists — this is its volume, and on a modulator it is
+  // its modulation depth, which is a level too (driver.md §13.4).
+  _fm3OpTl(op) {
+    const i = op - 1;
+    const { velTl4, volTl4 } = this._luts;
+    const off4 = velTl4[this._fm3OpVel[i]] + volTl4[this._fm3OpVol[i]]
+      + volTl4[this._fm[2].vol] + volTl4[this._master];
+    const tl = this._fm[2].ops[i].voicedTl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+    return tl < 0 ? 0 : tl > 127 ? 127 : tl;
+  }
+  _writeFm3OpTl(op) {
+    const o = this._fm[2].ops[op - 1];
+    o.tl = this._fm3OpTl(op);
+    this._ym(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl);
+  }
+  _recomposeFm3Ops() {
+    for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op);
+  }
+  // A channel's carriers, from its voiced levels + vel/vol/master. In special
+  // mode CH3's four operators are independent voices with their own levels, so
+  // the carrier set is not what decides its TLs (driver.md §13.4).
+  _recomposeCarriers(ch) {
+    if (ch === 2 && this._reg27 & 0x40) { this._recomposeFm3Ops(); return; }
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const off = ch % 3;
+    for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
+      const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
+      regs.ops[opIdx].tl = tl;
+      this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
+    }
+  }
+
   _writeFm3OpPitch(op, note, cents = 0) {
     const fb = this._fnumBlockFor(note, cents);
     const high = (((fb >> 11) & 0x07) << 3) | ((fb >> 8) & 0x07);
@@ -806,7 +848,7 @@ export class DrvPlayer {
     // macro's last sample would be the channel's velocity for the rest of the
     // song, which is how a level macro anywhere in a loop left every following
     // note at full volume. ir-player does the same with `regs.vel = noteVel`.
-    if (!fm3op) this._restoreVelBase(ch, exVel);
+    this._restoreVelBase(ch, exVel);
     // Live mixer: a muted / non-soloed track advances but does not sound — skip
     // the key and its macros (which gate on the keyed state). Always true during
     // the trace gate (nothing muted), so it doesn't affect verification.
@@ -816,22 +858,18 @@ export class DrvPlayer {
     // (fades, glide) survive.
     this._cancelLoopSweeps(ch);
     if (fm3op) {
-      // FM3 independent-OP: the F-number was set by the preceding FM3_OP_PITCH;
-      // this just keys the operator. Level/voice comes from the shared patch.
+      // FM3 independent-OP: the F-number was set by the preceding FM3_OP_PITCH.
+      // The patch is the shared CH3's, but the LEVEL is this operator's own and
+      // is recomposed on every note, so a level change between notes always
+      // lands — exactly as a channel's carriers are (driver.md §13.4).
+      this._writeFm3OpTl(fm3op);
       if (audible) this._fm3KeyOp(fm3op, true);
     } else if (ch < 6) {
       const regs = this._fm[ch];
       regs.currentNote = note;
       // Carrier TL from voiced levels + vel/vol/master (every note, so a
       // level change always lands; matches the IR player).
-      const port = ch >= 3 ? 1 : 0;
-      const off = ch % 3;
-      const carriers = fmCarrierOpsForAlg(regs.algorithm);
-      for (const opIdx of carriers) {
-        const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
-        regs.ops[opIdx].tl = tl;
-        this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
-      }
+      this._recomposeCarriers(ch);
       this._writeFmPitch(ch, note, regs.pitchCents);
       if (!legato && audible) this._keyOn(ch);
     } else if (ch < 10) {
@@ -1275,8 +1313,14 @@ export class DrvPlayer {
   // note has nothing to overwrite it and this is what puts the score's
   // velocity back.
   _restoreVelBase(channelId, exVel = null) {
-    if (exVel == null && channelId < 10 && this._macroActive[channelId]?.has(TARGET_ID.VEL))
+    const mc = this._macroCh(channelId);
+    if (exVel == null && mc >= 0 && this._macroActive[mc]?.has(TARGET_ID.VEL)) return;
+    const op = this._fm3OpFor(channelId);
+    if (op) {
+      this._fm3OpVel[op - 1] =
+        exVel != null ? (exVel < 0 ? 0 : exVel > 15 ? 15 : exVel) : this._fm3OpVelBase[op - 1];
       return;
+    }
     const st =
       channelId < 6
         ? this._fm[channelId]
@@ -1372,16 +1416,7 @@ export class DrvPlayer {
     if (target === TARGET_ID.MASTER) {
       this._master = value < 0 ? 0 : value > 31 ? 31 : value;
       // Re-apply carrier TL on all FM channels; PSG att on sounding channels.
-      for (let ch = 0; ch < 6; ch++) {
-        const regs = this._fm[ch];
-        const port = ch >= 3 ? 1 : 0;
-        const off = ch % 3;
-        for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
-          const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
-          regs.ops[opIdx].tl = tl;
-          this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
-        }
-      }
+      for (let ch = 0; ch < 6; ch++) this._recomposeCarriers(ch);
       for (let p = 0; p < 4; p++) {
         if (!this._psg[p].sounding) continue;
         this._writePsgAtt(p, this._psgAtt(this._psg[p].vel, this._psg[p].vol));
@@ -1414,6 +1449,17 @@ export class DrvPlayer {
       if (op && target === TARGET_ID.NOTE_PITCH) {
         this._fm3OpCents[op - 1] = value;
         this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], value);
+        return;
+      }
+      if (op && (target === TARGET_ID.VEL || target === TARGET_ID.VOL)) {
+        if (target === TARGET_ID.VEL) {
+          this._fm3OpVel[op - 1] = value < 0 ? 0 : value > 15 ? 15 : value;
+          // score's vel; a macro moves only the live one
+          if (!force) this._fm3OpVelBase[op - 1] = this._fm3OpVel[op - 1];
+        } else {
+          this._fm3OpVol[op - 1] = value < 0 ? 0 : value > 31 ? 31 : value;
+        }
+        this._writeFm3OpTl(op);
         return;
       }
     }
@@ -1480,11 +1526,7 @@ export class DrvPlayer {
           regs.vel = value < 0 ? 0 : value > 15 ? 15 : value;
           if (!force) regs.velBase = regs.vel; // score's vel; a macro moves only the live one
         } else regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
-        for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
-          const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
-          regs.ops[opIdx].tl = tl;
-          this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
-        }
+        this._recomposeCarriers(ch);
         return;
       }
       case target === TARGET_ID.FM_FB:
@@ -2244,7 +2286,11 @@ export class DrvPlayer {
     if (target === TARGET_ID.MASTER) return this._master;
     {
       const op = this._fm3OpFor(ch);
-      if (op && target === TARGET_ID.NOTE_PITCH) return this._fm3OpCents[op - 1];
+      if (op) {
+        if (target === TARGET_ID.NOTE_PITCH) return this._fm3OpCents[op - 1];
+        if (target === TARGET_ID.VEL) return this._fm3OpVel[op - 1];
+        if (target === TARGET_ID.VOL) return this._fm3OpVol[op - 1];
+      }
     }
     if (target === TARGET_ID.VOL)
       return ch < 6 ? this._fm[ch].vol : ch < 10 ? this._psg[ch - 6].vol : 31;

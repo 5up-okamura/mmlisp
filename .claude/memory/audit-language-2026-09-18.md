@@ -30,6 +30,23 @@ curves, doc facts and examples). What remains, with the question each needs:
 
 ## Decided and fixed
 
+- **fm3-N levels are per operator** (2026-09-22, user kept `(fm3 …) :vol`).
+  `tl[op] = voiced_tl[op] + dB(op vel) + dB(op vol) + dB(CH3 vol) + dB(master)`
+  — the shared track's `:vol` stays as a group fader and becomes one more term
+  in the sum instead of being removed. The carrier table is NOT consulted: on a
+  modulator the level is modulation depth, which the user accepted as a timbre
+  knob (option A). `vol 0` attenuates to silence rather than muting the key.
+  Registers were never the obstacle — every operator has its own TL — the
+  obstacle was op1 sharing channel 2 with the patch track, which also turned
+  out to be silencing op1 on that track's rests.
+
+  **Open, found while gating this:** a mid-song patch change on CH3 written as
+  a FULL voice (29 params → `VOICE_SET`) is not applied by the driver at all in
+  special mode, and the editor applies something at the wrong tick. Expressed
+  as individual `:tlN` PARAM_SETs it works (`m4-fm3-voice-track` gates that).
+  Pre-existing — the same scratch score misbehaves at `0e91ab3^`. Repro:
+  two full `(def …)` voices, `(fm3 a :len 4 _ _ b _ _)`, operators sustaining.
+
 - **Abutting fm3-N notes re-attack** (2026-09-21/22). The driver always did;
   the EDITOR's key merge left no gap — a full-gate operator note's interval
   ended exactly where the next one began, `_fm3MaskAt` returned the same mask
@@ -66,11 +83,10 @@ curves, doc facts and examples). What remains, with the question each needs:
 ## Judgment-free but larger
 
 - ~~fm3-N glide / pitch macros do nothing (or hit CH3) on the driver~~ FIXED
-  2026-09-21 (`m4-fm3op-pitch`, `m4-fm3op-keyon`): pitch AND `:keyon` are per
-  operator in all three players — a retrigger re-keys that operator's mask bit
-  alone. Still not verified on fm3-N tracks: LEVEL macros (`:vol`/`:vel`/op
-  params) — the driver ignores them on op2-4 and applies them to the shared
-  CH3 on op1; the editor's handling was not audited.
+  2026-09-21/22 (`m4-fm3op-pitch`, `m4-fm3op-keyon`, `m4-fm3op-level`,
+  `m4-fm3-voice-track`): pitch, `:keyon` AND level are per operator in all
+  three players. The enabler was giving op1 its own channel id — operators are
+  16-19 now, channel 2 is the shared CH3 alone.
 - def-val min/max on the driver: VAL_TABLE carries no range, so SGDK setVal
   clamps only to i16 (§8) — a format change.
 - Nf in one track converted at another track's mid-song tempo change (§4).

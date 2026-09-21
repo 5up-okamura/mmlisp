@@ -1098,8 +1098,13 @@ their presence enables the mode (`FM3_MODE op` at tick 0). The shared patch
 (ALG, FB, per-op TL/ADSR) is declared with a note-less `(fm3 voice)` form.
 Pitch is per operator: `:pitch`, `(glide …)`, an inline `:pitch (curve …)`
 sweep and the `:pitch` / `:semi` macros on an `fm3-N` track bend that
-operator's F-number alone, and `:keyon` re-attacks that operator alone — the
-others keep sounding. Level and the patch are the shared channel's.
+operator's F-number alone, `:keyon` re-attacks that operator alone — the others
+keep sounding — and `:vel`/`:vol` are that operator's own level. The `(fm3 …)`
+track keeps `:vol` as the **group fader** over all four, and `:master` is
+global as ever; the three compose on one dB ladder. The patch is the shared
+channel's. On alg 7 (four operators in parallel) each `fm3-N` is a voice with
+its own fader; on an algorithm where the operator modulates, its level is
+modulation depth rather than volume.
 
 ```lisp
 (def kit :extend init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)

@@ -279,6 +279,10 @@ typedef struct {
    * operator's F-number is written from (driver.md §13.4). */
   uint8_t fm3_op_note[4];
   int16_t fm3_op_cents[4];
+  /* ...and its own level. Composed with the shared CH3's vol — the group fader
+   * the note-less `(fm3 …)` track writes — and the global master into that
+   * operator's TL (driver.md §13.4). */
+  uint8_t fm3_op_vel[4], fm3_op_vel_base[4], fm3_op_vol[4];
   MMLPcmVoice pcm[MML_PCM_VOICES];
   uint8_t pcm_dac_on;  /* $2B sent: the score's first PCM note claims fm6 for good */
   MMLGlobalSweep tempo_sweep;

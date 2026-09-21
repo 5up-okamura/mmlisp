@@ -275,6 +275,12 @@
     "compileErrors": 0,
     "digest": "a3d63836"
   },
+  "m4-fm3op-level.mmlisp": {
+    "ok": false,
+    "mismatches": 11,
+    "compileErrors": 0,
+    "digest": "12300574"
+  },
   "m4-fm3op-pitch.mmlisp": {
     "ok": false,
     "mismatches": 53,

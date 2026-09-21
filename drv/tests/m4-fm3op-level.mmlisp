@@ -1,0 +1,22 @@
+; M4 gate: per-operator levels on the FM3 independent-operator tracks
+; (driver.md §13.4). alg 7 — the four operators in parallel, which is what the
+; mode exists for — so each fm3-N track is a voice with its own fader.
+;
+; Each operator's TL is its OWN :vel and :vol, plus the shared CH3's :vol (the
+; group fader the note-less (fm3 …) track writes) and the global :master, on
+; the one dB ladder. Before this the operators had no level of their own: op1's
+; :vol moved the whole channel and op2-4's was dropped.
+;
+; op1 holds while the group fader and master move under it; op2 steps its own
+; :vol between notes; op3 takes per-note :vel; op4 stays at unity as the
+; reference the others are heard against.
+(def kit :alg 7 :fb 0
+  :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 20 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 4 :sr2 0 :rr2 6 :sl2 1 :tl2 20 :ks2 0 :ml2 2 :dt2 0
+  :ar3 31 :dr3 4 :sr3 0 :rr3 6 :sl3 1 :tl3 20 :ks3 0 :ml3 4 :dt3 0
+  :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 20 :ks4 0 :ml4 8 :dt4 0)
+(fm3 :tempo 120 kit :len 4 _ :vol 24 _ :master 24 _ _)
+(fm3-1 :oct 5 :len 1  c)
+(fm3-2 :oct 4 :len 4  :vol 31 c :vol 20 c :vol 12 c :vol 31 c)
+(fm3-3 :oct 3 :len 4  :vel 15 c :vel 10 c :vel 5 c :vel 15 c)
+(fm3-4 :oct 4 :len 1  g)

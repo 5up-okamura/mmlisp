@@ -740,7 +740,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (51 scores; every score
+same ports, same frames, same order. `npm run c-gate` (52 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +758,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 51 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 52 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -1028,6 +1028,23 @@ interval is closed an ordering margin before the next one's key-on and the
 envelope sees the transition.
 Gate: `m4-fm3op-keyon` (op2 and op3 rolling on different `:step` clocks under a
 held op1 and op4, including a frame where both fire).
+
+**Level is per operator too.** Each operator's TL is
+
+```
+voiced_tl[op] + dB(vel[op]) + dB(vol[op]) + dB(CH3 vol) + dB(master)
+```
+
+on the one level ladder (§7.1): its own `:vel` and `:vol` from its `fm3-N`
+track, the **group fader** the note-less `(fm3 …)` track writes as the
+channel's `:vol`, and the global `:master`. It is recomposed on every note of
+that operator, so a level change between notes always lands, and the group and
+master terms move all four. Whether the operator is a carrier under the current
+algorithm is not consulted: on alg 7 — four independent voices, the reason the
+mode exists — this is its volume, and on a modulator it is its modulation
+depth, which is a level too. `vol 0` therefore attenuates that operator to
+silence rather than muting its key, which is what "no modulation" means for a
+modulator. Gate: `m4-fm3op-level`.
 
 ## 14. PCM
 

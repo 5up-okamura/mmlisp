@@ -193,9 +193,12 @@ export class IRPlayer {
     // and recompute the combined key writes at every affected boundary.
     // Entries: { opBit, on, off } where `off` is null for hold (len=0) notes.
     this._fm3OpIntervals = [];
-    // FM3 independent-OP: each operator's note and sticky :pitch offset
-    // (index = op − 1) — what its F-number is written from (driver.md §13.4).
-    this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
+    // FM3 independent-OP: each operator's own note, sticky :pitch offset
+    // and level (index = op − 1) — what its F-number and TL are written
+    // from (driver.md §13.4).
+    this._fm3Op = Array.from({ length: 4 }, () => ({
+      midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+    }));
 
     // Per FM channel: a full-gate note has run up to the next note and left its
     // key-off for that note's dispatch to write (driver: `pendingOff`).
@@ -297,9 +300,12 @@ export class IRPlayer {
 
     // Reset FM3 operator key-merge state for a fresh run
     this._fm3OpIntervals = [];
-    // FM3 independent-OP: each operator's note and sticky :pitch offset
-    // (index = op − 1) — what its F-number is written from (driver.md §13.4).
-    this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
+    // FM3 independent-OP: each operator's own note, sticky :pitch offset
+    // and level (index = op − 1) — what its F-number and TL are written
+    // from (driver.md §13.4).
+    this._fm3Op = Array.from({ length: 4 }, () => ({
+      midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+    }));
     this._pendingKeyOff.fill(false);
 
     // Build per-track scheduler state
@@ -391,9 +397,12 @@ export class IRPlayer {
     const secsPerTick = this._secsPerTick;
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
     this._fm3OpIntervals = [];
-    // FM3 independent-OP: each operator's note and sticky :pitch offset
-    // (index = op − 1) — what its F-number is written from (driver.md §13.4).
-    this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
+    // FM3 independent-OP: each operator's own note, sticky :pitch offset
+    // and level (index = op − 1) — what its F-number and TL are written
+    // from (driver.md §13.4).
+    this._fm3Op = Array.from({ length: 4 }, () => ({
+      midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+    }));
     this._pendingKeyOff.fill(false);
     this._tracks = this._flattenTracks();
     for (const t of this._tracks) {
@@ -952,9 +961,12 @@ export class IRPlayer {
       this._initDefaultVoices(); // preamble register writes (when=undefined → sec 0)
 
       this._fm3OpIntervals = [];
-      // FM3 independent-OP: each operator's note and sticky :pitch offset
-      // (index = op − 1) — what its F-number is written from (driver.md §13.4).
-      this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
+      // FM3 independent-OP: each operator's own note, sticky :pitch offset
+      // and level (index = op − 1) — what its F-number and TL are written
+      // from (driver.md §13.4).
+      this._fm3Op = Array.from({ length: 4 }, () => ({
+        midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+      }));
       this._pendingKeyOff.fill(false);
       this._tracks = this._flattenTracks();
       // Reproduce the driver's track start (driver.md §4.2): the frame
@@ -1291,6 +1303,38 @@ export class IRPlayer {
     this._write(0, 0x27, this._reg27, when);
   }
 
+  // An FM3 operator's TL in special mode: its OWN vel and vol, the shared
+  // CH3's vol (the group fader the note-less `(fm3 …)` track writes) and the
+  // global master, on the one dB ladder. Whether the operator is a carrier
+  // under the current algorithm is not consulted: on alg 7 — four independent
+  // voices, the reason the mode exists — this is its volume, and on a
+  // modulator it is its modulation depth, which is a level too (§13.4).
+  // The operator's vol at `when`: a :vol sweep on an fm3-N track is stepped
+  // per frame by the driver, so a note landing mid-sweep has to read the
+  // instantaneous value here, exactly as a channel's does (_fmVolAtTime).
+  _fm3OpVolAtTime(op, when) {
+    const st = this._fm3Op[op - 1];
+    return st.volSweep ? sweepVolAtTime(st.volSweep, when) : st.vol;
+  }
+  _fm3OpTl(op, when) {
+    const st = this._fm3Op[op - 1];
+    const regs = this._chRegs[2];
+    const offset =
+      velToTlAtten(st.vel) +
+      volToTlOffset(when === undefined ? st.vol : this._fm3OpVolAtTime(op, when)) +
+      volToTlOffset(regs.vol ?? VOL_UNITY) +
+      volToTlOffset(this._masterVol ?? VOL_UNITY);
+    return Math.max(0, Math.min(127, Math.round((regs.ops[op - 1].voicedTl ?? 0) + offset)));
+  }
+  _writeFm3OpTl(op, when) {
+    const o = this._chRegs[2].ops[op - 1];
+    o.tl = this._fm3OpTl(op, when);
+    this._write(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl, when);
+  }
+  _recomposeFm3Ops(when) {
+    for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, when);
+  }
+
   _writeFm3OpPitch(op, midiNote, when) {
     const { fnum, block } = midiToFnumBlock(midiNote);
     const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
@@ -1614,12 +1658,17 @@ export class IRPlayer {
         regs.currentMidi = midi;
 
         // Apply per-note velocity (and any vol/master) to carrier TL,
-        // attenuating from each operator's voiced TL. Runs on every normal note
-        // so static :vel works and a previously attenuated note is reset; vel 15
-        // / vol 31 / master 31 restores the voiced level. FM3-op notes keep the
-        // vol-gated path so the per-operator special mode is undisturbed.
-        const hasVol = regs?.vol != null || this._fmVolSweep[ch] != null;
-        if (hasVol || !isFm3OpNote) {
+        // attenuating from each operator's voiced TL. Runs on every note so
+        // static :vel works and a previously attenuated note is reset; vel 15
+        // / vol 31 / master 31 restores the voiced level.
+        if (isFm3OpNote) {
+          // FM3 independent-OP: the note's velocity is THIS operator's, and it
+          // composes into that operator's own TL — not the channel's carriers,
+          // which belong to the other operators too (driver.md §13.4).
+          this._fm3Op[fm3Op - 1].vel = ev.args?.vel ?? 15;
+          this._writeFm3OpTl(fm3Op, when);
+        } else {
+          const hasVol = regs?.vol != null || this._fmVolSweep[ch] != null;
           const currentVol = hasVol ? this._fmVolAtTime(ch, when) : (regs.vol ?? VOL_UNITY);
           const noteVel = ev.args?.vel ?? 15;
           regs.vel = noteVel; // track sticky vel for later VOL/MASTER recalcs
@@ -1680,7 +1729,7 @@ export class IRPlayer {
           // FM3 operator note: FM3_OP_PITCH already wrote this operator's
           // F-number with its sticky :pitch offset; its pitch / semi macros
           // write that operator's registers alone (driver.md §13.4).
-          const opState = this._fm3OpPitch[fm3Op - 1];
+          const opState = this._fm3Op[fm3Op - 1];
           opState.midi = midi;
           const fm3PitchWrite = (noteCentOffset, t) => {
             this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
@@ -1915,7 +1964,7 @@ export class IRPlayer {
         const op = Number(ev.args?.op);
         if (!Number.isInteger(op) || op < 1 || op > 4) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
-        const st = this._fm3OpPitch[op - 1];
+        const st = this._fm3Op[op - 1];
         st.midi = midi;
         this._writeFm3OpPitch(op, midi + st.offset / 100, when);
         break;
@@ -2154,7 +2203,7 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
-    if (fm3Op && t === "NOTE_PITCH") return this._fm3OpPitch[fm3Op - 1].offset;
+    if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
     const m = t.match(/^FM_([A-Z]+)([1-4])$/);
     if (m) {
       const FIELD = {
@@ -2439,7 +2488,7 @@ export class IRPlayer {
         // F-number alone (driver.md §13.4).
         const op = this._fm3OpOf(ev);
         if (op) {
-          const st = this._fm3OpPitch[op - 1];
+          const st = this._fm3Op[op - 1];
           st.offset = value;
           this._writeFm3OpPitch(op, st.midi + value / 100, when);
           break;
@@ -2462,6 +2511,22 @@ export class IRPlayer {
       }
 
       case "VOL": {
+        // FM3 independent-OP: :vol on an fm3-N track is THAT operator's fader;
+        // on the shared (fm3 …) track it is the group fader over all four
+        // (driver.md §13.4).
+        const volOp = this._fm3OpOf(ev);
+        if (volOp) {
+          const st = this._fm3Op[volOp - 1];
+          st.volSweep = null; // a PARAM_SET overrides a running sweep
+          st.vol = Math.max(0, Math.min(31, value));
+          this._writeFm3OpTl(volOp, when);
+          break;
+        }
+        if (ch === 2 && this._reg27 & 0x40) {
+          regs.vol = Math.max(0, Math.min(31, value));
+          this._recomposeFm3Ops(when);
+          break;
+        }
         // vol 0-31 (31=max, 0=silent). Apply to carrier operators.
         // Clear any active FM vol sweep (PARAM_SET overrides it).
         this._fmVolSweep[ch] = null;
@@ -2497,6 +2562,7 @@ export class IRPlayer {
     this._masterVol = master;
     // FM channels: update carrier TL
     for (let ci = 0; ci < 6; ci++) {
+      if (ci === 2 && this._reg27 & 0x40) { this._recomposeFm3Ops(when); continue; }
       const cr = this._chRegs[ci];
       const cp = ci >= 3 ? 1 : 0;
       const co = ci % 3;
@@ -3182,7 +3248,7 @@ export class IRPlayer {
       // On an fm3-N track the sweep bends that operator's F-number alone,
       // from the operator's own note (driver.md §13.4).
       const op = track?.fm3Op ?? 0;
-      const opState = op ? this._fm3OpPitch[op - 1] : null;
+      const opState = op ? this._fm3Op[op - 1] : null;
       let baseMidi = opState ? opState.midi : (this._chRegs[ch]?.currentMidi ?? 60);
       let cursor = track ? track.flatIndex + 1 : 0;
       let nextNoteTick = Infinity;
@@ -3266,6 +3332,12 @@ export class IRPlayer {
     // _fmVolAtTime() returns the correct instantaneous vol at NOTE_ON time.
     const regs = this._chRegs[ch];
     if (target === "VOL") {
+      // FM3 independent-OP: a :vol sweep on an fm3-N track fades THAT operator,
+      // not the channel's carriers — which belong to the other operators too
+      // (driver.md §13.4). On the shared (fm3 …) track it is the group fader
+      // and moves all four.
+      const volOp = this._fm3OpOf(ev);
+      const groupSweep = !volOp && ch === 2 && this._reg27 & 0x40;
       const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
       for (let i = 0; i < iterFrames; i++) {
         const frame = !loop ? nonLoopStartFrame + i : i;
@@ -3285,6 +3357,20 @@ export class IRPlayer {
         const vel = regs.vel ?? 15;
         const master = this._masterVol ?? VOL_UNITY;
         const frameWhen = when + i / 60;
+        if (volOp) {
+          const st = this._fm3Op[volOp - 1];
+          st.volSweep = null; // this sweep's own frames are the live value
+          st.vol = vol;
+          const o = this._chRegs[2].ops[volOp - 1];
+          o.tl = this._fm3OpTl(volOp);
+          this._write(0, 0x40 + OP_ADDR_OFFSET[volOp - 1] + 2, o.tl, frameWhen);
+          continue;
+        }
+        if (groupSweep) {
+          regs.vol = vol;
+          this._recomposeFm3Ops(frameWhen);
+          continue;
+        }
         for (const opIdx of carriers) {
           const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
           this._write(
@@ -3294,6 +3380,19 @@ export class IRPlayer {
             frameWhen,
           );
         }
+      }
+      if (volOp) {
+        const st = this._fm3Op[volOp - 1];
+        st.volSweep = {
+          from, to, curve, params, baseFrames,
+          nonLoopOffset: nonLoopStartFrame, startWhen: when,
+        };
+        st.vol = to; // final value, for a later MASTER/group recompose
+        return;
+      }
+      if (groupSweep) {
+        regs.vol = to;
+        return;
       }
       this._fmVolSweep[ch] = {
         from,
