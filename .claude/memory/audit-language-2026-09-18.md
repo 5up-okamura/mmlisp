@@ -27,15 +27,19 @@ curves, doc facts and examples). What remains, with the question each needs:
 7. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-9. **Abutting notes on an fm3-N track**: the driver keys the operator off and
-   on between them (FM re-keys every note unless `~`), the editor's key merge
-   leaves no gap — the intervals touch, so `_fm3MaskAt` returns the same mask
-   on both sides and no `$28` write happens at all. So in the editor every
-   consecutive pair of operator notes is silently a slur, which contradicts
-   §17's re-key rule. Found 2026-09-21. The driver looks right here; the fix
-   would be a `KEY_OFF_LEAD` gap between abutting operator intervals.
 
 ## Decided and fixed
+
+- **Abutting fm3-N notes re-attack** (2026-09-21/22). The driver always did;
+  the EDITOR's key merge left no gap — a full-gate operator note's interval
+  ended exactly where the next one began, `_fm3MaskAt` returned the same mask
+  on both sides, and no `$28` write happened at all, so every consecutive pair
+  of operator notes was silently a slur. Against §17's re-key rule, and the
+  driver was right. Fixed by closing the previous interval for that operator
+  `KEY_ORDER_EPS_SECS` before the new key-on — the same ordering margin the
+  normal channels' deferred key-off uses, where the separation the chip needs
+  comes from the write path's own cost, not from the margin. `m3-fm3op` and
+  `m4-fm3op-pitch` each lost one A/B divergence; their baselines are the gate.
 
 - **A `:keyon` macro's leading step is a no-op** (2026-09-21, user: "先頭の
   アタック意味ないでしょ"). The first sample lands in the note's own frame,

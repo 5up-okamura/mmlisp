@@ -73,9 +73,9 @@
   },
   "m3-fm3op.mmlisp": {
     "ok": false,
-    "mismatches": 26,
+    "mismatches": 25,
     "compileErrors": 0,
-    "digest": "d54c7c85"
+    "digest": "9b2d4945"
   },
   "m3-gate-tie.mmlisp": {
     "ok": true,
@@ -271,9 +271,9 @@
   },
   "m4-fm3op-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 59,
+    "mismatches": 58,
     "compileErrors": 0,
-    "digest": "18546eeb"
+    "digest": "eb80ca2b"
   },
   "m4-fm6-only.mmlisp": {
     "ok": true,

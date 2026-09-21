@@ -1361,6 +1361,24 @@ export class IRPlayer {
       );
     }
 
+    // The previous note on THIS operator keys off before this one attacks. An
+    // operator note never slurs (the compiler gives `legato` to FM/PSG only,
+    // since the operators key independently), so the envelope always has to
+    // see the transition — and a full-gate note's interval would otherwise end
+    // exactly where this one starts, leaving the merged mask unchanged and no
+    // $28 write at all. Close it an ordering margin early, the same one a
+    // normal channel's deferred key-off uses (driver: resolve_pending_off).
+    let reKeyAt = null;
+    for (let i = this._fm3OpIntervals.length - 1; i >= 0; i--) {
+      const iv = this._fm3OpIntervals[i];
+      if (iv.opBit !== opBit) continue;
+      if (iv.off == null || iv.off > onTime - KEY_ORDER_EPS_SECS) {
+        reKeyAt = Math.max(iv.on, onTime - KEY_ORDER_EPS_SECS);
+        iv.off = reKeyAt;
+      }
+      break;
+    }
+
     // One interval per keyed segment: [on, gap₁) [rekey₁, gap₂) … [rekeyₙ, off).
     const segments = [];
     let segOn = onTime;
@@ -1380,6 +1398,7 @@ export class IRPlayer {
     const within = (t) =>
       t > onTime && (offTime == null || t < offTime);
     const boundaries = new Set([onTime]);
+    if (reKeyAt != null) boundaries.add(reKeyAt);
     if (offTime != null) boundaries.add(offTime);
     for (const seg of segments) {
       boundaries.add(seg.on);

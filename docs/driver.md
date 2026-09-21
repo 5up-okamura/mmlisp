@@ -1021,6 +1021,10 @@ restores that operator's mask bit and re-emits `$28`, so the operators sounding
 alongside it are untouched. In the reference player this is one more interval
 in the key merge rather than a register write of its own — the note becomes
 `[on, gap₁) [rekey₁, gap₂) … [rekeyₙ, off)` and the merged mask follows.
+Consecutive operator notes re-attack for the same reason every FM note does
+(§17): an operator note never carries the legato flag, so the previous note's
+interval is closed an ordering margin before the next one's key-on and the
+envelope sees the transition.
 Gate: `m4-fm3op-keyon` (op2 and op3 rolling on different `:step` clocks under a
 held op1 and op4, including a frame where both fire).
 
