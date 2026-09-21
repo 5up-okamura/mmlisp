@@ -1656,7 +1656,8 @@ export class DrvPlayer {
     const active = this._macroActive[mc];
     const slots = [];
     for (const macroId of active.values()) {
-      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state: "run" });
+      // `fresh`: this slot's first sample lands in the note's own frame.
+      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state: "run", fresh: true });
     }
     this._macroSlots[mc] = slots;
   }
@@ -1732,7 +1733,11 @@ export class DrvPlayer {
       if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v, add);
       // KEYON retrigger: a nonzero step re-attacks the note (driver.md §14).
       else if (d.target === TARGET_ID.KEYON) {
-        if (v !== 0) this._keyonRetrigger(ch);
+        // The first sample lands in the note's own frame, where the note has
+        // just attacked — re-attacking there is a write with nothing behind
+        // it, so a leading nonzero step is a no-op (ir-player skips the t=0
+        // sample the same way). Later steps are the roll.
+        if (v !== 0 && !slot.fresh) this._keyonRetrigger(ch);
       } else if (d.target === TARGET_ID.NOTE_PITCH) {
         // Pitch macro: write the note pitch each frame WITHOUT storing back to
         // the sticky pitchCents (which holds the :pitch directive base). An
@@ -1754,6 +1759,7 @@ export class DrvPlayer {
         }
       } else this._paramSet(ch, d.target, v, true); // macro owns the envelope
     }
+    slot.fresh = false;
     slot.stepClock = d.step - 1;
     if (slot.state === "run") {
       slot.cursor++;

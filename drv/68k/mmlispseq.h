@@ -160,6 +160,7 @@ typedef struct {
   uint8_t macro_id;
   uint8_t state; /* MML_MACRO_RUN / _HOLD / _RELEASE */
   uint8_t dead;  /* finished this frame; compacted after the pass */
+  uint8_t fresh; /* the note's own frame: a KEYON step here does not re-attack */
   uint16_t cursor;
   int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
 } MMLMacroSlot;

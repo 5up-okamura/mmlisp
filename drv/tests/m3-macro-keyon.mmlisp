@@ -2,7 +2,9 @@
 ; the note — on FM the hardware EG is re-keyed ($28 off→on); on any channel the
 ; soft-envelope macros (vol/pitch) restart from their attack. FM+PSG only.
 ; Covers: an FM roll (bare re-key), an FM note whose vol envelope is restarted by
-; the retrigger, and a PSG note where the vol soft-envelope restart IS the effect.
+; the retrigger, a PSG note where the vol soft-envelope restart IS the effect,
+; and a macro whose FIRST step is 1 — a leading re-attack is a no-op, because
+; that sample lands in the note's own frame, where the note has just attacked.
 (fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
   (macro :step 3f :keyon [0 :hold 1]) :len 4  c e)
 (fm2 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
@@ -10,3 +12,5 @@
   (macro :step 6f :keyon [0 :hold 1]) :len 4  g)
 (sqr1 (macro :step 1f :vol [15 :hold 12 9 6 3])
       (macro :step 4f :keyon [0 :hold 1]) :len 4  e)
+(fm4 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (macro :step 4f :keyon [1 1 1 1]) :len 4  c)

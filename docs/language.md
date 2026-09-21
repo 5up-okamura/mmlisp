@@ -828,7 +828,8 @@ retriggers the envelope.
 `:keyon` is sampled once per `:step`; a sampled value ≥ 0.5 fires a key-on
 retrigger (key-off then key-on across the player's `KEY_OFF_LEAD` gap,
 restarting the envelopes). The first sample at t = 0 coincides with the note's
-own attack and is a no-op. Steps before `:off` loop until note-off (a roll);
+own attack and is a no-op, so a roll starts at the second step whether it is
+written `[0 :hold 1]` or `[1 1 1 …]`. Steps before `:off` loop until note-off (a roll);
 steps after `:off` fire after note-off (a one-channel echo tail). While a
 `:keyon` macro is active it owns the channel keying.
 
@@ -836,7 +837,7 @@ steps after `:off` fire after note-off (a one-channel echo tail). While a
 | ------------------------------ | ----------------------------------------- |
 | `:keyon 1`                     | Fire every `:step`                        |
 | `:keyon 0`                     | Never fire (= omitting `:keyon`)          |
-| `:keyon [1]`                   | One-shot at step 0, then stop             |
+| `:keyon [1]`                   | Nothing — step 0 is the note's own attack |
 | `:keyon [:hold 1 0]`           | Alternate steps                           |
 | `:keyon (square 0..1 :duty 128 :len 8)` | Duty-gated regular retrigger (period: one 8th) |
 | `:keyon (noise :from 0 :to 1 :len 1)` | Probabilistic retrigger (~50 % per step) |

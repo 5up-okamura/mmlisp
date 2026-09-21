@@ -27,16 +27,25 @@ curves, doc facts and examples). What remains, with the question each needs:
 7. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-9. **A `:keyon` macro's step 0** lands in the note's own frame: the driver
-   re-attacks there (key-off/key-on right after the note-on), the editor treats
-   the first sample as the note's own key-on and skips it. Every channel, not
-   just fm3 — found 2026-09-21 while gating fm3-N `:keyon`; `m3-macro-keyon`
-   was written as `[0 :hold 1]`, which steps around it. Is a leading 1 a
-   re-attack or a no-op?
-10. **Abutting notes on an fm3-N track**: the driver keys the operator off and
+9. **Abutting notes on an fm3-N track**: the driver keys the operator off and
    on between them (FM re-keys every note unless `~`), the editor's key merge
-   leaves no gap, so the operator never re-attacks. Same question as §17's
-   re-key rule, on the operator tracks.
+   leaves no gap — the intervals touch, so `_fm3MaskAt` returns the same mask
+   on both sides and no `$28` write happens at all. So in the editor every
+   consecutive pair of operator notes is silently a slur, which contradicts
+   §17's re-key rule. Found 2026-09-21. The driver looks right here; the fix
+   would be a `KEY_OFF_LEAD` gap between abutting operator intervals.
+
+## Decided and fixed
+
+- **A `:keyon` macro's leading step is a no-op** (2026-09-21, user: "先頭の
+  アタック意味ないでしょ"). The first sample lands in the note's own frame,
+  where the note has just attacked, so re-attacking there is a write with
+  nothing behind it. language.md §10 had said this all along ("The first
+  sample at t = 0 … is a no-op") and ir-player did it; the DRIVER was the one
+  diverging, on every channel. Fixed in `mmlispseq.c` and `drv-player.js` with
+  a per-slot `fresh` flag (the sustain loop can return to cursor 0, so the
+  cursor alone cannot say "first"). Gate: `m3-macro-keyon`'s fm4 track,
+  `[1 1 1 1]` — 0-diff on `$28` between the two players.
 
 ## Decided, no change
 

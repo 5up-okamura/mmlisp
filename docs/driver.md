@@ -907,7 +907,9 @@ region; `(wait key-off)` marks the release boundary).
   every active into its running slot, and the stepper steps all three. Gated by
   `m3-macro-multi`.
 - **KEYON** (macro-only target, retrigger; gated by `m3-macro-keyon`): a nonzero
-  step re-attacks the note — it restarts the channel's non-keyon macro slots to
+  step re-attacks the note — except the **first** one, which lands in the note's
+  own frame, where the note has just attacked; a leading `1` is a no-op and the
+  roll starts at the second step — it restarts the channel's non-keyon macro slots to
   their attack (so soft-envelope `:vol`/`:pitch` macros replay) and, on FM,
   re-keys the hardware EG (`$28` off→on). PSG has no hardware EG, so the
   soft-envelope restart is the whole effect. On an FM3 operator track the

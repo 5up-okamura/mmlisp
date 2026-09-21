@@ -928,6 +928,7 @@ static void macro_trigger(MMLSeq *s, int ch) {
     sl->macro_id = s->binds[ch][i].macro_id;
     sl->state = MML_MACRO_RUN;
     sl->dead = 0;
+    sl->fresh = 1;
     sl->cursor = 0;
     sl->step_clock = 0;
   }
@@ -1006,7 +1007,11 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
     if (d.target == T_NOTE_SEMI) {
       write_note_semi(s, ch, v, add);
     } else if (d.target == T_KEYON) {
-      if (v != 0) keyon_retrigger(s, ch);
+      /* The first sample lands in the note's own frame, where the note has
+       * just attacked — re-attacking there is a write with nothing behind it,
+       * so a leading nonzero step is a no-op (ir-player skips the t=0 sample
+       * the same way). Later steps are the roll. */
+      if (v != 0 && !sl->fresh) keyon_retrigger(s, ch);
     } else if (d.target == T_NOTE_PITCH) {
       /* Pitch macro: write the register every frame but never store back to
        * pitch_cents, which holds the :pitch directive's base. An override macro
@@ -1027,6 +1032,7 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
       param_set_ex(s, ch, d.target, v, 1); /* the macro owns the envelope */
     }
   }
+  sl->fresh = 0;
   sl->step_clock = (int16_t)(d.step - 1);
   if (sl->state == MML_MACRO_RUN) {
     sl->cursor++;
