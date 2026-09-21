@@ -79,7 +79,7 @@ count — where the images' periods come from).
 | --- | --- |
 | `z80asm.mjs`, `z80cpu.mjs`, `selftest.mjs` | first-party Z80 assembler and emulator (documented T-states, including the memory cycle every `(HL)` operand pays) |
 | `machine.mjs` | the Mega Drive slice the engine runs in: YM2612 ports with a timer model from the chip, the bank register, PSG, the 68000's bus grab as injected stopped time |
-| `probe-analysis.mjs`, `cooperative.mjs` | reading the probe BlastEm's event log |
+| `probe-analysis.mjs` | reading the probe BlastEm's event log |
 | `build-engine.mjs`, `emit-bin.mjs` | assemble the generated engine; emit the image and its header |
 | `emit-images.mjs` | the light images' descriptors into `live/src/engine-images.js` |
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |

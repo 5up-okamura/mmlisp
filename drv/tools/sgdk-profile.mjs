@@ -39,10 +39,11 @@ const KEEP = argv.includes("--keep");
 const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "sin008.mmlisp");
 const FRAME = 896040;   // master clocks in an NTSC frame
 const IRQ = new Set(["pump"]);
+// The host's own path only: encode_slot and mmlp_slot serve the byte-slot path
+// the gates' harnesses use, and an SGDK build never reaches them.
 const DEFAULT_FNS = [
   "mmlp_render", "run_frame", "dispatch", "note_on", "voice_set", "param_set_ex", "recompose_carriers",
-  "fnum_block_for", "psg_period_for", "process_macros", "pcm_frame", "encode_slot",
-  "mmlp_slot", "mmlp_plan", "pump",
+  "fnum_block_for", "psg_period_for", "process_macros", "pcm_note_on", "mmlp_plan", "pump",
 ];
 const pcAt = argv.indexOf("--pc");
 const PC_PERIOD = pcAt >= 0 ? (Number(argv[pcAt + 1]) || 1000) : 0;
