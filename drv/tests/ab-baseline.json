@@ -263,6 +263,12 @@
     "compileErrors": 0,
     "digest": "592bafb9"
   },
+  "m4-fm3op-pitch.mmlisp": {
+    "ok": false,
+    "mismatches": 59,
+    "compileErrors": 0,
+    "digest": "18546eeb"
+  },
   "m4-fm6-only.mmlisp": {
     "ok": true,
     "mismatches": 0,

@@ -118,7 +118,7 @@ plays. Sound effects are not on the hardware driver yet (driver.md §11).
 
 It's built reference-first: a JS implementation (`drv-player.js`) validated in
 MMLisp Live, then a C sequencer whose **every register write is checked
-byte-for-byte against it at zero tolerance** (48 scores), and an SGDK build
+byte-for-byte against it at zero tolerance** (49 scores), and an SGDK build
 graded write by write and DAC byte by DAC byte in an emulator. See
 [docs/driver.md](docs/driver.md) for the architecture,
 [drv/README.md](drv/README.md) for building and verification, and

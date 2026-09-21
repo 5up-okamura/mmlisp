@@ -284,10 +284,12 @@ Notes:
   bit0 = 1 → swept form: `from u16, to u16, len u16 (frames), curve u8`.
   Bits1–7 reserved 0.
 - **FM3_MODE / FM3_OP_PITCH** (implemented, driver.md §13.4). Each `fm3-1`…
-  `fm3-4` note emits `FM3_OP_PITCH {op, note}` — writing that operator's
-  F-number registers (OP4 → CH3 base `$A6`/`$A2`; OP1-3 → `$AC+idx`/`$A8+idx`,
-  `idx = op mod 3`) — followed by a `NOTE_ON` on channel id 2 (op1) or 16-18
-  (op2-4) that keys the operator's `$28` slot bit. `FM3_MODE 1` (from the
+  `fm3-4` note emits `FM3_OP_PITCH {op, note}` — recording the operator's note
+  and writing its F-number registers (OP4 → CH3 base `$A6`/`$A2`; OP1-3 →
+  `$AC+idx`/`$A8+idx`, `idx = op mod 3`) with the operator's own sticky
+  `NOTE_PITCH` offset applied — followed by a `NOTE_ON` on channel id 2 (op1)
+  or 16-18 (op2-4) that keys the operator's `$28` slot bit. NOTE_PITCH sets,
+  sweeps and macros on an operator track move that operator alone. `FM3_MODE 1` (from the
   note-less `(fm3 …)` track) sets `$27` bit6 first. (The v0.1 draft reserved
   0xA4 for REG_WRITE; REG_WRITE is dropped — see §8.)
 - **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id). The exporter bakes one

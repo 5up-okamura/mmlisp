@@ -73,6 +73,9 @@ import {
 } from "./ir-utils.js";
 
 const FRAMES_PER_SEC = 60;
+// The channels the macro engine runs on: 0-9 and FM3's op2-4 (mmlispseq.h
+// MML_MACRO_CHANNELS).
+const MACRO_CHANNELS = 13;
 const LOOP_STACK_DEPTH = 4; // driver.md §5.2
 
 // ── LUT construction (float math lives here and only here) ────────────────
@@ -434,13 +437,16 @@ export class DrvPlayer {
     // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
     // Banks: the ten M1 channels, then the three PCM voices — their loop
     // points sweep like any other param (_sweepBank).
-    this._sweeps = Array.from({ length: 13 }, () => [null, null]);
+    // Sweep banks: the ten M1 channels, the three PCM voices, then FM3's
+    // op2-4 (ids 16-18; op1 is channel 2's) — see _sweepBank.
+    this._sweeps = Array.from({ length: 16 }, () => [null, null]);
     // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
     // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
     this._macros = song?.macros ?? [];
     this._voices = song?.voices ?? [];
-    this._macroActive = Array.from({ length: 10 }, () => new Map()); // target → macro index
-    this._macroSlots = Array.from({ length: 10 }, () => []); // running slots
+    // The macro engine's channels: 0-9 and FM3's op2-4 as 10-12 (_macroCh).
+    this._macroActive = Array.from({ length: MACRO_CHANNELS }, () => new Map()); // target → macro index
+    this._macroSlots = Array.from({ length: MACRO_CHANNELS }, () => []); // running slots
     // M3 dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
     // overwritten by SET_VAL. $time (slot 0xFF) reads the frame counter instead.
     this._valSlots = new Int16Array(16);
@@ -450,6 +456,11 @@ export class DrvPlayer {
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
+    // FM3 independent-OP: each operator's own note and sticky :pitch offset
+    // (index = op − 1); in special mode the operator's F-number is written from
+    // these, not from _fm[2] (driver.md §13.4).
+    this._fm3OpNote = [0, 0, 0, 0];
+    this._fm3OpCents = [0, 0, 0, 0];
     // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
     // does not model playback — the engine owns every pointer — it keeps what
     // its commands need: the note's blob, whether it loops, and the level.
@@ -747,6 +758,17 @@ export class DrvPlayer {
     return 0;
   }
 
+  // The macro engine's channel index: 0-9 are their own, FM3's op2-4 (ids
+  // 16-18) are 10-12, op1 rides channel 2's. -1 = no macro engine (PCM).
+  _macroCh(ch) {
+    if (ch < 10) return ch;
+    if (ch >= 16 && ch <= 18) return 10 + (ch - 16);
+    return -1;
+  }
+  _macroChId(mc) {
+    return mc < 10 ? mc : 16 + (mc - 10);
+  }
+
   _fm3KeyOp(op, on) {
     const bit = 0x10 << (op - 1); // OP1=0x10 … OP4=0x80 ($28 slot bits)
     if (on) this._fm3OpMask |= bit;
@@ -754,8 +776,8 @@ export class DrvPlayer {
     this._ymKey(this._fm3OpMask | 0x02); // ch2 key = 0x02
   }
 
-  _writeFm3OpPitch(op, note) {
-    const fb = this._fnumBlockFor(note, 0);
+  _writeFm3OpPitch(op, note, cents = 0) {
+    const fb = this._fnumBlockFor(note, cents);
     const high = (((fb >> 11) & 0x07) << 3) | ((fb >> 8) & 0x07);
     const low = fb & 0xff;
     if (op === 4) {
@@ -829,7 +851,7 @@ export class DrvPlayer {
     // fires this frame in step 3, overriding the note-on's base level. A muted
     // track skips it (its channel is keyed-off, so a retrigger would sound a
     // release tail); gate scheduling below still runs so the track keeps time.
-    if (!fm3op && ch < 10 && audible) {
+    if ((fm3op || ch < 10) && audible) {
       this._macroTrigger(ch);
       // Past the frame's first sub-tick the step pass has already run, so the
       // first step fires HERE instead (driver.md §3.5). §13.1 requires it in the
@@ -1164,7 +1186,10 @@ export class DrvPlayer {
           const opn = s[trk.pc + 1];
           const note = s[trk.pc + 2];
           trk.pc += 3;
-          this._writeFm3OpPitch(opn, note);
+          if (opn >= 1 && opn <= 4) {
+            this._fm3OpNote[opn - 1] = note;
+            this._writeFm3OpPitch(opn, note, this._fm3OpCents[opn - 1]);
+          }
           break;
         }
         case OPCODE.PCM_NOTE_ON: {
@@ -1193,19 +1218,21 @@ export class DrvPlayer {
           const macroId = s[trk.pc + 1];
           trk.pc += 2;
           const d = this._macros[macroId];
-          if (d && trk.channelId < 10) {
+          const mc = this._macroCh(trk.channelId);
+          if (d && mc >= 0) {
             // Sticky: bind this macro as the active macro for its target,
             // replacing any macro already active on that target (driver.md §13.1).
-            this._macroActive[trk.channelId].set(d.target, macroId);
+            this._macroActive[mc].set(d.target, macroId);
           }
           break;
         }
         case OPCODE.MACRO_CLEAR: {
           const target = s[trk.pc + 1];
           trk.pc += 2;
-          if (trk.channelId < 10) {
-            if (target === 0xff) this._macroActive[trk.channelId].clear();
-            else this._macroActive[trk.channelId].delete(target);
+          const mc = this._macroCh(trk.channelId);
+          if (mc >= 0) {
+            if (target === 0xff) this._macroActive[mc].clear();
+            else this._macroActive[mc].delete(target);
           }
           break;
         }
@@ -1379,6 +1406,18 @@ export class DrvPlayer {
       return;
     }
 
+    // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
+    // F-number alone. Every other target on an operator track stays what it
+    // was — the level and patch are the shared CH3's (driver.md §13.4).
+    {
+      const op = this._fm3OpFor(channelId);
+      if (op && target === TARGET_ID.NOTE_PITCH) {
+        this._fm3OpCents[op - 1] = value;
+        this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], value);
+        return;
+      }
+    }
+
     // PSG-channel targets.
     if (channelId >= 6 && channelId < 10) {
       const psgCh = channelId - 6;
@@ -1544,11 +1583,18 @@ export class DrvPlayer {
 
   // ── M2 sweep engine (driver.md §4 step 3) ────────────────────────────────
   // A channel's sweep bank: the ten M1 channels are their own, the three PCM
-  // voices follow them. fm3-op ids have none. -1 = no bank.
+  // voices follow them, then FM3's op2-4 (ids 16-18) — a glide on an fm3-N
+  // track bends that operator alone. op1 is channel 2's bank. -1 = no bank.
   _sweepBank(ch) {
     if (ch < 10) return ch;
     if (ch >= 20 && ch <= 22) return 10 + (ch - 20);
+    if (ch >= 16 && ch <= 18) return 13 + (ch - 16);
     return -1;
+  }
+  _sweepBankCh(bank) {
+    if (bank < 10) return bank;
+    if (bank < 13) return 20 + (bank - 10);
+    return 16 + (bank - 13);
   }
 
   _startSweep(ch, target, curveId, loop, from, to, len) {
@@ -1595,6 +1641,8 @@ export class DrvPlayer {
 
   // ── M3 macro engine (driver.md §13) ──────────────────────────────────────
   _channelKeyed(ch) {
+    const op = this._fm3OpFor(ch);
+    if (op) return (this._fm3OpMask & (0x10 << (op - 1))) !== 0;
     if (ch < 6) return this._fm[ch].keyed;
     if (ch < 10) return this._psg[ch - 6].keyed;
     return false;
@@ -1603,12 +1651,14 @@ export class DrvPlayer {
   // NOTE_ON re-instantiates every active macro into a fresh running slot
   // (driver.md §13.1). Insertion order = MACRO_SET order (§13.3).
   _macroTrigger(ch) {
-    const active = this._macroActive[ch];
+    const mc = this._macroCh(ch);
+    if (mc < 0) return;
+    const active = this._macroActive[mc];
     const slots = [];
     for (const macroId of active.values()) {
       slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state: "run" });
     }
-    this._macroSlots[ch] = slots;
+    this._macroSlots[mc] = slots;
   }
 
   // NOTE_SEMI macro apply: pitch register at (current note + semitones), cents 0,
@@ -1616,7 +1666,10 @@ export class DrvPlayer {
   // `add` (additive macro, §4.4): ride the live :pitch offset (cents) instead of
   // overriding to 0 — for `:semi+` sharing a vibrato over a detuned base.
   _writeNoteSemi(ch, semi, add = false) {
-    if (ch < 6) {
+    const op = this._fm3OpFor(ch);
+    if (op) {
+      this._writeFm3OpPitch(op, this._fm3OpNote[op - 1] + semi, add ? this._fm3OpCents[op - 1] : 0);
+    } else if (ch < 6) {
       this._writeFmPitch(ch, this._fm[ch].currentNote + semi, add ? this._fm[ch].pitchCents : 0);
     } else if (ch < 10) {
       const p = ch - 6;
@@ -1625,13 +1678,15 @@ export class DrvPlayer {
   }
 
   _processMacros() {
-    for (let ch = 0; ch < 10; ch++) this._stepChannelMacros(ch);
+    for (let mc = 0; mc < MACRO_CHANNELS; mc++) this._stepChannelMacros(this._macroChId(mc));
   }
 
   // One channel's running slots, one step. Split out of _processMacros because
   // a note-on past sub-tick 0 has to step its own channel on the spot (§3.5).
   _stepChannelMacros(ch) {
-    const slots = this._macroSlots[ch];
+    const mc = this._macroCh(ch);
+    if (mc < 0) return;
+    const slots = this._macroSlots[mc];
     if (slots.length === 0) return;
     const keyed = this._channelKeyed(ch);
     let dead = false;
@@ -1641,7 +1696,7 @@ export class DrvPlayer {
         dead = true;
       }
     }
-    if (dead) this._macroSlots[ch] = slots.filter(Boolean);
+    if (dead) this._macroSlots[mc] = slots.filter(Boolean);
   }
 
   // One running slot, one frame. Returns true when the slot is finished.
@@ -1685,7 +1740,11 @@ export class DrvPlayer {
         // detune on every following note once it ends or is cleared. Additive
         // rides the live offset (`pitchCents + v`); override replaces it (base
         // 0 → `v` alone), matching ir-player's basePitchWrite.
-        if (ch < 6) {
+        const op = this._fm3OpFor(ch);
+        if (op) {
+          const base = add ? this._fm3OpCents[op - 1] : 0;
+          this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], base + v);
+        } else if (ch < 6) {
           const base = add ? this._fm[ch].pitchCents : 0;
           this._writeFmPitch(ch, this._fm[ch].currentNote, base + v);
         } else if (ch - 6 < 3) {
@@ -1713,9 +1772,10 @@ export class DrvPlayer {
   // KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
   // soft-envelope macros (every non-keyon running slot → attack) and, on FM,
   // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
-  // the whole effect. (The macro engine runs on channels 0-9, so this is FM+PSG.)
+  // the whole effect.
   _keyonRetrigger(ch) {
-    for (const s of this._macroSlots[ch]) {
+    const mc = this._macroCh(ch);
+    for (const s of mc < 0 ? [] : this._macroSlots[mc]) {
       if (!s) continue;
       const sd = this._macros[s.descIdx];
       if (!sd || sd.target === TARGET_ID.KEYON) continue;
@@ -2176,6 +2236,10 @@ export class DrvPlayer {
   // Logical current value of a target, for PARAM_ADD read-modify-write.
   _readParam(ch, target) {
     if (target === TARGET_ID.MASTER) return this._master;
+    {
+      const op = this._fm3OpFor(ch);
+      if (op && target === TARGET_ID.NOTE_PITCH) return this._fm3OpCents[op - 1];
+    }
     if (target === TARGET_ID.VOL)
       return ch < 6 ? this._fm[ch].vol : ch < 10 ? this._psg[ch - 6].vol : 31;
     if (target === TARGET_ID.VEL)
@@ -2252,7 +2316,7 @@ export class DrvPlayer {
         // 3. Sweep engines (driver.md §4 step 3): ascending channel, ascending
         //    slot, then the global tempo sweep. Each writes into the shadow.
         for (let bank = 0; bank < this._sweeps.length; bank++) {
-          const ch = bank < 10 ? bank : 20 + (bank - 10);
+          const ch = this._sweepBankCh(bank);
           const slots = this._sweeps[bank];
           for (let si = 0; si < slots.length; si++) {
             if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;

@@ -1,0 +1,21 @@
+; M4 gate: pitch modulation on the FM3 independent-operator tracks, per
+; operator (driver.md §13.4). Each fm3-N track bends ITS operator's F-number
+; and nothing else: a glide on op1, a :pitch vibrato macro on op2, a :semi
+; arpeggio on op3, and a sticky :pitch detune plus an inline pitch sweep on
+; op4. Before this gate op2-4 had no sweep bank and no macro engine (their
+; glides and macros were dropped) and op1's went through the CH3 path,
+; landing on op4's registers.
+(def kit :alg 4 :fb 3
+  :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 24 :ks1 0 :ml1 2 :dt1 0
+  :ar2 31 :dr2 8 :sr2 2 :rr2 8 :sl2 2 :tl2 8 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 28 :ks3 0 :ml3 4 :dt3 0
+  :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+(fm3 :tempo 120 kit)
+(fm3-1 :oct 5 :len 4
+  c (glide 8) e g (glide none) c)
+(fm3-2 :oct 4 :len 4
+  (macro :pitch [0 :hold 30 0 -30 0]) e _ c (macro :pitch none) e)
+(fm3-3 :oct 3 :len 2
+  (macro :semi [0 :hold 4 7]) c (macro :semi none) g)
+(fm3-4 :oct 4 :len 4
+  :pitch -50 g c :pitch (ease-out :from -50 :to 50 :len 4) e g)

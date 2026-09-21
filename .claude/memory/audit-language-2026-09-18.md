@@ -42,8 +42,12 @@ curves, doc facts and examples). What remains, with the question each needs:
 
 ## Judgment-free but larger
 
-- fm3-N glide / pitch macros do nothing (or hit CH3) on the driver: the macro
-  engine and sweep banks cover channels 0–9 only (§15).
+- ~~fm3-N glide / pitch macros do nothing (or hit CH3) on the driver~~ FIXED
+  2026-09-21 (`m4-fm3op-pitch`): pitch is per operator in all three players.
+  What is still not verified on fm3-N tracks: LEVEL macros (`:vol`/`:vel`/op
+  params) — the driver ignores them on op2-4 and applies them to the shared
+  CH3 on op1; the editor's handling was not audited. `:keyon` on fm3-N is now
+  dropped uniformly (was: op1 retriggered on the driver only).
 - def-val min/max on the driver: VAL_TABLE carries no range, so SGDK setVal
   clamps only to i16 (§8) — a format change.
 - Nf in one track converted at another track's mid-song tempo change (§4).

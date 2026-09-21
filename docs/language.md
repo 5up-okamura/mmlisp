@@ -1095,7 +1095,10 @@ override accepts a raw Hz literal or a pitch.
 `fm3-1`–`fm3-4` each drive one operator's F-number as a monophonic track;
 their presence enables the mode (`FM3_MODE op` at tick 0). The shared patch
 (ALG, FB, per-op TL/ADSR) is declared with a note-less `(fm3 voice)` form.
-Macros and `(glide …)` are independent per `fm3-N` track.
+Pitch is per operator: `:pitch`, `(glide …)`, an inline `:pitch (curve …)`
+sweep and the `:pitch` / `:semi` macros on an `fm3-N` track bend that
+operator's F-number alone. Level and the patch are the shared channel's, and
+`:keyon` is not available on operator tracks (`W_MMB_KEYON_UNSUPPORTED`).
 
 ```lisp
 (def kit :extend init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)

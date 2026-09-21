@@ -193,6 +193,9 @@ export class IRPlayer {
     // and recompute the combined key writes at every affected boundary.
     // Entries: { opBit, on, off } where `off` is null for hold (len=0) notes.
     this._fm3OpIntervals = [];
+    // FM3 independent-OP: each operator's note and sticky :pitch offset
+    // (index = op − 1) — what its F-number is written from (driver.md §13.4).
+    this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
 
     // Per FM channel: a full-gate note has run up to the next note and left its
     // key-off for that note's dispatch to write (driver: `pendingOff`).
@@ -294,6 +297,9 @@ export class IRPlayer {
 
     // Reset FM3 operator key-merge state for a fresh run
     this._fm3OpIntervals = [];
+    // FM3 independent-OP: each operator's note and sticky :pitch offset
+    // (index = op − 1) — what its F-number is written from (driver.md §13.4).
+    this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
     this._pendingKeyOff.fill(false);
 
     // Build per-track scheduler state
@@ -385,6 +391,9 @@ export class IRPlayer {
     const secsPerTick = this._secsPerTick;
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
     this._fm3OpIntervals = [];
+    // FM3 independent-OP: each operator's note and sticky :pitch offset
+    // (index = op − 1) — what its F-number is written from (driver.md §13.4).
+    this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
     this._pendingKeyOff.fill(false);
     this._tracks = this._flattenTracks();
     for (const t of this._tracks) {
@@ -943,6 +952,9 @@ export class IRPlayer {
       this._initDefaultVoices(); // preamble register writes (when=undefined → sec 0)
 
       this._fm3OpIntervals = [];
+      // FM3 independent-OP: each operator's note and sticky :pitch offset
+      // (index = op − 1) — what its F-number is written from (driver.md §13.4).
+      this._fm3OpPitch = Array.from({ length: 4 }, () => ({ midi: 60, offset: 0 }));
       this._pendingKeyOff.fill(false);
       this._tracks = this._flattenTracks();
       // Reproduce the driver's track start (driver.md §4.2): the frame
@@ -1052,6 +1064,9 @@ export class IRPlayer {
 
     return this._ir.tracks.map((track, ti) => {
       const isPsg = this._psgTrackChannel.has(ti);
+      // fm3-1..4: the FM3 operator this track drives (0 = not an operator
+      // track). Its :pitch, glide and pitch macros bend that operator alone.
+      const fm3Op = Number(/^fm3-([1-4])$/.exec(track.scoreChannel ?? "")?.[1] ?? 0);
       const isPcm = this._pcmTrackChannel.has(ti);
       const psgCh = isPsg ? this._psgTrackChannel.get(ti) : null;
       // PCM events carry their soft-mix voice slot (0-2) as _chIndex — that is
@@ -1157,6 +1172,7 @@ export class IRPlayer {
         chIndex,
         isPsg,
         psgCh,
+        fm3Op,
       };
     });
   }
@@ -1581,8 +1597,8 @@ export class IRPlayer {
           }
         }
 
-        // FM3 OP1..3 notes use dedicated A8/AC registers via FM3_OP_PITCH events.
-        const writesBasePitch = !isFm3OpNote || fm3Op === 4;
+        // FM3 operator notes had their F-number written by FM3_OP_PITCH.
+        const writesBasePitch = !isFm3OpNote;
         if (writesBasePitch) {
           // Write F-number high first (block + MSB), then low
           this._write(
@@ -1620,15 +1636,15 @@ export class IRPlayer {
             fmOffset,
           );
         } else {
-          // FM3 OP1..3 notes use dedicated pitch registers; apply runtime pitch offset
-          // and NOTE_PITCH macro updates through FM3 OP pitch writes.
-          if (centOffset !== 0) {
-            this._writeFm3OpPitch(fm3Op, midi + centOffset / 100, when);
-          }
+          // FM3 operator note: FM3_OP_PITCH already wrote this operator's
+          // F-number with its sticky :pitch offset; its pitch / semi macros
+          // write that operator's registers alone (driver.md §13.4).
+          const opState = this._fm3OpPitch[fm3Op - 1];
+          opState.midi = midi;
           const fm3PitchWrite = (noteCentOffset, t) => {
             this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
           };
-          const fm3Offset = () => this._chRegs[ch]?.pitchOffset ?? 0;
+          const fm3Offset = () => opState.offset;
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
             when,
@@ -1779,7 +1795,7 @@ export class IRPlayer {
           ch,
           port,
           chOffset,
-          { args: { target: ev.args?.target, value } },
+          { args: { target: ev.args?.target, value }, _trackIndex: ev._trackIndex },
           when,
         );
         break;
@@ -1787,13 +1803,13 @@ export class IRPlayer {
       case "PARAM_ADD":
       case "PARAM_MUL": {
         const target = ev.args?.target;
-        const cur = this._readParam(ch, target);
+        const cur = this._readParam(ch, target, this._fm3OpOf(ev));
         const operand = this._resolveOperand(
           ev.cmd === "PARAM_MUL" ? ev.args?.factor : ev.args?.delta,
           when,
         );
         const value = ev.cmd === "PARAM_MUL" ? cur * operand : cur + operand;
-        this._applyParam(ch, port, chOffset, { args: { target, value } }, when);
+        this._applyParam(ch, port, chOffset, { args: { target, value }, _trackIndex: ev._trackIndex }, when);
         break;
       }
 
@@ -1852,7 +1868,9 @@ export class IRPlayer {
         const op = Number(ev.args?.op);
         if (!Number.isInteger(op) || op < 1 || op > 4) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
-        this._writeFm3OpPitch(op, midi, when);
+        const st = this._fm3OpPitch[op - 1];
+        st.midi = midi;
+        this._writeFm3OpPitch(op, midi + st.offset / 100, when);
         break;
       }
     }
@@ -2080,10 +2098,16 @@ export class IRPlayer {
   // Read a target's current stored value from chRegs (the shadow register file)
   // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
   // base so a relative TL op composes with vel/vol attenuation.
-  _readParam(ch, target) {
+  // The FM3 operator an event's track drives (0 = not an operator track).
+  _fm3OpOf(ev) {
+    return ev?._trackIndex != null ? (this._tracks[ev._trackIndex]?.fm3Op ?? 0) : 0;
+  }
+
+  _readParam(ch, target, fm3Op = 0) {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
+    if (fm3Op && t === "NOTE_PITCH") return this._fm3OpPitch[fm3Op - 1].offset;
     const m = t.match(/^FM_([A-Z]+)([1-4])$/);
     if (m) {
       const FIELD = {
@@ -2364,6 +2388,15 @@ export class IRPlayer {
         break;
       }
       case "NOTE_PITCH": {
+        // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
+        // F-number alone (driver.md §13.4).
+        const op = this._fm3OpOf(ev);
+        if (op) {
+          const st = this._fm3OpPitch[op - 1];
+          st.offset = value;
+          this._writeFm3OpPitch(op, st.midi + value / 100, when);
+          break;
+        }
         // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
         const baseMidi = regs.currentMidi ?? 60;
         const centOffset = value;
@@ -3070,7 +3103,11 @@ export class IRPlayer {
       const track =
         ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
       const framesPerTick = secsPerTick * 60;
-      let baseMidi = this._chRegs[ch]?.currentMidi ?? 60;
+      // On an fm3-N track the sweep bends that operator's F-number alone,
+      // from the operator's own note (driver.md §13.4).
+      const op = track?.fm3Op ?? 0;
+      const opState = op ? this._fm3OpPitch[op - 1] : null;
+      let baseMidi = opState ? opState.midi : (this._chRegs[ch]?.currentMidi ?? 60);
       let cursor = track ? track.flatIndex + 1 : 0;
       let nextNoteTick = Infinity;
       let nextNoteMidi = baseMidi;
@@ -3104,11 +3141,16 @@ export class IRPlayer {
         const centOffset = Math.round(
           from + (to - from) * sampleCurveUnit(curve, phase, params),
         );
+        const frameWhen = when + frame / 60;
+        if (opState) {
+          opState.offset = centOffset;
+          this._writeFm3OpPitch(op, baseMidi + centOffset / 100, frameWhen);
+          continue;
+        }
         this._chRegs[ch].pitchOffset = centOffset;
         const { fnum: pf, block: pb } = midiToFnumBlock(
           baseMidi + centOffset / 100,
         );
-        const frameWhen = when + frame / 60;
         this._write(
           port,
           0xa4 + chOffset,
@@ -3124,9 +3166,14 @@ export class IRPlayer {
       // resets pitchOffset; `(glide none)` only stops future glides). Snap to the
       // final value so the note reaches true pitch and nothing leaks past it.
       if (ev.args?.bounded) {
+        const endWhen = when + budgetFrames / 60;
+        if (opState) {
+          opState.offset = to;
+          this._writeFm3OpPitch(op, baseMidi + to / 100, endWhen);
+          return;
+        }
         this._chRegs[ch].pitchOffset = to;
         const { fnum: ef, block: eb } = midiToFnumBlock(baseMidi + to / 100);
-        const endWhen = when + budgetFrames / 60;
         this._write(
           port,
           0xa4 + chOffset,

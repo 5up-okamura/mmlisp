@@ -478,14 +478,17 @@ export function encodeMmb(ir, opts = {}) {
 
   const internMacro = (spec, target, trackLabel, channelId) => {
     if (!spec || typeof spec !== "object") return null;
-    if (target === "KEYON" && channelId > 9) {
+    if (target === "KEYON" && (channelId > 9 || /^fm3-[1-4]$/.test(trackLabel))) {
       // Retrigger re-attacks the note's envelopes (FM hardware EG via $28 +
-      // soft-env macros; PSG soft-env macros). The macro engine runs on channels
-      // 0-9 only, so PCM (20-22) and FM3-op op2-4 (16-18) are deferred.
+      // soft-env macros; PSG soft-env macros). PCM (20-22) has no macro engine,
+      // and the FM3 operator tracks have no retrigger in the editor — their $28
+      // bits are one shared key merge — so it is dropped on every fm3-N (op1
+      // included: channel 2's engine would retrigger it, and the browser would
+      // not, which is not a driver the browser sounds like).
       diag(
         "warning",
         "W_MMB_KEYON_UNSUPPORTED",
-        `:keyon is FM/PSG only (macro engine channels); dropped on ${trackLabel}`,
+        `:keyon is FM/PSG only (not PCM or fm3-N operator tracks); dropped on ${trackLabel}`,
         trackLabel,
       );
       return null;

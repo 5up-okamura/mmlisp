@@ -448,8 +448,8 @@ static void fm3_key_op(MMLSeq *s, int op, int on) {
   else s->fm3_op_mask &= (uint8_t)~bit;
   ym_key(s, (uint8_t)(s->fm3_op_mask | 0x02)); /* ch2 key = 0x02 */
 }
-static void write_fm3_op_pitch(MMLSeq *s, int op, int note) {
-  uint16_t fb = fnum_block_for(note, 0);
+static void write_fm3_op_pitch(MMLSeq *s, int op, int note, int cents) {
+  uint16_t fb = fnum_block_for(note, cents);
   uint8_t high = (uint8_t)((((fb >> 11) & 7) << 3) | ((fb >> 8) & 7));
   uint8_t low = (uint8_t)(fb & 0xff);
   if (op == 4) {
@@ -560,6 +560,17 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     if (ch < 6) s->fm[ch].gate = g;
     else if (ch < 10) s->psg[ch - 6].gate = g;
     return;
+  }
+  {
+    /* FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
+     * F-number alone. Every other target on an operator track stays what it
+     * was — the level and patch are the shared CH3's (driver.md §13.4). */
+    int op = fm3_op_for(s, ch);
+    if (op && target == T_NOTE_PITCH) {
+      s->fm3_op_cents[op - 1] = (int16_t)value;
+      write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], value);
+      return;
+    }
   }
   if (ch >= 6 && ch < 10) {
     int pc = ch - 6;
@@ -709,6 +720,10 @@ static int read_slot(const MMLSeq *s, uint8_t slot) {
  * already keeps, so a relative write has a real base instead of a silent 0. */
 static int read_param(const MMLSeq *s, int ch, int target) {
   if (target == T_MASTER) return s->master;
+  {
+    int op = fm3_op_for(s, ch);
+    if (op && target == T_NOTE_PITCH) return s->fm3_op_cents[op - 1];
+  }
   if (target == T_VOL)
     return ch < 6 ? s->fm[ch].vol : ch < 10 ? s->psg[ch - 6].vol : 31;
   if (target == T_VEL)
@@ -756,17 +771,29 @@ static void write_timer_a(MMLSeq *s, int period) {
 
 /* ── Sweep slots ──────────────────────────────────────────────────────────── */
 /* A channel's sweep bank: the ten M1 channels are their own, the three PCM
- * voices follow them (their loop points sweep like any other param). fm3-op
- * ids have none. -1 = no bank. */
+ * voices follow them (their loop points sweep like any other param), then
+ * FM3's op2-4 (ids 16-18) — a glide on an fm3-N track bends that operator
+ * alone. op1 is channel 2's bank. -1 = no bank. */
 static int sweep_bank(int ch) {
   if (ch < 10) return ch;
   if (ch >= CH_PCM1 && ch <= CH_PCM3) return 10 + (ch - CH_PCM1);
+  if (ch >= 16 && ch <= 18) return 13 + (ch - 16);
   return -1;
 }
 /* The inverse, for the frame loop. */
 static int sweep_bank_ch(int bank) {
-  return bank < 10 ? bank : CH_PCM1 + (bank - 10);
+  if (bank < 10) return bank;
+  if (bank < 13) return CH_PCM1 + (bank - 10);
+  return 16 + (bank - 13);
 }
+/* The macro engine's channel index: 0-9 are their own, FM3's op2-4 (ids
+ * 16-18) are 10-12, op1 rides channel 2's. -1 = no macro engine (PCM). */
+static int macro_ch(int ch) {
+  if (ch < 10) return ch;
+  if (ch >= 16 && ch <= 18) return 10 + (ch - 16);
+  return -1;
+}
+static int macro_ch_id(int mc) { return mc < 10 ? mc : 16 + (mc - 10); }
 static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int loop,
                         int from, int to, int len) {
   int bank = sweep_bank(ch);
@@ -860,13 +887,16 @@ static int scale_macro_sample(int sample, int slot_value) {
 }
 
 static int channel_keyed(const MMLSeq *s, int ch) {
+  int op = fm3_op_for(s, ch);
+  if (op) return (s->fm3_op_mask >> (op - 1)) & 0x10;
   if (ch < 6) return s->fm[ch].keyed;
   if (ch < 10) return s->psg[ch - 6].keyed;
   return 0;
 }
 
 static void macro_bind(MMLSeq *s, int ch, uint8_t target, uint8_t macro_id) {
-  if (ch >= 10) return;
+  ch = macro_ch(ch);
+  if (ch < 0) return;
   for (int i = 0; i < s->bind_count[ch]; i++) {
     if (s->binds[ch][i].target == target) {
       s->binds[ch][i].macro_id = macro_id; /* replace in place: order is §13.3 */
@@ -879,7 +909,8 @@ static void macro_bind(MMLSeq *s, int ch, uint8_t target, uint8_t macro_id) {
   s->bind_count[ch]++;
 }
 static void macro_unbind(MMLSeq *s, int ch, uint8_t target) {
-  if (ch >= 10) return;
+  ch = macro_ch(ch);
+  if (ch < 0) return;
   for (int i = 0; i < s->bind_count[ch]; i++) {
     if (s->binds[ch][i].target != target) continue;
     for (int k = i + 1; k < s->bind_count[ch]; k++) s->binds[ch][k - 1] = s->binds[ch][k];
@@ -890,7 +921,8 @@ static void macro_unbind(MMLSeq *s, int ch, uint8_t target) {
 
 /* NOTE_ON re-instantiates every bind into a fresh slot, in bind order (§13.1). */
 static void macro_trigger(MMLSeq *s, int ch) {
-  if (ch >= 10) return;
+  ch = macro_ch(ch);
+  if (ch < 0) return;
   for (int i = 0; i < s->bind_count[ch]; i++) {
     MMLMacroSlot *sl = &s->macro_slots[ch][i];
     sl->macro_id = s->binds[ch][i].macro_id;
@@ -907,7 +939,11 @@ static void macro_trigger(MMLSeq *s, int ch) {
  * a key-on offset, not a detune that should outlive the macro. `add` rides the
  * live offset instead of overriding it to 0. */
 static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
-  if (ch < 6) {
+  int op = fm3_op_for(s, ch);
+  if (op) {
+    write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1] + semi,
+                       add ? s->fm3_op_cents[op - 1] : 0);
+  } else if (ch < 6) {
     write_fm_pitch(s, ch, s->fm[ch].current_note + semi, add ? s->fm[ch].pitch_cents : 0);
   } else if (ch < 10) {
     int p = ch - 6;
@@ -920,8 +956,9 @@ static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
  * the hardware EG. PSG has no hardware EG, so there the macro restart is the
  * whole effect. */
 static void keyon_retrigger(MMLSeq *s, int ch) {
-  for (int i = 0; i < s->macro_slot_count[ch]; i++) {
-    MMLMacroSlot *sl = &s->macro_slots[ch][i];
+  int mc = macro_ch(ch);
+  for (int i = 0; mc >= 0 && i < s->macro_slot_count[mc]; i++) {
+    MMLMacroSlot *sl = &s->macro_slots[mc][i];
     if (sl->dead) continue;
     MMLMacro d;
     if (!macro_desc(s, sl->macro_id, &d) || d.target == T_KEYON) continue;
@@ -974,7 +1011,11 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
       /* Pitch macro: write the register every frame but never store back to
        * pitch_cents, which holds the :pitch directive's base. An override macro
        * that clobbered it would leave a residual detune on every later note. */
-      if (ch < 6) {
+      int op = fm3_op_for(s, ch);
+      if (op) {
+        int base = add ? s->fm3_op_cents[op - 1] : 0;
+        write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], base + v);
+      } else if (ch < 6) {
         int base = add ? s->fm[ch].pitch_cents : 0;
         write_fm_pitch(s, ch, s->fm[ch].current_note, base + v);
       } else if (ch - 6 < 3) {
@@ -1004,33 +1045,35 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
 /* One channel's running slots, one step. Split out of process_macros because a
  * note-on past sub-tick 0 has to step its own channel on the spot (§3.5). */
 static void step_channel_macros(MMLSeq *s, int ch) {
-  int n = s->macro_slot_count[ch];
+  int mc = macro_ch(ch);
+  if (mc < 0) return;
+  int n = s->macro_slot_count[mc];
   if (!n) return;
   int keyed = channel_keyed(s, ch);
   int dead = 0;
   /* A KEYON step can reach back into this array (keyon_retrigger), so slots
    * are marked dead in place and compacted only after the whole pass. */
   for (int i = 0; i < n; i++) {
-    if (step_macro(s, ch, &s->macro_slots[ch][i], keyed)) {
-      s->macro_slots[ch][i].dead = 1;
+    if (step_macro(s, ch, &s->macro_slots[mc][i], keyed)) {
+      s->macro_slots[mc][i].dead = 1;
       dead = 1;
     }
   }
   if (!dead) return;
   int w = 0;
   for (int i = 0; i < n; i++) {
-    if (s->macro_slots[ch][i].dead) continue;
-    if (w != i) s->macro_slots[ch][w] = s->macro_slots[ch][i];
+    if (s->macro_slots[mc][i].dead) continue;
+    if (w != i) s->macro_slots[mc][w] = s->macro_slots[mc][i];
     w++;
   }
-  s->macro_slot_count[ch] = (uint8_t)w;
+  s->macro_slot_count[mc] = (uint8_t)w;
 }
 
 static void process_macros(MMLSeq *s) {
   /* The count is tested here, not only inside: the call's own entry and exit
    * cost the 68000 more than an empty channel's whole step. */
-  for (int ch = 0; ch < 10; ch++)
-    if (s->macro_slot_count[ch]) step_channel_macros(s, ch);
+  for (int mc = 0; mc < MML_MACRO_CHANNELS; mc++)
+    if (s->macro_slot_count[mc]) step_channel_macros(s, macro_ch_id(mc));
 }
 
 /* ── PCM voices (driver.md §14) ────────────────────────────────────────────
@@ -1266,7 +1309,7 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
 
   /* Re-trigger the channel's bound macros (driver.md §13.1). Their first step
    * fires this frame in step 3, overriding the note-on's base level. */
-  if (!fm3op && ch < 10) {
+  if (fm3op || ch < 10) {
     macro_trigger(s, ch);
     /* Past the frame's first sub-tick the step pass has already run, so the
      * first step fires HERE instead (§3.5). §13.1 requires it in the same frame
@@ -1593,7 +1636,10 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       case OP_FM3_OP_PITCH: {
         int opn = st[t->pc + 1], note = st[t->pc + 2];
         t->pc += 3;
-        write_fm3_op_pitch(s, opn, note);
+        if (opn >= 1 && opn <= 4) {
+          s->fm3_op_note[opn - 1] = (uint8_t)note;
+          write_fm3_op_pitch(s, opn, note, s->fm3_op_cents[opn - 1]);
+        }
         break;
       }
       case OP_PCM_NOTE_ON: {
@@ -1621,15 +1667,15 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         MMLMacro d;
         /* Sticky: this becomes the channel's macro for that target, replacing
          * whatever was bound there (driver.md §13.1). */
-        if (macro_desc(s, macro_id, &d) && t->channel_id < 10)
+        if (macro_desc(s, macro_id, &d))
           macro_bind(s, t->channel_id, d.target, macro_id);
         break;
       }
       case OP_MACRO_CLEAR: {
         uint8_t target = st[t->pc + 1];
         t->pc += 2;
-        if (t->channel_id < 10) {
-          if (target == 0xff) s->bind_count[t->channel_id] = 0;
+        if (macro_ch(t->channel_id) >= 0) {
+          if (target == 0xff) s->bind_count[macro_ch(t->channel_id)] = 0;
           else macro_unbind(s, t->channel_id, target);
         }
         break;

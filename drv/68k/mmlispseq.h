@@ -114,7 +114,13 @@ typedef struct {
   uint8_t sounding; /* attenuation < 15 */
 } MMLPsgCh;
 
-#define MML_SWEEP_BANKS 13
+/* Sweep banks: the ten M1 channels, the three PCM voices, then FM3's op2-4
+ * (channel ids 16-18) — a glide or pitch sweep on an fm3-N track bends that
+ * operator alone (driver.md §13.4). sweep_bank() maps a channel id to its bank. */
+#define MML_SWEEP_BANKS 16
+/* The channels the macro engine runs on: 0-9 and FM3 op2-4 (macro_ch()). op1
+ * rides channel 2's own entry. */
+#define MML_MACRO_CHANNELS 13
 
 /* One sweep slot (driver.md §4 step 3). Two per channel, so a pitch glide and
  * a volume fade can run at once. */
@@ -261,14 +267,16 @@ typedef struct {
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
   uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
 
-  /* Sweep banks: the ten M1 channels, then the three PCM voices — their loop
-   * points are swept like any other param (opcodes.md §7). sweep_bank() maps a
-   * channel id to its bank. */
   MMLSweep sweeps[MML_SWEEP_BANKS][2];
-  MMLMacroBind binds[10][MML_MACRO_BINDS];
-  uint8_t bind_count[10];
-  MMLMacroSlot macro_slots[10][MML_MACRO_BINDS];
-  uint8_t macro_slot_count[10];
+  MMLMacroBind binds[MML_MACRO_CHANNELS][MML_MACRO_BINDS];
+  uint8_t bind_count[MML_MACRO_CHANNELS];
+  MMLMacroSlot macro_slots[MML_MACRO_CHANNELS][MML_MACRO_BINDS];
+  uint8_t macro_slot_count[MML_MACRO_CHANNELS];
+  /* FM3 independent-OP mode: each operator's own note and sticky :pitch
+   * offset (index = op - 1). In special mode these, not fm[2]'s, are what the
+   * operator's F-number is written from (driver.md §13.4). */
+  uint8_t fm3_op_note[4];
+  int16_t fm3_op_cents[4];
   MMLPcmVoice pcm[MML_PCM_VOICES];
   uint8_t pcm_dac_on;  /* $2B sent: the score's first PCM note claims fm6 for good */
   MMLGlobalSweep tempo_sweep;

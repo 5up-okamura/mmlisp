@@ -740,7 +740,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (48 scores; every score
+same ports, same frames, same order. `npm run c-gate` (49 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +758,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 48 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 49 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -909,10 +909,11 @@ region; `(wait key-off)` marks the release boundary).
 - **KEYON** (macro-only target, retrigger; gated by `m3-macro-keyon`): a nonzero
   step re-attacks the note — it restarts the channel's non-keyon macro slots to
   their attack (so soft-envelope `:vol`/`:pitch` macros replay) and, on FM,
-  re-keys the hardware EG (`$28` off→on; FM3-op op via its mask). PSG has no
-  hardware EG, so the soft-envelope restart is the whole effect. The macro
-  engine runs on channels 0–9, so PCM and FM3-op op2–4 have no `:keyon` (the
-  exporter drops it there).
+  re-keys the hardware EG (`$28` off→on). PSG has no hardware EG, so the
+  soft-envelope restart is the whole effect. PCM has no macro engine and the
+  FM3 operator tracks have no retrigger (their `$28` bits are one shared key
+  merge), so `:keyon` there is dropped by the exporter with
+  `W_MMB_KEYON_UNSUPPORTED`.
 - Tick-unit `:step`/`:len` are resolved to a 60 Hz frame count at the note's
   tempo when the macro is snapshotted (compiler side, like the `Nf` glide/delay
   resolution), so both frame (`Nf`) and note-length macro clocks work.
@@ -999,6 +1000,19 @@ off at its gate like any other note, so consecutive operator notes attack
 (opcodes.md §3.1); operator notes never carry the legato flag. The driver derives
 the operator from the channel id (2→1, 16-18→2-4); F-numbers go through the
 change-only shadow, key edges bypass it.
+
+**Pitch is per operator.** Each operator keeps its own note (from
+`FM3_OP_PITCH`) and its own sticky `:pitch` offset, and everything that moves
+pitch on an `fm3-N` track writes that operator's F-number pair alone:
+`PARAM_SET NOTE_PITCH`, a `PARAM_SWEEP NOTE_PITCH` (a glide or an inline sweep),
+and the NOTE_PITCH / NOTE_SEMI macros. `FM3_OP_PITCH` itself writes the note
+with the operator's offset applied. For that, op2–4 (ids 16–18) have sweep
+banks and macro-engine channels of their own — banks 13–15 and macro channels
+10–12 — while op1 uses channel 2's. An operator is *keyed* for the macro engine
+when its own `$28` bit is set. Every other target on an operator track is the
+shared CH3's: levels and the patch are not per operator. Gate: `m4-fm3op-pitch`
+(a glide on op1, a `:pitch` vibrato on op2, a `:semi` arpeggio on op3, a sticky
+`:pitch` plus an inline sweep on op4 — each on its own registers).
 
 ## 14. PCM
 
