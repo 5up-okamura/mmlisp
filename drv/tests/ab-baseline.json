@@ -263,6 +263,12 @@
     "compileErrors": 0,
     "digest": "592bafb9"
   },
+  "m4-fm3op-keyon.mmlisp": {
+    "ok": false,
+    "mismatches": 246,
+    "compileErrors": 0,
+    "digest": "cf0419d6"
+  },
   "m4-fm3op-pitch.mmlisp": {
     "ok": false,
     "mismatches": 59,

@@ -740,7 +740,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (49 scores; every score
+same ports, same frames, same order. `npm run c-gate` (50 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +758,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 49 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 50 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -910,10 +910,10 @@ region; `(wait key-off)` marks the release boundary).
   step re-attacks the note — it restarts the channel's non-keyon macro slots to
   their attack (so soft-envelope `:vol`/`:pitch` macros replay) and, on FM,
   re-keys the hardware EG (`$28` off→on). PSG has no hardware EG, so the
-  soft-envelope restart is the whole effect. PCM has no macro engine and the
-  FM3 operator tracks have no retrigger (their `$28` bits are one shared key
-  merge), so `:keyon` there is dropped by the exporter with
-  `W_MMB_KEYON_UNSUPPORTED`.
+  soft-envelope restart is the whole effect. On an FM3 operator track the
+  retrigger re-keys **that operator's bit alone** (§13.4). PCM has no macro
+  engine and no envelope to re-attack, so `:keyon` is dropped there by the
+  exporter with `W_MMB_KEYON_UNSUPPORTED`.
 - Tick-unit `:step`/`:len` are resolved to a 60 Hz frame count at the note's
   tempo when the macro is snapshotted (compiler side, like the `Nf` glide/delay
   resolution), so both frame (`Nf`) and note-length macro clocks work.
@@ -1013,6 +1013,14 @@ when its own `$28` bit is set. Every other target on an operator track is the
 shared CH3's: levels and the patch are not per operator. Gate: `m4-fm3op-pitch`
 (a glide on op1, a `:pitch` vibrato on op2, a `:semi` arpeggio on op3, a sticky
 `:pitch` plus an inline sweep on op4 — each on its own registers).
+
+**Keying is per operator too**, including `:keyon`: a retrigger drops and
+restores that operator's mask bit and re-emits `$28`, so the operators sounding
+alongside it are untouched. In the reference player this is one more interval
+in the key merge rather than a register write of its own — the note becomes
+`[on, gap₁) [rekey₁, gap₂) … [rekeyₙ, off)` and the merged mask follows.
+Gate: `m4-fm3op-keyon` (op2 and op3 rolling on different `:step` clocks under a
+held op1 and op4, including a frame where both fire).
 
 ## 14. PCM
 

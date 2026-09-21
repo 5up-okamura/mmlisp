@@ -1339,11 +1339,17 @@ export class IRPlayer {
    * re-emitting supersedes the stale values written when earlier operators were
    * scheduled, yielding the correct chord at each transition.
    *
+   * A `:keyon` retrigger punches gaps in THIS operator's span: the note becomes
+   * several intervals instead of one, so the re-attack shows up in the merged
+   * mask as this operator's bit dropping and returning while every other
+   * operator's stays exactly as it was (driver.md §13.4).
+   *
    * @param {number} opBit  operator key bit (0x10=OP1 … 0x80=OP4)
    * @param {number} onTime audio time of key-on
    * @param {number|null} offTime audio time of key-off, or null for a hold note
+   * @param {{off: number, on: number}[]} retriggers gaps to punch, in time order
    */
-  _scheduleFm3OpKey(opBit, onTime, offTime) {
+  _scheduleFm3OpKey(opBit, onTime, offTime, retriggers = []) {
     const chKey = (0 << 2) | 2; // channel 3: port 0, channel offset 2
 
     // Drop intervals that have fully elapsed so the list stays bounded across
@@ -1355,7 +1361,19 @@ export class IRPlayer {
       );
     }
 
-    this._fm3OpIntervals.push({ opBit, on: onTime, off: offTime });
+    // One interval per keyed segment: [on, gap₁) [rekey₁, gap₂) … [rekeyₙ, off).
+    const segments = [];
+    let segOn = onTime;
+    for (const r of retriggers) {
+      if (r.off <= segOn) continue; // a gap shorter than the write ordering
+      if (offTime != null && r.on >= offTime) break;
+      segments.push({ on: segOn, off: r.off });
+      segOn = r.on;
+    }
+    segments.push({ on: segOn, off: offTime });
+    for (const seg of segments) {
+      this._fm3OpIntervals.push({ opBit, on: seg.on, off: seg.off });
+    }
 
     // Collect every boundary affected by this note: its own endpoints plus any
     // other operator transition that falls within this note's active span.
@@ -1363,6 +1381,10 @@ export class IRPlayer {
       t > onTime && (offTime == null || t < offTime);
     const boundaries = new Set([onTime]);
     if (offTime != null) boundaries.add(offTime);
+    for (const seg of segments) {
+      boundaries.add(seg.on);
+      if (seg.off != null) boundaries.add(seg.off);
+    }
     for (const iv of this._fm3OpIntervals) {
       if (within(iv.on)) boundaries.add(iv.on);
       if (iv.off != null && within(iv.off)) boundaries.add(iv.off);
@@ -1724,8 +1746,14 @@ export class IRPlayer {
           }
           if (isFm3OpNote) {
             // Merge this operator's key with the other FM3 operators sharing
-            // channel 3's 0x28 register instead of overwriting them.
-            this._scheduleFm3OpKey(keyMask & 0xf0, when, offWhen);
+            // channel 3's 0x28 register instead of overwriting them. A :keyon
+            // retrigger re-attacks THIS operator only (driver.md §13.4).
+            this._scheduleFm3OpKey(
+              keyMask & 0xf0,
+              when,
+              offWhen,
+              this._fm3KeyonGaps(ev.args?.keyon, when, gateTicks, macroLimit),
+            );
           } else {
             const keyOnByte = keyMask | chKey;
             // The previous note ran up to this one at full gate and left its
@@ -3075,6 +3103,35 @@ export class IRPlayer {
       stepSecs,
       limitSecs,
     );
+  }
+
+  // The gaps an FM3 operator's `:keyon` macro punches in its key interval.
+  // Sampled exactly like _scheduleKeyonMacro — same :step clock, same gap — but
+  // the writes are left to _scheduleFm3OpKey, which has to merge them with the
+  // other operators sharing $28 rather than write the register directly.
+  _fm3KeyonGaps(keyonSpec, when, gateTicks, limitSecs = Infinity) {
+    if (!keyonSpec) return [];
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
+      when,
+      gateTicks,
+    );
+    const stepSecs = this._stepSecs(keyonSpec.step);
+    const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
+    const gaps = [];
+    this._scheduleMacro(
+      keyonSpec,
+      noteFrames,
+      gateSecs,
+      when,
+      (v, t) => {
+        if (v < 0.5) return; // gate closed this step
+        if (t <= when + 1e-6) return; // first sample = the note's own key-on
+        gaps.push({ off: Math.max(when, t - gap), on: t });
+      },
+      stepSecs,
+      limitSecs,
+    );
+    return gaps;
   }
 
   _applyParamSweep(ch, port, chOffset, ev, when) {

@@ -1097,8 +1097,8 @@ their presence enables the mode (`FM3_MODE op` at tick 0). The shared patch
 (ALG, FB, per-op TL/ADSR) is declared with a note-less `(fm3 voice)` form.
 Pitch is per operator: `:pitch`, `(glide …)`, an inline `:pitch (curve …)`
 sweep and the `:pitch` / `:semi` macros on an `fm3-N` track bend that
-operator's F-number alone. Level and the patch are the shared channel's, and
-`:keyon` is not available on operator tracks (`W_MMB_KEYON_UNSUPPORTED`).
+operator's F-number alone, and `:keyon` re-attacks that operator alone — the
+others keep sounding. Level and the patch are the shared channel's.
 
 ```lisp
 (def kit :extend init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)

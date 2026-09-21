@@ -27,6 +27,16 @@ curves, doc facts and examples). What remains, with the question each needs:
 7. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+9. **A `:keyon` macro's step 0** lands in the note's own frame: the driver
+   re-attacks there (key-off/key-on right after the note-on), the editor treats
+   the first sample as the note's own key-on and skips it. Every channel, not
+   just fm3 — found 2026-09-21 while gating fm3-N `:keyon`; `m3-macro-keyon`
+   was written as `[0 :hold 1]`, which steps around it. Is a leading 1 a
+   re-attack or a no-op?
+10. **Abutting notes on an fm3-N track**: the driver keys the operator off and
+   on between them (FM re-keys every note unless `~`), the editor's key merge
+   leaves no gap, so the operator never re-attacks. Same question as §17's
+   re-key rule, on the operator tracks.
 
 ## Decided, no change
 
@@ -43,11 +53,11 @@ curves, doc facts and examples). What remains, with the question each needs:
 ## Judgment-free but larger
 
 - ~~fm3-N glide / pitch macros do nothing (or hit CH3) on the driver~~ FIXED
-  2026-09-21 (`m4-fm3op-pitch`): pitch is per operator in all three players.
-  What is still not verified on fm3-N tracks: LEVEL macros (`:vol`/`:vel`/op
+  2026-09-21 (`m4-fm3op-pitch`, `m4-fm3op-keyon`): pitch AND `:keyon` are per
+  operator in all three players — a retrigger re-keys that operator's mask bit
+  alone. Still not verified on fm3-N tracks: LEVEL macros (`:vol`/`:vel`/op
   params) — the driver ignores them on op2-4 and applies them to the shared
-  CH3 on op1; the editor's handling was not audited. `:keyon` on fm3-N is now
-  dropped uniformly (was: op1 retriggered on the driver only).
+  CH3 on op1; the editor's handling was not audited.
 - def-val min/max on the driver: VAL_TABLE carries no range, so SGDK setVal
   clamps only to i16 (§8) — a format change.
 - Nf in one track converted at another track's mid-song tempo change (§4).
