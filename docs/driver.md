@@ -833,15 +833,6 @@ events through `PcmIrVoices` — the class the worklet runs — and requires the
 per-track PCM faders are a UI gain on a voice's samples before its rung, which
 the driver does not have.
 
-**`npm run level-diff <song.mmlisp>`** (`drv/tools/level-diff.mjs`) answers the
-question the gate cannot: *where is the driver louder than the reference, and
-by how much*. It replays both logs into a register file, samples the level
-state per frame (carrier TL under the algorithm in force, PSG attenuation),
-and prints only the spans where the **driver is the louder of the two**, in dB.
-It tiles ir-player's loop (the capture is one pass; the driver loops) and
-ignores spans shorter than `--hold` (default 3 frames), so the ±1 frame
-note-timing skew does not read as a level difference.
-
 ### 12.6 Tables
 
 The reference computes every constant table (F-number, PSG period, level

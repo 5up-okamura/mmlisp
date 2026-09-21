@@ -479,24 +479,22 @@ Gate: `m3-loop-vel-hold`. Reproducing needs **all three** of: marker at the top
 of the track, a quiet `:vel`, and rests at the loop head — with a note right
 after the marker the wrong level lasts under a frame and is invisible.
 
-**How it was found, and the tool that now does it for you**:
-`npm run level-diff -- <song.mmlisp>` (drv/tools/level-diff.mjs, docs
-driver.md §12.5) — prints every span where the driver plays LOUDER than
-ir-player, in dB, with the loop frames alongside. Point it at any score that
-blasts; it names the channel, the register and the frame range.
-
-`ab-compare` had been reporting this bug all along as `missing-in-b` on a `$4x`
-register mid-body — ir writes a TL the driver never writes. That class reads
-like frame-0 seeding noise in a gate summary and is trivially skimmed past,
-which is why the tool exists. Two traps it took two wrong versions to learn:
-(1) **tile ir's loop** — `captureRegisterLog` captures ONE pass and reports
-loopStartSec/endSec, so without re-emitting the body at +P (like export-wav)
-every later iteration reads as "driver louder" and the loop point itself falls
-outside the comparison; (2) **drop spans < 3 frames** — the allowed ±1 frame
-note skew shows up as a level difference on every note. Self-check it by
-stubbing `DrvPlayer.prototype._restoreVelBase` to a no-op and running it on
-`m3-macro-vel-clear`: it must report +18 dB. Also useful and headless: the nuked
-cores load fine in node, so a per-frame peak render is available if needed.
+**How it was found**: `ab-compare` had been reporting this bug all along as
+`missing-in-b` on a `$4x` register mid-body — ir writes a TL the driver never
+writes. That class reads like frame-0 seeding noise in a gate summary and is
+trivially skimmed past. What named it was a throwaway comparison of the two
+players' per-frame LEVEL state (carrier TL under the algorithm in force, PSG
+attenuation), reporting only the spans where the driver is the louder. If a
+score ever blasts again, write that again — and two traps cost two wrong
+versions the first time: (1) **tile ir's loop** — `captureRegisterLog` captures
+ONE pass and reports loopStartSec/endSec, so without re-emitting the body at +P
+(like export-wav) every later iteration reads as "driver louder" and the loop
+point itself falls outside the comparison; (2) **drop spans < 3 frames** — the
+allowed ±1 frame note skew shows up as a level difference on every note.
+Self-check it by stubbing `DrvPlayer.prototype._restoreVelBase` to a no-op and
+running it on `m3-macro-vel-clear`: it must report +18 dB. Also useful and
+headless: the nuked cores load fine in node, so a per-frame peak render is
+available if needed.
 
 **Process note, worth more than the fix**: three rounds were burned on the
 driver because the hypothesis below (§3c) was inherited and never re-tested

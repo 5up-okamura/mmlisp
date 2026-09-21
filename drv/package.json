@@ -10,7 +10,6 @@
     "engine:score": "node tools/engine-score-gate.mjs",
     "engine:gate": "node tools/engine-gate.mjs",
     "engine:gate:negatives": "node tools/engine-gate.mjs --negatives",
-    "level-diff": "node tools/level-diff.mjs",
     "sgdk:lint": "node tools/sgdk-lint.mjs",
     "pairs-gate": "node tools/pairs-gate.mjs",
     "sgdk:gate": "node tools/sgdk-gate.mjs",

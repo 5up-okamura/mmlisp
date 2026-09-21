@@ -67,11 +67,10 @@ npm run sgdk:profile -- <score.mmlisp> [--pc] [--peak N]       # where the 68000
 
 Other tools: `npm run engine:gate:negatives` (the light gate's own faults
 must fail), `npm run emit-images` (regenerate `live/src/engine-images.js`),
-`npm run level-diff -- <score>` (where the driver is louder than
-ir-player), `npm run pcm-render -- <score> [--seconds N] [--out F.wav]` (the
-score's PCM as the DAC plays it, for listening; into `out/pcm-render/`), and
-`npm run light-study` (the highest rate the generator places at each voice
-count — where the images' periods come from).
+`npm run pcm-render -- <score> [--seconds N] [--out F.wav]` (the score's PCM as
+the DAC plays it, for listening; into `out/pcm-render/`), and `npm run
+light-study` (the highest rate the generator places at each voice count — where
+the images' periods come from).
 
 ## Tools
 
@@ -90,7 +89,6 @@ count — where the images' periods come from).
 | `pcm-render.mjs` | a score's PCM through the engine model, as a WAV at the image's rate |
 | `sgdk-project.mjs`, `sgdk-gate.mjs`, `sgdk-profile.mjs`, `sgdk-lint.mjs`, `sgdk-shim/` | the SGDK build path and its gates |
 | `install-sgdk.mjs` | install the driver into an SGDK project |
-| `level-diff.mjs` | per-frame level comparison against ir-player |
 
 The toolchain has no binary dependencies: the whole verify loop runs wherever
 node runs. The assembler and the emulator reject anything outside their subset
