@@ -112,7 +112,7 @@ Track flags:
 | --- | ------- | -------------------------------------------------- |
 | 0   | hasLoop | Track contains a backward JUMP (loops forever)     |
 | 1   | isCsm   | fm3-csm track; drives Timer A / CSM (driver.md §9) |
-| 2   | isFm3Op | fm3 independent-operator sub-track (channel 16–18) |
+| 2   | isFm3Op | fm3 independent-operator sub-track (channel 16–19) |
 | 3–7 | —       | Reserved, must be 0                                |
 
 `event_offset` is u16, and the encoder limits the whole MMB to 32 KB (§12).
@@ -130,7 +130,7 @@ Carried verbatim from the live player (`live/src/ir-player.js`,
 | 6–8   | sqr1–sqr3      | SN76489 square 1–3                    |
 | 9     | noise          | SN76489 noise                         |
 | 10–15 | —              | reserved                              |
-| 16–18 | fm3 op2–op4    | YM2612 ch3 special mode, operators 2–4 (op1 is channel 2 = fm3) |
+| 16–19 | fm3 op1–op4    | YM2612 ch3 special mode, one id per operator (§6.1a) |
 | 19    | —              | reserved                              |
 | 20–22 | pcm1–pcm3      | PCM voices on the fm6 DAC (driver.md §14) |
 | 23–255| —              | reserved                              |

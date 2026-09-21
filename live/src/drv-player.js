@@ -73,9 +73,9 @@ import {
 } from "./ir-utils.js";
 
 const FRAMES_PER_SEC = 60;
-// The channels the macro engine runs on: 0-9 and FM3's op2-4 (mmlispseq.h
-// MML_MACRO_CHANNELS).
-const MACRO_CHANNELS = 13;
+// The channels the macro engine runs on: 0-9 and FM3's four operators
+// (mmlispseq.h MML_MACRO_CHANNELS).
+const MACRO_CHANNELS = 14;
 const LOOP_STACK_DEPTH = 4; // driver.md §5.2
 
 // ── LUT construction (float math lives here and only here) ────────────────
@@ -438,8 +438,8 @@ export class DrvPlayer {
     // Banks: the ten M1 channels, then the three PCM voices — their loop
     // points sweep like any other param (_sweepBank).
     // Sweep banks: the ten M1 channels, the three PCM voices, then FM3's
-    // op2-4 (ids 16-18; op1 is channel 2's) — see _sweepBank.
-    this._sweeps = Array.from({ length: 16 }, () => [null, null]);
+    // the four operators (ids 16-19) — see _sweepBank.
+    this._sweeps = Array.from({ length: 17 }, () => [null, null]);
     // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
     // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
     this._macros = song?.macros ?? [];
@@ -750,19 +750,19 @@ export class DrvPlayer {
 
   // ── FM3 independent-OP mode (driver.md §5.1 / opcodes.md 0xA3/0xA4) ────────
   // In special mode ($27 bit6) CH3's four operators have independent F-numbers
-  // and key bits. op1 rides channel 2 (fm3), op2-4 ride channels 16-18.
+  // and key bits. The four operator tracks are channel ids 16-19; channel 2 is
+  // the shared CH3 (patch + channel level).
   _fm3OpFor(ch) {
     if (!(this._reg27 & 0x40)) return 0; // special mode off → normal channels
-    if (ch === 2) return 1;
-    if (ch >= 16 && ch <= 18) return ch - 14;
+    if (ch >= 16 && ch <= 19) return ch - 15;
     return 0;
   }
 
-  // The macro engine's channel index: 0-9 are their own, FM3's op2-4 (ids
-  // 16-18) are 10-12, op1 rides channel 2's. -1 = no macro engine (PCM).
+  // The macro engine's channel index: 0-9 are their own, FM3's four operators
+  // (ids 16-19) are 10-13. -1 = no macro engine (PCM).
   _macroCh(ch) {
     if (ch < 10) return ch;
-    if (ch >= 16 && ch <= 18) return 10 + (ch - 16);
+    if (ch >= 16 && ch <= 19) return 10 + (ch - 16);
     return -1;
   }
   _macroChId(mc) {
@@ -1583,12 +1583,12 @@ export class DrvPlayer {
 
   // ── M2 sweep engine (driver.md §4 step 3) ────────────────────────────────
   // A channel's sweep bank: the ten M1 channels are their own, the three PCM
-  // voices follow them, then FM3's op2-4 (ids 16-18) — a glide on an fm3-N
-  // track bends that operator alone. op1 is channel 2's bank. -1 = no bank.
+  // voices follow them, then FM3's four operators (ids 16-19) — a glide on an
+  // fm3-N track bends that operator alone. -1 = no bank.
   _sweepBank(ch) {
     if (ch < 10) return ch;
     if (ch >= 20 && ch <= 22) return 10 + (ch - 20);
-    if (ch >= 16 && ch <= 18) return 13 + (ch - 16);
+    if (ch >= 16 && ch <= 19) return 13 + (ch - 16);
     return -1;
   }
   _sweepBankCh(bank) {

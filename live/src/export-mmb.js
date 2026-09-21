@@ -558,7 +558,7 @@ export function encodeMmb(ir, opts = {}) {
     ) {
       flags |= TRACK_FLAG.isCsm;
     }
-    if (channelId >= 16 && channelId <= 18) flags |= TRACK_FLAG.isFm3Op;
+    if (channelId >= 16 && channelId <= 19) flags |= TRACK_FLAG.isFm3Op;
 
     // Per-track encoder state.
     let clock = 0; // running tick position of the stream

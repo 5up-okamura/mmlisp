@@ -114,13 +114,14 @@ typedef struct {
   uint8_t sounding; /* attenuation < 15 */
 } MMLPsgCh;
 
-/* Sweep banks: the ten M1 channels, the three PCM voices, then FM3's op2-4
- * (channel ids 16-18) — a glide or pitch sweep on an fm3-N track bends that
- * operator alone (driver.md §13.4). sweep_bank() maps a channel id to its bank. */
-#define MML_SWEEP_BANKS 16
-/* The channels the macro engine runs on: 0-9 and FM3 op2-4 (macro_ch()). op1
- * rides channel 2's own entry. */
-#define MML_MACRO_CHANNELS 13
+/* Sweep banks: the ten M1 channels, the three PCM voices, then FM3's four
+ * operators (channel ids 16-19) — a glide or pitch sweep on an fm3-N track
+ * bends that operator alone (driver.md §13.4). sweep_bank() maps a channel id
+ * to its bank. */
+#define MML_SWEEP_BANKS 17
+/* The channels the macro engine runs on: 0-9 and FM3's four operators
+ * (macro_ch()). */
+#define MML_MACRO_CHANNELS 14
 
 /* One sweep slot (driver.md §4 step 3). Two per channel, so a pitch glide and
  * a volume fade can run at once. */

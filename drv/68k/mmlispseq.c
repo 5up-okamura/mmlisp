@@ -434,12 +434,12 @@ static void write_noise_cfg(MMLSeq *s) {
 
 /* ── FM3 independent-OP mode (driver.md §5.1, opcodes 0xA3/0xA4) ───────────
  * In CH3 special mode ($27 bit6) the channel's four operators carry independent
- * F-numbers and key bits. op1 rides channel 2 (fm3); op2-4 ride channels 16-18.
+ * F-numbers and key bits. The four operator tracks are channel ids 16-19;
+ * channel 2 is the shared CH3 (patch + channel level).
  * Returns the 1-based operator, or 0 when this channel is an ordinary one. */
 static int fm3_op_for(const MMLSeq *s, int ch) {
   if (!(s->reg27 & 0x40)) return 0;
-  if (ch == 2) return 1;
-  if (ch >= 16 && ch <= 18) return ch - 14;
+  if (ch >= 16 && ch <= 19) return ch - 15;
   return 0;
 }
 static void fm3_key_op(MMLSeq *s, int op, int on) {
@@ -772,12 +772,12 @@ static void write_timer_a(MMLSeq *s, int period) {
 /* ── Sweep slots ──────────────────────────────────────────────────────────── */
 /* A channel's sweep bank: the ten M1 channels are their own, the three PCM
  * voices follow them (their loop points sweep like any other param), then
- * FM3's op2-4 (ids 16-18) — a glide on an fm3-N track bends that operator
- * alone. op1 is channel 2's bank. -1 = no bank. */
+ * FM3's four operators (ids 16-19) — a glide on an fm3-N track bends that
+ * operator alone. -1 = no bank. */
 static int sweep_bank(int ch) {
   if (ch < 10) return ch;
   if (ch >= CH_PCM1 && ch <= CH_PCM3) return 10 + (ch - CH_PCM1);
-  if (ch >= 16 && ch <= 18) return 13 + (ch - 16);
+  if (ch >= 16 && ch <= 19) return 13 + (ch - 16);
   return -1;
 }
 /* The inverse, for the frame loop. */
@@ -786,11 +786,11 @@ static int sweep_bank_ch(int bank) {
   if (bank < 13) return CH_PCM1 + (bank - 10);
   return 16 + (bank - 13);
 }
-/* The macro engine's channel index: 0-9 are their own, FM3's op2-4 (ids
- * 16-18) are 10-12, op1 rides channel 2's. -1 = no macro engine (PCM). */
+/* The macro engine's channel index: 0-9 are their own, FM3's four operators
+ * (ids 16-19) are 10-13. -1 = no macro engine (PCM). */
 static int macro_ch(int ch) {
   if (ch < 10) return ch;
-  if (ch >= 16 && ch <= 18) return 10 + (ch - 16);
+  if (ch >= 16 && ch <= 19) return 10 + (ch - 16);
   return -1;
 }
 static int macro_ch_id(int mc) { return mc < 10 ? mc : 16 + (mc - 10); }

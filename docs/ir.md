@@ -124,7 +124,7 @@ indices at load:
 | `pcm1` … `pcm3`      | Software PCM worklet, keyed by track id  | (FM index fallback only) |
 
 Unknown names fall back to `min(trackIndex, 5)` on the FM side. The numeric
-channel ids 0–5 / 6–9 / 16–18 / 20–22 exist only in the legacy MMB decoder at
+channel ids 0–5 / 6–9 / 16–19 / 20–22 exist only in the legacy MMB decoder at
 the top of `ir-player.js` (scheduled for deletion); the binary channel-id
 registry is (re)defined in docs/mmb.md.
 

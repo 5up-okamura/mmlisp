@@ -60,9 +60,10 @@ export const CHANNEL_ID = {
   sqr2: 7,
   sqr3: 8,
   noise: 9,
-  fm3op2: 16,
-  fm3op3: 17,
-  fm3op4: 18,
+  fm3op1: 16,
+  fm3op2: 17,
+  fm3op3: 18,
+  fm3op4: 19,
   pcm1: 20,
   pcm2: 21,
   pcm3: 22,
@@ -72,19 +73,19 @@ export const CHANNEL_NAME = Object.fromEntries(
 );
 
 // Resolve a compiler `scoreChannel` (e.g. "fm3-1", "fm3-csm", "pcm2") to its MMB
-// channel id. FM3 independent-op sub-tracks map op1→fm3 (channel 2) and op2–4→
-// 16–18; the CSM variants share the fm3 channel. Everything else is a direct
-// name lookup. Returns null for an unknown channel.
+// channel id. The four FM3 independent-op sub-tracks are ids 16-19, one each —
+// including op1, which used to share channel 2 with the `(fm3 …)` voice track
+// and was indistinguishable from it, so it could hold no per-operator state of
+// its own. Channel 2 is the shared CH3: the patch and the channel-wide level.
+// The CSM variants share it too. Everything else is a direct name lookup.
+// Returns null for an unknown channel.
 export function resolveChannelId(scoreChannel) {
   if (scoreChannel in CHANNEL_ID) return CHANNEL_ID[scoreChannel];
   if (scoreChannel === "fm3-csm" || scoreChannel === "fm3-csm-rate") {
     return CHANNEL_ID.fm3;
   }
   const m = /^fm3-([1-4])$/.exec(scoreChannel);
-  if (m) {
-    const op = Number(m[1]);
-    return op === 1 ? CHANNEL_ID.fm3 : 14 + op; // op1→fm3(2); op2–4→16–18
-  }
+  if (m) return 15 + Number(m[1]); // op1-4 → 16-19
   return null;
 }
 

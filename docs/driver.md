@@ -94,7 +94,7 @@ in FM3 independent-OP mode the note-less `(fm3 …)` voice track and the
 `fm3-1` operator track legitimately coexist on it (§13.4), so a second
 track claiming channel 2 keeps both rather than releasing the first. The
 first claimant owns the shared level state; later ones only key their
-operator. (`fm3-2`–`fm3-4` live on ids 16-18, which carry no channel block
+operator. (`fm3-1`–`fm3-4` live on ids 16-19, which carry no channel block
 and never arbitrate.)
 
 ### 2.3 Layering and scene transitions
@@ -297,7 +297,7 @@ the sin curve unit — §7, §8) are ROM data: `tools/gen-c-tables.mjs` generate
 `drv-player.js` builds its tables from, so the two cannot disagree (§12.6).
 
 **Channel state**, one per channel 0–9 (fm1–fm6, sqr1–sqr3, noise; mmb.md §6.1).
-fm3 operator sub-tracks (ids 16–18) keep their per-op pitch inside fm3's block;
+fm3 operator sub-tracks (ids 16–19) keep their per-op pitch inside fm3's block;
 PCM voices have their own state (§14).
 
 | Field | Notes |
@@ -740,7 +740,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (50 scores; every score
+same ports, same frames, same order. `npm run c-gate` (51 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +758,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 50 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 51 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -991,7 +991,8 @@ key bits.
 The score splits this across coexisting tracks: a note-less `(fm3 voice)`
 track carries the shared patch and channel level state, and `fm3-1`–`fm3-4`
 each drive one operator. `fm3-1` rides channel 2 (with the voice, §2.2);
-`fm3-2`–`fm3-4` ride channel ids 16-18. Each operator note emits
+`fm3-1`–`fm3-4` ride channel ids 16-19 — one each, so an operator can hold
+state of its own; channel 2 is the shared CH3 alone. Each operator note emits
 `FM3_OP_PITCH {op, note}` (0xA4) — writing that operator's F-number registers
 (OP4 → the CH3 base `$A6`/`$A2`; OP1-3 → `$AC+idx`/`$A8+idx` with
 `idx = op mod 3`) — followed by a `NOTE_ON` that keys the operator.
@@ -1000,7 +1001,7 @@ Keying is a shared 4-bit mask: each operator's key sets/clears its bit
 (OP1 = `$10` … OP4 = `$80`) and re-emits `$28 = mask | 0x02`. An operator keys
 off at its gate like any other note, so consecutive operator notes attack
 (opcodes.md §3.1); operator notes never carry the legato flag. The driver derives
-the operator from the channel id (2→1, 16-18→2-4); F-numbers go through the
+the operator from the channel id (16-19 → 1-4); F-numbers go through the
 change-only shadow, key edges bypass it.
 
 **Pitch is per operator.** Each operator keeps its own note (from
@@ -1008,9 +1009,9 @@ change-only shadow, key edges bypass it.
 pitch on an `fm3-N` track writes that operator's F-number pair alone:
 `PARAM_SET NOTE_PITCH`, a `PARAM_SWEEP NOTE_PITCH` (a glide or an inline sweep),
 and the NOTE_PITCH / NOTE_SEMI macros. `FM3_OP_PITCH` itself writes the note
-with the operator's offset applied. For that, op2–4 (ids 16–18) have sweep
-banks and macro-engine channels of their own — banks 13–15 and macro channels
-10–12 — while op1 uses channel 2's. An operator is *keyed* for the macro engine
+with the operator's offset applied. For that, the operators have sweep banks
+and macro-engine channels of their own — banks 13–16 and macro channels 10–13.
+An operator is *keyed* for the macro engine
 when its own `$28` bit is set. Every other target on an operator track is the
 shared CH3's: levels and the patch are not per operator. Gate: `m4-fm3op-pitch`
 (a glide on op1, a `:pitch` vibrato on op2, a `:semi` arpeggio on op3, a sticky

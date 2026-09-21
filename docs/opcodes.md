@@ -288,7 +288,7 @@ Notes:
   and writing its F-number registers (OP4 → CH3 base `$A6`/`$A2`; OP1-3 →
   `$AC+idx`/`$A8+idx`, `idx = op mod 3`) with the operator's own sticky
   `NOTE_PITCH` offset applied — followed by a `NOTE_ON` on channel id 2 (op1)
-  or 16-18 (op2-4) that keys the operator's `$28` slot bit. NOTE_PITCH sets,
+  or 16-19 (op1-4) that keys the operator's `$28` slot bit. NOTE_PITCH sets,
   sweeps and macros on an operator track move that operator alone. `FM3_MODE 1` (from the
   note-less `(fm3 …)` track) sets `$27` bit6 first. (The v0.1 draft reserved
   0xA4 for REG_WRITE; REG_WRITE is dropped — see §8.)
