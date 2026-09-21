@@ -22,7 +22,3 @@ live/.certs/
 
 # gate reports, probe logs, scratch SGDK projects and the probe BlastEm
 drv/out/
-
-# generated IR snapshots
-examples/ir/*.generated.json
-examples/ir/*.diagnostics.generated.json

@@ -6,7 +6,7 @@
  *
  * Usage:
  *   const player = new IRPlayer(writeCallback);
- *   await player.loadURL('path/to/demo1.ir.canonical.json');
+ *   await player.loadURL('path/to/score.ir.json');
  *   player.play();
  *   player.stop();
  *

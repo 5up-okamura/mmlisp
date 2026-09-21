@@ -17,14 +17,10 @@ Run from tools directory:
 
 1. `npm run format:mmlisp`
 2. `npm run check:format:mmlisp`
-3. `npm run mmlisp2ir -- ../examples/source/demo1.mmlisp --out ../examples/ir/demo1.ir.generated.json`
-4. `npm run build:ir-demos`
-5. `npm run verify-ir -- ../examples/ir/demo1.ir.canonical.json ../examples/ir/demo1.ir.generated.json`
-6. `npm run check:ir-demos`
-7. `npm run check:mmlisp-strict`
+3. `npm run mmlisp2ir -- ../examples/source/ab-core.mmlisp --out /tmp/ab-core.ir.json`
+4. `npm run verify-ir -- a.ir.json b.ir.json`
+5. `npm run check:mmlisp-strict`
 
 ## Notes
 
 1. Generated files use deterministic key ordering to simplify diffs.
-2. `build:ir-demos` runs in strict mode and emits diagnostics JSON files under
-   `examples/ir`.

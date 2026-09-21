@@ -1164,6 +1164,9 @@ carries one engine image per voice count, and the image is what sets the rate:
 
 The bank is one 32 KB window a song, and every note a sample is played at is
 baked into it separately, so the seconds above are the total of all of them.
+**Only what the score plays is baked.** A def the score never sounds — most of
+a drum kit, every time you import one — declares a name and costs no bank
+bytes, so importing a whole set is free until you write the note.
 The voices are summed and **hard-clipped**: loud simultaneous hits distort by
 design, and headroom is the composer's to manage with `:vel` / `:vol`.
 

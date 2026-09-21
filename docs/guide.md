@@ -1060,3 +1060,66 @@ with `Tab` moving between the fields:
 The placeholders are usable defaults, so leaving a template early (`Esc`) still
 leaves valid source. Forms whose shape genuinely varies — a track, `t`, the
 eval heads — insert just the name, as before.
+
+---
+
+## 25. Browsing what the app ships
+
+**File ▸ Browse…** lists the preset sets and the example scores that come with
+the app, so picking a voice or opening a score takes one click instead of a
+file dialog.
+
+Each preset set is one directory under `presets/`, and the list on the right is
+read straight out of the `set.mmlisp` a score would import — so a name in the
+panel is always the def behind it, never a copy that drifted.
+
+What the panel offers comes from two files, `presets/index.json` and
+`examples/index.json`, each a plain list of paths — a directory cannot be
+listed over HTTP, so a new set or a new example has to be named in one of them
+to show up. They hold paths and nothing else: the names, kinds and contents are
+read from the files themselves.
+
+| Row                | ▶                                       | Other actions |
+| ------------------ | --------------------------------------- | ------------- |
+| an FM voice (`fm`) | c at octaves 2-6, one `len 4` note each, on FM1 | **Insert def** pastes the definition at the cursor, to edit as your own |
+| a sample (`pcm`)   | the same run, baked and played through the driver's own engine — what an export will sound like | — |
+| a score            | opens it in the editor                  | — |
+
+One note says nothing about a voice: key scaling, the modulator's ratio and a
+sample's baked rate all change with the octave, so the audition walks the range
+a part would actually be written in. A sample is baked once per note, and the
+low octaves are the big blobs — where five octaves of a long sample do not fit
+the 32 KB bank, the preview drops the lowest ones and says so.
+
+The panel is driven from the keyboard: **↑↓** moves through the list, **←→**
+steps between sets, **Space** auditions the highlighted row, **Enter** is its
+action — open the score, paste the voice's definition, import the sample's set —
+and **Esc** closes. Everything is clickable too.
+
+**Import set** adds `(import "presets/…/set.mmlisp")` to the top of the score.
+A sample def has no **Insert def**: its `:file` is relative to the set's own
+folder (language.md §16), so importing is the only way to reach it from a score
+somewhere else. Importing a whole kit costs nothing in the sample bank —
+only the samples you actually play are baked (language.md §16).
+
+A sample preview replaces the loaded PCM bank, so it waits for playback to
+stop; the next **Play** or **Build** puts the score's bank back. Opening a
+score replaces what is in the editor, as `File ▸ Open…` does.
+
+### Drum kits swap
+
+Every kit names its sounds by role — `kick` `snare` `hat` `hat-open` `rim`
+`clap` `crash` `ride` `tom1`–`tom6` (low to high), and the percussion beyond
+them — so changing which kit you import changes the sounds under the same
+names, and the score is untouched:
+
+```lisp
+(import "presets/808/set.mmlisp")        ; ← swap this line for
+; (import "presets/gm-drums/set.mmlisp") ;   this one
+(pcm1 :len 8 kick c4 hat c4 snare c4 hat c4)
+```
+
+Two kits imported at once is `E_IMPORT_CONFLICT`, which is the point: they
+compete for the same names. A kit that lacks a sound the other has simply has
+no def of that name; fill the gap with an alias to one it does have
+(`(def clap snare)`), or copy the def line from the other kit's `set.mmlisp`.

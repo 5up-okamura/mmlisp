@@ -35,7 +35,7 @@ let scores = argv.filter((a, i) => !a.startsWith("--") && !(fIdx >= 0 && i === f
 if (!scores.length) scores = ["tests/m2-pcm.mmlisp", "tests/m4-fm6-only.mmlisp", "tests/m3-pcm-vol.mmlisp",
   "tests/m3-pcm-master.mmlisp", "tests/m3-pcm-softmix.mmlisp", "tests/m3-pcm-volmix.mmlisp",
   "tests/m3-pcm-slice.mmlisp", "tests/m2-csm.mmlisp", "tests/m3-macro-multi.mmlisp",
-  "../examples/source/demo1.mmlisp", "tests/m3-pcm-sync.mmlisp", "tests/sin008.mmlisp",
+  "tests/m3-pcm-sync.mmlisp", "tests/sin008.mmlisp",
   "tests/m4-pcm-loop.mmlisp", "tests/m4-pcm-2v-master.mmlisp", "tests/m4-pcm-3v.mmlisp", "tests/m4-pcm-loop-curve.mmlisp", "tests/m4-pcm-loop-mode.mmlisp"]
   .map((s) => join(drv, s));
 

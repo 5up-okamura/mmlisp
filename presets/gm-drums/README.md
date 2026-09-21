@@ -3,27 +3,31 @@
 42 one-shots from Virtuosity Drums (Versilian Studios and Karoryfer Samples,
 drummer Austin McMahon), [upstream](https://github.com/sfzinstruments/virtuosity_drums)
 at `9f04cf9a7345`, CC0 1.0 — [licence](LICENSE-CC0.txt).
-22,050 Hz, signed 16-bit mono; each file is named after its GM note number.
+22,050 Hz, signed 16-bit mono.
+
+`set.mmlisp` names them by role, in the vocabulary every kit uses, so
+swapping the import swaps the sounds under the same names. The number is
+the GM note the file is named for; toms run tom1-tom6, low to high.
 
 Muted and short articulations throughout: hand-muted snares, one muted low tom
 resampled across the six GM toms, and faded tails where the source has no muted
 take. Levels are untouched, so the kit is not balanced yet.
 
 ```
- 35 acoustic-bass-drum   51 ride-cymbal-1        67 high-agogo
- 36 bass-drum-1          53 ride-bell            68 low-agogo
- 37 side-stick           54 tambourine           69 cabasa
- 38 acoustic-snare       56 cowbell              71 short-whistle
- 41 low-floor-tom        57 crash-cymbal-2       72 long-whistle
- 42 closed-hi-hat        58 vibraslap            73 short-guiro
- 43 high-floor-tom       59 ride-cymbal-2        74 long-guiro
- 44 pedal-hi-hat         60 hi-bongo             75 claves
- 45 low-tom              61 low-bongo            76 hi-wood-block
- 46 open-hi-hat          62 mute-hi-conga        77 low-wood-block
- 47 low-mid-tom          63 open-hi-conga        78 mute-cuica
- 48 hi-mid-tom           64 low-conga            79 open-cuica
- 49 crash-cymbal-1       65 high-timbale         80 mute-triangle
- 50 high-tom             66 low-timbale          81 open-triangle
+ 35 kick2           51 ride            67 agogo-hi
+ 36 kick            53 ride-bell       68 agogo-lo
+ 37 rim             54 tamb            69 cabasa
+ 38 snare           56 cowbell         71 whistle
+ 41 tom1            57 crash2          72 whistle-long
+ 42 hat             58 vibraslap       73 guiro
+ 43 tom2            59 ride2           74 guiro-long
+ 44 hat-pedal       60 bongo-hi        75 claves
+ 45 tom3            61 bongo-lo        76 woodblock-hi
+ 46 hat-open        62 conga-mute      77 woodblock-lo
+ 47 tom4            63 conga-hi        78 cuica-mute
+ 48 tom5            64 conga-lo        79 cuica
+ 49 crash           65 timbale-hi      80 triangle-mute
+ 50 tom6            66 timbale-lo      81 triangle
 ```
 
 Not in the kit, for want of a source articulation: 39 hand clap,

@@ -1394,7 +1394,7 @@ export function scorePcmVoices(ir) {
 // ── Pitch baking (driver.md §14.2) ─────────────────────────────────────────
 // Which notes each PCM sample is actually played at: every one gets its own
 // blob, baked at the engine image's rate.
-function collectPcmUsage(ir) {
+export function collectPcmUsage(ir) {
   const use = new Map(); // sample name -> Set<midi note>
   for (const track of ir.tracks ?? []) {
     for (const ev of track.events ?? []) {
@@ -1472,6 +1472,19 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
 
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i];
+    const notes = [...(usage.get(s.name) ?? [])].sort((x, y) => x - y);
+    // A DEF THAT NO NOTE PLAYS COSTS NO BYTES. Importing a kit brings in every
+    // def it declares, and a score uses a handful — so the bank is built from
+    // what the score PLAYS, not from what it can name. Without this a 22-sample
+    // kit import is 113 KB of bank for a two-sound beat.
+    if (notes.length === 0) {
+      const empty = padBlock(new Uint8Array(0));
+      fallbackFor.set(s.name, push({
+        flags: 0, off: intern(empty), len: empty.length, srcFrames: 0,
+        loopStart: 0, loopEnd: 0,
+      }));
+      continue;
+    }
     const blob = blobs[s.name];
     const data = blob?.data ?? new Uint8Array(0);
     if (!blob) {
@@ -1488,10 +1501,8 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
     const loopEndSec = s.loopEndSec;
     const hasLoop = loopStartSec != null || loopEndSec != null;
     const rate = blob?.baseRate ?? s.rate ?? 13000;
-    const notes = [...(usage.get(s.name) ?? [])].sort((x, y) => x - y);
 
-    const bakeable = data.length > 0 && notes.length > 0;
-    if (!bakeable) {
+    if (data.length === 0) {
       fallbackFor.set(s.name, push({
         flags: 0, off: intern(padBlock(data)), len: padBlock(data).length, srcFrames: data.length,
         loopStart: 0, loopEnd: data.length,

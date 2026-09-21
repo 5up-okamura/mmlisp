@@ -990,3 +990,75 @@
     .license-row { margin: 0 0 0.55rem; }
     .license-row b { color: var(--foreground); }
 
+    /* Browse: preset sets and example scores */
+    .browse-modal { width: min(720px, 92vw); }
+    .browse-modal:focus { outline: none; }
+    .browse-body {
+      display: flex;
+      gap: 0.6rem;
+      height: min(420px, 60vh);
+    }
+    .browse-groups {
+      flex: 0 0 9.5rem;
+      overflow-y: auto;
+      border: 1px solid var(--mid);
+      border-radius: 3px;
+    }
+    .browse-items {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid var(--mid);
+      border-radius: 3px;
+    }
+    .browse-group, .browse-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      width: 100%;
+      padding: 0.3rem 0.45rem;
+      background: none;
+      border: 0;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.72rem;
+      text-align: left;
+      cursor: pointer;
+    }
+    .browse-group:hover, .browse-row:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
+    .browse-group.active { background: color-mix(in srgb, var(--foreground) 28%, var(--background)); font-weight: bold; }
+    .browse-row.active {
+      background: color-mix(in srgb, var(--foreground) 24%, var(--background));
+      outline: 1px solid var(--foreground);
+      outline-offset: -1px;
+    }
+    .browse-row .browse-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .browse-row .browse-kind { opacity: 0.55; font-size: 0.66rem; }
+    .browse-head {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.45rem;
+      border-bottom: 1px solid var(--mid);
+      font-size: 0.7rem;
+      color: var(--foreground);
+    }
+    .browse-head .browse-name { flex: 1; }
+    .browse-mini {
+      background: none;
+      border: 1px solid var(--mid);
+      border-radius: 2px;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.64rem;
+      padding: 0.05rem 0.3rem;
+      cursor: pointer;
+    }
+    .browse-mini:hover { background: color-mix(in srgb, var(--foreground) 22%, var(--background)); }
+    .browse-note {
+      color: var(--foreground);
+      opacity: 0.7;
+      font-size: 0.66rem;
+      margin: 0.4rem 0 0;
+      min-height: 1.1em;
+    }
+

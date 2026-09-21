@@ -117,6 +117,10 @@
           <span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
         </button>
+        <button class="menu-item" onclick="openBrowse();closeMenus()"
+                title="What the app ships: the preset voice/sample sets and the example scores. Preview a voice, insert its import, or open a score.">
+          <span>Browse…</span>
+        </button>
         <button class="menu-item" onclick="openFolder();closeMenus()"
                 title="Open a score's folder so its relative :file samples (wav next to the score) load. Session-scoped: reopen after a reload. Chrome blocks Desktop/Documents themselves; use a subfolder.">
           <span>Open Folder…</span>
@@ -165,15 +169,6 @@
           <span>Save As…</span>
           <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
         </button>
-        <div class="menu-wrap submenu-wrap" id="menuExamples">
-          <button class="menu-item" onclick="toggleSubmenu('menuExamples')">
-            <span>Examples</span>
-            <span class="submenu-arrow" aria-hidden="true"></span>
-          </button>
-          <div class="menu-dropdown submenu-dropdown">
-            <button class="menu-item" onclick="loadExample('/examples/ir/demo1.ir.canonical.json');closeMenus()">demo1</button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -413,6 +408,21 @@
     </div>
   </div>
 
+  <!-- Browse: the preset sets and the example scores the app ships -->
+  <div id="browseModal" class="modal-overlay" hidden>
+    <div class="modal browse-modal" tabindex="-1">
+      <div class="modal-title">Browse</div>
+      <div class="browse-body">
+        <div class="browse-groups" id="browseGroups"></div>
+        <div class="browse-items" id="browseItems"></div>
+      </div>
+      <div class="browse-note" id="browseNote"></div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="closeBrowse()">Done</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Early global diagnostics: surface otherwise-silent failures. On mobile
        there's no devtools, and a rejected top-level CDN import in the module
        below would leave window.onPlayToggle undefined (every button a dead
@@ -449,7 +459,7 @@
 <script type="module">
     import { IRPlayer } from './src/ir-player.js';
     import { DrvPlayer } from './src/drv-player.js';
-    import { encodeMmb } from './src/export-mmb.js';
+    import { encodeMmb, collectPcmUsage } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
@@ -2491,39 +2501,11 @@
     initShortcutLabels();
 
     // IR preset → MMLisp source URL mapping
-    const IR_TO_MMLISP = {
-      '/examples/ir/demo1.ir.canonical.json':
-        '/examples/source/demo1.mmlisp',
-    };
-
     const SOURCE_FILE_TYPES = [
       { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } },
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
       { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
     ];
-
-    async function loadMmlispSource(irURL) {
-      const mmlispURL = IR_TO_MMLISP[irURL];
-      if (!mmlispURL) {
-        setEditorDoc('(no MMLisp source mapped for this IR file)');
-        return;
-      }
-      try {
-        const res = await fetch(mmlispURL);
-        if (!res.ok) throw new Error(res.status);
-        const src = await res.text();
-        _lastFileName = mmlispURL.split('/').pop();
-        currentIrURL = irURL;
-        setEditorDoc(src);
-        // Compile immediately so playback uses the freshly compiled IR (which
-        // carries token/macro source spans) instead of the precompiled
-        // canonical IR. setEditorDoc replaces state without firing the
-        // doc-change compile trigger, so do it explicitly (as file-open does).
-        await refreshImportsAndCompile();
-      } catch (e) {
-        setEditorDoc('(failed to load: ' + mmlispURL + ')');
-      }
-    }
 
     function setEditorDoc(text) {
       // Reset the full state so that undo history does not include the file load.
@@ -2689,7 +2671,11 @@
     async function refreshImportSources(src) {
       const map = new Map();
       const seen = new Set();
-      const queue = collectImports(src).map((spec) => [spec, spec]);
+      // A top-level import resolves against the score's own folder, exactly as
+      // the compiler resolves it (docs/language.md §9.2). The score's name only
+      // HAS a folder when it came from the served tree (Browse); a bare file
+      // name leaves the spec untouched, which is what the opened folder wants.
+      const queue = collectImports(src).map((spec) => [joinImportPath(_lastFileName, spec), spec]);
       while (queue.length) {
         const [path, spec] = queue.shift();
         if (seen.has(path)) continue;
@@ -2751,9 +2737,14 @@
     async function pcmSampleBlobsForMmb(ir) {
       const defs = ir?.metadata?.samples;
       if (!Array.isArray(defs) || defs.length === 0) return null;
+      // Only what the score plays. Importing a kit declares every sample in it;
+      // fetching and decoding the whole kit to build a bank that leaves the
+      // unplayed ones out (export-mmb buildSampleBank) is work for nothing.
+      const played = collectPcmUsage(ir);
       const blobs = {};
       for (const def of defs) {
         if (!def?.name) continue;
+        if (!played.has(def.name)) continue;
         try {
           // Compiled samples are already signed-8; decode them straight to
           // bytes rather than round-tripping through float and losing a bit.
@@ -4370,27 +4361,12 @@
       });
     }
 
-    function loadExample(url) {
-      currentIrURL = url;
-      _lastGoodIR = null;
-      onStop();
-      _sourceHandle = null;
-      _sourceFileName = null;
-      clearSourceDir(); // a URL score resolves its samples from the server
-      if (/\.mmb(?:$|\?)/i.test(url)) {
-        setEditorDoc('(binary MMB preset loaded)');
-      } else {
-        loadMmlispSource(url);
-      }
-      closeMenus();
-    }
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.menu-wrap')) closeMenus();
     });
     window.toggleMenu  = toggleMenu;
     window.toggleSubmenu = toggleSubmenu;
     window.closeMenus  = closeMenus;
-    window.loadExample = loadExample;
 
     // -----------------------------------------------------------------------
     // ---- theme ----
@@ -4624,6 +4600,449 @@
         onStop();
       }
     });
+
+
+    // -----------------------------------------------------------------------
+    // Browse (File > Browse…)
+    // -----------------------------------------------------------------------
+    // One panel over what the app ships: the preset sets and the example
+    // scores. A set's contents are parsed out of the very file a score imports,
+    // so a listed name can never drift from the def behind it. The two
+    // index.json files exist only because a directory cannot be listed over
+    // HTTP; they hold paths and nothing else.
+    const BROWSE_SETS_INDEX = '/presets/index.json';
+    const BROWSE_SCORES_INDEX = '/examples/index.json';
+
+    let _browseCatalog = null;              // { sets: [path], scores: [path] }
+    const _browseSetCache = new Map();      // set path -> { path, text, defs }
+    let _browseSel = null;                  // left-hand selection: a set path, or 'scores'
+    let _browseRow = 0;                     // highlighted row in the right-hand list
+    let _browsePreviewTimers = [];          // note on/off timers for the FM audition
+    let _browsePcmSounding = false;         // the worklet holds a sample preview
+
+    async function fetchText(path) {
+      const res = await fetch(toFetchablePath(path));
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${path}`);
+      return res.text();
+    }
+
+    async function openBrowse() {
+      document.getElementById('browseModal').hidden = false;
+      // Capture phase, as the value popup does: the panel's arrows and space
+      // must not also reach a slider or the piano keys underneath.
+      document.addEventListener('keydown', onBrowseKey, true);
+      // Take focus off the editor, so letters do not type into the score behind
+      // the panel while you are picking a voice.
+      document.querySelector('#browseModal .browse-modal').focus();
+      if (!_browseCatalog) {
+        const read = async (url) => {
+          try { return JSON.parse(await fetchText(url)); }
+          catch (e) { log('Browse: ' + e.message, 'err'); return []; }
+        };
+        const [sets, scores] = await Promise.all([read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX)]);
+        _browseCatalog = { sets, scores };
+      }
+      renderBrowseGroups();
+      await selectBrowseGroup(_browseSel ?? _browseCatalog.sets[0] ?? 'scores');
+    }
+
+    function closeBrowse() {
+      stopBrowsePreview();
+      document.getElementById('browseModal').hidden = true;
+      document.removeEventListener('keydown', onBrowseKey, true);
+    }
+
+    function browseSetName(path) {
+      return path.replace(/\/[^/]*$/, '').replace(/^presets\//, '');
+    }
+
+    function renderBrowseGroups() {
+      const host = document.getElementById('browseGroups');
+      host.innerHTML = '';
+      const add = (key, label) => {
+        const b = document.createElement('button');
+        b.className = 'browse-group' + (key === _browseSel ? ' active' : '');
+        b.textContent = label;
+        b.onclick = () => selectBrowseGroup(key);
+        host.appendChild(b);
+      };
+      for (const path of _browseCatalog.sets) add(path, browseSetName(path));
+      add('scores', 'Scores');
+    }
+
+    async function selectBrowseGroup(key) {
+      _browseSel = key;
+      renderBrowseGroups();
+      const items = document.getElementById('browseItems');
+      items.innerHTML = '';
+      if (key === 'scores') {
+        renderBrowseScores(items);
+      } else {
+        try {
+          renderBrowseSet(items, await loadBrowseSet(key));
+        } catch (e) {
+          log('Browse: ' + e.message, 'err');
+          setBrowseNote(e.message);
+          return;
+        }
+      }
+      _browseRow = 0;
+      highlightBrowseRow(0);
+      setBrowseNote(browseKeyHint());
+    }
+
+    function browseKeyHint() {
+      return _browseSel === 'scores'
+        ? '\u2191\u2193 select \u00b7 Enter open \u00b7 Esc close'
+        : '\u2190\u2192 set \u00b7 \u2191\u2193 select \u00b7 Space preview \u00b7 Enter insert \u00b7 Esc close';
+    }
+
+    function browseRows() {
+      return [...document.querySelectorAll('#browseItems .browse-row')];
+    }
+
+    function highlightBrowseRow(i) {
+      const rows = browseRows();
+      if (rows.length === 0) return;
+      _browseRow = Math.max(0, Math.min(rows.length - 1, i));
+      rows.forEach((r, n) => r.classList.toggle('active', n === _browseRow));
+      rows[_browseRow].scrollIntoView({ block: 'nearest' });
+    }
+
+    // The panel is a list, so it is driven like one. Space auditions what is
+    // highlighted; Enter is the row's own action — a score opens, a voice's
+    // definition is pasted, a sample's set is imported (the only way to reach
+    // a sample from a score elsewhere).
+    function onBrowseKey(e) {
+      if (document.getElementById('browseModal').hidden) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const rows = browseRows();
+      const sets = _browseCatalog?.sets ?? [];
+      const groups = [...sets, 'scores'];
+      const stop = () => { e.preventDefault(); e.stopPropagation(); };
+      switch (e.key) {
+        case 'ArrowDown': stop(); highlightBrowseRow(_browseRow + 1); return;
+        case 'ArrowUp':   stop(); highlightBrowseRow(_browseRow - 1); return;
+        case 'ArrowRight':
+        case 'ArrowLeft': {
+          stop();
+          const at = groups.indexOf(_browseSel);
+          const next = (at + (e.key === 'ArrowRight' ? 1 : groups.length - 1)) % groups.length;
+          selectBrowseGroup(groups[next]);
+          return;
+        }
+        case ' ': {
+          stop();
+          if (e.repeat) return;               // holding space is one audition
+          const row = rows[_browseRow];
+          if (row?._browse?.def) previewBrowseDef(row._browse.set, row._browse.def);
+          else setBrowseNote('Nothing to preview \u2014 Enter opens a score.');
+          return;
+        }
+        case 'Enter': {
+          stop();
+          activateBrowseRow(rows[_browseRow]);
+          return;
+        }
+        case 'Escape': stop(); closeBrowse(); return;
+        default: return;
+      }
+    }
+
+    function activateBrowseRow(row) {
+      const b = row?._browse;
+      if (!b) return;
+      if (b.score) return void openBrowseScore(b.score);
+      if (b.def.kind === 'fm') return insertBrowseDefText(b.set, b.def);
+      insertBrowseImport(b.set.path);
+    }
+
+    function setBrowseNote(text) {
+      document.getElementById('browseNote').textContent = text;
+    }
+
+    // A set is read straight from its source: every top-level (def …) becomes a
+    // row, classified the way the FM panel already classifies the def under the
+    // cursor.
+    async function loadBrowseSet(path) {
+      const cached = _browseSetCache.get(path);
+      if (cached) return cached;
+      const text = await fetchText(path);
+      const defs = [];
+      for (const node of parse(text)) {
+        if (!node || node.kind !== 'list') continue;
+        const head = node.items?.[0];
+        if (!head || head.kind !== 'atom' || head.value !== 'def') continue;
+        const nameNode = node.items[1];
+        if (!nameNode || nameNode.kind !== 'atom') continue;
+        const name = nameNode.value;
+        if (isFmVoiceDefNode(node)) {
+          defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node), node });
+        } else if (sampleFileOfDefNode(node)) {
+          defs.push({ name, kind: 'pcm', node });
+        } else {
+          defs.push({ name, kind: 'def', node });
+        }
+      }
+      const entry = { path, text, defs };
+      _browseSetCache.set(path, entry);
+      return entry;
+    }
+
+    // The `:file` of a sample def, or null when the def is not a sample.
+    function sampleFileOfDefNode(node) {
+      let isSample = false;
+      let file = null;
+      for (let i = 2; i < node.items.length; i++) {
+        const it = node.items[i];
+        if (!it || it.kind !== 'atom') continue;
+        if (it.value === ':sample') isSample = true;
+        if (it.value === ':file' && node.items[i + 1]?.kind === 'string') {
+          file = node.items[i + 1].value;
+        }
+      }
+      return isSample ? file : null;
+    }
+
+    function renderBrowseSet(host, set) {
+      const head = document.createElement('div');
+      head.className = 'browse-head';
+      const label = document.createElement('span');
+      label.className = 'browse-name';
+      label.textContent = `${set.defs.length} defs · ${set.path}`;
+      const imp = document.createElement('button');
+      imp.className = 'browse-mini';
+      imp.textContent = 'Import set';
+      imp.title = 'Add (import "…") for this set to the top of the score';
+      imp.onclick = () => insertBrowseImport(set.path);
+      head.append(label, imp);
+      host.appendChild(head);
+
+      for (const def of set.defs) {
+        const row = document.createElement('div');
+        row.className = 'browse-row';
+        const play = document.createElement('button');
+        play.className = 'browse-mini';
+        play.textContent = '▶';
+        play.title = 'Preview';
+        play.onclick = () => previewBrowseDef(set, def);
+        const name = document.createElement('span');
+        name.className = 'browse-name';
+        name.textContent = def.name;
+        const kind = document.createElement('span');
+        kind.className = 'browse-kind';
+        kind.textContent = def.kind;
+        row.append(play, name, kind);
+        row._browse = { set, def };
+        row.addEventListener('click', () => highlightBrowseRow(browseRows().indexOf(row)));
+        if (def.kind === 'fm') {
+          // An FM def is self-contained text, so a copy can be pasted and then
+          // edited. A sample def is not: its `:file` is relative to the set's
+          // own folder (language.md §16), so importing is the only honest way
+          // to reach it from a score somewhere else.
+          const copy = document.createElement('button');
+          copy.className = 'browse-mini';
+          copy.textContent = 'Insert def';
+          copy.onclick = () => insertBrowseDefText(set, def);
+          row.appendChild(copy);
+        }
+        host.appendChild(row);
+      }
+    }
+
+    function renderBrowseScores(host) {
+      const head = document.createElement('div');
+      head.className = 'browse-head';
+      head.textContent = 'Opening a score replaces what is in the editor.';
+      host.appendChild(head);
+      for (const path of _browseCatalog.scores) {
+        const row = document.createElement('button');
+        row.className = 'browse-row';
+        const name = document.createElement('span');
+        name.className = 'browse-name';
+        name.textContent = path.split('/').pop();
+        const dir = document.createElement('span');
+        dir.className = 'browse-kind';
+        dir.textContent = path.replace(/\/[^/]*$/, '');
+        row.append(name, dir);
+        row._browse = { score: path };
+        row.onclick = () => openBrowseScore(path);
+        host.appendChild(row);
+      }
+    }
+
+    // ---- preview ----------------------------------------------------------
+
+    // A PREVIEW IS c AT OCTAVES 2-6, ONE `len 4` NOTE EACH. One note says
+    // nothing about an FM voice: key scaling, the modulator's ratio and a
+    // sample's baked rate all change with the octave, so the audition walks
+    // the range a part would actually be written in.
+    const PREVIEW_OCTAVES = [2, 3, 4, 5, 6];
+    const PREVIEW_NOTE_SEC = 0.5;          // len 4 at the default 120 BPM
+    const PREVIEW_GAP_SEC = 0.02;          // key-off before the next attack
+    const previewOctaveMidi = (oct) => (oct + 1) * 12;   // c of that octave
+
+    function previewBrowseDef(set, def) {
+      if (def.kind === 'fm') return previewBrowseFm(def);
+      if (def.kind === 'pcm') return previewBrowsePcm(set, def);
+      setBrowseNote(`${def.name} is not a voice or a sample \u2014 nothing to sound.`);
+    }
+
+    // Cancel whatever the panel has in flight. The FM run is JS timers; the
+    // PCM run is already queued inside the worklet, so only a flush recalls it
+    // (safe here because a sample preview refuses to start during playback).
+    function stopBrowsePreview() {
+      for (const t of _browsePreviewTimers) clearTimeout(t);
+      _browsePreviewTimers = [];
+      previewNoteOff(CURSOR_DEF_PREVIEW_CH);
+      if (_browsePcmSounding) {
+        workletNode?.port.postMessage({ type: 'flush' });
+        _browsePcmSounding = false;
+      }
+    }
+
+    // Same path the algorithm-diagram tap uses for the def under the cursor:
+    // push the registers onto the preview channel, then play the run. Timers
+    // rather than scheduled writes, so a second press can cancel the first
+    // without flushing a song that may be playing underneath.
+    async function previewBrowseFm(def) {
+      if (!(await initAudio())) return;
+      initParamOnlyPlayer();
+      applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
+      _kbAppliedDefSig = null; // the panel took the channel; let the keyboard re-push
+      stopBrowsePreview();
+      PREVIEW_OCTAVES.forEach((oct, i) => {
+        const at = i * PREVIEW_NOTE_SEC * 1000;
+        _browsePreviewTimers.push(setTimeout(
+          () => previewNoteOn(CURSOR_DEF_PREVIEW_CH, previewOctaveMidi(oct)), at));
+        _browsePreviewTimers.push(setTimeout(
+          () => previewNoteOff(CURSOR_DEF_PREVIEW_CH),
+          at + (PREVIEW_NOTE_SEC - PREVIEW_GAP_SEC) * 1000));
+      });
+      setBrowseNote(`${def.name} \u2014 c2\u2026c6 on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
+    }
+
+    // A sample has no register form to push: it is bytes in a bank. So compile
+    // the score that plays the run and hand the worklet that bank — the
+    // export's own bake, at the engine's rate, one blob per octave. The score's
+    // bank is displaced until the next Play or Build re-syncs it, which is why
+    // this waits for playback to stop.
+    async function previewBrowsePcm(set, def) {
+      if (!(await initAudio())) return;
+      if (_fmLiveRaf != null) {
+        setBrowseNote('Stop playback first \u2014 a sample preview reloads the PCM bank.');
+        return;
+      }
+      stopBrowsePreview();
+      let octaves = [...PREVIEW_OCTAVES];
+      try {
+        for (;;) {
+          try {
+            await playBrowsePcmRun(set, def, octaves);
+            break;
+          } catch (e) {
+            // THE LOW OCTAVES ARE THE BIG BLOBS. A note an octave down is
+            // twice the bytes, so a long sample cannot be baked five octaves
+            // deep into a 32 KB bank. Drop the lowest and try again rather
+            // than refuse to sound at all.
+            if (octaves.length > 1 && /sample bank is/.test(e.message)) {
+              octaves = octaves.slice(1);
+              continue;
+            }
+            throw e;
+          }
+        }
+      } catch (e) {
+        log('Browse preview: ' + e.message, 'err');
+        setBrowseNote(String(e.message));
+      }
+    }
+
+    async function playBrowsePcmRun(set, def, octaves) {
+      const run = octaves.map(() => 'c').join(' > ');
+      const source = `(import "${set.path}")\n`
+        + `(pcm1 :oct ${octaves[0]} :len 4 ${def.name} ${run})\n`;
+      const { ir, diagnostics } = compileMMLisp(source, 'browse-preview.mmlisp', {
+        imports: new Map([[set.path, set.text]]),
+      });
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
+      // decodePcmSample caches by path, so a retry with fewer octaves re-bakes
+      // without re-fetching the wav.
+      const samples = await pcmSampleBlobsForMmb(ir);
+      if (!samples) throw new Error('sample did not load');
+      const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+      workletNode.port.postMessage({
+        type: 'pcm-set-bank',
+        bank: sampleBank ?? null,
+        pcmVoices: ir?.metadata?.pcmVoices ?? 1,
+        entryIds: pcmEntryIds ?? {},
+      });
+      const base = audioCtx.currentTime + 0.05;
+      octaves.forEach((oct, i) => {
+        workletNode.port.postMessage({
+          type: 'pcm-ev', when: base + i * PREVIEW_NOTE_SEC,
+          kind: 'on', voice: 0, track: 0, sample: def.name,
+          midi: previewOctaveMidi(oct), mode: 'shot', vel: 15,
+        });
+      });
+      _browsePcmSounding = true;
+      const range = octaves.length === PREVIEW_OCTAVES.length
+        ? 'c2\u2026c6'
+        : `c${octaves[0]}\u2026c${octaves[octaves.length - 1]} (the lower octaves do not fit the bank)`;
+      setBrowseNote(`${def.name} \u2014 ${range}, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
+    }
+
+    function bankBytesUsed(bank) {
+      let last = 0;
+      for (let i = 0; i < bank.length; i++) if (bank[i] !== 0) last = i + 1;
+      return last;
+    }
+
+    // ---- insert / open ----------------------------------------------------
+
+    function insertBrowseImport(path) {
+      const doc = editorView.state.doc.toString();
+      const line = `(import "${path}")`;
+      if (doc.includes(line)) { setBrowseNote('Already imported.'); return; }
+      editorView.dispatch({ changes: { from: 0, to: 0, insert: line + '\n' } });
+      setBrowseNote(`Inserted ${line}`);
+    }
+
+    function insertBrowseDefText(set, def) {
+      const lines = set.text.split('\n');
+      const from = (def.node.line ?? 1) - 1;
+      const to = (def.node.endLine ?? def.node.line ?? 1) - 1;
+      const text = lines.slice(from, to + 1).join('\n');
+      insertInlineTextAtCursor(text + '\n');
+      setBrowseNote(`Inserted ${def.name} (${to - from + 1} lines)`);
+    }
+
+    // Open a served score. Its full path becomes the compile filename, so its
+    // imports and its samples' `:file` resolve against its own folder rather
+    // than the site root (docs/language.md §9.2, §16).
+    async function openBrowseScore(path) {
+      try {
+        const src = await fetchText(path);
+        clearSourceDir();
+        _sourceHandle = null;
+        _sourceFileName = path.split('/').pop();
+        currentIrURL = null;
+        _lastGoodIR = null;
+        _lastSourceMap = null;
+        _lastFileName = path;
+        setEditorDoc(src);
+        await refreshImportsAndCompile();
+        closeBrowse();
+        log('Opened ' + path, 'info');
+      } catch (e) {
+        log('Browse: ' + e.message, 'err');
+        setBrowseNote(String(e.message));
+      }
+    }
+
+    window.openBrowse = openBrowse;
+    window.closeBrowse = closeBrowse;
 
     // Expose for inline handlers
     window.initAudio    = initAudio;

@@ -28,9 +28,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 const baselinePath = join(here, "..", "tests", "ab-baseline.json");
 
-// Corpus: the trace-gate scores (drv/tests) plus the two example songs. Every
-// score the driver is verified against should also be watched on the ir↔drv
-// axis. Add a score here when you add a trace gate for it.
+// Corpus: the trace-gate scores (drv/tests) plus the example song. Every score
+// the driver is verified against should also be watched on the ir↔drv axis.
+// Add a score here when you add a trace gate for it.
 function corpus() {
   const list = [];
   const tdir = join(here, "..", "tests");
@@ -38,7 +38,6 @@ function corpus() {
     if (f.endsWith(".mmlisp")) list.push(join(tdir, f));
   }
   list.push(join(root, "examples", "source", "ab-core.mmlisp"));
-  list.push(join(root, "examples", "source", "demo1.mmlisp"));
   return list;
 }
 

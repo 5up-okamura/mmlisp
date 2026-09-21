@@ -237,7 +237,6 @@ _Compiler — per-target gaps (after unification):_
 - [x] Migrate `(def bd/sd/hh :psg [...])` → `(def bd/sd/hh :macro :vel [...])`
 - [x] `(def down :macro :pitch ...)` updated to cents unit (`:to -2400`)
 - [x] Add multi-stage `:macro :pitch` examples to spec v0.4 (`syntom-pitch`, `vib-entry`)
-- [x] Retire demo2 example and keep demo set on `demo1`
 
 ---
 
@@ -344,7 +343,6 @@ Other:
 - [x] Save As: `showSaveFilePicker` → write `.mmlisp`; update base directory for sample resolution
 - [x] Save: write to previously acquired `FileSystemFileHandle` (no picker re-prompt)
 - [x] Unsaved-state guard: warn when compiling `def :sample` paths with no saved base directory
-- [x] Examples item under File menu: load bundled `.mmlisp` sample into editor (currently: demo1; extensible)
 
 **Tools menu**
 

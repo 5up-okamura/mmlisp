@@ -340,11 +340,5 @@
     "mismatches": 6,
     "compileErrors": 0,
     "digest": "1e02c59c"
-  },
-  "demo1.mmlisp": {
-    "ok": false,
-    "mismatches": 26,
-    "compileErrors": 0,
-    "digest": "1aa330f2"
   }
 }

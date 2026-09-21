@@ -1,6 +1,6 @@
 ; libOPNMIDI XG: melodic MSB 0 / LSB 0 only (128 GM programs).
 ; MIT: Copyright (c) 2018-2026 Vitaliy Novichkov.
-; See licenses/libopnmidi-xg.txt and source.json.
+; See licenses/libopnmidi-xg.txt and README.md.
 ; Voice registers only; pitch and shared LFO settings belong to the score.
 
 ; GM 1 / MIDI 0: * GrandPiano
