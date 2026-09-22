@@ -222,7 +222,7 @@ field by its fixed size (gate uses duration-operand length rules).
 - **RET 0x45** — pop the top (call-tagged) entry and continue at its return
   pointer. **Implemented and gated.**
 
-The **dedup pass** (design-eval §9) is a pure encode transform: repeated
+The **dedup pass** is a pure encode transform: repeated
 event runs are stored once (fragment + RET) and each occurrence becomes a
 3-byte CALL. It changes MMB bytes, never the register trace — verified by the
 ab-compare gate (`drv/tools/ab-gate.mjs`), which replays the original IR and

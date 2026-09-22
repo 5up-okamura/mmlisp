@@ -11,7 +11,8 @@
 // Later steps add curve builtins (signals), `let`/`note`/`ticks`/`frames`, and
 // the runtime value machine ($slot lowering). The seams designed here — the
 // env chain and the builtin registry — are what those steps extend; see
-// .claude/memory/design-eval.md §1-2, §7.
+// docs/language.md §7; the design rationale is
+// .claude/memory/language-open.md §5.
 // ---------------------------------------------------------------------------
 
 import { sampleCurveUnit } from "./ir-utils.js";

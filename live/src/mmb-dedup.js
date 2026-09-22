@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Encode-time CALL/RET factoring (opcodes.md §5.2, design-eval §9).
+// Encode-time CALL/RET factoring (opcodes.md §5.2).
 //
 // Repeated event runs in the EVENT_STREAM are stored once and replaced by a
 // 3-byte CALL; the stored fragment ends in RET. This is a *pure encode

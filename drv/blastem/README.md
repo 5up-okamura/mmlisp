@@ -54,5 +54,5 @@ and therefore knows. The record is logged anyway because it costs nothing.
 
 BlastEm is the reference we are arguing with while the hardware round is
 expensive, and it has already found things no gate here could: see
-`.claude/memory/plan-68k-split.md`. It is a model. A green run here is a reason
+`.claude/memory/driver-decisions.md`. It is a model. A green run here is a reason
 to spend a hardware round, not a substitute for one.

@@ -2020,7 +2020,7 @@ static void run_frame(MMLSeq *s) {
       /* Step 3, in the normative order: sweeps ascending channel then slot,
        * then the macros (same write path, §13.3), the global tempo and CSM-rate
        * sweeps, and the fades. Once a frame — subdividing them would multiply
-       * 99% of the frame's write traffic by K (plan-subtick-timing). */
+       * 99% of the frame's write traffic by K (driver-decisions.md §3). */
       for (int bank = 0; bank < MML_SWEEP_BANKS; bank++) {
         int ch = sweep_bank_ch(bank);
         for (int i = 0; i < 2; i++) {

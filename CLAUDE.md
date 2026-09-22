@@ -36,16 +36,23 @@ The driver lives in `drv/`, with a first-party node toolchain in `drv/tools/`
 (Z80 assembler, Z80 CPU emulator, machine model, gates — no external binaries).
 The shipped Z80 engine (since 2026-09-11) is the pair-transport engine
 generated from `drv/engine/` by `drv/tools/build-engine.mjs` (`docs/driver.md`
-§15); `drv/68k/` is the C sequencer and the slot → pair converter, `drv/sgdk/`
+§5); `drv/68k/` is the C sequencer and the slot → pair converter, `drv/sgdk/`
 the SGDK host. Its gate: `cd drv && npm run verify:all` must be green (C ≡
 `drv-player.js`, converter ≡ its JS twin, the image on real scores).
 The superseded engines are
 at tags `archive/ring-engine` (the ring-consuming Z80 mixer) and
 `archive/all-z80` (sequencer and mixer both on the Z80), and the engine's
-research bench at `archive/dac-stream-bench`; their measurements
-live in `docs/dac-engine-implementation.md` and `.claude/memory/`. Read
-`.claude/memory/plan-pcm-spec.md` before touching PCM in any layer, and
-`.claude/memory/plan-68k-split.md` for the driver's decision record.
+research bench at `archive/dac-stream-bench`; their measurements live in
+`.claude/memory/`. Read `.claude/memory/plan-pcm-spec.md` before touching PCM
+in any layer, and `.claude/memory/driver-decisions.md` for the driver's
+decision record.
+
+`docs/dac-engine-implementation.md` is the DAC engine's designer↔implementer
+log. It is **local only** — kept out of git on the user's instruction — so a
+fresh clone and every cloud session lack it, and the section numbers cited from
+`drv/engine/` are provenance, not a dependency: each of those comments quotes
+the requirement it needs. Do not go looking for the file; `docs/driver.md` §5
+is the shipped engine's design.
 
 `docs/driver.md` describes only the current design — when it changes, rewrite
 the affected section; history belongs in git, the designer log and the memory.

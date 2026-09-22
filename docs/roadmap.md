@@ -400,7 +400,7 @@ remains the sole runtime-varying path.
   compile error. CALL/RET + an exporter dedup pass handle data-size reuse.
   The driver budget for all of this is measured and funded (stack watermark,
   size audit, overlay eviction). Normative record and ordered implementation
-  plan: `.claude/memory/design-eval.md`.
+  plan: `.claude/memory/language-open.md`.
   **Compiler track landed** (scalar + curve arithmetic, `:seed`, `let`, `note`,
   `ticks`/`frames`, signal materialization; language.md §7). **Driver track
   landed** too: the generic shadow read + value machine (left-linear `$slot`

@@ -1180,7 +1180,7 @@ export function encodeMmb(ir, opts = {}) {
     });
   }
 
-  // ── CALL/RET dedup (design-eval §9): factor repeated event runs. Pure
+  // ── CALL/RET dedup (opcodes.md §5.2): factor repeated event runs. Pure
   // encode transform — trackEntries.eventOffset and JUMP dests are relinked in
   // place; the register trace is unchanged (verified by the ab-compare gate).
   let eventBytes = stream.bytes;

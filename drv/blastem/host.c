@@ -8,7 +8,7 @@
 // WHY THIS EXISTS. Until now the only way to find out what the driver does on a
 // Mega Drive was to build a ROM, run it in BlastEm on a desktop, and listen.
 // Every gate in this repo stayed green through three separate bugs that a
-// machine found in minutes (plan-68k-split.md, 2026-08-29), and every engine
+// machine found in minutes (driver-decisions.md, 2026-08-29), and every engine
 // question cost a round of somebody's attention. The emulator is the reference
 // implementation of the hardware we are arguing with, and it builds as a
 // libretro core with no SDL, no X11 and no audio device — so it can run here,

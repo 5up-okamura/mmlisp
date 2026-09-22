@@ -1,15 +1,17 @@
-# language.md vs the implementation — what is left of the 2026-09-18 audit
+# The language and IR: what is open, and why the value machine looks like this
 
-A line-by-line audit (four agents, snippets compiled and run) compared
-docs/language.md with the compiler, the editor preview and the MMB/driver
-path. The judgment-free items were fixed the same day (commits d1d1d64,
-be08c05, f8acf9e, b44dd32, a530b3c: gate 0 keeps time, stage macros, :wait Nf,
->255-step warnings, delay/prio timing, def-val, tempo last-writer, gates, head
-expressions, shuffle, recursion diagnostic, pcm diagnostics, :vel/:oct/:tempo
-values, macro value tokens, :leak, :rate/:phase, hex :seed, :break, let-bound
-curves, doc facts and examples). What remains, with the question each needs:
+Two things live here, because a session working on the language needs both:
+**the open questions** (§1–§4, from the 2026-09-18 audit) and **the design
+rationale behind compile-time eval and the value machine** (§5, merged from
+`design-eval.md` 2026-09-22). `docs/language.md` carries the shipped spec; this
+is only what the docs do not say.
 
-## Needs the user's decision (the driver sounds different from the editor)
+`design-eval.md`'s Z80 byte budgets, its reduction ladder and every `.z80` line
+reference described the all-Z80 build (tag `archive/all-z80`) and are gone; so
+is its step-by-step implementation diary, which is git history. Its line
+references were against a 2026-07 tree and none resolve.
+
+## 1. Needs the user's decision (the driver sounds different from the editor)
 
 1. **Glide longer than its note** (§14): slide faster to finish inside the
    note, or cut at the note end? Today both players let it run into later
@@ -28,7 +30,7 @@ curves, doc facts and examples). What remains, with the question each needs:
    referenced; the code lets the def win. Error at def time?
 8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
 
-## Decided and fixed
+## 2. Decided and fixed
 
 - **fm3-N levels are per operator** (2026-09-22, user kept `(fm3 …) :vol`).
   `tl[op] = voiced_tl[op] + dB(op vel) + dB(op vol) + dB(CH3 vol) + dB(master)`
@@ -81,7 +83,7 @@ curves, doc facts and examples). What remains, with the question each needs:
   cursor alone cannot say "first"). Gate: `m3-macro-keyon`'s fm4 track,
   `[1 1 1 1]` — 0-diff on `$28` between the two players.
 
-## Decided, no change
+## 3. Decided, no change
 
 - **Consecutive `:gate 0` notes do not re-attack** (2026-09-20, user). Every
   other FM note now does — a full-gate note keys off right before the next
@@ -93,7 +95,7 @@ curves, doc facts and examples). What remains, with the question each needs:
   re-asserts its attenuation on every note-on and re-attacks either way.
   Written into language.md §17.
 
-## Judgment-free but larger
+## 4. Judgment-free but larger
 
 - ~~fm3-N glide / pitch macros do nothing (or hit CH3) on the driver~~ FIXED
   2026-09-21/22 (`m4-fm3op-pitch`, `m4-fm3op-keyon`, `m4-fm3op-level`,
@@ -109,3 +111,65 @@ curves, doc facts and examples). What remains, with the question each needs:
 - Voice-def values must be integer literals (a `(def lvl 40)` constant or an
   expression is dropped); E_LET_SHADOWS_DEF only for voice/macro defs.
 - Computed float levels on the driver (suspected: integer tables).
+
+## 5. Why the value machine has this shape
+
+Compile-time eval was designed in two rounds; **round 2 reversed two of round
+1's decisions**, and the reasons are the load-bearing part:
+
+- ~~"shrink the JS player's read-modify-write reads to match the Z80"~~ →
+  **grow the driver instead.** A generic shadow read, derived from the existing
+  write-descriptor table, makes every FM operator param readable.
+  **`live ≡ hardware` is achieved upward, not downward.**
+- ~~"`$`-bearing expressions must match a small closed lowering table"~~ → the
+  table **opens.** With the target param itself as the accumulator, any
+  left-linear expression over constants and `$slot`s lowers to existing opcode
+  chains **with zero new opcodes**.
+
+**The governing constraint, still true of `mmlispseq.c` and stated in no doc:**
+eval is compile-time only and its output is static data. The driver gains **no
+evaluator — only readers and flags.**
+
+The vision it serves: **`def-val` slots are the score's input ports, eval
+expressions are the wiring, and the sampling tiers are the rates** — the game
+writes variables, the score declares how the music responds. The four tiers
+(compile / tick / note-on / frame) are the unifying answer to "when is this
+value read?"; `language.md` §8 and `driver.md` §6.4 show the mechanism but not
+the model.
+
+One verdict worth keeping: the **batched frame flush** was built and then
+reverted — roughly 90 bytes for about a 1% reduction in writes. The revert is in
+git; the ratio is not.
+
+## 6. Live risks in the value machine
+
+1. **The hold sentinel collides with the pitch minimum.** `NOTE_PITCH.min` is
+   −32768 (`ir-utils.js`) and the i16 hold sentinel is `0x8000`
+   (`export-mmb.js` writes `v & 0xffff`), which `drv-player.js` and
+   `mmlispseq.c` both decode as "advance, write nothing". A `:pitch` macro
+   clamped to its minimum therefore becomes a silent hold. Same shape for
+   −128/`0x80` on i8 targets whose range reaches it. Latent and pre-existing,
+   more reachable now that macros can be computed. Fix: clamp the minimum to
+   sentinel+1 at MMB lowering.
+2. **A folded relative op is relative to the score-visible value**, so a host
+   `SET_PARAM` in between is invisible to it. `(+ $P X)` is the explicit opt-in
+   to host-relative behaviour.
+3. **Multi-write chains touch the register between steps** — `W_EVAL_CHAIN_LONG`
+   past about six ops.
+4. **Inline stochastic sweeps (curve ids 8–11) fall back to a linear ramp on the
+   driver** — a live ir↔drv divergence.
+5. **The signal-⊕ region model is deliberately restricted** (equal step, no
+   loop⊕one-shot, single release). loop⊕one-shot is the designed first
+   relaxation and the prerequisite for *baked* AM; runtime AM is the scaled-macro
+   flag.
+6. **A second sigil (`@vel`) was considered and rejected** — more syntax for the
+   same semantics. The `$` namespace carries several tiers and reserved-name
+   checks keep them apart.
+7. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
+   F-number at note boundaries, proven scale-independent. This was the only
+   record of it; the file it used to point at never existed.
+
+Deferred, with reasons: slot-fed macro-curve dynamics need a note-on curve
+re-sampler, and sweep `:rate`/`:len` dynamics are still baked — both still warn
+(`W_MMB_MACRO_SKIPPED`, `W_MMB_DYN_SWEEP_BAKED`). The scaled-macro form is
+`(* signal $slot)` only, so it **cannot combine with `:pitch+`** in one macro.
