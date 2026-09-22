@@ -69,3 +69,25 @@ path) as the specification, and port from that, not from prose.
 **A warning for whoever gates it:** to compare at zero tolerance the lifecycle
 must exist in *both* players and the harness must not auto-start the SE track —
 that is what the sidecar's `autoStart: false` is for.
+
+## Where the C actually stands (checked 2026-09-22)
+
+`mmlispseq.c` contains **no SE code at all** — not a stub, not a branch. Track
+start is `mml_start_track`, ported from `drv-player`'s `_startTrack(false)`
+with the SE path left out on purpose so it could drop in later. What has to
+appear:
+
+- a suspended state alongside running/armed/held on `MMLTrack`;
+- a per-channel owner, and a snapshot to put back;
+- a priority byte on the track;
+- an SE start command in `mml_command`, and the two reclaim hooks.
+
+The gate is waiting: `tests/m3-se.mmlisp` and `m3-se-prio.mmlisp` exist with
+their `.cmds.json` sidecars, and `c-gate` currently prints
+`SKIP … not ported yet` for both. **Porting them into the passing set is the
+definition of done for the C half.** The SGDK host then needs one call.
+
+Note the interaction with loading several MMBs (`roadmap.md` open #4): decision
+2 above chose bundling *because* cross-MMB banking was not available. If
+several scores can be resident, that choice is worth re-opening — but it is not
+a prerequisite, and bundling is the shipped-format answer today.

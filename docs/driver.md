@@ -99,11 +99,15 @@ and never arbitrate.)
 
 ### 2.3 Layering and scene transitions
 
-A track control block carries the pointer to its own score, so the sequencer's
-model allows tracks of several MMBs to run at once. The SGDK host loads **one
-score at a time** (`MMLisp_loadScore` resets the sequencer); cross-score
-transitions are not available yet (§11). Within a score, a transition is
-started and faded per track:
+**One score is loaded at a time, and that is a property of the sequencer, not
+just of the host.** A track control block holds an *offset* into the
+sequencer's single event stream (`event_offset`, `pc`), and the voice table,
+macro table, sample entries and tempo increment all live on the sequencer
+beside it — so two MMBs cannot be resident at once without moving that state to
+the track (or to a per-score struct the track points at). `MMLisp_loadScore`
+resets everything, and cross-score transitions are not available (§11).
+
+Within a score, a transition is started and faded per track:
 
 ```c
 MMLisp_startTrack(TRACK_B1);
@@ -174,10 +178,10 @@ PPQN 96 at 60 fps gives fractional ticks per frame for almost every tempo
 - **Accumulators are per-track; the increment is per-song.** Tempo is
   score-global in the language (a mid-track `:tempo` retimes every track of
   the score — language.md §5), so a TEMPO_SET/TEMPO_SWEEP decoded on any
-  track replaces the increment for **all tracks of its MMB**. Per-track
-  accumulators keep only the fractional phase. Independent BPM exists
-  *between* songs: tracks of different MMBs each follow their own song
-  increment (§2.1).
+  track replaces the increment for **all tracks of the loaded score**. Per-track
+  accumulators keep only the fractional phase. There is one increment, because
+  there is one score (§2.3); giving concurrent scores their own tempo is part
+  of what loading several would cost.
 
 ### 3.3 PAL
 

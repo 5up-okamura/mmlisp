@@ -25,13 +25,17 @@ Rules:
 - [plan-se.md](plan-se.md) — **SE: the settled design for work not yet ported.**
   SE exists only in `drv-player.js`; the C sequencer and the SGDK host have
   none. Read `drv-player.js` as the spec and this for the decisions behind it.
+- [plan-multi-score.md](plan-multi-score.md) — **loading several scores at
+  once: nothing built, and the docs used to claim the sequencer already
+  allowed it.** What the data model actually is, what moving it would cost,
+  and which of the two things people want this for is already free.
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind the
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.
 - [language-open.md](language-open.md) — **the language and IR: what is open.**
-  The questions from the 2026-09-18 audit that need the user's decision, what
-  was decided and fixed, and why compile-time eval and the value machine have
-  their shape — including the latent hold-sentinel collision.
+  The questions from the 2026-09-18 audit that need the user's decision, the
+  larger judgment-free items, and why compile-time eval and the value machine
+  have their shape, with the risks that are still live.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the
