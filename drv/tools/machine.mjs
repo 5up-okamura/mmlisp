@@ -1,12 +1,12 @@
-// The emulated machine, and the instrument (docs/dac-engine-implementation.md
-// §5/P0: "測定ツールに、設定値を自動検出したメタデータ、出力時刻、出力値、
-// BUSREQ、DAC enable区間を持たせる").
+// The emulated machine, and the instrument. What it was asked to carry:
+// metadata auto-detected from the settings, the time of each output, its value,
+// BUSREQ, and the DAC-enable spans.
 //
 // A Mega Drive slice: 8 KB of Z80 RAM, the YM2612's four ports with a REAL
 // timer model, the bank register, the PSG port, and the 68000's bus grab as an
 // injectable stretch of stopped time. Everything it observes is stamped with a
 // 64-bit-safe cycle count — the existing probe log wraps its 32-bit master
-// clock every 80 seconds and the §6.2 ten-minute case cannot use it.
+// clock every 80 seconds and a ten-minute run cannot use it.
 //
 // THE TIMERS ARE MODELLED FROM THE CHIP, NOT FROM OUR DOCUMENT. A harness
 // written from a design doc cannot fail on a register the doc forgot: this one

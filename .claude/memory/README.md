@@ -41,12 +41,3 @@ Rules:
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the
   Edit menu's measurement, and the standing decisions — never auto-repair
   brackets, no full paredit, no rainbow parens.
-
-## Not in this repo
-
-`docs/dac-engine-implementation.md` is the DAC engine's designer↔implementer
-instruction document (R1–R28). It is **local only** — kept out of git on the
-user's instruction (`.git/info/exclude`), so a fresh clone and every cloud
-session lack it. Six files in `drv/engine/` and `drv/tools/` cite its sections
-for provenance; each quotes the requirement it needs inline, so the code stands
-without it. The shipped engine's design is `docs/driver.md` §5.

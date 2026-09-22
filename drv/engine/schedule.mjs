@@ -1,4 +1,4 @@
-// The placement engine (docs/dac-engine-implementation.md §3.1, §4).
+// The placement engine (docs/driver.md §5.1).
 //
 // A slot is an OUTPUT INTERVAL: it begins with the `$2A` data write and lasts
 // exactly the number of cycles the profile's Bresenham says it should. Work is

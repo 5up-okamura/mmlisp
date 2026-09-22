@@ -1,6 +1,7 @@
-// The tables, and the arithmetic the JS reference and the Z80 share
-// (docs/dac-engine-implementation.md §3.4: "既存の`:vel`・`:vol`・`:master`の
-// 合成方法と無音時の再生位置継続は、JS参照実装と対応表を作って固定する").
+// The tables, and the arithmetic the JS reference and the Z80 share. The
+// requirement: pin how the existing `:vel` / `:vol` / `:master` compose, and
+// how a silent voice keeps its playback position, by building the table against
+// the JS reference rather than by agreeing in prose (docs/driver.md §6.3, §7).
 //
 // EVERYTHING IS BIASED-UNSIGNED, end to end: the source byte, every table's
 // input and output, the ring, and what the DAC is handed. Nothing converts

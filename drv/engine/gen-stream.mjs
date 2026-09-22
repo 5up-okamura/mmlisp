@@ -1,10 +1,11 @@
-// Generate the P1 output-only stream engine (docs/dac-engine-implementation.md
-// §5/P1: "既知の波形をZ80 RAMから出すだけの構成で、約10 kHzのサイクル配置を成立
-// させる。次にTimer-Bの観測を加え、CSMを併用する").
+// Generate the output-only stream engine (docs/driver.md §5). The brief it was
+// built to: "a configuration that only plays a known waveform out of Z80 RAM,
+// with the cycle placement holding at about 10 kHz; then add Timer-B
+// observation and run CSM alongside it".
 //
 // It generates rather than hand-places, because a hand-placed pad is a constant
 // somebody has to re-derive every time the work changes, and that is the
-// failure §7 asks not to repeat. The schedule is arithmetic: slot length from
+// failure this design exists to avoid. The schedule is arithmetic: slot length from
 // the profile's Bresenham, work from the job list, pad from what is left.
 //
 // THE ONE STRUCTURAL DECISION WORTH READING. There is no interrupt. The Z80

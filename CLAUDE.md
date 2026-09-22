@@ -47,13 +47,6 @@ research bench at `archive/dac-stream-bench`; their measurements live in
 in any layer, and `.claude/memory/driver-decisions.md` for the driver's
 decision record.
 
-`docs/dac-engine-implementation.md` is the DAC engine's designer↔implementer
-log. It is **local only** — kept out of git on the user's instruction — so a
-fresh clone and every cloud session lack it, and the section numbers cited from
-`drv/engine/` are provenance, not a dependency: each of those comments quotes
-the requirement it needs. Do not go looking for the file; `docs/driver.md` §5
-is the shipped engine's design.
-
 `docs/driver.md` describes only the current design — when it changes, rewrite
 the affected section; history belongs in git, the designer log and the memory.
 

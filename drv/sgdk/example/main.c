@@ -65,7 +65,7 @@ static void playAll(void)
 int main(bool hardReset)
 {
     // Upload and boot the Z80 engine: the one-voice pair-transport engine,
-    // ~7 KB with its level tables (docs/dac-engine-implementation.md R28 §63).
+    // ~7 KB with its level tables.
     MMLisp_init();
 
     // NOT READY means the engine never reached its main loop, so the fault is in

@@ -1,6 +1,6 @@
 // The ONE configuration object for the DAC stream prototype
-// (docs/dac-engine-implementation.md §5/P0: "新規ビルド設定は1つの設定オブジェクト
-// から、Z80・68k・JS・素材へ生成する").
+// The rule it was built to: "one configuration object generates the Z80, the
+// 68k, the JS and the material" — nothing re-derives a clock of its own.
 //
 // Everything downstream — the generated Z80 source, the emulated machine, the
 // analyzer's nominal period, the acceptance thresholds — reads THIS. Nothing

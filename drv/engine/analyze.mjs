@@ -1,11 +1,10 @@
-// Read a trace and answer §6's questions — VALUE, TIME and BUS, kept apart
-// (docs/dac-engine-implementation.md §6.1, §6.2).
+// Read a trace and answer three questions — VALUE, TIME and BUS — kept apart.
 //
 // The separation is the point. A delivered COUNT is not a sample clock, a
 // correct byte stream says nothing about when the bytes left, and a hole that
 // overlaps the 68000's bus grab is a different fault from one that does not.
 // Every number below says which of the three it belongs to, and no single
-// number is allowed to stand in for the others (§7).
+// number is allowed to stand in for the others: no single figure is a pass.
 import { YM } from "./config.mjs";
 
 const q = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];

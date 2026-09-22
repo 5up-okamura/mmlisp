@@ -151,6 +151,10 @@ All outside the code under test, all silent:
   ir↔drv A/B baseline, not the C gate. Same shape for the 2026-09 macro
   hold-sentinel fix: **c-gate cannot see an encoder regression at all**, because
   both players read the same stream and would be wrong together.
+- **Never fix a failing gate by breaking the reference the same way.** The
+  point of a zero-tolerance gate is that two independent implementations agree;
+  moving the reference to match a regression destroys the property and leaves
+  the gate green.
 - **When both players are wrong the same way, the A/B gate agrees and passes.**
   A mid-song `:tl` wrote `$40` raw in all three players for months; ab-gate saw
   no divergence because there was none. What found it was reading the register
@@ -289,3 +293,12 @@ increment into C *after* it. Two engine build traps: **the image boots at level
   loop) was wrong, and the profile was right each time.
 - An intermediate fix that only makes a symptom *smaller* is the wrong **shape**
   of fix; the user is right to reject it.
+- **A coefficient fitted to make the model match an observation is not a
+  hardware measurement.** Do not let one become the other in the writing-up.
+- **No single number is a pass.** Not the nominal rate, not the frame-processing
+  rate, not "the DAC bytes are identical", not how it sounds. Each of those has
+  passed while something else was broken — the byte stream says nothing about
+  when the bytes left, and a delivered count is not a sample clock.
+- **Do not stack unproven work.** While two voices are unsettled, three voices,
+  arbitrary pitch and better interpolation are not improvements — they are more
+  unknowns on top of an unknown.
