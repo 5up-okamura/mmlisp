@@ -1380,8 +1380,14 @@ function buildMacroTable(registry) {
   });
   for (const e of entries) {
     for (const v of e.values) {
-      if (e.flags & 1) blob.u16(v == null ? 0x8000 : v & 0xffff);
-      else blob.u8(v == null ? 0x80 : v & 0xff);
+      // A real value may never BE the hold sentinel. `_` encodes as 0x8000 /
+      // 0x80, and both players decode that as "advance, write nothing" — so a
+      // macro whose value reaches the bottom of its range (NOTE_PITCH's is
+      // -32768, exactly the i16 sentinel) would silently stop writing instead
+      // of holding its floor, and no diagnostic could see it. One step of the
+      // target's own resolution is inaudible; a dropped write is not.
+      if (e.flags & 1) blob.u16(v == null ? 0x8000 : (v === -32768 ? 0x8001 : v & 0xffff));
+      else blob.u8(v == null ? 0x80 : (v === -128 ? 0x81 : v & 0xff));
     }
     if (e.flags & 4) blob.u8(e.scaleSlot & 0xff); // scaled: appended slot id
   }

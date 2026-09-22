@@ -299,6 +299,12 @@
     "compileErrors": 0,
     "digest": "7572eb09"
   },
+  "m4-macro-floor.mmlisp": {
+    "ok": false,
+    "mismatches": 4,
+    "compileErrors": 0,
+    "digest": "abf0afd3"
+  },
   "m4-pal-frames.mmlisp": {
     "ok": true,
     "mismatches": 0,

@@ -143,14 +143,15 @@ git; the ratio is not.
 
 ## 6. Live risks in the value machine
 
-1. **The hold sentinel collides with the pitch minimum.** `NOTE_PITCH.min` is
-   −32768 (`ir-utils.js`) and the i16 hold sentinel is `0x8000`
-   (`export-mmb.js` writes `v & 0xffff`), which `drv-player.js` and
-   `mmlispseq.c` both decode as "advance, write nothing". A `:pitch` macro
-   clamped to its minimum therefore becomes a silent hold. Same shape for
-   −128/`0x80` on i8 targets whose range reaches it. Latent and pre-existing,
-   more reachable now that macros can be computed. Fix: clamp the minimum to
-   sentinel+1 at MMB lowering.
+1. ~~**The hold sentinel collides with the pitch minimum.**~~ FIXED
+   2026-09-22. `NOTE_PITCH.min` is −32768 and the i16 hold sentinel is
+   `0x8000`, which both players decode as "advance, write nothing" — so a
+   `:pitch` macro driven to its floor stopped writing, silently and with no
+   diagnostic (measured: `[-32768]` stored as `[null, null]`, two pitch writes
+   instead of six). The exporter now moves a real −32768 to −32767 and −128 to
+   −127. Gate `m4-macro-floor`; note that **c-gate cannot see an encoder
+   regression** — both players read the same stream — so the lock is the A/B
+   baseline, which does move.
 2. **A folded relative op is relative to the score-visible value**, so a host
    `SET_PARAM` in between is invisible to it. `(+ $P X)` is the explicit opt-in
    to host-relative behaviour.

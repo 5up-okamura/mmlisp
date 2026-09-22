@@ -439,9 +439,12 @@ descriptor stays 8 bytes. Each frame the driver reads that value slot and writes
 256 ≈ ×1 is not representable), the multiply runs on the magnitude then
 re-signs toward zero (§4.4). `scale_slot` = 0xFF is the `$time` frame counter,
 0x00–0x0F a value slot. The **hold sentinel** `0x80` (i8) / `0x8000` (i16)
-means "advance one step, write nothing" (the `_` token; NOTE_PITCH cents are
-practically ±32767, so −32768 is free as the sentinel). Regions inside the
-array:
+means "advance one step, write nothing" (the `_` token). The sentinel is NOT a
+free value: NOTE_PITCH's range bottoms out at exactly −32768, so **the exporter
+moves a real −32768 to −32767** (and −128 to −127) rather than let a macro
+driven to its floor silently stop writing. One step of the target's own
+resolution is inaudible; a dropped write is not. Gate: `m4-macro-floor`.
+Regions inside the array:
 
 ```
 [0 .. loop_start)        attack  — played once
