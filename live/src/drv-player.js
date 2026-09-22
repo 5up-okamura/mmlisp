@@ -803,6 +803,22 @@ export class DrvPlayer {
   _recomposeFm3Ops() {
     for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op);
   }
+  // An operator's $40 value under the channel's CURRENT level rule (§7). A :tl
+  // is a VOICED level, not a register value — what reaches the chip is that
+  // level plus vel/vol/master — so every path that writes $40 composes here, or
+  // a mid-song :tl (and a VOICE_SET) silently discards the level the channel is
+  // playing at until the next note-on recomposes it. On a sustaining note there
+  // is no next note-on, so it never comes back. CH3's operators in special mode
+  // each carry their own level; a normal channel composes its carriers and
+  // leaves its modulators raw, where the level is modulation depth, not volume.
+  // `alg` is a parameter because VOICE_SET composes against the voice's NEW
+  // algorithm, which is decided before its $B0 goes out.
+  _opLevel(ch, idx, alg) {
+    if (ch === 2 && this._reg27 & 0x40) return this._fm3OpTl(idx + 1);
+    const regs = this._fm[ch];
+    if (!fmCarrierOpsForAlg(alg & 7).includes(idx)) return regs.ops[idx].voicedTl;
+    return this._carrierTl(regs.ops[idx].voicedTl, regs.vel, regs.vol);
+  }
   // A channel's carriers, from its voiced levels + vel/vol/master. In special
   // mode CH3's four operators are independent voices with their own levels, so
   // the carrier set is not what decides its TLs (driver.md §13.4).
@@ -1360,15 +1376,13 @@ export class DrvPlayer {
     const put = (addr, oldByte, newByte) => {
       if (newByte !== oldByte) this._ym(port, addr, newByte);
     };
-    // Carrier TL goes out COMPOSED, not raw (driver.md §7). The voice's :tl is a
-    // voiced level; what the chip gets is that level plus vel/vol/master. Writing
-    // it raw would be a step of up to +10 dB on whatever note is still sounding —
-    // silent at track start (the armed frame), audible at every loop point that
-    // re-applies a voice, which is exactly where it was heard. The algorithm
-    // decides which operators are carriers, so it has to be read before the loop
-    // even though its register still goes out last.
+    // TL goes out COMPOSED, not raw — _opLevel holds that rule (driver.md §7).
+    // Raw would be a step of up to +10 dB on whatever note is still sounding:
+    // silent at track start (the armed frame), audible at every loop point and
+    // every mid-song patch change that re-applies a voice. The voice's own
+    // algorithm is passed in, because it decides the carriers here even though
+    // its $B0 still goes out last.
     const newAlg = entry[28] & 0x07;
-    const carriers = new Set(fmCarrierOpsForAlg(newAlg));
     for (let op = 0; op < 4; op++) {
       const o = regs.ops[op];
       const opOff = OP_ADDR_OFFSET[op];
@@ -1376,10 +1390,9 @@ export class DrvPlayer {
       put(0x30 + opOff + off, encode30(o), b30);
       o.dt = detuneFromReg(b30 >> 4);
       o.mul = b30 & 0x0f;
-      const voicedTl = entry[4 + op];
-      const tl = carriers.has(op) ? this._carrierTl(voicedTl, regs.vel, regs.vol) : voicedTl;
+      o.voicedTl = entry[4 + op];
+      const tl = this._opLevel(ch, op, newAlg);
       put(0x40 + opOff + off, o.tl, tl);
-      o.voicedTl = voicedTl;
       o.tl = tl;
       const b50 = entry[8 + op];
       put(0x50 + opOff + off, (o.rs << 6) | o.ar, b50);
@@ -1552,7 +1565,7 @@ export class DrvPlayer {
       case target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4: {
         const { idx, op } = opFor(TARGET_ID.FM_TL1);
         op.voicedTl = value < 0 ? 0 : value > 127 ? 127 : value;
-        op.tl = op.voicedTl;
+        op.tl = this._opLevel(channelId, idx, regs.algorithm);
         this._ym(port, 0x40 + OP_ADDR_OFFSET[idx] + off, op.tl);
         return;
       }

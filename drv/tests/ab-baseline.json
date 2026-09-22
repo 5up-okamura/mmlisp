@@ -91,9 +91,9 @@
   },
   "m3-loop-vel-hold.mmlisp": {
     "ok": false,
-    "mismatches": 6,
+    "mismatches": 2,
     "compileErrors": 0,
-    "digest": "27d239bf"
+    "digest": "922776c9"
   },
   "m3-macro-curve.mmlisp": {
     "ok": false,
@@ -328,6 +328,12 @@
     "mismatches": 0,
     "compileErrors": 0,
     "digest": "811c9dc5"
+  },
+  "m4-tl-compose.mmlisp": {
+    "ok": false,
+    "mismatches": 6,
+    "compileErrors": 0,
+    "digest": "bfb069fb"
   },
   "m4-trig-loop.mmlisp": {
     "ok": false,

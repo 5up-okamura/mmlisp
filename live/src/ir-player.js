@@ -1335,6 +1335,29 @@ export class IRPlayer {
     for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, when);
   }
 
+  // An operator's $40 value under the channel's CURRENT level rule (§7). A :tl
+  // is a VOICED level, not a register value — what reaches the chip is that
+  // level plus vel/vol/master — so a mid-song :tl composes here, or it silently
+  // discards the level the channel is playing at until the next note-on
+  // recomposes it. On a sustaining note there is no next note-on, so it never
+  // comes back. CH3's operators in special mode each carry their own level; a
+  // normal channel composes its carriers and leaves its modulators raw, where
+  // the level is modulation depth, not volume.
+  _opLevel(ch, opIdx, when) {
+    if (ch === 2 && this._reg27 & 0x40) return this._fm3OpTl(opIdx + 1, when);
+    const regs = this._chRegs[ch];
+    const op = regs.ops[opIdx];
+    if (!fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(opIdx)) {
+      return op.voicedTl ?? 0;
+    }
+    return this._carrierTl(
+      op,
+      regs.vel ?? 15,
+      this._fmVolAtTime(ch, when),
+      this._masterVol ?? VOL_UNITY,
+    );
+  }
+
   _writeFm3OpPitch(op, midiNote, when) {
     const { fnum, block } = midiToFnumBlock(midiNote);
     const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
@@ -2270,7 +2293,7 @@ export class IRPlayer {
           (v) => {
             // Voiced (timbre) TL — the base level vel/vol/master attenuate from.
             regs.ops[opIdx].voicedTl = v;
-            regs.ops[opIdx].tl = v;
+            regs.ops[opIdx].tl = this._opLevel(ch, opIdx, when);
           },
           0,
           127,

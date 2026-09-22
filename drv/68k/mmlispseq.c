@@ -522,6 +522,23 @@ static void recompose_fm3_ops(MMLSeq *s) {
   for (int op = 1; op <= 4; op++) write_fm3_op_tl(s, op);
 }
 
+/* An operator's $40 value under the channel's CURRENT level rule (§7). A :tl is
+ * a VOICED level, not a register value — what reaches the chip is that level
+ * plus vel/vol/master — so every path that writes $40 has to compose here, or a
+ * mid-song :tl (and a VOICE_SET) silently discards the level the channel is
+ * playing at until the next note-on recomposes it. On a sustaining note there
+ * is no next note-on, so it never comes back. CH3's operators in special mode
+ * each carry their own level; a normal channel composes its carriers and leaves
+ * its modulators raw, where the level is modulation depth, not volume.
+ * `alg` is a parameter because VOICE_SET composes against the voice's NEW
+ * algorithm, which is decided before its $B0 goes out. */
+static uint8_t op_level(const MMLSeq *s, int ch, int idx, uint8_t alg) {
+  uint8_t voiced = s->fm[ch].ops[idx].voiced_tl;
+  if (ch == 2 && (s->reg27 & 0x40)) return fm3_op_tl(s, idx + 1);
+  if (!(MML_CARRIER_MASK[alg & 7] & (1u << idx))) return voiced;
+  return carrier_tl(s, voiced, s->fm[ch].vel, s->fm[ch].vol);
+}
+
 /* A full-gate note meets the next note-on: the key-off it was holding fires
  * here, before that note's writes, so the FM envelope sees the transition it
  * needs to attack. A slur (NOTE_ON_EX bit3) cancels it instead. PSG re-asserts
@@ -720,7 +737,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[idx] + off);
   if (OPRANGE(T_FM_TL1)) {
     o->voiced_tl = (uint8_t)clampi(value, 0, 127);
-    o->tl = o->voiced_tl;
+    o->tl = op_level(s, ch, idx, c->algorithm);
     ym(s, port, (uint8_t)(0x40 + oo), o->tl);
   } else if (OPRANGE(T_FM_AR1) || OPRANGE(T_FM_KS1)) {
     if (OPRANGE(T_FM_AR1)) o->ar = (uint8_t)(value & 0x1f);
@@ -1277,13 +1294,12 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
   const uint8_t *e = s->voices + (uint32_t)voice_id * 29;
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
-  /* Carrier TL goes out COMPOSED, not raw (§7): the voice's :tl is a voiced
-   * level and the chip gets that plus vel/vol/master. Raw would step the level
-   * by up to +10 dB on whatever note is still sounding — inaudible at track
-   * start (the armed frame keeps it silent) but audible at every loop point
-   * that re-applies a voice. The algorithm picks the carriers, so read it here
-   * even though its own register still goes out last. */
-  uint8_t mask = MML_CARRIER_MASK[e[28] & 7];
+  /* TL goes out COMPOSED, not raw — op_level() holds that rule (§7). Raw would
+   * step the level by up to +10 dB on whatever note is still sounding:
+   * inaudible at track start (the armed frame keeps it silent) but audible at
+   * every loop point and every mid-song patch change that re-applies a voice.
+   * The voice's own algorithm is passed in, because it decides the carriers
+   * here even though its $B0 still goes out last. */
   for (int op = 0; op < 4; op++) {
     MMLOp *o = &c->ops[op];
     uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[op] + off);
@@ -1292,9 +1308,8 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
     if (b != enc_30(o)) ym(s, port, (uint8_t)(0x30 + oo), b);
     o->dt = dt_from_reg((uint8_t)(b >> 4));
     o->mul = (uint8_t)(b & 0x0f);
-    b = e[4 + op];
-    o->voiced_tl = b;
-    if (mask & (1 << op)) b = carrier_tl(s, b, c->vel, c->vol);
+    o->voiced_tl = e[4 + op];
+    b = op_level(s, ch, op, e[28]);
     if (b != o->tl) ym(s, port, (uint8_t)(0x40 + oo), b);
     o->tl = b;
     b = e[8 + op];

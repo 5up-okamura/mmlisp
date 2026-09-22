@@ -591,6 +591,14 @@ Rules:
 - Velocity never mutes (vel 0 = −30 dB floor); silence is a rest.
 - Carrier ops per algorithm come from the `fmCarrierOpsForAlg` table
   (alg 0–3 → op4; 4 → op2,4; 5–6 → op2,3,4; 7 → all).
+- **A `:tl` is a voiced level, never a register value.** Every path that writes
+  $40 composes it here first — note-on, `:vel`/`:vol`/`:master`, a mid-song
+  `:tl`*n*, and `VOICE_SET`. A raw write would drop the level the channel is
+  playing at until the next note-on recomposed it, and a sustaining note has no
+  next note-on. The channel's own rule decides: a normal channel composes its
+  carriers and leaves its modulators raw (there the level is modulation depth,
+  not volume); CH3 in special mode composes all four, because each operator
+  carries its own level (§13.4). Gate: `m4-tl-compose`.
 - **Same-table requirement:** the JS reference and the 68k C use these
   byte-identical integer tables. The tables round per term, whereas
   `ir-player.js` sums floats and quantizes once — a known divergence of at
@@ -680,9 +688,12 @@ The `VOICE_SET` handler block-copies the entry in drv-player's exact write
 order (op outer, register inner, then `$B0`), change-only against the shadow
 (an unwritten register reads as 0, so an SSG-omitting voice never writes `$90`),
 seeds the four voiced-TL bytes, and updates the channel's algorithm so the
-vel/vol carrier-TL recompose picks the right carrier mask. The comparison is
-against the **structured** shadow, because a PARAM_SET burst only wrote the
-registers it touched (§12.2). Gate: `m3-voice` (both ports, mid-song switch).
+vel/vol carrier-TL recompose picks the right carrier mask. Its `$40` writes go
+out **composed** under §7's rule, against the voice's NEW algorithm — decided
+before its own `$B0` reaches the chip. The comparison is against the
+**structured** shadow, because a PARAM_SET burst only wrote the registers it
+touched (§12.2). Gates: `m3-voice` (both ports, mid-song switch),
+`m4-tl-compose` (the level survives the change, including on CH3's operators).
 The ab-compare gate's `normalize` collapses same-frame YM writes to the
 per-frame final value, which makes the A/B baseline coalescing-invariant.
 
@@ -740,7 +751,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (52 scores; every score
+same ports, same frames, same order. `npm run c-gate` (53 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -758,7 +769,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 52 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 53 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.

@@ -40,12 +40,25 @@ curves, doc facts and examples). What remains, with the question each needs:
   obstacle was op1 sharing channel 2 with the patch track, which also turned
   out to be silencing op1 on that track's rests.
 
-  **Open, found while gating this:** a mid-song patch change on CH3 written as
-  a FULL voice (29 params → `VOICE_SET`) is not applied by the driver at all in
-  special mode, and the editor applies something at the wrong tick. Expressed
-  as individual `:tlN` PARAM_SETs it works (`m4-fm3-voice-track` gates that).
-  Pre-existing — the same scratch score misbehaves at `0e91ab3^`. Repro:
-  two full `(def …)` voices, `(fm3 a :len 4 _ _ b _ _)`, operators sustaining.
+- **A `:tl` is a voiced level on every write path** (2026-09-22). Chased from
+  the note above — a mid-song patch change on CH3 written as a FULL voice
+  (`VOICE_SET`) losing the operators' levels. The cause was not special mode
+  and not VOICE_SET: `T_FM_TL*` PARAM_SET wrote `$40` RAW in all three players,
+  and `voice_set` composed against the CHANNEL's carrier mask, which in special
+  mode is the wrong rule. So any mid-song `:tl` — on any channel — dropped
+  vel/vol/master until the next note-on recomposed, and a sustaining note has
+  no next note-on. Measured: `:vol 24` plays a TL-20 patch at 39; `:tl1 40`
+  then wrote 40 instead of 59.
+
+  Fixed with ONE helper per player (`op_level` / `_opLevel`) holding the
+  channel's rule — carriers compose and modulators stay raw on a normal
+  channel, all four compose in special mode — called from both the PARAM_SET
+  and the VOICE_SET path. Gate `m4-tl-compose` covers the three cases in one
+  score; `m3-loop-vel-hold` lost 4 A/B divergences (6 → 2), which were exactly
+  the carrier-TL writes the editor emitted and the driver did not.
+
+  Note for future audits: ab-gate could NOT have caught this — both players
+  were raw, so they agreed. Only reading the register trace against §7 did.
 
 - **Abutting fm3-N notes re-attack** (2026-09-21/22). The driver always did;
   the EDITOR's key merge left no gap — a full-gate operator note's interval

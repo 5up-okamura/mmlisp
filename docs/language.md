@@ -334,6 +334,14 @@ PSG: attenuation = clamp(0..15,  round(               dVel + dVol + dMaster ))
 The offset is uniform across carriers, preserving the patch's per-carrier
 balance.
 
+`:tl1`–`:tl4` set that **voiced** level, not the register: a `:tl` written
+mid-song keeps whatever `vel`/`vol`/`master` the channel is already playing at
+— it re-voices the timbre, it does not reset the mix. The same holds when a
+patch is swapped as a whole (a voice name mid-track). A modulator's `:tl` is
+not a level but modulation depth, so on a normal channel only the current
+algorithm's carriers compose; CH3's operators in special mode each carry their
+own level and all four compose (§15).
+
 - **`:vel` 0–15** — a 2 dB/step ladder. `15` = 0 dB (patch level), `0` ≈
   −30 dB floor. Attenuation only — velocity **never mutes** (silence is a
   rest).
