@@ -148,7 +148,14 @@ All outside the code under test, all silent:
   zero-tolerance gate and cost three bring-up rounds.
 - **An encoder-only fix is not locked by `verify:all`.** The 2026-07 loop
   sticky-state bleed was fixed in the exporter, so the regression lock is the
-  ir↔drv A/B baseline, not the C gate.
+  ir↔drv A/B baseline, not the C gate. Same shape for the 2026-09 macro
+  hold-sentinel fix: **c-gate cannot see an encoder regression at all**, because
+  both players read the same stream and would be wrong together.
+- **When both players are wrong the same way, the A/B gate agrees and passes.**
+  A mid-song `:tl` wrote `$40` raw in all three players for months; ab-gate saw
+  no divergence because there was none. What found it was reading the register
+  trace against the level rule in §7 — i.e. against the *spec*, not against
+  another implementation. Budget an audit of that kind; no gate substitutes.
 - A trick that pays: run a built `res/song.mmb` + `res/song.smp` straight
   through the reference player and count `$2A` writes. One write per 600 frames
   against 94,851 settles a "is PCM even running" question in seconds, without an
