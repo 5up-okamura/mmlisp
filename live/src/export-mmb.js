@@ -40,8 +40,15 @@ import {
   pcmBankStamp,
   PCM_BLOCK,
   HEADER_PCM_VOICES_SHIFT,
+  HEADER_FLAG,
 } from "./mmb.js";
-import { pitchToMidi, clampForTarget, sampleCurveUnit } from "./ir-utils.js";
+import {
+  pitchToMidi,
+  clampForTarget,
+  sampleCurveUnit,
+  FRAME_HZ_NTSC,
+  FRAME_HZ_PAL,
+} from "./ir-utils.js";
 
 // The loop-point targets, and the largest byte offset one can name: the bank's
 // usable window (the top page is the silence a parked voice reads).
@@ -64,7 +71,7 @@ function macroKeyToTarget(key) {
 
 // NOTE_ON macro spec keys — snapshotted per note; the exporter diffs them into
 // sticky MACRO_SET / MACRO_CLEAR (driver.md §13.1). Unlowered forms still warn.
-const MACRO_ARG_KEYS = new Set([
+export const MACRO_ARG_KEYS = new Set([
   "pitchMacro",
   "velMacro",
   "note_semi",
@@ -251,9 +258,9 @@ function bpmAt(timeline, tick) {
   return bpm;
 }
 
-function ticksToFrames(ticks, bpm) {
-  // frames = ticks × secsPerTick × 60 = ticks × 3600 / (bpm × 96)
-  return Math.max(1, Math.round((Number(ticks) * 3600) / (bpm * 96)));
+function ticksToFrames(ticks, bpm, frameHz) {
+  // frames = ticks × secsPerTick × frameHz = ticks × frameHz × 60 / (bpm × 96)
+  return Math.max(1, Math.round((Number(ticks) * frameHz * 60) / (bpm * 96)));
 }
 
 // Timer A period from Hz (same formula as ir-player.js _setCsmRateHz).
@@ -286,6 +293,14 @@ export function encodeMmb(ir, opts = {}) {
   const diagnostics = [];
   const diag = (severity, code, message, track = null) =>
     diagnostics.push({ severity, code, message, ...(track ? { track } : {}) });
+
+  // The video standard this score was COMPILED for (driver.md §3.3). Everything
+  // counted in frames — the tempo increment, macro and sweep lengths — is baked
+  // for it, and the header carries it so a loader can refuse a PAL score on an
+  // NTSC machine. It comes from the IR, not from an option: `Nf` note lengths
+  // are already ticks by now, so baking for a clock the compile did not target
+  // would silently retime them.
+  const frameHz = ir.metadata?.frameHz === FRAME_HZ_PAL ? FRAME_HZ_PAL : FRAME_HZ_NTSC;
 
   const timeline = buildTempoTimeline(ir);
   const valSlots = new Map(
@@ -995,7 +1010,7 @@ export function encodeMmb(ir, opts = {}) {
           }
           const frames = a.lenFrames
             ? Math.max(1, Math.round(Number(a.frames ?? 1)))
-            : ticksToFrames(a.frames ?? 1, bpmAt(timeline, ev.tick ?? 0));
+            : ticksToFrames(a.frames ?? 1, bpmAt(timeline, ev.tick ?? 0), frameHz);
           stream.u8(OPCODE.PARAM_SWEEP);
           stream.u8(id);
           stream.u8(curveId(a.curve));
@@ -1016,7 +1031,7 @@ export function encodeMmb(ir, opts = {}) {
         case "TEMPO_SET": {
           syncClock(ev.tick);
           stream.u8(OPCODE.TEMPO_SET);
-          stream.u16(bpmToTickIncrement(a.bpm ?? 120));
+          stream.u16(bpmToTickIncrement(a.bpm ?? 120, frameHz));
           break;
         }
         case "TEMPO_SWEEP": {
@@ -1027,10 +1042,10 @@ export function encodeMmb(ir, opts = {}) {
           // interpolates the increment linearly, so the average preserves the
           // sweep's musical length.
           const avg = Math.max(1, (from + to) / 2);
-          const frames = ticksToFrames(a.len ?? 1, avg);
+          const frames = ticksToFrames(a.len ?? 1, avg, frameHz);
           stream.u8(OPCODE.TEMPO_SWEEP);
-          stream.u16(bpmToTickIncrement(from));
-          stream.u16(bpmToTickIncrement(to));
+          stream.u16(bpmToTickIncrement(from, frameHz));
+          stream.u16(bpmToTickIncrement(to, frameHz));
           stream.u16(Math.min(0xffff, frames));
           stream.u8(curveId(a.curve));
           break;
@@ -1058,7 +1073,7 @@ export function encodeMmb(ir, opts = {}) {
             stream.u16(
               Math.min(
                 0xffff,
-                ticksToFrames(a.len ?? 1, bpmAt(timeline, ev.tick ?? 0)),
+                ticksToFrames(a.len ?? 1, bpmAt(timeline, ev.tick ?? 0), frameHz),
               ),
             );
             stream.u8(curveId(a.curve));
@@ -1293,8 +1308,12 @@ export function encodeMmb(ir, opts = {}) {
   file.raw(MAGIC);
   file.u8(VERSION_MAJOR);
   file.u8(VERSION_MINOR);
-  // flags: no WIDE_OFFSETS, no PAL_TIMEBASE; bits 2-3 the PCM voice count
-  file.u16((pcmVoices & 3) << HEADER_PCM_VOICES_SHIFT);
+  // flags: no WIDE_OFFSETS; PAL_TIMEBASE when this score's frame-counted
+  // numbers were baked for 50 Hz; bits 2-3 the PCM voice count
+  file.u16(
+    ((pcmVoices & 3) << HEADER_PCM_VOICES_SHIFT) |
+      (frameHz === FRAME_HZ_PAL ? HEADER_FLAG.PAL_TIMEBASE : 0),
+  );
   file.u16(sections.length);
   file.u16(HEADER_SIZE);
 

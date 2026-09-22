@@ -49,12 +49,14 @@ npm run verify:all
 | --- | --- |
 | `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same engine images, and the two generated files are what the images build to now |
 | `selftest` | the assembler and the emulator against their own cases |
-| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 53 scores |
+| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, 55 scores |
+| `c-gate:pal` | the same 55 on PAL-baked streams — the sequencer reads no frame rate, and this is what keeps it that way |
 | `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
 | `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
 | `engine:score` | real scores through the image each names, driven by the host model: FM writes per port, PSG bytes, DAC bytes, the clock, PCM-vs-FM sync |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
+| `pal-gate` | a score baked for 50 Hz is the same music as the one baked for 60 (driver.md §12.8) |
 | `pcm-ab` | the browser's IR preview sends the driver's PCM commands, each within a frame |
 | `pcm-loop` | each note plays the loop the score says (`tests/m4-pcm-loop-mode.mmlisp`): the note's `:mode` decides, track loop writes before a note are the note's and stay |
 

@@ -856,6 +856,15 @@ export const PSG_MASTER_CLOCK = 3579545;
 // Timing constants
 // ---------------------------------------------------------------------------
 
+// The video standard's frame rate, which is the driver's whole clock: a track
+// advances by a per-frame tick increment and every macro, sweep and delay is
+// counted in frames (driver.md §3). A score is COMPILED for one of these and
+// the MMB says which (mmb.md §4, PAL_TIMEBASE) — the driver itself only counts
+// frames, so the rate lives in the numbers the exporter bakes, never at
+// runtime. Authoring is NTSC; PAL is an export target.
+export const FRAME_HZ_NTSC = 60;
+export const FRAME_HZ_PAL = 50;
+
 // Lead time in seconds before gate boundary for FM key-off writes.
 // Gives the FM envelope time to start decaying before the note technically ends.
 export const KEY_OFF_LEAD_SECS = 0.005;

@@ -70,6 +70,13 @@ void MMLisp_setSampleBank(const u8* smp);
 // Loading resets all sequencer state and stops everything; one score is loaded
 // at a time. Returns FALSE on a malformed blob.
 //
+// A SCORE IS BAKED FOR ONE VIDEO STANDARD. Its tempo and every macro, sweep
+// and delay length are numbers of FRAMES, so an NTSC score on a PAL machine
+// plays 20% slow and a PAL score on an NTSC machine 20% fast. This is not
+// checked here — plenty of games ship one score and accept it, as the Mega
+// Drive always has — so if you care, bake both and pick with
+// MMLisp_scoreFrameHz() against SGDK's IS_PAL_SYSTEM.
+//
 // It also PRIMES the score: the chip's neutral patch and every track's leading
 // setup (its voices and levels) are queued at once and leave for the chip over
 // the next frames — keep calling MMLisp_frame() — so that starting the tracks
@@ -164,6 +171,15 @@ bool MMLisp_trackActive(u8 track_id);
 // moves before the trigger is heard — compare MMLisp_renderedFrames against
 // MMLispStats.due if a visual has to land ON the beat rather than near it.
 u8 MMLisp_trig(u8 track_id);
+
+// The video standard the loaded score was baked for: 60 or 50 (MMB header
+// flags bit 1, PAL_TIMEBASE). 0 when no score is loaded. The sequencer itself
+// reads no frame rate — it counts frames, and every frame-counted number
+// arrives baked — so this is here for the host to match a score to a machine:
+//
+//   MMLisp_loadScore(IS_PAL_SYSTEM ? song_pal : song_ntsc);
+//
+u8 MMLisp_scoreFrameHz(void);
 
 // Frames rendered since the score was loaded. They are rendered MMLISP_LEAD
 // frames ahead of their time, and what the player hears runs a further ~16 ms

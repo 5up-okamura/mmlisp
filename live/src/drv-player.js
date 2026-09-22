@@ -51,6 +51,8 @@ import {
   sweepValue,
   sweepStep,
   headerPcmVoices,
+  headerFrameHz,
+  tickIncrementToBpm,
   pcmBankStamp,
   SAMPLE_ENTRY_SIZE,
 } from "./mmb.js";
@@ -70,6 +72,7 @@ import {
   encode80,
   fmCarrierOpsForAlg,
   PSG_MASTER_CLOCK,
+  FRAME_HZ_NTSC,
 } from "./ir-utils.js";
 
 const FRAMES_PER_SEC = 60;
@@ -225,6 +228,7 @@ export class DrvPlayer {
   loadMMB(bytes, sampleBankBytes = null) {
     // A newly loaded song plays at its written tempo: drop any live override.
     this._tempoOverride = false;
+    this._frameHz = FRAME_HZ_NTSC; // replaced by the MMB header's PAL_TIMEBASE
     this._tempoOverrideInc = 0;
     const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (b.length < 12 || MAGIC.some((m, i) => b[i] !== m)) {
@@ -236,6 +240,10 @@ export class DrvPlayer {
     // Bits 2-3 of the flags: the PCM voice count, i.e. which engine image the
     // score plays on and the rate its bank is baked at (mmb.md §4).
     const pcmVoices = headerPcmVoices(u16(b, 6));
+    // Bit 1: the frame clock this score's numbers were baked for (mmb.md §4).
+    // The dispatcher never reads it — it counts frames — but the tempo
+    // readback and a live tempo override have to speak the score's own clock.
+    this._frameHz = headerFrameHz(u16(b, 6));
     const sectionCount = u16(b, 8);
     const headerSize = u16(b, 10);
     const sections = new Map();
@@ -408,7 +416,7 @@ export class DrvPlayer {
     // own tempo events. loadMMB clears it, so a fresh song starts as written.
     this._increment = this._tempoOverride
       ? this._tempoOverrideInc
-      : bpmToTickIncrement(120);
+      : bpmToTickIncrement(120, this._frameHz);
     this._diagnostics = [];
     this._skippedOpcodes = new Map();
     this._master = VOL_UNITY;
@@ -2599,7 +2607,11 @@ export class DrvPlayer {
   // ── Live-monitor surface (read-only views of driver state for the UI) ────
   /** Current tempo, for the transport display. Derived from the 8.8 increment. */
   getBpm() {
-    return ((this._increment ?? bpmToTickIncrement(120)) * 75) / 512;
+    const inc = this._increment ?? bpmToTickIncrement(120, this._frameHz);
+    // The inverse of bpmToTickIncrement on THIS score's clock: a PAL-baked
+    // increment is 6/5 of the NTSC one for the same music, so reading it back
+    // on the wrong clock would report a tempo 20% too high.
+    return tickIncrementToBpm(inc, this._frameHz);
   }
   /** FM channel shadow state; same field shape as IRPlayer's chRegs. */
   getChRegs(ch) {
@@ -2623,7 +2635,7 @@ export class DrvPlayer {
   setTempo(bpm) {
     if (!Number.isFinite(bpm) || bpm <= 0) return;
     this._tempoOverride = true;
-    this._tempoOverrideInc = bpmToTickIncrement(bpm);
+    this._tempoOverrideInc = bpmToTickIncrement(bpm, this._frameHz);
     this._tempoSweep = null;
     this._increment = this._tempoOverrideInc;
   }

@@ -1,0 +1,13 @@
+; PAL gate: `Nf` is FRAMES on both standards (language.md §6), so a score
+; written entirely in frames plays on the same frame numbers at 50 Hz as at
+; 60 Hz — and therefore takes 20% longer in wall-clock time. That is the
+; decision, not a defect: `30f` is thirty refreshes, which is what a frame
+; count is for.
+;
+; Its opposite number is m4-pal-sweep, where a MUSICAL length keeps its
+; wall-clock time instead. Between them they pin both halves of §3.3.
+;
+; Nothing here may be written in ticks — the gate checks the whole timeline
+; scaled, which is how it knows every duration came from an `Nf`.
+(fm1 :tempo 120 :alg 7 :ar1 31 :rr1 6 :tl1 20 :ar4 31 :rr4 6 :tl4 20
+  :oct 4 :len 30f c e g c :len 15f e g e g)

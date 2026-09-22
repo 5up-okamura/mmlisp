@@ -10,7 +10,13 @@
  */
 
 import { parse } from "./mmlisp-parser.js";
-import { clampForTarget, pitchToMidi, sampleCurveUnit } from "./ir-utils.js";
+import {
+  clampForTarget,
+  pitchToMidi,
+  sampleCurveUnit,
+  FRAME_HZ_NTSC,
+  FRAME_HZ_PAL,
+} from "./ir-utils.js";
 import {
   makeEnv,
   isEvalHead,
@@ -290,13 +296,23 @@ function importedFilePath(path, baseDir) {
   return normalizePosixPath(`${baseDir}/${p}`);
 }
 
-// Convert an Nf frame count (wall-clock, 1/60 s) to musical ticks at `bpm`.
-// Used where a duration advances the tick timeline (note length, :gate, ~,
-// rest). The conversion uses the tempo active at compile time, so under a
-// runtime tempo change an Nf note scales with tempo like any tick duration.
+// The frame clock this compile targets (driver.md §3.3). It is one number for
+// the whole compile — every `Nf` in the source means that many frames of THIS
+// clock — so it is a compile-scoped constant rather than a parameter threaded
+// through the eighteen call sites of parseLengthToken. compileMMLisp sets it
+// on entry and restores it on the way out; compiling is synchronous and does
+// not recurse (an import only collects defs), so no two targets are ever live
+// at once. Authoring is NTSC; PAL is an export target.
+let compileFrameHz = FRAME_HZ_NTSC;
+
+// Convert an Nf frame count (wall-clock, 1/compileFrameHz s) to musical ticks
+// at `bpm`. Used where a duration advances the tick timeline (note length,
+// :gate, ~, rest). The conversion uses the tempo active at compile time, so
+// under a runtime tempo change an Nf note scales with tempo like any tick
+// duration.
 function framesToTicks(frames, bpm) {
   if (frames === 0) return 0; // 0f = hold, mirroring plain 0
-  return Math.max(1, Math.round((frames * bpm * PPQN) / 3600));
+  return Math.max(1, Math.round((frames * bpm * PPQN) / (compileFrameHz * 60)));
 }
 
 function msToTicks(ms, bpm) {
@@ -311,20 +327,21 @@ function msToTicks(ms, bpm) {
 export function lengthTokenSeconds(token, bpm = 120) {
   if (typeof token !== "string") return null;
   if (/^\d+ms$/.test(token)) return parseInt(token, 10) / 1000;
-  if (/^\d+f$/.test(token)) return parseInt(token, 10) / 60;
+  if (/^\d+f$/.test(token)) return parseInt(token, 10) / compileFrameHz;
   const ticks = parseLengthToken(token, null, bpm);
   if (ticks === null || !Number.isFinite(ticks)) return null;
   return (ticks * 60) / ((bpm || 120) * PPQN);
 }
 
-// Inverse of framesToTicks: a tick duration → 60 Hz frame count at `bpm`.
+// Inverse of framesToTicks: a tick duration → a frame count at `bpm`, on the
+// clock this compile targets.
 function ticksToFrames(ticks, bpm) {
   if (!ticks) return ticks;
-  return Math.max(1, Math.round((ticks * 3600) / (bpm * PPQN)));
+  return Math.max(1, Math.round((ticks * compileFrameHz * 60) / (bpm * PPQN)));
 }
 
 // Resolve a macro spec's `:len`/`:wait` from ticks to frames at the note's
-// tempo, so the driver — which samples macros on a 60 Hz frame clock — gets an
+// tempo, so the driver — which samples macros on the frame clock — gets an
 // absolute frame count (`lenFrames`). `Nf` lens are already frames. Returns a
 // copy; the shared def spec is left untouched. Mirrors the glide/delay Nf→tick
 // resolution done at compile time.
@@ -335,6 +352,7 @@ function resolveMacroLen(spec, bpm) {
   if (out.step?.unit === "tick") {
     out.step = { unit: "frame", value: ticksToFrames(out.step.value, bpm) };
   }
+  // A `:step Nf` is already frames of the target clock, so it passes through.
   if (out.type === "curve") {
     if (!out.lenFrames && out.frames != null) {
       out.frames = ticksToFrames(out.frames, bpm);
@@ -4882,6 +4900,22 @@ function expandRoots(roots, defs, paramDefs, diagnostics) {
  * @returns {{ ir: object, diagnostics: array, sourceMap: array }}
  */
 export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
+  // `options.frameHz` picks the video standard the score is baked for: 60 for
+  // NTSC (the default, and what the editor previews) or 50 for PAL. It is
+  // compile-wide, so it is installed here rather than threaded — see
+  // `compileFrameHz`. Restored in `finally` so a throw cannot leave the next
+  // compile on the wrong clock.
+  const wantHz = options.frameHz === FRAME_HZ_PAL ? FRAME_HZ_PAL : FRAME_HZ_NTSC;
+  const prevHz = compileFrameHz;
+  compileFrameHz = wantHz;
+  try {
+    return compileScore(src, filename, options, wantHz);
+  } finally {
+    compileFrameHz = prevHz;
+  }
+}
+
+function compileScore(src, filename, options, frameHz) {
   const diagnostics = [];
   const parsed = parse(src);
   const {
@@ -5471,6 +5505,10 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
       author: fileMeta.author || "unknown",
       source: filename,
       pcmVoices,
+      // The frame clock every `Nf`, macro step and sweep length in this IR was
+      // resolved against (driver.md §3.3). The exporter reads it so a score can
+      // never be compiled for one standard and baked for the other.
+      frameHz,
       vals: [...vals.values()].map((v) => ({
         name: v.name,
         slot: v.slot,

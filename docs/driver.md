@@ -181,9 +181,43 @@ PPQN 96 at 60 fps gives fractional ticks per frame for almost every tempo
 
 ### 3.3 PAL
 
-Not supported. The tempo increments assume 60 Hz (the correction would be a
-6/5 scale applied at TEMPO_SET), and the sample bank is baked for the NTSC DAC
-rates (§14.2).
+**A score is baked for one video standard.** The driver reads no frame rate —
+it counts frames, and every number it acts on is already a number of frames —
+so the standard lives entirely in what the exporter bakes, and the MMB header
+says which (mmb.md §4, `PAL_TIMEBASE`). This is how XGM does it too: its header
+carries an NTSC/PAL bit and a frame wait means 1/60 s or 1/50 s accordingly.
+
+Compiling is what picks it (`compileMMLisp(src, file, { frameHz: 50 })`), not
+exporting: an `Nf` duration is already ticks by the time the IR exists. Two
+things change, and they change in opposite directions, which is the whole
+design:
+
+- **Musical time keeps its wall-clock length.** The tempo increment is
+  `round(bpm × 96 × 256 / (frameHz × 60))` — at 50 Hz exactly 6/5 of the 60 Hz
+  value — so the same notes occupy 5/6 as many frames and the same seconds. A
+  sweep whose `:len` is musical is converted with the same clock, so it too
+  keeps its seconds.
+- **`Nf` keeps its frame count.** `30f` is thirty refreshes on both standards,
+  so it lasts 20% longer on PAL. A frame count is a hardware quantity —
+  an LFO's update rate, an attack's write budget — and rescaling it would
+  make it something else. Macro `:step`s written in frames, and `$time` (§6.4),
+  follow the same rule.
+
+A tick-written macro `:len`/`:step` is resolved to frames at compile time, so
+it is converted on the target clock like a sweep; its rounding then happens on
+each standard independently (`:step 1/16` at 120 BPM is 7.5 NTSC frames → 8 and
+6.25 PAL frames → 6), which is a few percent on a long envelope.
+
+Not covered: **PCM pitch.** A bank is baked at the image's DAC rate, which
+comes from the Z80 clock, and the PAL Z80 runs 0.92% slower — so samples play
+about 16 cents flat there. The engine is free-running and cycle-paced, so
+nothing else about it changes; a PAL frame gives it 19.5% *more* cycles, which
+is the safe direction. Re-baking a bank at the PAL rate would fix the pitch and
+has not been done.
+
+Gate: `npm run pal-gate` (§12.8), plus `npm run c-gate:pal`, which runs the
+whole c-gate corpus on PAL-baked streams — the C matching its reference there
+is what shows the sequencer really is rate-blind.
 
 ### 3.4 Latency of host calls
 
@@ -725,7 +759,9 @@ three outcomes.
 - **One score loaded at a time** (§2.3).
 - **SE** runs in the reference player only; not in the C sequencer or the SGDK
   host (§2.5).
-- **PAL** is not supported (§3.3).
+- **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
+  on one standard. PCM pitch is not corrected — a PAL bank would have to be
+  re-baked at the PAL DAC rate, and is not.
 - **Not yet run on hardware.** The images are graded in the JS machine
   (§12.4) and on BlastEm (§12.7); the slot that binds each rate has no margin,
   and the one wait the model charges from measurement — a read through the 68k
@@ -751,7 +787,7 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (53 scores; every score
+same ports, same frames, same order. `npm run c-gate` (55 scores; every score
 without a host schedule runs a second time primed, §4.1).
 
 Two things the C needs that the reference gets for free:
@@ -769,7 +805,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 53 scores — each
+same slot streams into pairs and PSG bytes, byte for byte, on 55 scores — each
 with its own image's configuration — with late grabs injected, with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
@@ -883,6 +919,28 @@ build. Needs SGDK, the m68k toolchain and the probe BlastEm
 `npm run light-study` places the generator at each voice count and prints the
 highest rate a slot's work ceiling allows (`--target 0.95` for a margin) —
 where the images' periods come from.
+
+### 12.8 PAL
+
+`npm run pal-gate` bakes every score for both standards and runs the driver on
+each. Nothing else can see PAL: c-gate compares one stream against itself, and
+ab-gate compares against `ir-player`, which previews NTSC only. The claim is
+checked at the strongest strength the score admits:
+
+| strength | when | what must hold |
+| --- | --- | --- |
+| `strict` | no macro, no sweep, no `$time` | identical writes, each at the same **wall-clock time** |
+| `frames` | every duration written as `Nf` (the tick timeline comes out scaled 6/5) | identical writes, each on the same **frame number** |
+| `gesture` | sweeps only, all written in musical time | each register's continuous runs start and end at the same wall-clock time |
+| `span` | anything else (macros, `Nf` sweeps, `$time`) | the music occupies the same wall-clock time |
+
+`strict` and `frames` are the two halves of §3.3 and `m4-pal-frames` /
+`m4-pal-sweep` exist to pin them — each carries a `.pal.json` naming the
+strength it must be met at, because a regression that quietly re-classified
+itself would otherwise pass. The gate was proved against three injected faults:
+an unscaled tempo increment (46 of 62 scores fail), an unscaled sweep length
+(`m4-pal-sweep`, which the span check cannot see — the song still lasts as
+long), and an unscaled `Nf` conversion (`m4-pal-frames`, caught by its pin).
 
 ## 13. Macro Engine
 

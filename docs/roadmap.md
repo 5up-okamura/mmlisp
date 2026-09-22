@@ -98,7 +98,8 @@ Open (driver.md §11):
 3. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
    voice change is one pair instead of ~30.
 4. **Several scores loaded at once** (DJ transitions, driver.md §2.3).
-5. **PAL**.
+5. ~~**PAL**~~ — done: a score is baked for one standard and the MMB header
+   says which (driver.md §3.3). PCM pitch is still NTSC-baked.
 6. **A small Z80-only build** (sequencer on the Z80, this engine's DAC clock).
 
 ## Phase 4: Integration and Demo

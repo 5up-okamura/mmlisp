@@ -427,6 +427,11 @@ u8 MMLisp_trig(u8 track_id)
     return 0;
 }
 
+u8 MMLisp_scoreFrameHz(void)
+{
+    return loaded ? seq.frame_hz : 0;
+}
+
 bool MMLisp_isSettled(void)
 {
     // Nothing waiting in the sequencer or for the wire. The last grab's pairs

@@ -299,6 +299,18 @@
     "compileErrors": 0,
     "digest": "7572eb09"
   },
+  "m4-pal-frames.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-pal-sweep.mmlisp": {
+    "ok": false,
+    "mismatches": 61,
+    "compileErrors": 0,
+    "digest": "56a743f3"
+  },
   "m4-pcm-2v-master.mmlisp": {
     "ok": true,
     "mismatches": 0,

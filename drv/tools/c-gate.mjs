@@ -24,6 +24,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const c68k = join(here, "..", "68k");
 const flags = process.argv.slice(2).filter((a) => a.startsWith("--"));
 let scores = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+// --pal bakes every score for 50 Hz instead. The C reads no frame rate — every
+// frame-counted number arrives baked — so this is the check that it stays that
+// way: the same C, on a stream of different numbers, still matches its
+// reference byte for byte (driver.md §3.3).
+const frameHz = flags.includes("--pal") ? 50 : 60;
 const fIdx = process.argv.indexOf("--frames");
 const MAX_FRAMES = fIdx >= 0 ? Number(process.argv[fIdx + 1]) : 400;
 if (fIdx >= 0) scores = scores.filter((s) => s !== process.argv[fIdx + 1]);
@@ -68,7 +73,7 @@ let pending = 0;
 let skipped = 0;
 for (const score of scores) {
   const name = basename(score);
-  const { bytes: mmb, sampleBank, diagnostics } = buildMmb(score);
+  const { bytes: mmb, sampleBank, diagnostics } = buildMmb(score, { frameHz });
   for (const d of diagnostics ?? []) {
     if (d.severity === "error") throw new Error(`${d.code}: ${d.message}`);
   }

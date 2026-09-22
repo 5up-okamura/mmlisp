@@ -10,6 +10,10 @@
 // freeze), docs/ir.md (event vocabulary). Ids and layouts here match those
 // documents verbatim; the v0.1 ids they inherit came from the old
 // tools/scripts/mmb-common.js + ir-player.js MMB maps.
+import { FRAME_HZ_NTSC } from "./ir-utils.js";
+
+// Ticks per quarter note — the musical grid every tick count is in.
+const PPQN = 96;
 
 // ── File header (mmb.md §4) ───────────────────────────────────────────────
 export const MAGIC = [0x4d, 0x4d, 0x42, 0x30]; // "MMB0"
@@ -17,7 +21,10 @@ export const VERSION_MAJOR = 0;
 export const VERSION_MINOR = 3;
 export const HEADER_SIZE = 12;
 
-// Header flags (mmb.md §4). WIDE_OFFSETS and PAL_TIMEBASE are reserved and 0.
+// Header flags (mmb.md §4). WIDE_OFFSETS is reserved and 0. PAL_TIMEBASE says
+// the score's frame-counted numbers — the tempo increment, every macro, sweep
+// and delay length — were baked for a 50 Hz frame clock; the driver never
+// reads a rate, so this flag is what tells a loader the ROM's region.
 // Bits 2-3 are the score's PCM voice count, 0..3: which engine image plays it
 // (live/src/engine-images.js), and so the rate its sample bank is baked at.
 export const HEADER_FLAG = {
@@ -28,6 +35,8 @@ export const HEADER_PCM_VOICES_SHIFT = 2;
 export const HEADER_PCM_VOICES_MASK = 0x03;
 /** The PCM voice count an MMB header's flags word names. */
 export const headerPcmVoices = (flags) => (flags >> HEADER_PCM_VOICES_SHIFT) & HEADER_PCM_VOICES_MASK;
+/** The frame clock an MMB header's flags word was baked for, in Hz. */
+export const headerFrameHz = (flags) => ((flags & HEADER_FLAG.PAL_TIMEBASE) ? 50 : 60);
 
 // ── Section directory (mmb.md §5) ─────────────────────────────────────────
 export const SECTION_ID = {
@@ -361,10 +370,17 @@ export function readDuration(bytes, offset) {
 }
 
 // ── Tempo (mmb.md §7.5) ───────────────────────────────────────────────────
-// Per-frame tick increment in 8.8 fixed point: round(bpm × 96 × 256 / 3600) =
-// round(bpm × 512 / 75). e.g. 120 → 819, 150 → 1024 (exact).
-export function bpmToTickIncrement(bpm) {
-  return Math.round((Number(bpm) * 512) / 75);
+// Per-frame tick increment in 8.8 fixed point:
+// round(bpm × 96 × 256 / (frameHz × 60)). At 60 Hz that is round(bpm × 512/75)
+// — 120 → 819, 150 → 1024 (exact); at 50 Hz it is exactly 6/5 of it, which is
+// how a PAL-baked score keeps its musical tempo on a 50 Hz frame clock.
+export function bpmToTickIncrement(bpm, frameHz = FRAME_HZ_NTSC) {
+  return Math.round((Number(bpm) * PPQN * 256) / (frameHz * 60));
+}
+
+/** The inverse, for reading a running increment back as a tempo. */
+export function tickIncrementToBpm(inc, frameHz = FRAME_HZ_NTSC) {
+  return (Number(inc) * frameHz * 60) / (PPQN * 256);
 }
 
 // ── The light engine's sample bank (docs/mmb.md §10) ──────────

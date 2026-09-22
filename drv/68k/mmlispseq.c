@@ -2136,6 +2136,11 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   uint16_t section_count = rd16(mmb, 8), header_size = rd16(mmb, 10);
   /* Header flags bits 2-3: the score's PCM voice count (mmb.md §4). */
   s->pcm_voices = (uint8_t)((rd16(mmb, 6) >> 2) & 3);
+  /* Bit 1, PAL_TIMEBASE: the frame clock this score's numbers were baked for
+   * (driver.md §3.3). The dispatcher never reads it — it counts frames, and
+   * every frame-counted number already arrives baked — but the increment it
+   * starts from, before the score's own TEMPO_SET, has to be on that clock. */
+  s->frame_hz = (uint8_t)((rd16(mmb, 6) & 2) ? 50 : 60);
   const uint8_t *track_table = 0;
   uint32_t track_table_len = 0;
   for (uint16_t i = 0; i < section_count; i++) {
@@ -2175,7 +2180,9 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->trk[i].armed_frame = 0xffffffffu; /* never armed; frame 0 is a real one */
   }
 
-  s->increment = (uint16_t)((120 * 512 + 37) / 75); /* bpmToTickIncrement(120) */
+  /* bpmToTickIncrement(120, frame_hz): round(120 * 96 * 256 / (hz * 60)). */
+  s->increment = (uint16_t)((120u * 96u * 256u + (uint32_t)s->frame_hz * 30u)
+                            / ((uint32_t)s->frame_hz * 60u));
   s->master = VOL_UNITY;
   s->pcm_master_shift = 0;
   /* The engine resets its emit sites to unity, so 0 is what it already has:

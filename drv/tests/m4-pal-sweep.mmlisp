@@ -1,0 +1,13 @@
+; PAL gate: a sweep whose length is written in MUSICAL time occupies the same
+; wall-clock time on both standards (driver.md §3.3).
+;
+; The exporter converts that length to a whole number of FRAMES, and that is
+; the one PAL number a register trace can be made to show on its own. The
+; sweep is half the note, so it ENDS while the note is still sounding: its
+; last write to $A4 is the sweep's own end, not the track's. A sweep left on
+; the 60 Hz conversion runs 20% long and lands that write late.
+;
+; No `Nf` anywhere — those stay frames on both standards and would mask it.
+(fm1 :tempo 120 :alg 7 :ar1 31 :rr1 6 :tl1 20 :ar4 31 :rr4 6 :tl4 20
+  :oct 4 :len 1
+  :pitch (linear 0..1200 :len 2) c)

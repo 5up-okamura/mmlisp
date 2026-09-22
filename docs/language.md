@@ -180,7 +180,7 @@ Length token grammar:
 | `N.`  | Dotted (×1.5)                                          | `8.` → 72     |
 | `N/M` | Fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) | `1/3` → 128 |
 | `Nt`  | Exact tick count                                       | `6t` → 6      |
-| `Nf`  | N frames (1/60 s); context-dependent (see below)       | —             |
+| `Nf`  | N frames (1/60 s on NTSC); context-dependent (see below) | —           |
 | `Nms` | N milliseconds, absolute and tempo-independent         | `125ms` → 24 at 120 BPM |
 | `0`   | Hold: KEY-ON without advancing / without KEY-OFF (§17) | 0             |
 
@@ -192,9 +192,14 @@ A **computed** length is also allowed at `:len`, `:gate`, and a note's second
 argument (§7.4): a bare expression is a denominator like a literal number
 (`(+ 2 2)` ≡ `4`), and `(ticks expr)` / `(frames expr)` give an explicit unit.
 
-`Nf` is a true 60 Hz frame count — scheduled per frame, tempo-independent — in
+`Nf` is a true frame count — scheduled per frame, tempo-independent — in
 curve `:len`, macro `:step`, a `(wait Nf)` stage, and `def-val :unit frame`
-slots (the player runs these off its own frame clock). `Nms` has no such
+slots (the player runs these off its own frame clock). **It stays a frame count
+on PAL:** `30f` is thirty refreshes on either standard, and so lasts 20% longer
+at 50 Hz. A frame count is a hardware quantity — an LFO's update rate, an
+attack's write budget — and rescaling it would make it something else. What
+does keep its wall-clock length on PAL is everything written in musical time
+(driver.md §3.3). `Nms` has no such
 special context: it is a duration, converted to ticks at the tempo in force,
 and it is the only token finer than a tick (5.2 ms at 120 BPM). The PCM loop
 points (§16) are the one place it is not rounded to ticks at all — they take
@@ -202,8 +207,9 @@ their value in seconds, so `1ms` reaches the engine's own floor.
 
 In **structural** contexts that advance the musical timeline — note length,
 `:gate`, `~` (tie), rests, `(glide T)`, and `(delay … :time T)` — `Nf` is
-converted to ticks at the tempo active at compile time. So `c16f` lasts 16/60 s
-at the tempo it was authored under; a mid-track `:tempo` change before the note
+converted to ticks at the tempo active at compile time — on the target
+standard's clock, so `c16f` is sixteen frames there too. So `c16f` lasts
+16/60 s on NTSC at the tempo it was authored under; a mid-track `:tempo` change before the note
 is accounted for, but a **runtime** tempo change (live `setTempo`, or a
 `TEMPO_SWEEP` spanning the note) scales it like any tick duration. Use `Nt` when
 you want an exact, tempo-proof tick count.

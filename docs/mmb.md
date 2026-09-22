@@ -60,7 +60,7 @@ Header flags:
 | Bit  | Name         | Meaning                                              |
 | ---- | ------------ | ---------------------------------------------------- |
 | 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0; loaders reject it (see §12). |
-| 1    | PAL_TIMEBASE | **Reserved.** Tempo increments precomputed for 50 Hz (see driver.md §3). Must be 0. |
+| 1    | PAL_TIMEBASE | The score's frame-counted numbers — the tempo increment and every macro, sweep and delay length — were baked for a **50 Hz** frame clock (driver.md §3.3). The driver reads no frame rate, so this is what tells a host which machine the score belongs on. |
 | 2–3  | PCM_VOICES   | The score's PCM voice count, 0–3: which engine image plays it (driver.md §5) and so the rate its sample bank is baked at (§10). |
 | 4–15 | —            | Reserved, must be 0.                                 |
 

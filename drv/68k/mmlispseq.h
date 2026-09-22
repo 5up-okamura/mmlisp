@@ -247,6 +247,7 @@ typedef struct {
   /* The score's PCM voice count (MMB header flags bits 2-3): which engine image
    * plays it, and so the rate stamp its bank must carry. */
   uint8_t pcm_voices;
+  uint8_t frame_hz; /* 60 or 50 — the clock the score's numbers were baked for */
   /* Where the bank sits in the 68k ADDRESS SPACE. The Z80 reaches samples
    * through its 32 KB window, so PCM_START must carry an absolute {bank,
    * offset} — and only the host knows where rescomp put the blob. The gate

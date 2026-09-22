@@ -6,9 +6,12 @@ import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { encodeMmb } from "../../live/src/export-mmb.js";
 import { loadSamplesForIr } from "./wav.mjs";
 
-export function buildMmb(sourcePath) {
+// `frameHz` picks the video standard the score is baked for (driver.md §3.3):
+// 60 for NTSC, 50 for PAL. It has to be given to the COMPILER, not the
+// exporter — an `Nf` duration is already ticks by the time the IR exists.
+export function buildMmb(sourcePath, { frameHz } = {}) {
   const src = readFileSync(sourcePath, "utf8");
-  const { ir, diagnostics } = compileMMLisp(src, sourcePath);
+  const { ir, diagnostics } = compileMMLisp(src, sourcePath, { frameHz });
   const errors = diagnostics.filter((d) => d.severity === "error");
   if (errors.length) {
     throw new Error(
