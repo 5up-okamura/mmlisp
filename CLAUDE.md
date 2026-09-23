@@ -22,12 +22,19 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
+| `mmlisp-eval.js`                | Compile-time eval: `let`, expressions, the curve library                |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
+| `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
+| `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
+| `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
-`export-mmb.js` (IR → MMB v0.3 + the sample bank), `drv-player.js` (JS reference
-driver), and `ab-compare.js` (register-log A/B) in the same directory. PCM has
+`export-mmb.js` (IR → MMB v0.3 + the sample bank), `mmb-voices.js` and
+`mmb-dedup.js` (voice entries, stream dedup), `slot-builder.js` and
+`engine-images.js` (the per-frame slot stream and the engine images),
+`drv-player.js` (JS reference driver), and `ab-compare.js` (register-log A/B)
+in the same directory. PCM has
 one model for every consumer: `pcm-voices.js` (the sequencer's voice model)
 and `pcm-model.js` (the Z80 engine) — drv-player, the browser worklet's IR
 preview and the engine gates all run them.
@@ -61,8 +68,11 @@ spec files — new design decisions amend these documents directly.
 cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 ```
 
-There is **no automated test suite**. Verify changes by playing them back in
-the live environment; call this out when a change is hard to verify that way.
+The driver has gates — `cd drv && npm run verify:all` must be green — and
+`cd tools && npm run check:mmlisp-strict` checks the compiler. **The live app
+and the language have no automated suite:** verify those by playing them back
+in the live environment, and call it out when a change is hard to verify that
+way.
 
 ## Cross-session project memory
 

@@ -81,7 +81,7 @@
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
         <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
-                title="Play through the MMLispDRV reference decoder (MMB v0.2) instead of the IR player">
+                title="Play through the MMLispDRV reference decoder (MMB v0.3) instead of the IR player">
           <span>MMLispDRV Backend</span>
           <span class="menu-item-shortcut" id="drvBackendCheck"></span>
         </button>
@@ -4233,7 +4233,7 @@
       _drvBackend = !_drvBackend;
       updateDrvBackendCheck();
       savePref('drvBackend', _drvBackend ? 'on' : 'off');
-      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.2)' : 'IR player'), 'info');
+      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.3)' : 'IR player'), 'info');
     }
     window.toggleDrvBackend = toggleDrvBackend;
     updateDrvBackendCheck();
@@ -4330,7 +4330,7 @@
         workletNode?.port.postMessage({ type: 'flush' });
       }
 
-      // MMLispDRV reference backend: compile → MMB v0.2 → frame-stepped
+      // MMLispDRV reference backend: compile → MMB v0.3 → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
       // audible form of the A/B comparison. Mute/solo, live vol/master, the
       // tempo fader and Dynamic Parameters are supported (re-applied from the

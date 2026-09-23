@@ -4,14 +4,14 @@ How to play an MMLisp score on a real Mega Drive (or an accurate emulator) from
 an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
 > **Verification status.** The sequencer is proven byte-for-byte against the
-> JS reference on the host (`npm run c-gate`, 56 scores); the slot → pair
+> JS reference on the host (`npm run c-gate`, the whole corpus); the slot → pair
 > converter against its JS twin (`npm run pairs-gate`); the three engine images
 > with the converter in the JS instruction model (`npm run engine:gate`,
 > `npm run engine:score`). `npm run sgdk:lint` type-checks the glue against a
-> shim. The glue built with SGDK 2.x + m68k-elf-gcc 13.2.0 ran headless in a
-> patched BlastEm on the one-voice engine that preceded the three images
-> (`npm run sgdk:gate`); that gate is being moved to the images and stops with
-> a message until it is. Not yet run on hardware.
+> shim. The glue built with SGDK 2.x + m68k-elf-gcc 13.2.0 runs headless in a
+> patched BlastEm on the image the score itself boots (`npm run sgdk:gate`),
+> graded write by write and DAC byte by DAC byte — driver.md §12.7 carries the
+> measurements for all three images. Not yet run on hardware.
 
 ## Files
 

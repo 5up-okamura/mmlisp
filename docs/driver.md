@@ -865,8 +865,9 @@ an alternate backend, and emits real frames through the real cap/spill queue
 The C sequencer compiles for the host as well as for m68k (its core is plain C
 with no SGDK dependency), so the gate is: run both over the same MMB, dump the
 per-frame slot stream, diff at **zero tolerance** — same writes, same values,
-same ports, same frames, same order. `npm run c-gate` (56 scores; every score
-without a host schedule runs a second time primed, §4.1).
+same ports, same frames, same order. `npm run c-gate` runs the whole corpus
+and prints what it ran; every score without a host schedule runs a second time
+primed (§4.1).
 
 Two things the C needs that the reference gets for free:
 
@@ -894,8 +895,9 @@ window fits both video standards.
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, on 56 scores — each
-with its own image's configuration — with late grabs injected, with render
+same slot streams into pairs and PSG bytes, byte for byte, over the same
+corpus — each with its own image's configuration — with late grabs injected,
+with render
 leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
 frame, and through the frame-view path the SGDK host uses.
 

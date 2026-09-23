@@ -25,8 +25,9 @@ game state at runtime.
   cent-accurate glide and vibrato, **FM3 independent-operator mode** and CSM,
   chiptune arpeggios (`:semi`) and drum rolls (`:keyon`) — advanced YM2612
   techniques you write, not hand-poke.
-- **PCM on the DAC.** `pcm1`–`pcm3` play samples through the fm6 DAC (the
-  browser mixes all three; the hardware driver plays one voice today).
+- **PCM on the DAC.** `pcm1`–`pcm3` play samples through the fm6 DAC, in the
+  browser and on the driver alike — `(def pcm-voices N)` picks the engine, one
+  voice at 14,376 Hz, two at 10,112 Hz, three at 6,653 Hz.
 - **Interactive by design.** Tracks start / stop / layer / fade at runtime, and
   `def-val` slots let game code drive parameters live via `$name` — built for
   game music, not just linear playback.
@@ -118,7 +119,8 @@ plays. Sound effects are not on the hardware driver yet (driver.md §11).
 
 It's built reference-first: a JS implementation (`drv-player.js`) validated in
 MMLisp Live, then a C sequencer whose **every register write is checked
-byte-for-byte against it at zero tolerance** (56 scores), and an SGDK build
+byte-for-byte against it at zero tolerance** on the whole gate corpus, and
+an SGDK build
 graded write by write and DAC byte by DAC byte in an emulator. See
 [docs/driver.md](docs/driver.md) for the architecture,
 [drv/README.md](drv/README.md) for building and verification, and
