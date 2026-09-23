@@ -518,7 +518,6 @@ export class DrvPlayer {
       armedFrame: -1,
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
-      unsupported: t.channelId >= 23, // pcm1–pcm3 (20–22) are soft-mix PCM (M3)
       fading: false, // FADE_TRACK (M2 mailbox): Bresenham vol ramp to 0, then stop
       fadeN: 0,
       fadeErr: 0,
@@ -537,14 +536,6 @@ export class DrvPlayer {
       pcmVi: 0, // which voice pcmSnap belongs to
       sePrio: 0, // register-SE priority (for same-channel preempt/drop)
     }));
-    for (const t of this._trk) {
-      if (t.unsupported) {
-        this._diag(
-          "W_DRV_CHANNEL_UNSUPPORTED",
-          `channel id ${t.channelId} is M2/M3; track keeps time but stays silent`,
-        );
-      }
-    }
     this._emitInitWrites();
   }
 
@@ -868,7 +859,6 @@ export class DrvPlayer {
   _noteOn(trk, note, dur, exGate, legato = false, exVel = null) {
     const ch = trk.channelId;
     const fm3op = this._fm3OpFor(ch);
-    if (!fm3op && trk.unsupported) return; // pcm-softmix: timeline only (M3)
     // Every note starts from the score's velocity (driver.md §7.1). The stream
     // carries VEL as change-only sticky state, so once a macro has driven the
     // live vel there is nothing left to re-assert it — without this copy the

@@ -184,22 +184,6 @@ export function midiToFnumBlock(midiNote) {
 }
 
 // ---------------------------------------------------------------------------
-// Volume composition helpers
-// ---------------------------------------------------------------------------
-// Compose vel (0-15), vol (0-31), master (0-31) into a linear level 0.0-1.0.
-export function composeLevel(vel, vol, master) {
-  return (vel / 15) * (vol / 31) * (master / 31);
-}
-
-// Convert composed level 0.0-1.0 → YM2612 TL (0=max, 127=silent).
-// TL is already in dB domain (~0.375 dB/step), so a linear mapping produces
-// a perceptually linear (constant dB/frame) fade. No x² correction needed.
-export function levelToFmTl(level) {
-  const t = Math.max(0, Math.min(1, level));
-  return Math.max(0, Math.min(127, Math.round((1 - t) * 127)));
-}
-
-// ---------------------------------------------------------------------------
 // Unified level model — additive dB offsets
 // ---------------------------------------------------------------------------
 // vel / vol / master each map to a signed dB offset; the offsets are summed (in
@@ -253,22 +237,6 @@ export function velToPsgAtten(vel) {
 export function volToPsgOffset(v) {
   const x = Math.max(0, Math.min(31, v));
   return ((VOL_UNITY - x) * VOL_STEP_DB) / PSG_DB_PER_STEP;
-}
-
-// Convert composed level 0.0-1.0 → SN76489 attenuation (0=max, 15=silent).
-// Att is already in dB domain (2 dB/step), so linear mapping is correct.
-export function levelToPsgAtt(level) {
-  const t = Math.max(0, Math.min(1, level));
-  return Math.max(0, Math.min(15, Math.round((1 - t) * 15)));
-}
-
-// Convenience: compose vel/vol/master and convert to hardware register in one call.
-// Add analogous functions (composePcmVol, composeCsmTl, …) when new synth types land.
-export function composeFmTl(vel, vol, master) {
-  return levelToFmTl(composeLevel(vel, vol, master));
-}
-export function composePsgAtt(vel, vol, master) {
-  return levelToPsgAtt(composeLevel(vel, vol, master));
 }
 
 // ---------------------------------------------------------------------------

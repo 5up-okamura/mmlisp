@@ -226,10 +226,6 @@ function pushUnknownDiag(diagnostics, code, label, node, trackName) {
   );
 }
 
-function isAtom(node, value) {
-  return node && node.kind === "atom" && node.value === value;
-}
-
 function parseIntLike(value) {
   if (typeof value !== "string") return null;
   if (/^[+-]?\d+$/.test(value)) return parseInt(value, 10);
@@ -2821,33 +2817,6 @@ function nodeSrc(node) {
     src.endColumn = node.column + Math.max(1, len);
   }
   return src;
-}
-
-function parseSingleChannel(channelNode) {
-  if (!channelNode) return "fm1";
-  const val = atomValue(channelNode);
-  return val ? val.replace(/^:/, "").toLowerCase() : "fm1";
-}
-
-function parseTrackHead(items) {
-  const options = new Map();
-  let i = 1;
-  while (i < items.length) {
-    const item = items[i];
-    const val = atomValue(item);
-    if (
-      val &&
-      item.kind === "atom" &&
-      TRACK_OPTION_KEYS.has(val) &&
-      i + 1 < items.length
-    ) {
-      options.set(val, items[i + 1]);
-      i += 2;
-    } else {
-      break;
-    }
-  }
-  return { options, bodyStart: i };
 }
 
 /**
