@@ -195,9 +195,9 @@ bool MMLisp_loadScore(const u8* mmb)
     bankRc = (loaded && smpBank) ? (s8)mml_load_samples(&seq, smpBank, 0, (u32)smpBank) : 0;
     // PRIMED AT LOAD: the neutral patch the load queues, and every track's
     // leading setup (mml_prime_tracks), leave for the chip over the frames
-    // before the game starts the music — ~250 writes for sin008, sixteen
-    // frames of the wire that the first notes no longer wait behind. The
-    // starts later send only what differs (MMLisp_isSettled says when all of
+    // before the game starts the music — ~250 writes for a six-channel song,
+    // sixteen frames of the wire that the first notes no longer wait behind.
+    // The starts later send only what differs (MMLisp_isSettled says when all of
     // it has gone).
     if (loaded) mml_prime_tracks(&seq);
     mmlp_init(&pairs, &PAIRS_CFG);

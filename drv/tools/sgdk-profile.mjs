@@ -36,7 +36,7 @@ const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const SECONDS = Number(arg("seconds", 20));
 const KEEP = argv.includes("--keep");
-const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "sin008.mmlisp");
+const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "sgdk", "example", "demo.mmlisp");
 const FRAME = 896040;   // master clocks in an NTSC frame
 const IRQ = new Set(["pump"]);
 // The host's own path only: encode_slot and mmlp_slot serve the byte-slot path

@@ -212,7 +212,7 @@ while (TRUE) {
   no bus. The pumps send only frames whose time has come, counted from SGDK's
   `vtimer`, so **the tempo follows the video clock, not your main loop**: a
   main loop that runs late delays nothing that was ready, and the next call
-  renders the missed frames (on BlastEm, sin008 with the example's main loop
+  renders the missed frames (on BlastEm, a six-channel song with a main loop
   loaded to overrun every 64th frame: the FM timing moved 10.8 ms in 20 s,
   under one frame). A main loop more than three frames behind is a stop — a
   load, a pause screen — and the music pauses with it (`MMLispStats.pauses`)
@@ -241,9 +241,9 @@ while (TRUE) {
   the chip's neutral patch and every track's leading setup (voices, levels)
   leave over the next frames, so the starts later send only what differs. A
   six-channel song's load is ~250 register writes — sixteen frames of the wire
-  — and the first notes used to queue behind it (252 ms late on sin008). Load
-  during a transition and start once `MMLisp_isSettled()` is TRUE; starting
-  sooner is still correct, the first notes just come later.
+  — and the first notes used to queue behind it (252 ms late on such a song).
+  Load during a transition and start once `MMLisp_isSettled()` is TRUE;
+  starting sooner is still correct, the first notes just come later.
 
 - **Control.** `MMLisp_startTrack` / `stopTrack` / `keyOff` / `setParam` /
   `fadeTrack` / `setVal` are plain calls into the sequencer. They take effect on
@@ -439,10 +439,10 @@ the include phase and prints the real error.)
 5. **Where the 68000's time goes:** `npm run sgdk:profile -- score.mmlisp`
    times the driver's functions in the same build (probe marks on entry and
    exit); `--pc` samples the 68000's PC instead and names the inlined source
-   lines, `--peak N` only inside the N heaviest renders. On sin008 the driver
-   takes ~28% of the 68000 on average — the render ~18%, the pump the rest —
-   and the worst render ~116% of a frame (a voice change on several channels),
-   which the render lead absorbs.
+   lines, `--peak N` only inside the N heaviest renders. On a six-channel
+   song the driver takes ~28% of the 68000 on average — the render ~18%, the
+   pump the rest — and the worst render ~116% of a frame (a voice change on
+   several channels), which the render lead absorbs.
 
 ### Two tools that settle almost any "it sounds wrong" report
 

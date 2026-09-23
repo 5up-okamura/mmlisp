@@ -989,16 +989,16 @@ DAC byte against `live/src/pcm-model.js` driven by the engine's own state-block
 writes**, the bus stops, PCM-vs-FM sync, and whether the FM's lag behind the
 reference's frames climbs (a lost frame). Grading starts at the LAST ready mark
 — `MMLisp_init` boots `pcm1` and `MMLisp_loadScore` boots the score's image
-over it, so an earlier engine's samples are not this one's. Measured, five
+over it, so an earlier engine's samples are not this one's. Measured, four
 scores across the three images:
 
-| | `m2-pcm` | `m4-pcm-2v-master` | `m4-pcm-3v` | `m4-pcm-loop-curve` | `sin008` |
-| --- | --- | --- | --- | --- | --- |
-| image | pcm1 | pcm2 | pcm3 | pcm1 | pcm1 |
-| rate between stops | 14375.68 | 10111.71 | 6653.43 | 14375.68 | 14375.68 |
-| lost to bus stops | −2.4 ¢ | −2.7 ¢ | −2.7 ¢ | −3.6 ¢ | −3.1 ¢ |
-| longest runtime stop | 2,402 | 2,378 | 2,390 | 2,402 | 2,449 |
-| DAC vs the model | all match | all match | all match | all match | all match |
+| | `m2-pcm` | `m4-pcm-2v-master` | `m4-pcm-3v` | `m4-pcm-loop-curve` |
+| --- | --- | --- | --- | --- |
+| image | pcm1 | pcm2 | pcm3 | pcm1 |
+| rate between stops | 14375.68 | 10111.71 | 6653.43 | 14375.68 |
+| lost to bus stops | −2.4 ¢ | −2.7 ¢ | −2.7 ¢ | −3.6 ¢ |
+| longest runtime stop | 2,402 | 2,378 | 2,390 | 2,402 |
+| DAC vs the model | all match | all match | all match | all match |
 
 The lag floor moved 0.0–0.1 ms over an 8-second run: no frame is lost at one
 grab a frame. `npm run sgdk:profile` times the driver's functions in the same

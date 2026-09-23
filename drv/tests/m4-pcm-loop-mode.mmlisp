@@ -8,7 +8,7 @@
 ;   6  :mode shot, written, turns the loop off again
 (def pcm-voices 1)
 (def pad :sample :file "pad.wav" :loop-start 16ms :loop-end 45ms)
-(def voice :sample :file "shinobipcm.wav")
+(def voice :sample :file "pcmbank.wav")
 (pcm1 pad :tempo 120 :oct 4 :len 4 :vel 15
   c
   voice :mode loop c

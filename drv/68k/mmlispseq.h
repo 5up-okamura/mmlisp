@@ -44,8 +44,9 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the 60 Hz
  * frame, as in most game drivers. Sub-ticks were adopted as nearly free; with
  * the pair engine they were not heard (a frame's writes leave together) and
- * cost the 68000 ~6 points of its time (sin008: idle 71.9% -> 78.6% at 1), so
- * they were retired (2026-09-14). Must equal live/src/slot-builder.js. */
+ * cost the 68000 ~6 points of its time (a six-channel FM+PSG+PCM song: idle
+ * 71.9% -> 78.6% at 1), so they were retired (2026-09-14). Must equal
+ * live/src/slot-builder.js. */
 #define MML_SLOT_SUBS 1
 #define MML_MAX_TRACKS 16
 #define MML_LOOP_DEPTH 4

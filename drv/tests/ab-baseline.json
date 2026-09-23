@@ -431,12 +431,6 @@
     "compileErrors": 0,
     "digest": "684546e2"
   },
-  "sin008.mmlisp": {
-    "ok": false,
-    "mismatches": 632,
-    "compileErrors": 0,
-    "digest": "6c55f718"
-  },
   "stress-9ch.mmlisp": {
     "ok": false,
     "mismatches": 39,
