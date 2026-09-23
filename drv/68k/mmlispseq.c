@@ -2641,23 +2641,3 @@ void mml_stop_track(MMLSeq *s, uint8_t track_id) {
     }
   }
 }
-
-/* ── Ring transport (driver.md §6.6) ───────────────────────────────────────
- * The policy half of MMLisp_frame: everything except the bus grab and the copy,
- * so the host gate covers the arithmetic that is easy to get wrong.
- */
-uint8_t mml_pump(MMLSeq *s, uint8_t head, uint8_t tail, uint8_t depth,
-                 MMLSlotSink sink, void *ctx) {
-  if (depth < 2) return head; /* a one-slot ring can never hold anything */
-  uint8_t slot[MML_SLOT_SIZE];
-  /* Bounded by construction — at most depth-1 slots fit — but the counter also
-   * means a corrupt tail cannot spin the 68k for a frame. */
-  for (uint8_t guard = 0; guard < depth; guard++) {
-    uint8_t next = (uint8_t)(head + 1 >= depth ? 0 : head + 1);
-    if (next == tail) break; /* full: we are as far ahead as depth allows */
-    uint32_t n = mml_render_frame(s, slot);
-    sink(ctx, head, slot, (uint16_t)n);
-    head = next;
-  }
-  return head;
-}

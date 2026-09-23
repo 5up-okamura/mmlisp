@@ -439,22 +439,6 @@ void mml_render_frame_view(MMLSeq *s, MMLFrameView *v);
 void mml_drain_frame_view(MMLSeq *s, MMLFrameView *v);
 void mml_view_done(MMLSeq *s, const MMLFrameView *v);
 
-/* ── Ring transport (driver.md §6.1, §6.6) ─────────────────────────────────
- * The bus grab and the byte copy belong to the host layer; the arithmetic that
- * decides HOW MANY slots to render belongs here, where the host gate can reach
- * it. `mml_pump` renders while the ring has space and hands each slot to
- * `sink`, returning the new head — which the caller publishes LAST, after the
- * bytes are in place.
- *
- * `head == tail` is empty, so a depth-N ring holds N-1 slots, which is exactly
- * §3.4's "at depth N the game may overrun N-1 frames". The call is therefore
- * self-limiting: a second call in the same frame finds no space and renders
- * nothing (§6.6). */
-typedef void (*MMLSlotSink)(void *ctx, uint8_t index, const uint8_t *bytes,
-                            uint16_t len);
-uint8_t mml_pump(MMLSeq *s, uint8_t head, uint8_t tail, uint8_t depth,
-                 MMLSlotSink sink, void *ctx);
-
 /* Writes still queued behind the cap. */
 uint16_t mml_pending(const MMLSeq *s);
 
