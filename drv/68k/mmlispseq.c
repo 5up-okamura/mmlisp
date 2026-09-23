@@ -419,7 +419,16 @@ static uint16_t psg_period_for(int note, int cents) {
   return (uint16_t)clampi(p, 1, 1023);
 }
 
+static void write_fm3_op_pitch(MMLSeq *s, int op, int note, int cents);
 static void write_fm_pitch(MMLSeq *s, int ch, int note, int cents) {
+  /* CSM (driver.md §9): in this mode CH3's operators 1-3 read their own
+   * F-numbers ($A8-$AE) and only op4 the channel's, so the note that sets the
+   * channel's pitch sets all four — each operator rings at the note times its
+   * own multiple, as in normal mode, which is the formant the voice defines. */
+  if (ch == 2 && (s->reg27 & 0x80)) {
+    for (int op = 1; op <= 4; op++) write_fm3_op_pitch(s, op, note, cents);
+    return;
+  }
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint16_t fb = fnum_block_for(note, cents);
   ym_always(s, port, (uint8_t)(0xa4 + off),
@@ -475,6 +484,10 @@ static void key_on(MMLSeq *s, int ch) {
   uint8_t port = ch >= 3 ? 1 : 0;
   uint8_t chkey = (uint8_t)((port << 2) | mod3(ch));
   if (c->vol == 0 || s->master == 0) return; /* hard mute skips key-on */
+  /* CSM keys CH3 from Timer A's overflow, a key-on that lasts one sample and
+   * falls back to $28. Held on through $28, the operators would see no edge
+   * and every retrigger would be lost — so the note keys nothing here. */
+  if (ch == 2 && (s->reg27 & 0x80)) return;
   c->keyed = 1;
   ym_key(s, (uint8_t)(0xf0 | chkey));
 }
@@ -827,6 +840,11 @@ static int read_param(const MMLSeq *s, int ch, int target) {
 
 /* ── CSM (driver.md §9) ───────────────────────────────────────────────────── */
 static void set_reg27(MMLSeq *s, uint8_t value) {
+  /* Timer A runs exactly while CSM is on. LOAD A (bit 0) is what makes the
+   * counter count, and the CSM key-on is its overflow: without it the mode is
+   * set and nothing ever retriggers. The shipped engine keeps no timer, so
+   * $24-$27 are this sequencer's alone. */
+  value = (uint8_t)((value & ~0x01) | ((value & 0x80) ? 0x01 : 0));
   s->reg27 = value;
   ym(s, 0, 0x27, s->reg27);
 }

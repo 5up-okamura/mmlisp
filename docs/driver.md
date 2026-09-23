@@ -770,9 +770,24 @@ Both tables are generated **from the same code as `ir-utils.js`**
 
 ## 9. CSM Rule
 
+In CSM mode Timer A keys CH3: every overflow forces a key-on for one sample and
+falls back to what `$28` holds, so each overflow is an attack and a release.
+The rate of overflows is the pitch; where the operators ring is the formant.
+
 - The compiler emits `CSM_ON` once at the start and `CSM_OFF` only at
   **end-of-stream** of an fm3-csm track; mid-track rests do **not** toggle
   the CSM bit (Timer A just keeps retriggering a released envelope).
+- **Timer A runs exactly while CSM is on.** Setting the CSM bits in `$27` also
+  sets LOAD A (bit 0), and clearing them clears it: the counter only counts
+  with LOAD A, and without the overflow nothing retriggers. The shipped engine
+  keeps no timer, so `$24`–`$27` are the sequencer's alone.
+- **A CSM note keys nothing.** Held on through `$28`, the operators would see
+  no edge and every retrigger would be lost, so while CSM is on a note on CH3
+  writes no `$28` at all — neither key-on nor key-off.
+- **A CSM note sets all four operators' pitch.** In this mode operators 1–3
+  read their own F-numbers (`$A8`–`$AE`) and only operator 4 the channel's
+  (`$A0`/`$A4`), so a note writes the same F-number to all four and each rings
+  at the note times its own multiple, as in normal mode.
 - The sequencer's invariant: `MMLisp_stopTrack` (and END_OF_TRACK, and the stop
   side of `MMLisp_fadeTrack`) on the track flagged `isCsm` clears the CSM bits
   in reg `$27` — the flag exists in the track table precisely so stopping never

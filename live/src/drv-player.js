@@ -670,6 +670,13 @@ export class DrvPlayer {
   }
 
   _writeFmPitch(ch, note, cents) {
+    // CSM (driver.md §9): CH3's operators 1-3 read their own F-numbers
+    // ($A8-$AE) in this mode and only op4 the channel's, so the note that sets
+    // the channel's pitch sets all four — the formant the voice defines.
+    if (ch === 2 && this._reg27 & 0x80) {
+      for (let op = 1; op <= 4; op++) this._writeFm3OpPitch(op, note, cents);
+      return;
+    }
     const port = ch >= 3 ? 1 : 0;
     const off = ch % 3;
     const fb = this._fnumBlockFor(note, cents);
@@ -698,6 +705,9 @@ export class DrvPlayer {
     const chKey = (port << 2) | (ch % 3);
     // vol/master 0 = hard mute: skip key-on entirely (language.md §6).
     if (regs.vol === 0 || this._master === 0) return;
+    // CSM keys CH3 from Timer A's overflow; held on through $28 the operators
+    // would see no edge and every retrigger would be lost.
+    if (ch === 2 && this._reg27 & 0x80) return;
     regs.keyed = true;
     this._ymKey((this._opMasks?.[ch] ?? 0xf0) | chKey);
   }
@@ -1885,7 +1895,10 @@ export class DrvPlayer {
 
   // ── CSM (driver.md §9): reg $27 mode bit + Timer A period ($24/$25) ───────
   _setReg27(value) {
-    this._reg27 = value & 0xff;
+    // Timer A runs exactly while CSM is on: LOAD A (bit 0) makes the counter
+    // count, and the CSM key-on is its overflow (the C's set_reg27).
+    const v = value & 0xff;
+    this._reg27 = (v & ~0x01) | (v & 0x80 ? 0x01 : 0);
     this._ym(0, 0x27, this._reg27);
   }
 

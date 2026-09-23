@@ -251,6 +251,10 @@ export class IRPlayer {
 
   _loadIR(irObj) {
     this._ir = irObj;
+    // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
+    // mixer's mute has to hold the timer rather than key the channel off.
+    this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
+      (t.events ?? []).some((e) => e.cmd === "CSM_ON"));
     this._ppqn = irObj.ppqn ?? 48;
     this._bpm = this._resolveInitialTempo(irObj);
     this._tempoSweep = null;
@@ -510,6 +514,8 @@ export class IRPlayer {
     for (const [ti, psgCh] of this._psgTrackChannel) {
       if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, 15, when);
     }
+    // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
+    if (this._reg27 & 0x80) this._writeReg27(when);
   }
 
   /**
@@ -1302,6 +1308,15 @@ export class IRPlayer {
     this._writeTimerAValue(this._timerAValueFromHz(hz), when);
   }
 
+  // In CSM, Timer A keys CH3: its overflow forces a key-on for one sample and
+  // falls back to $28. A note that held CH3 on through $28 would leave the
+  // operators no edge to see and lose every retrigger, so while CSM is on a
+  // note keys nothing on CH3 — on or off. The driver's key_on returns early
+  // there and never marks the channel keyed, so it writes neither.
+  _csmKeysCh3(chKey) {
+    return chKey === 2 && (this._reg27 & 0x80) !== 0;
+  }
+
   _setReg27State({ csmEnabled, fm3SpecialMode }, when) {
     let next = this._reg27;
     if (csmEnabled !== undefined) {
@@ -1310,9 +1325,21 @@ export class IRPlayer {
     if (fm3SpecialMode !== undefined) {
       next = fm3SpecialMode ? next | 0x40 : next & ~0x40;
     }
+    // Timer A runs exactly while CSM is on: LOAD A (bit 0) makes the counter
+    // count, and the CSM key-on is its overflow (the driver's set_reg27).
+    next = (next & ~0x01) | (next & 0x80 ? 0x01 : 0);
     if (next === this._reg27) return;
     this._reg27 = next;
-    this._write(0, 0x27, this._reg27, when);
+    this._writeReg27(when);
+  }
+
+  // The $27 the chip gets: the score's value, except that a muted CSM voice
+  // holds Timer A (LOAD A clear). A key-off cannot silence a channel the timer
+  // keys, and mute is the preview's own mixer — the driver has none.
+  _writeReg27(when) {
+    const muted = (this._reg27 & 0x80) !== 0 && this._csmTrack >= 0
+      && !this._isTrackAudible(this._csmTrack);
+    this._write(0, 0x27, muted ? this._reg27 & ~0x01 : this._reg27, when);
   }
 
   // An FM3 operator's TL in special mode: its OWN vel and vol, the shared
@@ -1372,6 +1399,24 @@ export class IRPlayer {
 
   _writeFm3OpPitch(op, midiNote, when) {
     const { fnum, block } = midiToFnumBlock(midiNote);
+    this._writeFm3OpFnum(op, fnum, block, when);
+  }
+
+  // A channel's F-number, high byte then low. In CSM (driver.md §9) CH3's
+  // operators 1-3 read their own F-numbers ($A8-$AE) and only op4 the
+  // channel's, so the note that sets the channel's pitch sets all four — each
+  // operator rings at the note times its own multiple, the formant the voice
+  // defines. The driver's write_fm_pitch does the same.
+  _writeFmFnum(port, chOffset, fnum, block, when) {
+    if (port === 0 && chOffset === 2 && this._reg27 & 0x80) {
+      for (let op = 1; op <= 4; op++) this._writeFm3OpFnum(op, fnum, block, when);
+      return;
+    }
+    this._write(port, 0xa4 + chOffset, ((block & 0x07) << 3) | ((fnum >> 8) & 0x07), when);
+    this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
+  }
+
+  _writeFm3OpFnum(op, fnum, block, when) {
     const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
     const low = fnum & 0xff;
 
@@ -1726,22 +1771,10 @@ export class IRPlayer {
         const writesBasePitch = !isFm3OpNote;
         if (writesBasePitch) {
           // Write F-number high first (block + MSB), then low
-          this._write(
-            port,
-            0xa4 + chOffset,
-            ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-            when,
-          );
-          this._write(port, 0xa0 + chOffset, fnum & 0xff, when);
+          this._writeFmFnum(port, chOffset, fnum, block, when);
           const basePitchWrite = (centOffset, t) => {
             const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
-            this._write(
-              port,
-              0xa4 + chOffset,
-              ((block & 0x07) << 3) | ((fnum >> 8) & 0x07),
-              t,
-            );
-            this._write(port, 0xa0 + chOffset, fnum & 0xff, t);
+            this._writeFmFnum(port, chOffset, fnum, block, t);
           };
           const fmOffset = () => this._chRegs[ch]?.pitchOffset ?? 0;
           this._schedulePitchMacro(
@@ -1867,14 +1900,15 @@ export class IRPlayer {
             // latches key state (the driver gets the same guarantee from its
             // pair transport, which spaces writes 139 µs at its closest). A
             // slur cancels it: there the envelope carries over.
+            const csmKeys = this._csmKeysCh3(chKey);
             if (this._pendingKeyOff[ch]) {
               this._pendingKeyOff[ch] = false;
-              if (!ev.args?.legato)
+              if (!ev.args?.legato && !csmKeys)
                 this._write(0, 0x28, chKey, when - KEY_ORDER_EPS_SECS);
             }
             // Legato slur (NOTE_ON_EX bit3): the frequency already moved above;
             // do not re-key so the envelope carries over from the previous note.
-            if (!ev.args?.legato) this._write(0, 0x28, keyOnByte, when);
+            if (!ev.args?.legato && !csmKeys) this._write(0, 0x28, keyOnByte, when);
             // :keyon retrigger gate (drum roll / echo tail). FM3-op notes share
             // the 0x28 register so retrigger there is deferred. When active, the
             // keyon macro owns the channel's keying: its end time becomes the
@@ -1903,7 +1937,8 @@ export class IRPlayer {
             // note's. offWhen is null when the note slurs into the next.
             const keyOffAt = keyonEnd != null ? keyonEnd : offWhen;
             if (keyonEnd == null && deferOff) this._pendingKeyOff[ch] = true;
-            else if (keyOffAt != null) this._write(0, 0x28, chKey, keyOffAt);
+            else if (keyOffAt != null && !this._csmKeysCh3(chKey))
+              this._write(0, 0x28, chKey, keyOffAt);
           }
         } else {
           // Hold note: register the channel for runtime key-off
@@ -2527,13 +2562,7 @@ export class IRPlayer {
         const { fnum: pf, block: pb } = midiToFnumBlock(
           baseMidi + centOffset / 100,
         );
-        this._write(
-          port,
-          0xa4 + chOffset,
-          ((pb & 0x07) << 3) | ((pf >> 8) & 0x07),
-          when,
-        );
-        this._write(port, 0xa0 + chOffset, pf & 0xff, when);
+        this._writeFmFnum(port, chOffset, pf, pb, when);
         break;
       }
 
@@ -3209,6 +3238,7 @@ export class IRPlayer {
       (v, t) => {
         if (v < 0.5) return; // gate closed this step
         if (t <= when + 1e-6) return; // first sample = note's own key-on
+        if (this._csmKeysCh3(chKey)) return; // Timer A retriggers CH3 in CSM
         this._write(0, 0x28, chKey, Math.max(when, t - gap)); // key off
         this._write(0, 0x28, keyOnByte, t); // key on
       },
@@ -3320,13 +3350,7 @@ export class IRPlayer {
         const { fnum: pf, block: pb } = midiToFnumBlock(
           baseMidi + centOffset / 100,
         );
-        this._write(
-          port,
-          0xa4 + chOffset,
-          ((pb & 0x07) << 3) | ((pf >> 8) & 0x07),
-          frameWhen,
-        );
-        this._write(port, 0xa0 + chOffset, pf & 0xff, frameWhen);
+        this._writeFmFnum(port, chOffset, pf, pb, frameWhen);
       }
       // A bounded glide must land exactly on its target `to`. The frame loop can
       // stop a fraction short (budgetFrames is floored while the phase divides by
@@ -3343,13 +3367,7 @@ export class IRPlayer {
         }
         this._chRegs[ch].pitchOffset = to;
         const { fnum: ef, block: eb } = midiToFnumBlock(baseMidi + to / 100);
-        this._write(
-          port,
-          0xa4 + chOffset,
-          ((eb & 0x07) << 3) | ((ef >> 8) & 0x07),
-          endWhen,
-        );
-        this._write(port, 0xa0 + chOffset, ef & 0xff, endWhen);
+        this._writeFmFnum(port, chOffset, ef, eb, endWhen);
       }
       return;
     }

@@ -1139,7 +1139,11 @@ modulation depth rather than volume.
 
 ### CSM mode
 
-`fm3-csm` carries the tonal center (standard note syntax and range).
+`fm3-csm` carries the tonal center (standard note syntax and range): a note
+sets where all four operators ring, each at the note times its own multiple,
+which is heard as the formant. The sound itself comes only from Timer A —
+each overflow re-attacks the operators and its rate is the pitch — so a
+note's length neither starts nor stops it.
 `CSM_ON` is emitted once at the first note; **`CSM_OFF` fires once at the end
 of the `fm3-csm` event stream** — mid-track rests do *not* toggle CSM. To
 silence CSM mid-track, rest the rate source or write `:vol 0`. Clearing CSM on
