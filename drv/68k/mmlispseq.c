@@ -125,7 +125,7 @@ enum {
   T_LOOP_LEN = 0x45
 };
 
-/* The i16 targets (opcodes.md §7.4), mirroring WIDE_TARGET_IDS in
+/* The i16 targets (mmb.md §7.4), mirroring WIDE_TARGET_IDS in
  * live/src/mmb.js: cents, the reserved tempo scale, and the PCM loop points
  * (byte offsets into a blob, up to the bank's 32 KB window). */
 static int target_wide(int target) {
