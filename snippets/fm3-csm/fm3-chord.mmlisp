@@ -1,0 +1,20 @@
+; FM3 independent-operator mode: FM3's four operators become four voices on
+; one channel. A note-less (fm3 voice) sets the shared patch; each fm3-N track
+; plays one operator. On alg 7 every operator is a carrier, so each fm3-N is a
+; plain sine voice with its own :vel/:vol, and the other FM channels stay free.
+(import "presets/gm/set.mmlisp")
+
+(def four-sines :extend init-fm :alg 7 :fb 0
+  :tl1 10 :tl2 10 :tl3 10 :tl4 10
+  :dr1 4 :dr2 4 :dr3 4 :dr4 4 :sl1 4 :sl2 4 :sl3 4 :sl4 4
+  :rr1 6 :rr2 6 :rr3 6 :rr4 6)
+
+(fm3 four-sines)
+(fm3-1 :tempo 96 :oct 4 :len 1  c   c   d   e)
+(fm3-2 :oct 4 :len 1            e   f   f   g)
+(fm3-3 :oct 4 :len 1            g   a   b   > c)
+(fm3-4 :oct 3 :len 1            c   f   g   c)
+
+; ...and a melody on fm1 over the four-note chords from a single channel.
+(fm1 :oct 5 :len 4 gm-flute :vel 12
+  e d c e f e d c d g f d c2 e2)

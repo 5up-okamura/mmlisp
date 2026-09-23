@@ -1,0 +1,18 @@
+; delay: sticky track state. Every note that follows leaves repeats in the
+; gaps after it; the phrase keeps its length, and a written note always wins
+; over a tap that would overlap it. (delay none) turns it off.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 110 :oct 5 gm-marimba
+  ; dotted-eighth delay: 3 taps, each 4 velocity steps quieter
+  (delay :vel+ 3 :by -4 :time 8.)
+  :len 4 c _ g _ e _ d _
+
+  ; a list gives each tap its own ratio
+  (delay :vel* [0.7 0.45 0.25] :time 16)
+  :len 8 c _ _ _ e _ _ _ g _ _ _ > c < _ _ _
+
+  ; a curve is the envelope; the tap count is its :len / :time
+  (delay :vel* (linear 0.9..0.1 :len 2) :time 8)
+  :len 1 c
+  (delay none))

@@ -631,10 +631,11 @@ export function sampleCurveUnit(curve, phase, params = null) {
     case "ease-out-bounce": {
       const n1 = 7.5625,
         d1 = 2.75;
-      if (t < 1 / d1) return n1 * t * t;
-      if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
-      if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
-      return n1 * (t -= 2.625 / d1) * t + 0.984375;
+      const bounce = (u, add) => n1 * u * u + add;
+      if (t < 1 / d1) return bounce(t, 0);
+      if (t < 2 / d1) return bounce(t - 1.5 / d1, 0.75);
+      if (t < 2.5 / d1) return bounce(t - 2.25 / d1, 0.9375);
+      return bounce(t - 2.625 / d1, 0.984375);
     }
     case "ease-in-bounce":
       return 1 - sampleCurveUnit("ease-out-bounce", 1 - t);

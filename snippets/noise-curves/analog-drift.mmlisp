@@ -1,0 +1,14 @@
+; brown noise is a random walk: it wanders instead of jumping. As an inline
+; sweep it runs on the track's timeline across notes, like an old synth whose
+; tuning drifts. Two channels with different :seed drift independently, so
+; the unison slowly beats against itself.
+(import "presets/gm/set.mmlisp")
+
+(def line :len 4 c e g e f a > c < a g b > d < b c2. _)
+
+(fm1 :tempo 96 :oct 4 gm-synbrass1 :pan left
+  :pitch (brown -14..14 :len 2/1 :seed 1)
+  line)
+(fm2 :oct 4 gm-synbrass1 :pan right :vel 13
+  :pitch (brown -14..14 :len 2/1 :seed 2)
+  line)

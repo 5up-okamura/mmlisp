@@ -1,0 +1,20 @@
+; A drum bar as a function of its parts. On a pcm track a sample name
+; switches the sample, so samples are ordinary arguments, and so is the name
+; of another def: pass a different snare or a fill, and the bar changes while
+; the groove stays the same.
+(import "presets/808/set.mmlisp")
+
+(def plain snare c _)
+(def roll tom1 c16 tom3 c16 tom5 c16 tom6 c16)
+
+(def (bar s fill)
+  kick c _ s c _ kick c kick c fill)
+
+(pcm1 :tempo 112 :len 8
+  (bar snare plain)
+  (bar snare plain)
+  (bar rim plain)
+  (bar snare roll))
+
+(pcm2 :len 8 :vel 10
+  (x 4 hat c c hat-open c hat c c c hat-open c hat c))

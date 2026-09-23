@@ -1,0 +1,16 @@
+; Pan has three positions (left, center, right), so noise on :pan cannot
+; sweep, but it can hop. One long note, re-attacked every 16th by :keyon,
+; walks an arpeggio (:semi) while noise throws each step to a random side.
+; A different :seed is a different, equally random, pattern.
+(import "presets/gm/set.mmlisp")
+
+(def (sparkle s)
+  (macro :step 16 :keyon 1
+         :semi [:hold 0 7 12 16 19 12 7 4]
+         :pan (noise -1..1 :len 1 :seed s)))
+
+(fm1 :tempo 120 :oct 5 :len 1 gm-glock :vel 12
+  (sparkle 1) c
+  (sparkle 2) a-
+  (sparkle 3) f
+  (sparkle 4) g)

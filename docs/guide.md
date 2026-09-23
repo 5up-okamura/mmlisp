@@ -1094,29 +1094,45 @@ The placeholders are usable defaults, so leaving a template early (`Esc`) still
 leaves valid source. Forms whose shape genuinely varies — a track, `t`, the
 eval heads — insert just the name, as before.
 
+Names complete too. Two characters of a word offer the voices, samples, macros
+and snippets the score can use — its own defs and everything its imports bring
+in — each labelled with its kind and the set it comes from, and with the
+comment above its def as the description (`gm-piano` — *GM 1 / MIDI 0:
+GrandPiano*; a kit's sample shows its file). A local def hides an imported one
+of the same name, as it does when compiling. `$` offers the `def-val` slots and
+`$time`, and `(` offers the parametric defs next to the forms. Notes stay
+quiet: one letter never opens the list. Imported names are read when the score
+compiles, so a newly typed `(import …)` joins the list after the next Play or
+Build.
+
+A new score (**File ▸ New**) imports the `gm` and `waveforms` voice sets and
+the `808` kit without assigning any of them, so every preset name completes
+from the first keystroke. Only what a track plays reaches the song.
+
 ---
 
 ## 25. Browsing what the app ships
 
-**File ▸ Browse…** lists the preset sets and the example scores that come with
-the app, so picking a voice or opening a score takes one click instead of a
-file dialog.
+**File ▸ Browse…** lists the preset sets, the example scores and the snippets
+that come with the app, so picking a voice or trying a technique takes one
+click instead of a file dialog.
 
 Each preset set is one directory under `presets/`, and the list on the right is
 read straight out of the `set.mmlisp` a score would import — so a name in the
 panel is always the def behind it, never a copy that drifted.
 
-What the panel offers comes from two files, `presets/index.json` and
-`examples/index.json`, each a plain list of paths — a directory cannot be
-listed over HTTP, so a new set or a new example has to be named in one of them
-to show up. They hold paths and nothing else: the names, kinds and contents are
+What the panel offers comes from three files, `presets/index.json`,
+`examples/index.json` and `snippets/index.json`, each a plain list of paths — a
+directory cannot be listed over HTTP, so a new set, example or snippet has to
+be named in one of them to show up. They hold paths and nothing else: the names, kinds and contents are
 read from the files themselves.
 
 | Row                | ▶                                       | Other actions |
 | ------------------ | --------------------------------------- | ------------- |
 | an FM voice (`fm`) | c at octaves 2-6, one `len 4` note each, on FM1 | **Insert def** pastes the definition at the cursor, to edit as your own |
 | a sample (`pcm`)   | the same run, baked and played through the driver's own engine — what an export will sound like | — |
-| a score            | opens it in the editor                  | — |
+| a score            | plays it, without opening it            | **Open** puts it in the editor |
+| a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 
 One note says nothing about a voice: key scaling, the modulator's ratio and a
 sample's baked rate all change with the octave, so the audition walks the range
@@ -1125,9 +1141,25 @@ low octaves are the big blobs — where five octaves of a long sample do not fit
 the 32 KB bank, the preview drops the lowest ones and says so.
 
 The panel is driven from the keyboard: **↑↓** moves through the list, **←→**
-steps between sets, **Space** auditions the highlighted row, **Enter** is its
-action — open the score, paste the voice's definition, import the sample's set —
-and **Esc** closes. Everything is clickable too.
+steps between sets, **Space** auditions the highlighted row (and stops a score
+that is playing), **Enter** is its action — open the score, insert the snippet,
+paste the voice's definition, import the sample's set — and **Esc** closes.
+Everything is clickable too.
+
+**Snippets** are short scores, one technique each — echo and delay, `trig`,
+FM3 and CSM, curves and the noise curves, parametric defs, and tricks like
+`:prio` layering or runtime accumulation — grouped by topic, with the comment
+at the top of each file shown as you move through the list. They play on their
+own player, so listening to one leaves the score in the editor, its compiled
+song and its mixer alone; starting one stops the song, since there is one
+chip. **Insert** moves the snippet's `(import …)` lines to the top of the score
+(skipping any already there) and puts the rest at the cursor, in one undo step.
+A snippet is written as if it sat next to a new score, so its imports read
+`presets/…` wherever it ends up. **Tools ▸ Snippets ▸ Browse Snippets…** opens
+the panel on this list.
+
+A `(trig N)` cue has no sound, so the log shows it as it passes — `trig 2 —
+fm1` — whether the score is playing from the editor or from the panel.
 
 **Import set** adds `(import "presets/…/set.mmlisp")` to the top of the score.
 A sample def has no **Insert def**: its `:file` is relative to the set's own
@@ -1136,8 +1168,10 @@ somewhere else. Importing a whole kit costs nothing in the sample bank —
 only the samples you actually play are baked (language.md §16).
 
 A sample preview replaces the loaded PCM bank, so it waits for playback to
-stop; the next **Play** or **Build** puts the score's bank back. Opening a
-score replaces what is in the editor, as `File ▸ Open…` does.
+stop; the next **Play** or **Build** puts the score's bank back, and the same
+goes for a score or snippet played from the panel. A played score's
+`def-val` sliders are not shown until it is opened. Opening a score replaces
+what is in the editor, as `File ▸ Open…` does.
 
 ### Drum kits swap
 

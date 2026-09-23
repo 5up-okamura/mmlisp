@@ -1,0 +1,13 @@
+; The loop-wave curves as vibrato, one per phrase: sin, triangle, square
+; (a trill), saw (a falling "siren"). They cycle until key-off. :wait
+; key-off holds a curve until the release, so the last one only bends once
+; the note lets go.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 100 :oct 5 :len 2 gm-lead-calliope
+  (macro :pitch (sin -30..30 :len 8 :wait 8))       c g
+  (macro :pitch (triangle -30..30 :len 8 :wait 8))  c g
+  (macro :pitch (square 0..200 :len 16))            c g   ; a whole-tone trill
+  (macro :pitch (saw 0..-100 :len 8))               c g
+  (macro :pitch [(wait key-off) (linear 0..-1200 :len 4)])
+  :gate* 0.5 c1)

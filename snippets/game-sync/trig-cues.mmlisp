@@ -1,0 +1,14 @@
+; trig: tell the game where the music is. (trig N) writes id N (0-63) to the
+; track's status byte; the game polls MMLisp_trig(track) and reacts to any
+; change: flash on the downbeat, open the door at the end of the phrase...
+; The same id firing again still counts, so a cue inside a loop fires on
+; every pass. In the live app each cue is written to the log as it passes.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 120 :oct 4 :len 4 gm-organ-perc
+  (trig 1) c e g e          ; 1: intro
+  #verse
+  (trig 2) f a > c < a      ; 2: fires on both passes
+  (trig 3) g b > d < b
+  (go verse 2)
+  (trig 4) :len 1 c)        ; 4: the end

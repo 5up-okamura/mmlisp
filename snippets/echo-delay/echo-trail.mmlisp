@@ -1,0 +1,10 @@
+; echo: replay the last note in real time. The taps take up time of their own,
+; so every note after an echo moves back, and the phrase gets longer.
+; Taps play at the current :len, not at the length of the note they repeat.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 120 :oct 5 :len 8 gm-vibes
+  c e g (echo :vel+ 3 :by -3)          ; g, then g at vel -3, -6, -9
+  :len 16 a g e (echo :vel* 4 :by 0.6) ; x0.6 per tap, as 16ths
+  :len 8 d e c (echo :vel+ 2 :by -4 :back 2)  ; :back 2 replays the e
+  :len 2 c)
