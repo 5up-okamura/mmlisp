@@ -413,6 +413,12 @@
     "compileErrors": 0,
     "digest": "684546e2"
   },
+  "p3-se-overlap.mmlisp": {
+    "ok": false,
+    "mismatches": 8,
+    "compileErrors": 0,
+    "digest": "e5a5d65b"
+  },
   "p3-se-stopped-twin.mmlisp": {
     "ok": false,
     "mismatches": 16,

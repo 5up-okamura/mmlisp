@@ -2632,7 +2632,11 @@ export class DrvPlayer {
           slots.push(b.endFrame());
           trigLog.push(this._trk.map((t) => t.trigByte));
         }
-        for (const t of this._trk) this._startTrack(t.trackId, false);
+        // With a schedule, the schedule does the starting — a host that fires
+        // sound effects starts only its BGM tracks, and starting them all here
+        // would be different music. Without one, priming is followed by the
+        // blanket start the SGDK example does.
+        if (!commands.length) for (const t of this._trk) this._startTrack(t.trackId, false);
       }
       let frames = 0;
       while (frames < maxFrames) {

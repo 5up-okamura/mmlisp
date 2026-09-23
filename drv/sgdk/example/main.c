@@ -126,6 +126,30 @@ static const u8* const SONGS[] = { MMLISP_SONG_LIST };
 #define MMLISP_AUTOPLAY 0
 #endif
 
+// ── The headless effect script (sgdk-gate --se N) ───────────────────────────
+// The machine gate runs the ROM with no pad, so without this MMLisp_startSe
+// would never execute on a real 68000 — everything about effects would be
+// verified in the reference and in the host's C and nowhere else. With it,
+// each of the first MMLISP_SE_TRACKS effects is fired this many frames after
+// the BGM started, counted in frames the SEQUENCER rendered so that it lines
+// up with the reference's own timeline whatever the host's settle took.
+// sgdk-gate passes the same numbers to the reference as a command schedule.
+#ifndef MMLISP_SE_SCRIPT
+#define MMLISP_SE_SCRIPT 0
+#endif
+#ifndef MMLISP_SE_AT0
+#define MMLISP_SE_AT0 90
+#endif
+#ifndef MMLISP_SE_AT1
+#define MMLISP_SE_AT1 150
+#endif
+#ifndef MMLISP_SE_AT2
+#define MMLISP_SE_AT2 210
+#endif
+#ifndef MMLISP_SE_AT3
+#define MMLISP_SE_AT3 270
+#endif
+
 // A stand-in for a game's own work, for the machine gate (sgdk-gate --burn N):
 // N iterations of a busy loop every frame, and twice that every 64th frame —
 // long enough to push the main loop past a frame. 0 in a real program.
@@ -300,6 +324,12 @@ int main(bool hardReset)
 
     u16 prev = 0;
     u16 loops = 0;
+#if MMLISP_SE_SCRIPT
+    const u16 seAt[4] = { MMLISP_SE_AT0, MMLISP_SE_AT1, MMLISP_SE_AT2, MMLISP_SE_AT3 };
+    const u8  sePrio[4] = { SE_PRIO_LOW, SE_PRIO_HIGH, SE_PRIO_ONE, SE_PRIO_ONE };
+    u16 seBase = 0;
+    u8  seFired = 0;   // one bit per effect
+#endif
     u32 baseTimer = vtimer;
     u32 markTimer = vtimer;
     MMLispStats st;
@@ -318,6 +348,11 @@ int main(bool hardReset)
     }
     playing = TRUE;
     playBgm();
+#if MMLISP_SE_SCRIPT
+    // The next frame this loop renders is the reference's frame 0: both start
+    // their tracks before it, so the two timelines share an origin here.
+    seBase = MMLisp_renderedFrames();
+#endif
     VDP_drawText("PLAY", 2, 18);
 #endif
 
@@ -371,6 +406,19 @@ int main(bool hardReset)
             playBgm();
             VDP_drawText("PLAY", 2, 18);
         }
+
+#if MMLISP_SE_SCRIPT
+        {
+            const u16 t = (u16)(MMLisp_renderedFrames() - seBase);
+            for (u8 i = 0; i < 4 && i < MMLISP_SE_TRACKS; i++)
+            {
+                if (seFired & (1 << i)) continue;
+                if (t < seAt[i]) continue;
+                seFired |= (u8)(1 << i);
+                fireSe(i, sePrio[i]);
+            }
+        }
+#endif
 
         // The effects, one per kind of voice. The BGM keeps running throughout:
         // the track on the stolen channel is suspended, not stopped, and it

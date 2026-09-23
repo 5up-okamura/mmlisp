@@ -1,0 +1,16 @@
+; Two effects sounding at once, on two different channels. The snapshot lives
+; on each displaced track rather than in one slot, so this is supposed to work
+; — but nothing fired two at a time until this score, so it was only supposed.
+; An FM effect steals fm1 and a PSG effect steals sqr1 while it is still
+; sounding; they end at different frames, and each hands back its own channel.
+(def v :alg 7 :fb 0
+  :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1
+  :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1)
+(def w :alg 7 :fb 5
+  :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5
+  :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5)
+
+(fm1  :tempo 120 v :oct 4 :len 1 :vel 12  c c c c)   ; track 0  BGM, stolen by 2
+(sqr1 :oct 5 :len 1 :vel 10  e e e e)                ; track 1  BGM, stolen by 3
+(fm2  w :oct 6 :len 8 :vel 15  g a > c)              ; track 2  FM effect  -> fm1
+(sqr2 :oct 6 :len 4 :vel 14  c e)                    ; track 3  PSG effect -> sqr1

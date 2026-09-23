@@ -991,8 +991,19 @@ DAC byte against `live/src/pcm-model.js` driven by the engine's own state-block
 writes**, the bus stops, PCM-vs-FM sync, and whether the FM's lag behind the
 reference's frames climbs (a lost frame). Grading starts at the LAST ready mark
 — `MMLisp_init` boots `pcm1` and `MMLisp_loadScore` boots the score's image
-over it, so an earlier engine's samples are not this one's. Measured, four
-scores across the three images:
+over it, so an earlier engine's samples are not this one's.
+
+**Sound effects are graded here too**, which is the only place they run on a
+68000: the example presses no buttons, so `--se N` has it fire the score's last
+N tracks with `MMLisp_startSe` on a fixed schedule, counted in frames the
+sequencer rendered so the host's settle does not shift them, and the reference
+is driven with the same schedule. `--remap` points those tracks at the BGM's
+own channels, so what the machine runs is the whole suspend and restore.
+`npm run sgdk:gate:se` is that run on `sgdk/example/demo.mmlisp`: FM, PSG and
+PCM effects, one preempted and one dropped by priority, every FM and PSG write
+in the reference's order and every DAC byte against the model.
+
+Measured, four scores across the three images:
 
 | | `m2-pcm` | `m4-pcm-2v-master` | `m4-pcm-3v` | `m4-pcm-loop-curve` |
 | --- | --- | --- | --- | --- |

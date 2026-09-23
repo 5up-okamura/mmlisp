@@ -108,6 +108,7 @@ function slots(stem) {
 // away (a claim, a preempt) has to keep it true.
 const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
+  "p3-se-overlap",
   "p3-claim-se-in", "p3-claim-se-out",
 ];
 
