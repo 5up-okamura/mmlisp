@@ -57,6 +57,7 @@ import {
   SAMPLE_ENTRY_SIZE,
 } from "./mmb.js";
 import {
+  toSlotValue,
   midiToFnumBlock,
   velToTlAtten,
   volToTlOffset,
@@ -2768,9 +2769,8 @@ export class DrvPlayer {
   setVal(name, value) {
     const slot = this._valNameToSlot?.get(name);
     if (slot === undefined || !this._valSlots || slot >= this._valSlots.length) return;
-    const v = Math.round(Number(value));
-    if (!Number.isFinite(v)) return;
-    this._valSlots[slot] = Math.max(-32768, Math.min(32767, v));
+    const v = toSlotValue(value);
+    if (v !== null) this._valSlots[slot] = v;
   }
 
   getVal(name) {

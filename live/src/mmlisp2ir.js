@@ -4388,8 +4388,9 @@ function collectDefs(roots, diagnostics) {
     }
 
     // (def-val name init :min M :max X) — declare a runtime value slot (Tier
-    // 0/1 dynamic value). init is the default; :min/:max bound the live control
-    // (the Dynamic Parameters sliders). Slots are indexed in declaration order.
+    // 0/1 dynamic value). init is the default; :min/:max are the endpoints of
+    // the live control (the Dynamic Parameters sliders), not a bound on the
+    // slot. Slots are indexed in declaration order.
     if (head === "def-val") {
       const name = atomValue(root.items[1]);
       if (!name || name.startsWith("$")) {
@@ -4458,8 +4459,22 @@ function collectDefs(roots, diagnostics) {
         min = 0;
         max = 127;
       }
-      // The slot is clamped to its range at init as on every write (§8).
-      const init = Math.min(max, Math.max(min, initPos ?? from ?? min));
+      // `:from`/`:to` bound the live slider, not the slot, so `init` is kept
+      // as written (§8). An init outside the slider's travel is a score bug —
+      // said here, where it was authored, instead of folded in silently at
+      // playback. A slot is an i16 on the driver; an init that cannot fit one
+      // has no playable meaning.
+      const init = initPos ?? from ?? min;
+      if (init < -32768 || init > 32767) {
+        pushDiag(diagnostics, "error", "E_DEFVAL_INIT",
+          `def-val ${name}: init ${init} does not fit a 16-bit value slot`,
+          nodeSrc(root), null);
+        continue;
+      }
+      if (init < min || init > max)
+        pushDiag(diagnostics, "warning", "W_DEFVAL_INIT_RANGE",
+          `def-val ${name}: init ${init} is outside the slider range ${min}..${max}`,
+          nodeSrc(root), null);
       if (!vals.has(name))
         vals.set(name, {
           name,

@@ -92,6 +92,22 @@ export function clampForTarget(target, v) {
   return Math.max(range.min, Math.min(range.max, v));
 }
 
+/**
+ * Coerce a host-written dynamic value (`def-val` slot) to what a driver slot
+ * holds: a rounded i16. `def-val`'s `:from`/`:to` bound the live slider, not
+ * the slot — a value is bounded where it is *used*, per target, by the clamps
+ * both the preview and MMLispDRV apply. Returns `null` for a non-finite input,
+ * which both players treat as "ignore this write".
+ *
+ * @param {number|string} value
+ * @returns {number|null}
+ */
+export function toSlotValue(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return null;
+  return n < -32768 ? -32768 : n > 32767 ? 32767 : n;
+}
+
 // ---------------------------------------------------------------------------
 // Pitch → MIDI note
 // ---------------------------------------------------------------------------

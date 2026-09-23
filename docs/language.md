@@ -604,10 +604,17 @@ malformed option (`:step 0`, `:unit beat`) is `E_DEFVAL_OPTION`.
   `E_VALUE_COMPILE_TIME`.
 - `$time` is built in: elapsed 60 Hz frames since track start, read-only.
 - An undefined `$name` raises `E_VAL_UNDEFINED`.
-- A slot value is always clamped to its declared `[min, max]` finite range —
-  at `init` and on every host `setVal` — so a bad (out-of-range or non-finite)
-  value can never reach the pitch/length/gate/param math. This mirrors the
-  bounded integer slots the driver holds.
+- A slot is a signed 16-bit integer, and that is its only bound: a host
+  `setVal` is rounded and clamped to i16, and a non-finite write is ignored,
+  leaving the slot as it was. `:from`/`:to` are the **slider's** endpoints,
+  not a limit on the slot. A value is bounded where it is *used*, per target
+  (`:tl1` 0–127, `:vol` 0–31, `:pan` −1..+1, …), by the same clamps MMLispDRV
+  applies — so the preview and the driver agree on whatever a host writes, and
+  nothing out of range can reach a register.
+- `init` is kept as written. An init outside the slider's travel is
+  `W_DEFVAL_INIT_RANGE` — the score and its control disagree, which is worth
+  saying where it was authored rather than folding in at playback. An init
+  that cannot fit a 16-bit slot is `E_DEFVAL_INIT`.
 
 **Dynamic curve parameters.** A `$name` may feed a curve's `:from`, `:to`,
 `:rate`, or `:len`. The slot is read **once at note-on** (the note-on sampling
