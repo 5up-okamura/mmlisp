@@ -3,78 +3,24 @@
 // how a silent voice keeps its playback position, by building the table against
 // the JS reference rather than by agreeing in prose (docs/driver.md §6.3, §7).
 //
-// EVERYTHING IS BIASED-UNSIGNED, end to end: the source byte, every table's
-// input and output, the ring, and what the DAC is handed. Nothing converts
-// domains anywhere in the hot path — the conversion is baked into the tables.
-// That is worth 21 cycles a sample against the same code with `xor $80` at the
-// three places it would otherwise be needed, and 21 cycles is 6% of the period.
-//
-// ONE FAMILY SERVES BOTH the per-voice level and the master, because both are
-// the same operation — scale by k/15, clamp — and a second family is another
-// 4 KB of an 8 KB machine. The composition is two lookups in series, in the
-// order the reference states: voice level first, master second. Folding them
-// into one index would change where the rounding happens (§3.4 says so
-// explicitly), and the "vel and master, opposed" gate case is what would catch
-// it.
-//
-// LEVELS ARE NOT SHIFTS. Evenly spaced levels of k/(n-1) with round-half-away-
-// from-zero, not eight octaves of `sra`: §3.4 says not to narrow the fade range
-// into a bit shift. The top level is bit-exact unity, which matters because
-// most of the time nothing is being faded at all, and level 0 is silence.
-//
-// HOW MANY LEVELS IS A PROFILE'S CHOICE (R8 §23.2). The shipped one is 16, and
-// 16 pages is 4 KB of an 8 KB machine. The experimental 15-level profile exists
-// because the phase observer needs a page-aligned 256 B table and there is no
-// free page anywhere else in the complete 2ch map (§21.4): 15 levels are 3,840 B
-// and the page that comes free is the table's. What that costs is one step of
-// volume resolution, and the two profiles are different builds — the default is
-// NOT changed and a score's meaning under 16 levels is not reinterpreted.
-export const LEVELS = 16;
-
+// A SOURCE BYTE IS SIGNED — that is what the sample bank holds (mmb.md §10) —
+// and every table gives back a BIASED-UNSIGNED byte: the ring, the saturating
+// add's operands and what the DAC is handed are all biased. The conversion is
+// baked into the tables, so nothing in the hot path converts domains, and that
+// is worth 21 cycles a sample against the same code with `xor $80` at the three
+// places it would otherwise be needed — 6% of the period.
 export const unbias = (b) => (b & 0xff) - 128;
 export const bias = (s) => (s + 128) & 0xff;
 /** The signed value of a SOURCE byte, in either convention (R28 step 4). */
 export const sourceValue = (b, signed = false) => (signed ? ((b & 0xff) << 24) >> 24 : unbias(b));
 
 /**
- * The signed value a level maps a signed sample to. The ONE definition, for
- * every profile: level k of n scales by k/(n-1), so 0 is silence and n-1 is
- * unity whatever n is. The 15-level profile is k/14 — it is NOT the 16-level
- * table with a page removed and the numbers shifted, which would move every
- * level's meaning by a different amount and leave unity in the wrong place.
- */
-export const scale = (s, level, levels = LEVELS) => {
-  const v = (s * level) / (levels - 1);
-  const r = v < 0 ? -Math.round(-v) : Math.round(v);
-  return Math.max(-128, Math.min(127, r));
-};
-
-/** `levels` pages of 256 bytes, biased in and biased out. Page = level. */
-export function buildLut(levels = LEVELS, { signed = false } = {}) {
-  // THE INPUT CONVENTION IS THE TABLE'S TO ABSORB — and for the shipped image
-  // that means SIGNED IN, SIGNED OUT. The sample bank holds signed bytes
-  // (mmb.md §10), and the two lookups are in series: the master's input is the
-  // voice level's output, so one family cannot take signed and give biased. A
-  // signed-to-signed family serves both stages, and the mixer biases once, with
-  // an `xor $80` before the byte enters the ring (4 cycles a sample). The
-  // silence page a parked voice reads is then 0x00, which is signed silence.
-  // The test images keep the biased family the gates were written against.
-  const out = new Uint8Array(levels * 256);
-  for (let level = 0; level < levels; level++)
-    for (let b = 0; b < 256; b++) {
-      const v = scale(sourceValue(b, signed), level, levels);
-      out[level * 256 + b] = signed ? v & 0xff : bias(v);
-    }
-  return out;
-}
-
-/**
- * The pages a level index may name, from the RAM map. The mixer's page number
+ * The pages a rung index may name, from the RAM map. The mixer's page number
  * is a SELF-MODIFIED operand — the host writes it and the block edge stores it
  * into `mix_v0+1` — so a number outside this range does not fault, it silently
- * reads whatever else is at that address as a volume table. In the 15-level
- * profile the page immediately after the family is the phase table, which is
- * exactly the accident worth checking for (R8 §23.2).
+ * reads whatever else is at that address as a volume table. The page
+ * immediately after the family is the phase table, which is exactly the
+ * accident worth checking for.
  */
 export const lutPages = (cfg) => ({
   first: cfg.ram.lut[0] >> 8,
@@ -124,38 +70,4 @@ export function buildRungs() {
   for (let p = 0; p < RUNG_PAGES; p++)
     for (let b = 0; b < 256; b++) out[p * 256 + b] = bias(rung(sourceValue(b, true), p));
   return out;
-}
-
-/**
- * Do the GENERATED tables implement the same arithmetic? Reported separately
- * from the value gate, because "the image's tables are wrong" and "the mixer
- * used them wrongly" are different faults and a single comparison cannot tell
- * them apart.
- */
-export function tablesAgree(levels = LEVELS, { signed = false } = {}) {
-  const lut = buildLut(levels, { signed });
-  const clamp = buildClamp();
-  const problems = [];
-  if (lut.length !== levels * 256) problems.push(`the level family is ${lut.length} B, not ${levels * 256}`);
-  for (let level = 0; level < levels && problems.length < 4; level++)
-    for (let b = 0; b < 256; b++) {
-      const v = scale(sourceValue(b, signed), level, levels);
-      const want = signed ? v & 0xff : bias(v);
-      if (lut[level * 256 + b] !== want) {
-        problems.push(`LUT[${level}][${b}] = ${lut[level * 256 + b]}, the arithmetic says ${want}`);
-        break;
-      }
-    }
-  // Silence and unity are the two levels a score relies on being exact.
-  for (let b = 0; b < 256; b++) {
-    if (lut[b] !== (signed ? 0 : SILENCE)) { problems.push(`level 0 is not silence at ${b}`); break; }
-    if (lut[(levels - 1) * 256 + b] !== b) { problems.push(`level ${levels - 1} is not unity at ${b}`); break; }
-  }
-  for (let i = 0; i < CLAMP_SIZE && problems.length < 6; i++) {
-    // The index is the sum of two biased bytes, so its signed value is i - 256
-    // and both halves of that are already clamped to [-128, 127].
-    const want = bias(Math.max(-128, Math.min(127, i - 256)));
-    if (clamp[i] !== want) problems.push(`CLAMP[${i}] = ${clamp[i]}, the arithmetic says ${want}`);
-  }
-  return problems;
 }
