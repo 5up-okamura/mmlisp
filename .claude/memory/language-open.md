@@ -31,11 +31,14 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
 7. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+9. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
+   the baseline and says the numbered freezes stopped there, matching
+   CLAUDE.md — but score removal, `import`, compile-time eval and the value
+   machine all landed after that line was drawn. If they are v0.6, it is the
+   version table's last row and the sentence under it.
 
 ## 2. Judgment-free but larger
 
-- def-val min/max on the driver: VAL_TABLE carries no range, so SGDK setVal
-  clamps only to i16 (§8) — a format change.
 - Nf in one track converted at another track's mid-song tempo change (§4).
 - Tick-0 tempo written as an expression is not seen by the Nf prescan.
 - Imports: a local def does not win over an import in another namespace

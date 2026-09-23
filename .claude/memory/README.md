@@ -16,12 +16,6 @@ Rules:
 
 ## Index
 
-- [plan-release.md](plan-release.md) — **what the 2026-09-21 whole-repo review
-  settled, and why.** All four judgment calls (the deploy layout, the
-  Nuked-PSG notices, `$slot` clamping, deleting `player/`) with their
-  reasoning; nothing from the review is outstanding. Read it before touching
-  the engine cfg object or quoting a gate's score count — both have a trap in
-  them. One open question: whether the shipped eval work is called v0.6.
 - [driver-decisions.md](driver-decisions.md) — **why MMLispDRV is shaped as it
   is.** The measurement that moved the sequencer off the Z80, which of the
   pivot's decisions were later reversed, the competitor survey (XGM2's hardware

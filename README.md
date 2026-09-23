@@ -134,8 +134,16 @@ graded write by write and DAC byte by DAC byte in an emulator. See
   integration, and a first-party toolchain (assembler, Z80 emulator, gates)
 - `examples/` — demo songs and test assets
 - `tools/` — command-line compiler and validation scripts
+- `presets/` — the voice and sample sets the app ships
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`
 - `wasm/`, `third_party/` — the vendored YM2612 / PSG cores and their WASM build
+
+**Publishing.** The deployed site serves `live/` as its document root, while
+`npm run serve` serves the repository root and reaches the app at `/live/`. The
+data the app fetches by absolute path lives outside `live/`, so it reaches the
+published site through the tracked symlinks `live/examples` and `live/presets`.
+A new directory the app fetches from needs one too, or it resolves in
+development and 404s in production.
 
 File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 
