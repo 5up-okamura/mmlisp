@@ -1,7 +1,9 @@
 # Nuked WASM Backends (FM + PSG)
 
-This folder contains the build scaffold for the high-accuracy YM2612 (FM) and
-SEGA PSG backends used by the live tool and the standalone VGM player.
+This folder holds the build scaffold for the high-accuracy YM2612 (FM) and
+SEGA PSG cores MMLisp Live plays through. The build emits single-file ES
+modules and syncs them to `live/nuked-opn2.js` and `live/nuked-psg.js`, which
+are the copies the app ships.
 
 Chosen cores:
 
@@ -26,7 +28,7 @@ third_party/
 Generated output:
 
 ```text
-player/wasm/dist/
+wasm/dist/
   nuked-opn2.js
   nuked-psg.js
 live/
@@ -37,21 +39,21 @@ live/
 Build prerequisites:
 
 - Emscripten (`emcc`, `em++`)
-- Vendored `third_party/Nuked-OPN2`
+- Vendored `third_party/Nuked-OPN2` and `third_party/Nuked-PSG`
 
 Build:
 
 ```bash
-player/wasm/build-nuked.sh   # FM (YM2612)
-player/wasm/build-psg.sh     # PSG (SN76489)
+wasm/build-nuked.sh   # FM (YM2612)
+wasm/build-psg.sh     # PSG (SN76489)
 ```
 
 If `emcc` aborts with a Python syntax error, point Emscripten at a modern
-Python: `EMSDK_PYTHON=$(command -v python3.14) player/wasm/build-psg.sh`.
+Python: `EMSDK_PYTHON=$(command -v python3.14) wasm/build-psg.sh`.
 
 Integration notes:
 
-1. `player/wasm/nuked_adapter.c` / `psg_adapter.c` wrap the upstream cores with
+1. `wasm/nuked_adapter.c` / `psg_adapter.c` wrap the upstream cores with
    a small C API. The FM adapter also streams the YM2612 DAC (registers 0x2b
    enable / 0x2a data) folded into the per-sample clock budget, so PCM plays
    through the real chip rather than a software mixer.
@@ -60,8 +62,6 @@ Integration notes:
    that only publish the `live/` directory.
 3. `live/worklet.js` loads the generated module and handles timed YM register
    writes.
-4. `player/vgm-player.js` loads `../live/worklet.js` so both apps share the
-   same worklet implementation.
 
 Notes:
 

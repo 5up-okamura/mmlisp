@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 src_dir="$repo_root/third_party/Nuked-PSG"
-out_dir="$repo_root/player/wasm/dist"
+out_dir="$repo_root/wasm/dist"
 out_file="$out_dir/nuked-psg.js"
 live_out_file="$repo_root/live/nuked-psg.js"
-adapter_src="$repo_root/player/wasm/psg_adapter.c"
+adapter_src="$repo_root/wasm/psg_adapter.c"
 
 if ! command -v emcc >/dev/null 2>&1; then
   echo "error: emcc not found. Install Emscripten first." >&2
