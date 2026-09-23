@@ -231,7 +231,15 @@ if (opts.bundle) {
   const { loadManifest, buildBundle, resLines, channelName } = await import("./bundle.mjs");
   const { manifest, baseDir } = loadManifest(opts.bundle);
   const bundle = buildBundle(manifest, { baseDir });
+  // The seeded song.res declares "song.smp", and the uncommenting below keys
+  // on that name; a manifest that renames the bank would leave the res
+  // pointing at a file the build never writes. Rather than thread the name
+  // through two rewrites, say so.
   const bankName = manifest.bank ?? "song.smp";
+  if (bankName !== "song.smp") {
+    fail(`--bundle: "bank": "${bankName}" — install-sgdk writes the bank as song.smp.` +
+      ` Drop "bank" from the manifest, or run tools/bundle.mjs directly and copy the files.`);
+  }
   ensureDir(join(project, "res"));
   for (const s of bundle.songs) {
     const out = join(project, "res", `${s.name}.mmb`);
@@ -286,6 +294,13 @@ if (counts.kept && existsSync(resPath)) {
     const missing = bundleRes.filter((l) => !res.includes(l.split(" ")[1]));
     if (missing.length) {
       console.warn(`\nres/song.res is yours — add the bundle's resources to it:\n  ${missing.join("\n  ")}`);
+    }
+    // A bundle writes one .mmb per song and no res/song.mmb, so a line left
+    // over from a single-score install now names a file that is not there —
+    // and rescomp fails on a BIN whose file is missing.
+    if (/^\s*BIN\s+\S+\s+"?song\.mmb/m.test(res) && !existsSync(join(project, "res", "song.mmb"))) {
+      console.warn(`\nwarning: res/song.res still declares song.mmb, which this bundle does not` +
+        ` write — remove that BIN line.`);
     }
   } else if (!/^\s*BIN\s+\S+\s+"?song\.mmb/m.test(res)) {
     console.warn(`\nwarning: res/song.res declares no BIN for song.mmb.`);

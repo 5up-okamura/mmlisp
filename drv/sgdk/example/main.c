@@ -147,7 +147,9 @@ static void drawHex(u32 value, u16 digits, u16 x, u16 y)
 static u8 bgmTrackCount(void)
 {
     u8 n = MMLisp_trackCount();
-    return (n > MMLISP_SE_TRACKS) ? (u8)(n - MMLISP_SE_TRACKS) : n;
+    // >=, not >: a score that is ALL effect tracks has no BGM, and starting
+    // them here would start them with startTrack — evicting, never restoring.
+    return (n >= MMLISP_SE_TRACKS) ? (u8)(n - MMLISP_SE_TRACKS) : n;
 }
 
 static void playBgm(void)
@@ -292,8 +294,7 @@ int main(bool hardReset)
     VDP_drawText("fifo:", 28, 10);
     VDP_drawText("late:", 2, 11);
     VDP_drawText("intensity:", 2, 13);
-    VDP_drawText("vib:", 15, 13);
-    VDP_drawText("vol:", 25, 13);
+    VDP_drawText("bass vol:", 15, 13);
     VDP_drawText("track active:", 2, 15);
     VDP_drawText("trig:", 2, 16);
 
@@ -305,8 +306,7 @@ int main(bool hardReset)
 
     MMLisp_setVal(VAL_LVL, lvlFor(intensity));
     drawHex((u16)intensity, 2, 13, 13);
-    drawHex((u16)intensity, 2, 20, 13);
-    drawHex((u16)lvlFor(intensity), 2, 30, 13);
+    drawHex((u16)lvlFor(intensity), 2, 25, 13);
 
 #if MMLISP_AUTOPLAY
     // The load primed the score (mmlispdrv.h): let its writes reach the chip
@@ -316,6 +316,7 @@ int main(bool hardReset)
         MMLisp_frame();
         SYS_doVBlankProcess();
     }
+    playing = TRUE;
     playBgm();
     VDP_drawText("PLAY", 2, 18);
 #endif
@@ -342,7 +343,17 @@ int main(bool hardReset)
                 // song of a bundle boots the same engine image, so the Z80
                 // stays up; the wait below is only for the new score's setup
                 // writes to leave the wire.
-                loadSong((u8)((song + 1) % SONG_COUNT));
+                if (!loadSong((u8)((song + 1) % SONG_COUNT)))
+                {
+                    // A bad MMB at this point is a build mistake, not a
+                    // runtime one, but starting tracks against a sequencer
+                    // that refused the load would play the PREVIOUS song's
+                    // stream against this song's track table.
+                    VDP_drawText("BAD MMB", 2, 18);
+                    playing = FALSE;
+                    prev = joy;
+                    continue;
+                }
                 MMLisp_setVal(VAL_VIB, intensity);
                 MMLisp_setVal(VAL_LVL, lvlFor(intensity));
             }
@@ -397,8 +408,7 @@ int main(bool hardReset)
                 MMLisp_setVal(VAL_VIB, intensity);
                 MMLisp_setVal(VAL_LVL, lvl);
                 drawHex((u16)intensity, 2, 13, 13);
-                drawHex((u16)intensity, 2, 20, 13);
-                drawHex((u16)lvl, 2, 30, 13);
+                drawHex((u16)lvl, 2, 25, 13);
             }
         }
 

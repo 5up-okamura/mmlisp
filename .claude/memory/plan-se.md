@@ -72,6 +72,34 @@ so sweeps are cleared by the same rule rather than by a second mechanism.
 reference, and both were wrong in the same way (`driver-decisions.md` §6). The
 twin-score diff is what catches it, and is now `claim-gate`.
 
+## What the lifecycle actually needed (2026-09-23, second pass)
+
+A review of the committed port found five more, all one shape: **the suspend
+ledger was only maintained on the happy path.** A part is suspended and an
+effect holds a pointer to it; every path that ends the effect or takes the
+channel away has to keep those two facts in step, and only two of the five
+paths did.
+
+- START_TRACK over a channel an effect holds evicted the EFFECT and **stranded
+  the suspended part** — no reclaim runs, so it never dispatched again and the
+  effect kept a pointer that would restore it over a stranger later.
+- A **faded-out** effect never reclaimed: `process_fades`' terminal stop and
+  `mml_fade_track(…, 0)` were the only stop paths that skipped it.
+- `mml_stop_track` matched on `running`, so a **suspended part could not be
+  stopped** — the game asked for silence and the effect's end brought it back.
+- A preempting effect **inherited** the pointer without the preempted one
+  dropping it, and a start that took neither branch (an effect on a free
+  channel) kept whatever it displaced last time.
+
+The rule that resolves all of them, now in `driver.md` §2.5: *a part is
+suspended exactly while one running effect names it.* `release_suspended`
+dissolves the arrangement wherever a channel changes hands outside a reclaim.
+
+**The gate for it is not a twin diff.** A stranded part is SILENT, so no
+comparison of register traffic can see it. `claim-gate` therefore also checks
+the invariant above directly, every frame of every schedule with an effect in
+it. Verified by mutation: disabling any one of the four fixes fails it.
+
 Two boundaries worth not re-litigating: **stopping** a track must NOT clear,
 because a release-region macro runs after key-off and is the decay tail; and
 the restore re-binds but does not re-run a sweep, because a sweep has a

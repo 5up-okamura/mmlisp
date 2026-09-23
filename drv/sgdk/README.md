@@ -509,8 +509,13 @@ Everything the language compiles to, except SE:
   channels at once (~30 writes each) still takes a few frames through it, and
   scores that change many registers every frame (per-frame vibrato on every
   channel) can outrun it — watch `pending`.
-- **One score loaded at a time.** `MMLisp_loadScore` resets the sequencer.
-- **SE is not ported** to the 68k sequencer.
+- **One score resident at a time.** `MMLisp_loadScore` resets the sequencer,
+  so a song change stops the music and returns the value slots to their inits.
+  Songs share the sample bank rather than the sequencer — see "Several songs,
+  one bank" above.
+- **A sound effect is a track of the score it plays over**, authored on a spare
+  channel and pointed at the BGM's by the build. `import` shares defs, not
+  tracks, so each song repeats its effect track lines.
 - **SGDK's own Z80 halts** (pads, DMA) are outside the driver's budget — see
   "Bus stops that are not the driver's".
 - **Not yet run on hardware.** In particular the pump writes Z80 RAM with

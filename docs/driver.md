@@ -860,18 +860,6 @@ accumulators, the §7/§8 integer tables — no floats), in the live environment
 an alternate backend, and emits real frames through the real cap/spill queue
 (§4) so it specifies the interface too, not just the music.
 
-### 12.2a `claim-gate` — a channel's modulators do not outlive its owner
-
-`drv/tools/claim-gate.mjs`, `npm run claim-gate` (and `:pal`). §12.2 compares
-the two sequencers, so a rule both of them break passes it — and the claim rule
-of §2.2 was broken in both for as long as it existed. A leak is not a
-disagreement between players; it is register traffic the music never asked for.
-So each case is a score and a **twin**, the same score with its modulators
-removed, and over the window where those modulators must not be heard the two
-slot streams must be byte-identical. Three cases: a plain eviction, a sound
-effect's claim, and its restore. The effects' notes are `Nf` lengths, so one
-window fits both video standards.
-
 ### 12.2 68k C ≡ `drv-player.js` — the hard gate
 
 The C sequencer compiles for the host as well as for m68k (its core is plain C
@@ -892,6 +880,17 @@ Two things the C needs that the reference gets for free:
 A PCM score's sample bank is a separate ROM bank rather than an MMB section, so
 the gate hands it to the C as a separate file (`--samples`).
 
+### 12.2a `claim-gate` — a channel's modulators do not outlive its owner
+
+`drv/tools/claim-gate.mjs`, `npm run claim-gate` (and `:pal`). §12.2 compares
+the two sequencers, so a rule both of them break passes it — and the claim rule
+of §2.2 was broken in both for as long as it existed. A leak is not a
+disagreement between players; it is register traffic the music never asked for.
+So each case is a score and a **twin**, the same score with its modulators
+removed, and over the window where those modulators must not be heard the two
+slot streams must be byte-identical. Three cases: a plain eviction, a sound
+effect's claim, and its restore. The effects' notes are `Nf` lengths, so one
+window fits both video standards.
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
@@ -1087,14 +1086,17 @@ informational for macros.
 
 `MACRO_SET {macro_id}` binds MACRO_TABLE[macro_id] as the **active macro for
 its target** on the track (sticky, replacing any active macro on that target);
-`MACRO_CLEAR {target}` clears one (`0xFF` = all). The bind belongs to the
-**channel**, so claiming the channel clears it too (§2.2) — a sound effect's
-snapshot is what carries a displaced part's binds across (§2.5). The channel
+`MACRO_CLEAR {target}` clears one (`0xFF` = all). The channel
 holds up to **3** active-macro ids (§4.3). On **any** `NOTE_ON` the sequencer instantiates each
 active macro into a **running slot** (3 slots × {descriptor index, step clock,
 cursor, flags}); `NOTE_ON_EX` `macro_ref` adds a per-note one-shot. When a
 channel's active set would exceed 3, the *exporter* drops the extras with a
 `W_MMB_MACRO_SLOTS` warning (deterministic) — the driver never overflows.
+
+A bind belongs to the **channel**, not to the track that wrote it, so claiming
+the channel clears it (§2.2). A sound effect carries the displaced part's binds
+in its snapshot and re-instantiates them on the restore (§2.5); that snapshot
+holds the driver's own capacity, not the exporter's three.
 
 ### 13.2 Per-frame stepping
 

@@ -900,7 +900,6 @@ static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
  * deliberately NOT this: a release-region macro (`:off`) runs entirely after
  * key-off and IS the decay tail. Claiming is the line, because the new owner is
  * a different part. */
-static int macro_ch(int ch);
 static void clear_channel_modulators(MMLSeq *s, int ch) {
   int mc = macro_ch(ch);
   if (mc >= 0) {
@@ -1842,7 +1841,13 @@ static void process_fades(MMLSeq *s) {
       t->fade_cur--;
     }
     param_set(s, t->channel_id, T_VOL, t->fade_cur < 0 ? 0 : (int)t->fade_cur);
-    if (t->fade_frame >= t->fade_n) stop_track(s, t);
+    if (t->fade_frame >= t->fade_n) {
+      stop_track(s, t);
+      /* A faded-out effect gives its channel back, exactly as one that ended or
+       * was stopped does. Without this the displaced part stays suspended for
+       * good and the channel keeps the effect's last registers. */
+      reclaim_se(s, t);
+    }
   }
 }
 
@@ -2294,6 +2299,7 @@ void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames) {
     if (t->track_id != track_id || !t->running) continue;
     if (frames == 0) {
       stop_track(s, t);
+      reclaim_se(s, t); /* a zero-frame fade is a stop (§6.5) */
       return;
     }
     /* Bresenham vol ramp to 0 over `frames`, then stop — division-free. */
@@ -2415,8 +2421,23 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
   }
 }
 
-/* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK
- * and at mml_stop_track (a held or looping SE ends only on STOP). */
+/* A suspended track's only way back is the reclaim of the effect that
+ * displaced it. Anything that takes the channel away from that arrangement has
+ * to DISSOLVE it: otherwise the track is stranded — suspended forever, never
+ * dispatching — and the effect's own end would later restore it over whoever
+ * owns the channel by then. */
+static void release_suspended(MMLSeq *s, MMLTrack *t) {
+  if (!t->suspended) return;
+  t->suspended = 0;
+  t->snap.kind = MML_SNAP_NONE;
+  uint8_t idx = (uint8_t)(t - s->trk);
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].is_se && s->trk[i].displaced == idx) s->trk[i].displaced = 0xff;
+}
+
+/* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK,
+ * at mml_stop_track and at a fade's terminal stop (a held or looping SE ends
+ * on one of the latter two). */
 static void reclaim_se(MMLSeq *s, MMLTrack *se) {
   if (!se->is_se) return;
   if (se->pcm_snap) {
@@ -2429,8 +2450,9 @@ static void reclaim_se(MMLSeq *s, MMLTrack *se) {
     pcm_note_on(s, CH_PCM1 + se->pcm_vi, sid, loop);
     return;
   }
-  if (se->displaced == 0xff) {
+  if (se->displaced >= s->track_count) { /* 0xFF, or a track that is gone */
     se->is_se = 0;
+    se->displaced = 0xff;
     return;
   }
   MMLTrack *owner = &s->trk[se->displaced];
@@ -2450,6 +2472,12 @@ static void reclaim_se(MMLSeq *s, MMLTrack *se) {
  */
 static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   int ch = t->channel_id;
+  /* What this track displaced LAST time is not what it displaces now. Both are
+   * cleared before the branches below so that a start which takes neither
+   * branch — an effect on a free channel, or a plain start — cannot inherit a
+   * stale one and hand a channel back to a part that no longer owns it. */
+  t->displaced = 0xff;
+  t->pcm_snap = 0;
   /* Channel ownership. ch2 is the FM3 shared channel — its voice track and op1
    * coexist by design — and ids >= 10 (fm3-op, pcm) have no channel block, so
    * neither has an owner to displace. */
@@ -2474,6 +2502,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
         if (prio < owner->se_prio) return;
         channel_off(s, ch);
         t->displaced = owner->displaced;
+        owner->displaced = 0xff; /* the duty moves; it is not shared */
         owner->running = 0;
         owner->is_se = 0;
       } else if (owner) {
@@ -2508,6 +2537,14 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
      * up, so this is also what stops the displaced BGM's macro from playing the
      * SE through. */
     clear_channel_modulators(s, ch);
+    /* Any OTHER part still suspended on this channel loses it for good —
+     * everything except the one this start just took charge of, which is either
+     * the owner it suspended or the one it inherited by preempting. */
+    for (uint8_t i = 0; i < s->track_count; i++) {
+      MMLTrack *o = &s->trk[i];
+      if (o != t && o->suspended && o->channel_id == ch && i != t->displaced)
+        release_suspended(s, o);
+    }
   } else if (as_se && ch >= CH_PCM1 && ch <= CH_PCM3) {
     /* A PCM SE. Soft-mix voices have no owner track, so nothing is suspended:
      * the SE's PCM_NOTE_ON overwrites the voice. If a BGM loop is live there,
@@ -2590,12 +2627,19 @@ void mml_prime_tracks(MMLSeq *s) {
 }
 
 void mml_stop_track(MMLSeq *s, uint8_t track_id) {
-  for (uint8_t i = 0; i < s->track_count; i++)
-    if (s->trk[i].track_id == track_id && s->trk[i].running) {
-      stop_track(s, &s->trk[i]);
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *t = &s->trk[i];
+    if (t->track_id != track_id) continue;
+    if (t->running) {
+      stop_track(s, t);
       /* An SE stopped by the host gives its channel back like one that ended. */
-      reclaim_se(s, &s->trk[i]);
+      reclaim_se(s, t);
+    } else if (t->suspended) {
+      /* A part an effect displaced is not running, and the game still asked it
+       * to stop: it must not come back when that effect ends. */
+      release_suspended(s, t);
     }
+  }
 }
 
 /* ── Ring transport (driver.md §6.6) ───────────────────────────────────────

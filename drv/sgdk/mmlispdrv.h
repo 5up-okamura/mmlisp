@@ -214,11 +214,11 @@ typedef struct {
                        // Zero, or the engine has been starved of pumps
     u16 faults;        // PCM commands for a voice the booted image does not have:
                        // zero, or the score and its image disagree
-    s8  bank;          // the published sample bank, as the loaded score took it:
-                       // 0 fine (or none published), -3 baked for another engine
-                       // image — every PCM note is dropped, and a bundle built
-                       // with tools/bundle.mjs cannot produce this — other
-                       // negatives a malformed table
+    s8  bank;          // how the LOADED score took the published bank: 0 fine,
+                       // or none published, or nothing loaded yet; -3 baked for
+                       // another engine image, which drops every PCM note and
+                       // which a bundle built with tools/bundle.mjs cannot
+                       // produce; other negatives a malformed table
     u8  image;         // PCM voices of the booted engine image
     u16 due;           // frames whose time has come (vtimer since the load, less
                        // pauses); rendered - due is the lead, normally MMLISP_LEAD

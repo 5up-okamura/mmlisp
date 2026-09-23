@@ -2059,11 +2059,18 @@ export class DrvPlayer {
   // _reset); starting one re-inits its dispatch state and claims its channel.
   // With `asSe`, the channel's current owner is *suspended + snapshotted* (so
   // SE-end can restore it) instead of *evicted* — this is the whole SE story.
-  // The Z80 mirror is ovl_setup start_track (evict block → suspend variant).
+  // The port is mmlispseq.c `start_track_ex`, branch for branch.
   _startTrack(trackId, asSe, prio = 0) {
     const trk = this._trk.find((t) => t.trackId === trackId);
     if (!trk) return; // unknown track id
     const ch = trk.channelId;
+    // What this track displaced LAST time is not what it displaces now. Both
+    // are cleared before the branches below so that a start which takes
+    // neither branch — an effect on a free channel, or a plain start — cannot
+    // inherit a stale one and hand a channel back to a part that no longer
+    // owns it.
+    trk.displaced = null;
+    trk.pcmSnap = null;
     // Channel ownership: the current owner is the *other* running (non-suspended)
     // track on this channel. ch2 is the FM3 shared channel (voice + op1 coexist);
     // ids ≥ 10 (fm3-op/pcm) have no channel block — no owner to displace here.
@@ -2083,6 +2090,7 @@ export class DrvPlayer {
           if (prio < owner.sePrio) return; // dropped — leave the old SE playing
           this._channelOff(ch); // silence the old SE for the new one's re-attack
           trk.displaced = owner.displaced;
+          owner.displaced = null; // the duty moves; it is not shared
           owner.running = false;
           owner.isSe = false;
         } else if (owner) {
@@ -2120,13 +2128,19 @@ export class DrvPlayer {
       // up, so this is also what stops the displaced BGM's macro from playing
       // the SE through.
       this._clearChannelModulators(ch);
+      // Any OTHER part still suspended on this channel loses it for good —
+      // everything except the one this start just took charge of, which is
+      // either the owner it suspended or the one it inherited by preempting.
+      for (const o of this._trk) {
+        if (o !== trk && o.suspended && o.channelId === ch && o.index !== trk.displaced) {
+          this._releaseSuspended(o);
+        }
+      }
     } else if (asSe && ch >= 20 && ch <= 22) {
       // PCM SE (driver.md §2.5): soft-mix voices have no channel ownership,
       // so nothing is suspended — the SE's PCM_NOTE_ON overwrites the voice slot.
-      // If a BGM loop is live there, snapshot the whole voice struct now (frozen
-      // while the SE plays) so SE-end can restore it (PV_POS resume = no dropout).
-      // Captured at START_SE, before this frame's mixer pass — the same point the
-      // Z80 ovl_setup snapshots, so both ports capture identical voice state.
+      // If a BGM loop is live there, keep its NOTE now, at START_SE and before
+      // this frame's mixer pass, so SE-end can start it again.
       // The engine keeps no position the host can read back, so what SE-end
       // restores is the NOTE: a BGM loop starts again from its sample's head.
       const vi = ch - 20;
@@ -2136,11 +2150,13 @@ export class DrvPlayer {
       // rule, at the point the effect takes the voice.
       this._clearChannelModulators(ch);
       if (v.started && v.looping) {
-        trk.pcmSnap = { ...v };
+        // The note, not the voice: the sample id and that it loops are all the
+        // restart needs, and they are what the C keeps too.
+        trk.pcmSnap = { sampleId: v.sampleId, looping: v.looping };
         trk.pcmVi = vi;
       }
     }
-    // Re-init the track's dispatch state (mirrors ovl_setup TCB fill).
+    // Re-init the track's dispatch state.
     trk.pc = trk.eventOffset;
     trk.acc = 0;
     trk.wait = 0;
@@ -2160,10 +2176,16 @@ export class DrvPlayer {
   // STOP_TRACK (mailbox cmd 2): stop the track; if it is an SE that displaced a
   // BGM owner, restore the owner first (held/looping SEs end on STOP, not EOT).
   _mailboxStop(trackId) {
-    const t = this._trk.find((x) => x.trackId === trackId && x.running);
+    const t = this._trk.find((x) => x.trackId === trackId);
     if (!t) return;
-    this._stopTrack(t);
-    this._reclaimSe(t);
+    if (t.running) {
+      this._stopTrack(t);
+      this._reclaimSe(t);
+    } else {
+      // A part an effect displaced is not running, and the game still asked it
+      // to stop: it must not come back when that effect ends.
+      this._releaseSuspended(t);
+    }
   }
 
   // Snapshot a channel's live state at suspend — essential fields only; the
@@ -2234,8 +2256,8 @@ export class DrvPlayer {
       this._applyKeyon(ch);
     } else if (snap.kind === "psg") {
       // PSG re-attack = re-write period + attenuation (the PSG "key"); mirrors a
-      // NOTE_ON (drv-player _noteOn PSG branch), which the Z80 se_restore_psg
-      // reproduces in the same order.
+      // NOTE_ON (the PSG branch of _noteOn), which mmlispseq.c
+      // `restore_channel` reproduces in the same order.
       const psgCh = ch - 6;
       const st = this._psg[psgCh];
       st.velBase = snap.velBase;
@@ -2269,8 +2291,20 @@ export class DrvPlayer {
     }
   }
 
+  // A suspended track's only way back is the reclaim of the effect that
+  // displaced it. Anything that takes the channel away from that arrangement
+  // has to DISSOLVE it: otherwise the track is stranded — suspended forever,
+  // never dispatching — and the effect's own end would later restore it over
+  // whoever owns the channel by then.
+  _releaseSuspended(t) {
+    if (!t.suspended) return;
+    t.suspended = false;
+    t.snapshot = null;
+    for (const se of this._trk) if (se.isSe && se.displaced === t.index) se.displaced = null;
+  }
+
   // Restore the BGM owner an SE displaced (SE-end reclaim). Hooked at the SE
-  // track's END_OF_TRACK and STOP_TRACK, mirroring the Z80 d_eot / stop_track.
+  // track's END_OF_TRACK, at STOP_TRACK and at a fade's terminal stop.
   _reclaimSe(seTrk) {
     if (!seTrk.isSe) return;
     // PCM (design C): the BGM loop the SE stole is started again. No owner track.
@@ -2301,6 +2335,7 @@ export class DrvPlayer {
     if (!t) return;
     if (frames === 0) {
       this._stopTrack(t);
+      this._reclaimSe(t);
       return;
     }
     // Bresenham vol ramp from the channel's current vol down to 0 over `frames`
@@ -2323,7 +2358,13 @@ export class DrvPlayer {
         t.fadeCur--;
       }
       this._paramSet(t.channelId, TARGET_ID.VOL, t.fadeCur < 0 ? 0 : t.fadeCur);
-      if (t.fadeFrame >= t.fadeN) this._stopTrack(t);
+      if (t.fadeFrame >= t.fadeN) {
+        this._stopTrack(t);
+        // A faded-out effect gives its channel back, exactly as one that ended
+        // or was stopped does. Without this the displaced part stays suspended
+        // for good and the channel keeps the effect's last registers.
+        this._reclaimSe(t);
+      }
     }
   }
 

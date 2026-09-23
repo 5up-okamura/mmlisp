@@ -401,6 +401,36 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "p3-se-fade-twin.mmlisp": {
+    "ok": false,
+    "mismatches": 16,
+    "compileErrors": 0,
+    "digest": "684546e2"
+  },
+  "p3-se-fade.mmlisp": {
+    "ok": false,
+    "mismatches": 16,
+    "compileErrors": 0,
+    "digest": "684546e2"
+  },
+  "p3-se-stopped-twin.mmlisp": {
+    "ok": false,
+    "mismatches": 16,
+    "compileErrors": 0,
+    "digest": "684546e2"
+  },
+  "p3-se-stopped.mmlisp": {
+    "ok": false,
+    "mismatches": 16,
+    "compileErrors": 0,
+    "digest": "684546e2"
+  },
+  "p3-se-strand.mmlisp": {
+    "ok": false,
+    "mismatches": 16,
+    "compileErrors": 0,
+    "digest": "684546e2"
+  },
   "sin008.mmlisp": {
     "ok": false,
     "mismatches": 632,

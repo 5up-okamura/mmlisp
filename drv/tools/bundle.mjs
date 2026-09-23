@@ -148,7 +148,11 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     s.diagnostics.push(...ed);
     if (s.entry.remap) {
       const moved = remapTrackChannels(bytes, s.entry.remap);
-      if (!moved.length) diag("warning", "W_BUNDLE_REMAP_UNUSED", `remap matched no track id`, s.name);
+      const missed = Object.keys(s.entry.remap).filter((id) => !moved.some((m) => m.track === Number(id)));
+      if (missed.length) {
+        diag("warning", "W_BUNDLE_REMAP_UNUSED",
+          `remap names track ${missed.join(", ")}, which this score does not have`, s.name);
+      }
       s.moved = moved;
     }
     s.bytes = bytes;
@@ -156,7 +160,10 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     s.tracks = readTrackTable(bytes);
     if (Object.keys(s.entryIds).length) anyPcm = true;
     // Standalone, for the self-test below: what this song's bank would have
-    // held on its own, at the same image.
+    // held on its own, at the same image. This is a SECOND full encode of
+    // every song — a bundle build is 2N of them — and it is worth it: nothing
+    // else can tell "the bundle moved the ids" from "the bundle changed the
+    // sound", which is the one thing a shared bank could silently do.
     s.alone = encodeMmb(s.ir, { samples: s.samples });
   }
 
@@ -181,15 +188,16 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
   // The gate compares C against the reference on the bundled artifacts; this
   // is the check that the bundled artifacts are the song.
   for (const s of songs) {
-    if (!s.alone.sampleBank) continue;
+    const alone = s.alone;
+    delete s.alone;
+    if (!alone.sampleBank) continue;
     for (const [key, id] of Object.entries(s.entryIds)) {
       const mine = bankEntry(bank, id);
-      const theirs = bankEntry(s.alone.sampleBank, s.alone.pcmEntryIds[key]);
+      const theirs = bankEntry(alone.sampleBank, alone.pcmEntryIds[key]);
       const ok = mine && theirs && mine.flags === theirs.flags && mine.len === theirs.len &&
         mine.loopStart === theirs.loopStart && mine.loopEnd === theirs.loopEnd && sameBytes(mine.blob, theirs.blob);
       if (!ok) diag("error", "E_BUNDLE_ENTRY_MISMATCH", `sample entry ${key} differs from the song's own bank`, s.name);
     }
-    delete s.alone;
   }
 
   return {
@@ -211,7 +219,7 @@ export function resLines(bundle, bankName = "song.smp") {
 const CHANNEL_NAMES = ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise"];
 export const channelName = (id) =>
   CHANNEL_NAMES[id] ?? (id >= 16 && id <= 19 ? `fm3-${id - 15}` : id >= 20 && id <= 22 ? `pcm${id - 19}` : `ch${id}`);
-export const channelId = (name) => {
+const channelId = (name) => {
   const i = CHANNEL_NAMES.indexOf(name);
   if (i >= 0) return i;
   let m = /^fm3-([1-4])$/.exec(name);
@@ -230,7 +238,7 @@ function pcmVoicesNeeded(ir, remap) {
   let n = 0;
   (ir.tracks ?? []).forEach((t, i) => {
     const id = t.id ?? i;
-    const ch = remap?.[id] ?? remap?.[String(id)] ?? channelId(t.channel ?? "");
+    const ch = remap?.[id] ?? channelId(t.channel ?? "");
     if (ch >= 20 && ch <= 22) n = Math.max(n, ch - 19);
   });
   return n;

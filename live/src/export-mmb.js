@@ -1523,7 +1523,6 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
 
   return {
     rateHz,
-    get entryCount() { return rows.length; },
     get blobLength() { return blobBytes.length; },
 
     /** Plan one score's entries. Returns that score's `{ entryIds, idFor }`. */

@@ -1,0 +1,24 @@
+{
+  "autoStart": false,
+  "remapChannels": {
+    "1": 0
+  },
+  "commands": [
+    {
+      "frame": 0,
+      "cmd": 1,
+      "a0": 0
+    },
+    {
+      "frame": 40,
+      "cmd": 7,
+      "a0": 1,
+      "a1": 5
+    },
+    {
+      "frame": 50,
+      "cmd": 2,
+      "a0": 0
+    }
+  ]
+}

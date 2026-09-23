@@ -136,7 +136,7 @@ void MMLisp_setSampleBank(const u8* smp)
     writeBankRegister();
     // The sequencer resolves every PCM field itself and needs the bank's
     // directory and its ROM address (driver.md §6.3).
-    if (smp && loaded) bankRc = (s8)mml_load_samples(&seq, smp, 0, (u32)smp);
+    bankRc = (smp && loaded) ? (s8)mml_load_samples(&seq, smp, 0, (u32)smp) : 0;
 }
 
 static void writeBankRegister(void)
