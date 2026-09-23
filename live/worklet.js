@@ -143,25 +143,19 @@ class YM2612Processor extends AudioWorkletProcessor {
         if (msg.port === 2) {
           // PSG write (port=2 is the PSG flag)
           if (msg.when != null) {
-            this._insertTimed(
-              this._psgTimedQueue,
-              Math.round(msg.when * sampleRate),
-              { data: msg.data & 0xff },
-            );
+            this._insertTimed(this._psgTimedQueue, msg.when, {
+              data: msg.data & 0xff,
+            });
           } else {
             this._psgWriteQueue.push(msg.data & 0xff);
           }
         } else if (msg.when != null) {
-          // Insert into _timedQueue maintaining sorted order by target audio frame
-          this._insertTimed(
-            this._timedQueue,
-            Math.round(msg.when * sampleRate),
-            {
-              port: msg.port ?? 0,
-              addr: msg.addr,
-              data: msg.data,
-            },
-          );
+          // Kept in scheduled-time order (see _insertTimed).
+          this._insertTimed(this._timedQueue, msg.when, {
+            port: msg.port ?? 0,
+            addr: msg.addr,
+            data: msg.data,
+          });
         } else {
           this._writeQueue.push(msg);
         }
@@ -170,11 +164,8 @@ class YM2612Processor extends AudioWorkletProcessor {
       } else if (msg.type === "pcm-ev") {
         // Timed, and applied in time order: a note, a level and every step of
         // a loop-point sweep interleave exactly as the score orders them.
-        const targetFrame =
-          msg.when != null
-            ? Math.round(msg.when * sampleRate)
-            : currentFrame + WORKLET_BLOCK;
-        this._insertTimed(this._pcmTimedQueue, targetFrame, msg);
+        const t = msg.when ?? (currentFrame + WORKLET_BLOCK) / sampleRate;
+        this._insertTimed(this._pcmTimedQueue, t, msg);
       } else if (msg.type === "pcm-set-vol") {
         // Live per-PCM-track mixer fader: a gain on the voice's samples BEFORE
         // its rung, which the driver does not have (a UI-only control).
@@ -230,10 +221,20 @@ class YM2612Processor extends AudioWorkletProcessor {
     };
   }
 
-  _insertTimed(queue, frame, payload) {
+  // Queue a write for the instant it was scheduled for. The sort key is that
+  // exact time, NOT the audio frame it rounds to: a player that puts a key-off
+  // a microsecond before a key-on (ir-utils.js KEY_ORDER_EPS_SECS) is saying
+  // which comes first, and a frame is ~21 µs, so rounding first would throw
+  // that order away and leave arrival order to decide — which is how an FM3
+  // operator's re-key key-off, computed while the LAST operator's note is
+  // scheduled, used to land after every key-on and silence the chord. Arrival
+  // order breaks only true ties. Rounding is monotonic, so a queue sorted by
+  // time is also sorted by frame, which is all the drains read.
+  _insertTimed(queue, t, payload) {
+    const frame = Math.round(t * sampleRate);
     let i = queue.length;
-    while (i > 0 && queue[i - 1].frame > frame) i--;
-    queue.splice(i, 0, { frame, ...payload });
+    while (i > 0 && queue[i - 1].t > t) i--;
+    queue.splice(i, 0, { ...payload, frame, t });
   }
 
   _drainImmediateQueue(queue, consume) {
