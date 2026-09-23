@@ -37,6 +37,7 @@ static MMLPairs   pairs;
 static bool       ready  = FALSE;
 static bool       loaded = FALSE;
 static const u8*  smpBank = NULL;
+static s8         bankRc = 0;          // mml_load_samples on the last publish
 static u8         fifoLo = 0xff;      // the engine's index as read in the last grab
 static u16        rendered = 0;
 // HOW FAR AHEAD THE MAIN LOOP RENDERS, in frames. One absorbs a main loop that
@@ -135,7 +136,7 @@ void MMLisp_setSampleBank(const u8* smp)
     writeBankRegister();
     // The sequencer resolves every PCM field itself and needs the bank's
     // directory and its ROM address (driver.md §6.3).
-    if (smp && loaded) mml_load_samples(&seq, smp, 0, (u32)smp);
+    if (smp && loaded) bankRc = (s8)mml_load_samples(&seq, smp, 0, (u32)smp);
 }
 
 static void writeBankRegister(void)
@@ -186,7 +187,12 @@ bool MMLisp_loadScore(const u8* mmb)
     // anything is primed onto the wire.
     u8 want = (loaded && seq.pcm_voices) ? seq.pcm_voices : 1;
     if (want != image) bootImage(want);
-    if (loaded && smpBank) mml_load_samples(&seq, smpBank, 0, (u32)smpBank);
+    // Re-publish the bank to the new score. A bank is baked for one engine
+    // image, and a score names its image; a bundle (tools/bundle.mjs) gives
+    // every song the same one, so this cannot fail for bundled songs. It is
+    // recorded rather than acted on: the score still plays, minus its PCM, and
+    // MMLispStats.bank says why.
+    bankRc = (loaded && smpBank) ? (s8)mml_load_samples(&seq, smpBank, 0, (u32)smpBank) : 0;
     // PRIMED AT LOAD: the neutral patch the load queues, and every track's
     // leading setup (mml_prime_tracks), leave for the chip over the frames
     // before the game starts the music — ~250 writes for sin008, sixteen
@@ -381,6 +387,10 @@ void MMLisp_frame(void)
 
 void MMLisp_startTrack(u8 track_id)  { if (loaded) mml_start_track(&seq, track_id); }
 void MMLisp_stopTrack(u8 track_id)   { if (loaded) mml_stop_track(&seq, track_id); }
+void MMLisp_startSe(u8 track_id, u8 priority)
+{
+    if (loaded) mml_start_se(&seq, track_id, priority);
+}
 void MMLisp_keyOff(u8 channel_id)    { if (loaded) mml_key_off(&seq, channel_id); }
 
 void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value)
@@ -453,6 +463,7 @@ void MMLisp_readStats(MMLispStats* out)
     out->pairsWritten = pairs.pairs_written;
     out->overflow     = pairs.overflow;
     out->faults       = pairs.fault;
+    out->bank         = bankRc;
     out->image        = image;
     out->fifoLo       = fifoLo;
     out->late         = lateGrabs;

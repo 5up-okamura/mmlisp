@@ -56,6 +56,13 @@ const USAGE = `usage: node tools/install-sgdk.mjs [<project-dir>] [options]
 
   --song <file.mmlisp>   compile the score into <project>/res/song.mmb
                          (plus song.smp when the score uses PCM samples)
+  --remap <t:ch,...>     point track t at channel ch in the built song.mmb:
+                         an SE track is authored on a spare channel (the
+                         compiler gives each channel one track) and pointed at
+                         the BGM channel it steals
+  --bundle <manifest>    several scores against ONE sample bank (tools/bundle.mjs):
+                         res/<name>.mmb per song and res/song.smp. Instead of
+                         --song; the manifest carries each song's remap
   --example              also seed src/main.c from example/main.c, if absent
   --no-build             skip the emit-bin.mjs regeneration step
   --dry-run              report what would change; write nothing
@@ -68,7 +75,7 @@ function fail(msg) {
 }
 
 // ---- args -----------------------------------------------------------------
-const opts = { build: true, dryRun: false, example: false, song: null };
+const opts = { build: true, dryRun: false, example: false, song: null, remap: null, bundle: null };
 let projectArg = process.env.MMLISP_SGDK_PROJECT ?? null;
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -78,6 +85,10 @@ for (let i = 0; i < argv.length; i++) {
     process.exit(0);
   } else if (a === "--song") {
     opts.song = argv[++i] ?? fail("--song needs a path");
+  } else if (a === "--remap") {
+    opts.remap = argv[++i] ?? fail("--remap needs track:channel pairs");
+  } else if (a === "--bundle") {
+    opts.bundle = argv[++i] ?? fail("--bundle needs a manifest path");
   } else if (a === "--example") {
     opts.example = true;
   } else if (a === "--no-build") {
@@ -107,6 +118,9 @@ if (!["Makefile", "makefile", "GNUmakefile"].some((m) => existsSync(join(project
   );
 }
 if (opts.song && !existsSync(opts.song)) fail(`no such score: ${opts.song}`);
+if (opts.remap && !opts.song) fail("--remap needs --song: it rewrites the score being built");
+if (opts.bundle && (opts.song || opts.remap)) fail("--bundle replaces --song and --remap: the manifest names the scores and their remaps");
+if (opts.bundle && !existsSync(opts.bundle)) fail(`no such manifest: ${opts.bundle}`);
 
 const dry = opts.dryRun ? "[dry-run] " : "";
 console.log(`${dry}project: ${project}`);
@@ -175,8 +189,15 @@ for (const f of plan) {
 // ---- optional: compile the score ----------------------------------------
 let smpPath = null;
 if (opts.song) {
-  const { buildMmb } = await import("./mmb-build.mjs");
+  const { buildMmb, remapTrackChannels, parseRemap } = await import("./mmb-build.mjs");
   const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song);
+  if (opts.remap) {
+    let moved;
+    try { moved = remapTrackChannels(bytes, parseRemap(opts.remap)); }
+    catch (e) { fail(e.message); }
+    if (!moved.length) fail(`--remap ${opts.remap} matched no track id in the score`);
+    for (const m of moved) console.log(`    remap: track ${m.track} -> channel ${m.to} (authored on ${m.from})`);
+  }
   const mmbPath = join(project, "res", "song.mmb");
   ensureDir(dirname(mmbPath));
   if (!opts.dryRun) writeFileSync(mmbPath, bytes);
@@ -204,6 +225,50 @@ if (opts.song) {
   for (const d of diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
 }
 
+// ---- optional: a bundle of scores over one bank -------------------------
+let bundleRes = null; // the BIN lines the bundle needs
+if (opts.bundle) {
+  const { loadManifest, buildBundle, resLines, channelName } = await import("./bundle.mjs");
+  const { manifest, baseDir } = loadManifest(opts.bundle);
+  const bundle = buildBundle(manifest, { baseDir });
+  const bankName = manifest.bank ?? "song.smp";
+  ensureDir(join(project, "res"));
+  for (const s of bundle.songs) {
+    const out = join(project, "res", `${s.name}.mmb`);
+    if (!opts.dryRun) writeFileSync(out, s.bytes);
+    console.log(`${dry}  > res/${s.name}.mmb  ${s.bytes.length} B  (${relative(process.cwd(), s.src)})`);
+    const chans = s.tracks.map((t) => {
+      const m = s.moved.find((x) => x.track === t.id);
+      return `${t.id}:${m ? `${channelName(m.from)}->` : ""}${channelName(t.channel)}`;
+    }).join(" ");
+    console.log(`    ${s.tracks.length} tracks — ${chans}`);
+    for (const d of s.diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
+  }
+  if (bundle.bank) {
+    smpPath = join(project, "res", bankName);
+    if (!opts.dryRun) writeFileSync(smpPath, bundle.bank);
+    console.log(`${dry}  > res/${bankName}  ${bundle.entryCount} entries, ${bundle.blobBytes} B of blobs, ` +
+      `${bundle.headroom} B of headroom — ONE bank for ${bundle.songs.length} songs, ` +
+      `all on the ${bundle.pcmVoices}-voice image (a song change never reboots the Z80)`);
+  }
+  for (const d of bundle.diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
+  if ([...bundle.diagnostics, ...bundle.songs.flatMap((s) => s.diagnostics)].some((d) => d.severity === "error")) {
+    fail("the bundle has errors (above)");
+  }
+  bundleRes = resLines(bundle, bankName);
+  // A song.res this run seeded declares the single song; make it declare the
+  // bundle's instead. A project-owned one is told what to add, below.
+  const resPath = join(project, "res", "song.res");
+  if (resState === "created" && existsSync(resPath)) {
+    const res = readFileSync(resPath, "utf8").replace(
+      /^\s*BIN\s+song_mmb\s+"song\.mmb".*$/m,
+      bundleRes.filter((l) => !/song_smp/.test(l)).join("\n"),
+    );
+    if (!opts.dryRun) writeFileSync(resPath, res);
+    console.log(`${dry}  ~ res/song.res  (declares the bundle's songs)`);
+  }
+}
+
 // ---- report --------------------------------------------------------------
 const summary = Object.entries(counts)
   .filter(([, n]) => n)
@@ -217,7 +282,12 @@ console.log(`${dry}${summary}`);
 const resPath = join(project, "res", "song.res");
 if (counts.kept && existsSync(resPath)) {
   const res = readFileSync(resPath, "utf8");
-  if (!/^\s*BIN\s+\S+\s+"?song\.mmb/m.test(res)) {
+  if (bundleRes) {
+    const missing = bundleRes.filter((l) => !res.includes(l.split(" ")[1]));
+    if (missing.length) {
+      console.warn(`\nres/song.res is yours — add the bundle's resources to it:\n  ${missing.join("\n  ")}`);
+    }
+  } else if (!/^\s*BIN\s+\S+\s+"?song\.mmb/m.test(res)) {
     console.warn(`\nwarning: res/song.res declares no BIN for song.mmb.`);
   }
   if (/^\s*BIN\s+\S+\s+"?mmlispdrv_ovl\.bin/m.test(res)) {
@@ -272,7 +342,16 @@ if (smpPath) {
       `\n  (drv/sgdk/README.md §PCM sample banks)`,
   );
 }
-console.log(
+if (bundleRes) {
+  const names = bundleRes.filter((l) => /_mmb /.test(l)).map((l) => l.split(" ")[1]);
+  console.log(
+    `\nNext: include "song.h" (rescomp generates it from res/song.res). The bundle's songs are ` +
+      `${names.join(", ")} — one MMLisp_loadScore each, the bank published once with ` +
+      `MMLisp_setSampleBank(song_smp). example/main.c cycles them with\n` +
+      `  make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 ` +
+      `-DMMLISP_SONG_LIST=${names.join(",")}"`,
+  );
+} else console.log(
   `\nNext: include "song.h" (rescomp generates it from res/song.res), then` +
     ` MMLisp_init() → MMLisp_loadScore(song_mmb) → MMLisp_startTrack(id) per` +
     ` track, and MMLisp_frame() once per vblank, last in your frame` +

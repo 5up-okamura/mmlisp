@@ -5,7 +5,12 @@
 // no emulator, no assembler, a debugger on each. The comparison surface is the
 // SLOT STREAM (§6.2), which is what the 68000 actually hands the Z80.
 //
-//   node tools/c-gate.mjs [score.mmlisp …] [--frames N] [--keep]
+//   node tools/c-gate.mjs [score.mmlisp …] [--bundle manifest.json …]
+//                         [--frames N] [--pal] [--keep]
+//
+// A --bundle gates every song of a bundle (tools/bundle.mjs) on the BUNDLED
+// artifacts: each song's remapped MMB against the one shared sample bank, so
+// what is compared is what the ROM will carry.
 //
 // A score whose stream reaches an opcode the port does not decode yet stops
 // that track fail-safe (mmb.md §13) and is reported as PENDING rather than
@@ -15,7 +20,8 @@ import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "no
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMmb } from "./mmb-build.mjs";
+import { buildMmb, remapTrackChannels } from "./mmb-build.mjs";
+import { buildBundle, loadManifest } from "./bundle.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder } from "../../live/src/slot-builder.js";
 import { generatedTables } from "./c-tables.mjs";
@@ -32,7 +38,17 @@ const frameHz = flags.includes("--pal") ? 50 : 60;
 const fIdx = process.argv.indexOf("--frames");
 const MAX_FRAMES = fIdx >= 0 ? Number(process.argv[fIdx + 1]) : 400;
 if (fIdx >= 0) scores = scores.filter((s) => s !== process.argv[fIdx + 1]);
-if (!scores.length) scores = [join(here, "..", "..", "examples", "source", "ab-core.mmlisp")];
+// --bundle <manifest.json>: every song of a bundle (tools/bundle.mjs), each
+// gated on the BUNDLED artifacts — its remapped MMB against the ONE shared
+// bank — so what is compared is what the ROM will carry. May repeat.
+const bundles = [];
+for (let i = 2; i < process.argv.length; i++) {
+  if (process.argv[i] === "--bundle" && process.argv[i + 1]) {
+    bundles.push(process.argv[i + 1]);
+    scores = scores.filter((s) => s !== process.argv[i + 1]);
+  }
+}
+if (!scores.length && !bundles.length) scores = [join(here, "..", "..", "examples", "source", "ab-core.mmlisp")];
 
 // ── Build ──────────────────────────────────────────────────────────────────
 // The generated tables go to a directory of the gate's own: this used to
@@ -68,42 +84,64 @@ function parseStream(buf) {
   return slots;
 }
 
-let failures = 0;
-let pending = 0;
-let skipped = 0;
+// ── What to gate ───────────────────────────────────────────────────────────
+// A job is one MMB + its bank + its sidecar. A score on its own is built here;
+// a bundle's songs come built, with the shared bank, and their channel remap
+// already applied by the manifest — a sidecar's `remapChannels` is ignored for
+// those, so one file owns that decision.
+const jobs = [];
 for (const score of scores) {
-  const name = basename(score);
   const { bytes: mmb, sampleBank, diagnostics } = buildMmb(score, { frameHz });
   for (const d of diagnostics ?? []) {
     if (d.severity === "error") throw new Error(`${d.code}: ${d.message}`);
   }
-  const mmbPath = join(tmp, name.replace(/\.mmlisp$/, ".mmb"));
+  jobs.push({ name: basename(score), stem: basename(score, ".mmlisp"), mmb, sampleBank,
+    sidecar: score.replace(/\.mmlisp$/, ".cmds.json"), remapFromSidecar: true });
+}
+for (const manifestPath of bundles) {
+  const { manifest, baseDir } = loadManifest(manifestPath);
+  const bundle = buildBundle(manifest, { baseDir, frameHz });
+  const errs = [...bundle.diagnostics, ...bundle.songs.flatMap((s) => s.diagnostics)]
+    .filter((d) => d.severity === "error");
+  if (errs.length) throw new Error(`${manifestPath}: ${errs.map((d) => `${d.code}: ${d.message}`).join("; ")}`);
+  for (const s of bundle.songs) {
+    jobs.push({ name: `${basename(manifestPath)}:${s.name}`, stem: `${basename(manifestPath, ".json")}-${s.name}`,
+      mmb: s.bytes, sampleBank: bundle.bank, sidecar: s.src.replace(/\.mmlisp$/, ".cmds.json"), remapFromSidecar: false });
+  }
+}
+
+let failures = 0;
+let pending = 0;
+for (const job of jobs) {
+  const { name, mmb, sampleBank } = job;
+
+  // Host commands are not in the stream, so a score may carry a sidecar
+  // schedule — the same one the Z80 gates used. Both sides apply it at the top
+  // of the matching frame. A plain array is the schedule; the SE gates carry
+  // an object: `autoStart: false` (nothing starts until the schedule says so),
+  // `remapChannels` (track id → channel id, patched into the MMB's track table
+  // so both players read the two-tracks-one-channel layout — driver.md §2.5),
+  // and `commands`.
+  const cmdPath = job.sidecar;
+  const sidecar = existsSync(cmdPath) ? JSON.parse(readFileSync(cmdPath, "utf8")) : [];
+  const commands = Array.isArray(sidecar) ? sidecar : sidecar.commands ?? [];
+  const autoStart = Array.isArray(sidecar) ? true : sidecar.autoStart !== false;
+  if (job.remapFromSidecar && !Array.isArray(sidecar) && sidecar.remapChannels) {
+    remapTrackChannels(mmb, sidecar.remapChannels);
+  }
+  const mmbPath = join(tmp, `${job.stem}.mmb`);
   writeFileSync(mmbPath, mmb);
   // PCM scores carry their sample blobs in a separate ROM bank, not an MMB
   // section — so the C reads it as a separate file, the way the 68k will map it.
   let smpPath = null;
   if (sampleBank && sampleBank.length) {
-    smpPath = join(tmp, name.replace(/\.mmlisp$/, ".smp"));
+    smpPath = join(tmp, `${job.stem}.smp`);
     writeFileSync(smpPath, sampleBank);
   }
 
-  // Host commands are not in the stream, so a score may carry a sidecar
-  // schedule — the same one the Z80 gates use. Both sides apply it at the top
-  // of the matching frame.
-  const cmdPath = score.replace(/\.mmlisp$/, ".cmds.json");
-  const sidecar = existsSync(cmdPath) ? JSON.parse(readFileSync(cmdPath, "utf8")) : [];
-  // The SE gates use a richer sidecar (autoStart off + a channel remap +
-  // START_TRACK / START_SE). SE track lifecycle is its own port milestone, so
-  // say so rather than crash or quietly pass on a mis-set-up run.
-  if (!Array.isArray(sidecar)) {
-    console.log(`SKIP  ${name} — SE-style schedule (autoStart/remap); not ported yet`);
-    skipped++;
-    continue;
-  }
-  const commands = sidecar;
   let cmdFile = null;
   if (commands.length) {
-    cmdFile = join(tmp, name.replace(/\.mmlisp$/, ".cmds.txt"));
+    cmdFile = join(tmp, `${job.stem}.cmds.txt`);
     writeFileSync(
       cmdFile,
       commands.map((c) => `${c.frame} ${c.cmd} ${c.a0 ?? 0} ${c.a1 ?? 0} ${c.a2 ?? 0}`).join("\n") + "\n",
@@ -112,11 +150,11 @@ for (const score of scores) {
 
   const drv = new DrvPlayer();
   drv.loadMMB(mmb, sampleBank);
-  const ref = drv.captureSlotLog({ maxFrames: MAX_FRAMES, commands, builder: new SlotBuilder() });
+  const ref = drv.captureSlotLog({ maxFrames: MAX_FRAMES, commands, autoStart, builder: new SlotBuilder() });
 
   // `(trig N)` status bytes are sequencer state, not stream bytes, so the
   // harness writes them to a sidecar and they are diffed separately.
-  const trigFile = join(tmp, name.replace(/\.mmlisp$/, ".trig"));
+  const trigFile = join(tmp, `${job.stem}.trig`);
   let out, incomplete = null;
   try {
     out = execFileSync(
@@ -124,6 +162,7 @@ for (const score of scores) {
       [mmbPath, String(MAX_FRAMES),
         ...(cmdFile ? ["--cmds", cmdFile] : []),
         ...(smpPath ? ["--samples", smpPath] : []),
+        ...(autoStart ? [] : ["--idle"]),
         "--trig", trigFile],
       { maxBuffer: 1 << 28 },
     );
@@ -228,6 +267,6 @@ for (const score of scores) {
 ctab.dispose();
 if (!flags.includes("--keep")) rmSync(tmp, { recursive: true, force: true });
 console.log(
-  `\n${scores.length - failures - pending - skipped} passed · ${pending} pending · ${skipped} skipped · ${failures} failed`,
+  `\n${jobs.length - failures - pending} passed · ${pending} pending · ${failures} failed`,
 );
 if (failures) process.exit(1);

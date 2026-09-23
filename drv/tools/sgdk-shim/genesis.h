@@ -42,6 +42,10 @@ void waitSubTick(u32 subtick);
  * do. That is exactly what happened to verify-rom's frame wait at -Os. */
 extern vu32 vtimer;
 #define JOY_1        0
+#define BUTTON_UP    0x0001
+#define BUTTON_DOWN  0x0002
+#define BUTTON_LEFT  0x0004
+#define BUTTON_RIGHT 0x0008
 #define BUTTON_A     0x0040
 #define BUTTON_B     0x0010
 #define BUTTON_C     0x0020

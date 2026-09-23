@@ -1,0 +1,8 @@
+{
+  "pcmVoices": 1,
+  "bank": "song.smp",
+  "songs": [
+    { "src": "demo.mmlisp",   "name": "demo",   "remap": { "6": 0, "7": 0, "8": 6, "9": 20 } },
+    { "src": "demo-b.mmlisp", "name": "demo_b", "remap": { "6": 0, "7": 0, "8": 6, "9": 20 } }
+  ]
+}

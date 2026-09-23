@@ -1,0 +1,131 @@
+; The SGDK example's first song: a looping BGM, sound effects on all three
+; kinds of voice (FM, PSG and PCM), and two value slots the game drives from
+; the pad. demo-b.mmlisp is the second song; demo.bundle.json builds the two
+; against ONE sample bank (drv/tools/bundle.mjs):
+;
+;   node drv/tools/install-sgdk.mjs <proj> --example --bundle drv/sgdk/example/demo.bundle.json
+;
+; THE SE TRACKS ARE AUTHORED ON SPARE CHANNELS ON PURPOSE. The compiler gives
+; each channel exactly one track — two blocks on one channel merge into a
+; single timeline — so a BGM track and an SE track cannot be written on the
+; same channel in one score. The bundle's `remap` points each effect track at
+; the channel it steals; a score built on its own gets there with
+; `install-sgdk --remap`, or a gate sidecar's `remapChannels`. All three are
+; the same function (tools/mmb-build.mjs remapTrackChannels).
+;
+; The effect voices and the samples come from demo-lib.mmlisp, which both songs
+; import: `import` brings in defs, not tracks (language.md §9.2), so the four
+; effect TRACK lines below are repeated in demo-b.mmlisp. Their samples are
+; not — the bundle numbers `padsmp` and `blip` once for both songs.
+;
+; TRACKS, in declaration order — the ids MMLisp_startTrack / startSe take:
+;
+;   0 fm1   BGM lead, whole notes      <- the FM effects steal this
+;   1 fm2   BGM bass, reads $lvl
+;   2 sqr1  BGM chord, whole notes     <- the PSG effect steals this
+;   3 sqr3  BGM arp, vibrato on $vib
+;   4 noise BGM hat
+;   5 pcm1  BGM loop, held             <- the PCM effect overwrites this voice
+;   6 fm3   SE  bleep   -> fm1
+;   7 fm4   SE  zap     -> fm1
+;   8 sqr2  SE  chirp   -> sqr1
+;   9 pcm2  SE  blip    -> pcm1
+;
+; VALUE SLOTS, in declaration order — the indices MMLisp_setVal takes. The two
+; differ in WHEN the score reads them, which is the whole timing story of the
+; value machine, and main.c drives both from one knob so the difference is
+; audible in a single gesture:
+;
+;   slot 0  vib  a SCALED MACRO's depth. The driver re-reads it once per macro
+;                step, which at the default step is every frame — so a note
+;                that is already sounding changes as the knob moves.
+;   slot 1  lvl  a plain `:vol $lvl` in the event stream, read when the
+;                sequencer walks over it. The change lands at the next pass of
+;                the bass loop, not now.
+
+(import "demo-lib.mmlisp")
+
+(def lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def bass :alg 3 :fb 5
+  :ar1 31 :dr1 4 :sr1 0 :rr1 5 :sl1 1 :tl1 22 :ks1 0 :ml1 0 :dt1 0
+  :ar2 31 :dr2 6 :sr2 1 :rr2 6 :sl2 2 :tl2 28 :ks2 0 :ml2 2 :dt2 3
+  :ar3 31 :dr3 8 :sr3 1 :rr3 7 :sl3 2 :tl3 24 :ks3 0 :ml3 1 :dt3 0
+  :ar4 31 :dr4 12 :sr4 2 :rr4 10 :sl4 4 :tl4 2 :ks4 0 :ml4 1 :dt4 0)
+
+(def-val vib 128 0..255)
+(def-val lvl 24 0..31)
+
+; ── BGM ─────────────────────────────────────────────────────────────────────
+; track 0 — fm1. WHOLE NOTES, so an effect always steals a note that is still
+; sounding: what you hear when it ends is the restore's mid-sustain re-key.
+(fm1 :tempo 120 :lfo-rate 4 lead :oct 4 :len 1 :vel 12
+  #lead
+  c e g e
+  (go lead))
+
+; track 1 — fm2. `:vol $lvl` is re-read on every pass of the loop, twice a bar:
+; the game's level knob, applied at a musical boundary.
+(fm2 bass :oct 2 :len 4 :vel 13
+  #bass
+  :vol $lvl  c _8 c8 c _
+  :vol $lvl  e _8 e8 e _
+  (go bass))
+
+; track 2 — sqr1. Whole notes again, for the PSG effect to steal mid-sustain.
+; A PSG channel has no envelope generator, so its restore is the period and the
+; attenuation written again — a re-attack in the only sense the chip has.
+(sqr1 :oct 5 :len 1 :vel 8
+  #chord
+  e g b g
+  (go chord))
+
+; track 3 — sqr3. THE VALUE KNOB. `$vib` scales the macro's samples, and the
+; driver reads it every frame the macro steps, so the vibrato deepens under
+; your thumb while the note holds. Nothing steals this channel, so what you
+; hear is the knob and only the knob.
+(sqr3 :oct 6 :len 8 :vel 7
+  (macro :pitch (* (triangle -40..40 :len 8f) $vib))
+  #arp
+  c e g e  c e g e  < b > d g d  < b > d g d
+  (go arp))
+
+; track 4 — noise
+(noise :len 8 :vel 10
+  #hat
+  c c8. c16 _8 c c c8 c8
+  (go hat))
+
+; track 5 — pcm1. `:len 0` is an indefinite hold (language.md §2.4): the note
+; keys on and the track's dispatcher stops, so the loop runs forever and never
+; re-triggers. That makes the PCM effect's steal and hand-back the only thing
+; that ever moves this voice.
+(pcm1 padsmp :mode loop :oct 4 :len 0 :vel 12
+  c)
+
+; ── SE ──────────────────────────────────────────────────────────────────────
+; track 6 — "bleep", fired at a LOW priority. Short, so it hands the lead back
+; on its own END_OF_TRACK.
+(fm3 bleep :oct 5 :len 16 :vel 15
+  g a > c)
+
+; track 7 — "zap", fired at a HIGH priority: it preempts a running "bleep" and
+; inherits its duty to restore the BGM, so the lead returns after the LAST of
+; the two, not after the first.
+(fm4 zap :oct 6 :len 16 :vel 15
+  c < a > e < g)
+
+; track 8 — the PSG effect, pointed at sqr1.
+(sqr2 :oct 6 :len 16 :vel 14
+  c e g > c)
+
+; track 9 — the PCM effect, pointed at pcm1's voice. A soft-mix voice has no
+; owning track, so nothing is suspended: this note overwrites the voice, and
+; SE-end starts the BGM's loop again (from the sample's head — the engine keeps
+; no position the host can read back).
+(pcm2 blip :oct 5 :len 8 :vel 15
+  c)

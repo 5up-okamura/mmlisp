@@ -405,8 +405,8 @@ export class DrvPlayer {
   // ── Playback state reset (driver "power-on + START_TRACK all") ──────────
   // `autoStart`: true starts
   // every track from frame 0 (the M1 default); false leaves them idle so the
-  // host mailbox schedule drives START_TRACK / START_SE explicitly (plan-se.md
-  // SE gate — the SE track must not auto-start).
+  // host mailbox schedule drives START_TRACK / START_SE explicitly (the SE
+  // gates — an effect track must not auto-start; driver.md §2.5).
   _reset(autoStart = true) {
     const song = this._song;
     this._frame = 0;
@@ -522,14 +522,16 @@ export class DrvPlayer {
       fadeN: 0,
       fadeErr: 0,
       fadeVol: 0,
-      // SE suspend/restore (plan-se.md Step 2). A displaced BGM owner is
-      // `suspended` (T_STATUS=3: has state, does not dispatch, does not own its
-      // channel). An SE track that stole a channel carries `isSe` + the
-      // displaced owner's index + its channel snapshot, so SE-end can restore it.
+      // SE suspend/restore (driver.md §2.5). A displaced BGM owner is
+      // `suspended`: it has state, does not dispatch and does not own its
+      // channel, and its `snapshot` is the channel as it was. An SE that stole
+      // the channel carries `isSe` and the displaced owner's INDEX — the
+      // snapshot itself stays on the owner, so a preempting SE inherits the
+      // duty by inheriting the index and only the last SE restores it.
       suspended: false,
       isSe: false,
       displaced: null, // owner track index this SE displaced (null = none)
-      snapshot: null, // channel state captured at suspend
+      snapshot: null, // channel state captured at suspend (owner tracks only)
       pcmSnap: null, // PCM SE (design C): stolen soft-mix voice struct to restore
       pcmVi: 0, // which voice pcmSnap belongs to
       sePrio: 0, // register-SE priority (for same-channel preempt/drop)
@@ -974,7 +976,7 @@ export class DrvPlayer {
           if (trk.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
           trk.running = false;
           // A single-shot SE self-cleans at EOT: restore the BGM owner it stole
-          // the channel from (plan-se.md — reclaim = SE EOT or STOP_TRACK).
+          // the channel from (driver.md §2.5 — an effect ends here or on STOP).
           this._reclaimSe(trk);
           return;
         }
@@ -1693,6 +1695,25 @@ export class DrvPlayer {
     }
   }
 
+  // CLAIMING A CHANNEL WIPES ITS MODULATORS (driver.md §2.2). Macro binds and
+  // sweeps are channel state, not track state, and nothing but the stream's own
+  // MACRO_CLEAR ever cleared them — so an evicted track's macro went on playing
+  // whoever took the channel, and so did its sweep. Stopping a track is
+  // deliberately NOT this: a release-region macro (`:off`) runs entirely after
+  // key-off and IS the decay tail. Claiming is the line, because the new owner
+  // is a different part.
+  _clearChannelModulators(ch) {
+    const mc = this._macroCh(ch);
+    if (mc >= 0) {
+      this._macroActive[mc].clear();
+      this._macroSlots[mc] = [];
+    }
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
+    for (let i = 0; i < slots.length; i++) slots[i] = null;
+  }
+
   _cancelLoopSweeps(ch) {
     const bank = this._sweepBank(ch);
     if (bank < 0) return;
@@ -1962,8 +1983,8 @@ export class DrvPlayer {
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
   //    of a frame. When the harness auto-starts every track (the M1 default)
-  //    START/STOP never arrive; with auto-start off (plan-se.md SE gate) the
-  //    `commands` schedule drives START_TRACK / START_SE / STOP_TRACK too.
+  //    START/STOP never arrive; with auto-start off (the SE gates, driver.md
+  //    §2.5) the schedule drives START_TRACK / START_SE / STOP_TRACK too.
   _applyMailbox(cmd, a0, a1, a2) {
     switch (cmd) {
       case 0x01: // START_TRACK (track_id) — evict the channel's prior owner
@@ -2033,7 +2054,7 @@ export class DrvPlayer {
     t.fading = false;
   }
 
-  // ── Track lifecycle (plan-se.md Step 2) ──────────────────────────────────
+  // ── Track lifecycle (driver.md §2.2, §2.5, §6.5) ─────────────────────────
   // START_TRACK / START_SE. The MMB tracks already exist in `_trk` (built at
   // _reset); starting one re-inits its dispatch state and claims its channel.
   // With `asSe`, the channel's current owner is *suspended + snapshotted* (so
@@ -2062,7 +2083,6 @@ export class DrvPlayer {
           if (prio < owner.sePrio) return; // dropped — leave the old SE playing
           this._channelOff(ch); // silence the old SE for the new one's re-attack
           trk.displaced = owner.displaced;
-          trk.snapshot = owner.snapshot;
           owner.running = false;
           owner.isSe = false;
         } else if (owner) {
@@ -2072,28 +2092,36 @@ export class DrvPlayer {
           owner.running = false;
           owner.suspended = true;
           trk.displaced = owner.index;
-          trk.snapshot = owner.snapshot; // SE carries it for reclaim
         }
         trk.sePrio = prio;
       } else if (owner) {
         this._stopTrack(owner); // START_TRACK scene transition: evict
       }
-      // Claiming a channel resets its level state to defaults (ovl_setup
-      // st_claim: CHS_VEL=15 / CHS_VOL=31 / CHS_GATE=8) — so a track that relies
-      // on the default velocity (no PARAM_SET) sounds right after stealing it.
+      // Claiming a channel resets its level state to defaults (vel 15 / vol 31
+      // / gate 8, driver.md §6.5) — so a track that relies on the default
+      // velocity (no PARAM_SET) sounds right after stealing it. The BASE is what
+      // has to reset: every note-on copies base → live (§7.1), so resetting the
+      // live vel alone would hand the next note the previous owner's velocity.
       if (ch < 6) {
         const r = this._fm[ch];
+        r.velBase = 15;
         r.vel = 15;
         r.vol = VOL_UNITY;
         r.gate = 8;
       } else {
         const p = this._psg[ch - 6];
+        p.velBase = 15;
         p.vel = 15;
         p.vol = VOL_UNITY;
         p.gate = 8;
       }
+      // …and its modulators, for the same reason: they belong to the part that
+      // just lost the channel. An SE snapshotted the owner's binds a few lines
+      // up, so this is also what stops the displaced BGM's macro from playing
+      // the SE through.
+      this._clearChannelModulators(ch);
     } else if (asSe && ch >= 20 && ch <= 22) {
-      // PCM SE (plan-se.md design C): soft-mix voices have no channel ownership,
+      // PCM SE (driver.md §2.5): soft-mix voices have no channel ownership,
       // so nothing is suspended — the SE's PCM_NOTE_ON overwrites the voice slot.
       // If a BGM loop is live there, snapshot the whole voice struct now (frozen
       // while the SE plays) so SE-end can restore it (PV_POS resume = no dropout).
@@ -2103,6 +2131,10 @@ export class DrvPlayer {
       // restores is the NOTE: a BGM loop starts again from its sample's head.
       const vi = ch - 20;
       const v = this._pcmVoices[vi];
+      // A voice has no macro channel, but it does have sweep slots — a BGM's
+      // `:loop-start` glide would go on retargeting the effect's sample. Same
+      // rule, at the point the effect takes the voice.
+      this._clearChannelModulators(ch);
       if (v.started && v.looping) {
         trk.pcmSnap = { ...v };
         trk.pcmVi = vi;
@@ -2136,11 +2168,17 @@ export class DrvPlayer {
 
   // Snapshot a channel's live state at suspend — essential fields only; the
   // restore reconstructs the FM patch via VOICE_SET (design B). FM: voice id +
-  // note/vel/vol/gate/pitch. (PSG/PCM added in later slices.)
+  // note/vel/vol/gate/pitch, plus the MACRO BINDS, because claiming the channel
+  // is about to wipe them and the displaced part wants them back. A sweep in
+  // flight is NOT kept: it is a gesture with a position, and the note it was
+  // shaping re-attacks — see driver.md §2.5.
   _snapshotChannel(ch) {
+    const mc = this._macroCh(ch);
+    const macros = mc >= 0 ? [...this._macroActive[mc]] : [];
     if (ch < 6) {
       const r = this._fm[ch];
       return {
+        macros,
         kind: "fm",
         voiceId: r.voiceId,
         note: r.currentNote,
@@ -2154,6 +2192,7 @@ export class DrvPlayer {
     if (ch < 10) {
       const st = this._psg[ch - 6];
       return {
+        macros,
         kind: "psg",
         note: st.currentNote,
         velBase: st.velBase,
@@ -2171,6 +2210,9 @@ export class DrvPlayer {
   // mirror must emit the same registers in the same order.
   _restoreChannel(ch, snap) {
     if (!snap) return;
+    // Whatever the SE left bound or sweeping goes first — the channel is
+    // changing hands again, and the rule is the claim's.
+    this._clearChannelModulators(ch);
     if (snap.kind === "fm") {
       const regs = this._fm[ch];
       if (snap.voiceId !== 0xff) this._voiceSet(ch, snap.voiceId);
@@ -2207,6 +2249,15 @@ export class DrvPlayer {
       else this._writePsgPitch(psgCh, snap.note, snap.pitchCents);
       this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
     }
+    // The binds come back and are re-instantiated, in note-on order and at the
+    // note-on's place in it (driver.md §13.1). The restore already re-keys the
+    // note, so this makes it exactly a note-on with the snapshot's values —
+    // rather than resuming a macro mid-step under an envelope that did not.
+    const mc = this._macroCh(ch);
+    if (mc >= 0 && snap.macros?.length) {
+      for (const [target, macroId] of snap.macros) this._macroActive[mc].set(target, macroId);
+      this._macroTrigger(ch);
+    }
   }
 
   // Re-attack a channel (apply_keyon): FM re-keys the EG ($28 off→on); PSG has
@@ -2238,7 +2289,6 @@ export class DrvPlayer {
     const owner = this._trk[seTrk.displaced];
     seTrk.isSe = false;
     seTrk.displaced = null;
-    seTrk.snapshot = null;
     if (!owner || !owner.suspended) return;
     owner.suspended = false;
     owner.running = true;

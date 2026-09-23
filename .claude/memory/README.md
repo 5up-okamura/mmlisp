@@ -22,13 +22,13 @@ Rules:
   write-timing table, what MDSDRV and XGM2 do about holes), the three bugs no
   gate could see, how this repo's gates fail, the C-port lessons, and the
   user's rulings on how to work here. The design itself is `docs/driver.md`.
-- [plan-se.md](plan-se.md) — **SE: the settled design for work not yet ported.**
-  SE exists only in `drv-player.js`; the C sequencer and the SGDK host have
-  none. Read `drv-player.js` as the spec and this for the decisions behind it.
-- [plan-multi-score.md](plan-multi-score.md) — **loading several scores at
-  once: nothing built, and the docs used to claim the sequencer already
-  allowed it.** What the data model actually is, what moving it would cost,
-  and which of the two things people want this for is already free.
+- [plan-se.md](plan-se.md) — **SE: the decisions behind the shipped design,
+  and what is still open** (the bundler, above all). The behaviour itself is
+  `driver.md` §2.5 and `drv-player.js`; read this for why, not what.
+- [plan-multi-score.md](plan-multi-score.md) — **several songs: the shared
+  sample bank is built (`bundle.mjs`); two scores RESIDENT at once is not.**
+  The channel budget that makes a score one song, the decisions inside the
+  bundle, and what moving the per-score state off the sequencer would cost.
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind the
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.

@@ -314,7 +314,20 @@ slice's length, carried for tooling; nothing in the driver reads it.
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
 The **bank image (entry table + blobs) must fit one 32 KB window, below its
 silent top page**: the engine addresses a sample by its 16-bit window address.
-`encodeMmb` refuses a larger bank; more than one sample bank is not supported.
+`encodeMmb` refuses a larger bank; a score references one bank.
+
+### 10.2 One bank for several scores
+
+A bank is not tied to the MMB that was built with it: the MMB carries only
+entry ids, and the host re-publishes whatever bank it holds on every load
+(driver.md §2.3). `drv/tools/bundle.mjs` builds N scores against ONE bank —
+`createSampleBankBuilder` in `export-mmb.js` plans every score's `(sample,
+note)` pairs into the same entry table, deduplicated by content (bytes, flags,
+loop points), and hands each score the ids it ends up with. Two conditions,
+both enforced by the bundle: every score is encoded for the **same PCM voice
+count** (the `bake_stamp` names one image, and a score boots the image its
+header names), and the union of everything the scores play fits the one
+window. A score built on its own keeps the bank it always had, byte for byte.
 
 ## 11. VOICE_TABLE Section (0x0006)
 

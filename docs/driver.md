@@ -89,6 +89,15 @@ channel — with its release tail if the voice defines one (key-off, envelope
 runs out), otherwise immediately. The channel state records the owning
 track id (§4.3) to arbitrate this.
 
+**Claiming a channel wipes its modulators.** The new owner finds the channel's
+macro binds cleared, its running macro slots dropped and its sweep slots
+cancelled, along with the level reset above. Macros and sweeps are channel
+state, not track state, so without this an evicted part's vibrato would go on
+playing whatever took the channel. **Stopping** a track deliberately does not
+do this: a release-region macro (`:off`) runs entirely after key-off and *is*
+the decay tail (§13.2). Claiming is the line, because the new owner is a
+different part.
+
 **Exception — the FM3 shared channel.** Channel 2 is exempt from eviction:
 in FM3 independent-OP mode the note-less `(fm3 …)` voice track and the
 `fm3-1` operator track legitimately coexist on it (§13.4), so a second
@@ -116,6 +125,21 @@ MMLisp_fadeTrack(TRACK_A1, 60);   /* 60 frames ≈ 1 s */
 MMLisp_fadeTrack(TRACK_A2, 60);
 ```
 
+Both sides of such a transition are resident on different channels, and a
+track is a channel — a score using every channel the machine has is sixteen
+tracks — so an in-score cross-fade is only possible when each side uses at
+most half the machine.
+
+**Several songs** are several MMBs, one resident at a time; a song change is a
+`MMLisp_loadScore`, which stops the music, resets the sequencer (the val
+slots go back to their inits) and primes the new score. What songs share is
+the **sample bank**: `MMLisp_setSampleBank` is remembered and re-published by
+every load. `drv/tools/bundle.mjs` builds a set of scores against one bank —
+every sample any song plays numbered once, deduplicated by content — and
+encodes every song for one engine image, so the load never reboots the Z80
+(§5). A score's sound effects are tracks of that score (§2.5), so a bundled
+song carries its effect tracks itself; the bank is what it no longer carries.
+
 ### 2.4 `len=0` — indefinite hold
 
 A NOTE_ON with duration byte 0x00 keys on and **suspends the track's
@@ -126,10 +150,51 @@ already running on the channel keep running while held.
 
 ### 2.5 Sound effects
 
-SE is sequencer work — priority arbitration, suspend/restore of the displaced
-BGM channel, snapshot of mid-sustain state — so it belongs on the 68000. The
-reference player (`drv-player.js`) implements it; the C sequencer does not yet,
-and the SGDK host has no SE call (§11).
+An SE is a short score in the same language, started as a track with
+`MMLisp_startSe(track, priority)` (§6.5) on a channel a BGM track owns. It is
+sequencer work — arbitration, suspend and restore — and lives on the 68000.
+
+**Suspend, not evict.** The BGM owner enters a fourth track state,
+**suspended**: it keeps its state, does not dispatch (its writes would land
+over the SE's) and does not own its channel. Its live channel state is
+snapshotted first — the essential fields only, since the FM patch is rebuilt
+from the voice id: FM voice id + note/vel/vol/gate/pitch; PSG note + level +
+pitch. The channel is silenced and the SE starts as any track does (armed,
+level state reset).
+
+**Restore re-keys.** When the SE ends — its own END_OF_TRACK, or
+`MMLisp_stopTrack` for a held or looping SE — the owner is restored and
+resumes dispatching: VOICE_SET, carrier level, pitch, key-on, in that order.
+A note that was sounding when the channel was stolen re-attacks mid-sustain
+rather than waiting for the next note-on, which would drop audio; an FM
+envelope cannot resume mid-way, so the re-attack is the design.
+
+**Priority.** Against an SE already on the channel, a lower-priority SE is
+**dropped, without touching the one playing**; an equal or higher one
+preempts it and inherits its restore duty, so the BGM returns only after the
+**last** SE ends. Priorities are the host's own numbers, 0-255.
+
+**PCM.** Soft-mix voices have no channel owner, so a PCM SE overwrites the
+voice. If a looping BGM note was live there, SE-end starts it again from the
+sample's head — deliberately not time-synced.
+
+**Modulators change hands with the channel.** The SE's claim wipes the
+channel's macro binds and sweeps like any claim (§2.2), so the displaced part's
+vibrato does not play the SE; the snapshot carries the **binds**, and the
+restore puts them back and re-instantiates them, which makes the restore
+exactly a note-on with the snapshot's values (§13.1) rather than a macro
+resumed mid-step under an envelope that just re-attacked. The SE's own binds
+and sweeps go the same way at the restore.
+
+A **sweep in flight is not restored**: it is a gesture with a position, and its
+note has re-attacked. The channel keeps the value the sweep had reached, which
+the claim's level reset then replaces. So do not put an effect on a channel
+running a long sweep — that is an authoring rule, not a driver limit.
+
+Gates `tests/m3-se.mmlisp` (FM, PSG and PCM steals) and `m3-se-prio.mmlisp`
+(steal, preempt, drop, restore after the last) pin the lifecycle, and the
+`p3-claim-*` pairs pin the modulator rule (§12.2a). `drv/sgdk/example` plays
+all three kinds from a pad.
 
 ## 3. Timing
 
@@ -558,7 +623,8 @@ does all arithmetic; the sequencer only stores and applies (docs/language.md
 | `MMLisp_attachInterrupts()` | install the pump (§6.6) as the VBlank callback; a game with its own calls `MMLisp_pump()` once a frame instead. The horizontal interrupt is not touched |
 | `MMLisp_frame()` | once per frame in the main loop, after the control calls: render ahead (§3.1); takes no bus |
 | `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track enters **armed** (§4.2) |
-| `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9) |
+| `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9). Stopping an SE restores the BGM it displaced (§2.5) |
+| `MMLisp_startSe(track, priority)` | start the track as a sound effect (§2.5): the channel's owner is suspended and snapshotted rather than evicted, and restored when the SE ends. Against another SE, lower priority is dropped, equal or higher preempts |
 | `MMLisp_trackCount()` / `MMLisp_trackId(i)` | enumerate the loaded score's tracks — start them all by this list, not by a count of your own |
 | `MMLisp_keyOff(channel)` | key-off one channel without stopping its track: releases a `len=0` hold (the dispatcher resumes) or truncates a sounding note |
 | `MMLisp_setParam(channel, target, value)` | one-shot absolute write of `target` (opcodes.md §7), as if a PARAM_SET arrived in the stream |
@@ -760,9 +826,17 @@ three outcomes.
 - **Wire:** 960 pairs a second. The song's opening
   setup is primed at load (§4.1), but a mid-song voice change on several
   channels (~30 writes each) takes a few frames to reach the chip.
-- **One score loaded at a time** (§2.3).
-- **SE** runs in the reference player only; not in the C sequencer or the SGDK
-  host (§2.5).
+- **One score resident at a time** (§2.3); songs share the sample bank
+  through `bundle.mjs`, not the sequencer. Every song in a bundle plays on one
+  engine image, and one 32 KB bank has to hold every sample all of them play.
+- **SE** (§2.5): an SE track is a track of the score it plays over, and the
+  compiler gives every track its own channel — so an SE is authored on a spare
+  channel and pointed at the BGM's in the built MMB (a bundle manifest's
+  `remap`, `install-sgdk --remap`, the gates' sidecar: all `remapTrackChannels`).
+  `import` brings in defs, not tracks, so a game with many songs repeats its
+  effect track lines in every song; the samples it does not repeat (§2.3). A
+  PCM SE restarts the BGM loop from the sample's head, not from where it was,
+  and a sweep in flight on a stolen channel is lost rather than resumed.
 - **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
   on one standard. PCM pitch is not corrected — a PAL bank would have to be
   re-baked at the PAL DAC rate, and is not.
@@ -785,6 +859,18 @@ Executes MMB v0.3 with the §4 loop order and **integer-only math** (8.8
 accumulators, the §7/§8 integer tables — no floats), in the live environment as
 an alternate backend, and emits real frames through the real cap/spill queue
 (§4) so it specifies the interface too, not just the music.
+
+### 12.2a `claim-gate` — a channel's modulators do not outlive its owner
+
+`drv/tools/claim-gate.mjs`, `npm run claim-gate` (and `:pal`). §12.2 compares
+the two sequencers, so a rule both of them break passes it — and the claim rule
+of §2.2 was broken in both for as long as it existed. A leak is not a
+disagreement between players; it is register traffic the music never asked for.
+So each case is a score and a **twin**, the same score with its modulators
+removed, and over the window where those modulators must not be heard the two
+slot streams must be byte-identical. Three cases: a plain eviction, a sound
+effect's claim, and its restore. The effects' notes are `Nf` lengths, so one
+window fits both video standards.
 
 ### 12.2 68k C ≡ `drv-player.js` — the hard gate
 
@@ -1001,8 +1087,10 @@ informational for macros.
 
 `MACRO_SET {macro_id}` binds MACRO_TABLE[macro_id] as the **active macro for
 its target** on the track (sticky, replacing any active macro on that target);
-`MACRO_CLEAR {target}` clears one (`0xFF` = all). The channel holds up to **3**
-active-macro ids (§4.3). On **any** `NOTE_ON` the sequencer instantiates each
+`MACRO_CLEAR {target}` clears one (`0xFF` = all). The bind belongs to the
+**channel**, so claiming the channel clears it too (§2.2) — a sound effect's
+snapshot is what carries a displaced part's binds across (§2.5). The channel
+holds up to **3** active-macro ids (§4.3). On **any** `NOTE_ON` the sequencer instantiates each
 active macro into a **running slot** (3 slots × {descriptor index, step clock,
 cursor, flags}); `NOTE_ON_EX` `macro_ref` adds a per-note one-shot. When a
 channel's active set would exceed 3, the *exporter* drops the extras with a

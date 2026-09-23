@@ -1,0 +1,72 @@
+; The SGDK example's second song — the same track layout and the same value
+; slots as demo.mmlisp (main.c relies on both: the last four tracks are the
+; effects, slot 0 is the vibrato depth, slot 1 the bass level), a different
+; tune. Its effect tracks are the same four lines as demo.mmlisp's; its samples
+; are the same two entries in the shared bank, not a second copy.
+
+(import "demo-lib.mmlisp")
+
+(def keys :alg 5 :fb 4
+  :ar1 31 :dr1 8  :sr1 2 :rr1 7 :sl1 3 :tl1 26 :ks1 1 :ml1 1 :dt1 3
+  :ar2 31 :dr2 10 :sr2 3 :rr2 8 :sl2 4 :tl2 8  :ks2 0 :ml2 2 :dt2 0
+  :ar3 31 :dr3 7  :sr3 2 :rr3 7 :sl3 3 :tl3 12 :ks3 1 :ml3 3 :dt3 -3
+  :ar4 31 :dr4 12 :sr4 3 :rr4 9 :sl4 4 :tl4 6  :ks4 0 :ml4 1 :dt4 0)
+
+(def sub :alg 4 :fb 6
+  :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 18 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 8 :sr2 2 :rr2 7 :sl2 3 :tl2 4  :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 20 :ks3 0 :ml3 2 :dt3 3
+  :ar4 31 :dr4 9 :sr4 2 :rr4 8 :sl4 3 :tl4 2  :ks4 0 :ml4 1 :dt4 0)
+
+(def-val vib 128 0..255)
+(def-val lvl 24 0..31)
+
+; ── BGM ─────────────────────────────────────────────────────────────────────
+; track 0 — fm1, whole notes for the FM effects to steal mid-sustain
+(fm1 :tempo 150 :lfo-rate 3 keys :oct 4 :len 1 :vel 12
+  #lead
+  a < f > c < g >
+  (go lead))
+
+; track 1 — fm2, `:vol $lvl` twice a bar
+(fm2 sub :oct 2 :len 8 :vel 13
+  #bass
+  :vol $lvl  a a _ a  a _ > e < a
+  :vol $lvl  f f _ f  f _ > c < f
+  (go bass))
+
+; track 2 — sqr1, whole notes for the PSG effect
+(sqr1 :oct 5 :len 1 :vel 8
+  #chord
+  c < a > c < b >
+  (go chord))
+
+; track 3 — sqr3, the vibrato knob
+(sqr3 :oct 6 :len 16 :vel 6
+  (macro :pitch (* (triangle -40..40 :len 8f) $vib))
+  #arp
+  a c e c  a c e c  < g > c e c  < g > c e c
+  (go arp))
+
+; track 4 — noise
+(noise :len 16 :vel 9
+  #hat
+  c _ c c  _ c c _  c _ c c  _ c _ c
+  (go hat))
+
+; track 5 — pcm1, the held loop the PCM effect overwrites
+(pcm1 padsmp :mode loop :oct 3 :len 0 :vel 12
+  a)
+
+; ── SE — the same four lines as demo.mmlisp ─────────────────────────────────
+(fm3 bleep :oct 5 :len 16 :vel 15
+  g a > c)
+
+(fm4 zap :oct 6 :len 16 :vel 15
+  c < a > e < g)
+
+(sqr2 :oct 6 :len 16 :vel 14
+  c e g > c)
+
+(pcm2 blip :oct 5 :len 8 :vel 15
+  c)

@@ -18,5 +18,7 @@ BIN song_mmb "song.mmb" 2
 #
 # Uncomment when your score uses samples (rescomp fails on a BIN whose file is
 # absent), and call MMLisp_setSampleBank(song_smp) — the BIN line alone leaves
-# every PCM note dropped.
+# every PCM note dropped. One bank serves every song a `tools/bundle.mjs`
+# bundle carries, so there is one of these however many .mmb lines are above.
+# `install-sgdk --song/--bundle` uncomments it for a song.res it seeded itself.
 # BIN song_smp "song.smp" 32768

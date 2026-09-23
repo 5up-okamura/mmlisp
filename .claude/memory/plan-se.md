@@ -1,93 +1,109 @@
-# SE (sound effects) — the design record for work NOT yet ported
+# SE (sound effects) — the decisions behind it, and what is still open
 
-**Status: SE does not exist on the shipped driver.** It lives only in
-`live/src/drv-player.js`, which is the port spec (`driver.md` §2.5, §11;
-`roadmap.md` Phase 3 open #2). `drv/tools/c-gate.mjs` skips the SE scores —
-`SKIP … SE-style schedule (autoStart/remap); not ported yet`.
+**Status (2026-09-22): SE is shipped on the driver.** `mmlispseq.c` carries the
+port (suspend / snapshot / restore, priority, the PCM overwrite, both reclaim
+hooks — END_OF_TRACK and stop-track), the SGDK host has `MMLisp_startSe`, and
+`m3-se` / `m3-se-prio` are in the c-gate list, byte-identical in NTSC and PAL,
+and `drv/sgdk/example/demo.mmlisp` exercises all three kinds (FM steal with
+priority, PSG steal, PCM overwrite) from the SGDK example's own buttons.
+The behaviour is `docs/driver.md` §2.5 and `drv-player.js` (`_startTrack` with
+`asSe`, `_snapshotChannel`, `_restoreChannel`, `_reclaimSe`); this file holds
+only what neither records.
 
-This file used to say "SE core is DONE in emulation". That was true of the
-all-Z80 build, which was removed (tag `archive/all-z80`); every Z80 line
-reference, overlay index and byte figure it carried is gone. Rewritten
-2026-09-22 to be what it now is: **the settled design, so the C port does not
-have to re-decide it.** The behaviour itself is already implemented — read
-`drv-player.js` (`_startTrack` with `asSe`, `_snapshotChannel`, the restore
-path) as the specification, and port from that, not from prose.
+## Why it is shaped this way (the user, 2026-07-19)
 
-## What the user settled (2026-07-19)
-
-1. **SE is authored in MMLisp** — the same language as BGM, a short score.
-2. **Concurrency = bundle the control data, share the sample bank.** BGM and
-   the SEs it can trigger are bundled at build time into one control MMB; the
-   PCM sample data lives in a dedicated shared bank. This was chosen
+1. **SE is authored in MMLisp** — a short score in the same language.
+2. **Concurrency = bundle the control data, share the sample bank.** Chosen
    *explicitly over* runtime cross-MMB banking, which stays deferred
-   (`driver.md` §11, `roadmap.md` open #4).
-3. **A held sustaining note must be restored mid-sustain** — waiting for the
-   next note-on would drop audio. So restore re-keys a note that was sounding
-   when the SE stole its channel. (FM and PSG re-attack; an FM envelope cannot
-   resume mid-way, and that matches the "don't drop the note" goal.)
-4. **The displaced BGM track suspends** — it must NOT keep dispatching, because
-   its writes would overwrite the SE.
-5. **Triggering is a runtime command, not a source marker.** `START_SE` is a
-   host command; the user chose it because it needs no language, IR or MMB
-   change, and the hard part — the suspend/restore core — is identical either
-   way.
+   (`driver.md` §11). If several scores ever become resident at once
+   ([plan-multi-score.md](plan-multi-score.md)), this choice is worth
+   re-opening — but it is not a prerequisite.
+3. **Restore re-keys mid-sustain** rather than waiting for the next note-on:
+   dropping audio was the thing to avoid, and an FM envelope cannot resume.
+4. **Suspend, not evict.** Eviction stops the owner; the BGM could never resume.
+5. **Triggering is a host call, not a source marker** — no language, IR or
+   MMB change, and the hard part (suspend/restore) is the same either way.
+6. **PCM restore is not time-synced** — restarting the loop from the sample's
+   head was accepted; advancing by the elapsed SE frames is a later refinement
+   (the engine keeps no position the host can read back, so it would have to
+   be counted on the 68000).
 
-## The rules that are easy to get wrong
+## The modulator-leak bug — FIXED 2026-09-23. Kept for the reasoning.
 
-- **Track status gains a fourth state: suspended** — has state, does not
-  dispatch, does not own its channel. Distinct from idle and from held (`len 0`).
-  Eviction (what a scene transition does) is the wrong primitive for SE: it
-  stops the previous owner, so the BGM could never resume.
-- **Priority.** `new < owner.prio` → **drop the incoming SE, and the drop must
-  NOT silence the one already playing.** `new ≥ owner.prio` → preempt, but
-  **keep the snapshot**, so the suspended BGM is restored only when the *last*
-  SE ends. Gate `m3-se-prio` pins exactly this: SE-A steals, SE-B (prio 10)
-  preempts, SE-C (prio 3) is dropped, and the BGM returns when SE-B ends.
-- **Reclaim has two hooks, and only one was ever wired.** A single-shot SE
-  self-cleans at end-of-track; a **held or looping SE ends on stop-track**, and
-  that path is still missing.
-- **Snapshot the essential fields only**, because the patch is reconstructed:
-  FM → note/vel/vol/gate/pitch + the current **voice id** (VOICE_SET rebuilds
-  the rest) + active macro ids; PSG → tone period + attenuation + macro state.
-- **PCM suspends at a different hook** — PCM voices have no channel owner, so
-  the snapshot happens when an SE's PCM note-on is about to overwrite an
-  *active* voice. Restoring the voice's **position** resumes the loop where it
-  was, so there is no dropout. **Deliberately not time-synced** (user): advancing
-  the position by the elapsed SE frames is a later refinement.
+**Resolved:** claiming a channel now clears its macro binds, running slots and
+sweeps (`clear_channel_modulators` / `_clearChannelModulators`), the SE
+snapshot carries the binds, and the restore puts them back and re-triggers.
+The user ruled for re-trigger over resuming the running slots, and accepted
+losing an in-flight sweep: *"作曲者が長いスイープのチャンネルをSEに割り当てない
+ようにすること"* — an authoring rule, not a driver limit. Gated by
+`tools/claim-gate.mjs` (`driver.md` §12.2a), which was verified to FAIL on all
+three cases with the fix disabled. What follows is why it was shaped that way.
+
+## The bug as found — a CHANNEL-OWNERSHIP bug, not an SE bug (2026-09-23)
+
+Macro binds are sticky per-channel state (`binds[]` / `bind_count[]` in the C,
+`_macroActive[]` in the reference) and **nothing clears them but the stream's
+own MACRO_CLEAR.** Not `start_track`, not `stop_track`, not the SE paths. The
+running slots (`macro_slots[]`) are the same, and `process_macros` steps them
+without consulting any track state, so a channel's macros keep writing whoever
+owns it.
+
+Three leaks, all measured on 2026-09-22/23 by diffing the slot stream against
+the same score with the macro line removed:
+
+| Leak | Hook it needs | Measured |
+| --- | --- | --- |
+| Displaced BGM's macro plays the SE | SE claim | a run of `$A4/$A0` the no-macro score never emits |
+| SE's macro plays the restored BGM | SE end | 38 differing frames after the SE was over |
+| **Evicted track's macro plays the track that took the channel** | START_TRACK claim | 29 differing frames, **no SE involved** |
+
+The third is the one that reframes it: plain eviction (§2.2) already does this,
+so the fix belongs at CLAIMING A CHANNEL, beside the vel/vol/gate reset that is
+already there, not at an SE-specific hook. The SE path then needs only the
+snapshot, for the same reason it snapshots the note: the BGM's bind on a target
+is destroyed the instant the SE binds that target, because a bind REPLACES per
+target — so "turn the SE's macros off at SE end" cannot put the BGM's back.
+
+A fourth, found while fixing: **a displaced part's SWEEP keeps writing too**
+(a long `:vol (linear …)` under a stolen channel faded the effect). Same root,
+so sweeps are cleared by the same rule rather than by a second mechanism.
+
+**No byte gate can see any of this**: c-gate compares the C against the
+reference, and both were wrong in the same way (`driver-decisions.md` §6). The
+twin-score diff is what catches it, and is now `claim-gate`.
+
+Two boundaries worth not re-litigating: **stopping** a track must NOT clear,
+because a release-region macro runs after key-off and is the decay tail; and
+the restore re-binds but does not re-run a sweep, because a sweep has a
+position and the note it shaped re-attacked.
+
+## Two things the port taught
+
+- The reference's channel-claim level reset used to reset only the live `vel`,
+  not `velBase`; since every note-on copies base → live, the SE's first note
+  took the BGM's velocity. Fixed in `drv-player.js` (the C had it right). Only
+  an SE could expose it: START_TRACK gates always set their own velocity.
+- The gates' `.cmds.json` sidecar (`autoStart: false`, `remapChannels`,
+  `commands`) is applied by `c-gate.mjs` — the remap patches the MMB's track
+  table so both players read the same file, and `gate_main --idle` starts
+  nothing. It stands in for the bundler.
 
 ## Still to do
 
-- **The bundler / link tool** (never started): pack BGM + SE control data into
-  one MMB plus the shared sample bank, with a sample-id namespace across
-  sources. Compile-time and node-testable. The gates fake it today with the
-  `.cmds.json` `remapChannels` stand-in.
-- **The C port itself**, and a host call on the SGDK side.
-- **One SE snapshot slot → a small pool**, so two SEs (say FM + PSG) can sound
-  at once. The gate's SEs are non-overlapping, so one suffices today.
-- **Stop-track reclaim** for held and looping SEs.
-
-**A warning for whoever gates it:** to compare at zero tolerance the lifecycle
-must exist in *both* players and the harness must not auto-start the SE track —
-that is what the sidecar's `autoStart: false` is for.
-
-## Where the C actually stands (checked 2026-09-22)
-
-`mmlispseq.c` contains **no SE code at all** — not a stub, not a branch. Track
-start is `mml_start_track`, ported from `drv-player`'s `_startTrack(false)`
-with the SE path left out on purpose so it could drop in later. What has to
-appear:
-
-- a suspended state alongside running/armed/held on `MMLTrack`;
-- a per-channel owner, and a snapshot to put back;
-- a priority byte on the track;
-- an SE start command in `mml_command`, and the two reclaim hooks.
-
-The gate is waiting: `tests/m3-se.mmlisp` and `m3-se-prio.mmlisp` exist with
-their `.cmds.json` sidecars, and `c-gate` currently prints
-`SKIP … not ported yet` for both. **Porting them into the passing set is the
-definition of done for the C half.** The SGDK host then needs one call.
-
-Note the interaction with loading several MMBs (`roadmap.md` open #4): decision
-2 above chose bundling *because* cross-MMB banking was not available. If
-several scores can be resident, that choice is worth re-opening — but it is not
-a prerequisite, and bundling is the shipped-format answer today.
+- **The bundler — DONE as `drv/tools/bundle.mjs` (2026-09-23)**, but not as
+  first imagined. What a game with many songs needed was not "BGM + SE in one
+  MMB" (one source plus `remap` does that) but "N scores over ONE sample bank",
+  see [plan-multi-score.md](plan-multi-score.md). The effect tracks are still
+  written in each song's source, on spare channels, and pointed at the BGM's
+  channels by the manifest's `remap`.
+- **Importable tracks — a language question, open.** `import` brings in defs
+  only, by design ("tracks are songs, not defs", language.md §9.2). A game
+  with twenty songs and thirty effects repeats thirty track lines per song.
+  Text concatenation at build time was rejected: it breaks `:file` and import
+  resolution relative to the effect file. If it is wanted, it is a language
+  form — `(import "se.mmlisp" :tracks)` or a new `include` — and needs the
+  user's ruling, not a tooling workaround.
+- **Overlapping SEs on different channels** are already possible in the C —
+  the snapshot lives on each suspended track, not in one slot — but no gate
+  fires two at once. Add one when a score needs it.
+- **Time-synced PCM restore** (decision 6), if a composition ever needs it.

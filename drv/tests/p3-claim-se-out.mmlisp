@@ -1,0 +1,12 @@
+; The EFFECT's modulators must not play the restored part. The BGM on fm1 has
+; none; the effect that steals fm1 at frame 40 runs a pitch macro and a volume
+; sweep. Once the effect has ended the stream must equal p3-claim-se-out-twin,
+; which is this score with the effect's modulators removed.
+(def v :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1)
+(def w :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5)
+(fm1 :tempo 120 v :oct 4 :len 1 :vel 12
+  c c c c)
+(fm2 w :oct 6 :len 8 :vel 15
+  (macro :pitch (triangle -60..60 :len 8f))
+  :vol (linear :from 31 :to 0 :len 300f)
+  g g)

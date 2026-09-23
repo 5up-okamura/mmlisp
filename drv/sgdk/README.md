@@ -65,6 +65,87 @@ inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h  inc/mml_r
 res/song.res  res/song.mmb  [res/song.smp]
 ```
 
+### Hearing it work — `example/demo.bundle.json`
+
+`example/main.c` plays any score, but only scores that carry effects and
+value slots can show them. `example/demo.mmlisp` and `demo-b.mmlisp` are two
+such songs — a looping BGM on FM, PSG and PCM, one effect for each of the
+three, two value slots — and `demo.bundle.json` builds them against ONE
+sample bank:
+
+```
+cd drv
+node tools/install-sgdk.mjs ~/path/to/project --example --bundle sgdk/example/demo.bundle.json
+make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
+```
+
+(A fresh project gets its `song.res` seeded with the bundle's BIN lines and
+the PCM switch set; an existing one is told what to add.)
+
+| Button | What it does |
+| ------ | ------------ |
+| START | start the BGM; pressed again, load and start the NEXT song |
+| DOWN | stop everything |
+| A | an FM effect at priority 4, stealing the lead's channel |
+| B | a second FM effect at priority 9, on the same channel |
+| C | a PSG effect, stealing the chord's channel |
+| UP | a PCM effect, overwriting the BGM's looping voice |
+| LEFT / RIGHT | the value knob, held |
+
+Press A and the lead stops and the effect plays; when it ends the lead comes
+back mid-note, re-keyed. Press A then B and the second effect takes the channel
+over — the lead returns only after it. Press B then A and the second press is
+dropped with the first effect left untouched. `track active` on screen goes to
+0 for the displaced track and back to 1 on its own, which is the suspend and
+the restore made visible.
+
+START a second time loads the other song. The music stops for the load — a
+resident score is one MMB — and the knob's slots are written again, because a
+load resets them; the bank is not reloaded and the Z80 is not rebooted,
+because both songs were bundled onto it and onto one engine image.
+
+The knob writes two slots at once, and they answer at different times: the
+arp's vibrato follows it frame by frame, because the score reads that slot
+through a scaled macro, while the bass changes level only at the next pass of
+its loop, because that one is read by an opcode in the event stream. That gap
+is where each slot is read, not latency.
+
+**The `remap` in the manifest** is how an effect track lands on a BGM channel:
+the compiler gives each channel one track, so the effect is written on a spare
+channel and pointed at the right one in the built MMB. The byte-for-byte gate
+runs on the bundled artifacts through the same function, so what you hear is
+what the gate compares.
+
+### Several songs, one bank — `tools/bundle.mjs`
+
+A resident score is one MMB; a game with many songs has many. What they can
+share is the sample bank, and `bundle.mjs` is how: a manifest names the scores
+(and each one's effect-track remap), and the build emits one `.mmb` per song
+and one `song.smp` in which every sample any song plays is numbered once. Every
+song is encoded for the same PCM voice count, so a song change is a
+`MMLisp_loadScore` with no Z80 reboot behind it. Effect tracks are still
+written in each song — `import` shares defs (voices, samples), not tracks —
+which is a few lines per song; the samples, the part that costs ROM, are not
+repeated.
+
+```
+node tools/install-sgdk.mjs ~/path/to/project --bundle songs.json
+node tools/bundle.mjs songs.json out/          # or just the files
+```
+
+```json
+{
+  "pcmVoices": 1,
+  "songs": [
+    { "src": "stage1.mmlisp", "name": "stage1", "remap": { "6": 0, "7": 0 } },
+    { "src": "boss.mmlisp",   "name": "boss",   "remap": { "6": 0, "7": 0 } }
+  ]
+}
+```
+
+`MMLispStats.bank` reports how the loaded score took the published bank; a
+bundle cannot produce a mismatch, a hand-built pair can.
+
 ## The pipeline
 
 ```
@@ -167,6 +248,16 @@ while (TRUE) {
 - **Control.** `MMLisp_startTrack` / `stopTrack` / `keyOff` / `setParam` /
   `fadeTrack` / `setVal` are plain calls into the sequencer. They take effect on
   the next frame rendered and reach the chip within about a frame after that.
+
+- **Sound effects: `MMLisp_startSe(track, priority)`.** An SE is a track of the
+  same score, started on a channel the BGM owns. The BGM track is suspended,
+  not evicted; when the SE ends (its own end, or `MMLisp_stopTrack` for a held
+  or looping one) the BGM resumes and the note it was holding is re-keyed. A
+  second SE on the same channel is dropped if its priority is lower than the
+  playing one's and replaces it otherwise; the BGM comes back after the last.
+  An SE track is authored in the score alongside the BGM, on a spare channel,
+  and pointed at the BGM's channel by the build (the bundle's `remap`, or
+  `--remap` for a single score).
 
 - **Music → game: `MMLisp_trig(track)`.** The score marks a beat with
   `(trig N)`; this returns that track's status byte — the id in bits 5-0 under a

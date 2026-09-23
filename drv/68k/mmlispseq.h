@@ -12,9 +12,9 @@
  * Scope so far: M1 + M2 + M3 (driver.md §11) — the core opcode set, FM + PSG
  * note paths, the level model, pitch, loops/calls, tempo, the armed frame, slot
  * emission through the real cap/spill queue, the sweep engine and host API, and
- * now the macro engine, the value machine's stream ops, FM3 independent-OP mode
- * and PCM command emission. Anything still unported stops the track fail-safe
- * rather than being silently mis-decoded.
+ * now the macro engine, the value machine's stream ops, FM3 independent-OP mode,
+ * PCM command emission and SE (suspend / restore, priority). Anything still
+ * unported stops the track fail-safe rather than being silently mis-decoded.
  */
 #ifndef MMLISPSEQ_H
 #define MMLISPSEQ_H
@@ -104,6 +104,7 @@ typedef struct {
   uint8_t current_note;
   int16_t pitch_cents;
   uint8_t keyed;
+  uint8_t voice_id; /* last VOICE_SET id, 0xFF = none: the SE snapshot's patch */
 } MMLFmCh;
 
 typedef struct {
@@ -186,6 +187,7 @@ typedef struct {
 typedef struct {
   uint8_t started;    /* a START has been sent since load: PCM_VOL is worth sending */
   uint8_t looping;    /* the running note loops */
+  uint8_t sample_id;  /* the running note's sample: what an SE-end restarts */
   uint8_t muted;
   uint16_t src;       /* the note's blob, as a window address */
   uint16_t len;       /* …and its length in bytes (whole blocks) */
@@ -211,8 +213,41 @@ typedef struct {
   uint32_t o_ls, o_bound;
 } MMLPcmVoice;
 
+/* ── SE (driver.md §2.5) ───────────────────────────────────────────────────
+ * A channel's live state at the moment an SE steals it — the essential fields
+ * only, because the FM patch is reconstructed by VOICE_SET from the voice id.
+ * FM: voice + note/vel/vol/gate/pitch; PSG: note + level + pitch (the period
+ * and attenuation are re-derived). Restore re-keys the note that was sounding.
+ * Mirrors drv-player _snapshotChannel / _restoreChannel. */
+enum { MML_SNAP_NONE = 0, MML_SNAP_FM = 1, MML_SNAP_PSG = 2 };
+typedef struct {
+  uint8_t kind;
+  uint8_t voice_id; /* FM only; 0xFF = no VOICE_SET had run */
+  uint8_t note, vel_base, vel, vol, gate;
+  int16_t pitch_cents;
+  /* The channel's MACRO BINDS, because claiming it wipes them (§2.2) and the
+   * displaced part wants them back. A sweep in flight is not kept: it is a
+   * gesture with a position, and the note it shaped re-attacks (§2.5). */
+  MMLMacroBind macros[MML_MACRO_BINDS];
+  uint8_t macro_count;
+} MMLChanSnap;
+
 typedef struct {
   uint8_t running, armed, held;
+  /* SUSPENDED (the fourth track state, beside idle/running/held): a BGM owner
+   * an SE displaced. It keeps its state, does not dispatch and does not own
+   * its channel; the SE's end puts it back. Eviction would be the wrong
+   * primitive — it stops the owner, and the BGM could never resume. */
+  uint8_t suspended;
+  MMLChanSnap snap; /* the channel as it was when this track was suspended */
+  /* An SE track: what it stole, so its end can give it back. `displaced` is
+   * the suspended owner's track INDEX (0xFF = none); a preempting SE inherits
+   * it from the SE it replaces, so only the LAST SE restores the BGM. */
+  uint8_t is_se, se_prio;
+  uint8_t displaced;
+  /* A PCM SE: soft-mix voices have no owner track, so what is kept is the
+   * looping BGM note the SE's PCM_NOTE_ON overwrote, restarted at SE-end. */
+  uint8_t pcm_snap, pcm_snap_sample, pcm_snap_loop, pcm_vi;
   /* The frame the armed setup ran in. The armed frame advances no ticks at ALL
    * of its sub-ticks, not only the one that ran the setup (driver.md §3.5). */
   uint32_t armed_frame;
@@ -358,6 +393,15 @@ void mml_start_all(MMLSeq *s);
  * reset the channel's level state to defaults, and enter the armed frame (§4.2).
  * Starting an already-running track restarts it from the top. */
 void mml_start_track(MMLSeq *s, uint8_t track_id);
+
+/* Start one track as a sound effect (driver.md §2.5). Its channel's current
+ * owner is SUSPENDED and its live state snapshotted, not evicted; the SE's
+ * END_OF_TRACK or mml_stop_track restores the owner mid-note. Against an SE
+ * already on the channel, `priority` decides: lower is dropped (the playing
+ * SE is untouched), equal or higher preempts it and inherits its restore
+ * duty. A PCM SE overwrites the voice instead; a looping BGM note there is
+ * restarted at SE-end. */
+void mml_start_se(MMLSeq *s, uint8_t track_id, uint8_t priority);
 
 /* Stop one track: key-off (the release tail runs out), free its channel, idle
  * the TCB. On an fm3-csm track this clears the CSM bit (§9). */

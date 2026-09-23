@@ -59,7 +59,12 @@ try {
   // …and again with the PCM switch on, or that branch is never compiled — which
   // is the branch every PCM project turns on and nobody here tests by running.
   cc(join(drv, "sgdk", "example", "main.c"), [...exArgs, "-DMMLISP_PCM_SAMPLES=1"]);
-  console.log("ok    sgdk/example/main.c agrees with the host API (both PCM paths)");
+  // …and the demo build, which is the one the README tells people to make:
+  // effects on, samples on. With MMLISP_SE_TRACKS at its default the effect
+  // buttons compile to nothing, so that path alone never type-checks fireSe.
+  cc(join(drv, "sgdk", "example", "main.c"),
+     [...exArgs, "-DMMLISP_PCM_SAMPLES=1", "-DMMLISP_SE_TRACKS=4", "-DMMLISP_SONG_LIST=song_mmb,song_mmb"]);
+  console.log("ok    sgdk/example/main.c agrees with the host API (PCM, SE and bundle builds)");
   console.log("      (a type-check only — it says nothing about SGDK or hardware)");
 } catch (e) {
   console.error(e.stderr?.toString() ?? e.message);

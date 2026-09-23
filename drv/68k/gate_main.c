@@ -6,7 +6,7 @@
  * emulator and no assembler, and both are debuggable.
  *
  *   gate_main <song.mmb> [max_frames] [--cmds commands.txt] [--samples bank.smp]
- *                                    [--pump depth] [--prime K]
+ *                                    [--pump depth] [--prime K] [--idle]
  *
  * commands.txt is one host command per line — "frame cmd a0 a1 a2" — applied at
  * the top of the matching frame, which is where the reference applies them too.
@@ -18,6 +18,10 @@
  * mml_render_frame directly. The bytes must come out identical — the ring is a
  * pipeline, not a filter. No gate runs it since the ring engine was removed
  * (tag archive/ring-engine); it goes with the C ring model.
+ *
+ * --idle starts nothing: every track waits for the command schedule, which is
+ * how the SE gates fire START_TRACK / START_SE by hand (the reference's
+ * autoStart: false).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,12 +100,13 @@ int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr,
             "usage: gate_main <song.mmb> [max_frames] [--cmds f] [--samples f]"
-            " [--trig f]\n");
+            " [--trig f] [--prime K] [--idle]\n");
     return 2;
   }
   long max_frames = argc > 2 && argv[2][0] != '-' ? strtol(argv[2], NULL, 10) : 36000;
   const char *cmd_path = 0, *smp_path = 0, *trig_path = 0;
   int pump_depth = 0;
+  int idle = 0;
   long prime = -1; /* --prime K: the SGDK host's load (see below) */
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "--cmds") && i + 1 < argc) cmd_path = argv[++i];
@@ -111,6 +116,7 @@ int main(int argc, char **argv) {
       prime = strtol(argv[++i], NULL, 10);
     else if (!strcmp(argv[i], "--pump") && i + 1 < argc)
       pump_depth = (int)strtol(argv[++i], NULL, 10);
+    else if (!strcmp(argv[i], "--idle")) idle = 1;
   }
   if (pump_depth && cmd_path) {
     /* Commands are keyed to HOST frames, and under the ring a host frame is not
@@ -194,7 +200,7 @@ int main(int argc, char **argv) {
       EMIT_TRIG();
     }
     for (uint8_t i = 0; i < mml_track_count(&seq); i++) mml_start_track(&seq, mml_track_id(&seq, i));
-  } else {
+  } else if (!idle) {
     mml_start_all(&seq);
   }
 

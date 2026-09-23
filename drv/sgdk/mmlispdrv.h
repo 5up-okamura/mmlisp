@@ -121,7 +121,18 @@ void MMLisp_pump(void);
 void MMLisp_startTrack(u8 track_id);
 
 // Stop a track: key-off (the release tail runs out), free its channel, idle it.
+// Stopping a sound effect gives its channel back (see MMLisp_startSe).
 void MMLisp_stopTrack(u8 track_id);
+
+// Start a track as a SOUND EFFECT (driver.md §2.5). Unlike MMLisp_startTrack
+// it does not evict the channel's owner: the BGM track there is suspended with
+// its live state kept, and when the SE ends — its own END_OF_TRACK, or
+// MMLisp_stopTrack for a held or looping SE — the BGM resumes and its note is
+// re-keyed mid-sustain. Against an SE already on the channel `priority`
+// decides: a lower one is dropped and the playing SE is left alone, an equal
+// or higher one replaces it and the BGM returns after the LAST SE. A PCM SE
+// overwrites the voice; a looping BGM note there restarts at SE-end.
+void MMLisp_startSe(u8 track_id, u8 priority);
 
 // How many tracks the loaded score has, and the id of the i-th one:
 //
@@ -203,6 +214,11 @@ typedef struct {
                        // Zero, or the engine has been starved of pumps
     u16 faults;        // PCM commands for a voice the booted image does not have:
                        // zero, or the score and its image disagree
+    s8  bank;          // the published sample bank, as the loaded score took it:
+                       // 0 fine (or none published), -3 baked for another engine
+                       // image — every PCM note is dropped, and a bundle built
+                       // with tools/bundle.mjs cannot produce this — other
+                       // negatives a malformed table
     u8  image;         // PCM voices of the booted engine image
     u16 due;           // frames whose time has come (vtimer since the load, less
                        // pauses); rendered - due is the lead, normally MMLISP_LEAD

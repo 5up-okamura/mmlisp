@@ -359,6 +359,42 @@
     "compileErrors": 0,
     "digest": "8813c5a6"
   },
+  "p3-claim-evict-twin.mmlisp": {
+    "ok": false,
+    "mismatches": 16,
+    "compileErrors": 0,
+    "digest": "d8d72403"
+  },
+  "p3-claim-evict.mmlisp": {
+    "ok": false,
+    "mismatches": 502,
+    "compileErrors": 0,
+    "digest": "1ca4e0b1"
+  },
+  "p3-claim-se-in-twin.mmlisp": {
+    "ok": false,
+    "mismatches": 8,
+    "compileErrors": 0,
+    "digest": "e5a5d65b"
+  },
+  "p3-claim-se-in.mmlisp": {
+    "ok": false,
+    "mismatches": 494,
+    "compileErrors": 0,
+    "digest": "ca2e3c15"
+  },
+  "p3-claim-se-out-twin.mmlisp": {
+    "ok": false,
+    "mismatches": 8,
+    "compileErrors": 0,
+    "digest": "e5a5d65b"
+  },
+  "p3-claim-se-out.mmlisp": {
+    "ok": false,
+    "mismatches": 140,
+    "compileErrors": 0,
+    "digest": "b45b8f00"
+  },
   "p3-lifecycle.mmlisp": {
     "ok": true,
     "mismatches": 0,
