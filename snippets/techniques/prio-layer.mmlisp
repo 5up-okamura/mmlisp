@@ -1,0 +1,13 @@
+; Two parts on one channel. Forms of the same channel with different :prio
+; play at the same time: a lower number wins, and the other part fills the
+; gaps it leaves. A sparse melody and a busy filler share fm1. Keep loops
+; ((x ...), go) out of layered forms; write the notes, or use a def.
+(import "presets/gm/set.mmlisp")
+
+(def fill c e g e)
+
+(fm1 :prio 1 :tempo 120 :oct 5 :len 4 gm-musicbox
+  c _ _ g _ _ e _ a _ g _ f _ _ _)
+(fm1 :prio 5 :oct 4 :len 16 :vel 10
+  fill fill fill fill  fill fill fill fill
+  fill fill fill fill  fill fill fill fill)

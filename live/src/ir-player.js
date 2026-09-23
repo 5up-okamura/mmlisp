@@ -119,6 +119,7 @@ export class IRPlayer {
     this._schedulerInterval = 25; // ms
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
+    this._onTrig = null; // (trackIdx, code) => void — a (trig N) cue plays
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
     // Gapless swap (Build during playback): a swap requested by swapAtNextBar()
@@ -719,6 +720,15 @@ export class IRPlayer {
     this._onSeq = fn;
   }
 
+  /**
+   * Register a callback fired when a `(trig N)` cue (IR MARKER) plays — the
+   * moment a game polling the track's status byte would see it change.
+   * @param {((trackIdx: number, code: number) => void) | null} fn
+   */
+  setOnTrig(fn) {
+    this._onTrig = fn;
+  }
+
   _scheduleUiCallback(fn, delayMs) {
     const timerId = setTimeout(() => {
       this._pendingUiTimers.delete(timerId);
@@ -836,6 +846,11 @@ export class IRPlayer {
           // past those events without dispatching.
           if (evTime >= this._dispatchFloor) {
             this._dispatchEvent(ev, evTime);
+            if (this._onTrig && ev.cmd === "MARKER") {
+              const code = ev.args?.code;
+              const delay = Math.max(0, evTime - now) * 1000;
+              this._scheduleUiCallback(() => this._onTrig(tIdx, code), delay);
+            }
             if (
               this._onLine &&
               ev.src?.line != null &&
@@ -916,6 +931,7 @@ export class IRPlayer {
       write: this._write,
       onLine: this._onLine,
       onSeq: this._onSeq,
+      onTrig: this._onTrig,
       ctx: this._audioContext,
       loop: this._loop,
       playing: this._playing,
@@ -926,6 +942,7 @@ export class IRPlayer {
     // Silence every UI callback so no real setTimeout fires during capture.
     this._onLine = null;
     this._onSeq = null;
+    this._onTrig = null;
 
     this._write = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg)) {
@@ -1041,6 +1058,7 @@ export class IRPlayer {
       this._write = saved.write;
       this._onLine = saved.onLine;
       this._onSeq = saved.onSeq;
+      this._onTrig = saved.onTrig;
       this._audioContext = saved.ctx;
       this._loop = saved.loop;
       this._playing = saved.playing;

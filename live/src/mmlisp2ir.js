@@ -1325,6 +1325,25 @@ function lowerValueExpr(node, target, push, env, vals, diagnostics, trackName, s
   }
 }
 
+// A runtime value on a fader (`:vol $x`, `:master (+ $x 4)`): the same
+// PARAM_FROM_VAL / value-machine lowering every hardware param gets. Returns
+// false when the value is not runtime, leaving the literal/curve path to it.
+function lowerRuntimeFader(valueNode, rawVal, target, push, env, vals, diagnostics, trackName, src) {
+  if (
+    valueNode?.kind === "list" &&
+    valueNode.bracket === "()" &&
+    isEvalHead(atomValue(valueNode.items?.[0])) &&
+    exprHasValRef(valueNode)
+  ) {
+    lowerValueExpr(valueNode, target, push, env, vals, diagnostics, trackName, src);
+    return true;
+  }
+  const ref = resolveValRef(rawVal, vals, diagnostics, trackName, src);
+  if (ref === null) return false;
+  push("PARAM_FROM_VAL", { target, src: ref });
+  return true;
+}
+
 // Target group: a [] vector of macro keywords in target position, e.g.
 // (macro [:tl1 :tl2 :tl3 :tl4] spec) — one spec applied to every target.
 // Returns the keyword strings, or null if node is not an all-keyword vector.
@@ -2970,6 +2989,13 @@ function compileChannelBody(
             }
             case ":vol": {
               const valueNode = items[i];
+              const pushLevel = (cmd, args) =>
+                events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(node) });
+              if (
+                lowerRuntimeFader(valueNode, rawVal, "VOL", pushLevel, evalEnv, vals,
+                  diagnostics, trackName, nodeSrc(node))
+              )
+                break;
               const curveSpec = parseCurveSpec(
                 valueNode,
                 diagnostics,
@@ -3018,6 +3044,13 @@ function compileChannelBody(
             }
             case ":master": {
               const valueNode = items[i];
+              const pushLevel = (cmd, args) =>
+                events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(node) });
+              if (
+                lowerRuntimeFader(valueNode, rawVal, "MASTER", pushLevel, evalEnv, vals,
+                  diagnostics, trackName, nodeSrc(node))
+              )
+                break;
               const curveSpec = parseCurveSpec(
                 valueNode,
                 diagnostics,

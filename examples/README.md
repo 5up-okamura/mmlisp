@@ -13,3 +13,4 @@ Voices and PCM samples live in their own sets under `presets/`:
 [808](../presets/808/README.md) and [gm-drums](../presets/gm-drums/README.md).
 Each set keeps its own demo score, such as
 `presets/waveforms/demo-acid.mmlisp`; this directory holds songs.
+Short one-technique scores live in [snippets](../snippets/README.md).

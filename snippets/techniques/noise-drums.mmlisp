@@ -1,0 +1,11 @@
+; A drum kit on the PSG noise channel alone. A hat is a short white burst, a
+; snare a longer one; the :mode macro turns the snare's attack into a buzz
+; for a frame. The periodic modes are tonal. periodic3 follows the written
+; note (it takes its rate from sqr3), so it can play a bass line.
+(def hat   (macro :vel [12 7 3 0]))
+(def snare (macro :vel [15 13 11 9 7 5 4 3 2 1 0] :mode [periodic2 white1]))
+
+(noise :tempo 120 :len 16
+  (x 2 hat c c c c  snare c _ hat c c  hat c c c c  snare c _ hat c c)
+  :mode periodic3 (macro :vel none) :len 8
+  c c e- c g f e- c)

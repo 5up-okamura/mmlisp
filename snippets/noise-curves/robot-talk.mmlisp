@@ -1,0 +1,8 @@
+; Random semitones every two frames make the classic "computer thinking"
+; burble. :step sets how often a new random value is drawn; the range sets
+; how wild it is. A slower step with a smaller range sounds like chatter.
+(sqr1 :tempo 120 :oct 5 :len 4 :vel 12
+  (macro :step 2f :semi (noise 0..24 :len 30f)) c _
+  (macro :step 2f :semi (noise 0..24 :len 30f :seed 5)) g _
+  (macro :step 4f :semi (noise -5..5 :len 1 :seed 9)) :len 2 e
+  (macro :step 1f :semi (noise 0..36 :len 20f :seed 3)) :len 4 c16 _16 c16 _16 c8)

@@ -1114,6 +1114,13 @@
       color: var(--foreground);
     }
     .browse-head .browse-name { flex: 1; }
+    .browse-sub {
+      padding: 0.45rem 0.45rem 0.15rem;
+      font-size: 0.64rem;
+      opacity: 0.6;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
     .browse-mini {
       background: none;
       border: 1px solid var(--mid);

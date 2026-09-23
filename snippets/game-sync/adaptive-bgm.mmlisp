@@ -1,0 +1,27 @@
+; Adaptive music: the sliders (Dynamic Parameters) stand in for the game,
+; which writes one value per layer. At 0 only the pad plays; raise "drive"
+; and the bass fades in, raise "danger" and the lead joins. A $slot is read
+; when its write fires, so the :vol writes sit at the top of each bar and
+; follow the sliders once per bar.
+(import "presets/gm/set.mmlisp")
+(def-val drive 0 0..31)
+(def-val danger 0 0..31)
+
+(fm1 :tempo 124 :oct 4 :len 1 gm-pad-warm :vel 12
+  #loop c a- f g (go loop))
+
+(fm2 :oct 2 :len 8 gm-bass-syn1
+  #loop
+  :vol $drive (x 8 c)
+  :vol $drive (x 8 a-)
+  :vol $drive (x 8 f)
+  :vol $drive (x 8 g)
+  (go loop))
+
+(fm3 :oct 5 :len 8 gm-lead-square :vel 12
+  #loop
+  :vol $danger g _ > c < g e- _ f _
+  :vol $danger a- _ g _ e- _ c _
+  :vol $danger f _ a- _ > c _ < a- _
+  :vol $danger g _ _ _ b _ _ _
+  (go loop))

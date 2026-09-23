@@ -1,0 +1,14 @@
+; Pitches as numbers: (note n) plays MIDI note n, and arithmetic works on it.
+; Pass a root into a parametric def and it computes the chord, so one def
+; plays in any key. let binds a value inside a body.
+(import "presets/gm/set.mmlisp")
+
+(def (triad root) :len 8 (note root) (note (+ root 4)) (note (+ root 7)) (note (+ root 12)))
+(def (minor root) :len 8 (note root) (note (+ root 3)) (note (+ root 7)) (note (+ root 12)))
+
+(fm1 :tempo 110 gm-piano
+  (triad 60) (minor 57) (triad 53) (triad 55)
+  ; the same four bars, a whole step up
+  (let ((up 2))
+    (triad (+ 60 up)) (minor (+ 57 up)) (triad (+ 53 up)) (triad (+ 55 up)))
+  :len 2 (note 62))

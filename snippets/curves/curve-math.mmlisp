@@ -1,0 +1,19 @@
+; Curves are values, and arithmetic composes them. A scalar shifts or scales
+; a curve for free, so one normalized shape serves at any depth. Two curves
+; combined are baked frame by frame at compile time: give both frame lengths
+; (Nf), and keep them both looping (or both one-shot).
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 90 :oct 5 :len 1 gm-violin
+  ; a normalized sine scaled to +-30 cents
+  (macro :pitch (* (sin -1..1 :len 12f) 30))
+  e d
+  ; two LFOs summed: 12 and 20 frames, a wobble that repeats every 60
+  (macro :pitch (+ (sin -20..20 :len 12f) (sin -14..14 :len 20f)))
+  c e)
+
+; let names a curve once and reuses it at different depths
+(fm2 :oct 4 :len 1 gm-strings1 :vel 11
+  (let ((wobble (sin -1..1 :len 16f)))
+    (macro :pitch (* wobble 8)) c g
+    (macro :pitch (* wobble 40)) a- g))

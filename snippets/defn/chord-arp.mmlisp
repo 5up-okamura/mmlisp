@@ -1,0 +1,18 @@
+; A parametric def is a small function: (def (name param...) body...). Each
+; argument is substituted for its parameter, token for token, so notes,
+; lengths and voices can all be passed in. One arp pattern, four chords.
+(import "presets/gm/set.mmlisp")
+
+; Up and down over a triad, and back to the starting octave so the pattern
+; can repeat (octave changes are sticky).
+(def (arp a b c) :len 16 a b c > a b a < c b)
+
+(fm1 :tempo 132 :oct 4 gm-harpsi
+  (x 2 (arp c e g))
+  (x 2 (arp c f a))
+  (x 2 (arp d g b))
+  (x 2 (arp c e g))
+  :len 2 c)
+
+(fm2 :oct 2 :len 4 gm-bass-finger
+  c _ c _ f _ f _ g _ g _ c _ _ _ c)

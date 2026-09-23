@@ -1,0 +1,14 @@
+; :tempo takes a curve, and every track follows it: a ritardando into the
+; last bar, or an accelerando that runs away. Write tempo changes on one
+; track only, since tempo is global.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 100 :oct 4 :len 8 gm-accordion
+  c e g e c e g e
+  :tempo (ease-in 100..190 :len 2/1)       ; speed up over two bars
+  (x 4 d f a f)
+  :tempo (linear 190..60 :len 1)          ; slow right down
+  c e g > c < :len 2 c)
+
+(fm2 :oct 2 :len 4 gm-tuba
+  c g c g (x 4 d a) c g c2)

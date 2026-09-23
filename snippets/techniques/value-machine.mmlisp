@@ -1,0 +1,13 @@
+; A loop body is compiled once, so compile-time state never accumulates
+; across passes. A runtime write does: $tl1 names TL1's live value, so
+; :tl1 (+ $tl1 -3) takes the modulator down 3 more steps on every pass and
+; the note gets brighter each time round. The write runs on the driver.
+(def bell :extend init-fm :alg 4 :fb 4
+  :ar1 31 :dr1 6 :sl1 6 :tl1 60 :ml1 5
+  :ar2 31 :dr2 4 :sl2 8 :tl2 4  :ml2 1 :rr2 5
+  :ar3 31 :dr3 8 :sl3 6 :tl3 38 :ml3 3
+  :ar4 31 :dr4 5 :sl4 8 :tl4 10 :ml4 1 :rr4 5)
+
+(fm1 :tempo 120 :oct 4 :len 8 bell
+  (x 12 :tl1 (+ $tl1 -4) c g > c < g)
+  :tl1 60 :len 2 c)

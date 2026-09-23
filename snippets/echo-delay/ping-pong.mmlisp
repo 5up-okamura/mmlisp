@@ -1,0 +1,17 @@
+; Ping-pong delay across two channels. A delay tap cannot overlap the next
+; written note on its own channel, so for a real overlapping echo def the
+; phrase once and replay it on a second channel: a dotted 8th later,
+; quieter, and panned apart.
+(import "presets/gm/set.mmlisp")
+
+(def phrase :len 8 c e g > c < b g e d)
+
+(fm1 :tempo 120 :oct 5 gm-celesta :pan left
+  (x 2 phrase) :len 2 c)
+(fm2 :oct 5 gm-celesta :pan right :vel 11
+  :len 8. _ (x 2 phrase) :len 2 c)
+
+; Pan has three positions, so a square wave is the natural auto-pan:
+; the pad hops left/right every quarter note.
+(fm3 :oct 3 gm-pad-warm :vel 11 :pan (square -1..1 :len 2)
+  :len 1 c a- :len 2 c)

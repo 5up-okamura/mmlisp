@@ -1,0 +1,10 @@
+; :shuffle R swings pairs of eighths: the first of each pair takes R percent
+; of the pair's length (50 would be straight). It is a head option, set per
+; track: here the whole band swings at 66. Delete the :shuffle options to
+; hear it straight.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :shuffle 66 :tempo 132 :oct 4 :len 8 gm-ep1
+  e g a g e g a > c < b a g e d e g _)
+(fm2 :shuffle 66 :oct 2 :len 8 gm-bass-acoustic
+  c _ c e g _ g a b- _ b- a g _ g e)

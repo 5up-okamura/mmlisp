@@ -118,7 +118,7 @@
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
         </button>
         <button class="menu-item" onclick="openBrowse();closeMenus()"
-                title="What the app ships: the preset voice/sample sets and the example scores. Preview a voice, insert its import, or open a score.">
+                title="What the app ships: the preset voice/sample sets, the example scores and the snippets. Preview a voice or play a score, insert it, or open it.">
           <span>Browse…</span>
         </button>
         <button class="menu-item" onclick="openFolder();closeMenus()"
@@ -231,6 +231,8 @@
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
+            <button class="menu-item" onclick="openBrowse('snippets');closeMenus()"
+                    title="Short scores, one technique each: play one on its own, then insert it at the cursor">Browse Snippets…</button>
             <button class="menu-item" onclick="insertSnippetFmVoice();closeMenus()">FM Voice Template</button>
           </div>
         </div>
@@ -441,7 +443,7 @@
     </div>
   </div>
 
-  <!-- Browse: the preset sets and the example scores the app ships -->
+  <!-- Browse: the preset sets, the example scores and the snippets the app ships -->
   <div id="browseModal" class="modal-overlay" hidden>
     <div class="modal browse-modal" tabindex="-1">
       <div class="modal-title">Browse</div>
@@ -1514,8 +1516,68 @@
       AC_SNIPPETS[head] = `${head} \${1:0}..\${2:100} :len \${3:8}`;
     }
 
+    // The names a score can use: its own defs and everything its imports
+    // bring in. A scan, not a parse — it runs on keystrokes — reading each
+    // top-level (def …) head for the name and what kind of thing it is, and
+    // the comment line just above it for the description (a preset set says
+    // what each voice is there: "GM 1 / MIDI 0: * GrandPiano").
+    const AC_DEF_RE = /^[ \t]*\((def-val|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
+    function scanDefNames(text, from) {
+      const out = [];
+      let comment = '';
+      for (const line of text.split('\n')) {
+        const m = AC_DEF_RE.exec(line);
+        if (m) {
+          const [, head, fnParen, name, next, listAfter] = m;
+          let kind;
+          if (head === 'def-val') kind = 'val';
+          else if (fnParen) kind = 'fn';
+          else if (next === ':sample') kind = 'sample';
+          else if (/^:(alg|fb|extend|ar|dr|sr|rr|tl|sl|ml|dt|ks)/.test(next)) kind = 'voice';
+          else if (next === '' && listAfter) kind = /^\s*\(def[ \t]+\S+[ \t]+\(macro\b/.test(line) ? 'macro' : 'def';
+          else kind = 'def';
+          // A kit names its samples after roles; the file says which sound.
+          const file = kind === 'sample' && /:file\s+"(?:[^"]*\/)?([^"/]+?)(?:\.\w+)?"/.exec(line);
+          const about = comment || (file ? file[1] : '');
+          if (!(head === 'def' && /^(title|author|pcm-voices)$/.test(name) && kind === 'def'))
+            out.push({ name, kind, about, from });
+          comment = '';
+          continue;
+        }
+        const c = /^\s*;+\s?(.*)$/.exec(line);
+        comment = c ? c[1].replace(/\*\s*/, '') : '';
+      }
+      return out;
+    }
+    const _acImportDefs = new WeakMap(); // an _importSources map -> its scanned defs
+    function importedDefNames() {
+      let defs = _acImportDefs.get(_importSources);
+      if (!defs) {
+        defs = [];
+        for (const [path, text] of _importSources)
+          defs.push(...scanDefNames(text, path.replace(/\/set\.mmlisp$/, '').replace(/^.*\//, '')));
+        _acImportDefs.set(_importSources, defs);
+      }
+      return defs;
+    }
+    const AC_DEF_TYPE = { voice: 'type', sample: 'constant', macro: 'function', fn: 'function', val: 'variable', def: 'variable' };
+    function defCompletion(d, label = d.name) {
+      const detail = d.kind + (d.from ? ` \u00b7 ${d.from}` : '');
+      return { label, type: AC_DEF_TYPE[d.kind], detail, info: d.about || undefined, boost: d.from ? 0 : 1 };
+    }
+    function scoreDefNames(state) {
+      const seen = new Set();
+      const out = [];
+      for (const d of [...scanDefNames(state.doc.toString(), ''), ...importedDefNames()]) {
+        if (seen.has(d.name)) continue; // a local def overrides an imported one
+        seen.add(d.name);
+        out.push(d);
+      }
+      return out;
+    }
+
     function mmlispCompletions(context) {
-      // After '(' — suggest forms and track names
+      // After '(' — suggest forms and track names, and the score's parametric defs
       const formMatch = context.matchBefore(/\([a-zA-Z0-9_-]*/);
       if (formMatch) {
         const typed = formMatch.text.slice(1); // strip '('
@@ -1524,6 +1586,8 @@
           .map(s => AC_SNIPPETS[s]
             ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword' })
             : { label: s, type: 'keyword', apply: s + ' ' });
+        for (const d of scoreDefNames(context.state))
+          if (d.kind === 'fn' && d.name.startsWith(typed)) options.push(defCompletion(d));
         if (options.length === 0 && !context.explicit) return null;
         return { from: formMatch.from + 1, options };
       }
@@ -1549,6 +1613,23 @@
           .map(s => ({ label: s, type: 'enum' }));
         if (options.length === 0 && !context.explicit) return null;
         return { from: context.pos - typed.length, options };
+      }
+
+      // A bare word — a voice, sample, macro or snippet name; `$` for a slot.
+      // Two characters before it offers anything unasked, so typing notes (c,
+      // e, a-) stays quiet. Not inside a comment.
+      const word = context.matchBefore(/[$a-zA-Z][\w$-]*/);
+      if (word && (context.explicit || word.text.length >= 2)) {
+        if (/;/.test(before)) return null;
+        const slot = word.text.startsWith('$');
+        const typed = slot ? word.text.slice(1) : word.text;
+        const options = scoreDefNames(context.state)
+          .filter(d => (slot ? d.kind === 'val' : d.kind !== 'val' && d.kind !== 'fn')
+            && d.name.startsWith(typed))
+          .map(d => defCompletion(d, slot ? '$' + d.name : d.name));
+        if (slot && 'time'.startsWith(typed)) options.push({ label: '$time', type: 'variable', detail: 'frames since track start' });
+        if (options.length === 0) return null;
+        return { from: word.from, options };
       }
 
       return null;
@@ -2005,7 +2086,16 @@
 `,
     };
 
-    const DEFAULT_NEW_FILE_SOURCE = String.raw`(def voice1 :extend init-fm
+    // The preset sets are imported but not assigned: every voice and sample in
+    // them is a name the score can use, and completion lists them. Only what
+    // a track plays is baked, so the imports cost the song nothing.
+    const DEFAULT_NEW_FILE_SOURCE = String.raw`; Preset voices and samples: File > Browse... auditions them, and typing a
+; name (gm-, wave-, kick, snare, ...) offers them for completion.
+(import "presets/gm/set.mmlisp")
+(import "presets/waveforms/set.mmlisp")
+(import "presets/808/set.mmlisp") ; or "presets/gm-drums/set.mmlisp": the same names
+
+(def voice1 :extend init-fm
   :alg 7 :fb 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 0 :ks2 0 :ml2 1 :dt2 0
@@ -2801,13 +2891,20 @@
     }
 
     async function refreshImportSources(src) {
+      _importSources = await readImportSources(src, _lastFileName);
+      return _importSources;
+    }
+
+    // The imported files' text for `src` compiled as `fileName` — the editor's
+    // score, or one Browse plays without opening it.
+    async function readImportSources(src, fileName) {
       const map = new Map();
       const seen = new Set();
       // A top-level import resolves against the score's own folder, exactly as
       // the compiler resolves it (docs/language.md §9.2). The score's name only
       // HAS a folder when it came from the served tree (Browse); a bare file
       // name leaves the spec untouched, which is what the opened folder wants.
-      const queue = collectImports(src).map((spec) => [joinImportPath(_lastFileName, spec), spec]);
+      const queue = collectImports(src).map((spec) => [joinImportPath(fileName, spec), spec]);
       while (queue.length) {
         const [path, spec] = queue.shift();
         if (seen.has(path)) continue;
@@ -2820,7 +2917,6 @@
           if (!seen.has(nestedPath)) queue.push([nestedPath, nested]);
         }
       }
-      _importSources = map;
       return map;
     }
 
@@ -3632,8 +3728,8 @@
       _channelVol.clear();
       _masterVolUi = 31;
       setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-      compileNow();
       onStop();
+      refreshImportsAndCompile(); // the template imports the preset sets
     }
 
     // Compile the current source to IR. Logs diagnostics, updates _lastGoodIR /
@@ -3644,7 +3740,9 @@
       try {
         const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName, { imports: _importSources });
         const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
-        const hasSamples = sampleDefs.length > 0;
+        // A preset set's samples are served from the site root, so they resolve
+        // whether or not the score has been saved anywhere.
+        const hasSamples = sampleDefs.some(d => !/^presets\//.test(d.resolvedFile ?? d.file ?? ''));
         const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL);
         if (hasSamples && !hasSavedBase) {
           if (!_unsavedSamplePathWarned) {
@@ -3740,6 +3838,8 @@
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
     let _dynVals = {};                     // Dynamic Parameters: name → current slider value (declared here so the startup compileNow can render before the panel functions)
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
+    let _browseScorePlayer = null;          // the score or snippet Browse ▶ is playing
+    let _browseScorePath = null;
     let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
     let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
@@ -3796,9 +3896,10 @@
       { name: 'B',  black: false },
     ];
 
-    // Load default source on startup
+    // Load default source on startup. Its imports are fetched, so the compile
+    // waits for the rest of this module to have run.
     setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-    compileNow();
+    queueMicrotask(() => refreshImportsAndCompile());
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -4320,6 +4421,7 @@
     async function onPlay(fromLine = null) {
       const ok = await initAudio();
       if (!ok) return;
+      stopBrowseScorePreview(); // one score owns the chip at a time
       // Manual-compile model: starting from stopped always rebuilds from the
       // current source, so Play reflects the latest edits. On error, compileNow
       // keeps the last good IR; only binary/URL presets with no editable source
@@ -4401,6 +4503,8 @@
         }
         player.setOnLine(highlightTrackLine);
         player.setOnSeq(highlightSeq);
+        const playing = player;
+        player.setOnTrig((t, code) => logTrig(playing._ir, t, code));
         // The FM panel tracks live registers via the playback refresh loop
         // (startFmLiveLoop), so no per-PARAM_SET UI callback is needed.
         // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
@@ -4426,7 +4530,15 @@
       }
     }
 
+    // A (trig N) cue has no sound, so the log is where it shows: the moment a
+    // game polling MMLisp_trig(track) would see the status byte change.
+    function logTrig(ir, trackIdx, code) {
+      const ch = ir?.tracks?.[trackIdx];
+      log(`trig ${code}` + (ch ? ` \u2014 ${ch.scoreChannel ?? ch.channel}` : ''), 'info');
+    }
+
     function onStop() {
+      stopBrowseScorePreview();
       stopFmLiveLoop();
       resetChannelVu();
       _vizFrozen = null;
@@ -4737,15 +4849,17 @@
     // -----------------------------------------------------------------------
     // Browse (File > Browse…)
     // -----------------------------------------------------------------------
-    // One panel over what the app ships: the preset sets and the example
-    // scores. A set's contents are parsed out of the very file a score imports,
-    // so a listed name can never drift from the def behind it. The two
-    // index.json files exist only because a directory cannot be listed over
-    // HTTP; they hold paths and nothing else.
+    // One panel over what the app ships: the preset sets, the example scores
+    // and the snippets. A set's contents are parsed out of the very file a
+    // score imports, so a listed name can never drift from the def behind it.
+    // The index.json files exist only because a directory cannot be listed
+    // over HTTP; they hold paths and nothing else.
     const BROWSE_SETS_INDEX = '/presets/index.json';
     const BROWSE_SCORES_INDEX = '/examples/index.json';
+    const BROWSE_SNIPPETS_INDEX = '/snippets/index.json';
 
-    let _browseCatalog = null;              // { sets: [path], scores: [path] }
+    let _browseCatalog = null;              // { sets, scores, snippets: [path] }
+    const _browseFileCache = new Map();     // score/snippet path -> { text, about }
     const _browseSetCache = new Map();      // set path -> { path, text, defs }
     let _browseSel = null;                  // left-hand selection: a set path, or 'scores'
     let _browseRow = 0;                     // highlighted row in the right-hand list
@@ -4758,7 +4872,7 @@
       return res.text();
     }
 
-    async function openBrowse() {
+    async function openBrowse(group = null) {
       document.getElementById('browseModal').hidden = false;
       // Capture phase, as the value popup does: the panel's arrows and space
       // must not also reach a slider or the piano keys underneath.
@@ -4771,11 +4885,12 @@
           try { return JSON.parse(await fetchText(url)); }
           catch (e) { log('Browse: ' + e.message, 'err'); return []; }
         };
-        const [sets, scores] = await Promise.all([read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX)]);
-        _browseCatalog = { sets, scores };
+        const [sets, scores, snippets] = await Promise.all(
+          [read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX), read(BROWSE_SNIPPETS_INDEX)]);
+        _browseCatalog = { sets, scores, snippets };
       }
       renderBrowseGroups();
-      await selectBrowseGroup(_browseSel ?? _browseCatalog.sets[0] ?? 'scores');
+      await selectBrowseGroup(group ?? _browseSel ?? _browseCatalog.sets[0] ?? 'scores');
     }
 
     function closeBrowse() {
@@ -4800,6 +4915,7 @@
       };
       for (const path of _browseCatalog.sets) add(path, browseSetName(path));
       add('scores', 'Scores');
+      add('snippets', 'Snippets');
     }
 
     async function selectBrowseGroup(key) {
@@ -4807,8 +4923,8 @@
       renderBrowseGroups();
       const items = document.getElementById('browseItems');
       items.innerHTML = '';
-      if (key === 'scores') {
-        renderBrowseScores(items);
+      if (key === 'scores' || key === 'snippets') {
+        await renderBrowseFiles(items, key);
       } else {
         try {
           renderBrowseSet(items, await loadBrowseSet(key));
@@ -4824,9 +4940,11 @@
     }
 
     function browseKeyHint() {
-      return _browseSel === 'scores'
-        ? '\u2191\u2193 select \u00b7 Enter open \u00b7 Esc close'
-        : '\u2190\u2192 set \u00b7 \u2191\u2193 select \u00b7 Space preview \u00b7 Enter insert \u00b7 Esc close';
+      if (_browseSel === 'scores')
+        return '\u2191\u2193 select \u00b7 Space play \u00b7 Enter open \u00b7 Esc close';
+      if (_browseSel === 'snippets')
+        return '\u2191\u2193 select \u00b7 Space play \u00b7 Enter insert \u00b7 Esc close';
+      return '\u2190\u2192 set \u00b7 \u2191\u2193 select \u00b7 Space preview \u00b7 Enter insert \u00b7 Esc close';
     }
 
     function browseRows() {
@@ -4839,18 +4957,20 @@
       _browseRow = Math.max(0, Math.min(rows.length - 1, i));
       rows.forEach((r, n) => r.classList.toggle('active', n === _browseRow));
       rows[_browseRow].scrollIntoView({ block: 'nearest' });
+      const about = rows[_browseRow]._browse?.about;
+      if (about) setBrowseNote(about);
     }
 
     // The panel is a list, so it is driven like one. Space auditions what is
-    // highlighted; Enter is the row's own action — a score opens, a voice's
-    // definition is pasted, a sample's set is imported (the only way to reach
-    // a sample from a score elsewhere).
+    // highlighted; Enter is the row's own action — a score opens, a snippet is
+    // inserted, a voice's definition is pasted, a sample's set is imported (the
+    // only way to reach a sample from a score elsewhere).
     function onBrowseKey(e) {
       if (document.getElementById('browseModal').hidden) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const rows = browseRows();
       const sets = _browseCatalog?.sets ?? [];
-      const groups = [...sets, 'scores'];
+      const groups = [...sets, 'scores', 'snippets'];
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
       switch (e.key) {
         case 'ArrowDown': stop(); highlightBrowseRow(_browseRow + 1); return;
@@ -4868,7 +4988,7 @@
           if (e.repeat) return;               // holding space is one audition
           const row = rows[_browseRow];
           if (row?._browse?.def) previewBrowseDef(row._browse.set, row._browse.def);
-          else setBrowseNote('Nothing to preview \u2014 Enter opens a score.');
+          else if (row?._browse?.file) toggleBrowseScorePreview(row._browse.file);
           return;
         }
         case 'Enter': {
@@ -4884,7 +5004,10 @@
     function activateBrowseRow(row) {
       const b = row?._browse;
       if (!b) return;
-      if (b.score) return void openBrowseScore(b.score);
+      if (b.file) {
+        if (b.file.snippet) return void insertBrowseSnippet(b.file);
+        return void openBrowseScore(b.file.path);
+      }
       if (b.def.kind === 'fm') return insertBrowseDefText(b.set, b.def);
       insertBrowseImport(b.set.path);
     }
@@ -4982,23 +5105,88 @@
       }
     }
 
-    function renderBrowseScores(host) {
+    // A SNIPPET IS WRITTEN AS IF IT SAT AT THE SITE ROOT, next to a new score:
+    // its imports read `presets/…`, so the text resolves the same way when it
+    // is played from here, opened, or pasted into the score in the editor. An
+    // example score keeps its own folder (its imports are relative to it).
+    function browseCompileName(file) {
+      return file.snippet ? file.path.split('/').pop() : file.path;
+    }
+
+    // The leading comment block is the file's description; the first sentence
+    // of it is what the note line shows.
+    async function loadBrowseFile(path) {
+      const cached = _browseFileCache.get(path);
+      if (cached) return cached;
+      const text = await fetchText(path);
+      const lead = [];
+      for (const line of text.split('\n')) {
+        const m = /^\s*;+\s?(.*)$/.exec(line);
+        if (!m) break;
+        lead.push(m[1]);
+      }
+      const about = lead.join(' ').replace(/\s+/g, ' ').trim();
+      const entry = { text, about };
+      _browseFileCache.set(path, entry);
+      return entry;
+    }
+
+    async function renderBrowseFiles(host, key) {
+      const snippet = key === 'snippets';
       const head = document.createElement('div');
       head.className = 'browse-head';
-      head.textContent = 'Opening a score replaces what is in the editor.';
+      head.textContent = snippet
+        ? '\u25b6 plays a snippet on its own \u2014 the score in the editor is untouched. Insert puts it at the cursor (its imports go to the top).'
+        : '\u25b6 plays a score without opening it. Open replaces what is in the editor.';
       host.appendChild(head);
-      for (const path of _browseCatalog.scores) {
-        const row = document.createElement('button');
+      const paths = snippet ? _browseCatalog.snippets : _browseCatalog.scores;
+      const loaded = await Promise.all(paths.map(async (path) => {
+        try { return { path, ...(await loadBrowseFile(path)) }; }
+        catch (e) { log('Browse: ' + e.message, 'err'); return null; }
+      }));
+      let section = null;
+      for (const f of loaded) {
+        if (!f) continue;
+        const dir = f.path.replace(/\/[^/]*$/, '');
+        if (snippet && dir !== section) {
+          section = dir;
+          const sub = document.createElement('div');
+          sub.className = 'browse-sub';
+          sub.textContent = dir.replace(/^snippets\//, '');
+          host.appendChild(sub);
+        }
+        const file = { path: f.path, text: f.text, snippet };
+        const row = document.createElement('div');
         row.className = 'browse-row';
+        row.title = f.about;
+        const play = document.createElement('button');
+        play.className = 'browse-mini';
+        play.textContent = '\u25b6';
+        play.title = 'Play';
+        play.onclick = (e) => { e.stopPropagation(); toggleBrowseScorePreview(file); };
         const name = document.createElement('span');
         name.className = 'browse-name';
-        name.textContent = path.split('/').pop();
-        const dir = document.createElement('span');
-        dir.className = 'browse-kind';
-        dir.textContent = path.replace(/\/[^/]*$/, '');
-        row.append(name, dir);
-        row._browse = { score: path };
-        row.onclick = () => openBrowseScore(path);
+        name.textContent = f.path.split('/').pop().replace(/\.mmlisp$/, '');
+        row.append(play, name);
+        if (!snippet) {
+          const where = document.createElement('span');
+          where.className = 'browse-kind';
+          where.textContent = dir;
+          row.appendChild(where);
+        }
+        const act = (label, fn, title) => {
+          const b = document.createElement('button');
+          b.className = 'browse-mini';
+          b.textContent = label;
+          if (title) b.title = title;
+          b.onclick = (e) => { e.stopPropagation(); fn(); };
+          row.appendChild(b);
+        };
+        if (snippet) act('Insert', () => insertBrowseSnippet(file), 'Insert at the cursor');
+        act('Open', () => openBrowseScore(f.path, browseCompileName(file)),
+          'Open in the editor, replacing what is there');
+        row._browse = { file, about: f.about };
+        row.addEventListener('click', () => highlightBrowseRow(browseRows().indexOf(row)));
         host.appendChild(row);
       }
     }
@@ -5024,6 +5212,7 @@
     // PCM run is already queued inside the worklet, so only a flush recalls it
     // (safe here because a sample preview refuses to start during playback).
     function stopBrowsePreview() {
+      stopBrowseScorePreview();
       for (const t of _browsePreviewTimers) clearTimeout(t);
       _browsePreviewTimers = [];
       previewNoteOff(CURSOR_DEF_PREVIEW_CH);
@@ -5125,6 +5314,53 @@
       setBrowseNote(`${def.name} \u2014 ${range}, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
     }
 
+    // A SCORE PLAYS ON ITS OWN PLAYER, never through the editor's: the song
+    // being written keeps its IR, its source map and its mixer state, and the
+    // next Play or Build puts its PCM bank back (as a sample preview does).
+    // The chip is one chip, so the song stops first.
+    async function toggleBrowseScorePreview(file) {
+      if (_browseScorePlayer && _browseScorePath === file.path) {
+        stopBrowseScorePreview();
+        setBrowseNote('Stopped.');
+        return;
+      }
+      if (!(await initAudio())) return;
+      stopBrowsePreview();
+      if (player) onStop();
+      try {
+        const name = browseCompileName(file);
+        const imports = await readImportSources(file.text, name);
+        const { ir, diagnostics } = compileMMLisp(file.text, name, { imports });
+        const errors = diagnostics.filter((d) => d.severity === 'error');
+        if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
+        if (!ir.tracks.some((t) => t.events.some((e) => /NOTE_ON$/.test(e.cmd)))) {
+          setBrowseNote('No tracks to play.');
+          return;
+        }
+        const p = new IRPlayer(writeToWorklet);
+        p.loadJSON(ir);
+        p.setOnTrig((t, code) => logTrig(ir, t, code));
+        await syncPcmBankToWorklet(ir);
+        p.play(audioCtx);
+        _browseScorePlayer = p;
+        _browseScorePath = file.path;
+        const sliders = ir.metadata?.vals?.length
+          ? ' Its sliders appear once you open it.' : '';
+        setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
+      } catch (e) {
+        log('Browse: ' + e.message, 'err');
+        setBrowseNote(String(e.message));
+      }
+    }
+
+    function stopBrowseScorePreview() {
+      if (!_browseScorePlayer) return;
+      _browseScorePlayer.stop();
+      workletNode?.port.postMessage({ type: 'flush' });
+      _browseScorePlayer = null;
+      _browseScorePath = null;
+    }
+
     function bankBytesUsed(bank) {
       let last = 0;
       for (let i = 0; i < bank.length; i++) if (bank[i] !== 0) last = i + 1;
@@ -5150,19 +5386,41 @@
       setBrowseNote(`Inserted ${def.name} (${to - from + 1} lines)`);
     }
 
+    // A snippet's imports go to the top of the score, each once; the rest of
+    // it lands at the cursor. Both edits are one transaction, so one undo
+    // takes the whole snippet back out.
+    function insertBrowseSnippet(file) {
+      const importLine = /^\s*\(import\s+"([^"]+)"\)\s*(;.*)?$/;
+      const lines = file.text.split('\n');
+      const have = new Set(collectImports(editorView.state.doc.toString()));
+      const imports = lines
+        .filter((l) => importLine.test(l) && !have.has(importLine.exec(l)[1]))
+        .map((l) => l.trim());
+      const body = lines.filter((l) => !importLine.test(l)).join('\n').trim() + '\n';
+      const sel = editorView.state.selection.main;
+      const changes = [];
+      if (imports.length) changes.push({ from: 0, insert: imports.join('\n') + '\n' });
+      changes.push({ from: sel.from, to: sel.to, insert: body });
+      editorView.dispatch({ changes });
+      const name = file.path.split('/').pop();
+      setBrowseNote(`Inserted ${name}` + (imports.length ? ` and ${imports.length} import${imports.length > 1 ? 's' : ''}` : ''));
+    }
+
     // Open a served score. Its full path becomes the compile filename, so its
     // imports and its samples' `:file` resolve against its own folder rather
-    // than the site root (docs/language.md §9.2, §16).
-    async function openBrowseScore(path) {
+    // than the site root (docs/language.md §9.2, §16). A snippet is written
+    // for the root, so it opens under its bare name, like a new score.
+    async function openBrowseScore(path, compileName = path) {
       try {
         const src = await fetchText(path);
+        stopBrowsePreview();
         clearSourceDir();
         _sourceHandle = null;
         _sourceFileName = path.split('/').pop();
         currentIrURL = null;
         _lastGoodIR = null;
         _lastSourceMap = null;
-        _lastFileName = path;
+        _lastFileName = compileName;
         setEditorDoc(src);
         await refreshImportsAndCompile();
         closeBrowse();

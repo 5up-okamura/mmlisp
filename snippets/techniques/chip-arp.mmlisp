@@ -1,0 +1,13 @@
+; The chiptune chord: one square channel cycling through the notes of a chord
+; every couple of frames, fast enough to blur into a chord. :semi is the
+; offset in semitones from the written note; :hold at the front loops the
+; whole list. Put the pattern in a def and name the chord shape.
+(def major (macro :step 2f :semi [:hold 0 4 7]))
+(def minor (macro :step 2f :semi [:hold 0 3 7]))
+(def sus4  (macro :step 2f :semi [:hold 0 5 7]))
+
+(sqr1 :tempo 140 :oct 4 :len 2 :vel 12
+  major c c minor a a  major f f  sus4 g major g)
+
+(sqr2 :oct 3 :len 8 :vel 11
+  (x 4 c > c <) (x 4 a > a <) (x 4 f > f <) (x 4 g > g <))

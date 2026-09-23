@@ -1,0 +1,16 @@
+; PCM drums from a preset kit. The import brings the kit's names (kick,
+; snare, hat...); only the samples you actually play are baked into the
+; 32 KB bank. pcm-voices trades voices for quality: 1 voice plays at 14.4
+; kHz, 2 at 10.1 kHz, 3 at 6.7 kHz.
+(import "presets/808/set.mmlisp")
+(import "presets/gm/set.mmlisp")
+(def pcm-voices 2)
+
+(pcm1 :tempo 104 :len 16
+  (x 2 kick c _ _ c  snare c _ _ kick c  _ c kick c  snare c _ clap c _))
+
+(pcm2 :len 16 :vel 11
+  (x 8 hat c c hat-open c hat c))
+
+(fm1 :oct 2 :len 16 gm-bass-syn2
+  (x 2 c _ c _  _ _ c e-  _ _ g _  f _ e- _))
