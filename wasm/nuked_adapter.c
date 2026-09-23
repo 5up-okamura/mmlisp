@@ -123,13 +123,19 @@ int nopn_render(int sample_count) {
 
     // Per-channel scope taps: after a full 24-clock sample every channel's
     // ch_out holds the value computed for this sample. With the DAC on,
-    // channel 6's slot in the mix is the DAC byte, so tap dacdata instead.
+    // channel 6's slot in the mix is the DAC byte, so tap dacdata instead —
+    // SIGN-EXTENDED, as the chip's own output path does it (ym3438.c,
+    // SIGN_EXTEND(8, dacdata)). dacdata is the raw 9-bit latch, so read as it
+    // stands every negative sample showed as a large positive one: the trace
+    // was all above zero and up to twice a channel's full scale, while what
+    // the listener heard was correct.
     int16_t *ch_tap = &g_ch_buffer[sample_index * 6];
     for (int c = 0; c < 6; c++) {
       ch_tap[c] = g_chip.ch_out[c];
     }
     if (g_dac_enabled) {
-      ch_tap[5] = g_chip.dacdata;
+      int d = g_chip.dacdata & 0x1ff;
+      ch_tap[5] = (int16_t)((d & 0x100) ? d - 0x200 : d);
     }
   }
 
