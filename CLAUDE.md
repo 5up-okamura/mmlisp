@@ -23,7 +23,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
-| `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `player/wasm/`) |
+| `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.3 + the sample bank), `drv-player.js` (JS reference

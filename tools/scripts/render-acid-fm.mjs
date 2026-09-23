@@ -5,7 +5,7 @@ import os from 'node:os';
 import nodePath from 'node:path';
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
-import makeCore from '../../player/wasm/dist/nuked-opn2.js';
+import makeCore from '../../live/nuked-opn2.js';
 import {compileMMLisp} from '../../live/src/mmlisp2ir.js';
 import {encodeMmb} from '../../live/src/export-mmb.js';
 import {IRPlayer} from '../../live/src/ir-player.js';

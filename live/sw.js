@@ -2,7 +2,7 @@
 //
 // Scope: /live/ (registered as ./sw.js from /live/index.html). Once this worker
 // controls the page it intercepts *all* fetches that page makes — including the
-// same-origin WASM under /player/wasm/ and the cross-origin CDN modules — not
+// same-origin WASM beside this file and the cross-origin CDN modules — not
 // just requests under the scope path.
 //
 // Strategy: installable + fast repeat loads, NOT guaranteed full offline. There
