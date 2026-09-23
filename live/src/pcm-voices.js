@@ -21,10 +21,9 @@ import {
   PCM_MASTER_MAX_SHIFT,
   PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
-import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER } from "./slot-builder.js";
+import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
 import { pcmLoopPoints, pcmShotPoints, PCM_WINDOW } from "./pcm-model.js";
 
-export const PCM_VOICE_COUNT = 3;
 
 const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
 
@@ -61,7 +60,7 @@ export class PcmVoices {
   /** @param {(cmd: number[]) => void} emit */
   constructor(emit) {
     this.emit = emit;
-    this.voices = Array.from({ length: PCM_VOICE_COUNT }, newPcmVoice);
+    this.voices = Array.from({ length: PCM_VOICES }, newPcmVoice);
     // Master's own shift, and the last one sent. The engine boots at unity, so
     // 0 is what it already has: a score that merely restates `master 31` must
     // emit nothing.
@@ -113,7 +112,7 @@ export class PcmVoices {
   // recomposed and in that order (the mute reads the new master shift).
   setMaster(master) {
     this.composeMaster(master);
-    for (let vi = 0; vi < PCM_VOICE_COUNT; vi++) this.composeShift(vi, master);
+    for (let vi = 0; vi < PCM_VOICES; vi++) this.composeShift(vi, master);
   }
 
   // Send END/WRAP, but only when they actually moved. A swept loop point is
@@ -232,7 +231,7 @@ export class PcmIrVoices {
     this.bank = bank;
     this.master = 31;
     /** The track each voice last played, for the editor's per-track faders. */
-    this.voiceTrack = new Array(PCM_VOICE_COUNT).fill(null);
+    this.voiceTrack = new Array(PCM_VOICES).fill(null);
   }
 
   /** One event: {kind: on|off|vol|vel|master|loop, voice, …}. */

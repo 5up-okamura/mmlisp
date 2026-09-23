@@ -45,6 +45,7 @@ import {
 import {
   pitchToMidi,
   clampForTarget,
+  YM2612_MASTER_CLOCK,
   sampleCurveUnit,
   FRAME_HZ_NTSC,
   FRAME_HZ_PAL,
@@ -57,8 +58,6 @@ const PCM_LOOP_MAX = 0x7f00;
 import { dedupEventStream } from "./mmb-dedup.js";
 import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
 import { engineImage } from "./engine-images.js";
-
-const YM2612_MASTER_CLOCK = 7670454; // NTSC; matches ir-player.js
 
 // NOTE_ON macro spec key → target name (opcodes.md §7). Most keys uppercase
 // directly (vol→VOL, fm_tl1→FM_TL1, note_semi→NOTE_SEMI); velMacro/pitchMacro

@@ -17,11 +17,11 @@
 
 // VGM timing is always referenced to a fixed 44100 Hz sample clock, regardless
 // of the chip clocks below.
+import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "./ir-utils.js";
+
 const VGM_SAMPLE_RATE = 44100;
 
 // NTSC Mega Drive clocks (master 53.693175 MHz; YM2612 = /7, SN76489 = /15).
-const YM2612_CLOCK = 7670454;
-const SN76489_CLOCK = 3579545;
 // SN76489 as wired in the Mega Drive: white-noise feedback taps 0x0009, 16-bit
 // shift register.
 const SN76489_FEEDBACK = 0x0009;
@@ -128,7 +128,7 @@ function assembleVgm(data, gd3, { totalSamples, loopOffsetInData, loopSamples })
   buf[3] = 0x20;
   u32(0x04, total - 0x04); // EOF offset (relative to 0x04)
   u32(0x08, VGM_VERSION);
-  u32(0x0c, SN76489_CLOCK);
+  u32(0x0c, PSG_MASTER_CLOCK);
   u32(0x10, 0); // YM2413 clock
   u32(0x14, gd3 ? gd3Start - 0x14 : 0); // GD3 offset (relative to 0x14)
   u32(0x18, totalSamples);
@@ -144,7 +144,7 @@ function assembleVgm(data, gd3, { totalSamples, loopOffsetInData, loopSamples })
   u16(0x28, SN76489_FEEDBACK);
   buf[0x2a] = SN76489_SHIFT_WIDTH;
   buf[0x2b] = 0; // SN76489 flags
-  u32(0x2c, YM2612_CLOCK);
+  u32(0x2c, YM2612_MASTER_CLOCK);
   u32(0x30, 0); // YM2151 clock
   u32(0x34, DATA_START - 0x34); // VGM data offset (relative to 0x34)
 

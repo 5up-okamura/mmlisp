@@ -54,10 +54,10 @@ import {
   headerFrameHz,
   tickIncrementToBpm,
   pcmBankStamp,
-  SAMPLE_ENTRY_SIZE,
 } from "./mmb.js";
 import {
   toSlotValue,
+  midiToPsgPeriod,
   midiToFnumBlock,
   velToTlAtten,
   volToTlOffset,
@@ -72,7 +72,6 @@ import {
   detuneFromReg,
   encode80,
   fmCarrierOpsForAlg,
-  PSG_MASTER_CLOCK,
   FRAME_HZ_NTSC,
 } from "./ir-utils.js";
 
@@ -94,13 +93,7 @@ function buildLuts() {
   }
   // note → SN76489 tone period (10 bit), u16.
   const psgPeriod = new Uint16Array(128);
-  for (let n = 0; n < 128; n++) {
-    const freq = 440 * Math.pow(2, (n - 69) / 12);
-    psgPeriod[n] = Math.max(
-      1,
-      Math.min(1023, Math.round(PSG_MASTER_CLOCK / (32 * freq))),
-    );
-  }
+  for (let n = 0; n < 128; n++) psgPeriod[n] = midiToPsgPeriod(n);
   // Level offset tables (driver.md §7). Stored as float-exact step offsets;
   // composition sums them and rounds once (integer end result), matching the
   // player's float-sum-then-quantize within the documented ±2 TL band.
@@ -179,7 +172,7 @@ import {
   SLOT_SUBS,
   PCM_START,
 } from "./slot-builder.js";
-import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR } from "./pcm-model.js";
+import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR, parsePcmBank } from "./pcm-model.js";
 import { PcmVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
 
@@ -321,11 +314,11 @@ export class DrvPlayer {
           : new Uint8Array(sampleBankBytes);
     if (sampleBank) {
       sampleData = sampleBank;
-      const n = u16(sampleBank, 0);
+      // The engine model reads the bank; this player only grades the stamp.
+      const { stamp, entries } = parsePcmBank(sampleBank);
       // The bank stamps the image rate its blobs were baked at (mmb.md §10).
       // Baked data is bound to that rate: played under another the pitch is
       // quietly wrong, so the mismatch is reported here rather than heard.
-      const stamp = u16(sampleBank, 2);
       const want = pcmBankStamp(engineImage(pcmVoices).rateHz);
       if (stamp !== want) {
         this._diagnostics.push({
@@ -334,18 +327,7 @@ export class DrvPlayer {
           message: `sample bank baked for ${stamp} Hz; the pcm${Math.max(1, pcmVoices)} image runs at ${want} Hz`,
         });
       }
-      const blobBase = 4 + n * SAMPLE_ENTRY_SIZE;
-      for (let i = 0; i < n; i++) {
-        const e = 4 + i * SAMPLE_ENTRY_SIZE;
-        samples[sampleBank[e]] = {
-          hasLoop: (sampleBank[e + 1] & 1) !== 0,
-          base: blobBase + u32(sampleBank, e + 4),
-          len: u32(sampleBank, e + 8),
-          srcFrames: u32(sampleBank, e + 12),
-          loopStart: u32(sampleBank, e + 16),
-          loopEnd: u32(sampleBank, e + 20),
-        };
-      }
+      for (const id in entries) samples[id] = entries[id];
     }
 
     // MACRO_TABLE (mmb.md §15): 8-byte descriptors + a value blob. Parsed into

@@ -390,9 +390,10 @@ export function tickIncrementToBpm(inc, frameHz = FRAME_HZ_NTSC) {
 // silence to whole 16-sample blocks so the engine's block edge never cuts a
 // shot short. Loops are not unrolled — the sequencer sends loop points as they
 // are, rounded to blocks (live/src/pcm-model.js pcmLoopPoints).
-export const PCM_BLOCK = 16;
-/** Bytes of one v0.3 sample-bank entry. */
-export const SAMPLE_ENTRY_SIZE = 24;
+// The engine's block size and the bank's entry size are the engine model's
+// (live/src/pcm-model.js) and re-exported here, so the format tables and the
+// model it describes cannot drift apart.
+export { PCM_BLOCK, SAMPLE_ENTRY_SIZE } from "./pcm-model.js";
 /** The rate to resample to so `note` advances one byte a sample at `rateHz`. */
 export function pcmBakeRateAt(note, rateHz) {
   return rateHz / Math.pow(2, (note - 60) / 12);

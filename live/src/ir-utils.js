@@ -156,9 +156,30 @@ export function pitchToMidi(pitchStr) {
 }
 
 // ---------------------------------------------------------------------------
-// MIDI pitch → YM2612 F-number + block
-// Calibrated for NTSC Mega Drive master clock 7670454 Hz.
+// MIDI pitch → frequency, and the two chips' period/F-number encodings
+// Calibrated for the NTSC Mega Drive master clocks below.
 // ---------------------------------------------------------------------------
+
+/** The YM2612's clock (NTSC Mega Drive). */
+export const YM2612_MASTER_CLOCK = 7670454;
+
+/**
+ * Equal temperament around A4 = 440 Hz. Fractional `midiNote` is meaningful —
+ * a cent is 1/100 of a note — so every pitch path (compiler, both players,
+ * the exporters) goes through this one conversion.
+ */
+export function midiToHz(midiNote) {
+  return 440 * Math.pow(2, (midiNote - 69) / 12);
+}
+
+/**
+ * MIDI note → SN76489 tone period. The PSG divides its clock by 32 per period
+ * step; 1 is the shortest period the counter holds and 1023 the longest.
+ */
+export function midiToPsgPeriod(midiNote) {
+  const freq = midiToHz(midiNote);
+  return Math.max(1, Math.min(1023, Math.round(PSG_MASTER_CLOCK / (32 * freq))));
+}
 
 // YM2612 frequency formula: fnum = freq * 2^(21-block) / (MASTER_CLOCK/144)
 // MASTER_CLOCK/144 ≈ 53267 Hz (7,670,454 Hz / 144)
@@ -166,7 +187,7 @@ export function pitchToMidi(pitchStr) {
 const FM_CLOCK_DIV = 53267;
 
 export function midiToFnumBlock(midiNote) {
-  const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+  const freq = midiToHz(midiNote);
   let block = 4;
   let fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
   while (fnum > 1023 && block < 7) {

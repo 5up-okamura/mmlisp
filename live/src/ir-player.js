@@ -17,6 +17,8 @@
 import {
   clampForTarget,
   toSlotValue,
+  midiToPsgPeriod,
+  YM2612_MASTER_CLOCK,
   pitchToMidi,
   midiToFnumBlock,
   velToTlAtten,
@@ -39,15 +41,12 @@ import {
   CH_NAME_TO_INDEX,
   PSG_CH_NAME_TO_INDEX,
   PCM_CH_NAME_TO_INDEX,
-  PSG_MASTER_CLOCK,
   KEY_OFF_LEAD_SECS,
   KEY_ORDER_EPS_SECS,
   HOLD_FRAMES,
 } from "./ir-utils.js";
 import { curveId, curveUnit8, sweepValue, sweepStep } from "./mmb.js";
 import { engineImage } from "./engine-images.js";
-
-const YM2612_MASTER_CLOCK = 7670454;
 // The largest loop point a PCM loop target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
 const PCM_LOOP_MAX = 0x7f00;
@@ -3518,11 +3517,7 @@ export class IRPlayer {
 
   // Set tone period for a PSG tone channel (ch 0-2).
   _psgSetPitch(psgCh, midi, when) {
-    const freq = 440 * Math.pow(2, (midi - 69) / 12);
-    const period = Math.max(
-      1,
-      Math.min(1023, Math.round(PSG_MASTER_CLOCK / (32 * freq))),
-    );
+    const period = midiToPsgPeriod(midi);
     // Latch byte: low 4 bits of period
     this._psgWriteByte(0x80 | ((psgCh & 0x03) << 5) | (period & 0x0f), when);
     // Data byte: high 6 bits of period

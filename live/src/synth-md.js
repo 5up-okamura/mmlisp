@@ -25,10 +25,11 @@
 
 import createNukedModule from "../nuked-opn2.js";
 import createPsgModule from "../nuked-psg.js";
+import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "./ir-utils.js";
 
 // NTSC Mega Drive native rates (master 53.693175 MHz; YM2612 /144, PSG /16).
-export const NUKED_NATIVE_SAMPLE_RATE = 7670454 / 144;
-export const PSG_NATIVE_SAMPLE_RATE = 3579545 / 16;
+export const NUKED_NATIVE_SAMPLE_RATE = YM2612_MASTER_CLOCK / 144;
+export const PSG_NATIVE_SAMPLE_RATE = PSG_MASTER_CLOCK / 16;
 // Mega Drive Model 1 analog output low-pass default cutoff (Hz).
 export const MD_LPF_DEFAULT_CUTOFF = 3000;
 

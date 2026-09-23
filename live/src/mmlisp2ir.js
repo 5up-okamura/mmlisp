@@ -12,6 +12,7 @@
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
+  midiToHz,
   pitchToMidi,
   sampleCurveUnit,
   FRAME_HZ_NTSC,
@@ -2560,8 +2561,7 @@ function clampCsmRateHz(hz, diagnostics, src, trackName) {
 }
 
 function csmPitchToHz(pitch) {
-  const midi = pitchToMidi(pitch);
-  return 440 * Math.pow(2, (midi - 69) / 12);
+  return midiToHz(pitchToMidi(pitch));
 }
 
 function csmTrackPitch(trackState, noteName, diagnostics, src, trackName) {

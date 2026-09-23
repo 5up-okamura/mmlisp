@@ -48,10 +48,10 @@ import {
 import { PcmLiveEngine, parsePcmBank } from "./src/pcm-model.js";
 import { PcmIrVoices } from "./src/pcm-voices.js";
 import { engineImage } from "./src/engine-images.js";
+import { PSG_MASTER_CLOCK } from "./src/ir-utils.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 const SCOPE_FLUSH = 1024; // scope samples per batch posted to the main thread
-const PSG_CLOCK = 3579545; // NTSC Z80 clock driving the PSG
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
@@ -333,7 +333,7 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   _updatePsgFreq(ch) {
     const n = this._psgTone[ch] || 0x400; // period 0 counts as 0x400
-    this._scopeFreq[6 + ch] = PSG_CLOCK / (32 * n);
+    this._scopeFreq[6 + ch] = PSG_MASTER_CLOCK / (32 * n);
   }
 
   // The score's bank (null = none). The engine and the voice model restart

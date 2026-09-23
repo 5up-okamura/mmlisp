@@ -252,15 +252,15 @@ export class PcmLiveEngine {
 // {stamp, entries[id] = {hasLoop, base, len, srcFrames, loopStart, loopEnd}}:
 // `base` is the blob's offset in the bank, so its window address is
 // PCM_WINDOW + ((bankBase * 0x8000 + base) & 0x7fff).
-export const PCM_BANK_ENTRY_SIZE = 24;
+export const SAMPLE_ENTRY_SIZE = 24;
 export function parsePcmBank(bank) {
   const u16 = (o) => bank[o] | (bank[o + 1] << 8);
   const u32 = (o) => (bank[o] | (bank[o + 1] << 8) | (bank[o + 2] << 16) | (bank[o + 3] << 24)) >>> 0;
   const n = u16(0);
-  const blobBase = 4 + n * PCM_BANK_ENTRY_SIZE;
+  const blobBase = 4 + n * SAMPLE_ENTRY_SIZE;
   const entries = [];
   for (let i = 0; i < n; i++) {
-    const e = 4 + i * PCM_BANK_ENTRY_SIZE;
+    const e = 4 + i * SAMPLE_ENTRY_SIZE;
     entries[bank[e]] = {
       hasLoop: (bank[e + 1] & 1) !== 0,
       base: blobBase + u32(e + 4),
