@@ -4,8 +4,8 @@
   "private": true,
   "description": "Minimal local tooling for MMLisp draft workflow",
   "scripts": {
-    "format:mmlisp": "node scripts/format-mmlisp.js ../examples/source/*.mmlisp",
-    "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../examples/source/*.mmlisp",
+    "format:mmlisp": "node scripts/format-mmlisp.js ../examples/source/*.mmlisp ../presets/*/set.mmlisp",
+    "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../examples/source/*.mmlisp ../presets/*/set.mmlisp",
     "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
     "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js"

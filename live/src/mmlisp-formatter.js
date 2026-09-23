@@ -97,9 +97,12 @@ function normalizeListItems(items) {
       if (!rest) {
         continue;
       }
-      // Only split if the remainder looks like a value (digit, +/- followed by digit,
-      // or a quoted string start), not a keyword continuation (letter or hyphen).
-      if (/^[a-zA-Z-]/.test(rest)) {
+      // Only split when the remainder IS a value — a digit, `+`digit, `.`digit
+      // or a quoted string. Anything else is part of the keyword: a letter or
+      // hyphen continues its name, and `*` / `+` are the suffixes the language
+      // spells on the keyword itself (`:gate*`, `:oct*`, `:tl2+`), which must
+      // never be cut off from it.
+      if (!/^(?:\d|\+\d|\.\d|")/.test(rest)) {
         continue;
       }
       out.push(cloneAtom(item, key));

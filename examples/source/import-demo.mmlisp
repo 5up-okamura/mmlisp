@@ -9,8 +9,10 @@
 
 (fm1 :tempo 140 :oct 4 :len 8 :vel 13
   lead vib
-  c e g > c < b g e c)
+  c e g > c < b g e c
+)
 
 (fm2 :oct 2 :len 4 :vel 12
   bass
-  c g c g)
+  c g c g
+)
