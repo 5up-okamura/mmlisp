@@ -133,7 +133,7 @@ graded write by write and DAC byte by DAC byte in an emulator. See
 - `examples/` — demo songs and test assets
 - `tools/` — command-line compiler and validation scripts
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`
-- `player/`, `third_party/` — chip emulator cores (Nuked-OPN2 WASM build)
+- `wasm/`, `third_party/` — the vendored YM2612 / PSG cores and their WASM build
 
 File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 
@@ -175,9 +175,12 @@ MIT License — Copyright (c) 2026 Hiroshi Okamura (5&UP Inc.)
 
 See [LICENSE](LICENSE) for the full text.
 
-This repository also vendors `Nuked-OPN2` under `third_party/Nuked-OPN2`, which
-is licensed separately under LGPL-2.1-or-later. See
-`THIRD_PARTY_NOTICES.md` and `third_party/Nuked-OPN2/LICENSE`.
+This repository also vendors the two chip cores it emulates with, each licensed
+separately: `Nuked-OPN2` (LGPL-2.1-or-later) and `Nuked-PSG`
+(**GPL-2.0-or-later**), both under `third_party/`. MMLisp Live ships builds of
+both as `live/nuked-opn2.js` and `live/nuked-psg.js`, so a distribution of the
+app carries those terms for those components. See `THIRD_PARTY_NOTICES.md` and
+each core's `LICENSE`.
 
 ### mucom88 import
 
