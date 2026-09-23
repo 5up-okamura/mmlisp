@@ -25,6 +25,13 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
    PSG `:keyon` works on the driver only. The exporter comment says restarting
    the soft envelopes is intended — which wins?
 4. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
+   Since 2026-09-24 this has teeth — Timer A really runs while CSM is on (it
+   never did before: LOAD A was never set, so no CSM score had ever sounded),
+   and a rest on `fm3-csm-rate` leaves it running at the last rate, so the
+   buzz continues. Silencing mid-track needs a mechanism: clear LOAD A on a
+   rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
+   start level in this mode, not an attenuation). The preview's mixer mute
+   already holds Timer A; the language has no way to.
 5. **`:len 0` then more events** (§17): the IR/preview play them at the same
    tick; the driver waits for the host KEY_OFF.
 6. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
