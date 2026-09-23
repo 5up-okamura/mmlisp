@@ -16,6 +16,11 @@ Rules:
 
 ## Index
 
+- [plan-release.md](plan-release.md) — **the release checklist from the
+  2026-09-21 whole-repo review.** Its four decisions are settled (the deploy
+  layout, the Nuked-PSG notices, `$slot` clamping, deleting `player/`), each
+  with the reasoning. What remains is judgment-free: the facts to correct, the
+  dead code to cut and the history to remove from the docs.
 - [driver-decisions.md](driver-decisions.md) — **why MMLispDRV is shaped as it
   is.** The measurement that moved the sequencer off the Z80, which of the
   pivot's decisions were later reversed, the competitor survey (XGM2's hardware
