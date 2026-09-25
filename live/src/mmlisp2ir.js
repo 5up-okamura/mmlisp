@@ -919,6 +919,45 @@ function emitEvalNote(node, trackState, events, diagnostics, trackName, typedDef
   trackState.defaultOct = savedOct;
 }
 
+// What a following note connects to: the previous pitch (a `~` tie/slur and a
+// glide start from it), a pending `~`, and the head of the sounding tied group
+// (whose gate a tie extends). Compiled in stream order, but a loop is not
+// played in stream order — these carry the state across its edges.
+function connectionState(ts) {
+  return {
+    lastNotePitch: ts.lastNotePitch,
+    pendingLegato: ts.pendingLegato,
+    tiedHead: ts.tiedHead,
+  };
+}
+function restoreConnectionState(ts, st) {
+  ts.lastNotePitch = st.lastNotePitch;
+  ts.pendingLegato = st.pendingLegato;
+  ts.tiedHead = st.tiedHead;
+}
+
+// A `~` pending at a backward jump connects to the jump target's first note.
+// The target was compiled for the path that first entered it: when that note
+// is a TIE (the entry was tied into it), the tail is tied into it too, so the
+// tail note's gate is re-resolved across the TIE run — else it keys off at its
+// own gate and the tie extends silence. The pending `~` itself stays for the
+// stream-order successor (a counted loop's last pass falls through to it).
+function connectAcrossJump(ts, events, fromIdx) {
+  if (!ts.pendingLegato || !ts.tiedHead) return;
+  let tieLen = 0;
+  for (let k = fromIdx; k < events.length; k++) {
+    const c = events[k].cmd;
+    if (c === "TIE") tieLen += events[k].args?.length ?? 0;
+    else if (c === "NOTE_ON" || c === "REST" || c === "PCM_NOTE_ON") break;
+  }
+  if (tieLen === 0) return;
+  const head = ts.tiedHead;
+  const total = head.total + tieLen;
+  const g = resolveGateTicks(head.gateSpec, total);
+  if (g < total) head.ev.args.gate = g;
+  else delete head.ev.args.gate;
+}
+
 /**
  * v0.4: Emit glide PARAM_SWEEP before NOTE_ON if glide is active.
  * Inserts a portamento slide from lastNotePitch to newPitch over glideTicks.
@@ -2997,6 +3036,13 @@ function compileChannelBody(
         // current (x …) loop, or null inside a `#label …(go label N)` loop where
         // convertCountedJumps assigns it after the forms merge.
         if (val === ":break") {
+          // The last pass leaves the loop HERE, so what follows the loop is
+          // connected to this point, not to the body's tail (see (x N …)).
+          if (trackState.currentLoopId)
+            (trackState.loopBreaks ??= new Map()).set(
+              trackState.currentLoopId,
+              connectionState(trackState),
+            );
           events.push({
             tick: trackState.tick,
             cmd: "LOOP_BREAK",
@@ -3820,6 +3866,7 @@ function compileChannelBody(
             args: { id: loopId },
             src: nodeSrc(node.items[0]),
           });
+          const bodyIdx = events.length;
           compileChannelBody(
             node.items.slice(bodyStart),
             trackState,
@@ -3831,6 +3878,9 @@ function compileChannelBody(
             vals,
             evalEnv,
           );
+          // A `~` ending the body also connects it to the body's head on the
+          // passes that loop back.
+          connectAcrossJump(trackState, events, bodyIdx);
           events.push({
             tick: trackState.tick,
             cmd: "LOOP_END",
@@ -3838,6 +3888,15 @@ function compileChannelBody(
             src: nodeSrc(node.items[0]),
           });
           trackState.currentLoopId = savedLoopId;
+          // With a :break the last pass never reaches the tail: the loop is
+          // left from the break, so the next note connects to what was sounding
+          // there (a ~ / glide / tie from the tail would reach a note the
+          // player never came from).
+          const brk = trackState.loopBreaks?.get(loopId);
+          if (brk) {
+            restoreConnectionState(trackState, brk);
+            trackState.loopBreaks.delete(loopId);
+          }
         } else {
           events.push({
             tick: trackState.tick,
@@ -3912,6 +3971,11 @@ function compileChannelBody(
             continue;
           }
         }
+        // A `~` before the jump connects to the label's first note.
+        const target = events.findIndex(
+          (e) => e.cmd === "MARKER" && e.args?.id === label,
+        );
+        if (target >= 0) connectAcrossJump(trackState, events, target + 1);
         events.push({
           tick: trackState.tick,
           cmd: "JUMP",

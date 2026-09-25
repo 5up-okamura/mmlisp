@@ -1586,14 +1586,26 @@ export class IRPlayer {
     let totalLength = baseLength;
     let expectedTieTick = ev.tick + baseLength;
 
-    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
-      const nextEv = track.events[i];
-      if (nextEv.tick > expectedTieTick) break;
-      if (nextEv.tick !== expectedTieTick || nextEv.cmd !== "TIE") continue;
+    // A note ending exactly at the loop's JUMP continues at the loop start —
+    // a TIE there extends it too (the compiler ties a `~` across the jump), so
+    // the scan wraps once.
+    const jumpTick = track.hasLoop ? track.loopStartTick + track.loopDuration : null;
+    let i = track.flatIndex + 1;
+    for (let wrapped = false; ; ) {
+      let stopped = false;
+      for (; i < track.events.length; i++) {
+        const nextEv = track.events[i];
+        if (nextEv.tick > expectedTieTick) { stopped = true; break; }
+        if (nextEv.tick !== expectedTieTick || nextEv.cmd !== "TIE") continue;
 
-      const tieLength = nextEv.args?.length ?? 0;
-      totalLength += tieLength;
-      expectedTieTick += tieLength;
+        const tieLength = nextEv.args?.length ?? 0;
+        totalLength += tieLength;
+        expectedTieTick += tieLength;
+      }
+      if (stopped || wrapped || expectedTieTick !== jumpTick) break;
+      wrapped = true;
+      expectedTieTick = track.loopStartTick;
+      i = track.loopStartIndex ?? 0;
     }
 
     return totalLength;

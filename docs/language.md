@@ -140,6 +140,13 @@ note keeps its own length, so `~` takes none.
   **without re-keying** — the FM envelope (or the PSG tone) carries over from
   `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
 
+`~` follows the loop's control flow, not the text order. A `~` ending a loop
+body connects to the body's first note on the passes that loop back, and one
+before `(go label)` to the label's first note — when that note is a tie
+continuation (`c ~ #loop (x 2 c2 …`), the tail is tied into it. With a `:break`
+the last pass leaves from the break, so the note after the loop connects to
+the note before the `:break` (a `~` on the body's tail does not reach it).
+
 The left note of a slur always sounds its **full slot**: its gate (`:gate`,
 `:gate*`, `:gate-`) is ignored, so it never keys off before the connection (a
 hold, gate 0, stays a hold). The right note keeps its own gate — end a slurred
