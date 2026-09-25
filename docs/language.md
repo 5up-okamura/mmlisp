@@ -140,9 +140,10 @@ note keeps its own length, so `~` takes none.
   **without re-keying** — the FM envelope (or the PSG tone) carries over from
   `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
 
-For the slur to sustain across the connection the left note needs a **full gate**
-(the default); a `:gate`-cut (staccato) note keys off first, so the slur starts
-from a decaying tone. Slur/legato is an **FM/PSG** feature (the macro/keying
+The left note of a slur always sounds its **full slot**: its gate (`:gate`,
+`:gate*`, `:gate-`) is ignored, so it never keys off before the connection (a
+hold, gate 0, stays a hold). The right note keeps its own gate — end a slurred
+run staccato and only the last note is cut. Slur/legato is an **FM/PSG** feature (the macro/keying
 model of channels 0–9); on other channels a different-pitch `~` is treated as a
 normal note. Encoded as `NOTE_ON_EX` bit3 (opcodes.md §5.1).
 
@@ -247,7 +248,7 @@ head position, and equally as body directives.)
 | `:len`     | length token              | Default note length; `0` = hold, no timeline advance     |
 | `:gate`    | length token              | Absolute sounding time per slot; `0` = hold until runtime KEY-OFF |
 | `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |
-| `:gate-`   | length token              | Gate = note length minus this time (floor 1 tick)        |
+| `:gate-`   | length token              | Gate = note length minus this time; a note no longer than it is not cut (full gate) |
 | `:vel`     | 0–15                      | Note-on velocity (also `:vel+` / `:vel*`)                |
 | `:vol`     | 0–31 or curve             | Channel fader → `PARAM_SET` / `PARAM_SWEEP`              |
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |

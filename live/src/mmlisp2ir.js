@@ -512,9 +512,10 @@ function resolveGateTicks(gateSpec, lengthTicks) {
       ? Math.max(1, Math.round(lengthTicks * gateSpec.value))
       : 0;
   // `cut`: shorten the gate by a fixed amount (key off early) — note length minus
-  // the cut, floored at 1 tick. Set by `:gate-cut`.
+  // the cut. A note no longer than the cut is not cut at all (full gate), as
+  // mucom's q: shortening it to a tick would leave nothing to hear.
   if (gateSpec.type === "cut")
-    return Math.max(1, lengthTicks - gateSpec.value);
+    return gateSpec.value >= lengthTicks ? lengthTicks : lengthTicks - gateSpec.value;
   return gateSpec.value;
 }
 
@@ -727,6 +728,12 @@ function emitNoteForTrack(
       return;
     }
     legato = true;
+    // A slur carries the left note into this one, so the left note (the head
+    // of its tied group) sounds its whole slot: a gate cut there would key it
+    // off before the slur and leave the new pitch nothing to ride. A hold
+    // (gate 0) already never keys off, so it stays.
+    const head = trackState.tiedHead;
+    if (head && head.ev.args.gate > 0) delete head.ev.args.gate;
   }
   if (isTrackPcmActive(trackState)) {
     const reported = (trackState.pcmReported ??= new Set());
