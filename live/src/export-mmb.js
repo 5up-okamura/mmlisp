@@ -1784,3 +1784,18 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
   const { bytes } = builder.finish(diag);
   return { bytes, entryIds: plan.entryIds, idFor: plan.idFor };
 }
+
+/**
+ * One sample baked at one note, as a whole bank — the editor's keyboard
+ * audition of the def under the cursor. The same bake an export does, so the
+ * key sounds what the song will.
+ * @returns {{ sampleBank: Uint8Array, entryIds: Record<string, number> }}
+ */
+export function bakeAuditionBank(ir, blobs, name, midi) {
+  const rateHz = engineImage(scorePcmVoices(ir)).rateHz;
+  const { bytes, entryIds } = buildSampleBank(ir, blobs, () => {}, new Map([[name, new Set([midi])]]), rateHz);
+  if (bytes.length > 0x7f00) throw new RangeError(`sample bank is ${bytes.length} bytes at this note; the window holds 32512`);
+  const sampleBank = new Uint8Array(0x8000);
+  sampleBank.set(bytes, 0);
+  return { sampleBank, entryIds };
+}

@@ -662,6 +662,7 @@ constant (`(def depth 40)`, usable inside expressions). A `let` is a **local**,
 | `(def name :alg … :tl1 … …)`          | FM voice, keyword map                   |
 | `(def name :extend base :tl1 … …)`    | FM voice inheriting `base` (child keys override; unknown/non-voice base is `E_EXTENDS_BASE_UNKNOWN`, cycles `E_EXTENDS_CYCLE`) |
 | `(def name :sample :file "…" …)`      | PCM sample (§16)                        |
+| `(def name :extend sample …)`         | PCM sample inheriting a sample def (§16) |
 | `(def name (macro :target spec …))`   | Macro preset — single or multi target   |
 | `(def name (macro :target none))`     | Clear-def — applying it clears that target's macro |
 
@@ -734,6 +735,12 @@ inline.
   index is the importing file's host-visible layout, and tracks are songs, not
   a library, so both are ignored with a `W_IMPORT_IGNORED` warning. Import
   folds defs only.
+- **`:effect`**: `(import "path" :effect [...])` puts one effect chain (§16)
+  on every sample the import brings in — a whole kit processed at once. It
+  runs **before** each def's own `:effect`, so the kit is evened out first and
+  a sound's own adjustment lands on top (a per-sound `gain` survives a
+  kit-wide `normalize`). Nested imports stack outermost first. Other defs are
+  untouched.
 - **Collision policy**: imported defs are overridable **defaults** — a local
   `def` of the same name **wins** silently (so you can import a bank and tweak
   one patch inline). Two different imported files defining the same name is an
@@ -1387,8 +1394,13 @@ choice, as for the loop points).
 - **Loud samples overlap loud.** Voices are summed and hard-clipped (above),
   so a kit brought up to full scale distorts where hits overlap — trade that
   against `:vel` / `:vol`.
-- One def is one processing: to play a sample two ways, write two defs on the
-  same `:file`. The file is decoded once; each def is baked separately.
+- **A kit, or a variant.** `(import "kit" :effect [...])` processes every
+  sample of a kit (§9.2); its chain runs before each def's own.
+  `(def snare-hot :extend snare :effect [...])` is a variant of one sound: it
+  takes the base's `:file` (still read from the base's folder), slice, loop
+  points and effects — the import's chain included — and overrides the keys it
+  writes; its own `:effect` replaces the base's, the import's stays in front.
+  A variant is a def of its own, so playing both bakes both.
 - An unknown effect is `E_SAMPLE_FX_UNKNOWN`; a bad or unknown param, or a
   missing required one, is `E_SAMPLE_FX_PARAM`; `:effect` given anything but
   a `[...]` is `E_SAMPLE_FX`.

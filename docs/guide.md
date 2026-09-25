@@ -879,7 +879,18 @@ to the driver (language.md §16):
 
 `(normalize)` scales a quiet file to full scale, `(crush 4)` is the lo-fi
 step, and `(fade …)` cuts the sample where it ends — which also frees bank
-space.
+space. A whole kit takes one chain on its import, and one sound a variant of
+its own:
+
+```lisp
+(import "presets/808/set.mmlisp" :effect [(comp :attack 0ms) (gain 6) (limit)])
+(def snare-hot :extend snare :effect [(fade :len 60ms)])
+```
+
+**Put the cursor on a sample def to play it from the keyboard**, as with an FM
+voice: each key bakes that def at that note, effects included, and plays it on
+the driver's engine. It takes over the PCM bank, so stop playback first; the
+next Play or Build puts the song's bank back.
 
 Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
 `:pitch`, `:semi`, `(glide …)` and a pitch vibrato are errors on a pcm track)

@@ -1663,7 +1663,9 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
   return chain;
 }
 
-function parseSampleDef(root, diagnostics) {
+// `first` is the first key: 3 for `(def name :sample …)`, 4 for a sample
+// `:extend`, whose :file comes from its base.
+function parseSampleDef(root, diagnostics, first = 3) {
   const bodyItems = root.items.filter((n) => n.kind !== "comment");
   const sample = {
     file: null,
@@ -1679,7 +1681,7 @@ function parseSampleDef(root, diagnostics) {
     effect: [],
   };
 
-  for (let ki = 3; ki + 1 < bodyItems.length; ki += 2) {
+  for (let ki = first; ki + 1 < bodyItems.length; ki += 2) {
     const key = atomValue(bodyItems[ki]);
     const rawVal = atomValue(bodyItems[ki + 1]);
     if (key === ":effect") {
@@ -1710,7 +1712,7 @@ function parseSampleDef(root, diagnostics) {
     }
   }
 
-  if (!sample.file) {
+  if (!sample.file && first === 3) {
     pushDiag(
       diagnostics,
       "error",
@@ -4518,7 +4520,8 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      imports.push({ path: pathNode.value, src: nodeSrc(root) });
+      const at = root.items.findIndex((n) => atomValue(n) === ":effect");
+      imports.push({ path: pathNode.value, src: nodeSrc(root), effectNode: at > 1 ? root.items[at + 1] : null });
       continue;
     }
 
@@ -4749,7 +4752,8 @@ function collectDefs(roots, diagnostics) {
             kwMap.set(canonicalTarget(kwSym), kwVal);
           }
         }
-        typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src });
+        // `node`: the def may turn out to extend a SAMPLE (resolveSampleExtends).
+        typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src, node: root });
       } else if (
         maybeTag?.startsWith(":alg") ||
         maybeTag?.startsWith(":fb") ||
@@ -4926,8 +4930,10 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
 
   const bundle = collectDefs(parse(text), diagnostics);
   warnImportIgnored(bundle, path, diagnostics, importSrc);
-  // The set's own wav/ lives next to it, not next to the score that imports it.
+  // The set's own wav/ lives next to it, not next to the score that imports it
+  // — and so does a sample `:extend`'s own :file.
   for (const sample of bundle.sampleDefs.values()) sample.baseDir = selfDir;
+  for (const td of bundle.typedDefs.values()) if (td.node) td.baseDir = selfDir;
 
   // Resolve this file's own imports first (siblings merged strictly), then let
   // this file's defs overlay them.
@@ -4943,7 +4949,7 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
       nextStack,
       selfDir,
     );
-    mergeImportsStrict(merged, sub, diagnostics, imp.src);
+    mergeImportsStrict(merged, withImportEffect(sub, imp.effectNode), diagnostics, imp.src);
   }
   overlayDefs(merged, bundle, selfPath);
 
@@ -4965,9 +4971,53 @@ function resolveImports(importForms, importSources, diagnostics, scoreDir) {
       [],
       scoreDir,
     );
-    mergeImportsStrict(merged, sub, diagnostics, imp.src);
+    mergeImportsStrict(merged, withImportEffect(sub, imp.effectNode), diagnostics, imp.src);
   }
   return merged;
+}
+
+// An import's `:effect` rides on every sample it brings in, AHEAD of the def's
+// own chain (the outermost import first): the kit is processed as a whole, then
+// each sound is adjusted on top, so a per-sound level survives a kit-wide
+// normalize. A copy — the cached bundle is shared by every importer.
+function withImportEffect(bundle, effectNode) {
+  if (!effectNode) return bundle;
+  const sampleDefs = new Map();
+  for (const [name, s] of bundle.sampleDefs)
+    sampleDefs.set(name, { ...s, importFx: [effectNode, ...(s.importFx ?? [])] });
+  return { ...bundle, sampleDefs };
+}
+
+// `(def child :extend base …)` on a SAMPLE base is a sample def: the child
+// takes the base's file (still read from the base's folder), slice, loop and
+// effects — the import's chain included — and overrides the keys it writes.
+// It is parsed as an FM voice until the base is known, since the def does not
+// say which kind it extends; a base that is not a sample leaves it one.
+function resolveSampleExtends(typedDefs, sampleDefs, diagnostics) {
+  const resolve = (name, seen) => {
+    if (sampleDefs.has(name)) return sampleDefs.get(name);
+    const td = typedDefs.get(name);
+    if (!td?.node || seen.has(name)) return null; // a cycle is the FM path's to report
+    seen.add(name);
+    const base = resolve(td.extends, seen);
+    if (!base) return null;
+    const own = parseSampleDef(td.node, diagnostics, 4);
+    const child = { ...base, src: td.src };
+    for (const k of ["rate", "offset", "frames", "loopStartTok", "effectNode"])
+      if (own[k] !== null) child[k] = own[k];
+    if (own.file !== null) {
+      child.file = own.file;
+      child.baseDir = td.baseDir;
+    }
+    if (own.loopEndTok !== null || own.loopLenTok !== null) {
+      child.loopEndTok = own.loopEndTok;
+      child.loopLenTok = own.loopLenTok;
+    }
+    typedDefs.delete(name);
+    sampleDefs.set(name, child);
+    return child;
+  };
+  for (const name of [...typedDefs.keys()]) resolve(name, new Set());
 }
 
 // Replace bare atoms matching a parameter name with the caller's argument node
@@ -5103,6 +5153,7 @@ function compileScore(src, filename, options, frameHz) {
       src: null,
     });
   }
+  resolveSampleExtends(typedDefs, sampleDefs, diagnostics);
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
   // v0.6: 1 file = 1 score. There is no (score …) wrapper — the post-expand
@@ -5145,11 +5196,21 @@ function compileScore(src, filename, options, frameHz) {
   // The unit is SECONDS in the sample's own time — what a wave editor shows —
   // and the exporter maps them per baked blob, so a loop stays where it was set
   // however the note transposes (docs/language.md §16).
+  // One resolve per :effect form: an import's chain is shared by every sample
+  // of the kit, and an :extend shares its base's, so each is checked once.
+  const fxResolved = new Map();
   for (const sample of sampleDefs.values()) {
     const bpm = scoreInitialBpm ?? 120;
-    if (sample.effectNode) {
-      sample.effect = resolveSampleEffects(sample.effectNode, bpm, diagnostics, sample.src ?? fileSrc);
-    }
+    const fx = (node) => {
+      if (!fxResolved.has(node))
+        fxResolved.set(node, resolveSampleEffects(node, bpm, diagnostics, sample.src ?? fileSrc));
+      return fxResolved.get(node);
+    };
+    // The import's chain first, then the def's own.
+    sample.effect = [
+      ...(sample.importFx ?? []).flatMap(fx),
+      ...(sample.effectNode ? fx(sample.effectNode) : []),
+    ];
     const sec = (tok, key) => {
       if (tok == null) return null;
       const v = lengthTokenSeconds(tok, bpm);

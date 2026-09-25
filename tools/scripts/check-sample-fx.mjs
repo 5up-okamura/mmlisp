@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Checks the def :sample `:effect` chain (live/src/sample-fx.js): each effect
 // does what its name says on a synthetic signal, the compiler resolves and
-// rejects `:effect` forms, and the bank bakes the processed signal.
+// rejects `:effect` forms, an import's chain and a sample `:extend` compose,
+// and the bank (and the keyboard audition's bank) bakes the processed signal.
 import { applySampleEffects } from "../../live/src/sample-fx.js";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb } from "../../live/src/export-mmb.js";
+import { encodeMmb, bakeAuditionBank } from "../../live/src/export-mmb.js";
 
 const RATE = 22050;
 let failed = 0;
@@ -133,6 +134,40 @@ const run = (x, chain) => {
   const faded = bank(":effect [(fade :at 100ms :len 100ms)]");
   check("baked bytes carry the normalize", plain.peak <= 13 && norm.peak >= 126, `${plain.peak} -> ${norm.peak}`);
   check("baked entry shrinks with a fade", faded.len < plain.len / 2, `${plain.len} -> ${faded.len} B`);
+}
+
+// an import's :effect runs ahead of each def's own; a sample :extend inherits
+// file, slice and both chains, overriding what it writes
+{
+  const kit = `(def kick :sample :file "wav/kick.wav" :frames 900 :effect [(gain -3)])
+(def snare :sample :file "wav/snare.wav")
+(def snare-kit :extend snare :effect [(crush 6)])`;
+  const { ir, diagnostics } = compileMMLisp(`(def pcm-voices 1)
+(import "kit/set.mmlisp" :effect [(comp) (limit)])
+(def kick-short :extend kick :frames 400)
+(def snare-hot :extend snare :effect [(gain 3)])
+(def snare-own :extend snare :file "mine.wav")
+(def lead :extend init-fm :alg 4)
+(pcm1 kick :tempo 120 :len 4 c kick-short c snare-hot c snare-own c snare-kit c)
+(fm1 lead c)`, "t.mmlisp", { imports: new Map([["kit/set.mmlisp", kit]]) });
+  const by = (n) => ir.metadata.samples.find((d) => d.name === n);
+  const chain = (n) => by(n)?.effect.map((e) => e.type).join(" ");
+  check("import chain composes without errors", !diagnostics.some((d) => d.severity === "error"),
+    diagnostics.map((d) => d.code).join(","));
+  check("import chain runs before the def's", chain("kick") === "comp limit gain", chain("kick"));
+  check(":extend inherits the file and both chains",
+    by("kick-short")?.resolvedFile === "kit/wav/kick.wav" && chain("kick-short") === "comp limit gain",
+    `${by("kick-short")?.resolvedFile} / ${chain("kick-short")}`);
+  check(":extend overrides what it writes", by("kick-short")?.frames === 400 && chain("snare-hot") === "comp limit gain",
+    `${by("kick-short")?.frames} / ${chain("snare-hot")}`);
+  check(":extend's own :file reads from its own folder", by("snare-own")?.resolvedFile === "mine.wav",
+    by("snare-own")?.resolvedFile);
+  check("an :extend inside the kit keeps the kit's chain", chain("snare-kit") === "comp limit crush", chain("snare-kit"));
+  check("an FM :extend stays an FM voice", !by("lead"));
+  const src = { data: tone(0.2, 0.3), baseRate: RATE };
+  const { sampleBank, entryIds } = bakeAuditionBank(ir, { kick: src }, "kick", 67);
+  check("the audition bakes the one note", sampleBank.length === 0x8000 && entryIds["kick|67"] !== undefined
+    && Object.keys(entryIds).length === 1, JSON.stringify(entryIds));
 }
 
 if (failed) {

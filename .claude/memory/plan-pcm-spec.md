@@ -55,6 +55,11 @@ PCM in any layer.
   to move the resample to float at the same time). First batch: `gain`,
   `normalize`, `comp`, `limit`, `crush`, `fade`; the fade's shape is a §11
   easing name and it cuts the sample, which saves bank bytes.
+- **Kits and variants (2026-09-25).** `(import … :effect [...])` processes a
+  whole kit; `:extend` on a sample makes a variant. The import's chain runs
+  BEFORE the def's — the user's call: the kit is evened out first, and a
+  per-sound level survives a kit-wide normalize. PCM audition is the FM one:
+  cursor on a sample def, play the keyboard; no panel (user: no new UI).
 - **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
   START piece writes the bank register (~100 cycles, blobs may not cross a
   32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block

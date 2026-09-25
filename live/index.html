@@ -494,7 +494,7 @@
 <script type="module">
     import { IRPlayer } from './src/ir-player.js';
     import { DrvPlayer } from './src/drv-player.js';
-    import { encodeMmb, collectPcmUsage } from './src/export-mmb.js';
+    import { encodeMmb, collectPcmUsage, bakeAuditionBank } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
@@ -2970,13 +2970,12 @@
       console.warn('encodeMmb diagnostics:', diags);
     }
 
-    async function pcmSampleBlobsForMmb(ir) {
+    async function pcmSampleBlobsForMmb(ir, played = collectPcmUsage(ir)) {
       const defs = ir?.metadata?.samples;
       if (!Array.isArray(defs) || defs.length === 0) return null;
       // Only what the score plays. Importing a kit declares every sample in it;
       // fetching and decoding the whole kit to build a bank that leaves the
       // unplayed ones out (export-mmb buildSampleBank) is work for nothing.
-      const played = collectPcmUsage(ir);
       const blobs = {};
       for (const def of defs) {
         if (!def?.name) continue;
@@ -3821,6 +3820,8 @@
     let selectedCh = null;                 // hardware FM/PSG index (0-9) or null — drives the FM param panel
     let selectedChannel = null;            // head of the selected strip (e.g. "fm3-1") for highlight
     const CURSOR_DEF_PREVIEW_CH = 0;        // FM channel used to audition a cursor FM def (incl. its op mask)
+    const PCM_PREVIEW_CH = 'pcm';           // the keyboard's target while the cursor is on a sample def
+    let _pcmCursorDef = null;               // name of the sample def under the cursor
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
     const _mutedChannels = new Set();      // muted channel names (heads)
@@ -5711,6 +5712,36 @@
       };
     }
 
+    // The sample def under the cursor: `(def name :sample …)`, or a `:extend`
+    // of a sample (its base is a sample the last build knew, or a :sample /
+    // sample :extend in this text). What it sounds like is decided at the key,
+    // by compiling the text as it is then.
+    function findSampleDefAtCursor() {
+      const state = editorView.state;
+      const cursorLine = state.doc.lineAt(state.selection.main.head).number;
+      let ast;
+      try { ast = parse(state.doc.toString()); } catch { return null; }
+      const defs = new Map(); // name -> ':sample' | extend base
+      let hit = null;
+      for (const root of ast) {
+        const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
+        if (it[0]?.value !== 'def') continue;
+        const name = it[1]?.value, tag = it[2]?.value;
+        if (tag === ':sample') defs.set(name, ':sample');
+        else if (tag === ':extend') defs.set(name, it[3]?.value);
+        else continue;
+        if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) hit = name;
+      }
+      if (!hit) return null;
+      const known = new Set((_lastGoodIR?.metadata?.samples ?? []).map((d) => d.name));
+      for (let n = hit, i = 0; n && i < 32; i++) {
+        const v = defs.get(n);
+        if (v === ':sample' || (v === undefined && known.has(n))) return hit;
+        n = v;
+      }
+      return null;
+    }
+
     function getFmParamMode() {
       if (isFmChannel(selectedCh)) return 'channel';
       if (selectedCh == null && _fmCursorDefContext) return 'cursor-def';
@@ -5752,6 +5783,9 @@
       }
       if (Number.isInteger(selectedCh) && selectedCh >= 6 && selectedCh < 10) {
         return { chIndex: selectedCh, useCursorDef: false };
+      }
+      if (selectedCh == null && _pcmCursorDef) {
+        return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
       }
       if (selectedCh == null && _fmCursorDefContext?.regs) {
         return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
@@ -5855,6 +5889,7 @@
 
     function previewNoteOn(chIndex, midi) {
       if (!workletNode) return;
+      if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOn(midi); return; }
 
       // Keep FM preview deterministic by ensuring default regs/state exist.
       // PSG path already does this, so do the same before FM preview writes.
@@ -5870,6 +5905,7 @@
 
     function previewNoteOff(chIndex) {
       if (!workletNode) return;
+      if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOff(); return; }
 
       if (isPsgPreviewChannel(chIndex)) {
         previewPsgNoteOff(chIndex);
@@ -5877,6 +5913,51 @@
       }
 
       previewFmNoteOff(chIndex);
+    }
+
+    // THE SAMPLE DEF UNDER THE CURSOR, ON THE KEYBOARD. A sample is bytes in a
+    // bank, so each key compiles the text as it stands and bakes that one def
+    // at that one note — effects, :extend and the import's chain included,
+    // through the export's own bake — and plays it on the driver's engine. A
+    // def with loop points loops while the key is held. Like a Browse preview
+    // it takes over the PCM bank, so it waits for playback to stop; the next
+    // Play or Build puts the score's bank back.
+    let _pcmAuditionSeq = 0;
+    let _pcmReleasedSeq = 0;
+    async function previewPcmNoteOn(midi) {
+      const name = _pcmCursorDef;
+      if (!name) return;
+      if (_fmLiveRaf != null) {
+        log('Stop playback first \u2014 a sample audition reloads the PCM bank.', 'err');
+        return;
+      }
+      const seq = ++_pcmAuditionSeq;
+      try {
+        const { ir, diagnostics } = compileMMLisp(editorView.state.doc.toString(), _lastFileName, { imports: _importSources });
+        const err = diagnostics.find((d) => d.severity === 'error');
+        if (err) throw new Error(`${err.code} ${err.message}`);
+        const def = ir.metadata.samples.find((d) => d.name === name);
+        if (!def) return;
+        const samples = await pcmSampleBlobsForMmb(ir, new Set([name]));
+        if (!samples) throw new Error(`"${name}" did not load`);
+        const loop = def.loopStartSec != null || def.loopEndSec != null;
+        if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
+        const { sampleBank, entryIds } = bakeAuditionBank(ir, samples, name, midi);
+        workletNode.port.postMessage({
+          type: 'pcm-set-bank', bank: sampleBank, pcmVoices: ir.metadata.pcmVoices ?? 1, entryIds,
+        });
+        workletNode.port.postMessage({
+          type: 'pcm-ev', kind: 'on', voice: 0, track: 0, sample: name, midi,
+          mode: loop ? 'loop' : 'shot', vel: 15,
+        });
+      } catch (e) {
+        log('PCM audition: ' + e.message, 'err');
+      }
+    }
+
+    function previewPcmNoteOff() {
+      _pcmReleasedSeq = _pcmAuditionSeq;
+      workletNode?.port.postMessage({ type: 'pcm-ev', kind: 'off', voice: 0, track: 0 });
     }
 
     // Single entry point for note-on so every preview surface (on-screen keyboard,
@@ -6446,6 +6527,7 @@
     // ---- sync slider display from player state ----
     function syncParamUI() {
       _fmCursorDefContext = selectedCh == null ? findFmDefAtCursor() : null;
+      _pcmCursorDef = selectedCh == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
       updateFmParamStatus();
       updateKeyboardUiState();
 
