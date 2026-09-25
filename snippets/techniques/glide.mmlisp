@@ -1,10 +1,12 @@
 ; (glide T) slides into each following note from the previous one over T.
+; Glide only bends pitch — each note still re-attacks. Join the notes with ~
+; (slur) for a true portamento: one attack, then the pitch glides on.
 ; (glide from T) starts the next slide from a pitch of your choice, handy for
 ; a scoop up into the first note. (glide none) turns it off.
 (import "presets/gm/set.mmlisp")
 
 (fm1 :tempo 100 :oct 4 :len 4 gm-lead-saw
-  (glide 16)  c g e > c <
-  (glide 8)   a f d g
+  (glide 16)  c ~ g ~ e ~ > c <
+  (glide 8)   a ~ f ~ d ~ g
   (glide c3 4) :len 2 c         ; scoop up from c3
   (glide none) :len 8 g e c e :len 2 c)
