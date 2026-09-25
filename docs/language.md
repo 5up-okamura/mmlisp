@@ -1367,14 +1367,39 @@ Each effect is `(name :param value …)`; a param left out takes its default.
 Levels are dB (plain numbers), times are lengths (§4 — `Nms` is the usual
 choice, as for the loop points).
 
-| Effect | Params (default) | Does |
-| --- | --- | --- |
-| `(gain dB)` | `:db` (required; positional) | Scales the level |
-| `(normalize)` | `:peak` (0, ≤ 0) | Scales so the peak lands on `:peak` dBFS |
-| `(comp …)` | `:threshold` (−18, ≤ 0), `:ratio` (4, ≥ 1), `:attack` (5ms), `:release` (80ms), `:knee` (6), `:makeup` (0) | Compressor: above the threshold the level rises 1/`:ratio` as fast, over a soft knee `:knee` dB wide |
-| `(limit)` | `:ceiling` (0, ≤ 0), `:release` (50ms) | Brickwall limiter with a 2 ms lookahead: the peak never passes `:ceiling` dBFS |
-| `(crush bits)` | `:bits` (required; positional; 1–8) | Quantizes to N bits — the lo-fi step |
-| `(fade …)` | `:len` (required), `:at` (`:len` before the end), `:curve` (`linear`) | Fades to silence from `:at` over `:len` and **cuts the sample there**; `:curve` is a one-shot curve name (§11), read as 1 − curve, so `ease-out-expo` drops fast and tails off like a natural decay |
+| Effect | Does |
+| --- | --- |
+| `gain` | Scales the level |
+| `normalize` | Scales so the peak lands on `:peak` dBFS |
+| `comp` | Compressor: above the threshold the level rises 1/`:ratio` as fast, over a soft knee `:knee` dB wide |
+| `limit` | Brickwall limiter with a 2 ms lookahead: the peak never passes `:ceiling` dBFS |
+| `crush` | Quantizes to N bits — the lo-fi step |
+| `fade` | Fades to silence from `:at` over `:len` and **cuts the sample there** |
+
+Parameters — a positional value fills the one marked *positional*
+(`(gain 6)` is `(gain :db 6)`); anything outside a range is
+`E_SAMPLE_FX_PARAM`:
+
+| Effect | Param | Value | Range | Default |
+| --- | --- | --- | --- | --- |
+| `gain` | `:db` | dB | any | required, *positional* |
+| `normalize` | `:peak` | dBFS | ≤ 0 | `0` |
+| `comp` | `:threshold` | dBFS | ≤ 0 | `-18` |
+| | `:ratio` | ratio (`4` = 4:1) | ≥ 1 | `4` |
+| | `:attack` | length | ≥ 0 (`0ms` = instant) | `5ms` |
+| | `:release` | length | ≥ 0 | `80ms` |
+| | `:knee` | dB (width) | ≥ 0 (`0` = hard knee) | `6` |
+| | `:makeup` | dB | any | `0` |
+| `limit` | `:ceiling` | dBFS | ≤ 0 | `0` |
+| | `:release` | length | ≥ 0 | `50ms` |
+| `crush` | `:bits` | integer | 1–8 | required, *positional* |
+| `fade` | `:len` | length | > 0 | required |
+| | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end |
+| | `:curve` | a one-shot curve name (§11): `linear`, `ease-*` | not `const` or a looping curve | `linear` |
+
+Numbers are plain decimals (`-18`, `1.5`); lengths are §4 lengths (`60ms`,
+`16`, `4f`). The fade's gain is 1 − curve, so `ease-out-expo` drops fast and
+tails off like a natural decay.
 
 - **Nothing clips inside the chain.** The one hard clip is the 8-bit quantize
   at its end, so a `gain` that overshoots is caught by a later `limit` or
