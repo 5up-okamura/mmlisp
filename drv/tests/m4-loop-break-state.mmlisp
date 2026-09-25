@@ -1,0 +1,29 @@
+; M4 gate: sticky state across a counted loop's control flow.
+;
+; The MMB encoder omits a VEL / GATE / MACRO op whose value already matches its
+; running state — but it tracks that state in stream order, and a counted loop
+; is not played in stream order. Two paths reach code with a state the linear
+; pass never saw:
+;   - a :break exits to just past LOOP_END with the state AT THE BREAK, not the
+;     tail's (found on slp005b fm1: the last note before :break was :vel 9, the
+;     tail ended :vel 12, so every note after the loop stayed at vel 9 — the
+;     brass −5 dB for the rest of the song, ir-player unaffected)
+;   - pass 2+ re-enters the body with the TAIL's state, not the pre-loop one
+;
+;   fm1 — VEL differs between the break point and the tail; slurred out of the loop
+;   fm2 — GATE differs between the break point and the tail
+;   fm3 — the tail changes GATE and VEL; pass 2 must start from the body's own
+(def brass :alg 2 :fb 7
+  :ar1 13 :dr1 14 :sr1 0 :rr1 3 :sl1 1 :tl1 23 :ks1 2 :ml1 1 :dt1 3
+  :ar2 13 :dr2 14 :sr2 0 :rr2 10 :sl2 15 :tl2 40 :ks2 2 :ml2 7 :dt2 3
+  :ar3 14 :dr3 14 :sr3 0 :rr3 3 :sl3 1 :tl3 38 :ks3 2 :ml3 1 :dt3 3
+  :ar4 19 :dr4 3 :sr4 0 :rr4 10 :sl4 0 :tl4 0 :ks4 1 :ml4 1 :dt4 3)
+
+(fm1 brass :tempo 120 :oct 4 :vel 12 :len 8
+  (x 2 c :vel 9 d :vel 12 :break e f ~) g2 a2)
+
+(fm2 brass :oct 4 :vel 12 :len 8
+  (x 2 c :gate- 12t d :gate- 0t :break e f) g2 a2)
+
+(fm3 brass :oct 3 :vel 12 :len 8
+  (x 3 c d e :vel 6 :gate- 12t f :vel 12 :gate- 0t) g2)

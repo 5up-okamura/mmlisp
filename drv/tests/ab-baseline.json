@@ -299,6 +299,12 @@
     "compileErrors": 0,
     "digest": "7572eb09"
   },
+  "m4-loop-break-state.mmlisp": {
+    "ok": false,
+    "mismatches": 6,
+    "compileErrors": 0,
+    "digest": "708ae200"
+  },
   "m4-macro-floor.mmlisp": {
     "ok": false,
     "mismatches": 4,

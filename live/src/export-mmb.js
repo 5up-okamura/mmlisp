@@ -598,6 +598,10 @@ export function encodeMmb(ir, opts = {}) {
     const markerState = new Map(); // marker id → sticky {gate,macros} snapshot
     const jumpFixups = []; // { at, to } forward-marker patches
     const breakFixups = new Map(); // loop id → [patch offsets]
+    // Counted loops are control flow the linear pass must account for: pass 2+
+    // enters the body carrying the TAIL's sticky state, and a :break exits with
+    // the state at the break, not the tail's. loop id → { entry, breaks }.
+    const loopState = new Map();
     // Markers this track jumps back to. Known before the linear pass because a
     // loop target has to invalidate the sticky VEL tracking when it is emitted
     // — see the MARKER case.
@@ -642,6 +646,36 @@ export function encodeMmb(ir, opts = {}) {
       nextTimed[i] = next;
       if (TIMED.has(events[i].cmd)) next = events[i].tick;
     }
+    // Silent sticky state (GATE, macro binds): nothing reaches a register until
+    // the next note, so it can be re-asserted at a loop edge without disturbing
+    // a note still sounding. VEL is not — it recomposes carrier TL at once
+    // (driver.md §7.1) — so loop edges invalidate its tracking instead.
+    const silentState = () => ({ gateState, activeMacros: new Map(activeMacros) });
+    const sameSilent = (x, y) =>
+      x.gateState === y.gateState &&
+      x.activeMacros.size === y.activeMacros.size &&
+      [...x.activeMacros].every(([t, id]) => y.activeMacros.get(t) === id);
+    // Emit whatever brings the stream's silent state to `snap` (only what drifted).
+    const assertSilent = (snap) => {
+      for (const target of [...activeMacros.keys()]) {
+        if (!snap.activeMacros.has(target)) {
+          stream.u8(OPCODE.MACRO_CLEAR);
+          stream.u8(TARGET_ID[target]);
+          activeMacros.delete(target);
+        }
+      }
+      for (const [target, id] of snap.activeMacros) {
+        if (activeMacros.get(target) !== id) {
+          stream.u8(OPCODE.MACRO_SET);
+          stream.u8(id);
+          activeMacros.set(target, id);
+        }
+      }
+      if (gateState !== snap.gateState) {
+        emitParamState(TARGET_ID.GATE, snap.gateState);
+        gateState = snap.gateState;
+      }
+    };
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
       let a = ev.args ?? {};
@@ -787,22 +821,52 @@ export function encodeMmb(ir, opts = {}) {
           if (repeat >= 2) {
             stream.u8(OPCODE.LOOP_BEGIN);
             stream.u8(repeat);
+            // Pass 2+ re-enters here with the tail's VEL: the body re-asserts
+            // its own at the note that needs it (as at a JUMP target).
+            loopState.set(a.id, { entry: silentState(), breaks: [] });
+            velState = null;
           }
           break;
         }
         case "LOOP_END": {
           syncClock(ev.tick);
+          const ls = loopState.get(a.id);
+          if (ls) {
+            // Back to the body's entry state before looping, so every pass
+            // replays pass 1. The last pass falls through with it too, which
+            // the encoder's state now records.
+            assertSilent(ls.entry);
+          }
           if ((a.repeat ?? 1) >= 2) stream.u8(OPCODE.LOOP_END);
           // Resolve pending :break skips for this loop (to just past LOOP_END).
           for (const at of breakFixups.get(a.id) ?? []) {
             stream.patchU16(at, stream.length - (at + 2));
           }
           breakFixups.delete(a.id);
+          if (ls) {
+            // Join point: a :break lands here with the state it left with. Pin
+            // the silent state explicitly where the paths disagree, and drop
+            // VEL tracking so the next note re-asserts it.
+            const here = silentState();
+            if (ls.breaks.some((b) => !sameSilent(b, here))) {
+              gateState = null;
+              activeMacros.clear();
+              for (const b of ls.breaks)
+                for (const t of b.activeMacros.keys()) if (!here.activeMacros.has(t)) {
+                  stream.u8(OPCODE.MACRO_CLEAR);
+                  stream.u8(TARGET_ID[t]);
+                }
+              assertSilent(here);
+            }
+            if (ls.breaks.some((b) => b.velState !== velState)) velState = null;
+            loopState.delete(a.id);
+          }
           break;
         }
         case "LOOP_BREAK": {
           syncClock(ev.tick);
           if (a.id == null) break; // authored outside a counted loop — inert
+          loopState.get(a.id)?.breaks.push({ ...silentState(), velState });
           stream.u8(OPCODE.LOOP_BREAK);
           const at = stream.length;
           stream.u16(0); // patched at the matching LOOP_END
