@@ -212,7 +212,7 @@ event runs are stored once (fragment + RET) and each occurrence becomes a
 3-byte CALL. It changes MMB bytes, never the register trace — verified by the
 ab-compare gate (`drv/tools/ab-gate.mjs`), which replays the original IR and
 the deduped MMB and requires an unchanged mismatch baseline.
-- **LOOP_BREAK 0x46** `{skip u16}` — `:break`: on the **last** iteration of
+- **LOOP_BREAK 0x46** `{skip u16}` — `(break)`: on the **last** iteration of
   the innermost loop, pop its entry and jump forward `skip` bytes (measured
   from the end of this instruction, landing just past the matching
   LOOP_END); on earlier iterations, no-op.

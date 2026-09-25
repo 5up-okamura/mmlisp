@@ -1,6 +1,6 @@
 ; A/B verification score for the MMLispDRV reference player (Phase C gate).
 ; Exercises exactly the M1 core opcode set — notes/rests/ties across FM and
-; PSG, per-note lengths, gates, nested counted loops with :break, marker/jump
+; PSG, per-note lengths, gates, nested counted loops with (break), marker/jump
 ; loop, PARAM_SET on level and register targets, and a mid-song TEMPO_SET.
 ; No macros, sweeps, CSM, FM3 special modes, PCM, or dynamic values.
 
@@ -26,7 +26,7 @@
   lead :oct 4 :len 8 :vel 12
   c e g  c4 e8 g8 ~ g8
   :vel 15
-  (x 2 c d e :break f g)
+  (x 2 c d e (break) f g)
   :tempo 96
   :gate* 0.5
   a g f e

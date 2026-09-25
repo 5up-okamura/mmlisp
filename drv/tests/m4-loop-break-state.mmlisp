@@ -4,8 +4,8 @@
 ; running state — but it tracks that state in stream order, and a counted loop
 ; is not played in stream order. Two paths reach code with a state the linear
 ; pass never saw:
-;   - a :break exits to just past LOOP_END with the state AT THE BREAK, not the
-;     tail's (found on slp005b fm1: the last note before :break was :vel 9, the
+;   - a (break) exits to just past LOOP_END with the state AT THE BREAK, not the
+;     tail's (found on slp005b fm1: the last note before (break) was :vel 9, the
 ;     tail ended :vel 12, so every note after the loop stayed at vel 9 — the
 ;     brass −5 dB for the rest of the song, ir-player unaffected)
 ;   - pass 2+ re-enters the body with the TAIL's state, not the pre-loop one
@@ -20,10 +20,10 @@
   :ar4 19 :dr4 3 :sr4 0 :rr4 10 :sl4 0 :tl4 0 :ks4 1 :ml4 1 :dt4 3)
 
 (fm1 brass :tempo 120 :oct 4 :vel 12 :len 8
-  (x 2 c :vel 9 d :vel 12 :break e f ~) g2 a2)
+  (x 2 c :vel 9 d :vel 12 (break) e f ~) g2 a2)
 
 (fm2 brass :oct 4 :vel 12 :len 8
-  (x 2 c :gate- 12t d :gate- 0t :break e f) g2 a2)
+  (x 2 c :gate- 12t d :gate- 0t (break) e f) g2 a2)
 
 (fm3 brass :oct 3 :vel 12 :len 8
   (x 3 c d e :vel 6 :gate- 12t f :vel 12 :gate- 0t) g2)

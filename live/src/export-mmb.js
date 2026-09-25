@@ -599,7 +599,7 @@ export function encodeMmb(ir, opts = {}) {
     const jumpFixups = []; // { at, to } forward-marker patches
     const breakFixups = new Map(); // loop id → [patch offsets]
     // Counted loops are control flow the linear pass must account for: pass 2+
-    // enters the body carrying the TAIL's sticky state, and a :break exits with
+    // enters the body carrying the TAIL's sticky state, and a (break) exits with
     // the state at the break, not the tail's. loop id → { entry, breaks }.
     const loopState = new Map();
     // Markers this track jumps back to. Known before the linear pass because a
@@ -838,13 +838,13 @@ export function encodeMmb(ir, opts = {}) {
             assertSilent(ls.entry);
           }
           if ((a.repeat ?? 1) >= 2) stream.u8(OPCODE.LOOP_END);
-          // Resolve pending :break skips for this loop (to just past LOOP_END).
+          // Resolve pending (break) skips for this loop (to just past LOOP_END).
           for (const at of breakFixups.get(a.id) ?? []) {
             stream.patchU16(at, stream.length - (at + 2));
           }
           breakFixups.delete(a.id);
           if (ls) {
-            // Join point: a :break lands here with the state it left with. Pin
+            // Join point: a (break) lands here with the state it left with. Pin
             // the silent state explicitly where the paths disagree, and drop
             // VEL tracking so the next note re-asserts it.
             const here = silentState();

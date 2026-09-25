@@ -143,9 +143,9 @@ note keeps its own length, so `~` takes none.
 `~` follows the loop's control flow, not the text order. A `~` ending a loop
 body connects to the body's first note on the passes that loop back, and one
 before `(go label)` to the label's first note — when that note is a tie
-continuation (`c ~ #loop (x 2 c2 …`), the tail is tied into it. With a `:break`
+continuation (`c ~ #loop (x 2 c2 …`), the tail is tied into it. With a `(break)`
 the last pass leaves from the break, so the note after the loop connects to
-the note before the `:break` (a `~` on the body's tail does not reach it).
+the note before the `(break)` (a `~` on the body's tail does not reach it).
 
 The left note of a slur always sounds its **full slot**: its gate (`:gate`,
 `:gate*`, `:gate-`) is ignored, so it never keys off before the connection (a
@@ -264,7 +264,6 @@ head position, and equally as body directives.)
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
-| `:break`   | (no value)                | Early exit of the enclosing counted loop (§13)           |
 | hardware params | value / curve / `none` / `$slot` | `:alg :fb :ams :fms :lfo-rate :tl1`–`:tl4` `:ar :dr :sr :rr :sl :ml :dt :ks :ssg :am`(1–4) — §5.1 |
 
 The gate family decides how *short* a note is inside its slot, never whether
@@ -1055,7 +1054,7 @@ the phrase.
 | `(go label N)` | `LOOP_BEGIN`/`LOOP_END`| The `#label`…`go` section plays N times, then falls through |
 | `(x N body…)`  | `LOOP_BEGIN`/`LOOP_END`| Counted loop sugar                          |
 | `(x body…)`    | `JUMP` (to a label)    | Infinite loop sugar                         |
-| `:break`       | `LOOP_BREAK`           | On the final pass of the enclosing counted loop, exit here |
+| `(break)`      | `LOOP_BREAK`           | On the final pass of the enclosing counted loop, exit here |
 | `(trig N)`     | `TRIG {code}`          | Music→game sync point: writes id `N` to the track's status byte (`E_TRIG_ARITY`, `E_TRIG_RANGE`) |
 
 - `(go label N)` is rewritten post-merge into the same `LOOP_BEGIN`/`LOOP_END`
@@ -1067,9 +1066,10 @@ the phrase.
   `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching label is
   `E_JUMP_UNRESOLVED`. A label is a compile-time name: the jump is a resolved
   offset, so `#label` itself costs nothing at runtime and emits no bytes.
-- `:break` binds to the innermost counted loop, also from inside an infinite
+- `(break)` binds to the innermost counted loop, also from inside an infinite
   loop nested in it. With no counted loop around it there is no final pass to
-  exit, so it does nothing and is dropped with `W_BREAK_OUTSIDE_LOOP`.
+  exit, so it does nothing and is dropped with `W_BREAK_OUTSIDE_LOOP`. It takes
+  no arguments (`E_BREAK_ARITY`).
 - **`(trig N)`** marks a position for the game to read. It emits the `TRIG`
   opcode with an explicit id `N` (0..63), and the sequencer writes the track's
   **status byte**: the id in bits 5-0 under a 2-bit firing counter in bits 7-6
@@ -1092,7 +1092,7 @@ the phrase.
 
 ```lisp
 (fm1
-  (x 4 c d e :break f g)     ; body ×4; final pass stops before f g
+  (x 4 c d e (break) f g)    ; body ×4; final pass stops before f g
   #verse
   c e g e
   (go verse 2)               ; the #verse section plays twice

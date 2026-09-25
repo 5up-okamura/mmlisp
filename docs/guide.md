@@ -196,11 +196,11 @@ distribution.
 ```lisp
 (fm1 :len 8
   (x 4
-    c d e :break f g))
+    c d e (break) f g))
 ```
 
 - `(x N ...)` repeats body `N` times.
-- `:break` skips the tail on the last pass.
+- `(break)` skips the tail on the last pass.
 
 **`(x N …)` is a loop, not an unroll.** The body is compiled **once** and
 replayed `N` times, so sticky state changed inside the body (octave `>`/`<`,

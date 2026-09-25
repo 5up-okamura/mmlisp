@@ -3030,30 +3030,6 @@ function compileChannelBody(
 
       // Inline keyword modifier: :oct N, :len N, :gate N, :vol N, :tl1 30, etc.
       if (val.startsWith(":")) {
-        // `:break` is the one valueless `:`-directive; handle it before stepping
-        // onto a value token. Otherwise a trailing `:break` (the last token of a
-        // form — e.g. a mucom `/` loop-break that falls on a line boundary) is
-        // silently dropped: the `if (i < items.length)` guard below skips the
-        // switch while `i` has already stepped past the `:break`. Id is the
-        // current (x …) loop, or null inside a `#label …(go label N)` loop where
-        // convertCountedJumps assigns it after the forms merge.
-        if (val === ":break") {
-          // The last pass leaves the loop HERE, so what follows the loop is
-          // connected to this point, not to the body's tail (see (x N …)).
-          if (trackState.currentLoopId)
-            (trackState.loopBreaks ??= new Map()).set(
-              trackState.currentLoopId,
-              connectionState(trackState),
-            );
-          events.push({
-            tick: trackState.tick,
-            cmd: "LOOP_BREAK",
-            args: { id: trackState.currentLoopId ?? null },
-            src: nodeSrc(node),
-          });
-          i++;
-          continue;
-        }
         i++;
         if (i < items.length) {
           const rawVal = atomValue(items[i]);
@@ -3852,13 +3828,13 @@ function compileChannelBody(
       }
 
       // Repeat loop: (x N ...) counts N times; (x ...) loops forever
-      // :break inside the body emits LOOP_BREAK linked to this loop's id
+      // (break) inside the body emits LOOP_BREAK linked to this loop's id
       if (head === "x") {
         const maybeCount = parseIntLike(atomValue(node.items[1]));
         const bodyStart = maybeCount !== null ? 2 : 1;
         const loopId = `_x${loopCounter.count++}`;
         const savedLoopId = trackState.currentLoopId;
-        // Only counted loops support :break; inside an infinite (x …) it still
+        // Only counted loops support (break); inside an infinite (x …) it still
         // binds to the innermost COUNTED loop around it (§13).
         trackState.currentLoopId = maybeCount !== null ? loopId : savedLoopId;
         if (maybeCount !== null) {
@@ -3890,7 +3866,7 @@ function compileChannelBody(
             src: nodeSrc(node.items[0]),
           });
           trackState.currentLoopId = savedLoopId;
-          // With a :break the last pass never reaches the tail: the loop is
+          // With a (break) the last pass never reaches the tail: the loop is
           // left from the break, so the next note connects to what was sounding
           // there (a ~ / glide / tie from the tail would reach a note the
           // player never came from).
@@ -3983,6 +3959,40 @@ function compileChannelBody(
           cmd: "JUMP",
           args: repeat !== null ? { to: label, repeat } : { to: label },
           src: nodeSrc(node.items[0]),
+        });
+        i++;
+        continue;
+      }
+
+      // Loop break: (break) — on the final pass of the innermost counted loop,
+      // exit here. Id is the current (x …) loop, or null inside a
+      // `#label …(go label N)` loop where convertCountedJumps assigns it after
+      // the forms merge.
+      if (head === "break") {
+        if (node.items.length !== 1) {
+          pushDiag(
+            diagnostics,
+            "error",
+            "E_BREAK_ARITY",
+            "break takes no arguments: (break)",
+            nodeSrc(node.items[0]),
+            trackName,
+          );
+          i++;
+          continue;
+        }
+        // The last pass leaves the loop HERE, so what follows the loop is
+        // connected to this point, not to the body's tail (see (x N …)).
+        if (trackState.currentLoopId)
+          (trackState.loopBreaks ??= new Map()).set(
+            trackState.currentLoopId,
+            connectionState(trackState),
+          );
+        events.push({
+          tick: trackState.tick,
+          cmd: "LOOP_BREAK",
+          args: { id: trackState.currentLoopId ?? null },
+          src: nodeSrc(node),
         });
         i++;
         continue;
@@ -4376,7 +4386,7 @@ function compileChannelBody(
 
 // Turn a counted backward jump — `(go label N)` -> JUMP { to, repeat } — plus
 // its `#label` MARKER into the same LOOP_BEGIN/LOOP_END pair that `(x N …)`
-// emits, so the loader's `_expandLoops` (nesting, count, :break) handles both.
+// emits, so the loader's `_expandLoops` (nesting, count, (break)) handles both.
 // Runs on a track's merged events, so the label and the `go` may come from
 // different `(fmN …)` forms (mucom multi-line loops). Count-less JUMPs (infinite
 // `(go label)` / `#loop`) are left untouched for the track-level loop.
@@ -4384,7 +4394,7 @@ function convertCountedJumps(track) {
   const events = track.events;
   if (!events) return;
   // Left-to-right so an inner counted loop is converted before its outer one;
-  // that claims inner :break (LOOP_BREAK id:null) for the inner loop first.
+  // that claims inner (break) (LOOP_BREAK id:null) for the inner loop first.
   for (let j = 0; j < events.length; j++) {
     const ev = events[j];
     if (ev.cmd !== "JUMP" || ev.args?.repeat == null) continue;
@@ -5497,7 +5507,7 @@ function compileScore(src, filename, options, frameHz) {
         shuffleRatio,
         shuffleBase,
         subBeatParity: 0,
-        currentLoopId: null, // id of innermost counted (x N ...) loop, for :break
+        currentLoopId: null, // id of innermost counted (x N ...) loop, for (break)
       };
 
       const trackData = {
@@ -5667,7 +5677,7 @@ function compileScore(src, filename, options, frameHz) {
   });
 
   for (const track of tracks) convertCountedJumps(track);
-  // A :break that no counted loop claimed does nothing — an infinite loop has
+  // A (break) that no counted loop claimed does nothing — an infinite loop has
   // no final pass to exit. Drop it and say so; a score that carries one (a
   // mucom import whose `[` never closed) still plays.
   for (const track of tracks) {
@@ -5676,7 +5686,7 @@ function compileScore(src, filename, options, frameHz) {
     );
     for (const ev of stray)
       pushDiag(diagnostics, "warning", "W_BREAK_OUTSIDE_LOOP",
-        ":break is outside a counted loop — (x N …) or #label … (go label N) — and does nothing; dropped",
+        "(break) is outside a counted loop — (x N …) or #label … (go label N) — and does nothing; dropped",
         ev.src ?? { line: 1, column: 1 }, track.name ?? track.channel ?? null);
     if (stray.length) track.events = track.events.filter((ev) => !stray.includes(ev));
   }

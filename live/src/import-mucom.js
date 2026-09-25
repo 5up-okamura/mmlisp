@@ -819,7 +819,7 @@ function findFirstTempo(ops) {
 const ACC = (acc) => (acc > 0 ? "+" : acc < 0 ? "-" : "");
 
 // Emit `body` repeated `count` times as a compact (x N …). A `/` break in the
-// body becomes MMLisp `:break` (final pass exits there). N==1 plays once (no
+// body becomes MMLisp `(break)` (final pass exits there). N==1 plays once (no
 // redundant `(x 1 …)`) — exiting at the break since it's the only/final pass.
 function emitLoop(out, count, body, ctx, depth) {
   if (count <= 0) return;
@@ -1071,8 +1071,8 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "loopBreak":
         // A break inside a single-line (x …) loop is consumed by the loop case
         // (sliced out and expanded). A break that reaches here is inside a
-        // cross-line #label/(go) loop, where MMLisp's :break does the job.
-        out.push(":break");
+        // cross-line #label/(go) loop, where MMLisp's (break) does the job.
+        out.push("(break)");
         break;
       case "loopMarker":
         out.push(`#${op.label}`);
@@ -1086,7 +1086,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (!ctx.hasGlobalLoop) { out.push("#loop"); ctx.hasGlobalLoop = true; }
         break;
       case "loop":
-        // Single-line loop -> (x N …); a `/` break in the body renders as :break.
+        // Single-line loop -> (x N …); a `/` break in the body renders as (break).
         emitLoop(out, op.count, op.body, ctx, depth);
         break;
       case "tempo":
