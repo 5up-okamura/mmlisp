@@ -1452,6 +1452,8 @@
       'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
       'sin','triangle','square','saw','ramp',
       'noise','pink','perlin','brown',
+      // def :sample :effect [...] chain (§16)
+      'gain','normalize','comp','limit','crush','fade',
     ];
     const AC_TRACKS = [
       'fm1','fm2','fm3','fm3-csm','fm3-csm-rate','fm3-1','fm3-2','fm3-3','fm3-4',
@@ -1480,7 +1482,8 @@
       // def-val (dynamic value slots)
       ':min',':max',':unit',
       // PCM / effects
-      ':bit-depth',':compress',':reverb',
+      ':effect',':db',':peak',':threshold',':ratio',':attack',':release',
+      ':knee',':makeup',':ceiling',':bits',':at',':curve',
       // curve params
       ':from',':to',':phase',':wait',':duty',':skew',':hold',':jitter',
       ':beta',':octaves',':lacunarity',':persistence',':leak',':seed',
@@ -1507,6 +1510,10 @@
       'delay': 'delay :${1:vel+} ${2:3} :by ${3:-4} :time ${4:1/8}',
       'glide': 'glide ${1:1/8}',
       'const': 'const ${1:0} :len ${2:4}',
+      'gain': 'gain ${1:6}',
+      'comp': 'comp :threshold ${1:-18} :ratio ${2:4}',
+      'crush': 'crush ${1:4}',
+      'fade': 'fade :len ${1:100ms} :curve ${2:ease-out-expo}',
     };
     // Every curve head takes the same `A..B :len L` shape (§11), so generate
     // rather than list. `noise` is left out: as a head it is also a track name,
@@ -2945,8 +2952,9 @@
       return out;
     }
 
-    // Sample blobs for encodeMmb's SAMPLE_BANK (export-mmb.js §10): raw 8-bit
-    // signed PCM keyed by sample name. Without this the bank is omitted and the
+    // Sample blobs for encodeMmb's SAMPLE_BANK (export-mmb.js §10): each def's
+    // decoded mono slice, float, keyed by sample name — the bank applies the
+    // def's :effect chain and quantizes. Without this the bank is omitted and the
     // MMLispDRV backend (and any exported .mmb) has nothing to play. The loop
     // points are left to the IR metadata — the compiled truth; baseRate must be
     // supplied, since the exporter would otherwise fall back to 13000 Hz rather
@@ -2974,33 +2982,15 @@
         if (!def?.name) continue;
         if (!played.has(def.name)) continue;
         try {
-          // Compiled samples are already signed-8; decode them straight to
-          // bytes rather than round-tripping through float and losing a bit.
-          const compiled = def?.compiled;
-          if (compiled?.format === 'pcm_s8' && compiled.dataBase64) {
-            const bin = atob(compiled.dataBase64);
-            const data = new Int8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) data[i] = (bin.charCodeAt(i) << 24) >> 24;
-            blobs[def.name] = {
-              data,
-              baseRate: Number(compiled.sourceSampleRate) || Number(def.rate) || undefined,
-            };
-            continue;
-          }
           const sourcePath = def?.resolvedFile || def?.file;
           if (!sourcePath) continue;
           // decodePcmSample returns the whole file (cached per path); a banked
-          // def takes its slice. The compiled path above is already sliced.
+          // def takes its slice.
           const whole = await decodePcmSample(sourcePath);
           const decoded = whole && sliceDecodedSample(whole, def);
           if (!decoded) continue;
-          const mono = decoded.data;
-          const data = new Int8Array(mono.length);
-          for (let i = 0; i < mono.length; i++) {
-            data[i] = Math.max(-128, Math.min(127, Math.round(mono[i] * 127)));
-          }
           blobs[def.name] = {
-            data,
+            data: decoded.data,
             baseRate: Number(def.rate) || decoded.sampleRate,
           };
         } catch (e) {

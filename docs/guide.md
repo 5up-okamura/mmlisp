@@ -866,6 +866,21 @@ share one 32 KB bank — 2.3 seconds at one voice, 4.9 at three — and every no
 you play a sample at is baked separately, so a drum at four pitches costs four
 times its length.
 
+**Make it loud before it is baked.** An 8-bit sample next to FM tends to sound
+thin; `:effect` processes it at compile time, in the order written, at no cost
+to the driver (language.md §16):
+
+```lisp
+(def snare :sample :file "sounds/snare.wav"
+  :effect [(comp :threshold -20 :ratio 4 :attack 0ms)   ; even out the body
+           (gain 8) (limit)                             ; bring it up, cap the peak
+           (fade :len 60ms :curve ease-out-expo)])      ; shorten the tail
+```
+
+`(normalize)` scales a quiet file to full scale, `(crush 4)` is the lo-fi
+step, and `(fade …)` cuts the sample where it ends — which also frees bank
+space.
+
 Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
 `:pitch`, `:semi`, `(glide …)` and a pitch vibrato are errors on a pcm track)
 and **fade smoothly** (the level ladder is 6 dB a step). Put a fade on FM or

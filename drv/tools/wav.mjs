@@ -1,12 +1,11 @@
 // Minimal WAV reader for the node toolchain: load a PCM WAV and downmix it to
-// mono 8-bit signed PCM — the SAMPLE_BANK blob format (mmb.md §10). The exact
-// float rounding here does not need to match the browser loader: both the JS
-// reference driver and the asm read the *same* MMB SAMPLE_BANK bytes, so the
-// trace gate is unaffected by how the blob was produced (PCM vs ir-player is a
-// waived comparison anyway).
+// mono float (-1..1), the form the bank builder takes (export-mmb.js): it runs
+// the def's `:effect` chain, bakes each note and quantizes to 8-bit once. The
+// browser hands the builder the same thing from decodeAudioData, so the two
+// differ only in the decoder.
 import { readFileSync } from "node:fs";
 
-// Returns { data: Int8Array (mono 8-bit signed), sampleRate }.
+// Returns { data: Float32Array (mono, -1..1), sampleRate }.
 export function loadWav(path) {
   const buf = readFileSync(path);
   if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE") {
@@ -36,20 +35,20 @@ export function loadWav(path) {
   const bytesPerSample = bits >> 3;
   const frameBytes = bytesPerSample * channels;
   const frames = Math.floor(dataLen / frameBytes);
-  const out = new Int8Array(frames);
+  const out = new Float32Array(frames);
   for (let i = 0; i < frames; i++) {
     let acc = 0;
     for (let c = 0; c < channels; c++) {
       const off = dataOff + i * frameBytes + c * bytesPerSample;
       let s;
-      if (bits === 8) s = buf[off] - 128; // WAV 8-bit is unsigned
-      else if (bits === 16) s = buf.readInt16LE(off) >> 8; // → 8-bit
-      else if (bits === 24) s = buf.readIntLE(off, 3) >> 16;
-      else if (bits === 32) s = buf.readInt32LE(off) >> 24;
+      if (bits === 8) s = (buf[off] - 128) / 128; // WAV 8-bit is unsigned
+      else if (bits === 16) s = buf.readInt16LE(off) / 32768;
+      else if (bits === 24) s = buf.readIntLE(off, 3) / 8388608;
+      else if (bits === 32) s = buf.readInt32LE(off) / 2147483648;
       else throw new Error(`${path}: unsupported bit depth ${bits}`);
       acc += s;
     }
-    out[i] = Math.max(-128, Math.min(127, Math.round(acc / channels)));
+    out[i] = acc / channels;
   }
   return { data: out, sampleRate };
 }
@@ -100,7 +99,7 @@ export function loadSamplesForIr(ir, diagnostics = null) {
     }
     const slice = offset === 0 && end === total ? data : data.subarray(offset, end);
     samples[s.name] = {
-      data: Uint8Array.from(slice, (v) => v & 0xff),
+      data: slice,
       baseRate: s.rate ?? sampleRate,
     };
   }

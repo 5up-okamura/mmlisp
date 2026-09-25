@@ -23,6 +23,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
 | `mmlisp-eval.js`                | Compile-time eval: `let`, expressions, the curve library                |
+| `sample-fx.js`                  | A sample def's `:effect` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |

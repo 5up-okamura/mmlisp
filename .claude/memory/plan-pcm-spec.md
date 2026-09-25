@@ -47,6 +47,15 @@ PCM in any layer.
   and PCM in one score is an error. "fm6 in the gaps" is gone.
 - **The browser sounds like the driver (D0).** "Otherwise this is not a
   production environment for this driver."
+- **Sample effects are a def's `:effect [...]` chain (2026-09-25).** The user
+  asked for it because PCM sounds thin and weak next to FM, and wanted
+  effects chained in order rather than one key each — so `:bit-depth`,
+  `:volume`, `:compress`, `:reverb` were removed (`crush` replaced
+  `:bit-depth`). All compile-time, run by the bank builder on float before
+  the per-note resample, with one 8-bit quantize at the end (the user agreed
+  to move the resample to float at the same time). First batch: `gain`,
+  `normalize`, `comp`, `limit`, `crush`, `fade`; the fade's shape is a §11
+  easing name and it cuts the sample, which saves bank bytes.
 - **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
   START piece writes the bank register (~100 cycles, blobs may not cross a
   32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block
@@ -66,8 +75,9 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   prints the ladder with a margin).
 - **PCM SE** runs only in `drv-player.js`; the C sequencer and the SGDK host
   have no SE yet ([[plan-se]]).
-- **D7 sample keys** — `:bit-depth`, `:volume`, `:compress`, `:reverb`: the
-  user wants all of them eventually; today they warn
-  (`W_SAMPLE_KEY_UNIMPLEMENTED`).
+- **Sample effects, second batch** — `hpf` / `lpf` (a low cut buys level
+  headroom), `drive` (tanh saturation), `reverb` (last: its tail costs bank
+  bytes). Agreed with the first batch, not yet written. Nothing listened yet:
+  the first batch wants a pass by ear in the live app.
 - **Not scheduled:** compile-time premix of overlapping pcm voices (D1 (C));
   measuring XGM2/MDSDRV ROMs on BlastEm as a yardstick.

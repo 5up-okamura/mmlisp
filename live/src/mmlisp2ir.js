@@ -28,6 +28,7 @@ import {
   evalLengthValue,
   lookupBound,
 } from "./mmlisp-eval.js";
+import { SAMPLE_EFFECTS } from "./sample-fx.js";
 
 // 96 ticks/quarter (384/whole). Divisible by both MMLisp's note fractions and
 // mucom's default 128-clock/whole grid (LCM 384), so imported 128th notes land
@@ -1533,6 +1534,93 @@ function applyTypedMacroDef(trackState, td, ctx) {
   return false;
 }
 
+// The def keys that once named sample processing; a score that still writes
+// one is pointed at the chain that replaced them.
+const SAMPLE_FX_KEYS_MOVED = new Set([":bit-depth", ":volume", ":compress", ":reverb"]);
+
+// `:effect [(name …) (name …)]` → the IR's resolved chain (docs/ir.md §2.2):
+// `{type, …params}` with every param filled in, times in seconds (at the
+// score's opening tempo, like the loop points) and levels in dB. The table
+// the params are checked against is sample-fx.js's, the same one that runs
+// them.
+function resolveSampleEffects(node, bpm, diagnostics, src) {
+  const err = (code, msg, at) =>
+    pushDiag(diagnostics, "error", code, `def :sample :effect ${msg}`, at ? nodeSrc(at) : src, "global");
+  if (node?.kind !== "list" || node.bracket !== "[]") {
+    err("E_SAMPLE_FX", `takes a [...] of effects, got ${describeNodeToken(node)}`, node);
+    return [];
+  }
+  const chain = [];
+  for (const item of node.items) {
+    if (item.kind === "comment") continue;
+    const items = item.kind === "list" ? item.items.filter((n) => n.kind !== "comment") : null;
+    const type = items && item.bracket === "()" ? atomValue(items[0]) : null;
+    const spec = type ? SAMPLE_EFFECTS[type] : null;
+    if (!spec) {
+      err("E_SAMPLE_FX_UNKNOWN",
+        `has no effect ${describeNodeToken(item)} (known: ${Object.keys(SAMPLE_EFFECTS).join(", ")})`, item);
+      continue;
+    }
+    const raw = {};
+    let k = 1;
+    if (spec.pos && k < items.length && !atomValue(items[k])?.startsWith(":")) {
+      raw[spec.pos] = items[k++];
+    }
+    for (; k < items.length; k += 2) {
+      const key = atomValue(items[k]);
+      const name = key?.startsWith(":") ? key.slice(1) : null;
+      if (!name || !spec.params[name]) {
+        err("E_SAMPLE_FX_PARAM", `(${type}) has no parameter ${describeNodeToken(items[k])}`, items[k]);
+        continue;
+      }
+      if (k + 1 >= items.length) {
+        err("E_SAMPLE_FX_PARAM", `(${type}) ${key} has no value`, items[k]);
+        continue;
+      }
+      raw[name] = items[k + 1];
+    }
+    const fx = { type };
+    let ok = true;
+    for (const [name, p] of Object.entries(spec.params)) {
+      const at = raw[name];
+      if (at === undefined) {
+        if (p.required) {
+          err("E_SAMPLE_FX_PARAM", `(${type}) needs :${name}`, item);
+          ok = false;
+        } else fx[name] = p.def;
+        continue;
+      }
+      const tok = atomValue(at);
+      let v = null;
+      if (p.kind === "time") {
+        v = lengthTokenSeconds(tok, bpm);
+        // Only a fade's :len has to be a span; an attack, a release or an
+        // :at of 0 is instant / the start.
+        if (v !== null && !(v > 0) && type === "fade" && name === "len") v = null;
+      } else if (p.kind === "curve") {
+        v = CURVE_NAMES.has(tok) && !LOOP_CURVE_NAMES.has(tok) && tok !== "const" ? tok : null;
+      } else {
+        const n = typeof tok === "string" && /^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok) ? Number(tok) : null;
+        v = n !== null && (p.kind !== "int" || Number.isInteger(n)) ? n : null;
+        if (v !== null && ((p.min != null && v < p.min) || (p.max != null && v > p.max))) v = null;
+      }
+      if (v === null) {
+        const want = p.kind === "time" ? "a length"
+          : p.kind === "curve" ? "a one-shot curve name (linear, ease-…)"
+          : `${p.kind === "int" ? "an integer" : "a number"}` +
+            (p.min != null && p.max != null ? ` ${p.min}..${p.max}`
+              : p.min != null ? ` >= ${p.min}` : p.max != null ? ` <= ${p.max}` : "");
+        err("E_SAMPLE_FX_PARAM", `(${type}) :${name} must be ${want}, got ${describeNodeToken(at)}`, at);
+        ok = false;
+        continue;
+      }
+      fx[name] = v;
+    }
+    if (ok) chain.push(fx);
+  }
+  return chain;
+}
+
 function parseSampleDef(root, diagnostics) {
   const bodyItems = root.items.filter((n) => n.kind !== "comment");
   const sample = {
@@ -1545,15 +1633,19 @@ function parseSampleDef(root, diagnostics) {
     loopLenTok: null,
     loopStartSec: null,
     loopEndSec: null,
-    bitDepth: null,
-    volume: null,
-    compress: null,
-    reverb: null,
+    effectNode: null,
+    effect: [],
   };
 
   for (let ki = 3; ki + 1 < bodyItems.length; ki += 2) {
     const key = atomValue(bodyItems[ki]);
     const rawVal = atomValue(bodyItems[ki + 1]);
+    if (key === ":effect") {
+      // Resolved with the loop points, once the score's opening tempo is known
+      // (a fade `:len 8` is a musical length).
+      sample.effectNode = bodyItems[ki + 1];
+      continue;
+    }
     if (key === ":file") {
       sample.file = rawVal;
     } else if (key === ":rate") {
@@ -1573,15 +1665,18 @@ function parseSampleDef(root, diagnostics) {
     } else if (key === ":loop-len") {
       sample.loopLenTok = rawVal;
       sample.loopEndTok = null;
-    } else if (key === ":bit-depth") {
-      const bitDepth = parseIntLike(rawVal);
-      if (bitDepth !== null) sample.bitDepth = bitDepth;
-    } else if (key === ":volume") {
-      if (rawVal !== null) sample.volume = rawVal;
-    } else if (key === ":compress") {
-      if (rawVal !== null) sample.compress = rawVal;
-    } else if (key === ":reverb") {
-      if (rawVal !== null) sample.reverb = rawVal;
+    } else {
+      // A def is a handful of keys, so a stray one is a typo or a key that
+      // was never going to do anything — say so rather than drop it.
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_SAMPLE_KEY_UNKNOWN",
+        `def :sample has no key ${key ?? describeNodeToken(bodyItems[ki])}` +
+          (SAMPLE_FX_KEYS_MOVED.has(key) ? " (sample processing is :effect [...])" : ""),
+        nodeSrc(bodyItems[ki]),
+        null,
+      );
     }
   }
 
@@ -1594,23 +1689,6 @@ function parseSampleDef(root, diagnostics) {
       nodeSrc(root),
       null,
     );
-  }
-
-  // D7: parsed and carried in the IR, but nothing downstream acts on them yet.
-  // Say so rather than let a composer think the sample was processed.
-  for (const key of [":bit-depth", ":volume", ":compress", ":reverb"]) {
-    const field = { ":bit-depth": "bitDepth", ":volume": "volume",
-      ":compress": "compress", ":reverb": "reverb" }[key];
-    if (sample[field] !== null) {
-      pushDiag(
-        diagnostics,
-        "warning",
-        "W_SAMPLE_KEY_UNIMPLEMENTED",
-        `def :sample ${key} is not implemented yet and has no effect`,
-        nodeSrc(root),
-        null,
-      );
-    }
   }
 
   // :offset / :frames slice one file into many samples (a bank). Frames, not
@@ -5014,6 +5092,9 @@ function compileScore(src, filename, options, frameHz) {
   // however the note transposes (docs/language.md §16).
   for (const sample of sampleDefs.values()) {
     const bpm = scoreInitialBpm ?? 120;
+    if (sample.effectNode) {
+      sample.effect = resolveSampleEffects(sample.effectNode, bpm, diagnostics, sample.src ?? fileSrc);
+    }
     const sec = (tok, key) => {
       if (tok == null) return null;
       const v = lengthTokenSeconds(tok, bpm);
@@ -5545,10 +5626,7 @@ function compileScore(src, filename, options, frameHz) {
         frames: sample.frames,
         loopStartSec: sample.loopStartSec,
         loopEndSec: sample.loopEndSec,
-        bitDepth: sample.bitDepth,
-        volume: sample.volume,
-        compress: sample.compress,
-        reverb: sample.reverb,
+        effect: sample.effect,
       })),
     },
     tracks,

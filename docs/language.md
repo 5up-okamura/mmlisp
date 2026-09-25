@@ -1223,15 +1223,11 @@ is never touched.
 | `:offset`     | Start frame within the file (default 0). See *Sample banks*   |
 | `:frames`     | Frame count (default: to the end of the file)                 |
 | `:loop-start` / `:loop-end` / `:loop-len` | Sustain loop, as LENGTHS (see below) |
-| `:bit-depth`  | Quantize to N bits (expanded to 8-bit for playback)            |
-| `:volume`     | Gain / normalization                                           |
-| `:compress`   | Compressor preset                                              |
-| `:reverb`     | Reverb preset                                                  |
+| `:effect`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
 
-All conversion is compile-time: stereo is downmixed `(L+R)/2`, data becomes
-raw 8-bit signed PCM. `:bit-depth`, `:volume`, `:compress` and `:reverb` are
-parsed and carried through, but nothing acts on them yet — using one warns
-`W_SAMPLE_KEY_UNIMPLEMENTED`.
+All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:effect`
+chain runs, and the data becomes raw 8-bit signed PCM. Any other key is
+`E_SAMPLE_KEY_UNKNOWN`.
 
 ### Sample banks (many samples in one file)
 
@@ -1337,6 +1333,58 @@ Three limits worth knowing:
   recording, so a loop stays where you set it however the note transposes. On a
   track it is time as you HEAR it, so `:loop-len 16` is a 16th note at every
   pitch. At C4 the two coincide.
+
+### Effects
+
+A def's `:effect` takes a `[...]` of effects, applied **in order** to the
+sample when it is baked. They are compile-time sample processing: the driver
+never runs them, so they cost no Z80 time — only what they do to the bank
+(a fade saves bytes). Use them to make a sample hold its own against FM:
+
+```lisp
+(def snare :sample :file "snare.wav"
+  :effect [(comp :threshold -20 :ratio 4 :attack 0ms :release 60ms)
+           (gain 8)
+           (limit)
+           (fade :at 120ms :len 80ms :curve ease-out-expo)])
+```
+
+Each effect is `(name :param value …)`; a param left out takes its default.
+Levels are dB (plain numbers), times are lengths (§4 — `Nms` is the usual
+choice, as for the loop points).
+
+| Effect | Params (default) | Does |
+| --- | --- | --- |
+| `(gain dB)` | `:db` (required; positional) | Scales the level |
+| `(normalize)` | `:peak` (0, ≤ 0) | Scales so the peak lands on `:peak` dBFS |
+| `(comp …)` | `:threshold` (−18, ≤ 0), `:ratio` (4, ≥ 1), `:attack` (5ms), `:release` (80ms), `:knee` (6), `:makeup` (0) | Compressor: above the threshold the level rises 1/`:ratio` as fast, over a soft knee `:knee` dB wide |
+| `(limit)` | `:ceiling` (0, ≤ 0), `:release` (50ms) | Brickwall limiter with a 2 ms lookahead: the peak never passes `:ceiling` dBFS |
+| `(crush bits)` | `:bits` (required; positional; 1–8) | Quantizes to N bits — the lo-fi step |
+| `(fade …)` | `:len` (required), `:at` (`:len` before the end), `:curve` (`linear`) | Fades to silence from `:at` over `:len` and **cuts the sample there**; `:curve` is a one-shot curve name (§11), read as 1 − curve, so `ease-out-expo` drops fast and tails off like a natural decay |
+
+- **Nothing clips inside the chain.** The one hard clip is the 8-bit quantize
+  at its end, so a `gain` that overshoots is caught by a later `limit` or
+  `normalize` — or clips there, which `crush` aside is rarely the sound you
+  want. `comp` takes level off; follow it with `gain` + `limit` (or
+  `normalize`) to bring the loudness back up.
+- **An instant attack for short hits.** With a slow `:attack` a drum's first
+  milliseconds pass the compressor uncompressed, and a following `normalize`
+  scales to that spike. `:attack 0ms`, or a `limit` in front of the
+  `normalize`, is what a short sample needs.
+- **Times are the sample's own time**, like the def's loop points: a sample
+  played an octave up plays its fade in half the time.
+- **A fade inside the loop** is baked into the bytes the loop repeats, so it
+  warns (`W_SAMPLE_FX_FADE_LOOP`); a fade that runs past the sample's end
+  warns `W_SAMPLE_FX_FADE_PAST_END`. A `loop` note on a def with no loop
+  points loops the whole sample, fade included.
+- **Loud samples overlap loud.** Voices are summed and hard-clipped (above),
+  so a kit brought up to full scale distorts where hits overlap — trade that
+  against `:vel` / `:vol`.
+- One def is one processing: to play a sample two ways, write two defs on the
+  same `:file`. The file is decoded once; each def is baked separately.
+- An unknown effect is `E_SAMPLE_FX_UNKNOWN`; a bad or unknown param, or a
+  missing required one, is `E_SAMPLE_FX_PARAM`; `:effect` given anything but
+  a `[...]` is `E_SAMPLE_FX`.
 
 ### Playback
 

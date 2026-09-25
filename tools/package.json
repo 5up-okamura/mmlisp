@@ -8,7 +8,8 @@
     "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../examples/source/*.mmlisp ../presets/*/set.mmlisp",
     "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
-    "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js"
+    "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js",
+    "check:sample-fx": "node scripts/check-sample-fx.mjs"
   },
   "engines": {
     "node": ">=18"

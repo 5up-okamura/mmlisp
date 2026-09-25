@@ -289,16 +289,17 @@ Sample entry (24 bytes):
 | 0x02   | 2    | —          | reserved, 0                                  |
 | 0x04   | 4    | offset     | u32, blob start relative to the blob region (past the entry table) |
 | 0x08   | 4    | length     | u32, bytes — a whole number of 16-byte blocks |
-| 0x0C   | 4    | src_frames | u32, the source slice's frame count          |
+| 0x0C   | 4    | src_frames | u32, the source slice's frame count, after its `:effect` chain |
 | 0x10   | 4    | loop_start | u32, baked byte offset into the blob, unrounded |
 | 0x14   | 4    | loop_end   | u32, baked byte offset into the blob, unrounded |
 
 ### 10.1 Pitch baking
 
-Every entry is baked for one note: the source slice resampled (linear) to the
-rate at which that note advances *exactly one byte a DAC sample* at the image's
-rate — `rate / 2^((note − 60) / 12)` — and padded with silence to whole 16-byte
-blocks. The engine does not resample and has no octave step (driver.md §14.2),
+Every entry is baked for one note: the source slice, run through the def's
+`:effect` chain (language.md §16) in float, resampled (linear) to the rate at
+which that note advances *exactly one byte a DAC sample* at the image's rate —
+`rate / 2^((note − 60) / 12)` — quantized to signed 8-bit once, and padded with
+silence to whole 16-byte blocks. The engine does not resample and has no octave step (driver.md §14.2),
 so a sample played at several notes occupies several ids, deduplicated by
 content hash.
 
@@ -309,7 +310,7 @@ byte offsets by the note's own bake rate, and stored unrounded; the sequencer
 rounds them to whole blocks when it sends them (driver.md §14). A def with no
 loop points, or a loop that maps to nothing (`W_MMB_BAKE_LOOP_EMPTY`), stores
 the whole sample: `loop_start` 0, `loop_end` its baked length. `src_frames` is the source
-slice's length, carried for tooling; nothing in the driver reads it.
+slice's length after its effects (a fade shortens it), carried for tooling; nothing in the driver reads it.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
 The **bank image (entry table + blobs) must fit one 32 KB window, below its

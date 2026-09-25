@@ -87,8 +87,7 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
 | `loopStartSec`, `loopEndSec` | number\|null | Sustain loop, in SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. A null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
-| `bitDepth`     | int\|null   | Declared bit depth.                                 |
-| `volume`, `compress`, `reverb` | string\|null | Raw option strings. Carried, not yet acted on (`W_SAMPLE_KEY_UNIMPLEMENTED`). |
+| `effect`       | array       | The def's `:effect` chain, resolved: one `{type, …params}` per effect in order, every param filled in (defaults included), times in SECONDS (at the score's opening tempo, like the loop points), levels in dB. `gain {db}`, `normalize {peak}`, `comp {threshold, ratio, attack, release, knee, makeup}`, `limit {ceiling, release}`, `crush {bits}`, `fade {at\|null, len, curve}`. `[]` when the def has none. The exporter runs it (`live/src/sample-fx.js`) before baking. |
 
 ## 3. Track object
 

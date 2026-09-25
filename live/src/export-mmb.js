@@ -58,6 +58,7 @@ const PCM_LOOP_MAX = 0x7f00;
 import { dedupEventStream } from "./mmb-dedup.js";
 import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
 import { engineImage } from "./engine-images.js";
+import { applySampleEffects, quantizeS8 } from "./sample-fx.js";
 
 // NOTE_ON macro spec key → target name (opcodes.md §7). Most keys uppercase
 // directly (vol→VOL, fm_tl1→FM_TL1, note_semi→NOTE_SEMI); velMacro/pitchMacro
@@ -279,11 +280,12 @@ function midiNote(pitch) {
  *
  * @param {object} ir - compiled IR (compileMMLisp().ir)
  * @param {{ compilerVersion?: string,
- *           samples?: Record<string, { data: Uint8Array|Int8Array,
- *             baseRate?: number, loopStart?: number|null,
- *             loopEnd?: number|null }> }} [opts]
- *   `samples` supplies raw 8-bit signed PCM blobs keyed by sample name; when
- *   given (and PCM events exist) a SAMPLE_BANK section is emitted.
+ *           samples?: Record<string, { data: Float32Array,
+ *             baseRate?: number }> }} [opts]
+ *   `samples` supplies each sample's decoded mono slice (-1..1, at baseRate)
+ *   keyed by sample name; the bank applies the def's `:effect` chain, bakes
+ *   and quantizes it. When given (and PCM events exist) a SAMPLE_BANK section
+ *   is emitted.
  * @returns {{ bytes: Uint8Array, diagnostics: Array<{severity, code, message, track?}> }}
  * @throws {RangeError} when the event stream overflows the u16 offset space
  *   (one 32KB bank window; mmb.md §12).
@@ -1438,11 +1440,13 @@ export function collectPcmUsage(ir) {
   return use;
 }
 
-// Linear resample of an 8-bit signed blob from `from` Hz to `to` Hz. Linear and
+// Linear resample of a float sample from `from` Hz to `to` Hz, quantized to
+// signed 8-bit on the way out — the ONE quantize a bank byte goes through, so
+// the resample works on the full-precision (post-effect) signal. Linear and
 // not nearest-neighbour on purpose: this runs once, at build time, where the
 // better filter is free — the mixer's own nearest-neighbour step is what baking
 // REMOVES, so the baked copy should not carry its artefacts forward.
-function resample8(data, from, to) {
+function resampleS8(data, from, to) {
   const ratio = from / to;
   const outLen = Math.max(1, Math.round(data.length / ratio));
   const out = new Int8Array(outLen);
@@ -1451,12 +1455,25 @@ function resample8(data, from, to) {
     const i0 = Math.floor(x);
     const i1 = i0 + 1 < data.length ? i0 + 1 : i0;
     const f = x - i0;
-    const s0 = (data[i0] << 24) >> 24;
-    const s1 = (data[i1] << 24) >> 24;
-    let v = Math.round(s0 + (s1 - s0) * f);
-    out[i] = v > 127 ? 127 : v < -128 ? -128 : v;
+    out[i] = quantizeS8(data[i0] + (data[i1] - data[i0]) * f);
   }
   return out;
+}
+
+// A fade inside the loop is baked into the bytes the loop repeats, so every
+// pass of the loop replays it — almost never what was meant.
+function warnFadeOverLoop(s, durSec, diag) {
+  const ls = s.loopStartSec ?? 0;
+  const le = s.loopEndSec ?? durSec;
+  for (const fx of s.effect ?? []) {
+    if (fx.type !== "fade") continue;
+    const at = fx.at ?? Math.max(0, durSec - fx.len);
+    if (at < le && at + fx.len > ls) {
+      diag("warning", "W_SAMPLE_FX_FADE_LOOP",
+        `sample "${s.name}": its fade (${Math.round(at * 1000)}ms+${Math.round(fx.len * 1000)}ms) `
+          + `overlaps the loop, which repeats it`);
+    }
+  }
 }
 
 /** Silence to whole engine blocks: a shot's last block is played, never cut. */
@@ -1547,7 +1564,6 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
           continue;
         }
         const blob = blobs[s.name];
-        const data = blob?.data ?? new Uint8Array(0);
         if (!blob) {
           diag(
             "warning",
@@ -1562,6 +1578,13 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
         const loopEndSec = s.loopEndSec;
         const hasLoop = loopStartSec != null || loopEndSec != null;
         const rate = blob?.baseRate ?? s.rate ?? 13000;
+        // The def's `:effect` chain, at the sample's own rate: its times are
+        // the sample's own time, like the loop points (sample-fx.js).
+        const data = blob?.data?.length
+          ? applySampleEffects(blob.data, rate, s.effect, (code, msg) =>
+              diag("warning", code, `sample "${s.name}": ${msg}`))
+          : new Float32Array(0);
+        if (hasLoop && data.length > 0) warnFadeOverLoop(s, data.length / rate, diag);
 
         if (data.length === 0) {
           fallbackFor.set(s.name, push({
@@ -1584,7 +1607,7 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
         bakedSourceBytes += data.length;
         for (const n of notes) {
           const to = pcmBakeRateAt(n, rateHz);
-          const raw = resample8(data, rate, to);
+          const raw = resampleS8(data, rate, to);
           // Every entry carries a loop, because the NOTE decides whether it loops
           // (`:mode loop`, PCM_NOTE_ON's note bit 7): a def with no loop points
           // loops the whole sample. The flag records only that the def set some.

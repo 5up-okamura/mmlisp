@@ -1333,8 +1333,10 @@ subdivide finely on the way.
 
 ### 14.2 Pitch-baked samples
 
-The engine does not resample and has no octave step. The exporter resamples
-each sample at build time, once for every note it is played at, to the rate at
+The engine does not resample and has no octave step. The exporter runs each
+sample's `:effect` chain (language.md §16) — the driver has no effect of its
+own, so every layer plays the same processed bytes — then resamples it at
+build time, once for every note it is played at, to the rate at
 which that note advances one byte a sample at the image's DAC rate, and pads
 the blob with silence to whole 16-byte blocks (mmb.md §10.1). The bank carries
 the image's rate as its stamp, and a loader refuses a bank baked for another
@@ -1347,5 +1349,3 @@ image.
   bank an export ships, so rate, 8-bit output, levels and loop rounding match;
   `npm run pcm-ab` checks it sends the driver's commands. What differs is the
   timing: its events land on the audio clock, not on 60 Hz frames.
-- **Unimplemented sample keys.** `:bit-depth`, `:volume`, `:compress` and
-  `:reverb` are accepted with a warning (`W_SAMPLE_KEY_UNIMPLEMENTED`).
