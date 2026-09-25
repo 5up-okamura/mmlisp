@@ -49,8 +49,7 @@ PCM in any layer.
   production environment for this driver."
 - **Sample effects are a def's `:effect [...]` chain (2026-09-25).** The user
   asked for it because PCM sounds thin and weak next to FM, and wanted
-  effects chained in order rather than one key each — so `:bit-depth`,
-  `:volume`, `:compress`, `:reverb` were removed (`crush` replaced
+  effects chained in order rather than one key each (`crush` replaced
   `:bit-depth`). All compile-time, run by the bank builder on float before
   the per-note resample, with one 8-bit quantize at the end (the user agreed
   to move the resample to float at the same time). First batch: `gain`,

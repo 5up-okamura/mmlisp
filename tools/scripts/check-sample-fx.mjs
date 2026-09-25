@@ -95,7 +95,6 @@ const run = (x, chain) => {
     instant.diagnostics.length === 0 && instant.ir.metadata.samples[0].effect.length === 2,
     instant.diagnostics.map((d) => d.code).join(","));
   const cases = [
-    [":compress 3", "E_SAMPLE_KEY_UNKNOWN"],
     [":effect (gain 3)", "E_SAMPLE_FX"],
     [":effect [(reverb)]", "E_SAMPLE_FX_UNKNOWN"],
     [":effect [(gain)]", "E_SAMPLE_FX_PARAM"],

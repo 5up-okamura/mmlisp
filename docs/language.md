@@ -1226,8 +1226,7 @@ is never touched.
 | `:effect`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:effect`
-chain runs, and the data becomes raw 8-bit signed PCM. Any other key is
-`E_SAMPLE_KEY_UNKNOWN`.
+chain runs, and the data becomes raw 8-bit signed PCM.
 
 ### Sample banks (many samples in one file)
 

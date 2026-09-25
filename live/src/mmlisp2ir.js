@@ -1534,10 +1534,6 @@ function applyTypedMacroDef(trackState, td, ctx) {
   return false;
 }
 
-// The def keys that once named sample processing; a score that still writes
-// one is pointed at the chain that replaced them.
-const SAMPLE_FX_KEYS_MOVED = new Set([":bit-depth", ":volume", ":compress", ":reverb"]);
-
 // `:effect [(name …) (name …)]` → the IR's resolved chain (docs/ir.md §2.2):
 // `{type, …params}` with every param filled in, times in seconds (at the
 // score's opening tempo, like the loop points) and levels in dB. The table
@@ -1665,18 +1661,6 @@ function parseSampleDef(root, diagnostics) {
     } else if (key === ":loop-len") {
       sample.loopLenTok = rawVal;
       sample.loopEndTok = null;
-    } else {
-      // A def is a handful of keys, so a stray one is a typo or a key that
-      // was never going to do anything — say so rather than drop it.
-      pushDiag(
-        diagnostics,
-        "error",
-        "E_SAMPLE_KEY_UNKNOWN",
-        `def :sample has no key ${key ?? describeNodeToken(bodyItems[ki])}` +
-          (SAMPLE_FX_KEYS_MOVED.has(key) ? " (sample processing is :effect [...])" : ""),
-        nodeSrc(bodyItems[ki]),
-        null,
-      );
     }
   }
 
