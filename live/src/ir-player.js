@@ -160,6 +160,12 @@ export class IRPlayer {
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
+    // A NOTE_PITCH sweep is scheduled whole at dispatch, leaving the pitch
+    // offsets above at its END value. A glide sweep is emitted just before its
+    // note's NOTE_ON (same tick), so that note must start from the sweep's
+    // FIRST value instead — else its onset write lands on the target pitch for
+    // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
+    this._pitchSweepOnset = new Map(); // key → { when, offset }
     this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
     this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
@@ -1397,6 +1403,14 @@ export class IRPlayer {
     );
   }
 
+  // The cent offset a note starting at `when` sounds with: the first value of
+  // a NOTE_PITCH sweep that began at that same instant (a glide), else the
+  // channel's standing offset `fallback`.
+  _onsetPitchOffset(key, when, fallback) {
+    const onset = this._pitchSweepOnset.get(key);
+    return onset && Math.abs(onset.when - when) < 1e-9 ? onset.offset : fallback;
+  }
+
   _writeFm3OpPitch(op, midiNote, when) {
     const { fnum, block } = midiToFnumBlock(midiNote);
     this._writeFm3OpFnum(op, fnum, block, when);
@@ -1721,7 +1735,11 @@ export class IRPlayer {
         const fm3Op = Number(ev.args?.fm3Op);
         const isFm3OpNote =
           ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4;
-        const centOffset = this._chRegs[ch]?.pitchOffset ?? 0;
+        const centOffset = this._onsetPitchOffset(
+          `fm:${ch}`,
+          when,
+          this._chRegs[ch]?.pitchOffset ?? 0,
+        );
         const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
         const chKey = (port << 2) | chOffset; // 0x28 channel key
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
@@ -2036,7 +2054,8 @@ export class IRPlayer {
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const st = this._fm3Op[op - 1];
         st.midi = midi;
-        this._writeFm3OpPitch(op, midi + st.offset / 100, when);
+        const offset = this._onsetPitchOffset(`op:${op}`, when, st.offset);
+        this._writeFm3OpPitch(op, midi + offset / 100, when);
         break;
       }
     }
@@ -3341,6 +3360,11 @@ export class IRPlayer {
           from + (to - from) * sampleCurveUnit(curve, phase, params),
         );
         const frameWhen = when + frame / 60;
+        if (frame === 0)
+          this._pitchSweepOnset.set(opState ? `op:${op}` : `fm:${ch}`, {
+            when,
+            offset: centOffset,
+          });
         if (opState) {
           opState.offset = centOffset;
           this._writeFm3OpPitch(op, baseMidi + centOffset / 100, frameWhen);
@@ -3669,7 +3693,11 @@ export class IRPlayer {
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
-          const psgCentOffset = this._psgPitchOffset[psgCh] ?? 0;
+          const psgCentOffset = this._onsetPitchOffset(
+            `psg:${psgCh}`,
+            when,
+            this._psgPitchOffset[psgCh] ?? 0,
+          );
           this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
           const psgPitchWrite = (centOffset, t) =>
             this._psgSetPitch(psgCh, midi + centOffset / 100, t);
@@ -3842,6 +3870,11 @@ export class IRPlayer {
               from +
               (to - from) * sampleCurveUnit(curve, phase, ev.args?.params);
             this._psgPitchOffset[psgCh] = centOffset;
+            if (frame === 0)
+              this._pitchSweepOnset.set(`psg:${psgCh}`, {
+                when,
+                offset: centOffset,
+              });
             this._psgSetPitch(
               psgCh,
               baseMidi + centOffset / 100,

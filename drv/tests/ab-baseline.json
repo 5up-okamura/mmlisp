@@ -49,9 +49,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 633,
+    "mismatches": 569,
     "compileErrors": 0,
-    "digest": "4cb54214"
+    "digest": "bdcd531f"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -283,9 +283,9 @@
   },
   "m4-fm3op-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 53,
+    "mismatches": 21,
     "compileErrors": 0,
-    "digest": "19f23cc3"
+    "digest": "376d6a7a"
   },
   "m4-fm6-only.mmlisp": {
     "ok": true,
