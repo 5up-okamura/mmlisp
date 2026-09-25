@@ -152,7 +152,7 @@ MML_HOT int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v
  * does, so these change nothing but the time. */
 static const uint8_t MML_MOD3[32] = {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0,
                                      1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1};
-MML_HOT uint8_t mod3(int ch) { return (unsigned)ch < 32 ? MML_MOD3[ch] : mod3(ch); }
+MML_HOT uint8_t mod3(int ch) { return (unsigned)ch < 32 ? MML_MOD3[ch] : ch % 3; }
 /* a * b for operands that fit 16 bits (muls.w). */
 MML_HOT int32_t mml_muls(int16_t a, int16_t b) { return (int32_t)a * (int32_t)b; }
 /* n / d for a quotient that fits 16 bits (divs.w). */

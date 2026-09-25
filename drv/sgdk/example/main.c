@@ -2,7 +2,7 @@
 //
 // Build layout (see drv/sgdk/README.md):
 //   src/main.c            this file
-//   src/mmlispdrv.c       the host glue      \
+//   src/mmlispdrv.c       the host glue      )
 //   src/mmlispseq.c       the sequencer       ) copied by
 //   src/mmlispseq_tables.c its constant tables ) drv/tools/install-sgdk.mjs
 //   src/mmlpairs.c        the slot -> pair converter
@@ -24,8 +24,7 @@
 // (example/demo.bundle.json, built by tools/bundle.mjs):
 //
 //   node drv/tools/install-sgdk.mjs <proj> --example --bundle drv/sgdk/example/demo.bundle.json
-//   make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 \
-//        -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
+//   make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
 //
 #include <genesis.h>
 #include "mmlispdrv.h"
@@ -171,9 +170,13 @@ static void drawHex(u32 value, u16 digits, u16 x, u16 y)
 static u8 bgmTrackCount(void)
 {
     u8 n = MMLisp_trackCount();
+#if MMLISP_SE_TRACKS
     // >=, not >: a score that is ALL effect tracks has no BGM, and starting
     // them here would start them with startTrack — evicting, never restoring.
     return (n >= MMLISP_SE_TRACKS) ? (u8)(n - MMLISP_SE_TRACKS) : n;
+#else
+    return n;
+#endif
 }
 
 static void playBgm(void)
@@ -211,9 +214,14 @@ static bool loadSong(u8 i)
 // back, which is the whole difference between a scene change and an effect.
 static void fireSe(u8 i, u8 prio)
 {
+#if MMLISP_SE_TRACKS
     u8 n = MMLisp_trackCount();
     if (i >= MMLISP_SE_TRACKS || n < MMLISP_SE_TRACKS) return;
     MMLisp_startSe(MMLisp_trackId((u8)(n - MMLISP_SE_TRACKS + i)), prio);
+#else
+    (void)i;
+    (void)prio;
+#endif
 }
 
 // A held direction moves a slot every frame, so a full sweep takes about a
