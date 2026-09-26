@@ -81,6 +81,24 @@ const run = (x, chain) => {
     past.warns.includes("W_SAMPLE_FX_FADE_PAST_END") && past.y.length === x.length);
 }
 
+// reverb: grows by exactly :tail, rings after the dry ends, fades to silence;
+// :mix 0 is the dry signal; :predelay holds the wet back
+{
+  const x = new Float32Array(Math.round(0.05 * RATE));
+  x[0] = 1; // an impulse
+  const chain = (p) => [{ type: "reverb", size: 0.5, damp: 0.5, mix: 0.3, predelay: 0, tail: 0.3, ...p }];
+  const { y } = run(x, chain({}));
+  check("reverb grows by :tail", y.length === x.length + Math.round(0.3 * RATE), `${y.length} frames`);
+  const ring = peak(y, x.length, x.length + Math.round(0.05 * RATE));
+  check("reverb rings past the dry end", ring > 1e-3, ring.toExponential(2));
+  check("reverb tail fades to silence", peak(y, y.length - 20) < 1e-4, peak(y, y.length - 20).toExponential(2));
+  const dry = run(x, chain({ mix: 0 })).y;
+  check("reverb :mix 0 is dry", dry[0] === 1 && peak(dry, 1) === 0);
+  const late = run(x, chain({ mix: 1, predelay: 0.02 })).y;
+  const lead = Math.round(0.02 * RATE);
+  check("reverb :predelay holds the wet back", peak(late, 1, lead) === 0 && peak(late, lead) > 0);
+}
+
 // the compiler: resolution and rejection
 {
   const ok = compileMMLisp(`(def pcm-voices 1)
@@ -97,7 +115,10 @@ const run = (x, chain) => {
     instant.diagnostics.map((d) => d.code).join(","));
   const cases = [
     [":effect (gain 3)", "E_SAMPLE_FX"],
-    [":effect [(reverb)]", "E_SAMPLE_FX_UNKNOWN"],
+    [":effect [(bogus)]", "E_SAMPLE_FX_UNKNOWN"],
+    [":effect [(reverb)]", "E_SAMPLE_FX_PARAM"],
+    [":effect [(reverb :tail 0ms)]", "E_SAMPLE_FX_PARAM"],
+    [":effect [(reverb :tail 100ms :size 2)]", "E_SAMPLE_FX_PARAM"],
     [":effect [(gain)]", "E_SAMPLE_FX_PARAM"],
     [":effect [(comp :ratio 0.5)]", "E_SAMPLE_FX_PARAM"],
     [":effect [(comp :bogus 1)]", "E_SAMPLE_FX_PARAM"],

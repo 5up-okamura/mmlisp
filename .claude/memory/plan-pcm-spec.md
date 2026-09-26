@@ -80,8 +80,9 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 - **PCM SE** runs only in `drv-player.js`; the C sequencer and the SGDK host
   have no SE yet ([[plan-se]]).
 - **Sample effects, second batch** — `hpf` / `lpf` (a low cut buys level
-  headroom), `drive` (tanh saturation), `reverb` (last: its tail costs bank
-  bytes). Agreed with the first batch, not yet written. Nothing listened yet:
+  headroom), `drive` (tanh saturation). Agreed with the first batch, not yet
+  written. `reverb` is in (2026-09-26; `:tail` required, the user's OK on the
+  params), not yet listened to by the user. Nothing listened yet:
   the first batch wants a pass by ear in the live app.
 - **Not scheduled:** compile-time premix of overlapping pcm voices (D1 (C));
   measuring XGM2/MDSDRV ROMs on BlastEm as a yardstick.

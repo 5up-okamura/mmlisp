@@ -1408,6 +1408,7 @@ choice, as for the loop points).
 | `limit` | Brickwall limiter with a 2 ms lookahead: the peak never passes `:ceiling` dBFS |
 | `crush` | Quantizes to N bits — the lo-fi step |
 | `fade` | Fades to silence from `:at` over `:len` and **cuts the sample there** |
+| `reverb` | Freeverb-style room; **grows the sample by `:tail`** and fades the tail out over it |
 
 Parameters — a positional value fills the one marked *positional*
 (`(gain 6)` is `(gain :db 6)`); anything outside a range is
@@ -1429,6 +1430,11 @@ Parameters — a positional value fills the one marked *positional*
 | `fade` | `:len` | length | > 0 | required |
 | | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end |
 | | `:curve` | a one-shot curve name (§11): `linear`, `ease-*` | not `const` or a looping curve | `linear` |
+| `reverb` | `:tail` | length added after the sample | > 0 | required |
+| | `:size` | room size (decay) | 0–1 | `0.5` |
+| | `:damp` | high-frequency damping (higher is darker) | 0–1 | `0.5` |
+| | `:mix` | wet share | 0–1 | `0.3` |
+| | `:predelay` | length before the reverb starts | ≥ 0 | `0ms` |
 
 Numbers are plain decimals (`-18`, `1.5`); lengths are §4 lengths (`60ms`,
 `16`, `4f`). The fade's gain is 1 − curve, so `ease-out-expo` drops fast and
@@ -1449,6 +1455,13 @@ tails off like a natural decay.
   warns (`W_SAMPLE_FX_FADE_LOOP`); a fade that runs past the sample's end
   warns `W_SAMPLE_FX_FADE_PAST_END`. A `loop` note on a def with no loop
   points loops the whole sample, fade included.
+- **A reverb costs its `:tail` in bank bytes** — at `pcm-voices 1`, 250 ms
+  is about 3.6 KB, per note the sample is played at — which is why the tail is
+  yours to set. It is baked into each def, not a shared bus: **the next note on
+  the same voice cuts it**, so it rings on spaced hits (a backbeat snare, an
+  effect) and all but vanishes on a busy hat. Short rooms and plates (0.2–0.6
+  s) suit 8 bits best; a long tail decays into quantization grain. A reverb on
+  a def with loop points extends the sample the loop can reach.
 - **Loud samples overlap loud.** Voices are summed and hard-clipped (above),
   so a kit brought up to full scale distorts where hits overlap — trade that
   against `:vel` / `:vol`.

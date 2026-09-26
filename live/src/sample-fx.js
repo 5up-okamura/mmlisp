@@ -16,8 +16,9 @@
 import { sampleCurveUnit } from "./ir-utils.js";
 
 // Param kinds: "db" (a number, dB), "num" (a plain number), "int",
-// "time" (a length token → seconds), "curve" (a one-shot curve name).
-// `pos` names the param a bare positional value fills: `(gain 6)`.
+// "time" (a length token → seconds; `positive` when 0 is not a span),
+// "curve" (a one-shot curve name). `pos` names the param a bare positional
+// value fills: `(gain 6)`.
 export const SAMPLE_EFFECTS = {
   gain: { pos: "db", params: { db: { kind: "db", required: true } } },
   normalize: { params: { peak: { kind: "db", def: 0, max: 0 } } },
@@ -41,8 +42,17 @@ export const SAMPLE_EFFECTS = {
   fade: {
     params: {
       at: { kind: "time", def: null },
-      len: { kind: "time", required: true },
+      len: { kind: "time", required: true, positive: true },
       curve: { kind: "curve", def: "linear" },
+    },
+  },
+  reverb: {
+    params: {
+      size: { kind: "num", def: 0.5, min: 0, max: 1 },
+      damp: { kind: "num", def: 0.5, min: 0, max: 1 },
+      mix: { kind: "num", def: 0.3, min: 0, max: 1 },
+      predelay: { kind: "time", def: 0 },
+      tail: { kind: "time", required: true, positive: true },
     },
   },
 };
@@ -159,7 +169,48 @@ function fade(x, { at, len, curve }, rate, warn) {
 
 const ms = (sec) => `${Math.round(sec * 1000)}ms`;
 
-const APPLY = { gain, normalize, comp, limit, crush, fade };
+// Freeverb (Jezar's tunings, mono): eight lowpass-feedback combs in parallel,
+// four allpasses in series, the delays scaled from 44.1 kHz to the sample's
+// rate. The sample grows by `tail`, and the tail fades out over that span
+// ((1 − u)²), so what the bank pays for is exactly what was asked. Baked per
+// def, it is not a shared bus: the next note on the voice cuts the tail.
+const COMB_TUNING = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+const ALLPASS_TUNING = [556, 441, 341, 225];
+function reverb(x, { size, damp, mix, predelay, tail }, rate) {
+  const scale = rate / 44100;
+  const n = x.length;
+  const pre = Math.round(predelay * rate);
+  const total = n + Math.round(tail * rate);
+  const feedback = 0.7 + 0.28 * size;
+  const d = 0.4 * damp;
+  const combs = COMB_TUNING.map((t) => ({ buf: new Float32Array(Math.max(1, Math.round(t * scale))), i: 0, lp: 0 }));
+  const aps = ALLPASS_TUNING.map((t) => ({ buf: new Float32Array(Math.max(1, Math.round(t * scale))), i: 0 }));
+  const out = new Float32Array(total);
+  for (let k = 0; k < total; k++) {
+    const dry = k < n ? x[k] : 0;
+    const inp = (k - pre >= 0 && k - pre < n ? x[k - pre] : 0) * 0.015;
+    let wet = 0;
+    for (const c of combs) {
+      const y = c.buf[c.i];
+      c.lp = y * (1 - d) + c.lp * d;
+      c.buf[c.i] = inp + c.lp * feedback;
+      c.i = (c.i + 1) % c.buf.length;
+      wet += y;
+    }
+    for (const a of aps) {
+      const b = a.buf[a.i];
+      a.buf[a.i] = wet + b * 0.5;
+      a.i = (a.i + 1) % a.buf.length;
+      wet = b - wet;
+    }
+    let v = dry * (1 - mix) + wet * 3 * mix;
+    if (k >= n) v *= (1 - (k - n) / (total - n)) ** 2;
+    out[k] = v;
+  }
+  return out;
+}
+
+const APPLY = { gain, normalize, comp, limit, crush, fade, reverb };
 
 /**
  * Run a resolved `:effect` chain over one sample.

@@ -1453,7 +1453,7 @@
       'sin','triangle','square','saw','ramp',
       'noise','pink','perlin','brown',
       // def-sample :effect [...] chain (§16)
-      'gain','normalize','comp','limit','crush','fade',
+      'gain','normalize','comp','limit','crush','fade','reverb',
     ];
     const AC_TRACKS = [
       'fm1','fm2','fm3','fm3-csm','fm3-csm-rate','fm3-1','fm3-2','fm3-3','fm3-4',
@@ -1484,6 +1484,7 @@
       // PCM / effects
       ':effect',':db',':peak',':threshold',':ratio',':attack',':release',
       ':knee',':makeup',':ceiling',':bits',':at',':curve',
+      ':size',':damp',':mix',':predelay',':tail',
       // curve params
       ':from',':to',':phase',':wait',':duty',':skew',':hold',':jitter',
       ':beta',':octaves',':lacunarity',':persistence',':leak',':seed',
@@ -1516,6 +1517,7 @@
       'comp': 'comp :threshold ${1:-18} :ratio ${2:4}',
       'crush': 'crush ${1:4}',
       'fade': 'fade :len ${1:100ms} :curve ${2:ease-out-expo}',
+      'reverb': 'reverb :tail ${1:250ms} :size ${2:0.5} :mix ${3:0.3}',
     };
     // Every curve head takes the same `A..B :len L` shape (§11), so generate
     // rather than list. `noise` is left out: as a head it is also a track name,

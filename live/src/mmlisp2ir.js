@@ -1641,9 +1641,9 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
       let v = null;
       if (p.kind === "time") {
         v = lengthTokenSeconds(tok, bpm);
-        // Only a fade's :len has to be a span; an attack, a release or an
-        // :at of 0 is instant / the start.
-        if (v !== null && !(v > 0) && type === "fade" && name === "len") v = null;
+        // Only a span has to be positive (`positive`); an attack, a release or
+        // an :at of 0 is instant / the start.
+        if (v !== null && !(v > 0) && p.positive) v = null;
       } else if (p.kind === "curve") {
         v = CURVE_NAMES.has(tok) && !LOOP_CURVE_NAMES.has(tok) && tok !== "const" ? tok : null;
       } else {
@@ -1652,7 +1652,7 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
         if (v !== null && ((p.min != null && v < p.min) || (p.max != null && v > p.max))) v = null;
       }
       if (v === null) {
-        const want = p.kind === "time" ? "a length"
+        const want = p.kind === "time" ? (p.positive ? "a length > 0" : "a length")
           : p.kind === "curve" ? "a one-shot curve name (linear, ease-…)"
           : `${p.kind === "int" ? "an integer" : "a number"}` +
             (p.min != null && p.max != null ? ` ${p.min}..${p.max}`
