@@ -257,6 +257,12 @@
     "compileErrors": 0,
     "digest": "a85f9be0"
   },
+  "m4-break-once.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-callret-loop.mmlisp": {
     "ok": true,
     "mismatches": 0,

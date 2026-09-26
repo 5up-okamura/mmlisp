@@ -1,0 +1,9 @@
+; M4 gate: a (break) in a loop that plays once (opcodes.md §5.2). Its only
+; pass is its last, so it always exits: nothing after it in the body plays.
+; A repeat-1 loop emits no LOOP_BEGIN/LOOP_END, so the encoder drops the break
+; and its dead tail instead — a LOOP_BREAK there would act on the enclosing
+; loop (fm1) or on none (fm2) — and moves what follows earlier by the tail.
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (x 2 c (x 1 d (break) e) f) g2)
+(fm2 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 24 :ar4 31 :tl4 10
+  #h c (break) d (go h 1) g2)

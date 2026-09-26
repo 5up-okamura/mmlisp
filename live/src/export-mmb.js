@@ -289,7 +289,40 @@ function midiNote(pitch) {
  * @throws {RangeError} when the event stream overflows the u16 offset space
  *   (one 32KB bank window; mmb.md §12).
  */
+// A (break) in a repeat-1 loop: its only pass is its last, so it always exits
+// there and nothing between it and the LOOP_END can ever play. The loop itself
+// is not emitted (repeat 1 needs none), so a LOOP_BREAK there would act on the
+// enclosing loop instead — drop the break and its dead tail from the IR before
+// anything plans on it. IR ticks are pass-1 ticks, so everything after the
+// tail moves earlier by the tail's length, as the player's expansion does.
+function dropRepeatOneBreakTails(ir) {
+  const tracks = (ir.tracks ?? []).map((t) => {
+    const events = t.events ?? [];
+    const single = new Set(
+      events.filter((e) => e.cmd === "LOOP_END" && (e.args?.repeat ?? 1) < 2).map((e) => e.args?.id),
+    );
+    if (!single.size) return t;
+    const kept = [];
+    let dead = null; // { id, tick } of the break whose tail is being dropped
+    let shift = 0;
+    for (const e of events) {
+      if (dead !== null) {
+        if (e.cmd !== "LOOP_END" || e.args?.id !== dead.id) continue;
+        shift += e.tick - dead.tick;
+        dead = null;
+      } else if (e.cmd === "LOOP_BREAK" && single.has(e.args?.id)) {
+        dead = { id: e.args.id, tick: e.tick };
+        continue;
+      }
+      kept.push(shift ? { ...e, tick: e.tick - shift } : e);
+    }
+    return { ...t, events: kept };
+  });
+  return { ...ir, tracks };
+}
+
 export function encodeMmb(ir, opts = {}) {
+  ir = dropRepeatOneBreakTails(ir);
   const diagnostics = [];
   const diag = (severity, code, message, track = null) =>
     diagnostics.push({ severity, code, message, ...(track ? { track } : {}) });
@@ -816,7 +849,8 @@ export function encodeMmb(ir, opts = {}) {
             repeat = 255;
           }
           // repeat 1 = body plays once — no loop needed; the matching LOOP_END
-          // (and any LOOP_BREAKs) are dropped by the same rule.
+          // is dropped by the same rule, and a break's dead tail never got
+          // here (dropRepeatOneBreakTails).
           if (repeat >= 2) {
             stream.u8(OPCODE.LOOP_BEGIN);
             stream.u8(repeat);
